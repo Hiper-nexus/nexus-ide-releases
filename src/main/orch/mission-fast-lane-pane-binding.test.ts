@@ -42,7 +42,10 @@ vi.mock('../adapters/subscription-auth', () => ({ detectSubscriptionAuthReadines
 vi.mock('./squad-runtime-inventory', () => ({ warmSquadRuntimeSubscriptionAuth: async () => undefined }));
 vi.mock('../pty/warm-pool', () => ({ warmPool: { take: () => null } }));
 vi.mock('../observability/main-trace', () => ({ trace: () => undefined }));
-vi.mock('./tool-util', () => ({ deliverAgentPrompt: async () => true }));
+vi.mock('./tool-util', () => ({
+  deliverAgentPrompt: async () => true,
+  withProjectContextBlocks: (options: { prompt?: string }) => options.prompt,
+}));
 vi.mock('./pane-registry', () => ({
   listPaneSnapshots: () => [...state.physical.values()].map((info) => ({
     paneId: info.paneId!, sessionId: info.sessionId, missionId: info.missionId,

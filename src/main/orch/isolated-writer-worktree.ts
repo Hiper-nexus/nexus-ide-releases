@@ -4,6 +4,8 @@ import type { WorktreeRecord } from '../runtime/worktree-contract';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { tapSessionExit } from '../pty/pty-manager';
 import { getPaneRuntimeAuthorityBySession, listPaneSnapshots } from './pane-registry';
+import { claimSameCheckoutWriter, hasPendingWriterClaim } from './delegated-writer-gate';
+import { getProjectDomainStores } from './project-domain-store-registry';
 
 /**
  * Chave do registry para writers isolados da mão do operador (sem missão).
@@ -46,6 +48,7 @@ function trackAllocation(
   missionId: string | undefined,
   registryKey: string,
   record: WorktreeRecord,
+  claim?: ReturnType<typeof claimSameCheckoutWriter>,
 ): IsolatedWriterAllocation {
   const registry = requireWorktreeRuntimeRegistry();
   const branch = record.branchRef.slice('refs/heads/'.length);
@@ -59,6 +62,7 @@ function trackAllocation(
   let released = false;
   const release = () => {
     if (released) return;
+    claim?.settle();
     registry.markFailed(scope, registryKey, record.taskId,
       'pane writer closed or spawn failed; worktree and branch retained for integration');
     released = true;
@@ -83,7 +87,10 @@ function trackAllocation(
     branch,
     baseSha: record.baseSha,
     release,
-    link: (paneId, sessionId) => bind({ paneId, sessionId }),
+    link: (paneId, sessionId) => {
+      claim?.settle(paneId);
+      bind({ paneId, sessionId });
+    },
   };
 }
 
@@ -121,18 +128,38 @@ export function resumeIsolatedWriterWorktree(
   const registry = requireWorktreeRuntimeRegistry();
   const linked = registry.findPaneWriter(scope, { paneId: fromPaneId });
   if (!linked) return null;
-  const registryKey = missionId ?? OPERATOR_HAND_WORKTREE_KEY;
+  let registryKey = missionId ?? OPERATOR_HAND_WORKTREE_KEY;
   if (linked.missionId !== registryKey) {
-    throw new Error(`resume: o writer isolado ${fromPaneId} pertence a outro escopo (missão) — retome-o de lá`);
+    // Missão dona encerrada (ou apagada): o pane voltou à mão do operador e
+    // o trabalho não integrado da worktree tem que continuar alcançável.
+    const owner = !missionId && linked.missionId !== OPERATOR_HAND_WORKTREE_KEY
+      ? getProjectDomainStores(scope).missions.get(linked.missionId)
+      : undefined;
+    if (owner === undefined || (owner && owner.status !== 'done' && owner.status !== 'failed')) {
+      throw new Error(`resume: o writer isolado ${fromPaneId} pertence a outro escopo (missão) — retome-o de lá`);
+    }
+    registryKey = linked.missionId;
   }
   let record: WorktreeRecord;
+  // Reserva síncrona (mesmo claim dos writers novos): o spawn tem awaits
+  // antes de o pane aparecer nos snapshots, e `reopenPaneWriter` aceita de
+  // novo um registro `ready` — sem isto, dois resumes simultâneos recebiam a
+  // mesma worktree/branch. `link(paneId)` passa a reserva ao pane nascido;
+  // `release()` a solta.
+  let claim: ReturnType<typeof claimSameCheckoutWriter> | undefined;
   try {
-    if (listPaneSnapshots().some((pane) => pane.executionScope?.rootRealPath === linked.worktreePath &&
+    const snapshots = listPaneSnapshots();
+    if (snapshots.some((pane) => pane.executionScope?.rootRealPath === linked.worktreePath &&
       !['exited', 'parked', 'hibernated'].includes(pane.state))) {
       throw new Error('ainda há um pane ativo nela');
     }
+    if (hasPendingWriterClaim(linked.worktreePath, snapshots)) {
+      throw new Error('outra retomada dela já está em andamento');
+    }
+    claim = claimSameCheckoutWriter(linked.worktreePath);
     record = registry.reopenPaneWriter(scope, registryKey, linked.taskId);
   } catch (error) {
+    claim?.settle();
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(
       `resume: a worktree original do writer isolado ${fromPaneId} ` +
@@ -141,7 +168,7 @@ export function resumeIsolatedWriterWorktree(
       { cause: error },
     );
   }
-  return trackAllocation(scope, missionId, registryKey, record);
+  return trackAllocation(scope, missionId, registryKey, record, claim);
 }
 
 /**

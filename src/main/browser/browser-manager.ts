@@ -186,6 +186,8 @@ export interface BrowserEntry {
   // which seq the corresponding completion event belonged to so actions can
   // report whether they triggered a real or in-page navigation.
   navSeq: number;
+  /** Bumped at the start of every Main-driven load (operator or agent). */
+  loadGeneration: number;
   lastNewDocNavSeq: number;
   lastInPageNavSeq: number;
   /** Bounded ring of console/HTTP/load failures (≤ 20), newest last. */
@@ -858,6 +860,7 @@ async function createEntry(
     networkProxy,
     restoringExactNavigation: false,
     navSeq: 0,
+    loadGeneration: 0,
     lastNewDocNavSeq: 0,
     lastInPageNavSeq: 0,
     errors: [],
@@ -1098,6 +1101,7 @@ async function loadBrowserForEntry(
     device?: BrowserDeviceKind;
   } = {},
 ): Promise<BrowserPaneState> {
+  entry.loadGeneration += 1;
   const assertCurrentAuthority = (): void => {
     options.assertCurrentAuthority?.();
     if (options.signal?.aborted) {
@@ -1402,9 +1406,25 @@ export async function analyzeBrowserResponsive(
   };
   const breakpoints: BrowserResponsiveBreakpoint[] = [];
   let restoreError: string | undefined;
+  // Which load/navigation is ours: anything newer (operator address bar,
+  // another tool, a click inside the page) supersedes the restore.
+  let ownLoadGeneration = entry.loadGeneration;
+  let ownNavSeq = entry.navSeq;
+  let ownWidth = entry.emulatedViewport?.width ?? null;
+  const superseded = () =>
+    entry.loadGeneration !== ownLoadGeneration || entry.navSeq !== ownNavSeq;
+  const SUPERSEDED = 'the pane navigated elsewhere during the run';
   try {
     for (const device of devices) {
-      await loadBrowserForEntry(paneId, entry, url, { ...authority, device });
+      if (superseded()) throw new Error(`${SUPERSEDED}; responsive analysis stopped`);
+      const load = loadBrowserForEntry(paneId, entry, url, { ...authority, device });
+      ownLoadGeneration = entry.loadGeneration;
+      try {
+        await load;
+      } finally {
+        ownNavSeq = entry.navSeq;
+        ownWidth = entry.emulatedViewport?.width ?? null;
+      }
       const audit = browserLayoutAuditSchema.parse(
         await runBrowserAutomationForPane(paneId, scope, 'layout_audit', {}),
       );
@@ -1417,12 +1437,20 @@ export async function analyzeBrowserResponsive(
       breakpoints.push({ device, audit, screenshot });
     }
   } finally {
-    // Runs even when authority was revoked mid-loop: the pane belongs back
-    // in the operator's state. Same guarded navigation, no confirmation.
+    // The device emulation always goes back (unless someone else changed it
+    // meanwhile). The page reload is a navigation: only under the caller's
+    // current authority and only if nothing navigated the pane after our
+    // last load — never over the operator's own navigation.
     try {
       if (!entry.view.webContents.isDestroyed()) {
-        applyBrowserDeviceEmulation(entry, browserKey(scope, paneId), originalWidth);
-        await loadBrowserForEntry(paneId, entry, url);
+        if ((entry.emulatedViewport?.width ?? null) === ownWidth) {
+          applyBrowserDeviceEmulation(entry, browserKey(scope, paneId), originalWidth);
+        }
+        if (superseded()) {
+          restoreError = `page not reloaded: ${SUPERSEDED}`;
+        } else {
+          await loadBrowserForEntry(paneId, entry, url, authority);
+        }
       }
     } catch (error) {
       restoreError = error instanceof Error ? error.message : String(error);

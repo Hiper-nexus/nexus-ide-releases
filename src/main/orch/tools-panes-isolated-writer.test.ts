@@ -355,6 +355,57 @@ describe('revisão cruzada 0.76.110: corrida, retomada, WIP e GC', () => {
     expect(fs.readFileSync(path.join(record.worktreePath, 'wip.txt'), 'utf8')).toBe('wip');
   });
 
+  it('P1-4: dois resumes simultâneos do mesmo writer — um reabre, o outro recebe erro claro', async () => {
+    await paneSpawnTool.handler({ adapterId: 'codex', isolatedWriter: true }, op);
+    const [record] = opRecords();
+    fs.writeFileSync(path.join(opRecords()[0].worktreePath, 'base.txt'), 'writer\n');
+    git(opRecords()[0].worktreePath, 'commit', '-qam', 'writer output');
+    closePane(h.panes[0]);
+    slowSpawn();
+    const results = await Promise.allSettled([1, 2].map(() =>
+      paneSpawnTool.handler({ adapterId: 'codex', resume: 'pane-0' }, op)));
+    expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+    const rejected = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')!;
+    expect(String(rejected.reason)).toMatch(/outra retomada dela já está em andamento/);
+    expect(h.spawn).toHaveBeenCalledTimes(2);
+    expect(h.spawn.mock.calls[1][0]).toMatchObject({ cwd: record.worktreePath });
+    expect(opRecords()).toHaveLength(1);
+    // O pane nascido segura a worktree; fechado, a retomada volta a valer.
+    await expect(paneSpawnTool.handler({ adapterId: 'codex', resume: 'pane-0' }, op))
+      .rejects.toThrow(/ainda há um pane ativo nela/);
+    closePane(h.panes.at(-1)!);
+    await paneSpawnTool.handler({ adapterId: 'codex', resume: 'pane-0' }, op);
+    expect(h.spawn).toHaveBeenCalledTimes(3);
+  });
+
+  it('Fable P2-8: mão do operador retoma o writer isolado de missão encerrada; de missão viva, não', async () => {
+    await paneSpawnTool.handler({ agentName: 'Executor', isolatedWriter: true }, ctx);
+    const [record] = registry.listMission(ctx.scope, ctx.missionId!);
+    fs.writeFileSync(path.join(record.worktreePath, 'base.txt'), 'writer\n');
+    git(record.worktreePath, 'commit', '-qam', 'writer output');
+    h.panes[0].state = 'exited';
+    exitPane(h.panes[0]);
+    await expect(paneSpawnTool.handler({ adapterId: 'codex', resume: 'pane-0' }, op))
+      .rejects.toThrow(/pertence a outro escopo/);
+    h.mission = { ...h.mission, status: 'done' };
+    const receipt = await paneSpawnTool.handler({ adapterId: 'codex', resume: 'pane-0' }, op) as Record<string, any>;
+    expect(h.spawn.mock.calls.at(-1)![0]).toMatchObject({ cwd: record.worktreePath, isolatedWriter: true });
+    expect(receipt.isolatedWorktree.branch).toBe(record.branchRef.slice('refs/heads/'.length));
+    expect(registry.listMission(ctx.scope, ctx.missionId!)[0].status).toBe('ready');
+    expect(opRecords()).toHaveLength(0);
+  });
+
+  it('P1-4: resume cujo spawn falha solta a reserva', async () => {
+    await paneSpawnTool.handler({ adapterId: 'codex', isolatedWriter: true }, op);
+    fs.writeFileSync(path.join(opRecords()[0].worktreePath, 'base.txt'), 'writer\n');
+    git(opRecords()[0].worktreePath, 'commit', '-qam', 'writer output');
+    closePane(h.panes[0]);
+    h.spawn.mockRejectedValueOnce(new Error('spawn failed'));
+    await expect(paneSpawnTool.handler({ adapterId: 'codex', resume: 'pane-0' }, op)).rejects.toThrow('spawn failed');
+    await paneSpawnTool.handler({ adapterId: 'codex', resume: 'pane-0' }, op);
+    expect(h.spawn).toHaveBeenCalledTimes(3);
+  });
+
   it('resume de writer isolado cuja worktree sumiu dá erro claro e não cai no checkout', async () => {
     await paneSpawnTool.handler({ adapterId: 'codex', isolatedWriter: true }, op);
     const [record] = opRecords();

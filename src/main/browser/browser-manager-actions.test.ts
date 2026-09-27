@@ -771,6 +771,72 @@ describe('analyzeBrowserResponsive (nexus_browser_responsive)', () => {
     destroyBrowser(PANE, scope);
   });
 
+  // P2-9: the restore reload is a navigation — never after the caller lost
+  // authority, and never over a navigation that happened during the run.
+  const auditThen = (sideEffect: () => void | Promise<void>) => {
+    let audits = 0;
+    state.runAutomation.mockImplementation(async (_p, _wc, command: string) => {
+      if (command !== 'layout_audit') throw new Error('unexpected');
+      audits += 1;
+      if (audits === 1) await sideEffect();
+      return AUDIT;
+    });
+  };
+
+  it('does not reload the page after authority is revoked mid-run (device still restored)', async () => {
+    await boot();
+    let revoked = false;
+    auditThen(() => { revoked = true; });
+    await expect(analyzeBrowserResponsive(PANE, scope, {
+      assertCurrentAuthority: () => { if (revoked) throw new Error('session_authority_revoked'); },
+    })).rejects.toThrow(/revoked/);
+    expect(state.guest.loadURL).toHaveBeenCalledTimes(1);
+    expect(state.guest.disableDeviceEmulation).toHaveBeenCalled();
+    destroyBrowser(PANE, scope);
+  });
+
+  it('does not reload the page after the run is cancelled', async () => {
+    await boot();
+    const controller = new AbortController();
+    auditThen(() => controller.abort());
+    await expect(analyzeBrowserResponsive(PANE, scope, { signal: controller.signal })).rejects.toThrow();
+    expect(state.guest.loadURL).toHaveBeenCalledTimes(1);
+    destroyBrowser(PANE, scope);
+  });
+
+  it('stops and does not overwrite the operator navigating elsewhere during the run', async () => {
+    await boot();
+    auditThen(async () => {
+      await loadBrowser(PANE, 'https://example.test/other', { scope });
+    });
+    await expect(analyzeBrowserResponsive(PANE, scope)).rejects.toThrow(/navigated elsewhere/);
+    // Breakpoint 1 + the operator's load; no further breakpoint, no restore.
+    expect(state.guest.loadURL).toHaveBeenCalledTimes(2);
+    expect(state.guest.loadURL).toHaveBeenLastCalledWith('https://example.test/other');
+    destroyBrowser(PANE, scope);
+  });
+
+  it('skips only the restore reload when the operator navigates during the last breakpoint', async () => {
+    await boot();
+    auditThen(async () => {
+      await loadBrowser(PANE, 'https://example.test/other', { scope });
+    });
+    const result = await analyzeBrowserResponsive(PANE, scope, { devices: ['desktop'] });
+    expect(result.breakpoints).toHaveLength(1);
+    expect(result.restored).toBe(false);
+    expect(result.restoreError).toMatch(/navigated elsewhere/);
+    expect(state.guest.loadURL).toHaveBeenLastCalledWith('https://example.test/other');
+    destroyBrowser(PANE, scope);
+  });
+
+  it('does not overwrite a click-through navigation inside the page during the run', async () => {
+    await boot();
+    auditThen(() => fire('did-start-navigation', {}, 'https://example.test/next', false, true));
+    await expect(analyzeBrowserResponsive(PANE, scope)).rejects.toThrow(/navigated elsewhere/);
+    expect(state.guest.loadURL).toHaveBeenCalledTimes(1);
+    destroyBrowser(PANE, scope);
+  });
+
   it('keeps the DNS guard: a host now resolving privately is never loaded or emulated', async () => {
     await boot();
     state.browserSession.resolveHost.mockResolvedValue({

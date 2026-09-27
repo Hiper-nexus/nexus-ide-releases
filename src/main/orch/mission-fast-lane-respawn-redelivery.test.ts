@@ -29,9 +29,10 @@ const harness = vi.hoisted(() => ({
     adapterId?: string;
   }>,
   spawnCount: 0,
-  spawnOptions: [] as Array<{ cwd: string; scope: ReturnType<typeof testProjectScope>; executionScope: ReturnType<typeof testProjectScope> }>,
+  spawnOptions: [] as Array<{ initialPrompt?: string; cwd: string; scope: ReturnType<typeof testProjectScope>; executionScope: ReturnType<typeof testProjectScope> }>,
   redeliver: vi.fn((): number => 0),
   handoffsOfSession: undefined as string | undefined,
+  deliver: vi.fn(async (_sessionId: string, _prompt: string) => true),
 }));
 
 vi.mock('../pty/pty-manager', () => ({
@@ -60,8 +61,10 @@ vi.mock('../adapters/adapter-registry', () => ({
   }),
 }));
 
-vi.mock('./tool-util', () => ({
-  deliverAgentPrompt: vi.fn(async () => true),
+// Composição de contexto REAL (withProjectContextBlocks): só o transporte é dublê.
+vi.mock('./tool-util', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./tool-util')>()),
+  deliverAgentPrompt: harness.deliver,
 }));
 
 vi.mock('./pane-registry', () => ({
@@ -208,10 +211,16 @@ vi.mock('./mission-event-emit', () => ({ emitMissionEvent }));
 vi.mock('node:child_process', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('node:child_process')>();
-  const execFile = ((_cmd: unknown, _args: unknown, cb: unknown) => {
-    (cb as (err: unknown, out: { stdout: string }) => void)(null, {
+  const execFile = ((cmd: string, args: unknown, ...rest: unknown[]) => {
+    // Só o HEAD do watcher é dublê; o resto do git (extrator do modelo de
+    // negócio no teste P2-8) roda de verdade.
+    if (!Array.isArray(args) || args[0] !== 'rev-parse' || args[1] !== 'HEAD') {
+      return (actual.execFile as (...all: unknown[]) => unknown)(cmd, args, ...rest);
+    }
+    (rest[0] as (err: unknown, out: { stdout: string }) => void)(null, {
       stdout: 'sha-teste\n',
     });
+    return undefined;
   }) as unknown as typeof actual.execFile;
   return { ...actual, execFile };
 });
@@ -229,6 +238,7 @@ beforeEach(async () => {
   harness.spawnCount = 0;
   harness.spawnOptions.length = 0;
   harness.redeliver.mockClear();
+  harness.deliver.mockClear();
   harness.handoffsOfSession = undefined;
   liveMission = mission;
   reviewedSquad = undefined;
@@ -332,6 +342,30 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
     await vi.advanceTimersByTimeAsync(15_000);
     expect(harness.spawnCount).toBeGreaterThan(resumedSpawns);
     expect(liveMission.status).toBe('running');
+  });
+
+  it('P2-8: o Maestro da Via Rápida recebe o <business-model> atestado no briefing entregue', async () => {
+    vi.useRealTimers();
+    const { applyAttestedBusinessModel, createBarbershopRepo } =
+      await import('../context/business-model/__fixtures__/barbershop');
+    const root = createBarbershopRepo();
+    try {
+      const withModel = testProjectScope({ rootRealPath: root });
+      await applyAttestedBusinessModel(root, withModel);
+      vi.useFakeTimers();
+      await fastLane.fastLaneBootstrap(withModel, 'mission-1');
+      const delivered = [
+        harness.spawnOptions[0]?.initialPrompt ?? '',
+        ...harness.deliver.mock.calls.map(([, prompt]) => prompt),
+      ];
+      expect(delivered.length).toBeGreaterThan(1);
+      for (const brief of delivered) {
+        expect(brief).toContain('<business-model fonte=');
+        expect(brief).toContain('close_commanda#1');
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('missão running sem orquestrador vivo → respawn chama redeliverPendingHandoffs', async () => {

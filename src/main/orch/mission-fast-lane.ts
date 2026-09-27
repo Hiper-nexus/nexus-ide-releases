@@ -50,7 +50,7 @@ import {
 } from '../pty/pty-manager';
 import { getAcpDriverSession } from '../acp/acp-harness-driver';
 import { getAdapter } from '../adapters/adapter-registry';
-import { deliverAgentPrompt, proveNativeArgvBriefAccepted } from './tool-util';
+import { deliverAgentPrompt, proveNativeArgvBriefAccepted, withProjectContextBlocks } from './tool-util';
 import { canUseNexusMcp } from './cli-mcp-inject';
 import {
   getProjectDomainStores,
@@ -1019,11 +1019,42 @@ async function spawnWriterWithCircuit(
   return spawnAgentPane(scope, mission, successor, prompt, paneTitle, spawnOpts);
 }
 
+/**
+ * Colagem do briefing depois do boot (canal paste), igual para Maestro e
+ * worker. Se falhar, o pane recém-nascido é encerrado: nunca fica vivo, mudo
+ * e já vinculado à missão (o guardian não fecha pane de missão).
+ */
+async function pasteBriefAfterBoot(
+  sessionId: string,
+  prompt: string,
+  adapterId: string,
+): Promise<string | null> {
+  let failure: string | null;
+  try {
+    const boot =
+      getSessionState(sessionId) === 'idle'
+        ? 'idle'
+        : await waitForIdle(sessionId, ORCHESTRATOR_BOOT_TIMEOUT_MS);
+    if (boot === 'exited') return 'pane saiu antes do briefing';
+    failure = (await deliverAgentPrompt(sessionId, prompt, undefined, { adapterId }))
+      ? null
+      : 'briefing não foi aceito pelo pane';
+  } catch (error) {
+    failure = `falha ao colar briefing — ${error instanceof Error ? error.message : String(error)}`;
+  }
+  if (failure) {
+    await orchTerminateSession(sessionId).catch((error: unknown) => {
+      console.warn('[fast-lane] pane sem briefing não terminou:', error instanceof Error ? error.message : error);
+    });
+  }
+  return failure;
+}
+
 async function spawnAgentPane(
   scope: ProjectExecutionScope,
   mission: Mission,
   agent: SquadAgent,
-  initialPrompt?: string,
+  briefPrompt?: string,
   paneTitle?: string,
   spawnOpts?: { readonly readOnly?: boolean },
 ): Promise<SpawnedAgent | { error: string }> {
@@ -1032,6 +1063,18 @@ async function spawnAgentPane(
     agent.category === 'orchestrator' ? 'orchestrator' : 'worker';
   const title = paneTitle?.trim() || agent.agentName;
   const readOnly = spawnOpts?.readOnly === true;
+  // Mesmos blocos de contexto do wrapper de spawn (<business-model>,
+  // <workspace-memory>), compostos ANTES da escolha do transporte: argv e as
+  // colagens abaixo entregam este texto. O canal do "+ Pane" exclui missão.
+  const initialPrompt = withProjectContextBlocks({
+    prompt: briefPrompt,
+    scope,
+    executionScope,
+    missionId: mission.id,
+    role,
+    readOnly,
+    agentCategory: agent.category,
+  });
   if (role === 'worker') {
     const isMeta =
       getMissionRoutingHints(mission.intentContract).paneQuestion !== null ||
@@ -1109,34 +1152,8 @@ async function spawnAgentPane(
   if (role === 'worker' && initialPrompt) {
     const delivery = resolveOrchestratorBriefDelivery(agent.cli);
     if (delivery === 'paste') {
-      const boot =
-        getSessionState(spawn.sessionId) === 'idle'
-          ? 'idle'
-          : await waitForIdle(spawn.sessionId, ORCHESTRATOR_BOOT_TIMEOUT_MS);
-      if (boot === 'exited') {
-        return {
-          error: `${agent.agentName} (${agent.cli}): pane saiu antes do briefing`,
-        };
-      }
-      try {
-        const accepted = await deliverAgentPrompt(
-          spawn.sessionId,
-          initialPrompt,
-          undefined,
-          { adapterId: agent.cli },
-        );
-        if (!accepted) {
-          return {
-            error: `${agent.agentName} (${agent.cli}): briefing não foi aceito pelo pane`,
-          };
-        }
-      } catch (error) {
-        return {
-          error: `${agent.agentName} (${agent.cli}): falha ao colar briefing — ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        };
-      }
+      const failure = await pasteBriefAfterBoot(spawn.sessionId, initialPrompt, agent.cli);
+      if (failure) return { error: `${agent.agentName} (${agent.cli}): ${failure}` };
     }
   }
 
@@ -1149,43 +1166,14 @@ async function spawnAgentPane(
   if (role === 'orchestrator' && initialPrompt) {
     const delivery = resolveOrchestratorBriefDelivery(agent.cli);
     if (delivery === 'paste') {
-      const boot =
-        getSessionState(spawn.sessionId) === 'idle'
-          ? 'idle'
-          : await waitForIdle(
-              spawn.sessionId,
-              ORCHESTRATOR_BOOT_TIMEOUT_MS,
-            );
-      if (boot === 'exited') {
-        return {
-          error: `${agent.agentName} (${agent.cli}): pane saiu antes do briefing`,
-        };
-      }
-      try {
-        const accepted = await deliverAgentPrompt(
-          spawn.sessionId,
-          initialPrompt,
-          undefined,
-          { adapterId: agent.cli },
-        );
-        if (!accepted) {
-          return {
-            error: `${agent.agentName} (${agent.cli}): briefing não foi aceito pelo pane`,
-          };
-        }
-        tryAcceptIdleOrchestratorKickoff(
-          stores,
-          mission,
-          spawn.sessionId,
-          initialPrompt,
-        );
-      } catch (error) {
-        return {
-          error: `${agent.agentName} (${agent.cli}): falha ao colar briefing — ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        };
-      }
+      const failure = await pasteBriefAfterBoot(spawn.sessionId, initialPrompt, agent.cli);
+      if (failure) return { error: `${agent.agentName} (${agent.cli}): ${failure}` };
+      tryAcceptIdleOrchestratorKickoff(
+        stores,
+        mission,
+        spawn.sessionId,
+        initialPrompt,
+      );
     } else {
       // positional argv: Claude often only preloads the composer. Force
       // Enter (then paste) so the first turn starts without a human keystroke.
@@ -2218,7 +2206,7 @@ type OrchestratorAdoptionOutcome =
 async function adoptOrchestratorPane(
   scope: ProjectExecutionScope,
   mission: Mission,
-  initialPrompt: string,
+  briefPrompt: string,
 ): Promise<OrchestratorAdoptionOutcome> {
   const reservation = takeOrchestratorAdoption(mission.id);
   const adapter = reservation ? getAdapter(reservation.adapterId) : null;
@@ -2257,6 +2245,14 @@ async function adoptOrchestratorPane(
   }
 
   const live = stores.missions.get(mission.id) ?? mission;
+  // Adotado vira pane de missão: o canal do "+ Pane" deixa de valer para ele.
+  const initialPrompt = withProjectContextBlocks({
+    prompt: briefPrompt,
+    scope,
+    executionScope: missionExecutionScope(scope, live),
+    missionId: live.id,
+    role: 'orchestrator',
+  })!;
   rememberKickoffBrief({
     missionId: live.id,
     orchestratorSessionId: adopted.sessionId,
