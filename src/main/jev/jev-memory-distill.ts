@@ -55,9 +55,11 @@ const PREFERENCE_QUESTIONS: Record<string, JevQuestion> = {
   is_preference: {
     type: 'noul',
     instructions:
-      'Is this sentence a durable operator preference about how to work in ' +
-      'this project (tools, style, workflow, conventions to always or never ' +
-      'follow)? One-off task instructions and questions are not preferences.',
+      'The candidate was cut from the operator message in context. Is it a ' +
+      'durable preference the operator states as their own rule for this ' +
+      'project (tools, style, workflow, conventions to always or never ' +
+      'follow)? Quoted or analyzed text, examples, rules the operator rejects, ' +
+      'one-off task instructions and questions are not preferences.',
     criteria: {
       true: 'a durable preference the operator wants followed from now on',
       false: 'a one-off task instruction, question, or temporary detail',
@@ -71,7 +73,7 @@ const PREFERENCE_QUESTIONS: Record<string, JevQuestion> = {
  * (nenhuma gravação automática).
  */
 export async function confirmOperatorPreference(
-  input: { candidate: string },
+  input: { candidate: string; context?: string },
   deps: DistillHandoffSummaryDeps = {},
 ): Promise<boolean> {
   const judgeFn = deps.judge ?? judge;
@@ -81,7 +83,10 @@ export async function confirmOperatorPreference(
   if (!enabled() || !hasKeyFn()) return false;
 
   const result = await judgeFn({
-    state: { candidate: capText(input.candidate, 500) },
+    state: {
+      candidate: capText(input.candidate, 500),
+      ...(input.context ? { context: capText(input.context, 1_500) } : {}),
+    },
     questions: PREFERENCE_QUESTIONS,
     timeoutMs: DISTILL_TIMEOUT_MS,
     signal: deps.signal,

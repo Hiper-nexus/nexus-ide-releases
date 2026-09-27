@@ -351,6 +351,21 @@ describe('preferência do operador (fatia 3 da memória)', () => {
     );
     expect(distillPreference).not.toHaveBeenCalled();
   });
+
+  it('brief de helper (pane aberto por agente) e pack de failover nunca viram preferência', async () => {
+    const distillPreference = noDistill();
+    await handleHookDelegateRequest(
+      { role: 'user', sessionId: 'helper-1', scope, operatorParentSessionId: 'operator-pane' },
+      { prompt: 'Sempre use npm neste projeto.' },
+      { advise: vi.fn(async () => null), distillPreference },
+    );
+    await handleHookDelegateRequest(
+      { role: 'user', sessionId: 's1', scope },
+      { prompt: '[NEXUS FAILOVER HANDOFF]\nSempre use npm neste projeto.' },
+      { advise: vi.fn(async () => null), distillPreference },
+    );
+    expect(distillPreference).not.toHaveBeenCalled();
+  });
 });
 
 describe('bloco <workspace-memory> no primeiro prompt (fatia 4)', () => {

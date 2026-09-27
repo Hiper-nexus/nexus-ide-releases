@@ -21,6 +21,7 @@ import {
   workspaceMemoryContextBlock,
 } from '../memory/workspace-memory-context';
 import { getOrchSettings } from '../persistence/settings-store';
+import { FAILOVER_HANDOFF_HEADER } from '../../shared/failover-handoff';
 
 export const HOOK_DELEGATE_MAX_BODY_BYTES = 64 * 1024;
 
@@ -147,7 +148,18 @@ function memoryContextFor(
 }
 
 type HookContext = Pick<AgentGateContext, 'role' | 'missionId' | 'sessionId'> &
-  Partial<Pick<AgentGateContext, 'scope' | 'executionScope' | 'providerId'>>;
+  Partial<
+    Pick<AgentGateContext, 'scope' | 'executionScope' | 'providerId' | 'operatorParentSessionId'>
+  >;
+
+/**
+ * Só o que o humano digita no pane que ELE abriu vira preferência: helper
+ * (tem `operatorParentSessionId`, o brief é do agente pai) e texto que o
+ * próprio Nexus cola (pack de failover) nunca.
+ */
+function typedByOperator(ctx: HookContext, prompt: string): boolean {
+  return ctx.operatorParentSessionId === undefined && !prompt.includes(FAILOVER_HANDOFF_HEADER);
+}
 
 type DesignContextFn = (prompt: string, workspaceRoot: string) => string | null;
 
@@ -205,7 +217,7 @@ export async function handleHookDelegateRequest(
     // chamado quando há marcador. Fire-and-forget — não segura o prompt.
     const distillPreference = deps.distillPreference ?? distillOperatorPreferenceMemory;
     const preferenceScope = ctx.executionScope ?? ctx.scope;
-    if (preferenceScope) {
+    if (preferenceScope && typedByOperator(ctx, prompt)) {
       void distillPreference(preferenceScope, prompt).catch(() => {});
     }
     const now = (deps.now ?? Date.now)();
