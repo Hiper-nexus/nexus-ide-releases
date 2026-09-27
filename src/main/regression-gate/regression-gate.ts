@@ -31,6 +31,8 @@ import {
   DEFAULT_ORIENTATION_LIMITS,
   type OrientationLimits,
 } from '../context/orientation/orientation-types';
+import { ensureBlastRadius } from '../context/orientation/orientation-blast-radius';
+import { tryGetProjectOrientationService } from '../context/orientation/orientation-service';
 import { readWorkspaceTextFile } from '../orch/workspace-file';
 import { listDirtyPathsUnderCwd } from '../orch/worker-delivery-evidence';
 import { ProcessGitRunner, type GitRunner } from '../runtime/git-command';
@@ -47,12 +49,12 @@ const MAX_CHANGED_FILES = 256;
 const MAX_HASH_FILE_BYTES = 2 * 1024 * 1024;
 const REVERSE_DEPTH = 3;
 const MAX_REVERSE_VISITS = 4_000;
+// O walk só faz stat (conta bytes de todo arquivo, não só fonte); a leitura
+// fica restrita a TS/JS. Tetos menores truncam repositórios grandes na ordem
+// alfabética e somem com importadores reais.
 const GRAPH_LIMITS: OrientationLimits = Object.freeze({
   ...DEFAULT_ORIENTATION_LIMITS,
-  maxFiles: 20_000,
   maxFileBytes: 512 * 1024,
-  maxTotalBytes: 64 * 1024 * 1024,
-  buildBudgetMs: 8_000,
 });
 const CACHE_LIMIT = 32;
 
@@ -104,6 +106,31 @@ export function isRegressionGateEnabled(): boolean {
   } catch {
     return true;
   }
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+/**
+ * Default do contrato do codemap-banco: lê `tests`/`tables` do blast radius
+ * da orientação quando existirem (o writer 4 os acrescenta ao
+ * BlastRadiusResult). Sem serviço ou sem os campos → null, portão segue.
+ */
+export async function orientationBlastRadiusExtension(input: {
+  readonly scope: ProjectExecutionScope;
+  readonly changedFiles: readonly string[];
+}): Promise<RegressionBlastRadiusExtension | null> {
+  const service = tryGetProjectOrientationService();
+  if (!service) return null;
+  const radius: object = await ensureBlastRadius(
+    input.scope,
+    { seedFiles: input.changedFiles, depth: 1 },
+    service,
+  );
+  const tests = stringList((radius as { tests?: unknown }).tests);
+  const tables = stringList((radius as { tables?: unknown }).tables);
+  return tests.length > 0 || tables.length > 0 ? { tests, tables } : null;
 }
 
 /** Writers 3/4 registram aqui seus provedores, sem acoplar este módulo a eles. */
@@ -593,10 +620,9 @@ async function evaluate(
   const finish = (partial: Omit<RegressionGateResult, keyof typeof base | 'durationMs' | 'warnings'>) =>
     Object.freeze({ ...base, ...partial, warnings: Object.freeze([...warnings]), durationMs: now() - started });
 
-  const radius = extensions.blastRadius
-    ? await safeExtension('blast radius estendido', warnings, () =>
-        extensions.blastRadius!({ scope: input.scope, changedFiles }))
-    : null;
+  const blastRadius = extensions.blastRadius ?? orientationBlastRadiusExtension;
+  const radius = await safeExtension('blast radius estendido', warnings, () =>
+    blastRadius({ scope: input.scope, changedFiles }));
   const invariants = extensions.invariants
     ? (await safeExtension('invariantes do modelo de negócio', warnings, () =>
         extensions.invariants!({ scope: input.scope }))) ?? []
@@ -653,13 +679,23 @@ async function evaluate(
   if (runnable.length === 0) {
     return finish({ status: 'no-tests', testsRun: [], failures: [], runner: runner.kind, ...common });
   }
-  const outcome = await runTests(
-    root,
-    runner,
-    runnable,
-    input.timeoutMs ?? DEFAULT_REGRESSION_TEST_TIMEOUT_MS,
-    deps.exec ?? execDefault,
+  const timeoutMs = input.timeoutMs ?? DEFAULT_REGRESSION_TEST_TIMEOUT_MS;
+  const exec = deps.exec ?? execDefault;
+  let outcome = await runTests(root, runner, runnable, timeoutMs, exec);
+  // Teste instável (tempo, ordem) não pode barrar entrega: os arquivos que
+  // falharam rodam de novo uma vez, sozinhos; só a falha que se repete conta.
+  const failedFiles = [...new Set(outcome.failures.map((failure) => failure.file))].filter(
+    (file) => runnable.includes(file),
   );
+  if (outcome.status === 'failed' && failedFiles.length === outcome.failures.length) {
+    const retry = await runTests(root, runner, failedFiles, timeoutMs, exec);
+    if (retry.status === 'passed') {
+      warnings.push(`teste(s) instável(is), passaram na 2ª tentativa: ${failedFiles.slice(0, 5).join(', ')}`);
+      outcome = retry;
+    } else if (retry.status === 'failed') {
+      outcome = retry;
+    }
+  }
   if (outcome.warning) warnings.push(outcome.warning);
   return finish({
     status: outcome.status,

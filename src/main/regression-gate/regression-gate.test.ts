@@ -115,6 +115,25 @@ describe('runRegressionGate', () => {
     expect(formatRegressionGateReport(result)).toContain('Seu diff quebrou 1');
   });
 
+  it('teste instável que passa na 2ª tentativa não barra; falha que se repete barra', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const flaky = fakeVitest(['src/b.test.ts']);
+    const stable = fakeVitest();
+    let call = 0;
+    const exec = vi.fn<RegressionExec>((...args) =>
+      (call++ === 0 ? flaky.exec : stable.exec)(...args),
+    );
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(result.status).toBe('passed');
+    expect(exec).toHaveBeenCalledTimes(2);
+    // A retentativa roda só o arquivo que falhou.
+    expect(stable.calls[0]!.filter((arg) => arg.endsWith('.test.ts'))).toEqual(['src/b.test.ts']);
+    expect(result.warnings.join(' ')).toContain('instável(is), passaram na 2ª tentativa: src/b.test.ts');
+  });
+
   it('sem runner no projeto alvo: fail-open com aviso, sem executar nada', async () => {
     const { root, scope } = project({ runner: 'none' });
     write(root, 'src/a.ts', 'export const a = 2;\n');
@@ -211,8 +230,8 @@ describe('evaluateHandoffRegressionGate', () => {
     }
     const exhausted = await evaluateHandoffRegressionGate(input, deps);
     expect(exhausted.kind).toBe('exhausted');
-    // Cache: três avaliações do mesmo diff, uma execução.
-    expect(exec).toHaveBeenCalledTimes(1);
+    // Cache: três avaliações do mesmo diff, uma execução (+ a retentativa da falha).
+    expect(exec).toHaveBeenCalledTimes(2);
   });
 
   it('sem runner aceita (fail-open) sem artifact; passou registra em artifact', async () => {
