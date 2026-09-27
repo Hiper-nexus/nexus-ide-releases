@@ -4,6 +4,8 @@ import type { OwnedAgentSessionInfo } from '../pty/pty-manager';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
 import { hashMissionIntentAuthority } from './mission-pane-authority';
+import fs from 'node:fs';
+import { applyAttestedBusinessModel, createBarbershopRepo } from '../context/business-model/__fixtures__/barbershop';
 
 /**
  * Kimi Code 2.1.1 não tem prompt posicional em modo interativo (`kimi --help`:
@@ -21,6 +23,7 @@ const state = vi.hoisted(() => ({
   squad: null as Squad | null,
   mission: null as Mission | null,
   physical: new Map<string, OwnedAgentSessionInfo>(),
+  spawnPrompts: [] as Array<string | undefined>,
 }));
 
 vi.mock('./squad-store', () => ({ getSquad: () => state.squad, listSquads: () => [] }));
@@ -41,7 +44,9 @@ vi.mock('../adapters/subscription-auth', () => ({ detectSubscriptionAuthReadines
 vi.mock('./squad-runtime-inventory', () => ({ warmSquadRuntimeSubscriptionAuth: async () => undefined }));
 vi.mock('../pty/warm-pool', () => ({ warmPool: { take: () => null } }));
 vi.mock('../observability/main-trace', () => ({ trace: () => undefined }));
-vi.mock('./tool-util', () => ({
+// Composição de contexto REAL (withProjectContextBlocks): só o transporte é dublê.
+vi.mock('./tool-util', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./tool-util')>()),
   deliverAgentPrompt: deliverAgentPromptMock,
   proveNativeArgvBriefAccepted: async () => true,
 }));
@@ -57,6 +62,7 @@ vi.mock('./pane-registry', () => ({
       state: 'idle',
     })),
   requestPaneSpawn: async (options: {
+    initialPrompt?: string;
     agentName: string;
     missionId: string;
     adapterId: string;
@@ -91,6 +97,7 @@ vi.mock('./pane-registry', () => ({
       },
     };
     state.physical.set(sessionId, issued);
+    state.spawnPrompts.push(options.initialPrompt);
     return { ok: true, requestId: `spawn-${paneId}`, paneId, sessionId };
   },
 }));
@@ -106,11 +113,11 @@ import { dispatchFastLaneFirstWave } from './mission-fast-lane';
 
 afterEach(() => {
   state.physical.clear();
+  state.spawnPrompts.length = 0;
   deliverAgentPromptMock.mockClear();
 });
 
-function prepare() {
-  const scope = testProjectScope();
+function prepare(scope = testProjectScope()) {
   const squad: Squad = {
     id: 'team',
     name: 'Team',
@@ -169,5 +176,23 @@ describe('Via Rápida first-wave — entrega do briefing por colagem para o work
       undefined,
       { adapterId: 'kimi' },
     );
+  });
+
+  it('P2-8: worker da 1ª onda recebe o <business-model> atestado no briefing entregue (argv e colagem)', async () => {
+    const root = createBarbershopRepo();
+    try {
+      const scope = testProjectScope({ rootRealPath: root });
+      await applyAttestedBusinessModel(root, scope);
+      const { mission } = prepare(scope);
+      expect(await dispatchFastLaneFirstWave(scope, mission.id)).toBe(1);
+      const pasted = (deliverAgentPromptMock.mock.calls as unknown as Array<[string, string]>)[0][1];
+      for (const brief of [pasted, state.spawnPrompts[0] ?? '']) {
+        expect(brief).toContain('<business-model fonte=');
+        expect(brief).toContain('close_commanda#1');
+        expect(brief.indexOf('</business-model>')).toBeLessThan(brief.indexOf('2 + 2'));
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

@@ -50,7 +50,7 @@ import {
 } from '../pty/pty-manager';
 import { getAcpDriverSession } from '../acp/acp-harness-driver';
 import { getAdapter } from '../adapters/adapter-registry';
-import { deliverAgentPrompt, proveNativeArgvBriefAccepted } from './tool-util';
+import { deliverAgentPrompt, proveNativeArgvBriefAccepted, withProjectContextBlocks } from './tool-util';
 import { canUseNexusMcp } from './cli-mcp-inject';
 import {
   getProjectDomainStores,
@@ -1023,7 +1023,7 @@ async function spawnAgentPane(
   scope: ProjectExecutionScope,
   mission: Mission,
   agent: SquadAgent,
-  initialPrompt?: string,
+  briefPrompt?: string,
   paneTitle?: string,
   spawnOpts?: { readonly readOnly?: boolean },
 ): Promise<SpawnedAgent | { error: string }> {
@@ -1032,6 +1032,18 @@ async function spawnAgentPane(
     agent.category === 'orchestrator' ? 'orchestrator' : 'worker';
   const title = paneTitle?.trim() || agent.agentName;
   const readOnly = spawnOpts?.readOnly === true;
+  // Mesmos blocos de contexto do wrapper de spawn (<business-model>,
+  // <workspace-memory>), compostos ANTES da escolha do transporte: argv e as
+  // colagens abaixo entregam este texto. O canal do "+ Pane" exclui missão.
+  const initialPrompt = withProjectContextBlocks({
+    prompt: briefPrompt,
+    scope,
+    executionScope,
+    missionId: mission.id,
+    role,
+    readOnly,
+    agentCategory: agent.category,
+  });
   if (role === 'worker') {
     const isMeta =
       getMissionRoutingHints(mission.intentContract).paneQuestion !== null ||
@@ -2218,7 +2230,7 @@ type OrchestratorAdoptionOutcome =
 async function adoptOrchestratorPane(
   scope: ProjectExecutionScope,
   mission: Mission,
-  initialPrompt: string,
+  briefPrompt: string,
 ): Promise<OrchestratorAdoptionOutcome> {
   const reservation = takeOrchestratorAdoption(mission.id);
   const adapter = reservation ? getAdapter(reservation.adapterId) : null;
@@ -2257,6 +2269,14 @@ async function adoptOrchestratorPane(
   }
 
   const live = stores.missions.get(mission.id) ?? mission;
+  // Adotado vira pane de missão: o canal do "+ Pane" deixa de valer para ele.
+  const initialPrompt = withProjectContextBlocks({
+    prompt: briefPrompt,
+    scope,
+    executionScope: missionExecutionScope(scope, live),
+    missionId: live.id,
+    role: 'orchestrator',
+  })!;
   rememberKickoffBrief({
     missionId: live.id,
     orchestratorSessionId: adopted.sessionId,
