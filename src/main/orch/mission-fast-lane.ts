@@ -1100,6 +1100,46 @@ async function spawnAgentPane(
     });
   }
 
+  // Worker paste: mesma lacuna do Maestro, mas para writers. pty-manager só
+  // injeta initialPrompt no argv quando o canal do binário é positional/flag;
+  // um CLI sem prompt posicional (ex.: Kimi Code 2.1.1 — `kimi --help` não
+  // tem `[prompt]`) sempre resolve 'paste' e dependia de alguém colar depois
+  // do boot. Só o Maestro tinha esse fallback — o worker abria mudo e o
+  // operador digitava o briefing à mão (achado 2026-09-27).
+  if (role === 'worker' && initialPrompt) {
+    const delivery = resolveOrchestratorBriefDelivery(agent.cli);
+    if (delivery === 'paste') {
+      const boot =
+        getSessionState(spawn.sessionId) === 'idle'
+          ? 'idle'
+          : await waitForIdle(spawn.sessionId, ORCHESTRATOR_BOOT_TIMEOUT_MS);
+      if (boot === 'exited') {
+        return {
+          error: `${agent.agentName} (${agent.cli}): pane saiu antes do briefing`,
+        };
+      }
+      try {
+        const accepted = await deliverAgentPrompt(
+          spawn.sessionId,
+          initialPrompt,
+          undefined,
+          { adapterId: agent.cli },
+        );
+        if (!accepted) {
+          return {
+            error: `${agent.agentName} (${agent.cli}): briefing não foi aceito pelo pane`,
+          };
+        }
+      } catch (error) {
+        return {
+          error: `${agent.agentName} (${agent.cli}): falha ao colar briefing — ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        };
+      }
+    }
+  }
+
   // Maestro paste/oneshot: pty-manager NÃO coloca o briefing no argv (one-shot
   // mataria o pane; paste não tem canal). Sem colagem o Maestro fica mudo e
   // a Via Rápida marca kickoff aceito — missão "running" que nunca despacha.
