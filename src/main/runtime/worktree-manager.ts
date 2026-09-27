@@ -4,7 +4,10 @@ import type { ProjectExecutionScope } from "../../shared/types";
 import {
   GitCommandError,
   assertSafeLocalGitConfig,
+  assertSafeLocalGitConfigAsync,
+  AsyncProcessGitRunner,
   ProcessGitRunner,
+  type AsyncGitRunner,
   type GitRunner,
 } from "./git-command";
 import {
@@ -114,6 +117,9 @@ export class WorktreeManager {
   readonly legacyWorktreesRoot: string;
   readonly #stateStore: WorktreeStateStore;
   readonly #git: GitRunner;
+  readonly #asyncGit: AsyncGitRunner;
+  /** Writers de pane com remoção em curso: `reopenPaneWriter` não os reabre. */
+  readonly #collecting = new Set<string>();
   readonly #now: () => number;
 
   constructor(options: WorktreeManagerOptions) {
@@ -134,6 +140,7 @@ export class WorktreeManager {
     this.legacyWorktreesRoot = legacyWorktreesRoot(this.runtimeRoot);
     this.#stateStore = options.stateStore;
     this.#git = options.gitRunner ?? new ProcessGitRunner();
+    this.#asyncGit = options.asyncGitRunner ?? new AsyncProcessGitRunner();
     this.#now = options.now ?? Date.now;
   }
 
@@ -921,6 +928,9 @@ export class WorktreeManager {
     if (!record || record.ownerKind !== "pane") {
       throw new WorktreeStateConflictError("pane writer worktree record is missing");
     }
+    if (this.#collecting.has(record.taskKey)) {
+      throw new WorktreeStateConflictError("pane writer worktree is being collected");
+    }
     if (record.status !== "ready" && (record.status !== "failed" || record.integratedSha !== undefined)) {
       throw new WorktreeStateConflictError(`pane writer worktree is ${record.status}`);
     }
@@ -981,38 +991,61 @@ export class WorktreeManager {
     scope: ProjectExecutionScope,
     missionId: string,
     inUse: (worktreePath: string) => boolean,
-  ): readonly WorktreeRecord[] {
+  ): Promise<readonly WorktreeRecord[]> {
+    return this.#collectIntegratedPaneWorktrees(scope, missionId, inUse);
+  }
+
+  // Git assíncrono (fora do thread principal). Entre dois awaits o estado pode
+  // mudar (resume, pane novo): antes de remover, revalida registro e uso e
+  // marca o writer como "em coleta" para `reopenPaneWriter` recusá-lo.
+  async #collectIntegratedPaneWorktrees(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    inUse: (worktreePath: string) => boolean,
+  ): Promise<readonly WorktreeRecord[]> {
     const scopeKey = this.scopeKey(scope);
-    const candidates = this.#snapshot(scopeKey).records.filter((record) =>
-      record.ownerKind === "pane" && record.missionId === missionId &&
-      record.status === "failed" && !inUse(record.worktreePath));
+    const released = (record: WorktreeRecord) => record.ownerKind === "pane" &&
+      record.missionId === missionId && record.status === "failed" && !inUse(record.worktreePath);
+    const candidates = this.#snapshot(scopeKey).records.filter(released);
+    const git = this.#asyncGit;
     const removed: WorktreeRecord[] = [];
-    for (const record of candidates) {
+    for (const candidate of candidates) {
+      if (this.#collecting.has(candidate.taskKey)) continue;
       try {
-        const merged = this.#git.run(record.rootRealPath,
-          ["merge-base", "--is-ancestor", record.branchRef, "HEAD"], { allowFailure: true });
+        const merged = await git.run(candidate.rootRealPath,
+          ["merge-base", "--is-ancestor", candidate.branchRef, "HEAD"], { allowFailure: true });
         if (merged.status !== 0) continue;
-        if (fs.existsSync(record.worktreePath)) {
-          const real = fs.realpathSync(record.worktreePath);
-          if (real !== record.worktreePath) continue;
-          assertSafeLocalGitConfig(this.#git, real);
-          const top = this.#git.run(real, ["rev-parse", "--show-toplevel"], { allowFailure: true });
-          const head = this.#git.run(real, ["symbolic-ref", "--quiet", "HEAD"], { allowFailure: true });
+        let real: string | undefined;
+        if (fs.existsSync(candidate.worktreePath)) {
+          real = fs.realpathSync(candidate.worktreePath);
+          if (real !== candidate.worktreePath) continue;
+          await assertSafeLocalGitConfigAsync(git, real);
+          const top = await git.run(real, ["rev-parse", "--show-toplevel"], { allowFailure: true });
+          const head = await git.run(real, ["symbolic-ref", "--quiet", "HEAD"], { allowFailure: true });
           if (top.status !== 0 || fs.realpathSync(top.stdout.trim()) !== real ||
-              head.status !== 0 || head.stdout.trim() !== record.branchRef) continue;
-          const status = this.#git.run(real, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+              head.status !== 0 || head.stdout.trim() !== candidate.branchRef) continue;
+          const status = await git.run(real, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
           if (status.stdout.length > 0) continue;
-          // Sem --force: o Git recusa de novo se algo mudou entre a prova e a remoção.
-          this.#git.run(record.rootRealPath, ["worktree", "remove", real]);
         }
-        // -d (não -D): o Git só apaga a branch se ela estiver mesclada.
-        this.#git.run(record.rootRealPath,
-          ["branch", "-d", record.branchRef.slice("refs/heads/".length)], { allowFailure: true });
-        this.#mutate(scopeKey, (records) => ({
-          records: records.filter((candidate) => candidate.taskKey !== record.taskKey),
-          result: undefined,
-        }));
-        removed.push(record);
+        // Revalidação síncrona + marca: nada reabre este writer daqui em diante.
+        const record = this.#snapshot(scopeKey).records.find((current) =>
+          current.taskKey === candidate.taskKey);
+        if (!record || !released(record) || record.updatedAt !== candidate.updatedAt) continue;
+        this.#collecting.add(record.taskKey);
+        try {
+          // Sem --force: o Git recusa de novo se algo mudou entre a prova e a remoção.
+          if (real !== undefined) await git.run(record.rootRealPath, ["worktree", "remove", real]);
+          // -d (não -D): o Git só apaga a branch se ela estiver mesclada.
+          await git.run(record.rootRealPath,
+            ["branch", "-d", record.branchRef.slice("refs/heads/".length)], { allowFailure: true });
+          this.#mutate(scopeKey, (records) => ({
+            records: records.filter((current) => current.taskKey !== record.taskKey),
+            result: undefined,
+          }));
+          removed.push(record);
+        } finally {
+          this.#collecting.delete(record.taskKey);
+        }
       } catch {
         // Best-effort: identidade incerta mantém worktree, branch e registro.
       }

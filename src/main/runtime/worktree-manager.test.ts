@@ -17,6 +17,7 @@ import {
   type WorktreeStateSnapshot,
   type WorktreeStateStore,
 } from "./worktree-manager";
+import { AsyncProcessGitRunner } from "./git-command";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -178,6 +179,44 @@ describe("WorktreeManager", () => {
     expect(() => manager.get(scope, "mission-a", "task-a")).toThrow();
     stateStore.overwrite(key, current.map((r) => r.taskId === pane.taskId ? { ...r, paneIds: ["p", "p"] } : r));
     expect(() => manager.get(scope, "operator-hand", "pane-w1")).toThrow();
+  });
+
+  it("GC de writers de pane roda em Git assíncrono e não deixa reabrir o writer em remoção", async () => {
+    const scope = projectScope();
+    const create = (id: string) => manager.create({ scope, missionId: "operator-hand", taskId: `pane-${id}`,
+      workerId: id, ownerKind: "pane", ownership: { files: [], symbols: [], domains: [`pane-${id}`] } });
+    const [merged, unmerged, dirty] = [await create("m"), await create("u"), await create("d")];
+    for (const [record, file] of [[merged, "m.txt"], [unmerged, "u.txt"], [dirty, "d.txt"]] as const) {
+      write(file, file, record.worktreePath);
+      git(record.worktreePath, "add", file);
+      git(record.worktreePath, "commit", "-qm", file);
+      manager.markFailed(scope, "operator-hand", record.taskId, "pane closed");
+    }
+    git(root, "merge", "-q", "--no-edit", merged.branchRef.slice("refs/heads/".length));
+    git(root, "merge", "-q", "--no-edit", dirty.branchRef.slice("refs/heads/".length));
+    write("scratch.txt", "só existe aqui", dirty.worktreePath);
+    let holdRemove!: () => void;
+    const removeHeld = new Promise<void>((resolve) => { holdRemove = resolve; });
+    let removing!: () => void;
+    const removeStarted = new Promise<void>((resolve) => { removing = resolve; });
+    const real = new AsyncProcessGitRunner();
+    const gc = new WorktreeManager({ runtimeRoot, stateStore, gitRunner, now: () => 1_700_000_000_000,
+      asyncGitRunner: { run: async (cwd, args, options) => {
+        if (args[0] === "worktree" && args[1] === "remove") { removing(); await removeHeld; }
+        return real.run(cwd, args, options);
+      } } });
+    const syncCallsBefore = gitRunner.calls.length;
+    const collected = gc.collectIntegratedPaneWorktrees(scope, "operator-hand", () => false);
+    await removeStarted;
+    expect(() => gc.reopenPaneWriter(scope, "operator-hand", merged.taskId)).toThrow(/being collected/);
+    holdRemove();
+    expect((await collected).map((r) => r.taskId)).toEqual([merged.taskId]);
+    expect(gitRunner.calls.slice(syncCallsBefore)).toEqual([]);
+    expect(fs.existsSync(merged.worktreePath)).toBe(false);
+    expect(fs.existsSync(unmerged.worktreePath)).toBe(true);
+    expect(fs.readFileSync(path.join(dirty.worktreePath, "scratch.txt"), "utf8")).toBe("só existe aqui");
+    expect(gc.get(scope, "operator-hand", unmerged.taskId)).not.toBeNull();
+    expect(gc.get(scope, "operator-hand", dirty.taskId)).not.toBeNull();
   });
 
   it("never delegates versioned context authority to executor worktrees", async () => {
