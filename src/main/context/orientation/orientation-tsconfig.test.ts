@@ -7,6 +7,7 @@ import {
   loadTsconfigAliases,
   resolveAliasCandidateBases,
 } from './orientation-tsconfig';
+import { ProjectOrientationService } from './orientation-service';
 
 const roots: string[] = [];
 
@@ -63,6 +64,63 @@ describe('loadTsconfigAliases', () => {
     write(root, 'tsconfig.json', JSON.stringify({ extends: './tsconfig.base.json' }));
     const aliases = loadTsconfigAliases(scopeFor(root));
     expect(aliases?.paths.get('@/*')).toEqual(['./src/*']);
+  });
+
+  it('accepts an extends array (TS 5), skipping package entries and applying relative ones in order', () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-tsconfig-array-')));
+    roots.push(root);
+    write(root, 'tsconfig.a.json', JSON.stringify({ compilerOptions: { paths: { '@/*': ['./a/*'] } } }));
+    write(root, 'tsconfig.b.json', JSON.stringify({ compilerOptions: { paths: { '@/*': ['./b/*'] } } }));
+    write(root, 'tsconfig.json', JSON.stringify({
+      extends: ['@tsconfig/node20/tsconfig.json', './tsconfig.a.json', './tsconfig.b.json'],
+    }));
+    const aliases = loadTsconfigAliases(scopeFor(root));
+    expect(aliases && resolveAliasCandidateBases('@/x', aliases)).toEqual(['b/x']);
+  });
+
+  it('never throws on a non-object tsconfig', () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-tsconfig-null-')));
+    roots.push(root);
+    write(root, 'tsconfig.json', 'null');
+    expect(loadTsconfigAliases(scopeFor(root))).toBeNull();
+    write(root, 'tsconfig.json', JSON.stringify({ extends: 42, compilerOptions: { paths: [] } }));
+    expect(loadTsconfigAliases(scopeFor(root))).toBeNull();
+  });
+
+  it('resolves baseUrl relative to the inherited config that declares it', () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-tsconfig-dir-')));
+    roots.push(root);
+    write(root, 'config/base.json', JSON.stringify({
+      compilerOptions: { baseUrl: '..', paths: { '@/*': ['src/*'] } },
+    }));
+    write(root, 'tsconfig.json', JSON.stringify({ extends: './config/base.json' }));
+    const aliases = loadTsconfigAliases(scopeFor(root));
+    expect(aliases && resolveAliasCandidateBases('@/foo', aliases)).toEqual(['src/foo']);
+  });
+
+  it('resolves paths without baseUrl relative to the config that declares them', () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-tsconfig-nobase-')));
+    roots.push(root);
+    write(root, 'config/paths.json', JSON.stringify({
+      compilerOptions: { paths: { '@/*': ['../src/*'] } },
+    }));
+    write(root, 'tsconfig.json', JSON.stringify({ extends: './config/paths.json' }));
+    const aliases = loadTsconfigAliases(scopeFor(root));
+    expect(aliases && resolveAliasCandidateBases('@/foo', aliases)).toEqual(['src/foo']);
+  });
+
+  it('a tsconfig with an extends array does not fail the whole orientation map', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-tsconfig-map-')));
+    const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-tsconfig-map-cache-'));
+    roots.push(root, cacheRoot);
+    write(root, 'package.json', JSON.stringify({ name: 'x' }));
+    write(root, 'tsconfig.json', JSON.stringify({ extends: ['./a.json', './b.json'] }));
+    write(root, 'src/a.ts', "import { b } from './b';\nexport const a = b;");
+    write(root, 'src/b.ts', 'export const b = 1;');
+    const service = new ProjectOrientationService({ cacheRoot, includeContextSummary: false });
+    const map = await service.ensure(scopeFor(root), { reason: 'workspace-open' });
+    expect(map.status).toBe('ready');
+    expect(map.graph.edgeCount).toBe(1);
   });
 
   it('returns null when there is no tsconfig or no paths configured', () => {

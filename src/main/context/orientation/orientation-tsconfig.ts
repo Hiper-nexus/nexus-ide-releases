@@ -55,67 +55,95 @@ function parseJsonc(source: string): unknown {
   return JSON.parse(withoutTrailingCommas);
 }
 
-interface RawTsconfig {
-  readonly extends?: string;
-  readonly compilerOptions?: {
-    readonly baseUrl?: string;
-    readonly paths?: Record<string, readonly string[]>;
-  };
+/** Alias settings accumulated along an `extends` chain, as repo-relative dirs. */
+interface ResolvedTsconfig {
+  /** baseUrl, already joined with the dir of the config that declared it. */
+  readonly baseUrl?: string;
+  readonly paths?: Readonly<Record<string, unknown>>;
+  /** Dir of the config that declared `paths` (their base when no baseUrl). */
+  readonly pathsDir?: string;
 }
 
 const MAX_EXTENDS_DEPTH = 5;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Resolve one config and its relative `extends` (a string or, since TS 5.0,
+ * an array applied in order). Like tsc, `baseUrl` is relative to the file
+ * that declares it, and `paths` without a baseUrl are relative to the file
+ * that declares them. Package `extends` (no leading dot) are skipped.
+ */
 function readTsconfigChain(
   scope: ProjectExecutionScope,
   relativePath: string,
   depth: number,
-): RawTsconfig | null {
+): ResolvedTsconfig | null {
   if (depth > MAX_EXTENDS_DEPTH) return null;
-  let raw: RawTsconfig;
+  let raw: unknown;
   try {
-    const read = readWorkspaceTextFile(scope, relativePath);
-    raw = parseJsonc(read.content) as RawTsconfig;
+    raw = parseJsonc(readWorkspaceTextFile(scope, relativePath).content);
   } catch {
     return null;
   }
-  if (!raw.extends || !raw.extends.startsWith('.')) return raw;
+  if (!isRecord(raw)) return null;
+  const configDir = path.posix.dirname(relativePath);
+  let resolved: ResolvedTsconfig = {};
+  const parents = Array.isArray(raw.extends) ? raw.extends : [raw.extends];
+  for (const parent of parents) {
+    if (typeof parent !== 'string' || !parent.startsWith('.')) continue;
+    let parentRelative = path.posix.normalize(path.posix.join(configDir, parent));
+    if (!parentRelative.endsWith('.json')) parentRelative = `${parentRelative}.json`;
+    const inherited = readTsconfigChain(scope, parentRelative, depth + 1);
+    if (inherited) resolved = { ...resolved, ...definedOnly(inherited) };
+  }
+  const options = isRecord(raw.compilerOptions) ? raw.compilerOptions : {};
+  if (typeof options.baseUrl === 'string') {
+    resolved = {
+      ...resolved,
+      baseUrl: path.posix.normalize(path.posix.join(configDir, options.baseUrl)),
+    };
+  }
+  if (isRecord(options.paths)) {
+    resolved = { ...resolved, paths: options.paths, pathsDir: configDir };
+  }
+  return resolved;
+}
 
-  const parentDir = path.posix.dirname(relativePath);
-  let parentRelative = path.posix.normalize(path.posix.join(parentDir, raw.extends));
-  if (!parentRelative.endsWith('.json')) parentRelative = `${parentRelative}.json`;
-  const parent = readTsconfigChain(scope, parentRelative, depth + 1);
-  if (!parent) return raw;
-  return {
-    extends: raw.extends,
-    compilerOptions: {
-      baseUrl: raw.compilerOptions?.baseUrl ?? parent.compilerOptions?.baseUrl,
-      paths: raw.compilerOptions?.paths ?? parent.compilerOptions?.paths,
-    },
-  };
+function definedOnly(config: ResolvedTsconfig): ResolvedTsconfig {
+  return Object.fromEntries(
+    Object.entries(config).filter(([, value]) => value !== undefined),
+  ) as ResolvedTsconfig;
 }
 
 /**
  * Load `compilerOptions.paths`/`baseUrl` from the scanned project's own
- * tsconfig.json (following one level of `extends` chains), so `@/...`-style
- * aliases resolve to real files during import-graph construction. Returns
- * null when there is no tsconfig.json or no `paths` configured.
+ * tsconfig.json (following relative `extends`, string or array), so
+ * `@/...`-style aliases resolve to real files during import-graph
+ * construction. Returns null when there is no usable tsconfig or no `paths`;
+ * never throws — a malformed config only costs the aliases, not the map.
  */
 export function loadTsconfigAliases(
   scope: ProjectExecutionScope,
   tsconfigRelativePath = 'tsconfig.json',
 ): TsconfigAliasMap | null {
-  const resolved = readTsconfigChain(scope, tsconfigRelativePath, 0);
-  const paths = resolved?.compilerOptions?.paths;
-  if (!paths || Object.keys(paths).length === 0) return null;
-  const baseUrl = path.posix.normalize(
-    path.posix.join(path.posix.dirname(tsconfigRelativePath), resolved?.compilerOptions?.baseUrl ?? '.'),
-  );
-  const map = new Map<string, readonly string[]>();
-  for (const [prefix, targets] of Object.entries(paths)) {
-    if (Array.isArray(targets) && targets.length > 0) map.set(prefix, Object.freeze([...targets]));
+  try {
+    const resolved = readTsconfigChain(scope, tsconfigRelativePath, 0);
+    if (!resolved?.paths) return null;
+    const baseUrl = resolved.baseUrl ?? resolved.pathsDir ?? '.';
+    const map = new Map<string, readonly string[]>();
+    for (const [prefix, targets] of Object.entries(resolved.paths)) {
+      if (!Array.isArray(targets)) continue;
+      const strings = targets.filter((target): target is string => typeof target === 'string');
+      if (strings.length > 0) map.set(prefix, Object.freeze(strings));
+    }
+    if (map.size === 0) return null;
+    return Object.freeze({ baseUrl, paths: map });
+  } catch {
+    return null;
   }
-  if (map.size === 0) return null;
-  return Object.freeze({ baseUrl, paths: map });
 }
 
 function matchAliasPrefix(spec: string, prefix: string): string | null {
