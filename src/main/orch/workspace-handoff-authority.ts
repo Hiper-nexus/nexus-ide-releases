@@ -5,7 +5,10 @@ import {
 } from "./gate";
 import { getAgentSessionInfo } from "../pty/pty-manager";
 import { getPaneRuntimeAuthorityBySession } from "./pane-registry";
-import { sameProjectExecutionScope } from "./project-domain-store-registry";
+import {
+  getProjectDomainStores,
+  sameProjectExecutionScope,
+} from "./project-domain-store-registry";
 import type { ProjectExecutionScope } from "../../shared/types";
 
 interface HandPane {
@@ -39,6 +42,38 @@ function handPaneOf(sessionId: string): HandPane | null {
         scope: agent.scope,
       }
     : null;
+}
+
+/**
+ * O pai que o operador tornou orquestrador da missão da aba continua sendo o
+ * destino dos helpers que ele abriu ANTES da promoção — senão a entrega deles
+ * ficava sem dono. Só vale para o orquestrador ATUAL da missão (o store é quem
+ * diz); a entrega segue correspondência sem missão, nunca evidência dela.
+ */
+function isCurrentMissionOrchestrator(
+  sessionId: string,
+  parent: HandPane,
+  parentContext: AgentGateContext,
+  scope: Readonly<ProjectExecutionScope>,
+): boolean {
+  const missionId = parentContext.missionId;
+  if (
+    !missionId ||
+    parentContext.role !== "orchestrator" ||
+    parentContext.workerIncarnationId ||
+    parent.role === "worker" ||
+    parent.workerIncarnationId ||
+    (parent.missionId && parent.missionId !== missionId)
+  )
+    return false;
+  try {
+    return (
+      getProjectDomainStores(scope).missions.get(missionId)
+        ?.orchestratorSessionId === sessionId
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** Resolve only Main-owned spawn metadata against both current physical panes. */
@@ -79,18 +114,25 @@ export function resolveWorkspaceHandoffParent(ctx: AgentGateContext) {
     !parent ||
     !parentContext ||
     !isCurrentGateContext(parentContext) ||
+    parent.kind !== "cli-agent" ||
+    !parent.scope ||
+    !sameProjectExecutionScope(parent.scope, ctx.scope) ||
+    !sameProjectExecutionScope(parentContext.scope, ctx.scope)
+  )
+    return null;
+  const parentIsOperatorHand = !(
     parentContext.role === "worker" ||
     parentContext.missionId ||
     parentContext.contextRevision ||
     parentContext.workerIncarnationId ||
-    parent.kind !== "cli-agent" ||
     parent.role === "worker" ||
     parent.missionId ||
     parent.contextRevision ||
-    parent.workerIncarnationId ||
-    !parent.scope ||
-    !sameProjectExecutionScope(parent.scope, ctx.scope) ||
-    !sameProjectExecutionScope(parentContext.scope, ctx.scope)
+    parent.workerIncarnationId
+  );
+  if (
+    !parentIsOperatorHand &&
+    !isCurrentMissionOrchestrator(parentSessionId, parent, parentContext, ctx.scope)
   )
     return null;
   return { child, parent, parentContext };

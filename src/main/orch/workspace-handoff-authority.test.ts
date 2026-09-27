@@ -6,6 +6,18 @@ vi.mock("../pty/pty-manager", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../pty/pty-manager")>()),
   getAgentSessionInfo: (sessionId: string) => liveAgents.get(sessionId) ?? null,
 }));
+const missionOrchestrators = vi.hoisted(() => new Map<string, string>());
+vi.mock("./project-domain-store-registry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./project-domain-store-registry")>()),
+  getProjectDomainStores: () => ({
+    missions: {
+      get: (id: string) =>
+        missionOrchestrators.has(id)
+          ? { id, orchestratorSessionId: missionOrchestrators.get(id) }
+          : null,
+    },
+  }),
+}));
 import {
   bindTokenToSession,
   mintToken,
@@ -39,6 +51,7 @@ function pane(sessionId: string, parent?: string) {
 beforeEach(() => resetGateForTests());
 afterEach(() => {
   liveAgents.clear();
+  missionOrchestrators.clear();
   deleteMainOwnedPane("pane-parent");
   deleteMainOwnedPane("pane-child");
   resetGateForTests();
@@ -55,6 +68,37 @@ describe("workspace handoff authority", () => {
       parent: { sessionId: "parent" },
     });
     releaseSessionByToken(parent.token);
+    expect(resolveWorkspaceHandoffParent(child)).toBeNull();
+  });
+
+  it("entrega ao pai que virou orquestrador ATUAL da missão da aba", () => {
+    // O operador tornou o pai orquestrador depois de abrir o helper: a missão
+    // leve da aba nasce e o helper sem missão continua entregando a ele.
+    const parent = context("parent");
+    parent.role = "orchestrator";
+    parent.missionId = "mission-tab";
+    parent.contextRevision = "rev-1";
+    const child = context("child");
+    pane("parent");
+    pane("child", "parent");
+    missionOrchestrators.set("mission-tab", "parent");
+    expect(resolveWorkspaceHandoffParent(child)).toMatchObject({
+      parent: { sessionId: "parent" },
+    });
+
+    // Outro pane assumiu a missão: o pai antigo não é mais destino.
+    missionOrchestrators.set("mission-tab", "other");
+    expect(resolveWorkspaceHandoffParent(child)).toBeNull();
+  });
+
+  it("não entrega a um pai que é worker de missão", () => {
+    const parent = context("parent");
+    parent.role = "worker";
+    parent.missionId = "mission-tab";
+    const child = context("child");
+    pane("parent");
+    pane("child", "parent");
+    missionOrchestrators.set("mission-tab", "parent");
     expect(resolveWorkspaceHandoffParent(child)).toBeNull();
   });
 
