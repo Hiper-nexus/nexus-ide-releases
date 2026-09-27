@@ -1128,7 +1128,12 @@ async function runTests(
         ran,
       };
     }
-    return { failures: parsed.failures, ran };
+    // O vitest filtra por substring: um arquivo que o portão não pediu pode
+    // rodar junto. Falha dele não é deste diff (só a de arquivo sem nome conta).
+    return {
+      failures: parsed.failures.filter((failure) => requested.has(failure.file) || failure.file.startsWith('(')),
+      ran,
+    };
   } finally {
     fs.rmSync(sandbox.dir, { recursive: true, force: true });
   }
@@ -1271,6 +1276,8 @@ async function evaluate(
   const invariantsTouched = touchedSummary(new Set());
   const maxTests = input.maxTestFiles ?? DEFAULT_REGRESSION_MAX_TEST_FILES;
   const tests = impacted.tests.slice(0, maxTests);
+  // Cortados pelo teto não rodaram: contam como não verificados, não como aprovados.
+  const overflow = impacted.tests.slice(maxTests);
   if (impacted.tests.length > maxTests) {
     warnings.push(
       `raio grande: ${impacted.tests.length} testes impactados, rodando os ${maxTests} mais próximos do diff`,
@@ -1283,7 +1290,7 @@ async function evaluate(
   const { groups, orphans } = planRunnerGroups(root, tests);
   if (groups.length === 0) {
     warnings.push('nenhum runner de teste detectado (vitest/jest/pytest): testes impactados NÃO verificados');
-    return finish({ status: 'unavailable', testsRun: [], testsNotRun: tests, failures: [], inheritedFailures: [], runner: null, ...common });
+    return finish({ status: 'unavailable', testsRun: [], testsNotRun: [...tests, ...overflow], failures: [], inheritedFailures: [], runner: null, ...common });
   }
   if (orphans.length > 0) {
     warnings.push(`sem runner para ${orphans.length} teste(s): ${orphans.slice(0, 5).join(', ')}`);
@@ -1331,7 +1338,7 @@ async function evaluate(
     }
   }
   const testsRun = tests.filter((test) => ran.has(test));
-  const testsNotRun = tests.filter((test) => !ran.has(test));
+  const testsNotRun = [...tests.filter((test) => !ran.has(test)), ...overflow];
   if (testsNotRun.length > 0) {
     warnings.push(
       `${testsNotRun.length} teste(s) impactado(s) NÃO rodaram (excluídos pela config do runner, prazo ou sandbox): ${testsNotRun.slice(0, 5).join(', ')}`,

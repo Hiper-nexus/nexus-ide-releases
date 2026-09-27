@@ -186,6 +186,43 @@ describe('runRegressionGate', () => {
     expect(result.failures.map((failure) => failure.file)).toEqual(['test_calc.py']);
   });
 
+  it('impactado cortado pelo teto de arquivos conta como não verificado, nunca como aprovado', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec, calls } = fakeVitest();
+
+    const result = await runRegressionGate({ scope, maxTestFiles: 1 }, { exec });
+
+    expect(calls[0]!.filter((arg) => arg.endsWith('.test.ts'))).toHaveLength(1);
+    expect(result.status).toBe('unavailable');
+    expect(result.testsRun).toHaveLength(1);
+    expect(result.testsNotRun).toHaveLength(1);
+  });
+
+  it('falha de arquivo que o portão não pediu (filtro por substring do vitest) não bloqueia', async () => {
+    const { root, scope } = project();
+    write(root, 'src/c.ts', 'export const c = 4;\n');
+    const exec = vi.fn<RegressionExec>(async (_file, args, options) => {
+      const outFile = args.find((arg) => arg.startsWith('--outputFile='))!.slice('--outputFile='.length);
+      fs.writeFileSync(outFile, JSON.stringify({
+        testResults: [
+          { name: path.join(options.cwd, 'src/c.test.ts'), status: 'passed', assertionResults: [{ status: 'passed' }] },
+          {
+            name: path.join(options.cwd, 'lib/src/c.test.ts'),
+            status: 'failed',
+            assertionResults: [{ status: 'failed', fullName: 'alheio', failureMessages: ['quebrado antes'] }],
+          },
+        ],
+      }));
+      return { exitCode: 1, timedOut: false, stdout: '', stderr: '' };
+    });
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(result.status).toBe('passed');
+    expect(result.failures).toEqual([]);
+  });
+
   it('teste instável que passa na 2ª tentativa não barra; falha que se repete barra', async () => {
     const { root, scope } = project();
     write(root, 'src/a.ts', 'export const a = 2;\n');
