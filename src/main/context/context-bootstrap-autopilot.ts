@@ -311,7 +311,7 @@ function structuralHintFor(
   if (result.blockingError) {
     return (
       `Workflow binding blocked: ${result.blockingError}. ` +
-      'Use delegated workers in `same_checkout` mode, one writer at a time. ' +
+      'Use delegated workers in `same_checkout` mode; parallel writers are auto-isolated in their own worktree. ' +
       'Do not ask the user to stash, reset, clean, or switch branches.'
     );
   }
