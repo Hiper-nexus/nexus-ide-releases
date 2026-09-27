@@ -426,6 +426,14 @@ function resolvePaneDetails(
 }
 
 /** Latest fleet-snapshot entry for one account (undefined at boot race). */
+/**
+ * Backoff da conta quando o texto do PTY pede horas de quarentena mas não há
+ * leitura provider-api fresca para autorizá-las: curto o bastante para uma
+ * cascata fantasma se desfazer sozinha, longo o bastante para o pane não
+ * voltar à conta esgotada no próximo minuto.
+ */
+const CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS = 15 * 60 * 1000;
+
 function quotaEntryFor(
   adapterId: string,
   accountId: string,
@@ -1220,9 +1228,13 @@ function handleLimitHit(
   }
 
   // A long multi-hour usage quarantine cannot be authorized without a fresh
-  // matching provider-api window. Short backoff and auth recovery remain
-  // available; provider errors (transient) never reach this function — they
-  // are an episode of their own (handleTransientHit).
+  // matching provider-api window (cascata fantasma). Mas a conta ESTÁ
+  // bloqueada para este pane agora: recusar a troca deixava o pane preso na
+  // conta esgotada (2026-09-27, "hit your session limit" de um `claude -p`
+  // filho: nenhum failover, duas rodadas perdidas). Sem sonda fresca a troca
+  // acontece com backoff CURTO; se o limite for real, o próximo hit — já com
+  // leitura fresca — aplica a janela inteira. Provider errors (transient)
+  // never reach this function — they are an episode of their own.
   if (
     longCooldownNeedsFreshProviderApi(hit) &&
     !hasFreshProviderApiWindowForLimit(quotaEntry, hit, now)
@@ -1231,11 +1243,11 @@ function handleLimitHit(
       pane,
       current,
       hit,
-      'provider-api-required-for-long-cooldown',
+      'long-cooldown-capped-without-provider-api',
       source,
-      { cooldownMs: hit.cooldownMs },
+      { cooldownMs: hit.cooldownMs, cappedToMs: CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS },
     );
-    return;
+    hit = { ...hit, cooldownMs: CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS };
   }
 
   // Modelo rejeitado (F-520): a CONTA está sadia — "as contas estão todas

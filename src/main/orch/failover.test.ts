@@ -365,14 +365,14 @@ describe('account failover authority and lifecycle', () => {
     );
   });
 
-  it('does not create a long quarantine from PTY text without fresh provider-api authority', async () => {
+  it('sem leitura provider-api fresca: a quarentena cai para 15 min, mas o pane ainda troca de conta', async () => {
     const { detectLimit } = await import('./limit-detector');
     vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>
       buffer.includes('LIMIT')
         ? {
             kind: 'rate-limit',
-            reason: '5-hour usage limit reached',
-            cooldownMs: 5 * 60 * 60 * 1000,
+            reason: "You've hit your session limit",
+            cooldownMs: 77 * 60 * 1000,
           }
         : null,
     );
@@ -392,15 +392,27 @@ describe('account failover authority and lifecycle', () => {
       });
 
       ptyMocks.dataTaps[0]('session-718', 'LIMIT');
+      await settleFailover();
 
-      expect(accountMocks.setCooldown).not.toHaveBeenCalled();
-      expect(owner.send).not.toHaveBeenCalledWith(
+      // Horas de cooldown por texto de PTY não: só o backoff curto…
+      expect(accountMocks.setCooldown).toHaveBeenCalledWith(
+        'account-a',
+        100_000 + 15 * 60 * 1000,
+        "You've hit your session limit",
+        undefined,
+      );
+      // …mas a conta esgotada não prende o pane: a troca acontece.
+      expect(owner.send).toHaveBeenCalledWith(
         ACCOUNT_CHANNELS.failover,
-        expect.anything(),
+        expect.objectContaining({
+          paneId: 'pane-718',
+          switched: true,
+          toAccountId: 'account-b',
+        }),
       );
       expect(log).toHaveBeenCalledWith(
         '[failover]',
-        expect.stringContaining('provider-api-required-for-long-cooldown'),
+        expect.stringContaining('long-cooldown-capped-without-provider-api'),
       );
     } finally {
       log.mockRestore();

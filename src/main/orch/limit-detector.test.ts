@@ -586,3 +586,51 @@ describe('tierScopeFromModelId', () => {
     expect(tierScopeFromModelId(undefined)).toBeUndefined();
   });
 });
+
+describe('detectLimit — limite de sessão da CLI Claude (2026-09) e reset por horário', () => {
+  // Texto real: `claude -p` filho do pane estourou a conta e a ferramenta de
+  // shell do Claude Code emoldurou a saída com "⎿". Sem reconhecer isto o
+  // failover não trocava de conta (print do operador, 2026-09-27 18:53).
+  const real = [
+    '⏺ Background command "Rodada final G: pendências da verificação" failed with exit code 1',
+    "  ⎿  You've hit your session limit · resets 8:10pm (America/Sao_Paulo)",
+    '     Use your limit reset to reset it now: clau.de/reset',
+    '     /usage-credits to finish what you’re working on.',
+  ].join('\n');
+  // 18:53 em São Paulo (UTC-3): faltam 77 min para as 20:10.
+  const at1853 = Date.parse('2026-09-27T21:53:00Z');
+
+  it('reconhece "hit your session limit" atrás da moldura ⎿ e mede o cooldown até o reset na zona impressa', () => {
+    const hit = detectLimit(real, at1853);
+    expect(hit?.kind).toBe('rate-limit');
+    expect(hit?.reason).toBe("You've hit your session limit");
+    expect(hit?.cooldownMs).toBe(77 * 60 * 1000);
+    expect(hit?.scope).toBeUndefined();
+  });
+
+  it('horário de reset já passado (scrollback velho) não vira quarentena de um dia: fica o cooldown default', () => {
+    const hit = detectLimit(real, Date.parse('2026-09-27T23:30:00Z'));
+    expect(hit?.kind).toBe('rate-limit');
+    expect(hit?.cooldownMs).toBe(5 * 60 * 60 * 1000);
+  });
+
+  it('reset depois da meia-noite conta como amanhã, ainda dentro da janela de 5h', () => {
+    const text = "You've hit your session limit · resets 12:30am (America/Sao_Paulo)";
+    // 23:50 em São Paulo → 40 min até 00:30 do dia seguinte.
+    const hit = detectLimit(text, Date.parse('2026-09-28T02:50:00Z'));
+    expect(hit?.cooldownMs).toBe(40 * 60 * 1000);
+  });
+
+  it('zona inválida entre parênteses cai na hora local em vez de descartar o hit', () => {
+    const text = "You've hit your session limit · resets 3pm (Nowhere/Invalid)";
+    const now = new Date(2026, 8, 27, 13, 0).getTime();
+    const hit = detectLimit(text, now);
+    expect(hit?.kind).toBe('rate-limit');
+    expect(hit?.cooldownMs).toBe(2 * 60 * 60 * 1000);
+  });
+
+  it('prosa do agente citando a frase no meio da linha não dispara', () => {
+    expect(detectLimit('- o helper parou porque hit your session limit ontem', at1853)).toBeNull();
+    expect(detectLimit("Se aparecer \"You've hit your session limit\", troque de conta.", at1853)).toBeNull();
+  });
+});
