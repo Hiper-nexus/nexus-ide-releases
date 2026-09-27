@@ -3,7 +3,9 @@
 // e bearer do /hook/delegate. Se o diff do checkout mudou desde o último
 // relato e um teste impactado falhou, responde `decision: "block"` com as
 // falhas: o agente continua e corrige antes de encerrar. Missão e helpers
-// passam pelo portão no handoff; aqui é só o pane "+" do operador.
+// passam pelo portão no handoff; aqui é só o pane "+" do operador — inclusive
+// depois de promovido a orquestrador (missão sob demanda do primeiro helper):
+// o diff dele não tem handoff que o verifique.
 //
 // Anti-laço: o mesmo diff (hash do conteúdo) é relatado uma vez; no máximo
 // {@link MAX_CONSECUTIVE_STOP_BLOCKS} bloqueios seguidos sem um verde. Fora
@@ -32,7 +34,14 @@ const STOP_HOOK_MAX_TEST_FILES = 20;
 const MAX_LEDGERS = 256;
 
 type HookContext = Pick<AgentGateContext, 'role' | 'missionId' | 'sessionId'> &
-  Partial<Pick<AgentGateContext, 'scope' | 'executionScope' | 'providerId' | 'readOnly' | 'operatorParentSessionId'>>;
+  Partial<Pick<AgentGateContext,
+    'scope' | 'executionScope' | 'providerId' | 'readOnly' | 'operatorParentSessionId' | 'promotedFromUserSession'>>;
+
+/** Pane do próprio operador: `user` sem missão, ou promovido a orquestrador de uma. */
+function isOperatorHand(ctx: HookContext): boolean {
+  if (ctx.role === 'user') return !ctx.missionId;
+  return ctx.role === 'orchestrator' && ctx.promotedFromUserSession === true;
+}
 
 interface SessionLedger {
   /** Sem spawn conhecido: o primeiro HEAD visto é a base da sessão. */
@@ -86,8 +95,9 @@ export async function handleHookRegressionRequest(
 ): Promise<{ statusCode: 200; payload: Record<string, unknown> }> {
   void body;
   try {
-    // Helper do "+ Pane" (tem pai operador) já passa pelo portão no handoff.
-    if (ctx.role !== 'user' || ctx.missionId || ctx.readOnly === true || !ctx.sessionId || ctx.operatorParentSessionId) {
+    // Helper do "+ Pane" (tem pai operador) e workers de missão já passam
+    // pelo portão no handoff.
+    if (!isOperatorHand(ctx) || ctx.readOnly === true || !ctx.sessionId || ctx.operatorParentSessionId) {
       return { statusCode: 200, payload: {} };
     }
     if (!(deps.enabled ?? isRegressionGateEnabled)()) return { statusCode: 200, payload: {} };
