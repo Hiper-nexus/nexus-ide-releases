@@ -26,7 +26,7 @@ export const DEFAULT_ORIENTATION_LIMITS: OrientationLimits = Object.freeze({
   buildBudgetMs: 30_000,
   markdownMaxChars: 12_000,
   maxHubs: 24,
-  maxPersistedGraphNodes: 200,
+  maxPersistedGraphNodes: 800,
   maxPersistedGraphBytes: 512 * 1024,
   maxDbEntities: 200,
 });
