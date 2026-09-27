@@ -54,6 +54,8 @@ const DRIZZLE_USAGE_RES: readonly (readonly [RegExp, DbUsageRelation])[] = [
   [/\.\s*(?:insert|update|delete)\(\s*([A-Za-z_$][\w$]*)\s*\)/g, 'writes'],
 ];
 
+const SQL_STATEMENT_STARTS = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'WITH', 'MERGE'];
+
 const PRISMA_CALL_RE =
   /\bprisma\s*\.\s*([A-Za-z_]\w*)\s*\.\s*(findMany|findFirst|findFirstOrThrow|findUnique|findUniqueOrThrow|count|aggregate|groupBy|create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/g;
 const PRISMA_READ_VERBS = new Set([
@@ -69,8 +71,8 @@ const PRISMA_READ_VERBS = new Set([
 
 /**
  * Extract code→table/function edges from a TS/JS source: supabase.from/rpc,
- * prisma.<model>.<verb>, and raw SQL keywords (FROM/INTO/UPDATE/JOIN) found
- * inside template-literal strings.
+ * prisma.<model>.<verb>, drizzle builder calls, and raw SQL table references
+ * (FROM/INTO/UPDATE/JOIN) inside template literals that start like a statement.
  */
 export function extractTsDbUsageEdges(
   relativePath: string,
@@ -100,7 +102,11 @@ export function extractTsDbUsageEdges(
 
   for (const token of scanJsTokens(content)) {
     if (token.kind !== 'template') continue;
-    for (const ref of extractSqlTableRefs(scanSqlTokens(token.value))) {
+    const sql = scanSqlTokens(token.value);
+    // Only templates shaped like a statement: prose such as `loaded from the
+    // cache` would otherwise mint high-degree fake tables ("the", "a", ...).
+    if (!isSqlWord(sql[0], ...SQL_STATEMENT_STARTS)) continue;
+    for (const ref of extractSqlTableRefs(sql)) {
       edges.push(edge(relativePath, 'table', ref.qualifiedName, ref.relation));
     }
   }

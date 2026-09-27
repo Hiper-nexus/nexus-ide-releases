@@ -71,7 +71,8 @@ describe('orientation extractors: lexical correctness', () => {
 
   it('ignores import-looking text inside comments and strings', () => {
     const content =
-      "// import x from './commented';\nconst s = \"import y from './quoted'\";\nimport z from './real';\n";
+      "// import x from './commented';\nconst s = \"import y from './quoted'\";\n" +
+      "throw new Error(\"Failed to import './config'\");\nimport z from './real';\n";
     expect(extractOrientationImportSpecifiers(content)).toEqual(['./real']);
   });
 
@@ -85,6 +86,14 @@ describe('orientation extractors: lexical correctness', () => {
     expect(sql).toEqual([
       expect.objectContaining({ toQualifiedName: 'auth.sessions', relation: 'writes' }),
     ]);
+  });
+
+  it('ignores prose templates that are not shaped like a SQL statement', () => {
+    const edges = extractTsDbUsageEdges(
+      'src/a.ts',
+      "log(`loaded ${n} rows from the cache`); err(`Failed to import './config' from a file`);",
+    );
+    expect(edges).toEqual([]);
   });
 
   it('does not read a backtick inside a quoted string as a SQL template', () => {

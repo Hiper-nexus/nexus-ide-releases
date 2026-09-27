@@ -131,6 +131,7 @@ export function computeBlastRadius(
     ];
     for (const candidate of corpus) {
       if (!candidate.includes('/') && !candidate.includes('.')) continue;
+      if (candidate.startsWith('db:')) continue; // db ids seed only via dbEntities below
       const lower = candidate.toLowerCase();
       const tokens = goal.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 3);
       if (tokens.some((t) => lower.includes(t))) seedFiles.add(candidate);
@@ -150,12 +151,14 @@ export function computeBlastRadius(
   // their own uncapped registry (see OrientationGraphSummary.dbEntities).
   const followDbEdges = input.followDbEdges !== false;
   const dbEntities = followDbEdges ? map.graph.dbEntities ?? [] : [];
-  const goalLower = goal.toLowerCase();
+  const goalWords = new Set(goal.toLowerCase().split(/[^a-z0-9_]+/));
   for (const entity of dbEntities) {
     // A seeded migration/schema file reaches the code using what it defines.
     if (entity.definedIn.some((file) => seedFiles.has(file))) seedFiles.add(entity.nodeId);
     const nameLower = entity.name.toLowerCase();
-    if (goalLower && goalLower.includes(nameLower) && nameLower.length > 2) {
+    // Goal text seeds only schema-defined entities, by whole word: a usage-only
+    // name ("orders" typed in some query) is too weak to widen the radius on.
+    if (entity.definedIn.length > 0 && nameLower.length > 2 && goalWords.has(nameLower)) {
       seedFiles.add(entity.nodeId);
     }
     for (const symbol of input.seedSymbols ?? []) {

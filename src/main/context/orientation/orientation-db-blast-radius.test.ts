@@ -128,8 +128,9 @@ describe('code map <-> banco: grafo sem imports, seed de migration e reservas', 
     write(root, 'package.json', JSON.stringify({ name: 'db-only' }));
     write(root, 'supabase/migrations/20260101000000_users.sql', 'CREATE TABLE users (id uuid);');
     // No file imports another one: every link goes through the users table.
-    write(root, 'src/billing/invoices.ts', "export const a = () => supabase.from('users').select('*');");
-    write(root, 'src/profile/profile.ts', "export const b = () => supabase.from('users').update({});");
+    write(root, 'src/billing/invoices.ts', "export const listInvoices = () => supabase.from('users').select('*');");
+    write(root, 'src/profile/profile.ts', "export const saveProfile = () => supabase.from('users').update({});");
+    write(root, 'src/audit/audit.ts', "export const writeAudit = () => supabase.from('audit_log').insert({});");
     write(root, 'src/profile/profile.test.ts', "afterEach(() => supabase.from('users').delete());");
     if (withImport) {
       write(root, 'src/billing/money.ts', 'export const cents = 100;');
@@ -184,5 +185,15 @@ describe('code map <-> banco: grafo sem imports, seed de migration e reservas', 
     expect(owned.domains).toEqual(['billing']);
     expect(other.files.filter((f) => owned.files.includes(f))).toEqual([]);
     expect(other.domains.filter((d) => owned.domains.includes(d))).toEqual([]);
+  });
+
+  it('goal text seeds schema-defined tables, never usage-only names', async () => {
+    const map = await buildMap();
+    expect(computeBlastRadius(map, { goal: 'fix users sync', depth: 1 }).dbEntities).toEqual([
+      'db:table:public.users',
+    ]);
+    // depth 0: only what the goal itself seeds (the audit.ts symbol hub may
+    // still pull the file in, but the usage-only table is not a seed).
+    expect(computeBlastRadius(map, { goal: 'rotate audit_log', depth: 0 }).dbEntities).toEqual([]);
   });
 });
