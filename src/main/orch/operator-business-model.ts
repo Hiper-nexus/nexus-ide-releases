@@ -17,5 +17,5 @@ export function operatorBusinessModelContext(
   if (ctx.role !== 'user' || ctx.missionId) return null;
   if ((ctx.providerId === 'codex') !== (channel === 'hook')) return null;
   const scope = ctx.executionScope ?? ctx.scope;
-  return scope ? businessModelContextBlock(scope) : null;
+  return scope ? businessModelContextBlock(scope, ctx.scope) : null;
 }

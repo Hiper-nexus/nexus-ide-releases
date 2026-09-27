@@ -131,9 +131,15 @@ const PATTERNS: Pattern[] = [
   },
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /limite (?:do )?plano (?:atingido|excedido)|assinatura (?:esgotada|excedida)/i },
   // Rate / usage limit — resets within a window (not weekly — see quota above).
-  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /^(?:claude|error:?)?\s*usage limit reached(?:[.!\s]|$)/im },
-  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /^(?:claude|error:?)?\s*(?:you(?:'ve| have) )?reached your (?:usage|5-hour|daily) limit(?:[.!\s]|$)/im },
-  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /^(?:claude|error:?)?\s*(?:you(?:'ve| have) )?hit your (?:usage|rate|token) limit(?:[.!\s]|$)/im },
+  // Prefixo `⎿`/`│`: a saída de um `claude -p` filho chega ao PTY do pane
+  // emoldurada pela ferramenta de shell do Claude Code ("⎿  You've hit…"), e
+  // o limite do filho é o da MESMA conta do pane — sem reconhecer a moldura
+  // o failover nunca disparava e o pane ficava preso na conta esgotada.
+  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /^[\s⎿│]*(?:claude|error:?)?\s*usage limit reached(?:[.!\s]|$)/im },
+  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /^[\s⎿│]*(?:claude|error:?)?\s*(?:you(?:'ve| have) )?reached your (?:usage|5-hour|daily|session) limit(?:[.!\s·]|$)/im },
+  // 2026-09: "You've hit your session limit · resets 8:10pm (America/Sao_Paulo)"
+  // (janela rolante de 5h da conta Claude, com o reset em hora local).
+  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /^[\s⎿│]*(?:claude|error:?)?\s*(?:you(?:'ve| have) )?hit your (?:usage|rate|token|session) limit(?:[.!\s·]|$)/im },
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /5[-\s]?hour (?:usage )?limit (?:reached|exceeded|hit)/i },
   // PT: limite de uso / 5 horas (error-shaped).
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /limite de (?:uso|utiliza[cç][aã]o) (?:atingido|excedido|alcan[cç]ado)/i },
@@ -231,7 +237,7 @@ function stripClientRetryTicker(text: string): string {
   return text.replace(CLIENT_RETRY_TICKER, ' ');
 }
 
-function parseResetCooldown(text: string): number | null {
+function parseResetCooldown(text: string, now: number): number | null {
   const cleaned = stripClientRetryTicker(text);
   const mins = /try again in (\d+)\s*(?:minute|min)/i.exec(cleaned);
   if (mins) return Number(mins[1]) * 60 * 1000;
@@ -239,7 +245,72 @@ function parseResetCooldown(text: string): number | null {
   if (secs) return Number(secs[1]) * 1000;
   const hrs = /(?:resets?|available again) in (\d+)\s*hour/i.exec(cleaned);
   if (hrs) return Number(hrs[1]) * HOUR;
-  return parseRetryAfterMsFromText(cleaned);
+  const clock = parseResetClockMs(cleaned, now);
+  if (clock !== null) return clock;
+  return parseRetryAfterMsFromText(cleaned, now);
+}
+
+/**
+ * Reset em hora de parede: "resets 8:10pm (America/Sao_Paulo)" / "reset at
+ * 3pm". A zona entre parênteses é a que a CLI Claude imprime; sem zona vale a
+ * local. Só um horário FUTURO a até 6h conta — a janela rolante é de 5h, e um
+ * horário mais distante (ou já passado, lido de scrollback antigo) não é
+ * reset vivo: devolve null e o padrão fica com o cooldown default.
+ */
+const RESET_CLOCK_MAX_MS = 6 * HOUR;
+
+function parseResetClockMs(text: string, now: number): number | null {
+  const m = /\bresets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b(?:\s*\(([^)]{1,64})\))?/i.exec(text);
+  if (!m) return null;
+  let hour = Number(m[1]) % 12;
+  if (m[3].toLowerCase() === 'pm') hour += 12;
+  const minute = m[2] ? Number(m[2]) : 0;
+  if (hour > 23 || minute > 59) return null;
+  const timeZone = m[4]?.trim();
+  for (const dayOffset of [0, 1]) {
+    const target = wallClockMs(now, dayOffset, hour, minute, timeZone);
+    if (target === null) return null;
+    if (target > now) return target - now <= RESET_CLOCK_MAX_MS ? target - now : null;
+  }
+  return null;
+}
+
+/** Componentes de parede na zona (ou local) → epoch ms; zona inválida = local. */
+function wallClockMs(
+  now: number,
+  dayOffset: number,
+  hour: number,
+  minute: number,
+  timeZone: string | undefined,
+): number | null {
+  if (!timeZone) {
+    const local = new Date(now);
+    return new Date(local.getFullYear(), local.getMonth(), local.getDate() + dayOffset, hour, minute).getTime();
+  }
+  try {
+    const parts = (ms: number): Record<string, number> =>
+      Object.fromEntries(
+        new Intl.DateTimeFormat('en-US', {
+          timeZone,
+          hourCycle: 'h23',
+          year: 'numeric', month: 'numeric', day: 'numeric',
+          hour: 'numeric', minute: 'numeric', second: 'numeric',
+        })
+          .formatToParts(new Date(ms))
+          .map((part) => [part.type, Number(part.value)]),
+      );
+    const offsetAt = (ms: number): number => {
+      const p = parts(ms);
+      return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(ms / 1000) * 1000;
+    };
+    const today = parts(now);
+    const naive = Date.UTC(today.year, today.month - 1, today.day + dayOffset, hour, minute);
+    // Duas passadas (DST): o offset certo é o do próprio instante-alvo.
+    const first = naive - offsetAt(naive);
+    return naive - offsetAt(first);
+  } catch {
+    return wallClockMs(now, dayOffset, hour, minute, undefined);
+  }
 }
 
 /** Mapeia a taxonomia do omp para os kinds do Nexus. */
@@ -446,14 +517,14 @@ function stripQuotedDiagnosticExamples(text: string): string {
     .join('\n');
 }
 
-export function detectLimit(rawText: string): LimitHit | null {
+export function detectLimit(rawText: string, now: number = Date.now()): LimitHit | null {
   const text = stripQuotedDiagnosticExamples(
     stripFailoverHandoffPack(rawText),
   );
   for (const pattern of PATTERNS) {
     const match = pattern.re.exec(text);
     if (!match) continue;
-    const parsed = parseResetCooldown(text);
+    const parsed = parseResetCooldown(text, now);
     const scope = extractAnthropicTierScope(text, match.index, match[0].length);
     const cooldownMs =
       pattern.kind === 'auth'
@@ -461,7 +532,8 @@ export function detectLimit(rawText: string): LimitHit | null {
         : (parsed ?? pattern.cooldownMs);
     return {
       kind: pattern.kind,
-      reason: match[0].trim().slice(0, 120),
+      // Sem a moldura da ferramenta de shell ("⎿  ") no motivo do toast.
+      reason: match[0].replace(/^[\s⎿│]+/u, '').trim().slice(0, 120),
       cooldownMs,
       ...(scope ? { scope } : {}),
     };
@@ -483,7 +555,7 @@ export function detectLimit(rawText: string): LimitHit | null {
         return null;
       }
     }
-    const parsed = parseResetCooldown(text);
+    const parsed = parseResetCooldown(text, now);
     const scope = extractAnthropicTierScope(
       text,
       matchedIndex >= 0 ? matchedIndex : 0,

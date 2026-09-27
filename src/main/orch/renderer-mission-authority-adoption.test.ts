@@ -332,6 +332,74 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     expect(c.mission!.id).not.toBe(a.mission!.id);
   });
 
+  it("Astra 7: a associação aba→missão sobrevive ao reinício do Main (store reaberto, mapa em memória vazio)", () => {
+    const first = operatorPane("pane-a");
+    const second = operatorPane("pane-b");
+    register([
+      { paneId: "pane-a", sessionId: first },
+      { paneId: "pane-b", sessionId: second },
+    ]);
+    const a = authority().createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login", tabKey: "__loose__" });
+    expect(a.ok).toBe(true);
+    const suite = requireProjectDomainStoreRegistry().forScope(scope);
+    expect(suite.missions.get(a.mission!.id)?.intentContract?.workspaceBinding).toMatchObject({ adoptedPaneId: "pane-a", tabKey: "__loose__" });
+
+    // Reinício: nova autoridade sobre o mesmo store persistido.
+    const restarted = authority();
+    const b = restarted.createPaneMissionFromRenderer(owner, { paneId: "pane-b", title: "Missão · Login", tabKey: "__loose__" });
+
+    expect(b).toMatchObject({ ok: true, mission: { id: a.mission!.id } });
+    expect(suite.missions.list()).toHaveLength(1);
+    // Outra aba, depois do reinício, continua ganhando a sua.
+    const third = operatorPane("pane-c");
+    register([
+      { paneId: "pane-a", sessionId: first },
+      { paneId: "pane-b", sessionId: second },
+      { paneId: "pane-c", sessionId: third },
+    ]);
+    const c = restarted.createPaneMissionFromRenderer(owner, { paneId: "pane-c", title: "Missão · Pagamento", tabKey: "space:pay" });
+    expect(c.ok && c.mission!.id !== a.mission!.id).toBe(true);
+    // Missão da aba encerrada: o próximo clique explícito cria outra, sem ressuscitar a antiga.
+    suite.missions.update(a.mission!.id, { status: "failed" });
+    expect(returnOperatorHandFromEndedMission(getContextBySession(second)!)).toBe(true);
+    const next = authority().createPaneMissionFromRenderer(owner, { paneId: "pane-b", title: "Missão · Login 2", tabKey: "__loose__" });
+    expect(next.ok && next.mission!.id !== a.mission!.id).toBe(true);
+  });
+
+  it("Astra 1: missão do próprio grupo já em uso (worker gravado) nunca é desfeita pela compensação de um spawn que falhou", () => {
+    const first = operatorPane("pane-a");
+    syncPanes(
+      [{ paneId: "pane-a", sessionId: first, tabKey: "__loose__", title: "pane-a", kind: "cli-agent" as const, adapterId: "test-cli" }],
+      owner,
+    );
+    const main = authority();
+    const adopted = main.adoptOperatorHandForSpawn(first, "revise o login");
+    expect(adopted.ok && adopted.created).toBe(true);
+    const missionId = adopted.mission!.id;
+    const suite = requireProjectDomainStoreRegistry().forScope(scope);
+    // O 1º helper nasceu e foi gravado na composição da missão.
+    suite.missionPanes.record({ missionId, adapterId: "test-cli", title: "helper", role: "worker", paneId: "helper-1" });
+
+    // Um spawn posterior falha e tenta compensar: a missão em uso fica.
+    expect(main.discardUnusedTabMission(first, missionId)).toBe(false);
+    expect(suite.missions.get(missionId)).toMatchObject({ status: "running", orchestratorSessionId: first });
+    expect(getContextBySession(first)).toMatchObject({ role: "orchestrator", missionId });
+    // Sem worker gravado, a compensação desfaz (o caminho do spawn que nunca abriu).
+    const second = operatorPane("pane-b");
+    syncPanes(
+      [
+        { paneId: "pane-a", sessionId: first, tabKey: "__loose__", title: "pane-a", kind: "cli-agent" as const, adapterId: "test-cli" },
+        { paneId: "pane-b", sessionId: second, tabKey: "__loose__", title: "pane-b", kind: "cli-agent" as const, adapterId: "test-cli" },
+      ],
+      owner,
+    );
+    const own = main.adoptOperatorHandForSpawn(second, "teste o login");
+    expect(own.ok && own.created && own.mission!.id !== missionId).toBe(true);
+    expect(main.discardUnusedTabMission(second, own.mission!.id)).toBe(true);
+    expect(suite.missions.get(own.mission!.id)).toBeNull();
+    expect(getContextBySession(second)).toMatchObject({ role: "user" });
+  });
+
   it("troca de coroa na aba devolve o líder anterior a `user` com tudo que tinha, nunca worker sem tools", () => {
     const first = operatorPane("pane-a");
     const second = operatorPane("pane-b");

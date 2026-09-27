@@ -57,7 +57,9 @@ const E2E_FILE_RE = /(?:^|\/)(?:e2e|playwright)\/|\.e2e\.[^/]+$/iu;
 const PY_TEST_RE = /(?:^|\/)(?:test_[^/]+|[^/]+_test)\.py$/iu;
 const UNTESTED_IGNORE_RE =
   /(?:^|\/)(?:generated|dist|build|out|scripts|migrations)\/|\.d\.ts$|\.config\.[^/]+$/iu;
-const MAX_CHANGED_FILES = 256;
+// Limite de robustez, não de seleção: acima dele o portão não tem como
+// garantir cobertura e o resultado nunca é aprovação.
+const MAX_CHANGED_FILES = 20_000;
 const MAX_HASH_FILE_BYTES = 2 * 1024 * 1024;
 const REVERSE_DEPTH = 3;
 const MAX_REVERSE_VISITS = 4_000;
@@ -386,6 +388,14 @@ function gitText(git: GitRunner, cwd: string, args: readonly string[]): string |
     return result.status === 0 ? result.stdout.trim() : null;
   } catch {
     return null;
+  }
+}
+
+function unbornHead(git: GitRunner, root: string): boolean {
+  try {
+    return git.run(root, ['rev-parse', '--verify', '--quiet', 'HEAD'], { allowFailure: true }).status === 1;
+  } catch {
+    return false;
   }
 }
 
@@ -998,6 +1008,42 @@ function parseJestLikeReport(root: string, cwd: string, raw: string): ParsedRepo
   return { failures, ran };
 }
 
+function xmlText(value: string): string {
+  return value
+    .replace(/&lt;/gu, '<')
+    .replace(/&gt;/gu, '>')
+    .replace(/&quot;/gu, '"')
+    .replace(/&apos;/gu, "'")
+    .replace(/&#(\d+);/gu, (_m, code: string) => String.fromCodePoint(Number(code)))
+    .replace(/&amp;/gu, '&');
+}
+
+/**
+ * JUnit XML do pytest (`junit_family=xunit1`, com `file` por caso): um arquivo
+ * só conta como executado com um caso que rodou de fato (não `skipped`).
+ */
+function parsePytestJunit(root: string, cwd: string, raw: string): ParsedReport | null {
+  if (!/<testsuites?\b/u.test(raw)) return null;
+  const failures: RegressionTestFailure[] = [];
+  const ran = new Set<string>();
+  for (const match of raw.matchAll(/<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/gu)) {
+    const attrs = new Map([...match[1]!.matchAll(/([\w:-]+)="([^"]*)"/gu)].map((attr) => [attr[1]!, xmlText(attr[2]!)]));
+    const body = match[2] ?? '';
+    const fileAttr = attrs.get('file');
+    const file = fileAttr ? reportRelative(root, cwd, fileAttr) : null;
+    if (/<skipped\b/u.test(body)) continue;
+    if (file) ran.add(file);
+    const problem = /<(failure|error)\b([^>]*?)(?:\/>|>)/u.exec(body);
+    if (!problem) continue;
+    const message = /\bmessage="([^"]*)"/u.exec(problem[2] ?? '')?.[1];
+    failures.push({
+      file: file ?? '(pytest)',
+      message: neutralizeRunnerText(`${attrs.get('name') ?? ''} ${xmlText(message ?? problem[1]!)}`, 300) || 'falhou',
+    });
+  }
+  return { failures, ran: [...ran] };
+}
+
 function isInside(parent: string, child: string): boolean {
   const rel = path.relative(parent, child);
   return rel === '' || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel));
@@ -1093,15 +1139,34 @@ async function runTests(
   const notVerified = (why: string): GroupOutcome => ({ failures: [], ran: [], warning: why });
   try {
     if (runner.kind === 'pytest') {
-      const result = await exec(runner.bin, ['-m', 'pytest', '-q', '--no-header', '-p', 'no:cacheprovider', ...relTests], options);
+      const junitFile = path.join(sandbox.tmp, 'pytest.xml');
+      const result = await exec(
+        runner.bin,
+        ['-m', 'pytest', '-q', '--no-header', '-p', 'no:cacheprovider', '-o', 'junit_family=xunit1', `--junitxml=${junitFile}`, ...relTests],
+        options,
+      );
       if (result.aborted) return notVerified('pytest cancelado');
       if (result.timedOut) return notVerified(`pytest excedeu ${timeoutMs}ms`);
-      // 5 = nenhum teste coletado: não rodou, não é aprovação.
-      if (result.exitCode === 0 && /\b\d+ passed\b/u.test(result.stdout)) {
-        return { failures: [], ran: [...group.tests] };
+      const junit = (() => {
+        try {
+          return parsePytestJunit(root, cwd, fs.readFileSync(junitFile, 'utf8'));
+        } catch {
+          return null;
+        }
+      })();
+      const requested = new Set(group.tests);
+      if (junit) {
+        // "N passed" no resumo não prova nada por arquivo: só o que o
+        // relatório mostra executado entra em `ran`; o resto fica não verificado.
+        const ran = junit.ran.filter((file) => requested.has(file));
+        const failures = junit.failures.filter((failure) => requested.has(failure.file) || failure.file.startsWith('('));
+        if (failures.length === 0 && result.exitCode !== 0 && result.exitCode !== 5) {
+          return notVerified(`pytest saiu ${result.exitCode} sem falha no relatório (${neutralizeRunnerText(result.stderr || result.stdout, 160)})`);
+        }
+        return { failures, ran };
       }
-      // Saída 1 também é "python3 sem pytest" (No module named pytest): só é
-      // falha de teste com o resumo do pytest dizendo que algo falhou.
+      // Sem relatório: nada comprovadamente executado. Só a falha explícita
+      // do resumo conta (1 também é "python3 sem pytest": No module named pytest).
       if (result.exitCode !== 1 || !/\b\d+ (?:failed|errors?)\b/u.test(result.stdout)) {
         return notVerified(`pytest não rodou os testes (${neutralizeRunnerText(result.stderr || result.stdout, 160)})`);
       }
@@ -1111,7 +1176,7 @@ async function runTests(
       }));
       return {
         failures: failures.length > 0 ? failures : [{ file: '(pytest)', message: neutralizeRunnerText(result.stdout, 400) }],
-        ran: [...group.tests],
+        ran: [...new Set(failures.map((failure) => failure.file).filter((file) => requested.has(file)))],
       };
     }
     const outFile = path.join(sandbox.tmp, 'report.json');
@@ -1226,7 +1291,7 @@ async function evaluate(
     cached: false,
   } as const;
   if (state.changed.truncated) {
-    warnings.push(`diff com mais de ${MAX_CHANGED_FILES} arquivos: seleção de testes parcial (e sem cache)`);
+    warnings.push(`diff com mais de ${MAX_CHANGED_FILES} arquivos: seleção de testes incompleta — resultado NÃO verificado`);
   }
   if (state.base.head && !state.base.sha) {
     warnings.push('sem base conhecida (spawn/upstream): commits anteriores não entram — só o working tree e os declarados');
@@ -1380,8 +1445,13 @@ async function evaluate(
   }
   return finish({
     // Nenhum teste executado de verdade nunca é aprovação.
+    // Diff além do limite: a seleção não cobre tudo, então só falha ou NÃO verificado.
     status:
-      ownFailures.length > 0 ? 'failed' : ownRun.length > 0 && ownNotRun.length === 0 ? 'passed' : 'unavailable',
+      ownFailures.length > 0
+        ? 'failed'
+        : ownRun.length > 0 && ownNotRun.length === 0 && !state.changed.truncated
+          ? 'passed'
+          : 'unavailable',
     testsRun,
     testsNotRun,
     failures: ownFailures,
@@ -1407,10 +1477,13 @@ export async function runRegressionGate(
   if (before.changed.files.length === 0) {
     // Diff vazio só é "limpo" se o git respondeu: erro nele (lock, índice
     // corrompido) devolve lista vazia e não pode passar por árvore limpa.
+    // HEAD ausente só é legítimo em repositório sem commits (rev-parse sai 1);
+    // erro do git ao resolvê-lo (128) não é árvore limpa.
     const gitAnswered =
-      !before.base.head ||
-      (gitText(git, root, ['status', '--porcelain', '--untracked-files=all']) !== null &&
-        (!before.base.sha || gitText(git, root, ['diff', '--quiet', `${before.base.sha}...HEAD`]) !== null));
+      gitText(git, root, ['status', '--porcelain', '--untracked-files=all']) !== null &&
+      (before.base.head
+        ? !before.base.sha || gitText(git, root, ['diff', '--quiet', `${before.base.sha}...HEAD`]) !== null
+        : unbornHead(git, root));
     return Object.freeze({
       version: GATE_VERSION,
       status: gitAnswered ? 'clean' : 'unavailable',
@@ -1443,12 +1516,13 @@ export async function runRegressionGate(
   const cacheable = !before.changed.truncated;
   const hit = cacheable ? cache.get(key) : undefined;
   if (hit) return Object.freeze({ ...hit, cached: true });
-  const running = inflight.get(key);
-  if (running) {
+  // Cancelada por quem a iniciou (sessão fechada, transporte desistiu): não
+  // vale para este chamador, que consulta de novo — quem acordar primeiro
+  // reserva a substituta e os demais esperam por ela.
+  for (let running = inflight.get(key); running; running = inflight.get(key)) {
     const shared = await running.promise;
-    // Cancelada por quem a iniciou (sessão fechada, transporte desistiu):
-    // não vale para este chamador, que roda a própria.
     if (!running.signal?.aborted || input.signal?.aborted) return shared;
+    if (inflight.get(key) === running) inflight.delete(key);
   }
   const promise = evaluate(input, root, before, deps).then((result) => {
     // Edição concorrente durante a execução: o verde (ou vermelho) é de um
