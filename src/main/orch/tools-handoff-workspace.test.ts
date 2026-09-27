@@ -37,6 +37,19 @@ vi.mock("./jev-handoff-review", async (importOriginal) => ({
   reviewMissionHandoff: jevReview.reviewMissionHandoff,
 }));
 
+const regressionGate = vi.hoisted(() => ({
+  evaluateHandoffRegressionGate: vi.fn(
+    async (): Promise<unknown> => ({ kind: "skipped", reason: "test" }),
+  ),
+}));
+
+vi.mock("../regression-gate/regression-gate-handoff", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../regression-gate/regression-gate-handoff")
+  >()),
+  evaluateHandoffRegressionGate: regressionGate.evaluateHandoffRegressionGate,
+}));
+
 const scope = testProjectScope();
 let dir: string;
 let manager: ProjectRuntimeManager;
@@ -57,6 +70,11 @@ const args = {
 
 beforeEach(() => {
   resetGateForTests();
+  regressionGate.evaluateHandoffRegressionGate.mockReset();
+  regressionGate.evaluateHandoffRegressionGate.mockResolvedValue({
+    kind: "skipped",
+    reason: "test",
+  });
   jevReview.reviewMissionHandoff.mockReset();
   jevReview.reviewMissionHandoff.mockResolvedValue({
     kind: "skipped",
@@ -341,6 +359,48 @@ describe("workspace handoff", () => {
       getProjectDomainStores(scope).handoffs.list({ includeDelivered: true }),
     ).toEqual([]);
     expect(transport.injectPrompt).not.toHaveBeenCalled();
+  });
+
+  it("portão de regressão falhando devolve ao filho sem persistir nada", async () => {
+    caller("parent");
+    const child = caller("child");
+    regressionGate.evaluateHandoffRegressionGate.mockResolvedValue({
+      kind: "retry",
+      message: "handoff NÃO aceito pelo portão de regressão: src/a.test.ts",
+    });
+    await expect(tool("submit").handler(args, child)).rejects.toThrow(
+      "handoff NÃO aceito pelo portão de regressão",
+    );
+    expect(
+      getProjectDomainStores(scope).handoffs.list({ includeDelivered: true }),
+    ).toEqual([]);
+    expect(transport.injectPrompt).not.toHaveBeenCalled();
+    expect(reviewMissionHandoff).not.toHaveBeenCalled();
+  });
+
+  it("portão de regressão esgotado entra como blocked com as falhas em artifact", async () => {
+    caller("parent");
+    const child = caller("child");
+    regressionGate.evaluateHandoffRegressionGate.mockResolvedValue({
+      kind: "exhausted",
+      report: "Seu diff quebrou 1 arquivo(s)",
+      artifact: {
+        kind: "nexus.regressionGate",
+        payload: { status: "failed" },
+      },
+    });
+    await tool("submit").handler(args, child);
+    const rows = getProjectDomainStores(scope).handoffs.list({
+      includeDelivered: true,
+    });
+    expect(rows[0]?.status).toBe("blocked");
+    expect(rows[0]?.summary).toMatch(/^\[testes impactados falhando\] /);
+    expect(rows[0]?.artifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "nexus.regressionGate" }),
+      ]),
+    );
+    expect(reviewMissionHandoff).not.toHaveBeenCalled();
   });
 
   it("weak verdict prefixa [evidência fraca] no resumo do store e da injeção", async () => {

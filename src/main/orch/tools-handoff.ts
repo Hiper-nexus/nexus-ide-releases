@@ -76,6 +76,11 @@ import {
   reviewMissionHandoff,
   type JevReviewVerdict,
 } from "./jev-handoff-review";
+import {
+  evaluateHandoffRegressionGate,
+  type RegressionHandoffVerdict,
+} from "../regression-gate/regression-gate-handoff";
+import { missionExecutionBaseSha } from "./mission-execution-scope";
 
 function buildOverclockArtifacts(
   args: Record<string, unknown>,
@@ -392,6 +397,36 @@ const handoffSubmitTool: McpToolDef = {
       "files-modified": args["files-modified"],
       artifacts: args.artifacts,
     });
+    // Portão de regressão: roda só os testes impactados pelo diff do
+    // worktree. Falha devolve ao worker (mesmo caminho do contrato); com as
+    // devoluções esgotadas o handoff entra como blocked com as falhas.
+    let regressionVerdict: RegressionHandoffVerdict = {
+      kind: "skipped",
+      reason: "not-run",
+    };
+    if (
+      declaredStatus === "success" &&
+      !isPlanHandoff &&
+      ctx.readOnly !== true &&
+      contractVerdict.kind !== "exhausted"
+    ) {
+      assertMcpInvocationCurrent(invocation);
+      let baseSha: string | undefined;
+      try {
+        baseSha = missionExecutionBaseSha(ctx.scope, mission);
+      } catch {
+        baseSha = undefined;
+      }
+      regressionVerdict = await evaluateHandoffRegressionGate({
+        sessionId: ctx.sessionId,
+        scope: executionScopeFor(ctx),
+        declaredFiles,
+        baseSha,
+      });
+      if (regressionVerdict.kind === "retry") {
+        throw new Error(regressionVerdict.message);
+      }
+    }
     let jevVerdict: JevReviewVerdict = { kind: "skipped", reason: "not-run" };
     // Não julga entregas que não são trabalho de implementação: PRD/plano
     // (documento não tem testes), sessões read-only (revisores entregam
@@ -406,7 +441,9 @@ const handoffSubmitTool: McpToolDef = {
             ? "read-only-session"
             : contractVerdict.kind === "exhausted"
               ? "contract-exhausted"
-              : undefined;
+              : regressionVerdict.kind === "exhausted"
+                ? "regression-exhausted"
+                : undefined;
     if (declaredStatus === "success" && jevSkipReason === undefined) {
       // A revisão Jev é egresso externo: revalida a autoridade ANTES do await
       // (o checkpoint pós-await permanece logo abaixo, antes da escrita).
@@ -450,7 +487,13 @@ const handoffSubmitTool: McpToolDef = {
       jevVerdict = { kind: "skipped", reason: jevSkipReason };
     }
     const status: typeof declaredStatus =
-      contractVerdict.kind === "exhausted" ? "blocked" : declaredStatus;
+      contractVerdict.kind === "exhausted" ||
+      regressionVerdict.kind === "exhausted"
+        ? "blocked"
+        : declaredStatus;
+    if (regressionVerdict.kind === "exhausted") {
+      summary = `[testes impactados falhando] ${summary}`;
+    }
     assertMcpInvocationCurrent(invocation);
     const fromAgent = ctx.agentName ?? ctx.label;
     const atSeconds = Math.floor(Date.now() / 1000);
@@ -510,6 +553,9 @@ const handoffSubmitTool: McpToolDef = {
       ...contextDagArtifacts,
       ...(contractVerdict.kind === "exhausted"
         ? [deliveryContractExhaustedArtifact(contractVerdict, declaredStatus)]
+        : []),
+      ...(regressionVerdict.kind === "exhausted"
+        ? [regressionVerdict.artifact]
         : []),
       ...(telemetry ? [embedTelemetryArtifact(telemetry)] : []),
       ...(jevVerdict.kind === "ok" || jevVerdict.kind === "weak"

@@ -33,7 +33,7 @@ export interface RegressionGateArtifact {
 export type RegressionHandoffVerdict =
   | { readonly kind: 'skipped'; readonly reason: string }
   | { readonly kind: 'retry'; readonly message: string }
-  | { readonly kind: 'accepted'; readonly artifact: RegressionGateArtifact }
+  | { readonly kind: 'accepted'; readonly artifact?: RegressionGateArtifact }
   | { readonly kind: 'exhausted'; readonly artifact: RegressionGateArtifact; readonly report: string };
 
 const bouncesBySession = new Map<string, number>();
@@ -91,7 +91,13 @@ export async function evaluateHandoffRegressionGate(
     if (result.untestedFiles.length > 0 || result.warnings.length > 0) {
       console.info(`[regression-gate] ${formatRegressionGateReport(result).replace(/\n/g, ' | ')}`);
     }
-    return { kind: 'accepted', artifact: artifactOf(result) };
+    // Só registra no handoff o que o portão de fato apurou; indisponível
+    // (sem runner, sem árvore legível) fica no log, fail-open.
+    const recorded =
+      result.status === 'passed' ||
+      result.untestedFiles.length > 0 ||
+      result.invariantsTouched.length > 0;
+    return recorded ? { kind: 'accepted', artifact: artifactOf(result) } : { kind: 'accepted' };
   }
   const report = formatRegressionGateReport(result);
   const used = input.sessionId ? bouncesBySession.get(input.sessionId) ?? 0 : 0;

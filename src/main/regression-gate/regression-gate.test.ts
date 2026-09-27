@@ -215,17 +215,22 @@ describe('evaluateHandoffRegressionGate', () => {
     expect(exec).toHaveBeenCalledTimes(1);
   });
 
-  it('sem runner aceita (fail-open) e registra o resultado em artifact', async () => {
+  it('sem runner aceita (fail-open) sem artifact; passou registra em artifact', async () => {
     const { root, scope } = project({ runner: 'none' });
     write(root, 'src/a.ts', 'export const a = 2;\n');
     const verdict = await evaluateHandoffRegressionGate(
       { sessionId: 'sess-2', scope },
       { enabled: () => true },
     );
-    expect(verdict.kind).toBe('accepted');
-    if (verdict.kind === 'accepted') {
-      expect(verdict.artifact.payload.status).toBe('unavailable');
-    }
+    expect(verdict).toEqual({ kind: 'accepted' });
+
+    const withRunner = project();
+    write(withRunner.root, 'src/a.ts', 'export const a = 2;\n');
+    const passed = await evaluateHandoffRegressionGate(
+      { sessionId: 'sess-2', scope: withRunner.scope },
+      { exec: fakeVitest().exec, enabled: () => true },
+    );
+    expect(passed.kind === 'accepted' && passed.artifact?.payload.status).toBe('passed');
   });
 
   it('flag desligada pula o portão', async () => {

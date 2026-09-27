@@ -31,6 +31,11 @@ import {
   reviewMissionHandoff,
   type JevReviewVerdict,
 } from "./jev-handoff-review";
+import {
+  evaluateHandoffRegressionGate,
+  type RegressionHandoffVerdict,
+} from "../regression-gate/regression-gate-handoff";
+import { executionScopeFor } from "./gate";
 
 /** Workspace delivery is untrusted correspondence, never mission completion evidence. */
 export async function submitWorkspaceHandoff(
@@ -66,7 +71,35 @@ export async function submitWorkspaceHandoff(
       : ({ kind: "none" } as const);
   if (verdict.kind === "retry")
     throw new Error(deliveryContractRetryMessage(verdict));
-  const status = verdict.kind === "exhausted" ? "blocked" : declaredStatus;
+  const declaredFiles = normalizeFilesModified({
+    filesModified: args.filesModified,
+    "files-modified": args["files-modified"],
+    artifacts: args.artifacts,
+  });
+  // Portão de regressão do "+ Pane": mesmo contrato do handoff de missão —
+  // teste impactado falhando devolve ao helper; esgotado, entra como blocked.
+  let regressionVerdict: RegressionHandoffVerdict = {
+    kind: "skipped",
+    reason: "not-run",
+  };
+  if (
+    declaredStatus === "success" &&
+    ctx.readOnly !== true &&
+    verdict.kind !== "exhausted"
+  ) {
+    assertMcpInvocationCurrent(invocation);
+    regressionVerdict = await evaluateHandoffRegressionGate({
+      sessionId: ctx.sessionId,
+      scope: executionScopeFor(ctx),
+      declaredFiles,
+    });
+    if (regressionVerdict.kind === "retry")
+      throw new Error(regressionVerdict.message);
+  }
+  const status =
+    verdict.kind === "exhausted" || regressionVerdict.kind === "exhausted"
+      ? "blocked"
+      : declaredStatus;
   const condensed = condenseHandoffSummary(
     filterAntiSocialChatter(rawSummary).clean,
   );
@@ -80,7 +113,8 @@ export async function submitWorkspaceHandoff(
   if (
     declaredStatus === "success" &&
     ctx.readOnly !== true &&
-    verdict.kind !== "exhausted"
+    verdict.kind !== "exhausted" &&
+    regressionVerdict.kind !== "exhausted"
   ) {
     assertMcpInvocationCurrent(invocation);
     try {
@@ -93,11 +127,7 @@ export async function submitWorkspaceHandoff(
         accomplished: args.accomplished,
         blockers: args.blockers,
         nextSteps: args.nextSteps,
-        declaredFiles: normalizeFilesModified({
-          filesModified: args.filesModified,
-          "files-modified": args["files-modified"],
-          artifacts: args.artifacts,
-        }),
+        declaredFiles,
         artifactKinds: (Array.isArray(args.artifacts) ? args.artifacts : [])
           .filter(
             (a): a is { kind: string } =>
@@ -120,6 +150,9 @@ export async function submitWorkspaceHandoff(
       reviewedSummary = `[evidência fraca] ${condensed.summary}`;
     }
   }
+  if (regressionVerdict.kind === "exhausted") {
+    reviewedSummary = `[testes impactados falhando] ${condensed.summary}`;
+  }
   const telemetry = sanitizeHandoffTelemetry(args.telemetry);
   const artifacts = [
     ...(Array.isArray(args.artifacts) ? args.artifacts : []),
@@ -134,6 +167,11 @@ export async function submitWorkspaceHandoff(
       : []),
     ...(verdict.kind === "exhausted"
       ? [deliveryContractExhaustedArtifact(verdict, declaredStatus)]
+      : []),
+    ...((regressionVerdict.kind === "accepted" ||
+      regressionVerdict.kind === "exhausted") &&
+    regressionVerdict.artifact
+      ? [regressionVerdict.artifact]
       : []),
     ...(telemetry ? [embedTelemetryArtifact(telemetry)] : []),
     ...(jevVerdict.kind === "ok" || jevVerdict.kind === "weak"
