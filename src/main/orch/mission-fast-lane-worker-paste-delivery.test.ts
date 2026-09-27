@@ -17,7 +17,8 @@ import { applyAttestedBusinessModel, createBarbershopRepo } from '../context/bus
  * operador digitar o briefing à mão (achado 2026-09-27).
  */
 
-const deliverAgentPromptMock = vi.hoisted(() => vi.fn(async () => true));
+const deliverAgentPromptMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => true));
+const terminateMock = vi.hoisted(() => vi.fn(async (_sessionId: string) => true));
 
 const state = vi.hoisted(() => ({
   squad: null as Squad | null,
@@ -33,6 +34,7 @@ vi.mock('../pty/pty-manager', () => ({
   getSessionState: () => 'idle',
   listAgentSessions: () => [],
   getSessionCwd: () => null,
+  orchTerminateSession: terminateMock,
 }));
 vi.mock('../acp/acp-harness-driver', () => ({ getAcpDriverSession: () => null }));
 vi.mock('../persistence/provider-config-store', () => ({
@@ -115,6 +117,7 @@ afterEach(() => {
   state.physical.clear();
   state.spawnPrompts.length = 0;
   deliverAgentPromptMock.mockClear();
+  terminateMock.mockClear();
 });
 
 function prepare(scope = testProjectScope()) {
@@ -194,5 +197,19 @@ describe('Via Rápida first-wave — entrega do briefing por colagem para o work
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it('Fable P1-5: colagem recusada encerra o pane recém-nascido — não fica mudo e vinculado à missão', async () => {
+    const { scope, mission } = prepare();
+    deliverAgentPromptMock.mockResolvedValueOnce(false);
+    await dispatchFastLaneFirstWave(scope, mission.id);
+    expect(terminateMock).toHaveBeenCalledWith('session-Kimi');
+  });
+
+  it('Fable P1-5: colagem que lança também encerra o pane', async () => {
+    const { scope, mission } = prepare();
+    deliverAgentPromptMock.mockRejectedValueOnce(new Error('pty fechado'));
+    await dispatchFastLaneFirstWave(scope, mission.id);
+    expect(terminateMock).toHaveBeenCalledWith('session-Kimi');
   });
 });

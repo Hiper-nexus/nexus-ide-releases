@@ -1019,6 +1019,37 @@ async function spawnWriterWithCircuit(
   return spawnAgentPane(scope, mission, successor, prompt, paneTitle, spawnOpts);
 }
 
+/**
+ * Colagem do briefing depois do boot (canal paste), igual para Maestro e
+ * worker. Se falhar, o pane recém-nascido é encerrado: nunca fica vivo, mudo
+ * e já vinculado à missão (o guardian não fecha pane de missão).
+ */
+async function pasteBriefAfterBoot(
+  sessionId: string,
+  prompt: string,
+  adapterId: string,
+): Promise<string | null> {
+  let failure: string | null;
+  try {
+    const boot =
+      getSessionState(sessionId) === 'idle'
+        ? 'idle'
+        : await waitForIdle(sessionId, ORCHESTRATOR_BOOT_TIMEOUT_MS);
+    if (boot === 'exited') return 'pane saiu antes do briefing';
+    failure = (await deliverAgentPrompt(sessionId, prompt, undefined, { adapterId }))
+      ? null
+      : 'briefing não foi aceito pelo pane';
+  } catch (error) {
+    failure = `falha ao colar briefing — ${error instanceof Error ? error.message : String(error)}`;
+  }
+  if (failure) {
+    await orchTerminateSession(sessionId).catch((error: unknown) => {
+      console.warn('[fast-lane] pane sem briefing não terminou:', error instanceof Error ? error.message : error);
+    });
+  }
+  return failure;
+}
+
 async function spawnAgentPane(
   scope: ProjectExecutionScope,
   mission: Mission,
@@ -1121,34 +1152,8 @@ async function spawnAgentPane(
   if (role === 'worker' && initialPrompt) {
     const delivery = resolveOrchestratorBriefDelivery(agent.cli);
     if (delivery === 'paste') {
-      const boot =
-        getSessionState(spawn.sessionId) === 'idle'
-          ? 'idle'
-          : await waitForIdle(spawn.sessionId, ORCHESTRATOR_BOOT_TIMEOUT_MS);
-      if (boot === 'exited') {
-        return {
-          error: `${agent.agentName} (${agent.cli}): pane saiu antes do briefing`,
-        };
-      }
-      try {
-        const accepted = await deliverAgentPrompt(
-          spawn.sessionId,
-          initialPrompt,
-          undefined,
-          { adapterId: agent.cli },
-        );
-        if (!accepted) {
-          return {
-            error: `${agent.agentName} (${agent.cli}): briefing não foi aceito pelo pane`,
-          };
-        }
-      } catch (error) {
-        return {
-          error: `${agent.agentName} (${agent.cli}): falha ao colar briefing — ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        };
-      }
+      const failure = await pasteBriefAfterBoot(spawn.sessionId, initialPrompt, agent.cli);
+      if (failure) return { error: `${agent.agentName} (${agent.cli}): ${failure}` };
     }
   }
 
@@ -1161,43 +1166,14 @@ async function spawnAgentPane(
   if (role === 'orchestrator' && initialPrompt) {
     const delivery = resolveOrchestratorBriefDelivery(agent.cli);
     if (delivery === 'paste') {
-      const boot =
-        getSessionState(spawn.sessionId) === 'idle'
-          ? 'idle'
-          : await waitForIdle(
-              spawn.sessionId,
-              ORCHESTRATOR_BOOT_TIMEOUT_MS,
-            );
-      if (boot === 'exited') {
-        return {
-          error: `${agent.agentName} (${agent.cli}): pane saiu antes do briefing`,
-        };
-      }
-      try {
-        const accepted = await deliverAgentPrompt(
-          spawn.sessionId,
-          initialPrompt,
-          undefined,
-          { adapterId: agent.cli },
-        );
-        if (!accepted) {
-          return {
-            error: `${agent.agentName} (${agent.cli}): briefing não foi aceito pelo pane`,
-          };
-        }
-        tryAcceptIdleOrchestratorKickoff(
-          stores,
-          mission,
-          spawn.sessionId,
-          initialPrompt,
-        );
-      } catch (error) {
-        return {
-          error: `${agent.agentName} (${agent.cli}): falha ao colar briefing — ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        };
-      }
+      const failure = await pasteBriefAfterBoot(spawn.sessionId, initialPrompt, agent.cli);
+      if (failure) return { error: `${agent.agentName} (${agent.cli}): ${failure}` };
+      tryAcceptIdleOrchestratorKickoff(
+        stores,
+        mission,
+        spawn.sessionId,
+        initialPrompt,
+      );
     } else {
       // positional argv: Claude often only preloads the composer. Force
       // Enter (then paste) so the first turn starts without a human keystroke.
