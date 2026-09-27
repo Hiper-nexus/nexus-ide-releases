@@ -81,6 +81,7 @@
 
 .git-scm__tabs {
   display: flex;
+  min-width: 0;
   gap: 4px;
   border-bottom: 1px solid var(--border, rgb(255 255 255 / 0.08));
   padding-bottom: 6px;
@@ -88,6 +89,13 @@
 
 .git-scm__tabs button {
   appearance: none;
+  /* Painel estreito: as três abas encolhem com reticências em vez de a última
+     sair cortada pela borda. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   border: none;
   background: transparent;
   color: var(--text-dim, #aaa2a8);

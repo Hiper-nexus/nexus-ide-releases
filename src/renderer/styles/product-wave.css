@@ -6,6 +6,11 @@
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
+  /* A largura inline é a preferência da pessoa; a coluna do shell pode ser
+     menor (janela estreita) e o painel cede em vez de transbordar. A altura
+     é a do slot: quem rola é o corpo, nunca o inspetor inteiro. */
+  max-width: 100%;
+  height: 100%;
   min-height: 0;
   border-left: 1px solid var(--border, rgb(255 255 255 / 0.07));
   background: linear-gradient(
@@ -15,6 +20,14 @@
   );
   color: var(--text, #faf7f9);
   overflow: hidden;
+}
+
+/* O painel ocupa o slot exato e rola por dentro. `clip` (e não `auto`) tira
+   o inspetor da cadeia de rolagem: nem trilho reservado nem scroll
+   programático de um descendente desloca o painel. */
+.product-inspector:has(> .ctx-panel) {
+  overflow: clip;
+  scrollbar-gutter: auto;
 }
 
 /* Aba na BORDA, centro vertical: a pílula antiga pousava sobre a barra de
@@ -82,7 +95,47 @@
   align-items: center;
   gap: 2px;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
   scrollbar-width: none;
+  /* Sem trilho visível, a borda esmaecida é o sinal de "tem mais abas": só
+     aparece do lado que ainda rola (timeline de rolagem da própria faixa). */
+  mask-image: linear-gradient(
+    90deg,
+    transparent,
+    black var(--ctx-tabs-fade-start),
+    black calc(100% - var(--ctx-tabs-fade-end)),
+    transparent
+  );
+  animation: ctx-tabs-fade linear both;
+  animation-timeline: scroll(self inline);
+}
+
+@property --ctx-tabs-fade-start {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --ctx-tabs-fade-end {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+@keyframes ctx-tabs-fade {
+  0% {
+    --ctx-tabs-fade-start: 0px;
+    --ctx-tabs-fade-end: var(--space-5);
+  }
+  10%,
+  90% {
+    --ctx-tabs-fade-start: var(--space-5);
+    --ctx-tabs-fade-end: var(--space-5);
+  }
+  100% {
+    --ctx-tabs-fade-start: var(--space-5);
+    --ctx-tabs-fade-end: 0px;
+  }
 }
 
 .ctx-panel__tablist::-webkit-scrollbar {
@@ -96,6 +149,7 @@
   background: transparent;
   color: var(--text-dim, #aaa2a8);
   flex: 0 0 auto;
+  white-space: nowrap;
   min-height: 34px;
   font-size: var(--text-sm);
   font-weight: 500;
@@ -124,6 +178,7 @@
 }
 
 .ctx-panel__hide {
+  flex: 0 0 auto;
   display: grid !important;
   place-items: center;
   min-width: 30px;
@@ -144,8 +199,10 @@
 
 .ctx-panel__body {
   flex: 1;
+  min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: var(--space-4);
 }
 

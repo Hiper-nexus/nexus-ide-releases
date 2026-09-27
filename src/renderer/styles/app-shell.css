@@ -174,12 +174,13 @@
 }
 
 .nexus-shell__body--with-inspector {
-  grid-template-columns:
-    minmax(0, 1fr)
-    minmax(
-      var(--nexus-shell-inspector-min),
-      var(--nexus-shell-inspector-max)
-    );
+  /*
+    A coluna segue a largura do painel que ela hospeda (ContextualPanel já a
+    limita a 200–900px e ao espaço da janela). A faixa fixa 360–440px brigava
+    com essa largura: painel estreito sobrava vazio à direita, painel largo
+    transbordava a coluna com rolagem horizontal.
+  */
+  grid-template-columns: minmax(0, 1fr) minmax(0, max-content);
 }
 
 .product-canvas,
@@ -2021,8 +2022,7 @@
 
   .product-inspector {
     justify-self: end;
-    width: 100%;
-    max-width: var(--nexus-shell-inspector-max);
+    max-width: 100%;
     max-height: 40vh;
     border-top: 1px solid var(--border);
     border-left: 1px solid var(--border);

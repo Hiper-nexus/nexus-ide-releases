@@ -22,6 +22,7 @@ import {
 } from '../../shared/contextual-panel-persist';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { useContextualPanelNavStore } from '../state/contextual-panel-nav-store';
+import { useRailWidthStore } from '../state/rail-width-store';
 import { PixelIcon } from './PixelIcon';
 
 const MIN_PANEL_WIDTH = 200;
@@ -29,6 +30,8 @@ const MAX_PANEL_WIDTH = 900;
 const MIN_CANVAS_WIDTH = 320;
 const COMPACT_PANEL_BREAKPOINT = 900;
 const PANEL_KEYBOARD_STEP = 16;
+/** Folga ao revelar uma aba: a largura da borda esmaecida da faixa (--space-5). */
+const TAB_REVEAL_MARGIN = 24;
 
 function clampPanelWidth(
   widthPx: number,
@@ -156,14 +159,16 @@ export function ContextualPanel({
   const panelDomId = `ctx-panel-${generatedId}`;
   const panelBodyId = `${panelDomId}-body`;
   const compactPresentation = viewportWidth < COMPACT_PANEL_BREAKPOINT;
-  const missionRailWidth = viewportWidth <= 1120 ? 210 : 248;
+  // A coluna do shell segue a largura do painel; o teto precisa descontar o
+  // rail real (ajustável) para o canvas nunca ficar abaixo do mínimo.
+  const railWidth = useRailWidthStore((rail) => rail.width);
   const responsiveMaximum = compactPresentation
     ? Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, viewportWidth - 16))
     : Math.min(
         MAX_PANEL_WIDTH,
         Math.max(
           MIN_PANEL_WIDTH,
-          viewportWidth - missionRailWidth - MIN_CANVAS_WIDTH,
+          viewportWidth - railWidth - MIN_CANVAS_WIDTH,
         ),
       );
   const visibleTabs = supportedTabs(relevantTabs);
@@ -291,12 +296,20 @@ export function ContextualPanel({
 
   // The tab strip is intentionally single-line so narrow panels do not turn
   // into a two-row toolbar. Keep the active context reachable after keyboard
-  // navigation or a launcher request.
+  // navigation or a launcher request — scrolling ONLY the strip.
+  // `scrollIntoView` also scrolled every ancestor (inspector, shell) and
+  // dragged the whole layout sideways whenever a tab was activated.
   useEffect(() => {
     if (!state.visible) return;
     const tab = tabRefs.current.get(state.activeTab);
-    if (tab && typeof tab.scrollIntoView === 'function') {
-      tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    const strip = tab?.parentElement;
+    if (!tab || !strip) return;
+    const stripBox = strip.getBoundingClientRect();
+    const tabBox = tab.getBoundingClientRect();
+    if (tabBox.left < stripBox.left + TAB_REVEAL_MARGIN) {
+      strip.scrollLeft -= stripBox.left + TAB_REVEAL_MARGIN - tabBox.left;
+    } else if (tabBox.right > stripBox.right - TAB_REVEAL_MARGIN) {
+      strip.scrollLeft += tabBox.right - (stripBox.right - TAB_REVEAL_MARGIN);
     }
   }, [state.activeTab, state.visible]);
 
