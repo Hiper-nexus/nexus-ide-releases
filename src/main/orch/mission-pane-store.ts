@@ -314,7 +314,19 @@ export class ScopedMissionPaneStore {
           throw new ScopedStoreCorruptionError('mission pane ownership');
         }
         if (owners.length === 1 && owners[0].id !== existing?.id) {
-          throw new Error('pane id already belongs to another mission pane');
+          // Missão encerrada (done/failed) solta o pane: o orquestrador que a
+          // criou volta a ser a mão do operador e pode abrir outra missão. A
+          // linha antiga fica no histórico, só sem o vínculo com o pane vivo.
+          const owner = db
+            .prepare('SELECT status FROM missions WHERE id = ?')
+            .get(owners[0].missionId) as { status?: string } | undefined;
+          if (
+            owners[0].missionId === input.missionId ||
+            (owner?.status !== 'done' && owner?.status !== 'failed')
+          ) {
+            throw new Error('pane id already belongs to another mission pane');
+          }
+          db.prepare('UPDATE mission_panes SET pane_id = NULL WHERE id = ?').run(owners[0].id);
         }
       }
       if (existing) return this.#fillMissingAuthority(db, existing, input);

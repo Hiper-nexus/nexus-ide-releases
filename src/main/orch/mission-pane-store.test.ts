@@ -446,6 +446,26 @@ describe('scoped mission pane store', () => {
     ).toThrow(/already belongs/i);
   });
 
+  it('libera o pane de uma missão encerrada para a próxima missão (done/failed)', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const missions = createScopedMissionStore(runtimeManager, scope);
+    const panes = createScopedMissionPaneStore(runtimeManager, scope);
+    const failed = missions.create({ title: 'A' });
+    panes.record({ missionId: failed.id, adapterId: 'claude', role: 'orchestrator', paneId: 'op' });
+    missions.update(failed.id, { status: 'failed' });
+    const next = missions.create({ title: 'B' });
+    expect(panes.record({ missionId: next.id, adapterId: 'claude', role: 'orchestrator', paneId: 'op' }).paneId).toBe('op');
+    expect(panes.findByPaneId('op')?.missionId).toBe(next.id);
+    expect(panes.list(failed.id)).toHaveLength(1);
+    expect(panes.list(failed.id)[0].paneId).toBeUndefined();
+    // Missão viva continua dona do pane.
+    const third = missions.create({ title: 'C' });
+    expect(() =>
+      panes.record({ missionId: third.id, adapterId: 'claude', role: 'orchestrator', paneId: 'op' }),
+    ).toThrow(/already belongs/i);
+  });
+
   it('fails closed when corrupted persisted rows reuse a pane id', () => {
     const runtimeManager = manager();
     const scope = testProjectScope();
