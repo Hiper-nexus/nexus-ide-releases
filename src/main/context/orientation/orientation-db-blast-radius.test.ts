@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ProjectExecutionScope } from '../../../shared/types';
-import { computeBlastRadius } from './orientation-blast-radius';
+import { computeBlastRadius, expandOwnershipWithBlastRadius } from './orientation-blast-radius';
 import { ProjectOrientationService } from './orientation-service';
 
 const roots: string[] = [];
@@ -105,13 +105,84 @@ describe('code map <-> banco: comanda alcanca comissao e seu teste', () => {
     expect(radius.files).toEqual(
       expect.arrayContaining([
         'src/comanda/close-commanda.ts',
-        'db:function:public.close_commanda_internal',
-        'db:table:public.appointments',
-        'db:table:public.commission_entries',
         'src/commission/commission-service.ts',
         'src/commission/commission-service.test.ts',
       ]),
     );
+    expect(radius.dbEntities).toEqual(
+      expect.arrayContaining([
+        'db:function:public.close_commanda_internal',
+        'db:table:public.appointments',
+        'db:table:public.commission_entries',
+      ]),
+    );
     expect(radius.tests).toContain('src/commission/commission-service.test.ts');
+  });
+});
+
+describe('code map <-> banco: grafo sem imports, seed de migration e reservas', () => {
+  async function buildMap(withImport = false) {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-db-only-')));
+    const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-db-only-cache-'));
+    roots.push(root, cacheRoot);
+    write(root, 'package.json', JSON.stringify({ name: 'db-only' }));
+    write(root, 'supabase/migrations/20260101000000_users.sql', 'CREATE TABLE users (id uuid);');
+    // No file imports another one: every link goes through the users table.
+    write(root, 'src/billing/invoices.ts', "export const a = () => supabase.from('users').select('*');");
+    write(root, 'src/profile/profile.ts', "export const b = () => supabase.from('users').update({});");
+    write(root, 'src/profile/profile.test.ts', "afterEach(() => supabase.from('users').delete());");
+    if (withImport) {
+      write(root, 'src/billing/money.ts', 'export const cents = 100;');
+      write(root, 'src/billing/totals.ts', "import { cents } from './money';\nexport const t = cents;");
+    }
+    const service = new ProjectOrientationService({ cacheRoot, includeContextSummary: false });
+    return service.ensure(scopeFor(root), { reason: 'workspace-open' });
+  }
+
+  it('walks a graph made only of db edges (no import edge at all)', async () => {
+    const map = await buildMap();
+    expect(map.graph.edgeCount).toBe(0);
+    const radius = computeBlastRadius(map, { seedFiles: ['src/billing/invoices.ts'], depth: 2 });
+    expect(radius.files).toEqual([
+      'src/billing/invoices.ts',
+      'src/profile/profile.test.ts',
+      'src/profile/profile.ts',
+    ]);
+    expect(radius.dbEntities).toEqual(['db:table:public.users']);
+    expect(radius.tests).toEqual(['src/profile/profile.test.ts']);
+  });
+
+  it('seeding the migration reaches the code and tests that use what it defines', async () => {
+    const map = await buildMap();
+    const radius = computeBlastRadius(map, {
+      seedFiles: ['supabase/migrations/20260101000000_users.sql'],
+      depth: 1,
+    });
+    expect(radius.files).toEqual(
+      expect.arrayContaining(['src/billing/invoices.ts', 'src/profile/profile.ts']),
+    );
+    expect(radius.tests).toContain('src/profile/profile.test.ts');
+  });
+
+  it('keeps db nodes out of domains and never turns a shared table into an ownership claim', async () => {
+    // One unrelated import edge makes the graph walkable, as in real projects.
+    const map = await buildMap(true);
+    expect(map.graph.edgeCount).toBe(1);
+    const radius = computeBlastRadius(map, { seedFiles: ['src/billing/invoices.ts'], depth: 1 });
+    expect(radius.files).toEqual(['src/billing/invoices.ts']);
+    expect(radius.domains).toEqual(['billing']);
+
+    const owned = expandOwnershipWithBlastRadius(
+      { files: ['src/billing/invoices.ts'], symbols: [], domains: ['billing'] },
+      map,
+    );
+    const other = expandOwnershipWithBlastRadius(
+      { files: ['src/profile/profile.ts'], symbols: [], domains: ['profile'] },
+      map,
+    );
+    expect(owned.files).toEqual(['src/billing/invoices.ts']);
+    expect(owned.domains).toEqual(['billing']);
+    expect(other.files.filter((f) => owned.files.includes(f))).toEqual([]);
+    expect(other.domains.filter((d) => owned.domains.includes(d))).toEqual([]);
   });
 });
