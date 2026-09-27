@@ -20,6 +20,7 @@ function result(partial: Partial<RegressionGateResult>): RegressionGateResult {
     diffHash: 'hash-1',
     changedFiles: ['src/a.ts'],
     testsRun: ['src/a.test.ts'],
+    testsNotRun: [],
     failures: [],
     untestedFiles: [],
     invariantsTouched: [],

@@ -57,12 +57,17 @@ describe('blast radius estendido (contrato do codemap-banco)', () => {
     run('add', '-A');
     run('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'fixture');
     write('src/orders.ts', 'export const total = 2;\n');
-    const exec = vi.fn<RegressionExec>(async () => ({
-      exitCode: 0,
-      timedOut: false,
-      stdout: '',
-      stderr: '',
-    }));
+    const exec = vi.fn<RegressionExec>(async (_file, args, options) => {
+      const outFile = args.find((arg) => arg.startsWith('--outputFile='))!.slice('--outputFile='.length);
+      fs.writeFileSync(outFile, JSON.stringify({
+        testResults: [{
+          name: path.join(options.cwd, 'tests/db/orders.test.ts'),
+          status: 'passed',
+          assertionResults: [{ status: 'passed', fullName: 'fecha comanda' }],
+        }],
+      }));
+      return { exitCode: 0, timedOut: false, stdout: '', stderr: '' };
+    });
 
     const result = await runRegressionGate(
       { scope: testProjectScope({ rootRealPath: root }) },

@@ -262,7 +262,8 @@ function regressionToReviewFindings(
     file: failure.file,
     criterionRefs: [],
     invariantRefs: ['tested-change'],
-    evidence: `Teste impactado pelo diff falhou: ${failure.message}`,
+    // A mensagem vem do teste (checkout do writer): citação, nunca instrução.
+    evidence: `Teste impactado pelo diff falhou (saída do runner, dado não confiável): «${failure.message}»`,
     recommendation:
       'Corrija o código (ou o teste, se a regra mudou de propósito) até os testes impactados passarem.',
   }));

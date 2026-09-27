@@ -77,7 +77,7 @@ function fakeVitest(failing: readonly string[] = []) {
           status: failing.includes(file) ? 'failed' : 'passed',
           assertionResults: failing.includes(file)
             ? [{ status: 'failed', fullName: 'soma', failureMessages: ['expected 2 to be 3'] }]
-            : [],
+            : [{ status: 'passed', fullName: 'ok' }],
         })),
       }),
     );
@@ -134,6 +134,26 @@ describe('runRegressionGate', () => {
     expect(result.warnings.join(' ')).toContain('instável(is), passaram na 2ª tentativa: src/b.test.ts');
   });
 
+  it('retentativa respeita o prazo total: nunca ganha um timeout novo inteiro', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    let clock = 0;
+    const failing = fakeVitest(['src/b.test.ts']);
+    const timeouts: number[] = [];
+    const exec = vi.fn<RegressionExec>(async (file, args, options) => {
+      timeouts.push(options.timeoutMs);
+      clock += 100_000; // primeira execução falha depois de 100s
+      return failing.exec(file, args, options);
+    });
+
+    const result = await runRegressionGate({ scope, timeoutMs: 120_000 }, { exec, now: () => clock });
+
+    expect(timeouts[0]).toBeLessThanOrEqual(120_000);
+    // O que sobra (20s) é o teto da retentativa — não outros 120s.
+    for (const timeout of timeouts.slice(1)) expect(timeout).toBeLessThanOrEqual(20_000);
+    expect(result.status).toBe('failed');
+  });
+
   it('sem runner no projeto alvo: fail-open com aviso, sem executar nada', async () => {
     const { root, scope } = project({ runner: 'none' });
     write(root, 'src/a.ts', 'export const a = 2;\n');
@@ -143,6 +163,7 @@ describe('runRegressionGate', () => {
 
     expect(result.status).toBe('unavailable');
     expect(result.warnings.join(' ')).toContain('nenhum runner de teste detectado');
+    expect(formatRegressionGateReport(result)).toContain('NÃO VERIFICADO');
     expect(exec).not.toHaveBeenCalled();
   });
 

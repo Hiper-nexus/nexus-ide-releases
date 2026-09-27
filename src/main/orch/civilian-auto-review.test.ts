@@ -161,6 +161,7 @@ function regressionResult(
     diffHash: 'hash',
     changedFiles: ['src/app.ts'],
     testsRun: ['src/app.test.ts'],
+    testsNotRun: [],
     failures: [],
     untestedFiles: [],
     invariantsTouched: [],
