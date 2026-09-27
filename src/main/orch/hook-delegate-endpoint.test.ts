@@ -69,7 +69,7 @@ describe('hook /hook/delegate', () => {
       );
       expect(
         (responsive.payload.hookSpecificOutput as { additionalContext: string }).additionalContext,
-      ).toContain('nexus_browser_*');
+      ).toContain('nexus_browser_responsive');
 
       const shot = await handleHookDelegateRequest(
         { ...operator, sessionId: 's-shot' },
@@ -87,6 +87,15 @@ describe('hook /hook/delegate', () => {
       const out = await handleHookDelegateRequest(operator, { prompt: LONG }, { advise });
       expect(out.payload).toEqual({});
     });
+
+    it.each(['extrair o zip de release para dist/', 'faça a extração de método nesse service'])(
+      '"extrair" fora de contexto web não dispara a dica: %s',
+      async (prompt) => {
+        __resetLeanRemindersForTests();
+        const out = await handleHookDelegateRequest(operator, { prompt }, { advise: vi.fn(async () => null) });
+        expect(JSON.stringify(out.payload)).not.toContain('nexus_browser_');
+      },
+    );
 
     it('lembra uma vez por sessão dentro do intervalo', async () => {
       __resetLeanRemindersForTests();

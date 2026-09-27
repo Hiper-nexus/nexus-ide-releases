@@ -1,21 +1,46 @@
 import { describe, expect, it } from 'vitest';
-import { isSensitiveBrowserMarker } from './browser-redaction';
+import { isSensitiveBrowserMarker, redactPageUrl } from './browser-redaction';
 
 describe('isSensitiveBrowserMarker', () => {
-  it('flags real sensitive markers', () => {
-    expect(isSensitiveBrowserMarker('password')).toBe(true);
-    expect(isSensitiveBrowserMarker('user-token-field')).toBe(true);
-    expect(isSensitiveBrowserMarker('otp-input')).toBe(true);
-    expect(isSensitiveBrowserMarker('session_id')).toBe(true);
-    expect(isSensitiveBrowserMarker('mySession')).toBe(true);
+  it.each([
+    'password',
+    'user-token-field',
+    'otp-input',
+    'otp_code',
+    'session_id',
+    'sessionid',
+    'jsessionid',
+    'mySession',
+    'ssoOtp',
+    'ssoOtpInput',
+    'SSOOtp',
+    'expressSession',
+    'express-session',
+    'express_session',
+    'totp',
+    'totpCode',
+    'userOtp',
+    'possessionToken',
+    'mw-body sso-otp',
+  ])('flags %s', (value) => {
+    expect(isSensitiveBrowserMarker(value)).toBe(true);
   });
 
-  it('does not flag unrelated words that merely contain the substring', () => {
+  it.each([
     // MediaWiki tags every article body with `rootpage-<Title>` — "otp" is
     // embedded inside "rootpage", not a standalone token.
-    expect(isSensitiveBrowserMarker('rootpage-Brasil')).toBe(false);
-    expect(isSensitiveBrowserMarker('mw-jump-link')).toBe(false);
-    // "session" embedded inside an unrelated doubled-s word.
-    expect(isSensitiveBrowserMarker('possession-count')).toBe(false);
+    'rootpage-Brasil',
+    'RootPage',
+    'mw-jump-link',
+    'possession-count',
+    'skin-vector rootpage-Brasil page-Brasil',
+  ])('does not flag %s', (value) => {
+    expect(isSensitiveBrowserMarker(value)).toBe(false);
+  });
+
+  it('redacts camelCase OTP/session query keys in page URLs', () => {
+    const url = redactPageUrl('https://example.test/?ssoOtp=123456&expressSession=abc');
+    expect(url).toContain('ssoOtp=%5BREDACTED%5D');
+    expect(url).toContain('expressSession=%5BREDACTED%5D');
   });
 });

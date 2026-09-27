@@ -3,6 +3,7 @@ import {
   type McpToolDef,
 } from './mcp-protocol';
 import {
+  analyzeBrowserResponsive,
   assertBrowserAtExactUrl,
   captureBrowserScreenshot,
   clickBrowserElement,
@@ -17,6 +18,7 @@ import {
   readBrowserPageCompact,
   scrollBrowserPane,
   waitForBrowser,
+  type BrowserDeviceKind,
   type BrowserInlineRead,
 } from '../browser/browser-manager';
 import type { BrowserExtractField } from '../../shared/browser-automation';
@@ -217,7 +219,7 @@ const DEVICE_ARG_PROP = {
     'Emulate a device breakpoint before loading (real UA + viewport metrics, ' +
     'reused from the operator\'s responsive-preview toggle) — "mobile"/"tablet" ' +
     'serve the real mobile/tablet layout, "desktop" turns emulation back off. ' +
-    'Combine with nexus_browser_screenshot per breakpoint to check responsiveness.',
+    'For a full responsive check in one call use nexus_browser_responsive.',
 };
 
 const browserNavigateTool: McpToolDef = {
@@ -289,6 +291,46 @@ const browserScreenshotTool: McpToolDef = {
       recordAutomatedReviewBrowserInspection(reviewAuthority, 'screenshot');
     }
     return result;
+  },
+};
+
+const browserResponsiveTool: McpToolDef = {
+  name: 'nexus_browser_responsive',
+  requiresConfirm: true,
+  description:
+    'Analyze the responsiveness of the page already open in an owned browser ' +
+    'pane in ONE call: for each breakpoint (mobile 390px, tablet 800px, ' +
+    'desktop = pane width) reloads it with real device emulation (UA + ' +
+    'viewport, same guarded navigation as nexus_browser_navigate), captures a ' +
+    'PNG artifact and audits the layout — layout width, horizontal overflow ' +
+    '(scrollWidth > clientWidth), elements straddling the viewport edge and ' +
+    'elements cut by overflow:hidden. The original device and page are ' +
+    'restored at the end, even on error.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      paneId: { type: 'string' },
+      devices: {
+        type: 'array',
+        items: { type: 'string', enum: ['mobile', 'tablet', 'desktop'] },
+        description: 'Subset/order of breakpoints; default all three.',
+      },
+    },
+    required: ['paneId'],
+  },
+  handler: async (args, ctx, invocation) => {
+    const paneId = requireStr(args, 'paneId');
+    authorizePaneRef(ctx, paneId, 'write');
+    const devices = strArray(args, 'devices').filter(
+      (device): device is BrowserDeviceKind =>
+        device === 'mobile' || device === 'tablet' || device === 'desktop',
+    );
+    return analyzeBrowserResponsive(paneId, ctx.scope, {
+      devices,
+      missionId: ctx.missionId,
+      signal: invocation?.signal,
+      assertCurrentAuthority: invocation?.assertCurrentAuthority,
+    });
   },
 };
 
@@ -717,6 +759,7 @@ export function buildBrowserTools(): McpToolDef[] {
     browserOpenTool,
     browserNavigateTool,
     browserScreenshotTool,
+    browserResponsiveTool,
     browserReadTool,
     browserFindTool,
     browserExtractTool,

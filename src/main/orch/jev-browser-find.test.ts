@@ -131,6 +131,9 @@ describe('pickBrowserFindElement', () => {
     const picked = await pickBrowserFindElement(matches, context, d);
     expect(picked).toEqual({ ref: 'e2', confidence: 0.9 });
     expect(d.jev).toHaveBeenCalledOnce();
+    expect(d.jev).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 4_000, retryOnTimeout: false }),
+    );
     expect(d.recordDecision).toHaveBeenCalledWith(
       expect.objectContaining({
         surface: 'browserTool',

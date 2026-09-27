@@ -33,6 +33,7 @@ import type {
   BrowserFindMatch,
   BrowserFindResult,
   BrowserJudgmentSkipped,
+  BrowserLayoutAudit,
   BrowserPageJudgment,
   BrowserPageReadResult,
   BrowserViewport,
@@ -75,6 +76,7 @@ import {
   browserFillResultSchema,
   browserFindResultSchema,
   browserHoverResultSchema,
+  browserLayoutAuditSchema,
   browserPageReadResultSchema,
   browserPressResultSchema,
   browserScrollResultSchema,
@@ -162,6 +164,8 @@ export interface BrowserEntry {
   error?: string;
   /** Opened via nexus_browser_open/an agent pane, not the operator's own tab. */
   agentOwned: boolean;
+  /** Active device emulation (CSS px); absent when the pane renders natively. */
+  emulatedViewport?: { width: number; height: number };
   profileMode: 'personal' | 'isolated';
   disconnectProfile?: () => Promise<void>;
   lastBounds?: BrowserPaneBounds;
@@ -261,8 +265,10 @@ function applyBrowserDeviceEmulation(
       deviceScaleFactor: 0,
       scale: 1,
     });
+    entry.emulatedViewport = { width: width as number, height: emulatedHeight };
   } else {
     wc.disableDeviceEmulation();
+    entry.emulatedViewport = undefined;
     const original = originalUserAgents.get(key);
     if (original) {
       wc.setUserAgent(original);
@@ -1089,6 +1095,7 @@ async function loadBrowserForEntry(
     privateAccessConfirmed?: boolean;
     signal?: AbortSignal;
     assertCurrentAuthority?: () => void;
+    device?: BrowserDeviceKind;
   } = {},
 ): Promise<BrowserPaneState> {
   const assertCurrentAuthority = (): void => {
@@ -1113,6 +1120,15 @@ async function loadBrowserForEntry(
   entry.url = url;
   entry.error = undefined;
   assertCurrentAuthority();
+  // Only after URL/DNS/authority checks: a refused navigation must not
+  // leave the current page emulating another device.
+  if (options.device) {
+    applyBrowserDeviceEmulation(
+      entry,
+      browserKey(entry.scope, paneId),
+      DEVICE_EMULATION_WIDTH[options.device],
+    );
+  }
   if (url === 'about:blank') {
     entry.view.webContents.loadURL(url).catch(() => {});
   } else {
@@ -1149,13 +1165,6 @@ export async function loadBrowser(
   }
 > {
   const entry = withEntry(paneId, options.scope);
-  if (options.device && !entry.view.webContents.isDestroyed()) {
-    applyBrowserDeviceEmulation(
-      entry,
-      browserKey(options.scope, paneId),
-      DEVICE_EMULATION_WIDTH[options.device],
-    );
-  }
   const before = snapshotBrowserBefore(entry);
   const state = await loadBrowserForEntry(
     paneId,
@@ -1297,11 +1306,18 @@ export async function captureBrowserScreenshot(
   }
 
   const capturedAt = Date.now();
+  // An emulated device paints only its viewSize at the view's top-left; the
+  // rest of the slot is blank, so a full capture would be letterboxed.
   const clip = options.clip
     ? clampScreenshotClip(options.clip, entry.view.getBounds(), {
         padding: ELEMENT_SHOT_PADDING,
       })
-    : null;
+    : entry.emulatedViewport
+      ? clampScreenshotClip(
+          { x: 0, y: 0, ...entry.emulatedViewport },
+          entry.view.getBounds(),
+        )
+      : null;
   const image = await captureWithWakeRetry(
     () => (clip ? wc.capturePage(clip) : wc.capturePage()),
     assertCurrentAuthority,
@@ -1337,6 +1353,87 @@ export async function captureBrowserScreenshot(
     url: redactBrowserUrl(wc.getURL() || entry.url),
     title: redactBrowserLabel(wc.getTitle() || entry.title),
     capturedAt,
+  };
+}
+
+const RESPONSIVE_DEVICES: readonly BrowserDeviceKind[] = ['mobile', 'tablet', 'desktop'];
+
+export interface BrowserResponsiveBreakpoint {
+  device: BrowserDeviceKind;
+  audit: BrowserLayoutAudit;
+  screenshot: BrowserScreenshotResult;
+}
+
+/**
+ * `nexus_browser_responsive`: the page already open in the pane, reloaded
+ * once per breakpoint through the same guarded navigation as navigate
+ * (origin, DNS pins, exact-URL lock) with the same device emulation as the
+ * operator's preview toggle, then audited (`layout_audit`) and captured.
+ * The original emulation and page are restored at the end — also on error.
+ */
+export async function analyzeBrowserResponsive(
+  paneId: string,
+  scope: ProjectExecutionScope,
+  options: {
+    devices?: BrowserDeviceKind[];
+    missionId?: string;
+    signal?: AbortSignal;
+    assertCurrentAuthority?: () => void;
+  } = {},
+): Promise<{
+  paneId: string;
+  url: string;
+  breakpoints: BrowserResponsiveBreakpoint[];
+  restored: boolean;
+  restoreError?: string;
+}> {
+  const entry = withEntry(paneId, scope);
+  const url = entry.view.webContents.getURL() || entry.url;
+  if (!url || url === 'about:blank') {
+    throw new Error('browser pane has no page open; navigate first');
+  }
+  const originalWidth = entry.emulatedViewport?.width ?? null;
+  const devices = options.devices?.length
+    ? [...new Set(options.devices)]
+    : RESPONSIVE_DEVICES;
+  const authority = {
+    signal: options.signal,
+    assertCurrentAuthority: options.assertCurrentAuthority,
+  };
+  const breakpoints: BrowserResponsiveBreakpoint[] = [];
+  let restoreError: string | undefined;
+  try {
+    for (const device of devices) {
+      await loadBrowserForEntry(paneId, entry, url, { ...authority, device });
+      const audit = browserLayoutAuditSchema.parse(
+        await runBrowserAutomationForPane(paneId, scope, 'layout_audit', {}),
+      );
+      const screenshot = await captureBrowserScreenshot(
+        paneId,
+        scope,
+        options.missionId,
+        authority,
+      );
+      breakpoints.push({ device, audit, screenshot });
+    }
+  } finally {
+    // Runs even when authority was revoked mid-loop: the pane belongs back
+    // in the operator's state. Same guarded navigation, no confirmation.
+    try {
+      if (!entry.view.webContents.isDestroyed()) {
+        applyBrowserDeviceEmulation(entry, browserKey(scope, paneId), originalWidth);
+        await loadBrowserForEntry(paneId, entry, url);
+      }
+    } catch (error) {
+      restoreError = error instanceof Error ? error.message : String(error);
+    }
+  }
+  return {
+    paneId,
+    url: redactBrowserUrl(url),
+    breakpoints,
+    restored: restoreError === undefined,
+    ...(restoreError ? { restoreError: redactBrowserLabel(restoreError) } : {}),
   };
 }
 
@@ -1508,9 +1605,9 @@ async function inlinePageRead(
   });
 }
 
-// judge() retries once on timeout (jev-client.ts): 4s here meant up to ~8.4s
-// before failing open on this "auto-on, never blocks" read judgment.
-const BROWSER_JUDGE_TIMEOUT_MS = 2_000;
+// Single attempt (retryOnTimeout:false): judge()'s retry after a timeout
+// made this "never blocks" read judgment fail open only after ~8.4s.
+const BROWSER_JUDGE_TIMEOUT_MS = 4_000;
 
 /**
  * §8 Jev page judgment (opt-in): three nouls + a page-kind choice over
@@ -1581,6 +1678,7 @@ async function judgeBrowserPage(
       },
       questions,
       timeoutMs: BROWSER_JUDGE_TIMEOUT_MS,
+      retryOnTimeout: false,
       surface: 'browserTool',
       sessionId: options?.sessionId,
       missionId: options?.missionId,
@@ -2539,23 +2637,20 @@ function withOwnedEntry(
   return entry;
 }
 
-// A pane opened via nexus_browser_open/an agent may land in a tiny or
-// not-yet-laid-out UI slot (F-... "+ Pane": screenshots came back 356x138
-// CSS px, unusable for visual analysis). Below this floor the render is
-// useless regardless of what the operator's own layout looks like, so give
-// agent-owned panes a decent viewport off-window instead — invisible either
-// way, since this exact pane isn't the one the operator is looking at.
-const DEGENERATE_VIEWPORT_PX = 400;
+// A pane opened via nexus_browser_open/an agent may sit hidden (another tab,
+// collapsed/not-yet-laid-out slot): an invisible 0x0 view renders nothing
+// useful for screenshots. Only while the operator can NOT see it, give it a
+// decent viewport off-window. A visible agent pane keeps the operator's real
+// geometry — including the 375px Mobile preset and a narrowed grid.
 const AGENT_VIEWPORT_FLOOR_WIDTH = 1280;
 const AGENT_VIEWPORT_FLOOR_HEIGHT = 800;
 const AGENT_VIEWPORT_OFFSCREEN = 50_000;
 
-export function setBrowserBounds(entry: BrowserEntry, bounds: BrowserPaneBounds): void {
+function setBrowserBounds(entry: BrowserEntry, bounds: BrowserPaneBounds): void {
   entry.lastBounds = bounds;
-  if (
-    entry.agentOwned &&
-    (bounds.width < DEGENERATE_VIEWPORT_PX || bounds.height < DEGENERATE_VIEWPORT_PX)
-  ) {
+  const visible =
+    bounds.visible !== false && bounds.width >= 16 && bounds.height >= 16;
+  if (entry.agentOwned && !visible && entry.parkedAt === undefined) {
     entry.view.setVisible(true);
     entry.view.setBounds({
       x: AGENT_VIEWPORT_OFFSCREEN,
@@ -2565,8 +2660,6 @@ export function setBrowserBounds(entry: BrowserEntry, bounds: BrowserPaneBounds)
     });
     return;
   }
-  const visible =
-    bounds.visible !== false && bounds.width >= 16 && bounds.height >= 16;
   entry.view.setVisible(visible);
   if (!visible) return;
   entry.view.setBounds({

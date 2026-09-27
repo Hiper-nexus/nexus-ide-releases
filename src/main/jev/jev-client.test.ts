@@ -121,6 +121,18 @@ describe('judge', () => {
     }
   });
 
+  it('retryOnTimeout: false fails open after a single timed-out attempt', async () => {
+    const mockFetch = vi.fn(async () => {
+      throw new DOMException('The operation timed out.', 'TimeoutError');
+    });
+    const result = await judge(
+      { state: 'x', questions: { q: question }, timeoutMs: 10, retryOnTimeout: false },
+      { fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k' },
+    );
+    expect(result).toBeNull();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
   it('retry after a network error gets a fresh, non-aborted signal', async () => {
     vi.useFakeTimers();
     try {

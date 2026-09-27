@@ -391,6 +391,8 @@ describe('resolveBrowserExtract', () => {
       url: context.url,
       title: context.title,
     });
+    // One attempt at a 4s ceiling — no timeout retry doubling the budget.
+    expect(request).toMatchObject({ timeoutMs: 4_000, retryOnTimeout: false });
     expect(result.jev.calls).toBe(1);
     expect(result.fields.total).toMatchObject({ value: 100, source: 'jev' });
     expect(result.fields['em estoque']).toMatchObject({

@@ -151,6 +151,31 @@ describe('isolated browser automation', () => {
     ).rejects.toThrow(/refusing/);
   });
 
+  it('hides camelCase OTP/session subtrees from read and refuses fill, but not MediaWiki rootpage', async () => {
+    const dom = new JSDOM(
+      `<!doctype html>
+        <html><body class="skin-vector rootpage-Brasil">
+          <a class="mw-jump-link" href="#conteudo">Ir para o conteúdo</a>
+          <div class="ssoOtp"><span>otp-value-424242</span></div>
+          <div id="expressSession">session-value-abcdef</div>
+          <input id="ssoOtpInput" type="text">
+        </body></html>`,
+      { url: 'https://example.test/', pretendToBeVisual: true },
+    );
+    const automation = createBrowserAutomation(dom.window as unknown as BrowserDomWindow);
+    const read = (await automation.run('read', {})) as {
+      bodyText: string;
+      elements: Array<{ ref: string; name: string; inputType?: string }>;
+    };
+    expect(read.bodyText).toContain('Ir para o conteúdo');
+    expect(read.bodyText).not.toContain('otp-value-424242');
+    expect(read.bodyText).not.toContain('session-value-abcdef');
+    const input = read.elements.find((element) => element.inputType === 'text');
+    await expect(automation.run('fill', { ref: input!.ref, text: '123456' })).rejects.toThrow(
+      /refusing/,
+    );
+  });
+
   it('waits for visible text and enforces output bounds', async () => {
     const { dom, automation } = fixture();
     dom.window.setTimeout(() => {
@@ -402,6 +427,9 @@ describe('isolated browser automation', () => {
         <table>
           <tr><th><div>•<span> </span>Presidente</div></th><td>Lula da Silva</td></tr>
           <tr><th><div>•<span> </span>Vice-presidente</div></th><td>Geraldo Alckmin</td></tr>
+          <tr><th>
+            •&nbsp;Governador
+          </th><td>Fulano</td></tr>
         </table>
       </body>`,
       { url: 'https://example.test/', pretendToBeVisual: true },
@@ -414,16 +442,21 @@ describe('isolated browser automation', () => {
     expect(
       result.pairs.some((p) => p.label === 'Vice-presidente' && p.value === 'Geraldo Alckmin'),
     ).toBe(true);
+    // Indented markup: whitespace before the bullet must not keep it.
+    expect(result.pairs.some((p) => p.label === 'Governador' && p.value === 'Fulano')).toBe(true);
   });
 
-  it('stops a table-row value at the first <br>, not the whole cell text', async () => {
+  it('keeps multi-line <br> values whole and offers the first line as an extra candidate', async () => {
     // pt.wikipedia.org/wiki/Brasil infobox "Capital" cell: name, then <br>,
     // then unrelated geocoordinate markup glued on by .textContent.
     const dom = new JSDOM(
       `<!doctype html><body>
         <table>
           <tr><th>Capital</th><td><a href="/wiki/Brasília">Brasília</a><br><span>15° 47' S 47° 52' O</span></td></tr>
+          <tr><th>Endereço</th><td>Rua das Flores<br>São Paulo, SP</td></tr>
+          <tr><th>Sede</th><td><br>Recife</td></tr>
         </table>
+        <dl><dt>Entrega</dt><dd>Av. Paulista, 1000<br>Bela Vista</dd></dl>
       </body>`,
       { url: 'https://example.test/', pretendToBeVisual: true },
     );
@@ -431,8 +464,12 @@ describe('isolated browser automation', () => {
     const result = (await automation.run('extract_candidates', {})) as {
       pairs: Array<{ label: string; value: string }>;
     };
-    const capital = result.pairs.find((p) => p.label === 'Capital');
-    expect(capital?.value).toBe('Brasília');
+    const valuesOf = (label: string): string[] =>
+      result.pairs.filter((p) => p.label === label).map((p) => p.value);
+    expect(valuesOf('Capital')).toEqual(["Brasília / 15° 47' S 47° 52' O", 'Brasília']);
+    expect(valuesOf('Endereço')).toEqual(['Rua das Flores / São Paulo, SP', 'Rua das Flores']);
+    expect(valuesOf('Sede')).toEqual(['Recife']);
+    expect(valuesOf('Entrega')).toEqual(['Av. Paulista, 1000 / Bela Vista', 'Av. Paulista, 1000']);
   });
 
   it('tokenizes space/nbsp-grouped pt-BR thousands as number candidates', async () => {
@@ -452,5 +489,81 @@ describe('isolated browser automation', () => {
     const numbers = result.tokens.filter((t) => t.kind === 'number').map((t) => t.text);
     expect(numbers.some((t) => t.replace(/\s| /g, '') === '213421037')).toBe(true);
     expect(numbers.some((t) => t.replace(/\s| /g, '') === '8510417,771')).toBe(true);
+  });
+});
+
+describe('layout_audit (responsividade)', () => {
+  type Rect = { left: number; right: number; width: number; height: number };
+  function withGeometry(
+    dom: JSDOM,
+    layout: Record<string, Rect & { scrollWidth?: number; clientWidth?: number; scrollHeight?: number; clientHeight?: number }>,
+    page: { clientWidth: number; scrollWidth: number },
+  ): void {
+    const doc = dom.window.document;
+    Object.defineProperty(doc.documentElement, 'clientWidth', { value: page.clientWidth });
+    Object.defineProperty(doc.documentElement, 'scrollWidth', { value: page.scrollWidth });
+    for (const [id, geometry] of Object.entries(layout)) {
+      const element = doc.getElementById(id)!;
+      element.getBoundingClientRect = () =>
+        ({ ...geometry, top: 0, bottom: geometry.height, x: geometry.left, y: 0 }) as DOMRect;
+      for (const key of ['scrollWidth', 'clientWidth', 'scrollHeight', 'clientHeight'] as const) {
+        if (geometry[key] !== undefined) Object.defineProperty(element, key, { value: geometry[key] });
+      }
+    }
+  }
+
+  it('reports sideways scroll, the outermost straddling element and overflow-hidden cuts', async () => {
+    const dom = new JSDOM(
+      `<!doctype html><body>
+        <div id="hero"><img id="banner" alt="Banner largo"></div>
+        <nav id="drawer">Menu fora da tela</nav>
+        <div id="card" style="overflow-x: hidden; overflow-y: hidden">Texto longo cortado</div>
+        <div id="ssoOtp" style="overflow-x: clip; overflow-y: clip">123456</div>
+      </body>`,
+      { url: 'https://example.test/', pretendToBeVisual: true },
+    );
+    withGeometry(
+      dom,
+      {
+        hero: { left: 0, right: 390, width: 390, height: 200 },
+        banner: { left: 0, right: 520, width: 520, height: 200 },
+        drawer: { left: 400, right: 700, width: 300, height: 800 },
+        card: { left: 0, right: 200, width: 200, height: 40, scrollWidth: 200, clientWidth: 200, scrollHeight: 90, clientHeight: 40 },
+        ssoOtp: { left: 0, right: 100, width: 100, height: 20, scrollWidth: 160, clientWidth: 100, scrollHeight: 20, clientHeight: 20 },
+      },
+      { clientWidth: 390, scrollWidth: 520 },
+    );
+    const automation = createBrowserAutomation(dom.window as unknown as BrowserDomWindow);
+    const audit = (await automation.run('layout_audit', {})) as {
+      layoutWidth: number;
+      scrollWidth: number;
+      horizontalOverflow: boolean;
+      overflowing: Array<{ tag: string; name: string; overflowPx: number }>;
+      clipped: Array<{ name: string; hiddenX: number; hiddenY: number }>;
+    };
+    expect(audit).toMatchObject({ layoutWidth: 390, scrollWidth: 520, horizontalOverflow: true });
+    // Only the banner (not its in-bounds parent, not the fully off-canvas drawer).
+    expect(audit.overflowing).toHaveLength(1);
+    expect(audit.overflowing[0]).toMatchObject({ tag: 'img', name: 'Banner largo', overflowPx: 130 });
+    expect(audit.clipped).toHaveLength(2);
+    expect(audit.clipped[0]).toMatchObject({ name: 'Texto longo cortado', hiddenX: 0, hiddenY: 50 });
+    // Sensitive boxes are reported by geometry only — never their text.
+    expect(audit.clipped[1]).toMatchObject({ name: '[sensitive field hidden]', hiddenX: 60 });
+    expect(JSON.stringify(audit)).not.toContain('123456');
+  });
+
+  it('a page that fits reports no overflow', async () => {
+    const dom = new JSDOM(`<!doctype html><body><p id="p">ok</p></body>`, {
+      url: 'https://example.test/',
+      pretendToBeVisual: true,
+    });
+    withGeometry(dom, { p: { left: 0, right: 300, width: 300, height: 20 } }, { clientWidth: 390, scrollWidth: 390 });
+    const automation = createBrowserAutomation(dom.window as unknown as BrowserDomWindow);
+    expect(await automation.run('layout_audit', {})).toMatchObject({
+      horizontalOverflow: false,
+      overflowing: [],
+      clipped: [],
+      truncated: false,
+    });
   });
 });

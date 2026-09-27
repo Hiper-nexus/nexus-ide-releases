@@ -59,12 +59,24 @@ export const LEAN_CODE_REMINDER =
  * com sessão e cookies.
  */
 const BROWSER_REQUEST_PATTERN =
-  /\bextra(ir|ia|indo|[cç][aã]o)\b|\bscrape\b|\bscreenshot\b|\bcaptur(a|e|ar)\s+(a\s+|de\s+)?tela\b|\bresponsiv(idade|o|a|eness)\b|\banalis(e|ar)\s+.{0,20}\b(p[aá]gina|site|url)\b|\bp[aá]gina[s]?\s+web\b/i;
+  /\bscrape\b|\bscreenshot\b|\bcaptur(a|e|ar)\s+(a\s+|de\s+)?tela\b|\bresponsiv(idade|o|a|eness)\b|\banalis(e|ar)\s+.{0,20}\b(p[aá]gina|site|url)\b|\bp[aá]gina[s]?\s+web\b/i;
+
+// "extrair" sozinho também é zip/método/refactor: só conta com contexto web.
+const BROWSER_EXTRACT_PATTERN = /\bextra(ir|ia|indo|[cç][aã]o)\b/i;
+const WEB_CONTEXT_PATTERN = /https?:\/\/|\bp[aá]gina|\bsite\b|\burl\b|\bweb\b/i;
+
+function isBrowserRequest(prompt: string): boolean {
+  return (
+    BROWSER_REQUEST_PATTERN.test(prompt) ||
+    (BROWSER_EXTRACT_PATTERN.test(prompt) && WEB_CONTEXT_PATTERN.test(prompt))
+  );
+}
 
 export const BROWSER_TOOL_HINT =
   '[Nexus · Jev] Para analisar páginas, extrair dados ou testar responsividade, ' +
   'use nexus_browser_* (o navegador do Nexus já está aberto, com sessão) — não ' +
-  'WebFetch, Playwright ou Firecrawl para uma URL que será aberta agora.';
+  'WebFetch, Playwright ou Firecrawl para uma URL que será aberta agora. ' +
+  'Responsividade num só chamado: nexus_browser_responsive.';
 
 const leanRemindedAt = new Map<string, number>();
 const designRemindedAt = new Map<string, number>();
@@ -167,7 +179,7 @@ export async function handleHookDelegateRequest(
     }
     if (advice?.delegation) parts.push(formatDelegationContext(advice.delegation));
     if (
-      BROWSER_REQUEST_PATTERN.test(prompt) &&
+      isBrowserRequest(prompt) &&
       ctx.sessionId &&
       !remindedRecently(browserHintDeliveredAt, ctx.sessionId, now)
     ) {
