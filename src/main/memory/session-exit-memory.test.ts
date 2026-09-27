@@ -42,6 +42,7 @@ function handoff(
     sessionId,
     status,
     summary,
+    evidenceTrust: 'nexus-trusted',
   } as never;
 }
 
@@ -176,7 +177,7 @@ describe('session-exit memory distillation', () => {
     const store = getWorkspaceMemoryStore(scope);
     const first = store.retain({
       content:
-        '# Session digest\n\nSession digest:\nMission: mission-9\nReference: pty-session-0\nSummary: Older digest of the same mission.',
+        '# Session digest\n\nSession digest:\nMission: mission-9\nReference: pty-session-0\nSummary: Auth token refresh fixed.',
       kind: 'fact',
       scope: 'workspace',
       source: 'trusted:session-digest',
@@ -188,21 +189,68 @@ describe('session-exit memory distillation', () => {
       },
       {
         getStores: () =>
-          stores([handoff('h-1', 'Fresh digest replacing the older mission line.')]),
+          stores([handoff('h-1', 'Windows paths normalized in the git adapter.')]),
         distill: approve,
       },
     );
     expect(outcome).toMatchObject({ retained: true, supersededId: first.id });
-    const hits = store.recall({
-      query: 'digest mission older fresh replacing',
-      includeGlobal: false,
-      trustedOnly: true,
-    });
-    expect(hits.map((hit) => hit.id)).not.toContain(first.id);
     expect(
-      hits.some((hit) =>
-        hit.content.includes('replacing the older mission line'),
+      store.recall({ query: 'auth token refresh', includeGlobal: false, trustedOnly: true }),
+    ).toEqual([]);
+    expect(
+      store.recall({ query: 'windows paths git adapter', includeGlobal: false, trustedOnly: true }),
+    ).toHaveLength(1);
+  });
+
+  it('holds the daily cap under concurrent exits', async () => {
+    const store = getWorkspaceMemoryStore(scope);
+    for (let i = 0; i < 9; i++) {
+      store.retain({
+        content: `# Session digest\n\ncap filler ${i}`,
+        kind: 'fact',
+        scope: 'workspace',
+        source: 'trusted:session-digest',
+      });
+    }
+    const outcomes = await Promise.all(
+      ['alpha parser', 'beta router', 'gamma cache'].map((topic, index) =>
+        distillSessionExitMemory(
+          { sessionId: `pty-session-${index}`, agent: agent({ scope }) },
+          {
+            getStores: () =>
+              stores([handoff(`h-${index}`, `Shipped the ${topic} rewrite.`, `pty-session-${index}`)]),
+            distill: approve,
+          },
+        ),
       ),
-    ).toBe(true);
+    );
+    expect(outcomes.filter((outcome) => outcome.retained)).toHaveLength(1);
+    expect(store.stats().workspace.total).toBe(10);
+  });
+
+  it('counts superseded digests against the daily cap', async () => {
+    const store = getWorkspaceMemoryStore(scope);
+    let previous = store.retain({
+      content: '# Session digest\n\nSession digest:\nMission: mission-7\nSummary: first',
+      kind: 'fact',
+      scope: 'workspace',
+      source: 'trusted:session-digest',
+    });
+    for (let i = 1; i < 10; i++) {
+      previous = store.retain({
+        content: `# Session digest\n\nSession digest:\nMission: mission-7\nSummary: take ${i}`,
+        kind: 'fact',
+        scope: 'workspace',
+        source: 'trusted:session-digest',
+        supersedes: previous.id,
+      });
+    }
+    const distill = vi.fn<typeof distillHandoffSummary>();
+    const outcome = await distillSessionExitMemory(
+      { sessionId: 'pty-session-1', agent: agent({ scope, missionId: 'mission-7' }) },
+      { getStores: () => stores([handoff('h-1', 'Eleventh write of the day.')]), distill },
+    );
+    expect(outcome).toMatchObject({ retained: false, reason: 'daily-cap' });
+    expect(distill).not.toHaveBeenCalled();
   });
 });

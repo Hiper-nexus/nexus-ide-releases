@@ -1084,20 +1084,73 @@ export class WorkspaceMemoryStore {
   }
 
   /**
-   * Linhas ativas do workspace de uma fonte criadas desde um instante —
-   * usado pelo teto diário de gravações automáticas (session digest).
+   * Linhas do workspace de uma fonte criadas desde um instante, inclusive as
+   * já substituídas — o teto diário de gravações automáticas (session digest)
+   * conta gravações, não linhas vivas.
    */
-  countActiveSince(source: string, sinceMs: number): number {
+  countCreatedSince(source: string, sinceMs: number): number {
     this.#assertOpen();
     const row = this.#workspaceDb
       .prepare(
         `SELECT COUNT(*) AS n
          FROM memories
-         WHERE scope = 'workspace' AND source = ?
-           AND created_at >= ? AND superseded_by IS NULL`,
+         WHERE scope = 'workspace' AND source = ? AND created_at >= ?`,
       )
       .get(source, sinceMs) as { n: number };
     return row.n;
+  }
+
+  /**
+   * Linha ativa mais recente do workspace de uma fonte que tem `line` como
+   * linha inteira (ex.: `Mission: m-1`) — identidade estruturada, sem FTS.
+   */
+  latestActiveWithLine(source: string, line: string): string | null {
+    this.#assertOpen();
+    const row = this.#workspaceDb
+      .prepare(
+        `SELECT id FROM memories
+         WHERE scope = 'workspace' AND source = ? AND superseded_by IS NULL
+           AND instr(char(10) || content || char(10), char(10) || ? || char(10)) > 0
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1`,
+      )
+      .get(source, line) as { id: string } | undefined;
+    return row?.id ?? null;
+  }
+
+  /**
+   * Memórias trusted ativas do workspace por importância e recência, sem
+   * consulta textual: o contexto de quem ainda não tem prompt (instructions
+   * do MCP do "+ Pane").
+   */
+  topTrustedWorkspace(limit: number): MemoryRecallHit[] {
+    this.#assertOpen();
+    const rows = this.#workspaceDb
+      .prepare(
+        `SELECT id, content, kind, scope, importance, source,
+                created_at, updated_at, recall_count, 0 AS rank
+         FROM memories
+         WHERE scope = 'workspace' AND superseded_by IS NULL
+           AND source LIKE 'trusted:%'
+         ORDER BY importance DESC, updated_at DESC, id ASC
+         LIMIT ?`,
+      )
+      .all(Math.max(0, Math.min(limit, 32)))
+      .map((raw) => memoryRowSchema.parse(raw));
+    return rows.map((row) =>
+      Object.freeze({
+        id: row.id,
+        content: row.content,
+        kind: row.kind,
+        scope: row.scope,
+        importance: row.importance,
+        source: row.source,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        recallCount: row.recall_count,
+        score: row.importance,
+      }),
+    );
   }
 
   /**

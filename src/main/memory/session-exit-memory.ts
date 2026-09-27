@@ -1,7 +1,9 @@
 /**
  * Destilação de memória no fim de sessão de pane (fatia 2 da memória Jev).
  * Quando um pane de CLI termina, os resumos dos handoffs de sucesso daquela
- * sessão viram UMA linha trusted `session-digest` — se o Jev aprovar.
+ * sessão com evidência verificada pelo Main (`evidenceTrust: nexus-trusted`)
+ * viram UMA linha trusted `session-digest` — se o Jev aprovar. Declaração do
+ * agente sem evidência nunca vira memória trusted.
  *
  * Ordens de custo: sessão trivial (sem handoff com resumo), teto diário
  * atingido e duplicata contra o top-3 do FTS5 pulam com ZERO chamadas ao
@@ -35,6 +37,7 @@ export interface SessionDigestOutcome {
     | 'flag-off'
     | 'store-unavailable'
     | 'trivial'
+    | 'unverified'
     | 'daily-cap'
     | 'dedupe'
     | 'jev-skip'
@@ -48,12 +51,17 @@ interface SessionHandoffRow {
   readonly sessionId?: string;
   readonly status: string;
   readonly summary?: string | null;
+  readonly evidenceTrust?: string;
+}
+
+interface SessionHandoffSource {
+  list(filter: { sessionIds: string[]; includeDelivered: true }): SessionHandoffRow[];
 }
 
 export interface SessionExitMemoryDeps {
   readonly getStores?: (
     scope: ProjectExecutionScope,
-  ) => { handoffs: { list(): SessionHandoffRow[] } };
+  ) => { handoffs: SessionHandoffSource };
   readonly distill?: typeof distillHandoffSummary;
   readonly now?: () => number;
 }
@@ -63,6 +71,9 @@ function startOfDay(now: number): number {
   date.setHours(0, 0, 0, 0);
   return date.getTime();
 }
+
+/** Digests aguardando o Jev, por banco de workspace (reserva do teto diário). */
+const pendingDigests = new WeakMap<object, number>();
 
 /** Query FTS: as primeiras palavras do digest bastam para achar duplicatas. */
 function digestQuery(digest: string): string {
@@ -89,80 +100,89 @@ export async function distillSessionExitMemory(
     const getStores =
       deps.getStores ??
       ((target: ProjectExecutionScope) =>
-        getProjectDomainStores(target) as unknown as {
-          handoffs: { list(): SessionHandoffRow[] };
-        });
-    handoffs = getStores(scope).handoffs.list();
+        getProjectDomainStores(target));
+    // Entregue ou não: o helper que concluiu já teve o handoff marcado como
+    // submetido antes do auto-close.
+    handoffs = getStores(scope).handoffs.list({
+      sessionIds: [input.sessionId],
+      includeDelivered: true,
+    });
   } catch {
     return { retained: false, reason: 'store-unavailable' };
   }
 
-  const summaries = handoffs
-    .filter(
-      (handoff) =>
-        handoff.sessionId === input.sessionId &&
-        handoff.status === 'success' &&
-        typeof handoff.summary === 'string' &&
-        handoff.summary.trim(),
-    )
+  const delivered = handoffs.filter(
+    (handoff) =>
+      handoff.sessionId === input.sessionId &&
+      handoff.status === 'success' &&
+      typeof handoff.summary === 'string' &&
+      handoff.summary.trim(),
+  );
+  if (delivered.length === 0) return { retained: false, reason: 'trivial' };
+  const summaries = delivered
+    .filter((handoff) => handoff.evidenceTrust === 'nexus-trusted')
     .slice(0, DIGEST_MAX_HANDOFFS)
     .map((handoff) => handoff.summary!.trim());
-  if (summaries.length === 0) return { retained: false, reason: 'trivial' };
+  if (summaries.length === 0) return { retained: false, reason: 'unverified' };
 
   const digest = normalizeDistilledSummary(summaries.join(' | '));
   if (!digest) return { retained: false, reason: 'trivial' };
 
   const store = getWorkspaceMemoryStore(scope);
   const now = deps.now ?? Date.now;
+  // A vaga é reservada antes da chamada ao Jev: saídas simultâneas não
+  // passam todas pelo mesmo "9 de 10".
+  const pending = pendingDigests.get(store) ?? 0;
   if (
-    store.countActiveSince(
-      SESSION_DIGEST_SOURCE,
-      startOfDay(now()),
-    ) >= DAILY_SESSION_DIGEST_CAP
+    store.countCreatedSince(SESSION_DIGEST_SOURCE, startOfDay(now())) + pending >=
+    DAILY_SESSION_DIGEST_CAP
   ) {
     return { retained: false, reason: 'daily-cap' };
   }
+  pendingDigests.set(store, pending + 1);
+  try {
+    // Dedupe contra o top-3 do FTS5 do próprio workspace.
+    const hits = store.recall({
+      query: digestQuery(digest),
+      limit: 3,
+      includeGlobal: false,
+      trustedOnly: true,
+    });
+    if (hits.some((hit) => hit.content.includes(digest))) {
+      return { retained: false, reason: 'dedupe' };
+    }
 
-  // Dedupe/supersede contra o top-3 do FTS5 do próprio workspace.
-  const hits = store.recall({
-    query: digestQuery(digest),
-    limit: 3,
-    includeGlobal: false,
-    trustedOnly: true,
-  });
-  if (hits.some((hit) => hit.content.includes(digest))) {
-    return { retained: false, reason: 'dedupe' };
+    const distill = deps.distill ?? distillHandoffSummary;
+    const approved = await distill({ summary: digest });
+    if (!approved) return { retained: false, reason: 'jev-skip' };
+
+    // O digest anterior da missão é achado pela identidade, não por palavras.
+    const missionId = input.agent?.missionId;
+    const stale = missionId
+      ? store.latestActiveWithLine(SESSION_DIGEST_SOURCE, `Mission: ${missionId}`)
+      : null;
+    const result = retainTrustedMemoryBestEffort(
+      scope,
+      {
+        type: 'session-digest',
+        title: 'Session digest',
+        summary: digest,
+        ...(missionId ? { missionId } : {}),
+        reference: input.sessionId,
+      },
+      stale ? { supersedes: stale } : {},
+    );
+    if (!result) return { retained: false, reason: 'store-unavailable' };
+    return {
+      retained: true,
+      reason: 'ok',
+      ...(stale ? { supersededId: stale } : {}),
+    };
+  } finally {
+    const left = (pendingDigests.get(store) ?? 1) - 1;
+    if (left > 0) pendingDigests.set(store, left);
+    else pendingDigests.delete(store);
   }
-  const missionId = input.agent?.missionId;
-  const stale = missionId
-    ? hits.find(
-        (hit) =>
-          hit.source === SESSION_DIGEST_SOURCE &&
-          hit.content.includes(`Mission: ${missionId}`),
-      )
-    : undefined;
-
-  const distill = deps.distill ?? distillHandoffSummary;
-  const approved = await distill({ summary: digest });
-  if (!approved) return { retained: false, reason: 'jev-skip' };
-
-  const result = retainTrustedMemoryBestEffort(
-    scope,
-    {
-      type: 'session-digest',
-      title: 'Session digest',
-      summary: digest,
-      ...(missionId ? { missionId } : {}),
-      reference: input.sessionId,
-    },
-    stale ? { supersedes: stale.id } : {},
-  );
-  if (!result) return { retained: false, reason: 'store-unavailable' };
-  return {
-    retained: true,
-    reason: 'ok',
-    ...(stale ? { supersededId: stale.id } : {}),
-  };
 }
 
 let ensureDisposer: (() => void) | null = null;
