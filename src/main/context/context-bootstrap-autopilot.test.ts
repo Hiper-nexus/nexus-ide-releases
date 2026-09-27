@@ -827,4 +827,53 @@ describe('runContextBootstrapAutopilot', () => {
     expect(result.autopilotHint).toMatch(/observed/i);
     expect(result.autopilotHint).toMatch(/review/i);
   });
+
+  it('aplica o modelo de negócio extraído, entrega o draft ao commit e não propõe o esqueleto antigo no mesmo alvo', async () => {
+    const extracted: BootstrapDocProposal = Object.freeze({
+      targetPath: '.context/docs/business-model.md',
+      content: '# Modelo de negócio\n\n- **close_commanda#1** regra\n',
+      sources: Object.freeze([
+        Object.freeze({ type: 'file' as const, locator: 'supabase/migrations/1.sql', sourceHash: 'e'.repeat(64) }),
+      ]),
+      rationale: 'extraído',
+    });
+    const extraction = {
+      fingerprint: 'f',
+      document: { schemaVersion: 1 as const, flows: [], invariants: [] },
+      proposal: extracted,
+    };
+    const businessDraft = Object.freeze({
+      ...draft('bm-1', 'proposed'),
+      targetPath: extracted.targetPath,
+      content: extracted.content,
+      sources: extracted.sources,
+    });
+    mocks.proposals = [
+      {
+        targetPath: '.context/docs/business-model.md',
+        content: '# Business model\n\n> Auto-proposed skeleton\n- TODO\n',
+        sources: [{ type: 'file', locator: 'package.json', sourceHash: 'b'.repeat(64) }],
+        rationale: 'skeleton',
+      },
+    ];
+    mocks.propose.mockReturnValue(businessDraft);
+    mocks.readDraft.mockReturnValue(businessDraft);
+    mocks.review.mockReturnValue({ ...businessDraft, status: 'approved' });
+    mocks.apply.mockReturnValue({ draft: { ...businessDraft, status: 'applied' } });
+
+    const result = await runContextBootstrapAutopilot({
+      scope,
+      author,
+      autoCommit: false,
+      createReviewer: () => ({ run: mocks.reviewerRun }),
+      businessModel: { extract: () => extraction },
+    });
+
+    expect(result.businessModel?.status).toBe('applied');
+    expect(result.appliedDraftIds).toEqual(['bm-1']);
+    expect(mocks.propose).toHaveBeenCalledTimes(1);
+    expect(mocks.propose.mock.calls[0]![0]).toMatchObject({ content: extracted.content });
+    expect(result.bootstrapProposals.map((item) => item.targetPath))
+      .not.toContain('.context/docs/business-model.md');
+  });
 });
