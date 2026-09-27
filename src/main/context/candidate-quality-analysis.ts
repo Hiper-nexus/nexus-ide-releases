@@ -60,6 +60,9 @@ const GRAPH_LIMITS: OrientationLimits = Object.freeze({
   buildBudgetMs: 5_000,
   markdownMaxChars: 8_000,
   maxHubs: 24,
+  maxPersistedGraphNodes: 200,
+  maxPersistedGraphBytes: 512 * 1024,
+  maxDbEntities: 200,
 });
 
 export interface CandidateQualityLineRange {

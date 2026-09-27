@@ -10,6 +10,12 @@ export interface OrientationLimits {
   readonly buildBudgetMs: number;
   readonly markdownMaxChars: number;
   readonly maxHubs: number;
+  /** Cap on graph nodes persisted to the on-disk adjacency (both import and db nodes). */
+  readonly maxPersistedGraphNodes: number;
+  /** Byte-size ceiling for the persisted adjacency+reverse records combined. */
+  readonly maxPersistedGraphBytes: number;
+  /** Cap on distinct schema entities (tables/functions) surfaced on the map. */
+  readonly maxDbEntities: number;
 }
 
 export const DEFAULT_ORIENTATION_LIMITS: OrientationLimits = Object.freeze({
@@ -20,6 +26,9 @@ export const DEFAULT_ORIENTATION_LIMITS: OrientationLimits = Object.freeze({
   buildBudgetMs: 30_000,
   markdownMaxChars: 12_000,
   maxHubs: 24,
+  maxPersistedGraphNodes: 800,
+  maxPersistedGraphBytes: 512 * 1024,
+  maxDbEntities: 200,
 });
 
 export interface OrientationLanguageStat {
@@ -68,16 +77,39 @@ export interface OrientationGraphSummary {
   readonly sampleEdges: readonly {
     readonly from: string;
     readonly to: string;
-    readonly relation: 'imports' | 'calls';
+    readonly relation: 'imports' | 'calls' | 'reads' | 'writes';
   }[];
   readonly enricher: 'none' | 'graphify';
   /**
-   * Compact adjacency for blast-radius (capped). Paths are repo-relative.
-   * Absent when mode is none or graph was not built.
+   * Compact adjacency for blast-radius (capped). Paths are repo-relative, but
+   * a node may also be a db entity id (see OrientationDbEntity.nodeId) when
+   * schema↔code edges were detected.
    */
   readonly adjacency?: Readonly<Record<string, readonly string[]>>;
   readonly reverse?: Readonly<Record<string, readonly string[]>>;
   readonly warning?: string;
+  /** Schema entities (tables/functions) detected across migrations/ORM sources. */
+  readonly dbEntities?: readonly OrientationDbEntity[];
+  /** Count of reads/writes/calls edges contributed by the db-usage extractor. */
+  readonly dbEdgeCount?: number;
+}
+
+export type OrientationDbEntityKind = 'table' | 'function';
+
+/**
+ * A schema node (table or function) discovered from migrations/.prisma/drizzle
+ * sources. `nodeId` is the stable graph node id (see dbNodeId in
+ * orientation-schema.ts) usable as a seedFile/adjacency key for blast radius.
+ */
+export interface OrientationDbEntity {
+  readonly nodeId: string;
+  readonly kind: OrientationDbEntityKind;
+  /** Bare name, e.g. "comandas". */
+  readonly name: string;
+  /** schema.name, e.g. "public.comandas". */
+  readonly qualifiedName: string;
+  readonly definedIn: readonly string[];
+  readonly rlsEnabled?: boolean;
 }
 
 export interface OrientationDocsPresence {
@@ -214,6 +246,7 @@ export const SOURCE_EXTENSIONS = Object.freeze(
     '.sql',
     '.graphql',
     '.gql',
+    '.prisma',
   ]),
 );
 
@@ -242,6 +275,7 @@ export const LANGUAGE_BY_EXT: Readonly<Record<string, string>> = Object.freeze({
   '.sql': 'sql',
   '.graphql': 'graphql',
   '.gql': 'graphql',
+  '.prisma': 'prisma',
 });
 
 export const ROOT_DOCS = Object.freeze([

@@ -23,8 +23,51 @@ export interface BlastRadiusResult {
   readonly symbols: readonly string[];
   readonly domains: readonly string[];
   readonly hubs: readonly string[];
+  /**
+   * Test files reached within the radius (by import edges, db-table/function
+   * edges, or same-basename convention against the persisted graph's known
+   * nodes). Subset of `files` — a portao-regressao consumer can require these
+   * to be green before allowing a merge.
+   */
+  readonly tests: readonly string[];
   readonly mapHash: string | null;
   readonly source: 'orientation' | 'empty';
+}
+
+// Mirrors candidate-quality-analysis.ts's TEST_FILE_RE convention.
+const TEST_FILE_PATTERN = /(?:^|\/)(?:__tests__\/|[^/]+\.(?:test|spec)\.[^/]+$)/iu;
+
+function fileStem(relativePath: string): string {
+  return path.posix.basename(relativePath).replace(/\.[^.]+$/u, '');
+}
+
+/**
+ * Beyond the BFS-reached files, pull in same-basename test files from the
+ * persisted graph's known node universe even when nothing imports them
+ * (black-box tests that only exercise the module by convention).
+ */
+function stemMatchedTests(
+  files: readonly string[],
+  map: ProjectOrientationMap,
+): string[] {
+  const fileSet = new Set(files);
+  const nonTestStems = new Set(
+    files
+      .filter((f) => !f.startsWith('db:') && !TEST_FILE_PATTERN.test(f))
+      .map((f) => fileStem(f)),
+  );
+  if (nonTestStems.size === 0) return [];
+  const knownNodes = new Set<string>([
+    ...Object.keys(map.graph.adjacency ?? {}),
+    ...Object.keys(map.graph.reverse ?? {}),
+  ]);
+  const extra: string[] = [];
+  for (const node of knownNodes) {
+    if (fileSet.has(node) || node.startsWith('db:') || !TEST_FILE_PATTERN.test(node)) continue;
+    const stem = fileStem(node).replace(/\.(?:test|spec)$/i, '');
+    if (nonTestStems.has(stem)) extra.push(node);
+  }
+  return extra;
 }
 
 function domainsFromFiles(files: readonly string[]): string[] {
@@ -91,6 +134,23 @@ export function computeBlastRadius(
     }
   }
 
+  // Seed from db entities (tables/functions) separately from symbol hubs:
+  // schemas can have far more tables than the maxHubs cap allows, so they get
+  // their own uncapped registry (see OrientationGraphSummary.dbEntities).
+  const dbEntities = map.graph.dbEntities ?? [];
+  const goalLower = goal.toLowerCase();
+  for (const entity of dbEntities) {
+    const nameLower = entity.name.toLowerCase();
+    if (goalLower && goalLower.includes(nameLower) && nameLower.length > 2) {
+      seedFiles.add(entity.nodeId);
+    }
+    for (const symbol of input.seedSymbols ?? []) {
+      if (symbol.toLowerCase() === nameLower || symbol.toLowerCase() === entity.qualifiedName.toLowerCase()) {
+        seedFiles.add(entity.nodeId);
+      }
+    }
+  }
+
   // If graph has edges, expand; else use seeds + top hubs as weak radius.
   const hasGraph =
     map.graph.edgeCount > 0 &&
@@ -141,11 +201,17 @@ export function computeBlastRadius(
     .map((h) => h.name)
     .slice(0, 24);
 
+  const tests = [...new Set([
+    ...files.filter((f) => TEST_FILE_PATTERN.test(f)),
+    ...stemMatchedTests(files, map),
+  ])].sort((a, b) => a.localeCompare(b));
+
   return Object.freeze({
     files: Object.freeze(files),
     symbols: Object.freeze(symbolsFromMap(map, files, input.seedSymbols ?? [])),
     domains: Object.freeze(domainsFromFiles(files)),
     hubs: Object.freeze(hubs),
+    tests: Object.freeze(tests),
     mapHash: map.mapHash,
     source: 'orientation' as const,
   });
@@ -164,6 +230,7 @@ export async function ensureBlastRadius(
       symbols: Object.freeze([...(input.seedSymbols ?? [])]),
       domains: Object.freeze([]),
       hubs: Object.freeze([]),
+      tests: Object.freeze([]),
       mapHash: null,
       source: 'empty' as const,
     });

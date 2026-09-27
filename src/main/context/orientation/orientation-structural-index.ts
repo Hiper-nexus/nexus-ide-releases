@@ -12,10 +12,29 @@ import {
   type OrientationImportFileFact,
 } from './orientation-import-graph';
 import {
+  extractSqlDbUsageEdges,
+  extractTsDbUsageEdges,
+  type DbUsageEdge,
+} from './orientation-db-usage';
+import {
+  buildDbGraphFromFiles,
+  type DbGraphBuildResult,
+  type DbGraphInputFile,
+} from './orientation-db-graph';
+import type { TsconfigAliasMap } from './orientation-tsconfig';
+import {
   filterOrientationChangedPaths,
   filterOrientationChangedPathsAsync,
   normalizeOrientationChangedPath,
 } from './orientation-path-policy';
+import {
+  extractSchemaEntitiesFromDrizzle,
+  extractSchemaEntitiesFromPrisma,
+  extractSchemaEntitiesFromSql,
+  isPrismaSchemaPath,
+  isSchemaSqlPath,
+  type SchemaEntityFact,
+} from './orientation-schema';
 import {
   buildOrientationSymbolsFromFacts,
   buildOrientationSymbolsFromFactsAsync,
@@ -53,6 +72,10 @@ export interface OrientationStructuralFile {
   readonly isContentIndexed: boolean;
   readonly declarations: readonly string[];
   readonly importSpecifiers: readonly string[];
+  /** Schema entities (tables/functions) detected in this file, if any. */
+  readonly dbSchemaFacts: readonly SchemaEntityFact[];
+  /** Code↔schema usage edges detected in this file, if any. */
+  readonly dbUsageEdges: readonly DbUsageEdge[];
 }
 
 export interface OrientationStructuralIndex {
@@ -79,7 +102,36 @@ function freezeFile(
     ...file,
     declarations: Object.freeze([...file.declarations]),
     importSpecifiers: Object.freeze([...file.importSpecifiers]),
+    dbSchemaFacts: Object.freeze([...file.dbSchemaFacts]),
+    dbUsageEdges: Object.freeze([...file.dbUsageEdges]),
   });
+}
+
+/** Extract schema/usage db facts for one already-read source file. */
+function extractDbFacts(
+  relativePath: string,
+  ext: string,
+  content: string,
+): { schemaFacts: readonly SchemaEntityFact[]; usageEdges: readonly DbUsageEdge[] } {
+  if (isSchemaSqlPath(relativePath)) {
+    return {
+      schemaFacts: extractSchemaEntitiesFromSql(relativePath, content),
+      usageEdges: extractSqlDbUsageEdges(relativePath, content),
+    };
+  }
+  if (isPrismaSchemaPath(relativePath)) {
+    return {
+      schemaFacts: extractSchemaEntitiesFromPrisma(relativePath, content),
+      usageEdges: Object.freeze([]),
+    };
+  }
+  if (isOrientationImportSource(ext)) {
+    return {
+      schemaFacts: extractSchemaEntitiesFromDrizzle(relativePath, content),
+      usageEdges: extractTsDbUsageEdges(relativePath, content),
+    };
+  }
+  return { schemaFacts: Object.freeze([]), usageEdges: Object.freeze([]) };
 }
 
 function readStructuralFile(
@@ -114,6 +166,8 @@ function readStructuralFile(
   let isContentIndexed = false;
   let declarations: readonly string[] = Object.freeze([]);
   let importSpecifiers: readonly string[] = Object.freeze([]);
+  let dbSchemaFacts: readonly SchemaEntityFact[] = Object.freeze([]);
+  let dbUsageEdges: readonly DbUsageEdge[] = Object.freeze([]);
   if (isSource) {
     try {
       const read = readWorkspaceTextFile(scope, relativePath);
@@ -127,6 +181,9 @@ function readStructuralFile(
           read.content,
         ).slice(0, MAX_IMPORTS_PER_FILE);
       }
+      const dbFacts = extractDbFacts(relativePath, ext, read.content);
+      dbSchemaFacts = dbFacts.schemaFacts;
+      dbUsageEdges = dbFacts.usageEdges;
     } catch {
       // Keep safe metadata in the inventory; omit unreadable content facts.
     }
@@ -139,6 +196,8 @@ function readStructuralFile(
     size: stat.size,
     mtimeMs: stat.mtimeMs,
     isSource,
+    dbSchemaFacts,
+    dbUsageEdges,
     isContentIndexed,
     declarations,
     importSpecifiers,
@@ -191,6 +250,8 @@ async function readStructuralFileAsync(
   let isContentIndexed = false;
   let declarations: readonly string[] = Object.freeze([]);
   let importSpecifiers: readonly string[] = Object.freeze([]);
+  let dbSchemaFacts: readonly SchemaEntityFact[] = Object.freeze([]);
+  let dbUsageEdges: readonly DbUsageEdge[] = Object.freeze([]);
   let observedStat = beforeOpen;
   if (isSource) {
     let handle: fs.promises.FileHandle | undefined;
@@ -231,6 +292,9 @@ async function readStructuralFileAsync(
           MAX_IMPORTS_PER_FILE,
         );
       }
+      const dbFacts = extractDbFacts(relativePath, ext, content);
+      dbSchemaFacts = dbFacts.schemaFacts;
+      dbUsageEdges = dbFacts.usageEdges;
     } catch {
       throwIfOrientationAborted(signal);
       // Keep safe metadata in the inventory; omit unreadable content facts.
@@ -249,6 +313,8 @@ async function readStructuralFileAsync(
     isContentIndexed,
     declarations,
     importSpecifiers,
+    dbSchemaFacts,
+    dbUsageEdges,
   });
 }
 
@@ -578,6 +644,7 @@ export function buildImportGraphFromStructuralIndex(
 export async function buildImportGraphFromStructuralIndexAsync(
   index: OrientationStructuralIndex,
   limits: OrientationLimits,
+  aliases?: TsconfigAliasMap | null,
   signal?: AbortSignal,
 ): Promise<ImportGraphBuildResult> {
   const facts: OrientationImportFileFact[] = [];
@@ -595,5 +662,30 @@ export async function buildImportGraphFromStructuralIndexAsync(
       await yieldOrientationWork(signal);
     }
   }
-  return buildOrientationImportGraphFromFactsAsync(facts, limits, signal);
+  return buildOrientationImportGraphFromFactsAsync(facts, limits, aliases, signal);
+}
+
+export async function buildDbGraphFromStructuralIndexAsync(
+  index: OrientationStructuralIndex,
+  limits: OrientationLimits,
+  signal?: AbortSignal,
+): Promise<DbGraphBuildResult> {
+  const files: DbGraphInputFile[] = [];
+  for (let fileIndex = 0; fileIndex < index.files.length; fileIndex += 1) {
+    const file = index.files[fileIndex];
+    if (
+      file.isContentIndexed &&
+      (file.dbSchemaFacts.length > 0 || file.dbUsageEdges.length > 0)
+    ) {
+      files.push(Object.freeze({
+        relativePath: file.relativePath,
+        schemaFacts: file.dbSchemaFacts,
+        usageEdges: file.dbUsageEdges,
+      }));
+    }
+    if (fileIndex > 0 && fileIndex % 512 === 0) {
+      await yieldOrientationWork(signal);
+    }
+  }
+  return buildDbGraphFromFiles(files, limits);
 }
