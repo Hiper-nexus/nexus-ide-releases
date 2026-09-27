@@ -73,7 +73,11 @@ const CACHE_LIMIT = 32;
 const MIN_RUN_BUDGET_MS = 3_000;
 
 export const DEFAULT_REGRESSION_TEST_TIMEOUT_MS = 120_000;
-export const DEFAULT_REGRESSION_MAX_TEST_FILES = 40;
+/**
+ * Decisão do operador (0.76.110): o portão não raciona testes — quem manda é
+ * o prazo (Stop/handoff). Este teto só protege a linha de comando do runner.
+ */
+export const DEFAULT_REGRESSION_MAX_TEST_FILES = 400;
 
 /**
  * Contrato do modelo-negócio: invariante estruturado (mesma forma do
@@ -142,7 +146,8 @@ function stringList(value: unknown): string[] {
 const DB_NODE_RE = /^db:(?:table|function):(.+)$/u;
 /** Saltos entre entidades de banco (função → tabela que ela escreve → …). */
 const DB_ENTITY_HOPS = 3;
-const MAX_DB_CONSUMERS = 64;
+/** Guarda contra explosão do grafo (não racionamento): 3 saltos, até 512 consumidores. */
+const MAX_DB_CONSUMERS = 512;
 
 /**
  * arquivo do diff → tabela/função → arquivo de OUTRA feature que a usa: o
