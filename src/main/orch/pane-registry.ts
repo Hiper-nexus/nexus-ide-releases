@@ -2551,6 +2551,8 @@ export function requestPaneSpawn(
         executionScope: options.executionScope,
         readOnly: options.readOnly === true,
         nativeReadOnly: options.nativeReadOnly,
+        // Writer isolado que o Nexus criou: o token herda a guarda de git.
+        ...(options.isolatedWriter === true ? { isolatedWriter: true } : {}),
         authoritySeal: options.authoritySeal
           ? Object.freeze({ ...options.authoritySeal })
           : undefined,

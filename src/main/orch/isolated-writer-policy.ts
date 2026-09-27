@@ -6,11 +6,13 @@ interface ExecutionContext {
   readonly scope?: ProjectExecutionScope;
   readonly executionScope?: ProjectExecutionScope;
   readonly sharedTabWorktree?: true;
+  /** Main-owned mark of an operator helper spawned as an isolated writer. */
+  readonly isolatedWriter?: true;
 }
 
 /** Derived from main-issued scopes, never from tool arguments or prompt text. */
 export function isIsolatedWriterContext(ctx: ExecutionContext): boolean {
-  return ctx.role === 'worker' && ctx.sharedTabWorktree !== true && Boolean(ctx.scope && ctx.executionScope &&
+  return (ctx.role === 'worker' || ctx.isolatedWriter === true) && ctx.sharedTabWorktree !== true && Boolean(ctx.scope && ctx.executionScope &&
     ctx.executionScope.rootRealPath !== ctx.scope.rootRealPath);
 }
 

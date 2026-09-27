@@ -249,6 +249,26 @@ describe("pending pane spawn authority", () => {
     await expect(pending).resolves.toMatchObject({ ok: false });
   });
 
+  it("carries the isolated-writer mark of an operator helper into Main metadata", async () => {
+    const owner = renderer();
+    registered = owner;
+    registerOrchRenderer(owner);
+    const scope = testProjectScope();
+    bindScope(owner, scope);
+    vi.spyOn(ptyManager, "isSessionOwnedBy").mockImplementation(
+      (candidate, sessionId) => candidate.id === owner.id && sessionId === "operator-parent",
+    );
+    syncPanes([{ paneId: "operator-pane", sessionId: "operator-parent", kind: "cli-agent", title: "Operator" }], owner);
+    const pending = requestPaneSpawn({
+      adapterId: "codex", scope, operatorParentSessionId: "operator-parent", isolatedWriter: true,
+    });
+    const request = owner.send.mock.calls[0]?.[1] as OrchPaneSpawnRequest;
+    expect(request).not.toHaveProperty("isolatedWriter");
+    expect(claimPendingSpawnMeta(request.requestId, owner)).toMatchObject({ isolatedWriter: true });
+    resolvePaneSpawn({ requestId: request.requestId, ok: false, error: "test cleanup" }, owner);
+    await expect(pending).resolves.toMatchObject({ ok: false });
+  });
+
   it("closes the main-minted browser pane when its acknowledgement arrives after timeout", async () => {
     vi.useFakeTimers();
     const owner = renderer();

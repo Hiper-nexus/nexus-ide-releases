@@ -79,6 +79,35 @@ describe('nexus_pane_spawn dentro da missão sem adapterId', () => {
     expect(h.spawn.mock.calls[0][0]).toMatchObject({ adapterId: 'codex', model: 'gpt-5.4', role: 'worker', missionId: 'mission-a' });
     expect(receipt.harness.source).toBe('auto-route');
     expect(receipt.route.tier).toBe('medium');
+    expect(receipt.route.ignored).toEqual({ model: 'ignorado' });
+  });
+
+  it('tentativa abortada antes do spawn fecha a reserva do auto-roteamento', async () => {
+    setOperatorRouteResolver(vi.fn(async () => ({
+      adapterId: 'kimi', model: 'kimi-k2', routeReservationId: 'rr-abort',
+    })));
+    await expect(paneSpawnTool.handler({ task: 'implementar o login' }, ctx)).rejects.toThrow();
+    expect(h.spawn).not.toHaveBeenCalled();
+    expect(h.consumeRouteReservation).toHaveBeenCalledWith(
+      { reservationId: 'rr-abort', missionId: 'mission-a', adapterId: 'kimi', model: 'kimi-k2' },
+      'orch-session',
+    );
+  });
+
+  it('no modo livre a reserva criada pelo auto-roteamento é consumida, não fica pendurada', async () => {
+    h.mission = {
+      ...h.mission,
+      intentContract: { ...(h.mission.intentContract as object), freeAgentChoice: true },
+    };
+    setOperatorRouteResolver(vi.fn(async () => ({
+      adapterId: 'codex', model: 'gpt-5.4', effort: 'high', routeReservationId: 'rr-free',
+    })));
+    await paneSpawnTool.handler({ task: 'implementar o login', prompt: 'faça o login' }, ctx);
+    expect(h.spawn).toHaveBeenCalledTimes(1);
+    expect(h.consumeRouteReservation).toHaveBeenCalledWith(
+      expect.objectContaining({ reservationId: 'rr-free', adapterId: 'codex', model: 'gpt-5.4' }),
+      'orch-session',
+    );
   });
 
   it('adapterId explícito continua aceito e não aciona o roteador', async () => {

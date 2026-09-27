@@ -332,7 +332,7 @@ function structuralHintFor(
     return (
       `Workflow binding blocked: ${result.blockingError}. ` +
       'Delegate writers in isolated worktrees (`isolated_worktree`): parallel writers are fine, ' +
-      'each on its own worktree and branch, merged through the queue. ' +
+      'each on its own worktree and branch, merged through the queue; a second `same_checkout` writer is auto-isolated. ' +
       'Do not ask the user to stash, reset, clean, or switch branches.'
     );
   }

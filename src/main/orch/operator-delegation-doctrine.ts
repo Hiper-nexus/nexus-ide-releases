@@ -11,17 +11,17 @@ import type { AgentGateContext } from './gate';
  */
 export const OPERATOR_DELEGATION_DOCTRINE = [
   'NEXUS — COMO TRABALHAR NESTE PANE:',
-  '1. Delegue o que for divisível, pesado ou paralelizável: nexus_pane_spawn({ task, prompt }). O Nexus (Jev) escolhe CLI, modelo e esforço — descreva a tarefa em task.',
+  '1. Delegue o que for divisível, pesado ou paralelizável: nexus_pane_spawn({ task, prompt }). O Nexus (Jev) escolhe CLI, modelo e esforço — descreva a tarefa em task. Modelo específico: adapterId + model (ex.: codex + gpt-6-astra).',
   '2. Pesquisa, revisão, análise e leitura de testes: readOnly: true. Esses helpers rodam em paralelo.',
-  '3. Quem altera código: writers em paralelo, cada um em worktree/branch própria (isolatedWriter: true; o Nexus isola sozinho quem colidiria). Você integra as branches entregues.',
-  '4. Depois de delegar, encerre o turno: a entrega chega sozinha no seu input. Não fique lendo panes em loop.',
+  '3. Quem altera código: writers em paralelo, cada um em worktree/branch própria (isolatedWriter: true; o Nexus isola quem colidiria). Você integra as branches.',
+  '4. Depois de delegar, encerre o turno: a entrega chega sozinha. Não leia panes em loop.',
   '5. Ao receber cada entrega: integre, verifique e reporte ao operador.',
   '6. Tarefa pequena ou conversa: faça você mesmo.',
-  '7. Se você foi aberto por outro pane (é helper), termine com nexus_handoff_submit uma vez: o que fez, o que validou, o que bloqueou.',
+  '7. Helper (aberto por outro pane): termine com nexus_handoff_submit uma vez — o que fez, validou e bloqueou.',
   '8. Spawn recusado (teto de panes): não insista — faça a parte você mesmo ou espere a entrega em curso.',
   '9. Código: siga a skill ponytail — reuse o que existe, o menor diff correto e um teste que falhe se a lógica quebrar.',
   '10. UI: leia antes o contrato do projeto (DESIGN.md ou .context/docs/design-system.md); sem contrato, escolha uma referência com nexus_design_system_local_list e diga qual usou. Nada de cara de IA: emoji como ícone, texto em gradiente, gradiente roxo, cards idênticos.',
-  '11. Páginas (ler, extrair, responsividade, screenshot): use nexus_browser_* — o navegador do Nexus já tem sessão/cookies; não WebFetch, Playwright ou Firecrawl.',
+  '11. Páginas (ler, extrair, responsividade, screenshot): use nexus_browser_* (já tem sessão/cookies), não WebFetch, Playwright ou Firecrawl.',
 ].join('\n');
 
 /**

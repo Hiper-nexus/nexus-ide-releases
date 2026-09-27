@@ -3,6 +3,7 @@ import path from "node:path";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
   GitCommandError,
+  assertSafeLocalGitConfig,
   ProcessGitRunner,
   type GitRunner,
 } from "./git-command";
@@ -903,6 +904,92 @@ export class WorktreeManager {
         updatedAt: this.#timestamp(),
       };
     });
+  }
+
+  /**
+   * Retomada de um writer de pane: reabre o registro liberado (`failed`) da
+   * MESMA worktree/branch, sem materializar nada. Prova a identidade física
+   * (raiz Git + branch); WIP não commitado é permitido — é do próprio writer.
+   */
+  reopenPaneWriter(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    taskId: string,
+  ): WorktreeRecord {
+    const record = this.get(scope, missionId, taskId);
+    if (!record || record.ownerKind !== "pane") {
+      throw new WorktreeStateConflictError("pane writer worktree record is missing");
+    }
+    if (record.status !== "ready" && (record.status !== "failed" || record.integratedSha !== undefined)) {
+      throw new WorktreeStateConflictError(`pane writer worktree is ${record.status}`);
+    }
+    const real = fs.existsSync(record.worktreePath) ? fs.realpathSync(record.worktreePath) : "";
+    if (real !== record.worktreePath) {
+      throw new WorktreeStateConflictError("pane writer worktree path is gone");
+    }
+    assertSafeLocalGitConfig(this.#git, real);
+    const top = this.#git.run(real, ["rev-parse", "--show-toplevel"], { allowFailure: true });
+    const head = this.#git.run(real, ["symbolic-ref", "--quiet", "HEAD"], { allowFailure: true });
+    if (top.status !== 0 || fs.realpathSync(top.stdout.trim()) !== real ||
+        head.status !== 0 || head.stdout.trim() !== record.branchRef) {
+      throw new WorktreeStateConflictError("pane writer worktree no longer holds its branch");
+    }
+    if (record.status === "ready") return record;
+    return this.#transition(this.scopeKey(scope), record.taskKey, (current) => {
+      if (current.status !== "failed" || current.integratedSha !== undefined) {
+        throw new WorktreeStateConflictError(`pane writer worktree is ${current.status}`);
+      }
+      return { ...current, status: "ready", failureReason: undefined, updatedAt: this.#timestamp() };
+    });
+  }
+
+  /**
+   * GC dos writers de pane liberados: remove worktree, branch e registro só
+   * quando a branch já está contida no HEAD do checkout E a worktree está
+   * limpa (nada que exista só ali). Trabalho não integrado nunca é apagado;
+   * qualquer dúvida de identidade mantém tudo.
+   */
+  collectIntegratedPaneWorktrees(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    inUse: (worktreePath: string) => boolean,
+  ): readonly WorktreeRecord[] {
+    const scopeKey = this.scopeKey(scope);
+    const candidates = this.#snapshot(scopeKey).records.filter((record) =>
+      record.ownerKind === "pane" && record.missionId === missionId &&
+      record.status === "failed" && !inUse(record.worktreePath));
+    const removed: WorktreeRecord[] = [];
+    for (const record of candidates) {
+      try {
+        const merged = this.#git.run(record.rootRealPath,
+          ["merge-base", "--is-ancestor", record.branchRef, "HEAD"], { allowFailure: true });
+        if (merged.status !== 0) continue;
+        if (fs.existsSync(record.worktreePath)) {
+          const real = fs.realpathSync(record.worktreePath);
+          if (real !== record.worktreePath) continue;
+          assertSafeLocalGitConfig(this.#git, real);
+          const top = this.#git.run(real, ["rev-parse", "--show-toplevel"], { allowFailure: true });
+          const head = this.#git.run(real, ["symbolic-ref", "--quiet", "HEAD"], { allowFailure: true });
+          if (top.status !== 0 || fs.realpathSync(top.stdout.trim()) !== real ||
+              head.status !== 0 || head.stdout.trim() !== record.branchRef) continue;
+          const status = this.#git.run(real, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+          if (status.stdout.length > 0) continue;
+          // Sem --force: o Git recusa de novo se algo mudou entre a prova e a remoção.
+          this.#git.run(record.rootRealPath, ["worktree", "remove", real]);
+        }
+        // -d (não -D): o Git só apaga a branch se ela estiver mesclada.
+        this.#git.run(record.rootRealPath,
+          ["branch", "-d", record.branchRef.slice("refs/heads/".length)], { allowFailure: true });
+        this.#mutate(scopeKey, (records) => ({
+          records: records.filter((candidate) => candidate.taskKey !== record.taskKey),
+          result: undefined,
+        }));
+        removed.push(record);
+      } catch {
+        // Best-effort: identidade incerta mantém worktree, branch e registro.
+      }
+    }
+    return Object.freeze(removed);
   }
 
   markFailed(

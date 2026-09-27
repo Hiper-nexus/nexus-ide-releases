@@ -21,8 +21,11 @@ import { isFreeAgentChoiceContract } from "./free-agent-choice";
  * Missão em modo livre sem squad ("o Jev monta o squad"): o selo amarra a
  * intenção aprovada + workflow; a metade de squad é esta constante. Missão
  * COM squad nunca cai aqui — continua exigindo o hash do roster aprovado.
+ * É um SHA-256 porque o store persistente só aceita hash hex de 64 chars.
  */
-export const FREE_MODE_NO_SQUAD_REVISION_HASH = "free-agent-choice:no-squad";
+export const FREE_MODE_NO_SQUAD_REVISION_HASH = createHash("sha256")
+  .update("nexus:free-agent-choice:no-squad")
+  .digest("hex");
 
 function canonicalJson(value: unknown): string {
   if (value === undefined) return '"<undefined>"';
