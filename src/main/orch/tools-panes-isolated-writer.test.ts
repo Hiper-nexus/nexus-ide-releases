@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { PaneSnapshot } from '../../shared/orch-types';
 import type { AgentGateContext } from './gate';
 import type { SpawnToolOptions } from './tool-util';
@@ -19,6 +19,7 @@ const h = vi.hoisted(() => ({
   pending: vi.fn(),
   mission: {} as Record<string, unknown>,
   parents: {} as Record<string, string>,
+  handoffs: {} as Record<string, { sessionId?: string }>,
 }));
 vi.mock('./tool-util', async (original) => ({
   ...(await original<typeof import('./tool-util')>()),
@@ -42,6 +43,7 @@ vi.mock('./gate', async (original) => ({
 vi.mock('./project-domain-store-registry', () => ({
   getProjectDomainStores: () => ({
     missions: { get: () => h.mission },
+    handoffs: { get: (id: string) => h.handoffs[id] ?? null },
     missionPanes: { list: () => h.panes.map((p) => ({ ...p, role: 'worker' })) },
   }),
 }));
@@ -77,6 +79,7 @@ beforeEach(() => {
   h.pending.mockReturnValue(null);
   h.panes = [];
   h.parents = {};
+  h.handoffs = {};
   temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-pane-writer-')));
   const root = path.join(temp, 'repo');
   fs.mkdirSync(root);
@@ -411,5 +414,112 @@ describe('revisão cruzada 0.76.110: corrida, retomada, WIP e GC', () => {
     expect(fs.existsSync(unmerged.worktreePath)).toBe(true);
     expect(fs.readFileSync(path.join(dirty.worktreePath, 'scratch.txt'), 'utf8')).toBe('só existe aqui');
     expect(opRecords()).toHaveLength(3);
+  });
+});
+
+describe('1d: vínculo pane→worktree sobrevive ao reinício do app', () => {
+  let op: AgentGateContext;
+  beforeEach(() => {
+    op = { ...ctx, token: 'op', label: 'operador', role: 'user', sessionId: 'op-session', missionId: undefined };
+  });
+  const closePane = (pane: PaneSnapshot) => {
+    pane.state = 'exited';
+    for (const tap of [...h.exits]) tap(pane.sessionId!, {
+      sessionId: pane.sessionId!, adapterId: 'codex', cwd: pane.executionScope!.rootRealPath,
+      scope: pane.executionScope!, source: 'pending', role: 'user',
+      readOnly: false, allowedTools: [], allowedSkills: null,
+    });
+  };
+  /**
+   * Reinício: módulos novos (nada de estado em memória do processo anterior),
+   * registry novo sobre o MESMO banco reaberto do disco.
+   */
+  const restartApp = async () => {
+    h.exits.clear();
+    disposeWorktreeRuntimeRegistry();
+    manager.closeAll();
+    vi.resetModules();
+    const runtime = await import('../runtime/project-runtime-manager');
+    const worktreeRegistry = await import('../runtime/worktree-runtime-registry');
+    manager = new runtime.ProjectRuntimeManager({ baseDir: path.join(temp, 'runtime'), appVersion: 'test' });
+    const reopened = worktreeRegistry.configureWorktreeRuntimeRegistry(manager);
+    onTestFinished(() => worktreeRegistry.disposeWorktreeRuntimeRegistry());
+    const { paneSpawnTool: tool } = await import('./tools-panes');
+    return { tool, registry: reopened };
+  };
+
+  it('resume por paneId depois de reiniciar volta à worktree/branch original', async () => {
+    await paneSpawnTool.handler({ adapterId: 'codex', isolatedWriter: true }, op);
+    const [record] = registry.listMission(op.scope, OPERATOR_HAND_WORKTREE_KEY);
+    expect(record).toMatchObject({ paneIds: ['pane-0'], sessionIds: ['session-pane-0'] });
+    fs.writeFileSync(path.join(record.worktreePath, 'base.txt'), 'writer\n');
+    git(record.worktreePath, 'commit', '-qam', 'writer output');
+    closePane(h.panes[0]);
+    const after = await restartApp();
+    const receipt = await after.tool.handler({ adapterId: 'codex', resume: 'pane-0' }, op) as Record<string, any>;
+    const options = h.spawn.mock.calls.at(-1)![0] as SpawnToolOptions;
+    expect(options).toMatchObject({ cwd: record.worktreePath, isolatedWriter: true, resumeFromPaneId: 'pane-0' });
+    expect(receipt.isolatedWorktree.branch).toBe(record.branchRef.slice('refs/heads/'.length));
+    const records = after.registry.listMission(op.scope, OPERATOR_HAND_WORKTREE_KEY);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ status: 'ready', paneIds: ['pane-0', 'pane-1'] });
+  });
+
+  it('resume por id de task (h-N) depois de o app morrer com o writer rodando (ACK pendente)', async () => {
+    h.spawn.mockImplementationOnce(async (options: SpawnToolOptions) => {
+      h.panes.push({ paneId: 'pending-pane', sessionId: 'pending-session', kind: 'cli-agent',
+        title: 'pending', state: 'spawning', executionScope: options.executionScope });
+      throw new Error('pane spawn pending');
+    });
+    h.pending.mockReturnValueOnce({ ok: true, paneId: 'pending-pane', sessionId: null, pending: true });
+    await paneSpawnTool.handler({ adapterId: 'codex', isolatedWriter: true }, op);
+    const [record] = registry.listMission(op.scope, OPERATOR_HAND_WORKTREE_KEY);
+    fs.writeFileSync(path.join(record.worktreePath, 'base.txt'), 'writer\n');
+    git(record.worktreePath, 'commit', '-qam', 'writer output');
+    // A sessão nasce depois do ACK; o writer entrega o handoff e sai.
+    closePane(h.panes[0]);
+    h.handoffs['h-7'] = { sessionId: 'pending-session' };
+    expect(registry.listMission(op.scope, OPERATOR_HAND_WORKTREE_KEY)[0])
+      .toMatchObject({ paneIds: ['pending-pane'], sessionIds: ['pending-session'] });
+    const after = await restartApp();
+    await after.tool.handler({ adapterId: 'codex', resume: 'h-7' }, op);
+    expect(h.spawn.mock.calls.at(-1)![0]).toMatchObject({
+      cwd: record.worktreePath, isolatedWriter: true, resume: true, resumeFromPaneId: 'pending-pane',
+    });
+    expect(after.registry.listMission(op.scope, OPERATOR_HAND_WORKTREE_KEY)).toHaveLength(1);
+  });
+
+  it('writer rodando quando o app caiu: o reinício o marca interrompido e o resume reabre a mesma worktree', async () => {
+    await paneSpawnTool.handler({ agentName: 'Executor', isolatedWriter: true }, ctx);
+    const [record] = registry.listMission(ctx.scope, ctx.missionId!);
+    h.panes[0].state = 'exited';
+    const after = await restartApp();
+    expect(after.registry.listMission(ctx.scope, ctx.missionId!)[0].status).toBe('failed');
+    await after.tool.handler({ agentName: 'Executor', resume: 'pane-0' }, ctx);
+    expect(h.spawn.mock.calls.at(-1)![0]).toMatchObject({ cwd: record.worktreePath, isolatedWriter: true });
+    expect(after.registry.listMission(ctx.scope, ctx.missionId!)).toHaveLength(1);
+  });
+
+  it('depois de reiniciar, worktree sumida dá erro claro e não cai no checkout nem aloca outra', async () => {
+    await paneSpawnTool.handler({ adapterId: 'codex', isolatedWriter: true }, op);
+    const [record] = registry.listMission(op.scope, OPERATOR_HAND_WORKTREE_KEY);
+    fs.writeFileSync(path.join(record.worktreePath, 'base.txt'), 'writer\n');
+    git(record.worktreePath, 'commit', '-qam', 'writer output');
+    closePane(h.panes[0]);
+    git(op.scope.rootRealPath, 'worktree', 'remove', '--force', record.worktreePath);
+    const after = await restartApp();
+    await expect(after.tool.handler({ adapterId: 'codex', resume: 'pane-0' }, op))
+      .rejects.toThrow(/worktree original do writer isolado pane-0 .*não está disponível/);
+    expect(h.spawn).toHaveBeenCalledTimes(1);
+    expect(after.registry.listMission(op.scope, OPERATOR_HAND_WORKTREE_KEY)).toHaveLength(1);
+  });
+
+  it('resume de writer isolado de outra missão é recusado mesmo depois de reiniciar', async () => {
+    await paneSpawnTool.handler({ agentName: 'Executor', isolatedWriter: true }, ctx);
+    closePane(h.panes[0]);
+    const after = await restartApp();
+    await expect(after.tool.handler({ adapterId: 'codex', resume: 'pane-0' }, op))
+      .rejects.toThrow(/pertence a outro escopo/);
+    expect(h.spawn).toHaveBeenCalledTimes(1);
   });
 });

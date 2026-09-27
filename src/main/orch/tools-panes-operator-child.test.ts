@@ -24,6 +24,8 @@ const harness = vi.hoisted(() => ({
 vi.mock('./isolated-writer-worktree', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./isolated-writer-worktree')>()),
   allocateIsolatedWriterWorktree: harness.allocateIsolatedWriterWorktree,
+  // Sem registry neste harness: nenhum pane retomado é writer isolado.
+  resumeIsolatedWriterWorktree: vi.fn(() => null),
 }));
 
 // Catálogo determinístico: só a lista builtin do adapter, nunca o cache da máquina.
