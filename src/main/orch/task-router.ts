@@ -115,6 +115,10 @@ export type RankedRouteEntry = {
  * 1M ctx, agentic) follows the same pattern (longcat.json) and sits right
  * behind GLM on medium/hard — comparable price, extra diversity.
  *
+ * Evidência por modelo (benchmarks, preços, fontes datadas) e o porquê de
+ * cada linha: docs/models/estudo-2026-09.md. O contrato
+ * task-router-catalog-contract.test.ts reprova id aposentado, fora do
+ * catálogo do adapter ou bloqueado para rota automática.
  */
 export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   trivial: [
@@ -133,12 +137,17 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   easy: [
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'low' },
     { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'low' },
-    { adapterId: 'agy', model: 'gemini-3.7-flash-low', effort: 'low' },
-    { adapterId: 'codex', model: 'gpt-5.4-mini', effort: 'low' },
+    // 3.8 Flash supera o 3.7 no mesmo preço (TB4.0 19,1% × 11,2%, model
+    // cards Google 2026-08/09); o trivial segue no 3.7-low (free no agy).
+    { adapterId: 'agy', model: 'gemini-3.8-flash-low', effort: 'low' },
+    // gpt-5.4-mini saiu (migrava p/ 5.6-luna). GPT-6 Luna: geração nova e
+    // mais barata ($0,10/$0,50 × $0,20/$1,20) — docs/models/estudo-2026-09.md.
+    { adapterId: 'codex', model: 'gpt-6-luna', effort: 'low' },
     { adapterId: 'glm-flash', model: 'glm-5.3-flash[1m]', effort: 'low' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M2.7-highspeed' },
-    { adapterId: 'claude', model: 'claude-sonnet-4-6', effort: 'low' },
+    // Sonnet 5 é mais novo e mais barato que o 4.6 ($2/$10 × $3/$15).
+    { adapterId: 'claude', model: 'claude-sonnet-5', effort: 'low' },
     { adapterId: 'opencode', model: 'opencode/deepseek-v4-flash' },
     { adapterId: 'openclaude', model: 'haiku' },
     { adapterId: 'aider', model: 'claude-haiku-4-5' },
@@ -150,9 +159,12 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'medium' },
     { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'medium' },
-    { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'medium' },
+    // Gemini 3.8 Flash > 3.1 Pro em código/agentic (TB2.1 81,3 × 70,8, Vals;
+    // índice AA 41 × 30) a ~1/3 do preço. A tabela pedia 3.1-pro-high e o
+    // spawn migrava para este id em silêncio (F-586) — agora é explícito.
+    { adapterId: 'agy', model: 'gemini-3.8-flash-high', effort: 'medium' },
+    { adapterId: 'codex', model: 'gpt-6-luna', effort: 'medium' },
     { adapterId: 'codex', model: 'gpt-5.6-luna', effort: 'medium' },
-    { adapterId: 'codex', model: 'gpt-5.4', effort: 'medium' },
     { adapterId: 'claude', model: 'claude-sonnet-5', effort: 'medium' },
     // Catálogo builtin: priors de capacidade, não notas de benchmark.
     // Auth/modelos disponíveis continuam filtrados antes da escolha.
@@ -165,13 +177,21 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   ],
   hard: [
     { adapterId: 'claude', model: 'claude-opus-5-5', effort: 'high' },
+    // Fallback para CLI claude sem o 5.5: Opus 5 (TB4.0 52,3%) antes do 4.8,
+    // mesmo preço ($5/$25).
+    { adapterId: 'claude', model: 'claude-opus-5', effort: 'high' },
     { adapterId: 'claude', model: 'claude-opus-4-8', effort: 'high' },
+    // Topo fora da ordem padrão do hard: só sobem via frontierRoutePolicy
+    // (revisão cruzada; risco alto com Astra). Fable 5.1 gasta até 50% da
+    // cota semanal do Max e perde do Opus 5.5 no TB4 — não é o default.
+    { adapterId: 'claude', model: 'claude-fable-5-1', effort: 'high' },
     { adapterId: 'glm', model: 'glm-5.3', effort: 'high' },
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'high' },
     { adapterId: 'codex', model: CODEX_FRONTIER_MODEL, effort: 'high' },
+    { adapterId: 'codex', model: 'gpt-6-astra', effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.6-terra', effort: 'high' },
-    { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'high' },
+    { adapterId: 'agy', model: 'gemini-3.8-flash-high', effort: 'high' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'high' },
     { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'high' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro' },
@@ -183,9 +203,16 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'opencode', model: 'openrouter/anthropic/claude-opus-4.8' },
   ],
   critical: [
-    { adapterId: 'claude', model: 'claude-fable-5', effort: 'xhigh' },
+    // Opus 5.5 lidera o TB4.0 (66,4% — Anthropic 2026-09-22) e custa menos
+    // que Fable 5.1 (55,8%, $10/$50). claude-fable-5 era api-only: nunca
+    // roteava, só ocupava a 1ª linha.
     { adapterId: 'claude', model: 'claude-opus-5-5', effort: 'xhigh' },
+    { adapterId: 'claude', model: 'claude-fable-5-1', effort: 'xhigh' },
+    { adapterId: 'claude', model: 'claude-opus-5', effort: 'xhigh' },
     { adapterId: 'claude', model: 'claude-opus-4-8', effort: 'xhigh' },
+    // GPT-6 Astra é o topo da OpenAI (TB4.0 ~58% × Sol ~43%); caro ($10/$50),
+    // por isso no hard só sobe em alto risco/revisão (frontierRoutePolicy).
+    { adapterId: 'codex', model: 'gpt-6-astra', effort: 'xhigh' },
     { adapterId: 'codex', model: CODEX_FRONTIER_MODEL, effort: 'xhigh' },
     { adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'xhigh' },
     { adapterId: 'codex', model: 'gpt-5.6-terra', effort: 'xhigh' },
@@ -193,8 +220,8 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // Diversidade também no crítico: sem estes, uma máquina sem claude/codex/
     // glm empresta de outro tier e o worker crítico colapsa num só provider.
     // agy antes de kimi preserva a preferência efetiva anterior (o empréstimo
-    // do tier hard escolhia gemini-3.1-pro-high quando ambos instalados).
-    { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'xhigh' },
+    // do tier hard escolhia o agy quando ambos instalados).
+    { adapterId: 'agy', model: 'gemini-3.8-flash-high', effort: 'xhigh' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'xhigh' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro-ultraspeed' },
@@ -324,6 +351,75 @@ export function classifyTask(taskText: string): TaskClassification {
   }
 
   return { tier, signals };
+}
+
+/**
+ * Quando usar os modelos de topo (docs/models/estudo-2026-09.md §6). A tabela
+ * já abre hard/critical no Opus 5.5 e critical no GPT-6 Astra; esta política
+ * só REORDENA modelos dentro do mesmo adapter — nunca troca o adapter líder
+ * nem puxa topo para tiers baixos (trivial/easy/medium seguem eficientes):
+ *  - cross-review (revisão em hard/critical): modelo de topo diferente do
+ *    autor padrão (Opus 5.5) → Astra no codex e Fable 5.1 no claude. O
+ *    revisor automático já espalha o quórum por vendors (Anthropic × OpenAI).
+ *  - high-risk (critical, ou hard com segurança/bug/arquitetura/integração):
+ *    Astra passa o Sol no codex; no claude o Opus 5.5 segue na frente.
+ * Por assinatura o custo é cota, não API: Astra e Fable queimam a cota do
+ * plano mais rápido (Fable: até 50% da semanal no Max), por isso não viram
+ * default do hard comum. Adapter com cota esgotada já sai antes do router
+ * (quota auto-exclude em tools-domain).
+ */
+export type FrontierRoutePolicy = 'cross-review' | 'high-risk';
+
+const REVIEW_SIGNALS = ['review', 'revis', 'cross-review', 'code review'];
+
+const HIGH_RISK_SIGNALS = [
+  'arquitetura', 'architecture', 'redesign', 'design de sistema',
+  'system design', 'distributed', 'distribuído', 'distribuido',
+  'integração', 'integracao', 'integration', 'race', 'root cause',
+  'causa raiz',
+];
+
+export const FRONTIER_ORDER: Readonly<Record<FrontierRoutePolicy, readonly string[]>> = {
+  'cross-review': ['gpt-6-astra', 'claude-fable-5-1', 'claude-opus-5-5'],
+  'high-risk': ['claude-opus-5-5', 'gpt-6-astra', 'claude-fable-5-1'],
+};
+
+export function frontierRoutePolicy(
+  taskText: string,
+  tier: TaskTier,
+  specialty: RouteSpecialty,
+): { policy: FrontierRoutePolicy; signals: string[] } | null {
+  if (tier !== 'hard' && tier !== 'critical') return null;
+  const text = taskText.toLowerCase();
+  const review = matchSignals(text, REVIEW_SIGNALS);
+  if (review.length > 0) return { policy: 'cross-review', signals: review };
+  if (tier === 'critical') return { policy: 'high-risk', signals: ['critical'] };
+  if (specialty === 'security' || specialty === 'bug') {
+    return { policy: 'high-risk', signals: [specialty] };
+  }
+  const risk = matchSignals(text, HIGH_RISK_SIGNALS);
+  return risk.length > 0 ? { policy: 'high-risk', signals: risk } : null;
+}
+
+/** Reordena os modelos de cada adapter; as posições de adapter não mudam. */
+function frontierFirst(list: readonly RouteCandidate[], order: readonly string[]): RouteCandidate[] {
+  const rank = (c: RouteCandidate) => {
+    const index = order.indexOf(c.model ?? '');
+    return index < 0 ? order.length : index;
+  };
+  const byAdapter = new Map<string, RouteCandidate[]>();
+  for (const c of list) {
+    const entries = byAdapter.get(c.adapterId) ?? [];
+    entries.push(c);
+    byAdapter.set(c.adapterId, entries);
+  }
+  for (const entries of byAdapter.values()) entries.sort((a, b) => rank(a) - rank(b));
+  const cursor = new Map<string, number>();
+  return list.map((c) => {
+    const index = cursor.get(c.adapterId) ?? 0;
+    cursor.set(c.adapterId, index + 1);
+    return byAdapter.get(c.adapterId)![index];
+  });
 }
 
 export interface AdapterAvailability {
@@ -463,6 +559,29 @@ export function resolveRoutableModel(
   return variant ? { ok: true, model: variant } : { ok: false };
 }
 
+const warnedMissingRoutes = new Set<string>();
+
+/**
+ * Tabela velha visível em runtime: um candidato cuja CLI instalada não lista
+ * o modelo roteado é descartado (nunca cai no default silencioso), mas o
+ * operador precisa SABER — senão o roteador "pensa" que escolhe um modelo
+ * que a máquina não roda. Loga uma vez por adapter:modelo e devolve a nota
+ * que entra no `reason` da decisão.
+ */
+function warnRoutedModelsMissingFromCli(missing: readonly string[]): string {
+  const unique = [...new Set(missing)];
+  if (unique.length === 0) return '';
+  for (const key of unique) {
+    if (warnedMissingRoutes.has(key)) continue;
+    warnedMissingRoutes.add(key);
+    console.warn(
+      `[task-router] modelo roteado ausente da lista da CLI instalada: ${key} ` +
+      '(tabela de roteamento desatualizada ou modelo sem auth) — candidato ignorado',
+    );
+  }
+  return `; CLI sem o modelo roteado: ${unique.slice(0, 3).join(', ')}`;
+}
+
 function evaluatedCandidates(
   specialty: RouteSpecialty,
   tier: TaskTier,
@@ -559,6 +678,16 @@ export function routeTask(
       ? `sinais: ${classification.signals.slice(0, 5).join(', ')}`
       : 'sem sinais fortes — tier padrão pelo tamanho da tarefa';
 
+  const frontier = frontierRoutePolicy(taskText, tier, specialtyVerdict.specialty);
+  const routingTable: RoutingTable = frontier
+    ? (Object.fromEntries(
+        TIER_ORDER.map((t) => [t, frontierFirst(table[t], FRONTIER_ORDER[frontier.policy])]),
+      ) as RoutingTable)
+    : table;
+  const frontierNote = frontier
+    ? `; topo=${frontier.policy} (${frontier.signals.slice(0, 3).join(', ')})`
+    : '';
+
   const tierIndex = TIER_ORDER.indexOf(tier);
   // Same tier first, then cheaper tiers (never waste), then stronger ones.
   const searchOrder = [
@@ -576,8 +705,9 @@ export function routeTask(
     evaluated: true,
   }));
   const skippedRisk: string[] = [];
+  const missingFromCli: string[] = [];
   for (const candidateTier of searchOrder) {
-    const tierCandidates = table[candidateTier]
+    const tierCandidates = routingTable[candidateTier]
       .flatMap((c) => {
         const adapter = available.get(c.adapterId);
         if (!adapter) return [];
@@ -585,7 +715,10 @@ export function routeTask(
         // (variante de família quando a geração foi renomeada). Sem família
         // disponível, descarta — nunca cai no default silencioso do CLI.
         const resolved = resolveRoutableModel(c.model, adapter.models);
-        if (!resolved.ok) return [];
+        if (!resolved.ok) {
+          missingFromCli.push(`${c.adapterId}:${c.model}`);
+          return [];
+        }
         const routed: RouteCandidate = { ...c, model: resolved.model };
         const info = modelCatalogInfo(modelCatalog, routed.adapterId, routed.model);
         if (isModelBlockedForAutoRouting(info)) {
@@ -705,6 +838,8 @@ export function routeTask(
     tieBreakNote = tie.note;
   }
 
+  const missingNote = warnRoutedModelsMissingFromCli(missingFromCli);
+
   if (ranked.length > 0) {
     let chosen = ranked[0];
     if (reserveClaude && chosen.c.adapterId === 'claude') {
@@ -750,7 +885,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${costNote}${evaluationNote}${riskNote}${bandNote}${multiScoreNote}${tieBreakNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${costNote}${evaluationNote}${riskNote}${missingNote}${bandNote}${multiScoreNote}${tieBreakNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
       alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId) })),
       specialty: specialtyVerdict.specialty,
       policySource,
@@ -772,7 +907,7 @@ export function routeTask(
     tier,
     adapterId: fallback,
     effort: effortFor(fallback),
-    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback} (menos usado na missão)${effortNoteFor(fallback)}`,
+    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback} (menos usado na missão)${missingNote}${effortNoteFor(fallback)}`,
     alternatives: [],
     specialty: specialtyVerdict.specialty,
     policySource: policy.source,

@@ -118,7 +118,6 @@ describe('routeTask', () => {
     expect(decision!.adapterId).toBe('claude');
     expect(decision!.model).toBe('claude-opus-5-5');
     expect(decision!.effort).toBe('xhigh');
-    expect(decision!.reason).toContain('evitou');
   });
 
   it('falls through to the next candidate when the first is not installed', () => {
@@ -127,7 +126,7 @@ describe('routeTask', () => {
       adapters('claude'),
     );
     expect(decision!.adapterId).toBe('claude');
-    expect(decision!.model).toBe('claude-sonnet-4-6');
+    expect(decision!.model).toBe('claude-sonnet-5');
   });
 
   it('borrows from another tier when the target tier has nothing installed', () => {
@@ -236,15 +235,66 @@ describe('routeTask', () => {
   });
 
   it('keeps stronger critical candidates ahead of cheap fallback models', () => {
+    // A tabela padrão não carrega mais o api-only claude-fable-5 (estudo
+    // 2026-09); a linha injetada mantém a cobertura do "evitou".
+    const table = {
+      ...DEFAULT_ROUTING_TABLE,
+      critical: [
+        { adapterId: 'claude', model: 'claude-fable-5', effort: 'xhigh' },
+        ...DEFAULT_ROUTING_TABLE.critical,
+      ],
+    };
     const decision = routeTask(
       'auditar a segurança da autenticação e dos pagamentos',
       adapters('claude', 'codex', 'glm'),
+      table,
     );
 
     expect(decision!.tier).toBe('critical');
     expect(decision!.adapterId).toBe('claude');
     expect(decision!.model).toBe('claude-opus-5-5');
     expect(decision!.reason).toContain('evitou');
+  });
+
+  describe('modelos de topo (estudo 2026-09 §6)', () => {
+    const top = (task: string, installed: string[], tier?: 'medium' | 'hard' | 'critical') =>
+      routeTask(task, adapters(...installed), DEFAULT_ROUTING_TABLE, tier);
+
+    it('revisão cruzada em hard/critical: Astra no codex e Fable 5.1 no claude', () => {
+      for (const tier of ['hard', 'critical'] as const) {
+        const claude = top('Independent code review for the release', ['claude'], tier);
+        expect(claude!.model).toBe('claude-fable-5-1');
+        expect(claude!.reason).toContain('topo=cross-review');
+        const codex = top('Independent code review for the release', ['codex'], tier);
+        expect(codex!.model).toBe('gpt-6-astra');
+      }
+    });
+
+    it('hard de alto risco sobe o codex para o Astra; hard comum fica no Sol', () => {
+      expect(top('corrigir a race condition na integração entre main e renderer', ['codex'], 'hard')!.model)
+        .toBe('gpt-6-astra');
+      expect(top('refatorar o parser de configuração', ['codex'], 'hard')!.model).toBe('gpt-6-sol');
+      // No claude, o Opus 5.5 segue na frente do Fable fora de revisão.
+      expect(top('definir a arquitetura da fila distribuída de eventos', ['claude'], 'hard')!.model).toBe('claude-opus-5-5');
+    });
+
+    it('tarefas rotineiras não recebem modelo de topo', () => {
+      for (const task of ['revisar o texto do README', 'ajuste simples de label']) {
+        const decision = top(task, ['claude', 'codex']);
+        expect(['claude-opus-5-5', 'claude-fable-5-1', 'gpt-6-astra']).not.toContain(decision!.model);
+      }
+    });
+
+    it('easy no claude usa o Sonnet 5 (mais novo e mais barato que o 4.6)', () => {
+      expect(DEFAULT_ROUTING_TABLE.easy.filter((c) => c.adapterId === 'claude').map((c) => c.model))
+        .toEqual(['claude-sonnet-5']);
+    });
+
+    it('Fable 5.1 é rota automática (assinatura), Fable 5 não', () => {
+      const decision = top('Independent code review for the release', ['claude'], 'critical');
+      expect(decision!.reason).not.toContain('claude-fable-5-1 (');
+      expect(DEFAULT_ROUTING_TABLE.critical.some((c) => c.model === 'claude-fable-5')).toBe(false);
+    });
   });
 
   it('returns null when no adapter is installed', () => {
