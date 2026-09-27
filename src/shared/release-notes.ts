@@ -7240,7 +7240,7 @@ export const RELEASE_076107: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076108: AppRelease = {
   version: '0.76.108',
   date: '2026-09-27',
   codename: 'MiniMax Code',
@@ -7269,6 +7269,61 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'O upstream minimax do launcher usava endpoint e modelo fora de linha; ' +
         'agora usa os valores oficiais atuais.',
+    },
+  ],
+};
+
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.109',
+  date: '2026-09-27',
+  codename: 'Sessões estáveis',
+  summary:
+    'Corrige as trocas repetidas de conta causadas por mensagens antigas do ' +
+    'próprio Nexus. Melhora a distribuição entre CLIs, o ditado técnico e o ' +
+    'comportamento dos helpers.',
+  highlights: [
+    {
+      title: 'Distribuição entre CLIs',
+      detail:
+        'Qualquer orquestrador pode distribuir tarefas comparáveis entre CLIs ' +
+        'menos ocupadas. As 16 CLIs do catálogo têm candidatos, respeitando ' +
+        'autenticação, modelos disponíveis e a política da missão.',
+    },
+    {
+      title: 'Ditado com vocabulário técnico',
+      detail:
+        'Jev, Nexus, MiMo, Antigravity e outros nomes entram no contexto de ' +
+        'reconhecimento. A reescrita preserva comandos e identificadores.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Handoff antigo não encerra a sessão nova',
+      detail:
+        'O motivo da troca de conta recebe o mesmo tratamento do histórico. ' +
+        'O detector reconhece também a linha antiga do handoff sem cabeçalho, ' +
+        'preservando a detecção de erros novos do provider.',
+    },
+    {
+      title: 'Helpers sem roubar foco',
+      detail:
+        'Abrir um worker mantém a aba e o foco do operador. Helpers com entrega ' +
+        'concluída fecham mesmo quando a saída da sessão chega primeiro. ' +
+        'O limite de panes volta a avisar por padrão também na delegação.',
+    },
+    {
+      title: 'Cota do MiniMax pelo login',
+      detail:
+        'A conta nativa pode consultar o plano com o token de acesso vigente, ' +
+        'sem renovar credenciais. Cota indisponível não é apresentada como ' +
+        'ausência de conta.',
+    },
+    {
+      title: 'Controles da barra alinhados',
+      detail:
+        'Configurações, chaves e voz usam a mesma altura e os controles ' +
+        'existentes do sistema visual.',
     },
   ],
 };

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.109 — Sessões estáveis
+
+- **Failover sem repetir o próprio erro (F-511).** O motivo do handoff é sanitizado como o histórico. A linha antiga do Nexus também é reconhecida sem cabeçalho, evitando que um erro citado seja tratado como falha da nova conta. Erros novos continuam detectáveis.
+- **Orquestração para qualquer LLM (F-171–F-174).** Candidatos das 16 CLIs, desempate entre opções comparáveis pelo uso e descarte de rotas com falhas. Leitura somente não rebaixa a dificuldade de uma investigação. Auth, rosters selados e Hardened preservam suas regras.
+- **Helpers previsíveis.** Delegação respeita o aviso padrão de limite de panes (F-574); workers não roubam foco e helpers concluídos fecham depois da saída da sessão.
+- **Ditado técnico (F-657).** Vocabulário canônico para Jev, Nexus e nomes de CLIs; comandos, caminhos e identificadores preservados na reescrita. A acurácia acústica depende do áudio e do provider.
+- **MiniMax conectado.** Consulta da cota pelo access token vigente do login nativo, sem refresh pelo Nexus. Falta de cota não aparece como falta de conta.
+- **Barra lateral alinhada.** Configurações, chaves e voz compartilham os controles e tokens existentes.
+- **Carimbo Windows configurável (F-656).** Inclui a correção já integrada em main para o servidor de timestamp da assinatura Windows. Esta publicação é do canal macOS.
+
 ## 0.76.108 — MiniMax Code
 
 O MiniMax Code (a CLI oficial `mcode`) entra no Nexus como provedor nativo. Inclui a 0.76.107 (Abas no Windows).
