@@ -574,8 +574,9 @@ const paneSpawn: McpToolDef = {
     'writer is isolated automatically (receipt: executionMode ' +
     'isolated_worktree + isolatedWorktree {branch, worktreePath, reason}); the ' +
     'orchestrator integrates the branches. In Autopilot the FIRST helper a ' +
-    '"+ Pane" pane opens creates that tab\'s light mission (free agent ' +
-    'choice, no squad) with this pane as its orchestrator: helpers join it, ' +
+    '"+ Pane" pane opens creates THIS pane\'s light mission (free agent ' +
+    'choice, no squad; another pane of the same tab gets its own and never ' +
+    'takes this crown) with this pane as its orchestrator: helpers join it, ' +
     'their handoffs come back here, and this pane keeps reading/listing the ' +
     'panes it already could (receipt: tabMission {missionId}). ' +
     'Returns {paneId, sessionId} or {paneId, sessionId:null, pending:true} ' +
