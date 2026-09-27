@@ -1089,6 +1089,8 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           : undefined,
       // Handoff sem missão acha o pai mesmo com a janela noutro workspace.
       operatorParentSessionId: operatorChild ? meta?.operatorParentSessionId : undefined,
+      // Writer isolado da mão do operador: mesma guarda de git do worker.
+      ...(operatorChild && meta?.isolatedWriter === true ? { isolatedWriter: true as const } : {}),
     });
 
     const env: Record<string, string> = canUseNexusMcp(adapter)

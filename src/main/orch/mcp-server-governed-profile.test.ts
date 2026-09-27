@@ -8,6 +8,7 @@ import { PET_STUDIO_SQUAD } from '../../shared/pet-studio';
 import type { AgentSpawnDecoration } from '../pty/pty-manager';
 import type { BoundSpawnAuthority } from './spawn-authority';
 import { getContext, resetGateForTests } from './gate';
+import { assertIsolatedWriterGitTool, isIsolatedWriterContext } from './isolated-writer-policy';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
 
 vi.mock('electron', () => ({
@@ -866,6 +867,51 @@ describe('mcp-server governed CLI profile wiring', () => {
     expect(getContext(decoration.env.NEXUS_MCP_TOKEN!)?.operatorParentSessionId).toBe('parent-1');
 
     decoration.onSpawnFailed?.();
+  });
+
+  it('gives the git guard to an operator helper the Nexus spawned as an isolated writer, and only to it', () => {
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    fs.mkdirSync(path.join(root, 'workspace'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'writer-wt'), { recursive: true });
+    fs.mkdirSync(home, { recursive: true });
+    const cwd = fs.realpathSync(path.join(root, 'workspace'));
+    const worktree = fs.realpathSync(path.join(root, 'writer-wt'));
+    vi.stubEnv('HOME', home);
+    const base = authority(cwd, false);
+    const execution = { ...base.scope, rootRealPath: worktree };
+    const helper = (isolatedWriter?: true) => {
+      const decoration = prepareAgentSpawnDecoration(
+        adapter('claude'),
+        { kind: 'cli-agent', cols: 80, rows: 24 },
+        {
+          ...base,
+          source: 'pending',
+          cwd: worktree,
+          scope: execution,
+          coordinationScope: base.scope,
+          context: {
+            operatorParentSessionId: 'parent-1',
+            allowedTools: null,
+            allowedSkills: null,
+            scope: base.scope,
+            executionScope: execution,
+            ...(isolatedWriter ? { isolatedWriter } : {}),
+          },
+        },
+        undefined,
+      );
+      if (!decoration) throw new Error('expected operator-child decoration');
+      const ctx = getContext(decoration.env.NEXUS_MCP_TOKEN!)!;
+      decoration.onSpawnFailed?.();
+      return ctx;
+    };
+    const isolated = helper(true);
+    expect(isolated.role).toBe('user');
+    expect(isIsolatedWriterContext(isolated)).toBe(true);
+    expect(() => assertIsolatedWriterGitTool(isolated, 'nexus_git_push')).toThrow(/isolated_worktree/);
+    // Pane do operador numa worktree própria, sem a marca do Nexus: livre.
+    expect(isIsolatedWriterContext(helper())).toBe(false);
   });
 
   it('keeps the workspace MCP hub out of operator-spawned helpers unless their allowlist names a server', () => {

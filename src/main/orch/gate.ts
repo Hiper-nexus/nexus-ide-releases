@@ -85,6 +85,11 @@ export interface AgentGateContext {
   executionScope?: Readonly<ProjectExecutionScope>;
   /** Main verified a durable tab record, distinct from an isolated task writer. */
   sharedTabWorktree?: true;
+  /**
+   * Main-owned: the Nexus spawned this operator helper as an isolated writer
+   * (own worktree/branch). It gets the same git guard as an isolated worker.
+   */
+  isolatedWriter?: true;
   allowedTools: string[] | null;
   allowedSkills: string[] | null;
   /**
@@ -325,6 +330,7 @@ export interface MintTokenInput {
   scope: ProjectExecutionScope;
   executionScope?: ProjectExecutionScope;
   sharedTabWorktree?: true;
+  isolatedWriter?: true;
   allowedTools?: string[] | null;
   allowedSkills?: string[] | null;
   /**
@@ -450,6 +456,7 @@ export function mintToken(input: MintTokenInput): AgentGateContext {
     scope: Object.freeze({ ...input.scope }),
     executionScope: Object.freeze({ ...executionScope }),
     ...(input.sharedTabWorktree === true ? { sharedTabWorktree: true as const } : {}),
+    ...(input.isolatedWriter === true ? { isolatedWriter: true as const } : {}),
     // Snapshot caller-owned arrays at the mint boundary. Mutating spawn
     // metadata afterwards must never widen an already-issued bearer.
     allowedTools:
