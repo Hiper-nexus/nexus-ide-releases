@@ -561,7 +561,7 @@ function bootstrap(): void {
   );
   ensureCommandBlockTracking();
   // Fim de sessão de pane: digere os handoffs da sessão em memória trusted
-  // (best-effort; teto diário e dedupe FTS5 dentro do próprio módulo).
+  // (best-effort; sem teto diário — dedupe FTS5 e em voo dentro do módulo).
   ensureSessionExitMemoryDistiller();
   configureMissionEventEmit(projectRuntimeManager);
   installObserverMissionEventProjector();

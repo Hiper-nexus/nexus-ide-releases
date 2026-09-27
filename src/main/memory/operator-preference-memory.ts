@@ -29,16 +29,14 @@ const CANDIDATE_MAX_CHARS = 300;
  */
 const CONTEXT_MAX_CHARS = 1_500;
 
-/** Preferências gravadas por dia, por projeto. */
-export const DAILY_OPERATOR_PREFERENCE_CAP = 5;
-
 const PREFERENCE_SOURCE = 'trusted:operator-preference';
 
-function startOfDay(now: number): number {
-  const date = new Date(now);
-  date.setHours(0, 0, 0, 0);
-  return date.getTime();
-}
+/**
+ * Candidatos aguardando o Jev, por banco de workspace. Sem teto diário
+ * (decisão do operador, 2026-09-27): o mesmo prompt repetido em rajada vai
+ * ao Jev uma vez só; conteúdo distinto é trabalho legítimo.
+ */
+const pendingCandidates = new WeakMap<object, Set<string>>();
 
 /**
  * Moldura em que a frase com marcador não é regra do operador: exemplo,
@@ -63,7 +61,6 @@ export type OperatorPreferenceOutcome =
         | 'flag-off'
         | 'no-marker'
         | 'not-adopted'
-        | 'daily-cap'
         | 'dedupe'
         | 'jev-skip'
         | 'store-unavailable';
@@ -89,7 +86,7 @@ export function extractPreferenceCandidate(prompt: string): string | null {
 export async function distillOperatorPreferenceMemory(
   scope: ProjectExecutionScope,
   prompt: string,
-  deps: DistillHandoffSummaryDeps & { now?: () => number } = {},
+  deps: DistillHandoffSummaryDeps = {},
 ): Promise<OperatorPreferenceOutcome> {
   if (
     !getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory)
@@ -100,34 +97,39 @@ export async function distillOperatorPreferenceMemory(
   const candidate = extractPreferenceCandidate(prompt);
   if (!candidate) return { retained: false, reason: 'not-adopted' };
 
-  // Teto diário e duplicata saem antes do Jev: "never/always" é comum em
-  // prompt trivial e cada chamada custa.
+  // Duplicata sai antes do Jev: "never/always" é comum em prompt trivial e
+  // cada chamada custa.
+  let pending: Set<string>;
   try {
     const store = getWorkspaceMemoryStore(scope);
-    const since = startOfDay((deps.now ?? Date.now)());
-    if (store.countCreatedSince(PREFERENCE_SOURCE, since) >= DAILY_OPERATOR_PREFERENCE_CAP) {
-      return { retained: false, reason: 'daily-cap' };
-    }
     const hits = store.recall({ query: candidate, limit: 3, includeGlobal: false, trustedOnly: true });
     if (hits.some((hit) => hit.source === PREFERENCE_SOURCE && hit.content.includes(candidate))) {
       return { retained: false, reason: 'dedupe' };
     }
+    pending = pendingCandidates.get(store) ?? new Set<string>();
+    if (pending.has(candidate)) return { retained: false, reason: 'dedupe' };
+    pending.add(candidate);
+    pendingCandidates.set(store, pending);
   } catch {
     return { retained: false, reason: 'store-unavailable' };
   }
 
-  // O Jev vê a frase E a mensagem de onde ela saiu: o recorte sozinho
-  // esconderia negação, citação ou exemplo.
-  const confirmed = await confirmOperatorPreference(
-    { candidate, context: prompt.slice(0, CONTEXT_MAX_CHARS) },
-    deps,
-  );
-  if (!confirmed) return { retained: false, reason: 'jev-skip' };
+  try {
+    // O Jev vê a frase E a mensagem de onde ela saiu: o recorte sozinho
+    // esconderia negação, citação ou exemplo.
+    const confirmed = await confirmOperatorPreference(
+      { candidate, context: prompt.slice(0, CONTEXT_MAX_CHARS) },
+      deps,
+    );
+    if (!confirmed) return { retained: false, reason: 'jev-skip' };
 
-  const result = retainTrustedMemoryBestEffort(scope, {
-    type: 'operator-preference',
-    title: 'Operator preference',
-    summary: candidate,
-  });
-  return result ? { retained: true, reason: 'ok' } : { retained: false, reason: 'store-unavailable' };
+    const result = retainTrustedMemoryBestEffort(scope, {
+      type: 'operator-preference',
+      title: 'Operator preference',
+      summary: candidate,
+    });
+    return result ? { retained: true, reason: 'ok' } : { retained: false, reason: 'store-unavailable' };
+  } finally {
+    pending.delete(candidate);
+  }
 }

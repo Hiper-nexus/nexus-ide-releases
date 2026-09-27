@@ -154,7 +154,7 @@ describe('operator preference memory', () => {
     });
   });
 
-  it('duplicata e teto diário saem antes do Jev', async () => {
+  it('duplicata sai antes do Jev; sem teto diário de preferências', async () => {
     const approve = judge(0.95);
     expect(
       await distillOperatorPreferenceMemory(scope, 'Sempre use pnpm neste projeto.', deps(approve)),
@@ -168,11 +168,20 @@ describe('operator preference memory', () => {
     for (const tool of ['biome', 'vitest', 'zod', 'tsx']) {
       await distillOperatorPreferenceMemory(scope, `Sempre use ${tool} neste projeto.`, deps(judge(0.95)));
     }
-    const capped = judge(0.95);
+    const sixth = judge(0.95);
     expect(
-      await distillOperatorPreferenceMemory(scope, 'Nunca use yarn aqui.', deps(capped)),
-    ).toMatchObject({ retained: false, reason: 'daily-cap' });
-    expect(capped).not.toHaveBeenCalled();
+      await distillOperatorPreferenceMemory(scope, 'Nunca use yarn aqui.', deps(sixth)),
+    ).toMatchObject({ retained: true, reason: 'ok' });
+    expect(sixth).toHaveBeenCalledTimes(1);
+  });
+
+  it('o mesmo prompt em rajada vai ao Jev uma vez só', async () => {
+    const approve = judge(0.95);
+    const outcomes = await Promise.all([1, 2, 3].map(() =>
+      distillOperatorPreferenceMemory(scope, 'Nunca faça force push na main.', deps(approve))));
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(outcomes.filter((outcome) => outcome.retained)).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome.reason === 'dedupe')).toHaveLength(2);
   });
 
   it('prompt longo (texto colado) não é fonte de preferência', () => {
