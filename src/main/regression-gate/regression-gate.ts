@@ -171,7 +171,9 @@ export async function orientationBlastRadiusExtension(input: {
 export function businessModelInvariantsExtension(input: {
   readonly scope: ProjectExecutionScope;
 }): readonly RegressionInvariant[] {
-  return readBusinessModelInvariants(input.scope.rootRealPath);
+  // Passa o escopo já resolvido: re-resolver pela raiz (ex.: worktree de
+  // writer isolado) pode dar outro projectId e a atestação não casaria.
+  return readBusinessModelInvariants(input.scope);
 }
 
 /** Writers 3/4 registram aqui seus provedores, sem acoplar este módulo a eles. */

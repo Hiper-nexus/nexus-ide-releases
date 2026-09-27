@@ -3,7 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
+import { createHash } from 'node:crypto';
 import { ProcessGitRunner } from '../runtime/git-command';
+import { createContextAttestation, writeContextAttestation } from '../context/context-attestation';
+import { BUSINESS_MODEL_EXTRACTOR } from '../context/business-model/business-model-bootstrap';
+import { BUSINESS_MODEL_TARGET_PATH } from '../context/business-model/business-model-contract';
 import {
   __resetRegressionGateForTests,
   formatRegressionGateReport,
@@ -367,11 +371,23 @@ describe('runRegressionGate', () => {
         },
       ],
     };
-    write(
-      root,
-      '.context/docs/business-model.md',
-      `# Modelo\n\n<!-- nexus:business-model:v1 -->\n\n\`\`\`json\n${JSON.stringify(doc)}\n\`\`\`\n`,
-    );
+    const content = `# Modelo\n\n<!-- nexus:business-model:v1 -->\n\n\`\`\`json\n${JSON.stringify(doc)}\n\`\`\`\n`;
+    write(root, BUSINESS_MODEL_TARGET_PATH, content);
+    // Desde a rodada 3b o contrato só entrega invariantes de doc ATESTADO pelo
+    // extrator (doc sem revisão não vira instrução nem entra no portão).
+    writeContextAttestation(scope, createContextAttestation(scope, {
+      targetPath: BUSINESS_MODEL_TARGET_PATH,
+      targetHash: createHash('sha256').update(content).digest('hex'),
+      sources: [{
+        type: 'file',
+        locator: 'src/a.ts',
+        sourceHash: createHash('sha256').update(fs.readFileSync(path.join(root, 'src/a.ts'))).digest('hex'),
+      }],
+      author: BUSINESS_MODEL_EXTRACTOR,
+      reviewer: { id: 'nexus-business-model-reviewer', sessionId: 'deterministic-rederive-v1', provider: 'nexus-mechanical-review' },
+      reviewedAt: new Date(0).toISOString(),
+      nexusVersion: 'test',
+    }));
     const git = new ProcessGitRunner();
     git.run(root, ['add', '-A']);
     git.run(root, ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'modelo']);
