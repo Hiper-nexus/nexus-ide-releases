@@ -11,6 +11,7 @@ import {
   hasOwnershipOverlap,
   normalizeOwnership,
   sameValues,
+  MAX_PANE_BINDINGS,
   worktreeTaskKey,
   worktreeBranchRef,
   type WorktreeOwnership,
@@ -39,6 +40,19 @@ function isOptionalFailureReason(value: unknown): value is string | undefined {
     value === undefined ||
     (typeof value === 'string' && value.length <= 2_048 && !value.includes('\0'))
   );
+}
+
+/** Vínculo pane→worktree: só em writer de pane, ids únicos e limitados. */
+function isOptionalPaneBinding(value: unknown, ownerKind: WorktreeRecord['ownerKind']): boolean {
+  if (value === undefined) return true;
+  if (ownerKind !== 'pane' || !Array.isArray(value) || value.length > MAX_PANE_BINDINGS) return false;
+  if (new Set(value).size !== value.length) return false;
+  try {
+    for (const id of value) assertIdentifier(id as string, 'pane binding');
+  } catch {
+    return false;
+  }
+  return true;
 }
 
 function isIntegrationRef(value: unknown): value is string {
@@ -125,6 +139,8 @@ function validateRecord(
     !isOptionalSha(record.taskHeadSha) ||
     !isOptionalSha(record.integratedSha) ||
     !isOptionalFailureReason(record.failureReason) ||
+    !isOptionalPaneBinding(record.paneIds, record.ownerKind) ||
+    !isOptionalPaneBinding(record.sessionIds, record.ownerKind) ||
     !Array.isArray(dependencies) ||
     dependencies.some(
       (dependency) =>

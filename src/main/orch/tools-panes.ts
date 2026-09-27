@@ -104,6 +104,7 @@ import {
 } from './task-dispatch-authority';
 import {
   allocateIsolatedWriterWorktree,
+  isolatedWriterPaneOfSession,
   resumeIsolatedWriterWorktree,
   type IsolatedWriterAllocation,
 } from './isolated-writer-worktree';
@@ -128,13 +129,22 @@ import {
 /**
  * 0.76.45: `resume` aceita um paneId antigo ("pane-…") ou o número/sessão de
  * um pane ainda registrado; devolve o paneId cuja sessão do provider deve ser
- * copiada para o pane novo. Task ids ("h-N") seguem só como flag booleana.
+ * copiada para o pane novo. Task id ("h-N"): a sessão que entregou o handoff
+ * → o pane dela (vivo, ou o writer isolado no registry durável, que sobrevive
+ * a reinício). Sem nada disso segue só como flag booleana.
  */
-function resumePaneRefOf(ref: string | undefined): string | undefined {
+function resumePaneRefOf(ref: string | undefined, scope: ProjectExecutionScope): string | undefined {
   if (!ref) return undefined;
   if (ref.startsWith('pane-')) return ref;
   const known = findPane(ref);
-  return known?.paneId;
+  if (known) return known.paneId;
+  try {
+    const sessionId = getProjectDomainStores(scope).handoffs.get(ref)?.sessionId;
+    if (!sessionId) return undefined;
+    return findPane(sessionId)?.paneId ?? isolatedWriterPaneOfSession(scope, sessionId);
+  } catch {
+    return undefined;
+  }
 }
 
 export function coerceSpawnReadOnly<T extends { readOnly?: boolean }>(
@@ -839,7 +849,7 @@ const paneSpawn: McpToolDef = {
         prompt: str(args, 'prompt') ?? str(args, 'task'),
         scope: ctx.scope,
         resume: str(args, 'resume') ? true : undefined,
-        resumeFromPaneId: resumePaneRefOf(str(args, 'resume')),
+        resumeFromPaneId: resumePaneRefOf(str(args, 'resume'), ctx.scope),
       };
     } else {
       // Fan-out do operador sem missão: sem `adapterId`, roteia `task ??
@@ -973,7 +983,7 @@ const paneSpawn: McpToolDef = {
         prompt: adHocPrompt,
         scope: ctx.scope,
         resume: str(args, 'resume') ? true : undefined,
-        resumeFromPaneId: resumePaneRefOf(str(args, 'resume')),
+        resumeFromPaneId: resumePaneRefOf(str(args, 'resume'), ctx.scope),
       };
     }
     if (autoRoute) {
@@ -1492,7 +1502,7 @@ const paneSpawn: McpToolDef = {
         if (autoClose && pending.paneId) armAutoCloseOnHandoffForPane(pending.paneId);
         isolatedWriterPending = Boolean(isolatedWriter);
         spawnedPaneId = pending.paneId ?? undefined;
-        if (isolatedWriter && pending.paneId) isolatedWriter.link(pending.paneId);
+        if (isolatedWriter && pending.paneId) isolatedWriter.link(pending.paneId, pending.sessionId ?? undefined);
         return {
           ...pending,
           ...(executionMode ? { executionMode } : {}),
@@ -1510,7 +1520,7 @@ const paneSpawn: McpToolDef = {
       // sozinho no handoff SUCCESS — paridade Bridge, libera a vaga sem
       // segurar slot da onda seguinte; falha preserva pane para diagnóstico.
       spawnedPaneId = spawned.paneId;
-      isolatedWriter?.link(spawned.paneId);
+      isolatedWriter?.link(spawned.paneId, spawned.sessionId ?? undefined);
       if (autoClose && spawned.sessionId) {
         armAutoCloseOnHandoff(spawned.sessionId, spawned.paneId);
       }

@@ -18,6 +18,7 @@ import {
   digest,
   exclusiveOwnershipOverlap as exclusiveOverlap,
   hasOwnershipOverlap as hasOverlap,
+  MAX_PANE_BINDINGS,
   normalizeOwnership,
   sameValues,
   worktreeTaskKey,
@@ -940,6 +941,33 @@ export class WorktreeManager {
         throw new WorktreeStateConflictError(`pane writer worktree is ${current.status}`);
       }
       return { ...current, status: "ready", failureReason: undefined, updatedAt: this.#timestamp() };
+    });
+  }
+
+  /**
+   * Vincula um pane/sessão (mintados pelo Main) ao writer de pane, de forma
+   * durável: `resume` depois de reiniciar o app acha a worktree por eles.
+   */
+  bindPaneWriter(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    taskId: string,
+    binding: { readonly paneId?: string; readonly sessionId?: string },
+  ): WorktreeRecord {
+    const append = (ids: readonly string[] | undefined, id: string | undefined) =>
+      id === undefined || ids?.includes(id)
+        ? ids
+        : [...(ids ?? []), assertIdentifier(id, "pane binding")].slice(-MAX_PANE_BINDINGS);
+    return this.#transition(this.scopeKey(scope), worktreeTaskKey(missionId, taskId), (record) => {
+      if (record.ownerKind !== "pane") {
+        throw new WorktreeStateConflictError("only pane writer worktrees bind panes");
+      }
+      const paneIds = append(record.paneIds, binding.paneId);
+      const sessionIds = append(record.sessionIds, binding.sessionId);
+      return paneIds === record.paneIds && sessionIds === record.sessionIds
+        ? record
+        : { ...record, ...(paneIds ? { paneIds } : {}), ...(sessionIds ? { sessionIds } : {}),
+          updatedAt: this.#timestamp() };
     });
   }
 

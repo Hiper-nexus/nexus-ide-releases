@@ -18,16 +18,13 @@ export interface IsolatedWriterAllocation {
   /** Commit de onde a worktree nasceu (HEAD do checkout, sem o WIP dele). */
   readonly baseSha: string;
   readonly release: () => void;
-  /** Liga o pane nascido a esta worktree, para `resume` voltar a ela. */
-  readonly link: (paneId: string) => void;
+  /**
+   * Liga o pane nascido (e a sessão, se já existe) a esta worktree no
+   * registry durável — autoridade do Main; `resume` volta a ela mesmo depois
+   * de reiniciar o app.
+   */
+  readonly link: (paneId: string, sessionId?: string) => void;
 }
-
-/**
- * paneId → registro do writer isolado. Autoridade do Main (só o spawn grava);
- * `resume` de um desses panes reabre a MESMA worktree/branch. Vive o processo:
- * no restart o registry já marca todo writer de pane como interrompido.
- */
-const paneLinks = new Map<string, { registryKey: string; taskId: string; branch: string }>();
 
 function inUseByPane(worktreePath: string): boolean {
   return listPaneSnapshots().some(
@@ -52,6 +49,13 @@ function trackAllocation(
 ): IsolatedWriterAllocation {
   const registry = requireWorktreeRuntimeRegistry();
   const branch = record.branchRef.slice('refs/heads/'.length);
+  const bind = (binding: { paneId?: string; sessionId?: string }) => {
+    try {
+      registry.bindPaneWriter(scope, registryKey, record.taskId, binding);
+    } catch (error) {
+      console.warn('[isolated-writer] vínculo pane→worktree não gravado', error);
+    }
+  };
   let released = false;
   const release = () => {
     if (released) return;
@@ -67,15 +71,19 @@ function trackAllocation(
   const untap = tapSessionExit((sessionId, agent) => {
     const authority = agent ? null : getPaneRuntimeAuthorityBySession(sessionId);
     const executionRoot = agent?.scope.rootRealPath ?? authority?.executionScope?.rootRealPath;
-    if ((agent?.missionId ?? authority?.missionId) === missionId &&
-      executionRoot === record.worktreePath) release();
+    if ((agent?.missionId ?? authority?.missionId) !== missionId ||
+      executionRoot !== record.worktreePath) return;
+    // ACK pendente não tinha sessão no spawn: grava-a aqui, para `resume` por
+    // id de task (h-N → sessão do handoff) achar esta worktree.
+    if (!released) bind({ sessionId });
+    release();
   });
   return {
     worktreePath: record.worktreePath,
     branch,
     baseSha: record.baseSha,
     release,
-    link: (paneId) => { paneLinks.set(paneId, { registryKey, taskId: record.taskId, branch }); },
+    link: (paneId, sessionId) => bind({ paneId, sessionId }),
   };
 }
 
@@ -109,27 +117,40 @@ export function resumeIsolatedWriterWorktree(
   missionId: string | undefined,
   fromPaneId: string | undefined,
 ): IsolatedWriterAllocation | null {
-  const link = fromPaneId ? paneLinks.get(fromPaneId) : undefined;
-  if (!link) return null;
+  if (!fromPaneId) return null;
+  const registry = requireWorktreeRuntimeRegistry();
+  const linked = registry.findPaneWriter(scope, { paneId: fromPaneId });
+  if (!linked) return null;
   const registryKey = missionId ?? OPERATOR_HAND_WORKTREE_KEY;
-  if (link.registryKey !== registryKey) {
+  if (linked.missionId !== registryKey) {
     throw new Error(`resume: o writer isolado ${fromPaneId} pertence a outro escopo (missão) — retome-o de lá`);
   }
   let record: WorktreeRecord;
   try {
-    const registry = requireWorktreeRuntimeRegistry();
-    const current = registry.get(scope, registryKey, link.taskId);
-    if (current && listPaneSnapshots().some((pane) => pane.executionScope?.rootRealPath === current.worktreePath &&
+    if (listPaneSnapshots().some((pane) => pane.executionScope?.rootRealPath === linked.worktreePath &&
       !['exited', 'parked', 'hibernated'].includes(pane.state))) {
       throw new Error('ainda há um pane ativo nela');
     }
-    record = registry.reopenPaneWriter(scope, registryKey, link.taskId);
+    record = registry.reopenPaneWriter(scope, registryKey, linked.taskId);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `resume: a worktree original do writer isolado ${fromPaneId} (branch ${link.branch}) não está disponível ` +
+      `resume: a worktree original do writer isolado ${fromPaneId} ` +
+        `(branch ${linked.branchRef.slice('refs/heads/'.length)}) não está disponível ` +
         `(${reason}). Integre/recupere a branch ou abra um writer novo sem resume.`,
+      { cause: error },
     );
   }
   return trackAllocation(scope, missionId, registryKey, record);
+}
+
+/**
+ * `resume` por id de task (h-N): a sessão que entregou o handoff → o pane
+ * mais recente do writer isolado que ela rodou (vínculo durável do registry).
+ */
+export function isolatedWriterPaneOfSession(
+  scope: ProjectExecutionScope,
+  sessionId: string,
+): string | undefined {
+  return requireWorktreeRuntimeRegistry().findPaneWriter(scope, { sessionId })?.paneIds?.at(-1);
 }

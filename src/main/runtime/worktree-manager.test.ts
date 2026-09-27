@@ -153,6 +153,33 @@ describe("WorktreeManager", () => {
     expect(manager.purgeRecordsWithoutTask(scope, new Set())).toHaveLength(0);
   });
 
+  it("vincula panes/sessões ao writer de pane de forma durável; registros antigos seguem válidos", async () => {
+    const scope = projectScope();
+    const [pane, task] = await Promise.all([
+      manager.create({ scope, missionId: "operator-hand", taskId: "pane-w1", workerId: "w1",
+        ownerKind: "pane", ownership: { files: [], symbols: [], domains: ["pane-w1"] } }),
+      manager.create({ scope, missionId: "mission-a", taskId: "task-a", workerId: "wa",
+        ownership: { files: ["src/a.ts"], symbols: [], domains: [] } }),
+    ]);
+    // Registro antigo (sem vínculo) lê normalmente.
+    expect(pane.paneIds).toBeUndefined();
+    manager.bindPaneWriter(scope, "operator-hand", "pane-w1", { paneId: "pane-1" });
+    manager.bindPaneWriter(scope, "operator-hand", "pane-w1", { paneId: "pane-1", sessionId: "s-1" });
+    manager.bindPaneWriter(scope, "operator-hand", "pane-w1", { paneId: "pane-2" });
+    // Outro manager sobre o mesmo store (reinício) enxerga o vínculo.
+    expect(makeManager().get(scope, "operator-hand", "pane-w1"))
+      .toMatchObject({ paneIds: ["pane-1", "pane-2"], sessionIds: ["s-1"] });
+    expect(() => manager.bindPaneWriter(scope, "mission-a", "task-a", { paneId: "pane-3" }))
+      .toThrow(/only pane writer/);
+    // Vínculo forjado em task selada ou com ids repetidos é estado inválido.
+    const key = manager.scopeKey(scope);
+    const current = stateStore.read(key).records;
+    stateStore.overwrite(key, current.map((r) => r.taskId === task.taskId ? { ...r, paneIds: ["pane-x"] } : r));
+    expect(() => manager.get(scope, "mission-a", "task-a")).toThrow();
+    stateStore.overwrite(key, current.map((r) => r.taskId === pane.taskId ? { ...r, paneIds: ["p", "p"] } : r));
+    expect(() => manager.get(scope, "operator-hand", "pane-w1")).toThrow();
+  });
+
   it("never delegates versioned context authority to executor worktrees", async () => {
     await expect(manager.create({
         scope: projectScope(),

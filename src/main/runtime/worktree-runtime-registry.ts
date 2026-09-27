@@ -369,6 +369,33 @@ export class WorktreeRuntimeRegistry {
     return this.forScope(scope).worktrees.reopenPaneWriter(scope, missionId, taskId);
   }
 
+  bindPaneWriter(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    taskId: string,
+    binding: { readonly paneId?: string; readonly sessionId?: string },
+  ): WorktreeRecord {
+    return this.forScope(scope).worktrees.bindPaneWriter(scope, missionId, taskId, binding);
+  }
+
+  /** Writer de pane (de qualquer missão do escopo) vinculado a este pane/sessão. */
+  findPaneWriter(
+    scope: ProjectExecutionScope,
+    by: { readonly paneId: string } | { readonly sessionId: string },
+  ): WorktreeRecord | null {
+    const runtime = this.forScope(scope);
+    const matches = runtime.worktreeState
+      .read(runtime.worktrees.scopeKey(scope))
+      .records.filter((record) => record.ownerKind === "pane" && ("paneId" in by
+        ? record.paneIds?.includes(by.paneId)
+        : record.sessionIds?.includes(by.sessionId)));
+    // Ids são mintados pelo Main e únicos; ambiguidade nunca escolhe um lado.
+    if (matches.length > 1) {
+      throw new Error("pane writer binding is ambiguous across worktrees");
+    }
+    return matches[0] ?? null;
+  }
+
   collectIntegratedPaneWorktrees(
     scope: ProjectExecutionScope,
     missionId: string,
