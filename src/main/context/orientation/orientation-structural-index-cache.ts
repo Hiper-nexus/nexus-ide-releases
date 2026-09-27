@@ -48,14 +48,17 @@ function stringArray(
   return Object.freeze([...value] as string[]);
 }
 
-const MAX_DB_FACTS_PER_FILE = 4_096;
+/** Teto de fatos de banco por arquivo; o writer corta no mesmo número. */
+export const MAX_DB_FACTS_PER_FILE = 4_096;
+/** Maior string que o leitor aceita num fato de banco. */
+export const MAX_DB_FACT_STRING_LENGTH = 1_024;
 
 function optionalString(value: unknown): boolean {
-  return value === undefined || (typeof value === 'string' && value.length <= 1_024);
+  return value === undefined || (typeof value === 'string' && value.length <= MAX_DB_FACT_STRING_LENGTH);
 }
 
 function boundedString(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0 && value.length <= 1_024;
+  return typeof value === 'string' && value.length > 0 && value.length <= MAX_DB_FACT_STRING_LENGTH;
 }
 
 /** Validate a persisted array of plain records; null when anything is off. */

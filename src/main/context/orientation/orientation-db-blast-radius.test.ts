@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { ProjectExecutionScope } from '../../../shared/types';
 import { computeBlastRadius, expandOwnershipWithBlastRadius } from './orientation-blast-radius';
 import { orientationCurrentPath } from './orientation-cache';
+import { extractSqlDbUsageEdges } from './orientation-db-usage';
 import { ProjectOrientationService } from './orientation-service';
 import {
   orientationStructuralIndexPath,
@@ -230,6 +231,32 @@ describe('code map <-> banco: caches gravados por versoes anteriores', () => {
     const upgraded = await new ProjectOrientationService({ cacheRoot, includeContextSummary: false })
       .ensure(scope, { reason: 'workspace-open' });
     expect(upgraded.graph.dbEntities?.map((e) => e.nodeId)).toEqual(['db:table:public.users']);
+  });
+
+  it('migration grande (dump do Supabase) é cortada no writer: o índice persistido continua legível', async () => {
+    const { root, cacheRoot, scope } = fixture();
+    const functions = Array.from({ length: 1_500 }, (_, i) => `
+CREATE OR REPLACE FUNCTION public.f${i}() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE public.t${i} SET x = 1;
+  UPDATE public.t${i} SET x = 2;
+  INSERT INTO public.u${i} (id) VALUES (1);
+  PERFORM 1 FROM public.v${i};
+END;
+$$;`).join('\n');
+    write(root, 'supabase/migrations/20260102000000_remote_schema.sql', functions);
+    const raw = extractSqlDbUsageEdges('supabase/migrations/20260102000000_remote_schema.sql', functions);
+    expect(raw.length).toBeGreaterThan(4_096);
+
+    await new ProjectOrientationService({ cacheRoot, includeContextSummary: false })
+      .ensure(scope, { reason: 'workspace-open' });
+
+    const index = readOrientationStructuralIndex(cacheRoot, scope);
+    expect(index).not.toBeNull();
+    const dump = index!.files.find((f) => f.relativePath.endsWith('_remote_schema.sql'))!;
+    expect(dump.dbUsageEdges).toHaveLength(4_096);
+    const keys = dump.dbUsageEdges.map((edge) => JSON.stringify(edge));
+    expect(new Set(keys).size).toBe(keys.length);
   });
 
   it('round-trips db facts through the structural index and rejects an index without them', async () => {
