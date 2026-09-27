@@ -22,7 +22,11 @@ import { USD_PER_INPUT_TOKEN } from '../jev/jev-pricing';
  * Jev NEVER invents a value: no confident candidate means `null`.
  */
 
-const EXTRACT_JUDGE_TIMEOUT_MS = 4_000;
+// Auto-on/opt-in judge calls retry once on timeout (jev-client.ts), so the
+// real worst case before failing open is ~2x this + a short retry delay.
+// 4s made that ~8.4s on a slow/cold Jev call for a supposedly "fast, never
+// blocks" path — halved to keep the fail-open budget sane.
+const EXTRACT_JUDGE_TIMEOUT_MS = 2_000;
 const EXTRACT_JEV_CANDIDATES_MAX = 12;
 const EXTRACT_JEV_MIN_CONFIDENCE = 0.6;
 const EXTRACT_PAIRS_STATE_MAX = 20;

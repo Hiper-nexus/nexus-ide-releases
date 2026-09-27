@@ -53,6 +53,11 @@ const state = vi.hoisted(() => {
     setWebRTCIPHandlingPolicy: vi.fn(),
     loadURL: vi.fn(async () => {}),
     close: vi.fn(),
+    getUserAgent: vi.fn(() => 'desktop-ua'),
+    setUserAgent: vi.fn(),
+    enableDeviceEmulation: vi.fn(),
+    disableDeviceEmulation: vi.fn(),
+    reload: vi.fn(),
   };
   const owner = {
     id: 11,
@@ -116,6 +121,7 @@ const state = vi.hoisted(() => {
     assertMutationAllowed: vi.fn(),
     fromWebContents: vi.fn(() => win),
     webContentsAvailable: true,
+    views: [] as Array<{ setVisible: ReturnType<typeof vi.fn>; setBounds: ReturnType<typeof vi.fn> }>,
   };
 });
 
@@ -135,7 +141,9 @@ vi.mock('electron', () => ({
     setBounds = vi.fn();
     setBackgroundColor = vi.fn();
 
-    constructor(_options: { webPreferences: Record<string, unknown> }) {}
+    constructor(_options: { webPreferences: Record<string, unknown> }) {
+      state.views.push(this);
+    }
   },
   dialog: { showMessageBox: vi.fn() },
   ipcMain: {
@@ -194,9 +202,12 @@ import {
   clickBrowserElement,
   destroyBrowser,
   ensureBrowser,
+  loadBrowser,
   pressBrowserKey,
   readBrowserPage,
+  setBrowserBounds,
 } from './browser-manager';
+import { isAgentRequestedBrowser } from '../orch/pane-registry';
 
 const PANE = 'pane-actions-test';
 
@@ -209,6 +220,8 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.guestHandlers.clear();
+    state.views.length = 0;
+    vi.mocked(isAgentRequestedBrowser).mockReturnValue(false);
     destroyBrowser(PANE, scope);
     state.guest.getURL.mockReturnValue('about:blank');
     state.guest.getTitle.mockReturnValue('');
@@ -507,7 +520,7 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
     });
     expect(jev.mock.calls[0][0]).toMatchObject({
       surface: 'browserTool',
-      timeoutMs: 4_000,
+      timeoutMs: 2_000,
     });
 
     const disabled = await readBrowserPage(PANE, scope, {
@@ -538,6 +551,98 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
     expect(result.pressed).toBe(true);
     expect(result.changed?.navigated).toBe('none');
     expect(result.errors).toBeDefined();
+    destroyBrowser(PANE, scope);
+  });
+});
+
+describe('loadBrowser device emulation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.guestHandlers.clear();
+    state.views.length = 0;
+    vi.mocked(isAgentRequestedBrowser).mockReturnValue(false);
+    destroyBrowser(PANE, scope);
+    state.guest.getURL.mockReturnValue('about:blank');
+    state.guest.isDestroyed.mockReturnValue(false);
+    state.guest.once.mockImplementation(() => state.guest);
+    state.guest.removeListener.mockImplementation(() => state.guest);
+  });
+
+  it('emulates the mobile breakpoint before navigating, reusing the real UA/viewport', async () => {
+    await boot();
+    await loadBrowser(PANE, 'https://example.test/app', { scope, device: 'mobile' });
+    expect(state.guest.setUserAgent).toHaveBeenCalledWith(
+      expect.stringContaining('iPhone'),
+    );
+    expect(state.guest.enableDeviceEmulation).toHaveBeenCalledWith(
+      expect.objectContaining({ viewSize: { width: 390, height: 844 } }),
+    );
+    destroyBrowser(PANE, scope);
+  });
+
+  it('emulates the tablet breakpoint with the iPad UA', async () => {
+    await boot();
+    await loadBrowser(PANE, 'https://example.test/app', { scope, device: 'tablet' });
+    expect(state.guest.setUserAgent).toHaveBeenCalledWith(
+      expect.stringContaining('iPad'),
+    );
+    expect(state.guest.enableDeviceEmulation).toHaveBeenCalledWith(
+      expect.objectContaining({ viewSize: { width: 800, height: 1366 } }),
+    );
+    destroyBrowser(PANE, scope);
+  });
+
+  it('desktop disables emulation and restores the original UA', async () => {
+    await boot();
+    await loadBrowser(PANE, 'https://example.test/mobile', { scope, device: 'mobile' });
+    await loadBrowser(PANE, 'https://example.test/desktop', { scope, device: 'desktop' });
+    expect(state.guest.disableDeviceEmulation).toHaveBeenCalledOnce();
+    expect(state.guest.setUserAgent).toHaveBeenLastCalledWith('desktop-ua');
+    destroyBrowser(PANE, scope);
+  });
+
+  it('leaves emulation untouched when no device is requested', async () => {
+    await boot();
+    await loadBrowser(PANE, 'https://example.test/app', { scope });
+    expect(state.guest.enableDeviceEmulation).not.toHaveBeenCalled();
+    expect(state.guest.disableDeviceEmulation).not.toHaveBeenCalled();
+    destroyBrowser(PANE, scope);
+  });
+});
+
+describe('setBrowserBounds viewport floor for agent-owned panes', () => {
+  it('gives an agent-owned pane a decent off-window viewport instead of a degenerate UI slot', async () => {
+    vi.mocked(isAgentRequestedBrowser).mockReturnValue(true);
+    await boot();
+    const view = state.views.at(-1)!;
+    setBrowserBounds(
+      { view, agentOwned: true } as never,
+      { x: 10, y: 10, width: 356, height: 138 },
+    );
+    expect(view.setVisible).toHaveBeenCalledWith(true);
+    expect(view.setBounds).toHaveBeenCalledWith({
+      x: 50_000,
+      y: 50_000,
+      width: 1280,
+      height: 800,
+    });
+    destroyBrowser(PANE, scope);
+  });
+
+  it('leaves the operator-owned pane untouched at its real, small size', async () => {
+    vi.mocked(isAgentRequestedBrowser).mockReturnValue(false);
+    await boot();
+    const view = state.views.at(-1)!;
+    setBrowserBounds(
+      { view, agentOwned: false } as never,
+      { x: 10, y: 10, width: 356, height: 138 },
+    );
+    expect(view.setBounds).toHaveBeenCalledWith({
+      x: 10,
+      y: 10,
+      width: 356,
+      height: 138,
+    });
     destroyBrowser(PANE, scope);
   });
 });

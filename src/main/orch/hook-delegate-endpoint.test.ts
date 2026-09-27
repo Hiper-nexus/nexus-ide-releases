@@ -47,6 +47,59 @@ describe('hook /hook/delegate', () => {
     expect((await handleHookDelegateRequest(operator, { prompt: LONG }, { advise: boom })).payload).toEqual({});
   });
 
+  describe('dica do navegador Nexus (pedido de página/extração/responsividade)', () => {
+    it('pedido de extração recebe a dica do nexus_browser_*', async () => {
+      __resetLeanRemindersForTests();
+      const out = await handleHookDelegateRequest(
+        operator,
+        { prompt: 'quero extrair o título e o preço de https://exemplo.test' },
+        { advise: vi.fn(async () => null) },
+      );
+      const text = (out.payload.hookSpecificOutput as { additionalContext: string }).additionalContext;
+      expect(text).toContain('nexus_browser_*');
+    });
+
+    it('pedido de responsividade e de screenshot também disparam a dica', async () => {
+      __resetLeanRemindersForTests();
+      const advise = vi.fn(async () => null);
+      const responsive = await handleHookDelegateRequest(
+        operator,
+        { prompt: 'analise a responsividade desta página' },
+        { advise },
+      );
+      expect(
+        (responsive.payload.hookSpecificOutput as { additionalContext: string }).additionalContext,
+      ).toContain('nexus_browser_*');
+
+      const shot = await handleHookDelegateRequest(
+        { ...operator, sessionId: 's-shot' },
+        { prompt: 'me manda um screenshot do dashboard' },
+        { advise },
+      );
+      expect(
+        (shot.payload.hookSpecificOutput as { additionalContext: string }).additionalContext,
+      ).toContain('nexus_browser_*');
+    });
+
+    it('não dispara para pedidos sem sinal de página/extração (sem chamada extra ao Jev)', async () => {
+      __resetLeanRemindersForTests();
+      const advise = vi.fn(async () => null);
+      const out = await handleHookDelegateRequest(operator, { prompt: LONG }, { advise });
+      expect(out.payload).toEqual({});
+    });
+
+    it('lembra uma vez por sessão dentro do intervalo', async () => {
+      __resetLeanRemindersForTests();
+      let now = 2_000_000;
+      const deps = { advise: vi.fn(async () => null), now: () => now };
+      const prompt = 'extraia o nome e o preço desta página';
+      expect((await handleHookDelegateRequest(operator, { prompt }, deps)).payload).not.toEqual({});
+      expect((await handleHookDelegateRequest(operator, { prompt }, deps)).payload).toEqual({});
+      now += 31 * 60_000;
+      expect((await handleHookDelegateRequest(operator, { prompt }, deps)).payload).not.toEqual({});
+    });
+  });
+
   describe('lembrete da ponytail (pedido de código)', () => {
     const code = { delegation: null, writesCode: 0.9 };
 

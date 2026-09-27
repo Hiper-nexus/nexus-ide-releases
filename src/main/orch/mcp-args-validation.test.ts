@@ -91,6 +91,27 @@ describe('browser MCP argument validation', () => {
     ).toThrow();
   });
 
+  it('accepts a device breakpoint on browser_navigate and rejects unknown values', () => {
+    expect(
+      validateToolArgs('nexus_browser_navigate', {
+        paneId: 'browser-1',
+        url: 'https://example.test',
+        device: 'mobile',
+      }),
+    ).toEqual({
+      paneId: 'browser-1',
+      url: 'https://example.test',
+      device: 'mobile',
+    });
+    expect(() =>
+      validateToolArgs('nexus_browser_navigate', {
+        paneId: 'browser-1',
+        url: 'https://example.test',
+        device: 'phone',
+      }),
+    ).toThrow();
+  });
+
   it('accepts read/judge/format options and bounds extraction fields', () => {
     expect(
       validateToolArgs('nexus_browser_read', {
@@ -142,6 +163,36 @@ describe('browser MCP argument validation', () => {
       validateToolArgs('nexus_browser_extract', {
         paneId: 'browser-1',
         fields: [{ name: 'x'.repeat(65), type: 'string' }],
+      }),
+    ).toThrow();
+  });
+
+  it('accepts description as a hint synonym without keeping both keys', () => {
+    expect(
+      validateToolArgs('nexus_browser_extract', {
+        paneId: 'browser-1',
+        fields: [{ name: 'presidente', type: 'string', description: 'chefe de estado' }],
+      }),
+    ).toEqual({
+      paneId: 'browser-1',
+      fields: [{ name: 'presidente', type: 'string', hint: 'chefe de estado' }],
+    });
+    // hint wins when both are present.
+    expect(
+      validateToolArgs('nexus_browser_extract', {
+        paneId: 'browser-1',
+        fields: [
+          { name: 'presidente', type: 'string', hint: 'certo', description: 'ignorado' },
+        ],
+      }),
+    ).toEqual({
+      paneId: 'browser-1',
+      fields: [{ name: 'presidente', type: 'string', hint: 'certo' }],
+    });
+    expect(() =>
+      validateToolArgs('nexus_browser_extract', {
+        paneId: 'browser-1',
+        fields: [{ name: 'x', type: 'string', unexpectedKey: 'nope' }],
       }),
     ).toThrow();
   });

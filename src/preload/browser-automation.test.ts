@@ -115,6 +115,31 @@ describe('isolated browser automation', () => {
     await expect(automation.run('click', { ref: '#save' })).rejects.toThrow(/reference/);
   });
 
+  it('never marks buttons, checkboxes or radios as editable', async () => {
+    const dom = new JSDOM(
+      `<!doctype html>
+        <html><body>
+          <input type="submit" value="Buscar">
+          <input type="checkbox" id="aceite">
+          <input type="radio" name="opcao" value="a">
+          <input type="text" id="nome">
+        </body></html>`,
+      { url: 'https://example.test/formulario', pretendToBeVisual: true },
+    );
+    const automation = createBrowserAutomation(dom.window as unknown as BrowserDomWindow);
+    const read = (await automation.run('read', {})) as {
+      elements: Array<{ inputType?: string; editable?: boolean }>;
+    };
+    const submit = read.elements.find((element) => element.inputType === 'submit');
+    const checkbox = read.elements.find((element) => element.inputType === 'checkbox');
+    const radio = read.elements.find((element) => element.inputType === 'radio');
+    const text = read.elements.find((element) => element.inputType === 'text');
+    expect(submit?.editable).toBeUndefined();
+    expect(checkbox?.editable).toBeUndefined();
+    expect(radio?.editable).toBeUndefined();
+    expect(text?.editable).toBe(true);
+  });
+
   it('refuses password and sensitive fields even when the ref is valid', async () => {
     const { automation } = fixture();
     const read = (await automation.run('read', {})) as {
@@ -368,5 +393,64 @@ describe('isolated browser automation', () => {
     expect(result.tokens.some((t) => t.kind === 'date')).toBe(true);
     expect(result.pairs.length).toBeLessThanOrEqual(60);
     expect(result.tokens.length).toBeLessThanOrEqual(40);
+  });
+
+  it('strips a leading bullet marker from table-row labels', async () => {
+    // pt.wikipedia.org/wiki/Brasil infobox shape: <th><div>• Presidente</div></th>.
+    const dom = new JSDOM(
+      `<!doctype html><body>
+        <table>
+          <tr><th><div>•<span> </span>Presidente</div></th><td>Lula da Silva</td></tr>
+          <tr><th><div>•<span> </span>Vice-presidente</div></th><td>Geraldo Alckmin</td></tr>
+        </table>
+      </body>`,
+      { url: 'https://example.test/', pretendToBeVisual: true },
+    );
+    const automation = createBrowserAutomation(dom.window as unknown as BrowserDomWindow);
+    const result = (await automation.run('extract_candidates', {})) as {
+      pairs: Array<{ label: string; value: string }>;
+    };
+    expect(result.pairs.some((p) => p.label === 'Presidente' && p.value === 'Lula da Silva')).toBe(true);
+    expect(
+      result.pairs.some((p) => p.label === 'Vice-presidente' && p.value === 'Geraldo Alckmin'),
+    ).toBe(true);
+  });
+
+  it('stops a table-row value at the first <br>, not the whole cell text', async () => {
+    // pt.wikipedia.org/wiki/Brasil infobox "Capital" cell: name, then <br>,
+    // then unrelated geocoordinate markup glued on by .textContent.
+    const dom = new JSDOM(
+      `<!doctype html><body>
+        <table>
+          <tr><th>Capital</th><td><a href="/wiki/Brasília">Brasília</a><br><span>15° 47' S 47° 52' O</span></td></tr>
+        </table>
+      </body>`,
+      { url: 'https://example.test/', pretendToBeVisual: true },
+    );
+    const automation = createBrowserAutomation(dom.window as unknown as BrowserDomWindow);
+    const result = (await automation.run('extract_candidates', {})) as {
+      pairs: Array<{ label: string; value: string }>;
+    };
+    const capital = result.pairs.find((p) => p.label === 'Capital');
+    expect(capital?.value).toBe('Brasília');
+  });
+
+  it('tokenizes space/nbsp-grouped pt-BR thousands as number candidates', async () => {
+    // pt.wikipedia.org/wiki/Brasil: population "213 421 037" and
+    // area "8 510 417,771 km²" use NBSP thousand separators.
+    const dom = new JSDOM(
+      `<!doctype html><body>
+        <p>População: 213 421 037 habitantes</p>
+        <p>Área total: 8 510 417,771 km²</p>
+      </body>`,
+      { url: 'https://example.test/', pretendToBeVisual: true },
+    );
+    const automation = createBrowserAutomation(dom.window as unknown as BrowserDomWindow);
+    const result = (await automation.run('extract_candidates', {})) as {
+      tokens: Array<{ kind: string; text: string }>;
+    };
+    const numbers = result.tokens.filter((t) => t.kind === 'number').map((t) => t.text);
+    expect(numbers.some((t) => t.replace(/\s| /g, '') === '213421037')).toBe(true);
+    expect(numbers.some((t) => t.replace(/\s| /g, '') === '8510417,771')).toBe(true);
   });
 });

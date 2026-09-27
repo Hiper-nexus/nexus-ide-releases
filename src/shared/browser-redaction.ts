@@ -7,8 +7,17 @@ import { redactVisibleSecrets } from './vision-ipc';
  * page-side `read` output.
  */
 
+// ponytail: `otp`/`session` are short enough to appear embedded inside
+// unrelated words when doubled onto the preceding letter — MediaWiki's
+// `rootpage-<Title>` body class ("ro-otp-age") and English words like
+// "obsession"/"possession" ("s-session"). A negative lookbehind for that
+// exact doubled letter clears the false positive without requiring real
+// word-boundary tokenization (which would also need to accept camelCase/
+// snake_case compounds like "sessionId" or "user_token"). Ceiling: only
+// covers the doubled-letter collision, not every possible embedding — widen
+// with real boundary logic if another marker collides the same way.
 const SENSITIVE_MARKER =
-  /(?:password|passwd|secret|token|api[_ -]?key|access[_ -]?key|private[_ -]?key|authorization|credential|one[_ -]?time|otp|cookie|session)/i;
+  /(?:password|passwd|secret|token|api[_ -]?key|access[_ -]?key|private[_ -]?key|authorization|credential|one[_ -]?time|(?<!o)otp|cookie|(?<!s)session)/i;
 
 export function isSensitiveBrowserMarker(value: string): boolean {
   return SENSITIVE_MARKER.test(value);

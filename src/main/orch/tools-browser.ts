@@ -210,6 +210,16 @@ const browserOpenTool: McpToolDef = {
   },
 };
 
+const DEVICE_ARG_PROP = {
+  type: 'string',
+  enum: ['mobile', 'tablet', 'desktop'],
+  description:
+    'Emulate a device breakpoint before loading (real UA + viewport metrics, ' +
+    'reused from the operator\'s responsive-preview toggle) — "mobile"/"tablet" ' +
+    'serve the real mobile/tablet layout, "desktop" turns emulation back off. ' +
+    'Combine with nexus_browser_screenshot per breakpoint to check responsiveness.',
+};
+
 const browserNavigateTool: McpToolDef = {
   name: 'nexus_browser_navigate',
   requiresConfirm: true,
@@ -224,12 +234,14 @@ const browserNavigateTool: McpToolDef = {
       url: { type: 'string' },
       read: READ_ARG_PROP,
       judge: JUDGE_ARG_PROP,
+      device: DEVICE_ARG_PROP,
     },
     required: ['paneId', 'url'],
   },
   handler: async (args, ctx, invocation) => {
     const paneId = requireStr(args, 'paneId');
     authorizePaneRef(ctx, paneId, 'write');
+    const device = str(args, 'device');
     return loadBrowser(paneId, requireStr(args, 'url'), {
       scope: ctx.scope,
       privateAccessConfirmed: false,
@@ -239,6 +251,9 @@ const browserNavigateTool: McpToolDef = {
       judge: args.judge === true,
       sessionId: ctx.sessionId,
       missionId: ctx.missionId,
+      ...(device === 'mobile' || device === 'tablet' || device === 'desktop'
+        ? { device }
+        : {}),
     });
   },
 };
@@ -380,7 +395,37 @@ const browserExtractTool: McpToolDef = {
     type: 'object',
     properties: {
       paneId: { type: 'string' },
-      fields: { type: 'array' },
+      fields: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 20,
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Field key; ≤64 chars.' },
+            type: {
+              type: 'string',
+              enum: ['string', 'number', 'boolean', 'date', 'enum'],
+            },
+            enum: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Required options when type is "enum".',
+            },
+            hint: {
+              type: 'string',
+              description:
+                'Short disambiguation hint (also accepted as `description`).',
+            },
+            description: {
+              type: 'string',
+              description: 'Synonym for `hint`.',
+            },
+          },
+          required: ['name', 'type'],
+          additionalProperties: false,
+        },
+      },
     },
     required: ['paneId', 'fields'],
   },

@@ -140,8 +140,15 @@ const browserExtractFieldSchema = z
     type: z.enum(['string', 'number', 'boolean', 'date', 'enum']),
     enum: z.array(z.string().min(1).max(64)).min(1).max(20).optional(),
     hint: z.string().min(1).max(200).optional(),
+    // `description` is a common LLM-side synonym for `hint` in JSON Schema
+    // tool definitions; accept it without adding a second field downstream.
+    description: z.string().min(1).max(200).optional(),
   })
   .strict()
+  .transform(({ description, ...value }) => ({
+    ...value,
+    ...(value.hint === undefined && description !== undefined ? { hint: description } : {}),
+  }))
   .superRefine((value, ctx) => {
     if (value.type === 'enum' && !(value.enum && value.enum.length > 0)) {
       ctx.addIssue({
@@ -384,6 +391,7 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
         url: z.string().min(1).max(4096),
         read: browserInlineReadSchema,
         judge: browserJudgeArg,
+        device: z.enum(['mobile', 'tablet', 'desktop']).optional(),
       })
       .strict(),
   ],
