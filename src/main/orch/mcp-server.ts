@@ -104,6 +104,7 @@ import {
 } from "./hooks-gen";
 import { handleHookStatusHttp } from "./hook-status-endpoint";
 import { handleHookTriageHttp } from "./hook-triage-endpoint";
+import { handleHookRegressionHttp } from "./hook-regression-endpoint";
 import { handleHookDelegateHttp } from "./hook-delegate-endpoint";
 import { authenticateArmsToken } from "../connectors/arms-token-store";
 import { handleArmsJsonRpc, markArmsBoot } from "../connectors/arms-endpoint";
@@ -389,6 +390,11 @@ function hookTriageUrl(): string {
 /** UserPromptSubmit delegation advice — same loopback server/bearer. */
 function hookDelegateUrl(): string {
   return `http://127.0.0.1:${port}/hook/delegate`;
+}
+
+/** Stop regression gate — same loopback server/bearer. */
+function hookRegressionUrl(): string {
+  return `http://127.0.0.1:${port}/hook/regression`;
 }
 
 const SHA256_HEX = /^[a-f0-9]{64}$/u;
@@ -1103,6 +1109,8 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           NEXUS_HOOK_TRIAGE_URL: hookTriageUrl(),
           // UserPromptSubmit delegation advice hook — same transport contract.
           NEXUS_HOOK_DELEGATE_URL: hookDelegateUrl(),
+          // Stop regression gate hook — same transport contract.
+          NEXUS_HOOK_REGRESSION_URL: hookRegressionUrl(),
         }
       : {};
     const extraArgs: string[] = [];
@@ -1960,6 +1968,11 @@ export function startMcpServer(): Promise<void> {
       // UserPromptSubmit → conselho de delegação do Jev — aditivo, nunca bloqueia.
       if (url === "/hook/delegate" && req.method === "POST") {
         await handleHookDelegateHttp(req, res, ctx);
+        return;
+      }
+      // Stop → portão de regressão (testes impactados) — nunca quebra o CLI.
+      if (url === "/hook/regression" && req.method === "POST") {
+        await handleHookRegressionHttp(req, res, ctx);
         return;
       }
       sendJson(res, 404, { error: "not found" });
