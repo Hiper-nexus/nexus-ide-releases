@@ -19,6 +19,7 @@ export type BrowserAutomationCommand =
   | 'press'
   | 'hover'
   | 'extract_candidates'
+  | 'layout_audit'
   | 'design_enable'
   | 'design_disable'
   | 'design_set_style_preview'
@@ -174,6 +175,24 @@ export interface BrowserExtractCandidates {
     text: string;
     context: string;
   }>;
+}
+
+/** Page-side responsive audit at the current (possibly emulated) viewport. */
+export interface BrowserLayoutAudit {
+  /** CSS layout width (`documentElement.clientWidth`). */
+  layoutWidth: number;
+  /** Widest of `documentElement`/`body` scrollWidth. */
+  scrollWidth: number;
+  /** scrollWidth > layoutWidth: the page scrolls sideways. */
+  horizontalOverflow: boolean;
+  /** Outermost visible elements that straddle the viewport's left/right edge. */
+  overflowing: Array<
+    BrowserElementDescriptor & { left: number; right: number; overflowPx: number }
+  >;
+  /** Visible elements whose content is cut by `overflow: hidden|clip`. */
+  clipped: Array<BrowserElementDescriptor & { hiddenX: number; hiddenY: number }>;
+  /** DOM walk or issue lists hit their bound. */
+  truncated: boolean;
 }
 
 export interface BrowserExtractField {

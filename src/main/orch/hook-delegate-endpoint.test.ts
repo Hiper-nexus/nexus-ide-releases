@@ -69,7 +69,7 @@ describe('hook /hook/delegate', () => {
       );
       expect(
         (responsive.payload.hookSpecificOutput as { additionalContext: string }).additionalContext,
-      ).toContain('nexus_browser_*');
+      ).toContain('nexus_browser_responsive');
 
       const shot = await handleHookDelegateRequest(
         { ...operator, sessionId: 's-shot' },

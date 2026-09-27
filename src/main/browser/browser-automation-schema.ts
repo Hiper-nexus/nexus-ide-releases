@@ -146,3 +146,31 @@ export const browserExtractCandidatesSchema = z
       .max(40),
   })
   .strict();
+
+const layoutPx = z.number().finite().min(-1_000_000).max(1_000_000);
+
+export const browserLayoutAuditSchema = z
+  .object({
+    layoutWidth: z.number().finite().min(0).max(100_000),
+    scrollWidth: z.number().finite().min(0).max(1_000_000),
+    horizontalOverflow: z.boolean(),
+    overflowing: z
+      .array(
+        browserElementDescriptorSchema.extend({
+          left: layoutPx,
+          right: layoutPx,
+          overflowPx: z.number().finite().min(0).max(1_000_000),
+        }),
+      )
+      .max(20),
+    clipped: z
+      .array(
+        browserElementDescriptorSchema.extend({
+          hiddenX: z.number().finite().min(0).max(1_000_000),
+          hiddenY: z.number().finite().min(0).max(1_000_000),
+        }),
+      )
+      .max(20),
+    truncated: z.boolean(),
+  })
+  .strict();

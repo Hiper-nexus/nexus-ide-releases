@@ -50,6 +50,7 @@ const stubs = vi.hoisted(() => ({
     url: 'http://127.0.0.1:1234/',
   })),
   assertBrowserAtExactUrl: vi.fn(),
+  analyzeBrowserResponsive: vi.fn(async () => ({ paneId: 'browser-1', breakpoints: [] })),
   resolveReviewAuthority: vi.fn(() => null as {
     reviewSessionId: string;
     reviewerSessionId: string;
@@ -75,6 +76,7 @@ vi.mock('./preview-server', () => ({
   listPreviews: stubs.listPreviews,
 }));
 vi.mock('../browser/browser-manager', () => ({
+  analyzeBrowserResponsive: stubs.analyzeBrowserResponsive,
   assertBrowserAtExactUrl: stubs.assertBrowserAtExactUrl,
   captureBrowserScreenshot: stubs.captureBrowserScreenshot,
   clickBrowserElement: vi.fn(),
@@ -113,6 +115,7 @@ vi.mock('./automated-review-browser-authority', () => ({
 }));
 
 import { buildBrowserTools } from './tools-browser';
+import { authorizePaneRef } from './tool-util';
 
 const scope: ProjectExecutionScope = {
   version: 1,
@@ -141,6 +144,31 @@ describe('nexus_browser_extract MCP schema', () => {
     expect(fields.items!.properties).toHaveProperty('enum');
     expect(fields.items!.properties).toHaveProperty('hint');
     expect(fields.items!.properties).toHaveProperty('description');
+  });
+});
+
+describe('nexus_browser_responsive', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('requires write authority on the pane and confirmation, like navigate', async () => {
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_responsive')!;
+    expect(tool.requiresConfirm).toBe(true);
+    await tool.handler({ paneId: 'browser-1' }, context);
+    expect(authorizePaneRef).toHaveBeenCalledWith(context, 'browser-1', 'write');
+    expect(stubs.analyzeBrowserResponsive).toHaveBeenCalledWith(
+      'browser-1',
+      scope,
+      expect.objectContaining({ devices: [] }),
+    );
+  });
+
+  it('never runs when the pane is not authorized', async () => {
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_responsive')!;
+    vi.mocked(authorizePaneRef).mockImplementationOnce(() => {
+      throw new Error('not authorized');
+    });
+    await expect(tool.handler({ paneId: 'browser-9' }, context)).rejects.toThrow(/not authorized/);
+    expect(stubs.analyzeBrowserResponsive).not.toHaveBeenCalled();
   });
 });
 

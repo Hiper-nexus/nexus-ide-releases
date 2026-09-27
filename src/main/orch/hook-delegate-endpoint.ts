@@ -74,7 +74,8 @@ function isBrowserRequest(prompt: string): boolean {
 export const BROWSER_TOOL_HINT =
   '[Nexus · Jev] Para analisar páginas, extrair dados ou testar responsividade, ' +
   'use nexus_browser_* (o navegador do Nexus já está aberto, com sessão) — não ' +
-  'WebFetch, Playwright ou Firecrawl para uma URL que será aberta agora.';
+  'WebFetch, Playwright ou Firecrawl para uma URL que será aberta agora. ' +
+  'Responsividade num só chamado: nexus_browser_responsive.';
 
 const leanRemindedAt = new Map<string, number>();
 const designRemindedAt = new Map<string, number>();

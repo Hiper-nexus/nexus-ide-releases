@@ -4,6 +4,7 @@ import type {
   BrowserExtractCandidates,
   BrowserFindMatch,
   BrowserFindResult,
+  BrowserLayoutAudit,
   BrowserPageAlert,
   BrowserPageReadResult,
   BrowserViewport,
@@ -49,6 +50,10 @@ const NON_EDITABLE_INPUT_TYPES = new Set([
   'button', 'submit', 'reset', 'image', 'checkbox', 'radio', 'range', 'color', 'file',
 ]);
 const MAX_SCROLL_OFFSET = 100_000;
+// layout_audit reads geometry for every element: bound the walk well under
+// MAX_DOM_NODES so a huge page cannot stall the capture loop.
+const LAYOUT_AUDIT_MAX_NODES = 5_000;
+const LAYOUT_AUDIT_MAX_ISSUES = 20;
 
 /** Named keyboard keys accepted by `press` (KeyboardEvent.key values). */
 const ALLOWED_PRESS_KEYS = new Set([
@@ -1095,6 +1100,86 @@ export function createBrowserAutomation(
     return { hovered: true, element: describe(element) };
   }
 
+  /**
+   * `layout_audit`: cheap responsive check at the current viewport — sideways
+   * scroll (scrollWidth > clientWidth), the outermost elements that straddle
+   * the left/right edge (fully off-canvas drawers are ignored), and elements
+   * whose content an `overflow: hidden|clip` box cuts off. Geometry only; no
+   * values, names go through the same redacting `describe`.
+   */
+  function layoutAudit(): BrowserLayoutAudit {
+    pruneReferences();
+    const doc = win.document.documentElement;
+    const body = win.document.body;
+    const layoutWidth = Math.round(doc?.clientWidth || win.innerWidth || 0);
+    const scrollWidth = Math.round(Math.max(doc?.scrollWidth ?? 0, body?.scrollWidth ?? 0));
+    const overflowing: BrowserLayoutAudit['overflowing'] = [];
+    const clipped: BrowserLayoutAudit['clipped'] = [];
+    let truncated = false;
+    const straddles = (element: Element | null): boolean => {
+      if (!element || element === body || element === doc) return false;
+      const rect = element.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      return (
+        (rect.right > layoutWidth + 1 && rect.left < layoutWidth) ||
+        (rect.left < -1 && rect.right > 0)
+      );
+    };
+    const elements = body ? body.querySelectorAll('*') : [];
+    if (elements.length > LAYOUT_AUDIT_MAX_NODES) truncated = true;
+    for (let i = 0; i < Math.min(elements.length, LAYOUT_AUDIT_MAX_NODES); i += 1) {
+      const element = elements[i];
+      if (element.closest(SKIP_TEXT_SELECTOR)) continue;
+      if (
+        overflowing.length < LAYOUT_AUDIT_MAX_ISSUES &&
+        straddles(element) &&
+        !straddles(element.parentElement) &&
+        isElementVisible(win, element)
+      ) {
+        const rect = element.getBoundingClientRect();
+        overflowing.push({
+          ...describe(element),
+          left: Math.round(rect.left),
+          right: Math.round(rect.right),
+          overflowPx: Math.round(Math.max(rect.right - layoutWidth, -rect.left, 0)),
+        });
+      }
+      const html = element as HTMLElement;
+      const hiddenX = html.scrollWidth - html.clientWidth;
+      const hiddenY = html.scrollHeight - html.clientHeight;
+      if (clipped.length < LAYOUT_AUDIT_MAX_ISSUES && (hiddenX > 1 || hiddenY > 1)) {
+        let style: CSSStyleDeclaration | null = null;
+        try {
+          style = win.getComputedStyle(element);
+        } catch {
+          style = null;
+        }
+        const cuts = (value: string | undefined): boolean =>
+          value === 'hidden' || value === 'clip';
+        const cutX = hiddenX > 1 && cuts(style?.overflowX);
+        const cutY = hiddenY > 1 && cuts(style?.overflowY);
+        if ((cutX || cutY) && isElementVisible(win, element)) {
+          clipped.push({
+            ...describe(element),
+            hiddenX: cutX ? Math.round(hiddenX) : 0,
+            hiddenY: cutY ? Math.round(hiddenY) : 0,
+          });
+        }
+      }
+    }
+    if (overflowing.length >= LAYOUT_AUDIT_MAX_ISSUES || clipped.length >= LAYOUT_AUDIT_MAX_ISSUES) {
+      truncated = true;
+    }
+    return {
+      layoutWidth,
+      scrollWidth,
+      horizontalOverflow: scrollWidth > layoutWidth + 1,
+      overflowing,
+      clipped,
+      truncated,
+    };
+  }
+
   return {
     async run(command, args) {
       if (command === 'read') return read(args);
@@ -1107,6 +1192,7 @@ export function createBrowserAutomation(
       if (command === 'press') return press(args);
       if (command === 'hover') return hover(args);
       if (command === 'extract_candidates') return extractCandidates();
+      if (command === 'layout_audit') return layoutAudit();
       if (command === 'design_enable') {
         return ensureDesignMode().enable(designGeneration(args));
       }

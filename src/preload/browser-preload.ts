@@ -24,6 +24,7 @@ const COMMANDS = new Set<BrowserAutomationCommand>([
   'press',
   'hover',
   'extract_candidates',
+  'layout_audit',
   'design_enable',
   'design_disable',
   'design_set_style_preview',

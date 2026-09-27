@@ -397,6 +397,15 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
   ],
   ['browser_screenshot', z.object({ paneId }).strict()],
   [
+    'browser_responsive',
+    z
+      .object({
+        paneId,
+        devices: z.array(z.enum(['mobile', 'tablet', 'desktop'])).min(1).max(3).optional(),
+      })
+      .strict(),
+  ],
+  [
     'browser_read',
     z
       .object({

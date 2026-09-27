@@ -112,6 +112,21 @@ describe('browser MCP argument validation', () => {
     ).toThrow();
   });
 
+  it('bounds browser_responsive devices to the three breakpoints', () => {
+    expect(
+      validateToolArgs('nexus_browser_responsive', { paneId: 'browser-1', devices: ['mobile', 'desktop'] }),
+    ).toEqual({ paneId: 'browser-1', devices: ['mobile', 'desktop'] });
+    expect(validateToolArgs('nexus_browser_responsive', { paneId: 'browser-1' })).toEqual({
+      paneId: 'browser-1',
+    });
+    expect(() =>
+      validateToolArgs('nexus_browser_responsive', { paneId: 'browser-1', devices: ['watch'] }),
+    ).toThrow();
+    expect(() =>
+      validateToolArgs('nexus_browser_responsive', { paneId: 'browser-1', url: 'https://x.test' }),
+    ).toThrow();
+  });
+
   it('accepts read/judge/format options and bounds extraction fields', () => {
     expect(
       validateToolArgs('nexus_browser_read', {

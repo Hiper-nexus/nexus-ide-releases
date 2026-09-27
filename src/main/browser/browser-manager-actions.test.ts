@@ -58,6 +58,10 @@ const state = vi.hoisted(() => {
     enableDeviceEmulation: vi.fn(),
     disableDeviceEmulation: vi.fn(),
     reload: vi.fn(),
+    capturePage: vi.fn(async (rect?: { width: number; height: number }) => ({
+      getSize: () => ({ width: rect?.width ?? 1280, height: rect?.height ?? 800 }),
+      toPNG: () => Buffer.from('png'),
+    })),
   };
   const owner = {
     id: 11,
@@ -140,6 +144,7 @@ vi.mock('electron', () => ({
     }
     setVisible = vi.fn();
     setBounds = vi.fn();
+    getBounds = vi.fn(() => ({ x: 0, y: 0, width: 1280, height: 800 }));
     setBackgroundColor = vi.fn();
 
     constructor(_options: { webPreferences: Record<string, unknown> }) {
@@ -154,6 +159,20 @@ vi.mock('electron', () => ({
       state.onHandlers.set(channel, handler),
   },
   session: { fromPartition: state.fromPartition },
+}));
+
+vi.mock('./browser-artifact-store', () => ({
+  createScopedBrowserArtifactStore: () => ({
+    assertWritable: vi.fn(),
+    recordScreenshot: vi.fn((shot: { width: number }) => ({
+      id: `shot-${shot.width}`,
+      projectId: 'project-test',
+      checkoutId: 'checkout-test',
+      path: `/tmp/shot-${shot.width}.png`,
+      storageKey: `shot-${shot.width}`,
+      sha256: 'x'.repeat(64),
+    })),
+  }),
 }));
 
 vi.mock('./browser-automation-runtime', () => ({
@@ -201,6 +220,7 @@ vi.mock('../orch/design-send', () => ({
 }));
 
 import {
+  analyzeBrowserResponsive,
   clickBrowserElement,
   destroyBrowser,
   ensureBrowser,
@@ -672,6 +692,107 @@ describe('agent pane viewport floor via the real bounds IPC', () => {
     sendBounds({ x: 0, y: 0, width: 0, height: 0, visible: false });
     expect(view.setVisible).toHaveBeenLastCalledWith(false);
     expect(view.setBounds).not.toHaveBeenCalled();
+    destroyBrowser(PANE, scope);
+  });
+});
+
+describe('analyzeBrowserResponsive (nexus_browser_responsive)', () => {
+  const AUDIT = {
+    layoutWidth: 390,
+    scrollWidth: 520,
+    horizontalOverflow: true,
+    overflowing: [],
+    clipped: [],
+    truncated: false,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.guestHandlers.clear();
+    state.views.length = 0;
+    vi.mocked(isAgentRequestedBrowser).mockReturnValue(false);
+    destroyBrowser(PANE, scope);
+    state.guest.getURL.mockReturnValue('https://example.test/app');
+    state.guest.isDestroyed.mockReturnValue(false);
+    state.guest.once.mockImplementation(() => state.guest);
+    state.guest.removeListener.mockImplementation(() => state.guest);
+    state.runAutomation.mockImplementation(async (_p, _wc, command: string) => {
+      if (command === 'layout_audit') return AUDIT;
+      throw new Error(`unexpected command ${command}`);
+    });
+    registerBrowserIpc({} as never);
+  });
+
+  it('captures and audits mobile/tablet/desktop, then restores the native device and page', async () => {
+    await boot();
+    const result = await analyzeBrowserResponsive(PANE, scope);
+    expect(result.breakpoints.map((b) => b.device)).toEqual(['mobile', 'tablet', 'desktop']);
+    expect(result.breakpoints[0].audit).toEqual(AUDIT);
+    // Emulated breakpoints are captured at their own viewport (clamped to the view).
+    expect(state.guest.capturePage.mock.calls.map((call) => call[0])).toEqual([
+      { x: 0, y: 0, width: 390, height: 800 },
+      { x: 0, y: 0, width: 800, height: 800 },
+      undefined,
+    ]);
+    expect(result.breakpoints.map((b) => b.screenshot.width)).toEqual([390, 800, 1280]);
+    expect(result.restored).toBe(true);
+    // 3 breakpoints + 1 restore, all through the guarded navigation.
+    expect(state.guest.loadURL).toHaveBeenCalledTimes(4);
+    expect(state.guest.loadURL).toHaveBeenLastCalledWith('https://example.test/app');
+    expect(state.guest.disableDeviceEmulation).toHaveBeenCalled();
+    expect(state.guest.setUserAgent).toHaveBeenLastCalledWith('desktop-ua');
+    destroyBrowser(PANE, scope);
+  });
+
+  it('restores the operator\'s own mobile preview after the run', async () => {
+    await boot();
+    await loadBrowser(PANE, 'https://example.test/app', { scope, device: 'mobile' });
+    vi.mocked(state.guest.enableDeviceEmulation).mockClear();
+    await analyzeBrowserResponsive(PANE, scope, { devices: ['desktop'] });
+    expect(state.guest.enableDeviceEmulation).toHaveBeenLastCalledWith(
+      expect.objectContaining({ viewSize: { width: 390, height: 844 } }),
+    );
+    destroyBrowser(PANE, scope);
+  });
+
+  it('restores the original state even when a breakpoint fails', async () => {
+    await boot();
+    let audits = 0;
+    state.runAutomation.mockImplementation(async (_p, _wc, command: string) => {
+      if (command !== 'layout_audit') throw new Error('unexpected');
+      audits += 1;
+      if (audits === 2) throw new Error('page crashed mid-audit');
+      return AUDIT;
+    });
+    await expect(analyzeBrowserResponsive(PANE, scope)).rejects.toThrow(/crashed/);
+    expect(state.guest.disableDeviceEmulation).toHaveBeenCalled();
+    expect(state.guest.setUserAgent).toHaveBeenLastCalledWith('desktop-ua');
+    expect(state.guest.loadURL).toHaveBeenLastCalledWith('https://example.test/app');
+    destroyBrowser(PANE, scope);
+  });
+
+  it('keeps the DNS guard: a host now resolving privately is never loaded or emulated', async () => {
+    await boot();
+    state.browserSession.resolveHost.mockResolvedValue({
+      endpoints: [{ address: '10.0.0.5', port: 0 }],
+    });
+    try {
+      await expect(analyzeBrowserResponsive(PANE, scope)).rejects.toThrow();
+      expect(state.guest.loadURL).not.toHaveBeenCalled();
+      expect(state.guest.enableDeviceEmulation).not.toHaveBeenCalled();
+      expect(state.guest.capturePage).not.toHaveBeenCalled();
+    } finally {
+      state.browserSession.resolveHost.mockResolvedValue({
+        endpoints: [{ address: '93.184.216.34', port: 0 }],
+      });
+      destroyBrowser(PANE, scope);
+    }
+  });
+
+  it('refuses a pane with no page open', async () => {
+    await boot();
+    state.guest.getURL.mockReturnValue('about:blank');
+    await expect(analyzeBrowserResponsive(PANE, scope)).rejects.toThrow(/no page open/);
     destroyBrowser(PANE, scope);
   });
 });

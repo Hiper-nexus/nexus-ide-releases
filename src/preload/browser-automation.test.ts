@@ -491,3 +491,79 @@ describe('isolated browser automation', () => {
     expect(numbers.some((t) => t.replace(/\s| /g, '') === '8510417,771')).toBe(true);
   });
 });
+
+describe('layout_audit (responsividade)', () => {
+  type Rect = { left: number; right: number; width: number; height: number };
+  function withGeometry(
+    dom: JSDOM,
+    layout: Record<string, Rect & { scrollWidth?: number; clientWidth?: number; scrollHeight?: number; clientHeight?: number }>,
+    page: { clientWidth: number; scrollWidth: number },
+  ): void {
+    const doc = dom.window.document;
+    Object.defineProperty(doc.documentElement, 'clientWidth', { value: page.clientWidth });
+    Object.defineProperty(doc.documentElement, 'scrollWidth', { value: page.scrollWidth });
+    for (const [id, geometry] of Object.entries(layout)) {
+      const element = doc.getElementById(id)!;
+      element.getBoundingClientRect = () =>
+        ({ ...geometry, top: 0, bottom: geometry.height, x: geometry.left, y: 0 }) as DOMRect;
+      for (const key of ['scrollWidth', 'clientWidth', 'scrollHeight', 'clientHeight'] as const) {
+        if (geometry[key] !== undefined) Object.defineProperty(element, key, { value: geometry[key] });
+      }
+    }
+  }
+
+  it('reports sideways scroll, the outermost straddling element and overflow-hidden cuts', async () => {
+    const dom = new JSDOM(
+      `<!doctype html><body>
+        <div id="hero"><img id="banner" alt="Banner largo"></div>
+        <nav id="drawer">Menu fora da tela</nav>
+        <div id="card" style="overflow-x: hidden; overflow-y: hidden">Texto longo cortado</div>
+        <div id="ssoOtp" style="overflow-x: clip; overflow-y: clip">123456</div>
+      </body>`,
+      { url: 'https://example.test/', pretendToBeVisual: true },
+    );
+    withGeometry(
+      dom,
+      {
+        hero: { left: 0, right: 390, width: 390, height: 200 },
+        banner: { left: 0, right: 520, width: 520, height: 200 },
+        drawer: { left: 400, right: 700, width: 300, height: 800 },
+        card: { left: 0, right: 200, width: 200, height: 40, scrollWidth: 200, clientWidth: 200, scrollHeight: 90, clientHeight: 40 },
+        ssoOtp: { left: 0, right: 100, width: 100, height: 20, scrollWidth: 160, clientWidth: 100, scrollHeight: 20, clientHeight: 20 },
+      },
+      { clientWidth: 390, scrollWidth: 520 },
+    );
+    const automation = createBrowserAutomation(dom.window as unknown as BrowserDomWindow);
+    const audit = (await automation.run('layout_audit', {})) as {
+      layoutWidth: number;
+      scrollWidth: number;
+      horizontalOverflow: boolean;
+      overflowing: Array<{ tag: string; name: string; overflowPx: number }>;
+      clipped: Array<{ name: string; hiddenX: number; hiddenY: number }>;
+    };
+    expect(audit).toMatchObject({ layoutWidth: 390, scrollWidth: 520, horizontalOverflow: true });
+    // Only the banner (not its in-bounds parent, not the fully off-canvas drawer).
+    expect(audit.overflowing).toHaveLength(1);
+    expect(audit.overflowing[0]).toMatchObject({ tag: 'img', name: 'Banner largo', overflowPx: 130 });
+    expect(audit.clipped).toHaveLength(2);
+    expect(audit.clipped[0]).toMatchObject({ name: 'Texto longo cortado', hiddenX: 0, hiddenY: 50 });
+    // Sensitive boxes are reported by geometry only — never their text.
+    expect(audit.clipped[1]).toMatchObject({ name: '[sensitive field hidden]', hiddenX: 60 });
+    expect(JSON.stringify(audit)).not.toContain('123456');
+  });
+
+  it('a page that fits reports no overflow', async () => {
+    const dom = new JSDOM(`<!doctype html><body><p id="p">ok</p></body>`, {
+      url: 'https://example.test/',
+      pretendToBeVisual: true,
+    });
+    withGeometry(dom, { p: { left: 0, right: 300, width: 300, height: 20 } }, { clientWidth: 390, scrollWidth: 390 });
+    const automation = createBrowserAutomation(dom.window as unknown as BrowserDomWindow);
+    expect(await automation.run('layout_audit', {})).toMatchObject({
+      horizontalOverflow: false,
+      overflowing: [],
+      clipped: [],
+      truncated: false,
+    });
+  });
+});
