@@ -9,9 +9,11 @@ vi.mock('../context/orientation/orientation-service', () => ({
   tryGetProjectOrientationService: () => ({}),
 }));
 vi.mock('../context/orientation/orientation-blast-radius', () => ({
-  // Forma real do BlastRadiusResult do code map: `tests` e nós de banco em `files`.
+  // Forma real do BlastRadiusResult do code map (rodada 4b): `files` só com
+  // caminhos reais; os nós de banco vêm à parte em `dbEntities`.
   ensureBlastRadius: vi.fn(async () => ({
-    files: ['src/orders.ts', 'db:table:public.orders', 'db:function:fechar_comanda', 'tests/db/orders.test.ts'],
+    files: ['src/orders.ts', 'tests/db/orders.test.ts'],
+    dbEntities: ['db:table:public.orders', 'db:function:fechar_comanda'],
     symbols: [],
     domains: [],
     hubs: [],

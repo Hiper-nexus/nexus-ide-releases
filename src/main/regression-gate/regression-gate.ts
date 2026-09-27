@@ -137,7 +137,7 @@ const DB_NODE_RE = /^db:(?:table|function):(.+)$/u;
 
 /**
  * Default do contrato do codemap-banco: `tests` do BlastRadiusResult e as
- * entidades de banco do raio (nós `db:table:`/`db:function:` em `files`).
+ * entidades de banco do raio (nós `db:table:`/`db:function:` em `dbEntities`).
  * Sem serviço de orientação → null, o portão segue só com o grafo.
  */
 export async function orientationBlastRadiusExtension(input: {
@@ -152,7 +152,13 @@ export async function orientationBlastRadiusExtension(input: {
     service,
   );
   const tests = stringList((radius as { tests?: unknown }).tests);
-  const dbEntities = stringList((radius as { files?: unknown }).files).flatMap((node) => {
+  // O code map expõe os nós de banco em `dbEntities` (rodada 4b); `files`
+  // fica como fallback para mapas antigos que ainda os misturavam.
+  const dbNodes = [
+    ...stringList((radius as { dbEntities?: unknown }).dbEntities),
+    ...stringList((radius as { files?: unknown }).files),
+  ];
+  const dbEntities = [...new Set(dbNodes)].flatMap((node) => {
     const qualified = DB_NODE_RE.exec(node)?.[1];
     if (!qualified) return [];
     const dot = qualified.indexOf('.');
