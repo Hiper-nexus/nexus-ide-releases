@@ -589,7 +589,7 @@ saber isto antes de mexer:
   Grok realtime). Só transcreve (`TRANSCRIPTION_ONLY_STT_PROVIDERS`). Migração
   insere o link após o último cloud da cadeia persistida, nunca no head;
   cadeias só-local não recebem.
-- **Nomes canônicos no viés do ditado (F-656)**: `shared/dictation-vocabulary`
+- **Nomes canônicos no viés do ditado (F-657)**: `shared/dictation-vocabulary`
   exporta `DICTATION_CANONICAL_NAMES` (Jev, Nexus, Claude…) e
   `DICTATION_ENGINE_VOCABULARY` (código + nomes) — é ESTA lista que viaja como
   `keyterm` do xAI, `custom_vocabulary` do Gemini e priming do Whisper, e a
