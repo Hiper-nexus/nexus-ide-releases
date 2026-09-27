@@ -65,6 +65,8 @@ import {
   squadBindingViolationError,
 } from './free-agent-choice';
 import { loadModelCatalog, modelCatalogInfo } from '../adapters/model-catalog';
+import { discoverCliModels } from '../adapters/cli-model-discovery';
+import { resolveRoutableModel } from './task-router';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import {
   authorizePaneRef,
@@ -162,6 +164,44 @@ function defaultModelForAdapter(adapterId: string): string | undefined {
     if (def.id === adapterId) return def.models?.default;
   }
   return undefined;
+}
+
+function cliAdapterFor(adapterId: string): ReturnType<typeof getAdapter> {
+  const builtin = BUILTIN_ADAPTERS.find(
+    (item) => (item as { id?: string }).id === adapterId,
+  );
+  return getAdapter(adapterId) ?? (builtin ? adapterSchema.parse(builtin) : null);
+}
+
+/**
+ * 0.76.110 (paridade): a mão do operador sem missão que PEDE uma CLI/modelo
+ * é atendida — mas só com o que está instalado. Recusa CLI sem MCP do Nexus
+ * (sem missão, o handoff não teria por onde voltar) e modelo que a CLI não
+ * roda, listando as opções válidas em vez de cair calado no default.
+ */
+function assertOperatorExplicitRuntime(adapterId: string, model: string | undefined): string | undefined {
+  const adapter = cliAdapterFor(adapterId);
+  if (!adapter || adapter.kind !== 'cli-pty') {
+    throw new Error(`nexus_pane_spawn: CLI desconhecida ou não-terminal: ${adapterId}`);
+  }
+  if (!canUseNexusMcp(adapter)) {
+    throw new Error(
+      `nexus_pane_spawn: ${adapterId} não tem MCP do Nexus — sem missão o pane ` +
+        'não consegue entregar o handoff; escolha outra CLI, omita adapterId ' +
+        'para o Nexus rotear, ou abra dentro de uma missão',
+    );
+  }
+  const runnable = [
+    ...new Set([...(discoverCliModels().get(adapterId) ?? []), ...adapter.models.list]),
+  ];
+  const resolved = resolveRoutableModel(model, runnable);
+  if (!resolved.ok) {
+    throw new Error(
+      `nexus_pane_spawn: modelo "${model}" não existe em ${adapterId}; ` +
+        `opções válidas: ${runnable.join(', ')}`,
+    );
+  }
+  return resolved.model;
 }
 
 function uniqueSealedRuntimeForMission(
@@ -579,12 +619,20 @@ const paneSpawn: McpToolDef = {
     // the-operator como hoje.
     const inheritOperatorFreedom =
       operatorHand && isOperatorChoicePolicy(getOrchSettings().squadCliPolicy);
-    // A (25/09): na mão do operador sem missão o Jev + tabela SEMPRE decidem a
-    // CLI; o que o agente pediu vira `route.ignored` no recibo. `resume` fica
-    // de fora — trocar a CLI perderia a conversa retomada.
+    // A (25/09): na mão do operador sem missão, sem adapterId, o Jev + tabela
+    // decidem a CLI; model/effort soltos viram `route.ignored` no recibo.
+    // 0.76.110: adapterId EXPLÍCITO é honrado (com model/effort), validado
+    // contra o que está instalado. `resume` fica de fora — trocar a CLI
+    // perderia a conversa retomada.
     const resumeRef = str(args, 'resume');
+    const operatorExplicit =
+      operatorHand && !resumeRef && !str(args, 'missionId') && str(args, 'adapterId') !== undefined;
+    const operatorExplicitModel = operatorExplicit
+      ? assertOperatorExplicitRuntime(str(args, 'adapterId')!, str(args, 'model'))
+      : undefined;
     const forceOperatorRoute =
       operatorHand &&
+      !operatorExplicit &&
       !resumeRef &&
       !str(args, 'missionId') &&
       operatorRouteResolver !== null;
@@ -619,10 +667,7 @@ const paneSpawn: McpToolDef = {
         if (!adapterId) {
           throw new Error('nexus_pane_spawn: roteamento automático falhou (sem adapterId)');
         }
-        const builtin = BUILTIN_ADAPTERS.find(
-          (item) => (item as { id?: string }).id === adapterId,
-        );
-        const adapter = getAdapter(adapterId) ?? (builtin ? adapterSchema.parse(builtin) : null);
+        const adapter = cliAdapterFor(adapterId);
         if (!adapter || adapter.kind !== 'cli-pty') {
           throw new Error(`nexus_pane_spawn: rota sem adapter CLI válido (${adapterId})`);
         }
@@ -766,7 +811,7 @@ const paneSpawn: McpToolDef = {
       }
       assertMcpInvocationCurrent(invocation);
       const adHocModel =
-        (forceOperatorRoute || missionAutoRoute ? undefined : str(args, 'model')) ??
+        (forceOperatorRoute || missionAutoRoute ? undefined : operatorExplicitModel ?? str(args, 'model')) ??
         routeString(autoRoute, 'model');
       const adHocEffort =
         (forceOperatorRoute || missionAutoRoute ? undefined : str(args, 'effort')) ??
@@ -1270,7 +1315,7 @@ const paneSpawn: McpToolDef = {
             ? 'sealed-roster'
             : routeReservationId
               ? 'route'
-              : str(args, 'model')
+              : operatorExplicit || str(args, 'model')
                 ? 'explicit'
                 : 'cli-default',
         ...(deliveryContract

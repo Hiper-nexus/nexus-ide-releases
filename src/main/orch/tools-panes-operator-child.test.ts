@@ -26,6 +26,12 @@ vi.mock('./isolated-writer-worktree', async (importOriginal) => ({
   allocateIsolatedWriterWorktree: harness.allocateIsolatedWriterWorktree,
 }));
 
+// Catálogo determinístico: só a lista builtin do adapter, nunca o cache da máquina.
+vi.mock('../adapters/cli-model-discovery', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../adapters/cli-model-discovery')>()),
+  discoverCliModels: vi.fn(() => new Map()),
+}));
+
 vi.mock('./tool-util', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./tool-util')>()),
   spawnPaneAndMaybePrompt: harness.spawnPaneAndMaybePrompt,
@@ -313,13 +319,50 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     },
   );
 
-  it('adapterId/model/effort do agente são ignorados: o resolver decide e o recibo diz', async () => {
+  it('adapterId/model/effort explícitos são honrados sem rotear e o recibo diz explícito', async () => {
+    const resolver = vi.fn(async () => ({ adapterId: 'kimi', model: 'kimi-code/k3' }));
+    setOperatorRouteResolver(resolver);
+    const result = (await paneSpawnTool.handler(
+      { adapterId: 'codex', model: 'gpt-6-astra', effort: 'high', prompt: 'revise X' },
+      userPane(),
+    )) as Record<string, unknown>;
+    expect(resolver).not.toHaveBeenCalled();
+    expect(harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0]).toMatchObject({
+      adapterId: 'codex',
+      model: 'gpt-6-astra',
+      effort: 'high',
+    });
+    expect(result).toMatchObject({
+      harness: { adapterId: 'codex', model: 'gpt-6-astra', effort: 'high', source: 'explicit' },
+    });
+    expect(result.route).toBeUndefined();
+  });
+
+  it('modelo inexistente na CLI explícita falha com as opções válidas', async () => {
+    setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex' })));
+    await expect(paneSpawnTool.handler(
+      { adapterId: 'codex', model: 'gpt-9-fantasma', prompt: 'revise X' },
+      userPane(),
+    )).rejects.toThrow(/gpt-9-fantasma.*opções válidas:.*gpt-6-astra/);
+    expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
+  });
+
+  it('CLI explícita sem MCP do Nexus (agy) é recusada com motivo claro', async () => {
+    setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex' })));
+    await expect(paneSpawnTool.handler(
+      { adapterId: 'agy', prompt: 'revise X' },
+      userPane(),
+    )).rejects.toThrow(/agy não tem MCP do Nexus.*handoff/);
+    expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
+  });
+
+  it('model/effort sem adapterId continuam roteados e listados em route.ignored', async () => {
     const resolver = vi.fn(async () => ({
       adapterId: 'kimi', model: 'kimi-code/k3', effort: 'low', classifierSource: 'jev',
     }));
     setOperatorRouteResolver(resolver);
     const result = (await paneSpawnTool.handler(
-      { adapterId: 'claude', model: 'claude-opus-5-5', effort: 'high', prompt: 'revise X' },
+      { model: 'claude-opus-5-5', effort: 'high', prompt: 'revise X' },
       userPane(),
     )) as Record<string, unknown>;
     expect(resolver).toHaveBeenCalledTimes(1);
@@ -331,9 +374,7 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     });
     expect(result).toMatchObject({
       harness: { source: 'auto-route' },
-      route: {
-        ignored: { adapterId: 'claude', model: 'claude-opus-5-5', effort: 'high' },
-      },
+      route: { ignored: { model: 'claude-opus-5-5', effort: 'high' } },
     });
   });
 
@@ -395,7 +436,7 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
 
   it('sem task, prompt nem title o spawn roteado pede a tarefa', async () => {
     setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'kimi' })));
-    await expect(paneSpawnTool.handler({ adapterId: 'claude' }, userPane())).rejects.toThrow(/task/);
+    await expect(paneSpawnTool.handler({}, userPane())).rejects.toThrow(/task/);
     expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
   });
 
