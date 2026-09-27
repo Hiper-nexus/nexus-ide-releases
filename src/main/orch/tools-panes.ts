@@ -867,23 +867,59 @@ const paneSpawn: McpToolDef = {
       options = { ...options, executionScope: callerExecutionScope,
         cwd: options.cwd ?? callerExecutionScope.rootRealPath };
     }
-    // C3 (25/09): na mão do operador, writer delegado entra um por vez no
-    // checkout; helpers de leitura seguem em paralelo.
-    if (operatorHand && !options.missionId) {
-      const writerDecision = decideDelegatedWriterSpawn({
-        spawnReadOnly: options.readOnly === true,
-        checkoutId: ctx.scope.checkoutId,
-        executionRoot: callerExecutionScope.rootRealPath,
-        panes: delegatedPaneFacts(
-          listPaneSnapshots(),
-          (sessionId) =>
-            getPaneRuntimeAuthorityBySession(sessionId)?.operatorParentSessionId,
-        ),
-      });
-      if (!writerDecision.allowed) throw new Error(writerDecision.reason);
-    }
     let isolatedWriter: Awaited<ReturnType<typeof allocateIsolatedWriterWorktree>> | undefined;
+    let isolatedWriterReason: string | undefined;
+    // C3 (25/09) → 0.76.110: na mão do operador, dois writers nunca dividem o
+    // mesmo checkout. `isolatedWriter:true` ganha worktree/branch própria; um
+    // writer comum que colidiria com outro ativo é auto-isolado (em vez de
+    // recusado). Helpers de leitura seguem em paralelo no checkout.
+    if (operatorHand && !options.missionId && options.readOnly !== true) {
+      let isolate = args.isolatedWriter === true;
+      if (!isolate) {
+        const writerDecision = decideDelegatedWriterSpawn({
+          spawnReadOnly: false,
+          checkoutId: ctx.scope.checkoutId,
+          executionRoot: callerExecutionScope.rootRealPath,
+          panes: delegatedPaneFacts(
+            listPaneSnapshots(),
+            (sessionId) =>
+              getPaneRuntimeAuthorityBySession(sessionId)?.operatorParentSessionId,
+          ),
+        });
+        if (!writerDecision.allowed) {
+          // Aba em pasta compartilhada não suporta worktree: mantém a fila.
+          try {
+            assertTabSupportsOperation(ctx.scope, callerExecutionScope, 'isolatedWriter', ctx.sharedTabWorktree);
+          } catch {
+            throw new Error(writerDecision.reason);
+          }
+          isolate = true;
+          isolatedWriterReason = `auto-isolado: ${writerDecision.reason.replace(/ — .*$/, '')} no mesmo checkout`;
+        }
+      }
+      if (isolate) {
+        assertTabSupportsOperation(ctx.scope, callerExecutionScope, 'isolatedWriter', ctx.sharedTabWorktree);
+        isolatedWriter = await allocateIsolatedWriterWorktree(ctx.scope, undefined);
+        executionMode = 'isolated_worktree';
+        options = {
+          ...options,
+          executionMode,
+          isolatedWriter: true,
+          cwd: isolatedWriter.worktreePath,
+          executionScope: Object.freeze({ ...ctx.scope, rootRealPath: isolatedWriter.worktreePath }),
+          prompt: withIsolatedWriterContract(options.prompt ?? 'Execute a tarefa delegada.', isolatedWriter),
+        };
+      }
+    }
     let isolatedWriterPending = false;
+    // Recibo: quem spawnou sabe qual branch/worktree integrar depois.
+    const isolatedReceipt = () => isolatedWriter
+      ? { isolatedWorktree: {
+          branch: isolatedWriter.branch,
+          worktreePath: isolatedWriter.worktreePath,
+          ...(isolatedWriterReason ? { reason: isolatedWriterReason } : {}),
+        } }
+      : {};
     let releaseWorkerSlot: (() => void) | undefined;
     let spawnedWorkerPaneId: string | undefined;
     let consumeReservedRoute: (() => void) | undefined;
@@ -1272,6 +1308,7 @@ const paneSpawn: McpToolDef = {
         return {
           ...pending,
           ...(executionMode ? { executionMode } : {}),
+          ...isolatedReceipt(),
           // ACK pendente: ainda não há sessionId para buscar o recibo.
           harness: { ...harness, account: null },
           ...routeReceipt,
@@ -1305,6 +1342,7 @@ const paneSpawn: McpToolDef = {
       return {
         ...spawned,
         ...(executionMode ? { executionMode } : {}),
+        ...isolatedReceipt(),
         harness: {
           ...harness,
           account: getAccountChoiceReceipt(spawned.sessionId) ?? null,

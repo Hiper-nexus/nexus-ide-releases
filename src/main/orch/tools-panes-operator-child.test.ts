@@ -16,6 +16,14 @@ const harness = vi.hoisted(() => ({
   snapshots: [] as Array<Record<string, unknown>>,
   parentBySession: {} as Record<string, string>,
   panesByRef: {} as Record<string, { paneId: string; adapterId?: string }>,
+  allocateIsolatedWriterWorktree: vi.fn(async () => ({
+    worktreePath: '/tmp/nexus-wt/op-1', branch: 'nexus/op/1', release: vi.fn(),
+  })),
+}));
+
+vi.mock('./isolated-writer-worktree', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./isolated-writer-worktree')>()),
+  allocateIsolatedWriterWorktree: harness.allocateIsolatedWriterWorktree,
 }));
 
 vi.mock('./tool-util', async (importOriginal) => ({
@@ -391,15 +399,32 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
   });
 
-  it('writer delegado ativo no checkout recusa outro writer; readOnly passa', async () => {
+  it('writer delegado ativo no checkout auto-isola o próximo writer; readOnly segue no checkout', async () => {
     harness.snapshots = [
       { paneId: 'pane-w', paneNumber: 4, sessionId: 's-w', adapterId: 'codex', state: 'busy', title: 'w', kind: 'cli-agent', scope: testProjectScope() },
     ];
     harness.parentBySession = { 's-w': 'session-user' };
     setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'kimi' })));
-    await expect(paneSpawnTool.handler({ prompt: 'edite X' }, userPane())).rejects.toThrow(/writer pane 4 ainda ativo/);
+    const receipt = await paneSpawnTool.handler({ prompt: 'edite X' }, userPane()) as Record<string, unknown>;
+    expect(receipt).toMatchObject({
+      executionMode: 'isolated_worktree',
+      isolatedWorktree: { branch: 'nexus/op/1', worktreePath: '/tmp/nexus-wt/op-1', reason: expect.stringMatching(/writer pane 4 ainda ativo/) },
+    });
+    expect(harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0]).toMatchObject({ cwd: '/tmp/nexus-wt/op-1', isolatedWriter: true });
     await paneSpawnTool.handler({ prompt: 'revise X', readOnly: true }, userPane());
-    expect(harness.spawnPaneAndMaybePrompt).toHaveBeenCalledTimes(1);
+    expect(harness.allocateIsolatedWriterWorktree).toHaveBeenCalledTimes(1);
+    expect(harness.spawnPaneAndMaybePrompt).toHaveBeenCalledTimes(2);
+  });
+
+  it('aba em pasta compartilhada não isola: writer concorrente continua recusado', async () => {
+    harness.snapshots = [
+      { paneId: 'pane-w', paneNumber: 4, sessionId: 's-w', adapterId: 'codex', state: 'busy', title: 'w', kind: 'cli-agent', scope: testProjectScope() },
+    ];
+    harness.parentBySession = { 's-w': 'session-user' };
+    setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'kimi' })));
+    await expect(paneSpawnTool.handler({ prompt: 'edite X' }, userPane({ sharedTabWorktree: true })))
+      .rejects.toThrow(/writer pane 4 ainda ativo/);
+    expect(harness.allocateIsolatedWriterWorktree).not.toHaveBeenCalled();
   });
 
   it('helper do operador arma o auto-close por padrão', async () => {
