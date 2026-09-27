@@ -883,6 +883,26 @@ describe('analyzeBrowserResponsive (nexus_browser_responsive)', () => {
     }
   });
 
+  it('does not reload over a click-through navigation that aborted the breakpoint load (ERR_ABORTED)', async () => {
+    await boot();
+    state.guest.loadURL.mockImplementationOnce(async () => {
+      // The operator clicks a link while our load is in flight: Chromium
+      // aborts ours and starts theirs.
+      fire('did-start-navigation', {}, 'https://example.test/next', false, true);
+      throw new Error('ERR_ABORTED (-3) loading https://example.test/app');
+    });
+    try {
+      await expect(analyzeBrowserResponsive(PANE, scope, { devices: ['desktop'] })).rejects.toThrow(/ERR_ABORTED/);
+      // Only our aborted load; no restore reload over the operator's page…
+      expect(state.guest.loadURL).toHaveBeenCalledTimes(1);
+      // …but the device emulation still goes back.
+      expect(state.guest.disableDeviceEmulation).toHaveBeenCalled();
+    } finally {
+      state.guest.loadURL.mockImplementation(async () => {});
+      destroyBrowser(PANE, scope);
+    }
+  });
+
   it('keeps the DNS guard: a host now resolving privately is never loaded or emulated', async () => {
     await boot();
     state.browserSession.resolveHost.mockResolvedValue({

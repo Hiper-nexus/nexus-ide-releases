@@ -1227,29 +1227,6 @@ function handleLimitHit(
     return;
   }
 
-  // A long multi-hour usage quarantine cannot be authorized without a fresh
-  // matching provider-api window (cascata fantasma). Mas a conta ESTÁ
-  // bloqueada para este pane agora: recusar a troca deixava o pane preso na
-  // conta esgotada (2026-09-27, "hit your session limit" de um `claude -p`
-  // filho: nenhum failover, duas rodadas perdidas). Sem sonda fresca a troca
-  // acontece com backoff CURTO; se o limite for real, o próximo hit — já com
-  // leitura fresca — aplica a janela inteira. Provider errors (transient)
-  // never reach this function — they are an episode of their own.
-  if (
-    longCooldownNeedsFreshProviderApi(hit) &&
-    !hasFreshProviderApiWindowForLimit(quotaEntry, hit, now)
-  ) {
-    logSuppressedFailover(
-      pane,
-      current,
-      hit,
-      'long-cooldown-capped-without-provider-api',
-      source,
-      { cooldownMs: hit.cooldownMs, cappedToMs: CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS },
-    );
-    hit = { ...hit, cooldownMs: CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS };
-  }
-
   // Modelo rejeitado (F-520): a CONTA está sadia — "as contas estão todas
   // operacionais". Rotacionar o MODELO do pane (id aposentado → migração;
   // senão default curado do catálogo do adapter) e religar na MESMA conta.
@@ -1303,6 +1280,86 @@ function handleLimitHit(
     return;
   }
 
+  // A long multi-hour usage quarantine cannot be authorized by PTY text alone
+  // (cascata fantasma: um `cat erro.log` com a frase certa não é limite). Sem
+  // leitura provider-api fresca, CONFIRMA com uma sonda ao vivo antes de
+  // quarentenar/trocar: leitura sadia refuta; leitura no limite aplica a
+  // janela inteira; sonda sem resposta troca com backoff CURTO — a conta
+  // pode estar esgotada de verdade (2026-09-27, "hit your session limit" de
+  // um `claude -p` filho: nenhum failover, duas rodadas perdidas) e suprimir
+  // deixava o pane preso nela. Provider errors (transient) never reach this
+  // function — they are an episode of their own.
+  if (
+    longCooldownNeedsFreshProviderApi(hit) &&
+    !hasFreshProviderApiWindowForLimit(quotaEntry, hit, now)
+  ) {
+    void confirmLimitByProbe(authority, pane, key, hit, now, source, current, adapterId);
+    return;
+  }
+  commitLimitHit(authority, pane, key, hit, now, source, current, adapterId);
+}
+
+async function confirmLimitByProbe(
+  authority: FailoverAuthority,
+  pane: PaneDetails,
+  key: string,
+  hit: LimitHit,
+  now: number,
+  source: FailoverSignalSource,
+  current: ReturnType<typeof paneAccount>,
+  adapterId: string,
+): Promise<void> {
+  let fresh: ProviderQuotaEntry | undefined;
+  try {
+    await requireQuotaService().refresh();
+    fresh = current ? quotaEntryFor(adapterId, current.id) : undefined;
+  } catch (error) {
+    console.warn(
+      '[failover] sonda de cota após limite falhou:',
+      error instanceof Error ? error.message : error,
+    );
+    fresh = undefined;
+  }
+  const probedAt = Date.now();
+  if (current && providerApiRefutesLimit(fresh, hit, probedAt)) {
+    logSuppressedFailover(pane, current, hit, 'provider-api-healthy-after-probe', source);
+    return;
+  }
+  if (hasFreshProviderApiWindowForLimit(fresh, hit, probedAt)) {
+    commitLimitHit(authority, pane, key, hit, now, source, current, adapterId);
+    return;
+  }
+  logSuppressedFailover(
+    pane,
+    current,
+    hit,
+    'long-cooldown-capped-without-provider-api',
+    source,
+    { cooldownMs: hit.cooldownMs, cappedToMs: CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS },
+  );
+  commitLimitHit(
+    authority,
+    pane,
+    key,
+    { ...hit, cooldownMs: CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS },
+    now,
+    source,
+    current,
+    adapterId,
+  );
+}
+
+/** Cooldown na conta esgotada, disjuntor de auth e troca para a próxima. */
+function commitLimitHit(
+  authority: FailoverAuthority,
+  pane: PaneDetails,
+  key: string,
+  hit: LimitHit,
+  now: number,
+  source: FailoverSignalSource,
+  current: ReturnType<typeof paneAccount>,
+  adapterId: string,
+): void {
   // Feed fleet quota UI (session/5h/weekly bars) from the same limit signal.
   noteQuotaLimitHit(adapterId, hit, current?.id);
 

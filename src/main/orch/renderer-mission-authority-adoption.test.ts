@@ -344,12 +344,19 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     const suite = requireProjectDomainStoreRegistry().forScope(scope);
     expect(suite.missions.get(a.mission!.id)?.intentContract?.workspaceBinding).toMatchObject({ adoptedPaneId: "pane-a", tabKey: "__loose__" });
 
-    // Reinício: nova autoridade sobre o mesmo store persistido.
+    // Reinício do Main: o store SQLite é fechado e reaberto do disco e uma
+    // autoridade nova nasce sem nada em memória.
+    disposeProjectDomainStoreRegistry();
+    manager.closeAll();
+    manager = new ProjectRuntimeManager({ baseDir: path.join(dir, ".runtime"), appVersion: "test" });
+    configureProjectDomainStoreRegistry(manager);
+    const reopened = requireProjectDomainStoreRegistry().forScope(scope);
+    expect(reopened.missions.get(a.mission!.id)?.intentContract?.workspaceBinding).toMatchObject({ tabKey: "__loose__" });
     const restarted = authority();
     const b = restarted.createPaneMissionFromRenderer(owner, { paneId: "pane-b", title: "Missão · Login", tabKey: "__loose__" });
 
     expect(b).toMatchObject({ ok: true, mission: { id: a.mission!.id } });
-    expect(suite.missions.list()).toHaveLength(1);
+    expect(reopened.missions.list()).toHaveLength(1);
     // Outra aba, depois do reinício, continua ganhando a sua.
     const third = operatorPane("pane-c");
     register([
@@ -360,7 +367,7 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     const c = restarted.createPaneMissionFromRenderer(owner, { paneId: "pane-c", title: "Missão · Pagamento", tabKey: "space:pay" });
     expect(c.ok && c.mission!.id !== a.mission!.id).toBe(true);
     // Missão da aba encerrada: o próximo clique explícito cria outra, sem ressuscitar a antiga.
-    suite.missions.update(a.mission!.id, { status: "failed" });
+    reopened.missions.update(a.mission!.id, { status: "failed" });
     expect(returnOperatorHandFromEndedMission(getContextBySession(second)!)).toBe(true);
     const next = authority().createPaneMissionFromRenderer(owner, { paneId: "pane-b", title: "Missão · Login 2", tabKey: "__loose__" });
     expect(next.ok && next.mission!.id !== a.mission!.id).toBe(true);

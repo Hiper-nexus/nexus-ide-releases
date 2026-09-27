@@ -1366,7 +1366,12 @@ async function evaluate(
   }
   const common = { untestedFiles: impacted.untestedFiles, invariantsTouched };
   if (tests.length === 0) {
-    return finish({ status: 'no-tests', testsRun: [], testsNotRun: [], failures: [], inheritedFailures: [], runner: null, ...common });
+    // Seleção incompleta (diff além do limite): "sem testes" seria aprovação
+    // de um diff que o portão nem viu inteiro — fica NÃO verificado.
+    return finish({
+      status: state.changed.truncated ? 'unavailable' : 'no-tests',
+      testsRun: [], testsNotRun: [], failures: [], inheritedFailures: [], runner: null, ...common,
+    });
   }
   const { groups, orphans } = planRunnerGroups(root, tests);
   if (groups.length === 0) {

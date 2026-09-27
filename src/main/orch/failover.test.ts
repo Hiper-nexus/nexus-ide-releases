@@ -365,50 +365,123 @@ describe('account failover authority and lifecycle', () => {
     );
   });
 
-  it('sem leitura provider-api fresca: a quarentena cai para 15 min, mas o pane ainda troca de conta', async () => {
+  // Sem leitura provider-api fresca, o texto do PTY não decide sozinho: o
+  // failover sonda a cota ao vivo (Astra P1: `cat erro.log` com a frase certa
+  // não pode trocar uma conta sadia) antes de quarentenar/trocar.
+  const sessionLimitHit = {
+    kind: 'rate-limit' as const,
+    reason: "You've hit your session limit",
+    cooldownMs: 77 * 60 * 1000,
+  };
+  const probedEntry = (usedRatio: number) => ({
+    id: 'claude:account-a',
+    adapterId: 'claude',
+    accountId: 'account-a',
+    label: 'Account A',
+    installed: true,
+    onCooldown: false,
+    updatedAt: 100_000,
+    windows: [
+      {
+        kind: 'hours' as const,
+        label: '5 Horas',
+        usedRatio,
+        source: 'provider-api' as const,
+        confidence: 'high' as const,
+      },
+    ],
+  });
+  async function limitWithProbe(paneNo: number, probe: (() => Promise<unknown>) | null, usedRatio: number) {
     const { detectLimit } = await import('./limit-detector');
     vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>
-      buffer.includes('LIMIT')
-        ? {
-            kind: 'rate-limit',
-            reason: "You've hit your session limit",
-            cooldownMs: 77 * 60 * 1000,
-          }
-        : null,
+      buffer.includes('LIMIT') ? sessionLimitHit : null,
     );
+    const { requireQuotaService } = await import('../quota/quota-service');
+    const snapshot = {
+      updatedAt: 100_000,
+      worstUsedRatio: usedRatio,
+      highUsageCount: usedRatio >= 0.8 ? 1 : 0,
+      unknownCount: 0,
+      entries: [probedEntry(usedRatio)],
+    };
+    // Antes da sonda: nenhuma leitura; depois: a leitura sondada.
+    let probed = false;
+    vi.mocked(requireQuotaService).mockImplementation(() => {
+      if (!probe) throw new Error('quota indisponível');
+      return {
+        refresh: async () => {
+          await probe();
+          probed = true;
+          return snapshot;
+        },
+        lastSnapshot: () => (probed ? snapshot : undefined),
+      } as unknown as ReturnType<typeof requireQuotaService>;
+    });
+    const scope = testProjectScope();
+    const owner = renderer(paneNo);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    addPane({
+      owner,
+      paneId: `pane-${paneNo}`,
+      sessionId: `session-${paneNo}`,
+      missionId: `mission-${paneNo}`,
+      scope,
+    });
+    ptyMocks.dataTaps[0](`session-${paneNo}`, 'LIMIT');
+    await settleFailover();
+    return owner;
+  }
+  afterEach(async () => {
+    const { requireQuotaService } = await import('../quota/quota-service');
+    vi.mocked(requireQuotaService).mockImplementation(() => {
+      throw new Error('quota optional in test');
+    });
+  });
+
+  it('sem leitura fresca, a sonda ao vivo CONFIRMA o limite: cooldown inteiro e troca de conta', async () => {
+    const owner = await limitWithProbe(718, async () => undefined, 1);
+    expect(accountMocks.setCooldown).toHaveBeenCalledWith(
+      'account-a',
+      100_000 + 77 * 60 * 1000,
+      "You've hit your session limit",
+      undefined,
+    );
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({ paneId: 'pane-718', switched: true, toAccountId: 'account-b' }),
+    );
+  });
+
+  it('sem leitura fresca, a sonda ao vivo REFUTA (conta com folga): texto emoldurado de ferramenta não troca conta', async () => {
     const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
     try {
-      const scope = testProjectScope();
-      const owner = renderer(718);
-      renderers.push(owner);
-      bindResolvedRendererWorkspaceScope(owner, scope);
-      registerFailoverListener(owner);
-      addPane({
-        owner,
-        paneId: 'pane-718',
-        sessionId: 'session-718',
-        missionId: 'mission-718',
-        scope,
-      });
+      const owner = await limitWithProbe(720, async () => undefined, 0.3);
+      expect(accountMocks.setCooldown).not.toHaveBeenCalled();
+      expect(owner.send).not.toHaveBeenCalledWith(ACCOUNT_CHANNELS.failover, expect.anything());
+      expect(log).toHaveBeenCalledWith(
+        '[failover]',
+        expect.stringContaining('provider-api-healthy-after-probe'),
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
 
-      ptyMocks.dataTaps[0]('session-718', 'LIMIT');
-      await settleFailover();
-
-      // Horas de cooldown por texto de PTY não: só o backoff curto…
+  it('sonda sem resposta: a quarentena cai para 15 min, mas o pane ainda troca de conta', async () => {
+    const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    try {
+      const owner = await limitWithProbe(721, null, 0);
       expect(accountMocks.setCooldown).toHaveBeenCalledWith(
         'account-a',
         100_000 + 15 * 60 * 1000,
         "You've hit your session limit",
         undefined,
       );
-      // …mas a conta esgotada não prende o pane: a troca acontece.
       expect(owner.send).toHaveBeenCalledWith(
         ACCOUNT_CHANNELS.failover,
-        expect.objectContaining({
-          paneId: 'pane-718',
-          switched: true,
-          toAccountId: 'account-b',
-        }),
+        expect.objectContaining({ paneId: 'pane-721', switched: true, toAccountId: 'account-b' }),
       );
       expect(log).toHaveBeenCalledWith(
         '[failover]',

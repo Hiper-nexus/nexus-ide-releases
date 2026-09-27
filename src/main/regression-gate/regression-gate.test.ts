@@ -608,6 +608,21 @@ describe('runRegressionGate', () => {
     expect(failing.status).toBe('failed');
   }, 60_000);
 
+  it('diff truncado que deixa só docs na seleção não vira "sem testes" aprovado: NÃO verificado', async () => {
+    const { root, scope } = project();
+    // Só docs no diff visível (nenhum teste selecionado) e um diff além do limite:
+    // o retorno antecipado "sem testes" aprovaria um diff que o portão nem viu inteiro.
+    const declaredFiles = Array.from({ length: 20_001 }, (_, index) => `aaa/gone-${index}.md`);
+    write(root, 'docs/nota.md', '# nota\n');
+    const { exec, calls } = fakeVitest();
+
+    const result = await runRegressionGate({ scope, declaredFiles }, { exec });
+
+    expect(calls).toHaveLength(0);
+    expect(result.status).toBe('unavailable');
+    expect(result.warnings.join('\n')).toContain('NÃO verificado');
+  }, 60_000);
+
   it('pytest: test_a passou e test_b foi todo ignorado (relatório JUnit) — não é passed', async () => {
     const { root, scope } = project();
     write(root, 'pytest.ini', '[pytest]\n');

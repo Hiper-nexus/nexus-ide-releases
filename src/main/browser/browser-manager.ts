@@ -1476,22 +1476,25 @@ export async function analyzeBrowserResponsive(
       // DNS/pins before emulating, and a navigation in that gap must win.
       const load = loadBrowserForEntry(paneId, entry, url, { ...authority, device, expectedNavSeq: ownNavSeq });
       ownLoadGeneration = entry.loadGeneration;
-      let ours = true;
+      // The navigation baseline only moves for a load that ran to its end
+      // (settled or timed out). A rejected load — discarded before touching
+      // the page, refused by DNS, or aborted because the operator navigated
+      // while it was in flight (ERR_ABORTED) — cannot tell its own
+      // did-start-navigation from the operator's, so the baseline stays and
+      // the restore below treats the pane as "navigated elsewhere". The
+      // device width is always re-read: emulation is ours whenever applied.
+      let settled = false;
       try {
         await load;
+        settled = true;
       } catch (error) {
-        // Discarded before touching the page: the operator's navigation is
-        // the current one and must stay the baseline, so the restore below
-        // sees it as "superseded" and leaves it alone.
-        if (error instanceof BrowserLoadSupersededError) ours = false;
         if (!(error instanceof BrowserLoadTimeoutError)) throw error;
+        settled = true;
         breakpoints.push({ device, loadTimedOut: true, error: error.message });
         continue;
       } finally {
-        if (ours) {
-          ownNavSeq = entry.navSeq;
-          ownWidth = entry.emulatedViewport?.width ?? null;
-        }
+        if (settled) ownNavSeq = entry.navSeq;
+        ownWidth = entry.emulatedViewport?.width ?? null;
       }
       const audit = browserLayoutAuditSchema.parse(
         await runBrowserAutomationForPane(paneId, scope, 'layout_audit', {}),
