@@ -173,7 +173,7 @@ describe('WorkspaceTabs', () => {
         key: 'space:a',
         id: 'a',
         title: 'Checkout',
-        missions: [{ id: 'm-old', title: 'Missão · Checkout', state: 'done' }],
+        missions: [{ id: 'm-old', title: 'Missão · Checkout', state: 'completed' }],
       }),
     ];
     const { host } = render({ scopes, onStartTabMission: vi.fn() });
@@ -185,6 +185,28 @@ describe('WorkspaceTabs', () => {
       [...document.querySelectorAll('[role="menuitem"] strong')].map((item) => item.textContent),
     ).toContain('Criar missão desta aba');
   });
+
+  it.each(['blocked_user', 'blocked_technical', 'recovering', 'starting'])(
+    'missão da aba em %s ainda é a viva: não oferece criar outra',
+    (state) => {
+      const scopes = [
+        space({
+          key: 'space:a',
+          id: 'a',
+          title: 'Checkout',
+          missions: [{ id: 'm-viva', title: 'Missão · Checkout', state }],
+        }),
+      ];
+      const { host } = render({ scopes, onStartTabMission: vi.fn() });
+      act(() => {
+        host.querySelector('.workspace-tab[data-scope-kind="space"]')!
+          .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+      });
+      expect(
+        [...document.querySelectorAll('[role="menuitem"] strong')].map((item) => item.textContent),
+      ).not.toContain('Criar missão desta aba');
+    },
+  );
 
   it('Shift+F10 abre as ações da aba e Escape devolve o foco', () => {
     const { host } = render();
