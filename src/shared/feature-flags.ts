@@ -93,6 +93,8 @@ export const FEATURE_FLAG_IDS = {
   ptyPersistentSession: 'feature.pty.persistentSession',
   /** Superfície Project Overview + minimap + goal box. */
   uiProjectOverview: 'feature.ui.projectOverview',
+  /** Portão de regressão: testes impactados pelo diff antes de aceitar escrita (0.76.110). */
+  regressionGate: 'feature.orch.regressionGate',
 } as const;
 
 export type FeatureFlagId =
@@ -351,6 +353,18 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     channel: 'dev',
     createdAt: '2026-08-10',
     removeAfter: '2027-03-31',
+    killSwitch: false,
+    telemetry: true,
+    defaultEnabled: true,
+  },
+  {
+    id: FEATURE_FLAG_IDS.regressionGate,
+    owner: 'orch',
+    description:
+      'Portão de regressão: antes de aceitar handoff/entrega e no fim do turno do pane do operador, roda só os testes impactados pelo diff; falha volta ao agente.',
+    channel: 'dev',
+    createdAt: '2026-09-27',
+    removeAfter: '2027-09-30',
     killSwitch: false,
     telemetry: true,
     defaultEnabled: true,

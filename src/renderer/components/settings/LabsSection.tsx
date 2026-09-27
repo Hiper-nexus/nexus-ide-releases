@@ -37,6 +37,10 @@ export const LABS_FLAG_COPY: Record<string, { title: string; hint?: string }> = 
     title: 'Manter sessões ao fechar o app',
     hint: 'Quando disponível, usa tmux para manter agentes em execução e reconectar ao reabrir o app.',
   },
+  'feature.orch.regressionGate': {
+    title: 'Portão de regressão',
+    hint: 'Antes de aceitar o trabalho de um agente, roda só os testes afetados pelo que ele mudou. Se algo quebrou, o agente recebe a falha para corrigir.',
+  },
   'feature.ui.projectOverview': {
     title: 'Visão geral do projeto',
     hint: 'Mostra o objetivo e uma visão dos agentes na página Projeto.',
