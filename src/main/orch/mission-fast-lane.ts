@@ -56,6 +56,7 @@ import {
   operatorTabMissionLeader,
   operatorTabMissionResumeSpec,
   operatorTabResumeAgent,
+  operatorTabResumeAwaitsAdjustment,
 } from './operator-tab-mission-resume';
 import {
   getProjectDomainStores,
@@ -1911,7 +1912,7 @@ async function respawnFastLaneOrchestrator(
     assertFastLaneMaestroMcp(orchestrator.cli);
     prompt = buildRespawnPrompt({
       basePrompt: OPERATOR_TAB_RESUME_NOTE,
-      awaitingAdjustment: missionAwaitsAdjustment(live),
+      awaitingAdjustment: operatorTabResumeAwaitsAdjustment(live),
       note: options.note,
     });
   } else {
