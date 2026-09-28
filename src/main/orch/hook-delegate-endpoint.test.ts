@@ -38,6 +38,14 @@ describe('hook /hook/delegate', () => {
     expect(text.length).toBeLessThanOrEqual(400);
   });
 
+  it('a mão promovida pelo Main continua recebendo conselho de delegação', async () => {
+    __resetLeanRemindersForTests();
+    const ctx = { role: 'orchestrator' as const, missionId: 'm', sessionId: 'promoted', promotedFromUserSession: true as const };
+    const out = await handleHookDelegateRequest(ctx, { prompt: LONG }, { advise: async () => delegation(3, 1) });
+    expect(JSON.stringify(out.payload)).toContain('nexus_pane_spawn');
+    expect((await handleHookDelegateRequest({ ...ctx, promotedFromUserSession: undefined }, { prompt: LONG }, { advise: async () => delegation(3, 1) })).payload).toEqual({});
+  });
+
   it('silêncio: sem conselho, sessão de missão, worker, payload inválido, exceção', async () => {
     expect((await handleHookDelegateRequest(operator, { prompt: LONG }, { advise: vi.fn(async () => null) })).payload).toEqual({});
     const advise = vi.fn(async () => delegation(3, 0));

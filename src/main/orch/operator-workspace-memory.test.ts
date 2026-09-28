@@ -89,6 +89,21 @@ describe('<workspace-memory> no "+ Pane" pelos canais do <business-model>', () =
     expect(JSON.stringify(later.payload)).toContain('<workspace-memory');
   });
 
+  it('o pane promovido pelo Main continua recebendo memória por tarefa sem esperar 30 min', async () => {
+    const ctx = { role: 'orchestrator' as const, missionId: 'm', promotedFromUserSession: true as const,
+      sessionId: 's-promoted', providerId: 'codex', scope };
+    getWorkspaceMemoryStore(scope).retain({
+      content: 'Cobrança exige idempotência no helper cobrarUmaVez.', kind: 'decision',
+      importance: 5, source: 'trusted:architecture-rule',
+    });
+    const deps = { advise: async () => null, now: () => 1000 };
+    const first = await handleHookDelegateRequest(ctx, { prompt: 'instale com pnpm' }, deps);
+    expect(JSON.stringify(first.payload)).toContain('Sempre use pnpm');
+    const second = await handleHookDelegateRequest(ctx, { prompt: 'Corrija cobrança idempotência' }, deps);
+    expect(JSON.stringify(second.payload)).toContain('cobrarUmaVez');
+    expect(JSON.stringify(second.payload)).toContain('historical-context-only');
+  });
+
   it('a opção de desligar a injeção vale para o MCP e para o brief de spawn', async () => {
     const previous = getOrchSettings().workspaceMemoryInjection;
     replaceOrchSettings({ workspaceMemoryInjection: false });

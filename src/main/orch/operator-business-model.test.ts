@@ -174,6 +174,16 @@ describe('"+ Pane" (mão do operador, sem missão)', () => {
     expect(JSON.stringify(again.payload)).not.toContain('<business-model');
   });
 
+  it('a promoção Main-owned do pane mantém o modelo de negócio no hook', async () => {
+    const ctx = { role: 'orchestrator' as const, missionId: 'm', promotedFromUserSession: true as const,
+      sessionId: 's-promoted-model', providerId: 'codex', scope: scope() };
+    const out = await handleHookDelegateRequest(ctx, { prompt: 'corrija a comissão' }, {
+      advise: async () => null, now: () => 2000,
+    });
+    expect(JSON.stringify(out.payload)).toContain('<business-model');
+    expect(operatorBusinessModelContext({ ...ctx, promotedFromUserSession: undefined }, 'hook')).toBeNull();
+  });
+
   it('missão e worker não recebem por aqui (recebem no brief de spawn)', () => {
     for (const channel of ['mcp', 'hook'] as const) {
       expect(operatorBusinessModelContext({ role: 'user', missionId: 'm', scope: scope() }, channel)).toBeNull();

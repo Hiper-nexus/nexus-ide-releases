@@ -13,6 +13,7 @@
 // Árvore limpa zera a sequência de bloqueios.
 import type http from 'node:http';
 import type { AgentGateContext } from './gate';
+import { isOperatorHandContext } from './operator-hand-context';
 import { sendHookJson } from './hook-http';
 import {
   formatRegressionGateReport,
@@ -35,12 +36,6 @@ const MAX_LEDGERS = 256;
 type HookContext = Pick<AgentGateContext, 'role' | 'missionId' | 'sessionId'> &
   Partial<Pick<AgentGateContext,
     'scope' | 'executionScope' | 'providerId' | 'readOnly' | 'operatorParentSessionId' | 'promotedFromUserSession'>>;
-
-/** Pane do próprio operador: `user` sem missão, ou promovido a orquestrador de uma. */
-function isOperatorHand(ctx: HookContext): boolean {
-  if (ctx.role === 'user') return !ctx.missionId;
-  return ctx.role === 'orchestrator' && ctx.promotedFromUserSession === true;
-}
 
 interface SessionLedger {
   /** Sem spawn conhecido: o primeiro HEAD visto é a base da sessão. */
@@ -96,7 +91,7 @@ export async function handleHookRegressionRequest(
   try {
     // Helper do "+ Pane" (tem pai operador) e workers de missão já passam
     // pelo portão no handoff.
-    if (!isOperatorHand(ctx) || ctx.readOnly === true || !ctx.sessionId || ctx.operatorParentSessionId) {
+    if (!isOperatorHandContext(ctx) || ctx.readOnly === true || !ctx.sessionId || ctx.operatorParentSessionId) {
       return { statusCode: 200, payload: {} };
     }
     if (!(deps.enabled ?? isRegressionGateEnabled)()) return { statusCode: 200, payload: {} };

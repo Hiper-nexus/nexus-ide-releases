@@ -1,11 +1,12 @@
 import type { AgentGateContext } from './gate';
+import { isOperatorHandContext } from './operator-hand-context';
 import {
   standingWorkspaceMemoryBlock,
   workspaceMemoryContextBlock,
 } from '../memory/workspace-memory-context';
 
 type OperatorContext = Pick<AgentGateContext, 'role' | 'missionId' | 'providerId'> &
-  Partial<Pick<AgentGateContext, 'scope' | 'executionScope' | 'operatorParentSessionId'>>;
+  Partial<Pick<AgentGateContext, 'scope' | 'executionScope' | 'promotedFromUserSession' | 'operatorParentSessionId'>>;
 
 /**
  * `<workspace-memory>` do "+ Pane" (sem missão, sem brief), pelos canais do
@@ -21,7 +22,7 @@ export function operatorWorkspaceMemoryContext(
   channel: 'mcp' | 'hook',
   prompt?: string,
 ): string | null {
-  if (ctx.role !== 'user' || ctx.missionId || ctx.operatorParentSessionId) return null;
+  if (!isOperatorHandContext(ctx) || ctx.operatorParentSessionId) return null;
   if ((ctx.providerId === 'codex') !== (channel === 'hook')) return null;
   const scope = ctx.executionScope ?? ctx.scope;
   if (!scope) return null;

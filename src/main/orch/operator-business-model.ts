@@ -1,8 +1,9 @@
 import type { AgentGateContext } from './gate';
+import { isOperatorHandContext } from './operator-hand-context';
 import { businessModelContextBlock } from '../context/business-model/business-model-context-block';
 
 type OperatorContext = Pick<AgentGateContext, 'role' | 'missionId' | 'providerId'> &
-  Partial<Pick<AgentGateContext, 'scope' | 'executionScope'>>;
+  Partial<Pick<AgentGateContext, 'scope' | 'executionScope' | 'promotedFromUserSession'>>;
 
 /**
  * `<business-model>` para o pane da mão do operador ("+ Pane", sem missão),
@@ -14,7 +15,7 @@ export function operatorBusinessModelContext(
   ctx: OperatorContext,
   channel: 'mcp' | 'hook',
 ): string | null {
-  if (ctx.role !== 'user' || ctx.missionId) return null;
+  if (!isOperatorHandContext(ctx)) return null;
   if ((ctx.providerId === 'codex') !== (channel === 'hook')) return null;
   const scope = ctx.executionScope ?? ctx.scope;
   return scope ? businessModelContextBlock(scope, ctx.scope) : null;

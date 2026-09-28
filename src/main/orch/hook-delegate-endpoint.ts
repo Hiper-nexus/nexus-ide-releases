@@ -8,6 +8,7 @@
 import type http from 'node:http';
 import { createHash } from 'node:crypto';
 import type { AgentGateContext } from './gate';
+import { isOperatorHandContext } from './operator-hand-context';
 import { advisePrompt, type DelegationAdvice } from '../jev/jev-delegation';
 import { handleHookJsonPost } from './hook-http';
 import {
@@ -121,8 +122,9 @@ type MemoryBlockFn = typeof operatorWorkspaceMemoryContext;
 
 /**
  * `<workspace-memory>` do Codex "+ Pane" (os demais recebem pelo MCP), como o
- * modelo de negócio: uma vez por sessão a cada 30 min. Banco sem hit não
- * marca a sessão — tenta de novo no próximo prompt.
+ * modelo de negócio. A consulta segue a tarefa atual: só um bloco IDÊNTICO
+ * já entregue é suprimido por 30 min. Trocar de assunto não perde memória
+ * relevante. Banco sem hit não marca a sessão.
  */
 function memoryContextFor(
   ctx: HookContext,
@@ -148,7 +150,7 @@ function memoryContextFor(
 
 type HookContext = Pick<AgentGateContext, 'role' | 'missionId' | 'sessionId'> &
   Partial<
-    Pick<AgentGateContext, 'scope' | 'executionScope' | 'providerId' | 'operatorParentSessionId'>
+    Pick<AgentGateContext, 'scope' | 'executionScope' | 'providerId' | 'operatorParentSessionId' | 'promotedFromUserSession'>
   >;
 
 /**
@@ -206,7 +208,7 @@ export async function handleHookDelegateRequest(
   } = {},
 ): Promise<{ statusCode: 200; payload: Record<string, unknown> }> {
   try {
-    if (ctx.role !== 'user' || ctx.missionId) return { statusCode: 200, payload: {} };
+    if (!isOperatorHandContext(ctx)) return { statusCode: 200, payload: {} };
     const prompt = parseUserPrompt(body);
     // A entrega de um helper chega como prompt, mas não é pedido novo do operador.
     if (!prompt || prompt.startsWith(WORKSPACE_HANDOFF_DELIVERY_PREFIX)) {
