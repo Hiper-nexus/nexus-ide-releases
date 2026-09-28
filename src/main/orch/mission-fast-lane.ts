@@ -1321,6 +1321,17 @@ interface OrchPaneEntry {
 
 const orchPanes = new Map<string, OrchPaneEntry>();
 
+/** Retry a historical link write from Main's exact current runtime binding. */
+function reconcileOperatorTabPaneLink(scope: ProjectExecutionScope, mission: Mission): void {
+  const runtime = orchPanes.get(mission.id);
+  if (!runtime || runtime.sessionId !== mission.orchestratorSessionId ||
+      runtime.cwd !== missionExecutionScope(scope, mission).rootRealPath) return;
+  const panes = getProjectDomainStores(scope).missionPanes;
+  const previous = operatorTabMissionResumeSpec(mission, panes.list(mission.id));
+  if (!previous || previous.paneId === runtime.paneId || panes.findByPaneId(runtime.paneId)) return;
+  panes.moveOrchestratorPane(mission.id, previous.id, runtime.paneId);
+}
+
 // ── Watcher ──────────────────────────────────────────────────────────────
 
 function stopWatcher(scope: ProjectExecutionScope, missionId: string): void {
@@ -1351,6 +1362,12 @@ async function tickWatcher(state: WatcherState): Promise<void> {
   if (!mission) {
     stopWatcher(state.scope, state.missionId);
     return;
+  }
+
+  try {
+    reconcileOperatorTabPaneLink(state.scope, mission);
+  } catch (error) {
+    console.warn('[fast-lane] vínculo do pane retomado ainda pendente:', error);
   }
 
   // Missão já concluída ou bloqueada → encerra observador.
@@ -1900,6 +1917,10 @@ async function respawnFastLaneOrchestrator(
   // F-661: a missão da aba retoma a CONVERSA do pane do operador que a
   // lidera, com a CLI/modelo/conta dele — nunca o Maestro de um squad com o
   // título da missão como brief.
+  // Never select the stale historical pane while a newer Main-owned binding
+  // is known. A continuing store failure refuses a second spawn, not the
+  // already-live runtime; the watcher keeps retrying the link write.
+  reconcileOperatorTabPaneLink(scope, live);
   const composition = stores.missionPanes.list(mission.id);
   const operatorResume = operatorTabMissionResumeSpec(live, composition);
   let orchestrator: SquadAgent;

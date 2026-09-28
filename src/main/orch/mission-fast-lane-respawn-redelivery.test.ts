@@ -136,7 +136,9 @@ vi.mock('./project-domain-store-registry', async (importOriginal) => ({
         liveMission = { ...liveMission, ...next } as Mission;
         return liveMission;
       },
-      setOrchestratorSession: () => {},
+      setOrchestratorSession: (_missionId: string, sessionId: string) => {
+        liveMission = { ...liveMission, orchestratorSessionId: sessionId };
+      },
       recordKickoffAcceptance: () => {},
       hasCurrentKickoffAcceptance: () => false,
     },
@@ -255,7 +257,10 @@ beforeEach(async () => {
   harness.deliver.mockClear();
   harness.handoffsOfSession = undefined;
   harness.missionPaneSpecs = [];
-  harness.movePane.mockClear();
+  harness.movePane.mockReset().mockImplementation((_missionId, specId, paneId) => {
+    const spec = harness.missionPaneSpecs.find((row) => row.id === specId);
+    if (spec) spec.paneId = paneId;
+  });
   liveMission = mission;
   reviewedSquad = undefined;
   vi.resetModules();
@@ -420,6 +425,14 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
     // F-664: a linha deduplicada passa a apontar para o pane que agora tem a conversa.
     expect(harness.movePane).toHaveBeenCalledWith('mission-1', 'mp-1', 'pane-1');
     expect(harness.redeliver).toHaveBeenCalledWith(scope, 'mission-1');
+    if (moveFails) {
+      // Retry before another resume must use the new conversation, even when
+      // the first historical write failed after the runtime was opened.
+      harness.sessionStates.set('session-1', 'exited');
+      await fastLane.resumeFastLaneMission(scope, 'mission-1', { remountKind: 'operator' });
+      expect((harness.spawnOptions[1] as Record<string, unknown>).resumeFromPaneId).toBe('pane-1');
+      expect(harness.missionPaneSpecs[0]?.paneId).toBe('pane-2');
+    }
   });
 
   it('marca antiga de "Pedir um ajuste" não deixa a conversa retomada parada (F-665)', async () => {
