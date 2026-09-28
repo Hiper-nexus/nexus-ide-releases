@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.116 — Conversa preservada
+
+Correção urgente do Windows em 28/09. Inclui a 0.76.115.
+
+- **Conversas não somem mais no Windows (F-663).** O runtime do Electron 43 (Node 24) atravessa junctions ao apagar uma pasta recursivamente. A pasta temporária de cada pane liga as conversas guardadas do projeto por junction, então fechar, reiniciar ou retomar um pane apagava todas as conversas daquele projeto — e o "Retomar" abria um agente vazio. Toda remoção recursiva do Nexus agora tira os atalhos antes de apagar e nunca segue nenhum.
+- **Retomar continua da conversa certa (F-664).** Cada "Retomar" da missão da aba voltava ao mesmo pane antigo (o registro deduplicava o pane novo), com o modelo padrão da CLI. A missão agora acompanha o pane retomado e usa o modelo do pane que você abriu pelo "+ Pane".
+
 ## 0.76.115 — Worker que responde
 
 Correções do uso real no Windows em 28/09. Inclui a 0.76.114 (CLIs no canal certo).

@@ -7506,7 +7506,7 @@ export const RELEASE_076114: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076115: AppRelease = {
   version: '0.76.115',
   date: '2026-09-28',
   codename: 'Worker que responde',
@@ -7530,6 +7530,35 @@ export const CURRENT_RELEASE: AppRelease = {
         'nexus_pane_ask esperava o prazo inteiro e voltava vazio num pane AGY ' +
         'que estava trabalhando. Agora responde na hora que o pane é one-shot e ' +
         'que a entrega chega quando ele terminar; nexus_pane_write avisa o mesmo.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.116',
+  date: '2026-09-28',
+  codename: 'Conversa preservada',
+  summary:
+    'No Windows, fechar ou retomar um pane apagava as conversas guardadas do ' +
+    'projeto — o "Retomar" nunca achava a conversa. A limpeza agora remove só ' +
+    'os atalhos, e cada retomada da missão da aba continua da conversa mais ' +
+    'recente, com o modelo do seu pane.',
+  highlights: [
+    {
+      title: 'Conversas não somem mais no Windows',
+      detail:
+        'O runtime do Electron 43 atravessa junctions ao apagar uma pasta. A ' +
+        'pasta temporária de cada pane liga as conversas guardadas por junction, ' +
+        'então fechar o pane apagava todas as conversas do projeto. Toda ' +
+        'remoção do Nexus tira os atalhos antes de apagar.',
+    },
+    {
+      title: 'Retomar continua da conversa certa',
+      detail:
+        'Cada "Retomar" da missão da aba voltava ao mesmo pane antigo, com o ' +
+        'modelo padrão da CLI. A missão agora acompanha o pane retomado e usa o ' +
+        'modelo do pane que você abriu.',
     },
   ],
   fixes: [],
