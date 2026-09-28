@@ -879,3 +879,12 @@ saber isto antes de mexer:
   lendo a tela; nunca "Trust and continue". No Windows o perfil governado liga
   `features.code_mode_host` (`codexGovernedCodeModeHost`): o Codex instalado
   roda toda ferramenta por ele. O macOS governa o binário fixado e mantém off.
+- F-668: nunca entregue argv a um `.cmd` do npm no Windows — o `cmd.exe` corta
+  o argumento na 1ª quebra de linha (o brief chegava como "## Nexus execution
+  authority"), expande `%VAR%` e limita a 8K. O spawn direto usa
+  `windowsNpmShimSpawn` (pacote verificado → `.exe` ou `node.exe` + script,
+  `node` ao lado do atalho ou do PATH) para toda CLI embutida.
+- F-669: no Windows a linha de comando inteira tem 32.767 caracteres; brief
+  acima de `WINDOWS_NATIVE_PROMPT_MAX_CHARS` (20K) não vai no argv —
+  `nativeArgvPromptFits` decide no pty-manager, no tool-util e na Via Rápida,
+  que colam o brief depois do boot.

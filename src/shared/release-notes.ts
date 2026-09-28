@@ -7673,13 +7673,42 @@ export const RELEASE_076120: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076121: AppRelease = {
   version: '0.76.121',
+  date: '2026-09-28',
+  codename: 'Brief inteiro',
+  summary:
+    'No Windows os helpers voltam a receber a tarefa inteira: o Nexus abre o ' +
+    'executável real das CLIs instaladas pelo npm, sem passar pelo cmd.exe, ' +
+    'que cortava o brief na primeira linha. Inclui a 0.76.120.',
+  highlights: [
+    {
+      title: 'Helper recebe a tarefa inteira no Windows',
+      detail:
+        'Com o Claude instalado pelo npm, o brief do helper passava pelo atalho ' +
+        'claude.cmd e o cmd.exe cortava tudo depois da primeira linha — o ' +
+        'helper recebia só "## Nexus execution authority" ou morria. Agora o ' +
+        'Nexus abre o executável do pacote direto, para toda CLI embutida.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Brief longo não derruba o helper',
+      detail:
+        'Brief grande demais para a linha de comando do Windows (32.767 ' +
+        'caracteres) ia no argv e o helper morria com "Linha de comando muito ' +
+        'longa". Acima do limite o brief agora é colado depois do boot.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.122',
   date: '2026-09-28',
   codename: 'Sonnet 5.5 e Jev com medição',
   summary:
     'Sonnet 5.5 chega ao catálogo e ao roteamento. O Jev reúne decisões numa consulta, ' +
-    'reutiliza leituras iguais e mostra as otimizações observadas. Inclui as correções da 0.76.120.',
+    'reutiliza leituras iguais e mostra as otimizações observadas. Inclui as correções da 0.76.121.',
   highlights: [
     {
       title: 'Sonnet 5.5 oficial',

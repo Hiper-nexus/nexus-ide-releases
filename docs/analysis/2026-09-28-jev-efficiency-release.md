@@ -1,4 +1,4 @@
-# Jev: integração para a release 0.76.121
+# Jev: integração para a release 0.76.122
 
 Escopo recuperado da worktree `feat/jev-efficiency-20260928`, a pedido do
 operador para publicar tudo junto com o Sonnet 5.5 oficial.

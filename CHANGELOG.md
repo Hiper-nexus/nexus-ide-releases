@@ -1,13 +1,20 @@
 # Changelog
 
-## 0.76.121 — Sonnet 5.5 e Jev com medição
+## 0.76.122 — Sonnet 5.5 e Jev com medição
 
-Inclui todas as correções da 0.76.120.
+Inclui todas as correções da 0.76.121.
 
 - **Sonnet 5.5 oficial.** Modelo disponível no catálogo Claude e no roteamento do Nexus/Jev, com contexto de 1M, saída de 128K e preço próprio. Uso, cotas e Redline preservam a identidade do modelo e as janelas informadas pelo provedor. Sonnet 5 continua disponível.
 - **Uma consulta para rotear.** Classificação da tarefa e sugestão de skill compartilham um lote Jev, preservando permissões, esforço e fallback.
 - **Leituras focadas do navegador.** O parâmetro `focus` seleciona trechos da página na mesma consulta de julgamento. Texto completo permanece quando a resposta é insuficiente; leituras idênticas reutilizam o julgamento por até 15 segundos. O formato compacto preserva os trechos selecionados.
 - **Medição visível.** O painel Jev mostra consultas evitadas, triagens resolvidas sem LLM e bytes antes/depois da seleção. Essas medidas não são apresentadas como tokens faturados economizados.
+
+## 0.76.121 — Brief inteiro
+
+Correção do uso real no Windows em 28/09. Inclui a 0.76.120 (Instalação e tarefas recuperadas).
+
+- **Helper recebe a tarefa inteira no Windows (F-668).** Com uma CLI instalada pelo npm (ex.: `claude.cmd`), o brief do helper passava pelo atalho `.cmd` e o `cmd.exe` cortava o argumento na primeira quebra de linha: o helper recebia só "## Nexus execution authority" ou morria em segundos. O `cmd.exe` também expandia `%VARIÁVEL%` dentro do texto e limitava a linha a 8 mil caracteres. Agora o Nexus abre o executável verificado do pacote (o `.exe`, ou `node` + script) direto para toda CLI embutida, inclusive quando a CLI mora num prefixo npm separado como `~/.local/bin`.
+- **Brief longo não derruba o helper (F-669).** O Nexus aceitava até 64 KB de brief na linha de comando, mas o Windows aceita 32.767 caracteres na linha inteira: helpers com briefs longos morriam com "Linha de comando muito longa" e o religamento repetia o erro. Acima de 20 mil caracteres o brief agora é colado no pane depois do boot.
 
 ## 0.76.120 — Instalação e tarefas recuperadas
 

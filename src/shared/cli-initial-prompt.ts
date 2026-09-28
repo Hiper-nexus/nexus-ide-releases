@@ -158,6 +158,23 @@ export function applyInitialPromptToArgv(
 }
 
 /**
+ * F-668: teto do brief no argv no Windows. O CreateProcess aceita 32.767
+ * caracteres na linha de comando INTEIRA (flags, config de hooks, caminhos);
+ * o teto geral de 64 KB passava disso e o helper morria com "Linha de comando
+ * muito longa". Brief acima deste teto vai por colagem depois do boot.
+ */
+export const WINDOWS_NATIVE_PROMPT_MAX_CHARS = 20_000;
+
+/** O brief cabe no argv desta plataforma? Sem brief, nada a decidir. */
+export function nativeArgvPromptFits(
+  prompt: string | undefined,
+  platform: string,
+): boolean {
+  if (!prompt) return true;
+  return platform !== 'win32' || prompt.length <= WINDOWS_NATIVE_PROMPT_MAX_CHARS;
+}
+
+/**
  * O pane de missão precisa continuar vivo para o operador digitar nele.
  * Canais posicionais e flags interativas atendem isso; one-shot fecha depois da tarefa.
  */
