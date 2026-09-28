@@ -1831,7 +1831,9 @@ function startWatcher(
 export const ADJUSTMENT_WAIT_FIRST =
   '## AGUARDE O OPERADOR (esta ordem vence as instruções de delegação abaixo)\n' +
   'Você foi religado porque o operador clicou "Pedir um ajuste". NÃO spawne workers, NÃO re-execute o objetivo, NÃO conclua a missão. ' +
-  'Leia nexus_handoff_list({full:true}) para contexto e ESPERE a orientação dele no chat. Só aja depois que ele disser qual é o ajuste.';
+  'Leia nexus_handoff_list({full:true}) para contexto e ESPERE a orientação dele no chat. Só aja depois que ele disser qual é o ajuste. ' +
+  'A espera termina quando o operador descreve o ajuste: se ele já o descreveu depois da reabertura, execute esse pedido e delegue partes independentes conforme suas permissões. ' +
+  'Não peça o mesmo ajuste novamente. Perguntar status não autoriza re-executar o objetivo antigo.';
 
 /** Monta o prompt do Maestro religado — puro para teste. */
 export function buildRespawnPrompt(input: {

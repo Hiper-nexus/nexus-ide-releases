@@ -407,6 +407,7 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
       accountId: 'acct-operador',
     });
     expect(String(spawn.initialPrompt)).toContain('retomada');
+    expect(String(spawn.initialPrompt)).toContain('nexus_pane_spawn({task, prompt})');
     expect(String(spawn.initialPrompt)).not.toContain('Coordenar e revisar');
   });
 

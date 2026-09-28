@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Mission, MissionPaneSpec } from '../../shared/orch-types';
 import {
+  OPERATOR_TAB_RESUME_NOTE,
   operatorTabMissionResumeSpec,
   operatorTabResumeAgent,
 } from './operator-tab-mission-resume';
@@ -15,6 +16,14 @@ function spec(paneId: string, role: 'orchestrator' | 'worker', extra: Partial<Mi
 }
 
 describe('operatorTabMissionResumeSpec (F-661)', () => {
+  it('a retomada lembra a delegação proporcional sem apagar restrições explícitas', () => {
+    expect(OPERATOR_TAB_RESUME_NOTE).toContain('nexus_pane_spawn({task, prompt})');
+    expect(OPERATOR_TAB_RESUME_NOTE).toContain('readOnly:true');
+    expect(OPERATOR_TAB_RESUME_NOTE).toContain('Integre e valide');
+    expect(OPERATOR_TAB_RESUME_NOTE).toContain('Tarefa pequena ou conversa');
+    expect(OPERATOR_TAB_RESUME_NOTE).toContain('restrições explícitas do operador e do ambiente');
+  });
+
   it('retoma o orquestrador mais recente da missão da aba', () => {
     const chosen = operatorTabMissionResumeSpec(tabMission, [
       spec('pane-operador', 'orchestrator'),

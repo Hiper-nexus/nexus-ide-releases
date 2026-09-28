@@ -84,6 +84,9 @@ describe('buildRespawnPrompt — Maestro religado para ajuste espera', () => {
     expect(prompt).toMatch(/vence as instruções de delegação/);
     expect(prompt).toContain('BASE-DO-KICKOFF');
     expect(prompt).toContain('nota de continuidade');
+    expect(prompt).toContain('A espera termina quando o operador descreve o ajuste');
+    expect(prompt).toContain('delegue partes independentes conforme suas permissões');
+    expect(prompt).toContain('Perguntar status não autoriza');
   });
 
   it('sem ajuste: montagem legada idêntica (base + continuidade)', () => {

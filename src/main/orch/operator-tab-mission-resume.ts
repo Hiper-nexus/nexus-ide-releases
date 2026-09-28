@@ -15,7 +15,12 @@ import type { Mission, MissionPaneSpec, SquadAgent } from '../../shared/orch-typ
 export const OPERATOR_TAB_RESUME_NOTE =
   '[Nexus] Esta conversa foi retomada como orquestrador da missão da aba ' +
   '(o app reiniciou ou a missão foi reaberta). Continue de onde parou; se ' +
-  'estava esperando uma resposta minha, pergunte de novo.';
+  'estava esperando uma resposta minha, pergunte de novo. ' +
+  'Para trabalho divisível, pesado ou paralelizável, use nexus_pane_spawn({task, prompt}); ' +
+  'análise/revisão usa readOnly:true, escrita paralela usa isolatedWriter:true quando o escopo permitir. ' +
+  'Não duplique trabalho já despachado: consulte os handoffs. Integre e valide as entregas; feche os helpers após usá-los. ' +
+  'Tarefa pequena ou conversa pode ser feita aqui. Respeite pausas, orçamento e restrições explícitas do operador e do ambiente; ' +
+  'se alguma restrição impedir delegar, explique qual em vez de ficar parado.';
 
 /**
  * O orquestrador cuja conversa deve ser retomada, ou null quando a missão não
