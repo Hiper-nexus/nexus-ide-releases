@@ -1977,7 +1977,13 @@ async function respawnFastLaneOrchestrator(
   // pane novo na linha retomada (mesma identidade), a linha passa a apontar
   // para ele — a próxima retomada continua DESTA conversa, não da anterior.
   if (operatorResume && !stores.missionPanes.findByPaneId(spawned.paneId)) {
-    stores.missionPanes.moveOrchestratorPane(mission.id, operatorResume.id, spawned.paneId);
+    try {
+      stores.missionPanes.moveOrchestratorPane(mission.id, operatorResume.id, spawned.paneId);
+    } catch (error) {
+      // O runtime já nasceu e tem autoridade própria. Uma falha no vínculo
+      // histórico não pode deixá-lo sem watcher nem re-entrega de handoffs.
+      console.warn('[fast-lane] vínculo do pane retomado não foi atualizado:', error);
+    }
   }
 
   stopWatcher(scope, mission.id);

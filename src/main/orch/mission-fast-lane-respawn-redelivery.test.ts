@@ -385,7 +385,7 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
     }
   });
 
-  it('missão da aba retoma a conversa do pane do operador, não o Maestro do squad (F-661)', async () => {
+  it.each([false, true])('missão da aba retoma a conversa do pane do operador (falha no vínculo: %s)', async (moveFails) => {
     // Campo 28/09: depois do reinício, o Retomar da missão da aba subiu o
     // Maestro do squad com só o título como brief — Claude novo perguntando
     // "o que devo fazer?", sem a conversa do operador.
@@ -402,6 +402,7 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
       },
     ];
 
+    if (moveFails) harness.movePane.mockImplementationOnce(() => { throw new Error('store temporarily unavailable'); });
     await fastLane.fastLaneBootstrap(scope, 'mission-1');
 
     expect(harness.spawnCount).toBe(1);
@@ -418,6 +419,7 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
     expect(String(spawn.initialPrompt)).not.toContain('Coordenar e revisar');
     // F-664: a linha deduplicada passa a apontar para o pane que agora tem a conversa.
     expect(harness.movePane).toHaveBeenCalledWith('mission-1', 'mp-1', 'pane-1');
+    expect(harness.redeliver).toHaveBeenCalledWith(scope, 'mission-1');
   });
 
   it('retoma a conversa mais recente com o modelo do pane do operador (F-664)', async () => {
