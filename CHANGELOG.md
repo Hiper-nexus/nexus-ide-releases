@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.114 — CLIs no canal certo
+
+O botão Atualizar CLI volta a funcionar para o Codex instalado via npm com atalho externo e para o launcher nativo atual do Grok. A atualização automática usa o mesmo reconhecimento. No macOS, esta versão também inclui as correções de missão e pane publicadas no Windows em 0.76.113.
+
+- **Codex (F-364).** Um atalho como `~/.local/bin/codex` é aceito somente quando resolve para o binário do prefixo npm que será atualizado. A confirmação continua mostrando o comando exato.
+- **Grok (F-365).** O launcher `~/.grok/bin/grok` agora reconhece o binário versionado em `~/.grok/downloads` e executa `grok update`.
+
 ## 0.76.113 — Pane destravado
 
 Correções do uso real no Windows em 28/09. Inclui a 0.76.112 (Smoke test).

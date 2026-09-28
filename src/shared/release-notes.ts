@@ -7476,36 +7476,31 @@ export const RELEASE_076112: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.113',
+  version: '0.76.114',
   date: '2026-09-28',
-  codename: 'Pane destravado',
+  codename: 'CLIs no canal certo',
   summary:
-    'No Windows o Nexus volta a encerrar panes de verdade: digitação liberada, ' +
-    '"Retomar" e "Pedir ajuste" funcionando. A missão não conclui mais no meio ' +
-    'de uma pergunta sua, e retomar a missão da aba traz de volta a conversa do ' +
-    'seu pane. Inclui a 0.76.112 (Smoke test).',
+    'Atualizar CLI reconhece o Codex instalado via npm com atalho externo e o ' +
+    'launcher nativo atual do Grok. No macOS, inclui também as correções de ' +
+    'pane e missão publicadas no Windows em 0.76.113.',
   highlights: [
     {
-      title: 'Pane não trava mais no Windows',
+      title: 'Codex atualiza a instalação usada pelo pane',
       detail:
-        'O node-pty do Windows recusa qualquer sinal no kill, então nenhum ' +
-        'encerramento se provava: o pane ficava recusando digitação, "Retomar" ' +
-        'e "Pedir ajuste" davam "O agente não ficou pronto a tempo" e processos ' +
-        'ficavam órfãos. No Windows a raiz agora é encerrada sem sinal.',
+        'O atalho externo do Codex é aceito quando resolve para o binário do ' +
+        'mesmo prefixo npm que será atualizado. A confirmação mostra o comando.',
     },
     {
-      title: 'Missão espera a sua resposta',
+      title: 'Grok reconhece o launcher nativo',
       detail:
-        'Com o orquestrador parado numa pergunta a você, o pane fica ocioso e ' +
-        'a missão era dada como concluída no meio da conversa. Pergunta ' +
-        'pendente conta como orquestrador ocupado.',
+        'O binário versionado em ~/.grok/downloads agora é associado ao ' +
+        'launcher ~/.grok/bin/grok para a atualização manual e automática.',
     },
     {
-      title: 'Retomar a missão da aba traz a sua conversa',
+      title: 'Correções do Windows chegam ao macOS',
       detail:
-        'Depois de reiniciar o Nexus, "Retomar" subia um Claude novo e vazio. ' +
-        'A missão nascida do "+ Pane" agora retoma a conversa do pane que a ' +
-        'liderava, com a mesma CLI, modelo e conta.',
+        'Inclui a 0.76.113: pane encerra corretamente no Windows, missão ' +
+        'aguarda respostas pendentes e Retomar recupera a conversa da aba.',
     },
   ],
   fixes: [],
