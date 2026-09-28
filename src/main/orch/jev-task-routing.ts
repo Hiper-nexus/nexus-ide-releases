@@ -29,7 +29,7 @@ import {
   type RouteEffort,
   type RouteSpecialty,
 } from '../../shared/mission-route-specialty';
-import type { TaskTier } from './task-router';
+import { codeReviewTierFloor, raiseToTierFloor, type TaskTier } from './task-router';
 import type { JevUnavailableReason } from '../../shared/spawn-route';
 
 export const TASK_ROUTING_MIN_CONFIDENCE = 0.6;
@@ -52,7 +52,8 @@ const TASK_ROUTING_QUESTIONS: Record<string, JevQuestion> = {
       'it to a model. Judge the WORK, not the wording.',
     criteria: {
       trivial:
-        'inspection only: list, read, check, show, count, find a file — no code changes',
+        'inspection only: list, read, check, show, count, find a file — no code changes ' +
+        'and no code review (reviewing a diff, branch or release is hard, even read-only)',
       easy:
         'small contained edit: rename, typo, comment, README/doc text, formatting, ' +
         'lint, CSS/style tweak, copy/label/translation, adding a log line',
@@ -62,7 +63,8 @@ const TASK_ROUTING_QUESTIONS: Record<string, JevQuestion> = {
       hard:
         'architecture, refactor or redesign, performance/optimization, debugging ' +
         'a race or leak, algorithms, parsers/compilers/engines, system or ' +
-        'protocol design, cross-system integration',
+        'protocol design, cross-system integration, senior code review of a diff, ' +
+        'branch or release (read-only included)',
       critical:
         'risk-bearing work: security, authentication/authorization, secrets, ' +
         'payments/billing, deleting or migrating data, production/deploy changes',
@@ -226,6 +228,13 @@ export type ClassifierSource = 'jev' | 'heuristic' | 'mixed';
 export function routingOverridesFrom(
   classification: JevTaskClassification | null,
   callerTier: TaskTier | undefined,
+  /**
+   * Texto da tarefa: revisão de código tem piso hard também sobre o tier do
+   * Jev (27/09: "revisão sênior, somente leitura" virou trivial → grok low e
+   * a política de modelos de topo nem foi consultada). O tier do CHAMADOR
+   * continua mandando.
+   */
+  taskText?: string,
 ): {
   tierOverride: TaskTier | undefined;
   specialtyOverride: RouteSpecialty | undefined;
@@ -251,7 +260,11 @@ export function routingOverridesFrom(
     (classification.effortConfidence ?? 0) >= TASK_ROUTING_MIN_CONFIDENCE;
   const usedJev = Number(tierFromJev) + Number(specialtyFromJev) + Number(effortFromJev);
   return {
-    tierOverride: callerTier ?? (tierFromJev ? classification.tier : undefined),
+    tierOverride:
+      callerTier ??
+      (tierFromJev
+        ? raiseToTierFloor(classification.tier, taskText ? codeReviewTierFloor(taskText) : null)
+        : undefined),
     specialtyOverride: specialtyFromJev ? classification.specialty : undefined,
     effortOverride: effortFromJev ? classification.effort : undefined,
     classifierSource: usedJev === 3 ? 'jev' : usedJev > 0 ? 'mixed' : 'heuristic',

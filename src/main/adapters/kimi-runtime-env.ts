@@ -1,3 +1,8 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { parse as parseToml } from 'smol-toml';
+
 /**
  * Environment variables understood by Kimi Code's explicit transient-model
  * channel. Ordinary KIMI_API_KEY/MOONSHOT_API_KEY shell variables are not
@@ -50,4 +55,50 @@ export function buildKimiApiKeyRuntimeEnv(
     KIMI_MODEL_API_KEY: key,
     KIMI_MODEL_NAME: directApiModelName(model),
   };
+}
+
+/**
+ * Aliases de modelo declarados no config.toml do Kimi Code (chaves de
+ * `[models]`). `kimi --model` só aceita um destes: qualquer outro id derruba a
+ * sessão inteira ("Model … is not configured in config.toml"). O parser é o
+ * mesmo do overlay (smol-toml): aceita `[models."x"]`, `[models . "x"]` e a
+ * forma inline. Arquivo inválido cai para a leitura por linha dos cabeçalhos.
+ */
+export function parseKimiConfigModelAliases(toml: string): string[] {
+  try {
+    const parsed = parseToml(toml) as { models?: unknown };
+    if (parsed.models && typeof parsed.models === 'object' && !Array.isArray(parsed.models)) {
+      return Object.keys(parsed.models as Record<string, unknown>);
+    }
+    return [];
+  } catch {
+    const aliases: string[] = [];
+    for (const line of toml.split(/\r?\n/)) {
+      const match = /^\s*\[models\s*\.\s*(?:"([^"]+)"|'([^']+)'|([^\]\s]+))\s*\]\s*(?:#.*)?$/.exec(line);
+      const alias = match?.[1] ?? match?.[2] ?? match?.[3];
+      if (alias && !aliases.includes(alias)) aliases.push(alias);
+    }
+    return aliases;
+  }
+}
+
+/** Diretório do Kimi Code em vigor: overlay gerenciado (KIMI_CODE_HOME) ou ~/.kimi-code. */
+export function kimiCodeHome(home = os.homedir()): string {
+  return process.env.KIMI_CODE_HOME?.trim() || path.join(home, '.kimi-code');
+}
+
+/**
+ * Aliases do config.toml em vigor; [] quando não há config (CLI antiga ou não
+ * instalada). `kimiCodeHome` é o perfil do PANE (a conta escolhida chega em
+ * `keyEnv.KIMI_CODE_HOME`), não necessariamente o do Main.
+ */
+export function readKimiModelAliases(
+  options: { readonly home?: string; readonly kimiCodeHome?: string } = {},
+): string[] {
+  const dir = options.kimiCodeHome?.trim() || kimiCodeHome(options.home);
+  try {
+    return parseKimiConfigModelAliases(fs.readFileSync(path.join(dir, 'config.toml'), 'utf8'));
+  } catch {
+    return [];
+  }
 }

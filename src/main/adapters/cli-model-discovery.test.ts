@@ -24,6 +24,23 @@ describe('CLI model discovery', () => {
     expect(readCliModelCache(file)).toEqual(['gpt-5.6-sol', 'provider/model-new']);
   });
 
+  it('lê os aliases do config.toml do Kimi Code como lista oficial', () => {
+    // Kimi Code 2.x não tem models_cache.json: `--model` aceita só os aliases
+    // de [models."…"]; sem esta fonte a lista vinha do bundled velho (kimi-k2.7).
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-cli-models-'));
+    const file = path.join(dir, 'config.toml');
+    fs.writeFileSync(file, [
+      'default_model = "kimi-code/k3"',
+      '[models."kimi-code/k3"]',
+      'model = "k3"',
+      '[models."kimi-code/kimi-for-coding"]',
+      '[providers."kimi-code"]',
+    ].join('\n'));
+    expect(readCliModelCache(file)).toEqual(['kimi-code/k3', 'kimi-code/kimi-for-coding']);
+    expect(discoverCliModels([{ adapterId: 'kimi', files: [file] }]).get('kimi'))
+      .toEqual(['kimi-code/k3', 'kimi-code/kimi-for-coding']);
+  });
+
   it('merges multiple cache files for every registered adapter', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-cli-models-'));
     const one = path.join(dir, 'one.json');

@@ -10,7 +10,7 @@ import type {
 } from '../../shared/adapter-types';
 import publishedCatalogRaw from '../../../resources/model-catalog.json';
 import { MIMO_CODE_DEFAULT_MODEL, MIMO_CODE_MODEL_IDS } from '../../shared/mimo-models';
-import { CODEX_FRONTIER_MODEL, GROK_FRONTIER_MODEL } from '../../shared/model-defaults';
+import { CODEX_FRONTIER_MODEL, GROK_FRONTIER_MODEL, migrateModelId } from '../../shared/model-defaults';
 import { bareModelId } from '../../vendor/omp/catalog/identity';
 import {
   RICH_MODEL_CATALOG,
@@ -541,6 +541,10 @@ export function applyModelCatalogToAdapter(adapter: Adapter, catalog: ModelCatal
 
   const list = [...adapter.models.list];
   for (const entry of adapterCatalog.models ?? []) {
+    // Id oferecido não pode estar migrado: um overlay antigo do operador
+    // (~/.nexus/model-catalog.json) ainda listava kimi-k2.7 e o pane nascia
+    // com um alias que o Kimi Code recusa.
+    if (migrateModelId(entry.id) !== entry.id) continue;
     if (!list.includes(entry.id)) list.push(entry.id);
   }
 

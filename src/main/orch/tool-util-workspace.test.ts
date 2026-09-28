@@ -245,6 +245,7 @@ import {
   spawnPaneAndMaybePrompt,
   submitPendingAgentPrompt,
   withHandoffContract,
+  deliverPromptAfterPendingSpawn,
 } from './tool-util';
 import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
 import { getPaneAuthzInfo, pendingSpawnAttemptSession } from './pane-registry';
@@ -1416,6 +1417,78 @@ describe('agent prompt injection', () => {
       expect(typed.some(([, data]) => data === '\r')).toBe(true);
       expect(stubs.requestPaneClose).not.toHaveBeenCalled();
       expect(failures).toEqual([]);
+    });
+
+    it('a entrega não morre com a autoridade da requisição (a próxima tool do pane a substitui)', async () => {
+      // Smoke 28/09: o Kimi abria mudo. A autoridade do invocation é por
+      // chamada MCP; quando o pane nasce, a tool já respondeu e outra chamada
+      // do mesmo pane a substituiu — a colagem morria em
+      // session_authority_revoked. A entrega é do spawn, não da requisição.
+      answerEnterWithTurn();
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.waitForIdle.mockResolvedValue('idle');
+      stubs.requestPaneSpawn.mockResolvedValueOnce({
+        requestId: 'req-kimi',
+        ok: true,
+        pending: true,
+        paneId: 'pane-kimi',
+        sessionId: null,
+      } as never);
+      vi.mocked(getPaneAuthzInfo).mockReturnValue(null as never);
+      vi.mocked(pendingSpawnAttemptSession).mockReturnValue({ state: 'waiting' });
+      let current = true;
+      const invocation = {
+        assertCurrentAuthority: () => {
+          if (!current) throw new Error('session_authority_revoked');
+        },
+      } as never;
+      await expect(
+        spawnPaneAndMaybePrompt({ adapterId: 'kimi', prompt: 'revise o diff', scope }, { invocation }),
+      ).rejects.toThrow();
+      current = false;
+      bindAttempt('session-kimi');
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(typedInto('session-kimi')[0]?.[1]).toContain('revise o diff');
+      expect(stubs.requestPaneClose).not.toHaveBeenCalled();
+      expect(failures).toEqual([]);
+    });
+
+    it('missão bloqueada ou selo trocado enquanto o pane subia não recebe o brief velho', async () => {
+      // Astra P2-8: a entrega adiada perdeu a autoridade da requisição, mas
+      // mantém a DURÁVEL do spawn — missão viva e mesmo selo.
+      const seal = stubs.resolveMissionPaneAuthoritySeal();
+      const deliverInto = async (): Promise<boolean> => {
+        answerEnterWithTurn();
+        stubs.sessionState.mockReturnValue('idle');
+        stubs.waitForIdle.mockResolvedValue('idle');
+        bindAttempt('session-kimi');
+        const delivered = deliverPromptAfterPendingSpawn(
+          { requestId: 'req-kimi', paneId: 'pane-kimi' },
+          'revise o diff',
+          'kimi',
+          undefined,
+          { scope, missionId: 'm1', authoritySeal: seal },
+        );
+        await vi.advanceTimersByTimeAsync(3_000);
+        return delivered;
+      };
+      stubs.missionGet.mockImplementationOnce(() => ({ id: 'm1', squadId: 'squad-1', status: 'blocked' }));
+      expect(await deliverInto()).toBe(false);
+      expect(typedInto('session-kimi')).toEqual([]);
+      expect(stubs.requestPaneClose).toHaveBeenCalledWith('pane-kimi');
+      expect(failures).toHaveLength(1);
+      expect(failures[0]?.message).toContain('stale brief');
+
+      stubs.requestPaneClose.mockClear();
+      stubs.resolveMissionPaneAuthoritySeal.mockReturnValueOnce({ ...seal, intentVersion: 2 });
+      expect(await deliverInto()).toBe(false);
+      expect(typedInto('session-kimi')).toEqual([]);
+      expect(failures).toHaveLength(2);
+
+      // Missão viva e selo igual: o brief entra.
+      expect(await deliverInto()).toBe(true);
+      expect(typedInto('session-kimi')[0]?.[1]).toContain('revise o diff');
     });
 
     it('ACK pendente não conta como falha do adapter no circuit breaker', async () => {

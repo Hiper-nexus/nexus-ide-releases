@@ -930,6 +930,15 @@ async function createEntry(
   wc.on('did-navigate', (_event, url) => {
     entry.url = url;
     entry.lastNewDocNavSeq = entry.navSeq;
+    // A emulação de dispositivo é do widget do documento: o Chromium troca o
+    // RenderFrameHost a cada navegação de documento e a página nova nascia no
+    // layout desktop (smoke 28/09: "mobile" de 390 media viewport 989 e o
+    // responsive auditava a mesma largura nos três dispositivos). Reaplica
+    // no commit, antes de did-finish-load — a auditoria e o print já veem o
+    // layout emulado.
+    if (entry.emulatedViewport) {
+      applyBrowserDeviceEmulation(entry, key, entry.emulatedViewport.width);
+    }
     if (!exactNavigationAllowed(entry, url)) {
       reportBlockedExactNavigation(paneId, entry, url, true);
       return;

@@ -1,0 +1,111 @@
+import { describe, expect, it } from 'vitest';
+import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
+import { adapterCircuitBreakers } from './circuit-breaker';
+import {
+  classifyTask,
+  DEFAULT_ROUTING_TABLE,
+  mentionedRoute,
+  routeTask,
+  type AdapterAvailability,
+} from './task-router';
+
+// Texto REAL do spawn de 27/09: o Jev classificou como trivial e o router
+// mandou para grok low — com a política de modelos de topo desligada.
+const ASTRA_REVIEW =
+  'Revisão de código SÊNIOR (staff), SOMENTE LEITURA, com o modelo GPT-6 Astra ' +
+  '(Codex, esforço xhigh), da rodada final G do release 0.76.110 do Nexus IDE antes de publicar.';
+
+/** Inventário builtin COMPLETO (Devin lista gpt-6-astra-*, claude-fable-5-1-*…), só 3 CLIs instaladas. */
+function inventory(installed: readonly string[]): AdapterAvailability[] {
+  const builtins = BUILTIN_ADAPTERS as ReadonlyArray<{ id: string; models?: { list?: readonly string[] } }>;
+  return builtins.map((adapter) => ({
+    id: adapter.id,
+    installed: installed.includes(adapter.id),
+    models: [...(adapter.models?.list ?? [])],
+  }));
+}
+const installed = inventory(['claude', 'codex', 'grok']);
+
+describe('revisão de código: piso hard (bug 27/09; Astra 28/09)', () => {
+  it('revisão de código/diff/branch sobe ao piso hard, mesmo somente leitura ou citando CSS/README', () => {
+    expect(classifyTask(ASTRA_REVIEW).tier).toBe('hard');
+    expect(classifyTask('Code review sênior da branch de release, só leitura').tier).toBe('hard');
+    expect(classifyTask('Revisão sênior do diff de código, incluindo CSS e logs; somente leitura').tier).toBe('hard');
+    expect(classifyTask('Code review sênior da branch; não altere README nem comentários').tier).toBe('hard');
+  });
+
+  it('revisar texto ou coisa que não é código segue no tier normal', () => {
+    expect(classifyTask('revisar o texto do README').tier).not.toBe('hard');
+    expect(classifyTask('Revisar a lista de compras').tier).not.toBe('hard');
+  });
+
+  it('sem modelo citado, a revisão recebe a política de topo (cross-review)', () => {
+    const decision = routeTask(
+      'Code review sênior da branch de release, só leitura',
+      inventory(['claude', 'codex']),
+      DEFAULT_ROUTING_TABLE,
+    );
+    expect(['gpt-6-astra', 'claude-fable-5-1']).toContain(decision!.model);
+    expect(decision!.reason).toContain('topo=cross-review');
+  });
+});
+
+describe('modelo e esforço citados no texto (inventário builtin completo)', () => {
+  it('honra "com o modelo GPT-6 Astra (Codex, esforço xhigh)" com o Devin não instalado listando astra', () => {
+    const decision = routeTask(ASTRA_REVIEW, installed, DEFAULT_ROUTING_TABLE);
+    expect(decision).toMatchObject({ tier: 'hard', adapterId: 'codex', model: 'gpt-6-astra', effort: 'xhigh' });
+    expect(decision!.reason).toContain('modelo pedido no texto: codex:gpt-6-astra');
+    expect(decision!.reason).toContain('source=texto');
+  });
+
+  it('grafia humana e id completo: "Claude Fable 5.1" é o 5.1 (não o Fable 5 nem as variantes do Devin)', () => {
+    expect(mentionedRoute('Revisão de código com o Claude Fable 5.1 do diff', installed).model)
+      .toEqual({ adapterId: 'claude', model: 'claude-fable-5-1' });
+    expect(mentionedRoute('rode com claude-sonnet-5', installed).model)
+      .toEqual({ adapterId: 'claude', model: 'claude-sonnet-5' });
+    expect(mentionedRoute('não quero o Sol; use o Astra', installed).model)
+      .toEqual({ adapterId: 'codex', model: 'gpt-6-astra' });
+  });
+
+  it('negação, comparação, referência ao autor e nome sem palavra de escolha não pinam nada', () => {
+    for (const text of [
+      'revisão do diff, mas não use o Astra desta vez',
+      'revisão do diff, não use o GPT-6 Astra desta vez',
+      'review the diff without gpt-6-astra',
+      'Compare gpt-6-astra com Fable',
+      'compare o Astra com o Fable',
+      'revisão com o Astra e com o Fable',
+      'Revise o diff produzido pelo GPT-6 Astra',
+      'ajuste rápido no build',
+    ]) {
+      expect(mentionedRoute(text, installed).model, text).toBeUndefined();
+    }
+    expect(mentionedRoute('não use esforço low na revisão', installed).effort).toBeUndefined();
+    expect(mentionedRoute('revise com esforço high', installed).effort).toBe('high');
+  });
+
+  it('modelo só de CLI ausente vira "indisponível" e não pina', () => {
+    const semCodex = inventory(['claude', 'grok']);
+    expect(mentionedRoute(ASTRA_REVIEW, semCodex)).toEqual({ unavailable: 'codex:gpt-6-astra', effort: 'xhigh' });
+    const decision = routeTask(ASTRA_REVIEW, semCodex, DEFAULT_ROUTING_TABLE);
+    expect(decision!.adapterId).not.toBe('codex');
+    expect(decision!.reason).toContain('modelo pedido no texto indisponível: codex:gpt-6-astra');
+  });
+});
+
+describe('modelo citado não fura o circuit breaker da CLI', () => {
+  it('codex em quarentena: a revisão vai para outro topo e a decisão diz por quê', () => {
+    adapterCircuitBreakers.reset('codex');
+    for (let i = 0; i < 20 && !adapterCircuitBreakers.isOpen('codex'); i += 1) {
+      adapterCircuitBreakers.recordFailure('codex');
+    }
+    try {
+      expect(adapterCircuitBreakers.isOpen('codex')).toBe(true);
+      const decision = routeTask(ASTRA_REVIEW, installed, DEFAULT_ROUTING_TABLE);
+      expect(decision!.adapterId).not.toBe('codex');
+      expect(decision!.reason).toContain('em quarentena (circuit breaker): codex:gpt-6-astra');
+    } finally {
+      adapterCircuitBreakers.reset('codex');
+    }
+  });
+});

@@ -20,6 +20,7 @@ import { applyPaneTerminalIdentity } from "./pane-terminal-identity";
 import { assertManagedClaudeAuthSupported, CLAUDE_MANAGED_AUTH_ENV } from "../adapters/managed-claude-auth";
 import { ensurePrivateHomeOperatorAccess } from "./private-home-operator";
 import { PTY_CHANNELS } from "../../shared/channels";
+import { readKimiModelAliases } from "../adapters/kimi-runtime-env";
 import { migrateModelId } from "../../shared/model-defaults";
 import type { SpawnRequest, PaneSessionState } from "../../shared/types";
 import {
@@ -1218,10 +1219,28 @@ function normalizeAgentModel(
   adapter: CliPtyAdapter,
   model: string,
   failClosedOnUnusable: boolean,
+  /** Kimi: canal e perfil do processo que vai subir (ver `usesKimiTransientModel`). */
+  kimi: { readonly transientModel: boolean; readonly kimiCodeHome?: string } = { transientModel: false },
 ): string {
   const migrated = migrateModelId(model) ?? model;
-  if (adapter.id === "kimi" && migrated === "kimi-for-coding") {
-    return "kimi-code/kimi-for-coding";
+  if (adapter.id === "kimi") {
+    const alias =
+      migrated === "kimi-for-coding" ? "kimi-code/kimi-for-coding" : migrated;
+    // Canal transient (KIMI_MODEL_NAME por env, chave de API): o modelo não
+    // viaja no --model, então o alias do config.toml não se aplica.
+    if (kimi.transientModel) return alias;
+    // `kimi --model` só aceita alias do config.toml DO PERFIL DO PANE; fora
+    // dele o CLI recusa a sessão inteira ("Model … is not configured", smoke
+    // 28/09) e o pane fica mudo. Sem --model ele usa o default_model. Modelo
+    // selado nunca cai no default em silêncio.
+    const aliases = readKimiModelAliases({ kimiCodeHome: kimi.kimiCodeHome });
+    if (alias && aliases.length > 0 && !aliases.includes(alias)) {
+      if (failClosedOnUnusable) {
+        throw sealedModelMissingFromArgvError(adapter.label, alias);
+      }
+      return "";
+    }
+    return alias;
   }
   // OpenCode 1.17 requires provider/model. A stale unqualified preference is
   // not a valid fallback: omit --model and let OpenCode use its own configured
@@ -1409,6 +1428,10 @@ export function spawnAgentSession(
       adapter.models.default,
     ]),
     missionSealedModel,
+    {
+      transientModel: adapter.id === "kimi" && Boolean(overrides.keyEnv?.KIMI_MODEL_NAME),
+      kimiCodeHome: overrides.keyEnv?.KIMI_CODE_HOME,
+    },
   );
   const argv = resolvePlaceholders(
     interactiveTemplateForModel(

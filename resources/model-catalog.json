@@ -299,24 +299,6 @@
           "availability": "cheap",
           "costTier": "low",
           "source": "remote"
-        },
-        {
-          "id": "kimi-k2.8",
-          "availability": "paid",
-          "costTier": "medium",
-          "source": "remote"
-        },
-        {
-          "id": "kimi-k2.7",
-          "availability": "paid",
-          "costTier": "medium",
-          "source": "remote"
-        },
-        {
-          "id": "kimi-k2-turbo",
-          "availability": "cheap",
-          "costTier": "low",
-          "source": "remote"
         }
       ]
     },

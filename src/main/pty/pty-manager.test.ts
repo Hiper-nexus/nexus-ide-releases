@@ -1630,6 +1630,80 @@ describe("AGY advisory native profile", () => {
     }
   });
 
+  it("kimi: alias fora do config.toml não vai no --model (o CLI recusa a sessão inteira)", async () => {
+    // Smoke 28/09: a preferência antiga "kimi-k2.7" ia no --model e o Kimi Code
+    // 2.1.1 abria com "Model kimi-k2.7 is not configured in config.toml", sem
+    // sessão e sem briefing. Só alias declarado em [models."…"] pode viajar.
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-kimi-alias-"));
+    const kimiHome = path.join(root, "kimi-home");
+    fs.mkdirSync(kimiHome);
+    const savedHome = process.env.KIMI_CODE_HOME;
+    process.env.KIMI_CODE_HOME = kimiHome;
+    const h = fakeHost();
+    const spawn = vi.spyOn(h.host, "spawn");
+    setPtyHost(h.host);
+    const adapter = builtinCliPtyAdapter("kimi");
+    const opened: string[] = [];
+    const argsFor = (paneId: string, model: string): string[] => {
+      const { sessionId } = spawnAgentSession(
+        fakeWc(),
+        { kind: "cli-agent", paneId, cols: 80, rows: 24, model },
+        adapter,
+        {},
+        trustedSpawn(fs.realpathSync(root)),
+      );
+      opened.push(sessionId);
+      return spawn.mock.calls.at(-1)![0].args;
+    };
+    try {
+      // Config declara o alias "K2.7 Coding": a preferência antiga migra para ele.
+      fs.writeFileSync(
+        path.join(kimiHome, "config.toml"),
+        '[models."kimi-code/k3"]\n[models."kimi-code/kimi-for-coding"]\n',
+      );
+      const migrated = argsFor("kimi-alias-1", "kimi-k2.7");
+      expect(migrated[migrated.indexOf("--model") + 1]).toBe("kimi-code/kimi-for-coding");
+      // Config sem o alias: sem --model, o Kimi usa o default_model em vez de morrer.
+      fs.writeFileSync(path.join(kimiHome, "config.toml"), '[models."kimi-code/k3"]\n');
+      expect(argsFor("kimi-alias-2", "kimi-k2.7")).not.toContain("--model");
+      // Alias declarado passa intacto.
+      const declared = argsFor("kimi-alias-3", "kimi-code/k3");
+      expect(declared[declared.indexOf("--model") + 1]).toBe("kimi-code/k3");
+      // Perfil do PANE (conta escolhida em keyEnv.KIMI_CODE_HOME) manda sobre o do Main (Astra P2-6).
+      const paneHome = path.join(root, "pane-home");
+      fs.mkdirSync(paneHome);
+      fs.writeFileSync(path.join(paneHome, "config.toml"), '[models."kimi-code/kimi-for-coding"]\n');
+      const { sessionId: paneSession } = spawnAgentSession(
+        fakeWc(),
+        { kind: "cli-agent", paneId: "kimi-alias-4", cols: 80, rows: 24, model: "kimi-k2.7" },
+        adapter,
+        { keyEnv: { KIMI_CODE_HOME: paneHome } },
+        trustedSpawn(fs.realpathSync(root)),
+      );
+      opened.push(paneSession);
+      const fromPane = spawn.mock.calls.at(-1)![0].args;
+      expect(fromPane[fromPane.indexOf("--model") + 1]).toBe("kimi-code/kimi-for-coding");
+      // Canal transient (chave de API): o modelo vai por env, não por --model; a guarda não se aplica (Astra P1-3).
+      const { sessionId: apiSession } = spawnAgentSession(
+        fakeWc(),
+        { kind: "cli-agent", paneId: "kimi-alias-5", cols: 80, rows: 24, model: "kimi-code/kimi-for-coding" },
+        adapter,
+        { keyEnv: { KIMI_MODEL_API_KEY: "sk-kimi", KIMI_MODEL_NAME: "kimi-for-coding" } },
+        trustedSpawn(fs.realpathSync(root)),
+      );
+      opened.push(apiSession);
+      const viaApi = spawn.mock.calls.at(-1)![0];
+      expect(viaApi.args).not.toContain("--model");
+      expect(viaApi.env.KIMI_MODEL_NAME).toBe("kimi-for-coding");
+    } finally {
+      if (savedHome === undefined) delete process.env.KIMI_CODE_HOME;
+      else process.env.KIMI_CODE_HOME = savedHome;
+      for (const sessionId of opened) await orchTerminateSession(sessionId);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("não injeta prompt no argv do claude ao RETOMAR uma sessão", async () => {
     setSquadCliPolicyLookupForTests(() => "operator-choice");
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-claude-resume-"));

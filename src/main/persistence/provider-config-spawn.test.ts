@@ -1518,3 +1518,15 @@ describe('Recibo da escolha de conta (overrides.accountChoice)', () => {
     expect(receipt.source).toBe('legacy');
   });
 });
+
+describe('effectiveDefaultModel — preferência antiga do Kimi (smoke 28/09)', () => {
+  it('kimi-k2.7 guardado vira o alias "K2.7 Coding" do config.toml, nunca o id cru', () => {
+    const known = ['kimi-code/k3', 'kimi-code/kimi-for-coding', 'kimi-code/kimi-for-coding-highspeed'];
+    expect(effectiveDefaultModel('kimi', 'kimi-k2.7', known, 'kimi-code/k3'))
+      .toBe('kimi-code/kimi-for-coding');
+    expect(effectiveDefaultModel('kimi', 'kimi-k2-turbo', known, 'kimi-code/k3'))
+      .toBe('kimi-code/kimi-for-coding-highspeed');
+    // Id que nem migra nem existe: default do adapter (preferência mantida no arquivo).
+    expect(effectiveDefaultModel('kimi', 'kimi-k9', known, 'kimi-code/k3')).toBe('kimi-code/k3');
+  });
+});

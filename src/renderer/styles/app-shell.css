@@ -370,6 +370,11 @@
 }
 
 .workspace-rail__scroll {
+  /* Faixa fixa. No modo foco (Configurações) esta lista e as utilidades do
+     rodapé somem com display:none; sem posição explícita a colocação
+     automática puxava o rodapé para ESTA faixa elástica e "Configurações"
+     ficava centralizado no meio do rail, com um vazio embaixo (print 28/09). */
+  grid-row: 5;
   min-height: 0;
   padding: var(--space-2) var(--space-3);
   overflow-x: hidden;
@@ -1348,6 +1353,7 @@
 }
 
 .workspace-rail__footer {
+  grid-row: 6;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   /* Mesma trava da navegação: o label de Configurações encolhe com ellipsis
@@ -1361,6 +1367,7 @@
 /* Cede altura primeiro e rola por conta própria; Configurações e o status do
    runtime ficam na faixa `auto` abaixo e nunca saem da tela. */
 .workspace-rail__utilities {
+  grid-row: 1;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
@@ -1709,6 +1716,8 @@
 }
 
 .workspace-rail__cockpit-status {
+  /* Sempre na faixa `auto` do rodapé, mesmo com as utilidades ocultas. */
+  grid-row: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;

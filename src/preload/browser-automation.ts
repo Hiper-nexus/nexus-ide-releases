@@ -1107,8 +1107,22 @@ export function createBrowserAutomation(
    * whose content an `overflow: hidden|clip` box cuts off. Geometry only; no
    * values, names go through the same redacting `describe`.
    */
-  function layoutAudit(): BrowserLayoutAudit {
+  async function layoutAudit(): Promise<BrowserLayoutAudit> {
     pruneReferences();
+    // Dois frames: a emulação de dispositivo é reaplicada no commit da
+    // navegação e o relayout pode ainda estar pendente quando o main pede a
+    // auditoria logo após did-finish-load. Pane oculto não pinta frames —
+    // o timer garante que a auditoria nunca fica presa esperando um rAF.
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = (): void => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      win.requestAnimationFrame(() => win.requestAnimationFrame(finish));
+      win.setTimeout(finish, 200);
+    });
     const doc = win.document.documentElement;
     const body = win.document.body;
     const layoutWidth = Math.round(doc?.clientWidth || win.innerWidth || 0);

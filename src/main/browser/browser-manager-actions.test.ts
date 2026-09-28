@@ -607,6 +607,24 @@ describe('loadBrowser device emulation', () => {
     destroyBrowser(PANE, scope);
   });
 
+  it('reaplica a emulação no commit de cada navegação (o widget novo nasce sem ela)', async () => {
+    // Smoke 28/09: "mobile" de 390 media viewport 989 — a emulação morria com
+    // o RenderFrameHost trocado pela navegação e o responsive auditava a
+    // mesma largura nos três dispositivos.
+    await boot();
+    await loadBrowser(PANE, 'https://example.test/app', { scope, device: 'mobile' });
+    vi.mocked(state.guest.enableDeviceEmulation).mockClear();
+    fire('did-navigate', {}, 'https://example.test/app');
+    expect(state.guest.enableDeviceEmulation).toHaveBeenCalledWith(
+      expect.objectContaining({ viewSize: { width: 390, height: 844 } }),
+    );
+    await loadBrowser(PANE, 'https://example.test/desktop', { scope, device: 'desktop' });
+    vi.mocked(state.guest.enableDeviceEmulation).mockClear();
+    fire('did-navigate', {}, 'https://example.test/desktop');
+    expect(state.guest.enableDeviceEmulation).not.toHaveBeenCalled();
+    destroyBrowser(PANE, scope);
+  });
+
   it('emulates the tablet breakpoint with the iPad UA', async () => {
     await boot();
     await loadBrowser(PANE, 'https://example.test/app', { scope, device: 'tablet' });

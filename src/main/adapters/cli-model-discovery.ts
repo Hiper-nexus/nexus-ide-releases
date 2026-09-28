@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Adapter } from '../../shared/adapter-types';
 import { MODEL_ID_PATTERN } from '../../shared/model-id';
+import { parseKimiConfigModelAliases } from './kimi-runtime-env';
 
 export interface CliModelCacheSource {
   adapterId: string;
@@ -24,7 +25,14 @@ export const CLI_MODEL_CACHE_SOURCES: CliModelCacheSource[] = [
     files: [path.join(home, '.openclaude', 'models_cache.json')],
   },
   { adapterId: 'agy', files: [path.join(home, '.gemini', 'models_cache.json')] },
-  { adapterId: 'kimi', files: [path.join(home, '.kimi', 'models_cache.json')] },
+  {
+    adapterId: 'kimi',
+    files: [
+      // Kimi Code 2.x: os aliases de `[models."…"]` são o que `--model` aceita.
+      path.join(home, '.kimi-code', 'config.toml'),
+      path.join(home, '.kimi', 'models_cache.json'),
+    ],
+  },
   {
     adapterId: 'opencode',
     files: [
@@ -56,6 +64,10 @@ function modelId(value: unknown): string | null {
 
 export function readCliModelCache(file: string): string[] {
   try {
+    if (file.endsWith('.toml')) {
+      return parseKimiConfigModelAliases(fs.readFileSync(file, 'utf8'))
+        .filter((alias) => MODEL_ID.test(alias));
+    }
     const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown;
     const models = raw && typeof raw === 'object'
       ? (raw as { models?: unknown }).models

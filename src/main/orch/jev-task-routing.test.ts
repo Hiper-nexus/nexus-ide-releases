@@ -205,3 +205,27 @@ describe('routingOverridesFrom', () => {
     });
   });
 });
+
+describe('routingOverridesFrom — piso de revisão de código sobre o tier do Jev (27/09)', () => {
+  const review =
+    'Revisão de código SÊNIOR (staff), SOMENTE LEITURA, com o modelo GPT-6 Astra ' +
+    '(Codex, esforço xhigh), da rodada final G antes de publicar.';
+  const jevTrivial: JevTaskClassification = {
+    tier: 'trivial',
+    tierConfidence: 0.9,
+    specialty: 'general',
+    specialtyConfidence: 0.8,
+    escalate: 0.7,
+    model: 'jev-test',
+  };
+
+  it('Jev confiante em trivial não rebaixa uma revisão de código', () => {
+    expect(routingOverridesFrom(jevTrivial, undefined, review).tierOverride).toBe('hard');
+    expect(routingOverridesFrom({ ...jevTrivial, tier: 'critical' }, undefined, review).tierOverride).toBe('critical');
+  });
+
+  it('revisão de texto e tier do chamador seguem como antes', () => {
+    expect(routingOverridesFrom(jevTrivial, undefined, 'revisar o texto do README').tierOverride).toBe('trivial');
+    expect(routingOverridesFrom(jevTrivial, 'easy', review).tierOverride).toBe('easy');
+  });
+});

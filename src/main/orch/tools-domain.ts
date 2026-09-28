@@ -1541,7 +1541,7 @@ export async function routeTaskForCaller(
     jevRouting.kind === 'classified' ? jevRouting.classification : null;
   const jevUnavailable =
     jevRouting.kind === 'unavailable' ? jevRouting.reason : undefined;
-  const routing = routingOverridesFrom(jevClassification, callerTier);
+  const routing = routingOverridesFrom(jevClassification, callerTier, task);
   const tier = routing.tierOverride;
   // Failover de rate limit: o orquestrador re-roteia excluindo a CLI que
   // acabou de estourar cota/quebrar, em vez de insistir nela.

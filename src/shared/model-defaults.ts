@@ -52,6 +52,19 @@ export const RETIRED_MODEL_MIGRATIONS: Readonly<Record<string, string>> = Object
   'gemini-3.5-flash-low': 'gemini-3.8-flash-low',
   'gemini-3.5-flash-medium': 'gemini-3.8-flash-medium',
   'gemini-3.5-flash-high': 'gemini-3.8-flash-high',
+  // Kimi Code 2.x só aceita os ALIASES do config.toml (`kimi-code/…`); os ids
+  // da era kimi-cli continuavam na lista oferecida e o operador guardou
+  // "kimi-k2.7" como padrão — o pane abria com "Model kimi-k2.7 is not
+  // configured in config.toml" e nunca criava sessão (smoke 28/09). K2.7 é o
+  // "K2.7 Coding" do config; o resto vai para o default k3.
+  'kimi-k2.7': 'kimi-code/kimi-for-coding',
+  'kimi-k2.7-code-highspeed': 'kimi-code/kimi-for-coding-highspeed',
+  'kimi-k2-turbo': 'kimi-code/kimi-for-coding-highspeed',
+  'kimi-k2.6': 'kimi-code/kimi-for-coding',
+  'kimi-k2': 'kimi-code/kimi-for-coding',
+  'kimi-k2.8': 'kimi-code/k3',
+  'moonshot-v1-128k': 'kimi-code/k3',
+  'moonshot-v1-32k': 'kimi-code/k3',
   // Free sem credencial que saíram de `opencode models` (2026-09-27): vão
   // para o default credentialless do adapter, nunca para um id pago.
   'opencode/deepseek-v4-flash-free': 'opencode/big-pickle',

@@ -61,14 +61,7 @@
     "list": [
       "kimi-code/k3",
       "kimi-code/kimi-for-coding-highspeed",
-      "kimi-code/kimi-for-coding",
-      "kimi-k2.8",
-      "kimi-k2.7",
-      "kimi-k2.6",
-      "kimi-k2-turbo",
-      "kimi-k2",
-      "moonshot-v1-128k",
-      "moonshot-v1-32k"
+      "kimi-code/kimi-for-coding"
     ],
     "default": "kimi-code/k3"
   },

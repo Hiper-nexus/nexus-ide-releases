@@ -359,3 +359,26 @@ describe('Nexus V2 shell and product workspace style contracts', () => {
     ).toBe('1');
   });
 });
+
+describe('rail em modo foco (Configurações)', () => {
+  it('mantém o rodapé na última faixa quando a lista e as utilidades somem', () => {
+    const active = installStyleContract(productStyles, { width: 1_280, height: 800 });
+    // O modo foco esconde lista e utilidades com display:none; sem posição
+    // explícita a colocação automática puxava o rodapé para a faixa elástica
+    // e "Configurações" ficava no meio do rail com um vazio embaixo (28/09).
+    expect(activeCssomDeclaration(active, '.nexus-shell--focus .workspace-rail__scroll', 'display')).toBe('none');
+    expect(activeCssomDeclaration(active, '.nexus-shell--focus .workspace-rail__utilities', 'display')).toBe('none');
+
+    const host = render(<ProductShellFixture />, 1_280, 800);
+    const nav = host.querySelector<HTMLElement>('.workspace-rail__navigation');
+    const footer = host.querySelector<HTMLElement>('.workspace-rail__footer');
+    if (!nav || !footer) throw new Error('Workspace rail did not render');
+
+    const navRows = styleTracks(nav, 'grid-template-rows').length;
+    expect(activeCssomDeclaration(active, '.workspace-rail__scroll', 'grid-row')).toBe(String(navRows - 1));
+    expect(activeCssomDeclaration(active, '.workspace-rail__footer', 'grid-row')).toBe(String(navRows));
+    const footerRows = styleTracks(footer, 'grid-template-rows').length;
+    expect(activeCssomDeclaration(active, '.workspace-rail__utilities', 'grid-row')).toBe('1');
+    expect(activeCssomDeclaration(active, '.workspace-rail__cockpit-status', 'grid-row')).toBe(String(footerRows));
+  });
+});

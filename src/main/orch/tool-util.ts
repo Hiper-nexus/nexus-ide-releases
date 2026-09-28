@@ -74,7 +74,7 @@ import {
   tapAgentTurnStart,
 } from './agent-status';
 import { listSquads } from './squad-store';
-import { resolveMissionPaneAuthoritySeal } from './mission-pane-authority';
+import { resolveMissionPaneAuthoritySeal, sameMissionPaneAuthoritySeal } from './mission-pane-authority';
 import {
   assertMcpInvocationCurrent,
   type McpToolInvocation,
@@ -1526,15 +1526,21 @@ export async function spawnPaneAndMaybePrompt(
     // ACK pendente: o chamador recebe o paneId antes de a sessão existir. O
     // brief de argv já viajou no grant; o de COLAGEM (Kimi) não tem canal
     // nenhum — sem isto o helper abria mudo, sem o briefing.
+    // A entrega é do SPAWN, não da requisição: `assertCurrentAuthority` vale
+    // para a chamada MCP e já não é o corrente quando o pane nasce (a tool
+    // respondeu) — com ele, a colagem morria em session_authority_revoked e
+    // o Kimi abria mudo (smoke 28/09). Só o cancelamento explícito (signal)
+    // segue valendo; a vida do pane/sessão é checada dentro da entrega.
     void deliverPromptAfterPendingSpawn(
       { requestId: result.requestId, paneId: result.paneId },
       finalPrompt,
       adapter.id,
-      hooks.invocation,
+      hooks.invocation?.signal ? { signal: hooks.invocation.signal } : undefined,
       {
         scope: options.scope,
         missionId: options.missionId,
         title: options.agentName ?? options.title,
+        authoritySeal,
       },
     );
   }
@@ -1742,6 +1748,35 @@ const PENDING_SPAWN_SESSION_POLL_MS = 500;
  * respondeu sucesso pendente, então falha aqui é visível: fecha o pane se a
  * sessão ainda for desta tentativa e avisa o operador; nunca helper mudo.
  */
+/**
+ * A entrega adiada não tem mais a autoridade da requisição; o que ela tem é a
+ * autoridade DURÁVEL do spawn: a missão ainda viva e o mesmo selo com que o
+ * pane foi aberto. Missão bloqueada/encerrada ou selo trocado enquanto o CLI
+ * subia → o brief velho não entra no PTY (Astra P2-8, 28/09).
+ */
+function assertMissionStillWantsBrief(notice: {
+  readonly scope: SpawnToolOptions['scope'];
+  readonly missionId?: string;
+  readonly authoritySeal?: MissionPaneAuthoritySeal;
+}): void {
+  if (!notice.missionId) return;
+  const mission = getProjectDomainStores(notice.scope).missions.get(notice.missionId);
+  if (!mission) throw new Error(`mission ${notice.missionId} is gone; stale brief not delivered`);
+  if (mission.status === 'done' || mission.status === 'failed' || mission.status === 'blocked') {
+    throw new Error(`mission ${notice.missionId} is ${mission.status}; stale brief not delivered`);
+  }
+  if (!notice.authoritySeal) return;
+  const squads = listSquads().filter((candidate) => candidate.id === mission.squadId);
+  const live = resolveMissionPaneAuthoritySeal(
+    notice.scope,
+    mission,
+    squads.length === 1 ? squads[0] : null,
+  );
+  if (live && !sameMissionPaneAuthoritySeal(notice.authoritySeal, live)) {
+    throw new Error('mission authority changed while the pane booted; stale brief not delivered');
+  }
+}
+
 export async function deliverPromptAfterPendingSpawn(
   attempt: { readonly requestId: string; readonly paneId: string },
   prompt: string,
@@ -1751,6 +1786,8 @@ export async function deliverPromptAfterPendingSpawn(
     readonly scope: SpawnToolOptions['scope'];
     readonly missionId?: string;
     readonly title?: string;
+    /** Selo com que o pane foi aberto: revalidado antes de colar. */
+    readonly authoritySeal?: MissionPaneAuthoritySeal;
   },
 ): Promise<boolean> {
   const { paneId } = attempt;
@@ -1788,6 +1825,7 @@ export async function deliverPromptAfterPendingSpawn(
     );
     if (boot === 'exited') throw agentBootExitError(sessionId);
     assertMcpInvocationCurrent(invocation);
+    assertMissionStillWantsBrief(notice);
     const accepted = await deliverAgentPrompt(sessionId, prompt, invocation, {
       adapterId,
     });

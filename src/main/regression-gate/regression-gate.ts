@@ -20,6 +20,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { redactVisibleSecrets } from '../../shared/vision-ipc';
@@ -783,16 +784,88 @@ export async function computeImpactedTests(
   };
 }
 
+/** Major do Node pinado pelo projeto (`nexusRelease.node` ou `engines.node`). */
+export function pinnedNodeMajor(pkg: Record<string, unknown> | null): number | null {
+  const release = pkg?.nexusRelease as { node?: unknown } | undefined;
+  const engines = pkg?.engines as { node?: unknown } | undefined;
+  const raw = release?.node ?? engines?.node;
+  if (typeof raw !== 'string') return null;
+  const match = /(\d{1,3})/.exec(raw); // "22.23.2", ">=22 <23", "^22.0.0", "22.x"
+  return match ? Number(match[1]) : null;
+}
+
+const compareVersions = (a: string, b: string): number => {
+  const pa = a.replace(/^v/, '').split('.').map(Number);
+  const pb = b.replace(/^v/, '').split('.').map(Number);
+  for (let i = 0; i < 3; i += 1) {
+    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0);
+  }
+  return 0;
+};
+
+export interface PinnedNodeDeps {
+  readonly readPackage?: (file: string) => Record<string, unknown> | null;
+  readonly hasNode?: (binDir: string) => boolean;
+  readonly listDir?: (dir: string) => string[];
+  readonly home?: string;
+}
+
+/**
+ * Node do runner. `node_modules/.bin/vitest` é um script que chama o `node`
+ * do PATH; o PATH do app trazia o Node 26 do Homebrew enquanto o
+ * better-sqlite3 do projeto é compilado para o Node 22 pinado em package.json
+ * → ERR_DLOPEN_FAILED em dezenas de arquivos e o portão reprovava trabalho
+ * são (28/09). Quando o projeto pina um major e existe um Node desse major na
+ * máquina (Homebrew `node@N`, nvm), ele vai na frente do PATH; sem pino ou
+ * sem binário, o PATH segue como está.
+ */
+export function pinnedNodeBinDir(root: string, deps: PinnedNodeDeps = {}): string | null {
+  const readPackage = deps.readPackage ?? readJson;
+  const major = pinnedNodeMajor(readPackage(path.join(root, 'package.json')));
+  if (major === null) return null;
+  const hasNode =
+    deps.hasNode ??
+    ((binDir: string): boolean => {
+      try {
+        fs.accessSync(path.join(binDir, process.platform === 'win32' ? 'node.exe' : 'node'), fs.constants.X_OK);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  const listDir =
+    deps.listDir ??
+    ((dir: string): string[] => {
+      try {
+        return fs.readdirSync(dir);
+      } catch {
+        return [];
+      }
+    });
+  const home = deps.home ?? os.homedir();
+  const candidates = [`/opt/homebrew/opt/node@${major}/bin`, `/usr/local/opt/node@${major}/bin`];
+  const nvm = path.join(home, '.nvm', 'versions', 'node');
+  const nvmLatest = listDir(nvm)
+    .filter((entry) => entry.startsWith(`v${major}.`))
+    .sort(compareVersions)
+    .at(-1);
+  if (nvmLatest) candidates.push(path.join(nvm, nvmLatest, 'bin'));
+  return candidates.find((dir) => hasNode(dir)) ?? null;
+}
+
 /**
  * Env mínimo para o processo de teste: nada de tokens do Nexus ou chaves de
- * API. HOME/TMPDIR vêm do sandbox (privados, descartados no fim).
+ * API. HOME/TMPDIR vêm do sandbox (privados, descartados no fim). O Node
+ * pinado pelo projeto, quando existe na máquina, vai na frente do PATH.
  */
-function sanitizedTestEnv(): NodeJS.ProcessEnv {
+export function sanitizedTestEnv(root: string, deps: PinnedNodeDeps = {}): NodeJS.ProcessEnv {
   const keep = ['PATH', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'SystemRoot', 'COMSPEC', 'PATHEXT'];
   const env: NodeJS.ProcessEnv = {};
   for (const key of keep) {
     if (process.env[key] !== undefined) env[key] = process.env[key];
   }
+  const pinned = pinnedNodeBinDir(root, deps);
+  if (pinned) env.PATH = env.PATH ? `${pinned}${path.delimiter}${env.PATH}` : pinned;
   return { ...env, CI: '1', NODE_ENV: 'test', FORCE_COLOR: '0', NO_COLOR: '1' };
 }
 
@@ -1131,7 +1204,7 @@ async function runTests(
     scope,
     sandboxDir: sandbox.dir,
     timeoutMs,
-    env: sanitizedTestEnv(),
+    env: sanitizedTestEnv(root),
     extraReadPaths: dependencies.reads,
     signal: control.signal,
     authority: control.authority,

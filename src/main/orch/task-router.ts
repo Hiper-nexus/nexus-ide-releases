@@ -350,6 +350,15 @@ export function classifyTask(taskText: string): TaskClassification {
     else if (words > 80) tier = bumpTier(tier, 1);
   }
 
+  // Revisão de código é raciocínio sobre o trabalho de outro modelo, não
+  // inspeção (27/09: "revisão sênior, somente leitura" caiu em trivial →
+  // grok low, e a política de modelos de topo nem foi consultada).
+  const floor = codeReviewTierFloor(text);
+  if (floor && TIER_ORDER.indexOf(tier) < TIER_ORDER.indexOf(floor)) {
+    tier = floor;
+    signals = matchSignals(text, REVIEW_SIGNALS);
+  }
+
   return { tier, signals };
 }
 
@@ -371,6 +380,38 @@ export function classifyTask(taskText: string): TaskClassification {
 export type FrontierRoutePolicy = 'cross-review' | 'high-risk';
 
 const REVIEW_SIGNALS = ['review', 'revis', 'cross-review', 'code review'];
+
+/**
+ * Piso de tier para revisão de código: `hard`, para a política de topo
+ * (cross-review) valer. Revisar texto/README/label (sinal easy) segue barato.
+ * Vale para a heurística e para o tier do Jev; o tier do CHAMADOR não passa
+ * por aqui (quem já sabe a complexidade continua mandando).
+ */
+/**
+ * Contexto de CÓDIGO: o piso é para revisão de código/diff/branch. "Revisar a
+ * lista de compras" ou "revisar o texto do README" seguem no tier normal;
+ * palavras incidentais (CSS, logs, "não altere o README") não cancelam um
+ * code review explícito (Astra, 28/09).
+ */
+const REVIEW_CODE_SIGNALS = [
+  'código', 'codigo', 'code', 'diff', 'pull request', 'branch', 'commit',
+  'merge', 'patch', 'release', 'implementa', 'refator', 'refactor', 'bug',
+  'teste', 'test', 'arquivo', 'file', 'função', 'funcao', 'function', 'classe',
+  'módulo', 'modulo', 'module', 'api', 'sql', 'css', 'html', 'script',
+  'componente', 'component', 'sênior', 'senior', 'staff', 'arquitetura',
+  'architecture', 'repositório', 'repositorio', 'repo',
+];
+
+export function codeReviewTierFloor(taskText: string): TaskTier | null {
+  const text = taskText.toLowerCase();
+  if (matchSignals(text, REVIEW_SIGNALS).length === 0) return null;
+  if (matchSignals(text, REVIEW_CODE_SIGNALS).length === 0) return null;
+  return 'hard';
+}
+
+export function raiseToTierFloor(tier: TaskTier, floor: TaskTier | null): TaskTier {
+  return floor && TIER_ORDER.indexOf(tier) < TIER_ORDER.indexOf(floor) ? floor : tier;
+}
 
 const HIGH_RISK_SIGNALS = [
   'arquitetura', 'architecture', 'redesign', 'design de sistema',
@@ -438,6 +479,205 @@ const BUNDLED_EFFORTS = new Map(BUILTIN_ADAPTERS.map((raw) => {
 
 function effortForTier(tier: TaskTier): RouteEffort {
   return tier === 'critical' ? 'xhigh' : tier === 'hard' ? 'high' : tier === 'medium' ? 'medium' : 'low';
+}
+
+/**
+ * Modelo e esforço citados no texto da tarefa ("com o GPT-6 Astra, esforço
+ * xhigh") são a escolha explícita de quem pediu. Um id completo casa direto;
+ * senão, um token distintivo que identifica UM modelo do inventário (astra,
+ * fable, luna…). Ambíguo ("Astra e Fable") → nada. Só CLIs instaladas
+ * contam; modelo de CLI ausente vira `unavailable`, para a decisão dizer por
+ * que não foi honrado.
+ */
+export interface MentionedRoute {
+  model?: { adapterId: string; model: string };
+  effort?: RouteEffort;
+  unavailable?: string;
+}
+
+const MENTION_GENERIC_TOKENS = new Set([
+  'code', 'flash', 'fast', 'high', 'medium', 'low', 'xhigh', 'mini', 'pro',
+  'preview', 'latest', 'chat', 'instruct', 'thinking', 'lite', 'plus', 'turbo',
+  'ultra', 'ultraspeed', 'highspeed', 'build', 'coder', 'default', 'beta', 'max',
+]);
+
+/** "não use o Astra" / "without Fable": citado para EXCLUIR. */
+const MENTION_NEGATIONS = new Set([
+  'não', 'nao', 'nunca', 'sem', 'evite', 'evitar', 'exceto',
+  'not', 'never', 'no', 'without', 'avoid', 'except',
+]);
+
+/** "compare o Astra com o Fable": conteúdo comparado, não escolha. */
+const MENTION_COMPARISONS = new Set([
+  'compare', 'comparar', 'compara', 'comparando', 'comparação', 'comparacao',
+  'comparison', 'versus', 'vs', 'contra',
+]);
+
+/**
+ * Sem uma destas antes do nome, o modelo é conteúdo da tarefa ("revise o diff
+ * produzido pelo GPT-6 Astra"), não a escolha de quem pediu.
+ */
+const MENTION_SELECTION_CUES = new Set([
+  'com', 'use', 'usa', 'usar', 'usando', 'utilize', 'utilizar', 'utilizando',
+  'via', 'rode', 'rodar', 'rodando', 'execute', 'executar', 'modelo', 'model',
+  'prefira', 'preferir', 'escolha', 'escolher', 'selecione',
+  'with', 'using', 'run', 'prefer', 'choose', 'pick', 'select',
+]);
+
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Até 5 palavras antes de `index` (o contexto que diz se é escolha, negação ou comparação). */
+function wordsBefore(text: string, index: number): string[] {
+  return text
+    .slice(Math.max(0, index - 64), index)
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean)
+    .slice(-5);
+}
+
+/**
+ * Grafia humana de uma sequência de tokens do id: "gpt-6-astra" casa
+ * "GPT-6 Astra", "gpt 6 astra" e "gpt-6-astra" (um separador opcional entre
+ * tokens), nunca dentro de outra palavra.
+ */
+function tokenSequenceMatcher(tokens: readonly string[]): RegExp {
+  return new RegExp(`(?<![a-z0-9])${tokens.map(escapeRegExp).join('[^a-z0-9]?')}(?![a-z0-9])`, 'gu');
+}
+
+interface MentionHit {
+  readonly adapterId: string;
+  readonly model: string;
+  readonly installed: boolean;
+  readonly start: number;
+  readonly end: number;
+  /** Tokens do id casados: mais tokens = menção mais específica (fable-5-1 > fable-5). */
+  readonly count: number;
+}
+
+function mentionsAdapter(text: string, adapterId: string): boolean {
+  const first = adapterId.split(/[^a-z0-9]+/)[0] ?? adapterId;
+  return [adapterId, first].some((name) => tokenSequenceMatcher([name]).test(text));
+}
+
+/**
+ * Modelo e esforço citados no texto da tarefa como ESCOLHA de quem pediu ("com
+ * o GPT-6 Astra, esforço xhigh"). Regras: id completo ou sua grafia humana, ou
+ * um token que identifica UM modelo entre as CLIs instaladas (astra, fable,
+ * luna…); precisa de uma palavra de escolha antes (com/use/modelo/with…), e
+ * negação ou comparação no mesmo trecho anulam. Menções sobrepostas são a
+ * mesma (fica a mais específica); menções distintas ("Astra e Fable") não
+ * escolhem nada. Só CLIs instaladas são escolhidas; provider citado
+ * desempata; modelo só de CLI ausente vira `unavailable`, para a decisão dizer
+ * por que não foi honrado.
+ */
+export function mentionedRoute(
+  taskText: string,
+  adapters: readonly AdapterAvailability[],
+): MentionedRoute {
+  const text = taskText.toLowerCase();
+  const out: MentionedRoute = {};
+  const rejectedContext = (index: number): boolean => {
+    const before = wordsBefore(text, index);
+    return before.some((word) => MENTION_NEGATIONS.has(word) || MENTION_COMPARISONS.has(word));
+  };
+  for (const match of text.matchAll(
+    /(?<![\p{L}])(?:esfor[çc]o|effort)\s*[:=]?\s*(low|medium|high|xhigh)(?![\p{L}])/gu,
+  )) {
+    if (rejectedContext(match.index)) continue;
+    out.effort = match[1] as RouteEffort;
+    break;
+  }
+  const entries = adapters.flatMap((adapter) =>
+    (adapter.models ?? []).map((model) => ({
+      adapterId: adapter.id,
+      model,
+      installed: adapter.installed,
+      tokens: model.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean),
+    })),
+  );
+  // Token isolado só identifica um modelo se for único entre as CLIs INSTALADAS
+  // (o "astra" das variantes do Devin não instalado não tira o do Codex).
+  const installedOwners = new Map<string, number>();
+  for (const entry of entries) {
+    if (!entry.installed) continue;
+    for (const token of new Set(entry.tokens)) {
+      installedOwners.set(token, (installedOwners.get(token) ?? 0) + 1);
+    }
+  }
+  const nameLike = (token: string): boolean =>
+    token.length >= 4 && !/^\d/.test(token) && !MENTION_GENERIC_TOKENS.has(token);
+  const distinctiveAlone = (token: string): boolean =>
+    nameLike(token) && installedOwners.get(token) === 1;
+  const selected = (index: number): boolean => {
+    const before = wordsBefore(text, index);
+    if (before.some((word) => MENTION_NEGATIONS.has(word) || MENTION_COMPARISONS.has(word))) return false;
+    return before.some((word) => MENTION_SELECTION_CUES.has(word));
+  };
+  const hits: MentionHit[] = [];
+  // Nome de família citado como escolha ("com o Fable") que não identifica um
+  // modelo entre os instalados: conta como menção que ambiguiza o resto.
+  const familyMentions: Array<{ start: number; end: number }> = [];
+  for (const entry of entries) {
+    let best: { start: number; end: number; count: number } | null = null;
+    // Sequências candidatas: sufixos com ≥2 tokens ("fable 5 1", "6 astra") e
+    // cada token de nome sozinho ("astra", "fable") em qualquer posição.
+    const sequences: string[][] = [];
+    for (let from = 0; from + 2 <= entry.tokens.length; from += 1) {
+      const suffix = entry.tokens.slice(from);
+      if (suffix.some((token) => /^[a-z]{3,}$/.test(token) && !MENTION_GENERIC_TOKENS.has(token))) {
+        sequences.push(suffix); // "5 1" ou "flash high" não nomeiam um modelo
+      }
+    }
+    for (const token of new Set(entry.tokens)) {
+      if (!nameLike(token)) continue;
+      if (distinctiveAlone(token)) {
+        sequences.push([token]);
+      } else if (entry.installed) {
+        for (const match of text.matchAll(tokenSequenceMatcher([token]))) {
+          if (selected(match.index)) familyMentions.push({ start: match.index, end: match.index + match[0].length });
+        }
+      }
+    }
+    for (const sequence of sequences) {
+      for (const match of text.matchAll(tokenSequenceMatcher(sequence))) {
+        if (!selected(match.index)) continue;
+        if (!best || sequence.length > best.count) {
+          best = { start: match.index, end: match.index + match[0].length, count: sequence.length };
+        }
+      }
+    }
+    if (best) hits.push({ adapterId: entry.adapterId, model: entry.model, installed: entry.installed, ...best });
+  }
+  if (hits.length === 0) return out;
+  // "com o Astra e com o Fable": o Fable não resolve a um modelo, mas é uma
+  // segunda escolha — nada é pinado.
+  if (familyMentions.some((family) => !hits.some((hit) => hit.start < family.end && family.start < hit.end))) {
+    return out;
+  }
+  // Acertos sobrepostos são a MESMA menção (claude-fable-5 dentro de "Fable 5.1").
+  const regions: MentionHit[][] = [];
+  for (const hit of [...hits].sort((a, b) => a.start - b.start)) {
+    const region = regions.find((group) => group.some((other) => other.start < hit.end && hit.start < other.end));
+    if (region) region.push(hit);
+    else regions.push([hit]);
+  }
+  const resolved: MentionHit[] = [];
+  for (const region of regions) {
+    const longest = Math.max(...region.map((hit) => hit.count));
+    let pool = region.filter((hit) => hit.count === longest);
+    if (pool.some((hit) => hit.installed)) pool = pool.filter((hit) => hit.installed);
+    if (pool.length > 1) {
+      const named = pool.filter((hit) => mentionsAdapter(text, hit.adapterId));
+      if (named.length > 0) pool = named;
+    }
+    if (new Set(pool.map((hit) => `${hit.adapterId}:${hit.model}`)).size !== 1) return out;
+    resolved.push(pool[0]!);
+  }
+  if (new Set(resolved.map((hit) => `${hit.adapterId}:${hit.model}`)).size !== 1) return out;
+  const [hit] = resolved;
+  if (hit!.installed) out.model = { adapterId: hit!.adapterId, model: hit!.model };
+  else out.unavailable = `${hit!.adapterId}:${hit!.model}`;
+  return out;
 }
 
 /** Automatic routes never claim a knob the CLI cannot receive. */
@@ -638,11 +878,12 @@ export function routeTask(
 
   const classification = classifyTask(taskText);
   const tier = tierOverride ?? classification.tier;
-  const requestedEffort = context.effortOverride ?? effortForTier(tier);
+  const mention = mentionedRoute(taskText, adapters);
+  const requestedEffort = mention.effort ?? context.effortOverride ?? effortForTier(tier);
   const effortFor = (adapterId: string) => nativeRouteEffort(requestedEffort, available.get(adapterId)!);
   const effortNoteFor = (adapterId: string) =>
     `; effort=${effortFor(adapterId) ?? 'cli-default'} requested=${requestedEffort}` +
-    ` source=${context.effortOverride ? 'jev' : 'tier'}`;
+    ` source=${mention.effort ? 'texto' : context.effortOverride ? 'jev' : 'tier'}`;
   const heuristicSpecialty = classifyRouteSpecialty(taskText);
   const specialtyVerdict = context.specialtyOverride
     ? {
@@ -838,6 +1079,26 @@ export function routeTask(
     tieBreakNote = tie.note;
   }
 
+  let mentionNote = '';
+  if (mention.model) {
+    const { adapterId, model } = mention.model;
+    const info = modelCatalogInfo(modelCatalog, adapterId, model);
+    if (isModelBlockedForAutoRouting(info)) {
+      mentionNote = `; modelo pedido no texto bloqueado: ${adapterId}:${model} (${info?.availability ?? 'blocked'})`;
+    } else if (adapterCircuitBreakers.isOpen(adapterId)) {
+      // A CLI acabou de falhar (cota/crash): pedir por nome não reabre o circuito.
+      mentionNote = `; modelo pedido no texto em quarentena (circuit breaker): ${adapterId}:${model}`;
+    } else {
+      ranked = [
+        { c: { adapterId, model, effort: effortFor(adapterId) }, fromTier: tier },
+        ...ranked.filter((r) => !(r.c.adapterId === adapterId && r.c.model === model)),
+      ];
+      mentionNote = `; modelo pedido no texto: ${adapterId}:${model}`;
+    }
+  } else if (mention.unavailable) {
+    mentionNote = `; modelo pedido no texto indisponível: ${mention.unavailable}`;
+  }
+
   const missingNote = warnRoutedModelsMissingFromCli(missingFromCli);
 
   if (ranked.length > 0) {
@@ -885,7 +1146,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${costNote}${evaluationNote}${riskNote}${missingNote}${bandNote}${multiScoreNote}${tieBreakNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${bandNote}${multiScoreNote}${tieBreakNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
       alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId) })),
       specialty: specialtyVerdict.specialty,
       policySource,
