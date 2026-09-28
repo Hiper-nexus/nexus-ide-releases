@@ -15,6 +15,7 @@ import {
   configureAuditLogRuntime,
   disposeAuditLogRuntime,
 } from "../jarvis/audit-log";
+import { processSandboxRuntimeAvailable } from "../runtime/process-sandbox-capability";
 import { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import {
   configureWorktreeRuntimeRegistry,
@@ -139,7 +140,7 @@ afterEach(() => {
   fs.rmSync(temp, { recursive: true, force: true });
 });
 
-const darwinOnly = process.platform === "darwin" ? describe : describe.skip;
+const darwinOnly = process.platform === "darwin" && processSandboxRuntimeAvailable() ? describe : describe.skip;
 
 darwinOnly("portão de regressão na fronteira comum do handoff", () => {
   it("fechamento mecânico (nasce success) com teste impactado falhando entra blocked — mesmo depois de o MCP recusar", async () => {

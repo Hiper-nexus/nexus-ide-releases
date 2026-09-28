@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { processSandboxRuntimeAvailable } from '../runtime/process-sandbox-capability';
 import { ProcessGitRunner } from '../runtime/git-command';
 import { testProjectScope } from '../orch/__tests__/scope-fixture';
 import {
@@ -18,7 +19,7 @@ import {
 const REPO_NODE_MODULES = fs.realpathSync(path.resolve(__dirname, '../../../node_modules'));
 /** Checkout "principal" dono do node_modules que as fixtures linkam (validado pelo Main em produção). */
 const TRUSTED_ROOT = path.dirname(REPO_NODE_MODULES);
-const darwinOnly = process.platform === 'darwin' ? describe : describe.skip;
+const darwinOnly = process.platform === 'darwin' && processSandboxRuntimeAvailable() ? describe : describe.skip;
 const roots: string[] = [];
 
 afterEach(() => {

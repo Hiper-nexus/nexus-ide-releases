@@ -11,7 +11,8 @@ import { processSandboxRuntimeAvailable } from '../../runtime/process-sandbox-ca
 
 const testDir = path.join(os.tmpdir(), 'nexus-fase4-test-terminal');
 /** Real exec through Seatbelt/bwrap — skip when host userns is blocked (GHA Linux). */
-const itSandboxed = it.runIf(processSandboxRuntimeAvailable());
+const sandboxAvailable = processSandboxRuntimeAvailable();
+const itSandboxed = it.runIf(sandboxAvailable);
 
 describe('tools-terminal', () => {
   beforeAll(() => {
@@ -101,7 +102,7 @@ describe('tools-terminal', () => {
     ).rejects.toThrow(/escapes workspace/);
   });
 
-  it.runIf(process.platform === 'darwin')(
+  it.runIf(process.platform === 'darwin' && sandboxAvailable)(
     'denies absolute reads and writes outside the project',
     async () => {
       const outsideDir = fs.mkdtempSync(
@@ -131,7 +132,7 @@ describe('tools-terminal', () => {
     },
   );
 
-  it.runIf(process.platform === 'darwin')(
+  it.runIf(process.platform === 'darwin' && sandboxAvailable)(
     'terminates the whole process group on timeout',
     async () => {
       const pidFile = path.join(testDir, 'child.pid');

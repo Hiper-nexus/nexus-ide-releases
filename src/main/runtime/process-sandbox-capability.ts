@@ -8,11 +8,23 @@ import fs from 'node:fs';
  * (`setting up uid map: Permission denied`), so binary presence alone is not
  * enough for integration tests that exec through the sandbox.
  */
-export function processSandboxRuntimeAvailable(): boolean {
-  if (process.platform === 'darwin') {
-    return fs.existsSync('/usr/bin/sandbox-exec');
+export function processSandboxRuntimeAvailable(
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (platform === 'darwin') {
+    if (!fs.existsSync('/usr/bin/sandbox-exec')) return false;
+    try {
+      // A process already confined by the writer profile cannot apply another
+      // Seatbelt profile. Binary presence says nothing about that capability.
+      execFileSync('/usr/bin/sandbox-exec', [
+        '-p', '(version 1)(allow default)', '/usr/bin/true',
+      ], { timeout: 5_000, stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
   }
-  if (process.platform === 'win32') {
+  if (platform === 'win32') {
     const runtime = process.env.NEXUS_SANDBOX_CONTAINER_RUNTIME?.trim();
     const image = process.env.NEXUS_SANDBOX_CONTAINER_IMAGE?.trim();
     if (!runtime || !image || !/^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$/i.test(image)) {
@@ -28,7 +40,7 @@ export function processSandboxRuntimeAvailable(): boolean {
       return false;
     }
   }
-  if (process.platform !== 'linux') return false;
+  if (platform !== 'linux') return false;
 
   let bwrap: string | null = null;
   for (const candidate of ['/usr/bin/bwrap', '/bin/bwrap']) {
