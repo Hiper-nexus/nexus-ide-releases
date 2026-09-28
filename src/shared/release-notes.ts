@@ -7642,7 +7642,7 @@ export const RELEASE_076119: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076120: AppRelease = {
   version: '0.76.120',
   date: '2026-09-28',
   codename: 'Instalação e tarefas recuperadas',
@@ -7669,6 +7669,43 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'Falhas ao examinar pastas interrompem a limpeza. Vínculos de panes são reconciliados ' +
         'antes da próxima retomada, e resumos úteis sobrevivem a listas longas de evidências.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.121',
+  date: '2026-09-28',
+  codename: 'Sonnet 5.5 e Jev com medição',
+  summary:
+    'Sonnet 5.5 chega ao catálogo e ao roteamento. O Jev reúne decisões numa consulta, ' +
+    'reutiliza leituras iguais e mostra as otimizações observadas. Inclui as correções da 0.76.120.',
+  highlights: [
+    {
+      title: 'Sonnet 5.5 oficial',
+      detail:
+        'Disponível no Claude e no roteamento do Nexus, com contexto de 1 milhão de tokens, ' +
+        'preço próprio e acompanhamento de uso e cotas. Sonnet 5 continua disponível.',
+    },
+    {
+      title: 'Jev com menos consultas repetidas',
+      detail:
+        'Classificação e sugestão de skill usam um único lote. Leituras iguais do navegador ' +
+        'reutilizam o julgamento por até 15 segundos; uma pergunta de foco seleciona trechos relevantes.',
+    },
+    {
+      title: 'Otimização medida',
+      detail:
+        'As configurações mostram consultas evitadas, triagens resolvidas sem LLM e volume de texto ' +
+        'selecionado. Esses números não são estimativas de tokens faturados economizados.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Trechos preservados na leitura compacta',
+      detail:
+        'O formato compacto mantém os trechos escolhidos para a pergunta, inclusive os do fim da página. ' +
+        'Quando o julgamento não é suficiente, a leitura preserva o texto completo.',
     },
   ],
 };

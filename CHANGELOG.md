@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.121 — Sonnet 5.5 e Jev com medição
+
+Inclui todas as correções da 0.76.120.
+
+- **Sonnet 5.5 oficial.** Modelo disponível no catálogo Claude e no roteamento do Nexus/Jev, com contexto de 1M, saída de 128K e preço próprio. Uso, cotas e Redline preservam a identidade do modelo e as janelas informadas pelo provedor. Sonnet 5 continua disponível.
+- **Uma consulta para rotear.** Classificação da tarefa e sugestão de skill compartilham um lote Jev, preservando permissões, esforço e fallback.
+- **Leituras focadas do navegador.** O parâmetro `focus` seleciona trechos da página na mesma consulta de julgamento. Texto completo permanece quando a resposta é insuficiente; leituras idênticas reutilizam o julgamento por até 15 segundos. O formato compacto preserva os trechos selecionados.
+- **Medição visível.** O painel Jev mostra consultas evitadas, triagens resolvidas sem LLM e bytes antes/depois da seleção. Essas medidas não são apresentadas como tokens faturados economizados.
+
 ## 0.76.120 — Instalação e tarefas recuperadas
 
 Consolida as correções da candidata 0.76.117 e as de retomada da 0.76.118, com revisão sênior e os problemas encontrados durante a validação.
