@@ -90,7 +90,6 @@ vi.mock('./squad-store', () => ({
 }));
 
 import {
-  parkSiblingRunningMissions,
   pickFocusedRunningMission,
   resurrectRunningMissionsForScope,
 } from './mission-fast-lane';
@@ -261,15 +260,17 @@ describe('persist leftover + reopen não remonta', () => {
     expect(pickFocusedRunningMission([disk], new Map())).toBeNull();
   });
 
-  it('Iniciar uma missão nova estaciona as outras running e mata o PTY delas', async () => {
+  it('recuperar duas missões vivas mantém ambas e seus workers, mesmo sem squad (+ Pane)', async () => {
     const nova = leftoverRunning({
       id: 'mission-nova',
       title: 'nova',
+      squadId: undefined,
       updatedAt: Date.now(),
     });
     const velha = leftoverRunning({
       id: 'mission-velha',
       title: 'velha',
+      squadId: undefined,
       updatedAt: Date.now() - 10_000,
     });
     harness.missions.set(nova.id, nova);
@@ -282,17 +283,23 @@ describe('persist leftover + reopen não remonta', () => {
       { sessionId: 'sess-velha-writer', missionId: velha.id },
     ];
 
-    const parked = await parkSiblingRunningMissions(scope, nova.id);
+    harness.snapshots.push({
+      missionId: nova.id,
+      role: 'orchestrator',
+      sessionId: 'sess-nova',
+    });
+    harness.sessionStates.set('sess-velha', 'idle');
+    harness.sessionStates.set('sess-nova', 'idle');
 
-    expect(parked).toEqual([velha.id]);
-    expect(harness.missions.get(velha.id)?.status).toBe('blocked');
-    expect(harness.missions.get(velha.id)?.description).toContain(
+    await resurrectRunningMissionsForScope(scope);
+
+    expect(harness.missions.get(velha.id)?.status).toBe('running');
+    expect(harness.missions.get(velha.id)?.description).not.toContain(
       NEXUS_LEFTOVER_PARKED_MARKER,
     );
     expect(harness.missions.get(nova.id)?.status).toBe('running');
-    expect(harness.terminated.sort()).toEqual(
-      ['sess-velha', 'sess-velha-writer'].sort(),
-    );
+    expect(harness.terminated).toEqual([]);
+    expect(harness.spawnCount).toBe(0);
   });
 
   it('kickoff fresco com recibo desta sessão ainda pode nascer — não é leftover', async () => {

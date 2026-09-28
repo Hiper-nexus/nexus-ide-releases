@@ -31,7 +31,6 @@ import {
   persistLeftoverIsolation,
   pickFocusedRunningMission,
   shouldSkipLeftoverRemount,
-  siblingRunningMissionIds,
   wasMissionLeftoverParked,
   isFreshIniciarKickoff,
   NEXUS_LEFTOVER_PARKED_MARKER,
@@ -2012,17 +2011,9 @@ async function respawnFastLaneOrchestrator(
   }
 }
 
-/**
- * Uma missão focused neste processo. Iniciar em rajada não empilha 15
- * first-waves: a próxima estaciona a anterior e mata o PTY.
- */
-let focusedLiveMissionId: string | null = null;
-let focusedLiveClaim: Promise<void> = Promise.resolve();
+// Each mission owns its dispatch budget. Selecting or starting another mission
+// must never revoke it or close its PTYs.
 const firstWaveInFlight = new Set<string>();
-
-export function isFocusedLiveMission(missionId: string): boolean {
-  return focusedLiveMissionId === null || focusedLiveMissionId === missionId;
-}
 
 function listMissionLiveSessionIds(missionId: string): readonly string[] {
   const sessionIds = new Set<string>();
@@ -2064,54 +2055,8 @@ async function releaseMissionLiveRuntime(
 }
 
 /**
- * Iniciar / Retomar desta missão: as outras `running` dormem na rail sem PTY.
- * Encerrar não — o operador ainda vê o card e pode Retomar.
- */
-export async function parkSiblingRunningMissions(
-  scope: ProjectExecutionScope,
-  startingMissionId: string,
-): Promise<readonly string[]> {
-  const stores = getProjectDomainStores(scope);
-  let running: readonly Mission[] = [];
-  try {
-    running = stores.missions.list('running');
-  } catch {
-    return [];
-  }
-  const siblings = siblingRunningMissionIds(startingMissionId, running);
-  const parked: string[] = [];
-  for (const siblingId of siblings) {
-    persistLeftoverIsolation(stores.missions, siblingId, 'unfocus');
-    await releaseMissionLiveRuntime(scope, siblingId);
-    parked.push(siblingId);
-  }
-  return parked;
-}
-
-export async function claimFocusedLiveMission(
-  scope: ProjectExecutionScope,
-  missionId: string,
-  duringLock?: () => void | Promise<void>,
-): Promise<readonly string[]> {
-  const previous = focusedLiveClaim;
-  let release!: () => void;
-  focusedLiveClaim = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  await previous;
-  focusedLiveMissionId = missionId;
-  try {
-    const parked = await parkSiblingRunningMissions(scope, missionId);
-    await duringLock?.();
-    return parked;
-  } finally {
-    release();
-  }
-}
-
-/**
- * Ressurreição de boot: só a missão focused COM Maestro vivo neste processo
- * volta a voar. Rows leftover `running` no disco NÃO remontam PTY — persistem
+ * Ressurreição de boot: preserva todas as missões com Maestro vivo neste
+ * processo. Rows leftover `running` no disco NÃO remontam PTY — persistem
  * isolamento e ficam card na rail (restart restaura o card, não a equipe). */
 export function shouldResurrectPersistedRunningMission(input: {
   readonly updatedAt: number;
@@ -2144,7 +2089,6 @@ export async function resurrectRunningMissionsForScope(
     running.map((mission) => mission.id),
   );
   const focused = pickFocusedRunningMission(running, liveById);
-  if (focused) focusedLiveMissionId = focused.id;
   for (const mission of running) {
     if (wasMissionRuntimeClosedByOperator(mission)) continue;
     const liveMaestroSessionId = liveById.get(mission.id) ?? null;
@@ -2368,7 +2312,6 @@ export async function fastLaneBootstrap(
 
   const key = watcherKey(scope, missionId);
   if (watchers.has(key)) {
-    await claimFocusedLiveMission(scope, missionId);
     // Watcher already up (Maestro remounted). Iniciar / religado must still
     // self-walk if writers are gone — otherwise the civilian sees 1 pane.
     void maybeRedispatchFastLaneFirstWave(scope, mission, {
@@ -2383,7 +2326,6 @@ export async function fastLaneBootstrap(
   }
 
   if (mission.status === 'running') {
-    await claimFocusedLiveMission(scope, missionId);
     // Já está rodando: orquestrador vivo → watcher; morto → respawn. O
     // retorno silencioso antigo deixava missões zumbis pós-restart.
     const action = decideFastLaneResumeAction({
@@ -2453,7 +2395,7 @@ export async function fastLaneBootstrap(
   }
 
   let live = mission;
-  await claimFocusedLiveMission(scope, missionId, () => {
+  {
     const dispatched = stores.missions.transitionLifecycle(
       missionId,
       { updatedAt: mission.updatedAt, intentVersion: mission.intentVersion ?? 0 },
@@ -2472,7 +2414,7 @@ export async function fastLaneBootstrap(
       { status: 'running', intentState: 'executing' },
     );
     live = executing ?? dispatched;
-  });
+  }
 
   const teamNames = roster.map((agent) => agent.agentName);
   const designContext = missionDesignContext(
@@ -2527,8 +2469,7 @@ export async function fastLaneBootstrap(
           `briefing não chegou ao painel adotado: ${adoption.briefingError}`,
         );
       }
-      if (!isFocusedLiveMission(missionId)) {
-        persistLeftoverIsolation(stores.missions, missionId, 'unfocus');
+      if (stores.missions.get(missionId)?.status !== 'running') {
         await releaseMissionLiveRuntime(scope, missionId);
         return;
       }
@@ -2585,8 +2526,7 @@ export async function fastLaneBootstrap(
       agentName: orchestrator.agentName,
     });
 
-    if (!isFocusedLiveMission(missionId)) {
-      persistLeftoverIsolation(stores.missions, missionId, 'unfocus');
+    if (stores.missions.get(missionId)?.status !== 'running') {
       await releaseMissionLiveRuntime(scope, missionId);
       return;
     }
@@ -2640,7 +2580,6 @@ export async function dispatchFastLaneFirstWave(
   missionId: string,
 ): Promise<number> {
   if (firstWaveInFlight.has(missionId)) return 0;
-  if (!isFocusedLiveMission(missionId)) return 0;
   firstWaveInFlight.add(missionId);
   try {
     const stores = getProjectDomainStores(scope);
@@ -2732,11 +2671,7 @@ export async function dispatchFastLaneFirstWave(
       }
       for (const seat of wave.seats) {
         const current = stores.missions.get(missionId);
-        if (
-          !current ||
-          current.status !== 'running' ||
-          !isFocusedLiveMission(missionId)
-        ) {
+        if (!current || current.status !== 'running') {
           break;
         }
         const result = await spawnWriterWithCircuit(
@@ -2800,11 +2735,7 @@ export async function dispatchFastLaneFirstWave(
     }
     for (const seat of wave.seats) {
       const current = stores.missions.get(missionId);
-      if (
-        !current ||
-        current.status !== 'running' ||
-        !isFocusedLiveMission(missionId)
-      ) {
+      if (!current || current.status !== 'running') {
         break;
       }
       const prompt = [firstWaveWorkerPrompt({
@@ -2907,12 +2838,10 @@ export async function resumeFastLaneMission(
     liveOrchestratorSession: liveMaestroSessionId !== null,
   });
   if (action === 'watch') {
-    await claimFocusedLiveMission(scope, missionId);
     if (liveMaestroSessionId) startWatcher(scope, missionId, liveMaestroSessionId);
     return;
   }
   if (action === 'respawn') {
-    await claimFocusedLiveMission(scope, missionId);
     await respawnFastLaneOrchestrator(scope, mission, {
       note: options.note,
     });
