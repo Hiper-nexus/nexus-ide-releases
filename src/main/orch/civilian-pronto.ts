@@ -26,6 +26,7 @@ import {
   type CivilianDeliveryDependencies,
 } from './civilian-delivery-completion';
 import { listPaneSnapshots } from './pane-registry';
+import { isAgentAwaitingOperator } from './agent-status';
 import { getSquad } from './squad-store';
 import { inspectTeamQuestionCompletion, isTeamQuestionMission, teamQuestionResponseSummary, type TeamQuestionCompletion, type TeamQuestionObserverBinding, type TeamQuestionPaneRuntime } from './mission-team-question-completion';
 import { loadObserverPaneSessions } from './mission-team-question-observer';
@@ -525,8 +526,12 @@ export async function maybeApplyCivilianPronto(
     (pane) =>
       pane.role !== 'orchestrator' && isLiveWriterPaneState(pane.state),
   );
+  // F-660: Maestro parado numa pergunta ao operador não terminou o turno.
   const orchestratorBusy = missionPanes.some(
-    (pane) => pane.role === 'orchestrator' && isLiveWriterPaneState(pane.state),
+    (pane) =>
+      pane.role === 'orchestrator' &&
+      (isLiveWriterPaneState(pane.state) ||
+        (pane.sessionId ? isAgentAwaitingOperator(pane.sessionId) : false)),
   );
 
   const pendingReviewer = planned.some((row) => {

@@ -141,6 +141,8 @@ const statusByPane = new Map<string, AgentSemanticStatusEntry>();
 const paneBySession = new Map<string, string>();
 /** Explicit UserPromptSubmit count, scoped to the physical PTY session. */
 const turnStartSequenceBySession = new Map<string, number>();
+/** Sequência do último turno fechado por Stop/erro (F-660). */
+const turnEndSequenceBySession = new Map<string, number>();
 
 export type AgentSemanticStatusTap = (entry: AgentSemanticStatusEntry) => void;
 const statusTaps = new Set<AgentSemanticStatusTap>();
@@ -168,6 +170,23 @@ export function tapAgentTurnStart(cb: AgentTurnStartTap): () => void {
 
 export function getAgentTurnStartSequence(sessionId: string): number {
   return turnStartSequenceBySession.get(sessionId) ?? 0;
+}
+
+/**
+ * O agente está parado ESPERANDO o operador no meio do turno (F-660): o turno
+ * aberto pelo UserPromptSubmit ainda não teve Stop e o último sinal do hook é
+ * espera por entrada — pergunta, permissão, elicitação ou `idle_prompt`. O
+ * estado do pane vira `idle` nesse momento, e a conclusão automática lia isso
+ * como "o Maestro terminou" e fechava a missão com a pergunta aberta.
+ */
+export function isAgentAwaitingOperator(sessionId: string): boolean {
+  const entry = getAgentSemanticStatusBySession(sessionId);
+  if (!entry || entry.source !== 'hook') return false;
+  const turnOpen =
+    getAgentTurnStartSequence(sessionId) >
+    (turnEndSequenceBySession.get(sessionId) ?? 0);
+  if (!turnOpen) return false;
+  return entry.status === 'awaiting-input' || entry.notificationType !== undefined;
 }
 
 export function getAgentSemanticStatus(
@@ -553,6 +572,13 @@ export function applyCanonicalHookEvent(input: {
       }
     }
 
+    if (
+      event.kind === 'status' &&
+      (event.type === 'stop' || event.type === 'error')
+    ) {
+      turnEndSequenceBySession.set(sessionId, getAgentTurnStartSequence(sessionId));
+    }
+
     const transitioned = prev?.status !== next;
     if (transitioned) {
       for (const tap of statusTaps) {
@@ -716,6 +742,7 @@ export function resetAgentStatusOnExit(sessionId: string, now = Date.now()): voi
     const paneId = paneBySession.get(sessionId);
     paneBySession.delete(sessionId);
     turnStartSequenceBySession.delete(sessionId);
+    turnEndSequenceBySession.delete(sessionId);
     if (!paneId) return;
     const prev = statusByPane.get(paneId);
     if (!prev) return;
@@ -745,6 +772,7 @@ export function __resetAgentStatusForTests(): void {
   statusByPane.clear();
   paneBySession.clear();
   turnStartSequenceBySession.clear();
+  turnEndSequenceBySession.clear();
   observerToolCallsBySession.clear();
   statusTaps.clear();
   turnStartTaps.clear();

@@ -24,6 +24,7 @@ import {
   isSessionInjectableIdle,
   isSessionIdleForCleanup,
   isSessionInAbandonedDialog,
+  isAgentAwaitingOperator,
   paneStateForStatus,
   resetAgentStatusOnExit,
   semanticStatusForEvent,
@@ -68,6 +69,48 @@ beforeEach(() => {
   harness.publish.mockReset().mockImplementation(() => true);
   harness.agentInfo.mockReset().mockReturnValue(null);
   harness.state = 'idle';
+});
+
+describe('isAgentAwaitingOperator (F-660)', () => {
+  const apply = (event: CanonicalHookEvent) =>
+    applyCanonicalHookEvent({ sessionId: 'pty-maestro', event });
+
+  it('pergunta no meio do turno: o pane fica idle, mas o Maestro espera o operador', () => {
+    // Campo 28/09 08:49–08:50: UserPromptSubmit, ferramentas, AskUserQuestion
+    // → idle_prompt sem Stop. A conclusão automática leu idle como "terminou".
+    apply(userSubmit);
+    apply(start);
+    apply(idlePrompt);
+    expect(getAgentSemanticStatus('pty-maestro')?.status).toBe('idle');
+    expect(isAgentAwaitingOperator('pty-maestro')).toBe(true);
+    apply(permission);
+    expect(isAgentAwaitingOperator('pty-maestro')).toBe(true);
+  });
+
+  it('turno fechado por Stop não é espera, mesmo com idle_prompt depois', () => {
+    apply(userSubmit);
+    apply(stop);
+    expect(isAgentAwaitingOperator('pty-maestro')).toBe(false);
+    apply(idlePrompt);
+    expect(isAgentAwaitingOperator('pty-maestro')).toBe(false);
+  });
+
+  it('sem notificação de espera, turno aberto trabalhando não conta', () => {
+    apply(userSubmit);
+    apply(start);
+    expect(isAgentAwaitingOperator('pty-maestro')).toBe(false);
+    expect(isAgentAwaitingOperator('pty-sem-hook')).toBe(false);
+  });
+
+  it('novo prompt reabre o turno depois de um Stop', () => {
+    apply(userSubmit);
+    apply(stop);
+    apply(userSubmit);
+    apply(elicitation);
+    expect(isAgentAwaitingOperator('pty-maestro')).toBe(true);
+    resetAgentStatusOnExit('pty-maestro');
+    expect(isAgentAwaitingOperator('pty-maestro')).toBe(false);
+  });
 });
 
 describe('semanticStatusForEvent (pure mapping)', () => {

@@ -18,6 +18,7 @@ import {
 } from './civilian-auto-review';
 import { missionRequiresIndependentReview } from './mission-independent-review-gate';
 import { listPaneSnapshots, requestPaneSpawn } from './pane-registry';
+import { isAgentAwaitingOperator } from './agent-status';
 import {
   getProjectDomainStores,
   type ProjectDomainStoreSuite,
@@ -881,8 +882,12 @@ export function inspectCivilianDelivery(input: {
   const orchestratorPanes = missionPanes.filter(
     (pane) => pane.role === 'orchestrator',
   );
-  const orchestratorBusy = orchestratorPanes.some((pane) =>
-    isLiveWriterPaneState(pane.state),
+  // F-660: parado numa pergunta ao operador conta como ocupado — o pane fica
+  // `idle`, mas o turno do Maestro não acabou e a missão não pode fechar.
+  const orchestratorBusy = orchestratorPanes.some(
+    (pane) =>
+      isLiveWriterPaneState(pane.state) ||
+      (pane.sessionId ? isAgentAwaitingOperator(pane.sessionId) : false),
   );
 
   return {

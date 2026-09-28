@@ -10,6 +10,13 @@ vi.mock('electron', () => ({
   ipcMain: { handle: vi.fn(), on: vi.fn() },
 }));
 
+// F-660: quais sessões o redutor de hooks diria que esperam o operador.
+const awaitingOperator = vi.hoisted(() => ({ sessions: new Set<string>() }));
+vi.mock('./agent-status', async (original) => ({
+  ...(await original<typeof import('./agent-status')>()),
+  isAgentAwaitingOperator: (sessionId: string) => awaitingOperator.sessions.has(sessionId),
+}));
+
 vi.mock('./pane-registry', () => ({
   listPaneSnapshots: () => [],
   requestPaneSpawn: async () => ({ ok: false }),
@@ -765,6 +772,42 @@ describe('inspectCivilianDelivery', () => {
     });
     expect(inspected.orchestratorBusy).toBe(false);
     expect(inspected.boardAllDone).toBe(true);
+  });
+
+  it('Maestro idle parado numa pergunta ao operador conta como ocupado (F-660)', () => {
+    // Campo 28/09 08:50: helpers entregues, Maestro no menu do AskUserQuestion
+    // (pane idle por idle_prompt, turno sem Stop) — a missão fechou 19 s depois.
+    const input = {
+      mission: mission({ id: 'mission-orch-ask' }),
+      tasks: [
+        task({ id: 't-story-1', title: 'Story 01', missionId: 'mission-orch-ask', status: 'done' }),
+      ],
+      planned: storyPlan(1),
+      handoffs: [handoff({ missionId: 'mission-orch-ask' })],
+      panes: [
+        {
+          missionId: 'mission-orch-ask',
+          agentName: 'Maestro',
+          role: 'orchestrator',
+          state: 'idle',
+          sessionId: 'pty-maestro-ask',
+        },
+      ],
+      now: 20_000,
+    };
+    expect(inspectCivilianDelivery(input).orchestratorBusy).toBe(false);
+    awaitingOperator.sessions.add('pty-maestro-ask');
+    try {
+      const inspected = inspectCivilianDelivery(input);
+      expect(inspected.orchestratorBusy).toBe(true);
+      expect(
+        decideCivilianDeliveryAction(
+          decision({ boardAllDone: true, orchestratorBusy: inspected.orchestratorBusy }),
+        ),
+      ).toBe('wait');
+    } finally {
+      awaitingOperator.sessions.clear();
+    }
   });
 });
 
