@@ -115,6 +115,7 @@ import {
 } from './isolated-writer-worktree';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
+import { isOperatorTabMission } from './operator-tab-mission-resume';
 import { missionControlPlaneSnapshot } from './mission-control-plane-ipc';
 import { getOrchSettings } from '../persistence/settings-store';
 import { isPaneMetaTask } from './mission-fast-lane';
@@ -573,7 +574,12 @@ const paneSpawn: McpToolDef = {
     'pane\'s CLI, and a confident Jev skill ' +
     'suggestion adds one hint line to the prompt. Inside a mission, omit ' +
     'adapterId and describe `task` to get the same automatic routing (roster, ' +
-    'CLI policy and route reservation applied). Writers run in parallel: ' +
+    'CLI policy and route reservation applied). DEFAULT: omit adapterId and ' +
+    'model — Nexus spreads helpers across every ready CLI (Claude, Codex, Kimi, ' +
+    'Grok, MiMo, …) by task; pass adapterId only when the operator named a CLI, ' +
+    'and then also operatorChoice:true. In the tab mission a CLI that already ' +
+    'has 2+ live helpers is re-routed unless operatorChoice is true (receipt: ' +
+    'route.redistributed). Writers run in parallel: ' +
     'isolatedWriter gives each one its own git worktree/branch, and from the ' +
     'operator pane a writer that would share the checkout with another active ' +
     'writer is isolated automatically (receipt: executionMode ' +
@@ -595,9 +601,16 @@ const paneSpawn: McpToolDef = {
       adapterId: {
         type: 'string',
         description:
-          'Adapter id (cli) to run. Optional: omit it and Nexus routes `task` ' +
-          '(operator pane: Jev + cost table; mission: nexus_route_task). When ' +
-          'given, it is honored together with model/effort.',
+          'Adapter id (cli) to run. Optional and usually omitted: Nexus routes ' +
+          '`task` (operator pane: Jev + cost table; mission: nexus_route_task) ' +
+          'and spreads helpers across CLIs. When given, it is honored together ' +
+          'with model/effort (tab mission: see operatorChoice).',
+      },
+      operatorChoice: {
+        type: 'boolean',
+        description:
+          'true when the OPERATOR asked for this adapterId. Without it, the tab ' +
+          'mission re-routes a CLI that already has 2+ live helpers.',
       },
       agentName: { type: 'string', description: 'Squad agent name or id' },
       task: {
@@ -761,6 +774,10 @@ const paneSpawnAfterTabMission = {
       !str(args, 'missionId') &&
       operatorRouteResolver !== null;
     let ignoredChoice = forceOperatorRoute ? ignoredRouteChoice(args) : null;
+    // F-674: CLI fixada pelo orquestrador que o Nexus redistribuiu (recibo).
+    let diversityRedistributed:
+      | { adapterId: string; model?: string; sameAdapterLive: number }
+      | null = null;
     const resolveOperatorRoute = async (): Promise<Record<string, unknown>> => {
       const task = operatorRouteTask(args);
       if (!task) {
@@ -909,6 +926,33 @@ const paneSpawnAfterTabMission = {
         // missionId explícito vindos da mão do operador.
         autoRoute = await resolveOperatorRoute();
         adHocAdapterId = routeString(autoRoute, 'adapterId');
+      }
+      // F-674: na missão da aba, o orquestrador que fixa uma CLI que já tem
+      // 2+ helpers vivos é redistribuído pelo roteamento (Jev + tabela) — o
+      // operador quer as LLMs disponíveis em uso, não uma só. `operatorChoice`
+      // marca a CLI que o PRÓPRIO operador pediu e ela é respeitada.
+      if (
+        adHocAdapterId !== undefined &&
+        args.operatorChoice !== true &&
+        !resumeRef &&
+        !routeReservationId &&
+        ctx.role === 'orchestrator' &&
+        ctx.missionId &&
+        operatorRouteResolver !== null
+      ) {
+        const mission = getProjectDomainStores(ctx.scope).missions.get(ctx.missionId);
+        const crowded = mission && isOperatorTabMission(mission)
+          ? sameAdapterDiversityHint(adHocAdapterId, ctx.missionId, listPaneSnapshots())
+          : null;
+        if (crowded) {
+          const requestedModel = str(args, 'model');
+          diversityRedistributed = {
+            adapterId: adHocAdapterId,
+            ...(requestedModel ? { model: requestedModel } : {}),
+            sameAdapterLive: crowded.sameAdapterLive,
+          };
+          adHocAdapterId = undefined;
+        }
       }
       // C (0.76.110): paridade com o + Pane — dentro da missão, sem
       // adapterId, o Nexus roteia `task` pelo mesmo nexus_route_task da
@@ -1521,6 +1565,17 @@ const paneSpawnAfterTabMission = {
                 ? { jevUnavailable: autoRoute.jevUnavailable }
                 : {}),
               ...(ignoredChoice ? { ignored: ignoredChoice } : {}),
+              ...(diversityRedistributed
+                ? {
+                    redistributed: {
+                      ...diversityRedistributed,
+                      reason:
+                        `já havia ${diversityRedistributed.sameAdapterLive} helpers vivos em ` +
+                        `${diversityRedistributed.adapterId}; o Nexus distribuiu pela tarefa. ` +
+                        'Passe operatorChoice:true quando o operador pedir esta CLI.',
+                    },
+                  }
+                : {}),
               ...(!ignoredChoice && typeof autoRoute.ignoredMcpAdapterId === 'string'
                 ? { ignored: { adapterId: autoRoute.ignoredMcpAdapterId } }
                 : {}),

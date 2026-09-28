@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
   assertRouteReservation: vi.fn(),
   consumeRouteReservation: vi.fn(),
   mission: {} as Record<string, unknown>,
+  panes: [] as Array<Record<string, unknown>>,
 }));
 vi.mock('./tool-util', async (original) => ({
   ...(await original<typeof import('./tool-util')>()),
@@ -18,7 +19,7 @@ vi.mock('./tool-util', async (original) => ({
 }));
 vi.mock('./pane-registry', async (original) => ({
   ...(await original<typeof import('./pane-registry')>()),
-  listPaneSnapshots: () => [],
+  listPaneSnapshots: () => h.panes,
   takePendingPaneSpawnResult: () => null,
 }));
 vi.mock('./gate', async (original) => ({
@@ -64,6 +65,7 @@ const ctx: AgentGateContext = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.panes = [];
   h.mission = {
     id: 'mission-a', title: 'Feature', description: '', status: 'running', squadId: 'squad',
     intentContract: { ...compileIntentContract({ goal: 'Feature', intentVersion: 1 }), maxWorkers: 8 },
@@ -157,5 +159,46 @@ describe('nexus_pane_spawn dentro da missão sem adapterId', () => {
     setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex' })));
     await expect(paneSpawnTool.handler({}, ctx)).rejects.toThrow(/descreva a tarefa/);
     expect(h.spawn).not.toHaveBeenCalled();
+  });
+});
+
+describe('missão da aba redistribui a CLI lotada (F-674)', () => {
+  const tabMission = () => ({
+    ...h.mission,
+    squadId: undefined,
+    intentContract: {
+      ...(h.mission.intentContract as object),
+      freeAgentChoice: true,
+      workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' },
+    },
+  });
+  const liveClaude = (paneId: string) => ({
+    paneId, sessionId: `s-${paneId}`, adapterId: 'claude', state: 'busy', missionId: 'mission-a', role: 'worker',
+  });
+
+  it('orquestrador fixa claude com 2 helpers vivos em claude: o Nexus roteia pela tarefa', async () => {
+    // Campo 28/09: sem o operador pedir, só nasciam helpers Claude.
+    h.mission = tabMission();
+    h.panes = [liveClaude('p1'), liveClaude('p2')];
+    const resolver = vi.fn(async () => ({ adapterId: 'codex', model: 'gpt-5.4', effort: 'high', routeReservationId: 'rr-div' }));
+    setOperatorRouteResolver(resolver);
+    const receipt = await paneSpawnTool.handler(
+      { adapterId: 'claude', model: 'claude-opus-5-5', task: 'revisar o kanban', prompt: 'revise' }, ctx,
+    ) as Record<string, any>;
+    expect(resolver).toHaveBeenCalledTimes(1);
+    expect(h.spawn.mock.calls[0][0]).toMatchObject({ adapterId: 'codex', model: 'gpt-5.4' });
+    expect(receipt.route.redistributed).toMatchObject({ adapterId: 'claude', model: 'claude-opus-5-5', sameAdapterLive: 2 });
+  });
+
+  it('operatorChoice:true respeita a CLI que o operador pediu', async () => {
+    h.mission = tabMission();
+    h.panes = [liveClaude('p1'), liveClaude('p2')];
+    const resolver = vi.fn(async () => ({ adapterId: 'codex' }));
+    setOperatorRouteResolver(resolver);
+    await paneSpawnTool.handler(
+      { adapterId: 'claude', model: 'claude-opus-5-5', operatorChoice: true, task: 'revisar', prompt: 'revise' }, ctx,
+    );
+    expect(resolver).not.toHaveBeenCalled();
+    expect(h.spawn.mock.calls[0][0]).toMatchObject({ adapterId: 'claude' });
   });
 });
