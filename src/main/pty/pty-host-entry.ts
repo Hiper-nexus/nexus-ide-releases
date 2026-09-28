@@ -25,6 +25,7 @@ import {
   type HostEventMsg,
 } from './pty-host-core';
 import {
+  killPtyRoot,
   terminatePtyProcessTree,
   type PtyProcessTreeTerminationProof,
 } from './pty-descendant-termination';
@@ -314,7 +315,7 @@ function handleTerminate(
           {
             rootPid: entry.proc.pid,
             ownsRoot: () => procs.get(msg.sessionId) === entry,
-            killRoot: (signal) => entry.proc.kill(signal),
+            killRoot: (signal) => killPtyRoot(entry.proc, signal),
             rootExited: entry.exited,
           },
           {
@@ -368,7 +369,13 @@ parentPort.on('message', (e) => {
       return;
     case 'kill':
       try {
-        procs.get(msg.sessionId)?.proc.kill(msg.signal);
+        const target = procs.get(msg.sessionId)?.proc;
+        // F-659: no Windows o node-pty recusa qualquer sinal (o erro era
+        // engolido aqui como "já morto" e o processo seguia vivo).
+        if (target) {
+          if (msg.signal) killPtyRoot(target, msg.signal);
+          else target.kill();
+        }
       } catch {
         // Already dead.
       }

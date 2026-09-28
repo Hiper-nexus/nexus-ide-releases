@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   collectDescendantRows,
+  killPtyRoot,
   parseProcessTable,
   terminatePtyProcessTree,
   type ProcessTableCapture,
@@ -32,6 +33,58 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   });
   return { promise, resolve };
 }
+
+describe('killPtyRoot no Windows (F-659)', () => {
+  // O node-pty do Windows lança para QUALQUER sinal; só `kill()` fecha o ConPTY.
+  function windowsPty() {
+    const exited = deferred();
+    const proc = {
+      kill: vi.fn((signal?: string) => {
+        if (signal) throw new Error('Signals not supported on windows.');
+        exited.resolve();
+      }),
+    };
+    return { proc, exited };
+  }
+
+  it('no win32 mata sem sinal; fora dele o sinal segue', () => {
+    const win = { kill: vi.fn() };
+    killPtyRoot(win, 'SIGTERM', 'win32');
+    expect(win.kill).toHaveBeenCalledWith();
+    const posix = { kill: vi.fn() };
+    killPtyRoot(posix, 'SIGTERM', 'darwin');
+    expect(posix.kill).toHaveBeenCalledWith('SIGTERM');
+  });
+
+  it('o encerramento prova a saída da raiz no Windows', async () => {
+    const { proc, exited } = windowsPty();
+    const proof = await terminatePtyProcessTree(
+      {
+        rootPid: 4242,
+        ownsRoot: () => true,
+        killRoot: (signal) => killPtyRoot(proc, signal, 'win32'),
+        rootExited: exited.promise,
+      },
+      { platform: 'win32', termTimeoutMs: 1, killTimeoutMs: 1, snapshotTimeoutMs: 1 },
+    );
+    expect(proc.kill).toHaveBeenCalledWith();
+    expect(proof.rootExited).toBe(true);
+  });
+
+  it('com o sinal cru (como antes) o processo nunca morria', async () => {
+    const { proc, exited } = windowsPty();
+    const proof = await terminatePtyProcessTree(
+      {
+        rootPid: 4242,
+        ownsRoot: () => true,
+        killRoot: (signal) => proc.kill(signal),
+        rootExited: exited.promise,
+      },
+      { platform: 'win32', termTimeoutMs: 1, killTimeoutMs: 1, snapshotTimeoutMs: 1 },
+    );
+    expect(proof.rootExited).toBe(false);
+  });
+});
 
 describe('PTY descendant physical authority', () => {
   beforeEach(() => {

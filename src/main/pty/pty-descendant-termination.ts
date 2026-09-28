@@ -531,6 +531,28 @@ function proofError(
  * No process-group-wide signal is used: `killpg` can cross authority boundaries
  * after PGID reuse. Unsupported inventory platforms deliberately fail closed.
  */
+/**
+ * Mata a raiz do PTY do jeito que a plataforma aceita (F-659).
+ *
+ * O node-pty do Windows lança "Signals not supported on windows." para QUALQUER
+ * sinal: o SIGTERM/SIGKILL deste módulo era engolido, o processo nunca morria e
+ * a sessão ficava presa num voo de encerramento — saída descartada, digitação
+ * recusada, Retomar/Pedir ajuste abortados por "não terminou fisicamente" e
+ * pane fechado virando processo órfão. Sem sinal, o `kill()` do ConPTY fecha o
+ * pseudoconsole e encerra a lista de processos do console.
+ */
+export function killPtyRoot(
+  proc: { kill(signal?: string): void },
+  signal: NodeJS.Signals,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  if (platform === 'win32') {
+    proc.kill();
+    return;
+  }
+  proc.kill(signal);
+}
+
 export async function terminatePtyProcessTree(
   input: PtyProcessTreeTerminationInput,
   deps: TerminationDependencies = {},
