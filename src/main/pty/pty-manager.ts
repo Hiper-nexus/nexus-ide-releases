@@ -76,6 +76,7 @@ import {
   resolveSpawnBinary,
   resolveWindowsCodexNpmShimLaunch,
 } from "../path-resolver";
+import { windowsNpmShimSpawn } from "../adapters/windows-npm-shim";
 import {
   isBuiltinAdapter,
   resolveAdapterBinary,
@@ -2361,20 +2362,23 @@ export function spawnAgentSession(
     }
   }
 
-  // npm's Windows launcher is a .cmd batch file. A normal Codex pane carries
-  // the Nexus status-hook configuration as command-line arguments, which can
-  // exceed cmd.exe's 8K limit before Codex ever starts. The built-in launcher
-  // is verified by the resolver and is converted to node.exe + codex.js only
-  // for this direct, non-sandboxed Windows path. Never rewrite a sandbox plan:
-  // its wrapper and filesystem contract must remain exactly as constructed.
+  // npm's Windows launcher is a .cmd batch file. cmd.exe caps the command
+  // line at 8K (a Codex pane's hook config alone can pass it), CUTS an
+  // argument at its first newline — F-668: a worker's multi-line brief reached
+  // Claude as just "## Nexus execution authority" — and expands %VAR% inside
+  // the prompt text. A built-in launcher the resolver verifies (same package,
+  // exact entrypoint) runs its entrypoint directly: the .exe, or node.exe +
+  // script. Direct, non-sandboxed Windows path only. Never rewrite a sandbox
+  // plan: its wrapper and filesystem contract must remain exactly as built.
   if (
     process.platform === "win32" &&
-    adapter.id === "codex" &&
     isBuiltinAdapter(adapter.id) &&
     !processSandboxActive &&
     spawnFile === bin
   ) {
-    const npmShimLaunch = resolveWindowsCodexNpmShimLaunch(spawnFile);
+    const npmShimLaunch =
+      (adapter.id === "codex" ? resolveWindowsCodexNpmShimLaunch(spawnFile) : null) ??
+      windowsNpmShimSpawn(adapter.id, spawnFile);
     if (npmShimLaunch) {
       spawnFile = npmShimLaunch.file;
       spawnArgs = [...npmShimLaunch.argsPrefix, ...spawnArgs];

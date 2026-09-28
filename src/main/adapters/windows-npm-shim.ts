@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { cliInstallRecipeCandidates } from './cli-install-recipes';
+import { resolveCliBinary } from '../path-resolver';
 
 /**
  * Windows npm creates a .cmd launcher rather than a symlink. Resolve the
@@ -70,4 +71,25 @@ export function windowsNpmShimInvocation(
     // Unknown launcher format: do not claim the package entrypoint is runnable.
   }
   return null;
+}
+
+/**
+ * F-668: o executável real por trás do `.cmd` do npm de uma CLI embutida,
+ * verificado pelo pacote dela. `node.exe` vem do lado do atalho (Node
+ * portátil) ou do PATH (prefixo npm separado, ex. `~/.local/bin`).
+ */
+export function windowsNpmShimSpawn(
+  adapterId: string,
+  shimPath: string,
+): { file: string; argsPrefix: string[] } | null {
+  if (!/\.cmd$/iu.test(shimPath)) return null;
+  const sibling = path.join(path.dirname(shimPath), 'node.exe');
+  const node = fs.existsSync(sibling)
+    ? sibling
+    : resolveCliBinary('node')?.binPath ?? null;
+  const nodePath = node && /\.exe$/iu.test(node) ? node : null;
+  const invocation = windowsNpmShimInvocation(adapterId, shimPath, nodePath);
+  return invocation
+    ? { file: invocation.executable, argsPrefix: invocation.argsPrefix }
+    : null;
 }

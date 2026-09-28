@@ -37,6 +37,18 @@ const windowsNpmShimLaunch = vi.hoisted(() => ({
     | null,
 }));
 
+// F-668: atalho .cmd do npm de qualquer CLI embutida (default: nenhum).
+const npmShimSpawn = vi.hoisted(() => ({
+  launch: null as { file: string; argsPrefix: string[] } | null,
+  calls: [] as Array<[string, string]>,
+}));
+vi.mock("../adapters/windows-npm-shim", () => ({
+  windowsNpmShimSpawn: (adapterId: string, shimPath: string) => {
+    npmShimSpawn.calls.push([adapterId, shimPath]);
+    return npmShimSpawn.launch;
+  },
+}));
+
 // Unit tests use a fake PTY host — pin absolute bin paths so spawn never
 // depends on the machine PATH (same contract as production discovery).
 vi.mock("../path-resolver", () => ({
@@ -1629,6 +1641,46 @@ describe("AGY advisory native profile", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  (process.platform === "win32" ? it : it.skip)(
+    "F-668: worker claude no Windows nasce no executável do pacote, com o brief multi-linha inteiro",
+    async () => {
+      // Campo 28/09 13:37: via claude.cmd o cmd.exe cortou o argumento na 1ª
+      // quebra de linha e o worker recebeu só "## Nexus execution authority".
+      setSquadCliPolicyLookupForTests(() => "operator-choice");
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-claude-shim-"));
+      const worktree = path.join(root, "worktree");
+      fs.mkdirSync(worktree);
+      const host = fakeHost();
+      setPtyHost(host.host);
+      const base = revisionBoundWorker(fs.realpathSync.native(worktree));
+      const brief =
+        "## Nexus execution authority\nexecutionMode=same_checkout\nFaça a tarefa e chame nexus_handoff_submit.";
+      const authority: BoundSpawnAuthority = {
+        ...base,
+        context: { ...base.context!, initialPrompt: brief },
+      };
+      npmShimSpawn.launch = { file: "/mock/pkg/claude.exe", argsPrefix: [] };
+      npmShimSpawn.calls.length = 0;
+      let sessionId: string | null = null;
+      try {
+        ({ sessionId } = spawnMainOwnedAgentSession(
+          { kind: "cli-agent", paneId: "claude-npm-shim", cols: 100, rows: 30 },
+          builtinCliPtyAdapter("claude"),
+          {},
+          authority,
+        ));
+        const spec = host.specFor(sessionId);
+        expect(npmShimSpawn.calls).toContainEqual(["claude", "/mock/bin/claude"]);
+        expect(spec.file).toBe("/mock/pkg/claude.exe");
+        expect(spec.args).toContain(brief);
+      } finally {
+        npmShimSpawn.launch = null;
+        if (sessionId) await orchTerminateSession(sessionId);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("kimi: alias fora do config.toml não vai no --model (o CLI recusa a sessão inteira)", async () => {
     // Smoke 28/09: a preferência antiga "kimi-k2.7" ia no --model e o Kimi Code

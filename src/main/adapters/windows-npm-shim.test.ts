@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { windowsNpmShimInvocation, windowsNpmShimTarget } from './windows-npm-shim';
+import { windowsNpmShimInvocation, windowsNpmShimSpawn, windowsNpmShimTarget } from './windows-npm-shim';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -54,4 +54,52 @@ describe('Windows npm shim ownership', () => {
       argsPrefix: [],
     });
   });
+});
+
+// Atalho gerado pelo npm 10 para o Claude Code (cópia do PC do operador, 28/09).
+const CLAUDE_NPM_SHIM =
+  '@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\n' +
+  'CALL :find_dp0\r\n"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"   %*\r\n';
+
+describe('spawn direto por trás do .cmd do npm (F-668)', () => {
+  function npmPrefix(): string {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-npm-prefix-'));
+    roots.push(root);
+    return root;
+  }
+
+  it('o claude.cmd vira claude.exe: o brief multi-linha não passa pelo cmd.exe', () => {
+    // Campo 28/09 13:37: o cmd.exe cortou o argumento na 1ª quebra de linha e
+    // o worker recebeu só "## Nexus execution authority".
+    const prefix = npmPrefix();
+    const packageRoot = path.join(prefix, 'node_modules', '@anthropic-ai', 'claude-code');
+    fs.mkdirSync(path.join(packageRoot, 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(packageRoot, 'package.json'), JSON.stringify({ bin: { claude: 'bin/claude.exe' } }));
+    const exe = path.join(packageRoot, 'bin', 'claude.exe');
+    fs.writeFileSync(exe, '');
+    const shim = path.join(prefix, 'claude.cmd');
+    fs.writeFileSync(shim, CLAUDE_NPM_SHIM);
+    expect(windowsNpmShimSpawn('claude', shim)).toEqual({ file: exe, argsPrefix: [] });
+    // Pacote que não é o da CLI: nada de palpite.
+    expect(windowsNpmShimSpawn('codex', shim)).toBeNull();
+    expect(windowsNpmShimSpawn('claude', path.join(prefix, 'claude.exe'))).toBeNull();
+  });
+
+  (process.platform === 'win32' ? it : it.skip)(
+    'codex num prefixo sem node.exe (ex. ~/.local/bin) usa o node do PATH',
+    () => {
+      const prefix = npmPrefix();
+      const packageRoot = path.join(prefix, 'node_modules', '@openai', 'codex');
+      fs.mkdirSync(path.join(packageRoot, 'bin'), { recursive: true });
+      fs.writeFileSync(path.join(packageRoot, 'package.json'), JSON.stringify({ bin: { codex: 'bin/codex.js' } }));
+      const entry = path.join(packageRoot, 'bin', 'codex.js');
+      fs.writeFileSync(entry, '');
+      const shim = path.join(prefix, 'codex.cmd');
+      fs.writeFileSync(shim, '@ECHO off\r\n"%_prog%"  "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n');
+      const launch = windowsNpmShimSpawn('codex', shim);
+      expect(launch?.argsPrefix).toEqual([entry]);
+      expect(launch?.file).toMatch(/node\.exe$/iu);
+      expect(fs.existsSync(launch!.file)).toBe(true);
+    },
+  );
 });
