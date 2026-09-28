@@ -529,7 +529,7 @@ describe('prepareCodexGovernedSession', () => {
       browser_use: false,
       browser_use_external: false,
       browser_use_full_cdp_access: false,
-      code_mode_host: false,
+      code_mode_host: process.platform === 'win32',
       computer_use: false,
       enable_mcp_apps: false,
       goals: false,

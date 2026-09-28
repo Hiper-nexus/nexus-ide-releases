@@ -7,6 +7,7 @@ import {
   ACCEPT_SECOND_TRUST_OPTION_RESPONSE,
   BUILTIN_PROMPT_SIGNATURES,
   CliPromptAutoResponder,
+  codexFolderAccessResponse,
   matchesPromptSignature,
 } from './cli-prompt-autoresponder';
 
@@ -601,3 +602,42 @@ describe('MiMo startup permission prompt', () => {
   });
 });
 
+// Tela real do Codex 0.157.1 (sonda de 28/09 com o perfil governado numa
+// worktree): pasta marcada untrusted pelo próprio Nexus.
+const CODEX_FOLDER_ACCESS = [
+  '\x1b[1m Folder access\x1b[0m',
+  ' C:\Users\op\AppData\Roaming\NexusIDE\project-runtime\wt\d6cf\t-2f6c',
+  ' Config, hooks, and exec policies from untrusted folders stay disabled.',
+  ' Trusted project folders can still contribute settings. Opening will not change saved trust.',
+  '\x1b[36m› 1. Open restricted\x1b[0m',
+  '  2. Quit',
+  ' enter continue · esc quit',
+].join('\n');
+
+describe('Codex "Folder access" (F-666)', () => {
+  it('abre restrito com Enter quando o cursor já está em "Open restricted"', () => {
+    expect(codexFolderAccessResponse(CODEX_FOLDER_ACCESS)).toBe('\r');
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-codex', 'codex');
+    expect(responder.observe('session-codex', CODEX_FOLDER_ACCESS)).toBe('\r');
+  });
+
+  it('nunca escolhe "Trust and continue": desce até "Open restricted"', () => {
+    const withTrust = CODEX_FOLDER_ACCESS.replace(
+      '\x1b[36m› 1. Open restricted\x1b[0m\n  2. Quit',
+      '› 1. Trust and continue\n  2. Open restricted\n  3. Quit',
+    );
+    expect(codexFolderAccessResponse(withTrust)).toBe('\x1b[B\r');
+  });
+
+  it('sem "Open restricted" desenhado não responde', () => {
+    expect(codexFolderAccessResponse(' Folder access\n› 1. Quit')).toBeNull();
+  });
+
+  it('segura o brief enquanto a tela está aberta', () => {
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-codex-hold', 'codex');
+    responder.observe('session-codex-hold', ' Folder access\n');
+    expect(responder.shouldDeferInjection('session-codex-hold')).toBe(true);
+  });
+});

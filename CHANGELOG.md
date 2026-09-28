@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.76.119 — Instalação e tarefas recuperadas
+## 0.76.120 — Instalação e tarefas recuperadas
 
 Consolida as correções da candidata 0.76.117 e as de retomada da 0.76.118, com revisão sênior e os problemas encontrados durante a validação.
 
@@ -8,6 +8,12 @@ Consolida as correções da candidata 0.76.117 e as de retomada da 0.76.118, com
 - **Kimi recebe a tarefa (F-186).** A colagem aguarda o composer, evitando perder o briefing no menu de migração. A migração continua sendo deixada para depois.
 - **Retomada e limpeza (F-663/F-664).** Falhas na inspeção de links abortam a limpeza recursiva. Falhas transitórias no vínculo do pane são reconciliadas, mantendo o acompanhamento e a conversa correta na retomada seguinte.
 - **Memória útil preservada (F-180).** Resumos destilados ficam antes de listas extensas de evidências, para sobreviver ao limite de contexto.
+
+## 0.76.119 — Codex na worktree
+
+Correção do uso real no Windows em 28/09. Inclui a 0.76.118 (Retoma e continua).
+
+- **Helper Codex em worktree trabalha no Windows (F-666).** Quando o orquestrador soltava um helper Codex numa worktree isolada, o Codex 0.157 abria a tela "Folder access" (a pasta é marcada como restrita de propósito) e ninguém respondia: o brief caía na tela e o helper morria em segundos. Passando dela, cada comando falhava com "code-mode host is disabled", porque o perfil do Nexus desligava o executor que o Codex usa para rodar ferramentas. O Nexus agora responde "Open restricted" (nunca "Trust and continue") e liga o executor no Windows; as permissões de arquivo e rede do perfil continuam valendo.
 
 ## 0.76.118 — Retoma e continua
 

@@ -354,6 +354,19 @@ function codexProtectedWritePaths(options: {
  * model; the real config, plugins and user MCPs never enter the process-visible
  * provider home.
  */
+/**
+ * F-666: no Windows o perfil governado roda o Codex instalado (0.157+), que
+ * executa TODA ferramenta pelo code-mode host — desligado, cada comando falha
+ * com "code-mode host is disabled" e o writer da missão não faz nada. O macOS
+ * governa um binário fixado (`trusted-native-cli-binary`) e mantém o host
+ * desligado. Permissões de arquivo/rede do perfil continuam valendo.
+ */
+export function codexGovernedCodeModeHost(
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return platform === 'win32';
+}
+
 export function prepareCodexGovernedSession(
   token: string,
   options: CliMcpSessionOptions = {},
@@ -504,7 +517,7 @@ export function prepareCodexGovernedSession(
           browser_use: false,
           browser_use_external: false,
           browser_use_full_cdp_access: false,
-          code_mode_host: false,
+          code_mode_host: codexGovernedCodeModeHost(),
           computer_use: false,
           enable_mcp_apps: false,
           goals: false,

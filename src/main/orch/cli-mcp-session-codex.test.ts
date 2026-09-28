@@ -5,6 +5,7 @@ import Database from 'better-sqlite3';
 import { parse } from 'smol-toml';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  codexGovernedCodeModeHost,
   prepareCodexGovernedSession,
   prepareCodexOperatorMissionHome,
 } from './cli-mcp-session-codex';
@@ -292,5 +293,26 @@ describe('F-567 Codex checkout conversations', () => {
     expect(
       fs.existsSync(path.join(options.providerHome, 'session_index.jsonl')),
     ).toBe(false);
+  });
+});
+
+describe('code-mode host do perfil governado (F-666)', () => {
+  it('liga no Windows, onde o Codex instalado executa toda ferramenta por ele', () => {
+    // Sonda 28/09 (Codex 0.157.1): desligado, o primeiro comando do writer
+    // falhava com "code-mode host is disabled".
+    expect(codexGovernedCodeModeHost('win32')).toBe(true);
+    expect(codexGovernedCodeModeHost('darwin')).toBe(false);
+    expect(codexGovernedCodeModeHost('linux')).toBe(false);
+  });
+
+  it('o config.toml governado grava a escolha da plataforma', () => {
+    const options = fixture();
+    const token = 'codex-code-mode-host';
+    tokens.push(token);
+    const result = prepareCodexGovernedSession(token, options);
+    const config = parse(
+      fs.readFileSync(path.join(String(result.env.CODEX_HOME), 'config.toml'), 'utf8'),
+    ) as { features?: Record<string, boolean> };
+    expect(config.features?.code_mode_host).toBe(process.platform === 'win32');
   });
 });

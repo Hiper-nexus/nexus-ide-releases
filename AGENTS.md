@@ -871,3 +871,9 @@ saber isto antes de mexer:
   dos últimos 5 min (`operatorTabResumeAwaitsAdjustment`) prepende "AGUARDE O
   OPERADOR"; senão a nota manda resumir onde parou e continuar. O hold do
   Pronto continua lendo o marcador inteiro.
+- F-666: o Codex 0.157 abre "Folder access" (Open restricted / Quit) para
+  pasta `trust_level = "untrusted"` — o perfil governado marca a worktree assim.
+  A assinatura `codex-folder-access-restricted` responde "Open restricted"
+  lendo a tela; nunca "Trust and continue". No Windows o perfil governado liga
+  `features.code_mode_host` (`codexGovernedCodeModeHost`): o Codex instalado
+  roda toda ferramenta por ele. O macOS governa o binário fixado e mantém off.
