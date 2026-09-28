@@ -25,6 +25,7 @@ import { stripMissionVerdictParagraph } from '../../shared/mission-block-cause';
 import { wasUpdatedBeforeThisProcess } from '../../shared/session-restore-liveness';
 import {
   initialPromptChannel,
+  nativeArgvPromptFits,
   type InitialPromptChannel,
 } from '../../shared/cli-initial-prompt';
 import {
@@ -306,7 +307,13 @@ function tryAcceptIdleOrchestratorKickoff(
   });
 }
 
-function resolveOrchestratorBriefDelivery(adapterId: string): 'argv' | 'paste' {
+function resolveOrchestratorBriefDelivery(
+  adapterId: string,
+  brief?: string,
+): 'argv' | 'paste' {
+  // F-668: o pty-manager não põe no argv o brief que não cabe na linha de
+  // comando do Windows; aqui ele precisa ser colado.
+  if (!nativeArgvPromptFits(brief, process.platform)) return 'paste';
   const adapter = getAdapter(adapterId);
   if (!adapter || adapter.kind !== 'cli-pty') {
     // Fail-closed: sem contrato de argv confiável, cola.
@@ -1167,7 +1174,7 @@ async function spawnAgentPane(
   // do boot. Só o Maestro tinha esse fallback — o worker abria mudo e o
   // operador digitava o briefing à mão (achado 2026-09-27).
   if (role === 'worker' && initialPrompt) {
-    const delivery = resolveOrchestratorBriefDelivery(agent.cli);
+    const delivery = resolveOrchestratorBriefDelivery(agent.cli, initialPrompt);
     if (delivery === 'paste') {
       const failure = await pasteBriefAfterBoot(spawn.sessionId, initialPrompt, agent.cli);
       if (failure) return { error: `${agent.agentName} (${agent.cli}): ${failure}` };
@@ -1181,7 +1188,7 @@ async function spawnAgentPane(
   // OAuth sumirem. Se o pane já está idle com o briefing injetado, o recibo
   // pode ser aceito antes da prova de Enter (poke do operador não espera 70s).
   if (role === 'orchestrator' && initialPrompt) {
-    const delivery = resolveOrchestratorBriefDelivery(agent.cli);
+    const delivery = resolveOrchestratorBriefDelivery(agent.cli, initialPrompt);
     if (delivery === 'paste') {
       const failure = await pasteBriefAfterBoot(spawn.sessionId, initialPrompt, agent.cli);
       if (failure) return { error: `${agent.agentName} (${agent.cli}): ${failure}` };

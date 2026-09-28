@@ -1682,6 +1682,41 @@ describe("AGY advisory native profile", () => {
     },
   );
 
+  (process.platform === "win32" ? it : it.skip)(
+    "F-669: brief grande demais para a linha de comando do Windows não vai no argv",
+    async () => {
+      // Campo 28/09 13:5x: quatro helpers morreram com "Linha de comando muito
+      // longa" — o teto de 64 KB passava dos 32.767 do CreateProcess.
+      setSquadCliPolicyLookupForTests(() => "operator-choice");
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-claude-long-brief-"));
+      const worktree = path.join(root, "worktree");
+      fs.mkdirSync(worktree);
+      const host = fakeHost();
+      setPtyHost(host.host);
+      const base = revisionBoundWorker(fs.realpathSync.native(worktree));
+      const brief = "## Nexus execution authority\n" + "contexto ".repeat(3_000);
+      const authority: BoundSpawnAuthority = {
+        ...base,
+        context: { ...base.context!, initialPrompt: brief },
+      };
+      let sessionId: string | null = null;
+      try {
+        ({ sessionId } = spawnMainOwnedAgentSession(
+          { kind: "cli-agent", paneId: "claude-long-brief", cols: 100, rows: 30 },
+          builtinCliPtyAdapter("claude"),
+          {},
+          authority,
+        ));
+        const spec = host.specFor(sessionId);
+        expect(spec.args.join(" ").length).toBeLessThan(32_767);
+        expect(spec.args).not.toContain(brief);
+      } finally {
+        if (sessionId) await orchTerminateSession(sessionId);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("kimi: alias fora do config.toml não vai no --model (o CLI recusa a sessão inteira)", async () => {
     // Smoke 28/09: a preferência antiga "kimi-k2.7" ia no --model e o Kimi Code
     // 2.1.1 abria com "Model kimi-k2.7 is not configured in config.toml", sem

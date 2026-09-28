@@ -13,6 +13,7 @@ import {
 import {
   applyInitialPromptToArgv,
   initialPromptChannel,
+  nativeArgvPromptFits,
 } from "../../shared/cli-initial-prompt";
 import { ensureUtf8Locale } from "./pty-env-locale";
 import { materializeProviderState, providerStateEnvFor } from "./provider-state-env";
@@ -1594,7 +1595,9 @@ export function spawnAgentSession(
     promptChannel.kind !== "paste" &&
     (authority.context?.role === "worker" ||
       promptChannel.kind === "positional" ||
-      promptChannel.kind === "interactive-flag")
+      promptChannel.kind === "interactive-flag") &&
+    // F-668: mesma regra dos chamadores, que colam o brief depois do boot.
+    nativeArgvPromptFits(authority.context?.initialPrompt, process.platform)
       ? authority.context?.initialPrompt
       : undefined;
   let safeNativeInitialPrompt: string | undefined;

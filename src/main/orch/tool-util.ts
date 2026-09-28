@@ -88,7 +88,11 @@ import {
 import { getOrchSettings } from '../persistence/settings-store';
 import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
 import { issueAgentIdentityBestEffort } from './agent-identity-spawn';
-import { initialPromptChannel, spawnBinaryName } from '../../shared/cli-initial-prompt';
+import {
+  initialPromptChannel,
+  nativeArgvPromptFits,
+  spawnBinaryName,
+} from '../../shared/cli-initial-prompt';
 import { ORCH_SPAWN_GRANT_TTL_MS } from './orch-spawn-grant-recovery';
 
 export { assertSafePtyPrompt } from './pty-prompt-safety';
@@ -1484,7 +1488,10 @@ export async function spawnPaneAndMaybePrompt(
   const shouldUseNativeInitialPrompt = Boolean(
     finalPrompt &&
       promptChannel.kind !== 'paste' &&
-      (options.role === 'worker' || promptChannel.kind === 'positional'),
+      (options.role === 'worker' || promptChannel.kind === 'positional') &&
+      // F-668: brief grande demais para a linha de comando do Windows vai por
+      // colagem (o caminho pendente abaixo já cola quando não há argv).
+      nativeArgvPromptFits(finalPrompt, process.platform),
   );
   let initialPrompt: string | undefined;
   if (shouldUseNativeInitialPrompt && finalPrompt) {

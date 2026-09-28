@@ -4,6 +4,8 @@ import {
   applyInitialPromptToArgv,
   initialPromptChannel,
   spawnBinaryName,
+  nativeArgvPromptFits,
+  WINDOWS_NATIVE_PROMPT_MAX_CHARS,
 } from './cli-initial-prompt';
 
 describe('initialPromptChannel', () => {
@@ -147,5 +149,18 @@ describe('spawnBinaryName', () => {
     expect(spawnBinaryName(['/opt/homebrew/bin/claude', '--model', 'x'])).toBe(
       'claude',
     );
+  });
+});
+
+describe('brief no argv do Windows (F-669)', () => {
+  it('acima do teto o brief não vai pela linha de comando no Windows', () => {
+    const fits = 'x'.repeat(WINDOWS_NATIVE_PROMPT_MAX_CHARS);
+    const tooLong = 'x'.repeat(WINDOWS_NATIVE_PROMPT_MAX_CHARS + 1);
+    expect(nativeArgvPromptFits(fits, 'win32')).toBe(true);
+    expect(nativeArgvPromptFits(tooLong, 'win32')).toBe(false);
+    // O CreateProcess aceita 32.767 caracteres na linha inteira.
+    expect(WINDOWS_NATIVE_PROMPT_MAX_CHARS).toBeLessThan(32_767);
+    expect(nativeArgvPromptFits(tooLong, 'darwin')).toBe(true);
+    expect(nativeArgvPromptFits(undefined, 'win32')).toBe(true);
   });
 });
