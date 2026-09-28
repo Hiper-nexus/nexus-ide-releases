@@ -137,7 +137,13 @@ describe('nexus_design_system_local_list', () => {
     // agent: a catalog under home reads `~/.design-references`, and one outside
     // home is labelled instead of printed. See home-relative-path.test.ts.
     expect(result.dir).toBe(homeRelativePath(catalogDir));
-    expect(result.dir).toBe(OUTSIDE_HOME_LABEL);
+    if (process.platform === 'win32') {
+      // O temp do Windows mora no perfil do usuário (%USERPROFILE%\AppData):
+      // sai relativo ao home, nunca com o nome da conta.
+      expect(result.dir).toMatch(/^~\//);
+    } else {
+      expect(result.dir).toBe(OUTSIDE_HOME_LABEL);
+    }
     expect(result.dir).not.toContain(catalogDir);
     expect(result.kits.map((kit) => kit.kitId)).toEqual(['linear']);
     expect(result.kits[0].title).toBe('Linear-design-analysis');

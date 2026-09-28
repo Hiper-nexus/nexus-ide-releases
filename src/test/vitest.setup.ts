@@ -1,5 +1,25 @@
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+/**
+ * Windows: `%TEMP%` pode vir em nome curto 8.3 (`C:\Users\ADMINI~1\...`, com
+ * usuário de mais de 8 letras). `fs.realpathSync` mantém o nome curto e o git
+ * devolve o longo, então toda suíte que cria um repositório em `os.tmpdir()` e
+ * compara a raiz com `git rev-parse` falhava só nessas máquinas — dezenas de
+ * falhas de ambiente por versão, que escondiam defeito real (o F-654 quase
+ * passou assim). As suítes rodam no diretório temporário canônico; o
+ * `os.tmpdir()` relê `TEMP`/`TMP` a cada chamada e os filhos herdam.
+ */
+if (process.platform === 'win32') {
+  try {
+    const canonicalTemp = fs.realpathSync.native(os.tmpdir());
+    process.env.TEMP = canonicalTemp;
+    process.env.TMP = canonicalTemp;
+  } catch {
+    // Sem forma canônica legível, fica o TEMP original.
+  }
+}
 
 const baseDir = path.join(os.tmpdir(), `nexus-ide-vitest-${process.pid}`);
 
