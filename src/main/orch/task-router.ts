@@ -147,6 +147,8 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M2.7-highspeed' },
     // Sonnet 5 é mais novo e mais barato que o 4.6 ($2/$10 × $3/$15).
+    // CLI 2.1.284: mesma faixa de custo; catálogo da CLI filtra disponibilidade.
+    { adapterId: 'claude', model: 'claude-sonnet-5-5', effort: 'low' },
     { adapterId: 'claude', model: 'claude-sonnet-5', effort: 'low' },
     { adapterId: 'opencode', model: 'opencode/deepseek-v4-flash' },
     { adapterId: 'openclaude', model: 'haiku' },
@@ -165,6 +167,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'agy', model: 'gemini-3.8-flash-high', effort: 'medium' },
     { adapterId: 'codex', model: 'gpt-6-luna', effort: 'medium' },
     { adapterId: 'codex', model: 'gpt-5.6-luna', effort: 'medium' },
+    { adapterId: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' },
     { adapterId: 'claude', model: 'claude-sonnet-5', effort: 'medium' },
     // Catálogo builtin: priors de capacidade, não notas de benchmark.
     // Auth/modelos disponíveis continuam filtrados antes da escolha.

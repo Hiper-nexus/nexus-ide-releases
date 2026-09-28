@@ -32,13 +32,15 @@ describe('claudeProjectSlug', () => {
 });
 
 describe('parseTranscriptLine', () => {
-  it('extrai uso real de um turno de assistant', () => {
-    const ev = parseTranscriptLine(ASSISTANT_LINE);
+  it.each(['claude-sonnet-5', 'claude-sonnet-5-5'])('extrai uso real de %s preservando o modelo', (model) => {
+    const line = JSON.parse(ASSISTANT_LINE);
+    line.message.model = model;
+    const ev = parseTranscriptLine(JSON.stringify(line));
     expect(ev).not.toBeNull();
     expect(ev).toMatchObject({
       sessionId: 'sess-123',
       messageId: 'msg_abc',
-      model: 'claude-sonnet-5',
+      model,
       inputTokens: 100,
       outputTokens: 50,
       cacheReadTokens: 2000,

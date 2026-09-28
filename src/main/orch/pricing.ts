@@ -45,6 +45,8 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   'claude-opus': { inputPerM: 15, outputPerM: 75, cacheReadPerM: 1.5, cacheWritePerM: 18.75 },
 
   // Claude Sonnet family (Sonnet 5: $2/M in, $10/M out; Sonnet 3.5/3.7: $3/M in, $15/M out)
+  // Sonnet 5.5: registry + tier_2_10 in Claude Code 2.1.284 (2026-09-28).
+  'claude-sonnet-5-5': { inputPerM: 2, outputPerM: 10, cacheReadPerM: 0.2, cacheWritePerM: 2.5 },
   'claude-sonnet-5': { inputPerM: 2, outputPerM: 10, cacheReadPerM: 0.2, cacheWritePerM: 2.5 },
   'claude-3-7-sonnet': { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3, cacheWritePerM: 3.75 },
   'claude-3-5-sonnet': { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3, cacheWritePerM: 3.75 },

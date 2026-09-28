@@ -8,6 +8,15 @@ import {
 } from './pricing';
 
 describe('priceForModel', () => {
+  it.each(['claude-sonnet-5-5', 'anthropic/claude-sonnet-5-5', 'claude-sonnet-5-5[1m]'])(
+    'prices %s using its own registry entry', (model) => {
+      expect(priceForModel(model)).toBe(MODEL_PRICES['claude-sonnet-5-5']);
+      expect(priceForModel(model)).toEqual({ inputPerM: 2, outputPerM: 10,
+        cacheReadPerM: 0.2, cacheWritePerM: 2.5 });
+      expect(estimateCost(model, 1_000_000, 1_000_000)).toBe(12);
+      expect(priceForModel('claude-sonnet-5')).toBe(MODEL_PRICES['claude-sonnet-5']);
+    },
+  );
   it('matches by prefix and resolves specific variants', () => {
     expect(priceForModel('claude-opus-4-8')).toEqual(MODEL_PRICES['claude-opus-4-8']);
     expect(priceForModel('gpt-5.2')).toEqual(MODEL_PRICES['gpt-5.2']);

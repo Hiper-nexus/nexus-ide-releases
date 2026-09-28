@@ -113,6 +113,22 @@ describe('model catalog overlays', () => {
 });
 
 describe('published catalog JSON', () => {
+  it('exposes Sonnet 5.5 through stale catalogs without changing a pinned default', () => {
+    const combined = mergeModelCatalogs(BUILTIN_MODEL_CATALOG, PUBLISHED_MODEL_CATALOG);
+    const withLocal = mergeModelCatalogs(combined, {
+      adapters: { claude: { default: 'claude-sonnet-5', models: [{ id: 'claude-sonnet-5' }] } },
+    });
+    const adapter = applyModelCatalogToAdapter({ ...ADAPTER, id: 'claude',
+      models: { flag: '--model', list: ['claude-sonnet-5'], default: 'claude-sonnet-5' },
+    }, withLocal);
+    expect(adapter.models.list).toContain('claude-sonnet-5-5');
+    expect(adapter.models.default).toBe('claude-sonnet-5');
+    const info = modelCatalogInfo(withLocal, 'claude', 'claude-sonnet-5-5');
+    expect(info).toMatchObject({ availability: 'paid', costTier: 'medium' });
+    expect(info?.warning).toBeUndefined();
+    expect(info?.quality).toBeUndefined();
+    expect(isModelBlockedForAutoRouting(info)).toBe(false);
+  });
   it('offers Grok 4.7 even alongside an older user catalog, preserving explicit defaults', () => {
     const combined = mergeModelCatalogs(PUBLISHED_MODEL_CATALOG, {
       adapters: { grok: { default: 'grok-4.6', models: [{ id: 'grok-4.6', availability: 'paid' }] } },

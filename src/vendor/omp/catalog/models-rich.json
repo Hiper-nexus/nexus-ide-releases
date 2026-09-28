@@ -485,6 +485,24 @@
         "text",
         "image"
       ]
+    },
+    "claude-sonnet-5-5": {
+      "id": "claude-sonnet-5-5",
+      "name": "Claude Sonnet 5.5",
+      "api": "anthropic-messages",
+      "cost": {
+        "input": 2,
+        "output": 10,
+        "cacheRead": 0.2,
+        "cacheWrite": 2.5
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 128000,
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ]
     }
   },
   "openai": {

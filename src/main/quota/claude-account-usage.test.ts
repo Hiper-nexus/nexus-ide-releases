@@ -204,6 +204,20 @@ afterEach(() => {
 });
 
 describe('parseClaudeCachedUtilization', () => {
+  it('preserves a provider-reported Sonnet 5.5 window alongside shared account limits', () => {
+    const payload = usagePayload(73, NOW).utilization;
+    payload.limits.push({ kind: 'weekly_scoped', percent: 62,
+      resets_at: '2026-09-23T03:59:59Z', scope: { model: { display_name: 'Sonnet 5.5' } },
+    });
+    const windows = parseClaudeCachedUtilization(payload, NOW);
+    expect(windows.find((w) => w.label === 'Semanal (Sonnet 5.5)')).toMatchObject({
+      usedRatio: 0.62, source: 'provider-api', resetsAt: Date.parse('2026-09-23T03:59:59Z'),
+    });
+    expect(windows.find((w) => w.label === 'Semanal')?.usedRatio).toBe(0.73);
+    expect(windows.find((w) => w.label === '5 Horas')?.usedRatio).toBe(0.01);
+    expect(parseClaudeCachedUtilization(usagePayload(73, NOW).utilization, NOW)
+      .some((w) => w.label.includes('Sonnet'))).toBe(false);
+  });
   it('parses the CLI-written limits array into labeled windows', () => {
     const windows = parseClaudeCachedUtilization(
       usagePayload(73, NOW).utilization,

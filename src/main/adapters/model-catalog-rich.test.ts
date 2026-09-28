@@ -53,6 +53,17 @@ describe('recorte vendorado (models-rich.json)', () => {
 });
 
 describe('getRichModelMetadata — um modelo real por adapter', () => {
+  it('resolves Sonnet 5.5 independently of Sonnet 5 with CLI 2.1.284 metadata', () => {
+    const metadata = getRichModelMetadata('claude', 'claude-sonnet-5-5');
+    expect(metadata).toMatchObject({
+      id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', catalogProvider: 'anthropic',
+      cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+      contextWindow: 1_000_000, maxTokens: 128_000, reasoning: true,
+      input: ['text', 'image'],
+    });
+    expect(getRichModelMetadata('claude', 'anthropic/claude-sonnet-5-5')?.id).toBe('claude-sonnet-5-5');
+    expect(getRichModelMetadata('claude', 'claude-sonnet-5')?.id).toBe('claude-sonnet-5');
+  });
   it('claude: resolve o seletor exato e metadados do Claude Opus 5.5', () => {
     expect(getRichModelMetadata('claude', 'claude-opus-5-5')).toMatchObject({
       id: 'claude-opus-5-5',

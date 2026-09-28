@@ -432,6 +432,7 @@ describe('builtin adapters', () => {
 
     expect(claude?.models?.list?.[0]).toBe('claude-opus-5-5');
     expect(claude?.models?.list).toContain('claude-opus-5-5');
+    expect(claude?.models?.list).toContain('claude-sonnet-5-5');
     expect(claude?.models?.default).toBe('claude-sonnet-5');
   });
 

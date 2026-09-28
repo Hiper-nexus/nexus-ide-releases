@@ -33,6 +33,18 @@ const retired = (model: string | undefined) =>
   model !== undefined && Object.hasOwn(RETIRED_MODEL_MIGRATIONS, model);
 
 describe('contrato: tabela de roteamento × catálogos', () => {
+  it('offers Sonnet 5.5 in the balanced route and preserves Sonnet 5 fallback', () => {
+    const installed = [{ id: 'claude', installed: true, authReady: true,
+      models: ['claude-sonnet-5-5', 'claude-sonnet-5'], efforts: ['low', 'medium', 'high', 'xhigh'] }];
+    const route = routeTask('implementar componente', installed, DEFAULT_ROUTING_TABLE, 'medium', false, catalog);
+    expect([route?.model, ...(route?.alternatives.map((c) => c.model) ?? [])]).toContain('claude-sonnet-5-5');
+    const explicit = routeTask('Use Sonnet 5.5 para implementar componente', installed,
+      DEFAULT_ROUTING_TABLE, 'medium', false, catalog, { effortOverride: 'high' });
+    expect(explicit).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'high' });
+    const legacy = routeTask('implementar componente', [{ ...installed[0], models: ['claude-sonnet-5'] }],
+      DEFAULT_ROUTING_TABLE, 'medium', false, catalog);
+    expect(legacy?.model).toBe('claude-sonnet-5');
+  });
   const rows = Object.entries(DEFAULT_ROUTING_TABLE).flatMap(([tier, list]) =>
     list.map((c) => ({ tier, ...c })),
   );

@@ -100,6 +100,9 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
             'API-only/high-cost: not used for automatic routing unless the user selects it manually.',
         },
         { id: 'claude-opus-4-8', availability: 'paid', costTier: 'high', source: 'bundled' },
+        {
+          id: 'claude-sonnet-5-5', availability: 'paid', costTier: 'medium', source: 'bundled',
+        },
         { id: 'claude-sonnet-5', availability: 'paid', costTier: 'medium', source: 'bundled' },
         { id: 'claude-haiku-4-5', availability: 'cheap', costTier: 'low', source: 'bundled' },
       ],

@@ -17,6 +17,12 @@
   `RELEASE_AUDITED_MODEL_OVERLAYS`, no gerador. Cada overlay registra a versão
   do OMP e o comando local que provou seletor e metadados. Assim uma nova
   execução do script não apaga modelos já auditados para a release.
+- O overlay `claude-sonnet-5-5` usa o registro público embutido no binário
+  Claude Code **2.1.284**, conferido em 28/09/2026: seletor `first_party`,
+  contexto de 1M, saída de 128K, texto/imagem e `tier_2_10` ($2/$10 por MTok,
+  cache read $0,20 e write 5min $2,50). O registro local não comprova
+  acesso de toda conta nem publicação em CLIs de terceiros. O catálogo mantém
+  Sonnet 5 como default e não atribui benchmark ao novo modelo.
 - `rich-models.ts` — tipos + normalização + lookup fuzzy sobre o recorte.
 - `identity.ts` — classificação de modelId em família/variante, módulo próprio
   derivado de `packages/catalog/src/identity/` do omp (o diretório original

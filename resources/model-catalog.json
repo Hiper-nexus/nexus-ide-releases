@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-27T00:00:00.000Z",
+  "updatedAt": "2026-09-28T00:00:00.000Z",
   "adapters": {
     "claude": {
       "default": "claude-sonnet-5",
@@ -48,6 +48,12 @@
           "id": "claude-opus-4-7",
           "availability": "paid",
           "costTier": "high",
+          "source": "remote"
+        },
+        {
+          "id": "claude-sonnet-5-5",
+          "availability": "paid",
+          "costTier": "medium",
           "source": "remote"
         },
         {

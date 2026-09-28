@@ -126,7 +126,7 @@ describe('routeTask', () => {
       adapters('claude'),
     );
     expect(decision!.adapterId).toBe('claude');
-    expect(decision!.model).toBe('claude-sonnet-5');
+    expect(decision!.model).toBe('claude-sonnet-5-5');
   });
 
   it('borrows from another tier when the target tier has nothing installed', () => {
@@ -285,9 +285,9 @@ describe('routeTask', () => {
       }
     });
 
-    it('easy no claude usa o Sonnet 5 (mais novo e mais barato que o 4.6)', () => {
+    it('easy no claude oferece Sonnet 5.5 e preserva Sonnet 5 como fallback', () => {
       expect(DEFAULT_ROUTING_TABLE.easy.filter((c) => c.adapterId === 'claude').map((c) => c.model))
-        .toEqual(['claude-sonnet-5']);
+        .toEqual(['claude-sonnet-5-5', 'claude-sonnet-5']);
     });
 
     it('Fable 5.1 é rota automática (assinatura), Fable 5 não', () => {

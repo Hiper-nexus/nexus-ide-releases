@@ -55,6 +55,17 @@ const OPENROUTER_FAMILY_FILTER = /claude|gpt|glm|deepseek|kimi|grok|gemini/i;
  */
 const RELEASE_AUDITED_MODEL_OVERLAYS = {
   anthropic: {
+    // Claude Code 2.1.284 (2026-09-28), registry first_party + tier_2_10.
+    'claude-sonnet-5-5': {
+      id: 'claude-sonnet-5-5',
+      name: 'Claude Sonnet 5.5',
+      api: 'anthropic-messages',
+      cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      reasoning: true,
+      input: ['text', 'image'],
+    },
     'claude-opus-5-5': {
       id: 'claude-opus-5-5',
       name: 'Claude Opus 5.5',
