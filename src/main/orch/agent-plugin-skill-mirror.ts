@@ -6,6 +6,7 @@ import {
   materializeAgentPluginSkill,
   type AgentPluginToolReduction,
 } from './agent-plugin-skill';
+import { removeTreeSync } from '../util/remove-tree';
 
 const MAX_SKILL_TREE_DEPTH = 16;
 const MAX_SKILL_TREE_FILES = 512;
@@ -144,7 +145,7 @@ export function copyAgentPluginSkill(
     fs.renameSync(temporary, target);
     return true;
   } catch (error) {
-    fs.rmSync(temporary, { recursive: true, force: true });
+    removeTreeSync(temporary, { recursive: true, force: true });
     throw error;
   }
 }

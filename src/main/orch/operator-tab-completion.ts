@@ -12,13 +12,13 @@ export const TAB_COMPLETION_INSTRUCTION =
   'Uma pausa ou entrega de helper não conclui esta missão.';
 
 /** Scheduling intent only: the request never replaces review or completion proof. */
-export function isOperatorTabMission(mission: CompletionMission): boolean {
+export function hasOperatorTabHost(mission: CompletionMission): boolean {
   return Boolean(mission.intentContract?.workspaceBinding?.adoptedPaneId);
 }
 
 /** F-185: helper deliveries and an idle composer do not finish the operator's request. */
 export function awaitsOperatorTabCompletionRequest(scope: ProjectExecutionScope, mission: CompletionMission): boolean {
-  if (!isOperatorTabMission(mission)) return false;
+  if (!hasOperatorTabHost(mission)) return false;
   const request = requests.get(missionLifecycleKey(scope, mission.id));
   if (!request || request.intentVersion !== (mission.intentVersion ?? 0) ||
       request.sessionId !== mission.orchestratorSessionId) return true;

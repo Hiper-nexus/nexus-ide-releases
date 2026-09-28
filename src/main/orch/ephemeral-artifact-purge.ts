@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { removeTreeSync } from '../util/remove-tree';
 
 const SESSION_DIR_NAME = /^[0-9a-f]{32}$/;
 const MAX_ROOT_ENTRIES_SCANNED = 2_048;
@@ -136,9 +137,10 @@ function removeWithoutFollowing(candidate: string): boolean {
     return true;
   }
   if (!isBoundedTree(candidate)) return false;
-  // Node's recursive rm unlinks symlinks encountered in the tree; it does not
-  // traverse their targets. The bounded lstat walk above also never follows.
-  fs.rmSync(candidate, {
+  // F-663: o rm recursivo do Node 24 (Electron 43) ATRAVESSA junctions no
+  // Windows — era isto que apagava as conversas do provider-state no boot.
+  // removeTreeSync tira cada link antes, sem seguir nenhum.
+  removeTreeSync(candidate, {
     recursive: true,
     force: true,
     maxRetries: 2,

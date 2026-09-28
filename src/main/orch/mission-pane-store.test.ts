@@ -607,3 +607,44 @@ describe('selo da missão livre sem squad', () => {
     expect(sameMissionPaneAuthoritySeal(reopened?.authoritySeal, seal)).toBe(true);
   });
 });
+
+describe('retomada da missão da aba move o pane do orquestrador (F-664)', () => {
+  function setup() {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const mission = createScopedMissionStore(runtimeManager, scope).create({ title: 'Missão · Terminais' });
+    let id = 0;
+    const panes = createScopedMissionPaneStore(runtimeManager, scope, { idFactory: () => `mpane-${++id}` });
+    const leader = panes.record({
+      missionId: mission.id, adapterId: 'claude', model: 'claude-opus-5-5', paneId: 'pane-operador',
+      role: 'orchestrator', title: 'Orquestrador',
+    });
+    return { mission, panes, leader };
+  }
+
+  it('o record() deduplica o pane retomado; a linha passa a apontar para ele', () => {
+    const { mission, panes, leader } = setup();
+    // Campo 28/09: três "Retomar" seguidos e a linha sempre no pane antigo.
+    const deduped = panes.record({
+      missionId: mission.id, adapterId: 'claude', model: 'claude-opus-5-5', paneId: 'pane-retomado',
+      role: 'orchestrator', title: 'Orquestrador',
+    });
+    expect(deduped.id).toBe(leader.id);
+    expect(panes.findByPaneId('pane-retomado')).toBeNull();
+
+    const moved = panes.moveOrchestratorPane(mission.id, leader.id, 'pane-retomado');
+    expect(moved.paneId).toBe('pane-retomado');
+    expect(panes.findByPaneId('pane-retomado')?.id).toBe(leader.id);
+    expect(panes.findByPaneId('pane-operador')).toBeNull();
+  });
+
+  it('recusa mover worker e pane que já pertence a outra linha', () => {
+    const { mission, panes, leader } = setup();
+    const worker = panes.record({
+      missionId: mission.id, adapterId: 'codex', paneId: 'pane-helper', role: 'worker', title: 'Helper',
+    });
+    expect(() => panes.moveOrchestratorPane(mission.id, worker.id, 'pane-x')).toThrow(/orchestrator/);
+    expect(() => panes.moveOrchestratorPane(mission.id, leader.id, 'pane-helper')).toThrow(/already belongs/);
+    expect(panes.findByPaneId('pane-operador')?.id).toBe(leader.id);
+  });
+});

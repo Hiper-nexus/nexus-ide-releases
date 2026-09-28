@@ -51,6 +51,7 @@ import { listDirtyPathsUnderCwd } from '../orch/worker-delivery-evidence';
 import { ProcessGitRunner, type GitRunner } from '../runtime/git-command';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
+import { removeTreeSync } from '../util/remove-tree';
 
 const GATE_VERSION = 'regression-gate-v1';
 const TEST_FILE_RE = /(?:^|\/)(?:__tests__\/|[^/]+\.(?:test|spec)\.[^/]+$)/iu;
@@ -1300,7 +1301,7 @@ async function runTests(
       ran,
     };
   } finally {
-    fs.rmSync(sandbox.dir, { recursive: true, force: true });
+    removeTreeSync(sandbox.dir, { recursive: true, force: true });
   }
 }
 

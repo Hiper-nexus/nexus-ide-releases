@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ReviewBinding } from './review-council';
+import { removeTree } from '../util/remove-tree';
 
 const COMMIT_SHA = /^[a-f0-9]{40,64}$/;
 const DIFF_HASH = /^[a-f0-9]{64}$/;
@@ -481,7 +482,7 @@ async function disposeReviewCheckout(
   context: ReviewCheckoutContext,
 ): Promise<void> {
   assertOwnedTemporaryParent(context.temporaryRoot, context.temporaryParent);
-  await fs.promises.rm(context.temporaryParent, {
+  await removeTree(context.temporaryParent, {
     recursive: true,
     force: true,
     maxRetries: 3,

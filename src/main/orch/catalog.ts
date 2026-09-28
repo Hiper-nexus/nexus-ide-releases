@@ -14,6 +14,7 @@ import type {
   CatalogProvenance,
   InstallResult,
 } from './catalog-contract';
+import { removeTree } from '../util/remove-tree';
 export type {
   CatalogEntry,
   CatalogIndex,
@@ -635,7 +636,7 @@ async function installAgent(
       provenance,
     };
   } finally {
-    await fs.promises.rm(stagingDir, { recursive: true, force: true });
+    await removeTree(stagingDir, { recursive: true, force: true });
   }
 }
 
@@ -918,7 +919,7 @@ async function installSkill(
   } finally {
     // If rename succeeded this path no longer exists. On every failure, all
     // downloaded files remain invisible in staging and are removed here.
-    await fs.promises.rm(stagingDir, { recursive: true, force: true });
+    await removeTree(stagingDir, { recursive: true, force: true });
   }
 }
 

@@ -14,6 +14,7 @@ import type { McpToolDef } from './mcp-protocol';
 import { assertMcpInvocationCurrent } from './mcp-protocol';
 import { BUNDLED_GUIDED_SKILLS } from './guided-squad-skills';
 import { bundledSkillSourceDir } from './skill-mirror';
+import { removeTreeSync } from '../util/remove-tree';
 
 const skillOpsArgsSchema = z
   .object({
@@ -148,7 +149,7 @@ export const skillOpsTool: McpToolDef = {
           if (!fs.existsSync(target)) {
             return { cli: t.cli, status: 'já estava ausente' as const };
           }
-          fs.rmSync(target, { recursive: true, force: true });
+          removeTreeSync(target, { recursive: true, force: true });
           return { cli: t.cli, status: 'removida' as const };
         }
         if (fs.existsSync(target)) {

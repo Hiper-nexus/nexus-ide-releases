@@ -5,6 +5,7 @@ import { testProjectScope } from './__tests__/scope-fixture';
 const h = vi.hoisted(() => ({
   listProviderSettings: vi.fn(),
   livePanes: [] as Array<Record<string, unknown>>,
+  mission: {} as Record<string, unknown>,
   recorded: [] as Array<Record<string, unknown>>,
 }));
 
@@ -42,12 +43,22 @@ vi.mock('./squad-runtime-inventory', async (original) => ({
     policy: { routableWorkerCliIds: new Set(['agy', 'codex', 'kimi']) },
   }),
 }));
+// O registro real só carrega no boot; aqui ele tem as CLIs do cenário com o
+// quirk de MCP dos builtins (agy.json declara nexusMcp none).
+vi.mock('../adapters/adapter-registry', async (original) => ({
+  ...(await original<typeof import('../adapters/adapter-registry')>()),
+  listAdapters: () => [
+    { id: 'agy', kind: 'cli-pty', quirks: { nexusMcp: 'none' } },
+    { id: 'codex', kind: 'cli-pty', quirks: { nexusMcp: 'codex' } },
+    { id: 'kimi', kind: 'cli-pty', quirks: { nexusMcp: 'kimi' } },
+  ],
+}));
 vi.mock('./project-domain-store-registry', () => ({
   getProjectDomainStores: () => ({
     // Missão leve da aba (0.76.110): sem squad, running, só o orquestrador
     // registrado em mission_panes — os helpers nascem sem linha ali.
     missions: {
-      get: () => ({ id: 'mission-tab', status: 'running', title: 'Missão · Terminais' }),
+      get: () => h.mission,
       listOpenRouteAdapterIds: () => [],
       reserveRouteDecision: () => ({ id: 'rr', expiresAt: 1 }),
     },
@@ -69,8 +80,14 @@ function livePane(paneId: string, adapterId: string) {
   return { paneId, sessionId: `s-${paneId}`, adapterId, state: 'busy', missionId: 'mission-tab' };
 }
 
+const TAB_MISSION = {
+  id: 'mission-tab', status: 'running', title: 'Missão · Terminais',
+  intentContract: { workspaceBinding: { version: 1, adoptedPaneId: 'pane-orch' } },
+};
+
 beforeEach(() => {
   rememberKimiSeatReadiness('present');
+  h.mission = TAB_MISSION;
   h.recorded = [{ paneId: 'pane-orch', adapterId: 'claude', role: 'orchestrator' }];
   h.livePanes = [livePane('pane-orch', 'claude')];
   h.listProviderSettings.mockReturnValue([
@@ -80,18 +97,23 @@ beforeEach(() => {
   ]);
 });
 
+async function threeRoutes(): Promise<string[]> {
+  const picked: string[] = [];
+  for (let i = 0; i < 3; i += 1) {
+    const route = (await routeTaskForCaller({ task: TASK }, ctx)) as { adapterId: string };
+    picked.push(route.adapterId);
+    h.livePanes = [...h.livePanes, livePane(`pane-h${i}`, route.adapterId)];
+  }
+  return picked;
+}
+
 describe('rota de missão enxerga os helpers vivos (F-658)', () => {
   it('o helper vivo sem linha em mission_panes pesa na diversidade da próxima rota', async () => {
     // Campo 28/09: três helpers do "+ Pane" em sequência, todos na mesma CLI.
-    const first = (await routeTaskForCaller({ task: TASK }, ctx)) as { adapterId: string };
-    h.livePanes = [...h.livePanes, livePane('pane-2', first.adapterId)];
-
-    const second = (await routeTaskForCaller({ task: TASK }, ctx)) as { adapterId: string };
-    expect(second.adapterId).not.toBe(first.adapterId);
-
-    h.livePanes = [...h.livePanes, livePane('pane-4', second.adapterId)];
-    const third = (await routeTaskForCaller({ task: TASK }, ctx)) as { adapterId: string };
-    expect(new Set([first.adapterId, second.adapterId, third.adapterId]).size).toBe(3);
+    // Missão com squad: aqui a rota ainda aceita CLI sem MCP (entrega pelo PTY).
+    h.mission = { ...TAB_MISSION, squadId: 'nexus-fullstack' };
+    const picked = await threeRoutes();
+    expect(new Set(picked).size).toBe(3);
   });
 
   it('não conta duas vezes o pane que já está em mission_panes, nem pane encerrado', async () => {
@@ -103,5 +125,16 @@ describe('rota de missão enxerga os helpers vivos (F-658)', () => {
     ];
     const again = (await routeTaskForCaller({ task: TASK }, ctx)) as { adapterId: string };
     expect(again.adapterId).toBe(first.adapterId);
+  });
+});
+
+describe('missão da aba só roteia para CLI com MCP do Nexus (F-662)', () => {
+  it('o orquestrador retomado (sem promotedFromUserSession) nunca recebe o AGY', async () => {
+    // Campo 28/09 10:05: depois do reinício o orquestrador da aba pediu rota
+    // pelo nexus_route_task e recebeu o AGY, mudo no --print.
+    expect(ctx.promotedFromUserSession).toBeUndefined();
+    const picked = await threeRoutes();
+    expect(picked).not.toContain('agy');
+    expect(new Set(picked)).toEqual(new Set(['codex', 'kimi']));
   });
 });

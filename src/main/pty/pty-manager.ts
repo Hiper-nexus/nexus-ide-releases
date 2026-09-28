@@ -233,6 +233,12 @@ export interface OwnedAgentSessionInfo {
   authoritySeal?: MissionPaneAuthoritySeal;
   /** Mão do operador adotada como orquestradora; volta a `user` no fim. */
   promotedFromUser?: true;
+  /**
+   * F-662: o briefing nasceu no argv one-shot (AGY `--print`, OpenCode
+   * `run`). A CLI não lê o terminal e só imprime ao terminar: pergunta ou
+   * mensagem digitada nesse pane nunca é respondida.
+   */
+  oneShot?: true;
 }
 
 const sessions = new Map<string, Session>();
@@ -2517,6 +2523,9 @@ export function spawnAgentSession(
       authoritySeal: authority.context?.authoritySeal
         ? Object.freeze({ ...authority.context.authoritySeal })
         : undefined,
+      ...(safeNativeInitialPrompt !== undefined && promptChannel.kind === "oneshot"
+        ? { oneShot: true as const }
+        : {}),
     },
     missionOrchestratorGrantAvailable,
     missionOrchestratorGrantExpiresAt: missionOrchestratorGrantAvailable

@@ -1,5 +1,5 @@
-import type { Mission, MissionPaneSpec, SquadAgent } from '../../shared/orch-types';
 import { TAB_COMPLETION_INSTRUCTION } from './operator-tab-completion';
+import type { Mission, MissionPaneSpec, SquadAgent } from '../../shared/orch-types';
 
 /**
  * Retomada da missão da aba (F-661).
@@ -12,11 +12,19 @@ import { TAB_COMPLETION_INSTRUCTION } from './operator-tab-completion';
  * Retomar a missão da aba é retomar a CONVERSA de quem a liderava.
  */
 
+/** Missão leve da aba: sem squad, liderada pelo pane que o operador abriu. */
+export function isOperatorTabMission(
+  mission: Pick<Mission, 'squadId' | 'intentContract'>,
+): boolean {
+  return !mission.squadId && Boolean(mission.intentContract?.workspaceBinding?.adoptedPaneId);
+}
+
 /** Nota colada na conversa retomada quando o operador não mandou ajuste. */
 export const OPERATOR_TAB_RESUME_NOTE =
   '[Nexus] Esta conversa foi retomada como orquestrador da missão da aba ' +
   '(o app reiniciou ou a missão foi reaberta). Continue de onde parou; se ' +
-  'estava esperando uma resposta minha, pergunte de novo. ' +
+  'estava esperando uma resposta minha, pergunte de novo. Se esta conversa começou agora, sem histórico, ' +
+  'diga isso ao operador e leia nexus_handoff_list({full:true}) antes de agir — não invente o objetivo. ' +
   'Para trabalho divisível, pesado ou paralelizável, use nexus_pane_spawn({task, prompt}); ' +
   'análise/revisão usa readOnly:true, escrita paralela usa isolatedWriter:true quando o escopo permitir. ' +
   'Não duplique trabalho já despachado: consulte os handoffs. Integre e valide as entregas; feche os helpers após usá-los. ' +
@@ -33,23 +41,40 @@ export function operatorTabMissionResumeSpec(
   mission: Pick<Mission, 'squadId' | 'intentContract'>,
   specs: readonly MissionPaneSpec[],
 ): MissionPaneSpec | null {
-  if (mission.squadId) return null;
-  if (!mission.intentContract?.workspaceBinding?.adoptedPaneId) return null;
+  if (!isOperatorTabMission(mission)) return null;
   const orchestrators = specs.filter(
     (spec) => spec.role === 'orchestrator' && Boolean(spec.paneId) && Boolean(spec.adapterId),
   );
   return orchestrators.at(-1) ?? null;
 }
 
+/**
+ * O orquestrador que abriu a missão: o pane do "+ Pane" do operador. Dele vêm
+ * o modelo e o esforço quando a linha da conversa não guarda um (F-664: o
+ * Maestro que a 0.76.111 subia por engano nascia sem modelo e cada retomada
+ * herdava o padrão da CLI).
+ */
+export function operatorTabMissionLeader(
+  specs: readonly MissionPaneSpec[],
+): MissionPaneSpec | null {
+  return specs.find((spec) => spec.role === 'orchestrator' && Boolean(spec.adapterId)) ?? null;
+}
+
 /** O pane do operador descrito como o orquestrador que o spawn espera. */
-export function operatorTabResumeAgent(spec: MissionPaneSpec): SquadAgent {
+export function operatorTabResumeAgent(
+  spec: MissionPaneSpec,
+  leader?: MissionPaneSpec | null,
+): SquadAgent {
+  const sameCli = leader?.adapterId === spec.adapterId ? leader : null;
+  const model = spec.model ?? sameCli?.model;
+  const effort = spec.effort ?? sameCli?.effort;
   return {
     id: 'operator-tab-orchestrator',
     agentName: spec.agentName?.trim() || spec.title?.trim() || 'Orquestrador',
     category: 'orchestrator',
     cli: spec.adapterId,
-    ...(spec.model ? { model: spec.model } : {}),
-    ...(spec.effort ? { effort: spec.effort } : {}),
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
     allowedTools: spec.allowedTools ?? null,
     allowedSkills: spec.allowedSkills ?? null,
   };

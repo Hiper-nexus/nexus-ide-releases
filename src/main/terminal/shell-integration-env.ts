@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
+import { removeTreeSync } from '../util/remove-tree';
 
 export function isShellIntegrationEnabled(): boolean {
   return getFeatureFlagRegistry().isEnabled(
@@ -175,7 +176,7 @@ export function shellIntegrationBootstrapCommand(_shellPath: string): string | n
 export function cleanupShellIntegrationPaths(paths: readonly string[]): void {
   for (const p of paths) {
     try {
-      fs.rmSync(p, { recursive: true, force: true });
+      removeTreeSync(p, { recursive: true, force: true });
     } catch {
       /* best-effort */
     }

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, vi } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { MergeQueue, type MergeQueueEntry, type MergeQueueStateSnapshot, type MergeQueueStateStore, type MergeValidationContext, type MergeValidationDecision } from './merge-queue';
 import { ProcessGitRunner, WorktreeManager, type GitRunOptions, type GitRunner, type GitResult, type WorktreeRecord, type WorktreeStateSnapshot, type WorktreeStateStore } from './worktree-manager';
+import { removeTreeSync } from '../util/remove-tree';
 // Shared real-Git fixture; Vitest isolates this module for each focused suite.
 
 
@@ -257,5 +258,5 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  fs.rmSync(tempDir, { recursive: true, force: true });
+  removeTreeSync(tempDir, { recursive: true, force: true });
 });

@@ -490,6 +490,43 @@ export class ScopedMissionPaneStore {
   }
 
   /**
+   * F-664: a retomada da missão da aba continua a conversa num pane NOVO.
+   * Quando o record() deduplica o pane novo na mesma linha (mesma identidade),
+   * a linha passa a apontar para ele — senão cada "Retomar" voltava ao pane
+   * antigo e à conversa de antes. Só orquestrador; pane já vinculado a outra
+   * linha é recusado.
+   */
+  moveOrchestratorPane(
+    rawMissionId: string,
+    rawSpecId: string,
+    rawPaneId: string,
+  ): ScopedMissionPaneSpec {
+    const missionId = entityIdSchema.parse(rawMissionId);
+    const specId = entityIdSchema.parse(rawSpecId);
+    const paneId = entityIdSchema.parse(rawPaneId);
+    const db = this.#binding.writeDatabase();
+    const result = db.transaction(() => {
+      const spec = this.#listFromDatabase(db, missionId).find((row) => row.id === specId);
+      if (!spec || spec.role !== 'orchestrator') {
+        throw new Error('only a mission orchestrator pane may move');
+      }
+      if (spec.paneId === paneId) return { spec, changed: false };
+      if (this.#findRowsByPaneId(db, paneId).length > 0) {
+        throw new Error('pane id already belongs to a mission pane');
+      }
+      const update = db
+        .prepare('UPDATE mission_panes SET pane_id = ? WHERE id = ?')
+        .run(paneId, specId);
+      if (update.changes !== 1) {
+        throw new ScopedStoreCorruptionError('mission orchestrator pane move');
+      }
+      return { spec: { ...spec, paneId }, changed: true };
+    })();
+    if (result.changed) this.#binding.emitChange();
+    return cloneSpec(result.spec);
+  }
+
+  /**
    * Explicit workflow-authority rotation for the current orchestrator pane.
    * This is a compare-and-swap: legacy/unsealed rows, workers, intent drift,
    * squad drift and a stale caller all fail closed. Workers deliberately keep

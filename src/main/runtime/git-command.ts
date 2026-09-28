@@ -2,6 +2,7 @@ import { execFile, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { removeTreeSync } from '../util/remove-tree';
 
 const MAX_GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
 const EXECUTABLE_GIT_CONFIG_PATTERN =
@@ -59,7 +60,7 @@ export function createPrivateGitIndex(): PrivateGitIndex {
   return Object.freeze({
     path: indexPath,
     dispose: () => {
-      fs.rmSync(directoryRealPath, { recursive: true, force: true });
+      removeTreeSync(directoryRealPath, { recursive: true, force: true });
     },
   });
 }

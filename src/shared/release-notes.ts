@@ -7475,6 +7475,95 @@ export const RELEASE_076112: AppRelease = {
   ],
 };
 
+export const RELEASE_076114: AppRelease = {
+  version: '0.76.114',
+  date: '2026-09-28',
+  codename: 'CLIs no canal certo',
+  summary:
+    'Atualizar CLI reconhece o Codex instalado via npm com atalho externo e o ' +
+    'launcher nativo atual do Grok. No macOS, inclui também as correções de ' +
+    'pane e missão publicadas no Windows em 0.76.113.',
+  highlights: [
+    {
+      title: 'Codex atualiza a instalação usada pelo pane',
+      detail:
+        'O atalho externo do Codex é aceito quando resolve para o binário do ' +
+        'mesmo prefixo npm que será atualizado. A confirmação mostra o comando.',
+    },
+    {
+      title: 'Grok reconhece o launcher nativo',
+      detail:
+        'O binário versionado em ~/.grok/downloads agora é associado ao ' +
+        'launcher ~/.grok/bin/grok para a atualização manual e automática.',
+    },
+    {
+      title: 'Correções do Windows chegam ao macOS',
+      detail:
+        'Inclui a 0.76.113: pane encerra corretamente no Windows, missão ' +
+        'aguarda respostas pendentes e Retomar recupera a conversa da aba.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_076115: AppRelease = {
+  version: '0.76.115',
+  date: '2026-09-28',
+  codename: 'Worker que responde',
+  summary:
+    'A missão da aba volta a abrir workers só em CLIs que falam com o Nexus, ' +
+    'também depois de retomada, e perguntar a um pane one-shot responde na ' +
+    'hora em vez de parecer infraestrutura quebrada. Inclui a 0.76.114 (CLIs ' +
+    'no canal certo).',
+  highlights: [
+    {
+      title: 'Missão da aba sem worker mudo',
+      detail:
+        'Depois do "Retomar", o orquestrador da aba pedia rota e recebia o AGY, ' +
+        'que no modo one-shot não mostra nada até terminar. A regra de só abrir ' +
+        'helper em CLI com o MCP do Nexus agora vale para a missão inteira, não ' +
+        'só para o pane original.',
+    },
+    {
+      title: 'Pergunta a pane one-shot responde na hora',
+      detail:
+        'nexus_pane_ask esperava o prazo inteiro e voltava vazio num pane AGY ' +
+        'que estava trabalhando. Agora responde na hora que o pane é one-shot e ' +
+        'que a entrega chega quando ele terminar; nexus_pane_write avisa o mesmo.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_076116: AppRelease = {
+  version: '0.76.116',
+  date: '2026-09-28',
+  codename: 'Conversa preservada',
+  summary:
+    'No Windows, fechar ou retomar um pane apagava as conversas guardadas do ' +
+    'projeto — o "Retomar" nunca achava a conversa. A limpeza agora remove só ' +
+    'os atalhos, e cada retomada da missão da aba continua da conversa mais ' +
+    'recente, com o modelo do seu pane.',
+  highlights: [
+    {
+      title: 'Conversas não somem mais no Windows',
+      detail:
+        'O runtime do Electron 43 atravessa junctions ao apagar uma pasta. A ' +
+        'pasta temporária de cada pane liga as conversas guardadas por junction, ' +
+        'então fechar o pane apagava todas as conversas do projeto. Toda ' +
+        'remoção do Nexus tira os atalhos antes de apagar.',
+    },
+    {
+      title: 'Retomar continua da conversa certa',
+      detail:
+        'Cada "Retomar" da missão da aba voltava ao mesmo pane antigo, com o ' +
+        'modelo padrão da CLI. A missão agora acompanha o pane retomado e usa o ' +
+        'modelo do pane que você abriu.',
+    },
+  ],
+  fixes: [],
+};
+
 export const CURRENT_RELEASE: AppRelease = {
   version: '0.76.117',
   date: '2026-09-28',

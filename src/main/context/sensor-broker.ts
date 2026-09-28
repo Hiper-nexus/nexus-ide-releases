@@ -16,6 +16,7 @@ import {
   type McpToolInvocation,
 } from '../orch/mcp-protocol';
 import { canonicalJson } from './canonical-json';
+import { removeTreeSync } from '../util/remove-tree';
 
 const HASH_256 = /^[a-f0-9]{64}$/;
 const COMMIT_HASH = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
@@ -292,7 +293,7 @@ async function runSensorProcess(
       readOnlyRoot: true,
     });
   } catch (error) {
-    fs.rmSync(sandbox.dir, { recursive: true, force: true });
+    removeTreeSync(sandbox.dir, { recursive: true, force: true });
     throw error;
   }
 
@@ -307,7 +308,7 @@ async function runSensorProcess(
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (error) {
-      fs.rmSync(sandbox.dir, { recursive: true, force: true });
+      removeTreeSync(sandbox.dir, { recursive: true, force: true });
       reject(error);
       return;
     }
@@ -326,7 +327,7 @@ async function runSensorProcess(
       clearTimeout(timer);
       if (forceKillTimer) clearTimeout(forceKillTimer);
       authority.signal?.removeEventListener('abort', onAbort);
-      fs.rmSync(sandbox.dir, { recursive: true, force: true });
+      removeTreeSync(sandbox.dir, { recursive: true, force: true });
     };
 
     const scheduleForceKill = () => {

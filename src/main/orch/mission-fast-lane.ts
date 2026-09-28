@@ -53,6 +53,7 @@ import { deliverAgentPrompt, proveNativeArgvBriefAccepted, withProjectContextBlo
 import { canUseNexusMcp } from './cli-mcp-inject';
 import {
   OPERATOR_TAB_RESUME_NOTE,
+  operatorTabMissionLeader,
   operatorTabMissionResumeSpec,
   operatorTabResumeAgent,
 } from './operator-tab-mission-resume';
@@ -1898,14 +1899,15 @@ async function respawnFastLaneOrchestrator(
   // F-661: a missão da aba retoma a CONVERSA do pane do operador que a
   // lidera, com a CLI/modelo/conta dele — nunca o Maestro de um squad com o
   // título da missão como brief.
-  const operatorResume = operatorTabMissionResumeSpec(
-    live,
-    stores.missionPanes.list(mission.id),
-  );
+  const composition = stores.missionPanes.list(mission.id);
+  const operatorResume = operatorTabMissionResumeSpec(live, composition);
   let orchestrator: SquadAgent;
   let prompt: string;
   if (operatorResume) {
-    orchestrator = operatorTabResumeAgent(operatorResume);
+    orchestrator = operatorTabResumeAgent(
+      operatorResume,
+      operatorTabMissionLeader(composition),
+    );
     assertFastLaneMaestroMcp(orchestrator.cli);
     prompt = buildRespawnPrompt({
       basePrompt: OPERATOR_TAB_RESUME_NOTE,
@@ -1970,6 +1972,12 @@ async function respawnFastLaneOrchestrator(
     : await spawnAgentPane(scope, live, orchestrator, prompt);
   if ('error' in spawned) {
     throw new Error(`orquestrador não reabriu: ${spawned.error}`);
+  }
+  // F-664: a conversa agora mora no pane novo. Se o record() deduplicou o
+  // pane novo na linha retomada (mesma identidade), a linha passa a apontar
+  // para ele — a próxima retomada continua DESTA conversa, não da anterior.
+  if (operatorResume && !stores.missionPanes.findByPaneId(spawned.paneId)) {
+    stores.missionPanes.moveOrchestratorPane(mission.id, operatorResume.id, spawned.paneId);
   }
 
   stopWatcher(scope, mission.id);

@@ -2,10 +2,27 @@
 
 ## 0.76.117 — Missão no seu ritmo
 
+Inclui no macOS as correções de preservação de conversas e retomada da 0.76.116.
+
 - **Missão da aba permanece aberta (F-185).** Pausas do orquestrador e entregas de helpers deixam de concluir a missão antes do pedido inteiro, inclusive uma release solicitada. O orquestrador pede a conclusão explicitamente; a revisão existente continua valendo.
 - **Abertura dos panes (F-209).** A manutenção automática das CLIs espera 60 segundos de inatividade e libera o launcher validado antes de procurar atualizações das outras CLIs. Uma atualização já em curso ainda precisa terminar.
 - **Memória ligada à tarefa (F-176–F-181).** O contexto acompanha o pane promovido, a busca prioriza a tarefa e seus símbolos, recibos vazios não ocupam o resumo e o scanner compara código existente mesmo em projetos com muitos documentos.
 - **Ajustes e regressões (F-175, F-182–F-184, F-366).** Retomar preserva missões paralelas e recupera a orientação de delegação. O modelo de negócio atestado acompanha a checagem de regressões nas worktrees, a captura de teste usa pasta temporária privada e a missão sem terminal oferece retomada.
+
+## 0.76.116 — Conversa preservada
+
+Correção urgente do Windows em 28/09. Inclui a 0.76.115.
+
+- **Conversas não somem mais no Windows (F-663).** O runtime do Electron 43 (Node 24) atravessa junctions ao apagar uma pasta recursivamente. A pasta temporária de cada pane liga as conversas guardadas do projeto por junction, então fechar, reiniciar ou retomar um pane apagava todas as conversas daquele projeto — e o "Retomar" abria um agente vazio. Toda remoção recursiva do Nexus agora tira os atalhos antes de apagar e nunca segue nenhum.
+- **Retomar continua da conversa certa (F-664).** Cada "Retomar" da missão da aba voltava ao mesmo pane antigo (o registro deduplicava o pane novo), com o modelo padrão da CLI. A missão agora acompanha o pane retomado e usa o modelo do pane que você abriu pelo "+ Pane".
+
+## 0.76.115 — Worker que responde
+
+Correções do uso real no Windows em 28/09. Inclui a 0.76.114 (CLIs no canal certo).
+
+- **Missão da aba sem worker mudo (F-662).** Depois do "Retomar", o orquestrador da aba pedia rota com `nexus_route_task` e recebia o AGY, que no modo one-shot (`--print`) não mostra nada até terminar. A regra de só abrir helper em CLI com o MCP do Nexus agora vale para a missão da aba inteira, qualquer que seja o pane que pede a rota.
+- **Pergunta a pane one-shot responde na hora (F-662).** `nexus_pane_ask` esperava o prazo inteiro e voltava vazio num pane AGY que estava trabalhando — o orquestrador concluía "infraestrutura quebrada". Agora responde na hora que o pane é one-shot e que a entrega chega quando ele terminar; `nexus_pane_write` avisa o mesmo no recibo.
+- **Codex no Windows (fora do Nexus).** O Codex 0.157 instalado pelo npm do Node do WinGet não consegue abrir o próprio executor (caminho acima de 260 caracteres) e toda ferramenta dele falha, dentro ou fora do Nexus. Instale-o num prefixo curto: `npm i -g --prefix %USERPROFILE%\.local\bin @openai/codex`.
 
 ## 0.76.114 — CLIs no canal certo
 

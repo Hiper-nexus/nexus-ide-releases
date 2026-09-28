@@ -20,7 +20,6 @@ import {
   cpSync,
   existsSync,
   readFileSync,
-  rmSync,
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
@@ -38,6 +37,7 @@ import {
   resolveInstalledRedlineExe,
   syncInstalledRedlineWin,
 } from './redline-windows';
+import { removeTreeSync } from '../util/remove-tree';
 
 export const REDLINE_APP_NAME = 'Nexus Redline.app';
 export const REDLINE_EXEC_NAME = 'NexusRedline';
@@ -168,7 +168,7 @@ export async function installRedline(
   if (existsSync(destination)) {
     await stopRunningRedline();
     try {
-      rmSync(destination, { recursive: true, force: true });
+      removeTreeSync(destination, { recursive: true, force: true });
     } catch (error) {
       return {
         ok: false,

@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { MIMO_CLI_MODELS } from '../../shared/mimo-models';
 import { parseMimoAuth, readMimoNativeAuthBlob } from '../adapters/mimo-auth';
+import { removeTreeSync } from '../util/remove-tree';
 
 function explicitApiKey(base: NodeJS.ProcessEnv): string | null {
   const explicit = base.XIAOMI_API_KEY?.trim();
@@ -31,6 +32,6 @@ export function prepareMimoBenchmarkEnv(env: Record<string, string>, base: NodeJ
         } } },
       }),
     },
-    dispose: () => fs.rmSync(home, { recursive: true, force: true }),
+    dispose: () => removeTreeSync(home, { recursive: true, force: true }),
   };
 }

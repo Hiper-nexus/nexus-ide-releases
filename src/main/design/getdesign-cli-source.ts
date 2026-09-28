@@ -11,6 +11,7 @@ import {
   type DesignKitSource,
   type DesignKitSummary,
 } from './design-kit-source';
+import { removeTreeSync } from '../util/remove-tree';
 
 /**
  * `getdesign` CLI kit source — the open half of the catalog.
@@ -226,7 +227,7 @@ function signalGroup(pid: number, signal: NodeJS.Signals): void {
  */
 function removeWorkDir(workDir: string): void {
   try {
-    fs.rmSync(workDir, { recursive: true, force: true });
+    removeTreeSync(workDir, { recursive: true, force: true });
   } catch (error) {
     console.warn(
       `[getdesign] failed to remove the temporary work directory ${workDir}:`,

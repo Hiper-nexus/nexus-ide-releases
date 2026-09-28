@@ -13,6 +13,7 @@ import type {
   CliMcpPurgeOptions,
   CliMcpSessionOptions,
 } from './cli-mcp-session-types';
+import { removeTreeSync } from '../util/remove-tree';
 
 type ArtifactProvider = 'codex' | 'opencode' | 'kimi' | 'grok' | 'mimo-code';
 
@@ -259,7 +260,7 @@ function prepareArtifactDir(
   cleanupCliMcpSession(token);
   ensurePrivateDirectory(root);
   const dir = path.join(root, kind, sessionHash(token).slice(0, 32));
-  fs.rmSync(dir, { recursive: true, force: true });
+  removeTreeSync(dir, { recursive: true, force: true });
   ensurePrivateDirectory(path.dirname(dir));
   ensurePrivateDirectory(dir);
   return dir;
@@ -288,7 +289,7 @@ export function withCliMcpArtifactTransaction<T>(
     // creates the new directory, so an entry here can only be partial state
     // from the failed construction and must never sync back.
     activeArtifactDirs.delete(token);
-    fs.rmSync(artifactDir, { recursive: true, force: true });
+    removeTreeSync(artifactDir, { recursive: true, force: true });
     throw error;
   }
 }
@@ -367,7 +368,7 @@ export function cleanupCliMcpSession(token: string): void {
     }
   }
   try {
-    fs.rmSync(session.artifactDir, { recursive: true, force: true });
+    removeTreeSync(session.artifactDir, { recursive: true, force: true });
   } catch {
     // Best effort during process/session teardown.
   }

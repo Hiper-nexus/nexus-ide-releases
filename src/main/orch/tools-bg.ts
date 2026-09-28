@@ -8,7 +8,6 @@ import {
 } from './mcp-protocol';
 import { requireStr, str } from './tool-util';
 import { spawn, type ChildProcess } from 'node:child_process';
-import fs from 'node:fs';
 import { resolveCwdForScope } from './workspace-path';
 import { executionScopeFor } from './gate';
 import {
@@ -20,6 +19,7 @@ import { assertGovernedWorkspaceControlBoundary } from './governed-workspace-con
 import { emitBgTaskEvent } from './bg-task-events';
 import { sameProjectScope } from './project-scoped-broadcast';
 import type { ProjectExecutionScope } from '../../shared/types';
+import { removeTreeSync } from '../util/remove-tree';
 
 interface BgTask {
   id: string;
@@ -195,7 +195,7 @@ const bgRun: McpToolDef = {
         sandboxProfile,
       });
     } catch (error) {
-      fs.rmSync(sandbox.dir, { recursive: true, force: true });
+      removeTreeSync(sandbox.dir, { recursive: true, force: true });
       throw error;
     }
     let proc: ChildProcess;
@@ -209,7 +209,7 @@ const bgRun: McpToolDef = {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (error) {
-      fs.rmSync(sandbox.dir, { recursive: true, force: true });
+      removeTreeSync(sandbox.dir, { recursive: true, force: true });
       throw error;
     }
     const id = `bg-${++bgCounter}`;
@@ -288,7 +288,7 @@ const bgRun: McpToolDef = {
       });
       pruneBgTasks();
       try {
-        fs.rmSync(sandbox.dir, { recursive: true, force: true });
+        removeTreeSync(sandbox.dir, { recursive: true, force: true });
       } catch (cleanupError) {
         console.warn('[bg-task] sandbox cleanup failed:', cleanupError);
       }

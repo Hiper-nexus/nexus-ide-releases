@@ -19,6 +19,7 @@ import {
   findPane,
 } from './pane-registry';
 import {
+  getAgentSessionInfo,
   getSessionState,
   inspectSessionLease,
   orchWriteSession,
@@ -1889,14 +1890,33 @@ const paneWrite: McpToolDef = {
     }
     // OVKA-750 (soft): brief longo que cita card/task file → avisa o ponteiro.
     const briefingWarn = briefingPointerWarning(text);
+    // F-662: a escrita segue (pode ser a resposta a um prompt de primeiro uso),
+    // mas o recibo diz que o agente one-shot não vai ler a mensagem.
+    const target = getAgentSessionInfo(sessionId);
     return {
       ok: true,
       ...(briefingWarn
         ? { briefingWarnings: [formatBriefingWarning(briefingWarn)] }
         : {}),
+      ...(target?.oneShot ? { oneShot: oneShotPaneNotice(target.adapterId) } : {}),
     };
   },
 };
+
+/**
+ * F-662: pane one-shot (AGY `--print`, OpenCode `run`) não lê o terminal e
+ * só imprime ao terminar. Perguntar a ele esperava o prazo inteiro e voltava
+ * vazio — o orquestrador concluía "infraestrutura quebrada" e abandonava um
+ * worker que estava trabalhando.
+ */
+export function oneShotPaneNotice(adapterId: string): string {
+  return (
+    `pane one-shot (${adapterId}): a CLI roda sem terminal interativo, não lê ` +
+    'perguntas nem mensagens e só mostra a resposta quando termina — tela ' +
+    'vazia até lá é o normal. A entrega chega pelo fim do processo; espere com ' +
+    'nexus_pane_wait em vez de perguntar.'
+  );
+}
 
 /** Uma pergunta em voo por sessão: evita tempestade de asks cruzados. */
 const paneAskInFlight = new Set<string>();
@@ -1942,6 +1962,11 @@ const paneAsk: McpToolDef = {
     );
     if (ctx.sessionId && sessionId === ctx.sessionId) {
       throw new Error('pergunte a OUTRO pane — este é o seu próprio');
+    }
+    // F-662: nada é digitado — no one-shot a pergunta cairia no stdin cru.
+    const target = getAgentSessionInfo(sessionId);
+    if (target?.oneShot) {
+      return { ok: false, state: 'oneshot', answer: oneShotPaneNotice(target.adapterId) };
     }
     const asker = ctx.sessionId ?? 'anon';
     if (paneAskInFlight.has(asker)) {

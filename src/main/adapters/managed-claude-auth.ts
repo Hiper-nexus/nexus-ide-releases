@@ -11,6 +11,7 @@ import {
   writeManagedClaudeCredential,
 } from './claude-credential';
 import { readNativeOAuthCredential } from './native-oauth-keychain';
+import { removeTreeSync } from '../util/remove-tree';
 
 /** Physically verified with Claude Code 2.1.278; independent from conversation HOME. */
 export const CLAUDE_MANAGED_AUTH_ENV = 'CLAUDE_SECURESTORAGE_CONFIG_DIR';
@@ -188,7 +189,7 @@ export function removeManagedClaudeAuth(accountId: string, options: { home?: str
   validateManagedClaudeAuthDirectory(directory, home);
   deleteManagedClaudeCredential(directory);
   scopedCache.delete(directory);
-  fs.rmSync(directory, { recursive: true, force: true });
+  removeTreeSync(directory, { recursive: true, force: true });
 }
 
 /** CLI owns refreshing and its .oauth_refresh.lock; Nexus only seeds/read-backs this store. */
