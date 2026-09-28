@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.111 — Helpers variados
+
+Os helpers que o seu pane do "+ Pane" abre voltam a se espalhar por CLIs diferentes, e só em CLIs que falam com o Nexus. Inclui tudo da 0.76.110 (Nexus consciente).
+
+- **Sem três panes pretos no mesmo agente (F-658).** Na 0.76.110 o primeiro helper cria a missão da aba e os seguintes passavam por uma rota que não excluía CLI sem o MCP do Nexus nem enxergava os helpers já abertos: três revisores caíram no AGY, que no modo one-shot (`--print`) não mostra nada até terminar. Agora a missão conta os helpers vivos para diversificar, e o pane do "+ Pane" só abre helper em CLI com MCP do Nexus.
+
 ## 0.76.110 — Nexus consciente
 
 Tudo que o operador pediu em 27/09, revisado em cruz por GPT-6 Astra e Claude Fable 5.1 (por frente e no conjunto) e corrigido antes de sair. Inclui a 0.76.109.

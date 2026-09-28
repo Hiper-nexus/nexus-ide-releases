@@ -7329,7 +7329,7 @@ export const RELEASE_076109: AppRelease = {
 };
 
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076110: AppRelease = {
   version: '0.76.110',
   date: '2026-09-27',
   codename: 'Nexus consciente',
@@ -7390,6 +7390,33 @@ export const CURRENT_RELEASE: AppRelease = {
         'Memória do Jev sem teto diário; helper concluído não reabre como shell ' +
         'vazio; Enter chega no Codex; Kimi recebe o brief no "+ Pane"; ' +
         'nexus_mission_create atômico; GC de worktrees assíncrono.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.111',
+  date: '2026-09-28',
+  codename: 'Helpers variados',
+  summary:
+    'Os helpers que o seu pane do "+ Pane" abre voltam a se espalhar por CLIs ' +
+    'diferentes e só em CLIs que falam com o Nexus — nada de três panes pretos ' +
+    'no mesmo agente. Inclui tudo da 0.76.110 (Nexus consciente).',
+  highlights: [
+    {
+      title: 'Helpers em CLIs diferentes',
+      detail:
+        'O roteamento passa a enxergar os helpers que já estão abertos na missão ' +
+        'e distribui os próximos entre outras CLIs, em vez de repetir a mesma.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Sem três panes pretos no AGY',
+      detail:
+        'Na 0.76.110 os helpers do "+ Pane" podiam cair todos no AGY, que no modo ' +
+        'one-shot não mostra nada até terminar. Eles voltam a usar só CLIs com o ' +
+        'MCP do Nexus, como antes da missão da aba.',
     },
   ],
 };
