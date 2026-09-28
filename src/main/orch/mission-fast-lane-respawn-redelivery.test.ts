@@ -34,6 +34,7 @@ const harness = vi.hoisted(() => ({
   handoffsOfSession: undefined as string | undefined,
   deliver: vi.fn(async (_sessionId: string, _prompt: string) => true),
   missionPaneSpecs: [] as Array<Record<string, unknown>>,
+  movePane: vi.fn(),
 }));
 
 vi.mock('../pty/pty-manager', () => ({
@@ -139,7 +140,12 @@ vi.mock('./project-domain-store-registry', async (importOriginal) => ({
       recordKickoffAcceptance: () => {},
       hasCurrentKickoffAcceptance: () => false,
     },
-    missionPanes: { record: () => {}, list: () => harness.missionPaneSpecs },
+    missionPanes: {
+      record: () => {},
+      list: () => harness.missionPaneSpecs,
+      findByPaneId: () => null,
+      moveOrchestratorPane: harness.movePane,
+    },
     tasks: {
       hasPlan: () => false,
       list: () => [],
@@ -249,6 +255,7 @@ beforeEach(async () => {
   harness.deliver.mockClear();
   harness.handoffsOfSession = undefined;
   harness.missionPaneSpecs = [];
+  harness.movePane.mockClear();
   liveMission = mission;
   reviewedSquad = undefined;
   vi.resetModules();
@@ -408,6 +415,38 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
     });
     expect(String(spawn.initialPrompt)).toContain('retomada');
     expect(String(spawn.initialPrompt)).not.toContain('Coordenar e revisar');
+    // F-664: a linha deduplicada passa a apontar para o pane que agora tem a conversa.
+    expect(harness.movePane).toHaveBeenCalledWith('mission-1', 'mp-1', 'pane-1');
+  });
+
+  it('retoma a conversa mais recente com o modelo do pane do operador (F-664)', async () => {
+    // Campo 28/09 11:05: a linha mais recente era o "Maestro" que a 0.76.111
+    // subiu sem modelo — cada Retomar voltava a ele e nascia no Sonnet padrão.
+    liveMission = {
+      ...mission,
+      squadId: undefined,
+      intentContract: { workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' } },
+    } as unknown as Mission;
+    harness.missionPaneSpecs = [
+      {
+        id: 'mp-1', missionId: 'mission-1', paneId: 'pane-operador', adapterId: 'claude',
+        model: 'claude-opus-5-5', accountId: 'acct-operador', role: 'orchestrator', title: 'Orquestrador',
+      },
+      {
+        id: 'mp-2', missionId: 'mission-1', paneId: 'pane-maestro', adapterId: 'claude',
+        effort: 'high', accountId: 'acct-operador', role: 'orchestrator', title: 'Maestro', agentName: 'Maestro',
+      },
+    ];
+
+    await fastLane.fastLaneBootstrap(scope, 'mission-1');
+
+    expect(harness.spawnOptions[0]).toMatchObject({
+      adapterId: 'claude',
+      model: 'claude-opus-5-5',
+      effort: 'high',
+      resumeFromPaneId: 'pane-maestro',
+    });
+    expect(harness.movePane).toHaveBeenCalledWith('mission-1', 'mp-2', 'pane-1');
   });
 
   it('missão com squad continua subindo o Maestro do squad (sem retomar pane)', async () => {

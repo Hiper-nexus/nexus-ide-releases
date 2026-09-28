@@ -22,7 +22,9 @@ export function isOperatorTabMission(
 export const OPERATOR_TAB_RESUME_NOTE =
   '[Nexus] Esta conversa foi retomada como orquestrador da missão da aba ' +
   '(o app reiniciou ou a missão foi reaberta). Continue de onde parou; se ' +
-  'estava esperando uma resposta minha, pergunte de novo.';
+  'estava esperando uma resposta minha, pergunte de novo. Se esta conversa ' +
+  'começou agora, sem histórico, diga isso ao operador e leia ' +
+  'nexus_handoff_list({full:true}) antes de agir — não invente o objetivo.';
 
 /**
  * O orquestrador cuja conversa deve ser retomada, ou null quando a missão não
@@ -41,15 +43,33 @@ export function operatorTabMissionResumeSpec(
   return orchestrators.at(-1) ?? null;
 }
 
+/**
+ * O orquestrador que abriu a missão: o pane do "+ Pane" do operador. Dele vêm
+ * o modelo e o esforço quando a linha da conversa não guarda um (F-664: o
+ * Maestro que a 0.76.111 subia por engano nascia sem modelo e cada retomada
+ * herdava o padrão da CLI).
+ */
+export function operatorTabMissionLeader(
+  specs: readonly MissionPaneSpec[],
+): MissionPaneSpec | null {
+  return specs.find((spec) => spec.role === 'orchestrator' && Boolean(spec.adapterId)) ?? null;
+}
+
 /** O pane do operador descrito como o orquestrador que o spawn espera. */
-export function operatorTabResumeAgent(spec: MissionPaneSpec): SquadAgent {
+export function operatorTabResumeAgent(
+  spec: MissionPaneSpec,
+  leader?: MissionPaneSpec | null,
+): SquadAgent {
+  const sameCli = leader?.adapterId === spec.adapterId ? leader : null;
+  const model = spec.model ?? sameCli?.model;
+  const effort = spec.effort ?? sameCli?.effort;
   return {
     id: 'operator-tab-orchestrator',
     agentName: spec.agentName?.trim() || spec.title?.trim() || 'Orquestrador',
     category: 'orchestrator',
     cli: spec.adapterId,
-    ...(spec.model ? { model: spec.model } : {}),
-    ...(spec.effort ? { effort: spec.effort } : {}),
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
     allowedTools: spec.allowedTools ?? null,
     allowedSkills: spec.allowedSkills ?? null,
   };
