@@ -820,3 +820,21 @@ saber isto antes de mexer:
   mudo no `--print` até terminar. Rota nova de spawn: repasse as duas coisas.
 - Primeiro uso do AGY pode mostrar esquema de cores e Termos antes do composer.
   Consentimento sobre Termos cabe ao operador; nunca marcar aceite por ele.
+
+## Windows: o encerramento do PTY precisa se provar (F-659/F-660/F-661)
+
+- O `node-pty` do Windows lança `Signals not supported on windows` para
+  QUALQUER `kill(sinal)`. Toda morte de raiz de PTY passa por `killPtyRoot`
+  (`pty-descendant-termination.ts`): sem sinal no win32, com sinal em POSIX.
+  Chamar `proc.kill('SIGTERM')` direto deixa a sessão presa no voo de
+  encerramento — entrada recusada, saída descartada, "Retomar"/"Pedir ajuste"
+  esperando para sempre, e o reconciliador de 1 s repete a tentativa.
+- Pane `idle` não é "orquestrador terminou". Maestro parado numa pergunta ao
+  operador (hook `awaiting-input` ou notificação, rodada ainda aberta) é
+  `isAgentAwaitingOperator` e conta como ocupado no `orchestratorBusy` da
+  entrega civil e do "pronto". Só o `Stop`/erro do hook fecha a rodada.
+- Missão da aba (sem `squadId`, com `workspaceBinding.adoptedPaneId`) retoma a
+  CONVERSA de quem a liderava: `operatorTabMissionResumeSpec` escolhe o último
+  orquestrador da composição e o respawn usa `resume: true` +
+  `resumeFromPaneId` com a CLI, o modelo e a conta desse pane. Não volte a
+  subir o Maestro do squad padrão para ela: vira um Claude vazio.
