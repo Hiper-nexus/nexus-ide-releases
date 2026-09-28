@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { AgentGateContext } from './gate';
@@ -43,11 +46,14 @@ import {
 // laço com o DesktopControl mockado, então fixa a plataforma como darwin e
 // restaura no fim (o caso não-darwin tem teste próprio em desktop-control).
 const ORIGINAL_PLATFORM = process.platform;
+let userDataDir: string;
 beforeAll(() => {
+  userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-computer-do-userdata-'));
   Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
 });
 afterAll(() => {
   Object.defineProperty(process, 'platform', { value: ORIGINAL_PLATFORM, configurable: true });
+  fs.rmSync(userDataDir, { recursive: true, force: true });
 });
 
 const scope = testProjectScope({ rootRealPath: '/tmp/nexus-computer-do-test' });
@@ -185,7 +191,7 @@ function makeDeps(controlOverrides: Partial<DesktopControl> = {}): Deps {
     recognizeLines: vi.fn(async () => []),
     settle: vi.fn(async () => undefined),
     screenPermission: vi.fn(() => 'denied'),
-    userDataDir: vi.fn(() => '/tmp/nexus-computer-do-userdata'),
+    userDataDir: vi.fn(() => userDataDir),
   };
 }
 
@@ -323,7 +329,8 @@ describe('nexus_computer_do', () => {
     expect(out.status).toBe('needs_confirmation');
     expect(out.proposed.operation).toBe('CLICK');
     expect(out.proposed.target.name).toBe('Save');
-    expect(out.capturePath).toContain('/tmp/nexus-computer-do-userdata/jev/computer/');
+    expect(out.capturePath).toContain(path.join(userDataDir, 'jev', 'computer') + path.sep);
+    expect(fs.readFileSync(out.capturePath!)).toEqual(VALID_PNG);
     expect(out.capturePath).toMatch(/confirm\.png$/);
     expect(deps.control.press).not.toHaveBeenCalled();
   });
