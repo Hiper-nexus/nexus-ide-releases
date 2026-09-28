@@ -173,12 +173,13 @@ function trustedContent(
   const lines = event.title
     ? [`# ${event.title}`, '', `${policy.label}:`]
     : [`${policy.label}:`];
+  // Knowledge must survive the byte cap even when the evidence list is large.
+  lines.push(`Summary: ${event.summary}`);
   if (event.missionId) lines.push(`Mission: ${event.missionId}`);
   if (event.reference) lines.push(`Reference: ${event.reference}`);
   if (event.evidenceIds?.length) {
     lines.push(`Evidence: ${event.evidenceIds.join(', ')}`);
   }
-  lines.push(`Summary: ${event.summary}`);
   return clampUtf8TextPrefix(lines.join('\n'), TRUSTED_CONTENT_MAX_BYTES);
 }
 
@@ -193,6 +194,7 @@ export function buildAcceptedHandoffTrustedEvent(
   const input = acceptedHandoffMemoryInputSchema.parse(rawInput);
   const lines = [
     'Handoff accepted by Nexus Main.',
+    ...(input.distilledSummary ? [`Summary: ${input.distilledSummary}`] : []),
     `Handoff: ${input.handoffId}`,
     `Mission: ${input.missionId}`,
     `Task: ${input.taskId}`,
@@ -212,9 +214,6 @@ export function buildAcceptedHandoffTrustedEvent(
       `Diff: ${input.evidenceBinding.diffHash}`,
       `Workflow revision: ${input.evidenceBinding.workflowRevision}`,
     );
-  }
-  if (input.distilledSummary) {
-    lines.push(`Summary: ${input.distilledSummary}`);
   }
   return trustedMemoryEventSchema.parse({
     type: 'accepted-handoff',

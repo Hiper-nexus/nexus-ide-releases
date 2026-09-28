@@ -200,6 +200,18 @@ describe('trusted automatic memory retention', () => {
     ).toThrow();
   });
 
+  it('preserves distilled knowledge when valid evidence ids exhaust the byte budget (F-180)', () => {
+    const summary = 'Preservar conversas ao remover atalhos do overlay.';
+    retainAcceptedHandoffMemory(scope, {
+      ...input,
+      evidenceIds: Array.from({ length: 32 }, (_, index) => `e${String(index).padStart(2, '0')}${'x'.repeat(253)}`),
+      distilledSummary: summary,
+    });
+    const [hit] = getWorkspaceMemoryStore(scope).recall({ query: 'accepted', includeGlobal: false, trustedOnly: true });
+    expect(hit.content).toContain(`Summary: ${summary}`);
+    expect(Buffer.byteLength(hit.content)).toBeLessThanOrEqual(7_800);
+  });
+
   it('distills the agent summary into the trusted line when Jev approves', async () => {
     const judge = vi.fn<typeof jevJudge>(async () => ({
       model: 'jev-1.13.0',
