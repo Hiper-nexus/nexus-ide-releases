@@ -33,6 +33,7 @@ const harness = vi.hoisted(() => ({
   redeliver: vi.fn((): number => 0),
   handoffsOfSession: undefined as string | undefined,
   deliver: vi.fn(async (_sessionId: string, _prompt: string) => true),
+  missionPaneSpecs: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock('../pty/pty-manager', () => ({
@@ -138,7 +139,7 @@ vi.mock('./project-domain-store-registry', async (importOriginal) => ({
       recordKickoffAcceptance: () => {},
       hasCurrentKickoffAcceptance: () => false,
     },
-    missionPanes: { record: () => {}, list: () => [] },
+    missionPanes: { record: () => {}, list: () => harness.missionPaneSpecs },
     tasks: {
       hasPlan: () => false,
       list: () => [],
@@ -247,6 +248,7 @@ beforeEach(async () => {
   harness.redeliver.mockClear();
   harness.deliver.mockClear();
   harness.handoffsOfSession = undefined;
+  harness.missionPaneSpecs = [];
   liveMission = mission;
   reviewedSquad = undefined;
   vi.resetModules();
@@ -374,6 +376,48 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it('missão da aba retoma a conversa do pane do operador, não o Maestro do squad (F-661)', async () => {
+    // Campo 28/09: depois do reinício, o Retomar da missão da aba subiu o
+    // Maestro do squad com só o título como brief — Claude novo perguntando
+    // "o que devo fazer?", sem a conversa do operador.
+    liveMission = {
+      ...mission,
+      squadId: undefined,
+      intentContract: { workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' } },
+    } as unknown as Mission;
+    harness.missionPaneSpecs = [
+      {
+        id: 'mp-1', missionId: 'mission-1', paneId: 'pane-operador', adapterId: 'claude',
+        model: 'claude-opus-5-5', accountId: 'acct-operador', role: 'orchestrator',
+        title: 'Orquestrador', agentName: 'Orquestrador',
+      },
+    ];
+
+    await fastLane.fastLaneBootstrap(scope, 'mission-1');
+
+    expect(harness.spawnCount).toBe(1);
+    const spawn = harness.spawnOptions[0] as Record<string, unknown>;
+    expect(spawn).toMatchObject({
+      adapterId: 'claude',
+      model: 'claude-opus-5-5',
+      resume: true,
+      resumeFromPaneId: 'pane-operador',
+      accountId: 'acct-operador',
+    });
+    expect(String(spawn.initialPrompt)).toContain('retomada');
+    expect(String(spawn.initialPrompt)).not.toContain('Coordenar e revisar');
+  });
+
+  it('missão com squad continua subindo o Maestro do squad (sem retomar pane)', async () => {
+    harness.missionPaneSpecs = [
+      { id: 'mp-1', missionId: 'mission-1', paneId: 'pane-antigo', adapterId: 'claude', role: 'orchestrator', title: 'Maestro' },
+    ];
+    await fastLane.fastLaneBootstrap(scope, 'mission-1');
+    const spawn = harness.spawnOptions[0] as Record<string, unknown>;
+    expect(spawn).toMatchObject({ adapterId: 'codex', resume: false });
+    expect(spawn.resumeFromPaneId).toBeUndefined();
   });
 
   it('missão running sem orquestrador vivo → respawn chama redeliverPendingHandoffs', async () => {

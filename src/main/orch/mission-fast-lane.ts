@@ -53,6 +53,11 @@ import { getAdapter } from '../adapters/adapter-registry';
 import { deliverAgentPrompt, proveNativeArgvBriefAccepted, withProjectContextBlocks } from './tool-util';
 import { canUseNexusMcp } from './cli-mcp-inject';
 import {
+  OPERATOR_TAB_RESUME_NOTE,
+  operatorTabMissionResumeSpec,
+  operatorTabResumeAgent,
+} from './operator-tab-mission-resume';
+import {
   getProjectDomainStores,
   type ProjectDomainStoreSuite,
 } from './project-domain-store-registry';
@@ -1056,7 +1061,15 @@ async function spawnAgentPane(
   agent: SquadAgent,
   briefPrompt?: string,
   paneTitle?: string,
-  spawnOpts?: { readonly readOnly?: boolean },
+  spawnOpts?: {
+    readonly readOnly?: boolean;
+    /**
+     * F-661: retoma a conversa gravada deste pane no pane novo (`--resume`).
+     * O prompt vai cru — os blocos de contexto são do 1º prompt da conversa.
+     */
+    readonly resumeFromPaneId?: string;
+    readonly accountId?: string;
+  },
 ): Promise<SpawnedAgent | { error: string }> {
   const executionScope = missionExecutionScope(scope, mission);
   const role: 'orchestrator' | 'worker' =
@@ -1066,7 +1079,8 @@ async function spawnAgentPane(
   // Mesmos blocos de contexto do wrapper de spawn (<business-model>,
   // <workspace-memory>), compostos ANTES da escolha do transporte: argv e as
   // colagens abaixo entregam este texto. O canal do "+ Pane" exclui missão.
-  const initialPrompt = withProjectContextBlocks({
+  const resumeFromPaneId = spawnOpts?.resumeFromPaneId;
+  const initialPrompt = resumeFromPaneId ? briefPrompt : withProjectContextBlocks({
     prompt: briefPrompt,
     scope,
     executionScope,
@@ -1116,7 +1130,9 @@ async function spawnAgentPane(
     executionScope,
     executionMode: readOnly ? 'read_only' : 'same_checkout',
     ...(readOnly ? { readOnly: true, nativeReadOnly: true } : {}),
-    resume: false,
+    resume: Boolean(resumeFromPaneId),
+    ...(resumeFromPaneId ? { resumeFromPaneId } : {}),
+    ...(spawnOpts?.accountId ? { accountId: spawnOpts.accountId } : {}),
     ...(initialPrompt ? { initialPrompt } : {}),
   });
 
@@ -1878,28 +1894,48 @@ async function respawnFastLaneOrchestrator(
     live = stores.missions.update(mission.id, { status: 'running' }) ?? current;
   }
 
-  const squad = resolveFastLaneSquad(mission.squadId);
-  const roster = orderedRoster(squad?.agents ?? []);
-  const orchestrator = roster.find((agent) => agent.category === 'orchestrator');
-  if (!orchestrator) {
-    throw new Error('o squad não tem um orquestrador definido');
-  }
-  assertFastLaneMaestroMcp(orchestrator.cli);
+  // F-661: a missão da aba retoma a CONVERSA do pane do operador que a
+  // lidera, com a CLI/modelo/conta dele — nunca o Maestro de um squad com o
+  // título da missão como brief.
+  const operatorResume = operatorTabMissionResumeSpec(
+    live,
+    stores.missionPanes.list(mission.id),
+  );
+  let orchestrator: SquadAgent;
+  let prompt: string;
+  if (operatorResume) {
+    orchestrator = operatorTabResumeAgent(operatorResume);
+    assertFastLaneMaestroMcp(orchestrator.cli);
+    prompt = buildRespawnPrompt({
+      basePrompt: OPERATOR_TAB_RESUME_NOTE,
+      awaitingAdjustment: missionAwaitsAdjustment(live),
+      note: options.note,
+    });
+  } else {
+    const squad = resolveFastLaneSquad(mission.squadId);
+    const roster = orderedRoster(squad?.agents ?? []);
+    const squadOrchestrator = roster.find((agent) => agent.category === 'orchestrator');
+    if (!squadOrchestrator) {
+      throw new Error('o squad não tem um orquestrador definido');
+    }
+    orchestrator = squadOrchestrator;
+    assertFastLaneMaestroMcp(orchestrator.cli);
 
-  const sealedPlanTitles = sealFastLanePlanTitles(stores, live, squad);
-  const prompt = buildRespawnPrompt({
-    basePrompt: agentPrompt(
-      orchestrator,
-      live,
-      roster.map((agent) => agent.agentName),
-      true,
-      missionDesignContext(missionExecutionScope(scope, live).rootRealPath),
-      squad,
-      sealedPlanTitles,
-    ),
-    awaitingAdjustment: missionAwaitsAdjustment(live),
-    note: options.note,
-  });
+    const sealedPlanTitles = sealFastLanePlanTitles(stores, live, squad);
+    prompt = buildRespawnPrompt({
+      basePrompt: agentPrompt(
+        orchestrator,
+        live,
+        roster.map((agent) => agent.agentName),
+        true,
+        missionDesignContext(missionExecutionScope(scope, live).rootRealPath),
+        squad,
+        sealedPlanTitles,
+      ),
+      awaitingAdjustment: missionAwaitsAdjustment(live),
+      note: options.note,
+    });
+  }
 
   // P0-1 (2026-08-17): NUNCA spawnar por cima de um orquestrador registrado.
   // A cerca do pty-manager conta QUALQUER sessão registrada (exited/
@@ -1925,7 +1961,12 @@ async function respawnFastLaneOrchestrator(
     }
   }
 
-  const spawned = await spawnAgentPane(scope, live, orchestrator, prompt);
+  const spawned = operatorResume
+    ? await spawnAgentPane(scope, live, orchestrator, prompt, operatorResume.title, {
+        resumeFromPaneId: operatorResume.paneId,
+        ...(operatorResume.accountId ? { accountId: operatorResume.accountId } : {}),
+      })
+    : await spawnAgentPane(scope, live, orchestrator, prompt);
   if ('error' in spawned) {
     throw new Error(`orquestrador não reabriu: ${spawned.error}`);
   }
