@@ -9,6 +9,7 @@ import {
   isFileAuthAdapter,
   type FileAuthAdapterId,
 } from '../../shared/file-auth-adapters';
+import { removeTreeSync } from '../util/remove-tree';
 
 export { isFileAuthAdapter };
 export type { FileAuthAdapterId };
@@ -955,9 +956,9 @@ export function removeManagedHome(
 ): void {
   try {
     const dir = managedHomePath(adapterId, accountId, home);
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTreeSync(dir, { recursive: true, force: true });
     // Remove empty account folder.
-    fs.rmSync(path.dirname(dir), { recursive: true, force: true });
+    removeTreeSync(path.dirname(dir), { recursive: true, force: true });
   } catch {
     // Best-effort cleanup.
   }

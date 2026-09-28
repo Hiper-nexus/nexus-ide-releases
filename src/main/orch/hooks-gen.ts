@@ -23,6 +23,7 @@ import {
   linkDarwinUserKeychains,
   linkDeveloperIdentity,
 } from '../pty/private-home-operator';
+import { removeTreeSync } from '../util/remove-tree';
 
 export { DEVELOPER_IDENTITY_HOME_ENTRIES, linkDeveloperIdentity };
 
@@ -807,7 +808,7 @@ export function cleanupSessionArtifacts(tokenId: string): void {
     path.join(os.homedir(), '.nexus', 'mcp-configs', `${short}.settings.json`),
   ]) {
     try {
-      fs.rmSync(target, { recursive: true, force: true });
+      removeTreeSync(target, { recursive: true, force: true });
     } catch {
       // Best effort only.
     }

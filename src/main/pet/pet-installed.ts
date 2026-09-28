@@ -6,7 +6,6 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
-  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -19,6 +18,7 @@ import {
   type PetInstalledPreviewResult,
 } from '../../shared/pet-types';
 import { resolvePetsLibraryRoot } from './pet-library';
+import { removeTreeSync } from '../util/remove-tree';
 
 const MAX_SPRITESHEET_BYTES = 2.5 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 64 * 1024;
@@ -309,7 +309,7 @@ export function deleteInstalledPet(
     ) {
       return { ok: false, error: 'pacote de pet fora de ~/.codex/pets' };
     }
-    rmSync(packageDir, { recursive: true, force: false });
+    removeTreeSync(packageDir, { recursive: true, force: false });
 
     // Registra exclusão do pet padrão para que ensureDefaultInstalledPets não o ressuscite
     if (DEFAULT_PREINSTALLED_PETS.some((p) => p.id === id)) {

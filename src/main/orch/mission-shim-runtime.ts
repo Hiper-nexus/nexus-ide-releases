@@ -15,6 +15,7 @@ import {
 } from "./gate";
 import { runInsideMissionShimTransport } from "./http-mcp-boundary";
 import type { ToolDispatchResult } from "./mcp-dispatch-contract";
+import { removeTreeSync } from '../util/remove-tree';
 
 const REQUEST_SCHEMA = "nexus.mission-shim-request/v1";
 const MAX_REQUEST_BYTES = 64 * 1024;
@@ -178,7 +179,7 @@ function discardDirectoryEntry(parent: string, name: string): void {
   try {
     const stat = fs.lstatSync(entry);
     if (stat.isDirectory() && !stat.isSymbolicLink()) {
-      fs.rmSync(entry, { recursive: true, force: true });
+      removeTreeSync(entry, { recursive: true, force: true });
     } else {
       fs.unlinkSync(entry);
     }
@@ -569,7 +570,7 @@ export function createMissionShimRuntime(
       sessionId = null;
       seenRequestIds.clear();
       try {
-        fs.rmSync(rootDir, { recursive: true, force: true });
+        removeTreeSync(rootDir, { recursive: true, force: true });
       } catch (error) {
         console.warn("[mission-shim] failed to remove private runtime", error);
       }

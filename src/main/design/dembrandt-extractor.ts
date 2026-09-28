@@ -6,6 +6,7 @@ import {
   assessBrowserUrl,
   type BrowserUrlDecision,
 } from '../browser/url-policy';
+import { removeTreeSync } from '../util/remove-tree';
 
 /**
  * Governed Dembrandt CLI wrapper.
@@ -650,7 +651,7 @@ export async function extractDesignSystemFromUrl(
       normalizedUrl: decision.normalizedUrl,
     };
   } finally {
-    fs.rmSync(workDir, { recursive: true, force: true });
+    removeTreeSync(workDir, { recursive: true, force: true });
   }
 }
 

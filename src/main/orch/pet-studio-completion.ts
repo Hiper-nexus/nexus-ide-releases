@@ -11,7 +11,6 @@ import {
   readdirSync,
   realpathSync,
   renameSync,
-  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -31,6 +30,7 @@ import type { MissionEngine } from './mission-engine';
 import { missionEngineForScope } from './mission-engine-registry';
 import { MissionLeadershipError, type MissionLeader } from './mission-leadership';
 import { getMissionLeadership } from './mission-leadership-runtime';
+import { removeTreeSync } from '../util/remove-tree';
 
 const MAX_SPRITESHEET_BYTES = 2.5 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 64 * 1024;
@@ -424,7 +424,7 @@ function installWorkspacePackage(
     renameSync(staging, target);
     fsyncPath(petRoot);
   } catch (cause) {
-    rmSync(staging, { recursive: true, force: true });
+    removeTreeSync(staging, { recursive: true, force: true });
     throw cause;
   }
   return { packageDir: realpathSync(target) };

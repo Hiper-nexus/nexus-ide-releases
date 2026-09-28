@@ -17,6 +17,7 @@ import {
   type GovernedCliProfileOptions,
 } from "./governed-cli-profile";
 import { ensureSkillsForCli } from "./skill-mirror";
+import { removeTreeSync } from '../util/remove-tree';
 
 /**
  * Injeção REAL do servidor MCP embutido do Nexus nos CLIs não-Claude, para que
@@ -442,7 +443,7 @@ export function prepareAgyMcpConfig(
   const homeDir = path.join(artifactRoot, sessionKey);
   cleanupAgyMcpConfig(token);
   ensurePrivateDirectory(artifactRoot);
-  fs.rmSync(homeDir, { recursive: true, force: true });
+  removeTreeSync(homeDir, { recursive: true, force: true });
   const policy = resolveGovernedCliProfile(token, options);
 
   try {
@@ -492,7 +493,7 @@ export function prepareAgyMcpConfig(
       configPaths: [modern, cli],
     };
   } catch (error) {
-    fs.rmSync(homeDir, { recursive: true, force: true });
+    removeTreeSync(homeDir, { recursive: true, force: true });
     throw error;
   }
 }
@@ -517,7 +518,7 @@ export function cleanupAgyMcpConfig(token: string): void {
     }
   }
   try {
-    fs.rmSync(session.homeDir, { recursive: true, force: true });
+    removeTreeSync(session.homeDir, { recursive: true, force: true });
   } catch {
     // Best effort on process/session teardown.
   }

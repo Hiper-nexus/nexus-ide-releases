@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { removeTreeSync } from '../util/remove-tree';
 
 /**
  * Removes `<userData>/provider-state/<adapter>/<checkoutId>` across every
@@ -33,7 +34,7 @@ function removeCheckoutDirectory(candidate: string): 'removed' | 'absent' | 'fai
   // rather than follow it into an arbitrary target.
   if (stat.isSymbolicLink() || !stat.isDirectory()) return 'failed';
   try {
-    fs.rmSync(candidate, {
+    removeTreeSync(candidate, {
       recursive: true,
       force: true,
       maxRetries: 2,

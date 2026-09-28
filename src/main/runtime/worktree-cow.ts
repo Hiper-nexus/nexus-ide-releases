@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { GitRunner } from './git-command';
 import { GitCommandError } from './git-command';
+import { removeTreeSync } from '../util/remove-tree';
 
 export type WorktreeMaterializeMethod = 'clonefile' | 'git-worktree';
 
@@ -101,7 +102,7 @@ export async function tryClonefileCopy(
   });
   if (result.status !== 0 || !fs.existsSync(dest)) {
     try {
-      fs.rmSync(dest, { recursive: true, force: true });
+      removeTreeSync(dest, { recursive: true, force: true });
     } catch {
       // best-effort cleanup
     }
@@ -129,7 +130,7 @@ export function tryClonefileCopySync(
   });
   if (result.status !== 0 || !fs.existsSync(dest)) {
     try {
-      fs.rmSync(dest, { recursive: true, force: true });
+      removeTreeSync(dest, { recursive: true, force: true });
     } catch {
       // best-effort cleanup
     }

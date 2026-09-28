@@ -14,9 +14,10 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { removeTreeSync } from '../util/remove-tree';
 
 export const REDLINE_WIN_EXE_NAME = 'NexusRedline.exe';
 export const REDLINE_WIN_DIR_NAME = 'NexusRedline';
@@ -326,7 +327,7 @@ function installRedlineWinFrom(
   if (existsSync(destination)) {
     stopRunningRedlineWin(deps);
     try {
-      rmSync(destination, { recursive: true, force: true });
+      removeTreeSync(destination, { recursive: true, force: true });
     } catch (error) {
       return {
         ok: false,

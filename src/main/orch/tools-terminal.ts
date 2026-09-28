@@ -5,7 +5,6 @@ import {
 } from './mcp-protocol';
 import { requireStr, str } from './tool-util';
 import { spawn, type ChildProcess } from 'node:child_process';
-import fs from 'node:fs';
 import path from 'node:path';
 import { isIsolatedWriterContext, parseIsolatedWriterGitCommand } from './isolated-writer-policy';
 import { buildGitTools } from './tools-git';
@@ -24,6 +23,7 @@ import {
   type SquadCliPolicyMode,
 } from '../../shared/squad-cli-policy';
 import { triageCommandFailure } from '../jev/jev-terminal-triage';
+import { removeTreeSync } from '../util/remove-tree';
 
 /**
  * Terminal execution MCP tools for Jarvis agent.
@@ -238,7 +238,7 @@ const terminalRun: McpToolDef = {
         sandboxProfile,
       });
     } catch (error) {
-      fs.rmSync(sandbox.dir, { recursive: true, force: true });
+      removeTreeSync(sandbox.dir, { recursive: true, force: true });
       throw error;
     }
 
@@ -254,7 +254,7 @@ const terminalRun: McpToolDef = {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (error) {
-      fs.rmSync(sandbox.dir, { recursive: true, force: true });
+      removeTreeSync(sandbox.dir, { recursive: true, force: true });
       throw error;
     }
 
@@ -348,7 +348,7 @@ const terminalRun: McpToolDef = {
         activeProcesses.delete(id);
         let cleanupError: Error | undefined;
         try {
-          fs.rmSync(sandbox.dir, { recursive: true, force: true });
+          removeTreeSync(sandbox.dir, { recursive: true, force: true });
         } catch (cause) {
           cleanupError =
             cause instanceof Error ? cause : new Error(String(cause));

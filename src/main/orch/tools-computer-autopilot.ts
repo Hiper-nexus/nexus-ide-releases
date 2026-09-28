@@ -50,6 +50,7 @@ import {
   getScreenPermissionStatus,
 } from '../vision/screen-capture';
 import { recognizeLinesWithBoxes, type OcrLine } from '../vision/ocr';
+import { removeTreeSync } from '../util/remove-tree';
 
 const JUDGE_TIMEOUT_MS = 8_000;
 const SETTLE_MS = 800;
@@ -348,7 +349,7 @@ function pruneOldCaptures(root: string, now = Date.now()): void {
     const dir = path.join(root, entry.name);
     try {
       if (now - fs.statSync(dir).mtimeMs > CAPTURE_TTL_MS) {
-        fs.rmSync(dir, { recursive: true, force: true });
+        removeTreeSync(dir, { recursive: true, force: true });
       }
     } catch {
       // best-effort: uma pasta que não dá para ler não bloqueia a captura nova
