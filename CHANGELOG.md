@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.118 — Retoma e continua
+
+Correção do uso real no Windows em 28/09. Inclui a 0.76.117 (Missão no seu ritmo).
+
+- **Retomar continua o trabalho (F-665).** Um "Pedir um ajuste" feito horas antes deixava a missão da aba marcada, e toda retomada abria com "AGUARDE O OPERADOR": o orquestrador voltava com a conversa inteira, mas parava sem dizer onde estava. Agora só um ajuste pedido nos últimos minutos faz esperar; nos outros casos a conversa retomada abre com um resumo curto do que estava sendo feito e do próximo passo, e continua.
+
 ## 0.76.117 — Missão no seu ritmo
 
 Inclui no macOS as correções de preservação de conversas e retomada da 0.76.116.
