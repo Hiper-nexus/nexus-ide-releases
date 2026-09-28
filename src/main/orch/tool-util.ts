@@ -1057,6 +1057,7 @@ export function recallsWorkspaceMemory(
 type BriefCandidate = Pick<
   SpawnToolOptions,
   | 'prompt'
+  | 'memoryQuery'
   | 'transient'
   | 'scope'
   | 'executionScope'
@@ -1077,7 +1078,7 @@ export function withProjectContextBlocks(options: BriefCandidate): string | unde
   return mountPromptContextBlocks(options.prompt, [
     businessModelContextBlock(options.executionScope ?? options.scope, options.scope),
     recallsWorkspaceMemory(options)
-      ? workspaceMemoryContextBlock(options.scope, options.prompt, autoRecallPhaseForAgent(options))
+      ? workspaceMemoryContextBlock(options.scope, options.memoryQuery ?? options.prompt, autoRecallPhaseForAgent(options))
       : null,
   ]);
 }
@@ -1121,6 +1122,8 @@ export interface SpawnToolOptions {
    */
   freeAgentChoice?: boolean;
   prompt?: string;
+  /** Main-only original task, before execution-authority boilerplate is prepended. */
+  memoryQuery?: string;
   scope: AgentGateContext['scope'];
   executionScope?: AgentGateContext['executionScope'];
   readOnly?: boolean;

@@ -75,16 +75,18 @@ function sanitizeMemoryLine(content: string): string {
 }
 
 function buildRecallQuery(prompt: string): string {
-  const tokens: string[] = [];
+  const identifiers: string[] = [];
+  const words: string[] = [];
   const seen = new Set<string>();
-  for (const match of prompt.matchAll(/[\p{L}\p{N}_-]{3,64}/gu)) {
+  // Source symbols late in a task are more useful than its opening boilerplate.
+  // This only ranks a bounded FTS query; it never treats the prompt as authority.
+  for (const match of prompt.slice(0, 65_536).matchAll(/[\p{L}\p{N}_-]{3,64}/gu)) {
     const token = match[0].toLowerCase();
     if (QUERY_STOP_WORDS.has(token) || seen.has(token)) continue;
     seen.add(token);
-    tokens.push(match[0]);
-    if (tokens.length >= 12) break;
+    (/[_-]|[a-z][A-Z]/.test(match[0]) ? identifiers : words).push(match[0]);
   }
-  return tokens.join(' ').slice(0, 1_024);
+  return [...identifiers, ...words].slice(0, 12).join(' ').slice(0, 1_024);
 }
 
 /**

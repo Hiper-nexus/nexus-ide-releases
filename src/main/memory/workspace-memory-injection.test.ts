@@ -90,6 +90,16 @@ describe('workspaceMemoryContextBlock (bloco reutilizável do hook)', () => {
     ).toBeNull();
   });
 
+  it('símbolos citados depois do preâmbulo continuam alcançando sua memória', () => {
+    getWorkspaceMemoryStore(scope).retain({
+      content: 'billingChargeOnce já implementa a idempotência necessária.', kind: 'fact',
+      source: 'trusted:architecture-rule',
+    });
+    const block = workspaceMemoryContextBlock(scope,
+      'APENAS leitura diagnóstico sem editar arquivos abrir helpers operador pediu revisão geral detalhada cuidadosa independente. Rastreie billingChargeOnce.');
+    expect(block).toContain('billingChargeOnce já implementa');
+  });
+
   it('falha aberto para null quando o banco não está configurado', () => {
     disposeWorkspaceMemoryStores();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

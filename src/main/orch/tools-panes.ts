@@ -397,6 +397,7 @@ function isolatedWriterOptions(
     isolatedWriter: true,
     cwd: writer.worktreePath,
     executionScope: Object.freeze({ ...scope, rootRealPath: writer.worktreePath }),
+    memoryQuery: options.memoryQuery ?? options.prompt,
     prompt: withIsolatedWriterContract(options.prompt ?? 'Execute a tarefa delegada.', writer),
   };
 }
@@ -1448,6 +1449,7 @@ const paneSpawnAfterTabMission = {
               ...options,
               cwd: checkoutRoot,
               executionScope: callerExecutionScope,
+              memoryQuery: options.memoryQuery ?? options.prompt,
               prompt: withSameCheckoutWorkerContract(
                 options.prompt ?? 'Inspecione o estado atual e aguarde uma tarefa com escopo explícito.',
               ),

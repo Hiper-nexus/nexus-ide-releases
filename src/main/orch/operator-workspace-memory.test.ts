@@ -15,6 +15,7 @@ import { testProjectScope } from './__tests__/scope-fixture';
 import { __resetLeanRemindersForTests, handleHookDelegateRequest } from './hook-delegate-endpoint';
 import { handleMcpMessage, type McpRegistry } from './mcp-protocol';
 import { withProjectContextBlocks } from './tool-util';
+import { withSameCheckoutWorkerContract, withIsolatedWriterContract } from './tools-panes';
 
 const dirs: string[] = [];
 let scope: ReturnType<typeof testProjectScope>;
@@ -74,7 +75,7 @@ describe('<workspace-memory> no "+ Pane" pelos canais do <business-model>', () =
     expect(await instructionsFor({ role: 'user', providerId: 'codex' })).not.toContain('<workspace-memory');
   });
 
-  it('Codex recebe pelo hook, uma vez por sessão', async () => {
+  it('Codex suprime memória idêntica no hook dentro da janela', async () => {
     const codex = { role: 'user' as const, sessionId: 's-codex', providerId: 'codex', scope };
     const deps = { advise: async () => null, now: () => 1_000 };
     const first = await handleHookDelegateRequest(codex, { prompt: 'instale com pnpm' }, deps);
@@ -117,6 +118,20 @@ describe('<workspace-memory> no "+ Pane" pelos canais do <business-model>', () =
 });
 
 describe('<workspace-memory> no brief de spawn pelo ponto de montagem', () => {
+  it.each(['same', 'isolated'])('o recall usa a tarefa original, não o preâmbulo de autoridade (%s)', (mode) => {
+    getWorkspaceMemoryStore(scope).retain({
+      content: 'Stripe billing exige reutilizar o helper cobrarUmaVez.', kind: 'decision',
+      importance: 5, source: 'trusted:architecture-rule',
+    });
+    const task = 'Corrija Stripe billing';
+    const prompt = mode === 'same' ? withSameCheckoutWorkerContract(task)
+      : withIsolatedWriterContract(task, { branch: 'worker-a', worktreePath: '/tmp/worktree-a' });
+    const mounted = withProjectContextBlocks({ prompt, memoryQuery: task, scope, missionId: 'm', role: 'worker' })!;
+    expect(mounted).toContain('reutilizar o helper cobrarUmaVez');
+    expect(mounted).toContain('## Nexus execution authority');
+    expect(mounted.endsWith(task)).toBe(true);
+  });
+
   it('entra uma vez e não duplica em re-spawn/resume', () => {
     const once = withProjectContextBlocks({ prompt: 'instale com pnpm', scope })!;
     expect(once.match(/<workspace-memory/g)).toHaveLength(1);

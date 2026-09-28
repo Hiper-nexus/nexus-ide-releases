@@ -137,7 +137,7 @@ describe('Via Rápida isolated writers', () => {
       const record = records.find((r) => r.worktreePath === options.cwd)!;
       expect(record.status).toBe('ready');
       expect(record.ownerKind).toBe('pane');
-      expect(options).toMatchObject({ executionMode: 'isolated_worktree', isolatedWriter: true, scope: ctx.scope });
+      expect(options).toMatchObject({ executionMode: 'isolated_worktree', isolatedWriter: true, scope: ctx.scope, memoryQuery: 'Implement feature' });
       expect(options.executionScope?.rootRealPath).toBe(record.worktreePath);
       expect(record.worktreePath).not.toBe(ctx.scope.rootRealPath);
       expect(record.branchRef).toMatch(/^refs\/heads\/nexus\/[a-f0-9]{16}\/[a-f0-9]{24}$/);
