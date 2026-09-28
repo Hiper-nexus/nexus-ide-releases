@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.112 — Smoke test
+
+Pendências do 0.76.110 (e do 0.76.111) e tudo que o smoke test no app instalado (28/09) encontrou, revisado em cruz por GPT-6 Astra e Claude Fable 5.1 antes de sair.
+
+- **Rodapé da barra lateral no lugar.** Em Configurações, "Configurações · chaves · voz · Local" ficava no meio da barra com um vazio embaixo: a lista e as utilidades somem nesse modo e a colocação automática do grid puxava o rodapé para a faixa elástica. Agora cada faixa tem posição fixa; provado no Chrome headless (botão a 9 px do fundo, antes 328 px).
+- **Revisão de código vai para modelo de topo.** "Revisão sênior, somente leitura" era classificada como trivial (sem alteração de código) e ia para o grok em esforço baixo. Revisão de código tem piso hard também sobre o tier do Jev, e o modelo e o esforço citados no texto ("com o GPT-6 Astra, esforço xhigh") são honrados quando a CLI está instalada — com guarda de negação ("não use o Astra") e de ambiguidade.
+- **Navegador do Jev emula de verdade.** A emulação de dispositivo morria na navegação e o `nexus_browser_responsive` media a mesma largura nos três dispositivos. A emulação é reaplicada no commit de cada navegação e a auditoria espera o relayout.
+- **Kimi abre com sessão e com o briefing.** A preferência antiga `kimi-k2.7` ia no `--model` e o Kimi Code recusava a sessão inteira; os ids da era kimi-cli migram para os aliases `kimi-code/*`, as listas e o catálogo perdem os ids mortos, o `config.toml` do Kimi Code vira fonte de descoberta e um alias fora dele não viaja no `--model`. O briefing do helper pendente deixa de morrer na autoridade da chamada MCP já respondida.
+
 ## 0.76.111 — Helpers variados
 
 Os helpers que o seu pane do "+ Pane" abre voltam a se espalhar por CLIs diferentes, e só em CLIs que falam com o Nexus. Inclui tudo da 0.76.110 (Nexus consciente).

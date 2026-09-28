@@ -7394,7 +7394,7 @@ export const RELEASE_076110: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076111: AppRelease = {
   version: '0.76.111',
   date: '2026-09-28',
   codename: 'Helpers variados',
@@ -7417,6 +7417,60 @@ export const CURRENT_RELEASE: AppRelease = {
         'Na 0.76.110 os helpers do "+ Pane" podiam cair todos no AGY, que no modo ' +
         'one-shot não mostra nada até terminar. Eles voltam a usar só CLIs com o ' +
         'MCP do Nexus, como antes da missão da aba.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.112',
+  date: '2026-09-28',
+  codename: 'Smoke test',
+  summary:
+    'Pendências do 0.76.110 e o que o smoke test no app instalado achou: rodapé ' +
+    'da barra lateral no lugar, revisão de código roteada para modelo de topo, ' +
+    'navegador do Jev emulando de verdade, Kimi abrindo com sessão e briefing, e ' +
+    'o portão de regressão rodando com o Node do projeto.',
+  highlights: [
+    {
+      title: 'Rodapé da barra lateral no lugar',
+      detail:
+        'Em Configurações a lista e as utilidades somem e o grid puxava o rodapé ' +
+        'para o meio da barra, com um vazio embaixo. Cada faixa tem posição fixa; ' +
+        'provado no Chrome headless (botão a 9 px do fundo, antes 328 px).',
+    },
+    {
+      title: 'Revisão de código vai para modelo de topo',
+      detail:
+        '"Revisão sênior, somente leitura" era classificada como trivial e ia ' +
+        'para o grok em esforço baixo. Revisão de código tem piso hard também ' +
+        'sobre o tier do Jev, e o modelo e o esforço citados no texto ("com o ' +
+        'GPT-6 Astra, esforço xhigh") são honrados quando a CLI está instalada, ' +
+        'sem furar circuit breaker e com guarda de negação.',
+    },
+    {
+      title: 'Kimi abre com sessão e com o briefing',
+      detail:
+        'A preferência antiga kimi-k2.7 ia no --model e o Kimi Code recusava a ' +
+        'sessão inteira; os ids antigos migram para os aliases kimi-code/*, o ' +
+        'config.toml vira fonte de descoberta e alias fora dele não viaja. O ' +
+        'briefing do helper pendente deixa de morrer na autoridade da chamada ' +
+        'MCP já respondida.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Navegador do Jev emula de verdade',
+      detail:
+        'A emulação de dispositivo morria na navegação e nexus_browser_responsive ' +
+        'media a mesma largura nos três dispositivos. Reaplicada no commit de cada ' +
+        'navegação; a auditoria espera o relayout.',
+    },
+    {
+      title: 'Portão de regressão com o Node do projeto',
+      detail:
+        'O runner herdava o Node 26 do PATH do app e reprovava trabalho são com ' +
+        'ERR_DLOPEN_FAILED do better-sqlite3. O Node pinado em package.json ' +
+        '(Homebrew node@N ou nvm) vai na frente do PATH.',
     },
   ],
 };
