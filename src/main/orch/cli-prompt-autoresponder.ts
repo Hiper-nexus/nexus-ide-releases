@@ -202,6 +202,21 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
     watchMs: TRUST_WATCH_WINDOW_MS,
   },
   {
+    // F-666: Codex 0.157 abre "Folder access" antes do composer quando a
+    // pasta tem `trust_level = "untrusted"` — exatamente o que o perfil
+    // governado grava para a worktree de um writer de missão. "Open
+    // restricted" é a postura que o perfil quer (config, hooks e exec policies
+    // da pasta ficam desligados); nunca "Trust and continue". Sem resposta o
+    // brief caía no modal e o Codex saía (worker morto em 15 s, 28/09).
+    adapterIds: ['codex'],
+    name: 'codex-folder-access-restricted',
+    phrases: ['folder access', 'open restricted', 'quit'],
+    response: ACCEPT_DEFAULT_PROMPT_RESPONSE,
+    responseFor: codexFolderAccessResponse,
+    earlyPhrase: 'folder access',
+    watchMs: TRUST_WATCH_WINDOW_MS,
+  },
+  {
     // Devin CLI (herdr workspace_trust_prompt). Interactive spawn cannot pass
     // `--respect-workspace-trust false` (print-mode only). The cursor starts on
     // "Yes, trust …"; Enter accepts. Unanswered, the mission brief is pasted
@@ -251,6 +266,36 @@ function claudeWorkspaceTrustResponse(raw: string): string | null {
   return cancel < accept
     ? ACCEPT_SECOND_TRUST_OPTION_RESPONSE
     : ACCEPT_DEFAULT_PROMPT_RESPONSE;
+}
+
+const CODEX_FOLDER_OPTION_RE =
+  /(›|>)?[ \t]*(\d)\.[ \t]*(open restricted|trust and continue|open existing task|quit)/gi;
+
+/**
+ * Teclas até "Open restricted" no "Folder access" do Codex, lidas da última
+ * pintura da tela: o cursor (`›`) nasce no primeiro item e a ordem dos itens
+ * muda conforme a pasta (com ou sem "Trust and continue"). Sem "Open
+ * restricted" desenhado, `null` — o operador responde.
+ */
+export function codexFolderAccessResponse(raw: string): string | null {
+  const plain = raw
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b\][^\x07]*\x07/g, '');
+  const start = plain.toLowerCase().lastIndexOf('folder access');
+  if (start < 0) return null;
+  const options = new Map<number, { focused: boolean; label: string }>();
+  for (const match of plain.slice(start).matchAll(CODEX_FOLDER_OPTION_RE)) {
+    const number = Number(match[2]);
+    if (!options.has(number)) {
+      options.set(number, { focused: Boolean(match[1]), label: match[3].toLowerCase() });
+    }
+  }
+  const ordered = [...options.entries()].sort(([a], [b]) => a - b).map(([, option]) => option);
+  const target = ordered.findIndex((option) => option.label === 'open restricted');
+  if (target < 0) return null;
+  const focused = Math.max(0, ordered.findIndex((option) => option.focused));
+  const delta = target - focused;
+  return (delta >= 0 ? '\x1b[B'.repeat(delta) : '\x1b[A'.repeat(-delta)) + '\r';
 }
 
 export function matchesPromptSignature(
