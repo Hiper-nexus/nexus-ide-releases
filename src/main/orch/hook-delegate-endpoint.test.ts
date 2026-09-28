@@ -401,6 +401,33 @@ describe('bloco <workspace-memory> no primeiro prompt do Codex (fatia 4)', () =>
     expect(second.payload).toEqual({});
   });
 
+  it('mudança de assunto recebe memórias novas na mesma sessão, sem esperar 30 minutos', async () => {
+    __resetLeanRemindersForTests();
+    const ctx = { role: 'user' as const, sessionId: 'mem-topics', scope, providerId: 'codex' };
+    const memoryBlock = vi.fn<typeof operatorWorkspaceMemoryContext>((_ctx, _channel, prompt) =>
+      `<workspace-memory>${prompt?.includes('pagamento') ? 'Pagamento exige idempotência' : 'Login usa o helper existente'}</workspace-memory>`,
+    );
+    const deps = { advise: vi.fn(async () => null), memoryBlock, now: () => 1000 };
+    await handleHookDelegateRequest(ctx, { prompt: 'Corrija o login' }, deps);
+    const next = await handleHookDelegateRequest(ctx, { prompt: 'Agora corrija o pagamento' }, deps);
+    expect(JSON.stringify(next.payload)).toContain('Pagamento exige idempotência');
+    expect(JSON.stringify(next.payload)).not.toContain('Login usa');
+    expect((await handleHookDelegateRequest(ctx, { prompt: 'Mais um ajuste no pagamento' }, deps)).payload).toEqual({});
+  });
+
+  it('memória atualizada na mesma tarefa chega imediatamente; consulta falha não impede o prompt', async () => {
+    __resetLeanRemindersForTests();
+    const ctx = { role: 'user' as const, sessionId: 'mem-updated', scope, providerId: 'codex' };
+    const memoryBlock = vi.fn<typeof operatorWorkspaceMemoryContext>()
+      .mockReturnValueOnce('<workspace-memory>V1</workspace-memory>')
+      .mockReturnValueOnce('<workspace-memory>V2 corrigida</workspace-memory>')
+      .mockImplementationOnce(() => { throw new Error('banco indisponível'); });
+    const deps = { advise: vi.fn(async () => null), memoryBlock, now: () => 1000 };
+    await handleHookDelegateRequest(ctx, { prompt: LONG }, deps);
+    expect(JSON.stringify((await handleHookDelegateRequest(ctx, { prompt: LONG }, deps)).payload)).toContain('V2 corrigida');
+    expect((await handleHookDelegateRequest(ctx, { prompt: LONG }, deps)).payload).toEqual({});
+  });
+
   it('banco vazio (bloco null) não marca a sessão: entrega depois quando houver', async () => {
     __resetLeanRemindersForTests();
     const empty = vi.fn<typeof operatorWorkspaceMemoryContext>(() => null);

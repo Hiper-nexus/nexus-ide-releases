@@ -6,6 +6,7 @@
 // `additionalContext`. Nunca atrapalha: qualquer coisa fora do caminho feliz
 // responde `{}` com 200.
 import type http from 'node:http';
+import { createHash } from 'node:crypto';
 import type { AgentGateContext } from './gate';
 import { advisePrompt, type DelegationAdvice } from '../jev/jev-delegation';
 import { handleHookJsonPost } from './hook-http';
@@ -86,7 +87,7 @@ const designRemindedAt = new Map<string, number>();
 const doctrineDeliveredAt = new Map<string, number>();
 const businessModelDeliveredAt = new Map<string, number>();
 const browserHintDeliveredAt = new Map<string, number>();
-const memoryDeliveredAt = new Map<string, number>();
+const memoryDeliveredAt = new Map<string, { hash: string; at: number }>();
 
 function remindedRecently(ledger: Map<string, number>, sessionId: string, now: number): boolean {
   const last = ledger.get(sessionId);
@@ -129,9 +130,19 @@ function memoryContextFor(
   now: number,
   block: MemoryBlockFn,
 ): string | null {
-  if (!ctx.sessionId || remindedRecently(memoryDeliveredAt, ctx.sessionId, now)) return null;
+  if (!ctx.sessionId) return null;
   const context = block(ctx, 'hook', prompt);
-  if (context) markReminded(memoryDeliveredAt, ctx.sessionId, now);
+  if (!context) return null;
+  const scope = ctx.executionScope ?? ctx.scope;
+  const hash = createHash('sha256')
+    .update(JSON.stringify([scope?.projectId, scope?.checkoutId, scope?.rootRealPath, context]))
+    .digest('hex');
+  const previous = memoryDeliveredAt.get(ctx.sessionId);
+  if (previous?.hash === hash && now - previous.at < LEAN_REMINDER_INTERVAL_MS) return null;
+  for (const [id, entry] of memoryDeliveredAt) {
+    if (now - entry.at >= LEAN_REMINDER_INTERVAL_MS) memoryDeliveredAt.delete(id);
+  }
+  memoryDeliveredAt.set(ctx.sessionId, { hash, at: now });
   return context;
 }
 
