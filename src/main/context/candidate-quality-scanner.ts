@@ -248,9 +248,7 @@ export async function runCandidateQualityAnalysis(
   const untrackedPaths = new Set(snapshot?.untrackedPaths ?? []);
   const limits = Object.freeze({
     ...DEFAULT_ORIENTATION_LIMITS,
-    maxFiles: MAX_SOURCE_FILES,
     maxFileBytes: MAX_FILE_BYTES,
-    maxTotalBytes: MAX_SOURCE_BYTES,
     buildBudgetMs: ANALYSIS_BUDGET_MS,
   });
   const walk = await (dependencies.walk ?? walkOrientationTreeAsync)(
@@ -267,6 +265,13 @@ export async function runCandidateQualityAnalysis(
   const walkedByPath = new Map(
     walk.files.map((file) => [file.relativePath, file]),
   );
+  const changedDirectories = new Set(limitedChanged.map((file) => path.posix.dirname(file)));
+  const changedRoots = new Set(limitedChanged.map((file) => file.split('/')[0]));
+  const proximity = (file: string): number => changedDirectories.has(path.posix.dirname(file))
+    ? 0 : changedRoots.has(file.split('/')[0]) ? 1 : 2;
+  const unchangedSources = walk.files
+    .filter((file) => file.isSource && TS_JS_EXTENSIONS.has(file.ext) && !limitedChanged.includes(file.relativePath))
+    .sort((a, b) => proximity(a.relativePath) - proximity(b.relativePath) || a.relativePath.localeCompare(b.relativePath));
   const prioritizedFiles = [
     ...limitedChanged
       .filter((relativePath) =>
@@ -283,20 +288,27 @@ export async function runCandidateQualityAnalysis(
             isSecretName: false,
           },
       ),
-    ...walk.files.filter((file) => !limitedChanged.includes(file.relativePath)),
+    ...unchangedSources,
   ];
   for (const file of prioritizedFiles) {
     throwIfAborted(input.signal);
     if (
       !file.isSource ||
-      !TS_JS_EXTENSIONS.has(file.ext) ||
-      inspectedBytes + file.size > MAX_SOURCE_BYTES
+      !TS_JS_EXTENSIONS.has(file.ext)
     ) {
       continue;
+    }
+    if (sources.length >= MAX_SOURCE_FILES) {
+      reasons.push(`source file limit ${MAX_SOURCE_FILES} reached`);
+      break;
     }
     if (now() > deadline) {
       reasons.push(`analysis time budget ${ANALYSIS_BUDGET_MS}ms reached`);
       break;
+    }
+    if (inspectedBytes + file.size > MAX_SOURCE_BYTES) {
+      reasons.push(`source byte limit ${MAX_SOURCE_BYTES} reached`);
+      continue;
     }
     let content: string | null = null;
     try {
@@ -313,7 +325,7 @@ export async function runCandidateQualityAnalysis(
     const contentBytes = Buffer.byteLength(content, 'utf8');
     if (inspectedBytes + contentBytes > MAX_SOURCE_BYTES) {
       reasons.push(`source byte limit ${MAX_SOURCE_BYTES} reached`);
-      break;
+      continue;
     }
     inspectedBytes += contentBytes;
     sources.push(Object.freeze({

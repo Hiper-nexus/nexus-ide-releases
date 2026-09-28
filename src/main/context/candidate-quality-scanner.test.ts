@@ -85,6 +85,36 @@ afterEach(() => {
 });
 
 describe('candidate quality scanner', () => {
+  it('documentation does not exhaust the source budget before existing implementations', async () => {
+    const { root, scope, baseSha, headSha, git } = fixture();
+    fs.mkdirSync(path.join(root, 'aaa-docs'));
+    for (let i = 0; i < 1600; i++) fs.writeFileSync(path.join(root, 'aaa-docs', `${i}.md`), '# Notes');
+    const body = '{ let total = 0; for (const value of values) { if (Number.isFinite(value) && value > 0) { total += value; } } return Math.round(total * 100) / 100; }';
+    fs.writeFileSync(path.join(root, 'src', 'existing.ts'), `export function existing(values: number[]) ${body}`);
+    fs.writeFileSync(path.join(root, 'src', 'candidate.ts'), `export function changed(values: number[]) ${body}`);
+    const result = await runCandidateQualityAnalysis({
+      scope, checkoutPath: root, baseSha, headSha, diffHash: 'd'.repeat(64), changedFiles: ['src/candidate.ts'],
+    }, { git });
+    expect(result.findings.some((finding) => /Duplicate implementation/.test(finding.evidence) && finding.evidence.includes('src/existing.ts'))).toBe(true);
+    expect(result.inspectedFiles).toBe(2);
+    expect(result.complete).toBe(true);
+  });
+
+  it('skips a source that exceeds remaining bytes so later small implementations are still compared', async () => {
+    const { root, scope, baseSha, headSha, git } = fixture();
+    for (let i = 0; i < 30; i++) fs.writeFileSync(path.join(root, 'src', `a${i}.ts`), `/*${'p'.repeat(300 * 1024)}*/`);
+    const body = '{ let total = 0; for (const value of values) { if (Number.isFinite(value) && value > 0) { total += value; } } return Math.round(total * 100) / 100; }';
+    fs.writeFileSync(path.join(root, 'src', 'z-existing.ts'), `export function existing(values: number[]) ${body}`);
+    fs.writeFileSync(path.join(root, 'src', 'candidate.ts'), `export function changed(values: number[]) ${body}`);
+    const result = await runCandidateQualityAnalysis({
+      scope, checkoutPath: root, baseSha, headSha, diffHash: 'd'.repeat(64), changedFiles: ['src/candidate.ts'],
+    }, { git });
+    expect(result.findings.some((finding) => /Duplicate implementation/.test(finding.evidence) && finding.evidence.includes('src/z-existing.ts'))).toBe(true);
+    expect(result.inspectedBytes).toBeLessThanOrEqual(8 * 1024 * 1024);
+    expect(result.complete).toBe(false);
+    expect(result.incompleteReasons).toContain('source byte limit 8388608 reached');
+  });
+
   it.each(['dirty', 'staged', 'untracked'] as const)(
     'finds real unreachable code in a %s working-tree candidate without changing Git index',
     async (kind) => {
