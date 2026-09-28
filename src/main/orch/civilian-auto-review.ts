@@ -379,6 +379,7 @@ export async function enforceCivilianAutoReview(
     try {
       regression = await regressionGate({
         scope: executionScope,
+        projectScope: input.scope,
         declaredFiles: changedFiles,
         baseSha,
         trustedDependencyRoot: input.scope.rootRealPath,

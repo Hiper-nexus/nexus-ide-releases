@@ -239,6 +239,18 @@ export function readBusinessModelDocument(
   }
 }
 
+/** Same Main-attested model for both prompt context and regression checks. */
+export function readBusinessModelForExecution(
+  scope: ProjectExecutionScope,
+  projectScope?: ProjectExecutionScope,
+): BusinessModelDocument | null {
+  return readBusinessModelDocument(scope) ??
+    (projectScope && projectScope.installationId === scope.installationId &&
+      projectScope.projectId === scope.projectId && projectScope.rootRealPath !== scope.rootRealPath
+      ? readBusinessModelDocument(projectScope)
+      : null);
+}
+
 /** Invariantes estruturados do projeto ({id, fluxo, regra, arquivos, tabelas, funcoes, testes}). */
 export function readBusinessModelInvariants(
   target: ProjectExecutionScope | string,

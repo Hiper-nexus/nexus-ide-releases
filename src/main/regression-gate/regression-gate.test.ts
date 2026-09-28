@@ -486,7 +486,7 @@ describe('runRegressionGate', () => {
     expect(calls[0]).toContain('src/d.test.ts');
   });
 
-  it('invariante do modelo de negócio (.context) tocado: seus testes rodam e a violação aparece', async () => {
+  it.each([false, true])('invariante do modelo atestado roda no checkout de execução (fallback=%s)', async (fallback) => {
     const { root, scope } = project();
     const doc = {
       schemaVersion: 1,
@@ -527,10 +527,11 @@ describe('runRegressionGate', () => {
     const git = new ProcessGitRunner();
     git.run(root, ['add', '-A']);
     git.run(root, ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'modelo']);
-    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const execution = fallback ? project() : { root, scope };
+    write(execution.root, 'src/a.ts', 'export const a = 2;\n');
     const { exec, calls } = fakeVitest(['src/c.test.ts']);
 
-    const result = await runRegressionGate({ scope }, { exec });
+    const result = await runRegressionGate({ scope: execution.scope, projectScope: scope }, { exec });
 
     expect(calls[0]).toContain('src/c.test.ts');
     expect(result.status).toBe('failed');
@@ -538,6 +539,14 @@ describe('runRegressionGate', () => {
       { id: 'fechar_comanda#1', regra: 'comanda fechada não recebe item', violated: true },
     ]);
     expect(formatRegressionGateReport(result)).toContain('Invariantes de negócio VIOLADOS');
+    if (fallback) {
+      const foreign = await runRegressionGate({ scope: execution.scope, projectScope: { ...scope, projectId: 'other' } }, { exec });
+      expect(foreign.invariantsTouched).toEqual([]);
+      expect(foreign.cached).toBe(false);
+      fs.unlinkSync(path.join(root, BUSINESS_MODEL_TARGET_PATH));
+      const withoutModel = await runRegressionGate({ scope: execution.scope, projectScope: scope }, { exec });
+      expect(withoutModel.invariantsTouched).toEqual([]);
+    }
   });
 
   it('invariante alcançado pela tabela do blast radius (dbEntities) também entra', async () => {

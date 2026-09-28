@@ -34,7 +34,7 @@ import { walkOrientationTreeAsync } from '../context/orientation/orientation-wal
 import { loadTsconfigAliases } from '../context/orientation/orientation-tsconfig';
 import {
   invariantsTouchedBy,
-  readBusinessModelInvariants,
+  readBusinessModelForExecution,
   type BusinessInvariant,
 } from '../context/business-model/business-model-contract';
 import {
@@ -128,6 +128,7 @@ export interface RegressionGateExtensions {
   }) => Promise<RegressionBlastRadiusExtension | null> | RegressionBlastRadiusExtension | null;
   readonly invariants?: (input: {
     readonly scope: ProjectExecutionScope;
+    readonly projectScope?: ProjectExecutionScope;
   }) => Promise<readonly RegressionInvariant[]> | readonly RegressionInvariant[];
 }
 
@@ -230,10 +231,11 @@ export async function orientationBlastRadiusExtension(input: {
 /** Default do contrato do modelo de negócio: invariantes do `.context` do checkout. */
 export function businessModelInvariantsExtension(input: {
   readonly scope: ProjectExecutionScope;
+  readonly projectScope?: ProjectExecutionScope;
 }): readonly RegressionInvariant[] {
   // Passa o escopo já resolvido: re-resolver pela raiz (ex.: worktree de
   // writer isolado) pode dar outro projectId e a atestação não casaria.
-  return readBusinessModelInvariants(input.scope);
+  return readBusinessModelForExecution(input.scope, input.projectScope)?.invariants ?? [];
 }
 
 /** Writers 3/4 registram aqui seus provedores, sem acoplar este módulo a eles. */
@@ -310,6 +312,8 @@ export type RegressionExec = (
 
 export interface RunRegressionGateInput {
   readonly scope: ProjectExecutionScope;
+  /** Main-owned coordination scope; never derived from a dependency directory. */
+  readonly projectScope?: ProjectExecutionScope;
   /** Arquivos declarados pelo agente (somados aos observados no git). */
   readonly declaredFiles?: readonly string[];
   /** Base para somar os commits do worktree isolado (`base...HEAD`). */
@@ -569,7 +573,14 @@ interface ObservedState {
 function observeState(root: string, input: RunRegressionGateInput, git: GitRunner): ObservedState {
   const base = resolveRegressionBase(root, input, git);
   const changed = collectChanged(root, input, base, git);
-  const stamp = `${base.head ?? '-'}\0${base.sha ?? '-'}\0${dependencyStamp(root)}`;
+  const modelHash = createHash('sha256')
+    .update(JSON.stringify({
+      executionScope: input.scope,
+      projectScope: input.projectScope,
+      model: readBusinessModelForExecution(input.scope, input.projectScope),
+    }))
+    .digest('hex');
+  const stamp = `${base.head ?? '-'}\0${base.sha ?? '-'}\0${dependencyStamp(root)}\0${modelHash}`;
   return { base, changed, diffHash: regressionDiffHash(root, changed.files, stamp) };
 }
 
@@ -1378,7 +1389,7 @@ async function evaluate(
   const invariantsProvider = extensions.invariants ?? businessModelInvariantsExtension;
   const invariants: BusinessInvariant[] = (
     (await safeExtension('invariantes do modelo de negócio', warnings, () =>
-      invariantsProvider({ scope: input.scope }))) ?? []
+      invariantsProvider({ scope: input.scope, projectScope: input.projectScope }))) ?? []
   ).map((invariant) => ({
     id: invariant.id,
     fluxo: invariant.fluxo ?? '',

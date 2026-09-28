@@ -85,6 +85,7 @@ export async function evaluateHandoffRegressionGate(
   input: {
     readonly sessionId?: string;
     readonly scope: ProjectExecutionScope;
+    readonly projectScope?: ProjectExecutionScope;
     readonly declaredFiles?: readonly string[];
     readonly baseSha?: string;
     /** Spawn da sessão que entrega: base do diff e corte do WIP alheio. */
@@ -110,6 +111,7 @@ export async function evaluateHandoffRegressionGate(
     result = await runRegressionGate(
       {
         scope: input.scope,
+        projectScope: input.projectScope,
         declaredFiles: input.declaredFiles,
         baseSha: input.baseSha,
         startedAtMs: input.startedAtMs,

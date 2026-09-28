@@ -1,7 +1,7 @@
 import type { ProjectExecutionScope } from '../../../shared/types';
 import {
   BUSINESS_MODEL_TARGET_PATH,
-  readBusinessModelDocument,
+  readBusinessModelForExecution,
   type BusinessInvariant,
 } from './business-model-contract';
 
@@ -55,11 +55,7 @@ export function businessModelContextBlock(
   scope: ProjectExecutionScope,
   projectScope?: ProjectExecutionScope,
 ): string | null {
-  const document =
-    readBusinessModelDocument(scope) ??
-    (projectScope && projectScope.projectId === scope.projectId && projectScope.rootRealPath !== scope.rootRealPath
-      ? readBusinessModelDocument(projectScope)
-      : null);
+  const document = readBusinessModelForExecution(scope, projectScope);
   if (!document || (document.invariants.length === 0 && document.flows.length === 0)) return null;
   const open = `${BUSINESS_MODEL_BLOCK_TAG} fonte="${BUSINESS_MODEL_TARGET_PATH}">`;
   const close = '</business-model>';

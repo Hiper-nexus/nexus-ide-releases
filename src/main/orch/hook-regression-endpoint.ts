@@ -104,6 +104,7 @@ export async function handleHookRegressionRequest(
     }
     const result = await (deps.run ?? runRegressionGate)({
       scope,
+      projectScope: ctx.scope,
       startedAtMs,
       baseSha: startedAtMs === undefined ? ledger.firstHead : undefined,
       timeoutMs: STOP_HOOK_BUDGET_MS,

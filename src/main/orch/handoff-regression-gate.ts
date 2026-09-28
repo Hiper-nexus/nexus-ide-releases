@@ -41,6 +41,7 @@ export function evaluateWriterHandoffRegression(
   return evaluateHandoffRegressionGate({
     sessionId: ctx.sessionId,
     scope: execution,
+    projectScope: ctx.scope,
     declaredFiles: input.declaredFiles,
     baseSha,
     // Sem base registrada: o HEAD no spawn é a base, e o WIP sujo antes do
