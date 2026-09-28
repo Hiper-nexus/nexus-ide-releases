@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.121 — Brief inteiro
+
+Correção do uso real no Windows em 28/09. Inclui a 0.76.120 (Instalação e tarefas recuperadas).
+
+- **Helper recebe a tarefa inteira no Windows (F-668).** Com uma CLI instalada pelo npm (ex.: `claude.cmd`), o brief do helper passava pelo atalho `.cmd` e o `cmd.exe` cortava o argumento na primeira quebra de linha: o helper recebia só "## Nexus execution authority" ou morria em segundos. O `cmd.exe` também expandia `%VARIÁVEL%` dentro do texto e limitava a linha a 8 mil caracteres. Agora o Nexus abre o executável verificado do pacote (o `.exe`, ou `node` + script) direto para toda CLI embutida, inclusive quando a CLI mora num prefixo npm separado como `~/.local/bin`.
+- **Brief longo não derruba o helper (F-669).** O Nexus aceitava até 64 KB de brief na linha de comando, mas o Windows aceita 32.767 caracteres na linha inteira: helpers com briefs longos morriam com "Linha de comando muito longa" e o religamento repetia o erro. Acima de 20 mil caracteres o brief agora é colado no pane depois do boot.
+
 ## 0.76.120 — Instalação e tarefas recuperadas
 
 Consolida as correções da candidata 0.76.117 e as de retomada da 0.76.118, com revisão sênior e os problemas encontrados durante a validação.

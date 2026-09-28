@@ -7642,7 +7642,7 @@ export const RELEASE_076119: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076120: AppRelease = {
   version: '0.76.120',
   date: '2026-09-28',
   codename: 'Instalação e tarefas recuperadas',
@@ -7669,6 +7669,35 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'Falhas ao examinar pastas interrompem a limpeza. Vínculos de panes são reconciliados ' +
         'antes da próxima retomada, e resumos úteis sobrevivem a listas longas de evidências.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.121',
+  date: '2026-09-28',
+  codename: 'Brief inteiro',
+  summary:
+    'No Windows os helpers voltam a receber a tarefa inteira: o Nexus abre o ' +
+    'executável real das CLIs instaladas pelo npm, sem passar pelo cmd.exe, ' +
+    'que cortava o brief na primeira linha. Inclui a 0.76.120.',
+  highlights: [
+    {
+      title: 'Helper recebe a tarefa inteira no Windows',
+      detail:
+        'Com o Claude instalado pelo npm, o brief do helper passava pelo atalho ' +
+        'claude.cmd e o cmd.exe cortava tudo depois da primeira linha — o ' +
+        'helper recebia só "## Nexus execution authority" ou morria. Agora o ' +
+        'Nexus abre o executável do pacote direto, para toda CLI embutida.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Brief longo não derruba o helper',
+      detail:
+        'Brief grande demais para a linha de comando do Windows (32.767 ' +
+        'caracteres) ia no argv e o helper morria com "Linha de comando muito ' +
+        'longa". Acima do limite o brief agora é colado depois do boot.',
     },
   ],
 };
