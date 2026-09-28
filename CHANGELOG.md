@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.119 — Instalação e tarefas recuperadas
+
+Consolida as correções da candidata 0.76.117 e as de retomada da 0.76.118, com revisão sênior e os problemas encontrados durante a validação.
+
+- **Claude no macOS (F-210).** O Nexus encontra binários nativos válidos quando o atalho está ausente ou quebrado, preserva a instalação selecionada no PATH e prefere o instalador nativo. A instalação só anuncia sucesso depois de verificar o executável; arquivos e credenciais pessoais não são removidos.
+- **Kimi recebe a tarefa (F-186).** A colagem aguarda o composer, evitando perder o briefing no menu de migração. A migração continua sendo deixada para depois.
+- **Retomada e limpeza (F-663/F-664).** Falhas na inspeção de links abortam a limpeza recursiva. Falhas transitórias no vínculo do pane são reconciliadas, mantendo o acompanhamento e a conversa correta na retomada seguinte.
+- **Memória útil preservada (F-180).** Resumos destilados ficam antes de listas extensas de evidências, para sobreviver ao limite de contexto.
+
 ## 0.76.118 — Retoma e continua
 
 Correção do uso real no Windows em 28/09. Inclui a 0.76.117 (Missão no seu ritmo).

@@ -7601,7 +7601,7 @@ export const RELEASE_076117: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076118: AppRelease = {
   version: '0.76.118',
   date: '2026-09-28',
   codename: 'Retoma e continua',
@@ -7619,4 +7619,35 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.119',
+  date: '2026-09-28',
+  codename: 'Instalação e tarefas recuperadas',
+  summary:
+    'O Claude volta a ser encontrado com atalho nativo quebrado, o Kimi espera o campo de mensagem ' +
+    'antes de receber a tarefa e a retomada preserva a conversa. Inclui as correções anteriores da missão da aba.',
+  highlights: [
+    {
+      title: 'Claude reconhecido no macOS',
+      detail:
+        'A busca encontra instalações nativas válidas mesmo sem o atalho. ' +
+        'O Nexus prefere o instalador nativo e verifica a CLI antes de confirmar sucesso.',
+    },
+    {
+      title: 'Briefing chega ao Kimi',
+      detail:
+        'A tarefa aguarda o campo de mensagem ficar pronto e não se perde no menu de migração. ' +
+        'Suas conversas não são migradas automaticamente.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Retomada, limpeza e memória revisadas',
+      detail:
+        'Falhas ao examinar pastas interrompem a limpeza. Vínculos de panes são reconciliados ' +
+        'antes da próxima retomada, e resumos úteis sobrevivem a listas longas de evidências.',
+    },
+  ],
 };
