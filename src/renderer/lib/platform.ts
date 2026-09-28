@@ -17,6 +17,21 @@ export function uiPlatform(): UiPlatform {
   return 'linux';
 }
 
+/**
+ * F-673: sem `windowsPty` o xterm trata o PTY como Unix — ao ganhar linhas,
+ * puxa o histórico de volta para a tela, enquanto o ConPTY do Windows cria
+ * linhas vazias e repinta por cima: telas antigas misturadas às novas nos
+ * panes (TUIs como o Claude Code). Informar backend e build liga as
+ * heurísticas de ConPTY do próprio xterm.
+ */
+export function xtermWindowsPty(): { backend: 'conpty'; buildNumber?: number } | undefined {
+  if (typeof window === 'undefined' || window.nexus?.platform !== 'win32') return undefined;
+  const build = window.nexus?.windowsBuild;
+  return typeof build === 'number' && build > 0
+    ? { backend: 'conpty', buildNumber: build }
+    : { backend: 'conpty' };
+}
+
 export function isMac(): boolean {
   return uiPlatform() === 'mac';
 }

@@ -127,6 +127,7 @@ import {
 } from './terminal-render-policy';
 import { notifyPaneWorkspaceReveal } from '../lib/pane-intersection';
 import { tuiWheelPageSequence } from './tui-wheel';
+import { xtermWindowsPty } from '../lib/platform';
 
 /**
  * Persistent terminal manager.
@@ -518,6 +519,7 @@ function buildTerminal(kind: 'shell' | 'cli-agent'): {
   search: SearchAddon;
   serialize: SerializeAddon;
 } {
+  const windowsPty = xtermWindowsPty();
   const term = new Terminal({
     fontFamily: fontFamilyOf(currentSettings),
     fontSize: currentSettings.fontSize,
@@ -531,6 +533,8 @@ function buildTerminal(kind: 'shell' | 'cli-agent'): {
     ),
     // Alt+roda (modificador fixo do xterm 6) rola 5x mais rápido.
     fastScrollSensitivity: 5,
+    // F-673: ConPTY no Windows (ver xtermWindowsPty).
+    ...(windowsPty ? { windowsPty } : {}),
   });
   const fit = new FitAddon();
   const search = new SearchAddon();

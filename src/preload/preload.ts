@@ -658,6 +658,17 @@ ipcRenderer.on(PIPE_CHANNELS.changed, (_e, pipes: Pipe[]) =>
   emitToListeners(pipesChangedListeners, 'pipesChangedListeners', pipes),
 );
 
+/** F-673: "10.0.26200" -> 26200 (só no Windows; o xterm precisa dele para o ConPTY). */
+function windowsBuildNumber(): number | null {
+  if (process.platform !== 'win32') return null;
+  try {
+    const build = Number(process.getSystemVersion().split('.')[2]);
+    return Number.isSafeInteger(build) && build > 0 ? build : null;
+  } catch {
+    return null;
+  }
+}
+
 const api: NexusApi = {
   pet: {
     getPrefs: () => ipcRenderer.invoke(PET_CHANNELS.getPrefs),
@@ -1430,6 +1441,7 @@ const api: NexusApi = {
     },
   },
   platform: process.platform,
+  windowsBuild: windowsBuildNumber(),
 };
 
 let functionalSmokeStarted = false;

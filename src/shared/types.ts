@@ -1193,4 +1193,9 @@ export interface NexusApi {
   /** Fase 5 — Jarvis Vision: screen capture + AX tree + OCR */
   vision: VisionApi;
   platform: NodeJS.Platform;
+  /**
+   * F-673: build do Windows (ex.: 26200) para o xterm tratar o ConPTY como
+   * ConPTY; null fora do Windows ou quando a versão não é legível.
+   */
+  windowsBuild: number | null;
 }
