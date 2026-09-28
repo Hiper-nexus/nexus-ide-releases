@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.119 — Codex na worktree
+
+Correção do uso real no Windows em 28/09. Inclui a 0.76.118 (Retoma e continua).
+
+- **Helper Codex em worktree trabalha no Windows (F-666).** Quando o orquestrador soltava um helper Codex numa worktree isolada, o Codex 0.157 abria a tela "Folder access" (a pasta é marcada como restrita de propósito) e ninguém respondia: o brief caía na tela e o helper morria em segundos. Passando dela, cada comando falhava com "code-mode host is disabled", porque o perfil do Nexus desligava o executor que o Codex usa para rodar ferramentas. O Nexus agora responde "Open restricted" (nunca "Trust and continue") e liga o executor no Windows; as permissões de arquivo e rede do perfil continuam valendo.
+
 ## 0.76.118 — Retoma e continua
 
 Correção do uso real no Windows em 28/09. Inclui a 0.76.117 (Missão no seu ritmo).

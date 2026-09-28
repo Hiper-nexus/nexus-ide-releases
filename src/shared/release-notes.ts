@@ -7601,7 +7601,7 @@ export const RELEASE_076117: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076118: AppRelease = {
   version: '0.76.118',
   date: '2026-09-28',
   codename: 'Retoma e continua',
@@ -7616,6 +7616,27 @@ export const CURRENT_RELEASE: AppRelease = {
         'Um "Pedir um ajuste" feito horas antes fazia toda retomada abrir com ' +
         '"AGUARDE O OPERADOR" e o orquestrador parava. Agora só um ajuste recém-' +
         'pedido faz esperar; nos outros casos ele resume onde parou e segue.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.119',
+  date: '2026-09-28',
+  codename: 'Codex na worktree',
+  summary:
+    'Helpers Codex soltos em worktree isolada voltam a trabalhar no Windows: ' +
+    'a tela de acesso à pasta do Codex é respondida e as ferramentas dele ' +
+    'executam. Inclui a 0.76.118.',
+  highlights: [
+    {
+      title: 'Helper Codex em worktree trabalha no Windows',
+      detail:
+        'O Codex 0.157 pergunta "Folder access" antes de abrir uma pasta ' +
+        'restrita, e o perfil do Nexus desligava o executor que ele usa para ' +
+        'rodar comandos: o helper morria em segundos ou não fazia nada. A tela ' +
+        'agora é respondida com "Open restricted" e o executor fica ligado no Windows.',
     },
   ],
   fixes: [],
