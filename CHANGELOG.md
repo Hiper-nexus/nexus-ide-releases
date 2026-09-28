@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.123 — Helpers variados de novo
+
+Uso real no Windows em 28/09. Inclui a 0.76.122 (Sonnet 5.5 e Jev com medição).
+
+- **Aviso de diversidade no spawn (F-672).** Depois de ver um helper Codex falhar (problema já corrigido na 0.76.119), o orquestrador passou a fixar `adapterId: "claude"` em todo helper, e o roteamento pelo Jev nunca mais foi consultado. A escolha explícita continua valendo, mas quando a CLI pedida já tem dois ou mais helpers vivos na missão o recibo do `nexus_pane_spawn` traz um aviso para omitir `adapterId`/`model` e deixar o Nexus distribuir o trabalho entre as CLIs prontas.
+- **Brief inteiro no Windows, sem exceção (F-670/F-671).** A decisão de mandar o brief no argv agora é tomada com o executável e o argv finais: se a CLI ainda cairia num atalho `.cmd`/`.bat` não verificado, ou se a linha de comando inteira (executável, flags, config de hooks e brief, com aspas) passaria do limite do Windows, o brief sai do argv e é colado no pane depois do boot, com a mesma prova de turno das colagens do orquestrador.
+
 ## 0.76.122 — Sonnet 5.5 e Jev com medição
 
 Inclui todas as correções da 0.76.121.

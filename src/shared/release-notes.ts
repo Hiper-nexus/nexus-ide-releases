@@ -7702,7 +7702,7 @@ export const RELEASE_076121: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076122: AppRelease = {
   version: '0.76.122',
   date: '2026-09-28',
   codename: 'Sonnet 5.5 e Jev com medição',
@@ -7737,4 +7737,32 @@ export const CURRENT_RELEASE: AppRelease = {
         'Quando o julgamento não é suficiente, a leitura preserva o texto completo.',
     },
   ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.123',
+  date: '2026-09-28',
+  codename: 'Helpers variados de novo',
+  summary:
+    'Helpers no Windows recebem o brief inteiro em qualquer caso, e quando o ' +
+    'orquestrador fixa a mesma CLI para vários helpers o recibo sugere deixar ' +
+    'o Jev distribuir o trabalho. Inclui a 0.76.122 (Sonnet 5.5 e Jev com medição).',
+  highlights: [
+    {
+      title: 'Aviso de diversidade no spawn',
+      detail:
+        'Depois de uma falha já corrigida, o orquestrador passava a fixar Claude ' +
+        'em todo helper e o Jev nunca mais roteava. A escolha explícita continua ' +
+        'valendo, mas com dois ou mais helpers vivos na mesma CLI o recibo diz ' +
+        'para omitir adapterId e deixar o Nexus rotear.',
+    },
+    {
+      title: 'Brief inteiro no Windows, sem exceção',
+      detail:
+        'O Nexus mede a linha de comando final (executável, flags, config e ' +
+        'brief) e, se a CLI ainda cairia num atalho .cmd ou a linha passaria do ' +
+        'limite do Windows, entrega o brief colado depois do boot.',
+    },
+  ],
+  fixes: [],
 };
