@@ -888,3 +888,6 @@ saber isto antes de mexer:
   acima de `WINDOWS_NATIVE_PROMPT_MAX_CHARS` (20K) não vai no argv —
   `nativeArgvPromptFits` decide no pty-manager, no tool-util e na Via Rápida,
   que colam o brief depois do boot.
+- F-672: escolha explícita de CLI no `nexus_pane_spawn` é respeitada, mas o
+  recibo traz `diversity` quando a CLI já tem 2+ helpers vivos na missão
+  (`sameAdapterDiversityHint`): omitir `adapterId`/`model` devolve a rota ao Jev.
