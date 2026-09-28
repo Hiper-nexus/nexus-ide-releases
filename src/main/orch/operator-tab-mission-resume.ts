@@ -11,6 +11,13 @@ import type { Mission, MissionPaneSpec, SquadAgent } from '../../shared/orch-typ
  * Retomar a missão da aba é retomar a CONVERSA de quem a liderava.
  */
 
+/** Missão leve da aba: sem squad, liderada pelo pane que o operador abriu. */
+export function isOperatorTabMission(
+  mission: Pick<Mission, 'squadId' | 'intentContract'>,
+): boolean {
+  return !mission.squadId && Boolean(mission.intentContract?.workspaceBinding?.adoptedPaneId);
+}
+
 /** Nota colada na conversa retomada quando o operador não mandou ajuste. */
 export const OPERATOR_TAB_RESUME_NOTE =
   '[Nexus] Esta conversa foi retomada como orquestrador da missão da aba ' +
@@ -27,8 +34,7 @@ export function operatorTabMissionResumeSpec(
   mission: Pick<Mission, 'squadId' | 'intentContract'>,
   specs: readonly MissionPaneSpec[],
 ): MissionPaneSpec | null {
-  if (mission.squadId) return null;
-  if (!mission.intentContract?.workspaceBinding?.adoptedPaneId) return null;
+  if (!isOperatorTabMission(mission)) return null;
   const orchestrators = specs.filter(
     (spec) => spec.role === 'orchestrator' && Boolean(spec.paneId) && Boolean(spec.adapterId),
   );

@@ -28,7 +28,10 @@ import {
   readSessionOutput,
   waitForIdle,
 } from './pane-registry';
-import { liveMissionAdapterIds } from './operator-spawn-route';
+import { adapterIdsWithoutNexusMcp, liveMissionAdapterIds } from './operator-spawn-route';
+import { isOperatorTabMission } from './operator-tab-mission-resume';
+import { listAdapters } from '../adapters/adapter-registry';
+import { canUseNexusMcp } from './cli-mcp-inject';
 import {
   adoptUserAgentSessionAsMissionOrchestrator,
   returnAdoptedAgentSessionToUser,
@@ -1549,6 +1552,15 @@ export async function routeTaskForCaller(
     ...strArray(args, 'exclude'),
     ...(internal.excludeAdapterIds ?? []),
   ]);
+  // F-662: a missão da aba (sem squad, nascida do "+ Pane") segue a regra da
+  // mão do operador para QUALQUER pane que pergunte, inclusive o orquestrador
+  // retomado (F-661), que já não é `promotedFromUserSession`: helper só em CLI
+  // com MCP do Nexus. Sem isso a rota devolvia o AGY, mudo no `--print`.
+  if (mission && isOperatorTabMission(mission)) {
+    for (const id of adapterIdsWithoutNexusMcp(listAdapters(), canUseNexusMcp)) {
+      excluded.add(id);
+    }
+  }
   // 'shell' não é um provider roteável (sem modelos avaliados); incluí-lo
   // mantinha o gate de cobertura do task-router sempre falso, matando a
   // avaliação por dimensão. Alinha com o filtro id!=='shell' do architect.

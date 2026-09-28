@@ -1935,6 +1935,38 @@ describe("AGY advisory native profile", () => {
       const spec = host.specFor(sessionId);
       expect(spec.args).not.toContain("--prompt-interactive");
       expect(spec.args).not.toContain("must not reach argv");
+      // Orquestrador AGY cola o briefing: continua lendo o terminal.
+      expect(getAgentSessionInfo(sessionId)?.oneShot).toBeUndefined();
+    } finally {
+      if (sessionId) await orchTerminateSession(sessionId);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("marca o worker AGY no --print como one-shot (F-662)", async () => {
+    // O pane_ask/pane_write leem esta marca: pergunta a um one-shot nunca é
+    // respondida e esperar o prazo inteiro parecia infraestrutura quebrada.
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-agy-oneshot-"));
+    const worktree = path.join(root, "worktree");
+    fs.mkdirSync(worktree);
+    const baseAuthority = revisionBoundWorker(fs.realpathSync.native(worktree));
+    const authority: BoundSpawnAuthority = {
+      ...baseAuthority,
+      context: { ...baseAuthority.context!, initialPrompt: "Revise e entregue." },
+    };
+    const host = fakeHost();
+    setPtyHost(host.host);
+    let sessionId: string | null = null;
+    try {
+      ({ sessionId } = spawnMainOwnedAgentSession(
+        { kind: "cli-agent", paneId: "agy-oneshot-worker", cols: 100, rows: 30 },
+        builtinCliPtyAdapter("agy"),
+        {},
+        authority,
+      ));
+      expect(host.specFor(sessionId).args).toContain("--print");
+      expect(getAgentSessionInfo(sessionId)).toMatchObject({ adapterId: "agy", oneShot: true });
     } finally {
       if (sessionId) await orchTerminateSession(sessionId);
       fs.rmSync(root, { recursive: true, force: true });
