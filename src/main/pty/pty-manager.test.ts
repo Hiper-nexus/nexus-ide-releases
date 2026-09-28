@@ -221,6 +221,7 @@ import {
   recoverSessionOutput,
   setPtyHost,
   setAgentSpawnHook,
+  setDeferredInitialPromptHook,
   setResumeSessionLookup,
   setSessionDictationHook,
   setSquadCliPolicyLookupForTests,
@@ -1711,6 +1712,87 @@ describe("AGY advisory native profile", () => {
         expect(spec.args.join(" ").length).toBeLessThan(32_767);
         expect(spec.args).not.toContain(brief);
       } finally {
+        if (sessionId) await orchTerminateSession(sessionId);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  (process.platform === "win32" ? it : it.skip)(
+    "F-670: launcher .cmd não verificado nunca leva o brief — ele é colado depois do boot",
+    async () => {
+      setSquadCliPolicyLookupForTests(() => "operator-choice");
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-cmd-deferred-"));
+      const worktree = path.join(root, "worktree");
+      fs.mkdirSync(worktree);
+      const host = fakeHost();
+      setPtyHost(host.host);
+      const base = revisionBoundWorker(fs.realpathSync.native(worktree));
+      const brief = "## Nexus execution authority\nexecutionMode=same_checkout\nUse %PATH% com cuidado.";
+      const authority: BoundSpawnAuthority = {
+        ...base,
+        context: { ...base.context!, initialPrompt: brief },
+      };
+      const deferred: Array<{ sessionId: string; prompt: string; reason: string }> = [];
+      setDeferredInitialPromptHook((info) => deferred.push(info));
+      npmShimSpawn.launch = null;
+      let sessionId: string | null = null;
+      try {
+        ({ sessionId } = spawnMainOwnedAgentSession(
+          { kind: "cli-agent", paneId: "claude-cmd-deferred", cols: 100, rows: 30 },
+          builtinCliPtyAdapter("claude"),
+          { binPath: "/mock/bin/claude.cmd" },
+          authority,
+        ));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const spec = host.specFor(sessionId);
+        expect(spec.file).toBe("/mock/bin/claude.cmd");
+        expect(spec.args).not.toContain(brief);
+        expect(deferred).toEqual([
+          { sessionId, adapterId: "claude", prompt: brief, reason: "batch-launcher" },
+        ]);
+      } finally {
+        setDeferredInitialPromptHook(null);
+        if (sessionId) await orchTerminateSession(sessionId);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  (process.platform === "win32" ? it : it.skip)(
+    "F-671: linha de comando inteira acima do limite tira o brief do argv",
+    async () => {
+      setSquadCliPolicyLookupForTests(() => "operator-choice");
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-long-line-"));
+      const worktree = path.join(root, "worktree");
+      fs.mkdirSync(worktree);
+      const host = fakeHost();
+      setPtyHost(host.host);
+      const base = revisionBoundWorker(fs.realpathSync.native(worktree));
+      // Abaixo dos 20K do brief, mas com a config extra a linha passa de 32K.
+      const brief = "## Nexus execution authority\n" + "a".repeat(19_000);
+      const authority: BoundSpawnAuthority = {
+        ...base,
+        context: { ...base.context!, initialPrompt: brief },
+      };
+      const deferred: Array<{ reason: string }> = [];
+      setDeferredInitialPromptHook((info) => deferred.push(info));
+      npmShimSpawn.launch = { file: "/mock/pkg/claude.exe", argsPrefix: [] };
+      let sessionId: string | null = null;
+      try {
+        ({ sessionId } = spawnMainOwnedAgentSession(
+          { kind: "cli-agent", paneId: "claude-long-line", cols: 100, rows: 30 },
+          builtinCliPtyAdapter("claude"),
+          { extraArgs: ["--append-system-prompt", "b".repeat(14_000)] },
+          authority,
+        ));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const spec = host.specFor(sessionId);
+        expect(spec.args).not.toContain(brief);
+        expect(deferred.map((entry) => entry.reason)).toEqual(["command-line-too-long"]);
+      } finally {
+        npmShimSpawn.launch = null;
+        setDeferredInitialPromptHook(null);
         if (sessionId) await orchTerminateSession(sessionId);
         fs.rmSync(root, { recursive: true, force: true });
       }

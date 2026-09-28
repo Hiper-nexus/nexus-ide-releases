@@ -78,6 +78,7 @@ import {
   resolveWindowsCodexNpmShimLaunch,
 } from "../path-resolver";
 import { windowsNpmShimSpawn } from "../adapters/windows-npm-shim";
+import { windowsArgvPromptPlacement } from "./windows-command-line";
 import {
   isBuiltinAdapter,
   resolveAdapterBinary,
@@ -560,6 +561,26 @@ export interface DictatedSessionInfo {
 }
 
 export type SessionDictationHook = (info: DictatedSessionInfo) => void;
+
+/**
+ * F-670/F-671: brief que saiu do argv do Windows (launcher .cmd/.bat ou linha
+ * de comando longa demais) e precisa ser entregue depois do boot. O
+ * orquestrador liga isto à colagem com prova de turno (`deliverAgentPrompt`).
+ */
+export type DeferredInitialPromptHook = (info: {
+  readonly sessionId: string;
+  readonly adapterId: string;
+  readonly prompt: string;
+  readonly reason: "batch-launcher" | "command-line-too-long";
+}) => void;
+
+let deferredInitialPromptHook: DeferredInitialPromptHook | null = null;
+
+export function setDeferredInitialPromptHook(
+  hook: DeferredInitialPromptHook | null,
+): void {
+  deferredInitialPromptHook = hook;
+}
 
 let sessionDictationHook: SessionDictationHook | null = null;
 
@@ -2388,6 +2409,33 @@ export function spawnAgentSession(
     }
   }
 
+  // F-670/F-671: com executável e argv FINAIS, o brief só fica no argv do
+  // Windows se a linha for segura — nunca por um .cmd/.bat (o cmd.exe corta na
+  // quebra de linha e expande %VAR%) e nunca acima do limite do CreateProcess.
+  // Fora disso ele sai do argv e é colado depois do boot pelo orquestrador.
+  let deferredInitialPrompt:
+    | { readonly prompt: string; readonly reason: "batch-launcher" | "command-line-too-long" }
+    | undefined;
+  if (process.platform === "win32" && safeNativeInitialPrompt !== undefined) {
+    const placement = windowsArgvPromptPlacement({
+      file: spawnFile,
+      args: spawnArgs,
+      prompt: safeNativeInitialPrompt,
+      channel: promptChannel,
+    });
+    if (placement.defer) {
+      if (promptChannel.kind === "oneshot" || !deferredInitialPromptHook) {
+        decoration?.onSpawnFailed?.();
+        throw new Error(
+          `${adapter.label}: o brief não cabe na linha de comando do Windows ` +
+            `(${placement.reason}) e este canal não aceita colagem depois do boot`,
+        );
+      }
+      spawnArgs = placement.args;
+      deferredInitialPrompt = { prompt: safeNativeInitialPrompt, reason: placement.reason };
+    }
+  }
+
   const idleMs =
     adapter.stateParsing.idle.type === "timeout"
       ? adapter.stateParsing.idle.ms
@@ -2588,6 +2636,17 @@ export function spawnAgentSession(
   }
   emitStateChange(wc, sessionId, "spawning");
   decoration?.onSpawned?.(sessionId);
+  if (deferredInitialPrompt && deferredInitialPromptHook) {
+    const hook = deferredInitialPromptHook;
+    const deferred = deferredInitialPrompt;
+    queueMicrotask(() => {
+      try {
+        hook({ sessionId, adapterId: adapter.id, ...deferred });
+      } catch (error) {
+        console.warn("[pty] entrega adiada do brief falhou ao agendar:", error);
+      }
+    });
+  }
   if (sessionDictationHook) {
     try {
       sessionDictationHook({

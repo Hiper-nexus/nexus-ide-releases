@@ -16,6 +16,7 @@ import {
   getSessionState,
   orchWriteSession,
   setAgentSpawnHook,
+  setDeferredInitialPromptHook,
   tapSessionData,
   tapSessionExit,
   tapSessionState,
@@ -24,6 +25,7 @@ import {
   type AgentSpawnHook,
 } from "../pty/pty-manager";
 import { FirstRunInterstitialResponder } from "../pty/first-run-interstitial";
+import { deliverAgentPrompt } from "./tool-util";
 import {
   revalidateSealedAttachmentSnapshots,
   workspaceRootAuthorityFromScope,
@@ -1634,6 +1636,17 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
 /** Wire per-agent spawn decoration: gate tokens, MCP config and skill mirrors. */
 function installSpawnHook(): void {
   setAgentSpawnHook(prepareAgentSpawnDecoration);
+  // F-670/F-671: brief que não pôde ir no argv do Windows é colado depois do
+  // boot com a mesma prova de turno das colagens do orquestrador.
+  setDeferredInitialPromptHook(({ sessionId, adapterId, prompt, reason }) => {
+    console.info(`[pty] brief fora do argv do Windows (${reason}); colando após o boot em ${sessionId}`);
+    void deliverAgentPrompt(sessionId, prompt, undefined, { adapterId }).catch((error) => {
+      console.warn(
+        '[pty] colagem do brief adiado falhou:',
+        error instanceof Error ? error.message : error,
+      );
+    });
+  });
 }
 
 /** Legacy `### NEXUS_HANDOFF v1` stream fallback (ARCHITECTURE §E.3). */
@@ -2043,6 +2056,7 @@ export function startMcpServer(): Promise<void> {
 
 export function stopMcpServer(): void {
   setAgentSpawnHook(null);
+  setDeferredInitialPromptHook(null);
   legacyParserTaps.dispose();
   disposeTerminationRevocation?.();
   disposeTerminationRevocation = null;
