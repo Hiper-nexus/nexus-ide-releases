@@ -820,6 +820,18 @@ saber isto antes de mexer:
   mudo no `--print` até terminar. Rota nova de spawn: repasse as duas coisas.
 - Primeiro uso do AGY pode mostrar esquema de cores e Termos antes do composer.
   Consentimento sobre Termos cabe ao operador; nunca marcar aceite por ele.
+- F-662: a regra "helper só em CLI com MCP do Nexus" vale para a MISSÃO da
+  aba (`isOperatorTabMission`), não para quem pergunta: o orquestrador retomado
+  não é `promotedFromUserSession` e o `nexus_route_task` direto não passava
+  pelo auto-route do spawn. Pane one-shot (`OwnedAgentSessionInfo.oneShot`,
+  AGY `--print`/OpenCode `run`) não lê o terminal: `nexus_pane_ask` responde
+  `state: 'oneshot'` sem digitar nada e `nexus_pane_write` avisa no recibo.
+- Codex no Windows ≥ 0.157 lança `codex-code-mode-host.exe` a partir do
+  próprio pacote npm. No prefixo do Node do WinGet o caminho passa de 260
+  caracteres e toda ferramenta do Codex falha com `failed to spawn code-mode
+  host … (os error 3)` — dentro e fora do Nexus (o `logs_2.sqlite` do
+  provider-state mostra). Não é bug do pane: instale o Codex num prefixo curto
+  (`npm i -g --prefix %USERPROFILE%\.local\bin @openai/codex`).
 
 ## Windows: o encerramento do PTY precisa se provar (F-659/F-660/F-661)
 
