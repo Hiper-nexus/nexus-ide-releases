@@ -891,3 +891,8 @@ saber isto antes de mexer:
 - F-672: escolha explícita de CLI no `nexus_pane_spawn` é respeitada, mas o
   recibo traz `diversity` quando a CLI já tem 2+ helpers vivos na missão
   (`sameAdapterDiversityHint`): omitir `adapterId`/`model` devolve a rota ao Jev.
+- F-670/F-671: a decisão final do brief no argv do Windows é do pty-manager,
+  que conhece executável e argv finais: `.cmd`/`.bat` ou linha acima de 32.000
+  (`windowsArgvPromptPlacement`, aspas do MSVCRT) tiram o brief do argv e o
+  gancho `setDeferredInitialPromptHook` (mcp-server → `deliverAgentPrompt`) cola
+  depois do boot. Canal one-shot recusa com erro claro.
