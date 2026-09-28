@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Group, Panel, Separator } from 'react-resizable-panels';
 import { CanvasView } from '../CanvasView';
 import { PaneGrid } from '../PaneGrid';
+import { MissionTerminalRecovery } from './MissionTerminalRecovery';
 import { useLayoutStore } from '../../state/layout-store';
 import { useOrchStore } from '../../state/orch-store';
 import { listPanes } from '../../lib/split-tree';
@@ -127,10 +128,9 @@ export function TerminalWorkspace({
   // em missão já concluída/falha. Done SEM carimbo do humano é revisão, não
   // Pronto: senão o header dos Terminais declara encerrado o canal que ainda
   // precisa ficar aberto (F-108).
-  const missionState = useOrchStore((state) =>
+  const missionSummary = useOrchStore((state) =>
     missionId
-      ? (state.missionSummaries.find((m) => m.id === missionId)?.state ??
-        null)
+      ? (state.missionSummaries.find((m) => m.id === missionId) ?? null)
       : null,
   );
   const missionSpaceId = useOrchStore((state) => missionId
@@ -141,8 +141,8 @@ export function TerminalWorkspace({
     const mission = state.missions.find((item) => item.id === missionId);
     return mission ? missionAwaitsOperatorReview(mission) : false;
   });
-  const contextLabel = missionState
-    ? `Missão · ${missionLifecycleLabel(missionState, false, undefined, awaitsReview)}`
+  const contextLabel = missionSummary
+    ? `Missão · ${missionLifecycleLabel(missionSummary.state, false, missionSummary.stateReason?.code, awaitsReview)}`
     : 'Missão';
   const focusedPaneId = useLayoutStore((state) => state.focusedPaneId);
   const renamePaneSpace = useLayoutStore((state) => state.renamePaneSpace);
@@ -576,7 +576,14 @@ export function TerminalWorkspace({
       )}
 
       <div className="terminal-workspace__surface">
-        {viewKind === 'canvas' ? (
+        {inMission && visiblePaneIds?.size === 0 ? (
+          <PaneGrid
+            visiblePaneIds={visiblePaneIds}
+            emptyState={
+              <MissionTerminalRecovery key={missionId} missionId={missionId} />
+            }
+          />
+        ) : viewKind === 'canvas' ? (
           <CanvasView
             visiblePaneIds={visiblePaneIds}
             onPaneCreated={handlePaneCreated}

@@ -42,8 +42,10 @@ export function PaneGrid({
   visiblePaneIds,
   onPaneCreated,
   primary = true,
+  emptyState,
 }: {
   readonly visiblePaneIds?: ReadonlySet<string>;
+  readonly emptyState?: React.ReactNode;
   /** Repassado ao picker: o id do pane que o operador acabou de criar. */
   readonly onPaneCreated?: (paneId: string) => void;
   /**
@@ -121,16 +123,18 @@ export function PaneGrid({
         className="grid grid--mission-empty"
         aria-label="Nenhum terminal desta missão"
       >
-        <EmptyState
-          icon="terminal"
-          title="Nenhum terminal visível"
-          body={
-            <p>
-              Esta missão ainda não tem um terminal aberto. Volte ao quadro ou
-              abra um pane para começar.
-            </p>
-          }
-        />
+        {emptyState ?? (
+          <EmptyState
+            icon="terminal"
+            title="Nenhum terminal visível"
+            body={
+              <p>
+                Esta missão ainda não tem um terminal aberto. Volte ao quadro ou
+                abra um pane para começar.
+              </p>
+            }
+          />
+        )}
       </div>
     );
   }

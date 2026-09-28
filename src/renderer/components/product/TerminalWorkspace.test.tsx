@@ -290,7 +290,25 @@ describe('TerminalWorkspace contracts', () => {
     );
 
     expect(host.querySelector('.grid--mission-empty')).not.toBeNull();
-    expect(host.textContent).toContain('Nenhum terminal visível');
+    expect(host.textContent).toContain('Terminal da missão fechado');
+    expect(host.textContent).toContain('Abrir Quadro');
+  });
+
+  it.each(['grid', 'canvas'] as const)('missão dormindo tem rótulo e retomada coerentes em %s', (viewKind) => {
+    seedLayout(viewKind);
+    useOrchStore.setState({
+      missions: [{ id: 'sleeping', title: 'Feature', status: 'blocked', intentState: 'blocked_user',
+        description: '<!-- nexus:leftover-parked -->', milestones: [], learnings: '', createdAt: 1, updatedAt: 2 }],
+      missionSummaries: [{ id: 'sleeping', title: 'Feature', state: 'blocked_user',
+        stateReason: { code: 'session-sleeping', label: 'Dormindo' },
+        progress: { completed: 0, total: 1 }, needsAttention: false, updatedAt: 2 }],
+    });
+    const { host } = mount(<TerminalWorkspace missionId="sleeping" />);
+    expect(host.querySelector('.product-workspace__context')?.textContent).toBe('Missão · Dormindo');
+    expect(host.textContent).toContain('Retomar missão');
+    expect(host.textContent).not.toContain('Precisa de você');
+    expect(ptySpawn).not.toHaveBeenCalled();
+    expect(terminalRuntime.reconcileHosts).toHaveBeenCalled();
   });
 
   it('Terminais da missão mostra só os panes dela, não o mosaico das 15', () => {
