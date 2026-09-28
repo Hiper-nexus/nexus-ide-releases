@@ -850,3 +850,19 @@ saber isto antes de mexer:
   orquestrador da composição e o respawn usa `resume: true` +
   `resumeFromPaneId` com a CLI, o modelo e a conta desse pane. Não volte a
   subir o Maestro do squad padrão para ela: vira um Claude vazio.
+
+## Remoção recursiva nunca segue link (F-663)
+
+- O `fs.rm`/`fs.rmSync` recursivo do Node 24 (Electron 43) ATRAVESSA junctions
+  no Windows e apaga o conteúdo do alvo. O Node 22 do terminal e do vitest não
+  faz isso — teste que só confere "o alvo sobreviveu" passa no código errado.
+- Overlays de pane ligam por junction as conversas do provider-state, perfis
+  de CLI e a identidade do operador. Toda remoção recursiva no Main usa
+  `removeTreeSync`/`removeTree` (`src/main/util/remove-tree.ts`): tira cada
+  link da árvore primeiro e só então apaga o resto. Não chame `fs.rmSync(…,
+  { recursive: true })` direto em código novo.
+- Para provar um caso real no runtime do app:
+  `ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe script.js`.
+- F-664: a retomada da missão da aba move a linha do orquestrador para o pane
+  novo (`moveOrchestratorPane`) — `missionPanes.record` deduplica pela
+  identidade e nunca troca `pane_id`.
