@@ -35,7 +35,7 @@ Também foi removida duplicação real: dois truncadores UTF-8 da memória foram
 - Gate em duas raízes: modelo atestado apenas no coordenador passa seus testes à worktree; falha do teste aparece como invariante violado. Outro projeto não herda; remover o modelo invalida a seleção/cache anterior.
 - Memória: segunda tarefa, fato atualizado, tag citada, preâmbulo same_checkout/isolated_worktree, símbolos tardios e recibo sem resumo têm regressões dedicadas.
 - Bateria abrangente de 31 suítes: 485 testes passaram. Baterias adicionais de retomada (19), modelo/portão (107), contexto do modelo (33) e memória/isolamento (51) passaram. Há sobreposição; não somar como testes únicos.
-- Typecheck e security:renderer-sinks passaram (0 sinks). Revisão CodeRabbit final registrada ao concluir a rodada.
+- Typecheck e security:renderer-sinks passaram (0 sinks). CodeRabbit apontou três ajustes (identidade no cache, preservação da linha de testes no resumo e continuação após fonte grande); foram corrigidos e testados. A revisão final dos commits, base 83e0acf0, terminou com zero achados.
 
 ## Delegação nesta sessão
 
@@ -49,3 +49,5 @@ O diagnóstico do GLM sugeriu remover o marcador awaiting-adjustment em qualquer
 - Portões indisponíveis ou sem testes não ganham um verde fictício; o comportamento fail-soft e o limite de retentativas existentes permanecem. Não foi acrescentado modal nem nova barreira de despacho.
 - Este repo tem `.context/docs/business-model.md` com cabeçalho Product e sem o marcador estruturado `nexus:business-model:v1`. Esse documento não é um modelo atestado consumível pelo portão. Foi preservado; a correção não transforma texto manual em autoridade nem inventa invariantes. Os testes de modelo usam fixtures explicitamente atestadas.
 - Não houve release, instalação ou reinício do app do operador. A melhoria de lentidão F-209 permanece no checkout, preservada da rodada anterior.
+
+Commits: F-176 `81925ed1`; F-177 `21590d84`; F-178 `cae2a23b`; F-179 `86950141`; F-180 `d3bec04e`; F-181 `e8da56de`; F-182 `c7575165`; F-183 `b00ad82a`; refinamentos de engenharia/reuso `46c7dc16`.
