@@ -343,6 +343,7 @@ export function selectCliUpdateRecipe(input: {
   readonly windowsLocalAppData?: string;
   readonly installationDistribution?: string | null;
   readonly isRunnerResolvable: (runner: string) => boolean;
+  readonly resolveRealPath?: (filePath: string) => string | null;
 }): InstallRecipeSelection | null {
   const realPath = input.realBinPath.replaceAll('\\', '/');
   const binPath = input.binPath.replaceAll('\\', '/');
@@ -397,7 +398,12 @@ export function selectCliUpdateRecipe(input: {
   if (input.adapterId === 'kimi' && /\/\.kimi-code\/bin\/kimi$/u.test(realPath)) {
     return selfUpdate(['upgrade', '--yes']);
   }
-  if (input.adapterId === 'grok' && /\/\.grok\/bin\/grok(?:-[^/]+)?$/u.test(realPath)) {
+  const home = input.userHome?.replaceAll('\\', '/').replace(/\/$/u, '');
+  if (input.adapterId === 'grok' && (
+    /\/\.grok\/bin\/grok(?:-[^/]+)?$/u.test(realPath) ||
+    (home && binPath === `${home}/.grok/bin/grok` &&
+      realPath.startsWith(`${home}/.grok/downloads/grok-`))
+  )) {
     return selfUpdate(['update']);
   }
   if (input.adapterId === 'minimax-code') {
@@ -442,9 +448,12 @@ export function selectCliUpdateRecipe(input: {
         const expectedBinDir = input.platform === 'win32' ? prefix : `${prefix}/bin`;
         const binPath = input.binPath.replaceAll('\\', '/');
         const actualBinDir = binPath.slice(0, binPath.lastIndexOf('/'));
-        if (input.platform === 'win32'
+        const isOutsideNpmBin = input.platform === 'win32'
           ? actualBinDir.toLowerCase() !== expectedBinDir.toLowerCase()
-          : actualBinDir !== expectedBinDir) continue;
+          : actualBinDir !== expectedBinDir;
+        if (isOutsideNpmBin && (input.platform === 'win32' ||
+          input.resolveRealPath?.(`${expectedBinDir}/${binPath.slice(binPath.lastIndexOf('/') + 1)}`)
+            !== input.realBinPath)) continue;
         const recipe = {
           ...candidate,
           argv: ['npm', 'install', '-g', '--prefix', prefix, target],

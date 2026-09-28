@@ -237,6 +237,48 @@ describe('updating the CLI that Nexus launches', () => {
     });
   });
 
+  it('updates the npm owner when Codex is launched through an external symlink', () => {
+    const realBinPath = '/Users/operator/.hermes/node/lib/node_modules/@openai/codex/bin/codex.js';
+    const selected = selectCliUpdateRecipe({
+      adapterId: 'codex',
+      platform: 'darwin',
+      binPath: '/Users/operator/.local/bin/codex',
+      realBinPath,
+      resolveRealPath: (candidate) => candidate === '/Users/operator/.hermes/node/bin/codex'
+        ? realBinPath : null,
+      isRunnerResolvable: () => true,
+    });
+    expect(selected).toMatchObject({
+      ok: true,
+      recipe: { argv: ['npm', 'install', '-g', '--prefix', '/Users/operator/.hermes/node', '@openai/codex'] },
+    });
+  });
+
+  it('rejects an external launcher when the npm prefix owns a different binary', () => {
+    expect(selectCliUpdateRecipe({
+      adapterId: 'codex',
+      platform: 'darwin',
+      binPath: '/Users/operator/.local/bin/codex',
+      realBinPath: '/Users/operator/.hermes/node/lib/node_modules/@openai/codex/bin/codex.js',
+      resolveRealPath: () => '/other/codex.js',
+      isRunnerResolvable: () => true,
+    })).toBeNull();
+  });
+
+  it('updates a native Grok launcher whose real binary lives under downloads', () => {
+    expect(selectCliUpdateRecipe({
+      adapterId: 'grok',
+      platform: 'darwin',
+      binPath: '/Users/operator/.grok/bin/grok',
+      realBinPath: '/Users/operator/.grok/downloads/grok-1.0.43-macos-aarch64',
+      userHome: '/Users/operator',
+      isRunnerResolvable: () => true,
+    })).toMatchObject({
+      ok: true,
+      recipe: { argv: ['/Users/operator/.grok/bin/grok', 'update'] },
+    });
+  });
+
   it('keeps the owning npm prefix for a Windows Codex shim', () => {
     const selected = selectCliUpdateRecipe({
       adapterId: 'codex',

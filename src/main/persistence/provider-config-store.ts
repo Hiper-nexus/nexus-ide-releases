@@ -1535,6 +1535,11 @@ type AutomaticCliCandidate = {
   readonly prepared: ArgvInstallInvocation;
 };
 
+function resolveCliRealPath(filePath: string): string | null {
+  try { return fs.realpathSync(filePath); }
+  catch { return null; }
+}
+
 function automaticCliCandidate(adapterId: string): AutomaticCliCandidate | null {
   const adapter = getAdapter(adapterId);
   if (!adapter || adapter.kind !== 'cli-pty' || !isBuiltinAdapter(adapterId) ||
@@ -1550,6 +1555,7 @@ function automaticCliCandidate(adapterId: string): AutomaticCliCandidate | null 
     userHome: realUserHome(), windowsLocalAppData: process.env.LOCALAPPDATA,
     installationDistribution: adapterId === 'devin' ? installedDevinDistribution(realBinPath) : null,
     isRunnerResolvable: (runner) => resolveRunnerPath(runner) !== null,
+    resolveRealPath: resolveCliRealPath,
     isTargetWritable: (target) => {
       try { fs.accessSync(path.dirname(target), fs.constants.W_OK); return true; }
       catch { return false; }
@@ -2252,6 +2258,7 @@ export function registerProviderIpc(): void {
             ? installedDevinDistribution(realBinPath)
             : null,
           isRunnerResolvable: (runner) => resolveRunnerPath(runner) !== null,
+          resolveRealPath: resolveCliRealPath,
         })
       : selectInstallRecipe(
           cliInstallRecipeCandidates(adapter.id),
