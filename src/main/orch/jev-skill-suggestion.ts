@@ -11,6 +11,8 @@ import {
   capText,
   judge,
   USD_PER_INPUT_TOKEN,
+  type JevAnswer,
+  type JevQuestion,
 } from '../jev/jev-client';
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
 import { hasJevCredential } from '../jev/jev-secrets';
@@ -130,6 +132,81 @@ export interface SkillSuggestionDeps {
   record?: typeof recordJevDecision;
 }
 
+export interface SkillSuggestionPick {
+  name: string;
+  pkg: string;
+  confidence: number;
+}
+
+/**
+ * Catálogo das skills bundled filtrado pelos grants do chamador.
+ * Grants são por PACOTE no skill-mirror (ex.: `superpowers`) enquanto as
+ * entradas do catálogo são sub-skills (`brainstorming`): vale pkg OU name.
+ * `null` = sem restrição (catálogo inteiro).
+ */
+export function allowedSkillCatalog(
+  allowedSkills: string[] | null,
+  manifests?: Record<string, Record<string, SkillAsset>>,
+): BundledSkillCatalogEntry[] {
+  const allowed =
+    allowedSkills === null
+      ? null
+      : new Set(allowedSkills.map((s) => s.trim().toLocaleLowerCase()));
+  return listBundledSkillCatalog(manifests).filter(
+    (entry) =>
+      !allowed ||
+      allowed.has(entry.name.toLocaleLowerCase()) ||
+      allowed.has(entry.pkg.toLocaleLowerCase()),
+  );
+}
+
+/**
+ * Pergunta `choice` da skill (builder reutilizável): mesmos critérios do
+ * caminho standalone — cap de CRITERIA_SKILLS_MAX entradas + opção `none`.
+ */
+export function buildSkillSuggestionQuestion(
+  catalog: BundledSkillCatalogEntry[],
+): JevQuestion {
+  const criteria: Record<string, string | null> = {};
+  for (const entry of catalog.slice(0, CRITERIA_SKILLS_MAX)) {
+    criteria[entry.name] = entry.description || entry.name;
+  }
+  criteria['none'] = 'nenhuma skill é claramente útil';
+  return {
+    type: 'choice',
+    instructions:
+      'Qual skill instalada ajuda mais nesta tarefa? Escolha none se ' +
+      'nenhuma for claramente útil.',
+    criteria,
+  };
+}
+
+/**
+ * Parser da resposta `skill` (fail-open): `none`, confiança baixa ou escolha
+ * fora do catálogo elegível → null. Devolve o pick com o pkg do catálogo.
+ */
+export function parseSkillSuggestion(
+  answers: Record<string, JevAnswer>,
+  catalog: BundledSkillCatalogEntry[],
+): SkillSuggestionPick | null {
+  const answer = answers['skill'];
+  if (answer?.type !== 'choice') return null;
+  const eligible = catalog.slice(0, CRITERIA_SKILLS_MAX);
+  if (
+    answer.choice === 'none' ||
+    answer.confidence < SKILL_SUGGESTION_MIN_CONFIDENCE ||
+    !eligible.some((entry) => entry.name === answer.choice)
+  ) {
+    return null;
+  }
+  const picked = eligible.find((entry) => entry.name === answer.choice);
+  return {
+    name: answer.choice,
+    pkg: picked?.pkg ?? '',
+    confidence: answer.confidence,
+  };
+}
+
 export async function suggestSkillForTask(
   task: string,
   opts: {
@@ -138,60 +215,28 @@ export async function suggestSkillForTask(
     missionId?: string;
     deps?: SkillSuggestionDeps;
   },
-): Promise<{ name: string; pkg: string; confidence: number } | null> {
+): Promise<SkillSuggestionPick | null> {
   const enabled = opts.deps?.enabled ?? (() => isJevSurfaceEnabled('taskRouting'));
   const hasKey = opts.deps?.hasKey ?? hasJevCredential;
   const judgeFn = opts.deps?.judge ?? judge;
   const record = opts.deps?.record ?? recordJevDecision;
   if (!task.trim() || !enabled() || !hasKey()) return null;
 
-  // Grants são por PACOTE no skill-mirror (ex.: `superpowers`) enquanto as
-  // entradas do catálogo são sub-skills (`brainstorming`): vale pkg OU name.
-  const allowed =
-    opts.allowedSkills === null
-      ? null
-      : new Set(opts.allowedSkills.map((s) => s.trim().toLocaleLowerCase()));
-  const catalog = listBundledSkillCatalog().filter(
-    (entry) =>
-      !allowed ||
-      allowed.has(entry.name.toLocaleLowerCase()) ||
-      allowed.has(entry.pkg.toLocaleLowerCase()),
-  );
+  const catalog = allowedSkillCatalog(opts.allowedSkills);
   if (catalog.length === 0) return null;
-
-  const criteria: Record<string, string | null> = {};
-  for (const entry of catalog.slice(0, CRITERIA_SKILLS_MAX)) {
-    criteria[entry.name] = entry.description || entry.name;
-  }
-  criteria['none'] = 'nenhuma skill é claramente útil';
 
   try {
     const result = await judgeFn({
       state: { task: capText(task, TASK_MAX_CHARS) },
-      questions: {
-        skill: {
-          type: 'choice',
-          instructions:
-            'Qual skill instalada ajuda mais nesta tarefa? Escolha none se ' +
-            'nenhuma for claramente útil.',
-          criteria,
-        },
-      },
+      questions: { skill: buildSkillSuggestionQuestion(catalog) },
       timeoutMs: SKILL_SUGGESTION_TIMEOUT_MS,
       surface: 'taskRouting',
       sessionId: opts.sessionId,
       missionId: opts.missionId,
     });
     if (!result) return null;
-    const answer = result.answers['skill'];
-    if (
-      answer?.type !== 'choice' ||
-      answer.choice === 'none' ||
-      answer.confidence < SKILL_SUGGESTION_MIN_CONFIDENCE ||
-      !(answer.choice in criteria)
-    ) {
-      return null;
-    }
+    const picked = parseSkillSuggestion(result.answers, catalog);
+    if (!picked) return null;
     record({
       surface: 'taskRouting',
       sessionId: opts.sessionId,
@@ -200,16 +245,11 @@ export async function suggestSkillForTask(
       questions: ['skill'],
       probabilities: jevAnswerProbabilities(result.answers),
       confidence: jevAnswerConfidences(result.answers),
-      decision: `skill:${answer.choice}`,
+      decision: `skill:${picked.name}`,
       inputTokens: result.usage.input_tokens,
       usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
     });
-    const picked = catalog.find((entry) => entry.name === answer.choice);
-    return {
-      name: answer.choice,
-      pkg: picked?.pkg ?? '',
-      confidence: answer.confidence,
-    };
+    return picked;
   } catch {
     return null;
   }
