@@ -7739,7 +7739,7 @@ export const RELEASE_076122: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076123: AppRelease = {
   version: '0.76.123',
   date: '2026-09-28',
   codename: 'Helpers variados de novo',
@@ -7762,6 +7762,34 @@ export const CURRENT_RELEASE: AppRelease = {
         'O Nexus mede a linha de comando final (executável, flags, config e ' +
         'brief) e, se a CLI ainda cairia num atalho .cmd ou a linha passaria do ' +
         'limite do Windows, entrega o brief colado depois do boot.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.124',
+  date: '2026-09-28',
+  codename: 'Todas as LLMs',
+  summary:
+    'Os panes no Windows param de misturar telas antigas com novas, e a missão ' +
+    'da aba passa a distribuir os helpers entre as LLMs prontas em vez de ' +
+    'empilhar tudo numa só. Inclui a 0.76.123.',
+  highlights: [
+    {
+      title: 'Panes sem texto sobreposto no Windows',
+      detail:
+        'O terminal não sabia que rodava sobre o ConPTY do Windows: ao ganhar ' +
+        'linhas puxava o histórico enquanto o ConPTY repintava por cima, e as ' +
+        'TUIs apareciam com telas antigas misturadas. Agora o xterm liga as ' +
+        'regras de ConPTY com o build do Windows.',
+    },
+    {
+      title: 'Helpers distribuídos entre as LLMs',
+      detail:
+        'O orquestrador fixava Claude em todo helper. Na missão da aba, uma CLI ' +
+        'que já tem dois ou mais helpers vivos é redistribuída pelo roteamento ' +
+        '(Jev + tabela), salvo quando você pediu aquela CLI.',
     },
   ],
   fixes: [],

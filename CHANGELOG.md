@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.124 — Todas as LLMs
+
+Uso real no Windows em 28/09. Inclui a 0.76.123 (Helpers variados de novo).
+
+- **Panes sem texto sobreposto no Windows (F-673).** O xterm.js era criado sem saber que o PTY é o ConPTY do Windows: quando um pane ganhava linhas (a grade redimensiona ao abrir/fechar panes), ele puxava o histórico para a tela enquanto o ConPTY criava linhas vazias e repintava por cima — as TUIs (Claude Code) apareciam com trechos antigos misturados, texto sobreposto e colunas desalinhadas. Agora o terminal nasce com `windowsPty` (backend ConPTY + build do Windows), ligando as regras de ConPTY do próprio xterm.
+- **Helpers distribuídos entre as LLMs (F-674).** Sem o operador pedir, o orquestrador abria todos os helpers em Claude. Na missão da aba, quando ele fixa uma CLI que já tem dois ou mais helpers vivos, o Nexus redistribui pelo roteamento da missão (Jev + tabela com penalidade de diversidade) e diz no recibo o que redistribuiu. Quando o operador pediu uma CLI específica, o orquestrador marca `operatorChoice: true` e ela é respeitada. A instrução da ferramenta passa a dizer que o padrão é deixar o Nexus escolher.
+
 ## 0.76.123 — Helpers variados de novo
 
 Uso real no Windows em 28/09. Inclui a 0.76.122 (Sonnet 5.5 e Jev com medição).
