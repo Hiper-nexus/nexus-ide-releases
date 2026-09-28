@@ -9,6 +9,7 @@ const requests = new Map<string, { intentVersion: number; requestedAt: number; s
 export const TAB_COMPLETION_INSTRUCTION =
   'Quando terminar todo o pedido do operador, inclusive a release se solicitada, ' +
   'chame nexus_mission_set_status({missionId, status:"done", note:"resumo da entrega e validação"}). ' +
+  'A nota deve ter pelo menos 40 caracteres e descrever o que foi entregue e validado. ' +
   'Uma pausa ou entrega de helper não conclui esta missão.';
 
 /** Scheduling intent only: the request never replaces review or completion proof. */
