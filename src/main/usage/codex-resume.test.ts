@@ -71,6 +71,7 @@ async function scanOnce(
   seen: UsageEvent[],
   expectCount: number,
   isWatched: (cwd: string) => boolean = () => true,
+  ready?: () => boolean,
 ): Promise<void> {
   const scanner = new CodexUsageScanner({
     sessionsDir,
@@ -89,7 +90,10 @@ async function scanOnce(
     const settleUntil =
       expectCount === 0 ? Date.now() + 1_500 : deadline;
     while (Date.now() < deadline) {
-      if (seen.length >= expectCount && Date.now() >= settleUntil) return;
+      // Scan fatiado (8 ms + setTimeout) pode passar de 1,5 s numa máquina
+      // carregada: quem precisa do store gravado espera por ele, não pelo relógio.
+      if (ready && seen.length >= expectCount && ready()) return;
+      if (!ready && seen.length >= expectCount && Date.now() >= settleUntil) return;
       if (seen.length >= expectCount && expectCount > 0) {
         await new Promise((resolve) => setTimeout(resolve, 300));
         return;
@@ -271,8 +275,8 @@ describe('CodexUsageScanner verified resume', () => {
       rollout,
       `${JSON.stringify({ type: 'noop', payload: {} })}\n`.repeat(6000),
     );
-    await scanOnce(sessionsDir, persistDir, [], 0);
     const storeFile = path.join(persistDir, 'codex-resume.json');
+    await scanOnce(sessionsDir, persistDir, [], 0, undefined, () => fs.existsSync(storeFile));
     const skipped = JSON.parse(fs.readFileSync(storeFile, 'utf8')) as {
       files: Record<string, { skip: boolean; headDigest: string | null }>;
     };
