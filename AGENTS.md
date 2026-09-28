@@ -896,3 +896,9 @@ saber isto antes de mexer:
   (`windowsArgvPromptPlacement`, aspas do MSVCRT) tiram o brief do argv e o
   gancho `setDeferredInitialPromptHook` (mcp-server → `deliverAgentPrompt`) cola
   depois do boot. Canal one-shot recusa com erro claro.
+- F-673: no Windows o xterm nasce com `windowsPty: { backend: 'conpty', buildNumber }`
+  (`xtermWindowsPty`, build via `window.nexus.windowsBuild`). Sem isso ele puxa o
+  histórico ao ganhar linhas enquanto o ConPTY repinta: texto sobreposto.
+- F-674: na missão da aba, `adapterId` fixado pelo orquestrador numa CLI com 2+
+  helpers vivos é redistribuído (`route.redistributed`); `operatorChoice: true`
+  preserva a CLI que o operador pediu.
