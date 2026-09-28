@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.113 — Pane destravado
+
+Correções do uso real no Windows em 28/09. Inclui a 0.76.112 (Smoke test).
+
+- **Pane não trava mais no Windows (F-659).** O `node-pty` do Windows recusa qualquer sinal no `kill`, então nenhum encerramento de pane se provava: o pane recusava digitação, "Retomar" e "Pedir ajuste" terminavam em "O agente não ficou pronto a tempo" e processos ficavam órfãos. No Windows a raiz do PTY agora é encerrada sem sinal.
+- **Missão espera a sua resposta (F-660).** Com o orquestrador parado numa pergunta a você, o pane fica ocioso e a missão era dada como concluída no meio da conversa. Pergunta pendente (rodada aberta com o CLI esperando input) conta como orquestrador ocupado.
+- **Retomar a missão da aba traz a sua conversa (F-661).** Depois de reiniciar o Nexus, "Retomar" subia o Maestro padrão como um Claude novo e vazio. A missão nascida do "+ Pane" agora retoma a conversa do pane que a liderava, com a mesma CLI, modelo e conta.
+
 ## 0.76.112 — Smoke test
 
 Pendências do 0.76.110 (e do 0.76.111) e tudo que o smoke test no app instalado (28/09) encontrou, revisado em cruz por GPT-6 Astra e Claude Fable 5.1 antes de sair.

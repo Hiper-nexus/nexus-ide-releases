@@ -7421,7 +7421,7 @@ export const RELEASE_076111: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076112: AppRelease = {
   version: '0.76.112',
   date: '2026-09-28',
   codename: 'Smoke test',
@@ -7473,4 +7473,40 @@ export const CURRENT_RELEASE: AppRelease = {
         '(Homebrew node@N ou nvm) vai na frente do PATH.',
     },
   ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.113',
+  date: '2026-09-28',
+  codename: 'Pane destravado',
+  summary:
+    'No Windows o Nexus volta a encerrar panes de verdade: digitação liberada, ' +
+    '"Retomar" e "Pedir ajuste" funcionando. A missão não conclui mais no meio ' +
+    'de uma pergunta sua, e retomar a missão da aba traz de volta a conversa do ' +
+    'seu pane. Inclui a 0.76.112 (Smoke test).',
+  highlights: [
+    {
+      title: 'Pane não trava mais no Windows',
+      detail:
+        'O node-pty do Windows recusa qualquer sinal no kill, então nenhum ' +
+        'encerramento se provava: o pane ficava recusando digitação, "Retomar" ' +
+        'e "Pedir ajuste" davam "O agente não ficou pronto a tempo" e processos ' +
+        'ficavam órfãos. No Windows a raiz agora é encerrada sem sinal.',
+    },
+    {
+      title: 'Missão espera a sua resposta',
+      detail:
+        'Com o orquestrador parado numa pergunta a você, o pane fica ocioso e ' +
+        'a missão era dada como concluída no meio da conversa. Pergunta ' +
+        'pendente conta como orquestrador ocupado.',
+    },
+    {
+      title: 'Retomar a missão da aba traz a sua conversa',
+      detail:
+        'Depois de reiniciar o Nexus, "Retomar" subia um Claude novo e vazio. ' +
+        'A missão nascida do "+ Pane" agora retoma a conversa do pane que a ' +
+        'liderava, com a mesma CLI, modelo e conta.',
+    },
+  ],
+  fixes: [],
 };
