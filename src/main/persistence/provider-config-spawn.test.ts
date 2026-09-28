@@ -1,7 +1,12 @@
 import mimoRaw from '../../adapters/builtin/mimo-code.json';
+import fs from 'node:fs';
+import type { ChildProcess } from 'node:child_process';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const spawnDeps = vi.hoisted(() => ({
+  systemIdleTime: vi.fn(() => 0),
+  rescanBinaries: vi.fn(async () => []),
+  execFile: vi.fn<(...args: unknown[]) => ChildProcess>(),
   providersFile: { version: 3, providers: {
     claude: { upstream: 'glm' }, opencode: { upstream: 'glm' }, aider: { upstream: 'glm' },
   } } as { version: number; providers: Record<string, Record<string, unknown>> },
@@ -59,6 +64,10 @@ vi.mock('node:os', async (importOriginal) => {
   const mock = { ...(await importOriginal<typeof import('node:os')>()), homedir: () => '/fixture-quota-home' };
   return { ...mock, default: mock };
 });
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:child_process')>()),
+  execFile: spawnDeps.execFile,
+}));
 vi.mock('node:fs', async (importOriginal) => {
   const mock = {
     ...(await importOriginal<typeof import('node:fs')>()),
@@ -211,12 +220,14 @@ const credentiallessAdapter = {
 };
 
 vi.mock('electron', () => ({
+  powerMonitor: { getSystemIdleTime: spawnDeps.systemIdleTime },
   BrowserWindow: { getAllWindows: () => [], getFocusedWindow: () => null },
   dialog: { showMessageBox: vi.fn() },
   ipcMain: { handle: vi.fn() },
 }));
 
 vi.mock('../adapters/adapter-registry', () => ({
+  isBuiltinAdapter: (id: string) => id === 'claude',
   getAdapter: (id: string) =>
     id === 'mimo-code'
       ? mimoRaw
@@ -266,7 +277,7 @@ vi.mock('../adapters/adapter-registry', () => ({
         : id === 'local-agent'
           ? '/usr/local/bin/local-agent'
         : null,
-  rescanAdapterBinaries: vi.fn(() => []),
+  rescanAdapterBinaries: spawnDeps.rescanBinaries,
   listAdapters: () => [
     claudeAdapter,
     mimoRaw,
@@ -285,11 +296,14 @@ vi.mock('../adapters/adapter-registry', () => ({
 
 // Unit tests use synthetic absolute paths that do not exist on disk.
 vi.mock('../path-resolver', () => ({
+  realUserHome: () => '/fixture-quota-home',
   revalidateExecutable: (binPath: string) =>
     typeof binPath === 'string' &&
     (binPath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(binPath)),
   resolveCliBinary: (runner: string) =>
-    runner === 'npm'
+    runner === '/usr/local/bin/claude'
+      ? { binPath: runner }
+      : runner === 'npm'
       ? { binPath: 'C:\\Program Files\\nodejs\\npm.cmd' }
       : null,
 }));
@@ -369,6 +383,8 @@ vi.mock('../quota/quota-service', () => ({
 }));
 
 import {
+  acquireCliSpawnPermit,
+  startCliAutoUpdate,
   effectiveDefaultModel,
   listProviderSettings,
   prepareProviderSpawn,
@@ -381,6 +397,93 @@ import {
   resolveQuotaApiKey,
 } from './provider-config-store';
 import { fetchLiveProviderWindows } from '../quota/provider-live-usage';
+
+describe('background CLI maintenance during pane startup', () => {
+  let stop: (() => void) | undefined;
+  let finishUpdate: (() => void) | undefined;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    spawnDeps.systemIdleTime.mockReturnValue(120);
+    spawnDeps.rescanBinaries.mockReset().mockResolvedValue([]);
+    vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({ enabled: true, checkedAt: {} }));
+    vi.spyOn(fs, 'realpathSync').mockReturnValue('/fixture-quota-home/.local/share/claude/versions/1');
+    vi.spyOn(fs, 'accessSync').mockImplementation(() => {});
+    vi.spyOn(fs, 'renameSync').mockImplementation(() => {});
+    finishUpdate = undefined;
+    spawnDeps.execFile.mockImplementation((...args: unknown[]) => {
+      const argv = args[1] as string[];
+      const callback = args.at(-1) as (error: null, stdout: string) => void;
+      if (argv[0] === 'update') finishUpdate = () => callback(null, '');
+      else callback(null, '1.0.0');
+      return {} as ChildProcess;
+    });
+  });
+
+  afterEach(async () => {
+    stop?.();
+    finishUpdate?.();
+    await vi.advanceTimersByTimeAsync(0);
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('leaves launchers available while the operator is active, then updates when idle', async () => {
+    spawnDeps.systemIdleTime.mockReturnValue(0);
+    stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(finishUpdate).toBeUndefined();
+    const release = await acquireCliSpawnPermit('claude');
+    release();
+
+    spawnDeps.systemIdleTime.mockReturnValue(120);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(finishUpdate).toBeTypeOf('function');
+  });
+
+  it.each(['discovery', 'version'])('defers installation if the operator returns during %s', async (phase) => {
+    if (phase === 'discovery') {
+      spawnDeps.rescanBinaries.mockImplementationOnce(async () => {
+        spawnDeps.systemIdleTime.mockReturnValue(0);
+        return [];
+      });
+    } else {
+      spawnDeps.execFile.mockImplementationOnce((...args: unknown[]) => {
+        spawnDeps.systemIdleTime.mockReturnValue(0);
+        (args.at(-1) as (error: null, stdout: string) => void)(null, '1.0.0');
+        return {} as ChildProcess;
+      });
+    }
+    stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(finishUpdate).toBeUndefined();
+  });
+
+  it('releases a waiting pane after updating its launcher without awaiting unrelated CLI discovery', async () => {
+    let finishDiscovery!: () => void;
+    spawnDeps.rescanBinaries.mockResolvedValueOnce([]).mockImplementationOnce(() =>
+      new Promise<never[]>((resolve) => { finishDiscovery = () => resolve([]); }),
+    );
+    stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(finishUpdate).toBeTypeOf('function');
+    let release: (() => void) | undefined;
+    const pending = acquireCliSpawnPermit('claude').then((permit) => { release = permit; });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(release).toBeUndefined(); // The installer must still exclude spawns.
+      finishUpdate!();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(finishDiscovery).toBeTypeOf('function');
+      expect(release).toBeTypeOf('function');
+    } finally {
+      finishDiscovery?.();
+      await pending;
+      release?.();
+    }
+  });
+});
 
 describe('prepareProviderSpawn with a pane-pinned account', () => {
   beforeEach(() => {

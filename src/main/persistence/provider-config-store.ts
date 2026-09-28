@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { z } from 'zod';
 import os from 'node:os';
 import path from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain, net } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, net, powerMonitor } from 'electron';
 import type { WebContents } from 'electron';
 import { handleTrusted } from '../security/trusted-ipc';
 import {
@@ -1629,7 +1629,9 @@ async function confirmAutomaticCliConsent(candidates: readonly AutomaticCliCandi
   return result.response === 1;
 }
 
-/** One background update per pass; run only while this adapter has no live pane. */
+const CLI_AUTO_UPDATE_IDLE_SECONDS = 60;
+
+/** Background maintenance yields to operator activity and this adapter's live panes. */
 export function startCliAutoUpdate(
   userDataDir: string,
   hasLivePane: (adapterId: string) => boolean,
@@ -1649,6 +1651,9 @@ export function startCliAutoUpdate(
         (preferences?.enabled === false && !shouldOfferAutoCliConsent(preferences, Date.now()))) return;
     checking = true;
     try {
+      // A boot-time update used to take the launcher's lease just as the
+      // operator opened their first pane. Do maintenance while they are away.
+      if (powerMonitor.getSystemIdleTime() < CLI_AUTO_UPDATE_IDLE_SECONDS) return;
       if (Date.now() - lastDiscoveryAt >= 30 * 60_000) {
         await rescanAdapterBinaries();
         candidates = listAdapters()
@@ -1679,7 +1684,9 @@ export function startCliAutoUpdate(
         (id) => hasLivePane(id) || cliUpdateLease.isHeld(id), async (id) => {
         // Revalidate the effective launcher and permissions immediately before mutation.
         const selected = automaticCliCandidate(id);
-        if (!selected || hasLivePane(id) || readAutoCliPreferences(file)?.enabled !== true ||
+        if (!selected || stopped || hasLivePane(id) ||
+            powerMonitor.getSystemIdleTime() < CLI_AUTO_UPDATE_IDLE_SECONDS ||
+            readAutoCliPreferences(file)?.enabled !== true ||
             !cliUpdateLease.acquire(id)) return false;
         try {
           const beforeVersion = await installedCliVersion(id, selected.binPath);
@@ -1689,7 +1696,8 @@ export function startCliAutoUpdate(
               ? windowsNpmShimTarget(id, selected.binPath) ?? selected.binPath
               : selected.binPath) === selected.realBinPath;
           } catch { /* The launcher disappeared while being checked. */ }
-          if (!beforeVersion || !stillSameTarget || hasLivePane(id) ||
+          if (!beforeVersion || !stillSameTarget || stopped || hasLivePane(id) ||
+              powerMonitor.getSystemIdleTime() < CLI_AUTO_UPDATE_IDLE_SECONDS ||
               readAutoCliPreferences(file)?.enabled !== true ||
               activeProviderBinary(id) !== selected.binPath) return false;
           try { await runInstallRecipe(selected.recipe, selected.prepared); }
@@ -1697,8 +1705,9 @@ export function startCliAutoUpdate(
             console.warn(`[cli-auto-update] ${id}: update failed`, error);
             return false;
           }
-          await rescanAdapterBinaries();
-          broadcast();
+          // Refresh this launcher under the lease. The full PATH/login-shell
+          // scan below must not keep a ready launcher behind unrelated CLIs.
+          resolveAdapterBinary(id);
           const afterBin = activeProviderBinary(id);
           const afterVersion = afterBin ? await installedCliVersion(id, afterBin) : null;
           if (!afterBin || !afterVersion) return false;
@@ -1708,8 +1717,10 @@ export function startCliAutoUpdate(
           });
           if (result === 'different-launcher') return false;
           console.info(`[cli-auto-update] ${id}: ${result === 'updated' ? 'updated' : 'checked'}, ${afterVersion}`);
-          return true;
         } finally { cliUpdateLease.release(id); }
+        await rescanAdapterBinaries();
+        broadcast();
+        return true;
       });
       const current = readAutoCliPreferences(file);
       if (current?.enabled) {
