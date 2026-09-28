@@ -63,6 +63,42 @@ export function operatorChildUseCounts(
   return counts;
 }
 
+export interface MissionUsePane extends UseCountPane {
+  readonly paneId?: string;
+  readonly missionId?: string;
+}
+
+/**
+ * CLIs dos panes VIVOS da missão que o registro durável (`mission_panes`) não
+ * conhece. Os helpers da missão da aba (0.76.110) nascem sem linha ali e a
+ * reserva de rota some ao ser consumida: o roteador via "só o orquestrador em
+ * uso" a cada spawn e mandava todos os helpers para a mesma CLI (F-658).
+ */
+export function liveMissionAdapterIds(
+  missionId: string,
+  panes: readonly MissionUsePane[],
+  recordedPaneIds: ReadonlySet<string>,
+): string[] {
+  return panes
+    .filter(
+      (pane) =>
+        pane.missionId === missionId &&
+        Boolean(pane.adapterId) &&
+        !INACTIVE.has(pane.state) &&
+        !(pane.paneId && recordedPaneIds.has(pane.paneId)),
+    )
+    .map((pane) => pane.adapterId!);
+}
+
+/** CLIs de terminal que não carregam o MCP do Nexus (entrega só pelo fim do PTY). */
+export function adapterIdsWithoutNexusMcp<
+  T extends { readonly id: string; readonly kind: string },
+>(adapters: readonly T[], canUseNexusMcp: (adapter: T) => boolean): string[] {
+  return adapters
+    .filter((adapter) => adapter.kind === 'cli-pty' && !canUseNexusMcp(adapter))
+    .map((adapter) => adapter.id);
+}
+
 /** Origem da rota que o renderer exibe (chip + toast). */
 export function spawnRouteFrom(
   route: Record<string, unknown> | undefined,

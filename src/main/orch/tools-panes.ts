@@ -27,6 +27,7 @@ import {
 import {
   getAdapter,
   listAdapterInfos,
+  listAdapters,
 } from '../adapters/adapter-registry';
 import { canUseNexusMcp } from './cli-mcp-inject';
 import { adapterSchema } from '../../shared/adapter-types';
@@ -50,6 +51,7 @@ import {
 import { adHocSpawnGateError } from './route-provenance';
 import { recordRouteLog } from './route-log';
 import {
+  adapterIdsWithoutNexusMcp,
   ignoredRouteChoice,
   operatorChildUseCounts,
   operatorRouteTask,
@@ -922,7 +924,18 @@ const paneSpawnAfterTabMission = {
               'ou passe adapterId — o Nexus roteia a tarefa dentro da missão',
           );
         }
-        autoRoute = await operatorRouteResolver!(task, ctx, {});
+        // F-658: o pane do "+ Pane" promovido à missão da aba segue a regra da
+        // mão do operador — helper só em CLI com MCP do Nexus (F-157). A missão
+        // sob demanda (0.76.110) levava os helpers dele à rota de missão, que
+        // aceitava AGY: três panes mudos no `--print`. Missão do assistente
+        // segue aceitando CLI que entrega pelo fim do PTY.
+        autoRoute = await operatorRouteResolver!(
+          task,
+          ctx,
+          ctx.promotedFromUserSession === true
+            ? { excludeAdapterIds: adapterIdsWithoutNexusMcp(listAdapters(), canUseNexusMcp) }
+            : {},
+        );
         adHocAdapterId = routeString(autoRoute, 'adapterId');
         // model/effort soltos não valem aqui: o recibo diz o que foi ignorado.
         ignoredChoice = ignoredRouteChoice(args);

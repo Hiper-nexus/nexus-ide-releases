@@ -22,7 +22,13 @@ import {
 } from './mcp-protocol';
 import type { AgentGateContext } from './gate';
 import { z } from 'zod';
-import { findPane, readSessionOutput, waitForIdle } from './pane-registry';
+import {
+  findPane,
+  listPaneSnapshots,
+  readSessionOutput,
+  waitForIdle,
+} from './pane-registry';
+import { liveMissionAdapterIds } from './operator-spawn-route';
 import {
   adoptUserAgentSessionAsMissionOrchestrator,
   returnAdoptedAgentSessionToUser,
@@ -1621,10 +1627,21 @@ export async function routeTaskForCaller(
   if (missionId) {
     try {
       const stores = getProjectDomainStores(ctx.scope);
-      missionAdapterIds = stores.missionPanes
-        .list(missionId)
-        .map((pane) => pane.adapterId)
-        .filter(Boolean);
+      const recorded = stores.missionPanes.list(missionId);
+      missionAdapterIds = [
+        ...recorded.map((pane) => pane.adapterId).filter(Boolean),
+        // F-658: helpers vivos sem linha em mission_panes também contam — sem
+        // eles a diversidade do rerank não via os irmãos já abertos.
+        ...liveMissionAdapterIds(
+          missionId,
+          listPaneSnapshots(),
+          new Set(
+            recorded
+              .map((pane) => pane.paneId)
+              .filter((paneId): paneId is string => Boolean(paneId)),
+          ),
+        ),
+      ];
       reservedAdapterIds = stores.missions.listOpenRouteAdapterIds(missionId);
     } catch {
       missionAdapterIds = undefined;

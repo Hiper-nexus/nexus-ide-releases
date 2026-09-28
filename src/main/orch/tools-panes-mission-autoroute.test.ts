@@ -36,6 +36,14 @@ vi.mock('./project-domain-store-registry', () => ({
   }),
 }));
 vi.mock('./task-dispatch-authority', () => ({ isTaskQueueManagedMission: () => false }));
+vi.mock('../adapters/adapter-registry', async (original) => ({
+  ...(await original<typeof import('../adapters/adapter-registry')>()),
+  // AGY lê o MCP do perfil nativo (canUseNexusMcp=false); Codex carrega o Nexus.
+  listAdapters: () => [
+    { id: 'agy', kind: 'cli-pty', bin: 'agy', quirks: { nexusMcp: 'agy' } },
+    { id: 'codex', kind: 'cli-pty', bin: 'codex', quirks: { nexusMcp: 'codex' } },
+  ],
+}));
 vi.mock('../context/context-workflow-registry', () => ({
   getContextWorkflowService: () => ({ getMissionWorkflow: () => ({ contract: null }) }),
 }));
@@ -129,6 +137,20 @@ describe('nexus_pane_spawn dentro da missão sem adapterId', () => {
     await expect(paneSpawnTool.handler({ adapterId: 'codex', model: 'gpt-5.4' }, ctx))
       .rejects.toThrow(/route_reservation_required/);
     expect(resolver).not.toHaveBeenCalled();
+  });
+
+  it('pane do "+ Pane" na missão da aba só roteia helper para CLI com MCP do Nexus (F-658)', async () => {
+    // Campo 28/09: a missão sob demanda levou os helpers do operador à rota de
+    // missão, que aceitava AGY — três panes mudos no `--print`.
+    const resolver = vi.fn(async () => ({
+      adapterId: 'codex', model: 'gpt-5.4', effort: 'high', routeReservationId: 'rr-tab',
+    }));
+    setOperatorRouteResolver(resolver);
+    const operatorTab = { ...ctx, promotedFromUserSession: true as const };
+    await paneSpawnTool.handler({ task: 'mapear as telas', prompt: 'mapeie' }, operatorTab);
+    expect(resolver).toHaveBeenCalledWith('mapear as telas', operatorTab, {
+      excludeAdapterIds: ['agy'],
+    });
   });
 
   it('sem task nem prompt pede a tarefa', async () => {

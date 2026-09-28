@@ -811,5 +811,12 @@ saber isto antes de mexer:
 - A rota automática desse spawn exige `canUseNexusMcp(adapter)`: sem missão não
   há shim de nx-mail. Se a tabela/Jev escolher AGY, Aider, Devin ou Muse, o
   resolver exclui essa CLI, tenta a próxima e expõe o descarte no recibo.
+- F-658: a missão leve da aba (0.76.110) leva os helpers seguintes do "+ Pane"
+  à rota de MISSÃO. Ali o pane promovido (`promotedFromUserSession`) mantém a
+  mesma regra: `excludeAdapterIds` com as CLIs sem MCP, numa chamada só (sem
+  reserva órfã). O uso da missão soma os panes vivos da missão que ainda não
+  têm linha em `mission_panes` (`liveMissionAdapterIds`) — sem isso a
+  diversidade do rerank não via os irmãos e três helpers caíram no mesmo AGY,
+  mudo no `--print` até terminar. Rota nova de spawn: repasse as duas coisas.
 - Primeiro uso do AGY pode mostrar esquema de cores e Termos antes do composer.
   Consentimento sobre Termos cabe ao operador; nunca marcar aceite por ele.
