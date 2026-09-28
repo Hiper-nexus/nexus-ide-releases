@@ -866,3 +866,8 @@ saber isto antes de mexer:
 - F-664: a retomada da missão da aba move a linha do orquestrador para o pane
   novo (`moveOrchestratorPane`) — `missionPanes.record` deduplica pela
   identidade e nunca troca `pane_id`.
+- F-665: "Pedir um ajuste" deixa `<!-- nexus:awaiting-adjustment:<ts> -->`
+  até a missão pedir conclusão. Na retomada da conversa da aba só o ajuste
+  dos últimos 5 min (`operatorTabResumeAwaitsAdjustment`) prepende "AGUARDE O
+  OPERADOR"; senão a nota manda resumir onde parou e continuar. O hold do
+  Pronto continua lendo o marcador inteiro.

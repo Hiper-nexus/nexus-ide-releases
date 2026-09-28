@@ -422,6 +422,45 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
     expect(harness.redeliver).toHaveBeenCalledWith(scope, 'mission-1');
   });
 
+  it('marca antiga de "Pedir um ajuste" não deixa a conversa retomada parada (F-665)', async () => {
+    // Campo 28/09 12:49: ajuste pedido às 10:24; às 12:48 o Retomar ainda
+    // mandava "AGUARDE O OPERADOR" e o orquestrador parava sem dizer onde estava.
+    const tab = {
+      ...mission,
+      squadId: undefined,
+      intentContract: { workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' } },
+    };
+    harness.missionPaneSpecs = [
+      { id: 'mp-1', missionId: 'mission-1', paneId: 'pane-operador', adapterId: 'claude', role: 'orchestrator', title: 'Orquestrador' },
+    ];
+    liveMission = {
+      ...tab,
+      description: `contexto
+
+<!-- nexus:awaiting-adjustment:${Date.now() - 3 * 60 * 60_000} -->`,
+    } as unknown as Mission;
+    await fastLane.fastLaneBootstrap(scope, 'mission-1');
+    const stale = String((harness.spawnOptions[0] as Record<string, unknown>).initialPrompt);
+    expect(stale).not.toContain('AGUARDE O OPERADOR');
+    expect(stale).toContain('o que estava sendo feito');
+  });
+
+  it('ajuste recém-pedido ainda manda a conversa retomada esperar o operador (F-665)', async () => {
+    harness.missionPaneSpecs = [
+      { id: 'mp-1', missionId: 'mission-1', paneId: 'pane-operador', adapterId: 'claude', role: 'orchestrator', title: 'Orquestrador' },
+    ];
+    liveMission = {
+      ...mission,
+      squadId: undefined,
+      intentContract: { workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' } },
+      description: `contexto
+
+<!-- nexus:awaiting-adjustment:${Date.now() - 10_000} -->`,
+    } as unknown as Mission;
+    await fastLane.fastLaneBootstrap(scope, 'mission-1');
+    expect(String((harness.spawnOptions[0] as Record<string, unknown>).initialPrompt)).toContain('AGUARDE O OPERADOR');
+  });
+
   it('retoma a conversa mais recente com o modelo do pane do operador (F-664)', async () => {
     // Campo 28/09 11:05: a linha mais recente era o "Maestro" que a 0.76.111
     // subiu sem modelo — cada Retomar voltava a ele e nascia no Sonnet padrão.

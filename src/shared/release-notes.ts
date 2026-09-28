@@ -7564,7 +7564,7 @@ export const RELEASE_076116: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076117: AppRelease = {
   version: '0.76.117',
   date: '2026-09-28',
   codename: 'Missão no seu ritmo',
@@ -7599,4 +7599,24 @@ export const CURRENT_RELEASE: AppRelease = {
         'Worktrees usam o modelo de negócio atestado também na checagem de regressões.',
     },
   ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.118',
+  date: '2026-09-28',
+  codename: 'Retoma e continua',
+  summary:
+    'Retomar a missão da aba volta a continuar o trabalho: a conversa abre com ' +
+    'um resumo do que estava sendo feito, sem ficar presa num "Pedir um ajuste" ' +
+    'antigo. Inclui a 0.76.117 (Missão no seu ritmo).',
+  highlights: [
+    {
+      title: 'Retomar continua o trabalho',
+      detail:
+        'Um "Pedir um ajuste" feito horas antes fazia toda retomada abrir com ' +
+        '"AGUARDE O OPERADOR" e o orquestrador parava. Agora só um ajuste recém-' +
+        'pedido faz esperar; nos outros casos ele resume onde parou e segue.',
+    },
+  ],
+  fixes: [],
 };

@@ -4,6 +4,7 @@ import {
   OPERATOR_TAB_RESUME_NOTE,
   operatorTabMissionResumeSpec,
   operatorTabResumeAgent,
+  operatorTabResumeAwaitsAdjustment,
 } from './operator-tab-mission-resume';
 
 const tabMission = {
@@ -47,5 +48,18 @@ describe('operatorTabMissionResumeSpec (F-661)', () => {
     expect(agent).toMatchObject({
       category: 'orchestrator', cli: 'claude', model: 'claude-opus-5-5', effort: 'high', agentName: 'Orquestrador',
     });
+  });
+});
+
+describe('operatorTabResumeAwaitsAdjustment (F-665)', () => {
+  const at = (stamp: string) => ({ description: `x
+
+<!-- nexus:awaiting-adjustment${stamp} -->` });
+  it('só o ajuste recém-pedido segura a conversa retomada', () => {
+    const now = 1_000_000_000;
+    expect(operatorTabResumeAwaitsAdjustment(at(`:${now - 60_000}`), now)).toBe(true);
+    expect(operatorTabResumeAwaitsAdjustment(at(`:${now - 3 * 60 * 60_000}`), now)).toBe(false);
+    expect(operatorTabResumeAwaitsAdjustment(at(''), now)).toBe(false);
+    expect(operatorTabResumeAwaitsAdjustment({ description: 'sem marcador' }, now)).toBe(false);
   });
 });

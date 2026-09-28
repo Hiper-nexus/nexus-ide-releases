@@ -1,5 +1,6 @@
 import { TAB_COMPLETION_INSTRUCTION } from './operator-tab-completion';
 import type { Mission, MissionPaneSpec, SquadAgent } from '../../shared/orch-types';
+import { awaitingAdjustmentSince } from '../../shared/mission-recovery-policy';
 
 /**
  * Retomada da missão da aba (F-661).
@@ -22,14 +23,33 @@ export function isOperatorTabMission(
 /** Nota colada na conversa retomada quando o operador não mandou ajuste. */
 export const OPERATOR_TAB_RESUME_NOTE =
   '[Nexus] Esta conversa foi retomada como orquestrador da missão da aba ' +
-  '(o app reiniciou ou a missão foi reaberta). Continue de onde parou; se ' +
-  'estava esperando uma resposta minha, pergunte de novo. Se esta conversa começou agora, sem histórico, ' +
+  '(o app reiniciou ou a missão foi reaberta). Comece dizendo ao operador, em 2 a 4 linhas, ' +
+  'o que estava sendo feito e qual é o próximo passo; depois continue o trabalho sem esperar ' +
+  'nova ordem. Se estava esperando uma resposta do operador, pergunte de novo. Se esta conversa começou agora, sem histórico, ' +
   'diga isso ao operador e leia nexus_handoff_list({full:true}) antes de agir — não invente o objetivo. ' +
   'Para trabalho divisível, pesado ou paralelizável, use nexus_pane_spawn({task, prompt}); ' +
   'análise/revisão usa readOnly:true, escrita paralela usa isolatedWriter:true quando o escopo permitir. ' +
   'Não duplique trabalho já despachado: consulte os handoffs. Integre e valide as entregas; feche os helpers após usá-los. ' +
   'Tarefa pequena ou conversa pode ser feita aqui. Respeite pausas, orçamento e restrições explícitas do operador e do ambiente; ' +
   'se alguma restrição impedir delegar, explique qual em vez de ficar parado. ' + TAB_COMPLETION_INSTRUCTION;
+
+/**
+ * F-665: "Pedir um ajuste" deixa na missão um marcador que só sai quando ela
+ * pede conclusão. Na retomada da CONVERSA da aba, a ordem de esperar o
+ * operador só vale para o ajuste que acabou de ser pedido (o respawn do
+ * próprio botão). Marcador antigo quer dizer que o operador já descreveu o
+ * ajuste nesta conversa: esperar de novo deixava o orquestrador parado em
+ * cada reinício, sem retomar o que fazia.
+ */
+export const OPERATOR_TAB_FRESH_ADJUSTMENT_MS = 5 * 60_000;
+
+export function operatorTabResumeAwaitsAdjustment(
+  mission: Pick<Mission, 'description'>,
+  now = Date.now(),
+): boolean {
+  const since = awaitingAdjustmentSince(mission.description ?? '');
+  return since !== null && Number.isFinite(since) && now - since <= OPERATOR_TAB_FRESH_ADJUSTMENT_MS;
+}
 
 /**
  * O orquestrador cuja conversa deve ser retomada, ou null quando a missão não
