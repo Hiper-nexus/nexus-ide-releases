@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.117 — Missão no seu ritmo
+
+- **Missão da aba permanece aberta (F-185).** Pausas do orquestrador e entregas de helpers deixam de concluir a missão antes do pedido inteiro, inclusive uma release solicitada. O orquestrador pede a conclusão explicitamente; a revisão existente continua valendo.
+- **Abertura dos panes (F-209).** A manutenção automática das CLIs espera 60 segundos de inatividade e libera o launcher validado antes de procurar atualizações das outras CLIs. Uma atualização já em curso ainda precisa terminar.
+- **Memória ligada à tarefa (F-176–F-181).** O contexto acompanha o pane promovido, a busca prioriza a tarefa e seus símbolos, recibos vazios não ocupam o resumo e o scanner compara código existente mesmo em projetos com muitos documentos.
+- **Ajustes e regressões (F-175, F-182–F-184, F-366).** Retomar preserva missões paralelas e recupera a orientação de delegação. O modelo de negócio atestado acompanha a checagem de regressões nas worktrees, a captura de teste usa pasta temporária privada e a missão sem terminal oferece retomada.
+
 ## 0.76.114 — CLIs no canal certo
 
 O botão Atualizar CLI volta a funcionar para o Codex instalado via npm com atalho externo e para o launcher nativo atual do Grok. A atualização automática usa o mesmo reconhecimento. No macOS, esta versão também inclui as correções de missão e pane publicadas no Windows em 0.76.113.

@@ -7476,32 +7476,38 @@ export const RELEASE_076112: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.114',
+  version: '0.76.117',
   date: '2026-09-28',
-  codename: 'CLIs no canal certo',
+  codename: 'Missão no seu ritmo',
   summary:
-    'Atualizar CLI reconhece o Codex instalado via npm com atalho externo e o ' +
-    'launcher nativo atual do Grok. No macOS, inclui também as correções de ' +
-    'pane e missão publicadas no Windows em 0.76.113.',
+    'A missão da aba espera o orquestrador concluir o pedido inteiro. ' +
+    'A manutenção das CLIs cede à sua atividade, e a memória acompanha a tarefa.',
   highlights: [
     {
-      title: 'Codex atualiza a instalação usada pelo pane',
+      title: 'Pausar não encerra a missão',
       detail:
-        'O atalho externo do Codex é aceito quando resolve para o binário do ' +
-        'mesmo prefixo npm que será atualizado. A confirmação mostra o comando.',
+        'Entregas dos helpers e pausas entre turnos deixam de fechar a missão da aba. ' +
+        'O orquestrador solicita a conclusão quando terminar o pedido, incluindo a release se solicitada.',
     },
     {
-      title: 'Grok reconhece o launcher nativo',
+      title: 'Manutenção das CLIs espera você parar',
       detail:
-        'O binário versionado em ~/.grok/downloads agora é associado ao ' +
-        'launcher ~/.grok/bin/grok para a atualização manual e automática.',
+        'Atualizações automáticas começam após 60 segundos de inatividade. ' +
+        'O pane deixa de esperar a descoberta das outras CLIs depois de seu launcher ser validado.',
     },
     {
-      title: 'Correções do Windows chegam ao macOS',
+      title: 'Memória relevante para cada tarefa',
       detail:
-        'Inclui a 0.76.113: pane encerra corretamente no Windows, missão ' +
-        'aguarda respostas pendentes e Retomar recupera a conversa da aba.',
+        'A busca considera a tarefa e seus símbolos. Recibos sem aprendizado não ocupam o resumo, ' +
+        'e o contexto continua disponível quando seu pane assume uma missão.',
     },
   ],
-  fixes: [],
+  fixes: [
+    {
+      title: 'Retomada e verificações mais consistentes',
+      detail:
+        'Retomar preserva missões paralelas e a orientação de delegação. ' +
+        'Worktrees usam o modelo de negócio atestado também na checagem de regressões.',
+    },
+  ],
 };
