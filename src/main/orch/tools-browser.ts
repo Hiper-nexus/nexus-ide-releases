@@ -344,7 +344,9 @@ const browserReadTool: McpToolDef = {
     'values or storage. `format: "compact"` devolve um outline LLM-friendly ' +
     'em vez do JSON completo. `errors` traz os erros vistos desde a última ' +
     'ação. Julgamento Jev por padrão (auto-on, fail-open): "isso respondeu? ' +
-    'tem erro visível? precisa de humano?". `judge: false` desliga.',
+    'tem erro visível? precisa de humano?". `judge: false` desliga. ' +
+    'Use `focus` com a pergunta atual para receber trechos relevantes copiados da página; ' +
+    'sem confiança suficiente, mantém o texto completo. `contextSelection` mede bytes de texto, não tokens faturados.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -353,6 +355,7 @@ const browserReadTool: McpToolDef = {
       maxElements: { type: 'number', description: 'Element cap; max 200' },
       format: { type: 'string', enum: ['json', 'compact'] },
       judge: JUDGE_ARG_PROP,
+      focus: { type: 'string', maxLength: 500, description: 'Pergunta atual para selecionar texto relevante com Jev na mesma consulta de julgamento. Use com format: compact quando não precisar do JSON completo.' },
     },
     required: ['paneId'],
   },
@@ -366,6 +369,7 @@ const browserReadTool: McpToolDef = {
       // Auto-on: julgar a página é o que o Jev faz de melhor (decisão) e o
       // agente não precisa lembrar do flag. Opt-out explícito com judge: false.
       judge: args.judge !== false,
+      focus: str(args, 'focus')?.trim().slice(0, 500),
       sessionId: ctx.sessionId,
       missionId: ctx.missionId,
     };

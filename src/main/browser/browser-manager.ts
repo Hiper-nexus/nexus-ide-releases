@@ -44,10 +44,13 @@ import type { JevQuestion, JevResult } from '../jev/jev-client';
 import { judge } from '../jev/jev-client';
 import { hasJevCredential } from '../jev/jev-secrets';
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
+import { JevResponseCache } from '../jev/jev-response-cache';
+import { prepareBrowserFocus, resolveBrowserFocus, type BrowserContextSelection } from './browser-focused-context';
 import {
   jevAnswerConfidences,
   jevAnswerProbabilities,
   recordJevDecision,
+  recordJevOptimization,
 } from '../jev/jev-decision-log';
 import { USD_PER_INPUT_TOKEN } from '../jev/jev-pricing';
 import type {
@@ -1691,6 +1694,7 @@ export interface BrowserActionDeps {
   jevEnabled?: () => boolean;
   jevReady?: () => boolean;
   recordDecision?: typeof recordJevDecision;
+  recordOptimization?: typeof recordJevOptimization;
 }
 
 async function inlinePageRead(
@@ -1717,6 +1721,20 @@ async function inlinePageRead(
 // made this "never blocks" read judgment fail open only after ~8.4s.
 const BROWSER_JUDGE_TIMEOUT_MS = 4_000;
 
+type PageVerdict =
+  | { judgment: BrowserPageJudgment; judgmentSkipped?: never; focusedText?: string; contextSelection?: BrowserContextSelection; reused?: boolean }
+  | { judgment: null; judgmentSkipped: BrowserJudgmentSkipped; reused?: boolean };
+const pageJudgmentCache = new JevResponseCache<PageVerdict>();
+const pageCacheOwners = new WeakMap<object, WeakMap<object, object>>();
+
+function pageCacheOwner(entry: object, judgeFn: object): object {
+  let judges = pageCacheOwners.get(entry);
+  if (!judges) pageCacheOwners.set(entry, judges = new WeakMap());
+  let owner = judges.get(judgeFn);
+  if (!owner) judges.set(judgeFn, owner = {});
+  return owner;
+}
+
 /**
  * §8 Jev page judgment (opt-in): three nouls + a page-kind choice over
  * already-redacted read data. Fail-open: off, missing credential, timeout or
@@ -1726,11 +1744,9 @@ const BROWSER_JUDGE_TIMEOUT_MS = 4_000;
 async function judgeBrowserPage(
   read: BrowserPageReadResult,
   errors: BrowserErrorReport,
-  options?: BrowserActionOptions,
-): Promise<
-  | { judgment: BrowserPageJudgment; judgmentSkipped?: never }
-  | { judgment: null; judgmentSkipped: BrowserJudgmentSkipped }
-> {
+  options?: BrowserActionOptions & { focus?: string },
+  cacheEntry?: BrowserEntry,
+): Promise<PageVerdict> {
   const deps = options?.deps;
   const jevEnabled =
     deps?.jevEnabled ?? (() => isJevSurfaceEnabled('browserTool'));
@@ -1771,8 +1787,9 @@ async function judgeBrowserPage(
         },
       },
     };
-    const result: JevResult | null = await judgeFn({
-      state: {
+    const focus = prepareBrowserFocus(read.bodyText, options?.focus);
+    if (focus) Object.assign(questions, focus.questions);
+    const state = {
         url: read.url,
         title: read.title,
         headings: read.headings.slice(0, 10).map((h) => h.text),
@@ -1783,47 +1800,79 @@ async function judgeBrowserPage(
           httpErrors: errors.httpErrors,
           loadErrors: errors.loadErrors,
         },
-      },
-      questions,
-      timeoutMs: BROWSER_JUDGE_TIMEOUT_MS,
-      retryOnTimeout: false,
-      surface: 'browserTool',
-      sessionId: options?.sessionId,
-      missionId: options?.missionId,
-    });
-    if (!result) {
-      return { judgment: null, judgmentSkipped: 'judge-unavailable' };
-    }
-    const noul = (key: string): number => {
-      const answer = result.answers[key];
-      return answer && answer.type === 'noul' ? answer.noul : 0;
-    };
-    const kind = result.answers['pageKind'];
-    const record = deps?.recordDecision ?? recordJevDecision;
-    record({
-      surface: 'browserTool',
-      sessionId: options?.sessionId,
-      missionId: options?.missionId,
-      model: result.model,
-      questions: Object.keys(questions),
-      probabilities: jevAnswerProbabilities(result.answers),
-      confidence: jevAnswerConfidences(result.answers),
-      decision: kind && kind.type === 'choice' ? kind.choice : 'other',
-      inputTokens: result.usage.input_tokens,
-      usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
-    });
-    return {
-      judgment: {
-        errorVisible: noul('errorVisible'),
-        blockedByHuman: noul('blockedByHuman'),
-        stillLoading: noul('stillLoading'),
-        pageKind:
-          kind && kind.type === 'choice'
-            ? { choice: kind.choice, confidence: kind.confidence }
-            : { choice: 'other', confidence: 0 },
+        ...(focus ? { focus: focus.state } : {}),
+      };
+    const compute = async (): Promise<PageVerdict> => {
+      const result: JevResult | null = await judgeFn({
+        state, questions,
+        timeoutMs: BROWSER_JUDGE_TIMEOUT_MS,
+        retryOnTimeout: false,
+        surface: 'browserTool',
+        sessionId: options?.sessionId,
+        missionId: options?.missionId,
+      });
+      if (!result) {
+        return { judgment: null, judgmentSkipped: 'judge-unavailable' };
+      }
+      const focused = focus ? resolveBrowserFocus(focus, result.answers) : null;
+      const noul = (key: string): number => {
+        const answer = result.answers[key];
+        return answer && answer.type === 'noul' ? answer.noul : 0;
+      };
+      const kind = result.answers['pageKind'];
+      const record = deps?.recordDecision ?? recordJevDecision;
+      record({
+        surface: 'browserTool',
+        sessionId: options?.sessionId,
+        missionId: options?.missionId,
         model: result.model,
-      },
+        questions: Object.keys(questions),
+        probabilities: jevAnswerProbabilities(result.answers),
+        confidence: jevAnswerConfidences(result.answers),
+        decision: kind && kind.type === 'choice' ? kind.choice : 'other',
+        inputTokens: result.usage.input_tokens,
+        usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+        ...(focused?.selection.applied ? { optimization: {
+          contextBytesBefore: focused.selection.beforeBytes,
+          contextBytesAfter: focused.selection.afterBytes,
+        } } : {}),
+      });
+      return {
+        ...(focused ? { focusedText: focused.text, contextSelection: focused.selection } : {}),
+        judgment: {
+          errorVisible: noul('errorVisible'),
+          blockedByHuman: noul('blockedByHuman'),
+          stillLoading: noul('stillLoading'),
+          pageKind:
+            kind && kind.type === 'choice'
+              ? { choice: kind.choice, confidence: kind.confidence }
+              : { choice: 'other', confidence: 0 },
+          model: result.model,
+        },
+      };
     };
+    if (!cacheEntry) return compute();
+    const key = createHash('sha256').update(JSON.stringify({
+      state, questions,
+      navSeq: cacheEntry.navSeq,
+      loadGeneration: cacheEntry.loadGeneration,
+      model: process.env.NEXUS_JEV_MODEL ?? 'jev-latest',
+    })).digest('hex');
+    const cached = await pageJudgmentCache.get(pageCacheOwner(cacheEntry, judgeFn), key, compute, (value) => value.judgment !== null);
+    if (cached.reused && cached.value.judgment) {
+      (deps?.recordOptimization ?? recordJevOptimization)({
+        surface: 'browserTool', model: cached.value.judgment.model,
+        sessionId: options?.sessionId, missionId: options?.missionId,
+        optimization: {
+          jevRequestsAvoided: 1,
+          ...(cached.value.contextSelection?.applied ? {
+            contextBytesBefore: cached.value.contextSelection.beforeBytes,
+            contextBytesAfter: cached.value.contextSelection.afterBytes,
+          } : {}),
+        },
+      });
+    }
+    return { ...structuredClone(cached.value), ...(cached.reused ? { reused: true } : {}) };
   } catch {
     return { judgment: null, judgmentSkipped: 'judge-unavailable' };
   }
@@ -1883,6 +1932,7 @@ export async function readBrowserPage(
     maxChars?: number;
     maxElements?: number;
     judge?: boolean;
+    focus?: string;
     sessionId?: string;
     missionId?: string;
     deps?: BrowserActionDeps;
@@ -1893,6 +1943,8 @@ export async function readBrowserPage(
     errors: BrowserErrorReport;
     judgment?: BrowserPageJudgment | null;
     judgmentSkipped?: BrowserJudgmentSkipped;
+    judgmentReused?: boolean;
+    contextSelection?: BrowserContextSelection;
   }
 > {
   const result = browserPageReadResultSchema.parse(
@@ -1911,15 +1963,24 @@ export async function readBrowserPage(
     errors: BrowserErrorReport;
     judgment?: BrowserPageJudgment | null;
     judgmentSkipped?: BrowserJudgmentSkipped;
+    judgmentReused?: boolean;
+    contextSelection?: BrowserContextSelection;
   };
-  if (options.judge === true) {
+  if (options.judge === true || (options.focus?.trim() && options.judge !== false)) {
     const verdict = await judgeBrowserPage(result, errors, {
       sessionId: options.sessionId,
       missionId: options.missionId,
+      focus: options.focus,
       ...(options.deps ? { deps: options.deps } : {}),
-    });
+    }, entry);
     out.judgment = verdict.judgment;
     if (verdict.judgmentSkipped) out.judgmentSkipped = verdict.judgmentSkipped;
+    if (verdict.reused) out.judgmentReused = true;
+    if (verdict.judgment && verdict.contextSelection) {
+      out.bodyText = verdict.focusedText ?? result.bodyText;
+      out.contextSelection = verdict.contextSelection;
+      if (verdict.contextSelection.applied) out.truncated = true;
+    }
   }
   return out;
 }
@@ -1932,6 +1993,7 @@ export async function readBrowserPageCompact(
     maxChars?: number;
     maxElements?: number;
     judge?: boolean;
+    focus?: string;
     sessionId?: string;
     missionId?: string;
     deps?: BrowserActionDeps;
@@ -1942,6 +2004,8 @@ export async function readBrowserPageCompact(
     errors: BrowserErrorReport;
     judgment?: BrowserPageJudgment | null;
     judgmentSkipped?: BrowserJudgmentSkipped;
+    judgmentReused?: boolean;
+    contextSelection?: BrowserContextSelection;
   }
 > {
   const result = await readBrowserPage(paneId, scope, options);
@@ -1949,11 +2013,13 @@ export async function readBrowserPageCompact(
     paneId,
     url: result.url,
     title: result.title,
-    outline: renderBrowserOutline(result),
+    outline: renderBrowserOutline(result, { preserveSelectedText: result.contextSelection?.applied }),
     truncated: result.truncated,
     viewport: result.viewport,
     errors: result.errors,
     ...(result.judgment !== undefined ? { judgment: result.judgment } : {}),
+    ...(result.judgmentReused ? { judgmentReused: true } : {}),
+    ...(result.contextSelection ? { contextSelection: result.contextSelection } : {}),
     ...(result.judgmentSkipped
       ? { judgmentSkipped: result.judgmentSkipped }
       : {}),
@@ -2050,6 +2116,8 @@ async function resolveBrowserElementByText(
       const result: JevResult | null = await judgeFn({
         state,
         questions,
+        timeoutMs: BROWSER_JUDGE_TIMEOUT_MS,
+        retryOnTimeout: false,
         surface: 'browserTool',
         sessionId: options?.sessionId,
         missionId: options?.missionId,

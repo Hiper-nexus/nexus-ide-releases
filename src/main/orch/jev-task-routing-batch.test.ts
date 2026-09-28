@@ -5,7 +5,7 @@
  * disabled/no-key/falha/malformado, skill `none` não invalida a classificação
  * e o tier explícito do chamador segue mandando.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../jev/jev-decision-log', () => ({
   recordJevDecision: vi.fn(() => 'id'),
@@ -28,6 +28,8 @@ import {
 } from './jev-task-routing';
 
 type JudgeMock = (input: JudgeInput) => Promise<JevResult | null>;
+
+beforeEach(() => vi.mocked(recordJevDecision).mockClear());
 
 function batchAnswer(skill: JevAnswer, overrides?: Partial<Record<'tier' | 'specialty' | 'effort' | 'escalate', JevAnswer>>): JevResult {
   return {
@@ -130,6 +132,7 @@ describe('classifyTaskWithSkillForRouting — lote único', () => {
     });
     expect(await classifyTaskWithSkillForRouting('x', { allowedSkills: null, deps: { judge: timingOut, ...on } })).toMatchObject({
       kind: 'unavailable', reason: 'timeout', skillSuggestion: null,
+      batch: { requestCount: 1, questionCount: 5 },
     });
     expect(recordJevDecision).not.toHaveBeenCalled();
 

@@ -9,6 +9,7 @@ import {
   listJevDecisions,
   recordJevDecision,
   recordJevNoAnswer,
+  recordJevOptimization,
   setJevDecisionFeedback,
   type JevDecisionEntry,
   type JevDecisionInput,
@@ -52,6 +53,37 @@ describe('jev decision log', () => {
     expect(list[0].decision).toBe('ok');
     expect(list[1].decision).toBe('retry');
     expect(list[0].id).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('counts measured optimizations without inventing extra API calls or token savings', () => {
+    const d = setup();
+    recordJevDecision(entry({ optimization: { jevRequestsAvoided: 1 } }), { dir: d });
+    recordJevOptimization({
+      surface: 'browserTool', model: 'jev-1.13.0',
+      optimization: { jevRequestsAvoided: 1, contextBytesBefore: 1000, contextBytesAfter: 250 },
+    }, { dir: d });
+    const stats = jevDecisionStats({ dir: d });
+    expect(stats.totals).toMatchObject({ calls: 1, inputTokens: 600, usd: 0.0000252 });
+    expect(stats.windows.allTime).toMatchObject({
+      consultations: 1,
+      optimization: { observations: 2, jevRequestsAvoided: 2, contextSelections: 1, contextBytesBefore: 1000, contextBytesAfter: 250 },
+    });
+    expect(stats.bySurface.browserTool.calls).toBe(0);
+    expect(listJevDecisions({ dir: d, includeNoAnswer: true })).toHaveLength(1);
+  });
+
+  it('leaves old logs unmeasured instead of claiming zero historical savings', () => {
+    const d = setup();
+    recordJevDecision(entry(), { dir: d });
+    expect(jevDecisionStats({ dir: d }).windows.allTime.optimization).toBeUndefined();
+  });
+
+  it('ignores invalid numeric evidence and keeps context growth visible', () => {
+    const d = setup();
+    recordJevDecision(entry({ optimization: { jevRequestsAvoided: -1, contextBytesBefore: 50, contextBytesAfter: 70 } }), { dir: d });
+    const evidence = jevDecisionStats({ dir: d }).windows.allTime.optimization!;
+    expect(evidence.jevRequestsAvoided).toBe(0);
+    expect(evidence.contextBytesBefore - evidence.contextBytesAfter).toBe(-20);
   });
 
   it('filters by surface and honors limit', () => {

@@ -667,7 +667,8 @@ saber isto antes de mexer:
   (`setToolPickRegistry`). Medido: "ver o que outro pane está fazendo" →
   pane_read 0.84; "rodar os testes" → terminal_run 1.00.
 - **`nexus_route_task` com Jev** (`orch/jev-task-routing.ts`, surface
-  `taskRouting`): tier, especialidade e esforço julgados numa chamada, cada campo
+  `taskRouting`): tier, especialidade, esforço e sugestão de skill julgados no
+  mesmo lote (skill só quando há catálogo permitido), cada campo
   aceito só com confiança ≥ 0.6 (senão a heurística de palavras-chave, por
   campo); `tier` passado pelo chamador continua mandando na complexidade/modelo;
   o esforço é uma decisão independente sobre a tarefa, sem piso por especialidade.
@@ -696,7 +697,8 @@ saber isto antes de mexer:
   extract usa UMA chamada Jev para todos os campos (fan-out); booleano
   indeciso (0,4–0,6) vira null.
 - **Skill suggestion** (`jev-skill-suggestion.ts`, surface `taskRouting`):
-  uma `choice` entre as skills bundled (+`none`) para a tarefa;
+  uma `choice` entre as skills bundled permitidas (+`none`) para a tarefa,
+  incluída na chamada de classificação do `nexus_route_task`;
   `nexus_route_task` devolve `skillSuggestion`, o auto-route do `pane_spawn`
   acrescenta uma linha ao prompt do filho só com confiança ≥ 0.7 e skill
   permitida. Cookbook oficial 'skill suggestion'.

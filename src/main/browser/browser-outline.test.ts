@@ -57,6 +57,15 @@ function read(overrides: Partial<BrowserPageReadResult> = {}): BrowserPageReadRe
 }
 
 describe('renderBrowserOutline', () => {
+  it('keeps every selected passage ahead of controls in a focused compact read', () => {
+    const bodyText = 'primeiro trecho '.repeat(400) + 'ULTIMO TRECHO RELEVANTE';
+    const outline = renderBrowserOutline(read({ bodyText,
+      elements: Array.from({ length: 200 }, (_, i) => ({ ref: `e${i}`, tag: 'button', role: 'button', name: 'controle '.repeat(100) })),
+    }), { preserveSelectedText: true });
+    expect(outline).toContain(bodyText);
+    expect(outline.indexOf('ULTIMO TRECHO RELEVANTE')).toBeLessThan(outline.indexOf('## elementos'));
+    expect(outline.length).toBeLessThanOrEqual(bodyText.length + 3_030);
+  });
   it('renders header, indented headings, elements, text and the tail line', () => {
     const outline = renderBrowserOutline(read());
     const lines = outline.split('\n');

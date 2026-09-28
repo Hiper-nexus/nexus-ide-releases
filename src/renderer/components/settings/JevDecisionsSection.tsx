@@ -188,6 +188,30 @@ export function JevDecisionsSection() {
             sem intermediário.
           </p>
 
+          <h3 className="settings-section-heading">Otimização observada em 30 dias</h3>
+          {stats.windows.last30d.optimization ? (
+            <>
+              <p className="settings-detail__hint">
+                Consultas ao Jev evitadas por lote ou reutilização:{' '}
+                {stats.windows.last30d.optimization.jevRequestsAvoided} ·{' '}
+                Triagens resolvidas sem recorrer ao LLM:{' '}
+                {stats.windows.last30d.optimization.llmRoutingBypassed}.
+              </p>
+              <p className="settings-detail__hint">
+                {stats.windows.last30d.optimization.contextSelections > 0
+                  ? `Texto de páginas selecionado: ${stats.windows.last30d.optimization.contextBytesBefore.toLocaleString('pt-BR')} → ${stats.windows.last30d.optimization.contextBytesAfter.toLocaleString('pt-BR')} bytes, em ${stats.windows.last30d.optimization.contextSelections} leituras.`
+                  : 'Ainda sem seleção de texto de páginas registrada.'}
+                {' '}Bytes medem o texto selecionado antes da formatação; não representam tokens
+                {' '}faturados nem economia total do LLM.
+              </p>
+            </>
+          ) : (
+            <p className="settings-detail__hint">
+              Ainda sem medição de otimização. O histórico anterior continua
+              {' '}contabilizado no consumo acima.
+            </p>
+          )}
+
           <h3 className="settings-section-heading">Por superfície</h3>
           {surfaces.length === 0 ? (
             <p className="jev-decisions__hint">

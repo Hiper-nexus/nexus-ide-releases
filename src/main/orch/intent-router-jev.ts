@@ -250,6 +250,7 @@ export async function routeWithJev(
     decision: `route:${route.kind}`,
     inputTokens: result.usage.input_tokens,
     usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+    optimization: { llmRoutingBypassed: true },
   });
   return route;
 }

@@ -24,7 +24,19 @@ function elementLine(element: BrowserElementDescriptor): string {
  * page-side `read` result is already bounded and redacted; this only re-shapes
  * it, capping the body text and the total outline.
  */
-export function renderBrowserOutline(read: BrowserPageReadResult): string {
+export function renderBrowserOutline(
+  read: BrowserPageReadResult,
+  options: { preserveSelectedText?: boolean } = {},
+): string {
+  if (options.preserveSelectedText) {
+    // Focus already selected bounded source passages. Do not truncate their tail
+    // again at the ordinary 4K excerpt limit or let controls displace them.
+    const header = `${read.url} · ${read.title}`.slice(0, 1_000);
+    const text = read.bodyText.slice(0, 20_000);
+    const details = renderBrowserOutline({ ...read, url: '', title: '', bodyText: '' })
+      .split('\n').slice(1).join('\n').trim().slice(0, 2_000);
+    return `${header}\n\n## texto\n${text}${details ? `\n\n${details}` : ''}`;
+  }
   const lines: string[] = [`${read.url} · ${read.title}`];
 
   if (read.headings.length) {

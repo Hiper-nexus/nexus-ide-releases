@@ -229,6 +229,7 @@ import {
   loadBrowser,
   pressBrowserKey,
   readBrowserPage,
+  readBrowserPageCompact,
   registerBrowserIpc,
 } from './browser-manager';
 import { BROWSER_CHANNELS } from '../../shared/channels';
@@ -569,6 +570,52 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
     });
     expect(failing.judgment).toBeNull();
     expect(failing.judgmentSkipped).toBe('judge-unavailable');
+    destroyBrowser(PANE, scope);
+  });
+
+  it('reuses an identical focused read, invalidates changed text and keeps full text when disabled', async () => {
+    await boot();
+    const originalRead = await state.runAutomation(PANE, state.guest, 'read') as Record<string, unknown>;
+    let bodyText = 'Resposta. '.repeat(90) + 'Detalhes. '.repeat(180);
+    state.runAutomation.mockImplementation(async () => ({ ...originalRead, bodyText }));
+    const jev = vi.fn(async (_req: unknown) => ({
+      model: 'test-model',
+      answers: {
+        errorVisible: { type: 'noul' as const, noul: 0.1 },
+        focus_p0: { type: 'noul' as const, noul: 0.95 },
+        focus_p1: { type: 'noul' as const, noul: 0.1 },
+        focus_p2: { type: 'noul' as const, noul: 0.1 },
+      },
+      usage: { input_tokens: 100, output_tokens: 0 },
+    }));
+    const recordDecision = vi.fn();
+    const recordOptimization = vi.fn();
+    const options = { focus: 'Qual a resposta?', deps: {
+      jev, jevEnabled: () => true, jevReady: () => true, recordDecision, recordOptimization,
+    } };
+    const first = await readBrowserPage(PANE, scope, options);
+    expect(first.contextSelection?.applied).toBe(true);
+    expect(first.bodyText.length).toBeLessThan(bodyText.length);
+    const reused = await readBrowserPage(PANE, scope, options);
+    expect(reused.judgmentReused).toBe(true);
+    expect(reused.bodyText).toBe(first.bodyText);
+    expect(jev).toHaveBeenCalledOnce();
+    expect(recordDecision).toHaveBeenCalledOnce();
+    expect(recordOptimization).toHaveBeenCalledWith(expect.objectContaining({
+      optimization: expect.objectContaining({ jevRequestsAvoided: 1 }),
+    }));
+    const compact = await readBrowserPageCompact(PANE, scope, options);
+    expect(compact.outline).toContain(first.bodyText);
+    expect(compact.contextSelection?.applied).toBe(true);
+    expect(compact.judgmentReused).toBe(true);
+    expect(jev).toHaveBeenCalledOnce();
+    bodyText += ' atualizado';
+    await readBrowserPage(PANE, scope, options);
+    expect(jev).toHaveBeenCalledTimes(2);
+    const disabled = await readBrowserPage(PANE, scope, { ...options, judge: false });
+    expect(disabled.bodyText).toBe(bodyText);
+    expect(disabled.contextSelection).toBeUndefined();
+    expect(jev).toHaveBeenCalledTimes(2);
     destroyBrowser(PANE, scope);
   });
 

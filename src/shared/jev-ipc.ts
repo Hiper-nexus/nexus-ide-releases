@@ -69,6 +69,25 @@ export interface JevDecisionRow {
   usd: number | null;
   feedback?: 'right' | 'wrong';
   feedbackAt?: number;
+  optimization?: JevOptimizationEvidence;
+}
+
+/** Mechanical evidence, never a claim about billed LLM tokens. */
+export interface JevOptimizationEvidence {
+  jevRequestsAvoided?: number;
+  llmRoutingBypassed?: boolean;
+  /** UTF-8 bytes before/after passage selection, before JSON/outline formatting. */
+  contextBytesBefore?: number;
+  contextBytesAfter?: number;
+}
+
+export interface JevOptimizationStats {
+  observations: number;
+  jevRequestsAvoided: number;
+  llmRoutingBypassed: number;
+  contextSelections: number;
+  contextBytesBefore: number;
+  contextBytesAfter: number;
 }
 
 export interface JevWindowStatsResult {
@@ -77,6 +96,7 @@ export interface JevWindowStatsResult {
   noAnswer: number;
   usd: number;
   inputTokens: number;
+  optimization?: JevOptimizationStats;
 }
 
 export interface JevDecisionStatsResult {
@@ -98,6 +118,7 @@ export interface JevDecisionStatsResult {
       decisions: Record<string, number>;
       feedback: { right: number; wrong: number };
       suggestion?: string;
+      optimization?: JevOptimizationStats;
     }
   >;
   pricing: { usdPerInputToken: number; source: 'typesafe-published' };

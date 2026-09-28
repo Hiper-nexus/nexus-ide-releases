@@ -301,7 +301,8 @@ export async function classifyTaskWithSkillForRouting(
       noAnswer = reason;
     },
   });
-  const batch = { requestCount: result ? 1 : 0, questionCount: Object.keys(questions).length };
+  // Logical judge invocations, not successful answers (or HTTP retry count).
+  const batch = { requestCount: 1, questionCount: Object.keys(questions).length };
   if (!result) {
     return { kind: 'unavailable', reason: noAnswer ?? 'network', skillSuggestion: null, batch };
   }
@@ -328,6 +329,7 @@ export async function classifyTaskWithSkillForRouting(
     ].join('|'),
     inputTokens: result.usage.input_tokens,
     usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+    ...(catalog.length > 0 ? { optimization: { jevRequestsAvoided: 1 } } : {}),
   });
   return classification
     ? { kind: 'classified', classification, skillSuggestion, batch }

@@ -13,6 +13,7 @@ import path from 'node:path';
 import type { JevSurface } from './jev-autopilot';
 import type { JevAnswer } from './jev-client';
 import { USD_PER_INPUT_TOKEN } from './jev-pricing';
+import type { JevOptimizationEvidence, JevOptimizationStats } from '../../shared/jev-ipc';
 
 export type JevDecisionSurface =
   | JevSurface
@@ -35,7 +36,7 @@ export interface JevDecisionEntry {
   id: string;
   at: number;
   /** Ausente = 'decision' — linhas antigas continuam válidas. */
-  kind?: 'decision' | 'no-answer';
+  kind?: 'decision' | 'no-answer' | 'optimization';
   reason?: JevNoAnswerReason;
   surface: JevDecisionSurface;
   sessionId?: string;
@@ -50,6 +51,7 @@ export interface JevDecisionEntry {
   usd: number | null;
   feedback?: 'right' | 'wrong';
   feedbackAt?: number;
+  optimization?: JevOptimizationEvidence;
 }
 
 export type JevDecisionInput = Omit<JevDecisionEntry, 'id' | 'at'>;
@@ -138,6 +140,19 @@ export function recordJevDecision(
   return id;
 }
 
+/** A reused answer made no API request; never inflate call, token or USD totals. */
+export function recordJevOptimization(
+  input: Pick<JevDecisionInput, 'surface' | 'sessionId' | 'missionId' | 'model'> & {
+    optimization: JevOptimizationEvidence;
+  },
+  deps?: { dir?: string },
+): string {
+  return recordJevDecision({
+    ...input, kind: 'optimization', questions: [], probabilities: {},
+    decision: 'reuse', inputTokens: 0, usd: 0,
+  }, deps);
+}
+
 /**
  * Consulta que não teve resposta (timeout, erro, limite): a superfície caiu
  * no caminho determinístico. Gravado centralmente por `judge()` quando o
@@ -184,9 +199,10 @@ export function listJevDecisions(opts?: {
   } catch {
     return [];
   }
+  const decisions = entries.filter((e) => e.kind !== 'optimization');
   const answered = opts?.includeNoAnswer
-    ? entries
-    : entries.filter((e) => e.kind !== 'no-answer');
+    ? decisions
+    : decisions.filter((e) => e.kind !== 'no-answer');
   const filtered = opts?.surface
     ? answered.filter((e) => e.surface === opts.surface)
     : answered;
@@ -223,6 +239,7 @@ export interface JevWindowStats {
   noAnswer: number;
   usd: number;
   inputTokens: number;
+  optimization?: JevOptimizationStats;
 }
 
 export interface JevDecisionStats {
@@ -244,6 +261,7 @@ export interface JevDecisionStats {
       decisions: Record<string, number>;
       feedback: { right: number; wrong: number };
       suggestion?: string;
+      optimization?: JevOptimizationStats;
     }
   >;
   pricing: { usdPerInputToken: number; source: 'typesafe-published' };
@@ -256,6 +274,8 @@ function emptyWindow(): JevWindowStats {
 }
 
 function addToWindow(window: JevWindowStats, entry: JevDecisionEntry): void {
+  addOptimization(window, entry.optimization);
+  if (entry.kind === 'optimization') return;
   window.consultations += 1;
   if (entry.kind === 'no-answer') {
     window.noAnswer += 1;
@@ -264,6 +284,30 @@ function addToWindow(window: JevWindowStats, entry: JevDecisionEntry): void {
   window.answered += 1;
   window.usd += entry.usd ?? 0;
   window.inputTokens += entry.inputTokens ?? 0;
+}
+
+function addOptimization(
+  target: { optimization?: JevOptimizationStats },
+  evidence: JevOptimizationEvidence | undefined,
+): void {
+  if (!evidence || typeof evidence !== 'object') return;
+  const valid = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
+  const avoided = valid(evidence.jevRequestsAvoided) ? evidence.jevRequestsAvoided : 0;
+  const routed = evidence.llmRoutingBypassed === true ? 1 : 0;
+  const context = valid(evidence.contextBytesBefore) && valid(evidence.contextBytesAfter);
+  if (!avoided && !routed && !context) return;
+  const stats = target.optimization ??= {
+    observations: 0, jevRequestsAvoided: 0, llmRoutingBypassed: 0,
+    contextSelections: 0, contextBytesBefore: 0, contextBytesAfter: 0,
+  };
+  stats.observations += 1;
+  stats.jevRequestsAvoided += avoided;
+  stats.llmRoutingBypassed += routed;
+  if (context) {
+    stats.contextSelections += 1;
+    stats.contextBytesBefore += evidence.contextBytesBefore!;
+    stats.contextBytesAfter += evidence.contextBytesAfter!;
+  }
 }
 
 export function jevDecisionStats(deps?: {
@@ -300,6 +344,8 @@ export function jevDecisionStats(deps?: {
       decisions: {},
       feedback: { right: 0, wrong: 0 },
     });
+    addOptimization(bucket, entry.optimization);
+    if (entry.kind === 'optimization') continue;
     if (isNoAnswer) {
       bucket.noAnswer += 1;
       stats.totals.noAnswer += 1;

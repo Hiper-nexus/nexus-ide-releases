@@ -96,6 +96,22 @@ describe('JevDecisionsSection', () => {
     expect(host.textContent).toContain('Revisão de handoff');
     expect(host.textContent).toContain('ok ×1');
     expect(host.textContent).toContain('retry ×1');
+    expect(host.textContent).toContain('Ainda sem medição de otimização');
+  });
+
+  it('shows measured optimization separately from billed tokens', async () => {
+    const stats = await jev.decisionsStats();
+    Object.assign(stats.windows.last30d, { optimization: {
+      observations: 3, jevRequestsAvoided: 2, llmRoutingBypassed: 1,
+      contextSelections: 1, contextBytesBefore: 4000, contextBytesAfter: 1000,
+    } });
+    jev.decisionsStats.mockResolvedValueOnce(stats);
+    const host = mount(<JevDecisionsSection />);
+    await act(async () => Promise.resolve());
+    expect(host.textContent).toContain('Consultas ao Jev evitadas por lote ou reutilização: 2');
+    expect(host.textContent).toContain('Triagens resolvidas sem recorrer ao LLM: 1');
+    expect(host.textContent).toContain('4.000 → 1.000 bytes');
+    expect(host.textContent).toContain('não representam tokens faturados');
   });
 
   it('renders the consumption block with the three windows', async () => {
