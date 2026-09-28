@@ -61,6 +61,32 @@ const PROVIDER_API_TTL_MS = 60_000;
 const PROBE_FAILURE_BACKOFF_MS = 5 * 60_000;
 
 /**
+ * Sondas de conta em voo ao mesmo tempo (F-676). Várias abrem um processo de
+ * CLI por conta (`claude /usage`, `codex app-server`, `grok agent`): com
+ * 20–100 contas, disparar todas juntas travava a máquina e estourava o rate
+ * limit do provider exatamente na hora da troca de conta.
+ */
+export const QUOTA_PROBE_CONCURRENCY = 6;
+
+/** Roda `task` em cada item com no máximo `limit` em voo; preserva erros por item. */
+export async function forEachWithConcurrency<T>(
+  items: ReadonlyArray<T>,
+  limit: number,
+  task: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const item = items[next];
+      next += 1;
+      await task(item as T);
+    }
+  };
+  const workers = Math.max(1, Math.min(limit, items.length));
+  await Promise.all(Array.from({ length: workers }, worker));
+}
+
+/**
  * Every fleet CLI is eligible for a live/generic probe. Unknown adapters
  * still go through key-shape routing (OpenCode/Aider/custom).
  */
@@ -297,7 +323,12 @@ export class QuotaService {
   #lastSnapshot: QuotaFleetSnapshot | null = null;
   #stopped = false;
   /** In-flight refresh coalescing. */
-  #snapshotInFlight: { generation: number; promise: Promise<QuotaFleetSnapshot> } | null = null;
+  #snapshotInFlight: {
+    generation: number;
+    forced: boolean;
+    startedAt: number;
+    promise: Promise<QuotaFleetSnapshot>;
+  } | null = null;
   #snapshotGeneration = 0;
   #lastSnapshotGeneration = 0;
 
@@ -357,16 +388,38 @@ export class QuotaService {
 
   async snapshot(
     now = Date.now(),
-    opts?: { forceApi?: boolean },
+    opts?: {
+      forceApi?: boolean;
+      /**
+       * Aceita uma leitura FORÇADA já em voo que começou neste instante ou
+       * depois (F-676). Uma rajada de N panes batendo no limite fazia N
+       * sondagens da frota inteira; leitura anterior ao hit nunca serve —
+       * poderia "refutar" um limite que ainda não existia quando ela saiu.
+       */
+      shareForcedSince?: number;
+    },
   ): Promise<QuotaFleetSnapshot> {
     // Coalesce concurrent snapshot() so one open of Settings doesn't fan-out
     // N parallel Anthropic calls.
-    if (this.#snapshotInFlight && !opts?.forceApi) {
-      return this.#snapshotInFlight.promise;
+    const inFlight = this.#snapshotInFlight;
+    if (
+      inFlight &&
+      (!opts?.forceApi ||
+        (opts.shareForcedSince !== undefined &&
+          inFlight.forced &&
+          inFlight.startedAt >= opts.shareForcedSince))
+    ) {
+      return inFlight.promise;
     }
     const generation = ++this.#snapshotGeneration;
-    const run = this.#buildSnapshot(now, opts?.forceApi === true, generation);
-    const flight = { generation, promise: this.#resolveCurrentSnapshot(run, generation) };
+    const forced = opts?.forceApi === true;
+    const run = this.#buildSnapshot(now, forced, generation);
+    const flight = {
+      generation,
+      forced,
+      startedAt: Date.now(),
+      promise: this.#resolveCurrentSnapshot(run, generation),
+    };
     this.#snapshotInFlight = flight;
     try {
       return await flight.promise;
@@ -602,8 +655,10 @@ export class QuotaService {
     if (rows.length === 0) return observations;
 
     const resolvers = this.#liveResolvers();
-    await Promise.all(
-      rows.map(async (row) => {
+    await forEachWithConcurrency(
+      rows,
+      QUOTA_PROBE_CONCURRENCY,
+      async (row) => {
         if (!row.canProbe) return;
         const id = apiCacheKey(row);
         await this.#refreshPlan(row, now, forceApi, generation);
@@ -661,7 +716,7 @@ export class QuotaService {
             this.#probeBackoffUntil.set(id, now + PROBE_FAILURE_BACKOFF_MS);
           }
         }
-      }),
+      },
     );
     return observations;
   }
@@ -820,7 +875,20 @@ export class QuotaService {
 
   /** Force rebuild + live API re-probe + broadcast (UI refresh button). */
   async refresh(): Promise<QuotaFleetSnapshot> {
-    const snap = await this.snapshot(Date.now(), { forceApi: true });
+    return this.#refreshAndPublish(await this.snapshot(Date.now(), { forceApi: true }));
+  }
+
+  /**
+   * Leitura forçada para confirmar um limite detectado em `hitAt` (F-676):
+   * panes da mesma rajada dividem a sondagem que saiu depois do hit.
+   */
+  async refreshForLimitHit(hitAt: number): Promise<QuotaFleetSnapshot> {
+    return this.#refreshAndPublish(
+      await this.snapshot(Date.now(), { forceApi: true, shareForcedSince: hitAt }),
+    );
+  }
+
+  #refreshAndPublish(snap: QuotaFleetSnapshot): QuotaFleetSnapshot {
     if (this.#stopped || snap !== this.#lastSnapshot) return snap;
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed() && !win.webContents.isCrashed()) {

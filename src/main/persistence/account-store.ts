@@ -1174,6 +1174,11 @@ export interface FailoverPickOptions {
    * devolvida com `probe: true` (e a sondagem é consumida na hora).
    */
   allowProbe?: boolean;
+  /**
+   * Contas já tentadas neste mesmo failover cujo prepare falhou (F-676): o
+   * pick seguinte passa para a próxima da frota em vez de repetir a mesma.
+   */
+  excludeIds?: ReadonlySet<string>;
 }
 
 export interface FailoverPick {
@@ -1197,7 +1202,9 @@ export function pickAvailableForFailover(
   quotaScoreByAccountId?: ReadonlyMap<string, number>,
   options?: FailoverPickOptions,
 ): FailoverPick {
-  const siblings = listAccounts(adapterId).filter((a) => a.id !== excludeId);
+  const siblings = listAccounts(adapterId).filter(
+    (a) => a.id !== excludeId && !options?.excludeIds?.has(a.id),
+  );
   const free = siblings.filter(
     (a) =>
       !effectiveBlock(a, now, options?.scope) && accountHasFailoverCredential(a),
