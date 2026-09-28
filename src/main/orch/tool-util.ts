@@ -115,8 +115,10 @@ const AGENT_BOOT_TIMEOUT_MS = 120_000;
 const PROMPT_ACCEPTANCE_WINDOW_MS = 12_000;
 /** Devin composer footer (herdr welcome_prompt_footer) before PTY paste. */
 const DEVIN_COMPOSER_READY = /ask devin to build/i;
+/** Kimi Code's composer footer; migration/trust menus have no context meter. */
+const KIMI_COMPOSER_READY = /\bcontext:\s*\d+(?:\.\d+)?%/i;
 /** Cold Node boot + trust + welcome paint can exceed 8s; never paste blind. */
-const DEVIN_COMPOSER_WAIT_MS = 30_000;
+const PASTE_COMPOSER_WAIT_MS = 30_000;
 const RESTORED_PROMPT_ACCEPTANCE_WINDOW_MS = 3_000;
 /**
  * After a provider-native argv brief, the provider must open a turn within
@@ -776,26 +778,32 @@ export function submitPendingAgentPrompt(
 }
 
 /**
- * Devin paints trust first, then the composer. Paste before "Ask Devin to
- * build" is the F-537 swallow; waitOutBootPrompts only holds while the
- * autoresponder already saw the modal. Returns false on timeout so the
- * caller never types a brief into a trust modal / empty TUI.
+ * A quiet PTY is not a ready composer. Devin paints trust first; Kimi can
+ * offer migration before its welcome screen (F-186). The first-run responder
+ * already dismisses migration with Esc, but its repaint is not a model turn.
+ * Wait for the provider's composer before any brief bytes or Enter are sent.
  */
-async function waitUntilDevinComposerReady(
+async function waitUntilPasteComposerReady(
   sessionId: string,
   adapterId: string | undefined,
+  invocation?: McpToolInvocation,
 ): Promise<boolean> {
-  if (adapterId !== 'devin') return true;
-  const deadline = Date.now() + DEVIN_COMPOSER_WAIT_MS;
+  const ready = adapterId === 'devin' ? DEVIN_COMPOSER_READY
+    : adapterId === 'kimi' ? KIMI_COMPOSER_READY : null;
+  if (!ready) return true;
+  const deadline = Date.now() + PASTE_COMPOSER_WAIT_MS;
   while (Date.now() < deadline) {
+    assertMcpInvocationCurrent(invocation);
+    if (getSessionState(sessionId) === null) return false;
     if (cliPromptAutoResponder.shouldDeferInjection(sessionId)) {
       await delay(50);
       continue;
     }
-    if (DEVIN_COMPOSER_READY.test(readSessionOutput(sessionId))) return true;
+    if (ready.test(readSessionOutput(sessionId))) return true;
     await delay(50);
   }
-  return DEVIN_COMPOSER_READY.test(readSessionOutput(sessionId));
+  return !cliPromptAutoResponder.shouldDeferInjection(sessionId) &&
+    ready.test(readSessionOutput(sessionId));
 }
 
 /**
@@ -815,13 +823,14 @@ export async function deliverAgentPrompt(
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     await waitOutBootPrompts(sessionId);
-    const composerReady = await waitUntilDevinComposerReady(
+    const composerReady = await waitUntilPasteComposerReady(
       sessionId,
       options.adapterId,
+      invocation,
     );
     if (!composerReady) {
       lastError = new Error(
-        'Devin composer did not become ready before prompt delivery',
+        `${options.adapterId === 'kimi' ? 'Kimi' : 'Devin'} composer did not become ready before prompt delivery`,
       );
       continue;
     }

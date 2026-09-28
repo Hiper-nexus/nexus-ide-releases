@@ -252,6 +252,7 @@ import { getPaneAuthzInfo, pendingSpawnAttemptSession } from './pane-registry';
 import { onWorkerSpawnFailed } from './spawn-fail-events';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { testProjectScope } from './__tests__/scope-fixture';
+const KIMI_COMPOSER_SCREEN = 'Welcome to Kimi Code!\n│ >   │\nAsk When Needed K3 thinking: high\ncontext: 0% (0/1M)';
 import fs from 'node:fs';
 import { applyAttestedBusinessModel, createBarbershopRepo } from '../context/business-model/__fixtures__/barbershop';
 
@@ -1393,6 +1394,7 @@ describe('agent prompt injection', () => {
 
     beforeEach(() => {
       vi.useFakeTimers();
+      stubs.readSessionOutput.mockReturnValue(KIMI_COMPOSER_SCREEN);
       failures = [];
       unsubscribe = onWorkerSpawnFailed((event) => failures.push(event));
     });
@@ -2189,6 +2191,47 @@ describe('agent prompt injection', () => {
       );
     } finally {
       cliPromptAutoResponder.clear();
+      vi.useRealTimers();
+    }
+  });
+
+  it('F-186: não cola briefing no menu de migração do Kimi; espera o composer real', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.injectable = true;
+      stubs.readSessionOutput.mockReturnValue('Migrate from kimi-cli\nMigrate this data to kimi-code?\n❯ Migrate now\nAsk me later\nNever ask again\n↑/↓ move · ⏎ select · esc later\n│ > │');
+      const pending = deliverAgentPrompt('session-1', 'revise o diff', undefined, { adapterId: 'kimi' });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(stubs.writeSession).not.toHaveBeenCalled();
+      stubs.readSessionOutput.mockReturnValue(KIMI_COMPOSER_SCREEN);
+      stubs.writeSession.mockImplementation(((sessionId: string, data: string) => {
+        if (data === '\r') queueMicrotask(() => {
+          stubs.sessionState.mockReturnValue('busy');
+          for (const tap of [...stubs.stateTaps]) tap(sessionId, 'busy');
+          for (const tap of [...stubs.dataTaps]) tap(sessionId, 'reviewing the diff');
+        });
+        return true;
+      }) as typeof stubs.writeSession);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(pending).resolves.toBe(true);
+      expect(stubs.writeSession).toHaveBeenCalledWith('session-1', 'revise o diff', { markInputBusy: false });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('F-186: Kimi sem composer falha sem digitar nem aceitar migração', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.readSessionOutput.mockReturnValue('Migrate from kimi-cli\n│ > │');
+      const pending = deliverAgentPrompt('session-1', 'não migrar', undefined, { adapterId: 'kimi' });
+      const rejected = expect(pending).rejects.toThrow(/Kimi composer/);
+      await vi.advanceTimersByTimeAsync(65_000);
+      await rejected;
+      expect(stubs.writeSession).not.toHaveBeenCalled();
+    } finally {
       vi.useRealTimers();
     }
   });
