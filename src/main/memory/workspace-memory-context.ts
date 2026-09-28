@@ -31,6 +31,7 @@ export function autoRecallPhaseForAgent(input: {
 }
 
 const AUTO_RECALL_LIMIT = 8;
+const AUTO_RECALL_CANDIDATES = 32;
 const AUTO_RECALL_MARKER = '<workspace-memory';
 const QUERY_STOP_WORDS = new Set([
   'about',
@@ -99,7 +100,14 @@ export function formatAutoRecallContext(
   rawPhase: AutoRecallPhase,
   rawMaxBytes = AUTO_RECALL_DEFAULT_MAX_BYTES,
 ): string {
-  if (hits.length === 0) return '';
+  // Accepted receipts remain in the audit bank, but IDs alone are not reusable
+  // knowledge. Only their distilled summary belongs in an agent's context.
+  const memories = hits.flatMap((hit) => {
+    if (hit.source !== 'trusted:accepted-handoff') return [hit];
+    const summary = /^Summary: (?!Handoff accepted by Nexus Main\.$)(.+)$/m.exec(hit.content)?.[1];
+    return summary ? [{ ...hit, content: summary }] : [];
+  }).slice(0, AUTO_RECALL_LIMIT);
+  if (memories.length === 0) return '';
   const phase = autoRecallPhaseSchema.parse(rawPhase);
   const maxBytes = z
     .number()
@@ -115,7 +123,7 @@ export function formatAutoRecallContext(
   const footer = '</workspace-memory>';
   let body = '';
 
-  for (const hit of hits) {
+  for (const hit of memories) {
     const source = hit.source ? `; source=${hit.source}` : '';
     const prefix =
       `- [${hit.kind}; ${hit.scope}; importance=${hit.importance}${source}] `;
@@ -186,7 +194,7 @@ export function workspaceMemoryContextBlock(
     () =>
       getWorkspaceMemoryStore(scope).recall({
         query,
-        limit: AUTO_RECALL_LIMIT,
+        limit: AUTO_RECALL_CANDIDATES,
         trustedOnly: true,
       }),
     phase,
@@ -202,7 +210,7 @@ export function workspaceMemoryContextBlock(
 export function standingWorkspaceMemoryBlock(scope: ProjectExecutionScope): string | null {
   if (!injectionEnabled()) return null;
   return blockFrom(
-    () => getWorkspaceMemoryStore(scope).topTrustedWorkspace(AUTO_RECALL_LIMIT),
+    () => getWorkspaceMemoryStore(scope).topTrustedWorkspace(AUTO_RECALL_CANDIDATES),
     'execution',
     AUTO_RECALL_MIN_BYTES,
   );

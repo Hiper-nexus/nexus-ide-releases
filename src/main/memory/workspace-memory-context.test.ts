@@ -10,7 +10,10 @@ import {
   disposeWorkspaceMemoryStores,
   getWorkspaceMemoryStore,
 } from './workspace-memory';
+import { retainAcceptedHandoffMemory } from './trusted-memory';
 import {
+  standingWorkspaceMemoryBlock,
+  workspaceMemoryContextBlock,
   AUTO_RECALL_DEFAULT_MAX_BYTES,
   autoRecallPhaseForAgent,
   formatAutoRecallContext,
@@ -83,6 +86,22 @@ describe('automatic workspace-memory recall', () => {
     expect(Buffer.byteLength(prompt.slice(0, -brief.length), 'utf8')).toBeLessThanOrEqual(
       AUTO_RECALL_DEFAULT_MAX_BYTES + 2,
     );
+  });
+
+  it('recibos sem aprendizado ficam auditáveis, mas não ocupam o contexto automático', () => {
+    const receipt = { missionId: 'm', taskId: 't', dispatchId: 'd', status: 'success' as const, acceptedAt: 1 };
+    retainAcceptedHandoffMemory(scope, { ...receipt, handoffId: 'receipt-only' });
+    expect(standingWorkspaceMemoryBlock(scope)).toBeNull();
+    expect(workspaceMemoryContextBlock(scope, 'Nexus handoff mission')).toBeNull();
+    retainAcceptedHandoffMemory(scope, { ...receipt, handoffId: 'learned',
+      distilledSummary: 'Use cobrarUmaVez para cobrança idempotente.',
+    });
+    const block = standingWorkspaceMemoryBlock(scope);
+    expect(block).toContain('cobrarUmaVez');
+    expect(block).not.toContain('Handoff:');
+    expect(block).not.toContain('Dispatch:');
+    const stored = getWorkspaceMemoryStore(scope).recall({ query: 'Handoff', trustedOnly: true });
+    expect(stored.some((hit) => hit.content.includes('receipt-only'))).toBe(true);
   });
 
   it('caps formatted memory between the architectural 2–4 KB envelope', () => {
