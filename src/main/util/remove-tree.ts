@@ -47,63 +47,69 @@ function mayBeLink(entry: fs.Dirent): boolean {
 }
 
 /** Remove todo symlink/junction sob `root` (inclusive) sem seguir nenhum. */
-export function unlinkLinksInTreeSync(root: string): void {
+export function unlinkLinksInTreeSync(root: string): boolean {
   let stat: fs.Stats;
   try {
     stat = fs.lstatSync(root);
-  } catch {
-    return;
+  } catch (error) {
+    if (isMissing(error)) return false;
+    throw error;
   }
   if (stat.isSymbolicLink()) {
     unlinkLinkSync(root);
-    return;
+    return true;
   }
-  if (!stat.isDirectory()) return;
+  if (!stat.isDirectory()) return false;
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(root, { withFileTypes: true });
-  } catch {
-    return;
+  } catch (error) {
+    if (isMissing(error)) return false;
+    throw error;
   }
   for (const entry of entries) {
     const child = path.join(root, entry.name);
     if (entry.isDirectory() || mayBeLink(entry)) unlinkLinksInTreeSync(child);
   }
+  return false;
 }
 
 /** Versão assíncrona de {@link unlinkLinksInTreeSync}. */
-export async function unlinkLinksInTree(root: string): Promise<void> {
+export async function unlinkLinksInTree(root: string): Promise<boolean> {
   let stat: fs.Stats;
   try {
     stat = await fs.promises.lstat(root);
-  } catch {
-    return;
+  } catch (error) {
+    if (isMissing(error)) return false;
+    throw error;
   }
   if (stat.isSymbolicLink()) {
     await unlinkLink(root);
-    return;
+    return true;
   }
-  if (!stat.isDirectory()) return;
+  if (!stat.isDirectory()) return false;
   let entries: fs.Dirent[];
   try {
     entries = await fs.promises.readdir(root, { withFileTypes: true });
-  } catch {
-    return;
+  } catch (error) {
+    if (isMissing(error)) return false;
+    throw error;
   }
   for (const entry of entries) {
     const child = path.join(root, entry.name);
     if (entry.isDirectory() || mayBeLink(entry)) await unlinkLinksInTree(child);
   }
+  return false;
 }
 
 /** `fs.rmSync(target, { recursive: true, ...options })` sem seguir link. */
 export function removeTreeSync(target: string, options: TreeRmOptions = {}): void {
-  unlinkLinksInTreeSync(target);
+  if (unlinkLinksInTreeSync(target)) return;
   fs.rmSync(target, { ...options, recursive: true });
 }
 
 /** `fs.promises.rm(target, { recursive: true, ...options })` sem seguir link. */
 export async function removeTree(target: string, options: TreeRmOptions = {}): Promise<void> {
-  await unlinkLinksInTree(target);
+  if (await unlinkLinksInTree(target)) return;
   await fs.promises.rm(target, { ...options, recursive: true });
 }

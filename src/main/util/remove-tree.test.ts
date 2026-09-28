@@ -42,6 +42,28 @@ afterEach(() => {
 });
 
 describe('removeTree não segue link (F-663)', () => {
+  it.each(['lstatSync', 'readdirSync'] as const)('não remove a árvore se %s falhar durante a inspeção', (operation) => {
+    const fx = overlayFixture();
+    roots.push(fx.root);
+    const error = Object.assign(new Error('scan denied'), { code: 'EACCES' });
+    vi.spyOn(fs, operation).mockImplementationOnce(() => { throw error; });
+    const rm = vi.spyOn(fs, 'rmSync').mockImplementation(() => {});
+    expect(() => removeTreeSync(fx.overlay, { force: true })).toThrow(error);
+    expect(rm).not.toHaveBeenCalled();
+    expect(fs.existsSync(fx.conversation)).toBe(true);
+  });
+
+  it.each(['lstat', 'readdir'] as const)('não remove a árvore se %s async falhar durante a inspeção', async (operation) => {
+    const fx = overlayFixture();
+    roots.push(fx.root);
+    const error = Object.assign(new Error('scan failed'), { code: 'EIO' });
+    vi.spyOn(fs.promises, operation).mockRejectedValueOnce(error);
+    const rm = vi.spyOn(fs.promises, 'rm').mockResolvedValue();
+    await expect(removeTree(fx.overlay, { force: true })).rejects.toThrow(error);
+    expect(rm).not.toHaveBeenCalled();
+    expect(fs.existsSync(fx.conversation)).toBe(true);
+  });
+
   it('apaga o overlay e preserva as conversas do outro lado da junction', () => {
     const fx = overlayFixture();
     roots.push(fx.root);
@@ -88,6 +110,16 @@ describe('removeTree não segue link (F-663)', () => {
     roots.push(fx.root);
     const link = path.join(fx.overlay, '.claude', 'projects');
     removeTreeSync(link, { force: true });
+    expect(fs.existsSync(link)).toBe(false);
+    expect(fs.existsSync(fx.conversation)).toBe(true);
+  });
+
+  it.each(['sync', 'async'] as const)('alvo symlink com force:false não falha depois de remover o link (%s)', async (mode) => {
+    const fx = overlayFixture();
+    roots.push(fx.root);
+    const link = path.join(fx.overlay, '.claude', 'projects');
+    if (mode === 'sync') removeTreeSync(link, { force: false });
+    else await removeTree(link, { force: false });
     expect(fs.existsSync(link)).toBe(false);
     expect(fs.existsSync(fx.conversation)).toBe(true);
   });
