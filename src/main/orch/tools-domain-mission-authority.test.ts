@@ -10,6 +10,7 @@ import type { AgentGateContext } from './gate';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { ProcessGitRunner } from '../runtime/git-command';
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
+import { awaitsOperatorTabCompletionRequest } from './operator-tab-completion';
 
 const mocks = vi.hoisted(() => ({
   getProjectDomainStores: vi.fn(),
@@ -987,6 +988,65 @@ describe('mission creation authority', () => {
     expect(appendLearning).toHaveBeenCalledWith(mission.id, '## Solicitação de conclusão\nEntrega inicial enviada.');
     expect(mocks.reconcile).toHaveBeenCalledWith(scope, mission.id);
     expect(mocks.completeVerified).not.toHaveBeenCalled();
+  });
+
+  it('F-185: done da aba registra o pedido antes da revisão, mesmo sem nota', async () => {
+    let stored = {
+      id: 'mission-existing', status: 'running', squadId: 'standard-team',
+      orchestratorSessionId: 'orchestrator-session',
+      description: '<!-- nexus:awaiting-adjustment:100 -->',
+      learnings: '', intentVersion: 1, intentState: 'executing', updatedAt: 10,
+      intentContract: { lane: 'standard', workspaceBinding: { version: 1, adoptedPaneId: 'operator-pane', tabKey: '__loose__' } },
+    };
+    const updateContent = vi.fn((_id, patch) => (stored = { ...stored, ...patch }));
+    mocks.getProjectDomainStores.mockReturnValue({ missions: { get: () => stored, updateContent, appendLearning: vi.fn() } });
+    mocks.reconcile.mockImplementation(async () => {
+      expect(awaitsOperatorTabCompletionRequest(scope, stored as never)).toBe(false);
+      expect(stored.description).not.toContain('awaiting-adjustment');
+      return { action: 'wait', completed: false, reason: 'repair-dispatched' };
+    });
+    const result = await missionSetStatusTool().handler({ missionId: stored.id, status: 'done' }, context('orchestrator'));
+    expect(result).toMatchObject({ status: 'running', completionRequested: true });
+    expect(updateContent).toHaveBeenCalledOnce();
+    expect(mocks.reconcile).toHaveBeenCalledOnce();
+    expect(mocks.completeVerified).not.toHaveBeenCalled();
+  });
+
+  it('F-185: sessão antiga não registra pedido de conclusão na aba', async () => {
+    const updateContent = vi.fn();
+    mocks.getProjectDomainStores.mockReturnValue({ missions: {
+      get: () => ({
+        id: 'mission-existing', status: 'running', squadId: 'standard-team',
+        orchestratorSessionId: 'new-orchestrator-session',
+        intentContract: { lane: 'standard', workspaceBinding: { adoptedPaneId: 'operator-pane' } },
+      }),
+      updateContent,
+    } });
+    await expect(missionSetStatusTool().handler({ missionId: 'mission-existing', status: 'done' }, context('orchestrator'))).rejects.toThrow('orchestrator_session_stale');
+    expect(updateContent).not.toHaveBeenCalled();
+    expect(mocks.reconcile).not.toHaveBeenCalled();
+  });
+
+  it('F-185: aba sem squad continua concluindo pelo pedido explícito com nota durável', async () => {
+    let stored: Record<string, unknown> = {
+      id: 'mission-existing', status: 'running', learnings: '', milestones: [],
+      intentVersion: 1, intentState: 'executing', updatedAt: 10,
+      intentContract: { lane: 'standard', workspaceBinding: { adoptedPaneId: 'operator-pane' } },
+    };
+    mocks.getProjectDomainStores.mockReturnValue({ missions: { get: () => stored } });
+    mocks.getContextWorkflowService.mockReturnValue({
+      isMissionDriverComplete: () => false,
+      getMissionWorkflow: () => ({ contract: null }),
+    });
+    mocks.completeVerified.mockImplementation((_scope, input) => {
+      stored = { ...stored, status: 'done', result: input.result };
+    });
+    const result = await missionSetStatusTool().handler({
+      missionId: 'mission-existing', status: 'done',
+      note: 'Pedido inteiro entregue, testes validados e release publicada com recibo.',
+    }, context('orchestrator'));
+    expect(result).toMatchObject({ status: 'done' });
+    expect(mocks.completeVerified).toHaveBeenCalledOnce();
   });
 
   it('libera o turno enquanto sensores trabalham e deixa a reconciliação concluir depois', async () => {

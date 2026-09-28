@@ -7,6 +7,7 @@
  * DESIGN.md sozinho e rascunho nunca iniciado não fecham.
  */
 import { existsSync, readdirSync, statSync } from 'node:fs';
+import { awaitsOperatorTabCompletionRequest } from './operator-tab-completion';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { missionResultSchema } from '../../shared/mission-engine-contract';
 import { holdsAwaitingOperatorAdjustment } from '../../shared/mission-recovery-policy';
@@ -350,6 +351,7 @@ export function applyCivilianProntoDecision(input: {
   readonly teamQuestion?: TeamQuestionCompletion;
 }): boolean {
   if (input.decision.action !== 'pronto') return false;
+  if (awaitsOperatorTabCompletionRequest(input.scope, input.mission)) return false;
   const files = toArtifactRefs(input.productFiles);
   const orchestratorSummary = findOrchestratorHandoffSummary(
     input.mission,
@@ -507,6 +509,9 @@ export async function maybeApplyCivilianPronto(
   const tasks = stores.tasks.list(missionId);
   const sealedDone = tasks.filter((task) => task.status === 'done').length;
   const sealedTotal = tasks.length;
+  if (awaitsOperatorTabCompletionRequest(scope, mission)) {
+    return { ...empty('wait', 'awaiting-orchestrator-completion-request'), sealedDone, sealedTotal };
+  }
   const boardAllDone =
     sealedTotal > 0 && tasks.every((task) => task.status === 'done');
 

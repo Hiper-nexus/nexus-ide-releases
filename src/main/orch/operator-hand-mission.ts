@@ -3,6 +3,7 @@ import {
   MISSION_INTENT_GOAL_MAX_CHARS,
   type MissionIntentContract,
 } from '../../shared/mission-intent';
+import { TAB_COMPLETION_INSTRUCTION } from './operator-tab-completion';
 
 /**
  * Contrato da missão que a mão do operador cria em Autopilot: aprovado e
@@ -44,7 +45,7 @@ export function tabMissionLeaderNotice(missionTitle: string): string {
   const title = missionTitle.replace(/\s+/g, ' ').trim().slice(0, 120) || 'Missão da aba';
   return (
     `[Nexus] Você agora orquestra a ${title}. Helpers que abrir com ` +
-    'nexus_pane_spawn entram nela e as entregas deles chegam aqui.'
+    'nexus_pane_spawn entram nela e as entregas deles chegam aqui. ' + TAB_COMPLETION_INSTRUCTION
   );
 }
 

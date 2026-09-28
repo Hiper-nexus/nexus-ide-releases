@@ -1,4 +1,5 @@
 import { missionExecutionScope, missionExecutionBaseSha } from './mission-execution-scope';
+import { awaitsOperatorTabCompletionRequest } from './operator-tab-completion';
 import { execFile } from 'node:child_process';
 import { holdsAwaitingOperatorAdjustment } from '../../shared/mission-recovery-policy';
 import {
@@ -1491,6 +1492,10 @@ async function reconcileCivilianCompletionAttempt(
     ...uniqueAdvanced,
     ...markTasksDone(stores, inspection.deliveredWorkerTaskIds),
   ];
+
+  if (awaitsOperatorTabCompletionRequest(scope, mission)) {
+    return { ...emptyResult('wait'), markedDoneTaskIds, productFiles, reason: 'awaiting-orchestrator-completion-request' };
+  }
 
   const decisionInput: CivilianDeliveryDecisionInput = {
     failClosed: inspection.failClosed,

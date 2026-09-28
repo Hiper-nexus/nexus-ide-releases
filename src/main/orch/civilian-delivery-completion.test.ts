@@ -73,6 +73,7 @@ import { maybeApplyCivilianPronto } from './civilian-pronto';
 import { getAutomaticCompletionProof } from './automatic-completion-proof';
 import type { ScopedTaskRecord } from './task-store';
 import { MissionLeadershipError } from './mission-leadership';
+import { recordOperatorTabCompletionRequest } from './operator-tab-completion';
 
 const scope = testProjectScope({ rootRealPath: '/workspace/waitlist' });
 
@@ -1142,6 +1143,45 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     expect(marked).toEqual([]);
     expect(completeVerified).toHaveBeenCalledOnce();
   });
+
+  it.each(['watcher', 'pronto'] as const)(
+    'F-185: %s não conclui missão da aba numa pausa do Maestro antes da release',
+    async (closer) => {
+      completeVerified.mockClear();
+      const missionId = `mission-tab-${closer}`;
+      const deliveredTask = task({ id: 't-delivery', missionId, title: 'Implementar server.js', status: 'pending' });
+      const { reconcile, liveMission, stores } = harness({
+        missionId,
+        handoffs: [handoff({ missionId })],
+        files: ['server.js'],
+        tasks: [deliveredTask],
+        planned: [{ taskId: deliveredTask.id, agentCategory: 'executor', agent: { id: 'frontend', agentName: 'Frontend', category: 'executor' } }],
+        missionOverrides: {
+          squadId: undefined,
+          intentContract: {
+            workspaceBinding: { version: 1, adoptedPaneId: 'operator-pane', tabKey: '__loose__' },
+          } as Mission['intentContract'],
+        },
+      });
+      const result = closer === 'watcher' ? await reconcile() : await maybeApplyCivilianPronto(scope, liveMission.id, {
+        getStores: () => stores as never,
+        listPanes: () => [],
+        listProductFiles: () => ['server.js'],
+        missionEngine: { completeVerified } as never,
+        resolveMissionLeader: () => null,
+      });
+      expect(result.completed).toBe(false);
+      expect(result.action).toBe('wait');
+      expect(completeVerified).not.toHaveBeenCalled();
+      expect(liveMission.status).toBe('running');
+      expect(deliveredTask.status).toBe('done');
+      // O pedido libera somente a revisão existente, não cria um done direto.
+      recordOperatorTabCompletionRequest(scope, liveMission);
+      const requested = await reconcile();
+      expect(requested.completed).toBe(true);
+      expect(completeVerified).toHaveBeenCalledOnce();
+    },
+  );
 
   it('entrega + todos os workers feitos → Pronto e só avança quem entregou de verdade', async () => {
     completeVerified.mockClear();

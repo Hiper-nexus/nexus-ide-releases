@@ -1,4 +1,5 @@
 import type { Mission, MissionPaneSpec, SquadAgent } from '../../shared/orch-types';
+import { TAB_COMPLETION_INSTRUCTION } from './operator-tab-completion';
 
 /**
  * Retomada da missão da aba (F-661).
@@ -20,7 +21,7 @@ export const OPERATOR_TAB_RESUME_NOTE =
   'análise/revisão usa readOnly:true, escrita paralela usa isolatedWriter:true quando o escopo permitir. ' +
   'Não duplique trabalho já despachado: consulte os handoffs. Integre e valide as entregas; feche os helpers após usá-los. ' +
   'Tarefa pequena ou conversa pode ser feita aqui. Respeite pausas, orçamento e restrições explícitas do operador e do ambiente; ' +
-  'se alguma restrição impedir delegar, explique qual em vez de ficar parado.';
+  'se alguma restrição impedir delegar, explique qual em vez de ficar parado. ' + TAB_COMPLETION_INSTRUCTION;
 
 /**
  * O orquestrador cuja conversa deve ser retomada, ou null quando a missão não

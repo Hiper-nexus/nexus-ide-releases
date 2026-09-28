@@ -117,6 +117,8 @@ import {
 } from '../../shared/mission-intent';
 import { isTaskQueueManagedMission } from './task-dispatch-authority';
 import { operatorHandMissionContract } from './operator-hand-mission';
+import { isOperatorTabMission, recordOperatorTabCompletionRequest } from './operator-tab-completion';
+import { stripAwaitingAdjustmentMarker } from '../../shared/mission-recovery-policy';
 import {
   countMissionItems,
   fastLaneObjectiveText,
@@ -585,6 +587,14 @@ const missionSetStatusTool: McpToolDef = {
       }
       const lane = current.intentContract?.lane ?? 'standard';
       if (missionRequiresAutomaticCompletionReview(current, current.squadId ? getSquad(current.squadId) : null)) {
+        if (isOperatorTabMission(current)) {
+          assertCurrentMissionOrchestratorSession(ctx, current);
+          const recorded = stores.missions.updateContent(missionId, {
+            description: stripAwaitingAdjustmentMarker(current.description ?? ''),
+          });
+          if (!recorded) throw new Error('mission not found while requesting completion');
+          recordOperatorTabCompletionRequest(ctx.scope, recorded);
+        }
         const entry = `## Solicitação de conclusão\n${note}`.slice(0, MAX_MISSION_RESULT_CHARS);
         if (note && !current.learnings.includes(entry)) {
           stores.missions.appendLearning(missionId, entry);
