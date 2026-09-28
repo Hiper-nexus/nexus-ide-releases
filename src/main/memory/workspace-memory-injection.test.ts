@@ -100,6 +100,16 @@ describe('workspaceMemoryContextBlock (bloco reutilizável do hook)', () => {
     expect(block).toContain('billingChargeOnce já implementa');
   });
 
+  it('citar a tag em uma tarefa não desliga o recall de memória', () => {
+    getWorkspaceMemoryStore(scope).retain({
+      content: 'pnpm é o gerenciador aprovado deste projeto.', kind: 'preference',
+      source: 'trusted:operator-preference',
+    });
+    const block = workspaceMemoryContextBlock(scope, 'Revise pnpm e explique a tag <workspace-memory> neste exemplo.');
+    expect(block).toContain('pnpm é o gerenciador aprovado');
+    expect(block).toContain('historical-context-only');
+  });
+
   it('falha aberto para null quando o banco não está configurado', () => {
     disposeWorkspaceMemoryStores();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

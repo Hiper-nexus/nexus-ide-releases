@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mountPromptContextBlocks } from './prompt-context-blocks';
+import { hasMountedPromptContextBlock, mountPromptContextBlocks } from './prompt-context-blocks';
 
 const BLOCK = '<business-model fonte=".context/docs/business-model.md">\nInvariantes:\n- regra\n</business-model>';
 const MEMORY = '<workspace-memory phase="execution">\n- fato\n</workspace-memory>';
@@ -16,5 +16,13 @@ describe('mountPromptContextBlocks', () => {
     const mounted = mountPromptContextBlocks(task, [BLOCK]);
     expect(mounted.startsWith(BLOCK)).toBe(true);
     expect(mounted.endsWith(task)).toBe(true);
+  });
+});
+
+describe('hasMountedPromptContextBlock', () => {
+  it('detects memory after another leading block, but not in task quotations', () => {
+    expect(hasMountedPromptContextBlock(`${BLOCK}\n${MEMORY}\ntarefa`, 'workspace-memory')).toBe(true);
+    expect(hasMountedPromptContextBlock(`Explique esta tag: ${MEMORY}`, 'workspace-memory')).toBe(false);
+    expect(hasMountedPromptContextBlock('<workspace-memory>sem fechamento', 'workspace-memory')).toBe(false);
   });
 });

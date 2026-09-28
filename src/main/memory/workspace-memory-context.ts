@@ -3,7 +3,7 @@ import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { getOrchSettings } from '../persistence/settings-store';
-import { mountPromptContextBlocks } from '../orch/prompt-context-blocks';
+import { hasMountedPromptContextBlock, mountPromptContextBlocks } from '../orch/prompt-context-blocks';
 import {
   getWorkspaceMemoryStore,
   type MemoryRecallHit,
@@ -32,7 +32,6 @@ export function autoRecallPhaseForAgent(input: {
 
 const AUTO_RECALL_LIMIT = 8;
 const AUTO_RECALL_CANDIDATES = 32;
-const AUTO_RECALL_MARKER = '<workspace-memory';
 const QUERY_STOP_WORDS = new Set([
   'about',
   'after',
@@ -187,7 +186,7 @@ export function workspaceMemoryContextBlock(
   prompt: string,
   phase: AutoRecallPhase = 'execution',
 ): string | null {
-  if (prompt.includes(AUTO_RECALL_MARKER) || !injectionEnabled()) return null;
+  if (hasMountedPromptContextBlock(prompt, 'workspace-memory') || !injectionEnabled()) return null;
   const query = buildRecallQuery(prompt);
   if (!query) return null;
   return blockFrom(

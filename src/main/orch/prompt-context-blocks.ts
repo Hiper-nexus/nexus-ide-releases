@@ -29,6 +29,13 @@ function mountedOpenings(text: string): Set<string> {
   }
 }
 
+/** Only leading mounted blocks count; mentioning a tag in the task is not injection. */
+export function hasMountedPromptContextBlock(prompt: string, tag: string): boolean {
+  return [...mountedOpenings(prompt)].some(
+    (opening) => /^<([a-z][\w-]*)[\s>]/.exec(opening)?.[1] === tag,
+  );
+}
+
 function freshBlocks(text: string, blocks: readonly PromptContextBlock[]): string[] {
   const mounted = mountedOpenings(text);
   return blocks.filter(
