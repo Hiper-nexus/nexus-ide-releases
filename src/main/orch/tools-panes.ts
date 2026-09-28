@@ -53,6 +53,7 @@ import { adHocSpawnGateError } from './route-provenance';
 import { recordRouteLog } from './route-log';
 import {
   adapterIdsWithoutNexusMcp,
+  sameAdapterDiversityHint,
   ignoredRouteChoice,
   operatorChildUseCounts,
   operatorRouteTask,
@@ -1554,6 +1555,9 @@ const paneSpawnAfterTabMission = {
         isolatedWriterPending = Boolean(isolatedWriter);
         spawnedPaneId = pending.paneId ?? undefined;
         if (isolatedWriter && pending.paneId) isolatedWriter.link(pending.paneId, pending.sessionId ?? undefined);
+        const pendingDiversity = harness.source === 'explicit'
+          ? sameAdapterDiversityHint(options.adapterId, options.missionId, listPaneSnapshots(), pending.paneId ?? undefined)
+          : null;
         return {
           ...pending,
           ...(executionMode ? { executionMode } : {}),
@@ -1562,6 +1566,7 @@ const paneSpawnAfterTabMission = {
           // ACK pendente: ainda não há sessionId para buscar o recibo.
           harness: { ...harness, account: null },
           ...routeReceipt,
+          ...(pendingDiversity ? { diversity: pendingDiversity } : {}),
         };
       }
       // F-104: sem marcação de "handoff pendente" no spawn — o marcador só
@@ -1591,11 +1596,15 @@ const paneSpawnAfterTabMission = {
         ...(options.model ? { model: options.model } : {}),
         ...(options.effort ? { effort: options.effort as 'low' | 'medium' | 'high' } : {}),
       });
+      const diversity = harness.source === 'explicit'
+        ? sameAdapterDiversityHint(options.adapterId, options.missionId, listPaneSnapshots(), spawned.paneId)
+        : null;
       return {
         ...spawned,
         ...(executionMode ? { executionMode } : {}),
         ...isolatedReceipt(),
         ...(tabMissionId ? { tabMission: { missionId: tabMissionId } } : {}),
+        ...(diversity ? { diversity } : {}),
         harness: {
           ...harness,
           account: getAccountChoiceReceipt(spawned.sessionId) ?? null,

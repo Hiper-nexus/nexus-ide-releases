@@ -90,6 +90,40 @@ export function liveMissionAdapterIds(
     .map((pane) => pane.adapterId!);
 }
 
+/** Helpers vivos na mesma CLI a partir dos quais o recibo sugere diversificar. */
+export const SAME_ADAPTER_DIVERSITY_THRESHOLD = 2;
+
+/**
+ * F-672: quem fixa `adapterId` recebe a CLI que pediu — escolha explícita é
+ * respeitada —, mas o recibo avisa quando ela já tem helpers vivos na missão.
+ * Campo 28/09: depois de uma falha do Codex já corrigida, o orquestrador passou
+ * a fixar Claude em todo spawn e o roteamento pelo Jev nunca mais foi usado.
+ */
+export function sameAdapterDiversityHint(
+  adapterId: string | undefined,
+  missionId: string | undefined,
+  panes: readonly (MissionUsePane & { readonly role?: string })[],
+  newPaneId?: string,
+): { sameAdapterLive: number; hint: string } | null {
+  if (!adapterId || !missionId) return null;
+  const live = panes.filter(
+    (pane) =>
+      pane.missionId === missionId &&
+      pane.adapterId === adapterId &&
+      pane.role !== 'orchestrator' &&
+      !INACTIVE.has(pane.state) &&
+      pane.paneId !== newPaneId,
+  ).length;
+  if (live < SAME_ADAPTER_DIVERSITY_THRESHOLD) return null;
+  return {
+    sameAdapterLive: live,
+    hint:
+      `Já há ${live} helpers vivos em ${adapterId} nesta missão. Para distribuir ` +
+      'o trabalho entre CLIs, omita adapterId e model no próximo nexus_pane_spawn: ' +
+      'o Nexus roteia pela tarefa (Jev) entre as CLIs prontas.',
+  };
+}
+
 /** CLIs de terminal que não carregam o MCP do Nexus (entrega só pelo fim do PTY). */
 export function adapterIdsWithoutNexusMcp<
   T extends { readonly id: string; readonly kind: string },
