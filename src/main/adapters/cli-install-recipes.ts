@@ -188,9 +188,9 @@ type PlatformRecipes = Partial<
  */
 const RECIPES: Readonly<Record<string, PlatformRecipes>> = Object.freeze({
   claude: {
-    // Fallback: instalador nativo oficial da Anthropic (docs "Set up Claude
-    // Code") — cobre máquina sem Node E o clássico EACCES do npm -g.
-    darwin: [npmRecipe('@anthropic-ai/claude-code'), scriptRecipe('https://claude.ai/install.sh')],
+    // Native is the official recommended macOS install. npm-first collides
+    // with native/custom launchers in ~/.local/bin (EEXIST, F-210).
+    darwin: [scriptRecipe('https://claude.ai/install.sh'), npmRecipe('@anthropic-ai/claude-code')],
     linux: [npmRecipe('@anthropic-ai/claude-code'), scriptRecipe('https://claude.ai/install.sh')],
     win32: [npmRecipe('@anthropic-ai/claude-code')],
   },

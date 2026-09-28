@@ -56,6 +56,38 @@ describe('path-resolver CLI binary resolution', () => {
     expect(dirs).toContain('/opt/homebrew/bin');
   });
 
+  it.skipIf(process.platform === 'win32')('F-210: recupera Claude nativo com atalho quebrado sem modificar o atalho', () => {
+    const bin = path.join(tmp, '.local', 'bin');
+    const versions = path.join(tmp, '.local', 'share', 'claude', 'versions');
+    fs.mkdirSync(bin, { recursive: true }); fs.mkdirSync(versions, { recursive: true });
+    for (const version of ['2.1.9', '2.1.10', '2.1.10-beta.1']) {
+      fs.writeFileSync(path.join(versions, version), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    }
+    fs.writeFileSync(path.join(versions, '9.0.0'), 'not executable', { mode: 0o644 });
+    fs.mkdirSync(path.join(versions, '10.0.0'));
+    const missing = path.join(versions, '1.0.0');
+    const launcher = path.join(bin, 'claude'); fs.symlinkSync(missing, launcher);
+    const options = { home: tmp, processPath: bin, effectivePath: bin };
+    expect(resolveCliBinary('claude', options)).toMatchObject({ binPath: path.join(versions, '2.1.10'), source: 'fallback-dir' });
+    expect(fs.readlinkSync(launcher)).toBe(missing);
+    expect(resolveCliBinary('other-cli', options)).toBeNull();
+  });
+
+  it.skipIf(process.platform === 'win32')('F-210: recupera sem launcher e preserva prioridade de launcher válido', () => {
+    const versions = path.join(tmp, '.local', 'share', 'claude', 'versions');
+    fs.mkdirSync(versions, { recursive: true });
+    const native = path.join(versions, '8.42.123');
+    fs.writeFileSync(native, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    expect(resolveCliBinary('claude', { home: tmp, processPath: '', effectivePath: '' })?.binPath).toBe(native);
+    expect(resolveCliBinary('claude', { home: tmp, processPath: binDir, effectivePath: binDir })?.binPath).toBe(executable);
+  });
+
+  it.skipIf(process.platform === 'win32')('F-210: arquivo existente sem execução e sem instalação válida continua indisponível', () => {
+    fs.chmodSync(executable, 0o644);
+    expect(resolveCliBinary('claude', { home: tmp, processPath: binDir, effectivePath: binDir })).toBeNull();
+    expect(fs.readFileSync(executable, 'utf8')).toContain('echo ok');
+  });
+
   it('covers version managers and legacy installers outside ~/.local/bin (multi-cliente)', () => {
     // Máquina de colega: claude via nvm/pnpm/mise/instalador antigo. Com o
     // shell de login lento (oh-my-zsh + nvm > 4 s) só as pastas fixas valem.

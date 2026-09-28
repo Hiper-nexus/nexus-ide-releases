@@ -1,9 +1,14 @@
 import mimoRaw from '../../adapters/builtin/mimo-code.json';
 import fs from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
+import { PROVIDER_CHANNELS } from '../../shared/provider-settings-types';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const spawnDeps = vi.hoisted(() => ({
+  resolvedClaudeBin: '/usr/local/bin/claude' as string | null,
+  trustedHandlers: new Map<string, (event: unknown, args: unknown) => unknown>(),
+  confirmInstall: vi.fn(async () => ({ response: 1 })),
+  downloadInstaller: vi.fn(async () => ({ ok: true, text: async () => '#!/bin/bash\nexit 0\n' })),
   systemIdleTime: vi.fn(() => 0),
   rescanBinaries: vi.fn(async () => []),
   execFile: vi.fn<(...args: unknown[]) => ChildProcess>(),
@@ -222,8 +227,16 @@ const credentiallessAdapter = {
 vi.mock('electron', () => ({
   powerMonitor: { getSystemIdleTime: spawnDeps.systemIdleTime },
   BrowserWindow: { getAllWindows: () => [], getFocusedWindow: () => null },
-  dialog: { showMessageBox: vi.fn() },
+  dialog: { showMessageBox: spawnDeps.confirmInstall },
+  net: { fetch: spawnDeps.downloadInstaller },
   ipcMain: { handle: vi.fn() },
+}));
+
+vi.mock('../security/trusted-ipc', async (original) => ({
+  ...(await original<typeof import('../security/trusted-ipc')>()),
+  handleTrusted: (channel: string, handler: (event: unknown, args: unknown) => unknown) => {
+    spawnDeps.trustedHandlers.set(channel, handler);
+  },
 }));
 
 vi.mock('../adapters/adapter-registry', () => ({
@@ -251,7 +264,7 @@ vi.mock('../adapters/adapter-registry', () => ({
   isBinResolvable: () => true,
   getAdapterResolvedBin: (id: string) =>
     id === 'mimo-code' ? '/usr/local/bin/mimo' : id === 'claude'
-      ? '/usr/local/bin/claude'
+      ? spawnDeps.resolvedClaudeBin
       : id === 'kimi'
         ? '/Users/test/.kimi-code/bin/kimi'
       : id === 'muse'
@@ -265,7 +278,7 @@ vi.mock('../adapters/adapter-registry', () => ({
         : null,
   resolveAdapterBinary: (id: string) =>
     id === 'mimo-code' ? '/usr/local/bin/mimo' : id === 'claude'
-      ? '/usr/local/bin/claude'
+      ? spawnDeps.resolvedClaudeBin
       : id === 'kimi'
         ? '/Users/test/.kimi-code/bin/kimi'
       : id === 'muse'
@@ -305,6 +318,8 @@ vi.mock('../path-resolver', () => ({
       ? { binPath: runner }
       : runner === 'npm'
       ? { binPath: 'C:\\Program Files\\nodejs\\npm.cmd' }
+      : runner === 'bash'
+      ? { binPath: '/bin/bash' }
       : null,
 }));
 
@@ -393,6 +408,7 @@ import {
   providerAuthStrategy,
   providerReadiness,
   initializeProviderConfigStore,
+  registerProviderIpc,
   resolveRunnerPath,
   resolveQuotaApiKey,
 } from './provider-config-store';
@@ -1631,5 +1647,50 @@ describe('effectiveDefaultModel — preferência antiga do Kimi (smoke 28/09)', 
       .toBe('kimi-code/kimi-for-coding-highspeed');
     // Id que nem migra nem existe: default do adapter (preferência mantida no arquivo).
     expect(effectiveDefaultModel('kimi', 'kimi-k9', known, 'kimi-code/k3')).toBe('kimi-code/k3');
+  });
+});
+
+describe('F-210: instalação de Claude verifica e reutiliza o binário real', () => {
+  const install = () => spawnDeps.trustedHandlers.get(PROVIDER_CHANNELS.installCli)!({}, { adapterId: 'claude', mode: 'install' });
+  beforeEach(() => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    spawnDeps.resolvedClaudeBin = '/usr/local/bin/claude';
+    spawnDeps.confirmInstall.mockClear();
+    spawnDeps.downloadInstaller.mockClear();
+    spawnDeps.rescanBinaries.mockReset().mockResolvedValue([]);
+    spawnDeps.execFile.mockReset().mockImplementation((...args: unknown[]) => {
+      (args.at(-1) as (error: null, stdout: string) => void)(null, '4.12.7 (Claude Code)');
+      return {} as ChildProcess;
+    });
+    registerProviderIpc();
+  });
+  afterEach(() => {
+    spawnDeps.resolvedClaudeBin = '/usr/local/bin/claude';
+    vi.restoreAllMocks();
+  });
+  it('CLI existente validada não dispara instalador nem sobrescreve launcher', async () => {
+    await expect(install()).resolves.toMatchObject({ ok: true, changed: false, version: '4.12.7 (Claude Code)' });
+    expect(spawnDeps.execFile).toHaveBeenCalledOnce();
+    expect(spawnDeps.execFile.mock.calls[0]?.slice(0, 2)).toEqual(['/usr/local/bin/claude', ['--version']]);
+    expect(spawnDeps.confirmInstall).not.toHaveBeenCalled();
+    expect(spawnDeps.downloadInstaller).not.toHaveBeenCalled();
+  });
+  it('instalador exit 0 sem binário encontrado não anuncia sucesso', async () => {
+    spawnDeps.resolvedClaudeBin = null;
+    await expect(install()).resolves.toMatchObject({ ok: false, error: expect.stringContaining('não conseguiu verificar') });
+    expect(spawnDeps.downloadInstaller).toHaveBeenCalledWith('https://claude.ai/install.sh');
+    expect(spawnDeps.execFile.mock.calls[0]?.[0]).toBe('/bin/bash');
+  });
+  it('instalação nativa é reexaminada e sua versão comprovada antes do sucesso', async () => {
+    spawnDeps.resolvedClaudeBin = null;
+    spawnDeps.execFile.mockImplementation((...args: unknown[]) => {
+      if (args[0] === '/bin/bash') spawnDeps.resolvedClaudeBin = '/fixture-quota-home/.local/share/claude/versions/4.12.7';
+      (args.at(-1) as (error: null, stdout: string) => void)(null, '4.12.7 (Claude Code)');
+      return {} as ChildProcess;
+    });
+    await expect(install()).resolves.toMatchObject({ ok: true, version: '4.12.7 (Claude Code)' });
+    expect(spawnDeps.execFile.mock.calls.at(-1)?.slice(0, 2)).toEqual([
+      '/fixture-quota-home/.local/share/claude/versions/4.12.7', ['--version'],
+    ]);
   });
 });

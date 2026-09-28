@@ -2241,6 +2241,17 @@ export function registerProviderIpc(): void {
     }
     try {
     const updating = parsed.data.mode === 'update';
+    if (!updating && adapter.id === 'claude') {
+      // The UI can be stale, or only the native symlink may be broken.
+      // Reuse a verified existing CLI instead of installing over it.
+      await rescanAdapterBinaries();
+      const existing = activeProviderBinary(adapter.id);
+      const version = existing ? await installedCliVersion(adapter.id, existing) : null;
+      if (version) {
+        broadcast();
+        return { ok: true, changed: false, version };
+      }
+    }
     const beforeBin = updating ? activeProviderBinary(adapter.id) : null;
     if (updating && !beforeBin) {
       return { ok: false, error: 'CLI não encontrada; reexamine as CLIs antes de atualizar.' };
@@ -2316,7 +2327,6 @@ export function registerProviderIpc(): void {
     // Re-fold PATH + re-probe absolute bins so the new CLI is spawnable now.
     await rescanAdapterBinaries();
     broadcast();
-    if (!updating) return { ok: true };
     const afterBin = activeProviderBinary(adapter.id);
     const afterVersion = afterBin ? await installedCliVersion(adapter.id, afterBin) : null;
     if (!afterBin || !afterVersion) {
@@ -2325,6 +2335,7 @@ export function registerProviderIpc(): void {
         error: 'O instalador terminou, mas o Nexus não conseguiu verificar a versão da CLI usada pelo pane.',
       };
     }
+    if (!updating) return { ok: true, version: afterVersion };
     if (!beforeBin) return { ok: false, error: 'CLI anterior não verificada.' };
     const observation = assessCliUpdate({
       beforeBin,

@@ -2,6 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { execFile } from 'node:child_process';
+import { compareAppVersions, isValidAppVersion } from '../shared/app-version';
 
 /**
  * Single source of truth for CLI PATH + binary resolution.
@@ -433,6 +434,22 @@ function classifySource(
   return 'login-path';
 }
 
+/** Native Claude keeps version-named executables, not a file named `claude`. */
+function nativeClaudeVersionBinary(home: string): string | null {
+  if (process.platform === 'win32') return null;
+  const versions = path.join(home, '.local', 'share', 'claude', 'versions');
+  try {
+    const candidates = fs.readdirSync(versions, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && isValidAppVersion(entry.name))
+      .sort((a, b) => compareAppVersions(b.name, a.name));
+    for (const entry of candidates) {
+      const candidate = path.join(versions, entry.name);
+      if (isExecutableFile(candidate)) return candidate;
+    }
+  } catch { /* Missing or unreadable native installation: remain unavailable. */ }
+  return null;
+}
+
 /**
  * Resolve a CLI command (or absolute path) to an absolute executable.
  * Uses process PATH first, then the memoised effective PATH (login + fallbacks).
@@ -485,16 +502,17 @@ export function resolveCliBinary(
         })
       : getEffectivePath());
 
-  if (effective === processPath) return null;
-
-  const fromEffective = lookupInPath(trimmed, effective);
-  if (!fromEffective) return null;
-
   const home = options.home ?? realUserHome();
+  const fromEffective = effective === processPath ? null : lookupInPath(trimmed, effective);
+  // Only after PATH/explicit launchers lose: retain the operator's chosen
+  // installation/channel. Recover a missing/broken native link without
+  // overwriting that link or any custom launcher (F-210).
+  const resolved = fromEffective ?? (trimmed === 'claude' ? nativeClaudeVersionBinary(home) : null);
+  if (!resolved) return null;
   return {
-    binPath: fromEffective,
+    binPath: resolved,
     effectivePath: effective,
-    source: classifySource(fromEffective, processPath, home),
+    source: classifySource(resolved, processPath, home),
   };
 }
 

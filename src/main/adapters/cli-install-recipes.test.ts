@@ -120,15 +120,17 @@ describe('cli install recipes', () => {
 });
 
 describe('candidatos em cascata (máquina sem runner primário)', () => {
-  it('claude tem fallback de instalador oficial por script (sem Node/npm)', () => {
+  it('claude prefere instalador nativo no macOS mesmo quando npm está disponível (F-210)', () => {
     const candidates = cliInstallRecipeCandidates('claude', 'darwin');
     expect(candidates.length).toBeGreaterThanOrEqual(2);
-    expect(candidates[0]?.kind).toBe('argv');
-    const fallback = candidates[1];
+    expect(candidates[1]?.kind).toBe('argv');
+    const fallback = candidates[0];
     expect(fallback?.kind).toBe('script');
     if (fallback?.kind === 'script') {
       expect(fallback.scriptUrl).toBe('https://claude.ai/install.sh');
     }
+    expect(selectInstallRecipe(candidates, () => true)).toMatchObject({ ok: true, recipe: { kind: 'script' } });
+    expect(cliInstallRecipeFor('claude', 'win32')).toMatchObject({ kind: 'argv', runner: 'npm' });
   });
 
   it('selectInstallRecipe cai para o candidato cujo runner existe', () => {
