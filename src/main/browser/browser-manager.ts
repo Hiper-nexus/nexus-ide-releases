@@ -1856,6 +1856,8 @@ async function judgeBrowserPage(
       state, questions,
       navSeq: cacheEntry.navSeq,
       loadGeneration: cacheEntry.loadGeneration,
+      sessionId: options?.sessionId ?? null,
+      missionId: options?.missionId ?? null,
       model: process.env.NEXUS_JEV_MODEL ?? 'jev-latest',
     })).digest('hex');
     const cached = await pageJudgmentCache.get(pageCacheOwner(cacheEntry, judgeFn), key, compute, (value) => value.judgment !== null);

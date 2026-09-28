@@ -609,13 +609,15 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
     expect(compact.contextSelection?.applied).toBe(true);
     expect(compact.judgmentReused).toBe(true);
     expect(jev).toHaveBeenCalledOnce();
+    await readBrowserPage(PANE, scope, { ...options, sessionId: 'other-session', missionId: 'other-mission' });
+    expect(jev).toHaveBeenCalledTimes(2);
     bodyText += ' atualizado';
     await readBrowserPage(PANE, scope, options);
-    expect(jev).toHaveBeenCalledTimes(2);
+    expect(jev).toHaveBeenCalledTimes(3);
     const disabled = await readBrowserPage(PANE, scope, { ...options, judge: false });
     expect(disabled.bodyText).toBe(bodyText);
     expect(disabled.contextSelection).toBeUndefined();
-    expect(jev).toHaveBeenCalledTimes(2);
+    expect(jev).toHaveBeenCalledTimes(3);
     destroyBrowser(PANE, scope);
   });
 
