@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { clampUtf8TextPrefix } from '../../shared/utf8-byte-limits';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
@@ -164,18 +165,6 @@ const TRUSTED_MEMORY_POLICY: Readonly<
 
 const TRUSTED_CONTENT_MAX_BYTES = 7_800;
 
-function truncateUtf8(value: string, maxBytes: number): string {
-  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value;
-  let result = '';
-  let bytes = 0;
-  for (const character of value) {
-    const characterBytes = Buffer.byteLength(character, 'utf8');
-    if (bytes + characterBytes > maxBytes) break;
-    result += character;
-    bytes += characterBytes;
-  }
-  return result;
-}
 
 function trustedContent(
   event: TrustedMemoryEvent,
@@ -190,7 +179,7 @@ function trustedContent(
     lines.push(`Evidence: ${event.evidenceIds.join(', ')}`);
   }
   lines.push(`Summary: ${event.summary}`);
-  return truncateUtf8(lines.join('\n'), TRUSTED_CONTENT_MAX_BYTES);
+  return clampUtf8TextPrefix(lines.join('\n'), TRUSTED_CONTENT_MAX_BYTES);
 }
 
 /**

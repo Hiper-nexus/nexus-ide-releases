@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { clampUtf8TextPrefix } from '../../shared/utf8-byte-limits';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
@@ -51,18 +52,6 @@ const QUERY_STOP_WORDS = new Set([
   'with',
 ]);
 
-function truncateUtf8(value: string, maxBytes: number): string {
-  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value;
-  let result = '';
-  let bytes = 0;
-  for (const character of value) {
-    const characterBytes = Buffer.byteLength(character, 'utf8');
-    if (bytes + characterBytes > maxBytes) break;
-    result += character;
-    bytes += characterBytes;
-  }
-  return result;
-}
 
 function sanitizeMemoryLine(content: string): string {
   return content
@@ -135,7 +124,7 @@ export function formatAutoRecallContext(
       continue;
     }
     if (body.length === 0) {
-      body += truncateUtf8(line, availableBytes);
+      body += clampUtf8TextPrefix(line, availableBytes);
     }
     break;
   }

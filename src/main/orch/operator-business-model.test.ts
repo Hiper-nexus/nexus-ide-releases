@@ -10,6 +10,7 @@ import {
 } from '../context/business-model/business-model-context-block';
 import { extractBusinessModel } from '../context/business-model/business-model-extract';
 import {
+  BARBERSHOP_FILES,
   applyAttestedBusinessModel,
   createBarbershopRepo,
   writeFixtureFile,
@@ -39,10 +40,25 @@ describe('bloco <business-model>', () => {
     expect(block.endsWith('</business-model>')).toBe(true);
     expect(block).toMatch(/confira os invariantes/);
     expect(block).toMatch(/rode os testes listados/);
+    expect(block).toContain('src/commanda.ts');
+    expect(block).toContain('funções:');
+    expect(block).toContain('reutilize o que existe');
+    expect(block).toContain('Sem teste, crie uma verificação');
     expect(block.indexOf('Invariantes:')).toBeLessThan(block.indexOf('Testes por fluxo:'));
     expect(block).toContain('[close_commanda#1] close_commanda recusa: comanda ja fechada: %');
     expect(block).toContain('close_commanda (escreve appointments, commission_entries): tests/db/close-commanda.test.ts');
     expect(Buffer.byteLength(block, 'utf8')).toBeLessThanOrEqual(BUSINESS_MODEL_BLOCK_MAX_BYTES);
+  });
+
+  it('referências longas não expulsam a linha de testes que ainda cabe', async () => {
+    const longPath = `src/a${'a'.repeat(180)}.ts`;
+    const big = createBarbershopRepo({ ...BARBERSHOP_FILES, [longPath]: "supabase.rpc('close_commanda', {});\n" });
+    try {
+      await applyAttestedBusinessModel(big);
+      const block = businessModelContextBlock(scopeOf(big))!;
+      expect(block).toContain('close_commanda (escreve appointments, commission_entries): tests/db/close-commanda.test.ts');
+      expect(Buffer.byteLength(block)).toBeLessThanOrEqual(BUSINESS_MODEL_BLOCK_MAX_BYTES);
+    } finally { fs.rmSync(big, { recursive: true, force: true }); }
   });
 
   it('modelo grande é cortado dentro do teto e aponta o doc', async () => {
