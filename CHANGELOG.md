@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.115 — Worker que responde
+
+Correções do uso real no Windows em 28/09. Inclui a 0.76.114 (CLIs no canal certo).
+
+- **Missão da aba sem worker mudo (F-662).** Depois do "Retomar", o orquestrador da aba pedia rota com `nexus_route_task` e recebia o AGY, que no modo one-shot (`--print`) não mostra nada até terminar. A regra de só abrir helper em CLI com o MCP do Nexus agora vale para a missão da aba inteira, qualquer que seja o pane que pede a rota.
+- **Pergunta a pane one-shot responde na hora (F-662).** `nexus_pane_ask` esperava o prazo inteiro e voltava vazio num pane AGY que estava trabalhando — o orquestrador concluía "infraestrutura quebrada". Agora responde na hora que o pane é one-shot e que a entrega chega quando ele terminar; `nexus_pane_write` avisa o mesmo no recibo.
+- **Codex no Windows (fora do Nexus).** O Codex 0.157 instalado pelo npm do Node do WinGet não consegue abrir o próprio executor (caminho acima de 260 caracteres) e toda ferramenta dele falha, dentro ou fora do Nexus. Instale-o num prefixo curto: `npm i -g --prefix %USERPROFILE%\.local\bin @openai/codex`.
+
 ## 0.76.114 — CLIs no canal certo
 
 O botão Atualizar CLI volta a funcionar para o Codex instalado via npm com atalho externo e para o launcher nativo atual do Grok. A atualização automática usa o mesmo reconhecimento. No macOS, esta versão também inclui as correções de missão e pane publicadas no Windows em 0.76.113.

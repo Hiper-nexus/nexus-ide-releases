@@ -7475,7 +7475,7 @@ export const RELEASE_076112: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076114: AppRelease = {
   version: '0.76.114',
   date: '2026-09-28',
   codename: 'CLIs no canal certo',
@@ -7501,6 +7501,35 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'Inclui a 0.76.113: pane encerra corretamente no Windows, missão ' +
         'aguarda respostas pendentes e Retomar recupera a conversa da aba.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.115',
+  date: '2026-09-28',
+  codename: 'Worker que responde',
+  summary:
+    'A missão da aba volta a abrir workers só em CLIs que falam com o Nexus, ' +
+    'também depois de retomada, e perguntar a um pane one-shot responde na ' +
+    'hora em vez de parecer infraestrutura quebrada. Inclui a 0.76.114 (CLIs ' +
+    'no canal certo).',
+  highlights: [
+    {
+      title: 'Missão da aba sem worker mudo',
+      detail:
+        'Depois do "Retomar", o orquestrador da aba pedia rota e recebia o AGY, ' +
+        'que no modo one-shot não mostra nada até terminar. A regra de só abrir ' +
+        'helper em CLI com o MCP do Nexus agora vale para a missão inteira, não ' +
+        'só para o pane original.',
+    },
+    {
+      title: 'Pergunta a pane one-shot responde na hora',
+      detail:
+        'nexus_pane_ask esperava o prazo inteiro e voltava vazio num pane AGY ' +
+        'que estava trabalhando. Agora responde na hora que o pane é one-shot e ' +
+        'que a entrega chega quando ele terminar; nexus_pane_write avisa o mesmo.',
     },
   ],
   fixes: [],
