@@ -15,6 +15,7 @@ import {
   judge,
   USD_PER_INPUT_TOKEN,
   type JevQuestion,
+  type JevResult,
 } from '../jev/jev-client';
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
 import { hasJevCredential } from '../jev/jev-secrets';
@@ -23,6 +24,12 @@ import {
   jevAnswerProbabilities,
   recordJevDecision,
 } from '../jev/jev-decision-log';
+import {
+  allowedSkillCatalog,
+  buildSkillSuggestionQuestion,
+  parseSkillSuggestion,
+  type SkillSuggestionPick,
+} from './jev-skill-suggestion';
 import {
   isRouteEffort,
   ROUTE_SPECIALTIES,
@@ -145,6 +152,40 @@ export type JevTaskRoutingResult =
   | { readonly kind: 'skipped' };
 
 /**
+ * Parser compartilhado da classificação (tier/especialidade/esforço/escalate):
+ * qualquer resposta fora do vocabulário → null (fail-open para a heurística).
+ * Usado pelo caminho standalone e pelo lote do route_task.
+ */
+export function parseTaskClassification(
+  result: JevResult,
+): JevTaskClassification | null {
+  const tierAnswer = result.answers.tier;
+  const specialtyAnswer = result.answers.specialty;
+  const escalateAnswer = result.answers.escalate;
+  const effortAnswer = result.answers.effort;
+  const effort = effortAnswer?.type === 'choice' && isRouteEffort(effortAnswer.choice)
+    ? effortAnswer.choice : undefined;
+  if (
+    tierAnswer?.type !== 'choice' ||
+    specialtyAnswer?.type !== 'choice' ||
+    !isTier(tierAnswer.choice) ||
+    !isSpecialty(specialtyAnswer.choice)
+  ) {
+    return null;
+  }
+  return {
+    tier: tierAnswer.choice,
+    tierConfidence: tierAnswer.confidence,
+    specialty: specialtyAnswer.choice,
+    specialtyConfidence: specialtyAnswer.confidence,
+    effort,
+    effortConfidence: effort && effortAnswer?.type === 'choice' ? effortAnswer.confidence : undefined,
+    escalate: escalateAnswer?.type === 'noul' ? escalateAnswer.noul : 0,
+    model: result.model,
+  };
+}
+
+/**
  * Classificação para o roteador COM o motivo quando o Jev não respondeu — o
  * spawn da mão do operador mostra "sem Jev: <motivo>" em vez de cair calado na
  * heurística. `skipped` = tarefa em branco, nada a julgar e nada a avisar.
@@ -172,31 +213,8 @@ export async function classifyTaskForRouting(
   });
   if (!result) return { kind: 'unavailable', reason: noAnswer ?? 'network' };
 
-  const tierAnswer = result.answers.tier;
-  const specialtyAnswer = result.answers.specialty;
-  const escalateAnswer = result.answers.escalate;
-  const effortAnswer = result.answers.effort;
-  const effort = effortAnswer?.type === 'choice' && isRouteEffort(effortAnswer.choice)
-    ? effortAnswer.choice : undefined;
-  if (
-    tierAnswer?.type !== 'choice' ||
-    specialtyAnswer?.type !== 'choice' ||
-    !isTier(tierAnswer.choice) ||
-    !isSpecialty(specialtyAnswer.choice)
-  ) {
-    return { kind: 'unavailable', reason: 'invalid-answer' };
-  }
-
-  const classification: JevTaskClassification = {
-    tier: tierAnswer.choice,
-    tierConfidence: tierAnswer.confidence,
-    specialty: specialtyAnswer.choice,
-    specialtyConfidence: specialtyAnswer.confidence,
-    effort,
-    effortConfidence: effort && effortAnswer?.type === 'choice' ? effortAnswer.confidence : undefined,
-    escalate: escalateAnswer?.type === 'noul' ? escalateAnswer.noul : 0,
-    model: result.model,
-  };
+  const classification = parseTaskClassification(result);
+  if (!classification) return { kind: 'unavailable', reason: 'invalid-answer' };
   recordJevDecision({
     surface: 'taskRouting',
     model: result.model,
@@ -208,6 +226,112 @@ export async function classifyTaskForRouting(
     usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
   });
   return { kind: 'classified', classification };
+}
+
+/** Metadado interno do lote: quantas chamadas judge e quantas perguntas saíram. */
+export interface JevBatchUsageMeta {
+  readonly requestCount: number;
+  readonly questionCount: number;
+}
+
+/**
+ * Lote do `nexus_route_task`: classificação (tier/especialidade/esforço/
+ * escalate) + sugestão de skill numa ÚNICA chamada judge — as perguntas de
+ * roteamento e a choice `skill` (catálogo real filtrado pelos grants do
+ * chamador, cap 120 + `none`) vão juntas, e o uso é registrado UMA vez
+ * (USD/tokens do resultado único, com sessão/missão). Sem skills elegíveis a
+ * pergunta `skill` nem entra. Fail-open idêntico ao standalone: skill `none`,
+ * baixa confiança ou escolha fora do catálogo não invalidam a classificação —
+ * só viram skillSuggestion null. Resposta malformada nos dois → invalid-answer.
+ */
+export type JevRouteTaskBatch =
+  | {
+      readonly kind: 'classified';
+      readonly classification: JevTaskClassification;
+      readonly skillSuggestion?: SkillSuggestionPick | null;
+      readonly batch?: JevBatchUsageMeta;
+    }
+  | {
+      readonly kind: 'unavailable';
+      readonly reason: JevUnavailableReason;
+      readonly skillSuggestion?: SkillSuggestionPick | null;
+      readonly batch?: JevBatchUsageMeta;
+    }
+  | { readonly kind: 'skipped' };
+
+export interface RouteTaskJevBatchDeps extends ClassifyTaskDeps {
+  record?: typeof recordJevDecision;
+}
+
+export async function classifyTaskWithSkillForRouting(
+  task: string,
+  opts: {
+    allowedSkills: string[] | null;
+    sessionId?: string;
+    missionId?: string;
+    deps?: RouteTaskJevBatchDeps;
+  },
+): Promise<JevRouteTaskBatch> {
+  const noBatch = { requestCount: 0, questionCount: 0 };
+  if (!task.trim()) return { kind: 'skipped' };
+  const enabled = opts.deps?.enabled ?? (() => isJevSurfaceEnabled('taskRouting'));
+  const hasKey = opts.deps?.hasKey ?? hasJevCredential;
+  if (!enabled()) {
+    return { kind: 'unavailable', reason: 'disabled', skillSuggestion: null, batch: noBatch };
+  }
+  if (!hasKey()) {
+    return { kind: 'unavailable', reason: 'no-key', skillSuggestion: null, batch: noBatch };
+  }
+
+  const catalog = allowedSkillCatalog(opts.allowedSkills);
+  const questions: Record<string, JevQuestion> = {
+    ...TASK_ROUTING_QUESTIONS,
+    ...(catalog.length > 0 ? { skill: buildSkillSuggestionQuestion(catalog) } : {}),
+  };
+  let noAnswer: JevUnavailableReason | undefined;
+  const judgeFn = opts.deps?.judge ?? judge;
+  const result = await judgeFn({
+    state: { task: capText(task, TASK_MAX_CHARS) },
+    questions,
+    timeoutMs: TASK_ROUTING_TIMEOUT_MS,
+    surface: 'taskRouting',
+    sessionId: opts.sessionId,
+    missionId: opts.missionId,
+    onNoAnswer: (reason) => {
+      noAnswer = reason;
+    },
+  });
+  const batch = { requestCount: result ? 1 : 0, questionCount: Object.keys(questions).length };
+  if (!result) {
+    return { kind: 'unavailable', reason: noAnswer ?? 'network', skillSuggestion: null, batch };
+  }
+  const classification = parseTaskClassification(result);
+  const skillSuggestion =
+    catalog.length > 0 ? parseSkillSuggestion(result.answers, catalog) : null;
+  if (!classification && !skillSuggestion) {
+    return { kind: 'unavailable', reason: 'invalid-answer', skillSuggestion: null, batch };
+  }
+  // Uso do LOTE logado uma única vez — nunca uma linha por operação.
+  (opts.deps?.record ?? recordJevDecision)({
+    surface: 'taskRouting',
+    sessionId: opts.sessionId,
+    missionId: opts.missionId,
+    model: result.model,
+    questions: Object.keys(questions),
+    probabilities: jevAnswerProbabilities(result.answers),
+    confidence: jevAnswerConfidences(result.answers),
+    decision: [
+      classification
+        ? `tier:${classification.tier}/${classification.specialty}`
+        : 'tier:invalid',
+      `skill:${skillSuggestion?.name ?? 'none'}`,
+    ].join('|'),
+    inputTokens: result.usage.input_tokens,
+    usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+  });
+  return classification
+    ? { kind: 'classified', classification, skillSuggestion, batch }
+    : { kind: 'unavailable', reason: 'invalid-answer', skillSuggestion, batch };
 }
 
 /** Contrato antigo (classificação ou null) — mantido para os chamadores atuais. */

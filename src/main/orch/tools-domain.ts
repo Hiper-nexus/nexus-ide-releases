@@ -39,12 +39,11 @@ import {
 import { listProviderSettings } from '../persistence/provider-config-store';
 import { routeTask, type TaskTier } from './task-router';
 import {
-  classifyTaskForRouting,
+  classifyTaskWithSkillForRouting,
   routingOverridesFrom,
-  type JevTaskRoutingResult,
+  type JevRouteTaskBatch,
 } from './jev-task-routing';
 import { mergeAdapterUseLists } from './route-pipeline';
-import { suggestSkillForTask } from './jev-skill-suggestion';
 import { recordRouteDecision } from './route-provenance';
 import { recordRouteLog, recentRouteLog } from './route-log';
 import { loadSpecialtyBenchmark } from './specialty-benchmark';
@@ -1539,21 +1538,28 @@ export async function routeTaskForCaller(
   const callerTier = TIERS.includes(tierRaw as TaskTier)
     ? (tierRaw as TaskTier)
     : undefined;
-  // Classificação Jev (piloto automático, superfície taskRouting): troca a
-  // heurística de palavras-chave por tier/especialidade calibrados, cada
-  // campo só quando confiante; o caller que passou `tier` continua mandando.
-  // Fail-open: sem chave/serviço → heurística como sempre.
-  let jevRouting: JevTaskRoutingResult = { kind: 'skipped' };
+  // Lote Jev do route_task (piloto automático, superfície taskRouting): as
+  // perguntas tier/especialidade/esforço/escalate E a choice de skill (catálogo
+  // real filtrado pelos allowedSkills do chamador) numa ÚNICA chamada judge, em
+  // vez de duas seriais. Cada campo só substitui a heurística quando confiante;
+  // o caller que passou `tier` continua mandando. Fail-open: sem chave/serviço
+  // → heurística e skillSuggestion null, como sempre.
+  let jevRouting: JevRouteTaskBatch = { kind: 'skipped' };
   try {
-    jevRouting = await classifyTaskForRouting(task);
+    jevRouting = await classifyTaskWithSkillForRouting(task, {
+      allowedSkills: ctx.allowedSkills ?? null,
+      sessionId: ctx.sessionId,
+      missionId: missionId ?? undefined,
+    });
   } catch (error) {
-    console.warn('[route_task] classificação Jev falhou (ignorada):', error);
-    jevRouting = { kind: 'unavailable', reason: 'network' };
+    console.warn('[route_task] lote Jev falhou (ignorado):', error);
+    jevRouting = { kind: 'unavailable', reason: 'network', skillSuggestion: null };
   }
   const jevClassification =
     jevRouting.kind === 'classified' ? jevRouting.classification : null;
   const jevUnavailable =
     jevRouting.kind === 'unavailable' ? jevRouting.reason : undefined;
+  const skillSuggestion = jevRouting.kind === 'skipped' ? null : (jevRouting.skillSuggestion ?? null);
   const routing = routingOverridesFrom(jevClassification, callerTier, task);
   const tier = routing.tierOverride;
   // Failover de rate limit: o orquestrador re-roteia excluindo a CLI que
@@ -1763,25 +1769,14 @@ export async function routeTaskForCaller(
     classifierSource: routing.classifierSource,
     ...(jevUnavailable ? { jevUnavailable } : {}),
   });
-  // Proveniência da classificação (jev | heuristic | mixed) e o sinal
+  // Provenância da classificação (jev | heuristic | mixed) e o sinal
   // `escalate` do Jev — informação para o Maestro, nunca decisão do router.
+  // A skillSuggestion do mesmo lote já foi resolvida acima (uma chamada judge).
   const provenance = {
     classifierSource: routing.classifierSource,
     ...(routing.escalate !== undefined ? { escalate: routing.escalate } : {}),
     ...(jevUnavailable ? { jevUnavailable } : {}),
   };
-  // Skill suggestion (cookbook TypeSafe): UMA choice do Jev entre as skills
-  // bundled permitidas ao chamador. Fail-open: qualquer falha → null.
-  let skillSuggestion: { name: string; pkg: string; confidence: number } | null = null;
-  try {
-    skillSuggestion = await suggestSkillForTask(task, {
-      allowedSkills: ctx.allowedSkills ?? null,
-      sessionId: ctx.sessionId,
-      missionId: missionId ?? undefined,
-    });
-  } catch {
-    skillSuggestion = null;
-  }
   if (!missionId) return { ...decision, ...provenance, skillSuggestion };
   const reservation = getProjectDomainStores(ctx.scope)
     .missions.reserveRouteDecision(missionId, task, decision);

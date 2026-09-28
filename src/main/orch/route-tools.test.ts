@@ -7,8 +7,7 @@ const mocks = vi.hoisted(() => ({
   isProviderEnabled: vi.fn(() => true),
   providerReadiness: vi.fn(() => ({ ready: true, reason: 'ready' })),
   hasAvailableAccount: vi.fn(),
-  suggestSkillForTask: vi.fn(async (): Promise<unknown> => null),
-  classifyTaskForRouting: vi.fn(async (): Promise<unknown> => ({ kind: 'skipped' })),
+  classifyTaskWithSkillForRouting: vi.fn(async (): Promise<unknown> => ({ kind: 'skipped' })),
 }));
 
 vi.mock('../persistence/provider-config-store', () => ({
@@ -26,14 +25,9 @@ vi.mock('../persistence/account-store', async () => {
   return { ...actual, hasAvailableAccount: mocks.hasAvailableAccount };
 });
 
-vi.mock('./jev-skill-suggestion', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./jev-skill-suggestion')>()),
-  suggestSkillForTask: mocks.suggestSkillForTask,
-}));
-
 vi.mock('./jev-task-routing', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./jev-task-routing')>()),
-  classifyTaskForRouting: mocks.classifyTaskForRouting,
+  classifyTaskWithSkillForRouting: mocks.classifyTaskWithSkillForRouting,
 }));
 
 import { rememberKimiSeatReadiness } from '../adapters/seat-auth-readiness';
@@ -73,10 +67,8 @@ beforeEach(() => {
   mocks.providerReadiness.mockReturnValue({ ready: true, reason: 'ready' });
   mocks.hasAvailableAccount.mockReset();
   mocks.hasAvailableAccount.mockReturnValue(true);
-  mocks.suggestSkillForTask.mockReset();
-  mocks.suggestSkillForTask.mockResolvedValue(null);
-  mocks.classifyTaskForRouting.mockReset();
-  mocks.classifyTaskForRouting.mockResolvedValue({ kind: 'skipped' });
+  mocks.classifyTaskWithSkillForRouting.mockReset();
+  mocks.classifyTaskWithSkillForRouting.mockResolvedValue({ kind: 'skipped' });
 });
 
 afterEach(() => {
@@ -104,29 +96,33 @@ describe('nexus_route_task wiring', () => {
     expect(log[0].reason).toBeTruthy();
   });
 
-  it('devolve skillSuggestion do Jev e recebe o allowedSkills do chamador', async () => {
+  it('devolve skillSuggestion do lote Jev e recebe o allowedSkills do chamador', async () => {
     mocks.listProviderSettings.mockReturnValue([
       { adapterId: 'codex', enabled: true, installed: true, authStrategy: 'oauth', models: ['gpt-5.6-luna'] },
     ]);
-    mocks.suggestSkillForTask.mockResolvedValue({ name: 'ponytail', confidence: 0.9 });
+    mocks.classifyTaskWithSkillForRouting.mockResolvedValue({
+      kind: 'unavailable',
+      reason: 'disabled',
+      skillSuggestion: { name: 'ponytail', pkg: 'ponytail', confidence: 0.9 },
+    });
     const ctx = { ...context(), allowedSkills: ['ponytail'] };
     const decision = (await tool('nexus_route_task').handler(
       { task: 'tarefa de complexidade média' },
       ctx,
     )) as { skillSuggestion?: unknown };
 
-    expect(mocks.suggestSkillForTask).toHaveBeenCalledWith(
+    expect(mocks.classifyTaskWithSkillForRouting).toHaveBeenCalledWith(
       'tarefa de complexidade média',
       expect.objectContaining({ allowedSkills: ['ponytail'] }),
     );
-    expect(decision.skillSuggestion).toEqual({ name: 'ponytail', confidence: 0.9 });
+    expect(decision.skillSuggestion).toEqual({ name: 'ponytail', pkg: 'ponytail', confidence: 0.9 });
   });
 
-  it('skillSuggestion é null e fail-open quando a sugestão quebra', async () => {
+  it('skillSuggestion é null e fail-open quando o lote quebra', async () => {
     mocks.listProviderSettings.mockReturnValue([
       { adapterId: 'codex', enabled: true, installed: true, authStrategy: 'oauth', models: ['gpt-5.6-luna'] },
     ]);
-    mocks.suggestSkillForTask.mockRejectedValue(new Error('boom'));
+    mocks.classifyTaskWithSkillForRouting.mockRejectedValue(new Error('boom'));
     const decision = (await tool('nexus_route_task').handler(
       { task: 'tarefa de complexidade média' },
       context(),
@@ -270,7 +266,7 @@ describe('nexus_route_task — Jev fora e desempate interno', () => {
 
   it('devolve jevUnavailable e grava origem + motivo no route log', async () => {
     mocks.listProviderSettings.mockReturnValue(providers);
-    mocks.classifyTaskForRouting.mockResolvedValue({ kind: 'unavailable', reason: 'timeout' });
+    mocks.classifyTaskWithSkillForRouting.mockResolvedValue({ kind: 'unavailable', reason: 'timeout' });
     const decision = (await tool('nexus_route_task').handler(
       { task: 'tarefa média' },
       context(),
@@ -285,7 +281,7 @@ describe('nexus_route_task — Jev fora e desempate interno', () => {
 
   it('Jev respondeu: sem jevUnavailable', async () => {
     mocks.listProviderSettings.mockReturnValue(providers);
-    mocks.classifyTaskForRouting.mockResolvedValue({
+    mocks.classifyTaskWithSkillForRouting.mockResolvedValue({
       kind: 'classified',
       // Desde o F-163 o Jev também classifica o esforço; 'jev' exige as três
       // dimensões confiantes (sem esforço a origem honesta é 'mixed').

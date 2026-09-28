@@ -10,7 +10,7 @@ import {
   getProjectDomainStores,
 } from './project-domain-store-registry';
 import { testProjectScope } from './__tests__/scope-fixture';
-import type { JevTaskRoutingResult } from './jev-task-routing';
+import type { JevRouteTaskBatch } from './jev-task-routing';
 
 const mocks = vi.hoisted(() => ({
   listProviderSettings: vi.fn(),
@@ -18,12 +18,12 @@ const mocks = vi.hoisted(() => ({
   providerReadiness: vi.fn(() => ({ ready: true, reason: 'ready' })),
   hasAvailableAccount: vi.fn(() => true),
   routableWorkerCliIds: new Set<string>(['codex']),
-  classifyTaskForRouting: vi.fn(async (): Promise<JevTaskRoutingResult> => ({ kind: 'skipped' })),
+  classifyTaskWithSkillForRouting: vi.fn(async (): Promise<JevRouteTaskBatch> => ({ kind: 'skipped' })),
 }));
 
 vi.mock('./jev-task-routing', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./jev-task-routing')>()),
-  classifyTaskForRouting: mocks.classifyTaskForRouting,
+  classifyTaskWithSkillForRouting: mocks.classifyTaskWithSkillForRouting,
 }));
 
 vi.mock('../persistence/provider-config-store', () => ({
@@ -115,7 +115,7 @@ describe('nexus_route_task RouteReservation durável', () => {
     { effort: 'xhigh' as const, confidence: 0.45, efforts: ['low', 'medium', 'high'], expected: 'high' },
     { effort: 'high' as const, confidence: 0.9, efforts: [], expected: undefined },
   ])('persists native effort $expected from Jev $effort at confidence $confidence', async ({ effort, confidence, efforts, expected }) => {
-    mocks.classifyTaskForRouting.mockResolvedValueOnce({ kind: 'classified', classification: {
+    mocks.classifyTaskWithSkillForRouting.mockResolvedValueOnce({ kind: 'classified', classification: {
       tier: 'hard', tierConfidence: 0.9, specialty: 'bug', specialtyConfidence: 0.9,
       effort, effortConfidence: confidence, escalate: 0.2, model: 'jev-test',
     } });

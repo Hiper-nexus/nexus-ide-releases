@@ -20,13 +20,9 @@ vi.mock('../persistence/account-store', async () => ({
   )),
   hasAvailableAccount: () => true,
 }));
-vi.mock('./jev-skill-suggestion', async (original) => ({
-  ...(await original<typeof import('./jev-skill-suggestion')>()),
-  suggestSkillForTask: async () => null,
-}));
 vi.mock('./jev-task-routing', async (original) => ({
   ...(await original<typeof import('./jev-task-routing')>()),
-  classifyTaskForRouting: async () => ({ kind: 'skipped' }),
+  classifyTaskWithSkillForRouting: async () => ({ kind: 'skipped' }),
 }));
 vi.mock('./gate', async (original) => ({
   ...(await original<typeof import('./gate')>()),
