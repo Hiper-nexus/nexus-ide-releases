@@ -8096,7 +8096,7 @@ export const RELEASE_076135: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076136: AppRelease = {
   version: '0.76.136',
   date: '2026-09-29',
   codename: 'Agente trabalhando não cai',
@@ -8112,6 +8112,46 @@ export const CURRENT_RELEASE: AppRelease = {
         'longo do Maestro ou um worker produzindo sem handoff viravam "60 ' +
         'min sem progresso", a missão ia para "Precisa de reparo" e todos os ' +
         'panes caíam. Agora ele usa o status real das CLIs.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.137',
+  date: '2026-09-29',
+  codename: 'Sem clique, sem relogin',
+  summary:
+    'Os panes não param mais em diálogos de início, o Grok para de pedir ' +
+    'login todo dia no Windows, o Maestro não consegue mais prender os ' +
+    'helpers numa LLM só e o modelo recusado pelo provider sai do roteamento.',
+  highlights: [
+    {
+      title: 'Panes sem clique no início',
+      detail:
+        'O "Trust this folder?" do Codex nos seus panes e o aviso de Bypass ' +
+        'do Claude Code novo (sem números) são respondidos sozinhos. Workers ' +
+        'governados da missão continuam com a pasta restrita.',
+    },
+    {
+      title: 'Grok mantém o login no Windows',
+      detail:
+        'O token renovado dentro do pane voltava só no fechamento — e se ' +
+        'perdia. Agora cada renovação volta na hora ao perfil real, só se ' +
+        'for da mesma conta e mais nova.',
+    },
+    {
+      title: 'Todas as LLMs de verdade',
+      detail:
+        'O Maestro marcava sozinho "escolha do operador" para abrir tudo em ' +
+        'Claude. Essa marca agora só vale quando você nomeou a CLI (no pane ou ' +
+        'pelo Quadro); sem isso o Nexus distribui pela tarefa.',
+    },
+    {
+      title: 'Modelo recusado sai da rota',
+      detail:
+        'Helper que caiu em "Model access is disabled" (OpenCode Zen) troca ' +
+        'de modelo, e o roteador deixa esse modelo de fora por 12 horas.',
     },
   ],
   fixes: [],

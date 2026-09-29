@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.137 — Sem clique, sem relogin
+
+Uso real no Windows em 29/09.
+
+- **Panes sem clique no início (F-681).** O Codex 0.157 para em "Trust this folder? / Trust and continue / Quit" em pasta sem decisão, e o Claude Code novo desenha o aviso de Bypass Permissions sem números e com o cursor já em "Yes, I accept" — nos dois casos o pane ficava esperando Enter. O trust do Codex é respondido só em pane não governado (o perfil de missão mantém a pasta restrita do F-666); o aviso de bypass lê o cursor desenhado; o aceite forçado prefere a assinatura que casa inteira.
+- **operatorChoice só com prova (F-682).** O Maestro marcava `operatorChoice:true` sozinho e abriu 4 de 4 helpers em Claude. A flag agora exige que o operador tenha nomeado a CLI no pane ou numa orientação do Quadro nos últimos 30 min; sem isso o pin vira preferência (`operatorChoice-sem-pedido-do-operador` no recibo).
+- **Modelo recusado sai da rota (F-683).** "Upstream request failed: Model access is disabled" (OpenCode Zen) passa a ser modelo recusado: o pane troca de modelo e o roteador deixa o par CLI+modelo em quarentena por 12 h.
+- **Grok mantém o login no Windows (F-684).** O auth.json renovado dentro do pane (hardlink desfeito pelo rename da CLI) volta ao perfil de origem durante a vida do pane — só da mesma conta e mais novo, no próprio arquivo — inclusive em pane governado e sem depender do fechamento.
+
 ## 0.76.136 — Agente trabalhando não cai
 
 Uso real no Windows em 29/09. Inclui a 0.76.135 (Todas as LLMs de verdade, com o Jev enxugando).
