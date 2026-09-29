@@ -8165,8 +8165,17 @@ export const CURRENT_RELEASE: AppRelease = {
     'O Maestro que espera o seu pedido aparece como "Aguardando", não mais como ' +
     '"Dormindo"; a aba com missão dormindo aceita uma missão nova; e o segundo ' +
     'orquestrador da aba pergunta se começa missão própria ou assume a liderança. ' +
+    'Os writers voltam a entregar em projeto com a config do Jest fora da raiz. ' +
     'Inclui a 0.76.137.',
   highlights: [
+    {
+      title: 'Writers voltam a entregar',
+      detail:
+        'O portão de regressão rodava o Jest sem a config do projeto: em projeto com a ' +
+        'config em tests/jest.config.js, toda entrega de writer era recusada duas vezes ' +
+        'por dezenas de testes que nem chegavam a ser lidos. Agora ele usa a config dos ' +
+        'scripts, e arquivo que não carrega fora do diff vira "não verificado".',
+    },
     {
       title: 'Aguardando, não Dormindo',
       detail:
