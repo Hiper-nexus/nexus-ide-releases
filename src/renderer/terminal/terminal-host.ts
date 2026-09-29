@@ -263,6 +263,13 @@ interface Host {
    * até `pty.spawn`; consumido (reset) quando o spawn efetivamente inicia.
    */
   spawnCycleStartMs?: number;
+  /**
+   * F-369: saída foi perdida ou truncada (backlog dropado / xterm
+   * reidratado com fita cortada) — a TUI pode ter ficado com buracos.
+   * Consumida no próximo resume visível: um bounce de grade manda a CLI
+   * redesenhar a moldura inteira.
+   */
+  needsTuiRepaint?: boolean;
 }
 
 /**
@@ -397,7 +404,7 @@ function registerWebglLease(paneId: string, host: Host): void {
  * frame can be parsed against the transient DOM-renderer dimensions.
  */
 function resumeVisibleHost(paneId: string, host: Host): boolean {
-  return resumeTerminalVisibilityBeforePaint({
+  const resumed = resumeTerminalVisibilityBeforePaint({
     resumeRenderer: () => webglPool.touch(paneId),
     fitVisibleGrid: () => fitHostGrid(host),
     propagateSize: () => propagateHostSize(host),
@@ -408,6 +415,10 @@ function resumeVisibleHost(paneId: string, host: Host): boolean {
     },
     repaint: () => host.inputVisibility.repaintNow(),
   });
+  // F-369: depois do fit/propagação, com a grade já definitiva — o bounce
+  // faz a CLI repintar por cima dos fragmentos da saída perdida.
+  consumeTuiRepaint(host);
+  return resumed;
 }
 
 const hosts = new Map<string, Host>();
@@ -1227,6 +1238,25 @@ function startSpawn(
             onParsed: () => {
               if (!host.disposed) host.inputVisibility.onOutputParsed();
             },
+            // F-369: backlog dropado = quadro da TUI com buraco. Visível, o
+            // bounce vai no próximo frame, depois do aviso drenar; oculto, a
+            // flag espera o resumeVisibleHost do reveal.
+            onBackgroundBacklogDropped: () => {
+              if (host.disposed || host.virtualized) return;
+              if (host.kind !== 'cli-agent') return;
+              host.needsTuiRepaint = true;
+              if (
+                host.isVisible &&
+                !host.parked &&
+                document.visibilityState !== 'hidden'
+              ) {
+                requestAnimationFrame(() => {
+                  if (host.disposed || !host.opened) return;
+                  flushTerminalOutput(host.term);
+                  consumeTuiRepaint(host);
+                });
+              }
+            },
           });
         }),
       );
@@ -1772,6 +1802,30 @@ function bouncePtyGrid(host: Host): void {
   host.reportedGrid = { cols, rows };
 }
 
+/**
+ * F-369: consome `needsTuiRepaint` quando o host tem condições reais de
+ * redesenho — agente CLI com sessão viva, pane na tela e grade medida.
+ * Sem isso a flag fica para o resume seguinte (rehydrate sem fit ainda
+ * não sabe a geometria); com elas o bounce é one-shot e a flag limpa.
+ */
+function consumeTuiRepaint(host: Host): void {
+  if (!host.needsTuiRepaint) return;
+  if (
+    host.disposed ||
+    host.virtualized ||
+    host.kind !== 'cli-agent' ||
+    !host.sessionId ||
+    !host.opened ||
+    host.parked ||
+    !host.isVisible ||
+    !host.gridReady
+  ) {
+    return;
+  }
+  host.needsTuiRepaint = false;
+  bouncePtyGrid(host);
+}
+
 function tryDeferredSpawn(host: Host): void {
   if (
     !host.spawnWhenMeasurable ||
@@ -2026,6 +2080,10 @@ function rehydrateHost(host: Host): void {
   wireHostTerminalListeners(host);
   if (host.kind === 'shell') {
     setupGhostAssist(host);
+  } else if (host.kind === 'cli-agent') {
+    // F-369: snapshot + fita truncada + replay não reconstroem molduras de
+    // TUI — o bounce de grade sai no primeiro resume com a grade medida.
+    host.needsTuiRepaint = true;
   }
   // Flush do snapshot acontece no primeiro fit (largura definitiva); o output
   // retido entra depois dele, e o ring do main cobre o que estourar o buffer.

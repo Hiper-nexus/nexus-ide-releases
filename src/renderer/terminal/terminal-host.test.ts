@@ -68,7 +68,13 @@ vi.mock('@xterm/addon-fit', () => ({
   },
 }));
 vi.mock('@xterm/addon-search', () => ({ SearchAddon: class {} }));
-vi.mock('@xterm/addon-serialize', () => ({ SerializeAddon: class {} }));
+vi.mock('@xterm/addon-serialize', () => ({
+  SerializeAddon: class {
+    // virtualizeHost serializa o buffer antes de descartar o xterm — sem o
+    // método o catch aborta a hibernação silenciosamente.
+    serialize() { return ''; }
+  },
+}));
 vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {} }));
 vi.mock('./terminal-path-links', () => ({ attachTerminalPathLinks() {} }));
 vi.mock('./terminal-ghost-assist', () => ({
@@ -154,6 +160,7 @@ beforeEach(() => {
     configurable: true,
     value: { voice: { logVoice: vi.fn().mockResolvedValue(undefined) }, pty: {
       spawn, kill, resize: vi.fn(), write: ptyWrite,
+      replay: vi.fn(async () => {}),
       onStateChange: () => () => {},
       onData: (sessionId: string, listener: (data: string) => void) => {
         ptyDataListeners.set(sessionId, listener);
@@ -1590,5 +1597,115 @@ describe('F-368 — revive honesto: helper morto não promete o que não entrega
     const text = outputText(writeln);
     expect(text).not.toContain('reemitindo');
     expect(text).toContain(`«${maestro.title}»`);
+  });
+});
+
+describe('F-369 — TUI repinta depois de saída perdida', () => {
+  const agent: PaneModel = {
+    id: 'agent-tui',
+    kind: 'cli-agent',
+    adapterId: 'codex',
+    title: 'Codex',
+  };
+  const OVER_BACKLOG = 2 * 1024 * 1024 + 64;
+
+  const ptyResize = () => vi.mocked(window.nexus.pty.resize);
+
+  /** Par (rows-1, rows) consecutivo na mesma sessão = um bounce de grade. */
+  function bounceCount(): number {
+    const calls = ptyResize().mock.calls;
+    return calls.filter((call, i) => {
+      const prev = calls[i - 1];
+      return (
+        prev !== undefined &&
+        prev[0] === call[0] &&
+        prev[1] === call[1] &&
+        prev[2] === call[2] - 1
+      );
+    }).length;
+  }
+
+  async function openVisibleAgent() {
+    useLayoutStore.setState({
+      root: buildGridTree([agent]),
+      focusedPaneId: agent.id,
+    });
+    const host = getOrCreateHost(agent);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(agent, slot);
+    expect(await waitForSession(agent.id, 1000)).toBe('pty-hidden');
+    return host;
+  }
+
+  it('backlog >2 MiB dropado oculto → reveal → exatamente um bounce', async () => {
+    const host = await openVisibleAgent();
+    setHostVisibility(agent.id, false);
+    expect(host.isVisible).toBe(false);
+    ptyResize().mockClear();
+
+    ptyDataListeners.get('pty-hidden')!('x'.repeat(OVER_BACKLOG));
+    // A perda já aconteceu; bouncear oculto é desperdício — espera o reveal.
+    expect(ptyResize()).not.toHaveBeenCalled();
+
+    setHostVisibility(agent.id, true);
+    await vi.advanceTimersByTimeAsync(60);
+    expect(bounceCount()).toBe(1);
+
+    // Flag consumida: um segundo reveal sem nova perda não bounceia.
+    setHostVisibility(agent.id, false);
+    setHostVisibility(agent.id, true);
+    await vi.advanceTimersByTimeAsync(60);
+    expect(bounceCount()).toBe(1);
+  });
+
+  it('reidratação de host hibernado → um bounce no resume seguinte', async () => {
+    const host = await openVisibleAgent();
+    // O hibernador só descarta o xterm com a grade cheia de hosts vivos.
+    for (let i = 0; i < 24; i++) {
+      getOrCreateHost({ id: `filler-${i}`, kind: 'shell', title: `t${i}` });
+    }
+    setHostVisibility(agent.id, false);
+    expect(host.virtualized).not.toBeNull();
+    ptyResize().mockClear();
+
+    setHostVisibility(agent.id, true);
+    await vi.advanceTimersByTimeAsync(60);
+    // A reidratação devolve o xterm; o primeiro resume com grade consome a
+    // flag UMA vez (o replay sozinho não reconstroi a moldura da TUI).
+    refreshHost(agent.id);
+    await vi.advanceTimersByTimeAsync(60);
+    expect(bounceCount()).toBe(1);
+
+    refreshHost(agent.id);
+    await vi.advanceTimersByTimeAsync(60);
+    expect(bounceCount()).toBe(1);
+  });
+
+  it('perda com o pane visível → bounce no frame seguinte', async () => {
+    await openVisibleAgent();
+    // Visível mas NÃO focado: a saída segue pela fila de fundo e estoura o
+    // backlog — exatamente o caminho que dropava e deixava o pane quebrado.
+    useLayoutStore.setState({ focusedPaneId: 'other-pane' });
+    ptyResize().mockClear();
+
+    ptyDataListeners.get('pty-hidden')!('x'.repeat(OVER_BACKLOG));
+    // Nada no meio do drop — o bounce espera o próximo frame, depois que o
+    // aviso de backlog drena.
+    expect(ptyResize()).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(60);
+    expect(bounceCount()).toBe(1);
+  });
+
+  it('sem perda, o reveal não bounceia', async () => {
+    await openVisibleAgent();
+    setHostVisibility(agent.id, false);
+    ptyResize().mockClear();
+
+    ptyDataListeners.get('pty-hidden')!('texto pequeno');
+    setHostVisibility(agent.id, true);
+    await vi.advanceTimersByTimeAsync(60);
+    expect(ptyResize()).not.toHaveBeenCalled();
   });
 });
