@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.141 — Sem piscar
+
+Uso real no Windows em 29/09. Inclui a 0.76.140 (GPT-6.1 Sol).
+
+- **Cabeçalho dos panes para de piscar (F-686).** Na gravação das 18:08 todos os cabeçalhos alternavam juntos entre título ("pane 1 · Claude · Orquestrador") e botões a cada quadro. A densidade do cabeçalho seguia o limite exato de largura; no Windows a barra de rolagem ocupa ~17 px, e trocar de densidade fazia a barra da grade aparecer e sumir, empurrando todos os panes de volta pelo limite. Encolher continua imediato; voltar a um modo mais largo exige 32 px de folga.
+- **Codex sem "Hooks need review" no Windows (F-687).** O pane Codex parava em "8 hooks are new or changed / Trust all and continue". A flag `--dangerously-bypass-hook-trust` depende da versão do Codex, e a versão era lida por `execFileSync('codex')`. No Windows o Codex do npm é um `.cmd`: ENOENT pelo nome, EINVAL pelo `.cmd`. A versão agora sai pelo mesmo lançador verificado do spawn (`node.exe` + `codex.js` do pacote). Quando não dá para saber a versão, a flag continua de fora.
+- **Nexus Shot no Windows (F-685).** O ingest recusava todo caminho que não começasse com "/", e toda captura voltava `path-not-absolute`. Agora aceita caminhos com letra de unidade; UNC e `\?\` continuam recusados. As raízes passam a ser Imagens e Vídeos, mais as pastas conhecidas do Electron (OneDrive).
+
 ## 0.76.140 — GPT-6.1 Sol
 
 Lançamento da OpenAI em 29/09. Inclui a 0.76.139.

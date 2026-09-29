@@ -8233,7 +8233,7 @@ export const RELEASE_076139: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076140: AppRelease = {
   version: '0.76.140',
   date: '2026-09-29',
   codename: 'GPT-6.1 Sol',
@@ -8247,6 +8247,42 @@ export const CURRENT_RELEASE: AppRelease = {
         'Panes, squads e a rota automática do Codex passam a usar o GPT-6.1 Sol. Ele custa o ' +
         'mesmo que o GPT-6 Sol e empata com o Astra no DeepSWE, a um quinto do preço. Codex ' +
         'que ainda não lista o 6.1 continua no GPT-6 Sol.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.141',
+  date: '2026-09-29',
+  codename: 'Sem piscar',
+  summary:
+    'Os cabeçalhos dos panes param de piscar no Windows, o Codex para de travar ' +
+    'na revisão de hooks e o Nexus Shot volta a entregar capturas no Windows. ' +
+    'Inclui a 0.76.140 (GPT-6.1 Sol).',
+  highlights: [
+    {
+      title: 'Cabeçalho parado',
+      detail:
+        'No Windows os cabeçalhos de todos os panes alternavam entre título e ' +
+        'botões a cada quadro, porque a barra de rolagem da grade aparecia e ' +
+        'sumia. Agora o cabeçalho só volta a se alargar quando tem folga.',
+    },
+    {
+      title: 'Codex sem "Hooks need review"',
+      detail:
+        'O pane Codex do Windows não parava mais nessa tela à espera de uma ' +
+        'escolha. O Nexus volta a ler a versão do Codex instalado pelo npm e ' +
+        'passa a flag de confiança só para os hooks que ele mesmo escreveu, ' +
+        'como já fazia no macOS.',
+    },
+    {
+      title: 'Nexus Shot no Windows',
+      detail:
+        'Capturas e gravações do Nexus Shot no Windows voltam a chegar ao ' +
+        'pane. Antes eram recusadas porque o caminho começava com a letra da ' +
+        'unidade. As pastas Imagens e Vídeos, inclusive no OneDrive, passam a ' +
+        'ser aceitas.',
     },
   ],
   fixes: [],
