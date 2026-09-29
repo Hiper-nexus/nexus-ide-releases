@@ -8096,7 +8096,7 @@ export const RELEASE_076135: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076136: AppRelease = {
   version: '0.76.136',
   date: '2026-09-29',
   codename: 'Agente trabalhando não cai',
@@ -8112,6 +8112,39 @@ export const CURRENT_RELEASE: AppRelease = {
         'longo do Maestro ou um worker produzindo sem handoff viravam "60 ' +
         'min sem progresso", a missão ia para "Precisa de reparo" e todos os ' +
         'panes caíam. Agora ele usa o status real das CLIs.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.137',
+  date: '2026-09-29',
+  codename: 'Várias missões lado a lado',
+  summary:
+    'O Maestro que espera o seu pedido aparece como "Aguardando", não mais como ' +
+    '"Dormindo"; a aba com missão dormindo aceita uma missão nova; e o segundo ' +
+    'orquestrador da aba pergunta se começa missão própria ou assume a liderança. ' +
+    'Inclui a 0.76.136.',
+  highlights: [
+    {
+      title: 'Aguardando, não Dormindo',
+      detail:
+        'O Maestro vivo parado no prompt aparece como "Aguardando" na barra lateral, ' +
+        'no Quadro e nas abas, com a orientação pelo Quadro liberada. "Dormindo" fica ' +
+        'só para missão sem processo.',
+    },
+    {
+      title: 'Aba com missão dormindo aceita outra',
+      detail:
+        '"Tornar orquestrador" numa aba cuja missão dorme ou parou cria uma missão nova, ' +
+        'em vez de dar erro. A aba volta a oferecer "Criar missão desta aba" e a fechar.',
+    },
+    {
+      title: 'O segundo orquestrador pergunta',
+      detail:
+        'Numa aba com missão rodando, "Tornar orquestrador" em outro pane pergunta se ' +
+        'ele começa uma missão própria, em paralelo, ou assume a liderança.',
     },
   ],
   fixes: [],

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.137 — Várias missões lado a lado
+
+Pedido do operador em 29/09: abrir mais uma missão pelo "+ Pane", tornar o segundo terminal orquestrador e ver as duas operando. Inclui a 0.76.136.
+
+- **Aguardando, não Dormindo (F-198).** O Quadro só contava o Maestro como vivo quando ele estava ocupado. Parado no prompt, o estado normal logo depois de "Tornar orquestrador" e entre um pedido e outro, a missão aparecia como "Dormindo", com a orientação do Quadro desligada e só "Tentar início novamente". Agora a barra lateral e as abas mostram "Aguardando", o Quadro mostra "Aguardando sua instrução" e a orientação fica liberada. "Dormindo" fica só para missão sem processo.
+- **Aba com missão dormindo aceita outra (F-373).** "Tornar orquestrador" numa aba cuja missão dormia ou tinha parado tentava entrar nessa missão, o Nexus recusava e aparecia "Não foi possível definir o orquestrador". Agora o pane novo abre uma missão nova, com nome próprio ("Missão · Checkout 2"), e a antiga continua na barra lateral até você retomá-la. A aba volta a oferecer "Criar missão desta aba" e a fechar pelo ×.
+- **O segundo orquestrador pergunta (F-374).** Numa aba com missão rodando e Maestro vivo, "Tornar orquestrador" em outro pane tomava a liderança em silêncio e o Maestro anterior deixava de coordenar. Agora você escolhe: "Nova missão deste painel", em paralelo, ou "Assumir a liderança".
+
 ## 0.76.136 — Agente trabalhando não cai
 
 Uso real no Windows em 29/09. Inclui a 0.76.135 (Todas as LLMs de verdade, com o Jev enxugando).
