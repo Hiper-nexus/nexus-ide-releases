@@ -36,7 +36,7 @@ import { removeTreeSync } from '../util/remove-tree';
  */
 
 export type McpInjectionKind =
-  "codex" | "opencode" | "kimi" | "grok" | "mimo-code";
+  "codex" | "opencode" | "kimi" | "grok" | "mimo-code" | "minimax-code";
 type NexusMcpAdapter = Pick<CliPtyAdapter, "quirks">;
 type NexusMcpAdapterLike = {
   quirks: { mcpAutoload?: boolean; nexusMcp?: unknown };
@@ -50,6 +50,7 @@ export function supportsMcpInjection(
   return integration === "codex" ||
     integration === "opencode" ||
     integration === "mimo-code" ||
+    integration === "minimax-code" ||
     integration === "kimi" ||
     integration === "grok"
     ? integration

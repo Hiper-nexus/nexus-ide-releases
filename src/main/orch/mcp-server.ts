@@ -123,6 +123,7 @@ import {
   resolveArmsRuntimeInstance,
   type ArmsRuntimeInstance,
 } from "./arms-runtime-path";
+import { prepareMinimaxMcpSession } from "./cli-mcp-session-minimax";
 
 export { resolveArmsRuntimeDescriptorPath, resolveArmsRuntimeInstance, type ArmsRuntimeInstance };
 
@@ -1430,6 +1431,14 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           advisoryProviderSessionHome = prepared.providerSessionHome;
           advisoryProviderStateReadPaths = prepared.providerStateReadPaths ?? [];
           advisoryProviderStateWritePaths = prepared.providerStateWritePaths ?? [];
+        } else if (flavor === "minimax-code") {
+          // F-678: ponte stdio registrada em ~/.minimax/mcp.json; a sessão
+          // chega só por ENV (URL + bearer), nunca por arquivo.
+          const prepared = prepareMinimaxMcpSession(mcpUrl(), ctx.token);
+          if (!prepared.registered) {
+            console.warn("[mcp] MiniMax Code sem MCP do Nexus:", prepared.reason);
+          }
+          Object.assign(env, prepared.env);
         } else if (flavor === "kimi") {
           const prepared = prepareKimiMcpSession(mcpUrl(), ctx.token, {
             userDataPath: app.getPath("userData"),
