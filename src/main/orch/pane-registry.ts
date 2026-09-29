@@ -572,7 +572,9 @@ async function terminateOwnedMissionSession(sessionId: string): Promise<boolean>
     }
   }
   if (getSessionState(sessionId) === null) return true;
-  return orchTerminateSession(sessionId);
+  return orchTerminateSession(sessionId, {
+    origin: "pane-registry:owned-mission-session",
+  });
 }
 
 async function settlePaneRecoveryFailure(
@@ -853,7 +855,9 @@ function retireOperatorDismissedRendererPane(
   noteOperatorDismissedPane(paneId, missionId, role);
   const sessionId = registered.entry.sessionId;
   if (!sessionId) return;
-  void orchTerminateSession(sessionId).catch((error) => {
+  void orchTerminateSession(sessionId, {
+    origin: "pane-registry:operator-dismiss",
+  }).catch((error) => {
     console.warn(
       `[pane-registry] operator-dismiss terminate failed pane=${paneId} ` +
         `session=${sessionId}:`,

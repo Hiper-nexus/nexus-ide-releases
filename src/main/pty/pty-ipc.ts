@@ -153,7 +153,9 @@ async function terminateRejectedWorkerRestart(
   const detail =
     error instanceof Error ? error.message : "worker rebind failed";
   try {
-    const exited = await orchTerminateSession(sessionId);
+    const exited = await orchTerminateSession(sessionId, {
+      origin: "rejected-worker-restart",
+    });
     return {
       ok: false,
       error: exited
@@ -385,7 +387,10 @@ function spawnCliPtyAgentPane(
         pending,
         recovery,
         persistedPane,
-        terminate: () => orchTerminateSession(adopted.sessionId),
+        terminate: () =>
+          orchTerminateSession(adopted.sessionId, {
+            origin: "pty-ipc:spawn-settlement",
+          }),
       });
       if (settlement) return settlement;
       bindCommandTracking(
@@ -475,7 +480,8 @@ function spawnCliPtyAgentPane(
       pending,
       recovery,
       persistedPane,
-      terminate: () => orchTerminateSession(sessionId),
+      terminate: () =>
+        orchTerminateSession(sessionId, { origin: "pty-ipc:spawn-settlement" }),
     });
     if (settlement) return settlement;
     // O recibo só é registrado depois que o spawn se firma no Main — uma
@@ -663,7 +669,9 @@ export function registerPtyIpc(): void {
   ipcMain.on(PTY_CHANNELS.kill, (event, raw) => {
     const parsed = killSchema.safeParse(raw);
     if (parsed.success) {
-      killSession(event.sender, parsed.data.sessionId);
+      killSession(event.sender, parsed.data.sessionId, {
+        origin: "renderer:pty.kill",
+      });
     }
   });
 

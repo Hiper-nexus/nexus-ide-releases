@@ -202,6 +202,17 @@ vi.mock("../feature-flags/feature-flag-registry", () => ({
   }),
 }));
 
+// F-212: captura dos eventos de ciclo de vida PTY. A escrita NDJSON em disco é
+// responsabilidade de main-trace (testada lá); aqui só interessa o payload.
+const lifecycleTrace = vi.hoisted(() => ({
+  events: [] as Array<Record<string, unknown>>,
+}));
+vi.mock("../observability/main-trace", () => ({
+  trace: (event: Record<string, unknown>) => {
+    lifecycleTrace.events.push(event);
+  },
+}));
+
 import {
   __resetPtyShutdownLifecycleForTests,
   agentEnv,
@@ -5195,5 +5206,129 @@ describe('F-567 spawn contracts', () => {
       setAgentSpawnHook(null);
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("F-212 PTY lifecycle tracing (exit + termination origin)", () => {
+  beforeEach(() => {
+    lifecycleTrace.events.length = 0;
+  });
+
+  const lifecycleEvents = (kind: string, sessionId: string) =>
+    lifecycleTrace.events.filter(
+      (event) => event.kind === kind && event.sessionId === sessionId,
+    );
+
+  function tracedAgentSession(
+    host: PtyHost,
+    paneId = "pane-trace",
+  ): { sessionId: string } {
+    setPtyHost(host);
+    return spawnAgentSession(
+      fakeWc(),
+      { kind: "cli-agent", paneId, cols: 80, rows: 24 },
+      makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+      {},
+      missionGrantFor("mission-trace"),
+    );
+  }
+
+  it("exit após terminate rotulado persiste origem, exitCode e signal", async () => {
+    const h = fakeHost();
+    const { sessionId } = tracedAgentSession(h.host);
+    await orchTerminateSession(sessionId, {
+      origin: "fast-lane:respawn-stale-orchestrator",
+    });
+    expect(lifecycleEvents("agent-pty-terminate", sessionId)).toEqual([
+      expect.objectContaining({
+        sessionId,
+        origin: "fast-lane:respawn-stale-orchestrator",
+      }),
+    ]);
+    expect(lifecycleEvents("agent-pty-exit", sessionId)).toEqual([
+      expect.objectContaining({
+        sessionId,
+        paneId: "pane-trace",
+        missionId: "mission-trace",
+        role: "orchestrator",
+        adapterId: "test-cli",
+        exitCode: 0,
+        signal: 15,
+        uptimeMs: expect.any(Number),
+        terminationOrigin: "fast-lane:respawn-stale-orchestrator",
+      }),
+    ]);
+  });
+
+  it("exit natural (sem pedido Nexus) registra terminationOrigin null e o signal", async () => {
+    let handlers: PtySessionHandlers | null = null;
+    setPtyHost({
+      spawn(_spec, next) {
+        handlers = next;
+        return {
+          write: vi.fn(),
+          resize: vi.fn(),
+          kill: vi.fn(),
+          // O exit real já chegou por onExit; este terminate é só o drive
+          // interno de prova física (raiz + descendentes), não um pedido que
+          // atribua origem à morte.
+          terminate: vi.fn(async () => ({
+            ok: true,
+            rootExited: true,
+            descendantsExited: true,
+          })),
+        };
+      },
+    });
+    const { sessionId } = spawnAgentSession(
+      fakeWc(),
+      { kind: "cli-agent", paneId: "pane-natural", cols: 80, rows: 24 },
+      makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+      {},
+      missionGrantFor("mission-trace"),
+    );
+    handlers!.onExit(1, 2);
+    await vi.waitFor(() => {
+      expect(lifecycleEvents("agent-pty-exit", sessionId)).toHaveLength(1);
+    });
+    expect(lifecycleEvents("agent-pty-exit", sessionId)[0]).toEqual(
+      expect.objectContaining({
+        sessionId,
+        exitCode: 1,
+        signal: 2,
+        terminationOrigin: null,
+      }),
+    );
+  });
+
+  it("onExit duplicado não duplica o evento de exit no trace", async () => {
+    let handlers: PtySessionHandlers | null = null;
+    setPtyHost({
+      spawn(_spec, next) {
+        handlers = next;
+        return {
+          write: vi.fn(),
+          resize: vi.fn(),
+          kill: vi.fn(),
+          terminate: vi.fn(async () => ({
+            ok: true,
+            rootExited: true,
+            descendantsExited: true,
+          })),
+        };
+      },
+    });
+    const { sessionId } = spawnAgentSession(
+      fakeWc(),
+      { kind: "cli-agent", paneId: "pane-double", cols: 80, rows: 24 },
+      makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+      {},
+      missionGrantFor("mission-trace"),
+    );
+    handlers!.onExit(0, 15);
+    handlers!.onExit(0, 15);
+    await vi.waitFor(() => {
+      expect(lifecycleEvents("agent-pty-exit", sessionId)).toHaveLength(1);
+    });
   });
 });

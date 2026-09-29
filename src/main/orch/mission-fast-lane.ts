@@ -1073,7 +1073,9 @@ async function pasteBriefAfterBoot(
     failure = `falha ao colar briefing — ${error instanceof Error ? error.message : String(error)}`;
   }
   if (failure) {
-    await orchTerminateSession(sessionId).catch((error: unknown) => {
+    await orchTerminateSession(sessionId, {
+      origin: 'fast-lane:briefing-undelivered',
+    }).catch((error: unknown) => {
       console.warn('[fast-lane] pane sem briefing não terminou:', error instanceof Error ? error.message : error);
     });
   }
@@ -1999,6 +2001,7 @@ async function respawnFastLaneOrchestrator(
     const proven = await orchTerminateSession(stale.sessionId, {
       termTimeoutMs: 5_000,
       killTimeoutMs: 10_000,
+      origin: 'fast-lane:respawn-stale-orchestrator',
     });
     if (!proven) {
       throw new Error(
@@ -2106,7 +2109,9 @@ async function releaseMissionLiveRuntime(
   orchPanes.delete(missionId);
   for (const sessionId of sessionIds) {
     try {
-      await orchTerminateSession(sessionId);
+      await orchTerminateSession(sessionId, {
+        origin: 'fast-lane:release-runtime',
+      });
     } catch (error) {
       console.warn(
         `[fast-lane] unfocus não terminou ${sessionId} (${missionId}):`,

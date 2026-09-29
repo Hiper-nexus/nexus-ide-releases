@@ -128,7 +128,9 @@ export async function respawnMainOwnedPaneWithAccount(input: {
   }
   if (input.sessionId) {
     try {
-      await orchTerminateSession(input.sessionId);
+      await orchTerminateSession(input.sessionId, {
+        origin: 'failover-respawn',
+      });
     } catch {
       // Sessão já morta: o alvo do respawn é o novo processo.
     }

@@ -142,6 +142,7 @@ import {
   deletePersistentPty,
   upsertPersistentPty,
 } from "../persistence/persistent-session-store";
+import { trace } from "../observability/main-trace";
 
 /**
  * Owns every live PTY session — one per pane, addressed by an opaque id. The
@@ -253,8 +254,25 @@ interface PhysicalTerminationFlight {
   physicalTreeProven: boolean;
   revocationPublished: boolean;
   attempt: Promise<boolean> | null;
+  /**
+   * F-212: rótulo de quem pediu a terminação, congelado quando a raiz saiu.
+   * Sem o freeze, um exit natural herdaria o rótulo do drive interno de prova
+   * física e pareceria morte provocada pelo Nexus.
+   */
+  exitTerminationOrigin?: string | null;
 }
 const physicalTerminationFlights = new Map<string, PhysicalTerminationFlight>();
+/**
+ * F-212: último pedido de terminação/kill iniciado pelo Nexus por sessão.
+ * O trace final de exit carrega quem mandou matar; processo que saiu sozinho
+ * registra `terminationOrigin: null`. Removido no finalize.
+ */
+const terminationOrigins = new Map<string, string>();
+
+function noteTerminationRequest(sessionId: string, origin: string): void {
+  terminationOrigins.set(sessionId, origin);
+  trace({ kind: "agent-pty-terminate", sessionId, origin });
+}
 let allSessionsTerminationFlight: Promise<TerminateAllSessionsResult> | null =
   null;
 let allSessionsTerminationInProgress = false;
@@ -1062,6 +1080,13 @@ function finalizeSession(
       exitCode,
       ...(signal === undefined ? {} : { signal }),
     };
+    // F-212: congela a origem ANTES do drive interno de prova — o terminate
+    // interno abaixo não é a causa da morte, não pode virar terminationOrigin.
+    // `undefined` = ainda não congelado; `null` = exit natural (não regravar).
+    if (pendingTermination.exitTerminationOrigin === undefined) {
+      pendingTermination.exitTerminationOrigin =
+        terminationOrigins.get(sessionId) ?? null;
+    }
     pendingTermination.resolveExited();
     // Root exit alone does not release the agent/worktree exclusivity: a
     // captured detached descendant may still hold write authority.
@@ -1071,13 +1096,21 @@ function finalizeSession(
     // main-owned identity in the shutdown inventory. On Darwin the signed
     // supervisor only exits after its whole responsibility cohort is empty.
     if (!pendingTermination.attempt) {
-      void orchTerminateSession(sessionId);
+      void orchTerminateSession(sessionId, { origin: "pty:post-exit-proof" });
     }
     return;
   }
+  // `undefined` = raiz nunca chegou por onExit (timeout do drive de prova) —
+  // aí o pedido em curso no mapa ainda é a origem. `null` explícito = saída
+  // natural congelada, não confundir com ausência de freeze.
+  const tracedTerminationOrigin =
+    pendingTermination.exitTerminationOrigin === undefined
+      ? terminationOrigins.get(sessionId) ?? null
+      : pendingTermination.exitTerminationOrigin;
   sessions.delete(sessionId);
   sessionLeaseRegistry.revokeLease(sessionId);
   lastInputOrigins.delete(sessionId);
+  terminationOrigins.delete(sessionId);
   if (s.idleTimer) clearTimeout(s.idleTimer);
   if (s.hookBusyTimer) clearTimeout(s.hookBusyTimer);
   if (s.missionOrchestratorGrantTimer) {
@@ -1102,6 +1135,22 @@ function finalizeSession(
   // M1: scrub plaintext auth.json from the managed home now that the CLI exited.
   scrubManagedSessionAuth(sessionId);
   forgetAccountChoiceReceipt(sessionId);
+  if (s.agent) {
+    // F-212: morte de agente persistida no trace — ids, números e rótulos
+    // apenas; nunca argv, env ou texto do processo.
+    trace({
+      kind: "agent-pty-exit",
+      sessionId,
+      paneId: s.agent.paneId ?? null,
+      missionId: s.agent.missionId ?? null,
+      role: s.agent.role,
+      adapterId: s.agent.adapterId,
+      exitCode,
+      signal: signal ?? null,
+      uptimeMs: Math.max(0, Date.now() - s.spawnedAtMs),
+      terminationOrigin: tracedTerminationOrigin,
+    });
+  }
   if (canSend(s.wc)) {
     s.wc.send(PTY_CHANNELS.exit, { sessionId, exitCode, signal });
   }
@@ -2582,7 +2631,9 @@ export function spawnAgentSession(
       live.missionOrchestratorGrantAvailable = false;
       live.missionOrchestratorGrantExpiresAt = null;
       live.missionOrchestratorGrantTimer = null;
-      void orchTerminateSession(sessionId);
+      void orchTerminateSession(sessionId, {
+        origin: "orchestrator-grant-expired",
+      });
     }, MISSION_ORCHESTRATOR_GRANT_TTL_MS);
     session.missionOrchestratorGrantTimer.unref?.();
   }
@@ -3035,14 +3086,18 @@ export function rollbackOwnedAgentSessionMission(
   return true;
 }
 
-function destroySession(sessionId: string, session: Session): void {
+function destroySession(
+  sessionId: string,
+  session: Session,
+  origin?: string,
+): void {
   // Closing a pane/renderer is a logical request, never physical proof. Route
   // it through the same host-owned process-tree fence used by replacement and
   // app shutdown. The session stays registered and inert until the exact root
   // callback plus descendant receipt arrive; terminateAllSessions can
   // therefore still inventory/await a close racing with WebContents teardown.
   if (sessions.get(sessionId) !== session) return;
-  void orchTerminateSession(sessionId);
+  void orchTerminateSession(sessionId, { origin });
 }
 
 export function writeSession(
@@ -3099,7 +3154,9 @@ export function resizeSession(
 export function killSession(
   wc: WebContents,
   sessionId: string,
-  options: { force?: boolean; startKey?: string } = { force: true },
+  options: { force?: boolean; startKey?: string; origin?: string } = {
+    force: true,
+  },
 ): void {
   const session = ownedSession(wc, sessionId);
   if (!session) return;
@@ -3121,7 +3178,7 @@ export function killSession(
     );
     return;
   }
-  destroySession(sessionId, session);
+  destroySession(sessionId, session, options.origin);
 }
 
 export function killSessionsFor(wc: WebContents): void {
@@ -3140,7 +3197,7 @@ export function killSessionsFor(wc: WebContents): void {
       session.wc = null;
       continue;
     }
-    destroySession(id, session);
+    destroySession(id, session, "renderer:window-close");
   }
 }
 
@@ -3206,7 +3263,7 @@ export function orchResizeSession(
 /** Trusted main-process kill (MCP pane_close on a session-only target). */
 export function orchKillSession(
   sessionId: string,
-  options: { startKey?: string; force?: boolean } = {},
+  options: { startKey?: string; force?: boolean; origin?: string } = {},
 ): boolean {
   const session = sessions.get(sessionId);
   if (!session) return false;
@@ -3220,7 +3277,7 @@ export function orchKillSession(
     );
     return false;
   }
-  destroySession(sessionId, session);
+  destroySession(sessionId, session, options.origin);
   return true;
 }
 
@@ -3229,6 +3286,12 @@ export interface OrchTerminateSessionOptions {
   readonly termTimeoutMs?: number;
   /** Final window after SIGKILL. A false result remains fail-closed. */
   readonly killTimeoutMs?: number;
+  /**
+   * F-212: rótulo estável de quem pediu a terminação (ex. 'pane-close',
+   * 'mission-termination'). Vai para o trace e para `terminationOrigin` do
+   * exit final. Sem rótulo o default é 'unlabeled'.
+   */
+  readonly origin?: string;
 }
 
 /**
@@ -3240,6 +3303,7 @@ export interface OrchTerminateSessionOptions {
 export const APP_SHUTDOWN_PTY_TERMINATION = Object.freeze({
   termTimeoutMs: 10_000,
   killTimeoutMs: 20_000,
+  origin: "app-shutdown",
 });
 
 function ensurePhysicalTerminationFlight(
@@ -3364,6 +3428,7 @@ export function orchTerminateSession(
 ): Promise<boolean> {
   const session = sessions.get(sessionId);
   if (!session) return Promise.resolve(true);
+  noteTerminationRequest(sessionId, options.origin ?? "unlabeled");
   const flight = ensurePhysicalTerminationFlight(sessionId, session);
   if (flight.attempt) return flight.attempt;
   // A termination listener is not expected to drive the PTY, but preserve
@@ -3618,7 +3683,11 @@ export { sessionLeaseRegistry, warmPool };
 
 warmPool.setIsAliveFn((sessionId) => sessions.has(sessionId));
 warmPool.setDestroyFn((sessionId, startKey) => {
-  orchKillSession(sessionId, { startKey, force: !startKey });
+  orchKillSession(sessionId, {
+    startKey,
+    force: !startKey,
+    origin: "warm-pool",
+  });
 });
 
 /**
@@ -3650,6 +3719,7 @@ export function tryAdoptWarmSession(
       orchKillSession(warm.sessionId, {
         startKey: warm.startKey || undefined,
         force: !warm.startKey,
+        origin: "warm-pool:adopt-miss",
       });
     } catch {
       /* pane warm já morreu — miss honesto */

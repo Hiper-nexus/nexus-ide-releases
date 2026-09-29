@@ -203,13 +203,17 @@ describe('Via Rápida first-wave — entrega do briefing por colagem para o work
     const { scope, mission } = prepare();
     deliverAgentPromptMock.mockResolvedValueOnce(false);
     await dispatchFastLaneFirstWave(scope, mission.id);
-    expect(terminateMock).toHaveBeenCalledWith('session-Kimi');
+    expect(terminateMock).toHaveBeenCalledWith('session-Kimi', {
+      origin: 'fast-lane:briefing-undelivered',
+    });
   });
 
   it('Fable P1-5: colagem que lança também encerra o pane', async () => {
     const { scope, mission } = prepare();
     deliverAgentPromptMock.mockRejectedValueOnce(new Error('pty fechado'));
     await dispatchFastLaneFirstWave(scope, mission.id);
-    expect(terminateMock).toHaveBeenCalledWith('session-Kimi');
+    expect(terminateMock).toHaveBeenCalledWith('session-Kimi', {
+      origin: 'fast-lane:briefing-undelivered',
+    });
   });
 });

@@ -1280,7 +1280,7 @@ describe('F-367 — tecla em pane morto de missão: uma tentativa por janela', (
   function countNotice(writeln: ReturnType<typeof vi.spyOn>, needle: string): number {
     return writeln.mock.calls
       .flat()
-      .filter((line) => typeof line === 'string' && line.includes(needle))
+      .filter((line: unknown) => typeof line === 'string' && line.includes(needle))
       .length;
   }
 

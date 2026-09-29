@@ -1583,7 +1583,9 @@ describe('canonical MissionEngine IPC boundary', () => {
       ),
     ).rejects.toThrow(/physical|saída|prova|teardown/i);
 
-    expect(harness.terminatePty).toHaveBeenCalledWith('pty-stop-proof');
+    expect(harness.terminatePty).toHaveBeenCalledWith('pty-stop-proof', {
+      origin: 'mission-termination',
+    });
     expect(engine.snapshot).not.toHaveBeenCalled();
     expect(stored.status).toBe('blocked');
     expect(stored.orchestratorSessionId).toBe('pty-stop-proof');
@@ -2902,7 +2904,9 @@ describe('mission runtime close IPC authority', () => {
       },
       terminatedSessionIds: ['pty-stuck-close'],
     });
-    expect(harness.terminatePty).toHaveBeenCalledWith('pty-stuck-close');
+    expect(harness.terminatePty).toHaveBeenCalledWith('pty-stuck-close', {
+      origin: 'mission-termination',
+    });
     expect(stored.id).toBe('mission-stuck');
     expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
   });
@@ -3017,7 +3021,9 @@ describe('mission runtime close IPC authority', () => {
       ok: true,
       terminatedSessionIds: ['pty-viva'],
     });
-    expect(harness.terminatePty).toHaveBeenCalledWith('pty-viva');
+    expect(harness.terminatePty).toHaveBeenCalledWith('pty-viva', {
+      origin: 'mission-termination',
+    });
   });
 
   it('validates the close payload before inspecting or terminating anything', async () => {

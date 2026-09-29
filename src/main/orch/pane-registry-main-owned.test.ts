@@ -378,7 +378,9 @@ describe("main-owned mission pane spawn", () => {
       executionScope,
     });
     await expect(requestPaneClose(pty.paneId)).resolves.toBe(true);
-    expect(pty.terminate).toHaveBeenCalledWith("pty-headless-1");
+    expect(pty.terminate).toHaveBeenCalledWith("pty-headless-1", {
+      origin: "pane-registry:owned-mission-session",
+    });
     expect(getPaneRuntimeAuthorityBySession("pty-headless-1")).toBeNull();
   });
 
@@ -1056,7 +1058,9 @@ describe("main-owned mission pane spawn", () => {
         expect.anything(),
       );
       await vi.waitFor(() => {
-        expect(pty.terminate).toHaveBeenCalledWith("pty-headless-1");
+        expect(pty.terminate).toHaveBeenCalledWith("pty-headless-1", {
+          origin: "pane-registry:operator-dismiss",
+        });
       });
     } finally {
       unregisterOrchRenderer(owner);
@@ -1153,7 +1157,9 @@ describe("main-owned mission pane spawn", () => {
       expect.anything(),
     );
     await vi.waitFor(() => {
-      expect(pty.terminate).toHaveBeenCalledWith("pty-headless-1");
+      expect(pty.terminate).toHaveBeenCalledWith("pty-headless-1", {
+      origin: "pane-registry:owned-mission-session",
+    });
       expect(getMainOwnedPane(result.paneId!)).toBeUndefined();
     });
     unregisterOrchRenderer(owner);
@@ -1195,7 +1201,9 @@ describe("main-owned mission pane spawn", () => {
 
     syncPanes([], owner, "renderer-generation-missing-spec");
 
-    expect(pty.terminate).toHaveBeenCalledWith("pty-headless-1");
+    expect(pty.terminate).toHaveBeenCalledWith("pty-headless-1", {
+      origin: "pane-registry:owned-mission-session",
+    });
     const replacementSessionId = "pty-replacement";
     pty.live.add(replacementSessionId);
     setMainOwnedPane(result.paneId!, {
@@ -1211,7 +1219,7 @@ describe("main-owned mission pane spawn", () => {
         entry: { sessionId: replacementSessionId },
       });
     });
-    expect(pty.terminate).not.toHaveBeenCalledWith(replacementSessionId);
+    expect(pty.terminate).not.toHaveBeenCalledWith(replacementSessionId, expect.anything());
 
     deleteMainOwnedPane(result.paneId!);
     pty.live.delete(replacementSessionId);
@@ -1259,7 +1267,9 @@ describe("main-owned mission pane spawn", () => {
     );
 
     await expect(requestPaneClose(result.paneId!)).resolves.toBe(true);
-    expect(pty.terminate).toHaveBeenCalledWith("pty-headless-1");
+    expect(pty.terminate).toHaveBeenCalledWith("pty-headless-1", {
+      origin: "pane-registry:owned-mission-session",
+    });
     expect(getPaneRuntimeAuthorityBySession("pty-headless-1")).toBeNull();
     unregisterOrchRenderer(owner);
     clearRendererWorkspaceScope(owner);
@@ -2042,7 +2052,9 @@ describe("main-owned mission pane spawn", () => {
       ok: false,
       error: "review superseded",
     });
-    expect(pty.terminate).toHaveBeenCalledWith("pty-claimed");
+    expect(pty.terminate).toHaveBeenCalledWith("pty-claimed", {
+      origin: "pane-registry:owned-mission-session",
+    });
     expect(pty.live.has("pty-claimed")).toBe(false);
     expect(owner.send).toHaveBeenLastCalledWith(
       ORCH_CHANNELS.paneCloseRequest,
@@ -2090,7 +2102,9 @@ describe("main-owned mission pane spawn", () => {
       ok: false,
       error: "review superseded",
     });
-    expect(pty.terminate).toHaveBeenCalledWith("pty-claimed");
+    expect(pty.terminate).toHaveBeenCalledWith("pty-claimed", {
+      origin: "pane-registry:owned-mission-session",
+    });
     expect(pty.live.has("pty-claimed")).toBe(false);
     unregisterOrchRenderer(owner);
     clearRendererWorkspaceScope(owner);
@@ -2217,7 +2231,7 @@ describe("main-owned mission pane spawn", () => {
       error: expect.stringMatching(/dispatch-owned/u),
     });
     expect(owner.send).not.toHaveBeenCalled();
-    expect(pty.terminate).not.toHaveBeenCalledWith("pty-claimed");
+    expect(pty.terminate).not.toHaveBeenCalledWith("pty-claimed", expect.anything());
     syncPanes([], owner);
     clearRendererWorkspaceScope(owner);
   });
@@ -2255,7 +2269,9 @@ describe("main-owned mission pane spawn", () => {
 
     const closing = requestPaneClose("pane-pty-mission");
     await Promise.resolve();
-    expect(pty.terminate).toHaveBeenCalledWith("pty-mission-1");
+    expect(pty.terminate).toHaveBeenCalledWith("pty-mission-1", {
+      origin: "pane-registry:owned-mission-session",
+    });
     expect(owner.send).not.toHaveBeenCalledWith(
       expect.anything(),
       "pane-pty-mission",
@@ -2291,7 +2307,7 @@ describe("main-owned mission pane spawn", () => {
     }], owner);
 
     expect(await requestPaneClose("pane-reused", "pty-original")).toBe(false);
-    expect(pty.terminate).not.toHaveBeenCalledWith("pty-replacement");
+    expect(pty.terminate).not.toHaveBeenCalledWith("pty-replacement", expect.anything());
     expect(owner.send).not.toHaveBeenCalledWith(ORCH_CHANNELS.paneCloseRequest, expect.anything());
     expect(await requestPaneClose("pane-reused", "pty-replacement")).toBe(true);
     expect(owner.send).toHaveBeenCalledWith(ORCH_CHANNELS.paneCloseRequest, {

@@ -1103,7 +1103,9 @@ describe("registerPtyIpc account fail-fast", () => {
       ok: false,
       error: expect.stringMatching(/could not bind spawned PTY session/),
     });
-    expect(ptyDeps.orchTerminateSession).toHaveBeenCalledWith("pty-created");
+    expect(ptyDeps.orchTerminateSession).toHaveBeenCalledWith("pty-created", {
+      origin: "pty-ipc:spawn-settlement",
+    });
     expect(authorityDeps.attachSessionScope).not.toHaveBeenCalled();
   });
 

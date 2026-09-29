@@ -510,7 +510,8 @@ function bootstrap(): void {
   // o import de volta fecharia um ciclo ESM.
   configureWorktreePtySweep({
     listSessions: listLiveSessionLocations,
-    terminate: (sessionId) => orchTerminateSession(sessionId),
+    terminate: (sessionId) =>
+      orchTerminateSession(sessionId, { origin: "worktree-teardown-sweep" }),
   });
   const worktreeRuntime = configureWorktreeRuntimeRegistry(projectRuntimeManager);
   configureContextWorkflowRegistry(projectRuntimeManager, {

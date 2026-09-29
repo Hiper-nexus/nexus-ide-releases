@@ -114,7 +114,7 @@ async function terminatePhysicalSession(sessionId: string): Promise<boolean> {
       return false;
     }
   }
-  return orchTerminateSession(sessionId);
+  return orchTerminateSession(sessionId, { origin: 'mission-termination' });
 }
 
 function sameScope(

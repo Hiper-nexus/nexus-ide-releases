@@ -1614,7 +1614,9 @@ describe('agent prompt injection', () => {
       await vi.advanceTimersByTimeAsync(500);
 
       await rejected;
-      expect(stubs.terminateSession).toHaveBeenCalledWith('session-1');
+      expect(stubs.terminateSession).toHaveBeenCalledWith('session-1', {
+        origin: 'tool-util:authority-revoked',
+      });
       expect(stubs.writeSession).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
@@ -1649,7 +1651,9 @@ describe('agent prompt injection', () => {
       await vi.advanceTimersByTimeAsync(400);
 
       await rejected;
-      expect(stubs.terminateSession).toHaveBeenCalledWith('session-1');
+      expect(stubs.terminateSession).toHaveBeenCalledWith('session-1', {
+        origin: 'tool-util:authority-revoked',
+      });
       expect(stubs.writeSession).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
@@ -1825,7 +1829,9 @@ describe('agent prompt injection', () => {
       await vi.advanceTimersByTimeAsync(900);
 
       await rejected;
-      expect(stubs.terminateSession).toHaveBeenCalledWith('session-1');
+      expect(stubs.terminateSession).toHaveBeenCalledWith('session-1', {
+        origin: 'tool-util:authority-revoked',
+      });
     } finally {
       vi.useRealTimers();
     }
@@ -1919,7 +1925,9 @@ describe('agent prompt injection', () => {
       await vi.advanceTimersByTimeAsync(4_100);
 
       await rejected;
-      expect(stubs.terminateSession).toHaveBeenCalledWith('session-1');
+      expect(stubs.terminateSession).toHaveBeenCalledWith('session-1', {
+        origin: 'tool-util:authority-revoked',
+      });
     } finally {
       vi.useRealTimers();
     }

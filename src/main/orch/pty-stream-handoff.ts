@@ -110,7 +110,8 @@ export function isStaleReadOnlyObservationHandoffResult(
 export async function terminateStaleReadOnlyPtyStreamSession(
   sessionId: string,
   error: unknown,
-  terminate: (sessionId: string) => Promise<boolean> = orchTerminateSession,
+  terminate: (sessionId: string) => Promise<boolean> = (id) =>
+    orchTerminateSession(id, { origin: "pty-handoff:stale-read-only" }),
 ): Promise<boolean> {
   if (!isStaleReadOnlyObservationHandoffError(error)) return false;
   return terminate(sessionId);
@@ -124,7 +125,8 @@ export async function terminateStaleReadOnlyPtyStreamSession(
 export async function terminateStaleReadOnlyMcpSession(
   sessionId: string,
   result: Readonly<ToolDispatchResult>,
-  terminate: (sessionId: string) => Promise<boolean> = orchTerminateSession,
+  terminate: (sessionId: string) => Promise<boolean> = (id) =>
+    orchTerminateSession(id, { origin: "pty-handoff:stale-read-only" }),
 ): Promise<boolean> {
   if (!isStaleReadOnlyObservationHandoffResult(result)) return false;
   return terminate(sessionId);
