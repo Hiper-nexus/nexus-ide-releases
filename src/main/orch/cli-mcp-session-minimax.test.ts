@@ -5,7 +5,9 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  ensureMinimaxFullAccess,
   ensureMinimaxNexusMcpRegistration,
+  minimaxUserConfigPath,
   minimaxBridgePath,
   minimaxUserMcpPath,
   prepareMinimaxMcpSession,
@@ -122,5 +124,50 @@ describe('MiniMax Code recebe o MCP do Nexus pela ponte registrada (F-678)', () 
     } finally {
       server.close();
     }
+  });
+});
+
+describe('MiniMax Code roda livre nos panes do Nexus (F-692)', () => {
+  function writeConfig(home: string, content: string): string {
+    const file = minimaxUserConfigPath(home);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+    return file;
+  }
+
+  it('troca só a linha permissionMode e preserva o resto (CRLF incluso)', () => {
+    const home = tempHome();
+    const before =
+      '# meu comentário\r\ndefaultModel: minimax/MiniMax-M3\r\npermissionMode: default\r\n' +
+      'provider:\r\n  minimax:\r\n    mode: forced_on\r\n';
+    const file = writeConfig(home, before);
+    expect(ensureMinimaxFullAccess({ home })).toEqual({ changed: true });
+    expect(fs.readFileSync(file, 'utf8')).toBe(
+      before.replace('permissionMode: default', 'permissionMode: bypassPermissions'),
+    );
+    expect(ensureMinimaxFullAccess({ home })).toEqual({ changed: false });
+  });
+
+  it('acrescenta a chave de topo quando ela falta, sem mexer nas aninhadas', () => {
+    const home = tempHome();
+    const file = writeConfig(home, 'defaultModel: minimax/MiniMax-M3\nagents:\n  permissionMode: default');
+    expect(ensureMinimaxFullAccess({ home })).toEqual({ changed: true });
+    expect(fs.readFileSync(file, 'utf8')).toBe(
+      'defaultModel: minimax/MiniMax-M3\nagents:\n  permissionMode: default\npermissionMode: bypassPermissions\n',
+    );
+  });
+
+  it('cria o config.yaml quando a CLI ainda não gravou nenhum', () => {
+    const home = tempHome();
+    expect(ensureMinimaxFullAccess({ home })).toEqual({ changed: true });
+    expect(fs.readFileSync(minimaxUserConfigPath(home), 'utf8')).toBe(
+      'permissionMode: bypassPermissions\n',
+    );
+  });
+
+  it('valor já livre, com aspas ou comentário, não é regravado', () => {
+    const home = tempHome();
+    writeConfig(home, 'permissionMode: "bypassPermissions" # Full access\n');
+    expect(ensureMinimaxFullAccess({ home })).toEqual({ changed: false });
   });
 });

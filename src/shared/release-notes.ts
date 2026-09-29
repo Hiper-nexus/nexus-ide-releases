@@ -8356,7 +8356,7 @@ export const RELEASE_076143: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076144: AppRelease = {
   version: '0.76.144',
   date: '2026-09-29',
   codename: 'O modelo mais novo, sempre',
@@ -8370,6 +8370,26 @@ export const CURRENT_RELEASE: AppRelease = {
         'A versão mais nova da mesma linha (por exemplo, um GPT-6.2 Sol ao lado do 6.1) passa a ' +
         'valer na rota automática e como padrão do pane assim que a CLI a lista, sem esperar ' +
         'uma atualização do Nexus. Sem benchmark, ela herda a nota da versão anterior.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.145',
+  date: '2026-09-29',
+  codename: 'MiniMax livre',
+  summary:
+    'O MiniMax Code para de pedir permissão a cada ferramenta e roda livre nos ' +
+    'panes, como as outras CLIs. Inclui a 0.76.144 (O modelo mais novo, sempre).',
+  highlights: [
+    {
+      title: 'MiniMax Code sem pedir permissão',
+      detail:
+        'O MiniMax Code não tem opção de linha de comando para rodar livre. O ' +
+        'Nexus agora ajusta o modo "Full access" na configuração dele antes de ' +
+        'abrir o pane, e ele trabalha sem parar para pedir aprovação. Panes ' +
+        'somente leitura continuam sem essa liberação.',
     },
   ],
   fixes: [],
