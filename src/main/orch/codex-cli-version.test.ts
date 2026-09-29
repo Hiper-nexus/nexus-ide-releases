@@ -5,6 +5,7 @@ import {
   resetCodexCliVersionCacheForTests,
   resolveCodexCliVersion,
   type CodexVersionExec,
+  type CodexVersionLaunch,
 } from './codex-cli-version';
 
 beforeEach(() => {
@@ -71,5 +72,54 @@ describe('codexHookTrustBypassArgs', () => {
 
   it('omits the flag when the version is undeterminable (fail-safe)', () => {
     expect(codexHookTrustBypassArgs('codex', execThrowing)).toEqual([]);
+  });
+});
+
+describe('F-687: Windows npm launcher', () => {
+  const npmLaunch: CodexVersionLaunch = () => ({
+    file: 'C:\Users\op\.local\bin\node.exe',
+    argsPrefix: ['C:\Users\op\.local\bin\node_modules\@openai\codex\bin\codex.js'],
+  });
+
+  it('reads the version through the verified launcher when the bare bin fails', () => {
+    const calls: Array<{ bin: string; args: string[] }> = [];
+    const exec: CodexVersionExec = (bin, args) => {
+      calls.push({ bin, args });
+      if (bin === 'codex') throw new Error('spawn codex ENOENT');
+      return 'codex-cli 0.159.0\n';
+    };
+    expect(resolveCodexCliVersion('codex', exec, npmLaunch)).toBe('0.159.0');
+    expect(calls[1]).toEqual({
+      bin: 'C:\Users\op\.local\bin\node.exe',
+      args: ['C:\Users\op\.local\bin\node_modules\@openai\codex\bin\codex.js', '--version'],
+    });
+  });
+
+  it('the Codex pane gets the hook-trust bypass on Windows (no "Hooks need review")', () => {
+    const exec: CodexVersionExec = (bin) => {
+      if (bin === 'codex') throw new Error('spawn codex ENOENT');
+      return 'codex-cli 0.159.0\n';
+    };
+    expect(codexHookTrustBypassArgs('codex', exec, npmLaunch)).toEqual([
+      '--dangerously-bypass-hook-trust',
+    ]);
+  });
+
+  it('keeps the fail-safe when neither the bin nor the launcher resolve', () => {
+    expect(codexHookTrustBypassArgs('codex', execThrowing, () => null)).toEqual([]);
+    resetCodexCliVersionCacheForTests();
+    expect(codexHookTrustBypassArgs('codex', execThrowing, npmLaunch)).toEqual([]);
+  });
+
+  it('does not touch the launcher when the bare bin already answers', () => {
+    let launched = 0;
+    const launch: CodexVersionLaunch = () => {
+      launched += 1;
+      return null;
+    };
+    expect(resolveCodexCliVersion('codex', execReturning('codex-cli 0.145.0\n'), launch)).toBe(
+      '0.145.0',
+    );
+    expect(launched).toBe(0);
   });
 });

@@ -59,9 +59,30 @@ interface Props {
   isCanvas?: boolean;
 }
 
-type Density = 'full' | 'icons' | 'compact';
+export type Density = 'full' | 'icons' | 'compact';
 const COMPACT_TOOLBAR_WIDTH = 360;
 const FULL_TOOLBAR_WIDTH = 760;
+/**
+ * F-686: folga para VOLTAR a um modo mais largo. No Windows a barra de
+ * rolagem ocupa ~17 px (no macOS ela flutua): trocar de densidade mudava a
+ * altura dos cabeçalhos, a barra da grade aparecia/sumia e TODOS os panes
+ * cruzavam o limite juntos — o cabeçalho alternava título × botões a cada
+ * quadro (gravação do operador, 29/09 18:08). Encolher continua imediato.
+ */
+export const TOOLBAR_DENSITY_HYSTERESIS_PX = 32;
+
+const DENSITY_RANK: Record<Density, number> = { compact: 0, icons: 1, full: 2 };
+
+/** Densidade para `width` a partir de `current`, com histerese na subida. */
+export function nextToolbarDensity(current: Density, width: number): Density {
+  const target: Density =
+    width < COMPACT_TOOLBAR_WIDTH ? 'compact' : width < FULL_TOOLBAR_WIDTH ? 'icons' : 'full';
+  if (DENSITY_RANK[target] <= DENSITY_RANK[current]) return target;
+  const roomy = width - TOOLBAR_DENSITY_HYSTERESIS_PX;
+  const reachable: Density =
+    roomy < COMPACT_TOOLBAR_WIDTH ? 'compact' : roomy < FULL_TOOLBAR_WIDTH ? 'icons' : 'full';
+  return DENSITY_RANK[reachable] > DENSITY_RANK[current] ? reachable : current;
+}
 const MENU_VIEWPORT_GUTTER = 8;
 const MENU_ANCHOR_GAP = 4;
 
@@ -365,9 +386,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       // Thresholds altos: com 3+ panes na grelha a toolbar morre cedo e o
       // Fechar era empurrado para fora (overflow do .pane). Compact cedo.
       const w = entries[0]?.contentRect.width ?? 500;
-      if (w < COMPACT_TOOLBAR_WIDTH) setDensity('compact');
-      else if (w < FULL_TOOLBAR_WIDTH) setDensity('icons');
-      else setDensity('full');
+      setDensity((current) => nextToolbarDensity(current, w));
     });
     ro.observe(el);
     return () => ro.disconnect();

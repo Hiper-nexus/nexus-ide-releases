@@ -15,7 +15,9 @@
  * bem-conhecido em vez de adivinhar porta. Sem arquivo = IDE fora do ar.
  *
  * Aceito: caminho absoluto cujo realpath fica sob ~/Pictures/Nexus Shot ou
- * ~/Movies/Nexus Shot, arquivo regular, tamanho <= SHOT_FILE_MAX_BYTES. O
+ * ~/Movies/Nexus Shot (Windows: C:\…\Pictures|Videos\Nexus Shot e as pastas
+ * conhecidas redirecionadas; UNC recusado), arquivo regular, tamanho
+ * <= SHOT_FILE_MAX_BYTES. O
  * arquivo NÃO é copiado: já vive num diretório permitido; entregamos apenas
  * os metadados ao renderer ("shot:files-received").
  */

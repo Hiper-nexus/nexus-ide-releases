@@ -1,11 +1,12 @@
 # Changelog
 
-## 0.76.141 — Terminal sobe rápido
+## 0.76.141 — Sem piscar
 
-Pedido do operador em 29/09: terminais que embaralham e pane novo que demora quase um minuto para subir. Inclui a 0.76.140.
+Uso real no Windows em 29/09. Inclui a 0.76.140 (GPT-6.1 Sol).
 
-- **Pane novo sobe em segundos (F-215).** Os writers isolados do Maestro levaram de 47,7 a 52,4 s para abrir, quase tudo copiando o node_modules do saasbarbearia (331 mil entradas) arquivo por arquivo. O 1º pane de uma aba nova do "+" passa pelo mesmo caminho. Agora o Nexus clona a pasta inteira numa chamada só do macOS: 32 s caem para 4 a 6 s, medidos na máquina ociosa. O node_modules do app nativo (`apps/mobile`) também passa a vir clonado, desde que o git o ignore; antes o writer precisava criar o link à mão para rodar os testes.
-- **Terminal no tamanho certo (F-216).** No pane GLM do print, a CLI desenhava num tamanho diferente do pane: linhas quebradas na largura errada e restos abaixo da barra de status. Ao focar ou voltar a ver um pane, o Nexus agora reafirma o tamanho dele para a CLI. Se ela estava em outro tamanho, a tela é redesenhada inteira. O trace passa a registrar quando isso acontece. O toolbar do pane ganhou "Redesenhar tela", para quando algo ainda sair embaralhado. A causa exata do seu print não foi reproduzida.
+- **Cabeçalho dos panes para de piscar (F-686).** Na gravação das 18:08 todos os cabeçalhos alternavam juntos entre título ("pane 1 · Claude · Orquestrador") e botões a cada quadro. A densidade do cabeçalho seguia o limite exato de largura; no Windows a barra de rolagem ocupa ~17 px, e trocar de densidade fazia a barra da grade aparecer e sumir, empurrando todos os panes de volta pelo limite. Encolher continua imediato; voltar a um modo mais largo exige 32 px de folga.
+- **Codex sem "Hooks need review" no Windows (F-687).** O pane Codex parava em "8 hooks are new or changed / Trust all and continue". A flag `--dangerously-bypass-hook-trust` depende da versão do Codex, e a versão era lida por `execFileSync('codex')`. No Windows o Codex do npm é um `.cmd`: ENOENT pelo nome, EINVAL pelo `.cmd`. A versão agora sai pelo mesmo lançador verificado do spawn (`node.exe` + `codex.js` do pacote). Quando não dá para saber a versão, a flag continua de fora.
+- **Nexus Shot no Windows (F-685).** O ingest recusava todo caminho que não começasse com "/", e toda captura voltava `path-not-absolute`. Agora aceita caminhos com letra de unidade; UNC e `\?\` continuam recusados. As raízes passam a ser Imagens e Vídeos, mais as pastas conhecidas do Electron (OneDrive).
 
 ## 0.76.140 — GPT-6.1 Sol
 

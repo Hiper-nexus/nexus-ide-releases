@@ -9,6 +9,8 @@
 
 import { execFileSync } from 'node:child_process';
 import { resolveLoginShellPath } from '../adapters/adapter-registry';
+import { windowsNpmShimSpawn } from '../adapters/windows-npm-shim';
+import { resolveCliBinary, resolveWindowsCodexNpmShimLaunch } from '../path-resolver';
 
 /** Minimum codex version that honors --dangerously-bypass-hook-trust. */
 const HOOK_TRUST_BYPASS_MIN_VERSION: [number, number, number] = [0, 134, 0];
@@ -41,6 +43,31 @@ function versionAtLeast(version: string, min: [number, number, number]): boolean
 
 let versionCache = new Map<string, string | null>();
 
+/** Executable + prefix args that really run `bin` (Windows npm launcher). */
+export type CodexVersionLaunch = (
+  bin: string,
+) => { file: string; argsPrefix: readonly string[] } | null;
+
+/**
+ * F-687: no Windows o `codex` do npm é um `.cmd`. `execFileSync('codex')` dá
+ * ENOENT (o CreateProcess só completa `.exe`) e `codex.cmd` dá EINVAL (o Node
+ * recusa batch sem shell), então a versão ficava null, a flag de confiança
+ * nunca ia e todo pane Codex abria parado em "Hooks need review". Lê a versão
+ * pelo mesmo lançador verificado do spawn (`node.exe` + `codex.js` do pacote),
+ * sem cmd.exe.
+ */
+export function windowsCodexVersionLaunch(
+  bin: string,
+): { file: string; argsPrefix: readonly string[] } | null {
+  if (process.platform !== 'win32') return null;
+  const binPath = resolveCliBinary(bin)?.binPath;
+  if (!binPath) return null;
+  if (/\.(?:exe|com)$/iu.test(binPath)) return { file: binPath, argsPrefix: [] };
+  return (
+    resolveWindowsCodexNpmShimLaunch(binPath) ?? windowsNpmShimSpawn('codex', binPath)
+  );
+}
+
 /**
  * Resolve the installed codex version (`codex --version`), memoised per bin
  * for the process lifetime. Returns null when the binary or its version
@@ -49,6 +76,7 @@ let versionCache = new Map<string, string | null>();
 export function resolveCodexCliVersion(
   bin = 'codex',
   execImpl: CodexVersionExec = execFileSync as unknown as CodexVersionExec,
+  launchImpl: CodexVersionLaunch = windowsCodexVersionLaunch,
 ): string | null {
   const cached = versionCache.get(bin);
   if (cached !== undefined) return cached;
@@ -62,6 +90,21 @@ export function resolveCodexCliVersion(
   try {
     version = parseCodexCliVersion(execImpl(bin, ['--version'], options));
   } catch {
+    version = null;
+  }
+  if (version === null) {
+    try {
+      const launch = launchImpl(bin);
+      if (launch) {
+        version = parseCodexCliVersion(
+          execImpl(launch.file, [...launch.argsPrefix, '--version'], options),
+        );
+      }
+    } catch {
+      version = null;
+    }
+  }
+  if (version === null) {
     // GUI apps inherit a minimal PATH; retry with the login-shell PATH (same
     // doctrine as isBinInstalled in adapter-registry).
     try {
@@ -91,8 +134,9 @@ export function resolveCodexCliVersion(
 export function codexHookTrustBypassArgs(
   bin = 'codex',
   execImpl?: CodexVersionExec,
+  launchImpl?: CodexVersionLaunch,
 ): string[] {
-  const version = resolveCodexCliVersion(bin, execImpl);
+  const version = resolveCodexCliVersion(bin, execImpl, launchImpl);
   if (version === null) return [];
   return versionAtLeast(version, HOOK_TRUST_BYPASS_MIN_VERSION)
     ? ['--dangerously-bypass-hook-trust']

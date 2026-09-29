@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ShotFilesReceivedPayload } from '../../shared/shot-bridge';
-import { initShotIngestToasts, type ShotIngestAppApi } from './shot-ingest';
+import { initShotIngestToasts, parentDirOf, type ShotIngestAppApi } from './shot-ingest';
 import { useToastStore } from './toast-store';
 
 function clearToasts(): void {
@@ -250,5 +250,15 @@ describe('helpers do shot-ingest (F-613)', () => {
     const { selectShotFilesToInject } = await import('./shot-ingest');
     expect(selectShotFilesToInject([])).toEqual([]);
     expect(selectShotFilesToInject([PNG])).toEqual([PNG]);
+  });
+});
+
+describe('parentDirOf', () => {
+  it('corta no último separador, / ou \\ (realpath nativo do Windows)', () => {
+    expect(parentDirOf('/Users/op/Movies/Nexus Shot/take.mp4')).toBe('/Users/op/Movies/Nexus Shot');
+    expect(parentDirOf('C:\\Users\\op\\Videos\\Nexus Shot\\take.mp4')).toBe(
+      'C:\\Users\\op\\Videos\\Nexus Shot',
+    );
+    expect(parentDirOf('take.mp4')).toBe('');
   });
 });

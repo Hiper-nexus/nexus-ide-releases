@@ -8255,24 +8255,34 @@ export const RELEASE_076140: AppRelease = {
 export const CURRENT_RELEASE: AppRelease = {
   version: '0.76.141',
   date: '2026-09-29',
-  codename: 'Terminal sobe rápido',
+  codename: 'Sem piscar',
   summary:
-    'Pane novo com pasta isolada sobe em segundos em vez de quase um minuto, e o terminal ' +
-    'reafirma o próprio tamanho para a CLI não desenhar fora do pane. Inclui a 0.76.140.',
+    'Os cabeçalhos dos panes param de piscar no Windows, o Codex para de travar ' +
+    'na revisão de hooks e o Nexus Shot volta a entregar capturas no Windows. ' +
+    'Inclui a 0.76.140 (GPT-6.1 Sol).',
   highlights: [
     {
-      title: 'Pane novo sobe em segundos',
+      title: 'Cabeçalho parado',
       detail:
-        'Writers do Maestro e o 1º pane de uma aba nova ficavam cerca de 50 s em "Subindo…" ' +
-        'copiando o node_modules arquivo por arquivo. Agora o Nexus clona a pasta inteira de ' +
-        'uma vez: 4 a 6 s no saasbarbearia.',
+        'No Windows os cabeçalhos de todos os panes alternavam entre título e ' +
+        'botões a cada quadro, porque a barra de rolagem da grade aparecia e ' +
+        'sumia. Agora o cabeçalho só volta a se alargar quando tem folga.',
     },
     {
-      title: 'Terminal no tamanho certo',
+      title: 'Codex sem "Hooks need review"',
       detail:
-        'Ao focar ou voltar a ver um pane, o Nexus reafirma o tamanho dele para a CLI; se ela ' +
-        'estava em outro tamanho, redesenha a tela. "Redesenhar tela" no toolbar do pane força ' +
-        'o redesenho quando algo ainda sair embaralhado.',
+        'O pane Codex do Windows não parava mais nessa tela à espera de uma ' +
+        'escolha. O Nexus volta a ler a versão do Codex instalado pelo npm e ' +
+        'passa a flag de confiança só para os hooks que ele mesmo escreveu, ' +
+        'como já fazia no macOS.',
+    },
+    {
+      title: 'Nexus Shot no Windows',
+      detail:
+        'Capturas e gravações do Nexus Shot no Windows voltam a chegar ao ' +
+        'pane. Antes eram recusadas porque o caminho começava com a letra da ' +
+        'unidade. As pastas Imagens e Vídeos, inclusive no OneDrive, passam a ' +
+        'ser aceitas.',
     },
   ],
   fixes: [],

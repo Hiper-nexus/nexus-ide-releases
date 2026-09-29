@@ -6,8 +6,8 @@
  * porta efêmera, token aleatório por sessão gravado em endpoint.json (0600)
  * sob userData. Validação de caminho é a fronteira de segurança: só entram
  * arquivos cujo realpath fica sob as raízes do Shot (~/Pictures/Nexus Shot,
- * ~/Movies/Nexus Shot) — sem traversal, sem symlink para fora, sem paths
- * arbitrários do sistema.
+ * ~/Movies/Nexus Shot; no Windows, Imagens/Vídeos\Nexus Shot) — sem
+ * traversal, sem symlink para fora, sem paths arbitrários do sistema.
  *
  * O módulo NÃO importa electron: a borda (foco de janela, notificação,
  * webContents.send) vive no callback `onFiles` injetado pelo main.ts, o que
@@ -17,7 +17,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, sep } from 'node:path';
+import { basename, dirname, join, posix, win32 } from 'node:path';
 import { homedir } from 'node:os';
 import {
   SHOT_FILE_MAX_BYTES,
@@ -48,13 +48,41 @@ function tokenMatches(provided: string, expected: string): boolean {
   return timingSafeEqual(a, b);
 }
 
-/** Raízes permitidas: apenas os diretórios de destino do Nexus Shot. */
-export function shotAllowedRoots(home: string = homedir()): string[] {
-  return [join(home, 'Pictures', 'Nexus Shot'), join(home, 'Movies', 'Nexus Shot')];
+/** Pastas conhecidas do SO (app.getPath) — cobrem Imagens/Vídeos redirecionados
+ *  (OneDrive no Windows), que o Shot também resolve pela pasta conhecida. */
+export type ShotKnownFolders = { pictures?: string; videos?: string };
+
+/** Raízes permitidas: apenas os diretórios de destino do Nexus Shot. O Shot
+ *  grava gravações em ~/Movies no macOS e em Vídeos (~\Videos) no Windows. */
+export function shotAllowedRoots(
+  home: string = homedir(),
+  platform: NodeJS.Platform = process.platform,
+  knownFolders: ShotKnownFolders = {},
+): string[] {
+  const path = platform === 'win32' ? win32 : posix;
+  const videos = platform === 'win32' ? 'Videos' : 'Movies';
+  const roots = [path.join(home, 'Pictures', 'Nexus Shot'), path.join(home, videos, 'Nexus Shot')];
+  for (const folder of [knownFolders.pictures, knownFolders.videos]) {
+    if (folder && path.isAbsolute(folder)) roots.push(path.join(folder, 'Nexus Shot'));
+  }
+  return [...new Set(roots)];
 }
 
-function isUnderRoot(realPath: string, realRoot: string): boolean {
-  return realPath === realRoot || realPath.startsWith(realRoot + sep);
+/** Absoluto no formato que o Shot envia. No Windows só letra de unidade
+ *  (C:\…): UNC e device paths (\\host\share, \\?\, \\.\) ficam fora — o
+ *  realpath de um UNC abriria conexão SMB com o host informado. */
+function isAcceptedAbsolute(raw: string, platform: NodeJS.Platform): boolean {
+  if (platform === 'win32') return /^[A-Za-z]:[\\/]/.test(raw);
+  return raw.startsWith('/');
+}
+
+function isUnderRoot(realPath: string, realRoot: string, platform: NodeJS.Platform): boolean {
+  const sep = platform === 'win32' ? win32.sep : posix.sep;
+  // NTFS não diferencia caixa: C:\Users\x\pictures é a mesma pasta.
+  const [p, root] = platform === 'win32'
+    ? [realPath.toLowerCase(), realRoot.toLowerCase()]
+    : [realPath, realRoot];
+  return p === root || p.startsWith(root + sep);
 }
 
 function kindOf(name: string): ShotFileKind {
@@ -70,7 +98,12 @@ function kindOf(name: string): ShotFileKind {
  */
 export function validateShotIngestFiles(
   input: unknown,
-  options: { homeDir?: string; realpathFn?: (p: string) => string } = {},
+  options: {
+    homeDir?: string;
+    realpathFn?: (p: string) => string;
+    platform?: NodeJS.Platform;
+    knownFolders?: ShotKnownFolders;
+  } = {},
 ): ShotIngestOutcome {
   if (!Array.isArray(input) || input.length === 0) {
     return { ok: false, reason: 'invalid-shape' };
@@ -78,9 +111,10 @@ export function validateShotIngestFiles(
   if (input.length > SHOT_INGEST_MAX_FILES) {
     return { ok: false, reason: 'too-many-files' };
   }
+  const platform = options.platform ?? process.platform;
   const realpathFn = options.realpathFn ?? ((p: string) => realpathSync(p));
   // Roots canonicalizadas: sem isso um symlink numa raiz compararia errado.
-  const roots = shotAllowedRoots(options.homeDir).flatMap((root) => {
+  const roots = shotAllowedRoots(options.homeDir, platform, options.knownFolders).flatMap((root) => {
     try {
       return [realpathFn(root)];
     } catch {
@@ -93,7 +127,7 @@ export function validateShotIngestFiles(
     if (typeof raw !== 'string' || raw.length === 0 || raw.includes('\0')) {
       return { ok: false, reason: 'invalid-shape' };
     }
-    if (!raw.startsWith('/')) {
+    if (!isAcceptedAbsolute(raw, platform)) {
       return { ok: false, reason: 'path-not-absolute' };
     }
     let real: string;
@@ -102,7 +136,7 @@ export function validateShotIngestFiles(
     } catch {
       return { ok: false, reason: 'path-not-found' };
     }
-    if (!roots.some((root) => isUnderRoot(real, root))) {
+    if (!roots.some((root) => isUnderRoot(real, root, platform))) {
       return { ok: false, reason: 'path-outside-allowed' };
     }
     let size: number;
@@ -157,6 +191,7 @@ async function handleRequest(
   expectedToken: string,
   onFiles: (files: ShotFileMeta[]) => void,
   homeDir?: string,
+  knownFolders?: ShotKnownFolders,
 ): Promise<void> {
   if (req.method !== 'POST' || req.url?.split('?')[0] !== '/shot/ingest') {
     res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -194,7 +229,7 @@ async function handleRequest(
     return;
   }
 
-  const outcome = validateShotIngestFiles(shape.files, { homeDir });
+  const outcome = validateShotIngestFiles(shape.files, { homeDir, knownFolders });
   if (!outcome.ok) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: false, reason: outcome.reason }));
@@ -215,6 +250,8 @@ export async function startShotBridgeServer(options: {
   token?: string;
   /** Override de teste: raiz home para as pastas permitidas. */
   homeDir?: string;
+  /** app.getPath('pictures'|'videos') — pastas conhecidas redirecionadas. */
+  knownFolders?: ShotKnownFolders;
   onFiles: (files: ShotFileMeta[]) => void;
 }): Promise<ShotBridgeServerHandle> {
   if (active) return active;
@@ -224,7 +261,7 @@ export async function startShotBridgeServer(options: {
 
   const server: Server = createServer(async (req, res) => {
     try {
-      await handleRequest(req, res, token, options.onFiles, options.homeDir);
+      await handleRequest(req, res, token, options.onFiles, options.homeDir, options.knownFolders);
     } catch {
       if (!res.headersSent) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
