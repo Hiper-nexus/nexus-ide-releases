@@ -43,6 +43,58 @@ describe('MergeQueue', () => {
     },
   );
 
+  it.runIf(process.platform === 'darwin')(
+    'materializes ignored nested node_modules via the check-ignore predicate',
+    async () => {
+      write(root, 'apps/mobile/package.json', '{"name":"mobile"}\n');
+      git(root, 'add', 'apps/mobile/package.json');
+      git(root, 'commit', '-m', 'add mobile package');
+      // Ignored + untracked: a candidate that cloned it stays porcelain-clean.
+      // A root node_modules must exist — `check-ignore node_modules` exits 1
+      // for a nonexistent path under a dir-only pattern and closes the gate.
+      write(root, 'node_modules/root-dep/index.js', 'x\n');
+      write(root, 'apps/mobile/node_modules/dep/index.js', 'x\n');
+      await commitTask(
+        'mission-nested',
+        'task-nested',
+        'worker-nested',
+        'feature-nested.txt',
+        'x\n',
+      );
+
+      await queue.enqueue({
+        scope,
+        missionId: 'mission-nested',
+        taskId: 'task-nested',
+        async validate(context) {
+          if (context.phase === 'candidate') {
+            expect(
+              fs.existsSync(
+                path.join(
+                  context.checkoutPath,
+                  'apps/mobile/node_modules/dep/index.js',
+                ),
+              ),
+            ).toBe(true);
+            expect(git(context.checkoutPath, 'status', '--porcelain')).toBe('');
+          }
+          return approved(context);
+        },
+      });
+
+      // The merge-queue gates nested candidates through check-ignore — the
+      // rel under the repo root must be probed, not just 'node_modules'.
+      const checkIgnoreRels = gitRunner.calls
+        .filter(
+          (call) =>
+            call.cwd === fs.realpathSync(root) &&
+            call.args[0] === 'check-ignore',
+        )
+        .map((call) => call.args[call.args.length - 1]);
+      expect(checkIgnoreRels).toContain('apps/mobile/node_modules');
+    },
+  );
+
   it('validates a detached candidate before an exact fast-forward and revalidates after', async () => {
     await commitTask(
       'mission-a',

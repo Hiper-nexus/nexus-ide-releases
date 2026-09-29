@@ -463,13 +463,14 @@ export class WorktreeManager {
           );
         }
         // CoW-aware materialization (APFS clonefile path when enabled; else git).
-        await materializeGitWorktree({
+        const materialized = await materializeGitWorktree({
           repositoryRoot: repository.rootRealPath,
           worktreePath,
           branchRef,
           headSha: repository.headSha,
           git: this.#git,
         });
+        input.onMaterialized?.(materialized);
         assertTaskWorktree(this.#git, candidate);
       }
       assertRepositoryUnchanged(this.#git, repository, requireClean);

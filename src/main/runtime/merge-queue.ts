@@ -478,8 +478,9 @@ export class MergeQueue {
         integration.headSha,
         claimed.scopeKey,
       );
-      assertSafeLocalGitConfig(this.#git, prepared.record.rootRealPath);
-      this.#git.run(prepared.record.rootRealPath, [
+      const candidateRootRealPath = prepared.record.rootRealPath;
+      assertSafeLocalGitConfig(this.#git, candidateRootRealPath);
+      this.#git.run(candidateRootRealPath, [
         'worktree',
         'add',
         '--detach',
@@ -493,15 +494,20 @@ export class MergeQueue {
       // binaries fail with `command not found`. Clone only ignored heavy dirs
       // so candidate identity remains clean and the source checkout is never
       // mutated. APFS clonefile keeps this fast and copy-on-write.
-      const nodeModulesIgnored = this.#git.run(
-        prepared.record.rootRealPath,
-        ['check-ignore', '--quiet', 'node_modules'],
-        { allowFailure: true },
-      );
-      if (nodeModulesIgnored.status === 0) {
+      const isGitIgnored = (rel: string): boolean =>
+        this.#git.run(
+          candidateRootRealPath,
+          ['check-ignore', '--quiet', rel],
+          { allowFailure: true },
+        ).status === 0;
+      if (isGitIgnored('node_modules')) {
         await cowCopyHeavyDirs(
-          prepared.record.rootRealPath,
+          candidateRootRealPath,
           candidate.path,
+          undefined,
+          undefined,
+          undefined,
+          isGitIgnored,
         );
       }
       this.#assertCheckout(candidate.path, candidate.candidateSha, candidate.treeSha);

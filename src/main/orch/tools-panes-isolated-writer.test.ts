@@ -48,6 +48,12 @@ vi.mock('./project-domain-store-registry', () => ({
   }),
 }));
 vi.mock('./task-dispatch-authority', () => ({ isTaskQueueManagedMission: () => false }));
+const traceHarness = vi.hoisted(() => ({ events: [] as Array<Record<string, unknown>> }));
+vi.mock('../observability/main-trace', () => ({
+  trace: (event: Record<string, unknown>) => {
+    traceHarness.events.push(event);
+  },
+}));
 vi.mock('../context/context-workflow-registry', () => ({
   getContextWorkflowService: () => ({ getMissionWorkflow: () => ({ contract: null }) }),
 }));
@@ -76,6 +82,7 @@ function exitPane(pane: PaneSnapshot) {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  traceHarness.events.length = 0;
   h.pending.mockReturnValue(null);
   h.panes = [];
   h.parents = {};
@@ -124,6 +131,22 @@ describe('Via Rápida isolated writers', () => {
     ctx.executionScope = { ...ctx.scope, rootRealPath: path.join(temp, 'another-tab') };
     await paneSpawnTool.handler({ agentName: 'Executor' }, ctx);
     expect(h.spawn.mock.calls[0][0]).toMatchObject({ cwd: ctx.scope.rootRealPath, executionScope: ctx.scope });
+  });
+
+  it('emite pane-spawn-timing com gitWorktreeMs e cowMs do materialize (F-215)', async () => {
+    await paneSpawnTool.handler(
+      { agentName: 'Executor', isolatedWriter: true, prompt: 'Implement feature' },
+      ctx,
+    );
+    const events = traceHarness.events.filter(
+      (e) => e.kind === 'pane-spawn-timing',
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      gitWorktreeMs: expect.any(Number),
+      cowMs: expect.any(Number),
+    });
+    expect(events[0].phases).toHaveProperty('writer-isolation');
   });
 
   it('fans out concurrently with distinct registered worktrees/branches at HEAD, preserving WIP', async () => {

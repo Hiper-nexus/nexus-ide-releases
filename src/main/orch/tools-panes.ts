@@ -594,6 +594,9 @@ interface PaneSpawnTimingMeta {
   missionId?: string;
   role?: string;
   ok?: boolean;
+  /** F-215: tempos por etapa do materialize da worktree isolada (ms). */
+  gitWorktreeMs?: number;
+  cowMs?: number;
 }
 interface PaneSpawnTiming {
   readonly timer: PhaseTimer;
@@ -813,6 +816,12 @@ const paneSpawn: McpToolDef = {
         ok: spawnTiming.meta.ok === true,
         totalMs,
         phases,
+        ...(spawnTiming.meta.gitWorktreeMs === undefined
+          ? {}
+          : { gitWorktreeMs: spawnTiming.meta.gitWorktreeMs }),
+        ...(spawnTiming.meta.cowMs === undefined
+          ? {}
+          : { cowMs: spawnTiming.meta.cowMs }),
       });
     }
   },
@@ -1310,6 +1319,10 @@ const paneSpawnAfterTabMission = {
           }
           try {
             isolatedWriter = await allocateIsolatedWriterWorktree(ctx.scope, undefined);
+            if (spawnTiming && isolatedWriter.materialize) {
+              spawnTiming.meta.gitWorktreeMs = isolatedWriter.materialize.gitWorktreeMs;
+              spawnTiming.meta.cowMs = isolatedWriter.materialize.cowMs;
+            }
           } finally {
             spawnTiming?.timer.mark('writer-isolation');
           }
@@ -1624,6 +1637,10 @@ const paneSpawnAfterTabMission = {
               }
               try {
                 isolatedWriter = await allocateIsolatedWriterWorktree(ctx.scope, missionId);
+                if (spawnTiming && isolatedWriter.materialize) {
+                  spawnTiming.meta.gitWorktreeMs = isolatedWriter.materialize.gitWorktreeMs;
+                  spawnTiming.meta.cowMs = isolatedWriter.materialize.cowMs;
+                }
               } finally {
                 spawnTiming?.timer.mark('writer-isolation');
               }

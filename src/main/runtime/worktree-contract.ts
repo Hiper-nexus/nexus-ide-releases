@@ -3,6 +3,7 @@ import path from "node:path";
 import { TEAM_READ_ONLY_FANOUT_DOMAIN } from "../../shared/mission-topology";
 import type { ProjectExecutionScope } from "../../shared/types";
 import type { AsyncGitRunner, GitRunner } from "./git-command";
+import type { MaterializeWorktreeResult } from "./worktree-cow";
 
 export const SHA_PATTERN = /^[a-f0-9]{40,64}$/;
 export const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
@@ -89,6 +90,12 @@ export interface CreateWorktreeInput {
   readonly workerId: string;
   readonly ownership: WorktreeOwnership;
   readonly dependsOn?: readonly WorktreeDependencyInput[];
+  /**
+   * F-215: callback com o resultado efêmero do materialize (método, dirs
+   * CoW-copiados, tempos por etapa). Nunca persistido no registro durável —
+   * quem aloca usa para telemetria do spawn.
+   */
+  readonly onMaterialized?: (result: MaterializeWorktreeResult) => void;
 }
 
 export interface PreparedWorktreeIntegration {

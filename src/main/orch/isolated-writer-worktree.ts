@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { WorktreeRecord } from '../runtime/worktree-contract';
+import type { MaterializeWorktreeResult } from '../runtime/worktree-cow';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { tapSessionExit } from '../pty/pty-manager';
 import { getPaneRuntimeAuthorityBySession, listPaneSnapshots } from './pane-registry';
@@ -26,6 +27,11 @@ export interface IsolatedWriterAllocation {
    * de reiniciar o app.
    */
   readonly link: (paneId: string, sessionId?: string) => void;
+  /**
+   * F-215: resultado efêmero do materialize desta alocação (tempos por
+   * etapa) — só existe quando a worktree foi criada agora.
+   */
+  readonly materialize?: MaterializeWorktreeResult;
 }
 
 function inUseByPane(worktreePath: string): boolean {
@@ -137,6 +143,7 @@ export async function allocateIsolatedWriterWorktree(
   const workerId = randomUUID();
   const registryKey = missionId ?? OPERATOR_HAND_WORKTREE_KEY;
   if (!missionId) scheduleOperatorHandGc(scope);
+  let materialize: MaterializeWorktreeResult | undefined;
   const record = await requireWorktreeRuntimeRegistry().create({
     scope,
     missionId: registryKey,
@@ -145,8 +152,12 @@ export async function allocateIsolatedWriterWorktree(
     ownerKind: 'pane',
     // No sealed file claims: the Maestro owns integration of these branches.
     ownership: { files: [], symbols: [], domains: [`pane-${workerId}`] },
+    onMaterialized: (result) => {
+      materialize = result;
+    },
   });
-  return trackAllocation(scope, missionId, registryKey, record);
+  const allocation = trackAllocation(scope, missionId, registryKey, record);
+  return materialize ? { ...allocation, materialize } : allocation;
 }
 
 /**
