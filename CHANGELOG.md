@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.143 — Terminal sobe rápido
+
+Pedido do operador em 29/09: terminais que embaralham e pane novo que demora quase um minuto para subir. Inclui a 0.76.142.
+
+- **Pane novo sobe em segundos (F-215).** Os writers isolados do Maestro levaram de 47,7 a 52,4 s para abrir, quase tudo copiando o node_modules do saasbarbearia (331 mil entradas) arquivo por arquivo. O 1º pane de uma aba nova do "+" passa pelo mesmo caminho. Agora o Nexus clona a pasta inteira numa chamada só do macOS: 32 s caem para 4 a 6 s, medidos na máquina ociosa. O node_modules do app nativo (`apps/mobile`) também passa a vir clonado, desde que o git o ignore; antes o writer precisava criar o link à mão para rodar os testes.
+- **Terminal no tamanho certo (F-216).** No pane GLM do print, a CLI desenhava num tamanho diferente do pane: linhas quebradas na largura errada e restos abaixo da barra de status. Ao focar ou voltar a ver um pane, o Nexus agora reafirma o tamanho dele para a CLI. Se ela estava em outro tamanho, a tela é redesenhada inteira. O trace passa a registrar quando isso acontece. O toolbar do pane ganhou "Redesenhar tela", para quando algo ainda sair embaralhado. A causa exata do seu print não foi reproduzida.
+
 ## 0.76.142 — Codex no Windows
 
 Uso real no Windows em 29/09. Inclui a 0.76.141.
