@@ -91,6 +91,12 @@ vi.mock('./isolated-writer-worktree', async (original) => ({
   ...(await original<typeof import('./isolated-writer-worktree')>()),
   resumeIsolatedWriterWorktree: () => null,
 }));
+// F-218 lê o cache real das CLIs para promover a linha do modelo pedido —
+// o teste precisa de um conjunto determinístico (nenhum descoberto).
+vi.mock('../adapters/cli-model-discovery', async (original) => ({
+  ...(await original<typeof import('../adapters/cli-model-discovery')>()),
+  discoverCliModels: () => new Map(),
+}));
 
 import { operatorRecentlyNamedCli } from './operator-cli-mentions';
 

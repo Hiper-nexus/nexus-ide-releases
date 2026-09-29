@@ -913,7 +913,10 @@ describe('F-217 — o mais novo da linha vence mesmo sem catálogo', () => {
     }
   });
 
-  it('modelo pedido no texto continua vencendo o mais novo da linha', () => {
+  it('modelo pedido no texto sobe para o mais novo da linha e continua vencendo (F-218)', () => {
+    // Regra do operador 29/09 repetida hoje: "Sol 6.1 saiu; nunca use o Sol
+    // normal". A menção ainda decide CLI e linha — mas o id exato pedido é
+    // substituído pelo mais novo que a CLI oferece naquela linha.
     const decision = routeTask(
       'refatorar o parser inteiro com o GPT-6 Sol',
       codex(['gpt-6.2-sol', 'gpt-6.1-sol', 'gpt-6-sol']),
@@ -923,7 +926,44 @@ describe('F-217 — o mais novo da linha vence mesmo sem catálogo', () => {
       flat,
     );
     expect(decision?.adapterId).toBe('codex');
-    expect(decision?.model).toBe('gpt-6-sol');
+    expect(decision?.model).toBe('gpt-6.2-sol');
     expect(decision?.reason).toContain('modelo pedido no texto: codex:gpt-6-sol');
+    // A nota da linha registra o par pedido→usado (a tabela já tinha gerado o
+    // mesmo upgrade para a linha gpt-6-sol — o dedup mantém um só).
+    expect(decision?.reason).toContain('codex:gpt-6-sol→gpt-6.2-sol');
+  });
+
+  it('menção sem irmão mais novo passa intacta, sem nota de upgrade', () => {
+    const decision = routeTask(
+      'refatorar o parser inteiro — use o gpt-6-luna',
+      codex(['gpt-6.2-sol', 'gpt-6-luna', 'gpt-5.6-luna']),
+      DEFAULT_ROUTING_TABLE,
+      'hard',
+      false,
+      flat,
+    );
+    expect(decision?.adapterId).toBe('codex');
+    expect(decision?.model).toBe('gpt-6-luna');
+    expect(decision?.reason).toContain('modelo pedido no texto: codex:gpt-6-luna');
+    expect(decision?.reason).not.toContain('gpt-6-luna→');
+  });
+
+  it('o mais novo em quarentena não assume a menção — pega o elegível da linha', () => {
+    resetModelAccessQuarantineForTests();
+    try {
+      quarantineRejectedModel('codex', 'gpt-6.2-sol', 'Model access is disabled');
+      const decision = routeTask(
+        'refatorar o parser inteiro com o GPT-6 Sol',
+        codex(['gpt-6.2-sol', 'gpt-6.1-sol', 'gpt-6-sol']),
+        DEFAULT_ROUTING_TABLE,
+        'hard',
+        false,
+        flat,
+      );
+      expect(decision?.model).toBe('gpt-6.1-sol');
+      expect(decision?.reason).toContain('codex:gpt-6-sol→gpt-6.1-sol');
+    } finally {
+      resetModelAccessQuarantineForTests();
+    }
   });
 });

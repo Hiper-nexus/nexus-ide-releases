@@ -42,9 +42,18 @@ describe('fiação do gate de proveniência no nexus_pane_spawn ad-hoc', () => {
   beforeEach(() => clearRouteProvenance());
 
   it('recusa spawn ad-hoc de modelo com warning de catálogo sem decisão do router', async () => {
-    const message = await spawnError({ adapterId: 'grok', model: 'grok-4.5' });
+    // grok-4.7-build-fast tem warning e é o mais novo da própria linha
+    // (`grok-#-build-fast`) — sem irmão mais novo, nada o substitui (F-218).
+    const message = await spawnError({ adapterId: 'grok', model: 'grok-4.7-build-fast' });
     expect(message).toContain('route_required');
     expect(message).toContain('nexus_route_task');
+  });
+
+  it('F-218: o modelo pedido com warning sobe para o mais novo da linha — o gate olha o que VAI rodar', async () => {
+    // grok-4.5 tem warning mas a CLI oferece grok-4.7 (mesma linha, limpo):
+    // quem roda é o 4.7, então o gate de proveniência não dispara no 4.5.
+    const message = await spawnError({ adapterId: 'grok', model: 'grok-4.5' });
+    expect(message).not.toContain('route_required');
   });
 
   it('com decisão do router registrada, o gate deixa passar', async () => {

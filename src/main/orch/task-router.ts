@@ -1173,9 +1173,19 @@ export function routeTask(
       // A CLI acabou de falhar (cota/crash): pedir por nome não reabre o circuito.
       mentionNote = `; modelo pedido no texto em quarentena (circuit breaker): ${adapterId}:${model}`;
     } else {
+      // F-218 (regra do operador 29/09): a menção continua vencendo as outras
+      // rotas — mas o id pedido sobe para o mais novo da mesma linha que a
+      // CLI oferece (menos bloqueados/quarentenados), como a tabela já faz.
+      const adapter = available.get(adapterId);
+      const upgraded = adapter
+        ? newestInModelLine(model, eligibleModels(adapter))
+        : model;
+      if (upgraded !== model) {
+        lineUpgrades.push(`${adapterId}:${model}→${upgraded}`);
+      }
       ranked = [
-        { c: { adapterId, model, effort: effortFor(adapterId) }, fromTier: tier },
-        ...ranked.filter((r) => !(r.c.adapterId === adapterId && r.c.model === model)),
+        { c: { adapterId, model: upgraded, effort: effortFor(adapterId) }, fromTier: tier },
+        ...ranked.filter((r) => !(r.c.adapterId === adapterId && r.c.model === upgraded)),
       ];
       mentionNote = `; modelo pedido no texto: ${adapterId}:${model}`;
     }

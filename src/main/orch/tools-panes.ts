@@ -71,8 +71,10 @@ import {
   requiresRouteReservation,
   squadBindingViolationError,
 } from './free-agent-choice';
-import { loadModelCatalog, modelCatalogInfo } from '../adapters/model-catalog';
+import { loadModelCatalog, modelCatalogInfo, isModelBlockedForAutoRouting } from '../adapters/model-catalog';
 import { discoverCliModels } from '../adapters/cli-model-discovery';
+import { modelAccessQuarantine } from './model-access-quarantine';
+import { newestInModelLine } from '../../shared/model-line';
 import { resolveRoutableModel } from './task-router';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import {
@@ -236,6 +238,43 @@ function assertOperatorExplicitRuntime(adapterId: string, model: string | undefi
     );
   }
   return resolved.model;
+}
+
+/**
+ * F-218 (regra do operador 29/09, repetida hoje — "Sol 6.1 saiu; nunca use o
+ * Sol normal"): um modelo que chega EXPLÍCITO (args.model, template de squad,
+ * requestedModel do roster que vence o selo) sobe para o mais novo da mesma
+ * linha entre os elegíveis do adapter — o mesmo conjunto que
+ * `assertOperatorExplicitRuntime` considera rodável (lista viva + modelos
+ * descobertos pela CLI), menos os bloqueados pelo catálogo e os recusados pelo
+ * provider (quarentena). Selos de roster, reservas de rota, resume e o
+ * "+ Pane" do renderer não passam por aqui: contrato ou clique literal.
+ */
+function newestExplicitModelInLine(
+  adapterId: string,
+  model: string | undefined,
+): {
+  readonly model: string | undefined;
+  readonly upgrade?: { readonly requested: string; readonly used: string };
+} {
+  if (!model) return { model };
+  const adapter = cliAdapterFor(adapterId);
+  const catalog = loadModelCatalog();
+  const eligible = [
+    ...new Set([
+      ...(discoverCliModels().get(adapterId) ?? []),
+      ...(adapter?.models.list ?? []),
+    ]),
+  ].filter(
+    (candidate) =>
+      !isModelBlockedForAutoRouting(
+        modelCatalogInfo(catalog, adapterId, candidate),
+      ) && !modelAccessQuarantine(adapterId, candidate),
+  );
+  const used = newestInModelLine(model, eligible);
+  return used === model
+    ? { model }
+    : { model: used, upgrade: { requested: model, used } };
 }
 
 function uniqueSealedRuntimeForMission(
@@ -684,7 +723,15 @@ const paneSpawn: McpToolDef = {
           'tier/specialty + cost table) to a CLI/model; prompt/title are used ' +
           'when task is absent.',
       },
-      model: { type: 'string' },
+      model: {
+        type: 'string',
+        description:
+          'Model id for this spawn (e.g. "gpt-6.1-sol"). Omit it and Nexus ' +
+          'picks the model by routing. An older version of a model line is ' +
+          'replaced by the newest one the CLI offers (receipt: modelUpgrade ' +
+          '{requested, used}); sealed roster models and pane resumes are ' +
+          'kept as-is.',
+      },
       effort: {
         type: 'string',
         description:
@@ -847,6 +894,18 @@ const paneSpawnAfterTabMission = {
     let autoRoute: Record<string, unknown> | undefined;
     let routeSkill: { name: string; pkg: string; confidence: number } | null =
       null;
+    // F-218: um modelo pedido explicitamente (args.model, template de squad,
+    // requestedModel do roster que vence o selo) sobe para o mais novo da sua
+    // linha que a CLI oferece; o recibo diz o que foi pedido e o que rodou.
+    let modelUpgrade: { readonly requested: string; readonly used: string } | undefined;
+    const applyNewestModelLine = (
+      adapterId: string,
+      model: string | undefined,
+    ): string | undefined => {
+      const next = newestExplicitModelInLine(adapterId, model);
+      if (next.upgrade) modelUpgrade = next.upgrade;
+      return next.model;
+    };
     /**
      * Mão do operador sem missão: o pane filho é a MESMA mão. Omitir `role`
      * faz o main mintar `user` (`mcp-server`: `meta?.role ?? "user"`), então o
@@ -904,12 +963,18 @@ const paneSpawnAfterTabMission = {
         operatorExplicit)
         ? {
             adapterId: pinnedAdapterId,
-            ...(str(args, 'model') ? { model: str(args, 'model')! } : {}),
+            ...(str(args, 'model')
+              ? { model: applyNewestModelLine(pinnedAdapterId, str(args, 'model')!) }
+              : {}),
           }
         : null;
-    const operatorExplicitModel = operatorExplicit && !pinRedistributed
+    const operatorExplicitRequested = operatorExplicit && !pinRedistributed
       ? assertOperatorExplicitRuntime(str(args, 'adapterId')!, str(args, 'model'))
       : undefined;
+    const operatorExplicitModel =
+      operatorExplicitRequested !== undefined
+        ? applyNewestModelLine(str(args, 'adapterId')!, operatorExplicitRequested)
+        : undefined;
     const forceOperatorRoute =
       operatorHand &&
       (!operatorExplicit || pinRedistributed !== null) &&
@@ -1030,7 +1095,15 @@ const paneSpawnAfterTabMission = {
       const selectedAdapterId = honored
         ? honored.adapterId
         : routeString(autoRoute, 'adapterId')!;
-      const selectedModel = honored ? honored.model : routeString(autoRoute, 'model');
+      // F-218: quando o roster selado VENCE é contrato — fica o modelo selado.
+      // Quando o model pedido vence o roster (outra CLI ou selo sem modelo),
+      // ele é um modelo explícito e sobe para o mais novo da linha. `resume`
+      // mantém o runtime do pane, sem upgrade.
+      const selectedModel = honored
+        ? honored.rosterHonored || resumeRef
+          ? honored.model
+          : applyNewestModelLine(honored.adapterId, honored.model)
+        : routeString(autoRoute, 'model');
       const selectedEffort = honored ? honored.effort : routeString(autoRoute, 'effort');
       const noRouteOverride =
         requestedAdapterId === undefined &&
@@ -1138,9 +1211,18 @@ const paneSpawnAfterTabMission = {
         adHocAdapterId = requireStr(args, 'adapterId');
       }
       assertMcpInvocationCurrent(invocation);
-      const adHocModel =
-        (forceOperatorRoute || missionAutoRoute ? undefined : operatorExplicitModel ?? str(args, 'model')) ??
-        routeString(autoRoute, 'model');
+      // F-218: `args.model` explícito (o `operatorExplicitModel` acima já veio
+      // promovido) sobe para o mais novo da linha do adapter final. A rota
+      // (`autoRoute`) já devolve o modelo promovido; `resume` mantém o runtime
+      // do pane — nenhum dos dois passa pelo upgrade.
+      const adHocRequested =
+        forceOperatorRoute || missionAutoRoute
+          ? undefined
+          : (operatorExplicitModel ??
+            (resumeRef
+              ? str(args, 'model')
+              : applyNewestModelLine(adHocAdapterId, str(args, 'model'))));
+      const adHocModel = adHocRequested ?? routeString(autoRoute, 'model');
       const adHocEffort =
         (forceOperatorRoute || missionAutoRoute ? undefined : str(args, 'effort')) ??
         routeString(autoRoute, 'effort');
@@ -1155,7 +1237,13 @@ const paneSpawnAfterTabMission = {
       const squadAgent = !autoRoute && !uniqueSealed && !adHocModel
         ? findAgentInAnySquad(adHocAdapterId)?.agent
         : undefined;
-      const selectedAdHocModel = uniqueSealed?.model ?? adHocModel ?? squadAgent?.model;
+      // F-218: o modelo do template de squad é um default declarado, não um
+      // selo de missão — segue a regra da linha. `uniqueSealed` é contrato.
+      const squadTemplateModel =
+        !resumeRef && squadAgent?.model
+          ? applyNewestModelLine(adHocAdapterId, squadAgent.model)
+          : squadAgent?.model;
+      const selectedAdHocModel = uniqueSealed?.model ?? adHocModel ?? squadTemplateModel;
       const selectedAdHocEffort = uniqueSealed?.effort ?? adHocEffort ?? squadAgent?.effort;
       // Spawn ad-hoc (sem agentName): modelo com warning de catálogo (ex.:
       // grok-4.5) só entra se veio de uma decisão real do nexus_route_task.
@@ -1868,6 +1956,7 @@ const paneSpawnAfterTabMission = {
           ...(executionMode ? { executionMode } : {}),
           ...isolatedReceipt(),
           ...(tabMissionId ? { tabMission: { missionId: tabMissionId } } : {}),
+          ...(modelUpgrade ? { modelUpgrade } : {}),
           // ACK pendente: ainda não há sessionId para buscar o recibo.
           harness: { ...harness, account: null },
           ...routeReceipt,
@@ -1913,6 +2002,7 @@ const paneSpawnAfterTabMission = {
         ...(executionMode ? { executionMode } : {}),
         ...isolatedReceipt(),
         ...(tabMissionId ? { tabMission: { missionId: tabMissionId } } : {}),
+        ...(modelUpgrade ? { modelUpgrade } : {}),
         ...(diversity ? { diversity } : {}),
         harness: {
           ...harness,
