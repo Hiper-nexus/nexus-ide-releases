@@ -1090,6 +1090,29 @@ export function routeTask(
     tieBreakNote = tie.note;
   }
 
+  // F-214: cross-review e critical valem o topo ENTRE CLIs — o frontierFirst
+  // da tabela só reordena dentro de cada adapter e, com os benchmarks
+  // oficiais saturados, custo/uso do multi-score deixava um modelo barato à
+  // frente do frontier (MiMo Pro sobre o Astra na revisão de 29/09). Os
+  // modelos da ordem sobem na ordem dela; o resto mantém a ordem relativa.
+  // Hard high-risk sem revisão fica como está (só dentro do adapter).
+  let crossCliNote = '';
+  if (frontier?.policy === 'cross-review' || tier === 'critical') {
+    const crossPolicy = frontier?.policy === 'cross-review' ? 'cross-review' : 'high-risk';
+    const order = FRONTIER_ORDER[crossPolicy];
+    const head = ranked.filter((r) => order.includes(r.c.model ?? ''));
+    if (head.length > 0) {
+      const next = [
+        ...[...head].sort(
+          (a, b) => order.indexOf(a.c.model ?? '') - order.indexOf(b.c.model ?? ''),
+        ),
+        ...ranked.filter((r) => !order.includes(r.c.model ?? '')),
+      ];
+      if (next[0].c !== ranked[0].c) crossCliNote = `; topo entre CLIs (${crossPolicy})`;
+      ranked = next;
+    }
+  }
+
   let mentionNote = '';
   if (mention.model) {
     const { adapterId, model } = mention.model;
@@ -1157,7 +1180,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${bandNote}${multiScoreNote}${tieBreakNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
       alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId) })),
       specialty: specialtyVerdict.specialty,
       policySource,

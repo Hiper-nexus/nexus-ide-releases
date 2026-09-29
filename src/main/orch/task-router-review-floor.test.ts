@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import {
+  BUILTIN_MODEL_CATALOG,
+  mergeModelCatalogs,
+  PUBLISHED_MODEL_CATALOG,
+} from '../adapters/model-catalog';
+import {
   classifyTask,
   DEFAULT_ROUTING_TABLE,
   mentionedRoute,
@@ -90,6 +95,105 @@ describe('modelo e esforço citados no texto (inventário builtin completo)', ()
     const decision = routeTask(ASTRA_REVIEW, semCodex, DEFAULT_ROUTING_TABLE);
     expect(decision!.adapterId).not.toBe('codex');
     expect(decision!.reason).toContain('modelo pedido no texto indisponível: codex:gpt-6-astra');
+  });
+});
+
+describe('topo entre CLIs (F-214 — revisão e critical, 29/09)', () => {
+  // Campo: duas revisões sênior foram para mimo-code:xiaomi/mimo-v2.6-pro com
+  // o Astra em 2º — benchmarks oficiais saturados + custo decidiram no
+  // multi-score, ignorando a política de topo cross-review.
+  const FIELD_TEXT =
+    'Revisão sênior só-leitura do diff da branch feat/pote-receita-ajuste (migration, tenant)';
+  // Catálogo real (BUILTIN+PUBLISHED, sem o overlay de ~/.nexus): é ele que
+  // dá o custo que faz o MiMo Pro ganhar na qualidade saturada — um catalogo
+  // vazio esconderia o bug.
+  const catalog = mergeModelCatalogs(BUILTIN_MODEL_CATALOG, PUBLISHED_MODEL_CATALOG);
+  // claude fora do campo; multi-score ligado pelo histórico da missão.
+  const fieldAdapters = inventory(['mimo-code', 'codex', 'glm', 'kimi', 'grok']);
+  const missionHistory = {
+    multiScore: true,
+    missionUseCounts: new Map([
+      ['glm', 1],
+      ['kimi', 1],
+    ]),
+  };
+
+  it('revisão sênior em hard com várias CLIs vai ao topo de outro vendor (Astra)', () => {
+    const decision = routeTask(
+      FIELD_TEXT,
+      fieldAdapters,
+      DEFAULT_ROUTING_TABLE,
+      'hard',
+      false,
+      catalog,
+      missionHistory,
+    );
+    expect(decision).toMatchObject({ adapterId: 'codex', model: 'gpt-6-astra' });
+    expect(decision!.reason).toContain('topo entre CLIs (cross-review)');
+  });
+
+  it('critical sem revisão vai ao topo high-risk (Opus 5.5 quando o claude está instalado)', () => {
+    const decision = routeTask(
+      'auditar a segurança da autenticação e da migração multi-tenant',
+      inventory(['claude', 'mimo-code', 'codex', 'glm', 'kimi']),
+      DEFAULT_ROUTING_TABLE,
+      'critical',
+      false,
+      catalog,
+      // claude já usado na missão: a diversidade do multi-score derruba o
+      // Opus hoje (−18 por uso); o topo entre CLIs o traz de volta.
+      { multiScore: true, missionUseCounts: new Map([['claude', 1]]) },
+    );
+    expect(decision).toMatchObject({ adapterId: 'claude', model: 'claude-opus-5-5' });
+    expect(decision!.reason).toContain('topo entre CLIs (high-risk)');
+  });
+
+  it('hard de alto risco sem revisão NÃO atravessa CLIs — pin do pick de hoje', () => {
+    const decision = routeTask(
+      'corrigir a race condition na integração entre main e renderer',
+      fieldAdapters,
+      DEFAULT_ROUTING_TABLE,
+      'hard',
+      false,
+      catalog,
+      missionHistory,
+    );
+    expect(decision).toMatchObject({
+      adapterId: 'mimo-code',
+      model: 'xiaomi/mimo-v2.6-pro',
+    });
+    expect(decision!.reason).not.toContain('topo entre CLIs');
+  });
+
+  it('sem modelo de topo roteável, o ranking não muda', () => {
+    const decision = routeTask(
+      FIELD_TEXT,
+      inventory(['mimo-code', 'glm', 'kimi', 'grok']),
+      DEFAULT_ROUTING_TABLE,
+      'hard',
+      false,
+      catalog,
+      missionHistory,
+    );
+    expect(decision).toMatchObject({
+      adapterId: 'mimo-code',
+      model: 'xiaomi/mimo-v2.6-pro',
+    });
+    expect(decision!.reason).not.toContain('topo entre CLIs');
+  });
+
+  it('modelo citado no texto continua vencendo a política de topo', () => {
+    const decision = routeTask(
+      `${FIELD_TEXT} — use o gpt-6-luna`,
+      fieldAdapters,
+      DEFAULT_ROUTING_TABLE,
+      'hard',
+      false,
+      catalog,
+      missionHistory,
+    );
+    expect(decision).toMatchObject({ adapterId: 'codex', model: 'gpt-6-luna' });
+    expect(decision!.reason).toContain('modelo pedido no texto: codex:gpt-6-luna');
   });
 });
 
