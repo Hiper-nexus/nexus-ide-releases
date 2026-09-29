@@ -266,6 +266,31 @@ saber isto antes de mexer:
   merge); macOS/Linux mantêm o layout histórico byte a byte. Não monte esse
   caminho à mão em outro lugar.
 
+## Várias missões pelo "+ Pane" (F-198/F-373/F-374)
+
+- Maestro vivo e ocioso é missão viva. `projectMissionEngineSnapshotView`
+  conta a sessão `idle` do líder provado em `orchestratorLive` e marca
+  `orchestratorIdle`; sem pane `working|waiting|blocked`, `projectState`
+  projeta `running` com o motivo `awaiting-instruction` (rail e abas:
+  "Aguardando"; Quadro: "Aguardando sua instrução", com a orientação liberada).
+  "Dormindo" fica para missão sem processo. Não volte a exigir `busy|spawning`
+  para liveness: o Maestro parado no prompt é o estado normal da missão da aba,
+  logo depois de "Tornar orquestrador" e entre um pedido e outro.
+- "Tornar orquestrador" só entra na missão da aba que tem
+  `hasCurrentDispatchAuthority`, a mesma régua do Main. Entre várias vivas, a
+  da aba é a de `workspaceBinding.tabKey` igual à chave da aba. Missão
+  dormindo, parada pelo operador ou esperando resposta continua listada, mas o
+  pane novo abre outra missão em vez de receber `mission_unavailable`.
+- Aba cuja missão está Dormindo/Parou (`session-sleeping`/`runtime-closed`)
+  volta a oferecer "Criar missão desta aba" e fecha pelo ×; `session-dead`
+  (row `running` sem runtime) ainda segura a aba. "Criar missão desta aba" só
+  coroa pane com sessão viva (`pickTabMissionLeader`).
+- Com o líder da missão da aba VIVO em outro pane, "Tornar orquestrador"
+  pergunta: "Nova missão deste painel" (`createPaneMission` com
+  `ownGroup: true`: missão separada, sem `tabKey`) ou "Assumir a liderança" (a
+  troca de coroa). Missão nova com nome já usado ganha sufixo " 2", " 3"…
+  dentro do teto de 120 caracteres do Main.
+
 ## Conversas Grok/Kimi por checkout (F-566)
 
 - Os overlays recebem `userDataPath` e `checkoutId` da autoridade do Main e
