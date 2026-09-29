@@ -3094,8 +3094,12 @@ function handleWindowFocus(): void {
       ) {
         continue;
       }
-      if (paneId === focusedPaneId) focusHost(paneId);
-      else refreshHost(paneId);
+      // R8: voltar ao app NUNCA move o foco do DOM — um textarea/dialog que o
+      // operador estava usando não pode perdê-lo para um terminal. O cursor
+      // do pane focado volta a piscar pela option, sem term.focus().
+      host.term.options.cursorBlink =
+        paneId === focusedPaneId && !host.hibernated;
+      refreshHost(paneId);
     }
   });
 }

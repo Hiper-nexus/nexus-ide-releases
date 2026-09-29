@@ -1836,12 +1836,15 @@ describe('F-370 — foco da janela repinta os terminais (macOS)', () => {
     window.dispatchEvent(new Event('focus'));
     await vi.advanceTimersByTimeAsync(60);
 
-    // Uma rajada = um rAF = uma medição por host visível.
+    // Uma rajada = um rAF = uma medição por host visível, FOCADO INCLUSO.
     expect(fitA).toHaveBeenCalledTimes(1);
     expect(fitB).toHaveBeenCalledTimes(1);
     // Oculto não paga repaint.
     expect(fitC).not.toHaveBeenCalled();
-    // O pane focado passa por focusHost (cursor + renderer), não refreshHost.
-    expect(focusA).toHaveBeenCalledTimes(1);
+    // R8: o retorno da janela nunca rouba o foco do DOM (textarea/dialog do
+    // operador) — nem foca o terminal nem chama focusHost.
+    expect(focusA).not.toHaveBeenCalled();
+    expect(hostA.term.options.cursorBlink).toBe(true);
+    expect(hostB.term.options.cursorBlink).toBe(false);
   });
 });
