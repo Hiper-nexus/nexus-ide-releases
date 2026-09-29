@@ -15,6 +15,7 @@ import {
   deliverMissionDirectInstruction,
   type MissionDirectDeliveryDeps,
 } from './mission-engine-production';
+import { takeKickoffDirects } from './mission-kickoff-direct-queue';
 
 /**
  * Caminho operador-como-orquestrador (P0-2, dossiê 2026-08-11): numa squad SEM
@@ -199,13 +200,14 @@ function makeHarness(options: {
     id: string,
     patch: { readonly status: Mission['status'] },
   ) => Mission | null;
+  readonly kickoffReceipt?: boolean;
 }): Harness {
   const deliverSpy = vi.fn(async () => true);
   const emitSpy = vi.fn(() => true);
   const stores = {
     missions: {
       get: () => options.mission,
-      hasCurrentKickoffAcceptance: () => true,
+      hasCurrentKickoffAcceptance: () => options.kickoffReceipt ?? true,
       ...(options.missionsUpdate
         ? { update: options.missionsUpdate }
         : {}),
@@ -598,5 +600,99 @@ describe('mission direct — operador como orquestrador', () => {
     await deliverMissionDirectInstruction(makeScope(), stores, directCommand(), deps);
 
     expect(deliverSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('mission direct — missão da aba (sem squad, orquestrador = pane do operador)', () => {
+  // isOperatorTabMission: sem squadId + workspaceBinding.adoptedPaneId. O
+  // Maestro é a conversa promovida do operador — nunca houve briefing de
+  // kickoff, logo o recibo nunca existirá; exigir era a falha do print.
+  function operatorTabMission(overrides: Partial<Mission> = {}): Mission {
+    return makeMission({
+      intentContract: {
+        ...makeIntentContract('hash-livre'),
+        workspaceBinding: { version: 1, adoptedPaneId: 'pane-orch' },
+      },
+      orchestratorSessionId: 'sess-orch-live',
+      ...overrides,
+    });
+  }
+
+  it('Maestro da aba vivo sem recibo de kickoff → direção entregue à sessão do orquestrador', async () => {
+    const mission = operatorTabMission();
+    const orch = makeOrchSession({ squadId: undefined, agentName: 'Maestro' });
+    const resume = vi.fn(async () => {});
+    const { stores, deps, deliverSpy, emitSpy } = makeHarness({
+      mission,
+      squad: makeSquad(),
+      workers: [],
+      panes: [makeOrchPane()],
+      kickoffReceipt: false,
+      getRuntimeAgentSessionInfo: (sessionId) =>
+        sessionId === orch.sessionId ? orch : null,
+      resumeOrchestrator: resume,
+    });
+
+    await deliverMissionDirectInstruction(makeScope(), stores, directCommand(), deps);
+
+    expect(deliverSpy).toHaveBeenCalledTimes(1);
+    const [sessionId, prompt] = deliverSpy.mock.calls[0] as [string, string];
+    expect(sessionId).toBe('sess-orch-live');
+    expect(prompt).toContain('Apply this direction to your current mission');
+    expect(emitSpy).toHaveBeenCalledTimes(1);
+    // O recibo ausente NÃO é falha recuperável para a missão da aba: nada de
+    // respawnar o orquestrador à toa.
+    expect(resume).not.toHaveBeenCalled();
+    expect(takeKickoffDirects('mission-1')).toEqual([]);
+  });
+
+  it('Maestro da aba com sessão morta → mesma falha fechada de sempre', async () => {
+    const mission = operatorTabMission({ orchestratorSessionId: 'sess-orch-morta' });
+    const resume = vi.fn(async () => {});
+    const { stores, deps, deliverSpy } = makeHarness({
+      mission,
+      squad: makeSquad(),
+      workers: [],
+      panes: [makeOrchPane()],
+      kickoffReceipt: false,
+      getRuntimeAgentSessionInfo: () => null,
+      resumeOrchestrator: resume,
+    });
+
+    await expect(
+      deliverMissionDirectInstruction(makeScope(), stores, directCommand(), deps),
+    ).rejects.toThrow('mission direct orchestrator session is not live');
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect(deliverSpy).not.toHaveBeenCalled();
+  });
+
+  it('missão COM squad sem recibo → inalterado: enfileira no kickoff, sem erro cru', async () => {
+    const squad = makeSquad([
+      makeAgent(),
+      makeAgent({
+        id: 'ag-orch',
+        agentName: 'Orquestrador',
+        category: 'orchestrator',
+      }),
+    ]);
+    const mission = makeApprovedMission(squad, {
+      orchestratorSessionId: 'sess-orch-live',
+    });
+    const { stores, deps, deliverSpy, emitSpy } = makeHarness({
+      mission,
+      squad,
+      workers: [],
+      panes: [makeOrchPane()],
+      kickoffReceipt: false,
+      getRuntimeAgentSessionInfo: () => null,
+    });
+
+    await deliverMissionDirectInstruction(makeScope(), stores, directCommand(), deps);
+
+    expect(deliverSpy).not.toHaveBeenCalled();
+    expect(emitSpy).toHaveBeenCalledTimes(1);
+    const queued = takeKickoffDirects('mission-1');
+    expect(queued).toHaveLength(1);
+    expect(queued[0].text).toBe('Adicione uma seção hero.');
   });
 });

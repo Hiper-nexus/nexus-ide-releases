@@ -130,6 +130,7 @@ import {
   type ProjectMissionSnapshotView,
 } from "./mission-snapshot";
 import { resolveOpenMissionQuestion } from "./mission-open-question";
+import { isOperatorTabMission } from "./operator-tab-mission-resume";
 import { sameMissionPaneAuthoritySeal } from "./mission-pane-authority";
 import { MissionLeadershipError, type MissionLeader } from "./mission-leadership";
 import { getMissionLeadership } from "./mission-leadership-runtime";
@@ -669,7 +670,15 @@ function missionDirectAuthority(
     sessionId = worker.sessionId;
     pane = workerPane;
   } else {
-    if (!stores.missions.hasCurrentKickoffAcceptance(mission.id)) {
+    // Missão da aba (sem squad, liderada pelo pane promovido do operador):
+    // nunca houve briefing de kickoff, logo o recibo nunca existirá — exigi-lo
+    // era o erro cru do print. TODOS os demais gates seguem iguais: sessão
+    // viva, pane orquestrador gravado para a sessão, selo de runtime quando
+    // o contrato o traz, hash de squad e fingerprint/idempotência.
+    if (
+      !isOperatorTabMission(mission) &&
+      !stores.missions.hasCurrentKickoffAcceptance(mission.id)
+    ) {
       throw new Error("mission direct requires the current kickoff receipt");
     }
     const orchestratorSessionId = mission.orchestratorSessionId;
