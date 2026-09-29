@@ -192,6 +192,8 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'glm', model: 'glm-5.3', effort: 'high' },
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'high' },
     { adapterId: 'codex', model: CODEX_FRONTIER_MODEL, effort: 'high' },
+    // CLI sem o 6.1 ainda roteia para o GPT-6 Sol (superseded ≠ retired).
+    { adapterId: 'codex', model: 'gpt-6-sol', effort: 'high' },
     { adapterId: 'codex', model: 'gpt-6-astra', effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.6-terra', effort: 'high' },
@@ -218,6 +220,8 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // por isso no hard só sobe em alto risco/revisão (frontierRoutePolicy).
     { adapterId: 'codex', model: 'gpt-6-astra', effort: 'xhigh' },
     { adapterId: 'codex', model: CODEX_FRONTIER_MODEL, effort: 'xhigh' },
+    // Mesmo fallback do hard para CLI sem o 6.1.
+    { adapterId: 'codex', model: 'gpt-6-sol', effort: 'xhigh' },
     { adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'xhigh' },
     { adapterId: 'codex', model: 'gpt-5.6-terra', effort: 'xhigh' },
     { adapterId: 'glm', model: 'glm-5.3', effort: 'xhigh' },

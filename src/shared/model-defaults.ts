@@ -1,9 +1,10 @@
 /** Defaults de produto que devem permanecer alinhados em adapters e catálogo. */
-// GPT-6 Sol é o default de trabalho (custo × qualidade); o GPT-6 Astra é o
-// topo, mas custa 5× — só o tier crítico o pede (docs/models/estudo-2026-09.md).
-// gpt-5.6-sol/terra/luna permanecem listados (superseded ≠ retired) e NÃO
-// migram em RETIRED_MODEL_MIGRATIONS.
-export const CODEX_FRONTIER_MODEL = 'gpt-6-sol';
+// GPT-6.1 Sol é o default de trabalho (custo × qualidade; DeepSWE 75,2, OpenAI
+// 2026-09-29); o GPT-6 Astra é o topo, mas custa 5× — só o tier crítico o pede
+// (docs/models/estudo-2026-09.md). gpt-6-sol e gpt-5.6-sol/terra/luna
+// permanecem listados (superseded ≠ retired) e NÃO migram em
+// RETIRED_MODEL_MIGRATIONS.
+export const CODEX_FRONTIER_MODEL = 'gpt-6.1-sol';
 export const GROK_FRONTIER_MODEL = 'grok-4.7';
 
 /**

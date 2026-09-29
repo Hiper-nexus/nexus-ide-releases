@@ -286,9 +286,33 @@ describe('routeTask', () => {
     it('hard de alto risco sobe o codex para o Astra; hard comum fica no Sol', () => {
       expect(top('corrigir a race condition na integração entre main e renderer', ['codex'], 'hard')!.model)
         .toBe('gpt-6-astra');
-      expect(top('refatorar o parser de configuração', ['codex'], 'hard')!.model).toBe('gpt-6-sol');
+      expect(top('refatorar o parser de configuração', ['codex'], 'hard')!.model).toBe('gpt-6.1-sol');
       // No claude, o Opus 5.5 segue na frente do Fable fora de revisão.
       expect(top('definir a arquitetura da fila distribuída de eventos', ['claude'], 'hard')!.model).toBe('claude-opus-5-5');
+    });
+
+    it('GPT-6.1 Sol é o workhorse do codex; CLI sem ele cai no GPT-6 Sol, não no Astra', () => {
+      const task = 'refatorar o parser de configuração';
+      const codexWith = (models: string[]): AdapterAvailability => ({
+        id: 'codex',
+        installed: true,
+        models,
+        efforts: ['low', 'medium', 'high', 'xhigh'],
+      });
+      // CLI 0.159.0 já lista o 6.1 como "latest workhorse".
+      expect(
+        routeTask(task, [codexWith([
+          'gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra',
+          'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna',
+        ])], DEFAULT_ROUTING_TABLE, 'hard'),
+      ).toMatchObject({ adapterId: 'codex', model: 'gpt-6.1-sol' });
+      // CLI antiga sem o 6.1: a linha explícita de fallback entrega o Sol.
+      expect(
+        routeTask(task, [codexWith([
+          'gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra',
+          'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna',
+        ])], DEFAULT_ROUTING_TABLE, 'hard'),
+      ).toMatchObject({ adapterId: 'codex', model: 'gpt-6-sol' });
     });
 
     it('tarefas rotineiras não recebem modelo de topo', () => {

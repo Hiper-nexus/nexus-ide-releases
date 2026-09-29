@@ -32,6 +32,7 @@ export const PUBLISHED_BENCHMARKS: Readonly<Record<string, PublishedBenchmark>> 
   'claude:claude-sonnet-5-5': { deepSWE: 71.0, source: 'https://www.anthropic.com/claude-sonnet-5-5' },
   'claude:claude-sonnet-5': { terminalBench21: 80.4, swebenchVerified: 85.2, source: 'https://www.anthropic.com/claude-sonnet-5-system-card' },
   'claude:claude-haiku-4-5': { swebenchVerified: 73.3, source: 'https://www.anthropic.com/news/claude-haiku-4-5' },
+  'codex:gpt-6.1-sol': { deepSWE: 75.2, source: 'https://openai.com/index/introducing-gpt-6-1-sol/' },
   'codex:gpt-6-sol': { deepSWE: 68.8, source: 'https://openai.com/index/introducing-gpt-6-sol-and-luna/' },
   'codex:gpt-6-luna': { deepSWE: 66.6, source: 'https://openai.com/index/introducing-gpt-6-sol-and-luna/' },
   'codex:gpt-6-astra': { deepSWE: 74.1, source: 'https://openai.com/index/gpt-6-astra/' },

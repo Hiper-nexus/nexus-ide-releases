@@ -80,4 +80,12 @@ describe('benchmarks oficiais publicados (F-675)', () => {
     expect(mimo).toBeGreaterThan(12);
     expect(glm52).toBeLessThan(mimo);
   });
+
+  it('GPT-6.1 Sol supera o GPT-6 Sol na nota oficial (DeepSWE 75,2 × 68,8)', () => {
+    const next = publishedCodingQuality('codex', 'gpt-6.1-sol');
+    const sol = publishedCodingQuality('codex', 'gpt-6-sol');
+    expect(sol).not.toBeNull();
+    expect(next).not.toBeNull();
+    expect(next!).toBeGreaterThan(sol!);
+  });
 });

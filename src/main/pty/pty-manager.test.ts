@@ -3766,7 +3766,7 @@ describe("cli-agent spawn argv hardening", () => {
       expect(writeRules).not.toContain(canonicalSealedAttachment);
       expect(governedCodexArgv(spec)).toEqual([
         "--model",
-        "gpt-6-sol",
+        "gpt-6.1-sol",
         "--strict-config",
         "--disable",
         "multi_agent",

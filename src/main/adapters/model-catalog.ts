@@ -110,6 +110,8 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
     codex: {
       default: CODEX_FRONTIER_MODEL,
       models: [
+        // models_cache do Codex 0.159.0 (29/09): "latest workhorse model".
+        { id: 'gpt-6.1-sol', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gpt-6-sol', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gpt-6-luna', availability: 'paid', costTier: 'medium', source: 'bundled' },
         // ~/.codex/models_cache.json (2026-09-27) lista o Astra como visível

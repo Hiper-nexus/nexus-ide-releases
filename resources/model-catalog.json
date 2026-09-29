@@ -77,8 +77,14 @@
       ]
     },
     "codex": {
-      "default": "gpt-6-sol",
+      "default": "gpt-6.1-sol",
       "models": [
+        {
+          "id": "gpt-6.1-sol",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
         {
           "id": "gpt-6-sol",
           "availability": "paid",

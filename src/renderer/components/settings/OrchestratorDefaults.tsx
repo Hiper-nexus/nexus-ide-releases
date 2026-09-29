@@ -70,6 +70,12 @@ function modelLabel(adapterId: string, model: string): string {
   }
   if (
     adapterId === "codex" &&
+    (model === "gpt-6.1-sol" || model === "openai/gpt-6.1-sol")
+  ) {
+    return `GPT-6.1 Sol · ${model}`;
+  }
+  if (
+    adapterId === "codex" &&
     (model === "gpt-6-sol" || model === "openai/gpt-6-sol")
   ) {
     return `GPT-6 Sol · ${model}`;

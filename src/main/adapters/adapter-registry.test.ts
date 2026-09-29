@@ -441,8 +441,8 @@ describe('builtin adapters', () => {
       (adapter) => (adapter as { id?: string }).id === 'codex',
     ) as { models?: { list?: string[]; default?: string } } | undefined;
 
-    expect(codex?.models?.default).toBe('gpt-6-sol');
-    expect(codex?.models?.list?.[0]).toBe('gpt-6-sol');
+    expect(codex?.models?.default).toBe('gpt-6.1-sol');
+    expect(codex?.models?.list?.[0]).toBe('gpt-6.1-sol');
     expect(codex?.models?.list).toContain('gpt-6-luna');
     expect(codex?.models?.list).toContain('gpt-5.6-sol');
     // Ausentes de ~/.codex/models_cache.json (2026-09-27).

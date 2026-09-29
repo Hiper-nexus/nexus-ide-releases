@@ -72,6 +72,7 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   // gpt-5.6-sol ficou como estava: fontes conflitam ($4/$20 × $1,20/$6).
   'gpt-6-astra': { inputPerM: 10, outputPerM: 50, cacheReadPerM: 1 },
   'gpt-6': { inputPerM: 10, outputPerM: 50, cacheReadPerM: 1 },
+  'gpt-6.1-sol': { inputPerM: 2, outputPerM: 10, cacheReadPerM: 0.1 },
   'gpt-6-sol': { inputPerM: 2, outputPerM: 10, cacheReadPerM: 0.2 },
   'gpt-6-luna': { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01 },
   'gpt-5.6-sol': { inputPerM: 5, outputPerM: 30, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },

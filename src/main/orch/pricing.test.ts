@@ -53,6 +53,9 @@ describe('priceForModel', () => {
     expect(priceForModel('gpt-6-astra')).toEqual(
       MODEL_PRICES['gpt-6-astra'],
     );
+    expect(priceForModel('gpt-6.1-sol')).toEqual(
+      MODEL_PRICES['gpt-6.1-sol'],
+    );
     expect(priceForModel('gpt-6-sol')).toEqual(
       MODEL_PRICES['gpt-6-sol'],
     );
@@ -110,6 +113,7 @@ describe('estimateCost', () => {
     const inOut = (model: string) => estimateCost(model, 1_000_000, 1_000_000);
     expect(inOut('claude-opus-5-5')).toBeCloseTo(24);
     expect(inOut('gpt-6-astra')).toBeCloseTo(60);
+    expect(inOut('gpt-6.1-sol')).toBeCloseTo(12);
     expect(inOut('gpt-6-sol')).toBeCloseTo(12);
     expect(inOut('gpt-6-luna')).toBeCloseTo(0.6);
     expect(inOut('gemini-3.8-flash-high')).toBeCloseTo(4.5);

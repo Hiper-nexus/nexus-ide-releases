@@ -215,8 +215,13 @@ describe('published catalog JSON', () => {
     ).toBe(false);
   });
 
-  it('ships gpt-6-sol/luna/astra (2026) como paid — astra saiu do trusted-access', () => {
+  it('ships gpt-6.1-sol/sol/luna/astra (2026) como paid — astra saiu do trusted-access', () => {
     for (const catalog of [BUILTIN_MODEL_CATALOG, PUBLISHED_MODEL_CATALOG]) {
+      expect(modelCatalogInfo(catalog, 'codex', 'gpt-6.1-sol')).toMatchObject({
+        id: 'gpt-6.1-sol',
+        availability: 'paid',
+        costTier: 'high',
+      });
       expect(modelCatalogInfo(catalog, 'codex', 'gpt-6-sol')).toMatchObject({
         id: 'gpt-6-sol',
         availability: 'paid',
@@ -233,12 +238,13 @@ describe('published catalog JSON', () => {
       expect(astra?.costTier).toBe('high');
       expect(isModelBlockedForAutoRouting(astra)).toBe(false);
     }
-    // Astra custa 5× o Sol: o default segue no Sol (docs/models/estudo-2026-09.md).
+    // Astra custa 5× o Sol: o default segue no workhorse — hoje o 6.1
+    // (docs/models/estudo-2026-09.md).
     expect(BUILTIN_MODEL_CATALOG.adapters?.codex?.default).toBe(
-      'gpt-6-sol',
+      'gpt-6.1-sol',
     );
     expect(PUBLISHED_MODEL_CATALOG.adapters?.codex?.default).toBe(
-      'gpt-6-sol',
+      'gpt-6.1-sol',
     );
   });
 

@@ -158,9 +158,12 @@ describe('topo entre CLIs (F-214 — revisão e critical, 29/09)', () => {
       catalog,
       missionHistory,
     );
+    // Era mimo-pro até o GPT-6.1 Sol: DeepSWE 75,2 (vs 71,9 do MiMo) faz a
+    // qualidade saturada vencer o custo no multi-score — o pick mudou pelo
+    // modelo novo, NÃO pelo passo entre CLIs (hard high-risk não o dispara).
     expect(decision).toMatchObject({
-      adapterId: 'mimo-code',
-      model: 'xiaomi/mimo-v2.6-pro',
+      adapterId: 'codex',
+      model: 'gpt-6.1-sol',
     });
     expect(decision!.reason).not.toContain('topo entre CLIs');
   });

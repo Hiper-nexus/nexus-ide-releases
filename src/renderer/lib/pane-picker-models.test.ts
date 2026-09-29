@@ -31,6 +31,7 @@ describe('parseModelVersion — a geração embutida no id', () => {
     ['claude-opus-5-5', [5, 5]],
     ['claude-opus-5', [5, 0]],
     ['gpt-5.6-sol', [5, 6]],
+    ['gpt-6.1-sol', [6, 1]],
     ['gpt-6-sol', [6, 0]],
     ['gpt-6-luna', [6, 0]],
     ['gpt-6-astra', [6, 0]],
