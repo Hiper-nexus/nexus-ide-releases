@@ -937,3 +937,25 @@ saber isto antes de mexer:
   (`agyKeyringSlotAccount`) ou, se ela esgotou, na irmã da regra de folga. O
   segredo viaja por stdin em base64; teste nunca toca a vaga real (só com
   `exec` injetado). Conta AGY por chave de API não passa pela vaga.
+
+## Missão que morre e volta: o que o trace mostra (F-187/F-211/F-212/F-213)
+
+- `main.trace.ndjson` registra `agent-pty-terminate` (origem estável de todo
+  término pedido pelo Nexus) e `agent-pty-exit` (código, sinal, tempo de vida
+  e `terminationOrigin`; `null` = o processo saiu sozinho) para todo PTY de
+  CLI-agente, inclusive o pane direto do operador. Chamada nova de
+  `orchTerminateSession`/kill precisa passar `origin`; sem ela o trace diz
+  `unlabeled`. Nunca grave argv, ambiente ou texto nesses eventos.
+- `pane-spawn-timing` mede cada nascimento de pane (renderer: `rendererWaitMs`
+  e fases do main; MCP: rota, isolamento, credencial, alocação, prompt).
+  `rendererWaitMs` é telemetria: clampado em 0–600000 e nunca pode reprovar um
+  spawn.
+- Conversas Codex moram em `<userData>/provider-state/codex/<checkoutId>/
+  sessions` (F-566). O `CodexUsageScanner` lê essas raízes
+  (`codexSessionsDirsFor`) e o vínculo de rollout novo a exatamente um launch
+  grava `provider_pane_sessions` com a conta do launch — é o que permite
+  `codex resume <id>` no religamento de pane com conta fixada.
+- Remount automático (`retry-kickoff`, ressurreição do escopo) adota uma sessão
+  de orquestrador registrada e viva (`orchestrator-live-adopted`) quando
+  `liveOrchestratorSessionId` não a reconhece; só o Retomar do operador pode
+  encerrar e substituir um Maestro vivo.
