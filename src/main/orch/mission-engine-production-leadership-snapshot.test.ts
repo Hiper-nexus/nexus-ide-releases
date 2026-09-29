@@ -18,6 +18,7 @@ const harness = vi.hoisted(() => ({
   sessionStates: new Map<string, string | null>(),
   resolveMissionLeader: vi.fn<(scope: ProjectExecutionScope, missionId: string) => MissionLeader | null>(),
   agentSessionsByPane: new Map<string, Array<Record<string, unknown>>>(),
+  paneSnapshots: [] as Array<Record<string, unknown>>,
   squads: new Map<string, { id: string; agents: Array<Record<string, unknown>> }>(),
 }));
 
@@ -32,7 +33,7 @@ vi.mock('./squad-store', async (importOriginal) => ({
 }));
 
 vi.mock('./pane-registry', () => ({
-  listPaneSnapshots: () => [],
+  listPaneSnapshots: () => harness.paneSnapshots,
   getPaneRuntimeAuthorityBySession: () => null,
   readSessionOutput: () => '',
 }));
@@ -94,6 +95,7 @@ beforeEach(() => {
   harness.sessionStates = new Map();
   harness.resolveMissionLeader.mockReset();
   harness.agentSessionsByPane = new Map();
+  harness.paneSnapshots = [];
   harness.squads = new Map();
 });
 
@@ -288,5 +290,123 @@ describe('Quadro fiel ao terminal (campo 23/09)', () => {
 
     expect(view.panes.map((entry) => entry.paneId)).toEqual(['pane-1']);
     expect(projectMissionSnapshot(view).stateReason?.code).not.toBe('leader-drift');
+  });
+});
+
+describe('missão da aba (sem squad): o quadro desenha os panes que a missão gravou', () => {
+  function liveOrchestrator(paneId: string, sessionId: string, overrides: Record<string, unknown> = {}) {
+    harness.sessionStates.set(sessionId, 'busy');
+    harness.agentSessionsByPane.set(paneId, [
+      {
+        sessionId,
+        paneId,
+        adapterId: 'claude',
+        missionId,
+        role: 'orchestrator',
+        source: 'persisted-pane',
+        scope,
+        ...overrides,
+      },
+    ]);
+  }
+
+  it('líder provado + dois helpers com o MESMO agentName → orquestrador + um executor por paneId', () => {
+    harness.resolveMissionLeader.mockReturnValue({
+      sessionId: 's-orch', paneId: 'pane-orch', source: 'durable', proven: true,
+    });
+    for (const sessionId of ['s-orch', 's-w1', 's-w2']) {
+      harness.sessionStates.set(sessionId, 'busy');
+    }
+    harness.paneSnapshots = [
+      { paneId: 'pane-orch', sessionId: 's-orch' },
+      { paneId: 'pane-w1', sessionId: 's-w1' },
+      { paneId: 'pane-w2', sessionId: 's-w2' },
+    ];
+    const view = projectMissionEngineSnapshotView(
+      scope,
+      stores({
+        mission: mission(),
+        panes: [
+          pane({ paneId: 'pane-orch', role: 'orchestrator', agentName: 'Maestro', adapterId: 'claude' }),
+          pane({ paneId: 'pane-w1', role: 'worker', agentName: 'Auxiliar', adapterId: 'codex' }),
+          pane({ paneId: 'pane-w2', role: 'worker', agentName: 'Auxiliar', adapterId: 'glm' }),
+        ],
+      }),
+      missionId,
+    );
+
+    // Helpers com nomes iguais NÃO se sobrepõem: a identidade é o paneId.
+    expect(view.panes).toEqual([
+      expect.objectContaining({ paneId: 'pane-w2', agentId: 'pane:pane-w2' }),
+      expect.objectContaining({ paneId: 'pane-w1', agentId: 'pane:pane-w1' }),
+      expect.objectContaining({ paneId: 'pane-orch', agentId: 'orchestrator' }),
+    ]);
+
+    const snapshot = projectMissionSnapshot(view);
+    expect(snapshot.agents).toEqual([
+      expect.objectContaining({
+        id: 'orchestrator',
+        agentName: 'Maestro',
+        category: 'orchestrator',
+        cli: 'claude',
+        paneId: 'pane-orch',
+        state: 'working',
+      }),
+      expect.objectContaining({
+        id: 'pane:pane-w2',
+        agentName: 'Auxiliar',
+        category: 'executor',
+        cli: 'glm',
+        paneId: 'pane-w2',
+        state: 'working',
+      }),
+      expect.objectContaining({
+        id: 'pane:pane-w1',
+        agentName: 'Auxiliar',
+        category: 'executor',
+        cli: 'codex',
+        paneId: 'pane-w1',
+        state: 'working',
+      }),
+    ]);
+  });
+
+  it('líder à deriva sem squad: o card do orquestrador usa o pane à deriva', () => {
+    harness.resolveMissionLeader.mockReturnValue({
+      sessionId: 'pty-dead', paneId: null, source: 'durable', proven: false,
+    });
+    liveOrchestrator('pane-orq', 'pty-live');
+    const view = projectMissionEngineSnapshotView(
+      scope,
+      stores({
+        mission: mission({ status: 'blocked' }),
+        panes: [pane({ paneId: 'pane-orq', agentName: 'Maestro' })],
+      }),
+      missionId,
+    );
+
+    expect(view.orchestratorDrift).toBe(true);
+    expect(view.panes).toEqual([
+      expect.objectContaining({ paneId: 'pane-orq', agentId: 'orchestrator', state: 'working' }),
+    ]);
+
+    const snapshot = projectMissionSnapshot(view);
+    expect(snapshot.stateReason?.code).toBe('leader-drift');
+    expect(snapshot.agents).toEqual([
+      expect.objectContaining({ id: 'orchestrator', paneId: 'pane-orq', state: 'working' }),
+    ]);
+  });
+
+  it('missão sem squad e sem panes → sem agentes (o quadro mostra o vazio honesto)', () => {
+    harness.resolveMissionLeader.mockReturnValue(null);
+    const view = projectMissionEngineSnapshotView(
+      scope,
+      stores({ mission: mission(), panes: [] }),
+      missionId,
+    );
+
+    expect(view.roster).toEqual([]);
+    expect(view.panes).toEqual([]);
+    expect(projectMissionSnapshot(view).agents).toEqual([]);
   });
 });

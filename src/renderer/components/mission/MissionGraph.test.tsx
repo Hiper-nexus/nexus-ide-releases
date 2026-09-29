@@ -461,7 +461,7 @@ describe('MissionGraph', () => {
     expect(onOpenAgentPane).toHaveBeenCalledWith('pane-maestro');
   });
 
-  it('teaches recovery and invokes onRetry from Tentar carregar novamente when no agents are available', () => {
+  it('teaches recovery and invokes onRetry from Atualizar when no agents are available', () => {
     const emptySnapshot = {
       ...snapshot,
       agents: [],
@@ -470,9 +470,9 @@ describe('MissionGraph', () => {
     const onRetry = vi.fn<() => void>();
     const { host } = renderGraph(null, { snapshot: emptySnapshot, onRetry });
 
-    expect(host.textContent).toContain('Nenhum agente na missão');
+    expect(host.textContent).toContain('Nenhum agente na missão ainda');
     expect(host.textContent).toContain(
-      'Não foi possível carregar a equipe desta missão.',
+      'Os agentes aparecem aqui quando o orquestrador abre panes para esta missão.',
     );
 
     const retryButton = [
@@ -483,7 +483,7 @@ describe('MissionGraph', () => {
         candidate.textContent ??
         ''
       ).trim();
-      return accessibleName === 'Tentar carregar novamente';
+      return accessibleName === 'Atualizar';
     });
     expect(retryButton).toBeDefined();
     expect(retryButton!.type).toBe('button');

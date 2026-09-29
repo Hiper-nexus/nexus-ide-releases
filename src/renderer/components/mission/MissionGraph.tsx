@@ -144,14 +144,19 @@ export function MissionGraph({
         <EmptyState
           className="mission-graph__empty"
           icon="users"
-          title="Nenhum agente na missão"
-          body={<p>Não foi possível carregar a equipe desta missão.</p>}
+          title="Nenhum agente na missão ainda"
+          body={
+            <p>
+              Os agentes aparecem aqui quando o orquestrador abre panes para
+              esta missão.
+            </p>
+          }
           action={
             <ActionCard
               className="mission-graph__retry"
               size="sm"
               variant="primary"
-              title="Tentar carregar novamente"
+              title="Atualizar"
               onClick={onRetry}
             />
           }

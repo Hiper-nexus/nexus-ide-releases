@@ -40,6 +40,7 @@ import type {
   MissionOrchestratorBootstrapResult,
   MissionPaneSpec,
   MissionStatus,
+  SquadAgent,
 } from "../../shared/orch-types";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
@@ -1088,13 +1089,21 @@ export function projectMissionEngineSnapshotView(
     ? null
     : driftedOrchestratorSession(scope, missionId, missionPanes);
   const squad = mission.squadId ? getSquad(mission.squadId) : null;
-  const roster = (squad?.agents ?? []).map((agent) => ({
-    ...agent,
-    allowedTools: agent.allowedTools ? [...agent.allowedTools] : agent.allowedTools,
-    allowedSkills: agent.allowedSkills
-      ? [...agent.allowedSkills]
-      : agent.allowedSkills,
-  }));
+  // Missão da aba (sem squad): não há roster persistido — a equipe do quadro
+  // nasce dos panes que a missão gravou (Maestro provado/à deriva + cada
+  // worker pelo próprio paneId). Sem isso roster=[] e o grafo dizia
+  // "Não foi possível carregar a equipe" numa missão cheia de agentes.
+  const roster = squad
+    ? squad.agents.map((agent) => ({
+        ...agent,
+        allowedTools: agent.allowedTools
+          ? [...agent.allowedTools]
+          : agent.allowedTools,
+        allowedSkills: agent.allowedSkills
+          ? [...agent.allowedSkills]
+          : agent.allowedSkills,
+      }))
+    : squadlessMissionPaneRoster(missionPanes, orchestratorPane, leaderDrift);
   const rosterById = new Map(roster.map((agent) => [agent.id, agent] as const));
   const rosterByName = new Map(
     roster.map((agent) => [agent.agentName, agent] as const),
@@ -1177,7 +1186,21 @@ export function projectMissionEngineSnapshotView(
   for (const pane of [...missionPanes].reverse()) {
     if (!pane.paneId) continue;
     let agentId: string | undefined;
-    if (pane.agentName && rosterByName.has(pane.agentName)) {
+    if (!squad) {
+      // Missão da aba: helpers dividem agentName com frequência — a
+      // identidade é o paneId, nunca o nome. O orquestrador continua sendo
+      // só o pane do líder provado ou o do líder à deriva.
+      if (
+        pane.role === "orchestrator" &&
+        (pane.paneId === orchestratorPane?.paneId ||
+          pane.paneId === leaderDrift?.paneId)
+      ) {
+        agentId = "orchestrator";
+      } else {
+        const synthesizedId = `pane:${pane.paneId}`;
+        if (rosterById.has(synthesizedId)) agentId = synthesizedId;
+      }
+    } else if (pane.agentName && rosterByName.has(pane.agentName)) {
       agentId = rosterByName.get(pane.agentName)!.id;
     } else if (
       pane.role === "orchestrator" &&
@@ -1309,6 +1332,55 @@ function driftedOrchestratorSession(
     }
   }
   return found.length === 1 ? found[0]! : null;
+}
+
+/**
+ * Roster sintético da missão da aba (sem squad): um agente "orchestrator"
+ * com os dados do pane do líder provado (ou do líder à deriva, senão o spec
+ * de orquestrador mais novo) e um executor por spec de worker, dedupado por
+ * paneId — helpers dividem agentName, então a identidade do card é o pane.
+ * Mais novo primeiro, máximo 64 (teto do schema do snapshot).
+ */
+function squadlessMissionPaneRoster(
+  missionPanes: readonly MissionPaneSpec[],
+  orchestratorPane: MissionPaneSpec | null,
+  leaderDrift: { paneId: string } | null,
+): SquadAgent[] {
+  const driftSpec = leaderDrift
+    ? (missionPanes.find((pane) => pane.paneId === leaderDrift.paneId) ?? null)
+    : null;
+  const orchestratorSpec =
+    orchestratorPane ??
+    driftSpec ??
+    [...missionPanes].reverse().find((pane) => pane.role === "orchestrator") ??
+    null;
+  const agents: SquadAgent[] = [];
+  if (orchestratorSpec) {
+    agents.push({
+      id: "orchestrator",
+      agentName: orchestratorSpec.agentName?.trim() || "Orquestrador",
+      category: "orchestrator",
+      cli: orchestratorSpec.adapterId,
+      ...(orchestratorSpec.model ? { model: orchestratorSpec.model } : {}),
+    });
+  }
+  const seenPaneIds = new Set<string>();
+  for (const spec of [...missionPanes].reverse()) {
+    if (!spec.paneId || seenPaneIds.has(spec.paneId)) continue;
+    seenPaneIds.add(spec.paneId);
+    if (spec.role !== "worker" || spec.paneId === orchestratorSpec?.paneId) {
+      continue;
+    }
+    agents.push({
+      id: `pane:${spec.paneId}`,
+      agentName: spec.agentName?.trim() || spec.title?.trim() || spec.adapterId,
+      category: "executor",
+      cli: spec.adapterId,
+      ...(spec.model ? { model: spec.model } : {}),
+    });
+    if (agents.length >= 64) break;
+  }
+  return agents;
 }
 
 /**
