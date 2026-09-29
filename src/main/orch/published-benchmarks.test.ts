@@ -98,4 +98,23 @@ describe('benchmarks oficiais publicados (F-675)', () => {
     expect(m3).not.toBeNull();
     expect(flash).toBe(m3);
   });
+
+  it('modelo mais novo sem entrada própria herda o antecessor mais próximo da mesma linha (F-217)', () => {
+    // A CLI anuncia gpt-6.2-sol antes de qualquer catálogo/benchmark: a nota
+    // do 6.1 (mesmo stem, versão mais próxima abaixo) segura o piso.
+    expect(publishedBenchmarkFor('codex', 'gpt-6.2-sol')?.deepSWE).toBe(75.2);
+    expect(publishedCodingQuality('codex', 'gpt-6.2-sol')).toBe(
+      publishedCodingQuality('codex', 'gpt-6.1-sol'),
+    );
+  });
+
+  it('o antigo nunca herda do mais novo; entrada própria sempre vence', () => {
+    // Entrada direta do gpt-6-sol mantém os 68,8 dele — nunca os 75,2 do 6.1.
+    expect(publishedBenchmarkFor('codex', 'gpt-6-sol')?.deepSWE).toBe(68.8);
+    // Linha distinta herda do antecessor DELA (Luna 6), não do Sol.
+    expect(publishedBenchmarkFor('codex', 'gpt-9-luna')?.deepSWE).toBe(66.6);
+    // Sem linha publicada continua sem nota — não se inventa piso.
+    expect(publishedCodingQuality('mimo-code', 'xiaomi/mimo-v2.6-pro-ultraspeed')).toBeNull();
+    expect(publishedCodingQuality('deepseek', 'deepseek-chat')).toBeNull();
+  });
 });

@@ -5,6 +5,7 @@ import {
   routeTask,
   type AdapterAvailability,
   describePreferAdaptersOutcome,
+  type RoutingTable,
   type TaskTier,
 } from './task-router';
 import { countAdapterUses } from './route-pipeline';
@@ -799,5 +800,130 @@ describe('preferAdapters é soft — desempata, nunca pina a rota', () => {
       false, flat, { preferAdapters: ['cli-b'], multiScore: true });
     expect(prefer!.adapterId).toBe('cli-b');
     expect(prefer!.reason).toContain('cli-b=preferido escolhido');
+  });
+});
+
+describe('F-217 — o mais novo da linha vence mesmo sem catálogo', () => {
+  const flat = { adapters: {} } as ModelCatalog;
+  const codex = (models: string[]): AdapterAvailability[] => [
+    { id: 'codex', installed: true, models },
+  ];
+
+  it('CLI anunciou gpt-6.2-sol (sem catálogo): hard roteia para ele e o motivo diz', () => {
+    const decision = routeTask(
+      'refatorar o motor de layout para melhorar a performance do canvas',
+      codex(['gpt-6.2-sol', 'gpt-6.1-sol', 'gpt-6-sol']),
+      DEFAULT_ROUTING_TABLE,
+      'hard',
+      false,
+      flat,
+    );
+    expect(decision?.adapterId).toBe('codex');
+    expect(decision?.model).toBe('gpt-6.2-sol');
+    expect(decision?.reason).toContain(
+      'mais novo da linha: codex:gpt-6.1-sol→gpt-6.2-sol',
+    );
+  });
+
+  it('modelo da tabela ausente da CLI mas com linha mais nova instalada → usa ela', () => {
+    const table: RoutingTable = {
+      trivial: [],
+      easy: [],
+      medium: [],
+      critical: [],
+      hard: [{ adapterId: 'codex', model: 'gpt-7-sol', effort: 'high' }],
+    };
+    const decision = routeTask(
+      'tarefa',
+      codex(['gpt-7.1-sol']),
+      table,
+      'hard',
+      false,
+      flat,
+    );
+    expect(decision?.adapterId).toBe('codex');
+    expect(decision?.model).toBe('gpt-7.1-sol');
+    expect(decision?.reason).toContain(
+      'mais novo da linha: codex:gpt-7-sol→gpt-7.1-sol',
+    );
+    expect(decision?.reason).not.toContain('CLI sem o modelo roteado');
+  });
+
+  it('sem linha mais nova instalada, o descarte antigo continua ("CLI sem o modelo roteado")', () => {
+    const table: RoutingTable = {
+      trivial: [],
+      easy: [],
+      medium: [],
+      critical: [],
+      hard: [{ adapterId: 'codex', model: 'gpt-7-sol', effort: 'high' }],
+    };
+    // gpt-6-sol é mais VELHO que o pedido — não há upgrade; o fallback assume sem modelo.
+    const decision = routeTask(
+      'tarefa',
+      codex(['gpt-6-sol']),
+      table,
+      'hard',
+      false,
+      flat,
+    );
+    expect(decision?.adapterId).toBe('codex');
+    expect(decision?.model).toBeUndefined();
+    expect(decision?.reason).toContain('CLI sem o modelo roteado: codex:gpt-7-sol');
+  });
+
+  it('o mais novo api-only/deprecated NÃO é promovido', () => {
+    const catalog: ModelCatalog = {
+      adapters: {
+        codex: {
+          models: [
+            { id: 'gpt-6.2-sol', availability: 'api-only', source: 'bundled' },
+          ],
+        },
+      },
+    };
+    const decision = routeTask(
+      'tarefa',
+      codex(['gpt-6.2-sol', 'gpt-6.1-sol']),
+      DEFAULT_ROUTING_TABLE,
+      'hard',
+      false,
+      catalog,
+    );
+    expect(decision?.model).toBe('gpt-6.1-sol');
+    // Outras linhas da tabela sobem para o 6.1 — o bloqueado 6.2 nunca aparece.
+    expect(decision?.reason).not.toContain('→gpt-6.2-sol');
+  });
+
+  it('o mais novo recusado pelo provider (quarentena) NÃO é promovido', () => {
+    resetModelAccessQuarantineForTests();
+    try {
+      quarantineRejectedModel('codex', 'gpt-6.2-sol', 'Model access is disabled');
+      const decision = routeTask(
+        'tarefa',
+        codex(['gpt-6.2-sol', 'gpt-6.1-sol']),
+        DEFAULT_ROUTING_TABLE,
+        'hard',
+        false,
+        flat,
+      );
+      expect(decision?.model).toBe('gpt-6.1-sol');
+      expect(decision?.reason).not.toContain('→gpt-6.2-sol');
+    } finally {
+      resetModelAccessQuarantineForTests();
+    }
+  });
+
+  it('modelo pedido no texto continua vencendo o mais novo da linha', () => {
+    const decision = routeTask(
+      'refatorar o parser inteiro com o GPT-6 Sol',
+      codex(['gpt-6.2-sol', 'gpt-6.1-sol', 'gpt-6-sol']),
+      DEFAULT_ROUTING_TABLE,
+      'hard',
+      false,
+      flat,
+    );
+    expect(decision?.adapterId).toBe('codex');
+    expect(decision?.model).toBe('gpt-6-sol');
+    expect(decision?.reason).toContain('modelo pedido no texto: codex:gpt-6-sol');
   });
 });

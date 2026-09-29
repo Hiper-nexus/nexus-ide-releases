@@ -198,6 +198,58 @@ describe('topo entre CLIs (F-214 — revisão e critical, 29/09)', () => {
     expect(decision).toMatchObject({ adapterId: 'codex', model: 'gpt-6-luna' });
     expect(decision!.reason).toContain('modelo pedido no texto: codex:gpt-6-luna');
   });
+
+  it('F-217: CLI anunciou claude-opus-5-6 — a versão promovida continua no topo high-risk', () => {
+    // Mesmo formato do teste critical acima: sem o casamento por linha, o
+    // upgrade do F-217 tirava o modelo da FRONTIER_ORDER e a revisão/
+    // critical perdia o float (a CLI ainda não tem o id da tabela).
+    const withNewer = inventory(['claude', 'mimo-code', 'codex', 'glm', 'kimi']).map(
+      (a) =>
+        a.id === 'claude'
+          ? { ...a, models: ['claude-opus-5-6', ...(a.models ?? [])] }
+          : a,
+    );
+    const decision = routeTask(
+      'auditar a segurança da autenticação e da migração multi-tenant',
+      withNewer,
+      DEFAULT_ROUTING_TABLE,
+      'critical',
+      false,
+      catalog,
+      { multiScore: true, missionUseCounts: new Map([['claude', 1]]) },
+    );
+    expect(decision).toMatchObject({ adapterId: 'claude', model: 'claude-opus-5-6' });
+    expect(decision!.reason).toContain('topo entre CLIs (high-risk)');
+  });
+
+  it('F-217: gpt-6.1-astra anunciado pela CLI flutua como topo cross-review', () => {
+    const withNewer = fieldAdapters.map(
+      (a) =>
+        a.id === 'codex'
+          ? { ...a, models: ['gpt-6.1-astra', ...(a.models ?? [])] }
+          : a,
+    );
+    const decision = routeTask(
+      FIELD_TEXT,
+      withNewer,
+      DEFAULT_ROUTING_TABLE,
+      'hard',
+      false,
+      catalog,
+      // codex já usado na missão: sem o float por linha o multi-score
+      // derruba o 6.1-astra (−18 de diversidade) e o topo ia para outro.
+      {
+        multiScore: true,
+        missionUseCounts: new Map([
+          ['codex', 1],
+          ['glm', 1],
+          ['kimi', 1],
+        ]),
+      },
+    );
+    expect(decision).toMatchObject({ adapterId: 'codex', model: 'gpt-6.1-astra' });
+    expect(decision!.reason).toContain('topo entre CLIs (cross-review)');
+  });
 });
 
 describe('modelo citado não fura o circuit breaker da CLI', () => {

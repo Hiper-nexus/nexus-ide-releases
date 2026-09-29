@@ -39,11 +39,15 @@ import {
   USER_MODEL_CATALOG_FILE,
   applyModelCatalogToAdapter,
   invalidateModelCatalogCache,
+  isModelBlockedForAutoRouting,
   loadModelCatalog,
+  modelCatalogInfo,
   modelInfoForAdapter,
   refreshRemoteModelCatalog,
   seedLocalModelCatalogFromPublished,
+  type ModelCatalog,
 } from './model-catalog';
+import { newestInModelLine } from '../../shared/model-line';
 import { invalidateAdapterHotCache } from './adapter-hot-cache';
 import {
   supportsEnforceableReadOnlyNativeAuthority,
@@ -427,6 +431,31 @@ function refreshInstalledCache(): void {
   installedCache = next;
 }
 
+/**
+ * F-217 (regra do operador 29/09): a CLI pode anunciar um modelo mais novo da
+ * mesma linha do default catalogado (`gpt-6.2-sol` antes de qualquer catálogo
+ * conhecê-lo). O default do pane passa a apontar para ele — mas só entre os
+ * elegíveis (nunca api-only/deprecated). Sem default declarado, nada muda.
+ */
+export function applyNewestModelLineDefault(
+  adapter: Adapter,
+  catalog: ModelCatalog,
+): Adapter {
+  const current = adapter.models.default;
+  if (!current?.trim()) return adapter;
+  const newest = newestInModelLine(
+    current,
+    adapter.models.list.filter(
+      (model) =>
+        !isModelBlockedForAutoRouting(
+          modelCatalogInfo(catalog, adapter.id, model),
+        ),
+    ),
+  );
+  if (newest === current) return adapter;
+  return { ...adapter, models: { ...adapter.models, default: newest } };
+}
+
 function reload(): void {
   const catalog = loadModelCatalog();
   const discovered = discoverCliModels();
@@ -444,10 +473,13 @@ function reload(): void {
   registry = new Map(
     [...registry.entries()].map(([id, adapter]) => [
       id,
-      applyModelCatalogToAdapter(
-        applyDiscoveredEffortsToAdapter(
-          applyDiscoveredModelsToAdapter(adapter, discovered),
-          discoveredEfforts,
+      applyNewestModelLineDefault(
+        applyModelCatalogToAdapter(
+          applyDiscoveredEffortsToAdapter(
+            applyDiscoveredModelsToAdapter(adapter, discovered),
+            discoveredEfforts,
+          ),
+          catalog,
         ),
         catalog,
       ),

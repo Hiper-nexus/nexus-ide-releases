@@ -41,6 +41,7 @@ import {
   preferOperationalBand,
 } from '../../shared/model-operational-bands';
 import { CODEX_FRONTIER_MODEL, GROK_FRONTIER_MODEL, migrateModelId } from '../../shared/model-defaults';
+import { isSameLineAtLeast, newestInModelLine } from '../../shared/model-line';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { adapterSchema } from '../../shared/adapter-types';
 import { adapterCircuitBreakers } from './circuit-breaker';
@@ -968,6 +969,24 @@ export function routeTask(
   }));
   const skippedRisk: string[] = [];
   const missingFromCli: string[] = [];
+  const lineUpgrades: string[] = [];
+  // F-217 (regra do operador 29/09): a CLI anuncia modelos que ninguém
+  // catalogou ainda. Entre os elegíveis (não bloqueados pelo catálogo nem
+  // recusados pelo provider), o mais novo DA MESMA LINHA substitui o modelo
+  // roteado — e resgata um modelo da tabela que a CLI já não lista.
+  const eligibleByAdapter = new Map<string, readonly string[]>();
+  const eligibleModels = (adapter: AdapterAvailability): readonly string[] => {
+    const cached = eligibleByAdapter.get(adapter.id);
+    if (cached) return cached;
+    const eligible = (adapter.models ?? []).filter(
+      (model) =>
+        !isModelBlockedForAutoRouting(
+          modelCatalogInfo(modelCatalog, adapter.id, model),
+        ) && !modelAccessQuarantine(adapter.id, model),
+    );
+    eligibleByAdapter.set(adapter.id, eligible);
+    return eligible;
+  };
   for (const candidateTier of searchOrder) {
     const tierCandidates = routingTable[candidateTier]
       .flatMap((c) => {
@@ -976,12 +995,25 @@ export function routeTask(
         // Resolve o modelo da tabela para um que o adapter REALMENTE roda
         // (variante de família quando a geração foi renomeada). Sem família
         // disponível, descarta — nunca cai no default silencioso do CLI.
+        const eligible = eligibleModels(adapter);
         const resolved = resolveRoutableModel(c.model, adapter.models);
         if (!resolved.ok) {
-          missingFromCli.push(`${c.adapterId}:${c.model}`);
-          return [];
+          const newer = c.model ? newestInModelLine(c.model, eligible) : undefined;
+          if (!newer || newer === c.model) {
+            missingFromCli.push(`${c.adapterId}:${c.model}`);
+            return [];
+          }
+          lineUpgrades.push(`${c.adapterId}:${c.model}→${newer}`);
+          return [{ ...c, model: newer }];
         }
-        const routed: RouteCandidate = { ...c, model: resolved.model };
+        const upgraded =
+          resolved.model !== undefined
+            ? newestInModelLine(resolved.model, eligible)
+            : resolved.model;
+        if (upgraded !== resolved.model) {
+          lineUpgrades.push(`${c.adapterId}:${resolved.model}→${upgraded}`);
+        }
+        const routed: RouteCandidate = { ...c, model: upgraded };
         const info = modelCatalogInfo(modelCatalog, routed.adapterId, routed.model);
         if (isModelBlockedForAutoRouting(info)) {
           skippedRisk.push(
@@ -1111,13 +1143,20 @@ export function routeTask(
   if (frontier?.policy === 'cross-review' || tier === 'critical') {
     const crossPolicy = frontier?.policy === 'cross-review' ? 'cross-review' : 'high-risk';
     const order = FRONTIER_ORDER[crossPolicy];
-    const head = ranked.filter((r) => order.includes(r.c.model ?? ''));
+    // F-217: o candidato pode ter subido para a versão mais nova da mesma
+    // linha (ex.: a CLI anuncia claude-opus-5-6 e a tabela pede o 5-5) — a
+    // vaga de topo é da LINHA, então a ordem casa por linha, não por id.
+    const orderIndex = (model: string | undefined): number =>
+      model === undefined
+        ? -1
+        : order.findIndex((ref) => isSameLineAtLeast(model, ref));
+    const head = ranked.filter((r) => orderIndex(r.c.model) >= 0);
     if (head.length > 0) {
       const next = [
         ...[...head].sort(
-          (a, b) => order.indexOf(a.c.model ?? '') - order.indexOf(b.c.model ?? ''),
+          (a, b) => orderIndex(a.c.model) - orderIndex(b.c.model),
         ),
-        ...ranked.filter((r) => !order.includes(r.c.model ?? '')),
+        ...ranked.filter((r) => orderIndex(r.c.model) < 0),
       ];
       if (next[0].c !== ranked[0].c) crossCliNote = `; topo entre CLIs (${crossPolicy})`;
       ranked = next;
@@ -1145,6 +1184,10 @@ export function routeTask(
   }
 
   const missingNote = warnRoutedModelsMissingFromCli(missingFromCli);
+  const lineUpgradeNote =
+    lineUpgrades.length > 0
+      ? `; mais novo da linha: ${[...new Set(lineUpgrades)].slice(0, 3).join(', ')}`
+      : '';
 
   if (ranked.length > 0) {
     let chosen = ranked[0];
@@ -1191,7 +1234,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${lineUpgradeNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
       alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId) })),
       specialty: specialtyVerdict.specialty,
       policySource,

@@ -11,6 +11,7 @@ import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import publishedModelCatalog from '../../../resources/model-catalog.json';
 import {
   adapterCapabilityMatrixForAdapter,
+  applyNewestModelLineDefault,
   authMethodForAdapter,
   mergeAdapters,
   broadcastToListeners,
@@ -18,6 +19,8 @@ import {
   missionControlCapabilityForAdapter,
   taskHandoffCapabilityForAdapter,
 } from './adapter-registry';
+import { applyDiscoveredModelsToAdapter } from './cli-model-discovery';
+import type { ModelCatalog } from './model-catalog';
 
 // ── Minimal valid cli-pty adapter for reuse across tests ────────────────────
 
@@ -936,5 +939,77 @@ describe('authMethodForAdapter', () => {
       quirks: {},
     } as unknown as Adapter;
     expect(authMethodForAdapter(provider)).toBe('api_key');
+  });
+});
+
+describe('F-217 — default do pane sobe para o mais novo da linha descoberto pela CLI', () => {
+  const flatCatalog: ModelCatalog = { adapters: {} };
+  const codexLike = (): Adapter =>
+    ({
+      ...MINIMAL_CLI_PTY,
+      id: 'codex',
+      models: {
+        flag: '--model',
+        list: ['gpt-6.1-sol', 'gpt-6-sol'],
+        default: 'gpt-6.1-sol',
+      },
+    }) as Adapter;
+
+  it('modelo anunciado pela CLI (não catalogado) vira o default', () => {
+    const discovered = applyDiscoveredModelsToAdapter(
+      codexLike(),
+      new Map([['codex', ['gpt-6.2-sol']]]),
+    );
+    expect(discovered.models.list).toContain('gpt-6.2-sol');
+    expect(applyNewestModelLineDefault(discovered, flatCatalog).models.default).toBe(
+      'gpt-6.2-sol',
+    );
+  });
+
+  it('modelo mais novo api-only NÃO vira default', () => {
+    const discovered = applyDiscoveredModelsToAdapter(
+      codexLike(),
+      new Map([['codex', ['gpt-6.2-sol']]]),
+    );
+    const catalog: ModelCatalog = {
+      adapters: {
+        codex: {
+          models: [
+            { id: 'gpt-6.2-sol', availability: 'api-only', source: 'bundled' },
+          ],
+        },
+      },
+    };
+    expect(applyNewestModelLineDefault(discovered, catalog).models.default).toBe(
+      'gpt-6.1-sol',
+    );
+  });
+
+  it('modelo mais novo de linha distinta NÃO vira default', () => {
+    const discovered = applyDiscoveredModelsToAdapter(
+      codexLike(),
+      new Map([['codex', ['gpt-6.1-sol-ultrafast']]]),
+    );
+    expect(applyNewestModelLineDefault(discovered, flatCatalog).models.default).toBe(
+      'gpt-6.1-sol',
+    );
+  });
+
+  it('sem linha mais nova o default e o objeto ficam intactos', () => {
+    const adapter = codexLike();
+    expect(applyNewestModelLineDefault(adapter, flatCatalog)).toBe(adapter);
+  });
+
+  it('adapter sem default declarado não ganha um', () => {
+    const adapter = {
+      ...MINIMAL_CLI_PTY,
+      id: 'muse',
+      models: { flag: '--model', list: ['muse-spark-1.3'], default: '' },
+    } as Adapter;
+    const discovered = applyDiscoveredModelsToAdapter(
+      adapter,
+      new Map([['muse', ['muse-spark-2.0']]]),
+    );
+    expect(applyNewestModelLineDefault(discovered, flatCatalog).models.default).toBe('');
   });
 });

@@ -19,6 +19,7 @@
  * Versões diferentes de Terminal-Bench (2.0, 3.0, 4.0) NÃO entram: não são
  * comparáveis entre si.
  */
+import { isNewerModelVersion, modelLineOf } from '../../shared/model-line';
 
 export interface PublishedBenchmark {
   readonly deepSWE?: number;
@@ -97,8 +98,37 @@ function hasOwnNumbers(entry: PublishedBenchmark): boolean {
     .some((key) => typeof entry[key] === 'number');
 }
 
+/**
+ * Piso de linha em runtime (F-217, a mesma regra do `successorOf`, agora para
+ * modelo que a CLI anuncia antes de qualquer catálogo): sem entrada direta,
+ * procura a publicação MAIS RECENTE da mesma linha no mesmo adapter
+ * (normalizado) e herda a nota dela. Nunca herda de um modelo mais novo, e
+ * uma entrada direta sempre vence.
+ */
+function predecessorBenchmarkEntry(
+  adapterId: string,
+  model: string,
+): PublishedBenchmark | null {
+  const key = publishedBenchmarkKey(adapterId, model);
+  const prefix = key.slice(0, key.indexOf(':') + 1);
+  const target = modelLineOf(key.slice(prefix.length));
+  let best: PublishedBenchmark | null = null;
+  let bestVersion: readonly number[] = [];
+  for (const [candidateKey, candidate] of Object.entries(PUBLISHED_BENCHMARKS)) {
+    if (!candidateKey.startsWith(prefix)) continue;
+    const line = modelLineOf(candidateKey.slice(prefix.length));
+    if (line.stem !== target.stem) continue;
+    if (!isNewerModelVersion(target.version, line.version)) continue;
+    if (best && !isNewerModelVersion(line.version, bestVersion)) continue;
+    best = candidate;
+    bestVersion = line.version;
+  }
+  return best;
+}
+
 export function publishedBenchmarkFor(adapterId: string, model: string): PublishedBenchmark | null {
-  let entry = PUBLISHED_BENCHMARKS[publishedBenchmarkKey(adapterId, model)] ?? null;
+  let entry = PUBLISHED_BENCHMARKS[publishedBenchmarkKey(adapterId, model)]
+    ?? predecessorBenchmarkEntry(adapterId, model);
   for (let hops = 0; entry && hops < 4; hops += 1) {
     const next = entry.sameModelAs ?? (hasOwnNumbers(entry) ? undefined : entry.successorOf);
     if (!next) break;
