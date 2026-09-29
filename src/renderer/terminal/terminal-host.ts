@@ -3572,7 +3572,69 @@ function reliveOrchestratorCli(
         return rest as PaneModel;
       })()
     : pane;
-  void startSpawn(spawnPane, host, true);
+  // A missão aponta a sessão que acabou de morrer: depois do respawn ela
+  // precisa ser religada à sessão nova, senão fica em leader-drift para
+  // sempre (o orquestrador trabalha e as entregas não chegam a ele).
+  const missionId =
+    pane.missionId ?? useOrchStore.getState().paneMissions[pane.id];
+  void startSpawn(spawnPane, host, true).then((sessionId) => {
+    if (!sessionId || !missionId || host.disposed) return;
+    void rebindRelivedOrchestrator(missionId, pane.id, sessionId);
+  });
+}
+
+/**
+ * Reconecta a missão à sessão NOVA do orquestrador e espelha a liderança no
+ * layout — o mesmo IPC + espelho do rebind do orch-bridge: a estrela nunca
+ * antecede o Main. Falha deixa o quadro em leader-drift como fallback.
+ */
+async function rebindRelivedOrchestrator(
+  missionId: string,
+  paneId: string,
+  sessionId: string,
+): Promise<boolean> {
+  try {
+    const rebound = await window.nexus.orch.rebindMissionOrchestrator(
+      missionId,
+      sessionId,
+    );
+    if (!rebound.ok) {
+      console.warn(
+        `[leader-drift] o main recusou religar a missão ${missionId} à sessão ${sessionId}`,
+      );
+      return false;
+    }
+    // Só depois do rebind durável o renderer pode afirmar quem lidera.
+    useOrchStore.getState().bindPaneMission(paneId, missionId);
+    const { reflectLeadershipFromMissions } = await import(
+      '../orch/leadership-reflect'
+    );
+    reflectLeadershipFromMissions(useOrchStore.getState().missions);
+    return true;
+  } catch (error) {
+    console.warn(`[leader-drift] rebind da missão ${missionId} falhou:`, error);
+    return false;
+  }
+}
+
+/**
+ * «Religar a missão ao Maestro» do Quadro: o orquestrador já está vivo numa
+ * sessão nova (relive) e a missão ainda aponta a que morreu. Responde o
+ * resultado para a UI orientar o próximo passo — Retomar quando não há
+ * Maestro vivo, Reiniciar quando o Main recusa.
+ */
+export async function rebindLiveMaestroOfMission(
+  missionId: string,
+): Promise<'rebound' | 'no-live-maestro' | 'refused'> {
+  const maestro = liveMaestroPaneOfMission(missionId);
+  const sessionId = maestro ? getPaneSessionId(maestro.id) : null;
+  if (!maestro || !sessionId) return 'no-live-maestro';
+  const rebound = await rebindRelivedOrchestrator(
+    missionId,
+    maestro.id,
+    sessionId,
+  );
+  return rebound ? 'rebound' : 'refused';
 }
 
 function interruptBusyMissionWorkers(

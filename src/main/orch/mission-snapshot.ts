@@ -204,7 +204,8 @@ function leaderDriftReason(): MissionStateReason {
     label: 'O orquestrador reiniciou e a missão não o reconhece',
     detail:
       'O terminal do orquestrador continua trabalhando, mas a missão ainda aponta a sessão anterior: ' +
-      'entregas dos agentes não chegam a ele. Acompanhe pelo terminal; quando terminar, encerre a missão.',
+      'entregas dos agentes não chegam a ele. Use «Religar a missão ao Maestro» para ela voltar a ' +
+      'coordenar por esse terminal.',
   };
 }
 

@@ -60,6 +60,7 @@ import {
   removeMissionPrompt,
   type MissionListAction,
 } from '../../orch/mission-list-action';
+import { rebindLiveMaestroOfMission } from '../../terminal/terminal-host';
 import { MissionGraph } from './MissionGraph';
 import { DirectionComposer } from './DirectionComposer';
 import { MissionInspector } from './MissionInspector';
@@ -134,7 +135,10 @@ type HeaderAction = Extract<
 >;
 
 type LifecycleAction = Exclude<MissionListAction, 'none'>;
-type PendingBoardAction = HeaderAction | LifecycleAction;
+type PendingBoardAction =
+  | HeaderAction
+  | LifecycleAction
+  | 'leader-drift-rebind';
 
 interface BoardActionAttempt {
   readonly requestedMissionId: string;
@@ -803,6 +807,46 @@ export function MissionBoard({
     })();
   };
 
+  // leader-drift: o Maestro religou a CLI numa sessão nova e a missão ainda
+  // aponta a que morreu. A ação religa a sessão viva; os desfechos sem
+  // rebind orientam o operador sem derrubar a tela.
+  const runLeaderDriftRebind = (invoker: HTMLButtonElement): void => {
+    const attempt = beginBoardAction('leader-drift-rebind', invoker);
+    if (!attempt) return;
+
+    void (async () => {
+      let restoreFocus = false;
+      try {
+        const result = await rebindLiveMaestroOfMission(missionId);
+        if (!isCurrentBoardAction(attempt)) return;
+        if (result === 'rebound') {
+          // A liderança durável mudou no Main: o refresh normal do snapshot
+          // limpa o "Precisa de reparo" sozinho.
+          refreshSnapshotRef.current?.();
+          return;
+        }
+        setActionAnnouncement(
+          result === 'no-live-maestro'
+            ? 'O terminal do Maestro não está vivo — abra Terminais e use Retomar.'
+            : 'O Nexus recusou religar — abra Terminais e use Reiniciar no Maestro.',
+        );
+        restoreFocus = true;
+      } catch (reason) {
+        if (isCurrentBoardAction(attempt)) {
+          setCommandError(
+            toUserFacingMissionRecovery(
+              reason,
+              'Não foi possível religar a missão ao Maestro. Tente novamente.',
+            ),
+          );
+          restoreFocus = true;
+        }
+      } finally {
+        finishBoardAction(attempt, restoreFocus);
+      }
+    })();
+  };
+
   const runLifecycleAction = (
     invoker: HTMLButtonElement,
     actionOverride?: MissionListAction,
@@ -1112,6 +1156,23 @@ export function MissionBoard({
         )}
 
         <div className="mission-board__actions" aria-label="Ações da missão">
+          {/* leader-drift: o terminal do Maestro está vivo numa sessão nova e
+              a missão ainda aponta a que morreu — a ação primária aqui é
+              religar, não parar. */}
+          {currentSnapshot.stateReason?.code === 'leader-drift' && (
+            <button
+              type="button"
+              className="mission-board__button"
+              data-mission-command="leader-drift-rebind"
+              disabled={pendingAction !== null}
+              aria-busy={pendingAction === 'leader-drift-rebind'}
+              onClick={(event) =>
+                runLeaderDriftRebind(event.currentTarget)
+              }
+            >
+              Religar a missão ao Maestro
+            </button>
+          )}
           {/* Sempre no quadro: o destino é a superfície da missão, nunca o
               grid global. Sem pane, o mosaico vazio ensina; com pane, foca. */}
           <button

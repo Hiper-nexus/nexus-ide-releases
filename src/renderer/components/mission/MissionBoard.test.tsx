@@ -150,6 +150,15 @@ vi.mock('./MissionQuestion', () => ({
   ),
 }));
 
+const rebindLiveMaestroMock = vi.hoisted(() => vi.fn());
+// O botão "Religar a missão ao Maestro" chama o helper do terminal-host;
+// o resto do módulo (workspace-store → terminal-host) segue real.
+vi.mock('../../terminal/terminal-host', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../terminal/terminal-host')>();
+  return { ...actual, rebindLiveMaestroOfMission: rebindLiveMaestroMock };
+});
+
 vi.mock('./MissionInspector', () => ({
   MissionInspector: ({
     snapshot,
@@ -1666,5 +1675,119 @@ describe('MissionBoard canonical controller', () => {
       host.querySelector('[data-testid="journal-events"]')?.textContent,
     ).toContain('mudança observada');
     expect(api.missionEventsAck).not.toHaveBeenCalled();
+  });
+});
+
+describe('F — leader-drift: Religar a missão ao Maestro', () => {
+  const driftReason = {
+    code: 'leader-drift',
+    label: 'O orquestrador reiniciou e a missão não o reconhece',
+    detail: 'drift detail',
+  };
+
+  function driftSnapshot() {
+    return canonicalSnapshot({
+      state: 'blocked_technical',
+      stateReason: driftReason,
+      allowedActions: ['stop'],
+    });
+  }
+
+  function statusChip(host: ParentNode): string {
+    return normalizedText(
+      host.querySelector('.mission-board__status') as HTMLElement,
+    );
+  }
+
+  beforeEach(() => {
+    rebindLiveMaestroMock.mockReset().mockResolvedValue('rebound');
+    api.snapshot.mockResolvedValue(driftSnapshot());
+  });
+
+  it('leader-drift mostra a ação e o clique religa a missão', async () => {
+    const { host } = mount();
+    await flush();
+    expect(statusChip(host)).toBe('Precisa de reparo');
+
+    const action = buttonByName(host, 'Religar a missão ao Maestro');
+    expect(action).toBeTruthy();
+
+    // Depois do rebind durável, o próximo snapshot já vem coordenado.
+    api.snapshot.mockResolvedValue(
+      canonicalSnapshot({ state: 'running', stateReason: undefined }),
+    );
+    await click(action);
+
+    expect(rebindLiveMaestroMock).toHaveBeenCalledWith('mission-alpha');
+    // 'rebound' → o refresh normal do snapshot limpa o estado.
+    expect(api.snapshot.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(statusChip(host)).toBe('Trabalhando');
+  });
+
+  it('sem Maestro vivo → orienta o operador a usar Retomar', async () => {
+    rebindLiveMaestroMock.mockResolvedValue('no-live-maestro');
+    const { host } = mount();
+    await flush();
+
+    await click(buttonByName(host, 'Religar a missão ao Maestro'));
+    await flush();
+
+    expect(normalizedText(host)).toContain(
+      'O terminal do Maestro não está vivo — abra Terminais e use Retomar.',
+    );
+  });
+
+  it('main recusa a religação → orienta a usar Reiniciar no Maestro', async () => {
+    rebindLiveMaestroMock.mockResolvedValue('refused');
+    const { host } = mount();
+    await flush();
+
+    await click(buttonByName(host, 'Religar a missão ao Maestro'));
+    await flush();
+
+    expect(normalizedText(host)).toContain(
+      'O Nexus recusou religar — abra Terminais e use Reiniciar no Maestro.',
+    );
+  });
+
+  it('enquanto religa o botão fica ocupado e não dispara IPC duplicado', async () => {
+    let resolveRebind: (
+      v: 'rebound' | 'no-live-maestro' | 'refused',
+    ) => void = () => {};
+    rebindLiveMaestroMock.mockImplementation(
+      () =>
+        new Promise<'rebound' | 'no-live-maestro' | 'refused'>((resolve) => {
+          resolveRebind = resolve;
+        }),
+    );
+    const { host } = mount();
+    await flush();
+
+    const action = buttonByName(host, 'Religar a missão ao Maestro');
+    await click(action);
+    await click(action);
+
+    expect(rebindLiveMaestroMock).toHaveBeenCalledTimes(1);
+    expect(action.getAttribute('aria-busy')).toBe('true');
+    resolveRebind('rebound');
+    await flush();
+  });
+
+  it('outro motivo de bloqueio não mostra a ação de religar', async () => {
+    api.snapshot.mockResolvedValue(
+      canonicalSnapshot({
+        state: 'blocked_technical',
+        stateReason: { code: 'workspace-lock', label: 'locked', detail: 'x' },
+        allowedActions: ['stop'],
+      }),
+    );
+    const { host } = mount();
+    await flush();
+
+    expect(statusChip(host)).toBe('Precisa de reparo');
+    expect(
+      host.querySelector('button[data-mission-command="leader-drift-rebind"]'),
+    ).toBeNull();
+    expect(normalizedText(host)).not.toContain('Religar a missão ao Maestro');
   });
 });

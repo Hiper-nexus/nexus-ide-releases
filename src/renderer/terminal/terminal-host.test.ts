@@ -80,6 +80,16 @@ vi.mock('@xterm/addon-serialize', () => ({
 }));
 vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {} }));
 vi.mock('./terminal-path-links', () => ({ attachTerminalPathLinks() {} }));
+
+const rebindMissionOrchestratorMock = vi.hoisted(() => vi.fn());
+const reflectLeadershipMock = vi.hoisted(() => vi.fn());
+// O espelho de liderança vem por import() tardio no terminal-host; aqui ele
+// vira espião para provar que o rebind durável reflete no layout.
+vi.mock('../orch/leadership-reflect', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../orch/leadership-reflect')>();
+  return { ...actual, reflectLeadershipFromMissions: reflectLeadershipMock };
+});
 vi.mock('./terminal-ghost-assist', () => ({
   TerminalGhostAssist: class {
     state = { visibleTail: () => '' };
@@ -111,6 +121,7 @@ import {
   holdSpawnUntilApproved,
   markPaneClosingDeliberately,
   orchAutoReliveGate,
+  rebindLiveMaestroOfMission,
   reconcileHosts,
   refitAllPanesBeforePaint,
   refreshHost,
@@ -1846,5 +1857,257 @@ describe('F-370 — foco da janela repinta os terminais (macOS)', () => {
     expect(focusA).not.toHaveBeenCalled();
     expect(hostA.term.options.cursorBlink).toBe(true);
     expect(hostB.term.options.cursorBlink).toBe(false);
+  });
+});
+
+describe('leader-drift — o relive do Maestro religa a missão à sessão nova', () => {
+  let driftSeq = 0;
+
+  function mountMaestro(opts: { withMission?: boolean; indexOnly?: boolean } = {}) {
+    driftSeq += 1;
+    const { withMission = true, indexOnly = false } = opts;
+    const missionId = withMission ? `mission-drift-${driftSeq}` : undefined;
+    const maestro: PaneModel = {
+      id: `maestro-drift-${driftSeq}`,
+      kind: 'cli-agent',
+      adapterId: 'claude',
+      title: 'Maestro',
+      role: 'orchestrator',
+      // O vínculo pode sobreviver só no índice paneMissions (layout antigo).
+      missionId: indexOnly ? undefined : missionId,
+    };
+    useOrchStore.setState({
+      paneMissions: missionId ? { [maestro.id]: missionId } : {},
+      missions: missionId
+        ? [{ id: missionId, status: 'running' } as never]
+        : [],
+      handoffs: [],
+    });
+    useLayoutStore.setState({
+      root: buildGridTree([maestro]),
+      focusedPaneId: maestro.id,
+    });
+    return { maestro, missionId };
+  }
+
+  async function attachWithSession(maestro: PaneModel, sessionId: string) {
+    spawn.mockResolvedValueOnce({ ok: true, sessionId });
+    const host = getOrCreateHost(maestro);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(maestro, slot);
+    expect(await waitForSession(maestro.id, 1000)).toBe(sessionId);
+    return host;
+  }
+
+  async function openAndRelive(maestro: PaneModel, newSessionId: string) {
+    const oldSessionId = `pty-${maestro.id}-old`;
+    const host = await attachWithSession(maestro, oldSessionId);
+    // Turn-end: a CLI sai sozinha (code 0) → relive quieto na mesma xterm.
+    spawn.mockResolvedValueOnce({ ok: true, sessionId: newSessionId });
+    ptyExitListeners.get(oldSessionId)!({ exitCode: 0 });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(await waitForSession(maestro.id, 500)).toBe(newSessionId);
+    // O rebind é assíncrono depois do spawn: drena microtasks do IPC e do
+    // import() tardio do espelho de liderança.
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(50);
+    return host;
+  }
+
+  beforeEach(() => {
+    driftSeq += 0;
+    rebindMissionOrchestratorMock.mockReset().mockResolvedValue({ ok: true });
+    reflectLeadershipMock.mockReset();
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        voice: { logVoice: vi.fn().mockResolvedValue(undefined) },
+        pty: {
+          spawn, kill, resize: vi.fn(), write: ptyWrite,
+          replay: vi.fn(async () => {}),
+          onStateChange: () => () => {},
+          onData: (sessionId: string, listener: (data: string) => void) => {
+            ptyDataListeners.set(sessionId, listener);
+            return () => ptyDataListeners.delete(sessionId);
+          },
+          onExit: (sessionId: string, listener: (event: { exitCode: number }) => void) => {
+            ptyExitListeners.set(sessionId, listener);
+            return () => ptyExitListeners.delete(sessionId);
+          },
+        },
+        accounts: { list: vi.fn().mockResolvedValue([]) },
+        orch: {
+          listMissions: vi.fn(async () => []),
+          rebindMissionOrchestrator: rebindMissionOrchestratorMock,
+        },
+        mission: {
+          snapshot: vi.fn(async () => null),
+          command: vi.fn(async () => ({})),
+        },
+      },
+    });
+  });
+
+  it('relive quieto religa a missão à sessão nova UMA vez e espelha a liderança', async () => {
+    const { maestro, missionId } = mountMaestro();
+    const bindPaneMission = vi.spyOn(useOrchStore.getState(), 'bindPaneMission');
+
+    await openAndRelive(maestro, `pty-${maestro.id}-new`);
+
+    expect(rebindMissionOrchestratorMock).toHaveBeenCalledTimes(1);
+    expect(rebindMissionOrchestratorMock).toHaveBeenCalledWith(
+      missionId,
+      `pty-${maestro.id}-new`,
+    );
+    expect(bindPaneMission).toHaveBeenCalledWith(maestro.id, missionId);
+    await vi.waitFor(() => {
+      expect(reflectLeadershipMock).toHaveBeenCalled();
+    });
+  });
+
+  it('vínculo só no índice paneMissions (sem pane.missionId) também religa', async () => {
+    const { maestro, missionId } = mountMaestro({ indexOnly: true });
+
+    await openAndRelive(maestro, `pty-${maestro.id}-new`);
+
+    expect(rebindMissionOrchestratorMock).toHaveBeenCalledWith(
+      missionId,
+      `pty-${maestro.id}-new`,
+    );
+  });
+
+  it('orquestrador sem missão: relive normal, sem rebind', async () => {
+    const { maestro } = mountMaestro({ withMission: false });
+
+    await openAndRelive(maestro, `pty-${maestro.id}-new`);
+
+    expect(rebindMissionOrchestratorMock).not.toHaveBeenCalled();
+  });
+
+  it('recusa do main ({ok:false}) não derruba o relive — warn e quadro de fallback', async () => {
+    rebindMissionOrchestratorMock.mockResolvedValue({ ok: false });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { maestro, missionId } = mountMaestro();
+    const bindPaneMission = vi.spyOn(useOrchStore.getState(), 'bindPaneMission');
+
+    await openAndRelive(maestro, `pty-${maestro.id}-new`);
+
+    expect(rebindMissionOrchestratorMock).toHaveBeenCalledTimes(1);
+    // Sem ok não há espelho de liderança — a estrela nunca antecede o Main.
+    expect(bindPaneMission).not.toHaveBeenCalledWith(maestro.id, missionId);
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it('exceção no IPC de rebind também não derruba o relive', async () => {
+    rebindMissionOrchestratorMock.mockRejectedValue(new Error('ipc down'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { maestro } = mountMaestro();
+
+    await openAndRelive(maestro, `pty-${maestro.id}-new`);
+
+    expect(rebindMissionOrchestratorMock).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalled();
+  });
+});
+
+describe('rebindLiveMaestroOfMission — religar a missão ao Maestro vivo', () => {
+  let liveSeq = 0;
+
+  function mountLiveMaestro() {
+    liveSeq += 1;
+    const missionId = `mission-live-${liveSeq}`;
+    const maestro: PaneModel = {
+      id: `maestro-live-${liveSeq}`,
+      kind: 'cli-agent',
+      adapterId: 'claude',
+      title: 'Maestro',
+      role: 'orchestrator',
+      missionId,
+    };
+    useOrchStore.setState({
+      paneMissions: { [maestro.id]: missionId },
+      missions: [{ id: missionId, status: 'running' } as never],
+      handoffs: [],
+    });
+    useLayoutStore.setState({
+      root: buildGridTree([maestro]),
+      focusedPaneId: maestro.id,
+    });
+    return { maestro, missionId };
+  }
+
+  async function attachLiveMaestro(maestro: PaneModel) {
+    const sessionId = `pty-${maestro.id}`;
+    spawn.mockResolvedValueOnce({ ok: true, sessionId });
+    const host = getOrCreateHost(maestro);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(maestro, slot);
+    expect(await waitForSession(maestro.id, 1000)).toBe(sessionId);
+    return sessionId;
+  }
+
+  beforeEach(() => {
+    rebindMissionOrchestratorMock.mockReset().mockResolvedValue({ ok: true });
+    reflectLeadershipMock.mockReset();
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        voice: { logVoice: vi.fn().mockResolvedValue(undefined) },
+        pty: {
+          spawn, kill, resize: vi.fn(), write: ptyWrite,
+          replay: vi.fn(async () => {}),
+          onStateChange: () => () => {},
+          onData: (sessionId: string, listener: (data: string) => void) => {
+            ptyDataListeners.set(sessionId, listener);
+            return () => ptyDataListeners.delete(sessionId);
+          },
+          onExit: () => () => {},
+        },
+        accounts: { list: vi.fn().mockResolvedValue([]) },
+        orch: {
+          listMissions: vi.fn(async () => []),
+          rebindMissionOrchestrator: rebindMissionOrchestratorMock,
+        },
+      },
+    });
+  });
+
+  it('Maestro vivo → rebound + IPC com a sessão viva + espelho no renderer', async () => {
+    const { maestro, missionId } = mountLiveMaestro();
+    const sessionId = await attachLiveMaestro(maestro);
+    const bindPaneMission = vi.spyOn(useOrchStore.getState(), 'bindPaneMission');
+
+    await expect(rebindLiveMaestroOfMission(missionId)).resolves.toBe('rebound');
+
+    expect(rebindMissionOrchestratorMock).toHaveBeenCalledWith(
+      missionId,
+      sessionId,
+    );
+    expect(bindPaneMission).toHaveBeenCalledWith(maestro.id, missionId);
+    expect(reflectLeadershipMock).toHaveBeenCalled();
+  });
+
+  it('sem Maestro vivo → no-live-maestro e nenhum IPC', async () => {
+    useOrchStore.setState({ paneMissions: {}, missions: [], handoffs: [] });
+    useLayoutStore.setState({ root: buildGridTree([]) });
+
+    await expect(rebindLiveMaestroOfMission('mission-sem-maestro')).resolves.toBe(
+      'no-live-maestro',
+    );
+    expect(rebindMissionOrchestratorMock).not.toHaveBeenCalled();
+  });
+
+  it('main recusa ({ok:false}) → refused, sem espelho', async () => {
+    const { maestro, missionId } = mountLiveMaestro();
+    await attachLiveMaestro(maestro);
+    rebindMissionOrchestratorMock.mockResolvedValue({ ok: false });
+    const bindPaneMission = vi.spyOn(useOrchStore.getState(), 'bindPaneMission');
+
+    await expect(rebindLiveMaestroOfMission(missionId)).resolves.toBe('refused');
+    expect(bindPaneMission).not.toHaveBeenCalledWith(maestro.id, missionId);
   });
 });
