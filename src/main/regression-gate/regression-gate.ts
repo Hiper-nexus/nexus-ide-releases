@@ -53,10 +53,13 @@ import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { removeTreeSync } from '../util/remove-tree';
 
-const GATE_VERSION = 'regression-gate-v1';
+const GATE_VERSION = 'regression-gate-v2';
 const TEST_FILE_RE = /(?:^|\/)(?:__tests__\/|[^/]+\.(?:test|spec)\.[^/]+$)/iu;
 const E2E_FILE_RE = /(?:^|\/)(?:e2e|playwright)\/|\.e2e\.[^/]+$/iu;
 const PY_TEST_RE = /(?:^|\/)(?:test_[^/]+|[^/]+_test)\.py$/iu;
+/** Arquivo de configuração do runner/transform: tocado pelo diff, falha de carga pode ser do diff. */
+const RUNNER_TRANSFORM_BASENAME_RE =
+  /^(?:(?:jest|vitest|vite|babel)\.config\.[^/]*|\.babelrc[^/]*|tsconfig[^/]*\.json|package\.json)$/u;
 const UNTESTED_IGNORE_RE =
   /(?:^|\/)(?:generated|dist|build|out|scripts|migrations)\/|\.d\.ts$|\.config\.[^/]+$/iu;
 // Limite de robustez, não de seleção: acima dele o portão não tem como
@@ -588,6 +591,8 @@ function observeState(root: string, input: RunRegressionGateInput, git: GitRunne
 interface RunnerDetection {
   readonly kind: RegressionRunnerKind;
   readonly bin: string;
+  /** Config descoberta nos scripts do pacote (posix, relativa a `dir`), quando o pacote não tem uma própria. */
+  readonly config?: string;
 }
 
 function readJson(file: string): Record<string, unknown> | null {
@@ -607,6 +612,99 @@ function findBin(dir: string, root: string, name: string): string | null {
   }
 }
 
+const JEST_OWN_CONFIG_RE = /^jest\.config\.(?:js|ts|mjs|cjs|cts|mts|json)$/u;
+
+function packageHasOwnRunnerConfig(dir: string, kind: 'vitest' | 'jest', pkg: Record<string, unknown>): boolean {
+  if (kind === 'jest' && pkg.jest !== undefined) return true;
+  let entries: string[] = [];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return false;
+  }
+  return entries.some((entry) =>
+    kind === 'jest'
+      ? JEST_OWN_CONFIG_RE.test(entry)
+      : entry.startsWith('vitest.config.') || entry.startsWith('vite.config.'),
+  );
+}
+
+const SHELL_SEPARATOR_RE = /^(?:&&|\|\||;|\|)$/u;
+
+function resolveRunnerConfig(dir: string, root: string, candidate: string): string | null {
+  if (!candidate || /[\0\r\n]/u.test(candidate)) return null;
+  const rootReal = realOrNull(root);
+  const dirReal = realOrNull(dir);
+  if (!rootReal || !dirReal) return null;
+  try {
+    const resolved = path.resolve(dirReal, candidate);
+    if (!fs.statSync(resolved).isFile()) return null;
+    const real = fs.realpathSync(resolved);
+    if (!isInside(rootReal, real)) return null;
+    const rel = path.relative(dirReal, real).split(path.sep).join('/');
+    return rel || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Config do runner declarada nos scripts do package.json
+ * (`jest --config tests/jest.config.js`): projetos que guardam a config do
+ * runner fora da raiz declaram-na em cada chamada. Só o --config/-c de um
+ * comando do PRÓPRIO runner conta (`playwright --config` é dele); a mais
+ * usada pelos scripts vence. Validação estrita: arquivo real dentro do root.
+ */
+function discoverRunnerConfig(
+  dir: string,
+  root: string,
+  kind: 'vitest' | 'jest',
+  pkg: Record<string, unknown>,
+): string | undefined {
+  const scripts = pkg.scripts;
+  if (!scripts || typeof scripts !== 'object') return undefined;
+  const counts = new Map<string, number>();
+  const order: string[] = [];
+  for (const script of Object.values(scripts as Record<string, unknown>)) {
+    if (typeof script !== 'string') continue;
+    const inScript = new Set<string>();
+    const consider = (candidate: string) => {
+      const rel = resolveRunnerConfig(dir, root, candidate);
+      if (!rel || inScript.has(rel)) return;
+      inScript.add(rel);
+      if (!counts.has(rel)) order.push(rel);
+      counts.set(rel, (counts.get(rel) ?? 0) + 1);
+    };
+    let runnerSeen = false;
+    let wantsValue = false;
+    for (const raw of script.split(/\s+/u)) {
+      if (SHELL_SEPARATOR_RE.test(raw)) {
+        runnerSeen = false;
+        wantsValue = false;
+        continue;
+      }
+      const token = raw.replace(/\\/g, '/').replace(/^["']+|["']+$/gu, '');
+      if (wantsValue) {
+        wantsValue = false;
+        if (token) consider(token);
+        continue;
+      }
+      if (token === kind || token.endsWith(`/${kind}`)) {
+        runnerSeen = true;
+        continue;
+      }
+      if (!runnerSeen) continue;
+      if (token === '--config' || token === '-c') wantsValue = true;
+      else if (token.startsWith('--config=')) consider(token.slice('--config='.length));
+    }
+  }
+  let best: string | undefined;
+  for (const candidate of order) {
+    if (best === undefined || counts.get(candidate)! > counts.get(best)!) best = candidate;
+  }
+  return best;
+}
+
 /**
  * Runner do projeto alvo: vitest > jest (package.json) > pytest (trivial).
  * `dir` é o pacote do workspace (monorepo); o binário pode estar içado na raiz.
@@ -620,7 +718,12 @@ export function detectRegressionRunner(dir: string, root: string = dir): RunnerD
     };
     for (const kind of ['vitest', 'jest'] as const) {
       const bin = kind in deps ? findBin(dir, root, kind) : null;
-      if (bin) return { kind, bin };
+      if (bin) {
+        const config = packageHasOwnRunnerConfig(dir, kind, pkg)
+          ? undefined
+          : discoverRunnerConfig(dir, root, kind, pkg);
+        return config ? { kind, bin, config } : { kind, bin };
+      }
     }
   }
   if (dir !== root) return null;
@@ -1046,10 +1149,51 @@ function reportRelative(root: string, cwd: string, name: string): string | null 
   return normalizeRelative(path.relative(root, abs).replace(/\\/g, '/'));
 }
 
+interface LoadFailure {
+  /** Suíte que não carregou, relativa à raiz. */
+  readonly file: string;
+  /**
+   * Arquivo que o parser acusou, relativo à raiz. `null` junto de
+   * `offenderUnknown: false` = caminho extraído mas provado fora do diff
+   * (fora do root, `node_modules/`, `.git/`, `.nexus/`).
+   */
+  readonly offender: string | null;
+  /** A mensagem não trouxe caminho algum: não há prova de que venha de fora do diff. */
+  readonly offenderUnknown: boolean;
+  readonly message: string;
+}
+
 interface ParsedReport {
   readonly failures: RegressionTestFailure[];
   /** Arquivos de teste que o runner de fato executou (pelo relatório). */
   readonly ran: string[];
+  /** Suítes que o runner nem carregou (erro de parse): não rodaram, não são falha. */
+  readonly loadFailures: LoadFailure[];
+}
+
+const LOAD_FAILURE_MESSAGE_RE = /Test suite failed to run/u;
+const LOAD_FAILURE_DETAIL_RE =
+  /SyntaxError|Jest encountered an unexpected token|Cannot use import statement outside a module/u;
+
+/**
+ * Arquivo que o parser acusou: caminho absoluto (inclusive com espaços, como
+ * `~/Library/Application Support/…`) após `SyntaxError:`/`Details:`, até a
+ * extensão de fonte e `:linha(:col)` opcional. Três estados: relativo à raiz;
+ * `null` quando provado fora do diff; `unknown` quando não há caminho.
+ */
+const LOAD_OFFENDER_RE =
+  /(?:SyntaxError:|Details:)\s*((?:\/|[A-Za-z]:[\\/])[^\n'"]*?\.(?:[cm]?[jt]sx?|json|vue|svelte)(?::\d+)*)(?=[\s:(]|$)/u;
+
+function extractLoadOffender(
+  root: string,
+  cwd: string,
+  message: string,
+): { rel: string | null; unknown: boolean } {
+  const match = LOAD_OFFENDER_RE.exec(message);
+  if (!match) return { rel: null, unknown: true };
+  const candidate = match[1].replace(/(?::\d+)+$/u, '');
+  if (!path.isAbsolute(candidate)) return { rel: null, unknown: true };
+  return { rel: reportRelative(root, cwd, candidate), unknown: false };
 }
 
 /** Relatório JSON estilo Jest (vitest --reporter=json é compatível). */
@@ -1064,6 +1208,7 @@ function parseJestLikeReport(root: string, cwd: string, raw: string): ParsedRepo
   if (!Array.isArray(results)) return null;
   const failures: RegressionTestFailure[] = [];
   const ran: string[] = [];
+  const loadFailures: LoadFailure[] = [];
   for (const entry of results as Array<Record<string, unknown>>) {
     const file = typeof entry.name === 'string' ? reportRelative(root, cwd, entry.name) : null;
     const assertions = Array.isArray(entry.assertionResults)
@@ -1072,6 +1217,19 @@ function parseJestLikeReport(root: string, cwd: string, raw: string): ParsedRepo
     const executed = assertions.some(
       (assertion) => assertion.status === 'passed' || assertion.status === 'failed',
     );
+    if (entry.status === 'failed' && !executed) {
+      const rawMessage = String(entry.message ?? '');
+      if (LOAD_FAILURE_MESSAGE_RE.test(rawMessage) && LOAD_FAILURE_DETAIL_RE.test(rawMessage)) {
+        const offender = extractLoadOffender(root, cwd, rawMessage);
+        loadFailures.push({
+          file: file ?? '(desconhecido)',
+          offender: offender.rel,
+          offenderUnknown: offender.unknown,
+          message: neutralizeRunnerText(rawMessage, 300),
+        });
+        continue;
+      }
+    }
     if (file && (executed || entry.status === 'failed')) ran.push(file);
     if (entry.status !== 'failed') continue;
     const failed = assertions.filter((assertion) => assertion.status === 'failed');
@@ -1090,7 +1248,7 @@ function parseJestLikeReport(root: string, cwd: string, raw: string): ParsedRepo
         : neutralizeRunnerText(String(entry.message ?? 'falhou ao carregar'), 300);
     failures.push({ file: file ?? '(desconhecido)', message });
   }
-  return { failures, ran };
+  return { failures, ran, loadFailures };
 }
 
 function xmlText(value: string): string {
@@ -1126,7 +1284,7 @@ function parsePytestJunit(root: string, cwd: string, raw: string): ParsedReport 
       message: neutralizeRunnerText(`${attrs.get('name') ?? ''} ${xmlText(message ?? problem[1]!)}`, 300) || 'falhou',
     });
   }
-  return { failures, ran: [...ran] };
+  return { failures, ran: [...ran], loadFailures: [] };
 }
 
 function isInside(parent: string, child: string): boolean {
@@ -1186,6 +1344,8 @@ interface RunnerGroup {
 interface GroupOutcome {
   readonly failures: RegressionTestFailure[];
   readonly ran: string[];
+  /** Suítes que não carregaram (erro de parse): viram falha só se o diff as explica. */
+  readonly loadFailures?: readonly LoadFailure[];
   readonly warning?: string;
 }
 
@@ -1265,10 +1425,11 @@ async function runTests(
       };
     }
     const outFile = path.join(sandbox.tmp, 'report.json');
+    const configArgs = runner.config ? ['--config', runner.config] : [];
     const args =
       runner.kind === 'vitest'
-        ? ['run', '--reporter=json', `--outputFile=${outFile}`, '--passWithNoTests', ...relTests]
-        : ['--json', `--outputFile=${outFile}`, '--passWithNoTests', '--runTestsByPath', ...relTests];
+        ? ['run', ...configArgs, '--reporter=json', `--outputFile=${outFile}`, '--passWithNoTests', ...relTests]
+        : [...configArgs, '--json', `--outputFile=${outFile}`, '--passWithNoTests', '--runTestsByPath', ...relTests];
     const result = await exec(runner.bin, args, options);
     if (result.aborted) return notVerified(`${runner.kind} cancelado`);
     if (result.timedOut) return notVerified(`${runner.kind} excedeu ${timeoutMs}ms`);
@@ -1288,7 +1449,12 @@ async function runTests(
     }
     const requested = new Set(group.tests);
     const ran = parsed.ran.filter((file) => requested.has(file));
-    if (parsed.failures.length === 0 && result.exitCode !== 0 && ran.length > 0) {
+    const loadFailures = parsed.loadFailures.filter(
+      (load) => requested.has(load.file) || load.file.startsWith('('),
+    );
+    // Saída ≠0 sem falha no relatório: se há suítes que não carregaram, elas já
+    // explicam o código de saída — não inventar uma falha que culparia o diff.
+    if (parsed.failures.length === 0 && parsed.loadFailures.length === 0 && result.exitCode !== 0 && ran.length > 0) {
       return {
         failures: [{ file: `(${runner.kind})`, message: neutralizeRunnerText(result.stderr || result.stdout, 400) }],
         ran,
@@ -1299,6 +1465,7 @@ async function runTests(
     return {
       failures: parsed.failures.filter((failure) => requested.has(failure.file) || failure.file.startsWith('(')),
       ran,
+      loadFailures,
     };
   } finally {
     removeTreeSync(sandbox.dir, { recursive: true, force: true });
@@ -1366,6 +1533,7 @@ async function evaluate(
   const warnings: string[] = [];
   const extensions = deps.extensions ?? registeredExtensions;
   const changedFiles = state.changed.files;
+  const changedSet = new Set(changedFiles);
   const base = {
     version: GATE_VERSION,
     diffHash: state.diffHash,
@@ -1476,6 +1644,25 @@ async function evaluate(
     authority: input.authority,
     trustedDependencyRoot: input.trustedDependencyRoot,
   };
+  // Falha de carga só é do diff quando ele a explica: o arquivo quebrado está
+  // no diff, ou o diff tocou a config do runner/transform (ou a descoberta).
+  const discoveredConfigs = new Set(
+    groups.flatMap((group) =>
+      group.runner.config
+        ? [path.posix.normalize(group.dir ? `${group.dir}/${group.runner.config}` : group.runner.config)]
+        : [],
+    ),
+  );
+  const runnerConfigTouched = changedFiles.some(
+    (file) => discoveredConfigs.has(file) || RUNNER_TRANSFORM_BASENAME_RE.test(path.posix.basename(file)),
+  );
+  // Sem caminho extraível não há prova de que a quebra venha de fora do diff:
+  // conservador, continua falha. Só o ofensor PROVADO fora do diff vira
+  // "não verificado".
+  const loadAttributable = (load: LoadFailure) =>
+    load.offenderUnknown ||
+    runnerConfigTouched ||
+    (load.offender !== null && changedSet.has(load.offender));
   const failures: RegressionTestFailure[] = [];
   const ran = new Set<string>();
   const failuresByGroup = new Map<RunnerGroup, RegressionTestFailure[]>();
@@ -1487,7 +1674,17 @@ async function evaluate(
     const outcome = await runTests(input.scope, group, remaining(), exec, control);
     if (outcome.warning) warnings.push(outcome.warning);
     for (const file of outcome.ran) ran.add(file);
-    if (outcome.failures.length > 0) failuresByGroup.set(group, outcome.failures);
+    const groupFailures = [...outcome.failures];
+    for (const load of outcome.loadFailures ?? []) {
+      if (loadAttributable(load)) {
+        groupFailures.push({ file: load.file, message: load.message });
+      } else {
+        warnings.push(
+          `${group.runner.kind} não conseguiu carregar ${load.file} (erro de parse fora do diff — configuração do runner do projeto?)`,
+        );
+      }
+    }
+    if (groupFailures.length > 0) failuresByGroup.set(group, groupFailures);
   }
   // Teste instável (tempo, ordem) não pode barrar entrega: os arquivos que
   // falharam rodam de novo uma vez, sozinhos; só a falha que se repete conta.
@@ -1502,10 +1699,16 @@ async function evaluate(
     }
     const retry = await runTests(input.scope, { ...group, tests: failedFiles }, remaining(), exec, control);
     const retried = new Set(retry.ran);
-    if (retry.failures.length === 0 && failedFiles.every((file) => retried.has(file))) {
+    const retryFailures = [
+      ...retry.failures,
+      ...(retry.loadFailures ?? [])
+        .filter(loadAttributable)
+        .map((load) => ({ file: load.file, message: load.message })),
+    ];
+    if (retryFailures.length === 0 && failedFiles.every((file) => retried.has(file))) {
       warnings.push(`teste(s) instável(is), passaram na 2ª tentativa: ${failedFiles.slice(0, 5).join(', ')}`);
     } else {
-      failures.push(...(retry.failures.length > 0 ? retry.failures : groupFailures));
+      failures.push(...(retryFailures.length > 0 ? retryFailures : groupFailures));
     }
   }
   const testsRun = tests.filter((test) => ran.has(test));

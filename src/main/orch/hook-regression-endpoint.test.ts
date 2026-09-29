@@ -30,7 +30,7 @@ const git: GitRunner = {
 
 function result(partial: Partial<RegressionGateResult>): RegressionGateResult {
   return {
-    version: 'regression-gate-v1',
+    version: 'regression-gate-v2',
     status: 'passed',
     diffHash: 'hash-1',
     headSha: null,

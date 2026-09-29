@@ -156,7 +156,7 @@ function regressionResult(
   partial: Partial<RegressionGateResult>,
 ): RegressionGateResult {
   return {
-    version: 'regression-gate-v1',
+    version: 'regression-gate-v2',
     status: 'passed',
     diffHash: 'hash',
     headSha: null,

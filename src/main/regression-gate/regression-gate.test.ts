@@ -14,6 +14,7 @@ import {
 import { BUSINESS_MODEL_TARGET_PATH } from '../context/business-model/business-model-contract';
 import {
   __resetRegressionGateForTests,
+  detectRegressionRunner,
   formatRegressionGateReport,
   runRegressionGate,
   type RegressionExec,
@@ -92,6 +93,91 @@ function fakeVitest(failing: readonly string[] = []) {
     return { exitCode: failing.length > 0 ? 1 : 0, timedOut: false, stdout: '', stderr: '' };
   });
   return { exec, calls };
+}
+
+const JEST_SCRIPTS = {
+  test: 'jest --config tests/jest.config.js',
+  'test:api':
+    'node scripts/run-optional-suite.js tests/jest.config.js -- jest --config tests/jest.config.js --testPathPattern=tests/api',
+  'test:db': 'jest --config tests/jest.config.js --runTestsByPath tests/db/x.test.ts --runInBand',
+};
+
+/** Repo com jest cuja config mora nos scripts (estilo saasbarbearia), não na raiz. */
+function jestProject(scripts: Record<string, string> = JEST_SCRIPTS, spaced = false) {
+  const parent = spaced
+    ? (() => {
+        const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-regression-root-')));
+        roots.push(base);
+        const dir = path.join(base, 'Application Support');
+        fs.mkdirSync(dir);
+        return dir;
+      })()
+    : os.tmpdir();
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(parent, 'nexus-regression-jest-')));
+  roots.push(root);
+  const git = new ProcessGitRunner();
+  const run = (...args: string[]) => git.run(root, args).stdout.trim();
+  run('init', '-q');
+  run('config', 'user.name', 'Nexus Test');
+  run('config', 'user.email', 'test@example.invalid');
+  write(root, 'src/a.ts', 'export const a = 1;\n');
+  write(root, 'src/a.test.ts', "import { a } from './a';\n");
+  write(root, 'src/b.ts', "import { a } from './a';\nexport const b = a + 1;\n");
+  write(root, 'src/b.test.ts', "import { b } from './b';\n");
+  write(root, 'tests/jest.config.js', 'module.exports = {};\n');
+  write(root, 'package.json', JSON.stringify({ devDependencies: { jest: '*' }, scripts }));
+  write(root, 'node_modules/.bin/jest', '#!/bin/sh\n');
+  write(root, '.gitignore', 'node_modules\n');
+  run('add', '-A');
+  run('commit', '-qm', 'fixture');
+  const scope: ProjectExecutionScope = {
+    version: 1,
+    installationId: 'install-a',
+    projectId: 'project-a',
+    checkoutId: 'checkout-a',
+    rootRealPath: root,
+    identitySource: 'manifest',
+  };
+  return { root, scope };
+}
+
+/** Simula `jest --json --outputFile=…`: grava o relatório que a fábrica devolve. */
+function fakeJest(report: (files: readonly string[], cwd: string) => Array<Record<string, unknown>>) {
+  const calls: string[][] = [];
+  const exec = vi.fn<RegressionExec>(async (_file, args, options) => {
+    calls.push([...args]);
+    const outFile = args.find((arg) => arg.startsWith('--outputFile='))!.slice('--outputFile='.length);
+    const files = args.filter((arg) => arg.endsWith('.test.ts'));
+    const results = report(files, options.cwd);
+    fs.writeFileSync(outFile, JSON.stringify({ testResults: results }));
+    return {
+      exitCode: results.some((entry) => entry.status === 'failed') ? 1 : 0,
+      timedOut: false,
+      stdout: '',
+      stderr: '',
+    };
+  });
+  return { exec, calls };
+}
+
+function jestSuitePassed(files: readonly string[], cwd: string): Array<Record<string, unknown>> {
+  return files.map((file) => ({
+    name: path.join(cwd, file),
+    status: 'passed',
+    assertionResults: [{ status: 'passed', fullName: 'ok' }],
+  }));
+}
+
+/** Relatório de suíte que NÃO CARREGOU (ts-jest ausente): nenhuma asserção executada. */
+function jestSuiteLoadFailed(offender: (file: string, cwd: string) => string) {
+  return (files: readonly string[], cwd: string): Array<Record<string, unknown>> =>
+    files.map((file) => ({
+      name: path.join(cwd, file),
+      status: 'failed',
+      message:
+        `Test suite failed to run\n\n    SyntaxError: ${offender(file, cwd)}: Unexpected token (1:5)`,
+      assertionResults: [],
+    }));
 }
 
 describe('runRegressionGate', () => {
@@ -750,6 +836,271 @@ describe('runRegressionGate', () => {
   });
 });
 
+describe('detectRegressionRunner — config do runner nos scripts (F-199)', () => {
+  it('descobre tests/jest.config.js pelos scripts (estilo saasbarbearia)', () => {
+    const { root } = jestProject();
+
+    expect(detectRegressionRunner(root, root)).toMatchObject({
+      kind: 'jest',
+      config: 'tests/jest.config.js',
+    });
+  });
+
+  it('não procura config quando a raiz tem jest.config.* ou o package.json tem chave jest', () => {
+    const { root } = jestProject();
+    write(root, 'jest.config.ts', 'export default {};\n');
+    expect(detectRegressionRunner(root, root)!.config).toBeUndefined();
+    fs.rmSync(path.join(root, 'jest.config.ts'));
+    const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')) as Record<string, unknown>;
+    pkg.jest = { testMatch: ['**/*.test.ts'] };
+    write(root, 'package.json', JSON.stringify(pkg));
+    expect(detectRegressionRunner(root, root)!.config).toBeUndefined();
+  });
+
+  it('aceita --config=caminho e -c caminho; ignora o --config de outro comando', () => {
+    const { root } = jestProject({
+      e2e: 'playwright test --config playwright.config.ts',
+      unit: 'playwright test --config pw.ts && jest --config=tests/jest.config.js --runInBand',
+      band: 'jest -c tests/jest.config.js',
+    });
+    write(root, 'playwright.config.ts', 'export {};\n');
+    write(root, 'pw.ts', 'export {};\n');
+
+    expect(detectRegressionRunner(root, root)!.config).toBe('tests/jest.config.js');
+  });
+
+  it('um --config solto de comando que não é jest não vira config do runner', () => {
+    const { root } = jestProject({
+      e2e: 'playwright test --config playwright.config.ts',
+      test: 'jest --runInBand',
+    });
+    write(root, 'playwright.config.ts', 'export {};\n');
+
+    expect(detectRegressionRunner(root, root)!.config).toBeUndefined();
+  });
+
+  it('rejeita ../ fora da raiz, caminho absoluto externo e arquivo inexistente', () => {
+    const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-gate-outside-')));
+    roots.push(outside);
+    write(outside, 'jest.config.js', 'module.exports = {};\n');
+    const outsideFile = path.join(outside, 'jest.config.js');
+    const { root } = jestProject({
+      escaped: `jest --config ../${path.basename(outside)}/jest.config.js`,
+      abs: `jest --config ${outsideFile}`,
+      missing: 'jest --config tests/nope.config.js',
+    });
+
+    expect(detectRegressionRunner(root, root)!.config).toBeUndefined();
+  });
+
+  it('binário do jest por caminho (node_modules/.bin/jest) também habilita a leitura do --config', () => {
+    const { root } = jestProject({
+      test: 'node_modules/.bin/jest --config tests/jest.config.js',
+    });
+
+    expect(detectRegressionRunner(root, root)!.config).toBe('tests/jest.config.js');
+  });
+
+  it('escolhe a config usada pela maioria dos scripts', () => {
+    const { root } = jestProject({
+      a: 'jest --config other/jest.conf.js',
+      b: 'jest --config tests/jest.config.js',
+      c: 'jest --config tests/jest.config.js',
+    });
+    write(root, 'other/jest.conf.js', 'module.exports = {};\n');
+
+    expect(detectRegressionRunner(root, root)!.config).toBe('tests/jest.config.js');
+  });
+
+  it('vitest: descobre --config nos scripts quando não há vite/vitest.config.*', () => {
+    const { root } = project();
+    write(root, 'vitest.unit.config.ts', 'export default {};\n');
+    const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')) as Record<string, unknown>;
+    pkg.scripts = { test: 'vitest run --config vitest.unit.config.ts' };
+    write(root, 'package.json', JSON.stringify(pkg));
+
+    expect(detectRegressionRunner(root, root)).toMatchObject({ kind: 'vitest', config: 'vitest.unit.config.ts' });
+
+    write(root, 'vitest.config.mts', 'export default {};\n');
+    expect(detectRegressionRunner(root, root)!.config).toBeUndefined();
+  });
+});
+
+describe('runTests com config descoberta (F-199)', () => {
+  it('passa --config tests/jest.config.js na frente do --json para o jest', async () => {
+    const { root, scope } = jestProject();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec, calls } = fakeJest(jestSuitePassed);
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(result.status).toBe('passed');
+    const args = calls[0]!;
+    const configIndex = args.indexOf('--config');
+    expect(configIndex).toBeGreaterThanOrEqual(0);
+    expect(args[configIndex + 1]).toBe('tests/jest.config.js');
+    expect(args.indexOf('--json')).toBeGreaterThan(configIndex);
+  });
+});
+
+describe('falha de carga da suíte (F-199)', () => {
+  it('SyntaxError fora do diff vira NÃO verificado com aviso por arquivo — nunca devolução', async () => {
+    const { root, scope } = jestProject();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec } = fakeJest(jestSuiteLoadFailed((file, cwd) => path.join(cwd, file)));
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(result.status).toBe('unavailable');
+    expect(result.failures).toEqual([]);
+    expect(result.testsRun).toEqual([]);
+    expect([...result.testsNotRun].sort()).toEqual(['src/a.test.ts', 'src/b.test.ts']);
+    const warnings = result.warnings.join('\n');
+    expect(warnings).toContain(
+      'jest não conseguiu carregar src/a.test.ts (erro de parse fora do diff — configuração do runner do projeto?)',
+    );
+    expect(warnings).toContain('jest não conseguiu carregar src/b.test.ts');
+    expect(formatRegressionGateReport(result)).toContain('NÃO VERIFICADO');
+  });
+
+  it('o arquivo quebrado estando no diff, a falha de carga segue devolução', async () => {
+    const { root, scope } = jestProject();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec } = fakeJest(jestSuiteLoadFailed((_file, cwd) => path.join(cwd, 'src/a.ts')));
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(result.status).toBe('failed');
+    expect(result.failures.map((failure) => failure.file)).toEqual(['src/a.test.ts', 'src/b.test.ts']);
+  });
+
+  it.each(['tests/jest.config.js', 'tsconfig.json', 'package.json'])(
+    'config do runner/transform tocada pelo diff (%s) mantém a falha de carga como devolução',
+    async (configFile) => {
+      const { root, scope } = jestProject();
+      write(root, 'src/a.ts', 'export const a = 2;\n');
+      if (configFile === 'package.json') {
+        const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')) as Record<string, unknown>;
+        write(root, 'package.json', JSON.stringify({ ...pkg, private: true }));
+      } else if (configFile === 'tsconfig.json') {
+        write(root, 'tsconfig.json', '{}');
+      } else {
+        write(root, configFile, 'module.exports = { transform: {} };\n');
+      }
+      const { exec } = fakeJest(jestSuiteLoadFailed((file, cwd) => path.join(cwd, file)));
+
+      const result = await runRegressionGate({ scope }, { exec });
+
+      expect(result.changedFiles).toContain(configFile);
+      expect(result.status).toBe('failed');
+    },
+  );
+
+  it('ofensor com espaços no caminho que ESTÁ no diff segue devolução (worktree em "Application Support")', async () => {
+    const { root, scope } = jestProject(JEST_SCRIPTS, true);
+    expect(root).toContain(' ');
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec } = fakeJest(jestSuiteLoadFailed((_file, cwd) => path.join(cwd, 'src/a.ts')));
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(result.status).toBe('failed');
+    expect(result.failures.map((failure) => failure.file)).toEqual(['src/a.test.ts', 'src/b.test.ts']);
+  });
+
+  it('ofensor com espaços no caminho fora do diff continua não verificado', async () => {
+    const { root, scope } = jestProject(JEST_SCRIPTS, true);
+    expect(root).toContain(' ');
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec } = fakeJest(jestSuiteLoadFailed((file, cwd) => path.join(cwd, file)));
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(result.status).toBe('unavailable');
+    expect(result.warnings.join('\n')).toContain('jest não conseguiu carregar src/a.test.ts');
+  });
+
+  it('ofensor do bloco Details: com espaços no caminho e no diff → devolução', async () => {
+    const { root, scope } = jestProject(JEST_SCRIPTS, true);
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec } = fakeJest((files, cwd) =>
+      files.map((file) => ({
+        name: path.join(cwd, file),
+        status: 'failed',
+        message:
+          'Test suite failed to run\n\n    Jest encountered an unexpected token\n\n' +
+          `    Details:\n\n    ${path.join(cwd, 'src/a.ts')}:3\n` +
+          '    ({"Object.<anonymous>":function(module,exports,require){',
+        assertionResults: [],
+      })),
+    );
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(result.status).toBe('failed');
+  });
+
+  it('falha de carga sem caminho na mensagem continua devolução (conservador)', async () => {
+    const { root, scope } = jestProject();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec } = fakeJest((files, cwd) =>
+      files.map((file) => ({
+        name: path.join(cwd, file),
+        status: 'failed',
+        message: 'Test suite failed to run\n\n    SyntaxError: Unexpected token } in JSON at position 5',
+        assertionResults: [],
+      })),
+    );
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(result.status).toBe('failed');
+  });
+
+  it('ofensor dentro de node_modules conta como fora do diff (nunca é dele)', async () => {
+    const { root, scope } = jestProject();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec } = fakeJest(
+      jestSuiteLoadFailed((_file, cwd) => path.join(cwd, 'node_modules/foo/index.js')),
+    );
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(result.status).toBe('unavailable');
+    expect(result.warnings.join('\n')).toContain('jest não conseguiu carregar src/a.test.ts');
+  });
+
+  it('asserção falhando continua devolução mesmo com falha de carga alheia junto', async () => {
+    const { root, scope } = jestProject();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    write(root, 'src/b.ts', "import { a } from './a';\nexport const b = a + 2;\n");
+    const { exec } = fakeJest((files, cwd) =>
+      files.map((file) =>
+        file === 'src/b.test.ts'
+          ? {
+              name: path.join(cwd, file),
+              status: 'failed',
+              assertionResults: [
+                { status: 'failed', fullName: 'soma', failureMessages: ['expected 2 to be 3'] },
+              ],
+            }
+          : {
+              name: path.join(cwd, file),
+              status: 'failed',
+              message: `Test suite failed to run\n\n    SyntaxError: ${path.join(cwd, file)}: Unexpected token (1:5)`,
+              assertionResults: [],
+            },
+      ),
+    );
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(result.status).toBe('failed');
+    expect(result.failures).toEqual([{ file: 'src/b.test.ts', message: 'soma: expected 2 to be 3' }]);
+    expect(result.warnings.join('\n')).toContain('jest não conseguiu carregar src/a.test.ts');
+  });
+});
+
 describe('evaluateHandoffRegressionGate', () => {
   it('falha bloqueia a aceitação: devolve ao agente e, esgotado, nunca vira success', async () => {
     const { root, scope } = project();
@@ -789,6 +1140,21 @@ describe('evaluateHandoffRegressionGate', () => {
       { exec: fakeVitest().exec, enabled: () => true },
     );
     expect(passed.kind === 'accepted' && passed.artifact?.payload.status).toBe('passed');
+  });
+
+  it('falha de carga fora do diff NÃO bloqueia o handoff: aceito, marcado não verificado', async () => {
+    const { root, scope } = jestProject();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec } = fakeJest(jestSuiteLoadFailed((file, cwd) => path.join(cwd, file)));
+
+    const verdict = await evaluateHandoffRegressionGate(
+      { sessionId: 'sess-load', scope },
+      { exec, enabled: () => true },
+    );
+
+    expect(verdict).toMatchObject({ kind: 'accepted', unverified: true });
+    expect(verdict.kind === 'accepted' && verdict.artifact?.payload.status).toBe('unavailable');
+    expect(exec).toHaveBeenCalledTimes(1);
   });
 
   it('flag desligada pula o portão', async () => {
