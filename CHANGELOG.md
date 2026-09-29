@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.131 — Pane órfão volta a abrir
+
+Correção do uso real de 29/09. Inclui a 0.76.130.
+
+- **Pane com missão órfã volta a abrir (F-190).** Um pane que o layout ainda ligava a uma missão que não existe mais não abria nunca: Reiniciar e Retomar terminavam em "renderer payload does not match main-sealed persisted pane request". Agora o Nexus usa a missão que ele próprio tem gravada para aquele pane; sem registro nenhum, o pane abre como pane comum. Uma missão real diferente continua sendo recusada.
+
 ## 0.76.130 — Maestro religado lidera de novo
 
 Correção do uso real de 29/09. Inclui a 0.76.129.

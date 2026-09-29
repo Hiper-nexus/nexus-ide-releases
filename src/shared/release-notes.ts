@@ -7962,7 +7962,7 @@ export const RELEASE_076129: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076130: AppRelease = {
   version: '0.76.130',
   date: '2026-09-29',
   codename: 'Maestro religado lidera de novo',
@@ -7975,6 +7975,24 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'O religamento do Maestro religa a missão sozinho, e o Quadro oferece o botão para ' +
         'missões que já ficaram nesse estado.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.131',
+  date: '2026-09-29',
+  codename: 'Pane órfão volta a abrir',
+  summary:
+    'Um pane ligado no layout a uma missão que não existe mais volta a abrir em Reiniciar e ' +
+    'Retomar, em vez de falhar para sempre. Inclui a 0.76.130.',
+  highlights: [
+    {
+      title: 'Pane com missão órfã volta a abrir',
+      detail:
+        'O Nexus usa a missão gravada por ele para aquele pane; sem registro, o pane abre como ' +
+        'pane comum. Missão real diferente continua recusada.',
     },
   ],
   fixes: [],
