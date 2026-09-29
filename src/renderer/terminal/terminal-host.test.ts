@@ -1594,6 +1594,31 @@ describe('F-368 — revive honesto: helper morto não promete o que não entrega
     expect(missionCommand).not.toHaveBeenCalled();
   });
 
+  it('aviso de histórico silencia as próximas teclas da janela (R2)', async () => {
+    const { maestro, worker } = mountMission({ withMaestro: true });
+    await openLive(maestro);
+    const workerHost = await openLive(worker);
+    const writeln = vi.spyOn(workerHost.term, 'writeln');
+    ptyExitListeners.get(`pty-${worker.id}`)!({ exitCode: 1 });
+    await vi.advanceTimersByTimeAsync(50);
+    writeln.mockClear();
+
+    pressKey();
+    await vi.advanceTimersByTimeAsync(80);
+    expect(outputText(writeln)).toContain('histórico');
+    expect(missionCommand).not.toHaveBeenCalled();
+
+    // Janela de 15 s ainda aberta: nenhuma tecla nova pode imprimir a linha
+    // de cooldown — a resposta já foi dada ("escreva no Maestro").
+    writeln.mockClear();
+    for (let i = 0; i < 3; i += 1) {
+      pressKey();
+      await vi.advanceTimersByTimeAsync(80);
+    }
+    expect(outputText(writeln)).not.toContain('tentativa recente em curso');
+    expect(missionCommand).not.toHaveBeenCalled();
+  });
+
   it('grant expirado com Maestro vivo não dispara retry-kickoff automático', async () => {
     const { maestro, worker, missionId } = mountMission({ withMaestro: true });
     await openLive(maestro);

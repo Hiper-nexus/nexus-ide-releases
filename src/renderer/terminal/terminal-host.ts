@@ -871,6 +871,10 @@ async function runDeadMissionPaneRevive(
         host.term.writeln(
           `\r\n\x1b[36m${deadHelperPaneHistoryNotice(liveMaestro.title)}\x1b[0m`,
         );
+        // R2: o aviso de histórico já encerra a conversa DESTA janela — sem o
+        // carimbo, a próxima tecla caía no ramo de cooldown e imprimia
+        // "tentativa recente em curso…" sem tentativa nenhuma em andamento.
+        host.deadPaneReviveNoticeWindowStart = deadPaneReviveAt.get(missionId);
         return;
       }
     }
