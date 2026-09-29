@@ -7767,7 +7767,7 @@ export const RELEASE_076123: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076124: AppRelease = {
   version: '0.76.124',
   date: '2026-09-28',
   codename: 'Todas as LLMs',
@@ -7790,6 +7790,51 @@ export const CURRENT_RELEASE: AppRelease = {
         'O orquestrador fixava Claude em todo helper. Na missão da aba, uma CLI ' +
         'que já tem dois ou mais helpers vivos é redistribuída pelo roteamento ' +
         '(Jev + tabela), salvo quando você pediu aquela CLI.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.125',
+  date: '2026-09-28',
+  codename: 'Frota de contas',
+  summary:
+    'A troca automática de conta aguenta de 1 a 100 contas por LLM, cada pane ' +
+    'AGY no Windows passa a usar a conta escolhida, o MiniMax entra na ' +
+    'orquestração com o MCP do Nexus e o roteador escolhe modelos pelos ' +
+    'benchmarks oficiais dos fabricantes.',
+  highlights: [
+    {
+      title: 'Troca de conta com frotas grandes',
+      detail:
+        'Quando uma conta bate o limite, a próxima entra mesmo com dezenas de ' +
+        'contas: contas expiradas não travam mais a rotação das outras, a troca ' +
+        'percorre a frota até achar uma conta pronta e a cota é sondada no ' +
+        'máximo seis contas por vez.',
+    },
+    {
+      title: 'Conta AGY por pane no Windows',
+      detail:
+        'O AGY do Windows guarda o login numa vaga única do Gerenciador de ' +
+        'Credenciais. O Nexus agora salva essa sessão como conta e, antes de ' +
+        'abrir cada pane, coloca nela a conta escolhida — sem perder a que ' +
+        'estava lá.',
+    },
+    {
+      title: 'MiniMax Code orquestrado',
+      detail:
+        'O pane do MiniMax ganha as ferramentas do Nexus (handoff, panes, ' +
+        'missão) por uma ponte registrada no MCP do próprio MiniMax, e passa a ' +
+        'receber helpers da missão da aba.',
+    },
+    {
+      title: 'Roteamento pelos benchmarks oficiais',
+      detail:
+        'Sem avaliação própria do Nexus, cada modelo compete pelos números que ' +
+        'o fabricante publicou (DeepSWE, Terminal-Bench 2.1, SWE-bench ' +
+        'Verified), com fonte — MiMo, DeepSeek, Muse e MiniMax deixam de perder ' +
+        'por falta de nota.',
     },
   ],
   fixes: [],

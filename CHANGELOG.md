@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.125 — Frota de contas
+
+Uso real no Windows em 28/09.
+
+- **Troca de conta com frotas de 10–100 contas (F-676).** O disjuntor de "sessão que morre de auth" era do provider inteiro: duas contas expiradas quaisquer paravam a troca de todas. Agora é por conta (a mesma conta morta duas vezes), e o provider só trava com cinco contas distintas mortas. Cada limite percorre a frota até 12 contas e tira da frente, por 5 min, a conta que não prepara. A sondagem de cota roda no máximo seis contas por vez e uma rajada de limites divide a mesma leitura feita depois do hit.
+- **Conta AGY por pane no Windows (F-677).** O AGY 1.2 do Windows autentica pela vaga única `gemini:antigravity` do Gerenciador de Credenciais e ignorava a pasta da conta — todo pane usava a mesma conta e "Salvar conta" falhava. O Nexus captura a sessão da vaga e, antes do spawn, guarda o que está nela no cofre, grava a conta escolhida, confere a identidade e dá uma folga entre contas diferentes.
+- **MiniMax Code com o MCP do Nexus (F-678).** Uma ponte stdio registrada uma vez em `~/.minimax/mcp.json` recebe URL e token da sessão só por ambiente. O MiniMax passa a entregar handoff e entra nas rotas da missão da aba. Fora do Nexus a ponte não expõe ferramenta nenhuma.
+- **Roteamento pelos benchmarks oficiais (F-675).** Sem avaliação do Nexus, a qualidade de cada modelo vem dos números publicados pelo fabricante (DeepSWE v1.1, Terminal-Bench 2.1, SWE-bench Verified), com a fonte; o recibo da rota diz `quality=benchmark-oficial`.
+
 ## 0.76.124 — Todas as LLMs
 
 Uso real no Windows em 28/09. Inclui a 0.76.123 (Helpers variados de novo).
