@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.76.126 — Volta inteira
+
+Correções do uso real de 28/09: missões em dois projetos ao mesmo tempo, troca de aplicativo e ditado. Inclui a 0.76.125.
+
+- **Conversa do Codex retomada (F-211).** Os panes Codex gravam as conversas no estado do Nexus por checkout, mas o leitor de uso só olhava `~/.codex/sessions`: nenhuma conversa Codex ficava vinculada ao pane e todo religamento abria uma conversa nova — foi o que aconteceu com o Maestro Codex de uma missão da aba em 28/09. Agora o Nexus lê essas conversas e grava o vínculo com a conta do pane; religar, acordar ou retomar volta à mesma conversa. Conversas iniciadas antes desta versão não têm vínculo e ainda abrem uma nova.
+- **Maestro vivo não é substituído (F-187).** Um religamento automático (tecla num pane morto, autoridade de spawn vencida, reabertura do projeto) decidia respawnar quando não reconhecia o Maestro como líder e encerrava o processo vivo antes de abrir outro. Agora a remontagem automática adota o Maestro que está vivo; só o Retomar do operador substitui o Maestro.
+- **Pane de helper encerrado fala a verdade (F-367/F-368).** Uma tecla no pane de um helper encerrado não promete mais "o Maestro abre em outro pane" sem que nada aconteça: com o Maestro vivo, o pane diz que é histórico e aponta onde escrever, sem religar a missão. A dica "tentativa recente em curso" aparece no máximo uma vez a cada 15 s, em vez de uma linha por tecla.
+- **Tela da TUI volta inteira (F-369/F-370).** Quando parte da saída de um agente é descartada (limite de 2 MiB) ou o pane hiberna, o Nexus pede à CLI para redesenhar a tela ao revelar o pane, em vez de deixar fragmentos num fundo preto. No macOS, voltar de outro aplicativo agora remede e repinta os panes visíveis.
+- **Ditado com andamento no pane (F-371).** Depois de soltar o Espaço, o pane focado mostra "Transcrevendo áudio…" com o tempo decorrido até o texto chegar, ou "Transcrição falhou — veja Voz". Medido em 28/09: STT ~1,5 s, refino do modo CODE ~4 s e entrega ~0,75 s.
+- **Diagnóstico gravado (F-212/F-213).** `main.trace.ndjson` passa a registrar a saída de cada PTY de agente (código, sinal, tempo de vida e quem pediu o término) e o tempo de cada etapa do nascimento de um pane (espera do renderer, preparo da conta, permissões, rota, isolamento e criação do PTY). Com o que a 0.76.122 registrava, a causa das mortes e das aberturas lentas de 28/09 não pôde ser determinada.
+
 ## 0.76.125 — Frota de contas
 
 Uso real no Windows em 28/09.

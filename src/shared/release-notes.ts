@@ -7795,7 +7795,7 @@ export const RELEASE_076124: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076125: AppRelease = {
   version: '0.76.125',
   date: '2026-09-28',
   codename: 'Frota de contas',
@@ -7838,4 +7838,54 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.126',
+  date: '2026-09-29',
+  codename: 'Volta inteira',
+  summary:
+    'Missões em dois projetos ao mesmo tempo voltam inteiras: o Maestro Codex retoma a ' +
+    'mesma conversa, a remontagem automática não encerra um Maestro vivo e os panes ' +
+    'redesenham a tela ao voltar. O ditado mostra o andamento no pane. Inclui a 0.76.125.',
+  highlights: [
+    {
+      title: 'Conversa do Codex retomada',
+      detail:
+        'Religar, acordar ou retomar um pane Codex volta à mesma conversa, com a conta do pane. ' +
+        'Conversas iniciadas antes desta versão ainda abrem uma nova.',
+    },
+    {
+      title: 'Maestro vivo não é substituído',
+      detail:
+        'Religamentos automáticos adotam o Maestro que está vivo em vez de encerrá-lo para ' +
+        'abrir outro. Só o Retomar do operador substitui o Maestro.',
+    },
+    {
+      title: 'Ditado com andamento no pane',
+      detail:
+        'Ao soltar o Espaço, o pane mostra "Transcrevendo áudio…" com o tempo decorrido até o ' +
+        'texto chegar, ou avisa que a transcrição falhou.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Pane de helper encerrado aponta o Maestro',
+      detail:
+        'A tecla num helper encerrado não promete religar nada: com o Maestro vivo, o pane ' +
+        'indica onde escrever. A dica de tentativa em curso aparece no máximo uma vez a cada 15 segundos.',
+    },
+    {
+      title: 'Tela da TUI volta inteira',
+      detail:
+        'Depois de saída descartada ou de hibernação, o pane pede à CLI para redesenhar a tela. ' +
+        'No macOS, voltar de outro aplicativo repinta os panes visíveis.',
+    },
+    {
+      title: 'Diagnóstico de mortes e aberturas lentas',
+      detail:
+        'O trace do Nexus registra como cada sessão de agente terminou e quanto cada etapa da ' +
+        'abertura de um pane levou.',
+    },
+  ],
 };
