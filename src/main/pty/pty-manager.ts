@@ -74,10 +74,12 @@ import {
 } from "../adapters/managed-credentials";
 import { forgetAccountChoiceReceipt } from "../persistence/account-choice-receipts";
 import {
+  realUserHome,
   resolveSpawnBinary,
   resolveWindowsCodexNpmShimLaunch,
 } from "../path-resolver";
 import { windowsNpmShimSpawn } from "../adapters/windows-npm-shim";
+import { windowsCodexShimWithinMaxPath } from "../adapters/codex-windows-prefix";
 import { windowsArgvPromptPlacement } from "./windows-command-line";
 import {
   isBuiltinAdapter,
@@ -1542,6 +1544,13 @@ export function spawnAgentSession(
       `${adapter.label}: missing absolute binary path for spawn ` +
         `(adapter.bin="${adapter.bin}"). Re-scan CLIs or set binPath in settings.`,
     );
+  }
+  // F-688: o host de ferramentas do Codex (`codex-code-mode-host.exe`) mora
+  // no pacote npm. Num prefixo longo (Node portátil do WinGet) ele passa do
+  // MAX_PATH e toda ferramenta falha com `os error 3`. Abre a instalação curta
+  // (~/.local/bin) ou recusa com a correção — nunca um pane sem ferramentas.
+  if (process.platform === "win32" && adapter.id === "codex") {
+    bin = windowsCodexShimWithinMaxPath(bin, { home: realUserHome() });
   }
   let args = argv.slice(1);
   // Adapters whose interactive argv has no {{MODEL}} placeholder would

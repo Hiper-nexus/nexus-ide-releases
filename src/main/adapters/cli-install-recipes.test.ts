@@ -297,6 +297,26 @@ describe('updating the CLI that Nexus launches', () => {
     });
   });
 
+  it('moves a Windows Codex out of a prefix too long for its tool host (F-688)', () => {
+    const winget =
+      'C:\\Users\\Administrador\\AppData\\Local\\Microsoft\\WinGet\\Packages\\' +
+      'OpenJS.NodeJS.22_Microsoft.Winget.Source_8wekyb3d8bbwe\\node-v22.23.2-win-x64';
+    const selected = selectCliUpdateRecipe({
+      adapterId: 'codex',
+      platform: 'win32',
+      binPath: `${winget}\\codex.cmd`,
+      realBinPath: `${winget}\\node_modules\\@openai\\codex\\bin\\codex.js`,
+      userHome: 'C:\\Users\\Administrador',
+      isRunnerResolvable: () => true,
+    });
+    expect(selected).toMatchObject({
+      ok: true,
+      recipe: {
+        argv: ['npm', 'install', '-g', '--prefix', 'C:\\Users\\Administrador\\.local\\bin', '@openai/codex'],
+      },
+    });
+  });
+
   it('does not turn a project-local Windows npm CLI into a global installation', () => {
     expect(selectCliUpdateRecipe({
       adapterId: 'codex',
