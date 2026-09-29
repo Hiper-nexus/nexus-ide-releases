@@ -325,6 +325,23 @@ saber isto antes de mexer:
   DeepSWE, TB2.1 e SWE-bench Verified saturaram: modelo barato empata com o
   topo neles, e só o TB4 os separa.
 
+## Worktree rápida e tamanho do PTY (F-215/F-216)
+
+- A worktree de writer isolado, a da aba nova e o candidato de merge clonam
+  o `node_modules` com `clonefile(2)` no diretório inteiro, via
+  `/usr/bin/osascript -l JavaScript` (script constante, caminhos só como
+  argv). `cp -cR` copia entrada por entrada: 32 s contra ~4-6 s num
+  node_modules de 331 mil entradas. Symlink, falha ou
+  `NEXUS_COW_DIRECTORY_CLONE=0` voltam ao `cp -cR`. `node_modules` aninhado
+  (profundidade 1-2, ao lado de `package.json`) só entra se o git o ignora:
+  sem isso a worktree nasceria suja.
+- O renderer reafirma o tamanho do PTY no foco e na volta de visibilidade
+  (`resize` com `assert`); winsize igual não gera SIGWINCH. O Main grava
+  `pty-grid-drift` quando o PTY estava em outro tamanho e
+  `pty-resize-dropped` quando descarta resize de sessão de outro dono. Os
+  panes Claude/GLM do operador usam o renderizador fullscreen
+  (`"tui": "fullscreen"`), em que todo resize redesenha a tela inteira.
+
 ## Conversas Grok/Kimi por checkout (F-566)
 
 - Os overlays recebem `userDataPath` e `checkoutId` da autoridade do Main e
