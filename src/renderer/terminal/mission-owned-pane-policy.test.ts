@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   BLOCKED_RESUME_NOTICE,
+  DEAD_PANE_MISSION_RELIVED_NOTICE,
   DEAD_PANE_REVIVE_ATTEMPT_NOTICE,
+  DEAD_PANE_REVIVE_CHECK_NOTICE,
   DEAD_PANE_REVIVE_COOLDOWN_NOTICE,
+  deadHelperPaneHistoryNotice,
   deadMaestroKeyRequestsAdjustment,
   deadPaneReviveCooldownNoticeDue,
   decideDeadPaneReviveRespawn,
@@ -774,5 +777,26 @@ describe('avisos de revive — nenhuma tecla pós-done cai no silêncio', () => 
   it('o cooldown repetido orienta em vez de engolir a tecla', () => {
     expect(DEAD_PANE_REVIVE_COOLDOWN_NOTICE).toContain('[nexus]');
     expect(DEAD_PANE_REVIVE_COOLDOWN_NOTICE).toContain('Reiniciar');
+  });
+
+  it('helper morto não promete religar o Maestro NESTE pane (F-368)', () => {
+    expect(DEAD_PANE_REVIVE_CHECK_NOTICE).toContain('[nexus]');
+    expect(DEAD_PANE_REVIVE_CHECK_NOTICE).toContain('verificando a missão');
+    expect(DEAD_PANE_REVIVE_CHECK_NOTICE).not.toMatch(/religar o Maestro/);
+  });
+
+  it('pane histórico aponta o Maestro vivo pelo título', () => {
+    const notice = deadHelperPaneHistoryNotice('Maestro · nexus-ide');
+    expect(notice).toContain('histórico');
+    expect(notice).toContain('«Maestro · nexus-ide»');
+    expect(notice).toContain('escreva lá');
+    expect(deadHelperPaneHistoryNotice(undefined)).toContain('«Maestro»');
+    expect(deadHelperPaneHistoryNotice('  ')).toContain('«Maestro»');
+  });
+
+  it('missão religada sem Maestro fala em REABRIR, não em abrir (F-368)', () => {
+    expect(DEAD_PANE_MISSION_RELIVED_NOTICE).toContain('reabre em outro pane');
+    expect(DEAD_PANE_MISSION_RELIVED_NOTICE).toContain('histórico');
+    expect(DEAD_PANE_MISSION_RELIVED_NOTICE).not.toMatch(/\babre em outro pane/);
   });
 });

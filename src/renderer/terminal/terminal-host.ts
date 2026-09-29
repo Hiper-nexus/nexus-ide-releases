@@ -73,9 +73,12 @@ import {
   terminalDeadPaneFastPathApplies,
 } from './mission-owned-pane-policy';
 import {
+  DEAD_PANE_MISSION_RELIVED_NOTICE,
   DEAD_PANE_REVIVE_ATTEMPT_NOTICE,
+  DEAD_PANE_REVIVE_CHECK_NOTICE,
   DEAD_PANE_REVIVE_COOLDOWN_NOTICE,
   DONE_MAESTRO_ADJUSTMENT_NOTICE,
+  deadHelperPaneHistoryNotice,
   deadMaestroKeyRequestsAdjustment,
   deadPaneReviveCooldownNoticeDue,
   type TerminalMissionLink,
@@ -681,6 +684,27 @@ function missionOfPaneIsDoneById(missionId: string): boolean {
  * digitou (o trio "dona / pausado / cursor oco" era o beco sem saída).
  */
 /**
+ * Maestro VIVO da missão: pane com papel de coordenador ligado a ela, com
+ * sessão PTY e estado utilizável. É quem decide se a tecla num pane de
+ * worker morto vira retry-kickoff ou só um apontador para o pane certo —
+ * kickoff numa missão com Maestro vivo respawnaria coordenação em cima de
+ * coordenação (F-368).
+ */
+function liveMaestroPaneOfMission(missionId: string): PaneModel | null {
+  const paneMissions = useOrchStore.getState().paneMissions;
+  return (
+    listPanes(useLayoutStore.getState().root).find(
+      (candidate) =>
+        candidate.role === 'orchestrator' &&
+        (candidate.missionId ?? paneMissions[candidate.id]) === missionId &&
+        getPaneSessionId(candidate.id) !== null &&
+        paneState(candidate.id) !== 'exited' &&
+        paneState(candidate.id) !== 'hibernated',
+    ) ?? null
+  );
+}
+
+/**
  * Guarda de tecla em pane morto (F-367): enquanto unlock/revive está em
  * voo, a próxima tecla é engolida em silêncio. Contador porque o unlock
  * encadeia o revive — o trabalho só acaba quando os dois terminam.
@@ -739,10 +763,15 @@ async function runDeadMissionPaneRevive(
 ): Promise<void> {
   // Confirmação de recebimento ANTES do trabalho async (não é promessa de
   // aceite: recusa/falha ganham as linhas próprias abaixo). Sem isto, uma
-  // tentativa lenta parece tecla morta.
+  // tentativa lenta parece tecla morta. Helper morto não promete religar
+  // NADA neste pane — só verifica a missão (F-368).
   if (operatorInitiated) {
     host.term.writeln(
-      `\r\n\x1b[36m${DEAD_PANE_REVIVE_ATTEMPT_NOTICE}\x1b[0m`,
+      `\r\n\x1b[36m${
+        pane.role === 'orchestrator'
+          ? DEAD_PANE_REVIVE_ATTEMPT_NOTICE
+          : DEAD_PANE_REVIVE_CHECK_NOTICE
+      }\x1b[0m`,
     );
   }
   try {
@@ -784,12 +813,24 @@ async function runDeadMissionPaneRevive(
       reliveOrchestratorCli(pane, host, true);
       return;
     }
-    await requestMissionRuntimeResume(missionId, operatorInitiated);
     const reviveRespawn = decideDeadPaneReviveRespawn({
       missionOwnsPane: isMainControlledMissionPane(pane.id, pane),
       hasOrchRequestId: pane.orchRequestId !== undefined,
       isOrchestrator: pane.role === 'orchestrator',
     });
+    if (reviveRespawn === 'main-only') {
+      // O agente DESTE pane encerrou, mas a missão pode seguir com o
+      // Maestro vivo noutro leaf. Relançar o kickoff mataria essa
+      // coordenação — aponta onde escrever e fica como histórico (F-368).
+      const liveMaestro = liveMaestroPaneOfMission(missionId);
+      if (liveMaestro) {
+        host.term.writeln(
+          `\r\n\x1b[36m${deadHelperPaneHistoryNotice(liveMaestro.title)}\x1b[0m`,
+        );
+        return;
+      }
+    }
+    await requestMissionRuntimeResume(missionId, operatorInitiated);
     if (reviveRespawn === 'same-pane-resume') {
       host.term.writeln(
         '\r\n\x1b[36m[nexus] religando o Maestro neste pane — a missão segue aberta para revisão.\x1b[0m',
@@ -801,10 +842,10 @@ async function runDeadMissionPaneRevive(
       );
     } else {
       // Worker / grant: o main respawna noutro leaf e este vira histórico.
-      host.term.writeln(
-        '\r\n\x1b[36m[nexus] missão religada — o Maestro abre em outro pane; ' +
-          'este fica como histórico.\x1b[0m',
-      );
+      // A linha sai DEPOIS do comando aceito — antes, "o Maestro abre em
+      // outro pane" era impresso mesmo quando o main não fazia nada
+      // visível (F-368).
+      host.term.writeln(`\r\n\x1b[36m${DEAD_PANE_MISSION_RELIVED_NOTICE}\x1b[0m`);
     }
   } catch (error) {
     if (!operatorInitiated) return;
@@ -1020,6 +1061,19 @@ function startSpawn(
           /unknown or expired|orchestration spawn request/i.test(res.error)
         ) {
           useLayoutStore.getState().clearOrchRequestId(pane.id);
+          const liveMaestro = missionId
+            ? liveMaestroPaneOfMission(missionId)
+            : null;
+          if (liveMaestro) {
+            // Grant órfão de um pane cujo Maestro está VIVO: o retry-kickoff
+            // automático respawnaria a coordenação que já existe. Este pane
+            // é histórico — aponta onde escrever (F-368).
+            host.term.writeln(
+              `\r\n\x1b[36m${deadHelperPaneHistoryNotice(liveMaestro.title)}\x1b[0m`,
+            );
+            useSessionStateStore.getState().setPaneState(pane.id, 'exited');
+            return null;
+          }
           if (missionId && shouldAttemptDeadPaneRevive(missionId)) {
             host.term.writeln(
               '\r\n\x1b[36m[nexus] autoridade de spawn expirou — reemitindo e ' +

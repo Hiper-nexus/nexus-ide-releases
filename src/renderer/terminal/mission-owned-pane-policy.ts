@@ -297,8 +297,41 @@ export const MISSION_OWNED_EXIT_NOTICE =
  */
 export const DEAD_PANE_REVIVE_ATTEMPT_NOTICE =
   '[nexus] tecla recebida — tentando religar o Maestro neste pane…';
+/**
+ * Pane de worker/helper morto: a tecla não promete religar NADA neste
+ * pane — o renderer só verifica a missão. A versão do Maestro ("tentando
+ * religar o Maestro neste pane") num helper lia como promessa quebrada:
+ * o pane nunca volta (F-368).
+ */
+export const DEAD_PANE_REVIVE_CHECK_NOTICE =
+  '[nexus] tecla recebida — verificando a missão deste pane…';
 export const DEAD_PANE_REVIVE_COOLDOWN_NOTICE =
   '[nexus] tentativa recente em curso — aguarde concluir ou use Reiniciar na toolbar.';
+
+/**
+ * Worker morto com Maestro VIVO: religar a missão respawnaria coordenação
+ * em cima de coordenação. O pane fica como histórico e a mensagem aponta o
+ * pane onde a missão continua (F-368).
+ */
+export function deadHelperPaneHistoryNotice(
+  maestroTitle?: string,
+): string {
+  const destino =
+    maestroTitle && maestroTitle.trim().length > 0 ? maestroTitle : 'Maestro';
+  return (
+    '[nexus] este pane é histórico: o agente dele encerrou. ' +
+    `A missão segue com o Maestro em «${destino}» — escreva lá.`
+  );
+}
+
+/**
+ * Worker morto SEM Maestro vivo: o retry-kickoff reabre a coordenação
+ * noutro pane e este fica como histórico. Só se imprime depois do comando
+ * aceito — antes, "o Maestro abre em outro pane" saía mesmo quando o main
+ * não fazia nada visível (F-368).
+ */
+export const DEAD_PANE_MISSION_RELIVED_NOTICE =
+  '[nexus] missão religada — o Maestro reabre em outro pane; este fica como histórico.';
 
 /**
  * Aviso de cooldown do revive: UMA vez por janela por pane. A chave é o

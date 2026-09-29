@@ -1405,3 +1405,190 @@ describe('F-367 — tecla em pane morto de missão: uma tentativa por janela', (
     expect(missionCommand).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('F-368 — revive honesto: helper morto não promete o que não entrega', () => {
+  const listMissions = vi.fn();
+  const missionCommand = vi.fn();
+  const missionSnapshot = vi.fn();
+  let missionSeq = 0;
+
+  function pressKey(key = 'k'): void {
+    for (const listener of [...xtermEvents.onData]) listener(key);
+  }
+
+  function outputText(writeln: ReturnType<typeof vi.spyOn>): string {
+    return writeln.mock.calls.flat().join('\n');
+  }
+
+  function mountMission(opts: { withMaestro: boolean }) {
+    missionSeq += 1;
+    const missionId = `mission-368-${missionSeq}`;
+    const maestro: PaneModel = {
+      id: `maestro-368-${missionSeq}`,
+      kind: 'cli-agent',
+      adapterId: 'claude',
+      title: `Maestro · ${missionId}`,
+      role: 'orchestrator',
+      missionId,
+    };
+    const worker: PaneModel = {
+      id: `worker-368-${missionSeq}`,
+      kind: 'cli-agent',
+      adapterId: 'claude',
+      title: `Helper · ${missionId}`,
+      role: 'worker',
+      missionId,
+    };
+    const panes = opts.withMaestro ? [maestro, worker] : [worker];
+    listMissions.mockResolvedValue([{ id: missionId, status: 'running' }]);
+    useOrchStore.setState({
+      paneMissions: Object.fromEntries(panes.map((p) => [p.id, missionId])),
+      missions: [{ id: missionId, status: 'running' } as never],
+      handoffs: [],
+    });
+    useLayoutStore.setState({
+      root: buildGridTree(panes),
+      focusedPaneId: worker.id,
+    });
+    return { missionId, maestro, worker };
+  }
+
+  beforeEach(() => {
+    listMissions.mockReset();
+    missionCommand.mockReset().mockResolvedValue({});
+    missionSnapshot.mockReset().mockResolvedValue(null);
+    spawn.mockImplementation(async (req: { paneId?: string }) => ({
+      ok: true,
+      sessionId: `pty-${req.paneId ?? 'anon'}`,
+    }));
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        voice: { logVoice: vi.fn().mockResolvedValue(undefined) },
+        pty: {
+          spawn, kill, resize: vi.fn(), write: ptyWrite,
+          onStateChange: () => () => {},
+          onData: (sessionId: string, listener: (data: string) => void) => {
+            ptyDataListeners.set(sessionId, listener);
+            return () => ptyDataListeners.delete(sessionId);
+          },
+          onExit: (sessionId: string, listener: (event: { exitCode: number }) => void) => {
+            ptyExitListeners.set(sessionId, listener);
+            return () => ptyExitListeners.delete(sessionId);
+          },
+        },
+        accounts: { list: vi.fn().mockResolvedValue([]) },
+        orch: {
+          listMissions,
+          // A tecla vai a TODOS os onData — o Maestro vivo recebe como
+          // input de operador; o mock absorve para isolar o pane morto.
+          sendPaneOperatorInput: vi.fn().mockResolvedValue(true),
+        },
+        mission: { snapshot: missionSnapshot, command: missionCommand },
+      },
+    });
+  });
+
+  afterEach(() => {
+    useOrchStore.setState({ paneMissions: {}, missions: [], handoffs: [] });
+  });
+
+  async function openLive(target: PaneModel) {
+    const host = getOrCreateHost(target);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(target, slot);
+    expect(await waitForSession(target.id, 1000)).toBe(`pty-${target.id}`);
+    return host;
+  }
+
+  it('worker morto com Maestro vivo: sem kickoff e a mensagem aponta o pane', async () => {
+    const { maestro, worker } = mountMission({ withMaestro: true });
+    await openLive(maestro);
+    const workerHost = await openLive(worker);
+    const writeln = vi.spyOn(workerHost.term, 'writeln');
+    ptyExitListeners.get(`pty-${worker.id}`)!({ exitCode: 1 });
+    await vi.advanceTimersByTimeAsync(50);
+    writeln.mockClear();
+
+    pressKey();
+    await vi.advanceTimersByTimeAsync(80);
+
+    expect(missionCommand).not.toHaveBeenCalled();
+    const text = outputText(writeln);
+    expect(text).toContain('verificando a missão deste pane');
+    expect(text).toContain('histórico');
+    expect(text).toContain(`«${maestro.title}»`);
+    expect(text).toContain('escreva lá');
+  });
+
+  it('worker morto SEM Maestro vivo: retry-kickoff + mensagem de reabrir', async () => {
+    const { missionId, worker } = mountMission({ withMaestro: false });
+    const workerHost = await openLive(worker);
+    const writeln = vi.spyOn(workerHost.term, 'writeln');
+    ptyExitListeners.get(`pty-${worker.id}`)!({ exitCode: 1 });
+    await vi.advanceTimersByTimeAsync(50);
+    writeln.mockClear();
+
+    pressKey();
+    await vi.advanceTimersByTimeAsync(80);
+
+    expect(missionCommand).toHaveBeenCalledTimes(1);
+    expect(missionCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'retry-kickoff', missionId }),
+    );
+    const text = outputText(writeln);
+    expect(text).toContain('reabre em outro pane');
+    expect(text).toContain('histórico');
+  });
+
+  it('orquestrador morto mantém o aviso de religar neste pane', async () => {
+    const { maestro } = mountMission({ withMaestro: true });
+    const maestroHost = await openLive(maestro);
+    const writeln = vi.spyOn(maestroHost.term, 'writeln');
+    ptyExitListeners.get(`pty-${maestro.id}`)!({ exitCode: 1 });
+    await vi.advanceTimersByTimeAsync(50);
+    writeln.mockClear();
+
+    pressKey();
+    await vi.advanceTimersByTimeAsync(80);
+
+    const text = outputText(writeln);
+    expect(text).toContain('tentando religar o Maestro neste pane');
+    expect(text).not.toContain('verificando a missão deste pane');
+    // Orquestrador religa a própria CLI — nunca chuta o motor.
+    expect(missionCommand).not.toHaveBeenCalled();
+  });
+
+  it('grant expirado com Maestro vivo não dispara retry-kickoff automático', async () => {
+    const { maestro, worker, missionId } = mountMission({ withMaestro: true });
+    await openLive(maestro);
+    spawn.mockImplementationOnce(async () => ({
+      ok: false,
+      error: 'unknown or expired orchestration spawn request',
+    }));
+    const granted: PaneModel = { ...worker, orchRequestId: 'req-368' };
+    useLayoutStore.setState({
+      root: buildGridTree([maestro, granted]),
+      focusedPaneId: granted.id,
+    });
+    useOrchStore.setState({
+      paneMissions: { [maestro.id]: missionId, [granted.id]: missionId },
+      missions: [{ id: missionId, status: 'running' } as never],
+      handoffs: [],
+    });
+    const host = getOrCreateHost(granted);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(granted, slot);
+    const writeln = vi.spyOn(host.term, 'writeln');
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(missionCommand).not.toHaveBeenCalled();
+    const text = outputText(writeln);
+    expect(text).not.toContain('reemitindo');
+    expect(text).toContain(`«${maestro.title}»`);
+  });
+});
