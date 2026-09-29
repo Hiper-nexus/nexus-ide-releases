@@ -71,6 +71,7 @@ vi.mock("../path-resolver", () => ({
     source: "process-path",
   }),
   resolveWindowsCodexNpmShimLaunch: () => windowsNpmShimLaunch.launch,
+  realUserHome: () => "/mock/home",
 }));
 
 const adapterTrust = vi.hoisted(() => ({

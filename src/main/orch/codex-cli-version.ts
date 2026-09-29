@@ -81,46 +81,53 @@ export function resolveCodexCliVersion(
   const cached = versionCache.get(bin);
   if (cached !== undefined) return cached;
 
-  let version: string | null = null;
+  const version = probeCodexCli(bin, ['--version'], parseCodexCliVersion, execImpl, launchImpl);
+  versionCache.set(bin, version);
+  return version;
+}
+
+/**
+ * Runs `bin <args>` and parses stdout: by the bare name, then through the
+ * verified Windows launcher (F-687), then with the login-shell PATH (GUI apps
+ * inherit a minimal PATH — same doctrine as isBinInstalled). Null when no
+ * attempt yields a parse.
+ */
+function probeCodexCli<T>(
+  bin: string,
+  args: readonly string[],
+  parse: (output: string) => T | null,
+  execImpl: CodexVersionExec,
+  launchImpl: CodexVersionLaunch,
+): T | null {
   const options = {
     stdio: 'pipe',
     encoding: 'utf-8',
     timeout: 5_000,
   } as const;
-  try {
-    version = parseCodexCliVersion(execImpl(bin, ['--version'], options));
-  } catch {
-    version = null;
-  }
-  if (version === null) {
-    try {
+  const attempts: Array<() => string | null> = [
+    () => execImpl(bin, [...args], options),
+    () => {
       const launch = launchImpl(bin);
-      if (launch) {
-        version = parseCodexCliVersion(
-          execImpl(launch.file, [...launch.argsPrefix, '--version'], options),
-        );
-      }
-    } catch {
-      version = null;
-    }
-  }
-  if (version === null) {
-    // GUI apps inherit a minimal PATH; retry with the login-shell PATH (same
-    // doctrine as isBinInstalled in adapter-registry).
+      return launch
+        ? execImpl(launch.file, [...launch.argsPrefix, ...args], options)
+        : null;
+    },
+    () =>
+      execImpl(bin, [...args], {
+        ...options,
+        env: { ...process.env, PATH: resolveLoginShellPath() },
+      }),
+  ];
+  for (const attempt of attempts) {
     try {
-      const loginPath = resolveLoginShellPath();
-      version = parseCodexCliVersion(
-        execImpl(bin, ['--version'], {
-          ...options,
-          env: { ...process.env, PATH: loginPath },
-        }),
-      );
+      const output = attempt();
+      const parsed = output === null ? null : parse(output);
+      if (parsed !== null) return parsed;
     } catch {
-      version = null;
+      // Next attempt.
     }
   }
-  versionCache.set(bin, version);
-  return version;
+  return null;
 }
 
 /**
@@ -143,7 +150,44 @@ export function codexHookTrustBypassArgs(
     : [];
 }
 
+let noDaemonCache = new Map<string, boolean>();
+
+/**
+ * F-689: o Codex >= 0.159 no Windows sobe um servidor compartilhado em
+ * segundo plano e SAI quando o cliente está elevado ("start the Windows daemon
+ * from a non-elevated terminal"). O Nexus aberto como administrador passa a
+ * elevação a todo pane: o Codex morria em segundos, sem entrega, e o disjuntor
+ * tirava a CLI da missão. `--no-daemon` roda o pane sozinho, que é também o
+ * que o isolamento por pane (CODEX_HOME próprio) pressupõe. Vale antes de
+ * qualquer subcomando (resume, fork, exec) e só entra quando o `--help` do
+ * Codex instalado a anuncia — flag desconhecida quebraria o spawn.
+ */
+export function codexNoDaemonArgs(
+  bin = 'codex',
+  options: {
+    readonly platform?: NodeJS.Platform;
+    readonly execImpl?: CodexVersionExec;
+    readonly launchImpl?: CodexVersionLaunch;
+  } = {},
+): string[] {
+  if ((options.platform ?? process.platform) !== 'win32') return [];
+  let supported = noDaemonCache.get(bin);
+  if (supported === undefined) {
+    supported =
+      probeCodexCli(
+        bin,
+        ['--help'],
+        (output) => (/(?:^|\s)--no-daemon(?![\w-])/u.test(output) ? true : null),
+        options.execImpl ?? (execFileSync as unknown as CodexVersionExec),
+        options.launchImpl ?? windowsCodexVersionLaunch,
+      ) ?? false;
+    noDaemonCache.set(bin, supported);
+  }
+  return supported ? ['--no-daemon'] : [];
+}
+
 /** Test hook: drop the memoised versions. */
 export function resetCodexCliVersionCacheForTests(): void {
   versionCache = new Map();
+  noDaemonCache = new Map();
 }

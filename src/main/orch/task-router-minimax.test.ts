@@ -10,23 +10,28 @@ const models = [m3, flashPreview, highspeed, base];
 const catalog = { version: 1 as const, adapters: {} };
 
 describe('MiniMax task routing', () => {
-  it.each(['trivial', 'easy'] satisfies TaskTier[])(
-    'offers the highspeed lane for %s work without a benchmark score', (tier) => {
+  // Regra do operador (29/09): o modelo mais novo vem primeiro em todo tier,
+  // com ou sem benchmark publicado; o antigo fica como alternativa.
+  it.each(['trivial', 'easy', 'medium', 'hard', 'critical'] satisfies TaskTier[])(
+    'offers the newest MiniMax (M3.1 Flash Preview) for %s work', (tier) => {
       const decision = routeTask('tarefa', [
         { id: 'minimax-code', installed: true, models },
       ], DEFAULT_ROUTING_TABLE, tier, false, catalog);
-      expect(decision).toMatchObject({ adapterId: 'minimax-code', model: highspeed });
+      expect(decision).toMatchObject({ adapterId: 'minimax-code', model: flashPreview });
       expect(decision?.reason).not.toContain('nenhum candidato da tabela');
       expect(decision?.policySource).not.toBe('nexus-eval');
     },
   );
 
-  it.each(['medium', 'hard', 'critical'] satisfies TaskTier[])(
-    'offers M3 for %s work', (tier) => {
+  it.each([
+    ['easy', highspeed],
+    ['hard', m3],
+  ] satisfies Array<[TaskTier, string]>)(
+    'falls back to the previous MiniMax for %s work when the CLI lacks the newest', (tier, fallback) => {
       const decision = routeTask('tarefa', [
-        { id: 'minimax-code', installed: true, models },
+        { id: 'minimax-code', installed: true, models: [m3, highspeed, base] },
       ], DEFAULT_ROUTING_TABLE, tier, false, catalog);
-      expect(decision).toMatchObject({ adapterId: 'minimax-code', model: m3 });
+      expect(decision).toMatchObject({ adapterId: 'minimax-code', model: fallback });
     },
   );
 
@@ -51,6 +56,6 @@ describe('MiniMax task routing', () => {
     ], DEFAULT_ROUTING_TABLE, overrides.tierOverride, false, catalog, {
       specialtyOverride: overrides.specialtyOverride,
     });
-    expect(decision).toMatchObject({ tier: 'hard', adapterId: 'minimax-code', model: m3 });
+    expect(decision).toMatchObject({ tier: 'hard', adapterId: 'minimax-code', model: flashPreview });
   });
 });

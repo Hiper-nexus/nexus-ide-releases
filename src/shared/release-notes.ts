@@ -8291,24 +8291,40 @@ export const RELEASE_076141: AppRelease = {
 export const CURRENT_RELEASE: AppRelease = {
   version: '0.76.142',
   date: '2026-09-29',
-  codename: 'Terminal sobe rápido',
+  codename: 'Codex no Windows',
   summary:
-    'Pane novo com pasta isolada sobe em segundos em vez de quase um minuto, e o terminal ' +
-    'reafirma o próprio tamanho para a CLI não desenhar fora do pane. Inclui a 0.76.141.',
+    'O Codex volta a trabalhar no Windows, o Nexus para de fechar helpers que o ' +
+    'Maestro reaproveitou e cada CLI passa a usar sempre o seu modelo mais novo.',
   highlights: [
     {
-      title: 'Pane novo sobe em segundos',
+      title: 'Codex não morre com o Nexus como administrador',
       detail:
-        'Writers do Maestro e o 1º pane de uma aba nova ficavam cerca de 50 s em "Subindo…" ' +
-        'copiando o node_modules arquivo por arquivo. Agora o Nexus clona a pasta inteira de ' +
-        'uma vez: 4 a 6 s no saasbarbearia.',
+        'O Codex 0.159 do Windows fechava sozinho em 12 a 20 segundos quando o ' +
+        'Nexus rodava elevado, e a missão tirava o Codex da rota. Os panes Codex ' +
+        'agora rodam sem o servidor compartilhado do Codex, cada um no seu próprio ' +
+        'ambiente.',
     },
     {
-      title: 'Terminal no tamanho certo',
+      title: 'Codex com ferramentas funcionando',
       detail:
-        'Ao focar ou voltar a ver um pane, o Nexus reafirma o tamanho dele para a CLI; se ela ' +
-        'estava em outro tamanho, redesenha a tela. "Redesenhar tela" no toolbar do pane força ' +
-        'o redesenho quando algo ainda sair embaralhado.',
+        'Com o Node do WinGet, o Codex instalado pelo npm ficava num caminho longo ' +
+        'demais para o Windows, e nenhuma ferramenta rodava. O Nexus passa a usar a ' +
+        'instalação em %USERPROFILE%\.local\bin, e o "Atualizar CLI" move o Codex ' +
+        'para lá. Sem instalação curta, o pane não abre e diz como corrigir.',
+    },
+    {
+      title: 'Helper reaproveitado não é mais fechado',
+      detail:
+        'Quando o Maestro mandava trabalho novo a um helper que já tinha entregado, o ' +
+        'Nexus o fechava na primeira pausa, e ele "encerrava sem entregar". Agora esse ' +
+        'helper só fecha depois de entregar de novo.',
+    },
+    {
+      title: 'Sempre o modelo mais novo',
+      detail:
+        'Cada CLI usa primeiro o seu modelo mais novo, com ou sem benchmark ' +
+        'publicado: o MiniMax passa ao M3.1 Flash Preview e o AGY ao Gemini 3.8 ' +
+        'também nas tarefas simples. Os modelos anteriores ficam de reserva.',
     },
   ],
   fixes: [],

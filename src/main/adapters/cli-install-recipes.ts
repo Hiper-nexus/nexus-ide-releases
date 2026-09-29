@@ -41,6 +41,8 @@
  *             as flags e deixaria o SQLite quebrado.
  */
 
+import { codexWindowsPrefixFits, codexWindowsShortPrefix } from './codex-windows-prefix';
+
 interface ArgvInstallRecipe {
   readonly kind: 'argv';
   /** Comando exato (argv, sem shell). */
@@ -454,9 +456,16 @@ export function selectCliUpdateRecipe(input: {
         if (isOutsideNpmBin && (input.platform === 'win32' ||
           input.resolveRealPath?.(`${expectedBinDir}/${binPath.slice(binPath.lastIndexOf('/') + 1)}`)
             !== input.realBinPath)) continue;
+        // F-688: Codex num prefixo onde o host de ferramentas passa do
+        // MAX_PATH do Windows não tem conserto no lugar — a atualização o
+        // reinstala no prefixo curto, que o spawn prefere.
+        const targetPrefix = input.platform === 'win32' && input.adapterId === 'codex' &&
+          input.userHome && !codexWindowsPrefixFits(prefix.replaceAll('/', '\\'))
+          ? codexWindowsShortPrefix(input.userHome)
+          : prefix;
         const recipe = {
           ...candidate,
-          argv: ['npm', 'install', '-g', '--prefix', prefix, target],
+          argv: ['npm', 'install', '-g', '--prefix', targetPrefix, target],
         };
         return selectInstallRecipe([recipe], input.isRunnerResolvable);
       }

@@ -8,6 +8,12 @@
  * — nunca se inventa nota. `sameModelAs` só onde o fabricante declara que a
  * variante é o mesmo modelo servido mais rápido.
  *
+ * `successorOf` (regra do operador, 29/09: "sempre os modelos mais novos"):
+ * a versão nova do fabricante que ainda não publicou número herda a nota do
+ * antecessor como piso. Não é número dela; é o que impede o mais novo de
+ * perder para o antigo só por falta de benchmark. Quando o fabricante
+ * publicar, os números próprios substituem a herança.
+ *
  * Benchmarks usados (os de maior cobertura entre fabricantes hoje):
  *   - DeepSWE v1.1 (%), Terminal-Bench 2.1 (%), SWE-bench Verified (%).
  * Versões diferentes de Terminal-Bench (2.0, 3.0, 4.0) NÃO entram: não são
@@ -19,6 +25,7 @@ export interface PublishedBenchmark {
   readonly terminalBench21?: number;
   readonly swebenchVerified?: number;
   readonly sameModelAs?: string;
+  readonly successorOf?: string;
   readonly source: string;
 }
 
@@ -60,6 +67,7 @@ export const PUBLISHED_BENCHMARKS: Readonly<Record<string, PublishedBenchmark>> 
   'muse:muse-spark-1.3': { deepSWE: 75.4, terminalBench21: 88.8, source: 'https://dev.meta.ai/models/muse-spark/' },
   'mimo-code:xiaomi/mimo-v2.6-pro': { deepSWE: 71.9, terminalBench21: 89.9, source: 'https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Pro-RL' },
   'mimo-code:xiaomi/mimo-v2.6-flash': { deepSWE: 67.9, terminalBench21: 87.6, source: 'https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Flash-RL' },
+  'minimax-code:minimax/MiniMax-M3.1-Flash-Preview': { successorOf: 'minimax-code:minimax/MiniMax-M3', source: 'https://datanorth.ai/news/minimax-releases-m3-1-flash-preview' },
   'minimax-code:minimax/MiniMax-M3': { swebenchVerified: 80.5, terminalBench21: 66.0, source: 'https://www.minimax.io/blog/minimax-m3' },
   'minimax-code:minimax/MiniMax-M2.7': { swebenchVerified: 79.9, terminalBench21: 51.1, source: 'https://www.minimax.io/blog/minimax-m3' },
   'minimax-code:minimax/MiniMax-M2.7-highspeed': { sameModelAs: 'minimax-code:minimax/MiniMax-M2.7', source: 'https://www.minimax.io/models/text/m27' },
@@ -84,10 +92,17 @@ export function publishedBenchmarkKey(adapterId: string, model: string): string 
   return `${adapter}:${id}`;
 }
 
+function hasOwnNumbers(entry: PublishedBenchmark): boolean {
+  return (Object.keys(RANGES) as Array<keyof typeof RANGES>)
+    .some((key) => typeof entry[key] === 'number');
+}
+
 export function publishedBenchmarkFor(adapterId: string, model: string): PublishedBenchmark | null {
   let entry = PUBLISHED_BENCHMARKS[publishedBenchmarkKey(adapterId, model)] ?? null;
-  for (let hops = 0; entry?.sameModelAs && hops < 3; hops += 1) {
-    entry = PUBLISHED_BENCHMARKS[entry.sameModelAs] ?? null;
+  for (let hops = 0; entry && hops < 4; hops += 1) {
+    const next = entry.sameModelAs ?? (hasOwnNumbers(entry) ? undefined : entry.successorOf);
+    if (!next) break;
+    entry = PUBLISHED_BENCHMARKS[next] ?? null;
   }
   return entry;
 }

@@ -30,6 +30,7 @@ vi.mock("../path-resolver", () => ({
     source: "process-path",
   }),
   resolveWindowsCodexNpmShimLaunch: () => null,
+  realUserHome: () => "/mock/home",
 }));
 vi.mock("../pty/persistent-session", () => ({
   planPersistentAgentSpawn: (input: { file: string; args: readonly string[] }) => ({

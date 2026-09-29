@@ -124,6 +124,8 @@ export type RankedRouteEntry = {
 export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   trivial: [
     { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'low' },
+    // O mais novo primeiro (regra do operador, 29/09); o 3.7 fica de reserva.
+    { adapterId: 'agy', model: 'gemini-3.8-flash-low', effort: 'low' },
     { adapterId: 'agy', model: 'gemini-3.7-flash-low', effort: 'low' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'low' },
     { adapterId: 'glm-flash', model: 'glm-5.3-flash[1m]', effort: 'low' },
@@ -132,6 +134,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
     // Same cost-based prior for MiniMax: the `mcode` TUI takes no effort argv
     // (only headless `exec` does), so the model's native default stands.
+    { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M2.7-highspeed' },
     { adapterId: 'claude', model: 'claude-haiku-4-5', effort: 'low' },
   ],
@@ -146,6 +149,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'codex', model: 'gpt-6-luna', effort: 'low' },
     { adapterId: 'glm-flash', model: 'glm-5.3-flash[1m]', effort: 'low' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
+    { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M2.7-highspeed' },
     // Sonnet 5 é mais novo e mais barato que o 4.6 ($2/$10 × $3/$15).
     // CLI 2.1.284: mesma faixa de custo; catálogo da CLI filtra disponibilidade.
@@ -159,6 +163,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'glm', model: 'glm-5.3', effort: 'medium' },
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'medium' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
+    { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'medium' },
     { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'medium' },
@@ -202,6 +207,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'high' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro-ultraspeed' },
+    { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3' },
     { adapterId: 'devin', model: 'swe-2-high' },
     { adapterId: 'openclaude', model: 'opus' },
@@ -233,6 +239,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'xhigh' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro-ultraspeed' },
+    { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3' },
   ],
 };

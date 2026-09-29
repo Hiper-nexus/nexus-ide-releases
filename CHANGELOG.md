@@ -1,11 +1,13 @@
 # Changelog
 
-## 0.76.142 — Terminal sobe rápido
+## 0.76.142 — Codex no Windows
 
-Pedido do operador em 29/09: terminais que embaralham e pane novo que demora quase um minuto para subir. Inclui a 0.76.141.
+Uso real no Windows em 29/09. Inclui a 0.76.141.
 
-- **Pane novo sobe em segundos (F-215).** Os writers isolados do Maestro levaram de 47,7 a 52,4 s para abrir, quase tudo copiando o node_modules do saasbarbearia (331 mil entradas) arquivo por arquivo. O 1º pane de uma aba nova do "+" passa pelo mesmo caminho. Agora o Nexus clona a pasta inteira numa chamada só do macOS: 32 s caem para 4 a 6 s, medidos na máquina ociosa. O node_modules do app nativo (`apps/mobile`) também passa a vir clonado, desde que o git o ignore; antes o writer precisava criar o link à mão para rodar os testes.
-- **Terminal no tamanho certo (F-216).** No pane GLM do print, a CLI desenhava num tamanho diferente do pane: linhas quebradas na largura errada e restos abaixo da barra de status. Ao focar ou voltar a ver um pane, o Nexus agora reafirma o tamanho dele para a CLI. Se ela estava em outro tamanho, a tela é redesenhada inteira. O trace passa a registrar quando isso acontece. O toolbar do pane ganhou "Redesenhar tela", para quando algo ainda sair embaralhado. A causa exata do seu print não foi reproduzida.
+- **Codex não morre com o Nexus elevado (F-689).** Às 18:47 e às 18:48 dois Codex saíram com código 0 em 12 a 20 s, e o disjuntor tirou o Codex da missão. Reproduzido num PTY real: o Codex 0.159 do Windows sobe um servidor compartilhado em segundo plano e sai com "start the Windows daemon from a non-elevated terminal" quando o cliente é elevado. O Nexus aberto como administrador passa a elevação a todo pane. No Windows, todo pane Codex agora abre com `--no-daemon`, colocado depois da reconstrução governada do argv. A flag só entra quando o `--help` do Codex instalado a anuncia.
+- **Codex só abre com ferramentas que rodam (F-688).** O Codex ≥ 0.157 roda toda ferramenta por `codex-code-mode-host.exe`, dentro do pacote npm. No prefixo do Node portátil do WinGet esse caminho chega a 262 caracteres, e o Windows recusa com `os error 3`. O spawn troca esse `codex.cmd` pela instalação curta em `%USERPROFILE%\.local\bin` ou recusa com a correção exata, e o "Atualizar CLI" reinstala nesse prefixo curto.
+- **Helper reaproveitado não é fechado (F-690).** O TTL pós-handoff fecha o worker ocioso 30 s depois de todos os handoffs dele serem consumidos. O Maestro reaproveitava o helper com `nexus_pane_write` segundos depois do consumo; o handoff antigo seguia consumido e, na primeira pausa do trabalho novo, o Nexus o matava. Aconteceu três vezes em 29/09, às 16:06, 16:57 e 18:14, e o Maestro relatou "encerrou sem entregar". Trabalho iniciado depois do último consumo agora adia o fechamento até sair um handoff novo.
+- **O modelo mais novo sempre (F-691).** Regra do operador: todo modelo novo que entra no Nexus é usado e vem na frente, com ou sem benchmark. O MiniMax M3.1-Flash-Preview vira o padrão e o primeiro de todo tier (M3 e M2.7 de reserva), e uma versão nova sem número herda a nota do antecessor como piso. O tier trivial do AGY passa do Gemini 3.7 ao 3.8. Um teste-guarda reprova rota mais velha que um modelo da mesma linha no catálogo.
 
 ## 0.76.141 — Sem piscar
 

@@ -88,4 +88,14 @@ describe('benchmarks oficiais publicados (F-675)', () => {
     expect(next).not.toBeNull();
     expect(next!).toBeGreaterThan(sol!);
   });
+
+  it('successorOf: o mais novo sem número herda a nota do antecessor como piso (regra do operador 29/09)', () => {
+    for (const [key, entry] of Object.entries(PUBLISHED_BENCHMARKS)) {
+      if (entry.successorOf) expect(PUBLISHED_BENCHMARKS[entry.successorOf], key).toBeDefined();
+    }
+    const flash = publishedCodingQuality('minimax-code', 'minimax/MiniMax-M3.1-Flash-Preview');
+    const m3 = publishedCodingQuality('minimax-code', 'minimax/MiniMax-M3');
+    expect(m3).not.toBeNull();
+    expect(flash).toBe(m3);
+  });
 });

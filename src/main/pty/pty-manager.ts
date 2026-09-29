@@ -74,10 +74,13 @@ import {
 } from "../adapters/managed-credentials";
 import { forgetAccountChoiceReceipt } from "../persistence/account-choice-receipts";
 import {
+  realUserHome,
   resolveSpawnBinary,
   resolveWindowsCodexNpmShimLaunch,
 } from "../path-resolver";
 import { windowsNpmShimSpawn } from "../adapters/windows-npm-shim";
+import { windowsCodexShimWithinMaxPath } from "../adapters/codex-windows-prefix";
+import { codexNoDaemonArgs } from "../orch/codex-cli-version";
 import { windowsArgvPromptPlacement } from "./windows-command-line";
 import {
   isBuiltinAdapter,
@@ -1551,6 +1554,13 @@ export function spawnAgentSession(
         `(adapter.bin="${adapter.bin}"). Re-scan CLIs or set binPath in settings.`,
     );
   }
+  // F-688: o host de ferramentas do Codex (`codex-code-mode-host.exe`) mora
+  // no pacote npm. Num prefixo longo (Node portátil do WinGet) ele passa do
+  // MAX_PATH e toda ferramenta falha com `os error 3`. Abre a instalação curta
+  // (~/.local/bin) ou recusa com a correção — nunca um pane sem ferramentas.
+  if (process.platform === "win32" && adapter.id === "codex") {
+    bin = windowsCodexShimWithinMaxPath(bin, { home: realUserHome() });
+  }
   let args = argv.slice(1);
   // Adapters whose interactive argv has no {{MODEL}} placeholder would
   // silently DROP the resolved model (Codex boots on CLI 5.5, Grok on its
@@ -2143,6 +2153,16 @@ export function spawnAgentSession(
         promptChannel,
         safeNativeInitialPrompt,
       );
+    }
+    // F-689: depois da reconstrução governada (que descarta flag
+    // desconhecida). Codex no Windows sem o servidor compartilhado: elevado,
+    // ele sai em segundos; e cada pane tem o próprio CODEX_HOME.
+    if (
+      process.platform === "win32" &&
+      adapter.id === "codex" &&
+      !args.includes("--no-daemon")
+    ) {
+      args.unshift(...codexNoDaemonArgs(bin));
     }
     if (
       !usesKimiTransientModel &&
