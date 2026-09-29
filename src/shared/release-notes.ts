@@ -8223,6 +8223,12 @@ export const CURRENT_RELEASE: AppRelease = {
         'distribuído entre todas as LLMs, com a variante certa de cada uma (Flash no ' +
         'rotineiro, Pro no difícil).',
     },
+    {
+      title: 'Electron 43.7.4',
+      detail:
+        'O app passa a rodar no Electron 43.7.4, que corrige quatro falhas de segurança ' +
+        'altas do 43.0.0 (sandbox, leitura entre origens e preload).',
+    },
   ],
   fixes: [],
 };
