@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.135 — Todas as LLMs de verdade, com o Jev enxugando
+
+Pedido do operador em 29/09. Inclui a 0.76.134.
+
+- **CLI fixada pelo agente vira preferência (F-195).** De 25/09 a 28/09, 26 dos 71 panes abertos pelos agentes tinham a CLI fixada, 21 deles em Claude. O Maestro da saasbarbearia abriu todos os writers e revisores em Claude. Agora, sem pedido seu, a CLI fixada é só uma preferência e a rota decide pelo benchmark oficial e pela diversidade. A CLI que você digitou no pane (por exemplo "solta pane swe grok agy mimo") continua valendo.
+- **Jev classifica a tarefa pelo trabalho real (F-194).** O texto antigo mandava 60 de 78 tarefas reais para o tier mais caro. O novo, testado com o Jev nas mesmas 78 tarefas, manda 32 para o tier caro e 39 para o médio. No tier caro, um modelo barato com nota de benchmark próxima agora vence o caro.
+- **Maestro lê menos e decide igual (F-196).** A leitura de pane pelo Maestro vem resumida: linhas de erro, teste e pergunta, as últimas 30 linhas e o estado do pane julgado pelo Jev. A lista de handoffs não repete os artifacts de entregas antigas. Texto inteiro sob pedido (`mode:'full'`, `detail:'full'`).
+- **Helper parado recebe a continuação (F-197).** Quando um helper da mesma CLI está parado com o contexto certo, o Jev entrega a tarefa a ele em vez de abrir outro pane, economizando a abertura e o briefing. Revisão independente nunca vai para quem escreveu o código. Há um toggle em Ajustes.
+
 ## 0.76.134 — Revisão completa
 
 Revisão de todas as mudanças da 0.76.126 à 0.76.133, com a suíte inteira de testes verde. Inclui a 0.76.133.

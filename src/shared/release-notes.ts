@@ -8034,7 +8034,7 @@ export const RELEASE_076133: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076134: AppRelease = {
   version: '0.76.134',
   date: '2026-09-29',
   codename: 'Revisão completa',
@@ -8058,4 +8058,40 @@ export const CURRENT_RELEASE: AppRelease = {
         'aparecem com o que fazer, em vez da mensagem técnica em inglês.',
     },
   ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.135',
+  date: '2026-09-29',
+  codename: 'Todas as LLMs de verdade, com o Jev enxugando',
+  summary:
+    'A CLI fixada pelo agente vira preferência e a rota decide pelo benchmark; o Jev ' +
+    'classifica a tarefa pelo trabalho real, resume o que o Maestro lê e entrega ' +
+    'continuações a helpers parados. Inclui a 0.76.134.',
+  highlights: [
+    {
+      title: 'Todas as LLMs de verdade',
+      detail:
+        'Sem pedido seu, a CLI fixada pelo agente é só preferência; a CLI que você digitou no ' +
+        'pane continua valendo.',
+    },
+    {
+      title: 'Rota mais barata',
+      detail:
+        'O Jev classifica a tarefa pelo trabalho real e, no tier caro, o modelo barato com ' +
+        'nota próxima vence.',
+    },
+    {
+      title: 'Maestro lê menos',
+      detail:
+        'Leitura de pane resumida com o estado julgado pelo Jev, e a lista de handoffs sem ' +
+        'repetir entregas antigas.',
+    },
+    {
+      title: 'Helper parado recebe a continuação',
+      detail:
+        'Tarefa relacionada vai para o helper parado da mesma CLI, sem abrir pane novo.',
+    },
+  ],
+  fixes: [],
 };
