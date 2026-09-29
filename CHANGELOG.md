@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.140 — GPT-6.1 Sol
+
+Lançamento da OpenAI em 29/09. Inclui a 0.76.139.
+
+- **GPT-6.1 Sol é o modelo de trabalho do Codex.** Mesmo preço do GPT-6 Sol ($2/$10 por milhão de tokens; cache $0,10), DeepSWE 75,2 contra 68,8, e empata com o GPT-6 Astra a um quinto do custo, segundo a OpenAI. Panes, squads e a rota automática do Codex passam a usá-lo, e o Jev passa a chegar nele sempre que a tarefa pede o modelo de trabalho da OpenAI. O Codex que ainda não lista o 6.1 continua no GPT-6 Sol. O Astra segue reservado para revisão, alto risco e trabalho crítico.
+
 ## 0.76.139 — O Nexus orquestra sozinho
 
 Pedido do operador em 29/09: o Nexus deve saber orquestrar sozinho e saber qual modelo usar para cada tarefa. Inclui a 0.76.138.

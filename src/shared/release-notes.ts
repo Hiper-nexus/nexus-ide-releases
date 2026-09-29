@@ -8199,7 +8199,7 @@ export const RELEASE_076138: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076139: AppRelease = {
   version: '0.76.139',
   date: '2026-09-29',
   codename: 'O Nexus orquestra sozinho',
@@ -8228,6 +8228,25 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'O app passa a rodar no Electron 43.7.4, que corrige quatro falhas de segurança ' +
         'altas do 43.0.0 (sandbox, leitura entre origens e preload).',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.140',
+  date: '2026-09-29',
+  codename: 'GPT-6.1 Sol',
+  summary:
+    'O GPT-6.1 Sol, lançado hoje pela OpenAI, vira o modelo de trabalho do Codex no Nexus: ' +
+    'mesmo preço do GPT-6 Sol e quase o nível do Astra. Inclui a 0.76.139.',
+  highlights: [
+    {
+      title: 'GPT-6.1 Sol no Codex',
+      detail:
+        'Panes, squads e a rota automática do Codex passam a usar o GPT-6.1 Sol. Ele custa o ' +
+        'mesmo que o GPT-6 Sol e empata com o Astra no DeepSWE, a um quinto do preço. Codex ' +
+        'que ainda não lista o 6.1 continua no GPT-6 Sol.',
     },
   ],
   fixes: [],
