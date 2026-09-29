@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.128 — Todas as LLMs pelo benchmark oficial
+
+Pedido do operador em 29/09. Inclui a 0.76.127.
+
+- **Rota por todas as CLIs disponíveis (F-189).** O Maestro fixava Claude ou Codex e excluía CLIs saudáveis (Grok, AGY, Kimi), a heurística por especialidade empurrava Claude e Codex, e a posição na tabela pesava mais que o benchmark. Agora a rota vem do benchmark oficial publicado por cada LLM, com peso dobrado; modelo sem benchmark publicado entra com nota neutra em vez de ficar sempre por último; a preferência do Maestro só desempata e a exclusão de uma CLI saudável é ignorada (e avisada no motivo da rota). O resultado espalha as tarefas por MiMo, MiniMax, Kimi, GLM, Grok, Gemini, Codex, Claude e as demais CLIs prontas, inclusive nos panes abertos pelo operador sem missão.
+
 ## 0.76.127 — Troca de projeto sem perder agentes
 
 Correção urgente do uso real de 29/09. Inclui a 0.76.126.

@@ -7890,7 +7890,7 @@ export const RELEASE_076126: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076127: AppRelease = {
   version: '0.76.127',
   date: '2026-09-29',
   codename: 'Troca de projeto sem perder agentes',
@@ -7913,4 +7913,29 @@ export const CURRENT_RELEASE: AppRelease = {
         'de recusar cada tecla, e Retomar e Reiniciar funcionam.',
     },
   ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.128',
+  date: '2026-09-29',
+  codename: 'Todas as LLMs pelo benchmark oficial',
+  summary:
+    'A rota das tarefas usa o benchmark oficial de cada LLM e espalha o trabalho por todas ' +
+    'as CLIs prontas — MiMo, MiniMax, Kimi, GLM, Grok, Gemini, Codex, Claude e as demais. ' +
+    'Inclui a 0.76.127.',
+  highlights: [
+    {
+      title: 'Todas as CLIs entram na rota',
+      detail:
+        'Modelos sem benchmark publicado entram com nota neutra em vez de ficar por último, e a ' +
+        'diversidade da missão distribui as tarefas entre todas as CLIs disponíveis.',
+    },
+    {
+      title: 'Benchmark oficial decide',
+      detail:
+        'A nota publicada pelo fabricante pesa mais que a ordem fixa da tabela. A preferência ' +
+        'do Maestro só desempata, e excluir uma CLI saudável é ignorado e avisado.',
+    },
+  ],
+  fixes: [],
 };
