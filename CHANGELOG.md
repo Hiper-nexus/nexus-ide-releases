@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.145 — MiniMax livre
+
+Uso real no Windows em 29/09. Inclui a 0.76.144 (O modelo mais novo, sempre).
+
+- **MiniMax Code roda livre (F-692).** O operador relatou que o MiniMax Code "fica pedindo permissão toda hora". A TUI do `mcode` não tem flag nem variável de ambiente de permissão: o modo vem só da chave `permissionMode` do `~/.minimax/config.yaml`, e o padrão (Ask) pede aprovação a cada ferramenta. As demais CLIs já nascem em modo livre pela sequência verificada de cada adapter. Antes de abrir um pane MiniMax gravável, o Nexus agora garante `permissionMode: bypassPermissions` ("Full access") nesse arquivo. A edição é textual e idempotente: só a linha de topo muda, e o resto do arquivo fica como estava. Panes somente leitura não são liberados.
+
 ## 0.76.144 — O modelo mais novo, sempre
 
 Pedido do operador em 29/09: "qualquer modelo novo deve ser usado; os novos são os melhores". Inclui a 0.76.143.
