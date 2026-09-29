@@ -8252,7 +8252,7 @@ export const RELEASE_076140: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076141: AppRelease = {
   version: '0.76.141',
   date: '2026-09-29',
   codename: 'Sem piscar',
@@ -8283,6 +8283,32 @@ export const CURRENT_RELEASE: AppRelease = {
         'pane. Antes eram recusadas porque o caminho começava com a letra da ' +
         'unidade. As pastas Imagens e Vídeos, inclusive no OneDrive, passam a ' +
         'ser aceitas.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.142',
+  date: '2026-09-29',
+  codename: 'Terminal sobe rápido',
+  summary:
+    'Pane novo com pasta isolada sobe em segundos em vez de quase um minuto, e o terminal ' +
+    'reafirma o próprio tamanho para a CLI não desenhar fora do pane. Inclui a 0.76.141.',
+  highlights: [
+    {
+      title: 'Pane novo sobe em segundos',
+      detail:
+        'Writers do Maestro e o 1º pane de uma aba nova ficavam cerca de 50 s em "Subindo…" ' +
+        'copiando o node_modules arquivo por arquivo. Agora o Nexus clona a pasta inteira de ' +
+        'uma vez: 4 a 6 s no saasbarbearia.',
+    },
+    {
+      title: 'Terminal no tamanho certo',
+      detail:
+        'Ao focar ou voltar a ver um pane, o Nexus reafirma o tamanho dele para a CLI; se ela ' +
+        'estava em outro tamanho, redesenha a tela. "Redesenhar tela" no toolbar do pane força ' +
+        'o redesenho quando algo ainda sair embaralhado.',
     },
   ],
   fixes: [],
