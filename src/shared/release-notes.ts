@@ -7998,7 +7998,7 @@ export const RELEASE_076131: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076132: AppRelease = {
   version: '0.76.132',
   date: '2026-09-29',
   codename: 'Equipe da missão da aba no Quadro',
@@ -8011,6 +8011,24 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'O grafo monta a equipe pelos panes da missão: o Maestro e cada helper, com o estado de ' +
         'cada um e o atalho para o terminal.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.133',
+  date: '2026-09-29',
+  codename: 'Orientação chega ao Maestro da aba',
+  summary:
+    'Orientações enviadas pelo Quadro de uma missão aberta a partir de um pane chegam ao ' +
+    'Maestro, em vez de falhar por falta de recibo de início. Inclui a 0.76.132.',
+  highlights: [
+    {
+      title: 'Orientação pelo Quadro na missão da aba',
+      detail:
+        'A caixa "Enviar orientação" entrega a mensagem ao Maestro da missão da aba; as ' +
+        'checagens de sessão viva e autoridade continuam valendo.',
     },
   ],
   fixes: [],

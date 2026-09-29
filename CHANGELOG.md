@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.133 — Orientação chega ao Maestro da aba
+
+Correção do uso real de 29/09. Inclui a 0.76.132.
+
+- **Orientação pelo Quadro na missão da aba (F-192).** Em missão aberta a partir de um pane, enviar uma orientação pelo Quadro ("@todos: …") falhava com "Mission direct requires the current kickoff receipt": o Nexus exigia um recibo de início que essas missões nunca têm. Agora a orientação vai direto ao Maestro da missão, com as demais checagens de sessão e autoridade mantidas.
+
 ## 0.76.132 — Equipe da missão da aba no Quadro
 
 Correção do uso real de 29/09. Inclui a 0.76.131.
