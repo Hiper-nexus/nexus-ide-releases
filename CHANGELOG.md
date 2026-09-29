@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.132 — Equipe da missão da aba no Quadro
+
+Correção do uso real de 29/09. Inclui a 0.76.131.
+
+- **Quadro mostra quem trabalha na missão da aba (F-191).** Missão aberta a partir de um pane não tem equipe planejada, e o Quadro dizia "Não foi possível carregar a equipe desta missão" mesmo com o Maestro e os helpers trabalhando. Agora o grafo mostra o Maestro e cada helper pelos panes da missão; sem nenhum pane ainda, o aviso explica que os agentes aparecem quando o orquestrador abrir panes.
+
 ## 0.76.131 — Pane órfão volta a abrir
 
 Correção do uso real de 29/09. Inclui a 0.76.130.

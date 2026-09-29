@@ -7980,7 +7980,7 @@ export const RELEASE_076130: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076131: AppRelease = {
   version: '0.76.131',
   date: '2026-09-29',
   codename: 'Pane órfão volta a abrir',
@@ -7993,6 +7993,24 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'O Nexus usa a missão gravada por ele para aquele pane; sem registro, o pane abre como ' +
         'pane comum. Missão real diferente continua recusada.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.132',
+  date: '2026-09-29',
+  codename: 'Equipe da missão da aba no Quadro',
+  summary:
+    'O Quadro de uma missão aberta a partir de um pane mostra o Maestro e os helpers dela, em ' +
+    'vez de dizer que não conseguiu carregar a equipe. Inclui a 0.76.131.',
+  highlights: [
+    {
+      title: 'Equipe da missão da aba no Quadro',
+      detail:
+        'O grafo monta a equipe pelos panes da missão: o Maestro e cada helper, com o estado de ' +
+        'cada um e o atalho para o terminal.',
     },
   ],
   fixes: [],
