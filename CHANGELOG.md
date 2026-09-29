@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.134 — Revisão completa
+
+Revisão de todas as mudanças da 0.76.126 à 0.76.133, com a suíte inteira de testes verde. Inclui a 0.76.133.
+
+- **Orientação a um agente específico da missão da aba (F-193).** A revisão achou uma regressão da 0.76.132: com o Maestro e os helpers da missão da aba no seletor do Quadro, orientar um agente específico falhava. Agora a orientação vai ao Maestro com a indicação do helper escolhido, e as recusas da caixa de orientação aparecem em português, dizendo o que fazer (esperar o briefing, Retomar ou «Religar a missão ao Maestro»), em vez da mensagem técnica em inglês.
+
 ## 0.76.133 — Orientação chega ao Maestro da aba
 
 Correção do uso real de 29/09. Inclui a 0.76.132.

@@ -8016,7 +8016,7 @@ export const RELEASE_076132: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076133: AppRelease = {
   version: '0.76.133',
   date: '2026-09-29',
   codename: 'Orientação chega ao Maestro da aba',
@@ -8032,4 +8032,30 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.134',
+  date: '2026-09-29',
+  codename: 'Revisão completa',
+  summary:
+    'Revisão de todas as mudanças desde a 0.76.126, com a suíte inteira de testes verde. ' +
+    'Orientar um agente específico da missão da aba volta a funcionar, e as recusas da ' +
+    'orientação aparecem em português. Inclui a 0.76.133.',
+  highlights: [
+    {
+      title: 'Orientação a um agente da missão da aba',
+      detail:
+        'Escolher um helper no seletor do Quadro manda a orientação ao Maestro com a indicação ' +
+        'do pane a repassar.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Recusas da orientação em português',
+      detail:
+        'Briefing em curso, Maestro parado, terminal não reconhecido ou agente fora da missão ' +
+        'aparecem com o que fazer, em vez da mensagem técnica em inglês.',
+    },
+  ],
 };
