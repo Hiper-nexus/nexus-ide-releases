@@ -211,3 +211,45 @@ export function prepareMinimaxMcpSession(
     ...registration,
   };
 }
+
+export function minimaxUserConfigPath(home = os.homedir()): string {
+  return path.join(home, '.minimax', 'config.yaml');
+}
+
+export const MINIMAX_FULL_ACCESS_MODE = 'bypassPermissions';
+
+/**
+ * F-692: a TUI do mcode não tem flag nem ENV de permissão; o modo vem só da
+ * chave de topo `permissionMode` do `config.yaml` (`default` pergunta a cada
+ * ferramenta). Todo pane gravável do Nexus roda livre — o mesmo invariante
+ * "sempre full-auto" das outras CLIs (`--dangerously-skip-permissions`,
+ * `--yolo`, `--always-approve`…) —, então o Nexus garante
+ * `permissionMode: bypassPermissions` ("Full access") antes do spawn.
+ * Edição TEXTUAL e idempotente: só a linha de topo muda (ou entra no fim);
+ * comentários, ordem e o resto do arquivo ficam como o usuário deixou.
+ */
+export function ensureMinimaxFullAccess(
+  options: { readonly home?: string } = {},
+): { changed: boolean; reason?: string } {
+  const file = minimaxUserConfigPath(options.home ?? os.homedir());
+  let raw = '';
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      return { changed: false, reason: 'config.yaml do MiniMax ilegível — não foi alterado' };
+    }
+  }
+  const eol = raw.includes('\r\n') ? '\r\n' : '\n';
+  const line = `permissionMode: ${MINIMAX_FULL_ACCESS_MODE}`;
+  const current = /^permissionMode:[ \t]*([^\r\n]*?)[ \t]*\r?$/mu.exec(raw);
+  if (current) {
+    const value = current[1]!.replace(/\s+#.*$/u, '').trim().replace(/^(['"])(.*)\1$/u, '$2');
+    if (value === MINIMAX_FULL_ACCESS_MODE) return { changed: false };
+    writeFileAtomic(file, raw.replace(/^permissionMode:[^\r\n]*/mu, line));
+    return { changed: true };
+  }
+  const separator = raw.length === 0 || raw.endsWith('\n') ? '' : eol;
+  writeFileAtomic(file, `${raw}${separator}${line}${eol}`);
+  return { changed: true };
+}

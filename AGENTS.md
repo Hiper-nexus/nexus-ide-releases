@@ -872,9 +872,13 @@ saber isto antes de mexer:
   responde zero ferramentas. Nunca use `MINIMAX_DATA_DIR` como overlay: a
   credencial é chaveada pelo caminho do data dir e o login some. O harness ACP
   (`mcode acp`) continua recebendo `mcpServers` no `session/new`.
-- A TUI não tem flag de permissão nem de esforço: vêm do `config.yaml`
-  (`permissionMode`, `defaultModelThinking.effort`). Worker autônomo precisa de
-  Full access escolhido na própria CLI. O Jev roteia sem `effort`.
+- A TUI não tem flag nem ENV de permissão nem de esforço: vêm do `config.yaml`
+  (`permissionMode`, `defaultModelThinking.effort`); `MCODE_CONFIG_DIR` é só das
+  ferramentas de sandbox. F-692: todo pane MiniMax gravável roda livre como as
+  outras CLIs — `ensureMinimaxFullAccess` grava `permissionMode:
+  bypassPermissions` no `~/.minimax/config.yaml` antes do spawn (edição textual
+  da linha de topo, idempotente). Lane somente leitura não é liberada. O Jev
+  roteia sem `effort`.
 - Prompt inicial posicional depois de `--` (commander lê `-x` como opção).
   Resume só por id exato (`--session <id>`); sem hooks não há id capturado,
   então `--continue` (última sessão do cwd) fica proibido.

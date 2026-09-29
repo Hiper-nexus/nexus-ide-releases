@@ -81,6 +81,7 @@ import {
 import { windowsNpmShimSpawn } from "../adapters/windows-npm-shim";
 import { windowsCodexShimWithinMaxPath } from "../adapters/codex-windows-prefix";
 import { codexNoDaemonArgs } from "../orch/codex-cli-version";
+import { ensureMinimaxFullAccess } from "../orch/cli-mcp-session-minimax";
 import { windowsArgvPromptPlacement } from "./windows-command-line";
 import {
   isBuiltinAdapter,
@@ -2163,6 +2164,13 @@ export function spawnAgentSession(
       !args.includes("--no-daemon")
     ) {
       args.unshift(...codexNoDaemonArgs(bin));
+    }
+    // F-692: o mcode não tem flag de permissão; o modo livre das outras CLIs
+    // (`--dangerously-skip-permissions`, `--yolo`…) vem do `config.yaml`.
+    // Lane somente leitura não é liberada.
+    if (adapter.id === "minimax-code" && !nativeReadOnly) {
+      const fullAccess = ensureMinimaxFullAccess();
+      if (fullAccess.reason) console.warn(`[pty] MiniMax Code: ${fullAccess.reason}`);
     }
     if (
       !usesKimiTransientModel &&
