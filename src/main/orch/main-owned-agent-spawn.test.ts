@@ -206,7 +206,9 @@ describe("main-owned agent spawn boundary", () => {
     });
   });
 
-  it("classifies an orphaned mission layout pane as stale persisted authority", () => {
+  it("classifies an orphaned mission layout pane as stale persisted authority when the claimed mission exists", () => {
+    // A missão alegada EXISTE no escopo: é conflito real, a recusa fica.
+    missionDeps.mission = { id: "mission-deleted" };
     expect(() =>
       authorizeMainOwnedAgentSpawn(
         owner as never,
@@ -222,6 +224,33 @@ describe("main-owned agent spawn boundary", () => {
         {} as never,
       ),
     ).toThrow(/persisted mission pane authority.*no longer registered/i);
+  });
+
+  it("strips a renderer missionId that names a mission Main has never seen", () => {
+    // Sem spec persistido e missão alegada inexistente no escopo: o carimbo é
+    // órfão do layout — o spawn segue como pane direto em vez de fechar para
+    // sempre em "no longer registered".
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const authorized = authorizeMainOwnedAgentSpawn(
+      owner as never,
+      {
+        kind: "cli-agent",
+        cols: 80,
+        rows: 24,
+        adapterId: "claude",
+        cwd: scope.rootRealPath,
+        paneId: "pane-from-deleted-mission",
+        missionId: "mission-deleted",
+        orchRequestId: "orchspawn-stale-do-layout",
+      },
+      {} as never,
+    );
+
+    expect(authorized.persistedPane).toBeNull();
+    expect(authorized.request.missionId).toBeUndefined();
+    expect(authorized.request.orchRequestId).toBeUndefined();
+    expect(warn).toHaveBeenCalled();
   });
 
   it("derives persisted squad identity only from the current scoped mission", () => {

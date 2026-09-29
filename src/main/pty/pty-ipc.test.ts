@@ -1427,10 +1427,16 @@ describe("registerPtyIpc account fail-fast", () => {
       updatedAt: 1,
     };
     authorityDeps.listSquads.mockReturnValue([squad]);
-    authorityDeps.getMission.mockReturnValueOnce(approved).mockReturnValueOnce({
-      ...approved,
-      intentVersion: 2,
-    });
+    // Cada spawn lê a missão duas vezes: o gate de órfão do renderer
+    // (missão alegada existe no escopo?) e o bindMissionLaunchAuthority.
+    // 1º spawn: aprovada nas duas leituras; 2º: revisão intent vencida nas
+    // duas — a recusa continua sendo a de autoridade de dispatch.
+    const staleRevision = { ...approved, intentVersion: 2 };
+    authorityDeps.getMission
+      .mockReturnValueOnce(approved)
+      .mockReturnValueOnce(approved)
+      .mockReturnValueOnce(staleRevision)
+      .mockReturnValueOnce(staleRevision);
     providerDeps.prepareProviderSpawn.mockReturnValue({ ok: true, overrides: {} });
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
     const sender = { id: 7, isDestroyed: () => false };

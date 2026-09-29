@@ -399,6 +399,29 @@ function assertCurrentPersistedPaneAuthority(
 }
 
 /**
+ * Renderer layout outlives Main state: a pane can resurrect carrying a
+ * missionId that exists nowhere in the scope store (deleted row, pane copied
+ * between workspaces). That stale binding must never fence a live pane —
+ * warn once per (paneId, claimed mission) so sync/heartbeat retries don't
+ * spam, and let the fail-closed path below decide.
+ */
+const staleRendererMissionWarned = new Set<string>();
+
+function warnStaleRendererMissionBinding(
+  paneId: string,
+  claimedMissionId: string,
+  detail: string,
+): void {
+  const key = `${paneId}${claimedMissionId}`;
+  if (staleRendererMissionWarned.has(key)) return;
+  staleRendererMissionWarned.add(key);
+  console.warn(
+    `[mission-pane] missionId do renderer ignorado: pane ${paneId} ` +
+      `alega '${claimedMissionId}' que não existe no escopo — ${detail}`,
+  );
+}
+
+/**
  * Claims and canonicalizes every opaque renderer token at one main-process
  * boundary. Both PTY and RPC consume this exact envelope.
  */
@@ -440,6 +463,8 @@ export function authorizeMainOwnedAgentSpawn(
   }
 
   let persistedPane: ScopedMissionPaneSpec | null = null;
+  let rendererScope: ReturnType<typeof requireRendererWorkspaceScope> | null =
+    null;
   if (
     !pending &&
     canonicalRequest.kind !== "shell" &&
@@ -454,10 +479,31 @@ export function authorizeMainOwnedAgentSpawn(
       throw new Error("project-scoped PTY runtime is not initialized");
     }
     const scope = requireRendererWorkspaceScope(owner);
+    rendererScope = scope;
     const found = createScopedMissionPaneStore(
       runtimeManager,
       scope,
     ).findByPaneId(canonicalRequest.paneId);
+    if (
+      found &&
+      canonicalRequest.missionId &&
+      canonicalRequest.missionId !== found.missionId &&
+      !createScopedMissionStore(runtimeManager, scope).get(
+        canonicalRequest.missionId,
+      )
+    ) {
+      // O layout do renderer traz um missionId que não existe em lugar
+      // nenhum do escopo: vínculo órfão, não conflito. A spec persistida é
+      // a autoridade — o request herda o missionId dela antes do gate e da
+      // fence (resume e fresh). Uma missão alegada que EXISTE é divergência
+      // real e segue cercada abaixo.
+      warnStaleRendererMissionBinding(
+        canonicalRequest.paneId,
+        canonicalRequest.missionId,
+        `persistido=${found.missionId}`,
+      );
+      canonicalRequest = { ...canonicalRequest, missionId: found.missionId };
+    }
     if (
       found &&
       (
@@ -481,6 +527,32 @@ export function authorizeMainOwnedAgentSpawn(
   }
   if (recovery && !persistedPane) {
     throw new Error("pane recovery has no current persisted authority");
+  }
+  if (
+    !pending &&
+    !persistedPane &&
+    rendererScope &&
+    runtimeManager &&
+    canonicalRequest.missionId &&
+    canonicalRequest.paneId &&
+    !createScopedMissionStore(runtimeManager, rendererScope).get(
+      canonicalRequest.missionId,
+    )
+  ) {
+    // Pane sem spec persistido reivindicando missão inexistente: carimbo
+    // órfão do layout (missão apagada/pane copiado entre workspaces). Sem o
+    // strip o pane nunca mais abria — "no longer registered" eterno. Uma
+    // missão que EXISTE continua fechando abaixo.
+    warnStaleRendererMissionBinding(
+      canonicalRequest.paneId,
+      canonicalRequest.missionId,
+      "sem spec persistido — segue como pane direto",
+    );
+    canonicalRequest = {
+      ...canonicalRequest,
+      missionId: undefined,
+      orchRequestId: undefined,
+    };
   }
   if (
     !pending &&

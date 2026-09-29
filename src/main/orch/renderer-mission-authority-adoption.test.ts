@@ -675,3 +675,142 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     expect(second.tabMission).toBeUndefined();
   });
 });
+
+describe("missionId órfão do layout — a autoridade selada do Main vence (F: pane reiniciar preso)", () => {
+  it("spec persistido Y + renderer alega missão X inexistente com resume → canonical carrega Y", () => {
+    const sessionId = operatorPane("pane-a");
+    register([{ paneId: "pane-a", sessionId }]);
+    const missionY = authority().createPaneMissionFromRenderer(owner, {
+      paneId: "pane-a",
+      title: "Missão · Persistida",
+    }).mission!.id;
+
+    const authorized = authorizeMainOwnedAgentSpawn(
+      owner,
+      {
+        kind: "cli-agent",
+        cols: 80,
+        rows: 24,
+        paneId: "pane-a",
+        adapterId: "test-cli",
+        model: "default",
+        cwd: scope.rootRealPath,
+        missionId: "mission-que-nao-existe",
+        resume: true,
+      },
+      manager,
+    );
+
+    expect(authorized.persistedPane?.missionId).toBe(missionY);
+    expect(authorized.request.missionId).toBe(missionY);
+  });
+
+  it("spec persistido Y + restorePersistedAuthority com missão X inexistente → fresh selado de Y", async () => {
+    const sessionId = operatorPane("pane-a");
+    register([{ paneId: "pane-a", sessionId }]);
+    const missionY = authority().createPaneMissionFromRenderer(owner, {
+      paneId: "pane-a",
+      title: "Missão · Persistida",
+    }).mission!.id;
+    // Sessão morta: o fresh explícito só é honrado sem sessão viva.
+    await orchTerminateSession(sessionId);
+
+    const authorized = authorizeMainOwnedAgentSpawn(
+      owner,
+      {
+        kind: "cli-agent",
+        cols: 80,
+        rows: 24,
+        paneId: "pane-a",
+        adapterId: "test-cli",
+        model: "default",
+        cwd: scope.rootRealPath,
+        missionId: "mission-que-nao-existe",
+        restorePersistedAuthority: true,
+      },
+      manager,
+    );
+
+    expect(authorized.request).toMatchObject({
+      missionId: missionY,
+      restorePersistedAuthority: true,
+    });
+  });
+
+  it("renderer alega missão Z que EXISTE → a fence de divergência continua fechada", () => {
+    const sessionA = operatorPane("pane-a");
+    const sessionB = operatorPane("pane-b");
+    register([
+      { paneId: "pane-a", sessionId: sessionA },
+      { paneId: "pane-b", sessionId: sessionB },
+    ]);
+    const main = authority();
+    main.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão A", tabKey: "space:a" });
+    const missionZ = main.createPaneMissionFromRenderer(owner, { paneId: "pane-b", title: "Missão Z", tabKey: "space:z" }).mission!.id;
+
+    expect(() =>
+      authorizeMainOwnedAgentSpawn(
+        owner,
+        {
+          kind: "cli-agent",
+          cols: 80,
+          rows: 24,
+          paneId: "pane-a",
+          adapterId: "test-cli",
+          model: "default",
+          cwd: scope.rootRealPath,
+          missionId: missionZ,
+          resume: true,
+        },
+        manager,
+      ),
+    ).toThrow(/persisted pane request.*missionId/i);
+  });
+
+  it("sem spec persistido + missão alegada inexistente → spawns como pane direto, sem missionId", () => {
+    const authorized = authorizeMainOwnedAgentSpawn(
+      owner,
+      {
+        kind: "cli-agent",
+        cols: 80,
+        rows: 24,
+        paneId: "pane-fantasma",
+        adapterId: "test-cli",
+        cwd: scope.rootRealPath,
+        missionId: "mission-que-nao-existe",
+        orchRequestId: "orchspawn-stale-do-layout",
+      },
+      manager,
+    );
+
+    expect(authorized.persistedPane).toBeNull();
+    expect(authorized.request.missionId).toBeUndefined();
+    expect(authorized.request.orchRequestId).toBeUndefined();
+  });
+
+  it("sem spec persistido + missão alegada que EXISTE → continua 'no longer registered'", () => {
+    const sessionB = operatorPane("pane-b");
+    register([{ paneId: "pane-b", sessionId: sessionB }]);
+    const missionZ = authority().createPaneMissionFromRenderer(owner, {
+      paneId: "pane-b",
+      title: "Missão Z",
+      tabKey: "space:z",
+    }).mission!.id;
+
+    expect(() =>
+      authorizeMainOwnedAgentSpawn(
+        owner,
+        {
+          kind: "cli-agent",
+          cols: 80,
+          rows: 24,
+          paneId: "pane-fantasma",
+          adapterId: "test-cli",
+          cwd: scope.rootRealPath,
+          missionId: missionZ,
+        },
+        manager,
+      ),
+    ).toThrow(/no longer registered/i);
+  });
+});
