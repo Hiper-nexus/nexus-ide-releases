@@ -455,6 +455,8 @@ interface MissionDirectAuthority {
   readonly adapterId: string;
   /** Direção entregue direto ao worker (squad sem orquestrador na Via Rápida). */
   readonly operatorDirectToWorker: boolean;
+  /** Missão da aba: alvos são 'orchestrator'/null ou 'pane:<paneId>' de worker. */
+  readonly operatorTabMission: boolean;
   readonly authorityFingerprint: string;
 }
 
@@ -632,6 +634,34 @@ function healSplitBrainMissionRow(
   }
 }
 
+/**
+ * Missão da aba (sem squad): não há squad selada para validar o alvo — os
+ * alvos possíveis são o próprio Maestro ('orchestrator'/null) ou um helper
+ * gravado como pane worker ('pane:<paneId>'). O Composer monta o seletor a
+ * partir dos agentes sintetizados por estes mesmos specs, então a validação
+ * é contra missionPanes, não contra um roster. O hash retornado segue o do
+ * contrato (entra no fingerprint), nunca um selo de squad que não existe.
+ */
+function operatorTabDirectTargetHash(
+  stores: ProjectDomainStoreSuite,
+  mission: Mission,
+  command: MissionDirectCommand,
+): string | null {
+  const target = command.targetAgentId;
+  if (target !== null && target !== "orchestrator") {
+    const paneId = target.startsWith("pane:") ? target.slice(5) : null;
+    const spec = paneId
+      ? stores.missionPanes
+          .list(mission.id)
+          .find((candidate) => candidate.paneId === paneId)
+      : null;
+    if (!spec || spec.role !== "worker") {
+      throw new Error("mission direct target is not an agent of this mission");
+    }
+  }
+  return mission.intentContract?.squadRevisionHash ?? null;
+}
+
 function missionDirectAuthority(
   scope: ProjectExecutionScope,
   stores: ProjectDomainStoreSuite,
@@ -643,6 +673,7 @@ function missionDirectAuthority(
     throw new Error("mission direct requires a current mission");
   }
   const mission = healSplitBrainMissionRow(stores, stored);
+  const operatorTab = isOperatorTabMission(mission);
   if (!hasCurrentDispatchAuthority(mission)) {
     throw new Error("mission direct requires live current dispatch authority");
   }
@@ -676,7 +707,7 @@ function missionDirectAuthority(
     // viva, pane orquestrador gravado para a sessão, selo de runtime quando
     // o contrato o traz, hash de squad e fingerprint/idempotência.
     if (
-      !isOperatorTabMission(mission) &&
+      !operatorTab &&
       !stores.missions.hasCurrentKickoffAcceptance(mission.id)
     ) {
       throw new Error("mission direct requires the current kickoff receipt");
@@ -720,7 +751,9 @@ function missionDirectAuthority(
     pane = orchestratorPane;
   }
 
-  const squadRevisionHash = sealedSquadTargetHash(mission, command, deps);
+  const squadRevisionHash = operatorTab
+    ? operatorTabDirectTargetHash(stores, mission, command)
+    : sealedSquadTargetHash(mission, command, deps);
 
   const authorityFingerprint = createHash("sha256")
     .update(
@@ -747,6 +780,7 @@ function missionDirectAuthority(
     sessionId,
     adapterId: pane.adapterId,
     operatorDirectToWorker: operatorIsOrchestrator,
+    operatorTabMission: operatorTab,
     authorityFingerprint,
   };
 }
@@ -792,19 +826,33 @@ async function resolveMissionDirectAuthority(
 function missionDirectPrompt(
   command: MissionDirectCommand,
   operatorDirectToWorker: boolean,
+  operatorTabMission: boolean,
 ): string {
   const payload = {
     kind: "operator_direction" as const,
     targetAgentId: command.targetAgentId,
     text: command.text,
   };
-  const targetRule = operatorDirectToWorker
-    ? command.targetAgentId === null
-      ? "The operator directs this mission directly: apply the direction to the current work."
-      : "The operator selected this agent directly: apply the direction to the current work."
-    : command.targetAgentId === null
-      ? "Apply this direction to your current mission."
-      : `Route this direction to exactly squad agent ${JSON.stringify(command.targetAgentId)} and retain orchestration authority.`;
+  let targetRule: string;
+  if (operatorDirectToWorker) {
+    targetRule =
+      command.targetAgentId === null
+        ? "The operator directs this mission directly: apply the direction to the current work."
+        : "The operator selected this agent directly: apply the direction to the current work.";
+  } else if (operatorTabMission) {
+    // Missão da aba: o Maestro é a conversa do operador e os helpers são
+    // panes — o repasse é por nexus_pane_write, não por id de squad.
+    targetRule =
+      command.targetAgentId === null ||
+      command.targetAgentId === "orchestrator"
+        ? "Apply this direction to your current mission."
+        : `Route this direction to the mission helper in pane ${JSON.stringify(command.targetAgentId.slice("pane:".length))} with nexus_pane_write and retain orchestration authority.`;
+  } else {
+    targetRule =
+      command.targetAgentId === null
+        ? "Apply this direction to your current mission."
+        : `Route this direction to exactly squad agent ${JSON.stringify(command.targetAgentId)} and retain orchestration authority.`;
+  }
   return assertSafePtyPrompt(
     [
       "Nexus operator direction accepted by the main process.",
@@ -958,7 +1006,11 @@ export async function deliverMissionDirectInstruction(
     }
     throw error;
   }
-  const prompt = missionDirectPrompt(command, initial.operatorDirectToWorker);
+  const prompt = missionDirectPrompt(
+    command,
+    initial.operatorDirectToWorker,
+    initial.operatorTabMission,
+  );
   const acpSession = deps.getAcpDriverSession(initial.sessionId);
   if (acpSession) {
     const status = deps.getAcpDriverSemanticStatus(initial.sessionId);

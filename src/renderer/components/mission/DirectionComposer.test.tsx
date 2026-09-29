@@ -326,6 +326,26 @@ describe('DirectionComposer', () => {
     expect(alert && host.contains(alert)).toBe(true);
   });
 
+  it('shows the mapped PT-BR copy for a rejected mission-direct target', async () => {
+    const onCommand = vi.fn(async (_command: MissionEngineCommand) => {
+      throw new Error('mission direct target is not an agent of this mission');
+    });
+    const host = mountComposer(onCommand);
+    const { draft, submit } = composerControls(host);
+
+    setDraft(draft, 'Refaça a revisão.');
+    await act(async () => {
+      submit.click();
+      await Promise.resolve();
+    });
+
+    const alert = host.querySelector<HTMLElement>('[role="alert"]');
+    expect(alert?.textContent).toBe(
+      'O agente escolhido não faz parte desta missão. Envie para @todos.',
+    );
+    expect(alert?.textContent).not.toMatch(/mission direct|not an agent/i);
+  });
+
   it('is hidden or fully disabled when direct is unavailable and never reports a delivery', () => {
     const onCommand = successfulCommand();
     const host = mountComposer(onCommand, true);

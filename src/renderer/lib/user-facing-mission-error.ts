@@ -123,6 +123,35 @@ function knownMissionRecovery(raw: string): string | null {
   if (/mission runtime source squad is unavailable/i.test(raw)) {
     return "A equipe preparada perdeu o vínculo com esta pasta. Prepare a missão novamente.";
   }
+  // Orientação da equipe (DirectionComposer): as recusas do caminho direct
+  // chegavam cruas em inglês (print 29/09) — cada uma vira a ação que destrava.
+  if (/mission direct requires the current kickoff receipt/i.test(raw)) {
+    return "A coordenação ainda está recebendo o briefing da missão. Envie de novo em alguns segundos.";
+  }
+  if (
+    /mission direct (?:requires a live orchestrator session|orchestrator session is not live)/i.test(
+      raw,
+    )
+  ) {
+    return "O Maestro desta missão não está rodando. Use Retomar no Quadro para religá-lo.";
+  }
+  if (
+    /mission direct orchestrator authority (?:is incomplete|mismatch)/i.test(
+      raw,
+    )
+  ) {
+    return "A missão não reconhece o terminal do Maestro. Use «Religar a missão ao Maestro» no Quadro.";
+  }
+  if (
+    /mission direct target (?:requires sealed squad authority|squad authority is stale|agent is not in the sealed squad|is not an agent of this mission)/i.test(
+      raw,
+    )
+  ) {
+    return "O agente escolhido não faz parte desta missão. Envie para @todos.";
+  }
+  if (/mission direct requires live current dispatch authority/i.test(raw)) {
+    return "A missão está parada. Use Retomar no Quadro antes de orientar a equipe.";
+  }
   return null;
 }
 

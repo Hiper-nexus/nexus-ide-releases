@@ -666,6 +666,108 @@ describe('mission direct — missão da aba (sem squad, orquestrador = pane do o
     expect(deliverSpy).not.toHaveBeenCalled();
   });
 
+  it('alvo pane:<paneId> de worker → entregue ao Maestro com a regra de repasse por nexus_pane_write', async () => {
+    const mission = operatorTabMission();
+    const orch = makeOrchSession({ squadId: undefined, agentName: 'Maestro' });
+    const { stores, deps, deliverSpy } = makeHarness({
+      mission,
+      squad: makeSquad(),
+      workers: [],
+      panes: [
+        makeOrchPane(),
+        makeWorkerPane({ paneId: 'pane-helper-1', id: 'pane-helper-1', agentName: 'Auxiliar' }),
+      ],
+      kickoffReceipt: false,
+      getRuntimeAgentSessionInfo: (sessionId) =>
+        sessionId === orch.sessionId ? orch : null,
+    });
+
+    await deliverMissionDirectInstruction(
+      makeScope(),
+      stores,
+      directCommand({ targetAgentId: 'pane:pane-helper-1' }),
+      deps,
+    );
+
+    expect(deliverSpy).toHaveBeenCalledTimes(1);
+    const [sessionId, prompt] = deliverSpy.mock.calls[0] as [string, string];
+    expect(sessionId).toBe('sess-orch-live');
+    expect(prompt).toContain(
+      'Route this direction to the mission helper in pane "pane-helper-1" ' +
+        'with nexus_pane_write and retain orchestration authority.',
+    );
+  });
+
+  it('alvo orchestrator na missão da aba → mesma regra do alvo nulo', async () => {
+    const mission = operatorTabMission();
+    const orch = makeOrchSession({ squadId: undefined, agentName: 'Maestro' });
+    const { stores, deps, deliverSpy } = makeHarness({
+      mission,
+      squad: makeSquad(),
+      workers: [],
+      panes: [makeOrchPane()],
+      kickoffReceipt: false,
+      getRuntimeAgentSessionInfo: (sessionId) =>
+        sessionId === orch.sessionId ? orch : null,
+    });
+
+    await deliverMissionDirectInstruction(
+      makeScope(),
+      stores,
+      directCommand({ targetAgentId: 'orchestrator' }),
+      deps,
+    );
+
+    expect(deliverSpy).toHaveBeenCalledTimes(1);
+    expect(deliverSpy.mock.calls[0]?.[1]).toContain(
+      'Apply this direction to your current mission.',
+    );
+  });
+
+  it('alvo inexistente ou pane que não é worker → recusado, sem entrega', async () => {
+    const mission = operatorTabMission();
+    const orch = makeOrchSession({ squadId: undefined, agentName: 'Maestro' });
+    const { stores, deps, deliverSpy } = makeHarness({
+      mission,
+      squad: makeSquad(),
+      workers: [],
+      panes: [
+        makeOrchPane(),
+        makeWorkerPane({ paneId: 'pane-helper-1', id: 'pane-helper-1' }),
+      ],
+      kickoffReceipt: false,
+      getRuntimeAgentSessionInfo: (sessionId) =>
+        sessionId === orch.sessionId ? orch : null,
+    });
+
+    await expect(
+      deliverMissionDirectInstruction(
+        makeScope(),
+        stores,
+        directCommand({ targetAgentId: 'pane:nope' }),
+        deps,
+      ),
+    ).rejects.toThrow('mission direct target is not an agent of this mission');
+    // Existe, mas é o pane do orquestrador — helper só se for role worker.
+    await expect(
+      deliverMissionDirectInstruction(
+        makeScope(),
+        stores,
+        directCommand({ targetAgentId: 'pane:pane-orch' }),
+        deps,
+      ),
+    ).rejects.toThrow('mission direct target is not an agent of this mission');
+    await expect(
+      deliverMissionDirectInstruction(
+        makeScope(),
+        stores,
+        directCommand({ targetAgentId: 'qualquer-outra-coisa' }),
+        deps,
+      ),
+    ).rejects.toThrow('mission direct target is not an agent of this mission');
+    expect(deliverSpy).not.toHaveBeenCalled();
+  });
+
   it('missão COM squad sem recibo → inalterado: enfileira no kickoff, sem erro cru', async () => {
     const squad = makeSquad([
       makeAgent(),

@@ -163,4 +163,61 @@ describe("user-facing mission errors", () => {
       ),
     ).toMatch(/arquivos não commitados em \.context/i);
   });
+
+  it("maps mission-direct diagnostics to operator Portuguese recovery copy", () => {
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      [
+        "mission direct requires the current kickoff receipt",
+        "A coordenação ainda está recebendo o briefing da missão. " +
+          "Envie de novo em alguns segundos.",
+      ],
+      [
+        "mission direct requires a live orchestrator session",
+        "O Maestro desta missão não está rodando. " +
+          "Use Retomar no Quadro para religá-lo.",
+      ],
+      [
+        "mission direct orchestrator session is not live",
+        "O Maestro desta missão não está rodando. " +
+          "Use Retomar no Quadro para religá-lo.",
+      ],
+      [
+        "mission direct orchestrator authority is incomplete",
+        "A missão não reconhece o terminal do Maestro. " +
+          "Use «Religar a missão ao Maestro» no Quadro.",
+      ],
+      [
+        "mission direct orchestrator authority mismatch: adapterId",
+        "A missão não reconhece o terminal do Maestro. " +
+          "Use «Religar a missão ao Maestro» no Quadro.",
+      ],
+      [
+        "mission direct target requires sealed squad authority",
+        "O agente escolhido não faz parte desta missão. Envie para @todos.",
+      ],
+      [
+        "mission direct target squad authority is stale",
+        "O agente escolhido não faz parte desta missão. Envie para @todos.",
+      ],
+      [
+        "mission direct target agent is not in the sealed squad",
+        "O agente escolhido não faz parte desta missão. Envie para @todos.",
+      ],
+      [
+        "mission direct target is not an agent of this mission",
+        "O agente escolhido não faz parte desta missão. Envie para @todos.",
+      ],
+      [
+        "mission direct requires live current dispatch authority",
+        "A missão está parada. Use Retomar no Quadro antes de orientar a equipe.",
+      ],
+    ];
+    for (const [raw, expected] of cases) {
+      expect(
+        toUserFacingMissionError(
+          new Error(`Error invoking remote method 'orch:mission.command': ${raw}`),
+        ),
+      ).toBe(expected);
+    }
+  });
 });
