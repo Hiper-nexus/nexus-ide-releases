@@ -7840,7 +7840,7 @@ export const RELEASE_076125: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076126: AppRelease = {
   version: '0.76.126',
   date: '2026-09-29',
   codename: 'Volta inteira',
@@ -7886,6 +7886,31 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'O trace do Nexus registra como cada sessão de agente terminou e quanto cada etapa da ' +
         'abertura de um pane levou.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.127',
+  date: '2026-09-29',
+  codename: 'Troca de projeto sem perder agentes',
+  summary:
+    'Trocar de workspace não encerra mais os agentes das missões, e o pane de um agente ' +
+    'que parou fora da tela volta a aceitar Retomar e Reiniciar. Inclui a 0.76.126.',
+  highlights: [
+    {
+      title: 'Troca de projeto sem matar agentes',
+      detail:
+        'Sair e voltar de um workspace mantém o Maestro e os helpers da missão rodando, ' +
+        'inclusive quando o plano da missão foi revisado.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Pane de agente parado volta a responder',
+      detail:
+        'Quando um agente para com o projeto fora da tela, o pane mostra que ele parou em vez ' +
+        'de recusar cada tecla, e Retomar e Reiniciar funcionam.',
     },
   ],
 };

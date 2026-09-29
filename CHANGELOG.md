@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.127 — Troca de projeto sem perder agentes
+
+Correção urgente do uso real de 29/09. Inclui a 0.76.126.
+
+- **Trocar de workspace não mata mais os agentes (F-188).** Ao sair de um projeto, o Nexus encerrava helpers cujo plano tinha sido revisado; ao voltar, encerrava qualquer pane da missão que não passasse numa checagem de apresentação. Depois de algumas trocas só sobrava o Maestro, e os panes mortos pareciam vivos: cada tecla dava "o main recusou a digitação neste pane" e Reiniciar não fazia nada. Agora a troca nunca encerra agente vivo e, quando um agente para fora da tela, o pane mostra que ele parou e aceita Retomar e Reiniciar.
+
 ## 0.76.126 — Volta inteira
 
 Correções do uso real de 28/09: missões em dois projetos ao mesmo tempo, troca de aplicativo e ditado. Inclui a 0.76.125.
