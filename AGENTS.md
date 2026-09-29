@@ -324,6 +324,13 @@ saber isto antes de mexer:
   multi-score; hard sem revisão segue distribuindo entre todas as LLMs.
   DeepSWE, TB2.1 e SWE-bench Verified saturaram: modelo barato empata com o
   topo neles, e só o TB4 os separa.
+- Modelo mais novo sempre (regra do operador, F-691/F-217/F-218): dentro de
+  uma linha (`modelLineOf` em `src/shared/model-line.ts`: só os números
+  mudam), a versão mais nova que a CLI oferece substitui a velha na rota, no
+  padrão do pane, no `model` explícito do `nexus_pane_spawn`, no template de
+  squad e no modelo citado no texto. Sem benchmark, herda a nota da versão
+  anterior; versão nova de modelo de topo continua topo. Não sobem: roster
+  selado, reserva de rota já emitida, resume e o "+ Pane" do renderer.
 
 ## Worktree rápida e tamanho do PTY (F-215/F-216)
 
