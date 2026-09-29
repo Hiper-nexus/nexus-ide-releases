@@ -247,6 +247,7 @@ import {
   withHandoffContract,
   deliverPromptAfterPendingSpawn,
 } from './tool-util';
+import { startPhaseTimer } from '../observability/phase-timer';
 import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
 import { getPaneAuthzInfo, pendingSpawnAttemptSession } from './pane-registry';
 import { onWorkerSpawnFailed } from './spawn-fail-events';
@@ -632,6 +633,38 @@ describe('agent pane workspace confinement', () => {
       'session-1',
       spawnOptions?.initialPrompt,
     );
+  });
+
+  it('R6/F-213: subdivide o pty-spawn nos awaits internos (probe, alloc, writer, prompt)', async () => {
+    stubs.sessionState.mockReturnValue('busy');
+    const timer = startPhaseTimer();
+
+    await spawnPaneAndMaybePrompt(
+      {
+        adapterId: 'codex',
+        missionId: 'm1',
+        role: 'worker',
+        prompt: 'Implemente a interface e entregue o handoff.',
+        scope,
+        executionScope: taskExecutionScope,
+      },
+      { timer },
+    );
+
+    // O timer vai junto do pedido de spawn — o runtime main-owned pode marcar
+    // permit/provider-prep/pty-spawn por dentro do requestPaneSpawn.
+    expect(stubs.requestPaneSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ spawnTimer: timer }),
+    );
+    const { phases } = timer.finish();
+    for (const phase of [
+      'credential-probe',
+      'pane-alloc',
+      'writer-ready',
+      'prompt-delivery',
+    ]) {
+      expect(phases, phase).toHaveProperty(phase, expect.any(Number));
+    }
   });
 
   it('nasce com o <business-model> do projeto no brief, antes da tarefa', async () => {

@@ -1066,7 +1066,10 @@ function startSpawn(
           missionId,
           rendererWaitMs:
             pane.kind === 'cli-agent'
-              ? Math.max(0, spawnCallAt - cycleStartMs)
+              ? Math.min(
+                  600_000,
+                  Math.max(0, Math.round(spawnCallAt - cycleStartMs)),
+                )
               : undefined,
         }),
       );

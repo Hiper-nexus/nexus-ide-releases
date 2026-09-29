@@ -35,6 +35,7 @@ import {
   writerCircuitBreakers,
 } from './writer-circuit-break';
 import { trace } from '../observability/main-trace';
+import type { PhaseTimer } from '../observability/phase-timer';
 import { emitWorkerSpawnFailed } from './spawn-fail-events';
 import { getAdapter } from '../adapters/adapter-registry';
 import { discoverCliModels } from '../adapters/cli-model-discovery';
@@ -1179,6 +1180,13 @@ export interface SpawnPaneHooks {
     sessionId: string,
     prompt: string,
   ) => void;
+  /**
+   * F-213/R6: medidor de fases do `pane-spawn-timing` — subdivide a fase
+   * `pty-spawn` (que cobria a chamada inteira) nos awaits reais: probe de
+   * credencial, alocação do pane (renderer attach/waitForSession dentro do
+   * requestPaneSpawn), prova de writer e entrega do prompt.
+   */
+  readonly timer?: PhaseTimer;
   /** Exact dispatch authority propagated across asynchronous preflight. */
   readonly invocation?: McpToolInvocation;
 }
@@ -1442,6 +1450,10 @@ export async function spawnPaneAndMaybePrompt(
     resolvedAdapter = swapped;
     adapter = swapped;
   }
+  // A sonda de credencial e a cadeia de sucessão de assento são os awaits
+  // pré-alocação desta função. Em 28/09 a espera de ~50 s aconteceu antes da
+  // alocação do pane, sem registro de em qual etapa — esta marca separa.
+  hooks.timer?.mark('credential-probe');
   assertMcpInvocationCurrent(hooks.invocation);
   if (options.missionId && options.role) {
     // Best-effort only: never block spawn on attestation vault (pre-PTY slim).
@@ -1535,10 +1547,12 @@ export async function spawnPaneAndMaybePrompt(
   } = safeOptions;
   const result = await requestPaneSpawn({
     ...paneSpawnOptions,
+    ...(hooks.timer ? { spawnTimer: hooks.timer } : {}),
     ...(hooks.invocation?.signal
       ? { abortSignal: hooks.invocation.signal }
       : {}),
   });
+  hooks.timer?.mark('pane-alloc');
   if (
     result.ok &&
     result.pending === true &&
@@ -1599,6 +1613,7 @@ export async function spawnPaneAndMaybePrompt(
             sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
           },
         });
+  hooks.timer?.mark('writer-ready');
   if (!writerReady) {
     const failures = writerCircuitBreakers.recordConnectFailure(writerKey);
     adapterCircuitBreakers.recordFailure(options.adapterId);
@@ -1759,6 +1774,7 @@ export async function spawnPaneAndMaybePrompt(
       throw error;
     }
   }
+  hooks.timer?.mark('prompt-delivery');
   return { paneId: result.paneId, sessionId: result.sessionId };
 }
 

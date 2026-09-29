@@ -46,8 +46,10 @@ export const spawnRequestSchema = z.object({
   // adapter's declared levels at arg-build time; unknown values are dropped.
   effort: z.string().min(1).max(32).optional(),
   // F-213: telemetria — quanto o renderer esperou (grade + conta + fila)
-  // antes de chamar pty.spawn. Número apenas; nunca altera o comportamento.
-  rendererWaitMs: z.number().int().nonnegative().max(600_000).optional(),
+  // antes de chamar pty.spawn. Telemetria NUNCA pode reprovar um spawn:
+  // qualquer valor inválido cai para undefined e o main só registra
+  // números finitos (clampados/arredondados) — sem teto no schema.
+  rendererWaitMs: z.number().nonnegative().optional().catch(undefined),
 });
 
 export const writeSchema = z.object({

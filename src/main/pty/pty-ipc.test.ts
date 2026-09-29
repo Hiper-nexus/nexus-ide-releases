@@ -1563,25 +1563,42 @@ describe("registerPtyIpc account fail-fast", () => {
       ]);
     });
 
-    it.each([-1, 700_000, 1.5, "lento"])(
-      "rejeita rendererWaitMs inválido (%s)",
-      async (rendererWaitMs) => {
+    // F-213 R6: rendererWaitMs é telemetria — um pane restaurado retido mais
+    // de 10 min (ou qualquer valor estranho) NUNCA pode reprovar o spawn.
+    it.each([
+      { sent: 700_000, expected: 600_000 },
+      { sent: 1.5, expected: 2 },
+      { sent: Number.POSITIVE_INFINITY, expected: null },
+      { sent: "lento", expected: null },
+      { sent: -1, expected: null },
+    ])(
+      "rendererWaitMs $sent é clampado/ignorado e o spawn segue ($expected)",
+      async ({ sent, expected }) => {
+        providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+          ok: true,
+          overrides: {},
+        });
         const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
         const result = await handler?.(
           { sender: { id: 7 } },
           {
             kind: "cli-agent",
             adapterId: "claude",
+            paneId: "pane-timed",
             cols: 100,
             rows: 30,
-            rendererWaitMs,
+            rendererWaitMs: sent,
           },
         );
-        expect(result).toMatchObject({
-          ok: false,
-          error: expect.stringMatching(/invalid spawn request/),
-        });
-        expect(timingEvents()).toHaveLength(0);
+        expect(result).toMatchObject({ ok: true });
+        expect(timingEvents()).toEqual([
+          expect.objectContaining({
+            source: "renderer",
+            adapterId: "claude",
+            rendererWaitMs: expected,
+            ok: true,
+          }),
+        ]);
       },
     );
   });

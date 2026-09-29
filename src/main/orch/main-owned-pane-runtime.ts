@@ -48,6 +48,7 @@ import { assertTrustedNativeConfinementBinary } from "../pty/trusted-native-cli-
 import { canListPane, type CallerCtx, type PaneAuthzInfo } from "./pane-authz";
 import { sameProjectScope } from "./project-scoped-broadcast";
 import type { BoundSpawnAuthority } from "./spawn-authority";
+import type { PhaseTimer } from "../observability/phase-timer";
 import { makeId } from "./store-util";
 import { resolveCwdForScope } from "./workspace-path";
 import { sameMissionPaneAuthoritySeal } from "./mission-pane-authority";
@@ -149,6 +150,11 @@ export interface PaneSpawnOptions {
   resume?: boolean | string;
   /** Only consider the latest session (no exact-session resume lookup). */
   resumeLatestOnly?: boolean;
+  /**
+   * F-213/R6: medidor de fases do `pane-spawn-timing` (telemetria). Vive só no
+   * processo — nunca entra no pedido do renderer nem em snapshots de pane.
+   */
+  readonly spawnTimer?: PhaseTimer;
 }
 
 export interface MainOwnedPane {
@@ -621,7 +627,10 @@ export function spawnMainOwnedMissionPane(
       return waitForRotatingAuthSpawnGate({ authFile }).then(
         // Recheck Main authority after waiting, without selecting/materializing
         // again: that could switch the account or restore its stale credential.
-        () => spawnMainOwnedMissionPane(options, hooks, prepared, false, spawnPermitHeld),
+        () => {
+          options.spawnTimer?.mark("rotating-auth");
+          return spawnMainOwnedMissionPane(options, hooks, prepared, false, spawnPermitHeld);
+        },
         (error) => ({
           requestId,
           ok: false,
@@ -776,8 +785,12 @@ export async function spawnMainOwnedMissionPaneAsync(
       run: () => OrchPaneSpawnResult | Promise<OrchPaneSpawnResult>,
     ): Promise<OrchPaneSpawnResult> => {
       const release = await acquireCliSpawnPermit(options.adapterId);
-      try { return await run(); }
-      finally { release(); }
+      options.spawnTimer?.mark("cli-spawn-permit");
+      try {
+        const out = await run();
+        options.spawnTimer?.mark("pty-spawn");
+        return out;
+      } finally { release(); }
     };
     if (
       adapter?.kind === "cli-pty" &&
@@ -810,6 +823,7 @@ export async function spawnMainOwnedMissionPaneAsync(
           },
         ),
       });
+      options.spawnTimer?.mark("provider-prep");
       return withPermit(() => spawnMainOwnedMissionPane(options, hooks, prepared, false, true));
     }
     return adapter?.kind === 'cli-pty'

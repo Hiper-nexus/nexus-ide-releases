@@ -1616,6 +1616,10 @@ const paneSpawnAfterTabMission = {
             spawnedWorkerPaneId = paneId;
           },
           invocation,
+          // F-213/R6: subdivide 'pty-spawn' nos awaits internos — em 28/09 a
+          // espera de ~50 s veio antes da alocação do pane, sem saber em qual
+          // etapa (rota, isolamento ou dentro desta chamada).
+          timer: spawnTiming?.timer,
         });
         spawnTiming?.timer.mark('pty-spawn');
       } catch (error) {

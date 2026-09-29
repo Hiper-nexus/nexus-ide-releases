@@ -215,6 +215,14 @@ function reportPaneSpawnTiming(
   ok: boolean,
 ): void {
   const { totalMs, phases } = timer.finish();
+  // F-213: rendererWaitMs é telemetria — nunca reprova nem explode o spawn:
+  // não-finito é descartado; valor válido é arredondado e clampado no teto
+  // que o próprio renderer aplica.
+  const rendererWaitMs =
+    typeof request.rendererWaitMs === "number" &&
+    Number.isFinite(request.rendererWaitMs)
+      ? Math.min(600_000, Math.max(0, Math.round(request.rendererWaitMs)))
+      : null;
   trace({
     kind: "pane-spawn-timing",
     source: "renderer",
@@ -223,7 +231,7 @@ function reportPaneSpawnTiming(
     missionId:
       spawn?.authority.context?.missionId ?? request.missionId ?? null,
     role: spawn?.authority.context?.role ?? "user",
-    rendererWaitMs: request.rendererWaitMs ?? null,
+    rendererWaitMs,
     ok,
     totalMs,
     phases,
