@@ -1412,6 +1412,31 @@ describe('F-367 — tecla em pane morto de missão: uma tentativa por janela', (
     expect(countNotice(writeln, 'tecla recebida')).toBe(1);
     expect(missionCommand).toHaveBeenCalledTimes(1);
   });
+
+  it('guarda travada por IPC pendurado libera a tecla depois de 20 s (R1)', async () => {
+    const { missionWorker } = mountDeadWorker();
+    // listMissions NUNCA resolve — sem o teto a guarda calava o pane pra sempre.
+    listMissions.mockImplementation(() => new Promise(() => {}));
+    await openDeadWorker(missionWorker);
+
+    pressKey();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(listMissions).toHaveBeenCalledTimes(1);
+
+    // Dentro do teto: teclas continuam engolidas em silêncio.
+    pressKey();
+    await vi.advanceTimersByTimeAsync(5_000);
+    pressKey();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(listMissions).toHaveBeenCalledTimes(1);
+
+    // Passados 20 s do início do trabalho, a guarda considera o IPC
+    // pendurado e solta — a próxima tecla inicia um novo unlock.
+    await vi.advanceTimersByTimeAsync(10_500);
+    pressKey();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(listMissions).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('F-368 — revive honesto: helper morto não promete o que não entrega', () => {

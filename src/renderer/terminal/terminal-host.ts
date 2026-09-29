@@ -255,8 +255,11 @@ interface Host {
    * Desbloqueio/revive de pane morto em voo (contador: o unlock encadeia o
    * revive). Teclas nesse intervalo são engolidas em silêncio — sem a
    * guarda, cada uma pagava um listMissions IPC (F-367).
+   * `deadPaneKeyWorkSince` marca o início do lote: passados 20 s sem
+   * resolução o trabalho é considerado pendurado e a guarda se libera (R1).
    */
   deadPaneKeyWorkInFlight?: number;
+  deadPaneKeyWorkSince?: number;
   /**
    * F-213: início do ciclo de nascimento (primeira tentativa de spawn que
    * pode adiar por grade ou espera held). O `rendererWaitMs` do pedido mede
@@ -727,6 +730,9 @@ function liveMaestroPaneOfMission(missionId: string): PaneModel | null {
  * encadeia o revive — o trabalho só acaba quando os dois terminam.
  */
 function beginDeadPaneKeyWork(host: Host): void {
+  if ((host.deadPaneKeyWorkInFlight ?? 0) === 0) {
+    host.deadPaneKeyWorkSince = Date.now();
+  }
   host.deadPaneKeyWorkInFlight = (host.deadPaneKeyWorkInFlight ?? 0) + 1;
 }
 
@@ -735,6 +741,27 @@ function endDeadPaneKeyWork(host: Host): void {
     0,
     (host.deadPaneKeyWorkInFlight ?? 1) - 1,
   );
+  if (host.deadPaneKeyWorkInFlight === 0) host.deadPaneKeyWorkSince = undefined;
+}
+
+/**
+ * R1: a guarda silencia teclas SÓ enquanto o trabalho está vivo de verdade.
+ * Um IPC pendurado (listMissions sem resposta) não pode calar o pane para
+ * sempre — passado o teto, a guarda se libera e a próxima tecla tenta de novo.
+ */
+const DEAD_PANE_KEY_WORK_STUCK_MS = 20_000;
+
+function deadPaneKeyWorkActive(host: Host): boolean {
+  if ((host.deadPaneKeyWorkInFlight ?? 0) <= 0) return false;
+  if (
+    Date.now() - (host.deadPaneKeyWorkSince ?? 0) >
+    DEAD_PANE_KEY_WORK_STUCK_MS
+  ) {
+    host.deadPaneKeyWorkInFlight = 0;
+    host.deadPaneKeyWorkSince = undefined;
+    return false;
+  }
+  return true;
 }
 
 async function requestDeadMissionPaneRevive(
@@ -1510,8 +1537,9 @@ function startSpawn(
         if (!host.sessionId) {
           if (host.awaitingDeliberateClose) return;
           // Unlock/revive em voo: a tecla seguinte não paga outro IPC nem
-          // repete aviso — engolida em silêncio até a ação atual terminar.
-          if ((host.deadPaneKeyWorkInFlight ?? 0) > 0) return;
+          // repete aviso — engolida em silêncio até a ação atual terminar
+          // (ou até o teto de 20 s estourar num IPC pendurado — R1).
+          if (deadPaneKeyWorkActive(host)) return;
           // Pós-missão (ou pane sem vínculo): estado preso nunca silencia a
           // tecla. Missão viva ou desconhecida segue pela rota antiga, com
           // todas as proteções.
