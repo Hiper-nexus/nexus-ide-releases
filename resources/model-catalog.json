@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-28T00:00:00.000Z",
+  "updatedAt": "2026-09-29T00:00:00.000Z",
   "adapters": {
     "claude": {
       "default": "claude-sonnet-5",
@@ -447,20 +447,19 @@
       ]
     },
     "minimax-code": {
-      "default": "minimax/MiniMax-M3",
+      "default": "minimax/MiniMax-M3.1-Flash-Preview",
       "models": [
+        {
+          "id": "minimax/MiniMax-M3.1-Flash-Preview",
+          "availability": "paid",
+          "costTier": "low",
+          "source": "bundled"
+        },
         {
           "id": "minimax/MiniMax-M3",
           "availability": "paid",
           "costTier": "medium",
           "source": "bundled"
-        },
-        {
-          "id": "minimax/MiniMax-M3.1-Flash-Preview",
-          "availability": "paid",
-          "costTier": "low",
-          "source": "bundled",
-          "warning": "Preview model: verify tier/pricing before routing it by default."
         },
         {
           "id": "minimax/MiniMax-M2.7-highspeed",
