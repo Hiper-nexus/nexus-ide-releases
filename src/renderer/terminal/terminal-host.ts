@@ -1904,6 +1904,9 @@ function makeResizeObserver(paneId: string, host: Host): ResizeObserver {
       flushPendingScrollback(host);
       propagateHostSize(host);
       if (host.isVisible && document.visibilityState !== 'hidden') resumeTerminalOutput(host.term);
+      // F-369: pane reidratado visível mas SEM foco também merece o bounce —
+      // não pode depender de resumeVisibleHost (que só roda no foco).
+      consumeTuiRepaint(host);
       tryDeferredSpawn(host);
     }, RESIZE_DEBOUNCE_MS);
   });
@@ -1930,6 +1933,9 @@ function refitAllHosts(reason: RefitReason): void {
     if (gridChanged) flushPendingScrollback(host);
     propagateHostSize(host);
     if (host.isVisible && document.visibilityState !== 'hidden') resumeTerminalOutput(host.term);
+    // F-369: consume o repaint pendente de TODOS os hosts refeitos — inclusive
+    // o reidratado visível sem foco, que nunca passa por resumeVisibleHost.
+    consumeTuiRepaint(host);
     tryDeferredSpawn(host);
     if (!shouldRepaintOnRefit({ reason, gridChanged })) continue;
     try {

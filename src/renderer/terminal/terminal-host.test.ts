@@ -10,6 +10,8 @@ const xtermEvents = vi.hoisted(() => ({
 const resizeCalls = vi.hoisted(() => [] as Array<{ cols: number; rows: number }>);
 /** Shared timeline: which happened first, the grid fit or the output-scheduler resume. */
 const eventOrder = vi.hoisted(() => [] as string[]);
+/** Callbacks do ResizeObserver stub — o teste dispara o tick manualmente. */
+const resizeObserverTicks = vi.hoisted(() => [] as Array<() => void>);
 
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
@@ -148,7 +150,19 @@ function openHiddenHost() {
 
 beforeEach(() => {
   vi.useFakeTimers();
-  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(cb: ResizeObserverCallback) {
+        resizeObserverTicks.push(() =>
+          cb([], this as unknown as ResizeObserver),
+        );
+      }
+      observe() {}
+      disconnect() {}
+    },
+  );
+  resizeObserverTicks.length = 0;
   spawn.mockReset().mockResolvedValue({ ok: true, sessionId: 'pty-hidden' });
   kill.mockReset();
   ptyWrite.mockReset();
@@ -1731,6 +1745,30 @@ describe('F-369 — TUI repinta depois de saída perdida', () => {
 
     refreshHost(agent.id);
     await vi.advanceTimersByTimeAsync(60);
+    expect(bounceCount()).toBe(1);
+  });
+
+  it('reidratado, visível e SEM foco → um bounce no tick do ResizeObserver (R7)', async () => {
+    const host = await openVisibleAgent();
+    for (let i = 0; i < 24; i++) {
+      getOrCreateHost({ id: `filler-${i}`, kind: 'shell', title: `t${i}` });
+    }
+    setHostVisibility(agent.id, false);
+    expect(host.virtualized).not.toBeNull();
+    // De volta à tela mas SEM o foco — o bounce não pode depender de
+    // resumeVisibleHost (que só roda no caminho focado).
+    useLayoutStore.setState({ focusedPaneId: 'other-pane' });
+    setHostVisibility(agent.id, true);
+    await vi.advanceTimersByTimeAsync(60);
+    ptyResize().mockClear();
+
+    for (const tick of resizeObserverTicks.splice(0)) tick();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(bounceCount()).toBe(1);
+
+    // Flag consumida: um segundo tick não bounceia de novo.
+    for (const tick of resizeObserverTicks.splice(0)) tick();
+    await vi.advanceTimersByTimeAsync(200);
     expect(bounceCount()).toBe(1);
   });
 
