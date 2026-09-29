@@ -77,6 +77,7 @@ import {
   DEAD_PANE_REVIVE_COOLDOWN_NOTICE,
   DONE_MAESTRO_ADJUSTMENT_NOTICE,
   deadMaestroKeyRequestsAdjustment,
+  deadPaneReviveCooldownNoticeDue,
   type TerminalMissionLink,
 } from './mission-owned-pane-policy';
 import { TERMINAL_THEMES } from '../styles/terminal-theme';
@@ -241,6 +242,18 @@ interface Host {
    * SESSION_BOUNDARY_NOTICE divider first; an empty first spawn never does.
    */
   hasVisibleContent?: boolean;
+  /**
+   * Aviso de cooldown do revive já impresso para ESTA janela
+   * (`deadPaneReviveAt`): a tecla repetida dentro dos 15s fica muda; uma
+   * janela nova (outro carimbo) pode avisar de novo (F-367).
+   */
+  deadPaneReviveNoticeWindowStart?: number;
+  /**
+   * Desbloqueio/revive de pane morto em voo (contador: o unlock encadeia o
+   * revive). Teclas nesse intervalo são engolidas em silêncio — sem a
+   * guarda, cada uma pagava um listMissions IPC (F-367).
+   */
+  deadPaneKeyWorkInFlight?: number;
 }
 
 /**
@@ -667,6 +680,22 @@ function missionOfPaneIsDoneById(missionId: string): boolean {
  * mesma conta — o teclado volta a aceitar input no pane onde o operador
  * digitou (o trio "dona / pausado / cursor oco" era o beco sem saída).
  */
+/**
+ * Guarda de tecla em pane morto (F-367): enquanto unlock/revive está em
+ * voo, a próxima tecla é engolida em silêncio. Contador porque o unlock
+ * encadeia o revive — o trabalho só acaba quando os dois terminam.
+ */
+function beginDeadPaneKeyWork(host: Host): void {
+  host.deadPaneKeyWorkInFlight = (host.deadPaneKeyWorkInFlight ?? 0) + 1;
+}
+
+function endDeadPaneKeyWork(host: Host): void {
+  host.deadPaneKeyWorkInFlight = Math.max(
+    0,
+    (host.deadPaneKeyWorkInFlight ?? 1) - 1,
+  );
+}
+
 async function requestDeadMissionPaneRevive(
   pane: PaneModel,
   host: Host,
@@ -675,15 +704,39 @@ async function requestDeadMissionPaneRevive(
 ): Promise<void> {
   if (!shouldReviveDeadMissionFromPane({ operatorInitiated })) return;
   if (!shouldAttemptDeadPaneRevive(missionId)) {
-    // Repetição dentro do cooldown: em vez de no-op mudo, uma dica — era
-    // este silêncio que lia como "não deixa eu intervir".
-    if (operatorInitiated) {
+    // Repetição dentro do cooldown: uma dica POR JANELA (o carimbo de
+    // início é a chave) — antes cada tecla repetia a linha (F-367).
+    const windowStart = deadPaneReviveAt.get(missionId);
+    if (
+      operatorInitiated &&
+      deadPaneReviveCooldownNoticeDue({
+        windowStart,
+        lastNotifiedWindowStart: host.deadPaneReviveNoticeWindowStart,
+      })
+    ) {
+      host.deadPaneReviveNoticeWindowStart = windowStart;
       host.term.writeln(
         `\r\n\x1b[36m${DEAD_PANE_REVIVE_COOLDOWN_NOTICE}\x1b[0m`,
       );
     }
     return;
   }
+  // Segura a guarda de tecla enquanto o revive trabalha: unlock → revive
+  // viram UMA ação para a próxima tecla.
+  beginDeadPaneKeyWork(host);
+  try {
+    await runDeadMissionPaneRevive(pane, host, missionId, operatorInitiated);
+  } finally {
+    endDeadPaneKeyWork(host);
+  }
+}
+
+async function runDeadMissionPaneRevive(
+  pane: PaneModel,
+  host: Host,
+  missionId: string,
+  operatorInitiated: boolean,
+): Promise<void> {
   // Confirmação de recebimento ANTES do trabalho async (não é promessa de
   // aceite: recusa/falha ganham as linhas próprias abaixo). Sem isto, uma
   // tentativa lenta parece tecla morta.
@@ -1337,6 +1390,9 @@ function startSpawn(
 
         if (!host.sessionId) {
           if (host.awaitingDeliberateClose) return;
+          // Unlock/revive em voo: a tecla seguinte não paga outro IPC nem
+          // repete aviso — engolida em silêncio até a ação atual terminar.
+          if ((host.deadPaneKeyWorkInFlight ?? 0) > 0) return;
           // Pós-missão (ou pane sem vínculo): estado preso nunca silencia a
           // tecla. Missão viva ou desconhecida segue pela rota antiga, com
           // todas as proteções.
@@ -1374,13 +1430,15 @@ function startSpawn(
                 terminalLink === 'done' && pane.role === 'orchestrator',
             });
             if (terminalAction === 'resume-keyboard') {
+              beginDeadPaneKeyWork(host);
               void unlockRetiredMissionPane(pane, host, {
                 operatorInitiated: true,
-              });
+              }).finally(() => endDeadPaneKeyWork(host));
             } else if (terminalAction === 'reclaim-shell') {
+              beginDeadPaneKeyWork(host);
               void reclaimExitedPaneAsShell(pane, host, {
                 ignoreMissionOwnership: terminalLink !== 'none',
-              });
+              }).finally(() => endDeadPaneKeyWork(host));
             }
             return;
           }
@@ -1395,11 +1453,15 @@ function startSpawn(
               missionOfPaneIsDone(pane.id, pane),
           });
           if (keyAction === 'resume-keyboard') {
+            beginDeadPaneKeyWork(host);
             void unlockRetiredMissionPane(pane, host, {
               operatorInitiated: true,
-            });
+            }).finally(() => endDeadPaneKeyWork(host));
           } else if (keyAction === 'reclaim-shell') {
-            void reclaimExitedPaneAsShell(pane, host);
+            beginDeadPaneKeyWork(host);
+            void reclaimExitedPaneAsShell(pane, host).finally(() =>
+              endDeadPaneKeyWork(host),
+            );
           }
           return;
         }

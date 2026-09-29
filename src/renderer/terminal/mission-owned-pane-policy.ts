@@ -300,6 +300,19 @@ export const DEAD_PANE_REVIVE_ATTEMPT_NOTICE =
 export const DEAD_PANE_REVIVE_COOLDOWN_NOTICE =
   '[nexus] tentativa recente em curso — aguarde concluir ou use Reiniciar na toolbar.';
 
+/**
+ * Aviso de cooldown do revive: UMA vez por janela por pane. A chave é o
+ * carimbo de início da janela (`deadPaneReviveAt`) — uma janela nova tem
+ * outro carimbo e volta a poder avisar. Sem esta cerca, cada tecla dentro
+ * dos 15s repetia a linha (uma por tecla no voo real de 28/09).
+ */
+export function deadPaneReviveCooldownNoticeDue(input: {
+  readonly windowStart: number | undefined;
+  readonly lastNotifiedWindowStart: number | undefined;
+}): boolean {
+  return input.windowStart !== input.lastNotifiedWindowStart;
+}
+
 function clampDeliverySummary(raw: string): string | null {
   const line = raw.replace(/\s+/g, ' ').trim();
   if (line.length === 0 || line.startsWith('{')) return null;

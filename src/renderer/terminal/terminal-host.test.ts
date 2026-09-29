@@ -1266,3 +1266,142 @@ describe('fechamento deliberado pelo main — helper não reabre como shell vazi
     expect(host.awaitingDeliberateClose).toBeFalsy();
   });
 });
+
+describe('F-367 — tecla em pane morto de missão: uma tentativa por janela', () => {
+  const listMissions = vi.fn();
+  const missionCommand = vi.fn();
+  const missionSnapshot = vi.fn();
+  let missionSeq = 0;
+
+  function pressKey(key = 'k'): void {
+    for (const listener of [...xtermEvents.onData]) listener(key);
+  }
+
+  function countNotice(writeln: ReturnType<typeof vi.spyOn>, needle: string): number {
+    return writeln.mock.calls
+      .flat()
+      .filter((line) => typeof line === 'string' && line.includes(needle))
+      .length;
+  }
+
+  // A janela de cooldown é estado de MÓDULO por missionId: cada teste usa a
+  // sua, senão a segunda iteração cai na janela da primeira.
+  function mountDeadWorker() {
+    missionSeq += 1;
+    const missionId = `mission-367-${missionSeq}`;
+    const missionWorker: PaneModel = {
+      id: `dead-mission-worker-367-${missionSeq}`,
+      kind: 'cli-agent',
+      adapterId: 'claude',
+      title: 'Worker',
+      role: 'worker',
+      missionId,
+    };
+    listMissions.mockResolvedValue([{ id: missionId, status: 'running' }]);
+    useOrchStore.setState({
+      paneMissions: { [missionWorker.id]: missionId },
+      missions: [{ id: missionId, status: 'running' } as never],
+      handoffs: [],
+    });
+    useLayoutStore.setState({
+      root: buildGridTree([missionWorker]),
+      focusedPaneId: missionWorker.id,
+    });
+    return { missionWorker, missionId };
+  }
+
+  beforeEach(() => {
+    listMissions.mockReset();
+    missionCommand.mockReset().mockResolvedValue({});
+    missionSnapshot.mockReset().mockResolvedValue(null);
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        voice: { logVoice: vi.fn().mockResolvedValue(undefined) },
+        pty: {
+          spawn, kill, resize: vi.fn(), write: ptyWrite,
+          onStateChange: () => () => {},
+          onData: (sessionId: string, listener: (data: string) => void) => {
+            ptyDataListeners.set(sessionId, listener);
+            return () => ptyDataListeners.delete(sessionId);
+          },
+          onExit: (sessionId: string, listener: (event: { exitCode: number }) => void) => {
+            ptyExitListeners.set(sessionId, listener);
+            return () => ptyExitListeners.delete(sessionId);
+          },
+        },
+        accounts: { list: vi.fn().mockResolvedValue([]) },
+        orch: { listMissions },
+        mission: { snapshot: missionSnapshot, command: missionCommand },
+      },
+    });
+  });
+
+  afterEach(() => {
+    useOrchStore.setState({ paneMissions: {}, missions: [], handoffs: [] });
+  });
+
+  async function openDeadWorker(missionWorker: PaneModel) {
+    spawn.mockResolvedValueOnce({ ok: true, sessionId: `pty-${missionWorker.id}` });
+    const host = getOrCreateHost(missionWorker);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(missionWorker, slot);
+    expect(await waitForSession(missionWorker.id, 1000)).toBe(
+      `pty-${missionWorker.id}`,
+    );
+    const writeln = vi.spyOn(host.term, 'writeln');
+    ptyExitListeners.get(`pty-${missionWorker.id}`)!({ exitCode: 1 });
+    await vi.advanceTimersByTimeAsync(50);
+    writeln.mockClear();
+    return { host, writeln };
+  }
+
+  it('rajada de teclas dentro do cooldown: uma tentativa, um aviso de cada, um comando', async () => {
+    const { missionWorker, missionId } = mountDeadWorker();
+    const { writeln } = await openDeadWorker(missionWorker);
+
+    for (let i = 0; i < 8; i += 1) {
+      pressKey();
+      await vi.advanceTimersByTimeAsync(20);
+    }
+
+    expect(countNotice(writeln, 'tecla recebida')).toBe(1);
+    expect(countNotice(writeln, 'tentativa recente em curso')).toBeLessThanOrEqual(1);
+    expect(missionCommand).toHaveBeenCalledTimes(1);
+    expect(missionCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'retry-kickoff', missionId }),
+    );
+
+    // Janela nova: a próxima tecla abre outra tentativa (e avisa de novo).
+    await vi.advanceTimersByTimeAsync(15_000);
+    pressKey();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(missionCommand).toHaveBeenCalledTimes(2);
+    expect(countNotice(writeln, 'tecla recebida')).toBe(2);
+  });
+
+  it('teclas com o desbloqueio em voo são engolidas — um listMissions só', async () => {
+    const { missionWorker, missionId } = mountDeadWorker();
+    let releaseMissions!: () => void;
+    listMissions.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseMissions = () =>
+            resolve([{ id: missionId, status: 'running' }]);
+        }),
+    );
+    const { writeln } = await openDeadWorker(missionWorker);
+
+    for (let i = 0; i < 5; i += 1) pressKey();
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(listMissions).toHaveBeenCalledTimes(1);
+
+    releaseMissions();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(countNotice(writeln, 'tecla recebida')).toBe(1);
+    expect(missionCommand).toHaveBeenCalledTimes(1);
+  });
+});

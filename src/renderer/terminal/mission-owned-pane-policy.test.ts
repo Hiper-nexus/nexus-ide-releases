@@ -4,6 +4,7 @@ import {
   DEAD_PANE_REVIVE_ATTEMPT_NOTICE,
   DEAD_PANE_REVIVE_COOLDOWN_NOTICE,
   deadMaestroKeyRequestsAdjustment,
+  deadPaneReviveCooldownNoticeDue,
   decideDeadPaneReviveRespawn,
   decideExitedPaneKey,
   decideTerminalMissionDeadPaneKey,
@@ -532,6 +533,32 @@ describe('coordenador de missão concluída continua sendo o canal da revisão',
         missionOwns: false,
       }),
     ).toBe('reclaim-shell');
+  });
+});
+
+describe('deadPaneReviveCooldownNoticeDue — F-367: um aviso por janela', () => {
+  it('a primeira tecla dentro da janela avisa; as seguintes calam', () => {
+    expect(
+      deadPaneReviveCooldownNoticeDue({
+        windowStart: 1_000,
+        lastNotifiedWindowStart: undefined,
+      }),
+    ).toBe(true);
+    expect(
+      deadPaneReviveCooldownNoticeDue({
+        windowStart: 1_000,
+        lastNotifiedWindowStart: 1_000,
+      }),
+    ).toBe(false);
+  });
+
+  it('uma janela NOVA (outro carimbo) pode avisar de novo', () => {
+    expect(
+      deadPaneReviveCooldownNoticeDue({
+        windowStart: 16_500,
+        lastNotifiedWindowStart: 1_000,
+      }),
+    ).toBe(true);
   });
 });
 
