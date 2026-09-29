@@ -447,7 +447,12 @@ export interface NexusApi {
     replay(sessionId: string): Promise<void>;
     write(sessionId: string, data: string): void;
     writeConfirmed(sessionId: string, data: string): Promise<boolean>;
-    resize(sessionId: string, cols: number, rows: number): void;
+    resize(
+      sessionId: string,
+      cols: number,
+      rows: number,
+      options?: { assert?: boolean },
+    ): void;
     kill(sessionId: string): void;
     onData(sessionId: string, cb: (data: string) => void): Unsubscribe;
     onExit(

@@ -328,6 +328,19 @@ describe('canonical mission preload bridge', () => {
     expect(canonical).toHaveBeenCalledWith(summaries);
     expect(legacy).toHaveBeenCalledOnce();
   });
+
+  it('pty.resize encaminha o assert opcional para o Main (F-216)', async () => {
+    const api = await loadPreloadApi();
+    api.pty.resize('s1', 120, 40);
+    api.pty.resize('s1', 120, 40, { assert: true });
+    const sends = electronMock.ipcRenderer.send.mock.calls
+      .filter(([channel]) => channel === PTY_CHANNELS.resize)
+      .map(([, payload]) => payload);
+    expect(sends).toEqual([
+      { sessionId: 's1', cols: 120, rows: 40 },
+      { sessionId: 's1', cols: 120, rows: 40, assert: true },
+    ]);
+  });
 });
 
 

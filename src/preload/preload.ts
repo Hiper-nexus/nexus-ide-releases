@@ -758,8 +758,13 @@ const api: NexusApi = {
       ipcRenderer.send(PTY_CHANNELS.write, { sessionId, data }),
     writeConfirmed: (sessionId, data) =>
       ipcRenderer.invoke(PTY_CHANNELS.writeConfirmed, { sessionId, data }),
-    resize: (sessionId, cols, rows) =>
-      ipcRenderer.send(PTY_CHANNELS.resize, { sessionId, cols, rows }),
+    resize: (sessionId, cols, rows, options) =>
+      ipcRenderer.send(PTY_CHANNELS.resize, {
+        sessionId,
+        cols,
+        rows,
+        ...(options?.assert === true ? { assert: true } : {}),
+      }),
     kill: (sessionId) => ipcRenderer.send(PTY_CHANNELS.kill, { sessionId }),
     onData: (sessionId, cb) => {
       const unsub = subscribe(dataSubs, sessionId, cb);

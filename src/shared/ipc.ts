@@ -57,11 +57,16 @@ export const writeSchema = z.object({
   data: z.string().max(1_000_000),
 });
 
-export const resizeSchema = z.object({
-  sessionId: z.string().min(1).max(128),
-  cols: DIMENSION,
-  rows: DIMENSION,
-});
+export const resizeSchema = z
+  .object({
+    sessionId: z.string().min(1).max(128),
+    cols: DIMENSION,
+    rows: DIMENSION,
+    // F-216: o renderer reasserta a grade medida no resume/repaint — o Main
+    // usa a flag para registrar drift e aplicar o winsize mesmo igual.
+    assert: z.boolean().optional(),
+  })
+  .strict();
 
 export const killSchema = z.object({
   sessionId: z.string().min(1).max(128),

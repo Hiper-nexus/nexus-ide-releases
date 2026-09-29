@@ -768,6 +768,7 @@ export function registerPtyIpc(): void {
         parsed.data.sessionId,
         parsed.data.cols,
         parsed.data.rows,
+        { assert: parsed.data.assert },
       );
     }
   });

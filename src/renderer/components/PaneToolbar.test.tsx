@@ -12,6 +12,7 @@ vi.mock('../terminal/pane-close-guard', () => ({ requestPaneClose: close }));
 vi.mock('../terminal/terminal-host', () => ({
   hibernateHost: vi.fn(), wakeHost: vi.fn(), respawnWithResume: vi.fn(), scrollPaneToBottom: vi.fn(),
   getPaneSessionId: vi.fn(() => null),
+  repaintPaneTui: vi.fn(),
   onPaneSessionChange: vi.fn(() => () => {}),
 }));
 vi.mock('./CostBadge', () => ({ CostBadge: () => null }));
@@ -22,6 +23,7 @@ vi.mock('./ProviderLogo', () => ({ ProviderLogo: () => null }));
 vi.mock('./PixelIcon', () => ({ PixelIcon: () => null }));
 
 import { PaneToolbar } from './PaneToolbar';
+import { getPaneSessionId, repaintPaneTui } from '../terminal/terminal-host';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let measure!: (width: number) => void;
@@ -191,6 +193,65 @@ describe('PaneToolbar narrow controls', () => {
     expect(host.querySelector('.toolbar__title')?.textContent).toBe(
       'Claude · Codex pane boot crash',
     );
+  });
+
+  it('F-216: oferece Redesenhar tela para cli-agent com sessão viva', () => {
+    const agent: PaneModel = {
+      id: 'repaint-agent',
+      kind: 'cli-agent',
+      title: 'Claude',
+      adapterId: 'claude',
+    };
+    vi.mocked(getPaneSessionId).mockReturnValue('sess-live');
+    useLayoutStore.setState({
+      root: buildGridTree([agent]),
+      focusedPaneId: agent.id,
+      maximizedPaneId: null,
+    });
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    roots.push(root);
+    act(() => root.render(<PaneToolbar pane={agent} isFocused />));
+    act(() => measure(900));
+
+    const repaint = host.querySelector<HTMLButtonElement>(
+      '[aria-label="Redesenhar tela"]',
+    );
+    expect(repaint).not.toBeNull();
+    act(() => repaint!.click());
+    expect(repaintPaneTui).toHaveBeenCalledExactlyOnceWith(agent.id);
+  });
+
+  it('F-216: esconde Redesenhar tela sem sessão ou fora de cli-agent', () => {
+    const agentNoSession: PaneModel = {
+      id: 'repaint-no-session',
+      kind: 'cli-agent',
+      title: 'Claude',
+      adapterId: 'claude',
+    };
+    const shellPane: PaneModel = {
+      id: 'repaint-shell',
+      kind: 'shell',
+      title: 'sh',
+    };
+    for (const target of [agentNoSession, shellPane]) {
+      vi.mocked(getPaneSessionId).mockReturnValue(null);
+      useLayoutStore.setState({
+        root: buildGridTree([target]),
+        focusedPaneId: target.id,
+        maximizedPaneId: null,
+      });
+      const host = document.createElement('div');
+      document.body.appendChild(host);
+      const root = createRoot(host);
+      roots.push(root);
+      act(() => root.render(<PaneToolbar pane={target} isFocused />));
+      act(() => measure(900));
+      expect(
+        host.querySelector('[aria-label="Redesenhar tela"]'),
+      ).toBeNull();
+    }
   });
 
   it('exibe o botão de Foco Stage na barra de ferramentas em largura normal', () => {

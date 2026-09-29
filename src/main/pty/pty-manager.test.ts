@@ -246,6 +246,7 @@ import {
   orchTerminateSession,
   registeredOrchestratorSessionsForMission,
   orchWriteSession,
+  resizeSession,
   operatorShellLoginArgs,
   writeSession,
   tapSessionInput,
@@ -5457,5 +5458,93 @@ describe("F-212 PTY lifecycle tracing (exit + termination origin)", () => {
         terminationOrigin: null,
       }),
     );
+  });
+});
+
+describe("F-216 — evidência de drift e resize descartado", () => {
+  beforeEach(() => {
+    lifecycleTrace.events.length = 0;
+  });
+
+  const driftEvents = (sessionId: string) =>
+    lifecycleTrace.events.filter(
+      (event) => event.kind === "pty-grid-drift" && event.sessionId === sessionId,
+    );
+  const droppedEvents = (sessionId: string) =>
+    lifecycleTrace.events.filter(
+      (event) =>
+        event.kind === "pty-resize-dropped" && event.sessionId === sessionId,
+    );
+
+  function ownedShell(cols = 80, rows = 24) {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const owner = fakeWc();
+    const trusted = trustedSpawn();
+    const { sessionId } = spawnSession(
+      owner,
+      { kind: "shell", cols, rows },
+      { scope: trusted.scope, cwd: trusted.cwd, shell: "/bin/zsh" },
+    );
+    return { owner, sessionId, h };
+  }
+
+  it("assert resize emite pty-grid-drift só quando o tamanho do PTY diverge", () => {
+    const { owner, sessionId, h } = ownedShell(80, 24);
+    const proc = h.procFor(sessionId);
+
+    // Mesma grade: asserção sem drift — nada no trace.
+    resizeSession(owner, sessionId, 80, 24, { assert: true });
+    expect(driftEvents(sessionId)).toEqual([]);
+
+    // Grade diferente: drift registrado UMA vez e o resize ainda é aplicado.
+    resizeSession(owner, sessionId, 120, 40, { assert: true });
+    expect(driftEvents(sessionId)).toEqual([
+      {
+        kind: "pty-grid-drift",
+        sessionId,
+        ptyCols: 80,
+        ptyRows: 24,
+        cols: 120,
+        rows: 40,
+      },
+    ]);
+    expect(proc.resize).toHaveBeenCalledWith(120, 40);
+
+    // Depois do reassert o PTY já está na grade pedida: novo assert, sem drift.
+    resizeSession(owner, sessionId, 120, 40, { assert: true });
+    expect(driftEvents(sessionId)).toHaveLength(1);
+    orchKillSession(sessionId);
+  });
+
+  it("resize de quem não é dono emite pty-resize-dropped uma vez por sessão", () => {
+    const { sessionId } = ownedShell(80, 24);
+    const attacker = fakeWc();
+
+    resizeSession(attacker, sessionId, 100, 30);
+    resizeSession(attacker, sessionId, 100, 30);
+    resizeSession(attacker, sessionId, 90, 30);
+    expect(droppedEvents(sessionId)).toEqual([
+      { kind: "pty-resize-dropped", sessionId },
+    ]);
+
+    // Sessão inexistente não gera evento (não é caso de posse).
+    resizeSession(attacker, "sessao-inexistente", 100, 30);
+    expect(
+      lifecycleTrace.events.filter(
+        (event) => event.kind === "pty-resize-dropped",
+      ),
+    ).toHaveLength(1);
+    orchKillSession(sessionId);
+  });
+
+  it("assert em sessão alheia não vaza grade nem aplica resize", () => {
+    const { sessionId, h } = ownedShell(80, 24);
+    const attacker = fakeWc();
+    resizeSession(attacker, sessionId, 100, 30, { assert: true });
+    expect(driftEvents(sessionId)).toEqual([]);
+    expect(h.procFor(sessionId).resize).not.toHaveBeenCalled();
+    expect(droppedEvents(sessionId)).toHaveLength(1);
+    orchKillSession(sessionId);
   });
 });

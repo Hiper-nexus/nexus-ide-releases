@@ -20,6 +20,7 @@ import { useJevHintStore } from '../state/jev-hint-store';
 import {
   hibernateHost,
   onPaneSessionChange,
+  repaintPaneTui,
   respawnWithResume,
   scrollPaneToBottom,
   wakeHost,
@@ -355,6 +356,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   const isParked = usePaneParkedStore((s) => s.parked.has(pane.id));
   const isSleeping = isHibernated || isParked;
   const isMaximized = maximizedPaneId === pane.id;
+  const hasLiveSession = usePaneLiveSessionId(pane.id) !== null;
 
   useEffect(() => {
     const el = rootRef.current;
@@ -514,6 +516,15 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     }
 
     if (pane.kind === 'cli-agent' && pane.agentTransport !== 'acp') {
+      if (hasLiveSession) {
+        list.push({
+          id: 'repaint',
+          label: 'Redesenhar tela',
+          detail: 'Pede à CLI para redesenhar a tela no tamanho do pane',
+          icon: 'refresh',
+          run: () => repaintPaneTui(pane.id),
+        });
+      }
       list.push({
         id: 'restart',
         label: 'Reiniciar',
@@ -604,6 +615,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     stageFocusMode,
     stagePaneId,
     paneState,
+    hasLiveSession,
     promoteMissionPaneRole,
     setPaneRole,
     destination,
@@ -637,7 +649,10 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       ? false
       : density === 'icons'
         ? a.id === 'restart'
-        : a.id === 'scroll-end' || a.id === 'hibernate' || a.id === 'restart',
+        : a.id === 'scroll-end' ||
+          a.id === 'hibernate' ||
+          a.id === 'repaint' ||
+          a.id === 'restart',
   );
   const missionVisible = density === 'compact' ? [] : actions.filter(
     (a) => a.id === 'mission-leader',
@@ -657,6 +672,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
             (a) =>
               a.id === 'scroll-end' ||
               a.id === 'hibernate' ||
+              a.id === 'repaint' ||
               a.id === ROLE_CHANGE_ACTION_ID,
           )
         : actions.filter(

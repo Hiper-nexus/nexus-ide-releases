@@ -411,7 +411,7 @@ function resumeVisibleHost(paneId: string, host: Host): boolean {
   const resumed = resumeTerminalVisibilityBeforePaint({
     resumeRenderer: () => webglPool.touch(paneId),
     fitVisibleGrid: () => fitHostGrid(host),
-    propagateSize: () => propagateHostSize(host),
+    propagateSize: () => propagateHostSize(host, { assert: true }),
     flushOutput: () => {
       resumeTerminalOutput(host.term);
       flushPendingScrollback(host);
@@ -481,11 +481,24 @@ function setHostSession(
   }
 }
 
-function propagateHostSize(host: Host): boolean {
+function propagateHostSize(
+  host: Host,
+  options?: { assert?: boolean },
+): boolean {
   if (!host.sessionId) return false;
   const next = { cols: host.term.cols, rows: host.term.rows };
-  if (!terminalGridChanged(host.reportedGrid, next)) return false;
-  window.nexus.pty.resize(host.sessionId, next.cols, next.rows);
+  // F-216: a asserção sai mesmo com grade igual ao reportedGrid — winsize
+  // idêntico é no-op para a CLI, winsize divergente cura o drift e a TUI
+  // fullscreen repinta sozinha.
+  if (options?.assert !== true && !terminalGridChanged(host.reportedGrid, next)) {
+    return false;
+  }
+  window.nexus.pty.resize(
+    host.sessionId,
+    next.cols,
+    next.rows,
+    options?.assert === true ? { assert: true } : undefined,
+  );
   host.reportedGrid = next;
   return true;
 }
@@ -1839,6 +1852,37 @@ function bouncePtyGrid(host: Host): void {
   window.nexus.pty.resize(host.sessionId, cols, Math.max(2, rows - 1));
   window.nexus.pty.resize(host.sessionId, cols, rows);
   host.reportedGrid = { cols, rows };
+}
+
+/**
+ * F-216: "Redesenhar tela" do toolbar — refaz o fit, reasserta o winsize
+ * (o trace pty-grid-drift do Main registra se havia divergência), bounceia
+ * a grade para a TUI fullscreen repintar e refresca as linhas visíveis.
+ * No-op sem sessão viva, com o pane descartado ou estacionado.
+ */
+export function repaintPaneTui(paneId: string): void {
+  const host = hosts.get(paneId);
+  if (
+    !host ||
+    host.disposed ||
+    host.parked ||
+    host.virtualized ||
+    !host.sessionId
+  ) {
+    return;
+  }
+  try {
+    fitHostGrid(host);
+  } catch {
+    // Não mensurável agora — asserção/bounce abaixo usam a grade atual.
+  }
+  propagateHostSize(host, { assert: true });
+  bouncePtyGrid(host);
+  try {
+    host.term.refresh(0, Math.max(0, host.term.rows - 1));
+  } catch {
+    // Terminal ainda não aberto ou descartado no meio do caminho.
+  }
 }
 
 /**

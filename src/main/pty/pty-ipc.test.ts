@@ -33,6 +33,7 @@ const ptyDeps = vi.hoisted(() => ({
   killSession: vi.fn(),
   orchKillSession: vi.fn(),
   orchTerminateSession: vi.fn(async () => true),
+  resizeSession: vi.fn(),
   writeSession: vi.fn(() => true),
 }));
 
@@ -110,7 +111,7 @@ vi.mock("./pty-manager", () => ({
   killSession: ptyDeps.killSession,
   orchKillSession: ptyDeps.orchKillSession,
   orchTerminateSession: ptyDeps.orchTerminateSession,
-  resizeSession: vi.fn(),
+  resizeSession: ptyDeps.resizeSession,
   setPtyHost: ptyDeps.setPtyHost,
   startSessionMortalityReconciler: vi.fn(),
   spawnAgentSession: ptyDeps.spawnAgentSession,
@@ -1607,5 +1608,64 @@ describe("registerPtyIpc account fail-fast", () => {
         ]);
       },
     );
+  });
+});
+
+describe("F-216 — resize com assert", () => {
+  beforeEach(() => {
+    ipcDeps.handlers.clear();
+    ptyDeps.resizeSession.mockClear();
+    registerPtyIpc();
+  });
+
+  it("aceita assert booleano e repassa para resizeSession", () => {
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.resize)!;
+    handler(
+      { sender: { id: 1 } },
+      { sessionId: "s1", cols: 80, rows: 24, assert: true },
+    );
+    expect(ptyDeps.resizeSession).toHaveBeenCalledExactlyOnceWith(
+      { id: 1 },
+      "s1",
+      80,
+      24,
+      { assert: true },
+    );
+  });
+
+  it("sem assert chama resizeSession sem a flag", () => {
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.resize)!;
+    handler(
+      { sender: { id: 1 } },
+      { sessionId: "s1", cols: 80, rows: 24 },
+    );
+    expect(ptyDeps.resizeSession).toHaveBeenCalledExactlyOnceWith(
+      { id: 1 },
+      "s1",
+      80,
+      24,
+      { assert: undefined },
+    );
+  });
+
+  it.each([["yes"], [1], [{}], [null]])(
+    "rejeita assert não-booleano (%j)",
+    (bad) => {
+      const handler = ipcDeps.handlers.get(PTY_CHANNELS.resize)!;
+      handler(
+        { sender: { id: 1 } },
+        { sessionId: "s1", cols: 80, rows: 24, assert: bad },
+      );
+      expect(ptyDeps.resizeSession).not.toHaveBeenCalled();
+    },
+  );
+
+  it("schema estrito rejeita chaves desconhecidas", () => {
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.resize)!;
+    handler(
+      { sender: { id: 1 } },
+      { sessionId: "s1", cols: 80, rows: 24, origin: "renderer" },
+    );
+    expect(ptyDeps.resizeSession).not.toHaveBeenCalled();
   });
 });

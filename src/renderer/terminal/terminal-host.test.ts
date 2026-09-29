@@ -8,6 +8,10 @@ const xtermEvents = vi.hoisted(() => ({
 }));
 
 const resizeCalls = vi.hoisted(() => [] as Array<{ cols: number; rows: number }>);
+/** Repaints pedidos ao xterm (term.refresh) — F-216 prova o repaint manual. */
+const refreshCalls = vi.hoisted(
+  () => [] as Array<{ start: number; end: number }>,
+);
 /** Shared timeline: which happened first, the grid fit or the output-scheduler resume. */
 const eventOrder = vi.hoisted(() => [] as string[]);
 /** Callbacks do ResizeObserver stub — o teste dispara o tick manualmente. */
@@ -35,7 +39,9 @@ vi.mock('@xterm/xterm', () => ({
     focus() {}
     write() {}
     writeln() {}
-    refresh() {}
+    refresh(start: number, end: number) {
+      refreshCalls.push({ start, end });
+    }
     dispose() {}
     // Mirrors real xterm.js: resize() reflows the live buffer at the given
     // width. Tracked here so tests can catch an intermediate reflow at a
@@ -125,6 +131,7 @@ import {
   reconcileHosts,
   refitAllPanesBeforePaint,
   refreshHost,
+  repaintPaneTui,
   revealTerminalHostsAfterWorkspaceShow,
   setHostVisibility,
   submitPromptToPane,
@@ -180,6 +187,7 @@ beforeEach(() => {
   ptyExitListeners.clear();
   ptyDataListeners.clear();
   resizeCalls.length = 0;
+  refreshCalls.length = 0;
   xtermEvents.onData.clear();
   xtermEvents.onTitleChange.clear();
   Object.defineProperty(window, 'nexus', {
@@ -1806,7 +1814,12 @@ describe('F-369 — TUI repinta depois de saída perdida', () => {
     ptyDataListeners.get('pty-hidden')!('texto pequeno');
     setHostVisibility(agent.id, true);
     await vi.advanceTimersByTimeAsync(60);
-    expect(ptyResize()).not.toHaveBeenCalled();
+    // F-216: o reveal reasserta o winsize (no-op na CLI quando igual), mas
+    // sem o par rows-1/rows do bounce — a TUI não repinta à toa.
+    expect(ptyResize()).toHaveBeenCalledWith('pty-hidden', 120, 40, {
+      assert: true,
+    });
+    expect(bounceCount()).toBe(0);
   });
 });
 
@@ -2109,5 +2122,79 @@ describe('rebindLiveMaestroOfMission — religar a missão ao Maestro vivo', () 
 
     await expect(rebindLiveMaestroOfMission(missionId)).resolves.toBe('refused');
     expect(bindPaneMission).not.toHaveBeenCalledWith(maestro.id, missionId);
+  });
+});
+
+describe('F-216 — reassert da grade do PTY e repaint manual', () => {
+  const agent: PaneModel = {
+    id: 'f216-agent',
+    kind: 'cli-agent',
+    adapterId: 'codex',
+    title: 'Codex',
+  };
+  const ptyResize = () => vi.mocked(window.nexus.pty.resize);
+
+  async function openVisibleAgent() {
+    useLayoutStore.setState({
+      root: buildGridTree([agent]),
+      focusedPaneId: agent.id,
+    });
+    const host = getOrCreateHost(agent);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(agent, slot);
+    expect(await waitForSession(agent.id, 1000)).toBe('pty-hidden');
+    return host;
+  }
+
+  it('resume visible reasserta a grade do PTY mesmo sem mudança medida', async () => {
+    await openVisibleAgent();
+    setHostVisibility(agent.id, false);
+    const resize = ptyResize();
+    resize.mockClear();
+
+    setHostVisibility(agent.id, true);
+    await vi.advanceTimersByTimeAsync(60);
+    // Grade medida 120×40 = reportedGrid — a asserção sai mesmo assim, para
+    // curar um PTY que ficou com winsize diferente do pane.
+    expect(resize).toHaveBeenCalledWith('pty-hidden', 120, 40, {
+      assert: true,
+    });
+  });
+
+  it('repaintPaneTui refaz o fit, reasserta, bounceia e repinta as linhas', async () => {
+    await openVisibleAgent();
+    const resize = ptyResize();
+    resize.mockClear();
+    refreshCalls.length = 0;
+
+    repaintPaneTui(agent.id);
+
+    expect(resize).toHaveBeenNthCalledWith(1, 'pty-hidden', 120, 40, {
+      assert: true,
+    });
+    // bouncePtyGrid: par consecutivo (rows-1, rows) que força a TUI a repintar.
+    expect(resize).toHaveBeenNthCalledWith(2, 'pty-hidden', 120, 39);
+    expect(resize).toHaveBeenNthCalledWith(3, 'pty-hidden', 120, 40);
+    expect(refreshCalls.length).toBeGreaterThan(0);
+  });
+
+  it('repaintPaneTui é no-op para pane sem sessão', () => {
+    const shell: PaneModel = { id: 'f216-shell', kind: 'shell', title: 'sh' };
+    useLayoutStore.setState({
+      root: buildGridTree([shell]),
+      focusedPaneId: shell.id,
+    });
+    const host = getOrCreateHost(shell);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(shell, slot);
+    const resize = ptyResize();
+    resize.mockClear();
+
+    repaintPaneTui(shell.id);
+    expect(resize).not.toHaveBeenCalled();
   });
 });

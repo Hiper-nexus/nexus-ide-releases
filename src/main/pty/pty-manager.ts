@@ -211,6 +211,12 @@ interface Session {
   killPersistentOnFinalize?: boolean;
   /** Unique opaque lease key issued at physical spawn time. */
   startKey?: string;
+  /**
+   * F-216: última grade que o Main aplicou ao PTY (spawn ou resize aceito).
+   * O handle do host não expõe cols/rows — isto é o winsize que o Main
+   * conhece, usado como ptyCols/ptyRows no trace de drift.
+   */
+  grid: { cols: number; rows: number };
 }
 
 export interface OwnedAgentSessionInfo {
@@ -1139,6 +1145,7 @@ function finalizeSession(
   sessionLeaseRegistry.revokeLease(sessionId);
   lastInputOrigins.delete(sessionId);
   terminationOrigins.delete(sessionId);
+  resizeDropTracedSessions.delete(sessionId);
   if (s.idleTimer) clearTimeout(s.idleTimer);
   if (s.hookBusyTimer) clearTimeout(s.hookBusyTimer);
   if (s.missionOrchestratorGrantTimer) {
@@ -1260,6 +1267,7 @@ export function spawnSession(
     session = {
       proc,
       wc,
+      grid: { cols: req.cols, rows: req.rows },
       idleTimer: null,
       hookBusyTimer: null,
       idleTimeoutMs: 0,
@@ -2592,6 +2600,7 @@ export function spawnAgentSession(
   session = {
     proc,
     wc,
+    grid: { cols: req.cols, rows: req.rows },
     idleTimer: null,
     hookBusyTimer: null,
     idleTimeoutMs: idleMs,
@@ -3204,16 +3213,48 @@ export function writeSession(
   }
 }
 
+/**
+ * F-216: resize descartado por posse é evidência de pane/sessão dessincronizados
+ * — uma vez por sessão (ids apenas), nunca spam.
+ */
+const resizeDropTracedSessions = new Set<string>();
+
 export function resizeSession(
   wc: WebContents,
   sessionId: string,
   cols: number,
   rows: number,
+  options?: { assert?: boolean },
 ): void {
-  const session = ownedSession(wc, sessionId);
+  const session = sessions.get(sessionId);
   if (!session) return;
+  if (session.wc !== wc) {
+    // Renderer que não apresenta esta sessão pediu resize — só um evento
+    // por sessão, senão um pane esquecido spamma o trace.
+    if (!resizeDropTracedSessions.has(sessionId)) {
+      resizeDropTracedSessions.add(sessionId);
+      trace({ kind: "pty-resize-dropped", sessionId });
+    }
+    return;
+  }
+  if (
+    options?.assert === true &&
+    (session.grid.cols !== cols || session.grid.rows !== rows)
+  ) {
+    // A asserção do renderer diverge do winsize que o Main aplicou — a
+    // causa do TUI desenhado fora do pane. O resize abaixo já cura.
+    trace({
+      kind: "pty-grid-drift",
+      sessionId,
+      ptyCols: session.grid.cols,
+      ptyRows: session.grid.rows,
+      cols,
+      rows,
+    });
+  }
   try {
     session.proc.resize(cols, rows);
+    session.grid = { cols, rows };
   } catch {
     // A resize racing with process exit can throw; safe to ignore.
   }
@@ -3322,6 +3363,7 @@ export function orchResizeSession(
   if (!session) return false;
   try {
     session.proc.resize(cols, rows);
+    session.grid = { cols, rows };
     return true;
   } catch {
     return false;
