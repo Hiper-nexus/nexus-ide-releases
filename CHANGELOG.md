@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.146 — Sol 6.1 em todo pedido
+
+Pedido do operador em 29/09: "entrou o Sol 6.1, não devo usar o Sol normal; quando preciso de modelo bom devo usar o Sol 6.1". Inclui a 0.76.145.
+
+- **Modelo pedido pelo nome também sobe para o mais novo (F-218).** A 0.76.144 (F-217) subia de versão a rota automática e o padrão do pane, mas o modelo que um agente pedia pelo nome continuava na versão pedida. O Maestro Claude não conhece o GPT-6.1 Sol, lançado hoje, e pedia o GPT-6 Sol. Agora o modelo passado em `nexus_pane_spawn`, o do template de squad e o citado no texto da tarefa usam a versão mais nova da mesma linha que a CLI oferece. O recibo do spawn mostra `modelUpgrade` com o que foi pedido e o que rodou. Ficam como estão: rosters selados de missões já criadas, panes retomados e o modelo que você escolhe no "+ Pane".
+
 ## 0.76.145 — MiniMax livre
 
 Uso real no Windows em 29/09. Inclui a 0.76.144 (O modelo mais novo, sempre).

@@ -8375,7 +8375,7 @@ export const RELEASE_076144: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076145: AppRelease = {
   version: '0.76.145',
   date: '2026-09-29',
   codename: 'MiniMax livre',
@@ -8390,6 +8390,26 @@ export const CURRENT_RELEASE: AppRelease = {
         'Nexus agora ajusta o modo "Full access" na configuração dele antes de ' +
         'abrir o pane, e ele trabalha sem parar para pedir aprovação. Panes ' +
         'somente leitura continuam sem essa liberação.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.146',
+  date: '2026-09-29',
+  codename: 'Sol 6.1 em todo pedido',
+  summary:
+    'Quando um agente pede um modelo pelo nome, o Nexus usa a versão mais nova daquela linha: ' +
+    'pedir o GPT-6 Sol abre o GPT-6.1 Sol. Inclui a 0.76.145.',
+  highlights: [
+    {
+      title: 'Pedido pelo nome também sobe de versão',
+      detail:
+        'O modelo que um agente pede ao abrir um pane, o de um squad e o citado no texto da ' +
+        'tarefa passam a usar a versão mais nova da mesma linha que a CLI oferece. O recibo ' +
+        'mostra o que foi pedido e o que rodou. Rosters selados de missões antigas e panes ' +
+        'retomados continuam como estavam.',
     },
   ],
   fixes: [],
