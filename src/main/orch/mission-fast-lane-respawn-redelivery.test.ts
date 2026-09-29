@@ -35,6 +35,14 @@ const harness = vi.hoisted(() => ({
   deliver: vi.fn(async (_sessionId: string, _prompt: string) => true),
   missionPaneSpecs: [] as Array<Record<string, unknown>>,
   movePane: vi.fn(),
+  registeredOrchestrators: [] as Array<{
+    missionId: string;
+    sessionId: string;
+    state: PaneSessionState;
+    adapterId: string;
+  }>,
+  terminate: vi.fn(async (_sessionId: string, _options?: unknown) => true),
+  trace: vi.fn(),
 }));
 
 vi.mock('../pty/pty-manager', () => ({
@@ -45,10 +53,16 @@ vi.mock('../pty/pty-manager', () => ({
   isPtySessionConnectedAndWritable: (sessionId: string) =>
     harness.sessionStates.get(sessionId) === 'idle' ||
     harness.sessionStates.get(sessionId) === 'busy',
-  registeredOrchestratorSessionsForMission: () => [],
+  registeredOrchestratorSessionsForMission: (missionId: string) =>
+    harness.registeredOrchestrators.filter(
+      (entry) => entry.missionId === missionId,
+    ),
   listAgentSessions: () => [],
-  orchTerminateSession: () => Promise.resolve(true),
+  orchTerminateSession: (sessionId: string, options?: unknown) =>
+    harness.terminate(sessionId, options),
 }));
+
+vi.mock('../observability/main-trace', () => ({ trace: harness.trace }));
 
 // Fail-closed do bootstrap (0.60): o Maestro precisa de adapter cli-pty com
 // rota Nexus MCP; o registry real não carrega builtins no vitest.
@@ -257,6 +271,9 @@ beforeEach(async () => {
   harness.deliver.mockClear();
   harness.handoffsOfSession = undefined;
   harness.missionPaneSpecs = [];
+  harness.registeredOrchestrators.length = 0;
+  harness.terminate.mockClear();
+  harness.trace.mockClear();
   harness.movePane.mockReset().mockImplementation((_missionId, specId, paneId) => {
     const spec = harness.missionPaneSpecs.find((row) => row.id === specId);
     if (spec) spec.paneId = paneId;
@@ -555,6 +572,102 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
     // Pane morto é contado UMA vez: ticks seguintes não inflacionam.
     await vi.advanceTimersByTimeAsync(30_000);
     expect(mortality.workerMortalityCount('mission-1', 'glm')).toBe(1);
+  });
+
+  it('F-187: remount automático adota Maestro registrado e vivo — nunca termina nem respawna', async () => {
+    // Campo 28/09: o Maestro e os helpers morreram juntos e a remontagem
+    // automática respawnou por cima. O caminho decide 'respawn' quando
+    // liveOrchestratorSessionId devolve null — mas a projeção de pane pode
+    // ficar para trás de uma sessão registrada e FISICAMENTE viva. Remount
+    // automático (ressurreição de boot, retry-kickoff, supervisor) precisa
+    // adotar essa sessão em vez de matá-la.
+    liveMission = {
+      ...mission,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    } as Mission;
+    harness.sessionStates.set('sess-maestro-vivo', 'busy');
+    harness.registeredOrchestrators.push({
+      missionId: 'mission-1',
+      sessionId: 'sess-maestro-vivo',
+      state: 'busy',
+      adapterId: 'codex',
+    });
+
+    await fastLane.resumeFastLaneMission(scope, 'mission-1', {
+      remountKind: 'automatic',
+    });
+
+    expect(harness.terminate).not.toHaveBeenCalled();
+    expect(harness.spawnCount).toBe(0);
+    expect(harness.trace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'orchestrator-live-adopted',
+        missionId: 'mission-1',
+        sessionId: 'sess-maestro-vivo',
+      }),
+    );
+    expect(liveMission.status).toBe('running');
+  });
+
+  it('F-187: Retomar do operador mantém o respawn com terminate com prova', async () => {
+    liveMission = {
+      ...mission,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    } as Mission;
+    harness.sessionStates.set('sess-maestro-vivo', 'busy');
+    harness.registeredOrchestrators.push({
+      missionId: 'mission-1',
+      sessionId: 'sess-maestro-vivo',
+      state: 'busy',
+      adapterId: 'codex',
+    });
+
+    await fastLane.resumeFastLaneMission(scope, 'mission-1', {
+      remountKind: 'operator',
+    });
+
+    expect(harness.terminate).toHaveBeenCalledWith(
+      'sess-maestro-vivo',
+      expect.objectContaining({ termTimeoutMs: 5_000 }),
+    );
+    expect(harness.spawnCount).toBe(1);
+  });
+
+  it('F-187: pane promovido de missão da aba é reconhecido como Maestro vivo', async () => {
+    // O pane do operador promovido a orquestrador carrega orchMeta com
+    // missionId + role 'orchestrator': liveOrchestratorSessionId precisa
+    // reconhecê-lo para o remount automático virar 'watch', não 'respawn'.
+    liveMission = {
+      ...mission,
+      squadId: undefined,
+      intentContract: {
+        workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' },
+      },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    } as unknown as Mission;
+    harness.snapshots.push({
+      missionId: 'mission-1',
+      paneId: 'pane-operador',
+      sessionId: 'sess-pane-operador',
+      role: 'orchestrator',
+      agentName: 'Orquestrador',
+      adapterId: 'claude',
+    });
+    harness.sessionStates.set('sess-pane-operador', 'idle');
+
+    expect(fastLane.liveOrchestratorSessionId('mission-1')).toBe(
+      'sess-pane-operador',
+    );
+
+    await fastLane.resumeFastLaneMission(scope, 'mission-1', {
+      remountKind: 'automatic',
+    });
+
+    expect(harness.terminate).not.toHaveBeenCalled();
+    expect(harness.spawnCount).toBe(0);
   });
 
   it('worker que entregou antes de morrer é prova de vida, não mortalidade', async () => {

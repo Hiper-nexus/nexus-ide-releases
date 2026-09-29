@@ -522,6 +522,23 @@ export function liveOrchestratorSessionId(missionId: string): string | null {
   return leader?.proven ? leader.sessionId : null;
 }
 
+/**
+ * F-187: sessão de orquestrador REGISTRADA no pty-manager e fisicamente viva,
+ * mesmo quando a projeção de pane ainda não a reconhece como Maestro (meta
+ * em race na reabertura de escopo, snapshot não publicado). Só os remounts
+ * automáticos adotam este fallback — prova de liderança para UI e o remount
+ * do operador (Retomar) continuam exigindo liveOrchestratorSessionId.
+ */
+function liveRegisteredOrchestratorSessionId(
+  missionId: string,
+): string | null {
+  return (
+    registeredOrchestratorSessionsForMission(missionId).find(
+      (session) => classifySessionLiveness(session.state) === 'live',
+    )?.sessionId ?? null
+  );
+}
+
 export { maybeCompleteFastLaneOnDelivery };
 
 export function leftoverIsolationPersistPatch(): MissionBlockPatch {
@@ -2136,7 +2153,12 @@ export async function resurrectRunningMissionsForScope(
   const focused = pickFocusedRunningMission(running, liveById);
   for (const mission of running) {
     if (wasMissionRuntimeClosedByOperator(mission)) continue;
-    const liveMaestroSessionId = liveById.get(mission.id) ?? null;
+    // F-187: a adoção de liveRegisteredOrchestratorSessionId também vale
+    // aqui — sem ela o leftover-skip soltava (releaseMissionLiveRuntime) um
+    // Maestro fisicamente vivo cuja projeção de pane atrasou na reabertura.
+    const liveMaestroSessionId =
+      liveById.get(mission.id) ??
+      liveRegisteredOrchestratorSessionId(mission.id);
     const freshKickoff = isThisProcessFreshKickoff(
       stores,
       mission,
@@ -2860,7 +2882,22 @@ export async function resumeFastLaneMission(
     clearOperatorDismissedPanes(missionId);
     respawnBudgets.delete(watcherKey(scope, missionId));
   }
-  const liveMaestroSessionId = liveOrchestratorSessionId(missionId);
+  let liveMaestroSessionId = liveOrchestratorSessionId(missionId);
+  // F-187: remount automático NUNCA termina um Maestro fisicamente vivo. A
+  // projeção de pane pode ficar para trás de uma sessão registrada e viva;
+  // sem a adoção o leftover-skip marcava a missão e o respawn matava a
+  // sessão antes de spawnar a reposição (foi o que derrubou o Maestro do
+  // campo em 28/09). O remount do operador mantém o terminate com prova.
+  if (remountKind === 'automatic' && liveMaestroSessionId === null) {
+    liveMaestroSessionId = liveRegisteredOrchestratorSessionId(missionId);
+    if (liveMaestroSessionId) {
+      trace({
+        kind: 'orchestrator-live-adopted',
+        missionId,
+        sessionId: liveMaestroSessionId,
+      });
+    }
+  }
   const freshKickoff = isThisProcessFreshKickoff(
     stores,
     mission,
