@@ -4,6 +4,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { ensurePrivateDirectory, linkFile, linkProviderSessionState } from '../orch/cli-mcp-session-artifacts';
 import { compareAuthFreshness } from './auth-freshness';
+import { readAgyWindowsKeyringBlob } from './agy-windows-keyring';
 import { parseMimoAuth, readMimoNativeAuthBlob } from './mimo-auth';
 import {
   isFileAuthAdapter,
@@ -903,6 +904,19 @@ export function captureNativeAuth(
       email: identity.email,
       authRelativePath,
     };
+  }
+  if (adapterId === 'agy' && path.resolve(home) === path.resolve(os.homedir())) {
+    // F-677: AGY 1.2 no Windows não grava arquivo — a sessão mora só na vaga
+    // `gemini:antigravity` do Gerenciador de Credenciais. Sem isto "Salvar
+    // conta" e a adoção do login nativo no failover voltavam null.
+    const keyringBlob = readAgyWindowsKeyringBlob();
+    if (keyringBlob && authBlobIsUsable('agy', keyringBlob)) {
+      return {
+        blob: keyringBlob,
+        email: identityFromAuthBlob('agy', keyringBlob).email,
+        authRelativePath: spec.authRelativePath,
+      };
+    }
   }
   return null;
 }

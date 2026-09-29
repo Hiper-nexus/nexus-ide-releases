@@ -789,7 +789,9 @@ export async function spawnMainOwnedMissionPaneAsync(
     if (
       adapter?.kind === "cli-pty" &&
       (adapter.id === "agy" || adapter.id === "claude") &&
-      (adapter.id === "claude" || !options.accountId)
+      // F-677: no Windows a conta AGY fixada (rotação por limite) só vale
+      // depois de ir para a vaga do keyring, que o preparo autoritativo grava.
+      (adapter.id === "claude" || !options.accountId || process.platform === "win32")
     ) {
       const operatorChoice = isOperatorChoicePolicy(
         getOrchSettings().squadCliPolicy,

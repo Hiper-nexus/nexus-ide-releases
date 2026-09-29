@@ -121,6 +121,7 @@ import {
   accountHasFailoverCredential,
   activeClaudeAuthEnv,
   accountKey,
+  agyKeyringSlotAccount,
   ensureSubscriptionActive,
   fileSubscriptionAuthEnv,
   getActiveAccount,
@@ -145,6 +146,7 @@ import type {
 import { quotaAvailabilityScore } from '../quota/quota-policy';
 import { requireQuotaService } from '../quota/quota-service';
 import type { ApiQuotaKeyRequest } from '../quota/provider-live-usage';
+import { activateAgyAccountForSpawn } from './agy-keyring-activation';
 
 /**
  * Provider configuration hub: per-adapter enable/disable, binary-path
@@ -1100,6 +1102,35 @@ function resolveSpawnAccountChoice(
   if (!nativeLineage && hasManagedAccounts) {
     return pickUnpinnedAccountWithHeadroom(adapterId);
   }
+  if (adapterId === 'agy' && nativeLineage && hasManagedAccounts && process.platform === 'win32') {
+    // F-677: no Windows a "sessão nativa" do AGY é a conta da vaga única do
+    // keyring. O pane nasce fixado nela — o failover precisa saber QUAL conta
+    // esgotou — e, se ela já está em cooldown, a regra de folga escolhe a
+    // irmã, que o preparo autoritativo grava na vaga.
+    // Vaga ilegível: segue a linhagem nativa (nunca troca por conta velha).
+    const slotOwner = agyKeyringSlotAccount();
+    if (slotOwner && isAccountBlockedForScope(slotOwner.id, decidedAt)) {
+      return pickUnpinnedAccountWithHeadroom(adapterId);
+    }
+    if (slotOwner) {
+      return {
+        account: slotOwner,
+        receipt: {
+          adapterId,
+          source: 'native',
+          account: receiptAccount(slotOwner),
+          headroom: headroomFor(adapterId, slotOwner.id),
+          alternatives: accountChoiceAlternatives(
+            adapterId,
+            slotOwner.id,
+            quotaScoresFor(adapterId),
+            decidedAt,
+          ),
+          decidedAt,
+        },
+      };
+    }
+  }
   return {
     account: null,
     receipt: {
@@ -1308,6 +1339,16 @@ export async function prepareProviderSpawnAuthoritative(
     selectedChoice,
     verifiedClaudeBlob,
   );
+  // F-677: no Windows a conta AGY do pane é a da vaga única do keyring — a
+  // conta escolhida (pin, rotação por limite, headroom) vai para a vaga agora.
+  // Conta por chave de API não passa pela vaga (a chave vai por ENV).
+  const agySelected = prepared.ok && adapterId === 'agy' && prepared.overrides.selectedAccountId
+    ? getAccount(prepared.overrides.selectedAccountId)
+    : null;
+  if (agySelected?.mode === 'subscription') {
+    const activation = await activateAgyAccountForSpawn(agySelected.id);
+    if (!activation.ok) return { ok: false, error: activation.error };
+  }
   return prepared;
 }
 
