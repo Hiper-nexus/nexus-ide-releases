@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.130 — Maestro religado lidera de novo
+
+Correção do uso real de 29/09. Inclui a 0.76.129.
+
+- **Missão reconhece o Maestro religado (F-372).** Quando o processo do Maestro saía e o Nexus o religava no mesmo pane, a missão continuava apontando a sessão morta: o Quadro ficava em "O orquestrador reiniciou e a missão não o reconhece" para sempre e as entregas dos agentes não chegavam a ele. Agora o religamento também religa a missão, e quem já está nesse estado tem o botão "Religar a missão ao Maestro" no Quadro.
+
 ## 0.76.129 — Catálogo em dia
 
 Uso real no Windows em 29/09. Inclui a 0.76.128 (Todas as LLMs pelo benchmark oficial).

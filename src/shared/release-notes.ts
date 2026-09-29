@@ -7940,7 +7940,7 @@ export const RELEASE_076128: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076129: AppRelease = {
   version: '0.76.129',
   date: '2026-09-29',
   codename: 'Catálogo em dia',
@@ -7957,6 +7957,24 @@ export const CURRENT_RELEASE: AppRelease = {
         'catálogo do app: o Gemini 3.8 Flash aparecia como barato e puxava a ' +
         'rota para o AGY. Cópia mais velha que o app agora só acrescenta ' +
         'modelos que o app não conhece.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.130',
+  date: '2026-09-29',
+  codename: 'Maestro religado lidera de novo',
+  summary:
+    'Quando o Nexus religa o Maestro no mesmo pane, a missão volta a coordenar por ele — sem ' +
+    'ficar presa em "o orquestrador reiniciou e a missão não o reconhece". Inclui a 0.76.129.',
+  highlights: [
+    {
+      title: 'Religar a missão ao Maestro',
+      detail:
+        'O religamento do Maestro religa a missão sozinho, e o Quadro oferece o botão para ' +
+        'missões que já ficaram nesse estado.',
     },
   ],
   fixes: [],
