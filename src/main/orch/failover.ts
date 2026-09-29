@@ -52,6 +52,7 @@ import {
 import { quotaAvailabilityScore } from '../quota/quota-policy';
 import { tapObserverFrames } from './observer-bus';
 import type { ObserverFrame } from '../../shared/observer-frame';
+import { quarantineRejectedModel } from './model-access-quarantine';
 
 /**
  * Automatic account failover. Watches each pane's output for a limit signature
@@ -1265,6 +1266,8 @@ function handleLimitHit(
   // senão default curado do catálogo do adapter) e religar na MESMA conta.
   // Cooldown de credencial aqui puniria conta sã e queimaria o pool inteiro.
   if (hit.kind === 'model') {
+    // F-683: o roteador para de mandar helpers para o modelo recusado.
+    quarantineRejectedModel(adapterId, pane.model, hit.reason, now);
     const next = pickModelRotation(
       pane.model,
       getAdapter(adapterId)?.models.default,

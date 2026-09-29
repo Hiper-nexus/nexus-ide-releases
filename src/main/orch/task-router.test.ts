@@ -12,6 +12,7 @@ import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { adapterSchema } from '../../shared/adapter-types';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import type { ModelCatalog } from '../adapters/model-catalog';
+import { quarantineRejectedModel, resetModelAccessQuarantineForTests } from './model-access-quarantine';
 
 function adapters(...installed: string[]): AdapterAvailability[] {
   const all = [
@@ -96,6 +97,17 @@ describe('classifyTask', () => {
 });
 
 describe('routeTask', () => {
+  it('F-683: modelo recusado pelo provider sai do roteamento até a quarentena vencer', () => {
+    resetModelAccessQuarantineForTests();
+    const before = routeTask('corrigir typo no README do projeto agora', adapters('grok', 'claude', 'codex'));
+    expect(before).toMatchObject({ adapterId: 'grok', model: 'grok-4.7' });
+    quarantineRejectedModel('grok', 'grok-4.7', 'Model access is disabled');
+    const after = routeTask('corrigir typo no README do projeto agora', adapters('grok', 'claude', 'codex'));
+    expect(after).not.toBeNull();
+    expect(`${after!.adapterId}:${after!.model}`).not.toBe('grok:grok-4.7');
+    resetModelAccessQuarantineForTests();
+  });
+
   it('routes easy work to the cheapest installed candidate', () => {
     const decision = routeTask(
       'corrigir typo no README do projeto agora',

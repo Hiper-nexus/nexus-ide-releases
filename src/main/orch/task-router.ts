@@ -45,6 +45,7 @@ import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { adapterSchema } from '../../shared/adapter-types';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { multiScoreRerank, tieBreakByUse } from './route-pipeline';
+import { modelAccessQuarantine } from './model-access-quarantine';
 
 export type TaskTier = 'trivial' | 'easy' | 'medium' | 'hard' | 'critical';
 
@@ -974,6 +975,13 @@ export function routeTask(
         if (isModelBlockedForAutoRouting(info)) {
           skippedRisk.push(
             `${routed.adapterId}:${routed.model ?? '(default)'} (${info?.availability ?? 'blocked'})`,
+          );
+          return [];
+        }
+        // F-683: provider recusou este modelo há pouco (acesso desligado).
+        if (modelAccessQuarantine(routed.adapterId, routed.model)) {
+          skippedRisk.push(
+            `${routed.adapterId}:${routed.model ?? '(default)'} (recusado pelo provider)`,
           );
           return [];
         }

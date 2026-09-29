@@ -217,6 +217,9 @@ const PATTERNS: Pattern[] = [
   { kind: 'model', cooldownMs: 5 * 60 * 1000, re: /\bnot_found_error:[^\n]{0,60}\bmodel\b/i },
   { kind: 'model', cooldownMs: 5 * 60 * 1000, re: /\bmodels\/[a-z0-9][a-z0-9.-]{0,80}\s+is not found\b/i },
   { kind: 'model', cooldownMs: 5 * 60 * 1000, re: /\b(?:model_not_found|model_not_supported)\b/i },
+  // F-683: OpenCode Zen com o modelo desligado para a conta (29/09):
+  // "Error: Upstream request failed: Model access is disabled".
+  { kind: 'model', cooldownMs: 5 * 60 * 1000, re: /upstream request failed:\s*model access is disabled/i },
 ];
 
 /**
