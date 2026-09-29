@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.136 — Agente trabalhando não cai
+
+Uso real no Windows em 29/09. Inclui a 0.76.135 (Todas as LLMs de verdade, com o Jev enxugando).
+
+- **Chef-idle não derruba missão com agente trabalhando (F-680).** Duas vezes em 29/09 (00:15 e 10:21) os três panes da missão viraram "processo caiu" com "Precisa de reparo". O trace F-212 mostrou a cadeia: o chef-idle escalava a missão para bloqueada ("60 min sem progresso") e o reconciliador de autoridade encerrava todos os runtimes da missão no mesmo segundo. Só que num caso o Maestro estava no meio de um comando longo e silencioso, e no outro um worker Claude trabalhava até 1,5 min antes. O relógio agora ignora o Maestro com turno aberto e recomeça quando um worker está ocupado ou em turno.
+
 ## 0.76.135 — Todas as LLMs de verdade, com o Jev enxugando
 
 Pedido do operador em 29/09. Inclui a 0.76.134.

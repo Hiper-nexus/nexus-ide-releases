@@ -8060,7 +8060,7 @@ export const RELEASE_076134: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076135: AppRelease = {
   version: '0.76.135',
   date: '2026-09-29',
   codename: 'Todas as LLMs de verdade, com o Jev enxugando',
@@ -8091,6 +8091,27 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Helper parado recebe a continuação',
       detail:
         'Tarefa relacionada vai para o helper parado da mesma CLI, sem abrir pane novo.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.136',
+  date: '2026-09-29',
+  codename: 'Agente trabalhando não cai',
+  summary:
+    'A missão deixa de ser bloqueada — e de derrubar todos os agentes — ' +
+    'quando o Maestro está no meio de um comando longo ou um worker está ' +
+    'trabalhando sem ter entregue ainda. Inclui a 0.76.135.',
+  highlights: [
+    {
+      title: 'Agente trabalhando não é missão parada',
+      detail:
+        'O vigia de missão parada olhava só a saída do terminal: um comando ' +
+        'longo do Maestro ou um worker produzindo sem handoff viravam "60 ' +
+        'min sem progresso", a missão ia para "Precisa de reparo" e todos os ' +
+        'panes caíam. Agora ele usa o status real das CLIs.',
     },
   ],
   fixes: [],

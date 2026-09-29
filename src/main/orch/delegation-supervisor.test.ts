@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Handoff, Mission } from '../../shared/orch-types';
 import {
   CHEF_IDLE_BLOCK_AFTER_MS,
+  chefIdleAgentActivity,
   DELEGATION_RETRY_MS,
   DELEGATION_SLA_MS,
   decideChefIdleEscalation,
@@ -130,6 +131,50 @@ describe('delegation supervisor policy', () => {
         now: 9_999_999,
       }),
     ).toEqual({ action: 'reset' });
+  });
+
+  it('F-680: Maestro no meio de um comando longo não é chef ocioso (29/09 00:15)', () => {
+    // Pane "idle" pela saída do terminal, mas o turno está aberto: o Maestro
+    // esperava o ensaio no WSL num laço de sleep de até 10 min.
+    const now = 10_000_000;
+    const activity = chefIdleAgentActivity({
+      orchestratorSessionId: 'pty-maestro',
+      workers: [{ sessionId: 'pty-w1', state: 'idle' }, { sessionId: 'pty-w2', state: 'idle' }],
+      now,
+      semanticStatus: (id) => (id === 'pty-maestro' ? { status: 'working', updatedAt: now - 9 * 60_000 } : { status: 'idle', updatedAt: now - 40 * 60_000 }),
+    });
+    expect(activity).toEqual({ orchestratorInTurn: true, workerActive: false });
+  });
+
+  it('F-680: worker trabalhando é progresso — o relógio do bloqueio não corre (29/09 10:21)', () => {
+    const now = 10_000_000;
+    const busy = chefIdleAgentActivity({
+      orchestratorSessionId: 'pty-maestro',
+      workers: [{ sessionId: 'pty-codex', state: 'idle' }, { sessionId: 'pty-claude', state: 'busy' }],
+      now,
+      semanticStatus: () => ({ status: 'idle', updatedAt: now - 60_000 }),
+    });
+    expect(busy.workerActive).toBe(true);
+    // Mesmo com o pane quieto, turno aberto recente conta como trabalho.
+    const inTurn = chefIdleAgentActivity({
+      orchestratorSessionId: 'pty-maestro',
+      workers: [{ sessionId: 'pty-claude', state: 'idle' }],
+      now,
+      semanticStatus: (id) => (id === 'pty-claude' ? { status: 'working', updatedAt: now - 90_000 } : null),
+    });
+    expect(inTurn).toEqual({ orchestratorInTurn: false, workerActive: true });
+  });
+
+  it('F-680: missão parada de verdade (todos quietos, turno velho) continua escalando', () => {
+    const now = 10_000_000;
+    const stalled = chefIdleAgentActivity({
+      orchestratorSessionId: 'pty-maestro',
+      workers: [{ sessionId: 'pty-w1', state: 'idle' }],
+      now,
+      // "working" preso há mais que o teto do chef-idle não é trabalho.
+      semanticStatus: () => ({ status: 'working', updatedAt: now - CHEF_IDLE_BLOCK_AFTER_MS - 1 }),
+    });
+    expect(stalled).toEqual({ orchestratorInTurn: false, workerActive: false });
   });
 
   it('primeira observação idle começa a contar, não bloqueia na hora', () => {

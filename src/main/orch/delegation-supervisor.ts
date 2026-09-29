@@ -236,6 +236,47 @@ function rearmStuckHandoffDelivery(
   }
 }
 
+/**
+ * F-680: atividade real na missão que o relógio do chef-idle não pode
+ * ignorar. O `state` do pane vem da saída do terminal — um comando longo e
+ * silencioso (o Maestro esperando um ensaio no WSL, 29/09 00:15) deixa o pane
+ * `idle` com o turno aberto; e worker trabalhando sem handoff (um Claude
+ * produzindo até 1,5 min antes, 29/09 10:21) é progresso, não missão parada.
+ * Nos dois casos o bloqueio derrubava todos os agentes da missão.
+ */
+export interface ChefIdleAgentActivity {
+  /** Maestro com turno aberto (status semântico `working` recente). */
+  readonly orchestratorInTurn: boolean;
+  /** Algum worker da missão ocupado ou com turno aberto recente. */
+  readonly workerActive: boolean;
+}
+
+export function chefIdleAgentActivity(input: {
+  readonly orchestratorSessionId?: string | null;
+  readonly workers: ReadonlyArray<{
+    readonly sessionId?: string | null;
+    readonly state: PaneRuntimeState;
+  }>;
+  readonly now: number;
+  readonly semanticStatus: (
+    sessionId: string,
+  ) => { readonly status: string; readonly updatedAt: number } | null;
+  readonly windowMs?: number;
+}): ChefIdleAgentActivity {
+  const windowMs = input.windowMs ?? CHEF_IDLE_BLOCK_AFTER_MS;
+  const inTurn = (sessionId: string | null | undefined): boolean => {
+    if (!sessionId) return false;
+    const entry = input.semanticStatus(sessionId);
+    return entry?.status === 'working' && input.now - entry.updatedAt < windowMs;
+  };
+  return {
+    orchestratorInTurn: inTurn(input.orchestratorSessionId),
+    workerActive: input.workers.some(
+      (worker) => worker.state === 'busy' || inTurn(worker.sessionId),
+    ),
+  };
+}
+
 export type ChefIdleEscalationDecision =
   | { readonly action: 'watch' }
   | { readonly action: 'reset' }
@@ -509,13 +550,27 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
     // Chef-idle: orchestrator is idle while workers are present. This state is
     // indistinguishable from a stall without an explicit marker — emit one so
     // the presenter and telemetry can surface it instead of showing silence.
+    const chefActivity = chefIdleAgentActivity({
+      orchestratorSessionId:
+        orchSessionId ??
+        panes.find((pane) => pane.role === 'orchestrator')?.sessionId,
+      workers: panes.filter((pane) => pane.role === 'worker'),
+      now,
+      semanticStatus: getAgentSemanticStatusBySession,
+    });
     if (
       workerPaneCount > 0 &&
       orchestratorPaneState === 'idle' &&
+      !chefActivity.orchestratorInTurn &&
       (mission.status === 'pending' || mission.status === 'running')
     ) {
       emitChefIdleAwaitingWorkers(suite.scope, mission.id, workerPaneCount);
-      trackChefIdleEscalation(suite, mission, workerPaneCount, now);
+      // F-680: worker trabalhando é progresso — o relógio do bloqueio recomeça.
+      if (chefActivity.workerActive) {
+        chefIdleTrackers.delete(mission.id);
+      } else {
+        trackChefIdleEscalation(suite, mission, workerPaneCount, now);
+      }
     } else {
       chefIdleTrackers.delete(mission.id);
     }
