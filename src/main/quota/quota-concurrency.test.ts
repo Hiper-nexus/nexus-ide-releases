@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderSettingsInfo } from '../../shared/provider-settings-types';
+import type { AccountInfo } from '../../shared/account-types';
 import type { QuotaWindow, QuotaFleetSnapshot } from '../../shared/quota-types';
 
 const mocks = vi.hoisted(() => ({ probe: vi.fn(), send: vi.fn() }));
@@ -7,7 +8,7 @@ vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [{
   isDestroyed: () => false, webContents: { isCrashed: () => false, send: mocks.send },
 }] }, ipcMain: { handle: vi.fn(), removeHandler: vi.fn() } }));
 vi.mock('./provider-live-usage', () => ({ fetchLiveProviderWindows: mocks.probe }));
-import { QuotaService } from './quota-service';
+import { QUOTA_PROBE_CONCURRENCY, QuotaService } from './quota-service';
 
 const window = (ratio: number): QuotaWindow[] => [{
   kind: 'hours', label: '5 Horas', usedRatio: ratio, source: 'provider-api', confidence: 'high',
@@ -17,6 +18,55 @@ const providers = (upstream: string): ProviderSettingsInfo[] => [
   { adapterId: 'grok', label: 'Grok', installed: true, enabled: true, routable: false, authStrategy: 'subscription' },
 ] as ProviderSettingsInfo[];
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); });
+
+describe('frota de muitas contas (F-676)', () => {
+  const fleet = (n: number): AccountInfo[] => Array.from({ length: n }, (_, i) => ({
+    id: `grok-${i}`, adapterId: 'grok', label: `Conta ${i}`, mode: 'subscription' as const, upstream: 'xai', createdAt: i,
+    active: i === 0, hasCredential: true, onCooldown: false, needsRelogin: false,
+  }));
+
+  it('sonda no máximo QUOTA_PROBE_CONCURRENCY contas ao mesmo tempo', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    mocks.probe.mockImplementation(async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return { windows: window(0.3) };
+    });
+    const svc = new QuotaService({ listProviders: () => providers('glm').slice(1), listAccounts: () => fleet(30) });
+    await svc.snapshot(1_000, { forceApi: true });
+    expect(mocks.probe.mock.calls.length).toBeGreaterThanOrEqual(30);
+    expect(peak).toBeLessThanOrEqual(QUOTA_PROBE_CONCURRENCY);
+    svc.stop();
+  });
+
+  it('rajada de limites divide a sondagem que saiu depois do hit, nunca a de antes', async () => {
+    let release: (() => void) | undefined;
+    mocks.probe.mockImplementation(() => new Promise((resolve) => {
+      release = () => resolve({ windows: window(0.3) });
+    }));
+    const svc = new QuotaService({ listProviders: () => providers('glm').slice(1), listAccounts: () => fleet(1) });
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const before = svc.refresh();
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    // Hit em 2_000: a leitura em voo saiu em 1_000 — não pode refutar o limite.
+    clock.mockReturnValue(2_000);
+    release = undefined;
+    const firstHit = svc.refreshForLimitHit(2_000);
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    const callsAfterFirstHit = mocks.probe.mock.calls.length;
+    // Segundo pane da mesma rajada: divide a sondagem pós-hit.
+    const secondHit = svc.refreshForLimitHit(2_000);
+    expect(mocks.probe.mock.calls.length).toBe(callsAfterFirstHit);
+    release!();
+    await Promise.all([firstHit, secondHit]);
+    expect(await secondHit).toBe(await firstHit);
+    void before;
+    svc.stop();
+  });
+});
 
 describe('quota refresh identity and publication', () => {
   it('never mixes a newer upstream cache into an older snapshot or republishes the old snapshot', async () => {

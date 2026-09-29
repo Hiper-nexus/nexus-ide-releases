@@ -26,9 +26,10 @@ const MCP_BUILTIN_IDS = new Set([
   "kimi",
   "grok",
   "mimo-code",
+  "minimax-code",
 ]);
 
-const PTY_FALLBACK_BUILTIN_IDS = new Set(["agy", "aider", "devin", "minimax-code", "muse"]);
+const PTY_FALLBACK_BUILTIN_IDS = new Set(["agy", "aider", "devin", "muse"]);
 
 function loadCliAdapters(
   rawList: readonly unknown[],

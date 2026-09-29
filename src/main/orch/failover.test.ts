@@ -170,13 +170,14 @@ function addPane(options: {
   sessionId: string;
   missionId?: string;
   scope: ProjectExecutionScope;
+  accountId?: string;
 }): void {
   const pane = {
     paneId: options.paneId,
     sessionId: options.sessionId,
     kind: 'cli-agent',
     adapterId: 'claude',
-    accountId: 'account-a',
+    accountId: options.accountId ?? 'account-a',
   };
   paneMocks.panes.set(options.sessionId, pane);
   paneMocks.authorities.set(options.sessionId, {
@@ -202,7 +203,18 @@ async function settleFailover(): Promise<void> {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(100_000);
-  vi.mocked(pickAvailableForFailover).mockReset().mockImplementation(() => ({ account: accountMocks.next, probe: false }));
+  // Como o pick real: nunca devolve a conta excluída nem as já tentadas.
+  vi.mocked(pickAvailableForFailover).mockReset().mockImplementation(
+    (_adapterId, excludeId, _now, _scores, options) => ({
+      account:
+        accountMocks.next &&
+        accountMocks.next.id !== excludeId &&
+        !options?.excludeIds?.has(accountMocks.next.id)
+          ? accountMocks.next
+          : null,
+      probe: false,
+    }),
+  );
   ptyMocks.dataTaps.length = 0;
   ptyMocks.exitTaps.length = 0;
   ptyMocks.agentSessions.clear();
@@ -409,7 +421,7 @@ describe('account failover authority and lifecycle', () => {
     vi.mocked(requireQuotaService).mockImplementation(() => {
       if (!probe) throw new Error('quota indisponível');
       return {
-        refresh: async () => {
+        refreshForLimitHit: async () => {
           await probe();
           probed = true;
           return snapshot;
@@ -669,6 +681,62 @@ describe('account failover authority and lifecycle', () => {
         coalesced: false,
       }),
     );
+  });
+
+  it('percorre a frota até uma conta preparar e tira as quebradas da frente (F-676)', async () => {
+    const { prepareAccountForSpawn, pickAvailableForFailover } = await import(
+      '../persistence/account-store'
+    );
+    const scope = testProjectScope();
+    const owner = renderer(711);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    addPane({ owner, paneId: 'pane-fleet', sessionId: 'sess-fleet', missionId: 'm-fleet', scope });
+
+    // Frota: b, c e d sem credencial utilizável; e está saudável.
+    const fleet = ['account-b', 'account-c', 'account-d', 'account-e'].map((id, index) => ({
+      id,
+      adapterId: 'claude',
+      label: `Conta ${index}`,
+      mode: 'api-key' as const,
+      upstream: 'anthropic',
+      createdAt: index + 1,
+    }));
+    vi.mocked(pickAvailableForFailover).mockImplementation(
+      (_adapterId, excludeId, _now, _scores, options) => ({
+        account:
+          fleet.find((acct) => acct.id !== excludeId && !options?.excludeIds?.has(acct.id)) ?? null,
+        probe: false,
+      }),
+    );
+    const prepareFleet = (_adapterId: string, id: string) => {
+      const acct = fleet.find((candidate) => candidate.id === id);
+      return acct && id === 'account-e'
+        ? { ok: true as const, account: acct, apiKey: null, authEnv: {} }
+        : { ok: false as const, error: 'sem credencial' };
+    };
+    // Once por conta tentada: o mock do módulo volta ao padrão nos testes seguintes.
+    for (let i = 0; i < fleet.length; i += 1) {
+      vi.mocked(prepareAccountForSpawn).mockImplementationOnce(prepareFleet);
+    }
+    accountMocks.setCooldown.mockClear();
+
+    ptyMocks.dataTaps[0]!('sess-fleet', 'LIMIT');
+    for (let i = 0; i < 4; i += 1) await settleFailover();
+
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({ switched: true, toAccountId: 'account-e' }),
+    );
+    for (const broken of ['account-b', 'account-c', 'account-d']) {
+      expect(accountMocks.setCooldown).toHaveBeenCalledWith(
+        broken,
+        expect.any(Number),
+        expect.stringContaining('troca indisponível'),
+        undefined,
+      );
+    }
   });
 
   it('does not materialize a Claude failover credential that proves another identity', async () => {
@@ -1214,6 +1282,44 @@ describe('disjuntor de morte instantânea (401-loop multi-conta)', () => {
         (c[1] as { switched?: boolean }).switched === true,
     );
     expect(switchedTrue).toHaveLength(0);
+  });
+
+  it('contas diferentes mortas seguidas continuam girando a frota (F-676)', async () => {
+    // Frota de 10–100 contas: duas expiradas não podem travar a rotação das
+    // outras. Só a MESMA conta morta duas vezes (ou 5 contas distintas) trava.
+    const { detectLimit } = await import('./limit-detector');
+    const authHit = (buffer: string) =>
+      buffer.includes('LIMIT')
+        ? { kind: 'auth' as const, reason: 'invalid x-api-key', cooldownMs: 60_000 }
+        : null;
+    vi.mocked(detectLimit)
+      .mockImplementationOnce(authHit)
+      .mockImplementationOnce(authHit);
+    const scope = testProjectScope();
+    const owner = renderer(903);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    const originalCurrent = accountMocks.current;
+    try {
+      addPane({ owner, paneId: 'pane-fleet-1', sessionId: 'sess-fleet-1', scope });
+      ptyMocks.dataTaps[0]!('sess-fleet-1', 'LIMIT 401');
+      await settleFailover();
+
+      // O pane novo nasceu na account-b, que também estava morta.
+      accountMocks.current = { ...originalCurrent, id: 'account-b', label: 'Account B', createdAt: 1 };
+      accountMocks.next = { ...originalCurrent, id: 'account-c', label: 'Account C', createdAt: 2 };
+      addPane({ owner, paneId: 'pane-fleet-2', sessionId: 'sess-fleet-2', scope, accountId: 'account-b' });
+      owner.send.mockClear();
+      ptyMocks.dataTaps[0]!('sess-fleet-2', 'LIMIT 401');
+      await settleFailover();
+      expect(owner.send).toHaveBeenCalledWith(
+        ACCOUNT_CHANNELS.failover,
+        expect.objectContaining({ paneId: 'pane-fleet-2', switched: true, toAccountId: 'account-c' }),
+      );
+    } finally {
+      accountMocks.current = originalCurrent;
+    }
   });
 
   it('trip repetido sempre emite e re-login zera a contagem', async () => {

@@ -786,10 +786,16 @@ saber isto antes de mexer:
   `~/.minimax/auth/prod/<en|cn>/mcode-public/auth-state.json` (status público,
   sem token) ou a linha `minimaxModelSource: minimax_api_key` do `config.yaml`.
   Nunca ler `auth.json` (access/refresh). Sem multi-conta: uma sessão nativa.
-- PTY é worker sem MCP do Nexus (`nexusMcp: none`): a TUI só lê MCP do
-  `config.yaml` do data dir ou do `.mcp.json` do checkout, e nenhum dos dois
-  pode ser escrito por spawn. O MCP chega pelo harness ACP (`mcode acp`,
-  preset `minimax-code`), que recebe `mcpServers` no `session/new`.
+- F-678: o pane PTY TEM o MCP do Nexus (`nexusMcp: minimax-code`). A TUI e
+  o `exec` leem servidores de `<dataDir>/mcp.json` ("User-configured"), do
+  `.mcp.json` do projeto e de plugins locais — o `config.yaml` não declara
+  MCP. O Nexus registra UMA vez `mcpServers.nexus` (stdio → ponte
+  `~/.nexus/mcp-bridge/nexus-mcp-bridge.cjs`) em `~/.minimax/mcp.json`, por
+  mescla idempotente; URL e bearer da sessão chegam só por ENV
+  (`NEXUS_MCP_URL`/`NEXUS_MCP_TOKEN`, que o stdio herda). Sem ENV a ponte
+  responde zero ferramentas. Nunca use `MINIMAX_DATA_DIR` como overlay: a
+  credencial é chaveada pelo caminho do data dir e o login some. O harness ACP
+  (`mcode acp`) continua recebendo `mcpServers` no `session/new`.
 - A TUI não tem flag de permissão nem de esforço: vêm do `config.yaml`
   (`permissionMode`, `defaultModelThinking.effort`). Worker autônomo precisa de
   Full access escolhido na própria CLI. O Jev roteia sem `effort`.
@@ -888,3 +894,46 @@ saber isto antes de mexer:
   acima de `WINDOWS_NATIVE_PROMPT_MAX_CHARS` (20K) não vai no argv —
   `nativeArgvPromptFits` decide no pty-manager, no tool-util e na Via Rápida,
   que colam o brief depois do boot.
+- F-672: escolha explícita de CLI no `nexus_pane_spawn` é respeitada, mas o
+  recibo traz `diversity` quando a CLI já tem 2+ helpers vivos na missão
+  (`sameAdapterDiversityHint`): omitir `adapterId`/`model` devolve a rota ao Jev.
+- F-670/F-671: a decisão final do brief no argv do Windows é do pty-manager,
+  que conhece executável e argv finais: `.cmd`/`.bat` ou linha acima de 32.000
+  (`windowsArgvPromptPlacement`, aspas do MSVCRT) tiram o brief do argv e o
+  gancho `setDeferredInitialPromptHook` (mcp-server → `deliverAgentPrompt`) cola
+  depois do boot. Canal one-shot recusa com erro claro.
+- F-673: no Windows o xterm nasce com `windowsPty: { backend: 'conpty', buildNumber }`
+  (`xtermWindowsPty`, build via `window.nexus.windowsBuild`). Sem isso ele puxa o
+  histórico ao ganhar linhas enquanto o ConPTY repinta: texto sobreposto.
+- F-674: na missão da aba, `adapterId` fixado pelo orquestrador numa CLI com 2+
+  helpers vivos é redistribuído (`route.redistributed`); `operatorChoice: true`
+  preserva a CLI que o operador pediu.
+
+## Rotação de contas e roteamento com dados públicos (F-675/F-676/F-677)
+
+- F-675: sem avaliação `nexus-eval`, a qualidade do candidato no
+  `route-pipeline` vem de `orch/published-benchmarks.ts` — números OFICIAIS
+  do fabricante (DeepSWE v1.1, Terminal-Bench 2.1, SWE-bench Verified), cada
+  um com URL da fonte. Terminal-Bench de outra versão não entra (não é
+  comparável). Variante só herda (`sameModelAs`) quando o fabricante diz que é
+  o mesmo modelo; sem número publicado não há nota. Linha nova na tabela de
+  rota precisa de nota ou de entrada em `UNPUBLISHED_ROUTE_MODELS` no teste.
+- F-676: frota de 10–100 contas. O disjuntor de morte instantânea é POR CONTA
+  (2 mortes da mesma), e o provider só trava com 5 contas distintas mortas na
+  janela. `performSwitch` percorre até 12 contas (`excludeIds` no
+  `pickAvailableForFailover`) e tira a que não prepara da frente por 5 min.
+  Sondagem de cota: no máximo `QUOTA_PROBE_CONCURRENCY` (6) contas em voo; a
+  confirmação de limite usa `refreshForLimitHit(hitAt)`, que divide só a
+  leitura forçada que saiu DEPOIS do hit — leitura anterior nunca refuta.
+- F-677: o AGY 1.2 do Windows autentica pela vaga ÚNICA `gemini:antigravity`
+  do Gerenciador de Credenciais; HOME/USERPROFILE/GEMINI_CLI_HOME isolados e
+  `*_APP_DATA_DIR` não mudam a vaga, e o refresh passa pelo servidor do Google
+  (ADC por pane não serve). `captureNativeAuth('agy')` lê a vaga quando não há
+  arquivo; `prepareProviderSpawnAuthoritative` grava a conta escolhida na vaga
+  (`activateAgyAccountForSpawn`): guarda antes a sessão que estava lá
+  (`preserveAgyKeyringSession`, nunca mexe em cooldown/ativa), grava, relê a
+  identidade e, entre contas diferentes, espera `AGY_KEYRING_SETTLE_MS` para o
+  AGY recém-aberto ler a vaga. Pane sem conta fixada nasce na dona da vaga
+  (`agyKeyringSlotAccount`) ou, se ela esgotou, na irmã da regra de folga. O
+  segredo viaja por stdin em base64; teste nunca toca a vaga real (só com
+  `exec` injetado). Conta AGY por chave de API não passa pela vaga.

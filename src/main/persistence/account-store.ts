@@ -27,8 +27,10 @@ import {
   refreshClaudeOauthBlob,
 } from '../quota/claude-oauth-refresh';
 import {
+  authBlobIsUsable,
   captureNativeAuth,
   compareAuthBlobIdentity,
+  identityFromAuthBlob,
   isFileAuthAdapter,
   managedHomeEnv,
   materializeManagedHome,
@@ -38,6 +40,7 @@ import {
   type FileAuthAdapterId,
 } from '../adapters/managed-credentials';
 import { chooseAccount } from './account-select';
+import { readAgyWindowsKeyringBlob } from '../adapters/agy-windows-keyring';
 import { accountCredentialCandidates } from '../adapters/account-credential-candidates';
 import {
   freshestClaudeCredential,
@@ -1174,6 +1177,11 @@ export interface FailoverPickOptions {
    * devolvida com `probe: true` (e a sondagem é consumida na hora).
    */
   allowProbe?: boolean;
+  /**
+   * Contas já tentadas neste mesmo failover cujo prepare falhou (F-676): o
+   * pick seguinte passa para a próxima da frota em vez de repetir a mesma.
+   */
+  excludeIds?: ReadonlySet<string>;
 }
 
 export interface FailoverPick {
@@ -1197,7 +1205,9 @@ export function pickAvailableForFailover(
   quotaScoreByAccountId?: ReadonlyMap<string, number>,
   options?: FailoverPickOptions,
 ): FailoverPick {
-  const siblings = listAccounts(adapterId).filter((a) => a.id !== excludeId);
+  const siblings = listAccounts(adapterId).filter(
+    (a) => a.id !== excludeId && !options?.excludeIds?.has(a.id),
+  );
   const free = siblings.filter(
     (a) =>
       !effectiveBlock(a, now, options?.scope) && accountHasFailoverCredential(a),
@@ -1586,6 +1596,90 @@ export function addActiveSessionAccount(
     throw error;
   }
 
+  replaceMap(accounts, nextAccounts);
+  replaceMap(activeByAdapter, nextActive);
+  emit();
+  return account;
+}
+
+/**
+ * F-677: conta dona da sessão que está agora na vaga do AGY no Windows (a
+ * sessão entra no cofre se ainda não estiver). Null fora do Windows ou com a
+ * vaga vazia.
+ */
+export function agyKeyringSlotAccount(): Account | null {
+  if (process.platform !== 'win32') return null;
+  const blob = readAgyWindowsKeyringBlob();
+  if (!blob) return null;
+  try {
+    return preserveAgyKeyringSession(blob);
+  } catch {
+    return authBlobIsUsable('agy', blob) ? credentialIdentityOwner('agy', blob) : null;
+  }
+}
+
+/** Blob salvo de uma conta AGY de assinatura (F-677), ou null. */
+export function agyAccountCredentialBlob(accountId: string): string | null {
+  const account = getAccount(accountId);
+  if (!account || account.adapterId !== 'agy' || account.mode !== 'subscription') {
+    return null;
+  }
+  return getSecret(CRED_PREFIX + accountId);
+}
+
+/**
+ * F-677: antes de o Nexus trocar a vaga única do AGY no Windows, o que está
+ * nela vai para o cofre — a conta dona (mesma identidade) recebe o blob mais
+ * fresco; sem dona, a sessão vira conta nova. Nunca mexe em cooldown nem na
+ * conta ativa: a troca acontece justamente porque a conta da vaga esgotou.
+ */
+export function preserveAgyKeyringSession(blob: string): Account | null {
+  if (!authBlobIsUsable('agy', blob)) return null;
+  const owner = credentialIdentityOwner('agy', blob);
+  if (owner) {
+    if (getSecret(CRED_PREFIX + owner.id) !== blob) {
+      const saved = setSecret(CRED_PREFIX + owner.id, blob);
+      if (!saved.ok) {
+        throw new PersistenceUnavailableError(
+          saved.error ?? 'failed to persist AGY session',
+        );
+      }
+    }
+    return owner;
+  }
+  requireWritableDb();
+  const email = identityFromAuthBlob('agy', blob).email;
+  const account: Account = {
+    id: makeId(),
+    adapterId: 'agy',
+    label: email ?? 'AGY',
+    mode: 'subscription',
+    upstream: 'agy',
+    ...(email ? { email } : {}),
+    createdAt: Date.now(),
+  };
+  const secretKey = CRED_PREFIX + account.id;
+  const saved = setSecret(secretKey, blob);
+  if (!saved.ok) {
+    throw new PersistenceUnavailableError(
+      saved.error ?? 'failed to persist AGY session',
+    );
+  }
+  const nextAccounts = new Map(accounts);
+  nextAccounts.set(account.id, account);
+  const nextActive = new Map(activeByAdapter);
+  if (!nextActive.has('agy')) nextActive.set('agy', account.id);
+  try {
+    persistSnapshot(nextAccounts, nextActive, 'preserve agy keyring session');
+  } catch (error) {
+    const rollback = deleteSecret(secretKey);
+    if (!rollback.ok) {
+      throw new PersistenceUnavailableError(
+        'account metadata failed and credential rollback was not durable',
+      );
+    }
+    throw error;
+  }
   replaceMap(accounts, nextAccounts);
   replaceMap(activeByAdapter, nextActive);
   emit();

@@ -87,6 +87,17 @@ const RETRY_BUFFER_MS = 1_000;
 const RETRY_MIN_RESCHEDULE_MS = REARM_MS;
 /** Teto de re-agendamentos por watch — evita timer eterno em pool morto. */
 const MAX_SCHEDULED_RETRIES = 8;
+/**
+ * Contas que um mesmo failover tenta preparar antes de desistir (F-676). Com
+ * frotas de 10–100 contas, parar na 2ª com prepare falho deixava o pane sem
+ * troca enquanto dezenas de irmãs estavam livres.
+ */
+const MAX_PREPARE_ATTEMPTS = 12;
+/**
+ * Conta cujo prepare falhou sai da frente por alguns minutos: o pick é
+ * determinístico e, sem isto, o próximo hit escolhia a mesma conta quebrada.
+ */
+const PREPARE_FAILURE_COOLDOWN_MS = 5 * 60_000;
 
 interface CoalesceEntry {
   toAccountId: string;
@@ -168,18 +179,33 @@ export const TRANSIENT_CONTINUE_PROMPT =
  * duas contas = loop infinito entre panes novos (cada respawn zera o attempt).
  */
 const INSTANT_DEATH_MS = 90_000;
+/** Mortes seguidas da MESMA conta que travam o failover (credencial morta). */
 const INSTANT_DEATH_TRIP = 2;
+/**
+ * Contas DISTINTAS mortas na janela que travam o provider inteiro (F-676).
+ * Com 10–100 contas, duas expiradas não podem parar a rotação das outras;
+ * cinco seguidas já indicam defeito do provider/CLI, não da credencial.
+ */
+const INSTANT_DEATH_PROVIDER_TRIP = 5;
 const INSTANT_DEATH_WINDOW_MS = 10 * 60_000;
-/** adapterId → instantes das mortes instantâneas recentes. */
-const instantAuthDeaths = new Map<string, number[]>();
+/** adapterId → mortes instantâneas recentes (instante + conta que morreu). */
+const instantAuthDeaths = new Map<string, Array<{ at: number; accountKey: string }>>();
 
-function noteInstantAuthDeath(adapterId: string, now: number): number {
+function noteInstantAuthDeath(
+  adapterId: string,
+  accountId: string | null | undefined,
+  now: number,
+): { sameAccount: number; distinctAccounts: number } {
+  const accountKey = accountId ?? '';
   const recent = (instantAuthDeaths.get(adapterId) ?? []).filter(
-    (at) => now - at < INSTANT_DEATH_WINDOW_MS,
+    (death) => now - death.at < INSTANT_DEATH_WINDOW_MS,
   );
-  recent.push(now);
+  recent.push({ at: now, accountKey });
   instantAuthDeaths.set(adapterId, recent);
-  return recent.length;
+  return {
+    sameAccount: recent.filter((death) => death.accountKey === accountKey).length,
+    distinctAccounts: new Set(recent.map((death) => death.accountKey)).size,
+  };
 }
 
 /**
@@ -601,7 +627,8 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
 
   // Pin-only prepare. O coalesce já foi registrado de forma provisória no
   // pick (visibilidade para a rajada concorrente); aqui, na falha do
-  // prepare, a entrada é descartada e tenta-se UMA alternativa.
+  // prepare, a entrada é descartada e a frota é percorrida até uma conta
+  // preparar (teto MAX_PREPARE_ATTEMPTS, F-676).
   let prepareError: string | undefined;
   if (next) {
     // F-511: secundária Claude com access token vencido mas refresh vivo
@@ -615,40 +642,46 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
     let prepared = await prepareFailoverAccount(adapterId, next.id, now, {
       allowCoolingProbe: probe,
     });
-    if (!prepared.ok) {
+    const failedIds = new Set<string>();
+    while (next && !prepared.ok) {
       prepareError = prepared.error;
       console.warn('[failover] next account not spawnable:', prepared.error);
       coalesceByFrom.delete(coalesceKey);
       coalesced = false;
-      const failedId = next.id;
-      // Alternate sem probe: a sondagem (se houve) já foi consumida.
+      failedIds.add(next.id);
+      // Sondagem consumida não ganha cooldown extra: o bloco dela já existe.
+      if (!probe) {
+        setCooldown(
+          next.id,
+          now + PREPARE_FAILURE_COOLDOWN_MS,
+          `troca indisponível: ${prepared.error}`,
+          selectionScope,
+        );
+      }
+      if (failedIds.size >= MAX_PREPARE_ATTEMPTS) {
+        next = null;
+        break;
+      }
+      // Alternativas sem probe: a sondagem (se houve) já foi consumida.
       const alternate = pickAvailableForFailover(
         adapterId,
-        failedId,
+        req.excludeId,
         now,
         quotaScores,
-        selectionScope ? { scope: selectionScope } : undefined,
+        { excludeIds: failedIds, ...(selectionScope ? { scope: selectionScope } : {}) },
       );
       next = alternate.account;
       probe = false;
       if (nextUnblockAtMs === undefined) {
         nextUnblockAtMs = alternate.nextUnblockAtMs;
       }
-      if (next) {
-        if (next.adapterId === 'claude') {
-          await healClaudeSecondaryBeforePin(next.id, now);
-        }
-        prepared = await prepareFailoverAccount(adapterId, next.id, now);
-        if (!prepared.ok) {
-          prepareError = prepared.error;
-          next = null;
-        } else {
-          prepareError = undefined;
-        }
-      } else {
-        next = null;
+      if (!next) break;
+      if (next.adapterId === 'claude') {
+        await healClaudeSecondaryBeforePin(next.id, now);
       }
+      prepared = await prepareFailoverAccount(adapterId, next.id, now);
     }
+    if (next && prepared.ok) prepareError = undefined;
   }
 
   if (!next) {
@@ -1311,7 +1344,7 @@ async function confirmLimitByProbe(
 ): Promise<void> {
   let fresh: ProviderQuotaEntry | undefined;
   try {
-    await requireQuotaService().refresh();
+    await requireQuotaService().refreshForLimitHit(now);
     fresh = current ? quotaEntryFor(adapterId, current.id) : undefined;
   } catch (error) {
     console.warn(
@@ -1389,19 +1422,24 @@ function commitLimitHit(
   // Disjuntor de morte instantânea (401-loop multi-conta): sessão que morre
   // de auth com segundos de vida nasceu com credencial morta — trocar para a
   // irmã e respawnar só queima outro pane. A 1ª morte ainda troca (abrir pane
-  // em conta morta e cair na irmã saudável é legítimo); a 2ª seguida dentro
-  // da janela trava o failover com motivo acionável. O prepare da
+  // em conta morta e cair na irmã saudável é legítimo); a 2ª seguida da MESMA
+  // conta dentro da janela trava o failover com motivo acionável — contas
+  // diferentes mortas só travam o provider a partir de
+  // INSTANT_DEATH_PROVIDER_TRIP (F-676, frotas de 10–100 contas). O prepare da
   // account-store já veta conta com refresh morto; isto cobre a credencial
   // que morreu entre o prepare e o spawn. As entradas decaem pela janela, e
   // o re-login limpa a causa (blob fresco).
   if (hit.kind === 'auth') {
     const sessionAgeMs = now - (watches.get(key)?.startedAt ?? now);
     if (sessionAgeMs < INSTANT_DEATH_MS) {
-      const deaths = noteInstantAuthDeath(adapterId, now);
-      if (deaths >= INSTANT_DEATH_TRIP) {
+      const { sameAccount, distinctAccounts } = noteInstantAuthDeath(adapterId, current?.id, now);
+      const deaths = Math.max(sameAccount, distinctAccounts);
+      if (sameAccount >= INSTANT_DEATH_TRIP || distinctAccounts >= INSTANT_DEATH_PROVIDER_TRIP) {
         logSuppressedFailover(pane, current, hit, 'instant-auth-death-breaker', source, {
           sessionAgeMs,
           deaths,
+          sameAccount,
+          distinctAccounts,
         });
         // Emite SEMPRE: suprimir aqui deixava o pane morrer sem nenhum
         // feedback no renderer. Repetição idêntica não empilha toast — a

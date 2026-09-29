@@ -382,6 +382,8 @@ vi.mock('../adapters/subscription-auth', () => ({
 vi.mock('./account-store', () => ({
   activeClaudeAuthEnv: spawnDeps.activeClaudeAuthEnv,
   accountKey: () => 'sk-active-other-account',
+  agyKeyringSlotAccount: () => agyActivation.slotOwner(),
+  fileSubscriptionAuthEnv: () => ({ GEMINI_CLI_HOME: '/managed/agy-slot' }),
   ensureSubscriptionActive: spawnDeps.ensureSubscriptionActive,
   getActiveAccount: spawnDeps.getActiveAccount,
   getAccount: spawnDeps.getAccount,
@@ -395,6 +397,14 @@ vi.mock('./account-store', () => ({
 
 vi.mock('../quota/quota-service', () => ({
   requireQuotaService: () => ({ lastSnapshot: spawnDeps.quotaSnapshot }),
+}));
+
+const agyActivation = vi.hoisted(() => ({
+  activate: vi.fn(async (_accountId: string) => ({ ok: true as const, switched: false })),
+  slotOwner: vi.fn((): unknown => null),
+}));
+vi.mock('./agy-keyring-activation', () => ({
+  activateAgyAccountForSpawn: agyActivation.activate,
 }));
 
 import {
@@ -1134,6 +1144,60 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
         ]),
       },
     });
+  });
+
+  it('conta AGY de assinatura vai para a vaga do keyring antes do spawn (F-677)', async () => {
+    const account = {
+      id: 'agy-b', adapterId: 'agy', label: 'AGY B', mode: 'subscription' as const,
+      upstream: 'agy', createdAt: 2,
+    };
+    spawnDeps.getAccount.mockReturnValue(account);
+    spawnDeps.prepareAccount.mockReturnValue({ ok: true, account, apiKey: null, authEnv: {} });
+    agyActivation.activate.mockClear();
+    const ok = await prepareProviderSpawnAuthoritative('agy', { accountId: 'agy-b' });
+    expect(ok).toMatchObject({ ok: true });
+    expect(agyActivation.activate).toHaveBeenCalledWith('agy-b');
+
+    agyActivation.activate.mockResolvedValueOnce({ ok: false, error: 'vaga recusada' } as never);
+    await expect(prepareProviderSpawnAuthoritative('agy', { accountId: 'agy-b' }))
+      .resolves.toEqual({ ok: false, error: 'vaga recusada' });
+
+    // Conta por chave de API não mexe na vaga.
+    const apiKey = { ...account, id: 'agy-key', mode: 'api-key' as const };
+    spawnDeps.getAccount.mockReturnValue(apiKey);
+    spawnDeps.prepareAccount.mockReturnValue({ ok: true, account: apiKey, apiKey: 'k', authEnv: {} });
+    agyActivation.activate.mockClear();
+    await prepareProviderSpawnAuthoritative('agy', { accountId: 'agy-key' });
+    expect(agyActivation.activate).not.toHaveBeenCalled();
+  });
+
+  it('Windows: pane AGY sem conta fixada nasce na dona da vaga; se ela esgotou, na irmã (F-677)', async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      spawnDeps.hasSecret.mockReturnValue(true);
+      const owner = {
+        id: 'agy-slot', adapterId: 'agy', label: 'Vaga', mode: 'subscription' as const,
+        upstream: 'agy', createdAt: 1,
+      };
+      spawnDeps.listAccounts.mockReturnValue([owner]);
+      spawnDeps.getAccount.mockReturnValue(owner);
+      agyActivation.slotOwner.mockReturnValue(owner);
+      spawnDeps.blockedForScope.mockReturnValue(false);
+      const free = await prepareProviderSpawnAuthoritative('agy', { model: 'gemini-3.6-flash-high' });
+      expect(free.ok ? null : free.error).toBeNull();
+      expect(free).toMatchObject({ ok: true, overrides: { selectedAccountId: 'agy-slot', accountChoice: { source: 'native' } } });
+
+      spawnDeps.blockedForScope.mockReturnValue(true);
+      spawnDeps.pickAvailableForFailover.mockReturnValue({ account: null, probe: false });
+      const exhausted = await prepareProviderSpawnAuthoritative('agy', { model: 'gemini-3.6-flash-high' });
+      expect(exhausted).toMatchObject({ ok: true });
+      expect((exhausted as { overrides: { accountChoice: { source: string } } }).overrides.accountChoice.source)
+        .not.toBe('native');
+    } finally {
+      Object.defineProperty(process, 'platform', platform);
+      agyActivation.slotOwner.mockReturnValue(null);
+    }
   });
 
   it('returns the exact account error instead of passing through global auth', () => {

@@ -27,10 +27,10 @@ it('offers the official MiniMax Code CLI with its models, OAuth login and instal
   // Never resumes "the latest session in cwd": only an exact captured id.
   expect(adapter.spawn.resumeArgs).toEqual([]);
   expect(adapter.spawn.resumeIdArgs).toEqual(['--session']);
-  // Worker PTY: the TUI only loads MCP from its data dir or a checkout
-  // `.mcp.json`; Nexus MCP reaches MiniMax Code through the ACP harness.
-  expect(adapter.quirks.nexusMcp).toBe('none');
-  expect(canUseNexusMcp(adapter)).toBe(false);
+  // F-678: a TUI lê `~/.minimax/mcp.json`; a ponte stdio `nexus` registrada
+  // ali recebe URL e bearer da sessão por ENV — o pane PTY tem o MCP do Nexus.
+  expect(adapter.quirks.nexusMcp).toBe('minimax-code');
+  expect(canUseNexusMcp(adapter)).toBe(true);
   // No env key is injected: OAuth lives in ~/.minimax and the TUI ignores it.
   expect(primaryKeyEnvVar(adapter)).toBeNull();
   expect(accountLoginCommandFor('minimax-code')).toBe('mcode login --region global');

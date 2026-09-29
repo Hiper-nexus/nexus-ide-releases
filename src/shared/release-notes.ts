@@ -7702,7 +7702,7 @@ export const RELEASE_076121: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076122: AppRelease = {
   version: '0.76.122',
   date: '2026-09-28',
   codename: 'Sonnet 5.5 e Jev com medição',
@@ -7737,4 +7737,105 @@ export const CURRENT_RELEASE: AppRelease = {
         'Quando o julgamento não é suficiente, a leitura preserva o texto completo.',
     },
   ],
+};
+
+export const RELEASE_076123: AppRelease = {
+  version: '0.76.123',
+  date: '2026-09-28',
+  codename: 'Helpers variados de novo',
+  summary:
+    'Helpers no Windows recebem o brief inteiro em qualquer caso, e quando o ' +
+    'orquestrador fixa a mesma CLI para vários helpers o recibo sugere deixar ' +
+    'o Jev distribuir o trabalho. Inclui a 0.76.122 (Sonnet 5.5 e Jev com medição).',
+  highlights: [
+    {
+      title: 'Aviso de diversidade no spawn',
+      detail:
+        'Depois de uma falha já corrigida, o orquestrador passava a fixar Claude ' +
+        'em todo helper e o Jev nunca mais roteava. A escolha explícita continua ' +
+        'valendo, mas com dois ou mais helpers vivos na mesma CLI o recibo diz ' +
+        'para omitir adapterId e deixar o Nexus rotear.',
+    },
+    {
+      title: 'Brief inteiro no Windows, sem exceção',
+      detail:
+        'O Nexus mede a linha de comando final (executável, flags, config e ' +
+        'brief) e, se a CLI ainda cairia num atalho .cmd ou a linha passaria do ' +
+        'limite do Windows, entrega o brief colado depois do boot.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_076124: AppRelease = {
+  version: '0.76.124',
+  date: '2026-09-28',
+  codename: 'Todas as LLMs',
+  summary:
+    'Os panes no Windows param de misturar telas antigas com novas, e a missão ' +
+    'da aba passa a distribuir os helpers entre as LLMs prontas em vez de ' +
+    'empilhar tudo numa só. Inclui a 0.76.123.',
+  highlights: [
+    {
+      title: 'Panes sem texto sobreposto no Windows',
+      detail:
+        'O terminal não sabia que rodava sobre o ConPTY do Windows: ao ganhar ' +
+        'linhas puxava o histórico enquanto o ConPTY repintava por cima, e as ' +
+        'TUIs apareciam com telas antigas misturadas. Agora o xterm liga as ' +
+        'regras de ConPTY com o build do Windows.',
+    },
+    {
+      title: 'Helpers distribuídos entre as LLMs',
+      detail:
+        'O orquestrador fixava Claude em todo helper. Na missão da aba, uma CLI ' +
+        'que já tem dois ou mais helpers vivos é redistribuída pelo roteamento ' +
+        '(Jev + tabela), salvo quando você pediu aquela CLI.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.125',
+  date: '2026-09-28',
+  codename: 'Frota de contas',
+  summary:
+    'A troca automática de conta aguenta de 1 a 100 contas por LLM, cada pane ' +
+    'AGY no Windows passa a usar a conta escolhida, o MiniMax entra na ' +
+    'orquestração com o MCP do Nexus e o roteador escolhe modelos pelos ' +
+    'benchmarks oficiais dos fabricantes.',
+  highlights: [
+    {
+      title: 'Troca de conta com frotas grandes',
+      detail:
+        'Quando uma conta bate o limite, a próxima entra mesmo com dezenas de ' +
+        'contas: contas expiradas não travam mais a rotação das outras, a troca ' +
+        'percorre a frota até achar uma conta pronta e a cota é sondada no ' +
+        'máximo seis contas por vez.',
+    },
+    {
+      title: 'Conta AGY por pane no Windows',
+      detail:
+        'O AGY do Windows guarda o login numa vaga única do Gerenciador de ' +
+        'Credenciais. O Nexus agora salva essa sessão como conta e, antes de ' +
+        'abrir cada pane, coloca nela a conta escolhida — sem perder a que ' +
+        'estava lá.',
+    },
+    {
+      title: 'MiniMax Code orquestrado',
+      detail:
+        'O pane do MiniMax ganha as ferramentas do Nexus (handoff, panes, ' +
+        'missão) por uma ponte registrada no MCP do próprio MiniMax, e passa a ' +
+        'receber helpers da missão da aba.',
+    },
+    {
+      title: 'Roteamento pelos benchmarks oficiais',
+      detail:
+        'Sem avaliação própria do Nexus, cada modelo compete pelos números que ' +
+        'o fabricante publicou (DeepSWE, Terminal-Bench 2.1, SWE-bench ' +
+        'Verified), com fonte — MiMo, DeepSeek, Muse e MiniMax deixam de perder ' +
+        'por falta de nota.',
+    },
+  ],
+  fixes: [],
 };

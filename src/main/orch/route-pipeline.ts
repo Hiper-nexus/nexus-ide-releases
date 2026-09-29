@@ -13,6 +13,7 @@ import {
   modelRoutingRank,
 } from '../adapters/model-catalog';
 import type { RankedRouteEntry, RouteContext, TaskTier } from './task-router';
+import { publishedCodingQuality } from './published-benchmarks';
 
 export interface ScoreBreakdown {
   table: number;
@@ -76,9 +77,12 @@ export function scoreRouteCandidate(
   const authoritativeQuality = hasAuthoritativeModelQuality(info)
     ? info?.quality
     : undefined;
+  // F-675: sem avaliação nexus-eval, os benchmarks OFICIAIS publicados pelo
+  // fabricante dão a nota (6..24); só sem nenhum dos dois vale o "não avaliado".
   const qualityRaw =
     authoritativeQuality?.coding ??
     authoritativeQuality?.overall ??
+    (c.model ? publishedCodingQuality(c.adapterId, c.model) : null) ??
     (entry.evaluated ? 12 : 6);
   const quality = Math.min(24, Number(qualityRaw) || 6);
 
@@ -108,6 +112,14 @@ export function scoreRouteCandidate(
 
   const total = table + quality + cost + diversity + preference + circuit;
   return { table, quality, cost, diversity, preference, circuit, total };
+}
+
+/** A nota de qualidade do candidato veio do benchmark publicado (F-675), não do nexus-eval. */
+function usesPublishedBenchmark(entry: RankedRouteEntry, catalog: MultiScoreInput['modelCatalog']): boolean {
+  const { c } = entry;
+  if (!c.model) return false;
+  if (hasAuthoritativeModelQuality(modelCatalogInfo(catalog, c.adapterId, c.model))) return false;
+  return publishedCodingQuality(c.adapterId, c.model) !== null;
 }
 
 /**
@@ -146,6 +158,9 @@ export function multiScoreRerank(input: MultiScoreInput): {
   }
   if (head && head.score.preference > 0) {
     noteParts.push(' preference-boost');
+  }
+  if (head?.c.model && usesPublishedBenchmark(head, input.modelCatalog)) {
+    noteParts.push(' quality=benchmark-oficial');
   }
   if (anyClosed && filtered.length < scored.length) {
     noteParts.push(' circuit-open skipped');

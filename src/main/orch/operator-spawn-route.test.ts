@@ -6,6 +6,7 @@ import {
   parentPaneIdFor,
   routeString,
   spawnRouteFrom,
+  sameAdapterDiversityHint,
 } from './operator-spawn-route';
 
 describe('operator-spawn-route', () => {
@@ -63,5 +64,33 @@ describe('operator-spawn-route', () => {
     expect(parentPaneIdFor('sess-parent', lookup)).toBe('pane-7');
     expect(parentPaneIdFor('sess-gone', lookup)).toBeUndefined();
     expect(parentPaneIdFor(undefined, lookup)).toBeUndefined();
+  });
+});
+
+describe('aviso de diversidade no spawn explícito (F-672)', () => {
+  const pane = (paneId: string, adapterId: string, extra: Record<string, unknown> = {}) => ({
+    paneId, sessionId: `s-${paneId}`, adapterId, state: 'busy' as const, missionId: 'm', role: 'worker', ...extra,
+  });
+
+  it('avisa quando a CLI fixada já tem dois helpers vivos na missão', () => {
+    // Campo 28/09: o orquestrador fixou claude em todo spawn depois de uma
+    // falha do Codex já corrigida; o Jev nunca mais roteou nada.
+    const panes = [pane('p1', 'claude'), pane('p2', 'claude'), pane('novo', 'claude')];
+    const hint = sameAdapterDiversityHint('claude', 'm', panes, 'novo');
+    expect(hint?.sameAdapterLive).toBe(2);
+    expect(hint?.hint).toContain('omita adapterId');
+  });
+
+  it('não conta orquestrador, pane encerrado, outra missão nem o pane novo', () => {
+    const panes = [
+      pane('orq', 'claude', { role: 'orchestrator' }),
+      pane('morto', 'claude', { state: 'exited' }),
+      pane('outra', 'claude', { missionId: 'x' }),
+      pane('p1', 'claude'),
+      pane('novo', 'claude'),
+    ];
+    expect(sameAdapterDiversityHint('claude', 'm', panes, 'novo')).toBeNull();
+    expect(sameAdapterDiversityHint(undefined, 'm', panes)).toBeNull();
+    expect(sameAdapterDiversityHint('claude', undefined, panes)).toBeNull();
   });
 });

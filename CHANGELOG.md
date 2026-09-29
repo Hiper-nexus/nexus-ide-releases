@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.76.125 — Frota de contas
+
+Uso real no Windows em 28/09.
+
+- **Troca de conta com frotas de 10–100 contas (F-676).** O disjuntor de "sessão que morre de auth" era do provider inteiro: duas contas expiradas quaisquer paravam a troca de todas. Agora é por conta (a mesma conta morta duas vezes), e o provider só trava com cinco contas distintas mortas. Cada limite percorre a frota até 12 contas e tira da frente, por 5 min, a conta que não prepara. A sondagem de cota roda no máximo seis contas por vez e uma rajada de limites divide a mesma leitura feita depois do hit.
+- **Conta AGY por pane no Windows (F-677).** O AGY 1.2 do Windows autentica pela vaga única `gemini:antigravity` do Gerenciador de Credenciais e ignorava a pasta da conta — todo pane usava a mesma conta e "Salvar conta" falhava. O Nexus captura a sessão da vaga e, antes do spawn, guarda o que está nela no cofre, grava a conta escolhida, confere a identidade e dá uma folga entre contas diferentes.
+- **MiniMax Code com o MCP do Nexus (F-678).** Uma ponte stdio registrada uma vez em `~/.minimax/mcp.json` recebe URL e token da sessão só por ambiente. O MiniMax passa a entregar handoff e entra nas rotas da missão da aba. Fora do Nexus a ponte não expõe ferramenta nenhuma.
+- **Roteamento pelos benchmarks oficiais (F-675).** Sem avaliação do Nexus, a qualidade de cada modelo vem dos números publicados pelo fabricante (DeepSWE v1.1, Terminal-Bench 2.1, SWE-bench Verified), com a fonte; o recibo da rota diz `quality=benchmark-oficial`.
+
+## 0.76.124 — Todas as LLMs
+
+Uso real no Windows em 28/09. Inclui a 0.76.123 (Helpers variados de novo).
+
+- **Panes sem texto sobreposto no Windows (F-673).** O xterm.js era criado sem saber que o PTY é o ConPTY do Windows: quando um pane ganhava linhas (a grade redimensiona ao abrir/fechar panes), ele puxava o histórico para a tela enquanto o ConPTY criava linhas vazias e repintava por cima — as TUIs (Claude Code) apareciam com trechos antigos misturados, texto sobreposto e colunas desalinhadas. Agora o terminal nasce com `windowsPty` (backend ConPTY + build do Windows), ligando as regras de ConPTY do próprio xterm.
+- **Helpers distribuídos entre as LLMs (F-674).** Sem o operador pedir, o orquestrador abria todos os helpers em Claude. Na missão da aba, quando ele fixa uma CLI que já tem dois ou mais helpers vivos, o Nexus redistribui pelo roteamento da missão (Jev + tabela com penalidade de diversidade) e diz no recibo o que redistribuiu. Quando o operador pediu uma CLI específica, o orquestrador marca `operatorChoice: true` e ela é respeitada. A instrução da ferramenta passa a dizer que o padrão é deixar o Nexus escolher.
+
+## 0.76.123 — Helpers variados de novo
+
+Uso real no Windows em 28/09. Inclui a 0.76.122 (Sonnet 5.5 e Jev com medição).
+
+- **Aviso de diversidade no spawn (F-672).** Depois de ver um helper Codex falhar (problema já corrigido na 0.76.119), o orquestrador passou a fixar `adapterId: "claude"` em todo helper, e o roteamento pelo Jev nunca mais foi consultado. A escolha explícita continua valendo, mas quando a CLI pedida já tem dois ou mais helpers vivos na missão o recibo do `nexus_pane_spawn` traz um aviso para omitir `adapterId`/`model` e deixar o Nexus distribuir o trabalho entre as CLIs prontas.
+- **Brief inteiro no Windows, sem exceção (F-670/F-671).** A decisão de mandar o brief no argv agora é tomada com o executável e o argv finais: se a CLI ainda cairia num atalho `.cmd`/`.bat` não verificado, ou se a linha de comando inteira (executável, flags, config de hooks e brief, com aspas) passaria do limite do Windows, o brief sai do argv e é colado no pane depois do boot, com a mesma prova de turno das colagens do orquestrador.
+
 ## 0.76.122 — Sonnet 5.5 e Jev com medição
 
 Inclui todas as correções da 0.76.121.

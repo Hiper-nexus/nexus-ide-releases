@@ -72,7 +72,7 @@
     "altScreen": true,
     "requiresNoAutoUpdate": false,
     "mcpAutoload": false,
-    "nexusMcp": "none"
+    "nexusMcp": "minimax-code"
   },
   "control": {
     "permission": {

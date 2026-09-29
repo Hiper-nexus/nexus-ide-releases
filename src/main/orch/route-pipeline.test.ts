@@ -48,6 +48,25 @@ describe('scoreRouteCandidate', () => {
     expect(scored.quality).toBe(6);
   });
 
+  it('sem nexus-eval, usa o benchmark oficial publicado (F-675)', () => {
+    const published = scoreRouteCandidate(entry('mimo-code', 'xiaomi/mimo-v2.6-pro'), 0, {
+      tier: 'hard',
+      modelCatalog: catalog,
+    });
+    const unpublished = scoreRouteCandidate(entry('mimo-code', 'xiaomi/mimo-v2.6-pro-ultraspeed'), 0, {
+      tier: 'hard',
+      modelCatalog: catalog,
+    });
+    expect(published.quality).toBeGreaterThan(12);
+    expect(unpublished.quality).toBeLessThanOrEqual(12);
+    const { note } = multiScoreRerank({
+      ranked: [entry('mimo-code', 'xiaomi/mimo-v2.6-pro')],
+      tier: 'hard',
+      modelCatalog: catalog,
+    });
+    expect(note).toContain('quality=benchmark-oficial');
+  });
+
   it('penalizes adapters already used in the mission (diversity)', () => {
     const e = entry('codex', 'gpt-5.4');
     const fresh = scoreRouteCandidate(e, 0, {
