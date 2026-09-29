@@ -87,6 +87,13 @@ vi.mock('../persistence/settings-store', async (importOriginal) => ({
 }));
 
 const traceHarness = vi.hoisted(() => ({ events: [] as Array<Record<string, unknown>> }));
+// F-682: operatorChoice só vale com a prova de que o operador nomeou a CLI.
+const mentions = vi.hoisted(() => ({ named: false }));
+vi.mock('./operator-cli-mentions', () => ({
+  OPERATOR_CHOICE_PROOF_WINDOW_MS: 30 * 60_000,
+  operatorRecentlyNamedCli: () => mentions.named,
+}));
+
 vi.mock('../observability/main-trace', () => ({
   trace: (event: Record<string, unknown>) => {
     traceHarness.events.push(event);
@@ -124,6 +131,7 @@ function spawnedRole(): unknown {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mentions.named = false;
   traceHarness.events.length = 0;
   harness.settings.squadCliPolicy = 'operator-choice';
   harness.snapshots = [];
@@ -331,6 +339,7 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
   );
 
   it('adapterId/model/effort pedidos pelo operador são honrados sem rotear e o recibo diz explícito', async () => {
+    mentions.named = true;
     const resolver = vi.fn(async () => ({ adapterId: 'kimi', model: 'kimi-code/k3' }));
     setOperatorRouteResolver(resolver);
     const result = (await paneSpawnTool.handler(
@@ -358,6 +367,7 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
   });
 
   it('modelo inexistente na CLI pedida pelo operador falha com as opções válidas', async () => {
+    mentions.named = true;
     setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex' })));
     await expect(paneSpawnTool.handler(
       { adapterId: 'codex', model: 'gpt-9-fantasma', operatorChoice: true, prompt: 'revise X' },
@@ -367,6 +377,7 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
   });
 
   it('CLI pedida pelo operador sem MCP do Nexus (agy) é recusada com motivo claro', async () => {
+    mentions.named = true;
     setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex' })));
     await expect(paneSpawnTool.handler(
       { adapterId: 'agy', operatorChoice: true, prompt: 'revise X' },

@@ -52,6 +52,7 @@ import { assertDeliveryArtifactsForDone } from "./mission-delivery-artifact-gate
 import { getAutomaticCompletionProof } from "./automatic-completion-proof";
 import { resolveFrozenMissionReviewProof } from "./mission-review-proof";
 import { assertTeamQuestionCompletion, teamQuestionResponseSummary, type TeamQuestionObserverBinding, type TeamQuestionPaneRuntime } from "./mission-team-question-completion";
+import { noteOperatorDirection } from "./operator-cli-mentions";
 import { loadObserverPaneSessions } from "./mission-team-question-observer";
 import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
 import {
@@ -418,6 +419,8 @@ export interface MissionDirectDeliveryDeps {
   ) => Promise<void>;
   readonly getSessionState?: (sessionId: string) => string | null;
   readonly readSessionOutput?: (sessionId: string, maxLines?: number) => string;
+  /** F-682: orientação aceita vira prova de pedido do operador (menção de CLI). */
+  readonly noteOperatorDirection?: (sessionId: string, text: string) => void;
 }
 
 export interface MissionDirectDeliveryOptions {
@@ -447,6 +450,7 @@ const productionMissionDirectDeliveryDeps: MissionDirectDeliveryDeps = {
   resumeOrchestrator: resumeFastLaneMission,
   getSessionState,
   readSessionOutput,
+  noteOperatorDirection,
 };
 
 interface MissionDirectAuthority {
@@ -1047,6 +1051,7 @@ export async function deliverMissionDirectInstruction(
   ) {
     throw new Error("mission direct authority changed during delivery");
   }
+  deps.noteOperatorDirection?.(initial.sessionId, command.text);
   if (!options.conversationAlreadyAccepted) {
     emitOperatorDirectionAccepted(
       scope,

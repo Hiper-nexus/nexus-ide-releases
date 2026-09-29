@@ -101,6 +101,20 @@ function remember(sessionId: string, data: string): void {
 }
 
 /**
+ * F-682: janela da PROVA exigida por `operatorChoice:true` — a retenção inteira
+ * do input do operador (a flag sozinha é afirmação do agente, não pedido).
+ */
+export const OPERATOR_CHOICE_PROOF_WINDOW_MS = RETENTION_MS;
+
+/**
+ * F-682: orientação que o operador enviou pelo Quadro à sessão (entregue e
+ * aceita) conta como input dele — mesmo contrato de memória volátil.
+ */
+export function noteOperatorDirection(sessionId: string, text: string): void {
+  remember(sessionId, text);
+}
+
+/**
  * Instala os taps uma vez (bootstrap do Main). Devolve o disposer — usado
  * pelos testes; em produção a instalação vive com o processo.
  */
@@ -131,12 +145,14 @@ export function operatorRecentlyNamedCli(
   sessionId: string | undefined,
   adapterId: string,
   now = Date.now(),
+  windowMs = MENTION_WINDOW_MS,
 ): boolean {
   if (!sessionId) return false;
   const chunks = inputBySession.get(sessionId);
   if (!chunks || chunks.length === 0) return false;
+  const window = Math.min(windowMs, RETENTION_MS);
   const recent = chunks.filter(
-    (chunk) => now - chunk.at >= 0 && now - chunk.at <= MENTION_WINDOW_MS,
+    (chunk) => now - chunk.at >= 0 && now - chunk.at <= window,
   );
   if (recent.length === 0) return false;
   const normalized = normalizeForMatch(

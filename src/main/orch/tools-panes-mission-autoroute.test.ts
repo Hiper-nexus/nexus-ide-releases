@@ -84,6 +84,7 @@ vi.mock('./squad-store', async (original) => ({
   squadRoutableCliIds: () => new Set(['codex']),
 }));
 vi.mock('./operator-cli-mentions', () => ({
+  OPERATOR_CHOICE_PROOF_WINDOW_MS: 30 * 60_000,
   operatorRecentlyNamedCli: vi.fn((): boolean => false),
 }));
 vi.mock('./isolated-writer-worktree', async (original) => ({
@@ -299,8 +300,12 @@ describe('pin de adapterId sem pedido do operador vira preferência (F-674 ampli
     });
   });
 
-  it('operatorChoice:true respeita a CLI que o operador pediu', async () => {
+  it('operatorChoice:true respeita a CLI que o operador pediu (com a prova do pedido)', async () => {
     h.mission = tabMission();
+    // O operador nomeou a CLI no pane ou pelo Quadro dentro da retenção.
+    vi.mocked(operatorRecentlyNamedCli).mockImplementation(
+      (_session, adapterId, _now, windowMs) => adapterId === 'claude' && windowMs === 30 * 60_000,
+    );
     const resolver = vi.fn(async () => ({ adapterId: 'codex' }));
     setOperatorRouteResolver(resolver);
     await paneSpawnTool.handler(
@@ -308,6 +313,25 @@ describe('pin de adapterId sem pedido do operador vira preferência (F-674 ampli
     );
     expect(resolver).not.toHaveBeenCalled();
     expect(h.spawn.mock.calls[0][0]).toMatchObject({ adapterId: 'claude' });
+  });
+
+  it('F-682: operatorChoice marcado pelo Maestro sem o operador pedir é ignorado e roteado', async () => {
+    // Campo 29/09 (RU-261): 4 de 4 helpers Claude com operatorChoice:true e
+    // nenhuma menção do operador — a flag é afirmação do agente, não prova.
+    h.mission = tabMission();
+    const resolver = vi.fn(async () => ({ adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro', routeReservationId: 'rr-oc' }));
+    setOperatorRouteResolver(resolver);
+    const receipt = await paneSpawnTool.handler(
+      { adapterId: 'claude', model: 'claude-opus-5-5', operatorChoice: true, task: 'melhorar o visual do pipeline', prompt: 'melhore' }, ctx,
+    ) as Record<string, any>;
+    expect(resolver).toHaveBeenCalledWith('melhorar o visual do pipeline', ctx, {
+      preferAdapterIds: ['claude'],
+    });
+    expect(h.spawn.mock.calls[0][0]).toMatchObject({ adapterId: 'mimo-code' });
+    expect(receipt.route.redistributed).toMatchObject({
+      adapterId: 'claude',
+      reason: 'operatorChoice-sem-pedido-do-operador',
+    });
   });
 
   it('mão do operador com pin explícito sem menção é roteada com preferência', async () => {
