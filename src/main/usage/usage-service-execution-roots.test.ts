@@ -7,12 +7,14 @@ import type { ProjectExecutionScope } from '../../shared/types';
 const mocks = vi.hoisted(() => ({
   dictationHook: null as null | ((info: unknown) => void),
   resumeLookup: null as null | ((...args: unknown[]) => unknown),
+  userDataDir: '' as string,
   watcherOptions: [] as Array<{
     workspacePath: string;
     workspacePaths?: () => Iterable<string>;
   }>,
   codexScannerOptions: null as null | {
     isWatched: (cwd: string) => boolean;
+    sessionsDirs?: () => readonly string[];
     onEvent: (event: {
       sessionId: string;
       messageId: string | null;
@@ -44,7 +46,32 @@ const mocks = vi.hoisted(() => ({
     transcriptPath?: string;
     accountId?: string;
   },
+  savedPaneSessions: new Map<
+    string,
+    { sessionId: string; accountId: string | null }
+  >(),
+  saveProviderPaneSession: vi.fn(
+    (
+      _scope: ProjectExecutionScope,
+      paneId: string,
+      adapterId: string,
+      session: { key: string; id: string },
+      accountId?: string,
+    ) => {
+      mocks.savedPaneSessions.set(`${paneId}|${adapterId}`, {
+        sessionId: session.id,
+        accountId: accountId?.trim() || null,
+      });
+      return true;
+    },
+  ),
   recordAgentTurn: vi.fn(),
+}));
+
+vi.mock('electron', () => ({
+  app: { getPath: () => mocks.userDataDir },
+  BrowserWindow: { getAllWindows: () => [] },
+  ipcMain: { removeHandler: () => {}, handle: () => {} },
 }));
 
 vi.mock('../pty/pty-manager', () => ({
@@ -71,8 +98,22 @@ vi.mock('../gamification/gamification-service', () => ({
 }));
 
 vi.mock('../persistence/provider-session-store', () => ({
-  getProviderPaneSession: vi.fn(() => mocks.providerPaneSession),
-  saveProviderPaneSession: vi.fn(),
+  getProviderPaneSession: vi.fn(
+    (
+      _scope: ProjectExecutionScope,
+      paneId: string,
+      adapterId: string,
+      accountId?: string,
+    ) => {
+      if (mocks.providerPaneSession) return mocks.providerPaneSession;
+      const row = mocks.savedPaneSessions.get(`${paneId}|${adapterId}`);
+      if (!row) return null;
+      const want = accountId?.trim() || null;
+      if (want && row.accountId !== want) return null;
+      return { key: 'session_id' as const, id: row.sessionId };
+    },
+  ),
+  saveProviderPaneSession: mocks.saveProviderPaneSession,
 }));
 
 vi.mock('./claude-transcript-watcher', () => ({
@@ -174,6 +215,7 @@ function dictateCodex(
   paneId: string,
   cwd: string,
   providerSessionId: string | null = null,
+  accountId?: string,
 ): void {
   if (!mocks.dictationHook) {
     throw new Error('usage service did not install its dictation hook');
@@ -184,6 +226,7 @@ function dictateCodex(
     paneId,
     adapterId: 'codex',
     cwd,
+    ...(accountId ? { accountId } : {}),
   });
 }
 
@@ -230,10 +273,13 @@ afterEach(() => {
   resetGateForTests();
   mocks.dictationHook = null;
   mocks.resumeLookup = null;
+  mocks.userDataDir = '';
   mocks.watcherOptions.length = 0;
   mocks.codexScannerOptions = null;
   mocks.panes.clear();
   mocks.providerPaneSession = null;
+  mocks.savedPaneSessions.clear();
+  mocks.saveProviderPaneSession.mockClear();
   mocks.recordAgentTurn.mockReset();
   for (const manager of managers.splice(0)) manager.closeAll();
   for (const root of tempRoots.splice(0)) {
@@ -644,6 +690,168 @@ describe.skipIf(!sqliteAvailable)(
 
       expect(registry.forScope(scope).usage.totals().turns).toBe(2);
       expect(mocks.recordAgentTurn).toHaveBeenCalledTimes(1);
+      service.stop();
+    });
+
+    it('F-211: rollout Codex fresco ligado a um launch salva provider_pane_session com a conta', () => {
+      const parent = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'usage-codex-pane-session-'),
+      );
+      tempRoots.push(parent);
+      const scope = scopeFixture(parent, 'checkout-a');
+      const workerRoot = executionScope(
+        scope,
+        path.join(parent, 'worktrees', 'codex-task'),
+      );
+      const runtimeManager = new ProjectRuntimeManager({
+        baseDir: path.join(parent, 'runtime'),
+        appVersion: 'usage-service-test',
+      });
+      managers.push(runtimeManager);
+      const registry = new ProjectUsageStoreRegistry(runtimeManager);
+      const service = new UsageTelemetryService(registry);
+      service.start();
+      const token = mintToken({
+        label: 'codex-worker',
+        role: 'worker',
+        scope,
+        executionScope: workerRoot,
+      });
+      bindTokenToSession(token.token, 'pty-codex');
+      const pane = {
+        paneId: 'pane-codex',
+        sessionId: 'pty-codex',
+        kind: 'cli-agent' as const,
+        scope,
+        executionScope: workerRoot,
+      };
+      mocks.panes.set(pane.paneId, pane);
+      mocks.panes.set(pane.sessionId, pane);
+      // Launch ditado pelo spawn SEM providerSessionId — o Codex escolhe o
+      // próprio id; o vínculo chega quando o scanner vê o rollout fresco.
+      dictateCodex(
+        pane.sessionId,
+        pane.paneId,
+        workerRoot.rootRealPath,
+        null,
+        'acct-codex',
+      );
+
+      const onEvent = mocks.codexScannerOptions?.onEvent;
+      onEvent?.(
+        codexUsage('codex-session-1', 'first-event'),
+        workerRoot.rootRealPath,
+        codexSource('codex-session-1'),
+      );
+
+      expect(mocks.saveProviderPaneSession).toHaveBeenCalledWith(
+        scope,
+        'pane-codex',
+        'codex',
+        { key: 'session_id', id: 'codex-session-1' },
+        'acct-codex',
+      );
+      // A linha persistida fecha o resume exato do pane pinado na conta —
+      // antes disto todo relive/respawn Codex nascia com conversa nova.
+      expect(
+        mocks.resumeLookup?.(scope, 'pane-codex', 'codex', 'acct-codex'),
+      ).toBe('codex-session-1');
+      expect(
+        mocks.resumeLookup?.(scope, 'pane-codex', 'codex', 'acct-outra'),
+      ).toBeNull();
+      expect(registry.forScope(scope).usage.totals().turns).toBe(1);
+      service.stop();
+    });
+
+    it('F-211: launches ambíguos não salvam provider_pane_session', () => {
+      const parent = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'usage-codex-ambiguous-'),
+      );
+      tempRoots.push(parent);
+      const scope = scopeFixture(parent, 'checkout-a');
+      const workerRoot = executionScope(
+        scope,
+        path.join(parent, 'worktrees', 'codex-ambiguous'),
+      );
+      const runtimeManager = new ProjectRuntimeManager({
+        baseDir: path.join(parent, 'runtime'),
+        appVersion: 'usage-service-test',
+      });
+      managers.push(runtimeManager);
+      const registry = new ProjectUsageStoreRegistry(runtimeManager);
+      const service = new UsageTelemetryService(registry);
+      service.start();
+      for (const index of [1, 2]) {
+        const token = mintToken({
+          label: `codex-worker-${index}`,
+          role: 'worker',
+          scope,
+          executionScope: workerRoot,
+        });
+        bindTokenToSession(token.token, `pty-codex-${index}`);
+        const pane = {
+          paneId: `pane-codex-${index}`,
+          sessionId: `pty-codex-${index}`,
+          kind: 'cli-agent' as const,
+          scope,
+          executionScope: workerRoot,
+        };
+        mocks.panes.set(pane.paneId, pane);
+        mocks.panes.set(pane.sessionId, pane);
+        dictateCodex(
+          pane.sessionId,
+          pane.paneId,
+          workerRoot.rootRealPath,
+          null,
+          'acct-codex',
+        );
+      }
+
+      mocks.codexScannerOptions?.onEvent(
+        codexUsage('codex-shared-session', 'ambiguous-event'),
+        workerRoot.rootRealPath,
+        codexSource('codex-shared-session'),
+      );
+
+      expect(mocks.saveProviderPaneSession).not.toHaveBeenCalled();
+      expect(registry.forScope(scope).usage.totals().turns).toBe(0);
+      service.stop();
+    });
+
+    it('F-211: o scanner observa a raiz provider-state do checkout em uso', () => {
+      const parent = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'usage-codex-roots-'),
+      );
+      tempRoots.push(parent);
+      const scope = scopeFixture(parent, 'checkout-a');
+      mocks.userDataDir = path.join(parent, 'userData');
+      const runtimeManager = new ProjectRuntimeManager({
+        baseDir: path.join(parent, 'runtime'),
+        appVersion: 'usage-service-test',
+      });
+      managers.push(runtimeManager);
+      const service = new UsageTelemetryService(
+        new ProjectUsageStoreRegistry(runtimeManager),
+      );
+      service.start();
+      const token = mintToken({
+        label: 'codex-worker',
+        role: 'worker',
+        scope,
+        executionScope: scope,
+      });
+      bindTokenToSession(token.token, 'pty-codex');
+      dictateCodex('pty-codex', 'pane-codex', scope.rootRealPath);
+
+      expect(mocks.codexScannerOptions?.sessionsDirs?.()).toEqual([
+        path.join(
+          mocks.userDataDir,
+          'provider-state',
+          'codex',
+          'checkout-a',
+          'sessions',
+        ),
+      ]);
       service.stop();
     });
   },

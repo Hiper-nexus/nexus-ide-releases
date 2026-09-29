@@ -85,6 +85,7 @@ interface ScopeTelemetryState {
       readonly adapterId: string;
       readonly startedAt: number;
       readonly executionRoot: string;
+      readonly accountId?: string;
     }
   >;
   watcher: ClaudeTranscriptWatcher | null;
@@ -140,6 +141,31 @@ export function claudeConfigDirsFor(
     );
   }
   return dirs;
+}
+
+/**
+ * Raízes `sessions/` dos CODEX_HOME privados por checkout (F-566/F-211).
+ * Panes Codex rodam com `CODEX_HOME=<userData>/provider-state/codex/
+ * <checkoutId>` — sem esta raiz o scanner só lia ~/.codex/sessions e nenhum
+ * rollout Nexus era visto: zero uso real, zero vínculo, todo relive/respawn
+ * abria conversa nova.
+ */
+export function codexSessionsDirsFor(
+  scope: ProjectExecutionScope,
+  userData: string | null,
+): string[] {
+  if (!userData || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(scope.checkoutId)) {
+    return [];
+  }
+  return [
+    path.join(
+      userData,
+      'provider-state',
+      'codex',
+      scope.checkoutId,
+      'sessions',
+    ),
+  ];
 }
 
 function electronUserData(): string | null {
@@ -468,6 +494,7 @@ export class UsageTelemetryService {
         adapterId: info.adapterId,
         startedAt: Date.now(),
         executionRoot,
+        ...(info.accountId ? { accountId: info.accountId } : {}),
       });
     }
     this.#watchProvider(state.scope, info.adapterId);
@@ -846,6 +873,33 @@ export class UsageTelemetryService {
     ) {
       return false;
     }
+    // F-211: rollout Codex fresco ligado a EXATAMENTE um launch persiste o
+    // provider_pane_session (com a conta do launch) — sem a linha o resume
+    // exato nunca fecha para pane pinado em conta e todo relive/respawn
+    // nascia com conversa nova (campo 28/09).
+    if (provider === 'codex') {
+      const launchAccountIds = new Set(
+        [...recentLaunches]
+          .map((ptySessionId) => state.pendingLaunches.get(ptySessionId)?.accountId)
+          .filter((accountId): accountId is string => Boolean(accountId)),
+      );
+      try {
+        saveProviderPaneSession(
+          state.scope,
+          [...candidatePaneIds][0],
+          provider,
+          { key: 'session_id', id: event.sessionId },
+          launchAccountIds.size === 1 ? [...launchAccountIds][0] : undefined,
+        );
+      } catch (error) {
+        // Telemetria nunca derruba o vínculo já provado — o pane continua
+        // atribuído; só o resume exato da próxima vida fica sem a linha.
+        console.warn(
+          '[usage] provider_pane_session não persistiu:',
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
     state.resumedSessions.set(event.sessionId, {
       adapterId: provider,
       paneIds: candidatePaneIds,
@@ -861,6 +915,18 @@ export class UsageTelemetryService {
     if (this.#codexScanner) return;
     this.#codexScanner = new CodexUsageScanner({
       isWatched: (cwd) => this.#scopeForCwd(cwd) !== null,
+      // F-211: varre também as raízes provider-state dos checkouts em uso —
+      // thunk porque o conjunto de escopos cresce depois do scanner subir.
+      sessionsDirs: () => {
+        const userData = electronUserData();
+        const roots = new Set<string>();
+        for (const state of this.#states.values()) {
+          for (const dir of codexSessionsDirsFor(state.scope, userData)) {
+            roots.add(dir);
+          }
+        }
+        return [...roots];
+      },
       onEvent: (event, cwd, source) => {
         // Fresh Codex sessions are main-dictated before their transcript is
         // scanned. Prefer that exact provider-session binding: isolated task

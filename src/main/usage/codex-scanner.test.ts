@@ -334,4 +334,116 @@ describe('CodexUsageScanner multi-project activation', () => {
     );
     scanner.stop();
   });
+
+  it('varre também as raízes provider-state por checkout (F-211)', async () => {
+    // Desde F-566 os panes Codex do Nexus gravam rollouts em
+    // <userData>/provider-state/codex/<checkoutId>/sessions — fora do
+    // ~/.codex/sessions nativo. Raízes extras chegam por thunk porque o
+    // conjunto de checkouts observados cresce sem reiniciar o scanner.
+    const nativeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-scan-native-'));
+    const providerRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-scan-state-'));
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-workspace-state-'));
+    roots.push(nativeDir, providerRoot, workspace);
+    const rollout = path.join(dayDirectory(providerRoot), 'rollout-state.jsonl');
+    fs.writeFileSync(
+      rollout,
+      [
+        JSON.stringify({
+          type: 'session_meta',
+          payload: { session_id: 'session-state', cwd: workspace },
+        }),
+        JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5' } }),
+        JSON.stringify({
+          type: 'event_msg',
+          timestamp: '2026-09-28T19:58:00.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              last_token_usage: {
+                input_tokens: 12,
+                cached_input_tokens: 4,
+                output_tokens: 2,
+              },
+            },
+          },
+        }),
+        '',
+      ].join('\n'),
+    );
+
+    const onEvent = vi.fn();
+    const scanner = new CodexUsageScanner({
+      sessionsDir: nativeDir,
+      sessionsDirs: () => [providerRoot],
+      pollMs: 1,
+      isWatched: (cwd) => cwd === workspace,
+      onEvent,
+    });
+    scanner.start();
+    await eventually(() => expect(onEvent).toHaveBeenCalledTimes(1));
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-state',
+        inputTokens: 8,
+        outputTokens: 2,
+      }),
+      workspace,
+      {
+        providerSessionId: 'session-state',
+        threadId: 'session-state',
+        rolloutSessionId: null,
+        sessionStartedAt: null,
+      },
+    );
+    scanner.stop();
+  });
+
+  it('raízes extras avaliadas a cada varredura acompanham checkouts novos', async () => {
+    // Um checkout que começa a ser observado DEPOIS do scanner subir entra na
+    // varredura seguinte sem recriar o objeto.
+    const nativeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-scan-late-native-'));
+    const lateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-scan-late-'));
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-workspace-late-'));
+    roots.push(nativeDir, lateRoot, workspace);
+    const extraRoots: string[] = [];
+    const onEvent = vi.fn();
+    const scanner = new CodexUsageScanner({
+      sessionsDir: nativeDir,
+      sessionsDirs: () => extraRoots,
+      pollMs: 1,
+      isWatched: (cwd) => cwd === workspace,
+      onEvent,
+    });
+    scanner.start();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(onEvent).not.toHaveBeenCalled();
+
+    const rollout = path.join(dayDirectory(lateRoot), 'rollout-late.jsonl');
+    fs.writeFileSync(
+      rollout,
+      [
+        JSON.stringify({
+          type: 'session_meta',
+          payload: { session_id: 'session-late', cwd: workspace },
+        }),
+        JSON.stringify({
+          type: 'event_msg',
+          timestamp: '2026-09-28T20:00:00.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              last_token_usage: {
+                input_tokens: 5,
+                output_tokens: 1,
+              },
+            },
+          },
+        }),
+        '',
+      ].join('\n'),
+    );
+    extraRoots.push(lateRoot);
+    await eventually(() => expect(onEvent).toHaveBeenCalledTimes(1));
+    scanner.stop();
+  });
 });

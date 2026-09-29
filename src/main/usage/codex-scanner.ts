@@ -57,6 +57,13 @@ export interface CodexScannerOptions {
     source: CodexRolloutSource,
   ) => void;
   sessionsDir?: string;
+  /**
+   * Raízes de sessão adicionais — o estado Nexus por checkout (F-566):
+   * `<userData>/provider-state/codex/<checkoutId>/sessions`. Avaliada a cada
+   * varredura porque o conjunto de checkouts observados cresce sem reiniciar
+   * o scanner.
+   */
+  sessionsDirs?: () => readonly string[];
   pollMs?: number;
   /**
    * Diretório do resume store (`codex-resume.json`). Omitido = `<userData>/usage`
@@ -138,8 +145,14 @@ export class CodexUsageScanner {
     this.resumeStore.save();
   }
 
-  private root(): string {
-    return this.opts.sessionsDir ?? path.join(os.homedir(), '.codex', 'sessions');
+  private roots(): string[] {
+    return [
+      ...new Set<string>([
+        this.opts.sessionsDir ??
+          path.join(os.homedir(), '.codex', 'sessions'),
+        ...(this.opts.sessionsDirs?.() ?? []),
+      ]),
+    ];
   }
 
   private scheduleScan(): void {
@@ -159,7 +172,11 @@ export class CodexUsageScanner {
   private async scan(): Promise<void> {
     if (this.stopped) return;
     const now = new Date();
-    const dirs = [dayDir(this.root(), now), dayDir(this.root(), new Date(now.getTime() - 86_400_000))];
+    const yesterday = new Date(now.getTime() - 86_400_000);
+    const dirs = this.roots().flatMap((root) => [
+      dayDir(root, now),
+      dayDir(root, yesterday),
+    ]);
     for (const dir of dirs) {
       if (this.stopped) return;
       let names: string[];
