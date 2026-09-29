@@ -177,6 +177,13 @@ interface Session {
   spawnedAtMs: number;
   /** Main-owned identity for cli-agent panes; never sourced from pane sync. */
   agent: OwnedAgentSessionInfo | null;
+  /**
+   * F-212: ficha mínima do próprio spawn cli-agent (pane/adapter), separada
+   * de `agent` — um pane direto do operador pode ter `agent` null e mesmo
+   * assim é PTY de CLI-agente, que precisa do `agent-pty-exit` no trace.
+   * Shells comuns não carregam esta ficha.
+   */
+  agentSpawn?: { paneId?: string; adapterId: string };
   missionOrchestratorGrantAvailable: boolean;
   missionOrchestratorGrantExpiresAt: number | null;
   missionOrchestratorGrantTimer: ReturnType<typeof setTimeout> | null;
@@ -1135,16 +1142,17 @@ function finalizeSession(
   // M1: scrub plaintext auth.json from the managed home now that the CLI exited.
   scrubManagedSessionAuth(sessionId);
   forgetAccountChoiceReceipt(sessionId);
-  if (s.agent) {
+  if (s.agent || s.agentSpawn) {
     // F-212: morte de agente persistida no trace — ids, números e rótulos
-    // apenas; nunca argv, env ou texto do processo.
+    // apenas; nunca argv, env ou texto do processo. `agent` null (pane direto
+    // do operador) cai na ficha do próprio spawn com role 'user'.
     trace({
       kind: "agent-pty-exit",
       sessionId,
-      paneId: s.agent.paneId ?? null,
-      missionId: s.agent.missionId ?? null,
-      role: s.agent.role,
-      adapterId: s.agent.adapterId,
+      paneId: s.agent?.paneId ?? s.agentSpawn?.paneId ?? null,
+      missionId: s.agent?.missionId ?? null,
+      role: s.agent?.role ?? "user",
+      adapterId: s.agent?.adapterId ?? s.agentSpawn?.adapterId ?? "unknown",
       exitCode,
       signal: signal ?? null,
       uptimeMs: Math.max(0, Date.now() - s.spawnedAtMs),
@@ -2583,6 +2591,7 @@ export function spawnAgentSession(
         ? { oneShot: true as const }
         : {}),
     },
+    agentSpawn: { paneId: req.paneId, adapterId: adapter.id },
     missionOrchestratorGrantAvailable,
     missionOrchestratorGrantExpiresAt: missionOrchestratorGrantAvailable
       ? Date.now() + MISSION_ORCHESTRATOR_GRANT_TTL_MS

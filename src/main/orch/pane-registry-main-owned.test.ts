@@ -379,7 +379,7 @@ describe("main-owned mission pane spawn", () => {
     });
     await expect(requestPaneClose(pty.paneId)).resolves.toBe(true);
     expect(pty.terminate).toHaveBeenCalledWith("pty-headless-1", {
-      origin: "pane-registry:owned-mission-session",
+      origin: "pane-close",
     });
     expect(getPaneRuntimeAuthorityBySession("pty-headless-1")).toBeNull();
   });
@@ -1268,7 +1268,7 @@ describe("main-owned mission pane spawn", () => {
 
     await expect(requestPaneClose(result.paneId!)).resolves.toBe(true);
     expect(pty.terminate).toHaveBeenCalledWith("pty-headless-1", {
-      origin: "pane-registry:owned-mission-session",
+      origin: "pane-close",
     });
     expect(getPaneRuntimeAuthorityBySession("pty-headless-1")).toBeNull();
     unregisterOrchRenderer(owner);
@@ -2270,7 +2270,7 @@ describe("main-owned mission pane spawn", () => {
     const closing = requestPaneClose("pane-pty-mission");
     await Promise.resolve();
     expect(pty.terminate).toHaveBeenCalledWith("pty-mission-1", {
-      origin: "pane-registry:owned-mission-session",
+      origin: "pane-close",
     });
     expect(owner.send).not.toHaveBeenCalledWith(
       expect.anything(),

@@ -561,7 +561,10 @@ async function terminateRecoveryReplacement(
  * physical-exit proof in one helper prevents an ACP pane from being removed
  * from the registry while its child process is still alive.
  */
-async function terminateOwnedMissionSession(sessionId: string): Promise<boolean> {
+async function terminateOwnedMissionSession(
+  sessionId: string,
+  origin = "pane-registry:owned-mission-session",
+): Promise<boolean> {
   const acp = getAcpDriverSession(sessionId);
   if (acp) {
     try {
@@ -572,9 +575,7 @@ async function terminateOwnedMissionSession(sessionId: string): Promise<boolean>
     }
   }
   if (getSessionState(sessionId) === null) return true;
-  return orchTerminateSession(sessionId, {
-    origin: "pane-registry:owned-mission-session",
-  });
+  return orchTerminateSession(sessionId, { origin });
 }
 
 async function settlePaneRecoveryFailure(
@@ -3350,7 +3351,10 @@ export async function requestPanePark(
   );
   const sessionId = registered?.entry.sessionId;
   if (!registered || !sessionId) return false;
-  const exited = await terminateOwnedMissionSession(sessionId);
+  const exited = await terminateOwnedMissionSession(
+    sessionId,
+    `pane-guardian:park:${reason}`,
+  );
   if (!exited) return false;
   // Reconfirma depois do await (como requestPaneClose): um respawn/close
   // concorrente no mesmo pane não pode receber um parkRequest com sessão velha.
@@ -3413,7 +3417,10 @@ export async function requestPaneClose(
     if (expectedSessionId && sessionId !== expectedSessionId) return false;
     if (expectedSessionId) forgetParkedRecords(paneId);
     if (sessionId) {
-      const exited = await terminateOwnedMissionSession(sessionId);
+      const exited = await terminateOwnedMissionSession(
+        sessionId,
+        "pane-close",
+      );
       if (!exited) return false;
     }
     const currentDetached = getMainOwnedPane(paneId);
@@ -3448,7 +3455,10 @@ export async function requestPaneClose(
   }
   if (sessionId) {
     announceDeliberatePaneClose(owner, paneId, sessionId);
-    const exited = await terminateOwnedMissionSession(sessionId);
+    const exited = await terminateOwnedMissionSession(
+      sessionId,
+      "pane-close",
+    );
     if (!exited) return false;
   }
   if (expectedScope) {

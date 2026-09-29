@@ -5331,4 +5331,49 @@ describe("F-212 PTY lifecycle tracing (exit + termination origin)", () => {
       expect(lifecycleEvents("agent-pty-exit", sessionId)).toHaveLength(1);
     });
   });
+
+  it("pane cli-agent direto do operador (role user, sem missão) também grava agent-pty-exit", async () => {
+    let handlers: PtySessionHandlers | null = null;
+    setPtyHost({
+      spawn(_spec, next) {
+        handlers = next;
+        return {
+          write: vi.fn(),
+          resize: vi.fn(),
+          kill: vi.fn(),
+          terminate: vi.fn(async () => ({
+            ok: true,
+            rootExited: true,
+            descendantsExited: true,
+          })),
+        };
+      },
+    });
+    // Os Maestros de aba do operador mortos em 28/09 eram panes diretos
+    // (autoridade direct-user, contexto null → role 'user'): a saída deles
+    // precisa do mesmo trace que os panes de missão.
+    const { sessionId } = spawnAgentSession(
+      fakeWc(),
+      { kind: "cli-agent", paneId: "pane-direct-user", cols: 80, rows: 24 },
+      makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+      {},
+      trustedSpawn(),
+    );
+    handlers!.onExit(0, 15);
+    await vi.waitFor(() => {
+      expect(lifecycleEvents("agent-pty-exit", sessionId)).toHaveLength(1);
+    });
+    expect(lifecycleEvents("agent-pty-exit", sessionId)[0]).toEqual(
+      expect.objectContaining({
+        sessionId,
+        paneId: "pane-direct-user",
+        missionId: null,
+        role: "user",
+        adapterId: "test-cli",
+        exitCode: 0,
+        signal: 15,
+        terminationOrigin: null,
+      }),
+    );
+  });
 });
