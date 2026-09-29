@@ -918,6 +918,14 @@ saber isto antes de mexer:
   comparável). Variante só herda (`sameModelAs`) quando o fabricante diz que é
   o mesmo modelo; sem número publicado não há nota. Linha nova na tabela de
   rota precisa de nota ou de entrada em `UNPUBLISHED_ROUTE_MODELS` no teste.
+- F-189 (uso geral): no `scoreRouteCandidate` a nota de qualidade pesa em
+  dobro e modelo sem benchmark publicado recebe `NEUTRAL_UNPUBLISHED_QUALITY`
+  (15), nunca o piso; a posição na tabela é só desempate e a distância de tier
+  pesa −10 por degrau. A heurística de especialidade não prefere provider
+  (`HEURISTIC_SPECIALTY_ADAPTERS` vazio; só o piso de esforço). No
+  `nexus_route_task`, `preferAdapters` é bônus leve e `exclude` do chamador só
+  vale para CLI doente (circuito aberto, contas em cooldown, worker morto na
+  missão) — exclusão de CLI saudável é ignorada e aparece no `reason`.
 - F-676: frota de 10–100 contas. O disjuntor de morte instantânea é POR CONTA
   (2 mortes da mesma), e o provider só trava com 5 contas distintas mortas na
   janela. `performSwitch` percorre até 12 contas (`excludeIds` no
