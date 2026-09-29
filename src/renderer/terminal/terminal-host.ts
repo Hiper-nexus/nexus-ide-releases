@@ -3030,6 +3030,39 @@ if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', handleDocumentVisibilityChange);
 }
 
+// F-370: no macOS o window.ts desliga o backgroundThrottling — a página
+// segue 'visible' ao voltar de outro app e `visibilitychange` NUNCA
+// dispara, deixando os panes sem o repaint do retorno. O 'focus' da
+// janela é o equivalente real nessa plataforma; rajadas (focus trap,
+// Mission Control) coalescem num único rAF.
+let focusRefreshScheduled = false;
+function handleWindowFocus(): void {
+  if (focusRefreshScheduled) return;
+  focusRefreshScheduled = true;
+  requestAnimationFrame(() => {
+    focusRefreshScheduled = false;
+    if (document.visibilityState === 'hidden') return;
+    const focusedPaneId = useLayoutStore.getState().focusedPaneId;
+    for (const [paneId, host] of hosts) {
+      if (
+        host.disposed ||
+        !host.opened ||
+        !host.isVisible ||
+        host.parked ||
+        host.virtualized
+      ) {
+        continue;
+      }
+      if (paneId === focusedPaneId) focusHost(paneId);
+      else refreshHost(paneId);
+    }
+  });
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('focus', handleWindowFocus);
+}
+
 /** Stop compositor work for a terminal that lost focus or left live view. */
 export function blurHost(paneId: string): void {
   const host = hosts.get(paneId);

@@ -30,6 +30,7 @@ vi.mock('@xterm/xterm', () => ({
       return { dispose: () => xtermEvents.onData.delete(listener) };
     }
     attachCustomKeyEventHandler() {}
+    focus() {}
     write() {}
     writeln() {}
     refresh() {}
@@ -1707,5 +1708,52 @@ describe('F-369 — TUI repinta depois de saída perdida', () => {
     setHostVisibility(agent.id, true);
     await vi.advanceTimersByTimeAsync(60);
     expect(ptyResize()).not.toHaveBeenCalled();
+  });
+});
+
+describe('F-370 — foco da janela repinta os terminais (macOS)', () => {
+  const paneA: PaneModel = { id: 'f370-a', kind: 'shell', title: 'A' };
+  const paneB: PaneModel = { id: 'f370-b', kind: 'shell', title: 'B' };
+  const paneC: PaneModel = { id: 'f370-c', kind: 'shell', title: 'C' };
+
+  function openShell(target: PaneModel) {
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(target, slot);
+    const host = getOrCreateHost(target);
+    setHostSize(host.element, 1200, 800);
+    return host;
+  }
+
+  it('rajada de focus faz UMA passada só nos hosts abertos e visíveis', async () => {
+    // window.ts desliga backgroundThrottling no macOS: o canvas segue
+    // 'visible' ao voltar de outro app e `visibilitychange` nunca dispara.
+    // O 'focus' da janela é o gatilho real desse retorno.
+    useLayoutStore.setState({
+      root: buildGridTree([paneA, paneB, paneC]),
+      focusedPaneId: paneA.id,
+    });
+    const hostA = openShell(paneA);
+    const hostB = openShell(paneB);
+    const hostC = openShell(paneC);
+    setHostVisibility(paneC.id, false);
+
+    const fitA = vi.spyOn(hostA.fit, 'proposeDimensions');
+    const fitB = vi.spyOn(hostB.fit, 'proposeDimensions');
+    const fitC = vi.spyOn(hostC.fit, 'proposeDimensions');
+    const focusA = vi.spyOn(hostA.term, 'focus');
+
+    window.dispatchEvent(new Event('focus'));
+    window.dispatchEvent(new Event('focus'));
+    window.dispatchEvent(new Event('focus'));
+    await vi.advanceTimersByTimeAsync(60);
+
+    // Uma rajada = um rAF = uma medição por host visível.
+    expect(fitA).toHaveBeenCalledTimes(1);
+    expect(fitB).toHaveBeenCalledTimes(1);
+    // Oculto não paga repaint.
+    expect(fitC).not.toHaveBeenCalled();
+    // O pane focado passa por focusHost (cursor + renderer), não refreshHost.
+    expect(focusA).toHaveBeenCalledTimes(1);
   });
 });
