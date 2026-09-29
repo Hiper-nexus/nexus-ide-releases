@@ -305,6 +305,26 @@ saber isto antes de mexer:
   das worktrees isoladas no macOS têm espaço (`Application Support`): a
   extração do caminho precisa aceitar espaço.
 
+## Orquestração automática e modelo por tarefa (F-200/F-214)
+
+- Todo pedido digitado num pane do "+ Pane" passa pelo Jev de delegação
+  (`/hook/delegate`). Com `divisible ≥ 0,6` e 2+ partes o agente recebe a
+  dica; com `≥ 0,7` em Autopilot o Nexus adota o pane pela missão sob demanda
+  da aba (`adoptThroughOperatorTabMission`, o mesmo provedor do 1º helper) e
+  a dica vira diretiva de abrir os helpers. Hardened só dá a dica. O critério
+  `divisible` conta "a mesma mudança em apps/superfícies separadas" (nativo e
+  web/PWA): foi o que faltou no pedido real de 29/09 (0,52 → 0,84 na
+  avaliação com o Jev). Mude a régua só com avaliação em pedidos reais.
+- O hook não julga o que não foi o operador que escreveu: `<task-notification>`,
+  entrega de handoff (mesmo dentro de `<pasted_content>`), "Stop hook
+  feedback", corpo de skill, avisos `[Nexus]` e o pack de failover voltam `{}`.
+- Variante por tier na `DEFAULT_ROUTING_TABLE`: Flash/mini/Luna/Haiku no
+  rotineiro, Pro/Sol/Opus no hard. Revisão em hard/critical e todo o critical
+  levam o topo (`FRONTIER_ORDER`) à frente de qualquer CLI depois do
+  multi-score; hard sem revisão segue distribuindo entre todas as LLMs.
+  DeepSWE, TB2.1 e SWE-bench Verified saturaram: modelo barato empata com o
+  topo neles, e só o TB4 os separa.
+
 ## Conversas Grok/Kimi por checkout (F-566)
 
 - Os overlays recebem `userDataPath` e `checkoutId` da autoridade do Main e
