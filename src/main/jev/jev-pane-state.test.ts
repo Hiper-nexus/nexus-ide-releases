@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JevResult, judge as jevJudge } from './jev-client';
 import type { ScreenDetectionRecord } from '../detect/detector';
 import {
+  classifyPaneTailForDigest,
   getJevPaneHint,
   startJevPaneStateClassifier,
   type JevPaneStateDeps,
@@ -243,5 +244,78 @@ describe('jev-pane-state classifier', () => {
     emit(record());
     await advance(15_001);
     expect(deps.narrate).not.toHaveBeenCalled();
+  });
+});
+
+describe('classifyPaneTailForDigest (digest do pane_read)', () => {
+  const digestDeps = (judge: typeof jevJudge, now = 1_000_000) => ({
+    judge,
+    enabled: () => true,
+    hasKey: () => true,
+    now: () => now,
+  });
+
+  it('resposta válida do Jev vira estado/confiança/needsHuman', async () => {
+    const judge = vi.fn<typeof jevJudge>(async () => jevResult('working', 0.2));
+    const result = await classifyPaneTailForDigest('tail text', digestDeps(judge));
+    expect(result).toEqual({
+      state: 'working',
+      confidence: 0.9,
+      needsHuman: 0.2,
+    });
+    expect(judge).toHaveBeenCalledTimes(1);
+    expect(judge.mock.calls[0]![0]).toMatchObject({
+      surface: 'paneState',
+      timeoutMs: 4_000,
+    });
+  });
+
+  it('judge null ou choice inválida → null (fail-open)', async () => {
+    expect(
+      await classifyPaneTailForDigest('x', digestDeps(
+        vi.fn<typeof jevJudge>(async () => null), 2_000_000)),
+    ).toBeNull();
+    expect(
+      await classifyPaneTailForDigest('y', digestDeps(
+        vi.fn<typeof jevJudge>(async () => jevResult('bogus')), 3_000_000)),
+    ).toBeNull();
+    expect(
+      await classifyPaneTailForDigest('z', digestDeps(
+        vi.fn<typeof jevJudge>(async () => { throw new Error('timeout'); }), 4_000_000)),
+    ).toBeNull();
+  });
+
+  it('surface off ou sem credencial → null sem chamar o juiz', async () => {
+    const judge = vi.fn<typeof jevJudge>(async () => jevResult());
+    const base = digestDeps(judge, 5_000_000);
+    expect(
+      await classifyPaneTailForDigest('a', { ...base, enabled: () => false }),
+    ).toBeNull();
+    expect(
+      await classifyPaneTailForDigest('b', { ...base, hasKey: () => false }),
+    ).toBeNull();
+    expect(judge).not.toHaveBeenCalled();
+  });
+
+  it('mesmo texto dentro de 60 s não repete a chamada (cache por hash)', async () => {
+    const judge = vi.fn<typeof jevJudge>(async () => jevResult('idle_prompt', 0));
+    const deps = digestDeps(judge, 6_000_000);
+    const first = await classifyPaneTailForDigest('same tail', deps);
+    const second = await classifyPaneTailForDigest('same tail', deps);
+    expect(second).toEqual(first);
+    expect(judge).toHaveBeenCalledTimes(1);
+    // Passados 60 s, o mesmo texto chama de novo.
+    const later = await classifyPaneTailForDigest('same tail', digestDeps(judge, 6_061_000));
+    expect(later).toEqual(first);
+    expect(judge).toHaveBeenCalledTimes(2);
+  });
+
+  it('só os últimos 3.000 chars vão para o juiz', async () => {
+    const judge = vi.fn<typeof jevJudge>(async () => jevResult('working', 0));
+    const text = `${'x'.repeat(5_000)}FIM`;
+    await classifyPaneTailForDigest(text, digestDeps(judge, 7_000_000));
+    const screen = (judge.mock.calls[0]![0].state as { screen: string }).screen;
+    expect(screen.length).toBe(3_000);
+    expect(screen.endsWith('FIM')).toBe(true);
   });
 });

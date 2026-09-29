@@ -438,6 +438,7 @@ export function SquadsSection() {
     researchTriage: true,
     delegation: true,
     memoryDistill: true,
+    helperReuse: true,
   });
   const [designPro, setDesignPro] = useState(true);
   const [memoryInjection, setMemoryInjection] = useState(true);
@@ -464,6 +465,7 @@ export function SquadsSection() {
         researchTriage: o.jevSurfaces?.researchTriage !== false,
         delegation: o.jevSurfaces?.delegation !== false,
         memoryDistill: o.jevSurfaces?.memoryDistill !== false,
+        helperReuse: o.jevSurfaces?.helperReuse !== false,
       });
       setDesignPro(o.designPro);
       setMemoryInjection(o.workspaceMemoryInjection !== false);
@@ -863,6 +865,10 @@ export function SquadsSection() {
               [
                 'memoryDistill',
                 'Destilação de memória (handoff aceito, fim de sessão, preferência do operador)',
+              ],
+              [
+                'helperReuse',
+                'Reuso de helper ocioso (tarefa nova para pane parado com contexto)',
               ],
             ] as const
           ).map(([surface, label]) => (

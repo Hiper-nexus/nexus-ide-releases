@@ -330,11 +330,11 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     },
   );
 
-  it('adapterId/model/effort explícitos são honrados sem rotear e o recibo diz explícito', async () => {
+  it('adapterId/model/effort pedidos pelo operador são honrados sem rotear e o recibo diz explícito', async () => {
     const resolver = vi.fn(async () => ({ adapterId: 'kimi', model: 'kimi-code/k3' }));
     setOperatorRouteResolver(resolver);
     const result = (await paneSpawnTool.handler(
-      { adapterId: 'codex', model: 'gpt-6-astra', effort: 'high', prompt: 'revise X' },
+      { adapterId: 'codex', model: 'gpt-6-astra', effort: 'high', operatorChoice: true, prompt: 'revise X' },
       userPane(),
     )) as Record<string, unknown>;
     expect(resolver).not.toHaveBeenCalled();
@@ -357,19 +357,19 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     expect(paneSpawnTool.description).toMatch(/pass adapterId \(\+ model\/effort\)/);
   });
 
-  it('modelo inexistente na CLI explícita falha com as opções válidas', async () => {
+  it('modelo inexistente na CLI pedida pelo operador falha com as opções válidas', async () => {
     setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex' })));
     await expect(paneSpawnTool.handler(
-      { adapterId: 'codex', model: 'gpt-9-fantasma', prompt: 'revise X' },
+      { adapterId: 'codex', model: 'gpt-9-fantasma', operatorChoice: true, prompt: 'revise X' },
       userPane(),
     )).rejects.toThrow(/gpt-9-fantasma.*opções válidas:.*gpt-6-astra/);
     expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
   });
 
-  it('CLI explícita sem MCP do Nexus (agy) é recusada com motivo claro', async () => {
+  it('CLI pedida pelo operador sem MCP do Nexus (agy) é recusada com motivo claro', async () => {
     setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex' })));
     await expect(paneSpawnTool.handler(
-      { adapterId: 'agy', prompt: 'revise X' },
+      { adapterId: 'agy', operatorChoice: true, prompt: 'revise X' },
       userPane(),
     )).rejects.toThrow(/agy não tem MCP do Nexus.*handoff/);
     expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();

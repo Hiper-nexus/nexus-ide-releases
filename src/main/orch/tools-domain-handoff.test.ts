@@ -1421,6 +1421,64 @@ describe("handoff MCP stop receipt", () => {
     });
   });
 
+  it("compacts old delivered rows; the 5 most recent and undelivered stay whole", async () => {
+    const rows = Array.from({ length: 8 }, (_, i) => ({
+      id: `h-${i + 1}`,
+      delivered: true,
+      artifacts: [{ file: `f${i + 1}` }],
+    }));
+    rows[1]!.delivered = false;
+    mocks.listHandoffs.mockReturnValue(rows);
+
+    const result = (await listTool().handler(
+      {},
+      orchestratorContext(),
+    )) as Array<Record<string, unknown>>;
+
+    expect(result[0]).toMatchObject({
+      artifacts: [],
+      artifactsOmitted: 1,
+      detailHint: 'passe ids:["h-1"] para o conteúdo completo',
+    });
+    expect(result[1]!.artifacts).toEqual([{ file: "f2" }]);
+    expect(result[1]!.artifactsOmitted).toBeUndefined();
+    expect(result[2]).toMatchObject({ artifacts: [], artifactsOmitted: 1 });
+    // As 5 mais recentes (índices 3..7) ficam inteiras.
+    expect(result[3]!.artifacts).toEqual([{ file: "f4" }]);
+    expect(result[7]!.artifacts).toEqual([{ file: "f8" }]);
+  });
+
+  it("rows pedidas por ids ficam completas mesmo antigas e entregues", async () => {
+    const rows = Array.from({ length: 8 }, (_, i) => ({
+      id: `h-${i + 1}`,
+      delivered: true,
+      artifacts: [{ file: `f${i + 1}` }],
+    }));
+    mocks.listHandoffs.mockReturnValue(rows);
+
+    const result = (await listTool().handler(
+      { ids: ["h-1"] },
+      orchestratorContext(),
+    )) as Array<Record<string, unknown>>;
+
+    expect(result[0]!.artifacts).toEqual([{ file: "f1" }]);
+    expect(result[0]!.artifactsOmitted).toBeUndefined();
+    expect(result[2]!.artifactsOmitted).toBe(1);
+  });
+
+  it("detail:'full' devolve a trilha byte-identical, sem compactação", async () => {
+    const rows = Array.from({ length: 8 }, (_, i) => ({
+      id: `h-${i + 1}`,
+      delivered: true,
+      artifacts: [{ file: `f${i + 1}` }],
+    }));
+    mocks.listHandoffs.mockReturnValue(rows);
+
+    await expect(
+      listTool().handler({ detail: "full" }, orchestratorContext()),
+    ).resolves.toEqual(rows);
+  });
+
   it("confines a worker to its own mission even when another id is guessed", async () => {
     mocks.listHandoffs.mockReturnValue([]);
 

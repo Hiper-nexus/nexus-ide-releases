@@ -750,15 +750,19 @@ const handoffListTool: McpToolDef = {
     "List handoffs for the current mission, or workspace handoffs for an operator without a mission. The Maestro sees the full audit " +
     "trail by default (including delivered/consumed). Pass includeDelivered: " +
     "false for only undelivered rows. full:true is the documented alias for " +
-    "the complete trail (same as includeDelivered:true).",
+    "the complete trail (same as includeDelivered:true). Older delivered " +
+    "rows are compacted (artifacts replaced by artifactsOmitted + " +
+    "detailHint); the 5 most recent, undelivered rows and rows fetched by " +
+    "ids stay complete. detail:'full' disables compaction.",
   inputSchema: {
     type: "object",
     properties: {
       missionId: { type: "string" },
       includeDelivered: { type: "boolean" },
       full: { type: "boolean" },
+      detail: { type: "string", enum: ["full"], description: "'full' returns every artifact instead of compacting older delivered rows." },
       panes: { type: "array", items: { type: "string" }, description: "Optional pane ids/sessions to limit results (Overclock parity)." },
-      ids: { type: "array", items: { type: "string" }, description: "Optional exact handoff ids to fetch (Overclock parity)." },
+      ids: { type: "array", items: { type: "string" }, description: "Optional exact handoff ids to fetch (Overclock parity); rows fetched this way are never compacted." },
     },
   },
   handler: async (args, ctx) => {
@@ -840,9 +844,36 @@ const handoffListTool: McpToolDef = {
         );
       }
     }
-    return rows;
+    return compactHandoffListRows(rows, rawIds, str(args, "detail") === "full");
   },
 };
+
+/**
+ * Linhas antigas já entregues não carregam decisão nenhuma — o Maestro lê a
+ * trilha para saber o que FALTA, e os artifacts de um handoff consumido são
+ * a parte pesada. As 5 linhas mais recentes, qualquer linha não entregue e
+ * as pedidas por `ids` saem inteiras; o resto leva `artifacts: []` +
+ * `artifactsOmitted` + `detailHint` apontando o caminho de volta.
+ */
+function compactHandoffListRows(
+  rows: ScopedHandoff[],
+  rawIds: readonly string[],
+  detailFull: boolean,
+): Array<ScopedHandoff | Record<string, unknown>> {
+  if (detailFull) return rows;
+  const recentFrom = Math.max(0, rows.length - 5);
+  return rows.map((row, index) => {
+    if (!row.delivered || index >= recentFrom || rawIds.includes(row.id)) {
+      return row;
+    }
+    return {
+      ...row,
+      artifacts: [],
+      artifactsOmitted: Array.isArray(row.artifacts) ? row.artifacts.length : 0,
+      detailHint: `passe ids:["${row.id}"] para o conteúdo completo`,
+    };
+  });
+}
 
 const handoffAcknowledgeTool: McpToolDef = {
   name: "nexus_handoff_ack",

@@ -47,6 +47,17 @@ vi.mock('../pty/pty-manager', () => ({
   tapSessionState: vi.fn(() => () => {}),
 }));
 
+const digestClassify = vi.hoisted(() => ({
+  classifyPaneTailForDigest: vi.fn(async () => null as null | {
+    state: string; confidence: number; needsHuman: number;
+  }),
+}));
+
+vi.mock('../jev/jev-pane-state', async (original) => ({
+  ...(await original<typeof import('../jev/jev-pane-state')>()),
+  classifyPaneTailForDigest: digestClassify.classifyPaneTailForDigest,
+}));
+
 import { isToolAllowed } from './gate';
 import { buildPaneTools } from './tools-panes';
 
@@ -145,7 +156,7 @@ describe('in-mission pane observation (Overclock parity)', () => {
     ).resolves.toContain('Maestro waiting on handoff');
   });
 
-  it('lets the orchestrator read a worker pane', async () => {
+  it('lets the orchestrator read a worker pane (digest by default)', async () => {
     registerPane({
       paneId: 'pane-b',
       sessionId: 'session-b',
@@ -155,17 +166,125 @@ describe('in-mission pane observation (Overclock parity)', () => {
       scope,
     }, 'implementing login');
 
+    const result = await tool('nexus_pane_read').handler(
+      { paneId: 'pane-b' },
+      context({
+        role: 'orchestrator',
+        sessionId: 'session-orch',
+        label: 'maestro',
+        allowedTools: null,
+      }),
+    ) as Record<string, unknown>;
+    expect(result.mode).toBe('digest');
+    expect(result.text).toBe('implementing login');
+    expect(result.hint).toContain("mode:'full'");
+    expect(result.state).toBeUndefined();
+  });
+
+  it('mode:\'full\' keeps the raw tail for an orchestrator — same string as before', async () => {
+    const raw = Array.from({ length: 60 }, (_, i) => `saída ${i}`).join('\n');
+    registerPane({
+      paneId: 'pane-b',
+      sessionId: 'session-b',
+      kind: 'cli-agent',
+      missionId: 'mission-a',
+      role: 'worker',
+      scope,
+    }, raw);
+
     await expect(
       tool('nexus_pane_read').handler(
-        { paneId: 'pane-b' },
-        context({
-          role: 'orchestrator',
-          sessionId: 'session-orch',
-          label: 'maestro',
-          allowedTools: null,
-        }),
+        { paneId: 'pane-b', mode: 'full' },
+        context({ role: 'orchestrator', sessionId: 'session-orch', allowedTools: null }),
       ),
-    ).resolves.toContain('implementing login');
+    ).resolves.toBe(raw);
+    expect(digestClassify.classifyPaneTailForDigest).not.toHaveBeenCalled();
+  });
+
+  it('digest surfaces the Jev state when the classifier answers', async () => {
+    digestClassify.classifyPaneTailForDigest.mockResolvedValueOnce({
+      state: 'waiting_for_human', confidence: 0.9, needsHuman: 0.8,
+    });
+    registerPane({
+      paneId: 'pane-b',
+      sessionId: 'session-b',
+      kind: 'cli-agent',
+      missionId: 'mission-a',
+      role: 'worker',
+      scope,
+    }, 'Apply changes? [y/n]');
+
+    const result = await tool('nexus_pane_read').handler(
+      { paneId: 'pane-b' },
+      context({ role: 'orchestrator', sessionId: 'session-orch', allowedTools: null }),
+    ) as Record<string, unknown>;
+    expect(result).toMatchObject({
+      mode: 'digest',
+      state: 'waiting_for_human',
+      stateConfidence: 0.9,
+      needsHuman: 0.8,
+    });
+  });
+
+  it('digest compacts the tail: signal lines + last 30 verbatim + counts', async () => {
+    const raw = [
+      'error: build quebrou no passo 3',
+      ...Array.from({ length: 60 }, (_, i) => `progresso ${i}`),
+      ...Array.from({ length: 30 }, (_, i) => `tail ${i}`),
+    ].join('\n');
+    registerPane({
+      paneId: 'pane-b',
+      sessionId: 'session-b',
+      kind: 'cli-agent',
+      missionId: 'mission-a',
+      role: 'worker',
+      scope,
+    }, raw);
+
+    const result = await tool('nexus_pane_read').handler(
+      { paneId: 'pane-b' },
+      context({ role: 'orchestrator', sessionId: 'session-orch', allowedTools: null }),
+    ) as Record<string, unknown>;
+    const text = String(result.text);
+    expect(text).toContain('error: build quebrou no passo 3');
+    expect(text).toContain('tail 29');
+    expect(text).not.toContain('progresso 30');
+    expect(result.keptLines).toBe(31);
+    expect(result.omittedLines).toBe(60);
+  });
+
+  it('read_many follows the same role default and digest shape', async () => {
+    registerPane({
+      paneId: 'pane-b',
+      sessionId: 'session-b',
+      kind: 'cli-agent',
+      missionId: 'mission-a',
+      role: 'worker',
+      scope,
+    }, 'worker B idle');
+    registerPane({
+      paneId: 'pane-c',
+      sessionId: 'session-c',
+      kind: 'cli-agent',
+      missionId: 'mission-a',
+      role: 'worker',
+      scope,
+    }, 'worker C idle');
+
+    const digestResult = await tool('nexus_pane_read_many').handler(
+      { paneIds: ['pane-b', 'pane-c'] },
+      context({ role: 'orchestrator', sessionId: 'session-orch', allowedTools: null }),
+    ) as Array<Record<string, unknown>>;
+    expect(digestResult).toEqual([
+      expect.objectContaining({ paneId: 'pane-b', mode: 'digest', text: 'worker B idle' }),
+      expect.objectContaining({ paneId: 'pane-c', mode: 'digest', text: 'worker C idle' }),
+    ]);
+
+    const fullResult = await tool('nexus_pane_read_many').handler(
+      { paneIds: ['pane-b'], mode: 'full' },
+      context({ role: 'orchestrator', sessionId: 'session-orch', allowedTools: null }),
+    );
+    expect(fullResult).toEqual([{ paneId: 'pane-b', output: 'worker B idle' }]);
   });
 
   it('fails closed for an unknown pane', async () => {

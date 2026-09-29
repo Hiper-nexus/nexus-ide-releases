@@ -8,6 +8,13 @@ const h = vi.hoisted(() => ({
     hooks?.onPaneCreated?.('pane-w');
     return { paneId: 'pane-w', sessionId: 'session-w' };
   }),
+  injectPrompt: vi.fn(async (_sessionId: string, _text: string) => {}),
+  judge: vi.fn(async () => null as Record<string, unknown> | null),
+  recordDecision: vi.fn(() => 'dec-1'),
+  semantic: vi.fn((_sessionId: string) => null as Record<string, unknown> | null),
+  authority: vi.fn((_sessionId: string) => null as Record<string, unknown> | null),
+  stdinWritable: vi.fn((_sessionId: string) => true),
+  jevKey: { value: false },
   assertRouteReservation: vi.fn(),
   consumeRouteReservation: vi.fn(),
   mission: {} as Record<string, unknown>,
@@ -16,11 +23,33 @@ const h = vi.hoisted(() => ({
 vi.mock('./tool-util', async (original) => ({
   ...(await original<typeof import('./tool-util')>()),
   spawnPaneAndMaybePrompt: h.spawn,
+  injectPrompt: h.injectPrompt,
 }));
 vi.mock('./pane-registry', async (original) => ({
   ...(await original<typeof import('./pane-registry')>()),
   listPaneSnapshots: () => h.panes,
   takePendingPaneSpawnResult: () => null,
+  getPaneRuntimeAuthorityBySession: (sessionId: string) => h.authority(sessionId),
+}));
+vi.mock('../pty/pty-manager', async (original) => ({
+  ...(await original<typeof import('../pty/pty-manager')>()),
+  isSessionStdinWritable: (sessionId: string) => h.stdinWritable(sessionId),
+}));
+vi.mock('./agent-status', async (original) => ({
+  ...(await original<typeof import('./agent-status')>()),
+  getAgentSemanticStatusBySession: (sessionId: string) => h.semantic(sessionId),
+}));
+vi.mock('../jev/jev-client', async (original) => ({
+  ...(await original<typeof import('../jev/jev-client')>()),
+  judge: h.judge,
+}));
+vi.mock('../jev/jev-secrets', async (original) => ({
+  ...(await original<typeof import('../jev/jev-secrets')>()),
+  hasJevCredential: () => h.jevKey.value,
+}));
+vi.mock('../jev/jev-decision-log', async (original) => ({
+  ...(await original<typeof import('../jev/jev-decision-log')>()),
+  recordJevDecision: h.recordDecision,
 }));
 vi.mock('./gate', async (original) => ({
   ...(await original<typeof import('./gate')>()),
@@ -54,6 +83,15 @@ vi.mock('./squad-store', async (original) => ({
   getSquad: () => null,
   squadRoutableCliIds: () => new Set(['codex']),
 }));
+vi.mock('./operator-cli-mentions', () => ({
+  operatorRecentlyNamedCli: vi.fn((): boolean => false),
+}));
+vi.mock('./isolated-writer-worktree', async (original) => ({
+  ...(await original<typeof import('./isolated-writer-worktree')>()),
+  resumeIsolatedWriterWorktree: () => null,
+}));
+
+import { operatorRecentlyNamedCli } from './operator-cli-mentions';
 
 import { paneSpawnTool, setOperatorRouteResolver } from './tools-panes';
 
@@ -65,6 +103,12 @@ const ctx: AgentGateContext = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(operatorRecentlyNamedCli).mockImplementation(() => false);
+  h.judge.mockResolvedValue(null);
+  h.authority.mockReturnValue(null);
+  h.semantic.mockReturnValue(null);
+  h.stdinWritable.mockReturnValue(true);
+  h.jevKey.value = false;
   h.panes = [];
   h.mission = {
     id: 'mission-a', title: 'Feature', description: '', status: 'running', squadId: 'squad',
@@ -133,12 +177,72 @@ describe('nexus_pane_spawn dentro da missão sem adapterId', () => {
     expect(String(h.spawn.mock.calls[0][0].prompt)).toContain('implementar o login com OTP');
   });
 
-  it('adapterId explícito continua aceito e não aciona o roteador', async () => {
+  it('pin sem menção do operador vira preferência suave e passa pelo roteador', async () => {
+    const resolver = vi.fn(async () => ({
+      adapterId: 'codex', model: 'gpt-5.4', effort: 'high', routeReservationId: 'rr-pin',
+    }));
+    setOperatorRouteResolver(resolver);
+    const receipt = await paneSpawnTool.handler(
+      { adapterId: 'claude', model: 'claude-opus-5-5', task: 'olha o repo', prompt: 'olhe' },
+      ctx,
+    ) as Record<string, any>;
+    expect(resolver).toHaveBeenCalledWith('olha o repo', ctx, {
+      preferAdapterIds: ['claude'],
+    });
+    expect(h.spawn.mock.calls[0][0]).toMatchObject({
+      adapterId: 'codex', model: 'gpt-5.4', effort: 'high',
+    });
+    expect(receipt.route).toMatchObject({
+      redistributed: { adapterId: 'claude', model: 'claude-opus-5-5', reason: 'pin-sem-pedido-do-operador' },
+      ignored: { model: 'claude-opus-5-5' },
+    });
+  });
+
+  it('pin com a CLI digitada pelo operador na sessão é honrado literalmente', async () => {
+    vi.mocked(operatorRecentlyNamedCli).mockImplementation(
+      (_sessionId, adapterId) => adapterId === 'codex',
+    );
     const resolver = vi.fn(async () => ({ adapterId: 'kimi' }));
     setOperatorRouteResolver(resolver);
-    await expect(paneSpawnTool.handler({ adapterId: 'codex', model: 'gpt-5.4' }, ctx))
-      .rejects.toThrow(/route_reservation_required/);
+    await expect(
+      paneSpawnTool.handler({ adapterId: 'codex', model: 'gpt-5.4', task: 'olha o repo' }, ctx),
+    ).rejects.toThrow(/route_reservation_required/);
+    expect(operatorRecentlyNamedCli).toHaveBeenCalledWith('orch-session', 'codex');
     expect(resolver).not.toHaveBeenCalled();
+  });
+
+  it('pin com resume é honrado literalmente, sem rotear', async () => {
+    h.mission = {
+      ...h.mission,
+      squadId: undefined,
+      intentContract: {
+        ...(h.mission.intentContract as object),
+        freeAgentChoice: true,
+        workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' },
+      },
+    };
+    const resolver = vi.fn(async () => ({ adapterId: 'kimi' }));
+    setOperatorRouteResolver(resolver);
+    await paneSpawnTool.handler({ adapterId: 'claude', resume: 'pane-old', task: 'olha o repo' }, ctx);
+    expect(resolver).not.toHaveBeenCalled();
+    expect(h.spawn.mock.calls[0][0]).toMatchObject({
+      adapterId: 'claude', resume: true, resumeFromPaneId: 'pane-old',
+    });
+  });
+
+  it('pin com routeReservationId consome a reserva sem rotear', async () => {
+    const resolver = vi.fn(async () => ({ adapterId: 'kimi' }));
+    setOperatorRouteResolver(resolver);
+    await paneSpawnTool.handler(
+      { adapterId: 'codex', routeReservationId: 'rr-1', task: 'olha o repo', prompt: 'olhe' },
+      ctx,
+    );
+    expect(resolver).not.toHaveBeenCalled();
+    expect(h.consumeRouteReservation).toHaveBeenCalledWith(
+      expect.objectContaining({ reservationId: 'rr-1', adapterId: 'codex' }),
+      'orch-session',
+    );
+    expect(h.spawn.mock.calls[0][0]).toMatchObject({ adapterId: 'codex' });
   });
 
   it('pane do "+ Pane" na missão da aba só roteia helper para CLI com MCP do Nexus (F-658)', async () => {
@@ -162,7 +266,7 @@ describe('nexus_pane_spawn dentro da missão sem adapterId', () => {
   });
 });
 
-describe('missão da aba redistribui a CLI lotada (F-674)', () => {
+describe('pin de adapterId sem pedido do operador vira preferência (F-674 ampliado)', () => {
   const tabMission = () => ({
     ...h.mission,
     squadId: undefined,
@@ -172,27 +276,31 @@ describe('missão da aba redistribui a CLI lotada (F-674)', () => {
       workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' },
     },
   });
-  const liveClaude = (paneId: string) => ({
-    paneId, sessionId: `s-${paneId}`, adapterId: 'claude', state: 'busy', missionId: 'mission-a', role: 'worker',
-  });
+  const userCtx: AgentGateContext = {
+    ...ctx, role: 'user', missionId: undefined, sessionId: 'user-session',
+  };
 
-  it('orquestrador fixa claude com 2 helpers vivos em claude: o Nexus roteia pela tarefa', async () => {
-    // Campo 28/09: sem o operador pedir, só nasciam helpers Claude.
+  it('orquestrador da missão da aba fixa claude sem menção: roteado com a CLI como preferência', async () => {
     h.mission = tabMission();
-    h.panes = [liveClaude('p1'), liveClaude('p2')];
     const resolver = vi.fn(async () => ({ adapterId: 'codex', model: 'gpt-5.4', effort: 'high', routeReservationId: 'rr-div' }));
     setOperatorRouteResolver(resolver);
     const receipt = await paneSpawnTool.handler(
       { adapterId: 'claude', model: 'claude-opus-5-5', task: 'revisar o kanban', prompt: 'revise' }, ctx,
     ) as Record<string, any>;
-    expect(resolver).toHaveBeenCalledTimes(1);
+    expect(resolver).toHaveBeenCalledWith('revisar o kanban', ctx, {
+      preferAdapterIds: ['claude'],
+    });
     expect(h.spawn.mock.calls[0][0]).toMatchObject({ adapterId: 'codex', model: 'gpt-5.4' });
-    expect(receipt.route.redistributed).toMatchObject({ adapterId: 'claude', model: 'claude-opus-5-5', sameAdapterLive: 2 });
+    expect(receipt.route.redistributed).toEqual({
+      adapterId: 'claude',
+      model: 'claude-opus-5-5',
+      reason: 'pin-sem-pedido-do-operador',
+      hint: 'Passe operatorChoice:true quando o operador pedir esta CLI.',
+    });
   });
 
   it('operatorChoice:true respeita a CLI que o operador pediu', async () => {
     h.mission = tabMission();
-    h.panes = [liveClaude('p1'), liveClaude('p2')];
     const resolver = vi.fn(async () => ({ adapterId: 'codex' }));
     setOperatorRouteResolver(resolver);
     await paneSpawnTool.handler(
@@ -200,5 +308,215 @@ describe('missão da aba redistribui a CLI lotada (F-674)', () => {
     );
     expect(resolver).not.toHaveBeenCalled();
     expect(h.spawn.mock.calls[0][0]).toMatchObject({ adapterId: 'claude' });
+  });
+
+  it('mão do operador com pin explícito sem menção é roteada com preferência', async () => {
+    const resolver = vi.fn(async () => ({ adapterId: 'codex', model: 'gpt-5.4' }));
+    setOperatorRouteResolver(resolver);
+    const receipt = await paneSpawnTool.handler(
+      { adapterId: 'claude', task: 'olha o repo', prompt: 'olhe' }, userCtx,
+    ) as Record<string, any>;
+    expect(resolver).toHaveBeenCalledWith('olha o repo', userCtx, {
+      tieBreakUseCounts: expect.anything(),
+      excludeAdapterIds: [],
+      preferAdapterIds: ['claude'],
+    });
+    expect(h.spawn.mock.calls[0][0]).toMatchObject({ adapterId: 'codex' });
+    expect(receipt.harness.source).toBe('auto-route');
+    expect(receipt.route.redistributed).toMatchObject({
+      adapterId: 'claude', reason: 'pin-sem-pedido-do-operador',
+    });
+  });
+
+  it('spawn de agente do roster nunca vira preferência (roster selado intacto)', async () => {
+    const resolver = vi.fn(async () => ({ adapterId: 'codex' }));
+    setOperatorRouteResolver(resolver);
+    await expect(paneSpawnTool.handler(
+      { agentName: 'Worker', adapterId: 'claude', task: 'olha o repo' }, ctx,
+    )).rejects.toThrow(/unknown squad agent/);
+    expect(resolver).not.toHaveBeenCalled();
+  });
+
+  it('mão do operador que digitou a CLI no próprio pane tem o pin honrado', async () => {
+    vi.mocked(operatorRecentlyNamedCli).mockImplementation(
+      (sessionId, adapterId) => sessionId === 'user-session' && adapterId === 'claude',
+    );
+    const resolver = vi.fn(async () => ({ adapterId: 'codex' }));
+    setOperatorRouteResolver(resolver);
+    const receipt = await paneSpawnTool.handler(
+      { adapterId: 'claude', task: 'olha o repo', prompt: 'olhe' }, userCtx,
+    ) as Record<string, any>;
+    expect(resolver).not.toHaveBeenCalled();
+    expect(h.spawn.mock.calls[0][0]).toMatchObject({ adapterId: 'claude' });
+    expect(receipt.harness.source).toBe('explicit');
+    expect(receipt.route).toBeUndefined();
+  });
+});
+
+describe('reuso de helper ocioso (helperReuse)', () => {
+  const tabMission = () => ({
+    ...h.mission,
+    squadId: undefined,
+    intentContract: {
+      ...(h.mission.intentContract as object),
+      freeAgentChoice: true,
+      workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' },
+    },
+  });
+  const helperIdle = (over: Record<string, unknown> = {}) => ({
+    paneId: 'pane-h1', sessionId: 'sess-h1', kind: 'cli-agent',
+    title: 'Auxiliar', adapterId: 'codex', state: 'idle', ...over,
+  });
+  const idleSemantic = (sessionId: string, updatedAt = Date.now() - 60_000) =>
+    ({ status: 'idle', sessionId, paneId: 'pane-h1', updatedAt }) as never;
+  const judgePick = (choice: string, confidence: number) =>
+    h.judge.mockResolvedValue({
+      model: 'jev-m',
+      answers: { pick: { type: 'choice', choice, probabilities: {}, confidence } },
+      usage: { input_tokens: 12, output_tokens: 3 },
+    } as never);
+
+  it('missão da aba: helper ocioso da mesma CLI com contexto recebe a tarefa (sem spawn)', async () => {
+    h.mission = tabMission();
+    h.jevKey.value = true;
+    setOperatorRouteResolver(vi.fn(async () => ({
+      adapterId: 'codex', routeReservationId: 'rr-reuse',
+    })));
+    h.panes = [helperIdle({ missionId: 'mission-a', role: 'worker' })];
+    h.semantic.mockImplementation((sid) => (sid === 'sess-h1' ? idleSemantic(sid) : null));
+    h.authority.mockImplementation((sid) =>
+      sid === 'sess-h1' ? ({ role: 'worker', missionId: 'mission-a' } as never) : null);
+    judgePick('h1', 0.8);
+    const receipt = await paneSpawnTool.handler(
+      { task: 'continuar a refatoração do parser', prompt: 'siga com o parser' }, ctx,
+    ) as Record<string, any>;
+    expect(h.spawn).not.toHaveBeenCalled();
+    expect(h.injectPrompt).toHaveBeenCalledWith(
+      'sess-h1',
+      expect.stringContaining('nexus_handoff_submit'),
+      undefined,
+    );
+    expect(h.recordDecision).toHaveBeenCalledWith(
+      expect.objectContaining({ surface: 'helperReuse', decision: 'reuse:h1' }),
+    );
+    expect(receipt).toMatchObject({
+      paneId: 'pane-h1', sessionId: 'sess-h1', reused: true,
+      reusedReason: 'helper ocioso com contexto relacionado (Jev 0.8)',
+      harness: { source: 'reuse' },
+    });
+  });
+
+  it('resposta none do Jev cai no spawn normal', async () => {
+    h.mission = tabMission();
+    h.jevKey.value = true;
+    setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex' })));
+    h.panes = [helperIdle({ missionId: 'mission-a', role: 'worker' })];
+    h.semantic.mockImplementation((sid) => (sid === 'sess-h1' ? idleSemantic(sid) : null));
+    judgePick('none', 0.9);
+    await paneSpawnTool.handler({ task: 'nova feature', prompt: 'faça' }, ctx);
+    expect(h.injectPrompt).not.toHaveBeenCalled();
+    expect(h.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('confiança abaixo de 0.7 cai no spawn normal', async () => {
+    h.mission = tabMission();
+    h.jevKey.value = true;
+    setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex' })));
+    h.panes = [helperIdle({ missionId: 'mission-a', role: 'worker' })];
+    h.semantic.mockImplementation((sid) => (sid === 'sess-h1' ? idleSemantic(sid) : null));
+    judgePick('h1', 0.55);
+    await paneSpawnTool.handler({ task: 'nova feature', prompt: 'faça' }, ctx);
+    expect(h.injectPrompt).not.toHaveBeenCalled();
+    expect(h.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('fresh:true sempre spawna, sem consultar o Jev', async () => {
+    h.mission = tabMission();
+    h.jevKey.value = true;
+    setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex' })));
+    h.panes = [helperIdle({ missionId: 'mission-a', role: 'worker' })];
+    h.semantic.mockImplementation((sid) => (sid === 'sess-h1' ? idleSemantic(sid) : null));
+    await paneSpawnTool.handler(
+      { task: 'nova feature', prompt: 'faça', fresh: true }, ctx,
+    );
+    expect(h.judge).not.toHaveBeenCalled();
+    expect(h.injectPrompt).not.toHaveBeenCalled();
+    expect(h.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('helper ocupado ou de outra CLI não é candidato', async () => {
+    h.mission = tabMission();
+    h.jevKey.value = true;
+    setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex' })));
+    h.panes = [
+      helperIdle({ paneId: 'pane-b', sessionId: 'sess-b', state: 'busy', missionId: 'mission-a', role: 'worker' }),
+      helperIdle({ paneId: 'pane-c', sessionId: 'sess-c', adapterId: 'claude', missionId: 'mission-a', role: 'worker' }),
+    ];
+    h.semantic.mockImplementation((sid) => (sid ? idleSemantic(sid) : null));
+    await paneSpawnTool.handler({ task: 'nova feature', prompt: 'faça' }, ctx);
+    expect(h.judge).not.toHaveBeenCalled();
+    expect(h.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('tarefa de revisão nunca reutiliza helper writer', async () => {
+    h.mission = tabMission();
+    h.jevKey.value = true;
+    setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex' })));
+    h.panes = [helperIdle({ missionId: 'mission-a', role: 'worker', readOnly: false })];
+    h.semantic.mockImplementation((sid) => (sid === 'sess-h1' ? idleSemantic(sid) : null));
+    await paneSpawnTool.handler(
+      { task: 'revise a entrega do parser', prompt: 'revise' }, ctx,
+    );
+    expect(h.judge).not.toHaveBeenCalled();
+    expect(h.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('missão com squad nunca reutiliza', async () => {
+    h.jevKey.value = true;
+    setOperatorRouteResolver(vi.fn(async () => ({
+      adapterId: 'codex', routeReservationId: 'rr-squad',
+    })));
+    h.panes = [helperIdle({ missionId: 'mission-a', role: 'worker' })];
+    h.semantic.mockImplementation((sid) => (sid === 'sess-h1' ? idleSemantic(sid) : null));
+    await paneSpawnTool.handler({ task: 'nova feature', prompt: 'faça' }, ctx);
+    expect(h.judge).not.toHaveBeenCalled();
+    expect(h.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('falha na entrega do prompt cai no spawn normal', async () => {
+    h.mission = tabMission();
+    h.jevKey.value = true;
+    setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex' })));
+    h.panes = [helperIdle({ missionId: 'mission-a', role: 'worker' })];
+    h.semantic.mockImplementation((sid) => (sid === 'sess-h1' ? idleSemantic(sid) : null));
+    judgePick('h1', 0.8);
+    h.injectPrompt.mockRejectedValueOnce(new Error('sessão morta'));
+    await paneSpawnTool.handler({ task: 'nova feature', prompt: 'faça' }, ctx);
+    expect(h.injectPrompt).toHaveBeenCalledTimes(1);
+    expect(h.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('mão do operador sem missão: filho ocioso da mesma CLI recebe a tarefa', async () => {
+    h.jevKey.value = true;
+    const userCtx = {
+      ...ctx, role: 'user' as const, missionId: undefined, sessionId: 'op-session',
+    };
+    setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex', model: 'gpt-5.4' })));
+    h.panes = [helperIdle()];
+    h.semantic.mockImplementation((sid) => (sid === 'sess-h1' ? idleSemantic(sid) : null));
+    h.authority.mockImplementation((sid) =>
+      sid === 'sess-h1' ? ({ operatorParentSessionId: 'op-session' } as never) : null);
+    judgePick('h1', 0.9);
+    const receipt = await paneSpawnTool.handler(
+      { task: 'ajeitar o rodapé', prompt: 'arrume o rodapé' }, userCtx,
+    ) as Record<string, any>;
+    expect(h.spawn).not.toHaveBeenCalled();
+    expect(h.injectPrompt).toHaveBeenCalledWith(
+      'sess-h1', expect.stringContaining('arrume o rodapé'), undefined,
+    );
+    expect(receipt).toMatchObject({
+      paneId: 'pane-h1', sessionId: 'sess-h1', reused: true,
+      harness: { source: 'reuse' },
+    });
   });
 });

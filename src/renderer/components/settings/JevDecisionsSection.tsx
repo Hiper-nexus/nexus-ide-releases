@@ -21,6 +21,7 @@ const SURFACE_LABELS: Record<string, string> = {
   computerTool: 'Piloto do desktop',
   judgeTool: 'Tool nexus_judge',
   rankTool: 'Tool nexus_rank',
+  helperReuse: 'Reuso de helper ocioso',
 };
 
 const NO_ANSWER_REASONS: Record<string, string> = {

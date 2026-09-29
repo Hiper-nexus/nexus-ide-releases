@@ -25,7 +25,8 @@ export type JevSurface =
   | 'browserTool'
   | 'researchTriage'
   | 'delegation'
-  | 'memoryDistill';
+  | 'memoryDistill'
+  | 'helperReuse';
 
 const JEV_SURFACES: readonly JevSurface[] = [
   'handoffReview',
@@ -40,6 +41,7 @@ const JEV_SURFACES: readonly JevSurface[] = [
   'researchTriage',
   'delegation',
   'memoryDistill',
+  'helperReuse',
 ];
 
 /**

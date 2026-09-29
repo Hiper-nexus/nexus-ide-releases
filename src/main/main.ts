@@ -215,6 +215,7 @@ import { ensureSessionExitMemoryDistiller } from "./memory/session-exit-memory";
 import { createCommandBlockPersister } from "./terminal/command-block-persist";
 import { configureMissionEventEmit } from "./orch/mission-event-emit";
 import { installObserverMissionEventProjector } from "./orch/observer-mission-event-projector";
+import { installOperatorCliMentionTap } from "./orch/operator-cli-mentions";
 import {
   installMissionDiskProjection,
   uninstallMissionDiskProjection,
@@ -566,6 +567,10 @@ function bootstrap(): void {
   ensureSessionExitMemoryDistiller();
   configureMissionEventEmit(projectRuntimeManager);
   installObserverMissionEventProjector();
+  // Uso geral: input humano do PTY em RAM (nunca persistido) — prova de que o
+  // operador digitou o nome de uma CLI antes de um adapterId explícito ser
+  // honrado literalmente (pin do agente → preferência de roteamento).
+  installOperatorCliMentionTap();
   installMissionDiskProjection();
   registerMissionEventIpc();
   // Product paths: CommandBlock actions, SearchMixer, full product-wave IPC.

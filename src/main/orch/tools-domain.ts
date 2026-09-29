@@ -1691,7 +1691,14 @@ export async function routeTaskForCaller(
       reservedAdapterIds = undefined;
     }
   }
-  const preferAdapters = strArray(args, 'preferAdapters');
+  // Preferência interna (pin de adapterId que virou preferência suave no
+  // spawn) vale tanto quanto a do caller; nunca vira exclusão.
+  const preferAdapters = [
+    ...new Set([
+      ...(internal.preferAdapterIds ?? []),
+      ...strArray(args, 'preferAdapters'),
+    ]),
+  ];
   const missionUseCounts = mergeAdapterUseLists(
     missionAdapterIds,
     reservedAdapterIds,

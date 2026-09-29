@@ -151,6 +151,8 @@ export const orchSettingsSchema = z.object({
       delegation: z.boolean().default(true),
       /** Destilação de memória: resumo de handoff aceito vira linha trusted. */
       memoryDistill: z.boolean().default(true),
+      /** Reuso de helper ocioso com contexto relacionado em vez de spawn novo. */
+      helperReuse: z.boolean().default(true),
     })
     .prefault({}),
   /**

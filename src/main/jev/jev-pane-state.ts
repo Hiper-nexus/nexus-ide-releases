@@ -83,6 +83,98 @@ export function getJevPaneHint(sessionId: string): JevPaneHint | null {
   return hints.get(sessionId) ?? null;
 }
 
+/**
+ * Classificação sob demanda para o digest do `nexus_pane_read` — reusa as
+ * mesmas perguntas/superfície do classificador contínuo, mas responde na hora
+ * (timeout curto) e cacheia por hash do texto (60 s) para uma rajada de
+ * pane_read não virar uma rajada de chamadas. Fail-open: sem credencial,
+ * surface off, timeout ou resposta inválida devolvem `null` — o digest sai
+ * sem os campos de estado.
+ */
+const DIGEST_CLASSIFY_TIMEOUT_MS = 4_000;
+const DIGEST_CACHE_TTL_MS = 60_000;
+const DIGEST_MAX_CHARS = 3_000;
+const DIGEST_CACHE_CAP = 256;
+
+export interface PaneTailClassification {
+  readonly state: JevPaneStateKind;
+  readonly confidence: number;
+  readonly needsHuman: number;
+}
+
+export interface PaneTailClassifyDeps {
+  readonly judge?: typeof judge;
+  readonly enabled?: () => boolean;
+  readonly hasKey?: () => boolean;
+  readonly now?: () => number;
+}
+
+const digestClassifyCache = new Map<
+  string,
+  { at: number; result: PaneTailClassification | null }
+>();
+
+export async function classifyPaneTailForDigest(
+  text: string,
+  deps: PaneTailClassifyDeps = {},
+): Promise<PaneTailClassification | null> {
+  const now = deps.now ?? Date.now;
+  const clipped = text.slice(-DIGEST_MAX_CHARS);
+  const hash = createHash('sha256').update(clipped).digest('hex');
+  const cached = digestClassifyCache.get(hash);
+  if (cached && now() - cached.at < DIGEST_CACHE_TTL_MS) {
+    return cached.result;
+  }
+  try {
+    const enabled = deps.enabled ?? (() => isJevSurfaceEnabled('paneState'));
+    const hasKey = deps.hasKey ?? hasJevCredential;
+    if (!enabled() || !hasKey()) return null;
+    const judgeFn = deps.judge ?? judge;
+    const result = await judgeFn({
+      state: { screen: clipped },
+      questions: PANE_STATE_QUESTIONS,
+      timeoutMs: DIGEST_CLASSIFY_TIMEOUT_MS,
+      surface: 'paneState',
+    });
+    let classified: PaneTailClassification | null = null;
+    const stateAnswer = result?.answers.state;
+    if (
+      result &&
+      stateAnswer?.type === 'choice' &&
+      JEV_PANE_STATES.includes(stateAnswer.choice as JevPaneStateKind)
+    ) {
+      const needsAnswer = result.answers.needs_human;
+      classified = {
+        state: stateAnswer.choice as JevPaneStateKind,
+        confidence:
+          typeof stateAnswer.confidence === 'number'
+            ? stateAnswer.confidence
+            : 0,
+        needsHuman: needsAnswer?.type === 'noul' ? needsAnswer.noul : 0,
+      };
+      recordJevDecision({
+        surface: 'paneState',
+        model: result.model,
+        questions: Object.keys(PANE_STATE_QUESTIONS),
+        probabilities: jevAnswerProbabilities(result.answers),
+        confidence: jevAnswerConfidences(result.answers),
+        decision: `digest-state:${classified.state}`,
+        inputTokens: result.usage.input_tokens,
+        usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+      });
+    }
+    if (digestClassifyCache.size >= DIGEST_CACHE_CAP) {
+      const oldest = digestClassifyCache.keys().next().value;
+      if (oldest !== undefined) digestClassifyCache.delete(oldest);
+    }
+    digestClassifyCache.set(hash, { at: now(), result: classified });
+    return classified;
+  } catch {
+    // Fail-open: digest sem estado vale mais que digest nenhum.
+    return null;
+  }
+}
+
 function broadcastPaneHint(payload: {
   sessionId: string;
   paneId?: string;

@@ -121,6 +121,13 @@ import {
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { isOperatorTabMission } from './operator-tab-mission-resume';
+import { operatorRecentlyNamedCli } from './operator-cli-mentions';
+import {
+  judgeIdleHelperReuse,
+  listIdleHelperCandidates,
+} from './idle-helper-reuse';
+import { digestPaneTail } from './pane-output-digest';
+import { classifyPaneTailForDigest } from '../jev/jev-pane-state';
 import { missionControlPlaneSnapshot } from './mission-control-plane-ipc';
 import { getOrchSettings } from '../persistence/settings-store';
 import { isPaneMetaTask } from './mission-fast-lane';
@@ -475,6 +482,11 @@ export function attenuateTools(
 export interface OperatorRouteInternal {
   readonly tieBreakUseCounts?: ReadonlyMap<string, number>;
   readonly excludeAdapterIds?: readonly string[];
+  /**
+   * Pin do agente sem pedido do operador → PREFERÊNCIA suave: entra em
+   * `preferAdapters` do roteador (boost), nunca em excludes.
+   */
+  readonly preferAdapterIds?: readonly string[];
 }
 
 export type OperatorRouteResolver = (
@@ -599,10 +611,13 @@ const paneSpawn: McpToolDef = {
     'adapterId and describe `task` to get the same automatic routing (roster, ' +
     'CLI policy and route reservation applied). DEFAULT: omit adapterId and ' +
     'model — Nexus spreads helpers across every ready CLI (Claude, Codex, Kimi, ' +
-    'Grok, MiMo, …) by task; pass adapterId only when the operator named a CLI, ' +
-    'and then also operatorChoice:true. In the tab mission a CLI that already ' +
-    'has 2+ live helpers is re-routed unless operatorChoice is true (receipt: ' +
-    'route.redistributed). Writers run in parallel: ' +
+    'Grok, MiMo, …) by task. A pinned adapterId is a SOFT preference when the ' +
+    'operator did not ask for it: in any mission (orchestrator) or on the ' +
+    'operator pane (explicit pin), Nexus re-routes by task and keeps the pin ' +
+    'only as a routing preference (receipt: route.redistributed ' +
+    'pin-sem-pedido-do-operador). The pin is honored literally when the ' +
+    'operator recently typed that CLI\'s name in the calling pane, or when ' +
+    'operatorChoice:true is passed. Writers run in parallel: ' +
     'isolatedWriter gives each one its own git worktree/branch, and from the ' +
     'operator pane a writer that would share the checkout with another active ' +
     'writer is isolated automatically (receipt: executionMode ' +
@@ -617,7 +632,10 @@ const paneSpawn: McpToolDef = {
     'while the CLI session is still starting; use nexus_pane_wait_idle next. ' +
     '`harness.account` diz qual conta o pane usa, quem decidiu (regra de ' +
     'folga/pinada/ativa/nativa) e as alternativas com sua folga — rótulos ' +
-    'mascarados.',
+    'mascarados. If a live idle helper of the same owner and CLI has ' +
+    'related context, the task may be delivered to it instead of spawning ' +
+    '(receipt: reused:true + reusedReason); pass fresh:true to always ' +
+    'spawn.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -626,14 +644,20 @@ const paneSpawn: McpToolDef = {
         description:
           'Adapter id (cli) to run. Optional and usually omitted: Nexus routes ' +
           '`task` (operator pane: Jev + cost table; mission: nexus_route_task) ' +
-          'and spreads helpers across CLIs. When given, it is honored together ' +
-          'with model/effort (tab mission: see operatorChoice).',
+          'and spreads helpers across CLIs. A pin is honored literally only ' +
+          'when the operator named this CLI in the calling pane or ' +
+          'operatorChoice:true is set; otherwise it becomes a soft routing ' +
+          'preference (see operatorChoice).',
       },
       operatorChoice: {
         type: 'boolean',
         description:
-          'true when the OPERATOR asked for this adapterId. Without it, the tab ' +
-          'mission re-routes a CLI that already has 2+ live helpers.',
+          'true when the OPERATOR asked for this adapterId. Without it, an ' +
+          'adapterId the operator did not name is demoted to a soft routing ' +
+          'preference (mission orchestrators and the operator pane alike). ' +
+          'A CLI the operator recently typed in the calling pane is honored ' +
+          'automatically — operatorChoice is only needed when the request ' +
+          'did not come through this pane\'s input.',
       },
       agentName: { type: 'string', description: 'Squad agent name or id' },
       task: {
@@ -700,6 +724,15 @@ const paneSpawn: McpToolDef = {
           'files and conversation in its head, zero re-briefing. Use for any ' +
           'adjustment/follow-up on a deliverable whose worker was already closed. ' +
           'Combine with prompt (the adjustment).',
+      },
+      fresh: {
+        type: 'boolean',
+        description:
+          'true always opens a NEW pane. Without it, a task from the ' +
+          'operator pane (no mission) or an operator-tab mission may be ' +
+          'delivered to a live idle helper of the same owner and CLI whose ' +
+          'recent work is related (receipt: reused:true + reusedReason) — ' +
+          'saving the spawn and re-briefing.',
       },
     },
   },
@@ -813,20 +846,44 @@ const paneSpawnAfterTabMission = {
     const resumeRef = str(args, 'resume');
     const operatorExplicit =
       operatorHand && !resumeRef && !str(args, 'missionId') && str(args, 'adapterId') !== undefined;
-    const operatorExplicitModel = operatorExplicit
+    // Uso geral: um adapterId fixado SEM o operador ter digitado a CLI nesta
+    // sessão vira PREFERÊNCIA suave de roteamento, nunca destino certo — para
+    // o orquestrador de QUALQUER missão e para a mão do operador com pin
+    // explícito. `operatorChoice:true`, a CLI que o operador acabou de
+    // digitar, `resume`, reserva de rota e spawn de agente do roster seguem
+    // honrando o pin literal; sem texto roteável não há o que preferir.
+    const pinnedAdapterId = str(args, 'adapterId');
+    const pinRedistributed =
+      pinnedAdapterId !== undefined &&
+      !agentRef &&
+      args.operatorChoice !== true &&
+      !resumeRef &&
+      !routeReservationId &&
+      operatorRouteResolver !== null &&
+      operatorRouteTask(args) !== null &&
+      !operatorRecentlyNamedCli(ctx.sessionId, pinnedAdapterId) &&
+      ((ctx.role === 'orchestrator' && ctx.missionId !== undefined) ||
+        operatorExplicit)
+        ? {
+            adapterId: pinnedAdapterId,
+            ...(str(args, 'model') ? { model: str(args, 'model')! } : {}),
+          }
+        : null;
+    const operatorExplicitModel = operatorExplicit && !pinRedistributed
       ? assertOperatorExplicitRuntime(str(args, 'adapterId')!, str(args, 'model'))
       : undefined;
     const forceOperatorRoute =
       operatorHand &&
-      !operatorExplicit &&
+      (!operatorExplicit || pinRedistributed !== null) &&
       !resumeRef &&
       !str(args, 'missionId') &&
       operatorRouteResolver !== null;
-    let ignoredChoice = forceOperatorRoute ? ignoredRouteChoice(args) : null;
-    // F-674: CLI fixada pelo orquestrador que o Nexus redistribuiu (recibo).
-    let diversityRedistributed:
-      | { adapterId: string; model?: string; sameAdapterLive: number }
-      | null = null;
+    // O pin redistribuído sai do `ignored` (tem campo próprio no recibo);
+    // model/effort pedidos junto seguem listados como ignorados.
+    const ignoredRouteArgs = pinRedistributed
+      ? { ...args, adapterId: undefined }
+      : args;
+    let ignoredChoice = forceOperatorRoute ? ignoredRouteChoice(ignoredRouteArgs) : null;
     const resolveOperatorRoute = async (): Promise<Record<string, unknown>> => {
       const task = operatorRouteTask(args);
       if (!task) {
@@ -848,6 +905,9 @@ const paneSpawnAfterTabMission = {
           route = await operatorRouteResolver!(task, ctx, {
             tieBreakUseCounts,
             excludeAdapterIds: excluded,
+            ...(pinRedistributed
+              ? { preferAdapterIds: [pinRedistributed.adapterId] }
+              : {}),
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -985,33 +1045,12 @@ const paneSpawnAfterTabMission = {
         autoRoute = await timedOperatorRoute();
         adHocAdapterId = routeString(autoRoute, 'adapterId');
       }
-      // F-674: na missão da aba, o orquestrador que fixa uma CLI que já tem
-      // 2+ helpers vivos é redistribuído pelo roteamento (Jev + tabela) — o
-      // operador quer as LLMs disponíveis em uso, não uma só. `operatorChoice`
-      // marca a CLI que o PRÓPRIO operador pediu e ela é respeitada.
-      if (
-        adHocAdapterId !== undefined &&
-        args.operatorChoice !== true &&
-        !resumeRef &&
-        !routeReservationId &&
-        ctx.role === 'orchestrator' &&
-        ctx.missionId &&
-        operatorRouteResolver !== null
-      ) {
-        const mission = getProjectDomainStores(ctx.scope).missions.get(ctx.missionId);
-        const crowded = mission && isOperatorTabMission(mission)
-          ? sameAdapterDiversityHint(adHocAdapterId, ctx.missionId, listPaneSnapshots())
-          : null;
-        if (crowded) {
-          const requestedModel = str(args, 'model');
-          diversityRedistributed = {
-            adapterId: adHocAdapterId,
-            ...(requestedModel ? { model: requestedModel } : {}),
-            sameAdapterLive: crowded.sameAdapterLive,
-          };
-          adHocAdapterId = undefined;
-        }
-      }
+      // Pin → preferência suave (uso geral): o adapterId pedido sem o
+      // operador ter nomeado a CLI cai aqui e o spawn segue pelo caminho
+      // automático de sempre — missão usa missionAutoRoute. A mão do
+      // operador já saiu por forceOperatorRoute acima e o valor em
+      // adHocAdapterId é o da ROTA, não o pin.
+      if (pinRedistributed && !forceOperatorRoute) adHocAdapterId = undefined;
       // C (0.76.110): paridade com o + Pane — dentro da missão, sem
       // adapterId, o Nexus roteia `task` pelo mesmo nexus_route_task da
       // missão (roster selado, política de CLI e RouteReservation inclusos).
@@ -1038,16 +1077,21 @@ const paneSpawnAfterTabMission = {
           autoRoute = await operatorRouteResolver!(
             task,
             ctx,
-            ctx.promotedFromUserSession === true
-              ? { excludeAdapterIds: adapterIdsWithoutNexusMcp(listAdapters(), canUseNexusMcp) }
-              : {},
+            {
+              ...(ctx.promotedFromUserSession === true
+                ? { excludeAdapterIds: adapterIdsWithoutNexusMcp(listAdapters(), canUseNexusMcp) }
+                : {}),
+              ...(pinRedistributed
+                ? { preferAdapterIds: [pinRedistributed.adapterId] }
+                : {}),
+            },
           );
         } finally {
           spawnTiming?.timer.mark('route-resolve');
         }
         adHocAdapterId = routeString(autoRoute, 'adapterId');
         // model/effort soltos não valem aqui: o recibo diz o que foi ignorado.
-        ignoredChoice = ignoredRouteChoice(args);
+        ignoredChoice = ignoredRouteChoice(ignoredRouteArgs);
         routeReservationId =
           typeof autoRoute.routeReservationId === 'string' ? autoRoute.routeReservationId : undefined;
         autoRouteReservation = routeReservationId !== undefined;
@@ -1635,14 +1679,12 @@ const paneSpawnAfterTabMission = {
                 ? { jevUnavailable: autoRoute.jevUnavailable }
                 : {}),
               ...(ignoredChoice ? { ignored: ignoredChoice } : {}),
-              ...(diversityRedistributed
+              ...(pinRedistributed
                 ? {
                     redistributed: {
-                      ...diversityRedistributed,
-                      reason:
-                        `já havia ${diversityRedistributed.sameAdapterLive} helpers vivos em ` +
-                        `${diversityRedistributed.adapterId}; o Nexus distribuiu pela tarefa. ` +
-                        'Passe operatorChoice:true quando o operador pedir esta CLI.',
+                      ...pinRedistributed,
+                      reason: 'pin-sem-pedido-do-operador',
+                      hint: 'Passe operatorChoice:true quando o operador pedir esta CLI.',
                     },
                   }
                 : {}),
@@ -1661,6 +1703,78 @@ const paneSpawnAfterTabMission = {
         spawnTiming.meta.adapterId = options.adapterId;
         spawnTiming.meta.missionId = options.missionId;
         spawnTiming.meta.role = options.role ?? ctx.role;
+      }
+      // Reuso de helper ocioso (lote 0.76.135, superfície Jev helperReuse):
+      // mão do operador sem missão ou orquestrador da missão da aba entrega a
+      // tarefa a um pane vivo e parado em vez de pagar um spawn novo. agentName,
+      // resume, isolatedWriter, expect e fresh:true sempre caem no spawn de
+      // sempre; qualquer falha (inclusive de entrega) também.
+      const reuseMissionId =
+        options.missionId !== undefined &&
+        options.missionId === ctx.missionId &&
+        missionRow &&
+        isOperatorTabMission(missionRow)
+          ? options.missionId
+          : undefined;
+      const reuseEligible =
+        args.fresh !== true &&
+        !agentRef &&
+        !resumeRef &&
+        args.isolatedWriter !== true &&
+        !deliveryContract &&
+        typeof options.prompt === 'string' &&
+        options.prompt.length > 0 &&
+        typeof ctx.sessionId === 'string' &&
+        ((operatorHand && !ctx.missionId && !options.missionId) ||
+          (ctx.role === 'orchestrator' && reuseMissionId !== undefined));
+      if (reuseEligible) {
+        try {
+          const reuseChoice = await judgeIdleHelperReuse({
+            newTask: options.prompt!,
+            candidates: listIdleHelperCandidates({
+              mode: reuseMissionId ? 'tab-mission' : 'operator-hand',
+              callerSessionId: ctx.sessionId!,
+              ...(reuseMissionId ? { missionId: reuseMissionId } : {}),
+              adapterId: options.adapterId,
+              readOnly: options.readOnly === true,
+              newTask: options.prompt!,
+              scope: ctx.scope,
+            }),
+            scope: ctx.scope,
+            missionId: reuseMissionId ?? null,
+            callerSessionId: ctx.sessionId,
+          });
+          if (reuseChoice) {
+            await injectPrompt(
+              reuseChoice.candidate.sessionId,
+              withWorkerHandoffFooter(
+                reuseChoice.candidate.sessionId,
+                options.prompt!,
+              ),
+              invocation,
+            );
+            return {
+              paneId: reuseChoice.candidate.paneId,
+              sessionId: reuseChoice.candidate.sessionId,
+              reused: true,
+              reusedReason: reuseChoice.reason,
+              ...(tabMissionId ? { tabMission: { missionId: tabMissionId } } : {}),
+              harness: {
+                ...harness,
+                source: 'reuse',
+                account:
+                  getAccountChoiceReceipt(reuseChoice.candidate.sessionId) ??
+                  null,
+              },
+              ...routeReceipt,
+            };
+          }
+        } catch (error) {
+          console.warn(
+            '[tools-panes] reuso de helper falhou; segue o spawn normal:',
+            error,
+          );
+        }
       }
       let spawned: { paneId: string; sessionId: string };
       try {
@@ -1940,10 +2054,54 @@ const paneListProviders: McpToolDef = {
     })),
 };
 
+const paneReadHint = "mode:'full' devolve o texto inteiro";
+
+type PaneReadMode = 'digest' | 'full';
+
+// Default por papel: o orquestrador lê para DECIDIR — ganha o digest
+// compactado; worker/operador/papel desconhecido seguem com o tail cru de
+// sempre (`full`), que é o contrato que já existia.
+function paneReadMode(
+  args: Record<string, unknown>,
+  ctx: AgentGateContext,
+): PaneReadMode {
+  const raw = str(args, 'mode');
+  if (raw === 'digest' || raw === 'full') return raw;
+  if (raw !== undefined) {
+    throw new Error("nexus_pane_read: mode deve ser 'digest' ou 'full'");
+  }
+  return ctx.role === 'orchestrator' ? 'digest' : 'full';
+}
+
+async function paneDigestResult(tail: string): Promise<Record<string, unknown>> {
+  const digest = digestPaneTail(tail);
+  const classified = await classifyPaneTailForDigest(digest.text);
+  return {
+    mode: 'digest',
+    ...(classified
+      ? {
+          state: classified.state,
+          stateConfidence: classified.confidence,
+          needsHuman: classified.needsHuman,
+        }
+      : {}),
+    text: digest.text,
+    keptLines: digest.keptLines,
+    omittedLines: digest.omittedLines,
+    hint: paneReadHint,
+  };
+}
+
 const paneRead: McpToolDef = {
   name: 'nexus_pane_read',
   description:
-    "Read the tail of a pane's terminal as plain text (ANSI stripped). " +
+    "Read a pane's terminal (ANSI stripped). mode:'digest' (default for the " +
+    'orchestrator) returns a compact object: signal lines (errors, test ' +
+    'results, prompts, handoffs) from the older part of the window plus the ' +
+    'last 30 non-blank lines verbatim, Jev state when the classifier ' +
+    'answers, keptLines/omittedLines counts and a hint — much cheaper than ' +
+    'raw text. mode:\'full\' returns the raw tail string as before (default ' +
+    'for workers/user/unknown roles). ' +
     'When the operator says "look at what pane X is doing" / "olha o que ' +
     'o pane X está fazendo", call this once with that pane — do not poll ' +
     'in a loop (completion arrives via handoff_submit). Any pane in the ' +
@@ -1963,21 +2121,30 @@ const paneRead: McpToolDef = {
         type: 'number',
         description: 'Max lines from the tail (default 200)',
       },
+      mode: {
+        type: 'string',
+        enum: ['digest', 'full'],
+        description:
+          "'digest' = compacted object (default for the orchestrator); " +
+          "'full' = raw tail text (default for everyone else).",
+      },
     },
     required: ['paneId'],
   },
   handler: async (args, ctx) => {
     const sessionId = authorizedSessionIdOf(ctx, requireStr(args, 'paneId'), 'read');
-    return readSessionOutput(sessionId, num(args, 'lines') ?? 200);
+    const tail = readSessionOutput(sessionId, num(args, 'lines') ?? 200);
+    if (paneReadMode(args, ctx) !== 'digest') return tail;
+    return paneDigestResult(tail);
   },
 };
 
 const paneReadMany: McpToolDef = {
   name: 'nexus_pane_read_many',
   description:
-    'Read the output tails of several panes at once. Same visibility as ' +
-    'nexus_pane_read: same-mission peers including the orchestrator; ' +
-    'unknown / other-mission / user-shell targets return per-item errors. ' +
+    'Read the output of several panes at once. Same visibility and ' +
+    "mode:'digest'|'full' semantics as nexus_pane_read (orchestrator " +
+    'defaults to digest); errors come back per item. ' +
     'Prefer this over looping nexus_pane_read; prefer handoff_list when ' +
     'you only need structured completion, not the raw PTY.',
   inputSchema: {
@@ -1985,24 +2152,30 @@ const paneReadMany: McpToolDef = {
     properties: {
       paneIds: { type: 'array', items: { type: 'string' } },
       lines: { type: 'number' },
+      mode: { type: 'string', enum: ['digest', 'full'] },
     },
     required: ['paneIds'],
   },
   handler: async (args, ctx) => {
     const lines = num(args, 'lines') ?? 200;
-    return strArray(args, 'paneIds').map((paneId) => {
-      try {
-        return {
-          paneId,
-          output: readSessionOutput(authorizedSessionIdOf(ctx, paneId, 'read'), lines),
-        };
-      } catch (err) {
-        return {
-          paneId,
-          error: err instanceof Error ? err.message : String(err),
-        };
-      }
-    });
+    const mode = paneReadMode(args, ctx);
+    return Promise.all(
+      strArray(args, 'paneIds').map(async (paneId) => {
+        try {
+          const tail = readSessionOutput(
+            authorizedSessionIdOf(ctx, paneId, 'read'),
+            lines,
+          );
+          if (mode !== 'digest') return { paneId, output: tail };
+          return { paneId, ...(await paneDigestResult(tail)) };
+        } catch (err) {
+          return {
+            paneId,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }),
+    );
   },
 };
 
