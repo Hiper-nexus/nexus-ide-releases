@@ -140,17 +140,18 @@ describe('quality de fixture nunca pre-empta diversidade (RC1)', () => {
 
 describe('tier critical com diversidade instalada', () => {
   it('kimi/agy são candidatos do próprio tier critical (sem empréstimo)', () => {
-    // Ambos estão no próprio tier critical. A especialidade security empurra
-    // kimi (prior heurístico) à frente de agy; o que este teste trava é a
+    // Ambos estão no próprio tier critical. Sem prioridade heurística de
+    // security (uso geral), a ordem natural da tabela manda: agy
+    // (gemini-3.8-flash-high) vem antes de kimi. O que este teste trava é a
     // ausência de empréstimo de tier mais barato.
     const decision = routeTask(
       'auditar a segurança da autenticação',
       adapters('kimi', 'agy'),
     );
     expect(decision!.tier).toBe('critical');
-    // Security prior lists kimi ahead of agy; both remain native critical
-    // candidates (no cheaper-tier borrow).
-    expect(decision!.adapterId).toBe('kimi');
+    // No specialty prior anymore; both remain native critical candidates
+    // (no cheaper-tier borrow).
+    expect(decision!.adapterId).toBe('agy');
     expect(decision!.specialty).toBe('security');
     expect(decision!.reason).not.toContain('melhor opção instalada');
   });

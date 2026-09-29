@@ -5,6 +5,7 @@ import {
   routeTask,
   type AdapterAvailability,
   describePreferAdaptersOutcome,
+  type TaskTier,
 } from './task-router';
 import { countAdapterUses } from './route-pipeline';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
@@ -348,14 +349,17 @@ describe('routeTask', () => {
 });
 
 describe('routeTask specialty + diversidade de onda', () => {
-  it('não entrega UI no lead barato do tier medium (GLM)', () => {
+  it('sem benchmark medido a especialidade visual não puxa CLI — lidera o melhor do tier', () => {
+    // Uso geral: a heurística de especialidade não prefere provider nenhum;
+    // 'cobrança' classifica critical e o líder natural do tier vence.
     const decision = routeTask(
       'criar a nova tela de cobrança com estados vazios e acessibilidade',
       adapters('glm', 'agy', 'claude', 'codex'),
     );
     expect(decision!.specialty).toBe('visual');
     expect(decision!.policySource).toBe('heuristic');
-    expect(decision!.adapterId).toBe('agy');
+    expect(decision!.adapterId).toBe('claude');
+    expect(decision!.model).toBe('claude-opus-5-5');
     expect(decision!.reason).toContain('specialty=visual');
   });
 
@@ -403,18 +407,23 @@ describe('routeTask specialty + diversidade de onda', () => {
       },
     );
     expect(decision!.policySource).toBe('heuristic');
-    expect(decision!.adapterId).toBe('agy');
+    // Fixture não vira prioridade de CLI: sem prepend de especialidade, quem
+    // vence é o benchmark oficial — glm-5.3 lidera o tier no multi-score,
+    // não o codex (99) da tabela de fixture.
+    expect(decision!.adapterId).toBe('glm');
+    expect(decision!.model).toBe('glm-5.3');
   });
 
-  it('doc mecânico anota a faixa rápida sem trocar o CLI da prioridade heurística', () => {
+  it('doc mecânico não tem prioridade heurística — vale o líder natural do tier', () => {
     const decision = routeTask(
       'atualizar o README com o guia de instalação',
       adapters('glm', 'kimi', 'agy', 'grok'),
     );
     expect(decision!.specialty).toBe('doc');
     expect(decision!.policySource).toBe('heuristic');
+    // kimi lidera a tabela easy — pela ordem do tier, não por prior de doc.
     expect(decision!.adapterId).toBe('kimi');
-    expect(decision!.reason).toContain('band=fast');
+    expect(decision!.reason).not.toContain('band=');
   });
 
   it('espalha CLIs no fan-out: o 2º e 3º worker não herdam o GLM do 1º', () => {
@@ -624,5 +633,135 @@ describe('catálogo grok na tabela de roteamento', () => {
       (candidate) => candidate.adapterId === 'opencode',
     );
     expect(easyOpencode?.model).toBe('opencode/deepseek-v4-flash');
+  });
+});
+
+describe('uso geral — multi-score espalha por todos os providers saudáveis', () => {
+  const flat = { adapters: {} } as ModelCatalog;
+  const readyIds = [
+    'claude',
+    'codex',
+    'mimo-code',
+    'minimax-code',
+    'kimi',
+    'glm',
+    'grok',
+    'agy',
+  ];
+  // Cada CLI pronta com os modelos que a tabela pede (como o cache real do
+  // CLI reportaria), para que resolveRoutableModel valide cada candidato.
+  const tableModels = (id: string) => [
+    ...new Set(
+      Object.values(DEFAULT_ROUTING_TABLE)
+        .flat()
+        .filter((c) => c.adapterId === id && c.model)
+        .map((c) => c.model as string),
+    ),
+  ];
+  const ready = readyIds.map((id) => ({
+    id,
+    installed: true,
+    models: tableModels(id),
+  }));
+
+  it('8 rotas hard/medium consecutivas cobrem ≥5 CLIs e chegam em mimo-code e minimax-code', () => {
+    const usedAdapters = new Set<string>();
+    const useCounts = new Map<string, number>();
+    const picked: string[] = [];
+    let reserveClaude = false;
+    // Mistura hard/medium como um plano real: com −18 de diversidade por uso,
+    // o multi-score atravessa todo o roster saudável — inclusive MiMo e
+    // MiniMax, que jamais apareciam quando só Claude/Astra/GPT eram pedidos.
+    const tiers: TaskTier[] = [
+      'hard',
+      'medium',
+      'hard',
+      'medium',
+      'hard',
+      'medium',
+      'medium',
+      'medium',
+    ];
+    for (const tier of tiers) {
+      const decision = routeTask(
+        'implementar a tarefa descrita no briefing do worker',
+        ready,
+        DEFAULT_ROUTING_TABLE,
+        tier,
+        reserveClaude,
+        flat,
+        {
+          missionUsedAdapters: new Set(usedAdapters),
+          missionUseCounts: new Map(useCounts),
+          multiScore: true,
+        },
+      )!;
+      picked.push(decision.adapterId);
+      usedAdapters.add(decision.adapterId);
+      useCounts.set(decision.adapterId, (useCounts.get(decision.adapterId) ?? 0) + 1);
+      if (decision.adapterId === 'claude') reserveClaude = true;
+    }
+    expect(new Set(picked).size).toBeGreaterThanOrEqual(5);
+    expect(picked).toContain('mimo-code');
+    expect(picked).toContain('minimax-code');
+  });
+});
+
+describe('preferAdapters é soft — desempata, nunca pina a rota', () => {
+  const flat = { adapters: {} } as ModelCatalog;
+
+  it('sem multi-score o prefer não reordena (não há mais prepend)', () => {
+    // Antes: preferAdapters virava prepend e claude ganhava do líder da
+    // tabela. Agora a preferência só existe como bônus no multi-score.
+    const decision = routeTask(
+      'corrigir typo no README',
+      adapters('grok', 'claude'),
+      DEFAULT_ROUTING_TABLE,
+      'easy',
+      false,
+      flat,
+      { preferAdapters: ['claude'] },
+    );
+    expect(decision!.adapterId).toBe('grok');
+  });
+
+  it('prefer não derruba um candidato claramente melhor', () => {
+    // gemini-3.8-flash-high (agy) tem benchmark oficial forte no tier
+    // critical; o +4 de preferência do longcat não chega perto. Antes do fix,
+    // preferAdapters virava prepend duro e o longcat ganhava.
+    const decision = routeTask(
+      'auditar a segurança da autenticação',
+      adapters('agy', 'longcat'),
+      DEFAULT_ROUTING_TABLE,
+      'critical',
+      false,
+      undefined,
+      { preferAdapters: ['longcat'], multiScore: true },
+    );
+    expect(decision!.adapterId).toBe('agy');
+    expect(decision!.reason).toContain('longcat=preterido no multi-score');
+  });
+
+  it('prefer vence o empate entre candidatos equivalentes', () => {
+    // Duas CLIs sem benchmark nem entrada de catálogo: qualidade neutra e
+    // custo iguais — a posição desempataria, o prefer (+4) vira o jogo.
+    const tieTable = {
+      ...DEFAULT_ROUTING_TABLE,
+      hard: [
+        { adapterId: 'cli-a', effort: 'high' },
+        { adapterId: 'cli-b', effort: 'high' },
+      ],
+    };
+    const installed = [
+      { id: 'cli-a', installed: true },
+      { id: 'cli-b', installed: true },
+    ];
+    const plain = routeTask('implementar a tarefa', installed, tieTable, 'hard',
+      false, flat, { multiScore: true });
+    expect(plain!.adapterId).toBe('cli-a');
+    const prefer = routeTask('implementar a tarefa', installed, tieTable, 'hard',
+      false, flat, { preferAdapters: ['cli-b'], multiScore: true });
+    expect(prefer!.adapterId).toBe('cli-b');
+    expect(prefer!.reason).toContain('cli-b=preferido escolhido');
   });
 });

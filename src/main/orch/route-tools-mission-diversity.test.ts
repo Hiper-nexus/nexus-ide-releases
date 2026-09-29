@@ -64,6 +64,10 @@ vi.mock('./project-domain-store-registry', () => ({
 
 import { rememberKimiSeatReadiness } from '../adapters/seat-auth-readiness';
 import { routeTaskForCaller } from './tools-domain';
+import {
+  recordWorkerDeathWithoutDelivery,
+  resetMissionWorkerMortality,
+} from './worker-mortality';
 
 const ctx: AgentGateContext = {
   token: 't', label: 'orquestrador da aba', role: 'orchestrator', sessionId: 'orch',
@@ -121,6 +125,36 @@ describe('rota de missão enxerga os helpers vivos (F-658)', () => {
     ];
     const again = (await routeTaskForCaller({ task: TASK }, ctx)) as { adapterId: string };
     expect(again.adapterId).toBe(first.adapterId);
+  });
+});
+
+describe('exclude do caller só honra CLI doente (uso geral)', () => {
+  it('adapter que morreu sem entregar na missão: a exclusão vale', async () => {
+    // F-662 já tira o agy (sem MCP do Nexus) desta missão da aba — sobram
+    // codex e kimi. Com uma morte sem entrega registrada, excluir kimi é
+    // honrado; excluir o codex saudável seria ignorado.
+    recordWorkerDeathWithoutDelivery('mission-tab', 'kimi');
+    try {
+      const dead = (await routeTaskForCaller(
+        { task: TASK, exclude: ['kimi'] },
+        ctx,
+      )) as { adapterId: string; reason: string };
+      expect(dead.adapterId).not.toBe('kimi');
+      expect(dead.reason).not.toContain('exclude ignorado');
+    } finally {
+      resetMissionWorkerMortality('mission-tab');
+    }
+  });
+
+  it('CLI saudável não sai da rota só porque o caller pediu', async () => {
+    const healthy = (await routeTaskForCaller(
+      { task: TASK, exclude: ['codex'] },
+      ctx,
+    )) as { adapterId: string; reason: string };
+    expect(healthy.reason).toContain(
+      'exclude ignorado (CLI saudável): codex',
+    );
+    // codex continua elegível: está no ranked e pode até ser o escolhido.
   });
 });
 

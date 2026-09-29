@@ -31,6 +31,7 @@ vi.mock('./jev-task-routing', async (importOriginal) => ({
 }));
 
 import { rememberKimiSeatReadiness } from '../adapters/seat-auth-readiness';
+import { adapterCircuitBreakers } from './circuit-breaker';
 import { buildDomainTools, routeTaskForCaller } from './tools-domain';
 import { clearRouteProvenance, hasRecentRouteMatch } from './route-provenance';
 import { clearRouteLog, recentRouteLog } from './route-log';
@@ -332,5 +333,97 @@ describe('nexus_route_task — Jev fora e desempate interno', () => {
       { excludeAdapterIds: ['agy'] },
     );
     expect(decision.adapterId).toBe('codex');
+  });
+});
+
+describe('nexus_route_task — exclude do caller só honra CLI doente', () => {
+  const kimiProvider = {
+    adapterId: 'kimi', enabled: true, installed: true,
+    authStrategy: 'oauth', models: ['kimi-code/k3'],
+  };
+  const codexProvider = {
+    adapterId: 'codex', enabled: true, installed: true,
+    authStrategy: 'oauth', models: ['gpt-5.6-luna'],
+  };
+
+  it('exclusão de CLI saudável é ignorada e anotada no motivo', async () => {
+    mocks.listProviderSettings.mockReturnValue([kimiProvider, codexProvider]);
+    const decision = (await routeTaskForCaller(
+      { task: 'tarefa média', exclude: ['kimi', 'grok'] },
+      context(),
+    )) as { adapterId: string; reason: string };
+
+    // kimi está saudável (circuito fechado, conta disponível, sem mortes na
+    // missão) — o pedido de exclusão não vale; grok nem instalado está e a
+    // exclusão também é ignorada. O motivo diz quais foram descartadas.
+    expect(decision.reason).toContain(
+      'exclude ignorado (CLI saudável): kimi,grok',
+    );
+    expect(decision.adapterId).toBe('kimi');
+  });
+
+  it('circuit breaker aberto: a mesma exclusão passa a ser honrada', async () => {
+    mocks.listProviderSettings.mockReturnValue([kimiProvider, codexProvider]);
+    for (let i = 0; i < 3; i += 1) adapterCircuitBreakers.recordFailure('kimi');
+    try {
+      const decision = (await routeTaskForCaller(
+        { task: 'tarefa média', exclude: ['kimi'] },
+        context(),
+      )) as { adapterId: string; reason: string };
+      expect(decision.adapterId).toBe('codex');
+      expect(decision.reason).not.toContain('exclude ignorado');
+    } finally {
+      adapterCircuitBreakers.reset('kimi');
+    }
+  });
+
+  it('todas as contas em cooldown: a exclusão é honrada (e o auto-exclude também)', async () => {
+    mocks.listProviderSettings.mockReturnValue([kimiProvider, codexProvider]);
+    mocks.hasAvailableAccount.mockImplementation((id: string) => id !== 'kimi');
+    const decision = (await routeTaskForCaller(
+      { task: 'tarefa média', exclude: ['kimi'] },
+      context(),
+    )) as { adapterId: string; reason: string };
+    expect(decision.adapterId).toBe('codex');
+    expect(decision.reason).not.toContain('exclude ignorado');
+  });
+});
+
+describe('nexus_route_task — preferAdapters é soft (uso geral)', () => {
+  // 'tarefa de complexidade média' classifica medium: glm-5.3 lidera o tier,
+  // mimo-flash cola em benchmark oficial, longcat fica bem atrás.
+  const providers = [
+    { adapterId: 'glm', enabled: true, installed: true, authStrategy: 'oauth', models: ['glm-5.3', 'glm-5.2'] },
+    { adapterId: 'mimo-code', enabled: true, installed: true, authStrategy: 'oauth', models: ['xiaomi/mimo-v2.6-pro', 'xiaomi/mimo-v2.6-flash'] },
+    { adapterId: 'longcat', enabled: true, installed: true, authStrategy: 'apiKey', hasKey: true, models: ['LongCat-2.0'] },
+    { adapterId: 'agy', enabled: true, installed: true, authStrategy: 'oauth', models: ['gemini-3.8-flash-high', 'gemini-3.7-flash'] },
+  ];
+
+  it('prefer decide o near-tie entre líderes do mesmo tier', async () => {
+    mocks.listProviderSettings.mockReturnValue(providers);
+    const base = (await routeTaskForCaller({ task: 'tarefa de complexidade média' }, context())) as {
+      adapterId: string;
+    };
+    const preferred = (await routeTaskForCaller(
+      { task: 'tarefa de complexidade média', preferAdapters: ['mimo-code'] },
+      context(),
+    )) as { adapterId: string; reason: string };
+    // O +4 do prefer vira o jogo entre glm-5.3 e mimo-flash (mesmo tier,
+    // benchmark oficial quase igual) — mas nunca como prepend duro.
+    expect(preferred.adapterId).toBe('mimo-code');
+    expect(preferred.adapterId).not.toBe(base.adapterId);
+    expect(preferred.reason).toContain('mimo-code=preferido escolhido');
+  });
+
+  it('prefer não derruba um candidato claramente melhor', async () => {
+    mocks.listProviderSettings.mockReturnValue(providers);
+    const decision = (await routeTaskForCaller(
+      { task: 'tarefa de complexidade média', preferAdapters: ['longcat'] },
+      context(),
+    )) as { adapterId: string; reason: string };
+    // LongCat-2.0 tem benchmark oficial fraco (TB2.1 70,8): mesmo com o +4 de
+    // preferência fica atrás do glm-5.3 — soft, nunca pin.
+    expect(decision.adapterId).toBe('glm');
+    expect(decision.reason).toContain('longcat=preterido no multi-score');
   });
 });

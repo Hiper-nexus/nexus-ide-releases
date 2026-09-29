@@ -277,7 +277,13 @@ const TRIVIAL_SIGNALS = [
   'mostrar', 'show', 'contar', 'count', 'buscar arquivo', 'find file',
 ];
 
-const TIER_ORDER: TaskTier[] = ['trivial', 'easy', 'medium', 'hard', 'critical'];
+export const TIER_ORDER: TaskTier[] = [
+  'trivial',
+  'easy',
+  'medium',
+  'hard',
+  'critical',
+];
 
 // Sinais casam como PREFIXO DE PALAVRA ('autentica' → 'autenticação'), nunca
 // no meio de outra palavra ('cript' NÃO pode casar 'typescript'). Substring
@@ -981,18 +987,12 @@ export function routeTask(
     }
   }
 
-  // Specialty prior (heuristic today, benchmark when that table has rows)
-  // reorders BEFORE multi-score so a UI task does not inherit the medium-tier
-  // GLM lead, and a second route_task in the same wave can still diversify.
-  // Eval-full coverage already ranked by qualityDimension(specialty) — do not
-  // undo measured scores with the heuristic prior. A real benchmark table
-  // outranks both.
-  const prependIds = [
-    ...(context.preferAdapters ?? []),
-    ...(policy.source === 'benchmark' || evaluated.length === 0
-      ? policy.preferAdapterIds
-      : []),
-  ].filter((id, index, all) => all.indexOf(id) === index);
+  // Uso geral: só um benchmark de especialidade MEDIDO reordena a tabela.
+  // `context.preferAdapters` é soft (bônus +4 no multi-score) e a heurística
+  // de especialidade não carrega providers — a qualidade vem dos benchmarks
+  // oficiais publicados, não de uma lista fixa de CLIs.
+  const prependIds =
+    policy.source === 'benchmark' ? policy.preferAdapterIds : [];
   if (prependIds.length > 0) {
     ranked = preferAdapterOrder(
       ranked,

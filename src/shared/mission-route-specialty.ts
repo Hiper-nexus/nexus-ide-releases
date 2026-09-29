@@ -96,20 +96,22 @@ export const EMPTY_SPECIALTY_BENCHMARK: SpecialtyBenchmark = Object.freeze({
 });
 
 /**
- * Soft CLI order per specialty. Not a quality score — a prior so UI work
- * does not default to the cheapest coding model and security work does not
- * stay on a fast-and-loose lead. Empty arrays mean "no prior; use the
- * complexity table + diversity".
+ * Uso geral: a heurística de especialidade não prefere provider nenhum. A
+ * qualidade vem dos benchmarks oficiais publicados por LLM
+ * (src/main/orch/published-benchmarks.ts) e da avaliação Nexus por dimensão
+ * quando existir — nunca de uma lista fixa de CLIs por especialidade. O mapa
+ * segue aqui porque a API (`preferAdapterIds`) é compartilhada com o caminho
+ * de benchmark medido.
  */
 export const HEURISTIC_SPECIALTY_ADAPTERS: Readonly<
   Record<RouteSpecialty, readonly string[]>
 > = Object.freeze({
-  visual: Object.freeze(['agy', 'claude', 'codex']),
-  security: Object.freeze(['claude', 'codex', 'kimi']),
-  bug: Object.freeze(['codex', 'claude', 'grok']),
+  visual: Object.freeze([]),
+  security: Object.freeze([]),
+  bug: Object.freeze([]),
   feature: Object.freeze([]),
-  doc: Object.freeze(['kimi', 'agy', 'grok']),
-  ops: Object.freeze(['codex', 'claude', 'agy']),
+  doc: Object.freeze([]),
+  ops: Object.freeze([]),
   general: Object.freeze([]),
 });
 

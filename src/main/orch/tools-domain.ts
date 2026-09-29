@@ -48,6 +48,8 @@ import { recordRouteDecision } from './route-provenance';
 import { recordRouteLog, recentRouteLog } from './route-log';
 import { loadSpecialtyBenchmark } from './specialty-benchmark';
 import { hasAvailableAccount } from '../persistence/account-store';
+import { adapterCircuitBreakers } from './circuit-breaker';
+import { workerMortalityCount } from './worker-mortality';
 import { authReadyModelsForProvider } from '../adapters/model-auth-readiness';
 import {
   firstWaveCanSeat,
@@ -1564,8 +1566,21 @@ export async function routeTaskForCaller(
   const tier = routing.tierOverride;
   // Failover de rate limit: o orquestrador re-roteia excluindo a CLI que
   // acabou de estourar cota/quebrar, em vez de insistir nela.
+  // Uso geral: uma exclusão pedida pelo caller só vale para CLI realmente
+  // doente — circuito aberto, todas as contas Nexus em cooldown, ou adapter
+  // que já morreu nesta missão. Excluir CLI saudável mata a diversidade que
+  // os benchmarks oficiais sustentam ("só Claude, só Astra, só GPT"); a
+  // exclusão saudável é ignorada e avisada no reason. Exclusões internas
+  // (F-662 sem MCP, selo, reserva) seguem autoritárias.
+  const callerExclude = strArray(args, 'exclude');
+  const ignoredHealthyExclude = callerExclude.filter(
+    (id) =>
+      !adapterCircuitBreakers.isOpen(id) &&
+      hasAvailableAccount(id) &&
+      !(missionId && workerMortalityCount(missionId, id) > 0),
+  );
   const excluded = new Set([
-    ...strArray(args, 'exclude'),
+    ...callerExclude.filter((id) => !ignoredHealthyExclude.includes(id)),
     ...(internal.excludeAdapterIds ?? []),
   ]);
   // F-662: a missão da aba (sem squad, nascida do "+ Pane") segue a regra da
@@ -1712,7 +1727,10 @@ export async function routeTaskForCaller(
         usedAdapterIds.length > 0 ? new Set(usedAdapterIds) : undefined,
       missionUseCounts,
       preferAdapters: preferAdapters.length > 0 ? preferAdapters : undefined,
-      multiScore: Boolean(missionId),
+      // Uso geral: o multi-score (benchmark oficial + diversidade + custo)
+      // vale também para o fan-out do operador sem missão — a ordem crua da
+      // tabela não é medida de capacidade.
+      multiScore: true,
       specialtyBenchmark: loadSpecialtyBenchmark(),
       specialtyOverride: routing.specialtyOverride,
       effortOverride: routing.effortOverride,
@@ -1736,6 +1754,14 @@ export async function routeTaskForCaller(
     decision = {
       ...decision,
       reason: `${decision.reason}${quotaFallbackNote}`,
+    };
+  }
+  if (ignoredHealthyExclude.length > 0) {
+    decision = {
+      ...decision,
+      reason:
+        `${decision.reason}; exclude ignorado (CLI saudável): ` +
+        ignoredHealthyExclude.join(','),
     };
   }
   if (!missionId) {
@@ -1830,7 +1856,7 @@ const routeTaskTool: McpToolDef = {
         type: 'array',
         items: { type: 'string' },
         description:
-          'adapterIds to skip (rate-limited, not logged in, or just failed)',
+          'only CLIs that are rate-limited, not logged in or that just failed; Nexus ignores exclusions of healthy CLIs',
       },
       missionId: {
         type: 'string',
@@ -1840,7 +1866,7 @@ const routeTaskTool: McpToolDef = {
       preferAdapters: {
         type: 'array',
         items: { type: 'string' },
-        description: 'Optional adapter preference list applied after table rank',
+        description: 'soft preference: breaks ties, never pins the route',
       },
     },
     required: ['task'],

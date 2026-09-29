@@ -12,8 +12,16 @@ import {
   modelCatalogInfo,
   modelRoutingRank,
 } from '../adapters/model-catalog';
+import { TIER_ORDER } from './task-router';
 import type { RankedRouteEntry, RouteContext, TaskTier } from './task-router';
 import { publishedCodingQuality } from './published-benchmarks';
+
+/**
+ * Nota neutra (6..24 → midpoint 15) para modelo sem nexus-eval nem benchmark
+ * oficial publicado. Sem número o modelo não é nem premiado nem condenado ao
+ * piso — o custo, a diversidade e a saúde do circuito é que diferenciam.
+ */
+export const NEUTRAL_UNPUBLISHED_QUALITY = 15;
 
 export interface ScoreBreakdown {
   table: number;
@@ -69,22 +77,33 @@ export function scoreRouteCandidate(
   input: Omit<MultiScoreInput, 'ranked'>,
 ): ScoreBreakdown {
   const { c } = entry;
-  // Table position stays primary so cold ladder order is stable; multi-score
-  // nudges diversity/circuit without inventing a second router.
-  const table = Math.max(0, 60 - index * 4);
+  // Uso geral: a distância de tier domina (−10 por degrau errado); a posição
+  // na lista é só desempate (−0.5 por posição). A ordem da tabela não é uma
+  // medida de capacidade — quem manda é a nota de qualidade abaixo.
+  const table =
+    -10 *
+      Math.abs(
+        TIER_ORDER.indexOf(entry.fromTier) - TIER_ORDER.indexOf(input.tier),
+      ) -
+    0.5 * index;
 
   const info = modelCatalogInfo(input.modelCatalog, c.adapterId, c.model);
   const authoritativeQuality = hasAuthoritativeModelQuality(info)
     ? info?.quality
     : undefined;
-  // F-675: sem avaliação nexus-eval, os benchmarks OFICIAIS publicados pelo
-  // fabricante dão a nota (6..24); só sem nenhum dos dois vale o "não avaliado".
+  const publishedQuality = c.model
+    ? publishedCodingQuality(c.adapterId, c.model)
+    : null;
+  // F-675 + uso geral: nexus-eval > benchmark oficial publicado > neutro.
+  // quality = 2 × q com q clampado em 6..24, então a nota vai de 12 a 48 e
+  // um benchmark forte vence a ordem da lista em qualquer posição do tier.
   const qualityRaw =
     authoritativeQuality?.coding ??
     authoritativeQuality?.overall ??
-    (c.model ? publishedCodingQuality(c.adapterId, c.model) : null) ??
-    (entry.evaluated ? 12 : 6);
-  const quality = Math.min(24, Number(qualityRaw) || 6);
+    publishedQuality ??
+    NEUTRAL_UNPUBLISHED_QUALITY;
+  const quality =
+    2 * Math.min(24, Math.max(6, Number(qualityRaw) || NEUTRAL_UNPUBLISHED_QUALITY));
 
   const costRank = modelRoutingRank(info);
   const cost =
@@ -114,12 +133,19 @@ export function scoreRouteCandidate(
   return { table, quality, cost, diversity, preference, circuit, total };
 }
 
-/** A nota de qualidade do candidato veio do benchmark publicado (F-675), não do nexus-eval. */
-function usesPublishedBenchmark(entry: RankedRouteEntry, catalog: MultiScoreInput['modelCatalog']): boolean {
+/** Origem da nota de qualidade do candidato: nexus-eval > benchmark oficial > neutro. */
+function qualityKind(
+  entry: RankedRouteEntry,
+  catalog: MultiScoreInput['modelCatalog'],
+): 'nexus-eval' | 'benchmark' | 'neutral' {
   const { c } = entry;
-  if (!c.model) return false;
-  if (hasAuthoritativeModelQuality(modelCatalogInfo(catalog, c.adapterId, c.model))) return false;
-  return publishedCodingQuality(c.adapterId, c.model) !== null;
+  if (hasAuthoritativeModelQuality(modelCatalogInfo(catalog, c.adapterId, c.model))) {
+    return 'nexus-eval';
+  }
+  if (c.model && publishedCodingQuality(c.adapterId, c.model) !== null) {
+    return 'benchmark';
+  }
+  return 'neutral';
 }
 
 /**
@@ -159,8 +185,13 @@ export function multiScoreRerank(input: MultiScoreInput): {
   if (head && head.score.preference > 0) {
     noteParts.push(' preference-boost');
   }
-  if (head?.c.model && usesPublishedBenchmark(head, input.modelCatalog)) {
-    noteParts.push(' quality=benchmark-oficial');
+  if (head) {
+    const kind = qualityKind(head, input.modelCatalog);
+    if (kind === 'benchmark') {
+      noteParts.push(' quality=benchmark-oficial');
+    } else if (kind === 'neutral') {
+      noteParts.push(' quality=neutra(sem benchmark)');
+    }
   }
   if (anyClosed && filtered.length < scored.length) {
     noteParts.push(' circuit-open skipped');

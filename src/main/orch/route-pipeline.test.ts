@@ -4,6 +4,7 @@ import {
   countAdapterUses,
   mergeAdapterUseLists,
   multiScoreRerank,
+  NEUTRAL_UNPUBLISHED_QUALITY,
   scoreRouteCandidate,
   tieBreakByUse,
   TIE_MARGIN,
@@ -45,7 +46,9 @@ describe('scoreRouteCandidate', () => {
       modelCatalog: fixtureCatalog,
     });
 
-    expect(scored.quality).toBe(6);
+    // Fixture não é benchmark oficial nem nexus-eval: a nota é o ponto médio
+    // neutro (2×15), não o mínimo antigo (6) nem o 100 mentiroso do fixture.
+    expect(scored.quality).toBe(2 * NEUTRAL_UNPUBLISHED_QUALITY);
   });
 
   it('sem nexus-eval, usa o benchmark oficial publicado (F-675)', () => {
@@ -57,14 +60,50 @@ describe('scoreRouteCandidate', () => {
       tier: 'hard',
       modelCatalog: catalog,
     });
-    expect(published.quality).toBeGreaterThan(12);
-    expect(unpublished.quality).toBeLessThanOrEqual(12);
+    expect(published.quality).toBeCloseTo(44.4);
+    // Sem número publicado: nota neutra (midpoint), acima do piso antigo.
+    expect(unpublished.quality).toBe(2 * NEUTRAL_UNPUBLISHED_QUALITY);
     const { note } = multiScoreRerank({
       ranked: [entry('mimo-code', 'xiaomi/mimo-v2.6-pro')],
       tier: 'hard',
       modelCatalog: catalog,
     });
     expect(note).toContain('quality=benchmark-oficial');
+    const neutral = multiScoreRerank({
+      ranked: [entry('mimo-code', 'xiaomi/mimo-v2.6-pro-ultraspeed')],
+      tier: 'hard',
+      modelCatalog: catalog,
+    });
+    expect(neutral.note).toContain('quality=neutra(sem benchmark)');
+  });
+
+  it('a distância de tier domina a posição na lista (−10/degrau, −0.5/posição)', () => {
+    // Mesmo no fim da fila do tier certo vence o primeiro de um tier distante.
+    const nearTail = scoreRouteCandidate(
+      entry('minimax-code', 'minimax/MiniMax-M3', 'medium'), 9,
+      { tier: 'medium', modelCatalog: catalog },
+    );
+    const wrongTierHead = scoreRouteCandidate(
+      entry('grok', 'grok-sem-benchmark', 'trivial'), 0,
+      { tier: 'medium', modelCatalog: catalog },
+    );
+    expect(nearTail.table).toBe(-4.5);
+    // trivial → medium: 2 degraus errados dominam a liderança de posição.
+    expect(wrongTierHead.table).toBe(-20);
+    expect(nearTail.total).toBeGreaterThan(wrongTierHead.total);
+  });
+
+  it('quality: benchmark forte acima do neutro, benchmark fraco abaixo', () => {
+    const strong = scoreRouteCandidate(
+      entry('mimo-code', 'xiaomi/mimo-v2.6-pro', 'hard'), 0,
+      { tier: 'hard', modelCatalog: catalog },
+    );
+    const weak = scoreRouteCandidate(
+      entry('glm', 'glm-4.5-air', 'easy'), 0,
+      { tier: 'easy', modelCatalog: catalog },
+    );
+    expect(strong.quality).toBeGreaterThan(2 * NEUTRAL_UNPUBLISHED_QUALITY);
+    expect(weak.quality).toBeLessThan(2 * NEUTRAL_UNPUBLISHED_QUALITY);
   });
 
   it('penalizes adapters already used in the mission (diversity)', () => {
@@ -158,7 +197,10 @@ describe('multiScoreRerank', () => {
     expect(note).toContain('diversity×1');
   });
 
-  it('keeps an unused table lead ahead of another unused adapter', () => {
+  it('a posição na lista é só desempate: benchmark fraco perde para o neutro', () => {
+    // glm-5.2 tem benchmark oficial fraco (q≈12.8 → quality≈25.7); grok-4.1
+    // não tem número publicado e recebe a neutra (30). O −0.5 de posição não
+    // compensa a diferença de qualidade.
     const ranked = [entry('glm', 'glm-5.2'), entry('grok', 'grok-4.1')];
     const { ranked: out } = multiScoreRerank({
       ranked,
@@ -169,7 +211,21 @@ describe('multiScoreRerank', () => {
       },
       missionUseCounts: new Map([['claude', 1]]),
     });
-    expect(out[0]?.c.adapterId).toBe('glm');
+    expect(out[0]?.c.adapterId).toBe('grok');
+  });
+
+  it('mesma qualidade neutra: o −0.5 de posição decide a ordem', () => {
+    const { ranked: out, scored } = multiScoreRerank({
+      ranked: [
+        entry('grok', 'grok-sem-benchmark'),
+        entry('kimi', 'kimi-sem-benchmark'),
+      ],
+      tier: 'medium',
+      modelCatalog: catalog,
+    });
+    expect(scored[0]!.score.quality).toBe(scored[1]!.score.quality);
+    expect(scored[1]!.score.table).toBe(-0.5);
+    expect(out[0]?.c.adapterId).toBe('grok');
   });
 });
 
@@ -194,8 +250,8 @@ describe('mergeAdapterUseLists', () => {
 });
 
 describe('tieBreakByUse', () => {
-  // Catálogo vazio: qualidade e custo iguais para todos, então o total só
-  // difere pela posição na tabela (60, 56, 52, 48…).
+  // Catálogo vazio: qualidade neutra e custo iguais para todos, então o total
+  // só difere pela distância de tier (a posição é index 0 para todos aqui).
   const flat = { adapters: {} } as ModelCatalog;
   const ranked = [entry('grok'), entry('agy'), entry('kimi'), entry('codex')];
   const run = (counts: Record<string, number>) =>

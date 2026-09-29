@@ -10,7 +10,10 @@ const supported = ['low', 'medium', 'high', 'xhigh'];
 const builtins = BUILTIN_ADAPTERS.map((raw) => adapterSchema.parse(raw));
 const codex: AdapterAvailability = {
   id: 'codex', installed: true,
-  models: ['gpt-5.6-luna', 'gpt-5.6-sol'],
+  // Só o modelo da tabela hard resolve: para trivial/easy/medium a decisão
+  // precisa pegar emprestado o gpt-5.6-sol, mantendo o contrato do F-163
+  // (o esforço é da tarefa, não do tier de onde o modelo veio).
+  models: ['gpt-5.6-sol'],
   efforts: supported,
 };
 

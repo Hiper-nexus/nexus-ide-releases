@@ -42,10 +42,13 @@ describe('classifyRouteSpecialty', () => {
 });
 
 describe('resolveSpecialtyPolicy', () => {
-  it('cai na heurística quando o benchmark da especialidade está vazio', () => {
+  it('heurística não prefere CLI nenhuma — só mede o piso de esforço', () => {
+    // Uso geral: a qualidade vem dos benchmarks oficiais publicados
+    // (published-benchmarks.ts), nunca de uma lista de providers por
+    // especialidade. Sem benchmark medido, preferAdapterIds é vazio.
     const policy = resolveSpecialtyPolicy('visual', EMPTY_SPECIALTY_BENCHMARK);
     expect(policy.source).toBe('heuristic');
-    expect(policy.preferAdapterIds[0]).toBe('agy');
+    expect(policy.preferAdapterIds).toEqual([]);
     expect(policy.effortFloor).toBe('medium');
   });
 
@@ -90,7 +93,7 @@ describe('resolveSpecialtyPolicy', () => {
       },
     });
     expect(policy.source).toBe('heuristic');
-    expect(policy.preferAdapterIds[0]).toBe('agy');
+    expect(policy.preferAdapterIds).toEqual([]);
   });
 });
 
