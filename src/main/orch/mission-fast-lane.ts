@@ -2891,8 +2891,9 @@ export async function resumeFastLaneMission(
   // F-187: remount automático NUNCA termina um Maestro fisicamente vivo. A
   // projeção de pane pode ficar para trás de uma sessão registrada e viva;
   // sem a adoção o leftover-skip marcava a missão e o respawn matava a
-  // sessão antes de spawnar a reposição (foi o que derrubou o Maestro do
-  // campo em 28/09). O remount do operador mantém o terminate com prova.
+  // sessão antes de spawnar a reposição. Compatível com as mortes de 28/09;
+  // a causa não foi comprovada — F-212 passa a registrar quem termina cada
+  // sessão. O remount do operador mantém o terminate com prova.
   if (remountKind === 'automatic' && liveMaestroSessionId === null) {
     liveMaestroSessionId = liveRegisteredOrchestratorSessionId(missionId);
     if (liveMaestroSessionId) {

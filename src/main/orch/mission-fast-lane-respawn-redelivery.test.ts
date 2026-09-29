@@ -575,8 +575,10 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
   });
 
   it('F-187: remount automático adota Maestro registrado e vivo — nunca termina nem respawna', async () => {
-    // Campo 28/09: o Maestro e os helpers morreram juntos e a remontagem
-    // automática respawnou por cima. O caminho decide 'respawn' quando
+    // Campo 28/09: o Maestro e os helpers morreram juntos — compatível com
+    // a remontagem automática ter respawnado por cima, mas a causa não foi
+    // comprovada; F-212 passa a registrar quem termina cada sessão. O
+    // caminho decide 'respawn' quando
     // liveOrchestratorSessionId devolve null — mas a projeção de pane pode
     // ficar para trás de uma sessão registrada e FISICAMENTE viva. Remount
     // automático (ressurreição de boot, retry-kickoff, supervisor) precisa
