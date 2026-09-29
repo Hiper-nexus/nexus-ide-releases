@@ -121,7 +121,7 @@ import {
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { isOperatorTabMission } from './operator-tab-mission-resume';
-import { operatorRecentlyNamedCli } from './operator-cli-mentions';
+import { OPERATOR_CHOICE_PROOF_WINDOW_MS, operatorRecentlyNamedCli } from './operator-cli-mentions';
 import {
   judgeIdleHelperReuse,
   listIdleHelperCandidates,
@@ -615,9 +615,10 @@ const paneSpawn: McpToolDef = {
     'operator did not ask for it: in any mission (orchestrator) or on the ' +
     'operator pane (explicit pin), Nexus re-routes by task and keeps the pin ' +
     'only as a routing preference (receipt: route.redistributed ' +
-    'pin-sem-pedido-do-operador). The pin is honored literally when the ' +
-    'operator recently typed that CLI\'s name in the calling pane, or when ' +
-    'operatorChoice:true is passed. Writers run in parallel: ' +
+    'pin-sem-pedido-do-operador). The pin is honored literally only when the ' +
+    'operator named that CLI (typed in the calling pane or sent through the ' +
+    'Quadro direction) — operatorChoice:true without that request is ignored ' +
+    'and the helper is routed by task. Writers run in parallel: ' +
     'isolatedWriter gives each one its own git worktree/branch, and from the ' +
     'operator pane a writer that would share the checkout with another active ' +
     'writer is isolated automatically (receipt: executionMode ' +
@@ -645,19 +646,20 @@ const paneSpawn: McpToolDef = {
           'Adapter id (cli) to run. Optional and usually omitted: Nexus routes ' +
           '`task` (operator pane: Jev + cost table; mission: nexus_route_task) ' +
           'and spreads helpers across CLIs. A pin is honored literally only ' +
-          'when the operator named this CLI in the calling pane or ' +
-          'operatorChoice:true is set; otherwise it becomes a soft routing ' +
+          'when the operator named this CLI (in the calling pane or through ' +
+          'the Quadro direction); otherwise it becomes a soft routing ' +
           'preference (see operatorChoice).',
       },
       operatorChoice: {
         type: 'boolean',
         description:
-          'true when the OPERATOR asked for this adapterId. Without it, an ' +
-          'adapterId the operator did not name is demoted to a soft routing ' +
-          'preference (mission orchestrators and the operator pane alike). ' +
-          'A CLI the operator recently typed in the calling pane is honored ' +
-          'automatically — operatorChoice is only needed when the request ' +
-          'did not come through this pane\'s input.',
+          'Marks that the OPERATOR asked for this adapterId. It is verified: ' +
+          'Nexus honors it only when the operator actually named that CLI in ' +
+          'the calling pane or in a Quadro direction during the last 30 ' +
+          'minutes. Setting it on your own (the operator never named the CLI) ' +
+          'is ignored — the helper is routed by task and the receipt says ' +
+          'operatorChoice-sem-pedido-do-operador. Never set it to keep a ' +
+          'favourite CLI: the operator wants every ready LLM in use.',
       },
       agentName: { type: 'string', description: 'Squad agent name or id' },
       task: {
@@ -853,10 +855,25 @@ const paneSpawnAfterTabMission = {
     // digitar, `resume`, reserva de rota e spawn de agente do roster seguem
     // honrando o pin literal; sem texto roteável não há o que preferir.
     const pinnedAdapterId = str(args, 'adapterId');
+    // F-682: `operatorChoice:true` é AFIRMAÇÃO do agente, não prova — o Maestro
+    // da missão RU-261 (29/09) marcou-a sozinho em 4 de 4 helpers Claude. Só
+    // vale quando o operador nomeou a CLI no pane (input humano ou orientação
+    // do Quadro) dentro da retenção; sem isso o pin vira preferência.
+    const operatorChoiceProved =
+      pinnedAdapterId !== undefined &&
+      args.operatorChoice === true &&
+      operatorRecentlyNamedCli(
+        ctx.sessionId,
+        pinnedAdapterId,
+        Date.now(),
+        OPERATOR_CHOICE_PROOF_WINDOW_MS,
+      );
+    const operatorChoiceUnproved =
+      args.operatorChoice === true && !operatorChoiceProved;
     const pinRedistributed =
       pinnedAdapterId !== undefined &&
       !agentRef &&
-      args.operatorChoice !== true &&
+      !operatorChoiceProved &&
       !resumeRef &&
       !routeReservationId &&
       operatorRouteResolver !== null &&
@@ -1683,8 +1700,13 @@ const paneSpawnAfterTabMission = {
                 ? {
                     redistributed: {
                       ...pinRedistributed,
-                      reason: 'pin-sem-pedido-do-operador',
-                      hint: 'Passe operatorChoice:true quando o operador pedir esta CLI.',
+                      reason: operatorChoiceUnproved
+                        ? 'operatorChoice-sem-pedido-do-operador'
+                        : 'pin-sem-pedido-do-operador',
+                      hint: operatorChoiceUnproved
+                        ? 'operatorChoice só vale quando o operador nomeou esta CLI ' +
+                          '(no pane ou pelo Quadro); sem isso o Nexus distribui pela tarefa.'
+                        : 'Passe operatorChoice:true quando o operador pedir esta CLI.',
                     },
                   }
                 : {}),

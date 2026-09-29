@@ -8120,31 +8120,38 @@ export const RELEASE_076136: AppRelease = {
 export const CURRENT_RELEASE: AppRelease = {
   version: '0.76.137',
   date: '2026-09-29',
-  codename: 'Várias missões lado a lado',
+  codename: 'Sem clique, sem relogin',
   summary:
-    'O Maestro que espera o seu pedido aparece como "Aguardando", não mais como ' +
-    '"Dormindo"; a aba com missão dormindo aceita uma missão nova; e o segundo ' +
-    'orquestrador da aba pergunta se começa missão própria ou assume a liderança. ' +
-    'Inclui a 0.76.136.',
+    'Os panes não param mais em diálogos de início, o Grok para de pedir ' +
+    'login todo dia no Windows, o Maestro não consegue mais prender os ' +
+    'helpers numa LLM só e o modelo recusado pelo provider sai do roteamento.',
   highlights: [
     {
-      title: 'Aguardando, não Dormindo',
+      title: 'Panes sem clique no início',
       detail:
-        'O Maestro vivo parado no prompt aparece como "Aguardando" na barra lateral, ' +
-        'no Quadro e nas abas, com a orientação pelo Quadro liberada. "Dormindo" fica ' +
-        'só para missão sem processo.',
+        'O "Trust this folder?" do Codex nos seus panes e o aviso de Bypass ' +
+        'do Claude Code novo (sem números) são respondidos sozinhos. Workers ' +
+        'governados da missão continuam com a pasta restrita.',
     },
     {
-      title: 'Aba com missão dormindo aceita outra',
+      title: 'Grok mantém o login no Windows',
       detail:
-        '"Tornar orquestrador" numa aba cuja missão dorme ou parou cria uma missão nova, ' +
-        'em vez de dar erro. A aba volta a oferecer "Criar missão desta aba" e a fechar.',
+        'O token renovado dentro do pane voltava só no fechamento — e se ' +
+        'perdia. Agora cada renovação volta na hora ao perfil real, só se ' +
+        'for da mesma conta e mais nova.',
     },
     {
-      title: 'O segundo orquestrador pergunta',
+      title: 'Todas as LLMs de verdade',
       detail:
-        'Numa aba com missão rodando, "Tornar orquestrador" em outro pane pergunta se ' +
-        'ele começa uma missão própria, em paralelo, ou assume a liderança.',
+        'O Maestro marcava sozinho "escolha do operador" para abrir tudo em ' +
+        'Claude. Essa marca agora só vale quando você nomeou a CLI (no pane ou ' +
+        'pelo Quadro); sem isso o Nexus distribui pela tarefa.',
+    },
+    {
+      title: 'Modelo recusado sai da rota',
+      detail:
+        'Helper que caiu em "Model access is disabled" (OpenCode Zen) troca ' +
+        'de modelo, e o roteador deixa esse modelo de fora por 12 horas.',
     },
   ],
   fixes: [],

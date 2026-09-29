@@ -18,6 +18,8 @@ vi.mock('../pty/pty-manager', () => ({
 
 import {
   installOperatorCliMentionTap,
+  noteOperatorDirection,
+  OPERATOR_CHOICE_PROOF_WINDOW_MS,
   operatorRecentlyNamedCli,
 } from './operator-cli-mentions';
 
@@ -136,5 +138,23 @@ describe('operatorRecentlyNamedCli', () => {
   it('sessão sem input recente devolve false', () => {
     expect(operatorRecentlyNamedCli('nunca-digitou', 'claude')).toBe(false);
     expect(operatorRecentlyNamedCli(undefined, 'claude')).toBe(false);
+  });
+});
+
+describe('prova do operatorChoice (F-682)', () => {
+  it('orientação do Quadro aceita conta como pedido do operador naquela sessão', () => {
+    noteOperatorDirection('maestro', 'abre um helper no MiniMax para a revisão');
+    expect(operatorRecentlyNamedCli('maestro', 'minimax-code')).toBe(true);
+    expect(operatorRecentlyNamedCli('maestro', 'claude')).toBe(false);
+  });
+
+  it('a janela da prova do operatorChoice cobre a retenção inteira (30 min), a comum só 15', () => {
+    const t0 = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(t0);
+    type('maestro-janela', 'usa o claude nisso');
+    const later = t0 + 20 * MIN;
+    expect(operatorRecentlyNamedCli('maestro-janela', 'claude', later)).toBe(false);
+    expect(operatorRecentlyNamedCli('maestro-janela', 'claude', later, OPERATOR_CHOICE_PROOF_WINDOW_MS)).toBe(true);
+    expect(operatorRecentlyNamedCli('maestro-janela', 'claude', t0 + 31 * MIN, OPERATOR_CHOICE_PROOF_WINDOW_MS)).toBe(false);
   });
 });

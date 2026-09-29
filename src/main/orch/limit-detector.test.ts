@@ -67,6 +67,9 @@ describe('detectLimit', () => {
       'model',
     );
     expect(detectLimit('{"code": "model_not_found"}')?.kind).toBe('model');
+    // F-683: OpenCode Zen com o modelo desligado para a conta (campo 29/09).
+    expect(detectLimit('Error: Upstream request failed: Model access is disabled')?.kind).toBe('model');
+    expect(detectLimit('O acesso ao modelo está desligado? vou checar depois.')).toBeNull();
     // Prosa de agente citando o erro NUNCA dispara — disparar aqui mata
     // sessão sadia e reescreve o modelo do pane (doutrina error-shaped).
     expect(detectLimit('If the API returns model not found, upgrade the CLI.')).toBeNull();

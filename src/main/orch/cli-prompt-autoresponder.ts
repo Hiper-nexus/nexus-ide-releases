@@ -69,6 +69,12 @@ interface PromptSignature {
    * janela maior: podem pintar depois do cold start da CLI (F-529).
    */
   watchMs?: number;
+  /**
+   * Só em pane NÃO governado (mão do operador e filhos dele). Confiar numa
+   * pasta liga config, hooks e regras dela — o perfil governado de missão a
+   * deixa restrita de propósito (F-666) e nunca recebe esta resposta.
+   */
+  ungovernedOnly?: boolean;
 }
 
 export const ACCEPT_DEFAULT_PROMPT_RESPONSE = '\r';
@@ -120,6 +126,21 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
     ],
     response: ACCEPT_SECOND_PROMPT_RESPONSE,
     fallbackResponse: ACCEPT_SECOND_OPTION_BY_NUMBER,
+    earlyPhrase: 'claude code running in bypass permissions mode',
+  },
+  {
+    // F-681: o Claude Code novo desenha o mesmo aviso SEM números e com o
+    // cursor já em "Yes, I accept" (campo 29/09) — a assinatura numerada acima
+    // não casa e o pane ficava parado. As teclas saem do cursor desenhado.
+    adapterIds: ['claude', 'glm', 'glm-flash', 'longcat'],
+    name: 'claude-bypass-acknowledgement-unnumbered',
+    phrases: [
+      'claude code running in bypass permissions mode',
+      'no, exit',
+      'yes, i accept',
+    ],
+    response: ACCEPT_DEFAULT_PROMPT_RESPONSE,
+    responseFor: claudeBypassAcknowledgementResponse,
     earlyPhrase: 'claude code running in bypass permissions mode',
   },
   {
@@ -217,6 +238,22 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
     watchMs: TRUST_WATCH_WINDOW_MS,
   },
   {
+    // F-681: pasta sem decisão de confiança (o projeto que o operador abriu
+    // pelo "+ Pane"): o Codex 0.157 para em "Trust this folder? / Trust and
+    // continue / Quit" e o pane fica mudo até alguém apertar Enter. Mesma
+    // postura do trust de Claude/Kimi/Grok/Devin nos panes do operador. Nunca
+    // em pane governado, e nunca quando a tela oferece "Open restricted" (é o
+    // diálogo do F-666, que responde restrito).
+    adapterIds: ['codex'],
+    name: 'codex-folder-trust',
+    phrases: ['trust this folder?', 'trust and continue', 'quit'],
+    response: ACCEPT_DEFAULT_PROMPT_RESPONSE,
+    responseFor: codexFolderTrustResponse,
+    earlyPhrase: 'trust this folder?',
+    watchMs: TRUST_WATCH_WINDOW_MS,
+    ungovernedOnly: true,
+  },
+  {
     // Devin CLI (herdr workspace_trust_prompt). Interactive spawn cannot pass
     // `--respect-workspace-trust false` (print-mode only). The cursor starts on
     // "Yes, trust …"; Enter accepts. Unanswered, the mission brief is pasted
@@ -258,6 +295,53 @@ function compactPromptText(text: string): string {
  * a resposta é derivada; sem elas, `null` (o operador responde) — nunca um
  * chute que possa escolher "No, exit".
  */
+/**
+ * F-681: menu SEM números (Claude Code novo) — as teclas saem de onde o cursor
+ * (`❯`/`›`) está desenhado na última pintura depois do `banner`. Sem cursor
+ * visível, sem as duas opções ou com o alvo ausente: `null` (o operador
+ * responde). Nunca supõe o cursor na primeira opção: no aviso de bypass novo
+ * ele nasce em "Yes, I accept", e Seta+Enter dali voltava a "No, exit".
+ */
+export function focusedMenuResponse(
+  raw: string,
+  banner: string,
+  labels: readonly string[],
+  target: string,
+): string | null {
+  const plain = raw
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b\][^\x07]*\x07/g, '');
+  const start = plain.toLowerCase().lastIndexOf(banner);
+  if (start < 0) return null;
+  const escaped = labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const re = new RegExp(`([❯›])?[ \\t]*(${escaped.join('|')})`, 'gi');
+  const found: Array<{ label: string; focused: boolean }> = [];
+  for (const match of plain.slice(start).matchAll(re)) {
+    const label = match[2].toLowerCase();
+    const seen = found.find((option) => option.label === label);
+    if (seen) {
+      seen.focused ||= Boolean(match[1]);
+    } else {
+      found.push({ label, focused: Boolean(match[1]) });
+    }
+  }
+  if (found.length !== labels.length) return null;
+  const targetIndex = found.findIndex((option) => option.label === target);
+  const focusedIndexes = found.flatMap((option, index) => (option.focused ? [index] : []));
+  if (targetIndex < 0 || focusedIndexes.length !== 1) return null;
+  const delta = targetIndex - focusedIndexes[0]!;
+  return (delta >= 0 ? '\x1b[B'.repeat(delta) : '\x1b[A'.repeat(-delta)) + '\r';
+}
+
+function claudeBypassAcknowledgementResponse(raw: string): string | null {
+  return focusedMenuResponse(
+    raw,
+    'claude code running in bypass permissions mode',
+    ['no, exit', 'yes, i accept'],
+    'yes, i accept',
+  );
+}
+
 function claudeWorkspaceTrustResponse(raw: string): string | null {
   const compact = compactPromptText(raw);
   const cancel = compact.indexOf(compactPromptText('no, exit'));
@@ -298,6 +382,34 @@ export function codexFolderAccessResponse(raw: string): string | null {
   return (delta >= 0 ? '\x1b[B'.repeat(delta) : '\x1b[A'.repeat(-delta)) + '\r';
 }
 
+/**
+ * F-681: seta até "Trust and continue" lida da tela, depois Enter. `null`
+ * quando o diálogo também oferece "Open restricted" (F-666) ou quando a opção
+ * não está pintada — nunca um chute.
+ */
+export function codexFolderTrustResponse(raw: string): string | null {
+  const plain = raw
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b\][^\x07]*\x07/g, '');
+  const start = plain.toLowerCase().lastIndexOf('trust this folder?');
+  if (start < 0) return null;
+  const tail = plain.slice(start);
+  if (/open restricted|folder access/i.test(tail)) return null;
+  const options = new Map<number, { focused: boolean; label: string }>();
+  for (const match of tail.matchAll(CODEX_FOLDER_OPTION_RE)) {
+    const number = Number(match[2]);
+    if (!options.has(number)) {
+      options.set(number, { focused: Boolean(match[1]), label: match[3].toLowerCase() });
+    }
+  }
+  const ordered = [...options.entries()].sort(([a], [b]) => a - b).map(([, option]) => option);
+  const target = ordered.findIndex((option) => option.label === 'trust and continue');
+  if (target < 0) return null;
+  const focused = Math.max(0, ordered.findIndex((option) => option.focused));
+  const delta = target - focused;
+  return (delta >= 0 ? '\x1b[B'.repeat(delta) : '\x1b[A'.repeat(-delta)) + '\r';
+}
+
 export function matchesPromptSignature(
   output: string,
   signature: PromptSignature,
@@ -312,9 +424,11 @@ export function matchesPromptSignature(
   );
 }
 
-function signaturesFor(adapterId: string): PromptSignature[] {
-  return BUILTIN_PROMPT_SIGNATURES.filter((signature) =>
-    signature.adapterIds.includes(adapterId),
+function signaturesFor(adapterId: string, governed: boolean): PromptSignature[] {
+  return BUILTIN_PROMPT_SIGNATURES.filter(
+    (signature) =>
+      signature.adapterIds.includes(adapterId) &&
+      !(governed && signature.ungovernedOnly),
   );
 }
 
@@ -365,9 +479,15 @@ export class CliPromptAutoResponder {
     return enabled;
   }
 
-  bind(sessionId: string, adapterId: string, now = Date.now()): void {
+  bind(
+    sessionId: string,
+    adapterId: string,
+    now = Date.now(),
+    options: { governed?: boolean } = {},
+  ): void {
     if (!this.isEnabled(sessionId)) return;
-    const signatures = signaturesFor(adapterId);
+    // Sem informação de governança, trata como governado (fail-closed).
+    const signatures = signaturesFor(adapterId, options.governed ?? true);
     if (signatures.length === 0) return;
     this.sessions.set(sessionId, signatures);
     this.boundAt.set(sessionId, now);
@@ -492,14 +612,18 @@ export class CliPromptAutoResponder {
     const raw = this.buffers.get(sessionId) ?? '';
     const buffer = normalizePromptText(raw);
     const compact = compactPromptText(raw);
+    // F-681: a assinatura que casa por INTEIRO vence a que só viu o banner —
+    // o aviso de bypass numerado e o sem números têm o mesmo banner, e as
+    // teclas de um encerram o pane no outro.
     return (
+      signatures.find((signature) => matchesPromptSignature(raw, signature)) ??
       signatures.find(
         (signature) =>
-          matchesPromptSignature(raw, signature) ||
-          (signature.earlyPhrase !== undefined &&
-            (buffer.includes(signature.earlyPhrase) ||
-              compact.includes(compactPromptText(signature.earlyPhrase)))),
-      ) ?? null
+          signature.earlyPhrase !== undefined &&
+          (buffer.includes(signature.earlyPhrase) ||
+            compact.includes(compactPromptText(signature.earlyPhrase))),
+      ) ??
+      null
     );
   }
 

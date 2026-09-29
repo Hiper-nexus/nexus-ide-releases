@@ -34,6 +34,7 @@ import {
   grokStatusHooksDocument,
 } from './hook-status-config';
 import { grokHubMcpServers } from '../mcp-hub/mcp-hub-spawn';
+import { startAuthWriteThrough, type AuthWriteThroughPolicy } from './overlay-auth-writethrough';
 
 function governedGrokProjectPolicy(
   cwd: string | undefined,
@@ -135,6 +136,46 @@ function readGrokAuthIdentities(dir: string): GrokAuthIdentity[] {
     return [];
   }
 }
+
+/**
+ * F-684: identidade e validade do auth.json do Grok para a devolução ao
+ * perfil de origem. Chaves `issuer::conta` e e-mails identificam a conta; a
+ * maior `expires_at` mede quão novo é o blob.
+ */
+export const GROK_AUTH_WRITE_THROUGH_POLICY: AuthWriteThroughPolicy = {
+  expiry(blob) {
+    try {
+      const parsed = JSON.parse(blob) as Record<string, { expires_at?: unknown }>;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+      let best: number | null = null;
+      for (const entry of Object.values(parsed)) {
+        if (!entry || typeof entry !== 'object' || typeof entry.expires_at !== 'string') continue;
+        const ms = Date.parse(entry.expires_at);
+        if (Number.isFinite(ms) && (best === null || ms > best)) best = ms;
+      }
+      return best;
+    } catch {
+      return null;
+    }
+  },
+  identities(blob) {
+    try {
+      const parsed = JSON.parse(blob) as Record<string, { email?: unknown }>;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
+      const ids: string[] = [];
+      for (const [key, entry] of Object.entries(parsed)) {
+        if (!entry || typeof entry !== 'object') continue;
+        ids.push(key.trim().toLowerCase());
+        if (typeof entry.email === 'string' && entry.email.trim()) {
+          ids.push(`email:${entry.email.trim().toLowerCase()}`);
+        }
+      }
+      return ids;
+    } catch {
+      return [];
+    }
+  },
+};
 
 function hasFreshEntry(entries: GrokAuthIdentity[], now: number): boolean {
   return entries.some(
@@ -374,12 +415,22 @@ export function prepareGrokMcpSession(
           policy.allowedTools,
         );
       }
+      // F-684: cada renovação do token no overlay volta ao perfil de origem
+      // (mesma conta, mais nova) enquanto o pane vive — inclusive governado e
+      // mesmo que o app reinicie antes do fechamento. O auth.json sai da
+      // devolução cega do fechamento: a última passada do disposer decide.
+      const stopAuthWriteThrough = startAuthWriteThrough({
+        overlayFile: path.join(artifactDir, GROK_AUTH_FILE),
+        sourceFile: path.join(authSource, GROK_AUTH_FILE),
+        policy: GROK_AUTH_WRITE_THROUGH_POLICY,
+      });
       activateArtifact(token, {
         artifactDir,
         providerHome,
         configFiles: ['config.toml', ...GROK_SESSION_ENTRIES],
-        syncBackExcludeAnywhere: new Set([GROK_STATUS_HOOKS_FILE]),
+        syncBackExcludeAnywhere: new Set([GROK_STATUS_HOOKS_FILE, GROK_AUTH_FILE]),
         syncBack: !policy.governed,
+        dispose: stopAuthWriteThrough,
       });
       let isolatedHome: string | null = null;
       if (policy.governed) {

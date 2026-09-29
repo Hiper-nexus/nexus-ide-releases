@@ -1601,7 +1601,9 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     onSpawned: (sessionId) => {
       bindTokenToSession(ctx.token, sessionId);
       sessionTokens.set(sessionId, ctx.token);
-      cliPromptAutoResponder.bind(sessionId, adapter.id);
+      cliPromptAutoResponder.bind(sessionId, adapter.id, Date.now(), {
+        governed: gated,
+      });
       // First-run interstitials (workspace trust, data-sharing consent,
       // migration offers): mission panes only, and always against the exact
       // main-owned cwd this spawn was authorized for — never a path read off

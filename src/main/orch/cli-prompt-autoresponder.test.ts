@@ -8,6 +8,8 @@ import {
   BUILTIN_PROMPT_SIGNATURES,
   CliPromptAutoResponder,
   codexFolderAccessResponse,
+  codexFolderTrustResponse,
+  focusedMenuResponse,
   matchesPromptSignature,
 } from './cli-prompt-autoresponder';
 
@@ -639,5 +641,93 @@ describe('Codex "Folder access" (F-666)', () => {
     responder.bind('session-codex-hold', 'codex');
     responder.observe('session-codex-hold', ' Folder access\n');
     expect(responder.shouldDeferInjection('session-codex-hold')).toBe(true);
+  });
+});
+
+// Tela real do Codex 0.157 no pane do operador (campo 29/09, hipergo, YOLO).
+const CODEX_FOLDER_TRUST = [
+  ' C:\\Users\\Administrador\\Documents\\Projetos\\hipergo',
+  '              YOLO mode',
+  ' Trust this folder? Codex can read, edit, and run files here, subject to your permission settings.',
+  ' Folders can run code automatically, even without a model request. Continue only if you trust these files.',
+  ' Your decision will be saved.',
+  '\x1b[7m› 1. Trust and continue\x1b[0m',
+  '  2. Quit',
+  ' enter continue · esc quit',
+].join('\n');
+
+describe('Codex "Trust this folder?" no pane do operador (F-681)', () => {
+  it('pane não governado confia na pasta que o operador abriu', () => {
+    expect(codexFolderTrustResponse(CODEX_FOLDER_TRUST)).toBe('\r');
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-codex-op', 'codex', Date.now(), { governed: false });
+    expect(responder.observe('session-codex-op', CODEX_FOLDER_TRUST)).toBe('\r');
+  });
+
+  it('pane governado (ou sem informação) nunca confia sozinho', () => {
+    const governed = new CliPromptAutoResponder();
+    governed.bind('session-codex-gov', 'codex', Date.now(), { governed: true });
+    expect(governed.observe('session-codex-gov', CODEX_FOLDER_TRUST)).toBeNull();
+    const unknown = new CliPromptAutoResponder();
+    unknown.bind('session-codex-unknown', 'codex');
+    expect(unknown.observe('session-codex-unknown', CODEX_FOLDER_TRUST)).toBeNull();
+  });
+
+  it('o diálogo restrito do F-666 continua restrito mesmo no pane do operador', () => {
+    const withTrust = CODEX_FOLDER_ACCESS.replace(
+      '\x1b[36m› 1. Open restricted\x1b[0m\n  2. Quit',
+      '› 1. Trust and continue\n  2. Open restricted\n  3. Quit',
+    );
+    expect(codexFolderTrustResponse(withTrust)).toBeNull();
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-codex-restricted', 'codex', Date.now(), { governed: false });
+    expect(responder.observe('session-codex-restricted', withTrust)).toBe('\x1b[B\r');
+  });
+});
+
+// Tela real do Claude Code (campo 29/09): sem números, cursor em "Yes".
+const CLAUDE_BYPASS_UNNUMBERED = [
+  ' WARNING: Claude Code running in Bypass Permissions mode',
+  ' In Bypass Permissions mode, Claude Code will not ask for your approval',
+  ' before running potentially dangerous commands.',
+  ' https://code.claude.com/docs/en/security',
+  '   No, exit',
+  ' \x1b[36m❯ Yes, I accept\x1b[0m',
+  ' Enter to confirm · Esc to cancel',
+].join('\n');
+
+describe('aviso de Bypass Permissions sem números (F-681)', () => {
+  it('cursor já em "Yes, I accept": só Enter (nunca Seta, que voltava a "No, exit")', () => {
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-claude-bypass', 'claude');
+    expect(responder.observe('session-claude-bypass', CLAUDE_BYPASS_UNNUMBERED)).toBe('\r');
+  });
+
+  it('cursor em "No, exit": desce uma e confirma', () => {
+    const cursorOnNo = CLAUDE_BYPASS_UNNUMBERED
+      .replace('   No, exit', ' ❯ No, exit')
+      .replace('\x1b[36m❯ Yes, I accept\x1b[0m', '  Yes, I accept');
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-claude-bypass-no', 'claude');
+    expect(responder.observe('session-claude-bypass-no', cursorOnNo)).toBe('\x1b[B\r');
+  });
+
+  it('sem cursor desenhado não chuta', () => {
+    expect(
+      focusedMenuResponse(
+        CLAUDE_BYPASS_UNNUMBERED.replace('❯ ', '  '),
+        'claude code running in bypass permissions mode',
+        ['no, exit', 'yes, i accept'],
+        'yes, i accept',
+      ),
+    ).toBeNull();
+  });
+
+  it('na tela nova só a assinatura sem números casa inteira (o aceite forçado prefere ela)', () => {
+    const byName = (name: string) => BUILTIN_PROMPT_SIGNATURES.find((s) => s.name === name)!;
+    expect(matchesPromptSignature(CLAUDE_BYPASS_UNNUMBERED, byName('claude-bypass-acknowledgement'))).toBe(false);
+    expect(
+      matchesPromptSignature(CLAUDE_BYPASS_UNNUMBERED, byName('claude-bypass-acknowledgement-unnumbered')),
+    ).toBe(true);
   });
 });
