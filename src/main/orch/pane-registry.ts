@@ -659,6 +659,7 @@ export function unregisterOrchRenderer(wc: WebContents): void {
   if (orchRenderer === wc) orchRenderer = null;
   paneSyncGenerationByOwner.delete(wc.id);
   mirroredOwners.delete(wc.id);
+  deadExitDeliveredByOwner.delete(wc.id);
   const removed = panes.filter((registered) => registered.owner === wc);
   const removedPaneIds = removed.map((registered) => registered.entry.paneId);
   for (const registered of removed) {
@@ -974,8 +975,11 @@ function retainRenderedMissionPaneHeadless(
         authoritySeal: meta.authoritySeal,
       });
     } catch {
-      void terminateRecoveryReplacement(sessionId);
-      return true;
+      // Selo vencido NÃO autoriza matar um agente vivo porque o operador
+      // trocou de projeto (troca X → Y → X). O pane fica registrado no
+      // renderer — o host é estacionado lá e o PTY segue rodando, como nos
+      // panes diretos. Na volta, resolveMainOwnedPanePresentation decide.
+      return false;
     }
   }
   const detached = Boolean(
@@ -985,8 +989,9 @@ function retainRenderedMissionPaneHeadless(
       detachOwnedMissionAgentSession(owner, sessionId),
   );
   if (!detached) {
-    void terminateRecoveryReplacement(sessionId);
-    return true;
+    // Detach recusado (identidade diverge / tap indisponível): mesma regra
+    // fail-safe — nunca terminar um PTY vivo por causa da troca de projeto.
+    return false;
   }
   setMainOwnedPane(entry.paneId, {
     entry: { ...entry },
@@ -1257,9 +1262,21 @@ type MainOwnedPanePresentationResolution =
   | {
       readonly kind: "stale";
       readonly reason: string;
+      /**
+       * `true` só quando o PTY já morreu ou a missão durável deixou de
+       * existir. Qualquer outro stale com sessão VIVA é fail-safe: o pane é
+       * pulado e avisado uma vez — nunca terminado por causa de uma troca de
+       * workspace do operador.
+       */
+      readonly retire: boolean;
     };
 
 const staleMainOwnedPaneRetirements = new Map<string, Promise<void>>();
+/**
+ * Aviso único por (paneId, sessionId): o syncPanes é um heartbeat ~1 s e um
+ * pane vivo classificado stale não pode inundar o console a cada sync.
+ */
+const staleLivePaneWarnings = new Set<string>();
 
 function sameExactProjectScope(
   left: Readonly<ProjectExecutionScope>,
@@ -1268,8 +1285,11 @@ function sameExactProjectScope(
   return left.version === right.version && sameProjectScope(left, right);
 }
 
-function stalePresentation(reason: string): MainOwnedPanePresentationResolution {
-  return { kind: "stale", reason };
+function stalePresentation(
+  reason: string,
+  retire: boolean,
+): MainOwnedPanePresentationResolution {
+  return { kind: "stale", reason, retire };
 }
 
 function resolveMainOwnedPanePresentation(
@@ -1285,18 +1305,28 @@ function resolveMainOwnedPanePresentation(
   if (!meta.scope || !sameExactProjectScope(ownerScope, meta.scope)) {
     return { kind: "skip" };
   }
+  const acpSession = sessionId ? getAcpDriverSession(sessionId) : null;
+  const physicalGone =
+    !sessionId || (!acpSession && getSessionState(sessionId) === null);
   if (entry.kind !== "cli-agent") {
-    return stalePresentation("main-owned entry is not a CLI agent");
+    return stalePresentation(
+      "main-owned entry is not a CLI agent",
+      physicalGone,
+    );
   }
   if (!sessionId) {
-    return stalePresentation("main-owned entry has no physical session");
+    return stalePresentation("main-owned entry has no physical session", true);
   }
-  const acpSession = getAcpDriverSession(sessionId);
-  if (!acpSession && getSessionState(sessionId) === null) {
-    return stalePresentation("main-owned physical session has exited");
+  if (physicalGone) {
+    return stalePresentation("main-owned physical session has exited", true);
   }
   if (!missionId || (role !== "orchestrator" && role !== "worker")) {
-    return stalePresentation("main-owned entry has no mission role authority");
+    // Sem missionId não existe missão durável a proteger; papel inválido com
+    // missão viva é fail-safe (pula e avisa, nunca termina o PTY vivo).
+    return stalePresentation(
+      "main-owned entry has no mission role authority",
+      !missionId,
+    );
   }
   const agent = acpSession?.agent ?? getAgentSessionInfo(sessionId);
   const executionScope = meta.executionScope ?? meta.scope;
@@ -1310,7 +1340,10 @@ function resolveMainOwnedPanePresentation(
     (!sameProjectScope(agent.scope, executionScope) &&
       !sameProjectScope(agent.scope, meta.scope))
   ) {
-    return stalePresentation("physical PTY identity diverges from pane runtime");
+    return stalePresentation(
+      "physical PTY identity diverges from pane runtime",
+      false,
+    );
   }
 
   let spec: MissionPaneSpec | null | undefined;
@@ -1320,7 +1353,9 @@ function resolveMainOwnedPanePresentation(
     const mission = stores.missions.get(missionId);
     spec = stores.missionPanes.findByPaneId(entry.paneId);
     if (!mission || mission.id !== missionId) {
-      return stalePresentation("durable mission no longer exists");
+      // A missão durável deixou de existir: é a única razão de stale que ainda
+      // autoriza terminar uma sessão viva (a missão é a dona dos agentes).
+      return stalePresentation("durable mission no longer exists", true);
     }
     if (
       !spec ||
@@ -1333,7 +1368,10 @@ function resolveMainOwnedPanePresentation(
       !sameExactProjectScope(meta.scope, spec.scope) ||
       isAutomatedReviewerCompositionPane(spec)
     ) {
-      return stalePresentation("durable mission pane spec is stale or missing");
+      return stalePresentation(
+        "durable mission pane spec is stale or missing",
+        false,
+      );
     }
     currentSeal = resolveCurrentMissionSpawnAuthoritySeal(meta.scope, missionId);
   } catch (error) {
@@ -1341,6 +1379,7 @@ function resolveMainOwnedPanePresentation(
       error instanceof Error
         ? error.message
         : "durable mission authority is unavailable",
+      false,
     );
   }
   if (
@@ -1348,7 +1387,10 @@ function resolveMainOwnedPanePresentation(
     !sameMissionPaneAuthoritySeal(meta.authoritySeal, currentSeal) ||
     !sameMissionPaneAuthoritySeal(agent.authoritySeal, currentSeal)
   ) {
-    return stalePresentation("mission pane authority seal is no longer current");
+    return stalePresentation(
+      "mission pane authority seal is no longer current",
+      false,
+    );
   }
   return {
     kind: "present",
@@ -1437,14 +1479,34 @@ function retireStaleMainOwnedPane(
   staleMainOwnedPaneRetirements.set(key, retirement);
 }
 
+function warnStaleMainOwnedPaneKeptLiveOnce(
+  pane: MainOwnedPane,
+  reason: string,
+): void {
+  const key = staleMainOwnedPaneRetirementKey(pane);
+  if (staleLivePaneWarnings.has(key)) return;
+  staleLivePaneWarnings.add(key);
+  console.warn(
+    `[pane-registry] stale pane kept live pane=${pane.entry.paneId} ` +
+      `session=${pane.entry.sessionId ?? "none"}: ${reason}`,
+  );
+}
+
 function requestMainOwnedPanePresentations(owner: WebContents): void {
   const scope = getRendererWorkspaceScope(owner);
   if (!scope || owner.isDestroyed() || owner.isCrashed()) return;
   for (const pane of mainOwnedPaneValues()) {
     const resolution = resolveMainOwnedPanePresentation(scope, pane);
+    if (resolution.kind !== "stale" || resolution.retire) {
+      staleLivePaneWarnings.delete(staleMainOwnedPaneRetirementKey(pane));
+    }
     if (resolution.kind === "skip") continue;
     if (resolution.kind === "stale") {
-      retireStaleMainOwnedPane(pane, resolution.reason, owner);
+      if (resolution.retire) {
+        retireStaleMainOwnedPane(pane, resolution.reason, owner);
+      } else {
+        warnStaleMainOwnedPaneKeptLiveOnce(pane, resolution.reason);
+      }
       continue;
     }
     const { request } = resolution;
@@ -1491,6 +1553,57 @@ export function reclaimDetachedMissionSession(
   return true;
 }
 
+/**
+ * Exit sintético entregue ao renderer por id morto que ele ainda espelha:
+ * uma sessão detached (headless) não tem `wc`, então quando ela morre
+ * (reconciliador, missão concluída, saída natural) o exit não vai a lugar
+ * nenhum e o host estacionado segura o id para sempre — cada tecla virava
+ * "o main recusou a digitação neste pane" e Reiniciar ficava inerte. Uma
+ * entrega por (owner, sessionId); o id é esquecido quando o espelho para de
+ * reportá-lo (uma geração antiga pode reespelhá-lo e merece um novo aviso).
+ */
+const deadExitDeliveredByOwner = new Map<number, Set<string>>();
+
+function deliverDeadForeignSessionExits(
+  owner: WebContents,
+  entries: readonly PaneRegistryEntry[],
+  reclaimed: ReadonlySet<string>,
+): void {
+  const reportedForeign = new Set<string>();
+  for (const entry of entries) {
+    const sessionId = entry.sessionId;
+    if (!sessionId || reclaimed.has(sessionId)) continue;
+    if (isSessionOwnedBy(owner, sessionId)) continue;
+    reportedForeign.add(sessionId);
+  }
+  let delivered = deadExitDeliveredByOwner.get(owner.id);
+  if (!delivered) {
+    delivered = new Set();
+    deadExitDeliveredByOwner.set(owner.id, delivered);
+  }
+  for (const sessionId of [...delivered]) {
+    if (!reportedForeign.has(sessionId)) delivered.delete(sessionId);
+  }
+  for (const sessionId of reportedForeign) {
+    if (delivered.has(sessionId)) continue;
+    // Id vivo de OUTRA janela também é estranho ao espelho — nunca inventa
+    // exit para ele; só ids comprovadamente mortos (PTY nem ACP).
+    if (
+      getSessionState(sessionId) !== null ||
+      getAcpDriverSession(sessionId) !== null
+    ) {
+      continue;
+    }
+    try {
+      owner.send(PTY_CHANNELS.exit, { sessionId, exitCode: 0 });
+      delivered.add(sessionId);
+    } catch {
+      // Janela morrendo: não marca como entregue — se ela voltar a sincronizar
+      // a próxima tentativa envia de novo.
+    }
+  }
+}
+
 export function syncPanes(
   entries: PaneRegistryEntry[],
   owner: WebContents,
@@ -1502,15 +1615,19 @@ export function syncPanes(
   for (const entry of entries) {
     paneIdCounts.set(entry.paneId, (paneIdCounts.get(entry.paneId) ?? 0) + 1);
   }
+  const reclaimed = new Set<string>();
   for (const entry of entries) {
     if (
       entry.sessionId &&
       paneIdCounts.get(entry.paneId) === 1 &&
       !isSessionOwnedBy(owner, entry.sessionId)
     ) {
-      reclaimDetachedMissionSession(owner, entry.sessionId);
+      if (reclaimDetachedMissionSession(owner, entry.sessionId)) {
+        reclaimed.add(entry.sessionId);
+      }
     }
   }
+  deliverDeadForeignSessionExits(owner, entries, reclaimed);
   const accepted = entries.filter(
     (entry) =>
       paneIdCounts.get(entry.paneId) === 1 &&

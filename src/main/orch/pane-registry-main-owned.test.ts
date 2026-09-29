@@ -35,6 +35,7 @@ const missionAuthority = vi.hoisted(() => {
     currentSeal: seal,
     paneSpecSeal: seal,
     paneSpecAvailable: true,
+    missionAvailable: true,
   };
 });
 
@@ -216,10 +217,14 @@ vi.mock("../pty/trusted-native-cli-binary", () => ({
 vi.mock("./project-domain-store-registry", () => ({
   getProjectDomainStores: vi.fn(() => ({
     missions: {
-      get: vi.fn(() => ({
-        id: "mission-headless",
-        squadId: "squad-headless",
-      })),
+      get: vi.fn(() =>
+        missionAuthority.missionAvailable
+          ? {
+              id: "mission-headless",
+              squadId: "squad-headless",
+            }
+          : undefined,
+      ),
     },
     missionPanes: {
       findByPaneId: vi.fn((paneId: string) =>
@@ -258,6 +263,7 @@ vi.mock("./mission-pane-authority", () => ({
     JSON.stringify(left) === JSON.stringify(right),
 }));
 
+import { detachOwnedMissionAgentSession } from "../pty/pty-manager";
 import {
   attachOrchMeta,
   forgetParkedBrowserPane,
@@ -311,6 +317,9 @@ describe("main-owned mission pane spawn", () => {
     missionAuthority.currentSeal = missionAuthority.seal;
     missionAuthority.paneSpecSeal = missionAuthority.seal;
     missionAuthority.paneSpecAvailable = true;
+    missionAuthority.missionAvailable = true;
+    vi.mocked(detachOwnedMissionAgentSession).mockReset();
+    vi.mocked(detachOwnedMissionAgentSession).mockReturnValue(true);
     orchSettings.squadCliPolicy = "operator-choice";
     identity.issue.mockClear();
   });
@@ -1123,7 +1132,10 @@ describe("main-owned mission pane spawn", () => {
     }
   });
 
-  it("does not present and retires a main-owned pane whose durable authority rotated", async () => {
+  it("does not present nor terminate a live main-owned pane whose durable authority rotated", async () => {
+    // WS-switch fail-safe: um selo vencido com sessão VIVA nunca autoriza
+    // terminar o agente por causa de uma troca de projeto. O pane fica
+    // Main-owned, sem apresentação, com um aviso único por (paneId, sessionId).
     const result = await requestPaneSpawn({
       adapterId: "codex",
       model: "gpt-5.6-sol",
@@ -1149,24 +1161,38 @@ describe("main-owned mission pane spawn", () => {
       ...missionAuthority.seal,
       contractHash: "contract-hash-rotated",
     };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    syncPanes([], owner, "renderer-generation-stale");
+    try {
+      // Dois heartbeats seguidos: o syncPanes roda ~1/s no campo.
+      syncPanes([], owner, "renderer-generation-stale");
+      syncPanes([], owner, "renderer-generation-stale");
 
-    expect(owner.send).not.toHaveBeenCalledWith(
-      ORCH_CHANNELS.panePresentationRequest,
-      expect.anything(),
-    );
-    await vi.waitFor(() => {
-      expect(pty.terminate).toHaveBeenCalledWith("pty-headless-1", {
-      origin: "pane-registry:owned-mission-session",
-    });
-      expect(getMainOwnedPane(result.paneId!)).toBeUndefined();
-    });
-    unregisterOrchRenderer(owner);
-    clearRendererWorkspaceScope(owner);
+      expect(owner.send).not.toHaveBeenCalledWith(
+        ORCH_CHANNELS.panePresentationRequest,
+        expect.anything(),
+      );
+      await Promise.resolve();
+      expect(pty.terminate).not.toHaveBeenCalledWith(
+        "pty-headless-1",
+        expect.anything(),
+      );
+      expect(getMainOwnedPane(result.paneId!)).toBeDefined();
+      const staleWarns = warn.mock.calls.filter((call) =>
+        String(call[0]).includes("kept live"),
+      );
+      expect(staleWarns).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+      deleteMainOwnedPane(result.paneId!);
+      unregisterOrchRenderer(owner);
+      clearRendererWorkspaceScope(owner);
+    }
   });
 
   it("retires only the exact stale session and preserves a same-pane replacement", async () => {
+    // A missão durável sumiu: o retirement continua autorizado (não depende
+    // de a sessão estar morta), mas só contra a sessão EXATA registrada.
     const result = await requestPaneSpawn({
       adapterId: "codex",
       model: "gpt-5.6-sol",
@@ -1197,7 +1223,7 @@ describe("main-owned mission pane spawn", () => {
     } as unknown as WebContents & { send: ReturnType<typeof vi.fn> };
     bindResolvedRendererWorkspaceScope(owner, scope);
     registerOrchRenderer(owner);
-    missionAuthority.paneSpecAvailable = false;
+    missionAuthority.missionAvailable = false;
 
     syncPanes([], owner, "renderer-generation-missing-spec");
 
@@ -1225,6 +1251,217 @@ describe("main-owned mission pane spawn", () => {
     pty.live.delete(replacementSessionId);
     unregisterOrchRenderer(owner);
     clearRendererWorkspaceScope(owner);
+  });
+
+  it("workspace switch does NOT terminate a worker whose authority seal went stale", async () => {
+    // Campo: trocar X → Y → X não pode matar os agentes de X. O selo vencido
+    // classifica a apresentação na volta; nunca autoriza terminar um PTY vivo
+    // só porque o operador trocou de projeto.
+    const result = await requestPaneSpawn({
+      adapterId: "codex",
+      model: "gpt-5.6-sol",
+      cwd: executionScope.rootRealPath,
+      missionId: "mission-headless",
+      agentName: "Worker Headless",
+      workerIncarnationId: "worker-incarnation-main",
+      role: "worker",
+      allowedTools: [],
+      allowedSkills: null,
+      scope,
+      executionScope,
+    });
+    const paneId = result.paneId!;
+    pty.detached.add("pty-headless-1");
+    const owner = {
+      id: 943,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents & { send: ReturnType<typeof vi.fn> };
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerOrchRenderer(owner);
+    const entry = {
+      paneId,
+      sessionId: "pty-headless-1",
+      title: "Worker Headless",
+      kind: "cli-agent" as const,
+      adapterId: "codex",
+      model: "gpt-5.6-sol",
+      state: "idle" as const,
+    };
+    syncPanes([entry], owner, "renderer-generation-ws-stale");
+    expect(pty.reattach).toHaveBeenCalledWith(owner, "pty-headless-1", paneId);
+
+    try {
+      // Selo rotacionou DEPOIS da apresentação — a saída do workspace encontra
+      // o worker "stale". Antes: terminava o PTY vivo e removia o pane.
+      missionAuthority.currentSeal = {
+        ...missionAuthority.seal,
+        contractHash: "contract-hash-rotated",
+      };
+      bindResolvedRendererWorkspaceScope(owner, {
+        ...scope,
+        checkoutId: "checkout-other-workspace",
+      });
+
+      expect(pty.terminate).not.toHaveBeenCalledWith(
+        "pty-headless-1",
+        expect.anything(),
+      );
+      expect(getPaneRuntimeAuthorityBySession("pty-headless-1")).toMatchObject(
+        {
+          owner,
+          paneId,
+          sessionId: "pty-headless-1",
+        },
+      );
+
+      // Volta ao projeto: o mesmo pane continua registrado no renderer, sem
+      // respawn e sem re-present (a sessão nunca saiu da mão dele).
+      bindResolvedRendererWorkspaceScope(owner, scope);
+      syncPanes([entry], owner, "renderer-generation-ws-stale");
+      expect(getPaneRuntimeAuthorityBySession("pty-headless-1")).toMatchObject(
+        {
+          owner,
+          paneId,
+          sessionId: "pty-headless-1",
+        },
+      );
+      expect(pty.spawn).toHaveBeenCalledTimes(1);
+    } finally {
+      unregisterOrchRenderer(owner);
+      clearRendererWorkspaceScope(owner);
+    }
+  });
+
+  it("workspace switch does NOT terminate a worker when the headless detach fails", async () => {
+    const result = await requestPaneSpawn({
+      adapterId: "codex",
+      model: "gpt-5.6-sol",
+      cwd: executionScope.rootRealPath,
+      missionId: "mission-headless",
+      agentName: "Worker Headless",
+      workerIncarnationId: "worker-incarnation-main",
+      role: "worker",
+      allowedTools: [],
+      allowedSkills: null,
+      scope,
+      executionScope,
+    });
+    const paneId = result.paneId!;
+    pty.detached.add("pty-headless-1");
+    const owner = {
+      id: 944,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents & { send: ReturnType<typeof vi.fn> };
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerOrchRenderer(owner);
+    const entry = {
+      paneId,
+      sessionId: "pty-headless-1",
+      title: "Worker Headless",
+      kind: "cli-agent" as const,
+      adapterId: "codex",
+      model: "gpt-5.6-sol",
+      state: "idle" as const,
+    };
+    syncPanes([entry], owner, "renderer-generation-ws-detach");
+    expect(pty.reattach).toHaveBeenCalledWith(owner, "pty-headless-1", paneId);
+
+    try {
+      // O detach físico recusou (identidade diverge / tap indisponível): antes
+      // isso terminava o PTY vivo; agora o pane segue registrado no renderer.
+      vi.mocked(detachOwnedMissionAgentSession).mockReturnValueOnce(false);
+      bindResolvedRendererWorkspaceScope(owner, {
+        ...scope,
+        checkoutId: "checkout-other-workspace",
+      });
+
+      expect(pty.terminate).not.toHaveBeenCalledWith(
+        "pty-headless-1",
+        expect.anything(),
+      );
+      expect(getPaneRuntimeAuthorityBySession("pty-headless-1")).toMatchObject(
+        {
+          owner,
+          paneId,
+          sessionId: "pty-headless-1",
+        },
+      );
+    } finally {
+      unregisterOrchRenderer(owner);
+      clearRendererWorkspaceScope(owner);
+    }
+  });
+
+  it("delivers a dead foreign session exit exactly once while the mirror reports it", () => {
+    // Id morto que o estacionado continua espelhando (sessão headless sem wc
+    // na hora do exit): entrega um PTY exit UMA vez por (owner, sessionId),
+    // esquece quando o espelho para de reportar e nunca toca id vivo alheio.
+    const owner = {
+      id: 945,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents & { send: ReturnType<typeof vi.fn> };
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerOrchRenderer(owner);
+    pty.live.add("pty-foreign-live");
+    pty.detached.add("pty-foreign-live");
+    const dead = {
+      paneId: "pane-dead-foreign",
+      sessionId: "pty-dead-foreign",
+      title: "Worker morto",
+      kind: "cli-agent" as const,
+      adapterId: "codex",
+      state: "idle" as const,
+    };
+    const live = {
+      paneId: "pane-foreign-live",
+      sessionId: "pty-foreign-live",
+      title: "Worker de outra janela",
+      kind: "cli-agent" as const,
+      adapterId: "codex",
+      state: "idle" as const,
+    };
+
+    try {
+      syncPanes([dead, live], owner, "renderer-generation-dead");
+      syncPanes([dead, live], owner, "renderer-generation-dead");
+
+      const deadExits = owner.send.mock.calls.filter(
+        (call) =>
+          call[0] === PTY_CHANNELS.exit &&
+          (call[1] as { sessionId: string }).sessionId === "pty-dead-foreign",
+      );
+      expect(deadExits).toHaveLength(1);
+      expect(deadExits[0][1]).toEqual({
+        sessionId: "pty-dead-foreign",
+        exitCode: 0,
+      });
+      expect(owner.send).not.toHaveBeenCalledWith(
+        PTY_CHANNELS.exit,
+        expect.objectContaining({ sessionId: "pty-foreign-live" }),
+      );
+
+      // O renderer parou de reportar o id: esquece. Se ele voltar a espelhar
+      // o id morto (espelho velho de outra geração), entrega de novo.
+      syncPanes([live], owner, "renderer-generation-dead");
+      syncPanes([dead, live], owner, "renderer-generation-dead");
+      const deadExitsAgain = owner.send.mock.calls.filter(
+        (call) =>
+          call[0] === PTY_CHANNELS.exit &&
+          (call[1] as { sessionId: string }).sessionId === "pty-dead-foreign",
+      );
+      expect(deadExitsAgain).toHaveLength(2);
+    } finally {
+      pty.live.delete("pty-foreign-live");
+      pty.detached.delete("pty-foreign-live");
+      unregisterOrchRenderer(owner);
+      clearRendererWorkspaceScope(owner);
+    }
   });
 
   it("keeps a transient reviewer main-owned when a renderer is live", async () => {
