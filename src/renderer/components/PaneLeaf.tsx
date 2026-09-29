@@ -13,6 +13,7 @@ import { CoffeeSpillCorner } from '../pet/CoffeeCup';
 import { BrowserPane } from './BrowserPane';
 import { PaneActivityStrip } from './PaneActivityStrip';
 import { PaneBirthOverlay } from './PaneBirthOverlay';
+import { PaneDictationOverlay } from './PaneDictationOverlay';
 import { PaneInteractionSurface } from './PaneInteractionSurface';
 import { PaneToolbar } from './PaneToolbar';
 import { PaneVacancy } from './PaneVacancy';
@@ -149,6 +150,9 @@ function TerminalPaneLeaf({ pane }: Props) {
       {/* Irmão do slot, nunca filho: o nó do terminal é re-parentado para
           dentro de `pane__terminal` por fora do React. */}
       {pane.kind === 'cli-agent' && <PaneBirthOverlay pane={pane} />}
+      {/* F-371: o ditado injeta no pane focado — o chip pertence a todos os
+          panes de terminal (shells também recebem ditado). */}
+      <PaneDictationOverlay isFocused={isFocused} />
       <div
         className="pane__terminal"
         ref={slotRef}

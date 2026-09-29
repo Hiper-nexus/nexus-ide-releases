@@ -1911,6 +1911,69 @@ body {
   }
 }
 
+/* F-371 — chip de ditado: mesma linguagem do .pane-birth (chip inferior,
+   tokens idênticos) para não introduzir vocabulário visual novo. */
+.pane-dictation {
+  position: absolute;
+  inset: auto var(--space-3) var(--space-3) var(--space-3);
+  z-index: var(--z-soft-overlay);
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    'pulse headline'
+    'pulse detail';
+  align-items: center;
+  gap: 0 var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+  border-radius: var(--radius-xl);
+  background: color-mix(in srgb, var(--bg-elevated) 88%, var(--accent) 4%);
+  box-shadow: 0 6px 20px -12px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+.pane-dictation__pulse {
+  grid-area: pulse;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pane-birth-pulse 1.5s var(--ease-out-quart) infinite;
+}
+
+.pane-dictation__headline {
+  grid-area: headline;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+}
+
+.pane-dictation__detail {
+  grid-area: detail;
+  font-size: 10px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-dictation--failed {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.pane-dictation--failed .pane-dictation__pulse {
+  background: var(--danger);
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pane-dictation__pulse {
+    animation: none;
+    opacity: 0.8;
+  }
+}
+
 .pane-activity {
   flex: 0 0 auto;
   min-width: 0;

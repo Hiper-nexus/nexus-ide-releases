@@ -18,8 +18,17 @@ import type {
   VoiceRuntimeInfo,
 } from '../../shared/voice-ipc';
 import type { MicHealth } from './wake-health';
+import type { DictationOutputMode } from './dictation-output-mode';
 
 const RESPONSE_MUTED_KEY = 'nexus.voice.responseMuted';
+
+/**
+ * F-371: quanto tempo o chip "Transcrição falhou" permanece no pane antes de
+ * auto-limpar. O erro detalhado (provider, motivo, caminho de correção) segue
+ * no HUD/configurações de Voz via `error` — o chip é só o aviso no pane.
+ */
+export const DICTATION_FAILED_NOTICE_MS = 4_000;
+let dictationFailedTimer: ReturnType<typeof setTimeout> | null = null;
 
 function loadResponseMutedFlag(
   store: Pick<Storage, 'getItem' | 'setItem'> | null,
@@ -83,6 +92,17 @@ interface VoiceStore {
    * (Classic TTS + Live PCM) is suppressed.
    */
   responseMuted: boolean;
+  /**
+   * F-371: ditado em curso entre o fim da fala e a confirmação do pane
+   * (STT + refino CODE podem levar ~6 s). `mode` espelha
+   * `info.dictationOutputMode` do turno — 'english' é o modo CODE.
+   */
+  dictationPending: {
+    startedAt: number;
+    mode?: DictationOutputMode;
+  } | null;
+  /** Aviso transitório de falha do ditado (auto-limpa em ~4 s). */
+  dictationFailed: boolean;
 
   setStatus: (status: VoiceUiStatus) => void;
   setInfo: (info: VoiceRuntimeInfo) => void;
@@ -101,6 +121,10 @@ interface VoiceStore {
   setHudAnchor: (anchor: { corner: HudCorner; dx: number; dy: number }) => void;
   setHudWidth: (width: number) => void;
   setResponseMuted: (responseMuted: boolean) => void;
+  setDictationPending: (
+    pending: { startedAt: number; mode?: DictationOutputMode } | null,
+  ) => void;
+  setDictationFailed: (failed: boolean) => void;
   openSettings: () => void;
   closeSettings: () => void;
 }
@@ -131,6 +155,8 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   liveInterrupted: null,
   hud: hudStorage ? loadHudPrefs(hudStorage) : { ...DEFAULT_HUD_PREFS },
   responseMuted: loadResponseMutedFlag(hudStorage),
+  dictationPending: null,
+  dictationFailed: false,
 
   setStatus: (status) => set({ status, ...(status !== 'error' ? { error: null } : {}) }),
   setInfo: (info) => set({ info }),
@@ -162,6 +188,20 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   setResponseMuted: (responseMuted) => {
     saveResponseMutedFlag(responseMuted, hudStorage);
     set({ responseMuted });
+  },
+  setDictationPending: (dictationPending) => set({ dictationPending }),
+  setDictationFailed: (dictationFailed) => {
+    if (dictationFailedTimer) {
+      clearTimeout(dictationFailedTimer);
+      dictationFailedTimer = null;
+    }
+    if (dictationFailed) {
+      dictationFailedTimer = setTimeout(() => {
+        dictationFailedTimer = null;
+        set({ dictationFailed: false });
+      }, DICTATION_FAILED_NOTICE_MS);
+    }
+    set({ dictationFailed });
   },
   openSettings: () => set({ settingsOpen: true }),
   closeSettings: () => set({ settingsOpen: false }),

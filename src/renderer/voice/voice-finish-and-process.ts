@@ -326,6 +326,13 @@ export async function finishAndProcess(
     // pane focado e encerra. NUNCA abre sessão Live, cérebro Jarvis, captura
     // de reply ou TTS — a Jarvis é um produto separado com gatilhos próprios.
     if (dictationTurn) {
+      // F-371: entre o fim da fala e a confirmação do pane ficam ~6 s de
+      // silêncio visual — o chip do pane focado é alimentado por este flag.
+      // Toda saída do ramo (sucesso, descarte, falha, exceção) precisa limpá-lo.
+      store.setDictationPending({
+        startedAt: Date.now(),
+        mode: store.info?.dictationOutputMode,
+      });
       // Qualidade da fala ANTES da transcrição: quando o texto sair errado, o
       // voice.log diz se foi o microfone (abafado, fraco) ou o provider.
       if (result.quality) {
@@ -345,11 +352,14 @@ export async function finishAndProcess(
       if (!stt.ok) {
         // F-524: erro acionável em pt-BR — qual provider falhou, por quê e o
         // caminho de correção (chave, preview, throttle, whisper local).
+        store.setDictationPending(null);
+        store.setDictationFailed(true);
         store.setError(describeSttFailure(stt));
         return;
       }
       if (stt.discarded === 'echo') {
         console.log(`[voice] eco do TTS descartado no ditado: "${stt.text}"`);
+        store.setDictationPending(null);
         store.setStatus('idle');
         return;
       }
@@ -359,6 +369,7 @@ export async function finishAndProcess(
         isDiscardableTranscript(transcript, { inConversation: false })
       ) {
         console.log(`[voice] ditado vazio/lixo descartado: "${stt.text}"`);
+        store.setDictationPending(null);
         store.setStatus('idle');
         return;
       }
@@ -376,6 +387,8 @@ export async function finishAndProcess(
       store.setStatus('routing');
       const routed = await routeDictation(transcript);
       if (!routed.ok) {
+        store.setDictationPending(null);
+        store.setDictationFailed(true);
         store.setError(
           routed.reason === 'delivery-failed'
             ? 'O ditado chegou ao pane mas a injeção não foi confirmada — nada foi escrito.'
@@ -383,6 +396,7 @@ export async function finishAndProcess(
         );
         return;
       }
+      store.setDictationPending(null);
       store.setStatus('idle');
       return;
     }
@@ -1141,6 +1155,12 @@ export async function finishAndProcess(
     }
     store.setStatus('idle');
   } catch (err) {
+    // F-371: um throw no meio do ramo de ditado (timeout do STT, IPC caído)
+    // não pode deixar o chip "Transcrevendo…" preso no pane.
+    if (useVoiceStore.getState().dictationPending) {
+      store.setDictationPending(null);
+      store.setDictationFailed(true);
+    }
     store.setError(errMsg(err));
     liveStatus('error', errMsg(err));
   } finally {
