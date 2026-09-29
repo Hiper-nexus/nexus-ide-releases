@@ -10,13 +10,25 @@ type StatusTap = (entry: {
 }) => void;
 type ExitTap = (sessionId: string) => void;
 
+type TurnStartTap = (entry: {
+  sessionId: string;
+  paneId: string;
+  sequence: number;
+  observedAt: number;
+}) => void;
+
 const statusTaps = new Set<StatusTap>();
+const turnStartTaps = new Set<TurnStartTap>();
 const exitTaps = new Set<ExitTap>();
 
 vi.mock('./agent-status', () => ({
   tapAgentSemanticStatus: (cb: StatusTap) => {
     statusTaps.add(cb);
     return () => statusTaps.delete(cb);
+  },
+  tapAgentTurnStart: (cb: TurnStartTap) => {
+    turnStartTaps.add(cb);
+    return () => turnStartTaps.delete(cb);
   },
   isSessionInjectableIdle: () => true,
 }));
@@ -84,6 +96,12 @@ function emitStatus(sessionId: string, status: string): void {
   }
 }
 
+function emitTurnStart(sessionId: string): void {
+  for (const tap of [...turnStartTaps]) {
+    tap({ sessionId, paneId: `pane-${sessionId}`, sequence: 1, observedAt: Date.now() });
+  }
+}
+
 function emitExit(sessionId: string): void {
   for (const tap of [...exitTaps]) tap(sessionId);
 }
@@ -134,6 +152,7 @@ describe('worker-handoff-ttl (paridade Overclock: worker fecha ~30s pós-handoff
   afterEach(() => {
     shutdownWorkerHandoffTtl();
     statusTaps.clear();
+    turnStartTaps.clear();
     exitTaps.clear();
     vi.useRealTimers();
   });
@@ -160,6 +179,42 @@ describe('worker-handoff-ttl (paridade Overclock: worker fecha ~30s pós-handoff
     emitStatus('pty-w1', 'working');
     vi.advanceTimersByTime(WORKER_POST_HANDOFF_TTL_MS * 2);
     expect(h.closed).toHaveLength(0);
+  });
+
+  it('F-690: helper reaproveitado depois do consumo não fecha na pausa do trabalho novo', () => {
+    // 29/09: consumido 16:04:22, Maestro escreveu 16:04:27, TTL matou 16:06:42.
+    const h = harness();
+    initWorkerHandoffTtl(h.deps);
+    vi.advanceTimersByTime(5_000);
+    emitStatus('pty-w1', 'working');
+    emitStatus('pty-w1', 'idle');
+    vi.advanceTimersByTime(WORKER_POST_HANDOFF_TTL_MS * 4);
+    expect(h.closed).toHaveLength(0);
+  });
+
+  it('F-690: submissão nova sem transição de status também conta como trabalho', () => {
+    const h = harness();
+    initWorkerHandoffTtl(h.deps);
+    vi.advanceTimersByTime(5_000);
+    emitTurnStart('pty-w1');
+    emitStatus('pty-w1', 'idle');
+    vi.advanceTimersByTime(WORKER_POST_HANDOFF_TTL_MS * 4);
+    expect(h.closed).toHaveLength(0);
+  });
+
+  it('F-690: reaproveitado fecha de novo depois de entregar e ter o handoff novo consumido', () => {
+    const h = harness();
+    initWorkerHandoffTtl(h.deps);
+    vi.advanceTimersByTime(5_000);
+    emitStatus('pty-w1', 'working');
+    vi.advanceTimersByTime(60_000);
+    h.state.handoffs = [
+      handoffFor('pty-w1', 'consumed'),
+      { ...handoffFor('pty-w1', 'consumed'), id: 'hoff-second', createdAt: Date.now() },
+    ];
+    emitStatus('pty-w1', 'idle');
+    vi.advanceTimersByTime(WORKER_POST_HANDOFF_TTL_MS);
+    expect(h.closed).toHaveLength(1);
   });
 
   it('re-avalia no disparo: busy entre armar e disparar não fecha', () => {
