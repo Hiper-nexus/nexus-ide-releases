@@ -15,7 +15,7 @@ import {
 
 /**
  * Última milha do shot-bridge (F-576/F-613). O Main valida os caminhos (realpath
- * sob ~/Pictures|Movies/Nexus Shot), foca a janela e emite
+ * sob ~/Pictures|Movies/Nexus Shot, ou Imagens|Vídeos no Windows), foca a janela e emite
  * "shot:files-received".
  *
  * Além de exibir o toast de confirmação com ação Abrir/Abrir pasta, os arquivos
@@ -52,8 +52,9 @@ function formatBytes(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
-function parentDirOf(path: string): string {
-  const cut = path.lastIndexOf('/');
+export function parentDirOf(path: string): string {
+  // O Main devolve o realpath nativo: C:\…\Nexus Shot\x.png no Windows.
+  const cut = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
   return cut > 0 ? path.slice(0, cut) : '';
 }
 

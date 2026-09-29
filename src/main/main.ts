@@ -1011,6 +1011,10 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
       try {
         await startShotBridgeServer({
           userDataPath: app.getPath("userData"),
+          knownFolders: {
+            pictures: app.getPath("pictures"),
+            videos: app.getPath("videos"),
+          },
           onFiles: (files) => {
             // Janela principal = qualquer janela que não seja o pet (mesmo
             // filtro do activate; getAllWindows()[0] poderia ser o pet).

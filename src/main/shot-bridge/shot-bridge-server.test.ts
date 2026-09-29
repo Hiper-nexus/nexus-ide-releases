@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   startShotBridgeServer,
   stopShotBridgeServer,
+  shotAllowedRoots,
   validateShotIngestFiles,
   type ShotBridgeServerHandle,
 } from './shot-bridge-server';
@@ -27,7 +28,8 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'shot-bridge-home-'));
   userData = mkdtempSync(join(tmpdir(), 'shot-bridge-userdata-'));
   picturesDir = join(home, 'Pictures', 'Nexus Shot');
-  moviesDir = join(home, 'Movies', 'Nexus Shot');
+  // Gravações: ~/Movies no macOS, ~\Videos no Windows (dirs::video_dir do Shot).
+  moviesDir = join(home, process.platform === 'win32' ? 'Videos' : 'Movies', 'Nexus Shot');
   mkdirSync(picturesDir, { recursive: true });
   mkdirSync(moviesDir, { recursive: true });
 });
@@ -99,6 +101,71 @@ describe('validateShotIngestFiles (política de caminhos)', () => {
       ok: false,
       reason: 'too-many-files',
     });
+  });
+});
+
+describe('raízes e caminhos no Windows', () => {
+  it('raízes seguem a pasta de vídeos do SO e as pastas conhecidas', () => {
+    expect(shotAllowedRoots('/Users/u', 'darwin')).toEqual([
+      '/Users/u/Pictures/Nexus Shot',
+      '/Users/u/Movies/Nexus Shot',
+    ]);
+    expect(shotAllowedRoots('C:\\Users\\u', 'win32')).toEqual([
+      'C:\\Users\\u\\Pictures\\Nexus Shot',
+      'C:\\Users\\u\\Videos\\Nexus Shot',
+    ]);
+    // Imagens redirecionada ao OneDrive entra; a pasta padrão repetida não
+    // duplica.
+    expect(
+      shotAllowedRoots('C:\\Users\\u', 'win32', {
+        pictures: 'C:\\Users\\u\\OneDrive\\Imagens',
+        videos: 'C:\\Users\\u\\Videos',
+      }),
+    ).toEqual([
+      'C:\\Users\\u\\Pictures\\Nexus Shot',
+      'C:\\Users\\u\\Videos\\Nexus Shot',
+      'C:\\Users\\u\\OneDrive\\Imagens\\Nexus Shot',
+    ]);
+  });
+
+  it('no Windows aceita só letra de unidade — UNC e device paths não', () => {
+    const opts = {
+      platform: 'win32' as const,
+      homeDir: 'C:\\Users\\u',
+      realpathFn: (p: string) => p,
+    };
+    for (const raw of [
+      '\\\\host\\share\\Pictures\\Nexus Shot\\x.png',
+      '\\\\?\\C:\\Users\\u\\Pictures\\Nexus Shot\\x.png',
+      '\\\\.\\C:\\Users\\u\\Pictures\\Nexus Shot\\x.png',
+      '/Users/u/Pictures/Nexus Shot/x.png',
+      'Pictures\\Nexus Shot\\x.png',
+    ]) {
+      expect(validateShotIngestFiles([raw], opts), raw).toEqual({
+        ok: false,
+        reason: 'path-not-absolute',
+      });
+    }
+  });
+
+  it('aceita a pasta conhecida redirecionada fora da home', () => {
+    const redirected = mkdtempSync(join(tmpdir(), 'shot-bridge-onedrive-'));
+    try {
+      const dir = join(redirected, 'Nexus Shot');
+      mkdirSync(dir, { recursive: true });
+      const png = makeFile(dir, 'cap.png');
+      expect(validateShotIngestFiles([png], { homeDir: home }).ok).toBe(false);
+      expect(
+        validateShotIngestFiles([png], { homeDir: home, knownFolders: { pictures: redirected } }).ok,
+      ).toBe(true);
+    } finally {
+      rmSync(redirected, { recursive: true, force: true });
+    }
+  });
+
+  it.runIf(process.platform === 'win32')('no Windows compara a raiz sem diferenciar caixa', () => {
+    const png = makeFile(picturesDir, 'cap.png');
+    expect(validateShotIngestFiles([png.toUpperCase()], { homeDir: home }).ok).toBe(true);
   });
 });
 
