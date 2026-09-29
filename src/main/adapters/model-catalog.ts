@@ -383,16 +383,38 @@ export function loadUserModelCatalog(file = USER_MODEL_CATALOG_FILE): ModelCatal
  *
  * Including PUBLISHED is required so routeTask sees nexus-eval quality even when
  * a legacy user catalog has cost/availability only (no quality blocks).
+ *
+ * F-679: um USER com `updatedAt` MAIS VELHO que o PUBLISHED do app é cópia
+ * semeada/baixada de uma versão antiga (o refresh remoto dá 404 em repo
+ * privado e a semente nunca é regravada). Ele passa a valer só para modelos
+ * que o app não conhece: BUILTIN e PUBLISHED vencem por cima. Em 29/09 a
+ * semente de 14/09 dizia `gemini-3.8-flash-high` custo low (hoje high) e
+ * puxava a rota para o AGY. USER sem data ou mais novo continua mandando.
  */
 export function loadModelCatalog(file = USER_MODEL_CATALOG_FILE): ModelCatalog {
   if (file === USER_MODEL_CATALOG_FILE && cachedCatalog) return cachedCatalog;
-  const withPublished = mergeModelCatalogs(
-    BUILTIN_MODEL_CATALOG,
-    PUBLISHED_MODEL_CATALOG,
-  );
-  const catalog = mergeModelCatalogs(withPublished, loadUserModelCatalog(file));
+  const user = loadUserModelCatalog(file);
+  const catalog = isStaleUserModelCatalog(user)
+    ? mergeModelCatalogs(
+        mergeModelCatalogs(user, BUILTIN_MODEL_CATALOG),
+        PUBLISHED_MODEL_CATALOG,
+      )
+    : mergeModelCatalogs(
+        mergeModelCatalogs(BUILTIN_MODEL_CATALOG, PUBLISHED_MODEL_CATALOG),
+        user,
+      );
   if (file === USER_MODEL_CATALOG_FILE) cachedCatalog = catalog;
   return catalog;
+}
+
+/** Catálogo do usuário datado de antes do catálogo publicado que o app traz. */
+export function isStaleUserModelCatalog(
+  user: ModelCatalog,
+  published: ModelCatalog = PUBLISHED_MODEL_CATALOG,
+): boolean {
+  const userAt = Date.parse(user.updatedAt ?? '');
+  const publishedAt = Date.parse(published.updatedAt ?? '');
+  return Number.isFinite(userAt) && Number.isFinite(publishedAt) && userAt < publishedAt;
 }
 
 function writeCatalogFile(catalog: ModelCatalog, file: string): void {

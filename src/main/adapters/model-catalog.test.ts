@@ -19,6 +19,7 @@ import {
   resolveModelCatalogUrl,
   seedLocalModelCatalogFromPublished,
   invalidateModelCatalogCache,
+  isStaleUserModelCatalog,
 } from './model-catalog';
 
 const ADAPTER: Adapter = {
@@ -292,6 +293,46 @@ describe('loadModelCatalog quality merge layer', () => {
     tmpDirs.length = 0;
   });
 
+  it('catálogo do usuário mais velho que o publicado não sobrescreve o app (F-679)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-stale-catalog-'));
+    tmpDirs.push(dir);
+    const published = PUBLISHED_MODEL_CATALOG.adapters?.agy?.models?.find(
+      (m) => m.id === 'gemini-3.8-flash-high',
+    );
+    expect(published?.costTier).toBe('high');
+    let written = 0;
+    const write = (updatedAt: string | undefined) => {
+      written += 1;
+      const file = path.join(dir, `catalog-${written}.json`);
+      fs.writeFileSync(file, JSON.stringify({
+        version: 1,
+        ...(updatedAt ? { updatedAt } : {}),
+        adapters: {
+          agy: {
+            models: [
+              { id: 'gemini-3.8-flash-high', availability: 'cheap', costTier: 'low' },
+              { id: 'gemini-local-only', availability: 'free', costTier: 'free' },
+            ],
+          },
+        },
+      }));
+      return file;
+    };
+    const agy = (file: string, id: string) =>
+      loadModelCatalog(file).adapters?.agy?.models?.find((m) => m.id === id);
+
+    // Semente de 14/09 (campo, 29/09): o app de 28/09 vence; o modelo que só o
+    // usuário conhece continua disponível.
+    const stale = write('2026-09-03T00:00:00.000Z');
+    expect(isStaleUserModelCatalog(JSON.parse(fs.readFileSync(stale, 'utf8')))).toBe(true);
+    expect(agy(stale, 'gemini-3.8-flash-high')?.costTier).toBe('high');
+    expect(agy(stale, 'gemini-local-only')?.costTier).toBe('free');
+
+    // Catálogo mais novo que o app, ou sem data (edição manual): o usuário manda.
+    expect(agy(write('2999-01-01T00:00:00.000Z'), 'gemini-3.8-flash-high')?.costTier).toBe('low');
+    expect(agy(write(undefined), 'gemini-3.8-flash-high')?.costTier).toBe('low');
+  });
+
   it('keeps nexus-eval quality when a cost-only legacy overlay merges on top', () => {
     // A regra mora em mergeModelCatalogs: entry de overlay sem quality não
     // pode apagar a quality da base. Base sintética — o catálogo publicado
@@ -432,9 +473,11 @@ describe('refreshRemoteModelCatalog', () => {
     tmpDirs.push(dir);
     const file = path.join(dir, 'model-catalog.json');
 
+    // F-679: catálogo remoto mais velho que o publicado do app perde para ele;
+    // aqui o remoto é o mais novo, então sobrepõe o que o app traz.
     const remoteBody = {
       version: 2,
-      updatedAt: '2026-07-08T00:00:00.000Z',
+      updatedAt: '2099-01-01T00:00:00.000Z',
       adapters: {
         grok: {
           models: [
