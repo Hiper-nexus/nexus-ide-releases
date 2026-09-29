@@ -8330,7 +8330,7 @@ export const RELEASE_076142: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076143: AppRelease = {
   version: '0.76.143',
   date: '2026-09-29',
   codename: 'Terminal sobe rápido',
@@ -8351,6 +8351,25 @@ export const CURRENT_RELEASE: AppRelease = {
         'Ao focar ou voltar a ver um pane, o Nexus reafirma o tamanho dele para a CLI; se ela ' +
         'estava em outro tamanho, redesenha a tela. "Redesenhar tela" no toolbar do pane força ' +
         'o redesenho quando algo ainda sair embaralhado.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.144',
+  date: '2026-09-29',
+  codename: 'O modelo mais novo, sempre',
+  summary:
+    'Quando uma CLI passa a oferecer uma versão nova de um modelo, o Nexus a usa na hora, com ' +
+    'ou sem benchmark publicado. Inclui a 0.76.143.',
+  highlights: [
+    {
+      title: 'Modelo novo usado na hora',
+      detail:
+        'A versão mais nova da mesma linha (por exemplo, um GPT-6.2 Sol ao lado do 6.1) passa a ' +
+        'valer na rota automática e como padrão do pane assim que a CLI a lista, sem esperar ' +
+        'uma atualização do Nexus. Sem benchmark, ela herda a nota da versão anterior.',
     },
   ],
   fixes: [],

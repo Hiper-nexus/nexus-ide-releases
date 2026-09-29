@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.144 — O modelo mais novo, sempre
+
+Pedido do operador em 29/09: "qualquer modelo novo deve ser usado; os novos são os melhores". Inclui a 0.76.143.
+
+- **Modelo novo que a CLI anuncia é usado sem cadastro (F-217).** A 0.76.142 (F-691) aplicou a regra aos modelos que o Nexus já conhecia: o MiniMax M3.1 Flash Preview virou o padrão e o primeiro de todo tier. Faltava o modelo que a CLI passa a oferecer depois. Agora a versão mais nova da mesma linha (só os números mudam, como `gpt-6.1-sol` → `gpt-6.2-sol` ou `claude-opus-5-5` → `claude-opus-5-6`) substitui a antiga na rota automática e como padrão do pane assim que a CLI a lista. Sem benchmark publicado, ela herda a nota da versão anterior. A versão nova de um modelo de topo continua tratada como topo em revisão e trabalho crítico. Modelos bloqueados pelo catálogo, recusados pelo provider ou citados no texto da tarefa ficam como estavam. Uma linha nova de verdade (outro nome, não só outro número) ainda precisa ser cadastrada.
+
 ## 0.76.143 — Terminal sobe rápido
 
 Pedido do operador em 29/09: terminais que embaralham e pane novo que demora quase um minuto para subir. Inclui a 0.76.142.
