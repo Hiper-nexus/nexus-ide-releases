@@ -7915,7 +7915,7 @@ export const RELEASE_076127: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076128: AppRelease = {
   version: '0.76.128',
   date: '2026-09-29',
   codename: 'Todas as LLMs pelo benchmark oficial',
@@ -7935,6 +7935,28 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'A nota publicada pelo fabricante pesa mais que a ordem fixa da tabela. A preferência ' +
         'do Maestro só desempata, e excluir uma CLI saudável é ignorado e avisado.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.129',
+  date: '2026-09-29',
+  codename: 'Catálogo em dia',
+  summary:
+    'Um catálogo de modelos antigo guardado na máquina deixa de passar por ' +
+    'cima do catálogo que a versão instalada traz — custo e modelos voltam a ' +
+    'ser os atuais e a rota para de favorecer uma LLM por dado velho. Inclui ' +
+    'a 0.76.128.',
+  highlights: [
+    {
+      title: 'Rota com o catálogo atual',
+      detail:
+        'A cópia local do catálogo, semeada numa versão antiga, sobrescrevia o ' +
+        'catálogo do app: o Gemini 3.8 Flash aparecia como barato e puxava a ' +
+        'rota para o AGY. Cópia mais velha que o app agora só acrescenta ' +
+        'modelos que o app não conhece.',
     },
   ],
   fixes: [],

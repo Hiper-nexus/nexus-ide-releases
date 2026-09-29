@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.129 — Catálogo em dia
+
+Uso real no Windows em 29/09. Inclui a 0.76.128 (Todas as LLMs pelo benchmark oficial).
+
+- **Catálogo local velho não sobrescreve o do app (F-679).** `~/.nexus/model-catalog.json`, semeado numa versão antiga, nunca era regravado (o refresh remoto dá 404 no repo privado) e, sendo a última camada, vencia o catálogo publicado: aqui dizia `gemini-3.8-flash-high` custo low (hoje high) e a rota do F-189 escolhia o AGY no lugar do glm-5.3. Cópia com data anterior ao catálogo do app vira a camada de baixo e só acrescenta modelos que o app não conhece; cópia sem data ou mais nova continua mandando.
+
 ## 0.76.128 — Todas as LLMs pelo benchmark oficial
 
 Pedido do operador em 29/09. Inclui a 0.76.127.
