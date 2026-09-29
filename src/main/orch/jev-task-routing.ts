@@ -47,34 +47,54 @@ const TIERS: readonly TaskTier[] = ['trivial', 'easy', 'medium', 'hard', 'critic
 
 /**
  * Semântica alinhada à heurística de task-router.ts: crítico = risco
- * (segurança/auth/pagamento/dados/produção); difícil = arquitetura, refactor,
- * performance, debug, integração; fácil = rename/typo/doc/estilo/log;
- * trivial = inspeção (listar, ler, verificar, mostrar); médio = o resto.
+ * (segurança/auth/pagamento/dados/produção); difícil = raciocínio profundo
+ * entre muitos componentes (arquitetura, refactor grande, performance, race/
+ * leak, integração, review sênior de diff/branch/release); médio = trabalho
+ * de escopo claro, incluindo mapear/diagnosticar código só lendo; fácil =
+ * rename/typo/doc/estilo/log; trivial = consulta/relatório sem julgar código.
+ *
+ * F-194: o texto anterior mandava 60 de 78 tarefas reais delegadas (25–28/09)
+ * para `hard` — mapeamentos e diagnósticos só leitura iam para o tier mais
+ * caro. Com este texto o mesmo conjunto dá 32 hard / 39 medium e a confiança
+ * ≥ 0.6 sobe de 55 para 59 de 78; o piso de code review
+ * (`codeReviewTierFloor`) continua segurando review de código em `hard`.
  */
 const TASK_ROUTING_QUESTIONS: Record<string, JevQuestion> = {
   tier: {
     type: 'choice',
     instructions:
-      'Classify the complexity and risk tier of this software task for routing ' +
-      'it to a model. Judge the WORK, not the wording.',
+      'Classify the complexity and risk tier of this software task so it is routed ' +
+      'to the cheapest model that will still do it well. Judge the actual work the ' +
+      'task requires, not how the request is worded, how long it is, or how ' +
+      'important the project is.',
     criteria: {
       trivial:
-        'inspection only: list, read, check, show, count, find a file — no code changes ' +
-        'and no code review (reviewing a diff, branch or release is hard, even read-only)',
+        'Only looks something up and reports it: list, read, check, show, count, find ' +
+        'a file or value, or run an existing command (tests, lint, build, version ' +
+        'check) and report the output. No code changes and no judgment about code: ' +
+        'reviewing, verifying or validating a fix, diff, branch, release or review ' +
+        'finding is never trivial.',
       easy:
-        'small contained edit: rename, typo, comment, README/doc text, formatting, ' +
-        'lint, CSS/style tweak, copy/label/translation, adding a log line',
+        'Small contained edit with an obvious solution: rename, typo, comment, ' +
+        'README/doc text, formatting, lint fix, CSS/style tweak, copy/label/' +
+        'translation, adding a log line, bumping a version or config value.',
       medium:
-        'ordinary implementation: a feature or fix touching one or a few files ' +
-        'with clear scope and no special risk (the default when nothing else fits)',
+        'Ordinary engineering with clear scope: implement or fix a feature in one or ' +
+        'a few files, write or update tests, diagnose one failing test or error, ' +
+        'read-only mapping of existing code (find where something is implemented, ' +
+        'inventory, explain a flow, list file:line) without designing a new ' +
+        'architecture, or checking a few specific review findings or revalidating a ' +
+        'small fix. The default when nothing else clearly fits.',
       hard:
-        'architecture, refactor or redesign, performance/optimization, debugging ' +
-        'a race or leak, algorithms, parsers/compilers/engines, system or ' +
-        'protocol design, cross-system integration, senior code review of a diff, ' +
-        'branch or release (read-only included)',
+        'Deep reasoning across many components: architecture or redesign plans, ' +
+        'large refactors, performance optimization, debugging races, leaks or ' +
+        'intermittent failures, algorithms, parsers or engines, cross-system ' +
+        'integration design, or a senior code review of a whole diff, branch or ' +
+        'release (read-only included).',
       critical:
-        'risk-bearing work: security, authentication/authorization, secrets, ' +
-        'payments/billing, deleting or migrating data, production/deploy changes',
+        'Work that causes real damage if done wrong: security, authentication or ' +
+        'authorization, secrets, payments or billing, deleting or migrating data, ' +
+        'production deploys or infrastructure changes.',
     },
   },
   specialty: {

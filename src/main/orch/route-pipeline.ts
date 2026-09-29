@@ -106,10 +106,13 @@ export function scoreRouteCandidate(
     2 * Math.min(24, Math.max(6, Number(qualityRaw) || NEUTRAL_UNPUBLISHED_QUALITY));
 
   const costRank = modelRoutingRank(info);
+  // Hard pesa o custo quase como medium (×1.5): com 26 dos 71 spawns pinados
+  // no mesmo provider caro, o hard barato com nota próxima deve ganhar.
+  // Critical continua leve (×0.5) — ali a capacidade manda.
   const cost =
     input.tier === 'trivial' || input.tier === 'easy'
       ? -costRank * 4
-      : input.tier === 'medium'
+      : input.tier === 'medium' || input.tier === 'hard'
         ? -costRank * 1.5
         : -costRank * 0.5;
 

@@ -106,6 +106,54 @@ describe('scoreRouteCandidate', () => {
     expect(weak.quality).toBeLessThan(2 * NEUTRAL_UNPUBLISHED_QUALITY);
   });
 
+  it('tier hard pesa o custo (×1.5); critical mantém o peso leve (×0.5)', () => {
+    // glm-5.3 (low → rank 1): custo leve no hard, pesado no trivial.
+    const hard = scoreRouteCandidate(entry('glm', 'glm-5.3', 'hard'), 0, {
+      tier: 'hard', modelCatalog: catalog,
+    });
+    const critical = scoreRouteCandidate(entry('glm', 'glm-5.3', 'critical'), 0, {
+      tier: 'critical', modelCatalog: catalog,
+    });
+    const medium = scoreRouteCandidate(entry('glm', 'glm-5.3', 'medium'), 0, {
+      tier: 'medium', modelCatalog: catalog,
+    });
+    expect(hard.cost).toBe(-1.5);
+    expect(hard.cost).toBe(medium.cost);
+    expect(critical.cost).toBe(-0.5);
+  });
+
+  it('hard: notas publicadas a ≤2 pontos → o mais barato vence', () => {
+    // claude-opus-5 (q≈21.9, high) vale só 1.5 q acima de glm-5.3
+    // (q≈20.4, low): 3 pontos de custo ×1.5 viram o jogo que o peso 0.5
+    // antigo dava ao caro.
+    const { ranked: out, scored } = multiScoreRerank({
+      ranked: [
+        entry('glm', 'glm-5.3', 'hard'),
+        entry('claude', 'claude-opus-5', 'hard'),
+      ],
+      tier: 'hard',
+      modelCatalog: catalog,
+    });
+    const glmScore = scored.find((s) => s.c.adapterId === 'glm')!.score;
+    const opusScore = scored.find((s) => s.c.adapterId === 'claude')!.score;
+    expect(Math.abs(glmScore.quality - opusScore.quality)).toBeLessThanOrEqual(4);
+    expect(out[0]?.c.adapterId).toBe('glm');
+  });
+
+  it('hard: nota publicada ≥4 pontos acima → o mais forte vence mesmo caro', () => {
+    // claude-opus-5-5 (q≈23, high) abre ~9 q sobre glm-4.7 (q≈13.8, low):
+    // nem ×1.5 no custo derruba uma diferença real de capacidade.
+    const { ranked: out } = multiScoreRerank({
+      ranked: [
+        entry('glm', 'glm-4.7', 'hard'),
+        entry('claude', 'claude-opus-5-5', 'hard'),
+      ],
+      tier: 'hard',
+      modelCatalog: catalog,
+    });
+    expect(out[0]?.c.adapterId).toBe('claude');
+  });
+
   it('penalizes adapters already used in the mission (diversity)', () => {
     const e = entry('codex', 'gpt-5.4');
     const fresh = scoreRouteCandidate(e, 0, {
