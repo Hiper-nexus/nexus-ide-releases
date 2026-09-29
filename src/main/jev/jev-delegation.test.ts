@@ -90,6 +90,24 @@ describe('advisePrompt', () => {
     });
   });
 
+  it('a régua divisible cobre trabalho replicado em apps/superfícies separadas (F-200)', async () => {
+    const judge = vi.fn<JudgeMock>(async () => verdict(0.8, '2', '1'));
+    await advisePrompt(LONG, { judge });
+    const questions = judge.mock.calls[0]![0].questions;
+    const divisible = questions.divisible;
+    expect(divisible?.type).toBe('noul');
+    if (divisible?.type !== 'noul') return;
+    expect(divisible.criteria?.true).toBe(
+      'several independent pieces of work (research, implementation, tests, review…), ' +
+        'or the same feature or fix to be built in separate apps or surfaces ' +
+        '(for example the native app and the web or PWA)',
+    );
+    expect(divisible.criteria?.false).toBe(
+      'one cohesive task, a small change, a question or conversation, ' +
+        'or a short follow-up or confirmation of work already under way',
+    );
+  });
+
   it('sem resposta de writesCode, a probabilidade vale 0', async () => {
     const judge = vi.fn<JudgeMock>(async () => {
       const result = verdict(0.2, '1', '0');

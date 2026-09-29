@@ -1,6 +1,14 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../observability/main-trace', () => ({ trace: vi.fn() }));
+vi.mock('../persistence/settings-store', () => ({
+  getOrchSettings: () => ({ squadCliPolicy: 'governed' }),
+}));
+
+import { trace } from '../observability/main-trace';
+import { FAILOVER_HANDOFF_HEADER } from '../../shared/failover-handoff';
 import { OPERATOR_DELEGATION_DOCTRINE } from './operator-delegation-doctrine';
 import {
   AUXILIARY_CONTEXT_HEADER,
@@ -262,6 +270,175 @@ describe('hook /hook/delegate', () => {
     expect(out.payload).toEqual({});
     expect(advise).not.toHaveBeenCalled();
     expect(design).not.toHaveBeenCalled();
+  });
+
+  describe('prompt que não é pedido do operador (F-200)', () => {
+    it.each([
+      '<task-notification> <task-id>bzthj2b8r</task-id> <tool-use-id>t1</tool-use-id> resumo</task-notification>',
+      '[nexus handoff delivery_metadata] from=pane-w1 handoff_id=h-7 summary: Inventário pronto',
+      '<pasted_content id="p9">[nexus handoff delivery_metadata] from=pane-w1 handoff_id=h-7 summary: Inventário pronto</pasted_content>',
+      'Stop hook feedback: o trabalho continua; siga com a próxima etapa',
+      'Base directory for this skill: /x/skills/ponytail — leia as regras completas',
+      '[Nexus] Você agora orquestra a missão Missão · Checkout',
+      '[Nexus · Jev] Esta tarefa se divide em ~3 partes — delegue',
+      '  <pasted_content id="p2"><task-notification>done</task-notification></pasted_content>',
+      `contexto do crash\n\n${FAILOVER_HANDOFF_HEADER}\nrecupere a missão anterior`,
+    ])('cai fora sem chamar o Jev: %.36s…', async (prompt) => {
+      __resetLeanRemindersForTests();
+      const advise = vi.fn(async () => ({ delegation: { parts: 5, writers: 2, confidence: 0.95, model: 'j' }, writesCode: 0.9 }));
+      const design = vi.fn(() => 'Regra de design (teste)');
+      const out = await handleHookDelegateRequest(
+        { ...operator, scope: { rootRealPath: '/repo' } as never, providerId: 'codex' },
+        { prompt },
+        { advise, design },
+      );
+      expect(out.payload, prompt).toEqual({});
+      expect(advise).not.toHaveBeenCalled();
+      expect(design).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('auto-orquestração no Autopilot (F-200)', () => {
+    const FIELD_PROMPT =
+      '/Users/cleofasrocha/saasbarbearia/.nexus/attachments/mission-context/' +
+      'mumvufy7-3926d22fdca6c5ab-WhatsApp_Ptt_2026-09-29_at_13.20.08.ogg  ' +
+      'olha  oque ele pediu e  ja faz sime  coloca nativo e no  pwa e web';
+    const strong = {
+      delegation: { parts: 3, writers: 2, confidence: 0.84, model: 'j' },
+      writesCode: 0.1,
+    };
+    const context = (out: { payload: Record<string, unknown> }) =>
+      (out.payload.hookSpecificOutput as { additionalContext: string }).additionalContext;
+
+    it('pedido divisível com confiança ≥ 0,7 torna o pane orquestrador e troca a dica pela diretiva', async () => {
+      __resetLeanRemindersForTests();
+      const adoptMission = vi.fn((_ctx: unknown, _summary: string | null) => ({
+        missionId: 'm-auto',
+        discardIfUnused: vi.fn(),
+      }));
+      const out = await handleHookDelegateRequest(
+        operator,
+        { prompt: FIELD_PROMPT },
+        {
+          advise: vi.fn(async () => strong),
+          autopilot: () => true,
+          adoptMission,
+        },
+      );
+      const text = context(out);
+      expect(adoptMission).toHaveBeenCalledTimes(1);
+      expect(adoptMission.mock.calls[0]![1]).toBe(
+        'olha oque ele pediu e ja faz sime coloca nativo e no pwa e web',
+      );
+      expect(text).toContain('O Nexus tornou este pane orquestrador de uma missão');
+      expect(text).toContain('isolatedWriter: true');
+      expect(text).not.toContain('Delegue com nexus_pane_spawn');
+      expect(text.length).toBeLessThanOrEqual(500);
+      expect(vi.mocked(trace)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'auto-orchestrate',
+          sessionId: 's1',
+          missionId: 'm-auto',
+          parts: 3,
+          writers: 2,
+        }),
+      );
+    });
+
+    it('confiança abaixo de 0,7 fica só na dica (não adoça nada)', async () => {
+      __resetLeanRemindersForTests();
+      const adoptMission = vi.fn();
+      const out = await handleHookDelegateRequest(
+        operator,
+        { prompt: FIELD_PROMPT },
+        {
+          advise: vi.fn(async () => ({
+            delegation: { parts: 3, writers: 2, confidence: 0.65, model: 'j' },
+            writesCode: 0.1,
+          })),
+          autopilot: () => true,
+          adoptMission,
+        },
+      );
+      expect(adoptMission).not.toHaveBeenCalled();
+      expect(context(out)).toContain('Delegue com nexus_pane_spawn');
+    });
+
+    it('Hardened com a mesma confiança fica só na dica', async () => {
+      __resetLeanRemindersForTests();
+      const adoptMission = vi.fn();
+      const out = await handleHookDelegateRequest(
+        operator,
+        { prompt: FIELD_PROMPT },
+        { advise: vi.fn(async () => strong), autopilot: () => false, adoptMission },
+      );
+      expect(adoptMission).not.toHaveBeenCalled();
+      expect(context(out)).toContain('Delegue com nexus_pane_spawn');
+    });
+
+    it('helper do operador e pane com missão nunca são adotados', async () => {
+      __resetLeanRemindersForTests();
+      const adoptMission = vi.fn();
+      const deps = {
+        advise: vi.fn(async () => strong),
+        autopilot: () => true,
+        adoptMission,
+      };
+      const helper = await handleHookDelegateRequest(
+        { ...operator, operatorParentSessionId: 'parent-1' },
+        { prompt: FIELD_PROMPT },
+        deps,
+      );
+      expect(context(helper)).toContain('Delegue com nexus_pane_spawn');
+      const inMission = await handleHookDelegateRequest(
+        { ...operator, missionId: 'm-1' },
+        { prompt: FIELD_PROMPT },
+        deps,
+      );
+      expect(inMission.payload).toEqual({});
+      expect(adoptMission).not.toHaveBeenCalled();
+    });
+
+    it.each([null, undefined])(
+      'adoção devolvendo %s mantém a dica normal',
+      async (adopted) => {
+        __resetLeanRemindersForTests();
+        const adoptMission = vi.fn(() => adopted ?? null);
+        const out = await handleHookDelegateRequest(
+          operator,
+          { prompt: FIELD_PROMPT },
+          { advise: vi.fn(async () => strong), autopilot: () => true, adoptMission },
+        );
+        expect(context(out)).toContain('Delegue com nexus_pane_spawn');
+      },
+    );
+
+    it('adoção que lança mantém a dica normal', async () => {
+      __resetLeanRemindersForTests();
+      const adoptMission = vi.fn(() => {
+        throw new Error('pane sumiu');
+      });
+      const out = await handleHookDelegateRequest(
+        operator,
+        { prompt: FIELD_PROMPT },
+        { advise: vi.fn(async () => strong), autopilot: () => true, adoptMission },
+      );
+      expect(context(out)).toContain('Delegue com nexus_pane_spawn');
+    });
+
+    it('prompt que é só o anexo adota com summary null (o provider dá o título)', async () => {
+      __resetLeanRemindersForTests();
+      const onlyAttachment =
+        '/Users/cleofasrocha/saasbarbearia/.nexus/attachments/mission-context/' +
+        'mumvufy7-3926d22fdca6c5ab-WhatsApp_Ptt_2026-09-29_at_13.20.08.ogg';
+      const adoptMission = vi.fn(() => ({ missionId: 'm-2', discardIfUnused: vi.fn() }));
+      await handleHookDelegateRequest(
+        operator,
+        { prompt: onlyAttachment },
+        { advise: vi.fn(async () => strong), autopilot: () => true, adoptMission },
+      );
+      expect(adoptMission).toHaveBeenCalledWith(expect.anything(), null);
+    });
   });
 
   it('pedido de código de helper que já nasceu com as regras da ponytail não recebe o lembrete', async () => {

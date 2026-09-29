@@ -9,7 +9,11 @@ import type http from 'node:http';
 import { createHash } from 'node:crypto';
 import type { AgentGateContext } from './gate';
 import { isOperatorHandContext } from './operator-hand-context';
-import { advisePrompt, type DelegationAdvice } from '../jev/jev-delegation';
+import {
+  advisePrompt,
+  AUTO_ORCHESTRATE_MIN_CONFIDENCE,
+  type DelegationAdvice,
+} from '../jev/jev-delegation';
 import { handleHookJsonPost } from './hook-http';
 import {
   WORKSPACE_DESIGN_RULE_HEADING,
@@ -21,6 +25,13 @@ import { operatorBusinessModelContext } from './operator-business-model';
 import { distillOperatorPreferenceMemory } from '../memory/operator-preference-memory';
 import { operatorWorkspaceMemoryContext } from './operator-workspace-memory';
 import { FAILOVER_HANDOFF_HEADER } from '../../shared/failover-handoff';
+import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
+import { getOrchSettings } from '../persistence/settings-store';
+import {
+  adoptThroughOperatorTabMission,
+  type OperatorTabMission,
+} from './tools-panes';
+import { trace } from '../observability/main-trace';
 
 export const HOOK_DELEGATE_MAX_BODY_BYTES = 64 * 1024;
 
@@ -162,6 +173,27 @@ function typedByOperator(ctx: HookContext, prompt: string): boolean {
   return ctx.operatorParentSessionId === undefined && !prompt.includes(FAILOVER_HANDOFF_HEADER);
 }
 
+/**
+ * Texto que o harness ou o Nexus injeta como prompt mas que NÃO é pedido do
+ * operador (notificação de task, entrega de handoff, feedback de hook Stop,
+ * corpo de skill, avisos [Nexus]). Julgar isso com o Jev gerou conselhos como
+ * "delegate:5p" em mensagem que ninguém escreveu — nem a dica vale aqui.
+ * O `<pasted_content …>` que embrulha a entrega sai antes de comparar.
+ */
+const NON_OPERATOR_PROMPT_PREFIXES = [
+  '<task-notification>',
+  '[nexus handoff delivery_metadata]',
+  'Stop hook feedback:',
+  'Base directory for this skill:',
+  '[Nexus]',
+  '[Nexus ·',
+];
+
+function isNonOperatorPrompt(prompt: string): boolean {
+  const head = prompt.trim().replace(/^<pasted_content\b[^>]*>/u, '').trim();
+  return NON_OPERATOR_PROMPT_PREFIXES.some((prefix) => head.startsWith(prefix));
+}
+
 type DesignContextFn = (prompt: string, workspaceRoot: string) => string | null;
 
 /** Regra de design + carta no primeiro pedido de UI da sessão, a cada 30 min. */
@@ -194,6 +226,79 @@ export function formatDelegationContext(advice: DelegationAdvice): string {
   return text.length > 400 ? `${text.slice(0, 399)}…` : text;
 }
 
+/**
+ * Diretiva da adoção (Autopilot, confiança ≥ 0,7): o pane JÁ virou
+ * orquestrador — a ordem muda de "delegue" para "abra os helpers e encerre".
+ */
+function formatAutoOrchestrateDirective(advice: DelegationAdvice): string {
+  const reads = Math.max(0, advice.parts - advice.writers);
+  const text =
+    `[Nexus · Jev] Esta tarefa se divide em ~${advice.parts} partes ` +
+    `(${reads} de leitura, ${advice.writers} de escrita). O Nexus tornou ` +
+    'este pane orquestrador de uma missão para ela. Abra um helper por ' +
+    'parte com nexus_pane_spawn({ task, prompt }) — readOnly: true nas de ' +
+    'leitura, isolatedWriter: true nas de escrita em paralelo —, encerre o ' +
+    'turno e integre as entregas quando chegarem. Não faça as partes você ' +
+    'mesmo.';
+  return text.length > 500 ? `${text.slice(0, 499)}…` : text;
+}
+
+/**
+ * Título da missão adotada: sem as tags `<pasted_content>` e sem tokens de
+ * caminho absoluto (o anexo .ogg do pedido não vira nome de missão). Vazio →
+ * null e o provider usa o título padrão dele.
+ */
+function missionSummaryFromPrompt(prompt: string): string | null {
+  const text = prompt
+    .replace(/<\/?pasted_content\b[^>]*>/gu, ' ')
+    .replace(/(?:^|\s)(\/[^\s]+|[A-Za-z]:[\\/][^\s]*)/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  return text || null;
+}
+
+/**
+ * Pedido do operador que se divide, com confiança alta e em Autopilot: o
+ * Nexus torna o pane orquestrador pela missão sob demanda da aba (mesmo
+ * provedor do "1º helper") e troca a dica pela diretiva. Helper, pane com
+ * missão, Hardened, confiança menor e adoção recusada ficam na dica.
+ */
+function delegationContextFor(
+  ctx: HookContext,
+  prompt: string,
+  advice: DelegationAdvice,
+  autopilot: () => boolean,
+  adoptMission: (ctx: HookContext, summary: string | null) => OperatorTabMission | null,
+): string {
+  const hint = formatDelegationContext(advice);
+  if (
+    advice.confidence < AUTO_ORCHESTRATE_MIN_CONFIDENCE ||
+    advice.parts < 2 ||
+    ctx.role !== 'user' ||
+    ctx.missionId ||
+    !typedByOperator(ctx, prompt) ||
+    !autopilot()
+  ) {
+    return hint;
+  }
+  let adopted: OperatorTabMission | null = null;
+  try {
+    adopted = adoptMission(ctx, missionSummaryFromPrompt(prompt));
+  } catch {
+    adopted = null;
+  }
+  if (!adopted) return hint;
+  trace({
+    kind: 'auto-orchestrate',
+    sessionId: ctx.sessionId ?? null,
+    missionId: adopted.missionId,
+    parts: advice.parts,
+    writers: advice.writers,
+    confidence: advice.confidence,
+  });
+  return formatAutoOrchestrateDirective(advice);
+}
+
 export async function handleHookDelegateRequest(
   ctx: HookContext,
   body: unknown,
@@ -205,13 +310,22 @@ export async function handleHookDelegateRequest(
     distillPreference?: typeof distillOperatorPreferenceMemory;
     /** Bloco <workspace-memory> do primeiro prompt do Codex (fatia 4). */
     memoryBlock?: MemoryBlockFn;
+    /** Autopiloto (operator-choice): a auto-orquestração só roda nele. */
+    autopilot?: () => boolean;
+    /** Adoção pela missão sob demanda da aba (provedor do tools-panes). */
+    adoptMission?: (ctx: HookContext, summary: string | null) => OperatorTabMission | null;
   } = {},
 ): Promise<{ statusCode: 200; payload: Record<string, unknown> }> {
   try {
     if (!isOperatorHandContext(ctx)) return { statusCode: 200, payload: {} };
     const prompt = parseUserPrompt(body);
     // A entrega de um helper chega como prompt, mas não é pedido novo do operador.
-    if (!prompt || prompt.startsWith(WORKSPACE_HANDOFF_DELIVERY_PREFIX)) {
+    if (
+      !prompt ||
+      prompt.startsWith(WORKSPACE_HANDOFF_DELIVERY_PREFIX) ||
+      prompt.includes(FAILOVER_HANDOFF_HEADER) ||
+      isNonOperatorPrompt(prompt)
+    ) {
       return { statusCode: 200, payload: {} };
     }
     // Preferência do operador: pré-filtro regex no próprio módulo; o Jev só é
@@ -240,7 +354,18 @@ export async function handleHookDelegateRequest(
         parts.push(businessModel);
       }
     }
-    if (advice?.delegation) parts.push(formatDelegationContext(advice.delegation));
+    if (advice?.delegation) {
+      const autopilot =
+        deps.autopilot ??
+        (() => isOperatorChoicePolicy(getOrchSettings().squadCliPolicy));
+      const adoptMission =
+        deps.adoptMission ??
+        ((context: HookContext, summary: string | null) =>
+          adoptThroughOperatorTabMission(context as AgentGateContext, summary));
+      parts.push(
+        delegationContextFor(ctx, prompt, advice.delegation, autopilot, adoptMission),
+      );
+    }
     if (
       isBrowserRequest(prompt) &&
       ctx.sessionId &&

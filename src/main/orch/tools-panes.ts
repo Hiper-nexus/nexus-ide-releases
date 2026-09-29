@@ -527,6 +527,18 @@ export function setOperatorTabMissionProvider(
   operatorTabMissionProvider = provider;
 }
 
+/**
+ * Acesso fora do spawn ao provedor da missão sob demanda (o hook
+ * /hook/delegate adota o pane na auto-orquestração do Autopilot). O chamador
+ * decide se usa `discardIfUnused` — o hook nunca descarta: o pane já vive.
+ */
+export function adoptThroughOperatorTabMission(
+  ctx: AgentGateContext,
+  task: string | null,
+): OperatorTabMission | null {
+  return operatorTabMissionProvider?.(ctx, task) ?? null;
+}
+
 export function attenuateSkills(
   parent: string[] | null,
   requested: string[] | null,

@@ -21,6 +21,8 @@ import {
 
 export const DELEGATE_MIN_PROMPT_CHARS = 40;
 export const DELEGATE_MIN_CONFIDENCE = 0.6;
+/** Confiança a partir da qual o Nexus promove o pane a orquestrador (Autopilot). */
+export const AUTO_ORCHESTRATE_MIN_CONFIDENCE = 0.7;
 export const DELEGATE_TIMEOUT_MS = 2_500;
 const DELEGATE_MAX_CHARS = 3_000;
 
@@ -31,8 +33,8 @@ const DELEGATION_QUESTIONS: Record<string, JevQuestion> = {
       'Does this request to a coding agent ask for work that splits into ' +
       'independent parts that separate agents could do in parallel?',
     criteria: {
-      true: 'several independent pieces of work (research, implementation, tests, review…)',
-      false: 'one cohesive task, a small change, a question or conversation',
+      true: 'several independent pieces of work (research, implementation, tests, review…), or the same feature or fix to be built in separate apps or surfaces (for example the native app and the web or PWA)',
+      false: 'one cohesive task, a small change, a question or conversation, or a short follow-up or confirmation of work already under way',
     },
   },
   parts: {
