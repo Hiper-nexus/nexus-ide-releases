@@ -946,6 +946,27 @@ saber isto antes de mexer:
   segredo viaja por stdin em base64; teste nunca toca a vaga real (só com
   `exec` injetado). Conta AGY por chave de API não passa pela vaga.
 
+## Jev enxugando a orquestração (F-194/F-195/F-196/F-197)
+
+- F-194: o rubric de tier do `jev-task-routing.ts` foi avaliado com o Jev real
+  sobre 78 tarefas delegadas (`audit_events`): texto antigo 60 hard, novo 32
+  hard / 39 medium. Mudou o texto? Reavalie no mesmo conjunto antes de
+  publicar. Um rubric de esforço novo SUBIU o esforço e foi descartado. No
+  `scoreRouteCandidate`, `hard` pesa custo ×1,5 (igual medium); `critical` ×0,5.
+- F-195: `adapterId` explícito sem pedido do operador vira `preferAdapterIds`
+  (preferência leve) para orquestrador de qualquer missão e pin do pane do
+  operador. Literal só com `operatorChoice`, `resume`, reserva de rota, roster
+  ou CLI digitada no próprio pane nos últimos 15 min (`operator-cli-mentions.ts`,
+  input humano só em RAM — nunca persistir, logar nem encaminhar).
+- F-196: `nexus_pane_read`/`read_many` padrão `digest` para o orquestrador
+  (`pane-output-digest.ts` + `classifyPaneTailForDigest`); `mode:'full'` é o
+  texto cru. `nexus_handoff_list` compacta artifacts de entregues antigos (fora
+  das 5 mais recentes/não entregues/`ids`); `detail:'full'` desliga.
+- F-197: `idle-helper-reuse.ts` — reuso de helper parado (mesmo dono, mesma
+  CLI, mesmo modo, ≥20 s parado pelo status semântico) só no pane do operador
+  e na missão da aba; o Jev (`helperReuse`) escolhe ou `none`, aceita ≥ 0,7.
+  Título do pane entra no critério só como caminho do state, nunca como texto.
+
 ## Missão que morre e volta: o que o trace mostra (F-187/F-211/F-212/F-213)
 
 - `main.trace.ndjson` registra `agent-pty-terminate` (origem estável de todo
