@@ -291,6 +291,20 @@ saber isto antes de mexer:
   troca de coroa). Missão nova com nome já usado ganha sufixo " 2", " 3"…
   dentro do teto de 120 caracteres do Main.
 
+## Portão de regressão: config do runner e falha de carga (F-199)
+
+- Projeto sem config do Jest/Vitest na raiz do pacote costuma declará-la em
+  cada script (`jest --config tests/jest.config.js`). `detectRegressionRunner`
+  lê esse `--config`/`-c` dos scripts do próprio runner (arquivo real dentro
+  da raiz) e o portão o repassa. Sem isso o `ts-jest` não carrega e todo teste
+  TypeScript "quebra" — foi o que recusou todos os writers do saasbarbearia.
+- Suíte que nem carrega ("Test suite failed to run" com erro de parse) não é
+  regressão por si: só barra quando o arquivo acusado está no diff ou o diff
+  tocou config de runner/transform. Acusado fora do diff vira "não
+  verificado"; acusado que não dá para extrair continua barrando. Os caminhos
+  das worktrees isoladas no macOS têm espaço (`Application Support`): a
+  extração do caminho precisa aceitar espaço.
+
 ## Conversas Grok/Kimi por checkout (F-566)
 
 - Os overlays recebem `userDataPath` e `checkoutId` da autoridade do Main e
