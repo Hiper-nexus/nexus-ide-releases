@@ -45,6 +45,9 @@ export const spawnRequestSchema = z.object({
   // Per-spawn reasoning effort (task-router decision). Validated against the
   // adapter's declared levels at arg-build time; unknown values are dropped.
   effort: z.string().min(1).max(32).optional(),
+  // F-213: telemetria — quanto o renderer esperou (grade + conta + fila)
+  // antes de chamar pty.spawn. Número apenas; nunca altera o comportamento.
+  rendererWaitMs: z.number().int().nonnegative().max(600_000).optional(),
 });
 
 export const writeSchema = z.object({

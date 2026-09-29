@@ -88,6 +88,11 @@ import {
 import { isMissionWorkerWriteEligibleCli } from './squad-runtime-policy';
 import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
 import { getAccountChoiceReceipt } from '../persistence/account-choice-receipts';
+import { trace } from '../observability/main-trace';
+import {
+  startPhaseTimer,
+  type PhaseTimer,
+} from '../observability/phase-timer';
 import { CODEX_MCP_TOOL_TIMEOUT_SEC } from './cli-mcp-inject';
 import {
   assertCurrentMissionOrchestratorSession,
@@ -551,6 +556,24 @@ export function assertCallerMaySpawnPane(
   }
 }
 
+/**
+ * F-213: telemetria do nascimento do pane via MCP — o timer mede cada fase
+ * awaitada da entrada do tool até a criação do PTY; `meta` recebe a
+ * identidade conforme o caminho a descobre (adapter resolvido, paneId do
+ * resultado) e `ok` só vira true quando o handler devolve sucesso.
+ */
+interface PaneSpawnTimingMeta {
+  adapterId?: string;
+  paneId?: string;
+  missionId?: string;
+  role?: string;
+  ok?: boolean;
+}
+interface PaneSpawnTiming {
+  readonly timer: PhaseTimer;
+  readonly meta: PaneSpawnTimingMeta;
+}
+
 const paneSpawn: McpToolDef = {
   name: 'nexus_pane_spawn',
   description:
@@ -692,6 +715,10 @@ const paneSpawn: McpToolDef = {
     ) {
       tabMission = operatorTabMissionProvider(ctx, operatorRouteTask(args));
     }
+    const spawnTiming: PaneSpawnTiming = {
+      timer: startPhaseTimer(),
+      meta: {},
+    };
     try {
       return await paneSpawnAfterTabMission.handler(
         args,
@@ -699,12 +726,33 @@ const paneSpawn: McpToolDef = {
         invocation,
         tabMission?.missionId ?? null,
         deliveryContract,
+        spawnTiming,
       );
     } catch (error) {
       // Spawn que não saiu não deixa a missão da aba que nasceu para ele:
       // missão running vazia e pane promovido sem helper nenhum.
       tabMission?.discardIfUnused();
       throw error;
+    } finally {
+      // F-213: um evento por tentativa — sucesso, rota que falhou antes do
+      // PTY, falha de spawn ou exceção interna. Só ids/labels/números.
+      const { totalMs, phases } = spawnTiming.timer.finish();
+      trace({
+        kind: 'pane-spawn-timing',
+        source: 'mcp',
+        adapterId:
+          spawnTiming.meta.adapterId ?? str(args, 'adapterId') ?? null,
+        paneId: spawnTiming.meta.paneId ?? null,
+        missionId:
+          spawnTiming.meta.missionId ??
+          str(args, 'missionId') ??
+          ctx.missionId ??
+          null,
+        role: spawnTiming.meta.role ?? null,
+        ok: spawnTiming.meta.ok === true,
+        totalMs,
+        phases,
+      });
     }
   },
 };
@@ -717,6 +765,7 @@ const paneSpawnAfterTabMission = {
     invocation: McpToolInvocation | undefined,
     tabMissionId: string | null,
     deliveryContract: ReturnType<typeof parseExpectArg>,
+    spawnTiming?: PaneSpawnTiming,
   ): Promise<unknown> => {
     const agentRef = str(args, 'agentName');
     let routeReservationId = str(args, 'routeReservationId');
@@ -808,6 +857,15 @@ const paneSpawnAfterTabMission = {
         excluded.push(adapterId);
       }
     };
+    // F-213: a rota Jev/missão é uma das fases medidas — o mark no finally
+    // cobre o sucesso E o throw sem mudar o resultado.
+    const timedOperatorRoute = async (): Promise<Record<string, unknown>> => {
+      try {
+        return await resolveOperatorRoute();
+      } finally {
+        spawnTiming?.timer.mark('route-resolve');
+      }
+    };
     if (agentRef) {
       const requestedMissionId = childMissionId(ctx, str(args, 'missionId'));
       const mission = requestedMissionId
@@ -842,7 +900,7 @@ const paneSpawnAfterTabMission = {
       const requestedAdapterId = str(args, 'adapterId');
       const requestedModel = str(args, 'model');
       const requestedEffort = str(args, 'effort');
-      if (forceOperatorRoute) autoRoute = await resolveOperatorRoute();
+      if (forceOperatorRoute) autoRoute = await timedOperatorRoute();
       const honored = forceOperatorRoute
         ? null
         : honorSealedRosterRuntime({
@@ -897,7 +955,7 @@ const paneSpawnAfterTabMission = {
       // obrigatório como sempre.
       let adHocAdapterId = forceOperatorRoute ? undefined : str(args, 'adapterId');
       if (forceOperatorRoute) {
-        autoRoute = await resolveOperatorRoute();
+        autoRoute = await timedOperatorRoute();
         adHocAdapterId = routeString(autoRoute, 'adapterId');
       } else if (operatorHand && resumeRef) {
         // Retomar mantém a CLI do pane retomado: o registro vivo (pane
@@ -906,7 +964,7 @@ const paneSpawnAfterTabMission = {
       } else if (adHocAdapterId === undefined && operatorHand && operatorRouteResolver) {
         // Resolver sempre existe em produção; este ramo só cobre args com
         // missionId explícito vindos da mão do operador.
-        autoRoute = await resolveOperatorRoute();
+        autoRoute = await timedOperatorRoute();
         adHocAdapterId = routeString(autoRoute, 'adapterId');
       }
       // C (0.76.110): paridade com o + Pane — dentro da missão, sem
@@ -931,13 +989,17 @@ const paneSpawnAfterTabMission = {
         // sob demanda (0.76.110) levava os helpers dele à rota de missão, que
         // aceitava AGY: três panes mudos no `--print`. Missão do assistente
         // segue aceitando CLI que entrega pelo fim do PTY.
-        autoRoute = await operatorRouteResolver!(
-          task,
-          ctx,
-          ctx.promotedFromUserSession === true
-            ? { excludeAdapterIds: adapterIdsWithoutNexusMcp(listAdapters(), canUseNexusMcp) }
-            : {},
-        );
+        try {
+          autoRoute = await operatorRouteResolver!(
+            task,
+            ctx,
+            ctx.promotedFromUserSession === true
+              ? { excludeAdapterIds: adapterIdsWithoutNexusMcp(listAdapters(), canUseNexusMcp) }
+              : {},
+          );
+        } finally {
+          spawnTiming?.timer.mark('route-resolve');
+        }
         adHocAdapterId = routeString(autoRoute, 'adapterId');
         // model/effort soltos não valem aqui: o recibo diz o que foi ignorado.
         ignoredChoice = ignoredRouteChoice(args);
@@ -1128,7 +1190,11 @@ const paneSpawnAfterTabMission = {
           if (blockedBy !== undefined) {
             isolatedWriterReason = `auto-isolado: ${blockedBy.replace(/ — .*$/, '')} no mesmo checkout`;
           }
-          isolatedWriter = await allocateIsolatedWriterWorktree(ctx.scope, undefined);
+          try {
+            isolatedWriter = await allocateIsolatedWriterWorktree(ctx.scope, undefined);
+          } finally {
+            spawnTiming?.timer.mark('writer-isolation');
+          }
         }
       }
       if (isolatedWriter) {
@@ -1438,7 +1504,11 @@ const paneSpawnAfterTabMission = {
               if (blockedBy !== undefined) {
                 isolatedWriterReason = `auto-isolado: ${blockedBy} no mesmo checkout`;
               }
-              isolatedWriter = await allocateIsolatedWriterWorktree(ctx.scope, missionId);
+              try {
+                isolatedWriter = await allocateIsolatedWriterWorktree(ctx.scope, missionId);
+              } finally {
+                spawnTiming?.timer.mark('writer-isolation');
+              }
             }
           }
           if (isolatedWriter) {
@@ -1531,6 +1601,11 @@ const paneSpawnAfterTabMission = {
       const autoClose =
         args.autoCloseOnHandoff === true ||
         (operatorHand && !options.missionId && args.autoCloseOnHandoff !== false);
+      if (spawnTiming) {
+        spawnTiming.meta.adapterId = options.adapterId;
+        spawnTiming.meta.missionId = options.missionId;
+        spawnTiming.meta.role = options.role ?? ctx.role;
+      }
       let spawned: { paneId: string; sessionId: string };
       try {
         spawned = await spawnPaneAndMaybePrompt(options, {
@@ -1542,7 +1617,9 @@ const paneSpawnAfterTabMission = {
           },
           invocation,
         });
+        spawnTiming?.timer.mark('pty-spawn');
       } catch (error) {
+        spawnTiming?.timer.mark('pty-spawn');
         // The legacy helper still requires a session id. When the renderer has
         // already acknowledged the main-minted pane as pending, translate that
         // compatibility throw back into the successful effect result.
@@ -1554,6 +1631,10 @@ const paneSpawnAfterTabMission = {
         isolatedWriterPending = Boolean(isolatedWriter);
         spawnedPaneId = pending.paneId ?? undefined;
         if (isolatedWriter && pending.paneId) isolatedWriter.link(pending.paneId, pending.sessionId ?? undefined);
+        if (spawnTiming) {
+          spawnTiming.meta.ok = true;
+          spawnTiming.meta.paneId = pending.paneId ?? undefined;
+        }
         return {
           ...pending,
           ...(executionMode ? { executionMode } : {}),
@@ -1571,6 +1652,10 @@ const paneSpawnAfterTabMission = {
       // sozinho no handoff SUCCESS — paridade Bridge, libera a vaga sem
       // segurar slot da onda seguinte; falha preserva pane para diagnóstico.
       spawnedPaneId = spawned.paneId;
+      if (spawnTiming) {
+        spawnTiming.meta.ok = true;
+        spawnTiming.meta.paneId = spawned.paneId;
+      }
       isolatedWriter?.link(spawned.paneId, spawned.sessionId ?? undefined);
       if (autoClose && spawned.sessionId) {
         armAutoCloseOnHandoff(spawned.sessionId, spawned.paneId);

@@ -568,6 +568,12 @@ export interface SpawnRequest {
   paneId?: string;
   /** Per-spawn reasoning effort override (wins over the provider setting). */
   effort?: string;
+  /**
+   * F-213: telemetria do lado do renderer — quanto tempo se passou entre a
+   * intenção de nascer o pane (espera de grade, conta fixada, fila held) e a
+   * chamada `pty.spawn`. Somente leitura; o main nunca decide nada por ele.
+   */
+  rendererWaitMs?: number;
 }
 
 export type SpawnResult =

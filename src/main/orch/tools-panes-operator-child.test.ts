@@ -86,6 +86,13 @@ vi.mock('../persistence/settings-store', async (importOriginal) => ({
   })),
 }));
 
+const traceHarness = vi.hoisted(() => ({ events: [] as Array<Record<string, unknown>> }));
+vi.mock('../observability/main-trace', () => ({
+  trace: (event: Record<string, unknown>) => {
+    traceHarness.events.push(event);
+  },
+}));
+
 import { paneSpawnTool, setOperatorRouteResolver, setOperatorTabMissionProvider } from './tools-panes';
 import {
   forgetAccountChoiceReceipt,
@@ -117,6 +124,7 @@ function spawnedRole(): unknown {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  traceHarness.events.length = 0;
   harness.settings.squadCliPolicy = 'operator-choice';
   harness.snapshots = [];
   harness.parentBySession = {};
@@ -659,5 +667,53 @@ describe('nexus_pane_spawn — missão sob demanda da aba', () => {
     expect(provider).not.toHaveBeenCalled();
     // Sem missão criada, o spawn segue pela mão do operador (filho `user`).
     expect(spawnedRole()).toBeUndefined();
+  });
+});
+
+describe('nexus_pane_spawn — F-213 pane spawn timing', () => {
+  const timingEvents = () =>
+    traceHarness.events.filter((e) => e.kind === 'pane-spawn-timing');
+
+  it('persiste um evento de timing por spawn com as fases medidas', async () => {
+    await paneSpawnTool.handler({ adapterId: 'codex' }, userPane());
+    expect(timingEvents()).toEqual([
+      expect.objectContaining({
+        source: 'mcp',
+        adapterId: 'codex',
+        paneId: 'pane-child',
+        totalMs: expect.any(Number),
+      }),
+    ]);
+    expect(timingEvents()[0].phases).toHaveProperty('pty-spawn');
+  });
+
+  it('persiste o timing mesmo quando o spawn falha', async () => {
+    harness.spawnPaneAndMaybePrompt.mockRejectedValueOnce(
+      new Error('pty host offline'),
+    );
+    await expect(
+      paneSpawnTool.handler({ adapterId: 'codex' }, userPane(), {
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow('pty host offline');
+    const events = timingEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ source: 'mcp', adapterId: 'codex' });
+    expect(events[0].phases).toHaveProperty('pty-spawn');
+  });
+
+  it('persiste o timing quando a rota falha antes do spawn', async () => {
+    setOperatorRouteResolver(
+      vi.fn(async () => {
+        throw new Error('sem CLI elegível');
+      }),
+    );
+    await expect(
+      paneSpawnTool.handler({ prompt: 'implemente X' }, userPane()),
+    ).rejects.toThrow(/roteamento automático falhou/);
+    const events = timingEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ source: 'mcp' });
+    expect(events[0].phases).toHaveProperty('route-resolve');
   });
 });

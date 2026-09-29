@@ -257,6 +257,12 @@ interface Host {
    * guarda, cada uma pagava um listMissions IPC (F-367).
    */
   deadPaneKeyWorkInFlight?: number;
+  /**
+   * F-213: início do ciclo de nascimento (primeira tentativa de spawn que
+   * pode adiar por grade ou espera held). O `rendererWaitMs` do pedido mede
+   * até `pty.spawn`; consumido (reset) quando o spawn efetivamente inicia.
+   */
+  spawnCycleStartMs?: number;
 }
 
 /**
@@ -972,15 +978,30 @@ function startSpawn(
   const pack = continuityPack ?? takePendingContinuity(pane.id);
   return (async (): Promise<string | null> => {
     try {
+      // F-213: fases do renderer até o pty.spawn — espera de grade (intenção
+      // de nascer → slot mensurável), espera held do gate de restore e a
+      // pinagem de conta. `spawnCycleStartMs` é consumido aqui: uma retomada
+      // posterior começa um ciclo novo.
+      const spawnBeganAt = Date.now();
+      const cycleStartMs = host.spawnCycleStartMs ?? spawnBeganAt;
+      host.spawnCycleStartMs = undefined;
+      const gridWaitMs = Math.max(0, spawnBeganAt - cycleStartMs);
+      const heldSince = heldSpawnSinceMs.get(pane.id);
+      heldSpawnSinceMs.delete(pane.id);
+      const heldMs =
+        heldSince !== undefined ? Math.max(0, spawnBeganAt - heldSince) : 0;
       const missionId =
         pane.missionId ?? useOrchStore.getState().paneMissions[pane.id];
       // Account absence is also sealed authority. Renderer-side vault
       // discovery is reserved for manual panes; every mission/orchestration
       // spawn must preserve the exact account Main selected (including none).
+      const accountPinAt = Date.now();
       const accountId = shouldAutoPinPaneAccount(pane, missionId)
         ? await ensurePaneAccountPin(pane)
         : pane.accountId;
+      const accountPinMs = Date.now() - accountPinAt;
       if (host.disposed || host.spawnGeneration !== generation) return null;
+      const spawnCallAt = Date.now();
       const res = await window.nexus.pty.spawn(
         buildPtySpawnRequest({
           pane,
@@ -1001,8 +1022,22 @@ function startSpawn(
           // sessão de provider CAPTURADA deste pane (`--resume <id>`).
           accountId: accountId ?? pane.accountId,
           missionId,
+          rendererWaitMs:
+            pane.kind === 'cli-agent'
+              ? Math.max(0, spawnCallAt - cycleStartMs)
+              : undefined,
         }),
       );
+      const spawnRpcMs = Date.now() - spawnCallAt;
+      if (pane.kind === 'cli-agent') {
+        console.info('[pane-birth]', {
+          paneId: pane.id,
+          gridWaitMs,
+          accountPinMs,
+          heldMs,
+          spawnRpcMs,
+        });
+      }
       if (host.disposed || host.spawnGeneration !== generation) {
         if (res.ok) window.nexus.pty.kill(res.sessionId);
         return null;
@@ -1699,6 +1734,9 @@ function armDeferredSpawnRetry(host: Host, delayMs: number): void {
 
 function beginPaneSpawn(pane: PaneModel, host: Host): void {
   if (host.spawnStarted || host.hibernated || host.disposed) return;
+  // F-213: a primeira tentativa marca o nascimento do ciclo — a espera de
+  // grade mensurável e a pausa held entram no rendererWaitMs do pedido.
+  host.spawnCycleStartMs ??= Date.now();
   if (heldSpawnPanes.has(pane.id)) return;
   if (!settleHostGrid(host)) {
     host.spawnWhenMeasurable = true;
@@ -2663,6 +2701,8 @@ type FirstSpawnIntent = 'resume' | 'restore';
 const firstSpawnIntent = new Map<string, FirstSpawnIntent>();
 /** Restored agents held until the user confirms resume (no silent auto-work). */
 const heldSpawnPanes = new Set<string>();
+/** F-213: quando cada pane entrou no held — mede a espera da aprovação. */
+const heldSpawnSinceMs = new Map<string, number>();
 
 function markFirstSpawnIntent(paneId: string, intent: FirstSpawnIntent): void {
   firstSpawnIntent.set(paneId, intent);
@@ -2726,6 +2766,7 @@ export function prepareMissionPaneResume(paneId: string): void {
 /** Pause spawn for a restored agent until the user approves (or reopens). */
 export function holdSpawnUntilApproved(paneId: string): void {
   heldSpawnPanes.add(paneId);
+  heldSpawnSinceMs.set(paneId, Date.now());
   firstSpawnIntent.delete(paneId);
 }
 
@@ -2736,6 +2777,7 @@ export function isSpawnHeld(paneId: string): boolean {
 /** Forget every renderer-local spawn intent before pruning an orphan leaf. */
 export function discardPaneSpawnState(paneId: string): void {
   heldSpawnPanes.delete(paneId);
+  heldSpawnSinceMs.delete(paneId);
   firstSpawnIntent.delete(paneId);
   useSessionStateStore.getState().clearPaneState(paneId);
 }

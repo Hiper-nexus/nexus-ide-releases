@@ -88,6 +88,11 @@ import {
   type TaskDispatchStore,
 } from "../orch/task-dispatch-store";
 import { selectPersistedWorkerRestartDispatch } from "./persisted-worker-restart";
+import { trace } from "../observability/main-trace";
+import {
+  startPhaseTimer,
+  type PhaseTimer,
+} from "../observability/phase-timer";
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
 const RESTARTED_WORKER_LEASE_MS = 10 * 60_000;
@@ -195,6 +200,36 @@ function bindCommandTracking(
 // main-owned da Via Rápida); o conselheiro que NOMEIA os panes ociosos é
 // registrado pelo pane guardian no boot. Nada disso é importado aqui de
 // propósito: pty-ipc → guardian fechava um ciclo ESM na suíte.
+// F-213: um evento `pane-spawn-timing` por tentativa de spawn válida —
+// sucesso, falha de provider/auth/permissão/PTY ou erro interno. A recusa
+// de schema acontece ANTES do timer nascer (pedido inválido não é spawn).
+function reportPaneSpawnTiming(
+  timer: PhaseTimer,
+  request: {
+    adapterId?: string;
+    paneId?: string;
+    missionId?: string;
+    rendererWaitMs?: number;
+  },
+  spawn: ResolvedMainOwnedAgentSpawn | undefined,
+  ok: boolean,
+): void {
+  const { totalMs, phases } = timer.finish();
+  trace({
+    kind: "pane-spawn-timing",
+    source: "renderer",
+    adapterId: spawn?.request.adapterId ?? request.adapterId ?? null,
+    paneId: spawn?.request.paneId ?? request.paneId ?? null,
+    missionId:
+      spawn?.authority.context?.missionId ?? request.missionId ?? null,
+    role: spawn?.authority.context?.role ?? "user",
+    rendererWaitMs: request.rendererWaitMs ?? null,
+    ok,
+    totalMs,
+    phases,
+  });
+}
+
 function spawnCliPtyAgentPane(
   sender: WebContents,
   adapter: CliPtyAdapter,
@@ -202,8 +237,12 @@ function spawnCliPtyAgentPane(
   authoritativePreparation?: ProviderSpawnPreparation,
   authSpawnGated = false,
   spawnPermitAcquired = false,
+  spawnTiming?: PhaseTimer,
 ): SpawnResult | Promise<SpawnResult> {
   try {
+    // Recursões internas (prep → gate → permissão) compartilham o timer —
+    // um spawn, um evento. Chamador sem timer mede sozinho.
+    const timer = spawnTiming ?? startPhaseTimer();
     const {
       request,
       authority,
@@ -259,19 +298,27 @@ function spawnCliPtyAgentPane(
     };
     if ((adapter.id === "agy" || adapter.id === "claude") && authoritativePreparation === undefined) {
       return prepareProviderSpawnAuthoritative(adapter.id, perSpawn).then(
-        (preparation) =>
-          spawnCliPtyAgentPane(sender, adapter, spawn, preparation),
-        (error) => ({
-          ok: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "failed to verify provider authentication",
-        }),
+        (preparation) => {
+          timer.mark("provider-prep");
+          return spawnCliPtyAgentPane(
+            sender, adapter, spawn, preparation, false, false, timer,
+          );
+        },
+        (error) => {
+          timer.mark("provider-prep");
+          return {
+            ok: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : "failed to verify provider authentication",
+          };
+        },
       );
     }
     const preparation =
       authoritativePreparation ?? prepareProviderSpawn(adapter.id, perSpawn);
+    timer.mark("provider-prep");
     if (!preparation.ok) {
       throw new Error(preparation.error);
     }
@@ -289,24 +336,32 @@ function spawnCliPtyAgentPane(
       );
       if (authFile) {
         return waitForRotatingAuthSpawnGate({ authFile }).then(
-          () =>
-            spawnCliPtyAgentPane(
+          () => {
+            timer.mark("rotating-auth-gate");
+            return spawnCliPtyAgentPane(
               sender,
               adapter,
               spawn,
               preparation,
               true,
-            ),
-          (error) => ({
-            ok: false,
-            error:
-              error instanceof Error
-                ? error.message
-                : "failed to coordinate Codex auth refresh",
-          }),
+              false,
+              timer,
+            );
+          },
+          (error) => {
+            timer.mark("rotating-auth-gate");
+            return {
+              ok: false,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "failed to coordinate Codex auth refresh",
+            };
+          },
         );
       }
     }
+    timer.mark("rotating-auth-gate");
     // Revalidate immediately before spawn: discovery cache can go stale after
     // uninstall/move, and Finder launches must never re-search a bare name.
     // Do not mutate preparation.overrides — build a fresh overrides object.
@@ -378,6 +433,7 @@ function spawnCliPtyAgentPane(
           })
         : null;
     if (adopted) {
+      timer.mark("adopted-session");
       const settlement = settleSpawnedMainOwnedAgentSession({
         backend: "PTY",
         owner: sender,
@@ -411,20 +467,25 @@ function spawnCliPtyAgentPane(
     if (!spawnPermitAcquired) {
       return acquireCliSpawnPermit(adapter.id).then(
         async (release) => {
+          timer.mark("cli-spawn-permit");
           try {
             return await spawnCliPtyAgentPane(
-              sender, adapter, spawn, preparation, true, true,
+              sender, adapter, spawn, preparation, true, true, timer,
             );
           } finally {
             release();
           }
         },
-        (error) => ({
-          ok: false,
-          error: error instanceof Error ? error.message : 'failed to coordinate CLI update',
-        }),
+        (error) => {
+          timer.mark("cli-spawn-permit");
+          return {
+            ok: false,
+            error: error instanceof Error ? error.message : 'failed to coordinate CLI update',
+          };
+        },
       );
     }
+    timer.mark("cli-spawn-permit");
 
     assertNoLivePhysicalPaneProcess(spawn);
     const workerRestart = resolvePersistedWorkerRestart(spawn);
@@ -446,6 +507,7 @@ function spawnCliPtyAgentPane(
       overrides,
       authority,
     );
+    timer.mark("pty-spawn");
     if (workerRestart) {
       try {
         if (getSessionState(sessionId) === null) {
@@ -543,6 +605,13 @@ export function registerPtyIpc(): void {
     const req = parsed.data;
 
     if (req.kind === "cli-agent") {
+      // F-213: o timer nasce depois da validação de schema e cobre todo o
+      // trabalho main-side do spawn; `reportTiming` emite UMA vez no retorno
+      // (sucesso, recusa de adapter/autoridade ou exceção).
+      const spawnTiming = startPhaseTimer();
+      let timingSpawn: ResolvedMainOwnedAgentSpawn | undefined;
+      const reportTiming = (ok: boolean): void =>
+        reportPaneSpawnTiming(spawnTiming, req, timingSpawn, ok);
       try {
         const envelope = authorizeMainOwnedAgentSpawn(
           event.sender,
@@ -551,10 +620,12 @@ export function registerPtyIpc(): void {
         );
         const adapterId = envelope.request.adapterId;
         if (!adapterId) {
+          reportTiming(false);
           return { ok: false, error: "cli-agent spawn requires adapterId" };
         }
         const adapter = getAdapter(adapterId);
         if (!adapter) {
+          reportTiming(false);
           return { ok: false, error: `unknown adapter: ${adapterId}` };
         }
         const isolatedTab = req.worktreeSpaceId && !envelope.pending &&
@@ -564,13 +635,16 @@ export function registerPtyIpc(): void {
           isolatedTab ? { ...envelope, request: { ...envelope.request, cwd: undefined } } : envelope,
           projectRuntimeManager,
         );
+        timingSpawn = spawn;
         if (adapter.kind !== "cli-pty") {
+          reportTiming(false);
           return {
             ok: false,
             error: `adapter ${adapterId} is not a cli-pty adapter`,
           };
         }
         if (isolatedTab && spawn.authority.source !== 'direct-user') {
+          reportTiming(false);
           return { ok: false, error: 'Esta abertura já tem uma pasta definida pelo Nexus. Abra um novo pane comum na aba isolada.' };
         }
         if (isolatedTab && spawn.authority.source === 'direct-user') {
@@ -582,13 +656,37 @@ export function registerPtyIpc(): void {
                 ...spawn,
                 request: { ...spawn.request, cwd: worktree.cwd },
                 authority: { ...spawn.authority, scope: worktree.scope, cwd: worktree.cwd, coordinationScope },
-              });
+              }, undefined, false, false, spawnTiming);
               return result.ok ? { ...result, cwd: worktree.cwd } : result;
             })
-            .catch((error) => ({ ok: false, error: `Não foi possível abrir a pasta isolada da aba: ${error instanceof Error ? error.message : String(error)}` }));
+            .then((result) => {
+              reportTiming(result.ok);
+              return result;
+            })
+            .catch((error) => {
+              reportTiming(false);
+              return { ok: false, error: `Não foi possível abrir a pasta isolada da aba: ${error instanceof Error ? error.message : String(error)}` };
+            });
         }
-        return spawnCliPtyAgentPane(event.sender, adapter, spawn);
+        const outcome = spawnCliPtyAgentPane(
+          event.sender, adapter, spawn, undefined, false, false, spawnTiming,
+        );
+        if (outcome instanceof Promise) {
+          return outcome.then(
+            (result) => {
+              reportTiming(result.ok);
+              return result;
+            },
+            (error) => {
+              reportTiming(false);
+              throw error;
+            },
+          );
+        }
+        reportTiming(outcome.ok);
+        return outcome;
       } catch (err) {
+        reportTiming(false);
         const message =
           err instanceof Error ? err.message : "failed to spawn agent";
         if (err instanceof WorkspaceRootMissingError) {

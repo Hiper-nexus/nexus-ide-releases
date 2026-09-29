@@ -260,6 +260,9 @@ vi.mock("../persistence/account-store", () => ({
   }),
 }));
 
+const traceDeps = vi.hoisted(() => ({ trace: vi.fn() }));
+vi.mock("../observability/main-trace", () => ({ trace: traceDeps.trace }));
+
 import { configurePtyProjectRuntimeManager, registerPtyIpc } from "./pty-ipc";
 import { issueImmediateSquadSpawnGrant } from "../orch/spawn-authority";
 
@@ -1493,5 +1496,93 @@ describe("registerPtyIpc account fail-fast", () => {
       error: expect.stringMatching(/approval|required|current intent/i),
     });
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+  });
+
+  describe("F-213 pane spawn timing", () => {
+    const timingEvents = () =>
+      traceDeps.trace.mock.calls
+        .map(([event]) => event as Record<string, unknown>)
+        .filter((event) => event.kind === "pane-spawn-timing");
+
+    it("emite pane-spawn-timing com fases e o rendererWaitMs do pedido", async () => {
+      providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+        ok: true,
+        overrides: {},
+      });
+      const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+      const result = await handler?.(
+        { sender: { id: 7 } },
+        {
+          kind: "cli-agent",
+          adapterId: "claude",
+          paneId: "pane-timed",
+          cols: 100,
+          rows: 30,
+          rendererWaitMs: 42,
+        },
+      );
+      expect(result).toMatchObject({ ok: true });
+      expect(timingEvents()).toEqual([
+        expect.objectContaining({
+          source: "renderer",
+          adapterId: "claude",
+          paneId: "pane-timed",
+          rendererWaitMs: 42,
+          totalMs: expect.any(Number),
+        }),
+      ]);
+      const phases = timingEvents()[0].phases as Record<string, number>;
+      expect(phases).toHaveProperty("provider-prep");
+      expect(phases).toHaveProperty("cli-spawn-permit");
+      expect(phases).toHaveProperty("pty-spawn");
+    });
+
+    it("emite pane-spawn-timing também quando o spawn falha", async () => {
+      providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+        ok: false,
+        error: "no account",
+      });
+      const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+      const result = await handler?.(
+        { sender: { id: 7 } },
+        {
+          kind: "cli-agent",
+          adapterId: "claude",
+          cols: 100,
+          rows: 30,
+        },
+      );
+      expect(result).toMatchObject({ ok: false });
+      expect(timingEvents()).toEqual([
+        expect.objectContaining({
+          source: "renderer",
+          adapterId: "claude",
+          ok: false,
+          totalMs: expect.any(Number),
+        }),
+      ]);
+    });
+
+    it.each([-1, 700_000, 1.5, "lento"])(
+      "rejeita rendererWaitMs inválido (%s)",
+      async (rendererWaitMs) => {
+        const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+        const result = await handler?.(
+          { sender: { id: 7 } },
+          {
+            kind: "cli-agent",
+            adapterId: "claude",
+            cols: 100,
+            rows: 30,
+            rendererWaitMs,
+          },
+        );
+        expect(result).toMatchObject({
+          ok: false,
+          error: expect.stringMatching(/invalid spawn request/),
+        });
+        expect(timingEvents()).toHaveLength(0);
+      },
+    );
   });
 });

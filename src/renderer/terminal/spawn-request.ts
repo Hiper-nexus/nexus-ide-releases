@@ -36,6 +36,8 @@ export interface PtySpawnRequestInput {
   readonly restorePersistedAuthority: boolean;
   readonly missionId?: string;
   readonly accountId?: string;
+  /** F-213: espera do renderer até a chamada (telemetria). */
+  readonly rendererWaitMs?: number;
 }
 
 function clean(value: string | undefined): string | undefined {
@@ -63,5 +65,8 @@ export function buildPtySpawnRequest(
     effort: clean(pane.effort),
     orchRequestId: clean(pane.orchRequestId),
     missionId: clean(input.missionId),
+    ...(input.rendererWaitMs !== undefined
+      ? { rendererWaitMs: input.rendererWaitMs }
+      : {}),
   };
 }
