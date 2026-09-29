@@ -80,6 +80,7 @@ import {
 } from "../path-resolver";
 import { windowsNpmShimSpawn } from "../adapters/windows-npm-shim";
 import { windowsCodexShimWithinMaxPath } from "../adapters/codex-windows-prefix";
+import { codexNoDaemonArgs } from "../orch/codex-cli-version";
 import { windowsArgvPromptPlacement } from "./windows-command-line";
 import {
   isBuiltinAdapter,
@@ -2144,6 +2145,16 @@ export function spawnAgentSession(
         promptChannel,
         safeNativeInitialPrompt,
       );
+    }
+    // F-689: depois da reconstrução governada (que descarta flag
+    // desconhecida). Codex no Windows sem o servidor compartilhado: elevado,
+    // ele sai em segundos; e cada pane tem o próprio CODEX_HOME.
+    if (
+      process.platform === "win32" &&
+      adapter.id === "codex" &&
+      !args.includes("--no-daemon")
+    ) {
+      args.unshift(...codexNoDaemonArgs(bin));
     }
     if (
       !usesKimiTransientModel &&

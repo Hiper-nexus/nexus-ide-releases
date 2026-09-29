@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   codexHookTrustBypassArgs,
+  codexNoDaemonArgs,
   parseCodexCliVersion,
   resetCodexCliVersionCacheForTests,
   resolveCodexCliVersion,
@@ -123,3 +124,56 @@ describe('F-687: Windows npm launcher', () => {
     expect(launched).toBe(0);
   });
 });
+
+describe('F-689: Codex no Windows sem o servidor compartilhado', () => {
+  const help =
+    (withFlag: boolean): CodexVersionExec =>
+    (_bin, args) => {
+      if (args[args.length - 1] !== '--help') throw new Error('unexpected probe');
+      return withFlag
+        ? 'Options:\n      --no-daemon\n          Run without the shared background server\n'
+        : 'Options:\n      --model <MODEL>\n';
+    };
+
+  it('pede --no-daemon no Windows quando o Codex instalado anuncia a flag', () => {
+    expect(
+      codexNoDaemonArgs('codex', { platform: 'win32', execImpl: help(true), launchImpl: () => null }),
+    ).toEqual(['--no-daemon']);
+  });
+
+  it('não inventa a flag em Codex antigo nem fora do Windows', () => {
+    expect(
+      codexNoDaemonArgs('codex-old', { platform: 'win32', execImpl: help(false), launchImpl: () => null }),
+    ).toEqual([]);
+    expect(
+      codexNoDaemonArgs('codex-mac', { platform: 'darwin', execImpl: help(true), launchImpl: () => null }),
+    ).toEqual([]);
+    expect(
+      codexNoDaemonArgs('codex-none', { platform: 'win32', execImpl: execThrowing, launchImpl: () => null }),
+    ).toEqual([]);
+  });
+
+  it('lê o --help pelo lançador verificado quando o nome nu falha (.cmd do npm)', () => {
+    const entry = 'C:\\npm\\node_modules\\@openai\\codex\\bin\\codex.js';
+    const exec: CodexVersionExec = (bin, args) => {
+      if (bin === 'codex') throw new Error('spawn codex ENOENT');
+      expect(args).toEqual([entry, '--help']);
+      return '      --no-daemon\n';
+    };
+    expect(
+      codexNoDaemonArgs('codex', {
+        platform: 'win32',
+        execImpl: exec,
+        launchImpl: () => ({ file: 'C:\\npm\\node.exe', argsPrefix: [entry] }),
+      }),
+    ).toEqual(['--no-daemon']);
+  });
+
+  it('não confunde outra flag que só começa igual', () => {
+    const exec: CodexVersionExec = () => '      --no-daemon-restart\n';
+    expect(
+      codexNoDaemonArgs('codex-prefix', { platform: 'win32', execImpl: exec, launchImpl: () => null }),
+    ).toEqual([]);
+  });
+});
+
