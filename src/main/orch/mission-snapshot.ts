@@ -20,6 +20,7 @@ import {
   strictSquadAgentSchema,
 } from '../../shared/orch-types';
 import {
+  MISSION_AWAITING_INSTRUCTION_REASON_CODE,
   NEXUS_PROCESS_STARTED_AT,
   isIsolationStopReasonCode,
   leftoverRunningOrPendingIsDead,
@@ -123,6 +124,8 @@ export const projectMissionSnapshotViewSchema = z
     hasDispatchAuthority: z.boolean(),
     hasCurrentKickoffReceipt: z.boolean(),
     orchestratorLive: z.boolean(),
+    /** Orquestrador vivo parado no prompt — a missão espera instrução. */
+    orchestratorIdle: z.boolean().optional(),
     /**
      * O pane gravado como orquestrador roda uma sessão selada por esta missão,
      * mas não é o líder provado (a sessão durável morreu num failover/restart).
@@ -150,8 +153,9 @@ function hasResidualWork(view: ParsedView): boolean {
 }
 
 /**
- * Processo de verdade: busy/spawning (orquestrador vivo) ou pane working /
- * waiting / blocked. queued sem sessão é cadáver pós-restart, não equipe.
+ * Processo de verdade: orquestrador vivo (busy/spawning/idle — parado no
+ * prompt conta) ou pane working / waiting / blocked. queued sem sessão é
+ * cadáver pós-restart, não equipe.
  */
 export function missionViewHasLiveWorkingRuntime(view: {
   readonly orchestratorLive: boolean;
@@ -367,6 +371,26 @@ function projectState(view: ParsedView): {
         stateReason: {
           code: 'restore-failed',
           label: 'O runtime não foi restaurado após restart',
+        },
+      };
+    }
+
+    if (
+      view.orchestratorIdle &&
+      !view.panes.some(
+        (pane) =>
+          pane.state === 'working' ||
+          pane.state === 'waiting' ||
+          pane.state === 'blocked',
+      )
+    ) {
+      return {
+        state: 'running',
+        stateReason: {
+          code: MISSION_AWAITING_INSTRUCTION_REASON_CODE,
+          label: 'Aguardando sua instrução',
+          detail:
+            'O orquestrador está pronto e espera o próximo pedido. Escreva no terminal dele ou oriente a missão pelo Quadro.',
         },
       };
     }

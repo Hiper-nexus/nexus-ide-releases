@@ -72,6 +72,80 @@ describe('pickFallbackInScope — fallback nunca cruza missão', () => {
   });
 });
 
+describe('listPaneScopes — o código do motivo viaja com o estado', () => {
+  it('aba de missão própria carrega o código do resumo', () => {
+    const scopes = listPaneScopes({
+      panes: [pane({ id: 'a1', missionId: 'mA' })],
+      paneMissions: {},
+      missions: [
+        {
+          id: 'mA',
+          title: 'Missão A',
+          state: 'running',
+          stateReasonCode: 'awaiting-instruction',
+        },
+      ],
+    });
+    const scope = scopes.find((s) => s.id === 'mA');
+    expect(scope?.state).toBe('running');
+    expect(scope?.stateReasonCode).toBe('awaiting-instruction');
+  });
+
+  it('aba que hospeda a missão mostra o código da missão escolhida', () => {
+    const scopes = listPaneScopes({
+      panes: [
+        pane({
+          id: 'a1',
+          missionId: 'mA',
+          missionHost: true,
+          spaceId: 'space-a',
+          spaceTitle: 'Checkout',
+        }),
+        pane({ id: 'a2', spaceId: 'space-a', spaceTitle: 'Checkout' }),
+      ],
+      paneMissions: {},
+      missions: [
+        {
+          id: 'mA',
+          title: 'Missão A',
+          state: 'running',
+          stateReasonCode: 'awaiting-instruction',
+        },
+      ],
+    });
+    const scope = scopes.find((s) => s.key === 'space:space-a');
+    expect(scope?.state).toBe('running');
+    expect(scope?.stateReasonCode).toBe('awaiting-instruction');
+    expect(scope?.missions[0]?.stateReasonCode).toBe('awaiting-instruction');
+  });
+
+  it('missão dormindo hospedada leva o código — a aba sabe que ela não segura', () => {
+    const scopes = listPaneScopes({
+      panes: [
+        pane({
+          id: 'a1',
+          missionId: 'mA',
+          missionHost: true,
+          spaceId: 'space-a',
+          spaceTitle: 'Checkout',
+        }),
+      ],
+      paneMissions: {},
+      missions: [
+        {
+          id: 'mA',
+          title: 'Missão A',
+          state: 'blocked_user',
+          stateReasonCode: 'session-sleeping',
+        },
+      ],
+    });
+    const scope = scopes.find((s) => s.key === 'space:space-a');
+    expect(scope?.missions[0]?.stateReasonCode).toBe('session-sleeping');
+    expect(scope?.stateReasonCode).toBe('session-sleeping');
+  });
+});
+
 describe('listPaneScopes — cada missão carrega o SEU orquestrador', () => {
   it('dois campos lado a lado, cada um com o orquestrador próprio', () => {
     const scopes = listPaneScopes({

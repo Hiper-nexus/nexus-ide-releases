@@ -40,6 +40,21 @@ describe('missionLifecycleLabel', () => {
     ).toBe('Pronto para revisar');
   });
 
+  it('running com Maestro ocioso é Aguardando — vivo esperando não é Trabalhando', () => {
+    expect(
+      missionLifecycleLabel('running', false, 'awaiting-instruction'),
+    ).toBe('Aguardando');
+    // O motivo vence o aviso de atenção: ocioso não é "Trabalhando · aviso".
+    expect(
+      missionLifecycleLabel('running', true, 'awaiting-instruction'),
+    ).toBe('Aguardando');
+  });
+
+  it('running sem motivo de espera segue Trabalhando', () => {
+    expect(missionLifecycleLabel('running')).toBe('Trabalhando');
+    expect(missionLifecycleLabel('running', true)).toBe('Trabalhando · aviso');
+  });
+
   it('failed civil é Falhou mesmo se um reason session-dead sobrar', () => {
     expect(missionLifecycleLabel('failed', false, 'session-dead')).toBe(
       'Falhou',

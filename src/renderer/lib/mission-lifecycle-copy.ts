@@ -1,5 +1,9 @@
 import type { MissionLifecycleState } from '../../shared/mission-engine-contract';
-import { isolationStopLabel } from '../../shared/session-restore-liveness';
+import {
+  MISSION_AWAITING_INSTRUCTION_LABEL,
+  MISSION_AWAITING_INSTRUCTION_REASON_CODE,
+  isolationStopLabel,
+} from '../../shared/session-restore-liveness';
 
 /**
  * Status words a civilian understands at a glance.
@@ -51,6 +55,12 @@ export function missionLifecycleLabel(
   }
   const isolation = isolationStopLabel(stateReasonCode);
   if (isolation) return isolation;
+  if (
+    state === 'running' &&
+    stateReasonCode === MISSION_AWAITING_INSTRUCTION_REASON_CODE
+  ) {
+    return MISSION_AWAITING_INSTRUCTION_LABEL;
+  }
   if (state === 'running' && needsAttention) {
     return MISSION_RUNNING_ATTENTION_LABEL;
   }

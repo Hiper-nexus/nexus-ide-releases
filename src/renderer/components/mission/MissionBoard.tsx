@@ -25,6 +25,7 @@ import {
   MISSION_BACKGROUND_NOTICE,
   qualitativeProgress,
 } from '../../lib/mission-progress-line';
+import { MISSION_AWAITING_INSTRUCTION_REASON_CODE } from '../../../shared/session-restore-liveness';
 
 /** Estados em que a missão está de fato trabalhando agora. */
 const MISSION_LIVE_STATES: ReadonlySet<string> = new Set([
@@ -1109,7 +1110,9 @@ export function MissionBoard({
               missão parecia travada. A contagem vem dos agentes, que existem
               sempre. */}
           {currentSnapshot.progress.total === 0 &&
-            MISSION_LIVE_STATES.has(currentSnapshot.state) && (
+            MISSION_LIVE_STATES.has(currentSnapshot.state) &&
+            currentSnapshot.stateReason?.code !==
+              MISSION_AWAITING_INSTRUCTION_REASON_CODE && (
               <span className="mission-board__progress-line">
                 {qualitativeProgress(currentSnapshot.agents)?.line ??
                   'A equipe está começando'}
@@ -1131,11 +1134,13 @@ export function MissionBoard({
               </progress>
             </div>
           )}
-          {MISSION_LIVE_STATES.has(currentSnapshot.state) && (
-            <span className="mission-board__background-notice">
-              {MISSION_BACKGROUND_NOTICE}
-            </span>
-          )}
+          {MISSION_LIVE_STATES.has(currentSnapshot.state) &&
+            currentSnapshot.stateReason?.code !==
+              MISSION_AWAITING_INSTRUCTION_REASON_CODE && (
+              <span className="mission-board__background-notice">
+                {MISSION_BACKGROUND_NOTICE}
+              </span>
+            )}
           {telemetryLine && (
             <span
               className="mission-board__telemetry"

@@ -733,7 +733,13 @@ export interface NexusApi {
      * quando a política exige despacho explícito. `tabKey` só desempata
      * criação/reuso da missão da aba no main; não concede nada.
      */
-    createPaneMission(input: { paneId: string; title: string; tabKey?: string }): Promise<{
+    createPaneMission(input: {
+      paneId: string;
+      title: string;
+      tabKey?: string;
+      /** Missão do GRUPO do pane: nunca reusa nem toma a missão viva da aba. */
+      ownGroup?: boolean;
+    }): Promise<{
       ok: boolean;
       mission?: Mission;
       warning?: string;

@@ -16,6 +16,7 @@ import {
 import { TerminalWorkspace } from './TerminalWorkspace';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { useConfirmStore } from '../../state/confirm-store';
+import { useSessionStateStore } from '../../state/session-state-store';
 
 const terminalRuntime = vi.hoisted(() => ({
   attachHost: vi.fn(),
@@ -766,6 +767,51 @@ describe('TerminalWorkspace — espaços separados da missão aberta (F-560)', (
     ).toMatch(/Missão A, .+, 1 painel/);
   });
 
+  it('o código do motivo do resumo chega à aba — Maestro ocioso diz Aguardando (F-198)', () => {
+    useLayoutStore.setState({
+      root: buildGridTree([
+        {
+          id: 'pane-maestro',
+          kind: 'cli-agent',
+          title: 'Maestro',
+          adapterId: 'codex',
+          missionId: 'mission-x',
+          role: 'orchestrator',
+        },
+      ]),
+      focusedPaneId: 'pane-maestro',
+    });
+    useOrchStore.setState({
+      paneMissions: {},
+      missions: [],
+      missionSummaries: [
+        {
+          id: 'mission-x',
+          title: 'Missão X',
+          state: 'running',
+          stateReason: {
+            code: 'awaiting-instruction',
+            label: 'Aguardando sua instrução',
+          },
+          progress: { completed: 0, total: 1 },
+          needsAttention: false,
+          updatedAt: 1,
+        },
+      ],
+    });
+
+    const { host } = mount(<TerminalWorkspace />);
+
+    const missionTab = host.querySelector(
+      '.workspace-tab[data-scope-kind="mission"]',
+    );
+    expect(missionTab?.getAttribute('data-tone')).toBe('idle');
+    const tab = missionTab?.querySelector('[role="tab"]');
+    expect(tab?.getAttribute('aria-label')).toContain('Aguardando');
+    expect(tab?.getAttribute('aria-label')).not.toContain('Trabalhando');
+    expect(tab?.getAttribute('title')).toContain('Aguardando');
+  });
+
   it('sem nenhuma missão viva o filtro NÃO desliga — cada espaço segue no seu mosaico', () => {
     useLayoutStore.setState({
       root: buildGridTree([
@@ -1369,6 +1415,73 @@ describe('TerminalWorkspace — abas de feature', () => {
     expect(listPanes(useLayoutStore.getState().root)[0]).toMatchObject({
       spaceTitle: 'Epic 22',
     });
+  });
+
+  it('«Criar missão desta aba» na aba dormindo coroa o pane VIVO, não o Maestro morto (F-373)', async () => {
+    const createPaneMission = vi.fn(async () => ({ ok: true, mission: { id: 'm-new' } }));
+    const promoteMissionOrchestrator = vi.fn(async () => ({ ok: true }));
+    (window as unknown as { nexus: Record<string, unknown> }).nexus.orch = {
+      createPaneMission,
+      promoteMissionOrchestrator,
+    };
+    useLayoutStore.setState({
+      root: buildGridTree([
+        // O transcript morto do Maestro da missão dormindo ainda ocupa a aba.
+        {
+          id: 'pane-morto', kind: 'cli-agent', title: 'Claude morto', adapterId: 'claude',
+          spaceId: 'space-a', spaceTitle: 'Checkout', missionId: 'm-sleep',
+          missionHost: true, role: 'orchestrator',
+        },
+        { id: 'pane-vivo', kind: 'cli-agent', title: 'Codex vivo', adapterId: 'codex', spaceId: 'space-a', spaceTitle: 'Checkout' },
+      ]),
+      focusedPaneId: 'pane-morto',
+      maximizedPaneId: null,
+    });
+    useSessionStateStore.setState({
+      paneStates: new Map([
+        ['pane-morto', 'exited'],
+        ['pane-vivo', 'idle'],
+      ]) as never,
+    });
+    useOrchStore.setState({
+      paneMissions: { 'pane-morto': 'm-sleep' },
+      missions: [
+        {
+          id: 'm-sleep', title: 'Missão · Checkout', status: 'blocked',
+          intentState: 'blocked_user',
+          description: 'Trabalho anterior. <!-- nexus:leftover-parked -->',
+          milestones: [], learnings: '', createdAt: 1, updatedAt: 2,
+        } as import('../../../shared/orch-types').Mission,
+      ],
+      missionSummaries: [
+        {
+          id: 'm-sleep', title: 'Missão · Checkout', state: 'blocked_user',
+          stateReason: { code: 'session-sleeping', label: 'Dormindo' },
+          progress: { completed: 0, total: 1 }, needsAttention: false, updatedAt: 2,
+        } as never,
+      ],
+    });
+
+    const { host } = mount(<TerminalWorkspace />);
+    const tab = host.querySelector('.workspace-tab[data-scope-kind="space"]')!;
+    act(() => {
+      tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+    });
+    const item = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ].find((entry) => entry.textContent?.includes('Criar missão desta aba'))!;
+    await act(async () => {
+      item.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(createPaneMission).toHaveBeenCalledWith(
+      expect.objectContaining({ paneId: 'pane-vivo' }),
+    );
+    expect(promoteMissionOrchestrator).not.toHaveBeenCalled();
+    useSessionStateStore.setState({ paneStates: new Map() });
   });
 
   it('⌘/Ctrl+Alt+→ passa para a próxima aba', () => {

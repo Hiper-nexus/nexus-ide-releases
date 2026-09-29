@@ -332,6 +332,42 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     expect(c.mission!.id).not.toBe(a.mission!.id);
   });
 
+  it("ownGroup cria a missão do GRUPO: a coroa da aba não se move e o clique explícito ainda acha a 1ª", () => {
+    const first = operatorPane("pane-a");
+    const second = operatorPane("pane-b");
+    register([
+      { paneId: "pane-a", sessionId: first },
+      { paneId: "pane-b", sessionId: second },
+    ]);
+    const main = authority();
+
+    const a = main.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login", tabKey: "space:login" });
+    expect(a.ok).toBe(true);
+    const missionId = a.mission!.id;
+
+    const b = main.createPaneMissionFromRenderer(owner, { paneId: "pane-b", title: "Missão · Codex B", tabKey: "space:login", ownGroup: true });
+    expect(b.ok).toBe(true);
+    expect(b.mission!.id).not.toBe(missionId);
+    const suite = requireProjectDomainStoreRegistry().forScope(scope);
+    // A coroa da missão da aba não se moveu: cada missão tem o seu orquestrador.
+    expect(suite.missions.get(missionId)?.orchestratorSessionId).toBe(first);
+    expect(getContextBySession(first)).toMatchObject({ role: "orchestrator", missionId });
+    expect(getContextBySession(second)).toMatchObject({ role: "orchestrator", missionId: b.mission!.id });
+    // A missão do grupo não rouba a chave da aba: ela segue apontando a 1ª.
+    expect(suite.missions.get(missionId)?.intentContract?.workspaceBinding?.tabKey).toBe("space:login");
+    expect(suite.missions.get(b.mission!.id)?.intentContract?.workspaceBinding?.tabKey).toBeUndefined();
+
+    // Clique explícito depois (sem ownGroup) reusa a missão DA ABA, não a do grupo.
+    const third = operatorPane("pane-c");
+    register([
+      { paneId: "pane-a", sessionId: first },
+      { paneId: "pane-b", sessionId: second },
+      { paneId: "pane-c", sessionId: third },
+    ]);
+    const c = main.createPaneMissionFromRenderer(owner, { paneId: "pane-c", title: "Missão · Login", tabKey: "space:login" });
+    expect(c).toMatchObject({ ok: true, mission: { id: missionId } });
+  });
+
   it("Astra 7: a associação aba→missão sobrevive ao reinício do Main (store reaberto, mapa em memória vazio)", () => {
     const first = operatorPane("pane-a");
     const second = operatorPane("pane-b");

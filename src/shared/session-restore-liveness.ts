@@ -23,6 +23,11 @@ export const SESSION_SLEEPING_REASON_LABEL = 'Dormindo';
 /** Encerrar persistido: blocked + blocked_user + runtime-closed. */
 export const RUNTIME_CLOSED_REASON_CODE = 'runtime-closed' as const;
 
+/** Maestro vivo parado no prompt — esperando a próxima instrução. */
+export const MISSION_AWAITING_INSTRUCTION_REASON_CODE =
+  'awaiting-instruction' as const;
+export const MISSION_AWAITING_INSTRUCTION_LABEL = 'Aguardando';
+
 /** Preload/main injects this when a PTY hole is accepted. */
 export const SKIPPED_TERMINAL_OUTPUT_MARKER =
   'skipped terminal output that could not be recovered';

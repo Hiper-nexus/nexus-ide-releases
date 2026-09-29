@@ -9,6 +9,7 @@ import {
   MISSION_RUNNING_ATTENTION_LABEL,
   missionLifecycleLabel,
 } from '../../lib/mission-lifecycle-copy';
+import { MISSION_AWAITING_INSTRUCTION_REASON_CODE } from '../../../shared/session-restore-liveness';
 import { missionChromeTitle } from '../../../shared/mission-identity';
 import { listPanes } from '../../lib/split-tree';
 import { useLayoutStore } from '../../state/layout-store';
@@ -203,6 +204,12 @@ function missionStatusDisplay(
     stateReason?.code,
     awaitsOperatorReview,
   );
+  if (
+    state === 'running' &&
+    stateReason?.code === MISSION_AWAITING_INSTRUCTION_REASON_CODE
+  ) {
+    return { label, icon: 'status-idle', tone: 'ready' };
+  }
   if (label === 'Dormindo' || label === 'Parou') {
     return {
       label,

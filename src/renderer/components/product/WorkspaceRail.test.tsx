@@ -420,6 +420,37 @@ describe('WorkspaceRail', () => {
     ).not.toMatch(/Precisa de você/);
   });
 
+  it('Maestro vivo esperando instrução pinta Aguardando com tom pronto', () => {
+    const { host } = renderRail({
+      activeWorkspaces: [
+        {
+          id: 'idle',
+          name: 'Idle',
+          missions: [
+            {
+              id: 'mission-aguardando',
+              title: 'Idle',
+              status: 'running',
+              needsAttention: false,
+              stateReason: {
+                code: 'awaiting-instruction',
+                label: 'Aguardando sua instrução',
+              },
+            },
+          ],
+        },
+      ],
+      recentWorkspaces: [],
+    });
+    const row = host.querySelector('[data-mission-id="mission-aguardando"]');
+    expect(row?.textContent).toContain('Aguardando');
+    expect(row?.textContent).not.toContain('Trabalhando');
+    expect(row?.classList.contains('workspace-rail__mission--ready')).toBe(true);
+    expect(row?.classList.contains('workspace-rail__mission--blocked')).toBe(
+      false,
+    );
+  });
+
   it('Novo pedido abre o fluxo simples no projeto atual', () => {
     const { host, handlers } = renderRail();
 

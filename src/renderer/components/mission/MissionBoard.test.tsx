@@ -711,6 +711,52 @@ describe('MissionBoard canonical controller', () => {
     );
   });
 
+  it('Maestro ocioso à espera: o motivo explica e as frases de trabalho vivo somem (F-198)', async () => {
+    api.snapshot.mockResolvedValue(
+      canonicalSnapshot({
+        state: 'running',
+        stateReason: {
+          code: 'awaiting-instruction',
+          label: 'Aguardando sua instrução',
+          detail:
+            'O orquestrador está pronto e espera o próximo pedido. Escreva ' +
+            'no terminal dele ou oriente a missão pelo Quadro.',
+        },
+        progress: { completed: 0, total: 0 },
+        allowedActions: ['direct', 'stop'],
+      }),
+    );
+    const { host } = mount();
+    await flush();
+
+    expect(host.querySelector('.mission-board__status')?.textContent).toBe(
+      'Aguardando',
+    );
+    const reason = host.querySelector('.mission-board__reason');
+    expect(reason?.textContent).toContain('Aguardando sua instrução');
+    expect(reason?.textContent).toContain('espera o próximo pedido');
+    expect(host.textContent).not.toContain('Pode fechar esta tela');
+    expect(host.textContent).not.toContain('A equipe está');
+    // A direção segue habilitada — é o caminho para acordar a missão.
+    expect(host.querySelector('textarea')).not.toBeNull();
+  });
+
+  it('running de verdade mantém a linha de progresso e o aviso de fundo', async () => {
+    api.snapshot.mockResolvedValue(
+      canonicalSnapshot({
+        state: 'running',
+        stateReason: undefined,
+        progress: { completed: 0, total: 0 },
+        allowedActions: ['direct', 'stop'],
+      }),
+    );
+    const { host } = mount();
+    await flush();
+
+    expect(host.textContent).toContain('Pode fechar esta tela');
+    expect(host.textContent).toContain('A equipe está');
+  });
+
   it('header pedido humano real é Precisa de você', async () => {
     api.snapshot.mockResolvedValue(
       canonicalSnapshot({

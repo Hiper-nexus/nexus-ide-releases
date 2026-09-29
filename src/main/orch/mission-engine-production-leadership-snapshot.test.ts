@@ -410,3 +410,83 @@ describe('missão da aba (sem squad): o quadro desenha os panes que a missão gr
     expect(projectMissionSnapshot(view).agents).toEqual([]);
   });
 });
+
+describe('F-198: líder provado ocioso no prompt é vivo — Aguardando, nunca Dormindo', () => {
+  it('sessão idle do líder provado: orquestrador vivo e ocioso, missão running com direct', () => {
+    const now = Date.now();
+    harness.resolveMissionLeader.mockReturnValue({
+      sessionId: 's-orch', paneId: 'pane-orch', source: 'durable', proven: true,
+    });
+    harness.sessionStates.set('s-orch', 'idle');
+    harness.paneSnapshots = [{ paneId: 'pane-orch', sessionId: 's-orch' }];
+
+    const view = projectMissionEngineSnapshotView(
+      scope,
+      stores({
+        mission: mission({ createdAt: now, updatedAt: now }),
+        panes: [pane({ paneId: 'pane-orch', role: 'orchestrator', agentName: 'Maestro' })],
+      }),
+      missionId,
+    );
+
+    expect(view.orchestratorLive).toBe(true);
+    expect(view.orchestratorIdle).toBe(true);
+    const snapshot = projectMissionSnapshot(view);
+    expect(snapshot.state).toBe('running');
+    expect(snapshot.stateReason?.code).toBe('awaiting-instruction');
+    expect(snapshot.allowedActions).toEqual(['direct', 'stop']);
+  });
+
+  it('Maestro ocioso com worker ocupado: running sem o motivo — a missão trabalha', () => {
+    const now = Date.now();
+    harness.resolveMissionLeader.mockReturnValue({
+      sessionId: 's-orch', paneId: 'pane-orch', source: 'durable', proven: true,
+    });
+    harness.sessionStates.set('s-orch', 'idle');
+    harness.sessionStates.set('s-w1', 'busy');
+    harness.paneSnapshots = [
+      { paneId: 'pane-orch', sessionId: 's-orch' },
+      { paneId: 'pane-w1', sessionId: 's-w1' },
+    ];
+
+    const view = projectMissionEngineSnapshotView(
+      scope,
+      stores({
+        mission: mission({ createdAt: now, updatedAt: now }),
+        panes: [
+          pane({ paneId: 'pane-orch', role: 'orchestrator', agentName: 'Maestro' }),
+          pane({ paneId: 'pane-w1', role: 'worker', agentName: 'Auxiliar', adapterId: 'codex' }),
+        ],
+      }),
+      missionId,
+    );
+
+    expect(view.orchestratorIdle).toBe(true);
+    const snapshot = projectMissionSnapshot(view);
+    expect(snapshot.state).toBe('running');
+    expect(snapshot.stateReason).toBeUndefined();
+  });
+
+  it('líder provado sem sessão viva continua session-dead — idle não vira carta branca', () => {
+    const now = Date.now();
+    harness.resolveMissionLeader.mockReturnValue({
+      sessionId: 's-orch', paneId: 'pane-orch', source: 'durable', proven: true,
+    });
+    harness.paneSnapshots = [{ paneId: 'pane-orch', sessionId: 's-orch' }];
+
+    const view = projectMissionEngineSnapshotView(
+      scope,
+      stores({
+        mission: mission({ createdAt: now, updatedAt: now }),
+        panes: [pane({ paneId: 'pane-orch', role: 'orchestrator' })],
+      }),
+      missionId,
+    );
+
+    expect(view.orchestratorLive).toBe(false);
+    expect(view.orchestratorIdle).toBeUndefined();
+    const snapshot = projectMissionSnapshot(view);
+    expect(snapshot.state).toBe('blocked_technical');
+    expect(snapshot.stateReason?.code).toBe('session-dead');
+  });
+});

@@ -20,6 +20,8 @@ export interface PaneScopeMission {
   readonly title: string;
   /** Estado da projeção; ausente enquanto o renderer não conhece a missão. */
   readonly state?: string;
+  /** Código do motivo do estado (session-sleeping, awaiting-instruction…). */
+  readonly stateReasonCode?: string;
 }
 
 export interface PaneScopeEntry {
@@ -33,6 +35,11 @@ export interface PaneScopeEntry {
   readonly paneCount: number;
   /** Estado da missão, quando o renderer já conhece a projeção. */
   readonly state?: string;
+  /**
+   * Código do motivo do estado que a entrada mostra — a missão própria na
+   * aba de missão, a missão hospedada escolhida nas demais.
+   */
+  readonly stateReasonCode?: string;
   /**
    * Missões que moram nesta aba: a própria (aba de missão) ou as que um pane
    * do operador desta aba adotou (`missionHost`) — a aba é a feature.
@@ -234,6 +241,7 @@ export interface ListPaneScopesInput {
     readonly id: string;
     readonly title: string;
     readonly state: string;
+    readonly stateReasonCode?: string;
   }>;
 }
 
@@ -281,6 +289,9 @@ export function listPaneScopes(input: ListPaneScopesInput): PaneScopeEntry[] {
         id: missionId,
         title: summary?.title?.trim() || UNKNOWN_MISSION_TITLE,
         ...(summary ? { state: summary.state } : {}),
+        ...(summary?.stateReasonCode
+          ? { stateReasonCode: summary.stateReasonCode }
+          : {}),
       });
     }
   }
@@ -289,16 +300,20 @@ export function listPaneScopes(input: ListPaneScopesInput): PaneScopeEntry[] {
     const entry = byKey.get(key)!;
     const missions = missionsByKey.get(key) ?? [];
     // Aba de feature que hospeda missão mostra o estado dela (o ponto da aba).
-    const hostedState =
+    const hostedMission =
       entry.kind !== 'mission' && missions.length > 0
-        ? (missions.find((mission) => mission.state === 'running') ?? missions[0])!
-            .state
+        ? (missions.find((mission) => mission.state === 'running') ??
+          missions[0])!
         : undefined;
     return {
       ...entry,
       ...(input.panes.some((pane) => scopeOf(pane) === key && pane.isolateSpace) ? { isolated: true as const } : {}),
-      ...(entry.state === undefined && hostedState !== undefined
-        ? { state: hostedState }
+      ...(entry.state === undefined && hostedMission !== undefined
+        ? { state: hostedMission.state }
+        : {}),
+      ...(entry.stateReasonCode === undefined &&
+      hostedMission?.stateReasonCode !== undefined
+        ? { stateReasonCode: hostedMission.stateReasonCode }
         : {}),
       missions,
       orchestrator: orchestratorByKey.get(key) ?? null,
@@ -325,7 +340,10 @@ export function listPaneScopes(input: ListPaneScopesInput): PaneScopeEntry[] {
 function scopeEntryFor(
   key: string,
   pane: PaneModel,
-  missionById: ReadonlyMap<string, { title: string; state: string }>,
+  missionById: ReadonlyMap<
+    string,
+    { title: string; state: string; stateReasonCode?: string }
+  >,
   panes: readonly PaneModel[],
 ): PaneScopeEntry {
   if (key === LOOSE_SCOPE_KEY) {
@@ -350,6 +368,9 @@ function scopeEntryFor(
       missions: [],
       orchestrator: null,
       ...(summary ? { state: summary.state } : {}),
+      ...(summary?.stateReasonCode
+        ? { stateReasonCode: summary.stateReasonCode }
+        : {}),
     };
   }
   const id = key.slice(SPACE_SCOPE_PREFIX.length);

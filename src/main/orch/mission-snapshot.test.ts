@@ -618,3 +618,65 @@ describe('missão falhada não pode ter apagar como única saída', () => {
     }
   });
 });
+
+describe('awaiting-instruction — Maestro vivo esperando o próximo pedido (F-198)', () => {
+  it('orquestrador ocioso e nenhum pane em trabalho: running com o motivo honesto', () => {
+    const view: ProjectMissionSnapshotView = {
+      ...runningView(),
+      tasks: [],
+      panes: [
+        { paneId: 'pane-orch', agentId: 'orchestrator', state: 'queued' },
+      ],
+      roster: [],
+      orchestratorIdle: true,
+    };
+
+    const snapshot = projectMissionSnapshot(view);
+
+    expect(snapshot.state).toBe('running');
+    expect(snapshot.stateReason).toEqual({
+      code: 'awaiting-instruction',
+      label: 'Aguardando sua instrução',
+      detail:
+        'O orquestrador está pronto e espera o próximo pedido. Escreva no terminal dele ou oriente a missão pelo Quadro.',
+    });
+    // Direct nunca fica indisponível por um Maestro parado no prompt.
+    expect(snapshot.allowedActions).toEqual(['direct', 'stop']);
+  });
+
+  it.each(['working', 'waiting', 'blocked'] as const)(
+    'pane %s suprime o motivo — a missão tem trabalho em curso',
+    (state) => {
+      const view: ProjectMissionSnapshotView = {
+        ...runningView(),
+        orchestratorIdle: true,
+        panes: [
+          { paneId: 'pane-orch', agentId: 'orchestrator', state: 'queued' },
+          { paneId: 'pane-w1', agentId: 'agent-1', state },
+        ],
+      };
+
+      const snapshot = projectMissionSnapshot(view);
+
+      expect(snapshot.state).toBe('running');
+      expect(snapshot.stateReason).toBeUndefined();
+      expect(snapshot.allowedActions).toEqual(['direct', 'stop']);
+    },
+  );
+
+  it('sem orchestratorIdle o running não ganha motivo (payload antigo idêntico)', () => {
+    const view: ProjectMissionSnapshotView = {
+      ...runningView(),
+      tasks: [],
+      panes: [
+        { paneId: 'pane-orch', agentId: 'orchestrator', state: 'queued' },
+      ],
+      roster: [],
+    };
+
+    const snapshot = projectMissionSnapshot(view);
+
+    expect(snapshot.state).toBe('running');
+    expect(snapshot.stateReason).toBeUndefined();
+  });
+});

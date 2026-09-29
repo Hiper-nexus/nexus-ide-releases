@@ -110,6 +110,7 @@ const harness = vi.hoisted(() => {
     removeMission: vi.fn(),
     resolveOwnedPaneForAdoption: vi.fn(),
     promoteOrchestrator: vi.fn(),
+    createPaneMission: vi.fn(),
     planPromotionCandidate: vi.fn(),
     promotePlan: vi.fn(),
     missionLifecycleCandidate: vi.fn(),
@@ -466,6 +467,9 @@ vi.mock('./renderer-mission-authority', () => ({
       input: unknown,
     ) {
       return harness.promoteOrchestrator(owner, missionId, input);
+    }
+    createPaneMissionFromRenderer(owner: unknown, input: unknown) {
+      return harness.createPaneMission(owner, input);
     }
   },
 }));
@@ -4172,5 +4176,48 @@ describe('teclado do operador em pane de missão', () => {
       handler({ sender }, { sessionId, data: 'a'.repeat(4_097) }),
     ).toBe(false);
     expect(harness.operatorInput.writes).toEqual([]);
+  });
+});
+
+describe('missionCreateForPane — a missão do GRUPO do pane (F-374)', () => {
+  it('rejeita ownGroup não-booleano como invalid_payload', async () => {
+    configureRendererMissionAuthority({} as never);
+    const sender = owner(931);
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.createPaneMission.mockReturnValue({
+      ok: true,
+      mission: { id: 'mission-1', orchestratorSessionId: 'pty-1' },
+    });
+
+    const result = await canonicalHandler(ORCH_CHANNELS.missionCreateForPane)(
+      { sender },
+      { paneId: 'pane-a', title: 'Missão · Codex A', tabKey: 'space:a', ownGroup: 'yes' },
+    );
+
+    expect(result).toEqual({ ok: false, error: 'invalid_payload' });
+    expect(harness.createPaneMission).not.toHaveBeenCalled();
+  });
+
+  it('ownGroup booleano chega à autoridade sem tocar o resto do payload', async () => {
+    configureRendererMissionAuthority({} as never);
+    const sender = owner(932);
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.createPaneMission.mockReturnValue({
+      ok: true,
+      mission: { id: 'mission-1', orchestratorSessionId: 'pty-1' },
+    });
+
+    const result = await canonicalHandler(ORCH_CHANNELS.missionCreateForPane)(
+      { sender },
+      { paneId: 'pane-a', title: 'Missão · Codex A', tabKey: 'space:a', ownGroup: true },
+    );
+
+    expect(result).toMatchObject({ ok: true, mission: { id: 'mission-1' } });
+    expect(harness.createPaneMission).toHaveBeenCalledWith(sender, {
+      paneId: 'pane-a',
+      title: 'Missão · Codex A',
+      tabKey: 'space:a',
+      ownGroup: true,
+    });
   });
 });

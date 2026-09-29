@@ -1,6 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { MissionLifecycleState } from '../../../shared/mission-engine-contract';
+import {
+  MISSION_AWAITING_INSTRUCTION_REASON_CODE,
+  RUNTIME_CLOSED_REASON_CODE,
+  SESSION_SLEEPING_REASON_CODE,
+  isIsolationStopReasonCode,
+} from '../../../shared/session-restore-liveness';
 import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
 import type { PaneScopeEntry } from '../../lib/pane-spaces';
 import { PanePicker } from '../PanePicker';
@@ -68,7 +74,18 @@ export type WorkspaceTabTone =
   | 'idle';
 
 /** Um estado, uma cor — o mesmo mapa das superfícies de missão (`--state-*`). */
-export function workspaceTabTone(state: string | undefined): WorkspaceTabTone | null {
+export function workspaceTabTone(
+  state: string | undefined,
+  stateReasonCode?: string,
+): WorkspaceTabTone | null {
+  // Espera no prompt e paradas duráveis não são trabalho vivo — o glifo fica
+  // quieto como o de uma aba comum.
+  if (
+    stateReasonCode === MISSION_AWAITING_INSTRUCTION_REASON_CODE ||
+    isIsolationStopReasonCode(stateReasonCode)
+  ) {
+    return 'idle';
+  }
   switch (state) {
     case 'running':
     case 'starting':
@@ -91,9 +108,12 @@ export function workspaceTabTone(state: string | undefined): WorkspaceTabTone | 
   }
 }
 
-function stateLabel(state: string | undefined): string | null {
+function stateLabel(
+  state: string | undefined,
+  stateReasonCode?: string,
+): string | null {
   if (!state || !LIFECYCLE_STATES.has(state)) return null;
-  return missionLifecycleLabel(state as MissionLifecycleState);
+  return missionLifecycleLabel(state as MissionLifecycleState, false, stateReasonCode);
 }
 
 const TERMINAL_MISSION_STATES: ReadonlySet<string> = new Set<MissionLifecycleState>([
@@ -104,9 +124,15 @@ const TERMINAL_MISSION_STATES: ReadonlySet<string> = new Set<MissionLifecycleSta
 /**
  * Missão da aba que ainda pode receber um orquestrador. O campo é o estado do
  * lifecycle (o mesmo de `workspaceTabTone`): só terminal libera criar outra —
- * `blocked_user` ou `recovering` ainda é a missão viva da aba.
+ * `blocked_user` ou `recovering` ainda é a missão viva da aba. A exceção é a
+ * parada durável (Dormindo/Parou): essa não recebe mais orquestrador — o
+ * caminho dela é Retomar pelo Quadro, e a aba fica livre para outra missão.
  */
-function isActiveTabMission(mission: { readonly state?: string }): boolean {
+function isActiveTabMission(mission: {
+  readonly state?: string;
+  readonly stateReasonCode?: string;
+}): boolean {
+  if (missionIsParkedOrClosed(mission.stateReasonCode)) return false;
   return mission.state === undefined || !TERMINAL_MISSION_STATES.has(mission.state);
 }
 
@@ -117,19 +143,31 @@ const CLOSABLE_MISSION_STATES: ReadonlySet<string> = new Set([
   'review_ready',
 ]);
 
+/** Dormindo/Parou duráveis: a missão não segura a aba. */
+function missionIsParkedOrClosed(stateReasonCode: string | undefined): boolean {
+  return (
+    stateReasonCode === SESSION_SLEEPING_REASON_CODE ||
+    stateReasonCode === RUNTIME_CLOSED_REASON_CODE
+  );
+}
+
 /**
  * Fechar a aba encerra os panes dela. Uma missão viva (ou que o renderer ainda
  * não conhece) não se encerra por um × de aba: o caminho é o Quadro, que sabe
- * parar a coordenação sem deixar trabalho pela metade.
+ * parar a coordenação sem deixar trabalho pela metade. Missão já parada de
+ * forma durável (Dormindo/Parou) não conta — o trabalho dela já está morto.
  */
 export function workspaceTabIsClosable(scope: PaneScopeEntry): boolean {
+  const closable = (mission: {
+    readonly state?: string;
+    readonly stateReasonCode?: string;
+  }) =>
+    missionIsParkedOrClosed(mission.stateReasonCode) ||
+    (mission.state !== undefined && CLOSABLE_MISSION_STATES.has(mission.state));
   if (scope.kind === 'mission') {
-    return scope.state !== undefined && CLOSABLE_MISSION_STATES.has(scope.state);
+    return closable(scope);
   }
-  return scope.missions.every(
-    (mission) =>
-      mission.state !== undefined && CLOSABLE_MISSION_STATES.has(mission.state),
-  );
+  return scope.missions.every(closable);
 }
 
 function tabGlyph(scope: PaneScopeEntry): PixelIconName {
@@ -141,12 +179,12 @@ function tabGlyph(scope: PaneScopeEntry): PixelIconName {
 function tabTooltip(scope: PaneScopeEntry, side: boolean): string {
   const lines = [scope.title];
   if (scope.isolated) lines.push('Pasta isolada desta aba');
-  const label = stateLabel(scope.state);
+  const label = stateLabel(scope.state, scope.stateReasonCode);
   if (scope.kind === 'mission') {
     if (label) lines.push(`Missão · ${label}`);
   } else {
     for (const mission of scope.missions) {
-      const missionLabel = stateLabel(mission.state);
+      const missionLabel = stateLabel(mission.state, mission.stateReasonCode);
       lines.push(`Missão: ${mission.title}${missionLabel ? ` · ${missionLabel}` : ''}`);
     }
   }
@@ -158,7 +196,7 @@ function tabTooltip(scope: PaneScopeEntry, side: boolean): string {
 }
 
 function tabAccessibleName(scope: PaneScopeEntry): string {
-  const label = stateLabel(scope.state);
+  const label = stateLabel(scope.state, scope.stateReasonCode);
   const count = `${scope.paneCount} ${scope.paneCount === 1 ? 'painel' : 'painéis'}`;
   return [scope.title, label, count].filter(Boolean).join(', ');
 }
@@ -253,7 +291,7 @@ export function WorkspaceTabs({
         {scopes.map((scope) => {
           const active = !overview && scope.key === activeScopeKey;
           const side = !overview && scope.key === sideScopeKey;
-          const tone = workspaceTabTone(scope.state);
+          const tone = workspaceTabTone(scope.state, scope.stateReasonCode);
           const closable = workspaceTabIsClosable(scope);
           const isEditing = editing?.key === scope.key;
           return (

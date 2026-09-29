@@ -3,9 +3,12 @@ import { useOrchStore } from '../state/orch-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
 import { askChoice } from '../state/choice-store';
 import { useToastStore } from '../state/toast-store';
+import { useSessionStateStore } from '../state/session-state-store';
 import { listPanes } from './split-tree';
 import { listPaneScopes, paneScopeResolver } from './pane-spaces';
 import { usePendingOrchestratorAdoptionStore } from '../state/pending-orchestrator-adoption-store';
+import { hasCurrentDispatchAuthority } from '../../shared/mission-intent';
+import type { PaneSessionState } from '../../shared/types';
 
 /**
  * F-527: promoção de pane a orquestrador com vínculo EXPLÍCITO de missão.
@@ -32,6 +35,12 @@ export const PROMOTE_NEW_MISSION = '__new_mission__';
  * sucesso (toast genérico), não como id de missão.
  */
 export const PROMOTE_LOCAL_ORCHESTRATOR = '__local_orchestrator__';
+/**
+ * F-374: a aba já tem um orquestrador VIVO — as opções do diálogo entre uma
+ * missão própria em paralelo e tomar a liderança da que existe.
+ */
+export const PROMOTE_OWN_MISSION = '__own_mission__';
+export const PROMOTE_TAKE_OVER = '__take_over__';
 
 export type PanePromoteTarget =
   | { readonly kind: 'mission'; readonly missionId: string }
@@ -130,13 +139,65 @@ export function tabMissionTitle(tabTitle: string): string {
 }
 
 /**
+ * Estado de sessão que ainda pode receber a coroa: o processo existe e atende.
+ * `exited`/`hibernated`/ausente é transcript morto — coroá-lo daria um
+ * `pane_unavailable` do Main (ou um orquestrador fantasma).
+ */
+export function isLivePaneSessionState(
+  state: PaneSessionState | undefined,
+): boolean {
+  return state === 'spawning' || state === 'busy' || state === 'idle';
+}
+
+/**
+ * Quem lidera a missão da aba: o orquestrador do escopo se estiver vivo, senão
+ * o pane focado vivo, senão o primeiro vivo. `null` quando nenhum pane da aba
+ * tem sessão de IA viva — quem chama pede "Abra uma IA nesta aba".
+ */
+export function pickTabMissionLeader<T extends { readonly id: string }>(
+  agents: readonly T[],
+  options: {
+    readonly orchestratorPaneId?: string | null;
+    readonly focusedPaneId?: string | null;
+    readonly paneStates: ReadonlyMap<string, PaneSessionState>;
+  },
+): T | null {
+  const live = (paneId: string | null | undefined) =>
+    agents.find(
+      (agent) =>
+        agent.id === paneId &&
+        isLivePaneSessionState(options.paneStates.get(agent.id)),
+    );
+  return (
+    live(options.orchestratorPaneId) ??
+    live(options.focusedPaneId) ??
+    agents.find((agent) =>
+      isLivePaneSessionState(options.paneStates.get(agent.id)),
+    ) ??
+    null
+  );
+}
+
+/**
  * A aba do pane: o nome dela e a missão viva que ela já hospeda (a de algum
  * pane do mesmo escopo). `null` quando o pane não está no layout.
+ *
+ * F-373: "missão viva" é a que tem autoridade de despacho corrente — o mesmo
+ * teste que o Main faz antes de aceitar a coroa. Uma parada durável (Dormindo
+ * no leftover / Parou pelo operador) continua listada em `hostedMissionIds`,
+ * mas não é mais "a missão da aba": coroar nela seria recusado de qualquer
+ * jeito, e a aba fica livre para nascer outra.
  */
 function paneTabContext(paneId: string): {
   readonly key: string;
   readonly title: string;
   readonly missionId: string | null;
+  readonly missionTitle: string | null;
+  readonly leader: {
+    readonly paneId: string;
+    readonly title: string;
+    readonly live: boolean;
+  } | null;
   readonly hostedMissionIds: readonly string[];
 } | null {
   const panes = listPanes(useLayoutStore.getState().root);
@@ -150,16 +211,43 @@ function paneTabContext(paneId: string): {
     paneMissions: orch.paneMissions,
     missions: orch.missions.map((m) => ({ id: m.id, title: m.title, state: m.status })),
   }).find((scope) => scope.key === key);
-  const missionId =
-    entry?.missions.find((hosted) =>
-      orch.missions.some(
-        (m) => m.id === hosted.id && ACTIVE_MISSION_STATUSES.has(m.status),
-      ),
-    )?.id ?? null;
+  // Com duas missões vivas na aba ("Nova missão deste painel"), a da ABA é a
+  // que carrega o vínculo `workspaceBinding.tabKey` — a ordem de `orch.missions`
+  // (a mais nova primeiro) apontaria a do grupo. Sem vínculo, a primeira
+  // elegível na ordem dos panes.
+  const eligible = (entry?.missions ?? []).flatMap((hosted) => {
+    const mission = orch.missions.find((m) => m.id === hosted.id);
+    return mission && hasCurrentDispatchAuthority(mission) ? [mission] : [];
+  });
+  const mission =
+    eligible.find(
+      (m) => m.intentContract?.workspaceBinding?.tabKey === key,
+    ) ??
+    eligible[0] ??
+    null;
+  const leaderPane =
+    mission === null
+      ? undefined
+      : panes.find(
+          (candidate) =>
+            candidate.role === 'orchestrator' &&
+            (candidate.missionId ?? orch.paneMissions[candidate.id]) ===
+              mission.id,
+        );
   return {
     key,
     title: entry?.title ?? 'Terminais',
-    missionId,
+    missionId: mission?.id ?? null,
+    missionTitle: mission?.title ?? null,
+    leader: leaderPane
+      ? {
+          paneId: leaderPane.id,
+          title: leaderPane.title || leaderPane.id,
+          live: isLivePaneSessionState(
+            useSessionStateStore.getState().paneStates.get(leaderPane.id),
+          ),
+        }
+      : null,
     hostedMissionIds: entry?.missions.map((hosted) => hosted.id) ?? [],
   };
 }
@@ -206,12 +294,20 @@ async function createTabMission(
 async function requestTabMission(
   paneId: string,
   tab: { readonly key: string; readonly title: string },
+  options?: { readonly ownGroup?: boolean; readonly paneTitle?: string },
 ): Promise<TabMissionOutcome> {
   const create = window.nexus?.orch?.createPaneMission;
   if (!create) return { kind: 'unavailable' };
   let result: Awaited<ReturnType<typeof create>> | undefined;
   try {
-    result = await create({ paneId, title: tabMissionTitle(tab.title), tabKey: tab.key });
+    result = await create({
+      paneId,
+      title: uniqueMissionTitle(
+        tabMissionTitle(options?.paneTitle?.trim() || tab.title),
+      ),
+      tabKey: tab.key,
+      ...(options?.ownGroup ? { ownGroup: true } : {}),
+    });
   } catch (error) {
     console.warn(`[promote] missão da aba falhou pane=${paneId}:`, error);
     return { kind: 'refused' };
@@ -225,6 +321,38 @@ async function requestTabMission(
   useLayoutStore.getState().promoteMissionPaneRole(missionId, paneId);
   useOrchStore.getState().bindPaneMission(paneId, missionId);
   return { kind: 'created', missionId };
+}
+
+/**
+ * F-374: missão própria do pane numa aba que já tem orquestrador vivo. Chama o
+ * Main DIRETO — nunca por `createTabMission`/`tabMissionsInFlight`: o in-flight
+ * da aba existe para a missão DA ABA e uma missão de grupo não se junta a ela
+ * (nem a registra: entraria na mesma chave e a segunda criação da aba acharia
+ * a missão do grupo).
+ */
+async function createOwnPaneMission(
+  paneId: string,
+  tab: { readonly key: string; readonly title: string },
+  paneTitle?: string,
+): Promise<TabMissionOutcome> {
+  return requestTabMission(paneId, tab, { ownGroup: true, paneTitle });
+}
+
+/**
+ * Duas "Missão · Checkout" no rail são indistinguíveis. O sufixo " 2", " 3"…
+ * sai do primeiro livre e nunca passa de 120 caracteres (o máximo do schema
+ * do Main) — o corte é na base, não no título final.
+ */
+function uniqueMissionTitle(base: string): string {
+  const taken = new Set(
+    useOrchStore.getState().missions.map((mission) => mission.title),
+  );
+  if (!taken.has(base)) return base;
+  for (let index = 2; ; index += 1) {
+    const suffix = ` ${index}`;
+    const title = `${base.slice(0, 120 - suffix.length)}${suffix}`;
+    if (!taken.has(title)) return title;
+  }
 }
 
 const MISSION_STATUS_LABEL: Record<string, string> = {
@@ -246,9 +374,10 @@ export async function promotePaneWithMissionChoice(input: {
   // O vínculo GRAVADO no pane é autoridade tão boa quanto o observado — ler só
   // `paneMissions` fazia um pane restaurado do disco (que traz `missionId` no
   // modelo) parecer solto e cair no diálogo à toa.
-  const paneMissionId = listPanes(useLayoutStore.getState().root).find(
+  const promotedPane = listPanes(useLayoutStore.getState().root).find(
     (pane) => pane.id === input.paneId,
-  )?.missionId;
+  );
+  const paneMissionId = promotedPane?.missionId;
   const tab = paneTabContext(input.paneId);
   // A página de missão aberta (⌘K com a missão X na tela) só vincula um pane
   // que já mora na aba de X — nunca prende o pane de OUTRA aba à X.
@@ -278,6 +407,57 @@ export async function promotePaneWithMissionChoice(input: {
   // ganha a sua, leve, na hora — sem diálogo com as missões das OUTRAS abas
   // (escolher uma delas era o que misturava os trabalhos).
   if (tab?.missionId) {
+    // F-374: a missão da aba já é liderada por um pane VIVO e não é este. Tomar
+    // a coroa em silêncio rebaixava o Maestro vigente a terminal comum — era o
+    // que o operador via quando queria uma segunda missão. A escolha é dele.
+    const leader = tab.leader;
+    if (leader?.live && leader.paneId !== input.paneId) {
+      const picked = await askChoice({
+        title: 'Esta aba já tem uma missão rodando',
+        body:
+          `“${tab.missionTitle ?? tab.title}” é liderada por “${leader.title}”. ` +
+          'Este painel pode começar uma missão própria, em paralelo, ou assumir a liderança dessa.',
+        options: [
+          {
+            value: PROMOTE_OWN_MISSION,
+            label: 'Nova missão deste painel',
+            detail:
+              'As duas missões seguem nesta aba, cada uma com o seu orquestrador.',
+            primary: true,
+          },
+          {
+            value: PROMOTE_TAKE_OVER,
+            label: 'Assumir a liderança',
+            detail: `“${leader.title}” deixa de coordenar e volta a ser um terminal comum.`,
+          },
+        ],
+      });
+      if (picked === null) return null;
+      if (picked === PROMOTE_OWN_MISSION) {
+        const created = await createOwnPaneMission(
+          input.paneId,
+          tab,
+          promotedPane?.title ?? input.paneTitle,
+        );
+        switch (created.kind) {
+          case 'created':
+            return created.missionId;
+          case 'refused':
+            toastPromoteRefused(created.error);
+            return null;
+          case 'pane-unavailable':
+            toastPaneWithoutLiveAgent();
+            return null;
+          case 'hardened':
+            requestPaneAdoptionForNextMission(input.paneId, input.paneTitle);
+            return null;
+          case 'unavailable':
+            toastPromoteRefused();
+            return null;
+        }
+      }
+      // PROMOTE_TAKE_OVER segue no promoteToMission abaixo.
+    }
     const promoted = await promoteToMission(tab.missionId, input.paneId);
     if (!promoted.ok) {
       toastPromoteRefused(promoted.error);
@@ -355,7 +535,10 @@ export function toastPromoteRefused(error?: string): void {
     error === 'pane_mission_mismatch'
       ? 'Este painel ainda pertence a outra missão. Encerre-a pelo Quadro ou ' +
           'use outro painel desta aba.'
-      : 'A missão não aceitou este painel como líder. Abra a missão pelo Quadro e ' +
+      : error === 'mission_unavailable'
+        ? 'A missão deste painel não está rodando agora. Retome-a pelo Quadro ou ' +
+          'use um painel livre para começar outra missão.'
+        : 'A missão não aceitou este painel como líder. Abra a missão pelo Quadro e ' +
           'tente de novo, ou crie uma nova missão.',
   );
 }

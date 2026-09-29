@@ -2193,6 +2193,7 @@ export function registerOrchIpc(): void {
       paneId: z.string().min(1).max(128),
       title: z.string().trim().min(1).max(120),
       tabKey: z.string().min(1).max(256).optional(),
+      ownGroup: z.boolean().optional(),
     })
     .strict();
   ipcMain.handle(ORCH_CHANNELS.missionCreateForPane, (event, raw) => {

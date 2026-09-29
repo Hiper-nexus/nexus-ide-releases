@@ -1138,7 +1138,9 @@ export function projectMissionEngineSnapshotView(
   const orchestratorLive = Boolean(
     sessionId &&
       orchestratorPane &&
-      (sessionState === "spawning" || sessionState === "busy"),
+      (sessionState === "spawning" ||
+        sessionState === "busy" ||
+        sessionState === "idle"),
   );
   // Líder à deriva (campo 23/09): a sessão durável morreu (failover Claude →
   // GLM, restart) e o pane gravado como orquestrador voltou com a autoridade
@@ -1353,6 +1355,9 @@ export function projectMissionEngineSnapshotView(
     hasCurrentKickoffReceipt:
       stores.missions.hasCurrentKickoffAcceptance(mission.id),
     orchestratorLive,
+    ...(orchestratorLive && sessionState === "idle"
+      ? { orchestratorIdle: true }
+      : {}),
     ...(leaderDrift ? { orchestratorDrift: true } : {}),
     runtimeClosedByOperator: wasMissionRuntimeClosedByOperator(mission),
     leftoverParked: wasMissionLeftoverParked(mission),

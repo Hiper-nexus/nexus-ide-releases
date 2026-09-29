@@ -259,6 +259,148 @@ describe('WorkspaceTabs', () => {
   });
 });
 
+describe('WorkspaceTabs — estado com motivo (F-198/F-373)', () => {
+  it('aba com Maestro ocioso: tom idle e a palavra Aguardando (F-198)', () => {
+    const scopes = [
+      space({
+        key: 'mission:m',
+        kind: 'mission',
+        id: 'm',
+        title: 'Fechar o Epic 22',
+        state: 'running',
+        stateReasonCode: 'awaiting-instruction',
+        missions: [
+          {
+            id: 'm',
+            title: 'Fechar o Epic 22',
+            state: 'running',
+            stateReasonCode: 'awaiting-instruction',
+          },
+        ],
+        orchestrator: { paneId: 'orq', title: 'Claude' },
+      }),
+    ];
+    const { host } = render({ scopes });
+    const tab = host.querySelector<HTMLButtonElement>('[role="tab"]')!;
+
+    expect(
+      tab.closest('.workspace-tab')?.getAttribute('data-tone'),
+    ).toBe('idle');
+    expect(tab.getAttribute('aria-label')).toContain('Aguardando');
+    expect(tab.getAttribute('aria-label')).not.toContain('Trabalhando');
+    expect(tab.getAttribute('title')).toContain('Missão · Aguardando');
+  });
+
+  it('aba hospedeira mostra o motivo da missão hospedada, não o rótulo cru', () => {
+    const scopes = [
+      space({
+        key: 'space:a',
+        id: 'a',
+        title: 'Checkout',
+        missions: [
+          {
+            id: 'm-viva',
+            title: 'Missão · Checkout',
+            state: 'running',
+            stateReasonCode: 'awaiting-instruction',
+          },
+        ],
+      }),
+    ];
+    const { host } = render({ scopes });
+    const tab = host.querySelector<HTMLButtonElement>('[role="tab"]')!;
+
+    expect(tab.getAttribute('title')).toContain(
+      'Missão: Missão · Checkout · Aguardando',
+    );
+  });
+
+  it.each(['session-sleeping', 'runtime-closed'])(
+    'missão da aba %s não segura a aba: oferece criar outra e permite fechar (F-373)',
+    (stateReasonCode) => {
+      const scopes = [
+        space({
+          key: 'space:a',
+          id: 'a',
+          title: 'Checkout',
+          missions: [
+            {
+              id: 'm-morta',
+              title: 'Missão · Checkout',
+              state: 'blocked_user',
+              stateReasonCode,
+            },
+          ],
+        }),
+      ];
+      const { host } = render({ scopes, onStartTabMission: vi.fn() });
+      const tab = host.querySelector('.workspace-tab[data-scope-kind="space"]')!;
+
+      expect(tab.querySelector('.workspace-tab__close')).not.toBeNull();
+      act(() => {
+        tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+      });
+      const labels = [...document.querySelectorAll('[role="menuitem"] strong')].map(
+        (item) => item.textContent,
+      );
+      expect(labels).toContain('Criar missão desta aba');
+      expect(labels).toContain('Fechar a aba');
+      expect(labels).not.toContain('Missão em andamento');
+    },
+  );
+
+  it('aba de missão dormindo (a própria) também fecha pelo ×', () => {
+    const scope = space({
+      key: 'mission:m',
+      kind: 'mission',
+      id: 'm',
+      title: 'Missão parada',
+      state: 'blocked_user',
+      stateReasonCode: 'session-sleeping',
+    });
+    expect(workspaceTabIsClosable(scope)).toBe(true);
+    const alive = space({
+      key: 'mission:m2',
+      kind: 'mission',
+      id: 'm2',
+      title: 'Missão viva',
+      state: 'blocked_user',
+      stateReasonCode: 'open-question',
+    });
+    expect(workspaceTabIsClosable(alive)).toBe(false);
+  });
+
+  it('session-dead ainda segura a aba — o runtime pode voltar', () => {
+    const scopes = [
+      space({
+        key: 'space:a',
+        id: 'a',
+        title: 'Checkout',
+        missions: [
+          {
+            id: 'm-morta',
+            title: 'Missão · Checkout',
+            state: 'blocked_technical',
+            stateReasonCode: 'session-dead',
+          },
+        ],
+      }),
+    ];
+    const { host } = render({ scopes, onStartTabMission: vi.fn() });
+    const tab = host.querySelector('.workspace-tab[data-scope-kind="space"]')!;
+
+    expect(tab.querySelector('.workspace-tab__close')).toBeNull();
+    act(() => {
+      tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+    });
+    const labels = [...document.querySelectorAll('[role="menuitem"] strong')].map(
+      (item) => item.textContent,
+    );
+    expect(labels).not.toContain('Criar missão desta aba');
+    expect(labels).toContain('Missão em andamento');
+  });
+});
+
 describe('workspaceTabIsClosable / workspaceTabTone', () => {
   it('aba só de terminais fecha; com missão viva ou desconhecida, não', () => {
     expect(workspaceTabIsClosable(SCOPES[0]!)).toBe(true);
@@ -281,5 +423,14 @@ describe('workspaceTabIsClosable / workspaceTabTone', () => {
     expect(workspaceTabTone('blocked_technical')).toBe('repair');
     expect(workspaceTabTone('completed')).toBe('done');
     expect(workspaceTabTone(undefined)).toBeNull();
+  });
+
+  it('o código do motivo vence o estado: espera e paradas são idle', () => {
+    expect(workspaceTabTone('running', 'awaiting-instruction')).toBe('idle');
+    expect(workspaceTabTone('blocked_user', 'session-sleeping')).toBe('idle');
+    expect(workspaceTabTone('blocked_user', 'runtime-closed')).toBe('idle');
+    expect(workspaceTabTone('blocked_technical', 'session-dead')).toBe('idle');
+    // Motivo que não é parada não muda o tom.
+    expect(workspaceTabTone('blocked_user', 'open-question')).toBe('attention');
   });
 });

@@ -21,8 +21,13 @@ import {
   type PaneScopeEntry,
 } from '../../lib/pane-spaces';
 import { usePaneScopeStore } from '../../state/pane-scope-store';
+import { useSessionStateStore } from '../../state/session-state-store';
 import { useToastStore } from '../../state/toast-store';
-import { startTabMissionFor, toastPromoted } from '../../lib/pane-mission-promote';
+import {
+  pickTabMissionLeader,
+  startTabMissionFor,
+  toastPromoted,
+} from '../../lib/pane-mission-promote';
 import { askConfirm, useConfirmStore } from '../../state/confirm-store';
 import { WorkspaceTabs, workspaceTabIsClosable } from './WorkspaceTabs';
 import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
@@ -186,6 +191,9 @@ export function TerminalWorkspace({
           id: summary.id,
           title: summary.title,
           state: summary.state,
+          ...(summary.stateReason?.code
+            ? { stateReasonCode: summary.stateReason.code }
+            : {}),
         })),
       }),
     [panes, paneMissions, missionSummaries],
@@ -316,11 +324,13 @@ export function TerminalWorkspace({
       scope.key,
       useOrchStore.getState().paneMissions,
     ).filter((pane) => pane.kind === 'cli-agent');
-    const focused = useLayoutStore.getState().focusedPaneId;
-    const leader =
-      agents.find((pane) => pane.id === scope.orchestrator?.paneId) ??
-      agents.find((pane) => pane.id === focused) ??
-      agents[0];
+    // F-373: só pane com sessão VIVA pode liderar — o Maestro morto da missão
+    // dormindo ainda é `orchestrator` no escopo e coroá-lo volta pane_unavailable.
+    const leader = pickTabMissionLeader(agents, {
+      orchestratorPaneId: scope.orchestrator?.paneId,
+      focusedPaneId: useLayoutStore.getState().focusedPaneId,
+      paneStates: useSessionStateStore.getState().paneStates,
+    });
     if (!leader) {
       useToastStore.getState().push(
         'info',

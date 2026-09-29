@@ -1010,7 +1010,12 @@ const api: NexusApi = {
       paneId?: string;
       sessionId?: string;
     }) => ipcRenderer.invoke(ORCH_CHANNELS.missionPromoteOrchestrator, input),
-    createPaneMission: (input: { paneId: string; title: string; tabKey?: string }) =>
+    createPaneMission: (input: {
+      paneId: string;
+      title: string;
+      tabKey?: string;
+      ownGroup?: boolean;
+    }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionCreateForPane, input),
     updateMission: (missionId: string, patch: MissionPatch) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionUpdate, { missionId, patch }),
