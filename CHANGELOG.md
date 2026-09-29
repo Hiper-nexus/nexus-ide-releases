@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.139 — O Nexus orquestra sozinho
+
+Pedido do operador em 29/09: o Nexus deve saber orquestrar sozinho e saber qual modelo usar para cada tarefa. Inclui a 0.76.138.
+
+- **Orquestração automática no Autopilot (F-200).** Às 13:21 o pedido "coloca nativo e no pwa e web" chegou a um pane comum, e o Jev julgou 0,56 de chance de dividir, abaixo da régua de 0,6. O pane trabalhou sozinho por 10 minutos, até você torná-lo orquestrador; aí ele abriu os dois writers em 2 minutos. Agora o critério do Jev conta "a mesma mudança em apps ou superfícies separadas". Com confiança de 0,7 ou mais em Autopilot, o Nexus torna o pane orquestrador e manda abrir um helper por parte. No Hardened ele só sugere. Na avaliação com 18 pedidos reais, o critério novo acerta 4 dos 6 pedidos divisíveis (o antigo, 3), sem nenhum falso alarme nos outros 12. O hook também deixa de julgar mensagens que não foram escritas por você (avisos do Nexus, entregas de helper, notificações de tarefa).
+- **Revisão e trabalho crítico com modelo de topo (F-214).** As duas revisões sênior do diff de tenant/migration de 29/09 foram para o MiMo V2.6 Pro, com o GPT-6 Astra em 2º. Nos benchmarks oficiais que o roteador usava, todos já marcam perto do máximo, então o custo decidia. No Terminal-Bench 4.0, que separa os modelos, o próprio card da Xiaomi dá 34,9 ao Pro e 28,8 ao Flash, contra 66,4 do Opus 5.5. Agora revisão em tarefa difícil e todo trabalho crítico vão para GPT-6 Astra, Claude Fable 5.1 ou Opus 5.5, de qualquer CLI disponível. O restante segue distribuído entre todas as LLMs, com Flash no rotineiro e Pro no difícil.
+
 ## 0.76.138 — Várias missões lado a lado
 
 Pedido do operador em 29/09: abrir mais uma missão pelo "+ Pane", tornar o segundo terminal orquestrador e ver as duas operando. Inclui a 0.76.137.

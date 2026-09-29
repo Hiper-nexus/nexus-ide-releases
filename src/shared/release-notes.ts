@@ -8157,7 +8157,7 @@ export const RELEASE_076137: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076138: AppRelease = {
   version: '0.76.138',
   date: '2026-09-29',
   codename: 'Várias missões lado a lado',
@@ -8194,6 +8194,34 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'Numa aba com missão rodando, "Tornar orquestrador" em outro pane pergunta se ' +
         'ele começa uma missão própria, em paralelo, ou assume a liderança.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.139',
+  date: '2026-09-29',
+  codename: 'O Nexus orquestra sozinho',
+  summary:
+    'Em Autopilot, o pane que recebe um pedido que se divide vira orquestrador sozinho e ' +
+    'abre os helpers; revisões e trabalho crítico vão para um modelo de topo. ' +
+    'Inclui a 0.76.138.',
+  highlights: [
+    {
+      title: 'Orquestração automática no Autopilot',
+      detail:
+        'Pedido que se divide em partes independentes (por exemplo, a mesma mudança no app ' +
+        'nativo e no PWA) torna o pane orquestrador de uma missão e ele abre um helper por ' +
+        'parte. No Hardened o Nexus só sugere.',
+    },
+    {
+      title: 'Revisão com modelo de topo',
+      detail:
+        'Revisão de código e trabalho crítico (segurança, pagamento, dados) vão para GPT-6 ' +
+        'Astra, Claude Fable 5.1 ou Opus 5.5, de qualquer CLI disponível. O resto segue ' +
+        'distribuído entre todas as LLMs, com a variante certa de cada uma (Flash no ' +
+        'rotineiro, Pro no difícil).',
     },
   ],
   fixes: [],
