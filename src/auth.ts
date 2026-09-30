@@ -3,7 +3,7 @@ import { HTTPException } from 'hono/http-exception';
 import { getCookie, setCookie } from 'hono/cookie';
 import { z } from 'zod';
 import type { AppEnv } from './context.js';
-import type { AccountRow, OAuthStateRow, Provider } from './db/schema.js';
+import type { AccountRow, DesktopClient, OAuthStateRow, Provider } from './db/schema.js';
 import { authConfigured, type Config } from './config.js';
 import { findOrCreateAccount } from './accounts.js';
 import { consumeAuthCode, issueTokens, rotateRefresh, revokeAll, sessionFor, SESSION_TTL_MS, REFRESH_TTL_MS, type Tokens } from './sessions.js';
@@ -16,6 +16,7 @@ import { licenseForAccount } from './licences.js';
 import { requireNativeAuth, requireWebAuth, requireCsrf } from './middleware.js';
 const STATE_TTL_MS = 10 * 60 * 1000;
 const CODE_TTL_MS = 60 * 1000;
+const DESKTOP_CLIENTS: readonly DesktopClient[] = ['nexus', 'shot'];
 const APP_STATE = /^[A-Za-z0-9._~-]{1,128}$/;
 const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
 const VERIFIER = /^[A-Za-z0-9._~-]{43,128}$/;
@@ -51,6 +52,15 @@ function query(c: AuthContext, name: string): string {
         throw new HTTPException(400, { message: 'Parâmetros de login inválidos.' });
     return values[0];
 }
+/** Optional `client` on desktop starts: at most one value, from a fixed list. The web flow takes none. */
+function clientOf(c: AuthContext, web: boolean): DesktopClient {
+    const values = c.req.queries('client');
+    if (!values)
+        return 'nexus';
+    if (web || values.length !== 1 || !DESKTOP_CLIENTS.includes(values[0] as DesktopClient))
+        throw new HTTPException(400, { message: 'Cliente de login inválido.' });
+    return values[0] as DesktopClient;
+}
 function callbackUri(config: Config, provider: Provider): string { return `${config.PUBLIC_BASE_URL}/v1/auth/${provider}/callback`; }
 async function profileFor(c: AuthContext, accountId: string) {
     const account = await c.env.DB.prepare('SELECT * FROM accounts WHERE id=?').bind(accountId).first<AccountRow>();
@@ -63,13 +73,14 @@ async function startOAuth(c: AuthContext, web: boolean) {
     const provider = providerOf(c.req.param('provider') ?? '');
     const config = c.get('config');
     const creds = credentials(config, provider);
+    const client = clientOf(c, web);
     const appState = web ? null : query(c, 'app_state');
     const desktopChallenge = web ? null : query(c, 'code_challenge');
     if ((!web && (!APP_STATE.test(appState!) || !CHALLENGE.test(desktopChallenge!))))
         throw new HTTPException(400, { message: 'Estado e PKCE válidos são obrigatórios.' });
     const state = randomToken(), verifier = randomToken(), proof = web ? randomToken() : null;
     const now = Date.now();
-    await c.env.DB.prepare('INSERT INTO oauth_states(state,provider,code_verifier,app_state,code_challenge,created_at,expires_at,flow,web_state_hash) VALUES(?,?,?,?,?,?,?,?,?)').bind(state, provider, verifier, appState, desktopChallenge, now, now + STATE_TTL_MS, web ? 'web' : 'desktop', proof ? await hashToken(proof) : null).run();
+    await c.env.DB.prepare('INSERT INTO oauth_states(state,provider,code_verifier,app_state,code_challenge,created_at,expires_at,flow,web_state_hash,client) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(state, provider, verifier, appState, desktopChallenge, now, now + STATE_TTL_MS, web ? 'web' : 'desktop', proof ? await hashToken(proof) : null, client).run();
     if (proof)
         setCookie(c, '__Host-nexus_oauth_state', proof, { ...cookieOptions, maxAge: STATE_TTL_MS / 1000 });
     return c.redirect(authorizeUrl(provider, { ...creds, redirectUri: callbackUri(config, provider), state, challenge: await pkceChallenge(verifier) }));
@@ -111,7 +122,8 @@ async function finishOAuth(c: AuthContext, fetchFn: typeof fetch) {
     }
     const rawCode = randomToken(), now = Date.now();
     await c.env.DB.prepare('INSERT INTO auth_codes(code_hash,account_id,expires_at,created_at,code_challenge) VALUES(?,?,?,?,?)').bind(await hashToken(rawCode), account.id, now + CODE_TTL_MS, now, state.code_challenge).run();
-    return c.redirect(`${config.APP_DEEP_LINK_BASE}/${rawCode}?state=${encodeURIComponent(state.app_state!)}`);
+    const base = state.client === 'shot' ? config.SHOT_DEEP_LINK_BASE : config.APP_DEEP_LINK_BASE;
+    return c.redirect(`${base}/${rawCode}?state=${encodeURIComponent(state.app_state!)}`);
 }
 async function webSession(c: AuthContext) {
     const rawSession = getCookie(c, '__Host-nexus_session'), rawRefresh = getCookie(c, '__Host-nexus_refresh');

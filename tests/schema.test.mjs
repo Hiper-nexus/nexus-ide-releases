@@ -15,6 +15,7 @@ function database(t) {
   db.exec(readFileSync(migrationPath, 'utf8'));
   db.exec(readFileSync(new URL('../migrations/0002_trial_admin.sql', import.meta.url), 'utf8'));
   db.exec(readFileSync(new URL('../migrations/0003_checkout_reservation.sql', import.meta.url), 'utf8'));
+  db.exec(readFileSync(new URL('../migrations/0004_oauth_client.sql', import.meta.url), 'utf8'));
   return db;
 }
 
@@ -39,7 +40,7 @@ function project(db, accountId, projectId = 'same-project') {
 
 test('schema metadata records version without claiming PostgreSQL import', (t) => {
   const db = database(t);
-  assert.equal(db.prepare("SELECT value FROM system_metadata WHERE key = 'schema_version'").get().value, '3');
+  assert.equal(db.prepare("SELECT value FROM system_metadata WHERE key = 'schema_version'").get().value, '4');
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM system_metadata WHERE key LIKE 'import%'").get().n, 0);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM accounts").get().n, 0);
 });

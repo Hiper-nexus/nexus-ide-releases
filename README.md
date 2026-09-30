@@ -31,7 +31,7 @@ Respostas: `{ok:true,data:{…}}` ou `{ok:false,error:"…"}`.
 |---|---|
 | `GET /health`, `GET /ready` | pública |
 | `GET /v1/public/status` | pública |
-| `GET /v1/auth/:provider`, `GET /v1/web/auth/:provider`, `GET /v1/auth/:provider/callback` | OAuth com PKCE |
+| `GET /v1/auth/:provider`, `GET /v1/web/auth/:provider`, `GET /v1/auth/:provider/callback` | OAuth com PKCE. O início desktop aceita `client=nexus` (padrão) ou `client=shot`; o callback devolve o código no deep link do cliente gravado (`APP_DEEP_LINK_BASE` ou `SHOT_DEEP_LINK_BASE`), nunca num destino vindo da requisição. Outro valor: 400; o fluxo web não aceita `client`. |
 | `POST /v1/auth/exchange`, `POST /v1/auth/refresh`, `POST /v1/auth/logout`, `GET /v1/me` | app (Bearer) |
 | `GET /v1/web/session`, `POST /v1/web/logout` | site (cookie; mutações com `X-CSRF-Token`) |
 | `POST /v1/web/checkout`, `POST /v1/web/portal` | site (cookie + CSRF) |

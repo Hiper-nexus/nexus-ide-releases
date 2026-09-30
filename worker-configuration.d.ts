@@ -8,6 +8,7 @@ interface __BaseEnv_CloudflareBindings {
 	PUBLIC_BASE_URL: string;
 	PUBLIC_SITE_URL: string;
 	APP_DEEP_LINK_BASE: string;
+	SHOT_DEEP_LINK_BASE: string;
 	APP_MODE: string;
 	MIGRATION_READY: string;
 	ADMIN_EMAILS: string;
@@ -30,7 +31,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "PUBLIC_BASE_URL" | "PUBLIC_SITE_URL" | "APP_DEEP_LINK_BASE" | "APP_MODE" | "MIGRATION_READY" | "ADMIN_EMAILS" | "TRIAL_DAYS" | "TRIAL_MAX_AGENTS" | "TRIAL_CLOUD_SYNC" | "STRIPE_PRICE_PRO" | "GITHUB_OAUTH_ID" | "GOOGLE_OAUTH_ID" | "STRIPE_PRICE_TEAM">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "PUBLIC_BASE_URL" | "PUBLIC_SITE_URL" | "APP_DEEP_LINK_BASE" | "SHOT_DEEP_LINK_BASE" | "APP_MODE" | "MIGRATION_READY" | "ADMIN_EMAILS" | "TRIAL_DAYS" | "TRIAL_MAX_AGENTS" | "TRIAL_CLOUD_SYNC" | "STRIPE_PRICE_PRO" | "GITHUB_OAUTH_ID" | "GOOGLE_OAUTH_ID" | "STRIPE_PRICE_TEAM">> {}
 }
 
 // Begin runtime types

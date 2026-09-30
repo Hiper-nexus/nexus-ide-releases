@@ -67,6 +67,9 @@ export interface RefreshTokenRow {
   readonly channel: AuthChannel;
 }
 
+/** Desktop app that started a login; each one registers its own deep-link scheme. */
+export type DesktopClient = 'nexus' | 'shot';
+
 export interface OAuthStateRow {
   readonly state: string;
   readonly provider: Provider;
@@ -77,6 +80,7 @@ export interface OAuthStateRow {
   readonly expires_at: EpochMilliseconds;
   readonly flow: AuthChannel;
   readonly web_state_hash: string | null;
+  readonly client: DesktopClient;
 }
 
 export interface AuthCodeRow {

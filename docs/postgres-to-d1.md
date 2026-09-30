@@ -18,6 +18,9 @@ and a durable audit table. `src/db/schema.ts` defines read-only SQL row contract
 snake_case column names. The migration creates tables and indexes and inserts
 only `system_metadata.schema_version = '1'`; it contains no destructive data
 commands. The second migration advances `schema_version` to `2`, and
+`migrations/0004_oauth_client.sql` advances it to `4` by recording on
+`oauth_states.client` which desktop app (`nexus` or `shot`) started a login,
+so the callback can pick that client's deep-link scheme.
 `migrations/0003_checkout_reservation.sql` advances it to `3` by adding
 `accounts.checkout_generation` and `accounts.checkout_open_until`: one open
 Stripe Checkout Session per account, replayed through an idempotency key
