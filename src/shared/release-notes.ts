@@ -8557,7 +8557,7 @@ export const RELEASE_076150: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076151: AppRelease = {
   version: '0.76.151',
   date: '2026-09-30',
   codename: 'Mac em dia com o Windows',
@@ -8584,6 +8584,40 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'O GPT-6 Astra só roda quando pedido pelo nome, o GLM não para mais no ' +
         'aviso de Bypass e o AGY não cai quando a rota pede outro esforço.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.152',
+  date: '2026-09-30',
+  codename: 'Jev que ajuda',
+  summary:
+    'O Jev para de devolver entregas boas, orienta o Maestro a dividir seus ' +
+    'pedidos em workers e não segura mais o fechamento de panes. Inclui a ' +
+    '0.76.151.',
+  highlights: [
+    {
+      title: 'Revisão de entrega que não atrasa',
+      detail:
+        'A revisão do Jev devolvia 9 de cada 10 entregas: um revisor que achava ' +
+        'problemas era tratado como trabalho inacabado. Metade das devolvidas ' +
+        'nunca chegava ao Maestro. Agora só volta o que o worker consegue ' +
+        'corrigir; o resto chega marcado para o Maestro decidir.',
+    },
+    {
+      title: 'Maestro dividindo seus pedidos',
+      detail:
+        'Quando você digita um pedido no Maestro, o Jev avalia se ele se divide ' +
+        'e o Maestro recebe a orientação de abrir um worker por parte, em ' +
+        'paralelo.',
+    },
+    {
+      title: 'Fechar pane sem esperar o Jev',
+      detail:
+        'Fechar o pane de um worker não passa mais pela guarda do Jev, que ' +
+        'segurava o Maestro alguns segundos a cada fechamento.',
     },
   ],
   fixes: [],

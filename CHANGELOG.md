@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.152 — Jev que ajuda
+
+Plano de uso do Jev, a partir do mapa de 30/09 (826 decisões em 8 dias, 55% delas na guarda e zero nas superfícies que aceleram o trabalho). Inclui a 0.76.151 do Mac.
+
+- **Revisão de entrega calibrada (F-707).** Em 82 revisões houve 45 devoluções. Só 5 voltaram "ok" e 22 nunca foram reenviadas: a devolução recusa o `handoff_submit`, e a entrega sumia até o Maestro cobrar. O sinal "admite pendência" disparava para o revisor que relata NÃO PASS. A rubrica foi reescrita e medida com o Jev real nas 105 entregas de sucesso do HiperGO: devoluções caem de 98 para 3, todas justas. Achado de revisor e pendência admitida entram com `[evidência fraca]`, sem devolução.
+- **Maestro recebe a divisão do pedido (F-708).** O pedido que o operador digita no Maestro passa pelo mesmo Jev de delegação do "+ Pane". Com 2+ partes, vira "abra N workers (R de leitura, W de escrita) em paralelo e encerre o turno".
+- **Guarda não julga `pane_close` (F-709).** Eram 132 das 450 decisões da guarda, todas aprovadas, cada uma segurando o Maestro até 3 s. Spawn, write e terminal seguem julgados.
+
 ## 0.76.151 — Mac em dia com o Windows
 
 Primeira build para macOS desde a 0.76.146. Traz ao Mac as correções da 0.76.147 à 0.76.150, publicadas só para Windows. Inclui a 0.76.150.
