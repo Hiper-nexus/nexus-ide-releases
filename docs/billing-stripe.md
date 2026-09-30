@@ -40,10 +40,19 @@ são `login-required`, `verification-unavailable`, `invalid-license`,
 `account-mismatch`, `license-expired`, `trial-ended`, `suspended`, `inactive`.
 Para a capacidade de sync existe também `cloud-sync-disabled`. Bloqueado,
 `maxAgents()` devolve 0; sem limite assinado devolve null. A autoridade não abre
-nem fecha panes: os próximos escritores devem chamar essas APIs nos pontos de
-mutação de panes, PTYs, missões e sync, e novamente depois de operações assíncronas.
-A tela de bloqueio também pertence à próxima fase. Esta fase isolada **não
-impõe** esses gates nas funcionalidades existentes.
+nem fecha panes diretamente. `license-enforcement.ts` aplica o gate e reserva
+um slot por filho físico PTY/ACP; `pty-manager.ts` protege spawns frios e adoção
+warm, e `mission-engine.ts` protege mutações de missão. O renderer mantém a
+árvore montada e inerte na `AccessBoundary`; fechar terminais segue permitido.
+`gateRestoredAgents` segura a retomada enquanto o acesso está bloqueado.
+
+O registrador `warm-agent-spawner.ts` observa `onAccessChanged`: bloqueio drena
+somente filhos estacionados, preservando os adotados. `WarmPool.drain` invalida
+reposições em andamento; um filho que termina de iniciar depois da drenagem é
+encerrado. A reserva continua contando até a prova de finalização física.
+A adoção reaproveita o slot, sem permitir um terceiro agente no teste de dois
+slots. Cobertura: `pty-manager.test.ts`, `warm-pool.test.ts` e
+`license-lifecycle.test.tsx` (autoridade assinada real, host/IPC simulados).
 
 O arquivo `~/.nexus/license.json` guarda somente `{ "version": 2, "token": "…" }`.
 Do formato antigo só o token é aproveitado. Campos externos nunca concedem
@@ -77,7 +86,13 @@ minuto e uma vez ao observar cada vencimento. Voltar o relógio não ressuscita 
 observado. Limite inevitável: sem fonte de tempo confiável online não há prova do
 tempo transcorrido com o processo desligado; restaurar um cofre antigo, alterar
 o binário ou controlar o sistema operacional está fora dessa garantia. Falha ao
-persistir o cofre também limita essa defesa entre reinícios. Um salto indevido
+persistir o selo mantém o acesso bloqueado. Cada consulta seguinte retenta a
+escrita uma vez; escrita bem-sucedida limpa a falha, sem exigir rede quando o
+JWT e o vínculo continuam válidos. Minha conta oferece “Tentar novamente”
+também para `verification-unavailable`, por `refreshAccess` → `billing.get`
+→ reavaliação/persistência no Main. Selo ausente ou que ainda exige validação
+online continua fechado (H1). Cobertura: `license-access.test.ts` e
+`AccountSection.test.tsx`. Um salto indevido
 do relógio para o futuro pode manter o acesso bloqueado até aquele horário;
 JWT de deep link nunca reduz esse piso, pois poderia ser um token antigo
 reapresentado. Não há reset automático de relógio com base apenas em `iat`.
