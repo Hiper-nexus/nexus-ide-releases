@@ -81,24 +81,7 @@
 @keyframes vox-caret{to{opacity:0}}
 
 /* ---------- Nexus Shot illustration ---------- */
-.shot-mock,.redline-mock{margin:var(--s3) 0}
-.shot-screen{position:relative;aspect-ratio:16/9;border:1px solid var(--line);border-radius:8px;background:var(--bg);overflow:hidden}
-.shot-window{display:flex;gap:6px;padding:12px}
-.shot-window i{width:7px;height:7px;border-radius:50%;background:var(--lift)}
-.shot-select{position:absolute;inset:24% 10% 16% 20%;border:1.5px dashed var(--pink);border-radius:4px}
-.shot-select::before{content:'';position:absolute;left:8%;top:48%;width:34%;height:6px;border-radius:4px;background:var(--lift);box-shadow:0 16px 0 var(--lift),0 32px 0 var(--lift)}
-.shot-note{position:absolute;left:8%;top:14%;padding:3px 8px;border-radius:4px;background:var(--pink);color:var(--bg);font-size:11px;font-weight:600;white-space:nowrap}
-.shot-arrow{position:absolute;left:50%;top:36%;width:21%;height:30%;color:var(--pink);overflow:visible}
-.shot-arrow path{vector-effect:non-scaling-stroke}
-.shot-target{position:absolute;right:9%;bottom:14%;width:22%;height:22%;min-height:18px;border:1px solid var(--strong);border-radius:4px;background:var(--lift)}
-.shot-tools{display:flex;align-items:center;gap:12px;margin-top:12px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bar);color:var(--muted)}
-.companion-art .shot-tools svg,.companion-art .shot-arrow{margin:0;display:block}
-.companion-art .shot-arrow{width:21%;height:30%}
-.companion-art .shot-tools svg{width:20px;height:20px;flex:none}
-.companion-art .shot-tools svg:last-of-type,.companion-art .shot-arrow{color:var(--pink)}
-.shot-send{margin-left:auto;padding:4px 10px;border:1px solid var(--strong);border-radius:4px;color:var(--ink);font-size:12px;white-space:nowrap}
-.shot-delivered{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px 12px;margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);font-size:11px;color:var(--faint)}
-.shot-file{font-family:ui-monospace,monospace;color:var(--green)}
+.redline-mock{margin:var(--s3) 0}
 
 /* ---------- Nexus Redline illustration ---------- */
 .redline-mock{padding:var(--s2);border:1px solid var(--line);border-radius:8px;background:var(--bg)}
@@ -144,7 +127,6 @@
   .vox-examples button{text-align:left}
   .vox-facts{grid-template-columns:1fr;margin-top:var(--s4)}
   .vox-facts>div,.vox-facts>div+div{padding:var(--s3) 0;border-left:0}
-  .shot-note{font-size:10px}
 }
 @media(prefers-reduced-motion:reduce){
   .vox-word{opacity:1}
