@@ -10,6 +10,10 @@ export interface LicenseFailure {
   blockedReason?: LicenseDenialReason;
 }
 const messages: Partial<Record<LicenseDenialReason, string>> = {
+  'verification-unavailable': 'Não foi possível consultar seu acesso agora. Tente novamente.',
+  'invalid-license': 'Não foi possível validar sua licença. Entre novamente para atualizar o acesso.',
+  'account-mismatch': 'A licença pertence a outra conta. Entre com a conta da assinatura.',
+  'server-denied': 'O servidor recusou seu acesso. Acesse sua conta para atualizar a licença.',
   'login-required': 'Entre na sua conta para usar o NexusIDE.',
   'trial-ended': 'Seu teste terminou. Assine o Pro para continuar.',
   suspended: 'Esta conta está suspensa. Acesse sua conta para obter ajuda.',
@@ -33,13 +37,18 @@ export function licenseFailure(error: unknown): LicenseFailure | null {
   return { ok: false, code: denial.code, error: denial.message, ...(denial.reason ? { blockedReason: denial.reason } : {}) };
 }
 
-/** Electron/legacy pane ACKs may retain only Error.message. Recover the stable code. */
+/** Electron/legacy pane ACKs may retain only Error.message. Recover the product denial. */
 export function licenseErrorFrom(value: unknown): LicenseError | null {
   if (value instanceof LicenseError) return value;
   const message = value instanceof Error ? value.message : typeof value === 'string' ? value : '';
   const code = message.match(/\b(license_access_denied|license_agent_limit):/)?.[1] as LicenseErrorCode | undefined;
   if (!code) return null;
-  const error = new LicenseError(code);
+  const reason = code === 'license_access_denied'
+    ? (Object.entries(messages).find(([, copy]) => message.endsWith(`: ${copy}`))?.[0] as LicenseDenialReason | undefined)
+    : undefined;
+  const limitText = code === 'license_agent_limit' ? message.match(/Você já está usando os (\d+) agentes do teste\./)?.[1] : undefined;
+  const limit = limitText === undefined ? undefined : Number(limitText);
+  const error = new LicenseError(code, reason, limit !== undefined && Number.isSafeInteger(limit) ? limit : undefined);
   error.message = message;
   return error;
 }
