@@ -5,6 +5,10 @@ export interface ApiDeps {
   backendUrl: string;
   fetchFn: typeof fetch;
   getSecret: (key: string) => string | null;
+  applyLicense?: (jwt: string) => { ok: boolean; error?: string };
+  getAccountId?: () => string | null;
+  bindAccount?: (id: string, session: string) => { ok: boolean; error?: string };
+  generation?: () => number;
   setSecret: (key: string, value: string) => { ok: boolean; error?: string };
 }
 
@@ -29,7 +33,12 @@ function defaultDeps(): ApiDeps {
   // Lazy require: secrets-store importa electron/safeStorage indiretamente no app.
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const secrets = require('./persistence/secrets-store') as typeof import('./persistence/secrets-store');
+  const auth = require('./auth-client') as typeof import('./auth-client');
   return {
+    applyLicense: (jwt) => (require('./license-access') as typeof import('./license-access')).applyLicenseToken(jwt),
+    getAccountId: auth.getAuthenticatedAccountId,
+    bindAccount: auth.bindAuthenticatedAccount,
+    generation: auth.getAuthGeneration,
     backendUrl: resolveBackendUrl(),
     fetchFn: fetch,
     getSecret: (key) => secrets.getSecret(key),
@@ -107,6 +116,9 @@ async function performRefresh(
   deps: ApiDeps,
   refresh: string,
 ): Promise<string | null> {
+  const previousSession = deps.getSecret('auth:session');
+  const account = deps.getAccountId?.();
+  const generation = deps.generation?.();
   try {
     const res = await deps.fetchFn(urlFor(deps, '/v1/auth/refresh'), {
       method: 'POST',
@@ -117,15 +129,18 @@ async function performRefresh(
     if (!res.ok) return null;
     const body = (await boundedJson(res)) as {
       ok?: boolean;
-      data?: { session?: string; refresh?: string };
+      data?: { session?: string; refresh?: string; licenca?: string };
     };
     const session = body.data?.session;
     const nextRefresh = body.data?.refresh;
-    if (!body.ok || !session || !nextRefresh) return null;
+    if (!body.ok || typeof session !== 'string' || !session || typeof nextRefresh !== 'string' || !nextRefresh) return null;
+    if (deps.generation?.() !== generation || deps.getSecret('auth:session') !== previousSession || deps.getSecret('auth:refresh') !== refresh) return null;
     // Persist the next single-use refresh first. If session persistence then
     // fails, the following request can still recover with the valid token.
     if (!deps.setSecret('auth:refresh', nextRefresh).ok) return null;
     if (!deps.setSecret('auth:session', session).ok) return null;
+    if (account && deps.bindAccount && !deps.bindAccount(account, session).ok) return null;
+    if (typeof body.data?.licenca === 'string') deps.applyLicense?.(body.data.licenca);
     return session;
   } catch {
     return null;
@@ -151,22 +166,21 @@ export async function apiFetch(
   init: ApiRequestInit = {},
   deps: ApiDeps = defaultDeps(),
 ): Promise<ApiResult> {
-  const session = deps.getSecret('auth:session');
+  let session = deps.getSecret('auth:session');
+  const generation = deps.generation?.();
   if (!session) return { status: 401, json: null };
   try {
     let res = await doFetch(deps, path, init, session);
     if (res.status === 401) {
+      if (deps.getSecret('auth:session') !== session) return { status: 401, json: null };
       const renewed = await tryRefresh(deps);
       if (!renewed) return { status: 401, json: null };
+      session = renewed;
       res = await doFetch(deps, path, init, renewed);
     }
-    return {
-      status: res.status,
-      json: await boundedJson(
-        res,
-        init.maxResponseBytes ?? DEFAULT_RESPONSE_BUDGET,
-      ),
-    };
+    const json = await boundedJson(res, init.maxResponseBytes ?? DEFAULT_RESPONSE_BUDGET);
+    if (deps.generation?.() !== generation || deps.getSecret('auth:session') !== session) return { status: 401, json: null };
+    return { status: res.status, json };
   } catch {
     return { status: 0, json: null };
   }

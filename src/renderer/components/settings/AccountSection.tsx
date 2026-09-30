@@ -6,7 +6,6 @@ import {
   type PlanId,
   type TeamInfo,
 } from '../../../shared/billing-types';
-import type { PublicPlanId } from '../../../../shared/pricing';
 import { askConfirm } from '../../state/confirm-store';
 import { PixelIcon } from '../PixelIcon';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
@@ -19,7 +18,7 @@ import { accountSessionBadge, isSessionExpiredError } from './account-session-ba
  */
 
 function planPrice(plan: PlanDef): string {
-  if (plan.priceMonthlyMinor === 0) return 'Grátis para sempre';
+  if (plan.priceMonthlyMinor === 0) return '15 dias';
   const formatted = new Intl.NumberFormat('pt-BR', {
     style: 'currency',
     currency: plan.currency.toUpperCase(),
@@ -30,7 +29,7 @@ function planPrice(plan: PlanDef): string {
 
 function planName(id: PlanId): string {
   if (id === 'team') return 'Team (legado)';
-  return PLANS.find((p) => p.id === id)?.name ?? id;
+  return id === 'free' ? 'Sem acesso ativo' : 'Pro';
 }
 
 function roleLabel(role: string): string {
@@ -227,12 +226,8 @@ export function AccountSection() {
     await reloadTeam();
   };
 
-  const startCheckout = async (plan: PublicPlanId) => {
+  const startCheckout = async (plan: 'pro') => {
     setCheckoutError(null);
-    if (plan === 'free') {
-      setCheckoutError('Use o portal para alterar uma assinatura ativa.');
-      return;
-    }
     setCheckoutBusy(true);
     try {
       const result = await window.nexus.billing.openCheckout(plan);
@@ -288,17 +283,21 @@ export function AccountSection() {
             <span
               className={`account__plan-tag${currentPlan !== 'free' ? ' account__plan-tag--paid' : ''}`}
             >
-              {planName(currentPlan)}
+              {license?.access === 'trial' ? 'Teste de 15 dias' : planName(currentPlan)}
             </span>
             <span className="account__status">
               {licenseUnconfirmed
                 ? 'Assinatura não confirmada agora'
+                : license?.access === 'trial'
+                  ? license.trialEndsAt
+                    ? `Teste até ${new Date(license.trialEndsAt).toLocaleDateString('pt-BR')}`
+                    : 'Teste de 15 dias'
                 : license?.status === 'active'
                   ? license.renewsAt
                     ? `Renova em ${new Date(license.renewsAt).toLocaleDateString('pt-BR')}`
                     : 'Assinatura ativa'
                   : !isLoggedIn
-                    ? 'Só nesta máquina'
+                    ? 'Entre para acessar o NexusIDE'
                     : ''}
             </span>
           </div>
@@ -333,7 +332,7 @@ export function AccountSection() {
             Entrar de novo
           </button>
         )}
-        {license?.status === 'active' && (
+        {license?.access === 'pro' && (
           <button
             type="button"
             className="settings-btn"
@@ -554,7 +553,7 @@ export function AccountSection() {
         </div>
         <div className="account__plans">
           {PLANS.map((plan) => {
-            const isCurrent = plan.id === currentPlan;
+            const isCurrent = plan.id === license?.access;
             return (
               <article
                 key={plan.id}
@@ -583,16 +582,16 @@ export function AccountSection() {
                     <PixelIcon name="check" size={10} />
                     plano atual
                   </span>
-                ) : plan.id === 'free' ? (
+                ) : plan.id === 'trial' ? (
                   <span className="account__plan-badge account__plan-badge--muted">
-                    incluso
+                    Começa no primeiro login
                   </span>
                 ) : (
                   <button
                     type="button"
                     className="settings-btn settings-btn--primary account__plan-cta"
                     disabled={checkoutBusy}
-                    onClick={() => void startCheckout(plan.id)}
+                    onClick={() => void startCheckout('pro')}
                     title="Abrir checkout seguro da Stripe"
                   >
                     {checkoutBusy ? 'Abrindo…' : `Assinar ${plan.name}`}
@@ -603,7 +602,8 @@ export function AccountSection() {
           })}
         </div>
         <p className="account__zone-hint account__billing-note">
-          O Free não expira. O Pro é cobrado mensalmente em reais pela Stripe e
+          O teste dura 15 dias a partir do primeiro login verificado. Depois, é
+          necessário assinar o Pro, cobrado mensalmente em reais pela Stripe, que
           pode ser cancelado a qualquer momento no portal da assinatura.
         </p>
       </div>

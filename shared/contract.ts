@@ -22,6 +22,22 @@ export interface LicensePayload {
   exp: number;
 }
 
+/** Desktop v2: legacy LicensePayload above is only for the retired server workspace. */
+export type LicenseAccess = 'trial' | 'pro' | 'suspended' | 'inactive';
+export interface LicenseLimits { maxAgents: number | null; cloudSync: boolean; }
+export interface DesktopLicenseClaims extends LicensePayload {
+  sub: string;
+  iss: string;
+  aud: 'nexus-desktop';
+  iat: number;
+  nbf?: number;
+  access: LicenseAccess;
+  trialEndsAt: string | null;
+  limits: LicenseLimits;
+}
+export const LICENSE_MAX_TTL_SECONDS = 24 * 60 * 60;
+export const LICENSE_BLOCKED_TTL_SECONDS = 5 * 60;
+
 /** Evento de XP que o app sincroniza (Leaderboard, futuro). */
 export interface XpSyncEvent {
   entityKey: string;

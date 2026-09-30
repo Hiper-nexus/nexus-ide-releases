@@ -1,12 +1,4 @@
-/**
- * Resolve the backend base URL from NEXUS_BACKEND_URL (L6).
- *
- * The session bearer and OAuth codes are sent to this origin. If the env var is
- * set to a non-HTTPS URL (e.g. an attacker who can set env pointing at
- * http://attacker), those credentials would go out in cleartext. We therefore
- * accept only https:// (plus http://localhost for dev) and otherwise fall back
- * to the production default — fail safe rather than fail open.
- */
+/** Packaged credentials only go to the official origin. Overrides are development-only. */
 const DEFAULT_BACKEND_URL = 'https://api.nexuside.app';
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
@@ -25,7 +17,9 @@ export function isAcceptableBackendUrl(raw: string): boolean {
 
 export function resolveBackendUrl(
   envValue: string | undefined = process.env.NEXUS_BACKEND_URL,
+  packaged: boolean = isPackaged(),
 ): string {
+  if (packaged) return DEFAULT_BACKEND_URL;
   if (envValue && isAcceptableBackendUrl(envValue)) return envValue;
   if (envValue) {
     console.warn(
@@ -33,4 +27,9 @@ export function resolveBackendUrl(
     );
   }
   return DEFAULT_BACKEND_URL;
+}
+
+function isPackaged(): boolean {
+  try { return (require('electron') as typeof import('electron')).app?.isPackaged ?? false; }
+  catch { return false; }
 }

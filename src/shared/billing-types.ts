@@ -13,11 +13,11 @@ export type {
   TeamInfo,
   InviteInfo,
 } from '../../shared/contract';
-import type { LicenseInfo } from '../../shared/contract';
-import { PRO_MONTHLY_PRICE, type PublicPlanId } from '../../shared/pricing';
+import type { LicenseAccess, LicenseLimits, LicenseInfo } from '../../shared/contract';
+import { PRO_MONTHLY_PRICE } from '../../shared/pricing';
 
 export interface PlanDef {
-  id: PublicPlanId;
+  id: 'trial' | 'pro';
   name: string;
   priceMonthlyMinor: number;
   currency: 'brl';
@@ -29,11 +29,11 @@ export interface PlanDef {
 /** The single source of plan copy (renderer renders straight from this). */
 export const PLANS: PlanDef[] = [
   {
-    id: 'free',
-    name: 'Free',
+    id: 'trial',
+    name: 'Teste de 15 dias',
     priceMonthlyMinor: 0,
     currency: 'brl',
-    tagline: 'Sem prazo e sem cartão',
+    tagline: 'A partir do primeiro login verificado',
     features: [
       'Terminal e editor locais',
       'Todas as CLIs instaladas na máquina',
@@ -49,33 +49,37 @@ export const PLANS: PlanDef[] = [
     promotionLabel: 'Preço promocional',
     tagline: 'Para quem opera todo dia',
     features: [
-      'Tudo do Free',
+      'Acesso após o período de teste',
       'Failover multi-conta avançado',
-      'Squads ilimitados na nuvem',
+      'Squads na nuvem',
       'Sincronização entre máquinas',
       'Suporte prioritário',
     ],
   },
 ];
 
-/**
- * Estado devolvido ao renderer em billing:get: os campos da licença mais se a
- * assinatura do token gravado foi REVERIFICADA na leitura. `verified: false`
- * (sem token gravado, sem NEXUS_LICENSE_PUBKEY ou assinatura inválida) não
- * bloqueia nada — só informa que o conteúdo do arquivo não tem prova criptográfica.
- */
-export type LicenseState = LicenseInfo & { verified: boolean };
+export type AccessBlockedReason =
+  | 'login-required' | 'verification-unavailable' | 'invalid-license'
+  | 'account-mismatch' | 'license-expired' | 'trial-ended' | 'suspended' | 'inactive';
 
-export const DEFAULT_LICENSE: LicenseInfo = {
-  plan: 'free',
-  email: null,
-  status: 'none',
-  renewsAt: null,
+/** Main-owned projection of a token verified on this query. Never a permission input. */
+export type LicenseState = LicenseInfo & {
+  verified: boolean;
+  access: LicenseAccess | null;
+  trialEndsAt: string | null;
+  limits: LicenseLimits;
+  expiresAt: string | null;
+  canUseApp: boolean;
+  blockedReason: AccessBlockedReason | null;
+};
+
+export const DEFAULT_LICENSE: LicenseState = {
+  plan: 'free', email: null, status: 'none', renewsAt: null,
+  verified: false, access: null, trialEndsAt: null,
+  limits: { maxAgents: 0, cloudSync: false }, expiresAt: null,
+  canUseApp: false, blockedReason: 'login-required',
 };
 
 export const BILLING_CHANNELS = {
-  get: 'billing:get',
-  checkout: 'billing:checkout',
-  portal: 'billing:portal',
-  changed: 'billing:changed',
+  get: 'billing:get', checkout: 'billing:checkout', portal: 'billing:portal', changed: 'billing:changed',
 } as const;

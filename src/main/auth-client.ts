@@ -1,5 +1,9 @@
 import crypto from 'node:crypto';
 import { resolveBackendUrl } from './backend-url';
+import { verifyLicenseToken } from './persistence/billing-license';
+import type { apiFetch } from './api-client';
+
+type IdentityStore = Pick<typeof import('./persistence/secrets-store'), 'getSecret' | 'setSecret' | 'hasCachedSecret'>;
 
 /**
  * Cliente de auth do app. O login SÓ nasce aqui: beginLogin gera um nonce
@@ -20,16 +24,56 @@ interface PendingLogin {
 }
 
 let pending: PendingLogin | null = null;
+let authGeneration = 0;
+export function getAuthGeneration(): number { return authGeneration; }
+
+function secretStore() { return require('./persistence/secrets-store') as typeof import('./persistence/secrets-store'); }
+
+/** Cached-only: never unlock the Keychain on a permission query or first paint. */
+export function getAuthenticatedAccountId(store: IdentityStore = secretStore()): string | null {
+  if (!store.hasCachedSecret('auth:session') || !store.hasCachedSecret('auth:account')) return null;
+  try {
+    const binding = JSON.parse(store.getSecret('auth:account')!);
+    const session = store.getSecret('auth:session');
+    return session && typeof binding.id === 'string' && binding.id.trim() &&
+      binding.sessionHash === crypto.createHash('sha256').update(session).digest('hex') ? binding.id : null;
+  } catch { return null; }
+}
+
+export function bindAuthenticatedAccount(id: string, session: string, store: IdentityStore = secretStore()): { ok: boolean; error?: string } {
+  return store.setSecret('auth:account', JSON.stringify({ id, sessionHash: crypto.createHash('sha256').update(session).digest('hex') }));
+}
+
+/** Only call after first paint or an explicit login gesture. Older installs need /me online once. */
+export async function restoreAuthenticatedAccount(deps?: { store: IdentityStore; api: typeof apiFetch }): Promise<void> {
+  const store = deps?.store ?? secretStore();
+  const session = store.getSecret('auth:session');
+  store.getSecret('auth:account');
+  store.getSecret('license:clock');
+  if (!session || getAuthenticatedAccountId(store)) return;
+  const generation = authGeneration;
+  const api = deps?.api ?? (require('./api-client') as typeof import('./api-client')).apiFetch;
+  const result = await api('/v1/me');
+  const body = result.json as { ok?: boolean; data?: { id?: unknown } } | null;
+  const current = store.getSecret('auth:session');
+  if (generation !== authGeneration || !current || result.status !== 200 || !body?.ok || typeof body.data?.id !== 'string' || !body.data.id.trim()) return;
+  bindAuthenticatedAccount(body.data.id, current, store);
+}
+
 
 /** Só para testes e logout: descarta o login pendente. */
 export function resetPendingLogin(): void {
   pending = null;
+  authGeneration += 1;
 }
 
 export interface AuthDeps {
   backendUrl: string;
   fetchFn: typeof fetch;
   setSecret: (key: string, value: string) => { ok: boolean; error?: string };
+  validateLicense: (jwt: string, accountId: string) => { ok: boolean; error?: string };
+  bindAccount: (id: string, session: string) => { ok: boolean; error?: string };
+  clearAccess: () => void;
   applyLicense: (jwt: string) => { ok: boolean; error?: string };
   openExternal: (url: string) => void;
   now?: () => number;
@@ -48,6 +92,16 @@ function defaultDeps(): AuthDeps {
     backendUrl: resolveBackendUrl(),
     fetchFn: fetch,
     setSecret: (k, v) => secrets.setSecret(k, v),
+    validateLicense: (jwt, accountId) => {
+      const result = verifyLicenseToken(jwt, {
+        publicKeyPem: process.env.NEXUS_LICENSE_PUBKEY?.trim() || null,
+        issuer: new URL(resolveBackendUrl()).origin, now: Date.now,
+      });
+      if (!result.ok) return { ok: false, error: result.reason };
+      return result.claims.sub === accountId ? { ok: true } : { ok: false, error: 'account-mismatch' };
+    },
+    bindAccount: bindAuthenticatedAccount,
+    clearAccess: () => (require('./license-access') as typeof import('./license-access')).clearAccess(),
     applyLicense: (jwt) => billing.applyLicenseToken(jwt),
     openExternal: (url) => void shell.openExternal(url),
   };
@@ -69,6 +123,7 @@ export function beginLogin(
     .createHash('sha256')
     .update(codeVerifier)
     .digest('base64url');
+  authGeneration += 1;
   pending = { nonce, expiresAt: now() + PENDING_TTL_MS, codeVerifier };
   const params = new URLSearchParams({ app_state: nonce, code_challenge: codeChallenge });
   deps.openExternal(
@@ -92,6 +147,7 @@ export async function exchangeAuthCode(
   if (!state || state !== pending.nonce) {
     return { ok: false, error: 'state não confere com o login pendente' };
   }
+  const generation = authGeneration;
   const codeVerifier = pending.codeVerifier;
   pending = null; // nonce é single-use: consome ANTES da rede (anti-replay)
 
@@ -100,19 +156,33 @@ export async function exchangeAuthCode(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ code, code_verifier: codeVerifier }),
+      signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) return { ok: false, error: `exchange HTTP ${res.status}` };
     const json = (await res.json()) as {
       ok: boolean;
       data?: { session: string; refresh: string; licenca: string };
     };
-    if (!json.ok || !json.data) return { ok: false, error: 'resposta inválida' };
+    if (generation !== authGeneration) return { ok: false, error: 'login superseded' };
+    if (!json.ok || !json.data || !['session', 'refresh', 'licenca'].every(key => typeof json.data?.[key as keyof typeof json.data] === 'string' && json.data[key as keyof typeof json.data])) return { ok: false, error: 'resposta inválida' };
+    // A signed license does not prove which account owns this opaque session.
+    const profileResponse = await deps.fetchFn(`${deps.backendUrl}/v1/me`, {
+      headers: { authorization: `Bearer ${json.data.session}` }, signal: AbortSignal.timeout(10000),
+    });
+    const profile = await profileResponse.json() as { ok?: boolean; data?: { id?: unknown } };
+    if (generation !== authGeneration) return { ok: false, error: 'login superseded' };
+    if (!profileResponse.ok || !profile.ok || typeof profile.data?.id !== 'string' || !profile.data.id.trim()) return { ok: false, error: 'account identity unavailable' };
+    const proof = deps.validateLicense(json.data.licenca, profile.data.id);
+    if (!proof.ok) return proof;
+    deps.clearAccess();
     // Falha FECHADO: se qualquer persistência falhar, o login não "parece"
     // ter dado certo com sessão/licença ausentes.
     const s1 = deps.setSecret('auth:session', json.data.session);
     if (!s1.ok) return { ok: false, error: `sessão não persistida: ${s1.error}` };
     const s2 = deps.setSecret('auth:refresh', json.data.refresh);
     if (!s2.ok) return { ok: false, error: `refresh não persistido: ${s2.error}` };
+    const binding = deps.bindAccount(profile.data.id, json.data.session);
+    if (!binding.ok) return { ok: false, error: 'account binding not persisted' };
     const lic = deps.applyLicense(json.data.licenca);
     if (!lic.ok) return { ok: false, error: `licença não aplicada: ${lic.error}` };
     return { ok: true };

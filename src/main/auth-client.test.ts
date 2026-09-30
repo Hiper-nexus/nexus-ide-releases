@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { beginLogin, exchangeAuthCode, resetPendingLogin } from './auth-client';
+import { beginLogin, exchangeAuthCode, resetPendingLogin, getAuthenticatedAccountId, bindAuthenticatedAccount, restoreAuthenticatedAccount } from './auth-client';
 
 function okFetch() {
-  return vi.fn().mockResolvedValue(
+  return vi.fn().mockResolvedValueOnce(
     new Response(
       JSON.stringify({ ok: true, data: { session: 's', refresh: 'r', licenca: 'jwt' } }),
       { headers: { 'content-type': 'application/json' } },
     ),
-  );
+  ).mockResolvedValue(new Response(JSON.stringify({ ok: true, data: { id: 'account-a' } })));
 }
 
 function deps(over: Record<string, unknown> = {}) {
@@ -15,6 +15,9 @@ function deps(over: Record<string, unknown> = {}) {
     backendUrl: 'https://api.test',
     fetchFn: okFetch() as unknown as typeof fetch,
     setSecret: vi.fn().mockReturnValue({ ok: true }),
+    validateLicense: vi.fn().mockReturnValue({ ok: true }),
+    bindAccount: vi.fn().mockReturnValue({ ok: true }),
+    clearAccess: vi.fn(),
     applyLicense: vi.fn().mockReturnValue({ ok: true }),
     openExternal: vi.fn(),
     ...over,
@@ -93,4 +96,78 @@ describe('exchangeAuthCode (binding local)', () => {
     expect(r.ok).toBe(false);
     expect(d.setSecret).not.toHaveBeenCalled();
   });
+});
+
+
+describe('session identity binding', () => {
+  beforeEach(() => resetPendingLogin());
+  it('binds the license to the independently authenticated /me subject', async () => {
+    const d = deps();
+    beginLogin('github', d);
+    const state = new URL(d.openExternal.mock.calls[0][0]).searchParams.get('app_state');
+    expect((await exchangeAuthCode('c', state, d)).ok).toBe(true);
+    expect(d.bindAccount).toHaveBeenCalledWith('account-a', 's');
+    expect(d.fetchFn).toHaveBeenLastCalledWith('https://api.test/v1/me', expect.objectContaining({ headers: { authorization: 'Bearer s' } }));
+  });
+  it('refuses an exchange completed after logout or a replacement login', async () => {
+    let done!: (r: Response) => void;
+    const d = deps({ fetchFn: vi.fn(() => new Promise<Response>(resolve => { done = resolve; })) });
+    beginLogin('github', d);
+    const state = new URL(d.openExternal.mock.calls[0][0]).searchParams.get('app_state');
+    const flight = exchangeAuthCode('c', state, d);
+    resetPendingLogin();
+    done(new Response(JSON.stringify({ ok: true, data: { session: 's', refresh: 'r', licenca: 'jwt' } })));
+    expect((await flight).ok).toBe(false);
+    expect(d.setSecret).not.toHaveBeenCalled();
+    expect(d.applyLicense).not.toHaveBeenCalled();
+  });
+});
+
+
+function identityStore() {
+  const values = new Map<string, string>();
+  return { values, getSecret: (key: string) => values.get(key) ?? null,
+    hasCachedSecret: (key: string) => values.has(key),
+    setSecret: (key: string, value: string) => { values.set(key, value); return { ok: true }; } };
+}
+it('cached identity belongs to exactly one opaque session and never unlocks the vault in a query', () => {
+  const store = identityStore();
+  const read = vi.spyOn(store, 'getSecret');
+  expect(getAuthenticatedAccountId(store)).toBeNull();
+  expect(read).not.toHaveBeenCalled();
+  store.setSecret('auth:session', 'session-a');
+  bindAuthenticatedAccount('account-a', 'session-a', store);
+  expect(getAuthenticatedAccountId(store)).toBe('account-a');
+  store.setSecret('auth:session', 'session-b');
+  expect(getAuthenticatedAccountId(store)).toBeNull();
+});
+it('restores an old session identity after network recovery, but never after logout', async () => {
+  const store = identityStore();
+  store.setSecret('auth:session', 'session-a');
+  const api = vi.fn().mockResolvedValueOnce({ status: 0, json: null })
+    .mockResolvedValueOnce({ status: 200, json: { ok: true, data: { id: 'account-a' } } });
+  await restoreAuthenticatedAccount({ store, api });
+  expect(getAuthenticatedAccountId(store)).toBeNull();
+  await restoreAuthenticatedAccount({ store, api });
+  expect(getAuthenticatedAccountId(store)).toBe('account-a');
+  store.values.delete('auth:account');
+  let finish!: (value: unknown) => void;
+  const lateApi = vi.fn(() => new Promise(resolve => { finish = resolve; }));
+  const flight = restoreAuthenticatedAccount({ store, api: lateApi as never });
+  resetPendingLogin();
+  store.values.delete('auth:session');
+  finish({ status: 200, json: { ok: true, data: { id: 'account-a' } } });
+  await flight;
+  expect(getAuthenticatedAccountId(store)).toBeNull();
+});
+
+
+it('rejects an invalid exchange license before replacing the previous session', async () => {
+  resetPendingLogin();
+  const d = deps({ validateLicense: vi.fn().mockReturnValue({ ok: false, error: 'account-mismatch' }) });
+  beginLogin('github', d);
+  const state = new URL(d.openExternal.mock.calls[0][0]).searchParams.get('app_state');
+  expect((await exchangeAuthCode('c', state, d)).ok).toBe(false);
+  expect(d.clearAccess).not.toHaveBeenCalled();
+  expect(d.setSecret).not.toHaveBeenCalled();
 });

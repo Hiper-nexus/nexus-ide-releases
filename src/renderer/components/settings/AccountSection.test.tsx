@@ -21,6 +21,7 @@ describe('AccountSection', () => {
       configurable: true,
       value: {
         billing: {
+          onChanged: () => () => {},
           get: vi.fn(async () => ({
             plan: 'free',
             email: null,
@@ -61,7 +62,7 @@ describe('AccountSection', () => {
     expect(host.textContent).toContain('Entrar com GitHub');
     expect(host.textContent).toContain('Entrar com Google');
     expect(host.textContent).toContain('Providers');
-    expect(host.textContent).toContain('plano atual');
+    expect(host.textContent).not.toContain('Grátis para sempre');
     act(() => root.unmount());
   });
 
@@ -79,7 +80,7 @@ describe('AccountSection', () => {
     act(() => root.unmount());
   });
 
-  it('oferece somente Free permanente e Pro promocional em reais', async () => {
+  it('oferece teste de 15 dias e Pro, sem acesso gratuito permanente', async () => {
     const { host, root } = mount();
     await act(async () => {
       await Promise.resolve();
@@ -89,10 +90,11 @@ describe('AccountSection', () => {
     const planCards = [...host.querySelectorAll<HTMLElement>('.account__plan')];
     expect(planCards).toHaveLength(2);
     expect(planCards.map((card) => card.textContent)).toEqual([
-      expect.stringContaining('Free'),
+      expect.stringContaining('Teste de 15 dias'),
       expect.stringContaining('Pro'),
     ]);
-    expect(planCards[0].textContent).toContain('Sem prazo e sem cartão');
+    expect(planCards[0].textContent).toContain('primeiro login verificado');
+    expect(host.textContent).not.toContain('não expira');
     expect(planCards[1].textContent).toMatch(/R\$\s*59,99/);
     expect(planCards[1].textContent).toContain('Preço promocional');
     expect(planCards.some((card) => card.textContent?.includes('Team'))).toBe(false);
@@ -193,4 +195,19 @@ describe('AccountSection', () => {
     expect(host.textContent).not.toContain('Entrar com GitHub');
     act(() => root.unmount());
   });
+});
+
+
+it.each(['2026-10-10T12:00:00.000Z', null])('offers Pro checkout during trial with deadline %s', async trialEndsAt => {
+  Object.defineProperty(window, 'nexus', { configurable: true, value: {
+    billing: { get: async () => ({ plan: 'pro', access: 'trial', email: 'a@example.test', status: 'active', verified: true, trialEndsAt }), openCheckout: vi.fn(), onChanged: () => () => {} },
+    team: { get: async () => ({ ok: true, data: null }) },
+  } });
+  const { host, root } = mount();
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect([...host.querySelectorAll('button')].some(button => button.textContent === 'Assinar Pro')).toBe(true);
+  expect(host.textContent).not.toContain('Assinatura ativa');
+  expect(host.textContent).not.toMatch(/1969|1970/);
+  act(() => root.unmount());
+  Reflect.deleteProperty(window, 'nexus');
 });

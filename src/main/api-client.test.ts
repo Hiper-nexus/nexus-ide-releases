@@ -168,3 +168,35 @@ function deferred<T = void>() {
   });
   return { promise, resolve };
 }
+
+
+it('applies licenca returned by refresh after storing the new session', async () => {
+  const applied: string[] = [];
+  const d = deps({ applyLicense: (jwt: string) => { applied.push(jwt); return { ok: true }; } });
+  d.fetchFn.mockResolvedValueOnce(json({}, 401))
+    .mockResolvedValueOnce(json({ ok: true, data: { session: 's2', refresh: 'r2', licenca: 'suspended-jwt' } }))
+    .mockResolvedValueOnce(json({ ok: true }));
+  await apiFetch('/v1/team', {}, d);
+  expect(applied).toEqual(['suspended-jwt']);
+});
+it.each(['logout', 'switch'])('ignores refresh finishing after %s', async kind => {
+  const release = deferred<Response>();
+  const d = deps();
+  d.fetchFn.mockResolvedValueOnce(json({}, 401)).mockImplementationOnce(() => release.promise);
+  const flight = apiFetch('/v1/team', {}, d);
+  await vi.waitFor(() => expect(d.fetchFn).toHaveBeenCalledTimes(2));
+  d.store['auth:session'] = kind === 'logout' ? '' : 'other-session';
+  d.store['auth:refresh'] = kind === 'logout' ? '' : 'other-refresh';
+  release.resolve(json({ ok: true, data: { session: 'stale', refresh: 'stale-r', licenca: 'stale-jwt' } }));
+  await flight;
+  expect(d.store['auth:session']).toBe(kind === 'logout' ? '' : 'other-session');
+});
+
+it('does not return data from an authenticated request after session replacement', async () => {
+  const response = deferred<Response>();
+  const d = deps({ fetchFn: vi.fn(() => response.promise) });
+  const flight = apiFetch('/v1/me', {}, d);
+  d.store['auth:session'] = 'different-session';
+  response.resolve(json({ ok: true, data: { id: 'old-account' } }));
+  expect((await flight).status).toBe(401);
+});

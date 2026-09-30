@@ -31,3 +31,8 @@ describe('backend-url (L6)', () => {
     expect(resolveBackendUrl(undefined)).toBe('https://api.nexuside.app');
   });
 });
+
+it('pins the official origin in packaged builds regardless of environment override', () => {
+  expect(resolveBackendUrl('https://attacker.test', true)).toBe('https://api.nexuside.app');
+  expect(resolveBackendUrl('http://localhost:8787', true)).toBe('https://api.nexuside.app');
+});
