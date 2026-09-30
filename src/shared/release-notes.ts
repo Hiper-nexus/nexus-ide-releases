@@ -8499,7 +8499,7 @@ export const RELEASE_076148: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076149: AppRelease = {
   version: '0.76.149',
   date: '2026-09-30',
   codename: 'Memória que enche',
@@ -8516,6 +8516,42 @@ export const CURRENT_RELEASE: AppRelease = {
         'depois de dias de trabalho. Agora cada entrega que o Maestro confirma ' +
         'passa pelo Jev, e o que vale lembrar aparece em Memória. As entregas ' +
         'antigas não são reprocessadas.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.150',
+  date: '2026-09-30',
+  codename: 'Hooks de volta no Windows',
+  summary:
+    'No Windows os hooks do Nexus chegavam vazios aos panes Claude e GLM: sem ' +
+    'triagem de erro, sem lembrete de delegar, sem portão de regressão. Agora ' +
+    'chegam inteiros. O AGY não cai mais por esforço e o Muse recebe a tarefa. ' +
+    'Inclui a 0.76.149.',
+  highlights: [
+    {
+      title: 'Hooks funcionando no Windows',
+      detail:
+        'O Claude Code do Windows roda os hooks pelo Git Bash, e o comando do ' +
+        'Nexus perdia tudo o que o agente mandava. Em três dias foram 349 ' +
+        'erros de terminal sem nenhuma triagem do Jev. Agora a triagem, o ' +
+        'lembrete de delegar do Maestro, a memória de preferências e o portão ' +
+        'de regressão chegam ao Nexus, com acentos corretos.',
+    },
+    {
+      title: 'AGY sem "invalid model selection"',
+      detail:
+        'No AGY o esforço faz parte do nome do modelo. Quando a rota pedia ' +
+        'outro esforço, o pane caía na hora. Agora o Nexus escolhe a variante ' +
+        'certa do mesmo modelo.',
+    },
+    {
+      title: 'Muse recebe a tarefa',
+      detail:
+        'No Windows o Muse abria e ficava parado, sem a tarefa. Agora o Nexus ' +
+        'abre o programa do Muse direto e a tarefa já vai junto.',
     },
   ],
   fixes: [],

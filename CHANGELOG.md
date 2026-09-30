@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.150 — Hooks de volta no Windows
+
+Uso real no Windows em 30/09, achado ao mapear o uso do Jev. Inclui a 0.76.149 (memória do projeto).
+
+- **Hooks do Nexus inteiros no Windows (F-704).** O Claude Code do Windows roda hooks pelo Git Bash. O MSYS convertia o `/d /c` do `cmd.exe /d /c echo NEXUS_HOOK_STATUS>NUL&&powershell…` em caminhos, o `cmd` abria interativo e engolia o JSON do stdin, e o PowerShell postava corpo vazio. Em três dias de panes Claude/GLM houve 349 falhas de Bash e zero triagens, zero conselhos de delegação e zero memórias de preferência; o portão de regressão e o lembrete do Maestro (F-701) também chegavam vazios. Agora o comando é só `powershell.exe -EncodedCommand`, com prelúdio fixo: marcador, UTF-8 no stdin, no stdout e no corpo, e barra de progresso desligada. A limpeza reconhece o formato novo e o antigo. O teste roda o hook de verdade via `bash -c` no Windows.
+- **AGY sem "invalid model selection" (F-705).** No AGY 1.2.14 o esforço mora no id (`gemini-3.8-flash-low|medium|high`), e `--effort` diferente do sufixo derruba o pane. O spawn troca para a variante do esforço pedido ou tira o `--effort`. A tabela deixa de pedir `flash-high`/`medium` e `xhigh`.
+- **Muse recebe a tarefa no Windows (F-706).** `muse.cmd` chama um launcher PowerShell. Como `.cmd`, o brief saía do argv para a colagem pós-boot, que o Muse nunca recebia: workers ficaram até 2h56 parados, sem handoff. O spawn abre `muse-bin-<versão>.exe` direto, como o launcher faz, e o brief vai no argv.
+
 ## 0.76.149 — Memória que enche
 
 Uso real no Windows em 30/09. Inclui a 0.76.148 (Maestro delega).
