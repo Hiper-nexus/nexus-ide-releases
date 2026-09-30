@@ -169,13 +169,14 @@ describe('region names', () => {
   });
 });
 
-describe('bundled manifest contract (20 Herdr manifests)', () => {
+describe('bundled manifest contract (20 Herdr manifests + minimax-code do Nexus)', () => {
   const files = fs
     .readdirSync(BUNDLED_DIR)
     .filter((name) => name.endsWith('.toml'));
 
-  it('ships exactly the 20 upstream manifests', () => {
-    expect(files).toHaveLength(20);
+  it('ships exactly the 20 upstream manifests plus the Nexus-authored minimax-code (F-699)', () => {
+    expect(files).toHaveLength(21);
+    expect(files).toContain('minimax-code.toml');
   });
 
   it('resolves the bundled directory via the default candidate chain', () => {
@@ -184,7 +185,7 @@ describe('bundled manifest contract (20 Herdr manifests)', () => {
 
   it('every bundled manifest parses and compiles (regex translation check)', () => {
     const loaded = loadManifestDir(BUNDLED_DIR);
-    expect(loaded).toHaveLength(20);
+    expect(loaded).toHaveLength(21);
     for (const { manifest, file } of loaded) {
       const compiled = compileManifest(manifest);
       expect(compiled.rules.length, file).toBeGreaterThan(0);

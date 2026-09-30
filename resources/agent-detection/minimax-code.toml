@@ -1,0 +1,38 @@
+# Agent screen-state detection manifest.
+# Authored by Nexus (not an upstream Herdr manifest) — F-699.
+#
+# MiniMax Code (`mcode` 0.5.8) has no status hooks, so without this manifest the
+# Nexus never saw it as working: any quiet stretch read as idle and the memory
+# guardian parked a pane 58 minutes into a task with a background job running
+# (30/09). Evidence: the operator's screenshot of the live TUI bottom:
+#
+#   × Tasks · 2 failed · 1 background active · 8 results ready · 2 cancelled · /tasks details
+#   ✶ Running 57min44s · ⚡ 3268 tok/s · Alt+Enter queue · Ctrl+O details · Esc stop
+#   › Ask Mcode to do anything
+#
+# The composer line stays visible during a turn (Alt+Enter queues), so the
+# prompt alone never means idle. An active turn shows `Running <elapsed>`
+# together with `Esc stop`; a background task shows `<n> background active`.
+
+id = "minimax-code"
+version = "2026.09.30.1"
+min_engine_version = 1
+updated_at = "2026-09-30T00:00:00Z"
+aliases = ["mcode", "minimax"]
+
+[[rules]]
+id = "turn_running_working"
+state = "working"
+priority = 200
+region = "bottom_non_empty_lines(6)"
+visible_working = true
+contains = ["Esc stop"]
+line_regex = ['(?i)\bRunning\s+[0-9]']
+
+[[rules]]
+id = "background_task_working"
+state = "working"
+priority = 190
+region = "bottom_non_empty_lines(6)"
+visible_working = true
+line_regex = ['(?i)\b[1-9][0-9]*\s+background\s+active\b']

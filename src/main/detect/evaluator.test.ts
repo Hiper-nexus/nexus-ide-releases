@@ -266,3 +266,38 @@ describe('codex manifest fixtures', () => {
     expect(explain.matchedRule?.id).toBe('osc_title_idle');
   });
 });
+
+describe('minimax-code (F-699): o mcode sem hooks é visto trabalhando pela tela', () => {
+  const minimax = compiledFor('minimax-code');
+  // Print do operador, 30/09: pane estacionado aos 58 min com tarefa em segundo plano.
+  const running = [
+    '  × Tasks · 2 failed · 1 background active · 8 results ready · 2 cancelled · /tasks details',
+    '  ✶ Running 57min44s · ⚡ 3268 tok/s · Alt+Enter queue · Ctrl+O details · Esc stop',
+    '  › Ask Mcode to do anything',
+    '  t-b31220d4a9bb1c7f555d76e2 │ nexus… · wt │ Full access │ ✦ M3.1-Flash-Preview │ Ctx 48%',
+  ].join('\n');
+
+  it('turno rodando (Running + Esc stop) é working', () => {
+    const explain = evaluateManifest(minimax, input(running));
+    expect(explain.state).toBe('working');
+    expect(explain.matchedRule?.id).toBe('turn_running_working');
+  });
+
+  it('só tarefa em segundo plano ativa também é working (estacionar a mataria)', () => {
+    const screen = [
+      '  Tasks · 1 background active · 3 results ready · /tasks details',
+      '  › Ask Mcode to do anything',
+    ].join('\n');
+    const explain = evaluateManifest(minimax, input(screen));
+    expect(explain.state).toBe('working');
+    expect(explain.matchedRule?.id).toBe('background_task_working');
+  });
+
+  it('composer parado sem turno nem tarefa ativa não é working', () => {
+    const screen = [
+      '  Tasks · 8 results ready · /tasks details',
+      '  › Ask Mcode to do anything',
+    ].join('\n');
+    expect(evaluateManifest(minimax, input(screen)).state).not.toBe('working');
+  });
+});
