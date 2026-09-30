@@ -1737,3 +1737,14 @@ describe('spawnOrchPane — helper nasce na aba do pai (C3/B1)', () => {
 });
 
 beforeEach(() => { useAccessStore.setState({ canUseApp: true, maxAgents: null }); });
+
+
+it('B2: refuses an orchestration pane while access is blocked without changing layout', () => {
+  useAccessStore.setState({ canUseApp: false });
+  const before = useLayoutStore.getState();
+  try {
+    expect(() => useLayoutStore.getState().spawnOrchPane({ paneId: 'license-denied-orch', adapterId: 'codex', orchRequestId: 'license-request' })).toThrow(/license_access_denied/);
+    expect(useLayoutStore.getState().root).toBe(before.root);
+    expect(useLayoutStore.getState().focusedPaneId).toBe(before.focusedPaneId);
+  } finally { useAccessStore.setState({ canUseApp: true, maxAgents: null }); }
+});

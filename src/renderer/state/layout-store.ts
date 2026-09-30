@@ -1,4 +1,6 @@
 import { allowPaneCreation } from './access-guard';
+import { useAccessStore } from './access-store';
+import { LicenseError } from '../../shared/license-errors';
 import { useSessionStateStore } from './session-state-store';
 import { create } from 'zustand';
 import type { SpawnRouteInfo } from '../../shared/spawn-route';
@@ -922,6 +924,7 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
   },
 
   spawnOrchPane: (req) => {
+    if (!allowPaneCreation()) throw new LicenseError('license_access_denied', useAccessStore.getState().blockedReason ?? 'verification-unavailable');
     const { root: currentRoot, focusedPaneId, maximizedPaneId } = get();
     const existingPanes = listPanes(currentRoot);
     if (existingPanes.some((pane) => pane.id === req.paneId)) {
