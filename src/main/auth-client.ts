@@ -3,7 +3,7 @@ import { resolveBackendUrl } from './backend-url';
 import { verifyLicenseToken } from './persistence/billing-license';
 import type { apiFetch } from './api-client';
 
-type IdentityStore = Pick<typeof import('./persistence/secrets-store'), 'getSecret' | 'setSecret' | 'hasCachedSecret'>;
+import { bindLicenseAccount, readLicenseAccountState, LICENSE_SEAL_KEY, type LicenseAccountStore as IdentityStore } from './license-account-state';
 
 /**
  * Cliente de auth do app. O login SÓ nasce aqui: beginLogin gera um nonce
@@ -31,17 +31,11 @@ function secretStore() { return require('./persistence/secrets-store') as typeof
 
 /** Cached-only: never unlock the Keychain on a permission query or first paint. */
 export function getAuthenticatedAccountId(store: IdentityStore = secretStore()): string | null {
-  if (!store.hasCachedSecret('auth:session') || !store.hasCachedSecret('auth:account')) return null;
-  try {
-    const binding = JSON.parse(store.getSecret('auth:account')!);
-    const session = store.getSecret('auth:session');
-    return session && typeof binding.id === 'string' && binding.id.trim() &&
-      binding.sessionHash === crypto.createHash('sha256').update(session).digest('hex') ? binding.id : null;
-  } catch { return null; }
+  return readLicenseAccountState(store)?.id ?? null;
 }
 
-export function bindAuthenticatedAccount(id: string, session: string, store: IdentityStore = secretStore()): { ok: boolean; error?: string } {
-  return store.setSecret('auth:account', JSON.stringify({ id, sessionHash: crypto.createHash('sha256').update(session).digest('hex') }));
+export function bindAuthenticatedAccount(id: string, session: string, store: IdentityStore = secretStore(), previousSession?: string): { ok: boolean; error?: string } {
+  return bindLicenseAccount(id, session, store, previousSession);
 }
 
 /** Only call after first paint or an explicit login gesture. Older installs need /me online once. */
@@ -49,7 +43,7 @@ export async function restoreAuthenticatedAccount(deps?: { store: IdentityStore;
   const store = deps?.store ?? secretStore();
   const session = store.getSecret('auth:session');
   store.getSecret('auth:account');
-  store.getSecret('license:clock');
+  store.getSecret(LICENSE_SEAL_KEY);
   if (!session || getAuthenticatedAccountId(store)) return;
   const generation = authGeneration;
   const api = deps?.api ?? (require('./api-client') as typeof import('./api-client')).apiFetch;
@@ -85,7 +79,7 @@ function defaultDeps(): AuthDeps {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const secrets = require('./persistence/secrets-store') as typeof import('./persistence/secrets-store');
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const billing = require('./persistence/billing-ipc') as typeof import('./persistence/billing-ipc');
+  const access = require('./license-access') as typeof import('./license-access');
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { shell } = require('electron') as typeof import('electron');
   return {
@@ -102,7 +96,7 @@ function defaultDeps(): AuthDeps {
     },
     bindAccount: bindAuthenticatedAccount,
     clearAccess: () => (require('./license-access') as typeof import('./license-access')).clearAccess(),
-    applyLicense: (jwt) => billing.applyLicenseToken(jwt),
+    applyLicense: (jwt) => access.applyOnlineLicenseToken(jwt),
     openExternal: (url) => void shell.openExternal(url),
   };
 }
@@ -151,6 +145,7 @@ export async function exchangeAuthCode(
   const codeVerifier = pending.codeVerifier;
   pending = null; // nonce é single-use: consome ANTES da rede (anti-replay)
 
+  let failure = 'exchange-network';
   try {
     const res = await deps.fetchFn(`${deps.backendUrl}/v1/auth/exchange`, {
       method: 'POST',
@@ -158,35 +153,40 @@ export async function exchangeAuthCode(
       body: JSON.stringify({ code, code_verifier: codeVerifier }),
       signal: AbortSignal.timeout(10000),
     });
-    if (!res.ok) return { ok: false, error: `exchange HTTP ${res.status}` };
+    if (!res.ok) return { ok: false, error: 'exchange-http' };
+    failure = 'exchange-invalid-response';
     const json = (await res.json()) as {
       ok: boolean;
       data?: { session: string; refresh: string; licenca: string };
     };
     if (generation !== authGeneration) return { ok: false, error: 'login superseded' };
-    if (!json.ok || !json.data || !['session', 'refresh', 'licenca'].every(key => typeof json.data?.[key as keyof typeof json.data] === 'string' && json.data[key as keyof typeof json.data])) return { ok: false, error: 'resposta inválida' };
+    if (!json.ok || !json.data || !['session', 'refresh', 'licenca'].every(key => typeof json.data?.[key as keyof typeof json.data] === 'string' && json.data[key as keyof typeof json.data])) return { ok: false, error: 'exchange-invalid-response' };
     // A signed license does not prove which account owns this opaque session.
+    failure = 'exchange-network';
     const profileResponse = await deps.fetchFn(`${deps.backendUrl}/v1/me`, {
       headers: { authorization: `Bearer ${json.data.session}` }, signal: AbortSignal.timeout(10000),
     });
+    failure = 'exchange-invalid-response';
     const profile = await profileResponse.json() as { ok?: boolean; data?: { id?: unknown } };
     if (generation !== authGeneration) return { ok: false, error: 'login superseded' };
     if (!profileResponse.ok || !profile.ok || typeof profile.data?.id !== 'string' || !profile.data.id.trim()) return { ok: false, error: 'account identity unavailable' };
     const proof = deps.validateLicense(json.data.licenca, profile.data.id);
-    if (!proof.ok) return proof;
+    if (!proof.ok) return { ok: false, error: 'exchange-license-invalid' };
+    failure = 'exchange-storage';
     deps.clearAccess();
     // Falha FECHADO: se qualquer persistência falhar, o login não "parece"
     // ter dado certo com sessão/licença ausentes.
     const s1 = deps.setSecret('auth:session', json.data.session);
-    if (!s1.ok) return { ok: false, error: `sessão não persistida: ${s1.error}` };
+    if (!s1.ok) return { ok: false, error: 'exchange-storage' };
     const s2 = deps.setSecret('auth:refresh', json.data.refresh);
-    if (!s2.ok) return { ok: false, error: `refresh não persistido: ${s2.error}` };
+    if (!s2.ok) return { ok: false, error: 'exchange-storage' };
     const binding = deps.bindAccount(profile.data.id, json.data.session);
-    if (!binding.ok) return { ok: false, error: 'account binding not persisted' };
+    if (!binding.ok) return { ok: false, error: 'exchange-storage' };
+    failure = 'exchange-license-invalid';
     const lic = deps.applyLicense(json.data.licenca);
-    if (!lic.ok) return { ok: false, error: `licença não aplicada: ${lic.error}` };
+    if (!lic.ok) return { ok: false, error: 'exchange-license-invalid' };
     return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  } catch {
+    return { ok: false, error: failure };
   }
 }

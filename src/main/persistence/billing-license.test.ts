@@ -37,3 +37,8 @@ describe('desktop license verification', () => {
     expect(verifyLicenseToken('eyJhbGciOiJub25lIn0.e30.eA', options).ok).toBe(false);
   });
 });
+
+
+it.each(['iss', 'sub'])('explicitly rejects a license without %s', claim => {
+  expect(verifyLicenseToken(licenseFixture({ [claim]: undefined }), options).ok).toBe(false);
+});

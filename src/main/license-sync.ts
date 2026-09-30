@@ -25,7 +25,7 @@ function defaultDeps(): LicenseSyncDeps {
   const access = require('./license-access') as typeof import('./license-access');
   const auth = require('./auth-client') as typeof import('./auth-client');
   defaults = {
-    api, applyLicense: access.applyLicenseToken,
+    api, applyLicense: access.applyOnlineLicenseToken,
     readAccess: () => access.getAccessState().access,
     sessionKey: () => { const id = auth.getAuthenticatedAccountId(); return id ? `${auth.getAuthGeneration()}:${id}` : null; },
     // The authority broadcasts changes, including expiry without any network activity.
@@ -111,7 +111,7 @@ function defaultBootSyncDeps(): LicenseBootSyncDeps {
     return syncLicenseOnce();
   };
   return {
-    hasCachedAuthSession: () => secrets.hasCachedSecret('auth:session') && secrets.hasCachedSecret('auth:account') && secrets.hasCachedSecret('license:clock'),
+    hasCachedAuthSession: () => secrets.hasCachedSecret('auth:session') && secrets.hasCachedSecret('auth:account') && secrets.hasCachedSecret('auth:refresh') && secrets.hasCachedSecret('auth:license-seal-key'),
     sync,
     afterFirstPaint: callback => {
       // Keychain may synchronously block in SecItemCopyMatching. Wait for the

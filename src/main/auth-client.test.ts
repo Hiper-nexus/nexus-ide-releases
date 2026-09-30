@@ -85,7 +85,7 @@ describe('exchangeAuthCode (binding local)', () => {
     const url = new URL((d.openExternal as ReturnType<typeof vi.fn>).mock.calls[0][0] as string);
     const r = await exchangeAuthCode('code123', url.searchParams.get('app_state')!, d);
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/keychain/);
+    expect(r.error).toBe('exchange-storage');
   });
 
   it('erro do backend não guarda nada', async () => {
@@ -170,4 +170,22 @@ it('rejects an invalid exchange license before replacing the previous session', 
   expect((await exchangeAuthCode('c', state, d)).ok).toBe(false);
   expect(d.clearAccess).not.toHaveBeenCalled();
   expect(d.setSecret).not.toHaveBeenCalled();
+});
+
+
+
+it.each(['parse', 'network', 'storage'])('M3: %s auth failure never returns or logs response/exception secrets', async kind => {
+  resetPendingLogin();
+  const marker = 'secretXYZ';
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const d = deps(kind === 'parse' ? { fetchFn: vi.fn().mockResolvedValue(new Response(marker + '{')) }
+    : kind === 'network' ? { fetchFn: vi.fn().mockRejectedValue(new Error(marker)) }
+    : { setSecret: vi.fn().mockReturnValue({ ok: false, error: marker }) });
+  beginLogin('github', d);
+  const state = new URL(d.openExternal.mock.calls[0][0]).searchParams.get('app_state');
+  const result = await exchangeAuthCode('code', state, d);
+  expect(result.ok).toBe(false);
+  expect(JSON.stringify([result, warn.mock.calls, error.mock.calls])).not.toContain(marker);
+  warn.mockRestore(); error.mockRestore();
 });

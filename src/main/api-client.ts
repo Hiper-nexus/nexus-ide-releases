@@ -7,7 +7,7 @@ export interface ApiDeps {
   getSecret: (key: string) => string | null;
   applyLicense?: (jwt: string) => { ok: boolean; error?: string };
   getAccountId?: () => string | null;
-  bindAccount?: (id: string, session: string) => { ok: boolean; error?: string };
+  bindAccount?: (id: string, session: string, previousSession?: string) => { ok: boolean; error?: string };
   generation?: () => number;
   setSecret: (key: string, value: string) => { ok: boolean; error?: string };
 }
@@ -35,9 +35,9 @@ function defaultDeps(): ApiDeps {
   const secrets = require('./persistence/secrets-store') as typeof import('./persistence/secrets-store');
   const auth = require('./auth-client') as typeof import('./auth-client');
   return {
-    applyLicense: (jwt) => (require('./license-access') as typeof import('./license-access')).applyLicenseToken(jwt),
+    applyLicense: (jwt) => (require('./license-access') as typeof import('./license-access')).applyOnlineLicenseToken(jwt),
     getAccountId: auth.getAuthenticatedAccountId,
-    bindAccount: auth.bindAuthenticatedAccount,
+    bindAccount: (id, session, previousSession) => auth.bindAuthenticatedAccount(id, session, undefined, previousSession),
     generation: auth.getAuthGeneration,
     backendUrl: resolveBackendUrl(),
     fetchFn: fetch,
@@ -139,7 +139,7 @@ async function performRefresh(
     // fails, the following request can still recover with the valid token.
     if (!deps.setSecret('auth:refresh', nextRefresh).ok) return null;
     if (!deps.setSecret('auth:session', session).ok) return null;
-    if (account && deps.bindAccount && !deps.bindAccount(account, session).ok) return null;
+    if (account && deps.bindAccount && !deps.bindAccount(account, session, previousSession ?? undefined).ok) return null;
     if (typeof body.data?.licenca === 'string') deps.applyLicense?.(body.data.licenca);
     return session;
   } catch {
