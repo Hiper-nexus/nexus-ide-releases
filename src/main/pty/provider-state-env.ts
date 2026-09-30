@@ -156,11 +156,21 @@ export function materializeProviderState(
       throw new Error('Provider config target must remain inside checkout state');
     }
     ensureDirectory(path.dirname(target));
-    const targetEntry = fs.lstatSync(target, { throwIfNoEntry: false });
+    let targetEntry = fs.lstatSync(target, { throwIfNoEntry: false });
     if (targetEntry?.isSymbolicLink()) {
       const linked = path.resolve(path.dirname(target), fs.readlinkSync(target));
       if (path.toNamespacedPath(linked) !== path.toNamespacedPath(source)) {
-        throw new Error('Provider config link points outside its auth source');
+        // A CLI may consolidate config aliases into links inside this state
+        // root, and an older materialization may point at a different file
+        // under the same profile source. Both are ours to re-point — the
+        // link is never followed. Any other target is tampering.
+        const roots = [overlay.targetDir, overlay.sourceDir]
+          .map((root) => path.toNamespacedPath(path.resolve(root) + path.sep));
+        if (!roots.some((root) => path.toNamespacedPath(linked).startsWith(root))) {
+          throw new Error('Provider config link points outside its auth source');
+        }
+        fs.unlinkSync(target);
+        targetEntry = undefined;
       }
     } else if (targetEntry && !targetEntry.isFile()) {
       throw new Error('Provider config target must be a regular file');

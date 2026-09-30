@@ -552,6 +552,46 @@ describe('F-567 checkout provider homes', () => {
     expect(fs.readFileSync(conversation, 'utf8')).toBe('existing conversation');
   });
 
+  it('re-points AGY config links consolidated inside the managed home instead of failing the spawn', () => {
+    const root = tempHome();
+    const sourceHome = path.join(root, 'native');
+    fs.mkdirSync(path.join(sourceHome, 'antigravity-cli'), { recursive: true });
+    fs.writeFileSync(path.join(sourceHome, 'oauth_creds.json'), 'account A');
+    fs.writeFileSync(path.join(sourceHome, 'antigravity-cli/mcp_config.json'), '{"mcp":1}');
+    const options = { userDataPath: path.join(root, 'userData'), checkoutId: 'checkout-consolidated', sourceHome };
+    const first = prepareCheckoutProviderHome('agy', options);
+    const profile = first.env.GEMINI_CLI_HOME;
+    // What the AGY CLI does on this machine: antigravity-cli/mcp_config.json
+    // becomes a link to the sibling config/mcp_config.json inside the home.
+    const cliConfig = path.join(profile, 'antigravity-cli/mcp_config.json');
+    fs.unlinkSync(cliConfig);
+    fs.symlinkSync(path.join(profile, 'config/mcp_config.json'), cliConfig, 'junction');
+
+    const second = prepareCheckoutProviderHome('agy', options);
+    expect(second.stateHome).toBe(first.stateHome);
+    expect(fs.realpathSync(cliConfig)).toBe(
+      fs.realpathSync(path.join(sourceHome, 'antigravity-cli/mcp_config.json')),
+    );
+    expect(fs.readFileSync(cliConfig, 'utf8')).toBe('{"mcp":1}');
+  });
+
+  it('still rejects a credential link resolving outside the auth source and managed home', () => {
+    const root = tempHome();
+    const sourceHome = path.join(root, 'native');
+    fs.mkdirSync(sourceHome, { recursive: true });
+    fs.writeFileSync(path.join(sourceHome, 'oauth_creds.json'), 'account A');
+    const options = { userDataPath: path.join(root, 'userData'), checkoutId: 'checkout-tamper', sourceHome };
+    const first = prepareCheckoutProviderHome('agy', options);
+    const foreign = path.join(root, 'foreign.txt');
+    fs.writeFileSync(foreign, 'not ours');
+    const target = path.join(first.env.GEMINI_CLI_HOME, 'oauth_creds.json');
+    fs.unlinkSync(target);
+    fs.symlinkSync(foreign, target, 'junction');
+
+    expect(() => prepareCheckoutProviderHome('agy', options)).toThrow(/outside its auth source/);
+    expect(fs.readlinkSync(target)).toBe(foreign);
+  });
+
   it('rejects AGY skills pointing at another profile and preserves that profile', () => {
     const root = tempHome();
     const options = { userDataPath: path.join(root, 'userData'), checkoutId: 'checkout-skills', sourceHome: path.join(root, 'account-a') };
