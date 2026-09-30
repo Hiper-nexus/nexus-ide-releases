@@ -1,19 +1,38 @@
 import * as THREE from 'three';
+import { initialBarrels } from './props.js';
 
 export const COLORS = {
   floor: 0x242127, rim: 0x111013, raised: 0x37333d, pink: 0xff4f8b,
   white: 0xfaf0e8, dark: 0x19171d, mint: 0x7ee2a8, orange: 0xe5a388,
-  coffee: 0x62412f, metal: 0x4b4551, leaf: 0x687b69,
+  coffee: 0x62412f, metal: 0x4b4551, leaf: 0x687b69, red: 0xc2452f, amber: 0xffb35c,
 };
 const materials = new Map();
+export const ANIMATED = { pulse: [], blink: [] };
 
 function material(color, emissive = false) {
   const key = `${color}-${emissive}`;
-  if (!materials.has(key)) materials.set(key, new THREE.MeshStandardMaterial({
-    color, roughness: 0.7, metalness: 0.12,
-    ...(emissive ? { emissive: color, emissiveIntensity: 0.45 } : {}),
-  }));
+  if (!materials.has(key)) {
+    const created = new THREE.MeshStandardMaterial({
+      color, roughness: 0.7, metalness: 0.12,
+      ...(emissive ? { emissive: color, emissiveIntensity: 0.45 } : {}),
+    });
+    materials.set(key, created);
+    if (emissive) ANIMATED.pulse.push(created);
+  }
   return materials.get(key);
+}
+
+function blinkMaterial(color) {
+  const created = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 1 });
+  ANIMATED.blink.push(created);
+  return created;
+}
+
+export function glowBox(parent, dimensions, position, color) {
+  const object = new THREE.Mesh(new THREE.BoxGeometry(...dimensions), blinkMaterial(color));
+  object.position.set(...position);
+  parent.add(object);
+  return object;
 }
 
 export function box(parent, dimensions, position, color, emissive = false) {
@@ -145,8 +164,46 @@ function liveStation(parent) {
     cylinder(group,.24,.1,[x,1.25,1.38],COLORS.dark).rotation.x=Math.PI/2;
     cylinder(group,.3,.1,[x,.65,1.38],COLORS.dark).rotation.x=Math.PI/2;
   }
+  glowBox(group,[1.5,.22,.22],[0,3.95,-.5],COLORS.pink);
   parent.add(group);
   return group;
+}
+
+function barrelMesh(parent, x, z) {
+  const group = new THREE.Group();
+  group.position.set(x,0,z);
+  cylinder(group,.5,1.15,[0,.58,0],COLORS.red,14);
+  cylinder(group,.52,.1,[0,1.14,0],COLORS.dark,14);
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(.51,.51,.16,14), material(COLORS.amber,true));
+  band.position.set(0,.92,0);
+  group.add(band);
+  parent.add(group);
+  return group;
+}
+
+export function makeBarrels(scene) {
+  return initialBarrels().map(barrel => ({...barrel, mesh: barrelMesh(scene, barrel.x, barrel.z)}));
+}
+
+const PROP_SPOTS = [[-2,-3,'cone'],[2.5,-1.5,'cone'],[-6,4,'crate'],[5,6,'crate'],[-1,-12.5,'cone'],[8,-4,'crate']];
+
+export function makeProps(scene) {
+  return PROP_SPOTS.map(([x,z,kind],index) => {
+    const group = new THREE.Group();
+    group.position.set(x,0,z);
+    if(kind==='cone') {
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(.34,.8,10), material(COLORS.orange));
+      cone.position.set(0,.4,0);
+      cone.castShadow = true;
+      group.add(cone);
+      box(group,[.4,.07,.4],[0,.05,0],COLORS.dark);
+    } else {
+      box(group,[.85,.85,.85],[0,.43,0],COLORS.metal);
+      box(group,[.9,.14,.9],[0,.43,0],COLORS.white);
+    }
+    scene.add(group);
+    return {id:index,x,z,vx:0,vz:0,mesh:group};
+  });
 }
 
 export function makeWorld(scene) {
@@ -169,7 +226,7 @@ export function makeWorld(scene) {
   for(let i=-14;i<15;i+=2) box(root,[.1,.02,.75],[0,.06,i],COLORS.white);
   for(let i=-14;i<15;i+=2) box(root,[.75,.02,.1],[i,.065,9],COLORS.white);
   for(const x of [-3,3]) box(root,[.35,4,.35],[x,2,13.5],COLORS.metal);
-  box(root,[6.4,.35,.4],[0,4,13.5],COLORS.pink,true);
+  glowBox(root,[6.4,.35,.4],[0,4,13.5],COLORS.pink);
   sign(root,'START / NEXUS',5.6,.65,[0,3.5,13.72],'#ff4f8b');
   for(const x of [-14,14]) for(const z of [-12,-3,6]) {
     cylinder(root,.12,3,[x,1.4,z],COLORS.metal);
@@ -193,20 +250,29 @@ export function makeWorld(scene) {
 
 export function makeRover(scene) {
   const group=new THREE.Group();
-  box(group,[1.3,.35,1.8],[0,.55,0],COLORS.white);
-  box(group,[.9,.6,.9],[0,.98,-.15],COLORS.pink);
-  box(group,[.65,.35,.04],[0,1.05,.32],COLORS.dark);
-  box(group,[.17,.14,.05],[-.2,1.05,.35],COLORS.mint,true);
-  box(group,[.17,.14,.05],[.2,1.05,.35],COLORS.mint,true);
-  cylinder(group,.04,.65,[0,1.55,-.5],COLORS.metal);
+  const chassis=new THREE.Group();
+  group.add(chassis);
+  box(chassis,[1.3,.35,1.8],[0,.55,0],COLORS.white);
+  box(chassis,[.9,.6,.9],[0,.98,-.15],COLORS.pink);
+  box(chassis,[.65,.35,.04],[0,1.05,.32],COLORS.dark);
+  box(chassis,[.17,.14,.05],[-.2,1.05,.35],COLORS.mint,true);
+  box(chassis,[.17,.14,.05],[.2,1.05,.35],COLORS.mint,true);
+  box(chassis,[.5,.1,.04],[0,.72,.91],COLORS.amber,true);
+  cylinder(chassis,.04,.65,[0,1.55,-.5],COLORS.metal);
   const antenna=new THREE.Mesh(new THREE.SphereGeometry(.1,8,8),material(COLORS.pink,true));
   antenna.position.set(0,1.87,-.5);
-  group.add(antenna);
-  for(const x of [-.7,.7]) for(const z of [-.55,.55]) {
-    const wheel=cylinder(group,.32,.22,[x,.35,z],COLORS.dark,12);
+  chassis.add(antenna);
+  const wheels=[],fronts=[];
+  for(const [x,z,front] of [[-.72,-.62,1],[.72,-.62,1],[-.72,.62,0],[.72,.62,0]]) {
+    const pivot=new THREE.Group();
+    pivot.position.set(x,.35,z);
+    const wheel=cylinder(pivot,.32,.24,[0,0,0],COLORS.dark,12);
     wheel.rotation.z=Math.PI/2;
+    group.add(pivot);
+    wheels.push(wheel);
+    if(front)fronts.push(pivot);
   }
   group.position.set(0,0,4.5);
   scene.add(group);
-  return group;
+  return {group,chassis,wheels,fronts};
 }
