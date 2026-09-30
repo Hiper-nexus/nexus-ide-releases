@@ -49,3 +49,12 @@ test('a blast shoves the rover harder the closer it detonates', () => {
   assert.ok(close.vx>0&&Math.abs(close.vx)>Math.abs(far.vx));
   assert.equal(blastImpulse({x:barrel.x+99,z:barrel.z},barrel,10).vx,0);
 });
+
+test('props and barrels at rest step to the same array, so the frame loop allocates nothing', () => {
+  const props=[{id:'cone-1',x:2,z:0,vx:0,vz:0},{id:'crate-1',x:-3,z:4,vx:0,vz:0}];
+  assert.equal(stepProps(props,.016),props);
+  assert.notEqual(stepProps([pushProp(props[0],0,0,4),props[1]],.016),props);
+  const barrels=initialBarrels();
+  assert.equal(stepBarrels(barrels,.016),barrels);
+  assert.notEqual(stepBarrels(detonateBarrel(barrels,0),.016),barrels);
+});

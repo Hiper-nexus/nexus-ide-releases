@@ -19,6 +19,7 @@ export function detonateBarrel(barrels,id) {
 
 export function stepBarrels(barrels,delta) {
   const dt=Math.max(0,delta);
+  if(barrels.every(barrel=>barrel.alive))return barrels;
   return barrels.map(barrel=>{
     if(barrel.alive||barrel.respawn<=0)return barrel.alive?barrel:{...barrel,respawn:0,alive:true};
     const respawn=barrel.respawn-dt;
@@ -38,6 +39,8 @@ export function stepProps(props,delta) {
   const dt=Math.max(0,Math.min(delta,.1));
   const decay=Math.exp(-PROP_FRICTION*dt);
   const clamp=value=>Math.max(-PROP_LIMIT,Math.min(PROP_LIMIT,value));
+  // At rest nothing changes: hand back the same array so the frame loop allocates nothing.
+  if(props.every(prop=>prop.vx===0&&prop.vz===0))return props;
   return props.map(prop=>{
     const vx=prop.vx*decay,vz=prop.vz*decay;
     const still=Math.abs(vx)<.02&&Math.abs(vz)<.02;

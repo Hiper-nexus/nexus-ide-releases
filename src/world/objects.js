@@ -424,3 +424,22 @@ export function makeRover(scene) {
   scene.add(group);
   return {group,chassis,wheels,fronts,headlights,brakeMaterial,exhaust,headlight};
 }
+
+/** Release everything a scene holds on the GPU: geometries, materials (with their maps) and instanced buffers. */
+export function disposeObjects(scene) {
+  const seen = new Set();
+  const release = resource => { if (resource && !seen.has(resource)) { seen.add(resource); resource.dispose(); } };
+  scene.traverse(object => {
+    release(object.geometry);
+    for (const material of [].concat(object.material ?? [])) { release(material.map); release(material.emissiveMap); release(material); }
+    if (object.isInstancedMesh) release(object);
+  });
+}
+
+/** Forget the shared material cache and the animated lists, so the next world rebuilds them instead of reusing
+ * the ones disposeObjects() just released through the scene. */
+export function disposeShared() {
+  materials.clear();
+  ANIMATED.pulse.length = 0;
+  ANIMATED.blink.length = 0;
+}
