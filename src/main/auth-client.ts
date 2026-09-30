@@ -85,7 +85,7 @@ function defaultDeps(): AuthDeps {
   return {
     backendUrl: resolveBackendUrl(),
     fetchFn: fetch,
-    setSecret: (k, v) => secrets.setSecret(k, v),
+    setSecret: (k, v) => secrets.setInternalSecret(k, v),
     validateLicense: (jwt, accountId) => {
       const result = verifyLicenseToken(jwt, {
         publicKeyPem: process.env.NEXUS_LICENSE_PUBKEY?.trim() || null,
@@ -200,7 +200,7 @@ export interface LogoutDeps {
 }
 function defaultLogoutDeps(): LogoutDeps {
   return { backendUrl: resolveBackendUrl(), getSecret: key => secretStore().getSecret(key),
-    deleteSecret: key => secretStore().deleteSecret(key), fetchFn: fetch,
+    deleteSecret: key => secretStore().deleteInternalSecret(key), fetchFn: fetch,
     clearAccess: () => (require('./license-access') as typeof import('./license-access')).clearAccess() };
 }
 /** Main-owned logout. Revocation comes first; existing processes and project data are untouched. */

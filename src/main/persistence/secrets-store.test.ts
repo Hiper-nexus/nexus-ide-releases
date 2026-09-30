@@ -4,6 +4,12 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import Database from 'better-sqlite3';
+import crypto from 'node:crypto';
+import * as vault from './secrets-store';
+import { bindLicenseAccount, persistLicenseSeal, readLicenseAccountState } from '../license-account-state';
+import { createLicenseAccess } from '../license-access';
+import { licenseFixture, LICENSE_NOW, publicKeyPem } from '../../test/license-fixture';
+import { exportSecretsVault, importSecretsVault, SECRETS_BUNDLE_FORMAT } from './secrets-portability';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const secretDeps = vi.hoisted(() => ({
@@ -36,6 +42,10 @@ vi.mock('electron', () => ({
   },
 }));
 
+vi.mock('../adapters/adapter-registry', () => ({
+  getAdapter: (id: string) => ['claude', 'codex'].includes(id) ? { id } : null,
+}));
+
 import {
   deleteSecret,
   getSecret,
@@ -44,6 +54,7 @@ import {
   resetSecretsCacheForTests,
   setKey,
   setSecret,
+  setInternalSecret,
 } from './secrets-store';
 
 const secretsFile = path.join(secretDeps.home, '.nexus', 'secrets.enc');
@@ -90,6 +101,90 @@ describe('durable secret persistence', () => {
     expect(getSecret('provider')).toBe('first-secret');
     expect(getSecret('other')).toBe('second-secret');
     expectVaultDirectoryClean();
+  });
+
+  it.each([['setKey', 'pro'], ['setKey', 'trial'], ['import', 'pro'], ['import', 'trial']])
+  ('N1: %s não ressuscita JWT %s após suspensão e restart', (route, kind) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(LICENSE_NOW + 1000);
+    try {
+      expect(setInternalSecret('auth:session', 'legitimate-session').ok).toBe(true);
+      expect(bindLicenseAccount('account-a', 'legitimate-session', vault).ok).toBe(true);
+      const file = path.join(secretDeps.home, 'license.json');
+      const deps = { licensePath: file, publicKeyPem: () => publicKeyPem,
+        issuer: () => 'https://api.nexuside.app', now: Date.now, monotonicNow: () => 0,
+        accountId: () => readLicenseAccountState(vault)?.id ?? null,
+        readSeal: () => readLicenseAccountState(vault)?.seal ?? null,
+        writeSeal: (seal: Parameters<typeof persistLicenseSeal>[1]) => persistLicenseSeal(vault, seal) };
+      const access = createLicenseAccess(deps);
+      const oldToken = licenseFixture({ access: kind });
+      expect(access.applyOnlineLicenseToken(oldToken).ok).toBe(true);
+      expect(access.applyOnlineLicenseToken(licenseFixture({ access: 'suspended', iat: LICENSE_NOW / 1000 + 1 })).ok).toBe(true);
+      expect(access.getAccessState().canUseApp).toBe(false);
+      const before = ['auth:session', 'auth:account', 'auth:license-seal-key'].map(getSecret);
+      const session = 'attacker-opaque-session', root = '11'.repeat(32);
+      const sessionHash = crypto.createHash('sha256').update(session).digest('hex');
+      const state = { version: 2, binding: { id: 'account-a', sessionHash }, accounts: {
+        'account-a': { clockFloor: Date.now(), latestIat: 0, revokedAt: null, needsOnlineValidation: false } } };
+      const derived = crypto.createHmac('sha256', Buffer.from(root, 'hex'))
+        .update(`nexus-license-account-state-v2\0account-a\0${sessionHash}`).digest();
+      const forged = { 'auth:license-seal-key': root, 'auth:session': session,
+        'auth:account': JSON.stringify({ state, mac: crypto.createHmac('sha256', derived).update(JSON.stringify(state)).digest('hex') }) };
+      let results;
+      if (route === 'setKey') results = Object.entries(forged).map(([key, value]) => setKey(key, value));
+      else {
+        const pass = 'passphrase-test', salt = crypto.randomBytes(16), iv = crypto.randomBytes(12);
+        const cipher = crypto.createCipheriv('aes-256-gcm', crypto.pbkdf2Sync(pass, salt, 210_000, 32, 'sha512'), iv);
+        const payload = Buffer.concat([cipher.update(JSON.stringify(forged)), cipher.final()]);
+        results = [importSecretsVault(JSON.stringify({ format: SECRETS_BUNDLE_FORMAT,
+          kdf: { algo: 'pbkdf2-sha512', iterations: 210_000, salt: salt.toString('base64') },
+          cipher: { algo: 'aes-256-gcm', iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64') },
+          payload: payload.toString('base64') }), pass)];
+      }
+      fs.writeFileSync(file, JSON.stringify({ version: 2, token: oldToken }));
+      resetSecretsCacheForTests();
+      const after = ['auth:session', 'auth:account', 'auth:license-seal-key'].map(getSecret);
+      expect(createLicenseAccess(deps).getAccessState().canUseApp).toBe(false);
+      expect(results.every(result => !result.ok)).toBe(true);
+      expect(after).toEqual(before);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it.each(['auth:session', 'auth:refresh', 'auth:account', 'auth:license-seal-key',
+    'system:cron-authority-hmac:v1', 'agentkey:v1:mission:owner:id', 'browser:personal-profile-cookies'])
+  ('recusa gravar e excluir autoridade interna pela API genérica: %s', name => {
+    const denied = { ok: false, error: 'reserved_secret_name' };
+    expect(setSecret(name, 'forged')).toEqual(denied);
+    expect(setSecret(name, '')).toEqual(denied);
+    expect(setKey(name, 'forged')).toEqual(denied);
+    expect(setKey(name, '')).toEqual(denied);
+    expect(deleteSecret(name)).toEqual(denied);
+    expect(getSecret(name)).toBeNull();
+    expect(secretDeps.encrypted.size).toBe(0);
+  });
+
+  it('mantém a autoridade interna durável e protegida de exclusão genérica', () => {
+    expect(setInternalSecret('auth:session', 'opaque-session')).toEqual({ ok: true });
+    expect(deleteSecret('auth:session')).toEqual({ ok: false, error: 'reserved_secret_name' });
+    resetSecretsCacheForTests();
+    expect(getSecret('auth:session')).toBe('opaque-session');
+    expect(vault.deleteInternalSecret('auth:session')).toEqual({ ok: true });
+    resetSecretsCacheForTests();
+    expect(getSecret('auth:session')).toBeNull();
+  });
+
+  it('portabilidade padrão usa o catálogo e persiste providers legítimos', () => {
+    const pass = 'passphrase-test';
+    expect(setKey('claude', 'provider-key')).toEqual({ ok: true });
+    expect(setInternalSecret('auth:session', 'opaque-session')).toEqual({ ok: true });
+    const exported = exportSecretsVault(pass);
+    expect(exported).toMatchObject({ ok: true, exportedKeys: 1 });
+    if (!exported.ok) return;
+    expect(deleteSecret('claude').ok).toBe(true);
+    expect(importSecretsVault(exported.bundle, pass)).toEqual({ ok: true, importedKeys: 1, failedKeys: [] });
+    resetSecretsCacheForTests();
+    expect(getSecret('claude')).toBe('provider-key');
+    expect(getSecret('auth:session')).toBe('opaque-session');
   });
 
   it('publishes encrypted bytes durably before updating the cache', () => {

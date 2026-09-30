@@ -2466,6 +2466,7 @@ export function registerProviderIpc(): void {
   handleTrusted(PROVIDER_CHANNELS.setKey, (_event, raw) => {
     const parsed = setKeySchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'invalid key request' };
+    if (!getAdapter(parsed.data.adapterId)) return { ok: false, error: 'unknown provider' };
     const result = setKey(parsed.data.adapterId, parsed.data.key);
     broadcast();
     return result;

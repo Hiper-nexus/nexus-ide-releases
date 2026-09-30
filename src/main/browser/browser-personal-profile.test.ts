@@ -8,7 +8,7 @@ vi.mock('electron', () => ({ app: { getPath: () => state.root } }));
 vi.mock('../persistence/secrets-store', () => ({
   getSecret: () => state.secret,
   hasSecret: () => state.hasSecret,
-  setSecret: (_key: string, value: string) => { state.secret = value; state.hasSecret = true; return { ok: true }; },
+  setInternalSecret: (_key: string, value: string) => { state.secret = value; state.hasSecret = true; return { ok: true }; },
 }));
 beforeEach(() => {
   vi.resetModules();

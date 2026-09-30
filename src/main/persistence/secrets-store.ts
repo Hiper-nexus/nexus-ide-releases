@@ -53,6 +53,12 @@ export interface SecretWriteResult {
   error?: string;
 }
 
+/** Main-owned authority and browser sessions never cross generic secret APIs. */
+export function isReservedSecretName(name: string): boolean {
+  return ['auth:', 'system:', 'agentkey:', 'browser:'].some(prefix => name.startsWith(prefix));
+}
+export const RESERVED_SECRET_NAME_ERROR = 'reserved_secret_name';
+
 export function isSecureStorageBackendAllowed(
   platform: NodeJS.Platform,
   readBackend: () => string,
@@ -467,8 +473,14 @@ export function hasCachedSecret(key: string): boolean {
 }
 
 export function setSecret(key: string, value: string): SecretWriteResult {
+  if (isReservedSecretName(key)) return { ok: false, error: RESERVED_SECRET_NAME_ERROR };
+  return setInternalSecret(key, value);
+}
+
+/** Main-only entry point; never forward a renderer/MCP-selected name here. */
+export function setInternalSecret(key: string, value: string): SecretWriteResult {
   const store = ensureCache();
-  if (value === '') return deleteSecret(key);
+  if (value === '') return deleteInternalSecret(key);
   if (!isSecureStorageAvailable()) {
     return { ok: false, error: SECURE_STORAGE_ERROR };
   }
@@ -480,6 +492,12 @@ export function setSecret(key: string, value: string): SecretWriteResult {
 }
 
 export function deleteSecret(key: string): SecretWriteResult {
+  if (isReservedSecretName(key)) return { ok: false, error: RESERVED_SECRET_NAME_ERROR };
+  return deleteInternalSecret(key);
+}
+
+/** Main-only counterpart of setInternalSecret. */
+export function deleteInternalSecret(key: string): SecretWriteResult {
   const store = ensureCache();
   const result = persistDelta(key, null);
   if (!result.ok) return result;
@@ -506,15 +524,7 @@ export function maskedKey(adapterId: string): string | null {
 
 /** Store (or clear, when key === '') a provider's API key. */
 export function setKey(adapterId: string, key: string): SecretWriteResult {
-  const store = ensureCache();
-  if (key === '') return deleteSecret(adapterId);
-  if (!isSecureStorageAvailable()) {
-    return { ok: false, error: SECURE_STORAGE_ERROR };
-  }
-  const result = persistDelta(adapterId, key);
-  if (!result.ok) return result;
-  store.set(adapterId, key);
-  return { ok: true };
+  return setSecret(adapterId, key);
 }
 
 /** Test-only reset. */

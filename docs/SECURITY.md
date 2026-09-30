@@ -30,6 +30,29 @@ All external input validated with Zod at process boundaries.
 - Audit write failure → policy-defined block for effectful tools (`effectMayHaveCommitted` when handler already ran).
 - Unknown MCP tool → never executes.
 
+## Cofre: autoridade interna e credenciais portáveis (N1 / F-414)
+
+`src/main/persistence/secrets-store.ts` é o dono de `isReservedSecretName`:
+os prefixos `auth:`, `system:`, `agentkey:` e `browser:` são internos. As APIs
+genéricas de escrita/exclusão recusam esses nomes com `reserved_secret_name`
+antes de acessar o cofre. Só os donos no Main usam `setInternalSecret` /
+`deleteInternalSecret`; nunca encaminhar nomes escolhidos pelo renderer/MCP
+a essas entradas.
+
+`providers.setKey` usa o schema de id dos adapters e exige registro no catálogo
+no Main; key vazia segue a mesma validação antes de excluir. A portabilidade
+aceita ids registrados e os namespaces de credenciais `voice-env:`, `jev-env:`,
+`acctkey:`, `acctcred:`, `mediakey:` e `mcphub:`. Export não lê registros internos;
+import valida todos os nomes antes da primeira escrita e recusa o bundle inteiro
+se contiver autoridade interna ou nomes desconhecidos. Bundles antigos contendo
+sessão/licença devem ser reexportados como credenciais de providers.
+
+Evidência: `secrets-store.test.ts` reproduz JWT pro/trial anterior à suspensão,
+MAC calculado pelo atacante, import/setKey e reinício; o acesso continua bloqueado.
+`secrets-portability.test.ts` cobre rejeição sem escrita parcial e round-trip;
+`provider-config-spawn.test.ts` cobre o handler IPC; `provider-settings-types.test.ts`
+cobre a validação compartilhada.
+
 ## Limits
 
 - Max redaction depth/size (audit-log constants).

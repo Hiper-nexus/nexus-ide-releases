@@ -20,6 +20,7 @@ const spawnDeps = vi.hoisted(() => ({
   hasSecret: vi.fn(() => false),
   hasCachedSecret: vi.fn(() => false),
   getSecret: vi.fn<() => string | null>(() => null),
+  setKey: vi.fn(() => ({ ok: true })),
   getAccount: vi.fn(),
   launcherKey: vi.fn<(providerId: string) => string | null>(() => null),
   subscriptionAuthed: vi.fn<
@@ -337,14 +338,15 @@ vi.mock('../adapters/custom-models', () => ({
   removeCustomModel: vi.fn(),
 }));
 
-vi.mock('./secrets-store', () => ({
+vi.mock('./secrets-store', async importOriginal => ({
+  ...await importOriginal<typeof import('./secrets-store')>(),
   getKey: spawnDeps.runtimeKey,
   hasCachedSecret: spawnDeps.hasCachedSecret,
   getSecret: spawnDeps.getSecret,
   hasSecret: spawnDeps.hasSecret,
   isSecureStorageAvailable: () => true,
   maskedKey: () => null,
-  setKey: vi.fn(),
+  setKey: spawnDeps.setKey,
   listSecretKeys: () => [],
   setSecret: vi.fn(() => ({ ok: true })),
   vaultState: () => 'unknown',
@@ -1756,5 +1758,22 @@ describe('F-210: instalação de Claude verifica e reutiliza o binário real', (
     expect(spawnDeps.execFile.mock.calls.at(-1)?.slice(0, 2)).toEqual([
       '/fixture-quota-home/.local/share/claude/versions/4.12.7', ['--version'],
     ]);
+  });
+});
+
+describe('N1: fronteira IPC de keys de providers', () => {
+  beforeEach(() => { registerProviderIpc(); spawnDeps.setKey.mockClear(); });
+  it.each(['auth:account', 'auth:license-seal-key', 'auth:session', 'unknown-provider'])
+  ('recusa escrita e exclusão de %s antes de tocar o cofre', adapterId => {
+    const handler = spawnDeps.trustedHandlers.get(PROVIDER_CHANNELS.setKey)!;
+    expect(handler({}, { adapterId, key: 'forged' })).toMatchObject({ ok: false });
+    expect(handler({}, { adapterId, key: '' })).toMatchObject({ ok: false });
+    expect(spawnDeps.setKey).not.toHaveBeenCalled();
+  });
+  it('mantém escrita e exclusão de provider registrado', () => {
+    const handler = spawnDeps.trustedHandlers.get(PROVIDER_CHANNELS.setKey)!;
+    expect(handler({}, { adapterId: 'claude', key: 'key-test' })).toEqual({ ok: true });
+    expect(handler({}, { adapterId: 'claude', key: '' })).toEqual({ ok: true });
+    expect(spawnDeps.setKey.mock.calls).toEqual([['claude', 'key-test'], ['claude', '']]);
   });
 });

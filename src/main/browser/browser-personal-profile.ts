@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import type { BrowserProfileChange, BrowserProfileMode } from '../../shared/browser-profile';
-import { getSecret, hasSecret, setSecret } from '../persistence/secrets-store';
+import { getSecret, hasSecret, setInternalSecret } from '../persistence/secrets-store';
 import { writeJsonAtomic } from '../util/atomic-write';
 import { BrowserCookieProfile, profileCookieSchema, profileCookiesSchema, type ProfileCookie, type ProfileCookiePeer } from './browser-profile-cookies';
 
@@ -69,7 +69,7 @@ export function personalCookieProfile(): BrowserCookieProfile {
     try { cookies = stored ? profileCookiesSchema.parse(JSON.parse(stored)) : []; }
     catch { throw new Error('Não foi possível abrir os dados do perfil Nexus.'); }
     profile = new BrowserCookieProfile(cookies, (next) => {
-      const result = setSecret(VAULT_KEY, JSON.stringify(next));
+      const result = setInternalSecret(VAULT_KEY, JSON.stringify(next));
       if (!result.ok) throw new Error('Não foi possível guardar os logins no cofre do Nexus.');
     });
   }

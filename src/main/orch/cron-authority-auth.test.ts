@@ -14,7 +14,7 @@ vi.mock('../jarvis/audit-log', () => ({
 
 vi.mock('../persistence/secrets-store', () => ({
   getSecret: () => fixtures.secret,
-  setSecret: fixtures.setSecret,
+  setInternalSecret: fixtures.setSecret,
 }));
 
 import {

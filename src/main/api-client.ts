@@ -42,7 +42,7 @@ function defaultDeps(): ApiDeps {
     backendUrl: resolveBackendUrl(),
     fetchFn: fetch,
     getSecret: (key) => secrets.getSecret(key),
-    setSecret: (key, value) => secrets.setSecret(key, value),
+    setSecret: (key, value) => secrets.setInternalSecret(key, value),
   };
 }
 

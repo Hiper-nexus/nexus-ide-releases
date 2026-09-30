@@ -22,8 +22,11 @@ import {
   getSecret,
   listSecretKeys,
   setSecret,
+  isReservedSecretName,
+  RESERVED_SECRET_NAME_ERROR,
   type SecretWriteResult,
 } from './secrets-store';
+import { getAdapter } from '../adapters/adapter-registry';
 
 export const SECRETS_BUNDLE_FORMAT = 'nexus-secrets-v1';
 /** OWASP 2023 floor for PBKDF2-SHA512. Import rejects weaker bundles. */
@@ -35,13 +38,23 @@ export interface SecretsPortabilityDeps {
   listKeys(): string[];
   getSecret(key: string): string | null;
   setSecret(key: string, value: string): SecretWriteResult;
+  isProviderId(id: string): boolean;
 }
 
 const defaultDeps: SecretsPortabilityDeps = {
   listKeys: listSecretKeys,
   getSecret,
   setSecret,
+  isProviderId: id => Boolean(getAdapter(id)),
 };
+
+/** Existing provider credential namespaces; no auth/session/signing authority. */
+function isPortableProviderSecret(name: string, deps: SecretsPortabilityDeps): boolean {
+  return !isReservedSecretName(name) && (deps.isProviderId(name) ||
+    /^(?:voice-env|jev-env):[A-Z][A-Z0-9_]*$/.test(name) ||
+    /^(?:acctkey|acctcred|mediakey):[a-zA-Z0-9-]+$/.test(name) ||
+    /^mcphub:[^\r\n]+$/.test(name));
+}
 
 interface PortableVaultBundle {
   format: typeof SECRETS_BUNDLE_FORMAT;
@@ -71,7 +84,7 @@ function deriveKey(passphrase: string, salt: Buffer, iterations: number): Buffer
 }
 
 /**
- * Export every readable secret into a passphrase-encrypted bundle. Keys the
+ * Export readable provider credentials into a passphrase-encrypted bundle. Keys the
  * local keychain currently refuses (foreign vault, locked session) are listed
  * as skipped rather than silently dropped.
  */
@@ -85,6 +98,8 @@ export function exportSecretsVault(
   const secrets: Record<string, string> = {};
   const skippedKeys: string[] = [];
   for (const key of deps.listKeys()) {
+    if (isReservedSecretName(key)) continue;
+    if (!isPortableProviderSecret(key, deps)) { skippedKeys.push(key); continue; }
     const value = deps.getSecret(key);
     if (value === null) {
       skippedKeys.push(key);
@@ -166,7 +181,8 @@ function parseBundle(bundleText: string): PortableVaultBundle | null {
 
 /**
  * Import a bundle produced by {@link exportSecretsVault} and re-encrypt each
- * entry with THIS machine's safeStorage. Overwrites same-named keys.
+ * provider entry with THIS machine's safeStorage. Rejects authority records
+ * and unknown names before writing; overwrites same-named provider keys.
  */
 export function importSecretsVault(
   bundleText: string,
@@ -208,6 +224,11 @@ export function importSecretsVault(
     return { ok: false, error: 'Passphrase incorreta ou bundle corrompido.' };
   }
 
+  // Validate every name before any write, including empty-valued malicious entries.
+  if (Object.keys(secrets).some(isReservedSecretName)) return { ok: false, error: RESERVED_SECRET_NAME_ERROR };
+  if (Object.keys(secrets).some(key => !isPortableProviderSecret(key, deps))) {
+    return { ok: false, error: 'invalid_provider_secret_name' };
+  }
   const entries = Object.entries(secrets).filter(
     ([key, value]) => key.length > 0 && typeof value === 'string' && value.length > 0,
   );

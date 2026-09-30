@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ModelInfoMap } from './adapter-types';
+import { cliPtyAdapterSchema, type ModelInfoMap } from './adapter-types';
 
 /**
  * Per-provider (CLI/API adapter) user configuration and secrets surface for
@@ -116,7 +116,7 @@ export interface ProviderSettingsInfo {
 }
 
 export const setKeySchema = z.object({
-  adapterId: z.string().min(1).max(64),
+  adapterId: cliPtyAdapterSchema.shape.id,
   /** Empty string clears the stored key. */
   key: z.string().max(4096),
 });

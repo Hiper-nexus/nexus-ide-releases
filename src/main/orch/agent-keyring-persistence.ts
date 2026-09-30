@@ -19,9 +19,9 @@ import {
   type Ed25519Keypair,
 } from '../../shared/agent-attestation';
 import {
-  deleteSecret,
+  deleteInternalSecret,
   getSecret,
-  setSecret,
+  setInternalSecret,
   type SecretWriteResult,
 } from '../persistence/secrets-store';
 import {
@@ -38,8 +38,8 @@ export type SecretVault = {
 
 const defaultVault: SecretVault = {
   getSecret,
-  setSecret,
-  deleteSecret,
+  setSecret: setInternalSecret,
+  deleteSecret: deleteInternalSecret,
 };
 
 let vault: SecretVault = defaultVault;

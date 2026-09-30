@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createCipheriv, pbkdf2Sync, randomBytes } from 'node:crypto';
 import {
   MIN_PASSPHRASE_LENGTH,
   SECRETS_BUNDLE_FORMAT,
@@ -13,6 +14,7 @@ function fakeDeps(initial: Record<string, string> = {}): SecretsPortabilityDeps 
   const store = new Map(Object.entries(initial));
   return {
     store,
+    isProviderId: id => ['claude', 'codex', 'good', 'bad'].includes(id),
     listKeys: () => [...store.keys()],
     getSecret: (key) => store.get(key) ?? null,
     setSecret: (key, value) => {
@@ -27,7 +29,7 @@ const WRONG = 'wrong-horse-battery!';
 
 describe('exportSecretsVault', () => {
   it('rejeita passphrase curta sem tocar o cofre', () => {
-    const deps = fakeDeps({ a: 'secret-a' });
+    const deps = fakeDeps({ claude: 'secret-a' });
     expect(exportSecretsVault('short', deps)).toEqual({
       ok: false,
       error: `A passphrase precisa de pelo menos ${MIN_PASSPHRASE_LENGTH} caracteres.`,
@@ -36,7 +38,7 @@ describe('exportSecretsVault', () => {
   });
 
   it('cifra o payload — a key em plaintext não aparece no bundle', () => {
-    const deps = fakeDeps({ 'XAI_API_KEY': 'sk-live-super-secret' });
+    const deps = fakeDeps({ 'claude': 'sk-live-super-secret' });
     const result = exportSecretsVault(PASS, deps);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -49,7 +51,7 @@ describe('exportSecretsVault', () => {
   it('lista keys ilegíveis como skipped e falha quando nada é legível', () => {
     const deps = fakeDeps();
     deps.getSecret = () => null;
-    deps.listKeys = () => ['foreign-key-1', 'foreign-key-2'];
+    deps.listKeys = () => ['claude', 'codex'];
     const result = exportSecretsVault(PASS, deps);
     expect(result).toMatchObject({ ok: false });
     if (result.ok) return;
@@ -60,7 +62,7 @@ describe('exportSecretsVault', () => {
 describe('importSecretsVault', () => {
   it('round-trip: export → import regrava as mesmas keys', () => {
     const source = fakeDeps({
-      'XAI_API_KEY': 'sk-a',
+      'claude': 'sk-a',
       'voice-env:NEXUS_GITHUB_TOKEN': 'ghp-b',
     });
     const exported = exportSecretsVault(PASS, source);
@@ -70,12 +72,12 @@ describe('importSecretsVault', () => {
     const target = fakeDeps();
     const imported = importSecretsVault(exported.bundle, PASS, target);
     expect(imported).toEqual({ ok: true, importedKeys: 2, failedKeys: [] });
-    expect(target.store.get('XAI_API_KEY')).toBe('sk-a');
+    expect(target.store.get('claude')).toBe('sk-a');
     expect(target.store.get('voice-env:NEXUS_GITHUB_TOKEN')).toBe('ghp-b');
   });
 
   it('recusa passphrase errada e não grava nada', () => {
-    const source = fakeDeps({ a: 'secret-a' });
+    const source = fakeDeps({ claude: 'secret-a' });
     const exported = exportSecretsVault(PASS, source);
     expect(exported.ok).toBe(true);
     if (!exported.ok) return;
@@ -122,4 +124,37 @@ describe('importSecretsVault', () => {
     const imported = importSecretsVault(exported.bundle, PASS, target);
     expect(imported).toEqual({ ok: true, importedKeys: 1, failedKeys: ['bad'] });
   });
+});
+
+// Um bundle externo não precisa ter sido criado pelo exportador do Nexus.
+function externalBundle(secrets: Record<string, string>): string {
+  const salt = randomBytes(16), iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', pbkdf2Sync(PASS, salt, 210_000, 32, 'sha512'), iv);
+  const payload = Buffer.concat([cipher.update(JSON.stringify(secrets)), cipher.final()]);
+  return JSON.stringify({ format: SECRETS_BUNDLE_FORMAT, createdAt: new Date().toISOString(),
+    kdf: { algo: 'pbkdf2-sha512', iterations: 210_000, salt: salt.toString('base64') },
+    cipher: { algo: 'aes-256-gcm', iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64') },
+    payload: payload.toString('base64') });
+}
+
+it.each(['auth:account', 'auth:session', 'auth:license-seal-key', 'system:cron-authority-hmac:v1',
+  'agentkey:v1:m:owner:a', 'unknown-provider'])
+('N1: recusa todo o bundle com %s antes de qualquer escrita', name => {
+  const deps = fakeDeps({ claude: 'previous', 'auth:account': 'revoked' });
+  const before = new Map(deps.store);
+  expect(importSecretsVault(externalBundle({ claude: 'new-key', [name]: 'forged' }), PASS, deps).ok).toBe(false);
+  expect(deps.store).toEqual(before);
+});
+it('N1: export não lê nem transporta a autoridade interna', () => {
+  const deps = fakeDeps({ claude: 'provider-key', 'auth:session': 'opaque-session',
+    'auth:license-seal-key': 'internal-seal', 'auth:account': 'revoked-state',
+    'system:cron-authority-hmac:v1': 'cron-signing', 'agentkey:v1:m:owner:a': 'private-key' });
+  const read = vi.spyOn(deps, 'getSecret');
+  const exported = exportSecretsVault(PASS, deps);
+  expect(exported).toMatchObject({ ok: true, exportedKeys: 1, skippedKeys: [] });
+  expect(read.mock.calls).toEqual([['claude']]);
+  if (!exported.ok) return;
+  const target = fakeDeps();
+  expect(importSecretsVault(exported.bundle, PASS, target)).toEqual({ ok: true, importedKeys: 1, failedKeys: [] });
+  expect([...target.store.keys()]).toEqual(['claude']);
 });

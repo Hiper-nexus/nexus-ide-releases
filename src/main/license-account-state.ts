@@ -5,7 +5,7 @@
  */
 import crypto from 'node:crypto';
 export const LICENSE_SEAL_KEY = 'auth:license-seal-key';
-export type LicenseAccountStore = Pick<typeof import('./persistence/secrets-store'), 'getSecret' | 'setSecret' | 'hasCachedSecret'>;
+export type LicenseAccountStore = Pick<typeof import('./persistence/secrets-store'), 'getSecret' | 'setInternalSecret' | 'hasCachedSecret'>;
 export interface LicenseSeal {
   clockFloor: number;
   latestIat: number | null;
@@ -59,7 +59,7 @@ function readState(store: LicenseAccountStore): AccountState | null {
 function writeState(store: LicenseAccountStore, state: AccountState): { ok: boolean; error?: string } {
   const key = cachedKey(store);
   if (!key) return { ok: false };
-  return store.setSecret('auth:account', JSON.stringify({ state, mac: signature(state, key).toString('hex') }));
+  return store.setInternalSecret('auth:account', JSON.stringify({ state, mac: signature(state, key).toString('hex') }));
 }
 export function readLicenseAccountState(store: LicenseAccountStore, previousSession?: string): LicenseAccountState | null {
   if (!previousSession && !store.hasCachedSecret('auth:session')) return null;
@@ -73,7 +73,7 @@ export function bindLicenseAccount(id: string, session: string, store: LicenseAc
   store.getSecret(LICENSE_SEAL_KEY);
   store.getSecret('auth:account');
   if (!cachedKey(store)) {
-    const created = store.setSecret(LICENSE_SEAL_KEY, crypto.randomBytes(32).toString('hex'));
+    const created = store.setInternalSecret(LICENSE_SEAL_KEY, crypto.randomBytes(32).toString('hex'));
     if (!created.ok) return { ok: false };
   }
   const previous = readState(store);

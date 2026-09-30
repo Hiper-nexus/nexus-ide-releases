@@ -7,7 +7,7 @@ afterEach(() => vi.useRealTimers());
 function store() {
   const values = new Map([['auth:session', 'session-a']]);
   return { values, hasCachedSecret: (key: string) => values.has(key), getSecret: (key: string) => values.get(key) ?? null,
-    setSecret: vi.fn((key: string, value: string) => { values.set(key, value); return { ok: true }; }) };
+    setInternalSecret: vi.fn((key: string, value: string) => { values.set(key, value); return { ok: true }; }) };
 }
 it.each(['removed-floor', 'invalid-floor', 'removed-record', 'legacy'])('H1: %s cannot retain authenticated offline access', async kind => {
   const vault = store(); bindLicenseAccount('account-a', 'session-a', vault);
@@ -41,7 +41,7 @@ it('refresh rebinds the MAC to the rotated session without losing the clock or r
   expect(readLicenseAccountState(vault, 'session-a')).toBeNull();
 });
 it('a refused vault write never fabricates a sealed account', () => {
-  const vault = store(); vault.setSecret.mockReturnValue({ ok: false });
+  const vault = store(); vault.setInternalSecret.mockReturnValue({ ok: false });
   expect(bindLicenseAccount('account-a', 'session-a', vault).ok).toBe(false);
   expect(readLicenseAccountState(vault)).toBeNull();
 });

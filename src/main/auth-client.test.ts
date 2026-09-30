@@ -128,22 +128,22 @@ function identityStore() {
   const values = new Map<string, string>();
   return { values, getSecret: (key: string) => values.get(key) ?? null,
     hasCachedSecret: (key: string) => values.has(key),
-    setSecret: (key: string, value: string) => { values.set(key, value); return { ok: true }; } };
+    setInternalSecret: (key: string, value: string) => { values.set(key, value); return { ok: true }; } };
 }
 it('cached identity belongs to exactly one opaque session and never unlocks the vault in a query', () => {
   const store = identityStore();
   const read = vi.spyOn(store, 'getSecret');
   expect(getAuthenticatedAccountId(store)).toBeNull();
   expect(read).not.toHaveBeenCalled();
-  store.setSecret('auth:session', 'session-a');
+  store.setInternalSecret('auth:session', 'session-a');
   bindAuthenticatedAccount('account-a', 'session-a', store);
   expect(getAuthenticatedAccountId(store)).toBe('account-a');
-  store.setSecret('auth:session', 'session-b');
+  store.setInternalSecret('auth:session', 'session-b');
   expect(getAuthenticatedAccountId(store)).toBeNull();
 });
 it('restores an old session identity after network recovery, but never after logout', async () => {
   const store = identityStore();
-  store.setSecret('auth:session', 'session-a');
+  store.setInternalSecret('auth:session', 'session-a');
   const api = vi.fn().mockResolvedValueOnce({ status: 0, json: null })
     .mockResolvedValueOnce({ status: 200, json: { ok: true, data: { id: 'account-a' } } });
   await restoreAuthenticatedAccount({ store, api });

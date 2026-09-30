@@ -7,7 +7,7 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import { readAuditLog } from '../jarvis/audit-log';
 import {
   getSecret,
-  setSecret,
+  setInternalSecret,
 } from '../persistence/secrets-store';
 
 const CRON_AUTHORITY_KEY = 'system:cron-authority-hmac:v1';
@@ -64,7 +64,7 @@ function issueKey(): Buffer {
   const current = existingKey();
   if (current) return current;
   const generated = randomBytes(32).toString('hex');
-  const persisted = setSecret(CRON_AUTHORITY_KEY, generated);
+  const persisted = setInternalSecret(CRON_AUTHORITY_KEY, generated);
   if (!persisted.ok) {
     throw new Error(
       `cron_authority_auth_unavailable: ${
