@@ -153,6 +153,8 @@ export const orchSettingsSchema = z.object({
       memoryDistill: z.boolean().default(true),
       /** Reuso de helper ocioso com contexto relacionado em vez de spawn novo. */
       helperReuse: z.boolean().default(true),
+      /** Seleção por tarefa de fluxos/invariantes/hurdles do modelo de negócio. */
+      businessModel: z.boolean().default(true),
     })
     .prefault({}),
   /**

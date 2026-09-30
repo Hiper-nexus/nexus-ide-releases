@@ -852,6 +852,7 @@ describe('runContextBootstrapAutopilot', () => {
       document: { schemaVersion: 1 as const, flows: [], invariants: [] },
       proposal: extracted,
       pendingSources: [],
+      hurdles: [],
     };
     const businessDraft = Object.freeze({
       ...draft('bm-1', 'proposed'),

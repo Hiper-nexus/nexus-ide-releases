@@ -22,18 +22,37 @@ const DEFAULT_TIMEOUT_MS = 8_000;
 const RETRY_DELAY_MS = 400;
 const WARN_INTERVAL_MS = 60_000;
 
+/**
+ * Instruções estruturadas para a superfície `businessModel`: cada pergunta
+ * carrega a regra/fluxo/hurdle tipada em vez de um blob de texto — o julgamento
+ * de relevância fica sobre campos nomeados e o state não precisa repetir o
+ * candidato inteiro. Texto plano continua aceito pelas demais superfícies.
+ */
+export interface JevBusinessModelInstructions {
+  readonly question: string;
+  readonly rule?: { readonly flow: string; readonly text: string };
+  readonly flow?: {
+    readonly name: string;
+    readonly writes?: readonly string[];
+    readonly reads?: readonly string[];
+  };
+  readonly hurdle?: { readonly title: string; readonly summary: string };
+}
+
+export type JevQuestionInstructions = string | JevBusinessModelInstructions;
+
 export type JevQuestion =
   | {
       type: 'noul';
-      instructions: string;
+      instructions: JevQuestionInstructions;
       criteria?: { true: string; false: string };
     }
   | {
       type: 'choice';
-      instructions: string;
+      instructions: JevQuestionInstructions;
       criteria: Record<string, string | null>;
     }
-  | { type: 'score'; instructions: string; criteria: string[] };
+  | { type: 'score'; instructions: JevQuestionInstructions; criteria: string[] };
 
 export type JevAnswer =
   | { type: 'noul'; noul: number }
@@ -241,7 +260,10 @@ export async function judge(
   const body = JSON.stringify({
     state: redactState(input.state),
     model,
-    questions: input.questions,
+    // As perguntas também saem do processo: instruções estruturadas carregam
+    // texto do repositório (regra, armadilha, fluxo) e recebem a mesma
+    // redação do state — segredo colado numa fonte nunca vaza para a API.
+    questions: redactState(input.questions) as Record<string, JevQuestion>,
   });
 
   let lastFailure = 'unknown error';

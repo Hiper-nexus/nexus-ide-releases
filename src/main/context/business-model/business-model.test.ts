@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -25,6 +26,7 @@ import {
 } from './business-model-bootstrap';
 import {
   applyAttestedBusinessModel,
+  BARBERSHOP_FILES,
   createBarbershopRepo,
   git,
   writeFixtureFile,
@@ -209,6 +211,92 @@ describe('extractBusinessModel', () => {
     const root = fs.realpathSync(fs.mkdtempSync(path.join(path.dirname(repo()), 'nexus-bm-nogit-')));
     roots.push(root);
     expect(await extractBusinessModel(root)).toBeNull();
+  });
+
+  it('modo head lê o blob do HEAD para fonte suja: pendingSources vazio e conteúdo determinístico', async () => {
+    const root = repo();
+    // Fase 1: só o doc de regras sujo — worktree adia, head resolve pelo blob.
+    writeFixtureFile(root, 'AGENTS.md', [
+      '# Regras',
+      '',
+      '- Nunca grave commission_entries fora de close_commanda.',
+      '- Regra nova ainda não commitada que não pode vazar para o HEAD.',
+      '',
+    ].join('\n'));
+
+    const worktree = (await extractBusinessModel(root))!;
+    expect(worktree.pendingSources).toContain('AGENTS.md');
+    expect(worktree.document.invariants.map((item) => item.regra).join('\n'))
+      .not.toContain('não pode vazar');
+
+    const head = (await extractBusinessModel(root, { source: 'head' }))!;
+    // O HEAD ignora o sujo: nada pendente e nenhum texto não-commitado vaza.
+    expect(head.pendingSources).toEqual([]);
+    expect(head.document.invariants.map((item) => item.regra))
+      .toContain('Nunca grave commission_entries fora de close_commanda.');
+    expect(head.document.invariants.map((item) => item.regra).join('\n'))
+      .not.toContain('não pode vazar');
+
+    // Fase 2: a migration do fluxo também fica suja. Worktree perde a fonte;
+    // head continua extraindo o close_commanda do blob HEAD.
+    writeFixtureFile(
+      root,
+      'supabase/migrations/20260102000000_close_commanda.sql',
+      'create or replace function public.nada_a_ver() returns void as $$ begin end; $$;\n',
+    );
+    const head2 = (await extractBusinessModel(root, { source: 'head', fresh: true }))!;
+    expect(head2.pendingSources).toEqual([]);
+    expect(head2.document.flows.map((flow) => flow.fluxo)).toContain('close_commanda');
+    expect(head2.document.invariants.map((item) => item.regra))
+      .toContain('close_commanda recusa: comanda ja fechada: %');
+    // sourceHash da fonte suja vem do blob, não do arquivo no disco.
+    const source = head2.proposal.sources.find(
+      (item) => item.locator === 'supabase/migrations/20260102000000_close_commanda.sql',
+    )!;
+    const headBlob = execFileSync('git', [
+      '-C', root, 'show', 'HEAD:supabase/migrations/20260102000000_close_commanda.sql',
+    ]);
+    expect(source.sourceHash).toBe(createHash('sha256').update(headBlob).digest('hex'));
+    expect(source.sourceHash).not.toBe(
+      createHash('sha256')
+        .update(fs.readFileSync(path.join(root, 'supabase/migrations/20260102000000_close_commanda.sql')))
+        .digest('hex'),
+    );
+  });
+
+  it('modo head: arquivo novo sem tracking não entra; doc de hurdles commitado sai em hurdles', async () => {
+    const root = createBarbershopRepo({
+      ...BARBERSHOP_FILES,
+      'docs/AGENTS-HURDLES.md': [
+        '# Hurdles',
+        '',
+        '## Hurdle: comissão duplicada no retry do trigger',
+        'sync_commission_totals somava duas vezes quando o retry reexecutava o insert.',
+        '',
+        '## Hurdle: migration depois do código',
+        'O gate de produção rejeita código que usa coluna antes da migration aplicada.',
+        '',
+      ].join('\n'),
+    });
+    roots.push(root);
+    // `docs/…REGRAS.md` seria doc de regra se fosse rastreado — untracked fica fora.
+    writeFixtureFile(root, 'docs/AGENTS-REGRAS.md', '- Regra nunca commitada que não pode entrar.\n');
+
+    const head = (await extractBusinessModel(root, { source: 'head' }))!;
+    // Untracked não é fonte: nem no worktree nem no head mode.
+    expect(head.proposal.sources.map((source) => source.locator)).not.toContain('docs/AGENTS-REGRAS.md');
+    expect(head.document.invariants.map((item) => item.regra).join('\n'))
+      .not.toContain('nunca commitada');
+    // Hurdles do doc commitado entram separados das invariantes.
+    expect(head.hurdles.map((hurdle) => hurdle.titulo)).toEqual([
+      'comissão duplicada no retry do trigger',
+      'migration depois do código',
+    ]);
+    expect(head.hurdles[0]!.resumo).toContain('sync_commission_totals somava duas vezes');
+    expect(head.hurdles[0]!.origem).toMatch(/^docs\/AGENTS-HURDLES\.md:\d+$/);
+    // E hurdle não vira invariante.
+    expect(head.document.invariants.map((item) => item.regra).join('\n'))
+      .not.toContain('somava duas vezes');
   });
 });
 

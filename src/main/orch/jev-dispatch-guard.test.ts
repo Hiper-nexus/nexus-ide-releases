@@ -290,6 +290,16 @@ describe('guardToolCall', () => {
     expect(judge).toHaveBeenCalledTimes(2);
   });
 
+  it('F-221: julga sem retentativa em timeout — o guard segura o despacho', async () => {
+    const judge = vi.fn<JudgeMock>(async () => result(benign));
+    await guardToolCall(input(), { judge });
+    expect(judge).toHaveBeenCalledTimes(1);
+    expect(judge.mock.calls[0][0]).toMatchObject({
+      retryOnTimeout: false,
+      timeoutMs: 3_000,
+    });
+  });
+
   it('caps the objective and passes only the last 5 recent tools', async () => {
     const judge = vi.fn<JudgeMock>(async () => result(benign));
     await guardToolCall(

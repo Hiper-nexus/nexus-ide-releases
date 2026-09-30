@@ -12,6 +12,11 @@ import {
   type BusinessInvariant,
   type BusinessModelDocument,
 } from './business-model-contract';
+import {
+  isHurdleDoc,
+  parseBusinessHurdles,
+  type BusinessHurdle,
+} from './business-model-hurdles';
 
 /**
  * Extração DETERMINÍSTICA do modelo de negócio: nenhuma interpretação, só
@@ -29,6 +34,12 @@ import {
  * alteração local vai para `pendingSources` (o bootstrap adia em vez de
  * publicar um modelo que parece completo sem ela).
  *
+ * Dois modos de leitura (`options.source`):
+ *  - `worktree` (padrão): o comportamento acima, para o doc revisado;
+ *  - `head`: lê o modelo do HEAD — arquivo limpo vem do disco, arquivo sujo
+ *    vem do blob `HEAD:<path>`, então AGENTS.md sujo ou migration editada não
+ *    adiam nada. `pendingSources` fica vazio por definição.
+ *
  * Roda no processo main: git assíncrono e leitura de arquivo com `await`, então
  * a varredura cede o event loop a cada arquivo (IPC/PTY seguem atendidos).
  */
@@ -37,6 +48,8 @@ export const BUSINESS_MODEL_MARKER_LINE =
   '> Extraído deterministicamente pelo Nexus de fontes versionadas. Não edite à mão: o Nexus re-extrai quando as fontes mudam.';
 
 const MAX_SOURCE_BYTES = 1_000_000;
+/** Doc de regra pode ser grande (AGENTS-HURDLES.md real tem ~2.3 MB). */
+const MAX_RULE_DOC_BYTES = 8_000_000;
 const MAX_SCANNED_FILES = 30_000;
 const MAX_ATTESTED_SOURCES = 256;
 const MAX_CANDIDATE_FLOWS = 60;
@@ -105,6 +118,8 @@ export interface BusinessModelExtraction {
   readonly proposal: BootstrapDocProposal;
   /** Fontes relevantes (SQL, regra, código/teste que cita um fluxo) com alteração local. */
   readonly pendingSources: readonly string[];
+  /** Hurdles normalizadas dos docs de armadilha (inertes, com proveniência). */
+  readonly hurdles: readonly BusinessHurdle[];
 }
 
 function normalizeName(raw: string): string {
@@ -361,7 +376,10 @@ function parseRules(files: readonly { path: string; text: string }[]): ProjectRu
 
 interface TrackedFiles {
   readonly clean: TrackedFile[];
-  readonly dirty: string[];
+  /** Todo caminho rastreado com alteração local (staged ou não). */
+  readonly dirty: ReadonlySet<string>;
+  /** Todo caminho rastreado, inclusive sujo — o modo `head` lê estes via `git show`. */
+  readonly indexed: TrackedFile[];
 }
 
 async function listTrackedFiles(root: string, git: AsyncGitRunner): Promise<TrackedFiles | null> {
@@ -378,33 +396,63 @@ async function listTrackedFiles(root: string, git: AsyncGitRunner): Promise<Trac
       if (/[RC]/.test(record.slice(0, 2))) dirty.add(records[++index] ?? '');
     }
     const clean: TrackedFile[] = [];
+    const indexed: TrackedFile[] = [];
     for (const record of (await git.run(root, ['ls-files', '-s', '-z'])).stdout.split('\0')) {
       const match = /^\d+ ([0-9a-f]+) 0\t(.+)$/.exec(record);
-      if (!match || dirty.has(match[2]!)) continue;
+      if (!match) continue;
       const file = match[2]!;
       if (!isSafeBootstrapSourceLocator(file) || file.split('/').some((part) => NOISE_SEGMENT.test(part))) continue;
-      clean.push({ path: file, blob: match[1]! });
-      if (clean.length >= MAX_SCANNED_FILES) break;
+      indexed.push({ path: file, blob: match[1]! });
+      if (!dirty.has(file)) clean.push({ path: file, blob: match[1]! });
+      if (indexed.length >= MAX_SCANNED_FILES) break;
     }
+    const byPath = (left: TrackedFile, right: TrackedFile) => left.path.localeCompare(right.path);
     return {
-      clean: clean.sort((left, right) => left.path.localeCompare(right.path)),
-      dirty: [...dirty]
-        .filter((file) => file && isSafeBootstrapSourceLocator(file) && !file.split('/').some((part) => NOISE_SEGMENT.test(part)))
-        .sort(),
+      clean: clean.sort(byPath),
+      dirty,
+      indexed: indexed.sort(byPath),
     };
   } catch {
     return null;
   }
 }
 
-async function readText(root: string, relative: string): Promise<string | null> {
+/** Teto por tipo de fonte: doc de regra (hurdles) pode passar de 1 MB. */
+function sourceCap(file: string): number {
+  return isRuleDoc(file) ? MAX_RULE_DOC_BYTES : MAX_SOURCE_BYTES;
+}
+
+async function readText(root: string, relative: string, maxBytes: number): Promise<string | null> {
   try {
     const absolute = path.join(root, relative);
     const stat = await fs.promises.lstat(absolute);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_SOURCE_BYTES) return null;
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > maxBytes) return null;
     const bytes = await fs.promises.readFile(absolute);
     if (bytes.includes(0)) return null;
     return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+/** Conteúdo do blob `HEAD:<relative>` — o modelo do HEAD ignora a sujeira do worktree. */
+async function readHeadText(
+  root: string,
+  relative: string,
+  git: AsyncGitRunner,
+  maxBytes: number,
+): Promise<string | null> {
+  try {
+    const result = await git.run(
+      root,
+      ['--no-optional-locks', 'show', `HEAD:${relative}`],
+      { allowFailure: true },
+    );
+    if (result.status !== 0) return null;
+    if (Buffer.byteLength(result.stdout, 'utf8') > maxBytes) return null;
+    // Binário/mal-decodificado (UTF-8 inválido vira U+FFFD) não é fonte de texto.
+    if (result.stdout.includes('\0') || result.stdout.includes('\uFFFD')) return null;
+    return result.stdout;
   } catch {
     return null;
   }
@@ -436,10 +484,12 @@ function isReferenceFile(file: string): boolean {
   return CODE_EXTENSIONS.has(extension) || (TEST_PATH.test(file) && extension === '.sql');
 }
 
+type SourceReader = (relative: string, maxBytes: number) => Promise<string | null>;
+
 async function relatedFiles(
-  root: string,
   files: readonly TrackedFile[],
   flows: readonly FlowDraft[],
+  readSource: SourceReader,
 ): Promise<void> {
   const pattern = flowNamePattern(flows);
   if (!pattern) return;
@@ -447,7 +497,7 @@ async function relatedFiles(
   for (const file of files) {
     if (!isReferenceFile(file.path)) continue;
     const isTest = TEST_PATH.test(file.path);
-    const text = await readText(root, file.path);
+    const text = await readSource(file.path, MAX_SOURCE_BYTES);
     if (!text) continue;
     const lineOf = lineIndex(text);
     const hit = new Set<string>();
@@ -636,6 +686,12 @@ export interface ExtractBusinessModelOptions {
   /** Ignora o cache por fingerprint (a revisão mecânica re-deriva do zero). */
   readonly fresh?: boolean;
   readonly git?: AsyncGitRunner;
+  /**
+   * `worktree` (padrão): só fontes limpas entram; sujas adiam via pendingSources.
+   * `head`: o modelo do HEAD — fonte suja é lida do blob `HEAD:<path>`, então
+   * o modelo extraído nunca depende do estado sujo do worktree.
+   */
+  readonly source?: 'worktree' | 'head';
 }
 
 /**
@@ -657,7 +713,7 @@ async function pendingSourcesOf(
       continue;
     }
     if (!pattern || !isReferenceFile(file)) continue;
-    const text = await readText(root, file);
+    const text = await readText(root, file, MAX_SOURCE_BYTES);
     pattern.lastIndex = 0;
     if (text !== null && pattern.test(text)) pending.push(file);
   }
@@ -674,26 +730,54 @@ export async function extractBusinessModel(
   options: ExtractBusinessModelOptions = {},
 ): Promise<BusinessModelExtraction | null> {
   const git = options.git ?? new AsyncProcessGitRunner();
+  const headMode = options.source === 'head';
   const tracked = await listTrackedFiles(root, git);
   if (!tracked) return null;
+  // Modo head: arquivo sujo vem do blob HEAD (determinístico); limpo, do disco.
+  const readSource: SourceReader = headMode
+    ? (relative, maxBytes) =>
+        tracked.dirty.has(relative)
+          ? readHeadText(root, relative, git, maxBytes)
+          : readText(root, relative, maxBytes)
+    : (relative, maxBytes) => readText(root, relative, maxBytes);
   const withPending = async (
     core: { result: Omit<BusinessModelExtraction, 'pendingSources'> | null; flows: readonly FlowDraft[] },
   ): Promise<BusinessModelExtraction | null> =>
     core.result
-      ? Object.freeze({ ...core.result, pendingSources: Object.freeze(await pendingSourcesOf(root, tracked.dirty, core.flows)) })
+      ? Object.freeze({
+          ...core.result,
+          pendingSources: Object.freeze(
+            headMode
+              ? []
+              : await pendingSourcesOf(
+                  root,
+                  [...tracked.dirty]
+                    .filter((file) =>
+                      file &&
+                      isSafeBootstrapSourceLocator(file) &&
+                      !file.split('/').some((part) => NOISE_SEGMENT.test(part)))
+                    .sort(),
+                  core.flows,
+                ),
+          ),
+        })
       : null;
-  const candidates = tracked.clean.filter((file) => {
+  const candidates = (headMode ? tracked.indexed : tracked.clean).filter((file) => {
     const extension = path.extname(file.path).toLowerCase();
     return extension === '.sql' || isRuleDoc(file.path) || CODE_EXTENSIONS.has(extension);
   });
-  const fingerprint = sha256(candidates.map((file) => `${file.path}\0${file.blob}`).join('\n'));
-  const cached = cache.get(root);
+  const fingerprint = sha256(
+    `${headMode ? 'head' : 'worktree'}\n` +
+      candidates.map((file) => `${file.path}\0${file.blob}`).join('\n'),
+  );
+  const cacheKey = `${headMode ? 'head' : 'worktree'}\0${root}`;
+  const cached = cache.get(cacheKey);
   if (!options.fresh && cached?.fingerprint === fingerprint) return withPending(cached);
 
   const readAll = async (paths: readonly string[]): Promise<{ path: string; text: string }[]> => {
     const read: { path: string; text: string }[] = [];
     for (const file of paths) {
-      const text = await readText(root, file);
+      const text = await readSource(file, sourceCap(file));
       if (text !== null) read.push({ path: file, text });
     }
     return read;
@@ -701,10 +785,16 @@ export async function extractBusinessModel(
   const sql = parseSqlFiles(await readAll(candidates
     .map((file) => file.path)
     .filter((file) => file.toLowerCase().endsWith('.sql') && !TEST_PATH.test(file))));
-  const rules = parseRules(await readAll([
+  const ruleDocTexts = await readAll([
     ...ROOT_RULE_DOCS.filter((file) => candidates.some((candidate) => candidate.path === file)),
     ...candidates.map((file) => file.path).filter((file) => !ROOT_RULE_DOCS.includes(file) && isRuleDoc(file)),
-  ]));
+  ]);
+  const rules = parseRules(ruleDocTexts);
+  const hurdles = Object.freeze(
+    ruleDocTexts
+      .filter((file) => isHurdleDoc(file.path))
+      .flatMap((file) => parseBusinessHurdles(file.path, file.text)),
+  );
 
   const ranked: FlowDraft[] = [...sql.functions.values()]
     .filter((fn) => fn.writes.length > 0)
@@ -717,7 +807,7 @@ export async function extractBusinessModel(
     }))
     .sort((left, right) => right.score - left.score || left.fn.name.localeCompare(right.fn.name))
     .slice(0, MAX_CANDIDATE_FLOWS);
-  await relatedFiles(root, candidates, ranked);
+  await relatedFiles(candidates, ranked, readSource);
   const flows = ranked
     .map((flow) => ({
       flow,
@@ -744,6 +834,7 @@ export async function extractBusinessModel(
       result = Object.freeze({
         fingerprint,
         document,
+        hurdles,
         proposal: Object.freeze({
           targetPath: BUSINESS_MODEL_TARGET_PATH,
           content: renderBusinessModelDocument(document),
@@ -754,7 +845,7 @@ export async function extractBusinessModel(
     }
   }
   const core = { fingerprint, result, flows: ranked };
-  cache.set(root, core);
+  cache.set(cacheKey, core);
   return withPending(core);
 }
 

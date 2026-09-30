@@ -10,6 +10,8 @@ import {
   type ContextAttestation,
 } from '../context-attestation';
 import { isAttestedBusinessModelHash } from './business-model-attested-store';
+import { readLatestBusinessModel } from './business-model-store';
+import type { BusinessHurdle } from './business-model-hurdles';
 
 /**
  * CONTRATO do modelo de negócio do projeto (`.context/docs/business-model.md`).
@@ -239,16 +241,49 @@ export function readBusinessModelDocument(
   }
 }
 
-/** Same Main-attested model for both prompt context and regression checks. */
+function sameProjectFallback(
+  scope: ProjectExecutionScope,
+  projectScope: ProjectExecutionScope | undefined,
+): projectScope is ProjectExecutionScope {
+  return Boolean(
+    projectScope &&
+      projectScope.installationId === scope.installationId &&
+      projectScope.projectId === scope.projectId &&
+      projectScope.rootRealPath !== scope.rootRealPath,
+  );
+}
+
+/**
+ * Modelo de negócio para execução (contexto de prompt, risco do portão). A
+ * ordem vale: o modelo EXTRAÍDO do HEAD (store do Main, atual por commit) vem
+ * primeiro; sem ele, o doc REVISADO atestado cumpre o papel. Worktree de aba
+ * cai no escopo do projeto (mesma instalação/projeto, raiz diferente).
+ * Nunca lança.
+ */
 export function readBusinessModelForExecution(
   scope: ProjectExecutionScope,
   projectScope?: ProjectExecutionScope,
 ): BusinessModelDocument | null {
-  return readBusinessModelDocument(scope) ??
-    (projectScope && projectScope.installationId === scope.installationId &&
-      projectScope.projectId === scope.projectId && projectScope.rootRealPath !== scope.rootRealPath
-      ? readBusinessModelDocument(projectScope)
+  return readLatestBusinessModel(scope)?.document ??
+    readBusinessModelDocument(scope) ??
+    (sameProjectFallback(scope, projectScope)
+      ? readLatestBusinessModel(projectScope)?.document ?? readBusinessModelDocument(projectScope)
       : null);
+}
+
+/**
+ * Hurdles normalizadas do store extraído (doc revisado não as carrega).
+ * Nunca lança: sem store → lista vazia.
+ */
+export function readBusinessHurdles(
+  scope: ProjectExecutionScope,
+  projectScope?: ProjectExecutionScope,
+): readonly BusinessHurdle[] {
+  return readLatestBusinessModel(scope)?.hurdles ??
+    (sameProjectFallback(scope, projectScope)
+      ? readLatestBusinessModel(projectScope)?.hurdles
+      : undefined) ??
+    Object.freeze([]);
 }
 
 /** Invariantes estruturados do projeto ({id, fluxo, regra, arquivos, tabelas, funcoes, testes}). */

@@ -4,6 +4,12 @@ import {
   readBusinessModelForExecution,
   type BusinessInvariant,
 } from './business-model-contract';
+import {
+  selectBusinessContext,
+  type BusinessModelSelection,
+  type SelectBusinessContextDeps,
+} from './business-model-selection';
+import { readBusinessHurdles } from './business-model-contract';
 
 export const BUSINESS_MODEL_BLOCK_TAG = '<business-model';
 export const BUSINESS_MODEL_BLOCK_MAX_BYTES = 2048;
@@ -91,4 +97,101 @@ export function businessModelContextBlock(
   if (omitted > 0) lines.push(`+${omitted} item(ns) no doc.`);
   lines.push(close);
   return lines.join('\n');
+}
+
+export const SELECTED_BUSINESS_BLOCK_MAX_BYTES = 3072;
+
+/**
+ * Bloco `<business-model>` da seleção por tarefa (Jev ou fallback lexical):
+ * só os fluxos, invariantes e hurdles que a seleção marcou. Continua curto e
+ * inerte — o texto citado é dado, não instrução (mesmo aviso do bloco estático).
+ */
+export function selectedBusinessContextBlock(
+  selection: BusinessModelSelection,
+  maxBytes: number = SELECTED_BUSINESS_BLOCK_MAX_BYTES,
+): string | null {
+  if (
+    selection.flows.length === 0 &&
+    selection.invariants.length === 0 &&
+    selection.hurdles.length === 0
+  ) {
+    return null;
+  }
+  const open = `${BUSINESS_MODEL_BLOCK_TAG} fonte="extrato HEAD · ${selection.source}">`;
+  const close = '</business-model>';
+  const lines = [open, INSTRUCTION];
+  let used = bytes(open) + bytes(INSTRUCTION) + bytes(close) + 3;
+  let omitted = 0;
+  const push = (line: string): boolean => {
+    const cost = bytes(line) + 1;
+    if (used + cost > maxBytes - 48) return false;
+    lines.push(line);
+    used += cost;
+    return true;
+  };
+  if (selection.invariants.length > 0 && push('Invariantes da tarefa:')) {
+    for (const invariant of selection.invariants) {
+      if (!push(inert(`- [${invariant.id}] ${invariant.regra} (${invariant.origem})`))) omitted += 1;
+    }
+  }
+  if (selection.flows.length > 0 && push('Fluxos tocados:')) {
+    for (const flow of selection.flows) {
+      const tests = flow.testes.length > 0 ? flow.testes.join(', ') : 'nenhum — escreva um antes de mudar';
+      if (!push(inert(`- ${flow.fluxo} (escreve ${flow.escreve.join(', ')}): ${tests}`))) omitted += 1;
+    }
+  }
+  if (selection.hurdles.length > 0 && push('Armadilhas conhecidas:')) {
+    for (const hurdle of selection.hurdles) {
+      const resumo = hurdle.resumo ? ` — ${hurdle.resumo}` : '';
+      if (!push(inert(`- ${hurdle.titulo}${resumo} (${hurdle.origem})`))) omitted += 1;
+    }
+  }
+  if (omitted > 0) lines.push(`+${omitted} item(ns) no modelo.`);
+  lines.push(close);
+  return lines.join('\n');
+}
+
+export interface TaskBusinessContextOptions extends SelectBusinessContextDeps {
+  readonly sessionId?: string;
+  readonly missionId?: string;
+  readonly maxBytes?: number;
+}
+
+const EMPTY_DOCUMENT = Object.freeze({
+  schemaVersion: 1 as const,
+  flows: Object.freeze([]),
+  invariants: Object.freeze([]),
+});
+
+/**
+ * O bloco `<business-model>` DESTA tarefa: lê o modelo de execução (extraído
+ * do HEAD, com fallback ao doc revisado), seleciona pelo pedido e renderiza.
+ * `null` quando não há modelo, hurdle ou seleção — o chamador decide cair no
+ * bloco estático (`businessModelContextBlock`) ou omitir. Nunca lança.
+ */
+export async function taskBusinessContextBlock(
+  scope: ProjectExecutionScope,
+  task: string,
+  projectScope?: ProjectExecutionScope,
+  options: TaskBusinessContextOptions = {},
+): Promise<string | null> {
+  try {
+    const document = readBusinessModelForExecution(scope, projectScope);
+    const hurdles = readBusinessHurdles(scope, projectScope);
+    if (!document && hurdles.length === 0) return null;
+    const selection = await selectBusinessContext(
+      {
+        task,
+        document: document ?? EMPTY_DOCUMENT,
+        hurdles,
+        sessionId: options.sessionId,
+        missionId: options.missionId,
+      },
+      options,
+    );
+    if (!selection) return null;
+    return selectedBusinessContextBlock(selection, options.maxBytes);
+  } catch {
+    return null;
+  }
 }

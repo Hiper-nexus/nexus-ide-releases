@@ -1,6 +1,10 @@
 import { withWorkspaceDesignRule } from './workspace-design-rule';
 import { mountPromptContextBlocks } from './prompt-context-blocks';
-import { businessModelContextBlock } from '../context/business-model/business-model-context-block';
+import {
+  businessModelContextBlock,
+  taskBusinessContextBlock,
+} from '../context/business-model/business-model-context-block';
+import { ensureBusinessModel } from '../context/business-model/business-model-ensure';
 import type { SpawnRouteInfo } from '../../shared/spawn-route';
 import {
   getPaneAuthzInfo,
@@ -1101,6 +1105,33 @@ export function withProjectContextBlocks(options: BriefCandidate): string | unde
   ]);
 }
 
+/**
+ * Variante async: o `<business-model>` vem da SELEÇÃO por tarefa (Jev ou
+ * lexical sobre o modelo extraído do HEAD) — o bloco estático fica de
+ * fallback quando a seleção não encontra nada. Nunca lança: seleção falhou
+ * vira o bloco estático; sem modelo nenhum, só a memória.
+ */
+export async function withProjectContextBlocksAsync(
+  options: BriefCandidate,
+): Promise<string | undefined> {
+  if (!options.prompt || options.transient === true) return options.prompt;
+  const execScope = options.executionScope ?? options.scope;
+  // Brief é ponto de trigger: garante o modelo extraído do HEAD em background
+  // (dedup por commit + flight único), sem segurar o spawn.
+  if (execScope) void ensureBusinessModel(execScope, { wait: false }).catch(() => {});
+  const selected = execScope
+    ? await taskBusinessContextBlock(execScope, options.prompt, options.scope, {
+        missionId: options.missionId ?? undefined,
+      }).catch(() => null)
+    : null;
+  return mountPromptContextBlocks(options.prompt, [
+    selected ?? businessModelContextBlock(execScope, options.scope),
+    recallsWorkspaceMemory(options)
+      ? workspaceMemoryContextBlock(options.scope, options.memoryQuery ?? options.prompt, autoRecallPhaseForAgent(options))
+      : null,
+  ]);
+}
+
 export interface SpawnToolOptions {
   adapterId: string;
   /** Origem da rota (A, 25/09) exibida no cabeçalho do pane; nunca autoridade. */
@@ -1463,7 +1494,7 @@ export async function spawnPaneAndMaybePrompt(
       agentId: options.agentName?.trim() || adapter.id,
     });
   }
-  if (options.prompt) options = { ...options, prompt: withProjectContextBlocks(options) };
+  if (options.prompt) options = { ...options, prompt: await withProjectContextBlocksAsync(options) };
   const omitHandoff =
     options.omitHandoffContract === true ||
     options.role === 'orchestrator' ||

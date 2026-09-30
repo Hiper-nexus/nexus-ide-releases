@@ -400,7 +400,9 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
       expect(delivered.length).toBeGreaterThan(1);
       for (const brief of delivered) {
         expect(brief).toContain('<business-model fonte=');
-        expect(brief).toContain('close_commanda#1');
+        // Bloco por tarefa: a seleção cita itens do modelo (id por fluxo), não
+        // a lista inteira — o essencial é que conteúdo real do doc chegou.
+        expect(brief).toContain('close_commanda');
       }
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

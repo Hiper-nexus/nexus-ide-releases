@@ -50,7 +50,7 @@ import {
 } from '../pty/pty-manager';
 import { getAcpDriverSession } from '../acp/acp-harness-driver';
 import { getAdapter } from '../adapters/adapter-registry';
-import { deliverAgentPrompt, proveNativeArgvBriefAccepted, withProjectContextBlocks } from './tool-util';
+import { deliverAgentPrompt, proveNativeArgvBriefAccepted, withProjectContextBlocksAsync } from './tool-util';
 import { canUseNexusMcp } from './cli-mcp-inject';
 import {
   OPERATOR_TAB_RESUME_NOTE,
@@ -1107,7 +1107,7 @@ async function spawnAgentPane(
   // <workspace-memory>), compostos ANTES da escolha do transporte: argv e as
   // colagens abaixo entregam este texto. O canal do "+ Pane" exclui missão.
   const resumeFromPaneId = spawnOpts?.resumeFromPaneId;
-  const initialPrompt = resumeFromPaneId ? briefPrompt : withProjectContextBlocks({
+  const initialPrompt = resumeFromPaneId ? briefPrompt : await withProjectContextBlocksAsync({
     prompt: briefPrompt,
     scope,
     executionScope,
@@ -2303,13 +2303,13 @@ async function adoptOrchestratorPane(
 
   const live = stores.missions.get(mission.id) ?? mission;
   // Adotado vira pane de missão: o canal do "+ Pane" deixa de valer para ele.
-  const initialPrompt = withProjectContextBlocks({
+  const initialPrompt = (await withProjectContextBlocksAsync({
     prompt: briefPrompt,
     scope,
     executionScope: missionExecutionScope(scope, live),
     missionId: live.id,
     role: 'orchestrator',
-  })!;
+  })) ?? briefPrompt;
   rememberKickoffBrief({
     missionId: live.id,
     orchestratorSessionId: adopted.sessionId,

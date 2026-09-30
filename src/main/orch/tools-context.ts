@@ -31,6 +31,7 @@ import {
   runContextBootstrapAutopilot,
   type ContextBootstrapAutopilotResult,
 } from '../context/context-bootstrap-autopilot';
+import { ensureBusinessModel } from '../context/business-model/business-model-ensure';
 
 // Doctor is an idempotent project operation, not a fan-out primitive. Several
 // model retries used to launch independent reviewers for the same drafts.
@@ -255,6 +256,10 @@ const doctorTool: McpToolDef = {
     }
     const result = await flight;
     assertMcpInvocationCurrent(invocation);
+    // Store do modelo extraído do HEAD: o doctor garante que ele existe para
+    // o commit atual (seleção por tarefa e risco do portão leem de lá, sem
+    // depender do doc revisado). Fail-open como o resto do doctor.
+    const ensured = await ensureBusinessModel(ctx.scope).catch(() => null);
     return Object.freeze({
       ...result.readiness,
       phase: result.phase,
@@ -274,6 +279,22 @@ const doctorTool: McpToolDef = {
       // Modelo de negócio extraído das fontes: aplicado, em dia, adiado,
       // rejeitado ou falho (com a mensagem) — nunca engolido.
       businessModel: result.businessModel,
+      // Store extraído (HEAD): pronto para a seleção por tarefa ou ausente.
+      businessModelStore: ensured
+        ? {
+            status: 'ready' as const,
+            headSha: ensured.headSha,
+            flows: ensured.document.flows.length,
+            invariants: ensured.document.invariants.length,
+            hurdles: ensured.hurdles.length,
+          }
+        : {
+            status: 'unavailable' as const,
+            headSha: null,
+            flows: 0,
+            invariants: 0,
+            hurdles: 0,
+          },
       autopilotHint: result.autopilotHint,
     });
   },

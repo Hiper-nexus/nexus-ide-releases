@@ -439,6 +439,7 @@ export function SquadsSection() {
     delegation: true,
     memoryDistill: true,
     helperReuse: true,
+    businessModel: true,
   });
   const [designPro, setDesignPro] = useState(true);
   const [memoryInjection, setMemoryInjection] = useState(true);
@@ -466,6 +467,7 @@ export function SquadsSection() {
         delegation: o.jevSurfaces?.delegation !== false,
         memoryDistill: o.jevSurfaces?.memoryDistill !== false,
         helperReuse: o.jevSurfaces?.helperReuse !== false,
+        businessModel: o.jevSurfaces?.businessModel !== false,
       });
       setDesignPro(o.designPro);
       setMemoryInjection(o.workspaceMemoryInjection !== false);
@@ -869,6 +871,10 @@ export function SquadsSection() {
               [
                 'helperReuse',
                 'Reuso de helper ocioso (tarefa nova para pane parado com contexto)',
+              ],
+              [
+                'businessModel',
+                'Modelo de negócio por tarefa (fluxos, invariantes e hurdles relevantes)',
               ],
             ] as const
           ).map(([surface, label]) => (

@@ -40,6 +40,7 @@ vi.mock('./tool-util', () => ({
   assertSafePtyPrompt: () => {},
   deliverAgentPrompt: async () => true,
   withProjectContextBlocks: (options: { prompt?: string }) => options.prompt,
+  withProjectContextBlocksAsync: async (options: { prompt?: string }) => options.prompt,
 }));
 
 vi.mock('./mission-event-emit', () => ({

@@ -21,7 +21,12 @@ import {
 } from './workspace-design-rule';
 import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from './workspace-handoff-delivery';
 import { OPERATOR_DELEGATION_DOCTRINE } from './operator-delegation-doctrine';
-import { operatorBusinessModelContext } from './operator-business-model';
+import {
+  operatorBusinessModelContext,
+  providerHasDelegateHook,
+} from './operator-business-model';
+import { taskBusinessContextBlock } from '../context/business-model/business-model-context-block';
+import { ensureBusinessModel } from '../context/business-model/business-model-ensure';
 import { distillOperatorPreferenceMemory } from '../memory/operator-preference-memory';
 import { operatorWorkspaceMemoryContext } from './operator-workspace-memory';
 import { FAILOVER_HANDOFF_HEADER } from '../../shared/failover-handoff';
@@ -109,7 +114,8 @@ const maestroRemindedAt = new Map<string, number>();
 const leanRemindedAt = new Map<string, number>();
 const designRemindedAt = new Map<string, number>();
 const doctrineDeliveredAt = new Map<string, number>();
-const businessModelDeliveredAt = new Map<string, number>();
+const businessModelDeliveredAt = new Map<string, { hash: string; at: number }>();
+const businessEnsureAt = new Map<string, number>();
 const browserHintDeliveredAt = new Map<string, number>();
 const memoryDeliveredAt = new Map<string, { hash: string; at: number }>();
 
@@ -138,11 +144,61 @@ export function __resetLeanRemindersForTests(): void {
   designRemindedAt.clear();
   doctrineDeliveredAt.clear();
   businessModelDeliveredAt.clear();
+  businessEnsureAt.clear();
   browserHintDeliveredAt.clear();
   memoryDeliveredAt.clear();
 }
 
 type MemoryBlockFn = typeof operatorWorkspaceMemoryContext;
+
+/**
+ * `<business-model>` por tarefa para o pane da mão do operador (mesmo canal
+ * da memória: o bloco IDÊNTICO entregue na última meia hora é suprimido; uma
+ * seleção nova — outra tarefa, outro fluxo — sempre passa). O bloco estático
+ * do MCP é o fallback quando a seleção não acha nada ou não há modelo.
+ */
+type BusinessContextFn = (
+  ctx: HookContext,
+  prompt: string,
+) => Promise<string | null>;
+
+async function defaultBusinessContext(
+  ctx: HookContext,
+  prompt: string,
+): Promise<string | null> {
+  if (!isOperatorHandContext(ctx) || !providerHasDelegateHook(ctx.providerId)) {
+    return null;
+  }
+  const scope = ctx.executionScope ?? ctx.scope;
+  if (!scope) return null;
+  const selected = await taskBusinessContextBlock(scope, prompt, ctx.scope, {
+    sessionId: ctx.sessionId,
+  });
+  return selected ?? operatorBusinessModelContext(ctx, 'hook');
+}
+
+function businessContextFor(
+  ctx: HookContext,
+  prompt: string,
+  now: number,
+  block: BusinessContextFn,
+): Promise<string | null> {
+  if (!ctx.sessionId) return Promise.resolve(null);
+  const scope = ctx.executionScope ?? ctx.scope;
+  return block(ctx, prompt).then((context) => {
+    if (!context) return null;
+    const hash = createHash('sha256')
+      .update(JSON.stringify([scope?.projectId, scope?.checkoutId, scope?.rootRealPath, context]))
+      .digest('hex');
+    const previous = businessModelDeliveredAt.get(ctx.sessionId!);
+    if (previous?.hash === hash && now - previous.at < LEAN_REMINDER_INTERVAL_MS) return null;
+    for (const [id, entry] of businessModelDeliveredAt) {
+      if (now - entry.at >= LEAN_REMINDER_INTERVAL_MS) businessModelDeliveredAt.delete(id);
+    }
+    businessModelDeliveredAt.set(ctx.sessionId!, { hash, at: now });
+    return context;
+  }).catch(() => null);
+}
 
 /**
  * `<workspace-memory>` do Codex "+ Pane" (os demais recebem pelo MCP), como o
@@ -370,6 +426,8 @@ export async function handleHookDelegateRequest(
     distillPreference?: typeof distillOperatorPreferenceMemory;
     /** Bloco <workspace-memory> do primeiro prompt do Codex (fatia 4). */
     memoryBlock?: MemoryBlockFn;
+    /** Bloco <business-model> por tarefa; default = seleção Jev + fallback. */
+    businessContext?: BusinessContextFn;
     /** Autopiloto (operator-choice): a auto-orquestração só roda nele. */
     autopilot?: () => boolean;
     /** Adoção pela missão sob demanda da aba (provedor do tools-panes). */
@@ -409,22 +467,36 @@ export async function handleHookDelegateRequest(
       void distillPreference(preferenceScope, prompt).catch(() => {});
     }
     const advise = deps.advise ?? advisePrompt;
+    const businessContext = deps.businessContext ?? defaultBusinessContext;
+    // Duas consultas Jev no mesmo turno rodam em PARALELO: sequenciais, o
+    // prompt do operador pagava a soma dos timeouts no pior caso.
+    const advicePromise = advise(prompt, { sessionId: ctx.sessionId }).catch(() => null);
+    const businessModelPromise = businessContextFor(ctx, prompt, now, businessContext);
     // Jev fora do ar não pode levar junto o contexto de design, que é local.
-    const advice = await advise(prompt, { sessionId: ctx.sessionId }).catch(() => null);
+    const advice = await advicePromise;
     // O Codex não recebe a doutrina pelas instructions do MCP (ele as repete
     // em cada tool); ela chega aqui, uma vez por sessão a cada 30 min.
     if (ctx.providerId === 'codex' && ctx.sessionId && !remindedRecently(doctrineDeliveredAt, ctx.sessionId, now)) {
       markReminded(doctrineDeliveredAt, ctx.sessionId, now);
       parts.push(OPERATOR_DELEGATION_DOCTRINE);
     }
-    // Idem o modelo de negócio do projeto (os demais recebem pelo MCP).
-    if (ctx.sessionId && !remindedRecently(businessModelDeliveredAt, ctx.sessionId, now)) {
-      const businessModel = operatorBusinessModelContext(ctx, 'hook');
-      if (businessModel) {
-        markReminded(businessModelDeliveredAt, ctx.sessionId, now);
-        parts.push(businessModel);
-      }
+    // O modelo extraído do HEAD deve existir antes do prompt renderizar:
+    // dispara a extração (dedup 30 min/sessão) sem bloquear este turno — a
+    // primeira mensagem pode cair no bloco estático/doc revisado e a segunda
+    // já encontra o modelo extraído no store.
+    const businessScope = ctx.executionScope ?? ctx.scope;
+    if (
+      businessScope &&
+      ctx.sessionId &&
+      !remindedRecently(businessEnsureAt, ctx.sessionId, now)
+    ) {
+      markReminded(businessEnsureAt, ctx.sessionId, now);
+      void ensureBusinessModel(businessScope, { wait: false }).catch(() => {});
     }
+    // Modelo de negócio por tarefa: a seleção (Jev, com fallback lexical) muda
+    // com o pedido; a dedup por hash só suprime o bloco idêntico recente.
+    const businessModel = await businessModelPromise;
+    if (businessModel) parts.push(businessModel);
     if (advice?.delegation) {
       const autopilot =
         deps.autopilot ??

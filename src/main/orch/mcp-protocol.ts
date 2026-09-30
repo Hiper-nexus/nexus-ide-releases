@@ -6,6 +6,7 @@ import type { AgentTransportPhysicalReceipt } from "./http-mcp-boundary";
 import { operatorDelegationInstructions } from "./operator-delegation-doctrine";
 import { maestroStandingContext } from "./maestro-standing-context";
 import { operatorBusinessModelContext } from "./operator-business-model";
+import { ensureBusinessModel } from "../context/business-model/business-model-ensure";
 import { joinPromptContextBlocks } from "./prompt-context-blocks";
 import { operatorWorkspaceMemoryContext } from "./operator-workspace-memory";
 
@@ -188,6 +189,11 @@ export async function handleMcpMessage(
 
   switch (message.method) {
     case "initialize": {
+      // Garante o modelo extraído do HEAD em background: o primeiro hook/brief
+      // já encontra (ou recebe) o store pronto. Nunca segura o initialize.
+      void ensureBusinessModel(ctx.executionScope ?? ctx.scope, {
+        wait: false,
+      }).catch(() => {});
       const requested = (message.params?.protocolVersion as string) ?? "";
       const version = SUPPORTED_VERSIONS.has(requested)
         ? requested

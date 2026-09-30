@@ -68,6 +68,7 @@ vi.mock('./tool-util', () => ({
     harness.deliverAgentPrompt(...(args as [])),
   proveNativeArgvBriefAccepted: async () => {},
   withProjectContextBlocks: (options: { prompt?: string }) => options.prompt,
+  withProjectContextBlocksAsync: async (options: { prompt?: string }) => options.prompt,
 }));
 
 vi.mock('./pane-registry', () => ({

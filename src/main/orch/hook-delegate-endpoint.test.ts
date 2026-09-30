@@ -6,8 +6,12 @@ vi.mock('../observability/main-trace', () => ({ trace: vi.fn() }));
 vi.mock('../persistence/settings-store', () => ({
   getOrchSettings: () => ({ squadCliPolicy: 'governed' }),
 }));
+vi.mock('../context/business-model/business-model-ensure', () => ({
+  ensureBusinessModel: vi.fn(async () => null),
+}));
 
 import { trace } from '../observability/main-trace';
+import { ensureBusinessModel } from '../context/business-model/business-model-ensure';
 import { FAILOVER_HANDOFF_HEADER } from '../../shared/failover-handoff';
 import { OPERATOR_DELEGATION_DOCTRINE } from './operator-delegation-doctrine';
 import {
@@ -719,5 +723,84 @@ describe('bloco <workspace-memory> no primeiro prompt do Codex (fatia 4)', () =>
       { advise: vi.fn(async () => null), memoryBlock },
     );
     expect(memoryBlock).toHaveBeenCalledWith(ctx, 'hook', 'Implemente o fluxo.');
+  });
+});
+
+describe('<business-model> por tarefa no hook do operador', () => {
+  const scope = { rootRealPath: '/repo', projectId: 'p1', checkoutId: 'c1' } as never;
+  // Claude tem o delegate hook sem a doutrina por-turno do Codex — isola o teste.
+  const codex = { ...operator, providerId: 'claude', scope };
+  const text = (out: { payload: Record<string, unknown> }) =>
+    (out.payload.hookSpecificOutput as { additionalContext: string }).additionalContext;
+
+  it('o bloco selecionado entra no additionalContext; idêntico em 30 min é suprimido, diferente passa', async () => {
+    __resetLeanRemindersForTests();
+    let now = 4_000_000;
+    const businessContext = vi.fn(async () => '<business-model>selecionado</business-model>');
+    const deps = { advise: vi.fn(async () => null), businessContext, now: () => now };
+    expect(text(await handleHookDelegateRequest(codex, { prompt: LONG }, deps)))
+      .toContain('<business-model>selecionado');
+    // Mesmo conteúdo na mesma sessão dentro do intervalo: suprimido.
+    expect((await handleHookDelegateRequest(codex, { prompt: 'mesma tarefa' }, deps)).payload)
+      .toEqual({});
+    // Seleção nova (outra tarefa/outro fluxo) sempre passa — dedup é por hash.
+    businessContext.mockResolvedValue('<business-model>nova seleção</business-model>');
+    expect(text(await handleHookDelegateRequest(codex, { prompt: 'outra tarefa' }, deps)))
+      .toContain('nova seleção');
+    // Depois do intervalo, até o idêntico volta a entrar.
+    now += 31 * 60_000;
+    expect(text(await handleHookDelegateRequest(codex, { prompt: 'de novo' }, deps)))
+      .toContain('nova seleção');
+  });
+
+  it('bloco null não gera contexto e exceção é fail-open', async () => {
+    __resetLeanRemindersForTests();
+    // design: null isola o teste — o prompt LONG cita "tela" e acionaria a regra.
+    const none = {
+      advise: vi.fn(async () => null),
+      businessContext: vi.fn(async () => null),
+      design: () => null,
+    };
+    expect((await handleHookDelegateRequest(codex, { prompt: LONG }, none)).payload).toEqual({});
+    const boom = {
+      advise: vi.fn(async () => null),
+      design: () => null,
+      businessContext: vi.fn(async () => {
+        throw new Error('seleção explodiu');
+      }),
+    };
+    expect(
+      (await handleHookDelegateRequest({ ...codex, sessionId: 's-boom' }, { prompt: LONG }, boom))
+        .payload,
+    ).toEqual({});
+  });
+
+  it('sem sessionId o bloco por tarefa não é chamado', async () => {
+    __resetLeanRemindersForTests();
+    const businessContext = vi.fn(async () => 'X');
+    await handleHookDelegateRequest(
+      { role: 'user', scope, providerId: 'claude' } as never,
+      { prompt: LONG },
+      { advise: vi.fn(async () => null), businessContext },
+    );
+    expect(businessContext).not.toHaveBeenCalled();
+  });
+
+  it('dispara o ensure do modelo do HEAD uma vez por sessão a cada 30 min', async () => {
+    __resetLeanRemindersForTests();
+    vi.mocked(ensureBusinessModel).mockClear();
+    let now = 7_000_000;
+    const deps = {
+      advise: vi.fn(async () => null),
+      businessContext: vi.fn(async () => null),
+      now: () => now,
+    };
+    await handleHookDelegateRequest(codex, { prompt: LONG }, deps);
+    await handleHookDelegateRequest(codex, { prompt: 'outro' }, deps);
+    expect(ensureBusinessModel).toHaveBeenCalledTimes(1);
+    expect(ensureBusinessModel).toHaveBeenCalledWith(scope, { wait: false });
+    now += 31 * 60_000;
+    await handleHookDelegateRequest(codex, { prompt: LONG }, deps);
+    expect(ensureBusinessModel).toHaveBeenCalledTimes(2);
   });
 });

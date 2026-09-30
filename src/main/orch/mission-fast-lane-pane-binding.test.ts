@@ -45,6 +45,7 @@ vi.mock('../observability/main-trace', () => ({ trace: () => undefined }));
 vi.mock('./tool-util', () => ({
   deliverAgentPrompt: async () => true,
   withProjectContextBlocks: (options: { prompt?: string }) => options.prompt,
+  withProjectContextBlocksAsync: async (options: { prompt?: string }) => options.prompt,
 }));
 vi.mock('./pane-registry', () => ({
   listPaneSnapshots: () => [...state.physical.values()].map((info) => ({

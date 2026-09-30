@@ -408,6 +408,9 @@ export async function guardToolCall(
     },
     questions: GUARD_QUESTIONS,
     timeoutMs: GUARD_TIMEOUT_MS,
+    // F-221: o guard segura o despacho — uma retentativa em timeout dobrava a
+    // espera (2×3s) sem mudar a doutrina fail-open; um timeout já basta.
+    retryOnTimeout: false,
     signal: input.signal,
     surface: 'dispatchGuard',
     sessionId: input.ctx.sessionId,

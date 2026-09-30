@@ -38,6 +38,11 @@ import {
   type BusinessInvariant,
 } from '../context/business-model/business-model-contract';
 import {
+  evaluateGateBusinessRisk,
+  type GateBusinessRisk,
+  type GateBusinessRiskInput,
+} from './business-risk';
+import {
   DEFAULT_ORIENTATION_LIMITS,
   type OrientationLimits,
   type ProjectOrientationMap,
@@ -282,6 +287,12 @@ export interface RegressionGateResult {
   /** Arquivos-fonte tocados sem nenhum teste mapeado — aviso, não bloqueia. */
   readonly untestedFiles: readonly string[];
   readonly invariantsTouched: readonly RegressionInvariantTouched[];
+  /**
+   * Risco de negócio ADVISORY (regras/hurdles que o diff encosta, com a
+   * probabilidade do Jev quando ele respondeu). Nunca decide o veredito:
+   * pass/fail continuam saindo só dos testes executados.
+   */
+  readonly businessRisk?: GateBusinessRisk | null;
   readonly runner: RegressionRunnerKind | null;
   readonly warnings: readonly string[];
   readonly cached: boolean;
@@ -349,6 +360,10 @@ export interface RegressionGateDependencies {
   readonly git?: GitRunner;
   readonly extensions?: RegressionGateExtensions;
   readonly now?: () => number;
+  /** Seam de teste da avaliação advisory de risco de negócio. */
+  readonly businessRisk?: (
+    input: GateBusinessRiskInput,
+  ) => Promise<GateBusinessRisk | null>;
 }
 
 const cache = new Map<string, RegressionGateResult>();
@@ -1527,6 +1542,7 @@ async function evaluate(
   root: string,
   state: ObservedState,
   deps: RegressionGateDependencies,
+  git: GitRunner,
 ): Promise<RegressionGateResult> {
   const now = deps.now ?? Date.now;
   const started = now();
@@ -1583,6 +1599,21 @@ async function evaluate(
       regra: neutralizeRunnerText(invariant.regra, 200),
       violated: invariant.testes.some((test) => failedTests.has(test)),
     }));
+  // Risco de negócio advisory: dispara junto do mapa/execução (Jev ~0,4 s em
+  // paralelo com os testes); o veredito sai só deles, isto é só o relatório.
+  const riskEval =
+    deps.businessRisk ??
+    ((riskInput: GateBusinessRiskInput) =>
+      evaluateGateBusinessRisk(riskInput, { git }));
+  const businessRiskPromise = safeExtension('risco de negócio', warnings, () =>
+    riskEval({
+      scope: input.scope,
+      projectScope: input.projectScope,
+      baseSha: state.base.sha,
+      changedFiles,
+      touched,
+    }),
+  );
   const extraTests = [...(radius?.tests ?? []), ...touched.flatMap((invariant) => invariant.testes ?? [])];
 
   let impacted: ImpactedTests;
@@ -1599,6 +1630,7 @@ async function evaluate(
       untestedFiles: [],
       invariantsTouched: touchedSummary(new Set()),
       runner: null,
+      businessRisk: await businessRiskPromise,
     });
   }
   warnings.push(...impacted.warnings);
@@ -1609,9 +1641,15 @@ async function evaluate(
   }
   const invariantsTouched = touchedSummary(new Set());
   const maxTests = input.maxTestFiles ?? DEFAULT_REGRESSION_MAX_TEST_FILES;
-  const tests = impacted.tests.slice(0, maxTests);
+  // Sob o teto, os testes dos invariantes de negócio tocados vêm primeiro:
+  // um diff que encosta numa regra não pode deixar o teste dela fora do corte.
+  const invariantTests = new Set(touched.flatMap((invariant) => invariant.testes));
+  const prioritizedTests = [...impacted.tests].sort(
+    (left, right) => Number(invariantTests.has(right)) - Number(invariantTests.has(left)),
+  );
+  const tests = prioritizedTests.slice(0, maxTests);
   // Cortados pelo teto não rodaram: contam como não verificados, não como aprovados.
-  const overflow = impacted.tests.slice(maxTests);
+  const overflow = prioritizedTests.slice(maxTests);
   if (impacted.tests.length > maxTests) {
     warnings.push(
       `raio grande: ${impacted.tests.length} testes impactados, rodando os ${maxTests} mais próximos do diff`,
@@ -1623,13 +1661,14 @@ async function evaluate(
     // de um diff que o portão nem viu inteiro — fica NÃO verificado.
     return finish({
       status: state.changed.truncated ? 'unavailable' : 'no-tests',
-      testsRun: [], testsNotRun: [], failures: [], inheritedFailures: [], runner: null, ...common,
+      testsRun: [], testsNotRun: [], failures: [], inheritedFailures: [], runner: null,
+      businessRisk: await businessRiskPromise, ...common,
     });
   }
   const { groups, orphans } = planRunnerGroups(root, tests);
   if (groups.length === 0) {
     warnings.push('nenhum runner de teste detectado (vitest/jest/pytest): testes impactados NÃO verificados');
-    return finish({ status: 'unavailable', testsRun: [], testsNotRun: [...tests, ...overflow], failures: [], inheritedFailures: [], runner: null, ...common });
+    return finish({ status: 'unavailable', testsRun: [], testsNotRun: [...tests, ...overflow], failures: [], inheritedFailures: [], runner: null, businessRisk: await businessRiskPromise, ...common });
   }
   if (orphans.length > 0) {
     warnings.push(`sem runner para ${orphans.length} teste(s): ${orphans.slice(0, 5).join(', ')}`);
@@ -1752,6 +1791,7 @@ async function evaluate(
     runner: groups[0]!.runner.kind,
     untestedFiles: impacted.untestedFiles,
     invariantsTouched: touchedSummary(new Set(ownFailures.map((failure) => failure.file))),
+    businessRisk: await businessRiskPromise,
   });
 }
 
@@ -1791,6 +1831,7 @@ export async function runRegressionGate(
       inheritedFailures: [],
       untestedFiles: [],
       invariantsTouched: [],
+      businessRisk: null,
       runner: null,
       warnings: gitAnswered ? [] : ['git não respondeu ao listar o diff: nada verificado'],
       cached: false,
@@ -1817,7 +1858,7 @@ export async function runRegressionGate(
     if (!running.signal?.aborted || input.signal?.aborted) return shared;
     if (inflight.get(key) === running) inflight.delete(key);
   }
-  const promise = evaluate(input, root, before, deps).then((result) => {
+  const promise = evaluate(input, root, before, deps, git).then((result) => {
     // Edição concorrente durante a execução: o verde (ou vermelho) é de um
     // conteúdo que não existe mais — não vale para o estado atual.
     const after = observeState(root, input, git);
@@ -1900,6 +1941,18 @@ export function formatRegressionGateReport(result: RegressionGateResult): string
         .map((invariant) => `${invariant.id} «${invariant.regra}»`)
         .join('; ')}.`,
     );
+  }
+  // Advisory do Jev/lexical: texto inerte («texto» é dado), NUNCA veredito.
+  const risk = result.businessRisk;
+  if (risk && (risk.rules.length > 0 || risk.hurdles.length > 0)) {
+    const prob = (p: number | null) => (p === null ? '' : ` (p=${p.toFixed(2)})`);
+    lines.push('Risco de negócio (aviso — não muda o resultado do portão):');
+    for (const rule of risk.rules.slice(0, 6)) {
+      lines.push(`- regra ${rule.id} «${rule.text}»${prob(rule.p)}`);
+    }
+    for (const hurdle of risk.hurdles.slice(0, 4)) {
+      lines.push(`- armadilha «${hurdle.text}»${prob(hurdle.p)}`);
+    }
   }
   for (const warning of result.warnings.slice(0, 4)) lines.push(`Aviso: ${warning}`);
   return lines.join('\n');
