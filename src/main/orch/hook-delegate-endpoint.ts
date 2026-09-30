@@ -32,6 +32,7 @@ import {
   type OperatorTabMission,
 } from './tools-panes';
 import { trace } from '../observability/main-trace';
+import { maestroStandingDoctrineFor } from './maestro-standing-context';
 
 export const HOOK_DELEGATE_MAX_BODY_BYTES = 64 * 1024;
 
@@ -94,6 +95,17 @@ export const BROWSER_TOOL_HINT =
   'WebFetch, Playwright ou Firecrawl para uma URL que será aberta agora. ' +
   'Responsividade num só chamado: nexus_browser_responsive.';
 
+/**
+ * Lembrete do Maestro (F-701) no prompt, a cada 30 min por sessão. A doutrina
+ * inteira já está nas instructions do MCP; o Codex, que não as recebe, ganha
+ * a doutrina no lugar deste lembrete.
+ */
+export const MAESTRO_TURN_REMINDER =
+  '[Nexus] Maestro: o trabalho da missão vai para workers (nexus_pane_spawn, ' +
+  'os independentes em paralelo); seu pane coordena, integra e valida. ' +
+  'Trabalho restante sem worker vivo: abra os workers agora.';
+
+const maestroRemindedAt = new Map<string, number>();
 const leanRemindedAt = new Map<string, number>();
 const designRemindedAt = new Map<string, number>();
 const doctrineDeliveredAt = new Map<string, number>();
@@ -121,6 +133,7 @@ function claimLeanReminder(sessionId: string, now: number): boolean {
 
 /** Test-only: esquece quem já recebeu os lembretes. */
 export function __resetLeanRemindersForTests(): void {
+  maestroRemindedAt.clear();
   leanRemindedAt.clear();
   designRemindedAt.clear();
   doctrineDeliveredAt.clear();
@@ -192,6 +205,21 @@ const NON_OPERATOR_PROMPT_PREFIXES = [
 function isNonOperatorPrompt(prompt: string): boolean {
   const head = prompt.trim().replace(/^<pasted_content\b[^>]*>/u, '').trim();
   return NON_OPERATOR_PROMPT_PREFIXES.some((prefix) => head.startsWith(prefix));
+}
+
+type MaestroDoctrineFn = (ctx: HookContext) => string | null;
+
+function maestroContextFor(
+  ctx: HookContext,
+  now: number,
+  doctrineFor: MaestroDoctrineFn,
+): string | null {
+  if (ctx.role !== 'orchestrator' || !ctx.missionId || !ctx.sessionId) return null;
+  if (remindedRecently(maestroRemindedAt, ctx.sessionId, now)) return null;
+  const doctrine = doctrineFor(ctx);
+  if (!doctrine) return null;
+  markReminded(maestroRemindedAt, ctx.sessionId, now);
+  return ctx.providerId === 'codex' ? doctrine : MAESTRO_TURN_REMINDER;
 }
 
 type DesignContextFn = (prompt: string, workspaceRoot: string) => string | null;
@@ -314,19 +342,26 @@ export async function handleHookDelegateRequest(
     autopilot?: () => boolean;
     /** Adoção pela missão sob demanda da aba (provedor do tools-panes). */
     adoptMission?: (ctx: HookContext, summary: string | null) => OperatorTabMission | null;
+    /** Doutrina permanente do Maestro da missão (F-701); default lê a missão. */
+    maestroDoctrine?: MaestroDoctrineFn;
   } = {},
 ): Promise<{ statusCode: 200; payload: Record<string, unknown> }> {
   try {
-    if (!isOperatorHandContext(ctx)) return { statusCode: 200, payload: {} };
     const prompt = parseUserPrompt(body);
+    if (!prompt) return { statusCode: 200, payload: {} };
+    const now = (deps.now ?? Date.now)();
+    // O Maestro recebe o lembrete em qualquer prompt, inclusive na entrega de
+    // um worker: é processando entregas que ele passa a fazer o trabalho.
+    const maestro = maestroContextFor(ctx, now, deps.maestroDoctrine ?? maestroStandingDoctrineFor);
+    const parts: string[] = maestro ? [maestro] : [];
     // A entrega de um helper chega como prompt, mas não é pedido novo do operador.
     if (
-      !prompt ||
+      !isOperatorHandContext(ctx) ||
       prompt.startsWith(WORKSPACE_HANDOFF_DELIVERY_PREFIX) ||
       prompt.includes(FAILOVER_HANDOFF_HEADER) ||
       isNonOperatorPrompt(prompt)
     ) {
-      return { statusCode: 200, payload: {} };
+      return additionalContextResponse(ctx, parts);
     }
     // Preferência do operador: pré-filtro regex no próprio módulo; o Jev só é
     // chamado quando há marcador. Fire-and-forget — não segura o prompt.
@@ -335,11 +370,9 @@ export async function handleHookDelegateRequest(
     if (preferenceScope && typedByOperator(ctx, prompt)) {
       void distillPreference(preferenceScope, prompt).catch(() => {});
     }
-    const now = (deps.now ?? Date.now)();
     const advise = deps.advise ?? advisePrompt;
     // Jev fora do ar não pode levar junto o contexto de design, que é local.
     const advice = await advise(prompt, { sessionId: ctx.sessionId }).catch(() => null);
-    const parts: string[] = [];
     // O Codex não recebe a doutrina pelas instructions do MCP (ele as repete
     // em cada tool); ela chega aqui, uma vez por sessão a cada 30 min.
     if (ctx.providerId === 'codex' && ctx.sessionId && !remindedRecently(doctrineDeliveredAt, ctx.sessionId, now)) {
@@ -387,21 +420,28 @@ export async function handleHookDelegateRequest(
     if (design) parts.push(design);
     const memory = memoryContextFor(ctx, prompt, now, deps.memoryBlock ?? operatorWorkspaceMemoryContext);
     if (memory) parts.push(memory);
-    if (parts.length === 0) return { statusCode: 200, payload: {} };
-    const context = parts.join('\n');
-    return {
-      statusCode: 200,
-      payload: {
-        hookSpecificOutput: {
-          hookEventName: 'UserPromptSubmit',
-          additionalContext:
-            ctx.providerId === 'codex' ? `${AUXILIARY_CONTEXT_HEADER}\n${context}` : context,
-        },
-      },
-    };
+    return additionalContextResponse(ctx, parts);
   } catch {
     return { statusCode: 200, payload: {} };
   }
+}
+
+function additionalContextResponse(
+  ctx: HookContext,
+  parts: readonly string[],
+): { statusCode: 200; payload: Record<string, unknown> } {
+  if (parts.length === 0) return { statusCode: 200, payload: {} };
+  const context = parts.join('\n');
+  return {
+    statusCode: 200,
+    payload: {
+      hookSpecificOutput: {
+        hookEventName: 'UserPromptSubmit',
+        additionalContext:
+          ctx.providerId === 'codex' ? `${AUXILIARY_CONTEXT_HEADER}\n${context}` : context,
+      },
+    },
+  };
 }
 
 export async function handleHookDelegateHttp(

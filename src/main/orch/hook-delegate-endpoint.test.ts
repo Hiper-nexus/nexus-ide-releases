@@ -12,6 +12,7 @@ import { FAILOVER_HANDOFF_HEADER } from '../../shared/failover-handoff';
 import { OPERATOR_DELEGATION_DOCTRINE } from './operator-delegation-doctrine';
 import {
   AUXILIARY_CONTEXT_HEADER,
+  MAESTRO_TURN_REMINDER,
   __resetLeanRemindersForTests,
   formatDelegationContext,
   handleHookDelegateHttp,
@@ -257,6 +258,58 @@ describe('hook /hook/delegate', () => {
     // Claude lê as instructions do MCP uma vez no system prompt: não precisa do hook.
     expect((await handleHookDelegateRequest({ ...operator, providerId: 'claude' }, { prompt: 'oi' }, deps)).payload)
       .toEqual({});
+  });
+
+  describe('Maestro de missão (F-701)', () => {
+    const maestro = { role: 'orchestrator' as const, missionId: 'm', sessionId: 'maestro' };
+    const text = (out: { payload: Record<string, unknown> }) =>
+      (out.payload.hookSpecificOutput as { additionalContext: string }).additionalContext;
+
+    it('lembra de delegar a cada 30 min, também na entrega de um worker, sem chamar o Jev', async () => {
+      __resetLeanRemindersForTests();
+      let now = 5_000_000;
+      const advise = vi.fn(async () => delegation(3, 1));
+      const deps = { advise, now: () => now, maestroDoctrine: () => 'DOUTRINA' };
+      const delivery = '[nexus handoff delivery_metadata] from=pane-w1 handoff_id=h-7 summary: pronto';
+      expect(text(await handleHookDelegateRequest(maestro, { prompt: delivery }, deps))).toBe(MAESTRO_TURN_REMINDER);
+      now += 60_000;
+      expect((await handleHookDelegateRequest(maestro, { prompt: 'solta mais panes' }, deps)).payload).toEqual({});
+      now += 30 * 60_000;
+      expect(text(await handleHookDelegateRequest(maestro, { prompt: 'e agora?' }, deps))).toBe(MAESTRO_TURN_REMINDER);
+      expect(advise).not.toHaveBeenCalled();
+    });
+
+    it('o Codex, que não lê as instructions do MCP, recebe a doutrina inteira', async () => {
+      __resetLeanRemindersForTests();
+      const out = await handleHookDelegateRequest(
+        { ...maestro, providerId: 'codex' },
+        { prompt: 'continue' },
+        { advise: vi.fn(async () => null), maestroDoctrine: () => 'DOUTRINA DO MAESTRO' },
+      );
+      expect(text(out)).toBe(`${AUXILIARY_CONTEXT_HEADER}\nDOUTRINA DO MAESTRO`);
+    });
+
+    it('a mão promovida recebe o lembrete junto com o conselho do Jev', async () => {
+      __resetLeanRemindersForTests();
+      const out = await handleHookDelegateRequest(
+        { ...maestro, promotedFromUserSession: true as const },
+        { prompt: LONG },
+        { advise: async () => delegation(3, 1), maestroDoctrine: () => 'DOUTRINA' },
+      );
+      expect(text(out)).toContain(MAESTRO_TURN_REMINDER);
+      expect(text(out)).toContain('~3 partes');
+    });
+
+    it('missão sem delegação (execução direta, pergunta aos panes), worker e operador sem missão: nada', async () => {
+      __resetLeanRemindersForTests();
+      const deps = { advise: vi.fn(async () => null), maestroDoctrine: () => null };
+      expect((await handleHookDelegateRequest(maestro, { prompt: 'oi' }, deps)).payload).toEqual({});
+      const always = { advise: vi.fn(async () => null), maestroDoctrine: () => 'DOUTRINA' };
+      expect((await handleHookDelegateRequest({ role: 'worker', missionId: 'm', sessionId: 'w' }, { prompt: 'oi' }, always)).payload)
+        .toEqual({});
+      expect((await handleHookDelegateRequest({ ...operator, providerId: 'claude' }, { prompt: 'oi' }, always)).payload)
+        .toEqual({});
+    });
   });
 
   it('entrega de handoff de helper não é pedido novo: nem Jev nem contexto', async () => {

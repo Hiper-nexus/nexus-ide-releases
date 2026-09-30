@@ -4,6 +4,7 @@ import { dispatchToolCall, type McpDispatchOptions } from "./mcp-dispatch";
 import { isToolAllowedForReadOnlyContext } from "./mcp-effect-policy";
 import type { AgentTransportPhysicalReceipt } from "./http-mcp-boundary";
 import { operatorDelegationInstructions } from "./operator-delegation-doctrine";
+import { maestroStandingContext } from "./maestro-standing-context";
 import { operatorBusinessModelContext } from "./operator-business-model";
 import { joinPromptContextBlocks } from "./prompt-context-blocks";
 import { operatorWorkspaceMemoryContext } from "./operator-workspace-memory";
@@ -193,6 +194,7 @@ export async function handleMcpMessage(
         : MCP_PROTOCOL_VERSION;
       const instructions = joinPromptContextBlocks([
         operatorDelegationInstructions(ctx),
+        maestroStandingContext(ctx, "mcp"),
         operatorBusinessModelContext(ctx, "mcp"),
         operatorWorkspaceMemoryContext(ctx, "mcp"),
       ]);

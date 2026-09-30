@@ -1,4 +1,5 @@
 import type { Mission, Squad } from '../../shared/orch-types';
+import { isPaneMetaTask } from '../../shared/pane-meta-task';
 
 /**
  * Doutrina de orquestração da Via Rápida (2026-08-10).
@@ -208,6 +209,41 @@ export function buildMaestroKickoffBrief(
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+/**
+ * Doutrina permanente do Maestro (F-701). O kickoff leva a doutrina no 1º
+ * prompt, e a compactação do contexto a dilui: em 30/09 o Maestro de uma
+ * missão de dois dias passou a implementar sozinho, com trabalho sobrando e
+ * nenhum worker vivo, até o operador pedir "solta mais panes". Estas linhas
+ * vão nas `instructions` do MCP (prompt de sistema, sobrevive à compactação)
+ * e, no Codex, pelo hook do prompt. Curta: repete só o que se perde.
+ */
+export const MAESTRO_STANDING_DOCTRINE = [
+  'NEXUS — VOCÊ É O MAESTRO DESTA MISSÃO (vale a sessão inteira, também depois de compactar o contexto):',
+  '1. Delegue: todo trabalho do objetivo (código, revisão, pesquisa, testes, correção de achados) vai para workers com nexus_pane_spawn({ task, prompt }). O Nexus escolhe CLI, modelo e esforço; descreva a tarefa em task.',
+  '2. Paralelo: abra juntos os workers independentes — readOnly: true nas leituras, isolatedWriter: true nas escritas. Trabalho restante sem worker vivo: abra os workers agora, sem esperar o operador pedir.',
+  '3. Seu pane é coordenação: plano, briefs, integração das branches, validação e veredito. Não implemente nem revise você mesmo, salvo pedido explícito do operador.',
+  '4. Brief de worker não contraria a autoridade de execução do Nexus (worktree, branch, sem push, sem clone próprio): o worker segue o Nexus e a tarefa volta bloqueada.',
+  '5. Depois de delegar, encerre o turno: a entrega chega sozinha. Ao acordar, nexus_handoff_list({full:true}).',
+].join('\n');
+
+/**
+ * Doutrina permanente para a missão que DESPACHA workers. Execução direta
+ * (consulta, plano, orçamento zero) e missão-pergunta aos panes têm doutrina
+ * própria no kickoff, que contradiz "delegue" — ficam sem esta.
+ */
+export function maestroStandingDoctrine(
+  mission: Pick<Mission, 'title' | 'description' | 'intentContract'> | null | undefined,
+): string | null {
+  if (!mission) return null;
+  const mode = directMode({
+    lane: mission.intentContract?.lane,
+    maxWorkers: mission.intentContract?.budgets?.maxWorkers,
+  });
+  if (mode) return null;
+  if (isPaneMetaTask(mission.title) || isPaneMetaTask(mission.description ?? '')) return null;
+  return MAESTRO_STANDING_DOCTRINE;
 }
 
 /**

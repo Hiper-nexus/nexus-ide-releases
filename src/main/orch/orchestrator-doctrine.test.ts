@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Mission, Squad } from '../../shared/orch-types';
 import {
+  MAESTRO_STANDING_DOCTRINE,
   buildMaestroKickoffBrief,
   buildOrchestratorDoctrine,
+  maestroStandingDoctrine,
 } from './orchestrator-doctrine';
 
 function mission(overrides: Partial<Mission> = {}): Mission {
@@ -308,5 +310,27 @@ describe('doutrina de segurança chega ao coordenador', () => {
   it('missão comum não carrega doutrina de segurança', () => {
     const brief = buildMaestroKickoffBrief(base);
     expect(brief).not.toContain('SEGURANÇA');
+  });
+});
+
+describe('doutrina permanente do Maestro (F-701)', () => {
+  it('missão que despacha workers recebe a doutrina curta de delegar', () => {
+    expect(maestroStandingDoctrine(mission())).toBe(MAESTRO_STANDING_DOCTRINE);
+    expect(MAESTRO_STANDING_DOCTRINE).toContain('nexus_pane_spawn');
+    expect(MAESTRO_STANDING_DOCTRINE).toContain('depois de compactar');
+    // Vai no prompt de sistema de toda sessão do Maestro: fica curta.
+    expect(MAESTRO_STANDING_DOCTRINE.length).toBeLessThan(1_500);
+  });
+
+  it('execução direta e pergunta aos panes têm doutrina própria, que contradiz "delegue"', () => {
+    for (const intentContract of [
+      { lane: 'consult' },
+      { lane: 'plan' },
+      { budgets: { maxWorkers: 0 } },
+    ]) {
+      expect(maestroStandingDoctrine(mission({ intentContract } as Partial<Mission>))).toBeNull();
+    }
+    expect(maestroStandingDoctrine(mission({ title: 'pergunte aos panes quanto é 1+1' }))).toBeNull();
+    expect(maestroStandingDoctrine(null)).toBeNull();
   });
 });
