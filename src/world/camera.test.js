@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CAMERA, chaseStep, initialCamera } from './camera.js';
+import { CAMERA, ORBIT, chaseStep, initialCamera, orbitStep, stationFocusGoal, STATION_FOCUS_MS } from './camera.js';
 
 const still = (x = 0, z = 0, heading = 0) => ({ x, z, heading, vx: 0, vz: 0, speed: 0 });
 
@@ -25,13 +25,35 @@ test('turning the rover swings the camera around it and the result does not depe
 
 test('an orbit drag offsets the camera around the rover and boost widens the field of view', () => {
   let orbited = initialCamera(still());
-  for (let i = 0; i < 300; i++) orbited = chaseStep(orbited, still(), 1 / 60, { orbit: Math.PI / 2 });
+  for (let i = 0; i < 300; i++) orbited = chaseStep(orbited, still(), 1 / 60, { orbit: { yaw: Math.PI / 2, pitch: 0 } });
   assert.ok(Math.abs(orbited.x) > CAMERA.distance * 0.8, 'a quarter turn puts the camera to the side');
   let boosted = initialCamera(still());
   for (let i = 0; i < 120; i++) boosted = chaseStep(boosted, { ...still(), speed: 12 }, 1 / 60, { boost: true });
   assert.ok(boosted.fov > CAMERA.fov + 4 && boosted.fov <= CAMERA.boostFov);
   const calm = chaseStep(boosted, still(), 1);
   assert.ok(calm.fov < boosted.fov);
+});
+
+test('orbit pitch persists after the drag and stays inside its clamp', () => {
+  let orbit = { yaw: 0, pitch: 0 };
+  const target = { yaw: 0.4, pitch: 0.5 };
+  for (let i = 0; i < 120; i++) orbit = orbitStep(orbit, target, 1 / 60);
+  assert.ok(Math.abs(orbit.pitch - 0.5) < 0.02, 'pitch eases to the target and holds');
+  assert.ok(Math.abs(orbit.yaw - 0.4) < 0.02);
+  const over = orbitStep({ yaw: 0, pitch: 0 }, { yaw: 0, pitch: 5 }, 1);
+  assert.equal(over.pitch, ORBIT.pitchMax);
+  const under = orbitStep({ yaw: 0, pitch: 0 }, { yaw: 0, pitch: -5 }, 1);
+  assert.equal(under.pitch, ORBIT.pitchMin);
+});
+
+test('station focus frames the beacon for 2,4 s and calm can skip it', () => {
+  const goal = stationFocusGoal({ x: 10, z: -4 }, 0);
+  assert.ok(Math.abs(goal.tx - 10) < 0.01 && Math.abs(goal.tz + 4) < 0.01, 'the target is the beacon');
+  assert.ok(goal.y > 4, 'and the camera lifts to frame it');
+  assert.equal(STATION_FOCUS_MS, 2400);
+  let camera = initialCamera(still());
+  camera = chaseStep(camera, still(), 1 / 60, { focus: { x: 10, z: -4 } });
+  assert.ok(camera.tz !== 0 || camera.tx !== 0);
 });
 
 test('the intro flight orbits the world slowly and only while nobody is driving', () => {
