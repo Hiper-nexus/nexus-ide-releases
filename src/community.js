@@ -37,7 +37,8 @@ async function boot(){
     id('interact-station').addEventListener('click',world.interact);
     id('world-reset').addEventListener('click',world.reset);
     id('world-toggle').addEventListener('click',event=>{const paused=world.togglePause();event.currentTarget.textContent=paused?'Retomar':'Pausar';event.currentTarget.ariaPressed=String(paused);});
-    window.addEventListener('pagehide',world.dispose,{once:true});
+    // bfcache keeps the page alive: only a real unload disposes the world.
+    window.addEventListener('pagehide',event=>{if(!event.persisted)world.dispose();});
   }catch(error){console.warn('Nexus 3D:',error.message);id('world-loading').hidden=true;id('start-game').textContent='Exploração 3D indisponível';id('start-game').disabled=true;notify('Você pode conhecer os prêmios e entrar no grupo abaixo.');}
 }
 boot();

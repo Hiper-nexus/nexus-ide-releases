@@ -193,8 +193,8 @@ class CafeWorld {
     }
     // Slow devices drop to a lower pixel ratio instead of dropping frames.
     if(raw>.034&&this.renderer.getPixelRatio()>1){if(++this.slowFrames>45){this.renderer.setPixelRatio(1);this.resize();}}else this.slowFrames=Math.max(0,this.slowFrames-1);
-    const moving=Math.abs(this.vehicle.speed)>.01||Math.abs(this.vehicle.vy)>0||this.vehicle.y>0;
-    if(!this.paused||this.keys.size||moving||effects||this.dragging)this.schedule();
+    // A paused world only keeps drawing while effects settle or the camera is being dragged.
+    if(!this.paused||effects||this.dragging)this.schedule();
   };
   input(){
     const throttle=this.keys.has('forward')?1:this.keys.has('back')?-1:this.analog.throttle;
@@ -303,21 +303,24 @@ class CafeWorld {
   clearKeys=()=>{this.keys.clear();this.analog={throttle:0,steer:0};};
   bindInput(){
     const canvas=this.renderer.domElement;
+    // Synthetic pointers (tests, some assistive tools) have no capture target; the gesture still works.
+    const capture=(element,event)=>{try{element.setPointerCapture(event.pointerId);}catch{/* no active pointer to capture */}};
     canvas.style.touchAction='none';
     this.host.addEventListener('keydown',this.keydown);window.addEventListener('keyup',this.keyup);window.addEventListener('blur',this.clearKeys);
     // Dragging the scene orbits the camera around the rover; it eases back when released.
-    canvas.addEventListener('pointerdown',event=>{this.host.focus({preventScroll:true});this.dragging={id:event.pointerId,x:event.clientX};canvas.setPointerCapture(event.pointerId);});
+    canvas.addEventListener('pointerdown',event=>{this.host.focus({preventScroll:true});this.dragging={id:event.pointerId,x:event.clientX};capture(canvas,event);});
     canvas.addEventListener('pointermove',event=>{if(this.dragging?.id!==event.pointerId)return;this.orbit+=(event.clientX-this.dragging.x)*-.008;this.dragging.x=event.clientX;this.schedule();});
     for(const name of ['pointerup','pointercancel'])canvas.addEventListener(name,event=>{if(this.dragging?.id===event.pointerId)this.dragging=null;this.schedule();});
-    const stick=this.host.querySelector('.joystick');
+    // The joystick sits next to the canvas in the stage, not inside #world.
+    const stick=document.querySelector('.joystick');
     if(stick){
       const knob=stick.querySelector('.joystick-knob');let origin=null;
       const move=(event)=>{if(origin?.id!==event.pointerId)return;const dx=event.clientX-origin.x,dy=event.clientY-origin.y;this.analog=joystickInput(dx,dy);const limit=Math.min(1,Math.hypot(dx,dy)/56);const angle=Math.atan2(dy,dx);knob.style.transform=`translate(${Math.cos(angle)*limit*40}px,${Math.sin(angle)*limit*40}px)`;this.schedule();};
-      stick.addEventListener('pointerdown',event=>{event.preventDefault();origin={id:event.pointerId,x:event.clientX,y:event.clientY};stick.setPointerCapture(event.pointerId);stick.classList.add('active');if(!this.playing)this.options.onTouchStart?.();});
+      stick.addEventListener('pointerdown',event=>{event.preventDefault();origin={id:event.pointerId,x:event.clientX,y:event.clientY};capture(stick,event);stick.classList.add('active');if(!this.playing)this.options.onTouchStart?.();});
       stick.addEventListener('pointermove',move);
       for(const name of ['pointerup','pointercancel','lostpointercapture'])stick.addEventListener(name,event=>{if(origin?.id!==event.pointerId)return;origin=null;this.analog={throttle:0,steer:0};knob.style.transform='';stick.classList.remove('active');});
     }
-    document.querySelectorAll('[data-action]').forEach(button=>{const action=button.dataset.action;button.addEventListener('pointerdown',event=>{event.preventDefault();this.keys.add(action);button.setPointerCapture(event.pointerId);this.schedule();});for(const name of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(name,()=>this.keys.delete(action));});
+    document.querySelectorAll('[data-action]').forEach(button=>{const action=button.dataset.action;button.addEventListener('pointerdown',event=>{event.preventDefault();this.keys.add(action);capture(button,event);this.schedule();});for(const name of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(name,()=>this.keys.delete(action));});
   }
   observe(){
     this.resizeObserver=new ResizeObserver(this.resize);this.resizeObserver.observe(this.host);
