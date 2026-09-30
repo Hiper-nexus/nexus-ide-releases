@@ -1,3 +1,4 @@
+import { useAccessStore } from '../state/access-store';
 import {
   useEffect,
   useLayoutEffect,
@@ -401,6 +402,7 @@ export function PaneToolbar({ pane, isFocused }: Props) {
       }
     };
     const onKey = (e: KeyboardEvent) => {
+      if (!useAccessStore.getState().canUseApp) return;
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopImmediatePropagation();

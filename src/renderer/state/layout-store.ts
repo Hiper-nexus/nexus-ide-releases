@@ -1,3 +1,5 @@
+import { allowPaneCreation } from './access-guard';
+import { useSessionStateStore } from './session-state-store';
 import { create } from 'zustand';
 import type { SpawnRouteInfo } from '../../shared/spawn-route';
 import {
@@ -887,6 +889,7 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
   hydrated: false,
 
   split: (paneId, direction) => {
+    if (!allowPaneCreation()) return;
     // O irmão HERDA o espaço de quem foi dividido (F-560). Sem isto, dividir um
     // painel de "Meus terminais 2" cuspia o novo pane na aba dos soltos — o
     // operador dividia a tela e metade dela sumia da vista em que estava.
@@ -1020,6 +1023,7 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
   },
 
   addShellPane: (options) => {
+    if (!allowPaneCreation()) return '';
     const {
       root: currentRoot,
       focusedPaneId,
@@ -1075,6 +1079,9 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
   },
 
   spawnAgent: (adapterId, model, options) => {
+    const states = useSessionStateStore.getState().paneStates;
+    const liveAgents = listPanes(get().root).filter(pane => pane.kind === 'cli-agent' && ['idle', 'busy', 'spawning'].includes(states.get(pane.id) ?? '')).length;
+    if (!allowPaneCreation(liveAgents)) return undefined;
     const { focusedPaneId: targetId, root: currentRoot } = get();
     if (listPanes(currentRoot).length >= MAX_LIVE_PANES_HARD) {
       console.warn(
@@ -1236,6 +1243,7 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
   },
 
   addBrowserPane: (url, paneId, browserOpenRequestId) => {
+    if (!browserOpenRequestId && !allowPaneCreation()) return '';
     const { root: currentRoot, focusedPaneId } = get();
     if (paneId && listPanes(currentRoot).some((pane) => pane.id === paneId)) {
       throw new Error(`browser pane identity already exists: ${paneId}`);

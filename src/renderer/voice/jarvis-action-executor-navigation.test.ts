@@ -1,3 +1,4 @@
+import { useAccessStore } from '../state/access-store';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JarvisAction, JarvisContext, JarvisReply } from '../../shared/voice-ipc';
 
@@ -246,4 +247,14 @@ describe('Jarvis product navigation', () => {
       useProductNavigationStore.getState().settingsReturnDestination,
     ).toEqual({ kind: 'mission-setup' });
   });
+});
+
+beforeEach(() => { useAccessStore.setState({ canUseApp: true, maxAgents: null }); });
+
+it('refuses voice agent creation before reaching any spawn or MCP path while blocked', async () => {
+  useAccessStore.setState({ canUseApp: false });
+  const result = await execute({ type: 'open_agent', agentId: 'codex', model: '' });
+  expect(result.toolResult).toMatchObject({ ok: false, summary: 'license_access_denied' });
+  expect(waitForSession).not.toHaveBeenCalled();
+  expect(addShellPane).not.toHaveBeenCalled();
 });

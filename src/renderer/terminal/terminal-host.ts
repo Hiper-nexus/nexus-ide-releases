@@ -1,3 +1,5 @@
+import { useAccessStore } from '../state/access-store';
+import { reportLicenseDenial } from '../state/access-guard';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
@@ -426,6 +428,17 @@ function resumeVisibleHost(paneId: string, host: Host): boolean {
 }
 
 const hosts = new Map<string, Host>();
+const accessDeferredSpawns = new Map<string, () => void>();
+useAccessStore.subscribe((state, previous) => {
+  if (!state.canUseApp || previous.canUseApp) return;
+  const pending = [...accessDeferredSpawns];
+  accessDeferredSpawns.clear();
+  for (const [id, resume] of pending) {
+    const host = hosts.get(id);
+    const pane = listPanesFromLayout().find(item => item.id === id);
+    if (host && pane && !host.disposed) resume();
+  }
+});
 const MAX_PERSISTED_SCROLLBACK = 256_000;
 
 setTerminalSnapshotProvider((paneId) => {
@@ -1015,6 +1028,20 @@ function setupGhostAssist(host: Host, cwd?: string): void {
   });
 }
 
+/** Keep the in-flight request (including resume/continuity) until Main grants access. */
+function waitForSpawnAccess(host: Host, generation: number): Promise<boolean> {
+  return new Promise(resolve => {
+    let unsubscribe = () => {};
+    const finish = (allowed: boolean) => {
+      unsubscribe();
+      resolve(allowed && !host.disposed && host.spawnGeneration === generation);
+    };
+    unsubscribe = useAccessStore.subscribe(state => { if (state.canUseApp) finish(true); });
+    host.cleanups.push(() => finish(false));
+    if (useAccessStore.getState().canUseApp) finish(true);
+  });
+}
+
 function startSpawn(
   pane: PaneModel,
   host: Host,
@@ -1037,6 +1064,9 @@ function startSpawn(
   const pack = continuityPack ?? takePendingContinuity(pane.id);
   return (async (): Promise<string | null> => {
     try {
+      while (!useAccessStore.getState().canUseApp) {
+        if (!await waitForSpawnAccess(host, generation)) return null;
+      }
       // F-213: fases do renderer até o pty.spawn — espera de grade (intenção
       // de nascer → slot mensurável), espera held do gate de restore e a
       // pinagem de conta. `spawnCycleStartMs` é consumido aqui: uma retomada
@@ -1060,6 +1090,9 @@ function startSpawn(
         : pane.accountId;
       const accountPinMs = Date.now() - accountPinAt;
       if (host.disposed || host.spawnGeneration !== generation) return null;
+      while (!useAccessStore.getState().canUseApp) {
+        if (!await waitForSpawnAccess(host, generation)) return null;
+      }
       const spawnCallAt = Date.now();
       const res = await window.nexus.pty.spawn(
         buildPtySpawnRequest({
@@ -1105,6 +1138,12 @@ function startSpawn(
         return null;
       }
       if (!res.ok) {
+        if (reportLicenseDenial(res.error)) {
+          // Latch the attempt: remount, resize and recovery must not retry a denial.
+          recordPaneSpawnError(pane.id, res.error);
+          useSessionStateStore.getState().setPaneState(pane.id, 'exited');
+          return null;
+        }
         const isPersistedMissionAuthorityRefresh =
           /persisted mission pane authority/i.test(res.error);
         if (isPersistedMissionAuthorityRefresh) {
@@ -1651,8 +1690,13 @@ function startSpawn(
       return res.sessionId;
     } catch (err) {
       if (host.disposed || host.spawnGeneration !== generation) return null;
-      host.spawnStarted = false;
       const message = err instanceof Error ? err.message : String(err);
+      if (reportLicenseDenial(err)) {
+        recordPaneSpawnError(pane.id, message);
+        useSessionStateStore.getState().setPaneState(pane.id, 'exited');
+        return null;
+      }
+      host.spawnStarted = false;
       recordPaneSpawnError(pane.id, message);
       if (/persisted mission pane authority/i.test(message)) {
         console.warn(
@@ -1820,6 +1864,10 @@ function beginPaneSpawn(pane: PaneModel, host: Host): void {
   // grade mensurável e a pausa held entram no rendererWaitMs do pedido.
   host.spawnCycleStartMs ??= Date.now();
   if (heldSpawnPanes.has(pane.id)) return;
+  if (!useAccessStore.getState().canUseApp) {
+    accessDeferredSpawns.set(pane.id, () => beginPaneSpawn(pane, host));
+    return;
+  }
   if (!settleHostGrid(host)) {
     host.spawnWhenMeasurable = true;
     if (host.deferredSpawnRetry === undefined) {
@@ -2937,6 +2985,7 @@ export function releaseHeldSpawns(
   paneIds: readonly string[],
   opts: { resume: boolean },
 ): void {
+  if (!useAccessStore.getState().canUseApp) return;
   for (const paneId of paneIds) {
     // Always drop the hold flag even if it was already cleared — callers may
     // re-release after a coalesced prompt.
@@ -3573,6 +3622,10 @@ function reliveOrchestratorCli(
   operatorInitiated = false,
 ): void {
   if (host.disposed) return;
+  if (!useAccessStore.getState().canUseApp) {
+    accessDeferredSpawns.set(pane.id, () => reliveOrchestratorCli(pane, host, operatorInitiated));
+    return;
+  }
   const now = Date.now();
   if (!operatorInitiated) {
     const gate = orchAutoReliveGate({
@@ -3739,6 +3792,10 @@ export function respawnWithResume(
 ): void {
   const host = hosts.get(pane.id);
   if (!host || host.disposed) return;
+  if (!useAccessStore.getState().canUseApp) {
+    accessDeferredSpawns.set(pane.id, () => respawnWithResume(pane, note, options));
+    return;
+  }
   if (isMainControlledMissionPane(pane.id, pane)) {
     // Sessão morta: Reiniciar é retomar teclado, não outra sync que aposenta
     // o único leaf. Missão bloqueada com processo vivo segue o bootstrap.
@@ -4090,6 +4147,7 @@ export async function respawnMissionPaneFresh(
   timeoutMs = 75_000,
   recoveryRequestId?: string,
 ): Promise<string> {
+  if (!useAccessStore.getState().canUseApp) throw new Error('license_access_denied');
   const host = hosts.get(pane.id);
   if (!host || host.disposed) throw new Error('mission pane host is unavailable');
   const current = host.sessionId;
@@ -4363,6 +4421,7 @@ export function disposeWorkspaceHosts(workspacePath: string): number {
 }
 
 function disposeHost(host: Host, paneId: string): void {
+  accessDeferredSpawns.delete(paneId);
   host.disposed = true;
   clearDeferredSpawnRetry(host);
   host.inputVisibility.dispose();

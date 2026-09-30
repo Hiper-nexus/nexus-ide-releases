@@ -1,3 +1,4 @@
+import { useAccessStore } from './access-store';
 import { useOrchStore } from './orch-store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaneModel, WorkspaceLayout } from '../../shared/types';
@@ -1734,3 +1735,5 @@ describe('spawnOrchPane — helper nasce na aba do pai (C3/B1)', () => {
     expect(parsed.pane.spawnRoute).toBeUndefined();
   });
 });
+
+beforeEach(() => { useAccessStore.setState({ canUseApp: true, maxAgents: null }); });

@@ -1,3 +1,4 @@
+import { allowPaneCreation } from '../state/access-guard';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountInfo } from '../../shared/account-types';
 import { rankAutoSeatCli } from '../../shared/auto-seat-auth';
@@ -687,6 +688,7 @@ function paneStateRecord(): Record<string, string | undefined> {
  * vez de criá-lo invisível.
  */
 export function runPanePickerIntent(intent: PanePickerIntent): string | undefined {
+  if (!allowPaneCreation()) return undefined;
   const layout = useLayoutStore.getState();
   if (intent.kind === 'terminal') {
     return layout.addShellPane();
@@ -853,6 +855,7 @@ export function PanePicker({
   // menu volta direto na vista de contas dela.
   useEffect(() => {
     if (!pendingOpen || !acceptsPendingOpen) return;
+    if (!allowPaneCreation()) { consumePendingOpen(); return; }
     setOpen(true);
     if (pendingAccountsAdapterId) {
       // Voltar das contas devolve a matriz daquela CLI, não o índice geral.
@@ -1332,7 +1335,7 @@ export function PanePicker({
           trigger?.title ??
           'Abrir um pane novo: terminal, browser ou uma CLI numa conta e modelo exatos'
         }
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => { if (allowPaneCreation()) setOpen((current) => !current); }}
       >
         <PixelIcon name="plus" size={12} />
         {trigger ? (

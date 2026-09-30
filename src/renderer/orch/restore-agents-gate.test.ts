@@ -1,4 +1,6 @@
 /** @vitest-environment jsdom */
+import { buildGridTree } from '../lib/split-tree';
+import { useAccessStore } from '../state/access-store';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const holdSpawnUntilApproved = vi.fn();
@@ -100,6 +102,7 @@ describe('resolveAgentRestoreAction (multi-OS policy)', () => {
 
 describe('restore-agents-gate', () => {
   beforeEach(() => {
+    useAccessStore.setState({ canUseApp: true });
     setActiveWorkspacePath('/workspace-a');
     resetRestoredAgentsGate();
     holdSpawnUntilApproved.mockReset();
@@ -461,6 +464,56 @@ describe('restore-agents-gate', () => {
     expect(releaseHeldSpawns).toHaveBeenCalledWith(['a1', 'a2'], {
       resume: true,
     });
+  });
+
+  it('holds restored agents while blocked, preserving layout and policy', async () => {
+    useAccessStore.setState({ canUseApp: false });
+    await gateRestoredAgents([agent('locked', 'Guardado')]);
+    expect(holdSpawnUntilApproved).toHaveBeenCalledWith('locked');
+    expect(releaseHeldSpawns).not.toHaveBeenCalled();
+    expect(closePane).not.toHaveBeenCalled();
+    expect(orchGet).not.toHaveBeenCalled();
+  });
+
+  it('rechecks access after asynchronous policy loading', async () => {
+    orchGet.mockImplementation(async () => {
+      useAccessStore.setState({ canUseApp: false });
+      return { agentRestorePolicy: 'resume' };
+    });
+    await gateRestoredAgents([agent('late', 'Pendente')]);
+    expect(releaseHeldSpawns).not.toHaveBeenCalledWith(['late'], { resume: true });
+    expect(closePane).not.toHaveBeenCalled();
+  });
+
+  it('resumes access-held agents after unlock without dropping layout', async () => {
+    installRestoredAgentsGate();
+    const pane = agent('unlock', 'Guardado');
+    layoutRoot.current = { kind: 'leaf', id: 'leaf-unlock', pane };
+    useAccessStore.setState({ canUseApp: false });
+    await gateRestoredAgents([pane]);
+    orchGet.mockResolvedValue({ agentRestorePolicy: 'resume' });
+    useAccessStore.setState({ canUseApp: true });
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    expect(releaseHeldSpawns).toHaveBeenCalledWith(['unlock'], { resume: true });
+    expect(closePane).not.toHaveBeenCalled();
+  });
+
+  it('defers every pane in a coalesced restore prompt when access is revoked', async () => {
+    installRestoredAgentsGate();
+    const panes = [agent('batch-a', 'A'), agent('batch-b', 'B')];
+    layoutRoot.current = buildGridTree(panes) as never;
+    let decide!: (ok: boolean) => void;
+    askConfirm.mockImplementation(() => new Promise<boolean>(resolve => { decide = resolve; }));
+    const a = gateRestoredAgents([panes[0]]);
+    const b = gateRestoredAgents([panes[1]]);
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    useAccessStore.setState({ canUseApp: false });
+    decide(true);
+    await Promise.all([a, b]);
+    orchGet.mockResolvedValue({ agentRestorePolicy: 'resume' });
+    useAccessStore.setState({ canUseApp: true });
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    expect(releaseHeldSpawns).toHaveBeenCalledWith(['batch-a', 'batch-b'], { resume: true });
   });
 
   it('installRestoredAgentsGate wires the layout restore handler', () => {

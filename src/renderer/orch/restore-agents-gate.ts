@@ -1,3 +1,5 @@
+import { reportLicenseDenial } from '../state/access-guard';
+import { useAccessStore } from '../state/access-store';
 import type { PaneModel } from '../../shared/types';
 import type { OrchSettings } from '../../shared/settings-types';
 import { DEFAULT_ORCH_SETTINGS } from '../../shared/settings-types';
@@ -36,6 +38,9 @@ export function resolveAgentRestoreAction(
 }
 
 /** Coalesce concurrent restore prompts (layout handler + App double-call). */
+const accessPending = new Map<string, { pane: PaneModel; path: string | null }>();
+let unsubscribeAccess: (() => void) | undefined;
+
 let promptInFlight: Promise<void> | null = null;
 /** Agent pane ids waiting for the in-flight ask decision. */
 const pendingAskIds = new Set<string>();
@@ -152,7 +157,7 @@ async function requestMissionPaneAuthority(
       }
       return isAuthorized;
     } catch (error) {
-      if (!isCurrentRestoreWorkspaceGeneration(generation)) throw error;
+      if (!isCurrentRestoreWorkspaceGeneration(generation) || reportLicenseDenial(error)) throw error;
       const shouldRetry = await waitForMissionAuthorityRetry(
         retryDelayMs,
         generation,
@@ -238,7 +243,7 @@ function applyDecision(
   ids: readonly string[],
   decision: 'resume' | 'pause',
 ): void {
-  if (ids.length === 0) return;
+  if (ids.length === 0 || !useAccessStore.getState().canUseApp) return;
   if (decision === 'resume') {
     releaseHeldSpawns(ids, { resume: true });
     return;
@@ -267,6 +272,13 @@ export async function gateRestoredAgents(
 
   // Always hold first so a fast attach cannot race before policy resolves.
   for (const pane of agents) holdSpawnUntilApproved(pane.id);
+
+  const deferForAccess = (pending = agents): boolean => {
+    if (useAccessStore.getState().canUseApp) return false;
+    for (const pane of pending) accessPending.set(pane.id, { pane, path: restoreGeneration.path });
+    return true;
+  };
+  if (deferForAccess()) return;
 
   // Layout metadata is not authority. Main validates the exact
   // (missionId,paneId,approved revision) before a provider resume is requested.
@@ -297,6 +309,7 @@ export async function gateRestoredAgents(
     }),
   );
   if (isCurrentRestoreWorkspaceGeneration(restoreGeneration)) {
+    if (deferForAccess()) return;
     releaseHeldSpawns(confirmedMissionIds, { resume: true });
   } else {
     return;
@@ -309,6 +322,7 @@ export async function gateRestoredAgents(
   const action = resolveAgentRestoreAction(await loadPolicy());
   if (!isCurrentRestoreWorkspaceGeneration(restoreGeneration)) return;
 
+  if (deferForAccess()) return;
   if (action === 'resume') {
     applyDecision(ids, 'resume');
     return;
@@ -353,7 +367,9 @@ export async function gateRestoredAgents(
     lastAskDecision = ok ? 'resume' : 'pause';
     const batch = [...pendingAskIds];
     pendingAskIds.clear();
-    applyDecision(batch, lastAskDecision);
+    if (!isCurrentRestoreWorkspaceGeneration(restoreGeneration)) return;
+    const batchPanes = listPanes(useLayoutStore.getState().root).filter(pane => batch.includes(pane.id));
+    if (!deferForAccess(batchPanes)) applyDecision(batch, lastAskDecision);
   })();
 
   try {
@@ -365,6 +381,14 @@ export async function gateRestoredAgents(
 
 /** Wire layout restore → hold + policy. Call once at app boot (all platforms). */
 export function installRestoredAgentsGate(): void {
+  unsubscribeAccess?.();
+  unsubscribeAccess = useAccessStore.subscribe((state, previous) => {
+    if (!state.canUseApp || previous.canUseApp) return;
+    const ids = new Set(listPanes(useLayoutStore.getState().root).map(pane => pane.id));
+    const panes = [...accessPending.values()].filter(item => item.path === getActiveWorkspacePath() && ids.has(item.pane.id)).map(item => item.pane);
+    accessPending.clear();
+    if (panes.length) void gateRestoredAgents(panes);
+  });
   setRestoredPanesHandler((panes) => {
     void gateRestoredAgents(panes);
   });
@@ -372,6 +396,7 @@ export function installRestoredAgentsGate(): void {
 
 /** Drop pending ask state (workspace close / tests). */
 export function resetRestoredAgentsGate(): void {
+  accessPending.clear();
   promptInFlight = null;
   pendingAskIds.clear();
   lastAskDecision = null;

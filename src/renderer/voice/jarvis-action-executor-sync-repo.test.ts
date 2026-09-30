@@ -1,3 +1,4 @@
+import { useAccessStore } from '../state/access-store';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JarvisContext } from '../../shared/voice-ipc';
 import { buildSyncRepoViaPanePrompt } from '../../shared/sync-repo-via-pane';
@@ -220,3 +221,5 @@ describe('sync_repo_via_pane executor', () => {
     expect(execution.sayText).toMatch(/status/i);
   });
 });
+
+beforeEach(() => { useAccessStore.setState({ canUseApp: true, maxAgents: null }); });

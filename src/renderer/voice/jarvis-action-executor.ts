@@ -1,3 +1,4 @@
+import { allowPaneCreation } from '../state/access-guard';
 import type { JarvisAction, JarvisContext, JarvisReply } from '../../shared/voice-ipc';
 import { isMissionRuntimeSquadId, type SquadAgent } from '../../shared/orch-types';
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
@@ -410,6 +411,9 @@ export async function executeJarvisAction(
   control: JarvisExecutionControl = {},
 ): Promise<JarvisExecutionResult> {
   checkpoint(control);
+  if (reply.action.type !== 'none' && !allowPaneCreation()) {
+    return { sayText: 'Abra Minha conta para atualizar seu acesso ao NexusIDE.', expectReply: false, toolResult: { tool: reply.action.type, ok: false, summary: 'license_access_denied' } };
+  }
   let sayText = reply.say;
   let expectReply = reply.expectReply;
   // Legacy Live/classic action: rewrite to pane CLI path (avoids nexus_git_sync

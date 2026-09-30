@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { useAccessStore } from '../../state/access-store';
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -100,6 +101,7 @@ async function settleReady(sessionId: string | null): Promise<void> {
 }
 
 beforeEach(() => {
+  useAccessStore.setState({ canUseApp: true, maxAgents: null });
   terminal.waitForSession.mockReset();
   terminal.writeToPane.mockReset();
   terminal.waitForSession.mockImplementation(

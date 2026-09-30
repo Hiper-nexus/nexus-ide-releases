@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { useAccessStore } from '../state/access-store';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -41,6 +42,7 @@ function mount(width: number): HTMLElement {
 }
 
 beforeEach(() => {
+  useAccessStore.setState({ canUseApp: true, maxAgents: null });
   vi.clearAllMocks();
   vi.stubGlobal('ResizeObserver', class {
     constructor(callback: ResizeObserverCallback) {

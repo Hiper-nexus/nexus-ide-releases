@@ -1,3 +1,4 @@
+import { useAccessStore } from '../state/access-store';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JarvisContext, JarvisReply } from '../../shared/voice-ipc';
 import type { SquadAgent } from '../../shared/orch-types';
@@ -722,3 +723,5 @@ describe('Jarvis MCP result propagation', () => {
     expect(invokeMcpWithConfirm).not.toHaveBeenCalled();
   });
 });
+
+beforeEach(() => { useAccessStore.setState({ canUseApp: true, maxAgents: null }); });

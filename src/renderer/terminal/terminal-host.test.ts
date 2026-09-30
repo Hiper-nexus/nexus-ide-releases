@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { useAccessStore } from '../state/access-store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaneModel } from '../../shared/types';
 
@@ -167,6 +168,7 @@ function openHiddenHost() {
 }
 
 beforeEach(() => {
+  useAccessStore.setState({ canUseApp: true, maxAgents: null });
   vi.useFakeTimers();
   vi.stubGlobal(
     'ResizeObserver',
@@ -1963,6 +1965,22 @@ describe('leader-drift — o relive do Maestro religa a missão à sessão nova'
     });
   });
 
+  it('defers the complete automatic relive and rebind while access is blocked', async () => {
+    const { maestro, missionId } = mountMaestro();
+    const oldId = `pty-${maestro.id}-old`;
+    await attachWithSession(maestro, oldId);
+    useAccessStore.setState({ canUseApp: false });
+    spawn.mockResolvedValueOnce({ ok: true, sessionId: 'relived-after-unlock' });
+    ptyExitListeners.get(oldId)!({ exitCode: 0 });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(rebindMissionOrchestratorMock).not.toHaveBeenCalled();
+    useAccessStore.setState({ canUseApp: true });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(spawn).toHaveBeenLastCalledWith(expect.objectContaining({ resume: true }));
+    expect(rebindMissionOrchestratorMock).toHaveBeenCalledWith(missionId, 'relived-after-unlock');
+  });
+
   it('relive quieto religa a missão à sessão nova UMA vez e espelha a liderança', async () => {
     const { maestro, missionId } = mountMaestro();
     const bindPaneMission = vi.spyOn(useOrchStore.getState(), 'bindPaneMission');
@@ -2196,5 +2214,56 @@ describe('F-216 — reassert da grade do PTY e repaint manual', () => {
 
     repaintPaneTui(shell.id);
     expect(resize).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('license access at the PTY seam', () => {
+  it('holds initial spawn until access arrives, then keeps live sessions on revocation', async () => {
+    useAccessStore.setState({ canUseApp: false });
+    const host = getOrCreateHost(pane);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div'); document.body.append(slot);
+    attachHost(pane, slot);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(spawn).not.toHaveBeenCalled();
+    useAccessStore.setState({ canUseApp: true });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    useAccessStore.setState({ canUseApp: false });
+    expect(kill).not.toHaveBeenCalled();
+    expect(host.disposed).toBe(false);
+    expect(getPaneSessionId(pane.id)).toBe('pty-hidden');
+  });
+  it('preserves resume intent when access changes during account pinning', async () => {
+    const agent: PaneModel = { ...pane, kind: 'cli-agent', adapterId: 'codex' };
+    Object.assign(window.nexus, { accounts: { list: vi.fn(async () => { useAccessStore.setState({ canUseApp: false }); return []; }) } });
+    useLayoutStore.setState({ root: buildGridTree([agent]) });
+    markResumeOnSpawn(agent.id);
+    const host = getOrCreateHost(agent);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div'); document.body.append(slot);
+    attachHost(agent, slot);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(spawn).not.toHaveBeenCalled();
+    vi.mocked(window.nexus.accounts.list).mockResolvedValue([]);
+    useAccessStore.setState({ canUseApp: true });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(spawn).toHaveBeenCalledWith(expect.objectContaining({ resume: true }));
+  });
+
+  it.each(['license_access_denied', 'license_agent_limit'])('does not automatically retry %s', async code => {
+    spawn.mockResolvedValue({ ok: false, error: code });
+    const host = getOrCreateHost(pane);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div'); document.body.append(slot);
+    attachHost(pane, slot);
+    await vi.advanceTimersByTimeAsync(100);
+    attachHost(pane, slot);
+    revealTerminalHostsAfterWorkspaceShow();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(host.spawnStarted).toBe(true);
+    expect(kill).not.toHaveBeenCalled();
   });
 });

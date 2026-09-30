@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { useAccessStore } from '../state/access-store';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1030,4 +1031,13 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
       expect(resolveSpecialtyKeywords('gemini', 'gemini-2.5-flash')).toContain('scout');
     });
   });
+});
+
+beforeEach(() => { useAccessStore.setState({ canUseApp: true, maxAgents: null }); });
+
+it('refuses every picker intent while access is unavailable', () => {
+  useAccessStore.setState({ canUseApp: false });
+  expect(runPanePickerIntent({ kind: 'terminal' })).toBeUndefined();
+  expect(runPanePickerIntent({ kind: 'browser' })).toBeUndefined();
+  expect(runPanePickerIntent({ kind: 'agent', adapterId: 'codex', model: '' })).toBeUndefined();
 });
