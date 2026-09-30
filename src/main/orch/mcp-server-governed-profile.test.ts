@@ -30,6 +30,32 @@ vi.mock('../persistence/settings-store', () => ({
   getOrchSettings: homePolicyDeps.getOrchSettings,
 }));
 
+// Registro MCP no perfil nativo roda o binário real (`agy mcp add`,
+// `devin mcp add`) ou grava ~/.config/muse/settings.json — nunca num teste.
+const cliRegistration = vi.hoisted(() => ({
+  agy: vi.fn(() => ({ registered: true })),
+  devin: vi.fn(() => ({ registered: true })),
+  muse: vi.fn((mcpUrl: string, token: string) => ({
+    env: { NEXUS_MCP_URL: mcpUrl, NEXUS_MCP_TOKEN: token },
+    registered: true,
+  })),
+}));
+
+vi.mock('./cli-mcp-session-agy', async (orig) => ({
+  ...(await orig<typeof import('./cli-mcp-session-agy')>()),
+  ensureAgyNexusMcpRegistration: cliRegistration.agy,
+}));
+
+vi.mock('./cli-mcp-session-devin', async (orig) => ({
+  ...(await orig<typeof import('./cli-mcp-session-devin')>()),
+  ensureDevinNexusMcpRegistration: cliRegistration.devin,
+}));
+
+vi.mock('./cli-mcp-session-muse', async (orig) => ({
+  ...(await orig<typeof import('./cli-mcp-session-muse')>()),
+  prepareMuseMcpSession: cliRegistration.muse,
+}));
+
 import {
   buildArmsRuntimeDescriptor,
   hasApprovedMissionProjectTrust,
@@ -92,6 +118,7 @@ function adapter(
     | 'glm'
     | 'codex'
     | 'agy'
+    | 'aider'
     | 'opencode'
     | 'mimo-code'
     | 'kimi'
@@ -112,7 +139,7 @@ function adapter(
     },
     quirks: {
       mcpAutoload: claudeFamily,
-      nexusMcp: claudeFamily ? 'autoload' : id,
+      nexusMcp: claudeFamily ? 'autoload' : id === 'aider' ? 'none' : id,
     },
   } as unknown as CliPtyAdapter;
 }
@@ -242,6 +269,9 @@ function petAuthority(
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  cliRegistration.agy.mockClear();
+  cliRegistration.devin.mockClear();
+  cliRegistration.muse.mockClear();
   homePolicyDeps.getOrchSettings.mockReturnValue({
     squadCliPolicy: 'operator-choice',
   });
@@ -593,6 +623,32 @@ describe('mcp-server governed CLI profile wiring', () => {
     const cwd = path.join(root, 'workspace');
     fs.mkdirSync(cwd, { recursive: true });
     const originalPath = '/usr/local/bin:/usr/bin:/bin';
+
+    const assertWorkerShim = (decoration: AgentSpawnDecoration) => {
+      const shimRoot = decoration.env.NEXUS_SHIM_ROOT;
+      const shimBin = path.join(shimRoot, 'bin');
+      expect(decoration.env.NEXUS_SHIM_SECRET).toMatch(/^[a-f0-9]{64}$/);
+      expect(decoration.env.NEXUS_SHIM_CAPABILITY_ID).toMatch(/^[0-9a-f-]{36}$/);
+      expect(decoration.env.PATH?.split(path.delimiter)).toEqual([
+        shimBin,
+        ...originalPath.split(path.delimiter),
+      ]);
+      expect(decoration.missionShimReadPaths).toEqual([
+        shimBin,
+        path.join(shimRoot, 'responses'),
+        path.join(shimRoot, 'requests'),
+        path.join(shimRoot, 'state'),
+      ]);
+      expect(decoration.missionShimWritePaths).toEqual([
+        path.join(shimRoot, 'requests'),
+        path.join(shimRoot, 'state'),
+      ]);
+      expect(fs.existsSync(path.join(shimBin, 'nx-mail'))).toBe(true);
+      return shimRoot;
+    };
+
+    // F-697: AGY é capaz de MCP — a sessão chega por ENV e a ponte stdio é
+    // registrada pelo CLI no perfil nativo (mockada acima; nunca o binário real).
     const decoration = prepareAgentSpawnDecoration(
       adapter('agy'),
       { kind: 'cli-agent', cols: 80, rows: 24 },
@@ -601,29 +657,29 @@ describe('mcp-server governed CLI profile wiring', () => {
     );
     if (!decoration) throw new Error('expected AGY worker decoration');
 
-    const shimRoot = decoration.env.NEXUS_SHIM_ROOT;
-    const shimBin = path.join(shimRoot, 'bin');
-    expect(decoration.env.NEXUS_SHIM_SECRET).toMatch(/^[a-f0-9]{64}$/);
-    expect(decoration.env.NEXUS_SHIM_CAPABILITY_ID).toMatch(/^[0-9a-f-]{36}$/);
-    expect(decoration.env.PATH?.split(path.delimiter)).toEqual([
-      shimBin,
-      ...originalPath.split(path.delimiter),
-    ]);
-    expect(decoration.missionShimReadPaths).toEqual([
-      shimBin,
-      path.join(shimRoot, 'responses'),
-      path.join(shimRoot, 'requests'),
-      path.join(shimRoot, 'state'),
-    ]);
-    expect(decoration.missionShimWritePaths).toEqual([
-      path.join(shimRoot, 'requests'),
-      path.join(shimRoot, 'state'),
-    ]);
-    expect(decoration.env.NEXUS_MCP_URL).toBeUndefined();
-    expect(fs.existsSync(path.join(shimBin, 'nx-mail'))).toBe(true);
+    const shimRoot = assertWorkerShim(decoration);
+    expect(decoration.env.NEXUS_MCP_URL).toBe('http://127.0.0.1:0/mcp');
+    expect(cliRegistration.agy).toHaveBeenCalledTimes(1);
 
     decoration.onSpawnFailed?.();
     expect(fs.existsSync(shimRoot)).toBe(false);
+
+    // Metade sem MCP: o shim privado não depende do transporte nexus_*.
+    const aider = prepareAgentSpawnDecoration(
+      adapter('aider'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, true),
+      { PATH: originalPath },
+    );
+    if (!aider) throw new Error('expected Aider worker decoration');
+
+    const aiderShimRoot = assertWorkerShim(aider);
+    expect(aider.env.NEXUS_MCP_URL).toBeUndefined();
+    expect(cliRegistration.agy).toHaveBeenCalledTimes(1);
+    expect(cliRegistration.devin).not.toHaveBeenCalled();
+
+    aider.onSpawnFailed?.();
+    expect(fs.existsSync(aiderShimRoot)).toBe(false);
   });
 
   it('projects Claude trust only from an exact sealed mission authority', () => {
@@ -1321,14 +1377,17 @@ describe('mcp-server governed CLI profile wiring', () => {
     expect(
       getContext(agy.authorityToken)?.governedNativeProvider,
     ).toBeUndefined();
-    expect(agy.env.NEXUS_MCP_URL).toBeUndefined();
-    expect(agy.env.NEXUS_MCP_TOKEN).toBeUndefined();
-    expect(agy.env.NEXUS_GATE_URL).toBeUndefined();
-    expect(agy.env.NEXUS_GATE_TOKEN).toBeUndefined();
-    expect(agy.env.NEXUS_HOOK_URL).toBeUndefined();
+    // F-697: AGY é MCP-capable — transporte por ENV (URL + bearer) e ponte
+    // registrada no perfil nativo via `agy mcp add` (mockado neste arquivo).
+    expect(agy.env.NEXUS_MCP_URL).toBeDefined();
+    expect(agy.env.NEXUS_MCP_TOKEN).toBeDefined();
+    expect(agy.env.NEXUS_GATE_URL).toBeDefined();
+    expect(agy.env.NEXUS_GATE_TOKEN).toBeDefined();
+    expect(agy.env.NEXUS_HOOK_URL).toBeDefined();
     expect(agy.env.HOME).toBeUndefined();
     expect(agy.env.GEMINI_CLI_HOME).toBeUndefined();
     expect(agy.extraArgs.join(' ')).not.toContain('mcp_config');
+    expect(cliRegistration.agy).toHaveBeenCalledTimes(1);
 
     const opencode = decorations.get('opencode')!;
     expect(opencode.extraArgs).toContain('--pure');

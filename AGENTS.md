@@ -952,6 +952,11 @@ saber isto antes de mexer:
   ENV, que o AGY repassa ao stdio (provado com `agy -p` no 1.2.14). Registro
   falho num worker de missão derruba o spawn — nunca um worker esperando um
   handoff que não pode entregar. Fora do Nexus a ponte fica muda.
+- F-219: teste que chama `prepareAgentSpawnDecoration` para AGY, Devin ou Muse
+  mocka `ensureAgyNexusMcpRegistration`, `ensureDevinNexusMcpRegistration` e
+  `prepareMuseMcpSession` (modelo em `mcp-server-governed-profile.test.ts`).
+  Sem o mock a suíte roda o `agy mcp add` de verdade e grava o `nexus` no
+  perfil real de quem roda os testes (Mac, 30/09).
 - F-658: a missão leve da aba (0.76.110) leva os helpers seguintes do "+ Pane"
   à rota de MISSÃO. Ali o pane promovido (`promotedFromUserSession`) mantém a
   mesma regra: `excludeAdapterIds` com as CLIs sem MCP, numa chamada só (sem
