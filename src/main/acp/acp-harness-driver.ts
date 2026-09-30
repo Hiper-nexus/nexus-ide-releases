@@ -1,3 +1,5 @@
+import { assertLicenseAccess } from '../license-enforcement';
+import { LicenseError } from '../../shared/license-errors';
 /**
  * Production ACP harness driver — lifecycle over AcpClient with typed
  * observer frames. Never scrapes terminal scrollback and never falls back
@@ -239,6 +241,7 @@ async function promptLiveSession(
 export async function spawnAcpHarnessSession(
   input: AcpDriverSpawnInput,
 ): Promise<AcpDriverSession> {
+  assertLicenseAccess();
   const sessionId = `acp-${randomUUID()}`;
   const publish = input.publishFrame ?? defaultPublish;
   const observerScope: AcpObserverScope = {
@@ -265,6 +268,7 @@ export async function spawnAcpHarnessSession(
         }),
     });
   } catch (error) {
+    if (error instanceof LicenseError) throw error;
     const wrapped =
       error instanceof AcpClientError
         ? error

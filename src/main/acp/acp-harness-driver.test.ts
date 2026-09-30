@@ -1,3 +1,9 @@
+import { resetLicensedAccessMock } from '../__tests__/licensed-access';
+beforeEach(resetLicensedAccessMock);
+import { beforeEach } from 'vitest';
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+import { requireAccess } from '../license-access';
+import { vi } from 'vitest';
 /**
  * Integration tests for the production ACP harness driver (fake peer subprocess).
  */
@@ -85,4 +91,10 @@ describe('acp-harness-driver', () => {
     await session.shutdown();
     expect(frames.some((f) => f.kind === 'session_exited')).toBe(true);
   });
+});
+
+
+test('driver rejects denied access before starting a harness', async () => {
+  vi.mocked(requireAccess).mockReturnValue({ ok: false, reason: 'inactive' });
+  await expect(spawnAcpHarnessSession({} as never)).rejects.toMatchObject({ code: 'license_access_denied' });
 });

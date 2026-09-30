@@ -1,3 +1,8 @@
+import { resetLicensedAccessMock } from '../__tests__/licensed-access';
+beforeEach(resetLicensedAccessMock);
+import { beforeEach } from 'vitest';
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+import { requireAccess, getAccessState } from '../license-access';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const harness = vi.hoisted(() => ({
@@ -283,4 +288,18 @@ describe('remote-spawn target validation', () => {
     expect(args).toContain('vps-1');
     expect(args.join(' ')).not.toMatch(/\d{1,3}(?:\.\d{1,3}){3}/);
   });
+});
+
+
+it('refuses remote creation before SSH when the license is denied', async () => {
+  vi.mocked(requireAccess).mockReturnValue({ ok: false, reason: 'inactive' });
+  await expect(createRemoteTmuxSession({ target: 'vps-1', cli: 'claude' })).rejects.toMatchObject({ code: 'license_access_denied' });
+  expect(harness.execFile).not.toHaveBeenCalled();
+});
+
+
+it('keeps new remote tmux executions unavailable during trial', async () => {
+  vi.mocked(getAccessState).mockReturnValue({ ...getAccessState(), access: 'trial' });
+  await expect(createRemoteTmuxSession({ target: 'vps-1', cli: 'claude' })).rejects.toMatchObject({ code: 'license_access_denied', reason: 'remote-trial-unavailable' });
+  expect(harness.execFile).not.toHaveBeenCalled();
 });

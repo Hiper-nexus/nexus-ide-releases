@@ -1,3 +1,4 @@
+import { reserveLicensedAgent } from '../license-enforcement';
 /**
  * ACP client — drives an ACP-speaking agent subprocess over stdio.
  *
@@ -434,15 +435,25 @@ export class AcpClient {
    */
   static spawn(options: AcpSpawnOptions): AcpClient {
     validateSpawnOptions(options);
-    const child = spawn(options.command, [...(options.args ?? [])], {
+    const release = reserveLicensedAgent();
+    let child: ChildProcess | undefined;
+    try {
+    child = spawn(options.command, [...(options.args ?? [])], {
       cwd: options.cwd,
       env: sanitizeHarnessSpawnEnv(process.env, options.env),
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
     });
+    child.once('exit', release);
+    child.once('error', () => { if (child?.pid === undefined) release(); });
     const client = new AcpClient(child, options);
     client.attach();
     return client;
+    } catch (error) {
+      if (!child) release();
+      else killHarnessProcessTree(child);
+      throw error;
+    }
   }
 
   get pid(): number | undefined {

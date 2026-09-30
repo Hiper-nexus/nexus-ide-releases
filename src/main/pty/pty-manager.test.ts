@@ -1,3 +1,9 @@
+import { resetLicensedAccessMock } from '../__tests__/licensed-access';
+beforeEach(resetLicensedAccessMock);
+import { licensedAgentCount } from '../license-enforcement';
+import { AcpClient } from '../acp/acp-client';
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+import { requireAccess, maxAgents } from '../license-access';
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -924,6 +930,35 @@ function fakeHost(): {
   };
 }
 
+it('enforces a shared two-agent cap across PTY and ACP and releases only on physical finalization', async () => {
+  // Run before legacy ownership fixtures accumulate their fake live sessions.
+  expect(licensedAgentCount()).toBe(0);
+  vi.mocked(maxAgents).mockReturnValue(2);
+  const h = fakeHost(); setPtyHost(h.host);
+  const adapter = makeAdapter({ static: {}, passthrough: [], ephemeralHome: false });
+  const req = { kind: 'cli-agent' as const, cols: 80, rows: 24 };
+  const a = spawnAgentSession(fakeWc(), req, adapter, {}, trustedSpawn());
+  const b = AcpClient.spawn({ command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'] });
+  try {
+    expect(licensedAgentCount()).toBe(2);
+    expect(() => spawnAgentSession(fakeWc(), req, adapter, {}, trustedSpawn())).toThrow(/license_agent_limit/);
+    expect(() => AcpClient.spawn({ command: process.execPath, args: ['-e', ''] })).toThrow(/license_agent_limit/);
+    let prove!: () => void;
+    const proof = new Promise<void>(resolve => { prove = resolve; });
+    vi.mocked(h.procFor(a.sessionId).terminate).mockImplementationOnce(async () => {
+      await proof; return { ok: true, rootExited: true, descendantsExited: true };
+    });
+    const stopping = orchTerminateSession(a.sessionId);
+    expect(licensedAgentCount()).toBe(2);
+    prove(); await stopping;
+    expect(licensedAgentCount()).toBe(1);
+    const c = spawnAgentSession(fakeWc(), req, adapter, {}, trustedSpawn());
+    expect(licensedAgentCount()).toBe(2);
+    await orchTerminateSession(c.sessionId);
+  } finally { await orchTerminateSession(a.sessionId); await b.shutdown(); }
+  expect(licensedAgentCount()).toBe(0);
+});
+
 describe("PTY session ownership (renderer capability boundary)", () => {
   it("keeps a detached mission agent in the app-shutdown physical inventory", async () => {
     const h = fakeHost();
@@ -964,10 +999,12 @@ describe("PTY session ownership (renderer capability boundary)", () => {
       scope: authority.scope,
     };
 
+    const slotsBeforeAdoption = licensedAgentCount();
     expect(adoptMainOwnedAgentSession(owner, exactClaim)).toEqual({
       sessionId,
       state: "spawning",
     });
+    expect(licensedAgentCount()).toBe(slotsBeforeAdoption);
     expect(writeSession(owner, sessionId, "continue\r")).toBe(false);
     expect(getOwnedAgentSessionInfo(owner, sessionId)).toMatchObject({
       workerIncarnationId: "worker-incarnation-main-owned",
@@ -5548,4 +5585,17 @@ describe("F-216 — evidência de drift e resize descartado", () => {
     expect(droppedEvents(sessionId)).toHaveLength(1);
     orchKillSession(sessionId);
   });
+});
+
+
+it('license denial prevents both agent and shell host spawns even with NEXUS_PANE_GUARD=off', () => {
+  const h = fakeHost(); setPtyHost(h.host);
+  const spy = vi.spyOn(h.host, 'spawn');
+  vi.stubEnv('NEXUS_PANE_GUARD', 'off');
+  vi.mocked(requireAccess).mockReturnValue({ ok: false, reason: 'trial-ended' });
+  try {
+    expect(() => spawnAgentSession(fakeWc(), { kind: 'cli-agent', cols: 80, rows: 24 }, { id: 'test-cli' } as never, {}, trustedSpawn())).toThrow(/license_access_denied/);
+    expect(() => spawnSession(fakeWc(), { cols: 80, rows: 24, kind: 'shell' }, { ...trustedSpawn(), shell: '/bin/zsh' })).toThrow(/license_access_denied/);
+    expect(spy).not.toHaveBeenCalled();
+  } finally { vi.unstubAllEnvs(); }
 });

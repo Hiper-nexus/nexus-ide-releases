@@ -1,3 +1,8 @@
+import { resetLicensedAccessMock } from '../__tests__/licensed-access';
+beforeEach(resetLicensedAccessMock);
+import { beforeEach } from 'vitest';
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+import { requireAccess } from '../license-access';
 /**
  * TDD suite for the ACP client, driven against a REAL subprocess: an inline
  * fake peer (Node script written to a temp dir) that speaks ACP on the other
@@ -572,4 +577,13 @@ describe('spawn environment strips reserved keys regardless of casing', () => {
 
     expect(env).toEqual({ Path: 'C:\\bin', my_agent_mode: 'acp' });
   });
+});
+
+
+test('license denial prevents a physical ACP child from being created', async () => {
+  vi.mocked(requireAccess).mockReturnValue({ ok: false, reason: 'suspended' });
+  let child: AcpClient | undefined;
+  try {
+    expect(() => { child = AcpClient.spawn({ command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'] }); }).toThrow(/license_access_denied/);
+  } finally { await child?.shutdown(); }
 });

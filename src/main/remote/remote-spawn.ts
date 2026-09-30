@@ -1,3 +1,4 @@
+import { assertRemoteLicenseAccess } from '../license-enforcement';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
@@ -236,6 +237,7 @@ export async function createRemoteTmuxSession(
   req: RemoteSpawnRequest,
   control?: RemoteSpawnControl,
 ): Promise<RemoteSpawnResult> {
+  assertRemoteLicenseAccess();
   const target = await validateTarget(req.target);
   if (!ALLOWED_CLIS.includes(req.cli)) throw new Error('unsupported remote cli');
   const name = sessionName(req.sessionName);
@@ -268,6 +270,7 @@ export async function createRemoteTmuxSession(
   let promptStarted = false;
   try {
     assertRemoteSpawnAuthority(control);
+    assertRemoteLicenseAccess();
     creationStarted = true;
     const startOutput = await ssh(target, start, control?.signal);
     created = startOutput.includes(CREATED_MARKER);

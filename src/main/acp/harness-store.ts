@@ -1,3 +1,5 @@
+import { assertLicenseAccess } from '../license-enforcement';
+import { licenseFailure, type LicenseErrorCode, type LicenseDenialReason } from '../../shared/license-errors';
 /**
  * BYOH (Bring Your Own Harness) catalog — backed by OrchSettings so the
  * existing settings IPC (orchGet/orchSet) is the real save path used at spawn.
@@ -27,6 +29,8 @@ export interface AcpHarnessProbeResult {
   readonly harnessId: string;
   readonly detail: string;
   readonly pid?: number;
+  readonly code?: LicenseErrorCode;
+  readonly blockedReason?: LicenseDenialReason;
 }
 
 function freezeState(state: AcpHarnessCatalogState): AcpHarnessCatalogState {
@@ -142,6 +146,11 @@ export async function probeAcpHarness(
   id: string,
   options: { cwd?: string; requestTimeoutMs?: number } = {},
 ): Promise<AcpHarnessProbeResult> {
+  try { assertLicenseAccess(); } catch (error) {
+    const failure = licenseFailure(error);
+    if (failure) return { ...failure, harnessId: id, detail: failure.error };
+    throw error;
+  }
   const harness = getAcpHarness(id);
   if (!harness) {
     return {
@@ -185,6 +194,6 @@ export async function probeAcpHarness(
         : error instanceof Error
           ? error.message
           : String(error);
-    return { ok: false, harnessId: id, detail };
+    return { ok: false, harnessId: id, detail, ...licenseFailure(error) };
   }
 }

@@ -1,3 +1,7 @@
+import { resetLicensedAccessMock } from '../__tests__/licensed-access';
+beforeEach(resetLicensedAccessMock);
+import { beforeEach } from 'vitest';
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 import fs from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WebContents } from "electron";

@@ -1,3 +1,4 @@
+import { assertLicenseAccess, reserveLicensedAgent } from '../license-enforcement';
 import fs from "node:fs";
 import { canResumeMimoNativeSession } from "../adapters/mimo-session-owner";
 import os from "node:os";
@@ -165,6 +166,7 @@ import { trace } from "../observability/main-trace";
 
 interface Session {
   proc: PtyProcHandle;
+  releaseLicenseAgent?: () => void;
   /**
    * Renderer currently presenting this session. Mission agents may be
    * headless (`null`): the main coordinator remains their lifecycle owner and
@@ -1148,6 +1150,7 @@ function finalizeSession(
       ? terminationOrigins.get(sessionId) ?? null
       : pendingTermination.exitTerminationOrigin;
   sessions.delete(sessionId);
+  s.releaseLicenseAgent?.();
   sessionLeaseRegistry.revokeLease(sessionId);
   lastInputOrigins.delete(sessionId);
   terminationOrigins.delete(sessionId);
@@ -1236,6 +1239,7 @@ export function spawnSession(
   req: SpawnRequest,
   authority: ShellSpawnAuthority,
 ): SpawnedSession {
+  assertLicenseAccess();
   if (allSessionsTerminationInProgress) {
     throw new Error("PTY shutdown is in progress; new sessions are blocked");
   }
@@ -1512,6 +1516,9 @@ export function spawnAgentSession(
       console.warn('[warm-pool] adoção falhou; cold spawn:', err);
     }
   }
+  const releaseLicenseAgent = reserveLicensedAgent();
+  let licenseChildSpawned = false;
+  try {
   assertExclusiveOrchestratorProcessAvailable(adapter, authority);
   const requestedModel = (req.model ?? overrides.defaultModel)?.trim() || "";
   const missionSealedModel = Boolean(
@@ -2629,7 +2636,9 @@ export function spawnAgentSession(
     if (trustedNativeLaunch && persistencePlan.mode === "direct") {
       revalidateTrustedNativeConfinementLaunch(trustedNativeLaunch);
     }
+    assertLicenseAccess();
     proc = host.spawn(spec, handlers);
+    licenseChildSpawned = true;
   } catch (err) {
     // The host itself is unavailable (never initialized / failed to fork), so
     // no session will exist — free the minted token + on-disk artifacts here,
@@ -2645,6 +2654,7 @@ export function spawnAgentSession(
     Boolean(authority.context.squadId);
   session = {
     proc,
+    releaseLicenseAgent,
     wc,
     grid: { cols: req.cols, rows: req.rows },
     idleTimer: null,
@@ -2777,6 +2787,10 @@ export function spawnAgentSession(
     }
   }
   return { sessionId, startKey: lease.startKey, ...(resumeMode ? { resumeMode } : {}) };
+  } catch (error) {
+    if (!licenseChildSpawned) releaseLicenseAgent();
+    throw error;
+  }
 }
 
 /**
