@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.149 — Memória que enche
+
+Uso real no Windows em 30/09. Inclui a 0.76.148 (Maestro delega).
+
+- **Entrega confirmada pelo Maestro vira memória (F-703).** Depois de dois dias de missão HiperGO, a tela Memória estava vazia e o Jev nunca tinha sido chamado para destilar memória. As gravações automáticas exigiam um trilho que a missão da aba não percorre: tarefa do plano selado, evidência verificada pelo Main, fila de merge ou prompt no "+ Pane". Os 118 handoffs não tinham nenhum desses. Agora o `nexus_handoff_ack` do Maestro a uma entrega de sucesso fora do plano leva o resumo à mesma barreira do aceite: filtro de diretiva e Jev `instruction_free` + `worth_retaining`, numa linha de até 400 caracteres. O que o Jev aprovar aparece em Memória. Resumo descartado não grava nada, e as entregas antigas não são reprocessadas. A memória continua local de cada máquina.
+
 ## 0.76.148 — Maestro delega
 
 Uso real no Windows em 30/09, numa missão de dois dias no HiperGO. Inclui a 0.76.147 (todas as CLIs na rota).

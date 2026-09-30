@@ -8457,7 +8457,7 @@ export const RELEASE_076147: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076148: AppRelease = {
   version: '0.76.148',
   date: '2026-09-30',
   codename: 'Maestro delega',
@@ -8494,6 +8494,28 @@ export const CURRENT_RELEASE: AppRelease = {
         'Sob pressão de memória, o Nexus estacionava o MiniMax no meio de uma ' +
         'tarefa longa. Agora ele lê a tela do MiniMax e reconhece quando ele está ' +
         'trabalhando.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.149',
+  date: '2026-09-30',
+  codename: 'Memória que enche',
+  summary:
+    'As entregas que o Maestro confirma passam a virar memória do projeto: ' +
+    'antes, a missão da aba nunca gravava nada. Inclui a 0.76.148.',
+  highlights: [
+    {
+      title: 'Memória do projeto de verdade',
+      detail:
+        'O Jev só guardava memória de tarefas do plano selado, de entregas com ' +
+        'evidência verificada ou do "+ Pane". Na missão da aba, onde o Maestro ' +
+        'abre os workers, nada disso acontecia, e a tela Memória ficava vazia ' +
+        'depois de dias de trabalho. Agora cada entrega que o Maestro confirma ' +
+        'passa pelo Jev, e o que vale lembrar aparece em Memória. As entregas ' +
+        'antigas não são reprocessadas.',
     },
   ],
   fixes: [],
