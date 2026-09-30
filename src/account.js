@@ -100,7 +100,7 @@ async function refreshAccount({ announce = true } = {}) {
   isBusy = true;
   byId('refresh-account').disabled = true;
   byId('subscribe').disabled = true;
-  message('account-message', 'Atualizando sua conta…');
+  if (announce) message('account-message', 'Atualizando sua conta…');
   const results = await Promise.allSettled([api('/v1/public/status'), api('/v1/web/session')]);
   availability = results[0].status === 'fulfilled' ? results[0].value : null;
   let error = results.find(result => result.status === 'rejected')?.reason;
@@ -142,7 +142,7 @@ async function handleCheckoutReturn(kind) {
     return;
   }
   const confirmed = await confirmProAccess();
-  message(confirmed
+  message('account-message', confirmed
     ? 'Seu acesso Pro está confirmado pelo servidor. Abra o NexusIDE e entre com a mesma conta.'
     : 'O servidor ainda não confirmou o acesso Pro. Use “Atualizar situação da conta” em instantes para conferir.',
   confirmed ? 'success' : '');
