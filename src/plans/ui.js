@@ -6,7 +6,6 @@ const COPY_TARGETS = {
   price: 'plans-price',
   trialDays: 'plans-trial-days',
   trialAgents: 'plans-trial-agents',
-  trialSync: 'plans-trial-sync',
 };
 
 export function renderPlans(section, view) {

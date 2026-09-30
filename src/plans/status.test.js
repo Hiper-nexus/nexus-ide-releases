@@ -84,9 +84,6 @@ test('plan copy reads the trial values confirmed by the server', () => {
   const copy = planCopy(describeStatus(valid));
   assert.equal(copy.trialDays, '15 dias para experimentar o NexusIDE.');
   assert.equal(copy.trialAgents, 'Até 2 agentes simultâneos.');
-  assert.equal(copy.trialSync, 'Sem sincronização em nuvem no teste.');
-  assert.equal(planCopy({ state: PLAN_STATE.AVAILABLE, trial: { days: 1, maxAgents: 1, cloudSync: true } }).trialSync,
-    'Sincronização em nuvem incluída no teste.');
 });
 
 test('plan copy without server confirmation keeps the values marked as pending', () => {

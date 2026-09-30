@@ -54,8 +54,5 @@ export function planCopy({ state, price = null, trial = null }) {
     trialAgents: trial
       ? `Até ${trial.maxAgents} ${trial.maxAgents === 1 ? 'agente simultâneo' : 'agentes simultâneos'}.`
       : 'Limite de agentes indisponível por enquanto.',
-    trialSync: trial
-      ? (trial.cloudSync ? 'Sincronização em nuvem incluída no teste.' : 'Sem sincronização em nuvem no teste.')
-      : 'Sincronização em nuvem a confirmar.',
   };
 }
