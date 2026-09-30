@@ -57,7 +57,7 @@ export function createLicenseAccess(deps: LicenseAccessDeps) {
   }
   function persist(seal: LicenseSeal): boolean {
     try {
-      if (deps.writeSeal(seal).ok) { persistedClock = seal.clockFloor; return true; }
+      if (deps.writeSeal(seal).ok) { persistedClock = seal.clockFloor; persistenceFailed = false; return true; }
     } catch { /* The vault's failure is not permission to use an unsealed clock. */ }
     persistenceFailed = true;
     return false;
@@ -88,7 +88,7 @@ export function createLicenseAccess(deps: LicenseAccessDeps) {
     if (cleared || !account) return blocked('login-required');
     const seal = currentSeal();
     if (!seal || seal.latestIat === null || seal.needsOnlineValidation) return blocked('login-required');
-    if (persistenceFailed) return blocked('verification-unavailable');
+    if (persistenceFailed && !persist({ ...seal, clockFloor: now() })) return blocked('verification-unavailable');
     let raw: { token?: unknown };
     try {
       // Bound file size before parsing an operator-writable file.

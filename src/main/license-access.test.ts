@@ -188,12 +188,39 @@ it('H1: a newly revalidated account cannot activate a file/deep-link token befor
   expect(access.applyOnlineLicenseToken(token).ok).toBe(true);
   expect(access.getAccessState().canUseApp).toBe(true);
 });
-it('H1: a denied seal stays blocked until a confirmed online recovery writes the fence', () => {
+it('H1: an initial denied seal cannot grant a missing token before online recovery', () => {
   const { access, deps } = setup();
-  deps.writeSeal.mockReturnValueOnce({ ok: false });
+  deps.writeSeal.mockReturnValue({ ok: false });
   expect(access.applyOnlineLicenseToken(licenseFixture()).ok).toBe(false);
   expect(access.getAccessState().canUseApp).toBe(false);
+  deps.writeSeal.mockImplementation(seal => { deps.readSeal.mockReturnValue(seal); return { ok: true }; });
+  expect(access.getAccessState().canUseApp).toBe(false);
   expect(access.applyOnlineLicenseToken(licenseFixture()).ok).toBe(true);
-  expect(deps.writeSeal).toHaveBeenCalledTimes(2);
+  expect(deps.readSeal()?.latestIat).toBe(LICENSE_NOW / 1000);
   expect(access.getAccessState().canUseApp).toBe(true);
+});
+
+
+it('M1: retries a transient seal write on the next query without network', () => {
+  const { access, deps, setNow } = setup();
+  expect(access.applyLicenseToken(licenseFixture({ access: 'pro' })).ok).toBe(true);
+  setNow(LICENSE_NOW + 60001);
+  deps.writeSeal.mockReturnValueOnce({ ok: false });
+  expect(access.getAccessState().blockedReason).toBe('verification-unavailable');
+  const attempts = deps.writeSeal.mock.calls.length;
+  expect(access.requireAccess('use')).toEqual({ ok: true });
+  expect(deps.writeSeal).toHaveBeenCalledTimes(attempts + 1);
+  expect(access.getAccessState().canUseApp).toBe(true);
+  expect(deps.writeSeal).toHaveBeenCalledTimes(attempts + 1);
+});
+
+it('M1: retries once per query and stays closed while writes still fail', () => {
+  const { access, deps, setNow } = setup();
+  access.applyLicenseToken(licenseFixture({ access: 'pro' }));
+  setNow(LICENSE_NOW + 60001);
+  deps.writeSeal.mockReturnValue({ ok: false });
+  expect(access.getAccessState().blockedReason).toBe('verification-unavailable');
+  const attempts = deps.writeSeal.mock.calls.length;
+  expect(access.getAccessState().canUseApp).toBe(false);
+  expect(deps.writeSeal).toHaveBeenCalledTimes(attempts + 1);
 });

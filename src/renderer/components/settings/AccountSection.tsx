@@ -51,7 +51,8 @@ function AccountHeader() {
 }
 
 export function AccountSection({ accessOnly = false }: { accessOnly?: boolean }) {
-  const { license, loading: licenseLoading, failed: licenseFailed } = useAccess();
+  const { license, loading: licenseLoading, failed: licenseFailed, blockedReason } = useAccess();
+  const verificationUnavailable = blockedReason === 'verification-unavailable';
   const [team, setTeam] = useState<TeamInfo | null>(null);
   const [teamLoading, setTeamLoading] = useState(false);
   const [joinCode, setJoinCode] = useState('');
@@ -245,7 +246,7 @@ export function AccountSection({ accessOnly = false }: { accessOnly?: boolean })
           {checkoutBusy ? 'Abrindo…' : 'Assinar Pro'}
         </button>
         <button className="settings-btn" onClick={() => void openPortal()}>Gerenciar assinatura</button>
-        {licenseFailed && <button className="settings-btn" onClick={() => void refreshAccess()}>Tentar novamente</button>}
+        {(licenseFailed || verificationUnavailable) && <button className="settings-btn" disabled={licenseLoading} onClick={() => void refreshAccess()}>{licenseLoading ? 'Consultando…' : 'Tentar novamente'}</button>}
       </div>
       {(loginError || checkoutError) && <p role="alert">{loginError || checkoutError}</p>}
     </section>;
@@ -260,14 +261,14 @@ export function AccountSection({ accessOnly = false }: { accessOnly?: boolean })
   });
   const showLogin = !licenseLoading && (!isLoggedIn || reloginOpen);
 
-  if (licenseLoading || licenseFailed) {
+  if (licenseLoading || licenseFailed || verificationUnavailable) {
     return <section className="account" aria-busy={licenseLoading}>
       <AccountHeader />
-      <div className="account__load-state" role={licenseFailed ? 'alert' : 'status'}>
-        {licenseFailed ? <>
+      <div className="account__load-state" role={licenseFailed || verificationUnavailable ? 'alert' : 'status'}>
+        {licenseFailed || verificationUnavailable ? <>
           <h3>Não foi possível carregar sua conta</h3>
           <p>Seu plano não pôde ser consultado agora. Tente novamente para ver os dados da conta.</p>
-          <button type="button" className="settings-btn settings-btn--primary" onClick={() => void refreshAccess()}>Tentar novamente</button>
+          <button type="button" className="settings-btn settings-btn--primary" disabled={licenseLoading} onClick={() => void refreshAccess()}>{licenseLoading ? 'Consultando…' : 'Tentar novamente'}</button>
         </> : <><p>Carregando sua conta…</p><div className="settings-skeleton" aria-hidden="true"><span /><span /></div></>}
       </div>
     </section>;

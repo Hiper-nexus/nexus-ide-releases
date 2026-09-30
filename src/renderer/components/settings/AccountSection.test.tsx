@@ -2,6 +2,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_LICENSE } from '../../../shared/billing-types';
 import { AccountSection } from './AccountSection';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -239,4 +240,21 @@ it.each(['2026-10-10T12:00:00.000Z', null])('offers Pro checkout during trial wi
   expect(host.textContent).not.toMatch(/1969|1970/);
   act(() => root.unmount());
   Reflect.deleteProperty(window, 'nexus');
+});
+
+
+it.each([true, false])('M1: offers a local re-evaluation for verification-unavailable (accessOnly=%s)', async accessOnly => {
+  Object.defineProperty(window, 'nexus', { configurable: true, value: { billing: {
+    get: vi.fn().mockResolvedValueOnce({ ...DEFAULT_LICENSE, blockedReason: 'verification-unavailable' }).mockResolvedValue({ ...DEFAULT_LICENSE, canUseApp: true, access: 'pro', blockedReason: null }),
+    onChanged: () => () => {},
+  } } });
+  const { host, root } = mount(accessOnly);
+  try {
+    await act(async () => {});
+    const retry = [...host.querySelectorAll('button')].find(button => button.textContent === 'Tentar novamente');
+    expect(retry).toBeDefined();
+    await act(async () => retry!.click());
+    expect(window.nexus.billing.get).toHaveBeenCalledTimes(2);
+    expect(host.textContent).not.toContain('Tentar novamente');
+  } finally { act(() => root.unmount()); host.remove(); }
 });
