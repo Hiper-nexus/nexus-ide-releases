@@ -22,3 +22,16 @@
 .plans-section[data-state="indisponivel"] .plans-status,.plans-section[data-state="erro"] .plans-status{color:var(--pink)}
 @media(max-width:1150px){.plan-price{font-size:44px}}
 @media(max-width:760px){.plans-grid{grid-template-columns:1fr;gap:var(--s4)}.plan-pro{padding:var(--s3)}.plan-pro h3{font-size:28px}.plan-price{font-size:36px}}
+/* Roster of supported CLIs: a directory with hairlines, not a wall of cards. */
+.providers-band{grid-template-columns:minmax(0,.85fr) minmax(0,1.5fr);align-items:start;padding:64px 0}
+.providers-band .plain-benefits{margin-top:24px}
+.providers-band .plain-benefits li{font-size:13px}
+.provider-list{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 24px}
+.provider-list li{display:flex;align-items:center;gap:12px;min-height:60px;padding:10px 0;border-top:1px solid var(--line)}
+.provider-list img{flex:none;width:24px;height:24px;object-fit:contain;border-radius:4px}
+.provider-list span{display:block;min-width:0;gap:0;font-size:14px;color:var(--muted)}
+.provider-list strong{display:block;font-weight:500;color:var(--ink);line-height:1.3}
+.provider-list small{display:block;font-size:12px;color:var(--faint);line-height:1.3}
+.roster-note{margin:16px 0 0;padding-top:16px;border-top:1px solid var(--line);max-width:none!important;font-size:10px!important;color:var(--faint)!important}
+@media(max-width:1150px){.providers-band{grid-template-columns:1fr;gap:40px}}
+@media(max-width:760px){.providers-band{padding:40px 0}.provider-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:0 16px}.provider-list li{min-height:56px;gap:10px}.provider-list span{font-size:13px}.provider-list small{font-size:11px}}

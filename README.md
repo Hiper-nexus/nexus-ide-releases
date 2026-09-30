@@ -58,6 +58,8 @@ A CSP do Worker permite `connect-src 'self' https://api.nexuside.app` e mais nad
 
 ## Assets e provas
 
+A faixa de CLIs da principal lista os adaptadores que vêm no NexusIDE (`src/adapters/builtin/*.json` no repositório do app): 15 CLIs e dois provedores por API. A contagem de modelos vem de `resources/model-catalog.json` e traz a data do catálogo; atualize os dois ao publicar. Os logos vêm de `src/renderer/assets/provider-logos/` do app e a origem de cada um está em `public/providers/NOTICE.md`.
+
 Three.js MIT; modelos 3D próprios em código. Geist e VT323 sob OFL. Logos e mascotes são assets do NexusIDE. Nenhum asset ou código da Overclock, BridgeMind ou Bruno Simon foi copiado.
 
 Pesquisa e direção: `docs/site-redesign-brief.md`. Produto/design: `PRODUCT.md`, `DESIGN.md`. Migração do backend e validação de licença continuam separadas: `docs/cloudflare-migration.md`.
