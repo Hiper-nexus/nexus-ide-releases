@@ -696,6 +696,18 @@ Histórico da elaboração original: `npm test` passou com 81 testes (66 TypeScr
 | Falha, relógio de teste, cancelamento e abertura live | [Billing testing][stripe-billing-testing], [Simulate subscriptions][stripe-simulate], [Cancel subscriptions][stripe-cancel], [Go live][stripe-live] |
 | Reversão de versão e recuperação D1 | [Rollbacks][w-rollback], [Time Travel][w-time] |
 
+## Apêndice A. Ensaio acelerado em base descartável
+
+Fora do caminho normal. Este procedimento modifica datas de **uma conta fictícia em um banco descartável ou local**, nunca no banco que será promovido nem em produção. Ele adultera trial e graça diretamente, sem auditoria administrativa, e são duas atualizações independentes: a condição `role='user'` da primeira não protege a segunda. Prefira os testes automatizados ou aguarde os prazos reais. Exporte o banco e registre os valores originais antes; identifique o banco pelo nome físico, não pelo binding; confirme que a conta não é admin e não tem outra assinatura ou time ativo.
+
+```sh
+wrangler d1 export <NOME_D1_TESTE_ESCOLHIDO> --remote --output '<DIR_PRIVADO>/antes-expiracao-simulada.sql'
+wrangler d1 execute <NOME_D1_TESTE_ESCOLHIDO> --remote --command "SELECT id,role,trial_started_at,trial_expires_at FROM accounts WHERE id='<ACCOUNT_ID_TESTE>'; SELECT stripe_subscription_id,status,grace_until FROM subscriptions WHERE account_id='<ACCOUNT_ID_TESTE>';"
+wrangler d1 execute <NOME_D1_TESTE_ESCOLHIDO> --remote --command "UPDATE accounts SET trial_started_at=(unixepoch()-1382400)*1000,trial_expires_at=(unixepoch()-86400)*1000 WHERE id='<ACCOUNT_ID_TESTE>' AND role='user'; UPDATE subscriptions SET grace_until=(unixepoch()-1)*1000 WHERE account_id='<ACCOUNT_ID_TESTE>' AND stripe_subscription_id='<SUB_ID_TESTE>' AND status='past_due';"
+```
+
+Depois, atualize `/conta/` e renove a licença no app; espere `inactive` na API. Isso testa a avaliação de prazo vencido em uma base descartável; não prova sete dias reais de operação nem vale como conferência do banco de produção.
+
 [w-install]: https://developers.cloudflare.com/workers/wrangler/install-and-update/
 [w-general]: https://developers.cloudflare.com/workers/wrangler/commands/general/
 [w-workers]: https://developers.cloudflare.com/workers/wrangler/commands/workers/
@@ -730,15 +742,3 @@ Histórico da elaboração original: `npm test` passou com 81 testes (66 TypeScr
 [node-crypto]: https://nodejs.org/docs/latest-v22.x/api/crypto.html
 [npm-ci]: https://docs.npmjs.com/cli/v11/commands/npm-ci/
 [curl]: https://curl.se/docs/manpage.html
-
-## Apêndice A. Ensaio acelerado em base descartável
-
-Fora do caminho normal. Este procedimento modifica datas de **uma conta fictícia em um banco descartável ou local**, nunca no banco que será promovido nem em produção. Ele adultera trial e graça diretamente, sem auditoria administrativa, e são duas atualizações independentes: a condição `role='user'` da primeira não protege a segunda. Prefira os testes automatizados ou aguarde os prazos reais. Exporte o banco e registre os valores originais antes; identifique o banco pelo nome físico, não pelo binding; confirme que a conta não é admin e não tem outra assinatura ou time ativo.
-
-```sh
-wrangler d1 export <NOME_D1_TESTE_ESCOLHIDO> --remote --output '<DIR_PRIVADO>/antes-expiracao-simulada.sql'
-wrangler d1 execute <NOME_D1_TESTE_ESCOLHIDO> --remote --command "SELECT id,role,trial_started_at,trial_expires_at FROM accounts WHERE id='<ACCOUNT_ID_TESTE>'; SELECT stripe_subscription_id,status,grace_until FROM subscriptions WHERE account_id='<ACCOUNT_ID_TESTE>';"
-wrangler d1 execute <NOME_D1_TESTE_ESCOLHIDO> --remote --command "UPDATE accounts SET trial_started_at=(unixepoch()-1382400)*1000,trial_expires_at=(unixepoch()-86400)*1000 WHERE id='<ACCOUNT_ID_TESTE>' AND role='user'; UPDATE subscriptions SET grace_until=(unixepoch()-1)*1000 WHERE account_id='<ACCOUNT_ID_TESTE>' AND stripe_subscription_id='<SUB_ID_TESTE>' AND status='past_due';"
-```
-
-Depois, atualize `/conta/` e renove a licença no app; espere `inactive` na API. Isso testa a avaliação de prazo vencido em uma base descartável; não prova sete dias reais de operação nem vale como conferência do banco de produção.
