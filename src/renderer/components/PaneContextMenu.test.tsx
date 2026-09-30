@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { WorkspaceInertContext } from "../state/access-store";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -49,17 +50,17 @@ const pane: PaneModel = {
   missionId: "mission-1",
 };
 
-function mount(): { host: HTMLDivElement; root: Root } {
+function mount(blocked = false): { host: HTMLDivElement; root: Root } {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
   act(() => {
     root.render(
-      <PaneContextMenu
+      <WorkspaceInertContext.Provider value={blocked}><PaneContextMenu
         pane={pane}
         point={{ x: 24, y: 36 }}
         onClose={vi.fn()}
-      />,
+      /></WorkspaceInertContext.Provider>,
     );
   });
   return { host, root };
@@ -207,4 +208,10 @@ describe("PaneContextMenu authority routing", () => {
     expect(document.activeElement).toBe(items[1]);
     act(() => root.unmount());
   });
+});
+
+it('keeps an already-open context menu inert when license access is blocked', () => {
+  const { root } = mount(true);
+  expect(document.querySelector('[role="menu"]')?.closest('[inert]')).not.toBeNull();
+  act(() => root.unmount());
 });

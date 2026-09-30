@@ -1,6 +1,6 @@
 import { ProviderLogo } from './ProviderLogo';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { OverlayLayer } from '../overlay/overlay-layer';
 import type { Squad, AgentCategory } from '../../shared/orch-types';
 import type { AdapterInfo } from '../../shared/adapter-types';
 import { applySquadEdit, type EditableAgent } from '../../shared/squad-edit';
@@ -144,7 +144,7 @@ export function SquadEditor({
   // Portal + scrim: o editor abria INLINE no fim da lista de squads — nascia
   // fora da viewport e o usuário tinha que rolar até ele (achado de
   // operador). Modal centralizado é o comportamento esperado de "Editar".
-  return createPortal(
+  return (<OverlayLayer>
     <div
       className="squad-editor__scrim"
       onMouseDown={(event) => {
@@ -304,7 +304,6 @@ export function SquadEditor({
         </button>
       </div>
     </div>
-    </div>,
-    document.body,
-  );
+    </div>
+  </OverlayLayer>);
 }

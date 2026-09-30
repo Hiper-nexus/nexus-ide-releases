@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { createPortal } from "react-dom";
+import { OverlayLayer } from "../overlay/overlay-layer";
 import type { PaneModel } from "../../shared/types";
 import {
   buildHandoffRequestPrompt,
@@ -257,7 +257,7 @@ export function PaneContextMenu({
   });
 
   const position = viewportPoint(point);
-  return createPortal(
+  return (<OverlayLayer>
     <div
       ref={menuRef}
       className="pane-context-menu"
@@ -302,7 +302,6 @@ export function PaneContextMenu({
           )),
         ];
       })}
-    </div>,
-    document.body,
-  );
+    </div>
+  </OverlayLayer>);
 }

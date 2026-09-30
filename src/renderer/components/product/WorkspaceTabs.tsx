@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { OverlayLayer } from '../../overlay/overlay-layer';
 import type { MissionLifecycleState } from '../../../shared/mission-engine-contract';
 import {
   MISSION_AWAITING_INSTRUCTION_REASON_CODE,
@@ -565,7 +565,7 @@ function WorkspaceTabMenu({
 
   const left = Math.max(8, Math.min(menu.x, window.innerWidth - MENU_WIDTH - 8));
   const top = Math.max(8, Math.min(menu.y, window.innerHeight - MENU_HEIGHT - 8));
-  return createPortal(
+  return (<OverlayLayer>
     <div
       ref={menuRef}
       className="pane-context-menu workspace-tab-menu"
@@ -595,7 +595,6 @@ function WorkspaceTabMenu({
           </span>
         </button>
       ))}
-    </div>,
-    document.body,
-  );
+    </div>
+  </OverlayLayer>);
 }
