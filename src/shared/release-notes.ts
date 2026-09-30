@@ -8589,7 +8589,7 @@ export const RELEASE_076151: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076152: AppRelease = {
   version: '0.76.152',
   date: '2026-09-30',
   codename: 'Jev que ajuda',
@@ -8618,6 +8618,26 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'Fechar o pane de um worker não passa mais pela guarda do Jev, que ' +
         'segurava o Maestro alguns segundos a cada fechamento.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.153',
+  date: '2026-09-30',
+  codename: 'Segunda conta Grok',
+  summary:
+    'O pane do Grok volta a abrir na segunda conta Grok: no Windows ele caía ' +
+    'com "failed to prepare the isolated grok agent runtime". Inclui a 0.76.152.',
+  highlights: [
+    {
+      title: 'Segunda conta Grok funcionando',
+      detail:
+        'Depois de cadastrar uma segunda conta Grok, todo pane que o Nexus ' +
+        'abria nela falhava na hora. A conta nova guarda atalhos para as ' +
+        'pastas do Grok, e o Nexus tentava copiá-los como arquivos. Agora ' +
+        'eles são ligados como pastas.',
     },
   ],
   fixes: [],

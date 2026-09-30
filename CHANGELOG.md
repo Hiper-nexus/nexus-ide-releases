@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.153 — Segunda conta Grok
+
+Uso real no Windows em 30/09. Inclui a 0.76.152 (Jev que ajuda) e dois commits do Mac ainda sem versão própria: o erro do provider só vira toast no desfecho do failover (F-222), e saem o modo canvas e as notas adesivas.
+
+- **Conta Grok gerenciada volta a abrir (F-710).** A conta Grok gerenciada liga cada entrada ao `~/.grok` nativo, e `bundled` é um link para pasta. No Windows, `linkEntry` tratava todo link como arquivo: tentava hardlink e depois cópia de diretório (`EPERM copyfile …\bundled`). Todo pane daquela conta morria com "failed to prepare the isolated grok agent runtime" desde que a conta foi criada. Agora o link segue o destino, e pasta vira junção para a pasta real.
+
 ## 0.76.152 — Jev que ajuda
 
 Plano de uso do Jev, a partir do mapa de 30/09 (826 decisões em 8 dias, 55% delas na guarda e zero nas superfícies que aceleram o trabalho). Inclui a 0.76.151 do Mac.
