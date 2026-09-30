@@ -1,3 +1,6 @@
+// The bundled CLI asset is outside this IPC fixture; keep the test independent of asset packaging.
+vi.mock('../orch/impeccable-manifest', () => ({ IMPECCABLE_MANIFEST: [] }));
+import { LicenseError } from '../../shared/license-errors';
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
@@ -1510,6 +1513,13 @@ describe("registerPtyIpc account fail-fast", () => {
       traceDeps.trace.mock.calls
         .map(([event]) => event as Record<string, unknown>)
         .filter((event) => event.kind === "pane-spawn-timing");
+
+    it('preserves the license code across the spawn IPC response', async () => {
+      providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: {} });
+      ptyDeps.spawnAgentSession.mockImplementationOnce(() => { throw new LicenseError('license_agent_limit', undefined, 2); });
+      const result = await ipcDeps.handlers.get(PTY_CHANNELS.spawn)?.({ sender: { id: 7 } }, { kind: 'cli-agent', adapterId: 'claude', paneId: 'license-pane', cols: 80, rows: 24 });
+      expect(result).toMatchObject({ ok: false, code: 'license_agent_limit', error: expect.stringContaining('2 agentes') });
+    });
 
     it("emite pane-spawn-timing com fases e o rendererWaitMs do pedido", async () => {
       providerDeps.prepareProviderSpawn.mockReturnValueOnce({

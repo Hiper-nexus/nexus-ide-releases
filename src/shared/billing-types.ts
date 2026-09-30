@@ -81,5 +81,5 @@ export const DEFAULT_LICENSE: LicenseState = {
 };
 
 export const BILLING_CHANNELS = {
-  get: 'billing:get', checkout: 'billing:checkout', portal: 'billing:portal', changed: 'billing:changed',
+  get: 'billing:get', logout: 'billing:logout', checkout: 'billing:checkout', portal: 'billing:portal', changed: 'billing:changed',
 } as const;

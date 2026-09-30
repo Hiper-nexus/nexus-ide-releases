@@ -1,3 +1,4 @@
+import { initializeLicenseAuthority } from "./license-bootstrap";
 import './macos-activation-policy';
 import { registerArmsIpc } from './connectors/arms-ipc';
 import path from "node:path";
@@ -531,6 +532,9 @@ function bootstrap(): void {
     },
     soberMode: () => getOrchSettings().soberMode === true,
   });
+  // Product authority is fail-closed before any scheduler/orchestration starts.
+  // This cached-only evaluation never unlocks the cold Keychain before paint.
+  initializeLicenseAuthority();
   const cronBackend = createHttpCronBackendFromEnvironment();
   const syncCapability = configureSyncRuntime();
   configureCronRuntime({

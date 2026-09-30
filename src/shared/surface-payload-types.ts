@@ -1,3 +1,4 @@
+import type { LicenseErrorCode, LicenseDenialReason } from './license-errors';
 import type { SpawnRouteInfo } from './spawn-route';
 /**
  * Catalog / browser / design / layout / PTY payload types shared across IPC.
@@ -575,7 +576,7 @@ export type SpawnResult =
       /** Current state snapshot for an adopted session (push may predate listeners). */
       state?: PaneSessionState;
     }
-  | { ok: false; error: string };
+  | { ok: false; error: string; code?: LicenseErrorCode; blockedReason?: LicenseDenialReason };
 
 export interface PtyDataEvent {
   sessionId: string;

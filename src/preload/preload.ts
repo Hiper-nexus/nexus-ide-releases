@@ -1402,6 +1402,7 @@ const api: NexusApi = {
     onChanged: (cb) => addListener(pipesChangedListeners, cb),
   },
   billing: {
+    logout: () => ipcRenderer.invoke(BILLING_CHANNELS.logout),
     onChanged: (callback) => {
       const listener = (): void => callback();
       ipcRenderer.on(BILLING_CHANNELS.changed, listener);

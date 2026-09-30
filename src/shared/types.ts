@@ -1,3 +1,4 @@
+import type { LicenseErrorCode, LicenseDenialReason } from './license-errors';
 /**
  * Shared, transport-safe types used across main / preload / renderer.
  * Everything here must be JSON-serializable (it crosses the IPC boundary).
@@ -429,17 +430,18 @@ export interface NexusApi {
     revoke(): Promise<{ ok: boolean }>;
   };
   billing: {
+    logout(): Promise<{ ok: boolean; error?: string }>;
     onChanged(callback: () => void): () => void;
     get(): Promise<LicenseState>;
     openCheckout(request: CheckoutRequest['plan'] | CheckoutRequest): Promise<{ ok: boolean; error?: string }>;
     openPortal(): Promise<{ ok: boolean }>;
   };
   team: {
-    get(): Promise<{ ok: boolean; data?: TeamInfo; error?: string }>;
-    join(code: string): Promise<{ ok: boolean; error?: string }>;
-    invite(): Promise<{ ok: boolean; data?: { code: string; url: string } & Partial<InviteInfo>; error?: string }>;
-    removeMember(accountId: string): Promise<{ ok: boolean; error?: string }>;
-    leave(): Promise<{ ok: boolean; error?: string }>;
+    get(): Promise<{ ok: boolean; data?: TeamInfo; error?: string; code?: LicenseErrorCode; blockedReason?: LicenseDenialReason }>;
+    join(code: string): Promise<{ ok: boolean; error?: string; code?: LicenseErrorCode; blockedReason?: LicenseDenialReason }>;
+    invite(): Promise<{ ok: boolean; data?: { code: string; url: string } & Partial<InviteInfo>; error?: string; code?: LicenseErrorCode; blockedReason?: LicenseDenialReason }>;
+    removeMember(accountId: string): Promise<{ ok: boolean; error?: string; code?: LicenseErrorCode; blockedReason?: LicenseDenialReason }>;
+    leave(): Promise<{ ok: boolean; error?: string; code?: LicenseErrorCode; blockedReason?: LicenseDenialReason }>;
   };
   pty: {
     spawn(req: SpawnRequest): Promise<SpawnResult>;
@@ -731,6 +733,8 @@ export interface NexusApi {
       mission?: Mission;
       warning?: string;
       error?: string;
+      code?: LicenseErrorCode;
+      blockedReason?: LicenseDenialReason;
     }>;
     /**
      * "Tornar orquestrador" num pane solto: cria a missão leve da aba

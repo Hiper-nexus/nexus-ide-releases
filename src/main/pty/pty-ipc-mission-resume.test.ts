@@ -1,3 +1,6 @@
+import { resetLicensedAccessMock } from '../__tests__/licensed-access';
+beforeEach(resetLicensedAccessMock);
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PTY_CHANNELS } from "../../shared/channels";
 import type { Mission } from "../../shared/orch-types";

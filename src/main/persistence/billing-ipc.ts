@@ -1,10 +1,12 @@
-import { BrowserWindow, ipcMain, shell } from 'electron';
+import { handleTrusted } from '../security/trusted-ipc';
+import { logoutAuthSession } from '../auth-client';
+import { ipcMain, shell } from 'electron';
 import {
   BILLING_CHANNELS,
   type CheckoutRequest,
   type LicenseState,
 } from '../../shared/billing-types';
-import { getAccessState, onAccessChanged } from '../license-access';
+import { getAccessState } from '../license-access';
 export { applyLicenseToken } from '../license-access';
 
 /**
@@ -83,9 +85,7 @@ function resolveBillingIpcDeps(overrides?: Partial<BillingIpcDeps>): BillingIpcD
 }
 
 export function registerBillingIpc(overrides?: Partial<BillingIpcDeps>): void {
-  onAccessChanged(() => {
-    for (const win of BrowserWindow.getAllWindows()) win.webContents.send(BILLING_CHANNELS.changed);
-  });
+  handleTrusted(BILLING_CHANNELS.logout, () => logoutAuthSession());
   ipcMain.handle(BILLING_CHANNELS.get, (): LicenseState => getAccessState());
 
   ipcMain.handle(BILLING_CHANNELS.checkout, async (_e, raw: unknown) => {

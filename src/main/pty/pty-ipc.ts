@@ -1,3 +1,4 @@
+import { licenseFailure } from '../../shared/license-errors';
 import { ipcMain } from "electron";
 import type { WebContents } from "electron";
 import { PTY_CHANNELS } from "../../shared/channels";
@@ -580,7 +581,7 @@ function spawnCliPtyAgentPane(
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "failed to spawn agent";
-    return { ok: false, error: message };
+    return licenseFailure(err) ?? { ok: false, error: message };
   }
 }
 
@@ -673,7 +674,7 @@ export function registerPtyIpc(): void {
             })
             .catch((error) => {
               reportTiming(false);
-              return { ok: false, error: `Não foi possível abrir a pasta isolada da aba: ${error instanceof Error ? error.message : String(error)}` };
+              return licenseFailure(error) ?? { ok: false, error: `Não foi possível abrir a pasta isolada da aba: ${error instanceof Error ? error.message : String(error)}` };
             });
         }
         const outcome = spawnCliPtyAgentPane(
@@ -700,7 +701,7 @@ export function registerPtyIpc(): void {
         if (err instanceof WorkspaceRootMissingError) {
           probeCurrentWorkspaceLiveness();
         }
-        return { ok: false, error: message };
+        return licenseFailure(err) ?? { ok: false, error: message };
       }
     }
 
@@ -734,7 +735,7 @@ export function registerPtyIpc(): void {
             requireLiveRendererWorkspaceScope(event.sender, scope);
             return startShell(worktree.scope, worktree.cwd);
           })
-          .catch((error) => ({ ok: false, error: `Não foi possível abrir a pasta isolada da aba: ${error instanceof Error ? error.message : String(error)}` }));
+          .catch((error) => licenseFailure(error) ?? ({ ok: false, error: `Não foi possível abrir a pasta isolada da aba: ${error instanceof Error ? error.message : String(error)}` }));
       }
       return startShell(scope, resolveCwdForScope(scope, req.cwd));
     } catch (err) {
@@ -743,7 +744,7 @@ export function registerPtyIpc(): void {
       if (err instanceof WorkspaceRootMissingError) {
         probeCurrentWorkspaceLiveness();
       }
-      return { ok: false, error: message };
+      return licenseFailure(err) ?? { ok: false, error: message };
     }
   });
 

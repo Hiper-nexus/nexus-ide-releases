@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { beginLogin, exchangeAuthCode, resetPendingLogin, getAuthenticatedAccountId, bindAuthenticatedAccount, restoreAuthenticatedAccount } from './auth-client';
+import { beginLogin, exchangeAuthCode, resetPendingLogin, getAuthenticatedAccountId, bindAuthenticatedAccount, restoreAuthenticatedAccount, logoutAuthSession } from './auth-client';
 
 function okFetch() {
   return vi.fn().mockResolvedValueOnce(
@@ -188,4 +188,15 @@ it.each(['parse', 'network', 'storage'])('M3: %s auth failure never returns or l
   expect(result.ok).toBe(false);
   expect(JSON.stringify([result, warn.mock.calls, error.mock.calls])).not.toContain(marker);
   warn.mockRestore(); error.mockRestore();
+});
+
+it('logout revokes Main access before deleting credentials and survives an offline backend', async () => {
+  const steps: string[] = [];
+  const secrets = new Map([['auth:session', 's'], ['auth:refresh', 'r']]);
+  const result = await logoutAuthSession({ backendUrl: 'https://api.test',
+    clearAccess: () => { steps.push('clear'); }, getSecret: key => secrets.get(key) ?? null,
+    deleteSecret: key => { steps.push(key); secrets.delete(key); return { ok: true }; },
+    fetchFn: vi.fn().mockRejectedValue(new Error('offline')) });
+  expect(steps).toEqual(['clear', 'auth:session', 'auth:refresh']);
+  expect(secrets.size).toBe(0); expect(result.ok).toBe(true);
 });

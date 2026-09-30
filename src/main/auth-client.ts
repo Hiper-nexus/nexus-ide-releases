@@ -190,3 +190,31 @@ export async function exchangeAuthCode(
     return { ok: false, error: failure };
   }
 }
+
+export interface LogoutDeps {
+  backendUrl: string;
+  getSecret: (key: string) => string | null;
+  deleteSecret: (key: string) => { ok: boolean; error?: string };
+  clearAccess: () => void;
+  fetchFn: typeof fetch;
+}
+function defaultLogoutDeps(): LogoutDeps {
+  return { backendUrl: resolveBackendUrl(), getSecret: key => secretStore().getSecret(key),
+    deleteSecret: key => secretStore().deleteSecret(key), fetchFn: fetch,
+    clearAccess: () => (require('./license-access') as typeof import('./license-access')).clearAccess() };
+}
+/** Main-owned logout. Revocation comes first; existing processes and project data are untouched. */
+export async function logoutAuthSession(deps: LogoutDeps = defaultLogoutDeps()): Promise<{ ok: boolean; error?: string }> {
+  deps.clearAccess();
+  const session = deps.getSecret('auth:session');
+  const removedSession = deps.deleteSecret('auth:session');
+  const removedRefresh = deps.deleteSecret('auth:refresh');
+  if (session) {
+    try {
+      await deps.fetchFn(`${deps.backendUrl}/v1/auth/logout`, {
+        method: 'POST', headers: { authorization: `Bearer ${session}` }, signal: AbortSignal.timeout(10000),
+      });
+    } catch { /* Local logout remains effective offline. */ }
+  }
+  return removedSession.ok && removedRefresh.ok ? { ok: true } : { ok: false, error: 'Não foi possível remover as credenciais salvas. O acesso permanece bloqueado.' };
+}

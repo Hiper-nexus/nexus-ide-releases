@@ -794,6 +794,8 @@ export const orchPaneSpawnResultSchema = z.object({
   sessionId: z.string().max(128).nullable().optional(),
   pending: z.literal(true).optional(),
   error: z.string().max(1024).optional(),
+  code: z.enum(['license_access_denied', 'license_agent_limit']).optional(),
+  blockedReason: z.string().max(64).optional(),
 });
 export type OrchPaneSpawnResult = z.infer<typeof orchPaneSpawnResultSchema>;
 

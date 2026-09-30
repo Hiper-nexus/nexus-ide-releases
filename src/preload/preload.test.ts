@@ -85,6 +85,13 @@ describe('preload PTY delivery', () => {
     electronMock.contextBridge.exposeInMainWorld.mockClear();
   });
 
+  it('exposes Main-owned logout over billing:logout', async () => {
+    const api = await loadPreloadApi();
+    electronMock.ipcRenderer.invoke.mockResolvedValue({ ok: true });
+    expect(await api.billing.logout()).toEqual({ ok: true });
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenCalledWith('billing:logout');
+  });
+
   it('exposes billing changes without IPC event data and supports unsubscribe', async () => {
     const api = await loadPreloadApi();
     const listener = vi.fn();
