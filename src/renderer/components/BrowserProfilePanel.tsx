@@ -2,6 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import type { BrowserProfileChange, BrowserProfileStatus, ChromeImportResult, ChromeProfileSummary, ChromeSiteSummary } from '../../shared/browser-profile';
 import '../styles/browser-profile.css';
 
+const friendlyError = (reason: unknown, fallback: string): string =>
+  reason instanceof Error
+    ? reason.message.replace(/^Error invoking remote method '[^']+':\s*/, '').replace(/^Error:\s*/, '')
+    : fallback;
+
 export function BrowserProfilePanel({ paneId, onClose }: { paneId: string; onClose(): void }) {
   const [status, setStatus] = useState<BrowserProfileStatus | null>(null);
   const [profiles, setProfiles] = useState<ChromeProfileSummary[]>([]);
@@ -22,7 +27,7 @@ export function BrowserProfilePanel({ paneId, onClose }: { paneId: string; onClo
       .then(([next, available]) => {
         if (!current) return;
         setStatus(next); setProfiles(available); setProfileId(available[0]?.id ?? '');
-      }).catch((reason: unknown) => { if (current) setError(reason instanceof Error ? reason.message : 'Não foi possível abrir o perfil.'); });
+      }).catch((reason: unknown) => { if (current) setError(friendlyError(reason, 'Não foi possível abrir o perfil.')); });
     return () => { current = false; };
   }, [paneId]);
 
@@ -33,7 +38,7 @@ export function BrowserProfilePanel({ paneId, onClose }: { paneId: string; onClo
     setLoadingSites(true);
     void window.nexus.browser.chromeSites(paneId, profileId)
       .then((next) => { if (current) setSites(next); })
-      .catch((reason: unknown) => { if (current) setError(reason instanceof Error ? reason.message : 'Não foi possível listar os sites.'); })
+      .catch((reason: unknown) => { if (current) setError(friendlyError(reason, 'Não foi possível listar os sites.')); })
       .finally(() => { if (current) setLoadingSites(false); });
     return () => { current = false; };
   }, [paneId, profileId]);
@@ -41,7 +46,7 @@ export function BrowserProfilePanel({ paneId, onClose }: { paneId: string; onClo
   async function change(change: BrowserProfileChange): Promise<void> {
     setBusy(true); setError('');
     try { setStatus(await window.nexus.browser.profileChange(paneId, change)); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : 'Não foi possível mudar o perfil.'); }
+    catch (reason) { setError(friendlyError(reason, 'Não foi possível mudar o perfil.')); }
     finally { setBusy(false); }
   }
 
@@ -51,7 +56,7 @@ export function BrowserProfilePanel({ paneId, onClose }: { paneId: string; onClo
       const imported = await window.nexus.browser.chromeImport(paneId, profileId, [...selected]);
       setResult(imported);
       setStatus(await window.nexus.browser.profileStatus(paneId));
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Não foi possível importar as sessões.'); }
+    } catch (reason) { setError(friendlyError(reason, 'Não foi possível importar as sessões.')); }
     finally { setBusy(false); }
   }
   const skipped = result ? Object.values(result.skipped).reduce((total, count) => total + count, 0) : 0;

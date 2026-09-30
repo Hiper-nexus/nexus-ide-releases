@@ -53,7 +53,20 @@ function profilesAt(root: string): Array<ChromeProfileSummary & { folder: string
     const file = path.join(root, 'Local State');
     if (fs.statSync(file).size < 4 * 1024 * 1024) names = JSON.parse(fs.readFileSync(file, 'utf8'))?.profile?.info_cache ?? {};
   } catch { /* Folder names remain usable when Local State is unavailable. */ }
-  return fs.readdirSync(root, { withFileTypes: true })
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch (reason) {
+    const code = (reason as NodeJS.ErrnoException).code;
+    if (code === 'EPERM' || code === 'EACCES' || code === 'EBUSY') {
+      throw new Error(
+        'O macOS bloqueou o acesso aos perfis do Chrome. Autorize o NexusIDE em ' +
+        'Ajustes do Sistema → Privacidade e Segurança → Acesso Total ao Disco e abra o Nexus de novo.',
+      );
+    }
+    throw reason;
+  }
+  return entries
     .filter((entry) => entry.isDirectory() && /^(Default|Profile \d+)$/.test(entry.name))
     .slice(0, 50)
     .map((entry) => ({

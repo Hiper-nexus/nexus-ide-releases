@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decodeChromeCookie, listChromeProfiles, listChromeSites, readChromeImport, type ChromeCookieRow } from './chrome-cookie-import';
 
 const key = Buffer.alloc(16, 7);
@@ -65,5 +65,25 @@ describe('compatible Chrome cookie import', () => {
     await expect(readChromeImport(profile.id, ['example.com'], () => { if (revoked) throw new Error('scope changed'); }, {
       root, now, readKey: async () => { revoked = true; return Buffer.from(key); },
     })).rejects.toThrow('scope changed');
+  });
+
+  it('surfaces a permission denial as an actionable message instead of a raw EPERM', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-chrome-denied-')); roots.push(root);
+    fs.mkdirSync(path.join(root, 'Default'));
+    const denied = Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+    const spy = vi.spyOn(fs, 'readdirSync').mockImplementation(() => { throw denied; });
+    try {
+      expect(() => listChromeProfiles(root)).toThrow(/macOS bloqueou o acesso aos perfis do Chrome/);
+      expect(() => listChromeSites('any', root)).toThrow(/macOS bloqueou o acesso aos perfis do Chrome/);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(listChromeProfiles(root)).toEqual([{ id: expect.any(String), name: 'Default' }]);
+  });
+
+  it('lists no profiles when Chrome is not installed at all', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-chrome-empty-')); roots.push(root);
+    fs.rmSync(root, { recursive: true });
+    expect(listChromeProfiles(root)).toEqual([]);
   });
 });
