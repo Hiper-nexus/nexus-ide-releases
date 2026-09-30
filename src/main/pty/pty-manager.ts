@@ -80,6 +80,7 @@ import {
 } from "../path-resolver";
 import { windowsNpmShimSpawn } from "../adapters/windows-npm-shim";
 import { windowsCodexShimWithinMaxPath } from "../adapters/codex-windows-prefix";
+import { agyModelForEffort, withoutEffortArg } from "../adapters/agy-effort-model";
 import { codexNoDaemonArgs } from "../orch/codex-cli-version";
 import { ensureMinimaxFullAccess } from "../orch/cli-mcp-session-minimax";
 import { windowsArgvPromptPlacement } from "./windows-command-line";
@@ -1518,7 +1519,7 @@ export function spawnAgentSession(
       (authority.context.role === "worker" ||
         authority.context.role === "orchestrator"),
   );
-  const model = normalizeAgentModel(
+  const normalizedModel = normalizeAgentModel(
     adapter,
     firstDeclaredModel([
       req.model,
@@ -1531,6 +1532,12 @@ export function spawnAgentSession(
       kimiCodeHome: overrides.keyEnv?.KIMI_CODE_HOME,
     },
   );
+  // F-705: o AGY recusa `--effort` diferente do sufixo do modelo.
+  const agyEffort =
+    adapter.id === "agy" && normalizedModel
+      ? agyModelForEffort(normalizedModel, req.effort, adapter.models.list)
+      : null;
+  const model = agyEffort?.model ?? normalizedModel;
   const argv = resolvePlaceholders(
     interactiveTemplateForModel(
       adapter.spawn.interactive,
@@ -1675,7 +1682,11 @@ export function spawnAgentSession(
     trustedSessionArgs = [adapter.spawn.sessionIdArg, dictatedSessionId];
   }
   if (overrides.extraArgs && overrides.extraArgs.length > 0) {
-    args.push(...overrides.extraArgs);
+    args.push(
+      ...(agyEffort?.dropEffort && adapter.control?.effort?.arg
+        ? withoutEffortArg(overrides.extraArgs, adapter.control.effort.arg.trim())
+        : overrides.extraArgs),
+    );
   }
   const promptChannel = initialPromptChannel({
     declared: adapter.spawn.initialPrompt,

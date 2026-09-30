@@ -175,7 +175,9 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // Gemini 3.8 Flash > 3.1 Pro em código/agentic (TB2.1 81,3 × 70,8, Vals;
     // índice AA 41 × 30) a ~1/3 do preço. A tabela pedia 3.1-pro-high e o
     // spawn migrava para este id em silêncio (F-586) — agora é explícito.
-    { adapterId: 'agy', model: 'gemini-3.8-flash-high', effort: 'medium' },
+    // F-705: o esforço mora no sufixo do id — -high com --effort medium
+    // derrubava o pane ("conflicts with --effort=medium").
+    { adapterId: 'agy', model: 'gemini-3.8-flash-medium', effort: 'medium' },
     { adapterId: 'codex', model: 'gpt-6-luna', effort: 'medium' },
     { adapterId: 'codex', model: 'gpt-5.6-luna', effort: 'medium' },
     { adapterId: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' },
@@ -244,7 +246,8 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // glm empresta de outro tier e o worker crítico colapsa num só provider.
     // agy antes de kimi preserva a preferência efetiva anterior (o empréstimo
     // do tier hard escolhia o agy quando ambos instalados).
-    { adapterId: 'agy', model: 'gemini-3.8-flash-high', effort: 'xhigh' },
+    // O AGY não tem xhigh: o topo dele é a variante -high (F-705).
+    { adapterId: 'agy', model: 'gemini-3.8-flash-high', effort: 'high' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'xhigh' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro-ultraspeed' },
