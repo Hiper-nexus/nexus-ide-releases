@@ -27,9 +27,11 @@ const MCP_BUILTIN_IDS = new Set([
   "grok",
   "mimo-code",
   "minimax-code",
+  // F-696: Muse Code 1.4+ lê o MCP do Nexus pelo settings.json (ponte stdio).
+  "muse",
 ]);
 
-const PTY_FALLBACK_BUILTIN_IDS = new Set(["agy", "aider", "devin", "muse"]);
+const PTY_FALLBACK_BUILTIN_IDS = new Set(["agy", "aider", "devin"]);
 
 function loadCliAdapters(
   rawList: readonly unknown[],

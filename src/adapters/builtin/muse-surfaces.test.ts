@@ -33,8 +33,10 @@ describe('Muse CLI spawn contract (F-596)', () => {
 
   it('does not claim Claude --mcp-config autoload (unknown flags dump --help and exit 2)', () => {
     expect(adapter.quirks.mcpAutoload).toBe(false);
-    expect(adapter.quirks.nexusMcp).toBe('none');
-    expect(canUseNexusMcp(adapter)).toBe(false);
+    // F-696: o MCP do Nexus chega pelo settings.json do Muse 1.4+ (ponte
+    // stdio + ENV), nunca por flag do Claude no argv.
+    expect(adapter.quirks.nexusMcp).toBe('muse');
+    expect(canUseNexusMcp(adapter)).toBe(true);
     expect(
       shouldUseEphemeralHome(adapter, true, { mode: 'hardened' }),
     ).toBe(false);

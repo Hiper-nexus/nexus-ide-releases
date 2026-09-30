@@ -71,6 +71,6 @@
     "requiresNoAutoUpdate": false,
     "approvalFlag": "--approval-mode",
     "mcpAutoload": false,
-    "nexusMcp": "none"
+    "nexusMcp": "muse"
   }
 }

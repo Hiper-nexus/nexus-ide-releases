@@ -465,8 +465,14 @@ saber isto antes de mexer:
   `--strict-mcp-config`. Marcá-lo `mcpAutoload: true` / `nexusMcp: autoload`
   faz o spawn injetar essas flags; o binário 1.3 recusa, dumpa o help
   (incluindo `--subagent-worktree-isolation`) e sai 2.
-- Adapter `muse`: CLI própria (`bin: muse`, `mcpAutoload: false`). Handoff
-  cai no fallback PTY/nx-mail. `spawn.extraArgs` inclui `--trust-workspace`.
+- Adapter `muse`: CLI própria (`bin: muse`, `mcpAutoload: false`,
+  `nexusMcp: muse`). `spawn.extraArgs` inclui `--trust-workspace`. F-696: o
+  Muse Code 1.4+ lê `mcpServers` do `settings.json` (`$XDG_CONFIG_HOME/muse`,
+  padrão `~/.config/muse`) e herda o ambiente nos servidores stdio; o Nexus
+  registra UMA vez `mcpServers.nexus` → a mesma ponte stdio do MiniMax, com
+  URL/bearer só por ENV. `bearer_token_env_var` e `${VAR}` em `headers` não
+  funcionam no 1.4.1 (testado com `muse exec`). Muse < 1.4 não tem o arquivo
+  tocado; o handoff cai no fallback PTY/nx-mail.
 - Opcional `muse-claude`: Claude Code apontado a `https://api.meta.ai`
   (Muse Spark). Key `ANTHROPIC_AUTH_TOKEN` (Model API da Meta). Não mistura
   com a sessão Anthropic nativa (família terceiro + HOME isolado).

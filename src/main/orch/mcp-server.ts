@@ -124,6 +124,7 @@ import {
   type ArmsRuntimeInstance,
 } from "./arms-runtime-path";
 import { prepareMinimaxMcpSession } from "./cli-mcp-session-minimax";
+import { prepareMuseMcpSession } from "./cli-mcp-session-muse";
 
 export { resolveArmsRuntimeDescriptorPath, resolveArmsRuntimeInstance, type ArmsRuntimeInstance };
 
@@ -1437,6 +1438,14 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           const prepared = prepareMinimaxMcpSession(mcpUrl(), ctx.token);
           if (!prepared.registered) {
             console.warn("[mcp] MiniMax Code sem MCP do Nexus:", prepared.reason);
+          }
+          Object.assign(env, prepared.env);
+        } else if (flavor === "muse") {
+          // F-696: Muse Code 1.4+ lê mcpServers do settings.json; mesma ponte
+          // stdio do MiniMax, sessão só por ENV (URL + bearer).
+          const prepared = prepareMuseMcpSession(mcpUrl(), ctx.token);
+          if (!prepared.registered) {
+            console.warn("[mcp] Muse Code sem MCP do Nexus:", prepared.reason);
           }
           Object.assign(env, prepared.env);
         } else if (flavor === "kimi") {

@@ -122,7 +122,7 @@ export interface MinimaxMcpRegistrationOptions {
   nodePath?: string;
 }
 
-function writeFileAtomic(file: string, value: string): void {
+export function writeFileAtomic(file: string, value: string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
   try {
@@ -133,7 +133,7 @@ function writeFileAtomic(file: string, value: string): void {
   }
 }
 
-function readJsonObject(file: string): Record<string, unknown> | null {
+export function readJsonObject(file: string): Record<string, unknown> | null {
   let raw: string;
   try {
     raw = fs.readFileSync(file, 'utf8');
@@ -161,14 +161,11 @@ export function minimaxUserMcpPath(home = os.homedir()): string {
 }
 
 /**
- * Garante a ponte e a entrada `nexus` em `~/.minimax/mcp.json`. Idempotente:
- * só grava quando o conteúdo muda. `mcp.json` ilegível (JSON quebrado) nunca
- * é sobrescrito — o pane segue sem o MCP em vez de apagar config do usuário.
+ * Grava a ponte stdio (`~/.nexus/mcp-bridge/nexus-mcp-bridge.cjs`) quando o
+ * conteúdo mudou e devolve o caminho. Compartilhada por MiniMax (F-678) e
+ * Muse (F-696): sem ENV da sessão ela responde zero ferramentas.
  */
-export function ensureMinimaxNexusMcpRegistration(
-  options: MinimaxMcpRegistrationOptions = {},
-): { registered: boolean; reason?: string } {
-  const home = options.home ?? os.homedir();
+export function ensureNexusMcpBridgeScript(home = os.homedir()): string {
   const bridge = minimaxBridgePath(home);
   let current: string | null = null;
   try {
@@ -179,6 +176,19 @@ export function ensureMinimaxNexusMcpRegistration(
   if (current !== MINIMAX_NEXUS_MCP_BRIDGE_SCRIPT) {
     writeFileAtomic(bridge, MINIMAX_NEXUS_MCP_BRIDGE_SCRIPT);
   }
+  return bridge;
+}
+
+/**
+ * Garante a ponte e a entrada `nexus` em `~/.minimax/mcp.json`. Idempotente:
+ * só grava quando o conteúdo muda. `mcp.json` ilegível (JSON quebrado) nunca
+ * é sobrescrito — o pane segue sem o MCP em vez de apagar config do usuário.
+ */
+export function ensureMinimaxNexusMcpRegistration(
+  options: MinimaxMcpRegistrationOptions = {},
+): { registered: boolean; reason?: string } {
+  const home = options.home ?? os.homedir();
+  const bridge = ensureNexusMcpBridgeScript(home);
 
   const configPath = minimaxUserMcpPath(home);
   const document = readJsonObject(configPath);

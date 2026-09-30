@@ -138,6 +138,8 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M2.7-highspeed' },
     { adapterId: 'claude', model: 'claude-haiku-4-5', effort: 'low' },
+    // F-696: Muse Spark 1.3 (free, DeepSWE 75,4 / TB2.1 88,8) em todo tier.
+    { adapterId: 'muse', model: 'muse-spark-1.3' },
   ],
   easy: [
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'low' },
@@ -159,6 +161,8 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'opencode', model: 'opencode/deepseek-v4-flash' },
     { adapterId: 'openclaude', model: 'haiku' },
     { adapterId: 'aider', model: 'claude-haiku-4-5' },
+    // F-696: Muse Spark 1.3 (free, DeepSWE 75,4 / TB2.1 88,8) em todo tier.
+    { adapterId: 'muse', model: 'muse-spark-1.3' },
   ],
   medium: [
     { adapterId: 'glm', model: 'glm-5.3', effort: 'medium' },
@@ -214,6 +218,8 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'openclaude', model: 'opus' },
     { adapterId: 'aider', model: 'claude-opus-4-8' },
     { adapterId: 'opencode', model: 'openrouter/anthropic/claude-opus-4.8' },
+    // F-696: Muse Spark 1.3 (free, DeepSWE 75,4 / TB2.1 88,8) em todo tier.
+    { adapterId: 'muse', model: 'muse-spark-1.3' },
   ],
   critical: [
     // Opus 5.5 lidera o TB4.0 (66,4% — Anthropic 2026-09-22) e custa menos
@@ -242,6 +248,8 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro-ultraspeed' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3' },
+    // F-696: Muse Spark 1.3 (free, DeepSWE 75,4 / TB2.1 88,8) em todo tier.
+    { adapterId: 'muse', model: 'muse-spark-1.3' },
   ],
 };
 
