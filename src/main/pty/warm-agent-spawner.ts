@@ -17,7 +17,6 @@ import { WARM_IDLE_CONTEXT } from './warm-adoption';
 import {
   setWarmAgentSpawner,
   spawnAgentSession,
-  warmSpawnInProgress,
 } from './pty-manager';
 
 let unsubscribeAccess: (() => void) | undefined;
@@ -54,7 +53,8 @@ export function registerWarmAgentSpawner(deps: {
   });
   if (!requireAccess('use').ok) warmPool.drain();
   setWarmAgentSpawner(async (cli: string): Promise<WarmSession | null> => {
-    if (warmSpawnInProgress() || !requireAccess('use').ok) return null;
+    // Recursion is owned by setWarmAgentSpawner; its callback already runs at depth 1.
+    if (!requireAccess('use').ok) return null;
     const adapter = deps.resolveAdapter(cli);
     if (!adapter || adapter.kind !== 'cli-pty') return null;
     const ctx = deps.resolveContext();
