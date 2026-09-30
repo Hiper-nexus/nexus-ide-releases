@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.76.147 — Todas as CLIs na rota
+
+Uso real no Windows em 30/09. Regra do operador: nenhuma LLM fica sem operar no Nexus. Inclui a 0.76.146 (Sol 6.1 em todo pedido).
+
+- **AGY (Gemini 3.8) nas missões (F-697).** Em 48 h o AGY abriu 1 pane, e o Maestro relatou que o Nexus o rejeitava. `canUseNexusMcp` forçava `false` para o AGY com base no AGY 1.1. O AGY 1.2.14 lê o perfil nativo e herda o ambiente em servidores stdio; `agy -p` provou `initialize`, `tools/list` e `tools/call` autenticados pela ponte do Nexus. O Nexus registra a ponte pela própria CLI (`agy mcp add`, idempotente). Registro falho num worker de missão derruba o spawn em vez de deixar o worker sem como entregar.
+- **Devin nas missões (F-698).** Mesma correção: `devin mcp add --scope user` (nunca o escopo `local`, que grava dentro do repositório), provado com `devin -p`.
+- **Kimi volta à rota (F-694).** O Kimi Code 2.1.1 guarda o login em `credentials/kimi-code-env-<hash>.json`, e a detecção só procurava `kimi-code.json`: nenhum spawn de Kimi em 48 h. Agora aceita as variantes.
+- **Cota do Kimi (F-695).** A cota lê a credencial da CLI e, quando o servidor rotaciona o refresh token, grava de volta no mesmo arquivo de onde leu.
+- **Muse nas missões (F-696).** O Muse Code 1.4.1 lê `mcpServers` do `settings.json`; o Nexus registra a ponte uma vez, e o Muse Spark 1.3 (gratuito, DeepSWE 75,4) entra em todos os tiers.
+- **GLM sem o aviso de Bypass, com os hooks de volta (F-693).** O filtro de skills gravava `skillOverrides: "off"`, mas no Claude Code 2.1.285 esse campo é um mapa. O valor inválido descartava o `settings.json` do HOME efêmero inteiro, e com ele o `skipDangerousModePermissionPrompt` e os hooks de gate e de status. Provado em PTY real (A/B).
+
+Com a release, 12 CLIs ficam roteáveis e com MCP: Claude, Codex, Kimi, Grok, GLM, GLM Flash, AGY, OpenCode, MiMo, MiniMax, Muse e Devin.
+
 ## 0.76.146 — Sol 6.1 em todo pedido
 
 Pedido do operador em 29/09: "entrou o Sol 6.1, não devo usar o Sol normal; quando preciso de modelo bom devo usar o Sol 6.1". Inclui a 0.76.145.

@@ -8395,7 +8395,7 @@ export const RELEASE_076145: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076146: AppRelease = {
   version: '0.76.146',
   date: '2026-09-29',
   codename: 'Sol 6.1 em todo pedido',
@@ -8410,6 +8410,48 @@ export const CURRENT_RELEASE: AppRelease = {
         'tarefa passam a usar a versão mais nova da mesma linha que a CLI oferece. O recibo ' +
         'mostra o que foi pedido e o que rodou. Rosters selados de missões antigas e panes ' +
         'retomados continuam como estavam.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.147',
+  date: '2026-09-30',
+  codename: 'Todas as CLIs na rota',
+  summary:
+    'AGY (Gemini 3.8), Devin, Kimi e Muse voltam a receber trabalho nas missões, ' +
+    'a cota do Kimi aparece de novo, e o GLM não para mais no aviso de Bypass — ' +
+    'com os hooks de controle dos workers funcionando. Inclui a 0.76.146.',
+  highlights: [
+    {
+      title: 'AGY e Devin nas missões',
+      detail:
+        'O AGY e o Devin ficavam fora das missões porque não tinham o MCP do Nexus. ' +
+        'Os dois leem servidores MCP do perfil do usuário: o Nexus registra a ' +
+        'conexão uma vez pela própria CLI, e eles passam a devolver o resultado ' +
+        'ao Maestro. Fora do Nexus eles seguem iguais.',
+    },
+    {
+      title: 'Kimi na rota e com cota',
+      detail:
+        'O Kimi Code 2 guarda o login num arquivo com outro nome, e o Nexus o ' +
+        'achava deslogado: nenhum helper ia para o Kimi e a cota ficava vazia. ' +
+        'Agora o login é reconhecido, o K3 entra na rota, e a renovação do token ' +
+        'volta ao mesmo arquivo que a CLI usa.',
+    },
+    {
+      title: 'Muse nas missões',
+      detail:
+        'O Muse Code 1.4 aceita o MCP do Nexus e passa a concorrer em todos os ' +
+        'tiers; fora do Nexus o Muse segue igual.',
+    },
+    {
+      title: 'GLM sem o aviso de Bypass',
+      detail:
+        'Worker GLM com filtro de skills parava em "Bypass Permissions mode": a ' +
+        'configuração do pane era descartada inteira, com os hooks de controle ' +
+        'junto. Agora o filtro sai no formato que o Claude Code aceita.',
     },
   ],
   fixes: [],
