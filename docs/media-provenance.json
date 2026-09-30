@@ -1,0 +1,7 @@
+{
+  "public/media/nexus-reel-ptbr.mp4": {"origin":"User-provided /Users/cleofasrocha/dev/nexus-reel/out/nexus-reel-ptbr.mp4","sha256":"018cd442e3ba187ee652912ed563f32f1db8e03f6e467e2dbbd961ebfe286a62","operation":"copied unchanged"},
+  "public/media/nexus-reel-poster.jpg": {"origin":"Frame at 8 seconds from the user-provided Nexus reel","operation":"ffmpeg frame extraction"},
+  "public/agents": {"origin":"NexusIDE src/renderer/assets/agent-mascots"},
+  "public/providers": {"origin":"NexusIDE src/renderer/assets/provider-logos"},
+  "public/og-product.png": {"origin":"Original vector composition in scripts/social-card.mjs, rasterized with resvg"}
+}

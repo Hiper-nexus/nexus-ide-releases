@@ -1,0 +1,319 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-30T12:52:16.573542+00:00",
+  "title": "Design System: Nexus Web",
+  "extensions": {
+    "colorMeta": {
+      "bg": {
+        "role": "neutral",
+        "displayName": "bg",
+        "tonalRamp": [
+          "oklch(15% 0.0054 308.76)",
+          "oklch(25% 0.0054 308.76)",
+          "oklch(35% 0.0054 308.76)",
+          "oklch(45% 0.0054 308.76)",
+          "oklch(55% 0.0054 308.76)",
+          "oklch(65% 0.0054 308.76)",
+          "oklch(80% 0.0054 308.76)",
+          "oklch(95% 0.0054 308.76)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "surface",
+        "tonalRamp": [
+          "oklch(15% 0.0063 300.91)",
+          "oklch(25% 0.0063 300.91)",
+          "oklch(35% 0.0063 300.91)",
+          "oklch(45% 0.0063 300.91)",
+          "oklch(55% 0.0063 300.91)",
+          "oklch(65% 0.0063 300.91)",
+          "oklch(80% 0.0063 300.91)",
+          "oklch(95% 0.0063 300.91)"
+        ]
+      },
+      "bar": {
+        "role": "neutral",
+        "displayName": "bar",
+        "tonalRamp": [
+          "oklch(15% 0.0090 307.81)",
+          "oklch(25% 0.0090 307.81)",
+          "oklch(35% 0.0090 307.81)",
+          "oklch(45% 0.0090 307.81)",
+          "oklch(55% 0.0090 307.81)",
+          "oklch(65% 0.0090 307.81)",
+          "oklch(80% 0.0090 307.81)",
+          "oklch(95% 0.0090 307.81)"
+        ]
+      },
+      "lift": {
+        "role": "neutral",
+        "displayName": "lift",
+        "tonalRamp": [
+          "oklch(15% 0.0135 298.44)",
+          "oklch(25% 0.0135 298.44)",
+          "oklch(35% 0.0135 298.44)",
+          "oklch(45% 0.0135 298.44)",
+          "oklch(55% 0.0135 298.44)",
+          "oklch(65% 0.0135 298.44)",
+          "oklch(80% 0.0135 298.44)",
+          "oklch(95% 0.0135 298.44)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "ink",
+        "tonalRamp": [
+          "oklch(15% 0.0041 337.35)",
+          "oklch(25% 0.0041 337.35)",
+          "oklch(35% 0.0041 337.35)",
+          "oklch(45% 0.0041 337.35)",
+          "oklch(55% 0.0041 337.35)",
+          "oklch(65% 0.0041 337.35)",
+          "oklch(80% 0.0041 337.35)",
+          "oklch(95% 0.0041 337.35)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "muted",
+        "tonalRamp": [
+          "oklch(15% 0.0125 334.17)",
+          "oklch(25% 0.0125 334.17)",
+          "oklch(35% 0.0125 334.17)",
+          "oklch(45% 0.0125 334.17)",
+          "oklch(55% 0.0125 334.17)",
+          "oklch(65% 0.0125 334.17)",
+          "oklch(80% 0.0125 334.17)",
+          "oklch(95% 0.0125 334.17)"
+        ]
+      },
+      "faint": {
+        "role": "neutral",
+        "displayName": "faint",
+        "tonalRamp": [
+          "oklch(15% 0.0110 335.60)",
+          "oklch(25% 0.0110 335.60)",
+          "oklch(35% 0.0110 335.60)",
+          "oklch(45% 0.0110 335.60)",
+          "oklch(55% 0.0110 335.60)",
+          "oklch(65% 0.0110 335.60)",
+          "oklch(80% 0.0110 335.60)",
+          "oklch(95% 0.0110 335.60)"
+        ]
+      },
+      "pink": {
+        "role": "primary",
+        "displayName": "pink",
+        "tonalRamp": [
+          "oklch(15% 0.2152 4.09)",
+          "oklch(25% 0.2152 4.09)",
+          "oklch(35% 0.2152 4.09)",
+          "oklch(45% 0.2152 4.09)",
+          "oklch(55% 0.2152 4.09)",
+          "oklch(65% 0.2152 4.09)",
+          "oklch(80% 0.2152 4.09)",
+          "oklch(95% 0.2152 4.09)"
+        ]
+      },
+      "green": {
+        "role": "secondary",
+        "displayName": "green",
+        "tonalRamp": [
+          "oklch(15% 0.1258 156.83)",
+          "oklch(25% 0.1258 156.83)",
+          "oklch(35% 0.1258 156.83)",
+          "oklch(45% 0.1258 156.83)",
+          "oklch(55% 0.1258 156.83)",
+          "oklch(65% 0.1258 156.83)",
+          "oklch(80% 0.1258 156.83)",
+          "oklch(95% 0.1258 156.83)"
+        ]
+      },
+      "gold": {
+        "role": "secondary",
+        "displayName": "gold",
+        "tonalRamp": [
+          "oklch(15% 0.0970 82.26)",
+          "oklch(25% 0.0970 82.26)",
+          "oklch(35% 0.0970 82.26)",
+          "oklch(45% 0.0970 82.26)",
+          "oklch(55% 0.0970 82.26)",
+          "oklch(65% 0.0970 82.26)",
+          "oklch(80% 0.0970 82.26)",
+          "oklch(95% 0.0970 82.26)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "line",
+        "tonalRamp": [
+          "oklch(15% 0 0 / .1)",
+          "oklch(25% 0 0 / .1)",
+          "oklch(35% 0 0 / .1)",
+          "oklch(45% 0 0 / .1)",
+          "oklch(55% 0 0 / .1)",
+          "oklch(65% 0 0 / .1)",
+          "oklch(80% 0 0 / .1)",
+          "oklch(95% 0 0 / .1)"
+        ]
+      },
+      "strong": {
+        "role": "neutral",
+        "displayName": "strong",
+        "tonalRamp": [
+          "oklch(15% 0 0 / .2)",
+          "oklch(25% 0 0 / .2)",
+          "oklch(35% 0 0 / .2)",
+          "oklch(45% 0 0 / .2)",
+          "oklch(55% 0 0 / .2)",
+          "oklch(65% 0 0 / .2)",
+          "oklch(80% 0 0 / .2)",
+          "oklch(95% 0 0 / .2)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display editorial",
+        "purpose": "Hero do produto; variantes responsivas descritas no DESIGN.md."
+      },
+      "pixel": {
+        "displayName": "Sinal pixel",
+        "purpose": "Mundo, progressão e ilustrações pontuais."
+      }
+    },
+    "shadows": [
+      {
+        "name": "reel",
+        "value": "0 24px 72px rgb(0 0 0/.4)",
+        "purpose": "Moldura do reel original."
+      },
+      {
+        "name": "cockpit",
+        "value": "0 24px 70px rgb(0 0 0/.3)",
+        "purpose": "Demo ilustrativa."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease",
+        "value": "cubic-bezier(.22,.8,.2,1)",
+        "purpose": "Transições do DOM."
+      },
+      {
+        "name": "button",
+        "value": "220ms",
+        "purpose": "Transform e background."
+      },
+      {
+        "name": "reveal",
+        "value": "750ms",
+        "purpose": "Opacity e transform."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "product-intermediate",
+        "value": "1150px"
+      },
+      {
+        "name": "community-intermediate",
+        "value": "1000px"
+      },
+      {
+        "name": "mobile",
+        "value": "760px"
+      }
+    ],
+    "tonalRampNote": "Rampas OKLCH sintetizadas apenas para preview; não são tokens usados no código.",
+    "sources": [
+      "src/tokens.css",
+      "src/product.css",
+      "src/community.css"
+    ],
+    "surfaces": {
+      "https://nexuside.app/": "Reel portrait original, controle de áudio e missão ilustrativa.",
+      "https://comunidade.nexuside.app/": "Mapa dirigível de primeira tela, estações, missões e XP local."
+    }
+  },
+  "components": [
+    {
+      "name": "CTA principal",
+      "kind": "button",
+      "refersTo": "button-white",
+      "description": "Variante existente do controle compartilhado.",
+      "html": "<button class=\"ds-button ds-white\">Baixar NexusIDE</button>",
+      "css": ".ds-button{display:inline-flex;gap:16px;align-items:center;justify-content:center;border:1px solid transparent;border-radius:8px;padding:12px 24px;min-height:48px;font:600 14px \"Geist Variable\",system-ui,sans-serif;cursor:pointer;transition:transform .22s var(--ease,cubic-bezier(.22,.8,.2,1)),background .22s var(--ease,cubic-bezier(.22,.8,.2,1))}.ds-button:hover{transform:translateY(-3px)}.ds-button:active{transform:scale(.98)}.ds-button:focus-visible{outline:2px solid var(--pink,#ff4f8b);outline-offset:5px}.ds-button:disabled{opacity:.4;cursor:not-allowed}.ds-button:disabled:hover{transform:none}@media(prefers-reduced-motion:reduce){.ds-button{transition:none}}.ds-white{background:var(--ink,#faf7f9);color:var(--bg,#080709)}.ds-white:hover{background:#e5dde2}"
+    },
+    {
+      "name": "Botão secundário",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "Variante existente do controle compartilhado.",
+      "html": "<button class=\"ds-button ds-outline\">Recomeçar</button>",
+      "css": ".ds-button{display:inline-flex;gap:16px;align-items:center;justify-content:center;border:1px solid transparent;border-radius:8px;padding:12px 24px;min-height:48px;font:600 14px \"Geist Variable\",system-ui,sans-serif;cursor:pointer;transition:transform .22s var(--ease,cubic-bezier(.22,.8,.2,1)),background .22s var(--ease,cubic-bezier(.22,.8,.2,1))}.ds-button:hover{transform:translateY(-3px)}.ds-button:active{transform:scale(.98)}.ds-button:focus-visible{outline:2px solid var(--pink,#ff4f8b);outline-offset:5px}.ds-button:disabled{opacity:.4;cursor:not-allowed}.ds-button:disabled:hover{transform:none}@media(prefers-reduced-motion:reduce){.ds-button{transition:none}}.ds-outline{background:var(--surface,#111013);color:var(--ink,#faf7f9);border-color:var(--strong,rgb(255 255 255 / .2))}.ds-outline:hover{background:var(--lift,#201e25)}"
+    },
+    {
+      "name": "Ação do mundo",
+      "kind": "button",
+      "refersTo": "button-pink",
+      "description": "Variante existente do controle compartilhado.",
+      "html": "<button class=\"ds-button ds-pink\">Explorar estação</button>",
+      "css": ".ds-button{display:inline-flex;gap:16px;align-items:center;justify-content:center;border:1px solid transparent;border-radius:8px;padding:12px 24px;min-height:48px;font:600 14px \"Geist Variable\",system-ui,sans-serif;cursor:pointer;transition:transform .22s var(--ease,cubic-bezier(.22,.8,.2,1)),background .22s var(--ease,cubic-bezier(.22,.8,.2,1))}.ds-button:hover{transform:translateY(-3px)}.ds-button:active{transform:scale(.98)}.ds-button:focus-visible{outline:2px solid var(--pink,#ff4f8b);outline-offset:5px}.ds-button:disabled{opacity:.4;cursor:not-allowed}.ds-button:disabled:hover{transform:none}@media(prefers-reduced-motion:reduce){.ds-button{transition:none}}.ds-pink{background:var(--pink,#ff4f8b);color:var(--bg,#080709)}"
+    },
+    {
+      "name": "Seleção de missão",
+      "kind": "chip",
+      "refersTo": "mission-case",
+      "description": "Caso ilustrativo selecionável; estados padrão e ativo.",
+      "html": "<div class=\"ds-cases\"><button class=\"ds-case ds-active\" aria-pressed=\"true\"><span>01</span> Criar um app</button><button class=\"ds-case\" aria-pressed=\"false\"><span>02</span> Resolver um bug</button></div>",
+      "css": ".ds-cases{display:flex;gap:8px}.ds-case{background:transparent;border:1px solid var(--line,rgb(255 255 255 / .1));border-radius:8px;padding:12px 24px;font:14px \"Geist Variable\",system-ui,sans-serif;color:var(--muted,#aaa2a8);cursor:pointer}.ds-case span{font:10px monospace;margin-right:16px}.ds-case.ds-active{background:var(--lift,#201e25);color:var(--ink,#faf7f9);border-color:var(--strong,rgb(255 255 255 / .2))}.ds-active span{color:var(--pink,#ff4f8b)}.ds-case:focus-visible{outline:2px solid var(--pink,#ff4f8b);outline-offset:5px}"
+    },
+    {
+      "name": "Navegação",
+      "kind": "nav",
+      "description": "Wordmark e links discretos com foco rosa.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Principal\"><a class=\"ds-brand\" href=\"#\">nexus</a><div class=\"ds-links\"><a href=\"#demo\">Experimente</a><a href=\"#download\">Baixar Nexus</a></div></nav>",
+      "css": ".ds-nav{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:20px 40px;border-bottom:1px solid var(--line,rgb(255 255 255 / .1));background:var(--bg,#080709);font-family:\"Geist Variable\",system-ui,sans-serif}.ds-nav a{text-decoration:none;color:inherit}.ds-brand{font-size:24px;font-weight:600;letter-spacing:-.05em;color:var(--ink,#faf7f9)!important}.ds-links{display:flex;gap:32px;font-size:14px;color:var(--muted,#aaa2a8)}.ds-links a:hover{color:var(--ink,#faf7f9)}.ds-nav a:focus-visible{outline:2px solid var(--pink,#ff4f8b);outline-offset:5px}"
+    },
+    {
+      "name": "Cockpit ilustrativo",
+      "kind": "card",
+      "refersTo": "cockpit",
+      "description": "Camadas tonais, chrome e sombra difusa da demo.",
+      "html": "<article class=\"ds-cockpit\"><header class=\"ds-top\">nexus / missão de exemplo <span>DEMO INTERATIVA</span></header><div class=\"ds-main\">Objetivo → Plano → Código → Revisão → Entrega</div></article>",
+      "css": ".ds-cockpit{border:1px solid var(--strong,rgb(255 255 255 / .2));border-radius:12px;overflow:hidden;background:var(--surface,#111013);color:var(--ink,#faf7f9);box-shadow:0 24px 70px rgb(0 0 0/.3);font-family:\"Geist Variable\",system-ui,sans-serif}.ds-top{display:flex;align-items:center;gap:16px;padding:12px 20px;background:var(--bar,#0d0b0f);border-bottom:1px solid var(--line,rgb(255 255 255 / .1));font-size:12px;color:var(--muted,#aaa2a8)}.ds-top span{margin-left:auto;font:9px monospace;color:var(--faint,#928b90)}.ds-main{padding:20px;font-size:12px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Nexus mission control and playable dev cafe",
+    "overview": "Fonte de identidade: DESIGN.md do NexusIDE, baseline Linear, referência de interação Bruno Simon. A identidade combina superfícies near-black, hierarquia editorial, controles legíveis e sinais funcionais em rosa. Os tokens normativos acima vêm do código atual; fontes: `src/tokens.css`, `src/product.css` e `src/community.css`.",
+    "keyCharacteristics": [
+      "Superfícies escuras em camadas, com divisórias discretas.",
+      "Geist para leitura e VT323 nos sinais do mundo e da progressão.",
+      "CTA principal branca; rosa comunica interação e estado."
+    ],
+    "rules": [
+      {
+        "name": "The Action and State Rule",
+        "body": "A CTA principal usa branco; rosa comunica interação e estado.",
+        "section": "colors"
+      },
+      {
+        "name": "The Explicit Play Rule",
+        "body": "A exploração começa pela ação do visitante; os links da comunidade continuam disponíveis fora do canvas.",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "Do preservar a identidade Nexus e os assets originais.",
+      "Do manter foco visível, nomes acessíveis e acesso textual fora do canvas.",
+      "Do identificar a missão demonstrada como ilustrativa."
+    ],
+    "donts": [
+      "Don't apresentar XP local como chance de sorteio ou prova de participação no grupo.",
+      "Don't substituir o reel original por uma gravação ou promessa de produto não comprovada."
+    ]
+  }
+}

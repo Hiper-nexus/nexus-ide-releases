@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#080709" />
+  <title>Nexus dev café · Vibe coding, comunidade e código ao vivo</title>
+  <meta name="description" content="Entre no dev café do Nexus. Uma comunidade de vibe coding, projetos e lives. Participe do grupo e acompanhe o sorteio de Claude 20x e Codex 20x." />
+  <link rel="canonical" href="https://nexuside.app/" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta property="og:title" content="Nexus dev café · seu próximo projeto começa aqui" />
+  <meta property="og:description" content="Código, café e gente que constrói. Entre na comunidade de vibe coding e acompanhe o sorteio de Claude 20x e Codex 20x." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://nexuside.app/" />
+  <meta property="og:image" content="https://nexuside.app/og.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <script type="module" src="/src/main.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="Nexus dev café, início"><span class="brand-mark" aria-hidden="true">N</span><span>nexus<span class="brand-sub">/ dev café</span></span></a>
+    <nav aria-label="Navegação principal">
+      <a href="#drops">Os prêmios <span>02</span></a>
+      <a href="#comunidade">A comunidade</a>
+      <a class="header-cta" data-group href="https://chat.whatsapp.com/CB1tWTp9SVkFeJeZ33N9qK" target="_blank" rel="noopener noreferrer">Entrar no grupo <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+
+  <main id="conteudo">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-topline"><span><i class="live-dot"></i> O café está aberto</span><span class="mono">BR / VIBE CODING COMMUNITY</span></div>
+      <div class="hero-layout">
+        <div class="hero-copy">
+          <p class="eyebrow">Puxe uma cadeira. Abra o terminal.</p>
+          <h1 id="hero-title">Código quente.<br>Ideias fora<br>da <span class="pixel-word">curva.</span></h1>
+          <p class="hero-description">Um lugar para quem transforma café e prompts em projetos de verdade. Vem construir com a galera do Nexus.</p>
+          <a class="button button-primary" data-group href="https://chat.whatsapp.com/CB1tWTp9SVkFeJeZ33N9qK" target="_blank" rel="noopener noreferrer"><span class="prompt-icon" aria-hidden="true">&gt;_</span> Entrar no grupo <span aria-hidden="true">↗</span></a>
+          <p class="hero-caption"><span class="mini-cup" aria-hidden="true">☕</span> WhatsApp · código aberto para conversa</p>
+          <a class="explore-link" href="#drops">Tem dois drops esperando por você <span aria-hidden="true">↓</span></a>
+        </div>
+
+        <div class="world-shell" aria-label="Dev café interativo">
+          <div class="world-toolbar"><span class="mono"><i class="live-dot"></i> NEXUS / PLAYGROUND</span><button class="text-button" id="world-toggle" type="button" aria-pressed="false">Pausar movimento</button></div>
+          <div id="world" tabindex="0" role="application" aria-label="Explore o dev café. Use W A S D ou setas para mover o rover. Clique nas estações para descobrir os prêmios e as lives. Esc sai dos controles.">
+            <div class="world-fallback"><span class="pixel">&gt;_</span><p>Seu próximo projeto começa por uma boa conversa.</p><a href="#drops">Conhecer os prêmios ↓</a></div>
+            <div id="world-loading" class="world-loading" aria-live="polite"><span>Preparando o café...</span><div class="loading-track"></div></div>
+          </div>
+          <div class="world-hud"><span class="mono"><span id="coffee-score">0</span>/5 cafés encontrados</span><button class="text-button" type="button" id="world-reset" aria-label="Voltar o rover ao início">Voltar ao início <span aria-hidden="true">↺</span></button></div>
+          <div class="world-help"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> ou setas</span><span>Arraste para girar · clique para explorar</span></div>
+          <div class="touch-controls" aria-label="Controles de movimento no celular"><button data-move="up" aria-label="Mover para cima">↑</button><button data-move="left" aria-label="Mover para a esquerda">←</button><button data-move="down" aria-label="Mover para baixo">↓</button><button data-move="right" aria-label="Mover para a direita">→</button></div>
+          <p class="game-note">Os cafés são só diversão. Para participar do sorteio, entre no grupo.</p>
+        </div>
+      </div>
+      <div class="hero-bottom"><span class="mono">BUILD. BREAK. DEBUG. REPEAT.</span><span>Boa companhia para ideias ambiciosas.</span><a href="#drops" aria-label="Ver os prêmios">SCROLL TO EXPLORE <span aria-hidden="true">↓</span></a></div>
+    </section>
+
+    <section id="drops" class="section drops-section" aria-labelledby="drops-title">
+      <div class="section-heading reveal"><p class="eyebrow"><span class="section-index">01 /</span> Loot da comunidade</p><h2 id="drops-title">Seu próximo mês<br>pode ganhar um <span class="pixel-word">upgrade.</span></h2><p>Vamos sortear duas contas para a galera do grupo. Entre, acompanhe a comunidade e fique de olho no anúncio.</p></div>
+      <div class="prize-grid">
+        <article class="prize-card claude-card reveal"><div class="prize-top"><span class="mono">DROP / 001</span><span class="prize-badge">1 mês</span></div><div class="prize-logo claude-logo" aria-hidden="true">✳</div><h3>Claude <span>20x</span></h3><p>Uma conta Claude 20x por um mês.<br>Mais espaço para colocar suas ideias para rodar.</p><div class="prize-footer"><span>01 conta para sortear</span><span aria-hidden="true">↗</span></div></article>
+        <article class="prize-card codex-card reveal"><div class="prize-top"><span class="mono">DROP / 002</span><span class="prize-badge">Codex</span></div><div class="prize-logo codex-logo" aria-hidden="true">&gt;_</div><h3>Codex <span>20x</span></h3><p>Uma conta Codex 20x.<br>Os detalhes do prêmio serão anunciados no grupo.</p><div class="prize-footer"><span>01 conta para sortear</span><span aria-hidden="true">↗</span></div></article>
+      </div>
+      <div class="drop-status reveal"><i class="live-dot"></i><div><strong>Primeiro, vamos povoar esse café.</strong><p>A data do sorteio será anunciada no grupo, conforme a comunidade crescer.</p></div><a data-group href="https://chat.whatsapp.com/CB1tWTp9SVkFeJeZ33N9qK" target="_blank" rel="noopener noreferrer">Garantir meu lugar no grupo <span aria-hidden="true">↗</span></a></div>
+      <p class="fine-print">A participação depende de estar no grupo e acompanhar as regras anunciadas pela organização. Os prêmios são uma iniciativa da comunidade Nexus, sem vínculo promocional com Anthropic ou OpenAI. “20x” identifica a oferta anunciada; não significa uso ilimitado.</p>
+    </section>
+
+    <section id="comunidade" class="section community-section" aria-labelledby="community-title">
+      <div class="terminal reveal"><div class="terminal-title"><div class="terminal-dots" aria-hidden="true"><i></i><i></i><i></i></div><span class="mono">~/nexus/dev-cafe</span><span class="mono">zsh</span></div><div class="terminal-body"><p><span class="terminal-muted">nexus@cafe</span> <span class="terminal-pink">~ %</span> npm run comunidade</p><p class="terminal-muted">&gt; iniciando boas conversas...</p><p><span class="terminal-green">✓</span> gente que constrói</p><p><span class="terminal-green">✓</span> projetos saindo do papel</p><p><span class="terminal-green">✓</span> café: sempre uma boa ideia</p><p class="terminal-output">Pronto. Falta você<span class="cursor" aria-hidden="true">▌</span></p></div><div class="terminal-status"><span><i class="live-dot"></i> comunidade em construção</span><span>sem modo espectador</span></div></div>
+      <div class="community-copy reveal"><p class="eyebrow"><span class="section-index">02 /</span> Pull request: você</p><h2 id="community-title">Menos projeto<br>na gaveta.<br><span class="word-reveal">Mais coisa no ar.</span></h2><p>Do primeiro prompt ao deploy, o caminho fica melhor quando a gente troca ideia. Aqui cabe dúvida, demo, bug difícil e aquele “olha o que eu fiz”.</p><ul class="benefits"><li><span>01</span><div><strong>Troque com quem está fazendo</strong><p>Mostre seu projeto e compartilhe o que aprendeu.</p></div></li><li><span>02</span><div><strong>Veja código acontecer ao vivo</strong><p>Acompanhe as lives do Vibe coding ao vivo.</p></div></li><li><span>03</span><div><strong>Construa com a comunidade Nexus</strong><p>Encontre gente curiosa por IA, ferramentas e ideias.</p></div></li></ul></div>
+    </section>
+
+    <section class="section steps-section" aria-labelledby="steps-title"><div class="section-heading reveal"><p class="eyebrow"><span class="section-index">03 /</span> Sua primeira missão</p><h2 id="steps-title">Três passos.<br>Zero cerimônia.</h2></div><ol class="steps"><li class="reveal"><span class="step-number">01</span><h3>Entre no grupo</h3><p>Abra o convite do WhatsApp e faça parte da comunidade.</p></li><li class="reveal"><span class="step-number">02</span><h3>Dê um oi para a galera</h3><p>Conte o que você está construindo ou o que quer aprender.</p></li><li class="reveal"><span class="step-number">03</span><h3>Acompanhe o sorteio</h3><p>A data e as regras serão anunciadas dentro do grupo.</p></li></ol><a class="button button-primary reveal" data-group href="https://chat.whatsapp.com/CB1tWTp9SVkFeJeZ33N9qK" target="_blank" rel="noopener noreferrer">Entrar no grupo <span aria-hidden="true">↗</span></a></section>
+
+    <section id="lives" class="section live-section reveal" aria-labelledby="live-title"><div class="broadcast-art" aria-hidden="true"><div class="video-window"><div class="video-top"><span class="live-label"><i></i> AO VIVO NO CANAL</span><span>&gt;_</span></div><div class="video-code"><span>const ideia = await sonhar();</span><span>const projeto = construir(ideia);</span><span>await projeto.deploy();</span></div><span class="play-glyph">▶</span><div class="video-bottom"><span>VIBE CODING AO VIVO</span><span>REC ●</span></div></div><span class="broadcast-sticker pixel">SHIP IT.</span></div><div class="live-copy"><p class="eyebrow"><span class="section-index">04 /</span> Do prompt ao deploy</p><h2 id="live-title">O código acontece.<br>Você acompanha.</h2><p>Ideias, construção e os bugs no meio do caminho. Conheça nosso canal e acompanhe as lives.</p><a class="button button-secondary" href="https://www.youtube.com/@Vibecoding-ao-vivo" target="_blank" rel="noopener noreferrer">Abrir canal no YouTube <span aria-hidden="true">↗</span></a><p class="mono channel-handle">@Vibecoding-ao-vivo</p></div></section>
+
+    <section id="nexus" class="section nexus-section reveal" aria-labelledby="nexus-title"><p class="eyebrow"><span class="section-index">05 /</span> A casa dos seus agentes</p><div class="nexus-line"><h2 id="nexus-title">Uma IDE.<br>Vários agentes.<br>Suas ideias no comando.</h2><div><p>O NexusIDE reúne terminais e agentes de IA em um workspace. Explore o app que dá nome à nossa comunidade.</p><a class="button button-secondary" href="https://github.com/Hiper-nexus/nexus-ide-releases/releases/latest" target="_blank" rel="noopener noreferrer">Conhecer e baixar o NexusIDE <span aria-hidden="true">↗</span></a></div></div></section>
+
+    <section class="section faq-section" aria-labelledby="faq-title"><div class="section-heading reveal"><p class="eyebrow"><span class="section-index">06 /</span> Antes de abrir o terminal</p><h2 id="faq-title">Dúvidas rápidas.</h2></div><div class="faq-list reveal">
+      <details><summary>Como participo do sorteio?<span aria-hidden="true">+</span></summary><p>Entre no grupo de WhatsApp da comunidade Nexus e acompanhe as regras e o anúncio do sorteio por lá. Clicar no convite ou jogar nesta página não confirma sua entrada no grupo.</p></details>
+      <details><summary>Quando vai acontecer?<span aria-hidden="true">+</span></summary><p>Ainda não há uma data definida. Vamos anunciar dentro do grupo conforme a comunidade crescer.</p></details>
+      <details><summary>Quais são os prêmios?<span aria-hidden="true">+</span></summary><p>Uma conta Claude 20x por um mês e uma conta Codex 20x. A duração e os detalhes da conta Codex serão confirmados pela organização no grupo.</p></details>
+      <details><summary>Preciso ter experiência com programação?<span aria-hidden="true">+</span></summary><p>A comunidade é para quem tem curiosidade e vontade de construir. Quem está começando e quem já desenvolve pode participar das conversas.</p></details>
+      <details><summary>Os cafés do jogo valem chances no sorteio?<span aria-hidden="true">+</span></summary><p>Não. Os cafés e o rover são apenas uma brincadeira nesta página. O jogo não registra participantes nem aumenta as chances de ganhar.</p></details>
+      <details><summary>Onde acompanho as lives?<span aria-hidden="true">+</span></summary><p>No YouTube, no canal <a href="https://www.youtube.com/@Vibecoding-ao-vivo" target="_blank" rel="noopener noreferrer">Vibe coding ao vivo</a>. Os horários e novidades podem ser acompanhados pelo canal e pelo grupo.</p></details>
+    </div></section>
+
+    <section class="final-section reveal" aria-labelledby="final-title"><p class="eyebrow"><i class="live-dot"></i> Tem lugar para mais uma ideia</p><h2 id="final-title">Seu próximo projeto<br>começa com um <span class="pixel-word">“bora”.</span></h2><a class="button button-primary" data-group href="https://chat.whatsapp.com/CB1tWTp9SVkFeJeZ33N9qK" target="_blank" rel="noopener noreferrer">Entrar no grupo <span aria-hidden="true">↗</span></a><p>Café por sua conta. Companhia por nossa.</p></section>
+  </main>
+  <footer><a class="brand" href="/">nexus<span class="brand-sub">/ dev café</span></a><span class="mono">FEITO PARA QUEM CONSTRÓI.</span><div><a href="/privacidade.html">Privacidade</a><a href="/termos.html">Termos</a><a href="https://www.youtube.com/@Vibecoding-ao-vivo" target="_blank" rel="noopener noreferrer">YouTube ↗</a></div></footer>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <dialog id="station-dialog"><button class="dialog-close" aria-label="Fechar detalhes" type="button">×</button><p class="eyebrow" id="station-kicker"></p><h2 id="station-title"></h2><p id="station-description"></p><a class="button button-primary" id="station-link" target="_blank" rel="noopener noreferrer"></a></dialog>
+</body>
+</html>

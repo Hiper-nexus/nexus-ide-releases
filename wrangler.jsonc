@@ -1,0 +1,21 @@
+{
+  "name": "nexus-community-site",
+  "account_id": "53446ce31f241717e814d3766cb43305",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-09-30",
+  "workers_dev": true,
+  "routes": [{
+    "pattern": "nexuside.app/*",
+    "zone_id": "8e4c8f181ef7eb560356469f349cea09"
+  }, {
+    "pattern": "comunidade.nexuside.app",
+    "custom_domain": true
+  }],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "not_found_handling": "404-page"
+  },
+  "observability": {"enabled": true}
+}
