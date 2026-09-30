@@ -8415,7 +8415,7 @@ export const RELEASE_076146: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076147: AppRelease = {
   version: '0.76.147',
   date: '2026-09-30',
   codename: 'Todas as CLIs na rota',
@@ -8452,6 +8452,48 @@ export const CURRENT_RELEASE: AppRelease = {
         'Worker GLM com filtro de skills parava em "Bypass Permissions mode": a ' +
         'configuração do pane era descartada inteira, com os hooks de controle ' +
         'junto. Agora o filtro sai no formato que o Claude Code aceita.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.148',
+  date: '2026-09-30',
+  codename: 'Maestro delega',
+  summary:
+    'O Maestro volta a delegar em missões longas, o GPT-6 Astra sai da rota ' +
+    'automática, os workers deixam de parar para perguntar e o MiniMax não é ' +
+    'mais estacionado no meio do trabalho. Inclui a 0.76.147.',
+  highlights: [
+    {
+      title: 'Maestro que não esquece de delegar',
+      detail:
+        'Numa missão de dias, o Maestro perdia a regra de delegar quando o ' +
+        'contexto compactava e passava a fazer o trabalho sozinho. A regra agora ' +
+        'fica nas instruções permanentes dele, e cada nova mensagem ou entrega ' +
+        'de worker o lembra de abrir os workers em paralelo.',
+    },
+    {
+      title: 'Astra só quando você pedir',
+      detail:
+        'O GPT-6 Astra saía em toda revisão e em toda tarefa crítica: 1 de cada ' +
+        '4 workers num dia. Ele custa 5× mais e empata com o GPT-6.1 Sol nos ' +
+        'benchmarks. Agora ele só é usado quando pedido pelo nome.',
+    },
+    {
+      title: 'Worker não para para perguntar',
+      detail:
+        'Um worker Codex parava com uma pergunta de múltipla escolha quando o ' +
+        'brief conflitava com as regras do Nexus, e o pane ficava parado até ' +
+        'alguém clicar. Agora ele segue o Nexus e devolve o conflito na entrega.',
+    },
+    {
+      title: 'MiniMax não é estacionado trabalhando',
+      detail:
+        'Sob pressão de memória, o Nexus estacionava o MiniMax no meio de uma ' +
+        'tarefa longa. Agora ele lê a tela do MiniMax e reconhece quando ele está ' +
+        'trabalhando.',
     },
   ],
   fixes: [],

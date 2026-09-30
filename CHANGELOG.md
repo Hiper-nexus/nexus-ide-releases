@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.148 — Maestro delega
+
+Uso real no Windows em 30/09, numa missão de dois dias no HiperGO. Inclui a 0.76.147 (todas as CLIs na rota).
+
+- **Maestro volta a delegar (F-701).** A doutrina "delegue, não execute" só viajava no kickoff. Depois de compactar o contexto, o Maestro passou a implementar sozinho, e o operador teve de pedir "solta mais panes". Agora a doutrina curta vai nas `instructions` do MCP de todo orquestrador de missão, que ficam no prompt de sistema e sobrevivem à compactação. O hook do prompt também relembra a cada 30 min, inclusive na entrega de um worker. O Codex recebe a doutrina inteira pelo hook.
+- **GPT-6 Astra só pelo nome (F-700).** Com o Claude reservado ao Maestro, a regra de topo punha o Astra em toda revisão e todo critical: 20 de 76 workers em 24 h. Ele custa $10/$50 e perde do GPT-6.1 Sol no DeepSWE (74,1 × 75,2). Saiu das tabelas e da ordem de topo e é honrado só quando pedido pelo nome. O slot Codex de hard/critical é o Sol 6.1.
+- **Worker não pergunta ao humano (F-702).** Workers Codex paravam em `request_user_input_async` quando o brief (clone WSL, publicar branch) conflitava com a autoridade de execução do Nexus: foram 4 travas em 3 dias. O contrato de todo worker agora diz que não há humano no pane, que o Nexus vence o conflito (e ele volta como bloqueio no handoff) e que não se abrem subagentes internos da CLI.
+- **MiniMax não é estacionado trabalhando (F-699).** Manifesto de tela para o `mcode`: `Running <tempo>` com `Esc stop`, ou `<n> background active`, contam como trabalho, e o guardião de memória deixa de estacionar o pane no meio de uma tarefa.
+
 ## 0.76.147 — Todas as CLIs na rota
 
 Uso real no Windows em 30/09. Regra do operador: nenhuma LLM fica sem operar no Nexus. Inclui a 0.76.146 (Sol 6.1 em todo pedido).
