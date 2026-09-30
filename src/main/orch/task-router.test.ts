@@ -392,18 +392,19 @@ describe('routeTask', () => {
 });
 
 describe('routeTask specialty + diversidade de onda', () => {
-  it('sem benchmark medido a especialidade visual não puxa CLI — lidera o melhor do tier', () => {
-    // Uso geral: a heurística de especialidade não prefere provider nenhum;
-    // 'cobrança' classifica critical e o líder natural do tier vence.
+  it('especialidade visual sem benchmark medido vai para a lane de modelos de topo', () => {
+    // Regra do operador (30/09): UI/design sempre usa Sol 6.1, Opus 5.5,
+    // Sonnet 5.5 ou Astra — a lane promove o primeiro disponível da ordem.
     const decision = routeTask(
       'criar a nova tela de cobrança com estados vazios e acessibilidade',
       adapters('glm', 'agy', 'claude', 'codex'),
     );
     expect(decision!.specialty).toBe('visual');
     expect(decision!.policySource).toBe('heuristic');
-    expect(decision!.adapterId).toBe('claude');
-    expect(decision!.model).toBe('claude-opus-5-5');
+    expect(decision!.adapterId).toBe('codex');
+    expect(decision!.model).toBe('gpt-6.1-sol');
     expect(decision!.reason).toContain('specialty=visual');
+    expect(decision!.reason).toContain('lane visual');
   });
 
   it('honra a escolha de CLI do benchmark sem impor seu esforço à tarefa', () => {
@@ -450,11 +451,10 @@ describe('routeTask specialty + diversidade de onda', () => {
       },
     );
     expect(decision!.policySource).toBe('heuristic');
-    // Fixture não vira prioridade de CLI: sem prepend de especialidade, quem
-    // vence é o benchmark oficial — glm-5.3 lidera o tier no multi-score,
-    // não o codex (99) da tabela de fixture.
-    expect(decision!.adapterId).toBe('glm');
-    expect(decision!.model).toBe('glm-5.3');
+    // Fixture não vira prioridade de CLI: sem benchmark medido, a lane
+    // visual do operador decide — Sol 6.1 encabeça os modelos de topo.
+    expect(decision!.adapterId).toBe('codex');
+    expect(decision!.model).toBe('gpt-6.1-sol');
   });
 
   it('doc mecânico não tem prioridade heurística — vale o líder natural do tier', () => {

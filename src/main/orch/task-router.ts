@@ -460,6 +460,22 @@ export const FRONTIER_ORDER: Readonly<Record<FrontierRoutePolicy, readonly strin
   'high-risk': ['claude-opus-5-5', 'claude-fable-5-1'],
 };
 
+/**
+ * Lane visual (regra do operador, 30/09): trabalho de UI/design sempre vai
+ * para os modelos de topo — Sol 6.1, Opus 5.5, Sonnet 5.5, Astra — mesmo que
+ * a tabela do tier não os liste. O Astra entra aqui por escolha explícita do
+ * operador para UI (a proibição do F-700 vale para a rota automática geral).
+ */
+export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
+  adapterId: string;
+  model: string;
+}> = Object.freeze([
+  { adapterId: 'codex', model: 'gpt-6.1-sol' },
+  { adapterId: 'claude', model: 'claude-opus-5-5' },
+  { adapterId: 'claude', model: 'claude-sonnet-5-5' },
+  { adapterId: 'codex', model: 'gpt-6-astra' },
+]);
+
 export function frontierRoutePolicy(
   taskText: string,
   tier: TaskTier,
@@ -1176,6 +1192,52 @@ export function routeTask(
     }
   }
 
+  // Lane visual (regra do operador, 30/09): UI/design vai sempre para os
+  // modelos de topo. Como a tabela do tier pode não listá-los (Astra só
+  // existe no catálogo, fora de qualquer tier), injeta o candidato quando a
+  // CLI o anuncia e então promove a lane à frente do resultado do rerank.
+  let visualNote = '';
+  if (
+    specialtyVerdict.specialty === 'visual' &&
+    policy.source !== 'benchmark' &&
+    mention.model === undefined
+  ) {
+    for (const lane of VISUAL_FRONTIER_LANE) {
+      const adapter = available.get(lane.adapterId);
+      if (!adapter?.installed) continue;
+      const eligible = eligibleModels(adapter);
+      const resolved = resolveRoutableModel(lane.model, adapter.models);
+      const chosen = resolved.ok
+        ? (newestInModelLine(resolved.model ?? lane.model, eligible) ?? resolved.model ?? lane.model)
+        : lane.model;
+      // Lista de modelos exposta pela CLI: o modelo tem que estar nela.
+      // Sem lista (contrato bundled), confia na lane como a tabela confia.
+      if (adapter.models !== undefined && !eligible.includes(chosen)) continue;
+      if (
+        isModelBlockedForAutoRouting(modelCatalogInfo(modelCatalog, lane.adapterId, chosen)) ||
+        modelAccessQuarantine(lane.adapterId, chosen)
+      ) continue;
+      if (!ranked.some((r) => r.c.adapterId === lane.adapterId && r.c.model === chosen)) {
+        ranked.push({ c: { adapterId: lane.adapterId, model: chosen }, fromTier: tier });
+      }
+    }
+    const laneRank = (entry: RankedRouteEntry): number =>
+      VISUAL_FRONTIER_LANE.findIndex(
+        (lane) => lane.adapterId === entry.c.adapterId && lane.model === entry.c.model,
+      );
+    const inLane = ranked.filter(
+      (entry) => laneRank(entry) >= 0 && !adapterCircuitBreakers.isOpen(entry.c.adapterId),
+    );
+    if (inLane.length > 0) {
+      const set = new Set(inLane);
+      ranked = [
+        ...inLane.sort((a, b) => laneRank(a) - laneRank(b)),
+        ...ranked.filter((entry) => !set.has(entry)),
+      ];
+      visualNote = '; lane visual (modelos de topo)';
+    }
+  }
+
   // Rotação garantida por missão (regra do operador, 29/09): uma missão deve
   // dar um assento a CADA adapter elegível antes de repetir qualquer um —
   // a diversidade proporcional (−18/assento) sozinha nunca alcança adapters
@@ -1191,6 +1253,7 @@ export function routeTask(
     tier !== 'critical' &&
     evaluated.length === 0 &&
     policy.source !== 'benchmark' &&
+    specialtyVerdict.specialty !== 'visual' &&
     mention.model === undefined &&
     usedInMission.size > 0 &&
     usedInMission.has(ranked[0]?.c.adapterId ?? '')
@@ -1287,7 +1350,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${lineUpgradeNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${rotationNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${lineUpgradeNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${rotationNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
       alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId) })),
       specialty: specialtyVerdict.specialty,
       policySource,

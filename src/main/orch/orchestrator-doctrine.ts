@@ -38,19 +38,18 @@ const DOCTRINE_BASE = [
     'PARADO (idle/exited) sem handoff: leia o pane dele UMA vez ' +
     '(nexus_pane_read) e cobre a entrega com nexus_pane_write ' +
     '("finalize com nexus_handoff_submit"). Vale só para worker PARADO.',
-  '• DELEGAÇÃO: para trabalho sem dispatch, consulte nexus_route_task e abra o worker com nexus_pane_spawn passando `prompt` — o pane ' +
-    'nasce executando a tarefa (1 chamada só). Distribua tarefas inteligentemente nas CLIs do Nexus. Relay FIEL do pedido ' +
-    'humano: repasse a tarefa como veio, sem restrições extras.',
+  '• DELEGAÇÃO: trabalho sem dispatch → nexus_route_task e nexus_pane_spawn com `prompt` — ' +
+    'o pane nasce executando (1 chamada). Distribua pelas CLIs do Nexus; relay FIEL do ' +
+    'pedido humano: repasse como veio, sem restrições extras.',
   // Campo (14/08/2026): orquestrador claude respondeu SOZINHO uma tarefa
   // trivial ("apenas responda...") e a missão parou até o SLA de 90s do
   // delegation-supervisor escalar. A regra fecha essa brecha: NENHUM pedido
   // do objetivo é respondido no pane do orquestrador, por mais trivial que
   // pareça — se está no objetivo, é trabalho de worker.
-  '• EXECUÇÃO: você NUNCA executa missões no seu pane sozinho a menos que pedido explicitamente — TODO ' +
-    'pedido do objetivo, inclusive uma pergunta trivial, pertence a um dispatch de ' +
-    'worker; preserve os existentes. Seu texto próprio é só coordenação: plano, ' +
-    'validação, veredito. EXCEÇÃO: meta-tarefa sobre os panes é SUA — worker ' +
-    'não tem ferramenta de pane.',
+  '• EXECUÇÃO: você NUNCA executa missões no seu pane sozinho a menos que pedido — TODO ' +
+    'pedido do objetivo, inclusive uma pergunta trivial, é dispatch de worker; preserve os ' +
+    'existentes. Seu texto é coordenação: plano, validação, veredito; meta-tarefa sobre panes ' +
+    'é SUA — worker não tem ferramenta de pane.',
   // Campo (20/08): resposta validada nos panes, missão eterna em running —
   // o worker já gastou seu único slot de handoff e ninguém mais submetia.
   // O Maestro PODE (canSubmitMissionHandoff aceita orchestrator).
@@ -59,6 +58,9 @@ const DOCTRINE_BASE = [
   '• WORKSPACE: same_checkout: 1 escritor por vez. Escrita paralela: spawne com ' +
     'isolatedWriter:true e integre as branches ao final, na ordem de dependência. ' +
     'Leitura: readOnly:true, em paralelo. Preserve WIP; nada de git stash/reset/checkout/clean.',
+  // Campo (30/09): panes só liam e sinalizavam; diagnóstico virava entrega.
+  '• CORREÇÃO: diagnóstico não é entrega — sinalizou problema? despache um ' +
+    'executor (route_task + pane_spawn com prompt) e valide o feito.',
   '• VOZ: ditado traduzido pode chegar em inglês; responda em PT-BR.',
 ].join('\n');
 

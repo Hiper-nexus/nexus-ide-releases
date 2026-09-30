@@ -81,3 +81,69 @@ describe('rotação garantida por missão (usar todas as LLMs)', () => {
     expect(decision!.adapterId).toBe('claude');
   });
 });
+
+// Lane visual (regra do operador, 30/09): UI/design sempre usa os modelos de
+// topo — Sol 6.1, Opus 5.5, Sonnet 5.5, Astra — e a rotação garantida NÃO
+// os substitui por um provider sem assento.
+describe('lane visual (modelos de topo para UI/design)', () => {
+  const uiTask = 'criar a nova tela de onboarding com estados vazios e acessibilidade';
+
+  it('tarefa visual vai para o primeiro da lane disponível', () => {
+    const decision = routeTask(
+      uiTask, adapters, DEFAULT_ROUTING_TABLE, 'medium', false,
+      undefined, context({}),
+    );
+    expect(decision!.specialty).toBe('visual');
+    expect(decision!.adapterId).toBe('codex');
+    expect(decision!.model).toBe('gpt-6.1-sol');
+    expect(decision!.reason).toContain('lane visual');
+  });
+
+  it('rotação não tira a tarefa visual da lane', () => {
+    // codex já tem assento na missão — numa tarefa comum a rotação daria o
+    // lugar a outro adapter; na lane visual o Sol 6.1 fica.
+    const decision = routeTask(
+      uiTask, adapters, DEFAULT_ROUTING_TABLE, 'medium', false,
+      undefined, context({ codex: 1, muse: 1 }),
+    );
+    expect(decision!.adapterId).toBe('codex');
+    expect(decision!.model).toBe('gpt-6.1-sol');
+    expect(decision!.reason).not.toContain('rotação garantida');
+  });
+
+  it('Astra entra pela lane quando é o único de topo disponível', () => {
+    const onlyAstra: AdapterAvailability[] = [
+      { id: 'claude', installed: true, models: ['claude-fable-5-1'] },
+      { id: 'codex', installed: true, models: ['gpt-6-astra'] },
+      { id: 'glm', installed: true, models: ['glm-5.3'] },
+    ];
+    const decision = routeTask(
+      uiTask, onlyAstra, DEFAULT_ROUTING_TABLE, 'medium', false,
+      undefined, context({}),
+    );
+    expect(decision!.adapterId).toBe('codex');
+    expect(decision!.model).toBe('gpt-6-astra');
+    expect(decision!.reason).toContain('lane visual');
+  });
+
+  it('modelo citado no texto vence a lane', () => {
+    const decision = routeTask(
+      `${uiTask} — implemente com o glm-5.3`,
+      adapters, DEFAULT_ROUTING_TABLE, 'medium', false,
+      undefined, context({}),
+    );
+    expect(decision!.adapterId).toBe('glm');
+    expect(decision!.model).toBe('glm-5.3');
+  });
+
+  it('sem modelo da lane instalado, volta a mandar a rota normal', () => {
+    const noLane = adapters.filter((a) => a.id !== 'claude' && a.id !== 'codex');
+    const decision = routeTask(
+      uiTask, noLane, DEFAULT_ROUTING_TABLE, 'medium', false,
+      undefined, context({}),
+    );
+    expect(decision!.specialty).toBe('visual');
+    expect(decision!.reason).not.toContain('lane visual');
+    expect(['glm', 'mimo-code', 'muse']).toContain(decision!.adapterId);
+  });
+});
