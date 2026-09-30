@@ -1,4 +1,11 @@
-import * as THREE from 'three';
+import {
+  ACESFilmicToneMapping, BackSide, BoxGeometry, CanvasTexture, CircleGeometry, Color,
+  ConeGeometry, CylinderGeometry, DirectionalLight, DodecahedronGeometry, DoubleSide,
+  DynamicDrawUsage, ExtrudeGeometry, Float32BufferAttribute, Fog, Group, HemisphereLight,
+  InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, Object3D,
+  PCFShadowMap, PerspectiveCamera, PlaneGeometry, PointLight, RingGeometry, Scene, Shape,
+  SphereGeometry, SpotLight, SRGBColorSpace, TorusGeometry, Vector3, WebGLRenderer,
+} from 'three';
 import { disposeObjects, disposeShared, makeWorld, makeRover, makeBarrels, makeProps, ANIMATED, COLORS } from './objects.js';
 import { drive, initialVehicle } from './driving.js';
 import { collectNearby } from './movement.js';
@@ -11,22 +18,22 @@ import { joystickInput } from './touch.js';
 const KEYS={w:'forward',ArrowUp:'forward',s:'back',ArrowDown:'back',a:'left',ArrowLeft:'left',d:'right',ArrowRight:'right',Shift:'boost',' ':'brake'};
 const TERRAIN={ramps:WORLD.ramps,boostPads:WORLD.boostPads};
 const STATION_RANGE=3.8;
-const SPARK=[new THREE.Color(COLORS.amber),new THREE.Color(COLORS.orange),new THREE.Color(COLORS.pink)];
-const PICKUP=[new THREE.Color(COLORS.mint),new THREE.Color(COLORS.orange)];
-const DUST=[new THREE.Color(0xd9a4a2),new THREE.Color(0xb98486)];
-const FLAME=[new THREE.Color(COLORS.amber),new THREE.Color(COLORS.pink)];
+const SPARK=[new Color(COLORS.amber),new Color(COLORS.orange),new Color(COLORS.pink)];
+const PICKUP=[new Color(COLORS.mint),new Color(COLORS.orange)];
+const DUST=[new Color(0xd9a4a2),new Color(0xb98486)];
+const FLAME=[new Color(COLORS.amber),new Color(COLORS.pink)];
 
 class Particles {
   constructor(scene,capacity){
     this.capacity=capacity;
-    this.mesh=new THREE.InstancedMesh(new THREE.BoxGeometry(.16,.16,.16),new THREE.MeshBasicMaterial({toneMapped:false}),capacity);
-    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.mesh=new InstancedMesh(new BoxGeometry(.16,.16,.16),new MeshBasicMaterial({toneMapped:false}),capacity);
+    this.mesh.instanceMatrix.setUsage(DynamicDrawUsage);
     this.mesh.frustumCulled=false;
     this.items=Array.from({length:capacity},()=>({ttl:1,life:0,x:0,y:0,z:0,vx:0,vy:0,vz:0}));
-    this.dummy=new THREE.Object3D();
+    this.dummy=new Object3D();
     this.cursor=0;
     scene.add(this.mesh);
-    const hidden=new THREE.Matrix4().makeScale(0,0,0);
+    const hidden=new Matrix4().makeScale(0,0,0);
     for(let i=0;i<capacity;i++)this.mesh.setMatrixAt(i,hidden);
   }
   spawn(x,y,z,{count,colors,speed=6,spread=1}){
@@ -71,7 +78,7 @@ class Particles {
 class Shockwaves {
   constructor(scene,count=4){
     this.rings=Array.from({length:count},()=>{
-      const mesh=new THREE.Mesh(new THREE.RingGeometry(.7,.92,40),new THREE.MeshBasicMaterial({color:0xffc98a,transparent:true,opacity:0,side:THREE.DoubleSide,depthWrite:false,toneMapped:false}));
+      const mesh=new Mesh(new RingGeometry(.7,.92,40),new MeshBasicMaterial({color:0xffc98a,transparent:true,opacity:0,side:DoubleSide,depthWrite:false,toneMapped:false}));
       mesh.rotation.x=-Math.PI/2;
       mesh.visible=false;
       scene.add(mesh);
@@ -102,10 +109,10 @@ class Shockwaves {
 /** Skid marks left by the rear wheels while drifting. A ring buffer of flat quads. */
 class TireMarks {
   constructor(scene,capacity=320){
-    this.capacity=capacity;this.cursor=0;this.dummy=new THREE.Object3D();
-    this.mesh=new THREE.InstancedMesh(new THREE.PlaneGeometry(.2,.9),new THREE.MeshBasicMaterial({color:0x1b1519,transparent:true,opacity:.28,depthWrite:false}),capacity);
+    this.capacity=capacity;this.cursor=0;this.dummy=new Object3D();
+    this.mesh=new InstancedMesh(new PlaneGeometry(.2,.9),new MeshBasicMaterial({color:0x1b1519,transparent:true,opacity:.28,depthWrite:false}),capacity);
     this.mesh.frustumCulled=false;
-    const hidden=new THREE.Matrix4().makeScale(0,0,0);
+    const hidden=new Matrix4().makeScale(0,0,0);
     for(let i=0;i<capacity;i++)this.mesh.setMatrixAt(i,hidden);
     scene.add(this.mesh);
   }
@@ -132,26 +139,26 @@ class CafeWorld {
     // Every DOM listener hangs off this controller, so dispose() releases them in one call.
     this.aborter=new AbortController();this.listen={signal:this.aborter.signal};
     const mobile=Math.min(innerWidth,innerHeight)<760;
-    this.renderer=new THREE.WebGLRenderer({antialias:!mobile,powerPreference:'high-performance'});
+    this.renderer=new WebGLRenderer({antialias:!mobile,powerPreference:'high-performance'});
     this.renderer.setPixelRatio(Math.min(devicePixelRatio,mobile?1.25:1.6));
-    this.renderer.shadowMap.enabled=true;this.renderer.shadowMap.type=THREE.PCFShadowMap;
-    this.renderer.toneMapping=THREE.ACESFilmicToneMapping;this.renderer.toneMappingExposure=1.05;
+    this.renderer.shadowMap.enabled=true;this.renderer.shadowMap.type=PCFShadowMap;
+    this.renderer.toneMapping=ACESFilmicToneMapping;this.renderer.toneMappingExposure=1.05;
     this.renderer.setClearColor(COLORS.skyHorizon);
     host.prepend(this.renderer.domElement);
-    this.scene=new THREE.Scene();this.scene.fog=new THREE.Fog(COLORS.fog,48,150);
-    this.camera=new THREE.PerspectiveCamera(52,1,.1,300);
-    this.scene.add(new THREE.HemisphereLight(0xffc4d4,0x5a2a40,1.5));
+    this.scene=new Scene();this.scene.fog=new Fog(COLORS.fog,48,150);
+    this.camera=new PerspectiveCamera(52,1,.1,300);
+    this.scene.add(new HemisphereLight(0xffc4d4,0x5a2a40,1.5));
     // Shadow budget: phones get a 512² map and only the big shapes cast; desktops keep 2048² and everything.
-    const sun=new THREE.DirectionalLight(0xffcfa6,2.6);sun.castShadow=true;sun.shadow.mapSize.set(mobile?512:2048,mobile?512:2048);
+    const sun=new DirectionalLight(0xffcfa6,2.6);sun.castShadow=true;sun.shadow.mapSize.set(mobile?512:2048,mobile?512:2048);
     Object.assign(sun.shadow.camera,{left:-36,right:36,top:36,bottom:-36,near:1,far:140});sun.shadow.bias=-.0008;sun.shadow.normalBias=.03;
     this.sun=sun;this.scene.add(sun,sun.target);
-    const rim=new THREE.DirectionalLight(0xff6f91,.9);rim.position.set(-30,12,-40);this.scene.add(rim);
-    this.flash=new THREE.PointLight(0xffb35c,0,18,1.8);this.flash.position.set(0,2,0);this.scene.add(this.flash);
+    const rim=new DirectionalLight(0xff6f91,.9);rim.position.set(-30,12,-40);this.scene.add(rim);
+    this.flash=new PointLight(0xffb35c,0,18,1.8);this.flash.position.set(0,2,0);this.scene.add(this.flash);
     this.world=makeWorld(this.scene);this.rover=makeRover(this.scene);
     if(mobile)this.world.root.traverse(object=>{if(object.isInstancedMesh)object.castShadow=false;});
     this.barrels=makeBarrels(this.scene);this.props=makeProps(this.scene);
     this.particles=new Particles(this.scene,this.calm?120:320);this.shockwaves=new Shockwaves(this.scene);this.tireMarks=new TireMarks(this.scene);
-    this.scratch=new THREE.Vector3();this.shakeOffset=new THREE.Vector3();
+    this.scratch=new Vector3();this.shakeOffset=new Vector3();
     for(const coffee of this.world.coffees) coffee.mesh.visible=!this.collected.has(coffee.id);
     this.markers=this.world.stations.map(station=>{const button=document.createElement('button');button.className='station-marker';button.textContent=station.label;button.type='button';button.addEventListener('click',()=>this.activate(station),this.listen);host.append(button);return {...station,button};});
     this.placeRover();
@@ -290,7 +297,7 @@ class CafeWorld {
   activate=(station)=>{
     const near=Math.hypot(this.vehicle.x-station.x,this.vehicle.z-station.z)<STATION_RANGE+2.2;
     if(near&&!this.paused){
-      this.particles.spawn(station.x,2,station.z,{count:this.calm?14:40,colors:[new THREE.Color(COLORS.pink),new THREE.Color(COLORS.white)],speed:4,spread:1});
+      this.particles.spawn(station.x,2,station.z,{count:this.calm?14:40,colors:[new Color(COLORS.pink),new Color(COLORS.white)],speed:4,spread:1});
       this.xpFloat(`+${XP_AWARD.station} XP`);
       this.focus={x:station.x,y:station.anchorY*.5,z:station.z};this.focusUntil=performance.now()+1800;
     }
