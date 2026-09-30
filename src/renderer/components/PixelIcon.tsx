@@ -4,7 +4,6 @@ export type PixelIconName =
   | 'terminal'
   | 'browser'
   | 'grid'
-  | 'canvas'
   | 'files'
   | 'board'
   | 'orch'
@@ -107,14 +106,6 @@ const ICONS: Record<PixelIconName, Rect[]> = {
     [7, 1, 3, 3],
     [1, 7, 3, 3],
     [7, 7, 3, 3],
-  ],
-  // moldura + nó solto (canvas livre)
-  canvas: [
-    [1, 1, 9, 1],
-    [1, 1, 1, 9],
-    [9, 1, 1, 9],
-    [1, 9, 9, 1],
-    [4, 4, 3, 3],
   ],
   // pasta (aba + corpo)
   files: [

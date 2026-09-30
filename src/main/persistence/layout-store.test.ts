@@ -29,15 +29,6 @@ function layout(title = 'Terminal'): WorkspaceLayout {
       pane: { id: 'pane-a', kind: 'shell', title },
     },
     focusedPaneId: 'pane-a',
-    viewKind: 'canvas',
-    canvasNodeLayouts: {
-      'pane-a': {
-        position: { x: 10, y: 20 },
-        size: { width: 720, height: 480 },
-        z: 1,
-      },
-    },
-    canvasViewport: { x: 1, y: 2, zoom: 1 },
   };
 }
 
@@ -104,7 +95,7 @@ describe('scoped layout store', () => {
     const store = createScopedLayoutStore(runtimeManager, scope);
 
     expect(() =>
-      store.save({ ...layout(), canvasViewport: { x: 0, y: 0, zoom: 0 } }),
+      store.save({ ...layout(), focusedPaneId: '' }),
     ).toThrow();
     store.save(layout());
     runtimeManager
@@ -113,6 +104,39 @@ describe('scoped layout store', () => {
       .run('{not-json');
 
     expect(() => store.load()).toThrow(ScopedStoreCorruptionError);
+  });
+
+  it('carrega um layout persistido na era do canvas e descarta os campos de view', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const store = createScopedLayoutStore(runtimeManager, scope);
+
+    store.save(layout());
+    const legacy = {
+      ...layout(),
+      viewKind: 'canvas',
+      canvasNodeLayouts: {
+        'pane-a': {
+          position: { x: 10, y: 20 },
+          size: { width: 720, height: 480 },
+          z: 1,
+        },
+      },
+      canvasViewport: { x: 1, y: 2, zoom: 1 },
+    };
+    runtimeManager
+      .open(scope)
+      .db.prepare('UPDATE workspace_layout SET layout_json = ? WHERE singleton = 1')
+      .run(JSON.stringify(legacy));
+
+    const loaded = store.load();
+    expect(loaded?.layout).toEqual({
+      root: layout().root,
+      focusedPaneId: 'pane-a',
+    });
+    expect(loaded?.layout).not.toHaveProperty('viewKind');
+    expect(loaded?.layout).not.toHaveProperty('canvasNodeLayouts');
+    expect(loaded?.layout).not.toHaveProperty('canvasViewport');
   });
 
   it('notifies only observers bound to the changed checkout', () => {

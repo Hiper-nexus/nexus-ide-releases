@@ -18,8 +18,6 @@ export const SAFE_REALTIME_ACTIONS = [
   'open_board',
   'open_settings',
   'open_voice_settings',
-  'open_canvas',
-  'open_grid',
   'open_browser',
   'browser_back',
   'browser_forward',
@@ -100,10 +98,6 @@ export function summarizeNexusRealtimeAction(args: NexusRealtimeActionArgs): str
       return 'abrir configurações';
     case 'open_voice_settings':
       return 'abrir configurações de voz';
-    case 'open_canvas':
-      return 'abrir canvas';
-    case 'open_grid':
-      return 'abrir grade';
     case 'open_browser':
       return args.url ? `abrir browser em ${args.url}` : 'abrir browser';
     case 'browser_back':

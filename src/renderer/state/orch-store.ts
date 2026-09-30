@@ -11,7 +11,7 @@ import { getActiveWorkspacePath } from './active-workspace';
 
 /**
  * Renderer mirror of the orchestration domain (missions / handoffs / todos /
- * squads) plus pane→mission bindings for canvas edges. Project data is reset
+ * squads) plus pane→mission bindings. Project data is reset
  * and rehydrated whenever the main-authorized workspace changes.
  */
 
@@ -258,7 +258,7 @@ export const useOrchStore = create<OrchState>((set, get) => ({
       if (!missionId) return s;
       // Rebinding do mesmo par é no-op: este método é chamado em todo broadcast
       // de missão, e devolver um objeto novo acordava todo assinante (abas,
-      // toolbar, canvas) sem nada ter mudado.
+      // toolbar, grade) sem nada ter mudado.
       if (s.paneMissions[paneId] === missionId) return s;
       return { paneMissions: { ...s.paneMissions, [paneId]: missionId } };
     }),

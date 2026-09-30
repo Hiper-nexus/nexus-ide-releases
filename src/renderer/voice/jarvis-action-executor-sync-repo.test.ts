@@ -19,7 +19,6 @@ const {
   paneStates: new Map<string, string>(),
   layoutState: {
     focusedPaneId: 'pane-agent' as string | null,
-    viewKind: 'grid' as string,
     panes: [] as Array<{
       id: string;
       kind: 'shell' | 'cli-agent' | 'browser';
@@ -39,7 +38,6 @@ const {
       layoutState.panes.push(pane);
       layoutState.focusedPaneId = pane.id;
     }),
-    toggleView: vi.fn(),
   },
 }));
 
@@ -48,10 +46,8 @@ vi.mock('../state/layout-store', () => ({
     getState: () => ({
       root: layoutState.panes,
       focusedPaneId: layoutState.focusedPaneId,
-      viewKind: layoutState.viewKind,
       focus: layoutState.focus,
       spawnAgent: layoutState.spawnAgent,
-      toggleView: layoutState.toggleView,
     }),
   },
 }));
@@ -117,7 +113,6 @@ describe('sync_repo_via_pane executor', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     layoutState.focusedPaneId = 'pane-agent';
-    layoutState.viewKind = 'grid';
     layoutState.panes = [
       { id: 'pane-agent', kind: 'cli-agent', title: 'Claude' },
     ];

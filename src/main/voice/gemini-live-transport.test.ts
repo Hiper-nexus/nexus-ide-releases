@@ -720,14 +720,14 @@ describe('GeminiLiveTransport', () => {
     ws.fire(
       'message',
       JSON.stringify({
-        toolCall: { functionCalls: [{ id: 'c2', name: 'navegar', args: { target: 'canvas' } }] },
+        toolCall: { functionCalls: [{ id: 'c2', name: 'navegar', args: { target: 'board' } }] },
       }),
     );
-    t.sendToolResult('c2', 'navegar', { ok: true, output: 'canvas aberto' });
+    t.sendToolResult('c2', 'navegar', { ok: true, output: 'quadro aberto' });
     expect(JSON.parse(ws.sent.at(-1)!).toolResponse.functionResponses[0]).toMatchObject({
       id: 'c2',
       name: 'navegar',
-      response: { output: { ok: true, output: 'canvas aberto' } },
+      response: { output: { ok: true, output: 'quadro aberto' } },
     });
 
     ws.fire(

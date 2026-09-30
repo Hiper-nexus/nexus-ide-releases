@@ -26,8 +26,6 @@ export interface ShortcutEntry {
   readonly primary?: boolean;
   /** Rótulo de uma palavra para o rodapé; `action` não cabe lá. */
   readonly short?: string;
-  /** Só faz sentido nesta view; o rodapé do Home filtra por isto. */
-  readonly viewKind?: 'grid' | 'canvas';
 }
 
 export const SHORTCUT_GROUP_LABELS: Readonly<
@@ -110,14 +108,12 @@ export const SHORTCUTS: readonly ShortcutEntry[] = Object.freeze([
     group: 'fleet' as const,
     primary: true,
     short: 'dividir',
-    viewKind: 'grid' as const,
   }),
   Object.freeze({
     id: 'split-down',
     keys: formatShortcut('mod', 'shift', 'D'),
     action: 'Dividir o terminal abaixo',
     group: 'fleet' as const,
-    viewKind: 'grid' as const,
   }),
   Object.freeze({
     id: 'close-pane',
@@ -142,15 +138,6 @@ export const SHORTCUTS: readonly ShortcutEntry[] = Object.freeze([
     keys: 'Esc',
     action: 'Fechar o painel ou diálogo aberto',
     group: 'surfaces' as const,
-  }),
-  Object.freeze({
-    id: 'canvas-center',
-    keys: 'F',
-    action: 'Centralizar o canvas',
-    group: 'surfaces' as const,
-    primary: true,
-    short: 'centralizar',
-    viewKind: 'canvas' as const,
   }),
   Object.freeze({
     id: 'voice-dictate',
@@ -187,18 +174,9 @@ export function shortcutsInGroup(
   return SHORTCUTS.filter((entry) => entry.group === group);
 }
 
-/**
- * Subconjunto do rodapé do Home: só os `primary` aplicáveis à view corrente.
- * Um atalho sem `viewKind` vale nas duas.
- */
-export function primaryShortcuts(
-  viewKind: 'grid' | 'canvas',
-): readonly ShortcutEntry[] {
-  return SHORTCUTS.filter(
-    (entry) =>
-      entry.primary === true &&
-      (entry.viewKind === undefined || entry.viewKind === viewKind),
-  );
+/** Subconjunto do rodapé do Home: os atalhos `primary` do catálogo. */
+export function primaryShortcuts(): readonly ShortcutEntry[] {
+  return SHORTCUTS.filter((entry) => entry.primary === true);
 }
 
 /** IDs dos atalhos servidos por um handler global de App.tsx. */

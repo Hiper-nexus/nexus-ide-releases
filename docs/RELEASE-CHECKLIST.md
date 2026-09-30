@@ -40,7 +40,7 @@ Checklist mínimo para declarar o `.dmg`/`.zip` do NexusIDE release-ready. Inspi
 ## Smoke multi-pane e missão
 
 - [ ] Grid split abre múltiplos panes sem atingir `MAX_LIVE_PANES_HARD` de forma fantasma.
-- [ ] Canvas arrasta pane sem re-spawnar PTY.
+- [ ] Mover um pane entre splits/espaços não re-spawna PTY.
 - [ ] Pane de worker morre e o orquestrador consegue dar recovery sem reiniciar a app.
 - [ ] Missão bloqueada por `answer-question` mostra o pergunta na UI; `retry-kickoff` não a apaga sem resposta.
 - [ ] `STOP` encerra o runtime da missão e o histórico permanece.

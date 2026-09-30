@@ -1,11 +1,11 @@
 # NexusIDE
 
 Terminal IDE multi-agente para macOS: um grid de panes de terminal reais rodando
-CLIs de IA, canvas infinito arrastável, adapters multi-CLI plugáveis e
+CLIs de IA, adapters multi-CLI plugáveis e
 orquestração nativa de squads, missões e handoffs — tudo num único ambiente de
 desenvolvimento orientado a agentes.
 
-> **Status:** core completo — grid de terminais, canvas infinito, orquestração
+> **Status:** core completo — grid de terminais, orquestração
 > de squads/missões, voz falada e multi-conta com failover. macOS-first
 > (Apple Silicon).
 
@@ -23,7 +23,6 @@ seu shell de login, então funciona já na primeira execução.
 
 - **Grid de terminais reais** (PTY + xterm.js) com split, foco e resize; panes
   persistem através de reshapes do grid.
-- **Canvas infinito** arrastável (@xyflow) compartilhando as mesmas sessões.
 - **Onboarding**: escolher/abrir workspace → nova missão em modo **Livre**
   (N panes, provider por pane) ou **Squad** (preset orquestrado).
 - **Multi-CLI declarativo**: claude, codex, agy, kimi, grok,

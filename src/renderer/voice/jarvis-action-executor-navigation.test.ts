@@ -22,7 +22,6 @@ const {
   waitForSession: vi.fn(),
   layoutState: {
     focusedPaneId: 'pane-terminal' as string | null,
-    viewKind: 'grid' as 'grid' | 'canvas',
     panes: [] as Array<{
       id: string;
       kind: 'shell' | 'cli-agent' | 'browser';
@@ -46,11 +45,9 @@ vi.mock('../state/layout-store', () => ({
     getState: () => ({
       root: layoutState.panes,
       focusedPaneId: layoutState.focusedPaneId,
-      viewKind: layoutState.viewKind,
       addShellPane,
       claimStructuralPlaceholder,
       focus: focusPane,
-      toggleView: vi.fn(),
     }),
   },
 }));
@@ -130,7 +127,6 @@ async function execute(action: JarvisAction) {
 beforeEach(() => {
   vi.clearAllMocks();
   layoutState.focusedPaneId = 'pane-terminal';
-  layoutState.viewKind = 'grid';
   layoutState.panes = [
     { id: 'pane-terminal', kind: 'shell', title: 'Terminal' },
   ];

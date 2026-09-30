@@ -23,7 +23,7 @@ complexidade operacional continua disponível por divulgação progressiva.
 
 NexusIDE é um sistema de criação de software multi-agente: conduz objetivo, PRD,
 planejamento, implementação, revisão, testes e entrega enquanto mantém grid de
-terminais reais, canvas, orquestração MCP, voz e multi-conta disponíveis para
+terminais reais, orquestração MCP, voz e multi-conta disponíveis para
 inspeção avançada. Sucesso = uma pessoa descreve o que quer, entende decisões
 importantes e recebe uma entrega verificável; um operador pode abrir a camada
 técnica e assumir controle sem trocar de produto.

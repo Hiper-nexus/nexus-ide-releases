@@ -14,8 +14,6 @@ const TARGETS: Partial<Record<JarvisAction['type'], RegExp>> = {
   open_board: /\b(board|quadro|missoes|missions)\b/,
   open_settings: /\b(configuracoes|ajustes|settings|preferencias)\b/,
   open_voice_settings: /\b(voz|voice|jarvis|microfone|mic)\b/,
-  open_canvas: /\b(canvas|tela livre)\b/,
-  open_grid: /\b(grid|grade)\b/,
   open_browser: /\b(browser|navegador|site|url|pagina|page)\b/,
   close_pane: /\b(pane|painel|aba|terminal)\b/,
   focus_pane: /\b(pane|painel|aba|terminal|agente|agent)\b/,

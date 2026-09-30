@@ -51,7 +51,7 @@ export const usePipeStore = create<PipeStore>((set) => ({
   },
 }));
 
-/** Mount once (e.g. in App/CanvasView) to hydrate + subscribe to changes. */
+/** Mount once (e.g. in App) to hydrate + subscribe to changes. */
 export function usePipeController(): void {
   const hydrate = usePipeStore((s) => s.hydrate);
   useEffect(() => {

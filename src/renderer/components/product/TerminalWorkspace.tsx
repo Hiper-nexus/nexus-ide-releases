@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Group, Panel, Separator } from 'react-resizable-panels';
-import { CanvasView } from '../CanvasView';
 import { PaneGrid } from '../PaneGrid';
 import { MissionTerminalRecovery } from './MissionTerminalRecovery';
 import { useLayoutStore } from '../../state/layout-store';
@@ -49,7 +48,7 @@ export interface TerminalWorkspaceProps {
 /**
  * Terminal destination without an active project. The app shell still lets
  * the operator click "Terminais" before choosing a folder; returning a blank
- * canvas there is indistinguishable from a broken PTY. Keep this surface free
+ * surface there is indistinguishable from a broken PTY. Keep this surface free
  * of PaneLeaf/PTY work until the workspace scope exists, and give the operator
  * one explicit recovery action instead.
  */
@@ -112,7 +111,6 @@ export function TerminalWorkspace({
     wasHiddenRef.current = hidden;
     if (becameVisible) revealTerminalHostsAfterWorkspaceShow();
   }, [hidden]);
-  const viewKind = useLayoutStore((state) => state.viewKind);
   const inMission = missionId !== undefined;
   // F-560: a vista global passou a filtrar por ESCOPO (missão | espaço do
   // operador | soltos), não só por missão. O filtro antigo desligava inteiro
@@ -225,12 +223,11 @@ export function TerminalWorkspace({
       : (focusedScopeKey ?? scopes[0]?.key ?? null);
   const overview = !inMission && effectiveScopeKey === ALL_SCOPES_KEY;
 
-  // Aba ao lado: só na grelha, só fora da visão geral, só se ainda existe e
-  // não é a própria aba ativa. Qualquer outra coisa é uma aba só.
+  // Aba ao lado: só fora da visão geral, só se ainda existe e não é a própria
+  // aba ativa. Qualquer outra coisa é uma aba só.
   const liveSideKey =
     !inMission &&
     !overview &&
-    viewKind === 'grid' &&
     sideScopeKey &&
     sideScopeKey !== effectiveScopeKey &&
     scopes.some((scope) => scope.key === sideScopeKey)
@@ -592,11 +589,6 @@ export function TerminalWorkspace({
             emptyState={
               <MissionTerminalRecovery key={missionId} missionId={missionId} />
             }
-          />
-        ) : viewKind === 'canvas' ? (
-          <CanvasView
-            visiblePaneIds={visiblePaneIds}
-            onPaneCreated={handlePaneCreated}
           />
         ) : sideScope && sidePaneIds && activeScope ? (
           <div className="terminal-workspace__split">

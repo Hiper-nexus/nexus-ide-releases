@@ -344,7 +344,6 @@ describe('jarvisThink brain providers', () => {
 
   it('parseia ações nativas de UI do JSON do cérebro', async () => {
     const replies = [
-      '{"say":"Abrindo o canvas.","expectReply":false,"action":{"type":"open_canvas"}}',
       '{"say":"Abrindo voz.","expectReply":false,"action":{"type":"open_voice_settings"}}',
       '{"say":"Abrindo site.","expectReply":false,"action":{"type":"open_browser","url":"https://example.com"}}',
       '{"say":"Recarregando.","expectReply":false,"action":{"type":"browser_reload"}}',
@@ -361,7 +360,6 @@ describe('jarvisThink brain providers', () => {
       fetchImpl,
     );
 
-    const canvasReply = await jarvisThink('preciso reorganizar a tela livre', CTX, [], d);
     const voiceReply = await jarvisThink('preciso ajustar a voz da assistente', CTX, [], d);
     const browserReply = await jarvisThink('abre example.com', CTX, [], d);
     const reloadReply = await jarvisThink('recarrega a página', CTX, [], d);
@@ -369,7 +367,6 @@ describe('jarvisThink brain providers', () => {
     const previousReply = await jarvisThink('pane anterior', CTX, [], d);
     const focusTerminalReply = await jarvisThink('foca terminal', CTX, [], d);
 
-    expect(canvasReply.action).toEqual({ type: 'open_canvas' });
     expect(voiceReply.action).toEqual({ type: 'open_voice_settings' });
     expect(browserReply.action).toEqual({
       type: 'open_browser',

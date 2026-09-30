@@ -34,8 +34,6 @@ describe('mcp-bridge action mapping', () => {
   it('keeps local UI actions on the renderer UI path', () => {
     expect(mapActionToTool({ type: 'open_settings' })).toBeNull();
     expect(mapActionToTool({ type: 'open_voice_settings' })).toBeNull();
-    expect(mapActionToTool({ type: 'open_canvas' })).toBeNull();
-    expect(mapActionToTool({ type: 'open_grid' })).toBeNull();
     expect(mapActionToTool({ type: 'open_browser' })).toBeNull();
     expect(mapActionToTool({ type: 'browser_reload' })).toBeNull();
     expect(mapActionToTool({ type: 'focus_next_pane' })).toBeNull();

@@ -35,7 +35,7 @@ export const PLANS: PlanDef[] = [
     currency: 'brl',
     tagline: 'Sem prazo e sem cartão',
     features: [
-      'Terminal, editor e canvas locais',
+      'Terminal e editor locais',
       'Todas as CLIs instaladas na máquina',
       'Projetos e missões salvos localmente',
       'Use suas próprias contas e chaves',

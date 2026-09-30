@@ -12,8 +12,7 @@
 @import './provider-logo.css';
 @import './overlays.css';
 @import './pane-picker.css';
-@import './canvas-cockpit.css';
-@import './canvas-voice.css';
+@import './voice-hud.css';
 @import './orchestration.css';
 @import './settings.css';
 @import './settings-controls.css';

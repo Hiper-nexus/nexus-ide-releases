@@ -67,7 +67,7 @@ beforeEach(() => {
   useTerminalGridDialogStore.getState().close();
   useConfirmStore.setState({ pending: null, queue: [] });
   useWorkspaceStore.setState({ current: project, recents: [project] });
-  useLayoutStore.setState({ root: initialTree(), viewKind: 'grid', maximizedPaneId: null });
+  useLayoutStore.setState({ root: initialTree(), maximizedPaneId: null });
   useProductNavigationStore.getState().openLauncher();
   usePaneScopeStore.getState().clearScopeFocus();
   useProviderStore.setState({ providers: [provider('codex'), provider('claude'), provider('missing', false)] });

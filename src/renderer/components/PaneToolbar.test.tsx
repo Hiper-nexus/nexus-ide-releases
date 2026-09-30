@@ -91,15 +91,15 @@ describe('PaneToolbar narrow controls', () => {
     expect(menu?.querySelector('[aria-label="À direita"]')).not.toBeNull();
     expect(menu?.querySelector('[aria-label="Abaixo"]')).not.toBeNull();
     expect(menu?.contains(document.activeElement)).toBe(true);
-    const canvasShortcut = vi.fn();
-    window.addEventListener('keydown', canvasShortcut);
+    const surfaceShortcut = vi.fn();
+    window.addEventListener('keydown', surfaceShortcut);
     const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
     try {
       act(() => document.activeElement!.dispatchEvent(escape));
       expect(escape.defaultPrevented).toBe(true);
-      expect(canvasShortcut).not.toHaveBeenCalled();
+      expect(surfaceShortcut).not.toHaveBeenCalled();
     } finally {
-      window.removeEventListener('keydown', canvasShortcut);
+      window.removeEventListener('keydown', surfaceShortcut);
     }
     expect(document.querySelector('[role="menu"]')).toBeNull();
     expect(document.activeElement).toBe(trigger);
@@ -117,10 +117,10 @@ describe('PaneToolbar narrow controls', () => {
     expect(document.activeElement).toBe(trigger);
   });
 
-  it('navigates menu items with arrows, Home and End without reaching canvas shortcuts', () => {
+  it('navigates menu items with arrows, Home and End without reaching the grid shortcuts', () => {
     const host = mount(120);
-    const canvasShortcut = vi.fn();
-    document.addEventListener('keydown', canvasShortcut);
+    const surfaceShortcut = vi.fn();
+    document.addEventListener('keydown', surfaceShortcut);
     try {
       act(() => host.querySelector<HTMLButtonElement>('[aria-label="Mais ações do pane"]')!.click());
       const items = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
@@ -134,9 +134,9 @@ describe('PaneToolbar narrow controls', () => {
         expect(document.activeElement).toBe(target);
         expect(event.defaultPrevented).toBe(true);
       }
-      expect(canvasShortcut).not.toHaveBeenCalled();
+      expect(surfaceShortcut).not.toHaveBeenCalled();
     } finally {
-      document.removeEventListener('keydown', canvasShortcut);
+      document.removeEventListener('keydown', surfaceShortcut);
     }
   });
 

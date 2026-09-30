@@ -91,7 +91,6 @@ const PERSISTED_PLACEHOLDER_LAYOUT: WorkspaceLayout = {
     },
   },
   focusedPaneId: 'pane-1c962a59',
-  viewKind: 'grid',
 };
 
 function listener() {
@@ -405,7 +404,6 @@ describe('mission pane authority vs. workspace layout restore', () => {
         ],
       },
       focusedPaneId: 'pane-restored-mission',
-      viewKind: 'grid',
     });
     abandonWorkspaceLayoutAfterMainSwitch();
     await act(async () => {
@@ -459,7 +457,6 @@ describe('mission pane authority vs. workspace layout restore', () => {
     loadLayout = async () => ({
       root: buildGridTree(saturated),
       focusedPaneId: 'pane-full-0',
-      viewKind: 'grid',
     });
     const root = mount();
     await act(async () => {

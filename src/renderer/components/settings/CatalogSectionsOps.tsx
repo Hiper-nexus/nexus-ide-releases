@@ -365,9 +365,6 @@ export function RecipesSection() {
  */
 const GESTURES: Array<{ keys: string; action: string }> = [
   { keys: 'clique', action: 'Focar pane' },
-  // Controles da barra, não teclas — mas o operador procura os dois aqui.
-  // Antes vinham como glifos Unicode soltos (⬡ ☾ ☀), dívida pelo DESIGN.md §5.
-  { keys: 'botão Canvas', action: 'Alternar entre grade e canvas (barra)' },
   {
     keys: 'botão do pane',
     action: 'Hibernar ou acordar o pane (barra do pane)',

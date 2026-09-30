@@ -62,10 +62,6 @@ function actionSummary(action: JarvisAction): string {
       return 'abrir configurações';
     case 'open_voice_settings':
       return 'abrir configurações de voz';
-    case 'open_canvas':
-      return 'abrir canvas';
-    case 'open_grid':
-      return 'abrir grade';
     case 'open_browser':
       return action.url ? `abrir browser em ${action.url}` : 'abrir browser';
     case 'browser_back':

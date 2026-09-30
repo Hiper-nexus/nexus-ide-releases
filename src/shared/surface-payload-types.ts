@@ -510,24 +510,9 @@ export type LayoutNode =
       children: [LayoutNode, LayoutNode];
     };
 
-export type ViewKind = 'grid' | 'canvas';
-
-/** Position/size of one pane in the infinite canvas. */
-export interface CanvasNodeLayout {
-  position: { x: number; y: number };
-  size: { width: number; height: number };
-  z: number;
-}
-
 export interface WorkspaceLayout {
   root: LayoutNode;
   focusedPaneId: string | null;
-  /** Active view: grid (default) or infinite canvas. */
-  viewKind?: ViewKind;
-  /** Per-pane canvas position+size, keyed by paneId. */
-  canvasNodeLayouts?: Record<string, CanvasNodeLayout>;
-  /** Last canvas viewport (x, y, zoom) for restore. */
-  canvasViewport?: { x: number; y: number; zoom: number };
 }
 
 /** Payload to open a PTY session for a pane. */

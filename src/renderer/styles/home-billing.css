@@ -508,24 +508,6 @@
 
 /* Persona layout lives in voice-settings.css (avoid 2-col squeeze). */
 
-/* ---- Canvas (xyflow) dark theme: controles legíveis ---- */
-.react-flow__controls-button {
-  background: var(--bg-elevated) !important;
-  border-bottom: 1px solid var(--border) !important;
-  color: var(--text) !important;
-}
-.react-flow__controls-button svg {
-  fill: var(--text) !important;
-}
-.react-flow__controls-button:hover {
-  background: var(--accent-soft) !important;
-}
-.react-flow__attribution {
-  background: transparent !important;
-  color: var(--text-dim) !important;
-  opacity: 0.5;
-}
-
 /* Account roster styles live in panels.css (single source for CLI accounts). */
 
 /* Identidade do pane: quem opera aqui (orquestrador × worker do squad). */

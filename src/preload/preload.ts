@@ -84,8 +84,6 @@ import { BILLING_CHANNELS } from '../shared/billing-types';
 import type { CheckoutRequest } from '../shared/billing-types';
 import type { CostSnapshot } from '../shared/cost-types';
 import type { TokenSpeedSnapshot } from '../shared/token-speed-types';
-import { NOTE_CHANNELS } from '../shared/note-types';
-import type { Note, NotesChangedEvent } from '../shared/note-types';
 import { PIPE_CHANNELS } from '../shared/pipe-types';
 import type { Pipe, PipeMode } from '../shared/pipe-types';
 import {
@@ -649,10 +647,6 @@ ipcRenderer.on(
     emitToListeners(gamificationChangedListeners, 'gamificationChangedListeners', snapshot),
 );
 
-const notesChangedListeners = new Set<(event: NotesChangedEvent) => void>();
-ipcRenderer.on(NOTE_CHANNELS.changed, (_e, event: NotesChangedEvent) =>
-  emitToListeners(notesChangedListeners, 'notesChangedListeners', event),
-);
 const pipesChangedListeners = new Set<(pipes: Pipe[]) => void>();
 ipcRenderer.on(PIPE_CHANNELS.changed, (_e, pipes: Pipe[]) =>
   emitToListeners(pipesChangedListeners, 'pipesChangedListeners', pipes),
@@ -1399,14 +1393,6 @@ const api: NexusApi = {
       ipcRenderer.invoke(MEDIA_CHANNELS.revealArtifact, { storageKey }),
     readArtifactDataUrl: (storageKey: string) =>
       ipcRenderer.invoke(MEDIA_CHANNELS.readArtifactDataUrl, { storageKey }),
-  },
-  notes: {
-    list: (workspacePath: string) =>
-      ipcRenderer.invoke(NOTE_CHANNELS.list, { workspacePath }),
-    save: (workspacePath: string, note: Note) =>
-      ipcRenderer.invoke(NOTE_CHANNELS.save, { workspacePath, note }),
-    remove: (id: string) => ipcRenderer.invoke(NOTE_CHANNELS.remove, { id }),
-    onChanged: (cb) => addListener(notesChangedListeners, cb),
   },
   pipes: {
     list: () => ipcRenderer.invoke(PIPE_CHANNELS.list),

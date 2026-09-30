@@ -1,4 +1,4 @@
-import type { PaneModel, ViewKind } from '../../shared/types';
+import type { PaneModel } from '../../shared/types';
 import type { ProductDestination } from '../state/product-navigation-store';
 
 export interface ScreenSnapshot {
@@ -20,7 +20,6 @@ export type ScreenSurface =
 
 export interface BuildScreenSnapshotInput {
   workspaceName: string | null;
-  viewKind: ViewKind;
   panes: PaneModel[];
   focusedPaneId: string | null;
   orchestratorPaneId: string | null;
@@ -135,7 +134,7 @@ function surfaceContext(surface: ScreenSurface): string {
         surface.blockingOverlays.length > 0
           ? `; blocking overlays: ${surface.blockingOverlays.join(', ')}`
           : '';
-      return `workspace canvas/grid surface${blocked}`;
+      return `workspace terminal surface${blocked}`;
     }
   }
 }
@@ -204,7 +203,6 @@ export function buildScreenSnapshot(input: BuildScreenSnapshotInput): ScreenSnap
   const parts = [
     `Current Nexus screen: ${surfaceContext(input.surface)}.`,
     `Workspace: ${workspaceName}.`,
-    `View: ${input.viewKind}.`,
     `Panes (${input.panes.length}, ${shellCount} shell): ${panesSummary(input.panes, input.orchestratorPaneId)}.`,
     `Focused: ${focused}.`,
     `Active orchestrator: ${orchestrator}.`,

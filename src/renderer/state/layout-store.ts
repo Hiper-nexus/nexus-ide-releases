@@ -6,11 +6,9 @@ import {
   releasePaneNumber,
 } from '../lib/pane-numbers';
 import type {
-  CanvasNodeLayout,
   LayoutNode,
   PaneModel,
   SplitDirection,
-  ViewKind,
   WorkspaceLayout,
 } from '../../shared/types';
 import {
@@ -28,19 +26,12 @@ import {
   pickBalancedTarget,
   withPaneNumbers,
 } from '../lib/split-tree';
-import {
-  defaultCanvasLayout,
-  ensureCanvasLayouts,
-  nextCanvasLayout,
-} from '../lib/canvas-layout';
 import { getActiveWorkspacePath } from './active-workspace';
 import { useOrchStore } from './orch-store';
 import { paneScopeResolver, spaceIdOfScopeKey } from '../lib/pane-spaces';
 import { notifyIfLastMissionPaneClosed } from '../orch/mission-last-pane-notify';
 import { stashPendingContinuity } from '../orch/stranded-mission-handoff';
 import { isAutomatedReviewerPaneIdentity } from '../../shared/automated-reviewer-pane';
-
-const DEFAULT_CANVAS_VIEWPORT = { x: 0, y: 0, zoom: 1 };
 
 interface LayoutState {
   root: LayoutNode;
@@ -49,9 +40,6 @@ interface LayoutState {
   stageFocusMode: boolean;
   stagePaneId: string | null;
   hydrated: boolean;
-  viewKind: ViewKind;
-  canvasNodeLayouts: Record<string, CanvasNodeLayout>;
-  canvasViewport: { x: number; y: number; zoom: number };
 
   split(paneId: string, direction: SplitDirection): void;
   /**
@@ -179,9 +167,6 @@ interface LayoutState {
       readonly outgoingPaneIds?: ReadonlySet<string>;
     },
   ): void;
-  toggleView(): void;
-  updateCanvasNodeLayout(paneId: string, patch: Partial<CanvasNodeLayout>): void;
-  setCanvasViewport(vp: { x: number; y: number; zoom: number }): void;
 }
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -295,20 +280,8 @@ export function sanitizeWorkspaceLayout(
     layout.focusedPaneId && durablePaneIds.has(layout.focusedPaneId)
       ? layout.focusedPaneId
       : firstPaneId(root);
-  const canvasNodeLayouts = layout.canvasNodeLayouts
-    ? Object.fromEntries(
-        Object.entries(layout.canvasNodeLayouts).filter(([paneId]) =>
-          durablePaneIds.has(paneId),
-        ),
-      )
-    : undefined;
 
-  return {
-    ...layout,
-    root,
-    focusedPaneId,
-    ...(canvasNodeLayouts ? { canvasNodeLayouts } : {}),
-  };
+  return { ...layout, root, focusedPaneId };
 }
 
 /**
@@ -338,9 +311,6 @@ function persist(): void {
     const durableLayout = sanitizeWorkspaceLayout({
       root: state.root,
       focusedPaneId: state.focusedPaneId,
-      viewKind: state.viewKind,
-      canvasNodeLayouts: state.canvasNodeLayouts,
-      canvasViewport: state.canvasViewport,
     });
     void window.nexus.layout.save(key, {
       ...durableLayout,
@@ -361,15 +331,8 @@ export function flushLayout(sync = false): void {
     );
     return;
   }
-  const { root, focusedPaneId, viewKind, canvasNodeLayouts, canvasViewport } =
-    useLayoutStore.getState();
-  const durableLayout = sanitizeWorkspaceLayout({
-    root,
-    focusedPaneId,
-    viewKind,
-    canvasNodeLayouts,
-    canvasViewport,
-  });
+  const { root, focusedPaneId } = useLayoutStore.getState();
+  const durableLayout = sanitizeWorkspaceLayout({ root, focusedPaneId });
   const snapshot = {
     ...durableLayout,
     root: rootWithTerminalSnapshots(durableLayout.root),
@@ -706,7 +669,7 @@ function rootWithPaneGuaranteed(
  * what the surviving node was allowed to CARRY.
  *
  * Applied at the seam and not at the restore path on purpose: the poisoned
- * rows are already on disk, and any future writer (recovery, reopen, a canvas
+ * rows are already on disk, and any future writer (recovery, reopen, a layout
  * import) would otherwise re-introduce them.
  */
 function rootWithoutVacancyResidue(root: LayoutNode): LayoutNode {
@@ -922,9 +885,6 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
   stageFocusMode: false,
   stagePaneId: null,
   hydrated: false,
-  viewKind: 'grid',
-  canvasNodeLayouts: {},
-  canvasViewport: DEFAULT_CANVAS_VIEWPORT,
 
   split: (paneId, direction) => {
     // O irmão HERDA o espaço de quem foi dividido (F-560). Sem isto, dividir um
@@ -959,7 +919,7 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
   },
 
   spawnOrchPane: (req) => {
-    const { root: currentRoot, viewKind, canvasNodeLayouts, focusedPaneId, maximizedPaneId } = get();
+    const { root: currentRoot, focusedPaneId, maximizedPaneId } = get();
     const existingPanes = listPanes(currentRoot);
     if (existingPanes.some((pane) => pane.id === req.paneId)) {
       throw new Error(
@@ -1030,22 +990,6 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
         ? splitPane(currentRoot, target.paneId, target.direction, newPane)
         : splitPane(initialTree(), firstPaneId(initialTree()) ?? '', 'row', newPane);
 
-    const paneCount = listPanes(root).length;
-    const baseCanvasLayouts =
-      viewKind === 'canvas'
-        ? ensureCanvasLayouts(existingPanes, canvasNodeLayouts)
-        : canvasNodeLayouts;
-    const pivot = target.paneId ?? firstPaneId(currentRoot);
-    const updatedLayouts =
-      viewKind === 'canvas'
-        ? replaceLonePlaceholder
-          ? { [newPane.id]: defaultCanvasLayout(0) }
-          : {
-              ...baseCanvasLayouts,
-              [newPane.id]: nextCanvasLayout(baseCanvasLayouts, pivot, paneCount - 1),
-            }
-        : canvasNodeLayouts;
-
     bumpTreeVersion();
     const livePanes = listPanes(root);
     // Modo foco (F-521): com um pane ampliado ATIVO (o operador colocou o
@@ -1070,7 +1014,6 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
       root,
       focusedPaneId: keepFocus ? focusedPaneId : newPane.id,
       maximizedPaneId: keepMaximize ? maximizedPaneId : null,
-      canvasNodeLayouts: updatedLayouts,
     });
     persist();
     return newPane.id;
@@ -1081,8 +1024,6 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
       root: currentRoot,
       focusedPaneId,
       maximizedPaneId,
-      viewKind,
-      canvasNodeLayouts,
     } = get();
     const newPane = createPane('shell', getActiveWorkspacePath() ?? undefined);
     const pivot = focusedPaneId ?? firstPaneId(currentRoot);
@@ -1096,26 +1037,12 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
           newPane,
         )
       : buildGridTree([newPane]);
-    const existingPanes = listPanes(currentRoot);
-    const paneCount = listPanes(root).length;
-    const baseCanvasLayouts =
-      viewKind === 'canvas'
-        ? ensureCanvasLayouts(existingPanes, canvasNodeLayouts)
-        : canvasNodeLayouts;
-    const updatedLayouts =
-      viewKind === 'canvas'
-        ? {
-            ...baseCanvasLayouts,
-            [newPane.id]: nextCanvasLayout(baseCanvasLayouts, pivot, paneCount - 1),
-          }
-        : canvasNodeLayouts;
     bumpTreeVersion();
     const focusNewPane = options?.focus !== false;
     set({
       root,
       focusedPaneId: focusNewPane ? newPane.id : focusedPaneId,
       maximizedPaneId: focusNewPane ? null : maximizedPaneId,
-      canvasNodeLayouts: updatedLayouts,
     });
     persist();
     return newPane.id;
@@ -1139,27 +1066,16 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
       currentFocusedId && capped.some((pane) => pane.id === currentFocusedId)
         ? currentFocusedId
         : capped[0]!.id;
-    const { viewKind, canvasNodeLayouts } = get();
-    const updatedLayouts =
-      viewKind === 'canvas'
-        ? capped.reduce(
-            (acc, pane, index) => ({
-              ...acc,
-              [pane.id]: defaultCanvasLayout(index),
-            }),
-            {} as Record<string, CanvasNodeLayout>,
-          )
-        : canvasNodeLayouts;
     bumpTreeVersion();
     // Substituição deliberada do grid (retomada/apresentação de missão, Modo
     // Livre) encerra qualquer zoom de pane único: um maximize stale deixava o
     // pane ampliado (às vezes um shell vazio) cobrindo os panes recém-montados.
-    set({ root, focusedPaneId, maximizedPaneId: null, canvasNodeLayouts: updatedLayouts });
+    set({ root, focusedPaneId, maximizedPaneId: null });
     persist();
   },
 
   spawnAgent: (adapterId, model, options) => {
-    const { focusedPaneId: targetId, root: currentRoot, viewKind, canvasNodeLayouts } = get();
+    const { focusedPaneId: targetId, root: currentRoot } = get();
     if (listPanes(currentRoot).length >= MAX_LIVE_PANES_HARD) {
       console.warn(
         `[layout] refuse spawnAgent (hard=${MAX_LIVE_PANES_HARD}) adapter=${adapterId}`,
@@ -1195,27 +1111,12 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
         )
       : splitPane(initialTree(), firstPaneId(initialTree()) ?? '', 'row', newPane);
 
-    const existingPanes = listPanes(currentRoot);
-    const paneCount = listPanes(root).length;
-    const baseCanvasLayouts =
-      viewKind === 'canvas'
-        ? ensureCanvasLayouts(existingPanes, canvasNodeLayouts)
-        : canvasNodeLayouts;
-    const updatedLayouts =
-      viewKind === 'canvas'
-        ? {
-            ...baseCanvasLayouts,
-            [newPane.id]: nextCanvasLayout(baseCanvasLayouts, pivotId, paneCount - 1),
-          }
-        : canvasNodeLayouts;
-
     const focusedPaneId = newPane.id;
     bumpTreeVersion();
     set({
       root,
       focusedPaneId,
       maximizedPaneId: null,
-      canvasNodeLayouts: updatedLayouts,
     });
     persist();
     return newPane.id;
@@ -1335,7 +1236,7 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
   },
 
   addBrowserPane: (url, paneId, browserOpenRequestId) => {
-    const { root: currentRoot, focusedPaneId, viewKind, canvasNodeLayouts } = get();
+    const { root: currentRoot, focusedPaneId } = get();
     if (paneId && listPanes(currentRoot).some((pane) => pane.id === paneId)) {
       throw new Error(`browser pane identity already exists: ${paneId}`);
     }
@@ -1360,25 +1261,11 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
           newPane,
         )
       : buildGridTree([newPane]);
-    const existingPanes = listPanes(currentRoot);
-    const paneCount = listPanes(root).length;
-    const baseCanvasLayouts =
-      viewKind === 'canvas'
-        ? ensureCanvasLayouts(existingPanes, canvasNodeLayouts)
-        : canvasNodeLayouts;
-    const updatedLayouts =
-      viewKind === 'canvas'
-        ? {
-            ...baseCanvasLayouts,
-            [newPane.id]: nextCanvasLayout(baseCanvasLayouts, pivot, paneCount - 1),
-          }
-        : canvasNodeLayouts;
     bumpTreeVersion();
     set({
       root,
       focusedPaneId: newPane.id,
       maximizedPaneId: null,
-      canvasNodeLayouts: updatedLayouts,
     });
     persist();
     return newPane.id;
@@ -1669,9 +1556,6 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
         focusedPaneId: firstPaneId(root),
         maximizedPaneId: null,
         hydrated: true,
-        viewKind: 'grid',
-        canvasNodeLayouts: {},
-        canvasViewport: DEFAULT_CANVAS_VIEWPORT,
       });
       return;
     }
@@ -1703,39 +1587,7 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
         durableLayout.focusedPaneId ?? firstPaneId(durableLayout.root),
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: durableLayout.viewKind ?? 'grid',
-      canvasNodeLayouts: durableLayout.canvasNodeLayouts ?? {},
-      canvasViewport:
-        durableLayout.canvasViewport ?? DEFAULT_CANVAS_VIEWPORT,
     });
-  },
-
-  toggleView: () => {
-    const { viewKind, root, canvasNodeLayouts } = get();
-    if (viewKind === 'grid') {
-      const panes = listPanes(root);
-      const updatedLayouts = ensureCanvasLayouts(panes, canvasNodeLayouts);
-      set({ viewKind: 'canvas', canvasNodeLayouts: updatedLayouts });
-      persist();
-    } else {
-      set({ viewKind: 'grid' });
-      persist();
-    }
-  },
-
-  updateCanvasNodeLayout: (paneId, patch) => {
-    const { canvasNodeLayouts } = get();
-    const existing = canvasNodeLayouts[paneId] ?? defaultCanvasLayout(0);
-    const updated = { ...existing, ...patch };
-    const updatedLayouts = { ...canvasNodeLayouts, [paneId]: updated };
-    set({ canvasNodeLayouts: updatedLayouts });
-    persist();
-  },
-
-  setCanvasViewport: (vp) => {
-    set({ canvasViewport: vp });
-    // Debounce viewport persist separately (fires on every pan/zoom frame).
-    persist();
   },
   };
 });

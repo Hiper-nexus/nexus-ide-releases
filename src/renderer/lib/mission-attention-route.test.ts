@@ -48,7 +48,6 @@ beforeEach(() => {
     focusedPaneId: 'shell-old',
     maximizedPaneId: null,
     hydrated: true,
-    viewKind: 'grid',
   });
 });
 

@@ -43,7 +43,6 @@ export function CommandPalette() {
   const open = useCommandPaletteStore((state) => state.open);
   const close = useCommandPaletteStore((state) => state.close);
   const root = useLayoutStore((state) => state.root);
-  const viewKind = useLayoutStore((state) => state.viewKind);
   const missionSummaries = useOrchStore(
     (state) => state.missionSummaries,
   );
@@ -232,17 +231,6 @@ export function CommandPalette() {
       'web browser',
     );
     tool(
-      'view',
-      viewKind === 'canvas' ? 'Mudar para grade' : 'Mudar para canvas',
-      viewKind === 'canvas' ? 'grid' : 'canvas',
-      () => {
-        useProductNavigationStore.getState().openTerminal();
-        layout.toggleView();
-      },
-      '',
-      'layout visão',
-    );
-    tool(
       'skills',
       'Skills do projeto',
       'agent',
@@ -311,7 +299,7 @@ export function CommandPalette() {
     );
 
     return out;
-  }, [open, root, missionSummaries, paneStates, viewKind]);
+  }, [open, root, missionSummaries, paneStates]);
 
   const filtered = useMemo(
     () => filterPaletteActions(actions, query),

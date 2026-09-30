@@ -94,7 +94,6 @@ const PERSISTED_PLACEHOLDER_LAYOUT: WorkspaceLayout = {
     },
   },
   focusedPaneId: 'pane-5ba1523f',
-  viewKind: 'grid',
 };
 
 const WORKSPACE = '/workspace/vacancy';
@@ -177,7 +176,6 @@ function seedPlaceholderOnly(): PaneModel {
     focusedPaneId: pane.id,
     maximizedPaneId: null,
     hydrated: true,
-    viewKind: 'grid',
   });
   return pane;
 }
@@ -375,7 +373,6 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
       focusedPaneId: pane.id,
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
     });
     useProductNavigationStore.getState().openTerminal();
     render();

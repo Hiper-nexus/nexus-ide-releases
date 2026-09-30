@@ -113,7 +113,6 @@ beforeEach(() => {
     focusedPaneId: 'shell-origin',
     maximizedPaneId: null,
     hydrated: true,
-    viewKind: 'grid',
   });
   useAccountStore.setState({
     accounts: [],

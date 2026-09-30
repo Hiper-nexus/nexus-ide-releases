@@ -164,9 +164,9 @@ describe('resolveCoarseVoiceTool', () => {
     ).toMatchObject({ kind: 'action', action: { action: 'open_browser', url: 'https://x.dev' } });
   });
 
-  it('navegar screen resolves grid/board/settings/canvas/voz', () => {
+  it('navegar screen resolves grid/board/settings/voz', () => {
     expect(resolveCoarseVoiceTool('navegar', { target: 'screen', query: 'grid' })).toMatchObject({
-      action: { action: 'open_grid' },
+      action: { action: 'open_terminal' },
     });
     expect(resolveCoarseVoiceTool('navegar', { target: 'screen', query: 'board' })).toMatchObject({
       action: { action: 'open_board' },

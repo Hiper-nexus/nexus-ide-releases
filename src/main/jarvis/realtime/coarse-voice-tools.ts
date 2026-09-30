@@ -101,7 +101,7 @@ export const COARSE_VOICE_TOOLS: GeminiFunctionDeclaration[] = [
   {
     name: 'navegar',
     description:
-      'Navega a UI do Nexus: abre/foca workspace, squad, pane, terminal, browser ou tela (grid/board/settings/canvas/voz). Também dirige o wizard: "mission-new" abre Nova Missão; "squad-picker" abre a lista de squads salvos sem criar nem iniciar um; "mission-agentic" abre Nova Missão diretamente no Modo Agêntico (query recebe o objetivo se o usuário já o disse); "workspace-new" abre o assistente de NOVO workspace (pasta + setup — NÃO confundir com abrir um projeto existente); "design-squad" cria um squad novo e abre a revisão; "wizard-fire" usa o squad revisado e avança o wizard (como o botão Usar este squad), sem substituir a aprovação nativa antes da execução. Para iniciar/criar missão no modo agêntico, use mission-agentic — NUNCA use voz/settings nem design-squad. Use SEMPRE que o usuário pedir para abrir/mostrar/ir/focar/criar missão/novo workspace/confirmar. NÃO delegue navegação.',
+      'Navega a UI do Nexus: abre/foca workspace, squad, pane, terminal, browser ou tela (terminal/board/settings/voz). Também dirige o wizard: "mission-new" abre Nova Missão; "squad-picker" abre a lista de squads salvos sem criar nem iniciar um; "mission-agentic" abre Nova Missão diretamente no Modo Agêntico (query recebe o objetivo se o usuário já o disse); "workspace-new" abre o assistente de NOVO workspace (pasta + setup — NÃO confundir com abrir um projeto existente); "design-squad" cria um squad novo e abre a revisão; "wizard-fire" usa o squad revisado e avança o wizard (como o botão Usar este squad), sem substituir a aprovação nativa antes da execução. Para iniciar/criar missão no modo agêntico, use mission-agentic — NUNCA use voz/settings nem design-squad. Use SEMPRE que o usuário pedir para abrir/mostrar/ir/focar/criar missão/novo workspace/confirmar. NÃO delegue navegação.',
     parameters: {
       type: 'OBJECT',
       properties: {
@@ -113,7 +113,7 @@ export const COARSE_VOICE_TOOLS: GeminiFunctionDeclaration[] = [
         query: {
           type: 'STRING',
           description:
-            'Nome/id do alvo; em screen use grid, board, settings, canvas ou voz; em browser use a URL; em workspace use o nome do projeto; em mission-agentic use o objetivo falado, se houver; vazio em workspace-new/mission-new/design-squad/wizard-fire.',
+            'Nome/id do alvo; em screen use terminal, board, settings ou voz; em browser use a URL; em workspace use o nome do projeto; em mission-agentic use o objetivo falado, se houver; vazio em workspace-new/mission-new/design-squad/wizard-fire.',
         },
       },
       required: ['target'],
@@ -262,9 +262,10 @@ function isNewWorkspaceAlias(value: string): boolean {
 
 function screenToAction(query: string): NexusRealtimeActionArgs | null {
   switch (query.trim().toLowerCase()) {
+    case 'terminal':
     case 'grid':
     case 'grade':
-      return { action: 'open_grid' };
+      return { action: 'open_terminal' };
     case 'board':
     case 'quadro':
     case 'missões':
@@ -278,8 +279,6 @@ function screenToAction(query: string): NexusRealtimeActionArgs | null {
     case 'voz':
     case 'voice':
       return { action: 'open_voice_settings' };
-    case 'canvas':
-      return { action: 'open_canvas' };
     default:
       return null;
   }

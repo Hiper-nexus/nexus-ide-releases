@@ -74,7 +74,7 @@ describe('CoffeeSpillCorner no pane vivo focado', () => {
       configurable: true,
       value: {
         layout: {
-          load: vi.fn(async () => ({ root: null, focusedPaneId: null, viewKind: 'grid' as const })),
+          load: vi.fn(async () => ({ root: null, focusedPaneId: null })),
           save: vi.fn(async () => {}),
           saveSync: vi.fn(() => {}),
         },
@@ -95,7 +95,6 @@ describe('CoffeeSpillCorner no pane vivo focado', () => {
       focusedPaneId: pane.id,
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
     });
 
     render();
@@ -124,7 +123,6 @@ describe('CoffeeSpillCorner no pane vivo focado', () => {
       focusedPaneId: paneB.id, // paneA não tem foco
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
     });
 
     render();
@@ -144,7 +142,6 @@ describe('CoffeeSpillCorner no pane vivo focado', () => {
       focusedPaneId: paneA.id,
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
     });
 
     render();
@@ -179,7 +176,6 @@ describe('CoffeeSpillCorner no pane vivo focado', () => {
       focusedPaneId: workerPane.id,
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
     });
 
     render();

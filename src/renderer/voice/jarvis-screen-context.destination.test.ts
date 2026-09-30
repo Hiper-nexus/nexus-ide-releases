@@ -28,7 +28,6 @@ function seedPane(id: string): void {
     focusedPaneId: id,
     maximizedPaneId: null,
     hydrated: true,
-    viewKind: 'grid',
   });
 }
 

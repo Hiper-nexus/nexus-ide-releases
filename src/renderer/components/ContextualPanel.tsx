@@ -27,7 +27,7 @@ import { PixelIcon } from './PixelIcon';
 
 const MIN_PANEL_WIDTH = 200;
 const MAX_PANEL_WIDTH = 900;
-const MIN_CANVAS_WIDTH = 320;
+const MIN_STAGE_WIDTH = 320;
 const COMPACT_PANEL_BREAKPOINT = 900;
 const PANEL_KEYBOARD_STEP = 16;
 /** Folga ao revelar uma aba: a largura da borda esmaecida da faixa (--space-5). */
@@ -160,7 +160,7 @@ export function ContextualPanel({
   const panelBodyId = `${panelDomId}-body`;
   const compactPresentation = viewportWidth < COMPACT_PANEL_BREAKPOINT;
   // A coluna do shell segue a largura do painel; o teto precisa descontar o
-  // rail real (ajustável) para o canvas nunca ficar abaixo do mínimo.
+  // rail real (ajustável) para o palco nunca ficar abaixo do mínimo.
   const railWidth = useRailWidthStore((rail) => rail.width);
   const responsiveMaximum = compactPresentation
     ? Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, viewportWidth - 16))
@@ -168,7 +168,7 @@ export function ContextualPanel({
         MAX_PANEL_WIDTH,
         Math.max(
           MIN_PANEL_WIDTH,
-          viewportWidth - railWidth - MIN_CANVAS_WIDTH,
+          viewportWidth - railWidth - MIN_STAGE_WIDTH,
         ),
       );
   const visibleTabs = supportedTabs(relevantTabs);

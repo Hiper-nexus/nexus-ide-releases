@@ -195,24 +195,6 @@ export function jarvisActionFastPath(
     };
   }
 
-  if (
-    /\b(abre|abra|abrir|mostra|mostre|ativa|ative|entrar|entra|vai|ir)\b.*\b(canvas|modo canvas|tela livre)\b/.test(
-      t,
-    ) ||
-    /\b(modo canvas|canvas mode)\b$/.test(t)
-  ) {
-    return { say: say(ctx, 'Abrindo o canvas.'), expectReply: false, action: { type: 'open_canvas' } };
-  }
-
-  if (
-    /\b(abre|abra|abrir|mostra|mostre|ativa|ative|volta|volte|vai|ir)\b.*\b(grid|grade|modo grade|modo grid)\b/.test(
-      t,
-    ) ||
-    /\b(modo grade|modo grid|grid mode)\b$/.test(t)
-  ) {
-    return { say: say(ctx, 'Voltando para a grade.'), expectReply: false, action: { type: 'open_grid' } };
-  }
-
   const openBrowserWithUrl = t.match(
     /\b(?:abre|abra|abrir|open)\b(?:\s+o)?\s+(?:site|url|pagina|page|browser|navegador)\s+(.+)$/,
   );

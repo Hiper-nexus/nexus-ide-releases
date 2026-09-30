@@ -48,8 +48,6 @@ export function mapActionToTool(
     case 'open_terminal':
     case 'open_settings':
     case 'open_voice_settings':
-    case 'open_canvas':
-    case 'open_grid':
     case 'open_browser':
     case 'browser_back':
     case 'browser_forward':

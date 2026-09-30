@@ -37,10 +37,10 @@ export function isStatusQuestion(text: string): boolean {
 /**
  * A UI/navigation command (open/close/focus a workspace/pane/screen, list, count,
  * farewell) — NOT an answer to a pending work question. Re-expressed for nexus's
- * UI vocabulary (workspace/squad/pane/terminal/browser/grid/board/settings/canvas).
+ * UI vocabulary (workspace/squad/pane/terminal/browser/grid/board/settings).
  */
 const UI_UTTERANCE_RE =
-  /\b(abre|abra|abrir|fecha|feche|fechar|mostra|mostre|volta|voltar|navega|foca|focar|entra|sai|troca|restaura|cancela|desliga|encerra)\b|\b(tela|workspace|squad|pane|terminal|browser|navegador|cat[áa]logo|settings|configura|grid|grade|board|quadro|canvas)\b|\bmiss[õo]es\b|\blista\b|\bquantos?\b|tchau|at[ée] mais|[ée] s[óo] isso|valeu/i;
+  /\b(abre|abra|abrir|fecha|feche|fechar|mostra|mostre|volta|voltar|navega|foca|focar|entra|sai|troca|restaura|cancela|desliga|encerra)\b|\b(tela|workspace|squad|pane|terminal|browser|navegador|cat[áa]logo|settings|configura|grid|grade|board|quadro)\b|\bmiss[õo]es\b|\blista\b|\bquantos?\b|tchau|at[ée] mais|[ée] s[óo] isso|valeu/i;
 
 export function isUiUtterance(text: string): boolean {
   return UI_UTTERANCE_RE.test(text) || isStatusQuestion(text);

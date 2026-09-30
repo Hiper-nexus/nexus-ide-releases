@@ -167,13 +167,13 @@ describe('parseOpenAIRealtimeEvent', () => {
           type: 'response.function_call_arguments.done',
           call_id: 'call_2',
           name: 'nexus_action',
-          arguments: '{"action":"open_canvas"}',
+          arguments: '{"action":"open_board"}',
         }),
       ).toolCall,
     ).toMatchObject({
       callId: 'call_2',
       name: 'nexus_action',
-      arguments: { action: 'open_canvas' },
+      arguments: { action: 'open_board' },
     });
   });
 });

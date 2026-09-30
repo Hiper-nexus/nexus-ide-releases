@@ -201,7 +201,6 @@ function revealPaneForUser(paneId: string): void {
   } else {
     navigation.openTerminal();
   }
-  if (layout.viewKind !== 'grid') layout.toggleView();
   layout.focus(paneId);
 }
 
@@ -1003,44 +1002,6 @@ export async function executeJarvisAction(
       summary: confirmed
         ? 'configurações de voz abertas e confirmadas'
         : 'voz sem pós-condição',
-    };
-  } else if (action.type === 'open_canvas') {
-    dismissBlockingOverlays();
-    useProductNavigationStore.getState().openTerminal();
-    const layout = useLayoutStore.getState();
-    if (layout.viewKind !== 'canvas') layout.toggleView();
-    const confirmed = await confirmUiState(
-      () => useLayoutStore.getState().viewKind,
-      (kind) => kind === 'canvas',
-      control,
-    );
-    sayText = confirmed
-      ? 'Canvas aberto.'
-      : 'Tentei abrir o canvas, mas não confirmei a tela.';
-    toolResult = {
-      tool: action.type,
-      ok: confirmed,
-      summary: confirmed
-        ? 'modo canvas confirmado'
-        : 'canvas sem pós-condição',
-    };
-  } else if (action.type === 'open_grid') {
-    dismissBlockingOverlays();
-    useProductNavigationStore.getState().openTerminal();
-    const layout = useLayoutStore.getState();
-    if (layout.viewKind !== 'grid') layout.toggleView();
-    const confirmed = await confirmUiState(
-      () => useLayoutStore.getState().viewKind,
-      (kind) => kind === 'grid',
-      control,
-    );
-    sayText = confirmed
-      ? 'Grade aberta.'
-      : 'Tentei abrir a grade, mas não confirmei a tela.';
-    toolResult = {
-      tool: action.type,
-      ok: confirmed,
-      summary: confirmed ? 'modo grade confirmado' : 'grade sem pós-condição',
     };
   } else if (action.type === 'open_browser') {
     const paneId = useLayoutStore.getState().addBrowserPane(action.url);

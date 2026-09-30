@@ -575,14 +575,14 @@ export function App() {
       const layout = useLayoutStore.getState();
       if (!layout.focusedPaneId) return;
       const key = event.key.toLowerCase();
-      if (key === 'd' && layout.viewKind === 'grid') {
+      if (key === 'd') {
         event.preventDefault();
         useProductNavigationStore.getState().openTerminal();
         layout.split(
           layout.focusedPaneId,
           event.shiftKey ? 'column' : 'row',
         );
-      } else if (key === 'f' && event.shiftKey && layout.viewKind === 'grid') {
+      } else if (key === 'f' && event.shiftKey) {
         event.preventDefault();
         useProductNavigationStore.getState().openTerminal();
         layout.toggleStageFocus(layout.focusedPaneId);

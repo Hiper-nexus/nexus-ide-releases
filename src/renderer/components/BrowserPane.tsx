@@ -11,7 +11,6 @@ import { BrowserProfilePanel } from './BrowserProfilePanel';
 
 interface Props {
   pane: PaneModel;
-  isCanvas?: boolean;
 }
 
 const EMPTY_STATE: BrowserPaneState = {
@@ -23,7 +22,7 @@ const EMPTY_STATE: BrowserPaneState = {
   loading: false,
 };
 
-export function BrowserPane({ pane, isCanvas }: Props) {
+export function BrowserPane({ pane }: Props) {
   const slotRef = useRef<HTMLDivElement>(null);
   const isFocused = useLayoutStore((s) => s.focusedPaneId === pane.id);
   const [state, setState] = useState<BrowserPaneState>({
@@ -75,7 +74,7 @@ export function BrowserPane({ pane, isCanvas }: Props) {
 
   return (
     <div className={`pane ${isFocused ? 'pane--focused' : ''}`}>
-      <PaneToolbar pane={pane} isFocused={isFocused} isCanvas={isCanvas} />
+      <PaneToolbar pane={pane} isFocused={isFocused} />
       <form
         className="browser-bar nodrag"
         onSubmit={(e) => {

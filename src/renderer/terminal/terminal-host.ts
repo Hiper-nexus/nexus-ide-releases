@@ -172,7 +172,7 @@ interface Host {
   spawnWhenMeasurable?: boolean;
   /**
    * Retentativa do spawn adiado. O ResizeObserver era o único gatilho para
-   * retomar um spawn que esperava slot mensurável — e quando o canvas de
+   * retomar um spawn que esperava slot mensurável — e quando a grade de
    * terminais sai de `hidden` o fit pode falhar no mesmo frame (medida de
    * fonte ainda zero) e o tamanho depois fica estável: nenhum evento novo,
    * pane em branco para sempre (campo 09/09: pane aberto no Início).
@@ -180,7 +180,7 @@ interface Host {
   deferredSpawnRetry?: ReturnType<typeof setTimeout>;
   /**
    * Teto do spawn adiado. O backoff sozinho não termina: um slot que NUNCA fica
-   * mensurável (pane num canvas que nunca é revelado) ficava reagendando de 2s
+   * mensurável (pane numa área que nunca é revelada) ficava reagendando de 2s
    * em 2s para sempre, em silêncio — timer vivo permanente e pane vazio sem
    * nenhuma pista para o operador. Passado o orçamento, desistimos ALTO.
    */
@@ -1673,8 +1673,8 @@ function startSpawn(
 }
 
 /**
- * Debounced fit-on-resize. An interactive node resize (or a canvas pan that
- * re-parents the terminal) fires the ResizeObserver in a tight burst; calling
+ * Debounced fit-on-resize. An interactive split drag (or a pane re-parenting
+ * the terminal) fires the ResizeObserver in a tight burst; calling
  * fit()+pty.resize on each frame floods the child with SIGWINCH and thrashes
  * the renderer (the resize storm Maestri hit). Coalesce to one fit after the
  * last resize.
@@ -2064,8 +2064,7 @@ watchDisplayScale();
 useLayoutStore.subscribe((next, prev) => {
   if (
     next.root !== prev.root ||
-    next.maximizedPaneId !== prev.maximizedPaneId ||
-    next.viewKind !== prev.viewKind
+    next.maximizedPaneId !== prev.maximizedPaneId
   ) {
     scheduleRefitAll('layout-change');
   }

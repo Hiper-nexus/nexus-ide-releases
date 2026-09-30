@@ -38,7 +38,7 @@ export function shouldUseClassicActionBridge(transcript: string): boolean {
     /\b(abre|abra|abrir|open|fecha|feche|fechar|close|cria|crie|criar|create|novo|nova|inicia|inicie|iniciar|start|sobe|suba|liga|ligue|monta|monte|montar|design|roda|rode|rodar|run|executa|execute|executar|manda|mande|mandar|send|envia|envie|enviar|corrige|corrija|conserta|conserte|implementa|implemente|edita|edite|salva|salve|instala|instale|mata|mate|para|pare|retoma|retome|foca|foque|focar|seleciona|selecione|selecionar|troca|troque|muda|mude|atualiza|atualize|sincroniza|sincronize|puxa|puxe|pull|vai|ir|focus|select|switch|go)\b/.test(
       t,
     ) ||
-    /\b(terminal|shell|console|pane|painel|pagina|url|site|browser|canvas|workspace|projeto|squad|missao|missoes|orquestrador|board|quadro|git|github|origin|repositorio|repo|arquivo|pasta|comando|npm|teste|testes|build|status)\b/.test(
+    /\b(terminal|shell|console|pane|painel|pagina|url|site|browser|workspace|projeto|squad|missao|missoes|orquestrador|board|quadro|git|github|origin|repositorio|repo|arquivo|pasta|comando|npm|teste|testes|build|status)\b/.test(
       t,
     )
   );

@@ -43,9 +43,6 @@ function seedLayout(panes: PaneModel[]): void {
     focusedPaneId: panes[0]?.id ?? null,
     maximizedPaneId: null,
     hydrated: true,
-    viewKind: 'grid',
-    canvasNodeLayouts: {},
-    canvasViewport: { x: 0, y: 0, zoom: 1 },
   });
 }
 

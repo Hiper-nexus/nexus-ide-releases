@@ -322,8 +322,6 @@ export type JarvisAction =
   | { type: 'open_board' }
   | { type: 'open_settings' }
   | { type: 'open_voice_settings' }
-  | { type: 'open_canvas' }
-  | { type: 'open_grid' }
   | { type: 'open_browser'; url?: string }
   | { type: 'browser_back' }
   | { type: 'browser_forward' }
@@ -655,8 +653,6 @@ export const jarvisLiveToolResultInputSchema = z.object({
     'open_board',
     'open_settings',
     'open_voice_settings',
-    'open_canvas',
-    'open_grid',
     'open_browser',
     'browser_back',
     'browser_forward',

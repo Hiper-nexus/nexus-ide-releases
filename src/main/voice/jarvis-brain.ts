@@ -71,8 +71,6 @@ Action types:
 - {"type":"open_board"} - open the missions / Ops Board.
 - {"type":"open_settings"} - open the main app settings drawer.
 - {"type":"open_voice_settings"} - open the Jarvis/voice settings panel.
-- {"type":"open_canvas"} - switch the workspace to canvas view.
-- {"type":"open_grid"} - switch the workspace to grid view.
 - {"type":"open_browser","url":"<optional url>"} - open an embedded browser pane.
 - {"type":"browser_back"} / {"type":"browser_forward"} / {"type":"browser_reload"}
   - navigate the focused embedded browser pane.
@@ -138,7 +136,6 @@ You can execute things through actions. Never claim you cannot. Examples:
 - "iniciar missão no modo agêntico" -> {"say":"Abrindo a missão no modo agêntico.","action":{"type":"new_agentic_mission"}}
 - "criar missão agêntica para corrigir os testes" -> {"say":"Abrindo a missão no modo agêntico.","action":{"type":"new_agentic_mission","intent":"corrigir os testes"}}
 - "abre configuracoes de voz" -> {"say":"Abrindo as configuracoes de voz.","action":{"type":"open_voice_settings"}}
-- "abre o modo canvas" -> {"say":"Abrindo o canvas.","action":{"type":"open_canvas"}}
 - "abre um browser" -> {"say":"Abrindo o browser.","action":{"type":"open_browser"}}
 - "abre o site https://example.com" -> {"say":"Abrindo o site.","action":{"type":"open_browser","url":"https://example.com"}}
 - "recarrega a pagina" -> {"say":"Recarregando a pagina.","action":{"type":"browser_reload"}}
@@ -405,8 +402,6 @@ export function parseReply(raw: string): JarvisReply {
     if (type === 'open_board') return { say, expectReply, action: { type } };
     if (type === 'open_settings') return { say, expectReply, action: { type } };
     if (type === 'open_voice_settings') return { say, expectReply, action: { type } };
-    if (type === 'open_canvas') return { say, expectReply, action: { type } };
-    if (type === 'open_grid') return { say, expectReply, action: { type } };
     if (type === 'open_browser') {
       const url = typeof obj.action?.url === 'string' ? obj.action.url : undefined;
       return { say, expectReply, action: url ? { type, url } : { type } };
@@ -489,7 +484,7 @@ function firstAvailableAction(ctx: JarvisContext): string {
   if (ctx.focusedPaneKind === 'browser') return 'posso recarregar a página ou abrir outro site';
   if (ctx.focusedPaneKind === 'shell') return 'posso rodar um comando ou abrir outro terminal';
   if (ctx.orchestrator) return 'posso mandar uma missão para o squad ou focar outro pane';
-  if (ctx.workspace) return 'posso abrir terminal, canvas, quadro ou configurações';
+  if (ctx.workspace) return 'posso abrir terminal, quadro ou configurações';
   return 'posso iniciar um workspace novo ou abrir configurações';
 }
 

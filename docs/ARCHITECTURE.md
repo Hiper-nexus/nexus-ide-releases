@@ -46,12 +46,12 @@ a única superfície de verdade operacional.
 | --- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | A   | Runtime                | **Electron + Electron Forge**                                                                                                       | node-pty/xterm/uiohook/onnx todos Node-native; Forge faz .dmg signing+notarization; alvo macOS 11+ |
 | B   | Processos              | **Main + Renderer + PTY Host (utilityProcess) + MCP embutido**                                                                      | isola crash de PTY nativo; separa orquestração da UI                                               |
-| C   | Panes                  | **Workspace → View(grid\|canvas) → Pane → Session**; grid = split-tree, canvas = `@xyflow/react`; ambos referenciam a MESMA Session | grid↔canvas sem re-spawn do PTY; canvas arrastável além do grid                                    |
+| C   | Panes                  | **Workspace → Grid (split-tree) → Pane → Session**; pane referencia a MESMA Session                                                 | mover pane na grade nunca re-spawna o PTY                                                          |
 | D   | Adapters               | **JSON declarativo tipado: `cli-pty`, `api-provider`, `voice`**; hot-reload                                                         | usuário adiciona CLI nova sem tocar código; handoff/estado/modelos de primeira classe              |
 | E   | Orquestração           | **Domínio squads/missões/handoffs/catálogo + MCP embutido (24 tools, namespace `nexus_*`)**; skill-gate client+server               | orquestração multi-agente completa, auditável                                                      |
 | F   | Voz                    | **Jarvis v1: STT + Silero VAD + Groq translate + TTS streaming + resposta falada**                                                  | ditado E resposta falada de volta                                                                  |
 | G   | Persistência/Segurança | **better-sqlite3 + Keychain + CSP + contextIsolation**                                                                              | secrets fora do DB; sem cripto caseira                                                             |
-| H   | Build                  | **2a shell/grid → 2b adapters → 2c canvas → 2d orquestração → 2e voz → 3 QA/.dmg**                                                  | cada fase com entregável verificável                                                               |
+| H   | Build                  | **2a shell/grid → 2b adapters → 2d orquestração → 2e voz → 3 QA/.dmg**                                                              | cada fase com entregável verificável                                                               |
 
 ---
 
@@ -83,7 +83,6 @@ Frontend ............. React 18+ + TypeScript; Zustand (client state); zod (boun
 Terminal ............. @xterm/xterm + addons fit/webgl/search/serialize
 PTY .................. @lydell/node-pty v1.2.0-beta.12 — PRIMÁRIO;
                        node-pty-prebuilt-multiarch como alternativa se build nativo problemático
-Canvas ............... @xyflow/react (MIT)  — NÃO tldraw (licença comercial)
 Persistência ......... better-sqlite3 (síncrono, no main)
 Voz — VAD ............ onnxruntime-node + Silero VAD (ONNX ~2MB)
 Voz — hotkey ......... uiohook-napi (keydown/keyup global)
@@ -107,7 +106,7 @@ MAIN (Node/TS): lifecycle, janelas, globalShortcut, orchestration domain,
    │ MessagePort (IPC tipado+zod)            │ spawn utilityProcess
    ▼                                          ▼
 RENDERER (Chromium/React):                   PTY HOST (utilityProcess/Node):
-  UI grid+canvas+panes, xterm.js,             @lydell/node-pty spawn/kill/resize,
+  UI grid+panes, xterm.js,                    @lydell/node-pty spawn/kill/resize,
   Zustand, mic (getUserMedia+AudioWorklet),   1 host p/ N sessões, isola crash
   Web Audio playback (TTS)                    nativo, stream bytes → renderer
                                               via MessagePort dedicado
@@ -152,38 +151,32 @@ Contrato (design, `src/shared/ipc/contracts.ts`): canais `session:spawn/write/re
 ### B.4 Sessões PTY
 
 - `Session` nasce de `SpawnSessionInput` (adapterId+model+cwd+env); main resolve adapter, monta spawnArgs+env e pede spawn ao PTY Host. Panes diretos preservam o perfil completo escolhido pelo usuário. Workers governados recebem um perfil privado por sessão: só continuidade de autenticação/sessão, MCP Nexus e skills explicitamente permitidas ficam visíveis; plugins, hooks, comandos, agentes, MCPs externos e discovery de projeto não são herdados.
-- **Session ≠ Pane**: referenciada por `sessionId`; panes de grid e canvas apontam para o mesmo id. Fechar pane não mata session salvo último referenciador (`killOnLastPane` default true, exceto missões).
+- **Session ≠ Pane**: referenciada por `sessionId`; panes da grade apontam para o mesmo id. Fechar pane não mata session salvo último referenciador (`killOnLastPane` default true, exceto missões).
 - Idle/busy via `stateParsing` do adapter → alimenta `pane_wait_idle`.
 - Buffer serializado (@xterm/addon-serialize) → SQLite ao fechar; re-hidratado ao reabrir.
 
 ---
 
-## C. Sistema de Panes (Grid + Canvas Infinito)
+## C. Sistema de Panes (Grid)
 
 ### C.1 Modelo de dados
 
 ```
-Workspace(1) ──< View(N: 1 grid + 0..N canvas)
-  │                ├ GridLayout (split-tree)   ──< PaneRef ─┐
-  │                └ CanvasLayout (xyflow nodes) ──< PaneRef ─┤ referencia por sessionId
-  └──< Session(N) ◄──────────────────────────────────────────┘  (pty vivo + buffer xterm + adapter)
+Workspace(1) ──< GridLayout (split-tree) ──< PaneRef ─┐
+  └──< Session(N) ◄──────────────────────────────────┘  (pty vivo + buffer xterm + adapter)
 ```
 
-**Regra de ouro:** estado de terminal vive em `Session`, não no Pane. Grid e Canvas são projeções de layout sobre as mesmas Sessions — é o que torna o canvas 'grátis'.
+**Regra de ouro:** estado de terminal vive em `Session`, não no Pane. A grade é uma projeção de layout sobre as mesmas Sessions — é o que torna mover um pane 'grátis'.
 
-Interfaces (design): `Workspace{id,name,views,activeViewId}`; `View = {kind:'grid',layout:SplitNode} | {kind:'canvas',nodes:CanvasNode[],viewport}`; `Session{id,adapterId,providerId?,model?,cwd,ptyId,status,serializedBuffer?}`; `SplitNode = {kind:'leaf',paneRef} | {kind:'split',dir:'row'|'col',ratio,a,b}`; `CanvasNode{id,paneRef,position,size,z}`; `PaneRef{paneId,sessionId,title}`.
+Interfaces (design): `Workspace{id,name}`; `Session{id,adapterId,providerId?,model?,cwd,ptyId,status,serializedBuffer?}`; `SplitNode = {kind:'leaf',paneRef} | {kind:'split',dir:'row'|'col',ratio,a,b}`; `PaneRef{paneId,sessionId,title}`.
 
 ### C.2 Grid (split-tree)
 
 Árvore binária (row/col + ratio, mental model tmux/VS Code). Ops: splitPane/resizeSplit/closePane(colapsa irmão)/focusPane. Render CSS flex recursivo; divisores arrastáveis animando só flex-basis/transform (nunca width/height em loop). Cada leaf hospeda `<TerminalPane sessionId>` com addon-fit + ResizeObserver → `session:resize` (cols/rows ao PTY).
 
-### C.3 Canvas infinito (@xyflow/react)
+### C.3 Pane ↔ Session compartilhada
 
-Além do grid split-tree, o NexusIDE oferece um modo **canvas infinito**: cada pane é um custom node do xyflow, arrastável livremente, redimensionável, com z-order; `<MiniMap/>`, `<Controls/>`, `<Background/>` (dots), pan/zoom por trackpad. Edges representam relações de orquestração (orquestrador→worker, missão→panes), animadas em handoff. Performance: em zoom-out, nós abaixo de um threshold renderizam **snapshot congelado** (canvas image do serialize) em vez de xterm ativo; `onlyRenderVisibleElements`.
-
-### C.4 Grid ↔ Canvas compartilhando sessão
-
-1. **Reparent (preferido):** instância xterm+div mantida viva num `SessionSurfacePool` fora da árvore React; grid/canvas apenas reposicionam (portal) o mesmo DOM — O(1), zero re-spawn.
+1. **Reparent (preferido):** instância xterm+div mantida viva num `SessionSurfacePool` fora da árvore React; mover um pane entre splits apenas reposiciona o mesmo DOM — O(1), zero re-spawn.
 2. **Serialize/attach (fallback/persistência/mover-janela):** addon-serialize captura buffer; nova instância faz write(serialized) + reattach ao mesmo PTY stream.
 
 ---
@@ -407,7 +400,6 @@ reexamina somente o output exclusivo daquela missão.
 | Auth backend (Supabase + Google OAuth)                                      | opcional   | NexusIDE v1 é local-first — auth de nuvem é OPCIONAL, não requisito                                              |
 | Config dirs (`~/.nexus/`: squads.json, audio-config.json, plugins/, cache/) | §D.4       | tudo unificado sob `~/.nexus/`                                                                                   |
 | Auto-update (Squirrel)                                                      | §G.4       | Forge maker ZIP + Squirrel.Mac                                                                                   |
-| Canvas infinito arrastável                                                  | §C.3       | 🚀 além do grid split-tree                                                                                       |
 | Multi-CLI universal declarativo                                             | §D         | 🚀 adapters JSON tipados p/ qualquer CLI                                                                         |
 | Resposta falada TTS (Jarvis)                                                | §F         | 🚀 ditado E fala de volta                                                                                        |
 | UI de debug de missões/handoffs                                             | §E.6       | 🚀 timeline + edges animadas                                                                                     |
@@ -417,8 +409,7 @@ reexamina somente o output exclusivo daquela missão.
 1. **Secrets sem cripto caseira:** nunca implementar criptografia própria. Usar **macOS Keychain** via `safeStorage`/`keytar`; se indisponível, **libsodium** (secretbox) com **fallback gracioso** e nunca degradar para plaintext. Secrets jamais em SQLite/logs.
 2. **Handoffs duráveis:** **SQLite + IPC tipado** (§E.3) em vez de marker files temporários — durável, auditável, sem corrida.
 3. **Export/import de squads:** JSON nativo do squad schema (§E.1).
-4. **Modo canvas:** @xyflow/react arrastável além do grid split-tree (§C.3).
-5. **UI de debug de missões:** view dedicada — timeline de missões, estado de workers, handoffs em voo como edges animadas no canvas, inspeção de artifacts.
+4. **UI de debug de missões:** view dedicada — timeline de missões, estado de workers, handoffs em voo, inspeção de artifacts.
 
 **Catálogo (integração aitmpl):** davila7/claude-code-templates, 70+ agentes. `nexus_catalog_install` chama `GET https://.../api/catalog/search?q=<termo>&kind=agent|skill|command&limit=<n>` e instala plugins no formato `.claude-plugin/plugin.json` em `~/.nexus/plugins/`.
 
@@ -514,13 +505,11 @@ Electron Forge: maker-dmg (final) + ZIP (auto-update Squirrel.Mac). Signing `@el
 
 **2b — Adapters:** registry + zod (cli-pty/api-provider); hot-reload; seletor por pane; adapters JSON (claude/codex/agy/kimi/grok/aider/opencode + glm/fugu); stateParsing. _Verificável:_ spawn claude+codex; adicionar CLI nova só dropando JSON (sem rebuild); pane_wait_idle correto.
 
-**2c — Canvas:** @xyflow/react; pane=custom node; pan/zoom/minimap; SessionSurfacePool (reparent grid↔canvas sem re-spawn); frozen em zoom-out; edges de orquestração. _Verificável:_ alternar grid↔canvas mantém MESMO PTY vivo; fluido com ≥6 terminais.
-
 **2d — Orquestração+MCP:** MCP server no namespace `nexus_*`; domínio squads(schema)/missões/handoffs (SQLite+IPC, não marker files); todo_manager; skill-gate duplo; entrega auto ocioso; parser do marker `### NEXUS_HANDOFF v1` (fallback); catálogo aitmpl. _Verificável:_ Squad orquestrador+2 workers delega via pane_spawn/write; worker handoff_submit; entregue ao ficar ocioso; skill fora da allowlist BLOQUEADA; export/import de squad funciona.
 
 **2e — Voz Jarvis:** PTT (globalShortcut+uiohook keyup); getUserMedia+AudioWorklet; Silero VAD; STT multi (Groq+whisper.cpp); roteamento; TTS streaming (OpenAI→Piper→say); sumário falável; voice plugin estendendo audio-config. _Verificável:_ segurar PTT, falar PT, ver EN injetado, agente responde, **NexusIDE fala resumo**; sem key → whisper.cpp+Piper/say.
 
-**3 — QA+.dmg:** testes (unit domínio/adapters/parsers; integração IPC/MCP; E2E Playwright: grid/canvas/spawn/handoff/voz); a11y + reduced-motion; signing+notarization; universal .dmg. _Verificável:_ .dmg assinado+notarizado instala em máquina limpa; E2E verde; 3 fluxos-farol (multi-CLI, canvas, Jarvis) passam.
+**3 — QA+.dmg:** testes (unit domínio/adapters/parsers; integração IPC/MCP; E2E Playwright: grid/spawn/handoff/voz); a11y + reduced-motion; signing+notarization; universal .dmg. _Verificável:_ .dmg assinado+notarizado instala em máquina limpa; E2E verde; 3 fluxos-farol (multi-CLI, grade, Jarvis) passam.
 
 ---
 
@@ -547,7 +536,6 @@ Electron Forge: maker-dmg (final) + ZIP (auto-update Squirrel.Mac). Signing `@el
 | Risco                                    | Sev   | Mitigação                                                           |
 | ---------------------------------------- | ----- | ------------------------------------------------------------------- |
 | Crash node-pty derruba app               | Alta  | PTY Host utilityProcess isolado + re-spawn                          |
-| xterm-webgl pesado no canvas             | Alta  | frozen snapshot em zoom-out; onlyRenderVisibleElements; SurfacePool |
 | CLIs mudam flags (grok beta, kimi novo)  | Média | Quirks no adapter JSON — patch sem rebuild                          |
 | Alt-screen TUI idle/busy difícil         | Média | stateParsing + OSC 133 + timeout (agy --print-timeout)              |
 | Latência voz alta                        | Média | Batch Groq + TTS streaming + fallback local                         |

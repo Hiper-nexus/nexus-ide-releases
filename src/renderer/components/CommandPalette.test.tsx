@@ -58,7 +58,6 @@ beforeEach(() => {
   });
 
   useLayoutStore.setState({
-    viewKind: 'grid',
     focusedPaneId: 'pane-1',
     root: {
       kind: 'leaf',

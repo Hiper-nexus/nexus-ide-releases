@@ -136,7 +136,6 @@ function TerminalGridSetup({ initialCount, close }: { initialCount: number; clos
       });
       const layout = useLayoutStore.getState();
       layout.setPanes([...existing, ...panes]);
-      if (layout.viewKind !== 'grid') layout.toggleView();
       useLayoutStore.getState().focus(panes[0].id);
       // A escolha do escopo vem ANTES da navegação: é ela que faz os Terminais
       // abrirem já dentro do espaço recém-criado em vez do mosaico anterior.

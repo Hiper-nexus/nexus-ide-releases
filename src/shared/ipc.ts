@@ -146,29 +146,10 @@ export const layoutNodeSchema: z.ZodType<LayoutNode> = z.lazy(() =>
   ]),
 );
 
-// finite() rejects NaN/±Infinity — a non-finite viewport or node geometry
-// crashes the canvas renderer on restore (the class of bug Maestri hit at
-// 0.30.8/0.30.13). Guarding at the persistence boundary keeps a corrupt value
-// from ever reaching the layout tree.
-const canvasNodeLayoutSchema = z.object({
-  position: z.object({ x: z.number().finite(), y: z.number().finite() }),
-  size: z.object({
-    width: z.number().finite().positive().max(100_000),
-    height: z.number().finite().positive().max(100_000),
-  }),
-  z: z.number().int(),
-});
-
-const canvasViewportSchema = z.object({
-  x: z.number().finite(),
-  y: z.number().finite(),
-  zoom: z.number().finite().positive().max(1000),
-});
-
+// z.object strips unknown keys on parse, so layouts written by releases that
+// still had the canvas view mode (viewKind/canvasNodeLayouts/canvasViewport)
+// load cleanly and fall back to the grid — the only view left.
 export const workspaceLayoutSchema: z.ZodType<WorkspaceLayout> = z.object({
   root: layoutNodeSchema,
   focusedPaneId: z.string().min(1).max(128).nullable(),
-  viewKind: z.enum(['grid', 'canvas']).optional(),
-  canvasNodeLayouts: z.record(z.string(), canvasNodeLayoutSchema).optional(),
-  canvasViewport: canvasViewportSchema.optional(),
 });

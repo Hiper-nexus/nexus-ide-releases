@@ -14,7 +14,6 @@ describe('buildScreenSnapshot', () => {
   it('includes focused browser URL, pane roles, orchestrator, and missions', () => {
     const snapshot = buildScreenSnapshot({
       workspaceName: 'nexus-ide',
-      viewKind: 'canvas',
       focusedPaneId: 'browser-1',
       orchestratorPaneId: 'agent-1',
       activeMissions: ['Ship voice parity (running)'],
@@ -49,7 +48,6 @@ describe('buildScreenSnapshot', () => {
   it('reports settings destination open and handles wake prompts', () => {
     const snapshot = buildScreenSnapshot({
       workspaceName: 'nexus-ide',
-      viewKind: 'grid',
       focusedPaneId: null,
       orchestratorPaneId: null,
       activeMissions: [],
@@ -63,7 +61,6 @@ describe('buildScreenSnapshot', () => {
   it('lists blocking overlays on workspace surface', () => {
     const snapshot = buildScreenSnapshot({
       workspaceName: 'nexus-ide',
-      viewKind: 'grid',
       focusedPaneId: 'shell-1',
       orchestratorPaneId: null,
       activeMissions: [],
@@ -85,7 +82,6 @@ describe('buildScreenSnapshot', () => {
 
     const snapshot = buildScreenSnapshot({
       workspaceName: 'very-long-workspace-name',
-      viewKind: 'canvas',
       focusedPaneId: 'pane-0',
       orchestratorPaneId: null,
       activeMissions: [

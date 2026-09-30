@@ -327,11 +327,6 @@ import { syncLicenseOnBoot } from "./license-sync";
 import { registerTeamIpc } from "./team-ipc";
 import { initDesktopPet, ingestPetGamification, isPetWindow } from "./pet/pet-window";
 import {
-  registerNotesIpc,
-  registerNotesListener,
-  unregisterNotesListener,
-} from "./persistence/notes-ipc";
-import {
   registerPipeIpc,
   registerPipeListener,
   unregisterPipeListener,
@@ -759,7 +754,6 @@ function bootstrap(): void {
       }),
   });
   traceBootstrap('after quota service');
-  registerNotesIpc(projectRuntimeManager);
   registerBillingIpc();
   registerTeamIpc();
   // Packaged smoke must prove the app can boot without touching the user's
@@ -1209,7 +1203,6 @@ app.on("browser-window-created", (_event, win) => {
   registerAccountListener(wc);
   registerCostListener(wc);
   registerTokenSpeedListener(wc);
-  registerNotesListener(wc);
   registerPipeListener(wc);
   registerGamificationListener(wc);
   win.once("closed", () => {
@@ -1224,7 +1217,6 @@ app.on("browser-window-created", (_event, win) => {
     unregisterAccountListener(wc);
     unregisterCostListener(wc);
     unregisterTokenSpeedListener(wc);
-    unregisterNotesListener(wc);
     unregisterPipeListener(wc);
     unregisterGamificationListener(wc);
     destroyBrowsersFor(wc);

@@ -52,9 +52,8 @@ export function PaneVacancy({ pane }: { readonly pane: PaneModel }) {
 
 /**
  * The vacancy itself, without pane chrome — ONE implementation shared by every
- * surface that can host a pane (grid leaf and canvas node). A second copy is
- * how the placeholder ended up behaving differently depending on which view
- * you happened to be in.
+ * grid leaf that can host a pane. A second copy is how the placeholder ended
+ * up behaving differently depending on where it was rendered.
  */
 export function PaneVacancyBody({ pane }: { readonly pane: PaneModel }) {
   const missions = useOrchStore((state) => state.missions);

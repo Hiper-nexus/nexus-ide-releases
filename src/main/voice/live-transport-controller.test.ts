@@ -1016,7 +1016,7 @@ describe('LiveTransportController', () => {
     const controller = new LiveTransportController(() => {}, session);
 
     const started = controller.onStart();
-    controller.contextIn('Workspace nexus em canvas com terminal focado.');
+    controller.contextIn('Workspace nexus em grade com terminal focado.');
 
     expect(provider.sendContext).not.toHaveBeenCalled();
 
@@ -1024,7 +1024,7 @@ describe('LiveTransportController', () => {
     await started;
 
     expect(provider.sendContext).toHaveBeenCalledWith(
-      expect.stringContaining('Workspace nexus em canvas com terminal focado.'),
+      expect.stringContaining('Workspace nexus em grade com terminal focado.'),
     );
 
     vi.doUnmock('./voice-config-store');
@@ -1068,7 +1068,7 @@ describe('LiveTransportController', () => {
     const controller = new LiveTransportController(() => {}, session);
 
     await controller.onStart();
-    controller.contextIn('Workspace nexus em canvas.');
+    controller.contextIn('Workspace nexus em grade.');
     controller.toolResult({
       sessionId: 'session-1',
       at: 1001,

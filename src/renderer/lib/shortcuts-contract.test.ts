@@ -58,16 +58,11 @@ describe('catálogo de atalhos', () => {
     expect(shortcutsInGroup('surfaces').length).toBeGreaterThan(0);
   });
 
-  it('o rodapé filtra por view: split é grid, centralizar é canvas', () => {
-    const grid = primaryShortcuts('grid').map((entry) => entry.id);
-    const canvas = primaryShortcuts('canvas').map((entry) => entry.id);
-    expect(grid).toContain('split-right');
-    expect(grid).not.toContain('canvas-center');
-    expect(canvas).toContain('canvas-center');
-    expect(canvas).not.toContain('split-right');
-    // O palette vale nas duas views.
-    expect(grid).toContain('command-palette');
-    expect(canvas).toContain('command-palette');
+  it('o rodapé do Home recebe os atalhos primary do catálogo', () => {
+    const ids = primaryShortcuts().map((entry) => entry.id);
+    expect(ids).toContain('split-right');
+    expect(ids).toContain('command-palette');
+    expect(ids).toContain('focus-pane-n');
   });
 
   it('shortcutById / shortcutKeys resolvem o catálogo e rejeitam id desconhecido', () => {

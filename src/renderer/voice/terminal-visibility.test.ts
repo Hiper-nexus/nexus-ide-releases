@@ -25,7 +25,6 @@ function baseState(
   return {
     workspaceOpen: true,
     destination,
-    viewKind: 'grid',
     focusedPaneId: 'shell-1',
     focusedPaneKind: 'shell',
     shellPaneIds: ['shell-1'],
@@ -88,12 +87,12 @@ describe('terminal visibility follows mounted product surfaces', () => {
     expect(result.reasons).toContain('overlay: perfil operador');
   });
 
-  it('still rejects a canvas or unfocused pane on a terminal-bearing destination', () => {
+  it('still rejects an unfocused pane on a terminal-bearing destination', () => {
     const result = assessTerminalVisibility(
       'shell-1',
       baseState(
         { kind: 'terminal' },
-        { viewKind: 'canvas', focusedPaneId: 'shell-other' },
+        { focusedPaneId: 'shell-other' },
       ),
       true,
     );
@@ -101,7 +100,6 @@ describe('terminal visibility follows mounted product surfaces', () => {
     expect(result.visible).toBe(false);
     expect(result.reasons).toEqual(
       expect.arrayContaining([
-        expect.stringMatching(/canvas/),
         expect.stringMatching(/sem foco/),
       ]),
     );

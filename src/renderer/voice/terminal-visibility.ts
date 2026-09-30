@@ -1,4 +1,4 @@
-import type { PaneModel, ViewKind } from '../../shared/types';
+import type { PaneModel } from '../../shared/types';
 import { useCloseWorkspaceStore } from '../components/CloseWorkspaceDialog';
 import { listPanes } from '../lib/split-tree';
 import { useCheatsheetStore } from '../state/cheatsheet-store';
@@ -31,7 +31,6 @@ export interface BlockingOverlayFlags {
 export interface UiVisibilityState {
   workspaceOpen: boolean;
   destination: ProductDestination;
-  viewKind: ViewKind;
   focusedPaneId: string | null;
   focusedPaneKind: PaneModel['kind'] | null;
   shellPaneIds: string[];
@@ -68,7 +67,6 @@ export function readUiVisibilityState(): UiVisibilityState {
   return {
     workspaceOpen: Boolean(workspace),
     destination: useProductNavigationStore.getState().destination,
-    viewKind: layout.viewKind,
     focusedPaneId: layout.focusedPaneId,
     focusedPaneKind: focused?.kind ?? null,
     shellPaneIds: panes
@@ -109,7 +107,6 @@ export function assessTerminalVisibility(
   if (!state.workspaceOpen) reasons.push('sem workspace aberto');
   if (!hasSession) reasons.push('pty sem sessão');
   if (!state.shellPaneIds.includes(paneId)) reasons.push('pane shell ausente');
-  if (state.viewKind !== 'grid') reasons.push(`view ${state.viewKind} (terminal fora da grade)`);
   if (state.focusedPaneId !== paneId) reasons.push('terminal sem foco');
   if (state.focusedPaneKind === null || state.focusedPaneKind === 'browser') {
     reasons.push('foco não está em um terminal');

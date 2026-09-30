@@ -275,7 +275,6 @@ beforeEach(() => {
   });
   useLayoutStore.setState({
     hydrated: true,
-    viewKind: 'grid',
     focusedPaneId: 'pane-shell',
     root: {
       kind: 'split',

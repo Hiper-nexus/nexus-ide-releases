@@ -337,7 +337,6 @@ function openWorkspace(): void {
   });
   useLayoutStore.setState({
     hydrated: true,
-    viewKind: 'grid',
     focusedPaneId: 'pane-terminal',
     root: {
       kind: 'leaf',
@@ -377,7 +376,6 @@ beforeEach(() => {
   useTerminalGridDialogStore.getState().close();
   useLayoutStore.setState({
     hydrated: false,
-    viewKind: 'grid',
     focusedPaneId: 'pane-terminal',
     root: {
       kind: 'leaf',

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const css = fs.readFileSync(
-  path.join(__dirname, '../styles/canvas-voice.css'),
+  path.join(__dirname, '../styles/voice-hud.css'),
   'utf8',
 );
 

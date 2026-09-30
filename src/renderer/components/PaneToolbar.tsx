@@ -55,8 +55,6 @@ import { OverlayLayer } from '../overlay/overlay-layer';
 interface Props {
   pane: PaneModel;
   isFocused: boolean;
-  /** When true, hides grid-specific split buttons (canvas panes float freely). */
-  isCanvas?: boolean;
 }
 
 export type Density = 'full' | 'icons' | 'compact';
@@ -323,7 +321,7 @@ function ToolbarBtn({
  * Per-pane header: identity left; actions right with floating tooltips.
  * Density adapts to pane width; compact mode collapses secondary actions into ⋯.
  */
-export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
+export function PaneToolbar({ pane, isFocused }: Props) {
   const isVacancy = isStructuralPlaceholderPane(pane);
   const split = useLayoutStore((s) => s.split);
   const maximizedPaneId = useLayoutStore((s) => s.maximizedPaneId);
@@ -568,65 +566,62 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       });
     }
 
-    if (!isCanvas) {
-      if (stageFocusMode && stagePaneId && stagePaneId !== pane.id) {
-        list.push({
-          id: 'promote-to-stage',
-          label: 'Ir ao Palco',
-          detail: 'Trazer este pane para o palco principal',
-          icon: 'sparkle',
-          primary: true,
-          run: () => setStagePane(pane.id),
-        });
-      }
+    if (stageFocusMode && stagePaneId && stagePaneId !== pane.id) {
       list.push({
-        id: 'stage-focus',
-        label: stageFocusMode ? 'Grade Normal' : 'Foco Stage',
-        detail: stageFocusMode
-          ? 'Restaura a grade completa com todos os panes'
-          : 'Destaque no pane ativo com rail de companions (Cmd+Shift+F)',
-        shortcut: formatShortcut('mod', 'shift', 'F'),
-        icon: stageFocusMode ? 'grid' : 'sparkle',
-        active: stageFocusMode,
+        id: 'promote-to-stage',
+        label: 'Ir ao Palco',
+        detail: 'Trazer este pane para o palco principal',
+        icon: 'sparkle',
         primary: true,
-        run: () => toggleStageFocus(pane.id),
-      });
-      list.push({
-        id: 'maximize',
-        label: isMaximized ? 'Restaurar' : 'Ampliar',
-        detail: isMaximized
-          ? 'Restaura a grade com todos os panes'
-          : 'Amplia este pane sem fechar os outros',
-        icon: isMaximized ? 'grid' : 'maximize',
-        active: isMaximized,
-        primary: true,
-        run: () => toggleMaximizePane(pane.id),
-      });
-      // Splits NÃO são primary: em pane estreito empurravam o Fechar para fora
-      // da toolbar e o utilizador ficava sem forma de fechar a janela.
-      list.push({
-        id: 'split-right',
-        label: 'À direita',
-        detail: 'Cria um novo pane ao lado (não copia o terminal)',
-        shortcut: formatShortcut('mod', 'D'),
-        icon: 'split-right',
-        run: () => split(pane.id, 'row'),
-      });
-      list.push({
-        id: 'split-down',
-        label: 'Abaixo',
-        detail: 'Cria um novo pane abaixo (não copia o terminal)',
-        shortcut: formatShortcut('mod', 'shift', 'D'),
-        icon: 'split-down',
-        run: () => split(pane.id, 'column'),
+        run: () => setStagePane(pane.id),
       });
     }
+    list.push({
+      id: 'stage-focus',
+      label: stageFocusMode ? 'Grade Normal' : 'Foco Stage',
+      detail: stageFocusMode
+        ? 'Restaura a grade completa com todos os panes'
+        : 'Destaque no pane ativo com rail de companions (Cmd+Shift+F)',
+      shortcut: formatShortcut('mod', 'shift', 'F'),
+      icon: stageFocusMode ? 'grid' : 'sparkle',
+      active: stageFocusMode,
+      primary: true,
+      run: () => toggleStageFocus(pane.id),
+    });
+    list.push({
+      id: 'maximize',
+      label: isMaximized ? 'Restaurar' : 'Ampliar',
+      detail: isMaximized
+        ? 'Restaura a grade com todos os panes'
+        : 'Amplia este pane sem fechar os outros',
+      icon: isMaximized ? 'grid' : 'maximize',
+      active: isMaximized,
+      primary: true,
+      run: () => toggleMaximizePane(pane.id),
+    });
+    // Splits NÃO são primary: em pane estreito empurravam o Fechar para fora
+    // da toolbar e o utilizador ficava sem forma de fechar a janela.
+    list.push({
+      id: 'split-right',
+      label: 'À direita',
+      detail: 'Cria um novo pane ao lado (não copia o terminal)',
+      shortcut: formatShortcut('mod', 'D'),
+      icon: 'split-right',
+      run: () => split(pane.id, 'row'),
+    });
+    list.push({
+      id: 'split-down',
+      label: 'Abaixo',
+      detail: 'Cria um novo pane abaixo (não copia o terminal)',
+      shortcut: formatShortcut('mod', 'shift', 'D'),
+      icon: 'split-down',
+      run: () => split(pane.id, 'column'),
+    });
 
     return list;
   }, [
     pane,
     isVacancy,
-    isCanvas,
     isHibernated,
     isParked,
     isSleeping,

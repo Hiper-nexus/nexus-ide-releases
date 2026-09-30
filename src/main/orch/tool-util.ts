@@ -1583,7 +1583,7 @@ export async function spawnPaneAndMaybePrompt(
   }
   if (!result.ok || !result.paneId || !result.sessionId) {
     // ACK pendente não é falha do adapter: o chamador traduz em sucesso e o
-    // pane ainda vai nascer. Contar aqui abria o breaker com canvas oculto.
+    // pane ainda vai nascer. Contar aqui abria o breaker com a grade oculta.
     if (!(result.ok && result.pending === true)) {
       adapterCircuitBreakers.recordFailure(options.adapterId);
     }

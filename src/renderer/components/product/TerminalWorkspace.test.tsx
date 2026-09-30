@@ -58,22 +58,24 @@ const browserRuntime = vi.hoisted(() => ({
 
 vi.mock('../../terminal/terminal-host', () => terminalRuntime);
 vi.mock('../../browser/browser-host', () => browserRuntime);
-vi.mock('../CanvasView', () => ({
-  CanvasView: (props: {
-    visiblePaneIds?: ReadonlySet<string>;
-    onPaneCreated?: (paneId: string) => void;
-  }) => {
-    (globalThis as Record<string, unknown>).__nexusCanvasViewProps = props;
-    return <div className="canvas-container" />;
-  },
-}));
+vi.mock('../PaneGrid', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../PaneGrid')>();
+  return {
+    ...mod,
+    PaneGrid: (props: Parameters<typeof mod.PaneGrid>[0]) => {
+      (globalThis as Record<string, unknown>).__nexusPaneGridProps = props;
+      const RealPaneGrid = mod.PaneGrid;
+      return <RealPaneGrid {...props} />;
+    },
+  };
+});
 
-function canvasViewProps(): {
+function paneGridProps(): {
   visiblePaneIds?: ReadonlySet<string>;
   onPaneCreated?: (paneId: string) => void;
 } {
   return (
-    ((globalThis as Record<string, unknown>).__nexusCanvasViewProps as {
+    ((globalThis as Record<string, unknown>).__nexusPaneGridProps as {
       visiblePaneIds?: ReadonlySet<string>;
       onPaneCreated?: (paneId: string) => void;
     }) ?? {}
@@ -130,12 +132,6 @@ function installNexusBoundary(): void {
     configurable: true,
     value: {
       pty: { spawn: ptySpawn, write: vi.fn() },
-      notes: {
-        list: vi.fn(async () => []),
-        save: vi.fn(async () => undefined),
-        remove: vi.fn(async () => undefined),
-        onChanged: vi.fn(() => vi.fn()),
-      },
       pipes: {
         list: vi.fn(async () => []),
         add: vi.fn(async () => ({ ok: true, id: 'pipe-test' })),
@@ -146,15 +142,12 @@ function installNexusBoundary(): void {
   });
 }
 
-function seedLayout(viewKind: 'grid' | 'canvas' = 'grid'): void {
+function seedLayout(): void {
   useLayoutStore.setState({
     root: buildGridTree(PANES),
     focusedPaneId: PANES[0]!.id,
     maximizedPaneId: null,
     hydrated: true,
-    viewKind,
-    canvasNodeLayouts: {},
-    canvasViewport: { x: 0, y: 0, zoom: 1 },
   });
 }
 
@@ -212,16 +205,10 @@ afterEach(() => {
 });
 
 describe('TerminalWorkspace contracts', () => {
-  it('selects the canonical grid or canvas surface from layout state', () => {
+  it('renders the canonical grid surface from layout state', () => {
     const { host } = mount(<TerminalWorkspace />);
 
     expect(host.querySelector('.grid')).not.toBeNull();
-    expect(host.querySelector('.canvas-container')).toBeNull();
-
-    act(() => useLayoutStore.setState({ viewKind: 'canvas' }));
-
-    expect(host.querySelector('.canvas-container')).not.toBeNull();
-    expect(host.querySelector('.grid')).toBeNull();
   });
 
   it('mounts every pane host while hidden and does not dispose them when the mission view filters the mosaic', () => {
@@ -295,8 +282,8 @@ describe('TerminalWorkspace contracts', () => {
     expect(host.textContent).toContain('Abrir Quadro');
   });
 
-  it.each(['grid', 'canvas'] as const)('missão dormindo tem rótulo e retomada coerentes em %s', (viewKind) => {
-    seedLayout(viewKind);
+  it('missão dormindo tem rótulo e retomada coerentes', () => {
+    seedLayout();
     useOrchStore.setState({
       missions: [{ id: 'sleeping', title: 'Feature', status: 'blocked', intentState: 'blocked_user',
         description: '<!-- nexus:leftover-parked -->', milestones: [], learnings: '', createdAt: 1, updatedAt: 2 }],
@@ -448,18 +435,17 @@ describe('TerminalWorkspace em missão — "+ Pane" do operador', () => {
 
   it('new wizard mission keeps manual panes in the same isolated space after remount', () => {
     useOrchStore.setState({ missions: [{ id: 'm-1', title: 'Entrega isolada', intentContract: { workspaceBinding: { version: 1, spaceId: 'space-wizard-view' } } } as import('../../../shared/orch-types').Mission] });
-    useLayoutStore.setState({ viewKind: 'canvas' });
     const first = mount(<TerminalWorkspace missionId="m-1" />);
     let paneId = '';
     act(() => {
       paneId = useLayoutStore.getState().addShellPane();
-      canvasViewProps().onPaneCreated?.(paneId);
+      paneGridProps().onPaneCreated?.(paneId);
     });
     expect(listPanes(useLayoutStore.getState().root).find(p => p.id === paneId)).toMatchObject({ spaceId: 'space-wizard-view', isolateSpace: true });
     unmount(first);
     mount(<TerminalWorkspace missionId="m-1" />);
     // All panes in the isolated space remain visible without volatile pins.
-    const visible = canvasViewProps().visiblePaneIds;
+    const visible = paneGridProps().visiblePaneIds;
     expect(visible === undefined || visible.has(paneId)).toBe(true);
   });
 
@@ -469,19 +455,18 @@ describe('TerminalWorkspace em missão — "+ Pane" do operador', () => {
     expect(attachedIds()).toEqual(['pane-w1']);
   });
 
-  it('canvas: terminal criado na vista da missão é fixado no filtro', () => {
-    useLayoutStore.setState({ viewKind: 'canvas' });
+  it('terminal criado na vista da missão é fixado no filtro', () => {
     mount(<TerminalWorkspace missionId="m-1" />);
 
     // Só o pane da missão na árvore: não há o que filtrar, então a vista usa a
     // árvore canônica (undefined) em vez de um Set redundante — ver o contrato
     // "filtro é no-op quando cobre tudo".
-    expect(canvasViewProps().visiblePaneIds).toBeUndefined();
-    expect(typeof canvasViewProps().onPaneCreated).toBe('function');
+    expect(paneGridProps().visiblePaneIds).toBeUndefined();
+    expect(typeof paneGridProps().onPaneCreated).toBe('function');
 
-    // A barra do canvas cria o shell e avisa: o id entra no filtro da vista.
-    act(() => canvasViewProps().onPaneCreated?.('pane-op'));
-    expect([...(canvasViewProps().visiblePaneIds ?? [])]).toEqual(
+    // A barra do mosaico cria o shell e avisa: o id entra no filtro da vista.
+    act(() => paneGridProps().onPaneCreated?.('pane-op'));
+    expect([...(paneGridProps().visiblePaneIds ?? [])]).toEqual(
       expect.arrayContaining(['pane-w1', 'pane-op']),
     );
   });
@@ -977,7 +962,6 @@ describe('TerminalWorkspace — filtro é no-op quando cobre tudo (F-560)', () =
         { id: 'pane-b', kind: 'shell', title: 'B' },
       ]),
       focusedPaneId: 'pane-a',
-      viewKind: 'canvas',
     });
     useOrchStore.setState({
       paneMissions: {},
@@ -987,7 +971,7 @@ describe('TerminalWorkspace — filtro é no-op quando cobre tudo (F-560)', () =
 
     mount(<TerminalWorkspace />);
 
-    expect(canvasViewProps().visiblePaneIds).toBeUndefined();
+    expect(paneGridProps().visiblePaneIds).toBeUndefined();
   });
 
   it('com dois escopos o filtro volta a existir — aí ele tem o que filtrar', () => {
@@ -1003,7 +987,6 @@ describe('TerminalWorkspace — filtro é no-op quando cobre tudo (F-560)', () =
         { id: 'pane-solto', kind: 'shell', title: 'Solto' },
       ]),
       focusedPaneId: 'pane-missao',
-      viewKind: 'canvas',
     });
     useOrchStore.setState({
       paneMissions: { 'pane-missao': 'mission-a' },
@@ -1022,7 +1005,7 @@ describe('TerminalWorkspace — filtro é no-op quando cobre tudo (F-560)', () =
 
     mount(<TerminalWorkspace />);
 
-    const visible = canvasViewProps().visiblePaneIds;
+    const visible = paneGridProps().visiblePaneIds;
     expect(visible).toBeDefined();
     expect([...visible!]).toEqual(['pane-missao']);
   });

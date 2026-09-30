@@ -1,7 +1,6 @@
 import { useOrchStore } from './orch-store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaneModel, WorkspaceLayout } from '../../shared/types';
-import { defaultCanvasLayout } from '../lib/canvas-layout';
 import { paneScopeResolver } from '../lib/pane-spaces';
 import {
   buildGridTree,
@@ -59,33 +58,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('layout-store canvas placement', () => {
-  beforeEach(() => {
-    const root = buildGridTree([basePane]);
-    seedLayout({
-      root,
-      focusedPaneId: basePane.id,
-      hydrated: true,
-      viewKind: 'canvas',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
-    });
-  });
-
-  it('places a new terminal beside the focused pane even when its canvas layout is missing', () => {
-    const paneId = useLayoutStore.getState().addShellPane();
-    const layouts = useLayoutStore.getState().canvasNodeLayouts;
-    const focusedLayout = defaultCanvasLayout(0);
-
-    expect(layouts[basePane.id]).toEqual(focusedLayout);
-    expect(layouts[paneId].position).toEqual({
-      x: focusedLayout.position.x + focusedLayout.size.width + 24,
-      y: focusedLayout.position.y,
-    });
-    expect(layouts[paneId].size).toEqual(focusedLayout.size);
-  });
-});
-
 describe('layout-store pane maximize', () => {
   beforeEach(() => {
     const panes: PaneModel[] = [
@@ -97,9 +69,6 @@ describe('layout-store pane maximize', () => {
       focusedPaneId: 'pane-a',
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     });
   });
 
@@ -230,9 +199,6 @@ describe('layout-store maximize vs foco programático', () => {
       focusedPaneId: shell.id,
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     });
   });
 
@@ -313,16 +279,9 @@ describe('layout-store transient pane recovery', () => {
       role: 'worker',
       agentName: `reviewer-claude-1-${reviewerSuffix}`,
     };
-    const crashedLayout = {
+    const crashedLayout: WorkspaceLayout = {
       root: buildGridTree([durable, transient, legacy]),
       focusedPaneId: legacy.id,
-      viewKind: 'canvas' as const,
-      canvasNodeLayouts: {
-        [durable.id]: defaultCanvasLayout(0),
-        [transient.id]: defaultCanvasLayout(1),
-        [legacy.id]: defaultCanvasLayout(2),
-      },
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     };
 
     const sanitized = sanitizeWorkspaceLayout(crashedLayout);
@@ -330,17 +289,10 @@ describe('layout-store transient pane recovery', () => {
       durable.id,
     ]);
     expect(sanitized.focusedPaneId).toBe(durable.id);
-    expect(Object.keys(sanitized.canvasNodeLayouts ?? {})).toEqual([
-      durable.id,
-    ]);
 
-    const onlyLegacyLayout = {
-      ...crashedLayout,
+    const onlyLegacyLayout: WorkspaceLayout = {
       root: buildGridTree([legacy]),
       focusedPaneId: legacy.id,
-      canvasNodeLayouts: {
-        [legacy.id]: defaultCanvasLayout(0),
-      },
     };
     const save = vi.fn(
       async (_workspacePath: string, _layout: WorkspaceLayout) => undefined,
@@ -473,9 +425,6 @@ describe('layout-store orch spawn ceiling', () => {
       root: buildGridTree(panes),
       focusedPaneId: 'pane-0',
       hydrated: true,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     });
   }
 
@@ -517,9 +466,6 @@ describe('layout-store orch spawn vs structural placeholder', () => {
       focusedPaneId: panes[0]?.id ?? null,
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     });
   }
 
@@ -593,9 +539,6 @@ describe('layout-store orch spawn vs structural placeholder', () => {
       focusedPaneId: placeholder.id,
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     });
 
     spawn();
@@ -718,9 +661,6 @@ describe('layout-store focus vs. panes that are not there', () => {
       focusedPaneId: basePane.id,
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     });
 
     useLayoutStore.getState().focus('pane-that-left-the-tree');
@@ -742,9 +682,6 @@ describe('layout-store split pivot vs. the id it hands back', () => {
       focusedPaneId: 'pane-that-left-the-tree',
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     });
   });
 
@@ -899,9 +836,6 @@ describe('layout-store persistence key vs. the tree it owns', () => {
     const layoutA: WorkspaceLayout = {
       root: buildGridTree([missionPaneA]),
       focusedPaneId: missionPaneA.id,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     };
     let releaseB: () => void = () => undefined;
     const load = vi.fn(async (path: string) => {
@@ -963,9 +897,6 @@ describe('layout-store test fixtures go through the seam', () => {
       focusedPaneId: placeholder.id,
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     });
 
     expect(
@@ -992,9 +923,6 @@ describe('layout-store reclaimAsOperatorShell', () => {
       focusedPaneId: agent.id,
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     });
 
     const reclaimed = useLayoutStore
@@ -1146,9 +1074,6 @@ describe('layout-store role assignment and promotion', () => {
       focusedPaneId: pane1.id,
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     });
 
     useLayoutStore.getState().setPaneRole('p1', 'orchestrator');
@@ -1175,9 +1100,6 @@ describe('layout-store role assignment and promotion', () => {
       focusedPaneId: 'a1',
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     });
 
     useLayoutStore.getState().setPaneRole('a1', 'orchestrator');
@@ -1205,9 +1127,6 @@ describe('layout-store role assignment and promotion', () => {
       focusedPaneId: 'b2',
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     });
 
     useLayoutStore.getState().promoteMissionPaneRole('mB', 'b2');
@@ -1228,9 +1147,6 @@ describe('layout-store role assignment and promotion', () => {
       focusedPaneId: 'b2',
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     });
 
     useLayoutStore.getState().reflectMissionLeader('mB', 'b2');
@@ -1252,9 +1168,6 @@ describe('layout-store role assignment and promotion', () => {
       focusedPaneId: 'solto',
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     });
     const scopeNow = () => {
       const panes = listPanes(useLayoutStore.getState().root);
@@ -1286,9 +1199,6 @@ describe('layout-store role assignment and promotion', () => {
       focusedPaneId: 'a1',
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     });
 
     useLayoutStore.getState().spawnOrchPane({
@@ -1318,9 +1228,6 @@ describe('layout-store role assignment and promotion', () => {
       focusedPaneId: pane1.id,
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     });
 
     useLayoutStore.getState().promoteMissionPaneRole('mission-alpha', 'p1');
@@ -1648,9 +1555,6 @@ describe('layout-store — a missão mora na aba do pane que a começou', () => 
       focusedPaneId: operatorPane.id,
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     });
 
     useLayoutStore.getState().reflectMissionLeader('mission-epic', operatorPane.id);
@@ -1683,9 +1587,6 @@ describe('layout-store — a missão mora na aba do pane que a começou', () => 
       focusedPaneId: hostA.id,
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     });
 
     useLayoutStore.getState().reflectMissionLeader('mission-epic', paneB.id);
@@ -1717,9 +1618,6 @@ describe('layout-store — a missão mora na aba do pane que a começou', () => 
       focusedPaneId: maestro.id,
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     });
 
     useLayoutStore.getState().reflectMissionLeader('mission-epic', maestro.id);
@@ -1757,9 +1655,6 @@ describe('layout-store — a missão mora na aba do pane que a começou', () => 
       focusedPaneId: shell.id,
       maximizedPaneId: null,
       hydrated: true,
-      viewKind: 'grid',
-      canvasNodeLayouts: {},
-      canvasViewport: { x: 0, y: 0, zoom: 1 },
     });
 
     expect(useLayoutStore.getState().nameLooseSpace('space-epic', '  Epic 22  ')).toBe(true);
@@ -1783,7 +1678,6 @@ describe('spawnOrchPane — helper nasce na aba do pai (C3/B1)', () => {
         { ...basePane, id: 'pane-other' },
       ]),
       focusedPaneId: 'pane-parent',
-      viewKind: 'grid',
     });
   });
 

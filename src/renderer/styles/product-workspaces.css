@@ -304,8 +304,7 @@
   overflow: hidden;
 }
 
-.terminal-workspace__surface > .grid,
-.terminal-workspace__surface > .canvas-container {
+.terminal-workspace__surface > .grid {
   inline-size: 100%;
   block-size: 100%;
 }

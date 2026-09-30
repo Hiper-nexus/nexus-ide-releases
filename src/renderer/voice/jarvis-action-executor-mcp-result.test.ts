@@ -13,7 +13,6 @@ const {
   resolveSendToPaneTarget,
   setPendingDelegation,
   submitPromptToPane,
-  toggleView,
   voiceState,
   waitForSession,
   workspaceState,
@@ -26,7 +25,6 @@ const {
   resolveSendToPaneTarget: vi.fn(),
   setPendingDelegation: vi.fn(),
   submitPromptToPane: vi.fn(),
-  toggleView: vi.fn(),
   waitForSession: vi.fn(),
   writeToPane: vi.fn(),
   voiceState: {
@@ -49,7 +47,6 @@ const {
   },
   layoutState: {
     focusedPaneId: null as string | null,
-    viewKind: 'grid' as 'grid' | 'canvas',
     panes: [] as Array<{
       id: string;
       kind: 'shell' | 'cli-agent' | 'browser';
@@ -64,9 +61,7 @@ vi.mock('../state/layout-store', () => ({
     getState: () => ({
       root: layoutState.panes,
       focusedPaneId: layoutState.focusedPaneId,
-      viewKind: layoutState.viewKind,
       focus: focusPane,
-      toggleView,
       addShellPane: vi.fn(() => 'pane-added'),
     }),
   },
@@ -153,14 +148,9 @@ describe('Jarvis MCP result propagation', () => {
     vi.unstubAllGlobals();
     credentialState.missingModelKey = false;
     layoutState.focusedPaneId = null;
-    layoutState.viewKind = 'grid';
     layoutState.panes = [];
     focusPane.mockImplementation((paneId: string) => {
       layoutState.focusedPaneId = paneId;
-    });
-    toggleView.mockImplementation(() => {
-      layoutState.viewKind =
-        layoutState.viewKind === 'grid' ? 'canvas' : 'grid';
     });
     voiceState.settingsOpen = false;
     orchState.squads = [];

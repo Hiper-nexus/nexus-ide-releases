@@ -164,12 +164,6 @@ describe('jarvisActionFastPath', () => {
     expect(jarvisActionFastPath('abrir configurações', CTX)?.action).toEqual({
       type: 'open_settings',
     });
-    expect(jarvisActionFastPath('modo canvas', CTX)?.action).toEqual({
-      type: 'open_canvas',
-    });
-    expect(jarvisActionFastPath('volta para modo grid', CTX)?.action).toEqual({
-      type: 'open_grid',
-    });
   });
 
   it('browser e navegação disparam ações nativas', () => {

@@ -45,7 +45,7 @@ export function findOrchestratorPane(
 
 export function currentScreenSnapshot(): ScreenSnapshot {
   const workspace = useWorkspaceStore.getState().current;
-  const { root, focusedPaneId, viewKind } = useLayoutStore.getState();
+  const { root, focusedPaneId } = useLayoutStore.getState();
   const panes = listPanes(root);
   const orchestratorPaneId = findOrchestratorPane(root, focusedPaneId);
   const orch = useOrchStore.getState();
@@ -58,7 +58,6 @@ export function currentScreenSnapshot(): ScreenSnapshot {
 
   return buildScreenSnapshot({
     workspaceName: workspace?.name ?? null,
-    viewKind,
     panes,
     focusedPaneId,
     orchestratorPaneId,

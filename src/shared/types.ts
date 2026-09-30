@@ -141,7 +141,6 @@ import type {
   MediaStudioResponse,
   MediaUsageTotals,
 } from './media-types';
-import type { NotesApi } from './note-types';
 import type { MemoryBridge } from './memory-ui-types';
 import type { RichModelMetadataView } from './model-metadata-types';
 import type {
@@ -1199,7 +1198,6 @@ export interface NexusApi {
       storageKey: string,
     ): Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
   };
-  notes: NotesApi;
   pipes: PipeApi;
   /** Fase 5 — Jarvis Vision: screen capture + AX tree + OCR */
   vision: VisionApi;

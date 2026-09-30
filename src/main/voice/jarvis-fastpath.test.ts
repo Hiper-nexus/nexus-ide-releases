@@ -12,7 +12,7 @@ const CTX: JarvisContext = {
   focusedPaneKind: 'cli-agent',
   orchestrator: 'pane-3 [orquestrador]',
   missions: ['Landing page'],
-  screen: 'Workspace nexus-ide em modo canvas. 2 panes abertos. Pane focado: pane-2.',
+  screen: 'Workspace nexus-ide em modo grade. 2 panes abertos. Pane focado: pane-2.',
 };
 
 describe('jarvisFastPath', () => {
@@ -54,7 +54,7 @@ describe('jarvisFastPath', () => {
     expect(jarvisFastPath('onde a página está?', browserCtx)?.say).toContain(
       'https://example.com/docs',
     );
-    expect(jarvisFastPath('onde estamos?', CTX)?.say).toContain('modo canvas');
+    expect(jarvisFastPath('onde estamos?', CTX)?.say).toContain('modo grade');
   });
 
   it('responde consultas de estado em inglês sem LLM', () => {
@@ -68,7 +68,7 @@ describe('jarvisFastPath', () => {
       'https://example.com/docs',
     );
     expect(jarvisFastPath('current workspace', CTX)?.say).toContain('nexus-ide');
-    expect(jarvisFastPath('where are we?', CTX)?.say).toContain('modo canvas');
+    expect(jarvisFastPath('where are we?', CTX)?.say).toContain('modo grade');
     expect(jarvisFastPath('what panes are open?', CTX)?.say).toContain('2 panes');
   });
 
@@ -76,7 +76,7 @@ describe('jarvisFastPath', () => {
     const reply = jarvisFastPath('onde estamos?', {
       ...CTX,
       screen:
-        'Current Nexus screen: files panel open on package.json with unsaved changes. Workspace: nexus-ide. View: canvas.',
+        'Current Nexus screen: files panel open on package.json with unsaved changes. Workspace: nexus-ide. View: grid.',
     });
 
     expect(reply?.say).toContain('painel de arquivos');
