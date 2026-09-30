@@ -55,7 +55,7 @@ export class SqliteD1 implements D1Database {
   constructor() {
     this.sqlite = new DatabaseSync(':memory:');
     this.sqlite.exec('PRAGMA foreign_keys = ON');
-    for (const file of ['0001_core.sql', '0002_trial_admin.sql']) {
+    for (const file of ['0001_core.sql', '0002_trial_admin.sql', '0003_checkout_reservation.sql']) {
       this.sqlite.exec(readFileSync(new URL(`../../migrations/${file}`, import.meta.url), 'utf8'));
     }
   }

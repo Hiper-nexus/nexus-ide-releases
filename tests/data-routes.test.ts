@@ -15,7 +15,8 @@ const mutation = (version = 1, value = 'safe summary') => ({ entityType: 'contex
 const definition = { schemaVersion: 1 as const, name: 'Daily check', schedule: '0 12 * * *', brief: 'Review service health', target: { kind: 'agent' as const, id: 'codex' }, status: 'active' as const };
 
 async function account(db: SqliteD1, id: string, paid = false) {
-  await db.prepare('INSERT INTO accounts(id,email) VALUES(?,?)').bind(id, `${id}@example.test`).run();
+  // Accounts start in a running trial: cloud cron needs access, and sync still needs a paid plan.
+  await db.prepare('INSERT INTO accounts(id,email,trial_started_at,trial_expires_at) VALUES(?,?,?,?)').bind(id, `${id}@example.test`, Date.now(), Date.now() + 86_400_000).run();
   if (paid) await db.prepare("INSERT INTO subscriptions(id,owner_type,account_id,stripe_subscription_id,stripe_customer_id,plan,status,current_period_end) VALUES(?,'account',?,?,?,'pro','active',?)").bind(`sub-${id}`, id, `stripe-${id}`, `cus-${id}`, Date.now() + 86_400_000).run();
   return issueTokens(db, id, 'desktop');
 }

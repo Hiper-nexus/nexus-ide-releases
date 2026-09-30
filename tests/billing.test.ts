@@ -16,13 +16,15 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 async function setup(options: Parameters<typeof seedAccount>[2] = {}) {
   const db = new SqliteD1();
-  await seedAccount(db, 'user', options);
+  await seedAccount(db, 'user', { customer: 'cus_user', ...options });
   const fake = fakeStripe();
   const env = environment(db);
-  const app = createApp({ stripeFor: () => fake.stripe });
+  // A counter clock makes the order of concurrent steps deterministic.
+  const clock = { value: Date.now() };
+  const app = createApp({ stripeFor: () => fake.stripe, now: () => ++clock.value });
   const post = (path: string, headers: Record<string, string>, body?: unknown) =>
     app.request(path, { method: 'POST', headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, env);
-  return { db, fake, env, app, post };
+  return { db, fake, env, app, post, clock };
 }
 const access = async (db: SqliteD1, env: CloudflareBindings, now = Date.now()) => accountAccess(db, 'user', configFrom(env), now);
 async function deliver(context: Awaited<ReturnType<typeof setup>>, fake: FakeStripe, id: string, type = 'customer.subscription.updated') {
@@ -30,8 +32,8 @@ async function deliver(context: Awaited<ReturnType<typeof setup>>, fake: FakeStr
   return context.post('/v1/billing/webhook', { 'stripe-signature': 'fixture' }, { ignored: true });
 }
 
-test('web checkout creates an idempotent Stripe session bound to the signed-in account', async () => {
-  const context = await setup();
+test('web checkout creates a Stripe session bound to the signed-in account', async () => {
+  const context = await setup({ customer: undefined });
   const response = await context.post('/v1/web/checkout', await webLogin(context.db, 'user'), { plan: 'pro', attemptId: ATTEMPT });
   assert.equal(response.status, 200);
   assert.deepEqual((await json(response)).data, { url: 'https://checkout.stripe.com/c/pay/fixture' });
@@ -43,7 +45,8 @@ test('web checkout creates an idempotent Stripe session bound to the signed-in a
   assert.deepEqual(params.subscription_data, { metadata: { accountId: 'user', plan: 'pro' } });
   assert.equal(params.success_url, SITE + '/conta/?checkout=success');
   assert.equal(params.cancel_url, SITE + '/conta/?checkout=cancel');
-  assert.equal(options.idempotencyKey, `checkout:user:${ATTEMPT}`);
+  assert.equal(options.idempotencyKey, 'checkout:user:1');
+  assert.equal(typeof params.expires_at, 'number');
   assert.equal((await context.db.prepare("SELECT stripe_customer_id AS id FROM accounts WHERE id='user'").first<{ id: string }>())?.id, 'cus_created');
   context.db.close();
 });
@@ -114,7 +117,7 @@ test('billing routes answer 503 while Stripe is not configured', async () => {
 });
 
 test('desktop checkout and portal use the native bearer session and reuse the stored customer', async () => {
-  const context = await setup();
+  const context = await setup({ customer: undefined });
   const native = await nativeLogin(context.db, 'user');
   const webSession = (await issueTokens(context.db, 'user', 'web')).session;
   assert.equal((await context.post('/v1/billing/checkout', { Authorization: `Bearer ${webSession}`, 'Content-Type': 'application/json' }, { plan: 'pro' })).status, 401);
@@ -186,14 +189,80 @@ test('a webhook that fails while processing stays unprocessed so the Stripe retr
   context.db.close();
 });
 
-test('a subscription with an unauthorized price or without an account never grants access', async () => {
+test('subscriptions the product cannot own are acknowledged, recorded and never grant access', async () => {
   const context = await setup();
+  await seedAccount(context.db, 'other');
+  const reason = async (id: string) => JSON.parse((await context.db.prepare('SELECT payload FROM stripe_events WHERE event_id=? AND processed_at IS NOT NULL').bind(id).first<{ payload: string }>())!.payload).ignored;
   context.fake.subscription = subscription('user', { items: { data: [{ price: { id: 'price_other' }, current_period_end: Math.floor(Date.now() / 1000) + 3600 }] } });
-  assert.equal((await deliver(context, context.fake, 'evt_price')).status, 500);
+  assert.equal((await deliver(context, context.fake, 'evt_price')).status, 200);
+  assert.equal(await reason('evt_price'), 'foreign-price');
   context.fake.subscription = subscription('user', { metadata: {} });
-  assert.equal((await deliver(context, context.fake, 'evt_owner')).status, 500);
+  assert.equal((await deliver(context, context.fake, 'evt_owner')).status, 200);
+  assert.equal(await reason('evt_owner'), 'missing-owner');
+  context.fake.subscription = subscription('user', { metadata: { accountId: 'deleted-account' } });
+  assert.equal((await deliver(context, context.fake, 'evt_unknown')).status, 200);
+  assert.equal(await reason('evt_unknown'), 'unknown-owner');
+  // A subscription paid by one customer can never be pointed at another account through metadata.
+  context.fake.subscription = subscription('user', { metadata: { accountId: 'other', plan: 'pro' } });
+  assert.equal((await deliver(context, context.fake, 'evt_hijack')).status, 200);
+  assert.equal(await reason('evt_hijack'), 'customer-mismatch');
   assert.equal((await context.db.prepare('SELECT count(*) AS n FROM subscriptions').first<{ n: number }>())?.n, 0);
+  assert.equal((await accountAccess(context.db, 'other', configFrom(context.env))).access, 'trial');
   assert.equal((await access(context.db, context.env)).access, 'trial');
+  context.db.close();
+});
+
+test('a stale subscription snapshot never overwrites the newer one written by a concurrent delivery', async () => {
+  const context = await setup({ trialDays: -1 });
+  let reached!: () => void, release!: () => void;
+  const atRetrieve = new Promise<void>((resolve) => { reached = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  // The first delivery reads "active" before the cancellation and is delayed on the network.
+  context.fake.retrievals.push(async () => { reached(); await gate; return subscription('user'); });
+  context.fake.subscription = subscription('user', { status: 'canceled' });
+  const stale = deliver(context, context.fake, 'evt_stale', 'invoice.paid');
+  await atRetrieve;
+  assert.equal((await deliver(context, context.fake, 'evt_fresh', 'customer.subscription.deleted')).status, 200);
+  release();
+  assert.equal((await stale).status, 200);
+  assert.equal((await context.db.prepare("SELECT status FROM subscriptions WHERE stripe_subscription_id='sub_user'").first<{ status: string }>())?.status, 'canceled');
+  assert.equal((await access(context.db, context.env)).access, 'inactive');
+  assert.equal(context.fake.calls.retrieved.length, 3, 'the delayed delivery reads Stripe again instead of writing its old snapshot');
+  context.db.close();
+});
+
+test('every checkout attempt in the open window reuses one Stripe session, across site and app', async () => {
+  const context = await setup();
+  const web = await webLogin(context.db, 'user'), native = await nativeLogin(context.db, 'user');
+  const attempts = await Promise.all([
+    context.post('/v1/web/checkout', web, { plan: 'pro', attemptId: ATTEMPT }),
+    context.post('/v1/billing/checkout', native, { plan: 'pro' }),
+    context.post('/v1/web/checkout', web, { plan: 'pro', attemptId: '22222222-2222-4222-8222-222222222222' }),
+  ]);
+  assert.deepEqual(attempts.map(response => response.status), [200, 200, 200]);
+  const [first, ...rest] = context.fake.calls.checkouts as Array<[Record<string, unknown>, { idempotencyKey: string }]>;
+  for (const [params, options] of rest) {
+    assert.equal(options.idempotencyKey, first[1].idempotencyKey);
+    assert.deepEqual(params, first[0], 'identical parameters let Stripe replay the same session');
+  }
+  // Once the reserved window is over, the next attempt opens a new session.
+  context.clock.value += 24 * 60 * 60 * 1000;
+  await context.post('/v1/billing/checkout', native, { plan: 'pro' });
+  assert.notEqual((context.fake.calls.checkouts.at(-1) as [unknown, { idempotencyKey: string }])[1].idempotencyKey, first[1].idempotencyKey);
+  context.db.close();
+});
+
+test('a subscriber who cancels can subscribe again without being handed the finished checkout', async () => {
+  const context = await setup();
+  const native = await nativeLogin(context.db, 'user');
+  await context.post('/v1/billing/checkout', native, { plan: 'pro' });
+  context.fake.subscription = subscription('user');
+  await deliver(context, context.fake, 'evt_paid', 'checkout.session.completed');
+  context.fake.subscription = subscription('user', { status: 'canceled' });
+  await deliver(context, context.fake, 'evt_canceled', 'customer.subscription.deleted');
+  assert.equal((await context.post('/v1/billing/checkout', native, { plan: 'pro' })).status, 200);
+  const keys = (context.fake.calls.checkouts as Array<[unknown, { idempotencyKey: string }]>).map(call => call[1].idempotencyKey);
+  assert.deepEqual(keys, ['checkout:user:1', 'checkout:user:2']);
   context.db.close();
 });
 
@@ -202,7 +271,7 @@ test('past due keeps Pro for one anchored grace period that retries cannot exten
   context.fake.subscription = subscription('user', { status: 'past_due' });
   await deliver(context, context.fake, 'evt_due_1', 'invoice.payment_failed');
   const first = await context.db.prepare("SELECT grace_until FROM subscriptions WHERE stripe_subscription_id='sub_user'").first<{ grace_until: number }>();
-  assert.ok(first!.grace_until > Date.now() + 6 * DAY_MS && first!.grace_until <= Date.now() + 7 * DAY_MS);
+  assert.ok(first!.grace_until > Date.now() + 6 * DAY_MS && first!.grace_until <= Date.now() + 7 * DAY_MS + 1000);
   assert.equal((await access(context.db, context.env)).status, 'past_due');
   await context.db.prepare("UPDATE subscriptions SET grace_until=grace_until-1000 WHERE stripe_subscription_id='sub_user'").run();
   await deliver(context, context.fake, 'evt_due_2', 'invoice.payment_failed');

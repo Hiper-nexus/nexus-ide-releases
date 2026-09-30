@@ -36,10 +36,15 @@ async function targetAccount(c: Context<AppEnv>): Promise<AccountRow> {
   return account;
 }
 
-function audit(c: Context<AppEnv>, targetId: string, action: AdminAuditAction, details: Record<string, unknown>, now: number): D1PreparedStatement {
-  return c.env.DB.prepare('INSERT INTO admin_audit(id,actor_account_id,target_account_id,action,details,created_at) VALUES(?,?,?,?,?,?)')
-    .bind(crypto.randomUUID(), c.get('session').account_id, targetId, action, JSON.stringify(details), now);
+/** Audit row. With `guarded`, it is only written while the target still has the suspension
+ * state the admin saw, so a change that loses a race leaves no audit entry either. */
+function audit(c: Context<AppEnv>, target: AccountRow, action: AdminAuditAction, details: Record<string, unknown>, now: number, guarded = true): D1PreparedStatement {
+  const values = [crypto.randomUUID(), c.get('session').account_id, target.id, action, JSON.stringify(details), now];
+  return guarded
+    ? c.env.DB.prepare('INSERT INTO admin_audit(id,actor_account_id,target_account_id,action,details,created_at) SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM accounts WHERE id=? AND suspended_at IS ?)').bind(...values, target.id, target.suspended_at)
+    : c.env.DB.prepare('INSERT INTO admin_audit(id,actor_account_id,target_account_id,action,details,created_at) VALUES(?,?,?,?,?,?)').bind(...values);
 }
+const STALE = 'A situação desta conta mudou. Atualize a lista e tente novamente.';
 
 export const adminRoutes = new Hono<AppEnv>();
 adminRoutes.use('/admin/*', async (c, next) => { c.header('Cache-Control', 'no-store'); await next(); }, requireWebAuth, requireAdmin);
@@ -55,7 +60,8 @@ adminRoutes.get('/admin/accounts', async (c) => {
   if (!query.success) throw new HTTPException(400, { message: 'Filtro inválido.' });
   type Row = Pick<AccountRow, 'id' | 'email' | 'name' | 'trial_expires_at'> & { is_admin: number; situation: Situation; subscription_status: string | null };
   const rows = await c.env.DB.prepare(`${CLASSIFIED} SELECT id,email,name,trial_expires_at,is_admin,situation,
-      (SELECT s.status FROM subscriptions s WHERE s.owner_type='account' AND s.account_id=classified.id ORDER BY ${LIVE} DESC,s.updated_at DESC LIMIT 1) AS subscription_status
+      (SELECT s.status FROM subscriptions s WHERE (s.owner_type='account' AND s.account_id=classified.id)
+        OR (s.owner_type='team' AND s.team_id IN (SELECT team_id FROM team_members WHERE account_id=classified.id)) ORDER BY ${LIVE} DESC,s.updated_at DESC LIMIT 1) AS subscription_status
     FROM classified WHERE ?3='all' OR situation=?3 ORDER BY created_at DESC,id LIMIT ?4`)
     .bind(Date.now(), adminEmails(c.get('config')), query.data.status, query.data.limit).all<Row>();
   return c.json({ ok: true, data: { accounts: rows.results.map(row => ({
@@ -72,20 +78,23 @@ adminRoutes.post('/admin/accounts/:id/suspend', requireCsrf, async (c) => {
   const target = await targetAccount(c), now = Date.now();
   if (target.id === c.get('session').account_id) throw new HTTPException(409, { message: 'Você não pode suspender a própria conta.' });
   if (target.suspended_at !== null) throw new HTTPException(409, { message: 'Esta conta já está suspensa.' });
-  await c.env.DB.batch([
-    c.env.DB.prepare('UPDATE accounts SET suspended_at=?,suspension_reason=?,updated_at=? WHERE id=?').bind(now, reason, now, target.id),
-    audit(c, target.id, 'suspend', { reason }, now),
+  // The audit row and the change share one predicate and one batch: a concurrent change makes both no-ops.
+  const [, changed] = await c.env.DB.batch<{ id: string }>([
+    audit(c, target, 'suspend', { reason }, now),
+    c.env.DB.prepare('UPDATE accounts SET suspended_at=?,suspension_reason=?,updated_at=? WHERE id=? AND suspended_at IS NULL RETURNING id').bind(now, reason, now, target.id),
   ]);
+  if (!changed.results.length) throw new HTTPException(409, { message: STALE });
   return c.json({ ok: true, data: {} });
 });
 
 adminRoutes.post('/admin/accounts/:id/resume', requireCsrf, async (c) => {
   const target = await targetAccount(c), now = Date.now();
   if (target.suspended_at === null) throw new HTTPException(409, { message: 'Esta conta não está suspensa.' });
-  await c.env.DB.batch([
-    c.env.DB.prepare('UPDATE accounts SET suspended_at=NULL,suspension_reason=NULL,updated_at=? WHERE id=?').bind(now, target.id),
-    audit(c, target.id, 'resume', {}, now),
+  const [, changed] = await c.env.DB.batch<{ id: string }>([
+    audit(c, target, 'resume', {}, now),
+    c.env.DB.prepare('UPDATE accounts SET suspended_at=NULL,suspension_reason=NULL,updated_at=? WHERE id=? AND suspended_at=? RETURNING id').bind(now, target.id, target.suspended_at),
   ]);
+  if (!changed.results.length) throw new HTTPException(409, { message: STALE });
   return c.json({ ok: true, data: {} });
 });
 
@@ -95,7 +104,7 @@ adminRoutes.post('/admin/accounts/:id/extend-trial', requireCsrf, async (c) => {
   // The new end is computed in SQL from the stored value, so concurrent extensions add up instead of overwriting.
   await c.env.DB.batch([
     c.env.DB.prepare('UPDATE accounts SET trial_started_at=COALESCE(trial_started_at,?1),trial_expires_at=max(?1,COALESCE(trial_expires_at,?1))+?2,updated_at=?1 WHERE id=?3').bind(now, days * DAY_MS, target.id),
-    audit(c, target.id, 'extend_trial', { days, previousEnd: target.trial_expires_at === null ? null : new Date(target.trial_expires_at).toISOString() }, now),
+    audit(c, target, 'extend_trial', { days, previousEnd: target.trial_expires_at === null ? null : new Date(target.trial_expires_at).toISOString() }, now, false),
   ]);
   return c.json({ ok: true, data: {} });
 });

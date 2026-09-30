@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import type { AppEnv } from './context.js';
 import type { CronScheduleRow } from './db/schema.js';
-import { requireNativeAuth } from './middleware.js';
+import { requireAccess, requireNativeAuth } from './middleware.js';
 import { readBoundedBody } from './http.js';
 import { hashToken, randomToken } from './crypto.js';
 import { z } from 'zod';
@@ -150,14 +150,17 @@ export async function cronDefinitionHash(raw: unknown): Promise<string> {
   return hashToken(JSON.stringify(canonicalValue(definition)));
 }
 
+export const CRON_MAX_SCHEDULES_PER_ACCOUNT = 500;
+export const CRON_MAX_LIVE_LEASES_PER_ACCOUNT = 1_000;
 export interface CronServiceDeps { readonly db: D1Database; readonly now?: () => number; readonly makeToken?: () => string; }
 export interface StoredCronSchedule { readonly projectId: string; readonly scheduleId: string; readonly version: number; readonly definition: PortableCronDefinition; readonly definitionHash: string; readonly updatedAt: number; }
 export type PublishScheduleResult =
   | { readonly ok: true; readonly created: boolean; readonly schedule: StoredCronSchedule }
-  | { readonly ok: false; readonly expectedVersion: number; readonly actualVersion: number; readonly current: StoredCronSchedule | null };
+  | { readonly ok: false; readonly expectedVersion: number; readonly actualVersion: number; readonly current: StoredCronSchedule | null }
+  | { readonly ok: false; readonly reason: 'schedule-quota' };
 export type LeaseOperationResult =
   | { readonly acquired: true; readonly token: string; readonly expiresAt: number; readonly reused: boolean }
-  | { readonly acquired: false; readonly reason: 'held-by-peer' | 'expired-or-not-owner' | 'definition-conflict'; readonly retryAt?: number; readonly actualVersion?: number; readonly actualDefinitionHash?: string };
+  | { readonly acquired: false; readonly reason: 'held-by-peer' | 'expired-or-not-owner' | 'definition-conflict' | 'lease-quota'; readonly retryAt?: number; readonly actualVersion?: number; readonly actualDefinitionHash?: string };
 type LeaseCoordinates = z.infer<typeof leaseRequestSchema>;
 type CronDb = Pick<D1Database, 'prepare'>;
 
@@ -179,10 +182,12 @@ export async function publishCronSchedule(deps: CronServiceDeps, input: { readon
   const db = deps.db.withSession('first-primary');
   const common = [JSON.stringify(definition), hash, definition.status, now];
   const row = input.expectedVersion === 0
-    ? await db.prepare('INSERT INTO cron_schedules(account_id,project_id,schedule_id,version,definition,definition_hash,status,updated_at) VALUES(?,?,?,1,?,?,?,?) ON CONFLICT(account_id,project_id,schedule_id) DO NOTHING RETURNING *').bind(input.accountId, input.projectId, input.scheduleId, ...common).first<CronScheduleRow>()
+    ? await db.prepare('INSERT INTO cron_schedules(account_id,project_id,schedule_id,version,definition,definition_hash,status,updated_at) SELECT ?,?,?,1,?,?,?,? WHERE (SELECT count(*) FROM cron_schedules WHERE account_id=?)<? ON CONFLICT(account_id,project_id,schedule_id) DO NOTHING RETURNING *').bind(input.accountId, input.projectId, input.scheduleId, ...common, input.accountId, CRON_MAX_SCHEDULES_PER_ACCOUNT).first<CronScheduleRow>()
     : await db.prepare('UPDATE cron_schedules SET version=version+1,definition=?,definition_hash=?,status=?,updated_at=? WHERE account_id=? AND project_id=? AND schedule_id=? AND version=? RETURNING *').bind(...common, input.accountId, input.projectId, input.scheduleId, input.expectedVersion).first<CronScheduleRow>();
   if (row) return { ok: true, created: input.expectedVersion === 0, schedule: scheduleRecord(row) };
   const current = await findSchedule(db, input.accountId, input.projectId, input.scheduleId);
+  // A refused creation with no stored schedule can only be the per-account cap.
+  if (!current && input.expectedVersion === 0) return { ok: false, reason: 'schedule-quota' };
   return { ok: false, expectedVersion: input.expectedVersion, actualVersion: current?.version ?? 0, current };
 }
 async function definitionConflict(db: CronDb, accountId: string, input: LeaseCoordinates): Promise<Extract<LeaseOperationResult, { acquired: false }> | null> {
@@ -202,13 +207,15 @@ export async function acquireCronLease(deps: CronServiceDeps, accountId: string,
   const row = await db.prepare(`INSERT INTO cron_leases(account_id,project_id,schedule_id,occurrence_at,token_hash,version,expires_at,updated_at)
     SELECT account_id,project_id,schedule_id,?,?,1,?,? FROM cron_schedules
     WHERE account_id=? AND project_id=? AND schedule_id=? AND version=? AND definition_hash=? AND status='active'
+      AND (SELECT count(*) FROM cron_leases WHERE account_id=? AND expires_at>?)<?
     ON CONFLICT(account_id,project_id,schedule_id,occurrence_at) DO UPDATE SET token_hash=excluded.token_hash,expires_at=excluded.expires_at,updated_at=excluded.updated_at,version=cron_leases.version+1
-    WHERE cron_leases.token_hash IS NULL OR cron_leases.expires_at<=? RETURNING expires_at`).bind(input.occurrenceAt, tokenHash, expiresAt, now, accountId, input.projectId, input.scheduleId, input.definitionVersion, input.definitionHash, now).first<{ expires_at: number }>();
+    WHERE cron_leases.token_hash IS NULL OR cron_leases.expires_at<=? RETURNING expires_at`).bind(input.occurrenceAt, tokenHash, expiresAt, now, accountId, input.projectId, input.scheduleId, input.definitionVersion, input.definitionHash, accountId, now, CRON_MAX_LIVE_LEASES_PER_ACCOUNT, now).first<{ expires_at: number }>();
   if (row) return { acquired: true, token, expiresAt: row.expires_at, reused: false };
   const conflict = await definitionConflict(db, accountId, input);
   if (conflict) return conflict;
   const held = await db.prepare('SELECT expires_at FROM cron_leases WHERE account_id=? AND project_id=? AND schedule_id=? AND occurrence_at=?').bind(accountId, input.projectId, input.scheduleId, input.occurrenceAt).first<{ expires_at: number }>();
-  return { acquired: false, reason: 'held-by-peer', ...(held ? { retryAt: held.expires_at } : {}) };
+  // No lease row for this occurrence means the insert itself was refused by the live-lease cap.
+  return held ? { acquired: false, reason: 'held-by-peer', retryAt: held.expires_at } : { acquired: false, reason: 'lease-quota' };
 }
 export async function renewCronLease(deps: CronServiceDeps, accountId: string, input: LeaseCoordinates & { readonly token: string }): Promise<LeaseOperationResult> {
   const now = (deps.now ?? Date.now)();
@@ -238,22 +245,23 @@ cronRoutes.get('/cron/projects/:projectId/schedules', async (c) => {
   if (!project.success) return c.json({ ok: false, error: 'invalid-project' }, 400);
   return c.json({ ok: true, data: await listCronSchedules({ db: c.env.DB }, c.get('session').account_id, project.data) });
 });
-cronRoutes.put('/cron/projects/:projectId/schedules/:scheduleId', async (c) => {
+cronRoutes.put('/cron/projects/:projectId/schedules/:scheduleId', requireAccess, async (c) => {
   const project = portableProjectIdSchema.safeParse(c.req.param('projectId'));
   const schedule = portableScheduleIdSchema.safeParse(c.req.param('scheduleId'));
   const body = await parsedBody(c.req.raw, publishScheduleSchema);
   if (!project.success || !schedule.success || !body) return c.json({ ok: false, error: 'invalid-schedule' }, 400);
   const result = await publishCronSchedule({ db: c.env.DB }, { accountId: c.get('session').account_id, projectId: project.data, scheduleId: schedule.data, ...body });
+  if (!result.ok && 'reason' in result) return c.json({ ok: false, error: result.reason }, 409);
   if (!result.ok) return c.json({ ok: false, error: 'version-conflict', conflict: { expectedVersion: result.expectedVersion, actualVersion: result.actualVersion, current: result.current } }, 409);
   return c.json({ ok: true, data: result.schedule }, result.created ? 201 : 200);
 });
-cronRoutes.post('/cron/leases/acquire', async (c) => {
+cronRoutes.post('/cron/leases/acquire', requireAccess, async (c) => {
   const body = await parsedBody(c.req.raw, leaseRequestSchema);
   if (!body) return c.json({ ok: false, error: 'invalid-lease' }, 400);
   const result = await acquireCronLease({ db: c.env.DB }, c.get('session').account_id, body);
   return c.json({ ok: result.acquired, data: result }, result.acquired ? 200 : 409);
 });
-cronRoutes.post('/cron/leases/renew', async (c) => {
+cronRoutes.post('/cron/leases/renew', requireAccess, async (c) => {
   const body = await parsedBody(c.req.raw, leaseTokenRequestSchema);
   if (!body) return c.json({ ok: false, error: 'invalid-lease' }, 400);
   const result = await renewCronLease({ db: c.env.DB }, c.get('session').account_id, body);

@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type MiddlewareHandler } from 'hono';
 import { cors } from 'hono/cors';
 import { HTTPException } from 'hono/http-exception';
 import type { AppEnv } from './context.js';
@@ -20,7 +20,7 @@ const SECURITY_HEADERS = {
   'strict-transport-security': 'max-age=31536000; includeSubDomains',
 };
 
-export interface AppDeps { readonly fetchFn?: typeof fetch; readonly stripeFor?: StripeFactory }
+export interface AppDeps { readonly fetchFn?: typeof fetch; readonly stripeFor?: StripeFactory; readonly now?: () => number }
 
 export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -35,7 +35,16 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) c.res.headers.set(name, value);
   });
   app.get('/health', c => c.json({ ok: true }));
-  app.get('/ready', async (c) => {
+  const rateLimit: MiddlewareHandler<AppEnv> = async (c, next) => {
+    // Stripe retries arrive in bursts and are already protected by signature and idempotency.
+    if (c.req.path !== WEBHOOK_PATH) {
+      const limiter = /^\/v1\/(web\/)?auth\//.test(c.req.path) ? c.env.AUTH_RATE_LIMITER : c.env.API_RATE_LIMITER;
+      const { success } = await limiter.limit({ key: c.req.header('CF-Connecting-IP') ?? 'unknown' });
+      if (!success) throw new HTTPException(429, { message: 'Muitas tentativas. Aguarde um momento antes de continuar.' });
+    }
+    await next();
+  };
+  app.get('/ready', rateLimit, async (c) => {
     try {
       await c.env.DB.prepare("SELECT value FROM system_metadata WHERE key='schema_version'").first();
       return c.json({ ok: true });
@@ -47,15 +56,7 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
     origin: (origin, c) => origin === new URL(c.get('config').PUBLIC_SITE_URL).origin ? origin : null,
     credentials: true, allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'], allowHeaders: ['Content-Type', 'X-CSRF-Token'], maxAge: 600,
   }));
-  app.use('/v1/*', async (c, next) => {
-    // Stripe retries arrive in bursts and are already protected by signature and idempotency.
-    if (c.req.path !== WEBHOOK_PATH) {
-      const limiter = /^\/v1\/(web\/)?auth\//.test(c.req.path) ? c.env.AUTH_RATE_LIMITER : c.env.API_RATE_LIMITER;
-      const { success } = await limiter.limit({ key: c.req.header('CF-Connecting-IP') ?? 'unknown' });
-      if (!success) throw new HTTPException(429, { message: 'Muitas tentativas. Aguarde um momento antes de continuar.' });
-    }
-    await next();
-  });
+  app.use('/v1/*', rateLimit);
   app.get('/v1/public/status', (c) => {
     const config = c.get('config');
     c.header('Cache-Control', 'public, max-age=60');
@@ -66,14 +67,19 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
       trial: { days: config.TRIAL_DAYS, maxAgents: config.TRIAL_MAX_AGENTS, cloudSync: config.TRIAL_CLOUD_SYNC === 'true' },
     } });
   });
-  app.route('/v1', createAuthRoutes(deps.fetchFn)).route('/v1', createBillingRoutes(deps.stripeFor)).route('/v1', adminRoutes)
+  app.route('/v1', createAuthRoutes(deps.fetchFn)).route('/v1', createBillingRoutes(deps.stripeFor, deps.now)).route('/v1', adminRoutes)
     .route('/v1', teamRoutes).route('/v1', cronRoutes).route('/v1', syncRoutes);
   return app;
 }
 
-/** Removes login state and tokens that can no longer be used. */
+const LEASE_RETENTION_MS = 60 * 60 * 1000;
+/** Removes login state, tokens and cron leases that can no longer be used. */
 export async function cleanupExpired(db: D1Database, now = Date.now()): Promise<void> {
-  await db.batch(['oauth_states', 'auth_codes', 'sessions', 'refresh_tokens'].map(table => db.prepare(`DELETE FROM ${table} WHERE expires_at<?`).bind(now)));
+  await db.batch([
+    ...['oauth_states', 'auth_codes', 'sessions', 'refresh_tokens'].map(table => db.prepare(`DELETE FROM ${table} WHERE expires_at<?`).bind(now)),
+    // An expired lease can be re-acquired by any peer, so keeping it only grows the table.
+    db.prepare('DELETE FROM cron_leases WHERE expires_at<?').bind(now - LEASE_RETENTION_MS),
+  ]);
 }
 
 const app = createApp();

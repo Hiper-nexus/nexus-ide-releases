@@ -138,7 +138,9 @@ async function webSession(c: AuthContext) {
         setWebCookies(c, tokens);
     }
     const profile = await profileFor(c, accountId!);
-    return c.json({ ok: true, data: { authenticated: true, csrfToken: csrf, profile, entitlement: await accountAccess(c.env.DB, accountId!, config) } });
+    // Managing billing depends on having a Stripe customer, never on app access: a suspended subscriber must still reach the portal.
+    const customer = await c.env.DB.prepare('SELECT stripe_customer_id AS id FROM accounts WHERE id=?').bind(accountId).first<{ id: string | null }>();
+    return c.json({ ok: true, data: { authenticated: true, csrfToken: csrf, profile, entitlement: await accountAccess(c.env.DB, accountId!, config), billing: { portal: Boolean(customer?.id) } } });
 }
 export function createAuthRoutes(fetchFn: typeof fetch = fetch): Hono<AppEnv> {
     const routes = new Hono<AppEnv>();

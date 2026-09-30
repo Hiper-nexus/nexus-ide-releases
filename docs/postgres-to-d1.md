@@ -17,8 +17,11 @@ that the API can be cut over.
 and a durable audit table. `src/db/schema.ts` defines read-only SQL row contracts with the original
 snake_case column names. The migration creates tables and indexes and inserts
 only `system_metadata.schema_version = '1'`; it contains no destructive data
-commands. The second migration advances `schema_version` to `2`. Apply both
-through a migration ledger once. This initial migration is not
+commands. The second migration advances `schema_version` to `2`, and
+`migrations/0003_checkout_reservation.sql` advances it to `3` by adding
+`accounts.checkout_generation` and `accounts.checkout_open_until`: one open
+Stripe Checkout Session per account, replayed through an idempotency key
+derived from the generation. Apply all of them through a migration ledger once. This initial migration is not
 an upgrade script for a pre-existing D1 schema; do not rerun it against an
 existing installation as an import or repair shortcut.
 
@@ -90,7 +93,7 @@ continue validating ownership, seats and invite limits.
 
 | Table | Columns |
 | --- | --- |
-| `accounts` | `id`, `email`, `name?`, `avatar_url?`, `plan`, `stripe_customer_id?`, `created_at`, `updated_at`, `role`, `trial_started_at?`, `trial_expires_at?`, `suspended_at?`, `suspension_reason?`, `last_seen_at?` |
+| `accounts` | `id`, `email`, `name?`, `avatar_url?`, `plan`, `stripe_customer_id?`, `created_at`, `updated_at`, `role`, `trial_started_at?`, `trial_expires_at?`, `suspended_at?`, `suspension_reason?`, `last_seen_at?`, `checkout_generation`, `checkout_open_until?` |
 | `identities` | `id`, `account_id`, `provider`, `provider_user_id`, `email?`, `email_verified`, `created_at` |
 | `sessions` | `id`, `account_id`, `token_hash`, `expires_at`, `revoked_at?`, `created_at`, `last_used_at?`, `csrf_hash?`, `channel` |
 | `refresh_tokens` | `id`, `account_id`, `token_hash`, `rotated_from?`, `used_at?`, `expires_at`, `revoked_at?`, `created_at`, `channel` |

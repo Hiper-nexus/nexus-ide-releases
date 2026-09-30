@@ -29,6 +29,8 @@ export interface AccountRow {
   readonly suspended_at: EpochMilliseconds | null;
   readonly suspension_reason: string | null;
   readonly last_seen_at: EpochMilliseconds | null;
+  readonly checkout_generation: number;
+  readonly checkout_open_until: EpochMilliseconds | null;
 }
 
 export interface IdentityRow {

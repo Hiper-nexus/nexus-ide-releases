@@ -14,6 +14,7 @@ function database(t) {
   db.exec('PRAGMA foreign_keys = ON');
   db.exec(readFileSync(migrationPath, 'utf8'));
   db.exec(readFileSync(new URL('../migrations/0002_trial_admin.sql', import.meta.url), 'utf8'));
+  db.exec(readFileSync(new URL('../migrations/0003_checkout_reservation.sql', import.meta.url), 'utf8'));
   return db;
 }
 
@@ -38,7 +39,7 @@ function project(db, accountId, projectId = 'same-project') {
 
 test('schema metadata records version without claiming PostgreSQL import', (t) => {
   const db = database(t);
-  assert.equal(db.prepare("SELECT value FROM system_metadata WHERE key = 'schema_version'").get().value, '2');
+  assert.equal(db.prepare("SELECT value FROM system_metadata WHERE key = 'schema_version'").get().value, '3');
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM system_metadata WHERE key LIKE 'import%'").get().n, 0);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM accounts").get().n, 0);
 });
@@ -272,4 +273,13 @@ test('admin audit validates actions and JSON and survives actor and target delet
   assert.equal(row.action, 'suspend');
   assert.equal(row.details, '{"reason":"review"}');
   assert.equal(row.created_at, NOW);
+});
+
+test('accounts start without an open checkout window and the generation never goes negative', (t) => {
+  const db = database(t);
+  const accountId = account(db);
+  const row = db.prepare('SELECT checkout_generation AS generation, checkout_open_until AS openUntil FROM accounts WHERE id = ?').get(accountId);
+  assert.equal(row.generation, 0);
+  assert.equal(row.openUntil, null);
+  assert.throws(() => db.prepare('UPDATE accounts SET checkout_generation = -1 WHERE id = ?').run(accountId), /CHECK|constraint/i);
 });

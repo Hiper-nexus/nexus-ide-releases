@@ -32,6 +32,8 @@ export interface SeedOptions {
   readonly email?: string;
   /** Email reported by the provider when it differs from the account email. */
   readonly identityEmail?: string;
+  /** Stripe customer already linked to the account (set by a previous checkout). */
+  readonly customer?: string;
 }
 
 /** Inserts an account (15-day trial by default) with one provider identity. */
@@ -41,8 +43,8 @@ export async function seedAccount(db: SqliteD1, id: string, options: SeedOptions
   const trialDays = options.trialDays === undefined ? 15 : options.trialDays;
   const start = trialDays === null ? null : trialDays < 0 ? now + trialDays * DAY_MS - DAY_MS : now;
   await db.batch([
-    db.prepare('INSERT INTO accounts(id,email,name,role,trial_started_at,trial_expires_at,suspended_at,suspension_reason) VALUES(?,?,?,?,?,?,?,?)')
-      .bind(id, email, `Name ${id}`, options.admin ? 'admin' : 'user', start, trialDays === null ? null : now + trialDays * DAY_MS, options.suspended ? now : null, options.suspended ? 'fixture' : null),
+    db.prepare('INSERT INTO accounts(id,email,name,role,trial_started_at,trial_expires_at,suspended_at,suspension_reason,stripe_customer_id) VALUES(?,?,?,?,?,?,?,?,?)')
+      .bind(id, email, `Name ${id}`, options.admin ? 'admin' : 'user', start, trialDays === null ? null : now + trialDays * DAY_MS, options.suspended ? now : null, options.suspended ? 'fixture' : null, options.customer ?? null),
     db.prepare('INSERT INTO identities(id,account_id,provider,provider_user_id,email,email_verified) VALUES(?,?,?,?,?,?)')
       .bind(`identity-${id}`, id, 'google', `subject-${id}`, options.identityEmail ?? email, options.verified === false ? 0 : 1),
   ]);
@@ -76,6 +78,8 @@ export function subscription(accountId: string, values: Partial<StripeSubscripti
 export interface FakeStripe {
   readonly stripe: StripeLike;
   readonly calls: { customers: unknown[][]; checkouts: unknown[][]; portals: unknown[][]; retrieved: string[]; prices: string[] };
+  /** One-shot answers for the next subscription reads, used to interleave concurrent deliveries. */
+  readonly retrievals: Array<() => Promise<StripeSubscription>>;
   subscription: StripeSubscription | Error | null;
   event: StripeEvent | Error | null;
   price: StripePrice | Error | null;
@@ -85,7 +89,7 @@ export interface FakeStripe {
 export function fakeStripe(): FakeStripe {
   const fake: FakeStripe = {
     calls: { customers: [], checkouts: [], portals: [], retrieved: [], prices: [] },
-    subscription: null, event: null, price: null,
+    retrievals: [], subscription: null, event: null, price: null,
     stripe: {
       customers: { create: async (...args) => { fake.calls.customers.push(args); return { id: 'cus_created' }; } },
       checkout: { sessions: { create: async (...args) => { fake.calls.checkouts.push(args); return { url: 'https://checkout.stripe.com/c/pay/fixture' }; } } },
@@ -93,6 +97,8 @@ export function fakeStripe(): FakeStripe {
       subscriptions: {
         retrieve: async (id) => {
           fake.calls.retrieved.push(id);
+          const queued = fake.retrievals.shift();
+          if (queued) return queued();
           if (fake.subscription instanceof Error) throw fake.subscription;
           if (!fake.subscription) throw new Error('fake: no subscription programmed');
           return fake.subscription;
