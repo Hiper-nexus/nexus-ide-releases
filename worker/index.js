@@ -9,7 +9,7 @@ const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'strict-origin-when-cross-origin',
   'permissions-policy': 'camera=(), microphone=(), geolocation=()',
-  'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://api.nexuside.app; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+  'content-security-policy': "default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://api.nexuside.app https://cloudflareinsights.com; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
 };
 
 function isBackendPath(path) {

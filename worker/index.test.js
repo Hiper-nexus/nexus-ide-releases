@@ -95,12 +95,12 @@ test('returns branded missing pages with a real 404 status', async () => {
   assert.equal(response.headers.has('location'),false);
 });
 
-test('CSP connect-src allows the site and the API, and nothing else', async () => {
+test('CSP connect-src allows the site, the API and the Cloudflare analytics beacon, and nothing else', async () => {
   const res = await handleRequest(new Request('https://nexuside.app/'), {
     ASSETS: { fetch: async () => new Response('product') },
   });
   const csp = res.headers.get('content-security-policy');
-  assert.equal(connectSrcDirective(csp), "connect-src 'self' https://api.nexuside.app");
+  assert.equal(connectSrcDirective(csp), "connect-src 'self' https://api.nexuside.app https://cloudflareinsights.com");
   assert.equal(csp.includes("connect-src 'self';"), false);
 });
 
