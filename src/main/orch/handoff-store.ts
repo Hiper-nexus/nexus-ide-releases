@@ -23,7 +23,10 @@ import { parseReviewReport } from "../context/review-council";
 import { parseTrustedEvidence } from "../context/sensor-broker";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import type { MissionEngine } from "./mission-engine";
-import { retainAcceptedHandoffMemoryDistilledBestEffort } from "../memory/trusted-memory";
+import {
+  retainAcceptedHandoffMemoryDistilledBestEffort,
+  retainAcknowledgedHandoffMemoryBestEffort,
+} from "../memory/trusted-memory";
 import {
   encodeJsonArray,
   parseJsonArray,
@@ -1886,8 +1889,43 @@ export class ScopedHandoffStore {
       },
       physicalReceipt,
     );
-    if (outcome === "created") this.#binding.emitChange();
+    if (outcome === "created") {
+      this.#binding.emitChange();
+      this.#retainAcknowledgedHandoffMemory(id, missionId);
+    }
     return outcome !== null;
+  }
+
+  /**
+   * F-703: a entrega de sucesso confirmada pelo Maestro vira memória do
+   * projeto. A tarefa do plano selado já foi retida no aceite (mesmo handoff
+   * na fila de despacho) e fica de fora. Assíncrono e best-effort: a
+   * destilação é uma chamada ao Jev e nunca segura o ACK.
+   */
+  #retainAcknowledgedHandoffMemory(id: string, missionId: string): void {
+    try {
+      const handoff = this.get(id);
+      if (handoff?.status !== "success" || !handoff.summary?.trim()) return;
+      const dispatched = this.#binding
+        .readDatabase()
+        .prepare(`SELECT 1 FROM task_dispatch_queue WHERE handoff_id = ? LIMIT 1`)
+        .get(id);
+      if (dispatched) return;
+      void retainAcknowledgedHandoffMemoryBestEffort(
+        this.#binding.scope,
+        {
+          handoffId: id,
+          missionId,
+          status: "success",
+          ...(handoff.mcpProvenance
+            ? { mcpReceiptId: handoff.mcpProvenance.receiptId }
+            : {}),
+        },
+        handoff.summary,
+      ).catch(() => {});
+    } catch {
+      // Memória é contabilidade derivada: nunca desfaz nem trava o ACK.
+    }
   }
 
   hasTrustedFromSession(

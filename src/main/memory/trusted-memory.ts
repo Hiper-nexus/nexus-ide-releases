@@ -349,6 +349,75 @@ export async function retainAcceptedHandoffMemoryDistilledBestEffort(
   );
 }
 
+export const acknowledgedHandoffMemoryInputSchema = z
+  .object({
+    handoffId: trustedIdentifierSchema,
+    missionId: trustedIdentifierSchema,
+    status: z.literal('success'),
+    mcpReceiptId: trustedIdentifierSchema.optional(),
+  })
+  .strict();
+
+export type AcknowledgedHandoffMemoryInput = z.infer<
+  typeof acknowledgedHandoffMemoryInputSchema
+>;
+
+/**
+ * F-703: entrega de sucesso que o Maestro confirmou com o `nexus_handoff_ack`
+ * físico, fora do plano selado (worker aberto pelo `nexus_pane_spawn`). Era o
+ * trabalho inteiro da missão HiperGO — 77 entregas confirmadas, zero memórias,
+ * porque só a tarefa despachada pelo plano chegava ao aceite. Mesma barreira
+ * do aceite: o texto do agente só entra destilado e aprovado pelo Jev (sem
+ * diretiva, vale lembrar), numa linha de até 400 caracteres. Diferente do
+ * aceite, resumo que o Jev descarta não grava nada: um ACK sem conteúdo não
+ * é conhecimento do projeto.
+ */
+export async function retainAcknowledgedHandoffMemoryBestEffort(
+  scope: ProjectExecutionScope,
+  rawInput: AcknowledgedHandoffMemoryInput,
+  agentSummary: string | null | undefined,
+  deps: DistillHandoffSummaryDeps = {},
+): Promise<RetainResult | null> {
+  if (
+    !getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory) ||
+    !agentSummary?.trim()
+  ) {
+    return null;
+  }
+  try {
+    const input = acknowledgedHandoffMemoryInputSchema.parse(rawInput);
+    const distilled = await distillHandoffSummary({ summary: agentSummary }, deps);
+    if (!distilled) return null;
+    const lines = [
+      'Handoff acknowledged by the mission orchestrator.',
+      `Summary: ${distilled}`,
+      `Handoff: ${input.handoffId}`,
+      `Mission: ${input.missionId}`,
+      'Status: acknowledged',
+      // Sem o horário do ACK: o Maestro religado confirma a mesma entrega de
+      // novo, e o conteúdo idêntico cai no dedupe do store (a linha guarda a
+      // data sozinha).
+      ...(input.mcpReceiptId ? [`MCP receipt: ${input.mcpReceiptId}`] : []),
+    ];
+    return retainParsedTrustedMemory(
+      scope,
+      trustedMemoryEventSchema.parse({
+        type: 'accepted-handoff',
+        title: 'Acknowledged handoff',
+        summary: lines.join('\n'),
+        missionId: input.missionId,
+        reference: input.handoffId,
+      }),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes('requires configureWorkspaceMemory')) {
+      console.warn('[memory] trusted acknowledged-handoff retention unavailable:', message);
+    }
+    return null;
+  }
+}
+
 /**
  * Trusted retention is derived bookkeeping. Disk/native-module failure must
  * never roll back a handoff or keep an agent mission waiting.

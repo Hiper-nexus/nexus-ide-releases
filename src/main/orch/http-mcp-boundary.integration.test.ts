@@ -3,7 +3,15 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// F-703: o ACK do Maestro dispara a memória da entrega. O Jev é remoto, então
+// o teste só prova o gatilho; a destilação tem teste próprio.
+const retainAcknowledged = vi.hoisted(() => vi.fn(async () => null));
+vi.mock("../memory/trusted-memory", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../memory/trusted-memory")>()),
+  retainAcknowledgedHandoffMemoryBestEffort: retainAcknowledged,
+}));
 import type { Mission } from "../../shared/orch-types";
 import {
   configureAuditLogRuntime,
@@ -144,6 +152,7 @@ describe("physical HTTP MCP handoff boundary", () => {
 
   beforeEach(async () => {
     handlerCalls = 0;
+    retainAcknowledged.mockClear();
     baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-http-mcp-proof-"));
     manager = new ProjectRuntimeManager({
       baseDir,
@@ -777,6 +786,16 @@ describe("physical HTTP MCP handoff boundary", () => {
       },
     });
     expect(handoffs.get(handoff.id)?.deliveryState).toBe("consumed");
+    expect(retainAcknowledged).toHaveBeenCalledTimes(1);
+    expect(retainAcknowledged).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        handoffId: handoff.id,
+        missionId: MISSION_ID,
+        status: "success",
+      }),
+      "Durable result awaiting the exact physical Maestro ACK.",
+    );
     expect(
       manager
         .open(testProjectScope())
@@ -801,6 +820,8 @@ describe("physical HTTP MCP handoff boundary", () => {
         .db.prepare(`SELECT COUNT(*) AS count FROM handoff_ack_receipts`)
         .get(),
     ).toEqual({ count: 1 });
+    // ACK repetido é replay: não pede memória de novo.
+    expect(retainAcknowledged).toHaveBeenCalledTimes(1);
 
     const stale = mintToken({
       label: "stale Maestro",

@@ -842,6 +842,14 @@ saber isto antes de mexer:
   (`reviewMissionHandoff`): 1 devolução, depois `[evidência fraca]` no resumo
   que chega ao pane pai + artifact `nexus.jevReview`. Continua correspondência
   `unverified`.
+- **Memória do projeto pelo Jev** (F-703): as linhas automáticas nascem de
+  cinco trilhos. O aceite de tarefa do plano selado, o ACK físico do Maestro à
+  entrega avulsa (`nexus_handoff_ack` → `#retainAcknowledgedHandoffMemory`),
+  o fim de sessão com evidência verificada, o merge aprovado e a preferência
+  digitada no "+ Pane". Na missão da aba só o ACK roda: sem ele, dois dias de
+  HiperGO deram zero memórias. Texto de agente só entra destilado pelo Jev
+  (sem diretiva, vale lembrar); descartado não grava. A memória é local da
+  máquina (`userData/agent-memory`): o Mac e o Windows não compartilham.
 - **Triagem de Bash nativo** (Claude): hook `PostToolUseFailure` com matcher
   `Bash` → `POST /hook/triage` (mesmo bearer do gate) → `triageCommandFailure`
   → `hookSpecificOutput.additionalContext` de volta ao agente. O hook nunca
