@@ -5,6 +5,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { parse } from 'smol-toml';
 import { afterEach, describe, expect, it } from 'vitest';
+import { isNexusHookText } from '../../vendor/emdash/hooks/hook-commands';
 import {
   cleanupCliMcpSession,
   prepareCodexGovernedSession,
@@ -1020,7 +1021,7 @@ describe('prepareKimiMcpSession', () => {
     const overlayConfig = path.join(result.env.KIMI_CODE_HOME, 'config.toml');
     const overlayToml = fs.readFileSync(overlayConfig, 'utf8');
     expect(overlayToml).toContain('default_permission_mode = "manual"');
-    expect(overlayToml).toContain('NEXUS_HOOK_STATUS');
+    expect(isNexusHookText(overlayToml)).toBe(true);
     expect(overlayToml).not.toContain(token);
     expect(fs.readFileSync(realConfig, 'utf8')).toBe(
       'default_permission_mode = "manual"\n',
@@ -1078,7 +1079,7 @@ describe('prepareKimiMcpSession', () => {
 
     expect(rawMcp).not.toContain('external-mcp');
     expect(rawConfig).not.toContain('external-hook');
-    expect(rawConfig).toContain('NEXUS_HOOK_STATUS');
+    expect(isNexusHookText(rawConfig)).toBe(true);
     expect(result.extraArgs).toEqual([
       '--skills-dir',
       path.join(overlayHome, 'skills'),
@@ -1201,7 +1202,7 @@ describe('prepareGrokMcpSession', () => {
     // marked, env-only status commands; the real profile never gains it.
     const hooksDoc = path.join(result.env.GROK_HOME, 'hooks', 'nexus.json');
     const hooksRaw = fs.readFileSync(hooksDoc, 'utf8');
-    expect(hooksRaw).toContain('NEXUS_HOOK_STATUS');
+    expect(isNexusHookText(hooksRaw)).toBe(true);
     expect(hooksRaw).toContain('$NEXUS_GATE_TOKEN');
     expect(hooksRaw).not.toContain(token);
     expect(mode(hooksDoc)).toBe(0o600);
