@@ -72,6 +72,20 @@
 .boost-meter{width:96px;height:4px;margin-top:6px;background:rgb(250 247 249/.2);border-radius:4px;overflow:hidden}
 .boost-meter span{display:block;height:100%;background:var(--green);transform-origin:left;transform:scaleX(1);transition:transform .12s linear}
 
+.hud-fuel{position:absolute;right:24px;bottom:110px;z-index:5;display:none;align-items:center;gap:8px;padding:8px 12px;border:1px solid rgb(250 247 249/.18);border-radius:8px;background:rgb(8 7 9/.42);color:var(--ink)}
+.playing .hud-fuel{display:flex}
+.hud-fuel.low{border-color:var(--orange,#e5a388);color:#e5a388}
+.hud-fuel.empty{border-color:var(--red,#c2452f);color:#c2452f}
+.fuel-cup{opacity:.9;flex:none}
+.fuel-track{width:72px;height:6px;background:rgb(250 247 249/.15);border-radius:4px;overflow:hidden}
+.fuel-track span{display:block;height:100%;background:#e5a388;transform-origin:left;transform:scaleX(1);transition:transform .3s var(--ease)}
+.hud-fuel.low .fuel-track span{background:#e5a388}
+.hud-fuel.empty .fuel-track span{background:#c2452f}
+.hud-fuel .mono{font-size:9px;letter-spacing:.06em}
+.hud-tour{position:absolute;right:24px;bottom:168px;z-index:5;display:none;padding:6px 10px;border:1px solid rgb(250 247 249/.15);border-radius:6px;background:rgb(8 7 9/.38);font-size:10px;color:var(--ink);opacity:.85}
+.playing .hud-tour{display:block}
+.hud-tour.complete{border-color:var(--green);color:var(--green)}
+
 .interact-button{position:absolute;bottom:32px;left:50%;transform:translateX(-50%);z-index:5;font-size:12px;min-height:44px;padding:10px 18px;display:none}
 .playing .interact-button{display:inline-flex}
 .interact-button:hover{transform:translateX(-50%) translateY(-2px)}
@@ -112,6 +126,9 @@
   .touch-actions button{width:64px;height:64px;border-radius:50%;border:1px solid rgb(250 247 249/.35);background:rgb(8 7 9/.45);color:var(--ink);display:grid;place-items:center;touch-action:none}
   .touch-actions button:active{background:var(--pink);color:var(--bg);border-color:var(--pink)}
   .playing .hud-speed{bottom:172px}
+  .hud-fuel{right:16px;bottom:230px;padding:6px 10px}
+  .fuel-track{width:56px}
+  .hud-tour{right:16px;bottom:280px}
   .interact-button{bottom:172px}
 }
 @media(max-width:760px){

@@ -1,11 +1,12 @@
 import {
-  BackSide, BoxGeometry, CanvasTexture, CircleGeometry, Color, ConeGeometry, CylinderGeometry,
+  BackSide, BoxGeometry, BufferGeometry, CanvasTexture, CircleGeometry, Color, ConeGeometry, CylinderGeometry,
   DodecahedronGeometry, DoubleSide, ExtrudeGeometry, Float32BufferAttribute, Group,
   InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, Object3D,
-  PlaneGeometry, Shape, SphereGeometry, SpotLight, SRGBColorSpace, TorusGeometry, Vector3,
+  PlaneGeometry, RingGeometry, Shape, SphereGeometry, SpotLight, SRGBColorSpace, TorusGeometry, Vector3,
 } from 'three';
 import { initialBarrels } from './props.js';
 import { WORLD } from './layout.js';
+import { MODELS } from './tour.js';
 
 /** Pink City at dusk: warm ground, dark asphalt, neon signs, coloured trees. */
 export const COLORS = {
@@ -336,26 +337,151 @@ function boostPad(parent, entry) {
   return group;
 }
 
-function sky(scene) {
-  const geometry = new SphereGeometry(230, 24, 12);
-  const colors = [];
-  const position = geometry.attributes.position;
-  const top = new Color(COLORS.skyTop), horizon = new Color(COLORS.skyHorizon), glow = new Color(COLORS.skyGlow);
-  for (let i = 0; i < position.count; i++) {
-    const t = Math.max(0, Math.min(1, position.getY(i) / 230));
-    const c = t < .06 ? glow.clone().lerp(horizon, t / .06) : horizon.clone().lerp(top, Math.min(1, (t - .06) / .5));
-    colors.push(c.r, c.g, c.b);
+/** Coffee beans on the ground: fuel only. One instanced mesh, hidden beans scale to zero. */
+export function makeBeans(scene) {
+  const spots = WORLD.beans;
+  const mesh = new InstancedMesh(new SphereGeometry(.22, 8, 6), material(COLORS.coffee, true), spots.length);
+  const dummy = new Object3D();
+  spots.forEach(([x, z], index) => {
+    dummy.position.set(x, .22, z);
+    dummy.scale.set(1, .7, 1.35);
+    dummy.rotation.set(0, index * 1.1, .3);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(index, dummy.matrix);
+  });
+  mesh.castShadow = true;
+  scene.add(mesh);
+  return { mesh, dummy, spots };
+}
+
+/** Hide one bean instance after it is drunk. Reuses the dummy, so the hot path allocates nothing. */
+export function hideBean(beans, index) {
+  beans.dummy.position.set(0, -5, 0);
+  beans.dummy.scale.setScalar(0);
+  beans.dummy.updateMatrix();
+  beans.mesh.setMatrixAt(index, beans.dummy.matrix);
+  beans.mesh.instanceMatrix.needsUpdate = true;
+}
+
+/** A glowing pour-pad in front of the cafe: park here and the tank fills. */
+export function makeRefuelPad(parent) {
+  const zone = WORLD.refuelZone;
+  const group = new Group();
+  group.position.set(zone.x, .03, zone.z);
+  const ring = new Mesh(new RingGeometry(2.2, 2.7, 32), new MeshBasicMaterial({ color: COLORS.orange, transparent: true, opacity: .35, depthWrite: false, toneMapped: false }));
+  ring.rotation.x = -Math.PI/2;
+  group.add(ring);
+  const pad = new Mesh(new CircleGeometry(2.2, 24), new MeshBasicMaterial({ color: COLORS.coffee, transparent: true, opacity: .22, depthWrite: false }));
+  pad.rotation.x = -Math.PI/2;
+  pad.position.y = .005;
+  group.add(pad);
+  parent.add(group);
+  return group;
+}
+
+/** 18 model signs share one texture atlas and one material: a single draw call. */
+function totemAtlas() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512; canvas.height = 256; // 6×3 cells of ~85×85, well under the 256 px sign budget per icon
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  texture.anisotropy = 4;
+  return { canvas, texture };
+}
+
+function paintTotemAtlas(atlas) {
+  const context = atlas.canvas.getContext('2d');
+  const cols = 6, cellW = atlas.canvas.width / cols, cellH = atlas.canvas.height / 3;
+  context.fillStyle = '#19171d';
+  context.fillRect(0, 0, atlas.canvas.width, atlas.canvas.height);
+  MODELS.forEach((model, index) => {
+    const col = index % cols, row = Math.floor(index / cols);
+    const cx = col * cellW + cellW / 2, cy = row * cellH + cellH / 2;
+    const hex = `#${model.color.toString(16).padStart(6, '0')}`;
+    context.fillStyle = hex;
+    context.beginPath();
+    context.roundRect(col * cellW + 4, row * cellH + 4, cellW - 8, cellH - 8, 8);
+    context.fill();
+    context.fillStyle = model.color === 0xe8e8e8 || model.color === 0xe5e5e5 ? '#19171d' : '#faf7f9';
+    context.font = `600 ${Math.round(cellH * 0.28)}px ui-monospace, monospace`;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(model.name, cx, cy + cellH * 0.22, cellW - 12);
+    if (model._iconImage?.complete && model._iconImage.naturalWidth) {
+      const size = cellH * 0.42;
+      context.drawImage(model._iconImage, cx - size / 2, cy - cellH * 0.18 - size / 2, size, size);
+    } else {
+      context.fillStyle = model.color === 0xe8e8e8 || model.color === 0xe5e5e5 ? '#19171d' : '#faf7f9';
+      context.font = `700 ${Math.round(cellH * 0.38)}px ui-monospace, monospace`;
+      context.fillText(model.name.slice(0, 2).toUpperCase(), cx, cy - cellH * 0.12);
+    }
+  });
+  atlas.texture.needsUpdate = true;
+}
+
+/** Kick off icon downloads; each finish repaints the shared atlas once. */
+function loadTotemIcons(atlas) {
+  for (const model of MODELS) {
+    const image = new Image();
+    model._iconImage = image;
+    image.onload = () => paintTotemAtlas(atlas);
+    image.src = `/providers/${model.icon}`;
   }
-  geometry.setAttribute('color', new Float32BufferAttribute(colors, 3));
-  const dome = new Mesh(geometry, new MeshBasicMaterial({ vertexColors: true, side: BackSide, fog: false, toneMapped: false }));
-  scene.add(dome);
-  return dome;
+}
+
+export function makeTotems(scene) {
+  const atlas = totemAtlas();
+  paintTotemAtlas(atlas);
+  loadTotemIcons(atlas);
+  const spots = WORLD.totems;
+  const dummy = new Object3D();
+  // Poles and bases are instanced: two draw calls for thirty-six pieces.
+  const poles = new InstancedMesh(new CylinderGeometry(.12, .16, 3.4, 8), material(COLORS.metal), spots.length);
+  const bases = new InstancedMesh(new CylinderGeometry(.7, .9, .35, 10), material(COLORS.raised), spots.length);
+  const glows = new InstancedMesh(new BoxGeometry(.14, .14, .14), new MeshStandardMaterial({ color: COLORS.pink, emissive: COLORS.pink, emissiveIntensity: 1.1 }), spots.length);
+  spots.forEach((totem, i) => {
+    const { x, z } = totem;
+    dummy.position.set(x, 1.7, z); dummy.scale.setScalar(1); dummy.rotation.set(0, 0, 0); dummy.updateMatrix();
+    poles.setMatrixAt(i, dummy.matrix);
+    dummy.position.set(x, .18, z); dummy.updateMatrix();
+    bases.setMatrixAt(i, dummy.matrix);
+    dummy.position.set(x, 3.45, z); dummy.updateMatrix();
+    glows.setMatrixAt(i, dummy.matrix);
+  });
+  poles.castShadow = true; bases.castShadow = true;
+  scene.add(poles, bases, glows);
+  // One mesh holding all 18 sign quads, UV-mapped into the shared atlas.
+  const positions = [], uvs = [], indices = [];
+  const cols = 6, cellW = 1 / cols, cellH = 1 / 3;
+  spots.forEach((totem, i) => {
+    const { x, z } = totem;
+    const col = i % cols, row = Math.floor(i / cols);
+    const u0 = col * cellW, v0 = 1 - (row + 1) * cellH;
+    const base = i * 4;
+    // A 1.7×1.15 billboard facing the city centre (roughly -z toward the cafe loop).
+    const halfW = 0.95, halfH = 0.7, y = 2.75;
+    positions.push(x - halfW, y - halfH, z + .06, x + halfW, y - halfH, z + .06, x + halfW, y + halfH, z + .06, x - halfW, y + halfH, z + .06);
+    uvs.push(u0, v0, u0 + cellW, v0, u0 + cellW, v0 + cellH, u0, v0 + cellH);
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  });
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  const signs = new Mesh(geometry, new MeshBasicMaterial({ map: atlas.texture, side: DoubleSide, transparent: true, depthWrite: false, toneMapped: false }));
+  scene.add(signs);
+  return { atlas, signs, glows, spots };
+}
+
+/** Drop the shared totem atlas; the scene dispose() also sweeps the meshes. */
+export function disposeTotems(totems) {
+  totems?.atlas?.texture?.dispose();
+  for (const model of MODELS) delete model._iconImage;
 }
 
 export function makeWorld(scene) {
   const root = new Group();
   scene.add(root);
-  sky(scene);
   const size = WORLD.limit * 2 + 12;
   const ground = new Mesh(new CircleGeometry(size * 1.4, 64), material(COLORS.ground));
   ground.rotation.x = -Math.PI/2;
@@ -388,38 +514,54 @@ export function makeWorld(scene) {
     return { ...entry, mesh, anchor: new Vector3(entry.x, entry.anchorY, entry.z) };
   });
   const coffees = WORLD.coffees.map(([x,z], id) => ({ id, x, z, mesh: cup(root, [x,.1,z], .65, COLORS.orange) }));
-  return { root, coffees, stations, ramps: rampMeshes, pads: padMeshes };
+  const beans = makeBeans(root);
+  makeRefuelPad(root);
+  const totems = makeTotems(root);
+  return { root, coffees, stations, ramps: rampMeshes, pads: padMeshes, beans, totems };
 }
 
 export function makeRover(scene) {
   const group=new Group();
   const chassis=new Group();
   group.add(chassis);
-  box(chassis,[1.3,.32,1.9],[0,.55,0],COLORS.white);
-  box(chassis,[1.36,.12,.5],[0,.44,.72],COLORS.dark);
-  box(chassis,[.9,.6,.95],[0,.98,-.1],COLORS.pink);
-  box(chassis,[.7,.36,.05],[0,1.06,.39],COLORS.dark);
-  box(chassis,[.17,.14,.05],[-.2,1.05,.42],COLORS.mint,true);
-  box(chassis,[.17,.14,.05],[.2,1.05,.42],COLORS.mint,true);
-  const headlights=[-.42,.42].map(x=>{const lamp=new Mesh(new BoxGeometry(.22,.12,.06),new MeshStandardMaterial({color:COLORS.white,emissive:COLORS.amber,emissiveIntensity:1.6}));lamp.position.set(x,.62,.97);chassis.add(lamp);return lamp;});
+  // Silhouette from behind: wide fenders, a raised cabin, a sloped hood and a visible rear deck.
+  box(chassis,[1.42,.28,2.05],[0,.52,0],COLORS.white);
+  box(chassis,[1.48,.14,.55],[0,.4,.78],COLORS.dark);
+  box(chassis,[1.1,.34,.7],[0,.78,.62],COLORS.white);
+  box(chassis,[1.18,.12,.78],[0,.96,.58],COLORS.dark);
+  box(chassis,[.92,.62,1.0],[0,1.02,-.12],COLORS.pink);
+  box(chassis,[.72,.38,.06],[0,1.12,.4],COLORS.dark);
+  box(chassis,[.18,.15,.06],[-.21,1.12,.43],COLORS.mint,true);
+  box(chassis,[.18,.15,.06],[.21,1.12,.43],COLORS.mint,true);
+  box(chassis,[1.2,.1,.35],[0,.7,-.85],COLORS.raised);
+  for(const x of [-.78,.78]){
+    box(chassis,[.22,.34,1.15],[x,.62,.1],COLORS.raised);
+    box(chassis,[.22,.34,1.15],[x,.62,-.55],COLORS.raised);
+  }
+  const headlights=[-.42,.42].map(x=>{const lamp=new Mesh(new BoxGeometry(.26,.14,.07),new MeshStandardMaterial({color:COLORS.white,emissive:COLORS.amber,emissiveIntensity:1.6}));lamp.position.set(x,.78,1.02);chassis.add(lamp);return lamp;});
   const brakeMaterial=new MeshStandardMaterial({color:COLORS.red,emissive:COLORS.red,emissiveIntensity:.25});
-  const brakes=[-.42,.42].map(x=>{const lamp=new Mesh(new BoxGeometry(.22,.1,.05),brakeMaterial);lamp.position.set(x,.62,-.96);chassis.add(lamp);return lamp;});
+  const brakes=[-.42,.42].map(x=>{const lamp=new Mesh(new BoxGeometry(.28,.12,.06),brakeMaterial);lamp.position.set(x,.72,-1.04);chassis.add(lamp);return lamp;});
+  const tailBar=new Mesh(new BoxGeometry(1.0,.06,.05),brakeMaterial);
+  tailBar.position.set(0,.72,-1.04);
+  chassis.add(tailBar);
   const exhaust=new Mesh(new ConeGeometry(.16,.6,8),new MeshBasicMaterial({color:COLORS.amber,transparent:true,opacity:0,toneMapped:false}));
-  exhaust.position.set(0,.5,-1.25);exhaust.rotation.x=-Math.PI/2;chassis.add(exhaust);
-  cylinder(chassis,.04,.65,[0,1.55,-.5],COLORS.metal);
+  exhaust.position.set(0,.5,-1.35);exhaust.rotation.x=-Math.PI/2;chassis.add(exhaust);
+  cylinder(chassis,.04,.65,[0,1.62,-.55],COLORS.metal);
   const antenna=new Mesh(new SphereGeometry(.1,8,8),material(COLORS.pink,true));
-  antenna.position.set(0,1.87,-.5);
+  antenna.position.set(0,1.94,-.55);
   chassis.add(antenna);
   const wheels=[],fronts=[];
-  for(const [x,z,front] of [[-.72,.62,1],[.72,.62,1],[-.72,-.62,0],[.72,-.62,0]]) {
+  for(const [x,z,front] of [[-.78,.68,1],[.78,.68,1],[-.78,-.68,0],[.78,-.68,0]]) {
     const pivot=new Group();
-    pivot.position.set(x,.35,z);
-    const wheel=cylinder(pivot,.32,.24,[0,0,0],COLORS.dark,12);
-    wheel.rotation.z=Math.PI/2;
-    const hub=cylinder(pivot,.14,.26,[0,0,0],COLORS.white,8);
+    pivot.position.set(x,.36,z);
+    const tire=cylinder(pivot,.36,.22,[0,0,0],COLORS.dark,14);
+    tire.rotation.z=Math.PI/2;
+    const rim=cylinder(pivot,.22,.24,[0,0,0],COLORS.white,10);
+    rim.rotation.z=Math.PI/2;
+    const hub=cylinder(pivot,.1,.26,[0,0,0],COLORS.pink,8);
     hub.rotation.z=Math.PI/2;
     group.add(pivot);
-    wheels.push(wheel,hub);
+    wheels.push(tire,rim,hub);
     if(front)fronts.push(pivot);
   }
   const headlight=new SpotLight(0xffd9a8,0,26,.55,.6,1.2);

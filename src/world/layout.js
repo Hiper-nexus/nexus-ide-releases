@@ -40,6 +40,19 @@ export const WORLD = {
     { key: 'live', x: LIVE.x, z: LIVE.z, approach: 4.5, label: '03 / As lives', anchorY: 5.3 },
   ],
   coffees: [[0, -16], [18, 0], [-18, -8], [10, 30], [-26, 20]],
+  /** Coffee beans scattered on the map: fuel only, no XP. */
+  beans: [[6, -22], [-10, -28], [22, -6], [-14, 6], [8, 12], [-22, 28], [16, 36], [-8, 44], [28, 20], [-30, -14]],
+  /** Stop the rover here (in front of the cafe) to pour a full tank. */
+  refuelZone: { x: 0, z: -28, width: 8, depth: 6 },
+  /** Model tour totems: a loop that starts and ends at the cafe. */
+  totems: [
+    { id: 'claude', x: -8, z: -26 }, { id: 'codex', x: 8, z: -26 }, { id: 'gemini', x: 18, z: -18 },
+    { id: 'kimi', x: 26, z: -6 }, { id: 'deepseek', x: 26, z: 8 }, { id: 'grok', x: 18, z: 18 },
+    { id: 'glm', x: 8, z: 26 }, { id: 'qwen', x: -8, z: 26 }, { id: 'minimax-code', x: -18, z: 18 },
+    { id: 'mimo-code', x: -26, z: 8 }, { id: 'longcat', x: -26, z: -6 }, { id: 'devin', x: -18, z: -18 },
+    { id: 'aider', x: 0, z: -8 }, { id: 'cursor-agent', x: 14, z: 4 }, { id: 'opencode', x: -14, z: 4 },
+    { id: 'openclaude', x: 0, z: 20 }, { id: 'muse', x: 12, z: 40 }, { id: 'agy', x: -12, z: 40 },
+  ],
   barrels: [[YARD.x - 4, YARD.z], [YARD.x + 4, YARD.z], [YARD.x, YARD.z - 5], [YARD.x - 3, YARD.z + 5], [YARD.x + 5, YARD.z + 5], [8, 40]],
   props: [[YARD.x - 7, YARD.z - 3, 'crate'], [YARD.x + 7, YARD.z + 2, 'crate'], [2, -8, 'cone'], [-2, -8, 'cone'], [-12, 30, 'cone'], [12, 44, 'cone'], [-30, 6, 'crate'], [16, 8, 'crate']],
   pins: [[PINS.x, PINS.z - 4], [PINS.x - 1.2, PINS.z - 2], [PINS.x + 1.2, PINS.z - 2], [PINS.x - 2.4, PINS.z], [PINS.x, PINS.z], [PINS.x + 2.4, PINS.z], [PINS.x - 3.6, PINS.z + 2], [PINS.x - 1.2, PINS.z + 2], [PINS.x + 1.2, PINS.z + 2], [PINS.x + 3.6, PINS.z + 2]],
@@ -66,6 +79,7 @@ export const OBSTACLES = [
   { x: CAFE.x - 12, z: CAFE.z + 6, width: 6.4, depth: 3.6 }, { x: CAFE.x + 12, z: CAFE.z + 6, width: 6.4, depth: 3.6 },
   { x: DROPS.x, z: -8, width: 2.6, depth: 2.6 }, { x: DROPS.x, z: 8, width: 2.6, depth: 2.6 },
   { x: LIVE.x, z: LIVE.z - 0.5, width: 4.4, depth: 1.4 },
+  ...WORLD.totems.map(t => ({ x: t.x, z: t.z, width: 1.2, depth: 1.2 })),
   ...trees.map(([x, z]) => ({ x, z, width: 1.1, depth: 1.1 })),
   ...lamps.map(([x, z]) => ({ x, z, width: 0.5, depth: 0.5 })),
 ];

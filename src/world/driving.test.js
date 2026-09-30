@@ -115,3 +115,13 @@ test('holding the throttle never exceeds the top speed, and a pad burst still bl
   assert.ok(peak<=13.01,'one burst on top of the cap');
   assert.ok(Math.hypot(pushed.vx,pushed.vz)<=8.01,'back at the cap afterwards');
 });
+
+test('an empty coffee tank slows the rover down but never locks the steering', () => {
+  const sleepyPower={accelScale:.42,maxScale:.55};
+  let full=initialVehicle(),dry=initialVehicle();
+  for(let i=0;i<180;i++){full=drive(full,{throttle:1,steer:.4},1/60,[]);dry=drive(dry,{throttle:1,steer:.4},1/60,[],undefined,sleepyPower);}
+  assert.ok(Math.hypot(dry.vx,dry.vz)<Math.hypot(full.vx,full.vz),'a sleepy rover is slower');
+  assert.ok(dry.heading!==0,'it still turns');
+  for(let i=0;i<180;i++)dry=drive(dry,{throttle:1,steer:0},1/60,[],undefined,sleepyPower);
+  assert.ok(Math.hypot(dry.vx,dry.vz)<=8*.55+.02,'and its top speed stays capped by the tank');
+});

@@ -6,14 +6,16 @@ import {
   PCFShadowMap, PerspectiveCamera, PlaneGeometry, PointLight, RingGeometry, Scene, Shape,
   SphereGeometry, SpotLight, SRGBColorSpace, TorusGeometry, Vector3, WebGLRenderer,
 } from 'three';
-import { disposeObjects, disposeShared, makeWorld, makeRover, makeBarrels, makeProps, ANIMATED, COLORS } from './objects.js';
+import { disposeObjects, disposeShared, makeWorld, makeRover, makeBarrels, makeProps, makeBeans, hideBean, disposeTotems, ANIMATED, COLORS } from './objects.js';
 import { drive, initialVehicle } from './driving.js';
 import { collectNearby } from './movement.js';
-import { hitBarrel, detonateBarrel, stepBarrels, stepProps, pushProp, blastImpulse, BLAST_RADIUS } from './props.js';
+import { hitBarrel, detonateBarrel, stepBarrels, stepProps, pushProp, blastImpulse, breakCrates, shatterCrates, BLAST_RADIUS } from './props.js';
 import { XP_AWARD } from './quests.js';
 import { WORLD, OBSTACLES } from './layout.js';
-import { chaseStep, initialCamera } from './camera.js';
+import { chaseStep, initialCamera, orbitStep, stationFocusGoal, ORBIT, STATION_FOCUS_MS } from './camera.js';
 import { joystickInput } from './touch.js';
+import { initialFuel, fuelStep, fuelPower, refuel } from './fuel.js';
+import { initialTour, visitTotem, tourProgress, modelBlurb, modelName, TOUR_AWARD } from './tour.js';
 
 const KEYS={w:'forward',ArrowUp:'forward',s:'back',ArrowDown:'back',a:'left',ArrowLeft:'left',d:'right',ArrowRight:'right',Shift:'boost',' ':'brake'};
 const TERRAIN={ramps:WORLD.ramps,boostPads:WORLD.boostPads};
@@ -22,6 +24,25 @@ const SPARK=[new Color(COLORS.amber),new Color(COLORS.orange),new Color(COLORS.p
 const PICKUP=[new Color(COLORS.mint),new Color(COLORS.orange)];
 const DUST=[new Color(0xd9a4a2),new Color(0xb98486)];
 const FLAME=[new Color(COLORS.amber),new Color(COLORS.pink)];
+const STEAM=[new Color(0xfaf0e8),new Color(0xe5a388)];
+
+/** Dusk gradient in the Pink City palette: the same stops as the old vertex-coloured dome
+ * (COLORS.skyTop → skyHorizon → skyGlow), painted once into a sliver of canvas. */
+function skyTexture(){
+  const canvas=document.createElement('canvas');
+  canvas.width=8;canvas.height=128;
+  const context=canvas.getContext('2d');
+  const gradient=context.createLinearGradient(0,0,0,128);
+  gradient.addColorStop(0,'#1a0f2e');
+  gradient.addColorStop(.45,'#8d3f60');
+  gradient.addColorStop(.78,'#ff6f91');
+  gradient.addColorStop(1,'#ffb27a');
+  context.fillStyle=gradient;
+  context.fillRect(0,0,8,128);
+  const texture=new CanvasTexture(canvas);
+  texture.colorSpace=SRGBColorSpace;
+  return texture;
+}
 
 class Particles {
   constructor(scene,capacity){
@@ -133,9 +154,10 @@ class CafeWorld {
   constructor(host,options){
     this.host=host;this.options=options;this.calm=Boolean(options.reducedMotion);
     this.keys=new Set();this.analog={throttle:0,steer:0};this.collected=new Set(options.collected??[]);
-    this.vehicle=initialVehicle();this.cam=initialCamera(this.vehicle);this.orbit=0;this.dragging=null;this.focus=null;this.focusUntil=0;
+    this.vehicle=initialVehicle();this.cam=initialCamera(this.vehicle);this.orbit={yaw:0,pitch:0};this.orbitTarget={yaw:0,pitch:0};this.dragging=null;this.focus=null;this.focusUntil=0;
+    this.fuel=initialFuel();this.tour=initialTour();this.tourLit=new Set();this.beansLeft=null;this.hornCooldown=0;this.trickTime=0;this.wasAirborne=false;
     this.playing=false;this.paused=this.calm;this.visible=true;this.frame=0;this.lastTime=0;this.disposed=false;this.near=null;
-    this.wheelRotation=0;this.tiltPitch=0;this.tiltRoll=0;this.bounce=0;this.bounceV=0;this.wasAirborne=false;this.shake=0;this.markTimer=0;this.slowFrames=0;this.lastSpeed=null;this.lastBoost=1;
+    this.wheelRotation=0;this.tiltPitch=0;this.tiltRoll=0;this.bounce=0;this.bounceV=0;this.wasAirborne=false;this.shake=0;this.markTimer=0;this.slowFrames=0;this.lastSpeed=null;this.lastBoost=1;this.lastFuel=1;this.lastSleepy=false;
     // Every DOM listener hangs off this controller, so dispose() releases them in one call.
     this.aborter=new AbortController();this.listen={signal:this.aborter.signal};
     const mobile=Math.min(innerWidth,innerHeight)<760;
@@ -143,9 +165,9 @@ class CafeWorld {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio,mobile?1.25:1.6));
     this.renderer.shadowMap.enabled=true;this.renderer.shadowMap.type=PCFShadowMap;
     this.renderer.toneMapping=ACESFilmicToneMapping;this.renderer.toneMappingExposure=1.05;
-    this.renderer.setClearColor(COLORS.skyHorizon);
     host.prepend(this.renderer.domElement);
-    this.scene=new Scene();this.scene.fog=new Fog(COLORS.fog,48,150);
+    this.sky=skyTexture();
+    this.scene=new Scene();this.scene.background=this.sky;this.scene.fog=new Fog(COLORS.fog,48,150);
     this.camera=new PerspectiveCamera(52,1,.1,300);
     this.scene.add(new HemisphereLight(0xffc4d4,0x5a2a40,1.5));
     // Shadow budget: phones get a 512² map and only the big shapes cast; desktops keep 2048² and everything.
@@ -157,6 +179,7 @@ class CafeWorld {
     this.world=makeWorld(this.scene);this.rover=makeRover(this.scene);
     if(mobile)this.world.root.traverse(object=>{if(object.isInstancedMesh)object.castShadow=false;});
     this.barrels=makeBarrels(this.scene);this.props=makeProps(this.scene);
+    this.beansLeft=new Set(this.world.beans.spots.map((_,i)=>i));
     this.particles=new Particles(this.scene,this.calm?120:320);this.shockwaves=new Shockwaves(this.scene);this.tireMarks=new TireMarks(this.scene);
     this.scratch=new Vector3();this.shakeOffset=new Vector3();
     for(const coffee of this.world.coffees) coffee.mesh.visible=!this.collected.has(coffee.id);
@@ -183,10 +206,12 @@ class CafeWorld {
       effects=this.particles.update(delta)||effects;
       effects=this.shockwaves.update(delta)||effects;
       if(this.flash.intensity>0){this.flash.intensity*=Math.exp(-9*delta);if(this.flash.intensity<.3)this.flash.intensity=0;effects=true;}
-      if(!this.dragging&&this.orbit)this.orbit*=Math.exp(-1.8*delta);
+      this.orbit=orbitStep(this.orbit,this.orbitTarget,delta);
       const boosting=!this.calm&&this.keys.has('boost')&&this.vehicle.boostCharge>0&&Math.abs(this.vehicle.speed)>1;
-      this.cam=chaseStep(this.cam,this.vehicle,delta,{orbit:this.orbit,boost:boosting,attract:!this.playing});
-      if(this.focus&&time<this.focusUntil){const k=1-Math.exp(-delta*3);this.cam.tx+=(this.focus.x-this.cam.tx)*k;this.cam.tz+=(this.focus.z-this.cam.tz)*k;this.cam.ty+=(this.focus.y-this.cam.ty)*k;}else this.focus=null;
+      // Station focus: for a beat the chase goal is rewritten toward the beacon. Calm skips the extra camera move.
+      const focus=this.focus&&time<this.focusUntil&&!this.calm?this.focus:null;
+      if(this.focus&&time>=this.focusUntil)this.focus=null;
+      this.cam=chaseStep(this.cam,this.vehicle,delta,{orbit:this.orbit,focus,boost:boosting,attract:!this.playing});
     }
     this.camera.position.set(this.cam.x,this.cam.y,this.cam.z);
     this.camera.lookAt(this.cam.tx,this.cam.ty,this.cam.tz);
@@ -222,14 +247,27 @@ class CafeWorld {
   }
   step=(delta)=>{
     const input=this.input();
+    // Coffee fuel: burns while the engine runs, faster on the move, much faster on boost.
+    const nearStation=this.nearRefuel();
+    this.fuel=fuelStep(this.fuel,{driving:Math.abs(input.throttle)>0||Math.abs(this.vehicle.speed)>.4,boosting:input.boost&&this.vehicle.boostCharge>0,nearStation},delta);
+    const power=fuelPower(this.fuel);
+    if(nearStation&&this.fuel.refueling&&!this.calm&&Math.random()<.35){
+      this.particles.spawn(this.vehicle.x,.9,this.vehicle.z,{count:2,colors:STEAM,speed:1.2,spread:.4});
+    }
     const before=this.vehicle;
-    this.vehicle=drive(before,input,delta,OBSTACLES,TERRAIN);
+    this.vehicle=drive(before,input,delta,OBSTACLES,TERRAIN,power);
     const v=this.vehicle,rover=this.rover;
     const airborne=v.y>.03;
     const speed=Math.hypot(v.vx,v.vz);
     const lateral=v.vx*Math.cos(v.heading)-v.vz*Math.sin(v.heading);
     // Suspension: a spring on the chassis that reacts to landings and throttle.
-    if(this.wasAirborne&&!airborne)this.bounceV-=Math.min(3.5,before.vy?Math.abs(before.vy)*.35:1.2);
+    if(this.wasAirborne&&!airborne){
+      this.bounceV-=Math.min(3.5,before.vy?Math.abs(before.vy)*.35:1.2);
+      // A ramp jump that lasted long enough is a trick: XP and a little cheer.
+      if(this.trickTime>.65&&!this.calm){this.options.onTrick?.();this.xpFloat('+30 XP · truque');}
+      this.trickTime=0;
+    }
+    if(airborne)this.trickTime+=delta;
     this.bounceV+=(-this.bounce*70-this.bounceV*9)*delta;this.bounce+=this.bounceV*delta;
     this.wasAirborne=airborne;
     this.wheelRotation-=(v.speed/.32)*delta;
@@ -242,26 +280,43 @@ class CafeWorld {
     rover.brakeMaterial.emissiveIntensity=braking?1.8:.25;
     const boosting=input.boost&&v.boostCharge>0&&v.speed>1;
     rover.exhaust.material.opacity=boosting?.75+Math.random()*.25:0;rover.exhaust.scale.setScalar(boosting?1+Math.random()*.3:1);
-    rover.headlight.intensity=this.playing?38:0;
+    // A sleepy rover keeps a weak headlight and a subtle tremor, never a locked wheel.
+    const sleepy=power.sleepy;
+    rover.headlight.intensity=this.playing?(sleepy?14:38):0;
+    if(sleepy&&!this.calm&&this.playing){const t=performance.now()*.001;this.tiltPitch+=Math.sin(t*9)*.002;this.tiltRoll+=Math.cos(t*7)*.002;}
     if(boosting&&!this.calm&&Math.random()<.6)this.particles.spawn(v.x+Math.sin(v.heading)*1.2,.5,v.z+Math.cos(v.heading)*1.2,{count:2,colors:FLAME,speed:2,spread:.3});
     const drifting=Math.abs(lateral)>1.6&&speed>3&&!airborne;
     if(drifting){this.markTimer-=delta;if(this.markTimer<=0){this.tireMarks.stamp(v.x,v.z,v.heading);this.markTimer=.05;}if(!this.calm&&Math.random()<.5)this.particles.spawn(v.x,.2,v.z,{count:2,colors:DUST,speed:1.5,spread:.6});}
     const shown=Math.abs(v.speed).toFixed(1);
-    if(this.lastSpeed!==shown||v!==this.lastVehicle){this.lastVehicle=v;Object.assign(this.host.dataset,{playerX:v.x.toFixed(2),playerZ:v.z.toFixed(2),playerHeading:v.heading.toFixed(2),speed:shown});}
+    if(this.lastSpeed!==shown||v!==this.lastVehicle){this.lastVehicle=v;Object.assign(this.host.dataset,{playerX:v.x.toFixed(2),playerZ:v.z.toFixed(2),playerHeading:v.heading.toFixed(2),speed:shown,drawCalls:String(this.renderer.info.render.calls)});}
     if(this.lastSpeed!==shown){this.lastSpeed=shown;this.options.onSpeed?.(shown);}
     if(Math.abs(v.boostCharge-this.lastBoost)>.02){this.lastBoost=v.boostCharge;this.options.onBoost?.(v.boostCharge);}
+    if(Math.abs(this.fuel.level-this.lastFuel)>.004||this.fuel.sleepy!==this.lastSleepy){this.lastFuel=this.fuel.level;this.lastSleepy=this.fuel.sleepy;this.options.onFuel?.(this.fuel.level,power);}
     if(airborne&&!before.y)this.options.onJump?.();
     for(const id of collectNearby(v,this.world.coffees,this.collected)){
       this.collected.add(id);
       const coffee=this.world.coffees[id];
       coffee.mesh.visible=false;
       this.particles.spawn(coffee.x,.6,coffee.z,{count:this.calm?8:22,colors:PICKUP,speed:3,spread:.6});
+      this.fuel=refuel(this.fuel,.28);
       this.options.onCoffee(id);
       this.xpFloat(`+${XP_AWARD.coffee} XP`);
     }
+    this.drinkBeans(v);
+    this.visitTotems(v);
     if(speed>.5)this.props=this.props.map(prop=>Math.hypot(prop.x-v.x,prop.z-v.z)<1.05?pushProp(prop,v.x,v.z,Math.max(1.5,speed*.9)):prop);
     this.props=stepProps(this.props,delta);
-    for(const prop of this.props){prop.mesh.position.set(prop.x,0,prop.z);if(prop.kind==='pin'){const moving=Math.hypot(prop.vx,prop.vz);prop.mesh.rotation.z=Math.min(Math.PI/2,prop.mesh.rotation.z+(moving>.3?delta*6:0));}}
+    const shattered=breakCrates(this.props);
+    if(shattered.length){
+      this.props=shatterCrates(this.props,shattered);
+      for(const id of shattered){
+        const crate=this.props.find(prop=>prop.id===id);
+        this.particles.spawn(crate.x,.6,crate.z,{count:this.calm?10:24,colors:[new Color(COLORS.white),new Color(COLORS.metal)],speed:4,spread:.8});
+        this.options.onCrate?.(id);
+        this.xpFloat('+20 XP · caixa');
+      }
+    }
+    for(const prop of this.props){prop.mesh.position.set(prop.x,0,prop.z);prop.mesh.visible=!prop.broken;if(prop.kind==='pin'){const moving=Math.hypot(prop.vx,prop.vz);prop.mesh.rotation.z=Math.min(Math.PI/2,prop.mesh.rotation.z+(moving>.3?delta*6:0));}}
     this.barrels=stepBarrels(this.barrels,delta);
     const hit=hitBarrel(v,this.barrels);
     if(hit!=null){
@@ -278,7 +333,52 @@ class CafeWorld {
     for(const barrel of this.barrels)barrel.mesh.visible=barrel.alive;
     const nearby=this.world.stations.find(s=>Math.hypot(v.x-s.x,v.z-s.z)<STATION_RANGE+2.2);
     if((nearby?.key??null)!==this.near){this.near=nearby?.key??null;this.options.onNear(this.near);}
+    if(this.hornCooldown>0)this.hornCooldown-=delta;
   };
+  nearRefuel(){
+    const z=WORLD.refuelZone,v=this.vehicle;
+    return Math.abs(v.x-z.x)<z.width/2&&Math.abs(v.z-z.z)<z.depth/2&&Math.abs(v.speed)<1.2;
+  }
+  drinkBeans(v){
+    for(const index of [...this.beansLeft]){
+      const [x,z]=this.world.beans.spots[index];
+      if(Math.hypot(v.x-x,v.z-z)<1.1){
+        this.beansLeft.delete(index);
+        hideBean(this.world.beans,index);
+        this.fuel=refuel(this.fuel);
+        this.particles.spawn(x,.5,z,{count:this.calm?6:14,colors:PICKUP,speed:2,spread:.5});
+        this.options.onBean?.(this.beansLeft.size);
+      }
+    }
+  }
+  visitTotems(v){
+    for(const totem of this.world.totems.spots){
+      if(this.tourLit.has(totem.id))continue;
+      if(Math.hypot(v.x-totem.x,v.z-totem.z)<4.2){
+        this.tourLit.add(totem.id);
+        this.tour=visitTotem(this.tour,totem.id);
+        this.particles.spawn(totem.x,2.8,totem.z,{count:this.calm?8:20,colors:[new Color(COLORS.pink),new Color(COLORS.mint)],speed:3,spread:.7});
+        const view=tourProgress(this.tour);
+        this.options.onTour?.(totem.id,view,modelBlurb(totem.id));
+        this.xpFloat(`${modelName(totem.id)} ✓ ${view.label}`);
+      }
+    }
+  }
+  /** H / horn: nearby pins scatter and the world notices. */
+  honk(){
+    if(this.hornCooldown>0||this.paused)return;
+    this.hornCooldown=.6;
+    const v=this.vehicle;
+    let scattered=false;
+    this.props=this.props.map(prop=>{
+      if(prop.kind!=='pin'||Math.hypot(prop.x-v.x,prop.z-v.z)>7)return prop;
+      scattered=true;
+      return pushProp(prop,v.x,v.z,6);
+    });
+    if(scattered)this.xpFloat('HONK');
+    this.options.onHonk?.(scattered);
+    this.schedule();
+  }
   explode=(x,z)=>{
     this.particles.spawn(x,.9,z,{count:this.calm?36:120,colors:SPARK,speed:8,spread:1});
     this.shockwaves.trigger(x,z);
@@ -299,7 +399,7 @@ class CafeWorld {
     if(near&&!this.paused){
       this.particles.spawn(station.x,2,station.z,{count:this.calm?14:40,colors:[new Color(COLORS.pink),new Color(COLORS.white)],speed:4,spread:1});
       this.xpFloat(`+${XP_AWARD.station} XP`);
-      this.focus={x:station.x,y:station.anchorY*.5,z:station.z};this.focusUntil=performance.now()+1800;
+      this.focus={x:station.x,z:station.z};this.focusUntil=performance.now()+STATION_FOCUS_MS;
     }
     this.options.onStation(station.key,near);
   };
@@ -309,6 +409,7 @@ class CafeWorld {
     const key=event.key.length===1?event.key.toLowerCase():event.key;
     if(key==='Escape'){this.keys.clear();this.host.blur();return;}
     if(key==='e'||key==='Enter'){event.preventDefault();this.interact();return;}
+    if(key==='h'){event.preventDefault();this.honk();return;}
     if(key==='r'){this.reset();return;}
     if(key==='m'){this.options.onMissions?.();return;}
     if(!KEYS[key]||!this.playing)return;event.preventDefault();const fresh=!this.keys.has(KEYS[key]);this.keys.add(KEYS[key]);if(fresh&&!this.paused)this.step(.05);this.schedule();
@@ -323,9 +424,9 @@ class CafeWorld {
     canvas.style.touchAction='none';
     const on=(target,name,handler)=>target.addEventListener(name,handler,this.listen);
     on(this.host,'keydown',this.keydown);on(window,'keyup',this.keyup);on(window,'blur',this.clearKeys);
-    // Dragging the scene orbits the camera around the rover; it eases back when released.
-    on(canvas,'pointerdown',event=>{this.host.focus({preventScroll:true});this.dragging={id:event.pointerId,x:event.clientX};capture(canvas,event);});
-    on(canvas,'pointermove',event=>{if(this.dragging?.id!==event.pointerId)return;this.orbit+=(event.clientX-this.dragging.x)*-.008;this.dragging.x=event.clientX;this.schedule();});
+    // Dragging the scene orbits the camera around the rover; the angles persist after release.
+    on(canvas,'pointerdown',event=>{this.host.focus({preventScroll:true});this.dragging={id:event.pointerId,x:event.clientX,y:event.clientY};capture(canvas,event);});
+    on(canvas,'pointermove',event=>{if(this.dragging?.id!==event.pointerId)return;this.orbitTarget.yaw+=(event.clientX-this.dragging.x)*.005;this.orbitTarget.pitch=Math.min(ORBIT.pitchMax,Math.max(ORBIT.pitchMin,this.orbitTarget.pitch+(event.clientY-this.dragging.y)*.003));this.dragging.x=event.clientX;this.dragging.y=event.clientY;this.schedule();});
     for(const name of ['pointerup','pointercancel','lostpointercapture'])on(canvas,name,event=>{if(this.dragging?.id===event.pointerId)this.endDrag();});
     // The joystick sits next to the canvas in the stage, not inside #world.
     const stick=document.querySelector('.joystick');
@@ -347,13 +448,15 @@ class CafeWorld {
     this.renderer.domElement.addEventListener('webglcontextlost',event=>{event.preventDefault();this.paused=true;this.host.classList.remove('world-ready');this.options.onError?.();},this.listen);
   }
   start=()=>{this.playing=true;this.paused=false;this.reset();this.host.focus({preventScroll:true});};
-  reset=()=>{this.vehicle=initialVehicle();this.cam=initialCamera(this.vehicle);this.orbit=0;this.bounce=0;this.bounceV=0;this.keys.clear();this.analog={throttle:0,steer:0};this.placeRover();this.schedule();};
+  reset=()=>{this.vehicle=initialVehicle();this.cam=initialCamera(this.vehicle);this.orbit={yaw:0,pitch:0};this.orbitTarget={yaw:0,pitch:0};this.bounce=0;this.bounceV=0;this.keys.clear();this.analog={throttle:0,steer:0};this.fuel=initialFuel();this.trickTime=0;this.placeRover();this.schedule();};
   togglePause=()=>{this.paused=!this.paused;this.clearKeys();this.vehicle={...this.vehicle,vx:0,vz:0,speed:0};this.schedule();return this.paused;};
   dispose=()=>{
     this.disposed=true;cancelAnimationFrame(this.frame);this.frame=0;this.aborter.abort();
     this.resizeObserver.disconnect();this.observer.disconnect();
     for(const marker of this.markers)marker.button.remove();
+    disposeTotems(this.world.totems);
     disposeObjects(this.scene);this.sun.shadow.dispose();disposeShared();
+    this.sky.dispose();
     this.renderer.dispose();this.renderer.domElement.remove();
   };
 }

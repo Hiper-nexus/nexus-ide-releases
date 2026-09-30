@@ -9,6 +9,8 @@ const id=name=>document.getElementById(name);let state=initialProgress(),world,t
 try{state=readProgress(localStorage.getItem(STORAGE_KEY));}catch{id('save-status').textContent='Progresso disponível nesta sessão.';}
 function paint(){const view=progressView(state);id('game-level').textContent=view.level;id('game-xp').textContent=state.xp;id('game-rank').textContent=view.title;id('mission-count').textContent=`${view.completed} / 5`;id('coffee-score').textContent=state.coffees.length;id('barrel-score').textContent=Math.min(state.barrels,3);id('xp-fill').style.transform=`scaleX(${Math.min(state.xp/575,1)})`;document.querySelectorAll('[data-quest]').forEach(item=>{const key=item.dataset.quest;const done=key==='coffees'?state.coffees.length===5:key==='barrels'?state.barrels>=3:state.stations.includes(key);item.classList.toggle('done',done);});}
 function notify(text){clearTimeout(toastTimer);id('quest-toast').textContent=text;id('quest-toast').classList.add('visible');toastTimer=setTimeout(()=>id('quest-toast').classList.remove('visible'),3500);}
+function paintFuel(level,power){const fuel=id('hud-fuel'),fill=id('fuel-fill'),label=id('fuel-label');if(!fuel)return;fill.style.transform=`scaleX(${Math.max(0,Math.min(1,level))})`;fuel.classList.toggle('low',power?.low&&!power?.empty);fuel.classList.toggle('empty',power?.empty);label.textContent=power?.empty?'SEM CAFÉ':power?.low?'CAFÉ BAIXO':'CAFÉ';}
+function paintTour(view,blurb,name){const count=id('tour-count'),box=id('hud-tour');if(!count)return;count.textContent=view.label;box.classList.toggle('complete',view.complete);if(view.complete){notify('Tour completo. Você visitou as 18 CLIs do Nexus.');}else if(name){notify(`${name} ✓ ${view.label} · ${blurb}`);}}
 function tone(){if(!sound||!audioContext)return;const oscillator=audioContext.createOscillator(),gain=audioContext.createGain();oscillator.type='sine';oscillator.frequency.setValueAtTime(660,audioContext.currentTime);oscillator.frequency.exponentialRampToValueAtTime(990,audioContext.currentTime+.12);gain.gain.setValueAtTime(.06,audioContext.currentTime);gain.gain.exponentialRampToValueAtTime(.001,audioContext.currentTime+.22);oscillator.connect(gain);gain.connect(audioContext.destination);oscillator.start();oscillator.stop(audioContext.currentTime+.22);}
 function boom(){if(!sound||!audioContext)return;const duration=.5,buffer=audioContext.createBuffer(1,audioContext.sampleRate*duration,audioContext.sampleRate),channel=buffer.getChannelData(0);for(let i=0;i<channel.length;i++)channel[i]=(Math.random()*2-1)*(1-i/channel.length);const source=audioContext.createBufferSource();source.buffer=buffer;const filter=audioContext.createBiquadFilter();filter.type='lowpass';filter.frequency.setValueAtTime(900,audioContext.currentTime);filter.frequency.exponentialRampToValueAtTime(120,audioContext.currentTime+duration);const gain=audioContext.createGain();gain.gain.setValueAtTime(.4,audioContext.currentTime);gain.gain.exponentialRampToValueAtTime(.001,audioContext.currentTime+duration);source.connect(filter);filter.connect(gain);gain.connect(audioContext.destination);source.start();}
 function award(event){const previous=state.xp,wasComplete=progressView(state).complete;state=advanceQuest(state,event);paint();try{localStorage.setItem(STORAGE_KEY,JSON.stringify(state));}catch{id('save-status').textContent='Progresso disponível nesta sessão.';}if(state.xp!==previous){tone();notify(!wasComplete&&progressView(state).complete?'Missão completa. Você ganhou o título Builder. Bora encontrar a galera no grupo.':event.type==='coffee'?`+25 XP · café ${state.coffees.length}/5`:event.type==='barrel'?'+50 XP · barril no ar':'+100 XP · estação descoberta.');}}
@@ -31,11 +33,18 @@ async function boot(){
       onCoffee:coffee=>award({type:'coffee',id:coffee}),onStation:station,
       onNear:key=>{id('interact-station').disabled=!key;id('interact-station').textContent=key?`Ativar ${STATIONS[key].title} · E`:'Chegue perto de uma estação';},
       onSpeed:value=>id('speed-value').textContent=value,onBoost:charge=>{id('boost-fill').style.transform=`scaleX(${charge})`;},
+      onFuel:(level,power)=>paintFuel(level,power),
+      onTour:(id,view,blurb)=>paintTour(view,blurb,view.complete?'Tour completo':id),
+      onBean:()=>notify('Grão de café · tanque reabastecido'),
+      onCrate:()=>award({type:'barrel'}),
+      onTrick:()=>notify('Truque no ar · +30 XP'),
+      onHonk:scattered=>{if(scattered)notify('Buzina! Os pinos espalharam.');},
       onBarrel:()=>award({type:'barrel'}),onBoom:boom,onJump:()=>notify('Salto!'),onMissions:()=>toggleMissions(),onTouchStart:begin,
       onError:()=>notify('O modo 3D foi interrompido. Os links do grupo continuam abaixo.')});
     id('start-game').addEventListener('click',begin);
     id('interact-station').addEventListener('click',world.interact);
     id('world-reset').addEventListener('click',world.reset);
+    id('horn-btn')?.addEventListener('click',()=>world.honk?.());
     id('world-toggle').addEventListener('click',event=>{const paused=world.togglePause();event.currentTarget.textContent=paused?'Retomar':'Pausar';event.currentTarget.ariaPressed=String(paused);});
     // bfcache keeps the page alive: only a real unload disposes the world.
     window.addEventListener('pagehide',event=>{if(!event.persisted)world.dispose();});
