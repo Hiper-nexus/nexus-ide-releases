@@ -1,0 +1,101 @@
+import { Hono, type Context } from 'hono';
+import { HTTPException } from 'hono/http-exception';
+import { z } from 'zod';
+import type { AppEnv } from './context.js';
+import type { Config } from './config.js';
+import type { AccountRow, AdminAuditAction } from './db/schema.js';
+import { jsonBody } from './http.js';
+import { requireAdmin, requireCsrf, requireWebAuth } from './middleware.js';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const SITUATIONS = ['trial', 'active', 'suspended', 'expired'] as const;
+type Situation = typeof SITUATIONS[number];
+const listSchema = z.strictObject({ status: z.enum(['all', ...SITUATIONS]).default('all'), limit: z.coerce.number().int().min(1).max(50).default(50) });
+const suspendSchema = z.strictObject({ reason: z.string().trim().min(1).max(500) });
+const extendSchema = z.strictObject({ days: z.number().int().min(1).max(30) });
+
+// ?1 = now (epoch ms), ?2 = JSON array of allowlisted admin emails. Mirrors accountAccess:
+// suspension wins, then paid or authorized admin, then a running trial.
+const LIVE = "((s.status IN('active','trialing') AND s.current_period_end>?1) OR (s.status='past_due' AND s.grace_until>?1))";
+const CLASSIFIED = `WITH paid AS (
+    SELECT s.account_id FROM subscriptions s WHERE s.owner_type='account' AND ${LIVE}
+    UNION SELECT m.account_id FROM team_members m JOIN subscriptions s ON s.owner_type='team' AND s.team_id=m.team_id WHERE ${LIVE}
+  ), flagged AS (
+    SELECT a.*, (a.role='admin' AND EXISTS(SELECT 1 FROM identities i WHERE i.account_id=a.id AND i.email_verified=1 AND lower(i.email) IN (SELECT value FROM json_each(?2)))) AS is_admin FROM accounts a
+  ), classified AS (
+    SELECT f.*, CASE WHEN f.suspended_at IS NOT NULL THEN 'suspended' WHEN f.is_admin OR f.id IN (SELECT account_id FROM paid) THEN 'active' WHEN f.trial_expires_at>?1 THEN 'trial' ELSE 'expired' END AS situation FROM flagged f
+  )`;
+
+function adminEmails(config: Config): string {
+  return JSON.stringify(config.ADMIN_EMAILS.split(',').map(value => value.trim().toLowerCase()).filter(Boolean));
+}
+
+async function targetAccount(c: Context<AppEnv>): Promise<AccountRow> {
+  const account = await c.env.DB.prepare('SELECT * FROM accounts WHERE id=?').bind(c.req.param('id')).first<AccountRow>();
+  if (!account) throw new HTTPException(404, { message: 'Conta não encontrada.' });
+  return account;
+}
+
+function audit(c: Context<AppEnv>, targetId: string, action: AdminAuditAction, details: Record<string, unknown>, now: number): D1PreparedStatement {
+  return c.env.DB.prepare('INSERT INTO admin_audit(id,actor_account_id,target_account_id,action,details,created_at) VALUES(?,?,?,?,?,?)')
+    .bind(crypto.randomUUID(), c.get('session').account_id, targetId, action, JSON.stringify(details), now);
+}
+
+export const adminRoutes = new Hono<AppEnv>();
+adminRoutes.use('/admin/*', async (c, next) => { c.header('Cache-Control', 'no-store'); await next(); }, requireWebAuth, requireAdmin);
+
+adminRoutes.get('/admin/overview', async (c) => {
+  const counts = SITUATIONS.map(name => `count(CASE WHEN situation='${name}' THEN 1 END) AS ${name}`).join(',');
+  const row = await c.env.DB.prepare(`${CLASSIFIED} SELECT count(*) AS accounts,${counts} FROM classified`).bind(Date.now(), adminEmails(c.get('config'))).first<Record<'accounts' | Situation, number>>();
+  return c.json({ ok: true, data: row ?? { accounts: 0, trial: 0, active: 0, suspended: 0, expired: 0 } });
+});
+
+adminRoutes.get('/admin/accounts', async (c) => {
+  const query = listSchema.safeParse(c.req.query());
+  if (!query.success) throw new HTTPException(400, { message: 'Filtro inválido.' });
+  type Row = Pick<AccountRow, 'id' | 'email' | 'name' | 'trial_expires_at'> & { is_admin: number; situation: Situation; subscription_status: string | null };
+  const rows = await c.env.DB.prepare(`${CLASSIFIED} SELECT id,email,name,trial_expires_at,is_admin,situation,
+      (SELECT s.status FROM subscriptions s WHERE s.owner_type='account' AND s.account_id=classified.id ORDER BY ${LIVE} DESC,s.updated_at DESC LIMIT 1) AS subscription_status
+    FROM classified WHERE ?3='all' OR situation=?3 ORDER BY created_at DESC,id LIMIT ?4`)
+    .bind(Date.now(), adminEmails(c.get('config')), query.data.status, query.data.limit).all<Row>();
+  return c.json({ ok: true, data: { accounts: rows.results.map(row => ({
+    id: row.id, email: row.email.includes('@') ? row.email : '', name: row.name, role: row.is_admin ? 'admin' : 'user',
+    access: row.situation === 'active' ? 'pro' : row.situation, trialEndsAt: row.trial_expires_at === null ? null : new Date(row.trial_expires_at).toISOString(),
+    subscriptionStatus: row.subscription_status ?? 'none',
+  })) } });
+});
+
+// Suspension blocks NexusIDE access only. It never cancels the Stripe subscription, and the
+// account keeps its sessions so the owner can still open the billing portal.
+adminRoutes.post('/admin/accounts/:id/suspend', requireCsrf, async (c) => {
+  const { reason } = await jsonBody(c.req.raw, suspendSchema);
+  const target = await targetAccount(c), now = Date.now();
+  if (target.id === c.get('session').account_id) throw new HTTPException(409, { message: 'Você não pode suspender a própria conta.' });
+  if (target.suspended_at !== null) throw new HTTPException(409, { message: 'Esta conta já está suspensa.' });
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE accounts SET suspended_at=?,suspension_reason=?,updated_at=? WHERE id=?').bind(now, reason, now, target.id),
+    audit(c, target.id, 'suspend', { reason }, now),
+  ]);
+  return c.json({ ok: true, data: {} });
+});
+
+adminRoutes.post('/admin/accounts/:id/resume', requireCsrf, async (c) => {
+  const target = await targetAccount(c), now = Date.now();
+  if (target.suspended_at === null) throw new HTTPException(409, { message: 'Esta conta não está suspensa.' });
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE accounts SET suspended_at=NULL,suspension_reason=NULL,updated_at=? WHERE id=?').bind(now, target.id),
+    audit(c, target.id, 'resume', {}, now),
+  ]);
+  return c.json({ ok: true, data: {} });
+});
+
+adminRoutes.post('/admin/accounts/:id/extend-trial', requireCsrf, async (c) => {
+  const { days } = await jsonBody(c.req.raw, extendSchema);
+  const target = await targetAccount(c), now = Date.now();
+  // The new end is computed in SQL from the stored value, so concurrent extensions add up instead of overwriting.
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE accounts SET trial_started_at=COALESCE(trial_started_at,?1),trial_expires_at=max(?1,COALESCE(trial_expires_at,?1))+?2,updated_at=?1 WHERE id=?3').bind(now, days * DAY_MS, target.id),
+    audit(c, target.id, 'extend_trial', { days, previousEnd: target.trial_expires_at === null ? null : new Date(target.trial_expires_at).toISOString() }, now),
+  ]);
+  return c.json({ ok: true, data: {} });
+});

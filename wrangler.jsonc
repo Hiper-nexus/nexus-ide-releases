@@ -5,8 +5,14 @@
   "compatibility_date":"2026-09-30",
   "compatibility_flags":["nodejs_compat"],
   "workers_dev":true,
+  // The site and the desktop app both call this host; session cookies are bound to it.
+  "routes":[{"pattern":"api.nexuside.app","custom_domain":true}],
   "d1_databases":[{"binding":"DB","database_name":"nexus-cloud-staging","database_id":"27b16550-81d6-43cb-92dd-d2ef0373e36f","migrations_dir":"migrations"}],
-  "vars":{"PUBLIC_BASE_URL":"https://nexuside.app","PUBLIC_SITE_URL":"https://nexuside.app","APP_DEEP_LINK_BASE":"nexus://auth","APP_MODE":"staging","MIGRATION_READY":"false","STRIPE_PRICE_PRO":"","GITHUB_OAUTH_ID":"","GOOGLE_OAUTH_ID":"","STRIPE_PRICE_TEAM":""},
+  // MIGRATION_READY stays "false" until the operator opens sales: checkout answers 503 while it is.
+  // Secrets (wrangler secret put): LICENSE_PRIVATE_KEY, LICENSE_PUBLIC_KEY, STRIPE_SECRET_KEY,
+  // STRIPE_WEBHOOK_SECRET, GITHUB_OAUTH_SECRET, GOOGLE_OAUTH_SECRET.
+  "vars":{"PUBLIC_BASE_URL":"https://api.nexuside.app","PUBLIC_SITE_URL":"https://nexuside.app","APP_DEEP_LINK_BASE":"nexus://auth","APP_MODE":"staging","MIGRATION_READY":"false","ADMIN_EMAILS":"admin@volarehost.com.br,retornoja@gmail.com","TRIAL_DAYS":"15","TRIAL_MAX_AGENTS":"2","TRIAL_CLOUD_SYNC":"false","STRIPE_PRICE_PRO":"","GITHUB_OAUTH_ID":"","GOOGLE_OAUTH_ID":"","STRIPE_PRICE_TEAM":""},
+  "triggers":{"crons":["17 * * * *"]},
   "observability":{"enabled":true},
   "ratelimits":[{"name":"AUTH_RATE_LIMITER","namespace_id":"2001","simple":{"limit":20,"period":60}},{"name":"API_RATE_LIMITER","namespace_id":"2002","simple":{"limit":120,"period":60}}]
 }
