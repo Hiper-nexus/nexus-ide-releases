@@ -222,6 +222,38 @@ function maestroContextFor(
   return ctx.providerId === 'codex' ? doctrine : MAESTRO_TURN_REMINDER;
 }
 
+/** Maestro de missão que não é a mão do operador (essa já recebe o conselho). */
+function isMissionMaestro(ctx: HookContext): boolean {
+  return ctx.role === 'orchestrator' && Boolean(ctx.missionId) && ctx.promotedFromUserSession !== true;
+}
+
+/**
+ * F-708: o que o operador digita no Maestro é o pedido que ele deve dividir.
+ * Até aqui só a mão do operador passava pelo Jev de delegação; o Maestro, que
+ * é quem mais delega, recebia só o lembrete genérico — e em 30/09 respondeu
+ * "vinha atuando direto na Inbox". Missão de execução direta fica de fora
+ * (a doutrina dela manda executar).
+ */
+async function maestroDelegationDirective(
+  ctx: HookContext,
+  prompt: string,
+  advise: typeof advisePrompt,
+  doctrineFor: MaestroDoctrineFn,
+): Promise<string | null> {
+  if (!doctrineFor(ctx)) return null;
+  const advice = await advise(prompt, { sessionId: ctx.sessionId }).catch(() => null);
+  const delegation = advice?.delegation;
+  if (!delegation || delegation.parts < 2) return null;
+  const reads = Math.max(0, delegation.parts - delegation.writers);
+  const text =
+    `[Nexus · Jev] Maestro: este pedido se divide em ~${delegation.parts} partes ` +
+    `(${reads} de leitura, ${delegation.writers} de escrita). Abra agora um worker ` +
+    'por parte com nexus_pane_spawn({ task, prompt }), todos em paralelo — ' +
+    'readOnly: true nas de leitura, isolatedWriter: true nas de escrita — e ' +
+    'encerre o turno. Não faça as partes você mesmo.';
+  return text.length > 500 ? `${text.slice(0, 499)}…` : text;
+}
+
 type DesignContextFn = (prompt: string, workspaceRoot: string) => string | null;
 
 /** Regra de design + carta no primeiro pedido de UI da sessão, a cada 30 min. */
@@ -350,17 +382,23 @@ export async function handleHookDelegateRequest(
     const prompt = parseUserPrompt(body);
     if (!prompt) return { statusCode: 200, payload: {} };
     const now = (deps.now ?? Date.now)();
-    // O Maestro recebe o lembrete em qualquer prompt, inclusive na entrega de
-    // um worker: é processando entregas que ele passa a fazer o trabalho.
-    const maestro = maestroContextFor(ctx, now, deps.maestroDoctrine ?? maestroStandingDoctrineFor);
-    const parts: string[] = maestro ? [maestro] : [];
     // A entrega de um helper chega como prompt, mas não é pedido novo do operador.
-    if (
-      !isOperatorHandContext(ctx) ||
-      prompt.startsWith(WORKSPACE_HANDOFF_DELIVERY_PREFIX) ||
-      prompt.includes(FAILOVER_HANDOFF_HEADER) ||
-      isNonOperatorPrompt(prompt)
-    ) {
+    const operatorPrompt =
+      !prompt.startsWith(WORKSPACE_HANDOFF_DELIVERY_PREFIX) &&
+      !prompt.includes(FAILOVER_HANDOFF_HEADER) &&
+      !isNonOperatorPrompt(prompt);
+    const doctrineFor = deps.maestroDoctrine ?? maestroStandingDoctrineFor;
+    // F-708: pedido do operador no Maestro passa pelo mesmo Jev do "+ Pane";
+    // o lembrete genérico vira "abra N workers". Sem divisão, fica o lembrete
+    // — que vale em qualquer prompt, inclusive na entrega de um worker: é
+    // processando entregas que ele passa a fazer o trabalho.
+    const maestroDirective =
+      operatorPrompt && isMissionMaestro(ctx)
+        ? await maestroDelegationDirective(ctx, prompt, deps.advise ?? advisePrompt, doctrineFor)
+        : null;
+    const maestro = maestroDirective ?? maestroContextFor(ctx, now, doctrineFor);
+    const parts: string[] = maestro ? [maestro] : [];
+    if (!isOperatorHandContext(ctx) || !operatorPrompt) {
       return additionalContextResponse(ctx, parts);
     }
     // Preferência do operador: pré-filtro regex no próprio módulo; o Jev só é

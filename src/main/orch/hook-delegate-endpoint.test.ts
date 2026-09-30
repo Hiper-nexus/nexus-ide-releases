@@ -265,17 +265,39 @@ describe('hook /hook/delegate', () => {
     const text = (out: { payload: Record<string, unknown> }) =>
       (out.payload.hookSpecificOutput as { additionalContext: string }).additionalContext;
 
-    it('lembra de delegar a cada 30 min, também na entrega de um worker, sem chamar o Jev', async () => {
+    it('lembra de delegar a cada 30 min, também na entrega de um worker; entrega não vai ao Jev', async () => {
       __resetLeanRemindersForTests();
       let now = 5_000_000;
-      const advise = vi.fn(async () => delegation(3, 1));
+      const advise = vi.fn(async () => null);
       const deps = { advise, now: () => now, maestroDoctrine: () => 'DOUTRINA' };
       const delivery = '[nexus handoff delivery_metadata] from=pane-w1 handoff_id=h-7 summary: pronto';
       expect(text(await handleHookDelegateRequest(maestro, { prompt: delivery }, deps))).toBe(MAESTRO_TURN_REMINDER);
+      expect(advise).not.toHaveBeenCalled();
       now += 60_000;
       expect((await handleHookDelegateRequest(maestro, { prompt: 'solta mais panes' }, deps)).payload).toEqual({});
       now += 30 * 60_000;
       expect(text(await handleHookDelegateRequest(maestro, { prompt: 'e agora?' }, deps))).toBe(MAESTRO_TURN_REMINDER);
+      expect(advise).toHaveBeenCalledTimes(2);
+    });
+
+    it('F-708: pedido divisível digitado no Maestro vira "abra N workers", no lugar do lembrete', async () => {
+      __resetLeanRemindersForTests();
+      const advise = vi.fn(async () => delegation(4, 1));
+      const out = await handleHookDelegateRequest(
+        maestro,
+        { prompt: LONG },
+        { advise, maestroDoctrine: () => 'DOUTRINA' },
+      );
+      expect(text(out)).toContain('~4 partes (3 de leitura, 1 de escrita)');
+      expect(text(out)).toContain('Não faça as partes você mesmo');
+      expect(text(out)).not.toContain(MAESTRO_TURN_REMINDER);
+    });
+
+    it('F-708: missão de execução direta não recebe diretiva nem chama o Jev', async () => {
+      __resetLeanRemindersForTests();
+      const advise = vi.fn(async () => delegation(4, 1));
+      const out = await handleHookDelegateRequest(maestro, { prompt: LONG }, { advise, maestroDoctrine: () => null });
+      expect(out.payload).toEqual({});
       expect(advise).not.toHaveBeenCalled();
     });
 
