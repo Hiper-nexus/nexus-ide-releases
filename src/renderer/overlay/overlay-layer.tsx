@@ -1,4 +1,5 @@
-import { useSyncExternalStore } from 'react';
+import { WorkspaceInertContext } from '../state/access-store';
+import { useContext, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 
@@ -71,6 +72,7 @@ const EMPTY_SUBSCRIBE = () => () => {};
  * modo que envolver um overlay fechado não bloqueia clique nenhum.
  */
 export function OverlayLayer({ children }: { children?: ReactNode }) {
+  const workspaceBlocked = useContext(WorkspaceInertContext);
   // useSyncExternalStore com subscribe vazio: no servidor/SSR devolve null e
   // não toca no document; no cliente devolve a raiz já criada. Evita o
   // useEffect de duas passadas que faria o overlay piscar um frame atrás.
@@ -80,5 +82,5 @@ export function OverlayLayer({ children }: { children?: ReactNode }) {
     () => null,
   );
   if (!root) return null;
-  return createPortal(children, root);
+  return createPortal(<div style={{ display: workspaceBlocked ? 'none' : 'contents' }} ref={node => { node?.toggleAttribute('inert', workspaceBlocked); }}>{children}</div>, root);
 }

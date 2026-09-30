@@ -1,7 +1,14 @@
+import { DEFAULT_LICENSE } from '../shared/billing-types';
+import { useAccessStore } from './state/access-store';
 /** @vitest-environment jsdom */
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('./state/access-store', async (importActual) => {
+  const actual = await importActual<typeof import('./state/access-store')>();
+  return { ...actual, useAccess: () => actual.useAccessStore() };
+});
 
 const browserHost = vi.hoisted(() => ({
   reconcileBrowserPanes: vi.fn(),
@@ -347,6 +354,7 @@ function openWorkspace(): void {
 }
 
 beforeEach(() => {
+  useAccessStore.setState({ canUseApp: true, maxAgents: null });
   vi.useFakeTimers();
   vi.clearAllMocks();
   setActiveWorkspacePath(null);
@@ -360,6 +368,7 @@ beforeEach(() => {
     configurable: true,
     writable: true,
     value: {
+      billing: { onChanged: () => () => {}, get: async () => ({ ...DEFAULT_LICENSE, canUseApp: true, blockedReason: null, limits: { maxAgents: null, cloudSync: true } }) },
       app: { onDeepOpenPath: vi.fn(() => vi.fn()), onDeepOpenQuota: vi.fn(() => vi.fn()), onShotFilesReceived: vi.fn(() => vi.fn()) },
       pet: {
         onOpenSettings: vi.fn(() => vi.fn()),
@@ -1296,4 +1305,19 @@ describe('App Nexus V2 cutover', () => {
 
     expect(browserHost.setBrowserPaneSuppression.mock.lastCall?.[1]).toBe(false);
   });
+});
+
+it('blocks pane shortcuts and preserves the workspace tree across access revocation', () => {
+  openWorkspace();
+  useProductNavigationStore.getState().openTerminal();
+  const host = mountApp();
+  const tree = useLayoutStore.getState().root;
+  act(() => useAccessStore.setState({ canUseApp: false, loading: false, blockedReason: 'trial-ended' }));
+  expect(host.querySelector('.access-workspace')?.hasAttribute('inert')).toBe(true);
+  act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', ctrlKey: true, bubbles: true })));
+  expect(useLayoutStore.getState().root).toBe(tree);
+  expect(host.querySelector('[data-preserved-overlay="confirmation"]')).not.toBeNull();
+  act(() => useAccessStore.setState({ canUseApp: true }));
+  expect(host.querySelector('.access-workspace')?.hasAttribute('inert')).toBe(false);
+  expect(useLayoutStore.getState().root).toBe(tree);
 });

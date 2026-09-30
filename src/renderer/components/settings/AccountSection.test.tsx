@@ -7,11 +7,11 @@ import { AccountSection } from './AccountSection';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
 
-function mount(): { host: HTMLDivElement; root: Root } {
+function mount(accessOnly = false): { host: HTMLDivElement; root: Root } {
   const host = document.createElement('div');
   document.body.appendChild(host);
   const root = createRoot(host);
-  act(() => root.render(<AccountSection />));
+  act(() => root.render(<AccountSection accessOnly={accessOnly} />));
   return { host, root };
 }
 
@@ -49,6 +49,34 @@ describe('AccountSection', () => {
     Reflect.deleteProperty(window, 'nexus');
     document.body.innerHTML = '';
     vi.restoreAllMocks();
+  });
+
+  it('keeps recovery actions available on the blocked screen when the snapshot fails', async () => {
+    vi.mocked(window.nexus.billing.get).mockRejectedValue(new Error('offline'));
+    const { host, root } = mount(true);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(host.textContent).toContain('Entrar com GitHub');
+    expect(host.textContent).toContain('Assinar Pro');
+    expect(host.textContent).toContain('Gerenciar assinatura');
+    expect(host.textContent).toContain('Tentar novamente');
+    expect(host.textContent).not.toContain('Invalid Date');
+    expect(host.querySelector('[aria-label="Time"]')).toBeNull();
+    act(() => root.unmount());
+  });
+
+  it('shows a recoverable error when the blocked-screen checkout or portal rejects', async () => {
+    vi.mocked(window.nexus.billing.openCheckout).mockRejectedValue(new Error('private detail'));
+    vi.mocked(window.nexus.billing.openPortal).mockRejectedValue(new Error('private detail'));
+    const { host, root } = mount(true);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const button = (label: string) => [...host.querySelectorAll('button')].find(item => item.textContent === label)!;
+    await act(async () => button('Assinar Pro').click());
+    expect(host.textContent).toContain('Não foi possível abrir o checkout');
+    expect(button('Assinar Pro').disabled).toBe(false);
+    await act(async () => button('Gerenciar assinatura').click());
+    expect(host.textContent).toContain('Não foi possível abrir o portal');
+    expect(host.textContent).not.toContain('private detail');
+    act(() => root.unmount());
   });
 
   it('shows local session and login CTAs when not signed in', async () => {

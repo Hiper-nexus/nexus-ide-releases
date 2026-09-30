@@ -1,0 +1,33 @@
+/** @vitest-environment jsdom */
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import { afterEach, expect, it, vi } from 'vitest';
+import { DEFAULT_LICENSE } from '../../shared/billing-types';
+import { useAccessStore } from '../state/access-store';
+import { OverlayLayer } from '../overlay/overlay-layer';
+import { AccessBoundary } from './AccessBoundary';
+vi.mock('./settings/AccountSection', () => ({ AccountSection: () => <button className="settings-btn--primary account__plan-cta">Entrar com GitHub</button> }));
+vi.mock('./UpdateModal', () => ({ UpdateNotifier: () => <button>Atualizar app</button> }));
+vi.mock('../terminal/pane-close-guard', () => ({ requestPaneClose: vi.fn() }));
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+const host = document.createElement('div'); document.body.append(host);
+let root = createRoot(host);
+afterEach(() => { act(() => root.unmount()); root = createRoot(host); });
+it.each(['login-required', 'invalid-license', 'license-expired', 'account-mismatch', 'suspended', 'inactive', 'trial-ended', 'verification-unavailable'] as const)('keeps the workspace mounted and inert for %s, traps Tab, ignores Esc', async reason => {
+  Object.defineProperty(window, 'nexus', { configurable: true, value: { billing: { onChanged: () => () => {}, get: async () => ({ ...DEFAULT_LICENSE, blockedReason: reason }) } } });
+  await act(async () => root.render(<AccessBoundary><input aria-label="Workspace" defaultValue="preservado" /><OverlayLayer><button data-testid="workspace-portal">Novo pane</button></OverlayLayer></AccessBoundary>));
+  const workspace = host.querySelector('input')!;
+  expect(workspace.closest('[inert]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="workspace-portal"]')?.closest('[inert]')).not.toBeNull();
+  expect(host.querySelector('[role="dialog"]')?.textContent).not.toContain('undefined');
+  expect(document.activeElement?.textContent).toBe('Entrar com GitHub');
+  act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+  expect(host.querySelector('[role="dialog"]')).not.toBeNull();
+  act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true })));
+  expect(host.querySelector('[role="dialog"]')?.contains(document.activeElement)).toBe(true);
+  act(() => useAccessStore.setState({ canUseApp: true }));
+  expect(host.querySelector('[role="dialog"]')).toBeNull();
+  expect(host.querySelector('input')).toBe(workspace);
+  expect(workspace.value).toBe('preservado');
+  expect(workspace.closest('[inert]')).toBeNull();
+});

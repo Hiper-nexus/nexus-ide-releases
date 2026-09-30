@@ -1,6 +1,9 @@
-import { useEffect } from 'react';
+import { createContext, useEffect } from 'react';
 import { create } from 'zustand';
 import { DEFAULT_LICENSE, type LicenseState } from '../../shared/billing-types';
+
+/** Carries workspace inertness through React portals without affecting recovery UI. */
+export const WorkspaceInertContext = createContext(false);
 
 interface AccessState {
   license: LicenseState;

@@ -218,6 +218,39 @@ export function AccountSection({ accessOnly = false }: { accessOnly?: boolean })
     }
   };
 
+  const openPortal = async () => {
+    setCheckoutError(null);
+    try {
+      const result = await window.nexus.billing.openPortal();
+      if (!result.ok) setCheckoutError('Não foi possível abrir o portal de cobrança. Tente novamente.');
+    } catch {
+      setCheckoutError('Não foi possível abrir o portal de cobrança. Tente novamente.');
+    }
+  };
+
+  if (accessOnly) {
+    return <section className="account access-account" aria-label="Minha conta">
+      <h2>Minha conta</h2>
+      {license.email && <p>{license.email}</p>}
+      <p>Teste de 15 dias · 2 agentes · sem sync na nuvem</p>
+      <p>Pro · {planPrice(PLANS.find(plan => plan.id === 'pro')!)}</p>
+      <div className="access-account__actions">
+        <button className={`settings-btn account__login-btn${!isLoggedIn ? ' settings-btn--primary' : ''}`} disabled={loginBusy !== null} onClick={() => void startLogin('github')}>
+          {loginBusy === 'github' ? 'Abrindo GitHub…' : 'Entrar com GitHub'}
+        </button>
+        <button className="settings-btn account__login-btn" disabled={loginBusy !== null} onClick={() => void startLogin('google')}>
+          {loginBusy === 'google' ? 'Abrindo Google…' : 'Entrar com Google'}
+        </button>
+        <button className={`settings-btn account__plan-cta${isLoggedIn ? ' settings-btn--primary' : ''}`} disabled={checkoutBusy} onClick={() => void startCheckout('pro')}>
+          {checkoutBusy ? 'Abrindo…' : 'Assinar Pro'}
+        </button>
+        <button className="settings-btn" onClick={() => void openPortal()}>Gerenciar assinatura</button>
+        {licenseFailed && <button className="settings-btn" onClick={() => void refreshAccess()}>Tentar novamente</button>}
+      </div>
+      {(loginError || checkoutError) && <p role="alert">{loginError || checkoutError}</p>}
+    </section>;
+  }
+
   const sessionBadge = accountSessionBadge({
     loading: licenseLoading,
     isLoggedIn,
@@ -315,12 +348,7 @@ export function AccountSection({ accessOnly = false }: { accessOnly?: boolean })
           <button
             type="button"
             className="settings-btn"
-            onClick={() => {
-              setCheckoutError(null);
-              void window.nexus.billing.openPortal().then(result => {
-                if (!result.ok) setCheckoutError('Não foi possível abrir o portal de cobrança. Tente novamente.');
-              }).catch(() => setCheckoutError('Não foi possível abrir o portal de cobrança. Tente novamente.'));
-            }}
+            onClick={() => void openPortal()}
             title="Abrir o portal de assinatura (Stripe) no navegador"
           >
             Gerenciar assinatura

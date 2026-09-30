@@ -1,3 +1,5 @@
+import { AccessBoundary } from './components/AccessBoundary';
+import { useAccessStore } from './state/access-store';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   detachWorkspaceLayout,
@@ -220,6 +222,7 @@ const SHELL_DRAG_IDLE_TIMEOUT_MS = 1_200;
  * shortcuts (split/close) against the currently focused pane.
  */
 export function App() {
+  const canUseApp = useAccessStore(s => s.canUseApp);
   const productFlags = useProductFlags();
   const hydrated = useLayoutStore((state) => state.hydrated);
   const layoutRoot = useLayoutStore((state) => state.root);
@@ -469,6 +472,7 @@ export function App() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (!useAccessStore.getState().canUseApp) return;
       if (useConfirmStore.getState().pending) return;
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
       const mod = event.metaKey || event.ctrlKey;
@@ -600,6 +604,7 @@ export function App() {
   // cicaria junto. Mod+Tab no macOS é do SO (nunca chega); Ctrl+Tab cobre.
   useEffect(() => {
     const onCycleKey = (event: KeyboardEvent) => {
+      if (!useAccessStore.getState().canUseApp) return;
       if (event.key !== 'Tab') return;
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
       if (useConfirmStore.getState().pending) return;
@@ -1336,6 +1341,7 @@ export function App() {
 
   return (
     <div className="app">
+      <AccessBoundary>
       <AppShell
         // Configurações em modo foco: o rail mantém só a navegação principal
         // (três colunas de navegação apertavam o conteúdo a ~60%).
@@ -1429,7 +1435,7 @@ export function App() {
               </span>
             </div>
             <div className="product-header__tools">
-              <UpdateNotifier alwaysVisible />
+              {canUseApp && <UpdateNotifier alwaysVisible />}
               {currentWorkspace ? (
                 <>
                   <AgentNotifications />
@@ -1451,8 +1457,9 @@ export function App() {
         }
         overlays={
           <>
-            <CloseWorkspaceDialog />
+            {canUseApp && <CloseWorkspaceDialog />}
             <OverlayLayer>
+              {canUseApp && <>
               <VoiceHud />
               <VoiceSettings />
               {mediaStudioOpen ? (
@@ -1466,11 +1473,9 @@ export function App() {
               <CommandPalette />
               <AttentionInbox />
               <KeyboardCheatsheet />
-              <ConfirmDialog />
-              <ChoiceDialog />
               <TerminalGridDialog />
+              </>}
             </OverlayLayer>
-            <Toasts />
             {dropActive ? (
               <div
                 className="global-drop-overlay"
@@ -1486,6 +1491,8 @@ export function App() {
           </>
         }
       />
+      </AccessBoundary>
+      <OverlayLayer><ConfirmDialog /><ChoiceDialog /><Toasts /></OverlayLayer>
     </div>
   );
 }
