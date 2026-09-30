@@ -275,9 +275,9 @@ describe('builtin adapters', () => {
     expect(integration('glm-flash')).toBe('autoload');
     expect(integration('longcat')).toBe('autoload');
     expect(integration('codex')).toBe('codex');
-    // AGY 1.1 ignores private MCP profile projections. Mission workers use
-    // the Main-owned PTY-stream handoff instead of advertising fake MCP.
-    expect(integration('agy')).toBe('none');
+    // F-697: AGY ignora a projeção de HOME privado, mas lê o perfil nativo;
+    // a ponte stdio registrada por `agy mcp add` leva o MCP da sessão por ENV.
+    expect(integration('agy')).toBe('agy');
     expect(integration('opencode')).toBe('opencode');
     expect(integration('kimi')).toBe('kimi');
     expect(integration('grok')).toBe('grok');

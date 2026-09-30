@@ -80,7 +80,7 @@
     "altScreen": true,
     "requiresNoAutoUpdate": false,
     "mcpAutoload": false,
-    "nexusMcp": "none"
+    "nexusMcp": "agy"
   },
   "control": {
     "effort": {

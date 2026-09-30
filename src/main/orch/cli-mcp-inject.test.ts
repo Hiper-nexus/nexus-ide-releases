@@ -68,7 +68,7 @@ describe("supportsMcpInjection", () => {
 
   it("deriva capability da metadata declarativa, sem lista paralela por id", () => {
     expect(supportsMcpInjection(adapter("codex"))).toBe("codex");
-    expect(supportsMcpInjection(adapter("agy"))).toBe(null);
+    expect(supportsMcpInjection(adapter("agy"))).toBe("agy");
     expect(supportsMcpInjection(adapter("opencode"))).toBe("opencode");
     expect(supportsMcpInjection(adapter("mimo-code"))).toBe("mimo-code");
     expect(canUseNexusMcp(adapter("mimo-code"))).toBe(true);
@@ -78,7 +78,7 @@ describe("supportsMcpInjection", () => {
     expect(supportsMcpInjection(adapter("none"))).toBe(null);
     expect(canUseNexusMcp(adapter("autoload"))).toBe(true);
     expect(canUseNexusMcp(adapter("opencode"))).toBe(true);
-    expect(canUseNexusMcp(adapter("agy"))).toBe(false);
+    expect(canUseNexusMcp(adapter("agy"))).toBe(true);
     expect(canUseNexusMcp(adapter("none"))).toBe(false);
   });
 

@@ -71,6 +71,7 @@ vi.mock('../adapters/adapter-registry', async (original) => ({
   // AGY lê o MCP do perfil nativo (canUseNexusMcp=false); Codex carrega o Nexus.
   listAdapters: () => [
     { id: 'agy', kind: 'cli-pty', bin: 'agy', quirks: { nexusMcp: 'agy' } },
+    { id: 'devin', kind: 'cli-pty', bin: 'devin', quirks: { nexusMcp: 'none' } },
     { id: 'codex', kind: 'cli-pty', bin: 'codex', quirks: { nexusMcp: 'codex' } },
   ],
 }));
@@ -254,7 +255,9 @@ describe('nexus_pane_spawn dentro da missão sem adapterId', () => {
 
   it('pane do "+ Pane" na missão da aba só roteia helper para CLI com MCP do Nexus (F-658)', async () => {
     // Campo 28/09: a missão sob demanda levou os helpers do operador à rota de
-    // missão, que aceitava AGY — três panes mudos no `--print`.
+    // missão, que aceitava AGY — três panes mudos no `--print`. F-697: o AGY
+    // ganhou o MCP do Nexus (ponte no perfil nativo) e volta à rota; quem
+    // continua sem MCP (Devin) segue fora.
     const resolver = vi.fn(async () => ({
       adapterId: 'codex', model: 'gpt-5.4', effort: 'high', routeReservationId: 'rr-tab',
     }));
@@ -262,7 +265,7 @@ describe('nexus_pane_spawn dentro da missão sem adapterId', () => {
     const operatorTab = { ...ctx, promotedFromUserSession: true as const };
     await paneSpawnTool.handler({ task: 'mapear as telas', prompt: 'mapeie' }, operatorTab);
     expect(resolver).toHaveBeenCalledWith('mapear as telas', operatorTab, {
-      excludeAdapterIds: ['agy'],
+      excludeAdapterIds: ['devin'],
     });
   });
 

@@ -29,9 +29,11 @@ const MCP_BUILTIN_IDS = new Set([
   "minimax-code",
   // F-696: Muse Code 1.4+ lê o MCP do Nexus pelo settings.json (ponte stdio).
   "muse",
+  // F-697: AGY 1.2 lê a ponte stdio registrada por `agy mcp add` no perfil nativo.
+  "agy",
 ]);
 
-const PTY_FALLBACK_BUILTIN_IDS = new Set(["agy", "aider", "devin"]);
+const PTY_FALLBACK_BUILTIN_IDS = new Set(["aider", "devin"]);
 
 function loadCliAdapters(
   rawList: readonly unknown[],
@@ -107,7 +109,7 @@ describe("handoffTransportForAdapter catalog", () => {
   it("covers the adapters that failed in the field (agy/gemini/cursor/aider)", () => {
     const agy = builtins.find((adapter) => adapter.id === "agy");
     const aider = builtins.find((adapter) => adapter.id === "aider");
-    expect(handoffTransportForAdapter(agy!).mcpTool).toBe(false);
+    expect(handoffTransportForAdapter(agy!).mcpTool).toBe(true);
     expect(handoffTransportForAdapter(aider!).mcpTool).toBe(false);
 
     const overlayById = new Map(overlays.map((adapter) => [adapter.id, adapter]));

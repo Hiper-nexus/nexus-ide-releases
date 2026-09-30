@@ -12,9 +12,9 @@ import { LEGACY_MARKER } from "./legacy-handoff";
 import { charterTierForWorker, withHandoffContract } from "./worker-handoff-contract";
 
 describe("worker handoff transport contract", () => {
-  it("teaches AGY the filesystem shim before the physical PTY fallback", () => {
+  it("teaches a CLI without Nexus MCP the filesystem shim before the physical PTY fallback", () => {
     const prompt = withHandoffContract("Corrija o fluxo da missão.", {
-      quirks: { mcpAutoload: false, nexusMcp: "agy" },
+      quirks: { mcpAutoload: false, nexusMcp: "none" },
     });
 
     expect(prompt).toContain(LEGACY_MARKER);
@@ -23,9 +23,10 @@ describe("worker handoff transport contract", () => {
     expect(prompt).not.toContain("chamando a tool nexus_handoff_submit");
   });
 
-  it("keeps physically usable MCP adapters on nexus_handoff_submit", () => {
+  it.each(["opencode", "agy"])("keeps physically usable MCP adapters on nexus_handoff_submit (%s)", (nexusMcp) => {
+    // F-697: o AGY entrega pelo MCP da ponte registrada no perfil nativo.
     const prompt = withHandoffContract("Corrija o fluxo da missão.", {
-      quirks: { mcpAutoload: false, nexusMcp: "opencode" },
+      quirks: { mcpAutoload: false, nexusMcp },
     });
 
     expect(prompt).toContain("chamando a tool nexus_handoff_submit");

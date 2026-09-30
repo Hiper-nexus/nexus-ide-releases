@@ -125,6 +125,7 @@ import {
 } from "./arms-runtime-path";
 import { prepareMinimaxMcpSession } from "./cli-mcp-session-minimax";
 import { prepareMuseMcpSession } from "./cli-mcp-session-muse";
+import { ensureAgyNexusMcpRegistration } from "./cli-mcp-session-agy";
 
 export { resolveArmsRuntimeDescriptorPath, resolveArmsRuntimeInstance, type ArmsRuntimeInstance };
 
@@ -1440,6 +1441,18 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
             console.warn("[mcp] MiniMax Code sem MCP do Nexus:", prepared.reason);
           }
           Object.assign(env, prepared.env);
+        } else if (flavor === "agy") {
+          // F-697: ponte stdio no perfil nativo do AGY (via `agy mcp add`);
+          // URL e bearer já estão no env base (canUseNexusMcp).
+          const prepared = ensureAgyNexusMcpRegistration();
+          if (!prepared.registered) {
+            if (gated || meta?.missionId) {
+              throw new Error(
+                `AGY sem MCP do Nexus: ${prepared.reason ?? "registro falhou"} — sem ele o worker não entrega o handoff`,
+              );
+            }
+            console.warn("[mcp] AGY sem MCP do Nexus:", prepared.reason);
+          }
         } else if (flavor === "muse") {
           // F-696: Muse Code 1.4+ lê mcpServers do settings.json; mesma ponte
           // stdio do MiniMax, sessão só por ENV (URL + bearer).

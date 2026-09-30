@@ -36,7 +36,7 @@ import { removeTreeSync } from '../util/remove-tree';
  */
 
 export type McpInjectionKind =
-  "codex" | "opencode" | "kimi" | "grok" | "mimo-code" | "minimax-code" | "muse";
+  "codex" | "opencode" | "kimi" | "grok" | "mimo-code" | "minimax-code" | "muse" | "agy";
 type NexusMcpAdapter = Pick<CliPtyAdapter, "quirks">;
 type NexusMcpAdapterLike = {
   quirks: { mcpAutoload?: boolean; nexusMcp?: unknown };
@@ -52,6 +52,7 @@ export function supportsMcpInjection(
     integration === "mimo-code" ||
     integration === "minimax-code" ||
     integration === "muse" ||
+    integration === "agy" ||
     integration === "kimi" ||
     integration === "grok"
     ? integration
@@ -60,10 +61,10 @@ export function supportsMcpInjection(
 
 /** Source of truth shared by spawn contracts and renderer metadata. */
 export function canUseNexusMcp(adapter: NexusMcpAdapterLike): boolean {
-  // AGY 1.1 resolves MCP config from the real native profile and ignores the
-  // private HOME/GEMINI_CLI_HOME projection. Advertising it as MCP-capable
-  // makes workers wait forever. Its physical completion route is PTY stream.
-  if (adapter.quirks.nexusMcp === "agy") return false;
+  // F-697: o AGY ignora a projeção de HOME privado, mas lê o perfil nativo —
+  // a ponte stdio registrada por `agy mcp add` (cli-mcp-session-agy) leva o
+  // MCP da sessão por ENV. Registro falho num worker de missão derruba o
+  // spawn (mcp-server): nunca um worker esperando um handoff impossível.
   if (hasNexusMcpCapability(adapter.quirks)) return true;
   // Lei física do binário (bug E, 2026-08-17): adapter de usuário que roda o
   // binário `claude` contra endpoint terceiro (deepseek/qwen/sakana…) podia

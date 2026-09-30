@@ -910,8 +910,15 @@ saber isto antes de mexer:
   o pane permanece vivo para retry. O braço de auto-close é consumido pelo mesmo
   helper usado no handoff de missão; o fechamento roda após a resposta MCP.
 - A rota automática desse spawn exige `canUseNexusMcp(adapter)`: sem missão não
-  há shim de nx-mail. Se a tabela/Jev escolher AGY, Aider, Devin ou Muse, o
+  há shim de nx-mail. Se a tabela/Jev escolher uma CLI sem MCP do Nexus, o
   resolver exclui essa CLI, tenta a próxima e expõe o descarte no recibo.
+- F-697: o AGY TEM o MCP do Nexus (`nexusMcp: agy`). Ele ignora a projeção de
+  HOME privado, mas lê o perfil nativo: `ensureAgyNexusMcpRegistration`
+  registra `nexus` → a ponte stdio do F-678 pela própria CLI (`agy mcp add`,
+  idempotente via `agy mcp list`, memorizado por processo); URL/bearer só por
+  ENV, que o AGY repassa ao stdio (provado com `agy -p` no 1.2.14). Registro
+  falho num worker de missão derruba o spawn — nunca um worker esperando um
+  handoff que não pode entregar. Fora do Nexus a ponte fica muda.
 - F-658: a missão leve da aba (0.76.110) leva os helpers seguintes do "+ Pane"
   à rota de MISSÃO. Ali o pane promovido (`promotedFromUserSession`) mantém a
   mesma regra: `excludeAdapterIds` com as CLIs sem MCP, numa chamada só (sem

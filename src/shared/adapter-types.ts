@@ -224,6 +224,7 @@ export function hasNexusMcpCapability(quirks: NexusMcpQuirks): boolean {
     quirks.nexusMcp === 'mimo-code' ||
     quirks.nexusMcp === 'minimax-code' ||
     quirks.nexusMcp === 'muse' ||
+    quirks.nexusMcp === 'agy' ||
     quirks.nexusMcp === 'kimi' ||
     quirks.nexusMcp === 'grok'
   );
