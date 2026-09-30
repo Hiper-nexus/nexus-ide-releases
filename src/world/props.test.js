@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { initialBarrels, hitBarrel, detonateBarrel, stepBarrels, stepProps, pushProp, blastImpulse } from './props.js';
+import { initialBarrels, hitBarrel, detonateBarrel, stepBarrels, stepProps, pushProp, blastImpulse, PROP_LIMIT } from './props.js';
 
 test('a fast rover detonates a barrel it touches, a slow or distant one does not', () => {
   const barrels=initialBarrels();
@@ -38,7 +38,7 @@ test('pushing a prop sends it away from the rover and friction brings it to rest
 
 test('props never leave the world even with a huge frame', () => {
   const [next]=stepProps([{id:'crate',x:5,z:5,vx:-900,vz:900}],100);
-  assert.ok(Math.abs(next.x)<=15&&Math.abs(next.z)<=15);
+  assert.ok(Math.abs(next.x)<=PROP_LIMIT&&Math.abs(next.z)<=PROP_LIMIT);
 });
 
 test('a blast shoves the rover harder the closer it detonates', () => {
