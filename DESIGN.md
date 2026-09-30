@@ -10,6 +10,7 @@ colors:
   muted: "#aaa2a8"
   faint: "#928b90"
   pink: "#ff4f8b"
+  whatsapp: "#25D366"
   green: "#7ee2a8"
   gold: "#e5c07b"
   line: "rgb(255 255 255 / .1)"
@@ -66,6 +67,11 @@ components:
     textColor: "{colors.bg}"
     rounded: "{rounded.control}"
     padding: "12px 24px"
+  button-whatsapp:
+    backgroundColor: "{colors.whatsapp}"
+    textColor: "{colors.bg}"
+    rounded: "{rounded.control}"
+    padding: "12px 24px"
   mission-case:
     backgroundColor: "transparent"
     textColor: "{colors.muted}"
@@ -101,6 +107,7 @@ Fonte de identidade: DESIGN.md do NexusIDE, baseline Linear, referência de inte
 
 ### Secondary
 - **Concluído (`green`)**: etapas entregues, checks e exemplos de diff positivo.
+- **WhatsApp (`whatsapp`)**: verde oficial `#25D366`, reservado às ações que abrem o grupo (CTA da navegação, convite da seção de prêmios e link do painel de estação quando o destino é o grupo). Ícone oficial em SVG monocromático herdando `currentColor`. Texto escuro sobre o verde mantém contraste AA; hover clareia para `#2fe374`.
 
 ### Neutral
 - **Fundo (`bg`), superfície (`surface`), barra (`bar`), elevação (`lift`)**: separar página, conteúdo, chrome e seleção.
@@ -135,11 +142,11 @@ Controles e panes têm curvas suaves (8px); cockpit, reel, painéis de estação
 
 ## Components
 
-- **Botões:** branca, outline escura e rosa compartilham padding de 12px/24px, altura mínima de 48px e peso 600. Hover desloca −3px, active escala .98; outline clareia a superfície. Foco recebe contorno rosa de 2px com offset de 5px. Navegação e demo têm variantes menores.
+- **Botões:** branca, outline escura e rosa compartilham padding de 12px/24px, altura mínima de 48px e peso 600. Hover desloca −3px, active escala .98; outline clareia a superfície. Foco recebe contorno rosa de 2px com offset de 5px (a variante WhatsApp usa contorno escuro). A variante WhatsApp só existe em ações que abrem o grupo; a CTA branca continua para todo o resto. Navegação e demo têm variantes menores.
 - **Navegação:** wordmark à esquerda, links de 14px e CTA à direita; links clareiam no hover. Mobile oculta links intermediários e preserva CTA e marca.
 - **Missão ilustrativa:** seleção de caso, etapas, panes e revisão; caso ativo usa fundo elevado e números rosa. O rótulo de demo permanece visível. Não executa agentes nem ativa microfone.
 - **Reel original:** vídeo inteiro com poster, controles nativos e controle explícito de áudio; a preferência por redução de movimento impede autoplay programático.
-- **Mundo e HUD:** rover com aceleração, fricção e colisão; câmera acompanha. Controles de pausa/reposição, fallback WebGL, teclado e toque. Enter em controles filhos preserva a ativação nativa. XP e progresso são locais e não alteram chances de sorteio nem comprovam entrada no grupo.
+- **Mundo e HUD:** rover dirigível com aceleração, fricção, esterço proporcional à velocidade (sem girar parado), freio de mão com drift (Espaço), boost com carga que drena e recarrega (Shift) e colisão que desliza ao longo dos obstáculos. Rodas giram e esterçam, a carroceria inclina em aceleração e curva, a câmera acompanha com folga e antecipação da velocidade. Barris explosivos detonam no impacto acima de 3 u/s (partículas em InstancedMesh com gravidade, onda de choque, clarão, tremor de câmera, empurrão no rover e som sintetizado via WebAudio respeitando o botão de som) e renascem após 6s; cones e caixotes empurráveis têm física própria simples. Missão de demolição (3 barris, +50 XP cada, limitado a 3 no total do progresso). HUD reage a cada evento: velocímetro, medidor de boost, texto flutuante de XP sobre o rover, barra e níveis recalculados apenas a partir de conquistas conhecidas (máx. 575 XP; 5 missões). Sinais luminosos animados (pulsos emissivos e luzes piscando no pórtico de largada e no estúdio). Controles de pausa/reposição, fallback WebGL, teclado e toque (botões de 48px incluem boost e freio de mão). Enter em controles filhos preserva a ativação nativa. Com `prefers-reduced-motion`, sem tremor, sem clarão e partículas reduzidas. XP e progresso são locais e não alteram chances de sorteio nem comprovam entrada no grupo.
 - **Ícones de plataforma:** SVGs autorados de monitor e janela nos downloads. Providers e mascotes preservam assets Nexus de origem; mídia e fontes mantêm sua procedência.
 
 Movimento do DOM usa transform/opacity, com o easing registrado no sidecar. Redução de movimento desliga transições/animações do DOM e scroll suave; dirigir o mundo é uma ação explícita do visitante.
