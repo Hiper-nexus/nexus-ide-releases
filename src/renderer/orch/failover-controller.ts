@@ -36,8 +36,11 @@ export function useFailoverController(): void {
         const copy = blockedFailoverToastCopy(event);
         // Erro do provider (5xx/capacidade): nada a fazer em Providers — é
         // aviso, não erro, e sem botão que manda o operador procurar culpa
-        // na conta.
+        // na conta. 'detected' não vira toast: a CLI quase sempre se cura
+        // sozinha em segundos e alarmar era ruído (F-222). Toast só nos
+        // desfechos — parou, foi empurrada ou segue quebrada.
         if (event.kind === 'transient') {
+          if (event.transientPhase === 'detected') return;
           push(event.transientPhase === 'nudged' ? 'info' : 'warn', copy.title, {
             detail: copy.detail, dedupeKey: `failover:${event.paneId}`,
           });

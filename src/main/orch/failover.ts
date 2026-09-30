@@ -1165,6 +1165,16 @@ function checkTransientRecovery(
     logSuppressedFailover(pane, current, hit, 'transient-cli-still-busy', 'transient-watch', {
       attempt,
     });
+    emitNoSwitch(
+      authority,
+      pane,
+      current,
+      hit,
+      `${hit.reason} — a CLI segue tentando sozinha há ~${Math.round(
+        (MAX_TRANSIENT_CHECKS * TRANSIENT_RECHECK_MS) / 60_000,
+      )} min sem resposta`,
+      'stalled',
+    );
     endTransientEpisode(watch);
     return;
   }

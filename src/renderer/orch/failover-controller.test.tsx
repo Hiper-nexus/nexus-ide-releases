@@ -31,4 +31,30 @@ describe('failover notifications', () => {
       for (const toast of useToastStore.getState().toasts) useToastStore.getState().dismiss(toast.id);
     }
   });
+
+  it('erro do provider na detecção não vira toast; os desfechos viram', async () => {
+    let notify!: (event: FailoverEvent) => void;
+    Object.defineProperty(window, 'nexus', { configurable: true, value: { accounts: {
+      onFailover: (callback: typeof notify) => { notify = callback; return () => {}; },
+    } } });
+    const container = document.createElement('div'); document.body.append(container);
+    const root = createRoot(container);
+    const base: FailoverEvent = { paneId: 'pane-t', kind: 'transient', reason: 'HTTP 503', fromAccountLabel: 'conta adm', toAccountLabel: '', switched: false };
+    try {
+      await act(async () => root.render(<Harness />));
+      // A CLI tenta sozinha: a detecção não pode alarmar o operador (F-222).
+      notify({ ...base, transientPhase: 'detected' });
+      expect(useToastStore.getState().toasts.filter((toast) => toast.dedupeKey === 'failover:pane-t')).toHaveLength(0);
+      // Desfechos seguem visíveis: parada pede ação, stall avisa que segue ruim.
+      notify({ ...base, transientPhase: 'stalled' });
+      notify({ ...base, transientPhase: 'stopped' });
+      notify({ ...base, transientPhase: 'nudged' });
+      const toasts = useToastStore.getState().toasts.filter((toast) => toast.dedupeKey === 'failover:pane-t');
+      expect(toasts).toHaveLength(1);
+      expect(toasts[0].title).toBe('Missão continuou na mesma conta');
+    } finally {
+      await act(async () => root.unmount()); container.remove();
+      for (const toast of useToastStore.getState().toasts) useToastStore.getState().dismiss(toast.id);
+    }
+  });
 });

@@ -124,12 +124,14 @@ export interface FailoverEvent {
   probe?: boolean;
   /**
    * kind='transient' (erro do provider — nunca troca de conta): em que ponto
-   * do episódio o evento foi emitido. 'detected' = aviso inicial; 'stopped' =
+   * do episódio o evento foi emitido. 'detected' = aviso inicial (a UI não
+   * toast'a — a CLI costuma se recuperar sozinha em segundos); 'stopped' =
    * a CLI parou no erro num pane do operador (ele decide); 'nudged' = pane de
-   * missão parado recebeu um "continue" na MESMA sessão. A UI escolhe a cópia
-   * por este campo, nunca pelo texto de `reason`.
+   * missão parado recebeu um "continue" na MESMA sessão; 'stalled' = a CLI
+   * ficou ~3 min tentando sem resposta e a vigília encerrou. A UI escolhe a
+   * cópia por este campo, nunca pelo texto de `reason`.
    */
-  transientPhase?: 'detected' | 'stopped' | 'nudged';
+  transientPhase?: 'detected' | 'stopped' | 'nudged' | 'stalled';
 }
 
 /** Main → renderer: user activated an account; panes may need restart. */

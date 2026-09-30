@@ -75,6 +75,14 @@ describe('blockedFailoverToastCopy', () => {
       transientPhase: 'detected',
     });
     expect(detected.title).toBe('Provider instável — conta mantida');
+    const stalled = blockedFailoverToastCopy({
+      ...event('transient', 'status:503'),
+      transientPhase: 'stalled',
+      fromAccountLabel: 'conta adm',
+    });
+    expect(stalled.title).toBe('Provider continua instável');
+    expect(stalled.detail).toMatch(/não limite da conta "conta adm"/);
+    expect(stalled.detail).not.toMatch(/Providers/);
   });
 });
 

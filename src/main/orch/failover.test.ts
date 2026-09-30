@@ -1531,6 +1531,28 @@ ${E503}`);
     expect(toolMocks.injectPrompt).toHaveBeenCalledOnce();
   });
 
+  it('CLI ocupada ~3 min sem resposta: emite "stalled" uma vez e encerra a vigília', async () => {
+    const owner = await setupTransient();
+    ptyMocks.dataTaps[0]('session-503', E503);
+    await vi.advanceTimersByTimeAsync(21_000); // 1ª conferência: ainda ocupada
+    for (let i = 0; i < 5; i += 1) await vi.advanceTimersByTimeAsync(31_000); // 2ª…6ª
+    await settleFailover();
+
+    const events = failoverEvents(owner);
+    expect(events).toHaveLength(2);
+    expect(events[1]).toMatchObject({
+      kind: 'transient',
+      switched: false,
+      transientPhase: 'stalled',
+    });
+    expect(String(events[1].reason)).toMatch(/sem resposta/);
+    expect(toolMocks.injectPrompt).not.toHaveBeenCalled();
+    // Episódio encerrado: um erro novo abre episódio novo.
+    ptyMocks.dataTaps[0]('session-503', E503);
+    await settleFailover();
+    expect(failoverEvents(owner)).toHaveLength(3);
+  });
+
   it('limite de verdade esperando a conta: o 503 não abre episódio nem pede continue', async () => {
     const owner = await setupTransient();
     accountMocks.next = null; // sem irmã: o limite real agenda a espera

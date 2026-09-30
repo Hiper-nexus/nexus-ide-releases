@@ -52,6 +52,14 @@ export function blockedFailoverToastCopy(
           detail: `${event.reason}.`,
         };
       }
+      if (event.transientPhase === 'stalled') {
+        return {
+          title: 'Provider continua instável',
+          detail:
+            `${event.reason}. É erro do provider, não limite da conta ` +
+            `"${event.fromAccountLabel}" — a conta fica como está.`,
+        };
+      }
       return {
         title: 'Provider instável — conta mantida',
         detail:
