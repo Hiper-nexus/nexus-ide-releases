@@ -31,9 +31,11 @@ export function groundHeight(x,z,ramps=[]) {
   return 0;
 }
 
-export function drive(rawState,input,delta,obstacles,terrain=NO_TERRAIN) {
+/** `power` (from fuel.js) scales acceleration and top speed; steering and finishing never change. */
+export function drive(rawState,input,delta,obstacles,terrain=NO_TERRAIN,power=null) {
   const state=seeded(rawState);
   const dt=Math.max(0,Math.min(delta,.1));
+  const accelScale=power?.accelScale??1,maxScale=power?.maxScale??1;
   const groundBefore=groundHeight(state.x,state.z,terrain.ramps);
   const airborne=state.y>groundBefore+.02;
   const maxStep=STEER_SPEED*dt;
@@ -45,16 +47,16 @@ export function drive(rawState,input,delta,obstacles,terrain=NO_TERRAIN) {
   let lateral=state.vx*rx+state.vz*rz;
   const before=Math.abs(forward);
   if(!airborne){
-    if(input.throttle)forward+=input.throttle*(input.throttle*forward<0?BRAKE:ACCELERATION)*dt;
+    if(input.throttle)forward+=input.throttle*(input.throttle*forward<0?BRAKE:ACCELERATION*accelScale)*dt;
     else forward-=Math.min(Math.abs(forward),DRAG*dt)*Math.sign(forward);
-    if(useBoost&&input.throttle>=0)forward+=BOOST_ACCEL*dt;
+    if(useBoost&&input.throttle>=0)forward+=BOOST_ACCEL*accelScale*dt;
     if(input.handbrake)forward*=Math.exp(-HANDBRAKE_DRAG*dt);
   }
   // A boost pad gives one burst per pass; overspeed then bleeds off instead of snapping back.
   const onPad=terrain.boostPads.some(pad=>covers(pad,state.x,state.z));
   const burst=onPad&&!state.onPad&&forward>0;
   if(burst)forward=Math.min(PAD_MAX,forward+PAD_BURST);
-  const maximum=useBoost?BOOST_SPEED:MAX_SPEED;
+  const maximum=(useBoost?BOOST_SPEED:MAX_SPEED)*maxScale;
   // Above the cap (pad burst, boost that just ended, a blast) the throttle cannot add speed: it only bleeds off.
   if(forward>maximum)forward=Math.max(maximum,Math.min(forward,before+(burst?PAD_BURST:0))-OVERSPEED_DECAY*dt);
   else forward=Math.max(-MAX_REVERSE,forward);
