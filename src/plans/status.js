@@ -49,7 +49,7 @@ export function planCopy({ state, price = null, trial = null }) {
     status: STATE_MESSAGES[state] || STATE_MESSAGES.erro,
     price: price || 'Preço indisponível por enquanto.',
     trialDays: trial
-      ? `${trial.days} ${trial.days === 1 ? 'dia' : 'dias'} de teste, sem cartão.`
+      ? `${trial.days} ${trial.days === 1 ? 'dia' : 'dias'} para experimentar o NexusIDE.`
       : 'Dias do teste indisponíveis por enquanto.',
     trialAgents: trial
       ? `Até ${trial.maxAgents} ${trial.maxAgents === 1 ? 'agente simultâneo' : 'agentes simultâneos'}.`

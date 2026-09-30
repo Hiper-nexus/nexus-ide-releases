@@ -1,7 +1,8 @@
 import '@fontsource-variable/geist';
 import './account.css';
 
-export const API_ORIGIN = 'https://api.nexuside.app';
+// VITE_API_ORIGIN só existe em desenvolvimento local, para apontar a página a uma API rodando na máquina.
+export const API_ORIGIN = import.meta.env?.VITE_API_ORIGIN || 'https://api.nexuside.app';
 export const byId = id => document.getElementById(id);
 export const ACCESS_LABELS = { trial: 'Período de teste', pro: 'Nexus Pro', suspended: 'Acesso suspenso', inactive: 'Sem acesso ativo', expired: 'Teste encerrado' };
 const SUBSCRIPTION_LABELS = { active: 'Ativa', trialing: 'Em teste', past_due: 'Pagamento pendente', canceled: 'Cancelada', unpaid: 'Não paga', incomplete: 'Pagamento incompleto', incomplete_expired: 'Pagamento expirado', none: 'Não contratada' };
@@ -20,10 +21,16 @@ export async function api(path, { method = 'GET', body, csrfToken } = {}) {
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(12000) });
   } catch { throw new Error('Não foi possível conectar ao serviço. Tente novamente.'); }
   if (!response.ok) {
-    const error = new Error(response.status === 401 ? 'Sua sessão expirou. Entre novamente.'
+    // Conflitos e indisponibilidades trazem uma explicação do servidor que ajuda a pessoa a decidir o próximo passo.
+    let detail = null;
+    if ([400, 409, 502, 503].includes(response.status)) {
+      try { const failure = await response.json(); if (typeof failure?.error === 'string' && failure.error.length <= 200) detail = failure.error; }
+      catch { /* Sem corpo legível, vale a mensagem padrão abaixo. */ }
+    }
+    const error = new Error(detail ?? (response.status === 401 ? 'Sua sessão expirou. Entre novamente.'
       : response.status === 403 ? 'Sua conta não tem permissão para esta ação.'
       : response.status === 429 ? 'Muitas tentativas. Aguarde um momento antes de continuar.'
-      : 'Não foi possível concluir a solicitação. Tente novamente.');
+      : 'Não foi possível concluir a solicitação. Tente novamente.'));
     error.status = response.status;
     throw error;
   }
@@ -78,14 +85,17 @@ function renderAvailability() {
   for (const provider of ['google', 'github']) byId(`login-${provider}`).hidden = availability?.auth?.[provider] !== true;
   byId('login-status').textContent = availability?.auth?.google || availability?.auth?.github
     ? 'O login usa sua conta do provedor escolhido.' : 'Login temporariamente indisponível. Tente novamente mais tarde.';
-  byId('subscribe').disabled = isBusy || !billingReady || !session.authenticated || session.entitlement?.access === 'pro';
+  byId('subscribe').disabled = isBusy || !billingReady || !session.authenticated || ['pro', 'suspended'].includes(session.entitlement?.access);
   byId('logout').disabled = isBusy;
   byId('refresh-account').disabled = isBusy;
-  byId('billing-portal').hidden = !session.authenticated || !['pro'].includes(session.entitlement?.plan);
+  // O portal depende de existir um cliente no Stripe, não do acesso ao app: uma conta suspensa ainda precisa gerenciar a cobrança.
+  byId('billing-portal').hidden = !session.authenticated || session.billing?.portal !== true;
   byId('billing-portal').disabled = isBusy || !billingReady;
   byId('billing-status').textContent = !billingReady ? 'A contratação está temporariamente indisponível. Nenhuma cobrança será iniciada.'
     : !session.authenticated ? 'Entre na sua conta para contratar.' : session.entitlement.access === 'pro'
-      ? 'Seu acesso Pro está confirmado. Use o portal para gerenciar a cobrança.' : 'Ao continuar, você será levado ao checkout seguro do Stripe.';
+      ? (session.billing?.portal === true ? 'Seu acesso Pro está confirmado. Use o portal para gerenciar a cobrança.' : 'Seu acesso Pro está confirmado.')
+      : session.entitlement.access === 'suspended' ? 'Seu acesso está suspenso. Fale com o suporte. O portal de cobrança continua disponível se você tem assinatura.'
+        : 'Ao continuar, você será levado ao checkout seguro do Stripe.';
   if (billing && Number.isInteger(billing.amount) && billing.currency === 'brl' && billing.interval === 'month') {
     byId('pro-price').textContent = `${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(billing.amount / 100)} / mês`;
   } else byId('pro-price').textContent = 'Preço temporariamente indisponível';

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { makeWorld, makeRover, makeBarrels, makeProps, ANIMATED, COLORS } from './objects.js';
 import { drive, initialVehicle } from './driving.js';
-import { collectNearby } from './movement.js';
+import { collectNearby, followStep } from './movement.js';
 import { hitBarrel, detonateBarrel, stepBarrels, stepProps, pushProp, blastImpulse, BLAST_RADIUS } from './props.js';
 import { XP_AWARD } from './quests.js';
 
@@ -123,7 +123,13 @@ class CafeWorld {
     ANIMATED.blink.forEach((material,index)=>material.emissiveIntensity=(seconds*(.7+index*.35)%1)<.62?1.15:.06);
     let effects=false;
     if(!this.paused){
-      if(this.playing)this.step(delta);
+      if(this.playing){
+        this.step(delta);
+        // The focus chases a point just ahead of the rover; camera and target move together to keep the isometric angle.
+        const focus=followStep(this.controls.target,{x:this.vehicle.x,z:this.vehicle.z-1},delta);
+        this.follow.set(focus.x-this.controls.target.x,0,focus.z-this.controls.target.z);
+        this.controls.target.add(this.follow);this.camera.position.add(this.follow);
+      }
       for(const coffee of this.world.coffees){coffee.mesh.position.y=.2+Math.sin(seconds*1.8+coffee.id)*.12;coffee.mesh.rotation.y=seconds*.35+coffee.id;}
       effects=this.particles.update(delta)||effects;
       effects=this.shockwaves.update(delta)||effects;

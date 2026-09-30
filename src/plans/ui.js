@@ -1,6 +1,6 @@
 import { PLAN_STATE, describeStatus, planCopy } from './status.js';
 
-export const STATUS_URL = 'https://api.nexuside.app/v1/public/status';
+export const STATUS_URL = (import.meta.env?.VITE_API_ORIGIN || 'https://api.nexuside.app') + '/v1/public/status';
 const COPY_TARGETS = {
   status: 'plans-status',
   price: 'plans-price',
@@ -22,7 +22,7 @@ export async function initializePlans(fetchImpl = globalThis.fetch, timeoutMs = 
   let view;
   try {
     const response = await fetchImpl(STATUS_URL, {
-      credentials: 'include',
+      credentials: 'omit',
       headers: { Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs),
     });

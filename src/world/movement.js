@@ -18,3 +18,11 @@ export function collectNearby(position, items, collected) {
     .filter(item => !collected.has(item.id) && Math.hypot(position.x-item.x,position.z-item.z)<COFFEE_RADIUS)
     .map(item => item.id);
 }
+
+const FOLLOW_RATE = 3.2;
+/** Moves the camera focus toward the rover. The exponential step keeps the
+ * same lag at any frame rate, so a slow device does not lose the rover. */
+export function followStep(current, goal, delta, rate = FOLLOW_RATE) {
+  const ease = 1 - Math.exp(-Math.max(0, delta) * rate);
+  return { x: current.x + (goal.x - current.x) * ease, z: current.z + (goal.z - current.z) * ease };
+}
