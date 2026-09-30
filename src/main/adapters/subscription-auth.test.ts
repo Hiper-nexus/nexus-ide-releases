@@ -18,6 +18,7 @@ import {
   openclaudeCredentialsFileIsUsable,
   resetAgyKeychainCache,
   hasSubscriptionAuthForStatus,
+  kimiCredentialFilesIn,
   kimiCredentialsBlobIsUsable,
   refreshAgySubscriptionAuthCache,
   refreshClaudeSubscriptionAuthCache,
@@ -475,6 +476,44 @@ describe('agyKeychainCredentialIsUsable', () => {
       throw new Error('SecKeychainSearchCopyNext: item not found');
     }) as unknown as typeof import('node:child_process').execFileSync;
     expect(agyKeychainCredentialIsUsable(exec)).toBe(false);
+  });
+});
+
+describe('F-694: Kimi 2.x guarda o OAuth com chave por ambiente', () => {
+  it('conta credentials/kimi-code-env-<hash>.json como sessão viva', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-kimi-env-'));
+    const saved = process.env.KIMI_CODE_HOME;
+    delete process.env.KIMI_CODE_HOME;
+    try {
+      const credentials = path.join(home, '.kimi-code', 'credentials');
+      fs.mkdirSync(credentials, { recursive: true });
+      expect(detectSubscriptionAuth('kimi', home)).toBe(false);
+      // `kimi provider list --json` → oauth.key "oauth/kimi-code-env-0e4f99c69cc27850".
+      fs.writeFileSync(
+        path.join(credentials, 'kimi-code-env-0e4f99c69cc27850.json'),
+        JSON.stringify({ access_token: 'at', refresh_token: 'rt', expires_at: 1_700_000_000 }),
+      );
+      expect(detectSubscriptionAuth('kimi', home)).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env.KIMI_CODE_HOME;
+      else process.env.KIMI_CODE_HOME = saved;
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('não confunde arquivos de outras CLIs com a credencial do Kimi', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-kimi-files-'));
+    try {
+      for (const name of ['kimi-code.json', 'kimi-code-env-abc.json', 'kimi-code.json.bak', 'other.json']) {
+        fs.writeFileSync(path.join(dir, name), '{}');
+      }
+      expect(kimiCredentialFilesIn(dir).map((file) => path.basename(file))).toEqual([
+        'kimi-code.json',
+        'kimi-code-env-abc.json',
+      ]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
