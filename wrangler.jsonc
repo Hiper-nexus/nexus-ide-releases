@@ -1,0 +1,12 @@
+{
+  "name":"nexus-cloud-api",
+  "account_id":"53446ce31f241717e814d3766cb43305",
+  "main":"src/index.ts",
+  "compatibility_date":"2026-09-30",
+  "compatibility_flags":["nodejs_compat"],
+  "workers_dev":true,
+  "d1_databases":[{"binding":"DB","database_name":"nexus-cloud-staging","database_id":"27b16550-81d6-43cb-92dd-d2ef0373e36f","migrations_dir":"migrations"}],
+  "vars":{"PUBLIC_BASE_URL":"https://nexuside.app","PUBLIC_SITE_URL":"https://nexuside.app","APP_DEEP_LINK_BASE":"nexus://auth","APP_MODE":"staging","MIGRATION_READY":"false","STRIPE_PRICE_PRO":"","GITHUB_OAUTH_ID":"","GOOGLE_OAUTH_ID":"","STRIPE_PRICE_TEAM":""},
+  "observability":{"enabled":true},
+  "ratelimits":[{"name":"AUTH_RATE_LIMITER","namespace_id":"2001","simple":{"limit":20,"period":60}},{"name":"API_RATE_LIMITER","namespace_id":"2002","simple":{"limit":120,"period":60}}]
+}

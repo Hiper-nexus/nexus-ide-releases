@@ -1,0 +1,15 @@
+import type { MiddlewareHandler } from 'hono';
+import { HTTPException } from 'hono/http-exception';
+import { parseBearer, hashToken, safeEqual } from './crypto.js';
+import { sessionFor } from './sessions.js';
+import { accountAccess } from './access.js';
+import { isAuthorizedAdmin } from './admin-identity.js';
+import { isAllowedWebOrigin } from './http.js';
+import { getCookie } from 'hono/cookie';
+import type { AppEnv } from './context.js';
+import type { AccountRow } from './db/schema.js';
+export const requireNativeAuth:MiddlewareHandler<AppEnv>=async(c,next)=>{const token=parseBearer(c.req.header('Authorization'));const session=token?await sessionFor(c.env.DB,token,'desktop'):null;if(!session)throw new HTTPException(401,{message:'Entre na sua conta para continuar.'});c.set('session',session);await next();};
+export const requireWebAuth:MiddlewareHandler<AppEnv>=async(c,next)=>{const token=getCookie(c,'__Host-nexus_session');const session=token?await sessionFor(c.env.DB,token,'web'):null;if(!session)throw new HTTPException(401,{message:'Entre na sua conta para continuar.'});c.set('session',session);await next();};
+export const requireCsrf:MiddlewareHandler<AppEnv>=async(c,next)=>{const config=c.get('config');if(!isAllowedWebOrigin(c.req.header('Origin'),config.PUBLIC_SITE_URL))throw new HTTPException(403,{message:'Origem não autorizada.'});const token=c.req.header('X-CSRF-Token');const expected=c.get('session').csrf_hash;if(!token||!expected||!safeEqual(await hashToken(token),expected))throw new HTTPException(403,{message:'Recarregue a página e tente novamente.'});await next();};
+export const requireAdmin:MiddlewareHandler<AppEnv>=async(c,next)=>{if(!await isAuthorizedAdmin(c.env.DB,c.get('session').account_id,c.get('config')))throw new HTTPException(403,{message:'Acesso administrativo não autorizado.'});await next();};
+export const requirePro:MiddlewareHandler<AppEnv>=async(c,next)=>{const access=await accountAccess(c.env.DB,c.get('session').account_id,c.get('config'));if(access.access==='suspended')throw new HTTPException(403,{message:'Conta suspensa.'});if(!access.cloudSync)throw new HTTPException(403,{message:'Este recurso precisa de uma assinatura ativa.'});await next();};
