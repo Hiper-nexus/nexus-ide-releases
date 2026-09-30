@@ -12,7 +12,16 @@ import { isMaskedSecretValue, type McpHubConfig } from './mcp-hub-core';
  */
 
 export const MCP_HUB_VAULT_PREFIX = '__nexus_vault__:';
+export const MCP_HUB_VAULT_KEY_PREFIX = 'mcphub:';
 const SECRET_FIELD = /(token|secret|password|api[_-]?key|authorization|credential)/i;
+
+/**
+ * Reserved vault names owned by app auth/session (license seal, session,
+ * refresh). MCP Hub must never resolve these — a planted `__nexus_vault__:auth:*`
+ * ref in `.nexus/mcp-hub.json` is a cross-store read. Local predicate on
+ * purpose: the orchestrator unifies reserved names later.
+ */
+const RESERVED_VAULT_KEY_PREFIX = 'auth:';
 
 export type McpHubSecretGet = (key: string) => string | null;
 export type McpHubSecretPut = (
@@ -23,6 +32,10 @@ export type McpHubSecretAvailable = () => boolean;
 
 export function isSecretFieldName(name: string): boolean {
   return SECRET_FIELD.test(name);
+}
+
+export function isReservedVaultKey(key: string): boolean {
+  return key.startsWith(RESERVED_VAULT_KEY_PREFIX);
 }
 
 export function isVaultRef(value: string): boolean {
@@ -55,6 +68,29 @@ export function mcpHubSecretKey(
   return `mcphub:${scope}:${serverId}:${kind}:${name}`;
 }
 
+/**
+ * Fail-closed gate before any vault read. A ref is only legitimate when it is
+ * exactly the key this workspace/server/field would have produced at seal time
+ * and is not a reserved `auth:*` name. Stable error: never log the ref or the
+ * secret. Exported so seal and hydrate share one rule.
+ */
+export function assertMcpHubVaultKey(
+  key: string,
+  scope: string,
+  serverId: string,
+  kind: 'env' | 'headers',
+  name: string,
+  label: string,
+): void {
+  if (
+    isReservedVaultKey(key) ||
+    !key.startsWith(MCP_HUB_VAULT_KEY_PREFIX) ||
+    key !== mcpHubSecretKey(scope, serverId, kind, name)
+  ) {
+    throw new Error(`mcp hub vault ref rejected for ${label}.${name}`);
+  }
+}
+
 function sealRecord(
   record: Record<string, string> | undefined,
   scope: string,
@@ -65,7 +101,20 @@ function sealRecord(
   if (!record) return record;
   const next: Record<string, string> = {};
   for (const [name, value] of Object.entries(record)) {
-    if (!isSecretFieldName(name) || isVaultRef(value) || value.length === 0) {
+    if (isVaultRef(value)) {
+      // An existing ref must already be the key this field would own.
+      // Rejects planted `auth:*` / foreign-namespace refs before they stick.
+      const key = vaultKeyFromRef(value);
+      if (key === null) {
+        throw new Error(
+          `mcp hub vault ref rejected for ${serverId}.${kind}.${name}`,
+        );
+      }
+      assertMcpHubVaultKey(key, scope, serverId, kind, name, `${serverId}.${kind}`);
+      next[name] = value;
+      continue;
+    }
+    if (!isSecretFieldName(name) || value.length === 0) {
       next[name] = value;
       continue;
     }
@@ -91,6 +140,9 @@ function sealRecord(
 function hydrateRecord(
   record: Record<string, string> | undefined,
   get: McpHubSecretGet,
+  scope: string,
+  serverId: string,
+  kind: 'env' | 'headers',
   label: string,
 ): Record<string, string> | undefined {
   if (!record) return record;
@@ -98,6 +150,9 @@ function hydrateRecord(
     Object.entries(record).map(([name, value]) => {
       const key = vaultKeyFromRef(value);
       if (!key) return [name, value];
+      // Validate BEFORE the vault read — a planted auth:* ref must never
+      // reach getSecret (no decrypt, no side channel via miss timing).
+      assertMcpHubVaultKey(key, scope, serverId, kind, name, label);
       const plain = get(key);
       if (plain === null || plain === '') {
         throw new Error(
@@ -135,18 +190,34 @@ export function sealMcpHubSecrets(
   };
 }
 
-/** Resolve vault refs back to plaintext for runtime use. */
+/**
+ * Resolve vault refs back to plaintext for runtime use (server processes).
+ * Every ref is checked against the expected key for its workspace/server/field
+ * before the vault is consulted. Renderer paths must not use this result
+ * unmasked — see maskServerForUi (value-origin mask).
+ */
 export function hydrateMcpHubSecrets(
   config: McpHubConfig,
   get: McpHubSecretGet,
+  scope: string,
 ): McpHubConfig {
   return {
     ...config,
     servers: config.servers.map((server) => {
-      const env = hydrateRecord(server.env, get, `${server.id}.env`);
+      const env = hydrateRecord(
+        server.env,
+        get,
+        scope,
+        server.id,
+        'env',
+        `${server.id}.env`,
+      );
       const headers = hydrateRecord(
         server.headers,
         get,
+        scope,
+        server.id,
+        'headers',
         `${server.id}.headers`,
       );
       return {
@@ -214,6 +285,7 @@ export function sealMcpHubSecretsInMemory(
 export function hydrateMcpHubSecretsInMemory(
   config: McpHubConfig,
   store: Map<string, string>,
+  scope: string,
 ): McpHubConfig {
-  return hydrateMcpHubSecrets(config, (key) => store.get(key) ?? null);
+  return hydrateMcpHubSecrets(config, (key) => store.get(key) ?? null, scope);
 }

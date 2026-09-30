@@ -43,6 +43,7 @@ import {
   mcpHubConfigSchema,
   restoreMaskedSecrets,
   toolMatrix,
+  vaultRefFieldKeys,
   writeConfigWithBackup,
   rollbackFromBackup,
   healthForServer,
@@ -224,19 +225,29 @@ function requireFlag(id: string, label: string): void {
 /**
  * Load hub config and migrate plaintext secrets into the OS vault when
  * encryption is available. Disk is rewritten sealed; callers receive a
- * hydrated (plaintext) config for runtime use. UI paths must re-mask.
+ * hydrated (plaintext) config for runtime use. `refFields` records which
+ * env/header entries were vault refs BEFORE hydration so UI paths can mask
+ * by value-origin (not only by field name).
  */
-function loadMcpHub(root: string): McpHubConfig {
+function loadMcpHub(root: string): {
+  config: McpHubConfig;
+  refFields: Map<string, ReadonlySet<string>>;
+} {
+  const empty = mcpHubConfigSchema.parse({ schemaVersion: 1, servers: [] });
   const file = mcpHubPath(root);
   if (!fs.existsSync(file)) {
-    return mcpHubConfigSchema.parse({ schemaVersion: 1, servers: [] });
+    return { config: empty, refFields: new Map() };
   }
   try {
     if (!fs.lstatSync(file).isFile()) {
-      return mcpHubConfigSchema.parse({ schemaVersion: 1, servers: [] });
+      return { config: empty, refFields: new Map() };
     }
     let config = mcpHubConfigSchema.parse(
       JSON.parse(fs.readFileSync(file, 'utf8') as string),
+    );
+    // Capture ref origin now — hydration rewrites those values to plaintext.
+    const refFields = new Map(
+      config.servers.map((server) => [server.id, vaultRefFieldKeys(server)]),
     );
     const scope = mcpHubVaultScope(root);
     if (
@@ -260,6 +271,9 @@ function loadMcpHub(root: string): McpHubConfig {
           );
         }
         config = sealed;
+        for (const server of sealed.servers) {
+          refFields.set(server.id, vaultRefFieldKeys(server));
+        }
       } catch (error) {
         // e.g. masked placeholder on disk, vault put failed — keep raw config
         // rather than empty-out the hub for the operator.
@@ -271,22 +285,38 @@ function loadMcpHub(root: string): McpHubConfig {
     }
     if (isSecureStorageAvailable()) {
       try {
-        return hydrateMcpHubSecrets(config, getSecret);
+        return {
+          config: hydrateMcpHubSecrets(config, getSecret, scope),
+          refFields,
+        };
       } catch (error) {
-        // Vault miss / locked keychain: keep sealed shape so UI still loads
-        // structure without inventing secrets.
+        // Vault miss / locked keychain / rejected ref: keep sealed shape so UI
+        // still loads structure without inventing secrets.
         console.warn(
           '[mcp-hub] hydrate skipped:',
           error instanceof Error ? error.message : error,
         );
-        return config;
+        return { config, refFields };
       }
     }
-    return config;
+    return { config, refFields };
   } catch {
     // Fail-closed: corrupt config does not take down IPC.
-    return mcpHubConfigSchema.parse({ schemaVersion: 1, servers: [] });
+    return { config: empty, refFields: new Map() };
   }
+}
+
+/** UI projection: mask secret names AND every vault-resolved value. */
+export function maskMcpHubForUi(
+  config: McpHubConfig,
+  refFields: Map<string, ReadonlySet<string>>,
+): McpHubConfig {
+  return {
+    ...config,
+    servers: config.servers.map((server) =>
+      maskServerForUi(server, refFields.get(server.id)),
+    ),
+  };
 }
 
 function sealMcpHubForDisk(root: string, config: McpHubConfig): McpHubConfig {
@@ -534,13 +564,10 @@ export function registerProductWaveIpc(): void {
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.mcpHubLoad, (event) => {
     requireFlag(FEATURE_FLAG_IDS.mcpHub, 'feature.mcp.hub');
     const root = workspaceRoot(event.sender);
-    const config = loadMcpHub(root);
+    const { config, refFields } = loadMcpHub(root);
     return {
       path: mcpHubPath(root),
-      config: {
-        ...config,
-        servers: config.servers.map(maskServerForUi),
-      },
+      config: maskMcpHubForUi(config, refFields),
       matrix: toolMatrix(config),
     };
   });
@@ -559,7 +586,7 @@ export function registerProductWaveIpc(): void {
     // (hydrated when vault available), then seal to vault before disk write.
     const config = sealMcpHubForDisk(
       root,
-      restoreMaskedSecrets(input.config, loadMcpHub(root)),
+      restoreMaskedSecrets(input.config, loadMcpHub(root).config),
     );
     return writeConfigWithBackup(mcpHubPath(root), config, {
       dryRun: input.dryRun,
@@ -572,13 +599,13 @@ export function registerProductWaveIpc(): void {
     const input = z
       .object({ observed: mcpHubConfigSchema })
       .parse(raw);
-    return detectDrift(loadMcpHub(root), input.observed);
+    return detectDrift(loadMcpHub(root).config, input.observed);
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.mcpHubHealth, (event) => {
     requireFlag(FEATURE_FLAG_IDS.mcpHub, 'feature.mcp.hub');
     const root = workspaceRoot(event.sender);
-    return loadMcpHub(root).servers.map(healthForServer);
+    return loadMcpHub(root).config.servers.map(healthForServer);
   });
 
   /**
@@ -594,14 +621,11 @@ export function registerProductWaveIpc(): void {
     const hubPath = mcpHubPath(root);
     const resolvedBak = assertWorkspaceMcpHubBackup(root, backupPath);
     rollbackFromBackup(hubPath, resolvedBak);
-    const config = loadMcpHub(root);
+    const { config, refFields } = loadMcpHub(root);
     return {
       ok: true as const,
       path: hubPath,
-      config: {
-        ...config,
-        servers: config.servers.map(maskServerForUi),
-      },
+      config: maskMcpHubForUi(config, refFields),
     };
   });
 
@@ -614,7 +638,7 @@ export function registerProductWaveIpc(): void {
     let hubServerIds: string[] = [];
     try {
       root = workspaceRoot(event.sender);
-      hubServerIds = loadMcpHub(root).servers.map((server) => server.id);
+      hubServerIds = loadMcpHub(root).config.servers.map((server) => server.id);
     } catch {
       // No workspace bound — still probe Cursor/Claude/Codex/….
     }
@@ -624,7 +648,7 @@ export function registerProductWaveIpc(): void {
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.mcpHubSyncPlan, (event) => {
     requireFlag(FEATURE_FLAG_IDS.mcpHub, 'feature.mcp.hub');
     const root = workspaceRoot(event.sender);
-    return planMcpSync({ hub: loadMcpHub(root) });
+    return planMcpSync({ hub: loadMcpHub(root).config });
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.mcpHubSyncApply, (event, raw) => {
@@ -641,7 +665,7 @@ export function registerProductWaveIpc(): void {
       })
       .parse(raw ?? {});
     return applyMcpSync({
-      hub: loadMcpHub(root),
+      hub: loadMcpHub(root).config,
       hubPath: mcpHubPath(root),
       dryRun: input.dryRun,
       mode: input.mode,

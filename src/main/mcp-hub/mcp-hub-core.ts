@@ -74,12 +74,27 @@ function maskSecretFieldForUi(value: string): string {
   return maskSecretsInValue(value);
 }
 
-export function maskServerForUi(server: McpHubServer): McpHubServer {
+/**
+ * UI projection must mask by VALUE ORIGIN, not only by field name:
+ * - secret-looking names (existing rule)
+ * - any remaining vault ref (planted `__nexus_vault__:…` under a bland name)
+ * - any field that was resolved FROM a vault ref (hydrated plaintext)
+ * `resolvedFromRef` holds `env.<name>` / `headers.<name>` keys collected
+ * before hydration.
+ */
+export function maskServerForUi(
+  server: McpHubServer,
+  resolvedFromRef?: ReadonlySet<string>,
+): McpHubServer {
+  const shouldMask = (kind: 'env' | 'headers', name: string, value: string): boolean =>
+    SECRET_KEY.test(name) ||
+    value.startsWith('__nexus_vault__:') ||
+    (resolvedFromRef instanceof Set && resolvedFromRef.has(`${kind}.${name}`));
   const env = server.env
     ? Object.fromEntries(
         Object.entries(server.env).map(([k, v]) => [
           k,
-          SECRET_KEY.test(k) ? maskSecretFieldForUi(v) : v,
+          shouldMask('env', k, v) ? maskSecretFieldForUi(v) : v,
         ]),
       )
     : undefined;
@@ -87,11 +102,23 @@ export function maskServerForUi(server: McpHubServer): McpHubServer {
     ? Object.fromEntries(
         Object.entries(server.headers).map(([k, v]) => [
           k,
-          SECRET_KEY.test(k) ? maskSecretFieldForUi(v) : v,
+          shouldMask('headers', k, v) ? maskSecretFieldForUi(v) : v,
         ]),
       )
     : undefined;
   return { ...server, env, headers };
+}
+
+/** `env.<name>` / `headers.<name>` keys whose stored value is a vault ref. */
+export function vaultRefFieldKeys(server: McpHubServer): ReadonlySet<string> {
+  const keys = new Set<string>();
+  for (const [name, value] of Object.entries(server.env ?? {})) {
+    if (value.startsWith('__nexus_vault__:')) keys.add(`env.${name}`);
+  }
+  for (const [name, value] of Object.entries(server.headers ?? {})) {
+    if (value.startsWith('__nexus_vault__:')) keys.add(`headers.${name}`);
+  }
+  return keys;
 }
 
 /**
