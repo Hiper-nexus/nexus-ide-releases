@@ -94,3 +94,12 @@ Riscos residuais: ...
 
 O workflow não substitui a prova de upgrade instalado; o recibo distingue esse
 limite explicitamente. Nunca marque a release pronta apenas por um build unsigned.
+
+## Linux x64 (canal independente)
+
+- [ ] Workflow `linux-release.yml` concluído para a tag anotada e o commit em `main` protegido, no runner hospedado `ubuntu-22.04`. Não exige candidata macOS nem worker Windows.
+- [ ] O job produziu exatamente `nexus-ide_<v>_amd64.deb` e `nexus-ide-<v>-1.x86_64.rpm` (um de cada), mais `linux-release-receipt.json` no artifact `linux-x64-release`.
+- [ ] O smoke empacotado rodou sob `xvfb-run` e o `.deb` foi instalado no próprio runner (`apt-get install`), com `dpkg-query` confirmando a versão e `rpm -qpR` mostrando a dependência `bubblewrap`.
+- [ ] `npm run release:publish:linux -- --version <v> --run <id>` revalidou run, recibo (commit/tagObject), bytes e SHA-256 antes de anexar deb, rpm e `SHA256SUMS-linux-x64.txt` na canônica e depois no espelho — nunca `--clobber`, nunca delete.
+- [ ] `bubblewrap` está instalado na máquina de validação (dependência de runtime declarada nos dois pacotes).
+- [ ] Nenhuma versão Linux estável maior já foi publicada. Linux não tem auto-update: o usuário instala o pacote novo por cima; uma release somente macOS/Windows não avança nem bloqueia o canal Linux.

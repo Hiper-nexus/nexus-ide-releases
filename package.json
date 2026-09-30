@@ -28,6 +28,7 @@
     "release:publish": "node scripts/publish-release.mjs",
     "release:publish:windows": "node scripts/publish-release.mjs --windows",
     "release:publish:macos": "node scripts/publish-release.mjs --macos",
+    "release:publish:linux": "node scripts/publish-linux-release.mjs",
     "release:mac": "node scripts/release-mac-detached.mjs",
     "security:renderer-sinks": "node scripts/check-renderer-sinks.mjs",
     "design:palette-check": "node --import tsx scripts/check-palette-contrast.mjs",

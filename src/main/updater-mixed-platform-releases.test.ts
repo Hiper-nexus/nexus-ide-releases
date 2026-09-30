@@ -88,6 +88,15 @@ function windowsAssets(version: string) {
   ];
 }
 
+/** Assets publicados pelo canal Linux x64 (linux-release.yml). */
+function linuxAssets(version: string) {
+  return [
+    { name: `nexus-ide_${version}_amd64.deb` },
+    { name: `nexus-ide-${version}-1.x86_64.rpm` },
+    { name: 'SHA256SUMS-linux-x64.txt' },
+  ];
+}
+
 function fullRelease(version: string) {
   return {
     tag_name: `v${version}`,
@@ -252,5 +261,43 @@ describe('real 16/09 list: 0.76.41 windows-only, 0.76.42 mac-only', () => {
       'darwin',
     );
     expect(release).toBeNull();
+  });
+});
+
+describe('linux assets on the shared release list', () => {
+  const withLinux = (version: string) => ({
+    tag_name: `v${version}`,
+    published_at: '2026-09-20T12:00:00Z',
+    draft: false,
+    prerelease: false,
+    assets: [
+      macAsset(version),
+      ...windowsAssets(version),
+      ...linuxAssets(version),
+    ],
+  });
+
+  it('(7) a mac client still picks the darwin zip when deb/rpm/SHA256SUMS-linux are attached to the same tag', () => {
+    const release = parseGhReleases(
+      JSON.stringify([fullRelease('0.76.40'), withLinux('0.76.42')]),
+      '0.76.40',
+      'arm64',
+      'darwin',
+    );
+    expect(release).toMatchObject({
+      version: '0.76.42',
+      zipAsset: 'NexusIDE-darwin-arm64-0.76.42.zip',
+    });
+  });
+
+  it('(8) a linux runtime never evaluates the list — sem atualização automática', () => {
+    expect(
+      parseGhReleases(
+        JSON.stringify([withLinux('0.76.42')]),
+        '0.76.40',
+        'x64',
+        'linux',
+      ),
+    ).toBeNull();
   });
 });

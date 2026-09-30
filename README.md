@@ -69,5 +69,6 @@ Configurações → Sistema dentro do app.
 Electron + Electron Forge (Vite) · TypeScript · React 18 · `@lydell/node-pty` ·
 `@xterm/xterm` · `@xyflow/react` · better-sqlite3 · Zustand · zod.
 
-macOS-only por ora; a base Electron já é multiplataforma (port Windows/Linux no
-roadmap).
+Disponível para macOS (arm64), Windows (x64) e Linux (x64, `.deb`/`.rpm`).
+Em Linux não há auto-update — instale o pacote novo por cima; o runtime exige
+`bubblewrap` (já declarado como dependência dos pacotes).

@@ -10,8 +10,45 @@ comando não inicia nem exige build, assinatura ou notarização macOS. O Mac us
 seu próprio caminho de Developer ID/notarização e publica com
 `npm run release:publish:macos`, que consome só a candidata local já aprovada
 pelo gate (`npm run release:candidate`) e não exige nem aguarda um run
-Windows. Os publicadores fixam `--repo` em toda chamada ao `gh`; não dependem
-do repositório inferido pelo diretório atual.
+Windows. O Linux usa o workflow `linux-release.yml` em runner hospedado
+`ubuntu-22.04` e publica com `npm run release:publish:linux`. Os publicadores
+fixam `--repo` em toda chamada ao `gh`; não dependem do repositório inferido
+pelo diretório atual.
+
+## Canal Linux independente
+
+Uma publicação Linux usa somente os artefatos x64 que o workflow
+`linux-release.yml` produziu para a tag anotada: um `.deb` e um `.rpm` com os
+nomes do Electron Forge (`nexus-ide_<v>_amd64.deb` e
+`nexus-ide-<v>-1.x86_64.rpm`), mais `SHA256SUMS-linux-x64.txt` gerado pelo
+publicador. O workflow verifica a tag anotada, o commit na `main` protegida,
+o Node de `nexusRelease.node`, roda o smoke empacotado sob `xvfb-run` e ainda
+instala o `.deb` no próprio runner antes de publicar os artifacts.
+
+Para disparar a build Linux de uma versão já tagueada:
+
+```bash
+gh workflow run linux-release.yml -R Hiper-nexus/nexus-ide --ref main -f version=<v>
+```
+
+Depois de o run concluir com sucesso, publique com:
+
+```bash
+npm run release:publish:linux -- --version <v> --run <id-do-run>
+```
+
+O publicador revalida o run (workflow, `workflow_dispatch` na `main`,
+conclusão `success`), baixa os artifacts, confere o recibo contra a tag
+anotada local (commit e objeto de tag), reconfere bytes e SHA-256 de cada
+arquivo e exige o inventário exato antes de anexar deb, rpm e
+`SHA256SUMS-linux-x64.txt` na release já publicada da canônica e, em seguida,
+do espelho público. Um asset com o mesmo nome só é ignorado quando o digest
+remoto bate; nunca usa `--clobber` e nunca apaga assets.
+
+Linux **não tem auto-update**: o atualizador responde "Plataforma sem
+atualização automática" e o usuário instala o pacote novo manualmente. Os
+dois pacotes declaram `bubblewrap` como dependência de runtime (sandbox dos
+PTYs); a máquina alvo precisa tê-lo.
 
 ## Canal Windows independente
 
