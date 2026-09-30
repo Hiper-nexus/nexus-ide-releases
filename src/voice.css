@@ -1,0 +1,151 @@
+/* Voice showcase and companion illustrations of the product page.
+   New rules only: product.css is left untouched so parallel work merges cleanly. */
+
+/* ---------- Voice section ---------- */
+.vox-head{display:grid;grid-template-columns:1.15fr 1fr;gap:var(--s6);align-items:end;margin-bottom:var(--s5)}
+.vox-head h2{font-size:48px}
+.vox-head h2>span{color:var(--muted)}
+.vox-head p{color:var(--muted);max-width:460px}
+
+.vox-stage{background:var(--surface);border:1px solid var(--strong);border-radius:12px;overflow:hidden;box-shadow:0 24px 70px rgb(0 0 0/.3)}
+.vox-bar{display:flex;align-items:center;gap:var(--s2);padding:12px 20px;background:var(--bar);border-bottom:1px solid var(--line);font-size:12px;color:var(--muted)}
+.vox-mode{border:1px solid var(--strong);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--ink)}
+.vox-stage[data-mode=code] .vox-mode{border-color:var(--pink);color:var(--pink)}
+
+.vox-body{display:grid;grid-template-columns:minmax(240px,320px) minmax(0,1fr);min-height:400px}
+.vox-hud{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--s3);padding:var(--s5) var(--s3);background:var(--bar);border-right:1px solid var(--line)}
+
+/* Orb: three rings and a core, the shape of the app's voice HUD. It only moves during a replay. */
+.vox-orb{position:relative;width:148px;aspect-ratio:1;border-radius:50%;background:radial-gradient(circle,rgb(255 79 139/.2) 0 48%,transparent 49%);box-shadow:0 12px 40px rgb(255 79 139/.22)}
+.vox-ring,.vox-core{position:absolute;border-radius:50%}
+.vox-ring{border:1px solid rgb(255 79 139/.42)}
+.vox-ring-outer{inset:2%;border-top-color:rgb(250 247 249/.86);border-right-color:transparent}
+.vox-ring-middle{inset:15%;border-bottom-color:rgb(250 247 249/.72);border-left-color:transparent}
+.vox-ring-inner{inset:30%;border-right-color:rgb(250 247 249/.7);border-top-color:transparent}
+.vox-core{inset:39%;background:radial-gradient(circle,var(--ink),rgb(255 79 139/.8) 48%,transparent 70%);box-shadow:0 6px 22px rgb(255 79 139/.6)}
+.vox-stage.playing .vox-orb{animation:vox-breathe 2.2s ease-in-out infinite}
+.vox-stage.playing[data-phase=listening] .vox-orb{animation-duration:1.25s}
+.vox-stage.playing .vox-ring-outer{animation:vox-spin 6s linear infinite}
+.vox-stage.playing .vox-ring-middle{animation:vox-spin 4.4s linear infinite reverse}
+.vox-stage.playing .vox-ring-inner{animation:vox-spin 2.8s linear infinite}
+.vox-stage.playing .vox-core{animation:vox-pulse 1.45s ease-in-out infinite}
+
+.vox-bars{display:flex;align-items:flex-end;gap:4px;height:36px;color:var(--pink)}
+.vox-bars i{width:4px;height:100%;border-radius:4px;background:currentColor;transform:scaleY(.06);transform-origin:bottom;transition:transform 90ms ease-out}
+
+.vox-phase{font-family:VT323,monospace;font-size:32px;line-height:1;color:var(--ink);text-align:center;min-height:32px}
+.vox-stage.playing .vox-phase{color:var(--pink)}
+.vox-steps{list-style:none;display:grid;grid-template-columns:auto auto;justify-content:center;gap:8px 20px;margin:0;padding:0;font-size:11px;color:var(--faint)}
+.vox-steps li{display:flex;align-items:center;gap:6px}
+.vox-steps li[hidden]{display:none}
+.vox-steps li::before{content:'';width:6px;height:6px;border-radius:50%;border:1px solid var(--strong)}
+.vox-steps li.current{color:var(--ink)}
+.vox-steps li.current::before{background:var(--pink);border-color:var(--pink)}
+.vox-steps li.done::before{background:var(--green);border-color:var(--green)}
+
+.vox-flow{display:flex;flex-direction:column;justify-content:center;gap:var(--s4);padding:var(--s5);min-width:0}
+.vox-said>.mono{display:block;font-size:10px;color:var(--faint);margin-bottom:var(--s2)}
+#vox-spoken{font-size:26px;line-height:1.45;letter-spacing:-.02em;color:var(--ink);max-width:32ch;min-height:4.35em}
+.vox-word{opacity:.18;text-decoration:none;transition:opacity .18s var(--ease),color .35s var(--ease)}
+.vox-word.heard{opacity:1}
+.vox-word.dropped{color:var(--faint);text-decoration:line-through;text-decoration-color:var(--pink);text-decoration-thickness:1.5px}
+
+.vox-pane>header{min-height:40px}
+.vox-pane .pane-terminal{min-height:132px;font-size:13px;padding:20px}
+.vox-line{color:var(--ink);animation:vox-line .32s var(--ease) both}
+.vox-stage.playing .vox-line:last-child::after{content:'';display:inline-block;width:7px;height:1em;margin-left:4px;vertical-align:-2px;background:var(--pink);animation:vox-caret 1s steps(2,start) infinite}
+.vox-chip{margin-left:auto;display:inline-flex;align-items:center;gap:8px;font-size:10px;color:var(--ink)}
+.vox-chip[hidden]{display:none}
+.vox-chip::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--pink);animation:vox-pulse 1.1s ease-in-out infinite}
+
+.vox-controls{display:flex;align-items:center;justify-content:space-between;gap:var(--s2);padding:var(--s2) 20px;border-top:1px solid var(--line);background:var(--bar)}
+.vox-examples{display:flex;flex-wrap:wrap;gap:4px}
+.vox-examples button{min-height:44px;padding:10px 16px;border:1px solid transparent;border-radius:8px;background:none;color:var(--muted);font-size:13px;transition:color .2s var(--ease),background .2s var(--ease)}
+.vox-examples button:hover{color:var(--ink)}
+.vox-examples button:active{transform:scale(.98)}
+.vox-examples button[aria-pressed=true]{background:var(--lift);border-color:var(--line);color:var(--ink)}
+.vox-play{min-height:44px;gap:10px;font-size:13px;flex:none}
+.vox-play .vox-icon-stop,.vox-play[aria-pressed=true] .vox-icon-play{display:none}
+.vox-play[aria-pressed=true] .vox-icon-stop{display:block}
+
+.vox-facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:var(--s5) 0 0}
+.vox-facts>div{padding:var(--s3) var(--s4) 0 0;border-top:1px solid var(--line)}
+.vox-facts>div+div{padding-left:var(--s4);border-left:1px solid var(--line)}
+.vox-facts dt{font-size:18px;font-weight:550;letter-spacing:-.02em}
+.vox-facts dd{margin:12px 0 0;color:var(--muted);font-size:14px;max-width:40ch}
+
+@keyframes vox-spin{to{transform:rotate(360deg)}}
+@keyframes vox-breathe{0%,100%{transform:scale(1);opacity:.92}50%{transform:scale(1.035);opacity:1}}
+@keyframes vox-pulse{0%,100%{transform:scale(.94);opacity:.82}50%{transform:scale(1.08);opacity:1}}
+@keyframes vox-line{from{opacity:0;transform:translateY(8px)}}
+@keyframes vox-caret{to{opacity:0}}
+
+/* ---------- Nexus Shot illustration ---------- */
+.shot-mock,.redline-mock{margin:var(--s3) 0}
+.shot-screen{position:relative;aspect-ratio:16/9;border:1px solid var(--line);border-radius:8px;background:var(--bg);overflow:hidden}
+.shot-window{display:flex;gap:6px;padding:12px}
+.shot-window i{width:7px;height:7px;border-radius:50%;background:var(--lift)}
+.shot-select{position:absolute;inset:24% 10% 16% 20%;border:1.5px dashed var(--pink);border-radius:4px}
+.shot-select::before{content:'';position:absolute;left:8%;top:48%;width:34%;height:6px;border-radius:4px;background:var(--lift);box-shadow:0 16px 0 var(--lift),0 32px 0 var(--lift)}
+.shot-note{position:absolute;left:8%;top:14%;padding:3px 8px;border-radius:4px;background:var(--pink);color:var(--bg);font-size:11px;font-weight:600;white-space:nowrap}
+.shot-arrow{position:absolute;left:50%;top:36%;width:21%;height:30%;color:var(--pink);overflow:visible}
+.shot-arrow path{vector-effect:non-scaling-stroke}
+.shot-target{position:absolute;right:9%;bottom:14%;width:22%;height:22%;min-height:18px;border:1px solid var(--strong);border-radius:4px;background:var(--lift)}
+.shot-tools{display:flex;align-items:center;gap:12px;margin-top:12px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bar);color:var(--muted)}
+.companion-art .shot-tools svg,.companion-art .shot-arrow{margin:0;display:block}
+.companion-art .shot-arrow{width:21%;height:30%}
+.companion-art .shot-tools svg{width:20px;height:20px;flex:none}
+.companion-art .shot-tools svg:last-of-type,.companion-art .shot-arrow{color:var(--pink)}
+.shot-send{margin-left:auto;padding:4px 10px;border:1px solid var(--strong);border-radius:4px;color:var(--ink);font-size:12px;white-space:nowrap}
+.shot-delivered{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px 12px;margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);font-size:11px;color:var(--faint)}
+.shot-file{font-family:ui-monospace,monospace;color:var(--green)}
+
+/* ---------- Nexus Redline illustration ---------- */
+.redline-mock{padding:var(--s2);border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.redline-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:4px 12px;padding-bottom:12px;border-bottom:1px solid var(--line);font-size:12px;color:var(--green)}
+.redline-head strong{font-size:13px;font-weight:500;color:var(--ink)}
+.redline-row{display:grid;grid-template-columns:20px minmax(64px,.8fr) minmax(120px,1.6fr) 124px;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line);font-size:12px}
+.redline-row:last-child{border-bottom:0;padding-bottom:0}
+.redline-row>img{display:block}
+.redline-name strong{display:block;font-weight:500;color:var(--ink)}
+.redline-name span{font-size:11px;color:var(--faint)}
+.redline-meters{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 8px;align-items:center}
+.redline-meters b{font-weight:400;font-size:10px;color:var(--faint)}
+.redline-bar{display:block;height:4px;border-radius:4px;background:var(--lift);overflow:hidden}
+.redline-bar i{display:block;height:100%;border-radius:4px;background:var(--green);transform:scaleX(var(--used));transform-origin:left}
+.redline-bar[data-level=high] i{background:var(--pink)}
+.redline-reset{font-size:11px;color:var(--faint);white-space:nowrap;font-variant-numeric:tabular-nums;text-align:right}
+.redline-wait{color:var(--pink)}
+
+@media(max-width:1150px){
+  .vox-head{gap:var(--s5)}
+  .vox-body{grid-template-columns:minmax(220px,260px) minmax(0,1fr)}
+  .vox-flow{padding:var(--s4)}
+  #vox-spoken{font-size:22px}
+  .redline-row{grid-template-columns:20px minmax(64px,1fr) auto}
+  .redline-meters{grid-column:1/-1;grid-row:2}
+}
+@media(max-width:760px){
+  .vox-head{display:block;margin-bottom:var(--s4)}
+  .vox-head h2{font-size:36px}
+  .vox-head p{margin-top:var(--s3);font-size:14px}
+  .vox-bar{padding:12px;gap:8px;font-size:10px;flex-wrap:wrap}
+  .vox-bar .demo-badge{flex-basis:100%;margin-left:0;font-size:9px}
+  .vox-body{grid-template-columns:1fr;min-height:0}
+  .vox-hud{gap:var(--s2);padding:var(--s3) var(--s2);border-right:0;border-bottom:1px solid var(--line)}
+  .vox-orb{width:88px}
+  .vox-phase{font-size:28px}
+  .vox-steps{grid-template-columns:repeat(4,auto);gap:8px 12px;font-size:10px}
+  .vox-flow{padding:var(--s3) var(--s2);gap:var(--s3)}
+  #vox-spoken{font-size:18px;min-height:5.5em}
+  .vox-pane .pane-terminal{font-size:12px;padding:16px;min-height:120px}
+  .vox-controls{flex-direction:column;align-items:stretch;padding:var(--s2)}
+  .vox-examples{flex-direction:column}
+  .vox-examples button{text-align:left}
+  .vox-facts{grid-template-columns:1fr;margin-top:var(--s4)}
+  .vox-facts>div,.vox-facts>div+div{padding:var(--s3) 0;border-left:0}
+  .shot-note{font-size:10px}
+}
+@media(prefers-reduced-motion:reduce){
+  .vox-word{opacity:1}
+}
