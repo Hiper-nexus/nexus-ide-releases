@@ -6,6 +6,14 @@
  * segundo envio fraco é aceito mas marcado `[evidência fraca]` + artifact
  * `nexus.jevReview` para o Maestro decidir com evidência.
  *
+ * F-707: só devolve o que o worker conserta anexando — resumo genérico, e
+ * mudança de código sem verificação ou sem dizer onde está. Pendência
+ * admitida, e revisão/plano sem teste, entram marcados sem devolução: nas 105
+ * entregas reais do HiperGO (30/09) a rubrica antiga devolveria 98, e em
+ * produção 22 das 44 devolvidas nunca voltaram ao Maestro. A régua nova,
+ * medida no mesmo conjunto com o Jev real, devolve 3. Mudou o texto?
+ * Reavalie no mesmo conjunto antes de publicar.
+ *
  * FAIL-OPEN em tudo: sem chave, autopilot desligado, timeout ou `judge()`
  * null → `skipped` e o fluxo segue exatamente como hoje.
  */
@@ -41,6 +49,7 @@ export const IS_SPECIFIC_MIN = 0.5;
 export const HAS_VERIFICATION_MIN = 0.5;
 export const ADMITS_INCOMPLETE_MAX = 0.7;
 export const NAMES_CHANGES_MIN = 0.5;
+export const CHANGED_CODE_MIN = 0.5;
 
 /** Quantas devoluções o worker recebe antes de o handoff entrar como fraco. */
 export const JEV_REVIEW_MAX_BOUNCES = 1;
@@ -60,33 +69,57 @@ export const HANDOFF_REVIEW_QUESTIONS: Record<string, JevQuestion> = {
   has_verification: {
     type: 'noul',
     instructions:
-      'Does the report show that verification actually ran — test results, ' +
-      'typecheck/build output, command output or a commit reference — as ' +
-      'opposed to merely claiming the work is done or promising to test later?',
+      'Does the report show evidence that the work was checked — test results, ' +
+      'typecheck/build output, command output or a commit reference; for a ' +
+      'review or audit, concrete cited evidence such as file:line references ' +
+      'or reproduced cases; for a planning, mapping or research task, the ' +
+      'concrete output it produced (document path, sections, file:line map)? ' +
+      'Merely claiming the work is done, or promising to check later, is not ' +
+      'evidence.',
     criteria: {
-      true: 'verification output or commit reference present',
-      false: 'no verification evidence',
+      true: 'verification output, commit reference, cited evidence, or the concrete produced output is present',
+      false: 'only claims, with no verification, evidence or concrete output',
     },
   },
+  // Revisor que relata NÃO PASS fez o trabalho dele: achado sobre o código
+  // revisado não é pendência (era 52 das 75 devoluções em 30/09).
   admits_incomplete: {
     type: 'noul',
     instructions:
-      'Does the report itself admit unfinished, pending, skipped, failing or ' +
-      'uncertain parts of the requested work?',
+      'Does the worker admit that part of ITS OWN assigned task was left ' +
+      'undone, skipped, blocked or not verified? Bugs, failing checks, NOT ' +
+      'PASS verdicts, residual risks or findings that the worker discovered in ' +
+      'the code or work it was asked to review are RESULTS of a completed ' +
+      'task, not unfinished work.',
     criteria: {
-      true: 'the report admits unfinished or failing parts',
-      false: 'the report does not admit any incomplete part',
+      true: 'the worker admits parts of its own task are unfinished, skipped or blocked',
+      false: "the worker's own task is complete (reported findings about reviewed work do not count)",
+    },
+  },
+  // Decide se falta de verificação ou de arquivos devolve: revisão, análise
+  // e plano não mudam código e não têm teste a colar.
+  changed_code: {
+    type: 'noul',
+    instructions:
+      'Did the worker itself change code, configuration or other repository ' +
+      'files as part of this task (edits, commits, pushes)? Reviews, audits, ' +
+      'analyses, plans and reports that only read code, or only wrote a ' +
+      'planning/report document, did not change code.',
+    criteria: {
+      true: 'the worker changed code, configuration or repository files',
+      false: 'the worker only read, reviewed, analyzed or wrote a report/plan document',
     },
   },
   // Só entra no judge quando declaredFiles está vazio (ver reviewMissionHandoff).
   names_changes: {
     type: 'noul',
     instructions:
-      'Does the report name the specific files, modules or components that ' +
-      'were changed?',
+      'Does the report say where its changes live — the files, modules or ' +
+      'components changed, or the commit, branch or document it produced — or ' +
+      'state that the task was read-only and changed nothing?',
     criteria: {
-      true: 'specific files or components named',
-      false: 'no changed file or component named',
+      true: 'names changed files/components, a commit/branch/document, or explicitly changed nothing',
+      false: 'changed something but does not say where',
     },
   },
 };
@@ -140,20 +173,27 @@ function noulOf(answers: Record<string, JevAnswer>, id: string): number | null {
   return a && a.type === 'noul' ? a.noul : null;
 }
 
-/**
- * Regras determinísticas sobre as probabilidades do Jev. Cada sinal é a
- * instrução que volta ao worker (pt-BR) dizendo o que falta.
- */
-export function evaluateHandoffEvidence(
+interface HandoffSignal {
+  readonly text: string;
+  /** O worker conserta anexando: vale uma devolução. */
+  readonly bounce: boolean;
+}
+
+function handoffSignals(
   answers: Record<string, JevAnswer>,
   facts: HandoffReviewFacts,
-): string[] {
-  const signals: string[] = [];
+): HandoffSignal[] {
+  const signals: HandoffSignal[] = [];
+  const changedCode =
+    facts.declaredFiles.length > 0 ||
+    facts.hasObservedCommit ||
+    (noulOf(answers, 'changed_code') ?? 0) >= CHANGED_CODE_MIN;
   const isSpecific = noulOf(answers, 'is_specific');
   if (isSpecific !== null && isSpecific < IS_SPECIFIC_MIN) {
-    signals.push(
-      'resumo genérico/placeholder: descreva o que foi feito neste trabalho',
-    );
+    signals.push({
+      text: 'resumo genérico/placeholder: descreva o que foi feito neste trabalho',
+      bounce: true,
+    });
   }
   const hasVerification = noulOf(answers, 'has_verification');
   if (
@@ -161,17 +201,21 @@ export function evaluateHandoffEvidence(
     hasVerification < HAS_VERIFICATION_MIN &&
     facts.evidenceIdsCount === 0
   ) {
-    signals.push(
-      'sem evidência de verificação: cole a saída de testes/typecheck/build ' +
+    signals.push({
+      text:
+        'sem evidência de verificação: cole a saída de testes/typecheck/build ' +
         'ou a referência do commit',
-    );
+      bounce: changedCode,
+    });
   }
   const admitsIncomplete = noulOf(answers, 'admits_incomplete');
   if (admitsIncomplete !== null && admitsIncomplete > ADMITS_INCOMPLETE_MAX) {
-    signals.push(
-      'o texto admite pendências, mas o status é success: use partial/blocked ' +
+    signals.push({
+      text:
+        'o texto admite pendências, mas o status é success: use partial/blocked ' +
         'ou conclua o que falta',
-    );
+      bounce: false,
+    });
   }
   const namesChanges = noulOf(answers, 'names_changes');
   if (
@@ -180,11 +224,33 @@ export function evaluateHandoffEvidence(
     facts.declaredFiles.length === 0 &&
     !facts.hasObservedCommit
   ) {
-    signals.push(
-      'não lista arquivos/componentes alterados: informe filesModified',
-    );
+    signals.push({
+      text: 'não lista arquivos/componentes alterados: informe filesModified',
+      bounce: changedCode,
+    });
   }
   return signals;
+}
+
+/**
+ * Regras determinísticas sobre as probabilidades do Jev. Cada sinal é a
+ * instrução (pt-BR) dizendo o que falta; todos vão no artifact.
+ */
+export function evaluateHandoffEvidence(
+  answers: Record<string, JevAnswer>,
+  facts: HandoffReviewFacts,
+): string[] {
+  return handoffSignals(answers, facts).map((signal) => signal.text);
+}
+
+/** Os sinais que valem devolução (F-707); o resto entra marcado. */
+export function handoffBounceSignals(
+  answers: Record<string, JevAnswer>,
+  facts: HandoffReviewFacts,
+): string[] {
+  return handoffSignals(answers, facts)
+    .filter((signal) => signal.bounce)
+    .map((signal) => signal.text);
 }
 
 export interface JevReviewArtifact {
@@ -266,6 +332,7 @@ export async function reviewMissionHandoff(
     is_specific: HANDOFF_REVIEW_QUESTIONS.is_specific,
     has_verification: HANDOFF_REVIEW_QUESTIONS.has_verification,
     admits_incomplete: HANDOFF_REVIEW_QUESTIONS.admits_incomplete,
+    changed_code: HANDOFF_REVIEW_QUESTIONS.changed_code,
   };
   // names_changes só faz sentido quando nem o registro nem o commit já
   // apontam os arquivos — a pergunta é redundante com filesModified cheio.
@@ -293,11 +360,13 @@ export async function reviewMissionHandoff(
     return { kind: 'skipped', reason: 'judge-unavailable' };
   }
 
-  const signals = evaluateHandoffEvidence(result.answers, {
+  const facts: HandoffReviewFacts = {
     declaredFiles: params.declaredFiles,
     evidenceIdsCount: params.evidenceIdsCount,
     hasObservedCommit: params.hasObservedCommit,
-  });
+  };
+  const signals = evaluateHandoffEvidence(result.answers, facts);
+  const bounceSignals = handoffBounceSignals(result.answers, facts);
   const sessionId = params.sessionId;
   const record = (decision: 'ok' | 'retry' | 'weak') =>
     recordJevDecision({
@@ -318,26 +387,27 @@ export async function reviewMissionHandoff(
   }
 
   const budget = budgetBySession.get(sessionId) ?? { attempts: 0 };
-  budget.attempts += 1;
-  if (budget.attempts <= JEV_REVIEW_MAX_BOUNCES) {
+  if (bounceSignals.length > 0 && budget.attempts < JEV_REVIEW_MAX_BOUNCES) {
+    budget.attempts += 1;
     budgetBySession.set(sessionId, budget);
     record('retry');
     return {
       kind: 'retry',
-      signals,
+      signals: bounceSignals,
       attempt: budget.attempts,
       retries: JEV_REVIEW_MAX_BOUNCES,
       message:
         `revisão de evidência (Jev) — devolução ${budget.attempts}/${JEV_REVIEW_MAX_BOUNCES}: ` +
-        `${signals.join('; ')}. ` +
+        `${bounceSignals.join('; ')}. ` +
         'Reenvie o nexus_handoff_submit com a evidência real (saída de ' +
         'testes/typecheck, commit, arquivos). Se não conseguir concluir, use ' +
         'status partial ou blocked explicando o impedimento.',
     };
   }
 
-  // Segunda submissão fraca: aceita, mas fica marcada para o Maestro. O
-  // orçamento é limpo — um handoff futuro da mesma sessão recomeça do zero.
+  // Segunda submissão fraca, ou sinal que não vale devolução: aceita, mas
+  // fica marcada para o Maestro. O orçamento é limpo — um handoff futuro da
+  // mesma sessão recomeça do zero.
   budgetBySession.delete(sessionId);
   record('weak');
   return {

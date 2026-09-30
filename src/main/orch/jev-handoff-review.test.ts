@@ -198,6 +198,62 @@ describe('reviewMissionHandoff', () => {
     expect(verdict).toEqual({ kind: 'skipped', reason: 'no-session' });
   });
 
+  describe('F-707: só devolve o que o worker conserta anexando', () => {
+    const readOnlyReview: HandoffReviewInput = {
+      ...baseInput,
+      summary:
+        'Revisão somente leitura concluída: 1 MEDIUM (corrida retorna 404 em vez de 409), 2 LOW. ' +
+        'Nenhum arquivo foi alterado.',
+      declaredFiles: [],
+    };
+
+    it('revisor com achados (NÃO PASS) entra marcado, sem devolução', async () => {
+      const verdict = await reviewMissionHandoff(
+        { sessionId: 'r1', ...readOnlyReview },
+        deps(vi.fn(async () =>
+          result({ is_specific: 0.9, has_verification: 0.2, admits_incomplete: 0.9, changed_code: 0.05, names_changes: 0.9 }),
+        )),
+      );
+      expect(verdict.kind).toBe('weak');
+      if (verdict.kind === 'weak') expect(verdict.signals.length).toBe(2);
+    });
+
+    it('plano ou análise sem teste não é devolvido', async () => {
+      const verdict = await reviewMissionHandoff(
+        { sessionId: 'p1', ...readOnlyReview },
+        deps(vi.fn(async () =>
+          result({ is_specific: 0.9, has_verification: 0.1, admits_incomplete: 0.1, changed_code: 0.1, names_changes: 0.2 }),
+        )),
+      );
+      expect(verdict.kind).toBe('weak');
+    });
+
+    it('mudança de código sem verificação é devolvida, mesmo sem o Jev ver código', async () => {
+      const noVerification = result({ is_specific: 0.9, has_verification: 0.1, admits_incomplete: 0.1, changed_code: 0.1 });
+      const byFiles = await reviewMissionHandoff({ sessionId: 'w1', ...baseInput }, deps(vi.fn(async () => noVerification)));
+      expect(byFiles.kind).toBe('retry');
+      const byJev = await reviewMissionHandoff(
+        { sessionId: 'w2', ...readOnlyReview },
+        deps(vi.fn(async () =>
+          result({ is_specific: 0.9, has_verification: 0.1, admits_incomplete: 0.1, changed_code: 0.9, names_changes: 0.9 }),
+        )),
+      );
+      expect(byJev.kind).toBe('retry');
+      if (byJev.kind === 'retry') expect(byJev.message).toContain('sem evidência de verificação');
+    });
+
+    it('pergunta changed_code em toda revisão', async () => {
+      const asked: Record<string, JevQuestion>[] = [];
+      const j = vi.fn(async (input: { questions: Record<string, JevQuestion> }) => {
+        asked.push(input.questions);
+        return allPass();
+      });
+      await reviewMissionHandoff({ sessionId: 's1', ...baseInput }, deps(j));
+      expect(asked[0].changed_code).toBeDefined();
+      expect(asked[0].admits_incomplete.instructions).toContain('ITS OWN');
+    });
+  });
+
   it('names_changes só é perguntado quando declaredFiles está vazio', async () => {
     const asked: Record<string, JevQuestion>[] = [];
     const j = vi.fn(async (input: { questions: Record<string, JevQuestion> }) => {
