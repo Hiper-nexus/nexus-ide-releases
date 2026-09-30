@@ -303,18 +303,19 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     });
   });
 
-  it('ignora rota agy sem MCP e escolhe outra CLI com motivo no recibo', async () => {
+  // F-697/F-698: AGY e Devin ganharam o MCP do Nexus; o Aider segue sem.
+  it('ignora rota aider sem MCP e escolhe outra CLI com motivo no recibo', async () => {
     const resolver = vi.fn(async (_task: string, _ctx: AgentGateContext, internal: { excludeAdapterIds?: readonly string[] }) =>
-      internal.excludeAdapterIds?.includes('agy')
+      internal.excludeAdapterIds?.includes('aider')
         ? { adapterId: 'codex', model: 'gpt-5.6-luna', reason: 'segunda opção' }
-        : { adapterId: 'agy', model: 'gemini-3.8-flash-high', reason: 'primeira opção' },
+        : { adapterId: 'aider', model: 'claude-sonnet-5', reason: 'primeira opção' },
     );
     setOperatorRouteResolver(resolver);
     const result = await paneSpawnTool.handler({ prompt: 'implemente X' }, userPane()) as Record<string, unknown>;
     expect(resolver).toHaveBeenCalledTimes(2);
     expect(harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0]).toMatchObject({ adapterId: 'codex' });
-    expect(result).toMatchObject({ route: { ignored: { adapterId: 'agy' } } });
-    expect((result.route as { reason: string }).reason).toMatch(/agy.*MCP/i);
+    expect(result).toMatchObject({ route: { ignored: { adapterId: 'aider' } } });
+    expect((result.route as { reason: string }).reason).toMatch(/aider.*MCP/i);
   });
 
   it.each(['agy', 'aider', 'devin', 'muse'])(
@@ -376,13 +377,13 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
   });
 
-  it('CLI pedida pelo operador sem MCP do Nexus (agy) é recusada com motivo claro', async () => {
+  it('CLI pedida pelo operador sem MCP do Nexus (aider) é recusada com motivo claro', async () => {
     mentions.named = true;
     setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex' })));
     await expect(paneSpawnTool.handler(
-      { adapterId: 'agy', operatorChoice: true, prompt: 'revise X' },
+      { adapterId: 'aider', operatorChoice: true, prompt: 'revise X' },
       userPane(),
-    )).rejects.toThrow(/agy não tem MCP do Nexus.*handoff/);
+    )).rejects.toThrow(/aider não tem MCP do Nexus.*handoff/);
     expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
   });
 
