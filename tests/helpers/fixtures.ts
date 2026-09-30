@@ -16,7 +16,7 @@ export function environment(db: SqliteD1, overrides: Record<string, unknown> = {
   const allow = { limit: async () => ({ success: true }) };
   return {
     DB: db, AUTH_RATE_LIMITER: allow, API_RATE_LIMITER: allow,
-    PUBLIC_BASE_URL: API, PUBLIC_SITE_URL: SITE, APP_DEEP_LINK_BASE: 'nexus://auth', APP_MODE: 'staging', MIGRATION_READY: 'true',
+    PUBLIC_BASE_URL: API, PUBLIC_SITE_URL: SITE, APP_DEEP_LINK_BASE: 'nexus://auth', SHOT_DEEP_LINK_BASE: 'nexus-shot://auth/callback', APP_MODE: 'staging', MIGRATION_READY: 'true',
     ADMIN_EMAILS: ADMIN_EMAIL, GOOGLE_OAUTH_ID: 'google-id', GOOGLE_OAUTH_SECRET: 'fixture', GITHUB_OAUTH_ID: '', GITHUB_OAUTH_SECRET: '',
     LICENSE_PRIVATE_KEY: keys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(), LICENSE_PUBLIC_KEY,
     STRIPE_SECRET_KEY: 'fixture-key', STRIPE_WEBHOOK_SECRET: 'fixture-webhook', STRIPE_PRICE_PRO: PRICE_PRO, STRIPE_PRICE_TEAM: '',
