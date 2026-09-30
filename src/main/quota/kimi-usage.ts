@@ -33,6 +33,8 @@ export interface KimiOauthCreds {
   refreshToken?: string;
   /** Epoch seconds (Kimi credentials file). */
   expiresAt?: number;
+  /** F-694: arquivo nativo de onde o grant veio; a rotação volta a ele. */
+  sourcePath?: string;
 }
 
 function toInt(v: unknown): number | null {
@@ -289,7 +291,11 @@ export async function probeKimiRefresh(
   }
 }
 
-/** Persist refreshed tokens so `kimi` CLI stays logged in. */
+/**
+ * Persist refreshed tokens so `kimi` CLI stays logged in. F-694: `filePath`
+ * é o arquivo de onde o grant foi lido (o Kimi 2.x usa
+ * `kimi-code-env-<hash>.json`); sem ele, o nome histórico.
+ */
 export function writeKimiCredentialsFile(
   update: {
     accessToken: string;
@@ -297,13 +303,8 @@ export function writeKimiCredentialsFile(
     expiresIn?: number;
   },
   home = os.homedir(),
+  filePath = path.join(home, '.kimi-code', 'credentials', 'kimi-code.json'),
 ): void {
-  const filePath = path.join(
-    home,
-    '.kimi-code',
-    'credentials',
-    'kimi-code.json',
-  );
   try {
     let prev: Record<string, unknown> = {};
     try {
@@ -512,6 +513,7 @@ export async function probeKimiUsageWithOauth(
             expiresIn: refreshed.expiresIn,
           },
           opts.home,
+          ...(creds.sourcePath ? [creds.sourcePath] : []),
         );
       }
     }

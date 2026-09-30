@@ -28,6 +28,7 @@ import { accountCredentialCandidates } from '../adapters/account-credential-cand
 import { probeCodexCliUsage } from './codex-cli-usage';
 import type { LiveProviderProbe } from './provider-live-usage';
 import { probeClaudeCredentialIdentity } from './claude-native-account';
+import { kimiNativeCredentialFiles } from '../adapters/kimi-credential-files';
 
 const CRED_PREFIX = 'acctcred:';
 const KEY_PREFIX = 'acctkey:';
@@ -391,11 +392,9 @@ export function resolveKimiAccessTokenCandidates(
     pushUnique(out, k);
   }
   if (accountId) return out;
-  for (const rel of [
-    path.join('.kimi-code', 'credentials', 'kimi-code.json'),
-    path.join('.kimi', 'credentials', 'kimi-code.json'),
-  ]) {
-    const blob = readText(path.join(os.homedir(), rel));
+  // F-694: o Kimi 2.x grava `kimi-code-env-<hash>.json`, não só `kimi-code.json`.
+  for (const file of kimiNativeCredentialFiles(os.homedir())) {
+    const blob = readText(file);
     if (blob) pushUnique(out, extractKimiToken(blob));
   }
   return out;
@@ -410,6 +409,11 @@ export interface KimiOauthCredsResolved {
   refreshToken?: string;
   /** Epoch seconds. */
   expiresAt?: number;
+  /**
+   * F-694: arquivo nativo de onde o grant foi lido. A rotação do refresh token
+   * volta a ELE — gravar noutro arquivo deixaria a CLI com o token revogado.
+   */
+  sourcePath?: string;
 }
 
 /**
@@ -428,14 +432,11 @@ export function resolveKimiOauthCreds(
     }
     return null;
   }
-  for (const rel of [
-    path.join('.kimi-code', 'credentials', 'kimi-code.json'),
-    path.join('.kimi', 'credentials', 'kimi-code.json'),
-  ]) {
-    const blob = readText(path.join(os.homedir(), rel));
+  for (const file of kimiNativeCredentialFiles(os.homedir())) {
+    const blob = readText(file);
     if (blob) {
       const c = parseKimiCredsBlob(blob);
-      if (c) return c;
+      if (c) return { ...c, sourcePath: file };
     }
   }
   return null;

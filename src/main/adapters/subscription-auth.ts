@@ -20,6 +20,9 @@ import {
   peekKimiSeatReadiness,
   type AuthReadiness,
 } from './seat-auth-readiness';
+import { kimiCredentialFilesIn, kimiNativeCredentialFiles } from './kimi-credential-files';
+
+export { kimiCredentialFilesIn };
 
 /**
  * Subscription-auth priority (user directive): CLIs signed in via their own
@@ -775,32 +778,9 @@ function kimiCredentialsFileIsUsable(filePath: string): boolean {
   }
 }
 
-/**
- * F-694: o Kimi Code 2.x guarda o OAuth com chave por ambiente —
- * `kimi provider list --json` → `oauth.key: "oauth/kimi-code-env-<hash>"`,
- * arquivo `credentials/kimi-code-env-<hash>.json`. Procurar só
- * `kimi-code.json` marcava a sessão viva como login-needed e o Kimi nunca
- * entrava na rota. Aceita o nome fixo e as variantes `kimi-code-<sufixo>.json`.
- */
-export function kimiCredentialFilesIn(credentialsDir: string): string[] {
-  let names: string[];
-  try {
-    names = fs.readdirSync(credentialsDir);
-  } catch {
-    return [];
-  }
-  return names
-    .filter((name) => /^kimi-code(?:-[A-Za-z0-9_.-]+)?\.json$/u.test(name))
-    .sort((a, b) => (a === 'kimi-code.json' ? -1 : b === 'kimi-code.json' ? 1 : a.localeCompare(b)))
-    .map((name) => path.join(credentialsDir, name));
-}
-
 function kimiHasUsableCredentials(home: string): boolean {
-  const homes = [path.join(home, '.kimi-code'), path.join(home, '.kimi')];
-  const customHome = process.env.KIMI_CODE_HOME?.trim();
-  if (customHome) homes.unshift(customHome);
   const candidates = [
-    ...homes.flatMap((dir) => kimiCredentialFilesIn(path.join(dir, 'credentials'))),
+    ...kimiNativeCredentialFiles(home),
     path.join(home, '.config', 'kimi', 'credentials.json'),
   ];
   return candidates.some((file) => kimiCredentialsFileIsUsable(file));

@@ -272,6 +272,42 @@ describe('fetchKimiUsageWithOauth', () => {
     expect(parsed.refresh_token).toBe('rotated-rt');
   });
 
+  it('F-694: rotação volta ao kimi-code-env-<hash>.json de onde o grant veio', async () => {
+    const home = kfs.mkdtempSync(kpath.join(os.tmpdir(), 'kimi-env-rotation-'));
+    try {
+      const credentials = kpath.join(home, '.kimi-code', 'credentials');
+      kfs.mkdirSync(credentials, { recursive: true });
+      const envFile = kpath.join(credentials, 'kimi-code-env-0e4f99c69cc27850.json');
+      kfs.writeFileSync(envFile, JSON.stringify({ access_token: 'expired-at', refresh_token: 'rt-old', expires_at: 1, scope: 'kimi-code' }));
+      const fetchImpl = vi.fn(async (url: string) => {
+        if (String(url).includes('auth.kimi.com')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ access_token: 'rotated-at', refresh_token: 'rotated-rt', expires_in: 900 }),
+            text: async (): Promise<string> => '',
+          };
+        }
+        return { ok: true, status: 200, json: async () => LIVE_USAGES, text: async (): Promise<string> => '' };
+      });
+
+      const windows = await fetchKimiUsageWithOauth(
+        { accessToken: 'expired-at', refreshToken: 'rt-old', expiresAt: 1, sourcePath: envFile },
+        { fetchImpl: fetchImpl as never, allowRefresh: true, persistRefresh: false, persistOnRotation: true, home, now: Date.now() },
+      );
+
+      expect(windows?.length).toBeGreaterThan(0);
+      const parsed = JSON.parse(kfs.readFileSync(envFile, 'utf8')) as { access_token?: string; refresh_token?: string; scope?: string };
+      expect(parsed.refresh_token).toBe('rotated-rt');
+      expect(parsed.access_token).toBe('rotated-at');
+      expect(parsed.scope).toBe('kimi-code');
+      // O CLI lê o arquivo do ambiente; um kimi-code.json paralelo seria segunda linhagem.
+      expect(kfs.existsSync(kpath.join(credentials, 'kimi-code.json'))).toBe(false);
+    } finally {
+      kfs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('rotação sem persistOnRotation: não escreve (testes ficam puros)', async () => {
     const fetchImpl = vi.fn(async (url: string) => {
       if (String(url).includes('auth.kimi.com')) {
