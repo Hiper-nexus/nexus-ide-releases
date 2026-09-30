@@ -8521,7 +8521,7 @@ export const RELEASE_076149: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076150: AppRelease = {
   version: '0.76.150',
   date: '2026-09-30',
   codename: 'Hooks de volta no Windows',
@@ -8552,6 +8552,38 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'No Windows o Muse abria e ficava parado, sem a tarefa. Agora o Nexus ' +
         'abre o programa do Muse direto e a tarefa já vai junto.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.151',
+  date: '2026-09-30',
+  codename: 'Mac em dia com o Windows',
+  summary:
+    'O Mac recebe as correções da 0.76.147 à 0.76.150, que tinham saído só ' +
+    'para Windows: todas as CLIs nas missões, Maestro que delega, memória que ' +
+    'enche e o AGY sem cair por esforço. Inclui a 0.76.150.',
+  highlights: [
+    {
+      title: 'Todas as CLIs nas missões',
+      detail:
+        'AGY, Devin e Muse passam a entregar trabalho nas missões pelo MCP do ' +
+        'Nexus, e o Kimi volta à rota com a cota lida certa.',
+    },
+    {
+      title: 'Maestro que delega e memória que enche',
+      detail:
+        'O Maestro mantém a regra de delegar mesmo depois de compactar o ' +
+        'contexto, os workers não param para perguntar, e cada entrega que ele ' +
+        'confirma pode virar memória do projeto.',
+    },
+    {
+      title: 'Menos gasto e menos quedas',
+      detail:
+        'O GPT-6 Astra só roda quando pedido pelo nome, o GLM não para mais no ' +
+        'aviso de Bypass e o AGY não cai quando a rota pede outro esforço.',
     },
   ],
   fixes: [],

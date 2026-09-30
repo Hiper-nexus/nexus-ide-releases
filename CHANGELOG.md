@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.151 — Mac em dia com o Windows
+
+Primeira build para macOS desde a 0.76.146. Traz ao Mac as correções da 0.76.147 à 0.76.150, publicadas só para Windows. Inclui a 0.76.150.
+
+- **Valem também no Mac.** As CLIs do Mac estão nas mesmas versões medidas no Windows: Claude Code 2.1.285, AGY 1.2.14, Devin 3000.11.3, Muse 1.4.1 e Kimi 2.1.1. Com isso chegam ao Mac: GLM sem o aviso de Bypass e com os hooks (F-693), Kimi na rota e com cota (F-694/F-695), Muse, AGY e Devin com o MCP do Nexus nas missões (F-696/F-697/F-698), GPT-6 Astra só pelo nome (F-700), Maestro que mantém a doutrina de delegar (F-701), worker que não para para perguntar (F-702), entrega confirmada pelo Maestro virando memória (F-703) e AGY sem "invalid model selection" por esforço (F-705). O `agy mcp list` e o `devin mcp list` do Mac têm o mesmo formato que os parsers do F-697/F-698 leem. F-704 e F-706 só mudam o Windows.
+- **Testes sem mexer no perfil real (F-219).** A suíte rodava o `agy mcp add` de verdade e gravava `nexus` no perfil do AGY de quem testa. Os registros de AGY, Devin e Muse ficam mockados, e dois testes que exigiam o AGY sem MCP seguem o contrato do F-697.
+- **Audit do toolchain em zero (F-412).** Os overrides `fast-uri` 3.1.7 e `ip-address` 10.5.1 ganharam três alertas moderados. Subiram para 3.1.8 e 10.7.2, publicadas em 15/09.
+
 ## 0.76.150 — Hooks de volta no Windows
 
 Uso real no Windows em 30/09, achado ao mapear o uso do Jev. Inclui a 0.76.149 (memória do projeto).
