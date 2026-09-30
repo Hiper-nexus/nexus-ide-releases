@@ -4,7 +4,8 @@
   "main":"src/index.ts",
   "compatibility_date":"2026-09-30",
   "compatibility_flags":["nodejs_compat"],
-  "workers_dev":true,
+  "workers_dev":false,
+  "preview_urls":false,
   // The site and the desktop app both call this host; session cookies are bound to it.
   "routes":[{"pattern":"api.nexuside.app","custom_domain":true}],
   "d1_databases":[{"binding":"DB","database_name":"nexus-cloud-staging","database_id":"27b16550-81d6-43cb-92dd-d2ef0373e36f","migrations_dir":"migrations"}],
