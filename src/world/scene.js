@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { makeWorld, makeRover, makeBarrels, makeProps, ANIMATED, COLORS } from './objects.js';
+import { disposeObjects, disposeShared, makeWorld, makeRover, makeBarrels, makeProps, ANIMATED, COLORS } from './objects.js';
 import { drive, initialVehicle } from './driving.js';
 import { collectNearby } from './movement.js';
 import { hitBarrel, detonateBarrel, stepBarrels, stepProps, pushProp, blastImpulse, BLAST_RADIUS } from './props.js';
@@ -129,6 +129,8 @@ class CafeWorld {
     this.vehicle=initialVehicle();this.cam=initialCamera(this.vehicle);this.orbit=0;this.dragging=null;this.focus=null;this.focusUntil=0;
     this.playing=false;this.paused=this.calm;this.visible=true;this.frame=0;this.lastTime=0;this.disposed=false;this.near=null;
     this.wheelRotation=0;this.tiltPitch=0;this.tiltRoll=0;this.bounce=0;this.bounceV=0;this.wasAirborne=false;this.shake=0;this.markTimer=0;this.slowFrames=0;this.lastSpeed=null;this.lastBoost=1;
+    // Every DOM listener hangs off this controller, so dispose() releases them in one call.
+    this.aborter=new AbortController();this.listen={signal:this.aborter.signal};
     const mobile=Math.min(innerWidth,innerHeight)<760;
     this.renderer=new THREE.WebGLRenderer({antialias:!mobile,powerPreference:'high-performance'});
     this.renderer.setPixelRatio(Math.min(devicePixelRatio,mobile?1.25:1.6));
@@ -139,17 +141,19 @@ class CafeWorld {
     this.scene=new THREE.Scene();this.scene.fog=new THREE.Fog(COLORS.fog,48,150);
     this.camera=new THREE.PerspectiveCamera(52,1,.1,300);
     this.scene.add(new THREE.HemisphereLight(0xffc4d4,0x5a2a40,1.5));
-    const sun=new THREE.DirectionalLight(0xffcfa6,2.6);sun.castShadow=true;sun.shadow.mapSize.set(mobile?1024:2048,mobile?1024:2048);
+    // Shadow budget: phones get a 512² map and only the big shapes cast; desktops keep 2048² and everything.
+    const sun=new THREE.DirectionalLight(0xffcfa6,2.6);sun.castShadow=true;sun.shadow.mapSize.set(mobile?512:2048,mobile?512:2048);
     Object.assign(sun.shadow.camera,{left:-36,right:36,top:36,bottom:-36,near:1,far:140});sun.shadow.bias=-.0008;sun.shadow.normalBias=.03;
     this.sun=sun;this.scene.add(sun,sun.target);
     const rim=new THREE.DirectionalLight(0xff6f91,.9);rim.position.set(-30,12,-40);this.scene.add(rim);
     this.flash=new THREE.PointLight(0xffb35c,0,18,1.8);this.flash.position.set(0,2,0);this.scene.add(this.flash);
     this.world=makeWorld(this.scene);this.rover=makeRover(this.scene);
+    if(mobile)this.world.root.traverse(object=>{if(object.isInstancedMesh)object.castShadow=false;});
     this.barrels=makeBarrels(this.scene);this.props=makeProps(this.scene);
     this.particles=new Particles(this.scene,this.calm?120:320);this.shockwaves=new Shockwaves(this.scene);this.tireMarks=new TireMarks(this.scene);
     this.scratch=new THREE.Vector3();this.shakeOffset=new THREE.Vector3();
     for(const coffee of this.world.coffees) coffee.mesh.visible=!this.collected.has(coffee.id);
-    this.markers=this.world.stations.map(station=>{const button=document.createElement('button');button.className='station-marker';button.textContent=station.label;button.type='button';button.addEventListener('click',()=>this.activate(station));host.append(button);return {...station,button};});
+    this.markers=this.world.stations.map(station=>{const button=document.createElement('button');button.className='station-marker';button.textContent=station.label;button.type='button';button.addEventListener('click',()=>this.activate(station),this.listen);host.append(button);return {...station,button};});
     this.placeRover();
     this.bindInput();this.observe();this.resize();host.classList.add('world-ready');document.querySelector('#world-loading').hidden=true;
   }
@@ -161,8 +165,10 @@ class CafeWorld {
   render=(time)=>{
     this.frame=0;const raw=(time-this.lastTime)/1000;const delta=Math.min(raw,.05);this.lastTime=time;
     const seconds=time*.001;
-    ANIMATED.pulse.forEach((material,index)=>material.emissiveIntensity=.4+.3*Math.sin(seconds*2.2+index*1.9));
-    ANIMATED.blink.forEach((material,index)=>material.emissiveIntensity=(seconds*(.7+index*.35)%1)<.62?1.15:.06);
+    if(!this.calm){
+      ANIMATED.pulse.forEach((material,index)=>material.emissiveIntensity=.4+.3*Math.sin(seconds*2.2+index*1.9));
+      ANIMATED.blink.forEach((material,index)=>material.emissiveIntensity=(seconds*(.7+index*.35)%1)<.62?1.15:.06);
+    }
     let effects=false;
     if(!this.paused){
       if(this.playing)this.step(delta);
@@ -171,7 +177,7 @@ class CafeWorld {
       effects=this.shockwaves.update(delta)||effects;
       if(this.flash.intensity>0){this.flash.intensity*=Math.exp(-9*delta);if(this.flash.intensity<.3)this.flash.intensity=0;effects=true;}
       if(!this.dragging&&this.orbit)this.orbit*=Math.exp(-1.8*delta);
-      const boosting=this.keys.has('boost')&&this.vehicle.boostCharge>0&&Math.abs(this.vehicle.speed)>1;
+      const boosting=!this.calm&&this.keys.has('boost')&&this.vehicle.boostCharge>0&&Math.abs(this.vehicle.speed)>1;
       this.cam=chaseStep(this.cam,this.vehicle,delta,{orbit:this.orbit,boost:boosting,attract:!this.playing});
       if(this.focus&&time<this.focusUntil){const k=1-Math.exp(-delta*3);this.cam.tx+=(this.focus.x-this.cam.tx)*k;this.cam.tz+=(this.focus.z-this.cam.tz)*k;this.cam.ty+=(this.focus.y-this.cam.ty)*k;}else this.focus=null;
     }
@@ -233,8 +239,9 @@ class CafeWorld {
     if(boosting&&!this.calm&&Math.random()<.6)this.particles.spawn(v.x+Math.sin(v.heading)*1.2,.5,v.z+Math.cos(v.heading)*1.2,{count:2,colors:FLAME,speed:2,spread:.3});
     const drifting=Math.abs(lateral)>1.6&&speed>3&&!airborne;
     if(drifting){this.markTimer-=delta;if(this.markTimer<=0){this.tireMarks.stamp(v.x,v.z,v.heading);this.markTimer=.05;}if(!this.calm&&Math.random()<.5)this.particles.spawn(v.x,.2,v.z,{count:2,colors:DUST,speed:1.5,spread:.6});}
-    Object.assign(this.host.dataset,{playerX:v.x.toFixed(2),playerZ:v.z.toFixed(2),playerHeading:v.heading.toFixed(2),speed:Math.abs(v.speed).toFixed(1)});
-    const shown=Math.abs(v.speed).toFixed(1);if(this.lastSpeed!==shown){this.lastSpeed=shown;this.options.onSpeed?.(shown);}
+    const shown=Math.abs(v.speed).toFixed(1);
+    if(this.lastSpeed!==shown||v!==this.lastVehicle){this.lastVehicle=v;Object.assign(this.host.dataset,{playerX:v.x.toFixed(2),playerZ:v.z.toFixed(2),playerHeading:v.heading.toFixed(2),speed:shown});}
+    if(this.lastSpeed!==shown){this.lastSpeed=shown;this.options.onSpeed?.(shown);}
     if(Math.abs(v.boostCharge-this.lastBoost)>.02){this.lastBoost=v.boostCharge;this.options.onBoost?.(v.boostCharge);}
     if(airborne&&!before.y)this.options.onJump?.();
     for(const id of collectNearby(v,this.world.coffees,this.collected)){
@@ -300,37 +307,47 @@ class CafeWorld {
     if(!KEYS[key]||!this.playing)return;event.preventDefault();const fresh=!this.keys.has(KEYS[key]);this.keys.add(KEYS[key]);if(fresh&&!this.paused)this.step(.05);this.schedule();
   };
   keyup=(event)=>{this.keys.delete(KEYS[event.key.length===1?event.key.toLowerCase():event.key]);};
-  clearKeys=()=>{this.keys.clear();this.analog={throttle:0,steer:0};};
+  clearKeys=()=>{this.keys.clear();this.analog={throttle:0,steer:0};if(this.dragging)this.endDrag();};
+  endDrag=()=>{this.dragging=null;this.schedule();};
   bindInput(){
     const canvas=this.renderer.domElement;
     // Synthetic pointers (tests, some assistive tools) have no capture target; the gesture still works.
     const capture=(element,event)=>{try{element.setPointerCapture(event.pointerId);}catch{/* no active pointer to capture */}};
     canvas.style.touchAction='none';
-    this.host.addEventListener('keydown',this.keydown);window.addEventListener('keyup',this.keyup);window.addEventListener('blur',this.clearKeys);
+    const on=(target,name,handler)=>target.addEventListener(name,handler,this.listen);
+    on(this.host,'keydown',this.keydown);on(window,'keyup',this.keyup);on(window,'blur',this.clearKeys);
     // Dragging the scene orbits the camera around the rover; it eases back when released.
-    canvas.addEventListener('pointerdown',event=>{this.host.focus({preventScroll:true});this.dragging={id:event.pointerId,x:event.clientX};capture(canvas,event);});
-    canvas.addEventListener('pointermove',event=>{if(this.dragging?.id!==event.pointerId)return;this.orbit+=(event.clientX-this.dragging.x)*-.008;this.dragging.x=event.clientX;this.schedule();});
-    for(const name of ['pointerup','pointercancel'])canvas.addEventListener(name,event=>{if(this.dragging?.id===event.pointerId)this.dragging=null;this.schedule();});
+    on(canvas,'pointerdown',event=>{this.host.focus({preventScroll:true});this.dragging={id:event.pointerId,x:event.clientX};capture(canvas,event);});
+    on(canvas,'pointermove',event=>{if(this.dragging?.id!==event.pointerId)return;this.orbit+=(event.clientX-this.dragging.x)*-.008;this.dragging.x=event.clientX;this.schedule();});
+    for(const name of ['pointerup','pointercancel','lostpointercapture'])on(canvas,name,event=>{if(this.dragging?.id===event.pointerId)this.endDrag();});
     // The joystick sits next to the canvas in the stage, not inside #world.
     const stick=document.querySelector('.joystick');
     if(stick){
       const knob=stick.querySelector('.joystick-knob');let origin=null;
       const move=(event)=>{if(origin?.id!==event.pointerId)return;const dx=event.clientX-origin.x,dy=event.clientY-origin.y;this.analog=joystickInput(dx,dy);const limit=Math.min(1,Math.hypot(dx,dy)/56);const angle=Math.atan2(dy,dx);knob.style.transform=`translate(${Math.cos(angle)*limit*40}px,${Math.sin(angle)*limit*40}px)`;this.schedule();};
-      stick.addEventListener('pointerdown',event=>{event.preventDefault();origin={id:event.pointerId,x:event.clientX,y:event.clientY};capture(stick,event);stick.classList.add('active');if(!this.playing)this.options.onTouchStart?.();});
-      stick.addEventListener('pointermove',move);
-      for(const name of ['pointerup','pointercancel','lostpointercapture'])stick.addEventListener(name,event=>{if(origin?.id!==event.pointerId)return;origin=null;this.analog={throttle:0,steer:0};knob.style.transform='';stick.classList.remove('active');});
+      on(stick,'pointerdown',event=>{event.preventDefault();origin={id:event.pointerId,x:event.clientX,y:event.clientY};capture(stick,event);stick.classList.add('active');if(!this.playing)this.options.onTouchStart?.();});
+      on(stick,'pointermove',move);
+      for(const name of ['pointerup','pointercancel','lostpointercapture'])on(stick,name,event=>{if(origin?.id!==event.pointerId)return;origin=null;this.analog={throttle:0,steer:0};knob.style.transform='';stick.classList.remove('active');});
     }
-    document.querySelectorAll('[data-action]').forEach(button=>{const action=button.dataset.action;button.addEventListener('pointerdown',event=>{event.preventDefault();this.keys.add(action);capture(button,event);this.schedule();});for(const name of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(name,()=>this.keys.delete(action));});
+    document.querySelectorAll('[data-action]').forEach(button=>{const action=button.dataset.action;on(button,'pointerdown',event=>{event.preventDefault();this.keys.add(action);capture(button,event);this.schedule();});for(const name of ['pointerup','pointercancel','lostpointercapture'])on(button,name,()=>this.keys.delete(action));});
+    // The preference can flip while the page is open; calm keeps emissives, FOV and shake still.
+    this.motion=matchMedia('(prefers-reduced-motion: reduce)');on(this.motion,'change',event=>{this.calm=event.matches;this.schedule();});
   }
   observe(){
     this.resizeObserver=new ResizeObserver(this.resize);this.resizeObserver.observe(this.host);
     this.observer=new IntersectionObserver(entries=>{this.visible=entries[0].isIntersecting&&!document.hidden;if(this.visible)this.schedule();else{cancelAnimationFrame(this.frame);this.frame=0;this.clearKeys();}});this.observer.observe(this.host);
-    this.visibility=()=>{this.visible=!document.hidden&&this.host.getBoundingClientRect().bottom>0;if(this.visible)this.schedule();else{cancelAnimationFrame(this.frame);this.frame=0;this.clearKeys();}};document.addEventListener('visibilitychange',this.visibility);
-    this.renderer.domElement.addEventListener('webglcontextlost',event=>{event.preventDefault();this.paused=true;this.host.classList.remove('world-ready');this.options.onError?.();});
+    this.visibility=()=>{this.visible=!document.hidden&&this.host.getBoundingClientRect().bottom>0;if(this.visible)this.schedule();else{cancelAnimationFrame(this.frame);this.frame=0;this.clearKeys();}};document.addEventListener('visibilitychange',this.visibility,this.listen);
+    this.renderer.domElement.addEventListener('webglcontextlost',event=>{event.preventDefault();this.paused=true;this.host.classList.remove('world-ready');this.options.onError?.();},this.listen);
   }
   start=()=>{this.playing=true;this.paused=false;this.reset();this.host.focus({preventScroll:true});};
   reset=()=>{this.vehicle=initialVehicle();this.cam=initialCamera(this.vehicle);this.orbit=0;this.bounce=0;this.bounceV=0;this.keys.clear();this.analog={throttle:0,steer:0};this.placeRover();this.schedule();};
   togglePause=()=>{this.paused=!this.paused;this.clearKeys();this.vehicle={...this.vehicle,vx:0,vz:0,speed:0};this.schedule();return this.paused;};
-  dispose=()=>{this.disposed=true;cancelAnimationFrame(this.frame);this.resizeObserver.disconnect();this.observer.disconnect();this.renderer.dispose();this.host.removeEventListener('keydown',this.keydown);window.removeEventListener('keyup',this.keyup);window.removeEventListener('blur',this.clearKeys);document.removeEventListener('visibilitychange',this.visibility);this.scene.traverse(object=>object.geometry?.dispose());};
+  dispose=()=>{
+    this.disposed=true;cancelAnimationFrame(this.frame);this.frame=0;this.aborter.abort();
+    this.resizeObserver.disconnect();this.observer.disconnect();
+    for(const marker of this.markers)marker.button.remove();
+    disposeObjects(this.scene);this.sun.shadow.dispose();disposeShared();
+    this.renderer.dispose();this.renderer.domElement.remove();
+  };
 }
 export function createWorld(host,options){return new CafeWorld(host,options);}
