@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import {
   PLANS,
-  type LicenseState,
   type PlanDef,
   type PlanId,
   type TeamInfo,
 } from '../../../shared/billing-types';
+import { useAccess, refreshAccess } from '../../state/access-store';
 import { askConfirm } from '../../state/confirm-store';
 import { PixelIcon } from '../PixelIcon';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
@@ -50,11 +50,8 @@ function AccountHeader() {
   );
 }
 
-export function AccountSection() {
-  const [license, setLicense] = useState<LicenseState | null>(null);
-  const [licenseLoading, setLicenseLoading] = useState(true);
-  const [licenseFailed, setLicenseFailed] = useState(false);
-  const [licenseRetry, setLicenseRetry] = useState(0);
+export function AccountSection({ accessOnly = false }: { accessOnly?: boolean }) {
+  const { license, loading: licenseLoading, failed: licenseFailed } = useAccess();
   const [team, setTeam] = useState<TeamInfo | null>(null);
   const [teamLoading, setTeamLoading] = useState(false);
   const [joinCode, setJoinCode] = useState('');
@@ -67,25 +64,6 @@ export function AccountSection() {
   const [checkoutBusy, setCheckoutBusy] = useState(false);
   const [reloginOpen, setReloginOpen] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLicenseLoading(true);
-    setLicenseFailed(false);
-    void (async () => {
-      try {
-        const info = await window.nexus.billing.get();
-        if (!cancelled) setLicense(info);
-      } catch {
-        if (!cancelled) setLicenseFailed(true);
-      } finally {
-        if (!cancelled) setLicenseLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [licenseRetry]);
-
   const isLoggedIn = Boolean(license?.email);
   // G7 (paridade 1.3.18): verificação de assinatura que falhou NÃO é falta de
   // licença. Com conta presente e verified=false, a tela fala "não confirmado
@@ -95,7 +73,7 @@ export function AccountSection() {
     license?.verified === false &&
     (license.status !== 'none' || license.plan !== 'free');
   useEffect(() => {
-    if (!isLoggedIn) {
+    if (!isLoggedIn || accessOnly) {
       setTeam(null);
       setTeamLoading(false);
       return;
@@ -115,7 +93,7 @@ export function AccountSection() {
     return () => {
       cancelled = true;
     };
-  }, [isLoggedIn]);
+  }, [isLoggedIn, accessOnly]);
 
   const currentPlan: PlanId = license?.plan ?? 'free';
   const isOwner = team?.team?.role === 'owner';
@@ -139,8 +117,7 @@ export function AccountSection() {
         setLoginError(result.error ?? `Falha ao entrar com ${provider}.`);
         return;
       }
-      const next = await window.nexus.billing.get();
-      setLicense(next);
+      await refreshAccess();
       if (reloginOpen) {
         setReloginOpen(false);
         setTeamError(null);
@@ -234,6 +211,8 @@ export function AccountSection() {
       if (!result.ok) {
         setCheckoutError(result.error ?? 'Não foi possível abrir o checkout.');
       }
+    } catch {
+      setCheckoutError('Não foi possível abrir o checkout. Tente novamente.');
     } finally {
       setCheckoutBusy(false);
     }
@@ -255,7 +234,7 @@ export function AccountSection() {
         {licenseFailed ? <>
           <h3>Não foi possível carregar sua conta</h3>
           <p>Seu plano não pôde ser consultado agora. Tente novamente para ver os dados da conta.</p>
-          <button type="button" className="settings-btn settings-btn--primary" onClick={() => setLicenseRetry(value => value + 1)}>Tentar novamente</button>
+          <button type="button" className="settings-btn settings-btn--primary" onClick={() => void refreshAccess()}>Tentar novamente</button>
         </> : <><p>Carregando sua conta…</p><div className="settings-skeleton" aria-hidden="true"><span /><span /></div></>}
       </div>
     </section>;
@@ -332,11 +311,16 @@ export function AccountSection() {
             Entrar de novo
           </button>
         )}
-        {license?.access === 'pro' && (
+        {isLoggedIn && (
           <button
             type="button"
             className="settings-btn"
-            onClick={() => void window.nexus.billing.openPortal()}
+            onClick={() => {
+              setCheckoutError(null);
+              void window.nexus.billing.openPortal().then(result => {
+                if (!result.ok) setCheckoutError('Não foi possível abrir o portal de cobrança. Tente novamente.');
+              }).catch(() => setCheckoutError('Não foi possível abrir o portal de cobrança. Tente novamente.'));
+            }}
             title="Abrir o portal de assinatura (Stripe) no navegador"
           >
             Gerenciar assinatura
@@ -401,7 +385,7 @@ export function AccountSection() {
         </div>
       )}
 
-      {isLoggedIn && (
+      {isLoggedIn && !accessOnly && (
         <div className="account__team" role="region" aria-label="Time">
           <div className="account__team-head">
             <div>
@@ -572,6 +556,7 @@ export function AccountSection() {
                   </span>
                 </div>
                 <p className="account__plan-tagline">{plan.tagline}</p>
+                {plan.id === 'trial' && <p className="account__zone-hint">Teste de 15 dias · 2 agentes · sem sync na nuvem</p>}
                 <ul className="account__plan-features">
                   {plan.features.map((f) => (
                     <li key={f}>{f}</li>
