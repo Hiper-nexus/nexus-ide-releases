@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import worker, { handleRequest } from './index.js';
+
+function connectSrcDirective(csp) {
+  return csp.split(';').map(part => part.trim()).find(part => part.startsWith('connect-src'));
+}
 
 test('Cloudflare execution context does not replace the origin fetch function', async t => {
   const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response('origin'));
@@ -88,4 +93,42 @@ test('returns branded missing pages with a real 404 status', async () => {
   assert.equal(await response.text(),'Lost in space');
   assert.equal(response.headers.get('content-type'),'text/html');
   assert.equal(response.headers.has('location'),false);
+});
+
+test('CSP connect-src allows the site and the API, and nothing else', async () => {
+  const res = await handleRequest(new Request('https://nexuside.app/'), {
+    ASSETS: { fetch: async () => new Response('product') },
+  });
+  const csp = res.headers.get('content-security-policy');
+  assert.equal(connectSrcDirective(csp), "connect-src 'self' https://api.nexuside.app");
+  assert.equal(csp.includes("connect-src 'self';"), false);
+});
+
+test('serves conta and admin on the product domain with noindex', async () => {
+  for (const path of ['/conta/', '/admin/', '/conta', '/admin']) {
+    let served = null;
+    const res = await handleRequest(new Request('https://nexuside.app' + path), {
+      ASSETS: { fetch: async req => { served = new URL(req.url).pathname; return new Response('page'); } },
+    });
+    assert.equal(served, path, path);
+    assert.equal(res.status, 200, path);
+    assert.equal(res.headers.get('x-robots-tag'), 'noindex', path);
+    assert.equal(res.headers.get('content-security-policy').includes('api.nexuside.app'), true, path);
+  }
+});
+
+test('never serves conta or admin on the community hostname', async () => {
+  for (const path of ['/conta/', '/admin/', '/conta', '/admin']) {
+    const res = await handleRequest(new Request('https://comunidade.nexuside.app' + path), {
+      ASSETS: { fetch: () => assert.fail('must not serve account assets') },
+    });
+    assert.equal(res.status, 404, path);
+  }
+});
+
+test('conta and admin documents stay out of the search index', () => {
+  for (const file of ['../conta/index.html', '../admin/index.html']) {
+    const html = readFileSync(new URL(file, import.meta.url), 'utf8');
+    assert.match(html, /<meta name="robots" content="noindex">/, file);
+  }
 });

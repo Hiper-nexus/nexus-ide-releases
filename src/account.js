@@ -95,12 +95,12 @@ function renderAvailability() {
     : 'As condições do período de teste estão temporariamente indisponíveis.';
 }
 
-async function refreshAccount() {
+async function refreshAccount({ announce = true } = {}) {
   if (isBusy) return;
   isBusy = true;
   byId('refresh-account').disabled = true;
   byId('subscribe').disabled = true;
-  message('account-message', 'Atualizando sua conta…');
+  if (announce) message('account-message', 'Atualizando sua conta…');
   const results = await Promise.allSettled([api('/v1/public/status'), api('/v1/web/session')]);
   availability = results[0].status === 'fulfilled' ? results[0].value : null;
   let error = results.find(result => result.status === 'rejected')?.reason;
@@ -109,7 +109,49 @@ async function refreshAccount() {
   isBusy = false;
   renderIdentity();
   renderAvailability();
-  message('account-message', error ? error.message : session.authenticated ? 'Conta atualizada. O acesso mostrado foi confirmado pelo servidor.' : 'Entre para começar ou continuar.', error ? 'error' : '');
+  if (announce) message('account-message', error ? error.message : session.authenticated ? 'Conta atualizada. O acesso mostrado foi confirmado pelo servidor.' : 'Entre para começar ou continuar.', error ? 'error' : '');
+}
+
+const CHECKOUT_DELAYS = [1200, 2500, 4000];
+
+async function confirmProAccess() {
+  for (let attempt = 1; attempt <= CHECKOUT_DELAYS.length; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, CHECKOUT_DELAYS[attempt - 1]));
+    message('account-message', `Recebemos o retorno do Stripe. O servidor ainda vai confirmar o acesso Pro. Tentativa ${attempt} de ${CHECKOUT_DELAYS.length}…`);
+    try {
+      session = validatedSession(await api('/v1/web/session'));
+      renderIdentity();
+      renderAvailability();
+      if (session.authenticated && session.entitlement?.access === 'pro') return true;
+    } catch { /* A próxima tentativa consulta de novo; o resultado final é reportado pelo chamador. */ }
+  }
+  return false;
+}
+
+async function handleCheckoutReturn(kind) {
+  if (kind === 'cancel') {
+    message('account-message', 'O checkout foi cancelado. Nenhuma cobrança foi iniciada.');
+    await refreshAccount();
+    message('account-message', 'O checkout foi cancelado. Nenhuma cobrança foi iniciada e o seu acesso não mudou.');
+    return;
+  }
+  message('account-message', 'Recebemos o retorno do Stripe. Confirmando seu acesso com o servidor…');
+  await refreshAccount({ announce: false });
+  if (session.authenticated && session.entitlement?.access === 'pro') {
+    message('account-message', 'Seu acesso Pro está confirmado pelo servidor. Abra o NexusIDE e entre com a mesma conta.', 'success');
+    return;
+  }
+  const confirmed = await confirmProAccess();
+  message('account-message', confirmed
+    ? 'Seu acesso Pro está confirmado pelo servidor. Abra o NexusIDE e entre com a mesma conta.'
+    : 'O servidor ainda não confirmou o acesso Pro. Use “Atualizar situação da conta” em instantes para conferir.',
+  confirmed ? 'success' : '');
+}
+
+function highlightPlan() {
+  const panel = document.querySelector('.account-plan');
+  panel.classList.add('plan-highlight');
+  panel.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
 }
 
 function safeStripeUrl(value, hostname) {
@@ -150,9 +192,13 @@ async function logout() {
 }
 
 if (document.body.dataset.page === 'account') {
-  byId('refresh-account').addEventListener('click', refreshAccount);
+  byId('refresh-account').addEventListener('click', () => refreshAccount());
   byId('subscribe').addEventListener('click', () => billingAction('checkout'));
   byId('billing-portal').addEventListener('click', () => billingAction('portal'));
   byId('logout').addEventListener('click', logout);
-  void refreshAccount();
+  const query = new URLSearchParams(window.location.search);
+  const checkout = query.get('checkout');
+  if (checkout === 'success' || checkout === 'cancel') void handleCheckoutReturn(checkout);
+  else void refreshAccount();
+  if (query.get('plano') === 'pro') highlightPlan();
 }

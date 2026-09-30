@@ -3,16 +3,21 @@ import { releaseCatalogResponse } from '../src/downloads/catalog.js';
 const PRODUCTION_HOST = 'nexuside.app';
 const COMMUNITY_HOST = 'comunidade.nexuside.app';
 const BACKEND_PATHS = ['/v1', '/billing', '/join', '/health', '/ready'];
+const ACCOUNT_PATHS = ['/conta', '/admin'];
 const ALIASES = new Set(['/comunidade', '/comunidade/', '/sorteio', '/sorteio/']);
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'strict-origin-when-cross-origin',
   'permissions-policy': 'camera=(), microphone=(), geolocation=()',
-  'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+  'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://api.nexuside.app; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
 };
 
 function isBackendPath(path) {
   return BACKEND_PATHS.some(prefix => path === prefix || path.startsWith(prefix + '/'));
+}
+
+function isAccountPath(path) {
+  return ACCOUNT_PATHS.some(prefix => path === prefix || path.startsWith(prefix + '/'));
 }
 
 async function fetchOrigin(request, originFetch) {
@@ -43,6 +48,9 @@ export async function handleRequest(request, env, originFetch = fetch) {
     if (url.pathname.startsWith('/sorteio')) target.hash = 'premios';
     return Response.redirect(target.href, 307);
   }
+  if (url.hostname === COMMUNITY_HOST && isAccountPath(url.pathname)) {
+    return new Response('Not found', { status: 404 });
+  }
   const assetUrl = new URL(url);
   if (url.hostname === COMMUNITY_HOST && (url.pathname === '/' || ALIASES.has(url.pathname))) assetUrl.pathname = '/comunidade/';
   if (url.hostname === COMMUNITY_HOST && ['/privacidade', '/privacidade.html', '/termos', '/termos.html'].includes(url.pathname)) assetUrl.pathname = '/comunidade' + url.pathname;
@@ -55,6 +63,7 @@ export async function handleRequest(request, env, originFetch = fetch) {
   const headers = new Headers(response.headers);
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
   if (url.pathname.startsWith('/sorteio')) headers.set('x-robots-tag', 'noindex');
+  if (isAccountPath(url.pathname)) headers.set('x-robots-tag', 'noindex');
   return new Response(response.body, { status: response.status, headers });
 }
 

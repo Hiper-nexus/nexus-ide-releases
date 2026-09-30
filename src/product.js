@@ -1,8 +1,10 @@
 import '@fontsource-variable/geist';
 import './product.css';
 import { initializeDownloads } from './downloads/ui.js';
+import { initializePlans } from './plans/ui.js';
 
 void initializeDownloads();
+void initializePlans();
 
 const cases={
   app:{name:'app de agenda',folder:'agenda',brief:'Uma agenda com cadastro de clientes e horários disponíveis.',plan:['Definir cadastro e regras de horário.','Separar interface e persistência.','Escrever os critérios de revisão.'],build:['Criar a tela de agenda.','Validar disponibilidade no serviço.','Cobrir conflitos de horário com testes.'],review:'Verificar sobreposição de horários, acesso aos dados e funcionamento da interface.',result:'Agenda pronta para sua revisão.'},
