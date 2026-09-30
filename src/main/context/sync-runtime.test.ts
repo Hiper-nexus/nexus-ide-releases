@@ -1,3 +1,8 @@
+import { resetLicensedAccessMock } from '../__tests__/licensed-access';
+beforeEach(resetLicensedAccessMock);
+import { beforeEach } from 'vitest';
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+import { requireAccess } from '../license-access';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
@@ -140,4 +145,12 @@ describe('sync runtime registry', () => {
       SyncRuntimeNotConfiguredError,
     );
   });
+});
+
+
+it('blocks main-owned publication without touching the configured backend', async () => {
+  const read = vi.fn(); configureSyncRuntime({ backend: { read, compareAndSwap: vi.fn() } });
+  vi.mocked(requireAccess).mockReturnValue({ ok: false, reason: 'cloud-sync-disabled' });
+  await expect(publishMainOwnedSync(scope, { projectId: scope.projectId, expectedRemoteRevision: 0, mutations: [mutation] })).rejects.toMatchObject({ code: 'license_access_denied' });
+  expect(read).not.toHaveBeenCalled();
 });

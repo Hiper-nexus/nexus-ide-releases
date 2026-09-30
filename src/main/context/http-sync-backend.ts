@@ -1,3 +1,5 @@
+import { resolveBackendUrl } from '../backend-url';
+import { assertLicenseAccess, assertLicenseResponse } from '../license-enforcement';
 import { z } from 'zod';
 import {
   normalizeSyncEntities,
@@ -172,6 +174,7 @@ export class HttpSyncBackend implements SyncBackend {
   }
 
   async read(projectId: string): Promise<SyncProjectState> {
+    assertLicenseAccess('cloudSync');
     const project = syncProjectIdSchema.parse(projectId);
     const response = await this.#request(
       `/v1/sync/projects/${encodeURIComponent(project)}`,
@@ -181,6 +184,7 @@ export class HttpSyncBackend implements SyncBackend {
         maxResponseBytes: this.#maxResponseBytes,
       },
     );
+    assertLicenseResponse(response.status);
     const parsed = readEnvelopeSchema.safeParse(response.json);
     if (
       response.status !== 200 ||
@@ -200,6 +204,7 @@ export class HttpSyncBackend implements SyncBackend {
     expectedRevision: number,
     next: readonly SyncMutation[],
   ): Promise<boolean> {
+    assertLicenseAccess('cloudSync');
     const project = syncProjectIdSchema.parse(projectId);
     const expected = z.number().int().nonnegative().parse(expectedRevision);
     const entities = normalizeSyncEntities(next);
@@ -213,6 +218,7 @@ export class HttpSyncBackend implements SyncBackend {
       },
     );
 
+    assertLicenseResponse(response.status);
     const success = casEnvelopeSchema.safeParse(response.json);
     if (
       response.status === 200 &&
@@ -254,7 +260,7 @@ export function createHttpSyncBackendFromEnvironment(
     allowInsecureLocalhostForTests: allowLocal,
   });
   const authOrigin = normalizedBaseUrl(
-    env.NEXUS_BACKEND_URL ?? 'https://api.nexuside.app',
+    resolveBackendUrl(env.NEXUS_BACKEND_URL),
     allowLocal,
   );
   if (backend.baseUrl !== authOrigin) {

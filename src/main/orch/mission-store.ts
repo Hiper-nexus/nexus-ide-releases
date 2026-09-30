@@ -1,3 +1,4 @@
+import { assertLicenseAccess } from '../license-enforcement';
 import { createHash } from 'node:crypto';
 import { emitAppEvent } from '../connectors/app-events';
 import { isDeepStrictEqual } from 'node:util';
@@ -354,16 +355,20 @@ function assertIntentContractRevision(
   }
 }
 
+export type MissionStoreOptions = ScopedStoreOptions & { assertCreateAccess?: () => void };
+
 export class ScopedMissionStore {
   readonly #binding: ScopedStoreBinding;
+  readonly #assertCreateAccess: () => void;
   readonly #kickoffProofs: MissionKickoffProofLedger;
   readonly #routeReservations: MissionRouteReservationLedger;
 
   constructor(
     runtimeManager: ProjectRuntimeManager,
     scope: ProjectExecutionScope,
-    options: ScopedStoreOptions = {},
+    options: MissionStoreOptions = {},
   ) {
+    this.#assertCreateAccess = options.assertCreateAccess ?? assertLicenseAccess;
     this.#binding = new ScopedStoreBinding(runtimeManager, scope, options);
     this.#kickoffProofs = new MissionKickoffProofLedger(this.#binding);
     this.#routeReservations = new MissionRouteReservationLedger(this.#binding);
@@ -633,6 +638,7 @@ export class ScopedMissionStore {
   }
 
   create(rawInput: CreateMissionInput): ScopedMission {
+    this.#assertCreateAccess();
     const input = createMissionInputSchema.parse(rawInput);
     const now = this.#binding.now();
     const intentState: MissionIntentState = input.intentState ?? 'legacy';
@@ -2051,7 +2057,7 @@ export class ScopedMissionStore {
 export function createScopedMissionStore(
   runtimeManager: ProjectRuntimeManager,
   scope: ProjectExecutionScope,
-  options: ScopedStoreOptions = {},
+  options: MissionStoreOptions = {},
 ): ScopedMissionStore {
   return new ScopedMissionStore(runtimeManager, scope, options);
 }

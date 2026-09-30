@@ -1,3 +1,4 @@
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 import { describe, expect, it, vi } from 'vitest';
 import type {
   MissionAttachmentSnapshot,

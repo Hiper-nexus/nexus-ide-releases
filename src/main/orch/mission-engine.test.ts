@@ -1,3 +1,8 @@
+import { resetLicensedAccessMock } from '../__tests__/licensed-access';
+beforeEach(resetLicensedAccessMock);
+import { beforeEach } from 'vitest';
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+import { requireAccess } from '../license-access';
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type {
@@ -660,4 +665,15 @@ describe('MissionEngineRegistry', () => {
       /scope/i,
     );
   });
+});
+
+
+it('blocks prepare/start before ports while preserving stop for an existing mission', async () => {
+  const ports = createPorts(); const engine = new MainMissionEngine(scope, ports);
+  vi.mocked(requireAccess).mockReturnValue({ ok: false, reason: 'suspended' });
+  await expect(engine.prepare(scope, request)).rejects.toMatchObject({ code: 'license_access_denied' });
+  await expect(engine.start(scope, { missionId: 'mission-1', reviewSha256: 'a'.repeat(64) })).rejects.toMatchObject({ code: 'license_access_denied' });
+  expect(ports.arm).not.toHaveBeenCalled(); expect(ports.seal).not.toHaveBeenCalled();
+  await engine.command(scope, { kind: 'stop', missionId: 'mission-1' });
+  expect(ports.stop).toHaveBeenCalledOnce();
 });

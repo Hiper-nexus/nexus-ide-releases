@@ -1,3 +1,4 @@
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

@@ -1,3 +1,7 @@
+import { resetLicensedAccessMock } from '../__tests__/licensed-access';
+beforeEach(resetLicensedAccessMock);
+import { requireAccess } from '../license-access';
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -4220,4 +4224,12 @@ describe('missionCreateForPane — a missão do GRUPO do pane (F-374)', () => {
       ownGroup: true,
     });
   });
+});
+
+
+it('mission-this-pane returns license denial before calling mission creation authority', async () => {
+  const sender = owner(935); harness.scopes.set(sender.id, SCOPE_A);
+  vi.mocked(requireAccess).mockReturnValue({ ok: false, reason: 'inactive' });
+  expect(await canonicalHandler(ORCH_CHANNELS.missionCreateForPane)({ sender }, { paneId: 'pane-a', title: 'License' })).toMatchObject({ ok: false, code: 'license_access_denied' });
+  expect(harness.createPaneMission).not.toHaveBeenCalled();
 });

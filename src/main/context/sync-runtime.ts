@@ -1,3 +1,5 @@
+import { assertLicenseAccess } from '../license-enforcement';
+import { LicenseError } from '../../shared/license-errors';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type {
   SyncEntityType,
@@ -120,7 +122,8 @@ export async function inspectSyncRuntime(
         ),
       ),
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof LicenseError) throw error;
     return emptyStatus(projectId, 'unreachable');
   }
 }
@@ -130,6 +133,7 @@ export async function publishMainOwnedSync(
   scope: Pick<ProjectExecutionScope, 'projectId'>,
   input: SyncPublishInput,
 ): Promise<SyncPublishResult> {
+  assertLicenseAccess('cloudSync');
   const projectId = syncProjectIdSchema.parse(scope.projectId);
   if (syncProjectIdSchema.parse(input.projectId) !== projectId) {
     throw new Error('sync project differs from execution scope');

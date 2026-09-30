@@ -1,3 +1,7 @@
+import { resetLicensedAccessMock } from '../__tests__/licensed-access';
+beforeEach(resetLicensedAccessMock);
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+import { requireAccess } from '../license-access';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -2304,4 +2308,14 @@ describe('scoped mission store', () => {
     expect(row?.description).toContain('<!-- nexus:runtime-closed -->');
     expect(reopened.list('running')).toEqual([]);
   });
+});
+
+
+it('refuses a new mission while allowing reads and finalization of an existing mission', () => {
+  const store = createScopedMissionStore(manager(), testProjectScope({ checkoutId: 'license-gate' }));
+  const live = store.create({ title: 'Already admitted' });
+  vi.mocked(requireAccess).mockReturnValue({ ok: false, reason: 'trial-ended' });
+  expect(() => store.create({ title: 'Denied' })).toThrow(/license_access_denied/);
+  expect(store.transitionLifecycle(live.id, { updatedAt: live.updatedAt, intentVersion: live.intentVersion! }, { status: 'done', intentState: 'done', result: { outcome: 'success', summary: 'Already admitted delivery', evidenceIds: [], artifactRefs: [] } })?.status).toBe('done');
+  expect(store.list()).toHaveLength(1);
 });

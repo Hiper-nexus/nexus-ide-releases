@@ -1,3 +1,9 @@
+import { resolveBackendUrl } from '../backend-url';
+vi.mock('../backend-url', async (original) => { const mod = await original<typeof import('../backend-url')>(); return { ...mod, resolveBackendUrl: vi.fn(mod.resolveBackendUrl) }; });
+import { resetLicensedAccessMock } from '../__tests__/licensed-access';
+beforeEach(resetLicensedAccessMock);
+import { beforeEach } from 'vitest';
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 import { describe, expect, it, vi } from 'vitest';
 import type { ApiResult } from '../api-client';
 import {
@@ -222,4 +228,18 @@ describe('HttpCronBackend transport policy', () => {
     expect(request.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
     expect(request.mock.calls[1]?.[1]?.signal).toBe(controller.signal);
   });
+});
+
+
+it('preserves a server license denial for schedule reads', async () => {
+  const request = vi.fn(async () => ({ status: 403, json: { ok: false } }));
+  const backend = new HttpCronBackend({ baseUrl: 'https://api.test', request });
+  await expect(backend.list(lease().projectId)).rejects.toMatchObject({ code: 'license_access_denied' });
+  expect(request).toHaveBeenCalledOnce();
+});
+
+
+it('uses the packaged authenticated origin policy before accepting a cloud backend override', () => {
+  vi.mocked(resolveBackendUrl).mockReturnValueOnce('https://api.nexuside.app');
+  expect(() => createHttpCronBackendFromEnvironment({ NEXUS_CRON_BACKEND_URL: 'https://attacker.example', NEXUS_BACKEND_URL: 'https://attacker.example' })).toThrow(/authenticated Nexus backend origin/);
 });

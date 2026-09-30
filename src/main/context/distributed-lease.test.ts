@@ -1,3 +1,4 @@
+import { LicenseError } from '../../shared/license-errors';
 import { describe, expect, it } from 'vitest';
 import {
   DistributedLeaseCoordinator,
@@ -151,4 +152,12 @@ describe('DistributedLeaseCoordinator', () => {
       reason: 'backend-unavailable',
     });
   });
+});
+
+
+it('preserves a license error instead of converting it to backend-unavailable', async () => {
+  const backend = new MemoryLeaseBackend();
+  backend.acquire = async () => { throw new LicenseError('license_access_denied', 'server-denied'); };
+  const lease = new DistributedLeaseCoordinator(backend);
+  await expect(lease.acquire(REQUEST)).rejects.toMatchObject({ code: 'license_access_denied' });
 });

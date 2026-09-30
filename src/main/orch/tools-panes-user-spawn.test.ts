@@ -1,3 +1,9 @@
+import { resetLicensedAccessMock } from '../__tests__/licensed-access';
+beforeEach(resetLicensedAccessMock);
+import { beforeEach } from 'vitest';
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+import { requireAccess } from '../license-access';
+import { vi } from 'vitest';
 import { describe, expect, it } from 'vitest';
 import type { AgentGateContext } from './gate';
 import { testProjectScope } from './__tests__/scope-fixture';
@@ -60,4 +66,10 @@ describe('nexus_pane_spawn pela mão do operador', () => {
     }
     expect(message).toMatch(/adapterId/);
   });
+});
+
+
+it('MCP spawn reports license denial before routing or creating a mission', async () => {
+  vi.mocked(requireAccess).mockReturnValue({ ok: false, reason: 'inactive' });
+  await expect(paneSpawnTool.handler({}, userPane())).rejects.toMatchObject({ code: 'license_access_denied' });
 });

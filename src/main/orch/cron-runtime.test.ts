@@ -1,3 +1,8 @@
+import { resetLicensedAccessMock } from '../__tests__/licensed-access';
+beforeEach(resetLicensedAccessMock);
+import { beforeEach } from 'vitest';
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+import { requireAccess } from '../license-access';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   runCronTick,
@@ -235,4 +240,14 @@ describe('runCronTick', () => {
 
     release();
   });
+});
+
+
+it('refuses a due occurrence before materializing it when license access is denied', async () => {
+  vi.mocked(requireAccess).mockReturnValue({ ok: false, reason: 'suspended' });
+  const { deps: d } = deps([job()], new Date('2026-07-06T00:00:30').getTime());
+  const execute = vi.spyOn(d, 'executeOccurrence');
+  expect(await runCronTick(d)).toBe(0);
+  expect(execute).not.toHaveBeenCalled();
+  expect(d.load()[0].lastError).toContain('license_access_denied');
 });

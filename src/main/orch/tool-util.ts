@@ -1,3 +1,5 @@
+import { assertLicensedAgentCapacity } from '../license-enforcement';
+import { licenseErrorFrom } from '../../shared/license-errors';
 import { withWorkspaceDesignRule } from './workspace-design-rule';
 import { mountPromptContextBlocks } from './prompt-context-blocks';
 import {
@@ -1319,6 +1321,7 @@ export async function spawnPaneAndMaybePrompt(
   options: SpawnToolOptions,
   hooks: SpawnPaneHooks = {},
 ): Promise<{ paneId: string; sessionId: string }> {
+  assertLicensedAgentCapacity();
   assertMcpInvocationCurrent(hooks.invocation);
   let resolvedAdapter = getAdapter(options.adapterId);
   if (!resolvedAdapter) throw new Error(`unknown adapter: ${options.adapterId}`);
@@ -1613,6 +1616,8 @@ export async function spawnPaneAndMaybePrompt(
     );
   }
   if (!result.ok || !result.paneId || !result.sessionId) {
+    const licenseError = licenseErrorFrom(result.error);
+    if (licenseError) throw licenseError;
     // ACK pendente não é falha do adapter: o chamador traduz em sucesso e o
     // pane ainda vai nascer. Contar aqui abria o breaker com a grade oculta.
     if (!(result.ok && result.pending === true)) {

@@ -1,3 +1,5 @@
+import { resolveBackendUrl } from '../backend-url';
+import { assertLicenseResponse } from '../license-enforcement';
 import { z } from 'zod';
 import {
   apiFetchAt,
@@ -180,6 +182,7 @@ export class HttpCronBackend
       ...request,
       token,
     });
+    assertLicenseResponse(response.status);
     const parsed = releaseEnvelopeSchema.safeParse(response.json);
     return response.status === 200 && parsed.success && parsed.data.data.released;
   }
@@ -198,6 +201,7 @@ export class HttpCronBackend
         signal: options?.signal,
       },
     );
+    assertLicenseResponse(response.status);
     const parsed = listEnvelopeSchema.safeParse(response.json);
     return response.status === 200 && parsed.success
       ? { ok: true as const, schedules: parsed.data.data }
@@ -225,6 +229,7 @@ export class HttpCronBackend
         signal: options?.signal,
       },
     );
+    assertLicenseResponse(response.status);
     const success = publishEnvelopeSchema.safeParse(response.json);
     if ((response.status === 200 || response.status === 201) && success.success) {
       return {
@@ -254,6 +259,7 @@ export class HttpCronBackend
 
   async #lease(path: string, body: unknown): Promise<LeaseAcquireResult> {
     const response = await this.#call(path, body);
+    assertLicenseResponse(response.status);
     const parsed = leaseEnvelopeSchema.safeParse(response.json);
     if ((response.status !== 200 && response.status !== 409) || !parsed.success) {
       return unavailable();
@@ -284,7 +290,7 @@ export function createHttpCronBackendFromEnvironment(
     allowInsecureLocalhostForTests: allowLocal,
   });
   const authOrigin = normalizedBaseUrl(
-    env.NEXUS_BACKEND_URL ?? 'https://api.nexuside.app',
+    resolveBackendUrl(env.NEXUS_BACKEND_URL),
     allowLocal,
   );
   if (backend.baseUrl !== authOrigin) {

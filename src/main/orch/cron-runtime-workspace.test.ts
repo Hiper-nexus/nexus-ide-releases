@@ -1,3 +1,4 @@
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Squad } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';

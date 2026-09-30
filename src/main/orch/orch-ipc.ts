@@ -1,3 +1,5 @@
+import { assertLicenseAccess } from '../license-enforcement';
+import { licenseFailure } from '../../shared/license-errors';
 import { BrowserWindow, dialog, ipcMain } from "electron";
 import { showOwnedOpenDialog } from "../dialog/owned-open-dialog";
 import type { WebContents } from "electron";
@@ -2197,6 +2199,11 @@ export function registerOrchIpc(): void {
     })
     .strict();
   ipcMain.handle(ORCH_CHANNELS.missionCreateForPane, (event, raw) => {
+    try { assertLicenseAccess(); } catch (error) {
+      const failure = licenseFailure(error);
+      if (failure) return failure;
+      throw error;
+    }
     const parsed = missionCreateForPaneSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: "invalid_payload" };
     // Hardened mantém a missão com despacho explícito na interface: aqui só o

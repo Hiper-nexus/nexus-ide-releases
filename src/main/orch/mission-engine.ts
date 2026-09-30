@@ -1,3 +1,4 @@
+import { assertLicenseAccess } from '../license-enforcement';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
@@ -333,6 +334,7 @@ export class MainMissionEngine implements MissionEngine {
     assertCurrentScope?: () => void,
   ): Promise<MissionReview> {
     this.#assertScope(scope);
+    assertLicenseAccess();
     const parsedRequest = missionPrepareRequestSchema.parse(request);
     const safeRequest = canonicalPrepareRequest(parsedRequest);
     assertCurrentScope?.();
@@ -343,6 +345,7 @@ export class MainMissionEngine implements MissionEngine {
         : this.#ports.arm(safeRequest)),
     );
     try {
+      assertLicenseAccess();
       const compiled = missionCompilationSchema.parse(
         await this.#ports.compile(safeRequest, armed),
       );
@@ -368,6 +371,7 @@ export class MainMissionEngine implements MissionEngine {
         reviewSha256: review.reviewSha256,
       });
 
+      assertLicenseAccess();
       await this.#ports.persistReviewFence(fence);
       if (safeRequest.profile?.kind === 'pet-studio') {
         this.#preparedPetAttachments.set(
@@ -398,6 +402,7 @@ export class MainMissionEngine implements MissionEngine {
     assertCurrentScope?: () => void,
   ): Promise<MissionSnapshot> {
     this.#assertScope(scope);
+    assertLicenseAccess();
     const parsedInput = missionStartInputSchema.parse(input);
     const rawFence = await this.#ports.readReviewFence(parsedInput.missionId);
     if (rawFence === null) {
@@ -449,8 +454,10 @@ export class MainMissionEngine implements MissionEngine {
 
 
     assertCurrentScope?.();
+    assertLicenseAccess();
     await (assertCurrentScope ? this.#ports.seal(parsedInput, assertCurrentScope) : this.#ports.seal(parsedInput));
     assertCurrentScope?.();
+    assertLicenseAccess();
     await this.#ports.bootstrap(parsedInput.missionId);
     const snapshot = await this.#readFreshSnapshot(parsedInput.missionId);
     this.#preparedPetAttachments.delete(parsedInput.missionId);

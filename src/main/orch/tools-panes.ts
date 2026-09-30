@@ -1,3 +1,4 @@
+import { assertLicenseAccess } from '../license-enforcement';
 import { assertTabSupportsOperation, missionExecutionScope } from './mission-execution-scope';
 import {
   assertMcpInvocationCurrent,
@@ -801,6 +802,7 @@ const paneSpawn: McpToolDef = {
     },
   },
   handler: async (args, ctx, invocation) => {
+    assertLicenseAccess();
     assertMcpInvocationCurrent(invocation);
     assertCallerMaySpawnPane(ctx.role);
     // Contrato de entrega inválido falha AQUI, visível para quem declarou —

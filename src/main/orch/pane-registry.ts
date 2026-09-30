@@ -1,3 +1,5 @@
+import { assertLicensedAgentCapacity } from '../license-enforcement';
+import { licenseFailure } from '../../shared/license-errors';
 import type { WebContents } from "electron";
 import { parentPaneIdFor } from "./operator-spawn-route";
 import { emitAppEvent } from '../connectors/app-events';
@@ -2455,6 +2457,11 @@ function mintedWorkerIncarnationId(
 export function requestPaneSpawn(
   options: PendingPaneSpawnOptions & { readonly abortSignal?: AbortSignal },
 ): Promise<OrchPaneSpawnResult> {
+  try { assertLicensedAgentCapacity(); } catch (error) {
+    const failure = licenseFailure(error);
+    if (failure) return Promise.resolve({ requestId: '', ...failure });
+    throw error;
+  }
   if (options.abortSignal?.aborted) {
     return Promise.resolve({
       requestId: "",

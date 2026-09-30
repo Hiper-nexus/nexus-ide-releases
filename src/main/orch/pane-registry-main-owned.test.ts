@@ -1,3 +1,7 @@
+import { resetLicensedAccessMock } from '../__tests__/licensed-access';
+beforeEach(resetLicensedAccessMock);
+import { requireAccess } from '../license-access';
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
@@ -2555,4 +2559,10 @@ describe("main-owned mission pane spawn", () => {
     unregisterOrchRenderer(owner);
     clearRendererWorkspaceScope(owner);
   });
+});
+
+
+it('denies a pending pane request before allocation or physical spawn', async () => {
+  vi.mocked(requireAccess).mockReturnValue({ ok: false, reason: 'trial-ended' });
+  expect(await requestPaneSpawn({ adapterId: 'codex', scope } as never)).toMatchObject({ ok: false, code: 'license_access_denied' });
 });

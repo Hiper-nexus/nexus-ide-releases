@@ -1,3 +1,7 @@
+import { resetLicensedAccessMock } from '../__tests__/licensed-access';
+beforeEach(resetLicensedAccessMock);
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+import { requireAccess } from '../license-access';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const stubs = vi.hoisted(() => ({
@@ -2297,4 +2301,11 @@ describe('agent prompt injection', () => {
 
     expect(stubs.writeSession).not.toHaveBeenCalled();
   });
+});
+
+
+it('license denial never posts a spawn request', async () => {
+  vi.mocked(requireAccess).mockReturnValue({ ok: false, reason: 'trial-ended' });
+  await expect(spawnPaneAndMaybePrompt({ adapterId: 'codex', scope })).rejects.toMatchObject({ code: 'license_access_denied' });
+  expect(stubs.requestPaneSpawn).not.toHaveBeenCalled();
 });

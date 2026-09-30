@@ -1,3 +1,10 @@
+import { resolveBackendUrl } from '../backend-url';
+vi.mock('../backend-url', async (original) => { const mod = await original<typeof import('../backend-url')>(); return { ...mod, resolveBackendUrl: vi.fn(mod.resolveBackendUrl) }; });
+import { resetLicensedAccessMock } from '../__tests__/licensed-access';
+beforeEach(resetLicensedAccessMock);
+import { beforeEach } from 'vitest';
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+import { requireAccess } from '../license-access';
 import { describe, expect, it, vi } from 'vitest';
 import type { ApiResult } from '../api-client';
 import {
@@ -170,4 +177,25 @@ describe('HttpSyncBackend', () => {
       }),
     ).toBeInstanceOf(HttpSyncBackend);
   });
+});
+
+
+it('denies licensed cloud reads and CAS before any HTTP request', async () => {
+  vi.mocked(requireAccess).mockReturnValue({ ok: false, reason: 'cloud-sync-disabled' });
+  const request = requester({ status: 200, json: {} });
+  const backend = new HttpSyncBackend({ baseUrl: 'https://api.test', request });
+  await expect(backend.read('project-a')).rejects.toMatchObject({ code: 'license_access_denied' });
+  await expect(backend.compareAndSwap('project-a', 0, [mutation])).rejects.toMatchObject({ code: 'license_access_denied' });
+  expect(request).not.toHaveBeenCalled();
+});
+it('treats HTTP 403 as a license error for both reads and CAS, never as offline/conflict', async () => {
+  const backend = new HttpSyncBackend({ baseUrl: 'https://api.test', request: requester({ status: 403, json: { error: 'forbidden' } }) });
+  await expect(backend.read('project-a')).rejects.toMatchObject({ code: 'license_access_denied' });
+  await expect(backend.compareAndSwap('project-a', 0, [mutation])).rejects.toMatchObject({ code: 'license_access_denied' });
+});
+
+
+it('uses the packaged authenticated origin policy before accepting a cloud backend override', () => {
+  vi.mocked(resolveBackendUrl).mockReturnValueOnce('https://api.nexuside.app');
+  expect(() => createHttpSyncBackendFromEnvironment({ NEXUS_SYNC_BACKEND_URL: 'https://attacker.example', NEXUS_BACKEND_URL: 'https://attacker.example' })).toThrow(/authenticated Nexus backend origin/);
 });

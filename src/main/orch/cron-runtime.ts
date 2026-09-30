@@ -1,3 +1,4 @@
+import { assertLicenseAccess } from '../license-enforcement';
 import { randomUUID } from 'node:crypto';
 import type { MissionIntentContract } from '../../shared/mission-intent';
 import type { ProjectExecutionScope } from '../../shared/types';
@@ -61,6 +62,7 @@ export interface CronRuntimeDeps {
  * state. Never reintroduce a raw pane spawn here.
  */
 export async function fireCronJob(job: CronJob): Promise<void> {
+  assertLicenseAccess();
   // Revalida também jobs legados ou alterados no disco. Sem workspace aberto,
   // ou se o caminho escapar do workspace ativo, falha antes de criar missão.
   if (!job.workspacePath) throw new Error('job sem workspace registrado');
@@ -277,6 +279,7 @@ async function runCronTickLocked(deps: CronRuntimeDeps): Promise<number> {
     const decision = shouldFire(job, now, CRON_STALE_MS);
     if (decision.fire) {
       try {
+        assertLicenseAccess();
         const scheduledFor = job.nextFireAt;
         if (scheduledFor == null) throw new Error('cron occurrence has no schedule');
         const result = await deps.executeOccurrence(

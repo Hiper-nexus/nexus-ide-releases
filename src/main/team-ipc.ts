@@ -1,3 +1,4 @@
+import { LicenseError, licenseFailure } from '../shared/license-errors';
 import { TEAM_CHANNELS } from '../shared/channels';
 import { apiFetch } from './api-client';
 import { handleTrusted } from './security/trusted-ipc';
@@ -9,6 +10,7 @@ async function call(path: string, method = 'GET', body?: unknown) {
     method,
     ...(body !== undefined ? { body } : {}),
   });
+  if (result.status === 403) return licenseFailure(new LicenseError('license_access_denied', 'server-denied'))!;
   const env = result.json as Envelope;
   if (result.status === 401) return { ok: false, error: 'Sua sessão Nexus expirou — saia e entre de novo na conta' };
   if (result.status === 0) return { ok: false, error: 'sem conexão' };

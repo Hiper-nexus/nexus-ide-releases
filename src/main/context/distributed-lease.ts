@@ -1,3 +1,4 @@
+import { LicenseError } from '../../shared/license-errors';
 import { z } from 'zod';
 
 export interface SharedScheduleLeaseRequest {
@@ -101,7 +102,8 @@ export class DistributedLeaseCoordinator {
     const request = requestSchema.parse(rawRequest);
     try {
       return parsedResult(await this.#backend.acquire(request));
-    } catch {
+    } catch (error) {
+      if (error instanceof LicenseError) throw error;
       return unavailable();
     }
   }
@@ -119,7 +121,8 @@ export class DistributedLeaseCoordinator {
       const result = parsedResult(await this.#backend.renew(request, token.data));
       if (result.acquired && result.token !== token.data) return unavailable();
       return result;
-    } catch {
+    } catch (error) {
+      if (error instanceof LicenseError) throw error;
       return unavailable();
     }
   }
@@ -133,7 +136,8 @@ export class DistributedLeaseCoordinator {
     if (!token.success) return false;
     try {
       return (await this.#backend.release(request, token.data)) === true;
-    } catch {
+    } catch (error) {
+      if (error instanceof LicenseError) throw error;
       return false;
     }
   }
