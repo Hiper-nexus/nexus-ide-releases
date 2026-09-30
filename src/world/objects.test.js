@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 // The signs draw on a 2D canvas; a stub is enough for the geometry and materials to exist.
-globalThis.document = { createElement: () => ({ width: 0, height: 0, getContext: () => ({ fillRect() {}, fillText() {}, measureText: () => ({ width: 10 }) }) }) };
+globalThis.document = { createElement: () => ({ width: 0, height: 0, getContext: () => ({ fillRect() {}, fillText() {}, measureText: () => ({ width: 10 }), beginPath() {}, roundRect() {}, fill() {}, drawImage() {} }) }) };
+globalThis.Image = class { set src(_) {} };
 const THREE = await import('three');
 const { makeWorld, makeRover, makeBarrels, makeProps, disposeObjects, disposeShared, ANIMATED } = await import('./objects.js');
 
