@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
@@ -35,11 +36,24 @@ function offloadBundledSkillAssets(): Plugin {
   };
 }
 
+/** Release bundles must contain the pinned verification key; dev stays bootable without it. */
+export function assertReleaseLicenseKey(mode: string, pem: string | undefined): void {
+  if (mode !== 'production') return;
+  try {
+    if (!pem?.trim().startsWith('-----BEGIN PUBLIC KEY-----') || crypto.createPublicKey(pem).asymmetricKeyType !== 'ed25519') throw new Error();
+  } catch { throw new Error('NEXUS_LICENSE_PUBKEY must contain a valid Ed25519 public key for release builds'); }
+}
+
 // Main process bundle. Native modules are marked external so they are required
 // straight from node_modules (dev) / app.asar.unpacked (prod) instead of being
 // pulled into the Rollup graph, which would break the .node binaries.
 export default defineConfig({
-  plugins: [offloadBundledSkillAssets()],
+  plugins: [offloadBundledSkillAssets(), {
+    name: 'nexus:require-license-key',
+    configResolved(config) {
+      if (config.command === 'build') assertReleaseLicenseKey(config.mode, process.env.NEXUS_LICENSE_PUBKEY);
+    },
+  }],
   server: {
     // Runtime data, never source: worker worktrees under `.dev-user-data/`
     // are full repository checkouts inside the watch root. Without this the
@@ -49,11 +63,11 @@ export default defineConfig({
     },
   },
   // A chave publica de licenca e lida via process.env.NEXUS_LICENSE_PUBKEY em
-  // src/main/persistence/billing-ipc.ts. Um app EMPACOTADO (.dmg) nao recebe a
+  // src/main/license-access.ts. Um app EMPACOTADO (.dmg) nao recebe a
   // env do shell em runtime, entao assamos o valor no bundle do main aqui:
   // `npm run make` (ou `npm start`) com NEXUS_LICENSE_PUBKEY exportada embute a
-  // chave literal. Sem a env no build -> '' -> licensePublicKey() = null ->
-  // fail-closed (nenhuma licenca aceita), que e o comportamento seguro.
+  // chave literal. Release sem chave Ed25519 falha no plugin acima; dev sem
+  // chave continua abrindo, com acesso bloqueado por verification-unavailable.
   define: {
     'process.env.NEXUS_LICENSE_PUBKEY': JSON.stringify(
       process.env.NEXUS_LICENSE_PUBKEY ?? '',
