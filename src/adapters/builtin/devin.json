@@ -113,6 +113,6 @@
     "requiresNoAutoUpdate": false,
     "approvalFlag": "--permission-mode",
     "mcpAutoload": false,
-    "nexusMcp": "none"
+    "nexusMcp": "devin"
   }
 }

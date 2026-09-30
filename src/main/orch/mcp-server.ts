@@ -126,6 +126,7 @@ import {
 import { prepareMinimaxMcpSession } from "./cli-mcp-session-minimax";
 import { prepareMuseMcpSession } from "./cli-mcp-session-muse";
 import { ensureAgyNexusMcpRegistration } from "./cli-mcp-session-agy";
+import { ensureDevinNexusMcpRegistration } from "./cli-mcp-session-devin";
 
 export { resolveArmsRuntimeDescriptorPath, resolveArmsRuntimeInstance, type ArmsRuntimeInstance };
 
@@ -1452,6 +1453,18 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
               );
             }
             console.warn("[mcp] AGY sem MCP do Nexus:", prepared.reason);
+          }
+        } else if (flavor === "devin") {
+          // F-698: ponte stdio no escopo de usuário do Devin (via
+          // `devin mcp add --scope user`); URL e bearer no env base.
+          const prepared = ensureDevinNexusMcpRegistration();
+          if (!prepared.registered) {
+            if (gated || meta?.missionId) {
+              throw new Error(
+                `Devin sem MCP do Nexus: ${prepared.reason ?? "registro falhou"} — sem ele o worker não entrega o handoff`,
+              );
+            }
+            console.warn("[mcp] Devin sem MCP do Nexus:", prepared.reason);
           }
         } else if (flavor === "muse") {
           // F-696: Muse Code 1.4+ lê mcpServers do settings.json; mesma ponte

@@ -570,7 +570,14 @@ saber isto antes de mexer:
   `cliPromptAutoResponder` (`devin-workspace-trust`). `--respect-workspace-trust
   false` só existe no headless; extraArgs interativo continua vazio.
 - Brief só depois do composer "Ask Devin to build". Auth: TOML em
-  `~/.local/share/devin/credentials.toml`. `nexusMcp: none` permanece.
+  `~/.local/share/devin/credentials.toml`.
+- F-698: o Devin TEM o MCP do Nexus (`nexusMcp: devin`).
+  `ensureDevinNexusMcpRegistration` registra `nexus` → a ponte stdio do F-678
+  pela própria CLI, sempre `devin mcp add --scope user` (o escopo padrão é
+  `local`, dentro do repositório — nunca grave lá), idempotente via
+  `devin mcp list`. URL/bearer só por ENV, que o Devin repassa ao stdio
+  (provado com `devin -p` no 3000.11.1). Registro falho em worker de missão
+  derruba o spawn. Orquestrador declarado (coroável à mão), não verificado.
 
 ## Panes: quem abre, fecha (F-572)
 

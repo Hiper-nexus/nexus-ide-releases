@@ -152,12 +152,12 @@ describe('Devin CLI on every CLI/provider surface', () => {
     );
   });
 
-  it('is a launchable worker, never a Maestro (no Nexus MCP route)', () => {
-    // A injeção de MCP do Nexus é uma união fechada (codex/opencode/kimi/grok);
-    // devin declara nexusMcp "none", então não publica rota de orquestração.
-    expect(adapter.quirks.nexusMcp).toBe('none');
+  it('is a launchable worker with the Nexus MCP, never an automatic Maestro', () => {
+    // F-698: o MCP do Nexus chega pela ponte stdio registrada no escopo de
+    // usuário do Devin (`devin mcp add --scope user`), nunca por flag.
+    expect(adapter.quirks.nexusMcp).toBe('devin');
     expect(adapter.quirks.mcpAutoload).toBe(false);
-    expect(canUseNexusMcp(adapter)).toBe(false);
+    expect(canUseNexusMcp(adapter)).toBe(true);
     expect(adapterCapabilityMatrixForAdapter(adapter, 'builtin').launchable).toBe(
       true,
     );
@@ -165,7 +165,9 @@ describe('Devin CLI on every CLI/provider surface', () => {
     expect(
       shouldUseEphemeralHome(adapter, true, { mode: 'hardened' }),
     ).toBe(false);
-    expect(isDeclaredOrchestratorAdapter(adapterInfo(adapter, true))).toBe(false);
+    // Com MCP ele pode ser coroado à mão, como Kimi/Grok; o Maestro automático
+    // continua exigindo evidência verificada.
+    expect(isDeclaredOrchestratorAdapter(adapterInfo(adapter, true))).toBe(true);
     expect(isVerifiedOrchestratorAdapter(adapterInfo(adapter, true))).toBe(false);
   });
 

@@ -31,9 +31,11 @@ const MCP_BUILTIN_IDS = new Set([
   "muse",
   // F-697: AGY 1.2 lê a ponte stdio registrada por `agy mcp add` no perfil nativo.
   "agy",
+  // F-698: Devin lê a ponte stdio registrada no escopo de usuário.
+  "devin",
 ]);
 
-const PTY_FALLBACK_BUILTIN_IDS = new Set(["aider", "devin"]);
+const PTY_FALLBACK_BUILTIN_IDS = new Set(["aider"]);
 
 function loadCliAdapters(
   rawList: readonly unknown[],
