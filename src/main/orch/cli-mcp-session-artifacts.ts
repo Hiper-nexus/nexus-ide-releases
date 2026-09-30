@@ -131,14 +131,28 @@ export function linkEntry(source: string, target: string, entry: fs.Dirent): voi
     fs.symlinkSync(source, target);
     return;
   }
-  const isDirectory =
-    entry.isDirectory() ||
-    (!entry.isSymbolicLink() && fs.statSync(source).isDirectory());
-  if (isDirectory) {
-    fs.symlinkSync(source, target, 'junction');
+  if (linkTargetIsDirectory(source, entry)) {
+    // Junção aponta para a pasta real: um link intermediário não entra no caminho.
+    fs.symlinkSync(entry.isSymbolicLink() ? fs.realpathSync(source) : source, target, 'junction');
     return;
   }
   linkFile(source, target);
+}
+
+/**
+ * F-710: link para pasta também é pasta. A conta Grok gerenciada (30/09) tem
+ * `bundled` como link para `~/.grok/bundled`; tratado como arquivo, virava
+ * hardlink e cópia de diretório — `EPERM: copyfile …\bundled` — e todo pane
+ * daquela conta morria com "failed to prepare the isolated grok agent
+ * runtime". Link quebrado segue o caminho de arquivo, como antes.
+ */
+function linkTargetIsDirectory(source: string, entry: fs.Dirent): boolean {
+  if (entry.isDirectory()) return true;
+  try {
+    return fs.statSync(source).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /** Single-file link with the Windows hardlink/copy fallback (see linkEntry). */

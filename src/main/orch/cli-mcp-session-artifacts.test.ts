@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { linkProviderSessionState } from './cli-mcp-session-artifacts';
+import { linkProviderSessionState, linkSelectedEntries } from './cli-mcp-session-artifacts';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -105,4 +105,22 @@ describe('durable provider session state', () => {
       ).toBe('durable');
     },
   );
+});
+
+describe('linkSelectedEntries: link para pasta (F-710)', () => {
+  it('liga como pasta a entrada que é link para pasta, sem copiar diretório', () => {
+    const { root, overlay } = fixture();
+    const realBundled = path.join(root, 'native', 'bundled');
+    fs.mkdirSync(realBundled, { recursive: true });
+    fs.writeFileSync(path.join(realBundled, 'tool.json'), '{}');
+    // A conta gerenciada do Grok liga suas entradas ao perfil nativo.
+    const managedHome = path.join(root, 'managed-home');
+    fs.mkdirSync(managedHome);
+    fs.symlinkSync(realBundled, path.join(managedHome, 'bundled'), 'junction');
+
+    linkSelectedEntries(managedHome, overlay, new Set(['bundled']));
+
+    expect(fs.readFileSync(path.join(overlay, 'bundled', 'tool.json'), 'utf8')).toBe('{}');
+    expect(fs.lstatSync(path.join(overlay, 'bundled')).isSymbolicLink()).toBe(true);
+  });
 });
