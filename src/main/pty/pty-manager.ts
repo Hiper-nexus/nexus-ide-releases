@@ -81,6 +81,7 @@ import {
 import { windowsNpmShimSpawn } from "../adapters/windows-npm-shim";
 import { windowsCodexShimWithinMaxPath } from "../adapters/codex-windows-prefix";
 import { agyModelForEffort, withoutEffortArg } from "../adapters/agy-effort-model";
+import { windowsMuseLauncherSpawn } from "../adapters/muse-windows-launcher";
 import { codexNoDaemonArgs } from "../orch/codex-cli-version";
 import { ensureMinimaxFullAccess } from "../orch/cli-mcp-session-minimax";
 import { windowsArgvPromptPlacement } from "./windows-command-line";
@@ -2504,8 +2505,14 @@ export function spawnAgentSession(
     !processSandboxActive &&
     spawnFile === bin
   ) {
+    // F-706: o Muse não é npm — `muse.cmd` chama um launcher PowerShell
+    // que roda `muse-bin-<versão>.exe`; abrir o binário direto põe o brief
+    // no argv em vez da colagem pós-boot, que o Muse nunca recebia.
+    const museLaunch = adapter.id === "muse" ? windowsMuseLauncherSpawn(spawnFile) : null;
+    if (museLaunch) spawnEnv = { ...spawnEnv, ...museLaunch.env };
     const npmShimLaunch =
       (adapter.id === "codex" ? resolveWindowsCodexNpmShimLaunch(spawnFile) : null) ??
+      museLaunch ??
       windowsNpmShimSpawn(adapter.id, spawnFile);
     if (npmShimLaunch) {
       spawnFile = npmShimLaunch.file;
