@@ -429,6 +429,7 @@ export interface NexusApi {
     revoke(): Promise<{ ok: boolean }>;
   };
   billing: {
+    onChanged(callback: () => void): () => void;
     get(): Promise<LicenseState>;
     openCheckout(request: CheckoutRequest['plan'] | CheckoutRequest): Promise<{ ok: boolean; error?: string }>;
     openPortal(): Promise<{ ok: boolean }>;

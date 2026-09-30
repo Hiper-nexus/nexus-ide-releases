@@ -85,6 +85,17 @@ describe('preload PTY delivery', () => {
     electronMock.contextBridge.exposeInMainWorld.mockClear();
   });
 
+  it('exposes billing changes without IPC event data and supports unsubscribe', async () => {
+    const api = await loadPreloadApi();
+    const listener = vi.fn();
+    const off = api.billing.onChanged(listener);
+    emitIpc('billing:changed', { token: 'must-not-forward' });
+    expect(listener).toHaveBeenCalledWith();
+    off();
+    emitIpc('billing:changed', {});
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
   it('delivers ordered chunks byte-for-byte with acks and no recover', async () => {
     const api = await loadPreloadApi();
     const received: string[] = [];

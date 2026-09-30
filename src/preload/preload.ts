@@ -1402,6 +1402,11 @@ const api: NexusApi = {
     onChanged: (cb) => addListener(pipesChangedListeners, cb),
   },
   billing: {
+    onChanged: (callback) => {
+      const listener = (): void => callback();
+      ipcRenderer.on(BILLING_CHANNELS.changed, listener);
+      return () => { ipcRenderer.removeListener(BILLING_CHANNELS.changed, listener); };
+    },
     get: () => ipcRenderer.invoke(BILLING_CHANNELS.get),
     openCheckout: (request: CheckoutRequest['plan'] | CheckoutRequest) =>
       ipcRenderer.invoke(BILLING_CHANNELS.checkout, request),
