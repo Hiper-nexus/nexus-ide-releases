@@ -243,6 +243,17 @@ const UI_TERMS: readonly UiWorkTerm[] = Object.freeze([
     selfEvident: true,
     authority: 'craft',
   },
+  {
+    // Regra do operador (30/09): jogo/game é trabalho visual por construção —
+    // renderiza mundo, personagem e feedback o tempo todo. Sempre vai para a
+    // lane visual (Opus 5.5 / Sonnet 5.5 / Sol 6.1 / Astra), nunca para a
+    // escada geral onde o GLM lidera. Inclui engines e vocábulo de game dev.
+    rule: 'ui.game',
+    pattern:
+      /\b(?:jogos?|games?|videogames?|video[-\s]*games?|gameplay|game[-\s]*dev\w*|gamedev|godot|unity|unreal|phaser|pygame|raylib|bevy|love2d|tilemaps?|platformer|roguelike)\b/,
+    selfEvident: true,
+    authority: 'craft',
+  },
 
   // ── locative: a UI product/place. Self-evident for the skill grant, but it
   //    needs a governing verb before it may hang a design contract.

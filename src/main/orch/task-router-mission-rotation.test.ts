@@ -149,6 +149,24 @@ describe('lane visual (modelos de topo para UI/design)', () => {
     expect(['glm', 'mimo-code', 'muse']).toContain(decision!.adapterId);
   });
 
+  it('pedido de jogo/game vai para a lane visual — nunca para a escada geral', () => {
+    // Incidente real (30/09): "refazer o jogo" caiu em `feature` e o GLM
+    // liderou. ui.game é craft — jogo é visual por construção.
+    for (const task of [
+      'refazer o jogo Nexus Data Café com arte pixel e café pixelado',
+      'rebuild the game loop and enemy sprites',
+      'melhorar o gameplay do boss final',
+    ]) {
+      const decision = routeTask(
+        task, adapters, DEFAULT_ROUTING_TABLE, 'medium', false,
+        undefined, context({}),
+      );
+      expect(decision!.specialty, task).toBe('visual');
+      expect(decision!.adapterId, task).toBe('claude');
+      expect(decision!.model, task).toBe('claude-opus-5-5');
+    }
+  });
+
   it('membro da lane promovido pela linha (id mais novo) mantém o assento', () => {
     // A CLI anuncia só o sucessor: opus-5-6 ≥ opus-5-5 na mesma linha.
     const newerOnly: AdapterAvailability[] = [
