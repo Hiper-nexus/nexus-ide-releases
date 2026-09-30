@@ -106,6 +106,7 @@ Fonte de identidade: DESIGN.md do NexusIDE, baseline Linear, referência de inte
 - **Pink City (`pink`)**: interação, foco, estados ativos e progressão.
 
 ### Secondary
+- **Entardecer da Pink City (`ember` `#ffb27a`, `dusk` `#ff6f91`)**: atmosfera, nunca componente. Só aparecem como luz difusa em baixa opacidade (o wash atrás do hero) e como paleta do mundo jogável; texto, botões e bordas continuam em `pink` e neutros.
 - **Concluído (`green`)**: etapas entregues, checks e exemplos de diff positivo.
 - **WhatsApp (`whatsapp`)**: verde oficial `#25D366`, reservado às ações que abrem o grupo (CTA da navegação, convite da seção de prêmios e link do painel de estação quando o destino é o grupo). Ícone oficial em SVG monocromático herdando `currentColor`. Texto escuro sobre o verde mantém contraste AA; hover clareia para `#2fe374`.
 
@@ -120,7 +121,7 @@ Fonte de identidade: DESIGN.md do NexusIDE, baseline Linear, referência de inte
 
 ## Typography
 
-Geist Variable sustenta a leitura e a hierarquia editorial; ui-monospace identifica metadados e terminais. VT323 é funcional nos sinais do mundo e da progressão, com uso pontual também na ilustração de voz e no convite à comunidade.
+Geist Variable sustenta a leitura e a hierarquia editorial; ui-monospace identifica metadados e terminais. VT323 é funcional nos sinais do mundo e da progressão, e reaparece na página do produto como sinal de HUD: o eyebrow do hero (`DEV CAFÉ ABERTO · AGENTES EM MISSÃO`), os numeradores de seção (`01 / MISSÃO` … `07 / DOWNLOAD`, 22px, rosa) e o `PRESS START` do convite à comunidade. É sempre uma linha curta em caixa alta; nunca corpo de texto.
 
 O display do produto usa a definição acima, reduzindo a 60px no breakpoint intermediário e 36px no mobile pela regra específica de `body.product-page`. Headline de seção reduz a 36px; títulos secundários usam 24–36px. A comunidade usa título de 60px, reduzido a 48px; o sinal pixel principal usa 80px, reduzido a 64px. O corpo de apoio varia entre 12–18px, e metadados compactos do cockpit/HUD entre 7–12px. FAQ limita o texto a 70ch.
 
@@ -160,9 +161,11 @@ Movimento do DOM usa transform/opacity, com o easing registrado no sidecar. Redu
 
 ### Do:
 - Do preservar a identidade Nexus e os assets originais.
+- Do preferir capturas reais do produto (janela do NexusIDE, janela de revisão do Shot, folha de contato, frame da Pink City) a ilustrações em CSS; a legenda diz a data e o que foi desfocado.
 - Do manter foco visível, nomes acessíveis e acesso textual fora do canvas.
 - Do identificar a missão demonstrada como ilustrativa.
 
 ### Don't:
+- Don't publicar captura com dado pessoal legível (e-mail de conta, nome de projeto de cliente): desfocar antes de exportar.
 - Don't apresentar XP local como chance de sorteio ou prova de participação no grupo.
 - Don't substituir o reel original por uma gravação ou promessa de produto não comprovada.
