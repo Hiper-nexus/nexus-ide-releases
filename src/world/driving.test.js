@@ -9,7 +9,7 @@ test('acceleration moves the rover forward and leaves its input unchanged', () =
   const result=drive(initial,{throttle:1,steer:0},.1,[]);
   assert.ok(result.z<initial.z);
   assert.ok(result.speed>0);
-  assert.deepEqual(initial,{x:0,z:9,heading:0,vx:0,vz:0,steer:0,boostCharge:1});
+  assert.deepEqual(initial,{x:0,z:18,heading:0,vx:0,vz:0,steer:0,boostCharge:1,y:0,vy:0,onPad:false});
 });
 
 test('a stationary rover does not turn like a tank, but low speed still steers', () => {
@@ -71,10 +71,47 @@ test('boost drains its charge, respects the cap and long frames do not teleport'
   assert.ok(boosting.boostCharge<1);
   assert.ok(boosting.speed<=12.5);
   const jump=drive({...initialVehicle(),vx:0,vz:10},{throttle:1,steer:0,boost:true},100,[]);
-  assert.ok(Math.hypot(jump.x,jump.z-9)<=1.4);
+  assert.ok(Math.hypot(jump.x,jump.z-initialVehicle().z)<=1.4);
   let state=initialVehicle();
   for(let i=0;i<600;i++)state=drive(state,{throttle:1,steer:0},.016,[]);
   assert.equal(state.boostCharge,1);
   const empty=drive({...initialVehicle(),vx:0,vz:7.9,boostCharge:0},{throttle:1,steer:0,boost:true},.1,[]);
   assert.ok(empty.speed<=8);
+});
+
+test('a ramp lifts the rover, launches it off the top and gravity brings it back down', () => {
+  const ramp = { x: 0, z: -10, heading: 0, length: 6, width: 4, height: 1.6 };
+  let state = { ...initialVehicle(), x: 0, z: -4, heading: 0, vx: 0, vz: -9, y: 0, vy: 0 };
+  let peak = 0, launched = false, landed = false;
+  for (let i = 0; i < 240; i++) {
+    state = drive(state, { throttle: 1, steer: 0 }, 1 / 60, [], { ramps: [ramp], boostPads: [] });
+    peak = Math.max(peak, state.y);
+    if (state.z < ramp.z - ramp.length / 2 - 0.2 && state.y > 0.2) launched = true;
+    if (launched && state.y === 0) landed = true;
+  }
+  assert.ok(peak > ramp.height, 'the rover climbs above the top of the ramp');
+  assert.ok(launched, 'it leaves the top edge in the air');
+  assert.ok(landed, 'and comes back to the ground');
+});
+
+test('a boost pad gives one burst per pass instead of a permanent speed bonus', () => {
+  const pad = { x: 0, z: -6, heading: 0, length: 3, width: 3 };
+  let state = { ...initialVehicle(), z: -3, vz: -6 };
+  const before = Math.abs(state.vz);
+  const speeds = [];
+  for (let i = 0; i < 90; i++) { state = drive(state, { throttle: 0, steer: 0 }, 1 / 60, [], { ramps: [], boostPads: [pad] }); speeds.push(Math.hypot(state.vx, state.vz)); }
+  assert.ok(Math.max(...speeds) > before + 3, 'crossing the pad pushes the rover');
+  assert.ok(speeds.at(-1) < Math.max(...speeds), 'and drag takes over again afterwards');
+});
+
+test('holding the throttle never exceeds the top speed, and a pad burst still bleeds back to it', () => {
+  let state={...initialVehicle(),vz:-7.9};
+  for(let i=0;i<300;i++)state=drive(state,{throttle:1,steer:0},1/60,[]);
+  assert.ok(Math.hypot(state.vx,state.vz)<=8.01);
+  const pad={x:0,z:-6,heading:0,length:3,width:3};
+  let pushed={...initialVehicle(),z:-3,vz:-8};
+  let peak=0;
+  for(let i=0;i<240;i++){pushed=drive(pushed,{throttle:1,steer:0},1/60,[],{ramps:[],boostPads:[pad]});peak=Math.max(peak,Math.hypot(pushed.vx,pushed.vz));}
+  assert.ok(peak<=13.01,'one burst on top of the cap');
+  assert.ok(Math.hypot(pushed.vx,pushed.vz)<=8.01,'back at the cap afterwards');
 });

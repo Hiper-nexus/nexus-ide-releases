@@ -1,10 +1,9 @@
-export const BARREL_RADIUS=.75,BARREL_RESPAWN=6,BARREL_SPEED=3,PROP_FRICTION=3.5,PROP_LIMIT=15,BLAST_RADIUS=6;
+import { WORLD } from './layout.js';
+export const BARREL_RADIUS=.75,BARREL_RESPAWN=6,BARREL_SPEED=3,PROP_FRICTION=3.5,PROP_LIMIT=WORLD.limit,BLAST_RADIUS=6;
 // ponytail: barris/props em círculo, sem colisão prop-prop; se precisar de empilhar, trocar por grade espacial.
-// ponytail: o barris ficam fora das caixas de colisão dos prédios (OBSTACLES em scene.js), senão o rover nunca alcança.
-const BARREL_SPOTS=[[3,-11],[-11,-11],[12,0],[-13,10],[2,13],[-4,-11]];
-
-export function initialBarrels() {
-  return BARREL_SPOTS.map(([x,z],id)=>({id,x,z,alive:true,respawn:0}));
+// ponytail: os barris ficam fora das caixas de colisão (OBSTACLES em layout.js), senão o rover nunca alcança.
+export function initialBarrels(spots=WORLD.barrels) {
+  return spots.map(([x,z],id)=>({id,x,z,alive:true,respawn:0}));
 }
 
 export function hitBarrel(vehicle,barrels,minSpeed=BARREL_SPEED) {
