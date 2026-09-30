@@ -2,6 +2,7 @@ import '@fontsource-variable/geist';
 import './product.css';
 import { initializeDownloads } from './downloads/ui.js';
 import { initializePlans } from './plans/ui.js';
+import './voice/demo.js';
 
 void initializeDownloads();
 void initializePlans();
@@ -39,10 +40,8 @@ byId('play-demo').addEventListener('click',()=>{
 byId('reset-demo').addEventListener('click',()=>{stop();stage=0;render();});render();
 const roleText={orchestrator:['O objetivo não se perde.','O orquestrador organiza a missão, reparte o trabalho e acompanha as entregas.'],executor:['A tarefa vira mudança.','O executor trabalha no código, com o contexto e os critérios da missão.'],reviewer:['Antes de entregar, conferir.','O revisor inspeciona o resultado e identifica o que ainda precisa de correção.']};
 document.querySelectorAll('[data-role]').forEach(button=>button.addEventListener('click',()=>{document.querySelectorAll('[data-role]').forEach(b=>{b.classList.toggle('active',b===button);b.ariaPressed=String(b===button);});const [title,copy]=roleText[button.dataset.role];byId('role-title').textContent=title;byId('role-copy').textContent=copy;}));
-document.querySelector('.waveform').replaceChildren(...Array.from({length:39},(_,i)=>{const bar=document.createElement('i');bar.style.height=`${8+Math.sin(i*.7)**2*42}px`;bar.style.animationDelay=`${i*24}ms`;return bar;}));
-let voiceTimer;byId('voice-demo').addEventListener('click',()=>{clearTimeout(voiceTimer);document.querySelector('.voice-art').classList.add('voice-playing');byId('voice-status').textContent='EXEMPLO: PROMPT PRONTO PARA O AGENTE';byId('voice-sample').textContent='“Monte uma tela de agenda e revise os horários.”';voiceTimer=setTimeout(()=>document.querySelector('.voice-art').classList.remove('voice-playing'),4000);});
 const video=byId('nexus-reel'),audio=byId('reel-audio'),reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
 if(!reduced)video.play().catch(()=>{audio.textContent='Assistir ao filme ↗';});
 audio.addEventListener('click',()=>{video.muted=!video.muted;audio.ariaPressed=String(!video.muted);audio.textContent=video.muted?'Ativar áudio ↗':'Silenciar áudio';video.play().catch(()=>{audio.textContent='Use os controles do vídeo para assistir.';});});
 if('IntersectionObserver' in window){const observer=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){entry.target.classList.add('visible');observer.unobserve(entry.target);}},{threshold:.08});document.querySelectorAll('.reveal').forEach(el=>{if(!reduced)el.classList.add('reveal-ready');observer.observe(el);});const videoObserver=new IntersectionObserver(entries=>{if(!entries[0].isIntersecting)video.pause();else if(!reduced&&video.muted)video.play().catch(()=>{});});videoObserver.observe(video);}
-window.addEventListener('pagehide',()=>{stop();clearTimeout(voiceTimer);video.pause();});
+window.addEventListener('pagehide',()=>{stop();video.pause();});

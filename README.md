@@ -38,6 +38,12 @@ Catálogo público consultado em 30/09/2026: NexusIDE Windows x64 v0.76.148, mac
 
 A seção `#planos` da principal fica entre o manifesto e os downloads, com dois blocos de hierarquia diferente: o período de teste como porta de entrada e o Nexus Pro como oferta principal. `src/plans/` valida `GET /v1/public/status` (tipos, moeda `brl`, intervalo `month`, inteiros positivos) e define os estados `consultando`, `disponivel`, `indisponivel` e `erro`; `src/product.js` só liga o módulo ao DOM, com timeout na chamada e sem `innerHTML` com dado do servidor. Preço, dias e limites não são fixados no HTML: sem confirmação do servidor a seção informa que os valores estão sendo consultados; se a API falhar ou `billing.available` for falso, informa que a contratação está indisponível e que nenhuma cobrança será iniciada. Não existe plano gratuito permanente. Modelos de IA continuam cobrados à parte, por cada provedor.
 
+## Voz, Shot e Redline
+
+A seção de voz reproduz um exemplo escrito do ditado do NexusIDE: fases Ouvindo, Transcrevendo, Refinando e No terminal, fala transcrita e prompt entregue. Não usa `getUserMedia` e não grava nada. As afirmações vêm do código do produto: o modo CODE reescreve a fala em inglês para o agente, remove hesitações e autocorreções e preserva caminhos e comandos (`src/main/voice/code-prompt-polish.ts`); se o refino falha, o texto transcrito segue como veio; o modo CHAT mantém o português; o Jarvis abre squads, cria missões, roda comandos e envia texto a panes, com palavra de ativação e sessão contínua opcionais (`docs/voice.md`). Os três exemplos da página são ilustrativos e não são saídas gravadas de um modelo.
+
+Shot: captura e editor funcionam sem conta; gravação, GIF e frames exigem Pro (`nexus-shot/src/windows/Gate.tsx`). Redline: painel somente leitura com uso por conta nas janelas de 5 horas e da semana, tempo até o reset, conta com mais folga e estados de espera e sessão expirada (`native/menubar-redline/quota-panel.swift`, `native/windows-tray-redline/README.md`). Os números do painel ilustrado são exemplos.
+
 ## Conta e administração
 
 `/conta/` usa `https://api.nexuside.app`: disponibilidade em `GET /v1/public/status`, sessão em `GET /v1/web/session`, login em `/v1/web/auth/google` e `/v1/web/auth/github`. Cobrança fica desabilitada sem `ready` e `billing.available`; o preço e as condições do teste vêm do servidor. Não há cadastro ou acesso permanente Free nesta página. ChatGPT não é oferecido como login funcional.

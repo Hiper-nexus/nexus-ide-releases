@@ -21,7 +21,7 @@ Terminais PTY, adapters multi-CLI, squads/missões/handoffs, worktrees, custos/c
 Nexus, PT-BR, Pink City e estética dev. Referência do usuário: Bruno Simon, experiência realmente explorável e gamificada. Não aceitar um pequeno canvas como substituto dessa experiência. Concorrentes para pesquisa: Overclock e BridgeMind. Comunidade em `comunidade.nexuside.app`; produto em `nexuside.app`.
 
 ## Evidence on Hand
-PRODUCT.md, README.md, DESIGN.md e módulos de produto atuais do NexusIDE. Logos de providers e mascotes são assets do produto. Releases públicas no GitHub. Demonstrações no website devem ser identificadas como ilustração e não executar agentes ou acessar o microfone.
+PRODUCT.md, README.md, DESIGN.md e módulos de produto atuais do NexusIDE. Logos de providers e mascotes são assets do produto. Releases públicas no GitHub. Demonstrações no website devem ser identificadas como ilustração e não executar agentes ou acessar o microfone. Voz: o ditado em modo CODE vira prompt em inglês sem hesitações, o modo CHAT mantém o português e o Jarvis executa ações no app. Shot: captura e anotação sem conta; gravação no Pro. Redline: leitura de cotas por conta, sem acesso a credenciais.
 
 ## Product Principles
 - Separar produto, comunidade e campanha.
