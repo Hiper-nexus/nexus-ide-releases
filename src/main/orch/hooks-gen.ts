@@ -481,6 +481,52 @@ export const CLAUDE_FAMILY_ZERO_CLICK_SETTINGS = Object.freeze({
 });
 
 /**
+ * F-693: `skillOverrides` do Claude Code é um MAPA nome da skill → modo
+ * (`on`/`name-only`/`user-invocable-only`/`off`). A string `'off'` que o
+ * filtro gravava invalida o `settings.json` inteiro (Claude 2.1.285, provado
+ * em PTY): caíam juntos `skipDangerousModePermissionPrompt` — o GLM parava no
+ * aviso de Bypass — e os hooks de gate/status do worker governado. Aqui cada
+ * skill de projeto (`<cwd>/.claude/skills`) e de usuário (`~/.claude/skills`)
+ * fora da lista permitida vira `off`, pelo nome da pasta e pelo `name:` do
+ * SKILL.md.
+ */
+export function claudeSkillOverridesForFilter(
+  filter: readonly string[],
+  options: { readonly cwd?: string; readonly home?: string } = {},
+): Record<string, 'off'> {
+  const allowed = new Set(filter.map((name) => name.toLowerCase()));
+  const roots = [
+    options.cwd ? path.join(options.cwd, '.claude', 'skills') : null,
+    path.join(options.home ?? os.homedir(), '.claude', 'skills'),
+  ];
+  const overrides: Record<string, 'off'> = {};
+  const hide = (name: string | undefined): void => {
+    const trimmed = name?.trim();
+    if (trimmed && !allowed.has(trimmed.toLowerCase())) overrides[trimmed] = 'off';
+  };
+  for (const root of roots) {
+    if (!root) continue;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(root, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      hide(entry.name);
+      try {
+        const head = fs.readFileSync(path.join(root, entry.name, 'SKILL.md'), 'utf8').slice(0, 2048);
+        hide(/^name:[ \t]*["']?([^"'\r\n]+?)["']?[ \t]*$/mu.exec(head)?.[1]);
+      } catch {
+        // Pasta sem SKILL.md legível: o nome da pasta já basta.
+      }
+    }
+  }
+  return overrides;
+}
+
+/**
  * Flag-settings file so ungated panes also skip the click dialog. Carries the
  * additive semantic-status hooks too (emdash wave 1): the same
  * UserPromptSubmit/Notification/Stop curl commands as the ephemeral HOME —
@@ -596,7 +642,9 @@ export function prepareEphemeralHome(
   const settings = {
     ...CLAUDE_FAMILY_ZERO_CLICK_SETTINGS,
     enabledPlugins: Object.freeze({}),
-    ...(skillFilterActive ? { skillOverrides: 'off' as const } : {}),
+    ...(skillFilterActive
+      ? { skillOverrides: claudeSkillOverridesForFilter(options.skillFilter!, { cwd: options.cwd }) }
+      : {}),
     hooks: mergeClaudeStatusHooks({
       PreToolUse: [
         {

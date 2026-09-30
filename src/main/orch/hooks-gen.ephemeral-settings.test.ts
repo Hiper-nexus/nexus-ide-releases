@@ -99,4 +99,34 @@ describe('Claude-family zero-click settings (system default)', () => {
     expect(serialized).toContain('$NEXUS_GATE_TOKEN');
     expect(serialized).not.toContain(TOKEN);
   });
+
+  it('F-693: filtro de skills grava skillOverrides como MAPA — string invalida o settings.json inteiro', () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-skill-filter-'));
+    try {
+      for (const [dir, name] of [['typesafe-ai', 'typesafe-ai'], ['deploy-prod', 'Deploy Prod']] as const) {
+        fs.mkdirSync(path.join(cwd, '.claude', 'skills', dir), { recursive: true });
+        fs.writeFileSync(
+          path.join(cwd, '.claude', 'skills', dir, 'SKILL.md'),
+          `---\nname: ${name}\ndescription: x\n---\n`,
+        );
+      }
+      const home = prepareEphemeralHome(TOKEN, { mcpServers: {} }, {
+        skillFilter: ['typesafe-ai'],
+        cwd,
+      });
+      const settings = JSON.parse(
+        fs.readFileSync(path.join(home.dir, '.claude', 'settings.json'), 'utf8'),
+      ) as { skillOverrides?: unknown; skipDangerousModePermissionPrompt?: boolean };
+      // Claude 2.1.285: record<string, 'on'|'name-only'|'user-invocable-only'|'off'>.
+      expect(typeof settings.skillOverrides).toBe('object');
+      const overrides = settings.skillOverrides as Record<string, string>;
+      expect(overrides['deploy-prod']).toBe('off');
+      expect(overrides['Deploy Prod']).toBe('off');
+      expect(overrides['typesafe-ai']).toBeUndefined();
+      expect(Object.values(overrides).every((mode) => mode === 'off')).toBe(true);
+      expect(settings.skipDangerousModePermissionPrompt).toBe(true);
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 });
