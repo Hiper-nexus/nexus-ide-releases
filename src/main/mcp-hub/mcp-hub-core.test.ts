@@ -252,7 +252,7 @@ describe('restoreMaskedSecrets', () => {
   it('round-trip of a masked load keeps the stored secrets', () => {
     const masked: McpHubConfig = {
       schemaVersion: 1,
-      servers: stored.servers.map(maskServerForUi),
+      servers: stored.servers.map((server) => maskServerForUi(server)),
     };
     const restored = restoreMaskedSecrets(masked, stored);
     expect(restored.servers[0]?.headers?.authorization).toBe(
