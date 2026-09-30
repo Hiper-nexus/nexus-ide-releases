@@ -106,9 +106,11 @@ wrangler d1 migrations apply DB --remote
 wrangler d1 migrations list DB --remote
 wrangler d1 execute DB --remote --command "SELECT value FROM system_metadata WHERE key='schema_version';"
 wrangler d1 execute DB --remote --command "PRAGMA foreign_key_check;"
+wrangler d1 execute DB --remote --command "PRAGMA table_info(accounts);"
+wrangler d1 execute DB --remote --command "PRAGMA table_info(oauth_states);"
 ```
 
-Conferência: `0001_core.sql` e `0002_trial_admin.sql` foram aplicadas, nenhuma migration pendente, versão `2` e nenhum resultado de `foreign_key_check`. Não execute os arquivos SQL de novo por fora do ledger. Se uma migration falhar, pare e investigue; as migrations anteriores podem já ter sido aplicadas. O export contém dados pessoais e hashes de sessão e deve ficar privado. Fontes: [D1][w-d1], [exportação][w-export] e [contrato local](./postgres-to-d1.md).
+Conferência: as quatro migrations foram aplicadas pelo ledger, nesta ordem: `0001_core.sql` → `0002_trial_admin.sql` → `0003_checkout_reservation.sql` → `0004_oauth_client.sql`; nenhuma pendente, versão `4`, nenhum resultado de `foreign_key_check`, `accounts` com as colunas `checkout_generation` e `checkout_open_until` e `oauth_states` com a coluna `client`. `/ready` não prova nada disso: ele executa uma única consulta e não valida a versão; com só `0001`/`0002` aplicadas a API sobe e falha depois com "no such column". `migrations apply` aplica o diretório inteiro: não reaplique arquivos por fora do ledger. Não execute os arquivos SQL de novo por fora do ledger. Se uma migration falhar, pare e investigue; as migrations anteriores podem já ter sido aplicadas. O export contém dados pessoais e hashes de sessão e deve ficar privado. Fontes: [D1][w-d1], [exportação][w-export] e [contrato local](./postgres-to-d1.md).
 
 ### 2.3 Resolver a identidade das licenças
 
@@ -199,13 +201,14 @@ Em Settings > Billing > Customer portal, ainda em teste, habilite atualização 
 
 ### 2.6 Configurar variáveis e fazer o primeiro deploy fechado
 
-Confira todas as variáveis de `src/config.ts`:
+Confira as 20 variáveis de `src/config.ts`:
 
 | Variável | Configuração nesta etapa | Conferência |
 | --- | --- | --- |
 | `PUBLIC_BASE_URL` | `https://api.nexuside.app` | Callback e emissor da licença |
 | `PUBLIC_SITE_URL` | `https://nexuside.app` | Origem CORS e retorno ao site |
-| `APP_DEEP_LINK_BASE` | `nexus://auth` | Retorno do login nativo |
+| `APP_DEEP_LINK_BASE` | `nexus://auth` | Retorno do login nativo do NexusIDE |
+| `SHOT_DEEP_LINK_BASE` | `nexus-shot://auth/callback` | Retorno do login nativo do Nexus Shot (`client=shot`); tem default no parser, mas confira o valor antes de publicar |
 | `APP_MODE` | `staging` | Não é isolamento Stripe |
 | `MIGRATION_READY` | `false` | `/v1/public/status` tem `ready=false` |
 | `ADMIN_EMAILS` | `<EMAIL_ADMIN_1>,<EMAIL_ADMIN_2>` | Os dois endereços de 1.1, sem outros usuários |
@@ -222,7 +225,7 @@ Confira todas as variáveis de `src/config.ts`:
 
 As variáveis não secretas ficam em `vars` no `wrangler.jsonc`. Preserve `DB`, `AUTH_RATE_LIMITER` e `API_RATE_LIMITER`. Preserve `main`, `nodejs_compat` e a data de compatibilidade. Não há `DATABASE_URL`, chave publishable Stripe ou segredo de cron a acrescentar: o código usa binding D1 e checkout hospedado.
 
-Preserve a rota:
+Ajuste o `wrangler.jsonc`: hoje `workers_dev` está `true` e não existe `preview_urls`. Mude para o bloco abaixo, preservando a rota `custom_domain`, o cron e a observabilidade já existentes, e comprove no ambiente publicado que não há entrada alternativa:
 
 ```jsonc
 "routes": [{ "pattern": "api.nexuside.app", "custom_domain": true }],
@@ -236,6 +239,8 @@ Desabilitar os endereços alternativos evita contornar a restrição temporária
 
 **Restrinja o ensaio antes de publicar login.** A flag de migração não bloqueia cadastro nem início de trial. Na Cloudflare, zona `nexuside.app` > Security > WAF/Custom rules > Create rule, use o construtor para bloquear o host `api.nexuside.app` quando o IP de origem estiver fora da lista do operador, exceto o caminho exato `/v1/billing/webhook`. Inclua os IPv4/IPv6 de saída do navegador e do app. Não aplique challenge ao webhook. Após o deploy, confira de outra rede que o login fica bloqueado, enquanto a rede autorizada consegue usá-lo. Mantenha essa restrição até 3.4. Fonte: [custom rules][w-waf].
 
+Rate limits em vigor no código: `AUTH_RATE_LIMITER` (namespace 2001) permite 20 requisições por 60 s em `/v1/auth/*` e `/v1/web/auth/*`; `API_RATE_LIMITER` (namespace 2002) permite 120 por 60 s nos demais `/v1/*` e em `/ready`; a chave é `CF-Connecting-IP` (fallback `unknown`) e a recusa é 429. `/health` não passa pelo limiter e `/v1/billing/webhook` é excluído. Não troque os dois bindings entre si nem aplique throttling adicional ao webhook.
+
 ```sh
 cd /Users/cleofasrocha/dev/nexus-cloud-api
 wrangler deploy --dry-run
@@ -248,7 +253,7 @@ wrangler secret put STRIPE_SECRET_KEY
 wrangler secret list
 ```
 
-Nos comandos interativos, cole somente o segredo solicitado. Nunca digite `echo <segredo>` no shell. PEMs precisam de quebras de linha reais. `secret put` publica uma nova versão imediatamente. O primeiro deploy sem secrets é deliberadamente fechado; login e billing ainda ficam indisponíveis. Confira os cinco nomes cadastrados, sem imprimir valores. O sexto será cadastrado em 2.7. Fontes: [Wrangler Workers][w-workers], [secrets][w-secrets].
+Nos comandos interativos, cole somente o segredo solicitado. Nunca digite `echo <segredo>` no shell. PEMs precisam de quebras de linha reais. `secret put` publica uma nova versão imediatamente. `MIGRATION_READY=false` fecha novos checkouts; login só fica indisponível se as credenciais OAuth ou as chaves de licença estiverem ausentes — a flag não impede login, webhook nem portal. Não infira ausência de secrets a partir de um primeiro deploy deste roteiro: confira com `secret list`. Confira os cinco nomes cadastrados, sem imprimir valores. O sexto será cadastrado em 2.7. Fontes: [Wrangler Workers][w-workers], [secrets][w-secrets].
 
 O deploy cria o Custom Domain declarado. Confira em Workers & Pages > `nexus-cloud-api` > Settings > Domains & Routes. A alternativa manual é Add > Custom Domain > `api.nexuside.app`. A Cloudflare gerencia DNS e certificado. Se já existir um CNAME nesse hostname, pare e registre seu destino antes de planejar a substituição; não apague registros às cegas. Fonte: [Custom Domains][w-domains].
 
@@ -260,7 +265,9 @@ curl --fail --silent --show-error https://api.nexuside.app/v1/public/status
 
 Conferência: TLS válido; `/health` e `/ready` com `ok=true`; `ready=false` no status público. Antes do webhook, `billing.available` pode ser falso. `/ready` só testa leitura do banco; `/health` só prova que o Worker atende. Nenhum deles prova OAuth, preço ou licença. Não use `curl -k`. Sintaxe das conferências HTTP: [curl][curl].
 
-Em Settings > Trigger Events > Cron Triggers, confira `17 * * * *`. Significa minuto 17 de cada hora em UTC. Aguarde até 15 minutos para propagação e confira uma execução em Logs. O handler só limpa estados OAuth, códigos e tokens vencidos. Ele não cobra, não renova licenças e não substitui webhook. Não existe um comando obrigatório `wrangler cron`: `deploy` aplica `triggers.crons`. Fonte: [Cron Triggers][w-cron].
+Em Settings > Trigger Events > Cron Triggers, confira `17 * * * *`. Significa minuto 17 de cada hora em UTC. Aguarde até 15 minutos para propagação e confira uma execução em Logs. A cada hora, no minuto 17 UTC, `scheduled` executa `cleanupExpired`: remove `oauth_states`, `auth_codes`, `sessions` e `refresh_tokens` vencidos e `cron_leases` vencidos há mais de uma hora. Ele não executa as tarefas de usuário, não cobra, não renova licenças e não substitui webhook.
+
+Não confunda esse gatilho com a API nativa de cron do app, que continua no Worker: `GET /v1/cron/projects/:projectId/schedules`, `PUT /v1/cron/projects/:projectId/schedules/:scheduleId` e `POST /v1/cron/leases/{acquire,renew,release}`, todas com Bearer desktop. Publicar, adquirir e renovar exigem acesso `trial` ou `pro`, não sync pago. Não existe segredo de cron nem endpoint HTTP público que substitua o `scheduled`. Não existe um comando obrigatório `wrangler cron`: `deploy` aplica `triggers.crons`. Fonte: [Cron Triggers][w-cron].
 
 ### 2.7 Cadastrar o webhook de teste
 
@@ -280,6 +287,8 @@ customer.subscription.deleted
 invoice.paid
 invoice.payment_failed
 ```
+
+Esses seis eventos são a seleção operacional; no código o roteador reconhece `checkout.session.completed` e os prefixos `customer.subscription.*` e `invoice.*` (inclusive `invoice.parent.subscription_details.subscription`). A assinatura é verificada sobre o corpo original com o header `stripe-signature` e `STRIPE_WEBHOOK_SECRET` (`constructEventAsync`/SubtleCrypto): na conferência de 2.10, teste também assinatura adulterada e fora da tolerância de tempo, não só header ausente. Evento ignorado também recebe `processed_at` e 200: inspecione `payload.ignored` (razões `foreign-price`, `missing-owner`, `unknown-owner`, `customer-mismatch`, `missing-period`) e reconcilie com o Stripe; "sem pendentes" não prova concessão. Falha transitória ao consultar o Stripe deixa o evento sem `processed_at` para o retry do Stripe.
 
 Anote a versão da API do destino e a do SDK da aplicação. Não selecione thin events para este handler. Copie o signing secret desse destino para o prompt:
 
@@ -321,6 +330,10 @@ Somente dentro dessa janela autorizada, com D1 de teste e chave de teste conferi
 ### 2.9 Validar login e início do teste
 
 Abra DevTools > Network no navegador para conferir respostas. Não exporte cookies, HAR com credenciais, CSRF ou tokens para o registro da operação.
+
+Checklist de segurança web: os quatro cookies `__Host-nexus_session`, `__Host-nexus_refresh`, `__Host-nexus_csrf` e `__Host-nexus_oauth_state` chegam com `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/` e sem `Domain`. O `csrfToken` vem do JSON de `GET /v1/web/session`, nunca de `document.cookie`. Toda mutação web (checkout, portal, logout, admin) exige `Origin` exatamente igual à origem de `PUBLIC_SITE_URL` e `X-CSRF-Token` válido: teste ausência, adulteração e origem estrangeira, esperando 403. O CORS só concede credenciais a essa origem; isso não bloqueia clientes HTTP em geral nem substitui a WAF.
+
+Autoridade administrativa: exige `accounts.role=admin` **e** identidade do provedor com `email_verified=1` cujo e-mail, normalizado, esteja em `ADMIN_EMAILS`. Editar só o `role` ou ter um e-mail igual em texto não basta; sair da lista ou perder a verificação derruba a autoridade, e um admin não pode suspender a própria conta. Rotas: `GET /v1/admin/overview`, `GET /v1/admin/accounts` e `POST /v1/admin/accounts/:id/{suspend,resume,extend-trial}`.
 
 | Passo | Ação | Resultado esperado |
 | --- | --- | --- |
@@ -373,7 +386,9 @@ Conferência: eventos relevantes com `processed_at` preenchido; uma assinatura c
 
 ### 2.11 Provar a licença no app instalado
 
-No app instalado, entre com a mesma conta comum que comprou em 2.10. Repita login nativo com Google e GitHub. O navegador deve retornar por `nexus://auth`; a API faz exchange com PKCE. O destino padrão é `https://api.nexuside.app`. Confira que não existe override de `NEXUS_BACKEND_URL` apontando para a Railway ou outro serviço.
+No app instalado, entre com a mesma conta comum que comprou em 2.10. Repita login nativo com Google e GitHub. O navegador deve retornar por `nexus://auth`; a API faz exchange com PKCE.
+
+**Nexus Shot instalado.** Repita o login pelo Shot: ele inicia `/v1/auth/google` ou `/v1/auth/github` com `app_state`, `code_challenge` e `client=shot`; o navegador deve voltar por `nexus-shot://auth/callback/<code>?state=<app_state>` e o Shot troca o código em `POST /v1/auth/exchange` com o `code_verifier`. Sem `client` (ou com `client=nexus`) o retorno continua `nexus://auth/<code>?state=…`. `client` desconhecido ou duplicado, e qualquer `client` no início web, respondem 400. O callback usa o cliente salvo em D1, nunca o recebido no retorno. Os callbacks OAuth do Google/GitHub continuam HTTPS na API: não cadastre o esquema `nexus-shot` no provedor. A licença continua `aud=nexus-desktop`; a compatibilidade do Shot com ela precisa ser provada no app, não presumida. O destino padrão é `https://api.nexuside.app`. Confira que não existe override de `NEXUS_BACKEND_URL` apontando para a Railway ou outro serviço.
 
 Depois de comprar no site, faça sair/entrar explicitamente no app para obter uma licença nova. Não dependa de reiniciar o app: o código atual pode evitar sync no boot sem sessão já desbloqueada. A licença de trial também usa `plan=pro`, por isso o rótulo “Pro” isolado não prova pagamento.
 
@@ -424,15 +439,9 @@ Registre `grace_until`. Reenvie o mesmo evento e provoque outra tentativa de pag
 
 **Fim da graça.** Test Clock altera o tempo do Stripe, não `Date.now()` do Worker nem os prazos D1. Para prova manual sem alterar dados, espere o `grace_until` UTC e use uma conta cujo trial Nexus também tenha acabado. Atualize a sessão. Resultado: `access=inactive`, `maxAgents=0`, `cloudSync=false`. Se o trial Nexus ainda estiver válido, o resultado correto é `access=trial`.
 
-Para acelerar somente essa conferência, a opção abaixo modifica datas de **uma conta fictícia no banco reservado a teste**. Exporte o banco e registre os valores originais primeiro. Nunca rode em produção. Identifique o banco pelo nome físico, não pelo binding que será trocado depois. Confirme que a conta não é admin e não tem outra assinatura/time ativo:
+Para acelerar somente essa conferência existe o procedimento do Apêndice A, que adultera datas diretamente no banco e por isso fica fora do caminho normal: só em base descartável ou local, nunca no banco que será promovido.
 
-```sh
-wrangler d1 export <NOME_D1_TESTE_ESCOLHIDO> --remote --output '<DIR_PRIVADO>/antes-expiracao-simulada.sql'
-wrangler d1 execute <NOME_D1_TESTE_ESCOLHIDO> --remote --command "SELECT id,role,trial_started_at,trial_expires_at FROM accounts WHERE id='<ACCOUNT_ID_TESTE>'; SELECT stripe_subscription_id,status,grace_until FROM subscriptions WHERE account_id='<ACCOUNT_ID_TESTE>';"
-wrangler d1 execute <NOME_D1_TESTE_ESCOLHIDO> --remote --command "UPDATE accounts SET trial_started_at=(unixepoch()-1382400)*1000,trial_expires_at=(unixepoch()-86400)*1000 WHERE id='<ACCOUNT_ID_TESTE>' AND role='user'; UPDATE subscriptions SET grace_until=(unixepoch()-1)*1000 WHERE account_id='<ACCOUNT_ID_TESTE>' AND stripe_subscription_id='<SUB_ID_TESTE>' AND status='past_due';"
-```
-
-Atualize `/conta/` e renove a licença no app. Espere `inactive` na API. Isso testa avaliação de prazo vencido; não prova sete dias reais de operação. Os testes automatizados cobrem a duração e a ancoragem sem adulterar banco. O app instalado ainda precisa provar o bloqueio.
+Sem o apêndice, aguarde os prazos reais: os testes automatizados já cobrem a duração e a ancoragem sem adulterar banco. O app instalado ainda precisa provar o bloqueio.
 
 **Recuperação.** Troque no portal para o cartão de sucesso. Na fatura de teste em aberto, acione nova tentativa de pagamento. Espere `invoice.paid` com 2xx, assinatura `active`, `grace_until=NULL` e `access=pro` de novo. Confira pelas consultas de 2.10. Não considere só o botão do portal como prova.
 
@@ -444,10 +453,10 @@ Mantenha duas janelas: administrador em `/admin/` e usuário comum em `/conta/`.
 
 | Ação no painel | Conferência na API, conta e app |
 | --- | --- |
-| Suspender conta com motivo fictício identificável | POST `/v1/admin/accounts/<ID>/suspend` com 200. Sessão do usuário passa a `access=suspended`, limite 0 e sync falso. Checkout retorna 403. Renove a licença no app e verifique bloqueio. |
+| Suspender conta com motivo fictício identificável | POST `/v1/admin/accounts/<ID>/suspend` com 200. Sessão do usuário passa a `access=suspended`, limite 0 e sync falso. Com billing configurado, sessão/CSRF/corpo válidos e `MIGRATION_READY=true`, o checkout retorna 403; com a flag falsa, retorna 503 antes de avaliar a suspensão — registre em qual estado a flag estava. Renove a licença no app e verifique bloqueio. |
 | Abrir portal da conta suspensa | Portal continua disponível. Confira que a assinatura Stripe não foi cancelada. **Suspender não interrompe cobrança.** |
 | Restaurar acesso | POST `/resume` com 200. A API recalcula: Pro se houver direito pago, trial se vigente, inactive se vencido. Restaurar não recria assinatura nem reinicia teste. |
-| Estender teste de conta comum sem assinatura ativa | Acrescente 1 dia. POST `/extend-trial` com 200. Novo fim = maior entre agora e fim anterior + 1 dia; acesso trial, limite 2, sem sync. Não há cobrança Stripe. |
+| Estender teste de conta comum sem assinatura ativa | Acrescente 1 dia. POST `/extend-trial` com 200. Para conta comum não suspensa e sem direito pago pessoal ou de time, novo fim = max(agora, fim anterior) + 1 dia e ela passa a `trial` (limite 2, sem sync). A extensão não remove suspensão nem reduz direito pago. Não há cobrança Stripe. |
 | Repetir com usuário comum tentando ação admin | 403 e nenhuma alteração/auditoria bem-sucedida. Admin não pode suspender a própria conta. |
 
 ```sh
@@ -488,7 +497,7 @@ Conferência: nenhuma contratação nova disponível, nenhum objeto live alterad
 
 Mantenha checkout fechado e restrição temporária de acesso. Confirme ausência de usuários reais no banco que será deixado para trás. Se houver, interrompa a troca: é necessária migração/reconciliação, fora deste roteiro.
 
-Configure `DB` com nome e UUID do banco de produção escolhido em 2.1. Aplique as duas migrations e confira a base antes de publicar:
+Configure `DB` com nome e UUID do banco de produção escolhido em 2.1. Aplique as quatro migrations pelo ledger e confira a base antes de publicar (a mesma conferência de 2.2, inclusive os `PRAGMA table_info`), e confira que `SHOT_DEEP_LINK_BASE` está em `vars`:
 
 ```sh
 wrangler d1 migrations list DB --remote
@@ -496,7 +505,7 @@ wrangler d1 migrations apply DB --remote
 wrangler d1 execute DB --remote --command "SELECT value FROM system_metadata WHERE key='schema_version'; SELECT count(*) AS contas FROM accounts; SELECT count(*) AS assinaturas FROM subscriptions; SELECT count(*) AS eventos FROM stripe_events;"
 ```
 
-Esperado: versão 2 e base reservada vazia, sem clientes/assinaturas de teste. Configure `APP_MODE=production` e mantenha `MIGRATION_READY=false`. Não copie tabelas `accounts`/`subscriptions` do ensaio para live. Os administradores serão reconhecidos no novo login. O mesmo par Ed25519 continua valendo.
+Esperado: versão 4 e base reservada vazia, sem clientes/assinaturas de teste. Configure `APP_MODE=production` e mantenha `MIGRATION_READY=false`. Não copie tabelas `accounts`/`subscriptions` do ensaio para live. Os administradores serão reconhecidos no novo login. O mesmo par Ed25519 continua valendo.
 
 ### 3.2 Preparar Stripe live e substituir o conjunto inteiro
 
@@ -569,7 +578,7 @@ O primeiro movimento em um incidente de contratação é voltar `MIGRATION_READY
 
 | Etapa com problema | Como voltar | Conferência e limite |
 | --- | --- | --- |
-| Migrations, antes de usuários reais | Preserve o banco. Corrija a migration ou use outro banco novo e reconfigure o binding | Não existe down migration neste roteiro. `migrations list`, versão 2 e `foreign_key_check` antes de retomar. |
+| Migrations, antes de usuários reais | Preserve o banco. Corrija a migration ou use outro banco novo e reconfigure o binding | Não existe down migration neste roteiro. `migrations list`, versão 4, `PRAGMA table_info` e `foreign_key_check` antes de retomar. |
 | Secrets/OAuth, sem vendas reais | Restaure do cofre o conjunto anterior compatível e publique fechado. Restaure callbacks anteriores se necessário | Login real pelos dois provedores; não revogue imediatamente o segredo que ainda sustenta serviço válido. |
 | Chave Ed25519 | Restaure o par que o app reconhece, somente se ainda for seguro, e mantenha vendas fechadas | Apps atualizados para outra pública podem deixar de funcionar. Roteiro não resolve rotação com duas chaves nem chave comprometida. |
 | Deploy de API ou site | No Worker > Deployments, selecione a versão conhecida e use Rollback, após revisar sua configuração | Repita `/health`, `/ready`, status e login. Confira flag, secrets e D1 efetivos. Reversão de código não reverte conteúdo D1. |
@@ -582,13 +591,13 @@ O primeiro movimento em um incidente de contratação é voltar `MIGRATION_READY
 
 Fonte das limitações de rollback do Worker: [Cloudflare Rollbacks][w-rollback].
 
-**Sessões de checkout já abertas:** no Stripe, localize sessões `open` emitidas antes do fechamento. Expire cada sessão confirmada, no modo correto. Para live, o comando é:
+**Sessões de checkout já abertas:** no Stripe, localize sessões `open` emitidas antes do fechamento. Expire cada sessão confirmada, no modo correto. Isto é uma reversão deliberada, por ID live conferido um a um; nunca faz parte de uma sequência automática de ensaio. Para live, o comando é:
 
 ```sh
 stripe checkout sessions expire <CHECKOUT_SESSION_ID_LIVE> --live
 ```
 
-Conferência: `status=expired`. Sessões concluídas já podem ter cobrado e exigem conciliação, não expiração. Fonte: [expire Checkout Session][stripe-expire] e [CLI resources][stripe-resources].
+Conferência: `status=expired`. Sessões concluídas já podem ter cobrado e exigem conciliação, não expiração. Expirar a sessão no Stripe não limpa a reserva em D1: o checkout reutiliza a mesma chave de idempotência por uma janela de 23 horas e não há handler de `checkout.session.expired` que a libere. Antes de reabrir vendas, confira que o usuário consegue obter um checkout utilizável; não prometa recuperação imediata nem improvise `UPDATE` em produção. Fonte: [expire Checkout Session][stripe-expire] e [CLI resources][stripe-resources].
 
 **Assinaturas reais:** se for necessário parar futuras cobranças, faça cancelamento no Stripe da assinatura correta e confira data/estado. Arquivar um Price, desligar Worker ou suspender usuário no Nexus não para as assinaturas existentes. Reembolso é uma operação financeira separada, com consequências reais. Não emita reembolso automático como “teste de rollback”. Fonte: [cancelamento][stripe-cancel].
 
@@ -650,17 +659,17 @@ Antes de nova mudança, faça export privado e registre nome do banco, horário 
 | Backup restaurável, retenção e alertas configurados | D1/Cloudflare e ensaio separado de recuperação | Recuperação operacional comprovada |
 | Dados legados que apareçam depois da decisão de banco vazio | Railway/PostgreSQL e reconciliação | Troca simples de banco. Não inventar um import nem apagar registros. |
 
-Cancelamento, extensão e suspensão estão implementados na API. Este documento descreve sua operação. Ele não substitui revisão de segurança de autenticação, pagamentos, licença e dados de usuário. Não determina regras fiscais, reembolso ou termos comerciais do produto.
+A API implementa extensão e suspensão/restauração; o cancelamento da assinatura é feito no Stripe (Customer Portal ou Dashboard) e a API reconcilia o estado pelo webhook. Este documento descreve sua operação. Ele não substitui revisão de segurança de autenticação, pagamentos, licença e dados de usuário. Não determina regras fiscais, reembolso ou termos comerciais do produto.
 
 ### 6.2 Implementação consultada
 
-- API: `wrangler.jsonc`, `package.json`, `src/config.ts`, `src/index.ts`, `src/auth.ts`, `src/accounts.ts`, `src/providers.ts`, `src/billing.ts`, `src/stripe.ts`, `src/access.ts`, `src/licences.ts`, `src/admin.ts`, `src/admin-identity.ts`, ambas as migrations, testes de billing/admin/auth/licença/app/esquema e `docs/postgres-to-d1.md`.
+- API: `wrangler.jsonc`, `package.json`, `src/config.ts`, `src/index.ts`, `src/auth.ts`, `src/accounts.ts`, `src/providers.ts`, `src/billing.ts`, `src/stripe.ts`, `src/access.ts`, `src/licences.ts`, `src/admin.ts`, `src/admin-identity.ts`, as quatro migrations (`0001`–`0004`), testes de billing/admin/auth/licença/app/esquema e `docs/postgres-to-d1.md`.
 - Site: `docs/plano-comunidade-planos-assinatura.md`, especialmente Fase 5, `docs/cloudflare-migration.md`, README, configuração Wrangler/Vite e scripts npm. O estado da Fase 3 deve ser rechecado após a integração dos escritores.
 - App, lido em `main`: `docs/billing-stripe.md`, `server/package.json`, `server/scripts/provision-stripe.ts`, `shared/pricing.ts`, `src/main/persistence/billing-ipc.ts`, seu teste de licença, `src/main/license-sync.ts` e `src/main/backend-url.ts`.
 
 O texto antigo de billing em `nexus-ide/main` descreve Free permanente. Essa parte está superada pela decisão do operador e pela API atual. O script de provisionamento e os comandos ainda foram conferidos no código.
 
-Validação local durante a elaboração: `npm test` passou com 81 testes (66 TypeScript e 15 de esquema); `npm run typecheck` passou. Os blocos shell/JavaScript foram conferidos sintaticamente sem execução. As 16 consultas SQL foram validadas em memória contra as migrations reais. As 19 variáveis de configuração estão cobertas; referências Markdown e varredura de segredos passaram. Não foram executados deploy, migrations remotas, login OAuth real, operações Stripe, build/publicação do site nem instalação/release desktop. `deploy --dry-run` ficou para o operador; nenhum resultado remoto foi presumido.
+Histórico da elaboração original: `npm test` passou com 81 testes (66 TypeScript e 15 de esquema); `npm run typecheck` passou. Na revisão de 30/09/2026 (branch `feat/shot-deep-link`), `npm test` passou com 97 testes — 81 TypeScript e 16 de esquema —, sem falhas; `npm run typecheck` e `wrangler deploy --dry-run` passaram. Os blocos shell/JavaScript foram conferidos sintaticamente sem execução. As 16 consultas SQL foram validadas em memória contra as migrations reais. As 20 variáveis de configuração estão cobertas; referências Markdown e varredura de segredos passaram. Não foram executados deploy, migrations remotas, login OAuth real, operações Stripe, build/publicação do site nem instalação/release desktop. `deploy --dry-run` ficou para o operador; nenhum resultado remoto foi presumido.
 
 ### 6.3 Fontes oficiais dos comandos e painéis
 
@@ -721,3 +730,15 @@ Validação local durante a elaboração: `npm test` passou com 81 testes (66 Ty
 [node-crypto]: https://nodejs.org/docs/latest-v22.x/api/crypto.html
 [npm-ci]: https://docs.npmjs.com/cli/v11/commands/npm-ci/
 [curl]: https://curl.se/docs/manpage.html
+
+## Apêndice A. Ensaio acelerado em base descartável
+
+Fora do caminho normal. Este procedimento modifica datas de **uma conta fictícia em um banco descartável ou local**, nunca no banco que será promovido nem em produção. Ele adultera trial e graça diretamente, sem auditoria administrativa, e são duas atualizações independentes: a condição `role='user'` da primeira não protege a segunda. Prefira os testes automatizados ou aguarde os prazos reais. Exporte o banco e registre os valores originais antes; identifique o banco pelo nome físico, não pelo binding; confirme que a conta não é admin e não tem outra assinatura ou time ativo.
+
+```sh
+wrangler d1 export <NOME_D1_TESTE_ESCOLHIDO> --remote --output '<DIR_PRIVADO>/antes-expiracao-simulada.sql'
+wrangler d1 execute <NOME_D1_TESTE_ESCOLHIDO> --remote --command "SELECT id,role,trial_started_at,trial_expires_at FROM accounts WHERE id='<ACCOUNT_ID_TESTE>'; SELECT stripe_subscription_id,status,grace_until FROM subscriptions WHERE account_id='<ACCOUNT_ID_TESTE>';"
+wrangler d1 execute <NOME_D1_TESTE_ESCOLHIDO> --remote --command "UPDATE accounts SET trial_started_at=(unixepoch()-1382400)*1000,trial_expires_at=(unixepoch()-86400)*1000 WHERE id='<ACCOUNT_ID_TESTE>' AND role='user'; UPDATE subscriptions SET grace_until=(unixepoch()-1)*1000 WHERE account_id='<ACCOUNT_ID_TESTE>' AND stripe_subscription_id='<SUB_ID_TESTE>' AND status='past_due';"
+```
+
+Depois, atualize `/conta/` e renove a licença no app; espere `inactive` na API. Isso testa a avaliação de prazo vencido em uma base descartável; não prova sete dias reais de operação nem vale como conferência do banco de produção.
