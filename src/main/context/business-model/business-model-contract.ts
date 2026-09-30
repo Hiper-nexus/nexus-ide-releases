@@ -10,8 +10,10 @@ import {
   type ContextAttestation,
 } from '../context-attestation';
 import { isAttestedBusinessModelHash } from './business-model-attested-store';
-import { readLatestBusinessModel } from './business-model-store';
+import { readBusinessModelAt, readLatestBusinessModel } from './business-model-store';
+import type { StoredBusinessModel } from './business-model-store';
 import type { BusinessHurdle } from './business-model-hurdles';
+import { ProcessGitRunner } from '../../runtime/git-command';
 
 /**
  * CONTRATO do modelo de negócio do projeto (`.context/docs/business-model.md`).
@@ -253,21 +255,53 @@ function sameProjectFallback(
   );
 }
 
+// O store é por projeto — worktrees isoladas do MESMO projeto gravam na mesma
+// pasta. "O mais novo gravado" podia ser o HEAD de um worker (revisão F-227):
+// o pane do operador herdava o modelo da branch errada. Lê-se SÓ o modelo do
+// HEAD atual do checkout; sem ele, vale o doc atestado.
+const headReadCache = new Map<string, { at: number; headSha: string | null }>();
+const HEAD_READ_TTL_MS = 5_000;
+const syncGit = new ProcessGitRunner();
+
+function currentHeadSha(rootRealPath: string): string | null {
+  const now = Date.now();
+  const cached = headReadCache.get(rootRealPath);
+  if (cached && now - cached.at < HEAD_READ_TTL_MS) return cached.headSha;
+  let headSha: string | null = null;
+  try {
+    const result = syncGit.run(rootRealPath, ['rev-parse', 'HEAD'], { timeoutMs: 5_000 });
+    const sha = result.status === 0 ? result.stdout.trim() : '';
+    headSha = /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+  } catch {
+    headSha = null;
+  }
+  headReadCache.set(rootRealPath, { at: now, headSha });
+  return headSha;
+}
+
+function extractedAtHead(scope: ProjectExecutionScope): StoredBusinessModel | null {
+  const headSha = currentHeadSha(scope.rootRealPath);
+  // Sem HEAD não há branch para confundir (fixture, pasta sem repo): o
+  // "mais novo" do projeto ainda é a melhor aproximação.
+  return headSha
+    ? readBusinessModelAt(scope, headSha)
+    : readLatestBusinessModel(scope);
+}
+
 /**
  * Modelo de negócio para execução (contexto de prompt, risco do portão). A
- * ordem vale: o modelo EXTRAÍDO do HEAD (store do Main, atual por commit) vem
- * primeiro; sem ele, o doc REVISADO atestado cumpre o papel. Worktree de aba
- * cai no escopo do projeto (mesma instalação/projeto, raiz diferente).
- * Nunca lança.
+ * ordem vale: o modelo EXTRAÍDO do HEAD atual do checkout vem primeiro; sem
+ * ele, o doc REVISADO atestado cumpre o papel. Worktree de aba cai no escopo
+ * do projeto (mesma instalação/projeto, raiz diferente). Nunca lança.
  */
 export function readBusinessModelForExecution(
   scope: ProjectExecutionScope,
   projectScope?: ProjectExecutionScope,
 ): BusinessModelDocument | null {
-  return readLatestBusinessModel(scope)?.document ??
+  return extractedAtHead(scope)?.document ??
     readBusinessModelDocument(scope) ??
     (sameProjectFallback(scope, projectScope)
-      ? readLatestBusinessModel(projectScope)?.document ?? readBusinessModelDocument(projectScope)
+      ? extractedAtHead(projectScope)?.document ?? readBusinessModelDocument(projectScope)
       : null);
 }
 
@@ -279,9 +313,9 @@ export function readBusinessHurdles(
   scope: ProjectExecutionScope,
   projectScope?: ProjectExecutionScope,
 ): readonly BusinessHurdle[] {
-  return readLatestBusinessModel(scope)?.hurdles ??
+  return extractedAtHead(scope)?.hurdles ??
     (sameProjectFallback(scope, projectScope)
-      ? readLatestBusinessModel(projectScope)?.hurdles
+      ? extractedAtHead(projectScope)?.hurdles
       : undefined) ??
     Object.freeze([]);
 }

@@ -117,13 +117,14 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
         // ~/.codex/models_cache.json (2026-09-27) lista o Astra como visível
         // na conta — o rollout trusted-access acabou; roda pela assinatura do
         // Codex (gasta a mesma cota, mais rápido). Topo da OpenAI: fora da
-        // rota automática desde o F-700 — só quando pedido pelo nome.
+        // rota automática geral desde o F-700 — exceção: a lane visual do
+        // F-227 (UI/design) e pedidos pelo nome.
         {
           id: 'gpt-6-astra',
           availability: 'paid',
           costTier: 'high',
           source: 'bundled',
-          warning: 'Topo da OpenAI, caro: gasta a cota do Codex mais rápido — fora da rota automática, só quando pedido pelo nome.',
+          warning: 'Topo da OpenAI, caro: gasta a cota do Codex mais rápido — fora da rota automática geral; entra em UI/design (lane visual) ou quando pedido pelo nome.',
         },
         { id: 'gpt-5.6-sol', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gpt-5.6-terra', availability: 'paid', costTier: 'high', source: 'bundled' },
@@ -194,6 +195,10 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
       // abre sempre na geração mais nova (2026-09-19, dono do produto).
       default: 'gemini-3.8-flash-high',
       models: [
+        // Gemini 4 Argon (Google, 30/09): flagship novo — $2/M entrada,
+        // acesso restrito (Fairwind → Ultra → API paga). Entra no pool quando
+        // o `agy models` o anunciar; quarentena absorve a conta sem acesso.
+        { id: 'gemini-4-argon', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gemini-3.8-flash-high', availability: 'cheap', costTier: 'high', source: 'bundled' },
         { id: 'gemini-3.8-flash-medium', availability: 'cheap', costTier: 'medium', source: 'bundled' },
         { id: 'gemini-3.8-flash-low', availability: 'cheap', costTier: 'low', source: 'bundled' },

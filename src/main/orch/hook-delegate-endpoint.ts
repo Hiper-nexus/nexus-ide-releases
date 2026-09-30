@@ -162,6 +162,12 @@ type BusinessContextFn = (
   prompt: string,
 ) => Promise<string | null>;
 
+// O hook do operador morre em ~4 s no curl (Claude mata aos 5). A seleção
+// por tarefa pode esperar até 6 s de Jev — estourado o prazo, TODO o
+// additionalContext da rodada ia embora em silêncio. Deadline duro: passou,
+// cai no bloco estático (que já é contexto de negócio válido).
+const BUSINESS_CONTEXT_DEADLINE_MS = 1_500;
+
 async function defaultBusinessContext(
   ctx: HookContext,
   prompt: string,
@@ -171,9 +177,14 @@ async function defaultBusinessContext(
   }
   const scope = ctx.executionScope ?? ctx.scope;
   if (!scope) return null;
-  const selected = await taskBusinessContextBlock(scope, prompt, ctx.scope, {
-    sessionId: ctx.sessionId,
-  });
+  const selected = await Promise.race([
+    taskBusinessContextBlock(scope, prompt, ctx.scope, {
+      sessionId: ctx.sessionId,
+    }),
+    new Promise<null>((resolve) =>
+      setTimeout(resolve, BUSINESS_CONTEXT_DEADLINE_MS),
+    ),
+  ]);
   return selected ?? operatorBusinessModelContext(ctx, 'hook');
 }
 

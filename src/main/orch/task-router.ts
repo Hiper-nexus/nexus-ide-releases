@@ -213,6 +213,9 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // (74,1 × 75,2).
     { adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.6-terra', effort: 'high' },
+    // Gemini 4 Argon (Google, 30/09): geração nova entra sempre; só roda se
+    // a conta tiver acesso (Fairwind→Ultra→API) — sem acesso, quarentena.
+    { adapterId: 'agy', model: 'gemini-4-argon', effort: 'high' },
     { adapterId: 'agy', model: 'gemini-3.8-flash-high', effort: 'high' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'high' },
     { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'high' },
@@ -464,7 +467,9 @@ export const FRONTIER_ORDER: Readonly<Record<FrontierRoutePolicy, readonly strin
  * Lane visual (regra do operador, 30/09): trabalho de UI/design sempre vai
  * para os modelos de topo — Sol 6.1, Opus 5.5, Sonnet 5.5, Astra — mesmo que
  * a tabela do tier não os liste. O Astra entra aqui por escolha explícita do
- * operador para UI (a proibição do F-700 vale para a rota automática geral).
+ * operador para UI (a proibição do F-700 vale para a rota automática geral),
+ * mas fica por último: `gpt-6-sol` é o fallback para ele não vencer por
+ * eliminação quando a missão já tirou o Claude do pool.
  */
 export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
   adapterId: string;
@@ -473,6 +478,7 @@ export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
   { adapterId: 'codex', model: 'gpt-6.1-sol' },
   { adapterId: 'claude', model: 'claude-opus-5-5' },
   { adapterId: 'claude', model: 'claude-sonnet-5-5' },
+  { adapterId: 'codex', model: 'gpt-6-sol' },
   { adapterId: 'codex', model: 'gpt-6-astra' },
 ]);
 
@@ -1202,36 +1208,47 @@ export function routeTask(
     policy.source !== 'benchmark' &&
     mention.model === undefined
   ) {
-    for (const lane of VISUAL_FRONTIER_LANE) {
+    const laneSeats: Array<{ lane: number; adapterId: string; model: string }> = [];
+    VISUAL_FRONTIER_LANE.forEach((lane, laneIndex) => {
       const adapter = available.get(lane.adapterId);
-      if (!adapter?.installed) continue;
+      if (!adapter?.installed) return;
       const eligible = eligibleModels(adapter);
       const resolved = resolveRoutableModel(lane.model, adapter.models);
+      // `resolved.ok` cobre o id exato; senão tenta o mais novo da MESMA
+      // linha entre os elegíveis (mesma salva da tabela, :1030) — um id
+      // mais novo promovido pela linha (gpt-6.2-sol) mantém o assento.
       const chosen = resolved.ok
         ? (newestInModelLine(resolved.model ?? lane.model, eligible) ?? resolved.model ?? lane.model)
-        : lane.model;
+        : newestInModelLine(lane.model, eligible);
+      if (!chosen) return;
       // Lista de modelos exposta pela CLI: o modelo tem que estar nela.
       // Sem lista (contrato bundled), confia na lane como a tabela confia.
-      if (adapter.models !== undefined && !eligible.includes(chosen)) continue;
+      if (adapter.models !== undefined && !eligible.includes(chosen)) return;
       if (
         isModelBlockedForAutoRouting(modelCatalogInfo(modelCatalog, lane.adapterId, chosen)) ||
         modelAccessQuarantine(lane.adapterId, chosen)
-      ) continue;
+      ) return;
+      laneSeats.push({ lane: laneIndex, adapterId: lane.adapterId, model: chosen });
       if (!ranked.some((r) => r.c.adapterId === lane.adapterId && r.c.model === chosen)) {
         ranked.push({ c: { adapterId: lane.adapterId, model: chosen }, fromTier: tier });
       }
-    }
+    });
     const laneRank = (entry: RankedRouteEntry): number =>
-      VISUAL_FRONTIER_LANE.findIndex(
-        (lane) => lane.adapterId === entry.c.adapterId && lane.model === entry.c.model,
-      );
+      laneSeats.find(
+        (seat) => seat.adapterId === entry.c.adapterId && seat.model === entry.c.model,
+      )?.lane ?? -1;
     const inLane = ranked.filter(
       (entry) => laneRank(entry) >= 0 && !adapterCircuitBreakers.isOpen(entry.c.adapterId),
     );
     if (inLane.length > 0) {
       const set = new Set(inLane);
+      // Dentro da lane, o adapter MENOS usado na missão vai primeiro —
+      // N workers visuais se distribuem entre os de topo em vez de
+      // concentrarem no primeiro da lista.
+      const used = (entry: RankedRouteEntry) =>
+        context.missionUseCounts?.get(entry.c.adapterId) ?? 0;
       ranked = [
-        ...inLane.sort((a, b) => laneRank(a) - laneRank(b)),
+        ...inLane.sort((a, b) => used(a) - used(b) || laneRank(a) - laneRank(b)),
         ...ranked.filter((entry) => !set.has(entry)),
       ];
       visualNote = '; lane visual (modelos de topo)';
@@ -1251,15 +1268,22 @@ export function routeTask(
   ]);
   if (
     tier !== 'critical' &&
+    frontier === null &&
     evaluated.length === 0 &&
     policy.source !== 'benchmark' &&
     specialtyVerdict.specialty !== 'visual' &&
+    specialtyVerdict.specialty !== 'security' &&
+    specialtyVerdict.specialty !== 'bug' &&
     mention.model === undefined &&
     usedInMission.size > 0 &&
     usedInMission.has(ranked[0]?.c.adapterId ?? '')
   ) {
+    // Só rotaciona para um candidato do MESMO tier da tarefa — um assento
+    // "fresco" emprestado de tier mais fraco derrubaria o trabalho (achado
+    // da revisão: task hard → glm-flash[1m]).
     const fresh = ranked.find(
       (entry) =>
+        entry.fromTier === tier &&
         !usedInMission.has(entry.c.adapterId) &&
         !adapterCircuitBreakers.isOpen(entry.c.adapterId),
     );

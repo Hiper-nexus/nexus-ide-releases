@@ -151,6 +151,21 @@ function isSensitiveFieldName(key: string): boolean {
   return SENSITIVE_FIELD_PATTERN.test(key);
 }
 
+/**
+ * No mapa de perguntas a CHAVE é identificador (`flow:`, `inv:`, `hurdle:`),
+ * não campo de credencial — `inv:credential_grant` não pode apagar a pergunta
+ * inteira. Redige os valores; a chave passa intacta.
+ */
+function redactQuestions(
+  questions: Record<string, JevQuestion>,
+): Record<string, JevQuestion> {
+  const out: Record<string, JevQuestion> = {};
+  for (const [k, v] of Object.entries(questions)) {
+    out[k] = redactState(v) as JevQuestion;
+  }
+  return out;
+}
+
 /** Aplica redactSecrets recursivamente em toda string do state. */
 export function redactState(state: unknown): unknown {
   if (typeof state === 'string') return redactSecrets(state);
@@ -263,7 +278,8 @@ export async function judge(
     // As perguntas também saem do processo: instruções estruturadas carregam
     // texto do repositório (regra, armadilha, fluxo) e recebem a mesma
     // redação do state — segredo colado numa fonte nunca vaza para a API.
-    questions: redactState(input.questions) as Record<string, JevQuestion>,
+    // A chave é identificador: redactQuestions redige valores, não nomes.
+    questions: redactQuestions(input.questions),
   });
 
   let lastFailure = 'unknown error';

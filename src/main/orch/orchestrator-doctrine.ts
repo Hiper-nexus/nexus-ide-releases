@@ -22,7 +22,7 @@ import { isPaneMetaTask } from '../../shared/pane-meta-task';
 
 /** Doutrina base — genérica, mesma tom direto do `agentPrompt`. */
 const DOCTRINE_BASE = [
-  'DOUTRINA DE ORQUESTRAÇÃO (só para a coordenação):',
+  'DOUTRINA DE ORQUESTRAÇÃO (coordenação):',
   '• ESPERA: delegar e encerrar o turno É esperar. Quando um worker termina, ' +
     'a entrega é digitada no seu input assim que você fica idle (idle-delivery). ' +
     'NUNCA entre em loop de nexus_pane_read/pane_wait_* para vigiar worker vivo — ' +
@@ -46,10 +46,10 @@ const DOCTRINE_BASE = [
   // delegation-supervisor escalar. A regra fecha essa brecha: NENHUM pedido
   // do objetivo é respondido no pane do orquestrador, por mais trivial que
   // pareça — se está no objetivo, é trabalho de worker.
-  '• EXECUÇÃO: você NUNCA executa missões no seu pane sozinho a menos que pedido — TODO ' +
-    'pedido do objetivo, inclusive uma pergunta trivial, é dispatch de worker; preserve os ' +
-    'existentes. Seu texto é coordenação: plano, validação, veredito; meta-tarefa sobre panes ' +
-    'é SUA — worker não tem ferramenta de pane.',
+  '• EXECUÇÃO: você NUNCA executa missões no seu pane sozinho a menos que pedido ' +
+    'explicitamente — TODO pedido do objetivo, inclusive uma pergunta trivial, é dispatch ' +
+    'de worker; preserve os existentes. Seu texto é coordenação: plano, validação, veredito; ' +
+    'meta-tarefa sobre panes é SUA — worker não tem ferramenta de pane.',
   // Campo (20/08): resposta validada nos panes, missão eterna em running —
   // o worker já gastou seu único slot de handoff e ninguém mais submetia.
   // O Maestro PODE (canSubmitMissionHandoff aceita orchestrator).
@@ -61,8 +61,8 @@ const DOCTRINE_BASE = [
   // Campo (30/09): panes só liam e sinalizavam; diagnóstico virava entrega.
   // E cada hop "ler → reportar → abrir outro pane" custa uma rodada inteira:
   // o pane que leu já tem o contexto — ele mesmo resolve.
-  '• CORREÇÃO: diagnóstico não é entrega — peça a correção no mesmo despacho ' +
-    '(o pane lê E resolve); quem só sinalizou, mande o MESMO pane executar.',
+  '• CORREÇÃO: pedido de correção não é diagnóstico — o pane lê E resolve no ' +
+    'mesmo despacho; quem só sinalizou, mande-o executar; readOnly entrega texto.',
   '• VOZ: ditado traduzido pode chegar em inglês; responda em PT-BR.',
 ].join('\n');
 

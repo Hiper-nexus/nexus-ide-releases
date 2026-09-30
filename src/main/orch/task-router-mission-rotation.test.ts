@@ -99,15 +99,17 @@ describe('lane visual (modelos de topo para UI/design)', () => {
     expect(decision!.reason).toContain('lane visual');
   });
 
-  it('rotação não tira a tarefa visual da lane', () => {
-    // codex já tem assento na missão — numa tarefa comum a rotação daria o
-    // lugar a outro adapter; na lane visual o Sol 6.1 fica.
+  it('rotação não tira a tarefa visual da lane — reparte entre os de topo', () => {
+    // codex já tem assento: fora da lane a rotação geral empurraria um
+    // adapter barato sem assento; na lane visual o próximo é o membro de
+    // topo menos usado — Opus 5.5 — e nunca sai dos modelos de topo.
     const decision = routeTask(
       uiTask, adapters, DEFAULT_ROUTING_TABLE, 'medium', false,
       undefined, context({ codex: 1, muse: 1 }),
     );
-    expect(decision!.adapterId).toBe('codex');
-    expect(decision!.model).toBe('gpt-6.1-sol');
+    expect(decision!.adapterId).toBe('claude');
+    expect(decision!.model).toBe('claude-opus-5-5');
+    expect(decision!.reason).toContain('lane visual');
     expect(decision!.reason).not.toContain('rotação garantida');
   });
 
@@ -145,5 +147,37 @@ describe('lane visual (modelos de topo para UI/design)', () => {
     expect(decision!.specialty).toBe('visual');
     expect(decision!.reason).not.toContain('lane visual');
     expect(['glm', 'mimo-code', 'muse']).toContain(decision!.adapterId);
+  });
+
+  it('membro da lane promovido pela linha (id mais novo) mantém o assento', () => {
+    // A CLI anuncia só o sucessor: opus-5-6 ≥ opus-5-5 na mesma linha.
+    const newerOnly: AdapterAvailability[] = [
+      { id: 'claude', installed: true, models: ['claude-opus-5-6'] },
+      { id: 'glm', installed: true, models: ['glm-5.3'] },
+    ];
+    const decision = routeTask(
+      uiTask, newerOnly, DEFAULT_ROUTING_TABLE, 'medium', false,
+      undefined, context({}),
+    );
+    expect(decision!.adapterId).toBe('claude');
+    expect(decision!.model).toBe('claude-opus-5-6');
+    expect(decision!.reason).toContain('lane visual');
+  });
+});
+
+describe('guarda de tier da rotação', () => {
+  it('task hard não rotaciona para candidato emprestado de tier mais fraco', () => {
+    const withFlash: AdapterAvailability[] = [
+      ...adapters,
+      { id: 'glm-flash', installed: true, models: ['glm-5.3-flash[1m]'] },
+    ];
+    const decision = routeTask(
+      'tarefa difícil qualquer', withFlash, DEFAULT_ROUTING_TABLE, 'hard', false,
+      undefined,
+      context({ claude: 1, codex: 1, glm: 1, 'mimo-code': 1, muse: 1 }),
+    );
+    // glm-flash é o único sem assento, mas sua entrada no hard é emprestada
+    // de tier mais fraco — a rotação não pode derrubar o trabalho nele.
+    expect(decision!.adapterId).not.toBe('glm-flash');
   });
 });
