@@ -465,19 +465,19 @@ export const FRONTIER_ORDER: Readonly<Record<FrontierRoutePolicy, readonly strin
 
 /**
  * Lane visual (regra do operador, 30/09): trabalho de UI/design sempre vai
- * para os modelos de topo — Sol 6.1, Opus 5.5, Sonnet 5.5, Astra — mesmo que
- * a tabela do tier não os liste. O Astra entra aqui por escolha explícita do
- * operador para UI (a proibição do F-700 vale para a rota automática geral),
- * mas fica por último: `gpt-6-sol` é o fallback para ele não vencer por
- * eliminação quando a missão já tirou o Claude do pool.
+ * para os modelos de topo — Opus 5.5 e Sonnet 5.5 lideram (superam até o
+ * Astra, palavra do operador), depois Sol 6.1; o Astra entra por escolha
+ * explícita do operador para UI (a proibição do F-700 vale para a rota
+ * automática geral), mas fica por último: `gpt-6-sol` é o fallback para ele
+ * não vencer por eliminação quando a missão já tirou o Claude do pool.
  */
 export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
   adapterId: string;
   model: string;
 }> = Object.freeze([
-  { adapterId: 'codex', model: 'gpt-6.1-sol' },
   { adapterId: 'claude', model: 'claude-opus-5-5' },
   { adapterId: 'claude', model: 'claude-sonnet-5-5' },
+  { adapterId: 'codex', model: 'gpt-6.1-sol' },
   { adapterId: 'codex', model: 'gpt-6-sol' },
   { adapterId: 'codex', model: 'gpt-6-astra' },
 ]);

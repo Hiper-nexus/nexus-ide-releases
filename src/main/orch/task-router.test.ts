@@ -401,8 +401,8 @@ describe('routeTask specialty + diversidade de onda', () => {
     );
     expect(decision!.specialty).toBe('visual');
     expect(decision!.policySource).toBe('heuristic');
-    expect(decision!.adapterId).toBe('codex');
-    expect(decision!.model).toBe('gpt-6.1-sol');
+    expect(decision!.adapterId).toBe('claude');
+    expect(decision!.model).toBe('claude-opus-5-5');
     expect(decision!.reason).toContain('specialty=visual');
     expect(decision!.reason).toContain('lane visual');
   });
@@ -452,9 +452,9 @@ describe('routeTask specialty + diversidade de onda', () => {
     );
     expect(decision!.policySource).toBe('heuristic');
     // Fixture não vira prioridade de CLI: sem benchmark medido, a lane
-    // visual do operador decide — Sol 6.1 encabeça os modelos de topo.
-    expect(decision!.adapterId).toBe('codex');
-    expect(decision!.model).toBe('gpt-6.1-sol');
+    // visual do operador decide — Opus 5.5 encabeça os modelos de topo.
+    expect(decision!.adapterId).toBe('claude');
+    expect(decision!.model).toBe('claude-opus-5-5');
   });
 
   it('doc mecânico não tem prioridade heurística — vale o líder natural do tier', () => {

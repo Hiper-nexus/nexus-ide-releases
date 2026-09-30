@@ -83,8 +83,8 @@ describe('rotação garantida por missão (usar todas as LLMs)', () => {
 });
 
 // Lane visual (regra do operador, 30/09): UI/design sempre usa os modelos de
-// topo — Sol 6.1, Opus 5.5, Sonnet 5.5, Astra — e a rotação garantida NÃO
-// os substitui por um provider sem assento.
+// topo — Opus 5.5 e Sonnet 5.5 lideram (superam até o Astra), depois Sol 6.1
+// e Astra — e a rotação garantida NÃO os substitui por um provider sem assento.
 describe('lane visual (modelos de topo para UI/design)', () => {
   const uiTask = 'criar a nova tela de onboarding com estados vazios e acessibilidade';
 
@@ -94,8 +94,8 @@ describe('lane visual (modelos de topo para UI/design)', () => {
       undefined, context({}),
     );
     expect(decision!.specialty).toBe('visual');
-    expect(decision!.adapterId).toBe('codex');
-    expect(decision!.model).toBe('gpt-6.1-sol');
+    expect(decision!.adapterId).toBe('claude');
+    expect(decision!.model).toBe('claude-opus-5-5');
     expect(decision!.reason).toContain('lane visual');
   });
 
