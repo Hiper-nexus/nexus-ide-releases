@@ -55,3 +55,20 @@ export function blastImpulse(vehicle,barrel,power) {
   const magnitude=power*(1-distance/BLAST_RADIUS);
   return distance?{vx:dx/distance*magnitude,vz:dz/distance*magnitude}:{vx:power,vz:0};
 }
+
+/** Crates shatter when the rover hits them hard enough. Returns the ids that broke this frame. */
+export function breakCrates(props,minSpeed=4.5) {
+  const broke=[];
+  for(const prop of props){
+    if(prop.kind!=='crate'||prop.broken)continue;
+    if(Math.hypot(prop.vx,prop.vz)>=minSpeed)broke.push(prop.id);
+  }
+  return broke;
+}
+
+/** Marks those crates as gone; the scene hides the meshes. */
+export function shatterCrates(props,ids) {
+  if(!ids.length)return props;
+  const gone=new Set(ids);
+  return props.map(prop=>gone.has(prop.id)?{...prop,broken:true,vx:0,vz:0}:prop);
+}

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { initialBarrels, hitBarrel, detonateBarrel, stepBarrels, stepProps, pushProp, blastImpulse, PROP_LIMIT } from './props.js';
+import { initialBarrels, hitBarrel, detonateBarrel, stepBarrels, stepProps, pushProp, blastImpulse, breakCrates, shatterCrates, PROP_LIMIT } from './props.js';
 
 test('a fast rover detonates a barrel it touches, a slow or distant one does not', () => {
   const barrels=initialBarrels();
@@ -57,4 +57,15 @@ test('props and barrels at rest step to the same array, so the frame loop alloca
   const barrels=initialBarrels();
   assert.equal(stepBarrels(barrels,.016),barrels);
   assert.notEqual(stepBarrels(detonateBarrel(barrels,0),.016),barrels);
+});
+
+test('a crate shatters when it is shoved hard enough, a gentle nudge leaves it standing', () => {
+  const props=[{id:1,kind:'crate',x:0,z:0,vx:5,vz:0},{id:2,kind:'crate',x:2,z:0,vx:1,vz:0},{id:3,kind:'cone',x:4,z:0,vx:9,vz:0}];
+  assert.deepEqual(breakCrates(props),[1]);
+  assert.deepEqual(breakCrates(props,6),[], 'the threshold can be raised');
+  const broken=shatterCrates(props,[1]);
+  assert.equal(broken[0].broken,true);
+  assert.equal(broken[0].vx,0);
+  assert.equal(broken[1].broken,undefined);
+  assert.equal(shatterCrates(props,[]),props,'nothing to break keeps the same array');
 });
