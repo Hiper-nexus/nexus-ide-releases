@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { isNexusHookText } from '../../vendor/emdash/hooks/hook-commands';
 import {
   prepareKimiMcpSession,
   projectKimiNativeCatalog,
@@ -294,7 +295,7 @@ describe('F-611 kimi overlay model catalog', () => {
       );
       expect(overlayToml).toContain('kimi-code/k3');
       expect(overlayToml).toContain('managed:kimi-code');
-      expect(overlayToml).toContain('NEXUS_HOOK_STATUS');
+      expect(isNexusHookText(overlayToml)).toBe(true);
       expect(fs.readFileSync(seeded.nativeToml, 'utf8')).toBe(
         KIMI_NATIVE_CATALOG,
       );
@@ -318,7 +319,7 @@ describe('F-611 kimi overlay model catalog', () => {
     expect(restored).toContain('default_model = "kimi-code/kimi-for-coding"');
     expect(restored).toContain('kimi-code/k3');
     expect(restored).toContain('managed:kimi-code');
-    expect(restored).toContain('NEXUS_HOOK_STATUS');
+    expect(isNexusHookText(restored)).toBe(true);
     expect(restoreKimiOverlayCatalog(overlayToml, seeded.nativeToml)).toBe(
       false,
     );

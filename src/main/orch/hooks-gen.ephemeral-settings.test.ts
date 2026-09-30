@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { isNexusHookText } from '../../vendor/emdash/hooks/hook-commands';
 import {
   cleanupSessionArtifacts,
   prepareEphemeralHome,
@@ -68,7 +69,7 @@ describe('Claude-family zero-click settings (system default)', () => {
     ]);
     // skill-gate + status + portão de regressão (/hook/regression).
     expect(settings.hooks?.Stop).toHaveLength(3);
-    expect(gateCommands).toContain('NEXUS_HOOK_STATUS');
+    expect(isNexusHookText(gateCommands)).toBe(true);
     expect(home.dir.startsWith(path.join(os.homedir(), '.nexus', 'ephemeral'))).toBe(
       true,
     );

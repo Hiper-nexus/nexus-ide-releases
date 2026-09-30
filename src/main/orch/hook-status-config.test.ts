@@ -8,6 +8,7 @@ import {
   mergeKimiStatusHooks,
 } from './hook-status-config';
 import { REGRESSION_HOOK_TIMEOUT_SECONDS } from './hook-regression-command';
+import { isNexusHookText } from '../../vendor/emdash/hooks/hook-commands';
 
 const MARKER = 'NEXUS_HOOK_STATUS';
 
@@ -79,7 +80,11 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
     expect(twice).toEqual(once);
     // 6 status hooks (claudeHookSpecs) + 1 hook de triagem PostToolUseFailure
     // + 1 hook de delegação UserPromptSubmit (C2) + 1 portão de regressão Stop.
-    expect(JSON.stringify(twice).match(new RegExp(MARKER, 'g'))).toHaveLength(9);
+    const commands = Object.values(twice)
+      .flat()
+      .flatMap((entry) => (entry as { hooks: Array<{ command: string }> }).hooks)
+      .map((hook) => hook.command);
+    expect(commands.filter(isNexusHookText)).toHaveLength(9);
   });
 });
 
@@ -198,7 +203,7 @@ describe('mergeKimiStatusHooks (Kimi TOML flat array)', () => {
     expect(merged.model).toBe('k2');
     // Round-trip through real TOML, the way the overlay writer persists it.
     const reparsed = parseToml(stringifyToml(merged)) as typeof merged;
-    expect(JSON.stringify(reparsed)).toContain(MARKER);
+    expect(isNexusHookText(JSON.stringify(reparsed))).toBe(true);
   });
 
   it('Stop também chama o portão de regressão', () => {

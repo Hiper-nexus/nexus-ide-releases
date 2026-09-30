@@ -29,7 +29,7 @@ import {
 } from './governed-cli-profile';
 import { mergeKimiStatusHooks } from './hook-status-config';
 import { claudeFamilyHubMcpServers } from '../mcp-hub/mcp-hub-spawn';
-import { NEXUS_HOOK_MARKER } from '../../vendor/emdash/hooks/hook-commands';
+import { isNexusHookText } from '../../vendor/emdash/hooks/hook-commands';
 
 const KIMI_CATALOG_OBJECT_KEYS = ['models', 'providers', 'services'] as const;
 
@@ -92,7 +92,7 @@ export function restoreKimiOverlayCatalog(
   }
   if (
     kimiCatalogHasNativeModels(overlay, native) &&
-    overlayRaw.includes(NEXUS_HOOK_MARKER)
+    isNexusHookText(overlayRaw)
   ) {
     return false;
   }

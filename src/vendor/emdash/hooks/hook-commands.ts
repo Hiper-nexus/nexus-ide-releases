@@ -9,9 +9,9 @@
 //    `authorization: Bearer $NEXUS_GATE_TOKEN` replaces the X-Emdash-Token /
 //    X-Emdash-Pty-Id headers (the token alone identifies the pane).
 //  - Event type + CLI flavor travel as X-Nexus-Hook-Event / X-Nexus-Hook-Flavor.
-//  - Marker NEXUS_HOOK_STATUS (env-assignment prefix on POSIX, echo prefix on
-//    Windows) separates Nexus-managed entries from user hooks, same role as
-//    emdash's EMDASH_HOOK_PORT marker.
+//  - Marker NEXUS_HOOK_STATUS (env-assignment prefix on POSIX; on Windows the
+//    fixed base64 prefix of the prelude, F-704) separates Nexus-managed
+//    entries from user hooks, same role as emdash's EMDASH_HOOK_PORT marker.
 //  - Commands reference env vars only; no token or port is ever written into
 //    a config file (the hook process inherits the PTY spawn env).
 // Structure preserved verbatim: curl `|| true`, PowerShell SilentlyContinue +
@@ -30,10 +30,43 @@ export type HookCommandOptions = {
 
 export const NEXUS_HOOK_MARKER = 'NEXUS_HOOK_STATUS';
 
+/**
+ * F-704: prelúdio de todo script de hook do Windows. A 1ª linha é o marcador;
+ * com ela fixa, o começo do base64 do `-EncodedCommand` também é fixo, e é
+ * por ele que a limpeza reconhece o comando (o marcador não pode mais vir
+ * num `cmd.exe /d /c echo …&&` — ver makeWindowsPowerShellHookCommand).
+ * O resto conserta o que o PowerShell 5.1 fazia: stdin/stdout na página de
+ * código do console (acento virava "a?�?�o"), corpo em ISO-8859-1 e a barra
+ * de progresso do Invoke-WebRequest (lenta, CLIXML no stderr).
+ */
+const WINDOWS_HOOK_MARKER_LINE = `$env:${NEXUS_HOOK_MARKER} = '1'`;
+const WINDOWS_HOOK_PRELUDE = [
+  WINDOWS_HOOK_MARKER_LINE,
+  "$ProgressPreference = 'SilentlyContinue'",
+  '[Console]::InputEncoding = New-Object Text.UTF8Encoding $false',
+  '[Console]::OutputEncoding = New-Object Text.UTF8Encoding $false',
+  "$PSDefaultParameterValues['Invoke-WebRequest:ContentType'] = 'application/json; charset=utf-8'",
+].join('; ');
+
+/**
+ * Base64 de um prefixo do marcador com nº de caracteres múltiplo de 3 (6
+ * bytes UTF-16LE por grupo): é prefixo exato do base64 de qualquer script
+ * que comece pelo prelúdio.
+ */
+export const NEXUS_HOOK_WINDOWS_MARKER = `-EncodedCommand ${Buffer.from(
+  WINDOWS_HOOK_MARKER_LINE.slice(0, Math.floor(WINDOWS_HOOK_MARKER_LINE.length / 3) * 3),
+  'utf16le',
+).toString('base64')}`;
+
+/** Texto de comando (ou de config inteira) que carrega um hook do Nexus. */
+export function isNexusHookText(text: string): boolean {
+  return text.includes(NEXUS_HOOK_MARKER) || text.includes(NEXUS_HOOK_WINDOWS_MARKER);
+}
+
 /** Filter out Nexus-managed entries from a hook array. */
 export function filterUserHooks<T>(entries: T[], stringify?: (entry: T) => string): T[] {
   const toStr = stringify ?? JSON.stringify;
-  return entries.filter((entry) => !toStr(entry).includes(NEXUS_HOOK_MARKER));
+  return entries.filter((entry) => !isNexusHookText(toStr(entry)));
 }
 
 // ── Internal helpers ────────────────────────────────────────────────────────
@@ -89,12 +122,18 @@ function makeWindowsHookPostCommand(
   return makeWindowsPowerShellHookCommand(script);
 }
 
+/**
+ * F-704: o PowerShell é chamado direto. O antigo `cmd.exe /d /c echo
+ * NEXUS_HOOK_STATUS>NUL&&powershell…` quebrava no Claude Code do Windows, que
+ * roda hooks pelo Git Bash: o MSYS converte `/d` e `/c` em caminhos, o
+ * `cmd.exe` abre interativo, executa o JSON do stdin como comando e o
+ * PowerShell recebe corpo vazio — todo hook do Nexus (triagem, delegação,
+ * regressão, lembrete do Maestro) chegava ao Main sem payload. Só `-flag`,
+ * base64 e o executável: nada que bash, cmd ou CreateProcess reinterpretem.
+ */
 export function makeWindowsPowerShellHookCommand(script: string): string {
-  const encoded = Buffer.from(script, 'utf16le').toString('base64');
-  return (
-    `cmd.exe /d /c echo ${NEXUS_HOOK_MARKER}>NUL&&` +
-    `powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`
-  );
+  const encoded = Buffer.from(`${WINDOWS_HOOK_PRELUDE}; ${script}`, 'utf16le').toString('base64');
+  return `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}`;
 }
 
 /** Post an event with an arbitrary payload, platform-aware. */

@@ -10,7 +10,9 @@ import { createServer } from 'node:http';
 import { describe, expect, it } from 'vitest';
 import {
   NEXUS_HOOK_MARKER,
+  NEXUS_HOOK_WINDOWS_MARKER,
   filterUserHooks,
+  isNexusHookText,
   makeNotificationHookCommand,
   makeStdinHookCommand,
   makeWindowsPowerShellHookCommand,
@@ -134,27 +136,83 @@ describe('hook command helpers', () => {
     },
   );
 
-  it('builds Windows hook commands without a quoted cmd.exe body', () => {
+  it('builds Windows hook commands as a bare PowerShell call (F-704)', () => {
     const command = makeNotificationHookCommand('idle_prompt', {
       platform: 'win32',
       flavor: 'codex',
     });
 
     expect(command).toMatch(
-      /^cmd\.exe \/d \/c echo NEXUS_HOOK_STATUS>NUL&&powershell\.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand [A-Za-z0-9+/]+=*$/
+      /^powershell\.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand [A-Za-z0-9+/]+=*$/
     );
-    expect(command).toContain(NEXUS_HOOK_MARKER);
-    expect(command).not.toContain('/c "');
-    expect(command).not.toContain('& powershell.exe');
+    // O Git Bash do Claude Code converte todo argumento "/x" em caminho: o
+    // `cmd.exe /d /c` virava interativo e engolia o stdin do hook.
+    expect(command.split(' ').filter((arg) => arg.startsWith('/'))).toEqual([]);
+    expect(command).not.toContain('cmd.exe');
   });
 
-  it('keeps the Nexus marker visible to hook config cleanup without PowerShell args', () => {
+  it('keeps the Nexus marker recognizable in the encoded command, legacy form too', () => {
     const command = makeWindowsPowerShellHookCommand('Write-Output "ok"');
-
-    expect(command.startsWith(`cmd.exe /d /c echo ${NEXUS_HOOK_MARKER}>NUL&&powershell.exe `)).toBe(
-      true
-    );
+    expect(command).toContain(NEXUS_HOOK_WINDOWS_MARKER);
+    expect(isNexusHookText(command)).toBe(true);
+    const legacy = `cmd.exe /d /c echo ${NEXUS_HOOK_MARKER}>NUL&&powershell.exe -EncodedCommand AAAA`;
+    const user = { hooks: [{ type: 'command', command: 'powershell.exe -EncodedCommand VwByAGkA' }] };
+    expect(
+      filterUserHooks([
+        { hooks: [{ type: 'command', command }] },
+        { hooks: [{ type: 'command', command: legacy }] },
+        user,
+      ]),
+    ).toEqual([user]);
+    const script = Buffer.from(command.split('-EncodedCommand ')[1]!, 'base64').toString('utf16le');
+    expect(script).toContain('[Console]::InputEncoding = New-Object Text.UTF8Encoding $false');
+    expect(script).toContain("$ProgressPreference = 'SilentlyContinue'");
+    expect(script.endsWith('; Write-Output "ok"')).toBe(true);
   });
+
+  it.runIf(process.platform === 'win32')(
+    'delivers the stdin payload intact when Git Bash runs the hook, as Claude Code does (F-704)',
+    async () => {
+      const payload = '{"hook_event_name":"UserPromptSubmit","prompt":"ação inválida ✓"}';
+      let received = Buffer.alloc(0);
+      const server = createServer((request, response) => {
+        const chunks: Buffer[] = [];
+        request.on('data', (chunk: Buffer) => chunks.push(chunk));
+        request.on('end', () => {
+          received = Buffer.concat(chunks);
+          response.writeHead(200, { 'content-type': 'application/json' });
+          response.end('{}');
+        });
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('no TCP port');
+      try {
+        const code = await new Promise<number | null>((resolve, reject) => {
+          const child = spawn(
+            'bash',
+            ['-c', makeStdinHookCommand('user-submit', { platform: 'win32', flavor: 'claude' })],
+            {
+              env: {
+                ...process.env,
+                NEXUS_GATE_TOKEN: 'test-token',
+                NEXUS_HOOK_URL: `http://127.0.0.1:${address.port}/hook/status`,
+              },
+              stdio: ['pipe', 'ignore', 'ignore'],
+            },
+          );
+          child.once('error', reject);
+          child.once('close', resolve);
+          child.stdin.end(Buffer.from(payload, 'utf8'));
+        });
+        expect(code).toBe(0);
+        expect(received.toString('utf8')).toBe(payload);
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+    30_000,
+  );
 
   it('filterUserHooks drops marker-bearing entries and keeps user hooks', () => {
     const ours = { hooks: [{ type: 'command', command: makeStdinHookCommand('stop') }] };
