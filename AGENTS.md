@@ -324,6 +324,24 @@ saber isto antes de mexer:
   multi-score; hard sem revisão segue distribuindo entre todas as LLMs.
   DeepSWE, TB2.1 e SWE-bench Verified saturaram: modelo barato empata com o
   topo neles, e só o TB4 os separa.
+- F-700: o GPT-6 Astra é caso raro (regra do operador, 30/09). Não está em
+  nenhuma tabela nem na `FRONTIER_ORDER`; entra só pelo nome ("com o GPT-6
+  Astra", `mentionedRoute`) ou por escolha do operador. Com o Maestro Claude,
+  `reserveClaude` tira Opus/Fable dos workers, e com o Astra no topo ele virou
+  1 de cada 4 workers num dia. Não o devolva à rota automática; a regra do
+  "mais novo da linha" também não o traz (`gpt-6.1-astra` continua fora).
+- F-701: o Maestro recebe a doutrina de delegar em três lugares. O kickoff,
+  as `instructions` do MCP (`MAESTRO_STANDING_DOCTRINE` via
+  `maestroStandingContext`: prompt de sistema, sobrevive à compactação) e o
+  hook do prompt (`MAESTRO_TURN_REMINDER` a cada 30 min, inclusive na entrega
+  de um worker; o Codex recebe a doutrina inteira). Execução direta e
+  pergunta aos panes não recebem: a doutrina delas diz o contrário.
+- F-702: worker nunca pergunta ao humano (`request_user_input_async` do
+  Codex, AskUserQuestion): ninguém responde e o pane trava. Brief que
+  contraria a autoridade de execução (clone próprio, push, outra branch)
+  perde para o Nexus e volta como bloqueio no handoff. `features.multi_agent`
+  e `default_mode_request_user_input` do Codex não removem a ferramenta; a
+  regra vive no contrato (`withHandoffContract`).
 - Modelo mais novo sempre (regra do operador, F-691/F-217/F-218): dentro de
   uma linha (`modelLineOf` em `src/shared/model-line.ts`: só os números
   mudam), a versão mais nova que a CLI oferece substitui a velha na rota, no

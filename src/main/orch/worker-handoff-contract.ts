@@ -113,6 +113,21 @@ export function withHandoffContract(
     "telemetry: {durationMs, tokensTotal, tokensByModel?, estimated?} no " +
     "nexus_handoff_submit — números REAIS do transcript; estimativa marca " +
     "estimated: true; sem dados, OMITA o campo (nunca invente zero).";
+  // F-702 (30/09): quatro workers Codex pararam em request_user_input_async
+  // perguntando "clone WSL do brief ou a worktree do Nexus?". Ninguém
+  // responde num worker: o pane fica parado até o operador clicar. E o
+  // spawn_agent interno do Codex (29 vezes em 3 dias) herda o modelo do pane
+  // e escapa da rota e do custo que o Nexus controla.
+  const autonomy =
+    'Não há humano acompanhando este pane: nunca pare para perguntar ' +
+    '(request_user_input, AskUserQuestion, pergunta de múltipla escolha) — ' +
+    'ninguém responde e o pane trava. Se o brief conflitar com a autoridade de ' +
+    'execução do Nexus (worktree, branch, push, clone próprio), o Nexus vence: ' +
+    'faça o que couber nela e registre o conflito como bloqueio no handoff. ' +
+    'Dúvida que só o operador resolve: nexus_handoff_submit com status ' +
+    '"blocked" e a pergunta no summary. Não abra subagentes internos da CLI ' +
+    '(spawn_agent, Task) para dividir a tarefa: o Nexus distribui o trabalho — ' +
+    'se precisar de mais mãos, diga no handoff.';
   const peerRead =
     'Quando o operador pedir para olhar o que outro pane está fazendo, chame ' +
     'nexus_pane_read com o número falado ("7" ou "pane 7"). Na mesma missão ' +
@@ -166,7 +181,7 @@ export function withHandoffContract(
   const design =
     orch.designPro && tier.design ? `\n\n${composeDesignCharter(orch)}` : '';
   const lean = orch.leanCode && tier.lean ? `\n\n${PONYTAIL_RULES}` : '';
-  return `${prompt}${charter}${design}${lean}\n\n${peerRead}\n\n${contract}`;
+  return `${prompt}${charter}${design}${lean}\n\n${autonomy}\n\n${peerRead}\n\n${contract}`;
 }
 
 

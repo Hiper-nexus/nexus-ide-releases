@@ -35,6 +35,19 @@ describe("worker handoff transport contract", () => {
     expect(prompt).toMatch(/olhar o que outro pane/);
     expect(prompt).not.toContain(LEGACY_MARKER);
   });
+
+  it("F-702: worker não pergunta ao humano, segue o Nexus em conflito e não abre subagentes da CLI", () => {
+    for (const nexusMcp of ["codex", "none"]) {
+      const prompt = withHandoffContract("Corrija o achado RU-263.", {
+        quirks: { mcpAutoload: false, nexusMcp },
+      });
+      expect(prompt).toContain("nunca pare para perguntar");
+      expect(prompt).toContain("request_user_input");
+      expect(prompt).toContain("o Nexus vence");
+      expect(prompt).toContain('"blocked"');
+      expect(prompt).toContain("spawn_agent");
+    }
+  });
 });
 
 // REGRESSAO: este arquivo tinha a QUINTA gramatica de "isto e UI?" do produto,
