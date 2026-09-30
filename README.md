@@ -16,7 +16,7 @@ wrangler deploy --dry-run
 wrangler deploy
 ```
 
-Vite multipage: `index.html` e `comunidade/index.html`. O Worker escolhe o documento pelo hostname. Assets enviados: somente `dist`. Source, docs, screenshots e arquivos de revisão não são publicados.
+Vite multipage: `index.html`, `comunidade/index.html`, `conta/index.html` e `admin/index.html`. O Worker escolhe o documento pelo hostname; `/conta/` e `/admin/` existem somente em `nexuside.app`, com `noindex` no HTML e no cabeçalho, e nunca são servidos no host da comunidade. Assets enviados: somente `dist`. Source, docs, screenshots e arquivos de revisão não são publicados.
 
 ## Conteúdo
 
@@ -34,11 +34,19 @@ O botão principal usa User Agent Client Hints quando disponíveis e sinais do n
 
 Catálogo público consultado em 30/09/2026: NexusIDE Windows x64 v0.76.148, macOS Apple Silicon v0.76.146. Nexus Shot tem download próprio Apple Silicon v0.1.13 no repositório público `Hiper-nexus/nexus-shot-releases`; nenhum instalador Windows foi encontrado nas 11 releases públicas. A seção apresenta captura, gravação e envio de arquivos, comprovados no código da ponte e nas notas publicadas. Redline é incluído pelo Forge no NexusIDE para macOS e Windows, com instalação pela seção de cotas nas configurações; não há link independente inventado. As ilustrações SVG são autoria do site e estão identificadas como fluxo ilustrativo.
 
+## Planos no site
+
+A seção `#planos` da principal fica entre o manifesto e os downloads, com dois blocos de hierarquia diferente: o período de teste como porta de entrada e o Nexus Pro como oferta principal. `src/plans/` valida `GET /v1/public/status` (tipos, moeda `brl`, intervalo `month`, inteiros positivos) e define os estados `consultando`, `disponivel`, `indisponivel` e `erro`; `src/product.js` só liga o módulo ao DOM, com timeout na chamada e sem `innerHTML` com dado do servidor. Preço, dias e limites não são fixados no HTML: sem confirmação do servidor a seção informa que os valores estão sendo consultados; se a API falhar ou `billing.available` for falso, informa que a contratação está indisponível e que nenhuma cobrança será iniciada. Não existe plano gratuito permanente. Modelos de IA continuam cobrados à parte, por cada provedor.
+
 ## Conta e administração
 
 `/conta/` usa `https://api.nexuside.app`: disponibilidade em `GET /v1/public/status`, sessão em `GET /v1/web/session`, login em `/v1/web/auth/google` e `/v1/web/auth/github`. Cobrança fica desabilitada sem `ready` e `billing.available`; o preço e as condições do teste vêm do servidor. Não há cadastro ou acesso permanente Free nesta página. ChatGPT não é oferecido como login funcional.
 
+O retorno do Stripe em `/conta/?checkout=success` só informa: a página consulta a sessão de novo, com espera entre as tentativas, até o servidor confirmar o acesso Pro e então orienta abrir o NexusIDE com a mesma conta. `?checkout=cancel` avisa apenas que nenhuma cobrança foi iniciada. `?plano=pro` destaca o bloco do plano e mais nada. Nenhum parâmetro de URL eleva acesso: somente o entitlement do servidor define trial, pro, suspended ou inactive.
+
 As chamadas de API usam cookies (`credentials: include`) e mutações usam `X-CSRF-Token` da sessão. Checkout envia `{plan:'pro',attemptId}`; portal e logout enviam `{}`. Redirecionamentos aceitam somente HTTPS nos hosts exatos `checkout.stripe.com` e `billing.stripe.com`. Parâmetros da página não elevam o acesso: somente o entitlement retornado pelo servidor define trial, pro, suspended ou inactive.
+
+A CSP do Worker permite `connect-src 'self' https://api.nexuside.app` e mais nada, que é o que habilita as chamadas da conta, do admin e da seção de planos.
 
 `/admin/` mostra dados apenas após uma sessão com papel `admin`, com autorização obrigatória também no backend. Consulta `/v1/admin/overview` e `/v1/admin/accounts?status=…&limit=50`; ações POST por ID suspendem acesso com motivo, restauram acesso ou estendem o teste de 1 a 30 dias. A suspensão informa explicitamente que não cancela a assinatura ou cobranças Stripe. Respostas 401/403 limpam os dados exibidos. Nenhum e-mail administrativo ou regra de elevação é codificado no frontend. As respostas seguem `{ok:true,data:{…}}`, inclusive confirmação de mutações; falhas ficam em texto inline, sem alert/confirm.
 

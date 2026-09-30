@@ -15,7 +15,7 @@ O principal apresenta o NexusIDE, ajuda a entender seu fluxo e oferece os instal
 NexusIDE é um app desktop baseado em Electron. A fonte do produto é `/Users/cleofasrocha/dev/nexus-ide/PRODUCT.md` e a implementação atual. Site: Vite, HTML/CSS/JS, Three.js e Cloudflare Workers Static Assets.
 
 ## Capabilities and Constraints
-Terminais PTY, adapters multi-CLI, squads/missões/handoffs, worktrees, custos/cotas e voz têm implementação no produto. Nenhum depoimento, ganho de velocidade ou receita foi autorizado como prova. A API pública e a licença em produção ainda precisam ser validadas; o site não oferece checkout fictício. Os instaladores públicos observados são macOS Apple Silicon e Windows x64; Linux não foi observado como download publicado.
+Terminais PTY, adapters multi-CLI, squads/missões/handoffs, worktrees, custos/cotas e voz têm implementação no produto. Nenhum depoimento, ganho de velocidade ou receita foi autorizado como prova. A API pública e a licença em produção ainda precisam ser validadas; o site não oferece checkout fictício. A seção de planos lê preço, dias e limites de `GET /v1/public/status` sem fixar números no HTML, não existe plano gratuito permanente e a contratação só é oferecida quando o servidor confirma disponibilidade. Os instaladores públicos observados são macOS Apple Silicon e Windows x64; Linux não foi observado como download publicado.
 
 ## Brand Commitments
 Nexus, PT-BR, Pink City e estética dev. Referência do usuário: Bruno Simon, experiência realmente explorável e gamificada. Não aceitar um pequeno canvas como substituto dessa experiência. Concorrentes para pesquisa: Overclock e BridgeMind. Comunidade em `comunidade.nexuside.app`; produto em `nexuside.app`.
