@@ -59,8 +59,10 @@ const DOCTRINE_BASE = [
     'isolatedWriter:true e integre as branches ao final, na ordem de dependência. ' +
     'Leitura: readOnly:true, em paralelo. Preserve WIP; nada de git stash/reset/checkout/clean.',
   // Campo (30/09): panes só liam e sinalizavam; diagnóstico virava entrega.
-  '• CORREÇÃO: diagnóstico não é entrega — sinalizou problema? despache um ' +
-    'executor (route_task + pane_spawn com prompt) e valide o feito.',
+  // E cada hop "ler → reportar → abrir outro pane" custa uma rodada inteira:
+  // o pane que leu já tem o contexto — ele mesmo resolve.
+  '• CORREÇÃO: diagnóstico não é entrega — peça a correção no mesmo despacho ' +
+    '(o pane lê E resolve); quem só sinalizou, mande o MESMO pane executar.',
   '• VOZ: ditado traduzido pode chegar em inglês; responda em PT-BR.',
 ].join('\n');
 
