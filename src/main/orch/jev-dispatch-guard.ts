@@ -83,6 +83,11 @@ export const GUARD_EXEMPT_TOOLS: ReadonlySet<string> = new Set([
   'tool_pick',
   'route_task',
   'route_log',
+  // F-709: fechar pane encerra um processo cuja conversa volta por resume e
+  // cujo trabalho fica na worktree — não é efeito irreversível nem egresso.
+  // Eram 132 das 450 chamadas julgadas em 3 dias (todas aprovadas), cada uma
+  // segurando o Maestro até 3 s. Spawn, write e terminal seguem julgados.
+  'pane_close',
   'browser_read',
   'browser_inspect',
   'browser_screenshot',

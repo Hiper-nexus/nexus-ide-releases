@@ -97,6 +97,7 @@ describe('guardToolCall', () => {
     ['no-objective', { missionObjective: null }],
     ['read-only', { toolName: 'nexus_file_read' }],
     ['exempt', { toolName: 'nexus_handoff_submit' }],
+    ['exempt', { toolName: 'nexus_pane_close' }],
   ] as const)('skips (%s) without calling the judge', async (reason, over) => {
     const judge = vi.fn();
     const v = await guardToolCall(input(over as Partial<GuardToolCallInput>), { judge });

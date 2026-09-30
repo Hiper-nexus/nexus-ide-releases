@@ -335,7 +335,9 @@ saber isto antes de mexer:
   `maestroStandingContext`: prompt de sistema, sobrevive à compactação) e o
   hook do prompt (`MAESTRO_TURN_REMINDER` a cada 30 min, inclusive na entrega
   de um worker; o Codex recebe a doutrina inteira). Execução direta e
-  pergunta aos panes não recebem: a doutrina delas diz o contrário.
+  pergunta aos panes não recebem: a doutrina delas diz o contrário. F-708:
+  pedido digitado pelo operador no Maestro passa pelo Jev de delegação e, com
+  2+ partes, vira "abra N workers" no lugar do lembrete.
 - F-702: worker nunca pergunta ao humano (`request_user_input_async` do
   Codex, AskUserQuestion): ninguém responde e o pane trava. Brief que
   contraria a autoridade de execução (clone próprio, push, outra branch)
@@ -745,7 +747,11 @@ saber isto antes de mexer:
   chave em Ajustes → Chaves de API (cofre `jev-env:TYPESAFE_API_KEY`, fallback
   env); `src/main/jev/jev-client.ts` fail-open com `redactState`; revisão de
   evidência dos handoffs em `src/main/orch/jev-handoff-review.ts` (1 devolução,
-  depois `[evidência fraca]` + artifact `nexus.jevReview`); tool `nexus_judge`
+  depois `[evidência fraca]` + artifact `nexus.jevReview`; F-707: só devolve
+  resumo genérico e código mudado sem verificação ou sem dizer onde — achado
+  de revisor e pendência admitida entram marcados; rubrica medida com o Jev
+  real nas 105 entregas do HiperGO, reavalie no mesmo conjunto se mudar o
+  texto); tool `nexus_judge`
   (read-only, ALWAYS_ALLOWED, 30/min/sessão, state ≤ 32 KB); toggle
   `orch.jevAutopilot` / `NEXUS_JEV_AUTOPILOT=0`; skill `typesafe-ai` bundled e
   concedida aos roles `clean-code`.
@@ -767,7 +773,7 @@ saber isto antes de mexer:
   (exceção estreita à doutrina 09/09: é assinatura de sequestro, não
   cerimônia); tudo o mais → passa. Read-only e o conjunto isento
   (`GUARD_EXEMPT_TOOLS`: handoff_*, heartbeat, clarify, waits, reads, judge,
-  rank, tool_pick, route_*) nunca são julgados. Args vão compactados
+  rank, tool_pick, route_*, pane_close — F-709) nunca são julgados. Args vão compactados
   (string > 300 chars vira `<N chars>`, JSON ≤ 2 KB, redigidos) e NUNCA
   entram no decision log. Cache de veredito por sessão+args por 60 s.
   Limiar 0.35 medido em 17/09 (`git push --force main` numa missão de login
