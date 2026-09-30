@@ -116,14 +116,14 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
         { id: 'gpt-6-luna', availability: 'paid', costTier: 'medium', source: 'bundled' },
         // ~/.codex/models_cache.json (2026-09-27) lista o Astra como visível
         // na conta — o rollout trusted-access acabou; roda pela assinatura do
-        // Codex (gasta a mesma cota, mais rápido). Topo da OpenAI: o roteador
-        // só o usa em critical, hard de alto risco e revisão cruzada.
+        // Codex (gasta a mesma cota, mais rápido). Topo da OpenAI: fora da
+        // rota automática desde o F-700 — só quando pedido pelo nome.
         {
           id: 'gpt-6-astra',
           availability: 'paid',
           costTier: 'high',
           source: 'bundled',
-          warning: 'Topo da OpenAI: gasta a cota do Codex mais rápido — rota automática só em crítico, alto risco e revisão cruzada.',
+          warning: 'Topo da OpenAI, caro: gasta a cota do Codex mais rápido — fora da rota automática, só quando pedido pelo nome.',
         },
         { id: 'gpt-5.6-sol', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gpt-5.6-terra', availability: 'paid', costTier: 'high', source: 'bundled' },

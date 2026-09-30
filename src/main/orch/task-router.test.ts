@@ -274,19 +274,25 @@ describe('routeTask', () => {
     const top = (task: string, installed: string[], tier?: 'medium' | 'hard' | 'critical') =>
       routeTask(task, adapters(...installed), DEFAULT_ROUTING_TABLE, tier);
 
-    it('revisão cruzada em hard/critical: Astra no codex e Fable 5.1 no claude', () => {
+    it('revisão cruzada em hard/critical: Fable 5.1 no claude; o codex fica no Sol 6.1 (F-700)', () => {
       for (const tier of ['hard', 'critical'] as const) {
         const claude = top('Independent code review for the release', ['claude'], tier);
         expect(claude!.model).toBe('claude-fable-5-1');
         expect(claude!.reason).toContain('topo=cross-review');
         const codex = top('Independent code review for the release', ['codex'], tier);
-        expect(codex!.model).toBe('gpt-6-astra');
+        expect(codex!.model).toBe('gpt-6.1-sol');
       }
     });
 
-    it('hard de alto risco sobe o codex para o Astra; hard comum fica no Sol', () => {
+    it('F-700: o Astra sai da rota automática e só vem pelo nome', () => {
       expect(top('corrigir a race condition na integração entre main e renderer', ['codex'], 'hard')!.model)
-        .toBe('gpt-6-astra');
+        .toBe('gpt-6.1-sol');
+      expect(top('auditar a segurança da autenticação multi-tenant', ['codex'], 'critical')!.model)
+        .toBe('gpt-6.1-sol');
+      for (const tier of ['hard', 'critical'] as const) {
+        expect(DEFAULT_ROUTING_TABLE[tier].map((c) => c.model)).not.toContain('gpt-6-astra');
+      }
+      // Pedido pelo nome continua valendo: task-router-review-floor.test.ts.
       expect(top('refatorar o parser de configuração', ['codex'], 'hard')!.model).toBe('gpt-6.1-sol');
       // No claude, o Opus 5.5 segue na frente do Fable fora de revisão.
       expect(top('definir a arquitetura da fila distribuída de eventos', ['claude'], 'hard')!.model).toBe('claude-opus-5-5');

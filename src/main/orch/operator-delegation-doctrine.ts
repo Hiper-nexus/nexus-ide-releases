@@ -11,7 +11,7 @@ import type { AgentGateContext } from './gate';
  */
 export const OPERATOR_DELEGATION_DOCTRINE = [
   'NEXUS — COMO TRABALHAR NESTE PANE:',
-  '1. Delegue o que for divisível, pesado ou paralelizável: nexus_pane_spawn({ task, prompt }). O Nexus (Jev) escolhe CLI, modelo e esforço — descreva a tarefa em task. Modelo específico: adapterId + model (ex.: codex + gpt-6-astra).',
+  '1. Delegue o que for divisível, pesado ou paralelizável: nexus_pane_spawn({ task, prompt }). O Nexus (Jev) escolhe CLI, modelo e esforço — descreva a tarefa em task. Modelo específico: adapterId + model (ex.: kimi + kimi-code/k3).',
   '2. Pesquisa, revisão, análise e leitura de testes: readOnly: true. Esses helpers rodam em paralelo.',
   '3. Quem altera código: writers em paralelo, cada um em worktree/branch própria (isolatedWriter: true; o Nexus isola quem colidiria). Você integra as branches.',
   '4. Depois de delegar, encerre o turno: a entrega chega sozinha. Não leia panes em loop.',

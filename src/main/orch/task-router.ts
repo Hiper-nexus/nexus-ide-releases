@@ -195,16 +195,20 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // mesmo preço ($5/$25).
     { adapterId: 'claude', model: 'claude-opus-5', effort: 'high' },
     { adapterId: 'claude', model: 'claude-opus-4-8', effort: 'high' },
-    // Topo fora da ordem padrão do hard: só sobem via frontierRoutePolicy
-    // (revisão cruzada; risco alto com Astra). Fable 5.1 gasta até 50% da
-    // cota semanal do Max e perde do Opus 5.5 no TB4 — não é o default.
+    // Topo fora da ordem padrão do hard: só sobe via frontierRoutePolicy
+    // (revisão cruzada; risco alto). Fable 5.1 gasta até 50% da cota
+    // semanal do Max e perde do Opus 5.5 no TB4 — não é o default.
     { adapterId: 'claude', model: 'claude-fable-5-1', effort: 'high' },
     { adapterId: 'glm', model: 'glm-5.3', effort: 'high' },
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'high' },
     { adapterId: 'codex', model: CODEX_FRONTIER_MODEL, effort: 'high' },
     // CLI sem o 6.1 ainda roteia para o GPT-6 Sol (superseded ≠ retired).
     { adapterId: 'codex', model: 'gpt-6-sol', effort: 'high' },
-    { adapterId: 'codex', model: 'gpt-6-astra', effort: 'high' },
+    // F-700: o GPT-6 Astra saiu da rota automática. É caso raro, só pelo
+    // nome ("com o Astra", mentionedRoute). Com o Claude reservado ao Maestro,
+    // a regra de topo punha o Astra em 20 de 76 workers num dia (toda revisão
+    // e todo critical). Ele custa $10/$50 e perde do Sol 6.1 no DeepSWE
+    // (74,1 × 75,2).
     { adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.6-terra', effort: 'high' },
     { adapterId: 'agy', model: 'gemini-3.8-flash-high', effort: 'high' },
@@ -229,9 +233,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'claude', model: 'claude-fable-5-1', effort: 'xhigh' },
     { adapterId: 'claude', model: 'claude-opus-5', effort: 'xhigh' },
     { adapterId: 'claude', model: 'claude-opus-4-8', effort: 'xhigh' },
-    // GPT-6 Astra é o topo da OpenAI (TB4.0 ~58% × Sol ~43%); caro ($10/$50),
-    // por isso no hard só sobe em alto risco/revisão (frontierRoutePolicy).
-    { adapterId: 'codex', model: 'gpt-6-astra', effort: 'xhigh' },
+    // F-700: sem o GPT-6 Astra (só pelo nome, ver o hard).
     { adapterId: 'codex', model: CODEX_FRONTIER_MODEL, effort: 'xhigh' },
     // Mesmo fallback do hard para CLI sem o 6.1.
     { adapterId: 'codex', model: 'gpt-6-sol', effort: 'xhigh' },
@@ -451,8 +453,8 @@ const HIGH_RISK_SIGNALS = [
 ];
 
 export const FRONTIER_ORDER: Readonly<Record<FrontierRoutePolicy, readonly string[]>> = {
-  'cross-review': ['gpt-6-astra', 'claude-fable-5-1', 'claude-opus-5-5'],
-  'high-risk': ['claude-opus-5-5', 'gpt-6-astra', 'claude-fable-5-1'],
+  'cross-review': ['claude-fable-5-1', 'claude-opus-5-5'],
+  'high-risk': ['claude-opus-5-5', 'claude-fable-5-1'],
 };
 
 export function frontierRoutePolicy(

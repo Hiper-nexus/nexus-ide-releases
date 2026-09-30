@@ -102,7 +102,7 @@
           "availability": "paid",
           "costTier": "high",
           "source": "remote",
-          "warning": "Topo da OpenAI: gasta a cota do Codex mais rápido — rota automática só em crítico, alto risco e revisão cruzada."
+          "warning": "Topo da OpenAI, caro: gasta a cota do Codex mais rápido — fora da rota automática, só quando pedido pelo nome."
         },
         {
           "id": "gpt-5.6-sol",

@@ -50,7 +50,7 @@ describe('revisão de código: piso hard (bug 27/09; Astra 28/09)', () => {
       inventory(['claude', 'codex']),
       DEFAULT_ROUTING_TABLE,
     );
-    expect(['gpt-6-astra', 'claude-fable-5-1']).toContain(decision!.model);
+    expect(decision!.model).toBe('claude-fable-5-1');
     expect(decision!.reason).toContain('topo=cross-review');
   });
 });
@@ -118,7 +118,9 @@ describe('topo entre CLIs (F-214 — revisão e critical, 29/09)', () => {
     ]),
   };
 
-  it('revisão sênior em hard com várias CLIs vai ao topo de outro vendor (Astra)', () => {
+  it('F-700: revisão sênior em hard sem o claude não sobe ao Astra', () => {
+    // Com o Claude reservado ao Maestro, a ordem de topo punha o Astra em toda
+    // revisão (20 de 76 workers em 30/09). Sem topo roteável, decide o multi-score.
     const decision = routeTask(
       FIELD_TEXT,
       fieldAdapters,
@@ -128,8 +130,8 @@ describe('topo entre CLIs (F-214 — revisão e critical, 29/09)', () => {
       catalog,
       missionHistory,
     );
-    expect(decision).toMatchObject({ adapterId: 'codex', model: 'gpt-6-astra' });
-    expect(decision!.reason).toContain('topo entre CLIs (cross-review)');
+    expect(decision!.model).not.toMatch(/astra/);
+    expect(decision!.reason).not.toContain('topo entre CLIs');
   });
 
   it('critical sem revisão vai ao topo high-risk (Opus 5.5 quando o claude está instalado)', () => {
@@ -222,7 +224,7 @@ describe('topo entre CLIs (F-214 — revisão e critical, 29/09)', () => {
     expect(decision!.reason).toContain('topo entre CLIs (high-risk)');
   });
 
-  it('F-217: gpt-6.1-astra anunciado pela CLI flutua como topo cross-review', () => {
+  it('F-700: nem o gpt-6.1-astra anunciado pela CLI entra sozinho na rota', () => {
     const withNewer = fieldAdapters.map(
       (a) =>
         a.id === 'codex'
@@ -236,8 +238,6 @@ describe('topo entre CLIs (F-214 — revisão e critical, 29/09)', () => {
       'hard',
       false,
       catalog,
-      // codex já usado na missão: sem o float por linha o multi-score
-      // derruba o 6.1-astra (−18 de diversidade) e o topo ia para outro.
       {
         multiScore: true,
         missionUseCounts: new Map([
@@ -247,8 +247,7 @@ describe('topo entre CLIs (F-214 — revisão e critical, 29/09)', () => {
         ]),
       },
     );
-    expect(decision).toMatchObject({ adapterId: 'codex', model: 'gpt-6.1-astra' });
-    expect(decision!.reason).toContain('topo entre CLIs (cross-review)');
+    expect(decision!.model).not.toMatch(/astra/);
   });
 });
 
