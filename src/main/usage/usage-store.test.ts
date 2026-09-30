@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';;
 import type { ProjectExecutionScope } from '../../shared/types';
 import { createScopedMissionPaneStore } from '../orch/mission-pane-store';
 import { createScopedMissionStore } from '../orch/mission-store';
@@ -74,6 +74,8 @@ afterEach(() => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 
 describe('computeRealCost', () => {
   it('includes provider cache tiers without mutating the event', () => {

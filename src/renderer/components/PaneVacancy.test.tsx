@@ -2,6 +2,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useAccessStore } from '../state/access-store';
 import type { Mission } from '../../shared/orch-types';
 import type { PaneModel, WorkspaceLayout } from '../../shared/types';
 import { buildGridTree, listPanes } from '../lib/split-tree';
@@ -186,6 +187,7 @@ function livePane(): PaneModel {
 
 describe('a SOLITARY structural placeholder is a vacancy, not a session', () => {
   beforeEach(() => {
+  useAccessStore.setState({ canUseApp: true, loading: false, maxAgents: null, cloudSync: true, blockedReason: null });
     installNexus();
     setActiveWorkspacePath(WORKSPACE);
     useOrchStore.setState({ missions: [], paneMissions: {} });

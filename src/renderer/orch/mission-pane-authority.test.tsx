@@ -2,6 +2,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useAccessStore } from '../state/access-store';
 import type { MissionPanePresentationRequest } from '../../shared/orch-types';
 import type { PaneModel, WorkspaceLayout } from '../../shared/types';
 import {
@@ -221,6 +222,7 @@ function expectLayoutInvariants(): void {
 
 describe('mission pane authority vs. workspace layout restore', () => {
   beforeEach(() => {
+  useAccessStore.setState({ canUseApp: true, loading: false, maxAgents: null, cloudSync: true, blockedReason: null });
     workspaceSeq += 1;
     WORKSPACE = `/workspace/live-${workspaceSeq}`;
     installNexus();

@@ -14,6 +14,8 @@ import {
 import { ScopedStoreBinding } from "../orch/scoped-store";
 
 const sweep = vi.hoisted(() => vi.fn());
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+
 vi.mock('./worktree-pty-sweep', () => ({ sweepPtysInsideWorktree: sweep }));
 
 const roots: string[] = [];

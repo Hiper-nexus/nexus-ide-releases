@@ -9,6 +9,8 @@ const pty = vi.hoisted(() => ({
   live: new Set<string>(),
 }));
 
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+
 vi.mock('../pty/pty-manager', () => ({
   getSessionState: vi.fn((sessionId: string) =>
     pty.live.has(sessionId) ? 'idle' : null,

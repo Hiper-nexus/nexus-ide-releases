@@ -32,6 +32,8 @@ const jevReview = vi.hoisted(() => ({
   ),
 }));
 
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+
 vi.mock("./jev-handoff-review", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./jev-handoff-review")>()),
   reviewMissionHandoff: jevReview.reviewMissionHandoff,

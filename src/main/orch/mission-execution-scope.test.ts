@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';;
 import { compileIntentContract } from '../../shared/mission-intent';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { configureWorktreeRuntimeRegistry, disposeWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
@@ -36,6 +36,8 @@ beforeEach(() => {
 afterEach(() => {
   disposeWorktreeRuntimeRegistry(); manager.closeAll(); fs.rmSync(directory, { recursive: true, force: true });
 });
+
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 
 it('leaves legacy missions/adoption alone and shares one durable root per new mission across restart', async () => {
   expect(missionExecutionScope(scope, {})).toBe(scope);

@@ -4,6 +4,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useAccessStore } from '../state/access-store';
 import type { PaneModel } from '../../shared/types';
 
 const hostStubs = vi.hoisted(() => ({
@@ -37,6 +38,7 @@ function render(pane: PaneModel): void {
 }
 
 beforeEach(() => {
+  useAccessStore.setState({ canUseApp: true, loading: false, maxAgents: null, cloudSync: true, blockedReason: null });
   load = vi.fn(async () => ({}));
   Object.defineProperty(window, 'nexus', {
     configurable: true,

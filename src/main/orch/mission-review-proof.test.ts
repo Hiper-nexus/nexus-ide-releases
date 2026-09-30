@@ -90,6 +90,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+
 describe('frozen candidate review proof', () => {
   it('uses the durable candidate report without requiring a manual handoff or evidence ID', () => {
     const f = fixture();

@@ -12,6 +12,8 @@ import {
   disposeProjectUsageStoreRegistry,
 } from './usage-store-registry';
 
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+
 let sqliteAvailable = true;
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires

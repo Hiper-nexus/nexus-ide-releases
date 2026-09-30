@@ -10,6 +10,8 @@ import type { WebContents } from "electron";
  * registry real (syncPanes) e stores SQLite reais. Só o que é ambiente (binário,
  * userData, sessão persistente) é trocado.
  */
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+
 vi.mock("electron", async () => {
   const fs = await import("node:fs");
   const os = await import("node:os");

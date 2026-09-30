@@ -2,6 +2,8 @@
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useAccessStore } from './state/access-store';
+import { DEFAULT_LICENSE } from '../shared/billing-types';
 
 const browserHost = vi.hoisted(() => ({
   reconcileBrowserPanes: vi.fn(),
@@ -231,12 +233,17 @@ function terminalVisibility() {
 }
 
 beforeEach(() => {
+  useAccessStore.setState({ canUseApp: true, loading: false, maxAgents: null, cloudSync: true, blockedReason: null });
   vi.clearAllMocks();
   Object.defineProperty(window, 'nexus', {
     configurable: true,
     writable: true,
     value: {
       app: { onDeepOpenPath: vi.fn(() => vi.fn()), onDeepOpenQuota: vi.fn(() => vi.fn()), onShotFilesReceived: vi.fn(() => vi.fn()) },
+      billing: {
+        onChanged: vi.fn(() => vi.fn()),
+        get: vi.fn(async () => ({ ...DEFAULT_LICENSE, plan: 'pro', status: 'active', access: 'pro', verified: true, canUseApp: true, blockedReason: null, expiresAt: new Date(Date.now() + 3600000).toISOString(), limits: { maxAgents: null, cloudSync: true } })),
+      },
       pet: {
         onOpenSettings: vi.fn(() => vi.fn()),
         onOpenOps: vi.fn(() => vi.fn()),
@@ -340,6 +347,9 @@ afterEach(() => {
 describe('App root blocking overlays', () => {
   it('mounts pending Mode as the reported blocking surface, suppresses the live browser pane, and restores both on resolve', async () => {
     mountApp();
+    // O billing.get do refresh resolve num microtask após o mount — flushing
+    // garante canUseApp antes dos overlays gated por licença.
+    await act(async () => {});
     expect(lastBrowserSuppression()).toBe(false);
     expect(terminalVisibility()).toEqual({ visible: true, reasons: [] });
 
@@ -372,8 +382,9 @@ describe('App root blocking overlays', () => {
     expect(lastBrowserSuppression()).toBe(false);
   });
 
-  it('mounts open Media as the reported blocking surface, suppresses the live browser pane, and restores both on close', () => {
+  it('mounts open Media as the reported blocking surface, suppresses the live browser pane, and restores both on close', async () => {
     mountApp();
+    await act(async () => {});
     expect(lastBrowserSuppression()).toBe(false);
 
     act(() => useMediaStudioStore.getState().show());
@@ -393,8 +404,9 @@ describe('App root blocking overlays', () => {
     expect(lastBrowserSuppression()).toBe(false);
   });
 
-  it('mounts profileOpen as visible DOM, reports it only while mounted, and suppresses the live browser pane', () => {
+  it('mounts profileOpen as visible DOM, reports it only while mounted, and suppresses the live browser pane', async () => {
     mountApp();
+    await act(async () => {});
     expect(lastBrowserSuppression()).toBe(false);
 
     act(() => useGamificationStore.setState({ profileOpen: true }));

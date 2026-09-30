@@ -49,6 +49,8 @@ const stubs = vi.hoisted(() => ({
   bootstrap: vi.fn(),
 }));
 
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+
 vi.mock('../persistence/project-identity', () => ({
   resolveProjectExecutionScope: stubs.resolveProjectExecutionScope,
 }));

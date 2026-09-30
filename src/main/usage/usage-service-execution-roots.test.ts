@@ -68,6 +68,8 @@ const mocks = vi.hoisted(() => ({
   recordAgentTurn: vi.fn(),
 }));
 
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+
 vi.mock('electron', () => ({
   app: { getPath: () => mocks.userDataDir },
   BrowserWindow: { getAllWindows: () => [] },

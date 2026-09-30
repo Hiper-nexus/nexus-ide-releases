@@ -44,6 +44,8 @@ const spawnedAt = vi.hoisted(() => new Map<string, number>());
 
 // Sem PTY neste teste: o horário de spawn da sessão vem daqui; o resto do
 // pty-manager é o real. A UI/entrega ao Maestro fica fora.
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+
 vi.mock("../pty/pty-manager", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../pty/pty-manager")>()),
   getLastSessionInputOrigin: () => "system",

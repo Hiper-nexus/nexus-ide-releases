@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   classifyTaskWithSkillForRouting: vi.fn(async (): Promise<JevRouteTaskBatch> => ({ kind: 'skipped' })),
 }));
 
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+
 vi.mock('./jev-task-routing', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./jev-task-routing')>()),
   classifyTaskWithSkillForRouting: mocks.classifyTaskWithSkillForRouting,

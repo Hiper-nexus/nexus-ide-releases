@@ -2,6 +2,7 @@
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useAccessStore } from '../../state/access-store';
 import type { PaneModel } from '../../../shared/types';
 import { buildGridTree, listPanes } from '../../lib/split-tree';
 import { useLayoutStore } from '../../state/layout-store';
@@ -186,6 +187,7 @@ function boardReturnButtons(host: HTMLElement): HTMLButtonElement[] {
 }
 
 beforeEach(() => {
+  useAccessStore.setState({ canUseApp: true, loading: false, maxAgents: null, cloudSync: true, blockedReason: null });
   vi.clearAllMocks();
   installNexusBoundary();
   usePaneScopeStore.getState().clearScopeFocus();

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';;
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { CronJob } from './cron-loop';
 import {
@@ -138,6 +138,8 @@ function service(
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
+
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 
 describe('CronPortableScheduleService', () => {
   it('publishes a versioned definition and keeps machine coordinates local', async () => {

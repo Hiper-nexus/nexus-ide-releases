@@ -24,6 +24,8 @@ const state = vi.hoisted(() => ({
   corrupt: null as ((info: OwnedAgentSessionInfo) => OwnedAgentSessionInfo) | null,
 }));
 
+vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
+
 vi.mock('./project-domain-store-registry', () => ({ getProjectDomainStores: () => state.stores }));
 vi.mock('./squad-store', () => ({ getSquad: () => state.squad, listSquads: () => [] }));
 vi.mock('../pty/pty-manager', () => ({
