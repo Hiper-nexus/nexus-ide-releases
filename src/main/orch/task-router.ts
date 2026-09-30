@@ -1176,6 +1176,36 @@ export function routeTask(
     }
   }
 
+  // Rotação garantida por missão (regra do operador, 29/09): uma missão deve
+  // dar um assento a CADA adapter elegível antes de repetir qualquer um —
+  // a diversidade proporcional (−18/assento) sozinha nunca alcança adapters
+  // sem benchmark publicado quando há muitos com nota alta. Fora de alcance:
+  // critical (o topo entre CLIs manda), menção explícita, escolha medida
+  // (benchmark de especialidade / avaliação Nexus) e primeira reserva.
+  let rotationNote = '';
+  const usedInMission = new Set<string>([
+    ...(context.missionUsedAdapters ?? []),
+    ...(context.missionUseCounts?.keys() ?? []),
+  ]);
+  if (
+    tier !== 'critical' &&
+    evaluated.length === 0 &&
+    policy.source !== 'benchmark' &&
+    mention.model === undefined &&
+    usedInMission.size > 0 &&
+    usedInMission.has(ranked[0]?.c.adapterId ?? '')
+  ) {
+    const fresh = ranked.find(
+      (entry) =>
+        !usedInMission.has(entry.c.adapterId) &&
+        !adapterCircuitBreakers.isOpen(entry.c.adapterId),
+    );
+    if (fresh) {
+      ranked = [fresh, ...ranked.filter((entry) => entry !== fresh)];
+      rotationNote = `; rotação garantida: ${fresh.c.adapterId} ainda sem assento na missão`;
+    }
+  }
+
   let mentionNote = '';
   if (mention.model) {
     const { adapterId, model } = mention.model;
@@ -1257,7 +1287,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${lineUpgradeNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${lineUpgradeNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${rotationNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
       alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId) })),
       specialty: specialtyVerdict.specialty,
       policySource,
