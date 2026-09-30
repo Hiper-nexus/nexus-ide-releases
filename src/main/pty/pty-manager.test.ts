@@ -258,6 +258,8 @@ import {
   writeSession,
   tapSessionInput,
   inspectSessionLease,
+  warmPool,
+  tryAdoptWarmSession,
 } from "./pty-manager";
 import type {
   PtyHost,
@@ -956,6 +958,57 @@ it('enforces a shared two-agent cap across PTY and ACP and releases only on phys
     expect(licensedAgentCount()).toBe(2);
     await orchTerminateSession(c.sessionId);
   } finally { await orchTerminateSession(a.sessionId); await b.shutdown(); }
+  expect(licensedAgentCount()).toBe(0);
+});
+
+it('A1: a denied license cannot adopt a matching live warm child', async () => {
+  const h = fakeHost(); setPtyHost(h.host);
+  const adapter = makeAdapter({ static: {}, passthrough: [], ephemeralHome: false });
+  const authority = trustedSpawn();
+  const req = { kind: 'cli-agent' as const, cols: 80, rows: 24 };
+  const child = spawnAgentSession(null, req, adapter, {}, authority);
+  warmPool.setWarmPoolSize(1);
+  warmPool.put({ ...child, startKey: child.startKey!, cli: adapter.id, bornAtMs: Date.now(), cwd: authority.cwd, scopeRootRealPath: authority.scope.rootRealPath });
+  vi.mocked(requireAccess).mockReturnValue({ ok: false, reason: 'suspended' });
+  try {
+    expect(() => spawnAgentSession(fakeWc(), req, adapter, {}, authority)).toThrow(/license_access_denied/);
+    expect(() => tryAdoptWarmSession(adapter.id, authority, authority.cwd)).toThrow(/license_access_denied/);
+  } finally { warmPool.resetForTesting(); await orchTerminateSession(child.sessionId); }
+});
+
+it('A1: denial after taking a warm child terminates its lease instead of losing it outside the pool', async () => {
+  const h = fakeHost(); setPtyHost(h.host);
+  const adapter = makeAdapter({ static: {}, passthrough: [], ephemeralHome: false });
+  const authority = trustedSpawn();
+  const req = { kind: 'cli-agent' as const, cols: 80, rows: 24 };
+  const child = spawnAgentSession(null, req, adapter, {}, authority);
+  warmPool.setWarmPoolSize(1);
+  warmPool.put({ ...child, startKey: child.startKey!, cli: adapter.id, bornAtMs: Date.now(), cwd: authority.cwd, scopeRootRealPath: authority.scope.rootRealPath });
+  vi.mocked(requireAccess).mockReturnValueOnce({ ok: true }).mockReturnValue({ ok: false, reason: 'license-expired' });
+  try {
+    expect(() => spawnAgentSession(fakeWc(), req, adapter, {}, authority)).toThrow(/license_access_denied/);
+    expect(h.procFor(child.sessionId).terminate).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(licensedAgentCount()).toBe(0));
+  } finally { warmPool.resetForTesting(); await orchTerminateSession(child.sessionId); }
+});
+
+it('A1: warm children reserve both trial slots and adoption reuses a reservation', async () => {
+  vi.mocked(maxAgents).mockReturnValue(2);
+  const h = fakeHost(); setPtyHost(h.host);
+  const adapter = makeAdapter({ static: {}, passthrough: [], ephemeralHome: false });
+  const authority = trustedSpawn();
+  const req = { kind: 'cli-agent' as const, cols: 80, rows: 24 };
+  const a = spawnAgentSession(null, req, adapter, {}, authority);
+  const b = spawnAgentSession(null, req, adapter, {}, authority);
+  warmPool.setWarmPoolSize(2);
+  for (const child of [a, b]) warmPool.put({ ...child, startKey: child.startKey!, cli: adapter.id, bornAtMs: Date.now(), cwd: authority.cwd, scopeRootRealPath: authority.scope.rootRealPath });
+  try {
+    expect(licensedAgentCount()).toBe(2);
+    expect(() => spawnAgentSession(fakeWc(), { ...req, paneId: 'cold' }, adapter, {}, authority)).toThrow(/license_agent_limit/);
+    expect(spawnAgentSession(fakeWc(), req, adapter, {}, authority)).toEqual(a);
+    expect(licensedAgentCount()).toBe(2);
+    expect(getSessionState(b.sessionId)).not.toBe('exited');
+  } finally { warmPool.resetForTesting(); await orchTerminateSession(a.sessionId); await orchTerminateSession(b.sessionId); }
   expect(licensedAgentCount()).toBe(0);
 });
 

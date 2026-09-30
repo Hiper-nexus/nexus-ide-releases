@@ -1506,13 +1506,17 @@ export function spawnAgentSession(
   // quando o pedido é o contrato com que ele nasceu (F-642). Recursão
   // evitada: a reposição do pool não tenta tomar de si mesma.
   if (!warmSpawnInProgress() && requestMatchesWarmContract(req, overrides, authority)) {
+    let warm: SpawnedSession | null = null;
     try {
-      const warm = tryAdoptWarmSession(adapter.id, authority, cwd);
+      warm = tryAdoptWarmSession(adapter.id, authority, cwd);
       if (warm) {
         console.warn(`[warm-pool] adotado pane=${warm.sessionId} cli=${adapter.id}`);
+        assertLicenseAccess();
         return warm;
       }
     } catch (err) {
+      // A child taken just before expiry is no longer in the drain inventory.
+      if (warm) orchKillSession(warm.sessionId, { startKey: warm.startKey, origin: 'warm-pool:adoption-denied' });
       console.warn('[warm-pool] adoção falhou; cold spawn:', err);
     }
   }
@@ -3881,6 +3885,8 @@ export function tryAdoptWarmSession(
   authority: BoundSpawnAuthority,
   cwd: string,
 ): SpawnedSession | null {
+  // Check before taking: denial observers may drain the pool synchronously.
+  assertLicenseAccess();
   const warm = warmPool.take(cli);
   if (!warm) return null;
   const session = sessions.get(warm.sessionId);

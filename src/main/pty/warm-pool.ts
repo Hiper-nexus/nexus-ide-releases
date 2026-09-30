@@ -39,6 +39,7 @@ export class WarmPool {
   private destroyFn?: (sessionId: string, startKey?: string) => void;
   private isAliveFn?: (sessionId: string) => boolean;
   private targetSizeOverride: number | null = null;
+  private generation = 0;
 
   private metrics: WarmPoolMetrics = {
     hits: 0,
@@ -208,6 +209,7 @@ export class WarmPool {
    * guarded by CPU headroom.
    */
   async replenish(cli: string): Promise<boolean> {
+    const generation = this.generation;
     const targetSize = this.getWarmPoolSize();
     if (targetSize <= 0 || !this.spawnFn) return false;
 
@@ -222,7 +224,7 @@ export class WarmPool {
       if (!session) return false;
 
       const queue = this.queues.get(cli) ?? [];
-      if (queue.length < targetSize) {
+      if (generation === this.generation && queue.length < this.getWarmPoolSize()) {
         queue.push(session);
         this.queues.set(cli, queue);
         this.metrics.replenished += 1;
@@ -251,7 +253,9 @@ export class WarmPool {
     return { ...this.metrics };
   }
 
-  resetForTesting(): void {
+  /** Discard only parked children and invalidate replenishment already in flight. */
+  drain(): void {
+    this.generation += 1;
     for (const queue of this.queues.values()) {
       for (const session of queue) {
         try {
@@ -260,6 +264,10 @@ export class WarmPool {
       }
     }
     this.queues.clear();
+  }
+
+  resetForTesting(): void {
+    this.drain();
     this.targetSizeOverride = null;
     this.metrics = {
       hits: 0,

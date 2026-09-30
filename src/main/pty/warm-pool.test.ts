@@ -157,3 +157,28 @@ describe('WarmPool', () => {
     expect(destroyedSessions).toContain('session-dead');
   });
 });
+
+it('A1: drain invalidates replenishment already waiting for a child', async () => {
+  let finish!: (session: WarmSession) => void;
+  const destroyFn = vi.fn();
+  const pool = new WarmPool({ minCpuHeadroom: 0, destroyFn, spawnFn: () => new Promise(resolve => { finish = resolve; }) });
+  pool.setWarmPoolSize(1);
+  const pending = pool.replenish('claude');
+  pool.drain();
+  const late = { sessionId: 'late', startKey: 'late-key', cli: 'claude', bornAtMs: Date.now(), cwd: '/mock/cwd' };
+  finish(late);
+  expect(await pending).toBe(false);
+  expect(pool.getMetrics().readyCount).toBe(0);
+  expect(destroyFn).toHaveBeenCalledWith('late', 'late-key');
+});
+
+it('A1: drain destroys queued leases even when one teardown throws, retaining target size', () => {
+  const destroyFn = vi.fn().mockImplementationOnce(() => { throw new Error('failed teardown'); });
+  const pool = new WarmPool({ destroyFn });
+  pool.setWarmPoolSize(2);
+  for (const id of ['a', 'b']) pool.put({ sessionId: id, startKey: `key-${id}`, cli: 'claude', bornAtMs: Date.now(), cwd: '/mock/cwd' });
+  pool.drain();
+  expect(destroyFn).toHaveBeenCalledTimes(2);
+  expect(pool.getMetrics().readyCount).toBe(0);
+  expect(pool.getWarmPoolSize()).toBe(2);
+});

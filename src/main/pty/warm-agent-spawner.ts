@@ -10,13 +10,17 @@
 import type { BoundSpawnAuthority } from '../orch/spawn-authority';
 import type { ProjectExecutionScope, SpawnRequest } from '../../shared/types';
 import type { Adapter } from '../../shared/adapter-types';
-import type { WarmSession } from './warm-pool';
+import { warmPool, type WarmSession } from './warm-pool';
+import { onAccessChanged, requireAccess } from '../license-access';
+
 import { WARM_IDLE_CONTEXT } from './warm-adoption';
 import {
   setWarmAgentSpawner,
   spawnAgentSession,
   warmSpawnInProgress,
 } from './pty-manager';
+
+let unsubscribeAccess: (() => void) | undefined;
 
 export interface WarmSpawnContext {
   readonly scope: Readonly<ProjectExecutionScope>;
@@ -44,8 +48,13 @@ export function registerWarmAgentSpawner(deps: {
   resolveAdapter: (cli: string) => Adapter | null;
   resolveContext: WarmScopeProvider;
 }): void {
+  unsubscribeAccess?.();
+  unsubscribeAccess = onAccessChanged(state => {
+    if (!state.canUseApp) warmPool.drain();
+  });
+  if (!requireAccess('use').ok) warmPool.drain();
   setWarmAgentSpawner(async (cli: string): Promise<WarmSession | null> => {
-    if (warmSpawnInProgress()) return null;
+    if (warmSpawnInProgress() || !requireAccess('use').ok) return null;
     const adapter = deps.resolveAdapter(cli);
     if (!adapter || adapter.kind !== 'cli-pty') return null;
     const ctx = deps.resolveContext();
