@@ -4,7 +4,12 @@ import { resolve } from 'node:path';
 export default defineConfig({
   build: {
     rolldownOptions: {
-      input: { product: resolve('index.html'), community: resolve('comunidade/index.html') },
+      input: {
+        product: resolve('index.html'),
+        community: resolve('comunidade/index.html'),
+        conta: resolve('conta/index.html'),
+        admin: resolve('admin/index.html'),
+      },
     },
   },
 });
