@@ -137,7 +137,8 @@ function copyFor(kind: NoticeKind, input: NoticeTemplateInput): Copy {
         preheader: 'Para voltar a usar o app, escolha o plano Pro.',
         title: 'Seu teste terminou',
         paragraphs: [
-          date === null ? `O teste de ${days(trialDays)} do NexusIDE terminou. Sua conta continua existindo.` : `O teste de ${days(trialDays)} do NexusIDE terminou em ${date}. Sua conta continua existindo.`,
+          // Sem "N dias": o administrador pode ter estendido o teste, e a duração configurada deixaria de ser a real.
+          date === null ? 'O teste do NexusIDE terminou. Sua conta continua existindo.' : `O teste do NexusIDE terminou em ${date}. Sua conta continua existindo.`,
           `Para voltar a usar o app, escolha o plano Pro na sua conta. ${[...price, noCharge].join(' ')}`,
         ],
         cta: { label: 'Ver o plano Pro', url: PLAN_URL },

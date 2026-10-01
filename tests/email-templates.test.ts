@@ -99,3 +99,8 @@ test('data inválida não derruba a renderização: o texto fala do fim do teste
   const out = renderNotice('trial_ending_3d', { ...base, trialEndsAt: 'ontem' });
   assert.doesNotMatch(out.text, /undefined|Invalid|NaN/);
 });
+
+test('o aviso de teste terminado não afirma a duração do teste (o admin pode ter estendido)', () => {
+  assert.doesNotMatch(renderNotice('trial_ended', base).text, /\b\d+ dias\b/);
+  assert.match(renderNotice('trial_ended', base).text, /terminou em 16 de outubro de 2026/);
+});

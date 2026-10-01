@@ -43,6 +43,18 @@ export function isDeliverableEmail(value: unknown): value is string {
   return typeof value === 'string' && value.length <= 254 && EMAIL.test(value);
 }
 
+/** Caracteres que um endereço entregável nunca tem (os de `ADDRESS_PART`, em GLOB para o SQLite). O `]` vem primeiro para valer como literal. */
+export const FORBIDDEN_ADDRESS_GLOB = '*[][ <>",;:()\'\\\t\n\r]*';
+
+/**
+ * Espelho em SQL de `isDeliverableEmail`, que o D1 não executa: sem ele o LIMIT do despacho seria gasto com endereços que o filtro em memória
+ * descarta depois, e eles voltariam toda hora. Tem de ser igual ou mais frouxo que a regex, nunca mais estrito (senão some quem é válido).
+ * `forbiddenParam` é o placeholder que recebe FORBIDDEN_ADDRESS_GLOB.
+ */
+export function deliverableEmailSql(column: string, forbiddenParam: string): string {
+  return `(length(${column})<=254 AND ${column} GLOB '?*@?*.?*' AND length(${column})-length(replace(${column},'@',''))=1 AND ${column} NOT GLOB ${forbiddenParam})`;
+}
+
 function candidateKinds(row: NoticeCandidate, now: number): Set<NoticeKind> {
   const kinds = new Set<NoticeKind>();
   const ends = row.trialExpiresAt;

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { AppEnv } from './context.js';
 import type { AccountRow, AdminAuditAction, LicenseCodeRow } from './db/schema.js';
 import { jsonBody } from './http.js';
+import { emailConfigured } from './config.js';
 import { CLASSIFIED, LIVE, adminEmails } from './classified.js';
 import { mintLicenseCode } from './license-codes.js';
 import { requireAdmin, requireCsrf, requireWebAuth } from './middleware.js';
@@ -97,6 +98,8 @@ adminRoutes.post('/admin/accounts/:id/extend-trial', requireCsrf, async (c) => {
   await c.env.DB.batch([
     c.env.DB.prepare('UPDATE accounts SET trial_started_at=COALESCE(trial_started_at,?1),trial_expires_at=max(?1,COALESCE(trial_expires_at,?1))+?2,updated_at=?1 WHERE id=?3').bind(now, days * DAY_MS, target.id),
     audit(c, target, 'extend_trial', { days, previousEnd: target.trial_expires_at === null ? null : new Date(target.trial_expires_at).toISOString() }, now, false),
+    // Um prazo novo reabre os avisos de fim de teste (o de boas-vindas não volta). Só com e-mail configurado: sem ele a tabela nem precisa existir ainda.
+    ...(emailConfigured(c.get('config')) ? [c.env.DB.prepare("DELETE FROM account_notices WHERE account_id=? AND kind IN ('trial_ending_3d','trial_ending_1d','trial_ended')").bind(target.id)] : []),
   ]);
   return c.json({ ok: true, data: {} });
 });

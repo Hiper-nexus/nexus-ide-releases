@@ -13,6 +13,8 @@ Só e-mails ligados ao teste de 15 dias. Cada conta recebe no máximo um e-mail 
 | `trial_ending_1d` | o teste termina em até 24 h | Seu teste do NexusIDE termina em 24 horas |
 | `trial_ended` | o teste terminou há até 7 dias | Seu teste do NexusIDE terminou |
 
+Estender o teste de uma conta pelo painel admin reabre os avisos de fim de teste dela (o de boas-vindas não volta). Se `TRIAL_DAYS` for 3 ou menos, a conta nova já nasce na janela do aviso de fim de teste e o de boas-vindas não sai: só vale em produção com os 15 dias.
+
 Quem **não** recebe nada: conta Pro (assinatura ou código de licença), administrador, conta suspensa, conta que usou o link de descadastro e conta sem e-mail entregável (o login sem e-mail verificado guarda `provedor:id` em `accounts.email`, que nunca é tratado como endereço).
 
 O texto não escreve preço e não promete nada além do que existe (ele diz que nada é cobrado sem a confirmação da pessoa). O prazo do teste e o limite de agentes vêm de `TRIAL_DAYS` e `TRIAL_MAX_AGENTS`. Para mostrar o valor nos avisos de fim de teste, passe `priceLabel` na função `template()` de `src/email/dispatch.ts` (o modelo já aceita e escapa o texto).
@@ -25,7 +27,8 @@ A cada hora (minuto 17) o Worker limpa o que expirou (`cleanupExpired`) e, depoi
 
 - **Desligado** (`EMAIL_ENABLED` diferente de `"true"`, ou falta `RESEND_API_KEY` ou `NOTICE_SECRET`): não faz nada. Nenhuma consulta, nenhuma chamada, nenhuma marca.
 - **Ligado:** uma consulta ao D1 reaproveita a mesma classificação de acesso do painel admin (`src/classified.ts`), pré-filtra pelas janelas acima e traz até 50 contas, as mais urgentes primeiro (24 h, terminou, 3 dias, boas-vindas). Cada envio leva `Idempotency-Key: <conta>:<tipo>` e, quando o Resend aceita, a marca vai para `account_notices` (em blocos de 10, para gastar poucas consultas D1).
-- **Falha que passa sozinha** (429, 5xx, rede, prazo de 10 s): não marca e tenta de novo na hora seguinte. Três seguidas interrompem o lote.
+- **Ritmo:** 550 ms entre envios, porque o Resend aceita 2 requisições por segundo por padrão (50 envios levam cerca de 30 s dentro do `waitUntil` do cron). Um 429 ganha uma pausa de 1,5 s e uma segunda chance no mesmo aviso. As chamadas ao Resend, segundas chances incluídas, somam no máximo 50 por execução (o teto de subrequests do plano gratuito).
+- **Falha que passa sozinha** (429 depois da segunda chance, 5xx, rede, prazo de 10 s): não marca e tenta de novo na hora seguinte. Três seguidas (uma recusa definitiva no meio zera a contagem) interrompem o lote.
 - **Falha definitiva** (outros 4xx): não marca e registra uma linha por execução, sem endereço e sem chave. `401`/`403` (chave recusada, domínio não verificado) interrompem o lote inteiro. Um endereço que o Resend recusa (422) volta a ser tentado a cada hora enquanto a janela do aviso durar; olhe o log se o mesmo erro se repetir.
 - **Queda entre enviar e marcar:** o Resend recusa o reenvio repetido pela chave de idempotência por 24 h, então a pessoa não recebe duas vezes. Se o corpo mudou entre as tentativas (o "faltam N dias"), o Resend responde 409 `invalid_idempotent_request`; o Worker entende que o envio anterior saiu e só marca.
 - Se não for possível gravar as marcas, o lote para em vez de continuar enviando sem registro.

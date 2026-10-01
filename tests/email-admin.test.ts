@@ -73,3 +73,23 @@ test('se o Resend recusar, a resposta traz o motivo (sem endereço) e a auditori
   assert.deepEqual(JSON.parse(audit()[0]!.details!), { kind: 'trial_ending_3d', sent: false, reason: 'http_403:validation_error' });
   db.close();
 });
+
+async function extendTrialWithMarks(overrides: Record<string, unknown>): Promise<string[]> {
+  const db = new SqliteD1();
+  await seedAccount(db, 'admin', { admin: true });
+  await seedAccount(db, 'acc-1');
+  for (const kind of ['welcome', 'trial_ending_3d', 'trial_ending_1d', 'trial_ended']) db.sqlite.prepare('INSERT INTO account_notices(account_id,kind,sent_at) VALUES(?,?,1)').run('acc-1', kind);
+  const response = await createApp().request('/v1/admin/accounts/acc-1/extend-trial', { method: 'POST', headers: await webLogin(db, 'admin'), body: JSON.stringify({ days: 5 }) }, environment(db, overrides));
+  assert.equal(response.status, 200);
+  const kinds = (db.sqlite.prepare('SELECT kind FROM account_notices ORDER BY kind').all() as Array<{ kind: string }>).map(row => row.kind);
+  db.close();
+  return kinds;
+}
+
+test('estender o teste reabre os avisos de fim de teste (o de boas-vindas não volta) quando o e-mail está configurado', async () => {
+  assert.deepEqual(await extendTrialWithMarks(ON), ['welcome']);
+});
+
+test('sem e-mail configurado, estender o teste não toca na tabela de avisos', async () => {
+  assert.deepEqual(await extendTrialWithMarks({}), ['trial_ended', 'trial_ending_1d', 'trial_ending_3d', 'welcome']);
+});

@@ -1,7 +1,7 @@
 import { configFrom, emailConfigured, type Config } from '../config.js';
 import { CLASSIFIED, adminEmails } from '../classified.js';
 import type { NoticeKind } from '../db/schema.js';
-import { DAY_MS, ENDED_WINDOW_MS, FIRST_WARNING_MS, NOTICE_KINDS, WELCOME_WINDOW_MS, dueNotices, type DueNotice, type NoticeCandidate } from './notices.js';
+import { DAY_MS, ENDED_WINDOW_MS, FIRST_WARNING_MS, FORBIDDEN_ADDRESS_GLOB, NOTICE_KINDS, WELCOME_WINDOW_MS, deliverableEmailSql, dueNotices, type DueNotice, type NoticeCandidate } from './notices.js';
 import { createResendSender, oneClickUnsubscribeHeaders, type SendResult } from './resend.js';
 import { renderNotice } from './templates.js';
 import { buildUnsubscribeUrl, noticeToken } from './unsubscribe.js';
@@ -10,6 +10,9 @@ import { buildUnsubscribeUrl, noticeToken } from './unsubscribe.js';
 export const NOTICE_BATCH_LIMIT = 50;
 /** As marcas vão ao banco em blocos: poucas consultas D1 por execução, e uma queda perde no máximo um bloco. */
 const MARK_CHUNK = 10;
+/** O Resend aceita 2 requisições por segundo por padrão: 550 ms entre envios deixa folga para a latência. */
+const SEND_PACE_MS = 550;
+const RATE_LIMIT_PAUSE_MS = 1500;
 /** Perder uma marca só repete o envio, e a chave de idempotência do Resend segura o reenvio por 24 h. */
 const MAX_CONSECUTIVE_FAILURES = 3;
 
@@ -20,6 +23,10 @@ export interface DispatchOptions {
   readonly fetchFn?: FetchFn;
   /** Recebe uma linha por problema, sem destinatário, sem chave e sem corpo. */
   readonly log?: (message: string) => void;
+  /** Espera entre envios; os testes trocam por uma que não espera. */
+  readonly sleep?: (ms: number) => Promise<void>;
+  /** Intervalo entre envios. O padrão cabe no limite de 2 requisições por segundo do Resend. */
+  readonly paceMs?: number;
 }
 
 export type DispatchStop = 'consecutive_failures' | 'auth';
@@ -46,13 +53,13 @@ const sentSql = (kind: NoticeKind): string => `NOT EXISTS(SELECT 1 FROM account_
 /**
  * Uma consulta só. Reaproveita a classificação de acesso do painel (suspensa, paga/admin, teste vivo, expirado) e pré-filtra
  * pelas MESMAS janelas de `dueNotices`, tirando quem já recebeu cada tipo: assim o LIMIT nunca é gasto com quem não tem nada a receber.
- * ?1 agora, ?2 e-mails admin, ?3 limite do "terminou", ?4 agora+1d, ?5 agora+3d, ?6 limite das boas-vindas, ?7 teto.
+ * ?1 agora, ?2 e-mails admin, ?3 limite do "terminou", ?4 agora+1d, ?5 agora+3d, ?6 limite das boas-vindas, ?7 teto, ?8 caracteres proibidos num endereço.
  */
 const CANDIDATES = `${CLASSIFIED}
 SELECT id,email,name,created_at,trial_expires_at,notices_opt_out,suspended_at,is_admin,situation,
   (SELECT group_concat(n.kind) FROM account_notices n WHERE n.account_id=classified.id) AS sent
 FROM classified
-WHERE situation IN ('trial','expired') AND notices_opt_out=0 AND instr(email,'@')>1 AND (
+WHERE situation IN ('trial','expired') AND notices_opt_out=0 AND ${deliverableEmailSql('email', '?8')} AND (
   (trial_expires_at<=?1 AND trial_expires_at>=?3 AND ${sentSql('trial_ended')})
   OR (trial_expires_at>?1 AND trial_expires_at<=?4 AND ${sentSql('trial_ending_1d')})
   OR (trial_expires_at>?4 AND trial_expires_at<=?5 AND ${sentSql('trial_ending_3d')})
@@ -96,10 +103,12 @@ export async function sendDueNotices(env: { readonly DB: D1Database }, options: 
   if (!emailConfigured(config)) return { skipped: 'disabled' };
   const now = options.now ?? Date.now();
   const log = options.log ?? ((message: string) => console.error(message));
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
+  const paceMs = options.paceMs ?? SEND_PACE_MS;
   const db = env.DB;
 
   const rows = await db.prepare(CANDIDATES)
-    .bind(now, adminEmails(config), now - ENDED_WINDOW_MS, now + DAY_MS, now + FIRST_WARNING_MS, now - WELCOME_WINDOW_MS, NOTICE_BATCH_LIMIT)
+    .bind(now, adminEmails(config), now - ENDED_WINDOW_MS, now + DAY_MS, now + FIRST_WARNING_MS, now - WELCOME_WINDOW_MS, NOTICE_BATCH_LIMIT, FORBIDDEN_ADDRESS_GLOB)
     .all<CandidateRow>();
   const due = dueNotices(rows.results.map(toCandidate), now);
 
@@ -111,17 +120,28 @@ export async function sendDueNotices(env: { readonly DB: D1Database }, options: 
     pending = [];
   };
 
+  let attempts = 0;
+  /** Uma chamada ao Resend (um subrequest), já no ritmo que o limite de requisições por segundo do Resend aceita. */
+  const attempt = async (notice: DueNotice, unsubscribeUrl: string, pause: number): Promise<SendResult> => {
+    if (attempts > 0) await sleep(pause);
+    attempts += 1;
+    const rendered = renderNotice(notice.kind, template(config, notice, unsubscribeUrl, now));
+    return sender.send({
+      to: notice.email, subject: rendered.subject, html: rendered.html, text: rendered.text,
+      idempotencyKey: `${notice.accountId}:${notice.kind}`, headers: oneClickUnsubscribeHeaders(unsubscribeUrl),
+    });
+  };
+
   let sent = 0, failed = 0, consecutive = 0, loggedRefusal = false;
   let stopped: DispatchStop | null = null;
   let failure: unknown;
   try {
     for (const notice of due) {
+      if (attempts >= NOTICE_BATCH_LIMIT) break;
       const unsubscribeUrl = buildUnsubscribeUrl(config.PUBLIC_BASE_URL, notice.accountId, await noticeToken(config.NOTICE_SECRET, notice.accountId));
-      const rendered = renderNotice(notice.kind, template(config, notice, unsubscribeUrl, now));
-      const result = await sender.send({
-        to: notice.email, subject: rendered.subject, html: rendered.html, text: rendered.text,
-        idempotencyKey: `${notice.accountId}:${notice.kind}`, headers: oneClickUnsubscribeHeaders(unsubscribeUrl),
-      });
+      let result = await attempt(notice, unsubscribeUrl, paceMs);
+      // O 429 do Resend é "devagar": uma pausa maior e uma segunda chance antes de contar como falha.
+      if (!result.ok && result.status === 429 && attempts < NOTICE_BATCH_LIMIT) result = await attempt(notice, unsubscribeUrl, RATE_LIMIT_PAUSE_MS);
       if (result.ok || alreadyAccepted(result)) {
         sent += 1; consecutive = 0;
         pending.push(db.prepare('INSERT OR IGNORE INTO account_notices(account_id,kind,sent_at,provider_id) VALUES(?,?,?,?)').bind(notice.accountId, notice.kind, now, result.ok ? result.id : null));
@@ -134,6 +154,7 @@ export async function sendDueNotices(env: { readonly DB: D1Database }, options: 
         if (consecutive >= MAX_CONSECUTIVE_FAILURES) { stopped = 'consecutive_failures'; log(`nexus-cloud-api: lote de avisos interrompido após ${MAX_CONSECUTIVE_FAILURES} falhas seguidas do Resend (${result.reason})`); break; }
         continue;
       }
+      consecutive = 0;
       if (!loggedRefusal) { loggedRefusal = true; log(`nexus-cloud-api: aviso recusado pelo Resend sem nova tentativa (${result.reason})`); }
       if (result.status === 401 || result.status === 403) { stopped = 'auth'; break; }
     }
