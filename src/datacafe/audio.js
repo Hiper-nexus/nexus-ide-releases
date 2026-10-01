@@ -50,8 +50,8 @@ export function createAudio({ context = null, storage = defaultStorage(), create
     return Boolean(ctx && master) && !muted && volume > 0;
   }
 
-  function envelope(gain, peak, attack, release) {
-    const t = ctx.currentTime;
+  function envelope(gain, peak, attack, release, delay = 0) {
+    const t = ctx.currentTime + delay;
     gain.gain.setValueAtTime(0.0001, t);
     gain.gain.linearRampToValueAtTime(peak, t + attack);
     gain.gain.exponentialRampToValueAtTime(0.0001, t + attack + release);
@@ -66,10 +66,10 @@ export function createAudio({ context = null, storage = defaultStorage(), create
     filter.frequency.value = frequency;
     filter.Q.value = q;
     const gain = ctx.createGain();
-    const end = envelope(gain, peak, attack, release);
+    const end = envelope(gain, peak, attack, release, delay);
     source.connect(filter); filter.connect(gain); gain.connect(master);
     source.start(ctx.currentTime + delay, Math.random() * 0.5);
-    source.stop(end + delay + 0.02);
+    source.stop(end + 0.02);
   }
 
   function tone({ type = 'sine', frequency, to = null, peak = 0.1, attack = 0.005, release = 0.12, delay = 0 }) {

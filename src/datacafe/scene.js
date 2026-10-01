@@ -43,7 +43,7 @@ const STEP_LENGTH = 0.62;
 const SIP_SECONDS = 0.8;
 const TRAIL_EVERY = 0.045;
 const FROST_EVERY = 0.35;
-const label = (text, { duration = 1, blocked = false } = {}) => Object.freeze({ text, duration, blocked });
+const label = (text, { duration = 1, blocked = false, holdId = null } = {}) => Object.freeze({ text, duration, blocked, holdId });
 const modelOf = id => MODELS.find(model => model.id === id);
 const STATION = LAYOUT.workstation;
 const SEATED_LABELS = {
@@ -341,7 +341,7 @@ class DataCafeWorld {
     let item = this.freezerLabels.get(key);
     if (!item) {
       if (this.carrying) item = label('Com a GPU na mão não dá para abrir o freezer: instale no rack', { blocked: true });
-      else if (reason === 'ready') item = label(`Pegar um Nexus+ (${stock})`, { duration: 0.9 });
+      else if (reason === 'ready') item = label(`Pegar um Nexus+ (${stock})`, { duration: 0.9, holdId: 'freezer-ready' });
       else if (reason === 'cooling') item = label(`Gelando… ${formatClock(wait)}`, { blocked: true });
       else item = label(`Vazio. Repondo… ${formatClock(wait)}`, { blocked: true });
       this.freezerLabels.set(key, item);
@@ -665,11 +665,14 @@ class DataCafeWorld {
     const item = nearest(this.items, this.body, this);
     const current = item ? item.label(this) : null;
     if (item !== this.promptItem || current !== this.promptLabel) {
+      // O aviso de ação bloqueada toca uma vez por alvo: o relógio do rótulo (Gelando… 0:12) não o rearma a cada segundo.
+      const blockedNow = Boolean(current?.blocked);
+      if (item !== this.promptItem || blockedNow !== this.promptBlocked) this.blockedToast = false;
+      this.promptBlocked = blockedNow;
       this.promptItem = item;
       this.promptLabel = current;
       this.on.prompt?.(current);
       this.dc.highlight(item);
-      this.blockedToast = false;
     }
     const result = advanceHold(this.hold, item, current, this.holding && !this.latch, dt);
     if (result === 'blocked' && !this.blockedToast) { this.on.toast?.(current.text); this.audio?.denied(); this.blockedToast = true; }

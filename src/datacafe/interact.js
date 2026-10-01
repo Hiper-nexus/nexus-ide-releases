@@ -43,11 +43,15 @@ export function holdStep(hold, dt) {
  * está solto, então tempo segurado num alvo nunca vale para outro.
  * Devolve 'idle', 'blocked', 'progress' ou 'done'. */
 export function advanceHold(hold, item, label, pressed, dt) {
-  if (hold.item !== item || hold.label !== label) {
+  // `holdId` deixa o texto do rótulo mudar no meio do segurar (o estoque que repõe) sem zerar o progresso.
+  const identity = label?.holdId ?? label;
+  if (hold.item !== item || hold.identity !== identity) {
     hold.item = item;
+    hold.identity = identity;
     hold.label = label;
     hold.elapsed = 0;
   }
+  hold.label = label;
   if (!pressed || !item || !label) { hold.elapsed = 0; return 'idle'; }
   if (label.blocked) { hold.elapsed = 0; return 'blocked'; }
   hold.duration = label.duration;

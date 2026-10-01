@@ -6,7 +6,7 @@ import {
 
 test('o freezer começa com 8 latas, sem turbo e sem lata bebida', () => {
   const state = createDrinks();
-  assert.deepEqual([state.stock, state.cans], [DRINK.stockStart, 0]);
+  assert.equal(state.stock, DRINK.stockStart);
   assert.equal(DRINK.stockStart, 8);
   assert.equal(DRINK.stockMax, 12);
   assert.equal(turboLeft(state, 0), 0);
@@ -17,7 +17,6 @@ test('beber tira uma lata, liga o turbo de 20 s e põe a lata seguinte para gela
   const first = drinkCan(createDrinks(100), 100);
   assert.equal(first.ok, true);
   assert.equal(first.state.stock, 7);
-  assert.equal(first.state.cans, 1);
   assert.equal(turboLeft(first.state, 100), 20);
   assert.equal(turboLeft(first.state, 112.5), 7.5);
   assert.equal(turboLeft(first.state, 125), 0);
@@ -30,7 +29,6 @@ test('beber tira uma lata, liga o turbo de 20 s e põe a lata seguinte para gela
 
   const later = drinkCan(first.state, 130);
   assert.equal(later.ok, true);
-  assert.equal(later.state.cans, 2);
 });
 
 test('freezer vazio explica quanto falta para repor a próxima lata', () => {

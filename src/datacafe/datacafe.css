@@ -186,3 +186,5 @@
 }
 
 @media(max-width:880px){.dc-prize-goal{display:none}}
+
+@media(max-width:1020px){.dc-boost-label{display:none}.dc-boost .dc-track{width:40px}}

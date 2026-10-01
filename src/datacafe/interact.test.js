@@ -78,3 +78,18 @@ test('advanceHold: soltar ou mudar a ação do mesmo alvo recomeça a contagem',
   assert.ok(Math.abs(hold.elapsed - 0.5) < 1e-9, 'a ação nova começou do zero');
   assert.equal(advanceHold(hold, null, null, true, 0.1), 'idle');
 });
+
+test('advanceHold: o texto do rótulo pode mudar no meio do segurar sem reiniciar (mesmo holdId)', async () => {
+  const { advanceHold } = await import('./interact.js');
+  const freezer = { id: 'freezer' };
+  const hold = { item: null, label: null, elapsed: 0, duration: 0 };
+  const eight = Object.freeze({ text: 'Pegar um Nexus+ (8)', duration: 0.9, blocked: false, holdId: 'freezer-ready' });
+  const nine = Object.freeze({ text: 'Pegar um Nexus+ (9)', duration: 0.9, blocked: false, holdId: 'freezer-ready' });
+  assert.equal(advanceHold(hold, freezer, eight, true, 0.4), 'progress');
+  assert.equal(advanceHold(hold, freezer, nine, true, 0.4), 'progress', 'a lata que voltou ao estoque não zera o gole');
+  assert.equal(advanceHold(hold, freezer, nine, true, 0.2), 'done', '0,4 + 0,4 + 0,2 completa os 0,9 s');
+  const other = Object.freeze({ text: 'Outro', duration: 0.9, blocked: false, holdId: 'outro' });
+  hold.elapsed = 0.5;
+  assert.equal(advanceHold(hold, freezer, other, true, 0.1), 'progress');
+  assert.ok(hold.elapsed <= 0.1 + 1e-9, 'um holdId diferente continua reiniciando');
+});

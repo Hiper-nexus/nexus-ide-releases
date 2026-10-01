@@ -28,7 +28,7 @@ const valid = now => typeof now === 'number' && Number.isFinite(now);
 
 export function createDrinks(now = 0) {
   const start = valid(now) ? now : 0;
-  return { stock: DRINK.stockStart, nextRestock: start + DRINK.restockEvery, readyAt: start, turboUntil: start, cans: 0 };
+  return { stock: DRINK.stockStart, nextRestock: start + DRINK.restockEvery, readyAt: start, turboUntil: start };
 }
 
 /** Repõe as latas que o tempo já trouxe. Devolve o mesmo estado quando nada mudou. */
@@ -73,7 +73,6 @@ export function drinkCan(state, now) {
       nextRestock: wasFull ? now + DRINK.restockEvery : current.nextRestock,
       readyAt: now + DRINK.cooldown,
       turboUntil: now + DRINK.turbo,
-      cans: current.cans + 1,
     },
   };
 }
