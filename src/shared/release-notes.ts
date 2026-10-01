@@ -8689,6 +8689,13 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
   fixes: [
     {
+      title: 'Worker reaproveitado volta a entregar',
+      detail:
+        'Um pane só podia entregar uma vez: a segunda entrega do mesmo worker ' +
+        'era recusada como repetição e se perdia. Entrega já recebida pelo ' +
+        'Maestro mais conteúdo novo agora conta como rodada nova.',
+    },
+    {
       title: 'Licença sem bloqueio falso',
       detail:
         'A tela de bloqueio não pisca a cada renovação, uma resposta boa não ' +
