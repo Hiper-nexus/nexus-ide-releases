@@ -61,7 +61,35 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** Faz a barra montada medir `content` px de conteúdo rígido numa caixa de `box` px. */
+function overflowToolbar(host: HTMLElement, content: number, box: number): void {
+  const toolbar = host.querySelector<HTMLElement>('.toolbar')!;
+  Object.defineProperty(toolbar, 'scrollWidth', { configurable: true, get: () => content });
+  Object.defineProperty(toolbar, 'clientWidth', { configurable: true, get: () => box });
+}
+
 describe('PaneToolbar narrow controls', () => {
+  it('F-717: pane largo cuja barra cheia transborda desce para ícones e mantém o Fechar', () => {
+    const host = mount(850);
+    const toolbar = host.querySelector<HTMLElement>('.toolbar')!;
+    expect(toolbar.dataset.density).toBe('full');
+    // Rótulos + custo + tok/s pediam 1011 px num pane de 850 px.
+    overflowToolbar(host, 1025, 864);
+    act(() => measure(850));
+    expect(toolbar.dataset.density).toBe('icons');
+    expect(host.querySelector('.toolbar__actions .toolbar__btn-label')).toBeNull();
+    expect(host.querySelector('[aria-label="Fechar este pane"]')).not.toBeNull();
+    // Em ícones a barra cabe: fica, sem alternar a cada quadro.
+    overflowToolbar(host, 864, 864);
+    act(() => measure(850));
+    expect(toolbar.dataset.density).toBe('icons');
+    // Só volta ao modo cheio com a largura que ele pediu mais a folga.
+    act(() => measure(1011 + 31));
+    expect(toolbar.dataset.density).toBe('icons');
+    act(() => measure(1011 + 32));
+    expect(toolbar.dataset.density).toBe('full');
+  });
+
   it('keeps readable icon controls instead of crowded full labels on a medium pane', () => {
     const host = mount(600);
     const maximize = host.querySelector<HTMLButtonElement>('.toolbar__actions [aria-label="Ampliar"]');

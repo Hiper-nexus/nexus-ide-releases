@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { nextToolbarDensity, TOOLBAR_DENSITY_HYSTERESIS_PX, type Density } from './PaneToolbar';
+import {
+  nextToolbarDensity,
+  recordToolbarOverflow,
+  TOOLBAR_DENSITY_HYSTERESIS_PX,
+  type Density,
+  type ToolbarNeeds,
+} from './PaneToolbar';
 
 describe('densidade do cabeçalho do pane com histerese (F-686)', () => {
   it('encolhe na hora ao cruzar o limite para baixo', () => {
@@ -26,5 +32,33 @@ describe('densidade do cabeçalho do pane com histerese (F-686)', () => {
       seen.push(density);
     }
     expect(seen).toEqual(['full', 'icons', 'icons', 'icons', 'icons', 'icons', 'icons']);
+  });
+});
+
+describe('densidade pelo transbordo real da barra (F-717)', () => {
+  it('guarda quanto a densidade pedia e ignora ruído de 1 px e o modo compacto', () => {
+    expect(recordToolbarOverflow({}, 'full', 850, 1)).toEqual({});
+    expect(recordToolbarOverflow({}, 'compact', 200, 40)).toEqual({});
+    expect(recordToolbarOverflow({}, 'full', 850, 160.4)).toEqual({ full: 1011 });
+    const needs: ToolbarNeeds = { full: 1011 };
+    expect(recordToolbarOverflow(needs, 'full', 850, 100)).toBe(needs);
+    expect(recordToolbarOverflow(needs, 'icons', 500, 40)).toEqual({ full: 1011, icons: 540 });
+  });
+
+  it('pane largo cuja barra cheia não cabe desce para ícones e só volta com folga', () => {
+    // Print de 01/10: três panes de ~850 px, rótulos + custo + tok/s, Fechar cortado.
+    const needs: ToolbarNeeds = { full: 1011 };
+    expect(nextToolbarDensity('full', 850)).toBe('full');
+    expect(nextToolbarDensity('full', 850, needs)).toBe('icons');
+    expect(nextToolbarDensity('icons', 850, needs)).toBe('icons');
+    expect(nextToolbarDensity('icons', 1011 + TOOLBAR_DENSITY_HYSTERESIS_PX - 1, needs)).toBe('icons');
+    expect(nextToolbarDensity('icons', 1011 + TOOLBAR_DENSITY_HYSTERESIS_PX, needs)).toBe('full');
+  });
+
+  it('ícones que também não cabem descem até o compacto, que nunca transborda o Fechar', () => {
+    const needs: ToolbarNeeds = { full: 1011, icons: 700 };
+    expect(nextToolbarDensity('full', 650, needs)).toBe('compact');
+    expect(nextToolbarDensity('compact', 700, needs)).toBe('compact');
+    expect(nextToolbarDensity('compact', 700 + TOOLBAR_DENSITY_HYSTERESIS_PX, needs)).toBe('icons');
   });
 });

@@ -71,16 +71,45 @@ const FULL_TOOLBAR_WIDTH = 760;
 export const TOOLBAR_DENSITY_HYSTERESIS_PX = 32;
 
 const DENSITY_RANK: Record<Density, number> = { compact: 0, icons: 1, full: 2 };
+const LOWER_DENSITY: Record<Density, Density> = { full: 'icons', icons: 'compact', compact: 'compact' };
+
+/**
+ * F-717: largura (content-box) que cada densidade já provou precisar. Os
+ * limites fixos não sabem quanto custo, tok/s, Cmds e o botão de missão
+ * ocupam: num pane de ~850 px a barra ficava em 'full' com rótulos, passava
+ * da largura e o Fechar saía pelo `overflow: hidden` (print de 01/10).
+ */
+export type ToolbarNeeds = Partial<Record<Density, number>>;
+
+function densityForWidth(width: number, needs: ToolbarNeeds): Density {
+  let density: Density =
+    width < COMPACT_TOOLBAR_WIDTH ? 'compact' : width < FULL_TOOLBAR_WIDTH ? 'icons' : 'full';
+  while (density !== 'compact' && width < (needs[density] ?? 0)) density = LOWER_DENSITY[density];
+  return density;
+}
 
 /** Densidade para `width` a partir de `current`, com histerese na subida. */
-export function nextToolbarDensity(current: Density, width: number): Density {
-  const target: Density =
-    width < COMPACT_TOOLBAR_WIDTH ? 'compact' : width < FULL_TOOLBAR_WIDTH ? 'icons' : 'full';
+export function nextToolbarDensity(current: Density, width: number, needs: ToolbarNeeds = {}): Density {
+  const target = densityForWidth(width, needs);
   if (DENSITY_RANK[target] <= DENSITY_RANK[current]) return target;
-  const roomy = width - TOOLBAR_DENSITY_HYSTERESIS_PX;
-  const reachable: Density =
-    roomy < COMPACT_TOOLBAR_WIDTH ? 'compact' : roomy < FULL_TOOLBAR_WIDTH ? 'icons' : 'full';
+  const reachable = densityForWidth(width - TOOLBAR_DENSITY_HYSTERESIS_PX, needs);
   return DENSITY_RANK[reachable] > DENSITY_RANK[current] ? reachable : current;
+}
+
+/** A barra transbordou em `measured`: guarda quanto ela pedia (F-717). */
+export function recordToolbarOverflow(
+  needs: ToolbarNeeds,
+  measured: Density,
+  width: number,
+  overflowPx: number,
+): ToolbarNeeds {
+  if (overflowPx <= 1 || measured === 'compact') return needs;
+  const need = Math.ceil(width + overflowPx);
+  return (needs[measured] ?? 0) >= need ? needs : { ...needs, [measured]: need };
+}
+
+function isDensity(value: string | undefined): value is Density {
+  return value === 'full' || value === 'icons' || value === 'compact';
 }
 const MENU_VIEWPORT_GUTTER = 8;
 const MENU_ANCHOR_GAP = 4;
@@ -358,6 +387,7 @@ export function PaneToolbar({ pane, isFocused }: Props) {
   const [menuPosition, setMenuPosition] = useState({ left: MENU_VIEWPORT_GUTTER, top: MENU_VIEWPORT_GUTTER });
   const [copiedId, setCopiedId] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const needsRef = useRef<ToolbarNeeds>({});
   const menuRef = useRef<HTMLDivElement>(null);
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
 
@@ -381,15 +411,25 @@ export function PaneToolbar({ pane, isFocused }: Props) {
   useEffect(() => {
     const el = rootRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
+    // F-717: além da largura do pane, os blocos rígidos (botões e telemetria)
+    // — custo e tok/s crescem sem re-renderizar esta barra.
+    const rigid = [...el.querySelectorAll<HTMLElement>(':scope > .toolbar__actions, :scope > .toolbar__telemetry')];
+    let width: number | null = null;
     const ro = new ResizeObserver((entries) => {
-      // Thresholds altos: com 3+ panes na grelha a toolbar morre cedo e o
-      // Fechar era empurrado para fora (overflow do .pane). Compact cedo.
-      const w = entries[0]?.contentRect.width ?? 500;
-      setDensity((current) => nextToolbarDensity(current, w));
+      const own = entries.find((entry) => !rigid.includes(entry.target as HTMLElement));
+      if (own) width = own.contentRect.width;
+      if (width === null) return;
+      const measured = el.dataset.density;
+      if (isDensity(measured)) {
+        needsRef.current = recordToolbarOverflow(needsRef.current, measured, width, el.scrollWidth - el.clientWidth);
+      }
+      const w = width;
+      setDensity((current) => nextToolbarDensity(current, w, needsRef.current));
     });
     ro.observe(el);
+    for (const block of rigid) ro.observe(block);
     return () => ro.disconnect();
-  }, []);
+  }, [pane.kind]);
 
   useEffect(() => {
     if (!menuOpen) return;
