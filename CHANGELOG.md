@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.160 — Teste à vista
+
+Build do Mac. Inclui a 0.76.159 (Marca nova).
+
+- **Aviso de fim do teste dentro do app.** Nos últimos 3 dias do teste de 15 dias, o rodapé da barra lateral mostra "Faltam N dias do seu teste" (ou "Termina amanhã" / "Termina hoje") com o botão Assinar, que abre o checkout. Antes disso o cartão não aparece, e quem já assina, tem código de licença ou é administrador nunca o vê.
+
 ## 0.76.159 — Marca nova
 
 Build do Mac. Inclui a 0.76.158 (Uma linha por cota), a 0.76.157 (Kimi sem alarme falso), a 0.76.156 (Fechar sempre à vista) e a 0.76.155 (Guarda no lugar).

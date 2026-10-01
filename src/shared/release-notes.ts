@@ -8866,7 +8866,7 @@ export const RELEASE_076158: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076159: AppRelease = {
   version: '0.76.159',
   date: '2026-10-01',
   codename: 'Marca nova',
@@ -8889,6 +8889,26 @@ export const CURRENT_RELEASE: AppRelease = {
         'Login que diz o que está acontecendo e resgate de código de ' +
         'licença, uma linha por cota, Kimi sem alarme falso e o botão Fechar ' +
         'sempre à vista.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.160',
+  date: '2026-10-01',
+  codename: 'Teste à vista',
+  summary:
+    'O app avisa quantos dias faltam do teste de 15 dias e leva direto para ' +
+    'assinar. Inclui a 0.76.159 (marca nova).',
+  highlights: [
+    {
+      title: 'Aviso de fim do teste na barra lateral',
+      detail:
+        'Nos últimos 3 dias do teste, o rodapé da barra lateral mostra ' +
+        'quantos dias faltam, ou que termina amanhã ou hoje, com o botão ' +
+        'Assinar que abre o checkout. Quem já assina, usa código de licença ' +
+        'ou é administrador não vê o aviso.',
     },
   ],
   fixes: [],
