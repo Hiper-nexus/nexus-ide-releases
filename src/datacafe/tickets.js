@@ -15,7 +15,7 @@ export const BADGES = {
   'turno-500': 'Turno de 500 pontos',
   'bombeiro-10': 'Dez incidentes resolvidos',
   'missoes-5': 'Cinco missões fechadas',
-  'combustivel-nexus': 'Combustível Nexus+: cinco latas (marca fictícia do jogo)',
+  'combustivel-nexus': 'Combustível Nexus+: cinco latas',
 };
 
 /** Cada nível acima do primeiro deixa o dev 3% mais rápido. */

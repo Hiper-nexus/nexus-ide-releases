@@ -9,7 +9,6 @@ export const CAN_SIZE = 64;
 export const DOOR_SIZE = Object.freeze({ width: 128, height: 240 });
 
 /** O aviso que também vai para o HUD e para o primeiro gole, em frase. */
-export const FICTIONAL_NOTE = 'Nexus+ é uma marca fictícia, só deste jogo.';
 
 const FONT = 'VT323, ui-monospace, monospace';
 const MONO = 'ui-monospace, monospace';
@@ -33,7 +32,7 @@ export function paintSign(context, canvas) {
   context.fillRect(w * 0.12, h * 0.9, w * 0.76, h * 0.05);
 }
 
-/** Plaqueta baixa na frente do gabinete: a marca e o aviso de que é fictícia. */
+/** Plaqueta baixa na frente do gabinete: a marca e o que ela é, um energético que dá energia. */
 export function paintPlaque(context, canvas) {
   const { width: w, height: h } = canvas;
   context.fillStyle = '#17151b';
@@ -48,7 +47,7 @@ export function paintPlaque(context, canvas) {
   context.textAlign = 'right';
   context.fillStyle = '#d9d2d8';
   context.font = `600 ${Math.round(h * 0.34)}px ${MONO}`;
-  context.fillText('MARCA FICTÍCIA · SÓ NO JOGO', w - 14, h * 0.54, w * 0.66);
+  context.fillText('ENERGÉTICO · DÁ ENERGIA', w - 14, h * 0.54, w * 0.66);
 }
 
 /** Rótulo da lata, que dá a volta no cilindro: duas faixas brancas com o N+ (frente e costas). */

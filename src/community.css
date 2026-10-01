@@ -25,15 +25,16 @@
 .hud-whatsapp{min-height:44px;padding:8px 14px;font-size:13px;gap:8px}
 .hud-whatsapp svg{width:18px;height:18px}
 
-.game-intro{position:absolute;left:24px;bottom:24px;z-index:5;max-width:420px;padding:0 0 0 20px;border-left:1px solid rgb(250 247 249/.35);transition:opacity .35s var(--ease),transform .35s var(--ease)}
+.game-intro{position:absolute;left:50%;top:54%;z-index:5;width:min(520px,calc(100% - 32px));padding:32px 24px;text-align:center;transform:translate(-50%,-50%);transition:opacity .35s var(--ease),transform .35s var(--ease)}
+.game-intro:before{content:'';position:absolute;inset:-48px -96px;z-index:-1;background:radial-gradient(closest-side,rgb(8 7 9/.82),rgb(8 7 9/.55) 62%,transparent);pointer-events:none}
 .intro-place{font-size:10px;color:var(--ink);opacity:.8;margin-bottom:8px}
 .game-intro h1{margin:0 0 12px}
 .game-intro h1>.pixel{font-size:88px;line-height:.8;color:var(--pink);letter-spacing:-.02em;text-shadow:0 4px 24px rgb(255 79 139/.35)}
-.game-intro>p:not(.intro-place){font-size:15px;line-height:1.55;color:var(--ink);opacity:.9;margin-bottom:20px;max-width:34ch;text-shadow:0 1px 10px rgb(8 7 9/.6)}
+.game-intro>p:not(.intro-place){font-size:15px;line-height:1.55;color:var(--ink);opacity:.9;margin:0 auto 20px;max-width:38ch;text-shadow:0 1px 10px rgb(8 7 9/.6)}
 .game-intro .button{font-size:14px}
-.intro-skip{display:inline-block;margin-left:20px;font-size:12px;color:var(--ink);opacity:.75}
+.intro-skip{display:block;margin:14px 0 0;font-size:12px;color:var(--ink);opacity:.75}
 .intro-skip:hover{opacity:1}
-.dc-playing .game-intro{opacity:0;pointer-events:none;transform:translateY(12px);visibility:hidden}
+.dc-playing .game-intro{opacity:0;pointer-events:none;transform:translate(-50%,calc(-50% + 12px));visibility:hidden}
 
 #quest-toast{display:none}
 .scroll-cue{position:absolute;left:50%;bottom:8px;transform:translateX(-50%);z-index:5;font-size:11px;color:var(--ink);opacity:.7;text-shadow:0 1px 8px rgb(8 7 9/.7);display:none}
@@ -48,10 +49,10 @@
   .hud-link{display:none}
   .hud-whatsapp{font-size:12px;min-height:44px;padding:6px 12px}
   .hud-whatsapp span{display:none}
-  .game-intro{left:16px;right:16px;bottom:24px;max-width:none;padding-left:16px}
+  .game-intro{top:56%;padding:24px 8px}
+  .game-intro:before{inset:-32px -16px}
   .game-intro h1>.pixel{font-size:64px}
   .game-intro>p:not(.intro-place){font-size:14px}
-  .intro-skip{display:block;margin:12px 0 0}
   .scroll-cue{display:none!important}
 }
 @media(prefers-reduced-motion:reduce){.loading-track:after{animation:none}}
@@ -106,7 +107,7 @@
 @media(max-width:760px){.sorteio-lead{max-width:none}.sorteio-board{grid-template-columns:1fr;gap:16px;margin-bottom:40px}.drop{--pad:20px}.drop img{width:48px;height:48px;margin:24px 0 16px}.drop h3{font-size:28px}.drop-next h3{font-size:40px}.drop>.drop-draw{margin:24px 0}.drop-draw .pixel{font-size:22px}.drop-stub .pixel{font-size:20px}.sorteio-steps{grid-template-columns:1fr;gap:24px}.sorteio-steps h3{font-size:20px}.sorteio-rules{padding:24px;margin-top:32px}}
 
 /* ---------- O prêmio é a estrela: letreiro, bilhete que reage ao ponteiro, marca que flutua ---------- */
-.intro-prize{position:relative;display:flex;flex-direction:column;gap:2px;width:max-content;max-width:100%;margin-top:24px;padding:10px 18px;border:1px solid rgb(255 79 139/.5);border-radius:4px;background:rgb(13 11 15/.78);transition:transform .22s var(--ease),border-color .22s var(--ease)}
+.intro-prize{position:relative;display:flex;flex-direction:column;gap:2px;width:max-content;max-width:100%;margin:24px auto 0;padding:10px 18px;border:1px solid rgb(255 79 139/.5);border-radius:4px;background:rgb(13 11 15/.78);transition:transform .22s var(--ease),border-color .22s var(--ease)}
 .intro-prize:before,.intro-prize:after{content:'';position:absolute;top:50%;width:10px;height:10px;margin-top:-5px;border-radius:50%;border:1px solid rgb(255 79 139/.5);background:var(--bg)}
 .intro-prize:before{left:-6px;clip-path:inset(-1px -1px -1px 5px)}
 .intro-prize:after{right:-6px;clip-path:inset(-1px 5px -1px -1px)}

@@ -37,7 +37,7 @@ function hudMarkup(id) {
     <button class="dc-sound" type="button" aria-pressed="true" aria-label="Som do jogo">${SPEAKER}</button>
   </div>
   <div class="dc-row dc-chips">
-    <div class="dc-meter dc-boost mono" role="timer" aria-label="Turbo do Nexus+, marca fictícia do jogo" hidden><span class="dc-boost-name pixel">NEXUS+</span><span class="dc-track"><span class="dc-boost-fill"></span></span><span class="dc-boost-label">TURBO</span><span class="dc-boost-time">0:20</span></div>
+    <div class="dc-meter dc-boost mono" role="timer" aria-label="Turbo do Nexus+" hidden><span class="dc-boost-name pixel">NEXUS+</span><span class="dc-track"><span class="dc-boost-fill"></span></span><span class="dc-boost-label">TURBO</span><span class="dc-boost-time">0:20</span></div>
     <div class="dc-meter dc-racks mono">${RACK}<span class="dc-racks-count">0/18</span><span class="dc-racks-label">NO AR</span></div>
     <div class="dc-meter dc-shift mono" role="timer" aria-label="Tempo e pontos do turno">${CLOCK}<span class="dc-shift-clock">3:00</span><span class="dc-shift-score">0 PTS</span></div>
     <div class="dc-meter dc-combo mono" hidden><span class="dc-combo-x pixel">×1</span><span class="dc-track"><span class="dc-combo-fill"></span></span><span class="dc-combo-label">COMBO</span></div>
@@ -236,7 +236,7 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
         if (seconds === shown.boost) return;
         shown.boost = seconds;
         $('.dc-boost-time').textContent = formatClock(seconds);
-        chip.setAttribute('aria-label', `Turbo do Nexus+, marca fictícia do jogo: ${seconds} segundos`);
+        chip.setAttribute('aria-label', `Turbo do Nexus+: ${seconds} segundos`);
         chip.classList.toggle('ending', seconds <= 3);
       },
       turboFx(active) { stage.classList.toggle('dc-turbo', active); },

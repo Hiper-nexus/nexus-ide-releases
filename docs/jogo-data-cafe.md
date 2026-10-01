@@ -20,7 +20,7 @@ Câmera: segue o dev olhando um pouco à frente da caminhada, aproxima enquanto 
 8. Três missões do turno ficam ativas (ligar racks, resolver incidentes, chegar a um combo, tomar café a tempo). Fechar uma paga XP e traz a próxima.
 9. O turno dura 3 minutos e os pontos são o XP ganho nele. O recorde fica salvo.
 10. Cada nível deixa o dev 3% mais rápido.
-11. O freezer do Nexus+ (ao lado da cafeteira) guarda latas do energético fictício do jogo: segurar E abre a porta, o dev bebe, a energia vai ao máximo e o turbo liga por 20 s (andar ×1,4 e janela do combo ×1,5). Ver "O freezer do Nexus+" abaixo.
+11. O freezer do Nexus+ (ao lado da cafeteira) guarda latas do energético do jogo: segurar E abre a porta, o dev bebe, a energia vai ao máximo e o turbo liga por 20 s (andar ×1,4 e janela do combo ×1,5). Ver "O freezer do Nexus+" abaixo.
 
 XP, recorde e progresso ficam só no navegador (`nexus-data-cafe:v1`, esquema 2; o salvo do esquema 1 migra sem perder nada) e não contam para o sorteio.
 
@@ -89,7 +89,7 @@ Efeitos: passos, pegar GPU, rack no ar, alarme de incidente, café, ação bloqu
 
 ## O freezer do Nexus+ (01/10/2026)
 
-O Nexus+ é uma **marca fictícia, só deste jogo**: não existe como produto, não tem preço nem alegação de efeito. A plaqueta do gabinete diz `MARCA FICTÍCIA · SÓ NO JOGO`, o primeiro gole de cada visita avisa em frase (`FICTIONAL_NOTE`) e o chip do HUD leva o aviso no nome acessível.
+O Nexus+ é o energético do jogo: a plaqueta do gabinete diz só `NEXUS+` e `ENERGÉTICO · DÁ ENERGIA`, sem aviso, preço nem alegação de efeito além do que o jogo faz (enche o café e liga o turbo).
 
 - **Mapa:** a linha 1 passou a `#NNNNNNFFDKDBBBBBLPCCCCC.#`: duas células `F` nos x 7 e 8, entre o NOC e a cafeteira (`LAYOUT.freezer = { x: 7, z: 1, width: 2 }`, `HEIGHTS.F` 2,0). A faixa neon vertical do x 7,5 saiu da parede (ficaria atrás do gabinete) e sobraram `[18.55, 24.5]`. O ponto de interação fica em `x` 8,0, `z` 2,45, raio 1,15; a frente de vidro está na borda da célula, em `z` 2,0.
 - **Regras (`energy-drink.js`):** estoque de 12 latas e começa com 8; repõe 1 a cada 15 s (o relógio para com o freezer cheio e recomeça quando a primeira lata sai); 30 s de gelo entre latas; turbo de 20 s com andar ×1,4 e janela do combo ×1,5 (`comboHit(combo, escala)`; o medidor do HUD continua indo de 1 a 0). Beber enche a energia ao máximo e desperta o dev (`refill`: nunca tira o excedente do pico do café). Recusar nunca gasta lata nem prolonga o turbo. O relógio é o de jogo (só corre com o jogo rodando): pausar ou esconder a aba congela estoque, gelo e turbo.

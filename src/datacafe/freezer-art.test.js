@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SIGN_SIZE, PLAQUE_SIZE, CAN_SIZE, DOOR_SIZE, FICTIONAL_NOTE, paintSign, paintPlaque, paintCan, paintDoor } from './freezer-art.js';
+import { SIGN_SIZE, PLAQUE_SIZE, CAN_SIZE, DOOR_SIZE, paintSign, paintPlaque, paintCan, paintDoor } from './freezer-art.js';
 
 /** Contexto 2D de mentira que anota os textos desenhados. */
 function recorder() {
@@ -28,13 +28,14 @@ test('o letreiro do freezer diz NEXUS+ em néon, sem prometer nada além do nome
   assert.ok(!shown(log).some(text => /saúde|vitamina|performance|energia infinita|R\$|preço/i.test(text)));
 });
 
-test('a plaqueta do freezer avisa em texto que a marca é fictícia e só existe no jogo', () => {
+test('a plaqueta do freezer só destaca o Nexus+ como o energético que dá energia, sem aviso nem promessa', () => {
   const { context, log } = recorder();
   paintPlaque(context, { width: PLAQUE_SIZE.width, height: PLAQUE_SIZE.height });
   const text = shown(log).join(' ');
-  assert.match(text, /MARCA FICTÍCIA/);
-  assert.match(text, /SÓ NO JOGO/);
-  assert.match(FICTIONAL_NOTE, /fictícia/i);
+  assert.match(text, /NEXUS\+/);
+  assert.match(text, /ENERGÉTICO/);
+  assert.match(text, /DÁ ENERGIA/);
+  assert.doesNotMatch(text, /FICTÍCIA|SÓ NO JOGO|saúde|vitamina|performance|R\$|preço/i);
 });
 
 test('a lata leva o N+ no rótulo e a porta de vidro desenha a moldura sem texto algum', () => {

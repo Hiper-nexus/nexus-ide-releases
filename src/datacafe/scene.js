@@ -19,7 +19,6 @@ import { DESK, createDesk, resetDesk, sit, deskStep, deployPlan, seatPose } from
 import { joystickInput, JOYSTICK_RADIUS } from './touch.js';
 import { ENERGY, createEnergy, energyStep, drink, refill, speedScale, energyLevel } from './energy.js';
 import { DRINK, createDrinks, drinkAdvance, drinkCan, drinkReason, drinkWait, turboLeft, turboLevel, turboEnding, turboEffects } from './energy-drink.js';
-import { FICTIONAL_NOTE } from './freezer-art.js';
 import { formatClock } from './shift.js';
 import { createRacks, installGpu, reboot, rackStep, rackState, poweredCount, operationalCount, installedIds, incidentIds, allPowered } from './racks.js';
 import { ticketsFrom, badgesFor, speedPerk, TICKET_XP, BADGES } from './tickets.js';
@@ -133,7 +132,6 @@ class DataCafeWorld {
     this.turboOn = false;
     this.turboFx = false;
     this.turboTickAt = 0;
-    this.toldNexus = false;
     this.dc.freezer?.setStock(this.drinks.stock);
 
     this.body = { x: LAYOUT.spawn.x, z: LAYOUT.spawn.z, vx: 0, vz: 0, heading: 0, speed: 0 };
@@ -365,8 +363,7 @@ class DataCafeWorld {
     this.particles.burst(this.body.x, 1.1, this.body.z, { count: this.calm ? 8 : 26, colors: [PALETTE.pink, 0xcfefff, PALETTE.ink], speed: 2.2, up: 2.4 });
     this.audio?.can();
     const seals = badges.filter(badge => !before.has(badge)).map(badge => ` · selo: ${BADGES[badge]}`).join('');
-    this.on.toast?.(`Nexus+ gelado: turbo por ${DRINK.turbo} s.${this.toldNexus ? '' : ` ${FICTIONAL_NOTE}`}${seals}`);
-    this.toldNexus = true;
+    this.on.toast?.(`Nexus+ gelado: energia no máximo e turbo por ${DRINK.turbo} s.${seals}`);
     this.on.energy?.(energyLevel(this.energy), false);
     this.on.xp?.({ progress: this.progress, gained: 0, leveledUp: false });
     this.emitTurbo();
