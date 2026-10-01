@@ -8681,6 +8681,27 @@ export const CURRENT_RELEASE: AppRelease = {
         'entrega agora espera o terminal ficar pronto.',
     },
     {
+      title: 'Qwen Code entra na rota',
+      detail:
+        'A CLI qwen, instalada e configurada com qwen3.8-max, nunca era ' +
+        'chamada. Agora é roteável nos três tiers, lê o catálogo do seu ' +
+        'settings e avisa quando a chave do Token Plan está recusada.',
+    },
+    {
+      title: 'Veredito de ponta antes do push',
+      detail:
+        'Push, push automático ao concluir e git push digitado numa missão ' +
+        'só rodam com um veredito "approve" de modelo de ponta registrado ' +
+        'para o commit exato. Modelo barato não aprova produção.',
+    },
+    {
+      title: '"+ Pane" dentro da missão',
+      detail:
+        'Numa aba de missão o picker pergunta o destino: nesta missão (o ' +
+        'pane vira participante, só você fecha), nesta aba ou nova aba. Pane ' +
+        'solto não é mais puxado para Terminais.',
+    },
+    {
       title: 'DeepSeek como CLI',
       detail:
         'DeepSeek deixa de ser só um endereço e passa a abrir pane próprio ' +
@@ -8723,6 +8744,13 @@ export const CURRENT_RELEASE: AppRelease = {
         'coordenador era fechado, e "Retomar" recusava a missão pausada por ' +
         'ociosidade. Agora Retomar o coordenador funciona para qualquer ' +
         'bloqueio técnico.',
+    },
+    {
+      title: 'Workers não gastam a noite com teste que já quebrava',
+      detail:
+        'O portão de regressão compara com o commit-base: falha que já ' +
+        'existia vira aviso, não devolução. E o hub de MCPs deixa de entrar ' +
+        'inteiro em cada worker — boot rápido e sem travar em login de MCP.',
     },
     {
       title: 'Licença sem bloqueio falso',
