@@ -91,7 +91,7 @@ test('os efeitos chegam audíveis: o jogo saía a uns -40 dBFS e ninguém ouvia'
   const master = ctx.gains[0];
   assert.ok(master.gain.value >= 0.5, `volume mestre ${master.gain.value}`);
   assert.ok(ctx.log.includes('connect:gain>limiter') && ctx.log.includes('connect:limiter>destination'), 'o mestre passa por um limitador');
-  for (const effect of ['footstep', 'pickup', 'coffee', 'alert', 'success', 'typing', 'sit', 'stand', 'levelUp', 'mission', 'denied', 'shiftEnd']) {
+  for (const effect of ['footstep', 'pickup', 'coffee', 'alert', 'success', 'typing', 'sit', 'stand', 'levelUp', 'mission', 'denied', 'shiftEnd', 'can', 'turboTick']) {
     ctx.peaks.length = 0;
     audio[effect]();
     const loudest = Math.max(...ctx.peaks) * master.gain.value;
@@ -174,4 +174,25 @@ test('volume zero vale como mudo para a trilha', () => {
   audio.setVolume(0);
   timers.callback();
   assert.equal(ctx.log.filter(entry => entry === 'start:oscillator').length, 0);
+});
+
+test('a lata do Nexus+ estala, chia e fecha com um arpejo de três notas; sem gesto ou no mudo é silêncio', () => {
+  const ctx = fakeContext();
+  const audio = createAudio({ context: ctx, storage: memoryStorage(), timers: fakeTimers() });
+  audio.can();
+  audio.turboTick();
+  assert.equal(ctx.log.length, 0, 'antes do gesto nada toca');
+  audio.unlock();
+  ctx.log.length = 0;
+  audio.can();
+  assert.ok(ctx.log.filter(entry => entry === 'start:source').length >= 2, 'estalo da lingueta e chiado');
+  assert.ok(ctx.log.filter(entry => entry === 'start:oscillator').length >= 5, 'lingueta, pop e três notas');
+  ctx.log.length = 0;
+  audio.turboTick();
+  assert.equal(ctx.log.filter(entry => entry === 'start:oscillator').length, 1, 'o tique do fim do turbo é uma nota só');
+  audio.setMuted(true);
+  ctx.log.length = 0;
+  audio.can();
+  audio.turboTick();
+  assert.equal(ctx.log.length, 0, 'mudo silencia os dois');
 });

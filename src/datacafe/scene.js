@@ -17,7 +17,10 @@ import { WALK, intentFrom, worldDirection, walkStep } from './walk.js';
 import { RIG, clampYaw, clampPitch, createCamera, cameraStep, wheelZoom, pinchZoom } from './rig.js';
 import { DESK, createDesk, resetDesk, sit, deskStep, deployPlan, seatPose } from './desk.js';
 import { joystickInput, JOYSTICK_RADIUS } from './touch.js';
-import { ENERGY, createEnergy, energyStep, drink, speedScale, energyLevel } from './energy.js';
+import { ENERGY, createEnergy, energyStep, drink, refill, speedScale, energyLevel } from './energy.js';
+import { DRINK, createDrinks, drinkAdvance, drinkCan, drinkReason, drinkWait, turboLeft, turboLevel, turboEnding, turboEffects } from './energy-drink.js';
+import { FICTIONAL_NOTE } from './freezer-art.js';
+import { formatClock } from './shift.js';
 import { createRacks, installGpu, reboot, rackStep, rackState, poweredCount, operationalCount, installedIds, incidentIds, allPowered } from './racks.js';
 import { ticketsFrom, badgesFor, speedPerk, TICKET_XP, BADGES } from './tickets.js';
 import { createProgression, scoreTicket, progressionStep, closeShift, awardMessage } from './progression.js';
@@ -36,6 +39,10 @@ const GAME_TICK = 0.2;
 const NO_INSTALL = ['install'];
 const ANY_MISSION = [];
 const STEP_LENGTH = 0.62;
+/** Quanto a lata fica na mão antes de o dev guardá-la. */
+const SIP_SECONDS = 0.8;
+const TRAIL_EVERY = 0.045;
+const FROST_EVERY = 0.35;
 const label = (text, { duration = 1, blocked = false } = {}) => Object.freeze({ text, duration, blocked });
 const modelOf = id => MODELS.find(model => model.id === id);
 const STATION = LAYOUT.workstation;
@@ -116,6 +123,18 @@ class DataCafeWorld {
     this.shownVersion = 0;
     this.tickets = [];
     this.energyLow = false;
+    // Freezer do Nexus+ (marca fictícia, só do jogo). O relógio só corre com o jogo rodando:
+    // pausar ou esconder a aba congela estoque, gelo e turbo.
+    this.clock = 0;
+    this.drinks = createDrinks(0);
+    this.freezerLabels = new Map();
+    this.freezerStatus = null;
+    this.sip = 0;
+    this.turboOn = false;
+    this.turboFx = false;
+    this.turboTickAt = 0;
+    this.toldNexus = false;
+    this.dc.freezer?.setStock(this.drinks.stock);
 
     this.body = { x: LAYOUT.spawn.x, z: LAYOUT.spawn.z, vx: 0, vz: 0, heading: 0, speed: 0 };
     this.walkOut = {};
@@ -218,6 +237,14 @@ class DataCafeWorld {
       label: game => (game.carrying ? dock.carrying : game.dc.dock.count() > 0 ? dock.take : dock.empty),
       onComplete: () => this.takeCrate(),
     });
+    const freezer = this.dc.freezer;
+    if (freezer) {
+      register(this.items, {
+        id: 'energy', x: freezer.x, z: freezer.front + 0.45, radius: 1.15,
+        label: game => game.freezerLabel(),
+        onComplete: () => this.takeCan(),
+      });
+    }
     const board = label('Ver o sorteio do grupo', { duration: 0.3 });
     // O painel tem cinco células de largura: o alcance cobre a frente toda, de ponta a ponta.
     register(this.items, {
@@ -305,10 +332,65 @@ class DataCafeWorld {
     this.version++;
   }
 
+  /** O que o freezer diz agora: pegar, gelando, vazio ou com a GPU na mão. Rótulos em cache, chave numérica: o loop nunca aloca. */
+  freezerLabel() {
+    const stock = this.drinks.stock;
+    const reason = drinkReason(this.drinks, this.clock);
+    const wait = drinkWait(this.drinks, this.clock);
+    const key = this.carrying ? -1 : reason === 'ready' ? stock : reason === 'cooling' ? 100 + wait : 200 + wait;
+    let item = this.freezerLabels.get(key);
+    if (!item) {
+      if (this.carrying) item = label('Com a GPU na mão não dá para abrir o freezer: instale no rack', { blocked: true });
+      else if (reason === 'ready') item = label(`Pegar um Nexus+ (${stock})`, { duration: 0.9 });
+      else if (reason === 'cooling') item = label(`Gelando… ${formatClock(wait)}`, { blocked: true });
+      else item = label(`Vazio. Repondo… ${formatClock(wait)}`, { blocked: true });
+      this.freezerLabels.set(key, item);
+    }
+    return item;
+  }
+
+  /** Pega uma lata: enche o café, liga o turbo e começa o gole. */
+  takeCan() {
+    const result = drinkCan(this.drinks, this.clock);
+    if (!result.ok) return;
+    this.drinks = result.state;
+    this.energy = refill(this.energy);
+    this.sip = SIP_SECONDS;
+    this.dc.freezer.setStock(this.drinks.stock);
+    const before = new Set(this.progress.badges);
+    const progress = { ...this.progress, cans: (this.progress.cans ?? 0) + 1 };
+    const badges = badgesFor(progress, this.racks);
+    this.progress = { ...progress, badges };
+    saveProgress(this.progress);
+    this.particles.burst(this.body.x, 1.1, this.body.z, { count: this.calm ? 8 : 26, colors: [PALETTE.pink, 0xcfefff, PALETTE.ink], speed: 2.2, up: 2.4 });
+    this.audio?.can();
+    const seals = badges.filter(badge => !before.has(badge)).map(badge => ` · selo: ${BADGES[badge]}`).join('');
+    this.on.toast?.(`Nexus+ gelado: turbo por ${DRINK.turbo} s.${this.toldNexus ? '' : ` ${FICTIONAL_NOTE}`}${seals}`);
+    this.toldNexus = true;
+    this.on.energy?.(energyLevel(this.energy), false);
+    this.on.xp?.({ progress: this.progress, gained: 0, leveledUp: false });
+    this.emitTurbo();
+    this.version++;
+  }
+
+  /** O turbo no HUD (chip e borda rosa) e o tique dos últimos segundos. */
+  emitTurbo() {
+    const left = turboLeft(this.drinks, this.clock);
+    const on = left > 0;
+    if (on || this.turboOn) this.on.turbo?.(left, turboLevel(this.drinks, this.clock));
+    this.turboOn = on;
+    const fx = on && !this.calm;
+    if (fx !== this.turboFx) { this.turboFx = fx; this.on.turboFx?.(fx); }
+    if (turboEnding(this.drinks, this.clock)) {
+      const second = Math.ceil(left);
+      if (second !== this.turboTickAt) { this.turboTickAt = second; this.audio?.turboTick(); }
+    } else this.turboTickAt = 0;
+  }
+
   award(ticket, what) {
     const before = new Set(this.progress.badges);
     const unavailable = this.unavailableMissions();
-    const result = scoreTicket(this.game, this.progress, ticket, undefined, unavailable);
+    const result = scoreTicket(this.game, this.progress, ticket, undefined, unavailable, { turbo: turboLeft(this.drinks, this.clock) > 0 });
     this.game = { ...result.state, missions: dropUnavailable(result.state.missions, undefined, unavailable) };
     this.missionsDone += result.finished.length;
     const progress = { ...result.progress, racksOn: installedIds(this.racks) };
@@ -341,6 +423,7 @@ class DataCafeWorld {
     const { combo, shift } = this.game;
     this.on.combo?.(combo.streak, comboMultiplier(combo), comboLevel(combo));
     this.on.shift?.(shift.left, shift.score, this.progress.bestShift);
+    this.emitTurbo();
   }
 
   advanceGame(dt) {
@@ -514,6 +597,16 @@ class DataCafeWorld {
 
   // ---------- Simulação ----------
   simulate(dt) {
+    this.clock += dt;
+    const freezer = this.dc.freezer;
+    if (freezer) {
+      const previous = this.drinks;
+      this.drinks = drinkAdvance(this.drinks, this.clock);
+      if (this.drinks !== previous) freezer.setStock(this.drinks.stock);
+      const reason = drinkReason(this.drinks, this.clock);
+      if (reason !== this.freezerStatus) { this.freezerStatus = reason; freezer.setStatus(reason); }
+    }
+    if (this.sip > 0) this.sip = Math.max(0, this.sip - dt);
     this.clocks.energy += dt;
     if (this.clocks.energy >= ENERGY_TICK) {
       const previous = this.energy;
@@ -554,7 +647,7 @@ class DataCafeWorld {
   move(dt) {
     intentFrom(this.keys, this.analog, this.intent);
     worldDirection(this.intent, this.cam.yaw, this.direction);
-    const scale = speedScale(this.energy) * speedPerk(this.progress.level) * (this.carrying ? WALK.carryScale : 1);
+    const scale = speedScale(this.energy) * speedPerk(this.progress.level) * (this.carrying ? WALK.carryScale : 1) * turboEffects(this.drinks, this.clock).speed;
     const out = walkStep(this.body, this.direction, dt, scale, this.walkOut);
     const next = slideMove(this.grid, this.body, { x: out.dx, z: out.dz }, WALK.radius);
     const moved = Math.hypot(next.x - this.body.x, next.z - this.body.z);
@@ -617,8 +710,11 @@ class DataCafeWorld {
     }
     if (running) {
       this.steam(dt);
+      this.frost(dt);
+      this.trail(dt);
+      this.dc.freezer?.setDoor(this.sip > 0 || (this.holdShown && this.promptItem?.id === 'energy'));
       this.dev.group.position.set(this.body.x, 0, this.body.z);
-      this.dev.setMotion({ speed: this.playing ? this.body.speed : 0, heading: this.body.heading, carrying: this.carrying, tired: this.energy.tired, calm: this.calm, seat: this.seatView.blend, typing: this.desk.phase === 'acting' && this.holding }, dt);
+      this.dev.setMotion({ speed: this.playing ? this.body.speed : 0, heading: this.body.heading, carrying: this.carrying, tired: this.energy.tired, calm: this.calm, seat: this.seatView.blend, typing: this.desk.phase === 'acting' && this.holding, drinking: this.sip > 0 }, dt);
       this.dc.update(dt, seconds, this.calm);
     }
     const effects = running ? this.particles.update(dt) : false;
@@ -653,6 +749,28 @@ class DataCafeWorld {
     this.clocks.steam = 0;
     const { spout } = this.dc.coffee;
     this.particles.burst(spout.x, spout.y + 0.2, spout.z, { count: 2, colors: [0xf4ece6], speed: 0.06, up: 0.5, gravity: -0.4, life: 1.6, size: 0.8 });
+  }
+
+  /** Vapor frio escorrendo do freezer quando o dev chega perto ou a porta está aberta. Nada com redução de movimento. */
+  frost(dt) {
+    const freezer = this.dc.freezer;
+    if (!freezer || this.calm) return;
+    const near = Math.hypot(this.body.x - freezer.x, this.body.z - (freezer.front + 0.45)) < 2.8;
+    if (!near && freezer.doorOpen() < 0.3) return;
+    this.clocks.frost = (this.clocks.frost ?? 0) + dt;
+    if (this.clocks.frost < FROST_EVERY) return;
+    this.clocks.frost = 0;
+    this.particles.burst(freezer.x + (Math.random() - 0.5) * 1.5, 1.05, freezer.front + 0.12, { count: 2, colors: [0xcfefff, 0xf4fbff], speed: 0.12, up: 0.1, gravity: 0.35, life: 1.7, size: 0.85 });
+  }
+
+  /** Rastro de faíscas rosa atrás do dev enquanto dura o turbo e ele anda. Nada com redução de movimento. */
+  trail(dt) {
+    if (this.calm || !this.playing || this.body.speed < 1 || turboLeft(this.drinks, this.clock) <= 0) return;
+    this.clocks.trail = (this.clocks.trail ?? 0) + dt;
+    if (this.clocks.trail < TRAIL_EVERY) return;
+    this.clocks.trail = 0;
+    const heading = this.body.heading;
+    this.particles.burst(this.body.x - Math.sin(heading) * 0.22, 0.32, this.body.z - Math.cos(heading) * 0.22, { count: 2, colors: [PALETTE.pink, PALETTE.ember, PALETTE.ink], speed: 0.4, up: 0.6, gravity: 1.4, life: 0.5, size: 0.7 });
   }
 
   /** A espiada no painel do sorteio logo depois de começar; null quando não há (ou acabou). */
@@ -900,6 +1018,10 @@ class DataCafeWorld {
     for (const art of this.dc.racks.values()) art.setState('off');
     this.carrying = false;
     this.energy = createEnergy();
+    this.drinks = createDrinks(this.clock);
+    this.freezerStatus = null;
+    this.sip = 0;
+    this.dc.freezer?.setStock(this.drinks.stock);
     this.dc.dock.setCount(3);
     // A mesa recomeça junto: um deploy pausado não pode render XP num data center zerado.
     this.desk = resetDesk(this.desk);
@@ -915,6 +1037,7 @@ class DataCafeWorld {
     this.on.xp?.({ progress: this.progress, gained: 0, leveledUp: false });
     this.on.energy?.(1, false);
     this.emitGame();
+    this.emitTurbo();
     this.version++;
     this.refresh();
     this.schedule();

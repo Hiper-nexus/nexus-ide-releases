@@ -151,6 +151,17 @@ export function createAudio({ context = null, storage = defaultStorage(), create
       noiseBurst({ type: 'highpass', frequency: 2600, q: 0.7, peak: 0.14, attack: 0.08, release: 1.1 });
       for (let i = 0; i < 6; i++) tone({ frequency: 260 + Math.random() * 280, peak: 0.16, release: 0.06, delay: 0.1 + i * 0.13 + Math.random() * 0.05 });
     },
+    /** Lata do Nexus+: estalo da lingueta, pop, chiado do gás e um arpejo curto subindo. */
+    can() {
+      if (!ready()) return;
+      noiseBurst({ type: 'highpass', frequency: 3200, q: 0.8, peak: 0.3, attack: 0.001, release: 0.04 });
+      tone({ type: 'square', frequency: 1800, to: 700, peak: 0.14, attack: 0.001, release: 0.05 });
+      tone({ frequency: 240, to: 120, peak: 0.24, release: 0.09, delay: 0.03 });
+      noiseBurst({ type: 'highpass', frequency: 4200, q: 0.6, peak: 0.18, attack: 0.03, release: 0.7, delay: 0.08 });
+      [523.25, 659.25, 880].forEach((frequency, i) => tone({ type: 'triangle', frequency, peak: 0.2, release: 0.16, delay: 0.5 + i * 0.07 }));
+    },
+    /** Tique suave nos últimos segundos do turbo. */
+    turboTick() { if (ready()) tone({ type: 'triangle', frequency: 988, peak: 0.16, release: 0.06 }); },
     alert() {
       if (!ready()) return;
       for (const delay of [0, 0.36]) {

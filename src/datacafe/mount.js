@@ -37,6 +37,7 @@ function hudMarkup(id) {
     <button class="dc-sound" type="button" aria-pressed="true" aria-label="Som do jogo">${SPEAKER}</button>
   </div>
   <div class="dc-row dc-chips">
+    <div class="dc-meter dc-boost mono" role="timer" aria-label="Turbo do Nexus+, marca fictícia do jogo" hidden><span class="dc-boost-name pixel">NEXUS+</span><span class="dc-track"><span class="dc-boost-fill"></span></span><span class="dc-boost-label">TURBO</span><span class="dc-boost-time">0:20</span></div>
     <div class="dc-meter dc-racks mono">${RACK}<span class="dc-racks-count">0/18</span><span class="dc-racks-label">NO AR</span></div>
     <div class="dc-meter dc-shift mono" role="timer" aria-label="Tempo e pontos do turno">${CLOCK}<span class="dc-shift-clock">3:00</span><span class="dc-shift-score">0 PTS</span></div>
     <div class="dc-meter dc-combo mono" hidden><span class="dc-combo-x pixel">×1</span><span class="dc-track"><span class="dc-combo-fill"></span></span><span class="dc-combo-label">COMBO</span></div>
@@ -95,7 +96,7 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
   const audio = createAudio();
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   /** O relógio do turno chega várias vezes por segundo: só escreve no DOM o que mudou. */
-  const shown = { clock: '', score: -1, best: -1 };
+  const shown = { clock: '', score: -1, best: -1, boost: -1 };
 
   function toast(text) {
     clearTimeout(toastTimer);
@@ -225,6 +226,20 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
         if (score !== shown.score) { shown.score = score; $('.dc-shift-score').textContent = `${score} PTS`; }
         if (best !== shown.best) { shown.best = best; $('.dc-best').textContent = best; }
       },
+      /** Turbo do Nexus+ (marca fictícia): chip com a barra que esvazia. Só escreve no DOM o que mudou. */
+      turbo(left, level) {
+        const chip = $('.dc-boost');
+        const seconds = Math.ceil(left);
+        chip.hidden = seconds <= 0;
+        if (seconds <= 0) { shown.boost = -1; return; }
+        $('.dc-boost-fill').style.transform = `scaleX(${level.toFixed(3)})`;
+        if (seconds === shown.boost) return;
+        shown.boost = seconds;
+        $('.dc-boost-time').textContent = formatClock(seconds);
+        chip.setAttribute('aria-label', `Turbo do Nexus+, marca fictícia do jogo: ${seconds} segundos`);
+        chip.classList.toggle('ending', seconds <= 3);
+      },
+      turboFx(active) { stage.classList.toggle('dc-turbo', active); },
       toast,
       station: openStation,
       menu: () => togglePanel(),
@@ -308,7 +323,7 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
       audio.dispose();
       clearTimeout(toastTimer);
       hud.remove();
-      stage.classList.remove('dc-stage', 'dc-playing');
+      stage.classList.remove('dc-stage', 'dc-playing', 'dc-turbo');
     },
   };
 }
