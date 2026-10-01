@@ -25,6 +25,9 @@ function date(value: unknown): boolean {
   return Number.isFinite(ms) && new Date(ms).toISOString() === value;
 }
 
+/** Tolerância de relógio (F-228) aplicada apenas a iat/nbf futuros — nunca a exp. */
+export const LICENSE_CLOCK_LEEWAY_SECONDS = 300;
+
 /** Pure, Ed25519 only; no ambient key, clock, filesystem, session or network. */
 export function verifyLicenseToken(token: unknown, opts: VerifyLicenseOptions): LicenseVerification {
   const invalid = { ok: false, reason: 'invalid-license' } as const;
@@ -43,9 +46,12 @@ export function verifyLicenseToken(token: unknown, opts: VerifyLicenseOptions): 
     if (!crypto.verify(null, Buffer.from(`${parts[0]}.${parts[1]}`), key, Buffer.from(parts[2], 'base64url'))) return invalid;
     const c: unknown = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
     const now = opts.now() / 1000;
-    if (!record(c) || !Number.isFinite(now) || !timestamp(c.exp) || !timestamp(c.iat) || c.iat > now || c.exp <= c.iat) return invalid;
+    // F-228: iat/nbf ganham tolerância de relógio — um relógio local alguns
+    // segundos atrasado não pode marcar token recém-emitido como inválido.
+    // `exp` segue estrito; o piso monotônico de license-access não muda.
+    if (!record(c) || !Number.isFinite(now) || !timestamp(c.exp) || !timestamp(c.iat) || c.iat > now + LICENSE_CLOCK_LEEWAY_SECONDS || c.exp <= c.iat) return invalid;
     if (c.iss !== opts.issuer || c.aud !== 'nexus-desktop' || typeof c.sub !== 'string' || !c.sub.trim()) return invalid;
-    if (c.nbf !== undefined && (!timestamp(c.nbf) || c.nbf > now || c.nbf >= c.exp)) return invalid;
+    if (c.nbf !== undefined && (!timestamp(c.nbf) || c.nbf > now + LICENSE_CLOCK_LEEWAY_SECONDS || c.nbf >= c.exp)) return invalid;
     if (typeof c.access !== 'string' || !['trial', 'pro', 'suspended', 'inactive'].includes(c.access)) return invalid;
     const blocked = c.access === 'suspended' || c.access === 'inactive';
     if (c.exp - c.iat > (blocked ? LICENSE_BLOCKED_TTL_SECONDS : LICENSE_MAX_TTL_SECONDS)) return invalid;

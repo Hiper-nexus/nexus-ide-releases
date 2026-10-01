@@ -112,6 +112,32 @@ it('a signed suspension revokes access even if saving the file fails', () => {
   expect(access.getAccessState().blockedReason).toBe('suspended');
 });
 
+it('F-228: seal write failing after the file write leaves the NEW token acceptable next evaluation', () => {
+  const { access, deps, setNow } = setup();
+  access.applyLicenseToken(licenseFixture({ access: 'pro' }));
+  setNow(LICENSE_NOW + 2000);
+  deps.writeSeal.mockReturnValue({ ok: false });
+  const newer = licenseFixture({ access: 'pro', iat: LICENSE_NOW / 1000 + 1 });
+  expect(access.applyLicenseToken(newer)).toEqual({ ok: false, error: 'verification-unavailable' });
+  deps.writeSeal.mockImplementation(seal => { deps.readSeal.mockReturnValue(seal); return { ok: true }; });
+  // O arquivo já tem o token novo e o selo ainda o antigo: iat > latestIat sela aqui.
+  expect(access.getAccessState().canUseApp).toBe(true);
+  expect(deps.readSeal()?.latestIat).toBe(LICENSE_NOW / 1000 + 1);
+});
+
+it('F-228: license file write failing keeps the OLD disk token valid (never replay)', () => {
+  const { access, file } = setup();
+  const old = licenseFixture({ access: 'pro' });
+  access.applyLicenseToken(old);
+  fs.mkdirSync(`${file}.tmp`);
+  expect(access.applyLicenseToken(licenseFixture({ access: 'pro', iat: LICENSE_NOW / 1000 + 1 })))
+    .toEqual({ ok: false, error: 'license-persistence-failed' });
+  fs.rmdirSync(`${file}.tmp`);
+  const state = access.getAccessState();
+  expect(state.canUseApp).toBe(true);
+  expect(state.blockedReason).toBeNull();
+});
+
 
 it.each(['trial', 'pro'])('does not rewrite the vault on every repeated %s expiry check', kind => {
   const { access, deps, setNow } = setup();
@@ -192,9 +218,12 @@ it('H1: an initial denied seal cannot grant a missing token before online recove
   const { access, deps } = setup();
   deps.writeSeal.mockReturnValue({ ok: false });
   expect(access.applyOnlineLicenseToken(licenseFixture()).ok).toBe(false);
+  // Enquanto o vault recusa o selo a avaliação segue fechada.
   expect(access.getAccessState().canUseApp).toBe(false);
   deps.writeSeal.mockImplementation(seal => { deps.readSeal.mockReturnValue(seal); return { ok: true }; });
-  expect(access.getAccessState().canUseApp).toBe(false);
+  // F-228: o arquivo já foi gravado na ordem nova — com o vault de volta a
+  // avaliação aceita e sela o token (iat > latestIat), sem replay do antigo.
+  expect(access.getAccessState().canUseApp).toBe(true);
   expect(access.applyOnlineLicenseToken(licenseFixture()).ok).toBe(true);
   expect(deps.readSeal()?.latestIat).toBe(LICENSE_NOW / 1000);
   expect(access.getAccessState().canUseApp).toBe(true);

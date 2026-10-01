@@ -172,14 +172,23 @@ export async function apiFetch(
   try {
     let res = await doFetch(deps, path, init, session);
     if (res.status === 401) {
-      if (deps.getSecret('auth:session') !== session) return { status: 401, json: null };
-      const renewed = await tryRefresh(deps);
-      if (!renewed) return { status: 401, json: null };
-      session = renewed;
-      res = await doFetch(deps, path, init, renewed);
+      const current = deps.getSecret('auth:session');
+      if (current && current !== session) {
+        // Outro voo já renovou a sessão: repete UMA vez com ela em vez de
+        // devolver um 401 espúrio.
+        session = current;
+        res = await doFetch(deps, path, init, current);
+      } else {
+        const renewed = await tryRefresh(deps);
+        if (!renewed) return { status: 401, json: null };
+        session = renewed;
+        res = await doFetch(deps, path, init, renewed);
+      }
     }
     const json = await boundedJson(res, init.maxResponseBytes ?? DEFAULT_RESPONSE_BUDGET);
-    if (deps.generation?.() !== generation || deps.getSecret('auth:session') !== session) return { status: 401, json: null };
+    // F-228: logout/troca de conta (geração) invalida a resposta; rotação de
+    // sessão por um voo irmão NÃO — a resposta 2xx já autorizada vale.
+    if (deps.generation?.() !== generation) return { status: 401, json: null };
     return { status: res.status, json };
   } catch {
     return { status: 0, json: null };

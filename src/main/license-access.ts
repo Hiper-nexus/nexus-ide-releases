@@ -147,24 +147,28 @@ export function createLicenseAccess(deps: LicenseAccessDeps) {
     const revoked = result.claims.access === 'suspended' || result.claims.access === 'inactive';
     // A full disk must never defer a verified revocation until the next restart.
     if (revoked) { revocationToken = token; cleared = false; }
-    if (!accept(result.claims, seal, now())) {
-      getAccessState();
-      return { ok: false, error: 'verification-unavailable' };
-    }
-    persistenceFailed = false;
+    // F-228: grava o arquivo ANTES de avançar a cerca de replay. Na ordem
+    // inversa uma falha de escrita deixava o token ANTIGO no disco abaixo do
+    // latestIat novo → replay → lockout. Se o selo falhar depois da gravação,
+    // a próxima evaluate() vê iat > latestIat e sela ali.
     try {
       fs.mkdirSync(path.dirname(deps.licensePath), { recursive: true });
       const tmp = `${deps.licensePath}.tmp`;
       fs.writeFileSync(tmp, JSON.stringify({ version: 2, token }), { mode: 0o600 });
       fs.renameSync(tmp, deps.licensePath);
-      revocationToken = revoked ? token : null;
-      cleared = false;
-      getAccessState();
-      return { ok: true };
     } catch {
       getAccessState();
       return { ok: false, error: 'license-persistence-failed' };
     }
+    if (!accept(result.claims, seal, now())) {
+      getAccessState();
+      return { ok: false, error: 'verification-unavailable' };
+    }
+    persistenceFailed = false;
+    revocationToken = revoked ? token : null;
+    cleared = false;
+    getAccessState();
+    return { ok: true };
   }
   function clearAccess(): void {
     cleared = true;

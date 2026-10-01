@@ -33,16 +33,45 @@ describe('Main-owned access snapshot', () => {
   it.each(['login-required', 'license-expired', 'trial-ended', 'suspended'] as const)('blocks on %s and unlocks without restarting', async reason => {
     const api = setup(); await flush();
     api.get.mockResolvedValue({ ...DEFAULT_LICENSE, blockedReason: reason });
-    api.changed();
-    expect(useAccessStore.getState().canUseApp).toBe(false);
-    await flush();
-    expect(useAccessStore.getState().blockedReason).toBe(reason);
+    api.changed(); await flush();
+    expect(useAccessStore.getState()).toMatchObject({ canUseApp: false, blockedReason: reason });
     api.get.mockResolvedValue(active); api.changed(); await flush();
     expect(useAccessStore.getState().canUseApp).toBe(true);
   });
-  it('fails closed on an IPC failure even after a valid snapshot', async () => {
+  it('keeps the granted snapshot on screen while a renewal read is in flight (F-228)', async () => {
+    let resolve!: (state: LicenseState) => void;
+    const api = setup(); await flush();
+    expect(useAccessStore.getState().canUseApp).toBe(true);
+    api.get.mockImplementationOnce(() => new Promise<LicenseState>(r => { resolve = r; }));
+    api.changed();
+    // Em voo: nada de flicker — canUseApp do último snapshot permanece.
+    expect(useAccessStore.getState()).toMatchObject({ loading: true, canUseApp: true });
+    resolve({ ...active, limits: { maxAgents: 4, cloudSync: true } });
+    await flush();
+    expect(useAccessStore.getState()).toMatchObject({ loading: false, canUseApp: true, maxAgents: 4, cloudSync: true });
+  });
+  it('first read stays canUseApp:false until the Main snapshot resolves', async () => {
+    const get = vi.fn().mockImplementation(() => new Promise<LicenseState>(() => {}));
+    setup(get);
+    expect(useAccessStore.getState()).toMatchObject({ loading: true, canUseApp: false });
+  });
+  it('re-read resolving canUseApp:false blocks the app', async () => {
+    const api = setup(); await flush();
+    api.get.mockResolvedValue({ ...DEFAULT_LICENSE, blockedReason: 'trial-ended' });
+    api.changed();
+    // Em voo ainda vale o snapshot anterior.
+    expect(useAccessStore.getState().canUseApp).toBe(true);
+    await flush();
+    expect(useAccessStore.getState()).toMatchObject({ canUseApp: false, blockedReason: 'trial-ended' });
+  });
+  it('IPC failure after a granted snapshot keeps canUseApp with failed:true (Main stays the authority)', async () => {
     const api = setup(); await flush();
     api.get.mockRejectedValue(new Error('private diagnostic')); api.changed(); await flush();
+    expect(useAccessStore.getState()).toMatchObject({ canUseApp: true, failed: true });
+  });
+  it('IPC failure without any snapshot fails closed with verification-unavailable', async () => {
+    setup(vi.fn(async () => { throw new Error('ipc down'); }));
+    await flush();
     expect(useAccessStore.getState()).toMatchObject({ canUseApp: false, failed: true, blockedReason: 'verification-unavailable', cloudSync: false, maxAgents: 0 });
   });
 });

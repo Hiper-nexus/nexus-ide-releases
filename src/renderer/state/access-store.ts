@@ -27,7 +27,14 @@ let unsubscribe: (() => void) | undefined;
 /** Events invalidate pending reads, including the initial IPC snapshot. */
 export async function refreshAccess(): Promise<void> {
   const request = ++generation;
-  useAccessStore.setState({ loading: true, failed: false, canUseApp: false, maxAgents: 0, cloudSync: false });
+  const hadSnapshot = !useAccessStore.getState().loading && !useAccessStore.getState().failed;
+  // F-228: o último snapshot do Main fica na tela enquanto a leitura nova está
+  // em voo (onChanged dispara a cada renovação ~5 min — a tela de bloqueio
+  // piscava e roubava o foco do terminal). Só o resultado do Main muda
+  // canUseApp; a primeira leitura segue fail-closed.
+  useAccessStore.setState(hadSnapshot
+    ? { loading: true, failed: false }
+    : { loading: true, failed: false, canUseApp: false, maxAgents: 0, cloudSync: false });
   try {
     const license = await window.nexus.billing.get();
     if (request !== generation) return;
@@ -40,7 +47,11 @@ export async function refreshAccess(): Promise<void> {
     });
   } catch {
     if (request !== generation) return;
-    useAccessStore.setState({ ...initial, loading: false, failed: true, blockedReason: 'verification-unavailable' });
+    // Falha de IPC não é negação do Main: o Main continua a autoridade em
+    // todo spawn (requireAccess). Sem snapshot, segue fail-closed.
+    useAccessStore.setState(hadSnapshot
+      ? { loading: false, failed: true }
+      : { ...initial, loading: false, failed: true, blockedReason: 'verification-unavailable' });
   }
 }
 

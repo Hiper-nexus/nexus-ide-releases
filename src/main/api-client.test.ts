@@ -192,10 +192,45 @@ it.each(['logout', 'switch'])('ignores refresh finishing after %s', async kind =
   expect(d.store['auth:session']).toBe(kind === 'logout' ? '' : 'other-session');
 });
 
-it('does not return data from an authenticated request after session replacement', async () => {
+it('401 com sessão já trocada por outro voo repete uma vez com a sessão nova', async () => {
+  const first = deferred<Response>();
+  const d = deps({ fetchFn: vi.fn()
+    .mockImplementationOnce(() => first.promise)
+    .mockImplementation(async () => json({ ok: true, data: 7 })) });
+  const flight = apiFetch('/v1/team', {}, d);
+  // Voo irmão concluiu o refresh antes deste receber o 401.
+  d.store['auth:session'] = 's2';
+  first.resolve(json({ ok: false }, 401));
+
+  const result = await flight;
+  expect(result.status).toBe(200);
+  expect(result.json).toEqual({ ok: true, data: 7 });
+  const retry = (d.fetchFn as ReturnType<typeof vi.fn>).mock.calls[1];
+  expect((retry[1].headers as Record<string, string>).authorization).toBe('Bearer s2');
+  // Sem refresh próprio: nenhuma chamada a /v1/auth/refresh.
+  expect((d.fetchFn as ReturnType<typeof vi.fn>).mock.calls.some(
+    (c) => String(c[0]).endsWith('/v1/auth/refresh'),
+  )).toBe(false);
+});
+
+it('resposta 2xx cuja sessão rotacionou durante o voo ainda vale (F-228)', async () => {
   const response = deferred<Response>();
   const d = deps({ fetchFn: vi.fn(() => response.promise) });
   const flight = apiFetch('/v1/me', {}, d);
+  // Rotação por voo irmão, sem troca de conta (geração estável).
+  d.store['auth:session'] = 's2';
+  d.store['auth:refresh'] = 'r2';
+  response.resolve(json({ ok: true, data: { id: 'old-session-ok' } }));
+  expect(await flight).toMatchObject({ status: 200 });
+});
+
+it('does not return data from an authenticated request after session replacement', async () => {
+  const response = deferred<Response>();
+  let gen = 0;
+  const d = deps({ fetchFn: vi.fn(() => response.promise), generation: () => gen });
+  const flight = apiFetch('/v1/me', {}, d);
+  // Logout/troca de conta: a geração muda — a resposta obtida não vale mais.
+  gen += 1;
   d.store['auth:session'] = 'different-session';
   response.resolve(json({ ok: true, data: { id: 'old-account' } }));
   expect((await flight).status).toBe(401);

@@ -13,9 +13,9 @@ describe('desktop license verification', () => {
   it.each([
     { exp: undefined }, { iat: undefined }, { iat: '123' }, { exp: '123' },
     { exp: LICENSE_NOW / 1000 }, { exp: LICENSE_NOW / 1000 - 1 },
-    { exp: LICENSE_NOW / 1000 + 86401 }, { iat: LICENSE_NOW / 1000 + 1 },
+    { exp: LICENSE_NOW / 1000 + 86401 }, { iat: LICENSE_NOW / 1000 + 301 },
     { iss: 'https://attacker.test' }, { aud: 'other' }, { sub: '' },
-    { nbf: LICENSE_NOW / 1000 + 1 }, { nbf: 'tomorrow' }, { access: undefined },
+    { nbf: LICENSE_NOW / 1000 + 301 }, { nbf: 'tomorrow' }, { access: undefined },
     { access: ['trial'] }, { plan: ['pro'] }, { status: ['active'] },
     { access: 'free' }, { limits: undefined }, { limits: { maxAgents: -1, cloudSync: true } },
     { limits: { maxAgents: 1.5, cloudSync: true } }, { limits: { maxAgents: null, cloudSync: 'true' } },
