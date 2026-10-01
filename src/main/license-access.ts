@@ -17,6 +17,7 @@ import { verifyLicenseToken } from './persistence/billing-license';
 import { hasSecret } from './persistence/secrets-store';
 import { isLicenseBootSyncSettled } from './license-sync';
 import { resolveBackendUrl } from './backend-url';
+import { isCurrentProcessSmokeTest } from './smoke-core';
 import { isLicenseSeal, persistLicenseSeal, readLicenseAccountState, invalidateLicenseAccountBinding, type LicenseSeal } from './license-account-state';
 import type { DesktopLicenseClaims } from '../../shared/contract';
 
@@ -31,6 +32,17 @@ export interface LicenseAccessDeps {
   readSeal: () => LicenseSeal | null;
   writeSeal: (seal: LicenseSeal) => { ok: boolean };
 }
+
+// F-250: o smoke empacotado (--smoke-test) nunca vira produto utilizável —
+// roda os probes e encerra — então o gate cede, como vault/updater/mic já
+// cedem (smoke-core). Sem isto o probe mission-prepare morre em
+// login-required e o release gate falha num falso negativo.
+const SMOKE_LICENSE: LicenseState = Object.freeze({
+  plan: 'pro', email: null, status: 'active', renewsAt: null,
+  verified: true, access: 'pro', trialEndsAt: null,
+  limits: Object.freeze({ maxAgents: null, cloudSync: true }), expiresAt: null,
+  canUseApp: true, blockedReason: null,
+});
 
 /** On-disk session existence (no decrypt — the keychain cache is cold at boot). */
 function hasPersistedAuthSession(): boolean {
@@ -94,6 +106,7 @@ export function createLicenseAccess(deps: LicenseAccessDeps) {
     return { ...DEFAULT_LICENSE, limits: { ...DEFAULT_LICENSE.limits }, blockedReason: reason };
   }
   function evaluate(): LicenseState {
+    if (isCurrentProcessSmokeTest()) return SMOKE_LICENSE;
     const account = deps.accountId();
     // F-228: cold boot — sessão persistida no disco com o boot sync ainda em
     // voo não é "sem login". `hasSecret` não exige decrypt (cache ainda frio).

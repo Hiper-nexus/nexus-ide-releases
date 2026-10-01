@@ -284,3 +284,30 @@ it('M1: retries once per query and stays closed while writes still fail', () => 
   expect(access.getAccessState().canUseApp).toBe(false);
   expect(deps.writeSeal).toHaveBeenCalledTimes(attempts + 1);
 });
+
+// F-250: o gate cede SÓ no modo smoke empacotado (--smoke-test): o processo
+// roda os probes e encerra, nunca vira produto. Fora dele nada muda.
+it('packaged smoke mode bypasses the license gate', async () => {
+  const argv = process.argv;
+  process.argv = [...argv, '--smoke-test'];
+  try {
+    vi.resetModules();
+    const { createLicenseAccess: createSmokeAccess } = await import('./license-access');
+    const { deps } = setup();
+    const access = createSmokeAccess(deps);
+    expect(access.getAccessState()).toMatchObject({ canUseApp: true, access: 'pro', verified: true });
+    expect(access.requireAccess('use')).toEqual({ ok: true });
+    expect(access.requireAccess('cloudSync')).toEqual({ ok: true });
+    expect(access.maxAgents()).toBeNull();
+  } finally {
+    process.argv = argv;
+    vi.resetModules();
+  }
+});
+
+it('without the smoke flag the same unlicensed state stays closed', () => {
+  const { access } = setup();
+  access.clearAccess();
+  expect(access.getAccessState()).toMatchObject({ canUseApp: false, blockedReason: 'login-required' });
+  expect(access.requireAccess('use')).toEqual({ ok: false, reason: 'login-required' });
+});
