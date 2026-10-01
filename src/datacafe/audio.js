@@ -11,8 +11,9 @@ const MUSIC = {
   /** Segundos por nota de um arpejo lento: lá menor, sol, fá, mi menor. */
   step: 0.42,
   notes: [220, 261.63, 329.63, 261.63, 196, 246.94, 293.66, 246.94, 174.61, 220, 261.63, 220, 164.81, 196, 246.94, 196],
-  peak: 0.07,
-  bass: 0.1,
+  /** Baixa de propósito: a trilha fica uns 12 dB abaixo dos efeitos. */
+  peak: 0.04,
+  bass: 0.05,
   /** Quanto à frente do relógio a trilha agenda a cada passada do intervalo. */
   horizon: 0.6,
   interval: 200,

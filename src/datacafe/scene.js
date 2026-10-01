@@ -17,8 +17,11 @@ import { WALK, intentFrom, worldDirection, walkStep } from './walk.js';
 import { RIG, clampYaw, clampTarget, rigGoal, rigStep } from './rig.js';
 import { joystickInput, JOYSTICK_RADIUS } from './touch.js';
 import { ENERGY, createEnergy, energyStep, drink, speedScale, energyLevel } from './energy.js';
-import { createRacks, installGpu, reboot, rackStep, rackState, poweredCount, operationalCount, installedIds } from './racks.js';
-import { ticketsFrom, completeTicket, badgesFor, TICKET_XP } from './tickets.js';
+import { createRacks, installGpu, reboot, rackStep, rackState, poweredCount, operationalCount, installedIds, allPowered } from './racks.js';
+import { ticketsFrom, badgesFor, speedPerk, TICKET_XP } from './tickets.js';
+import { createProgression, scoreTicket, progressionStep, closeShift } from './progression.js';
+import { dropUnavailable, missionView } from './missions.js';
+import { comboLevel, comboMultiplier } from './combo.js';
 import { saveProgress, initialProgress } from './progress.js';
 
 const KEYS = { w: 'up', arrowup: 'up', s: 'down', arrowdown: 'down', a: 'left', arrowleft: 'left', d: 'right', arrowright: 'right' };
@@ -26,6 +29,10 @@ const ACTION_KEYS = new Set(['e', ' ', 'enter']);
 const RACK_TICK = 0.25;
 const ENERGY_TICK = 0.1;
 const DELIVERY_SECONDS = 7;
+const GAME_TICK = 0.2;
+/** Com o data center completo não há o que instalar: essas missões saem do baralho. */
+const NO_INSTALL = ['install'];
+const ANY_MISSION = [];
 const STEP_LENGTH = 0.62;
 const label = (text, { duration = 1, blocked = false } = {}) => Object.freeze({ text, duration, blocked });
 const modelOf = id => MODELS.find(model => model.id === id);
@@ -120,7 +127,8 @@ class DataCafeWorld {
     this.blockedToast = false;
     this.promptItem = undefined;
     this.promptLabel = undefined;
-    this.clocks = { racks: 0, energy: 0, delivery: 0, step: 0, dataset: 0 };
+    this.clocks = { racks: 0, energy: 0, delivery: 0, step: 0, dataset: 0, game: 0 };
+    this.game = createProgression(undefined, this.unavailableMissions());
     this.playing = false;
     this.paused = false;
     this.visible = true;
@@ -139,6 +147,7 @@ class DataCafeWorld {
     this.refresh();
     this.on.energy?.(energyLevel(this.energy), this.energy.tired);
     this.on.xp?.({ progress: this.progress, gained: 0, leveledUp: false });
+    this.emitGame();
     this.on.ready?.();
   }
 
@@ -244,15 +253,58 @@ class DataCafeWorld {
 
   award(ticket, what) {
     const before = new Set(this.progress.badges);
-    const result = completeTicket(this.progress, ticket);
+    const unavailable = this.unavailableMissions();
+    const result = scoreTicket(this.game, this.progress, ticket, undefined, unavailable);
+    this.game = { ...result.state, missions: dropUnavailable(result.state.missions, undefined, unavailable) };
     const progress = { ...result.progress, racksOn: installedIds(this.racks) };
     const badges = badgesFor(progress, this.racks);
     this.progress = { ...progress, badges };
     saveProgress(this.progress);
-    this.floatText(`+${result.xpGained} XP`);
-    this.on.xp?.({ progress: this.progress, gained: result.xpGained, leveledUp: result.leveledUp });
-    this.on.toast?.(`${what} · +${result.xpGained} XP`);
+    const mission = result.finished[0];
+    this.floatText(`+${result.xpGained + result.bonus} XP`);
+    if (mission) this.on.toast?.(`Missão cumprida: ${mission.text} · +${mission.xp} XP`);
+    else this.on.toast?.(result.multiplier > 1 ? `${what} · combo ×${result.multiplier} · +${result.xpGained} XP` : `${what} · +${result.xpGained} XP`);
+    this.on.xp?.({ progress: this.progress, gained: result.xpGained + result.bonus, leveledUp: result.leveledUp });
+    if (result.leveledUp) this.audio?.levelUp();
+    else if (mission) this.audio?.mission();
+    else if (this.game.combo.streak > 1) this.audio?.combo(this.game.combo.streak);
+    this.emitGame();
     for (const badge of badges) if (!before.has(badge)) this.on.badge?.(badge);
+  }
+
+  // ---------- Combo, missões e turno ----------
+  unavailableMissions() {
+    return allPowered(this.racks) ? NO_INSTALL : ANY_MISSION;
+  }
+
+  emitGame() {
+    this.on.missions?.(missionView(this.game.missions));
+    this.emitClock();
+  }
+
+  /** O que muda com o relógio: medidor do combo e tempo do turno. */
+  emitClock() {
+    const { combo, shift } = this.game;
+    this.on.combo?.(combo.streak, comboMultiplier(combo), comboLevel(combo));
+    this.on.shift?.(shift.left, shift.score, this.progress.bestShift);
+  }
+
+  advanceGame(dt) {
+    const step = progressionStep(this.game, dt);
+    this.game = step.state;
+    if (step.shiftOver) {
+      const closed = closeShift(this.game, this.progress);
+      this.game = closed.state;
+      this.progress = { ...closed.progress, badges: badgesFor(closed.progress, this.racks) };
+      saveProgress(this.progress);
+      // Turno sem ponto nenhum fecha calado: ninguém quer um aviso de zero a cada três minutos.
+      if (closed.score > 0) {
+        this.audio?.shiftEnd();
+        this.on.toast?.(closed.record ? `Turno encerrado: ${closed.score} pontos. Recorde novo!` : `Turno encerrado: ${closed.score} pontos. Recorde: ${this.progress.bestShift}.`);
+        this.on.xp?.({ progress: this.progress, gained: 0, leveledUp: false });
+      }
+    }
+    this.emitClock();
   }
 
   refresh() {
@@ -328,6 +380,8 @@ class DataCafeWorld {
         this.version++;
       }
     }
+    this.clocks.game += dt;
+    if (this.clocks.game >= GAME_TICK) { this.advanceGame(this.clocks.game); this.clocks.game = 0; }
     this.clocks.delivery += dt;
     if (this.clocks.delivery >= DELIVERY_SECONDS) {
       this.clocks.delivery = 0;
@@ -342,7 +396,7 @@ class DataCafeWorld {
   move(dt) {
     intentFrom(this.keys, this.analog, this.intent);
     worldDirection(this.intent, this.yaw, this.direction);
-    const scale = speedScale(this.energy) * (this.carrying ? WALK.carryScale : 1);
+    const scale = speedScale(this.energy) * speedPerk(this.progress.level) * (this.carrying ? WALK.carryScale : 1);
     const out = walkStep(this.body, this.direction, dt, scale, this.walkOut);
     const next = slideMove(this.grid, this.body, { x: out.dx, z: out.dz }, WALK.radius);
     const moved = Math.hypot(next.x - this.body.x, next.z - this.body.z);
@@ -367,7 +421,7 @@ class DataCafeWorld {
       this.blockedToast = false;
     }
     const result = advanceHold(this.hold, item, current, this.holding && !this.latch, dt);
-    if (result === 'blocked' && !this.blockedToast) { this.on.toast?.(current.text); this.blockedToast = true; }
+    if (result === 'blocked' && !this.blockedToast) { this.on.toast?.(current.text); this.audio?.denied(); this.blockedToast = true; }
     if (result === 'progress') { this.on.hold?.(this.hold.elapsed / this.hold.duration); this.holdShown = true; }
     else if (this.holdShown) { this.on.hold?.(0); this.holdShown = false; }
     if (result === 'done') { this.latch = true; item.onComplete?.(); }
@@ -561,7 +615,7 @@ class DataCafeWorld {
     this.resizeObserver.observe(this.host);
     const apply = visible => {
       this.visible = visible;
-      if (visible) { this.lastTime = 0; this.audio?.resume(); this.schedule(); }
+      if (visible) { this.lastTime = 0; if (!this.paused) this.audio?.resume(); this.schedule(); }
       else { cancelAnimationFrame(this.frame); this.frame = 0; this.clearInput(); this.audio?.suspend(); }
     };
     this.intersection = new IntersectionObserver(entries => apply(entries[0].isIntersecting && !document.hidden));
@@ -593,6 +647,7 @@ class DataCafeWorld {
 
   setPaused = paused => {
     this.paused = Boolean(paused);
+    if (this.paused) this.audio?.suspend(); else this.audio?.resume();
     this.clearInput();
     this.lastTime = 0;
     this.schedule();
@@ -608,9 +663,11 @@ class DataCafeWorld {
     this.carrying = false;
     this.energy = createEnergy();
     this.dc.dock.setCount(3);
+    this.game = createProgression();
     saveProgress(this.progress);
     this.on.xp?.({ progress: this.progress, gained: 0, leveledUp: false });
     this.on.energy?.(1, false);
+    this.emitGame();
     this.version++;
     this.refresh();
     this.schedule();
