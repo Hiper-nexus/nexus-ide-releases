@@ -11,7 +11,7 @@ O jogador é o dev de plantão num data center ao entardecer.
 3. Com o data center crescendo, racks ligados caem ao acaso. O ticket aparece no NOC e o dev segura E para reiniciar.
 4. Café é energia. Cai com o tempo, mais rápido andando e carregando. Sem café o dev anda devagar e boceja; a cafeteira reabastece.
 5. Tickets dão XP, níveis (Estagiário a Principal) e selos. Ligar as 18 LLMs dá o selo "Data center completo".
-6. O mural do sorteio e a TV da live abrem o convite do grupo e o canal de lives.
+6. O painel do sorteio (o grande letreiro de LED da parede norte) e a TV da live abrem o convite do grupo e o canal de lives. O painel está no primeiro quadro: alterna a conta Claude 20x (aos 200 no grupo) e a Codex 20x (aos 500), gira o ganhador até "PODE SER VOCÊ" e tem uma ficha 3D girando em cima; um chip fixo no HUD repete o prêmio e abre o mesmo convite. Os textos vêm de `src/sorteio/prizes.js`.
 7. Na estação de trabalho (a mesa do meio da fileira de mesas, com monitor grande e cadeira) o dev senta segurando E. Sentado, segurar E roda `nexus deploy --prod` no terminal (soltar pausa); com pelo menos um rack no ar o deploy rende XP e o próximo build fica pronto em 25 s. Com um incidente aberto o deploy cai no canary. Toque rápido em E, Esc, WASD ou o joystick levantam.
 
 Câmera: segue o dev olhando um pouco à frente da caminhada, aproxima enquanto ele segura uma ação e enquadra o monitor quando ele senta. Roda do mouse ou pinça aproximam (no limite do zoom a roda volta a rolar a página); arrastar gira e inclina um pouco. Quando um rack ou parede ficaria entre a câmera e o dev, ela sobe até vê-lo.
@@ -37,6 +37,8 @@ XP, recorde e progresso ficam só no navegador (`nexus-data-cafe:v1`, esquema 2;
 | `combo.js`, `missions.js`, `shift.js` | Combo de entregas, missões do turno e turno cronometrado | um teste por módulo |
 | `progression.js` | Junta combo, missões e turno: `scoreTicket` quando um ticket fecha, `progressionStep` no relógio | `progression.test.js` |
 | `audio.js` | Som sintetizado em WebAudio, liga após gesto, mudo e volume persistentes, limitador na saída, trilha em arpejo | `audio.test.js` |
+| `billboard.js`, `token.js`, `showcase.js` | Painel do prêmio (quadro a quadro por tempo: letreiro, fusão Claude/Codex, luzes correndo, ganhador girando), ficha 3D e câmera de vitrine/espiada, tudo puro | um teste por módulo |
+| `prize-art.js`, `prize-ui.js` | Pintura do painel e texto do chip e do painel de estação do grupo, só com constantes de `prizes.js` | um teste por módulo |
 | `kit.js`, `character.js`, `datacenter.js` | Arte 3D: cache por mundo, InstancedMesh, partículas, descarte, terminal que só repinta quando muda | `art.test.js` (inclui: nenhuma face do dev no mesmo plano de outra cor, caneca fora do alcance dos braços, racks vizinhos sem fresta) |
 | `scene.js` | Liga entrada, simulação, arte e eventos do HUD | navegador |
 | `mount.js`, `datacafe.css` | HUD montado por código, igual nas duas páginas | navegador |
@@ -73,6 +75,14 @@ Efeitos: passos, pegar GPU, rack no ar, alarme de incidente, café, ação bloqu
 - As missões de combo falam em "entregas em sequência" e o medidor mostra a sequência ao lado do multiplicador (que para em ×2).
 - Pausado, mexer no volume ou no mudo não acorda o som; recomeçar o progresso tira da pausa.
 - A câmera confere a linha de visão depois de suavizar e sobe na hora se um rack ficaria na frente; descer continua suave.
+
+## O prêmio no mundo (01/10/2026)
+
+- **Mapa:** a linha 1 passou a `#NNNNNN..DKDBBBBBLPCCCCC.#`: cinco células `B` formam o painel (`LAYOUT.board = { x: 12, z: 1, width: 5 }`, `HEIGHTS.B` 2,1), a TV da live foi para `x: 17` e as duas plantas daquela parede saíram. O letreiro "NEXUS DATA CAFÉ" foi para x 11,4 e as faixas neon verticais da parede norte para `[7.5, 18.55, 24.5]`. O ponto de interação do painel é o centro, z 2,25, raio 2,7.
+- **Movimento:** o canvas do painel repinta a ~10 fps, só enquanto o palco está visível, e fica parado no Claude com redução de movimento. A ficha tem 14 faíscas num InstancedMesh e uma luz pontual.
+- **Câmera:** antes de começar, a câmera passeia com o painel em quadro; ao começar, faz uma espiada de 2,5 s (qualquer tecla, toque ou E pula). Redução de movimento desliga as duas.
+- **Guia:** um caminho de setas no chão leva do ponto de partida ao painel; o farol de objetivo aponta o prêmio depois da primeira missão ou de 40 s parado e volta ao normal quando o jogador se mexe.
+- **Regras:** o chip e o painel nunca mostram contagem de membros nem progresso, e repetem o `DISCLAIMER`: jogar e XP não registram participação nem mudam as chances.
 
 ## Orçamento medido
 

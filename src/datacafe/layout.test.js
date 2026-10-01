@@ -31,7 +31,9 @@ test('há um rack por LLM, cada um em uma célula R com a frente livre', () => {
 
 test('os pontos de interação estão nas células certas', () => {
   assert.equal(LAYOUT.cells[LAYOUT.coffee.z][LAYOUT.coffee.x], 'K');
-  assert.equal(LAYOUT.cells[LAYOUT.board.z][LAYOUT.board.x], 'B');
+  assert.ok(LAYOUT.board.width >= 4, 'o painel do sorteio é largo, a atração principal da parede norte');
+  for (let i = 0; i < LAYOUT.board.width; i++) assert.equal(LAYOUT.cells[LAYOUT.board.z][LAYOUT.board.x + i], 'B');
+  assert.equal(LAYOUT.cells[LAYOUT.board.z][LAYOUT.board.x - 1] === 'B' || LAYOUT.cells[LAYOUT.board.z][LAYOUT.board.x + LAYOUT.board.width] === 'B', false, 'o painel não vaza para fora da largura declarada');
   assert.equal(LAYOUT.cells[LAYOUT.live.z][LAYOUT.live.x], 'L');
   for (let i = 0; i < LAYOUT.dock.width; i++) assert.equal(LAYOUT.cells[LAYOUT.dock.z][LAYOUT.dock.x + i], 'C');
   for (let i = 0; i < LAYOUT.noc.width; i++) assert.equal(LAYOUT.cells[LAYOUT.noc.z][LAYOUT.noc.x + i], 'N');
@@ -54,6 +56,7 @@ test('o dev nasce em piso livre e alcança a frente de todos os racks e objetos'
   }
   for (const rack of LAYOUT.racks) assert.ok(seen.has(`${rack.x},${rack.z + 1}`), `frente do rack ${rack.id}`);
   for (const spot of [LAYOUT.coffee, LAYOUT.board, LAYOUT.live, LAYOUT.dock]) assert.ok(seen.has(`${spot.x},${spot.z + 1}`));
+  for (let i = 0; i < LAYOUT.board.width; i++) assert.ok(seen.has(`${LAYOUT.board.x + i},${LAYOUT.board.z + 1}`), `frente do painel, célula ${i}`);
   const { stand } = LAYOUT.workstation;
   assert.ok(seen.has(`${Math.floor(stand.x)},${Math.floor(stand.z)}`), 'lugar de levantar da estação');
 });

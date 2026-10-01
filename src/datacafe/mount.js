@@ -6,6 +6,8 @@ import { createAudio } from './audio.js';
 import { loadProgress, clearProgress } from './progress.js';
 import { titleFor, levelProgress, BADGES } from './tickets.js';
 import { formatClock } from './shift.js';
+import { chipParts, groupStation } from './prize-ui.js';
+import { nextPrize } from '../sorteio/prizes.js';
 
 export const GROUP_URL = 'https://chat.whatsapp.com/CB1tWTp9SVkFeJeZ33N9qK';
 export const LIVE_URL = 'https://www.youtube.com/@Vibecoding-ao-vivo';
@@ -16,12 +18,7 @@ const CLOCK = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" strok
 const SPEAKER = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10v4h3l5 4V6L7 10H4Z"/><path class="dc-sound-on" d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/><path class="dc-sound-off" d="m16 9.5 5 5m0-5-5 5"/></svg>';
 
 const STATIONS = {
-  group: {
-    kicker: 'SORTEIO NO GRUPO',
-    title: 'Entrar no grupo é a inscrição',
-    copy: 'Aos 200 membros sorteamos uma conta Claude 20x por 1 mês; aos 500, uma conta Codex 20x por 1 mês. O sorteio é ao vivo, numa live, entre quem está no grupo. Jogar não muda as chances.',
-    url: GROUP_URL, label: 'Entrar no grupo', whatsapp: true,
-  },
+  group: groupStation(GROUP_URL),
   live: {
     kicker: 'DO PROMPT AO DEPLOY',
     title: 'Vibe coding ao vivo',
@@ -45,6 +42,7 @@ function hudMarkup(id) {
     <div class="dc-meter dc-combo mono" hidden><span class="dc-combo-x pixel">×1</span><span class="dc-track"><span class="dc-combo-fill"></span></span><span class="dc-combo-label">COMBO</span></div>
   </div>
 </div>
+<button class="dc-prize" type="button" aria-controls="${id}-station"><i class="dc-prize-dot" aria-hidden="true"></i><span class="dc-prize-tag mono"></span><span class="dc-prize-name pixel"></span><span class="dc-prize-goal mono"></span></button>
 <button class="dc-level" type="button" aria-expanded="false" aria-controls="${id}-panel"><span class="pixel">LVL <b class="dc-lvl">1</b></span><span class="dc-xpbar" aria-hidden="true"><span></span></span><span class="mono dc-title">Estagiário</span></button>
 <aside class="dc-panel" id="${id}-panel" hidden aria-label="Missões, tickets e ajustes">
   <div class="dc-panel-head"><strong>Missões do turno</strong><span class="mono">RECORDE <span class="dc-best">0</span> PTS</span></div>
@@ -62,7 +60,7 @@ function hudMarkup(id) {
 <div class="dc-joystick" aria-hidden="true"><span class="dc-ring"></span><span class="dc-knob"></span></div>
 <div class="dc-hints"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> anda</span><span>segure <kbd>E</kbd> para interagir</span><span><kbd>M</kbd> tickets</span><span>arraste gira, a roda aproxima</span></div>
 <div class="dc-toast" role="status" aria-live="polite"></div>
-<aside class="dc-station" hidden aria-labelledby="${id}-station-title"><button type="button" class="dc-close" aria-label="Fechar">✕</button><span class="mono dc-station-kicker"></span><h3 id="${id}-station-title" class="dc-station-title"></h3><p class="dc-station-copy"></p><a class="button dc-station-link" target="_blank" rel="noopener noreferrer"></a></aside>`;
+<aside class="dc-station" id="${id}-station" hidden aria-labelledby="${id}-station-title"><button type="button" class="dc-close" aria-label="Fechar">✕</button><span class="mono dc-station-kicker"></span><h3 id="${id}-station-title" class="dc-station-title"></h3><ol class="dc-station-prizes" hidden></ol><p class="dc-station-copy"></p><a class="button dc-station-link" target="_blank" rel="noopener noreferrer"></a><p class="dc-station-note" hidden></p></aside>`;
 }
 
 /**
@@ -85,6 +83,10 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
   const prompt = $('.dc-prompt');
   const panel = $('.dc-panel');
   const level = $('.dc-level');
+  const chip = chipParts(nextPrize());
+  const prizeChip = $('.dc-prize');
+  prizeChip.setAttribute('aria-label', `${chip.label}. Abrir o painel do sorteio.`);
+  [$('.dc-prize-tag'), $('.dc-prize-name'), $('.dc-prize-goal')].forEach((node, index) => { node.textContent = chip.parts[index]; });
   let toastTimer;
   let disposed = false;
   const aborter = new AbortController();
@@ -116,6 +118,22 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
     $('.dc-station-kicker').textContent = item.kicker;
     $('.dc-station-title').textContent = item.title;
     $('.dc-station-copy').textContent = item.copy;
+    const rows = $('.dc-station-prizes');
+    rows.hidden = !item.prizes;
+    rows.replaceChildren(...(item.prizes ?? []).map(prize => {
+      const row = document.createElement('li');
+      row.className = 'dc-prize-row';
+      row.dataset.next = String(prize.next);
+      row.innerHTML = '<span class="dc-prize-row-name"></span><span class="dc-prize-row-badge mono"></span><span class="dc-prize-row-goal"></span><span class="dc-prize-row-meta mono"></span>';
+      row.children[0].textContent = prize.name;
+      row.children[1].textContent = prize.badge;
+      row.children[2].textContent = prize.goal;
+      row.children[3].textContent = prize.meta;
+      return row;
+    }));
+    const note = $('.dc-station-note');
+    note.hidden = !item.note;
+    note.textContent = item.note ?? '';
     const link = $('.dc-station-link');
     link.href = item.url;
     link.className = `button dc-station-link ${item.whatsapp ? 'button-whatsapp' : 'button-white'}`;
@@ -239,6 +257,7 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
   }, listen);
   prompt.addEventListener('keyup', event => { if (['e', 'E', 'Enter', ' '].includes(event.key)) world.holdEnd(); }, listen);
   level.addEventListener('click', () => togglePanel(), listen);
+  prizeChip.addEventListener('click', () => { openStation('group'); $('.dc-close').focus({ preventScroll: true }); }, listen);
   $('.dc-close').addEventListener('click', () => { $('.dc-station').hidden = true; host.focus({ preventScroll: true }); }, listen);
   const muteButton = hud.querySelector('[data-act=mute]');
   const soundButton = $('.dc-sound');

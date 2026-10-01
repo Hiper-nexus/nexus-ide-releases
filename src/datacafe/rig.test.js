@@ -211,3 +211,36 @@ test('andando ao longo de uma fileira de racks o peito do dev fica à vista em t
   }
   assert.equal(hidden, 0, `${hidden} quadros com o dev escondido atrás de um rack`);
 });
+
+test('a espiada com peso zero não muda nada: a câmera segue o dev como sempre', () => {
+  const plain = settle(createCamera(), input());
+  const glance = { x: 14.5, y: 1.35, z: 1.9, range: 6, weight: 0 };
+  const same = settle(createCamera(), input({ glance }));
+  assert.deepEqual(same, plain);
+  assert.deepEqual(settle(createCamera(), input({ glance: null })), plain);
+});
+
+test('com a espiada inteira a câmera mira o ponto, chega perto e vira de frente; pela metade fica no meio do caminho', () => {
+  const glance = { x: 14.5, y: 1.35, z: 1.9, range: 6, weight: 1 };
+  const full = settle(createCamera(), input({ glance }));
+  assert.ok(Math.hypot(full.tx - glance.x, full.tz - glance.z) < 0.05, `mira o ponto: ${full.tx},${full.tz}`);
+  assert.ok(Math.abs(full.ty - glance.y) < 0.05);
+  assert.ok(Math.abs(full.range - glance.range) < 0.05);
+  assert.ok(Math.abs(full.yaw) < 0.02, 'de frente para a parede norte');
+  const half = settle(createCamera(), input({ glance: { ...glance, weight: 0.5 } }));
+  const none = settle(createCamera(), input());
+  assert.ok(half.tx > Math.min(none.tx, full.tx) && half.tx < Math.max(none.tx, full.tx), 'meio do caminho em x');
+  assert.ok(half.range < none.range && half.range > full.range, 'meio do caminho no zoom');
+});
+
+test('terminada a espiada a câmera volta ao dev e a elevação segura continua valendo', () => {
+  const cam = createCamera();
+  settle(cam, input({ glance: { x: 14.5, y: 1.35, z: 1.9, range: 6, weight: 1 } }), 3);
+  settle(cam, input(), 6);
+  const plain = settle(createCamera(), input());
+  assert.ok(Math.hypot(cam.tx - plain.tx, cam.tz - plain.tz) < 0.05, 'de volta ao dev');
+  assert.ok(Math.abs(cam.range - plain.range) < 0.05);
+  const body = { x: 5.5, z: 7.5, vx: 0, vz: 0 };
+  const behind = settle(createCamera(), input({ body }));
+  assert.ok(behind.pitch >= occlusionPitch(LAYOUT, body, behind.yaw, behind.range, { x: behind.tx, z: behind.tz }) - 0.02, 'o dev continua à vista');
+});

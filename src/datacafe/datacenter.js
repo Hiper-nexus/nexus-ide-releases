@@ -2,12 +2,18 @@
  * devolve os controles que o jogo usa: estado de cada rack, cafeteira, doca,
  * telão do NOC e o anel de destaque. Tudo que repete é InstancedMesh. */
 import {
-  BufferAttribute, BufferGeometry, Color, CylinderGeometry, Group, IcosahedronGeometry,
-  Mesh, MeshBasicMaterial, Object3D, OctahedronGeometry, PlaneGeometry, RingGeometry,
+  AdditiveBlending, BufferAttribute, BufferGeometry, CircleGeometry, Color, CylinderGeometry, DoubleSide, DynamicDrawUsage,
+  Group, IcosahedronGeometry, InstancedMesh, Mesh, MeshBasicMaterial, Object3D, OctahedronGeometry, PlaneGeometry,
+  PointLight, RingGeometry,
 } from 'three';
 import { PALETTE, hex } from './palette.js';
 import { findCells } from './layout.js';
 import { DEPLOY, CANARY } from './desk.js';
+import { BILLBOARD, billboardView, chaseLevel, bulbRing } from './billboard.js';
+import { TOKEN, tokenPose, sparkleAt } from './token.js';
+import { BOARD_SIZE, COIN_SIZE, paintBillboard, paintCoinFace } from './prize-art.js';
+import { prizePath, pathMarks } from './showcase.js';
+import { PRIZES } from '../sorteio/prizes.js';
 
 /** Racks lado a lado, como num data center de verdade: com fresta, o dev aparecia
  * e sumia entre um rack e outro ao andar atrás da fileira. */
@@ -112,18 +118,23 @@ function hazard(context, canvas) {
   }
 }
 
-function codeScreen(context, canvas) {
+/** `scroll` anda o texto uma linha por vez: o monitor parece estar sendo escrito. */
+function codeScreen(context, canvas, scroll = 0) {
   const { width: w, height: h } = canvas;
   context.fillStyle = '#0e0c12';
   context.fillRect(0, 0, w, h);
   const colors = [hex(PALETTE.pink), hex(PALETTE.green), hex(PALETTE.gold), '#8b80ff', '#aaa2a8'];
-  for (let y = 8, i = 0; y < h - 6; y += 8, i++) {
+  for (let y = 8, row = 0; y < h - 6; y += 8, row++) {
+    const i = row + scroll;
     const indent = (i * 7 % 4) * 8;
     context.fillStyle = colors[i % colors.length];
     context.fillRect(8 + indent, y, 18 + (i * 29 % 60), 3);
     context.fillStyle = '#5c5460';
     context.fillRect(30 + indent + (i * 29 % 60), y, 10 + (i * 17 % 40), 3);
   }
+  // Cursor piscando na última linha: o dev está digitando.
+  context.fillStyle = hex(PALETTE.pink);
+  context.fillRect(8, h - 14, 5, 5);
 }
 
 function neonText(text, color) {
@@ -141,37 +152,6 @@ function neonText(text, color) {
     context.fillStyle = '#ffe3ec';
     context.fillText(text, w / 2, h / 2 + h * 0.05, w * 0.96);
   };
-}
-
-function boardArt(context, canvas) {
-  const { width: w, height: h } = canvas;
-  context.fillStyle = '#f4efe6';
-  context.fillRect(0, 0, w, h);
-  context.fillStyle = hex(PALETTE.whatsapp);
-  context.fillRect(0, 0, w, h * 0.2);
-  context.fillStyle = '#0b2e1a';
-  context.textAlign = 'center';
-  context.font = `700 ${Math.round(h * 0.07)}px ui-monospace, monospace`;
-  context.fillText('GRUPO NO WHATSAPP', w / 2, h * 0.12);
-  context.fillStyle = '#19171d';
-  context.font = `400 ${Math.round(h * 0.14)}px VT323, ui-monospace, monospace`;
-  context.fillText('SORTEIO', w / 2, h * 0.34);
-  context.font = `600 ${Math.round(h * 0.055)}px ui-monospace, monospace`;
-  context.fillStyle = hex(PALETTE.pink);
-  context.fillText('200 no grupo', w / 2, h * 0.47);
-  context.fillStyle = '#19171d';
-  context.fillText('conta Claude 20x', w / 2, h * 0.54);
-  context.fillStyle = hex(PALETTE.pink);
-  context.fillText('500 no grupo', w / 2, h * 0.66);
-  context.fillStyle = '#19171d';
-  context.fillText('conta Codex 20x', w / 2, h * 0.73);
-  context.fillStyle = '#6b6468';
-  context.font = `500 ${Math.round(h * 0.045)}px ui-monospace, monospace`;
-  context.fillText('ao vivo, numa live', w / 2, h * 0.86);
-  context.fillStyle = '#e8c547';
-  context.fillRect(w * 0.08, h * 0.24, w * 0.12, w * 0.12);
-  context.fillStyle = '#ff9fbf';
-  context.fillRect(w * 0.8, h * 0.78, w * 0.12, w * 0.12);
 }
 
 function liveArt(context, canvas) {
@@ -365,7 +345,7 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
   }, { cast: false, receive: false });
   // Rodapé luminoso nas paredes altas.
   kit.instanced(root, kit.boxGeo(1, 0.05, 0.03), kit.mat(PALETTE.dusk, { basic: true }), tall.filter(c => c.z === 0 && c.x > 0 && c.x < W - 1), (d, c) => d.position.set(c.x + 0.5, 0.06, 1.02), { cast: false, receive: false });
-  kit.instanced(root, kit.boxGeo(0.04, 2.3, 0.03), kit.mat(PALETTE.pink, { basic: true }), [7.5, 12.5, 18.5, 24.5], (d, x) => d.position.set(x, 1.3, 1.02), { cast: false, receive: false });
+  kit.instanced(root, kit.boxGeo(0.04, 2.3, 0.03), kit.mat(PALETTE.pink, { basic: true }), [7.5, 18.55, 24.5], (d, x) => d.position.set(x, 1.3, 1.02), { cast: false, receive: false });
 
   // Janelas a oeste com o entardecer, e as manchas de luz que entram por elas.
   const windowTex = kit.canvasTexture(256, 160, sunsetWindow);
@@ -381,7 +361,7 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
 
   // Letreiro principal na parede norte.
   const titleTex = kit.canvasTexture(1024, 128, neonText('NEXUS DATA CAFÉ', '#ff4f8b'));
-  const title = kit.mesh(root, kit.geo('title', () => new PlaneGeometry(5.2, 0.65)), kit.own(new MeshBasicMaterial({ map: titleTex.texture, transparent: true, toneMapped: false, depthWrite: false })), [12.4, 2.4, 1.03], { cast: false, receive: false });
+  const title = kit.mesh(root, kit.geo('title', () => new PlaneGeometry(5.2, 0.65)), kit.own(new MeshBasicMaterial({ map: titleTex.texture, transparent: true, toneMapped: false, depthWrite: false })), [11.4, 2.46, 1.03], { cast: false, receive: false });
   title.renderOrder = 2;
 
   // ---------- Racks ----------
@@ -421,7 +401,9 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
   });
   const atlas = kit.canvasTexture(ATLAS.width, ATLAS.height, paintAtlas(models, images));
   let alive = true;
-  images.forEach(image => { if (image) image.onload = () => { if (alive) atlas.redraw(); }; });
+  /** A marca do prêmio chega depois do primeiro quadro: o painel e a ficha se redesenham quando ela baixa. */
+  let onMarkLoaded = () => {};
+  images.forEach(image => { if (image) image.onload = () => { if (alive) { atlas.redraw(); onMarkLoaded(); } }; });
   const signGeo = kit.own(new BufferGeometry());
   const positions = new Float32Array(rackEntries.length * 12);
   const uvs = new Float32Array(rackEntries.length * 8);
@@ -451,7 +433,7 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
     return material;
   })(), rackEntries, (d, r) => { d.position.set(r.cx, 0.008, r.front + 0.5); d.rotation.x = -Math.PI / 2; }, { cast: false, receive: false });
 
-  const rackState = rackEntries.map(() => ({ state: 'off', pulse: 0, dirty: true }));
+  const rackState = rackEntries.map(() => ({ state: 'off', pulse: 0, dirty: true, standby: false }));
   const color = new Color();
   const mover = new Object3D();
 
@@ -526,13 +508,82 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
     setCount(n) { crates.count = Math.max(0, Math.min(crateSlots.length, n)); },
   };
 
-  // ---------- Mural do sorteio e TV da live ----------
+  // ---------- Painel de LED do sorteio, ficha do prêmio e TV da live ----------
   const board = layout.board;
-  const boardTex = kit.canvasTexture(256, 320, boardArt);
-  kit.box(root, [0.05, 1.7, 0.05], [board.x + 0.12, 0.85, board.z + 0.5], steel);
-  kit.box(root, [0.05, 1.7, 0.05], [board.x + 0.88, 0.85, board.z + 0.5], steel);
-  kit.box(root, [0.92, 1.12, 0.06], [board.x + 0.5, 1.2, board.z + 0.5], kit.mat(0x3a2f38));
-  kit.mesh(root, kit.geo('boardface', () => new PlaneGeometry(0.84, 1.04)), kit.own(new MeshBasicMaterial({ map: boardTex.texture })), [board.x + 0.5, 1.2, board.z + 0.535], { cast: false, receive: false });
+  const frame = { w: board.width, h: 1.57, z: 1.06 };
+  const panel = { cx: board.x + board.width / 2, cy: 1.28, z: 1.125, w: board.width - 0.3, h: frame.h - 0.3 };
+  const cabinet = kit.mat(0x1b1721);
+  kit.box(root, [board.width - 0.04, 0.5, 0.56], [panel.cx, 0.25, board.z + 0.28], cabinet);
+  kit.box(root, [board.width - 0.04, 0.035, 0.035], [panel.cx, 0.5, board.z + 0.57], kit.mat(PALETTE.pink, { basic: true }), { cast: false, receive: false });
+  kit.box(root, [frame.w, frame.h, 0.12], [panel.cx, panel.cy, frame.z], kit.mat(0x120f16));
+  // Aura atrás do painel: um brilho rosa aditivo que vaza pela parede e dá peso à atração principal.
+  const auraTex = kit.canvasTexture(128, 128, (context, canvas) => {
+    const { width: w, height: h } = canvas;
+    context.clearRect(0, 0, w, h);
+    const glow = context.createRadialGradient(w / 2, h / 2, 2, w / 2, h / 2, w / 2);
+    glow.addColorStop(0, 'rgba(255,79,139,0.7)');
+    glow.addColorStop(0.5, 'rgba(255,79,139,0.2)');
+    glow.addColorStop(1, 'rgba(255,79,139,0)');
+    context.fillStyle = glow;
+    context.fillRect(0, 0, w, h);
+  });
+  const aura = kit.mesh(root, kit.geo('boardaura', () => new PlaneGeometry(frame.w + 2.6, frame.h + 1.7)), kit.own(new MeshBasicMaterial({ map: auraTex.texture, transparent: true, blending: AdditiveBlending, depthWrite: false, toneMapped: false })), [panel.cx, panel.cy, 1.03], { cast: false, receive: false });
+  aura.renderOrder = 1;
+  const markOf = id => images[byId.get(id)?.index] ?? null;
+  const bb = { view: billboardView(0, { calm: true }), calm: true, dirty: true, last: -1 };
+  const boardTex = kit.canvasTexture(BOARD_SIZE.width, BOARD_SIZE.height, (context, canvas) => paintBillboard(context, canvas, bb.view, markOf));
+  kit.mesh(root, kit.geo('boardface', () => new PlaneGeometry(panel.w, panel.h)), kit.own(new MeshBasicMaterial({ map: boardTex.texture, toneMapped: false })), [panel.cx, panel.cy, panel.z], { cast: false, receive: false });
+  // Lâmpadas na moldura: uma luz corre pelo anel, como num letreiro de cinema.
+  const bulbSpots = bulbRing(frame.w - 0.15, frame.h - 0.15, 0.24);
+  const bulbs = kit.instanced(root, kit.boxGeo(0.07, 0.07, 0.04), kit.mat(0xffffff, { basic: true }), bulbSpots, (d, bulb) => d.position.set(panel.cx + bulb.x, panel.cy + bulb.y, 1.135), { cast: false, receive: false, dynamic: true });
+  const bulbDim = new Color(0x3a1a2a), bulbHot = new Color(0xffd2a0), bulbColor = new Color();
+  bulbSpots.forEach((_, i) => bulbs.setColorAt(i, bulbDim));
+  bulbs.instanceColor.needsUpdate = true;
+
+  // A ficha gira acima do painel, com faíscas em volta e um cone de luz que cai sobre ele.
+  const anchor = { x: panel.cx, y: 2.62, z: 1.38 };
+  const halo = new Group();
+  halo.position.set(anchor.x, anchor.y, anchor.z);
+  root.add(halo);
+  const token = new Group();
+  halo.add(token);
+  const coinR = 0.36, coinT = 0.1;
+  kit.mesh(token, kit.geo('coinrim', () => { const geometry = new CylinderGeometry(coinR, coinR, coinT, 14); geometry.rotateX(Math.PI / 2); return geometry; }), kit.mat(PALETTE.ember, { emissive: PALETTE.ember, emissiveIntensity: 0.55, metalness: 0.5, roughness: 0.35 }), [0, 0, 0], { cast: false, receive: false });
+  const faceGeo = kit.geo('coinface', () => new CircleGeometry(coinR * 0.97, 24));
+  const coinFaces = PRIZES.map(prize => kit.canvasTexture(COIN_SIZE, COIN_SIZE, (context, canvas) => paintCoinFace(context, canvas, prize, markOf(prize.id))));
+  kit.mesh(token, faceGeo, kit.own(new MeshBasicMaterial({ map: coinFaces[0].texture, toneMapped: false })), [0, 0, coinT / 2 + 0.002], { cast: false, receive: false });
+  const back = kit.mesh(token, faceGeo, kit.own(new MeshBasicMaterial({ map: coinFaces[1].texture, toneMapped: false })), [0, 0, -(coinT / 2 + 0.002)], { cast: false, receive: false });
+  back.rotation.y = Math.PI;
+  const sparkMesh = kit.own(new InstancedMesh(kit.geo('spark', () => new OctahedronGeometry(0.07)), kit.mat(0xffffff, { basic: true }), TOKEN.sparkles));
+  sparkMesh.instanceMatrix.setUsage(DynamicDrawUsage);
+  sparkMesh.frustumCulled = false;
+  const sparkColors = [PALETTE.gold, PALETTE.pink, PALETTE.ink];
+  for (let i = 0; i < TOKEN.sparkles; i++) sparkMesh.setColorAt(i, new Color(sparkColors[i % sparkColors.length]));
+  sparkMesh.instanceColor.needsUpdate = true;
+  halo.add(sparkMesh);
+  const beamMat = kit.own(new MeshBasicMaterial({ color: PALETTE.pink, transparent: true, opacity: 0.08, depthWrite: false, side: DoubleSide, blending: AdditiveBlending, toneMapped: false }));
+  const prizeBeam = kit.mesh(root, kit.geo('prizebeam', () => new CylinderGeometry(0.16, 1.5, 1.35, 22, 1, true)), beamMat, [anchor.x, anchor.y - 0.95, anchor.z], { cast: false, receive: false });
+  prizeBeam.renderOrder = 3;
+  const prizeLight = new PointLight(PALETTE.pink, 5, 7, 2);
+  prizeLight.position.set(panel.cx, 1.9, board.z + 1.2);
+  root.add(prizeLight);
+
+  // Caminho de setas no chão, do spawn até o painel: some quando o jogador já abriu o painel.
+  const marksOnFloor = pathMarks(prizePath(layout), 0.62);
+  const chevrons = kit.instanced(root, kit.geo('chevron', () => new CircleGeometry(0.17, 3)), kit.own(new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, toneMapped: false })), marksOnFloor, (d, mark) => {
+    d.rotation.order = 'YXZ';
+    d.rotation.set(-Math.PI / 2, mark.angle, 0);
+    d.position.set(mark.x, 0.016, mark.z);
+  }, { cast: false, receive: false, dynamic: true });
+  const chevronColor = new Color();
+  marksOnFloor.forEach((_, i) => chevrons.setColorAt(i, chevronColor.set(PALETTE.pink)));
+  chevrons.instanceColor.needsUpdate = true;
+  let pathOn = true, pathDirty = true;
+  const sparkOut = { x: 0, y: 0, z: 0, scale: 0 };
+  const sparkDummy = new Object3D();
+
+  onMarkLoaded = () => { bb.dirty = true; coinFaces.forEach(face => face.redraw()); };
+
   const live = layout.live;
   const liveTex = kit.canvasTexture(256, 150, liveArt);
   kit.box(root, [0.08, 1.05, 0.08], [live.x + 0.5, 0.52, live.z + 0.4], steel);
@@ -550,6 +601,7 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
   kit.box(root, [noc.width - 0.2, 1.58, 0.06], [noc.x + noc.width / 2, 1.78, 1.03], kit.mat(0x0c0b0e));
   kit.mesh(root, kit.geo('nocface', () => new PlaneGeometry(noc.width - 0.32, 1.48)), kit.own(new MeshBasicMaterial({ map: nocTex.texture, toneMapped: false })), [noc.x + noc.width / 2, 1.78, 1.065], { cast: false, receive: false });
   let nocClock = 0;
+  let screenClock = 0, screenScroll = 0;
 
   // ---------- Mesas dos devs e a estação do terminal ----------
   const station = layout.workstation;
@@ -630,6 +682,49 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
     ring.position.set(target.x, 0.02, target.z);
   }
 
+  /** O painel redesenha a 10 quadros por segundo (e só uma vez com redução de movimento); a ficha, as faíscas e as setas andam todo quadro. */
+  function updatePrize(dt, time, calm) {
+    if (calm !== bb.calm) { bb.calm = calm; bb.dirty = true; }
+    if (bb.dirty || (!calm && time - bb.last >= BILLBOARD.repaint)) {
+      bb.dirty = false;
+      bb.last = time;
+      bb.view = billboardView(time, { calm });
+      boardTex.redraw();
+      for (let i = 0; i < bulbSpots.length; i++) {
+        const level = calm ? 0.35 : chaseLevel(i, bulbSpots.length, bb.view.chase, BILLBOARD.chaseHeads);
+        bulbs.setColorAt(i, bulbColor.copy(bulbDim).lerp(bulbHot, level * level));
+      }
+      bulbs.instanceColor.needsUpdate = true;
+    }
+    const pose = tokenPose(time, calm);
+    token.position.y = pose.y;
+    token.rotation.y = pose.spin;
+    for (let i = 0; i < TOKEN.sparkles; i++) {
+      sparkleAt(i, time, calm, sparkOut);
+      sparkDummy.position.set(sparkOut.x, sparkOut.y, sparkOut.z);
+      sparkDummy.scale.setScalar(sparkOut.scale);
+      sparkDummy.rotation.set(time * 1.3 + i, time + i * 0.5, 0);
+      sparkDummy.updateMatrix();
+      sparkMesh.setMatrixAt(i, sparkDummy.matrix);
+    }
+    sparkMesh.instanceMatrix.needsUpdate = true;
+    beamMat.opacity = calm ? 0.08 : 0.06 + 0.04 * bb.view.pulse;
+    chevrons.visible = pathOn;
+    if (pathOn && (pathDirty || !calm)) {
+      pathDirty = false;
+      marksOnFloor.forEach((_, i) => {
+        const wave = calm ? 0.7 : Math.max(0, Math.sin(time * 3.2 - i * 0.75));
+        chevrons.setColorAt(i, chevronColor.set(PALETTE.pink).multiplyScalar(0.25 + 0.75 * wave));
+      });
+      chevrons.instanceColor.needsUpdate = true;
+    }
+    // Os monitores dos devs "escrevem": o texto sobe uma linha a cada ~0,4 s.
+    if (!calm) {
+      screenClock += dt;
+      if (screenClock > 0.4) { screenClock = 0; screenScroll++; codeTex.redraw(screenScroll); }
+    }
+  }
+
   const fanAngle = new Float32Array(rackEntries.length);
   function update(dt, time, calm) {
     const blink = Math.floor(time * 4) % 2 === 0;
@@ -638,11 +733,14 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
       const slot = rackState[i];
       const model = byId.get(r.id).model;
       const animated = !calm && slot.state !== 'off';
+      // Rack desligado respira em standby: uma onda de luz passa pela fileira, um rack de cada vez.
+      const standby = !calm && slot.state === 'off' && (Math.floor(time * 3) + i) % 9 === 0;
+      if (standby !== slot.standby) { slot.standby = standby; slot.dirty = true; }
       if (slot.pulse > 0) { slot.pulse = Math.max(0, slot.pulse - dt * 2.5); slot.dirty = true; }
       if (!slot.dirty && !animated) return;
       for (let k = 0; k < LEDS_PER_RACK; k++) {
         const row = Math.floor(k / 2);
-        if (slot.state === 'off') color.set(PALETTE.ledOff);
+        if (slot.state === 'off') color.set(slot.standby && row === 0 ? 0x2e5a45 : PALETTE.ledOff);
         else if (slot.state === 'incident') color.set(calm || blink ? PALETTE.red : 0x3a1014);
         else {
           const wave = calm ? 1 : Math.sin(time * 5 - row * 1.1 + i * 0.7 + (k % 2) * 1.7);
@@ -690,6 +788,7 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
       arrow.rotation.y = time * 1.5;
       beam.material.opacity = 0.12 + 0.06 * Math.sin(time * 2.4);
     }
+    updatePrize(dt, time, calm);
     if (calm !== nocState.calm) { nocState = { ...nocState, calm }; nocTex.redraw(); }
     nocClock += dt;
     if (!calm && nocClock > 1) { nocClock = 0; nocState = { ...nocState, clock: time }; nocTex.redraw(); }
@@ -709,5 +808,11 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
     for (const image of images) if (image) { image.onload = null; image.src = ''; }
   }
 
-  return { root, racks, coffee, dock, workstation, highlight, setObjective, setNoc, update, release, tier };
+  /** O painel do sorteio como a cena enxerga: onde fica a ficha e o caminho de setas. */
+  const prize = {
+    anchor, panel,
+    setPathVisible(visible) { if (pathOn === visible) return; pathOn = visible; pathDirty = true; },
+  };
+
+  return { root, racks, coffee, dock, workstation, prize, highlight, setObjective, setNoc, update, release, tier };
 }

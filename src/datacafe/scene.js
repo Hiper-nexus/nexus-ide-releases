@@ -24,6 +24,7 @@ import { createProgression, scoreTicket, progressionStep, closeShift, awardMessa
 import { dropUnavailable, missionView } from './missions.js';
 import { comboLevel, comboMultiplier } from './combo.js';
 import { saveProgress, initialProgress } from './progress.js';
+import { attractPose, revealWeight, REVEAL, IDLE_NUDGE, glanceTarget, glanceRange, prizeObjective, shouldPointToPrize } from './showcase.js';
 
 const KEYS = { w: 'up', arrowup: 'up', s: 'down', arrowdown: 'down', a: 'left', arrowleft: 'left', d: 'right', arrowright: 'right' };
 const ACTION_KEYS = new Set(['e', ' ', 'enter']);
@@ -143,6 +144,15 @@ class DataCafeWorld {
     this.terminal = { phase: 'standing', shown: 0, result: null, failure: null, progress: 0, status: '', blink: true };
     this.toldDesk = false;
     this.scratch = new Vector3();
+    // Vitrine do sorteio: passeio antes de começar, espiada no painel ao começar e o cutucão do farol.
+    this.attract = { x: center.x, z: center.z - 0.5, yaw: 0, zoom: 1 };
+    this.glance = { ...glanceTarget(LAYOUT), range: 8, weight: 0 };
+    this.reveal = null;
+    this.prizeSeen = false;
+    this.missionsDone = 0;
+    this.idle = 0;
+    this.nudged = false;
+    this.dc.prize.setPathVisible(true);
 
     this.hold = { item: null, label: null, duration: 1, elapsed: 0 };
     this.holdShown = false;
@@ -209,7 +219,12 @@ class DataCafeWorld {
       onComplete: () => this.takeCrate(),
     });
     const board = label('Ver o sorteio do grupo', { duration: 0.3 });
-    register(this.items, { id: 'board', x: LAYOUT.board.x + 0.5, z: LAYOUT.board.z + 0.95, radius: 0.95, label: () => board, onComplete: () => this.on.station?.('group') });
+    // O painel tem cinco células de largura: o alcance cobre a frente toda, de ponta a ponta.
+    register(this.items, {
+      id: 'board', x: LAYOUT.board.x + LAYOUT.board.width / 2, z: LAYOUT.board.z + 1.25, radius: LAYOUT.board.width / 2 + 0.2,
+      label: () => board,
+      onComplete: () => this.seePrize(),
+    });
     const live = label('Ver as lives', { duration: 0.3 });
     register(this.items, { id: 'live', x: LAYOUT.live.x + 0.5, z: LAYOUT.live.z + 0.95, radius: 0.95, label: () => live, onComplete: () => this.on.station?.('live') });
     const nocLabels = new Map();
@@ -227,6 +242,15 @@ class DataCafeWorld {
       label: game => (game.carrying ? desk.busy : desk.sit),
       onComplete: () => this.sitDown(),
     });
+  }
+
+  /** Abre o painel do sorteio; quem já viu não é mais cutucado pelo farol nem pelo caminho no chão. */
+  seePrize() {
+    this.on.station?.('group');
+    if (this.prizeSeen) return;
+    this.prizeSeen = true;
+    this.dc.prize.setPathVisible(false);
+    this.version++;
   }
 
   ticketFor(kind, rackId = null) {
@@ -286,6 +310,7 @@ class DataCafeWorld {
     const unavailable = this.unavailableMissions();
     const result = scoreTicket(this.game, this.progress, ticket, undefined, unavailable);
     this.game = { ...result.state, missions: dropUnavailable(result.state.missions, undefined, unavailable) };
+    this.missionsDone += result.finished.length;
     const progress = { ...result.progress, racksOn: installedIds(this.racks) };
     const badges = badgesFor(progress, this.racks);
     this.progress = { ...progress, badges };
@@ -367,6 +392,8 @@ class DataCafeWorld {
   /** Para onde o jogador deveria ir agora: incidente, café baixo, rack livre com a GPU na mão ou a doca. */
   objective() {
     const top = this.tickets[0];
+    const nudge = shouldPointToPrize({ topKind: top?.kind ?? null, carrying: this.carrying, visited: this.prizeSeen, finishedMissions: this.missionsDone, idleSeconds: this.idle });
+    if (nudge) return prizeObjective(LAYOUT);
     if (!top) return null;
     if (top.kind === 'incident') { const rack = this.dc.racks.get(top.rackId); return { x: rack.x, z: rack.front + 0.4, kind: 'incident', text: top.title }; }
     if (top.kind === 'coffee') return { x: this.dc.coffee.x, z: this.dc.coffee.z + 0.6, kind: 'coffee', text: top.title };
@@ -581,6 +608,7 @@ class DataCafeWorld {
     const running = !this.paused;
     if (running && this.playing) {
       this.sitStep(dt, seconds);
+      this.trackIdle(dt);
       if (this.desk.phase === 'standing') this.move(dt);
       this.simulate(dt);
       if (this.desk.phase === 'standing') this.interact(dt);
@@ -588,6 +616,7 @@ class DataCafeWorld {
       else this.trackGoal(dt);
     }
     if (running) {
+      this.steam(dt);
       this.dev.group.position.set(this.body.x, 0, this.body.z);
       this.dev.setMotion({ speed: this.playing ? this.body.speed : 0, heading: this.body.heading, carrying: this.carrying, tired: this.energy.tired, calm: this.calm, seat: this.seatView.blend, typing: this.desk.phase === 'acting' && this.holding }, dt);
       this.dc.update(dt, seconds, this.calm);
@@ -608,15 +637,52 @@ class DataCafeWorld {
     if (animate || effects || this.pointers.size) this.schedule();
   };
 
+  /** Parado há muito tempo? O farol passa a apontar o painel do sorteio, e volta ao normal quando o jogador mexe. */
+  trackIdle(dt) {
+    const active = this.holding || this.desk.phase !== 'standing' || Math.hypot(this.intent.x, this.intent.y) > 0.1;
+    this.idle = active ? 0 : this.idle + dt;
+    const nudged = this.idle >= IDLE_NUDGE;
+    if (nudged !== this.nudged) { this.nudged = nudged; this.version++; }
+  }
+
+  /** Vapor subindo da cafeteira: dois cubinhos a cada ~0,5 s. Nada com redução de movimento. */
+  steam(dt) {
+    if (this.calm) return;
+    this.clocks.steam = (this.clocks.steam ?? 0) + dt;
+    if (this.clocks.steam < 0.55) return;
+    this.clocks.steam = 0;
+    const { spout } = this.dc.coffee;
+    this.particles.burst(spout.x, spout.y + 0.2, spout.z, { count: 2, colors: [0xf4ece6], speed: 0.06, up: 0.5, gravity: -0.4, life: 1.6, size: 0.8 });
+  }
+
+  /** A espiada no painel do sorteio logo depois de começar; null quando não há (ou acabou). */
+  stepReveal(dt) {
+    const reveal = this.reveal;
+    if (!reveal || !this.playing) return null;
+    reveal.t += dt;
+    if (reveal.t >= REVEAL.duration) { this.reveal = null; return null; }
+    const glance = this.glance;
+    glance.weight = revealWeight(reveal.t, this.calm);
+    glance.range = glanceRange(this.camera.aspect);
+    return glance;
+  }
+
   updateCamera(dt, seconds) {
     const input = this.camInput;
-    if (!this.playing && !this.calm && !this.pointers.size) this.view.yaw = Math.sin(seconds * 0.12) * 0.45;
+    if (!this.playing) {
+      // Antes de começar a câmera passeia pelo salão com o painel do sorteio em vista.
+      attractPose(seconds, this.calm, this.attract);
+      input.idle.x = this.attract.x;
+      input.idle.z = this.attract.z;
+      if (!this.calm && !this.pointers.size) this.view.yaw = this.attract.yaw;
+    }
+    input.glance = this.stepReveal(dt);
     input.playing = this.playing;
     input.calm = this.calm;
     input.aspect = this.camera.aspect;
     input.yaw = this.view.yaw;
     input.pitch = this.view.pitch;
-    input.zoom = this.view.zoom;
+    input.zoom = this.playing ? this.view.zoom : this.view.zoom * this.attract.zoom;
     // Aproxima enquanto o jogador segura uma ação; sentado, enquadra o monitor.
     input.focus = this.holdShown && this.promptItem ? this.promptItem : null;
     input.seat = this.seatView.blend > 0 ? this.seatView : null;
@@ -663,6 +729,7 @@ class DataCafeWorld {
       this.clearInput(); this.host.blur(); return;
     }
     if (!this.playing || this.paused) return;
+    this.reveal = null;
     if (KEYS[key]) { event.preventDefault(); this.keys[KEYS[key]] = true; this.schedule(); return; }
     if (ACTION_KEYS.has(key)) { event.preventDefault(); if (!event.repeat) this.holdStart(); return; }
     if (key === 'm') this.on.menu?.();
@@ -684,6 +751,7 @@ class DataCafeWorld {
 
   holdStart = () => {
     if (!this.playing || this.paused || this.disposed) return;
+    this.reveal = null;
     this.audio?.unlock();
     this.holding = true;
     this.schedule();
@@ -707,6 +775,7 @@ class DataCafeWorld {
     const pair = () => { const [a, b] = this.pointers.values(); return Math.hypot(a.x - b.x, a.y - b.y); };
     on(canvas, 'pointerdown', event => {
       this.host.focus({ preventScroll: true });
+      this.reveal = null;
       this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       capture(canvas, event);
       if (this.pointers.size === 2) this.pinch = { distance: pair(), zoom: this.view.zoom };
@@ -753,6 +822,7 @@ class DataCafeWorld {
       on(stick, 'pointerdown', event => {
         event.preventDefault();
         if (!this.playing) { this.on.requestStart?.(); }
+        this.reveal = null;
         origin = { id: event.pointerId, x: event.clientX, y: event.clientY };
         capture(stick, event);
         stick.classList.add('active');
@@ -802,6 +872,9 @@ class DataCafeWorld {
     this.view.yaw = 0;
     this.paused = false;
     this.lastTime = 0;
+    this.idle = 0;
+    // Uma espiada de 2,5 s no painel do sorteio antes de a câmera assentar no dev (qualquer tecla ou toque pula).
+    this.reveal = this.calm ? null : { t: 0 };
     this.audio?.unlock();
     this.version++;
     this.host.focus({ preventScroll: true });
@@ -833,6 +906,11 @@ class DataCafeWorld {
     this.deployGain = DESK.xp;
     if (this.holdShown) { this.on.hold?.(0); this.holdShown = false; }
     this.game = createProgression();
+    this.prizeSeen = false;
+    this.missionsDone = 0;
+    this.idle = 0;
+    this.nudged = false;
+    this.dc.prize.setPathVisible(true);
     saveProgress(this.progress);
     this.on.xp?.({ progress: this.progress, gained: 0, leveledUp: false });
     this.on.energy?.(1, false);

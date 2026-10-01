@@ -35,6 +35,8 @@ export const RIG = {
   /** Perto de algo interativo: aproxima e desliza o olhar para o objeto. */
   approach: 0.86,
   approachShift: 0.35,
+  /** Na espiada no painel do sorteio a câmera olha a parede norte de frente, de uma elevação baixa. */
+  glancePitch: 0.66,
 };
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -140,6 +142,7 @@ const framing = {};
  * Um passo da câmera; `cam` (de createCamera) é atualizado no lugar e devolvido.
  * `input`: { playing, calm, aspect, body: {x, z, vx, vz}, yaw, pitch, zoom (o que o jogador
  * pediu), focus: {x, z} | null (algo interativo ao alcance), seat: { blend, screen } | null,
+ * glance: { x, y, z, range, weight } | null (espiada: aproxima o olhar de um ponto, 0 a 1),
  * idle: {x, z} (para onde olhar antes de começar) }.
  */
 export function cameraStep(cam, input, layout, dt) {
@@ -189,6 +192,18 @@ export function cameraStep(cam, input, layout, dt) {
     tz += (framing.tz - tz) * blend;
   }
 
+  // Espiada: depois do enquadramento do dev, puxa o olhar para o ponto pedido. Com peso zero nada muda.
+  const glance = input.glance;
+  const gaze = glance && glance.weight > 0 ? Math.min(1, glance.weight) : 0;
+  if (gaze > 0) {
+    yaw -= yaw * gaze;
+    pitch += (RIG.glancePitch - pitch) * gaze;
+    range += (glance.range - range) * gaze;
+    tx += (glance.x - tx) * gaze;
+    ty += (glance.y - ty) * gaze;
+    tz += (glance.z - tz) * gaze;
+  }
+
   const kTurn = instant ? 1 : blendFor(RIG.turn, dt);
   const kFollow = instant ? 1 : blendFor(RIG.follow, dt);
   cam.yaw += (yaw - cam.yaw) * kTurn;
@@ -200,7 +215,7 @@ export function cameraStep(cam, input, layout, dt) {
   cam.fresh = false;
   // A elevação segura acima vale para o destino; a câmera suavizada ainda está a caminho.
   // Subir é imediato, para o dev nunca sumir atrás de um rack; descer continua suave.
-  if (playing && blend === 0) {
+  if (playing && blend === 0 && gaze === 0) {
     seen.x = cam.tx;
     seen.z = cam.tz;
     cam.pitch = Math.max(cam.pitch, occlusionPitch(layout, body, cam.yaw, cam.range, seen, cam.pitch));

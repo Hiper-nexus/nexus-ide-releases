@@ -5,14 +5,14 @@
  *
  *   '.' piso      '#' parede     'R' rack        'C' caixa de GPU na doca
  *   'K' cafeteira 'D' mesa/balcão 'N' telão NOC  'T' mesa do café
- *   'P' planta    'B' mural da comunidade        'L' TV da live
+ *   'P' planta    'B' painel de LED do sorteio   'L' TV da live
  *   'H' cadeira da estação de trabalho, na frente da mesa com o terminal
  */
 import { MODELS } from './models.js';
 
 export const CELLS = [
   '##########################',
-  '#NNNNNN..DKD.PB.LP.CCCCC.#',
+  '#NNNNNN..DKDBBBBBLPCCCCC.#',
   '#........................#',
   '#.......T...T............#',
   '#........................#',
@@ -51,8 +51,9 @@ export const LAYOUT = Object.freeze({
   coffee: { x: 10, z: 1 },
   dock: { x: 19, z: 1, width: 5 },
   noc: { x: 1, z: 1, width: 6 },
-  board: { x: 14, z: 1 },
-  live: { x: 16, z: 1 },
+  /** O painel do sorteio: cinco células de largura, a atração da parede norte. */
+  board: { x: 12, z: 1, width: 5 },
+  live: { x: 17, z: 1 },
   /** A mesa do terminal: o dev senta em `seat`, de costas para a câmera, e levanta em `stand`. */
   workstation: {
     desk: { x: 17, z: 10 },
@@ -66,7 +67,7 @@ export const LAYOUT = Object.freeze({
 /** Altura de cada tipo de célula, a mesma da arte em datacenter.js. A câmera usa isto
  * para subir quando algo ficaria entre ela e o dev. */
 export const HEIGHTS = Object.freeze({
-  '#': 2.8, lowWall: 0.45, R: 2.05, N: 2.6, K: 1.45, D: 1.4, T: 0.8, P: 1.1, B: 1.8, L: 1.7, C: 0.95, H: 1,
+  '#': 2.8, lowWall: 0.45, R: 2.05, N: 2.6, K: 1.45, D: 1.4, T: 0.8, P: 1.1, B: 2.1, L: 1.7, C: 0.95, H: 1,
 });
 
 /** Altura do que ocupa a célula (x, z); piso e fora do salão valem 0. */
