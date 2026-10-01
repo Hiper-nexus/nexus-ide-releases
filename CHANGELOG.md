@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.156 — Fechar sempre à vista
+
+Build do Windows. Inclui a 0.76.155 (Guarda no lugar).
+
+- **Fechar não some do cabeçalho (F-717).** Com três panes de ~850 px lado a lado, a barra do pane ficava no modo cheio, porque o limite era fixo em 760 px. Custo, tok/s e nove ações com rótulo passavam da largura, e o `overflow: hidden` cortava o Fechar. A barra agora mede o transbordo real, inclusive quando custo e tok/s crescem, guarda quanto cada densidade precisou e desce um degrau (cheio → ícones → compacto). Ela só volta a subir com essa largura mais a folga contra oscilação do F-686.
+
 ## 0.76.155 — Guarda no lugar
 
 Build do Windows. Inclui a 0.76.154 (Motor que usa todo mundo).

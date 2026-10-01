@@ -8774,7 +8774,7 @@ export const RELEASE_076154: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076155: AppRelease = {
   version: '0.76.155',
   date: '2026-10-01',
   codename: 'Guarda no lugar',
@@ -8790,6 +8790,27 @@ export const CURRENT_RELEASE: AppRelease = {
         'atalho para a própria pasta do perfil ou para uma pasta vizinha de ' +
         'nome parecido, e apenas o refazia. Agora ela recusa e o pane não ' +
         'abre, como no Mac.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.156',
+  date: '2026-10-01',
+  codename: 'Fechar sempre à vista',
+  summary:
+    'O botão Fechar não some mais do cabeçalho quando vários panes ficam ' +
+    'lado a lado. Inclui a 0.76.155.',
+  highlights: [
+    {
+      title: 'Fechar sempre à vista',
+      detail:
+        'Com três panes lado a lado numa tela larga, o cabeçalho mostrava ' +
+        'custo, tok/s e todas as ações com nome, passava da largura e o ' +
+        'botão Fechar ficava cortado. Agora, quando os botões não cabem, ' +
+        'eles viram ícones ou vão para o menu "⋯", e o Fechar fica sempre ' +
+        'no canto direito.',
     },
   ],
   fixes: [],
