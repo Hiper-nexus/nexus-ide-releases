@@ -1,0 +1,185 @@
+/**
+ * Qwen Code (`qwen`) recebe o MCP do Nexus por `--mcp-config` (F-238).
+ *
+ * Qwen é fork do Gemini CLI: `QWEN_HOME` aponta o home da CLI (settings,
+ * sessões, MCP). A credencial do operador vive em `settings.json`
+ * (`env.BAILIAN_TOKEN_PLAN_API_KEY` + `modelProviders`) — o overlay LIGA o
+ * arquivo, nunca copia o segredo para outro lugar. O MCP da sessão chega por
+ * um arquivo JSON privado (`{"mcpServers": …}`) referenciado por
+ * `--mcp-config`; a ponte stdio compartilhada (`~/.nexus/mcp-bridge`) recebe
+ * URL e bearer só por ENV (`NEXUS_MCP_URL`/`NEXUS_MCP_TOKEN`), como MiniMax
+ * (F-678) e Muse (F-696). `--allowed-mcp-server-names` restringe os
+ * servidores: worker de missão (governed) recebe só o `nexus` + hub do
+ * workspace — o `mcpServers` ambiente do operador (ex.: blender) não entra.
+ *
+ * Conversas (`sessions`, `projects`, `todos`, `file-history`, `tmp`, `debug`,
+ * `artifacts`, `usage`) ficam em `<userData>/provider-state/qwen/<checkoutId>`
+ * (F-566); sync-back é desligado — nada volta ao perfil real.
+ */
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  activateArtifact,
+  linkDirectoryEntries,
+  linkProviderSessionState,
+  linkSelectedEntries,
+  objectValue,
+  readJsonObject,
+  runtimeServerName,
+  validateCliMcpInputs,
+  withCliMcpArtifactTransaction,
+  writePrivateFileAtomic,
+} from './cli-mcp-session-artifacts';
+import { mirrorGovernedSkills } from './cli-mcp-session-governance';
+import type {
+  CliMcpSessionOptions,
+  CliMcpSessionResult,
+} from './cli-mcp-session-types';
+import { resolveGovernedCliProfile } from './governed-cli-profile';
+import { claudeFamilyHubMcpServers } from '../mcp-hub/mcp-hub-spawn';
+import { ensureNexusMcpBridgeScript } from './cli-mcp-session-minimax';
+import { resolveCliBinary } from '../path-resolver';
+
+/**
+ * Estado de conversa do Qwen: isolado por checkout. `memories` fica do lado
+ * da config (são memórias do operador, não transcript de sessão).
+ */
+const QWEN_SESSION_DIRECTORIES = [
+  'sessions',
+  'projects',
+  'todos',
+  'file-history',
+  'tmp',
+  'debug',
+  'artifacts',
+  'usage',
+];
+const QWEN_SESSION_FILES = {
+  'usage_record.jsonl': '',
+  'tip_history.json': '',
+};
+const QWEN_SESSION_ENTRIES = [
+  ...QWEN_SESSION_DIRECTORIES,
+  ...Object.keys(QWEN_SESSION_FILES),
+];
+
+/**
+ * Único material de credencial do Qwen: `settings.json` guarda
+ * `env.BAILIAN_TOKEN_PLAN_API_KEY` e o catálogo `modelProviders`. Ligado,
+ * nunca copiado — a própria CLI lê/atualiza no lugar.
+ */
+const QWEN_AUTH_ENTRIES = ['settings.json', 'installation_id'];
+
+function qwenAuthGrantPaths(providerHome: string): string[] {
+  const found: string[] = [];
+  for (const name of QWEN_AUTH_ENTRIES) {
+    const candidate = path.join(providerHome, name);
+    try {
+      if (fs.statSync(candidate)) found.push(candidate);
+    } catch {
+      continue;
+    }
+  }
+  return found;
+}
+
+/**
+ * Overlay `QWEN_HOME` por sessão: config/credencial ligada do perfil real,
+ * conversas no provider-state do checkout, e `mcp-config.json` privado com o
+ * servidor `nexus` (ponte stdio) + hub — MCP ambiente do operador só entra em
+ * pane não-governado.
+ */
+export function prepareQwenMcpSession(
+  url: string,
+  token: string,
+  options: CliMcpSessionOptions = {},
+): CliMcpSessionResult {
+  validateCliMcpInputs(url, token);
+  const home = path.resolve(options.home ?? os.homedir());
+  const providerHome = path.resolve(
+    options.providerHome ?? process.env.QWEN_HOME ?? path.join(home, '.qwen'),
+  );
+  const artifactRoot = path.resolve(
+    options.artifactRoot ?? path.join(home, '.nexus', 'ephemeral', 'mcp-clients'),
+  );
+  return withCliMcpArtifactTransaction('qwen', token, artifactRoot, (artifactDir) => {
+    const serverName = runtimeServerName(token);
+    const policy = resolveGovernedCliProfile(token, options);
+    if (policy.governed) {
+      linkSelectedEntries(providerHome, artifactDir, new Set(QWEN_AUTH_ENTRIES));
+    } else {
+      linkDirectoryEntries(providerHome, artifactDir, new Set(QWEN_SESSION_ENTRIES));
+    }
+    const providerSessionHome = linkProviderSessionState(
+      'qwen',
+      artifactDir,
+      options,
+      QWEN_SESSION_DIRECTORIES,
+      QWEN_SESSION_FILES,
+    );
+
+    const bridge = ensureNexusMcpBridgeScript(home);
+    const command = resolveCliBinary('node')?.binPath ?? 'node';
+    const hub = claudeFamilyHubMcpServers(options.hubServers ?? []);
+    // MCP ambiente do operador (settings.json do perfil real): pane direto
+    // preserva; worker governado nunca recebe (política Codex gated).
+    const ambient = policy.governed
+      ? {}
+      : objectValue(readJsonObject(path.join(providerHome, 'settings.json')).mcpServers);
+    const servers = {
+      ...ambient,
+      ...hub,
+      [serverName]: { type: 'stdio', command, args: [bridge] },
+    };
+    writePrivateFileAtomic(
+      path.join(artifactDir, 'mcp-config.json'),
+      `${JSON.stringify({ mcpServers: servers }, null, 2)}\n`,
+    );
+
+    const governedSkillsDir = path.join(artifactDir, 'skills');
+    if (policy.governed) {
+      mirrorGovernedSkills(
+        'qwen',
+        home,
+        [governedSkillsDir],
+        policy.allowedSkills,
+        policy.allowedTools,
+      );
+    }
+    activateArtifact(token, {
+      artifactDir,
+      providerHome,
+      // settings.json é symlink para o perfil real — sync-back é sempre off:
+      // nem conversas nem o arquivo de credencial voltam por cópia.
+      configFiles: [],
+      syncBack: false,
+    });
+    const allowed = policy.governed
+      ? [serverName, ...Object.keys(hub)]
+      : Object.keys(servers);
+    const authGrantPaths = policy.governed ? qwenAuthGrantPaths(providerHome) : [];
+    return {
+      env: {
+        QWEN_HOME: artifactDir,
+        NEXUS_MCP_URL: url,
+        NEXUS_MCP_TOKEN: token,
+      },
+      extraArgs: [
+        '--mcp-config',
+        path.join(artifactDir, 'mcp-config.json'),
+        '--allowed-mcp-server-names',
+        ...allowed,
+      ],
+      serverName,
+      artifactDir,
+      ...(policy.governed
+        ? {
+            providerStateReadPaths: authGrantPaths,
+            providerStateWritePaths: authGrantPaths,
+            providerSessionHome,
+          }
+        : {}),
+    };
+  });
+}

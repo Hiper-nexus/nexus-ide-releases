@@ -217,6 +217,7 @@ import {
   prepareKimiMcpSession,
   prepareOpenCodeMcpSession,
   prepareMimoMcpSession,
+  prepareQwenMcpSession,
   purgeStaleCliMcpSessions,
 } from "./cli-mcp-session-config";
 import { readTomlObject } from "./cli-mcp-session-artifacts";
@@ -1493,6 +1494,24 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
             userDataPath: app.getPath("userData"),
             checkoutId: authority.scope.checkoutId,
             providerHome: preparedEnv?.GROK_HOME,
+            cwd: authority.cwd,
+            workspaceRoot: authority.scope.rootRealPath,
+            hubServers,
+          });
+          Object.assign(env, prepared.env);
+          extraArgs.push(...prepared.extraArgs);
+          advisoryProviderStateHome = prepared.providerStateHome;
+          advisoryProviderSessionHome = prepared.providerSessionHome;
+          advisoryProviderStateReadPaths = prepared.providerStateReadPaths ?? [];
+          advisoryProviderStateWritePaths = prepared.providerStateWritePaths ?? [];
+        } else if (flavor === "qwen") {
+          // F-238: QWEN_HOME aponta um overlay por sessão (settings.json
+          // ligado, conversas no provider-state do checkout); o MCP chega por
+          // --mcp-config + --allowed-mcp-server-names (worker: só o Nexus).
+          const prepared = prepareQwenMcpSession(mcpUrl(), ctx.token, {
+            userDataPath: app.getPath("userData"),
+            checkoutId: authority.scope.checkoutId,
+            providerHome: preparedEnv?.QWEN_HOME,
             cwd: authority.cwd,
             workspaceRoot: authority.scope.rootRealPath,
             hubServers,

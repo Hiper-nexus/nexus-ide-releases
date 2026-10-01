@@ -19,14 +19,13 @@ const SESSION_LOGIN_IDS = [
 ] as const;
 
 // F-236: deepseek virou cli-pty no host Claude (chave de API, como glm/longcat).
-const KEY_ONLY_IDS = ['aider', 'deepseek', 'glm', 'glm-flash', 'longcat', 'muse-claude'] as const;
+// F-238: qwen virou cli-pty (Qwen Code) — auth só por settings/env, sem `qwen auth`.
+const KEY_ONLY_IDS = ['aider', 'deepseek', 'glm', 'glm-flash', 'longcat', 'muse-claude', 'qwen'] as const;
 
 describe('builtin CLI login commands', () => {
   const adapters = BUILTIN_ADAPTERS.map((raw) => adapterSchema.parse(raw));
 
   it('parses every builtin adapter', () => {
-    // Login commands são conceito de CLI local; o api-provider (qwen) existe
-    // para gestão de key na aba Remotos e fica fora desta lista.
     const cliIds = adapters
       .filter((a) => a.kind === 'cli-pty')
       .map((a) => a.id)
@@ -36,7 +35,8 @@ describe('builtin CLI login commands', () => {
 
   it('api-providers remotos declaram endpoint e auth de key', () => {
     const remotes = adapters.filter((a) => a.kind === 'api-provider');
-    expect(remotes.map((a) => a.id).sort()).toEqual(['qwen']);
+    // F-238: qwen saiu — era o último api-provider builtin.
+    expect(remotes.map((a) => a.id).sort()).toEqual([]);
     for (const adapter of remotes) {
       if (adapter.kind !== 'api-provider') continue;
       expect(adapter.endpoint.startsWith('https://')).toBe(true);

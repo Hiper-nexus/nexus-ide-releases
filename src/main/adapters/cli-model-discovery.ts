@@ -4,10 +4,13 @@ import path from 'node:path';
 import type { Adapter } from '../../shared/adapter-types';
 import { MODEL_ID_PATTERN } from '../../shared/model-id';
 import { parseKimiConfigModelAliases } from './kimi-runtime-env';
+import { readQwenSettingsSummary } from './qwen-settings';
 
 export interface CliModelCacheSource {
   adapterId: string;
   files: string[];
+  /** Custom reader for non-`models`-shaped files (e.g. Qwen settings.json). */
+  read?(file: string): string[];
 }
 
 const home = os.homedir();
@@ -44,6 +47,14 @@ export const CLI_MODEL_CACHE_SOURCES: CliModelCacheSource[] = [
   // reader usually yields nothing; live `opencode models` in model-discovery
   // is the official listing. Claude/Codex have no list command — this cache
   // (when the CLI writes it) is their official mechanism.
+  {
+    adapterId: 'qwen',
+    // F-238: sem subcomando de listar — o catálogo vivo é o
+    // `modelProviders.*[].id` do settings do operador (só ids qwen*).
+    files: [path.join(home, '.qwen', 'settings.json')],
+    read: (file) =>
+      readQwenSettingsSummary(path.dirname(path.dirname(file))).modelIds as string[],
+  },
 ];
 
 const MODEL_ID = MODEL_ID_PATTERN;
@@ -135,7 +146,7 @@ export function discoverCliModels(
   for (const source of sources) {
     const ids = new Set<string>();
     for (const file of source.files) {
-      for (const id of readCliModelCache(file)) ids.add(id);
+      for (const id of (source.read ?? readCliModelCache)(file)) ids.add(id);
     }
     if (ids.size > 0) discovered.set(source.adapterId, [...ids]);
   }

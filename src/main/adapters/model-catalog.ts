@@ -240,6 +240,19 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
         { id: 'deepseek-flash', availability: 'cheap', costTier: 'free', source: 'bundled' },
       ],
     },
+    qwen: {
+      // Catálogo vivo vem do settings.json do operador (F-238); estes são os
+      // ids seed do adapter, usados como fallback e priors de custo.
+      default: 'qwen3.8-max',
+      models: [
+        { id: 'qwen3.8-max', availability: 'paid', costTier: 'medium', source: 'bundled' },
+        { id: 'qwen3.8-max-preview', availability: 'paid', costTier: 'medium', source: 'bundled' },
+        { id: 'qwen3.7-max', availability: 'paid', costTier: 'medium', source: 'bundled' },
+        { id: 'qwen3.7-plus', availability: 'cheap', costTier: 'low', source: 'bundled' },
+        { id: 'qwen3.6-plus', availability: 'cheap', costTier: 'low', source: 'bundled' },
+        { id: 'qwen3.6-flash', availability: 'cheap', costTier: 'free', source: 'bundled' },
+      ],
+    },
     muse: {
       // 'muse' era placeholder e está em RETIRED_MODEL_MIGRATIONS; o binário
       // 1.3 abre em muse-spark-1.3 (mesmo default do catálogo publicado).

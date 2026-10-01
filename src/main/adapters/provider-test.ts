@@ -1,6 +1,7 @@
 import type { Adapter } from '../../shared/adapter-types';
 import type { TestConnectionResult } from '../../shared/provider-settings-types';
 import { isBinResolvable } from './adapter-registry';
+import { probeQwenCredential } from './qwen-readiness';
 
 /**
  * Test-connection for a provider's configured key. For api-provider adapters
@@ -53,6 +54,21 @@ export async function testProviderKey(
   // cli-pty: verify the binary resolves; report whether a key is stored.
   if (!isBinResolvable(adapter.bin)) {
     return { ok: false, detail: `binary "${adapter.bin}" not found on PATH` };
+  }
+  // F-238: sonda viva só no painel de Providers — nunca no spawn. A chave do
+  // Qwen pode viver só em ~/.qwen/settings.json; a sonda a usa em memória.
+  if (adapter.id === 'qwen') {
+    const probe = await probeQwenCredential({ key });
+    switch (probe.state) {
+      case 'present':
+        return { ok: true, detail: 'reachable; credential accepted' };
+      case 'invalid-credential':
+        return { ok: false, detail: probe.detail ?? 'key rejected' };
+      case 'no-credential':
+        return { ok: false, detail: 'binary found but no key stored' };
+      default:
+        return { ok: true, detail: 'binary found; credential check unreachable (CLI validates on use)' };
+    }
   }
   if (adapter.auth.method === 'oauth' || adapter.auth.method === 'subscription') {
     return {

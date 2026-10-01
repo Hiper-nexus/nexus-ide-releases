@@ -15,6 +15,7 @@ export { prepareGrokMcpSession } from './cli-mcp-session-grok';
 export { prepareKimiMcpSession } from './cli-mcp-session-kimi';
 export { prepareOpenCodeMcpSession } from './cli-mcp-session-opencode';
 export { prepareMimoMcpSession } from './cli-mcp-session-mimo';
+export { prepareQwenMcpSession } from './cli-mcp-session-qwen';
 export type {
   CliMcpPurgeOptions,
   CliMcpSessionOptions,

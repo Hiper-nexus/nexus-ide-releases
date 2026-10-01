@@ -309,6 +309,9 @@ const LAUNCHER_KEY_ALIASES: Record<string, string[]> = {
   // `ai gf` não tem slot próprio no providers.conf — lê a chave `glm`.
   'glm-flash': ['glm-flash', 'glm', 'zai', 'z.ai'],
   sakana: ['sakana', 'fugu'],
+  // F-238: a chave do Token Plan/Bailian também pode estar gravada como
+  // `dashscope=` no providers.conf legado.
+  qwen: ['qwen', 'dashscope', 'bailian'],
 };
 
 let launcherKeyCache: {

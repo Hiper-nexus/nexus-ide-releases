@@ -210,8 +210,9 @@ export const MODEL_DISCOVERY_INVENTORY: Readonly<
     reason: 'wrapper da CLI claude + endpoint DeepSeek; sem catálogo próprio',
   },
   qwen: {
-    kind: 'bundled',
-    reason: 'Qwen Code não expõe comando de listar modelos',
+    kind: 'cache',
+    reason:
+      'sem subcomando list; usa modelProviders do ~/.qwen/settings.json + bundled',
   },
   muse: {
     kind: 'bundled',

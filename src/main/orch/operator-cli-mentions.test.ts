@@ -65,6 +65,9 @@ describe('operatorRecentlyNamedCli', () => {
     type('s5', 'chama o xiaomi');
     type('s6', 'testa com o moonshot');
     type('s7', 'openai pra variar');
+    type('s8', 'passa pro qwen revisar');
+    type('s9', 'qwen code nesse diff');
+    type('s10', 'testa com qwen 3.8');
     expect(operatorRecentlyNamedCli('s1', 'claude', now)).toBe(true);
     expect(operatorRecentlyNamedCli('s2', 'agy', now)).toBe(true);
     expect(operatorRecentlyNamedCli('s3', 'devin', now)).toBe(true);
@@ -73,6 +76,9 @@ describe('operatorRecentlyNamedCli', () => {
     expect(operatorRecentlyNamedCli('s5', 'mimo-code', now)).toBe(true);
     expect(operatorRecentlyNamedCli('s6', 'kimi', now)).toBe(true);
     expect(operatorRecentlyNamedCli('s7', 'codex', now)).toBe(true);
+    expect(operatorRecentlyNamedCli('s8', 'qwen', now)).toBe(true);
+    expect(operatorRecentlyNamedCli('s9', 'qwen', now)).toBe(true);
+    expect(operatorRecentlyNamedCli('s10', 'qwen', now)).toBe(true);
   });
 
   it('só casa palavra inteira — sol e terra nunca são codex', () => {

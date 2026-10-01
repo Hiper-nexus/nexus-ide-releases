@@ -97,7 +97,7 @@ const quirksSchema = z
     mcpAutoload: z.boolean().default(false),
     /** Per-session Nexus MCP integration. `none` keeps the CLI worker-only. */
     nexusMcp: z
-      .enum(['none', 'autoload', 'codex', 'agy', 'opencode', 'kimi', 'grok', 'mimo-code', 'minimax-code', 'muse', 'devin'])
+      .enum(['none', 'autoload', 'codex', 'agy', 'opencode', 'kimi', 'grok', 'mimo-code', 'minimax-code', 'muse', 'devin', 'qwen'])
       .default('none'),
   })
   .superRefine((quirks, ctx) => {
@@ -227,7 +227,8 @@ export function hasNexusMcpCapability(quirks: NexusMcpQuirks): boolean {
     quirks.nexusMcp === 'agy' ||
     quirks.nexusMcp === 'devin' ||
     quirks.nexusMcp === 'kimi' ||
-    quirks.nexusMcp === 'grok'
+    quirks.nexusMcp === 'grok' ||
+    quirks.nexusMcp === 'qwen'
   );
 }
 

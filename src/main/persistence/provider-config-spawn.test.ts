@@ -168,6 +168,27 @@ const opencodeAdapter = {
   },
 };
 
+const qwenAdapter = {
+  ...kimiAdapter,
+  id: 'qwen',
+  label: 'Qwen Code',
+  bin: 'qwen',
+  auth: {
+    method: 'api_key',
+    envVarFallback: 'BAILIAN_TOKEN_PLAN_API_KEY',
+    loginHint: 'settings/env auth',
+  },
+  env: {
+    passthrough: [
+      'BAILIAN_TOKEN_PLAN_API_KEY',
+      'DASHSCOPE_API_KEY',
+      'OPENAI_API_KEY',
+      'OPENAI_BASE_URL',
+      'OPENAI_MODEL',
+    ],
+  },
+};
+
 const claudeHostAdapter = (id: string, extra: string[]) => ({
   ...kimiAdapter,
   id,
@@ -272,6 +293,8 @@ vi.mock('../adapters/adapter-registry', () => ({
           ? { ...kimiAdapter, id: 'grok', bin: 'grok', env: { passthrough: ['XAI_API_KEY'] } }
         : id === 'agy'
           ? agyAdapter
+        : id === 'qwen'
+          ? qwenAdapter
         : id === 'local-agent'
             ? credentiallessAdapter
           : null,
@@ -422,6 +445,13 @@ vi.mock('./agy-keyring-activation', () => ({
   activateAgyAccountForSpawn: agyActivation.activate,
 }));
 
+const qwenSettingsProbe = vi.hoisted(() => ({
+  hasCredential: vi.fn<() => boolean>(() => false),
+}));
+vi.mock('../adapters/qwen-settings', () => ({
+  qwenSettingsHasCredential: qwenSettingsProbe.hasCredential,
+}));
+
 import {
   acquireCliSpawnPermit,
   startCliAutoUpdate,
@@ -437,6 +467,7 @@ import {
   resolveRunnerPath,
   resolveQuotaApiKey,
   resolveRuntimeApiKey,
+  hasRuntimeKey,
 } from './provider-config-store';
 import { fetchLiveProviderWindows } from '../quota/provider-live-usage';
 
@@ -1646,6 +1677,59 @@ describe('generic Anthropic env token is host-gated (F-236 rework)', () => {
   it('claude still accepts a bare ANTHROPIC_API_KEY (native host, no gate)', () => {
     vi.stubEnv('ANTHROPIC_API_KEY', 'fixture-claude-key');
     expect(resolveRuntimeApiKey('claude')).toBe('fixture-claude-key');
+  });
+});
+
+describe('generic OpenAI env key is host-gated for qwen (F-238)', () => {
+  beforeAll(() => initializeProviderConfigStore());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    spawnDeps.runtimeKey.mockReturnValue(null);
+    spawnDeps.hasSecret.mockReturnValue(false);
+    spawnDeps.hasCachedSecret.mockReturnValue(false);
+    spawnDeps.launcherKey.mockReturnValue(null);
+    qwenSettingsProbe.hasCredential.mockReturnValue(false);
+    vi.stubEnv('BAILIAN_TOKEN_PLAN_API_KEY', '');
+    vi.stubEnv('DASHSCOPE_API_KEY', '');
+    vi.stubEnv('OPENAI_API_KEY', '');
+    vi.stubEnv('OPENAI_BASE_URL', '');
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('qwen rejects a bare OPENAI_API_KEY without OPENAI_BASE_URL', () => {
+    vi.stubEnv('OPENAI_API_KEY', 'fixture-openai-key');
+    expect(resolveRuntimeApiKey('qwen')).toBeNull();
+  });
+
+  it('qwen rejects OPENAI_API_KEY pointed at api.openai.com', () => {
+    vi.stubEnv('OPENAI_API_KEY', 'fixture-openai-key');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://api.openai.com/v1');
+    expect(resolveRuntimeApiKey('qwen')).toBeNull();
+  });
+
+  it('qwen accepts OPENAI_API_KEY when OPENAI_BASE_URL is *.aliyuncs.com', () => {
+    vi.stubEnv('OPENAI_API_KEY', 'fixture-bailian-key');
+    vi.stubEnv(
+      'OPENAI_BASE_URL',
+      'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+    );
+    expect(resolveRuntimeApiKey('qwen')).toBe('fixture-bailian-key');
+  });
+
+  it('qwen accepts its own BAILIAN/DASHSCOPE env vars without a host gate', () => {
+    vi.stubEnv('DASHSCOPE_API_KEY', 'fixture-dashscope-key');
+    expect(resolveRuntimeApiKey('qwen')).toBe('fixture-dashscope-key');
+  });
+
+  it('qwen has no runtime key when nothing is configured', () => {
+    expect(hasRuntimeKey('qwen')).toBe(false);
+  });
+
+  it('credential living only in ~/.qwen/settings.json counts as present', () => {
+    qwenSettingsProbe.hasCredential.mockReturnValue(true);
+    expect(hasRuntimeKey('qwen')).toBe(true);
+    // ...mas nunca é copiada para o env do spawn.
+    expect(resolveRuntimeApiKey('qwen')).toBeNull();
   });
 });
 

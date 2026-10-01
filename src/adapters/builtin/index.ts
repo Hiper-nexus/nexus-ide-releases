@@ -56,8 +56,6 @@ export const BUILTIN_ADAPTERS: unknown[] = [
   // seja: spawn sem escolha explícita roda full-auto, igual a claude/glm/codex.
   // Quem quiser aprovação por edição escolhe outro modo no settings do provider.
   devinRaw,
-  // api-provider: sem binário — existem para gestão de key na aba Remotos
-  // (router de intenção lê o vault/launcher por esses mesmos ids).
   deepseekRaw,
   qwenRaw,
 ];

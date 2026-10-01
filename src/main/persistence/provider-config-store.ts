@@ -1,4 +1,5 @@
 import { mimoCredentialSupportsModel } from '../adapters/mimo-auth';
+import { qwenSettingsHasCredential } from '../adapters/qwen-settings';
 import { migrateModelId } from '../../shared/model-defaults';
 import fs from 'node:fs';
 import { z } from 'zod';
@@ -510,6 +511,37 @@ function anthropicHostForProvider(providerId: string): string | null {
   }
 }
 
+/**
+ * F-238: um OPENAI_API_KEY solto no env só é credencial do Qwen quando
+ * OPENAI_BASE_URL já aponta para a Alibaba (`*.aliyuncs.com`) — sem o gate,
+ * uma chave OpenAI de outro provider seria tratada como credencial Qwen.
+ */
+function openAiHostMatchesProvider(providerId: string): boolean {
+  if (providerId !== 'qwen') return false;
+  try {
+    const url = new URL(process.env.OPENAI_BASE_URL ?? '');
+    const host = url.hostname;
+    return (
+      url.protocol === 'https:' &&
+      (host === 'aliyuncs.com' || host.endsWith('.aliyuncs.com')) &&
+      !url.username &&
+      !url.password
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Gate genérico de variável de chave por host: devolve true quando a env var
+ * `name` é prova de credencial deste provider. Vars sem regra retornam true
+ * (comportamento histórico: qualquer valor presente conta).
+ */
+function genericEnvKeyAllowedForProvider(name: string, providerId: string): boolean {
+  if (name === 'OPENAI_API_KEY') return openAiHostMatchesProvider(providerId);
+  return true;
+}
+
 function quotaEnvMatchesProvider(name: string, providerId: string): boolean {
   if (['ZAI_API_KEY', 'ZHIPU_API_KEY', 'ZHIPUAI_API_KEY'].includes(name)) return ['glm', 'glm-flash', 'zai', 'zhipu'].includes(providerId);
   if (name === 'LONGCAT_API_KEY') return providerId === 'longcat';
@@ -517,6 +549,8 @@ function quotaEnvMatchesProvider(name: string, providerId: string): boolean {
   if (name === 'MINIMAX_API_KEY') return providerId === 'minimax-code';
   if (['KIMI_MODEL_API_KEY', 'KIMI_API_KEY', 'KIMI_CODING_API_KEY', 'MOONSHOT_API_KEY'].includes(name)) return providerId === 'kimi';
   if (name === 'XAI_API_KEY') return providerId === 'grok';
+  if (name === 'OPENAI_API_KEY') return openAiHostMatchesProvider(providerId);
+  if (['BAILIAN_TOKEN_PLAN_API_KEY', 'DASHSCOPE_API_KEY'].includes(name)) return providerId === 'qwen';
   if (!['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'].includes(name)) return false;
   const host = anthropicHostForProvider(providerId);
   if (!host) return false;
@@ -537,6 +571,10 @@ export function hasRuntimeKey(
   // the encrypted index is enough for readiness; the actual key is resolved
   // only when a provider is spawned.
   if (hasSecret(adapterId)) return true;
+  // F-238: a credencial do Qwen pode viver só em ~/.qwen/settings.json
+  // (`env.BAILIAN_TOKEN_PLAN_API_KEY` / envKey por modelo) — conta como
+  // `present`; a leitura nunca carrega o valor para fora do settings.
+  if (adapterId === 'qwen' && qwenSettingsHasCredential()) return true;
   return resolveApiKeyWithoutVault(adapterId) !== null;
 }
 
@@ -570,6 +608,7 @@ function resolveApiKeyWithoutVault(
         continue;
       }
     }
+    if (!genericEnvKeyAllowedForProvider(name, adapterId)) continue;
     const value = process.env[name];
     if (typeof value === 'string' && value.trim().length > 0) {
       if (allowEnv && !allowEnv(name)) return null;

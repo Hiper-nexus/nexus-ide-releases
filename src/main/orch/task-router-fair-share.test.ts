@@ -54,6 +54,25 @@ describe('fair-share global de rotas (F-232)', () => {
     expect(decision!.reason).toContain('fair-share');
   });
 
+  it('F-238: qwen instalado com zero reservas pode assumir o medium', () => {
+    const withQwen: AdapterAvailability[] = [
+      ...adapters,
+      { id: 'qwen', installed: true, models: ['qwen3.7-plus'] },
+    ];
+    const decision = routeTask(
+      'tarefa média qualquer',
+      withQwen,
+      DEFAULT_ROUTING_TABLE,
+      'medium',
+      false,
+      undefined,
+      context({ glm: 9, 'mimo-code': 7, muse: 0, qwen: 0 }),
+    );
+    expect(decision).not.toBeNull();
+    expect(['muse', 'qwen']).toContain(decision!.adapterId);
+    expect(decision!.reason).toContain('fair-share');
+  });
+
   it('gap abaixo do limiar mantém o líder (sem pingue-pongue)', () => {
     const decision = routeTask(
       'tarefa média qualquer',

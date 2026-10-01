@@ -129,6 +129,12 @@ const PROMPT_ACCEPTANCE_WINDOW_MS = 12_000;
 const DEVIN_COMPOSER_READY = /ask devin to build/i;
 /** Kimi Code's composer footer; migration/trust menus have no context meter. */
 const KIMI_COMPOSER_READY = /\bcontext:\s*\d+(?:\.\d+)?%/i;
+/**
+ * Qwen Code (fork do Gemini CLI) — mesma assinatura do manifesto Herdr
+ * `resources/agent-detection/qwen.toml` (regra composer_idle). A tela de
+ * "Connect a Provider" (sem credencial) não casa, então a entrega espera.
+ */
+const QWEN_COMPOSER_READY = /type your message|@path\/to\/file/i;
 /** Cold Node boot + trust + welcome paint can exceed 8s; never paste blind. */
 const PASTE_COMPOSER_WAIT_MS = 30_000;
 /**
@@ -889,7 +895,8 @@ async function waitUntilPasteComposerReady(
   invocation?: McpToolInvocation,
 ): Promise<boolean> {
   const ready = adapterId === 'devin' ? DEVIN_COMPOSER_READY
-    : adapterId === 'kimi' ? KIMI_COMPOSER_READY : null;
+    : adapterId === 'kimi' ? KIMI_COMPOSER_READY
+    : adapterId === 'qwen' ? QWEN_COMPOSER_READY : null;
   if (!ready) return true;
   const deadline = Date.now() + PASTE_COMPOSER_WAIT_MS;
   while (Date.now() < deadline) {

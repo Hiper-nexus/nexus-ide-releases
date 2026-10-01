@@ -1,23 +1,107 @@
 {
-  "kind": "api-provider",
+  "kind": "cli-pty",
   "id": "qwen",
-  "label": "Qwen / Alibaba",
+  "label": "Qwen Code",
   "version": "1.0.0",
   "icon": "🌐",
-  "endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1/models",
-  "protocol": "openai-chat",
+  "bin": "qwen",
+  "detect": "qwen --version",
+  "install": {
+    "method": "npm",
+    "command": "npm install -g @qwen-code/qwen-code@latest"
+  },
   "auth": {
     "method": "api_key",
-    "header": "authorization",
-    "scheme": "Bearer",
-    "envVar": "DASHSCOPE_API_KEY",
-    "keychainKey": "qwen"
+    "credentialStore": "keychain",
+    "envVarFallback": "BAILIAN_TOKEN_PLAN_API_KEY",
+    "loginHint": "O Qwen Code não tem `qwen auth`: a credencial vive em ~/.qwen/settings.json (security.auth/modelProviders) ou nas variáveis BAILIAN_TOKEN_PLAN_API_KEY/DASHSCOPE_API_KEY."
+  },
+  "spawn": {
+    "interactive": [
+      "qwen",
+      "-m",
+      "{{MODEL}}",
+      "--approval-mode",
+      "auto-edit"
+    ],
+    "headless": [
+      "qwen",
+      "-m",
+      "{{MODEL}}",
+      "-p",
+      "{{PROMPT}}"
+    ],
+    "ptyRequired": true,
+    "resumeArgs": [],
+    "resumeIdArgs": [
+      "--resume"
+    ],
+    "sessionIdArg": "--session-id",
+    "extraArgs": [],
+    "initialPrompt": "interactive-flag",
+    "initialPromptFlag": "--prompt-interactive"
+  },
+  "env": {
+    "static": {},
+    "passthrough": [
+      "BAILIAN_TOKEN_PLAN_API_KEY",
+      "DASHSCOPE_API_KEY",
+      "OPENAI_API_KEY",
+      "OPENAI_BASE_URL",
+      "OPENAI_MODEL"
+    ],
+    "ephemeralHome": false
   },
   "models": {
     "flag": "--model",
-    "list": ["qwen3-coder", "qwen-max", "qwen-plus"],
-    "default": "qwen3-coder"
+    "list": [
+      "qwen3.8-max",
+      "qwen3.8-max-preview",
+      "qwen3.7-max",
+      "qwen3.7-plus",
+      "qwen3.6-plus",
+      "qwen3.6-flash"
+    ],
+    "default": "qwen3.8-max"
   },
-  "streaming": true,
-  "quirks": {}
+  "promptInjection": {
+    "method": "arg",
+    "trailingNewline": false,
+    "bracketedPaste": false
+  },
+  "stateParsing": {
+    "idle": {
+      "type": "timeout",
+      "ms": 1000
+    },
+    "shellIntegration": false,
+    "exitCodes": {
+      "0": "ok",
+      "1": "error"
+    }
+  },
+  "quirks": {
+    "altScreen": true,
+    "requiresNoAutoUpdate": false,
+    "mcpAutoload": false,
+    "nexusMcp": "qwen"
+  },
+  "control": {
+    "permission": {
+      "arg": "",
+      "modes": {},
+      "yolo": [
+        "--yolo"
+      ],
+      "safe": [
+        "--approval-mode",
+        "default"
+      ],
+      "readOnly": [
+        "--approval-mode",
+        "plan"
+      ],
+      "default": ""
+    }
+  }
 }

@@ -42,7 +42,7 @@ const CLI_MENTION_ALIASES: Readonly<Record<string, readonly string[]>> = {
   opencode: ['opencode'],
   openclaude: ['openclaude'],
   aider: ['aider'],
-  qwen: ['qwen'],
+  qwen: ['qwen', 'qwen code', 'qwen 3.8'],
 };
 
 /* eslint-disable no-control-regex */

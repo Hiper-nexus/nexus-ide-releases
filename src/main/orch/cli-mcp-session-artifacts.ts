@@ -15,7 +15,7 @@ import type {
 } from './cli-mcp-session-types';
 import { removeTreeSync } from '../util/remove-tree';
 
-type ArtifactProvider = 'codex' | 'opencode' | 'kimi' | 'grok' | 'mimo-code';
+type ArtifactProvider = 'codex' | 'opencode' | 'kimi' | 'grok' | 'mimo-code' | 'qwen';
 
 export interface ArtifactSession {
   artifactDir: string;

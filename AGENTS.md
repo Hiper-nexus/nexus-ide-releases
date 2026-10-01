@@ -454,6 +454,23 @@ saber isto antes de mexer:
   apagar o catálogo. O guarda no overlay reescreve modelos/providers nativos e
   preserva o `default_model` que a TUI escolheu. Nunca sync-back desse arquivo.
 
+## Qwen Code: fork do Gemini CLI, auth por settings (F-238)
+
+- O adapter `qwen` é `cli-pty` sobre o binário `qwen` (Qwen Code). Não existe
+  `qwen auth`: a credencial vive em `~/.qwen/settings.json`
+  (`env.BAILIAN_TOKEN_PLAN_API_KEY`, `modelProviders.*[].envKey`) ou nas envs
+  `BAILIAN_TOKEN_PLAN_API_KEY`/`DASHSCOPE_API_KEY` — conta como `present` sem
+  nunca copiar o segredo.
+- O catálogo vivo vem de `modelProviders.*[].id` do settings (só ids `qwen*`;
+  `deepseek-*` no mesmo settings é de outro provider). Um `OPENAI_API_KEY`
+  solto só vale para qwen com `OPENAI_BASE_URL` em `*.aliyuncs.com` — mesmo
+  gate de host do ANTHROPIC_*.
+- MCP do Nexus chega por `--mcp-config <arquivo por sessão>` +
+  `--allowed-mcp-server-names`; worker de missão fica restrito ao `nexus`+hub
+  (o MCP ambiente do operador, ex.: blender, não entra). `QWEN_HOME` aponta
+  o overlay da sessão: `settings.json` ligado (nunca copiado), conversas em
+  `<userData>/provider-state/qwen/<checkoutId>`.
+
 ## HOME efêmero da família Claude: o pane escreve como o operador (F-579/F-580)
 
 - O overlay `~/.nexus/ephemeral/<tok>` isola CONVERSA e auth Claude (F-567),

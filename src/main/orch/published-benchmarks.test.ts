@@ -23,6 +23,11 @@ const UNPUBLISHED_ROUTE_MODELS = new Set([
   // Gemini 4 Argon (Google, 30/09): a geração nova entra sempre na rota; o
   // model card ainda não traz DeepSWE/TB2.1 verificados — entra aqui até sair.
   'agy:gemini-4-argon',
+  // F-238: Qwen 3.x — sem nota oficial de coding publicada (model card da
+  // Alibaba não traz DeepSWE/TB2.1/SWE-bench para estes ids); prior de custo.
+  'qwen:qwen3.6-flash',
+  'qwen:qwen3.7-plus',
+  'qwen:qwen3.8-max',
 ]);
 
 describe('benchmarks oficiais publicados (F-675)', () => {

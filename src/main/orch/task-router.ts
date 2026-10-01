@@ -151,6 +151,9 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // DeepSeek roda na CLI do Claude no endpoint Anthropic-compatible deles;
     // ids da API /models do DeepSeek, 01/10/2026.
     { adapterId: 'deepseek', model: 'deepseek-flash', effort: 'low' },
+    // F-238: Qwen Code (cli-pty, fork do Gemini CLI) — flash barato no
+    // trivial/easy; ids do settings do operador / seed do adapter.
+    { adapterId: 'qwen', model: 'qwen3.6-flash', effort: 'low' },
     // Cost-based onboarding prior, not a measured quality rank. MiMo exposes
     // no verified effort argv; let its CLI use the model's native default.
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
@@ -173,6 +176,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'codex', model: 'gpt-6-luna', effort: 'low' },
     { adapterId: 'glm-flash', model: 'glm-5.3-flash[1m]', effort: 'low' },
     { adapterId: 'deepseek', model: 'deepseek-flash', effort: 'low' },
+    { adapterId: 'qwen', model: 'qwen3.6-flash', effort: 'low' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M2.7-highspeed' },
@@ -190,6 +194,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'glm', model: 'glm-5.3', effort: 'medium' },
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'medium' },
     { adapterId: 'deepseek', model: 'deepseek-v4-pro', effort: 'medium' },
+    { adapterId: 'qwen', model: 'qwen3.7-plus', effort: 'medium' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3' },
@@ -227,6 +232,9 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'glm', model: 'glm-5.3', effort: 'high' },
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'high' },
     { adapterId: 'deepseek', model: 'deepseek-v4-pro', effort: 'high' },
+    // F-238: Qwen 3.8 Max no hard — prior de custo/capacidade, sem nota
+    // oficial publicada (UNPUBLISHED_ROUTE_MODELS).
+    { adapterId: 'qwen', model: 'qwen3.8-max', effort: 'high' },
     { adapterId: 'codex', model: CODEX_FRONTIER_MODEL, effort: 'high' },
     // CLI sem o 6.1 ainda roteia para o GPT-6 Sol (superseded ≠ retired).
     { adapterId: 'codex', model: 'gpt-6-sol', effort: 'high' },
