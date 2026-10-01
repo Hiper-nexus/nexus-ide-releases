@@ -338,6 +338,13 @@ saber isto antes de mexer:
   pergunta aos panes não recebem: a doutrina delas diz o contrário. F-708:
   pedido digitado pelo operador no Maestro passa pelo Jev de delegação e, com
   2+ partes, vira "abra N workers" no lugar do lembrete.
+- F-714: vigia de esteira (`mission-momentum-watchdog.ts`, no laço do
+  `delegation-supervisor`): missão `running` que delega, Maestro vivo e zero
+  workers por 20 min → handoff de supervisor `[momentum:…]` (no máximo 1/h)
+  mandando adiantar as próximas unidades em workers durante o gate longo.
+  Comando pesado local (validador, `make verify`, suíte) continua um por vez —
+  a regra é não deixar trabalho de LLM esperando CPU. Na noite de 30/09 a
+  missão do HiperGO gastou 7h30 em validações em fila única, sem worker.
 - F-702: worker nunca pergunta ao humano (`request_user_input_async` do
   Codex, AskUserQuestion): ninguém responde e o pane trava. Brief que
   contraria a autoridade de execução (clone próprio, push, outra branch)

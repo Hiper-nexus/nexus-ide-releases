@@ -25,6 +25,7 @@ import {
   zeroDeliveryPokeSummary,
 } from './zero-delivery-watchdog';
 import { flushAllNexusTaskFailClosedRetries } from './nexus-task-fail-closed-recovery';
+import { decideMomentumNudge, momentumNudgeSummary } from './mission-momentum-watchdog';
 import {
   getAgentSemanticStatusBySession,
   SEMANTIC_WORKING_VETO_MS,
@@ -41,6 +42,10 @@ interface ChefIdleTracker {
   workerCount: number;
 }
 const chefIdleTrackers = new Map<string, ChefIdleTracker>();
+
+/** Esteira (F-714): desde quando a missão está sem worker e o último lembrete. */
+const momentumSoloSince = new Map<string, number>();
+const momentumNudgedAt = new Map<string, number>();
 
 /** Zero-entrega: Maestro dormiu esperando handoff com disco vazio. */
 const zeroDeliveryPoked = new Set<string>();
@@ -649,6 +654,44 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
       }
     }
 
+    // Esteira (F-714): Maestro vivo, nenhum worker há muito tempo.
+    {
+      if (workerPaneCount > 0) momentumSoloSince.delete(mission.id);
+      else if (!momentumSoloSince.has(mission.id)) momentumSoloSince.set(mission.id, now);
+      const momentum = decideMomentumNudge({
+        missionStatus: mission.status,
+        lane: lane ?? null,
+        maxWorkers: mission.intentContract?.budgets?.maxWorkers ?? null,
+        workerPanes: workerPaneCount,
+        orchestratorAlive:
+          orchestratorPaneState !== undefined &&
+          orchestratorPaneState !== 'exited' &&
+          orchestratorPaneState !== 'parked' &&
+          orchestratorPaneState !== 'hibernated',
+        soloSinceMs: momentumSoloSince.get(mission.id) ?? null,
+        lastNudgeAtMs: momentumNudgedAt.get(mission.id) ?? null,
+        now,
+      });
+      if (momentum.action === 'nudge') {
+        momentumNudgedAt.set(mission.id, now);
+        try {
+          const handoff = suite.handoffs.submit({
+            missionId: mission.id,
+            status: 'progress',
+            summary: momentumNudgeSummary(mission.id, momentum.soloForMs),
+            fromAgent: DELEGATION_SUPERVISOR_AGENT,
+          });
+          onHandoffSubmitted(handoff, suite.scope);
+          console.warn(`[delegation-supervisor] momentum nudge for ${mission.id}`);
+        } catch (error) {
+          console.warn(
+            `[delegation-supervisor] momentum nudge falhou:`,
+            error instanceof Error ? error.message : error,
+          );
+        }
+      }
+    }
+
     if (
       shouldSkipLeftoverDelegationRecovery({
         updatedAt: mission.updatedAt,
@@ -826,4 +869,6 @@ export function shutdownDelegationSupervisor(): void {
   zeroDeliveryPoked.clear();
   zeroDeliveryEscalated.clear();
   handoffRearmLastRun.clear();
+  momentumSoloSince.clear();
+  momentumNudgedAt.clear();
 }

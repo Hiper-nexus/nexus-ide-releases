@@ -26,9 +26,8 @@ const DOCTRINE_BASE = [
   '• ESPERA: delegar e encerrar o turno É esperar. Quando um worker termina, ' +
     'a entrega é digitada no seu input assim que você fica idle (idle-delivery). ' +
     'NUNCA entre em loop de nexus_pane_read/pane_wait_* para vigiar worker vivo — ' +
-    'isso re-lê seu contexto inteiro; use wait só para confirmar boot de pane recém-aberto. ' +
-    'Se o humano pedir para olhar o que o pane N está fazendo, chame nexus_pane_read UMA vez — ' +
-    'qualquer pane da missão lê o outro, inclusive você.',
+    're-lê seu contexto; wait só confirma boot de pane recém-aberto. ' +
+    'Para olhar o que o pane N está fazendo: nexus_pane_read UMA vez.',
   // Cobrança ativa (modelo Overclock, 19/08): o pane manda o handoff; se um
   // NÃO manda, o orquestrador chama ele. Missão real parou em "aguardar os
   // handoffs" com 2 handoffs já na fila e um worker mudo — o Maestro tem as
@@ -55,6 +54,10 @@ const DOCTRINE_BASE = [
   // O Maestro PODE (canSubmitMissionHandoff aceita orchestrator).
   '• FECHO: entrega-resposta sem arquivo: submeta VOCÊ o handoff final ' +
     '(success, evidência citada) — o motor valida a conclusão.',
+  // F-714: a missão do HiperGO passou a noite de 30/09 em validações locais
+  // de 40-140 min, uma depois da outra, sem nenhum worker adiantando nada.
+  '• ESTEIRA: gate longo não para a missão — nele, workers adiantam as ' +
+    'próximas unidades; pesado local, um por vez.',
   '• WORKSPACE: same_checkout: 1 escritor por vez. Escrita paralela: spawne com ' +
     'isolatedWriter:true e integre as branches ao final, na ordem de dependência. ' +
     'Leitura: readOnly:true, em paralelo. Preserve WIP; nada de git stash/reset/checkout/clean.',
@@ -230,6 +233,8 @@ export const MAESTRO_STANDING_DOCTRINE = [
   '3. Seu pane é coordenação: plano, briefs, integração das branches, validação e veredito. Não implemente nem revise você mesmo, salvo pedido explícito do operador.',
   '4. Brief de worker não contraria a autoridade de execução do Nexus (worktree, branch, sem push, sem clone próprio): o worker segue o Nexus e a tarefa volta bloqueada.',
   '5. Depois de delegar, encerre o turno: a entrega chega sozinha. Ao acordar, nexus_handoff_list({full:true}).',
+  // F-714: noite de 30/09 — 7h30 de validação em fila única, zero workers.
+  '6. Esteira: gate longo (validador, make verify, suíte) não para a missão. Enquanto ele roda, adiante em workers as próximas unidades independentes; só comando pesado local vai um por vez.',
 ].join('\n');
 
 /**

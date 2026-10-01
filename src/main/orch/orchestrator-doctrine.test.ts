@@ -99,6 +99,7 @@ describe('orchestrator doctrine', () => {
   it('a doutrina base (sem playbook do operador) fica curta (<2KB)', () => {
     const text = buildOrchestratorDoctrine(null, mission());
     expect(Buffer.byteLength(text, 'utf8')).toBeLessThan(2048);
+    expect(text).toContain('ESTEIRA');
   });
 });
 
@@ -320,6 +321,8 @@ describe('doutrina permanente do Maestro (F-701)', () => {
     expect(MAESTRO_STANDING_DOCTRINE).toContain('depois de compactar');
     // Vai no prompt de sistema de toda sessão do Maestro: fica curta.
     expect(MAESTRO_STANDING_DOCTRINE.length).toBeLessThan(1_500);
+    // F-714: gate longo não para a esteira.
+    expect(MAESTRO_STANDING_DOCTRINE).toContain('Esteira');
   });
 
   it('execução direta e pergunta aos panes têm doutrina própria, que contradiz "delegue"', () => {
