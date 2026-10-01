@@ -57,6 +57,20 @@ test('racks vizinhos se tocam: o dev não pisca pelas frestas ao andar atrás da
   assert.ok(b.min.x > a.min.x + 1e-4 && b.max.x < a.max.x - 1e-4, 'rodapé recuado nas laterais');
 });
 
+test('o terminal da estação só redesenha quando o que mostra muda', () => {
+  const { dc } = world();
+  const view = { phase: 'seated', shown: 0, result: null, failure: null, progress: 0, status: 'Segure para fazer deploy', blink: true };
+  dc.workstation.show(view);
+  const { texture } = dc.workstation;
+  const version = texture.version;
+  for (let i = 0; i < 30; i++) dc.workstation.show(view);
+  assert.equal(texture.version, version, 'mesmo estado, nenhuma pintura');
+  dc.workstation.show({ ...view, shown: 2 });
+  assert.equal(texture.version, version + 1);
+  dc.workstation.show({ ...view, shown: 2, progress: 0.001 });
+  assert.equal(texture.version, version + 1, 'progresso muda em degraus, não a cada quadro');
+});
+
 test('a doca entrega caixas até esvaziar e é reabastecida até o limite', () => {
   const { dc } = world();
   assert.equal(dc.dock.count(), 3);

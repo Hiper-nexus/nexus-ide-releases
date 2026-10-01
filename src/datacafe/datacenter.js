@@ -7,6 +7,7 @@ import {
 } from 'three';
 import { PALETTE, hex } from './palette.js';
 import { findCells } from './layout.js';
+import { DEPLOY, CANARY } from './desk.js';
 
 /** Racks lado a lado, como num data center de verdade: com fresta, o dev aparecia
  * e sumia entre um rack e outro ao andar atrás da fileira. */
@@ -15,6 +16,7 @@ const LED_ROWS = 5;
 const LEDS_PER_RACK = LED_ROWS * 2;
 const ATLAS = { cols: 3, rows: 6, width: 1024, height: 512 };
 const NOC_SIZE = { width: 1024, height: 274 };
+const TERMINAL = { width: 512, height: 320, steps: 40 };
 
 function tileFloor(context, canvas) {
   const s = canvas.width;
@@ -291,6 +293,52 @@ function paintNoc(context, canvas, lines = [], states = [], clock = 0, calm = fa
   }
 }
 
+/** Monitor da estação: o deploy linha a linha, o resultado e o que fazer agora. */
+function paintTerminal(context, canvas, view) {
+  const { width: w, height: h } = canvas;
+  context.fillStyle = '#0e0c12';
+  context.fillRect(0, 0, w, h);
+  context.fillStyle = '#1b1820';
+  context.fillRect(0, 0, w, 36);
+  [PALETTE.pink, PALETTE.gold, PALETTE.green].forEach((color, i) => {
+    context.fillStyle = hex(color);
+    context.beginPath();
+    context.arc(20 + i * 18, 18, 5, 0, Math.PI * 2);
+    context.fill();
+  });
+  context.textBaseline = 'middle';
+  context.textAlign = 'left';
+  context.fillStyle = '#aaa2a8';
+  context.font = '600 16px ui-monospace, monospace';
+  context.fillText('dev@nexus-datacafe · deploy', 80, 19);
+  context.font = '500 22px ui-monospace, monospace';
+  let y = 66;
+  for (let i = 0; i < view.shown; i++, y += 34) {
+    const failed = view.result === 'failed' && i === CANARY;
+    context.fillStyle = i === 0 ? hex(PALETTE.pink) : failed ? hex(PALETTE.red) : '#faf7f9';
+    context.fillText(failed ? '› canary ........ falhou' : DEPLOY[i].text, 18, y, w - 36);
+  }
+  if (view.result === 'ok' && view.shown === DEPLOY.length) {
+    context.fillStyle = hex(PALETTE.green);
+    context.fillText('✓ no ar', 18, y, w - 36);
+  } else if (view.result === 'failed') {
+    context.fillStyle = hex(PALETTE.red);
+    context.fillText(`✗ ${view.failure ?? ''}`, 18, y, w - 36);
+  } else if (view.blink && view.phase !== 'done') {
+    context.fillStyle = hex(PALETTE.pink);
+    context.fillRect(18, y - 11, 12, 22);
+  }
+  if (view.phase === 'acting') {
+    context.fillStyle = '#2c2830';
+    context.fillRect(18, h - 52, w - 36, 8);
+    context.fillStyle = hex(PALETTE.pink);
+    context.fillRect(18, h - 52, (w - 36) * view.progress, 8);
+  }
+  context.fillStyle = view.result === 'failed' && view.phase === 'done' ? hex(PALETTE.red) : '#aaa2a8';
+  context.font = '500 17px ui-monospace, monospace';
+  context.fillText(view.status ?? '', 18, h - 22, w - 36);
+}
+
 export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }) {
   const root = new Group();
   root.name = 'datacenter';
@@ -503,15 +551,49 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
   kit.mesh(root, kit.geo('nocface', () => new PlaneGeometry(noc.width - 0.32, 1.48)), kit.own(new MeshBasicMaterial({ map: nocTex.texture, toneMapped: false })), [noc.x + noc.width / 2, 1.78, 1.065], { cast: false, receive: false });
   let nocClock = 0;
 
-  // ---------- Mesas dos devs ----------
-  const desks = findCells(layout, 'D').filter(c => c.z > 2).map(c => ({ x: c.x + 0.5, z: c.z + 0.5 }));
+  // ---------- Mesas dos devs e a estação do terminal ----------
+  const station = layout.workstation;
+  const desks = findCells(layout, 'D').filter(c => c.z > 2).map(c => ({ x: c.x + 0.5, z: c.z + 0.5, terminal: c.x === station?.desk.x && c.z === station?.desk.z }));
+  const plain = desks.filter(desk => !desk.terminal);
   const codeTex = kit.canvasTexture(128, 80, codeScreen);
   kit.instanced(root, kit.boxGeo(0.96, 0.05, 0.8), kit.mat(0xe9e2da, { roughness: 0.6 }), desks, (d, s) => d.position.set(s.x, 0.74, s.z));
   kit.instanced(root, kit.boxGeo(0.04, 0.72, 0.72), kit.mat(0x2a2530), desks.flatMap(s => [-0.44, 0.44].map(dx => ({ x: s.x + dx, z: s.z }))), (d, s) => d.position.set(s.x, 0.36, s.z));
-  kit.instanced(root, kit.boxGeo(0.56, 0.35, 0.03), kit.mat(0x121015), desks, (d, s) => d.position.set(s.x, 1.02, s.z - 0.18));
-  kit.instanced(root, kit.geo('screen', () => new PlaneGeometry(0.5, 0.3)), kit.own(new MeshBasicMaterial({ map: codeTex.texture, toneMapped: false })), desks, (d, s) => d.position.set(s.x, 1.02, s.z - 0.163), { cast: false, receive: false });
-  kit.instanced(root, kit.boxGeo(0.36, 0.02, 0.12), kit.mat(0x2e2a35), desks, (d, s) => d.position.set(s.x, 0.775, s.z + 0.12), { cast: false });
-  kit.instanced(root, mugGeo, kit.mat(PALETTE.pink), desks.filter((_, i) => i % 2 === 0), (d, s) => d.position.set(s.x + 0.34, 0.81, s.z + 0.05), { cast: false });
+  kit.instanced(root, kit.boxGeo(0.56, 0.35, 0.03), kit.mat(0x121015), plain, (d, s) => d.position.set(s.x, 1.02, s.z - 0.18));
+  kit.instanced(root, kit.geo('screen', () => new PlaneGeometry(0.5, 0.3)), kit.own(new MeshBasicMaterial({ map: codeTex.texture, toneMapped: false })), plain, (d, s) => d.position.set(s.x, 1.02, s.z - 0.163), { cast: false, receive: false });
+  // Na estação o teclado fica na beira da mesa, onde as mãos do dev sentado alcançam.
+  kit.instanced(root, kit.boxGeo(0.36, 0.02, 0.12), kit.mat(0x2e2a35), desks, (d, s) => d.position.set(s.x, 0.775, s.z + (s.terminal ? 0.3 : 0.12)), { cast: false });
+  kit.instanced(root, mugGeo, kit.mat(PALETTE.pink), desks.filter((desk, i) => i % 2 === 0 && !desk.terminal), (d, s) => d.position.set(s.x + 0.34, 0.81, s.z + 0.05), { cast: false });
+
+  // Monitor grande com o terminal e a cadeira. O terminal só repinta quando o que mostra muda.
+  let workstation = null;
+  if (station) {
+    const { screen, seat } = station;
+    const dark = kit.mat(0x121015);
+    kit.box(root, [0.86, 0.56, 0.04], [screen.x, screen.y, screen.z - 0.02], dark);
+    kit.box(root, [0.08, 0.1, 0.06], [screen.x, 0.81, screen.z - 0.06], dark, { cast: false });
+    const shown = { phase: null, shown: -1, result: null, failure: null, step: -1, status: null, blink: null };
+    const view = { ...shown };
+    const terminal = kit.canvasTexture(TERMINAL.width, TERMINAL.height, (context, canvas) => paintTerminal(context, canvas, view));
+    kit.mesh(root, kit.geo('terminal', () => new PlaneGeometry(0.8, 0.5)), kit.own(new MeshBasicMaterial({ map: terminal.texture, toneMapped: false })), [screen.x, screen.y, screen.z + 0.004], { cast: false, receive: false });
+    const chair = kit.mat(PALETTE.rackEdge, { roughness: 0.7 });
+    kit.box(root, [0.4, 0.06, 0.42], [seat.x, 0.41, seat.z - 0.04], chair);
+    kit.box(root, [0.4, 0.46, 0.05], [seat.x, 0.72, seat.z + 0.26], chair);
+    kit.mesh(root, kit.geo('chairpole', () => new CylinderGeometry(0.03, 0.03, 0.38, 8)), steel, [seat.x, 0.2, seat.z - 0.04], { cast: false });
+    kit.mesh(root, kit.geo('chairbase', () => new CylinderGeometry(0.22, 0.24, 0.03, 10)), steel, [seat.x, 0.015, seat.z - 0.04], { cast: false });
+    workstation = {
+      texture: terminal.texture,
+      screen,
+      /** `next`: { phase, shown, result, failure, progress, status, blink }. */
+      show(next) {
+        const step = Math.round(next.progress * TERMINAL.steps);
+        if (next.phase === shown.phase && next.shown === shown.shown && next.result === shown.result && next.failure === shown.failure
+          && step === shown.step && next.status === shown.status && next.blink === shown.blink) return;
+        Object.assign(shown, { phase: next.phase, shown: next.shown, result: next.result, failure: next.failure, step, status: next.status, blink: next.blink });
+        Object.assign(view, shown, { progress: step / TERMINAL.steps });
+        terminal.redraw();
+      },
+    };
+  }
 
   // ---------- Plantas ----------
   const plants = findCells(layout, 'P').map(c => ({ x: c.x + 0.5, z: c.z + 0.5 }));
@@ -627,5 +709,5 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
     for (const image of images) if (image) { image.onload = null; image.src = ''; }
   }
 
-  return { root, racks, coffee, dock, highlight, setObjective, setNoc, update, release, tier };
+  return { root, racks, coffee, dock, workstation, highlight, setObjective, setNoc, update, release, tier };
 }
