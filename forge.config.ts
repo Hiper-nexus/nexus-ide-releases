@@ -426,7 +426,8 @@ const config: ForgeConfig = {
           ]
         : []),
     ],
-    // App icon (nó-nexus pixel: anel + núcleo aceso + satélites): packager
+    // App icon (o N pixel rosa da marca, igual ao favicon do site; fonte em
+    // scripts/build-app-icon-source.mjs): packager
     // appends .icns on macOS. Read at build time from the project root — not
     // shipped inside the asar.
     icon: 'assets/icon',

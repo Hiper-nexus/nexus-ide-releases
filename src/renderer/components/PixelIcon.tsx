@@ -57,7 +57,7 @@ export type PixelIconName =
   | 'link';
 
 /**
- * Icon set pixel — desenhado no MESMO grid 11×11 do NexusMark, em rects crisp
+ * Icon set pixel — desenhado em grid 11×11, em rects crisp
  * (currentColor). Um idioma só de ícones, na pegada operador/pixel, no lugar da
  * sopa de emoji + glifos Unicode. Cada ícone é uma lista de rects [x,y,w,h]
  * (w/h default 1).
