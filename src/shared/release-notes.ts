@@ -8696,6 +8696,20 @@ export const CURRENT_RELEASE: AppRelease = {
         'Maestro mais conteúdo novo agora conta como rodada nova.',
     },
     {
+      title: 'Worker travado acorda o Maestro',
+      detail:
+        'Um worker que pendurou no meio do turno deixava a missão parada até o ' +
+        'relógio de ociosidade bloquear tudo horas depois. Agora, após 20 ' +
+        'minutos sem atividade, o Maestro é avisado para ler, destravar ou ' +
+        'trocar o pane.',
+    },
+    {
+      title: 'Maestro gasta menos contexto',
+      detail:
+        'O orquestrador relia quase 900 mil tokens a cada turno. Agora compacta ' +
+        'em 400 mil, cortando o custo por turno pela metade sem perder o resumo.',
+    },
+    {
       title: 'Licença sem bloqueio falso',
       detail:
         'A tela de bloqueio não pisca a cada renovação, uma resposta boa não ' +

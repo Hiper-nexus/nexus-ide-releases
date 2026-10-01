@@ -554,9 +554,10 @@ function notifyHungWorkerPanes(
           `[travado] worker "${pane.agentName ?? pane.title}" ` +
           `(${pane.paneId}, ${pane.adapterId}) está há ${hungMinutes} min ` +
           `no meio do turno sem ferramenta nem saída (última atividade ` +
-          `${hhmm}). Destrave com nexus_pane_write (Esc, depois Enter) ou ` +
-          `feche (nexus_pane_close) e re-despache a tarefa — a missão não ` +
-          `espera pane travado.`,
+          `${hhmm}). Leia o pane (nexus_pane_read) antes de decidir: comando ` +
+          `longo e silencioso (suíte, validador) não é travamento. Travado de ` +
+          `fato: destrave com nexus_pane_write (Esc, depois Enter) ou feche ` +
+          `(nexus_pane_close) e re-despache — a missão não espera pane travado.`,
         fromAgent: DELEGATION_SUPERVISOR_AGENT,
       });
       onHandoffSubmitted(handoff, suite.scope);
