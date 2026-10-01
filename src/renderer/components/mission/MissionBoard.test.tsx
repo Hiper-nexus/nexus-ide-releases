@@ -230,7 +230,7 @@ const api = {
 const roots = new Set<Root>();
 const subscriptions: ChangeSubscription[] = [];
 const HEADER_ACTION_LABELS: Readonly<Partial<Record<string, true>>> = {
-  'Tentar início novamente': true,
+  'Retomar o coordenador': true,
   Retomar: true,
   'Pedir um ajuste': true,
   'Tentar de novo': true,
@@ -1322,7 +1322,7 @@ describe('MissionBoard canonical controller', () => {
   });
 
   it.each([
-    ['retry-kickoff', 'Tentar início novamente'],
+    ['retry-kickoff', 'Retomar o coordenador'],
     ['resume', 'Retomar'],
     ['stop', 'Parar'],
   ] as const)(
@@ -1367,7 +1367,7 @@ describe('MissionBoard canonical controller', () => {
   );
 
   it.each([
-    ['retry-kickoff', 'Tentar início novamente'],
+    ['retry-kickoff', 'Retomar o coordenador'],
     ['resume', 'Retomar'],
   ] as const)(
     'keeps %s as the sole primary recovery action and styles Parar as a destructive secondary action',

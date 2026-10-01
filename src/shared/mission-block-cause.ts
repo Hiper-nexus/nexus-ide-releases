@@ -35,6 +35,7 @@ export const MISSION_BLOCK_CAUSE_CODES = [
   'exclusive-replacement',
   'runtime-closed',
   'human-decision',
+  'maestro-idle-timeout',
   'unknown',
 ] as const;
 
@@ -129,6 +130,14 @@ const COPY: Readonly<
     headline: 'A missão está esperando uma resposta sua.',
     action: 'Abra a missão e responda a pergunta pendente.',
   },
+  'maestro-idle-timeout': {
+    headline:
+      'O coordenador ficou ocioso esperando a equipe e o Nexus pausou a missão.',
+    action:
+      'Veja a última tela de cada pane na aba Atividade. Clique em Retomar: ' +
+      'o coordenador volta com uma nota de continuidade; integrante travado ' +
+      'não volta — re-despache a tarefa.',
+  },
   unknown: {
     headline: 'Motivo não registrado.',
     action: 'Abra a missão e veja a aba Atividade para entender o que aconteceu.',
@@ -207,6 +216,12 @@ const RULES: readonly {
   // Último: `[NEXUS_FAILURE:terminal]` é marcador de SEVERIDADE, não de causa.
   // Sozinho ele só garante que a recuperação automática acabou.
   { code: 'terminal-failure', test: /\[NEXUS_FAILURE:terminal\]/u },
+  // F-244: bloqueio do vigilante chef-idle. O marcador cobre builds novos; o
+  // texto legado cobre missões pausadas por builds anteriores.
+  {
+    code: 'maestro-idle-timeout',
+    test: /\[NEXUS_CHEF_IDLE\]|Orquestrador ocioso aguardando/u,
+  },
 ]);
 
 const EMAIL = /[\w.+-]+@[\w-]+\.[\w.-]+/gu;

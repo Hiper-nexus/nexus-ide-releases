@@ -242,6 +242,36 @@ describe('missionBlockCause — descrição real de campo', () => {
 });
 
 describe('missionBlockCause — honestidade quando a causa não existe', () => {
+  it('chef-idle: o marcador nomeia a causa (F-244)', () => {
+    const cause = missionBlockCause(
+      blocked(
+        'objetivo\n\n[NEXUS_CHEF_IDLE] Orquestrador ocioso aguardando 1 ' +
+          'worker(s) por 60min sem progresso. Use Retomar no rail.\n',
+      ),
+    );
+
+    expect(cause.code).toBe('maestro-idle-timeout');
+    expect(cause.headline).toBe(
+      'O coordenador ficou ocioso esperando a equipe e o Nexus pausou a missão.',
+    );
+    expect(cause.action).toContain('última tela');
+    expect(cause.action).toContain('Retomar');
+    expect(cause.detail).toContain('ocioso aguardando 1 worker');
+  });
+
+  it('chef-idle legado sem marcador ainda casa pelo texto (F-244)', () => {
+    const cause = missionBlockCause(
+      blocked(
+        'objetivo\n\nOrquestrador ocioso aguardando 2 worker(s) por 60min ' +
+          'sem progresso. Use Retomar no rail (respawna o orquestrador com ' +
+          'nota de continuidade) ou pare a missão.\n',
+      ),
+    );
+
+    expect(cause.code).toBe('maestro-idle-timeout');
+    expect(cause.headline).toContain('coordenador ficou ocioso');
+  });
+
   it('bloqueio sem nenhuma nota durável admite que não sabe', () => {
     const cause = missionBlockCause({
       status: 'blocked',

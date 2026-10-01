@@ -143,8 +143,11 @@ function trackChefIdleEscalation(
       expectedIntentState: mission.intentState,
       expectedUpdatedAt: mission.updatedAt,
       expectedIntentVersion: mission.intentVersion ?? 0,
+      // F-244: o marcador nomeia a causa no Quadro (mission-block-cause);
+      // builds antigas gravaram só o texto sem marcador.
       description:
-        `Orquestrador ocioso aguardando ${workerPaneCount} worker(s) por ` +
+        `[NEXUS_CHEF_IDLE] Orquestrador ocioso aguardando ` +
+        `${workerPaneCount} worker(s) por ` +
         `${minutes}min sem progresso. Use Retomar no rail (respawna o ` +
         `orquestrador com nota de continuidade) ou pare a missão.`,
     });

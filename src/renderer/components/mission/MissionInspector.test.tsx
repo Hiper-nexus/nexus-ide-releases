@@ -797,4 +797,176 @@ describe('MissionInspector', () => {
     expect(text).not.toContain('artifact://mission/report-completo.html');
     expect(text).not.toContain('evidence-rendered-board');
   });
+
+  it('F-244: colapsa eventos chef-idle consecutivos numa linha ×N', () => {
+    const host = mount({
+      events: [
+        event({ sequence: 1, id: 'run', type: 'mission.run_started' }),
+        event({
+          sequence: 2, id: 'idle-1', type: 'custom',
+          payload: { kind: 'chef_idle_awaiting_workers', workerCount: 1 },
+          idempotencyKey: 'chef-idle-1',
+        }),
+        event({
+          sequence: 3, id: 'idle-2', type: 'custom',
+          payload: { kind: 'chef_idle_awaiting_workers', workerCount: 1 },
+          idempotencyKey: 'chef-idle-2',
+        }),
+        event({
+          sequence: 4, id: 'idle-3', type: 'custom',
+          payload: { kind: 'chef_idle_awaiting_workers', workerCount: 1 },
+          idempotencyKey: 'chef-idle-3',
+        }),
+      ],
+    });
+    const panel = selectTab(host, 'Atividade');
+    const items = Array.from(panel.querySelectorAll('li'));
+
+    expect(items).toHaveLength(2);
+    expect(items[1]?.textContent).toContain(
+      'Coordenador ocioso aguardando 1 worker(s)',
+    );
+    expect(items[1]?.textContent).toContain('×3');
+  });
+
+  it('F-244: pane-final-screen vira details com a cauda como texto puro', () => {
+    const host = mount({
+      events: [
+        event({
+          sequence: 1, id: 'screen-1', type: 'custom',
+          payload: {
+            kind: 'pane-final-screen',
+            paneId: 'pane-32',
+            sessionId: 'pty-32',
+            role: 'worker',
+            adapterId: 'glm',
+            agentName: 'Construtor',
+            tail: '$ read foo.ts\n<img src=x onerror=alert(1)> fim',
+          },
+          idempotencyKey: 'pane_final_screen:pty-32',
+        }),
+      ],
+    });
+    const panel = selectTab(host, 'Atividade');
+    const details = panel.querySelector('details');
+    const summary = details?.querySelector('summary');
+
+    expect(summary?.textContent).toContain('Última tela — Construtor (worker)');
+    const pre = details?.querySelector('pre.mission-inspector__final-screen');
+    expect(pre?.textContent).toContain('$ read foo.ts');
+    // Cauda é texto React, nunca markup: o <img> aparece como texto literal.
+    expect(pre?.querySelector('img')).toBeNull();
+    expect(pre?.textContent).toContain('<img src=x onerror=alert(1)>');
+  });
+
+  it('F-244: kind custom desconhecido vira "Evento <kind>" sem quebrar', () => {
+    const host = mount({
+      events: [
+        event({
+          sequence: 1, id: 'mystery', type: 'custom',
+          payload: { kind: 'wat-futuro' },
+          idempotencyKey: 'mystery-kind',
+        }),
+        event({
+          sequence: 2, id: 'bad-kind', type: 'custom',
+          payload: { kind: '<script>alert(1)</script>' },
+          idempotencyKey: 'bad-kind-xx',
+        }),
+      ],
+    });
+    const panel = selectTab(host, 'Atividade');
+
+    expect(panel.textContent).toContain('Evento wat-futuro');
+    expect(panel.textContent).toContain('Evento personalizado registrado');
+    expect(panel.querySelector('script')).toBeNull();
+  });
+
+  it('F-244: cauda maior que 4 KB fica limitada', () => {
+    const host = mount({
+      events: [
+        event({
+          sequence: 1, id: 'screen-big', type: 'custom',
+          payload: {
+            kind: 'pane-final-screen',
+            paneId: 'pane-1',
+            sessionId: 'pty-1',
+            role: 'worker',
+            adapterId: 'glm',
+            tail: 'x'.repeat(9_000),
+          },
+          idempotencyKey: 'pane_final_screen:pty-1',
+        }),
+      ],
+    });
+    const panel = selectTab(host, 'Atividade');
+    const pre = panel.querySelector('pre.mission-inspector__final-screen');
+
+    expect(pre?.textContent?.length).toBeLessThanOrEqual(4 * 1024);
+  });
+
+  it('F-244: missão blocked_technical abre Atividade com "Por que parou"', () => {
+    const blockedSnapshot = missionSnapshotSchema.parse({
+      ...SNAPSHOT,
+      state: 'blocked_technical',
+      stateReason: {
+        code: 'mission-blocked',
+        label: 'O coordenador ficou ocioso esperando a equipe e o Nexus pausou a missão.',
+        detail: 'Veja a última tela de cada pane na aba Atividade.',
+      },
+      allowedActions: ['retry-kickoff', 'stop'],
+    });
+    const host = mount({
+      snapshot: blockedSnapshot,
+      events: [
+        event({
+          sequence: 1, id: 'screen-old', type: 'custom',
+          payload: {
+            kind: 'pane-final-screen', paneId: 'pane-a',
+            sessionId: 'pty-a', role: 'worker', adapterId: 'glm',
+            tail: 'tela antiga',
+          },
+          idempotencyKey: 'pane_final_screen:pty-a',
+        }),
+        event({
+          sequence: 2, id: 'screen-new', type: 'custom',
+          payload: {
+            kind: 'pane-final-screen', paneId: 'pane-b',
+            sessionId: 'pty-b', role: 'orchestrator', adapterId: 'claude',
+            agentName: 'Maestro',
+            tail: 'tela recente',
+          },
+          idempotencyKey: 'pane_final_screen:pty-b',
+        }),
+      ],
+    });
+    const panel = selectTab(host, 'Atividade');
+    const section = panel.querySelector('.mission-inspector__stop-reason');
+
+    expect(section?.textContent).toContain('Por que parou');
+    expect(section?.textContent).toContain('coordenador ficou ocioso');
+    const summaries = Array.from(
+      section?.querySelectorAll('summary') ?? [],
+      (node) => node.textContent,
+    );
+    // Mais recente primeiro.
+    expect(summaries[0]).toContain('Maestro');
+    expect(summaries[1]).toContain('glm');
+    expect(section?.textContent).toContain('tela recente');
+  });
+
+  it('F-244: bloqueio sem tela gravada diz isso explicitamente', () => {
+    const blockedSnapshot = missionSnapshotSchema.parse({
+      ...SNAPSHOT,
+      state: 'blocked_technical',
+      stateReason: { code: 'mission-blocked', label: 'Motivo não registrado.' },
+      allowedActions: ['retry-kickoff', 'stop'],
+    });
+    const host = mount({ snapshot: blockedSnapshot });
+    const panel = selectTab(host, 'Atividade');
+
+    expect(panel.textContent).toContain('Por que parou');
+    expect(panel.textContent).toContain(
+      'Sem última tela registrada (a missão foi encerrada por uma build anterior)',
+    );
+  });
 });

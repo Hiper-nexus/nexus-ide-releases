@@ -274,6 +274,44 @@ describe('projectMissionSnapshot', () => {
     expect(snapshot.stateReason?.label).not.toBe('Parou');
   });
 
+  it('chef-idle nomeia a causa e o reparo no stateReason (F-244)', () => {
+    const view = runningView();
+    view.mission.status = 'blocked';
+    view.mission.updatedAt = 1;
+    view.mission.intentState = 'blocked_technical';
+    view.mission.description =
+      'objetivo\n\n[NEXUS_CHEF_IDLE] Orquestrador ocioso aguardando 1 ' +
+      'worker(s) por 60min sem progresso. Use Retomar no rail.\n';
+    view.orchestratorLive = false;
+    view.panes = [];
+
+    const snapshot = projectMissionSnapshot(view);
+
+    expect(snapshot.state).toBe('blocked_technical');
+    expect(snapshot.stateReason?.code).toBe('mission-blocked');
+    expect(snapshot.stateReason?.label).toBe(
+      'O coordenador ficou ocioso esperando a equipe e o Nexus pausou a missão.',
+    );
+    expect(snapshot.stateReason?.detail).toContain('última tela');
+    expect(snapshot.stateReason?.detail).toContain('ocioso aguardando 1 worker');
+    expect(snapshot.stateReason?.detail?.length).toBeLessThanOrEqual(16_384);
+  });
+
+  it('bloqueio sem marcador admite que a causa não está registrada (F-244)', () => {
+    const view = runningView();
+    view.mission.status = 'blocked';
+    view.mission.updatedAt = 1;
+    view.mission.description = 'objetivo do operador\n';
+    view.orchestratorLive = false;
+    view.panes = [];
+
+    const snapshot = projectMissionSnapshot(view);
+
+    expect(snapshot.stateReason?.code).toBe('mission-blocked');
+    expect(snapshot.stateReason?.label).toBe('Motivo não registrado.');
+    expect(snapshot.stateReason?.detail).toContain('aba Atividade');
+  });
+
   it('leftover pending de antes do boot não fica Pronta para iniciar', () => {
     const view = runningView();
     view.mission.status = 'pending';

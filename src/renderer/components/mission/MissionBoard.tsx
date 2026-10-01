@@ -155,7 +155,7 @@ const HEADER_ACTIONS: readonly HeaderAction[] = [
 ];
 
 const HEADER_ACTION_LABELS: Readonly<Record<HeaderAction, string>> = {
-  'retry-kickoff': 'Tentar início novamente',
+  'retry-kickoff': 'Retomar o coordenador',
   resume: 'Retomar',
   stop: 'Parar',
 };

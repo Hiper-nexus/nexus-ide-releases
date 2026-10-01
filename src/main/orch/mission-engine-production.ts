@@ -1351,6 +1351,9 @@ export function projectMissionEngineSnapshotView(
         mission.title,
       workspaceLabel: `${scope.projectId}/${scope.checkoutId}`,
       status: mission.status,
+      // F-244: descrição/intentState alimentam a causa nomeada no Quadro.
+      ...(mission.description ? { description: mission.description } : {}),
+      ...(mission.intentState ? { intentState: mission.intentState } : {}),
       version: mission.intentVersion ?? 0,
       createdAt: mission.createdAt,
       updatedAt: mission.updatedAt,

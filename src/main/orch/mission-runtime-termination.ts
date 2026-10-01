@@ -47,6 +47,9 @@ import {
 import type { ProjectDomainStoreSuite } from './project-domain-store-registry';
 import { withMissionLifecycleLock } from './mission-lifecycle-lock';
 import { sameProjectScope } from './project-scoped-broadcast';
+import { emitMissionEvent } from './mission-event-emit';
+import { sanitizeMissionOrchestratorExitOutput } from './mission-orchestrator-exit-policy';
+import { readSessionOutput } from './pane-session-output';
 
 export type MissionRuntimeTerminationReason =
   | 'restart'
@@ -83,6 +86,9 @@ interface RuntimeTarget {
   readonly paneId: string;
   readonly sessionId: string;
   readonly spec?: MissionPaneSpec;
+  readonly role?: 'orchestrator' | 'worker' | 'user';
+  readonly adapterId?: string;
+  readonly agentName?: string;
   readonly workerIncarnationId?: string;
   readonly orphaned: boolean;
 }
@@ -102,6 +108,50 @@ export function missionHasLivePhysicalSession(
     (session) =>
       session.missionId === missionId && sameScope(session.scope, scope),
   );
+}
+
+const FINAL_SCREEN_TAIL_MAX_BYTES = 4 * 1024;
+
+/**
+ * F-244: última tela do pane antes de matar a sessão. O Quadro da missão
+ * bloqueada mostra o que cada pane estava fazendo quando morreu — sem isso o
+ * operador via terminais mortos e nenhuma pista. Best-effort: nunca atrasa
+ * nem impede a terminação; sessão sem buffer não gera evento.
+ */
+function emitFinalPaneScreen(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  target: RuntimeTarget,
+): void {
+  try {
+    const raw = readSessionOutput(target.sessionId, 80);
+    if (!raw.trim()) return;
+    let tail = sanitizeMissionOrchestratorExitOutput(raw);
+    if (Buffer.byteLength(tail, 'utf8') > FINAL_SCREEN_TAIL_MAX_BYTES) {
+      tail =
+        Buffer.from(tail, 'utf8')
+          .subarray(0, FINAL_SCREEN_TAIL_MAX_BYTES)
+          .toString('utf8') + '…';
+    }
+    emitMissionEvent(scope, {
+      missionId,
+      runId: 'pane-final-screen',
+      type: 'custom',
+      origin: 'main',
+      idempotencyKey: `pane_final_screen:${target.sessionId}`,
+      payload: {
+        kind: 'pane-final-screen',
+        paneId: target.paneId,
+        sessionId: target.sessionId,
+        role: target.role ?? target.spec?.role ?? null,
+        adapterId: target.adapterId ?? target.spec?.adapterId ?? null,
+        agentName: target.agentName ?? target.spec?.agentName ?? null,
+        tail,
+      },
+    });
+  } catch {
+    // Sessão já morrendo / journal indisponível: nunca compete com o teardown.
+  }
 }
 
 async function terminatePhysicalSession(sessionId: string): Promise<boolean> {
@@ -145,6 +195,8 @@ function runtimeTargets(input: {
     readonly paneId?: string;
     readonly missionId?: string;
     readonly role: 'orchestrator' | 'worker' | 'user';
+    readonly adapterId?: string;
+    readonly agentName?: string;
     readonly workerIncarnationId?: string;
     readonly scope: Readonly<ProjectExecutionScope>;
   }): void => {
@@ -191,6 +243,9 @@ function runtimeTargets(input: {
     targets.set(physical.sessionId, {
       paneId: physical.paneId,
       sessionId: physical.sessionId,
+      role: physical.role,
+      ...(physical.adapterId ? { adapterId: physical.adapterId } : {}),
+      ...(physical.agentName ? { agentName: physical.agentName } : {}),
       ...(matching[0] && exactAuthority ? { spec: matching[0] } : {}),
       ...(physical.workerIncarnationId
         ? { workerIncarnationId: physical.workerIncarnationId }
@@ -210,6 +265,8 @@ function runtimeTargets(input: {
       paneId: agent.paneId,
       missionId: agent.missionId,
       role: agent.role,
+      adapterId: agent.adapterId,
+      agentName: agent.agentName,
       workerIncarnationId: agent.workerIncarnationId,
       scope: agent.scope,
     });
@@ -284,6 +341,8 @@ function orphanRuntimeInventory(input: {
     readonly paneId?: string;
     readonly missionId?: string;
     readonly role: 'orchestrator' | 'worker' | 'user';
+    readonly adapterId?: string;
+    readonly agentName?: string;
     readonly workerIncarnationId?: string;
     readonly scope: Readonly<ProjectExecutionScope>;
   }): void => {
@@ -310,6 +369,9 @@ function orphanRuntimeInventory(input: {
     targets.set(target.sessionId, {
       paneId: target.paneId,
       sessionId: target.sessionId,
+      role: target.role,
+      ...(target.adapterId ? { adapterId: target.adapterId } : {}),
+      ...(target.agentName ? { agentName: target.agentName } : {}),
       ...(target.workerIncarnationId
         ? { workerIncarnationId: target.workerIncarnationId }
         : {}),
@@ -400,6 +462,7 @@ export async function closeOrphanedMissionRuntime(input: {
       );
       if (pending.length === 0) break;
       for (const target of pending) {
+        emitFinalPaneScreen(input.scope, input.missionId, target);
         if (!(await terminatePhysicalSession(target.sessionId))) {
           return {
             ok: false,
@@ -559,6 +622,7 @@ export async function terminateMissionRuntime(input: {
     if (pending.length === 0) break;
     for (const target of pending) {
       panesToCollapse.add(target.paneId);
+      emitFinalPaneScreen(input.scope, mission.id, target);
       const exited = await terminatePhysicalSession(target.sessionId);
       if (!exited) {
         return {

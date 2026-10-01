@@ -16,9 +16,11 @@ import {
   missionWorktreeSchema,
 } from '../../shared/mission-engine-contract';
 import {
+  missionIntentStateSchema,
   missionStatusSchema,
   strictSquadAgentSchema,
 } from '../../shared/orch-types';
+import { missionBlockCause } from '../../shared/mission-block-cause';
 import {
   MISSION_AWAITING_INSTRUCTION_REASON_CODE,
   NEXUS_PROCESS_STARTED_AT,
@@ -53,6 +55,14 @@ function isRootRelativeProjectPath(value: string): boolean {
   );
 }
 
+/** `missionStateReasonSchema.detail` máx. 16_384 — reticências no excesso. */
+const REASON_DETAIL_MAX = 16_384;
+function clipReasonDetail(value: string): string {
+  return value.length <= REASON_DETAIL_MAX
+    ? value
+    : `${value.slice(0, REASON_DETAIL_MAX - 1)}…`;
+}
+
 export const rootRelativeProjectPathSchema = z
   .string()
   .trim()
@@ -79,6 +89,9 @@ const snapshotMissionViewSchema = missionSnapshotSchema
   })
   .extend({
     status: missionStatusSchema,
+    // F-244: a nota durável do bloqueio nomeia a causa no Quadro.
+    description: z.string().max(65_536).optional(),
+    intentState: missionIntentStateSchema.optional(),
     createdAt: z
       .number()
       .int()
@@ -408,13 +421,28 @@ function projectState(view: ParsedView): {
           stateReason: persistClosedReason(),
         };
       }
-      return {
-        state: 'blocked_technical',
-        stateReason: {
-          code: 'mission-blocked',
-          label: 'A missão encontrou um bloqueio técnico',
-        },
-      };
+      {
+        // F-244: a causa nomeada viaja no stateReason — o header genérico
+        // não deixava o operador saber o que parou nem como reparar.
+        const cause = missionBlockCause({
+          status: view.mission.status,
+          intentState: view.mission.intentState ?? null,
+          description: view.mission.description ?? null,
+          pendingQuestion: view.openQuestion != null,
+        });
+        return {
+          state: 'blocked_technical',
+          stateReason: {
+            code: 'mission-blocked',
+            label: cause.headline,
+            detail: clipReasonDetail(
+              cause.detail
+                ? `${cause.action} — ${cause.detail}`
+                : cause.action,
+            ),
+          },
+        };
+      }
   }
 }
 

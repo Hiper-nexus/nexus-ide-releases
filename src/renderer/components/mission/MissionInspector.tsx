@@ -78,6 +78,8 @@ const BASIC_ACTIVITY_LABELS: Readonly<Partial<Record<MissionEvent['type'], strin
 const OPERATOR_DIRECTION_KEY_RE = /^operator_direction:[a-f0-9]{64}$/u;
 const UNSAFE_LABEL_CONTROL_RE =
   /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u;
+const SAFE_CUSTOM_KIND_RE = /^[a-z0-9_-]{1,40}$/u;
+const FINAL_SCREEN_TAIL_MAX_CHARS = 4 * 1024;
 
 function CanonicalField({
   label,
@@ -599,6 +601,80 @@ interface ActivityItem {
   readonly eventId: string;
   readonly sequence: number;
   readonly label: string;
+  readonly count: number;
+  /** Última tela sanitizada do pane (kind pane-final-screen). */
+  readonly finalScreenTail?: string;
+}
+
+function safeCustomKind(value: unknown): string | null {
+  return typeof value === 'string' && SAFE_CUSTOM_KIND_RE.test(value)
+    ? value
+    : null;
+}
+
+function customPayloadNumber(value: unknown): number | string {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.round(value)
+    : '?';
+}
+
+function customPayloadName(value: unknown): string | null {
+  return typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 128 &&
+    !UNSAFE_LABEL_CONTROL_RE.test(value)
+    ? value
+    : null;
+}
+
+/** F-244: rótulo legível por `payload.kind` — nunca o genérico 300×. */
+function customActivity(
+  event: MissionEvent,
+): Pick<ActivityItem, 'label' | 'finalScreenTail'> {
+  const kind = safeCustomKind(event.payload.kind);
+  if (kind === null) return { label: 'Evento personalizado registrado' };
+  const { payload } = event;
+  switch (kind) {
+    case 'chef_idle_awaiting_workers':
+      return {
+        label:
+          `Coordenador ocioso aguardando ` +
+          `${customPayloadNumber(payload.workerCount)} worker(s)`,
+      };
+    case 'chef_idle_escalated_blocked':
+      return {
+        label:
+          `Missão pausada: coordenador ocioso há ` +
+          `${customPayloadNumber(payload.idleMinutes)} min com ` +
+          `${customPayloadNumber(payload.workerCount)} worker(s)`,
+      };
+    case 'external-head-change':
+      return { label: 'HEAD do checkout mudou fora da missão' };
+    case 'worker-died-without-delivery':
+      return { label: 'Worker encerrou sem entregar' };
+    case 'worker-prompt-delivery-failed':
+      return { label: 'Brief não chegou ao worker' };
+    case 'worker-hung':
+      return {
+        label: `Worker travado há ${customPayloadNumber(payload.hungMinutes)} min`,
+      };
+    case 'pane-final-screen': {
+      const who =
+        customPayloadName(payload.agentName) ??
+        customPayloadName(payload.adapterId) ??
+        'pane';
+      const role = customPayloadName(payload.role) ?? 'agente';
+      const tail =
+        typeof payload.tail === 'string'
+          ? payload.tail.slice(0, FINAL_SCREEN_TAIL_MAX_CHARS)
+          : '';
+      return { label: `Última tela — ${who} (${role})`, finalScreenTail: tail };
+    }
+    case 'operator_direction':
+      return { label: 'Evento personalizado registrado' };
+    default:
+      return { label: `Evento ${kind}` };
+  }
 }
 
 function normalizedActivity(
@@ -609,6 +685,19 @@ function normalizedActivity(
 
   for (const event of events) {
     if (event.missionId !== missionId) continue;
+    if (event.type === 'custom') {
+      const custom = customActivity(event);
+      items.push({
+        eventId: event.id,
+        sequence: event.sequence,
+        label: custom.label,
+        count: 1,
+        ...(custom.finalScreenTail !== undefined
+          ? { finalScreenTail: custom.finalScreenTail }
+          : {}),
+      });
+      continue;
+    }
     const label = event.type.startsWith('observer.')
       ? observerActivityLabel(event)
       : BASIC_ACTIVITY_LABELS[event.type] ?? 'Evento da missão registrado';
@@ -617,10 +706,70 @@ function normalizedActivity(
       eventId: event.id,
       sequence: event.sequence,
       label,
+      count: 1,
     });
   }
 
-  return items.sort((left, right) => left.sequence - right.sequence);
+  const sorted = items.sort((left, right) => left.sequence - right.sequence);
+  // F-244: rajadas idênticas (ex.: 300× chef-idle) viram uma linha "×N" —
+  // o sequence exibido é o do primeiro da sequência.
+  const collapsed: ActivityItem[] = [];
+  for (const item of sorted) {
+    const previous = collapsed[collapsed.length - 1];
+    if (previous && previous.label === item.label) {
+      collapsed[collapsed.length - 1] = {
+        ...previous,
+        count: previous.count + 1,
+        ...(item.finalScreenTail !== undefined
+          ? { finalScreenTail: item.finalScreenTail }
+          : {}),
+      };
+      continue;
+    }
+    collapsed.push(item);
+  }
+  return collapsed;
+}
+
+/** Última tela gravada por pane, mais recente primeiro (F-244). */
+export function finalPaneScreens(
+  events: readonly MissionEvent[],
+  missionId: string,
+): readonly { eventId: string; label: string; tail: string }[] {
+  const byPane = new Map<string, { eventId: string; sequence: number; label: string; tail: string }>();
+  for (const event of events) {
+    if (event.missionId !== missionId || event.type !== 'custom') continue;
+    if (safeCustomKind(event.payload.kind) !== 'pane-final-screen') continue;
+    const paneId = customPayloadName(event.payload.paneId) ?? event.id;
+    const tail =
+      typeof event.payload.tail === 'string'
+        ? event.payload.tail.slice(0, FINAL_SCREEN_TAIL_MAX_CHARS)
+        : '';
+    const existing = byPane.get(paneId);
+    if (existing && existing.sequence >= event.sequence) continue;
+    byPane.set(paneId, {
+      eventId: event.id,
+      sequence: event.sequence,
+      label: customActivity(event).label,
+      tail,
+    });
+  }
+  return [...byPane.values()].sort((left, right) => right.sequence - left.sequence);
+}
+
+function FinalScreenDetails({
+  label,
+  tail,
+}: {
+  readonly label: string;
+  readonly tail: string;
+}) {
+  return (
+    <details className="mission-inspector__final-screen-item">
+      <summary>{label}</summary>
+      <pre className="mission-inspector__final-screen">{tail}</pre>
+    </details>
+  );
 }
 
 function ActivityProjection({
@@ -632,38 +781,91 @@ function ActivityProjection({
 }) {
   const [viewMode, setViewMode] = useState<'timeline' | 'canonical'>('canonical');
   const items = normalizedActivity(events, snapshot.id);
-
-  if (items.length === 0) {
-    return (
-      <p className="mission-inspector__empty" role="status">
-        Nenhuma atividade canônica segura foi registrada ainda.
-      </p>
-    );
-  }
+  // F-244: missão parada explica o reparo e mostra a última tela de cada pane.
+  const stopScreens =
+    snapshot.state === 'blocked_technical'
+      ? finalPaneScreens(events, snapshot.id)
+      : [];
+  const stopReason =
+    snapshot.state === 'blocked_technical' ? snapshot.stateReason : undefined;
 
   return (
     <div className="mission-inspector__activity-wrap">
-      <div className="mission-inspector__activity-view-switcher" style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
-        <button
-          type="button"
-          className="product-pane__btn product-pane__btn--ghost"
-          style={{ fontSize: 10, padding: '2px 8px' }}
-          onClick={() => setViewMode((m) => (m === 'timeline' ? 'canonical' : 'timeline'))}
+      {snapshot.state === 'blocked_technical' && (
+        <section
+          className="mission-inspector__stop-reason"
+          aria-label="Por que parou"
         >
-          {viewMode === 'timeline' ? 'Lista simples' : 'Timeline detalhada'}
-        </button>
-      </div>
-      {viewMode === 'timeline' ? (
-        <AgentActivityTimeline events={events} missionId={snapshot.id} />
+          <h3>Por que parou</h3>
+          {stopReason && <p>{stopReason.label}</p>}
+          {stopReason?.detail && <p>{stopReason.detail}</p>}
+          {stopScreens.length > 0 ? (
+            stopScreens.map((screen) => (
+              <FinalScreenDetails
+                key={screen.eventId}
+                label={screen.label}
+                tail={screen.tail}
+              />
+            ))
+          ) : (
+            <p className="mission-inspector__empty-value">
+              Sem última tela registrada (a missão foi encerrada por uma build
+              anterior)
+            </p>
+          )}
+        </section>
+      )}
+      {items.length === 0 ? (
+        <p className="mission-inspector__empty" role="status">
+          Nenhuma atividade canônica segura foi registrada ainda.
+        </p>
       ) : (
-        <ol className="mission-inspector__activity-list">
-          {items.map((item) => (
-            <li key={item.eventId}>
-              <span className="mission-inspector__sequence">#{item.sequence}</span>{' '}
-              <span>{item.label}</span>
-            </li>
-          ))}
-        </ol>
+        <>
+          <div className="mission-inspector__activity-view-switcher" style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+            <button
+              type="button"
+              className="product-pane__btn product-pane__btn--ghost"
+              style={{ fontSize: 10, padding: '2px 8px' }}
+              onClick={() => setViewMode((m) => (m === 'timeline' ? 'canonical' : 'timeline'))}
+            >
+              {viewMode === 'timeline' ? 'Lista simples' : 'Timeline detalhada'}
+            </button>
+          </div>
+          {viewMode === 'timeline' ? (
+            <AgentActivityTimeline events={events} missionId={snapshot.id} />
+          ) : (
+            <ol className="mission-inspector__activity-list">
+              {items.map((item) => (
+                <li key={item.eventId}>
+                  {item.finalScreenTail !== undefined ? (
+                    <details className="mission-inspector__final-screen-item">
+                      <summary>
+                        <span className="mission-inspector__sequence">
+                          #{item.sequence}
+                        </span>{' '}
+                        {item.label}
+                        {item.count > 1 ? ` ×${item.count}` : ''}
+                      </summary>
+                      <pre className="mission-inspector__final-screen">
+                        {item.finalScreenTail}
+                      </pre>
+                    </details>
+                  ) : (
+                    <>
+                      <span className="mission-inspector__sequence">
+                        #{item.sequence}
+                      </span>{' '}
+                      <span>
+                        {item.label}
+                        {item.count > 1 ? ` ×${item.count}` : ''}
+                      </span>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ol>
+          )}
+        </>
       )}
     </div>
   );

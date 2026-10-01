@@ -10,6 +10,12 @@ const runtime = vi.hoisted(() => ({
   snapshots: [] as Array<Record<string, unknown>>,
   /** Live PTYs absent from every authority inventory (unattributable). */
   unattributed: [] as string[],
+  /** Saída de PTY por sessionId para o final-screen (F-244). */
+  sessionOutput: new Map<string, string>(),
+  readOutputError: null as Error | null,
+  emittedEvents: [] as Array<Record<string, unknown>>,
+  /** Ordem das operações: evento de tela ANTES do encerramento físico. */
+  order: [] as string[],
   terminatePty: vi.fn(async (_sessionId: string) => true),
   closeMissionPane: vi.fn(
     async (_request: {
@@ -20,6 +26,21 @@ const runtime = vi.hoisted(() => ({
   ),
 }));
 
+vi.mock('./pane-session-output', () => ({
+  readSessionOutput: (sessionId: string, _lineLimit: number) => {
+    if (runtime.readOutputError) throw runtime.readOutputError;
+    return runtime.sessionOutput.get(sessionId) ?? '';
+  },
+}));
+
+vi.mock('./mission-event-emit', () => ({
+  emitMissionEvent: (_scope: unknown, input: Record<string, unknown>) => {
+    runtime.emittedEvents.push(input);
+    runtime.order.push(`event:${(input as { idempotencyKey?: string }).idempotencyKey}`);
+    return true;
+  },
+}));
+
 vi.mock('../pty/pty-manager', () => ({
   getSessionState: (sessionId: string) =>
     runtime.pty.some((entry) => entry.sessionId === sessionId) ||
@@ -28,6 +49,7 @@ vi.mock('../pty/pty-manager', () => ({
       : null,
   listAgentSessions: () => [...runtime.pty],
   orchTerminateSession: async (sessionId: string) => {
+    runtime.order.push(`terminate:${sessionId}`);
     const result = await runtime.terminatePty(sessionId);
     if (result) {
       runtime.pty = runtime.pty.filter(
@@ -201,6 +223,10 @@ beforeEach(() => {
   runtime.pty = [];
   runtime.snapshots = [];
   runtime.unattributed = [];
+  runtime.sessionOutput = new Map();
+  runtime.readOutputError = null;
+  runtime.emittedEvents = [];
+  runtime.order = [];
   runtime.terminatePty.mockReset().mockResolvedValue(true);
   runtime.closeMissionPane.mockReset().mockResolvedValue(true);
 });
@@ -293,6 +319,84 @@ describe('mission runtime physical inventory termination', () => {
     ).resolves.toMatchObject({ ok: true, terminatedSessionIds: ['pty-hidden'] });
     expect(runtime.terminatePty).toHaveBeenCalledWith('pty-hidden');
     expect(runtime.closeMissionPane).not.toHaveBeenCalled();
+  });
+
+  it('grava a última tela sanitizada do pane antes de encerrar (F-244)', async () => {
+    runtime.pty = [physical('pty-tail', 'pane-tail', 'inc-tail')];
+    runtime.sessionOutput.set(
+      'pty-tail',
+      'password=hunter2 sk-ant-abc123456789\n$ revisão concluída',
+    );
+
+    await expect(
+      terminateMissionRuntime({
+        scope,
+        suite: suite([pane('pane-tail', 'inc-tail')]),
+        missionId: mission.id,
+        reason: 'authority-revoked',
+        collapsePanes: true,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+
+    const event = runtime.emittedEvents.find(
+      (entry) => entry.idempotencyKey === 'pane_final_screen:pty-tail',
+    );
+    expect(event).toMatchObject({
+      missionId: mission.id,
+      runId: 'pane-final-screen',
+      type: 'custom',
+      origin: 'main',
+    });
+    const payload = (event ?? {}).payload as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      kind: 'pane-final-screen',
+      paneId: 'pane-tail',
+      sessionId: 'pty-tail',
+      role: 'worker',
+      adapterId: 'codex',
+    });
+    expect(payload.tail).toContain('revisão concluída');
+    expect(payload.tail).not.toContain('hunter2');
+    expect(payload.tail).not.toContain('sk-ant');
+    expect(
+      runtime.order.indexOf('event:pane_final_screen:pty-tail'),
+    ).toBeLessThan(runtime.order.indexOf('terminate:pty-tail'));
+  });
+
+  it('falha na leitura do buffer não atrasa nem impede o encerramento (F-244)', async () => {
+    runtime.pty = [physical('pty-broken', 'pane-broken', 'inc-broken')];
+    runtime.readOutputError = new Error('output buffer gone');
+
+    await expect(
+      terminateMissionRuntime({
+        scope,
+        suite: suite([pane('pane-broken', 'inc-broken')]),
+        missionId: mission.id,
+        reason: 'authority-revoked',
+        collapsePanes: true,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(runtime.terminatePty).toHaveBeenCalledWith('pty-broken');
+    expect(runtime.emittedEvents).toHaveLength(0);
+  });
+
+  it('sessão sem buffer de saída não gera evento de última tela (F-244)', async () => {
+    runtime.pty = [physical('pty-empty', 'pane-empty', 'inc-empty')];
+
+    await terminateMissionRuntime({
+      scope,
+      suite: suite([pane('pane-empty', 'inc-empty')]),
+      missionId: mission.id,
+      reason: 'authority-revoked',
+      collapsePanes: true,
+    });
+
+    expect(runtime.terminatePty).toHaveBeenCalledWith('pty-empty');
+    expect(
+      runtime.emittedEvents.some((entry) =>
+        String(entry.idempotencyKey).startsWith('pane_final_screen:'),
+      ),
+    ).toBe(false);
   });
 
   it('keeps exclusivity and pane authority when descendant exit is unproven', async () => {
