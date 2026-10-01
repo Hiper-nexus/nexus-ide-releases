@@ -6,6 +6,7 @@
 #   2. Rode:   scripts/go-live-email.sh          → MANDA um e-mail de verdade para o dono, grava os segredos e NÃO liga o disparo
 #   3. Confira a caixa de entrada e só então:   scripts/go-live-email.sh --ligar
 #   Para desligar a qualquer hora (kill switch):  scripts/go-live-email.sh --desligar
+#   Sem acesso ao Mac (chave vinda por outro canal):  printf '%s' "$CHAVE" | scripts/go-live-email.sh --stdin   (o passo 2, lendo a chave do stdin)
 #
 # A chave vem da área de transferência (pbpaste), só circula por pipe/stdin e nunca é impressa nem entra na linha de comando.
 # O NOTICE_SECRET (assina os links de descadastro) é criado UMA vez e nunca é trocado: trocar quebra todo link já enviado.
@@ -59,13 +60,18 @@ case "${1:-}" in
     deploy_flag false
     echo "Desligado: nenhum e-mail sai até religar."
     exit 0 ;;
-  "") ;;
-  *) die "uso: scripts/go-live-email.sh [--ligar | --desligar]" ;;
+  ""|--stdin) ;;
+  *) die "uso: scripts/go-live-email.sh [--stdin | --ligar | --desligar]" ;;
 esac
 
-command -v pbpaste >/dev/null || die "este roteiro usa pbpaste (macOS)"
-KEY="$(pbpaste | tr -d '\r\n[:space:]')"
-[[ "$KEY" =~ ^re_[A-Za-z0-9_]{16,}$ ]] || die "a área de transferência não tem uma chave do Resend (re_…). Copie a chave recém-criada e rode de novo."
+if [[ "${1:-}" == "--stdin" ]]; then
+  KEY="$(cat | tr -d '\r\n[:space:]')"
+  [[ "$KEY" =~ ^re_[A-Za-z0-9_]{16,}$ ]] || die "o stdin não tem uma chave do Resend (re_…)."
+else
+  command -v pbpaste >/dev/null || die "este roteiro usa pbpaste (macOS)"
+  KEY="$(pbpaste | tr -d '\r\n[:space:]')"
+  [[ "$KEY" =~ ^re_[A-Za-z0-9_]{16,}$ ]] || die "a área de transferência não tem uma chave do Resend (re_…). Copie a chave recém-criada e rode de novo."
+fi
 
 FROM="$(config_value EMAIL_FROM)"
 [[ -n "$FROM" ]] || die "EMAIL_FROM não está em wrangler.jsonc"
