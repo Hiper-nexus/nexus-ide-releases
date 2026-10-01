@@ -1,6 +1,9 @@
 import '@fontsource-variable/geist';
 import './community.css';
-import { DRAW, drawFrame } from './sorteio/draw.js';
+import './prize.css';
+import { buildMarquee } from './sorteio/marquee.js';
+import { startDrawSign } from './sorteio/reel.js';
+import { tiltFor } from './sorteio/tilt.js';
 
 const id = name => document.getElementById(name);
 
@@ -29,25 +32,49 @@ async function boot() {
   }
 }
 
-/** O letreiro do ganhador gira só enquanto está na tela; com redução de movimento fica na frase. */
-function startDrawSign(sign) {
-  if (!sign || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  const phrase = sign.textContent;
-  let timer = 0;
-  const spin = () => {
-    const began = performance.now();
-    const frame = () => {
-      const progress = (performance.now() - began) / DRAW.spin;
-      sign.textContent = drawFrame(phrase, progress);
-      timer = setTimeout(progress < 1 ? frame : spin, progress < 1 ? DRAW.tick : DRAW.hold);
-    };
-    frame();
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** O bilhete do próximo prêmio cede na ponta que o ponteiro encosta e o brilho segue o dedo. */
+function tiltTicket(ticket) {
+  if (!ticket || reducedMotion() || !matchMedia('(hover: hover)').matches) return;
+  let frame = 0;
+  const paint = event => {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => {
+      const { rx, ry, mx, my } = tiltFor(ticket.getBoundingClientRect(), event.clientX, event.clientY);
+      ticket.style.setProperty('--rx', `${rx.toFixed(2)}deg`);
+      ticket.style.setProperty('--ry', `${ry.toFixed(2)}deg`);
+      ticket.style.setProperty('--mx', `${mx.toFixed(1)}%`);
+      ticket.style.setProperty('--my', `${my.toFixed(1)}%`);
+    });
   };
-  new IntersectionObserver(([entry]) => {
-    clearTimeout(timer);
-    if (entry.isIntersecting) spin(); else sign.textContent = phrase;
-  }, { threshold: 0.6 }).observe(sign);
+  ticket.addEventListener('pointerenter', () => ticket.classList.add('tilting'));
+  ticket.addEventListener('pointermove', paint);
+  ticket.addEventListener('pointerleave', () => {
+    cancelAnimationFrame(frame);
+    ticket.classList.remove('tilting');
+    ticket.style.removeProperty('--rx');
+    ticket.style.removeProperty('--ry');
+  });
 }
 
+/** Os bilhetes saem da impressora uma vez, quando o quadro deles chega à tela. Quem observa é o quadro, nunca o
+ * bilhete: o bilhete começa recortado e um alvo recortado pode nunca ser considerado visível. Sem observador ou
+ * com redução de movimento, nada fica escondido. */
+function printTickets(board) {
+  const tickets = board ? [...board.querySelectorAll('.drop')] : [];
+  if (!tickets.length || reducedMotion() || !('IntersectionObserver' in window)) return;
+  document.body.classList.add('prize-ready');
+  const observer = new IntersectionObserver(entries => {
+    if (!entries.some(entry => entry.isIntersecting)) return;
+    tickets.forEach(ticket => ticket.classList.add('printed'));
+    observer.disconnect();
+  }, { threshold: 0.15 });
+  observer.observe(board);
+}
+
+buildMarquee(id('prize-marquee'));
+tiltTicket(document.querySelector('.drop-next'));
+printTickets(document.querySelector('.sorteio-board'));
 startDrawSign(id('draw-sign'));
 boot();

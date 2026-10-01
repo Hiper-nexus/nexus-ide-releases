@@ -1,9 +1,14 @@
 import '@fontsource-variable/geist';
 import './product.css';
+import './prize.css';
+import { buildMarquee } from './sorteio/marquee.js';
+import { startDrawSign } from './sorteio/reel.js';
 import { initializeDownloads } from './downloads/ui.js';
 import { initializePlans } from './plans/ui.js';
 import './voice/demo.js';
 
+buildMarquee(document.getElementById('prize-marquee'));
+startDrawSign(document.getElementById('prize-draw'));
 void initializeDownloads();
 void initializePlans();
 
@@ -69,4 +74,21 @@ window.addEventListener('pagehide',()=>{stop();video.pause();});
       play.disabled = true;
     }
   });
+})();
+
+// O filme do topo acompanha o ponteiro por poucos pixels, como um objeto sobre o piso. Só com mouse e sem redução de movimento.
+(() => {
+  const hero = document.querySelector('.product-hero'), reel = document.querySelector('.hero-reel');
+  if (!hero || !reel || reduced || !matchMedia('(hover: hover)').matches) return;
+  let frame = 0;
+  hero.addEventListener('pointermove', event => {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => {
+      const box = hero.getBoundingClientRect();
+      const x = (event.clientX - box.left) / box.width - 0.5, y = (event.clientY - box.top) / box.height - 0.5;
+      reel.style.setProperty('--px', `${(x * -14).toFixed(1)}px`);
+      reel.style.setProperty('--py', `${(y * -10).toFixed(1)}px`);
+    });
+  });
+  hero.addEventListener('pointerleave', () => { reel.style.removeProperty('--px'); reel.style.removeProperty('--py'); });
 })();
