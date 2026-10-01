@@ -167,3 +167,12 @@ test('os assuntos continuam curtos, em uma linha e sem pictograma, mesmo com a p
   }
   assert.match(renderNotice('welcome', base).subject, /15 dias de teste/);
 });
+
+test('a barra de progresso pinta os dias que já passaram de rosa e deixa o resto apagado, sem mudar o texto', () => {
+  const html = renderNotice('trial_ending_3d', base).html;
+  assert.ok(html.includes('<span style="color:#ff4f8b;">████████████</span>'), 'blocos usados em rosa');
+  assert.ok(html.includes('<span style="color:#5d5560;">░░░</span>'), 'blocos restantes apagados');
+  assert.match(renderNotice('trial_ending_3d', base).text, /\[█{12}░{3}\] 12\/15/);
+  // Bateria cheia ou vazia não deixa span sem conteúdo.
+  assert.doesNotMatch(renderNotice('welcome', base).html, /<span style="color:#ff4f8b;"><\/span>/);
+});

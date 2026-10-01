@@ -236,9 +236,20 @@ function terminalBarHtml(): string {
   return `<table role="presentation" aria-hidden="true" cellpadding="0" cellspacing="0" border="0"><tr>${dot('#ff5f57')}${dot('#febc2e')}${dot('#28c840')}<td style="padding-left:6px;font-family:${MONO};font-size:12px;line-height:1;color:${MUTED};">nexus — zsh</td></tr></table>`;
 }
 
+const BAR_EMPTY = '#5d5560';
+
+/** A barra `[████░░░░] 4/7` com os dias que já passaram em rosa e o resto apagado; qualquer outra linha sai como texto. */
+function lineContentHtml(entry: TerminalLine): string {
+  const bar = /^\[(█*)(░*)\] (\d+\/\d+)$/.exec(entry.text);
+  if (bar === null) return `${escapeHtml(entry.symbol)} ${escapeHtml(entry.text)}`;
+  const [, used = '', left = '', count = ''] = bar;
+  const span = (color: string, text: string): string => (text === '' ? '' : `<span style="color:${color};">${text}</span>`);
+  return `${escapeHtml(entry.symbol)} ${span(MUTED, '[')}${span(PINK, used)}${span(BAR_EMPTY, left)}${span(MUTED, `] ${escapeHtml(count)}`)}`;
+}
+
 function terminalHtml(copy: Copy): string {
   const line = (color: string, content: string): string => `<div style="color:${color};white-space:pre-wrap;word-break:break-word;">${content}</div>`;
-  const lines = copy.lines.map(entry => line(TONE_COLOR[entry.tone], `${escapeHtml(entry.symbol)} ${escapeHtml(entry.text)}`)).join('');
+  const lines = copy.lines.map(entry => line(TONE_COLOR[entry.tone], lineContentHtml(entry))).join('');
   const command = copy.command.startsWith('$ ') ? `<span style="color:${PINK};">$</span> <span style="color:${TEXT};">${escapeHtml(copy.command.slice(2))}</span>` : escapeHtml(copy.command);
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${TERMINAL};border:1px solid ${RULE};border-radius:10px;">
 <tr><td style="padding:10px 14px;border-bottom:1px solid ${RULE};">${terminalBarHtml()}</td></tr>
