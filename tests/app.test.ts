@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { SqliteD1 } from './helpers/sqlite-d1.js';
 import { SITE, environment, fakeStripe, seedAccount, webLogin } from './helpers/fixtures.js';
 import { createApp, cleanupExpired } from '../src/index.js';
+import { pkceChallenge } from '../src/crypto.js';
 
 type Body = { ok: boolean; error?: string; data?: Record<string, any> };
 const json = async (response: Response): Promise<Body> => await response.json() as Body;
@@ -117,4 +118,79 @@ test('scheduled cleanup removes only expired login state and tokens', async () =
     assert.deepEqual(rows.results.map(row => row.id), ['new'], table);
   }
   db.close();
+});
+
+async function startDesktopLogin(app: ReturnType<typeof createApp>, env: ReturnType<typeof environment>) {
+  const started = await app.request(`/v1/auth/google?app_state=nonce&code_challenge=${await pkceChallenge('a'.repeat(43))}`, {}, env);
+  assert.equal(started.status, 302);
+  return new URL(started.headers.get('location')!).searchParams.get('state')!;
+}
+const googleProvider: typeof fetch = async input => String(input).includes('/token')
+  ? Response.json({ access_token: 'tok' })
+  : Response.json({ sub: 'g-1', email: 'a@example.test', email_verified: true, name: 'A' });
+
+test('desktop login callback ends on a readable page that carries the deep link, under its own strict CSP', async () => {
+  const db = new SqliteD1();
+  const env = environment(db);
+  const app = createApp({ fetchFn: googleProvider });
+  const state = await startDesktopLogin(app, env);
+  const page = await app.request(`/v1/auth/google/callback?code=provider-code&state=${state}`, {}, env);
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get('content-type')!, /^text\/html/);
+  const html = await page.text();
+  assert.match(html, /Login concluído/);
+  assert.match(html, /<a [^>]*href="nexus:\/\/auth\/[A-Za-z0-9_-]+\?state=nonce"/);
+  assert.match(html, /http-equiv="refresh" content="1;url=nexus:\/\/auth\//);
+  assert.doesNotMatch(html, /<script/i);
+  const csp = page.headers.get('content-security-policy')!;
+  assert.match(csp, /default-src 'none'/);
+  assert.match(csp, /style-src 'unsafe-inline'/);
+  assert.match(csp, /frame-ancestors 'none'/);
+  assert.doesNotMatch(csp, /script-src|unsafe-eval|https?:/);
+  assert.equal(page.headers.get('x-frame-options'), 'DENY');
+  assert.equal(page.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(page.headers.get('cache-control'), 'no-store');
+  db.close();
+});
+
+test('a failed login callback explains the problem and the way back instead of showing raw JSON', async () => {
+  const db = new SqliteD1();
+  const env = environment(db);
+  const app = createApp({ fetchFn: async () => { throw new Error('boom'); } });
+  const state = await startDesktopLogin(app, env);
+  const page = await app.request(`/v1/auth/google/callback?code=provider-code&state=${state}`, {}, env);
+  assert.equal(page.status, 502);
+  assert.match(page.headers.get('content-type')!, /^text\/html/);
+  const html = await page.text();
+  assert.match(html, /Não foi possível concluir o login/);
+  assert.match(html, /Não foi possível validar o login no provedor/);
+  assert.match(html, /Abrir de novo/);
+  assert.doesNotMatch(html, /\{"ok"/);
+  assert.doesNotMatch(html, /boom|provider-code/);
+  assert.match(page.headers.get('content-security-policy')!, /style-src 'unsafe-inline'/);
+  db.close();
+});
+
+test('an expired or unknown login state also ends on the readable page, and API errors elsewhere stay JSON', async () => {
+  const db = new SqliteD1();
+  const env = environment(db);
+  const app = createApp({ fetchFn: googleProvider });
+  const page = await app.request(`/v1/auth/google/callback?code=x&state=${'a'.repeat(43)}`, {}, env);
+  assert.equal(page.status, 400);
+  assert.match(await page.text(), /Estado de login inválido ou vencido/);
+  const api = await app.request('/v1/auth/nope', {}, env);
+  assert.equal(api.status, 404);
+  assert.match(api.headers.get('content-type')!, /json/);
+  assert.equal(api.headers.get('content-security-policy'), "default-src 'none'; frame-ancestors 'none'");
+  db.close();
+});
+
+test('the page HTML-escapes everything it echoes', async () => {
+  const { loginErrorPage } = await import('../src/auth-pages.js');
+  const { Hono } = await import('hono');
+  const probe = new Hono();
+  probe.get('/', c => loginErrorPage(c, '<img src=x onerror=alert(1)> & "quoted"', 400));
+  const html = await (await probe.request('/')).text();
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt; &amp; &quot;quoted&quot;/);
 });

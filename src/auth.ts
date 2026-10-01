@@ -10,6 +10,7 @@ import { consumeAuthCode, issueTokens, rotateRefresh, revokeAll, sessionFor, SES
 import { hashToken, pkceChallenge, randomToken, safeEqual } from './crypto.js';
 import { authorizeUrl, exchangeCode } from './providers.js';
 import { jsonBody, isAllowedWebOrigin } from './http.js';
+import { loginErrorPage, loginSuccessPage } from './auth-pages.js';
 import { accountAccess } from './access.js';
 import { isAuthorizedAdmin } from './admin-identity.js';
 import { licenseForAccount } from './licences.js';
@@ -123,7 +124,7 @@ async function finishOAuth(c: AuthContext, fetchFn: typeof fetch) {
     const rawCode = randomToken(), now = Date.now();
     await c.env.DB.prepare('INSERT INTO auth_codes(code_hash,account_id,expires_at,created_at,code_challenge) VALUES(?,?,?,?,?)').bind(await hashToken(rawCode), account.id, now + CODE_TTL_MS, now, state.code_challenge).run();
     const base = state.client === 'shot' ? config.SHOT_DEEP_LINK_BASE : config.APP_DEEP_LINK_BASE;
-    return c.redirect(`${base}/${rawCode}?state=${encodeURIComponent(state.app_state!)}`);
+    return loginSuccessPage(c, { appName: state.client === 'shot' ? 'Nexus Shot' : 'NexusIDE', deepLink: `${base}/${rawCode}?state=${encodeURIComponent(state.app_state!)}` });
 }
 async function webSession(c: AuthContext) {
     const rawSession = getCookie(c, '__Host-nexus_session'), rawRefresh = getCookie(c, '__Host-nexus_refresh');
@@ -159,7 +160,17 @@ export function createAuthRoutes(fetchFn: typeof fetch = fetch): Hono<AppEnv> {
     routes.use('*', async (c, next) => { c.header('Cache-Control', 'no-store'); await next(); });
     routes.get('/auth/:provider', c => startOAuth(c, false));
     routes.get('/web/auth/:provider', c => startOAuth(c, true));
-    routes.get('/auth/:provider/callback', c => finishOAuth(c, fetchFn));
+    routes.get('/auth/:provider/callback', async (c) => {
+        try {
+            return await finishOAuth(c, fetchFn);
+        }
+        catch (error) {
+            // O callback é uma navegação do navegador, não uma chamada de API: erro vira página legível.
+            if (error instanceof HTTPException)
+                return loginErrorPage(c, error.message, error.status);
+            throw error;
+        }
+    });
     routes.post('/auth/exchange', async (c) => {
         const body = await jsonBody(c.req.raw, exchangeSchema);
         const accountId = await consumeAuthCode(c.env.DB, body.code, body.code_verifier, pkceChallenge);

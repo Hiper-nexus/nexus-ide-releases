@@ -25,7 +25,7 @@ export function authorizeUrl(provider: Provider, input: {
     const query = new URLSearchParams({ client_id: input.clientId, redirect_uri: input.redirectUri, response_type: 'code', scope: definition.scope, state: input.state, code_challenge: input.challenge, code_challenge_method: 'S256' });
     return `${definition.authUrl}?${query}`;
 }
-async function providerJson<T>(fetchFn: typeof fetch, url: string, init: RequestInit, schema: z.ZodType<T>): Promise<T> {
+async function providerJson<T>(fetchFn: typeof fetch, url: string, init: RequestInit, schema: z.ZodType<T>, step: string): Promise<T> {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<never>((_resolve, reject) => {
@@ -35,13 +35,26 @@ async function providerJson<T>(fetchFn: typeof fetch, url: string, init: Request
         }, PROVIDER_TIMEOUT_MS);
     });
     const request = async () => {
-        const response = await fetchFn(url, { ...init, signal: controller.signal, redirect: 'error' });
-        if (!response.ok) throw new Error('Provider request rejected');
+        // Workers só aceita 'follow' e 'manual' ('error' lança TypeError e derrubava todo login). Com 'manual'
+        // um 3xx volta como resposta e `response.ok` é falso, então redirecionamento continua recusado.
+        const response = await fetchFn(url, { ...init, signal: controller.signal, redirect: 'manual' });
+        if (!response.ok) throw new Error(`http ${response.status}`);
         const body = await readBoundedBody(new Request(url, { method: 'POST', body: response.body, headers: response.headers, duplex: 'half' } as RequestInit), MAX_PROVIDER_BYTES);
-        return schema.parse(JSON.parse(body));
+        let json: unknown;
+        try { json = JSON.parse(body); }
+        catch { throw new Error('resposta não é JSON'); }
+        const parsed = schema.safeParse(json);
+        if (parsed.success) return parsed.data;
+        // GitHub responde 200 com { error } quando recusa; o código do erro é a pista (nunca o segredo).
+        const reason = json && typeof json === 'object' && 'error' in json ? `provider_error=${String((json as { error: unknown }).error).slice(0, 64)}` : `campos=${parsed.error.issues.map(issue => issue.path.join('.')).join(',')}`;
+        throw new Error(`resposta inesperada ${reason}`);
     };
     try { return await Promise.race([request(), deadline]); }
-    catch { throw new HTTPException(502, { message: 'Não foi possível validar o login no provedor. Tente novamente.' }); }
+    catch (error) {
+        // Diagnóstico para `wrangler tail`: etapa + motivo curto. Nunca URL com code, token ou segredo.
+        console.error('[oauth]', step, error instanceof Error ? error.message.slice(0, 160) : 'erro desconhecido');
+        throw new HTTPException(502, { message: 'Não foi possível validar o login no provedor. Tente novamente.' });
+    }
     finally { clearTimeout(timer); }
 }
 export async function exchangeCode(provider: Provider, input: {
@@ -55,14 +68,14 @@ export async function exchangeCode(provider: Provider, input: {
     const token = await providerJson(fetchFn, definition.tokenUrl, {
         method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ client_id: input.clientId, client_secret: input.clientSecret, code: input.code, redirect_uri: input.redirectUri, grant_type: 'authorization_code', code_verifier: input.verifier }).toString(),
-    }, tokenSchema);
+    }, tokenSchema, 'token');
     const headers = { authorization: `Bearer ${token.access_token}`, accept: 'application/json', 'User-Agent': 'NexusIDE-Cloud' };
     if (provider === 'google') {
-        const user = await providerJson(fetchFn, definition.userUrl, { headers }, googleSchema);
+        const user = await providerJson(fetchFn, definition.userUrl, { headers }, googleSchema, 'google-user');
         return { provider, subject: user.sub, email: user.email ?? null, verified: user.email_verified === true && Boolean(user.email), name: user.name ?? null, avatar: user.picture ?? null };
     }
-    const user = await providerJson(fetchFn, definition.userUrl, { headers }, githubSchema);
-    const emails = await providerJson(fetchFn, 'https://api.github.com/user/emails', { headers }, emailsSchema);
+    const user = await providerJson(fetchFn, definition.userUrl, { headers }, githubSchema, 'github-user');
+    const emails = await providerJson(fetchFn, 'https://api.github.com/user/emails', { headers }, emailsSchema, 'github-emails');
     const primary = emails.find(value => value.primary && value.verified);
     return { provider, subject: String(user.id), email: primary?.email ?? null, verified: Boolean(primary), name: user.name ?? user.login ?? null, avatar: user.avatar_url ?? null };
 }

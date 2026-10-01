@@ -32,7 +32,11 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
   app.notFound(c => c.json({ ok: false, error: 'Rota não encontrada.' }, 404));
   app.use('*', async (c, next) => {
     await next();
-    for (const [name, value] of Object.entries(SECURITY_HEADERS)) c.res.headers.set(name, value);
+    for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+      // As páginas de resultado do login trazem o próprio CSP (só estilo inline); o resto da API mantém o global.
+      if (name === 'content-security-policy' && c.res.headers.has(name)) continue;
+      c.res.headers.set(name, value);
+    }
   });
   app.get('/health', c => c.json({ ok: true }));
   const rateLimit: MiddlewareHandler<AppEnv> = async (c, next) => {
