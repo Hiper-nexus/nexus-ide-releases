@@ -41,3 +41,6 @@
 @keyframes account-pulse{from{opacity:.35}to{opacity:1}}
 @media(max-width:760px){.login-actions{max-width:none}.login-benefits{margin-top:var(--s3)}}
 @media(prefers-reduced-motion:reduce){.account-message:before{animation:none}}
+/* "Entrar para assinar": o quadro de login chama a atenção uma vez, sem mover nada. */
+.account-panel.attention{animation:account-attention 1.4s var(--ease) 1}
+@keyframes account-attention{0%{box-shadow:0 0 0 0 rgb(255 79 139/.55)}100%{box-shadow:0 0 0 16px rgb(255 79 139/0)}}

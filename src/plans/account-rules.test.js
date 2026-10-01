@@ -63,3 +63,26 @@ test('suspenso sem cliente no Stripe não ouve que o portal continua disponível
   assert.equal(flags.portalEnabled, false);
   assert.equal(billingFlags(open, trial, false).portalEnabled, false);
 });
+
+test('sem login e com as vendas abertas o botão não é um beco sem saída: vira "Entrar para assinar"', () => {
+  const signedOut = billingFlags(open, { authenticated: false }, false);
+  assert.equal(signedOut.subscribeAction, 'login');
+  assert.equal(signedOut.subscribeEnabled, true);
+  assert.equal(signedOut.subscribeLabel, 'Entrar para assinar');
+  assert.equal(signedOut.checkoutEnabled, false, 'ainda não existe checkout sem sessão');
+});
+
+test('logado e sem Pro o botão abre o checkout; com Pro, suspenso ou vendas fechadas ele fica desligado', () => {
+  const ready = billingFlags(open, trial, false);
+  assert.deepEqual([ready.subscribeAction, ready.subscribeEnabled, ready.subscribeLabel], ['checkout', true, 'Assinar Nexus Pro ↗']);
+  for (const [availability, session] of [[open, customer], [open, { ...customer, entitlement: { access: 'suspended' } }], [closed, trial], [closed, { authenticated: false }], [{ ready: true, billing: { available: false } }, { authenticated: false }]]) {
+    const flags = billingFlags(availability, session, false);
+    assert.equal(flags.subscribeAction, 'none');
+    assert.equal(flags.subscribeEnabled, false);
+  }
+});
+
+test('ocupado desliga o botão nos dois modos, para o clique duplo não repetir a ação', () => {
+  assert.equal(billingFlags(open, { authenticated: false }, true).subscribeEnabled, false);
+  assert.equal(billingFlags(open, trial, true).subscribeEnabled, false);
+});

@@ -25,9 +25,15 @@ export function billingFlags(availability, session, isBusy) {
     status = portalUsable ? 'Seu acesso está suspenso. Fale com o suporte. O portal de cobrança continua disponível.' : 'Seu acesso está suspenso. Fale com o suporte.';
   } else if (!selling) {
     status = `A contratação está temporariamente indisponível. Nenhuma cobrança será iniciada.${portalUsable ? ' O portal de cobrança continua disponível.' : ''}`;
-  } else status = authenticated ? 'Ao continuar, você será levado ao checkout seguro do Stripe.' : 'Entre na sua conta para contratar.';
+  } else status = authenticated ? 'Ao continuar, você será levado ao checkout seguro do Stripe.' : 'Entre ou crie sua conta com Google ou GitHub para contratar.';
+  const checkoutEnabled = !isBusy && selling && authenticated && !['pro', 'suspended'].includes(access);
+  // Sem login o botão não é um beco sem saída: com as vendas abertas ele leva ao cadastro.
+  const subscribeAction = checkoutEnabled ? 'checkout' : (!isBusy && selling && !authenticated ? 'login' : 'none');
   return {
-    checkoutEnabled: !isBusy && selling && authenticated && !['pro', 'suspended'].includes(access),
+    checkoutEnabled,
+    subscribeAction,
+    subscribeEnabled: subscribeAction !== 'none',
+    subscribeLabel: selling && !authenticated ? 'Entrar para assinar' : 'Assinar Nexus Pro ↗',
     portalVisible,
     portalEnabled: !isBusy && portalUsable,
     status,

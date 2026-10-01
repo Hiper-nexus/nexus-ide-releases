@@ -86,7 +86,10 @@ function renderAvailability() {
   for (const provider of ['google', 'github']) byId(`login-${provider}`).hidden = availability?.auth?.[provider] !== true;
   byId('login-status').textContent = availability?.auth?.google || availability?.auth?.github
     ? 'O login usa sua conta do provedor escolhido.' : 'Login temporariamente indisponível. Tente novamente mais tarde.';
-  byId('subscribe').disabled = !flags.checkoutEnabled;
+  // Sem login o botão leva ao cadastro; logado, ao checkout; fechado ou já Pro, fica desligado.
+  subscribeAction = flags.subscribeAction;
+  byId('subscribe').disabled = !flags.subscribeEnabled;
+  byId('subscribe').textContent = flags.subscribeLabel;
   byId('logout').disabled = isBusy;
   byId('refresh-account').disabled = isBusy;
   // O portal depende de existir um cliente no Stripe, não do acesso ao app nem de as vendas estarem abertas.
@@ -100,6 +103,28 @@ function renderAvailability() {
   byId('trial-description').textContent = Number.isInteger(trial?.days) && Number.isInteger(trial.maxAgents)
     ? `${trial.days} dias de teste com até ${trial.maxAgents} agentes simultâneos${trial.cloudSync === false ? ', sem sincronização em nuvem' : ''}.`
     : 'As condições do período de teste estão temporariamente indisponíveis.';
+}
+
+let subscribeAction = 'none';
+const INTENT_KEY = 'nexus-subscribe-intent';
+
+/** O clique em "Entrar para assinar" sobrevive ao desvio pelo Google/GitHub, só neste navegador e nesta aba. */
+function rememberSubscribeIntent() { try { sessionStorage.setItem(INTENT_KEY, '1'); } catch { /* sem armazenamento: o fluxo segue sem o lembrete */ } }
+function consumeSubscribeIntent() {
+  try { const had = sessionStorage.getItem(INTENT_KEY) === '1'; sessionStorage.removeItem(INTENT_KEY); return had; } catch { return false; }
+}
+
+/** Pede o cadastro: leva o foco ao login, destaca o quadro e diz o que fazer. */
+function startSignup() {
+  const panel = byId('identity-title').closest('.account-panel');
+  const first = ['login-google', 'login-github'].map(byId).find(button => button && !button.hidden);
+  rememberSubscribeIntent();
+  panel.classList.remove('attention');
+  void panel.offsetWidth;
+  panel.classList.add('attention');
+  panel.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  first?.focus({ preventScroll: true });
+  message('account-message', first ? 'Para assinar, entre ou crie sua conta: escolha Google ou GitHub.' : 'O login está temporariamente indisponível. Tente novamente em instantes.', first ? '' : 'error');
 }
 
 async function refreshAccount({ announce = true } = {}) {
@@ -116,6 +141,11 @@ async function refreshAccount({ announce = true } = {}) {
   renderIdentity();
   renderAvailability();
   if (announce) message('account-message', error ? error.message : session.authenticated ? 'Conta atualizada. O acesso mostrado foi confirmado pelo servidor.' : 'Entre para começar ou continuar.', error ? 'error' : '');
+  // Voltou do login depois de clicar em assinar: leva ao plano em vez de deixar a pessoa procurando.
+  if (!error && session.authenticated && consumeSubscribeIntent() && subscribeAction === 'checkout') {
+    highlightPlan();
+    message('account-message', 'Conta pronta. Clique em “Assinar Nexus Pro” para continuar.', 'success');
+  }
 }
 
 const CHECKOUT_DELAYS = [1200, 2500, 4000];
@@ -199,7 +229,7 @@ async function logout() {
 
 if (document.body.dataset.page === 'account') {
   byId('refresh-account').addEventListener('click', () => refreshAccount());
-  byId('subscribe').addEventListener('click', () => billingAction('checkout'));
+  byId('subscribe').addEventListener('click', () => (subscribeAction === 'login' ? startSignup() : billingAction('checkout')));
   byId('billing-portal').addEventListener('click', () => billingAction('portal'));
   byId('logout').addEventListener('click', logout);
   const query = new URLSearchParams(window.location.search);
