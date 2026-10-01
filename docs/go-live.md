@@ -176,6 +176,14 @@ Conferência funcional dos dois provedores ocorre em 2.9. Não remova callbacks 
 
 ### 2.5 Criar o Product, Price e Customer Portal de teste
 
+**Caminho recomendado:** com a chave de teste no ambiente, rode o script idempotente do repositório. Ele cria ou reaproveita o produto, o preço mensal de R$ 59,99, atualiza o Customer Portal padrão e cria o webhook da etapa 2.7 com os seis eventos, imprimindo os IDs e os comandos `wrangler` seguintes. Rodar de novo não duplica nada; `--dry-run` só mostra o plano; chave live exige `--live`.
+
+```sh
+STRIPE_SECRET_KEY='<sk_test_...>' npm run stripe:provision -- --json
+```
+
+As instruções manuais abaixo continuam válidas para conferência ou para quem preferir o painel.
+
 No Stripe, selecione explicitamente o ambiente de teste do produto. Todos os objetos e a chave desta etapa pertencem a esse mesmo ambiente. Em Product catalog > Add product, crie Nexus Pro com preço fixo recorrente mensal, BRL, R$ 59,99, quantidade 1. Guarde `<PRICE_ID_TESTE>` em `STRIPE_PRICE_PRO`. Não adicione trial do Stripe: os 15 dias do Nexus começam no login, sem cartão. O checkout atual cobra a assinatura imediatamente. Fonte: [Products e Prices][stripe-prices].
 
 Como alternativa ao painel, existe este comando no repositório do app, já inspecionado em `main`:
@@ -270,6 +278,8 @@ Em Settings > Trigger Events > Cron Triggers, confira `17 * * * *`. Significa mi
 Não confunda esse gatilho com a API nativa de cron do app, que continua no Worker: `GET /v1/cron/projects/:projectId/schedules`, `PUT /v1/cron/projects/:projectId/schedules/:scheduleId` e `POST /v1/cron/leases/{acquire,renew,release}`, todas com Bearer desktop. Publicar, adquirir e renovar exigem acesso `trial` ou `pro`, não sync pago. Não existe segredo de cron nem endpoint HTTP público que substitua o `scheduled`. Não existe um comando obrigatório `wrangler cron`: `deploy` aplica `triggers.crons`. Fonte: [Cron Triggers][w-cron].
 
 ### 2.7 Cadastrar o webhook de teste
+
+Se você rodou `npm run stripe:provision` na etapa 2.5, o destino já existe: use o `webhookSecret` da saída `--json` em `wrangler secret put STRIPE_WEBHOOK_SECRET` e pule para a conferência. Sem assinatura, o endpoint responde 400 antes de qualquer verificação de configuração.
 
 No Stripe, ainda no mesmo ambiente de teste: Workbench > Webhooks > criar destino. Escolha eventos da própria conta, payload de eventos compatível com o endpoint clássico, destino HTTPS:
 
