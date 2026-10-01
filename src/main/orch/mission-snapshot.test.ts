@@ -657,6 +657,43 @@ describe('missão falhada não pode ter apagar como única saída', () => {
   });
 });
 
+describe('F-245 — blocked_technical oferece Retomar, não retry-kickoff', () => {
+  it('bloqueio técnico nomeado (mission-blocked) anuncia resume + stop', () => {
+    expect(
+      allowedActionsForState('blocked_technical', {
+        code: 'mission-blocked',
+        label: 'x',
+      }),
+    ).toEqual(['resume', 'stop']);
+  });
+
+  it('líder à deriva continua com só stop — nunca um segundo orquestrador', () => {
+    expect(
+      allowedActionsForState('blocked_technical', {
+        code: 'leader-drift',
+        label: 'x',
+      }),
+    ).toEqual(['stop']);
+  });
+
+  it('o snapshot de missão chef-idle anuncia Retomar ao operador', () => {
+    const view = runningView();
+    view.mission.status = 'blocked';
+    view.mission.updatedAt = 1;
+    view.mission.intentState = 'blocked_technical';
+    view.mission.description =
+      'objetivo\n\n[NEXUS_CHEF_IDLE] Orquestrador ocioso aguardando 1 ' +
+      'worker(s) por 60min sem progresso. Use Retomar no rail.\n';
+    view.orchestratorLive = false;
+    view.panes = [];
+
+    const snapshot = projectMissionSnapshot(view);
+
+    expect(snapshot.state).toBe('blocked_technical');
+    expect(snapshot.allowedActions).toEqual(['resume', 'stop']);
+  });
+});
+
 describe('awaiting-instruction — Maestro vivo esperando o próximo pedido (F-198)', () => {
   it('orquestrador ocioso e nenhum pane em trabalho: running com o motivo honesto', () => {
     const view: ProjectMissionSnapshotView = {

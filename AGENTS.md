@@ -233,6 +233,10 @@ saber isto antes de mexer:
   missão criada pelo MCP não tem botão de despacho. A invariante em
   `mcp-dispatch-security.test.ts` percorre todo status; trava nova no caminho
   do pane do operador precisa passar nela.
+- F-245: `blocked_technical` oferece `resume` (remount do operador com nota de
+  continuidade, qualquer causa — inclusive chef-idle sem marcador de dispatch);
+  `retry-kickoff` com Maestro dispensado lança `orchestrator_operator_dismissed`
+  (erro visível) em vez do skip silencioso do remount automático.
 
 ## Abas dos Terminais: aba = feature (23/09)
 

@@ -177,6 +177,11 @@ export function headerActionLabel(
   if (action === 'resume' && missionState === 'failed') {
     return 'Tentar de novo';
   }
+  // F-245: em bloqueio técnico o Retomar reabre a missão e respawna o
+  // coordenador — nomeie o que volta, não a ação abstrata.
+  if (action === 'resume' && missionState === 'blocked_technical') {
+    return 'Retomar o coordenador';
+  }
   return HEADER_ACTION_LABELS[action];
 }
 

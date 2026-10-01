@@ -1323,7 +1323,7 @@ describe('MissionBoard canonical controller', () => {
 
   it.each([
     ['retry-kickoff', 'Retomar o coordenador'],
-    ['resume', 'Retomar'],
+    ['resume', 'Retomar o coordenador'],
     ['stop', 'Parar'],
   ] as const)(
     'shows only the allowed %s action and replaces state with its returned snapshot',

@@ -84,6 +84,7 @@ import {
   getPaneRuntimeAuthorityBySession,
   listPaneSnapshots,
   readSessionOutput,
+  wasOrchestratorOperatorDismissed,
   type PaneRuntimeAuthority,
 } from "./pane-registry";
 import {
@@ -1697,6 +1698,15 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
             "só Retomar no rail religa",
         );
       }
+      // F-245: o remount automático ignora pane dispensado em SILÊNCIO — o
+      // botão do Quadro resolvia sem erro e sem efeito. O clique do operador
+      // merece erro visível apontando o Retomar.
+      if (wasOrchestratorOperatorDismissed(command.missionId)) {
+        throw new Error(
+          "orchestrator_operator_dismissed: o pane do coordenador foi " +
+            "fechado — use Retomar para reabrir a missão",
+        );
+      }
       await resumeFastLaneMission(scope, command.missionId, {
         remountKind: "automatic",
       });
@@ -1794,8 +1804,20 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
       const detail = taskDispatchBlockDetailFromDescription(
         mission.description,
       );
+      // F-245: sem marcador de dispatch (chef-idle etc.) o bloqueio técnico
+      // não tinha saída — `resume` lançava e o remount automático pulava o
+      // pane dispensado. O clique do operador é `operator`: reabre a missão
+      // (resumeTechnical + fastLaneBootstrap) com nota de continuidade.
       if (!detail) {
-        throw new Error("mission engine resume requires an exact dispatch block");
+        await resumeFastLaneMission(scope, command.missionId, {
+          remountKind: "operator",
+          note:
+            "O operador retomou a missão depois de uma pausa (bloqueio " +
+            "técnico). Releia nexus_handoff_list({full:true}) e " +
+            "nexus_pane_list antes de despachar; worker que estava travado " +
+            "não voltou — re-despache a tarefa dele.",
+        });
+        return;
       }
       transitionMissionEngineLifecycle(
         stores,

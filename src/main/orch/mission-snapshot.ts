@@ -464,9 +464,11 @@ export function allowedActionsForState(
       // Líder à deriva: tentar de novo abriria um SEGUNDO orquestrador ao lado
       // do que continua trabalhando no terminal.
       if (stateReason?.code === LEADER_DRIFT_CODE) return ['stop'];
-      return stateReason?.code === 'residual-work'
-        ? ['resume', 'stop']
-        : ['retry-kickoff', 'stop'];
+      // F-245: `resume` serve qualquer bloqueio técnico (o port já faz
+      // remount do operador com nota de continuidade); `retry-kickoff` só
+      // piorava — com o pane do coordenador dispensado ele resolvia em
+      // silêncio sem efeito.
+      return ['resume', 'stop'];
     case 'recovering':
       return ['stop'];
     // Concluída NÃO é o fim da conversa: a entrega ainda espera a revisão

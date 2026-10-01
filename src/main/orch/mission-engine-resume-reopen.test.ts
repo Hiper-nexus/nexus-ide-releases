@@ -17,6 +17,7 @@ import { testProjectScope } from './__tests__/scope-fixture';
 const harness = vi.hoisted(() => ({
   resumeFastLaneMission: vi.fn(async () => {}),
   taskList: [] as Array<{ id: string; title: string; status: string }>,
+  orchestratorDismissed: false,
 }));
 
 vi.mock('../pty/pty-manager', () => ({
@@ -51,6 +52,7 @@ vi.mock('./pane-registry', () => ({
   listPaneSnapshots: () => [],
   getPaneRuntimeAuthorityBySession: () => null,
   readSessionOutput: () => '',
+  wasOrchestratorOperatorDismissed: () => harness.orchestratorDismissed,
 }));
 
 vi.mock('./squad-store', () => ({
@@ -144,6 +146,7 @@ beforeEach(async () => {
   vi.resetModules();
   harness.resumeFastLaneMission.mockClear();
   harness.taskList = [];
+  harness.orchestratorDismissed = false;
   transitionCount = 0;
   await import('./mission-engine-production');
   const { missionEngineForScope } = await import('./mission-engine-registry');
@@ -234,16 +237,58 @@ describe('engine resume — os estados em que a UI oferece Retomar', () => {
     );
   });
 
-  it('bloqueio técnico sem dispatch block continua recusado (regressão do caminho cerimonial)', async () => {
+  it('F-245: bloqueio técnico sem marcador de dispatch (chef-idle) reabre via remount do operador', async () => {
+    // O bloqueio do chef-idle não tem marcador de despacho — o resume antigo
+    // lançava "requires an exact dispatch block" e a missão não tinha saída.
     liveMission = baseMission({
       status: 'blocked',
       intentState: 'blocked_technical',
-      description: 'erro técnico qualquer sem marcador de despacho',
+      description:
+        'objetivo\n\n[NEXUS_CHEF_IDLE] Orquestrador ocioso aguardando ' +
+        '1 worker(s) por 60min sem progresso.',
     });
 
+    await engine.command(scope, { kind: 'resume', missionId: 'mission-1' });
+
+    expect(harness.resumeFastLaneMission).toHaveBeenCalledTimes(1);
+    expect(harness.resumeFastLaneMission).toHaveBeenCalledWith(
+      scope,
+      'mission-1',
+      expect.objectContaining({
+        remountKind: 'operator',
+        note: expect.stringContaining('bloqueio técnico'),
+      }),
+    );
+  });
+
+  it('F-245: retry-kickoff com coordenador dispensado falha visível, nunca em silêncio', async () => {
+    liveMission = baseMission({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+    harness.orchestratorDismissed = true;
+
     await expect(
-      engine.command(scope, { kind: 'resume', missionId: 'mission-1' }),
-    ).rejects.toThrow('mission engine resume requires an exact dispatch block');
+      engine.command(scope, { kind: 'retry-kickoff', missionId: 'mission-1' }),
+    ).rejects.toThrow('orchestrator_operator_dismissed');
     expect(harness.resumeFastLaneMission).not.toHaveBeenCalled();
+  });
+
+  it('F-245: retry-kickoff sem pane dispensado segue o remount automático', async () => {
+    liveMission = baseMission({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+
+    await engine.command(scope, {
+      kind: 'retry-kickoff',
+      missionId: 'mission-1',
+    });
+
+    expect(harness.resumeFastLaneMission).toHaveBeenCalledWith(
+      scope,
+      'mission-1',
+      expect.objectContaining({ remountKind: 'automatic' }),
+    );
   });
 });

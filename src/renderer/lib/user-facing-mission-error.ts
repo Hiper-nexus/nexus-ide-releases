@@ -44,6 +44,10 @@ function refusedGoalRecovery(raw: string): string | null {
 function knownMissionRecovery(raw: string): string | null {
   const refusedGoal = refusedGoalRecovery(raw);
   if (refusedGoal) return refusedGoal;
+  // F-245: retry-kickoff com o pane do coordenador fechado pelo operador.
+  if (/orchestrator_operator_dismissed/i.test(raw)) {
+    return "Você fechou o pane do coordenador. Clique em Retomar para reabrir a missão.";
+  }
   if (/guided_plan_unborn_with_files/i.test(raw)) {
     return "Esta pasta já tem arquivos sem histórico. Faça o primeiro commit e tente novamente.";
   }
