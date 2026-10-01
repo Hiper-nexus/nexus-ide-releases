@@ -2,7 +2,21 @@
  * Só liga depois de um gesto do jogador (regra de autoplay dos navegadores).
  * Sem AudioContext (Node, navegador antigo, bloqueio) tudo vira silêncio. */
 export const MUTE_KEY = 'nexus-data-cafe:muted';
-const VOLUME = 0.18;
+export const VOLUME_KEY = 'nexus-data-cafe:volume';
+/** Com o mestre em 0.18 e efeitos de pico 0.05 a 0.12 o jogo saía a uns -40 dBFS
+ * (medido no navegador) e ninguém ouvia. O mestre agora é o volume do jogador e
+ * um limitador segura a soma dos efeitos. */
+export const DEFAULT_VOLUME = 0.8;
+const MUSIC = {
+  /** Segundos por nota de um arpejo lento: lá menor, sol, fá, mi menor. */
+  step: 0.42,
+  notes: [220, 261.63, 329.63, 261.63, 196, 246.94, 293.66, 246.94, 174.61, 220, 261.63, 220, 164.81, 196, 246.94, 196],
+  peak: 0.07,
+  bass: 0.1,
+  /** Quanto à frente do relógio a trilha agenda a cada passada do intervalo. */
+  horizon: 0.6,
+  interval: 200,
+};
 
 function defaultStorage() {
   try { return globalThis.localStorage ?? null; } catch { return null; }
@@ -13,13 +27,21 @@ function defaultContext() {
   return Context ? new Context() : null;
 }
 
-export function createAudio({ context = null, storage = defaultStorage(), createContext = defaultContext } = {}) {
+const clamp01 = value => Math.max(0, Math.min(1, value));
+
+export function createAudio({ context = null, storage = defaultStorage(), createContext = defaultContext, timers = globalThis } = {}) {
   let ctx = context;
   const ownsContext = !context;
   let master = null, noise = null, fanGain = null, fanSource = null;
   let muted = false;
+  let volume = DEFAULT_VOLUME;
   let disposed = false;
-  try { muted = storage?.getItem(MUTE_KEY) === '1'; } catch { muted = false; }
+  let musicTimer = null, nextNote = 0, noteIndex = 0;
+  try {
+    muted = storage?.getItem(MUTE_KEY) === '1';
+    const saved = Number.parseFloat(storage?.getItem(VOLUME_KEY));
+    if (Number.isFinite(saved)) volume = clamp01(saved);
+  } catch { muted = false; }
 
   function ready() {
     return Boolean(ctx && master) && !muted;
@@ -69,11 +91,25 @@ export function createAudio({ context = null, storage = defaultStorage(), create
     fanSource.loop = true;
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.value = 420;
+    filter.frequency.value = 700;
     fanGain = ctx.createGain();
     fanGain.gain.value = 0;
     fanSource.connect(filter); filter.connect(fanGain); fanGain.connect(master);
     fanSource.start();
+  }
+
+  /** Agenda as próximas notas da trilha. Mudo, pausado ou sem gesto não agenda nada. */
+  function scheduleMusic() {
+    if (!ready() || ctx.state === 'suspended') return;
+    const now = ctx.currentTime;
+    if (nextNote < now) nextNote = now + 0.05;
+    while (nextNote < now + MUSIC.horizon) {
+      const frequency = MUSIC.notes[noteIndex % MUSIC.notes.length];
+      tone({ type: 'triangle', frequency, peak: MUSIC.peak, attack: 0.03, release: 0.55, delay: nextNote - now });
+      if (noteIndex % 4 === 0) tone({ frequency: frequency / 2, peak: MUSIC.bass, attack: 0.05, release: 1.4, delay: nextNote - now });
+      noteIndex += 1;
+      nextNote += MUSIC.step;
+    }
   }
 
   return {
@@ -85,11 +121,18 @@ export function createAudio({ context = null, storage = defaultStorage(), create
         if (!ctx) return false;
         if (!master) {
           master = ctx.createGain();
-          master.gain.value = muted ? 0 : VOLUME;
-          master.connect(ctx.destination);
+          master.gain.value = muted ? 0 : volume;
+          const limiter = ctx.createDynamicsCompressor?.();
+          if (limiter) {
+            limiter.threshold.value = -12; limiter.knee.value = 6; limiter.ratio.value = 8;
+            limiter.attack.value = 0.003; limiter.release.value = 0.2;
+            master.connect(limiter); limiter.connect(ctx.destination);
+          } else master.connect(ctx.destination);
           noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
           const channel = noise.getChannelData(0);
           for (let i = 0; i < channel.length; i++) channel[i] = Math.random() * 2 - 1;
+          musicTimer = timers.setInterval?.(scheduleMusic, MUSIC.interval) ?? null;
+          musicTimer?.unref?.();
         }
         ctx.resume?.();
         return true;
@@ -97,40 +140,76 @@ export function createAudio({ context = null, storage = defaultStorage(), create
         return false;
       }
     },
-    footstep() { if (ready()) noiseBurst({ frequency: 650 + Math.random() * 350, q: 1.4, peak: 0.12, release: 0.06 }); },
-    pickup() { if (ready()) tone({ frequency: 380, to: 720, peak: 0.08, release: 0.1 }); },
+    footstep() { if (ready()) noiseBurst({ frequency: 520 + Math.random() * 300, q: 1.2, peak: 0.5, release: 0.07 }); },
+    pickup() { if (ready()) tone({ frequency: 380, to: 720, peak: 0.28, release: 0.12 }); },
     coffee() {
       if (!ready()) return;
-      noiseBurst({ type: 'highpass', frequency: 2600, q: 0.7, peak: 0.05, attack: 0.08, release: 1.1 });
-      for (let i = 0; i < 6; i++) tone({ frequency: 260 + Math.random() * 280, peak: 0.05, release: 0.05, delay: 0.1 + i * 0.13 + Math.random() * 0.05 });
+      noiseBurst({ type: 'highpass', frequency: 2600, q: 0.7, peak: 0.14, attack: 0.08, release: 1.1 });
+      for (let i = 0; i < 6; i++) tone({ frequency: 260 + Math.random() * 280, peak: 0.16, release: 0.06, delay: 0.1 + i * 0.13 + Math.random() * 0.05 });
     },
     alert() {
       if (!ready()) return;
-      tone({ type: 'square', frequency: 880, peak: 0.05, release: 0.1 });
-      tone({ type: 'square', frequency: 660, peak: 0.05, release: 0.12, delay: 0.16 });
+      for (const delay of [0, 0.36]) {
+        tone({ type: 'square', frequency: 880, peak: 0.16, release: 0.1, delay });
+        tone({ type: 'square', frequency: 660, peak: 0.16, release: 0.12, delay: delay + 0.16 });
+      }
     },
     success() {
       if (!ready()) return;
-      [523.25, 659.25, 783.99, 1046.5].forEach((frequency, i) => tone({ type: 'triangle', frequency, peak: 0.08, release: 0.2, delay: i * 0.08 }));
+      [523.25, 659.25, 783.99, 1046.5].forEach((frequency, i) => tone({ type: 'triangle', frequency, peak: 0.26, release: 0.22, delay: i * 0.08 }));
     },
-    /** Zumbido contínuo das ventoinhas, mais alto quanto mais racks no ar. */
+    /** Uma tecla do teclado do PC. */
+    typing() {
+      if (!ready()) return;
+      noiseBurst({ type: 'highpass', frequency: 1800 + Math.random() * 900, q: 0.8, peak: 0.3, attack: 0.001, release: 0.03 });
+    },
+    levelUp() {
+      if (!ready()) return;
+      [392, 523.25, 659.25, 783.99, 1046.5].forEach((frequency, i) => tone({ type: 'triangle', frequency, peak: 0.28, release: i === 4 ? 0.6 : 0.16, delay: i * 0.09 }));
+      tone({ frequency: 523.25, peak: 0.16, attack: 0.02, release: 0.7, delay: 0.36 });
+    },
+    mission() {
+      if (!ready()) return;
+      tone({ frequency: 880, peak: 0.25, release: 0.3 });
+      tone({ frequency: 1318.5, peak: 0.25, release: 0.45, delay: 0.12 });
+    },
+    /** A cada entrega emendada o bip sobe um degrau. */
+    combo(streak) {
+      if (ready()) tone({ type: 'triangle', frequency: 520 * 1.12 ** Math.max(0, Math.min(8, streak - 1)), peak: 0.22, release: 0.14, delay: 0.3 });
+    },
+    denied() { if (ready()) tone({ type: 'square', frequency: 150, to: 110, peak: 0.16, release: 0.14 }); },
+    shiftEnd() {
+      if (!ready()) return;
+      [659.25, 523.25, 392].forEach((frequency, i) => tone({ type: 'triangle', frequency, peak: 0.24, release: 0.3, delay: i * 0.16 }));
+    },
+    /** Zumbido contínuo das ventoinhas: a sala nunca fica muda e cresce com os racks no ar. */
     fan(level) {
       if (!ctx || !master) return;
       ensureFan();
-      const target = muted ? 0 : Math.max(0, Math.min(1, level)) * 0.35;
+      const target = muted ? 0 : (0.25 + 0.75 * clamp01(level)) * 0.4;
       fanGain.gain.setTargetAtTime(target, ctx.currentTime, 0.6);
     },
     setMuted(value) {
       muted = Boolean(value);
       try { storage?.setItem(MUTE_KEY, muted ? '1' : '0'); } catch { /* sem armazenamento, vale só nesta sessão */ }
-      if (ctx && master) master.gain.setTargetAtTime(muted ? 0 : VOLUME, ctx.currentTime, 0.05);
+      if (ctx && master) master.gain.setTargetAtTime(muted ? 0 : volume, ctx.currentTime, 0.05);
       return muted;
     },
     isMuted() { return muted; },
+    /** Volume de 0 a 1, lembrado na próxima visita. */
+    setVolume(value) {
+      volume = clamp01(Number(value) || 0);
+      try { storage?.setItem(VOLUME_KEY, String(volume)); } catch { /* sem armazenamento, vale só nesta sessão */ }
+      if (ctx && master && !muted) master.gain.setTargetAtTime(volume, ctx.currentTime, 0.05);
+      return volume;
+    },
+    getVolume() { return volume; },
     suspend() { try { ctx?.suspend?.(); } catch { /* nada a fazer */ } },
     resume() { try { if (master) ctx?.resume?.(); } catch { /* nada a fazer */ } },
     dispose() {
       disposed = true;
+      if (musicTimer != null) timers.clearInterval?.(musicTimer);
+      musicTimer = null;
       try { fanSource?.stop(); } catch { /* já parou */ }
       fanSource = null;
       if (ownsContext) { try { ctx?.close?.(); } catch { /* já fechado */ } }
