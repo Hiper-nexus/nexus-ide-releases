@@ -20,6 +20,9 @@ const UNPUBLISHED_ROUTE_MODELS = new Set([
   'aider:claude-haiku-4-5',
   'aider:claude-sonnet-5',
   'aider:claude-opus-4-8',
+  // Gemini 4 Argon (Google, 30/09): a geração nova entra sempre na rota; o
+  // model card ainda não traz DeepSWE/TB2.1 verificados — entra aqui até sair.
+  'agy:gemini-4-argon',
 ]);
 
 describe('benchmarks oficiais publicados (F-675)', () => {
