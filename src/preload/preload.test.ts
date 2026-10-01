@@ -85,6 +85,14 @@ describe('preload PTY delivery', () => {
     electronMock.contextBridge.exposeInMainWorld.mockClear();
   });
 
+  it('exposes only typed status and write operations for Clef configuration', async () => {
+    const api = await loadPreloadApi();
+    electronMock.ipcRenderer.invoke.mockResolvedValue({ ok: true });
+    expect(await api.decisionModels.setKey({ token: 'synthetic-token' })).toEqual({ ok: true });
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenCalledWith('decisionModels:setKey', { token: 'synthetic-token' });
+    expect(api.decisionModels).not.toHaveProperty('getKey');
+  });
+
   it('exposes Main-owned logout over billing:logout', async () => {
     const api = await loadPreloadApi();
     electronMock.ipcRenderer.invoke.mockResolvedValue({ ok: true });

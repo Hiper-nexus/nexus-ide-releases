@@ -27,6 +27,7 @@ import {
   type SecretWriteResult,
 } from './secrets-store';
 import { getAdapter } from '../adapters/adapter-registry';
+import { CLEF_SECRET_NAME } from '../../shared/decision-models';
 
 export const SECRETS_BUNDLE_FORMAT = 'nexus-secrets-v1';
 /** OWASP 2023 floor for PBKDF2-SHA512. Import rejects weaker bundles. */
@@ -50,7 +51,7 @@ const defaultDeps: SecretsPortabilityDeps = {
 
 /** Existing provider credential namespaces; no auth/session/signing authority. */
 function isPortableProviderSecret(name: string, deps: SecretsPortabilityDeps): boolean {
-  return !isReservedSecretName(name) && (deps.isProviderId(name) ||
+  return !isReservedSecretName(name) && (deps.isProviderId(name) || name === CLEF_SECRET_NAME ||
     /^(?:voice-env|jev-env):[A-Z][A-Z0-9_]*$/.test(name) ||
     /^(?:acctkey|acctcred|mediakey):[a-zA-Z0-9-]+$/.test(name) ||
     /^mcphub:[^\r\n]+$/.test(name));

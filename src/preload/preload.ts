@@ -26,6 +26,7 @@ import { REDLINE_IPC } from '../shared/redline-types';
 import type { PetPrefs } from '../shared/pet-types';
 import { VOICE_CHANNELS } from '../shared/voice-channels';
 import { JEV_CHANNELS } from '../shared/jev-channels';
+import { DECISION_MODEL_CHANNELS } from '../shared/decision-model-channels';
 import { VISION_CHANNELS } from '../shared/vision-ipc';
 import type { ScreenCaptureMetadata } from '../shared/vision-ipc';
 import { getAxTree, performAxAction } from './ax-tree';
@@ -938,6 +939,10 @@ const api: NexusApi = {
     onLiveToolResult: (cb) => addListener(liveToolResultListeners, cb),
     onLiveToolTurnComplete: (cb) => addListener(liveToolTurnCompleteListeners, cb),
     onLiveInterrupted: (cb) => addListener(liveInterruptedListeners, cb),
+  },
+  decisionModels: {
+    status: () => ipcRenderer.invoke(DECISION_MODEL_CHANNELS.status),
+    setKey: (req) => ipcRenderer.invoke(DECISION_MODEL_CHANNELS.setKey, req),
   },
   jev: {
     status: () => ipcRenderer.invoke(JEV_CHANNELS.status),

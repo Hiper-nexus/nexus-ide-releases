@@ -28,6 +28,19 @@ const PASS = 'correct-horse-battery';
 const WRONG = 'wrong-horse-battery!';
 
 describe('exportSecretsVault', () => {
+  it('round-trips the Clef credential without exposing plaintext or exporting internal authority', () => {
+    const source = fakeDeps({ 'clef-env:CLOUDFLARE_API_TOKEN': 'cloudflare-token-123456',
+      'auth:account': 'internal-license', 'clef-env:UNRECOGNIZED_SECRET': 'not-portable' });
+    const exported = exportSecretsVault(PASS, source);
+    expect(exported.ok).toBe(true);
+    if (!exported.ok) return;
+    expect(exported.bundle).not.toContain('cloudflare-token-123456');
+    const target = fakeDeps();
+    expect(importSecretsVault(exported.bundle, PASS, target).ok).toBe(true);
+    expect(target.store.get('clef-env:CLOUDFLARE_API_TOKEN')).toBe('cloudflare-token-123456');
+    expect(target.store.has('auth:account')).toBe(false);
+    expect(target.store.has('clef-env:UNRECOGNIZED_SECRET')).toBe(false);
+  });
   it('rejeita passphrase curta sem tocar o cofre', () => {
     const deps = fakeDeps({ claude: 'secret-a' });
     expect(exportSecretsVault('short', deps)).toEqual({

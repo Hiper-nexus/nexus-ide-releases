@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { decisionSettingsSchema } from './decision-models';
 
 function isHttpUrlOrEmpty(value: string): boolean {
   if (value.trim() === '') return true;
@@ -115,6 +116,7 @@ const designDialSchema = z
  * github.com/DietrichGebert/ponytail) no prompt de todo worker de squad.
  */
 export const orchSettingsSchema = z.object({
+  decisionModels: decisionSettingsSchema.prefault({}),
   leanCode: z.boolean().default(true),
   /** Carta de Engenharia (XP/sênior) injetada em todo worker de squad. */
   seniorMode: z.boolean().default(true),

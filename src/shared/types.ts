@@ -38,6 +38,7 @@ import type {
   PendingContextDraft,
 } from './context-draft-types';
 import type { UpdateState } from './update-ipc';
+import type { DecisionModelStatus, SetDecisionKeyRequest } from './decision-models';
 import type {
   JevDecisionRow,
   JevDecisionStatsResult,
@@ -635,6 +636,10 @@ export interface NexusApi {
       cb: (event: JarvisLiveToolTurnCompleteEvent) => void,
     ): Unsubscribe;
     onLiveInterrupted(cb: (event: JarvisLiveInterruptEvent) => void): Unsubscribe;
+  };
+  decisionModels: {
+    status(): Promise<DecisionModelStatus>;
+    setKey(req: SetDecisionKeyRequest): Promise<{ ok: boolean; error?: string }>;
   };
   jev: {
     /** Status sem segredo (presença da chave, autopilot, stats de uso). */
