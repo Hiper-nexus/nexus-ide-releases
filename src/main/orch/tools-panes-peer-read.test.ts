@@ -294,6 +294,70 @@ describe('in-mission pane observation (Overclock parity)', () => {
     expect(h.readSessionOutput).not.toHaveBeenCalled();
   });
 
+  it('F-241: unknown paneId lista os panes vivos da missão do chamador', async () => {
+    h.listPaneSnapshots.mockReturnValue([
+      {
+        paneId: 'pane-a',
+        sessionId: 'session-a',
+        title: 'a',
+        kind: 'cli-agent',
+        adapterId: 'codex',
+        state: 'idle',
+        missionId: 'mission-a',
+        paneNumber: 3,
+      },
+      {
+        paneId: 'pane-b',
+        sessionId: 'session-b',
+        title: 'b',
+        kind: 'cli-agent',
+        adapterId: 'glm',
+        state: 'busy',
+        missionId: 'mission-a',
+        paneNumber: 5,
+      },
+      // Outra missão e estado morto não entram no inventário.
+      {
+        paneId: 'pane-foreign',
+        sessionId: 'session-f',
+        title: 'f',
+        kind: 'cli-agent',
+        adapterId: 'codex',
+        state: 'idle',
+        missionId: 'mission-b',
+      },
+      {
+        paneId: 'pane-dead',
+        sessionId: null,
+        title: 'd',
+        kind: 'cli-agent',
+        adapterId: 'codex',
+        state: 'exited',
+        missionId: 'mission-a',
+      },
+    ] as never);
+
+    await expect(
+      tool('nexus_pane_read').handler({ paneId: 'pane-missing' }, context()),
+    ).rejects.toThrow(
+      'unknown pane: pane-missing (panes vivos desta missão: ' +
+        'pane-a #3 codex idle, pane-b #5 glm busy; ' +
+        'use nexus_pane_list para o inventário)',
+    );
+  });
+
+  it('F-241: unknown paneId fora de missão aponta o nexus_pane_list', async () => {
+    await expect(
+      tool('nexus_pane_read').handler(
+        { paneId: 'pane-missing' },
+        context({ missionId: undefined }),
+      ),
+    ).rejects.toThrow(
+      'unknown pane: pane-missing ' +
+        '(nenhum pane vivo com esse id; use nexus_pane_list)',
+    );
+  });
+
   it('tells the agent why a browser pane is gone instead of a bare refusal', async () => {
     // Campo 26/09: sem a pista, o agente concluiu que o Nexus o bloqueou e
     // pediu ao operador para colar um token no chat.

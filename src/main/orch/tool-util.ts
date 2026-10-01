@@ -285,7 +285,38 @@ export function strArray(args: Record<string, unknown>, key: string): string[] {
  * opção certa é barato; mandar trabalho para o terminal errado não tem volta.
  * Por isso não existe fallback para "o pane focado" em lugar nenhum.
  */
-function unknownPaneMessage(paneRef: string): string {
+/**
+ * F-241: quando o agente cita um paneId que não existe, a saída é o inventário
+ * dos panes VIVOS da própria missão (até 8, nos estados ocupados — o Maestro
+ * pode escrever neles imediatamente). Sem missão, aponta o `nexus_pane_list`.
+ */
+function unknownPaneIdDetail(ctx: AgentGateContext): string {
+  if (!ctx.missionId) {
+    return ' (nenhum pane vivo com esse id; use nexus_pane_list)';
+  }
+  const alive = listPaneSnapshots()
+    .filter(
+      (pane) =>
+        pane.missionId === ctx.missionId &&
+        (pane.state === 'busy' ||
+          pane.state === 'idle' ||
+          pane.state === 'spawning'),
+    )
+    .slice(0, 8);
+  if (alive.length === 0) {
+    return ' (nenhum pane vivo nesta missão; use nexus_pane_list)';
+  }
+  const inventory = alive
+    .map(
+      (pane) =>
+        `${pane.paneId}${pane.paneNumber !== undefined ? ` #${pane.paneNumber}` : ''}` +
+        ` ${pane.adapterId ?? 'shell'} ${pane.state}`,
+    )
+    .join(', ');
+  return ` (panes vivos desta missão: ${inventory}; use nexus_pane_list para o inventário)`;
+}
+
+function unknownPaneMessage(paneRef: string, ctx?: AgentGateContext): string {
   // O navegador sobrevive à troca de projeto (fica afastado); se não resolve,
   // foi fechado. Sem a pista, o agente concluía que o Nexus o bloqueou e
   // pedia credenciais no chat (campo 26/09).
@@ -296,7 +327,9 @@ function unknownPaneMessage(paneRef: string): string {
       'Nexus window)'
     );
   }
-  if (parsePaneNumberRef(paneRef) === null) return `unknown pane: ${paneRef}`;
+  if (parsePaneNumberRef(paneRef) === null) {
+    return `unknown pane: ${paneRef}` + (ctx ? unknownPaneIdDetail(ctx) : '');
+  }
   const valid = listLivePaneNumbers();
   return valid.length === 0
     ? `unknown pane: ${paneRef} (no numbered pane is open)`
@@ -321,7 +354,7 @@ export function authorizePaneRef(
   action: PaneAction,
 ): PaneAuthzInfo {
   const info = getPaneAuthzInfo(paneRef);
-  if (!info) throw new Error(unknownPaneMessage(paneRef));
+  if (!info) throw new Error(unknownPaneMessage(paneRef, ctx));
   const decision = authorizePaneAccess(ctx, info, action);
   if (!decision.allow) {
     throw new Error(`not authorized: ${decision.reason}`);

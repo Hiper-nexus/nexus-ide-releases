@@ -132,7 +132,15 @@ function resolveCwdInsideRoot(root: string, cwdOverride?: string): string {
     : root;
   const realCwd = realpathOrThrow(cwd, 'cwd');
   if (!isInsidePath(root, realCwd)) {
-    throw new Error(`cwd escapes workspace: ${cwdOverride}`);
+    // F-241: a recusa tem que dizer a saída — sem ela o Maestro repetia o
+    // mesmo cwd ou concluía que o Nexus o bloqueou (20x em 14 dias).
+    throw new Error(
+      `cwd escapes workspace: ${cwdOverride} — o pane de missão só roda ` +
+        `dentro do checkout/worktree da missão (${root}). Para trabalhar em ` +
+        'outro repositório, abra a missão naquele checkout; para outra ' +
+        'worktree deste repo, use isolatedWriter:true (worktree própria ' +
+        'criada pelo Nexus) em vez de cwd.',
+    );
   }
   if (!fs.existsSync(realCwd) || !fs.statSync(realCwd).isDirectory()) {
     throw new Error(`cwd is not a directory: ${cwdOverride ?? root}`);
