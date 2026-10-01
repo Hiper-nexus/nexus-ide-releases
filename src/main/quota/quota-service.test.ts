@@ -210,6 +210,43 @@ describe('QuotaService limit-hit expiry', () => {
     svc.stop();
   });
 
+  it('F-720: GLM e GLM Flash na mesma chave z.ai saem com o mesmo grupo de cota; chaves distintas não', async () => {
+    const zaiLimits = { data: { limits: [
+      { type: 'TOKENS_LIMIT', unit: 3, number: 5, percentage: 4 },
+      { type: 'TOKENS_LIMIT', unit: 6, number: 1, percentage: 66 },
+    ] } };
+    const run = async (keys: Record<string, string>) => {
+      const svc = new QuotaService({
+        listProviders: () => [
+          { ...provider('glm', 'GLM (z.ai)'), authStrategy: 'api-key' },
+          { ...provider('glm-flash', 'GLM Flash (z.ai)'), authStrategy: 'api-key' },
+        ],
+        listAccounts: () => [],
+        resolveApiQuotaKey: ({ adapterId }) => keys[adapterId] ?? null,
+        fetchImpl: async () => ({ ok: true, status: 200, json: async () => zaiLimits, text: async () => '' }),
+      });
+      try {
+        return await svc.snapshot(HIT_AT);
+      } finally {
+        svc.stop();
+      }
+    };
+
+    const shared = await run({ glm: 'zai-shared-key', 'glm-flash': 'zai-shared-key' });
+    const glm = shared.entries.find((entry) => entry.adapterId === 'glm');
+    const flash = shared.entries.find((entry) => entry.adapterId === 'glm-flash');
+    // O snapshot segue com as duas entradas (failover/roteamento por adapter)…
+    expect(glm?.quotaGroup).toBeDefined();
+    expect(flash?.quotaGroup).toBe(glm?.quotaGroup);
+    // …e o Redline mostra uma só.
+    expect(buildRedlineSnapshotFile(shared, [], HIT_AT).entries).toHaveLength(1);
+
+    const distinct = await run({ glm: 'zai-key-a', 'glm-flash': 'zai-key-b' });
+    const groups = distinct.entries.map((entry) => entry.quotaGroup);
+    expect(new Set(groups).size).toBe(2);
+    expect(buildRedlineSnapshotFile(distinct, [], HIT_AT).entries).toHaveLength(2);
+  });
+
   it('keeps adapter identity while routing an explicitly configured upstream quota', async () => {
     const resolveClaudeAccessToken = vi.fn(async () => 'native-credential-not-to-use');
     const resolveApiQuotaKey = vi.fn(() => 'routed-owner-key');

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { QuotaWindow } from '../../shared/quota-types';
-import { fetchLiveProviderWindows, parseKimiUsage } from './provider-live-usage';
+import { fetchLiveProviderWindows, parseKimiUsage, quotaCredentialId } from './provider-live-usage';
 
 const nativeOpenCode = vi.hoisted(() => vi.fn(() => [{ providerId: 'custom', key: 'native-other-account' }]));
 vi.mock('./opencode-auth', () => ({ loadOpenCodeAuthKeys: nativeOpenCode }));
@@ -11,6 +11,57 @@ vi.mock('./agy-cli-usage', () => ({ fetchAgyCliUsageWindows: agyCli }));
 // whatever happens to be running on the dev machine.
 const agyBridge = vi.hoisted(() => vi.fn<() => Promise<QuotaWindow[] | null>>(async () => null));
 vi.mock('./agy-bridge', () => ({ fetchAgyBridgeUsage: agyBridge }));
+
+describe('identidade da credencial que leu a cota (F-720)', () => {
+  const zaiQuota = {
+    code: 200,
+    success: true,
+    data: {
+      level: 'pro',
+      limits: [
+        { type: 'TOKENS_LIMIT', unit: 3, number: 5, percentage: 4 },
+        { type: 'TOKENS_LIMIT', unit: 6, number: 1, percentage: 66 },
+      ],
+    },
+  };
+  const fetchImpl = vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => zaiQuota,
+    text: async () => JSON.stringify(zaiQuota),
+  }));
+
+  it('GLM e GLM Flash lidos com a mesma chave z.ai têm a mesma identidade — opaca', async () => {
+    const glm = await fetchLiveProviderWindows('glm', undefined, {
+      resolveGlmApiKeyCandidates: () => ['zai-shared-key'],
+      fetchImpl,
+    }, 100);
+    const flash = await fetchLiveProviderWindows('glm-flash', undefined, {
+      resolveGenericApiKeyCandidates: () => ['zai-shared-key'],
+      fetchImpl,
+    }, 100);
+    expect(glm.windows?.length).toBeGreaterThan(0);
+    expect(flash.windows?.length).toBeGreaterThan(0);
+    expect(glm.credentialId).toBeDefined();
+    expect(flash.credentialId).toBe(glm.credentialId);
+    expect(glm.credentialId).not.toContain('zai-shared-key');
+  });
+
+  it('chaves diferentes são cotas diferentes; leitura sem janela não ganha identidade', async () => {
+    const other = await fetchLiveProviderWindows('glm', undefined, {
+      resolveGlmApiKeyCandidates: () => ['zai-other-key'],
+      fetchImpl,
+    }, 100);
+    expect(other.credentialId).toBe(quotaCredentialId(['zai-other-key']));
+    expect(other.credentialId).not.toBe(quotaCredentialId(['zai-shared-key']));
+    const failed = await fetchLiveProviderWindows('glm', undefined, {
+      resolveGlmApiKeyCandidates: () => ['zai-shared-key'],
+      fetchImpl: vi.fn(async () => ({ ok: false, status: 401, json: async () => ({}), text: async () => '' })),
+    }, 100);
+    expect(failed.windows).toBeNull();
+    expect(failed.credentialId).toBeUndefined();
+  });
+});
 
 describe('fetchLiveProviderWindows', () => {
   it('uses only the explicit MiMo console resolver, including saved API credentials', async () => {

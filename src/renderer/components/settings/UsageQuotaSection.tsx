@@ -14,6 +14,7 @@ import {
 import { useMinuteTick } from '../../lib/use-minute-tick';
 import {
   QUOTA_HIGH_USAGE_THRESHOLD,
+  collapseSharedQuotaEntries,
   type ProviderQuotaEntry,
   type QuotaSource,
   type QuotaWindow,
@@ -542,7 +543,8 @@ export function UsageQuotaSection() {
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
-  const entries = prioritizeReportedQuotas(snapshot.entries);
+  // F-720: uma linha por cota — GLM e GLM Flash na mesma chave z.ai são uma.
+  const entries = prioritizeReportedQuotas(collapseSharedQuotaEntries(snapshot.entries));
   const highUsageCount = entries.filter((entry) =>
     entry.windows.some(
       (window) =>

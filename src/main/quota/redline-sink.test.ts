@@ -53,6 +53,29 @@ describe('maskEmail', () => {
 });
 
 describe('buildRedlineSnapshotFile', () => {
+  it('F-720: GLM e GLM Flash na mesma chave viram uma linha só no Redline', () => {
+    const zai = (id: string, label: string): ProviderQuotaEntry => ({
+      id,
+      adapterId: id,
+      label,
+      installed: true,
+      onCooldown: false,
+      quotaGroup: 'zai-key',
+      windows: [
+        { kind: 'hours', label: '5h', usedRatio: 0.038, resetsAt: NOW + 3_600_000, source: 'provider-api', confidence: 'high' },
+        { kind: 'weekly', label: 'Semanal', usedRatio: 0.661, resetsAt: NOW + 70_000_000, source: 'provider-api', confidence: 'high' },
+      ],
+      updatedAt: NOW,
+    });
+    const file = buildRedlineSnapshotFile(
+      snapshotWith([zai('glm', 'GLM (z.ai)'), zai('glm-flash', 'GLM Flash (z.ai)')]),
+      [],
+      NOW,
+    );
+    expect(file.entries.map((entry) => entry.label)).toEqual(['GLM (z.ai)']);
+    expect(file.statusBarEntryIds).toEqual(['glm']);
+  });
+
   it('shape do arquivo: versão, gerador, ranking e sem segredos', () => {
     const file = buildRedlineSnapshotFile(
       snapshotWith([

@@ -1,8 +1,32 @@
 import { describe, expect, it } from 'vitest';
 import {
+  collapseSharedQuotaEntries,
   compareEntriesByConsumption,
   peakUsedRatio,
 } from './quota-types';
+
+describe('collapseSharedQuotaEntries (F-720)', () => {
+  it('uma linha por cota: a primeira de cada grupo fica, na ordem recebida', () => {
+    const rows = [
+      { id: 'kimi' },
+      { id: 'glm', quotaGroup: 'zai-key' },
+      { id: 'codex' },
+      { id: 'glm-flash', quotaGroup: 'zai-key' },
+      { id: 'longcat', quotaGroup: 'other-key' },
+    ];
+    expect(collapseSharedQuotaEntries(rows).map((row) => row.id)).toEqual([
+      'kimi',
+      'glm',
+      'codex',
+      'longcat',
+    ]);
+  });
+
+  it('linha sem leitura por chave (sem grupo) nunca é escondida', () => {
+    const rows = [{ id: 'a' }, { id: 'b' }, { id: 'c', quotaGroup: undefined }];
+    expect(collapseSharedQuotaEntries(rows)).toEqual(rows);
+  });
+});
 
 describe('peakUsedRatio', () => {
   it('returns the highest honest window and ignores null/NaN/out of range', () => {

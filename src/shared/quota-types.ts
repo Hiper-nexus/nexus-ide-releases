@@ -119,7 +119,30 @@ export interface ProviderQuotaEntry {
   windows: QuotaWindow[];
   /** Motivo da ausência de leitura, quando toda janela é desconhecida. */
   readHint?: QuotaReadHint;
+  /**
+   * F-720: linhas lidas com a MESMA credencial são a mesma cota (GLM e GLM
+   * Flash na mesma chave z.ai). Id opaco por execução (HMAC com sal
+   * aleatório): só igualdade, nunca exibido nem comparado entre execuções.
+   */
+  quotaGroup?: string;
   updatedAt: number;
+}
+
+/**
+ * F-720: uma linha por cota na apresentação (barra lateral, Configurações,
+ * Redline). Mantém a primeira de cada `quotaGroup`, na ordem recebida; o
+ * snapshot continua com uma entrada por adapter para failover e roteamento.
+ */
+export function collapseSharedQuotaEntries<T extends { readonly quotaGroup?: string }>(
+  entries: readonly T[],
+): T[] {
+  const seen = new Set<string>();
+  return entries.filter((entry) => {
+    if (!entry.quotaGroup) return true;
+    if (seen.has(entry.quotaGroup)) return false;
+    seen.add(entry.quotaGroup);
+    return true;
+  });
 }
 
 /** Resumo dos planos de assinatura detectados na frota. */

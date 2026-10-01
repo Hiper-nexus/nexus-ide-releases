@@ -11,6 +11,7 @@ import { homedir as osHomedir } from 'node:os';
 import { join } from 'node:path';
 import type { AccountInfo } from '../../shared/account-types';
 import {
+  collapseSharedQuotaEntries,
   compareEntriesByConsumption,
   type QuotaFleetSnapshot,
 } from '../../shared/quota-types';
@@ -45,7 +46,12 @@ export function buildRedlineSnapshotFile(
   now = Date.now(),
 ): RedlineSnapshotFile {
   const scored = scoreFleet(snap.entries, accounts, now);
-  const entries = [...scored.entries].sort(compareEntriesByConsumption);
+  // F-720: o Redline mostra uma linha por cota (GLM/GLM Flash na mesma chave).
+  // O grupo vem do snapshot: as linhas decoradas pelo scorer não o carregam.
+  const shown = new Set(collapseSharedQuotaEntries(snap.entries).map((entry) => entry.id));
+  const entries = scored.entries
+    .filter((entry) => shown.has(entry.id))
+    .sort(compareEntriesByConsumption);
   const ratios = entries.flatMap((entry) => entry.windows.map((window) => window.usedRatio))
     .filter((ratio): ratio is number => ratio !== null);
   return {

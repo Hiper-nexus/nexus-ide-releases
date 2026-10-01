@@ -254,6 +254,8 @@ interface CachedApiWindows {
   at: number;
   usageProviderId?: string;
   authMode: string;
+  /** F-720: id opaco da credencial que leu as janelas (vira `quotaGroup`). */
+  credentialId?: string;
 }
 
 /** Plano detectado — TTL longo: assinatura muda por mês, não por minuto. */
@@ -686,7 +688,13 @@ export class QuotaService {
               try { this.#deps.clearRefutedAuthCooldown?.(row.accountId, row.adapterId); }
               catch { console.warn('[quota] não foi possível limpar o aviso de autenticação confirmado'); }
             }
-            const observation = { windows: probe.windows, at: now, usageProviderId: row.usageProviderId, authMode: row.authMode };
+            const observation: CachedApiWindows = {
+              windows: probe.windows,
+              at: now,
+              usageProviderId: row.usageProviderId,
+              authMode: row.authMode,
+              ...(probe.credentialId ? { credentialId: probe.credentialId } : {}),
+            };
             observations.set(id, observation);
             this.#probeBackoffUntil.delete(id);
             this.#probeHints.delete(id);
@@ -849,6 +857,7 @@ export class QuotaService {
       cooldownUntil,
       windows: mergeWindows(defaultUnknownWindows(input.adapterId), windows),
       ...(readHint ? { readHint } : {}),
+      ...(api?.credentialId ? { quotaGroup: api.credentialId } : {}),
       updatedAt: api?.at ?? input.now,
     };
   }

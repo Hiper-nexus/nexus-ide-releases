@@ -21,6 +21,7 @@ import { useLifetimeUsage } from '../../state/lifetime-usage';
 import { fmtTokens, fmtUsd } from '../../lib/lifetime-format';
 import { useAdapterStore } from '../../state/adapter-store';
 import { prioritizeReportedQuotas, shortWindowsLine } from '../../lib/quota-display';
+import { collapseSharedQuotaEntries } from '../../../shared/quota-types';
 import { useMinuteTick } from '../../lib/use-minute-tick';
 import { ProviderLogo } from '../ProviderLogo';
 import { useTerminalGridDialogStore } from '../../state/terminal-grid-dialog-store';
@@ -990,7 +991,7 @@ export function WorkspaceRail({
               <span className="workspace-rail__cockpit-detail-hint">Ver</span>
             </div>
             <div className="workspace-rail__cockpit-bars">
-              {prioritizeReportedQuotas(quotaEntries).slice(0, 4).map((entry) => {
+              {prioritizeReportedQuotas(collapseSharedQuotaEntries(quotaEntries)).slice(0, 4).map((entry) => {
                 // A barra e o percentual vêm SOMENTE da telemetria real do
                 // serviço. Um cooldown/limit-hit jamais pinta 100% falso por
                 // cima de uma leitura fresca (ex.: conta pausada com Semanal

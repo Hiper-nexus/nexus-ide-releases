@@ -6,6 +6,7 @@
  * single stale key cannot hide real telemetry.
  */
 
+import { createHmac, randomBytes } from 'node:crypto';
 import type { QuotaReadHint, QuotaWindow } from '../../shared/quota-types';
 import {
   probeClaudeOauthUsage,
@@ -177,6 +178,28 @@ async function stringCandidates(
 export interface LiveProviderProbe {
   windows: QuotaWindow[] | null;
   hint?: QuotaReadHint;
+  /** F-720: identidade opaca da(s) chave(s) que leram as janelas. */
+  credentialId?: string;
+}
+
+/**
+ * F-720: sal aleatório por processo. O id resultante só serve para dizer que
+ * duas linhas leram a cota com a MESMA chave; não sai desta execução com
+ * sentido e não é reversível para a chave.
+ */
+const CREDENTIAL_ID_SALT = randomBytes(32);
+const CREDENTIAL_ID_SEPARATOR = String.fromCharCode(0);
+
+export function quotaCredentialId(keys: readonly string[]): string {
+  const hmac = createHmac('sha256', CREDENTIAL_ID_SALT);
+  for (const key of [...keys].sort()) hmac.update(key).update(CREDENTIAL_ID_SEPARATOR);
+  return hmac.digest('hex').slice(0, 16);
+}
+
+function withCredential(probe: LiveProviderProbe, keys: readonly string[]): LiveProviderProbe {
+  return probe.windows?.length && keys.length > 0
+    ? { ...probe, credentialId: quotaCredentialId(keys) }
+    : probe;
 }
 
 const NO_CREDENTIAL: LiveProviderProbe = { windows: null, hint: 'no-credential' };
@@ -211,7 +234,10 @@ export async function fetchLiveProviderWindows(
     }
     const key = await deps.resolveApiQuotaKey?.({ adapterId, accountId, usageProviderId: declaredUpstream, authMode });
     return key
-      ? asProbe(await fetchWindowsForApiKey(key, { fetchImpl, now, adapterHint: declaredUpstream }), 'unavailable')
+      ? withCredential(
+          asProbe(await fetchWindowsForApiKey(key, { fetchImpl, now, adapterHint: declaredUpstream }), 'unavailable'),
+          [key],
+        )
       : NO_CREDENTIAL;
   }
 
@@ -301,7 +327,7 @@ export async function fetchLiveProviderWindows(
       if (keys.length === 0) return NO_CREDENTIAL;
       for (const key of keys) {
         const windows = await fetchWindowsForApiKey(key, { fetchImpl, now, adapterHint: 'glm' });
-        if (windows && windows.length > 0) return { windows };
+        if (windows && windows.length > 0) return withCredential({ windows }, [key]);
       }
       return UNAVAILABLE;
     }
@@ -318,7 +344,7 @@ export async function fetchLiveProviderWindows(
           now,
           adapterHint: 'longcat',
         });
-        if (w?.length) return { windows: w };
+        if (w?.length) return withCredential({ windows: w }, [key]);
       }
       return UNAVAILABLE;
     }
@@ -526,17 +552,21 @@ async function fetchMultiKeyWindows(
   }
   if (keys.length === 0) return NO_CREDENTIAL;
   const sets: QuotaWindow[][] = [];
+  const readers: string[] = [];
   for (const key of keys) {
     const w = await fetchWindowsForApiKey(key, {
       fetchImpl,
       now,
       adapterHint: adapterId,
     });
-    if (w?.length) sets.push(w);
+    if (w?.length) {
+      sets.push(w);
+      readers.push(key);
+    }
   }
   if (sets.length === 0) return UNAVAILABLE;
   const merged = mergeWorstWindows(sets);
-  return merged.length > 0 ? { windows: merged } : UNAVAILABLE;
+  return merged.length > 0 ? withCredential({ windows: merged }, readers) : UNAVAILABLE;
 }
 
 async function fetchOpenCodeFleetWindows(
