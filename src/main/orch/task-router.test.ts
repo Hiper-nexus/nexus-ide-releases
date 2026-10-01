@@ -608,10 +608,18 @@ describe('describePreferAdaptersOutcome (bug F — prefer não é silêncio)', (
     ).toContain('codex=preferido escolhido');
   });
 
-  it('preferido não instalado/reservado aparece no motivo', () => {
+  it('preferido não instalado aparece no motivo', () => {
     expect(
       describePreferAdaptersOutcome(['claude'], 'codex', availability, ['codex']),
-    ).toContain('claude=não instalado/reservado');
+    ).toContain('claude=não instalado');
+  });
+
+  it('preferido ausente do pool (reservado/indisponível) não vira "não instalado"', () => {
+    // F-249: claude reservado ao Maestro sai do pool antes da lista — o motivo
+    // não pode dizer "não instalado/sem login" para uma CLI logada.
+    expect(
+      describePreferAdaptersOutcome(['glm'], 'codex', availability, ['codex']),
+    ).toContain('glm=fora do pool (reservado/indisponível)');
   });
 
   it('preferido fora do ranking do tier aparece', () => {

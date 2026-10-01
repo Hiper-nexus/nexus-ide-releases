@@ -842,8 +842,14 @@ export function describePreferAdaptersOutcome(
       continue;
     }
     const info = available.get(id);
-    if (!info || !info.installed) {
-      fates.push(`${id}=não instalado/reservado`);
+    // F-249: "reservado ao Maestro/sem credencial" não é "não instalado" — o
+    // Maestro lia o rótulo fundido e reportava "sem login" para uma conta
+    // logada. O pool já filtrou o adapter antes desta lista, então a ausência
+    // aqui não distingue o motivo exato: o rótulo tem de admitir os dois.
+    if (!info) {
+      fates.push(`${id}=fora do pool (reservado/indisponível)`);
+    } else if (!info.installed) {
+      fates.push(`${id}=não instalado`);
     } else if (!rankedAdapterIds.includes(id)) {
       fates.push(`${id}=fora do ranking do tier`);
     } else {

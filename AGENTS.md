@@ -152,6 +152,15 @@ saber isto antes de mexer:
   cadastro de uma segunda conta não consegue gravar a primeira, e quando o
   e-mail da sessão viva é de outra conta. Sessão `missing` não tem o que
   guardar e não bloqueia o login.
+- **Limite não confirmado não troca o pane (F-249).** Texto de PTY citado
+  (handoff, `cat` de log, narração do Maestro) casa no detector de limite —
+  `⎿ usage limit reached` não é prova de que a CONTA do pane atingiu nada.
+  Sonda de cota sem resposta ⇒ cooldown capado de 15 min na conta + pane
+  segue na MESMA conta + `scheduleUnconfirmedLimitRetry` re-sonda no fim:
+  refutado limpa o cooldown sem tocar o pane; confirmado/sem-dados troca lá.
+  E `switched:true` só sai DEPOIS do religamento real (pane main-owned faz o
+  respawn antes de emitir); toda decisão sai no trace `account-failover`.
+  Nunca volte a trocar pane ou a emitir sucesso por texto não confirmado.
 
 ## Conventions
 

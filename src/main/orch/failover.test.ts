@@ -481,19 +481,30 @@ describe('account failover authority and lifecycle', () => {
     }
   });
 
-  it('sonda sem resposta: a quarentena cai para 15 min, mas o pane ainda troca de conta', async () => {
+  it('sonda sem resposta: cooldown capado de 15 min na conta, pane NÃO troca, retry agendado', async () => {
     const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
     try {
       const owner = await limitWithProbe(721, null, 0);
+      // Conta protegida do pool por 15 min com motivo honesto…
       expect(accountMocks.setCooldown).toHaveBeenCalledWith(
         'account-a',
         100_000 + 15 * 60 * 1000,
-        "You've hit your session limit",
+        "You've hit your session limit (limite não confirmado pela API do provider)",
         undefined,
       );
+      // …mas o pane NÃO troca nem respawna num limite não confirmado (F-249):
+      // texto de PTY/narração sozinho não destrói uma sessão sadia.
       expect(owner.send).toHaveBeenCalledWith(
         ACCOUNT_CHANNELS.failover,
-        expect.objectContaining({ paneId: 'pane-721', switched: true, toAccountId: 'account-b' }),
+        expect.objectContaining({
+          paneId: 'pane-721',
+          switched: false,
+          scheduledRetryAtMs: expect.any(Number),
+        }),
+      );
+      expect(owner.send).not.toHaveBeenCalledWith(
+        ACCOUNT_CHANNELS.failover,
+        expect.objectContaining({ paneId: 'pane-721', switched: true }),
       );
       expect(log).toHaveBeenCalledWith(
         '[failover]',

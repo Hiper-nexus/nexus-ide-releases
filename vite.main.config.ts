@@ -36,6 +36,31 @@ function offloadBundledSkillAssets(): Plugin {
   };
 }
 
+/**
+ * Chave Ed25519 PÚBLICA que verifica os tokens de licença emitidos pelo
+ * backend (api.nexuside.app). Ela vai dentro de cada binário distribuído —
+ * não é segredo. O par privado NUNCA entra neste repo: mora no secret
+ * LICENSE_PRIVATE_KEY do Worker e em ~/.nexus-secrets/ na máquina da release.
+ *
+ * Ordem: NEXUS_LICENSE_PUBKEY do ambiente (override de CI/operador), senão o
+ * PEM commitado em resources/license-pubkey.pem — é o que deixa o build de
+ * Windows/Linux/CI funcionar sem configurar env nenhuma.
+ */
+export function resolveLicensePubkey(envValue: string | undefined): string {
+  const env = envValue?.trim();
+  if (env) return env;
+  try {
+    return fs
+      .readFileSync(
+        new URL('./resources/license-pubkey.pem', import.meta.url),
+        'utf8',
+      )
+      .trim();
+  } catch {
+    return '';
+  }
+}
+
 /** Release bundles must contain the pinned verification key; dev stays bootable without it. */
 export function assertReleaseLicenseKey(mode: string, pem: string | undefined): void {
   if (mode !== 'production') return;
@@ -51,7 +76,7 @@ export default defineConfig({
   plugins: [offloadBundledSkillAssets(), {
     name: 'nexus:require-license-key',
     configResolved(config) {
-      if (config.command === 'build') assertReleaseLicenseKey(config.mode, process.env.NEXUS_LICENSE_PUBKEY);
+      if (config.command === 'build') assertReleaseLicenseKey(config.mode, resolveLicensePubkey(process.env.NEXUS_LICENSE_PUBKEY));
     },
   }],
   server: {
@@ -64,13 +89,14 @@ export default defineConfig({
   },
   // A chave publica de licenca e lida via process.env.NEXUS_LICENSE_PUBKEY em
   // src/main/license-access.ts. Um app EMPACOTADO (.dmg) nao recebe a
-  // env do shell em runtime, entao assamos o valor no bundle do main aqui:
-  // `npm run make` (ou `npm start`) com NEXUS_LICENSE_PUBKEY exportada embute a
-  // chave literal. Release sem chave Ed25519 falha no plugin acima; dev sem
-  // chave continua abrindo, com acesso bloqueado por verification-unavailable.
+  // env do shell em runtime, entao assamos o valor no bundle do main aqui.
+  // Fonte: env NEXUS_LICENSE_PUBKEY (override) ou resources/license-pubkey.pem
+  // commitado — o build de Windows/CI nao precisa de env nenhuma. Release sem
+  // chave Ed25519 valida falha no plugin acima; dev sem chave continua
+  // abrindo, com acesso bloqueado por verification-unavailable.
   define: {
     'process.env.NEXUS_LICENSE_PUBKEY': JSON.stringify(
-      process.env.NEXUS_LICENSE_PUBKEY ?? '',
+      resolveLicensePubkey(process.env.NEXUS_LICENSE_PUBKEY),
     ),
   },
   build: {

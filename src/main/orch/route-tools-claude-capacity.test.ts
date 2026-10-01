@@ -111,7 +111,7 @@ describe('F-235: capacidade de panes Claude por conta utilizável', () => {
   it('Maestro Claude + 1 conta: claude segue reservado (comportamento atual)', async () => {
     const decision = await route();
     expect(decision.adapterId).not.toBe('claude');
-    expect(decision.reason).toContain('claude=não instalado/reservado');
+    expect(decision.reason).toContain('claude=não instalado');
   });
 
   it('Maestro Claude + 2 contas com credencial: um worker Claude é roteado', async () => {
@@ -126,7 +126,7 @@ describe('F-235: capacidade de panes Claude por conta utilizável', () => {
     ]);
     const decision = await route();
     expect(decision.adapterId).toBe('claude');
-    expect(decision.reason).not.toContain('claude=não instalado/reservado');
+    expect(decision.reason).not.toContain('claude=não instalado');
   });
 
   it('Maestro Claude + worker Claude vivo + 2 contas: reservado de novo', async () => {
@@ -138,6 +138,6 @@ describe('F-235: capacidade de panes Claude por conta utilizável', () => {
     h.livePanes = [livePane('pane-orch', 'claude'), livePane('pane-w1', 'claude')];
     const decision = await route();
     expect(decision.adapterId).not.toBe('claude');
-    expect(decision.reason).toContain('claude=não instalado/reservado');
+    expect(decision.reason).toContain('claude=não instalado');
   });
 });

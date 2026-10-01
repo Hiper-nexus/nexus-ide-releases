@@ -575,11 +575,19 @@ const handoffSubmitTool: McpToolDef = {
     let handoff: ScopedHandoff;
     let taskDispatchState: string | undefined;
     let replayed = false;
-    // F-239: a transição de dispatch só vale quando o dispatch ainda espera o
-    // SEU handoff (running). Dispatch já com handoff (handoff_ready e além)
-    // significa rodada nova — vai pelo caminho de replay puro.
+    // F-239: a transição de dispatch vale quando o dispatch ainda espera o
+    // SEU handoff (running). Dispatch que JÁ entregou (handoffId gravado:
+    // handoff_ready e além) significa rodada nova — caminho de replay puro.
+    // Dispatch parado SEM handoff (superseded/cancelado antes de entregar)
+    // continua na transição, que recusa a resposta tardia como sempre.
     const dispatchAwaitingHandoff = boundDispatch?.state === "running";
-    if (ctx.sessionId && ctx.workerIncarnationId && boundDispatch && dispatchAwaitingHandoff) {
+    const dispatchDeliveredBefore = boundDispatch?.handoffId !== undefined;
+    if (
+      ctx.sessionId &&
+      ctx.workerIncarnationId &&
+      boundDispatch &&
+      (dispatchAwaitingHandoff || !dispatchDeliveredBefore)
+    ) {
       const committed =
         suite.handoffs.submitFromPhysicalAgentBoundaryAndTransitionDispatch(
           handoffInput,

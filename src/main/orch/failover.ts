@@ -35,6 +35,7 @@ import {
 import type { ProviderQuotaEntry } from '../../shared/quota-types';
 import {
   adoptNativeAccountForFailover,
+  clearCooldown,
   ensureFreshClaudeSubscription,
   getAccount,
   getActiveAccount,
@@ -53,6 +54,7 @@ import { quotaAvailabilityScore } from '../quota/quota-policy';
 import { tapObserverFrames } from './observer-bus';
 import type { ObserverFrame } from '../../shared/observer-frame';
 import { quarantineRejectedModel } from './model-access-quarantine';
+import { trace } from '../observability/main-trace';
 
 /**
  * Automatic account failover. Watches each pane's output for a limit signature
@@ -780,6 +782,68 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
     }),
   );
 
+  // F-249: o evento "trocou" só pode sair depois da troca de verdade. Pane
+  // main-owned (worker headless de missão): o renderer não é dono e nunca
+  // consumiria o evento — o Main respawna ANTES de emitir, e emite o desfecho
+  // real (skip/recusa do respawn virava toast de sucesso mentiroso).
+  if (!authority.owner) {
+    let respawned = false;
+    try {
+      respawned = await respawnMainOwnedPaneWithAccount({
+        paneId,
+        sessionId: authority.sessionId,
+        adapterId,
+        toAccountId: next.id,
+        fromAccountLabel: fromLabel,
+        reason: hit.reason,
+      });
+    } catch (error) {
+      console.warn(
+        '[failover] main-owned respawn falhou:',
+        error instanceof Error ? error.message : error,
+      );
+    }
+    trace({
+      kind: 'account-failover',
+      outcome: respawned ? 'switched' : 'switch-respawn-failed',
+      paneId,
+      adapterId,
+      fromAccountId: fromAccountId ?? null,
+      toAccountId: next.id,
+      limitKind: hit.kind,
+      reason: `${hit.reason}${req.reasonSuffix}`,
+      crossAccount,
+      coalesced,
+      missionId: authority.missionId ?? null,
+    });
+    if (!respawned) {
+      emitNoSwitch(
+        authority,
+        { paneId, adapterId, model: req.paneModel, accountId: fromAccountId ?? undefined },
+        current,
+        hit,
+        `${hit.reason} — a troca para "${next.label}" não se aplicou ` +
+          '(o pane não pôde ser religado); a conta original segue em cooldown',
+      );
+      return;
+    }
+    emitFailover(authority, {
+      paneId,
+      fromAccountLabel: fromLabel,
+      toAccountLabel: next.label,
+      reason: `${hit.reason}${req.reasonSuffix}`,
+      kind: hit.kind,
+      switched: true,
+      toAccountId: next.id,
+      fromAccountId,
+      crossAccount,
+      coalesced,
+      missionId: authority.missionId,
+      ...(probe ? { probe } : {}),
+    });
+    return;
+  }
+
   emitFailover(authority, {
     paneId,
     fromAccountLabel: fromLabel,
@@ -794,24 +858,19 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
     missionId: authority.missionId,
     ...(probe ? { probe } : {}),
   });
-
-  // Pane main-owned (worker headless de missão): o renderer não é dono e
-  // nunca vai consumir o evento acima — o Main respawna com a nova conta.
-  if (!authority.owner) {
-    void respawnMainOwnedPaneWithAccount({
-      paneId,
-      sessionId: authority.sessionId,
-      adapterId,
-      toAccountId: next.id,
-      fromAccountLabel: fromLabel,
-      reason: hit.reason,
-    }).catch((error) => {
-      console.warn(
-        '[failover] main-owned respawn falhou (evento segue para o renderer):',
-        error instanceof Error ? error.message : error,
-      );
-    });
-  }
+  trace({
+    kind: 'account-failover',
+    outcome: 'switched',
+    paneId,
+    adapterId,
+    fromAccountId: fromAccountId ?? null,
+    toAccountId: next.id,
+    limitKind: hit.kind,
+    reason: `${hit.reason}${req.reasonSuffix}`,
+    crossAccount,
+    coalesced,
+    missionId: authority.missionId ?? null,
+  });
 }
 
 /** Agenda (ou re-agenda) a espera-pela-irmã de um watch. */
@@ -880,6 +939,97 @@ function fireScheduledRetry(
   });
 }
 
+/**
+ * F-249: retry de um limite que a API do provider NÃO conseguiu confirmar.
+ * Re-sonda uma vez: leitura saudável refuta → limpa o cooldown capado e o
+ * pane segue intacto; confirmada ou ainda sem dados → troca de verdade
+ * (adiar pra sempre deixaria pane preso num limite real — a janela capada é
+ * o único adiamento permitido). Dividir o mapa `pendingRetries` é proposital:
+ * cancel/cleanup por escopo/sessão cobrem o retry sem código duplo.
+ */
+function scheduleUnconfirmedLimitRetry(
+  key: string,
+  authority: FailoverAuthority,
+  hit: LimitHit,
+  retryAtMs: number,
+): number {
+  cancelScheduledRetry(key);
+  const scheduledAt = Date.now();
+  const delay = Math.max(retryAtMs - scheduledAt, RETRY_BUFFER_MS);
+  const timer = setTimeout(() => {
+    pendingRetries.delete(key);
+    try {
+      void fireUnconfirmedLimitRetry(key, authority, hit);
+    } catch (err) {
+      console.warn('[failover] unconfirmed-limit retry error:', err);
+    }
+  }, delay);
+  timer.unref?.();
+  pendingRetries.set(key, { timer, authority });
+  return scheduledAt + delay;
+}
+
+async function fireUnconfirmedLimitRetry(
+  key: string,
+  authority: FailoverAuthority,
+  hit: LimitHit,
+): Promise<void> {
+  if (!isCurrentAuthority(authority)) return;
+  const pane = resolvePaneDetails(authority);
+  if (!pane) return;
+  const adapterId = pane.adapterId;
+  const current = paneAccount(pane);
+  const now = Date.now();
+  let fresh: ProviderQuotaEntry | undefined;
+  try {
+    await requireQuotaService().refreshForLimitHit(now);
+    fresh = current ? quotaEntryFor(adapterId, current.id) : undefined;
+  } catch {
+    fresh = undefined;
+  }
+  const probedAt = Date.now();
+  if (current && providerApiRefutesLimit(fresh, hit, probedAt)) {
+    clearCooldown(current.id, 'limite não confirmado pela API do provider — sonda saudável no retry');
+    logSuppressedFailover(pane, current, hit, 'unconfirmed-limit-refuted-at-retry', 'transient-watch');
+    trace({
+      kind: 'account-failover',
+      outcome: 'unconfirmed-refuted',
+      paneId: pane.paneId,
+      adapterId,
+      fromAccountId: current.id,
+      limitKind: hit.kind,
+      reason: hit.reason,
+      missionId: authority.missionId ?? null,
+    });
+    // Pane de missão pode ter ficado parado no erro fantasma: um "continue"
+    // na mesma sessão retoma sem custo. Pane do operador nunca é digitado.
+    if (authority.missionId) nudgeTransientContinue(authority, pane, current, hit);
+    return;
+  }
+  // Confirmado pela sonda ou ainda sem dados: era (ou pode ser) limite real —
+  // a troca acontece AGORA, no fim da pausa capada. Quando a sonda CONFIRMOU,
+  // a conta sai da disputa de vez (evita respawnar na conta ainda limitada);
+  // sem dados ela pode voltar a ser escolhida (falso positivo provável).
+  const confirmed = hasFreshProviderApiWindowForLimit(fresh, hit, probedAt);
+  void performSwitch({
+    key,
+    authority,
+    paneId: pane.paneId,
+    adapterId,
+    paneModel: pane.model,
+    hit,
+    now,
+    current,
+    excludeId: confirmed ? (current?.id ?? null) : null,
+    ownUnblockAtMs:
+      current?.cooldownUntil && current.cooldownUntil > now
+        ? current.cooldownUntil
+        : undefined,
+    attempt: 0,
+    reasonSuffix: ' — troca após pausa de limite não confirmado',
+  });
+}
+
 type FailoverSignalSource = 'observer' | 'scrollback';
 
 function watchFor(authority: FailoverAuthority): [string, SessionWatch] {
@@ -945,6 +1095,20 @@ function logSuppressedFailover(
   source: FailoverSignalSource | 'transient-watch',
   extra: Record<string, unknown> = {},
 ): void {
+  // F-249: a decisão de NÃO trocar também precisa sobreviver ao empacotamento
+  // — console.info morre no stdout, o trace fica em logs/main.trace.ndjson.
+  trace({
+    kind: 'account-failover',
+    outcome: 'suppressed',
+    suppressed,
+    paneId: pane.paneId,
+    adapterId: pane.adapterId,
+    fromAccountId: current?.id ?? null,
+    limitKind: hit.kind,
+    reason: hit.reason,
+    source,
+    ...extra,
+  });
   console.info(
     '[failover]',
     JSON.stringify({
@@ -968,7 +1132,20 @@ function emitNoSwitch(
   hit: LimitHit,
   reason: string = hit.reason,
   transientPhase?: FailoverEvent['transientPhase'],
+  extra: Partial<Pick<FailoverEvent, 'nextUnblockAtMs' | 'scheduledRetryAtMs'>> = {},
 ): void {
+  trace({
+    kind: 'account-failover',
+    outcome: 'no-switch',
+    paneId: pane.paneId,
+    adapterId: pane.adapterId,
+    fromAccountId: current?.id ?? null,
+    limitKind: hit.kind,
+    reason,
+    transientPhase: transientPhase ?? null,
+    missionId: authority.missionId ?? null,
+    ...extra,
+  });
   emitFailover(authority, {
     paneId: pane.paneId,
     fromAccountLabel: current?.label ?? pane.adapterId,
@@ -979,6 +1156,7 @@ function emitNoSwitch(
     fromAccountId: current?.id,
     missionId: authority.missionId,
     ...(transientPhase ? { transientPhase } : {}),
+    ...extra,
   });
 }
 
@@ -1375,6 +1553,13 @@ async function confirmLimitByProbe(
     commitLimitHit(authority, pane, key, hit, now, source, current, adapterId);
     return;
   }
+  // F-249: sonda sem resposta NÃO troca o pane. O único indício é o texto da
+  // CLI (ou narração do Maestro citando erro de outro pane — "usage limit
+  // reached" casa no detector mesmo sem erro na conta do narrador). A conta
+  // fica em cooldown CURTO para o pool não sentar nela, o pane segue vivo na
+  // MESMA conta e um retry re-sonda: confirmado/sem-dados → troca lá;
+  // refutado → limpa o cooldown e não toca em nada. Antes disto o texto sozinho
+  // capava o cooldown E respawnava o pane na irmã — "trocou sem ter atingido".
   logSuppressedFailover(
     pane,
     current,
@@ -1383,15 +1568,48 @@ async function confirmLimitByProbe(
     source,
     { cooldownMs: hit.cooldownMs, cappedToMs: CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS },
   );
-  commitLimitHit(
+  if (!current) {
+    // Sem conta gerenciada (adapter api-key): não há cooldown nem irmã — o
+    // caminho legado resolve (nextUnblockAtMs/espera-pela-irmã ou no-switch).
+    commitLimitHit(
+      authority,
+      pane,
+      key,
+      { ...hit, cooldownMs: CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS },
+      now,
+      source,
+      current,
+      adapterId,
+    );
+    return;
+  }
+  setCooldown(
+    current.id,
+    now + CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS,
+    `${hit.reason} (limite não confirmado pela API do provider)`,
+    hit.scope,
+  );
+  noteQuotaLimitHit(adapterId, hit, current.id);
+  const scheduledRetryAtMs = scheduleUnconfirmedLimitRetry(
+    key,
+    authority,
+    hit,
+    now + CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS + RETRY_BUFFER_MS,
+  );
+  emitNoSwitch(
     authority,
     pane,
-    key,
-    { ...hit, cooldownMs: CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS },
-    now,
-    source,
     current,
-    adapterId,
+    hit,
+    `${hit.reason} — a API do provider não confirmou o limite; ` +
+      `a conta fica em pausa curta e o pane tenta de novo em ~${Math.round(
+        CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS / 60_000,
+      )} min sem trocar de conta`,
+    undefined,
+    {
+      scheduledRetryAtMs,
+      nextUnblockAtMs: now + CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS,
+    },
   );
 }
 

@@ -91,51 +91,67 @@ export function useFailoverController(): void {
       const pane = listPanes(useLayoutStore.getState().root).find(
         (p) => p.id === event.paneId,
       );
-      if (pane) {
-        if (event.toAccountId) {
-          useLayoutStore.getState().setAccountId(pane.id, event.toAccountId);
-        }
-        const updated = listPanes(useLayoutStore.getState().root).find(
-          (candidate) => candidate.id === pane.id,
+      // F-249: o toast de sucesso só pode sair se o pane foi encontrado e
+      // religado — antes ele saía mesmo com o pane ausente da árvore (aba
+      // fechada/trocada), dizendo "trocou" sem trocar nada.
+      if (!pane) {
+        push('warn', 'Troca de conta não aplicada', {
+          detail:
+            `"${event.fromAccountLabel}" reportou limite, mas o pane não está ` +
+            'mais nesta janela — nada foi religado.',
+          dedupeKey: `failover:${event.paneId}`,
+        });
+        return;
+      }
+      if (event.toAccountId) {
+        useLayoutStore.getState().setAccountId(pane.id, event.toAccountId);
+      }
+      const updated = listPanes(useLayoutStore.getState().root).find(
+        (candidate) => candidate.id === pane.id,
+      );
+      if (!updated) {
+        push('warn', 'Troca de conta não aplicada', {
+          detail:
+            `"${event.fromAccountLabel}" reportou limite, mas o pane sumiu ` +
+            'da árvore antes do religamento — nada foi trocado.',
+          dedupeKey: `failover:${event.paneId}`,
+        });
+        return;
+      }
+      if (isSameAccountFailover(event)) {
+        respawnWithResume(
+          updated,
+          `[nexus] ${event.reason}; retomando sessão na mesma conta…`,
+          {
+            mode: 'same-account-resume',
+            skipContinuation: event.kind === 'auth',
+          },
         );
-        if (updated) {
-          const sameAccount = isSameAccountFailover(event);
-          if (sameAccount) {
-            respawnWithResume(
-              updated,
-              `[nexus] ${event.reason}; retomando sessão na mesma conta…`,
-              {
-                mode: 'same-account-resume',
-                skipContinuation: event.kind === 'auth',
-              },
-            );
-          } else {
-            const orch = useOrchStore.getState();
-            const mission = resolveContinuityMission({
-              paneId: updated.id,
-              paneMissions: orch.paneMissions,
-              missions: orch.missions,
-              eventMissionId: event.missionId,
-            });
-            const continuityPack = buildContinuityPack({
-              fromAccountLabel: event.fromAccountLabel,
-              toAccountLabel: event.toAccountLabel,
-              reason: event.reason,
-              role: updated.role,
-              missionId: mission.missionId,
-              openWorkHint: mission.openWorkHint,
-              scrollbackExcerpt: getScrollbackExcerpt(updated.id),
-            });
-            respawnWithResume(
-              updated,
-              `[nexus] limite em "${event.fromAccountLabel}" → conta "${event.toAccountLabel}" (sessão nova + handoff)`,
-              {
-                mode: 'cross-account-continuity',
-                continuityPack,
-              },
-            );
-          }
-        }
+      } else {
+        const orch = useOrchStore.getState();
+        const mission = resolveContinuityMission({
+          paneId: updated.id,
+          paneMissions: orch.paneMissions,
+          missions: orch.missions,
+          eventMissionId: event.missionId,
+        });
+        const continuityPack = buildContinuityPack({
+          fromAccountLabel: event.fromAccountLabel,
+          toAccountLabel: event.toAccountLabel,
+          reason: event.reason,
+          role: updated.role,
+          missionId: mission.missionId,
+          openWorkHint: mission.openWorkHint,
+          scrollbackExcerpt: getScrollbackExcerpt(updated.id),
+        });
+        respawnWithResume(
+          updated,
+          `[nexus] limite em "${event.fromAccountLabel}" → conta "${event.toAccountLabel}" (sessão nova + handoff)`,
+          {
+            mode: 'cross-account-continuity',
+            continuityPack,
+          },
+        );
       }
       if (isSameAccountFailover(event)) {
         const copy = recoveredFailoverToastCopy(event);
