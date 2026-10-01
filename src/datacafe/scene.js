@@ -19,8 +19,8 @@ import { DESK, createDesk, resetDesk, sit, deskStep, deployPlan, seatPose } from
 import { joystickInput, JOYSTICK_RADIUS } from './touch.js';
 import { ENERGY, createEnergy, energyStep, drink, speedScale, energyLevel } from './energy.js';
 import { createRacks, installGpu, reboot, rackStep, rackState, poweredCount, operationalCount, installedIds, incidentIds, allPowered } from './racks.js';
-import { ticketsFrom, badgesFor, speedPerk, TICKET_XP } from './tickets.js';
-import { createProgression, scoreTicket, progressionStep, closeShift } from './progression.js';
+import { ticketsFrom, badgesFor, speedPerk, TICKET_XP, BADGES } from './tickets.js';
+import { createProgression, scoreTicket, progressionStep, closeShift, awardMessage } from './progression.js';
 import { dropUnavailable, missionView } from './missions.js';
 import { comboLevel, comboMultiplier } from './combo.js';
 import { saveProgress, initialProgress } from './progress.js';
@@ -290,16 +290,14 @@ class DataCafeWorld {
     const badges = badgesFor(progress, this.racks);
     this.progress = { ...progress, badges };
     saveProgress(this.progress);
-    const mission = result.finished[0];
     this.floatText(`+${result.xpGained + result.bonus} XP`);
-    if (mission) this.on.toast?.(`Missão cumprida: ${mission.text} · +${mission.xp} XP`);
-    else this.on.toast?.(result.multiplier > 1 ? `${what} · combo ×${result.multiplier} · +${result.xpGained} XP` : `${what} · +${result.xpGained} XP`);
+    // Um aviso só, com tudo o que este ticket rendeu: nada é atropelado por outro aviso.
+    this.on.toast?.(awardMessage(what, result, badges.filter(badge => !before.has(badge))));
     this.on.xp?.({ progress: this.progress, gained: result.xpGained + result.bonus, leveledUp: result.leveledUp });
     if (result.leveledUp) this.audio?.levelUp();
-    else if (mission) this.audio?.mission();
+    else if (result.finished.length) this.audio?.mission();
     else if (this.game.combo.streak > 1) this.audio?.combo(this.game.combo.streak);
     this.emitGame();
-    for (const badge of badges) if (!before.has(badge)) this.on.badge?.(badge);
     return result.xpGained + result.bonus;
   }
 
@@ -325,13 +323,15 @@ class DataCafeWorld {
     this.game = step.state;
     if (step.shiftOver) {
       const closed = closeShift(this.game, this.progress);
+      const had = new Set(this.progress.badges);
       this.game = closed.state;
       this.progress = { ...closed.progress, badges: badgesFor(closed.progress, this.racks) };
+      const seals = this.progress.badges.filter(badge => !had.has(badge)).map(badge => ` Selo: ${BADGES[badge]}.`).join('');
       saveProgress(this.progress);
       // Turno sem ponto nenhum fecha calado: ninguém quer um aviso de zero a cada três minutos.
       if (closed.score > 0) {
         this.audio?.shiftEnd();
-        this.on.toast?.(closed.record ? `Turno encerrado: ${closed.score} pontos. Recorde novo!` : `Turno encerrado: ${closed.score} pontos. Recorde: ${this.progress.bestShift}.`);
+        this.on.toast?.(`${closed.record ? `Turno encerrado: ${closed.score} pontos. Recorde novo!` : `Turno encerrado: ${closed.score} pontos. Recorde: ${this.progress.bestShift}.`}${seals}`);
         this.on.xp?.({ progress: this.progress, gained: 0, leveledUp: false });
       }
     }
@@ -820,6 +820,8 @@ class DataCafeWorld {
   togglePause = () => this.setPaused(!this.paused);
 
   resetProgress = () => {
+    // Recomeçar também tira da pausa: o jogo e o som voltam juntos.
+    this.setPaused(false);
     this.progress = initialProgress();
     this.racks = createRacks(MODELS.map(model => model.id));
     for (const art of this.dc.racks.values()) art.setState('off');

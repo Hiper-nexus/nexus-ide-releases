@@ -142,3 +142,36 @@ test('a trilha só agenda notas com o som ligado e o contexto rodando, e para no
   audio.dispose();
   assert.equal(timers.cleared, true);
 });
+
+test('pausado, mexer no som não acorda o áudio: só o resume do jogo acorda', () => {
+  const ctx = fakeContext();
+  const timers = fakeTimers();
+  const audio = createAudio({ context: ctx, storage: memoryStorage(), timers });
+  audio.unlock();
+  audio.suspend();
+  assert.equal(ctx.state, 'suspended');
+  const resumes = () => ctx.log.filter(entry => entry === 'resume').length;
+  const before = resumes();
+  audio.unlock(); audio.setVolume(0.2); audio.setMuted(true); audio.setMuted(false);
+  assert.equal(resumes(), before, 'unlock, volume e mudo não chamam resume durante a pausa');
+  assert.equal(ctx.state, 'suspended');
+  ctx.state = 'running';
+  const scheduled = ctx.log.filter(entry => entry === 'start:oscillator').length;
+  ctx.currentTime = 50;
+  timers.callback();
+  assert.equal(ctx.log.filter(entry => entry === 'start:oscillator').length, scheduled, 'a trilha não agenda com o jogo pausado, mesmo se o contexto acordar');
+  audio.resume();
+  assert.equal(resumes(), before + 1);
+  timers.callback();
+  assert.ok(ctx.log.filter(entry => entry === 'start:oscillator').length > scheduled);
+});
+
+test('volume zero vale como mudo para a trilha', () => {
+  const ctx = fakeContext();
+  const timers = fakeTimers();
+  const audio = createAudio({ context: ctx, storage: memoryStorage(), timers });
+  audio.unlock();
+  audio.setVolume(0);
+  timers.callback();
+  assert.equal(ctx.log.filter(entry => entry === 'start:oscillator').length, 0);
+});

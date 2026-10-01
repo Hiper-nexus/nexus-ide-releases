@@ -5,12 +5,12 @@
 export const MISSIONS = [
   { id: 'ligar-3', text: 'Ligue 3 racks', kind: 'install', goal: 3, xp: 80 },
   { id: 'bombeiro-2', text: 'Resolva 2 incidentes', kind: 'incident', goal: 2, xp: 100 },
-  { id: 'combo-3', text: 'Chegue ao combo ×3', kind: 'combo', goal: 3, xp: 90 },
+  { id: 'combo-3', text: 'Faça 3 entregas em sequência', kind: 'combo', goal: 3, xp: 90 },
   { id: 'deploy-2', text: 'Faça 2 deploys no terminal', kind: 'deploy', goal: 2, xp: 90 },
   { id: 'cafe-em-dia', text: 'Tome café antes de cansar', kind: 'coffee', goal: 1, xp: 40 },
   { id: 'ligar-5', text: 'Ligue 5 racks', kind: 'install', goal: 5, xp: 140 },
   { id: 'bombeiro-4', text: 'Resolva 4 incidentes', kind: 'incident', goal: 4, xp: 180 },
-  { id: 'combo-5', text: 'Chegue ao combo ×5', kind: 'combo', goal: 5, xp: 160 },
+  { id: 'combo-5', text: 'Faça 5 entregas em sequência', kind: 'combo', goal: 5, xp: 160 },
 ];
 export const MISSION_SLOTS = 3;
 
@@ -37,16 +37,24 @@ export function createMissions(pool = MISSIONS, slots = MISSION_SLOTS, unavailab
   return { active, next, completed: 0 };
 }
 
-/** Aplica um evento. Devolve o mesmo estado quando nada mudou. */
+/** Aplica os eventos de um mesmo ticket (um evento ou uma lista) às missões que já estavam
+ * ativas, e só depois repõe as vagas: missão recém-sacada nunca fecha no ticket em que entrou.
+ * Devolve o mesmo estado quando nada mudou. */
 export function missionEvent(state, event, pool = MISSIONS, unavailable = []) {
+  const events = Array.isArray(event) ? event : [event];
   const finished = [];
   let next = state.next;
   let changed = false;
   const active = [];
   for (const entry of state.active) {
     const mission = pool.find(item => item.id === entry.id);
-    if (!mission || mission.kind !== event.kind) { active.push(entry); continue; }
-    const done = mission.kind === 'combo' ? Math.max(entry.done, event.value ?? 0) : entry.done + 1;
+    let done = entry.done;
+    if (mission) {
+      for (const one of events) {
+        if (mission.kind !== one.kind) continue;
+        done = mission.kind === 'combo' ? Math.max(done, one.value ?? 0) : done + 1;
+      }
+    }
     if (done === entry.done) { active.push(entry); continue; }
     changed = true;
     if (done < mission.goal) { active.push({ id: entry.id, done }); continue; }
@@ -68,10 +76,21 @@ export function missionEvent(state, event, pool = MISSIONS, unavailable = []) {
   return { state: { active: refilled, next, completed: state.completed + finished.length }, finished };
 }
 
-/** Tira da lista as missões que ficaram impossíveis (ex.: instalar com o data center completo). */
+/** Tira da lista as missões que ficaram impossíveis (ex.: instalar com o data center completo)
+ * e repõe cada vaga com a próxima missão possível. */
 export function dropUnavailable(state, pool = MISSIONS, unavailable = []) {
   const active = state.active.filter(entry => !unavailable.includes(pool.find(item => item.id === entry.id)?.kind));
-  return active.length === state.active.length ? state : { ...state, active };
+  if (active.length === state.active.length) return state;
+  const taken = new Set(state.active.map(entry => entry.id));
+  let next = state.next;
+  while (active.length < state.active.length) {
+    const drawn = draw(pool, next, taken, unavailable);
+    if (!drawn) break;
+    taken.add(drawn.mission.id);
+    next = drawn.next;
+    active.push({ id: drawn.mission.id, done: 0 });
+  }
+  return { ...state, active, next };
 }
 
 /** Lista para o HUD: texto, progresso e recompensa. */

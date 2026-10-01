@@ -105,8 +105,7 @@ function renderAvailability() {
 async function refreshAccount({ announce = true } = {}) {
   if (isBusy) return;
   isBusy = true;
-  byId('refresh-account').disabled = true;
-  byId('subscribe').disabled = true;
+  for (const id of ['refresh-account', 'subscribe', 'billing-portal', 'logout']) byId(id).disabled = true;
   if (announce) message('account-message', 'Atualizando sua conta…');
   const results = await Promise.allSettled([api('/v1/public/status'), api('/v1/web/session')]);
   availability = results[0].status === 'fulfilled' ? results[0].value : null;

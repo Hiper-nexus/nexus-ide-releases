@@ -15,16 +15,21 @@ export function billingFlags(availability, session, isBusy) {
   const authenticated = session?.authenticated === true;
   const access = session?.entitlement?.access;
   const portalVisible = authenticated && session.billing?.portal === true;
-  const portalHint = portalVisible && available ? ' O portal de cobrança continua disponível.' : '';
+  const portalUsable = portalVisible && available;
   let status;
-  if (authenticated && access === 'pro' && available) status = portalVisible ? 'Seu acesso Pro está confirmado. Use o portal para gerenciar a cobrança.' : 'Seu acesso Pro está confirmado.';
-  else if (authenticated && access === 'suspended' && available) status = 'Seu acesso está suspenso. Fale com o suporte. O portal de cobrança continua disponível se você tem assinatura.';
-  else if (!selling) status = `A contratação está temporariamente indisponível. Nenhuma cobrança será iniciada.${portalHint}`;
-  else status = authenticated ? 'Ao continuar, você será levado ao checkout seguro do Stripe.' : 'Entre na sua conta para contratar.';
+  if (authenticated && access === 'pro') {
+    status = portalUsable ? 'Seu acesso Pro está confirmado. Use o portal para gerenciar a cobrança.'
+      : portalVisible ? 'Seu acesso Pro está confirmado. O portal de cobrança está temporariamente indisponível.'
+        : 'Seu acesso Pro está confirmado.';
+  } else if (authenticated && access === 'suspended') {
+    status = portalUsable ? 'Seu acesso está suspenso. Fale com o suporte. O portal de cobrança continua disponível.' : 'Seu acesso está suspenso. Fale com o suporte.';
+  } else if (!selling) {
+    status = `A contratação está temporariamente indisponível. Nenhuma cobrança será iniciada.${portalUsable ? ' O portal de cobrança continua disponível.' : ''}`;
+  } else status = authenticated ? 'Ao continuar, você será levado ao checkout seguro do Stripe.' : 'Entre na sua conta para contratar.';
   return {
     checkoutEnabled: !isBusy && selling && authenticated && !['pro', 'suspended'].includes(access),
     portalVisible,
-    portalEnabled: !isBusy && available,
+    portalEnabled: !isBusy && portalUsable,
     status,
   };
 }

@@ -37,6 +37,8 @@ export function createAudio({ context = null, storage = defaultStorage(), create
   let muted = false;
   let volume = DEFAULT_VOLUME;
   let disposed = false;
+  /** O jogo pausou ou saiu da tela: só `resume()` acorda o áudio de novo. */
+  let held = false;
   let musicTimer = null, nextNote = 0, noteIndex = 0;
   try {
     muted = storage?.getItem(MUTE_KEY) === '1';
@@ -45,7 +47,7 @@ export function createAudio({ context = null, storage = defaultStorage(), create
   } catch { muted = false; }
 
   function ready() {
-    return Boolean(ctx && master) && !muted;
+    return Boolean(ctx && master) && !muted && volume > 0;
   }
 
   function envelope(gain, peak, attack, release) {
@@ -101,7 +103,7 @@ export function createAudio({ context = null, storage = defaultStorage(), create
 
   /** Agenda as próximas notas da trilha. Mudo, pausado ou sem gesto não agenda nada. */
   function scheduleMusic() {
-    if (!ready() || ctx.state === 'suspended') return;
+    if (!ready() || held || ctx.state === 'suspended') return;
     const now = ctx.currentTime;
     if (nextNote < now) nextNote = now + 0.05;
     while (nextNote < now + MUSIC.horizon) {
@@ -135,7 +137,8 @@ export function createAudio({ context = null, storage = defaultStorage(), create
           musicTimer = timers.setInterval?.(scheduleMusic, MUSIC.interval) ?? null;
           musicTimer?.unref?.();
         }
-        ctx.resume?.();
+        // Mexer no som com o jogo pausado prepara o contexto, mas não o acorda.
+        if (!held) ctx.resume?.();
         return true;
       } catch {
         return false;
@@ -216,8 +219,8 @@ export function createAudio({ context = null, storage = defaultStorage(), create
       return volume;
     },
     getVolume() { return volume; },
-    suspend() { try { ctx?.suspend?.(); } catch { /* nada a fazer */ } },
-    resume() { try { if (master) ctx?.resume?.(); } catch { /* nada a fazer */ } },
+    suspend() { held = true; try { ctx?.suspend?.(); } catch { /* nada a fazer */ } },
+    resume() { held = false; try { if (master) ctx?.resume?.(); } catch { /* nada a fazer */ } },
     dispose() {
       disposed = true;
       if (musicTimer != null) timers.clearInterval?.(musicTimer);

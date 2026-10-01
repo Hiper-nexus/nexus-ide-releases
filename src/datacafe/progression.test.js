@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createProgression, scoreTicket, progressionStep, closeShift } from './progression.js';
+import { createProgression, scoreTicket, progressionStep, closeShift, awardMessage } from './progression.js';
 import { initialProgress } from './progress.js';
 import { COMBO } from './combo.js';
 import { SHIFT_SECONDS } from './shift.js';
@@ -64,4 +64,34 @@ test('deploy no terminal entra no combo e avança a missão de deploy', () => {
   assert.deepEqual(second.finished.map(mission => mission.id), ['d']);
   assert.equal(second.progress.xp, 35 + Math.round(35 * (1 + COMBO.step)) + 90);
   assert.equal(second.progress.incidents, 0, 'deploy não conta como incidente');
+});
+
+test('combo alto não fecha na mesma entrega a missão de sequência que acabou de entrar', () => {
+  const deck = [
+    { id: 'i1', text: 'Ligue 1 rack', kind: 'install', goal: 1, xp: 40 },
+    { id: 'c2', text: 'Faça 2 entregas em sequência', kind: 'combo', goal: 2, xp: 90 },
+  ];
+  let game = { ...createProgression(deck), missions: { active: [{ id: 'i1', done: 0 }], next: 1, completed: 0 } };
+  game = { ...game, combo: { streak: 6, left: COMBO.window } };
+  const step = scoreTicket(game, initialProgress(), install('claude'), deck);
+  assert.deepEqual(step.finished.map(mission => mission.id), ['i1']);
+  assert.equal(step.bonus, 40, 'o XP pago bate com as missões que o jogador viu fechar');
+  assert.deepEqual(step.state.missions.active.map(entry => entry.id), ['c2']);
+});
+
+test('o aviso da premiação diz o XP total que entrou, todas as missões fechadas, o nível e o selo', () => {
+  const deck = [
+    { id: 'i1', text: 'Ligue 1 rack', kind: 'install', goal: 1, xp: 80 },
+    { id: 'c1', text: 'Faça 1 entrega em sequência', kind: 'combo', goal: 1, xp: 90 },
+  ];
+  const result = scoreTicket(createProgression(deck), { ...initialProgress(), xp: 90 }, install('claude'), deck);
+  assert.equal(result.finished.length, 2);
+  const text = awardMessage('Claude no ar', result, ['primeira-gpu']);
+  assert.match(text, /Missões cumpridas: Ligue 1 rack e Faça 1 entrega em sequência/);
+  assert.match(text, new RegExp(`\\+${result.xpGained + result.bonus} XP`), 'o total mostrado é o total gravado');
+  assert.equal(result.progress.xp, 90 + result.xpGained + result.bonus);
+  assert.match(text, /subiu para /);
+  assert.match(text, /selo: Primeira GPU instalada/);
+  const plain = scoreTicket(createProgression([]), initialProgress(), install('codex'), []);
+  assert.equal(awardMessage('Codex no ar', plain), 'Codex no ar · +60 XP');
 });

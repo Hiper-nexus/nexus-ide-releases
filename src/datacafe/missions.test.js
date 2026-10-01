@@ -56,3 +56,34 @@ test('missão que ficou impossível sai da lista (data center completo não tem 
   const after = missionEvent(next, { kind: 'incident' }, pool, ['install']);
   assert.deepEqual(after.state.active.map(mission => mission.id), ['c'], 'nenhuma missão de instalar volta');
 });
+
+test('missão sacada para a vaga não fecha no mesmo ticket: ela aparece antes de valer', () => {
+  const deck = [
+    { id: 'i2', text: 'Ligue 2 racks', kind: 'install', goal: 2, xp: 50 },
+    { id: 'c3', text: 'Faça 3 entregas em sequência', kind: 'combo', goal: 3, xp: 90 },
+  ];
+  let state = createMissions(deck, 1);
+  state = missionEvent(state, [{ kind: 'install' }, { kind: 'combo', value: 9 }], deck).state;
+  const step = missionEvent(state, [{ kind: 'install' }, { kind: 'combo', value: 10 }], deck);
+  assert.deepEqual(step.finished.map(mission => mission.id), ['i2'], 'só a missão que já estava ativa fecha');
+  assert.deepEqual(missionView(step.state, deck).map(mission => [mission.id, mission.done]), [['c3', 0]], 'a nova entra zerada e visível');
+  const next = missionEvent(step.state, [{ kind: 'install' }, { kind: 'combo', value: 11 }], deck);
+  assert.deepEqual(next.finished.map(mission => mission.id), ['c3']);
+});
+
+test('dois eventos do mesmo ticket fecham duas missões ativas de uma vez', () => {
+  let state = createMissions(pool, 3);
+  state = missionEvent(state, [{ kind: 'install' }, { kind: 'combo', value: 2 }], pool).state;
+  const step = missionEvent(state, [{ kind: 'install' }, { kind: 'combo', value: 3 }], pool);
+  assert.deepEqual(step.finished.map(mission => mission.id).sort(), ['a', 'c']);
+  assert.equal(step.state.completed, 2);
+});
+
+test('tirar missão impossível repõe a vaga com a próxima possível', () => {
+  const state = createMissions(MISSIONS, 3);
+  assert.ok(state.active.some(entry => MISSIONS.find(mission => mission.id === entry.id).kind === 'install'));
+  const next = dropUnavailable(state, MISSIONS, ['install']);
+  assert.equal(next.active.length, 3, 'continuam três missões ativas');
+  assert.ok(next.active.every(entry => MISSIONS.find(mission => mission.id === entry.id).kind !== 'install'));
+  assert.equal(new Set(next.active.map(entry => entry.id)).size, 3);
+});

@@ -34,6 +34,7 @@
 .dc-shift-score{white-space:nowrap}
 .dc-shift.ending{border-color:var(--ember,#ffb27a);color:var(--ember,#ffb27a)}
 .dc-combo{font-size:10px;border-color:var(--pink)}
+.dc-combo-label{white-space:nowrap}
 .dc-combo-x{font-size:22px;line-height:1;color:var(--pink)}
 .dc-combo .dc-track{width:48px}
 .dc-combo-fill{display:block;height:100%;background:var(--pink);transform-origin:left}
@@ -122,7 +123,7 @@
   .dc-prompt{left:auto;right:16px;bottom:24px;transform:none;max-width:calc(100% - 180px);min-height:64px;font-size:12px}
   .dc-toast{bottom:168px}
   .dc-station{bottom:170px;right:16px}
-  .dc-sound{width:44px;height:44px}
+  .dc-sound{width:48px;height:48px}
 }
 @media(max-width:760px){
   .dc-status{left:16px;gap:6px}

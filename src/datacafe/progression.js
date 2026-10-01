@@ -4,7 +4,7 @@
 import { createCombo, comboHit, comboStep, comboMultiplier } from './combo.js';
 import { MISSIONS, createMissions, missionEvent } from './missions.js';
 import { createShift, shiftStep, shiftScore } from './shift.js';
-import { completeTicket, levelFor } from './tickets.js';
+import { completeTicket, levelFor, titleFor, perkText, BADGES } from './tickets.js';
 
 export function createProgression(pool = MISSIONS, unavailable = []) {
   return { combo: createCombo(), missions: createMissions(pool, undefined, unavailable), shift: createShift() };
@@ -17,12 +17,9 @@ export function scoreTicket(state, progress, ticket, pool = MISSIONS, unavailabl
   const combo = counts ? comboHit(state.combo) : state.combo;
   const multiplier = counts ? comboMultiplier(combo) : 1;
   const result = completeTicket(progress, ticket, multiplier);
-  let step = missionEvent(state.missions, { kind: ticket.kind }, pool, unavailable);
-  const finished = [...step.finished];
-  if (counts) {
-    step = missionEvent(step.state, { kind: 'combo', value: combo.streak }, pool, unavailable);
-    finished.push(...step.finished);
-  }
+  const events = counts ? [{ kind: ticket.kind }, { kind: 'combo', value: combo.streak }] : [{ kind: ticket.kind }];
+  const step = missionEvent(state.missions, events, pool, unavailable);
+  const { finished } = step;
   const bonus = finished.reduce((sum, mission) => sum + mission.xp, 0);
   const xp = result.progress.xp + bonus;
   const level = levelFor(xp);
@@ -39,6 +36,18 @@ export function scoreTicket(state, progress, ticket, pool = MISSIONS, unavailabl
     leveledUp: level > progress.level,
     finished,
   };
+}
+
+/** O aviso de uma premiação, numa linha só: o que fechou, o XP total que entrou (ticket,
+ * combo e missões), a subida de nível e os selos novos. Um aviso único não é atropelado por outro. */
+export function awardMessage(what, result, newBadges = []) {
+  const parts = [];
+  if (result.finished.length) parts.push(`${result.finished.length > 1 ? 'Missões cumpridas' : 'Missão cumprida'}: ${result.finished.map(mission => mission.text).join(' e ')}`);
+  else parts.push(result.multiplier > 1 ? `${what} · combo ×${result.multiplier}` : what);
+  parts.push(`+${result.xpGained + result.bonus} XP`);
+  if (result.leveledUp) parts.push([`subiu para ${titleFor(result.progress.level)}`, perkText(result.progress.level)].filter(Boolean).join(', '));
+  for (const badge of newBadges) parts.push(`selo: ${BADGES[badge]}`);
+  return parts.join(' · ');
 }
 
 export function progressionStep(state, dt) {

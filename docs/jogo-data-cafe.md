@@ -68,6 +68,10 @@ Efeitos: passos, pegar GPU, rack no ar, alarme de incidente, café, ação bloqu
 - Um toque curto levanta também sobre um deploy pausado (o deploy é cancelado); retomar exige segurar além do toque.
 - O monitor e o prompt mostram o XP que o deploy rendeu de verdade, com combo e missão.
 - A espera de 25 s pelo próximo build conta em segundos de jogo: pausar ou ocultar a aba congela a contagem.
+- Uma premiação gera um aviso só, com o XP total (ticket, combo e missões), todas as missões fechadas, a subida de nível e os selos; nenhum aviso atropela outro.
+- Missão que entra numa vaga não fecha no mesmo ticket em que entrou, e missão que ficou impossível é trocada pela próxima possível.
+- As missões de combo falam em "entregas em sequência" e o medidor mostra a sequência ao lado do multiplicador (que para em ×2).
+- Pausado, mexer no volume ou no mudo não acorda o som; recomeçar o progresso tira da pausa.
 - A câmera confere a linha de visão depois de suavizar e sobe na hora se um rack ficaria na frente; descer continua suave.
 
 ## Orçamento medido

@@ -4,7 +4,7 @@ import './datacafe.css';
 import { createWorld } from './scene.js';
 import { createAudio } from './audio.js';
 import { loadProgress, clearProgress } from './progress.js';
-import { titleFor, levelProgress, perkText, BADGES } from './tickets.js';
+import { titleFor, levelProgress, BADGES } from './tickets.js';
 import { formatClock } from './shift.js';
 
 export const GROUP_URL = 'https://chat.whatsapp.com/CB1tWTp9SVkFeJeZ33N9qK';
@@ -42,7 +42,7 @@ function hudMarkup(id) {
   <div class="dc-row dc-chips">
     <div class="dc-meter dc-racks mono">${RACK}<span class="dc-racks-count">0/18</span><span class="dc-racks-label">NO AR</span></div>
     <div class="dc-meter dc-shift mono" role="timer" aria-label="Tempo e pontos do turno">${CLOCK}<span class="dc-shift-clock">3:00</span><span class="dc-shift-score">0 PTS</span></div>
-    <div class="dc-meter dc-combo mono" hidden><span class="dc-combo-x pixel">×1</span><span class="dc-track"><span class="dc-combo-fill"></span></span><span>COMBO</span></div>
+    <div class="dc-meter dc-combo mono" hidden><span class="dc-combo-x pixel">×1</span><span class="dc-track"><span class="dc-combo-fill"></span></span><span class="dc-combo-label">COMBO</span></div>
   </div>
 </div>
 <button class="dc-level" type="button" aria-expanded="false" aria-controls="${id}-panel"><span class="pixel">LVL <b class="dc-lvl">1</b></span><span class="dc-xpbar" aria-hidden="true"><span></span></span><span class="mono dc-title">Estagiário</span></button>
@@ -176,7 +176,6 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
           chip.textContent = BADGES[badge];
           return chip;
         }));
-        if (leveledUp && gained) toast([`Subiu de nível: ${titleFor(progress.level)}`, perkText(progress.level)].filter(Boolean).join(' · '));
       },
       missions(list) {
         const first = list[0];
@@ -199,6 +198,7 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
         chip.hidden = streak < 2;
         if (streak < 2) return;
         $('.dc-combo-x').textContent = `×${multiplier}`;
+        $('.dc-combo-label').textContent = `${streak} EM SEQUÊNCIA`;
         $('.dc-combo-fill').style.transform = `scaleX(${level.toFixed(3)})`;
       },
       shift(left, score, best) {
@@ -207,7 +207,6 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
         if (score !== shown.score) { shown.score = score; $('.dc-shift-score').textContent = `${score} PTS`; }
         if (best !== shown.best) { shown.best = best; $('.dc-best').textContent = best; }
       },
-      badge(badge) { toast(`Selo: ${BADGES[badge]}`); },
       toast,
       station: openStation,
       menu: () => togglePanel(),
@@ -260,7 +259,12 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
     const paused = world.togglePause();
     event.currentTarget.textContent = paused ? 'Retomar' : 'Pausar';
   }, listen);
-  hud.querySelector('[data-act=reset]').addEventListener('click', () => { clearProgress(); world.resetProgress(); toast('Progresso recomeçado.'); }, listen);
+  hud.querySelector('[data-act=reset]').addEventListener('click', () => {
+    clearProgress();
+    world.resetProgress();
+    hud.querySelector('[data-act=pause]').textContent = 'Pausar';
+    toast('Progresso recomeçado.');
+  }, listen);
   hud.addEventListener('keydown', event => { if (event.key === 'Escape') { togglePanel(false); $('.dc-station').hidden = true; } }, listen);
   // Os botões de início são da página: o AbortController os solta no dispose.
   for (const button of startButtons) button?.addEventListener('click', start, listen);

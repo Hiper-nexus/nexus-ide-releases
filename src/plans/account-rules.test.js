@@ -44,3 +44,22 @@ test('limite de agentes: número, sem limite do teste no Pro e a confirmar quand
   assert.equal(agentLimitLabel(undefined), 'A confirmar');
   assert.equal(agentLimitLabel('7'), 'A confirmar');
 });
+
+test('com a cobrança fora do ar o texto não promete portal nem fala em contratação para quem já é Pro', () => {
+  const down = { ready: true, billing: { available: false } };
+  const pro = billingFlags(down, customer, false);
+  assert.equal(pro.portalEnabled, false);
+  assert.match(pro.status, /Pro está confirmado/);
+  assert.doesNotMatch(pro.status, /Use o portal/);
+  const suspended = billingFlags(down, { ...customer, entitlement: { access: 'suspended' } }, false);
+  assert.match(suspended.status, /suspenso/);
+  assert.doesNotMatch(suspended.status, /portal de cobrança continua disponível/);
+});
+
+test('suspenso sem cliente no Stripe não ouve que o portal continua disponível, e portal oculto nunca fica habilitado', () => {
+  const flags = billingFlags(open, { authenticated: true, entitlement: { access: 'suspended' }, billing: { portal: false } }, false);
+  assert.doesNotMatch(flags.status, /portal/);
+  assert.equal(flags.portalVisible, false);
+  assert.equal(flags.portalEnabled, false);
+  assert.equal(billingFlags(open, trial, false).portalEnabled, false);
+});
