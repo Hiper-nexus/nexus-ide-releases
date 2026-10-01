@@ -20,3 +20,24 @@
 .admin-code-confirm{margin:0 0 var(--s1);font-size:13px;color:var(--ember)}
 @media(max-width:760px){.admin-code-value{font-size:18px}}
 
+
+/* Entrar: botões de provedor com a marca, lado a lado no peso, e o que a conta libera. */
+.login-actions{flex-direction:column;align-items:stretch;max-width:380px;gap:12px}
+.login-provider{justify-content:center;gap:12px;min-height:52px;font-size:15px}
+.login-provider svg{flex:none;width:20px;height:20px}
+.login-provider.button-outline{background:var(--lift)}
+.login-provider.button-outline:hover{background:#2a2830}
+.login-benefits{display:grid;gap:12px;margin:var(--s4) 0 0;padding:var(--s3) 0 0;border-top:1px solid var(--line);list-style:none}
+.login-benefits li{position:relative;padding-left:20px;font-size:14px;line-height:1.5;color:var(--muted);max-width:52ch}
+.login-benefits li:before{content:'+';position:absolute;left:0;color:var(--pink)}
+/* A mensagem de estado vira uma linha quieta; só erro e sucesso ganham caixa. */
+.account-message{display:flex;align-items:center;gap:10px;padding:0 0 var(--s3);border:0;background:none}
+.account-message:before{content:'';flex:none;width:6px;height:6px;border-radius:50%;background:var(--pink);animation:account-pulse 1.6s var(--ease) infinite alternate}
+.account-message[data-state=error],.account-message[data-state=success]{padding:var(--s2) var(--s3);border:1px solid var(--line);border-radius:8px;background:var(--bar)}
+.account-message[data-state=error]{border-color:color-mix(in srgb,var(--pink) 45%,transparent)}
+.account-message[data-state=success]{border-color:color-mix(in srgb,var(--green) 45%,transparent)}
+.account-message[data-state=success]:before{background:var(--green);animation:none}
+.account-plan .button:disabled{border:1px dashed var(--strong);background:transparent;color:var(--muted);opacity:1}
+@keyframes account-pulse{from{opacity:.35}to{opacity:1}}
+@media(max-width:760px){.login-actions{max-width:none}.login-benefits{margin-top:var(--s3)}}
+@media(prefers-reduced-motion:reduce){.account-message:before{animation:none}}
