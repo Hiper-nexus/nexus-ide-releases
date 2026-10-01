@@ -368,7 +368,8 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
     return image;
   });
   const atlas = kit.canvasTexture(ATLAS.width, ATLAS.height, paintAtlas(models, images));
-  images.forEach(image => { if (image) image.onload = () => atlas.redraw(); });
+  let alive = true;
+  images.forEach(image => { if (image) image.onload = () => { if (alive) atlas.redraw(); }; });
   const signGeo = kit.own(new BufferGeometry());
   const positions = new Float32Array(rackEntries.length * 12);
   const uvs = new Float32Array(rackEntries.length * 8);
@@ -615,5 +616,11 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
   // Primeira pintura dos racks, antes do primeiro quadro.
   update(0, 0, true);
 
-  return { root, racks, coffee, dock, highlight, setObjective, setNoc, update, tier };
+  /** Ícones que ainda estão baixando não redesenham uma textura já descartada. */
+  function release() {
+    alive = false;
+    for (const image of images) if (image) { image.onload = null; image.src = ''; }
+  }
+
+  return { root, racks, coffee, dock, highlight, setObjective, setNoc, update, release, tier };
 }

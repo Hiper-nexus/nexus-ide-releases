@@ -623,6 +623,7 @@ class DataCafeWorld {
     this.host.querySelectorAll('.dc-float').forEach(span => span.remove());
     this.pointer.remove();
     this.sun.shadow.dispose();
+    this.dc.release();
     this.kit.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
