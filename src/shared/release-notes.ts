@@ -8643,7 +8643,7 @@ export const RELEASE_076153: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076154: AppRelease = {
   version: '0.76.154',
   date: '2026-10-01',
   codename: 'Motor que usa todo mundo',
@@ -8772,4 +8772,25 @@ export const CURRENT_RELEASE: AppRelease = {
         'em Ajustes do Sistema.',
     },
   ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.155',
+  date: '2026-10-01',
+  codename: 'Guarda no lugar',
+  summary:
+    'No Windows, o Nexus volta a recusar um atalho de credencial adulterado ' +
+    'em vez de refazê-lo em silêncio. Inclui a 0.76.154.',
+  highlights: [
+    {
+      title: 'Atalho de credencial adulterado volta a ser recusado no Windows',
+      detail:
+        'Antes de abrir um pane, o Nexus confere os atalhos de login e ' +
+        'configuração de cada CLI. No Windows, essa conferência aceitava um ' +
+        'atalho para a própria pasta do perfil ou para uma pasta vizinha de ' +
+        'nome parecido, e apenas o refazia. Agora ela recusa e o pane não ' +
+        'abre, como no Mac.',
+    },
+  ],
+  fixes: [],
 };

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.155 — Guarda no lugar
+
+Build do Windows. Inclui a 0.76.154 (Motor que usa todo mundo).
+
+- **Guarda de link no Windows (F-716).** O F-229 passou a aceitar links de configuração que apontam para dentro do perfil da CLI. No Windows, a checagem usava `startsWith` sobre `path.toNamespacedPath(raiz + separador)`, e essa chamada resolve o caminho e tira o separador final. Com isso, um link para a própria raiz do perfil, ou para uma pasta irmã com o mesmo prefixo (`operator2`), era re-apontado em silêncio em vez de falhar fechado. A checagem agora é `isStrictlyInside` (`path.relative`), nos dois pontos do F-229. O link nunca era seguido, mas a detecção de adulteração tinha sumido no Windows.
+- **Testes no Windows.** Os testes do link de config do AGY e do Qwen comparam o arquivo por `dev`/`ino` (no Windows o link é hardlink), e o modo 0600 do business model só é conferido no POSIX.
+
 ## 0.76.154 — Motor que usa todo mundo
 
 Uso real no Mac em 30/09 e 01/10. Inclui a 0.76.153 (Segunda conta Grok). Primeira build com a licença ligada ao `api.nexuside.app`.
