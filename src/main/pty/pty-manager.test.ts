@@ -260,6 +260,7 @@ import {
   inspectSessionLease,
   warmPool,
   tryAdoptWarmSession,
+  liveClaudeMissionAccountIds,
 } from "./pty-manager";
 import type {
   PtyHost,
@@ -5651,4 +5652,53 @@ it('license denial prevents both agent and shell host spawns even with NEXUS_PAN
     expect(() => spawnSession(fakeWc(), { cols: 80, rows: 24, kind: 'shell' }, { ...trustedSpawn(), shell: '/bin/zsh' })).toThrow(/license_access_denied/);
     expect(spy).not.toHaveBeenCalled();
   } finally { vi.unstubAllEnvs(); }
+});
+
+describe('F-235: liveClaudeMissionAccountIds — contas com pane Claude vivo na missão', () => {
+  it('devolve a conta do pane Claude da missão e ignora outros panes', () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const claude = {
+      ...makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+      id: 'claude',
+    };
+    // A cerca de família exclusiva vale só para orquestradores — os demais
+    // panes da missão nascem como worker.
+    const workerGrantFor = (missionId: string): BoundSpawnAuthority => {
+      const grant = missionGrantFor(missionId);
+      return {
+        ...grant,
+        coordinationScope: grant.scope,
+        context: { ...grant.context!, role: 'worker' as const },
+      };
+    };
+
+    spawnAgentSession(
+      fakeWc(),
+      { kind: 'cli-agent', paneId: 'pane-a', cols: 80, rows: 24, accountId: 'acct-A' },
+      claude, {}, workerGrantFor('mission-x'),
+    );
+    // Pane Claude sem accountId (login nativo) não exclui nada.
+    spawnAgentSession(
+      fakeWc(),
+      { kind: 'cli-agent', paneId: 'pane-native', cols: 80, rows: 24 },
+      claude, {}, workerGrantFor('mission-x'),
+    );
+    // Outra conta em OUTRA missão não entra na exclusão desta.
+    spawnAgentSession(
+      fakeWc(),
+      { kind: 'cli-agent', paneId: 'pane-b', cols: 80, rows: 24, accountId: 'acct-B' },
+      claude, {}, workerGrantFor('mission-y'),
+    );
+    // Mesma missão, adapter diferente, não conta.
+    spawnAgentSession(
+      fakeWc(),
+      { kind: 'cli-agent', paneId: 'pane-k', cols: 80, rows: 24, accountId: 'acct-K' },
+      makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }), {}, workerGrantFor('mission-x'),
+    );
+
+    expect(liveClaudeMissionAccountIds('mission-x')).toEqual(['acct-A']);
+    expect(liveClaudeMissionAccountIds('mission-y')).toEqual(['acct-B']);
+    expect(liveClaudeMissionAccountIds('mission-z')).toEqual([]);
+  });
 });

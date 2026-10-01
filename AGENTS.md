@@ -1097,7 +1097,7 @@ saber isto antes de mexer:
   segredo viaja por stdin em base64; teste nunca toca a vaga real (só com
   `exec` injetado). Conta AGY por chave de API não passa pela vaga.
 
-## Fair-share, lanes de topo e hosts Claude (F-232/F-233/F-236/F-237)
+## Fair-share, lanes de topo e hosts Claude (F-232/F-233/F-235/F-236/F-237)
 
 - F-232: `globalUseCounts` (reservas consumidas em 7d por adapter,
   `consumedCountsByAdapterSince` no ledger / `consumedRouteCountsByAdapterSince`
@@ -1109,6 +1109,12 @@ saber isto antes de mexer:
   novos de auditoria/veredito em `REVIEW_SIGNALS`. Sem assento disponível,
   `judgeUnavailable` + hint — o Maestro julga no próprio pane; modelo barato
   nunca julga código.
+- F-235: panes Claude de missão coexistem até o nº de contas com credencial
+  utilizável (`countAccountsWithLiveCredential`), conta distinta por pane —
+  a cópia de refresh token (F-645) só colide na mesma conta. `excludeAccountIds`
+  no `prepareProviderSpawnAuthoritative` é o backstop fail-closed: sem conta
+  livre fora das contas com pane vivo na missão, o spawn recusa
+  (`claude_accounts_in_use`) em vez de cair no `active-fallback`.
 - F-236: adapters host-Claude (glm, glm-flash, longcat, deepseek) aparecem
   juntos em `CLAUDE_FAMILY_ADAPTERS`, `CLAUDE_FAMILY_TURN_PROOF_ADAPTERS`,
   subscription-auth e seat-auth. Token Anthropic genérico do env

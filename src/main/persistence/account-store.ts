@@ -1168,6 +1168,22 @@ function markProbeConsumed(
   upsertCooldownBlock(account.id, entry.blockScope, consumed);
 }
 
+/**
+ * F-235: capacidade de panes simultâneos do adapter = contas gerenciadas com
+ * credencial utilizável fora de bloco efetivo (mesma régua do failover).
+ * Sem conta gerenciada a capacidade é 1: o login nativo.
+ */
+export function countAccountsWithLiveCredential(
+  adapterId: string,
+  now = Date.now(),
+): number {
+  const all = listAccounts(adapterId);
+  if (all.length === 0) return 1;
+  return all.filter(
+    (a) => accountHasFailoverCredential(a) && !effectiveBlock(a, now),
+  ).length;
+}
+
 export interface FailoverPickOptions {
   /** Escopo do spawn alvo (ex.: 'tier:opus'); ausente = só blocos globais. */
   scope?: string;

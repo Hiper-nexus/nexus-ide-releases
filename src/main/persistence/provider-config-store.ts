@@ -688,6 +688,12 @@ export interface ProviderPerSpawn {
   isolatedHome?: boolean;
   /** Main-only: an explicitly requested pane may let Muse check its native auth. */
   allowNativeAuthAttempt?: boolean;
+  /**
+   * F-235: contas com pane Claude VIVO na mesma missão — o pane novo nunca
+   * nasce numa delas (duas cópias do refresh token colidem, F-645). Backstop
+   * fail-closed: sem conta livre fora da exclusão o spawn recusa.
+   */
+  excludeAccountIds?: readonly string[];
 }
 
 /**
@@ -1192,16 +1198,49 @@ function resolveSpawnAccountChoice(
  */
 function pickUnpinnedAccountWithHeadroom(
   adapterId: string,
+  excludeIds?: ReadonlySet<string>,
 ): { account: Account | null; receipt: AccountChoiceReceipt } {
   const decidedAt = Date.now();
   const active = getActiveAccount(adapterId);
   const quotaScores = quotaScoresFor(adapterId);
-  const picked = pickAvailableForFailover(
-    adapterId,
-    null,
-    decidedAt,
-    quotaScores,
+  const picked = (
+    excludeIds?.size
+      ? pickAvailableForFailover(
+          adapterId,
+          null,
+          decidedAt,
+          quotaScores,
+          { excludeIds },
+        )
+      : pickAvailableForFailover(adapterId, null, decidedAt, quotaScores)
   ).account;
+  // F-235: exclusões vêm de panes Claude vivos na mesma missão. Se nada livre
+  // sobra, cair no active-fallback poria dois panes na MESMA conta (duas
+  // cópias do refresh token colidem, F-645) — fail-closed com recibo
+  // categórico que o prepare autoritativo transforma em erro visível.
+  if (!picked && excludeIds?.size) {
+    const note =
+      'claude_accounts_in_use: todas as contas Claude com credencial já ' +
+      'têm pane vivo nesta missão';
+    console.warn(`[spawn] ${note} (${adapterId})`);
+    return {
+      account: null,
+      receipt: {
+        adapterId,
+        source: 'legacy',
+        account: null,
+        headroom: null,
+        alternatives: accountChoiceAlternatives(
+          adapterId,
+          null,
+          quotaScores,
+          decidedAt,
+        ),
+        decidedAt,
+        note,
+      },
+    };
+  }
   const alternatives = accountChoiceAlternatives(
     adapterId,
     picked?.id ?? null,
@@ -1345,8 +1384,18 @@ export async function prepareProviderSpawnAuthoritative(
   // managed auth store. Prove the account *before* crossing that boundary.
   const selectedChoice = adapterId === 'claude' && !perSpawn.accountId &&
     listAccounts('claude').length > 0
-    ? pickUnpinnedAccountWithHeadroom('claude')
+    ? pickUnpinnedAccountWithHeadroom(
+        'claude',
+        perSpawn.excludeAccountIds?.length
+          ? new Set(perSpawn.excludeAccountIds)
+          : undefined,
+      )
     : undefined;
+  // F-235: com exclusões de missão e nenhuma conta livre, o picker devolve o
+  // recibo fail-closed em vez do active-fallback — aqui vira recusa visível.
+  if (selectedChoice?.receipt.note?.startsWith('claude_accounts_in_use')) {
+    return { ok: false, error: selectedChoice.receipt.note };
+  }
   const account = perSpawn.accountId
     ? getAccount(perSpawn.accountId)
     : selectedChoice?.account;

@@ -51,7 +51,10 @@ import { mergeAdapterUseLists } from './route-pipeline';
 import { recordRouteDecision } from './route-provenance';
 import { recordRouteLog, recentRouteLog } from './route-log';
 import { loadSpecialtyBenchmark } from './specialty-benchmark';
-import { hasAvailableAccount } from '../persistence/account-store';
+import {
+  countAccountsWithLiveCredential,
+  hasAvailableAccount,
+} from '../persistence/account-store';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { workerMortalityCount } from './worker-mortality';
 import { authReadyModelsForProvider } from '../adapters/model-auth-readiness';
@@ -1724,14 +1727,18 @@ export async function routeTaskForCaller(
     ...(missionAdapterIds ?? []),
     ...(reservedAdapterIds ?? []),
   ];
-  // Claude shares one OAuth credential state. Another CLI may route one
-  // Claude worker in autopilot, but once any Claude pane belongs to this
-  // mission a second concurrent Claude route is physically unavailable.
-  const reserveClaude = Boolean(
-    missionId &&
-      (ctx.providerId === 'claude' ||
-        usedAdapterIds.includes('claude')),
+  // F-235: panes Claude de missão podem coexistir até o número de contas
+  // Claude utilizáveis, cada pane numa conta distinta (a cópia de refresh
+  // token da F-645 só colide dentro da MESMA conta). Capacidade = contas
+  // com credencial utilizável fora de bloco efetivo; sem conta gerenciada
+  // a capacidade é 1 — o login nativo, e o comportamento histórico de
+  // reservar o Claude ao primeiro pane persiste.
+  const claudeSeats = Math.max(
+    usedAdapterIds.filter((id) => id === 'claude').length,
+    ctx.providerId === 'claude' ? 1 : 0,
   );
+  const claudeCapacity = countAccountsWithLiveCredential('claude');
+  const reserveClaude = Boolean(missionId && claudeSeats >= claudeCapacity);
   if (reserveClaude) {
     adapters = adapters.map((adapter) =>
       adapter.id === 'claude'

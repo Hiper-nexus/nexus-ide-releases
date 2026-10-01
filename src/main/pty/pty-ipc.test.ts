@@ -120,6 +120,7 @@ vi.mock("./pty-manager", () => ({
   spawnAgentSession: ptyDeps.spawnAgentSession,
   spawnSession: ptyDeps.spawnSession,
   writeSession: ptyDeps.writeSession,
+  liveClaudeMissionAccountIds: () => [],
 }));
 
 vi.mock("./pty-host-client", () => ({

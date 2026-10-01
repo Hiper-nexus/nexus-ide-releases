@@ -991,6 +991,68 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     expect(spawnDeps.activeClaudeAuthEnv).not.toHaveBeenCalled();
   });
 
+  describe('F-235: exclusão de contas com pane Claude vivo na missão', () => {
+    const acctA = { id: 'acct-a', adapterId: 'claude', label: 'Conta A',
+      mode: 'subscription', upstream: 'anthropic', email: 'a@example.com', createdAt: 1 };
+    const acctB = { id: 'acct-b', adapterId: 'claude', label: 'Conta B',
+      mode: 'subscription', upstream: 'anthropic', email: 'b@example.com', createdAt: 2 };
+
+    beforeEach(() => {
+      spawnDeps.listAccounts.mockReturnValue([acctA, acctB]);
+      spawnDeps.getActiveAccount.mockReturnValue(acctA);
+      spawnDeps.getAccount.mockImplementation((id: string) =>
+        [acctA, acctB].find((a) => a.id === id) ?? null);
+    });
+
+    it('excluindo a conta A entre A+B com credencial, a escolha cai em B', async () => {
+      // O pick honra excludeIds (F-676) — o mock espelha a filtragem real.
+      spawnDeps.pickAvailableForFailover.mockImplementation(
+        (_adapterId: string, _excludeId: string | null, _now: number,
+          _scores: unknown, options?: { excludeIds?: ReadonlySet<string> }) => ({
+          account: [acctA, acctB].find((a) => !options?.excludeIds?.has(a.id)) ?? null,
+        }));
+      spawnDeps.prepareAccount.mockReturnValue({ ok: true, account: acctB,
+        authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '/fixture/accounts/claude/b' } });
+
+      await expect(prepareProviderSpawnAuthoritative('claude', {
+        excludeAccountIds: ['acct-a'],
+      })).resolves.toMatchObject({
+        ok: true,
+        overrides: { selectedAccountId: 'acct-b' },
+      });
+      expect(spawnDeps.pickAvailableForFailover).toHaveBeenCalledWith(
+        'claude', null, expect.any(Number), undefined,
+        { excludeIds: new Set(['acct-a']) },
+      );
+    });
+
+    it('excluindo A e B, o spawn falha com claude_accounts_in_use — nunca active-fallback', async () => {
+      spawnDeps.pickAvailableForFailover.mockReturnValue({ account: null });
+
+      await expect(prepareProviderSpawnAuthoritative('claude', {
+        excludeAccountIds: ['acct-a', 'acct-b'],
+      })).resolves.toEqual({
+        ok: false,
+        error: expect.stringContaining('claude_accounts_in_use'),
+      });
+      // Sem fallback para a conta ativa: dois panes nunca dividem uma conta.
+      expect(spawnDeps.prepareAccount).not.toHaveBeenCalled();
+    });
+
+    it('sem excludeAccountIds a conta ativa permanece (comportamento atual)', () => {
+      spawnDeps.pickAvailableForFailover.mockReturnValue({ account: acctA });
+      spawnDeps.prepareAccount.mockReturnValue({ ok: true, account: acctA,
+        authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '/fixture/accounts/claude/a' } });
+
+      expect(prepareProviderSpawn('claude')).toMatchObject({
+        ok: true, overrides: { selectedAccountId: 'acct-a' },
+      });
+      expect(spawnDeps.pickAvailableForFailover).toHaveBeenCalledWith(
+        'claude', null, expect.any(Number), undefined,
+      );
+    });
+  });
+
   it('refuses to launch a Claude pane when its scoped credential belongs to another account', async () => {
     const account = { id: 'acct-b', adapterId: 'claude', label: 'Conta B',
       mode: 'subscription', upstream: 'anthropic', email: 'b@example.com', createdAt: 1 };

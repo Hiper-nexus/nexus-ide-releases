@@ -11,6 +11,7 @@ const deps = vi.hoisted(() => ({
   adapterId: 'codex',
   authoritative: vi.fn<(...args: unknown[]) => Promise<ProviderSpawnPreparation>>(),
   acquirePermit: vi.fn(async (_adapterId: string): Promise<() => void> => () => {}),
+  liveClaudeAccounts: vi.fn(() => [] as string[]),
 }));
 
 vi.mock('../adapters/adapter-registry', () => ({
@@ -39,6 +40,7 @@ vi.mock('../adapters/managed-credentials', async (importOriginal) => ({
 vi.mock('../persistence/account-choice-receipts', () => ({ recordAccountChoiceReceipt: vi.fn() }));
 vi.mock('../pty/pty-manager', () => ({
   getAgentSessionInfo: vi.fn(), getSessionState: () => 'spawning', spawnMainOwnedAgentSession: deps.spawn,
+  liveClaudeMissionAccountIds: deps.liveClaudeAccounts,
 }));
 vi.mock('../pty/autonomous-cli-policy', () => ({
   isMissionBoundCodexWorkspaceAuthority: () => false,
@@ -96,6 +98,22 @@ describe('main-owned Codex auth gate', () => {
       .resolves.toMatchObject({ ok: false, error: 'credencial de outra conta Claude' });
     expect(deps.authoritative).toHaveBeenCalledOnce();
     expect(deps.spawn).not.toHaveBeenCalled();
+  });
+  it('F-235: worker Claude passa as contas com pane vivo da missão ao prepare', async () => {
+    deps.adapterId = 'claude';
+    deps.liveClaudeAccounts.mockReturnValue(['acct-A']);
+
+    await expect(
+      spawnMainOwnedMissionPaneAsync(
+        { ...options, adapterId: 'claude', role: 'worker', readOnly: true },
+        hooks,
+      ),
+    ).resolves.toMatchObject({ ok: true });
+    expect(deps.liveClaudeAccounts).toHaveBeenCalledWith('synthetic-mission');
+    expect(deps.authoritative).toHaveBeenCalledWith(
+      'claude',
+      expect.objectContaining({ excludeAccountIds: ['acct-A'] }),
+    );
   });
   it('waits for the Claude update permit before physical main-owned spawn', async () => {
     deps.adapterId = 'claude';
