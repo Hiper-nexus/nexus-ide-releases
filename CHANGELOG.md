@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.158 — Uma linha por cota
+
+Build do Windows. Inclui a 0.76.157 (Kimi sem alarme falso) e o login novo do Mac.
+
+- **Uma linha por cota (F-720).** O `glm-flash` lê a chave do `glm`, porque não tem slot próprio no launcher. As duas linhas eram a mesma cota z.ai, com os mesmos números, e ocupavam dois dos quatro lugares da barra lateral e do Redline. Agora as sondas por chave de API devolvem um id opaco da credencial (HMAC com sal aleatório por processo), que vira `quotaGroup`. Barra lateral, Configurações e Redline mostram uma linha por grupo. O snapshot continua com uma entrada por adapter, porque failover e roteamento consultam por adapter.
+- **Login honesto e tela de acesso nova (F-719, Mac).** "Entrar com GitHub/Google" confere o servidor antes de abrir o navegador, mostra a espera e diz o motivo quando a troca falha. A tela de acesso foi redesenhada, e o resgate de código de licença ("Tenho um código") passou a existir.
+
 ## 0.76.157 — Kimi sem alarme falso
 
 Build do Windows. Inclui a 0.76.156 (Fechar sempre à vista).

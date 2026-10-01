@@ -8816,7 +8816,7 @@ export const RELEASE_076156: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076157: AppRelease = {
   version: '0.76.157',
   date: '2026-10-01',
   codename: 'Kimi sem alarme falso',
@@ -8833,6 +8833,34 @@ export const CURRENT_RELEASE: AppRelease = {
         'limite da conta e avisava "Limite temporário" com a cota sobrando. ' +
         'Agora ele ignora esse aviso interno, e só um erro real do provider ' +
         'conta como limite.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.158',
+  date: '2026-10-01',
+  codename: 'Uma linha por cota',
+  summary:
+    'O GLM aparece uma vez só nas cotas e no Redline, e o login pelo GitHub ' +
+    'ou Google mostra a espera e diz o motivo quando falha. Inclui a 0.76.157.',
+  highlights: [
+    {
+      title: 'GLM uma vez só nas cotas',
+      detail:
+        'GLM e GLM Flash usam a mesma chave z.ai, então são a mesma cota. A ' +
+        'barra lateral, as Configurações e o Redline mostravam as duas ' +
+        'linhas com os mesmos números. Agora aparece uma linha por cota; se ' +
+        'o GLM Flash tiver chave própria, as duas continuam separadas.',
+    },
+    {
+      title: 'Login que diz o que está acontecendo',
+      detail:
+        'Ao clicar em "Entrar com GitHub" ou "Entrar com Google", o Nexus ' +
+        'confere o servidor antes de abrir o navegador, mostra que está ' +
+        'esperando e explica o motivo se o login falhar. A tela de acesso ' +
+        'foi redesenhada e aceita código de licença.',
     },
   ],
   fixes: [],
