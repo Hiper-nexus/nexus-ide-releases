@@ -446,9 +446,16 @@ function commitPhysicalPtyHandoff(
     worktreeHeadSha: prepared.worktreeHeadSha,
     rawPayloadSha256: prepared.rawPayloadSha256,
   };
-  // F-239: transição de dispatch só quando o dispatch ainda espera o SEU
-  // handoff (running); handoff_ready e além = rodada nova pelo caminho de replay.
-  if (dispatch && ctx.workerIncarnationId && dispatch.state === "running") {
+  // F-239: transição de dispatch vale quando o dispatch ainda espera o SEU
+  // handoff (running). Dispatch que JÁ entregou (handoffId gravado) é rodada
+  // nova — caminho de replay. Dispatch parado SEM handoff (superseded e
+  // afins) continua na transição, que recusa a resposta tardia como sempre.
+  const dispatchDeliveredBefore = dispatch?.handoffId !== undefined;
+  if (
+    dispatch &&
+    ctx.workerIncarnationId &&
+    (dispatch.state === "running" || !dispatchDeliveredBefore)
+  ) {
     return suite.handoffs.submitFromPhysicalAgentBoundaryAndTransitionDispatch(
       handoffInput,
       physicalReceipt,
