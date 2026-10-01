@@ -1,28 +1,369 @@
+/*
+ * Tela de acesso: o que a pessoa vê quando o app está bloqueado. Painel único
+ * com duas zonas (entrar | planos), hierarquia por tipografia e espaço, a ação
+ * principal em branco e o acento reservado ao que está VIVO (espera do login,
+ * foco). Tokens de DESIGN.md; nenhum hex fora das marcas dos provedores.
+ */
 .access-workspace { display: contents; }
+
 .access-screen {
   position: fixed;
   inset: 0;
   z-index: var(--z-hard-modal);
+  display: flex;
+  flex-direction: column;
   overflow: auto;
+  overscroll-behavior: contain;
+  isolation: isolate;
+  padding: var(--space-7) var(--space-5);
   background: var(--bg);
   color: var(--text);
-  padding: 48px 24px;
+  font-family: var(--font-ui);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
-.access-screen__content { max-width: 760px; margin: 0 auto; }
-.access-screen h1 { font-size: 24px; font-weight: 600; text-wrap: balance; }
-.access-screen h2 { font-size: 16px; font-weight: 600; margin-top: 32px; }
-.access-screen header > p { color: var(--text-dim); line-height: 1.5; text-wrap: pretty; }
-.access-screen .account { margin-top: 32px; }
-.access-screen__panes { padding: 0; list-style: none; }
-.access-screen__panes li, .access-screen__utilities { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
-.access-screen__panes li { justify-content: space-between; padding: 8px 0; }
-.access-screen__utilities { margin-top: 32px; }
-.access-screen .settings-btn { min-height: 32px; }
-.access-screen .settings-btn--primary { min-height: 40px; background: var(--btn-primary); color: var(--btn-primary-ink); }
-.access-screen button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-@media (max-width: 600px) { .access-screen { padding: 32px 16px; } }
 
-.access-account { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-xl); padding: 24px; }
-.access-account h2 { margin-top: 0; }
-.access-account > p { color: var(--text-dim); }
-.access-account__actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+/* Textura de grade que se dissolve nas bordas: atmosfera de cockpit, sem glow. */
+.access-screen::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: radial-gradient(var(--grid-dot) 1px, transparent 1.2px);
+  background-size: 24px 24px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 36%, black 0%, transparent 78%);
+}
+
+.access-screen ::selection {
+  background: color-mix(in srgb, var(--accent) 38%, transparent);
+  color: var(--text);
+}
+
+/* `margin: auto` centra com folga e deixa de empurrar quando falta altura. */
+.access-screen__content {
+  display: grid;
+  /* minmax(0, …): sem isso um título sem quebra alarga a coluna além da tela. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-6);
+  width: min(100%, 880px);
+  margin: auto;
+}
+
+.access-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2-5);
+  justify-self: start;
+  font: 26px/1 var(--font-pixel);
+  letter-spacing: 0.02em;
+}
+
+.access-head {
+  display: grid;
+  gap: var(--space-2);
+  max-width: 60ch;
+  margin-top: var(--space-5);
+}
+.access-head h1 {
+  margin: 0;
+  font-size: clamp(1.625rem, 1.2rem + 1.6vw, var(--text-hero));
+  font-weight: 600;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+.access-head p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--text-lg);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+.access-head p[role='status'] {
+  margin-top: var(--space-1);
+  color: var(--text);
+  font-size: var(--text-xl);
+}
+
+/* ── Painel: entrar | planos ─────────────────────────────────────────────── */
+.access-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-card-rest);
+}
+.access-panel__gate {
+  display: grid;
+  align-content: center;
+  gap: var(--space-3);
+  padding: var(--space-6);
+}
+.access-panel__plans {
+  display: grid;
+  align-content: space-between;
+  gap: var(--space-5);
+  padding: var(--space-6);
+  border-inline-start: 1px solid var(--border);
+  background: var(--bg-bar);
+}
+
+.access-who {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--text-md);
+  overflow-wrap: anywhere;
+}
+.access-who strong { color: var(--text); font-weight: 600; }
+
+.access-providers { display: grid; gap: var(--space-2-5); }
+
+.access-fineprint {
+  margin: var(--space-1) 0 0;
+  color: var(--text-faint);
+  font-size: var(--text-md);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+/* ── Botões: uma régua só (altura, raio, foco) para a tela inteira ───────── */
+.access-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2-5);
+  min-height: 40px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  color: var(--text);
+  font: 500 var(--text-lg) / 1 var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out-quart),
+    border-color var(--duration-fast) var(--ease-out-quart),
+    color var(--duration-fast) var(--ease-out-quart),
+    transform 120ms var(--ease-out-quart);
+}
+.access-btn:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: color-mix(in srgb, var(--text) 30%, transparent);
+}
+.access-btn:active:not(:disabled) { transform: translateY(1px); }
+.access-btn:disabled { opacity: 0.55; cursor: progress; }
+.access-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.access-btn--provider { justify-content: flex-start; width: 100%; }
+
+/* A ação principal é a coisa mais clara da tela — branco neutro, não acento. */
+.access-btn--primary {
+  border-color: var(--btn-primary);
+  background: var(--btn-primary);
+  color: var(--btn-primary-ink);
+  font-weight: 600;
+}
+.access-btn--primary:hover:not(:disabled) {
+  border-color: var(--btn-primary);
+  background: color-mix(in srgb, var(--btn-primary) 88%, black);
+}
+
+.access-btn--quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-dim);
+}
+.access-btn--quiet:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--surface-2);
+  color: var(--text);
+}
+.access-btn--small { min-height: 28px; padding: 0 var(--space-2-5); font-size: var(--text-md); }
+
+/* ── Erro: caixa inteira com tom de perigo, nunca tarja lateral ──────────── */
+.access-error {
+  margin: 0;
+  padding: var(--space-2-5) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+  color: var(--text);
+  font-size: var(--text-md);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+/* ── Espera do login: o único estado "vivo" da tela ──────────────────────── */
+.access-wait {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+}
+.access-wait:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.access-wait__pulse {
+  position: relative;
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: var(--radius-round);
+  background: var(--state-running);
+}
+.access-wait__pulse::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--state-running);
+  animation: access-ping var(--dur-overlay-pulse) var(--ease-out-quart) infinite;
+}
+.access-wait__copy p { margin: 0; color: var(--text-dim); font-size: var(--text-md); line-height: 1.5; }
+.access-wait__copy .access-wait__title {
+  margin-bottom: var(--space-1);
+  color: var(--text);
+  font-size: var(--text-xl);
+  font-weight: 600;
+}
+.access-wait__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  grid-column: 1 / -1;
+}
+
+/* ── Planos ──────────────────────────────────────────────────────────────── */
+.access-plans { display: grid; gap: var(--space-5); margin: 0; }
+.access-plans__row { display: grid; gap: var(--space-1-5); }
+.access-plans__row + .access-plans__row {
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border);
+}
+.access-plans dt { font-size: var(--text-xl); font-weight: 600; }
+.access-plans dd {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--text-md);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+.access-plans dd.access-plans__price {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-2-5);
+  color: var(--text);
+  font-size: var(--text-3xl);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.access-plans__price small {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+.access-plans__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ── Terminais preservados: linhas finas, sem caixa ──────────────────────── */
+.access-panes { display: grid; gap: var(--space-3); margin-top: var(--space-2); }
+.access-panes__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+}
+.access-panes h2 { margin: 0; font-size: var(--text-xl); font-weight: 600; }
+.access-panes__head span { color: var(--text-faint); font-size: var(--text-md); }
+.access-panes__list {
+  max-height: 248px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+  border-block: 1px solid var(--border);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.access-pane {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: var(--space-1) 0;
+}
+.access-pane + .access-pane { border-top: 1px solid var(--border); }
+.access-pane__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-round);
+  background: var(--text-faint);
+}
+.access-pane__dot--running { background: var(--state-running); }
+.access-pane__dot--ready { background: var(--state-ready); }
+.access-pane__title {
+  overflow: hidden;
+  font-size: var(--text-lg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.access-pane__state { color: var(--text-dim); font-size: var(--text-md); white-space: nowrap; }
+
+.access-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+/* ── Um momento de movimento: a tela se assenta. Estado visível por padrão. ─ */
+.access-head { animation: access-rise 260ms var(--ease-out-expo) backwards; }
+.access-panel { animation: access-rise 260ms var(--ease-out-expo) 70ms backwards; }
+.access-panes { animation: access-rise 260ms var(--ease-out-expo) 140ms backwards; }
+
+@keyframes access-rise {
+  from { opacity: 0; transform: translateY(8px); }
+}
+@keyframes access-ping {
+  0% { opacity: 0.55; transform: scale(1); }
+  70%, 100% { opacity: 0; transform: scale(2.6); }
+}
+
+@media (max-width: 720px) {
+  .access-screen { padding: var(--space-6) var(--space-4); }
+  .access-panel { grid-template-columns: minmax(0, 1fr); }
+  .access-panel__gate,
+  .access-panel__plans { padding: var(--space-5); }
+  .access-panel__plans { border-inline-start: 0; border-block-start: 1px solid var(--border); }
+  .access-btn { white-space: normal; }
+  .access-pane {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: 'dot title close' '. state close';
+    row-gap: 0;
+  }
+  .access-pane__dot { grid-area: dot; }
+  .access-pane__title { grid-area: title; }
+  .access-pane__state { grid-area: state; }
+  .access-pane .access-btn { grid-area: close; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .access-head,
+  .access-panel,
+  .access-panes,
+  .access-wait__pulse::after { animation: none; }
+  .access-btn { transition: none; }
+}

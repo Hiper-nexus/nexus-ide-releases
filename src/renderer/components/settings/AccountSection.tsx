@@ -8,6 +8,11 @@ import {
 import { useAccess, refreshAccess } from '../../state/access-store';
 import { askConfirm } from '../../state/confirm-store';
 import { PixelIcon } from '../PixelIcon';
+import { AccessAccountCard } from '../access/AccessAccountCard';
+import { LicenseCodeForm } from '../access/LicenseCodeForm';
+import { accessPrimaryAction } from '../access/access-view';
+import { LOGIN_PROVIDERS, loginProviderLabel } from '../../../shared/auth-login';
+import { useNexusLogin, waitingProviderOf } from './use-nexus-login';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
 import { accountSessionBadge, isSessionExpiredError } from './account-session-badge';
 
@@ -60,9 +65,10 @@ export function AccountSection({ accessOnly = false }: { accessOnly?: boolean })
   const [inviteCopied, setInviteCopied] = useState(false);
   const [teamError, setTeamError] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
-  const [loginError, setLoginError] = useState<string | null>(null);
-  const [loginBusy, setLoginBusy] = useState<'github' | 'google' | null>(null);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
+  const [redeemError, setRedeemError] = useState<string | null>(null);
+  const [redeemBusy, setRedeemBusy] = useState(false);
+  const [redeemOk, setRedeemOk] = useState(false);
   const [reloginOpen, setReloginOpen] = useState(false);
 
   const isLoggedIn = Boolean(license?.email);
@@ -109,28 +115,18 @@ export function AccountSection({ accessOnly = false }: { accessOnly?: boolean })
     }
   };
 
-  const startLogin = async (provider: 'github' | 'google') => {
-    setLoginError(null);
-    setLoginBusy(provider);
-    try {
-      const result = await window.nexus.app.authLogin(provider);
-      if (!result.ok) {
-        setLoginError(result.error ?? `Falha ao entrar com ${provider}.`);
-        return;
-      }
+  // Abrir o navegador não é login feito: o hook espera o deep link e o conclui
+  // (ou mostra por que não deu) em vez de fechar o painel às cegas.
+  const login = useNexusLogin({
+    onCompleted: async () => {
       await refreshAccess();
-      if (reloginOpen) {
-        setReloginOpen(false);
-        setTeamError(null);
-        setCheckoutError(null);
-        await reloadTeam();
-      }
-    } catch (err) {
-      setLoginError(err instanceof Error ? err.message : 'Falha no login.');
-    } finally {
-      setLoginBusy(null);
-    }
-  };
+      if (!reloginOpen) return;
+      setReloginOpen(false);
+      setTeamError(null);
+      setCheckoutError(null);
+      await reloadTeam();
+    },
+  });
 
   const joinTeam = async () => {
     const code = joinCode.trim();
@@ -229,27 +225,52 @@ export function AccountSection({ accessOnly = false }: { accessOnly?: boolean })
     }
   };
 
+  // "Tenho um código": o backend valida e devolve a licença assinada; o main
+  // aplica e emite billing:changed — aqui basta recontar o acesso.
+  const redeemCode = async (code: string) => {
+    setRedeemError(null);
+    setRedeemBusy(true);
+    try {
+      const result = await window.nexus.billing.redeemCode(code);
+      if (!result.ok) {
+        setRedeemError(result.error ?? 'Não foi possível resgatar o código.');
+        return;
+      }
+      setRedeemOk(true);
+      await refreshAccess();
+    } catch {
+      setRedeemError('Não foi possível resgatar o código. Tente novamente.');
+    } finally {
+      setRedeemBusy(false);
+    }
+  };
+
   if (accessOnly) {
-    return <section className="account access-account" aria-label="Minha conta">
-      <h2>Minha conta</h2>
-      {license.email && <p>{license.email}</p>}
-      <p>Teste de 15 dias · 2 agentes · sem sync na nuvem</p>
-      <p>Pro · {planPrice(PLANS.find(plan => plan.id === 'pro')!)}</p>
-      <div className="access-account__actions">
-        <button className={`settings-btn account__login-btn${!isLoggedIn ? ' settings-btn--primary' : ''}`} disabled={loginBusy !== null} onClick={() => void startLogin('github')}>
-          {loginBusy === 'github' ? 'Abrindo GitHub…' : 'Entrar com GitHub'}
-        </button>
-        <button className="settings-btn account__login-btn" disabled={loginBusy !== null} onClick={() => void startLogin('google')}>
-          {loginBusy === 'google' ? 'Abrindo Google…' : 'Entrar com Google'}
-        </button>
-        <button className={`settings-btn account__plan-cta${isLoggedIn ? ' settings-btn--primary' : ''}`} disabled={checkoutBusy} onClick={() => void startCheckout('pro')}>
-          {checkoutBusy ? 'Abrindo…' : 'Assinar Pro'}
-        </button>
-        <button className="settings-btn" onClick={() => void openPortal()}>Gerenciar assinatura</button>
-        {(licenseFailed || verificationUnavailable) && <button className="settings-btn" disabled={licenseLoading} onClick={() => void refreshAccess()}>{licenseLoading ? 'Consultando…' : 'Tentar novamente'}</button>}
-      </div>
-      {(loginError || checkoutError) && <p role="alert">{loginError || checkoutError}</p>}
-    </section>;
+    const pro = PLANS.find((plan) => plan.id === 'pro')!;
+    const canRetry = licenseFailed || verificationUnavailable;
+    return (
+      <AccessAccountCard
+        email={license?.email ?? null}
+        primary={accessPrimaryAction(blockedReason, { isLoggedIn, canRetry })}
+        login={login}
+        offerTrial={!isLoggedIn}
+        proPrice={planPrice(pro)}
+        promotion={pro.promotionLabel}
+        proFeatures={pro.features.slice(1, 4)}
+        checkoutBusy={checkoutBusy}
+        canRetry={canRetry}
+        retrying={licenseLoading}
+        actionError={checkoutError}
+        onCheckout={() => void startCheckout('pro')}
+        onPortal={() => void openPortal()}
+        onRetry={() => void refreshAccess()}
+        canRedeem={isLoggedIn}
+        redeemBusy={redeemBusy}
+        redeemSucceeded={redeemOk}
+        redeemError={redeemError}
+        onRedeem={(code) => void redeemCode(code)}
+      />
+    );
   }
 
   const sessionBadge = accountSessionBadge({
@@ -260,6 +281,7 @@ export function AccountSection({ accessOnly = false }: { accessOnly?: boolean })
       isSessionExpiredError(teamError) || isSessionExpiredError(checkoutError),
   });
   const showLogin = !licenseLoading && (!isLoggedIn || reloginOpen);
+  const waitingProvider = waitingProviderOf(login.phase);
 
   if (licenseLoading || licenseFailed || verificationUnavailable) {
     return <section className="account" aria-busy={licenseLoading}>
@@ -357,6 +379,18 @@ export function AccountSection({ accessOnly = false }: { accessOnly?: boolean })
         )}
       </div>
 
+      {isLoggedIn && license?.access !== 'pro' && (
+        <div className="account__redeem" role="group" aria-label="Resgatar código de licença">
+          <LicenseCodeForm
+            enabled={isLoggedIn}
+            busy={redeemBusy}
+            succeeded={redeemOk}
+            error={redeemError}
+            onSubmit={(code) => void redeemCode(code)}
+          />
+        </div>
+      )}
+
       {showLogin && (
         <div className="account__login" role="region" aria-label="Entrar na conta Nexus">
           <div className="account__login-copy">
@@ -369,41 +403,73 @@ export function AccountSection({ accessOnly = false }: { accessOnly?: boolean })
               com ferramentas de IA ficam em Contas de IA.
             </p>
           </div>
+          {waitingProvider ? (
+            <p className="account__notice" role="status">
+              Continue no navegador: conclua o login com{' '}
+              {loginProviderLabel(waitingProvider)} e volte aqui. O Nexus
+              entra sozinho quando você terminar.
+            </p>
+          ) : null}
           <div className="account__login-buttons">
-            <button
-              type="button"
-              className="settings-btn settings-btn--primary account__login-btn"
-              disabled={loginBusy !== null}
-              onClick={() => void startLogin('github')}
-            >
-              <PixelIcon name="user" size={12} />
-              {loginBusy === 'github' ? 'Abrindo GitHub…' : 'Entrar com GitHub'}
-            </button>
-            <button
-              type="button"
-              className="settings-btn account__login-btn"
-              disabled={loginBusy !== null}
-              onClick={() => void startLogin('google')}
-            >
-              <PixelIcon name="user" size={12} />
-              {loginBusy === 'google' ? 'Abrindo Google…' : 'Entrar com Google'}
-            </button>
+            {waitingProvider ? (
+              <>
+                <button
+                  type="button"
+                  className="settings-btn account__login-btn"
+                  disabled={login.busy}
+                  onClick={() => void login.start(waitingProvider)}
+                >
+                  {login.phase.kind === 'opening' ? 'Abrindo…' : 'Abrir de novo'}
+                </button>
+                <button
+                  type="button"
+                  className="settings-btn account__login-btn"
+                  disabled={login.busy}
+                  onClick={login.reset}
+                >
+                  Escolher outro método
+                </button>
+              </>
+            ) : (
+              LOGIN_PROVIDERS.map((provider, index) => (
+                <button
+                  key={provider}
+                  type="button"
+                  className={`settings-btn account__login-btn${index === 0 ? ' settings-btn--primary' : ''}`}
+                  disabled={login.busy}
+                  onClick={() => void login.start(provider)}
+                >
+                  <PixelIcon name="user" size={12} />
+                  {login.phase.kind === 'opening' && login.phase.provider === provider
+                    ? `Abrindo ${loginProviderLabel(provider)}…`
+                    : `Entrar com ${loginProviderLabel(provider)}`}
+                </button>
+              ))
+            )}
             {reloginOpen ? (
               // Aberto por "Entrar de novo" com a conta já ligada: sempre há
               // saída — a sessão atual continua como estava.
               <button
                 type="button"
                 className="settings-btn account__login-btn"
-                disabled={loginBusy !== null}
-                onClick={() => setReloginOpen(false)}
+                disabled={login.busy}
+                onClick={() => {
+                  login.reset();
+                  setReloginOpen(false);
+                }}
               >
                 Cancelar
               </button>
             ) : null}
           </div>
-          {loginError && (
+          {login.phase.kind === 'finishing' && (
+            <p className="account__notice" role="status">
+              Conta confirmada. Atualizando seu acesso…
+            </p>
+          )}
+          {login.phase.kind === 'failed' && (
             <p className="account__notice account__notice--err" role="alert">
-              {loginError}
+              {login.phase.message}
             </p>
           )}
           <p className="account__zone-hint">

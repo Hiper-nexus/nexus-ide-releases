@@ -1,4 +1,5 @@
 import type { LicenseErrorCode, LicenseDenialReason } from './license-errors';
+import type { LoginResultEvent } from './auth-login';
 /**
  * Shared, transport-safe types used across main / preload / renderer.
  * Everything here must be JSON-serializable (it crosses the IPC boundary).
@@ -386,6 +387,8 @@ export interface NexusApi {
     openExternal(url: string): Promise<{ ok: boolean; error?: string }>;
     /** Inicia o login OAuth (nonce local + browser) no processo main. */
     authLogin(provider: 'github' | 'google'): Promise<{ ok: boolean; error?: string }>;
+    /** Resultado do login quando o navegador devolve o deep link nexus://auth. */
+    onAuthLoginResult(cb: (result: LoginResultEvent) => void): Unsubscribe;
     /**
      * Abre THIRD_PARTY_NOTICES.md no app do SO (Markdown viewer).
      * Cumpre atribuição MIT de terceiros sem tornar o código público.
@@ -435,6 +438,8 @@ export interface NexusApi {
     get(): Promise<LicenseState>;
     openCheckout(request: CheckoutRequest['plan'] | CheckoutRequest): Promise<{ ok: boolean; error?: string }>;
     openPortal(): Promise<{ ok: boolean }>;
+    /** Resgata um código de licença ("tenho um código") na conta logada. */
+    redeemCode(code: string): Promise<{ ok: boolean; error?: string }>;
   };
   team: {
     get(): Promise<{ ok: boolean; data?: TeamInfo; error?: string; code?: LicenseErrorCode; blockedReason?: LicenseDenialReason }>;

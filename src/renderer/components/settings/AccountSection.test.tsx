@@ -3,10 +3,13 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_LICENSE } from '../../../shared/billing-types';
+import type { LoginResultEvent } from '../../../shared/auth-login';
 import { AccountSection } from './AccountSection';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
+
+let emitAuthResult: (result: LoginResultEvent) => void = () => {};
 
 function mount(accessOnly = false): { host: HTMLDivElement; root: Root } {
   const host = document.createElement('div');
@@ -31,6 +34,7 @@ describe('AccountSection', () => {
           })),
           openCheckout: vi.fn(async () => ({ ok: true })),
           openPortal: vi.fn(async () => ({ ok: true })),
+          redeemCode: vi.fn(async () => ({ ok: true })),
         },
         team: {
           get: vi.fn(async () => ({ ok: true, data: null })),
@@ -41,6 +45,10 @@ describe('AccountSection', () => {
         },
         app: {
           authLogin: vi.fn(async () => ({ ok: true })),
+          onAuthLoginResult: (cb: (result: LoginResultEvent) => void) => {
+            emitAuthResult = cb;
+            return () => {};
+          },
         },
       },
     });
@@ -63,6 +71,92 @@ describe('AccountSection', () => {
     expect(host.textContent).not.toContain('Invalid Date');
     expect(host.querySelector('[aria-label="Time"]')).toBeNull();
     act(() => root.unmount());
+  });
+
+  it('redeems a license code from the blocked screen and refreshes access', async () => {
+    // Resgate exige conta: a licença mockada precisa vir com e-mail.
+    vi.mocked(window.nexus.billing.get).mockResolvedValue({
+      ...DEFAULT_LICENSE, email: 'op@nexus.dev', verified: true,
+      access: 'inactive', blockedReason: 'inactive', status: 'none',
+    });
+    const { host, root } = mount(true);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const button = (label: string) => [...host.querySelectorAll('button')].find(item => item.textContent === label)!;
+    await act(async () => button('Tenho um código').click());
+    const input = host.querySelector<HTMLInputElement>('.license-code input')!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(input, 'NEXUS-AAAA-BBBB-CCCC');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => button('Ativar').click());
+    expect(window.nexus.billing.redeemCode).toHaveBeenCalledWith('NEXUS-AAAA-BBBB-CCCC');
+    expect(host.textContent).toContain('Licença ativada');
+    act(() => root.unmount());
+  });
+
+  it('shows the backend refusal when the code is rejected', async () => {
+    vi.mocked(window.nexus.billing.get).mockResolvedValue({
+      ...DEFAULT_LICENSE, email: 'op@nexus.dev', verified: true,
+      access: 'inactive', blockedReason: 'inactive', status: 'none',
+    });
+    vi.mocked(window.nexus.billing.redeemCode).mockResolvedValue({ ok: false, error: 'Código inválido, expirado ou já utilizado.' });
+    const { host, root } = mount(true);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const button = (label: string) => [...host.querySelectorAll('button')].find(item => item.textContent === label)!;
+    await act(async () => button('Tenho um código').click());
+    const input = host.querySelector<HTMLInputElement>('.license-code input')!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(input, 'NEXUS-AAAA-BBBB-CCCC');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => button('Ativar').click());
+    expect(host.querySelector('.license-code [role="alert"]')?.textContent).toContain('Código inválido');
+    expect(host.textContent).not.toContain('Licença ativada');
+    act(() => root.unmount());
+  });
+
+  it('redeems a code from Minha Conta (settings tab) and refreshes the license', async () => {
+    // A aba Minha Conta tem o próprio ponto de entrada: logado e ainda sem Pro.
+    vi.mocked(window.nexus.billing.get).mockResolvedValue({
+      ...DEFAULT_LICENSE, email: 'op@nexus.dev', verified: true,
+      access: 'inactive', blockedReason: 'inactive', status: 'none',
+    });
+    const { host, root } = mount(false);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    const redeem = host.querySelector('.account__redeem');
+    expect(redeem, 'logado sem Pro deve ver "Tenho um código" em Minha Conta').not.toBeNull();
+    const button = (label: string) => [...host.querySelectorAll('button')].find(item => item.textContent === label)!;
+    const getCalls = vi.mocked(window.nexus.billing.get).mock.calls.length;
+    await act(async () => button('Tenho um código').click());
+    const input = host.querySelector<HTMLInputElement>('.license-code input')!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(input, 'NEXUS-AAAA-BBBB-CCCC');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { button('Ativar').click(); await Promise.resolve(); await Promise.resolve(); });
+    expect(window.nexus.billing.redeemCode).toHaveBeenCalledWith('NEXUS-AAAA-BBBB-CCCC');
+    // Depois do resgate a licença é relida (o main já aplicou o token e avisou billing:changed).
+    expect(vi.mocked(window.nexus.billing.get).mock.calls.length).toBeGreaterThan(getCalls);
+    act(() => root.unmount());
+  });
+
+  it('hides the code entry from Minha Conta when signed out or already Pro', async () => {
+    const signedOut = mount(false);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    expect(signedOut.host.querySelector('.account__redeem')).toBeNull();
+    act(() => signedOut.root.unmount());
+
+    vi.mocked(window.nexus.billing.get).mockResolvedValue({
+      ...DEFAULT_LICENSE, email: 'op@nexus.dev', verified: true, plan: 'pro',
+      access: 'pro', blockedReason: null, canUseApp: true, status: 'active',
+    });
+    const pro = mount(false);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    expect(pro.host.querySelector('.account__redeem')).toBeNull();
+    act(() => pro.root.unmount());
   });
 
   it('shows a recoverable error when the blocked-screen checkout or portal rejects', async () => {
@@ -220,9 +314,17 @@ describe('AccountSection', () => {
     await act(async () => { github.click(); await Promise.resolve(); await Promise.resolve(); });
 
     expect(window.nexus.app.authLogin).toHaveBeenCalledWith('github');
+    // Navegador aberto NÃO é login feito: a tela espera e não finge sucesso.
+    expect(host.textContent).toContain('Continue no navegador');
+    expect(host.querySelector('.account__session-pill')!.textContent).toBe('sessão expirada');
+    expect(teamGet).toHaveBeenCalledTimes(1);
+
+    // O deep link voltou e a conta foi confirmada: só agora a sessão renova.
+    await act(async () => { emitAuthResult({ ok: true }); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
     expect(teamGet).toHaveBeenCalledTimes(2);
     expect(host.querySelector('.account__session-pill')!.textContent).toBe('conectado');
     expect(host.textContent).not.toContain('Entrar com GitHub');
+    expect(host.textContent).not.toContain('Continue no navegador');
     act(() => root.unmount());
   });
 });

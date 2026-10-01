@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { app, BrowserWindow } from 'electron';
 import { confirmNativeAction } from './native-confirm';
+import { finishAuthDeepLink } from './auth-deep-link';
 
 /**
  * Deep link `nexus://` + document open. O parser é PURO e valida com rigor
@@ -138,19 +139,10 @@ function defaultHandler(link: DeepLink, trusted: boolean): void {
     }
   } else if (link.kind === 'auth') {
     // Login: valida o state contra o login pendente e troca o code de uso
-    // único por tokens (Keychain) + licença.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { exchangeAuthCode } = require('./auth-client') as typeof import('./auth-client');
-    void exchangeAuthCode(link.code, link.state)
-      .then((r) => {
-        if (!r.ok) console.warn('[auth] exchange falhou');
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { BILLING_CHANNELS } = require('../shared/billing-types') as typeof import('../shared/billing-types');
-        win?.webContents.send(BILLING_CHANNELS.changed);
-      })
-      .catch(() => {
-        console.warn('[auth] exchange rejeitou');
-      });
+    // único por tokens (Keychain) + licença. O resultado volta para a tela.
+    void finishAuthDeepLink(link, (channel, payload) => {
+      if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+    });
   } else if (link.kind === 'quota') {
     // Read-only: só foca a janela e navega para a seção de cotas. Sem efeito
     // colateral — qualquer site pode disparar este link.

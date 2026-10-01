@@ -2,6 +2,13 @@ import crypto from 'node:crypto';
 import { resolveBackendUrl } from './backend-url';
 import { verifyLicenseToken } from './persistence/billing-license';
 import type { apiFetch } from './api-client';
+import {
+  LOGIN_PENDING_TTL_MS,
+  loginExchangeMessage,
+  loginProbeMessage,
+  type LoginProbeFailure,
+  type LoginProvider,
+} from '../shared/auth-login';
 
 import { bindLicenseAccount, readLicenseAccountState, LICENSE_SEAL_KEY, type LicenseAccountStore as IdentityStore } from './license-account-state';
 
@@ -14,7 +21,8 @@ import { bindLicenseAccount, readLicenseAccountState, LICENSE_SEAL_KEY, type Lic
  * usa electron shell, secrets-store e billing-ipc.
  */
 
-const PENDING_TTL_MS = 10 * 60 * 1000;
+const PENDING_TTL_MS = LOGIN_PENDING_TTL_MS;
+const PROBE_TIMEOUT_MS = 8000;
 
 interface PendingLogin {
   nonce: string;
@@ -25,6 +33,8 @@ interface PendingLogin {
 
 let pending: PendingLogin | null = null;
 let authGeneration = 0;
+/** Último login iniciado: a sonda de um clique antigo não pode vencer o mais novo. */
+let beginSequence = 0;
 export function getAuthGeneration(): number { return authGeneration; }
 
 function secretStore() { return require('./persistence/secrets-store') as typeof import('./persistence/secrets-store'); }
@@ -70,6 +80,11 @@ export interface AuthDeps {
   clearAccess: () => void;
   applyLicense: (jwt: string) => { ok: boolean; error?: string };
   openExternal: (url: string) => void;
+  /**
+   * Checagem prévia do início do login. `null` = pode abrir o navegador; senão
+   * o motivo definitivo. Ausente (testes) = sem checagem.
+   */
+  probeLogin?: (url: string) => Promise<LoginProbeFailure | null>;
   now?: () => number;
 }
 
@@ -98,15 +113,46 @@ function defaultDeps(): AuthDeps {
     clearAccess: () => (require('./license-access') as typeof import('./license-access')).clearAccess(),
     applyLicense: (jwt) => access.applyOnlineLicenseToken(jwt),
     openExternal: (url) => void shell.openExternal(url),
+    probeLogin: (url) => probeLoginEndpoint(url, fetch),
   };
 }
 
-export type LoginProvider = 'github' | 'google';
+export type { LoginProvider };
 
-export function beginLogin(
+/**
+ * Pergunta ao servidor se o login pode começar ANTES de abrir o navegador.
+ * Sem isso, um backend sem o provedor configurado (503) vira uma aba com JSON
+ * cru e o app esperando um deep link que nunca chega. O redirecionamento NÃO é
+ * seguido: 3xx é o caminho feliz. 2xx também não bloqueia (o navegador decide);
+ * só falha definitiva (4xx/5xx) ou rede caída impede a abertura. Nunca devolve
+ * o texto da exceção nem do corpo — só o status.
+ */
+export async function probeLoginEndpoint(
+  url: string,
+  fetchFn: typeof fetch,
+): Promise<LoginProbeFailure | null> {
+  try {
+    const res = await fetchFn(url, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    // O corpo (JSON de erro) não interessa: solta o socket em vez de deixá-lo preso.
+    void res.body?.cancel().catch(() => {});
+    return res.status >= 400 ? { status: res.status } : null;
+  } catch (error) {
+    // Servidor frio/lento não é servidor recusando: deixa o navegador tentar,
+    // como antes da checagem. Só falha rápida de rede (DNS, recusa) bloqueia.
+    if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) return null;
+    return { network: true };
+  }
+}
+
+export type BeginLoginResult = { ok: true } | { ok: false; error: string };
+
+export async function beginLogin(
   provider: LoginProvider,
   deps: AuthDeps = defaultDeps(),
-): { ok: boolean } {
+): Promise<BeginLoginResult> {
   const now = deps.now ?? Date.now;
   const nonce = crypto.randomBytes(24).toString('base64url');
   // M11: generate a PKCE pair so the auth-code exchange is bound to THIS
@@ -117,12 +163,22 @@ export function beginLogin(
     .createHash('sha256')
     .update(codeVerifier)
     .digest('base64url');
+  const params = new URLSearchParams({ app_state: nonce, code_challenge: codeChallenge });
+  const url = `${deps.backendUrl}/v1/auth/${provider}?${params.toString()}`;
+  // O login pendente só nasce DEPOIS da checagem: uma tentativa que o servidor
+  // recusa não pode derrubar o login anterior que ainda estava em curso.
+  const attempt = ++beginSequence;
+  const generationBefore = authGeneration;
+  const failure = deps.probeLogin ? await deps.probeLogin(url) : null;
+  // Outro clique veio depois, ou houve logout/reset durante a sonda: este login
+  // não pode mais abrir o navegador nem virar o pendente.
+  if (attempt !== beginSequence || generationBefore !== authGeneration) {
+    return { ok: false, error: loginExchangeMessage('login superseded') };
+  }
+  if (failure) return { ok: false, error: loginProbeMessage(provider, failure) };
   authGeneration += 1;
   pending = { nonce, expiresAt: now() + PENDING_TTL_MS, codeVerifier };
-  const params = new URLSearchParams({ app_state: nonce, code_challenge: codeChallenge });
-  deps.openExternal(
-    `${deps.backendUrl}/v1/auth/${provider}?${params.toString()}`,
-  );
+  deps.openExternal(url);
   return { ok: true };
 }
 

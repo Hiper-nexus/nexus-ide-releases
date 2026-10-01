@@ -55,6 +55,9 @@ describe('main access authority', () => {
     setAccount('account-b');
     expect(access.getAccessState().blockedReason).toBe('account-mismatch');
     setAccount(null);
+    // Sem sessão persistida: não pode depender do cofre real da máquina de quem roda a suíte
+    // (conta logada ali vira startup-pending, o que é o comportamento certo do F-228).
+    vi.spyOn(secretsStore, 'hasSecret').mockReturnValue(false);
     expect(access.getAccessState().blockedReason).toBe('login-required');
   });
   it('F-228: sessão persistida com boot sync em voo responde startup-pending, não login', () => {

@@ -6,7 +6,7 @@ import { DEFAULT_LICENSE } from '../../shared/billing-types';
 import { useAccessStore } from '../state/access-store';
 import { OverlayLayer } from '../overlay/overlay-layer';
 import { AccessBoundary } from './AccessBoundary';
-vi.mock('./settings/AccountSection', () => ({ AccountSection: () => <button className="settings-btn--primary account__plan-cta">Entrar com GitHub</button> }));
+vi.mock('./settings/AccountSection', () => ({ AccountSection: () => <button data-access-initial-focus="">Entrar com GitHub</button> }));
 vi.mock('./UpdateModal', () => ({ UpdateNotifier: () => <button>Atualizar app</button> }));
 vi.mock('../terminal/pane-close-guard', () => ({ requestPaneClose: vi.fn() }));
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

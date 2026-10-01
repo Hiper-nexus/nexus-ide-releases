@@ -81,6 +81,7 @@ import type {
 import { GAMIFICATION_CHANNELS } from '../shared/gamification-types';
 import type { GamificationSnapshot } from '../shared/gamification-types';
 import { BILLING_CHANNELS } from '../shared/billing-types';
+import type { LoginResultEvent } from '../shared/auth-login';
 import type { CheckoutRequest } from '../shared/billing-types';
 import type { CostSnapshot } from '../shared/cost-types';
 import type { TokenSpeedSnapshot } from '../shared/token-speed-types';
@@ -193,6 +194,10 @@ ipcRenderer.on(
   WINDOW_CHANNELS.deepOpenPath,
   (_event, payload: { path: string; isDir: boolean }) =>
     emitToListeners(deepOpenListeners, 'deepOpenListeners', payload),
+);
+const authLoginResultListeners = new Set<(result: LoginResultEvent) => void>();
+ipcRenderer.on(WINDOW_CHANNELS.authLoginResult, (_event, result: LoginResultEvent) =>
+  emitToListeners(authLoginResultListeners, 'authLoginResultListeners', result),
 );
 const deepOpenQuotaListeners = new Set<() => void>();
 ipcRenderer.on(WINDOW_CHANNELS.deepOpenQuota, () =>
@@ -727,6 +732,8 @@ const api: NexusApi = {
       ipcRenderer.invoke(WINDOW_CHANNELS.openTerminalPath, path),
     onDeepOpenPath: (cb: (payload: { path: string; isDir: boolean }) => void) =>
       addListener(deepOpenListeners, cb),
+    onAuthLoginResult: (cb: (result: LoginResultEvent) => void) =>
+      addListener(authLoginResultListeners, cb),
     onDeepOpenQuota: (cb: () => void) => addListener(deepOpenQuotaListeners, cb),
     onShotFilesReceived: (cb: (payload: ShotFilesReceivedPayload) => void) =>
       addListener(shotFilesListeners, cb),
@@ -1422,6 +1429,7 @@ const api: NexusApi = {
     openCheckout: (request: CheckoutRequest['plan'] | CheckoutRequest) =>
       ipcRenderer.invoke(BILLING_CHANNELS.checkout, request),
     openPortal: () => ipcRenderer.invoke(BILLING_CHANNELS.portal),
+    redeemCode: (code: string) => ipcRenderer.invoke(BILLING_CHANNELS.redeem, code),
   },
   team: {
     get: () => ipcRenderer.invoke(TEAM_CHANNELS.get),

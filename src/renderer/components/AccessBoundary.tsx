@@ -8,20 +8,11 @@ import { listPanes } from '../lib/split-tree';
 import { nextTrapFocus } from '../lib/focus-trap';
 import { requestPaneClose } from '../terminal/pane-close-guard';
 import { AccountSection } from './settings/AccountSection';
+import { AccessPaneList } from './access/AccessPaneList';
+import { ACCESS_COPY, accessTitle } from './access/access-view';
+import { NexusMark } from './NexusMark';
 import { UpdateNotifier } from './UpdateModal';
 import '../styles/access-boundary.css';
-
-export const ACCESS_COPY: Record<AccessBlockedReason, string> = {
-  'startup-pending': 'Consultando seu acesso…',
-  'login-required': 'Entre na sua conta Nexus para começar.',
-  'verification-unavailable': 'Não foi possível consultar seu acesso agora. Tente novamente.',
-  'invalid-license': 'Não foi possível validar sua licença. Entre novamente para atualizar o acesso.',
-  'license-expired': 'Sua licença precisa ser renovada. Entre novamente para atualizar o acesso.',
-  'account-mismatch': 'A licença pertence a outra conta. Entre com a conta da assinatura.',
-  suspended: 'Seu acesso está suspenso. Consulte sua assinatura no portal de cobrança.',
-  inactive: 'Sua assinatura está inativa. Consulte o portal de cobrança ou assine o Pro.',
-  'trial-ended': 'Seu teste de 15 dias terminou. Assine o Pro para continuar.',
-};
 
 /** Keep the workspace mounted: access changes never dispose hosts or mutate layout. */
 export function AccessBoundary({ children }: { children: ReactNode }) {
@@ -34,6 +25,9 @@ export function AccessBoundary({ children }: { children: ReactNode }) {
   </>;
 }
 
+/** A ação principal da tela (um só botão), marcada por AccessAccountCard. */
+const INITIAL_FOCUS = '[data-access-initial-focus]:not(:disabled)';
+
 function AccessScreen({ loading, reason }: { loading: boolean; reason: AccessBlockedReason | null }) {
   const ref = useRef<HTMLElement>(null);
   const root = useLayoutStore(s => s.root);
@@ -42,8 +36,8 @@ function AccessScreen({ loading, reason }: { loading: boolean; reason: AccessBlo
   const [folderError, setFolderError] = useState(false);
   const panes = listPanes(root);
   useEffect(() => {
-    const selector = reason === 'trial-ended' || reason === 'inactive' ? '.account__plan-cta' : '.settings-btn--primary:not(:disabled)';
-    ref.current?.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true });
+    const screen = ref.current;
+    screen?.querySelector<HTMLElement>(INITIAL_FOCUS)?.focus({ preventScroll: true });
     const onKey = (event: KeyboardEvent) => {
       const screen = ref.current;
       if (!screen) return;
@@ -60,28 +54,28 @@ function AccessScreen({ loading, reason }: { loading: boolean; reason: AccessBlo
   }, [loading, reason]);
   return <section ref={ref} className="access-screen" role="dialog" aria-modal="true" aria-labelledby="access-title">
     <div className="access-screen__content">
-      <header>
-        <h1 id="access-title">{loading ? 'Consultando seu acesso' : 'Seu acesso ao NexusIDE'}</h1>
-        <p role="status">{loading ? 'Aguarde a confirmação da sua conta.' : ACCESS_COPY[reason ?? 'verification-unavailable']}</p>
+      <div className="access-brand">
+        <NexusMark size={22} />
+        <span>NexusIDE</span>
+      </div>
+      <header className="access-head">
+        <h1 id="access-title">{accessTitle(loading, reason)}</h1>
+        <p role="status">{ACCESS_COPY[loading ? 'startup-pending' : (reason ?? 'verification-unavailable')]}</p>
         <p>Seus projetos e terminais continuam preservados.</p>
       </header>
       <AccountSection accessOnly />
-      <section aria-label="Terminais preservados">
-        <h2>Seus terminais</h2>
-        <ul className="access-screen__panes">
-          {panes.map(pane => <li key={pane.id}>
-            <span>{pane.title} · {({ idle: 'Aguardando', busy: 'Trabalhando', spawning: 'Iniciando', exited: 'Encerrado', hibernated: 'Em pausa' } as Record<string, string>)[states.get(pane.id) ?? ''] ?? 'Preservado'}</span>
-            <button className="settings-btn" onClick={() => void requestPaneClose(pane.id)}>Fechar {pane.title}</button>
-          </li>)}
-        </ul>
-      </section>
-      <footer className="access-screen__utilities">
+      <AccessPaneList
+        panes={panes}
+        states={states}
+        onClose={paneId => void requestPaneClose(paneId)}
+      />
+      <footer className="access-footer">
         <UpdateNotifier alwaysVisible />
-        {workspace && <button className="settings-btn" onClick={() => {
+        {workspace && <button type="button" className="access-btn access-btn--quiet" onClick={() => {
           setFolderError(false);
           void window.nexus.app.openTerminalPath(workspace.path).then(result => { if (!result.ok) setFolderError(true); }).catch(() => setFolderError(true));
         }}>Abrir pasta do projeto</button>}
-        {folderError && <p role="alert">Não foi possível abrir a pasta do projeto.</p>}
+        {folderError && <p className="access-error" role="alert">Não foi possível abrir a pasta do projeto.</p>}
       </footer>
     </div>
   </section>;

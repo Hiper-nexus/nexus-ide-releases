@@ -160,7 +160,7 @@ it('suspension keeps a presented child alive until the AccessBoundary close acti
   expect(host.querySelector('input')).toBe(terminal);
   expect(licensedAgentCount()).toBe(1);
   expect(getSessionState(child.sessionId)).not.toBeNull();
-  const close = [...host.querySelectorAll('button')].find(button => button.textContent === 'Fechar Aberto')!;
+  const close = [...host.querySelectorAll('button')].find(button => button.getAttribute('aria-label') === 'Fechar Aberto')!;
   await act(async () => { close.click(); });
   await Promise.all(closed);
   expect(getSessionState(child.sessionId)).toBeNull();

@@ -229,6 +229,10 @@ export const WINDOW_CHANNELS = {
    * local (binding do deep link) e abre o browser — o renderer nunca monta
    * a URL de auth. */
   authLogin: 'auth:login',
+  /** event: main → renderer. O deep link do login terminou de ser trocado:
+   * { ok, error? } com `error` já em texto para a pessoa (nunca código bruto
+   * nem detalhe do servidor). Sem isso a tela de acesso ficava muda. */
+  authLoginResult: 'auth:login-result',
   /**
    * invoke: renderer → main. Open a file/directory printed in a terminal
    * pane in the OS default app (clickable paths). Main validates: absolute
