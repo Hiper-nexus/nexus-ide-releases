@@ -29,7 +29,9 @@ const nexusPaneSkipReason =
     : undefined;
 
 // F-714: a write-denying sandbox (the Nexus regression gate's Seatbelt profile)
-// cannot open /dev/ptmx, so no real PTY exists there. Probed once, on first use.
+// cannot open /dev/ptmx and refuses setuid exec ("spawn EPERM"), so the cases
+// that need a real PTY, a detached daemon or a setuid process cannot run there.
+// A denied posix_openpt is the marker; probed once, on first use.
 let ptySkipProbe;
 function ptySkipReason() {
   if (ptySkipProbe) return ptySkipProbe.reason;
@@ -38,7 +40,7 @@ function ptySkipReason() {
     nodePty.spawn("/usr/bin/true", [], {}).kill();
   } catch (error) {
     if (/posix_openpt failed: Operation not permitted/.test(String(error?.message))) {
-      ptySkipProbe.reason = "AMBIENTE-SANDBOX (F-714): posix_openpt is denied here, so no real PTY can be opened; run outside the sandbox.";
+      ptySkipProbe.reason = "AMBIENTE-SANDBOX (F-714): this sandbox denies posix_openpt and setuid exec, so the real supervisor fixture cannot run; run outside the sandbox.";
     }
   }
   return ptySkipProbe.reason;
@@ -969,6 +971,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
 
   it("owns and reaps a double-forked, setsid, PPID-1 daemon before preserving the CLI exit", async ({ skip }) => {
     if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
+    if (ptySkipReason()) skip(ptySkipReason());
     const daemonPidFile = path.join(fixtureRoot, "daemon.pid");
     const readyFile = path.join(fixtureRoot, "root.ready");
     const releaseFile = path.join(fixtureRoot, "root.release");
@@ -1066,6 +1069,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
 
   it("proves the cohort empty while an unrelated setuid process born after the anchor denies lookup", async ({ skip }) => {
     if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
+    if (ptySkipReason()) skip(ptySkipReason());
     // Campo 26/09: o /usr/bin/login de uma janela do Ghostty nasceu depois do
     // pane e respondia EPERM à consulta de responsabilidade; o supervisor
     // ficava em laço para sempre depois que a CLI saía. Um sudo esperando
