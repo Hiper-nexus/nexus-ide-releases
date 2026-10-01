@@ -3,8 +3,12 @@ import type { NoticeKind } from '../db/schema.js';
 /** Quais contas devem receber qual aviso agora. Puro: o relógio e o que já foi enviado entram por parâmetro. */
 export const NOTICE_KINDS = ['welcome', 'trial_ending_3d', 'trial_ending_1d', 'trial_ended'] as const satisfies readonly NoticeKind[];
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-const ENDED_WINDOW_MS = 7 * DAY_MS;
+export const DAY_MS = 24 * 60 * 60 * 1000;
+export const ENDED_WINDOW_MS = 7 * DAY_MS;
+/** Quanto tempo depois da criação da conta as boas-vindas ainda valem. */
+export const WELCOME_WINDOW_MS = DAY_MS;
+/** Até quanto antes do fim o primeiro aviso sai. */
+export const FIRST_WARNING_MS = 3 * DAY_MS;
 /** Do mais urgente ao menos urgente: só o primeiro que vale agora é considerado. */
 const URGENCY: readonly NoticeKind[] = ['trial_ended', 'trial_ending_1d', 'trial_ending_3d', 'welcome'];
 
@@ -46,10 +50,10 @@ function candidateKinds(row: NoticeCandidate, now: number): Set<NoticeKind> {
     const remaining = ends - now;
     if (remaining <= 0) { if (-remaining <= ENDED_WINDOW_MS) kinds.add('trial_ended'); }
     else if (remaining <= DAY_MS) kinds.add('trial_ending_1d');
-    else if (remaining <= 3 * DAY_MS) kinds.add('trial_ending_3d');
+    else if (remaining <= FIRST_WARNING_MS) kinds.add('trial_ending_3d');
   }
   const age = now - row.createdAt;
-  if (Number.isFinite(age) && age >= 0 && age <= DAY_MS) kinds.add('welcome');
+  if (Number.isFinite(age) && age >= 0 && age <= WELCOME_WINDOW_MS) kinds.add('welcome');
   return kinds;
 }
 

@@ -10,6 +10,7 @@ import { teamRoutes } from './teams.js';
 import { cronRoutes } from './cron.js';
 import { syncRoutes } from './sync.js';
 import { noticeRoutes } from './email/routes.js';
+import { sendDueNotices } from './email/dispatch.js';
 import { PRO_MONTHLY_PRICE } from './stripe.js';
 
 const WEBHOOK_PATH = '/v1/billing/webhook';
@@ -91,8 +92,18 @@ export async function cleanupExpired(db: D1Database, now = Date.now()): Promise<
   ]);
 }
 
+/** Cron horário: a limpeza vem primeiro; os avisos por e-mail depois, e uma falha deles nunca desfaz nem esconde a limpeza. */
+export async function runScheduled(env: CloudflareBindings, deps: { readonly now?: number; readonly fetchFn?: typeof fetch } = {}): Promise<void> {
+  await cleanupExpired(env.DB, deps.now);
+  try {
+    await sendDueNotices(env, { ...(deps.now === undefined ? {} : { now: deps.now }), ...(deps.fetchFn === undefined ? {} : { fetchFn: deps.fetchFn }) });
+  } catch (error) {
+    console.error('nexus-cloud-api: avisos por e-mail falharam:', error instanceof Error ? error.message : 'unknown');
+  }
+}
+
 const app = createApp();
 export default {
   fetch: app.fetch,
-  scheduled(_controller, env, context) { context.waitUntil(cleanupExpired(env.DB)); },
+  scheduled(_controller, env, context) { context.waitUntil(runScheduled(env)); },
 } satisfies ExportedHandler<CloudflareBindings>;

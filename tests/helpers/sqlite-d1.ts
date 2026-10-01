@@ -52,6 +52,9 @@ class SqliteStatement implements D1PreparedStatement {
 
 export class SqliteD1 implements D1Database {
   readonly sqlite: DatabaseSync;
+  /** Chamadas ao banco como o D1 as conta: cada consulta avulsa e cada batch valem uma. */
+  queryCount = 0;
+  #inBatch = false;
   constructor() {
     this.sqlite = new DatabaseSync(':memory:');
     this.sqlite.exec('PRAGMA foreign_keys = ON');
@@ -59,8 +62,10 @@ export class SqliteD1 implements D1Database {
       this.sqlite.exec(readFileSync(new URL(`../../migrations/${file}`, import.meta.url), 'utf8'));
     }
   }
-  prepare(query: string): D1PreparedStatement { return new SqliteStatement(this.sqlite, query); }
+  prepare(query: string): D1PreparedStatement { return new SqliteStatement(this.sqlite, query, [], () => { if (!this.#inBatch) this.queryCount += 1; }); }
   async batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
+    this.queryCount += 1;
+    this.#inBatch = true;
     this.sqlite.exec('BEGIN');
     try {
       const results = statements.map((statement) => {
@@ -72,6 +77,8 @@ export class SqliteD1 implements D1Database {
     } catch (error) {
       this.sqlite.exec('ROLLBACK');
       throw error;
+    } finally {
+      this.#inBatch = false;
     }
   }
   async exec(query: string): Promise<D1ExecResult> { this.sqlite.exec(query); return { count: 1, duration: 0 }; }
