@@ -35,3 +35,21 @@ test('campos ausentes ou estranhos viram valores seguros', () => {
   assert.equal(normalized.incidents, 0);
   assert.deepEqual(normalized.racksOn, []);
 });
+
+test('progresso salvo na versão 1 migra sem perder nada e ganha os campos novos zerados', () => {
+  const storage = memoryStorage();
+  storage.data.set(STORAGE_KEY, JSON.stringify({ schema: 1, xp: 950, level: 4, badges: ['primeira-gpu'], racksOn: ['claude', 'codex'], completed: 14, incidents: 3 }));
+  const loaded = loadProgress(storage);
+  assert.deepEqual([loaded.xp, loaded.level, loaded.completed, loaded.incidents], [950, 4, 14, 3]);
+  assert.deepEqual(loaded.racksOn, ['claude', 'codex']);
+  assert.deepEqual(loaded.badges, ['primeira-gpu']);
+  assert.deepEqual([loaded.bestCombo, loaded.bestShift, loaded.missions], [0, 0, 0]);
+  assert.equal(loaded.schema, 2);
+});
+
+test('recorde do turno, melhor combo e missões fechadas vão e voltam do armazenamento', () => {
+  const storage = memoryStorage();
+  saveProgress({ ...initialProgress(), bestCombo: 4, bestShift: 620, missions: 7 }, storage);
+  const loaded = loadProgress(storage);
+  assert.deepEqual([loaded.bestCombo, loaded.bestShift, loaded.missions], [4, 620, 7]);
+});

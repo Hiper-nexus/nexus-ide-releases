@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ticketsFrom, completeTicket, levelFor, titleFor, levelProgress, badgesFor, TICKET_XP } from './tickets.js';
+import { ticketsFrom, completeTicket, levelFor, titleFor, levelProgress, badgesFor, speedPerk, perkText, TICKET_XP, LEVEL_TITLES } from './tickets.js';
 import { createRacks, installGpu, rackStep } from './racks.js';
 import { initialProgress } from './progress.js';
 
@@ -54,4 +54,27 @@ test('propriedade: concluir tickets nunca reduz o XP', () => {
     assert.ok(next.xp >= progress.xp);
     progress = next;
   }
+});
+
+test('o multiplicador do combo arredonda o XP do ticket', () => {
+  const start = initialProgress();
+  assert.equal(completeTicket(start, { kind: 'install', xp: 60 }, 1.25).xpGained, 75);
+  assert.equal(completeTicket(start, { kind: 'install', xp: 60 }, 2).progress.xp, 120);
+  assert.equal(completeTicket(start, { kind: 'install', xp: 60 }, 0.2).xpGained, 60, 'nunca paga menos que o ticket');
+});
+
+test('selos de combo, turno, incidentes e missões saem do progresso', () => {
+  const racks = createRacks(IDS);
+  const earned = badgesFor({ ...initialProgress(), bestCombo: 5, bestShift: 500, incidents: 10, missions: 5 }, racks);
+  assert.deepEqual(earned, ['apagou-incendio', 'combo-5', 'turno-500', 'bombeiro-10', 'missoes-5']);
+  assert.deepEqual(badgesFor({ ...initialProgress(), bestCombo: 4, bestShift: 499, incidents: 9, missions: 4 }, racks), ['apagou-incendio']);
+});
+
+test('cada nível deixa o dev um pouco mais rápido e diz isso em texto', () => {
+  const speeds = LEVEL_TITLES.map((_, index) => speedPerk(index + 1));
+  assert.equal(speeds[0], 1);
+  for (let i = 1; i < speeds.length; i++) assert.ok(speeds[i] > speeds[i - 1]);
+  assert.ok(speeds.at(-1) <= 1.2, 'o bônus não quebra o ritmo do jogo');
+  assert.equal(perkText(1), '');
+  assert.match(perkText(3), /%/);
 });
