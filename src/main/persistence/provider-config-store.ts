@@ -488,6 +488,28 @@ export function resolveQuotaApiKey(request: ApiQuotaKeyRequest): string | null {
   return resolveApiKeyWithoutVault(adapterId, upstream, (name) => quotaEnvMatchesProvider(name, usageProviderId));
 }
 
+/**
+ * Host Anthropic-compatible de cada adapter host-Claude de terceiro.
+ * Um ANTHROPIC_AUTH_TOKEN/ANTHROPIC_API_KEY solto no env só é credencial do
+ * provider quando ANTHROPIC_BASE_URL aponta para o host dele — sem o gate, um
+ * token da z.ai (ou da própria Anthropic) era enviado para api.deepseek.com.
+ */
+function anthropicHostForProvider(providerId: string): string | null {
+  switch (providerId) {
+    case 'glm':
+    case 'glm-flash':
+      return 'api.z.ai';
+    case 'longcat':
+      return 'api.longcat.chat';
+    case 'deepseek':
+      return 'api.deepseek.com';
+    case 'muse-claude':
+      return 'api.meta.ai';
+    default:
+      return null;
+  }
+}
+
 function quotaEnvMatchesProvider(name: string, providerId: string): boolean {
   if (['ZAI_API_KEY', 'ZHIPU_API_KEY', 'ZHIPUAI_API_KEY'].includes(name)) return ['glm', 'glm-flash', 'zai', 'zhipu'].includes(providerId);
   if (name === 'LONGCAT_API_KEY') return providerId === 'longcat';
@@ -496,7 +518,7 @@ function quotaEnvMatchesProvider(name: string, providerId: string): boolean {
   if (['KIMI_MODEL_API_KEY', 'KIMI_API_KEY', 'KIMI_CODING_API_KEY', 'MOONSHOT_API_KEY'].includes(name)) return providerId === 'kimi';
   if (name === 'XAI_API_KEY') return providerId === 'grok';
   if (!['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'].includes(name)) return false;
-  const host = providerId === 'glm' || providerId === 'glm-flash' ? 'api.z.ai' : providerId === 'longcat' ? 'api.longcat.chat' : providerId === 'deepseek' ? 'api.deepseek.com' : null;
+  const host = anthropicHostForProvider(providerId);
   if (!host) return false;
   try {
     const url = new URL(process.env.ANTHROPIC_BASE_URL ?? '');
@@ -532,7 +554,22 @@ function resolveApiKeyWithoutVault(
     if (viaUpstream) return viaUpstream;
   }
 
+  const anthropicHost = anthropicHostForProvider(adapterId);
   for (const name of keyEnvVarsOf(adapterId)) {
+    if (
+      anthropicHost !== null &&
+      (name === 'ANTHROPIC_AUTH_TOKEN' || name === 'ANTHROPIC_API_KEY')
+    ) {
+      // Token Anthropic genérico só é deste provider se o BASE_URL do env já
+      // aponta para o host dele — senão pode ser da Anthropic ou de outro
+      // host-Claude e vazaria para o endpoint errado.
+      try {
+        const url = new URL(process.env.ANTHROPIC_BASE_URL ?? '');
+        if (url.hostname !== anthropicHost) continue;
+      } catch {
+        continue;
+      }
+    }
     const value = process.env[name];
     if (typeof value === 'string' && value.trim().length > 0) {
       if (allowEnv && !allowEnv(name)) return null;

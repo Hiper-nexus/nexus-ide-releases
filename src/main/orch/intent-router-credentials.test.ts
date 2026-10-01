@@ -118,23 +118,29 @@ describe.each(['classification', 'direct answer'] as const)(
       { ...PROVIDERS[1], env: 'ANTHROPIC_AUTH_TOKEN' },
     ])('uses $env without a vault or launcher entry', async ({ provider, env, endpoint, header, value }) => {
       vi.stubEnv(env, ' test-runtime-key ');
-      // F-236: o deepseek virou cli-pty no host Claude e declara
-      // ANTHROPIC_AUTH_TOKEN como env de chave — na cadeia (deepseek primeiro
-      // por custo) um AUTH_TOKEN solto é consumido pela rota deepseek, não
-      // pelo glm. O caso do glm+AUTH_TOKEN passa a exercitar isso.
-      const consumedByDeepSeek = provider === 'glm' && env === 'ANTHROPIC_AUTH_TOKEN';
-      const fetchImpl = vi.fn<typeof fetch>().mockImplementation(
-        async (url) => response(String(url).includes('deepseek') ? 'deepseek' : provider),
-      );
+      if (env === 'ANTHROPIC_AUTH_TOKEN') {
+        // O token Anthropic genérico só vale como credencial do glm quando o
+        // BASE_URL do env já aponta para api.z.ai (host gate, F-236 rework).
+        vi.stubEnv('ANTHROPIC_BASE_URL', 'https://api.z.ai/api/anthropic');
+      }
+      const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response(provider));
 
       expect(await invoke(fetchImpl)).toEqual(expected);
       expect(fetchImpl).toHaveBeenCalledTimes(1);
-      expect(fetchImpl.mock.calls[0][0]).toBe(
-        consumedByDeepSeek ? 'https://api.deepseek.com/chat/completions' : endpoint,
-      );
-      expect(new Headers(fetchImpl.mock.calls[0][1]?.headers).get(
-        consumedByDeepSeek ? 'authorization' : header,
-      )).toBe(consumedByDeepSeek ? 'Bearer test-runtime-key' : value);
+      expect(fetchImpl.mock.calls[0][0]).toBe(endpoint);
+      expect(new Headers(fetchImpl.mock.calls[0][1]?.headers).get(header)).toBe(value);
+    });
+
+    it('ignores a bare ANTHROPIC_AUTH_TOKEN with no matching BASE_URL', async () => {
+      // Sem ANTHROPIC_BASE_URL apontando para o host do provider, o token
+      // genérico não é credencial de nenhum host-Claude da cadeia — nenhum
+      // fetch sai e o router cai no fallback sem key.
+      vi.stubEnv('ANTHROPIC_AUTH_TOKEN', ' test-runtime-key ');
+      vi.stubEnv('ANTHROPIC_BASE_URL', '');
+      const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response());
+
+      expect(await invoke(fetchImpl)).toBeNull();
+      expect(fetchImpl).not.toHaveBeenCalled();
     });
 
     it('prefers the vault over launcher and environment credentials', async () => {

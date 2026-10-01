@@ -168,6 +168,15 @@ const opencodeAdapter = {
   },
 };
 
+const claudeHostAdapter = (id: string, extra: string[]) => ({
+  ...kimiAdapter,
+  id,
+  label: id,
+  bin: 'claude',
+  auth: { method: 'api_key', envVarFallback: 'ANTHROPIC_AUTH_TOKEN' },
+  env: { passthrough: ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', ...extra] },
+});
+
 const museAdapter = {
   ...kimiAdapter,
   id: 'muse', label: 'Muse Code', bin: 'muse',
@@ -249,6 +258,10 @@ vi.mock('../adapters/adapter-registry', () => ({
       ? claudeAdapter
       : id === 'kimi'
         ? kimiAdapter
+      : id === 'glm'
+        ? claudeHostAdapter('glm', ['ZAI_API_KEY'])
+      : id === 'deepseek'
+        ? claudeHostAdapter('deepseek', ['DEEPSEEK_API_KEY'])
       : id === 'muse'
         ? museAdapter
       : id === 'opencode'
@@ -423,6 +436,7 @@ import {
   registerProviderIpc,
   resolveRunnerPath,
   resolveQuotaApiKey,
+  resolveRuntimeApiKey,
 } from './provider-config-store';
 import { fetchLiveProviderWindows } from '../quota/provider-live-usage';
 
@@ -1524,6 +1538,52 @@ describe('main-owned quota credential resolution', () => {
     expect(resolveQuotaApiKey({ adapterId: 'grok', accountId: 'saved', usageProviderId: 'grok', authMode: 'api-key' })).toBeNull();
     expect(resolveQuotaApiKey({ adapterId: 'missing', accountId: 'saved', usageProviderId: 'longcat', authMode: 'api-key' })).toBeNull();
     expect(spawnDeps.getSecret.mock.calls.length).toBe(0);
+  });
+});
+
+describe('generic Anthropic env token is host-gated (F-236 rework)', () => {
+  beforeAll(() => initializeProviderConfigStore());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    spawnDeps.runtimeKey.mockReturnValue(null);
+    spawnDeps.hasSecret.mockReturnValue(false);
+    spawnDeps.hasCachedSecret.mockReturnValue(false);
+    spawnDeps.launcherKey.mockReturnValue(null);
+    vi.stubEnv('ANTHROPIC_AUTH_TOKEN', '');
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    vi.stubEnv('ANTHROPIC_BASE_URL', '');
+    vi.stubEnv('ZAI_API_KEY', '');
+    vi.stubEnv('DEEPSEEK_API_KEY', '');
+    vi.stubEnv('LONGCAT_API_KEY', '');
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('glm rejects a bare ANTHROPIC_AUTH_TOKEN without ANTHROPIC_BASE_URL', () => {
+    vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'fixture-generic-token');
+    expect(resolveRuntimeApiKey('glm')).toBeNull();
+  });
+
+  it('glm accepts ANTHROPIC_AUTH_TOKEN when BASE_URL points at api.z.ai', () => {
+    vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'fixture-zai-token');
+    vi.stubEnv('ANTHROPIC_BASE_URL', 'https://api.z.ai/api/anthropic');
+    expect(resolveRuntimeApiKey('glm')).toBe('fixture-zai-token');
+  });
+
+  it('deepseek falls through a foreign ANTHROPIC_AUTH_TOKEN to DEEPSEEK_API_KEY', () => {
+    vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'fixture-generic-token');
+    vi.stubEnv('DEEPSEEK_API_KEY', 'fixture-deepseek-key');
+    expect(resolveRuntimeApiKey('deepseek')).toBe('fixture-deepseek-key');
+  });
+
+  it('deepseek rejects a z.ai-scoped ANTHROPIC_AUTH_TOKEN', () => {
+    vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'fixture-zai-token');
+    vi.stubEnv('ANTHROPIC_BASE_URL', 'https://api.z.ai/api/anthropic');
+    expect(resolveRuntimeApiKey('deepseek')).toBeNull();
+  });
+
+  it('claude still accepts a bare ANTHROPIC_API_KEY (native host, no gate)', () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'fixture-claude-key');
+    expect(resolveRuntimeApiKey('claude')).toBe('fixture-claude-key');
   });
 });
 

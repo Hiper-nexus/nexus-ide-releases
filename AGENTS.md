@@ -1097,6 +1097,31 @@ saber isto antes de mexer:
   segredo viaja por stdin em base64; teste nunca toca a vaga real (só com
   `exec` injetado). Conta AGY por chave de API não passa pela vaga.
 
+## Fair-share, lanes de topo e hosts Claude (F-232/F-233/F-236/F-237)
+
+- F-232: `globalUseCounts` (reservas consumidas em 7d por adapter,
+  `consumedCountsByAdapterSince` no ledger / `consumedRouteCountsByAdapterSince`
+  no store) troca o líder da rota quando ele passa `FAIR_SHARE_GAP` (2) do
+  menos usado do pool do tier — só se a rotação por missão não disparou, com
+  as mesmas exclusões dela (critical, frontier, benchmark, especialidade, menção).
+- F-233: cross-review virou lane (`JUDGE_FRONTIER_LANE`: Fable → Opus → Sonnet →
+  Sol 6.1 → Astra) via `applyFrontierLane` compartilhada com a visual; sinais
+  novos de auditoria/veredito em `REVIEW_SIGNALS`. Sem assento disponível,
+  `judgeUnavailable` + hint — o Maestro julga no próprio pane; modelo barato
+  nunca julga código.
+- F-236: adapters host-Claude (glm, glm-flash, longcat, deepseek) aparecem
+  juntos em `CLAUDE_FAMILY_ADAPTERS`, `CLAUDE_FAMILY_TURN_PROOF_ADAPTERS`,
+  subscription-auth e seat-auth. Token Anthropic genérico do env
+  (`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY`) só é credencial do provider com
+  `ANTHROPIC_BASE_URL` no host dele (`anthropicHostForProvider`, que também
+  mapeia muse-claude→api.meta.ai). DeepSeek usa
+  os ids reais `deepseek-v4-pro`/`deepseek-flash` (API /models, 01/10); os da
+  era api-provider migram em `RETIRED_MODEL_MIGRATIONS`.
+- F-237: doutrina `JULGAMENTO`/`CUSTO` em `orchestrator-doctrine.ts` — escreve
+  barato e diverso, julga caro (veredito de ponta antes de integrar/push).
+  O `DOCTRINE_BASE` tem teto de 2 KB testado: bullet novo exige comprimir os
+  vizinhos SEM tocar nas frases que os testes fixam.
+
 ## Jev enxugando a orquestração (F-194/F-195/F-196/F-197)
 
 - F-194: o rubric de tier do `jev-task-routing.ts` foi avaliado com o Jev real
