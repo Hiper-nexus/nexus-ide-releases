@@ -19,7 +19,7 @@ const CLAUDE_MUTATING_NATIVE_TOOLS = [
   'Write',
   'NotebookEdit',
 ] as const;
-const CLAUDE_FAMILY_ADAPTERS = new Set(['claude', 'glm', 'glm-flash', 'longcat']);
+const CLAUDE_FAMILY_ADAPTERS = new Set(['claude', 'glm', 'glm-flash', 'longcat', 'deepseek']);
 
 export interface NativeEffectAuthority {
   readonly source: SpawnAuthoritySource;
@@ -298,7 +298,7 @@ export function supportsEnforceableReadOnlyNativeAuthority(
 ): boolean {
   const permission = adapter.control?.permission;
   if (adapter.id === 'codex') return true;
-  if (adapter.id === 'glm' || adapter.id === 'glm-flash' || adapter.id === 'longcat') return false;
+  if (adapter.id === 'glm' || adapter.id === 'glm-flash' || adapter.id === 'longcat' || adapter.id === 'deepseek') return false;
   return (
     (adapter.quirks?.mcpAutoload &&
       adapter.id === 'claude' &&

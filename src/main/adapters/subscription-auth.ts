@@ -979,6 +979,10 @@ export function detectSubscriptionAuth(
       // Same model as GLM: pure API-key route on the Claude binary, pointed
       // at the LongCat Anthropic-compatible endpoint. Never a subscription.
       return false;
+    case 'deepseek':
+      // Same model as GLM/LongCat: pure API-key route on the Claude binary,
+      // pointed at the DeepSeek Anthropic-compatible endpoint. Never a subscription.
+      return false;
     case 'agy':
       // Live OAuth only — never treat antigravity* install trees as login.
       // Installation dirs made google_accounts.active=null + leftover keychain

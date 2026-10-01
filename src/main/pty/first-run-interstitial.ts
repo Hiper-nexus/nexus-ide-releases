@@ -85,7 +85,7 @@ const PATTERNS: FirstRunInterstitialPattern[] = [
     // Claude-family shells (glm/glm-flash/longcat) inherit the screen; grok
     // ships a folder-trust gate of its own whose older wording is already
     // owned by cli-prompt-autoresponder and is forbidden below.
-    adapterIds: ['claude', 'glm', 'glm-flash', 'longcat', 'grok'],
+    adapterIds: ['claude', 'glm', 'glm-flash', 'longcat', 'deepseek', 'grok'],
     requireAll: [
       /do you trust the contents of this directory\?/,
       /higher risk of prompt injection/,

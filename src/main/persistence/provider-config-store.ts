@@ -184,7 +184,9 @@ function defaultConfigFor(adapterId: string): ProviderConfig {
         ? 'glm-flash'
         : adapterId === 'longcat'
           ? 'longcat'
-          : 'anthropic';
+          : adapterId === 'deepseek'
+            ? 'deepseek'
+            : 'anthropic';
   return {
     adapterId,
     enabled: true,
@@ -489,11 +491,12 @@ export function resolveQuotaApiKey(request: ApiQuotaKeyRequest): string | null {
 function quotaEnvMatchesProvider(name: string, providerId: string): boolean {
   if (['ZAI_API_KEY', 'ZHIPU_API_KEY', 'ZHIPUAI_API_KEY'].includes(name)) return ['glm', 'glm-flash', 'zai', 'zhipu'].includes(providerId);
   if (name === 'LONGCAT_API_KEY') return providerId === 'longcat';
+  if (name === 'DEEPSEEK_API_KEY') return providerId === 'deepseek';
   if (name === 'MINIMAX_API_KEY') return providerId === 'minimax-code';
   if (['KIMI_MODEL_API_KEY', 'KIMI_API_KEY', 'KIMI_CODING_API_KEY', 'MOONSHOT_API_KEY'].includes(name)) return providerId === 'kimi';
   if (name === 'XAI_API_KEY') return providerId === 'grok';
   if (!['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'].includes(name)) return false;
-  const host = providerId === 'glm' || providerId === 'glm-flash' ? 'api.z.ai' : providerId === 'longcat' ? 'api.longcat.chat' : null;
+  const host = providerId === 'glm' || providerId === 'glm-flash' ? 'api.z.ai' : providerId === 'longcat' ? 'api.longcat.chat' : providerId === 'deepseek' ? 'api.deepseek.com' : null;
   if (!host) return false;
   try {
     const url = new URL(process.env.ANTHROPIC_BASE_URL ?? '');

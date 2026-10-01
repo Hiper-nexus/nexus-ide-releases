@@ -355,35 +355,17 @@
       ]
     },
     "deepseek": {
-      "default": "deepseek-chat",
+      "default": "deepseek-v4-pro",
       "models": [
         {
-          "id": "deepseek-chat",
-          "availability": "cheap",
-          "costTier": "low",
-          "source": "bundled"
-        },
-        {
-          "id": "deepseek-coder",
-          "availability": "cheap",
-          "costTier": "low",
-          "source": "bundled"
-        },
-        {
-          "id": "deepseek-reasoner",
-          "availability": "cheap",
-          "costTier": "medium",
-          "source": "bundled"
-        },
-        {
-          "id": "deepseek-pro",
+          "id": "deepseek-v4-pro",
           "availability": "paid",
-          "costTier": "medium",
+          "costTier": "low",
           "source": "bundled"
         },
         {
           "id": "deepseek-flash",
-          "availability": "free",
+          "availability": "cheap",
           "costTier": "free",
           "source": "bundled"
         }

@@ -25,6 +25,7 @@ function adapters(...installed: string[]): AdapterAvailability[] {
     'glm',
     'glm-flash',
     'longcat',
+    'deepseek',
   ];
   return all.map((id) => ({ id, installed: installed.includes(id) }));
 }
@@ -187,6 +188,18 @@ describe('routeTask', () => {
     );
     expect(decision!.adapterId).toBe('kimi');
     expect(decision!.model).toBe('kimi-code/k3');
+  });
+
+  it('routes medium work to DeepSeek when installed (cli-pty no host Claude)', () => {
+    const decision = routeTask(
+      'tarefa de complexidade média',
+      adapters('deepseek', 'mimo-code'),
+      DEFAULT_ROUTING_TABLE,
+      'medium',
+    );
+    expect(decision!.adapterId).toBe('deepseek');
+    expect(decision!.model).toBe('deepseek-v4-pro');
+    expect(decision!.effort).toBe('medium');
   });
 
   it('does not route to LongCat when the caller marks it unavailable', () => {

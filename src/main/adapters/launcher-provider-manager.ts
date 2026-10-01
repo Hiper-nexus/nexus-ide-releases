@@ -176,8 +176,15 @@ export const UPSTREAM_PROVIDERS: Record<string, UpstreamProvider> = {
     id: 'deepseek',
     label: 'DeepSeek',
     baseUrl: 'https://api.deepseek.com/anthropic',
-    defaultModel: 'deepseek-chat',
-    extraEnv: THIRD_PARTY_EXTRA,
+    // IDs da API /models do DeepSeek, 01/10/2026 (v4-pro default, flash barato).
+    defaultModel: 'deepseek-v4-pro',
+    extraEnv: {
+      ...THIRD_PARTY_EXTRA,
+      CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT: '1',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'deepseek-flash',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'deepseek-v4-pro',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'deepseek-v4-pro',
+    },
     requiresToken: true,
     local: false,
   },

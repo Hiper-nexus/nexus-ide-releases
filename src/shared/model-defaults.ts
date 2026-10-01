@@ -73,6 +73,12 @@ export const RETIRED_MODEL_MIGRATIONS: Readonly<Record<string, string>> = Object
   'opencode/north-mini-code-free': 'opencode/big-pickle',
   'opencode/laguna-s-2.1-free': 'opencode/big-pickle',
   'opencode/ling-3.0-flash-free': 'opencode/big-pickle',
+  // F-236: DeepSeek virou cli-pty no host Claude com a linhagem atual da API
+  // /models (01/10/2026); os ids da era api-provider saem de linha.
+  'deepseek-chat': 'deepseek-v4-pro',
+  'deepseek-coder': 'deepseek-v4-pro',
+  'deepseek-reasoner': 'deepseek-v4-pro',
+  'deepseek-pro': 'deepseek-v4-pro',
 });
 
 export function migrateModelId(modelId: string | undefined): string | undefined {

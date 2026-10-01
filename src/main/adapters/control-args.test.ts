@@ -211,7 +211,7 @@ describe('buildControlArgs', () => {
     const claudeBacked = BUILTIN_ADAPTERS
       .map((raw) => adapterSchema.parse(raw))
       .filter((item): item is CliPtyAdapter => item.kind === 'cli-pty' && item.bin === 'claude');
-    expect(claudeBacked.map((item) => item.id)).toEqual(['claude', 'glm', 'glm-flash', 'longcat', 'muse-claude']);
+    expect(claudeBacked.map((item) => item.id)).toEqual(['claude', 'glm', 'glm-flash', 'longcat', 'muse-claude', 'deepseek']);
     for (const item of claudeBacked) {
       expect(defaultPermissionMode(item)).toBe('yolo');
       expect(buildControlArgs(item, { permissionMode: 'yolo' }))

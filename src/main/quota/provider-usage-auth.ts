@@ -67,7 +67,8 @@ function pushUnique(out: string[], value: string | null | undefined): void {
 
 function declaredAnthropicToken(adapterId: string): string | null {
   const expectedHost = adapterId === 'glm' || adapterId === 'glm-flash' ? 'api.z.ai'
-    : adapterId === 'longcat' ? 'api.longcat.chat' : null;
+    : adapterId === 'longcat' ? 'api.longcat.chat'
+    : adapterId === 'deepseek' ? 'api.deepseek.com' : null;
   if (!expectedHost) return null;
   try {
     const url = new URL(process.env.ANTHROPIC_BASE_URL ?? '');
@@ -260,6 +261,13 @@ export function resolveProviderApiKeyCandidates(
 
   if (adapterId === 'longcat') {
     for (const envName of ['LONGCAT_API_KEY']) {
+      pushUnique(out, process.env[envName]);
+    }
+    pushUnique(out, declaredAnthropicToken(adapterId));
+  }
+
+  if (adapterId === 'deepseek') {
+    for (const envName of ['DEEPSEEK_API_KEY']) {
       pushUnique(out, process.env[envName]);
     }
     pushUnique(out, declaredAnthropicToken(adapterId));

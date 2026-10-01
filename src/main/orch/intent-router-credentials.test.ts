@@ -118,12 +118,23 @@ describe.each(['classification', 'direct answer'] as const)(
       { ...PROVIDERS[1], env: 'ANTHROPIC_AUTH_TOKEN' },
     ])('uses $env without a vault or launcher entry', async ({ provider, env, endpoint, header, value }) => {
       vi.stubEnv(env, ' test-runtime-key ');
-      const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response(provider));
+      // F-236: o deepseek virou cli-pty no host Claude e declara
+      // ANTHROPIC_AUTH_TOKEN como env de chave — na cadeia (deepseek primeiro
+      // por custo) um AUTH_TOKEN solto é consumido pela rota deepseek, não
+      // pelo glm. O caso do glm+AUTH_TOKEN passa a exercitar isso.
+      const consumedByDeepSeek = provider === 'glm' && env === 'ANTHROPIC_AUTH_TOKEN';
+      const fetchImpl = vi.fn<typeof fetch>().mockImplementation(
+        async (url) => response(String(url).includes('deepseek') ? 'deepseek' : provider),
+      );
 
       expect(await invoke(fetchImpl)).toEqual(expected);
       expect(fetchImpl).toHaveBeenCalledTimes(1);
-      expect(fetchImpl.mock.calls[0][0]).toBe(endpoint);
-      expect(new Headers(fetchImpl.mock.calls[0][1]?.headers).get(header)).toBe(value);
+      expect(fetchImpl.mock.calls[0][0]).toBe(
+        consumedByDeepSeek ? 'https://api.deepseek.com/chat/completions' : endpoint,
+      );
+      expect(new Headers(fetchImpl.mock.calls[0][1]?.headers).get(
+        consumedByDeepSeek ? 'authorization' : header,
+      )).toBe(consumedByDeepSeek ? 'Bearer test-runtime-key' : value);
     });
 
     it('prefers the vault over launcher and environment credentials', async () => {

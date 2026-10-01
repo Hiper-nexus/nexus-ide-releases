@@ -234,13 +234,10 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
       ],
     },
     deepseek: {
-      default: 'deepseek-chat',
+      default: 'deepseek-v4-pro',
       models: [
-        { id: 'deepseek-chat', availability: 'cheap', costTier: 'low', source: 'bundled' },
-        { id: 'deepseek-coder', availability: 'cheap', costTier: 'low', source: 'bundled' },
-        { id: 'deepseek-reasoner', availability: 'cheap', costTier: 'medium', source: 'bundled' },
-        { id: 'deepseek-pro', availability: 'paid', costTier: 'medium', source: 'bundled' },
-        { id: 'deepseek-flash', availability: 'free', costTier: 'free', source: 'bundled' },
+        { id: 'deepseek-v4-pro', availability: 'paid', costTier: 'low', source: 'bundled' },
+        { id: 'deepseek-flash', availability: 'cheap', costTier: 'free', source: 'bundled' },
       ],
     },
     muse: {

@@ -160,6 +160,7 @@ const CLAUDE_FAMILY_TURN_PROOF_ADAPTERS = new Set([
   'glm',
   'glm-flash',
   'longcat',
+  'deepseek',
 ]);
 
 function requiresClaudeFamilyTurnProof(adapterId: string | undefined): boolean {

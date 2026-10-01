@@ -62,7 +62,7 @@ export function classifySeatAuth(input: SeatAuthInput): AuthReadiness {
     return listed ?? 'incomplete';
   }
 
-  if (adapterId === 'longcat') {
+  if (adapterId === 'longcat' || adapterId === 'deepseek') {
     return hasKey ? 'present' : 'no-credential';
   }
 

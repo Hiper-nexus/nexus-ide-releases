@@ -155,7 +155,7 @@ export async function routeWithDeepSeek(
           authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: deps.model ?? 'deepseek-chat',
+          model: deps.model ?? 'deepseek-flash',
           messages: [
             { role: 'system', content: ROUTER_SYSTEM_PROMPT },
             { role: 'user', content: objective },
@@ -369,7 +369,8 @@ const ROUTER_PROVIDER_CHAIN: readonly RouterProvider[] = [
     id: 'deepseek',
     style: 'openai',
     endpoint: 'https://api.deepseek.com/chat/completions',
-    model: 'deepseek-chat',
+    // Slot barato do provider (API /models do DeepSeek, 01/10/2026).
+    model: 'deepseek-flash',
   },
   {
     id: 'glm',
