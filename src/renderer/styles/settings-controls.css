@@ -1,6 +1,31 @@
 /* Settings controls that span multiple sections: accessibility, native scroll,
    audio routing and provider-agnostic squad orchestration. */
 
+.decision-models {
+  padding: var(--space-3);
+  margin-bottom: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+}
+
+.decision-models__head { margin-bottom: var(--space-3); }
+.decision-models .settings-field { margin-bottom: 0; min-width: 0; }
+.decision-models .settings-form-grid { margin-bottom: var(--space-3); }
+.decision-models__credentials { margin-top: var(--space-3); }
+.decision-models__actions { flex-wrap: wrap; }
+.decision-models__table { overflow-x: auto; margin-bottom: var(--space-4); }
+.decision-models__table table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.decision-models__table th, .decision-models__table td { text-align: left; padding: var(--space-2); border-bottom: 1px solid var(--border); }
+.decision-models__table th { color: var(--text-dim); font-weight: 600; }
+.decision-models__loading {
+  min-height: var(--space-6);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  color: var(--text-dim);
+}
+
 .settings-visually-hidden {
   position: absolute;
   width: 1px;

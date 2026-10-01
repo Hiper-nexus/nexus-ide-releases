@@ -53,6 +53,7 @@ export interface JevDecisionRow {
   reason?:
     | 'timeout'
     | 'rate-limited'
+    | 'client-error'
     | 'server-error'
     | 'network'
     | 'malformed'

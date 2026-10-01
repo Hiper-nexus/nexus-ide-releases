@@ -10,6 +10,7 @@ import { ProviderLogo } from '../ProviderLogo';
 import { PixelIcon } from '../PixelIcon';
 import { EmptyState } from '../ActionCard';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
+import { DecisionModelsSection } from './DecisionModelsSection';
 
 export interface SystemApiKeyDef {
   id: string;
@@ -591,6 +592,8 @@ export function ApiKeysSection() {
           </span>
         </div>
       </header>
+
+      <DecisionModelsSection />
 
       <div className="api-keys-section__filter-row">
         <input

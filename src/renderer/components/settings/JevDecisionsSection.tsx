@@ -31,6 +31,7 @@ const NO_ANSWER_REASONS: Record<string, string> = {
   network: 'rede',
   malformed: 'resposta inválida',
   aborted: 'cancelada',
+  'client-error': 'configuração ou credencial',
 };
 
 function surfaceLabel(surface: string): string {
@@ -103,7 +104,7 @@ export function JevDecisionsSection() {
   return (
     <section className="jev-decisions">
       <div className="jev-decisions__head">
-        <SettingsSectionTitle>Decisões do Jev</SettingsSectionTitle>
+        <SettingsSectionTitle>Decisões dos modelos</SettingsSectionTitle>
         {stats && (
           <button
             type="button"
@@ -116,7 +117,7 @@ export function JevDecisionsSection() {
         )}
       </div>
       <p className="settings-detail__hint">
-        Cada vez que o piloto automático consulta o modelo Jev (TypeSafe), o
+        Cada vez que o piloto automático consulta Jev ou Clef, o
         Nexus registra a decisão aqui — sem nunca guardar o texto analisado.
         Marque certo ou errado para o app aprender onde ele acerta e onde
         precisa de ajuste.
@@ -151,7 +152,7 @@ export function JevDecisionsSection() {
       {stats && (
         <>
           <h3 className="settings-section-heading">
-            Consumo do Jev (TypeSafe)
+            Consumo dos modelos de decisão
           </h3>
           <div
             className="jev-periods"
@@ -182,10 +183,11 @@ export function JevDecisionsSection() {
             })}
           </div>
           <p className="settings-detail__hint">
-            Custo estimado: tokens de entrada × US$ 0,042 por milhão (tabela
-            pública da TypeSafe; saída é grátis). "Pela regra" = o Jev foi
+            Custo estimado pelas tarifas públicas de cada modelo: Jev US$ 0,042,
+            Clef US$ 0,24 e Flash US$ 0,09 por milhão de tokens de entrada.
+            Consultas sem resposta podem ter custo não medido. "Pela regra" = o modelo foi
             consultado e não respondeu (timeout, erro, limite) — a superfície
-            decidiu pelo caminho determinístico. Chamada direta à TypeSafe,
+            decidiu pelo caminho determinístico. Chamada direta ao provedor,
             sem intermediário.
           </p>
 
@@ -193,7 +195,7 @@ export function JevDecisionsSection() {
           {stats.windows.last30d.optimization ? (
             <>
               <p className="settings-detail__hint">
-                Consultas ao Jev evitadas por lote ou reutilização:{' '}
+                Consultas aos modelos evitadas por lote ou reutilização:{' '}
                 {stats.windows.last30d.optimization.jevRequestsAvoided} ·{' '}
                 Triagens resolvidas sem recorrer ao LLM:{' '}
                 {stats.windows.last30d.optimization.llmRoutingBypassed}.
@@ -213,6 +215,15 @@ export function JevDecisionsSection() {
             </p>
           )}
 
+          {stats.byModel && Object.keys(stats.byModel).length > 0 && <>
+            <h3 className="settings-section-heading">Por modelo · desde sempre</h3>
+            <div className="decision-models__table"><table aria-label="Consumo por modelo">
+              <thead><tr><th>Modelo</th><th>Consultas</th><th>Estimativa</th><th>Sem resposta</th><th>Tentativas HTTP</th></tr></thead>
+              <tbody>{Object.entries(stats.byModel).map(([model, usage]) => <tr key={model}>
+                <td>{model}</td><td>{usage.calls}</td><td>{formatUsd(usage.usd)}</td><td>{usage.noAnswer}</td><td>{usage.requests ?? 'Sem medição'}</td>
+              </tr>)}</tbody>
+            </table></div>
+          </>}
           <h3 className="settings-section-heading">Por superfície</h3>
           {surfaces.length === 0 ? (
             <p className="jev-decisions__hint">
@@ -244,7 +255,7 @@ export function JevDecisionsSection() {
                       {formatUsd(bucket.usd)}
                     </span>
                     <span className="jev-cell">
-                      {bucket.last30d.jev} pelo Jev · {bucket.last30d.rule}{' '}
+                      {bucket.last30d.jev} pelo modelo · {bucket.last30d.rule}{' '}
                       pela regra · {formatUsd(bucket.last30d.usd)}{' '}
                       <span className="jev-cell__u">(30 dias)</span>
                     </span>
@@ -284,7 +295,7 @@ export function JevDecisionsSection() {
               title="Sem decisões ainda"
               body={
                 <p>
-                  Assim que o piloto automático consultar o Jev, cada decisão
+                  Assim que o piloto automático consultar um modelo, cada decisão
                   aparece aqui para você marcar certo ou errado.
                 </p>
               }
@@ -318,8 +329,9 @@ export function JevDecisionsSection() {
                         </span>
                       </div>
                       <p className="jev-log__meta">
-                        {formatTime(row.at)} · {row.model} ·{' '}
+                        {formatTime(row.at)} · {row.provider === 'clef' || row.model.startsWith('clef') ? 'Cloudflare' : 'TypeSafe'} · {row.model} ·{' '}
                         {topProbabilities(row)}
+                        {row.route?.reason === 'credential-fallback' ? ' · alternativa disponível' : row.route?.evidence === 'public-benchmark' ? ' · regra inicial' : ''}
                       </p>
                     </div>
                     <div

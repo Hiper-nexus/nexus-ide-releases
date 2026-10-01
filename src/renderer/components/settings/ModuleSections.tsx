@@ -27,6 +27,7 @@ import { SettingsSectionTitle } from './SettingsSectionTitle';
 import { EmptyState } from '../ActionCard';
 import { SquadEditor } from '../SquadEditor';
 import { VoiceSettings } from '../VoiceSettings';
+import { DecisionModelsSection } from './DecisionModelsSection';
 
 /** MÓDULOS sections: Terminal, Voice, Providers, Squads, Marketplace. */
 
@@ -823,6 +824,7 @@ export function SquadsSection() {
       <AgentSessionSettings />
 
       <h3 className="settings-section-heading">Padrões de execução</h3>
+      <DecisionModelsSection showCredentials={false} />
       <div className="settings-toggle-list">
         <OrchestrationToggle
           checked={seniorMode}
@@ -835,15 +837,15 @@ export function SquadsSection() {
         />
         <OrchestrationToggle
           checked={jevAutopilot}
-          title="Piloto automático Jev"
-          detail="Revisa a evidência dos handoffs com o modelo Jev (TypeSafe) e devolve ao worker o que faltou. Precisa da chave TypeSafe em Chaves de API."
+          title="Piloto automático"
+          detail="Consulta o modelo de decisão configurado nas triagens e na revisão de evidência dos handoffs. Precisa de Jev ou Clef configurado em Chaves de API."
           onChange={(checked) => {
             setJevAutopilot(checked);
             void window.nexus.settings.orchSet({ jevAutopilot: checked });
           }}
         />
         <div className="sys-toggle-divider">
-          Superfícies supervisionadas pelo Jev
+          Superfícies supervisionadas pelos modelos de decisão
         </div>
         {(
           [

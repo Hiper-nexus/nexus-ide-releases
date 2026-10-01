@@ -91,7 +91,7 @@ describe('JevDecisionsSection', () => {
   it('renders totals and the per-surface table', async () => {
     const host = mount(<JevDecisionsSection />);
     await act(async () => Promise.resolve());
-    expect(host.textContent).toContain('Decisões do Jev');
+    expect(host.textContent).toContain('Decisões dos modelos');
     expect(host.textContent).toContain('2 chamadas');
     expect(host.textContent).toContain('Revisão de handoff');
     expect(host.textContent).toContain('ok ×1');
@@ -108,7 +108,7 @@ describe('JevDecisionsSection', () => {
     jev.decisionsStats.mockResolvedValueOnce(stats);
     const host = mount(<JevDecisionsSection />);
     await act(async () => Promise.resolve());
-    expect(host.textContent).toContain('Consultas ao Jev evitadas por lote ou reutilização: 2');
+    expect(host.textContent).toContain('Consultas aos modelos evitadas por lote ou reutilização: 2');
     expect(host.textContent).toContain('Triagens resolvidas sem recorrer ao LLM: 1');
     expect(host.textContent).toContain('4.000 → 1.000 bytes');
     expect(host.textContent).toContain('não representam tokens faturados');
@@ -117,7 +117,7 @@ describe('JevDecisionsSection', () => {
   it('renders the consumption block with the three windows', async () => {
     const host = mount(<JevDecisionsSection />);
     await act(async () => Promise.resolve());
-    expect(host.textContent).toContain('Consumo do Jev (TypeSafe)');
+    expect(host.textContent).toContain('Consumo dos modelos de decisão');
     expect(host.textContent).toContain('Hoje');
     expect(host.textContent).toContain('30 dias');
     expect(host.textContent).toContain('Desde sempre');
@@ -125,8 +125,9 @@ describe('JevDecisionsSection', () => {
     expect(host.textContent).toContain('3 consultas');
     expect(host.textContent).toContain('5 consultas');
     expect(host.textContent).toContain('1 sem resposta');
-    expect(host.textContent).toContain('US$ 0,042 por milhão');
-    expect(host.textContent).toContain('2 pelo Jev · 1 pela regra');
+    expect(host.textContent).toContain('Jev US$ 0,042');
+    expect(host.textContent).toContain('Clef US$ 0,24');
+    expect(host.textContent).toContain('2 pelo modelo · 1 pela regra');
     // Custo miúdo (0.0000252) não vira "US$ 0.0000": mostra o teto.
     expect(host.textContent).toContain('< US$ 0,0001');
     // 0.0001 exato segue no formato de 4 casas.
