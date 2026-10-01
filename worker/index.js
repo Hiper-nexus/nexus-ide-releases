@@ -7,6 +7,7 @@ const ACCOUNT_PATHS = ['/conta', '/admin'];
 const ALIASES = new Set(['/comunidade', '/comunidade/', '/sorteio', '/sorteio/']);
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
+  'strict-transport-security': 'max-age=31536000',
   'referrer-policy': 'strict-origin-when-cross-origin',
   'permissions-policy': 'camera=(), microphone=(), geolocation=()',
   'content-security-policy': "default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://api.nexuside.app https://cloudflareinsights.com; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",

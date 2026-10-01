@@ -29,6 +29,7 @@ test('serves a distinct community document on its own hostname', async () => {
   }, () => assert.fail('must not hit backend'));
   assert.equal(await res.text(), 'Nexus community');
   assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(res.headers.get('strict-transport-security'), 'max-age=31536000');
 });
 
 test('keeps the product homepage at the main domain root', async () => {
