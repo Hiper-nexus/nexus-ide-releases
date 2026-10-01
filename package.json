@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 4173",
     "build": "node scripts/social-card.mjs && vite build",
-    "test": "node --test worker/*.test.js src/datacafe/*.test.js src/downloads/*.test.js src/plans/*.test.js src/voice/*.test.js",
+    "test": "node --test worker/*.test.js src/datacafe/*.test.js src/downloads/*.test.js src/plans/*.test.js src/sorteio/*.test.js src/voice/*.test.js",
     "releases:update": "node scripts/update-release-catalog.mjs",
     "preview": "vite preview --host 127.0.0.1 --port 4173",
     "deploy": "npm run build && wrangler deploy"
