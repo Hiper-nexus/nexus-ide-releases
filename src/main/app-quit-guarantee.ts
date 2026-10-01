@@ -62,11 +62,23 @@ export interface UnclearableQuitCeiling {
   remainingMs(): number | null;
 }
 
+/**
+ * Teto inarredável do quit (F-240): acima do orçamento inteiro do PTY
+ * (APP_SHUTDOWN_PTY_TERMINATION: 5s term + 8s kill + 8s lag = 21s por sessão)
+ * com sobra para as demais fases medidas pelo shutdown.
+ */
+export const QUIT_CEILING_MS = 45_000;
+
 export function createUnclearableQuitCeiling(deps: {
   readonly ceilingMs: number;
   readonly exitApp: () => void;
   readonly record: QuitIncidentRecorder;
   readonly now?: () => number;
+  /**
+   * F-240: descreve a fase do shutdown em curso e as já concluídas para o
+   * `detail` do incidente `ceiling-fired` (string curta, só rótulos/ms).
+   */
+  readonly describeProgress?: () => string;
 }): UnclearableQuitCeiling {
   const now = deps.now ?? Date.now;
   let timer: NodeJS.Timeout | null = null;
@@ -79,9 +91,12 @@ export function createUnclearableQuitCeiling(deps: {
       armedAt = now();
       timer = setTimeout(() => {
         fired = true;
+        const progress = deps.describeProgress?.();
         deps.record({
           kind: "ceiling-fired",
-          detail: `quit excedeu o teto de ${deps.ceilingMs}ms`,
+          detail:
+            `quit excedeu o teto de ${deps.ceilingMs}ms` +
+            (progress ? ` | ${progress}` : ""),
         });
         console.error(
           "[main] quit exceeded the hard ceiling; forcing exit to avoid a permanent hang",

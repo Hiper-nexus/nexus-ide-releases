@@ -3493,10 +3493,15 @@ export interface OrchTerminateSessionOptions {
  * deadline once SIGTERM is delivered; main only needs a generous transport
  * fence for the exit event that is ordered ahead of the host proof. Short
  * 1.5s defaults left real shell panes stuck as "sessão sem prova física".
+ * F-240: orçamento vs. QUIT_CEILING_MS (45s, app-quit-guarantee.ts). O pior
+ * caso por sessão é term + kill (escalação) + kill de novo (lag do evento de
+ * exit em drivePhysicalTermination): 5+8+8 = 21s < 45s — uma CLI que ignora
+ * SIGTERM não pode mais estourar o teto do quit inteiro (o antigo 10+20+20 =
+ * 50s já passava do teto só na fase PTY).
  */
 export const APP_SHUTDOWN_PTY_TERMINATION = Object.freeze({
-  termTimeoutMs: 10_000,
-  killTimeoutMs: 20_000,
+  termTimeoutMs: 5_000,
+  killTimeoutMs: 8_000,
   origin: "app-shutdown",
 });
 
@@ -3658,6 +3663,17 @@ export interface TerminateAllSessionsResult {
   readonly attemptedSessionIds: readonly string[];
   readonly terminatedSessionIds: readonly string[];
   readonly failedSessionIds: readonly string[];
+}
+
+/**
+ * F-240: rótulo do adapter dono da sessão para o pós-mortem do shutdown
+ * (só o id estável do adapter — nunca argv/env). null quando a sessão já não
+ * está registrada ou não tem adapter conhecido.
+ */
+export function sessionAdapterId(sessionId: string): string | null {
+  const session = sessions.get(sessionId);
+  if (!session) return null;
+  return session.agent?.adapterId ?? session.agentSpawn?.adapterId ?? null;
 }
 
 /** Close PTY admission synchronously before any asynchronous shutdown work. */

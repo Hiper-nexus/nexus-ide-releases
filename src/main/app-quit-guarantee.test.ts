@@ -4,8 +4,10 @@ import {
   buildFailureQuitNotice,
   buildSlowQuitNotice,
   createUnclearableQuitCeiling,
+  QUIT_CEILING_MS,
   selectOrphanSupervisorPids,
 } from "./app-quit-guarantee";
+import { APP_SHUTDOWN_PTY_TERMINATION } from "./pty/pty-manager";
 
 describe("teto de quit inarredável", () => {
   // TOMBSTONE (relato do dono, 06/08): o backstop de 45s era CANCELADO pelo
@@ -84,6 +86,57 @@ describe("teto de quit inarredável", () => {
     vi.advanceTimersByTime(1_000);
     expect(exitApp).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
+  });
+
+  it("F-240: o incidente ceiling-fired descreve a fase do shutdown em curso", () => {
+    vi.useFakeTimers();
+    const record = vi.fn();
+    const ceiling = createUnclearableQuitCeiling({
+      ceilingMs: 1_000,
+      exitApp: () => {},
+      record,
+      describeProgress: () =>
+        "fase atual=terminateAllSessions (há 3.200ms); concluídas: stopCronLoop=12ms",
+    });
+    ceiling.arm();
+    vi.advanceTimersByTime(1_000);
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "ceiling-fired",
+        detail:
+          "quit excedeu o teto de 1000ms | fase atual=terminateAllSessions " +
+          "(há 3.200ms); concluídas: stopCronLoop=12ms",
+      }),
+    );
+    vi.useRealTimers();
+  });
+
+  it("F-240: sem describeProgress o detail do teto não muda", () => {
+    vi.useFakeTimers();
+    const record = vi.fn();
+    const ceiling = createUnclearableQuitCeiling({
+      ceilingMs: 1_000,
+      exitApp: () => {},
+      record,
+    });
+    ceiling.arm();
+    vi.advanceTimersByTime(1_000);
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "ceiling-fired",
+        detail: "quit excedeu o teto de 1000ms",
+      }),
+    );
+    vi.useRealTimers();
+  });
+
+  it("F-240: o orçamento do PTY fica abaixo do teto do quit", () => {
+    // Pior caso por sessão: term + kill (escalação) + kill de novo (lag do
+    // evento de exit em drivePhysicalTermination).
+    expect(
+      APP_SHUTDOWN_PTY_TERMINATION.termTimeoutMs +
+        APP_SHUTDOWN_PTY_TERMINATION.killTimeoutMs * 2,
+    ).toBeLessThan(QUIT_CEILING_MS);
   });
 
   it("expõe o restante do prazo para o countdown do aviso", () => {

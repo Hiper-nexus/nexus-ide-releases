@@ -188,6 +188,7 @@ import {
   getAgentSessionInfo,
   listLiveSessionLocations,
   orchTerminateSession,
+  sessionAdapterId,
   terminateAllSessions,
 } from "./pty/pty-manager";
 import { setPaneTerminalIdentity } from "./pty/pane-terminal-identity";
@@ -204,6 +205,7 @@ import {
 import {
   createQuitIncidentFileRecorder,
   createUnclearableQuitCeiling,
+  QUIT_CEILING_MS,
   sweepOrphanPtySupervisors,
 } from "./app-quit-guarantee";
 import { shutdownAllAcpDriverSessions } from "./acp/acp-harness-driver";
@@ -1125,10 +1127,12 @@ let shutdownPromise: Promise<void> | null = null;
  * per-child SIGTERM→SIGKILL escalation (pty-host-core/entry), so graceful quit
  * settles well under this. This ceiling only fires if shutdown wedges ANYWHERE —
  * PTY or otherwise — and guarantees quit can NEVER hang indefinitely (v0.25.0
- * regression: packaged app hung forever on quit). It sits comfortably above the
- * PTY termination budget (term 10s + kill 20s + transport margin).
+ * regression: packaged app hung forever on quit). F-240: the constant lives in
+ * app-quit-guarantee.ts (QUIT_CEILING_MS) so the PTY budget in pty-manager.ts
+ * cross-checks against the same number — term 5s + kill 8s + exit lag 8s =
+ * 21s worst case per session, comfortably under the 45s ceiling.
  */
-const QUIT_HARD_CEILING_MS = 45_000;
+const QUIT_HARD_CEILING_MS = QUIT_CEILING_MS;
 // Registro durável de todo quit que precisou da rede de segurança: teto,
 // botão de forçar, sessão sem prova, órfão varrido. Se esta classe voltar,
 // aparece em dados — não num relato do operador.
@@ -1143,7 +1147,50 @@ const quitCeiling = createUnclearableQuitCeiling({
   ceilingMs: QUIT_HARD_CEILING_MS,
   exitApp: () => app.exit(0),
   record: recordQuitIncident,
+  describeProgress: describeShutdownProgress,
 });
+
+/**
+ * F-240: telemetria de fases do shutdown. O teto não sabe ONDE o quit
+ * travou — cada fase medida aparece no `detail` do `ceiling-fired` e, no
+ * caminho feliz, no trace `app-shutdown-phases`. Só rótulos/ms/ids (F-212:
+ * nunca argv/env/texto de processo).
+ */
+const shutdownProgress: {
+  startedAt: number;
+  phases: Array<{ name: string; ms: number }>;
+  current: string | null;
+  currentStartedAt: number;
+} = { startedAt: 0, phases: [], current: null, currentStartedAt: 0 };
+
+async function trackShutdownPhase<T>(
+  name: string,
+  run: () => Promise<T> | T,
+): Promise<T> {
+  const at = Date.now();
+  shutdownProgress.current = name;
+  shutdownProgress.currentStartedAt = at;
+  try {
+    return await run();
+  } finally {
+    shutdownProgress.phases.push({ name, ms: Date.now() - at });
+    shutdownProgress.current = null;
+  }
+}
+
+/** Resumo curto do progresso para o detail do incidente (≤ ~440 chars). */
+function describeShutdownProgress(): string {
+  if (shutdownProgress.startedAt === 0) return "shutdown ainda não iniciou";
+  const done = shutdownProgress.phases
+    .map((phase) => `${phase.name}=${phase.ms}ms`)
+    .join(", ");
+  const current = shutdownProgress.current
+    ? `fase atual=${shutdownProgress.current} (há ${
+        Date.now() - shutdownProgress.currentStartedAt
+      }ms); `
+    : "";
+  return `${current}concluídas: ${done || "nenhuma"}`.slice(0, 440);
+}
 const forceQuitNow = (origin: "slow-notice" | "failure-notice"): void => {
   recordQuitIncident({ kind: "force-button", detail: origin });
   app.exit(0);
@@ -1300,6 +1347,7 @@ function shutdown(): Promise<void> {
   if (shutdownComplete) return Promise.resolve();
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
+    shutdownProgress.startedAt = Date.now();
     stopMacOSDockWatchdog();
     // F-572: nenhum fechamento automático de pane pode disparar no meio do
     // teardown físico — a varredura e os timers param antes do PTY.
@@ -1308,34 +1356,46 @@ function shutdown(): Promise<void> {
     // Quiesce periodic orchestration before physical teardown, but retain its
     // exact exit observer and stores until PTY proof and reconciliation are
     // complete. A failed proof must leave the next retry operational.
-    await stopCronLoop();
+    await trackShutdownPhase("stopCronLoop", () => stopCronLoop());
     // Cancela refreshes de projecao pendentes ANTES do teardown fisico: um
     // timer de debounce disparando apos closeAll reabriria o runtime SQLite.
     uninstallMissionDiskProjection();
-    await closeAllDesignWritebacks();
+    await trackShutdownPhase("closeAllDesignWritebacks", () =>
+      closeAllDesignWritebacks(),
+    );
     // ACP children are not part of the PTY host inventory. Close them before
     // proving the PTY half, otherwise quitting could leave a harness orphaned
     // even though the normal terminal shutdown gate passed.
-    await shutdownAllAcpDriverSessions();
+    await trackShutdownPhase("shutdownAllAcpDriverSessions", () =>
+      shutdownAllAcpDriverSessions(),
+    );
     // Sem veto de sessão única: falha de prova vira incidente registrado e o
     // teardown segue até o fim — o processo resistente é abandonado ao teto,
     // nunca aguardado para sempre (diretiva 06/08).
     const ptyShutdown = await shutdownOrchestrationRuntimesRecordingStragglers(
       {
-        quiesceOrchestration: quiesceOrchestrationCoordinator,
-        // Generous fence: Darwin supervisor proof is unbounded once SIGTERM is
-        // delivered; main only bounds the ordered exit-event lag after that.
+        quiesceOrchestration: () =>
+          trackShutdownPhase(
+            "quiesceOrchestration",
+            quiesceOrchestrationCoordinator,
+          ),
+        // F-240: orçamento 5s/8s/8s — ver o comentário de
+        // APP_SHUTDOWN_PTY_TERMINATION (pty-manager) e QUIT_CEILING_MS.
         terminateAllSessions: () =>
-          terminateAllSessions(APP_SHUTDOWN_PTY_TERMINATION),
-        shutdownPtyHost,
+          trackShutdownPhase("terminateAllSessions", () =>
+            terminateAllSessions(APP_SHUTDOWN_PTY_TERMINATION),
+          ),
+        shutdownPtyHost: () => trackShutdownPhase("shutdownPtyHost", shutdownPtyHost),
         // Via Rápida: o supervisor cerimonial de exit do orquestrador morreu;
         // não há reconciliação durável pendente a provar no shutdown.
         reconcileOrchestratorExits: () => true,
-        closeOrchestration,
+        closeOrchestration: () =>
+          trackShutdownPhase("closeOrchestration", closeOrchestration),
       },
       recordQuitIncident,
     );
-    stopRemoteBridge();
+    await trackShutdownPhase("rest", async () => {
+      stopRemoteBridge();
     configureAgentHookEndpointPath(null);
     await stopAgentHookHttpServer().catch(() => {});
     await stopShotBridgeServer().catch(() => {});
@@ -1363,9 +1423,22 @@ function shutdown(): Promise<void> {
     disposeAuditLogRuntime();
     disposeContextWorkflowRegistry();
     disposeWorktreeRuntimeRegistry();
-    closeDb();
-    projectRuntimeManager?.closeAll();
-    projectRuntimeManager = null;
+      closeDb();
+      projectRuntimeManager?.closeAll();
+      projectRuntimeManager = null;
+    });
+    // F-240: medição de fases no trace — só rótulos/ms/ids de sessão e
+    // adapter (F-212). `current` já é null aqui: toda fase concluiu.
+    trace({
+      kind: "app-shutdown-phases",
+      totalMs: Date.now() - shutdownProgress.startedAt,
+      phases: shutdownProgress.phases,
+      sessions: ptyShutdown.attemptedSessionIds.length,
+      failedSessions: ptyShutdown.failedSessionIds.map((sessionId) => ({
+        id: sessionId,
+        adapterId: sessionAdapterId(sessionId) ?? "unknown",
+      })),
+    });
     shutdownComplete = true;
     if (isCurrentProcessSmokeTest()) {
       // Reader-visible release evidence: the app itself reached the end of the
