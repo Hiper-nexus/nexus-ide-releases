@@ -766,3 +766,14 @@ node scripts/smoke-prod-license.mjs
 ```
 
 Ele cria uma conta sintética (`@nexus-e2e.invalid`) com um código de login de uso único no D1 de produção, troca o código pelo endpoint real, confere a licença e **apaga a conta** (também se algo falhar no meio). Prova, em 12 conferências: sessão e renovação, código de uso único, licença **assinada pela API e aceita pela chave pública embutida no app** (`../nexus-ide/resources/license-pubkey.pem`), teste de 15 dias com teto de 2 agentes e validade de até 24 h. Se a chave pública do app divergir da de assinatura da API, todo cliente novo fica bloqueado e este é o teste que acusa. Não toca no Stripe nem em conta de cliente e não imprime token.
+
+## Verificação dos segredos OAuth (Google e GitHub) sem usar conta de ninguém
+
+O redirecionamento de ida funciona mesmo com segredo errado; quem quebra o login de todo cliente é a volta (troca do código pelo token). Para provar sem login humano, depois de trocar qualquer segredo OAuth:
+
+1. `npx wrangler tail nexus-cloud-api --format json > /tmp/tail.log &`
+2. Inicie o login (`GET /v1/auth/<provedor>?app_state=<hex>&code_challenge=<43 base64url>`), pegue o `state` do `Location` e chame `GET /v1/auth/<provedor>/callback?code=falso&state=<state>`: responde 502, de propósito.
+3. No log, a linha `[oauth] token …` diz a verdade: GitHub `provider_error=bad_verification_code` e Google `http 400` = credenciais **aceitas** (só o código falso foi recusado); GitHub `incorrect_client_credentials` ou Google `http 401` = **segredo errado**.
+4. Abra o `Location` do passo 2 com `curl`: 302 para a tela de login do provedor = client id e `redirect_uri` cadastrados; uma página 400 de `redirect_uri_mismatch` = faltou cadastrar o endereço de retorno.
+
+Verificado em 01/10/2026: os dois provedores aceitam as credenciais de produção e o endereço de retorno. Só o clique de consentimento de uma pessoa fica sem prova automática.
