@@ -40,6 +40,8 @@ process.env.NEXUS_JARVIS_METRICS_FILE ??= path.join(baseDir, 'jarvis-metrics.log
 delete process.env.TYPESAFE_API_KEY;
 delete process.env.TYPESAFE_BASE_URL;
 delete process.env.NEXUS_JEV_MODEL;
+delete process.env.CLOUDFLARE_API_TOKEN;
+delete process.env.CLOUDFLARE_ACCOUNT_ID;
 
 /**
  * `localStorage` sob jsdom.

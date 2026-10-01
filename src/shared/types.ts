@@ -38,7 +38,7 @@ import type {
   PendingContextDraft,
 } from './context-draft-types';
 import type { UpdateState } from './update-ipc';
-import type { DecisionModelStatus, SetDecisionKeyRequest } from './decision-models';
+import type { DecisionModelStatus, SetDecisionKeyRequest, TestDecisionModelRequest } from './decision-models';
 import type {
   JevDecisionRow,
   JevDecisionStatsResult,
@@ -640,6 +640,7 @@ export interface NexusApi {
   decisionModels: {
     status(): Promise<DecisionModelStatus>;
     setKey(req: SetDecisionKeyRequest): Promise<{ ok: boolean; error?: string }>;
+    test(req?: TestDecisionModelRequest): Promise<JevTestResult>;
   };
   jev: {
     /** Status sem segredo (presença da chave, autopilot, stats de uso). */

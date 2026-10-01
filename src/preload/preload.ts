@@ -943,6 +943,7 @@ const api: NexusApi = {
   decisionModels: {
     status: () => ipcRenderer.invoke(DECISION_MODEL_CHANNELS.status),
     setKey: (req) => ipcRenderer.invoke(DECISION_MODEL_CHANNELS.setKey, req),
+    test: (req) => ipcRenderer.invoke(DECISION_MODEL_CHANNELS.test, req),
   },
   jev: {
     status: () => ipcRenderer.invoke(JEV_CHANNELS.status),

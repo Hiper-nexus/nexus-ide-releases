@@ -47,4 +47,21 @@ describe('trusted Clef configuration IPC', () => {
     expect(() => handlers.get('decisionModels:setKey')!({ ...event, senderFrame: {} }, { token: 'example-token' })).toThrow('não autorizado');
     expect(setKey).not.toHaveBeenCalled();
   });
+
+  it('tests the configured Cloudflare account and requested variant without returning the token', async () => {
+    registerDecisionModelIpc({
+      getSettings: () => ({ mode: 'auto', clefModel: 'clef', cloudflareAccountId: '0123456789abcdef0123456789abcdef', visionEnabled: false }),
+      resolveToken: () => 'synthetic-private-token',
+      testConnection: async connection => ({ ok: connection.token === 'synthetic-private-token'
+        && connection.accountId === '0123456789abcdef0123456789abcdef', detail: `Connected ${connection.model}` }),
+    });
+    const result = await handlers.get('decisionModels:test')!(trustedEvent(), { model: 'clef-flash' });
+    expect(result).toEqual({ ok: true, detail: 'Connected clef-flash' });
+    expect(JSON.stringify(result)).not.toContain('synthetic-private-token');
+  });
+
+  it('does not run an inference test when account or token is absent', async () => {
+    registerDecisionModelIpc({ resolveToken: () => undefined });
+    expect(await handlers.get('decisionModels:test')!(trustedEvent(), {})).toMatchObject({ ok: false });
+  });
 });

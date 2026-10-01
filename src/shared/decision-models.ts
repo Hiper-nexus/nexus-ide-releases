@@ -15,11 +15,16 @@ export const setDecisionKeyRequestSchema = z.object({
   token: z.string().trim().max(512).refine(value => !/[\r\n]/.test(value)),
 }).strict();
 
+export const testDecisionModelRequestSchema = z.object({
+  model: z.enum(['clef', 'clef-flash']).optional(),
+}).strict();
+
 export type DecisionSettings = z.infer<typeof decisionSettingsSchema>;
 export type DecisionMode = DecisionSettings['mode'];
 export type ClefModel = DecisionSettings['clefModel'];
 export type DecisionProvider = 'jev' | 'clef';
 export type SetDecisionKeyRequest = z.infer<typeof setDecisionKeyRequestSchema>;
+export type TestDecisionModelRequest = z.infer<typeof testDecisionModelRequestSchema>;
 
 export interface DecisionRoute {
   provider: DecisionProvider;
