@@ -80,6 +80,12 @@ class DataCafeWorld {
     this.dev.group.scale.setScalar(1.15);
     this.scene.add(this.dev.group);
     this.particles = new Particles(this.kit, this.scene, this.calm ? 120 : 260);
+    this.goalPoint = null;
+    this.pointer = document.createElement('span');
+    this.pointer.className = 'dc-pointer';
+    this.pointer.setAttribute('aria-hidden', 'true');
+    this.pointer.hidden = true;
+    host.append(this.pointer);
 
     // Estado do jogo: sempre substituído por valores novos dos módulos puros.
     this.grid = createGrid(LAYOUT);
@@ -255,7 +261,31 @@ class DataCafeWorld {
     this.on.racks?.(powered, MODELS.length);
     this.dc.setNoc(this.tickets.map(ticket => ticket.title), this.racks.order.map(id => rackState(this.racks, id)));
     this.audio?.fan(powered / MODELS.length);
+    this.goalPoint = this.playing ? this.objective() : null;
+    this.dc.setObjective(this.goalPoint);
+    this.on.objective?.(this.goalPoint ? { text: this.goalPoint.text, kind: this.goalPoint.kind } : null);
     this.shownVersion = this.version;
+  }
+
+  /** Para onde o jogador deveria ir agora: incidente, café baixo, rack livre com a GPU na mão ou a doca. */
+  objective() {
+    const top = this.tickets[0];
+    if (!top) return null;
+    if (top.kind === 'incident') { const rack = this.dc.racks.get(top.rackId); return { x: rack.x, z: rack.front + 0.4, kind: 'incident', text: top.title }; }
+    if (top.kind === 'coffee') return { x: this.dc.coffee.x, z: this.dc.coffee.z + 0.6, kind: 'coffee', text: top.title };
+    if (this.carrying) {
+      // O rack desligado mais perto de quem carrega, não o primeiro da lista.
+      let best = null, bestDistance = Infinity;
+      for (const ticket of this.tickets) {
+        if (ticket.kind !== 'install') continue;
+        const rack = this.dc.racks.get(ticket.rackId);
+        const distance = Math.hypot(rack.x - this.body.x, rack.front - this.body.z);
+        if (distance < bestDistance) { best = rack; bestDistance = distance; }
+      }
+      return best ? { x: best.x, z: best.front + 0.4, kind: 'install', text: 'Leve a GPU até um rack desligado (o farol rosa mostra o mais perto)' } : null;
+    }
+    const waiting = this.tickets.filter(ticket => ticket.kind === 'install').length;
+    return { x: this.dc.dock.x, z: this.dc.dock.z + 0.7, kind: 'install', text: `Pegue uma GPU na doca · ${waiting} ${waiting === 1 ? 'rack esperando' : 'racks esperando'}` };
   }
 
   // ---------- Simulação ----------
@@ -377,6 +407,7 @@ class DataCafeWorld {
     const effects = this.particles.update(running ? dt : 0);
     this.updateCamera(dt, seconds);
     this.renderer.render(this.scene, this.camera);
+    this.updatePointer();
     this.clocks.dataset += raw;
     if (this.clocks.dataset > 0.5) {
       this.clocks.dataset = 0;
@@ -400,6 +431,24 @@ class DataCafeWorld {
     rigStep(this.cam, this.goal, dt, this.calm ? 40 : RIG.follow);
     this.camera.position.set(this.cam.x, this.cam.y, this.cam.z);
     this.camera.lookAt(this.cam.tx, this.cam.ty, this.cam.tz);
+  }
+
+  /** Seta na borda da tela quando o objetivo está fora do quadro. */
+  updatePointer() {
+    const goal = this.goalPoint;
+    if (!goal || !this.playing) { if (!this.pointer.hidden) this.pointer.hidden = true; return; }
+    const p = this.scratch.set(goal.x, 1.2, goal.z).project(this.camera);
+    const onScreen = p.z < 1 && Math.abs(p.x) < 0.92 && Math.abs(p.y) < 0.85;
+    if (onScreen) { if (!this.pointer.hidden) this.pointer.hidden = true; return; }
+    let x = p.x, y = p.y;
+    if (p.z > 1) { x = -x; y = -y; }
+    const scale = 1 / Math.max(Math.abs(x) / 0.9, Math.abs(y) / 0.8, 1e-6);
+    x *= scale; y *= scale;
+    const w = this.host.clientWidth, h = this.host.clientHeight;
+    const angle = Math.atan2(-y, x);
+    this.pointer.hidden = false;
+    this.pointer.dataset.kind = goal.kind;
+    this.pointer.style.transform = `translate(${((x * 0.5 + 0.5) * w).toFixed(1)}px,${((-y * 0.5 + 0.5) * h).toFixed(1)}px) translate(-50%,-50%) rotate(${angle.toFixed(3)}rad)`;
   }
 
   floatText(text) {
@@ -572,6 +621,7 @@ class DataCafeWorld {
     this.resizeObserver?.disconnect();
     this.intersection?.disconnect();
     this.host.querySelectorAll('.dc-float').forEach(span => span.remove());
+    this.pointer.remove();
     this.sun.shadow.dispose();
     this.kit.dispose();
     this.renderer.dispose();

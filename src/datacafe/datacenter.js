@@ -520,6 +520,23 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
   ring.rotation.x = -Math.PI / 2;
   ring.visible = false;
 
+  // ---------- Farol do objetivo: feixe translúcido e seta que quica ----------
+  const beam = kit.mesh(root, kit.geo('beam', () => new CylinderGeometry(0.32, 0.42, 3.2, 20, 1, true)), kit.mat(PALETTE.pink, { basic: true, transparent: true, opacity: 0.16 }), [0, 1.6, 0], { cast: false, receive: false });
+  beam.material.depthWrite = false;
+  beam.renderOrder = 3;
+  const arrow = kit.mesh(root, kit.geo('arrow', () => new OctahedronGeometry(0.18)), kit.mat(PALETTE.pink, { basic: true }), [0, 2.9, 0], { cast: false, receive: false });
+  arrow.scale.set(1, 1.6, 1);
+  beam.visible = arrow.visible = false;
+  let objectiveY = 0;
+
+  function setObjective(target) {
+    beam.visible = arrow.visible = Boolean(target);
+    if (!target) return;
+    objectiveY = target.y ?? 0;
+    beam.position.set(target.x, 1.6 + objectiveY, target.z);
+    arrow.position.set(target.x, 2.9 + objectiveY, target.z);
+  }
+
   function highlight(target) {
     if (!target) { ring.visible = false; return; }
     ring.visible = true;
@@ -581,6 +598,11 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
     if (neonChanged) neonMesh.instanceColor.needsUpdate = true;
     if (alertsChanged) alertMesh.instanceMatrix.needsUpdate = true;
     if (ring.visible) ringMat.opacity = calm ? 0.8 : 0.55 + 0.35 * Math.sin(time * 5);
+    if (arrow.visible && !calm) {
+      arrow.position.y = 2.9 + objectiveY + Math.abs(Math.sin(time * 3)) * 0.25;
+      arrow.rotation.y = time * 1.5;
+      beam.material.opacity = 0.12 + 0.06 * Math.sin(time * 2.4);
+    }
     nocClock += dt;
     if (nocClock > 1) { nocClock = 0; nocState = { ...nocState, clock: time }; nocTex.redraw(); }
   }
@@ -593,5 +615,5 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
   // Primeira pintura dos racks, antes do primeiro quadro.
   update(0, 0, true);
 
-  return { root, racks, coffee, dock, highlight, setNoc, update, tier };
+  return { root, racks, coffee, dock, highlight, setObjective, setNoc, update, tier };
 }

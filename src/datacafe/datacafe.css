@@ -74,6 +74,10 @@
 .dc-close:hover{color:var(--ink)}
 
 .dc-joystick{display:none}
+.dc-pointer{position:absolute;left:0;top:0;z-index:5;width:0;height:0;border-top:12px solid transparent;border-bottom:12px solid transparent;border-left:22px solid var(--pink);filter:drop-shadow(0 0 8px rgb(255 79 139/.7));pointer-events:none;will-change:transform}
+.dc-pointer[data-kind=incident]{border-left-color:#ff4d4d;filter:drop-shadow(0 0 8px rgb(255 77 77/.8))}
+.dc-pointer[data-kind=coffee]{border-left-color:var(--ember,#ffb27a)}
+.dc-pointer[hidden]{display:none}
 
 /* Embutido na página principal: sem a barra superior da comunidade. */
 .dc-hud[data-variant=embed]{--dc-top:16px}

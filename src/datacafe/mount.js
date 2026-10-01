@@ -121,10 +121,11 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
         $('.dc-racks-count').textContent = `${powered}/${total}`;
         $('.dc-racks').classList.toggle('complete', powered === total);
       },
+      objective(goal) {
+        $('.dc-ticket-now').textContent = goal ? goal.text : 'NOC em ordem. Bora de café?';
+        $('.dc-ticket-now').dataset.kind = goal?.kind ?? 'ok';
+      },
       tickets(list) {
-        const top = list[0];
-        $('.dc-ticket-now').textContent = top ? `TICKET · ${top.title}` : 'NOC em ordem. Bora de café?';
-        $('.dc-ticket-now').dataset.kind = top?.kind ?? 'ok';
         $('.dc-ticket-list').replaceChildren(...list.slice(0, 6).map(ticket => {
           const item = document.createElement('li');
           item.dataset.kind = ticket.kind;
