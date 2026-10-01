@@ -57,3 +57,21 @@ export function loginErrorPage(c: Context, message: string, status: ContentfulSt
 <p class="error" role="alert">${escapeHtml(message)}</p>
 <p class="hint">Volte ao NexusIDE e clique em “Abrir de novo” para tentar outra vez.</p>`), status);
 }
+
+/** Descadastro feito. Nada na página vem da requisição: o link só carrega o que já foi verificado. */
+export function unsubscribeDonePage(c: Context, siteUrl: string): Response {
+  c.header('Cache-Control', 'no-store');
+  return page(c, layout('Avisos cancelados', '', `
+<h1>Avisos cancelados</h1>
+<p>Pronto: você não vai mais receber estes avisos por e-mail.</p>
+<a class="cta" href="${escapeHtml(siteUrl)}">Ir para o NexusIDE</a>`), 200);
+}
+
+/** Resposta única para qualquer link recusado (token errado, conta alheia, parâmetro faltando): não revela qual deles. */
+export function unsubscribeInvalidPage(c: Context): Response {
+  c.header('Cache-Control', 'no-store');
+  return page(c, layout('Link inválido', '', `
+<h1>Link inválido</h1>
+<p class="error" role="alert">Este link de descadastro não é válido ou está incompleto.</p>
+<p class="hint">Use o link mais recente de um e-mail do NexusIDE.</p>`), 400);
+}
