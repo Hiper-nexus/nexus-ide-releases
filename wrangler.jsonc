@@ -15,5 +15,5 @@
   "vars":{"PUBLIC_BASE_URL":"https://api.nexuside.app","PUBLIC_SITE_URL":"https://nexuside.app","APP_DEEP_LINK_BASE":"nexus://auth","SHOT_DEEP_LINK_BASE":"nexus-shot://auth/callback","APP_MODE":"staging","MIGRATION_READY":"true","ADMIN_EMAILS":"admin@volarehost.com.br,retornoja@gmail.com","TRIAL_DAYS":"15","TRIAL_MAX_AGENTS":"2","TRIAL_CLOUD_SYNC":"false","STRIPE_PRICE_PRO":"price_1ULpqf4kFhDStKADzAvYIrQe","GITHUB_OAUTH_ID":"Ov23liYym8dKGRydr2Mi","GOOGLE_OAUTH_ID":"696325447792-m8nrl6nm9eeav9brhkhcmrs9ukitmkl2.apps.googleusercontent.com","STRIPE_PRICE_TEAM":""},
   "triggers":{"crons":["17 * * * *"]},
   "observability":{"enabled":true},
-  "ratelimits":[{"name":"AUTH_RATE_LIMITER","namespace_id":"2001","simple":{"limit":20,"period":60}},{"name":"API_RATE_LIMITER","namespace_id":"2002","simple":{"limit":120,"period":60}}]
+  "ratelimits":[{"name":"AUTH_RATE_LIMITER","namespace_id":"2001","simple":{"limit":20,"period":60}},{"name":"API_RATE_LIMITER","namespace_id":"2002","simple":{"limit":120,"period":60}},{"name":"REDEEM_RATE_LIMITER","namespace_id":"2003","simple":{"limit":10,"period":60}}]
 }

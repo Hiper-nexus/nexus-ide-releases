@@ -21,7 +21,7 @@ async function account(db: SqliteD1, id: string, paid = false) {
   return issueTokens(db, id, 'desktop');
 }
 function environment(db: SqliteD1): CloudflareBindings {
-  return { DB: db, AUTH_RATE_LIMITER: { limit: async () => ({ success: true }) }, API_RATE_LIMITER: { limit: async () => ({ success: true }) }, PUBLIC_BASE_URL: 'https://nexuside.app', PUBLIC_SITE_URL: 'https://nexuside.app', APP_DEEP_LINK_BASE: 'nexus://auth', SHOT_DEEP_LINK_BASE: 'nexus-shot://auth/callback', APP_MODE: 'staging', MIGRATION_READY: 'false', STRIPE_PRICE_PRO: '', STRIPE_PRICE_TEAM: '', GITHUB_OAUTH_ID: '', GOOGLE_OAUTH_ID: '', ADMIN_EMAILS: '', TRIAL_DAYS: '15', TRIAL_MAX_AGENTS: '2', TRIAL_CLOUD_SYNC: 'false' };
+  return { DB: db, AUTH_RATE_LIMITER: { limit: async () => ({ success: true }) }, API_RATE_LIMITER: { limit: async () => ({ success: true }) }, REDEEM_RATE_LIMITER: { limit: async () => ({ success: true }) }, PUBLIC_BASE_URL: 'https://nexuside.app', PUBLIC_SITE_URL: 'https://nexuside.app', APP_DEEP_LINK_BASE: 'nexus://auth', SHOT_DEEP_LINK_BASE: 'nexus-shot://auth/callback', APP_MODE: 'staging', MIGRATION_READY: 'false', STRIPE_PRICE_PRO: '', STRIPE_PRICE_TEAM: '', GITHUB_OAUTH_ID: '', GOOGLE_OAUTH_ID: '', ADMIN_EMAILS: '', TRIAL_DAYS: '15', TRIAL_MAX_AGENTS: '2', TRIAL_CLOUD_SYNC: 'false' };
 }
 function app() {
   const router = new Hono<AppEnv>();

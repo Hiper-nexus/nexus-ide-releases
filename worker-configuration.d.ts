@@ -5,6 +5,7 @@ interface __BaseEnv_CloudflareBindings {
 	DB: D1Database;
 	AUTH_RATE_LIMITER: RateLimit;
 	API_RATE_LIMITER: RateLimit;
+	REDEEM_RATE_LIMITER: RateLimit;
 	PUBLIC_BASE_URL: string;
 	PUBLIC_SITE_URL: string;
 	APP_DEEP_LINK_BASE: string;

@@ -12,6 +12,7 @@ import { syncRoutes } from './sync.js';
 import { PRO_MONTHLY_PRICE } from './stripe.js';
 
 const WEBHOOK_PATH = '/v1/billing/webhook';
+const REDEEM_PATH = '/v1/license/redeem';
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'no-referrer',
@@ -42,7 +43,10 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
   const rateLimit: MiddlewareHandler<AppEnv> = async (c, next) => {
     // Stripe retries arrive in bursts and are already protected by signature and idempotency.
     if (c.req.path !== WEBHOOK_PATH) {
-      const limiter = /^\/v1\/(web\/)?auth\//.test(c.req.path) ? c.env.AUTH_RATE_LIMITER : c.env.API_RATE_LIMITER;
+      // O código de licença é a única barreira do resgate: teto próprio e mais baixo. Sem o binding (deploy antigo) cai no geral.
+      const limiter = /^\/v1\/(web\/)?auth\//.test(c.req.path) ? c.env.AUTH_RATE_LIMITER
+        : c.req.path === REDEEM_PATH ? (c.env.REDEEM_RATE_LIMITER ?? c.env.API_RATE_LIMITER)
+        : c.env.API_RATE_LIMITER;
       const { success } = await limiter.limit({ key: c.req.header('CF-Connecting-IP') ?? 'unknown' });
       if (!success) throw new HTTPException(429, { message: 'Muitas tentativas. Aguarde um momento antes de continuar.' });
     }

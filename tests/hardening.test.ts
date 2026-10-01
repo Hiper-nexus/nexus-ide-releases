@@ -168,6 +168,26 @@ test('readiness checks are rate limited like the rest of the API', async () => {
   db.close();
 });
 
+test('license code redemption has its own, stricter rate limiter and never spends the general API budget', async () => {
+  const db = new SqliteD1();
+  const allow = { limit: async () => ({ success: true }) };
+  const deny = { limit: async () => ({ success: false }) };
+  const request = (env: CloudflareBindings) => createApp().request('/v1/license/redeem', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: 'NEXUS-AAAA-BBBB-CCCC' }) }, env);
+  // O limite do resgate nega mesmo com o geral livre: o código é a única barreira e merece teto próprio.
+  assert.equal((await request(environment(db, { API_RATE_LIMITER: allow, REDEEM_RATE_LIMITER: deny }))).status, 429);
+  // O resgate não gasta o orçamento geral: com o geral esgotado e o do resgate livre, a rota segue (401 por falta de sessão, nunca 429).
+  assert.equal((await request(environment(db, { API_RATE_LIMITER: deny, REDEEM_RATE_LIMITER: allow }))).status, 401);
+  db.close();
+});
+
+test('redemption keeps working on a deploy that predates the dedicated limiter binding', async () => {
+  const db = new SqliteD1();
+  const denied = (await createApp().request('/v1/license/redeem', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: 'NEXUS-AAAA-BBBB-CCCC' }) }, environment(db, { REDEEM_RATE_LIMITER: undefined }))).status;
+  assert.notEqual(denied, 429, 'sem o binding novo cai no limite geral, sem lançar');
+  assert.notEqual(denied, 500);
+  db.close();
+});
+
 test('the production webhook verifier accepts only the exact signed body within the time tolerance', async () => {
   const secret = 'whsec_fixture_only';
   const payload = JSON.stringify({ id: 'evt_signed', object: 'event', type: 'invoice.paid', data: { object: { id: 'in_1', subscription: 'sub_1' } } });
