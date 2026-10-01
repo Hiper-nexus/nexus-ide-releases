@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mission, OrchPaneSpawnRequest } from '../../shared/orch-types';
 import { buildGridTree, listPanes } from '../lib/split-tree';
 import { setActiveWorkspacePath } from '../state/active-workspace';
+import { useAccessStore } from '../state/access-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchBridge } from './orch-bridge';
 
@@ -134,6 +135,7 @@ function orchestratorSpawnRequest(
 describe('orchestration bridge orchestrator dedup', () => {
   beforeEach(() => {
     useLayoutStore.setState({ hydrated: true });
+    useAccessStore.setState({ canUseApp: true, loading: false, maxAgents: null, cloudSync: true, blockedReason: null });
   });
 
   afterEach(() => {
@@ -264,6 +266,7 @@ describe('orchestration bridge orchestrator dedup', () => {
 describe('orchestration bridge leadership mirror', () => {
   beforeEach(() => {
     useLayoutStore.setState({ hydrated: true });
+    useAccessStore.setState({ canUseApp: true, loading: false, maxAgents: null, cloudSync: true, blockedReason: null });
     // Dois orquestradores da MESMA missão: o que o Main confirma (sessão
     // durável) e um impostor que se promoveu antes da religação.
     useLayoutStore.setState({
