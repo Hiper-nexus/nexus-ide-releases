@@ -5,7 +5,8 @@ import { NOTICE_KINDS } from '../src/email/notices.js';
 
 const UNSUB = 'https://api.nexuside.app/v1/notices/unsubscribe?a=acc-1&t=abc_DEF-123';
 const base = { name: 'Ana Silva', trialEndsAt: '2026-10-16T15:00:00.000Z', daysLeft: 3, unsubscribeUrl: UNSUB };
-const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/u;
+// Pictogramas coloridos renderizam diferente em cada cliente e pesam no filtro de spam; ✓ → █ ░ do visual de terminal são texto.
+const EMOJI = /[\u{1F300}-\u{1FAFF}\u{FE0F}]/u;
 
 test('todo tipo renderiza assunto de uma linha, HTML e texto, sempre com descadastro e a razão do envio', () => {
   for (const kind of NOTICE_KINDS) {
@@ -103,4 +104,66 @@ test('data inválida não derruba a renderização: o texto fala do fim do teste
 test('o aviso de teste terminado não afirma a duração do teste (o admin pode ter estendido)', () => {
   assert.doesNotMatch(renderNotice('trial_ended', base).text, /\b\d+ dias\b/);
   assert.match(renderNotice('trial_ended', base).text, /terminou em 16 de outubro de 2026/);
+});
+
+// ---- Cara de dev e tom jovial ----
+const TERMINAL_COMMAND = { welcome: '$ nexus init', trial_ending_3d: '$ nexus trial --status', trial_ending_1d: '$ nexus trial --status', trial_ended: '$ nexus trial --status' } as const;
+
+test('visual de dev: cada aviso traz uma janela de terminal com o comando, em fonte monoespaçada, no HTML e no texto', () => {
+  for (const kind of NOTICE_KINDS) {
+    const out = renderNotice(kind, base);
+    assert.ok(out.text.includes(TERMINAL_COMMAND[kind]), `${kind}: comando no texto`);
+    // No HTML o prompt `$` é rosa e o comando vai num span próprio.
+    assert.ok(out.html.includes('>$</span>'), `${kind}: prompt`);
+    assert.ok(out.html.includes(escapeForHtml(TERMINAL_COMMAND[kind].slice(2))), `${kind}: comando no HTML`);
+    assert.match(out.html, /font-family:'SF Mono'/, `${kind}: fonte monoespaçada`);
+    assert.match(out.html, /nexus — zsh/, `${kind}: barra de título do terminal`);
+    assert.match(out.html, /#ff5f57/, `${kind}: bolinhas da janela`);
+  }
+});
+function escapeForHtml(value: string): string { return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+test('a barra de progresso do teste conta os dias que já passaram, com os números do teste', () => {
+  assert.match(renderNotice('welcome', base).text, /\[░{15}\] 0\/15/);
+  assert.match(renderNotice('trial_ending_3d', base).text, /\[█{12}░{3}\] 12\/15/);
+  assert.match(renderNotice('trial_ending_3d', { ...base, daysLeft: 2 }).text, /\[█{13}░{2}\] 13\/15/);
+  assert.match(renderNotice('trial_ending_1d', { ...base, daysLeft: 1 }).text, /\[█{14}░\] 14\/15/);
+  assert.match(renderNotice('trial_ending_3d', { ...base, trialDays: 7, daysLeft: 3 }).text, /\[█{9}░{6}\] 4\/7/);
+  // Teste estendido pelo admin: no aviso de fim a barra não afirma uma duração que pode não ser a real.
+  assert.doesNotMatch(renderNotice('trial_ended', base).text, /[█░]/);
+});
+
+test('a voz é de dev e bem-humorada: manchete, comentário final e nenhum clichê de marketing', () => {
+  const lines = { welcome: /passou de primeira/, trial_ending_3d: /hot reload/, trial_ending_1d: /último commit/, trial_ended: /Exit code 0/ } as const;
+  for (const kind of NOTICE_KINDS) {
+    const out = renderNotice(kind, base);
+    assert.match(out.text, lines[kind], `${kind}: manchete`);
+    assert.match(out.text, /\nP\.S\.: /, `${kind}: comentário final`);
+    assert.doesNotMatch(out.text, /imperdível|corra|aproveite agora|oferta|não perca/i, `${kind}: sem urgência de marketing`);
+  }
+});
+
+test('a piada nunca atrapalha o que importa: prazo, o que fazer e que nada é cobrado sem confirmação', () => {
+  for (const kind of ['trial_ending_3d', 'trial_ending_1d', 'trial_ended'] as const) {
+    const text = renderNotice(kind, base).text;
+    assert.match(text, /16 de outubro de 2026/, `${kind}: data`);
+    assert.match(text, /plano Pro/, `${kind}: o que fazer`);
+    assert.match(text, /Nada é cobrado sem a sua confirmação/, `${kind}: sem cobrança surpresa`);
+  }
+});
+
+test('o aviso de boas-vindas aponta o download, e os valores do terminal também são escapados', () => {
+  assert.match(renderNotice('welcome', base).html, /href="https:\/\/nexuside\.app\/#download"/);
+  assert.ok(renderNotice('welcome', base).text.includes('https://nexuside.app/#download'));
+  const evil = renderNotice('welcome', { ...base, name: '<b>x</b>', trialEndsAt: '2026-10-16T15:00:00.000Z' });
+  assert.doesNotMatch(evil.html, /<b>x<\/b>/);
+});
+
+test('os assuntos continuam curtos, em uma linha e sem pictograma, mesmo com a piada', () => {
+  for (const kind of NOTICE_KINDS) {
+    const subject = renderNotice(kind, base).subject;
+    assert.ok(subject.length <= 78, `${kind}: ${subject.length} caracteres`);
+    assert.doesNotMatch(subject, EMOJI);
+  }
+  assert.match(renderNotice('welcome', base).subject, /15 dias de teste/);
 });
