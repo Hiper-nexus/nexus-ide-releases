@@ -117,7 +117,7 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
     watchMs: FIRST_RUN_WATCH_WINDOW_MS,
   },
   {
-    adapterIds: ['claude', 'glm', 'glm-flash', 'longcat'],
+    adapterIds: ['claude', 'glm', 'glm-flash', 'longcat', 'deepseek'],
     name: 'claude-bypass-acknowledgement',
     phrases: [
       'claude code running in bypass permissions mode',
@@ -132,7 +132,7 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
     // F-681: o Claude Code novo desenha o mesmo aviso SEM números e com o
     // cursor já em "Yes, I accept" (campo 29/09) — a assinatura numerada acima
     // não casa e o pane ficava parado. As teclas saem do cursor desenhado.
-    adapterIds: ['claude', 'glm', 'glm-flash', 'longcat'],
+    adapterIds: ['claude', 'glm', 'glm-flash', 'longcat', 'deepseek'],
     name: 'claude-bypass-acknowledgement-unnumbered',
     phrases: [
       'claude code running in bypass permissions mode',
@@ -151,7 +151,7 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
     // the mission/review brief is pasted into the modal and swallowed.
     // Option 1 is "Yes, proceed" — never force the default-accept here:
     // Down+Enter would pick "No, exit" and kill the session.
-    adapterIds: ['claude', 'glm', 'glm-flash', 'longcat'],
+    adapterIds: ['claude', 'glm', 'glm-flash', 'longcat', 'deepseek'],
     name: 'claude-workspace-trust',
     phrases: [
       'do you trust the files in this folder?',
@@ -170,7 +170,7 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
     // 2.1.267 mudou a FORMA além da redação: as opções perderam os números e o
     // cursor nasce em "No, exit" — a tecla que aceitava na 2.1.220 (`1\r`)
     // encerra o pane agora. Por isso a resposta é lida da própria tela.
-    adapterIds: ['claude', 'glm', 'glm-flash', 'longcat'],
+    adapterIds: ['claude', 'glm', 'glm-flash', 'longcat', 'deepseek'],
     name: 'claude-workspace-trust-quick-safety-check',
     phrases: [
       'quick safety check: is this a project you created or one you trust?',
