@@ -37,7 +37,11 @@ import {
   returnAdoptedAgentSessionToUser,
 } from '../pty/pty-manager';
 import { listProviderSettings } from '../persistence/provider-config-store';
-import { routeTask, type TaskTier } from './task-router';
+import {
+  GLOBAL_USE_WINDOW_MS,
+  routeTask,
+  type TaskTier,
+} from './task-router';
 import {
   classifyTaskWithSkillForRouting,
   routingOverridesFrom,
@@ -1667,9 +1671,15 @@ export async function routeTaskForCaller(
   }
   let missionAdapterIds: string[] | undefined;
   let reservedAdapterIds: string[] | undefined;
+  let globalUseCounts: Map<string, number> | undefined;
   if (missionId) {
     try {
       const stores = getProjectDomainStores(ctx.scope);
+      // F-232: uso GLOBAL de rota neste checkout (7 dias, todas as missões) —
+      // alimenta o fair-share para os providers nunca escolhidos entrarem.
+      globalUseCounts = stores.missions.consumedRouteCountsByAdapterSince(
+        Date.now() - GLOBAL_USE_WINDOW_MS,
+      );
       const recorded = stores.missionPanes.list(missionId);
       missionAdapterIds = [
         ...recorded.map((pane) => pane.adapterId).filter(Boolean),
@@ -1689,6 +1699,7 @@ export async function routeTaskForCaller(
     } catch {
       missionAdapterIds = undefined;
       reservedAdapterIds = undefined;
+      globalUseCounts = undefined;
     }
   }
   // Preferência interna (pin de adapterId que virou preferência suave no
@@ -1734,6 +1745,7 @@ export async function routeTaskForCaller(
         usedAdapterIds.length > 0 ? new Set(usedAdapterIds) : undefined,
       missionUseCounts,
       preferAdapters: preferAdapters.length > 0 ? preferAdapters : undefined,
+      ...(globalUseCounts ? { globalUseCounts } : {}),
       // Uso geral: o multi-score (benchmark oficial + diversidade + custo)
       // vale também para o fan-out do operador sem missão — a ordem crua da
       // tabela não é medida de capacidade.

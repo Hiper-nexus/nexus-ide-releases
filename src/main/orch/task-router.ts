@@ -50,6 +50,19 @@ import { modelAccessQuarantine } from './model-access-quarantine';
 
 export type TaskTier = 'trivial' | 'easy' | 'medium' | 'hard' | 'critical';
 
+/**
+ * F-232 (regra do operador, 01/10): janela do fair-share GLOBAL — reservas de
+ * rota consumidas por adapter neste checkout nos últimos 7 dias, em TODAS as
+ * missões. A rotação por missão sozinha só reparte assentos entre os 3
+ * primeiros do ranking (1–3 workers/missão); quem nunca entra na missão nunca
+ * acumula uso — 7 dias medidos: muse/grok/openclaude/minimax/deepseek com
+ * zero reservas.
+ */
+export const GLOBAL_USE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Gap mínimo para o fair-share trocar o líder — evita pingue-pongue. */
+export const FAIR_SHARE_GAP = 2;
+
 export interface RouteCandidate {
   adapterId: string;
   model?: string;
@@ -94,6 +107,11 @@ export interface RouteContext {
    * na tabela como qualidade medida. Nunca vem de argumento MCP.
    */
   tieBreakUseCounts?: ReadonlyMap<string, number>;
+  /**
+   * F-232: reservas de rota CONSUMIDAS por adapter neste checkout nos últimos
+   * 7 dias (todas as missões) — alimenta o fair-share global.
+   */
+  globalUseCounts?: ReadonlyMap<string, number>;
 }
 
 export type RankedRouteEntry = {
@@ -1293,6 +1311,47 @@ export function routeTask(
     }
   }
 
+  // F-232: fair-share global (regra do operador, 01/10). A rotação por
+  // missão cobre só quem disputa assento dentro dela; providers nunca
+  // escolhidos ficavam com ZERO reservas em 7 dias. Quando o líder acumulou
+  // uso global muito acima do menos usado do pool do tier, o menos usado
+  // lidera — converge para uso igual sem pingue-pongue (FAIR_SHARE_GAP).
+  // Mesmas exclusões da rotação por missão, e só quando ela NÃO venceu.
+  let fairShareNote = '';
+  if (
+    rotationNote === '' &&
+    context.globalUseCounts !== undefined &&
+    tier !== 'critical' &&
+    frontier === null &&
+    evaluated.length === 0 &&
+    policy.source !== 'benchmark' &&
+    specialtyVerdict.specialty !== 'visual' &&
+    specialtyVerdict.specialty !== 'security' &&
+    specialtyVerdict.specialty !== 'bug' &&
+    mention.model === undefined
+  ) {
+    const use = (id: string) => context.globalUseCounts!.get(id) ?? 0;
+    const pool = ranked.filter(
+      (entry) =>
+        entry.fromTier === tier &&
+        !adapterCircuitBreakers.isOpen(entry.c.adapterId),
+    );
+    const leader = ranked[0];
+    if (leader && pool.length > 1) {
+      const minUse = Math.min(...pool.map((entry) => use(entry.c.adapterId)));
+      if (use(leader.c.adapterId) >= minUse + FAIR_SHARE_GAP) {
+        // Primeiro no ranking entre os menos usados.
+        const pick = pool.find((entry) => use(entry.c.adapterId) === minUse);
+        if (pick && pick !== leader) {
+          ranked = [pick, ...ranked.filter((entry) => entry !== pick)];
+          fairShareNote =
+            `; fair-share: ${pick.c.adapterId} (uso 7d ` +
+            `${use(pick.c.adapterId)} × ${use(leader.c.adapterId)} do líder)`;
+        }
+      }
+    }
+  }
+
   let mentionNote = '';
   if (mention.model) {
     const { adapterId, model } = mention.model;
@@ -1374,7 +1433,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${lineUpgradeNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${rotationNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${lineUpgradeNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${rotationNote}${fairShareNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
       alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId) })),
       specialty: specialtyVerdict.specialty,
       policySource,

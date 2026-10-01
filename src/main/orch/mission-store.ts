@@ -425,6 +425,14 @@ export class ScopedMissionStore {
     );
   }
 
+  /**
+   * F-232: reservas consumidas por adapter desde `sinceMs`, em todas as
+   * missões deste checkout — insumo do fair-share global do router.
+   */
+  consumedRouteCountsByAdapterSince(sinceMs: number): Map<string, number> {
+    return this.#routeReservations.consumedCountsByAdapterSince(sinceMs);
+  }
+
   assertRouteReservation(
     rawExpected: RouteReservationExpectation,
   ): MissionRouteReservation {

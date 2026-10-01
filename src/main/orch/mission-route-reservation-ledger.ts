@@ -346,6 +346,23 @@ export class MissionRouteReservationLedger {
     return rows.map((row) => row.adapter_id);
   }
 
+  /**
+   * F-232: reservas CONSUMIDAS por adapter neste checkout desde `sinceMs`,
+   * em todas as missões — alimenta o fair-share global do task-router.
+   */
+  consumedCountsByAdapterSince(rawSinceMs: number): Map<string, number> {
+    const sinceMs = timestampSchema.parse(rawSinceMs);
+    const rows = this.#binding
+      .readDatabase()
+      .prepare(
+        `SELECT adapter_id, COUNT(*) AS n FROM mission_route_reservations
+          WHERE consumed_at IS NOT NULL AND consumed_at >= ?
+          GROUP BY adapter_id`,
+      )
+      .all(sinceMs) as Array<{ adapter_id: string; n: number }>;
+    return new Map(rows.map((row) => [row.adapter_id, row.n]));
+  }
+
   assertRouteReservation(
     rawExpected: RouteReservationExpectation,
   ): MissionRouteReservation {
