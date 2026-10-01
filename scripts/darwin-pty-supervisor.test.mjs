@@ -20,6 +20,14 @@ import { buildDarwinPtySupervisor } from "./build-darwin-pty-supervisor.mjs";
 import { darwinNodePtyBootstrapLaunch } from "../src/main/pty/darwin-node-pty-bootstrap.ts";
 import { supervisedPtyCommand } from "../src/main/pty/darwin-pty-supervisor.ts";
 
+// F-714: pty-manager sets these markers; a pane inherits its supervisor's
+// responsibility, which main.c rejects as responsible_is_supervisor.
+const nexusPaneSkipReason =
+  process.platform === "darwin" &&
+  (process.env.NEXUS_PANE_ID || process.env.NEXUS_PANE_KEY)
+    ? "AMBIENTE-PANE (F-714): inherited nexus-pty-supervisor responsibility rejects launch before disclaim; run outside a Nexus pane or via launchd."
+    : undefined;
+
 const isDarwin = process.platform === "darwin";
 const suite = isDarwin ? describe : describe.skip;
 const developerSigningIdentity = isDarwin
@@ -586,7 +594,8 @@ suite("Darwin PTY native responsibility supervisor", () => {
     ).toThrow();
   });
 
-  it("is the authenticated supervisor behind a real node-pty session", async () => {
+  it("is the authenticated supervisor behind a real node-pty session", async ({ skip }) => {
+    if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
     const output = [];
     const terminal = spawnDarwinPty(
       helper,
@@ -613,7 +622,8 @@ suite("Darwin PTY native responsibility supervisor", () => {
 
   signedSuite(
     "continues an exact live Developer ID identity only after validation",
-    () => {
+    ({ skip }) => {
+      if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
       const marker = path.join(fixtureRoot, "sealed-exact.marker");
       const result = spawnSync(
         helper,
@@ -630,7 +640,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
     60_000,
   );
 
-  signedSuite.each([
+  signedSuite.for([
     [
       "identifier",
       (identity) => ({ ...identity, identifier: "com.nexuside.wrong" }),
@@ -645,7 +655,8 @@ suite("Darwin PTY native responsibility supervisor", () => {
     ],
   ])(
     "kills a traced child on %s mismatch before constructors run",
-    (_label, mutateIdentity) => {
+    ([_label, mutateIdentity], { skip }) => {
+      if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
       const marker = path.join(
         fixtureRoot,
         `sealed-mismatch-${_label.replaceAll(" ", "-")}.marker`,
@@ -673,7 +684,8 @@ suite("Darwin PTY native responsibility supervisor", () => {
 
   signedSuite(
     "keeps a traced provider sealed through 5,000 external SIGCONT signals",
-    async () => {
+    async ({ skip }) => {
+      if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
       const marker = path.join(fixtureRoot, "sealed-sigcont.marker");
       const ready = path.join(fixtureRoot, "sealed-sigcont.ready");
       const rejectedIdentity = {
@@ -715,7 +727,8 @@ suite("Darwin PTY native responsibility supervisor", () => {
 
   signedSuite(
     "kills a trace-stopped provider when its helper tracer is SIGKILLed",
-    async () => {
+    async ({ skip }) => {
+      if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
       const marker = path.join(fixtureRoot, "sealed-tracer-death.marker");
       const ready = path.join(fixtureRoot, "sealed-tracer-death.ready");
       const launch = spawnDetachedResult(
@@ -758,7 +771,8 @@ suite("Darwin PTY native responsibility supervisor", () => {
 
   signedSuite(
     "operates as the inner target of sandbox-exec while sealing the provider",
-    () => {
+    ({ skip }) => {
+      if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
       const marker = path.join(fixtureRoot, "sealed-seatbelt.marker");
       const result = spawnSync(
         "/usr/bin/sandbox-exec",
@@ -782,7 +796,8 @@ suite("Darwin PTY native responsibility supervisor", () => {
 
   signedSuite(
     "rejects a signed pathname substitution after the seal is captured, before file or network effects",
-    async () => {
+    async ({ skip }) => {
+      if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
       const trustedBackup = `${sealedFixture}.trusted`;
       const marker = path.join(fixtureRoot, "sealed-substitution.marker");
       const capturedInvocation = authenticatedArguments(
@@ -872,7 +887,8 @@ suite("Darwin PTY native responsibility supervisor", () => {
     60_000,
   );
 
-  it("reaps the direct child and entire responsibility cohort after SIGTERM", async () => {
+  it("reaps the direct child and entire responsibility cohort after SIGTERM", async ({ skip }) => {
+    if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
     const cohort = await launchLongLivedCohort("term");
     let terminalExited = false;
     try {
@@ -894,7 +910,8 @@ suite("Darwin PTY native responsibility supervisor", () => {
     }
   }, 60_000);
 
-  it("delivers Ctrl-C to a continuing child without closing the pane, then reaps on SIGTERM", async () => {
+  it("delivers Ctrl-C to a continuing child without closing the pane, then reaps on SIGTERM", async ({ skip }) => {
+    if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
     const cohort = await launchLongLivedCohort("ctrl-c", {
       keepRunningOnInterrupt: true,
     });
@@ -931,7 +948,8 @@ suite("Darwin PTY native responsibility supervisor", () => {
     }
   }, 60_000);
 
-  it("owns and reaps a double-forked, setsid, PPID-1 daemon before preserving the CLI exit", async () => {
+  it("owns and reaps a double-forked, setsid, PPID-1 daemon before preserving the CLI exit", async ({ skip }) => {
+    if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
     const daemonPidFile = path.join(fixtureRoot, "daemon.pid");
     const readyFile = path.join(fixtureRoot, "root.ready");
     const releaseFile = path.join(fixtureRoot, "root.release");
@@ -1027,7 +1045,8 @@ suite("Darwin PTY native responsibility supervisor", () => {
     );
   }, 60_000);
 
-  it("proves the cohort empty while an unrelated setuid process born after the anchor denies lookup", async () => {
+  it("proves the cohort empty while an unrelated setuid process born after the anchor denies lookup", async ({ skip }) => {
+    if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
     // Campo 26/09: o /usr/bin/login de uma janela do Ghostty nasceu depois do
     // pane e respondia EPERM à consulta de responsabilidade; o supervisor
     // ficava em laço para sempre depois que a CLI saía. Um sudo esperando
