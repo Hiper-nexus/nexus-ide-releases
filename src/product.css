@@ -71,8 +71,8 @@
 @media(max-width:760px){.datacafe-stage{aspect-ratio:3/4;min-height:0;max-height:none}.datacafe-cover-copy .pixel{font-size:52px}}
 
 /* ---------- Topo vivo: o piso do data center em perspectiva, brasas subindo, o título entrando em linhas ---------- */
-.hero-floor{position:absolute;inset:0;overflow:hidden;pointer-events:none}
-.hero-floor:before{content:'';position:absolute;left:-30%;right:-30%;top:54%;height:440px;transform-origin:50% 0;transform:perspective(700px) rotateX(68deg) translateY(-72px);background-image:linear-gradient(90deg,rgb(255 79 139/.3) 1px,transparent 1px),linear-gradient(rgb(255 79 139/.3) 1px,transparent 1px);background-size:72px 72px;-webkit-mask-image:linear-gradient(transparent,#000 22%,transparent 94%);mask-image:linear-gradient(transparent,#000 22%,transparent 94%);animation:floor-drift 5.5s linear infinite}
+.hero-floor{--tile:72px;position:absolute;inset:0;overflow:hidden;pointer-events:none}
+.hero-floor:before{content:'';position:absolute;left:-30%;right:-30%;top:54%;height:440px;transform-origin:50% 0;transform:perspective(700px) rotateX(68deg) translateY(calc(var(--tile)*-1));background-image:linear-gradient(90deg,rgb(255 79 139/.3) 1px,transparent 1px),linear-gradient(rgb(255 79 139/.3) 1px,transparent 1px);background-size:var(--tile) var(--tile);-webkit-mask-image:linear-gradient(transparent,#000 22%,transparent 94%);mask-image:linear-gradient(transparent,#000 22%,transparent 94%);animation:floor-drift 5.5s linear infinite}
 .hero-floor span{position:absolute;bottom:-8px;left:var(--x);width:4px;height:4px;background:var(--ember);opacity:0;animation:ember 9s linear var(--d) infinite}
 .hero-floor span:nth-child(1){--x:6%;--d:0s;--dx:18px}
 .hero-floor span:nth-child(2){--x:18%;--d:2.6s;--dx:-14px}
@@ -91,7 +91,7 @@
 .nav-community{display:inline-flex;align-items:center;gap:8px}
 .nav-chip{display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border:1px solid rgb(255 79 139/.5);border-radius:4px;font:500 10px/1.4 ui-monospace,monospace;letter-spacing:.06em;text-transform:uppercase;color:var(--pink)}
 .nav-chip .live-dot{width:5px;height:5px;margin:0;animation:eyebrow-blink 1.6s steps(2) infinite}
-@media(max-width:760px){.hero-floor:before{top:60%;height:320px;background-size:56px 56px}.hero-reel{transform:none}}
+@media(max-width:760px){.hero-floor{--tile:56px}.hero-floor:before{top:60%;height:320px}.hero-reel{transform:none}}
 @media(prefers-reduced-motion:reduce){.hero-floor span{display:none}.hero-floor:before{animation:none;transform:perspective(700px) rotateX(68deg) translateY(0)}.hero-reel{transform:none}.nav-chip .live-dot{animation:none}}
 
 /* ---------- Nexus Shot: a janela de revisão desenhada em HTML, nítida em qualquer tamanho ---------- */

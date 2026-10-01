@@ -947,6 +947,7 @@ export function createWorld(host, options) {
     holdStart: world.holdStart,
     holdEnd: world.holdEnd,
     resetProgress: world.resetProgress,
+    seePrize: () => world.seePrize(),
     dispose: world.dispose,
     get playing() { return world.playing; },
     get paused() { return world.paused; },

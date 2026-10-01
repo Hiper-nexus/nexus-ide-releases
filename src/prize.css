@@ -42,7 +42,9 @@
   .prize-ticket-stub .pixel{font-size:26px}
 }
 @media(prefers-reduced-motion:reduce){
-  .prize-marquee-track{width:auto;flex-wrap:wrap;justify-content:center;padding:0 24px}
+  .prize-marquee-track{width:auto;justify-content:center;padding:0 24px}
+  .prize-marquee-group{flex:0 1 auto;flex-wrap:wrap;justify-content:center}
   .prize-marquee-group+.prize-marquee-group{display:none}
 }
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.prize-ticket-copy>.prize-ticket-note{margin-top:12px;font-size:12px;color:var(--faint)}

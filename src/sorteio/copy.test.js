@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { PRIZES, goalLine } from './prizes.js';
+import { PRIZES, goalLine, DISCLAIMER } from './prizes.js';
 
 const home = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
 const community = readFileSync(new URL('../../comunidade/index.html', import.meta.url), 'utf8');
@@ -26,4 +26,8 @@ test('o convite do sorteio nunca vira cadastro nem promessa de ganho', () => {
 test('a meta do primeiro prêmio aparece na primeira tela da comunidade e na faixa da home', () => {
   assert.ok(community.includes('intro-prize') && community.includes(goalLine(PRIZES[0]).toUpperCase()));
   assert.ok(home.includes('prize-ticket') && home.includes(goalLine(PRIZES[0]).toUpperCase()));
+});
+
+test('a faixa do prêmio na home repete o aviso: gratuito, e jogar ou XP não mudam as chances', () => {
+  assert.ok(home.includes(DISCLAIMER));
 });

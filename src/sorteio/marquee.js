@@ -1,11 +1,12 @@
 import { tickerPhrases } from './prizes.js';
 
-/** Letreiro corrido do prêmio: duas cópias do mesmo grupo, para o laço fechar sem salto. */
+/** Letreiro corrido do prêmio: quatro cópias do mesmo grupo (a trilha anda metade, ou seja, dois grupos),
+ * para o laço fechar sem salto e nenhuma tela larga ver o fim da trilha. */
 export function buildMarquee(marquee, phrases = tickerPhrases()) {
   if (!marquee) return;
   const track = document.createElement('div');
   track.className = 'prize-marquee-track';
-  for (let copy = 0; copy < 2; copy++) {
+  for (let copy = 0; copy < 4; copy++) {
     const group = document.createElement('div');
     group.className = 'prize-marquee-group';
     for (const phrase of phrases) {

@@ -134,6 +134,8 @@
 /* O bilhete sai da impressora: aparece de cima para baixo, uma vez, quando chega à tela. */
 .prize-ready .drop{clip-path:inset(0 0 100% 0)}
 .prize-ready .drop.printed{clip-path:inset(-120px);transition:clip-path 1s var(--ease)}
+.prize-ready .drop-next.printed{transition:clip-path 1s var(--ease),transform .6s var(--ease)}
+.prize-ready .drop-next.printed.tilting{transition:clip-path 1s var(--ease),transform .12s linear}
 .prize-ready .drop+.drop.printed{transition-delay:.18s}
 
 @media(hover:none){.drop-next.tilting{transform:none}.drop-next:after{display:none}}

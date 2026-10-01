@@ -4,7 +4,7 @@
 import {
   AdditiveBlending, BufferAttribute, BufferGeometry, CircleGeometry, Color, CylinderGeometry, DoubleSide, DynamicDrawUsage,
   Group, IcosahedronGeometry, InstancedMesh, Mesh, MeshBasicMaterial, Object3D, OctahedronGeometry, PlaneGeometry,
-  PointLight, RingGeometry,
+  LinearFilter, PointLight, RingGeometry,
 } from 'three';
 import { PALETTE, hex } from './palette.js';
 import { findCells } from './layout.js';
@@ -530,8 +530,11 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
   const aura = kit.mesh(root, kit.geo('boardaura', () => new PlaneGeometry(frame.w + 2.6, frame.h + 1.7)), kit.own(new MeshBasicMaterial({ map: auraTex.texture, transparent: true, blending: AdditiveBlending, depthWrite: false, toneMapped: false })), [panel.cx, panel.cy, 1.03], { cast: false, receive: false });
   aura.renderOrder = 1;
   const markOf = id => images[byId.get(id)?.index] ?? null;
-  const bb = { view: billboardView(0, { calm: true }), calm: true, dirty: true, last: -1 };
+  const bb = { view: billboardView(0, { calm: true }), calm: true, dirty: true, last: -1, t0: null };
   const boardTex = kit.canvasTexture(BOARD_SIZE.width, BOARD_SIZE.height, (context, canvas) => paintBillboard(context, canvas, bb.view, markOf));
+  // Repinta a 10 Hz: sem mipmaps (cada subida regeneraria a cadeia inteira).
+  boardTex.texture.generateMipmaps = false;
+  boardTex.texture.minFilter = LinearFilter;
   kit.mesh(root, kit.geo('boardface', () => new PlaneGeometry(panel.w, panel.h)), kit.own(new MeshBasicMaterial({ map: boardTex.texture, toneMapped: false })), [panel.cx, panel.cy, panel.z], { cast: false, receive: false });
   // Lâmpadas na moldura: uma luz corre pelo anel, como num letreiro de cinema.
   const bulbSpots = bulbRing(frame.w - 0.15, frame.h - 0.15, 0.24);
@@ -688,7 +691,9 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
     if (bb.dirty || (!calm && time - bb.last >= BILLBOARD.repaint)) {
       bb.dirty = false;
       bb.last = time;
-      bb.view = billboardView(time, { calm });
+      // O tempo do painel conta desde o primeiro quadro: a abertura sempre mostra o Claude, como o chip.
+      if (bb.t0 === null) bb.t0 = time;
+      bb.view = billboardView(time - bb.t0, { calm });
       boardTex.redraw();
       for (let i = 0; i < bulbSpots.length; i++) {
         const level = calm ? 0.35 : chaseLevel(i, bulbSpots.length, bb.view.chase, BILLBOARD.chaseHeads);

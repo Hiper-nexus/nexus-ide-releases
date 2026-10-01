@@ -257,8 +257,16 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
   }, listen);
   prompt.addEventListener('keyup', event => { if (['e', 'E', 'Enter', ' '].includes(event.key)) world.holdEnd(); }, listen);
   level.addEventListener('click', () => togglePanel(), listen);
-  prizeChip.addEventListener('click', () => { openStation('group'); $('.dc-close').focus({ preventScroll: true }); }, listen);
-  $('.dc-close').addEventListener('click', () => { $('.dc-station').hidden = true; host.focus({ preventScroll: true }); }, listen);
+  // Quem abriu o painel pelo chip recebe o foco de volta nele; os demais voltam ao jogo.
+  let stationOpener = null;
+  const closeStation = () => {
+    $('.dc-station').hidden = true;
+    const back = stationOpener ?? host;
+    stationOpener = null;
+    back.focus({ preventScroll: true });
+  };
+  prizeChip.addEventListener('click', () => { stationOpener = prizeChip; world.seePrize(); $('.dc-close').focus({ preventScroll: true }); }, listen);
+  $('.dc-close').addEventListener('click', closeStation, listen);
   const muteButton = hud.querySelector('[data-act=mute]');
   const soundButton = $('.dc-sound');
   const volume = $('.dc-volume input');
@@ -284,7 +292,7 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
     hud.querySelector('[data-act=pause]').textContent = 'Pausar';
     toast('Progresso recomeçado.');
   }, listen);
-  hud.addEventListener('keydown', event => { if (event.key === 'Escape') { togglePanel(false); $('.dc-station').hidden = true; } }, listen);
+  hud.addEventListener('keydown', event => { if (event.key === 'Escape') { togglePanel(false); closeStation(); } }, listen);
   // Os botões de início são da página: o AbortController os solta no dispose.
   for (const button of startButtons) button?.addEventListener('click', start, listen);
   if (autostart) start();

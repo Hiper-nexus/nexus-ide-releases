@@ -171,3 +171,5 @@
   .dc-float,.dc-energy.empty,.dc-prize-dot{animation:none}
   .dc-toast,.dc-fill,.dc-xpbar>span,.dc-mission-bar>span,.dc-prize{transition:none}
 }
+
+@media(max-width:880px){.dc-prize-goal{display:none}}
