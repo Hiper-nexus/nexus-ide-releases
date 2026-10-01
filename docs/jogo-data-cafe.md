@@ -62,6 +62,14 @@ Tudo sintetizado, sem arquivos. O mestre é o volume do jogador (padrão 0,8) e 
 
 Efeitos: passos, pegar GPU, rack no ar, alarme de incidente, café, ação bloqueada, combo (o bip sobe a cada entrega), missão cumprida, subir de nível, fim de turno `typing()` para o teclado do PC e `sit()`/`stand()` para a cadeira. O deploy no terminal entra no combo como qualquer entrega e tem missão própria ("Faça 2 deploys no terminal"). O botão de som fica sempre visível no HUD; o volume fica no painel (M). Pausa e aba oculta suspendem o contexto; mudo e pausa também param a trilha.
 
+## Regras da mesa que a revisão fechou
+
+- Recomeçar o progresso zera a mesa junto, e um deploy em andamento é cancelado se deixa de haver rack no ar: não existe XP de deploy num data center vazio.
+- Um toque curto levanta também sobre um deploy pausado (o deploy é cancelado); retomar exige segurar além do toque.
+- O monitor e o prompt mostram o XP que o deploy rendeu de verdade, com combo e missão.
+- A espera de 25 s pelo próximo build conta em segundos de jogo: pausar ou ocultar a aba congela a contagem.
+- A câmera confere a linha de visão depois de suavizar e sobe na hora se um rack ficaria na frente; descer continua suave.
+
 ## Orçamento medido
 
 Entre 112 e 153 chamadas de desenho em 1440×900 a 60 fps no Chromium (01/10/2026, Apple M5): 134 no início do plantão, 130 nas mesas, 153 com o zoom todo afastado. Em 390×844 e 768×1024 com toque, 127 e 144 a 60 fps. Sem rolagem horizontal de 320 a 800 px.

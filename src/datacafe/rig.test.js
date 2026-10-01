@@ -194,3 +194,20 @@ test('fora do jogo olha o salão do alto e mantém o alvo dentro do salão', () 
   const edge = clampTarget(-5, 99, LAYOUT);
   assert.ok(edge.x >= RIG.margin && edge.z <= LAYOUT.height);
 });
+
+test('andando ao longo de uma fileira de racks o peito do dev fica à vista em todos os quadros', () => {
+  // A elevação segura era calculada para o destino e depois suavizada: no caminho a câmera
+  // interpolada passava alguns quadros com um rack entre ela e o dev.
+  const body = { x: 10.5, z: 5.5, vx: 0, vz: 0 };
+  const given = input({ body, pitch: 0.8 });
+  const cam = settle(createCamera(), given);
+  const dt = 1 / 60;
+  let hidden = 0;
+  body.vx = -3.4;
+  for (let frame = 0; frame < 240 && body.x > 2; frame++) {
+    body.x += body.vx * dt;
+    cameraStep(cam, given, LAYOUT, dt);
+    if (!clearLine(cam, body.x, CHEST, body.z)) hidden++;
+  }
+  assert.equal(hidden, 0, `${hidden} quadros com o dev escondido atrás de um rack`);
+});

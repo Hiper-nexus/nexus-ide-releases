@@ -15,7 +15,7 @@ import { createGrid, slideMove } from './grid.js';
 import { createInteractables, register, nearest, advanceHold } from './interact.js';
 import { WALK, intentFrom, worldDirection, walkStep } from './walk.js';
 import { RIG, clampYaw, clampPitch, createCamera, cameraStep, wheelZoom, pinchZoom } from './rig.js';
-import { DESK, createDesk, sit, deskStep, deployPlan, seatPose } from './desk.js';
+import { DESK, createDesk, resetDesk, sit, deskStep, deployPlan, seatPose } from './desk.js';
 import { joystickInput, JOYSTICK_RADIUS } from './touch.js';
 import { ENERGY, createEnergy, energyStep, drink, speedScale, energyLevel } from './energy.js';
 import { createRacks, installGpu, reboot, rackStep, rackState, poweredCount, operationalCount, installedIds, incidentIds, allPowered } from './racks.js';
@@ -41,8 +41,7 @@ const STATION = LAYOUT.workstation;
 const SEATED_LABELS = {
   ready: label('Segure para fazer deploy · toque para levantar'),
   running: label('Deploy em andamento · continue segurando'),
-  paused: label('Deploy pausado · segure para continuar'),
-  ok: label(`Deploy no ar · +${DESK.xp} XP`, { blocked: true }),
+  paused: label('Deploy pausado · segure para continuar · toque para levantar'),
 };
 
 class DataCafeWorld {
@@ -131,6 +130,8 @@ class DataCafeWorld {
     this.pinch = null;
     // Mesa do terminal: estado puro em desk.js, a cena só aplica pose, prompt e eventos.
     this.desk = createDesk();
+    /** XP que o último deploy rendeu de verdade (combo e missão incluídos), para o monitor e o prompt. */
+    this.deployGain = DESK.xp;
     this.deskEvents = [];
     this.seatFrom = { x: 0, z: 0, heading: 0 };
     this.seatPose = { x: 0, z: 0, heading: 0, blend: 0 };
@@ -299,6 +300,7 @@ class DataCafeWorld {
     else if (this.game.combo.streak > 1) this.audio?.combo(this.game.combo.streak);
     this.emitGame();
     for (const badge of badges) if (!before.has(badge)) this.on.badge?.(badge);
+    return result.xpGained + result.bonus;
   }
 
   // ---------- Combo, missões e turno ----------
@@ -434,7 +436,7 @@ class DataCafeWorld {
     let next = null;
     if (desk.phase === 'seated') next = plan.blocked ? this.seatedLabel(`${plan.blocked} · toque para levantar`) : SEATED_LABELS.ready;
     else if (desk.phase === 'acting') next = this.holding ? SEATED_LABELS.running : SEATED_LABELS.paused;
-    else if (desk.phase === 'done') next = desk.result === 'ok' ? SEATED_LABELS.ok : this.seatedLabel(`${desk.failure} · reinicie o rack e tente de novo`);
+    else if (desk.phase === 'done') next = this.seatedLabel(desk.result === 'ok' ? `Deploy no ar · +${this.deployGain} XP` : `${desk.failure} · reinicie o rack e tente de novo`);
     if (desk.phase !== 'standing' && next !== this.seatLabel) { this.seatLabel = next; this.on.prompt?.(next); }
     if (desk.phase === 'acting') { this.on.hold?.(desk.progress); this.holdShown = true; } else if (this.holdShown && desk.phase !== 'standing') { this.on.hold?.(0); this.holdShown = false; }
     this.paintTerminal(plan, seconds);
@@ -451,7 +453,7 @@ class DataCafeWorld {
       const { screen } = STATION;
       this.particles.burst(screen.x, screen.y + 0.3, screen.z + 0.1, { count: this.calm ? 8 : 22, colors: [PALETTE.green, PALETTE.pink, PALETTE.ink], speed: 1.4, up: 2 });
       this.audio?.success();
-      this.award({ id: 'deploy', kind: 'deploy', xp: DESK.xp }, 'Deploy no ar');
+      this.deployGain = this.award({ id: 'deploy', kind: 'deploy', xp: DESK.xp }, 'Deploy no ar');
       this.version++;
     } else if (event === 'standing') {
       // De pé de novo, no piso livre ao lado da cadeira (sem animação o passo de levantar não acontece).
@@ -468,7 +470,7 @@ class DataCafeWorld {
     const desk = this.desk, view = this.terminal;
     let status;
     if (desk.phase === 'acting') status = this.holding ? 'Deploy em andamento' : 'Pausado · segure para continuar';
-    else if (desk.phase === 'done') status = desk.result === 'ok' ? SEATED_LABELS.ok.text : 'Reinicie o rack e tente de novo';
+    else if (desk.phase === 'done') status = desk.result === 'ok' ? `Deploy no ar · +${this.deployGain} XP` : 'Reinicie o rack e tente de novo';
     else if (plan.blocked) status = plan.blocked;
     else if (desk.phase === 'standing') status = plan.fail ? 'Há incidente aberto: o canary vai falhar' : 'Deploy pronto · sente e segure';
     else status = 'Segure para fazer deploy';
@@ -824,6 +826,10 @@ class DataCafeWorld {
     this.carrying = false;
     this.energy = createEnergy();
     this.dc.dock.setCount(3);
+    // A mesa recomeça junto: um deploy pausado não pode render XP num data center zerado.
+    this.desk = resetDesk(this.desk);
+    this.deployGain = DESK.xp;
+    if (this.holdShown) { this.on.hold?.(0); this.holdShown = false; }
     this.game = createProgression();
     saveProgress(this.progress);
     this.on.xp?.({ progress: this.progress, gained: 0, leveledUp: false });

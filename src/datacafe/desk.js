@@ -4,7 +4,8 @@
  *   standing → sitting → seated ⇄ acting → done → seated … → rising → standing
  *   (de pé)    (sentando) (sentado) (agindo) (concluído)      (levantando)
  *
- * Sentado: segurar a ação roda o deploy (soltar pausa), um toque rápido levanta, e andar
+ * Sentado: segurar a ação roda o deploy (soltar pausa), um toque rápido levanta (também
+ * sobre um deploy pausado, que é cancelado), e andar
  * ou Esc levantam a qualquer momento. Cada passo devolve a mesa nova e empurra os
  * eventos ('seated', 'start', 'line', 'typing', 'deployed', 'failed', 'blocked',
  * 'abort', 'rise', 'standing') num array do chamador, para a cena tocar som e dar XP. */
@@ -40,6 +41,14 @@ const ease = k => k * k * (3 - 2 * k);
 
 export function createDesk() {
   return { phase: 'standing', t: 0, press: 0, armed: false, progress: 0, shown: 0, typed: 0, result: null, failure: null, cooldown: 0, deploys: 0 };
+}
+
+/** Recomeçar o progresso: mesa nova, com o dev onde está (sentado continua sentado). */
+export function resetDesk(desk) {
+  const fresh = createDesk();
+  if (desk.phase === 'standing') return fresh;
+  if (SEATED.has(desk.phase)) return { ...fresh, phase: 'seated' };
+  return { ...fresh, phase: desk.phase, t: desk.t };
 }
 
 export function sit(desk) {
@@ -91,7 +100,21 @@ export function deskStep(desk, { dt = 0, holding = false, moving = false, leave 
   }
 
   if (desk.phase === 'acting') {
-    if (!holding) return desk.press === 0 && cooldown === desk.cooldown ? desk : { ...desk, press: 0, cooldown };
+    // Deixou de dar para publicar (ex.: o progresso recomeçou e não há rack no ar): cancela sem XP.
+    if (plan.blocked) {
+      events.push('abort');
+      return { ...desk, phase: 'seated', press: 0, armed: !holding, progress: 0, shown: 0, typed: 0, cooldown };
+    }
+    if (!holding) {
+      // Um toque curto sobre o deploy pausado levanta, como no estado sentado.
+      if (desk.press > 0 && desk.press < DESK.tap) {
+        events.push('abort', 'rise');
+        return { ...rise(desk), cooldown };
+      }
+      return desk.press === 0 && cooldown === desk.cooldown ? desk : { ...desk, press: 0, cooldown };
+    }
+    // Pode ainda ser um toque: o deploy só retoma depois do limiar.
+    if (desk.press + step < DESK.tap) return { ...desk, press: desk.press + step, cooldown };
     const progress = Math.min(1, desk.progress + step / DESK.runTime);
     let typed = desk.typed + step, shown = desk.shown;
     if (typed >= DESK.typeEvery) { typed -= DESK.typeEvery; events.push('typing'); }

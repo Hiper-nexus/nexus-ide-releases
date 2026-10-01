@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DESK, DEPLOY, CANARY, createDesk, sit, rise, deskStep, deployPlan, seatBlend, seatPose } from './desk.js';
+import { DESK, DEPLOY, CANARY, createDesk, resetDesk, sit, rise, deskStep, deployPlan, seatBlend, seatPose } from './desk.js';
 
 const READY = deployPlan({ cooldown: 0, powered: 3, incident: null });
 const DT = 1 / 60;
@@ -151,4 +151,43 @@ test('a pose leva o dev de onde estava até o assento, de frente para a mesa, e 
   const end = seatPose(rising, from, seat, stand);
   assert.ok(Math.abs(end.x - stand.x) < 1e-9 && Math.abs(end.z - stand.z) < 1e-9);
   assert.equal(up.phase, 'standing');
+});
+
+test('um toque curto com o deploy pausado levanta e não avança o deploy', () => {
+  const half = run(seated(), DESK.tap + DESK.runTime / 2, { holding: true }).desk;
+  const paused = run(half, 1, { holding: false }).desk;
+  const tapping = run(paused, 0.1, { holding: true });
+  assert.equal(tapping.desk.progress, paused.progress, 'um toque não digita nem avança');
+  assert.equal(count(tapping.events, 'typing'), 0);
+  const released = run(tapping.desk, DT, { holding: false });
+  assert.deepEqual(released.events, ['abort', 'rise']);
+  assert.equal(released.desk.phase, 'rising');
+});
+
+test('segurar além do toque retoma o deploy pausado de onde parou', () => {
+  const half = run(seated(), DESK.tap + DESK.runTime / 2, { holding: true }).desk;
+  const paused = run(half, 1, { holding: false }).desk;
+  const resumed = run(paused, DESK.tap + 0.3, { holding: true }).desk;
+  assert.equal(resumed.phase, 'acting');
+  assert.ok(resumed.progress > paused.progress);
+});
+
+test('deploy em andamento é cancelado quando deixa de haver rack no ar: nada de XP sem data center', () => {
+  const half = run(seated(), DESK.tap + DESK.runTime / 2, { holding: true }).desk;
+  const empty = deployPlan({ cooldown: 0, powered: 0, incident: null });
+  const after = run(half, DESK.runTime, { holding: true, plan: empty });
+  assert.equal(count(after.events, 'deployed'), 0);
+  assert.equal(count(after.events, 'abort'), 1);
+  assert.equal(after.desk.phase, 'seated');
+  assert.equal(after.desk.progress, 0);
+  assert.equal(after.desk.deploys, 0);
+});
+
+test('recomeçar o progresso zera a mesa sem tirar o dev da cadeira', () => {
+  const half = run(seated(), DESK.tap + DESK.runTime / 2, { holding: true }).desk;
+  const fresh = resetDesk({ ...half, cooldown: 12, deploys: 3 });
+  assert.deepEqual([fresh.phase, fresh.progress, fresh.cooldown, fresh.deploys, fresh.armed, fresh.result], ['seated', 0, 0, 0, false, null]);
+  assert.deepEqual(resetDesk({ ...createDesk(), cooldown: 9, deploys: 2 }), createDesk());
+  const rising = rise(seated());
+  assert.equal(resetDesk({ ...rising, t: 0.2 }).phase, 'rising', 'no meio de levantar continua levantando');
 });

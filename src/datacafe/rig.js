@@ -133,6 +133,7 @@ export function createCamera() {
 }
 
 const look = { x: 0, z: 0 };
+const seen = { x: 0, z: 0 };
 const framing = {};
 
 /**
@@ -197,6 +198,13 @@ export function cameraStep(cam, input, layout, dt) {
   cam.ty += (ty - cam.ty) * kFollow;
   cam.tz += (tz - cam.tz) * kFollow;
   cam.fresh = false;
+  // A elevação segura acima vale para o destino; a câmera suavizada ainda está a caminho.
+  // Subir é imediato, para o dev nunca sumir atrás de um rack; descer continua suave.
+  if (playing && blend === 0) {
+    seen.x = cam.tx;
+    seen.z = cam.tz;
+    cam.pitch = Math.max(cam.pitch, occlusionPitch(layout, body, cam.yaw, cam.range, seen, cam.pitch));
+  }
 
   const flat = cam.range * Math.cos(cam.pitch);
   cam.x = cam.tx + flat * Math.sin(cam.yaw);
