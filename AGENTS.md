@@ -403,6 +403,12 @@ saber isto antes de mexer:
   `pty-resize-dropped` quando descarta resize de sessão de outro dono. Os
   panes Claude/GLM do operador usam o renderizador fullscreen
   (`"tui": "fullscreen"`), em que todo resize redesenha a tela inteira.
+- F-248: a grade pode mudar enquanto `pty.spawn` espera o Main. O spawn
+  captura `spawnGrid` ANTES do await, grava-a como `reportedGrid` no
+  `setHostSession` e chama `propagateHostSize` logo depois — sem isso o PTY
+  fica na winsize velha até um "Redesenhar". O assert do resize manda
+  `reported` junto e o trace `pty-grid-drift` grava `reportedCols/Rows`:
+  `reported ≠ pty` = renderer nunca mandou; `reported == cols` = Main perdeu.
 
 ## Conversas Grok/Kimi por checkout (F-566)
 

@@ -275,6 +275,60 @@ describe('spawn adiado sem ninguém esperando a sessão', () => {
   });
 });
 
+describe('F-248 — grade do PTY segue a grade do pane', () => {
+  function freshPane(id: string): PaneModel {
+    const p: PaneModel = { id, kind: 'shell', title: 'Terminal' };
+    useLayoutStore.setState({
+      root: buildGridTree([p]),
+      focusedPaneId: p.id,
+    });
+    return p;
+  }
+
+  it('grade que muda durante o spawn emite resize logo após a sessão', async () => {
+    // Repro: spawn capturou 120×40; o layout re-dividiu o pane para 90×30
+    // enquanto o Main criava a sessão. O PTY nasceu em 120×40 e o reportedGrid
+    // TEM de ser o do spawn — senão o resize nunca sai (pty-grid-drift).
+    const p = freshPane('f248-drift');
+    const ptyResize = window.nexus.pty.resize as ReturnType<typeof vi.fn>;
+    let resolveSpawn!: (value: { ok: true; sessionId: string }) => void;
+    spawn.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSpawn = resolve;
+      }),
+    );
+    const host = getOrCreateHost(p);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(p, slot);
+    const pending = waitForSession(p.id, 1_000);
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
+    expect(spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ cols: 120, rows: 40 }),
+    );
+    host.term.resize(90, 30);
+    resolveSpawn({ ok: true, sessionId: 'pty-grid-moved' });
+    expect(await pending).toBe('pty-grid-moved');
+    expect(ptyResize).toHaveBeenCalledWith('pty-grid-moved', 90, 30, undefined);
+    discardPaneSpawnState(p.id);
+  });
+
+  it('grade estável durante o spawn não emite resize extra', async () => {
+    const p = freshPane('f248-stable');
+    const ptyResize = window.nexus.pty.resize as ReturnType<typeof vi.fn>;
+    const host = getOrCreateHost(p);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(p, slot);
+    expect(await waitForSession(p.id, 1_000)).toBe('pty-hidden');
+    expect(ptyResize).not.toHaveBeenCalled();
+    expect(host.term.cols).toBe(120);
+    discardPaneSpawnState(p.id);
+  });
+});
+
 describe('F-603 — pane não some ao voltar dos Ajustes', () => {
   it('reveal recoloca host que o IO marcou invisível', () => {
     const slot = document.createElement('div');
@@ -1820,6 +1874,7 @@ describe('F-369 — TUI repinta depois de saída perdida', () => {
     // sem o par rows-1/rows do bounce — a TUI não repinta à toa.
     expect(ptyResize()).toHaveBeenCalledWith('pty-hidden', 120, 40, {
       assert: true,
+      reported: { cols: 120, rows: 40 },
     });
     expect(bounceCount()).toBe(0);
   });
@@ -2178,6 +2233,7 @@ describe('F-216 — reassert da grade do PTY e repaint manual', () => {
     // curar um PTY que ficou com winsize diferente do pane.
     expect(resize).toHaveBeenCalledWith('pty-hidden', 120, 40, {
       assert: true,
+      reported: { cols: 120, rows: 40 },
     });
   });
 
@@ -2191,6 +2247,7 @@ describe('F-216 — reassert da grade do PTY e repaint manual', () => {
 
     expect(resize).toHaveBeenNthCalledWith(1, 'pty-hidden', 120, 40, {
       assert: true,
+      reported: { cols: 120, rows: 40 },
     });
     // bouncePtyGrid: par consecutivo (rows-1, rows) que força a TUI a repintar.
     expect(resize).toHaveBeenNthCalledWith(2, 'pty-hidden', 120, 39);

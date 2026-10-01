@@ -65,6 +65,9 @@ export const resizeSchema = z
     // F-216: o renderer reasserta a grade medida no resume/repaint — o Main
     // usa a flag para registrar drift e aplicar o winsize mesmo igual.
     assert: z.boolean().optional(),
+    // F-248: a grade que o renderer ACHA que o Main aplicou — no drift, separa
+    // "renderer nunca mandou" (reported ≠ pty) de "Main perdeu" (reported == cols).
+    reported: z.object({ cols: DIMENSION, rows: DIMENSION }).strict().optional(),
   })
   .strict();
 

@@ -479,11 +479,12 @@ function setHostSession(
   host: Host,
   paneId: string,
   sessionId: string | null,
+  reportedGrid?: { cols: number; rows: number },
 ): void {
   host.sessionId = sessionId;
   if (sessionId) host.awaitingDeliberateClose = false;
   host.reportedGrid = sessionId
-    ? { cols: host.term.cols, rows: host.term.rows }
+    ? (reportedGrid ?? { cols: host.term.cols, rows: host.term.rows })
     : null;
   for (const cb of [...paneSessionListeners]) {
     try {
@@ -510,7 +511,9 @@ function propagateHostSize(
     host.sessionId,
     next.cols,
     next.rows,
-    options?.assert === true ? { assert: true } : undefined,
+    options?.assert === true
+      ? { assert: true, reported: host.reportedGrid ?? undefined }
+      : undefined,
   );
   host.reportedGrid = next;
   return true;
@@ -1094,11 +1097,15 @@ function startSpawn(
         if (!await waitForSpawnAccess(host, generation)) return null;
       }
       const spawnCallAt = Date.now();
+      // F-248: a grade pode mudar enquanto o spawn espera o Main (1–5 s com
+      // MCP). O PTY nasce com ESTA grade; se o term re-fitou nesse intervalo o
+      // reportedGrid precisa ser o spawnGrid para o resize sair já abaixo.
+      const spawnGrid = { cols: host.term.cols, rows: host.term.rows };
       const res = await window.nexus.pty.spawn(
         buildPtySpawnRequest({
           pane,
-          cols: host.term.cols,
-          rows: host.term.rows,
+          cols: spawnGrid.cols,
+          rows: spawnGrid.rows,
           // Panes always live inside the active workspace: restored panes from
           // older sessions (or the fresh initial tree) may lack a cwd — they
           // must open in the workspace folder, never the user's home.
@@ -1245,7 +1252,10 @@ function startSpawn(
         // Mission account bindings are persisted by Main's sealed pane store.
         useLayoutStore.getState().setAccountId(pane.id, res.accountId);
       }
-      setHostSession(host, pane.id, res.sessionId);
+      setHostSession(host, pane.id, res.sessionId, spawnGrid);
+      // A grade atual vence a do spawn: sem este resize imediato o PTY ficava
+      // preso na winsize antiga até um "Redesenhar" (pty-grid-drift F-248).
+      propagateHostSize(host);
       if (res.cwd) useLayoutStore.getState().setPaneCwd(pane.id, res.cwd);
       clearPaneSpawnError(pane.id);
       const spawnedAt = Date.now();

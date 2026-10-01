@@ -5654,7 +5654,11 @@ describe("F-216 — evidência de drift e resize descartado", () => {
     expect(driftEvents(sessionId)).toEqual([]);
 
     // Grade diferente: drift registrado UMA vez e o resize ainda é aplicado.
-    resizeSession(owner, sessionId, 120, 40, { assert: true });
+    // F-248: `reported` distingue "renderer nunca mandou" de "Main perdeu".
+    resizeSession(owner, sessionId, 120, 40, {
+      assert: true,
+      reported: { cols: 80, rows: 24 },
+    });
     expect(driftEvents(sessionId)).toEqual([
       {
         kind: "pty-grid-drift",
@@ -5663,6 +5667,8 @@ describe("F-216 — evidência de drift e resize descartado", () => {
         ptyRows: 24,
         cols: 120,
         rows: 40,
+        reportedCols: 80,
+        reportedRows: 24,
       },
     ]);
     expect(proc.resize).toHaveBeenCalledWith(120, 40);

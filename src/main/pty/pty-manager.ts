@@ -3354,7 +3354,7 @@ export function resizeSession(
   sessionId: string,
   cols: number,
   rows: number,
-  options?: { assert?: boolean },
+  options?: { assert?: boolean; reported?: { cols: number; rows: number } },
 ): void {
   const session = sessions.get(sessionId);
   if (!session) return;
@@ -3380,6 +3380,8 @@ export function resizeSession(
       ptyRows: session.grid.rows,
       cols,
       rows,
+      reportedCols: options?.reported?.cols,
+      reportedRows: options?.reported?.rows,
     });
   }
   try {

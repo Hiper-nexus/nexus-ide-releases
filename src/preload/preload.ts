@@ -758,6 +758,7 @@ const api: NexusApi = {
         cols,
         rows,
         ...(options?.assert === true ? { assert: true } : {}),
+        ...(options?.reported ? { reported: options.reported } : {}),
       }),
     kill: (sessionId) => ipcRenderer.send(PTY_CHANNELS.kill, { sessionId }),
     onData: (sessionId, cb) => {

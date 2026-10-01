@@ -453,7 +453,10 @@ export interface NexusApi {
       sessionId: string,
       cols: number,
       rows: number,
-      options?: { assert?: boolean },
+      options?: {
+        assert?: boolean;
+        reported?: { cols: number; rows: number };
+      },
     ): void;
     kill(sessionId: string): void;
     onData(sessionId: string, cb: (data: string) => void): Unsubscribe;
