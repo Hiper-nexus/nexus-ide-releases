@@ -1,3 +1,6 @@
+-- NOTA DE OPERAÇÃO (01/10/2026): o D1 `nexus-cloud-staging` aplicou a versão ANTERIOR deste arquivo,
+-- sem os CHECKs de tamanho/teto (code_hash/code_suffix/period_days/max_uses). Bancos novos (o live)
+-- nascem com eles; os limites já valem na rota de admin, no script de emissão e nos testes.
 -- Códigos de licença resgatáveis no app ("tenho um código").
 -- A coluna code_hash guarda sha256 do código normalizado — nunca o plaintext.
 -- A concessão materializa uma linha em `subscriptions` com
