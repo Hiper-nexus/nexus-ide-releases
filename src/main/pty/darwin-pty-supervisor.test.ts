@@ -31,6 +31,14 @@ import type { DarwinAdHocSmokeExecutableSeal } from "./darwin-pty-supervisor";
 import type { DarwinTrustedExecutableSeal } from "./trusted-native-cli-binary";
 import { darwinNodePtyBootstrapLaunch } from "./darwin-node-pty-bootstrap";
 
+// F-714: pty-manager sets these markers; a pane inherits its supervisor's
+// responsibility, which main.c rejects as responsible_is_supervisor.
+const nexusPaneSkipReason =
+  process.platform === "darwin" &&
+  (process.env.NEXUS_PANE_ID || process.env.NEXUS_PANE_KEY)
+    ? "AMBIENTE-PANE (F-714): inherited nexus-pty-supervisor responsibility rejects launch before disclaim; run outside a Nexus pane or via launchd."
+    : undefined;
+
 const temporaryDirectories: string[] = [];
 const activeProcessGroups = new Set<number>();
 const activePtys = new Map<number, nodePty.IPty>();
@@ -1182,7 +1190,8 @@ describe.runIf(process.platform === "darwin")(
 describe.runIf(process.platform === "darwin")(
   "Darwin stage-zero live helper barrier",
   () => {
-    it("preserves a real foreground PTY, input, output, and provider PATH", async () => {
+    it("preserves a real foreground PTY, input, output, and provider PATH", async ({ skip }) => {
+      if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
       const { root, helper, runtime } = temporaryRuntime();
       buildNativeDevelopmentHelper(helper);
       const command = supervisedPtyCommand(runtime, "/bin/sh", [
@@ -1320,7 +1329,8 @@ describe.runIf(process.platform === "darwin")(
       }
     }, 60_000);
 
-    it("rejects a helper swapped between its initial and responsibility exec", async () => {
+    it("rejects a helper swapped between its initial and responsibility exec", async ({ skip }) => {
+      if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
       const { root, helper, runtime } = temporaryRuntime();
       buildNativeDevelopmentHelper(helper, [
         "NEXUS_TEST_PRE_SELF_EXEC_HOLD_MS=1200",
@@ -1389,7 +1399,8 @@ describe.runIf(process.platform === "darwin")(
       }
     }, 60_000);
 
-    it("kills a traced helper if the Perl tracer is SIGKILLed before its responsibility exec", async () => {
+    it("kills a traced helper if the Perl tracer is SIGKILLed before its responsibility exec", async ({ skip }) => {
+      if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
       const { root, helper, runtime } = temporaryRuntime();
       buildNativeDevelopmentHelper(helper, [
         "NEXUS_TEST_PRE_SELF_EXEC_HOLD_MS=3000",
@@ -1444,7 +1455,8 @@ describe.runIf(process.platform === "darwin")(
       }
     }, 60_000);
 
-    it("rejects physical proof when the authenticated helper is SIGKILLed after provider detach", async () => {
+    it("rejects physical proof when the authenticated helper is SIGKILLed after provider detach", async ({ skip }) => {
+      if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
       const { root, helper, runtime } = temporaryRuntime();
       buildNativeDevelopmentHelper(helper);
       const providerPidFile = path.join(root, "killed-helper-provider.pid");
@@ -1491,7 +1503,8 @@ describe.runIf(process.platform === "darwin")(
       }
     }, 60_000);
 
-    it("maps a proven provider exit in the reserved signal band to an unambiguous receipt", async () => {
+    it("maps a proven provider exit in the reserved signal band to an unambiguous receipt", async ({ skip }) => {
+      if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
       const { helper, runtime } = temporaryRuntime();
       buildNativeDevelopmentHelper(helper);
       const command = supervisedPtyCommand(runtime, "/bin/sh", [
@@ -1512,7 +1525,8 @@ describe.runIf(process.platform === "darwin")(
       ).toBe(true);
     }, 60_000);
 
-    it("rejects physical proof when the authenticated helper dies during teardown proof", async () => {
+    it("rejects physical proof when the authenticated helper dies during teardown proof", async ({ skip }) => {
+      if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
       const { root, helper, runtime } = temporaryRuntime();
       buildNativeDevelopmentHelper(helper, [
         "NEXUS_TEST_PRE_TERMINATION_PROOF_HOLD_MS=3000",
@@ -1569,7 +1583,8 @@ describe.runIf(process.platform === "darwin")(
       }
     }, 60_000);
 
-    it("times out through EINTR and leaves no provider or descendant", async () => {
+    it("times out through EINTR and leaves no provider or descendant", async ({ skip }) => {
+      if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
       const { root, helper, runtime } = temporaryRuntime();
       buildNativeDevelopmentHelper(helper);
       const childPidFile = path.join(root, "timeout-child.pid");
@@ -1633,7 +1648,8 @@ describe.runIf(process.platform === "darwin")(
       }
     }, 60_000);
 
-    it("forwards SIGTERM through the exact helper and leaves no orphan", async () => {
+    it("forwards SIGTERM through the exact helper and leaves no orphan", async ({ skip }) => {
+      if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
       const { root, helper, runtime } = temporaryRuntime();
       buildNativeDevelopmentHelper(helper);
       const childPidFile = path.join(root, "term-child.pid");
