@@ -22,6 +22,14 @@ import {
 } from "../src/main/pty/darwin-pty-supervisor.ts";
 import { buildMacosSeatbeltPlan } from "../src/main/runtime/process-sandbox.ts";
 
+// F-714: pty-manager sets these markers; a pane inherits its supervisor's
+// responsibility, which main.c rejects as responsible_is_supervisor.
+const nexusPaneSkipReason =
+  process.platform === "darwin" &&
+  (process.env.NEXUS_PANE_ID || process.env.NEXUS_PANE_KEY)
+    ? "AMBIENTE-PANE (F-714): inherited nexus-pty-supervisor responsibility rejects launch before disclaim; run outside a Nexus pane or via launchd."
+    : undefined;
+
 const isDarwin = process.platform === "darwin";
 const suite = isDarwin ? describe : describe.skip;
 const nexusDeveloperIdentity = isDarwin
@@ -404,7 +412,8 @@ suite("Darwin supervisor one-shot launch authorization", () => {
     rmSync(fixtureRoot, { recursive: true, force: true });
   });
 
-  it("rejects direct helper re-entry before disclaim and leaves no orphan", async () => {
+  it("rejects direct helper re-entry before disclaim and leaves no orphan", async ({ skip }) => {
+    if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
     const nestedPidFile = path.join(fixtureRoot, "nested-direct.pid");
     const nestedLog = path.join(fixtureRoot, "nested-direct.log");
     let nestedPid = 0;
@@ -433,7 +442,8 @@ suite("Darwin supervisor one-shot launch authorization", () => {
     }
   }, 150_000);
 
-  it("rejects re-entry through Apple Perl and leaves no orphan", async () => {
+  it("rejects re-entry through Apple Perl and leaves no orphan", async ({ skip }) => {
+    if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
     const nestedPidFile = path.join(fixtureRoot, "nested-perl.pid");
     const nestedLog = path.join(fixtureRoot, "nested-perl.log");
     const nestedArguments = stageZeroArguments(
