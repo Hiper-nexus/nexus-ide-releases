@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
-import { ORCHESTRATION_PROJECT_MIGRATION_SPECS } from './project-runtime-orchestration-migrations';
+import {
+  HANDOFF_ROUNDED_OPERATION_IDENTITY_SCHEMA,
+  ORCHESTRATION_PROJECT_MIGRATION_SPECS,
+} from './project-runtime-orchestration-migrations';
 
 export interface ProjectMigrationSpec {
   id: string;
@@ -922,5 +925,13 @@ export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
       schemaVersion: 37,
       appVersion: '0.28.1',
       sql: MISSION_RESULT_SCHEMA,
+    }),
+    // F-239: rodadas de handoff — identidade idempotente do recibo passa a ser
+    // (logical_operation_key, raw_payload_sha256).
+    createProjectMigration({
+      id: '038-handoff-rounded-operation-identity',
+      schemaVersion: 38,
+      appVersion: '0.76.154',
+      sql: HANDOFF_ROUNDED_OPERATION_IDENTITY_SCHEMA,
     }),
   ]);

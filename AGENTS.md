@@ -200,6 +200,10 @@ saber isto antes de mexer:
   `delivered: false` com `deliveryError`; o operador ainda pode listar a linha.
 - Esse caminho nunca emite evidência/recibo de missão, ACK, avanço de task ou
   conclusão. A auditoria MCP continua no dispatcher; o handoff é `unverified`.
+- **F-239: handoff em rodadas** — recibo mais recente entregue + payload novo
+  = rodada nova (handoff novo, recibo novo); entrega ainda pendente =
+  replay/recusa. A transição de dispatch só quando o dispatch está `running`;
+  `handoff_ready` e além seguem pelo caminho de replay puro.
 
 ## Uma missão nunca mistura workspace (F-634/F-635)
 

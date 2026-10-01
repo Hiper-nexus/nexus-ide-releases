@@ -924,6 +924,21 @@ BEGIN
 END;
 `;
 
+/**
+ * F-239 — handoff em rodadas: uma sessão de worker pode ter N handoffs (um
+ * por rodada). A identidade idempotente da operação lógica passa a ser o PAR
+ * (logical_operation_key, raw_payload_sha256): a repetição byte-idêntica ainda
+ * colide na constraint (e nem chega aqui — o replay exato retorna antes), mas
+ * uma rodada nova com payload diferente comete um recibo novo. Índice só, sem
+ * rebuild: a tabela permanece imutável via trigger.
+ */
+export const HANDOFF_ROUNDED_OPERATION_IDENTITY_SCHEMA = `
+DROP INDEX IF EXISTS idx_handoff_mcp_receipts_logical_operation;
+CREATE UNIQUE INDEX idx_handoff_mcp_receipts_logical_operation
+  ON handoff_mcp_receipts(logical_operation_key, raw_payload_sha256)
+  WHERE logical_operation_key IS NOT NULL AND raw_payload_sha256 IS NOT NULL;
+`;
+
 export const ORCHESTRATION_PROJECT_MIGRATION_SPECS: readonly ProjectMigrationSpec[] =
   [
     {

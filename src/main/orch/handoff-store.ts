@@ -610,6 +610,7 @@ export class ScopedHandoffStore {
           input.sessionId!,
           input.workerIncarnationId,
           logicalOperationKey,
+          mcpBoundary.options.rawPayloadSha256,
         );
         if (committedReceipt) {
           const dispatchReplay = mcpBoundary.dispatchTransition
@@ -1106,7 +1107,11 @@ export class ScopedHandoffStore {
     sessionId: string,
     workerIncarnationId: string | undefined,
     logicalOperationKey: string,
+    incomingRawPayloadSha256: string,
   ): z.infer<typeof mcpReceiptRowSchema> | null {
+    // F-239: uma sessão de worker pode ter N handoffs (um por rodada). Vale o
+    // recibo MAIS recente — se o handoff dele já foi entregue e o payload é
+    // outro, a submissão é rodada nova, não replay.
     const rawRows = db
       .prepare(
         `SELECT receipt_id, handoff_id, tool_call_id, tool_name, source,
@@ -1116,15 +1121,11 @@ export class ScopedHandoffStore {
                 chain_seq, prev_receipt_hash, chain_hash
          FROM handoff_mcp_receipts
          WHERE mission_id = ? AND session_id = ?
-           AND worker_incarnation_id IS ?`,
+           AND worker_incarnation_id IS ?
+         ORDER BY issued_at DESC, rowid DESC LIMIT 1`,
       )
       .all(missionId, sessionId, workerIncarnationId ?? null);
     if (rawRows.length === 0) return null;
-    if (rawRows.length !== 1) {
-      throw new ScopedStoreCorruptionError(
-        "physical handoff logical operation identity",
-      );
-    }
     let row: z.infer<typeof mcpReceiptRowSchema>;
     try {
       row = mcpReceiptRowSchema.parse(rawRows[0]);
@@ -1142,6 +1143,24 @@ export class ScopedHandoffStore {
       throw new Error(
         "handoff replay recusado: identidade lógica diverge do commit existente",
       );
+    }
+    const previousHandoff = db
+      .prepare(`SELECT delivered, delivery_state FROM handoffs WHERE id = ?`)
+      .get(row.handoff_id) as
+      | { delivered: 0 | 1; delivery_state: string }
+      | undefined;
+    const alreadyDelivered =
+      previousHandoff !== undefined &&
+      (previousHandoff.delivered === 1 ||
+        ["submitted", "acknowledged", "consumed"].includes(
+          previousHandoff.delivery_state,
+        ));
+    if (
+      alreadyDelivered &&
+      row.raw_payload_sha256 !== incomingRawPayloadSha256
+    ) {
+      // Rodada nova: handoff anterior entregue ao Maestro e payload diferente.
+      return null;
     }
     return row;
   }
@@ -1203,6 +1222,15 @@ export class ScopedHandoffStore {
           (transitionDetail !== undefined &&
             taskDispatch.lastError === transitionDetail.slice(0, 65_536))));
     if (!exactPayload || !exactPhysicalBoundary || !exactDispatchOutcome) {
+      // F-239: quem chega aqui tem o handoff anterior AINDA não entregue —
+      // payload divergente pendente é recusa com mensagem própria.
+      if (
+        replayRawPayloadSha256 !== committedReceipt.raw_payload_sha256
+      ) {
+        throw new Error(
+          "handoff recusado: a entrega anterior deste pane ainda não chegou ao Maestro — aguarde a entrega (ou repita o payload idêntico); nova rodada só depois de entregue",
+        );
+      }
       throw new Error(
         "handoff replay recusado: payload raw, origem física ou estado diverge do commit existente",
       );

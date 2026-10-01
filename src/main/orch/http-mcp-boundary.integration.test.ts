@@ -1249,17 +1249,84 @@ describe("physical HTTP MCP handoff boundary", () => {
     );
 
     expect(first).toMatchObject({ status: 200, body: { ok: true } });
+    // F-239: handoff 1 ainda `queued` → payload divergente é recusa com a
+    // mensagem de entrega pendente (nova rodada só depois de entregue).
     expect(divergent).toMatchObject({
       status: 200,
       body: {
         ok: false,
-        error: expect.stringMatching(/replay recusado.*diverge/i),
+        error: expect.stringMatching(/entrega anterior deste pane/i),
         effectMayHaveCommitted: true,
       },
     });
     expect(countRows(manager, "handoffs")).toBe(1);
     expect(countRows(manager, "handoff_mcp_receipts")).toBe(1);
     expect(spentHandoffSteps(missions)).toBe(1);
+  });
+
+  it("F-239: delivered handoff frees a new round — different payload commits a new receipt", async () => {
+    const first = await post("Auditoria a11y concluída — rodada 1.");
+    expect(first).toMatchObject({ status: 200, body: { ok: true } });
+    const firstId = first.body.result?.handoffId;
+    expect(firstId).toMatch(/^handoff-http-/);
+    expect(handoffs.markDelivered(firstId!)).toBe(true);
+
+    const second = await post("Correções dos ALTO da auditoria — rodada 2.");
+    expect(second).toMatchObject({
+      status: 200,
+      body: {
+        ok: true,
+        result: { handoffId: expect.stringMatching(/^handoff-http-/) },
+      },
+    });
+    const secondId = second.body.result?.handoffId;
+    expect(secondId).not.toBe(firstId);
+    expect(countRows(manager, "handoffs")).toBe(2);
+    expect(countRows(manager, "handoff_mcp_receipts")).toBe(2);
+    expect(handoffs.verifyReceiptChain(MISSION_ID)).toMatchObject({
+      status: "valid",
+      length: 2,
+    });
+    expect(spentHandoffSteps(missions)).toBe(2);
+
+    // Repetição idêntica da rodada 2: replay exato, sem recibo novo.
+    const retry = await post("Correções dos ALTO da auditoria — rodada 2.");
+    expect(retry).toMatchObject({
+      status: 200,
+      body: { ok: true, result: { handoffId: secondId } },
+    });
+    expect(countRows(manager, "handoffs")).toBe(2);
+    expect(countRows(manager, "handoff_mcp_receipts")).toBe(2);
+    expect(spentHandoffSteps(missions)).toBe(2);
+  });
+
+  it("F-239: divergent payload while round 2 is still queued is refused, delivered round frees round 3", async () => {
+    const first = await post("Rodada 1 entregue ao Maestro.");
+    expect(first.body.ok).toBe(true);
+    handoffs.markDelivered(first.body.result!.handoffId!);
+
+    const second = await post("Rodada 2 ainda pendente.");
+    expect(second.body.ok).toBe(true);
+    const divergentWhileQueued = await post("Rodada 2 com payload divergente.");
+    expect(divergentWhileQueued).toMatchObject({
+      status: 200,
+      body: {
+        ok: false,
+        error: expect.stringMatching(/entrega anterior deste pane/i),
+      },
+    });
+    expect(countRows(manager, "handoffs")).toBe(2);
+
+    handoffs.markDelivered(second.body.result!.handoffId!);
+    const third = await post("Rodada 3 após a 2 ser entregue.");
+    expect(third).toMatchObject({
+      status: 200,
+      body: { ok: true },
+    });
+    expect(third.body.result?.handoffId).not.toBe(
+      second.body.result?.handoffId,
+    );
+    expect(countRows(manager, "handoff_mcp_receipts")).toBe(3);
   });
 
   it("rejects different raw payloads hidden behind the same compact summary", async () => {
@@ -1275,11 +1342,13 @@ describe("physical HTTP MCP handoff boundary", () => {
     const divergent = await post(secondSummary);
 
     expect(first).toMatchObject({ status: 200, body: { ok: true } });
+    // F-239: payload raw divergente com a entrega ainda pendente → mensagem
+    // de rodada, não a de replay genérica.
     expect(divergent).toMatchObject({
       status: 200,
       body: {
         ok: false,
-        error: expect.stringMatching(/payload raw.*diverge/i),
+        error: expect.stringMatching(/entrega anterior deste pane/i),
         effectMayHaveCommitted: true,
       },
     });

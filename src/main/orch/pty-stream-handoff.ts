@@ -446,7 +446,9 @@ function commitPhysicalPtyHandoff(
     worktreeHeadSha: prepared.worktreeHeadSha,
     rawPayloadSha256: prepared.rawPayloadSha256,
   };
-  if (dispatch && ctx.workerIncarnationId) {
+  // F-239: transição de dispatch só quando o dispatch ainda espera o SEU
+  // handoff (running); handoff_ready e além = rodada nova pelo caminho de replay.
+  if (dispatch && ctx.workerIncarnationId && dispatch.state === "running") {
     return suite.handoffs.submitFromPhysicalAgentBoundaryAndTransitionDispatch(
       handoffInput,
       physicalReceipt,

@@ -219,6 +219,47 @@ describe("submitPtyStreamHandoff MCP parity", () => {
     expect(mocks.assertReadOnlyLaneObservationCurrent).toHaveBeenCalledOnce();
   });
 
+  it("F-239: dispatch já com handoff (handoff_ready) segue pelo caminho de replay sem transição", async () => {
+    const submitWithReplay = vi.fn(() => ({
+      handoff: {
+        id: "hoff-round-2",
+        evidenceTrust: "nexus-trusted",
+        deliveryState: "queued",
+      },
+      replayed: false,
+    }));
+    const submitAndTransition = vi.fn();
+    mocks.getContextBySession.mockReturnValue(workerCtx());
+    mocks.getStores.mockReturnValue({
+      missions: { get: () => approvedMission() },
+      tasks: { list: () => [] },
+      missionPanes: { list: () => [] },
+      taskDispatches: {
+        list: () => [
+          {
+            sessionId: "agy-session",
+            workerIncarnationId: "inc-a",
+            workerId: "agy",
+            state: "handoff_ready",
+            handoffId: "hoff-round-1",
+          },
+        ],
+      },
+      handoffs: {
+        submitFromPhysicalAgentBoundaryWithReplay: submitWithReplay,
+        submitFromPhysicalAgentBoundaryAndTransitionDispatch:
+          submitAndTransition,
+      },
+    });
+
+    const result = await submitPtyStreamHandoff("agy-session", payload);
+
+    expect(result.handoffId).toBe("hoff-round-2");
+    expect(submitAndTransition).not.toHaveBeenCalled();
+    expect(submitWithReplay).toHaveBeenCalledOnce();
+    expect(mocks.onHandoffSubmitted).toHaveBeenCalledOnce();
+  });
+
   it("Via Rápida: missão VIVA sem contrato cerimonial aprovado aceita o fechamento mecânico", async () => {
     // Campo 22/08 ("nenhum pane entrega handoffs"): pane ad-hoc do
     // nexus_pane_spawn (meta-de-pane/revisor) não tem dispatch selado —

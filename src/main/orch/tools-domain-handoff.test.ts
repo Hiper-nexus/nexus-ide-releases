@@ -1172,12 +1172,10 @@ describe("handoff MCP stop receipt", () => {
       ...handoff("unverified"),
       workerIncarnationId: "worker-incarnation-a",
     };
-    mocks.submitAndTransition.mockReturnValue({
+    // F-239: dispatch fora de "running" já tem handoff — replay/follow-up vai
+    // pelo caminho sem transição.
+    mocks.submitWithReplay.mockReturnValue({
       handoff: submitted,
-      taskDispatch: {
-        state: "handoff_ready",
-        handoffId: submitted.id,
-      },
       replayed: true,
     });
 
@@ -1194,10 +1192,10 @@ describe("handoff MCP stop receipt", () => {
       ok: true,
       handoffId: submitted.id,
       replayed: true,
-      taskDispatchState: "handoff_ready",
     });
-    expect(mocks.submitAndTransition).toHaveBeenCalledOnce();
-    expect(mocks.submit).not.toHaveBeenCalled();
+    expect(result).not.toHaveProperty("taskDispatchState");
+    expect(mocks.submitWithReplay).toHaveBeenCalledOnce();
+    expect(mocks.submitAndTransition).not.toHaveBeenCalled();
     expect(mocks.onHandoffSubmitted).toHaveBeenCalledOnce();
     expect(mocks.onHandoffSubmitted).toHaveBeenCalledWith(submitted, scope);
   });
@@ -1220,21 +1218,14 @@ describe("handoff MCP stop receipt", () => {
       ...handoff("unverified"),
       workerIncarnationId: "worker-incarnation-a",
     };
-    mocks.submitAndTransition
+    // F-239: dispatch handoff_ready → caminho de replay puro nas duas chamadas.
+    mocks.submitWithReplay
       .mockReturnValueOnce({
         handoff: submitted,
-        taskDispatch: {
-          state: "handoff_ready",
-          handoffId: submitted.id,
-        },
         replayed: false,
       })
       .mockReturnValueOnce({
         handoff: submitted,
-        taskDispatch: {
-          state: "handoff_ready",
-          handoffId: submitted.id,
-        },
         replayed: true,
       });
     mocks.onHandoffSubmitted.mockImplementationOnce(() => {
@@ -1262,9 +1253,9 @@ describe("handoff MCP stop receipt", () => {
       ok: true,
       handoffId: submitted.id,
       replayed: true,
-      taskDispatchState: "handoff_ready",
     });
-    expect(mocks.submitAndTransition).toHaveBeenCalledTimes(2);
+    expect(mocks.submitWithReplay).toHaveBeenCalledTimes(2);
+    expect(mocks.submitAndTransition).not.toHaveBeenCalled();
     expect(mocks.onHandoffSubmitted).toHaveBeenCalledTimes(2);
     expect(mocks.onHandoffSubmitted).toHaveBeenLastCalledWith(
       submitted,
@@ -1296,12 +1287,10 @@ describe("handoff MCP stop receipt", () => {
       status: "blocked" as const,
       workerIncarnationId: "worker-incarnation-a",
     };
-    mocks.submitAndTransition.mockReturnValue({
+    // F-239: dispatch "blocked" já carrega handoff — a reconciliação do replay
+    // vai pelo caminho sem transição.
+    mocks.submitWithReplay.mockReturnValue({
       handoff: submitted,
-      taskDispatch: {
-        state: "blocked",
-        handoffId: submitted.id,
-      },
       replayed: true,
     });
 
@@ -1318,12 +1307,55 @@ describe("handoff MCP stop receipt", () => {
       ok: true,
       handoffId: submitted.id,
       replayed: true,
-      taskDispatchState: "blocked",
     });
-    expect(mocks.submitAndTransition).toHaveBeenCalledOnce();
-    expect(mocks.submit).not.toHaveBeenCalled();
+    expect(result).not.toHaveProperty("taskDispatchState");
+    expect(mocks.submitWithReplay).toHaveBeenCalledOnce();
+    expect(mocks.submitAndTransition).not.toHaveBeenCalled();
     expect(mocks.onHandoffSubmitted).toHaveBeenCalledOnce();
     expect(mocks.onHandoffSubmitted).toHaveBeenCalledWith(submitted, scope);
+  });
+
+  it("F-239: worker com dispatch handoff_ready submete follow-up pelo caminho sem transição", async () => {
+    const worktree = createCommittedWorktree();
+    const stores = mocks.getStores();
+    const dispatch = {
+      id: "dispatch-current",
+      missionId: "mission-a",
+      taskId: "task-a",
+      sessionId: "worker-session",
+      workerIncarnationId: "worker-incarnation-a",
+      handoffId: "handoff-round-1",
+      state: "handoff_ready",
+    };
+    stores.taskDispatches.list = () => [dispatch];
+    const followUp = {
+      ...handoff("unverified"),
+      id: "handoff-round-2",
+      summary: "Segunda rodada: correções dos achados da revisão.",
+      workerIncarnationId: "worker-incarnation-a",
+    };
+    mocks.submitWithReplay.mockReturnValue({
+      handoff: followUp,
+      replayed: false,
+    });
+
+    const result = await submitTool().handler(
+      {
+        status: "success",
+        summary: followUp.summary,
+      },
+      context(worktree.root),
+      invocation(),
+    );
+
+    expect(result).toMatchObject({ ok: true, handoffId: "handoff-round-2" });
+    expect(result).not.toHaveProperty("taskDispatchState");
+    expect(mocks.submitWithReplay).toHaveBeenCalledOnce();
+    expect(mocks.submitAndTransition).not.toHaveBeenCalled();
+    // O dispatch NÃO transita: segue handoff_ready apontando para a rodada 1.
+    expect(dispatch.state).toBe("handoff_ready");
+    expect(dispatch.handoffId).toBe("handoff-round-1");
+    expect(mocks.onHandoffSubmitted).toHaveBeenCalledWith(followUp, scope);
   });
 
   it("refuses direct/internal handler calls without the central HTTP MCP receipt", async () => {
