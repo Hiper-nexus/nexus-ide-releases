@@ -66,3 +66,27 @@ test('the dev never ends inside a solid cell, whatever the frame throws at it', 
   }
   assert.ok(pos.x > 1 && pos.x < 7, 'the walk actually moved somewhere');
 });
+
+test('slideMove contorna a quina em vez de travar nela', async () => {
+  const { slideMove } = await import('./grid.js');
+  // Vão de uma célula entre dois sólidos na fileira de cima, como entre a planta e a doca.
+  const alcove = createGrid({ width: 8, height: 5, cellSize: 1, cells: ['########', '#P.CCCC#', '#......#', '#......#', '########'] });
+  let pos = { x: 2.5, z: 2.25 };
+  assert.equal(circleFree(alcove, pos.x, pos.z, .3), true);
+  for (let i = 0; i < 60; i++) pos = slideMove(alcove, pos, { x: .06, z: 0 }, .3);
+  assert.ok(pos.x > 3.5, `passou da quina (x=${pos.x.toFixed(2)})`);
+  assert.ok(pos.z >= 2.3 - 1e-6, 'foi empurrado para baixo da fileira de caixas');
+  assert.equal(circleFree(alcove, pos.x, pos.z, .3), true);
+});
+
+test('slideMove nunca deixa o disco dentro de um sólido, mesmo com passos enormes', async () => {
+  const { slideMove } = await import('./grid.js');
+  let seed = 99;
+  const rng = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  let pos = { x: 4.5, z: 4.5 };
+  for (let step = 0; step < 20000; step++) {
+    const angle = rng() * Math.PI * 2, speed = rng() * 6;
+    pos = slideMove(room, pos, { x: Math.cos(angle) * speed, z: Math.sin(angle) * speed }, .3);
+    assert.equal(circleFree(room, pos.x, pos.z, .3), true, `passo ${step}`);
+  }
+});
