@@ -154,3 +154,43 @@ test('/comunidade sem barra, o sorteio e subcaminhos continuam indo para o subdo
   const sub = await handleRequest(new Request('https://nexuside.app/comunidade/qualquer-coisa'), {});
   assert.equal(sub.status, 307);
 });
+
+// ---- Links permanentes de download ----
+const DOWNLOAD_REPO = 'https://github.com/Hiper-nexus/nexus-ide-releases/releases';
+function mockGitHubReleases(t) {
+  const release = (version, file) => ({ tag_name: `v${version}`, draft: false, prerelease: false, published_at: '2026-10-01T12:00:00Z',
+    html_url: `${DOWNLOAD_REPO}/tag/v${version}`, assets: [{ name: file, size: 1000, browser_download_url: `${DOWNLOAD_REPO}/download/v${version}/${file}` }] });
+  return t.mock.method(globalThis, 'fetch', async () => Response.json([
+    release('0.76.160', 'NexusIDE-0.76.160-arm64.dmg'),
+    release('0.76.159', 'NexusIDE-0.76.159-win32-x64-Setup.exe'),
+  ]));
+}
+
+test('/download/macos e /download/windows redirecionam para a última release de cada sistema', async t => {
+  mockGitHubReleases(t);
+  const mac = await handleRequest(new Request('https://nexuside.app/download/macos'), {});
+  assert.equal(mac.status, 302);
+  assert.equal(mac.headers.get('location'), `${DOWNLOAD_REPO}/download/v0.76.160/NexusIDE-0.76.160-arm64.dmg`);
+  const windows = await handleRequest(new Request('https://nexuside.app/download/windows'), {});
+  assert.equal(windows.headers.get('location'), `${DOWNLOAD_REPO}/download/v0.76.159/NexusIDE-0.76.159-win32-x64-Setup.exe`);
+});
+
+test('/download/mac e /download/win são apelidos curtos', async t => {
+  mockGitHubReleases(t);
+  assert.equal((await handleRequest(new Request('https://nexuside.app/download/mac'), {})).headers.get('x-nexus-version'), '0.76.160');
+  assert.equal((await handleRequest(new Request('https://nexuside.app/download/win'), {})).headers.get('x-nexus-version'), '0.76.159');
+});
+
+test('/download com sistema desconhecido não existe e o subdomínio da comunidade não serve download', async t => {
+  const fetchMock = mockGitHubReleases(t);
+  assert.equal((await handleRequest(new Request('https://nexuside.app/download/linux'), {})).status, 404);
+  assert.equal((await handleRequest(new Request('https://comunidade.nexuside.app/download/macos'), {})).status, 404);
+  assert.equal(fetchMock.mock.callCount(), 0);
+});
+
+test('/download/macos aceita HEAD e recusa POST', async t => {
+  mockGitHubReleases(t);
+  const head = await handleRequest(new Request('https://nexuside.app/download/macos', { method: 'HEAD' }), {});
+  assert.equal(head.status, 302);
+  assert.equal((await handleRequest(new Request('https://nexuside.app/download/macos', { method: 'POST' }), {})).status, 405);
+});

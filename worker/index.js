@@ -1,9 +1,12 @@
-import { releaseCatalogResponse } from '../src/downloads/catalog.js';
+import { downloadRedirectResponse, releaseCatalogResponse } from '../src/downloads/catalog.js';
 
 const PRODUCTION_HOST = 'nexuside.app';
 const COMMUNITY_HOST = 'comunidade.nexuside.app';
 const BACKEND_PATHS = ['/v1', '/billing', '/join', '/health', '/ready'];
 const ACCOUNT_PATHS = ['/conta', '/admin'];
+// Links permanentes de download: o HTML, os e-mails e a documentação apontam para cá e nunca ficam velhos.
+const DOWNLOAD_PREFIX = '/download/';
+const DOWNLOAD_SYSTEMS = { macos: 'macos', mac: 'macos', windows: 'windows', win: 'windows' };
 const ALIASES = new Set(['/comunidade', '/sorteio', '/sorteio/']);
 // A comunidade também abre no endereço principal: quem não consegue o subdomínio (filtro de rede, DNS) chega por aqui.
 const COMMUNITY_MIRROR_PATH = '/comunidade/';
@@ -44,6 +47,10 @@ export async function handleRequest(request, env, originFetch = fetch) {
   }
   if (url.pathname === '/api/releases') {
     return url.hostname === COMMUNITY_HOST ? new Response('Not found', { status: 404 }) : releaseCatalogResponse(request);
+  }
+  if (url.pathname.startsWith(DOWNLOAD_PREFIX)) {
+    const system = DOWNLOAD_SYSTEMS[url.pathname.slice(DOWNLOAD_PREFIX.length)];
+    return system && url.hostname !== COMMUNITY_HOST ? downloadRedirectResponse(system) : new Response('Not found', { status: 404 });
   }
   if (url.hostname === PRODUCTION_HOST && (ALIASES.has(url.pathname) || (url.pathname.startsWith('/comunidade/') && url.pathname !== COMMUNITY_MIRROR_PATH))) {
     const target = new URL('https://' + COMMUNITY_HOST);
