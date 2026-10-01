@@ -22,12 +22,12 @@ import {
 } from "../src/main/pty/darwin-pty-supervisor.ts";
 import { buildMacosSeatbeltPlan } from "../src/main/runtime/process-sandbox.ts";
 
-// F-714: pty-manager sets these markers; a pane inherits its supervisor's
+// F-715: pty-manager sets these markers; a pane inherits its supervisor's
 // responsibility, which main.c rejects as responsible_is_supervisor.
 const nexusPaneSkipReason =
   process.platform === "darwin" &&
   (process.env.NEXUS_PANE_ID || process.env.NEXUS_PANE_KEY)
-    ? "AMBIENTE-PANE (F-714): inherited nexus-pty-supervisor responsibility rejects launch before disclaim; run outside a Nexus pane or via launchd."
+    ? "AMBIENTE-PANE (F-715): inherited nexus-pty-supervisor responsibility rejects launch before disclaim; run outside a Nexus pane or via launchd."
     : undefined;
 
 const isDarwin = process.platform === "darwin";

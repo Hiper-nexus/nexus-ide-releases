@@ -20,15 +20,15 @@ import { buildDarwinPtySupervisor } from "./build-darwin-pty-supervisor.mjs";
 import { darwinNodePtyBootstrapLaunch } from "../src/main/pty/darwin-node-pty-bootstrap.ts";
 import { supervisedPtyCommand } from "../src/main/pty/darwin-pty-supervisor.ts";
 
-// F-714: pty-manager sets these markers; a pane inherits its supervisor's
+// F-715: pty-manager sets these markers; a pane inherits its supervisor's
 // responsibility, which main.c rejects as responsible_is_supervisor.
 const nexusPaneSkipReason =
   process.platform === "darwin" &&
   (process.env.NEXUS_PANE_ID || process.env.NEXUS_PANE_KEY)
-    ? "AMBIENTE-PANE (F-714): inherited nexus-pty-supervisor responsibility rejects launch before disclaim; run outside a Nexus pane or via launchd."
+    ? "AMBIENTE-PANE (F-715): inherited nexus-pty-supervisor responsibility rejects launch before disclaim; run outside a Nexus pane or via launchd."
     : undefined;
 
-// F-714: a write-denying sandbox (the Nexus regression gate's Seatbelt profile)
+// F-715: a write-denying sandbox (the Nexus regression gate's Seatbelt profile)
 // cannot open /dev/ptmx and refuses setuid exec ("spawn EPERM"), so the cases
 // that need a real PTY, a detached daemon or a setuid process cannot run there.
 // A denied posix_openpt is the marker; probed once, on first use.
@@ -40,7 +40,7 @@ function ptySkipReason() {
     nodePty.spawn("/usr/bin/true", [], {}).kill();
   } catch (error) {
     if (/posix_openpt failed: Operation not permitted/.test(String(error?.message))) {
-      ptySkipProbe.reason = "AMBIENTE-SANDBOX (F-714): this sandbox denies posix_openpt and setuid exec, so the real supervisor fixture cannot run; run outside the sandbox.";
+      ptySkipProbe.reason = "AMBIENTE-SANDBOX (F-715): this sandbox denies posix_openpt and setuid exec, so the real supervisor fixture cannot run; run outside the sandbox.";
     }
   }
   return ptySkipProbe.reason;

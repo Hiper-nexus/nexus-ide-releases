@@ -31,15 +31,15 @@ import type { DarwinAdHocSmokeExecutableSeal } from "./darwin-pty-supervisor";
 import type { DarwinTrustedExecutableSeal } from "./trusted-native-cli-binary";
 import { darwinNodePtyBootstrapLaunch } from "./darwin-node-pty-bootstrap";
 
-// F-714: pty-manager sets these markers; a pane inherits its supervisor's
+// F-715: pty-manager sets these markers; a pane inherits its supervisor's
 // responsibility, which main.c rejects as responsible_is_supervisor.
 const nexusPaneSkipReason =
   process.platform === "darwin" &&
   (process.env.NEXUS_PANE_ID || process.env.NEXUS_PANE_KEY)
-    ? "AMBIENTE-PANE (F-714): inherited nexus-pty-supervisor responsibility rejects launch before disclaim; run outside a Nexus pane or via launchd."
+    ? "AMBIENTE-PANE (F-715): inherited nexus-pty-supervisor responsibility rejects launch before disclaim; run outside a Nexus pane or via launchd."
     : undefined;
 
-// F-714: a write-denying sandbox (the Nexus regression gate's Seatbelt profile)
+// F-715: a write-denying sandbox (the Nexus regression gate's Seatbelt profile)
 // cannot open /dev/ptmx, so no real PTY exists there. Probed once, on first use.
 let ptySkipProbe: { reason: string | undefined } | undefined;
 function ptySkipReason(): string | undefined {
@@ -49,7 +49,7 @@ function ptySkipReason(): string | undefined {
     nodePty.spawn("/usr/bin/true", [], {}).kill();
   } catch (error) {
     if (/posix_openpt failed: Operation not permitted/.test(String((error as Error | undefined)?.message))) {
-      ptySkipProbe.reason = "AMBIENTE-SANDBOX (F-714): posix_openpt is denied here, so no real PTY can be opened; run outside the sandbox.";
+      ptySkipProbe.reason = "AMBIENTE-SANDBOX (F-715): posix_openpt is denied here, so no real PTY can be opened; run outside the sandbox.";
     }
   }
   return ptySkipProbe.reason;
