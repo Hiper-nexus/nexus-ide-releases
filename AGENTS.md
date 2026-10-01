@@ -161,6 +161,12 @@ saber isto antes de mexer:
   E `switched:true` só sai DEPOIS do religamento real (pane main-owned faz o
   respawn antes de emitir); toda decisão sai no trace `account-failover`.
   Nunca volte a trocar pane ou a emitir sucesso por texto não confirmado.
+- **Estrangulamento que a própria CLI administra não é limite (F-718).** O
+  enxame do Kimi Code re-enfileira subagentes no 429 de concorrência e mostra
+  "Rate limited…"; o tower pausa spawns por segundos. `detectLimit` tira essas
+  frases exatas (`CLI_SELF_MANAGED_THROTTLE`) antes dos padrões. CLI nova com
+  rótulo de fila/backoff próprio entra ali com a string exata do bundle, nunca
+  afrouxando o padrão de "rate limit" para todo mundo.
 
 ## Conventions
 

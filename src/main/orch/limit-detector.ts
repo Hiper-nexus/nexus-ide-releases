@@ -376,6 +376,28 @@ function stripFailoverHandoffPack(text: string): string {
   );
 }
 
+/**
+ * F-718: estrangulamento que a PRÓPRIA CLI administra não é limite da conta.
+ *
+ * O Kimi Code (2.1) roda subagentes em enxame. No 429 de concorrência da
+ * Moonshot ele entra em modo de taxa: re-enfileira o subagente com backoff
+ * (3 s, 6 s, 12 s…), encolhe a capacidade e a recupera em ~3 min. O painel
+ * mostra "Rate limited…" (SUSPENDED_LABEL, com reticências U+2026), e o tower
+ * pausa spawns por segundos. Esses textos casavam o padrão de 1 h e o Nexus
+ * avisava "Limite temporário" com a cota em 73% (print de 01/10). Só as
+ * frases exatas da CLI saem; o erro que derruba o agente continua detectado.
+ */
+const CLI_SELF_MANAGED_THROTTLE: readonly RegExp[] = [
+  /\bRate\s+limited…/g,
+  /\bProvider\s+rate\s+limit;\s+subagent\s+requeued\s+for\s+retry\.?/gi,
+  /\bprovider\s+rate\s+limit\s+hit\s+[—–-]+\s+new\s+tower\s+spawns\s+paused\s+for\s+~?\d+s\b/gi,
+  /\bspawns\s+PAUSED\s+for\s+~?\d+s\s+\(provider\s+rate\s+limit\s+[—–-]+\s+successful\s+requests\s+lift\s+the\s+pause\s+early\)/gi,
+];
+
+function stripCliSelfManagedThrottle(text: string): string {
+  return CLI_SELF_MANAGED_THROTTLE.reduce((out, re) => out.replace(re, ' '), text);
+}
+
 interface MarkdownFence {
   marker: '`' | '~';
   length: number;
@@ -522,7 +544,7 @@ function stripQuotedDiagnosticExamples(text: string): string {
 
 export function detectLimit(rawText: string, now: number = Date.now()): LimitHit | null {
   const text = stripQuotedDiagnosticExamples(
-    stripFailoverHandoffPack(rawText),
+    stripCliSelfManagedThrottle(stripFailoverHandoffPack(rawText)),
   );
   for (const pattern of PATTERNS) {
     const match = pattern.re.exec(text);

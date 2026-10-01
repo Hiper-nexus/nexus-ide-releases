@@ -637,3 +637,35 @@ describe('detectLimit — limite de sessão da CLI Claude (2026-09) e reset por 
     expect(detectLimit("Se aparecer \"You've hit your session limit\", troque de conta.", at1853)).toBeNull();
   });
 });
+
+describe('F-718: estrangulamento que a CLI do Kimi administra sozinha', () => {
+  const swarm = [
+    'Agent swarm · 3 agents',
+    '  ⣿⣿⣿⣿⣿⣿  Completed',
+    '  ⣤⣀⣀⣀⣀⣀  Rate limited…',
+    '  ⣀⣀⣀⣀⣀⣀  Queued…',
+  ].join('\n');
+
+  it.each([
+    // Painel do enxame (SUSPENDED_LABEL): subagente re-enfileirado com backoff.
+    '⣿⣿⣶⣀⣀⣀  Rate limited…  explore-api   ━━━━━━',
+    swarm,
+    'Provider rate limit; subagent requeued for retry.',
+    // Tower: pausa de spawns por segundos, recuperada sozinha.
+    'provider rate limit hit — new tower spawns paused for ~12s. Successful requests lift the pause early; wait and retry, or let running agents finish first.',
+    ['provider rate limit hit — new tower spawns paused', 'for ~12s. Successful requests lift the pause early'].join('\n'),
+    'budget: 4 agent(s) · inflight: 4 · spawns PAUSED for ~9s (provider rate limit — successful requests lift the pause early)',
+  ])('não é limite da conta: %s', (text) => {
+    expect(detectLimit(text)).toBeNull();
+  });
+
+  it('um 429 real depois do painel do enxame continua detectado', () => {
+    const hit = detectLimit([swarm, 'Error: 429 Too Many Requests'].join('\n'));
+    expect(hit?.kind).toBe('rate-limit');
+  });
+
+  it('"Rate limited" de outra CLI, sem as reticências do rótulo do Kimi, continua detectado', () => {
+    expect(detectLimit('Error: Rate limited by provider')?.kind).toBe('rate-limit');
+    expect(detectLimit('Rate limited. Please wait before retrying.')?.kind).toBe('rate-limit');
+  });
+});
