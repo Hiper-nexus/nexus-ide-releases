@@ -8894,7 +8894,7 @@ export const RELEASE_076159: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076160: AppRelease = {
   version: '0.76.160',
   date: '2026-10-01',
   codename: 'Teste à vista',
@@ -8909,6 +8909,41 @@ export const CURRENT_RELEASE: AppRelease = {
         'quantos dias faltam, ou que termina amanhã ou hoje, com o botão ' +
         'Assinar que abre o checkout. Quem já assina, usa código de licença ' +
         'ou é administrador não vê o aviso.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.161',
+  date: '2026-10-01',
+  codename: 'Jev e Clef juntos',
+  summary:
+    'Escolha Jev, Clef ou o modo automático nas configurações. O Clef pode ' +
+    'analisar a página do navegador com visão optativa. Inclui a 0.76.160.',
+  highlights: [
+    {
+      title: 'Dois modelos de decisão, uma configuração',
+      detail:
+        'Account ID e token Cloudflare no cofre local, teste de conexão e ' +
+        'escolha entre Automático, Somente Jev e Somente Clef, com Clef Flash ' +
+        'opcional. Jev e suas credenciais permanecem disponíveis.',
+    },
+    {
+      title: 'Visão do navegador com Clef',
+      detail:
+        'Ao ativar a análise de imagens, o agente pode consultar sinais ' +
+        'visuais de erro, sucesso, carregamento, bloqueio humano e layout. ' +
+        'Campos reconhecidos e frames são ocultos antes do envio. A ' +
+        'consulta não clica nem concede permissões.',
+    },
+    {
+      title: 'Uso e custos por modelo',
+      detail:
+        'O histórico identifica o provedor, modelo, regra de seleção, ' +
+        'tokens e tentativas. A regra automática inicial mantém Jev nas ' +
+        'tarefas de texto e usa Clef para escolher ferramentas; qualidade ' +
+        'local ainda será medida antes de promover novas rotas.',
     },
   ],
   fixes: [],

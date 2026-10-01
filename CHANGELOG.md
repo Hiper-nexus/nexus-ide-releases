@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.161 — Jev e Clef juntos
+
+Build do Mac. Inclui integralmente a 0.76.160 (Teste à vista), com marca, site, acesso, assinatura e licença preservados.
+
+- **Modelos complementares.** Automático, Somente Jev ou Somente Clef; Clef Flash opcional. Account ID local, token no cofre criptografado e teste de conexão. Instalações existentes conservam Jev e visão desligada.
+- **Visão optativa no navegador.** `nexus_browser_judge_visual` informa sinais de erro, sucesso, carregamento, bloqueio humano e layout. Captura apenas o pane autorizado, oculta campos reconhecidos e frames, sem executar ações ou enviar screenshots do desktop. A detecção não garante ocultar toda informação pessoal da página.
+- **Contabilidade por modelo.** Histórico distingue provedores, variantes, uso real e tentativas HTTP; alterações de configuração/chave invalidam cache e decisões em andamento.
+- **Limite conhecido.** A política automática inicial usa evidência pública: Clef na escolha de ferramentas, Jev nas outras tarefas de texto. Não foi promovida como superioridade comprovada no Nexus. Avaliador local com casos em português e heldout separado disponível para medir novas rotas.
+
 ## 0.76.160 — Teste à vista
 
 Build do Mac. Inclui a 0.76.159 (Marca nova).
