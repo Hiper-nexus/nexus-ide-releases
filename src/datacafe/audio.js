@@ -18,6 +18,7 @@ export function createAudio({ context = null, storage = defaultStorage(), create
   const ownsContext = !context;
   let master = null, noise = null, fanGain = null, fanSource = null;
   let muted = false;
+  let disposed = false;
   try { muted = storage?.getItem(MUTE_KEY) === '1'; } catch { muted = false; }
 
   function ready() {
@@ -78,6 +79,7 @@ export function createAudio({ context = null, storage = defaultStorage(), create
   return {
     /** Chame dentro de um clique ou tecla. Devolve true quando o som ficou disponível. */
     unlock() {
+      if (disposed) return false;
       try {
         ctx ??= createContext();
         if (!ctx) return false;
@@ -128,6 +130,7 @@ export function createAudio({ context = null, storage = defaultStorage(), create
     suspend() { try { ctx?.suspend?.(); } catch { /* nada a fazer */ } },
     resume() { try { if (master) ctx?.resume?.(); } catch { /* nada a fazer */ } },
     dispose() {
+      disposed = true;
       try { fanSource?.stop(); } catch { /* já parou */ }
       fanSource = null;
       if (ownsContext) { try { ctx?.close?.(); } catch { /* já fechado */ } }

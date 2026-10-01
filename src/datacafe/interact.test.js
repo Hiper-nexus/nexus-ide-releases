@@ -46,3 +46,35 @@ test('holdStep reports progress and completion without drifting past 1', () => {
   assert.equal(done.progress, 1);
   assert.ok(hold.elapsed >= 1.2);
 });
+
+test('advanceHold: tempo segurado num alvo não vale para outro, nem passando por um bloqueado', async () => {
+  const { advanceHold } = await import('./interact.js');
+  const a = { id: 'a' }, b = { id: 'b' };
+  const install = { text: 'Instalar', duration: 1.4, blocked: false };
+  const need = { text: 'Precisa de GPU', duration: 1, blocked: true };
+  const hold = { item: null, label: null, duration: 1, elapsed: 0 };
+  for (let i = 0; i < 8; i++) assert.equal(advanceHold(hold, a, install, true, 0.1), 'progress');
+  assert.ok(Math.abs(hold.elapsed - 0.8) < 1e-9);
+  assert.equal(advanceHold(hold, b, need, true, 0.1), 'blocked');
+  assert.equal(hold.elapsed, 0, 'o bloqueado zera a barra');
+  let result;
+  for (let i = 0; i < 6; i++) result = advanceHold(hold, a, install, true, 0.1);
+  assert.equal(result, 'progress', 'voltar ao alvo A recomeça do zero');
+  for (let i = 0; i < 8 && result !== 'done'; i++) result = advanceHold(hold, a, install, true, 0.1);
+  assert.equal(result, 'done');
+});
+
+test('advanceHold: soltar ou mudar a ação do mesmo alvo recomeça a contagem', async () => {
+  const { advanceHold } = await import('./interact.js');
+  const rack = { id: 'rack' };
+  const install = { text: 'Instalar', duration: 1, blocked: false };
+  const reboot = { text: 'Reiniciar', duration: 1, blocked: false };
+  const hold = { item: null, label: null, duration: 1, elapsed: 0 };
+  advanceHold(hold, rack, install, true, 0.6);
+  assert.equal(advanceHold(hold, rack, install, false, 0.1), 'idle');
+  assert.equal(hold.elapsed, 0);
+  advanceHold(hold, rack, install, true, 0.6);
+  assert.equal(advanceHold(hold, rack, reboot, true, 0.5), 'progress');
+  assert.ok(Math.abs(hold.elapsed - 0.5) < 1e-9, 'a ação nova começou do zero');
+  assert.equal(advanceHold(hold, null, null, true, 0.1), 'idle');
+});

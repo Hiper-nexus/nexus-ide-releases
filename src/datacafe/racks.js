@@ -51,6 +51,11 @@ export function poweredCount(state) {
   return state.order.filter(id => state.racks[id].state !== 'off').length;
 }
 
+/** Racks realmente no ar agora: instalados e sem incidente. */
+export function operationalCount(state) {
+  return state.order.filter(id => state.racks[id].state === 'on').length;
+}
+
 export function incidentIds(state) {
   return state.order.filter(id => state.racks[id].state === 'incident');
 }

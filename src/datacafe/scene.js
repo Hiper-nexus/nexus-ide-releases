@@ -12,12 +12,12 @@ import { LAYOUT } from './layout.js';
 import { MODELS } from './models.js';
 import { PALETTE } from './palette.js';
 import { createGrid, slideMove } from './grid.js';
-import { createInteractables, register, nearest, holdStep } from './interact.js';
+import { createInteractables, register, nearest, advanceHold } from './interact.js';
 import { WALK, intentFrom, worldDirection, walkStep } from './walk.js';
 import { RIG, clampYaw, clampTarget, rigGoal, rigStep } from './rig.js';
 import { joystickInput, JOYSTICK_RADIUS } from './touch.js';
 import { ENERGY, createEnergy, energyStep, drink, speedScale, energyLevel } from './energy.js';
-import { createRacks, installGpu, reboot, rackStep, rackState, poweredCount, installedIds } from './racks.js';
+import { createRacks, installGpu, reboot, rackStep, rackState, poweredCount, operationalCount, installedIds } from './racks.js';
 import { ticketsFrom, completeTicket, badgesFor, TICKET_XP } from './tickets.js';
 import { saveProgress, initialProgress } from './progress.js';
 
@@ -113,7 +113,8 @@ class DataCafeWorld {
     this.cam = rigGoal({ x: center.x, z: center.z + 1 }, 0, {}, 1.2);
     this.scratch = new Vector3();
 
-    this.hold = { item: null, duration: 1, elapsed: 0 };
+    this.hold = { item: null, label: null, duration: 1, elapsed: 0 };
+    this.holdShown = false;
     this.holding = false;
     this.latch = false;
     this.blockedToast = false;
@@ -258,13 +259,26 @@ class DataCafeWorld {
     this.tickets = ticketsFrom(this.racks, this.energy, MODELS);
     const powered = poweredCount(this.racks);
     this.on.tickets?.(this.tickets);
-    this.on.racks?.(powered, MODELS.length);
+    this.on.racks?.(operationalCount(this.racks), MODELS.length, powered);
     this.dc.setNoc(this.tickets.map(ticket => ticket.title), this.racks.order.map(id => rackState(this.racks, id)));
     this.audio?.fan(powered / MODELS.length);
     this.goalPoint = this.playing ? this.objective() : null;
     this.dc.setObjective(this.goalPoint);
     this.on.objective?.(this.goalPoint ? { text: this.goalPoint.text, kind: this.goalPoint.kind } : null);
     this.shownVersion = this.version;
+  }
+
+  /** Com a GPU na mão, o rack mais perto muda enquanto o dev anda: reavalia algumas vezes por segundo. */
+  trackGoal(dt) {
+    if (!this.carrying || this.goalPoint?.kind !== 'install') return;
+    this.clocks.goal = (this.clocks.goal ?? 0) + dt;
+    if (this.clocks.goal < 0.3) return;
+    this.clocks.goal = 0;
+    const next = this.objective();
+    if (next && (next.x !== this.goalPoint.x || next.z !== this.goalPoint.z)) {
+      this.goalPoint = next;
+      this.dc.setObjective(next);
+    }
   }
 
   /** Para onde o jogador deveria ir agora: incidente, café baixo, rack livre com a GPU na mão ou a doca. */
@@ -352,24 +366,11 @@ class DataCafeWorld {
       this.dc.highlight(item);
       this.blockedToast = false;
     }
-    if (this.holding && current && !this.latch) {
-      if (current.blocked) {
-        if (!this.blockedToast) { this.on.toast?.(current.text); this.blockedToast = true; }
-        return;
-      }
-      if (this.hold.item !== item) { this.hold.item = item; this.hold.elapsed = 0; this.hold.duration = current.duration; }
-      const { progress, done } = holdStep(this.hold, dt);
-      this.on.hold?.(progress);
-      if (done) {
-        this.hold.item = null;
-        this.latch = true;
-        this.on.hold?.(0);
-        item.onComplete?.();
-      }
-    } else if (this.hold.item) {
-      this.hold.item = null;
-      this.on.hold?.(0);
-    }
+    const result = advanceHold(this.hold, item, current, this.holding && !this.latch, dt);
+    if (result === 'blocked' && !this.blockedToast) { this.on.toast?.(current.text); this.blockedToast = true; }
+    if (result === 'progress') { this.on.hold?.(this.hold.elapsed / this.hold.duration); this.holdShown = true; }
+    else if (this.holdShown) { this.on.hold?.(0); this.holdShown = false; }
+    if (result === 'done') { this.latch = true; item.onComplete?.(); }
   }
 
   // ---------- Quadro ----------
@@ -398,13 +399,14 @@ class DataCafeWorld {
       this.simulate(dt);
       this.interact(dt);
       if (this.version !== this.shownVersion) this.refresh();
+      else this.trackGoal(dt);
     }
     if (running) {
       this.dev.group.position.set(this.body.x, 0, this.body.z);
       this.dev.setMotion({ speed: this.playing ? this.body.speed : 0, heading: this.body.heading, carrying: this.carrying, tired: this.energy.tired, calm: this.calm }, dt);
       this.dc.update(dt, seconds, this.calm);
     }
-    const effects = this.particles.update(running ? dt : 0);
+    const effects = running ? this.particles.update(dt) : false;
     this.updateCamera(dt, seconds);
     this.renderer.render(this.scene, this.camera);
     this.updatePointer();
@@ -467,7 +469,7 @@ class DataCafeWorld {
     if (!this.host.contains(event.target)) return;
     const key = event.key.toLowerCase();
     if (key === 'escape') { this.clearInput(); this.host.blur(); return; }
-    if (!this.playing) return;
+    if (!this.playing || this.paused) return;
     if (KEYS[key]) { event.preventDefault(); this.keys[KEYS[key]] = true; this.schedule(); return; }
     if (ACTION_KEYS.has(key)) { event.preventDefault(); if (!event.repeat) this.holdStart(); return; }
     if (key === 'm') this.on.menu?.();
@@ -487,7 +489,7 @@ class DataCafeWorld {
   };
 
   holdStart = () => {
-    if (!this.playing || this.paused) return;
+    if (!this.playing || this.paused || this.disposed) return;
     this.audio?.unlock();
     this.holding = true;
     this.schedule();
@@ -578,6 +580,7 @@ class DataCafeWorld {
 
   // ---------- API ----------
   start = () => {
+    if (this.disposed) return;
     this.playing = true;
     this.yawTarget = 0;
     this.paused = false;

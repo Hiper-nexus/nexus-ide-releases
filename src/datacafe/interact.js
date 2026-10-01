@@ -37,3 +37,21 @@ export function holdStep(hold, dt) {
   const progress = Math.min(1, hold.elapsed / hold.duration);
   return { progress, done: progress >= 1 };
 }
+
+/** Decide o segurar deste quadro. `hold` é o acumulador do loop: ele zera sempre
+ * que o alvo ou a ação mudam, e também enquanto a ação está bloqueada ou o botão
+ * está solto, então tempo segurado num alvo nunca vale para outro.
+ * Devolve 'idle', 'blocked', 'progress' ou 'done'. */
+export function advanceHold(hold, item, label, pressed, dt) {
+  if (hold.item !== item || hold.label !== label) {
+    hold.item = item;
+    hold.label = label;
+    hold.elapsed = 0;
+  }
+  if (!pressed || !item || !label) { hold.elapsed = 0; return 'idle'; }
+  if (label.blocked) { hold.elapsed = 0; return 'blocked'; }
+  hold.duration = label.duration;
+  hold.elapsed += dt;
+  if (hold.elapsed >= hold.duration) { hold.elapsed = 0; return 'done'; }
+  return 'progress';
+}

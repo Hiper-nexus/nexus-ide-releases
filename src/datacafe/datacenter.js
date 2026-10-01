@@ -242,7 +242,7 @@ function paintAtlas(models, images) {
 }
 
 /** Telão do NOC: tickets, mapa dos racks e carga. */
-function paintNoc(context, canvas, lines = [], states = [], clock = 0) {
+function paintNoc(context, canvas, lines = [], states = [], clock = 0, calm = false) {
   const { width: w, height: h } = canvas;
   context.fillStyle = '#060508';
   context.fillRect(0, 0, w, h);
@@ -273,7 +273,7 @@ function paintNoc(context, canvas, lines = [], states = [], clock = 0) {
   const cell = 44, gap = 8, cols = 6;
   states.forEach((state, i) => {
     const cx = gx + 16 + (i % cols) * (cell + gap), cy = 62 + Math.floor(i / cols) * (cell + gap);
-    context.fillStyle = state === 'on' ? hex(PALETTE.green) : state === 'incident' ? (Math.floor(clock * 2) % 2 ? '#ff4d4d' : '#6b1c24') : '#2c2830';
+    context.fillStyle = state === 'on' ? hex(PALETTE.green) : state === 'incident' ? (calm || Math.floor(clock * 2) % 2 ? '#ff4d4d' : '#6b1c24') : '#2c2830';
     context.fillRect(cx, cy, cell, cell);
   });
   const [bx, , bw] = panels[2];
@@ -281,7 +281,8 @@ function paintNoc(context, canvas, lines = [], states = [], clock = 0) {
   context.fillText('CARGA', bx + 16, 22);
   const bars = 10;
   for (let i = 0; i < bars; i++) {
-    const load = powered === 0 ? 0.05 : 0.25 + 0.6 * Math.abs(Math.sin(clock * 0.7 + i * 1.3)) * (powered / Math.max(1, states.length));
+    const wave = calm ? 0.6 + 0.4 * Math.abs(Math.sin(i * 1.3)) : Math.abs(Math.sin(clock * 0.7 + i * 1.3));
+    const load = powered === 0 ? 0.05 : 0.25 + 0.6 * wave * (powered / Math.max(1, states.length));
     const bh = (h - 90) * load;
     context.fillStyle = i % 3 === 0 ? hex(PALETTE.pink) : '#8b80ff';
     context.fillRect(bx + 16 + i * ((bw - 32) / bars), h - 20 - bh, (bw - 32) / bars - 5, bh);
@@ -493,8 +494,8 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
   kit.box(root, [noc.width - 0.1, 0.78, 0.72], [noc.x + noc.width / 2, 0.39, noc.z + 0.45], kit.mat(0x17151b));
   kit.box(root, [noc.width - 0.06, 0.04, 0.76], [noc.x + noc.width / 2, 0.8, noc.z + 0.45], kit.mat(PALETTE.lift));
   kit.instanced(root, kit.boxGeo(0.46, 0.02, 0.16), kit.mat(0x2e2a35), [0, 1, 2, 3], (d, i) => d.position.set(noc.x + 0.8 + i * 1.45, 0.83, noc.z + 0.6), { cast: false });
-  let nocState = { lines: [], states: rackEntries.map(() => 'off'), clock: 0 };
-  const nocTex = kit.canvasTexture(NOC_SIZE.width, NOC_SIZE.height, (context, canvas) => paintNoc(context, canvas, nocState.lines, nocState.states, nocState.clock));
+  let nocState = { lines: [], states: rackEntries.map(() => 'off'), clock: 0, calm: false };
+  const nocTex = kit.canvasTexture(NOC_SIZE.width, NOC_SIZE.height, (context, canvas) => paintNoc(context, canvas, nocState.lines, nocState.states, nocState.clock, nocState.calm));
   kit.box(root, [noc.width - 0.2, 1.58, 0.06], [noc.x + noc.width / 2, 1.78, 1.03], kit.mat(0x0c0b0e));
   kit.mesh(root, kit.geo('nocface', () => new PlaneGeometry(noc.width - 0.32, 1.48)), kit.own(new MeshBasicMaterial({ map: nocTex.texture, toneMapped: false })), [noc.x + noc.width / 2, 1.78, 1.065], { cast: false, receive: false });
   let nocClock = 0;
@@ -604,12 +605,13 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
       arrow.rotation.y = time * 1.5;
       beam.material.opacity = 0.12 + 0.06 * Math.sin(time * 2.4);
     }
+    if (calm !== nocState.calm) { nocState = { ...nocState, calm }; nocTex.redraw(); }
     nocClock += dt;
-    if (nocClock > 1) { nocClock = 0; nocState = { ...nocState, clock: time }; nocTex.redraw(); }
+    if (!calm && nocClock > 1) { nocClock = 0; nocState = { ...nocState, clock: time }; nocTex.redraw(); }
   }
 
   function setNoc(lines, states) {
-    nocState = { lines, states, clock: nocState.clock };
+    nocState = { ...nocState, lines, states };
     nocTex.redraw();
   }
 

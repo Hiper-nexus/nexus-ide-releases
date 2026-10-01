@@ -64,3 +64,10 @@ test('sem sorteio favorável nada cai e o estado é o mesmo objeto quando nada e
   assert.equal(rackStep(on, 0.1, never).events.length, 0);
   assert.equal(allPowered(on), true);
 });
+
+test('operacionais exclui racks em incidente, instalados não', async () => {
+  const { operationalCount } = await import('./racks.js');
+  const state = rackStep(createRacks(IDS, ['llm0', 'llm1', 'llm2']), 0.1, () => 0).state;
+  assert.equal(poweredCount(state), 3);
+  assert.equal(operationalCount(state), 2);
+});

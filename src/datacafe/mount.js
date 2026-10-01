@@ -33,7 +33,7 @@ function hudMarkup(id) {
   return `
 <div class="dc-status">
   <div class="dc-meter dc-energy" role="status" aria-label="Energia do café">${CUP}<span class="dc-track"><span class="dc-fill"></span></span><span class="dc-label mono">CAFÉ</span></div>
-  <div class="dc-meter dc-racks mono">${RACK}<span class="dc-racks-count">0/18</span><span>NO AR</span></div>
+  <div class="dc-meter dc-racks mono">${RACK}<span class="dc-racks-count">0/18</span><span class="dc-racks-label">NO AR</span></div>
 </div>
 <button class="dc-level" type="button" aria-expanded="false" aria-controls="${id}-panel"><span class="pixel">LVL <b class="dc-lvl">1</b></span><span class="dc-xpbar" aria-hidden="true"><span></span></span><span class="mono dc-title">Estagiário</span></button>
 <aside class="dc-panel" id="${id}-panel" hidden aria-label="Tickets e ajustes">
@@ -72,6 +72,9 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
   const panel = $('.dc-panel');
   const level = $('.dc-level');
   let toastTimer;
+  let disposed = false;
+  const aborter = new AbortController();
+  const listen = { signal: aborter.signal };
 
   const audio = createAudio();
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -117,9 +120,12 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
         meter.classList.toggle('empty', tired);
         $('.dc-label').textContent = tired ? 'SEM CAFÉ' : level < 0.3 ? 'CAFÉ BAIXO' : 'CAFÉ';
       },
-      racks(powered, total) {
-        $('.dc-racks-count').textContent = `${powered}/${total}`;
-        $('.dc-racks').classList.toggle('complete', powered === total);
+      racks(operational, total, installed = operational) {
+        $('.dc-racks-count').textContent = `${operational}/${total}`;
+        const down = installed - operational;
+        $('.dc-racks-label').textContent = down > 0 ? `NO AR · ${down} ${down === 1 ? 'CAÍDO' : 'CAÍDOS'}` : 'NO AR';
+        $('.dc-racks').classList.toggle('complete', operational === total);
+        $('.dc-racks').classList.toggle('down', down > 0);
       },
       objective(goal) {
         $('.dc-ticket-now').textContent = goal ? goal.text : 'NOC em ordem. Bora de café?';
@@ -169,7 +175,7 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
   });
 
   function start() {
-    if (world.playing) return;
+    if (disposed || world.playing) return;
     stage.classList.add('dc-playing');
     world.start();
     toast(matchMedia('(pointer: coarse)').matches
@@ -179,27 +185,38 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
 
   // Botão de ação: segurar com mouse, toque ou teclado.
   const press = event => { event.preventDefault(); try { prompt.setPointerCapture(event.pointerId); } catch { /* sintético */ } world.holdStart(); };
-  prompt.addEventListener('pointerdown', press);
-  for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) prompt.addEventListener(name, () => world.holdEnd());
-  level.addEventListener('click', () => togglePanel());
-  $('.dc-close').addEventListener('click', () => { $('.dc-station').hidden = true; host.focus({ preventScroll: true }); });
+  prompt.addEventListener('pointerdown', press, listen);
+  for (const name of ['pointerup', 'pointercancel', 'lostpointercapture', 'blur']) prompt.addEventListener(name, () => world.holdEnd(), listen);
+  // Teclado no próprio botão: E, Enter ou Espaço seguram a ação como no jogo.
+  prompt.addEventListener('keydown', event => {
+    if (!['e', 'E', 'Enter', ' '].includes(event.key)) return;
+    event.preventDefault();
+    if (!event.repeat) world.holdStart();
+  }, listen);
+  prompt.addEventListener('keyup', event => { if (['e', 'E', 'Enter', ' '].includes(event.key)) world.holdEnd(); }, listen);
+  level.addEventListener('click', () => togglePanel(), listen);
+  $('.dc-close').addEventListener('click', () => { $('.dc-station').hidden = true; host.focus({ preventScroll: true }); }, listen);
   const muteButton = hud.querySelector('[data-act=mute]');
   const paintMute = () => { muteButton.textContent = audio.isMuted() ? 'Som desligado' : 'Som ligado'; muteButton.setAttribute('aria-pressed', String(!audio.isMuted())); };
   paintMute();
-  muteButton.addEventListener('click', () => { audio.unlock(); audio.setMuted(!audio.isMuted()); paintMute(); });
+  muteButton.addEventListener('click', () => { audio.unlock(); audio.setMuted(!audio.isMuted()); paintMute(); }, listen);
   hud.querySelector('[data-act=pause]').addEventListener('click', event => {
     const paused = world.togglePause();
     event.currentTarget.textContent = paused ? 'Retomar' : 'Pausar';
-  });
-  hud.querySelector('[data-act=reset]').addEventListener('click', () => { clearProgress(); world.resetProgress(); toast('Progresso recomeçado.'); });
-  hud.addEventListener('keydown', event => { if (event.key === 'Escape') { togglePanel(false); $('.dc-station').hidden = true; } });
-  for (const button of startButtons) button?.addEventListener('click', start);
+  }, listen);
+  hud.querySelector('[data-act=reset]').addEventListener('click', () => { clearProgress(); world.resetProgress(); toast('Progresso recomeçado.'); }, listen);
+  hud.addEventListener('keydown', event => { if (event.key === 'Escape') { togglePanel(false); $('.dc-station').hidden = true; } }, listen);
+  // Os botões de início são da página: o AbortController os solta no dispose.
+  for (const button of startButtons) button?.addEventListener('click', start, listen);
   if (autostart) start();
 
   return {
     start,
     resetProgress: () => { clearProgress(); world.resetProgress(); },
     dispose() {
+      if (disposed) return;
+      disposed = true;
+      aborter.abort();
       world.dispose();
       audio.dispose();
       clearTimeout(toastTimer);

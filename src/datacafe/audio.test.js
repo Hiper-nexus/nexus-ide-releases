@@ -67,3 +67,11 @@ test('dispose só fecha o contexto que o próprio módulo criou', () => {
   mine.unlock(); mine.dispose();
   assert.equal(owned.log.includes('close'), true);
 });
+
+test('depois do dispose o unlock não recria o contexto', () => {
+  let created = 0;
+  const audio = createAudio({ storage: null, createContext: () => { created++; return fakeContext(); } });
+  audio.unlock(); audio.dispose();
+  assert.equal(audio.unlock(), false);
+  assert.equal(created, 1);
+});
