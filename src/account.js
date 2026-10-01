@@ -1,5 +1,6 @@
 import '@fontsource-variable/geist';
 import './account.css';
+import { agentLimitLabel, billingFlags } from './plans/account-rules.js';
 
 // VITE_API_ORIGIN só existe em desenvolvimento local, para apontar a página a uma API rodando na máquina.
 export const API_ORIGIN = import.meta.env?.VITE_API_ORIGIN || 'https://api.nexuside.app';
@@ -75,27 +76,23 @@ function renderIdentity() {
   byId('access-label').textContent = ACCESS_LABELS[entitlement.access];
   byId('trial-end-row').hidden = entitlement.access !== 'trial';
   byId('trial-end').textContent = displayDate(entitlement.trialEndsAt);
-  byId('agent-limit').textContent = Number.isInteger(entitlement.maxAgents) ? String(entitlement.maxAgents) : 'A confirmar';
+  byId('agent-limit').textContent = agentLimitLabel(entitlement.maxAgents);
   byId('subscription-status').textContent = subscriptionLabel(entitlement.status);
 }
 
 function renderAvailability() {
   const billing = availability?.billing;
-  const billingReady = availability?.ready === true && billing?.available === true;
+  const flags = billingFlags(availability, session, isBusy);
   for (const provider of ['google', 'github']) byId(`login-${provider}`).hidden = availability?.auth?.[provider] !== true;
   byId('login-status').textContent = availability?.auth?.google || availability?.auth?.github
     ? 'O login usa sua conta do provedor escolhido.' : 'Login temporariamente indisponível. Tente novamente mais tarde.';
-  byId('subscribe').disabled = isBusy || !billingReady || !session.authenticated || ['pro', 'suspended'].includes(session.entitlement?.access);
+  byId('subscribe').disabled = !flags.checkoutEnabled;
   byId('logout').disabled = isBusy;
   byId('refresh-account').disabled = isBusy;
-  // O portal depende de existir um cliente no Stripe, não do acesso ao app: uma conta suspensa ainda precisa gerenciar a cobrança.
-  byId('billing-portal').hidden = !session.authenticated || session.billing?.portal !== true;
-  byId('billing-portal').disabled = isBusy || !billingReady;
-  byId('billing-status').textContent = !billingReady ? 'A contratação está temporariamente indisponível. Nenhuma cobrança será iniciada.'
-    : !session.authenticated ? 'Entre na sua conta para contratar.' : session.entitlement.access === 'pro'
-      ? (session.billing?.portal === true ? 'Seu acesso Pro está confirmado. Use o portal para gerenciar a cobrança.' : 'Seu acesso Pro está confirmado.')
-      : session.entitlement.access === 'suspended' ? 'Seu acesso está suspenso. Fale com o suporte. O portal de cobrança continua disponível se você tem assinatura.'
-        : 'Ao continuar, você será levado ao checkout seguro do Stripe.';
+  // O portal depende de existir um cliente no Stripe, não do acesso ao app nem de as vendas estarem abertas.
+  byId('billing-portal').hidden = !flags.portalVisible;
+  byId('billing-portal').disabled = !flags.portalEnabled;
+  byId('billing-status').textContent = flags.status;
   if (billing && Number.isInteger(billing.amount) && billing.currency === 'brl' && billing.interval === 'month') {
     byId('pro-price').textContent = `${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(billing.amount / 100)} / mês`;
   } else byId('pro-price').textContent = 'Preço temporariamente indisponível';
