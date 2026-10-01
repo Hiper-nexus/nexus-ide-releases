@@ -22,6 +22,7 @@ const READ_ONLY_TOOLS = new Set([
   'agent_list',
   'browser_inspect',
   'browser_read',
+  'browser_judge_visual',
   'browser_screenshot',
   'browser_wait',
   'context_draft_get',

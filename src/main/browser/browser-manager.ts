@@ -4,6 +4,7 @@ import {
   WebContentsView,
   dialog,
   ipcMain,
+  nativeImage,
   session as electronSession,
 } from 'electron';
 import type { BrowserProfileStatus } from '../../shared/browser-profile';
@@ -105,6 +106,8 @@ import {
 } from '../persistence/renderer-workspace-scope';
 import { sameProjectScope } from '../orch/project-scoped-broadcast';
 import { createScopedBrowserArtifactStore } from './browser-artifact-store';
+import { browserVisualMasksSchema, maskBrowserBitmap } from './browser-capture-redaction';
+import { validateDecisionImages } from '../decision-models/decision-images';
 import {
   registerBrowserAutomationResponseHandler,
   rejectPendingBrowserAutomation,
@@ -1339,6 +1342,39 @@ async function loadBrowserWithUserConfirmation(
       privateAccessConfirmed: true,
     });
   }
+}
+
+/** Capture remains in memory; ordinary local screenshots are never overwritten. */
+export async function captureRedactedBrowserVisual(
+  paneId: string,
+  scope: ProjectExecutionScope,
+  options: { signal?: AbortSignal; assertCurrentAuthority?: () => void } = {},
+) {
+  const entry = withEntry(paneId, scope);
+  const navSeq = entry.navSeq; const generation = entry.loadGeneration;
+  const bounds = JSON.stringify(entry.view.getBounds());
+  const assertCurrent = (): void => {
+    options.assertCurrentAuthority?.();
+    if (options.signal?.aborted || withEntry(paneId, scope) !== entry || entry.view.webContents.isDestroyed() ||
+      entry.view.webContents.isCrashed() || entry.navSeq !== navSeq || entry.loadGeneration !== generation ||
+      JSON.stringify(entry.view.getBounds()) !== bounds) throw new Error('visual snapshot changed');
+  };
+  assertCurrent();
+  const before = browserVisualMasksSchema.parse(await runBrowserAutomation(paneId, entry.view.webContents, 'visual_masks', {}));
+  assertCurrent();
+  const clip = entry.emulatedViewport ? { x: 0, y: 0, ...entry.emulatedViewport } : undefined;
+  const image = await captureWithWakeRetry(() => entry.view.webContents.capturePage(clip), assertCurrent);
+  assertCurrent();
+  const after = browserVisualMasksSchema.parse(await runBrowserAutomation(paneId, entry.view.webContents, 'visual_masks', {}));
+  assertCurrent();
+  if (JSON.stringify(before) !== JSON.stringify(after)) throw new Error('visual masks changed during capture');
+  const size = image.getSize();
+  const bitmap = maskBrowserBitmap(image.toBitmap(), size, before);
+  const png = nativeImage.createFromBitmap(bitmap, { ...size, scaleFactor: 1 }).toPNG();
+  const decisionImage = { content_type: 'image/png' as const, base64: png.toString('base64') };
+  if (!validateDecisionImages([decisionImage])) throw new Error('visual image exceeds provider limits');
+  assertCurrent();
+  return { image: decisionImage, assertCurrent };
 }
 
 export async function captureBrowserScreenshot(

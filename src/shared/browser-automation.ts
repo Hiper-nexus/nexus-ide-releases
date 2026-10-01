@@ -20,6 +20,7 @@ export type BrowserAutomationCommand =
   | 'hover'
   | 'extract_candidates'
   | 'layout_audit'
+  | 'visual_masks'
   | 'design_enable'
   | 'design_disable'
   | 'design_set_style_preview'

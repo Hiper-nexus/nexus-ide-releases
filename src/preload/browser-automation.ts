@@ -11,6 +11,7 @@ import type {
   BrowserWaitCondition,
 } from '../shared/browser-automation';
 import type { BrowserDesignEvent } from '../shared/browser-design';
+import { collectBrowserVisualMasks } from './browser-visual-redaction';
 import {
   isSensitiveBrowserMarker,
   redactBrowserText,
@@ -1207,6 +1208,7 @@ export function createBrowserAutomation(
       if (command === 'hover') return hover(args);
       if (command === 'extract_candidates') return extractCandidates();
       if (command === 'layout_audit') return layoutAudit();
+      if (command === 'visual_masks') return collectBrowserVisualMasks(win);
       if (command === 'design_enable') {
         return ensureDesignMode().enable(designGeneration(args));
       }

@@ -128,6 +128,7 @@ const state = vi.hoisted(() => {
     fromWebContents: vi.fn(() => win),
     webContentsAvailable: true,
     decisionConfiguration: 'initial',
+    encodeBitmap: vi.fn((_bitmap: Buffer, _size: unknown) => ({ toPNG: () => Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2WQAAAAASUVORK5CYII=', 'base64') })),
     views: [] as Array<{ setVisible: ReturnType<typeof vi.fn>; setBounds: ReturnType<typeof vi.fn> }>,
   };
 });
@@ -161,6 +162,7 @@ vi.mock('electron', () => ({
       state.onHandlers.set(channel, handler),
   },
   session: { fromPartition: state.fromPartition },
+  nativeImage: { createFromBitmap: state.encodeBitmap },
 }));
 
 vi.mock('./browser-artifact-store', () => ({
@@ -237,6 +239,7 @@ import {
   readBrowserPage,
   readBrowserPageCompact,
   registerBrowserIpc,
+  captureRedactedBrowserVisual,
 } from './browser-manager';
 import { BROWSER_CHANNELS } from '../../shared/channels';
 import { bindResolvedRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
@@ -250,6 +253,25 @@ async function boot(): Promise<void> {
 }
 
 describe('browser manager actions (after/changed, errors, judge, text)', () => {
+  it('captures only a scoped masked copy and rejects navigation or mask movement', async () => {
+    await boot();
+    const masks = { width: 4, height: 4, scrollX: 0, scrollY: 0, rectangles: [{ x: 0, y: 0, width: 1, height: 1 }] };
+    state.runAutomation.mockResolvedValue(masks);
+    const original = Buffer.alloc(8 * 8 * 4, 70);
+    const captured = { getSize: () => ({ width: 8, height: 8 }), toBitmap: () => original } as never;
+    state.guest.capturePage.mockResolvedValueOnce(captured).mockResolvedValueOnce(captured);
+    const snapshot = await captureRedactedBrowserVisual(PANE, scope);
+    expect(snapshot.image.content_type).toBe('image/png');
+    expect(state.encodeBitmap.mock.calls[0][0].subarray(0, 4)).toEqual(Buffer.from([0, 0, 0, 255]));
+    expect(original[0]).toBe(70);
+    fire('did-start-navigation', {}, 'https://example.test/new', false, true);
+    expect(snapshot.assertCurrent).toThrow('visual snapshot changed');
+    state.runAutomation.mockResolvedValueOnce(masks).mockResolvedValueOnce({ ...masks, scrollY: 10 });
+    await expect(captureRedactedBrowserVisual(PANE, scope)).rejects.toThrow('visual masks changed');
+    state.guest.capturePage.mockClear();
+    await expect(captureRedactedBrowserVisual(PANE, { ...scope, checkoutId: 'another' })).rejects.toThrow();
+    expect(state.guest.capturePage).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     state.decisionConfiguration = 'initial';

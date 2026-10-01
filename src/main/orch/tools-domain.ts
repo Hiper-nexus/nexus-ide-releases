@@ -105,6 +105,7 @@ import {
 } from './tools-panes';
 import { buildBrowserTools } from './tools-browser';
 import { buildBrowserAutopilotTools } from './tools-browser-autopilot';
+import { buildBrowserVisualTools } from './tools-browser-visual';
 import { buildComputerAutopilotTools } from './tools-computer-autopilot';
 import { runRemoteBridgeToolAction } from './remote-bridge-tool';
 import {
@@ -2522,6 +2523,7 @@ export function buildDomainTools(): McpToolDef[] {
     remoteSpawnTool,
     ...buildBrowserTools(),
     ...buildBrowserAutopilotTools(),
+    ...buildBrowserVisualTools(),
     ...buildComputerAutopilotTools(),
     cronTool,
     cronScheduleTool,
