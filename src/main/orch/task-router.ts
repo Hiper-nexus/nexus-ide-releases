@@ -435,7 +435,15 @@ export function classifyTask(taskText: string): TaskClassification {
  */
 export type FrontierRoutePolicy = 'cross-review' | 'high-risk';
 
-const REVIEW_SIGNALS = ['review', 'revis', 'cross-review', 'code review'];
+const REVIEW_SIGNALS = [
+  'review', 'revis', 'cross-review', 'code review',
+  // F-233 (regra do operador, 01/10): julgamento/veredito também é revisão —
+  // auditoria e "aprove ou rejeite" não podem cair em modelo barato.
+  'auditoria', 'audit', 'veredito', 'parecer', 'julgue', 'julgar',
+  'aprovar ou', 'aprove ou', 'approve or', 'quality assurance', ' qa ',
+  'segunda opinião', 'second opinion', 'avalie a entrega', 'avaliar a entrega',
+  'valide a entrega', 'validar a entrega',
+];
 
 /**
  * Piso de tier para revisão de código: `hard`, para a política de topo
@@ -497,6 +505,23 @@ export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
   { adapterId: 'claude', model: 'claude-sonnet-5-5' },
   { adapterId: 'codex', model: 'gpt-6.1-sol' },
   { adapterId: 'codex', model: 'gpt-6-sol' },
+  { adapterId: 'codex', model: 'gpt-6-astra' },
+]);
+
+/**
+ * Lane de julgamento (regra do operador, 01/10): revisão/auditoria/veredito
+ * só com modelos de ponta — GLM/MiMo davam "veredito APROVAR" em revisão de
+ * código. Fable 5.1 lidera (cross-review clássico), depois Opus/Sonnet e os
+ * Codex Sol/Astra.
+ */
+export const JUDGE_FRONTIER_LANE: ReadonlyArray<{
+  adapterId: string;
+  model: string;
+}> = Object.freeze([
+  { adapterId: 'claude', model: 'claude-fable-5-1' },
+  { adapterId: 'claude', model: 'claude-opus-5-5' },
+  { adapterId: 'claude', model: 'claude-sonnet-5-5' },
+  { adapterId: 'codex', model: 'gpt-6.1-sol' },
   { adapterId: 'codex', model: 'gpt-6-astra' },
 ]);
 
@@ -809,6 +834,11 @@ export interface RouteDecision {
   specialty?: RouteSpecialty;
   /** Why this adapter won: heuristic prior, eval scores, or benchmark rows. */
   policySource?: RoutePolicySource;
+  /**
+   * F-233: a tarefa pede julgamento (revisão/veredito) e nenhum modelo de
+   * ponta da lane está disponível — o Maestro julga no próprio pane.
+   */
+  judgeUnavailable?: boolean;
 }
 
 type QualityDimension = 'coding' | 'reasoning' | 'frontend' | 'security';
@@ -1193,9 +1223,10 @@ export function routeTask(
   // modelos da ordem sobem na ordem dela; o resto mantém a ordem relativa.
   // Hard high-risk sem revisão fica como está (só dentro do adapter).
   let crossCliNote = '';
-  if (frontier?.policy === 'cross-review' || tier === 'critical') {
-    const crossPolicy = frontier?.policy === 'cross-review' ? 'cross-review' : 'high-risk';
-    const order = FRONTIER_ORDER[crossPolicy];
+  // F-233: cross-review saiu daqui — virou a lane de julgamento abaixo. O
+  // topo entre CLIs agora vale só para high-risk/critical.
+  if (frontier?.policy === 'high-risk') {
+    const order = FRONTIER_ORDER['high-risk'];
     // F-217: o candidato pode ter subido para a versão mais nova da mesma
     // linha (ex.: a CLI anuncia claude-opus-5-6 e a tabela pede o 5-5) — a
     // vaga de topo é da LINHA, então a ordem casa por linha, não por id.
@@ -1211,44 +1242,43 @@ export function routeTask(
         ),
         ...ranked.filter((r) => orderIndex(r.c.model) < 0),
       ];
-      if (next[0].c !== ranked[0].c) crossCliNote = `; topo entre CLIs (${crossPolicy})`;
+      if (next[0].c !== ranked[0].c) crossCliNote = `; topo entre CLIs (high-risk)`;
       ranked = next;
     }
   }
 
-  // Lane visual (regra do operador, 30/09): UI/design vai sempre para os
-  // modelos de topo. Como a tabela do tier pode não listá-los (Astra só
-  // existe no catálogo, fora de qualquer tier), injeta o candidato quando a
-  // CLI o anuncia e então promove a lane à frente do resultado do rerank.
-  let visualNote = '';
-  if (
-    specialtyVerdict.specialty === 'visual' &&
-    policy.source !== 'benchmark' &&
-    mention.model === undefined
-  ) {
+  // Lanes de topo (regras do operador, 30/09 e 01/10): a tabela do tier pode
+  // não listar os modelos da lane (Astra só existe no catálogo, fora de
+  // qualquer tier), então o candidato é injetado quando a CLI o anuncia e a
+  // lane é promovida à frente do resultado do rerank. Dentro da lane, o
+  // adapter MENOS usado na missão vai primeiro — N workers se distribuem
+  // entre os de topo em vez de concentrarem no primeiro da lista.
+  const applyFrontierLane = (
+    lane: ReadonlyArray<{ adapterId: string; model: string }>,
+  ): boolean => {
     const laneSeats: Array<{ lane: number; adapterId: string; model: string }> = [];
-    VISUAL_FRONTIER_LANE.forEach((lane, laneIndex) => {
-      const adapter = available.get(lane.adapterId);
+    lane.forEach((seat, laneIndex) => {
+      const adapter = available.get(seat.adapterId);
       if (!adapter?.installed) return;
       const eligible = eligibleModels(adapter);
-      const resolved = resolveRoutableModel(lane.model, adapter.models);
+      const resolved = resolveRoutableModel(seat.model, adapter.models);
       // `resolved.ok` cobre o id exato; senão tenta o mais novo da MESMA
       // linha entre os elegíveis (mesma salva da tabela, :1030) — um id
       // mais novo promovido pela linha (gpt-6.2-sol) mantém o assento.
       const chosen = resolved.ok
-        ? (newestInModelLine(resolved.model ?? lane.model, eligible) ?? resolved.model ?? lane.model)
-        : newestInModelLine(lane.model, eligible);
+        ? (newestInModelLine(resolved.model ?? seat.model, eligible) ?? resolved.model ?? seat.model)
+        : newestInModelLine(seat.model, eligible);
       if (!chosen) return;
       // Lista de modelos exposta pela CLI: o modelo tem que estar nela.
       // Sem lista (contrato bundled), confia na lane como a tabela confia.
       if (adapter.models !== undefined && !eligible.includes(chosen)) return;
       if (
-        isModelBlockedForAutoRouting(modelCatalogInfo(modelCatalog, lane.adapterId, chosen)) ||
-        modelAccessQuarantine(lane.adapterId, chosen)
+        isModelBlockedForAutoRouting(modelCatalogInfo(modelCatalog, seat.adapterId, chosen)) ||
+        modelAccessQuarantine(seat.adapterId, chosen)
       ) return;
-      laneSeats.push({ lane: laneIndex, adapterId: lane.adapterId, model: chosen });
-      if (!ranked.some((r) => r.c.adapterId === lane.adapterId && r.c.model === chosen)) {
-        ranked.push({ c: { adapterId: lane.adapterId, model: chosen }, fromTier: tier });
+      laneSeats.push({ lane: laneIndex, adapterId: seat.adapterId, model: chosen });
+      if (!ranked.some((r) => r.c.adapterId === seat.adapterId && r.c.model === chosen)) {
+        ranked.push({ c: { adapterId: seat.adapterId, model: chosen }, fromTier: tier });
       }
     });
     const laneRank = (entry: RankedRouteEntry): number =>
@@ -1258,18 +1288,44 @@ export function routeTask(
     const inLane = ranked.filter(
       (entry) => laneRank(entry) >= 0 && !adapterCircuitBreakers.isOpen(entry.c.adapterId),
     );
-    if (inLane.length > 0) {
-      const set = new Set(inLane);
-      // Dentro da lane, o adapter MENOS usado na missão vai primeiro —
-      // N workers visuais se distribuem entre os de topo em vez de
-      // concentrarem no primeiro da lista.
-      const used = (entry: RankedRouteEntry) =>
-        context.missionUseCounts?.get(entry.c.adapterId) ?? 0;
-      ranked = [
-        ...inLane.sort((a, b) => used(a) - used(b) || laneRank(a) - laneRank(b)),
-        ...ranked.filter((entry) => !set.has(entry)),
-      ];
-      visualNote = '; lane visual (modelos de topo)';
+    if (inLane.length === 0) return false;
+    const set = new Set(inLane);
+    const used = (entry: RankedRouteEntry) =>
+      context.missionUseCounts?.get(entry.c.adapterId) ?? 0;
+    ranked = [
+      ...inLane.sort((a, b) => used(a) - used(b) || laneRank(a) - laneRank(b)),
+      ...ranked.filter((entry) => !set.has(entry)),
+    ];
+    return true;
+  };
+
+  // Lane visual (regra do operador, 30/09): UI/design vai sempre para os
+  // modelos de topo.
+  let visualNote = '';
+  if (
+    specialtyVerdict.specialty === 'visual' &&
+    policy.source !== 'benchmark' &&
+    mention.model === undefined &&
+    applyFrontierLane(VISUAL_FRONTIER_LANE)
+  ) {
+    visualNote = '; lane visual (modelos de topo)';
+  }
+
+  // Lane de julgamento (regra do operador, 01/10): cross-review (revisão,
+  // auditoria, veredito) só é julgado por modelo de ponta. Sem assento de
+  // lane, a rota segue no melhor barato e o Maestro é quem julga.
+  let judgeNote = '';
+  let judgeUnavailable = false;
+  if (
+    frontier?.policy === 'cross-review' &&
+    policy.source !== 'benchmark' &&
+    mention.model === undefined
+  ) {
+    if (applyFrontierLane(JUDGE_FRONTIER_LANE)) {
+      judgeNote = '; lane de julgamento (modelos de ponta)';
+    } else {
+      judgeNote = '; sem juiz frontier disponível — o Maestro julga';
+      judgeUnavailable = true;
     }
   }
 
@@ -1433,10 +1489,11 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${lineUpgradeNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${rotationNote}${fairShareNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${lineUpgradeNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
       alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId) })),
       specialty: specialtyVerdict.specialty,
       policySource,
+      ...(judgeUnavailable ? { judgeUnavailable } : {}),
     };
   }
 
@@ -1459,5 +1516,6 @@ export function routeTask(
     alternatives: [],
     specialty: specialtyVerdict.specialty,
     policySource: policy.source,
+    ...(judgeUnavailable ? { judgeUnavailable } : {}),
   };
 }

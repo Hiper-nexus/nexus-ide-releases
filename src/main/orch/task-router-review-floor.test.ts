@@ -135,8 +135,10 @@ describe('topo entre CLIs (F-214 — revisão e critical, 29/09)', () => {
   });
 
   it('critical sem revisão vai ao topo high-risk (Opus 5.5 quando o claude está instalado)', () => {
+    // F-233: 'auditar' virou sinal de revisão (cross-review → lane de
+    // julgamento); o texto agora é falha crítica SEM verbo de julgamento.
     const decision = routeTask(
-      'auditar a segurança da autenticação e da migração multi-tenant',
+      'corrigir a falha de segurança na autenticação e na migração multi-tenant',
       inventory(['claude', 'mimo-code', 'codex', 'glm', 'kimi']),
       DEFAULT_ROUTING_TABLE,
       'critical',
@@ -212,7 +214,7 @@ describe('topo entre CLIs (F-214 — revisão e critical, 29/09)', () => {
           : a,
     );
     const decision = routeTask(
-      'auditar a segurança da autenticação e da migração multi-tenant',
+      'corrigir a falha de segurança na autenticação e na migração multi-tenant',
       withNewer,
       DEFAULT_ROUTING_TABLE,
       'critical',

@@ -58,6 +58,7 @@ const routeDecisionSchema = z
       .enum(['visual', 'security', 'bug', 'feature', 'doc', 'ops', 'general'])
       .optional(),
     policySource: z.enum(['heuristic', 'nexus-eval', 'benchmark']).optional(),
+    judgeUnavailable: z.boolean().optional(),
   })
   .strict();
 

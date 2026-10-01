@@ -125,7 +125,8 @@ describe('routeTask', () => {
 
   it('routes critical work to the strong tier with high effort', () => {
     const decision = routeTask(
-      'auditar a segurança da autenticação e dos pagamentos',
+      // F-233: 'auditar' virou sinal de revisão → lane de julgamento (Fable).
+      'corrigir falha de segurança na autenticação e dos pagamentos',
       adapters('claude', 'grok'),
     );
     expect(decision!.tier).toBe('critical');
@@ -259,7 +260,7 @@ describe('routeTask', () => {
       ],
     };
     const decision = routeTask(
-      'auditar a segurança da autenticação e dos pagamentos',
+      'corrigir falha de segurança na autenticação e dos pagamentos',
       adapters('claude', 'codex', 'glm'),
       table,
     );

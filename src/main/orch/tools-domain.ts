@@ -1675,11 +1675,6 @@ export async function routeTaskForCaller(
   if (missionId) {
     try {
       const stores = getProjectDomainStores(ctx.scope);
-      // F-232: uso GLOBAL de rota neste checkout (7 dias, todas as missões) —
-      // alimenta o fair-share para os providers nunca escolhidos entrarem.
-      globalUseCounts = stores.missions.consumedRouteCountsByAdapterSince(
-        Date.now() - GLOBAL_USE_WINDOW_MS,
-      );
       const recorded = stores.missionPanes.list(missionId);
       missionAdapterIds = [
         ...recorded.map((pane) => pane.adapterId).filter(Boolean),
@@ -1699,6 +1694,17 @@ export async function routeTaskForCaller(
     } catch {
       missionAdapterIds = undefined;
       reservedAdapterIds = undefined;
+    }
+    // F-232: uso GLOBAL de rota neste checkout (7 dias, todas as missões) —
+    // alimenta o fair-share para os providers nunca escolhidos entrarem.
+    // Fail-open isolado: se o store de reservas não puder ler, a diversidade
+    // da missão coletada acima NÃO pode morrer junto.
+    try {
+      globalUseCounts = getProjectDomainStores(ctx.scope)
+        .missions.consumedRouteCountsByAdapterSince(
+          Date.now() - GLOBAL_USE_WINDOW_MS,
+        );
+    } catch {
       globalUseCounts = undefined;
     }
   }
@@ -1822,13 +1828,25 @@ export async function routeTaskForCaller(
     ...(routing.escalate !== undefined ? { escalate: routing.escalate } : {}),
     ...(jevUnavailable ? { jevUnavailable } : {}),
   };
-  if (!missionId) return { ...decision, ...provenance, skillSuggestion };
+  // F-233: sem nenhum modelo de ponta para julgar, o Maestro é avisado de
+  // que o veredito é dele — nunca delegado a um modelo barato.
+  const judgeHint = decision.judgeUnavailable
+    ? {
+        hint:
+          'Nenhum modelo de ponta disponível para julgar: julgue você mesmo ' +
+          'no seu pane em vez de delegar a um modelo barato.',
+      }
+    : {};
+  if (!missionId) {
+    return { ...decision, ...provenance, skillSuggestion, ...judgeHint };
+  }
   const reservation = getProjectDomainStores(ctx.scope)
     .missions.reserveRouteDecision(missionId, task, decision);
   return {
     ...decision,
     ...provenance,
     skillSuggestion,
+    ...judgeHint,
     routeReservationId: reservation.id,
     routeReservationExpiresAt: reservation.expiresAt,
   };
