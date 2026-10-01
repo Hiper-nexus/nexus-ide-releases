@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.76.154 — Motor que usa todo mundo
+
+Uso real no Mac em 30/09 e 01/10. Inclui a 0.76.153 (Segunda conta Grok). Primeira build com a licença ligada ao `api.nexuside.app`.
+
+- **Todas as CLIs entram na rota (F-226/F-232).** Em 7 dias medidos, codex/kimi/glm/devin/mimo levavam 100% das reservas e muse, grok, openclaude, minimax e deepseek ficavam com zero. Agora cada adapter elegível ganha assento na missão antes de qualquer um repetir, e o uso dos últimos 7 dias em todas as missões desempata: quem ficou para trás passa à frente. Critical, segurança, UI e menção explícita de modelo continuam fora da rotação.
+- **Só modelo de ponta julga (F-233/F-237).** Revisão, auditoria, QA, veredito e parecer vão para Fable 5.1 → Opus 5.5 → Sonnet 5.5 → Sol 6.1 → Astra. Sem nenhum deles disponível, o Maestro julga no próprio pane em vez de delegar a um modelo barato. A doutrina passa a dizer: escreva com o barato que o roteador escolher, julgue com o caro, e o caro corrige só o que o veredito apontou.
+- **UI e jogos nos melhores de visual (F-227).** Trabalho de interface, design e jogo (Godot, Unity, Phaser, Three.js…) vai para Opus 5.5 → Sonnet 5.5 → Sol 6.1; o Astra só por pedido explícito.
+- **Duas contas Claude, dois panes (F-235).** Com o Maestro no Claude, nenhum worker Claude era roteado. Agora cabem tantos panes Claude quanto contas com credencial, cada um numa conta distinta.
+- **DeepSeek de verdade (F-236).** Deixa de ser só um endereço de upstream e vira CLI roteável no host Claude (`deepseek-v4-pro`, `deepseek-flash`), com a chave já cadastrada.
+- **Worker Devin/Kimi não morre em 2 s (F-230).** O brief era colado enquanto o terminal ainda pintava a tela inicial; as duas tentativas queimavam em milissegundos e o pane era fechado com "O agente não ficou pronto a tempo". Agora a entrega espera o terminal ficar pronto.
+- **Pane AGY não cai por link interno (F-229).** A CLI do AGY consolida atalhos de configuração dentro do próprio estado gerenciado; a guarda de credencial lia isso como adulteração e abortava o spawn.
+- **Diagnóstico não é entrega (F-227).** Pane que só lê e sinaliza é mandado resolver no mesmo pane — sem abrir outro.
+- **Gate longo não para a missão (F-714).** Enquanto um validador ou suíte de horas roda, os workers adiantam as próximas unidades.
+- **Licença sem lockout falso (F-228).** Tela de bloqueio não pisca a cada renovação, resposta boa não vira "sessão expirou" quando outra requisição renovou a sessão, relógio até 5 min atrasado não invalida token novo, e o token é gravado antes de avançar a cerca de replay.
+- **Chrome bloqueado pelo macOS explica o que fazer (F-225).** Em vez de EPERM cru, o painel pede Acesso Total ao Disco em Ajustes do Sistema.
+
 ## 0.76.153 — Segunda conta Grok
 
 Uso real no Windows em 30/09. Inclui a 0.76.152 (Jev que ajuda) e dois commits do Mac ainda sem versão própria: o erro do provider só vira toast no desfecho do failover (F-222), e saem o modo canvas e as notas adesivas.

@@ -8623,7 +8623,7 @@ export const RELEASE_076152: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076153: AppRelease = {
   version: '0.76.153',
   date: '2026-09-30',
   codename: 'Segunda conta Grok',
@@ -8641,4 +8641,71 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.154',
+  date: '2026-10-01',
+  codename: 'Motor que usa todo mundo',
+  summary:
+    'Todas as CLIs instaladas entram na rota, só modelo de ponta julga código ' +
+    'e workers Devin/Kimi param de morrer ao nascer. Inclui a 0.76.153.',
+  highlights: [
+    {
+      title: 'Todas as CLIs entram na rota',
+      detail:
+        'Em 7 dias medidos, cinco CLIs levavam todas as tarefas e muse, grok, ' +
+        'openclaude, minimax e deepseek ficavam com zero. Agora cada uma ' +
+        'elegível ganha assento na missão antes de alguém repetir, e quem ' +
+        'ficou para trás nos últimos 7 dias passa à frente.',
+    },
+    {
+      title: 'Só modelo de ponta julga',
+      detail:
+        'Revisão, auditoria, QA e veredito vão para Fable 5.1, Opus 5.5, ' +
+        'Sonnet 5.5, Sol 6.1 ou Astra. Sem nenhum deles livre, o Maestro ' +
+        'julga no próprio pane em vez de delegar a um modelo barato.',
+    },
+    {
+      title: 'Duas contas Claude, dois panes',
+      detail:
+        'Com o Maestro no Claude, nenhum worker Claude era aberto. Agora ' +
+        'cabem tantos panes Claude quanto contas com credencial, cada um ' +
+        'numa conta distinta.',
+    },
+    {
+      title: 'Worker Devin/Kimi não morre em 2 segundos',
+      detail:
+        'O brief era colado enquanto o terminal ainda desenhava a tela ' +
+        'inicial e o pane era fechado como "não ficou pronto a tempo". A ' +
+        'entrega agora espera o terminal ficar pronto.',
+    },
+    {
+      title: 'DeepSeek como CLI',
+      detail:
+        'DeepSeek deixa de ser só um endereço e passa a abrir pane próprio ' +
+        '(deepseek-v4-pro e deepseek-flash) com a chave já cadastrada.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Licença sem bloqueio falso',
+      detail:
+        'A tela de bloqueio não pisca a cada renovação, uma resposta boa não ' +
+        'vira "sessão expirou", e um relógio alguns minutos atrasado não ' +
+        'invalida um token recém-emitido.',
+    },
+    {
+      title: 'Pane AGY não cai por atalho interno',
+      detail:
+        'A CLI do AGY consolida atalhos de configuração dentro do próprio ' +
+        'estado; a guarda lia isso como adulteração e abortava o pane.',
+    },
+    {
+      title: 'Chrome bloqueado pelo macOS explica o que fazer',
+      detail:
+        'Em vez de um erro EPERM cru, o painel pede Acesso Total ao Disco ' +
+        'em Ajustes do Sistema.',
+    },
+  ],
 };
