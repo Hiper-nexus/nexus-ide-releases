@@ -8710,6 +8710,13 @@ export const CURRENT_RELEASE: AppRelease = {
         'em 400 mil, cortando o custo por turno pela metade sem perder o resumo.',
     },
     {
+      title: 'Missão parada explica o reparo',
+      detail:
+        'O Quadro dizia só "bloqueio técnico" e os terminais já tinham ' +
+        'morrido. Agora ele nomeia a causa e o próximo passo, e guarda a ' +
+        'última tela de cada pane para você ver o que aconteceu.',
+    },
+    {
       title: 'Licença sem bloqueio falso',
       detail:
         'A tela de bloqueio não pisca a cada renovação, uma resposta boa não ' +
