@@ -11,6 +11,7 @@ import type {
 } from '../../shared/orch-types';
 import { listPanes } from '../lib/split-tree';
 import { setActiveWorkspacePath } from '../state/active-workspace';
+import { useAccessStore } from '../state/access-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useOrchBridge } from './orch-bridge';
@@ -117,6 +118,7 @@ describe('orchestration bridge pane recovery', () => {
     // Presentations await the workspace layout hydrate in production; these
     // scenarios all model a workspace whose layout already settled.
     useLayoutStore.setState({ hydrated: true });
+    useAccessStore.setState({ canUseApp: true, loading: false, maxAgents: null, cloudSync: true, blockedReason: null });
   });
 
   afterEach(() => {
