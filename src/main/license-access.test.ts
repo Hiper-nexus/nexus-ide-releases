@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { LicenseSeal } from './license-account-state';
+import { isLicenseSeal, type LicenseSeal } from './license-account-state';
 import { createLicenseAccess } from './license-access';
 import { licenseFixture, LICENSE_NOW, publicKeyPem } from '../test/license-fixture';
 
@@ -123,6 +123,19 @@ it('F-228: seal write failing after the file write leaves the NEW token acceptab
   // O arquivo já tem o token novo e o selo ainda o antigo: iat > latestIat sela aqui.
   expect(access.getAccessState().canUseApp).toBe(true);
   expect(deps.readSeal()?.latestIat).toBe(LICENSE_NOW / 1000 + 1);
+});
+
+it('F-228: future iat inside the clock leeway seals with a server-time floor (no login-required)', () => {
+  const { access, deps } = setup();
+  const skewed = licenseFixture({ access: 'pro', iat: LICENSE_NOW / 1000 + 120 });
+  expect(access.applyOnlineLicenseToken(skewed)).toEqual({ ok: true });
+  const state = access.getAccessState();
+  expect(state.canUseApp).toBe(true);
+  const seal = deps.readSeal();
+  expect(isLicenseSeal(seal)).toBe(true);
+  expect(seal!.clockFloor).toBeGreaterThanOrEqual(seal!.latestIat! * 1000);
+  // Avaliações seguintes seguem consistentes — o piso puxou o relógio do servidor.
+  expect(access.getAccessState().canUseApp).toBe(true);
 });
 
 it('F-228: license file write failing keeps the OLD disk token valid (never replay)', () => {

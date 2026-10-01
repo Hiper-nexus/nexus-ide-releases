@@ -75,7 +75,9 @@ export function createLicenseAccess(deps: LicenseAccessDeps) {
       ((c.access === 'pro' || c.access === 'trial') && seal.revokedAt !== null && c.iat <= seal.revokedAt);
   }
   function accept(c: DesktopLicenseClaims, seal: LicenseSeal, time: number): boolean {
-    const next = { clockFloor: time, needsOnlineValidation: false, latestIat: Math.max(seal.latestIat ?? 0, c.iat),
+    // F-228: o iat assinado é piso de tempo real — com o leeway, um iat futuro
+    // não pode gerar selo que isLicenseSeal rejeite (clockFloor < latestIat*1000).
+    const next = { clockFloor: Math.max(time, c.iat * 1000), needsOnlineValidation: false, latestIat: Math.max(seal.latestIat ?? 0, c.iat),
       revokedAt: c.access === 'suspended' || c.access === 'inactive' ? Math.max(seal.revokedAt ?? 0, c.iat) : seal.revokedAt };
     accepted.set(c.sub, next); // Never forget a revocation even when the vault refuses the write.
     return persist(next);
