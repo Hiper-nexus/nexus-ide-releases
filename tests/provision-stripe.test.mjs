@@ -82,3 +82,15 @@ test('a chave de produção exige --live e a chave nunca aparece na saída', asy
   assert.ok(errors.some(line => /--live/.test(line)));
   assert.ok(errors.every(line => !line.includes('secretvalue')));
 });
+
+test('reaproveita o produto e o preço que já existem na conta de produção (metadata do catálogo antigo)', async () => {
+  const fake = fakeStripe();
+  fake.store.products.push({ id: 'prod_legado', active: true, name: 'NexusIDE Pro', default_price: 'price_legado', metadata: { nexusProduct: 'nexuside_pro', plan: 'pro' } });
+  fake.store.prices.push({ id: 'price_legado', product: 'prod_legado', active: true, currency: 'brl', unit_amount: 5999, recurring: { interval: 'month', interval_count: 1 } });
+  const result = await provision(fake.stripe);
+  assert.equal(result.productId, 'prod_legado');
+  assert.equal(result.priceId, 'price_legado');
+  assert.equal(fake.store.products.length, 1, 'não cria um segundo Nexus Pro');
+  assert.equal(fake.store.prices.length, 1, 'não cria um segundo preço de R$ 59,99');
+  assert.deepEqual(fake.calls, ['portal.create', 'webhook.create']);
+});

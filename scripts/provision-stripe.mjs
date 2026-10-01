@@ -9,6 +9,7 @@
 import { pathToFileURL } from 'node:url';
 
 export const PRODUCT = { name: 'Nexus Pro', metadata: { nexus_product: 'pro' } };
+export const LEGACY_PRODUCT = 'nexuside_pro';
 export const PRICE = { currency: 'brl', unit_amount: 5999, recurring: { interval: 'month', interval_count: 1 }, metadata: { nexus_price: 'pro-monthly' } };
 export const WEBHOOK_URL = 'https://api.nexuside.app/v1/billing/webhook';
 export const WEBHOOK_EVENTS = [
@@ -42,6 +43,9 @@ async function listAll(resource, params = {}) {
   }
 }
 
+/** O produto criado por este script ou o do catálogo antigo, que já existe na conta de produção. */
+const isNexusPro = product => product.metadata?.nexus_product === PRODUCT.metadata.nexus_product || product.metadata?.nexusProduct === LEGACY_PRODUCT;
+
 const samePrice = price => price.active && price.currency === PRICE.currency && price.unit_amount === PRICE.unit_amount
   && price.recurring?.interval === PRICE.recurring.interval && price.recurring?.interval_count === PRICE.recurring.interval_count;
 
@@ -57,7 +61,7 @@ export async function provision(stripe, { dryRun = false, log = () => {} } = {})
   const result = { created: [], updated: [], webhookSecret: null };
   const note = (kind, what) => { result[kind].push(what); log(`${dryRun ? '[simulação] ' : ''}${kind === 'created' ? 'criar' : 'atualizar'}: ${what}`); };
 
-  let product = (await listAll(stripe.products, { active: true })).find(item => item.metadata?.nexus_product === PRODUCT.metadata.nexus_product);
+  let product = (await listAll(stripe.products, { active: true })).find(isNexusPro);
   if (!product) {
     note('created', 'produto Nexus Pro');
     product = dryRun ? { id: 'prod_simulado' } : await stripe.products.create({ name: PRODUCT.name, metadata: PRODUCT.metadata });
