@@ -86,6 +86,7 @@ import {
   assertMcpInvocationCurrent,
   type McpToolInvocation,
 } from './mcp-protocol';
+import { emitMissionEvent } from './mission-event-emit';
 import type { MissionPaneAuthoritySeal } from '../../shared/orch-types';
 import { sanitizeMissionOrchestratorExitOutput } from './mission-orchestrator-exit-policy';
 import {
@@ -130,6 +131,14 @@ const DEVIN_COMPOSER_READY = /ask devin to build/i;
 const KIMI_COMPOSER_READY = /\bcontext:\s*\d+(?:\.\d+)?%/i;
 /** Cold Node boot + trust + welcome paint can exceed 8s; never paste blind. */
 const PASTE_COMPOSER_WAIT_MS = 30_000;
+/**
+ * F-230: o regex do composer casa no meio do quadro inicial (Devin pinta
+ * "Ask Devin to build", Kimi a barra `context: 0%`) enquanto o PTY ainda está
+ * `busy`. Sem esperar a borda de idle, as duas tentativas de entrega queimavam
+ * em milissegundos sem escrever um byte e o pane era fechado como "did not
+ * start". Espera limitada pelo PTY ficar injetável antes de cada tentativa.
+ */
+const INJECTABLE_IDLE_WAIT_MS = 15_000;
 const RESTORED_PROMPT_ACCEPTANCE_WINDOW_MS = 3_000;
 /**
  * After a provider-native argv brief, the provider must open a turn within
@@ -190,6 +199,48 @@ function logAgentPromptFailure(
     `[spawn] agent prompt failed (${adapterId}/${sessionId}): ${message}\n` +
       `PTY tail:\n${outputTail}`,
   );
+}
+
+/**
+ * F-230: falha de entrega de worker de missão vira evento do journal com a
+ * cauda sanitizada do PTY (mesma política do Maestro em mission-store). O
+ * trace main.trace.ndjson continua sem texto de processo (F-212).
+ */
+function recordWorkerPromptDeliveryFailure(input: {
+  readonly scope: SpawnToolOptions['scope'];
+  readonly missionId?: string;
+  readonly paneId: string;
+  readonly sessionId: string | null;
+  readonly adapterId: string;
+  readonly error: unknown;
+}): void {
+  if (!input.missionId) return;
+  try {
+    const message =
+      input.error instanceof Error ? input.error.message : String(input.error);
+    emitMissionEvent(input.scope, {
+      missionId: input.missionId,
+      runId: `spawn:${input.missionId}`,
+      type: 'custom',
+      origin: 'system',
+      payload: {
+        kind: 'worker-prompt-delivery-failed',
+        paneId: input.paneId,
+        sessionId: input.sessionId ?? '',
+        adapterId: input.adapterId,
+        reason: sanitizeMissionOrchestratorExitOutput(message),
+        outputTail: input.sessionId
+          ? sanitizeMissionOrchestratorExitOutput(
+              readSessionOutput(input.sessionId, 80),
+            )
+          : '[sem sessão]',
+      },
+      idempotencyKey: `worker-prompt-failed:${input.sessionId ?? input.paneId}`,
+      occurredAt: Date.now(),
+    });
+  } catch {
+    // Best-effort: o erro original é o que importa para o chamador.
+  }
 }
 
 export function delay(ms: number): Promise<void> {
@@ -821,6 +872,26 @@ async function waitUntilPasteComposerReady(
     ready.test(readSessionOutput(sessionId));
 }
 
+/** Bounded wait for an injectable idle edge (F-230, see INJECTABLE_IDLE_WAIT_MS). */
+async function waitForInjectableIdle(
+  sessionId: string,
+  invocation?: McpToolInvocation,
+): Promise<'idle' | 'exited' | 'timeout'> {
+  const deadline = Date.now() + INJECTABLE_IDLE_WAIT_MS;
+  for (;;) {
+    assertMcpInvocationCurrent(invocation);
+    if (getSessionState(sessionId) === null) return 'exited';
+    if (
+      isSessionInjectableIdle(sessionId) &&
+      !cliPromptAutoResponder.shouldDeferInjection(sessionId)
+    ) {
+      return 'idle';
+    }
+    if (Date.now() >= deadline) return 'timeout';
+    await delay(50);
+  }
+}
+
 /**
  * Type a brief into an agent pane and PROVE it was accepted: after the paste,
  * the session must turn busy within the acceptance window, else we run the
@@ -849,6 +920,10 @@ export async function deliverAgentPrompt(
       );
       continue;
     }
+    const idle = await waitForInjectableIdle(sessionId, invocation);
+    if (idle === 'exited') throw agentBootExitError(sessionId);
+    // 'timeout': segue — injectWithBusyProof recusa sessão não-idle sem
+    // escrever e a tentativa conta.
     // Linearization point after boot/menu waits and immediately before paste.
     assertMcpInvocationCurrent(invocation);
     try {
@@ -1802,6 +1877,14 @@ export async function spawnPaneAndMaybePrompt(
       // durable row remains as audit history, but a fenced worker incarnation
       // is never respawned as a different physical process.
       logAgentPromptFailure(adapter.id, result.sessionId, error);
+      recordWorkerPromptDeliveryFailure({
+        scope: options.scope,
+        missionId: options.missionId,
+        paneId: result.paneId,
+        sessionId: result.sessionId,
+        adapterId: adapter.id,
+        error,
+      });
       try {
         await requestPaneClose(result.paneId);
       } catch {
@@ -1910,6 +1993,14 @@ export async function deliverPromptAfterPendingSpawn(
     return true;
   } catch (error) {
     logAgentPromptFailure(adapterId, sessionId ?? paneId, error);
+    recordWorkerPromptDeliveryFailure({
+      scope: notice.scope,
+      missionId: notice.missionId,
+      paneId,
+      sessionId: sessionId ?? null,
+      adapterId,
+      error,
+    });
     // Só fecha se o pane ainda roda a sessão desta tentativa: um substituto
     // (resume) no mesmo paneId não é nosso.
     const bound = pendingSpawnAttemptSession(attempt.requestId);

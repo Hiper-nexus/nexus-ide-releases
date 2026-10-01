@@ -1990,7 +1990,7 @@ describe('agent prompt injection', () => {
       for (const tap of [...stubs.stateTaps]) tap('session-1', 'busy');
       stubs.sessionState.mockReturnValue('busy');
 
-      await vi.advanceTimersByTimeAsync(13_000);
+      await vi.advanceTimersByTimeAsync(31_000);
       await rejected;
       expect(stubs.requestPaneClose).not.toHaveBeenCalled();
     } finally {
@@ -2024,7 +2024,7 @@ describe('agent prompt injection', () => {
       );
       const rejected = expect(pending).rejects.toThrow(/did not start/i);
 
-      await vi.advanceTimersByTimeAsync(13_000);
+      await vi.advanceTimersByTimeAsync(31_000);
       await rejected;
       expect(stubs.turnStartSequence).toBe(0);
     } finally {
@@ -2118,7 +2118,7 @@ describe('agent prompt injection', () => {
       await vi.advanceTimersByTimeAsync(500);
       for (const tap of [...stubs.stateTaps]) tap('session-1', 'busy');
       stubs.sessionState.mockReturnValue('busy');
-      await vi.advanceTimersByTimeAsync(13_000);
+      await vi.advanceTimersByTimeAsync(31_000);
 
       await rejected;
     } finally {
@@ -2281,25 +2281,154 @@ describe('agent prompt injection', () => {
     }
   });
 
+  it('F-230: composer do Devin pintado com o PTY ainda busy espera a borda de idle e entrega', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('busy');
+      stubs.injectable = true;
+      stubs.readSessionOutput.mockReturnValue(DEVIN_COMPOSER_SCREEN);
+      stubs.writeSession.mockImplementation(
+        ((sessionId: string, data: string) => {
+          if (data === '\r') {
+            queueMicrotask(() => {
+              stubs.sessionState.mockReturnValue('busy');
+              for (const tap of [...stubs.stateTaps]) tap(sessionId, 'busy');
+              for (const tap of [...stubs.dataTaps]) {
+                tap(sessionId, 'running tools');
+              }
+            });
+          }
+          return true;
+        }) as typeof stubs.writeSession,
+      );
+
+      const pending = deliverAgentPrompt(
+        'session-1',
+        'build the feature',
+        undefined,
+        { adapterId: 'devin' },
+      );
+
+      await vi.advanceTimersByTimeAsync(300);
+      expect(stubs.writeSession).not.toHaveBeenCalled();
+
+      stubs.sessionState.mockReturnValue('idle');
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      await expect(pending).resolves.toBe(true);
+      expect(stubs.writeSession).toHaveBeenCalledWith(
+        'session-1',
+        'build the feature',
+        { markInputBusy: false },
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('F-230: adapter sem regex de composer também espera o idle injetável', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('busy');
+      stubs.injectable = true;
+      stubs.writeSession.mockImplementation(
+        ((sessionId: string, data: string) => {
+          if (data === '\r') {
+            queueMicrotask(() => {
+              stubs.sessionState.mockReturnValue('busy');
+              for (const tap of [...stubs.stateTaps]) tap(sessionId, 'busy');
+              for (const tap of [...stubs.dataTaps]) {
+                tap(sessionId, 'running tools');
+              }
+            });
+          }
+          return true;
+        }) as typeof stubs.writeSession,
+      );
+
+      const pending = deliverAgentPrompt(
+        'session-1',
+        'build the feature',
+        undefined,
+        { adapterId: 'codex' },
+      );
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(stubs.writeSession).not.toHaveBeenCalled();
+
+      stubs.sessionState.mockReturnValue('idle');
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      await expect(pending).resolves.toBe(true);
+      expect(stubs.writeSession).toHaveBeenCalledWith(
+        'session-1',
+        'build the feature',
+        { markInputBusy: false },
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('F-230: sessão que sai durante a espera de idle falha com a cauda do PTY, sem colar', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('busy');
+      stubs.injectable = true;
+      stubs.readSessionOutput.mockReturnValue(DEVIN_COMPOSER_SCREEN);
+
+      const pending = deliverAgentPrompt(
+        'session-1',
+        'build the feature',
+        undefined,
+        { adapterId: 'devin' },
+      );
+      const rejected = expect(pending).rejects.toThrow(/exited during boot/i);
+
+      await vi.advanceTimersByTimeAsync(300);
+      stubs.sessionState.mockReturnValue(null as unknown as string);
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      await rejected;
+      expect(stubs.writeSession).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('never pastes a worker brief into a session that was already busy', async () => {
-    stubs.sessionState.mockReturnValue('busy');
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('busy');
 
-    await expect(deliverAgentPrompt('session-1', 'do not interleave')).rejects.toThrow(
-      /did not start/i,
-    );
+      const pending = deliverAgentPrompt('session-1', 'do not interleave');
+      const rejected = expect(pending).rejects.toThrow(/did not start/i);
 
-    expect(stubs.writeSession).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(31_000);
+      await rejected;
+
+      expect(stubs.writeSession).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('never pastes a worker brief into an idle-looking permission prompt', async () => {
-    stubs.sessionState.mockReturnValue('idle');
-    stubs.injectable = false;
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.injectable = false;
 
-    await expect(deliverAgentPrompt('session-1', 'do not confirm')).rejects.toThrow(
-      /did not start/i,
-    );
+      const pending = deliverAgentPrompt('session-1', 'do not confirm');
+      const rejected = expect(pending).rejects.toThrow(/did not start/i);
 
-    expect(stubs.writeSession).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(31_000);
+      await rejected;
+
+      expect(stubs.writeSession).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
