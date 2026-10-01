@@ -6,6 +6,7 @@ import { billingConfigured, type Config } from './config.js';
 import type { AccountRow } from './db/schema.js';
 import { jsonBody, readBoundedBody } from './http.js';
 import { licenseForAccount } from './licences.js';
+import { redeemLicenseCode } from './license-codes.js';
 import { requireCsrf, requireNativeAuth, requireWebAuth } from './middleware.js';
 import { PRO_MONTHLY_PRICE, stripeFrom, type StripeEvent, type StripeLike, type StripePrice, type StripeSubscription } from './stripe.js';
 
@@ -15,6 +16,7 @@ const CHECKOUT_WINDOW_MS = 23 * 60 * 60 * 1000;
 const SNAPSHOT_ATTEMPTS = 3;
 const webCheckoutSchema = z.strictObject({ plan: z.literal('pro'), attemptId: z.uuid() });
 const nativeCheckoutSchema = z.object({ plan: z.literal('pro') });
+const redeemSchema = z.strictObject({ code: z.string().trim().min(4).max(80) });
 type BillingContext = Context<AppEnv>;
 export type StripeFactory = (config: Config) => StripeLike;
 
@@ -60,7 +62,9 @@ async function checkout(c: BillingContext, stripe: StripeLike, now: () => number
   if (!account) throw new HTTPException(401, { message: 'Conta não disponível.' });
   if (account.suspended_at !== null) throw new HTTPException(403, { message: 'Conta suspensa. Fale com o suporte.' });
   // A live personal subscription is changed in the portal, never by a second checkout.
-  const live = await db.prepare("SELECT id FROM subscriptions WHERE owner_type='account' AND account_id=? AND status IN('active','trialing','past_due') LIMIT 1").bind(accountId).first();
+  // Concessões por código ('codegrant:…') são espelhos locais sem cliente/portal na Stripe: nunca contam aqui,
+  // senão um código vencido (a linha segue 'active') impediria a pessoa de assinar para sempre.
+  const live = await db.prepare("SELECT id FROM subscriptions WHERE owner_type='account' AND account_id=? AND status IN('active','trialing','past_due') AND stripe_subscription_id NOT LIKE 'codegrant:%' LIMIT 1").bind(accountId).first();
   if (live) throw new HTTPException(409, { message: 'Você já tem uma assinatura. Use o portal para gerenciá-la.' });
   // The Stripe Price is the monetary authority: a stale or foreign Price fails before any customer or charge exists.
   const price = await viaStripe(() => stripe.prices.retrieve(config.STRIPE_PRICE_PRO));
@@ -186,6 +190,20 @@ export function createBillingRoutes(stripeFor: StripeFactory = stripeFrom, now: 
   });
   routes.post('/billing/portal', requireNativeAuth, requireBilling, c => portal(c, stripeFor(c.get('config'))));
   routes.get('/license', requireNativeAuth, async c => c.json({ ok: true, data: { licenca: await licenseForAccount(c.env.DB, c.get('session').account_id, c.get('config')) } }));
+  // Resgate não depende de Stripe: o código já é a autorização concedida.
+  routes.post('/license/redeem', requireNativeAuth, async c => {
+    const { code } = await jsonBody(c.req.raw, redeemSchema);
+    const db = c.env.DB, accountId = c.get('session').account_id;
+    const account = await db.prepare('SELECT * FROM accounts WHERE id=?').bind(accountId).first<AccountRow>();
+    if (!account) throw new HTTPException(401, { message: 'Conta não disponível.' });
+    if (account.suspended_at !== null) throw new HTTPException(403, { message: 'Conta suspensa. Fale com o suporte.' });
+    // Mensagem única para código inexistente, revogado, expirado ou esgotado —
+    // a resposta nunca distingue o motivo da recusa.
+    if (await redeemLicenseCode(db, account, code, now()) === 'invalid') {
+      throw new HTTPException(400, { message: 'Código inválido, expirado ou já utilizado.' });
+    }
+    return c.json({ ok: true, data: { licenca: await licenseForAccount(db, accountId, c.get('config')) } });
+  });
   // Sem assinatura a requisição nem é do Stripe: 400 antes de revelar se a cobrança está configurada.
   const requireSignature: MiddlewareHandler<AppEnv> = async (c, next) => {
     if (!c.req.header('stripe-signature')) throw new HTTPException(400, { message: 'Assinatura inválida.' });

@@ -8,7 +8,7 @@ export type OwnerType = 'account' | 'team';
 export type TeamRole = 'owner' | 'member';
 export type AuthChannel = 'desktop' | 'web';
 export type AccountRole = 'user' | 'admin';
-export type AdminAuditAction = 'suspend' | 'resume' | 'extend_trial';
+export type AdminAuditAction = 'suspend' | 'resume' | 'extend_trial' | 'mint_license_code' | 'revoke_license_code';
 export type CronStatus = 'active' | 'paused' | 'deleted';
 export type SqlBoolean = 0 | 1;
 export type EpochMilliseconds = number;
@@ -177,6 +177,26 @@ export interface SyncProjectRow {
 export interface SystemMetadataRow {
   readonly key: string;
   readonly value: string;
+}
+
+export interface LicenseCodeRow {
+  readonly id: string;
+  readonly code_hash: string;
+  readonly code_suffix: string;
+  readonly plan: Plan;
+  readonly period_days: number | null;
+  readonly max_uses: number;
+  readonly note: string;
+  readonly created_by: string | null;
+  readonly expires_at: EpochMilliseconds | null;
+  readonly revoked_at: EpochMilliseconds | null;
+  readonly created_at: EpochMilliseconds;
+}
+
+export interface LicenseRedemptionRow {
+  readonly code_id: string;
+  readonly account_id: string;
+  readonly redeemed_at: EpochMilliseconds;
 }
 
 export interface AdminAuditRow {
