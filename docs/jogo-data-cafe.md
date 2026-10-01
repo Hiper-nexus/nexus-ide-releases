@@ -13,7 +13,12 @@ O jogador é o dev de plantão num data center ao entardecer.
 5. Tickets dão XP, níveis (Estagiário a Principal) e selos. Ligar as 18 LLMs dá o selo "Data center completo".
 6. O mural do sorteio e a TV da live abrem o convite do grupo e o canal de lives.
 
-XP e progresso ficam só no navegador (`nexus-data-cafe:v1`) e não contam para o sorteio.
+7. Entregas emendadas viram combo: instalar ou reiniciar um rack em até 18 s do anterior multiplica o XP (×1,25 por entrega, até ×2).
+8. Três missões do turno ficam ativas (ligar racks, resolver incidentes, chegar a um combo, tomar café a tempo). Fechar uma paga XP e traz a próxima.
+9. O turno dura 3 minutos e os pontos são o XP ganho nele. O recorde fica salvo.
+10. Cada nível deixa o dev 3% mais rápido.
+
+XP, recorde e progresso ficam só no navegador (`nexus-data-cafe:v1`, esquema 2; o salvo do esquema 1 migra sem perder nada) e não contam para o sorteio.
 
 ## Arquitetura (`src/datacafe/`)
 
@@ -24,7 +29,9 @@ XP e progresso ficam só no navegador (`nexus-data-cafe:v1`) e não contam para 
 | `interact.js` | Objeto interativo mais próximo e progresso de segurar | `interact.test.js` |
 | `walk.js`, `rig.js` | Caminhada relativa à câmera e câmera de diorama | `walk.test.js` |
 | `energy.js`, `racks.js`, `tickets.js`, `progress.js` | Regras puras e imutáveis | um teste por módulo |
-| `audio.js` | Som sintetizado em WebAudio, liga após gesto, mudo persistente | `audio.test.js` |
+| `combo.js`, `missions.js`, `shift.js` | Combo de entregas, missões do turno e turno cronometrado | um teste por módulo |
+| `progression.js` | Junta combo, missões e turno: `scoreTicket` quando um ticket fecha, `progressionStep` no relógio | `progression.test.js` |
+| `audio.js` | Som sintetizado em WebAudio, liga após gesto, mudo e volume persistentes, limitador na saída, trilha em arpejo | `audio.test.js` |
 | `kit.js`, `character.js`, `datacenter.js` | Arte 3D: cache por mundo, InstancedMesh, partículas, descarte | `art.test.js` |
 | `scene.js` | Liga entrada, simulação, arte e eventos do HUD | navegador |
 | `mount.js`, `datacafe.css` | HUD montado por código, igual nas duas páginas | navegador |
@@ -43,6 +50,12 @@ game.start(); game.resetProgress(); game.dispose();
 ```
 
 A comunidade monta em tela cheia; a página principal monta sob demanda no clique de "Jogar aqui", então o módulo 3D (cerca de 156 kB gzip) não pesa no carregamento.
+
+## Som
+
+Tudo sintetizado, sem arquivos. O mestre é o volume do jogador (padrão 0,8) e passa por um limitador. Medido no navegador com um analisador na saída: a sala com a trilha fica em torno de -25 dBFS RMS e os efeitos chegam a cerca de -8 dBFS de pico. Antes disso o mestre era 0,18 com efeitos de pico 0,05 a 0,12, o que dava uns -44 dBFS: o jogo parecia mudo. O teste `os efeitos chegam audíveis` falha se algum efeito cair abaixo de 0,1 de pico.
+
+Efeitos: passos, pegar GPU, rack no ar, alarme de incidente, café, ação bloqueada, combo (o bip sobe a cada entrega), missão cumprida, subir de nível, fim de turno e `typing()` para o teclado do PC. O botão de som fica sempre visível no HUD; o volume fica no painel (M). Pausa e aba oculta suspendem o contexto; mudo e pausa também param a trilha.
 
 ## Orçamento medido
 

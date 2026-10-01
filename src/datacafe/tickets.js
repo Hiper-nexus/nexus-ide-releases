@@ -11,7 +11,14 @@ export const BADGES = {
   'apagou-incendio': 'Primeiro incidente resolvido',
   'metade-no-ar': 'Metade do data center no ar',
   'data-center-completo': 'Data center completo: as 18 LLMs no ar',
+  'combo-5': 'Combo ×5: cinco entregas emendadas',
+  'turno-500': 'Turno de 500 pontos',
+  'bombeiro-10': 'Dez incidentes resolvidos',
+  'missoes-5': 'Cinco missões fechadas',
 };
+
+/** Cada nível acima do primeiro deixa o dev 3% mais rápido. */
+const SPEED_PER_LEVEL = 0.03;
 
 function nameOf(models, id) {
   return models.find(model => model.id === id)?.name ?? id;
@@ -50,8 +57,19 @@ export function levelProgress(xp) {
   return (xp - floor) / (ceil - floor);
 }
 
-export function completeTicket(progress, ticket) {
-  const xpGained = Math.max(0, ticket?.xp ?? 0);
+/** Recompensa do nível: multiplicador de velocidade do dev. */
+export function speedPerk(level) {
+  return 1 + SPEED_PER_LEVEL * (Math.max(1, Math.min(LEVEL_TITLES.length, level)) - 1);
+}
+
+export function perkText(level) {
+  const bonus = Math.round((speedPerk(level) - 1) * 100);
+  return bonus > 0 ? `anda ${bonus}% mais rápido` : '';
+}
+
+/** `multiplier` é o do combo: só aumenta o XP do ticket, nunca reduz. */
+export function completeTicket(progress, ticket, multiplier = 1) {
+  const xpGained = Math.round(Math.max(0, ticket?.xp ?? 0) * Math.max(1, multiplier));
   const xp = progress.xp + xpGained;
   const level = levelFor(xp);
   return {
@@ -69,5 +87,9 @@ export function badgesFor(progress, rackState) {
   if (progress.incidents >= 1) earned.add('apagou-incendio');
   if (installed >= rackState.order.length / 2) earned.add('metade-no-ar');
   if (allPowered(rackState)) earned.add('data-center-completo');
+  if ((progress.bestCombo ?? 0) >= 5) earned.add('combo-5');
+  if ((progress.bestShift ?? 0) >= 500) earned.add('turno-500');
+  if (progress.incidents >= 10) earned.add('bombeiro-10');
+  if ((progress.missions ?? 0) >= 5) earned.add('missoes-5');
   return Object.keys(BADGES).filter(badge => earned.has(badge));
 }

@@ -22,6 +22,21 @@
 .dc-racks.complete{border-color:var(--green)}
 .dc-racks.down{border-color:#ff4d4d}
 .dc-racks-label{white-space:nowrap}
+.dc-row{display:flex;align-items:center;gap:8px}
+.dc-chips{flex-direction:column;align-items:flex-start}
+.dc-sound{display:grid;place-items:center;flex:none;width:36px;height:36px;border:1px solid rgb(250 247 249/.18);border-radius:8px;background:rgb(8 7 9/.55);color:var(--ink);cursor:pointer;transition:border-color .2s var(--ease),color .2s var(--ease)}
+.dc-sound:hover{border-color:var(--pink)}
+.dc-sound[aria-pressed=false]{color:var(--faint)}
+.dc-sound-off,.dc-sound[aria-pressed=false] .dc-sound-on{display:none}
+.dc-sound[aria-pressed=false] .dc-sound-off{display:inline}
+.dc-shift{font-size:11px;gap:6px}
+.dc-shift-clock{font-family:VT323,monospace;font-size:22px;line-height:1;min-width:36px}
+.dc-shift-score{white-space:nowrap}
+.dc-shift.ending{border-color:var(--ember,#ffb27a);color:var(--ember,#ffb27a)}
+.dc-combo{font-size:10px;border-color:var(--pink)}
+.dc-combo-x{font-size:22px;line-height:1;color:var(--pink)}
+.dc-combo .dc-track{width:48px}
+.dc-combo-fill{display:block;height:100%;background:var(--pink);transform-origin:left}
 
 .dc-level{position:absolute;right:24px;top:var(--dc-top,80px);display:flex;align-items:center;gap:12px;min-height:44px;padding:6px 12px 6px 14px;border:1px solid rgb(250 247 249/.2);border-radius:8px;background:rgb(8 7 9/.55);color:var(--ink);cursor:pointer;transition:border-color .2s var(--ease),background .2s var(--ease)}
 .dc-level:hover,.dc-level[aria-expanded=true]{border-color:var(--pink);background:rgb(8 7 9/.8)}
@@ -35,6 +50,11 @@
 .dc-panel-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding-bottom:10px;border-bottom:1px solid var(--line)}
 .dc-panel-head strong{font-size:14px;font-weight:550}
 .dc-panel-head .mono{font-size:9px;color:var(--faint)}
+.dc-mission-list{list-style:none;margin:0 0 14px;padding:0}
+.dc-mission-list li{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12px;line-height:1.35}
+.dc-mission-list small{font-size:9px;color:var(--green);white-space:nowrap}
+.dc-volume{display:flex;align-items:center;gap:12px;padding-top:12px;font-size:9px;color:var(--faint)}
+.dc-volume input{flex:1;min-width:0;min-height:44px;accent-color:var(--pink)}
 .dc-ticket-list{list-style:none;margin:0;padding:0}
 .dc-ticket-list li{display:grid;grid-template-columns:10px 1fr auto;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12px;line-height:1.35}
 .dc-ticket-list small{font-size:9px;color:var(--faint)}
@@ -52,6 +72,11 @@
 .dc-ticket-now{position:absolute;left:50%;top:var(--dc-top,80px);transform:translateX(-50%);max-width:min(520px,calc(100% - 420px));padding:9px 14px;border:1px solid rgb(250 247 249/.16);border-radius:8px;background:rgb(8 7 9/.55);font-size:11px;letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
 .dc-ticket-now[data-kind=incident]{border-color:#ff4d4d;color:#ffb3b3}
 .dc-ticket-now[data-kind=coffee]{border-color:var(--ember,#ffb27a)}
+.dc-mission{position:absolute;left:50%;top:calc(var(--dc-top,80px) + 44px);transform:translateX(-50%);display:flex;align-items:center;gap:12px;max-width:min(520px,calc(100% - 420px));padding:7px 14px 9px;border:1px solid rgb(250 247 249/.16);border-radius:8px;background:rgb(8 7 9/.55);font-size:10px;letter-spacing:.02em;white-space:nowrap;overflow:hidden;pointer-events:none}
+.dc-mission-text{overflow:hidden;text-overflow:ellipsis}
+.dc-mission-count{flex:none;color:var(--green)}
+.dc-mission-bar{position:absolute;left:0;right:0;bottom:0;height:2px;background:rgb(250 247 249/.08)}
+.dc-mission-bar>span{display:block;height:100%;background:var(--green);transform-origin:left;transform:scaleX(0);transition:transform .3s var(--ease)}
 
 .dc-prompt{position:absolute;left:50%;bottom:40px;transform:translateX(-50%);display:flex;align-items:center;gap:10px;max-width:calc(100% - 48px);min-height:48px;padding:10px 18px 14px;border:1px solid var(--pink);border-radius:10px;background:rgb(8 7 9/.82);color:var(--ink);font-size:13px;text-align:left;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none;overflow:hidden}
 .dc-prompt:hover{background:rgb(8 7 9/.92)}
@@ -83,7 +108,7 @@
 
 /* Embutido na página principal: sem a barra superior da comunidade. */
 .dc-hud[data-variant=embed]{--dc-top:16px}
-.dc-hud[data-variant=embed] .dc-ticket-now{max-width:min(440px,calc(100% - 380px))}
+.dc-hud[data-variant=embed] .dc-ticket-now,.dc-hud[data-variant=embed] .dc-mission{max-width:min(440px,calc(100% - 380px))}
 
 @keyframes dc-float{from{opacity:1;transform:translate(-50%,-100%)}to{opacity:0;transform:translate(-50%,-240%)}}
 @keyframes dc-pulse{50%{box-shadow:0 0 0 4px rgb(255 77 77/.18)}}
@@ -97,6 +122,7 @@
   .dc-prompt{left:auto;right:16px;bottom:24px;transform:none;max-width:calc(100% - 180px);min-height:64px;font-size:12px}
   .dc-toast{bottom:168px}
   .dc-station{bottom:170px;right:16px}
+  .dc-sound{width:44px;height:44px}
 }
 @media(max-width:760px){
   .dc-status{left:16px;gap:6px}
@@ -105,10 +131,14 @@
   .dc-level{right:16px;gap:8px;padding:5px 10px}
   .dc-xpbar,.dc-title{display:none}
   .dc-panel{left:16px;right:16px;width:auto}
-  .dc-ticket-now,.dc-hud[data-variant=embed] .dc-ticket-now{top:calc(var(--dc-top,80px) + 96px);left:16px;right:16px;transform:none;max-width:none}
+  .dc-chips{flex-direction:row;flex-wrap:wrap;gap:6px;max-width:calc(100vw - 32px)}
+  .dc-racks:not(.down) .dc-racks-label{display:none}
+  .dc-ticket-now,.dc-hud[data-variant=embed] .dc-ticket-now{top:calc(var(--dc-top,80px) + 118px);left:16px;right:16px;transform:none;max-width:none}
+  .dc-mission,.dc-hud[data-variant=embed] .dc-mission{top:calc(var(--dc-top,80px) + 158px);left:16px;right:16px;transform:none;max-width:none}
   .dc-station-title{font-size:22px}
 }
+@media(max-width:360px){.dc-label{display:none}}
 @media(prefers-reduced-motion:reduce){
   .dc-float,.dc-energy.empty{animation:none}
-  .dc-toast,.dc-fill,.dc-xpbar>span{transition:none}
+  .dc-toast,.dc-fill,.dc-xpbar>span,.dc-mission-bar>span{transition:none}
 }
