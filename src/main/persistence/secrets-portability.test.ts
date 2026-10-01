@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createCipheriv, pbkdf2Sync, randomBytes } from 'node:crypto';
+import { decisionCredentialRevision } from '../decision-models/decision-revision';
 import {
   MIN_PASSPHRASE_LENGTH,
   SECRETS_BUNDLE_FORMAT,
@@ -36,7 +37,9 @@ describe('exportSecretsVault', () => {
     if (!exported.ok) return;
     expect(exported.bundle).not.toContain('cloudflare-token-123456');
     const target = fakeDeps();
+    const before = decisionCredentialRevision();
     expect(importSecretsVault(exported.bundle, PASS, target).ok).toBe(true);
+    expect(decisionCredentialRevision()).toBeGreaterThan(before);
     expect(target.store.get('clef-env:CLOUDFLARE_API_TOKEN')).toBe('cloudflare-token-123456');
     expect(target.store.has('auth:account')).toBe(false);
     expect(target.store.has('clef-env:UNRECOGNIZED_SECRET')).toBe(false);

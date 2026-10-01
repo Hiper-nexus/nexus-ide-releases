@@ -261,3 +261,33 @@ e a política; chamadas reais com conjuntos rotulados verificam a qualidade.
 
 Não houve chamada de inferência paga nesta análise, alteração de credencial,
 mudança no código do produto ou medição comparativa executada no Nexus.
+
+## Evidência da implementação
+
+A implementação preserva os consumidores Jev pela fachada existente e registra
+provedor, modelo, rota, tokens, duração e tentativas HTTP. A UI oferece Automático,
+Somente Jev e Somente Clef, com Clef Flash opcional. Migrações começam em Jev e a
+visão começa desligada. A política automática inicial usa Clef na escolha de
+ferramentas e Jev nas outras tarefas de texto; indisponibilidade de credenciais
+pode escolher o outro provedor antes da chamada. Falha durante a chamada não
+provoca troca silenciosa. Nenhuma rota foi promovida por resultado simulado.
+
+O avaliador tem 18 casos sintéticos rotulados em português, com desenvolvimento
+e heldout distintos, e separa respostas incorretas, falhas e visão não suportada.
+Esses casos e os testes de contrato não provam superioridade em produção.
+Comparação com as APIs reais depende do cadastro seguro e da disponibilidade dos
+modelos na conta. Relatórios excluem state, expectativas, imagens e credenciais.
+
+O teste de integração no Electron usou o preload real em contexto isolado e
+sandbox, captura de 800×568 pixels e dois campos sintéticos. Senha e token ficaram
+opacos, o sinal de sucesso permaneceu visível e o bitmap original foi preservado.
+A ferramenta `nexus_browser_judge_visual` devolve probabilidades de erro, objetivo
+atingido, carregamento, bloqueio humano e defeito de layout. Não executa ações.
+Campos reconhecidos, frames e canvas são ocultos, mas a detecção não garante
+remover toda informação pessoal de uma página. Cada consulta visual captura de
+novo; não usa cache visual nem envia screenshots do desktop.
+
+A branch foi atualizada para incluir integralmente a base 0.76.160: site, acesso,
+assinatura/licença, marca e aviso de término do teste. O operador autorizou também
+a nova release; os gates de assinatura, notarização e candidata continuam
+obrigatórios antes da publicação.

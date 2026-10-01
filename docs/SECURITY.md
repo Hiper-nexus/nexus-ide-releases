@@ -19,6 +19,23 @@ All external input validated with Zod at process boundaries.
 
 ## Error flow
 
+Decision routing lives in `decision-models/decision-judge.ts`: fixed modes never
+silently change provider; visual inputs require explicit opt-in and Clef.
+Cloudflare credentials use only `clef-env:CLOUDFLARE_API_TOKEN` in Main's
+encrypted vault. Trusted settings IPC returns presence/mask, never the token.
+The Account ID is local configuration. Rotation/import and settings changes
+invalidate in-flight decisions and cache authority. Cloudflare requests target
+the fixed Workers AI HTTPS endpoint, reject redirects and validate every answer.
+
+`nexus_browser_judge_visual` is scoped, read-only and rate limited. Its isolated
+preload supplies geometry only; Main makes an opaque pixel copy for editable
+fields, recognized secrets, frames and canvas. Navigation, scope, geometry,
+configuration changes and cancellation reject stale captures/results. Invalid
+masks or provider image limits stop egress. Captures remain in memory; original
+local artifacts are unchanged. Recognition does not guarantee removal of all
+personal information on a page. Signals never authorize clicks or permissions.
+Desktop screenshot egress is not enabled by this feature.
+
 - Jev dispatch guard: `deny` only on injection ≥ 0.8; otherwise at most human
   confirmation (destructive + incoherent); service failure = pass-through
   (never blocks). The operator's own hand (`role user`, no mission) is never
@@ -42,7 +59,8 @@ a essas entradas.
 `providers.setKey` usa o schema de id dos adapters e exige registro no catálogo
 no Main; key vazia segue a mesma validação antes de excluir. A portabilidade
 aceita ids registrados e os namespaces de credenciais `voice-env:`, `jev-env:`,
-`acctkey:`, `acctcred:`, `mediakey:` e `mcphub:`. Export não lê registros internos;
+`acctkey:`, `acctcred:`, `mediakey:`, `mcphub:` e o nome exato
+`clef-env:CLOUDFLARE_API_TOKEN`. Export não lê registros internos;
 import valida todos os nomes antes da primeira escrita e recusa o bundle inteiro
 se contiver autoridade interna ou nomes desconhecidos. Bundles antigos contendo
 sessão/licença devem ser reexportados como credenciais de providers.

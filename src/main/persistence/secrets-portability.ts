@@ -28,6 +28,7 @@ import {
 } from './secrets-store';
 import { getAdapter } from '../adapters/adapter-registry';
 import { CLEF_SECRET_NAME } from '../../shared/decision-models';
+import { bumpDecisionCredentialRevision } from '../decision-models/decision-revision';
 
 export const SECRETS_BUNDLE_FORMAT = 'nexus-secrets-v1';
 /** OWASP 2023 floor for PBKDF2-SHA512. Import rejects weaker bundles. */
@@ -241,7 +242,10 @@ export function importSecretsVault(
   let importedKeys = 0;
   for (const [key, value] of entries) {
     const saved = deps.setSecret(key, value);
-    if (saved.ok) importedKeys += 1;
+    if (saved.ok) {
+      importedKeys += 1;
+      if (key === CLEF_SECRET_NAME || key.startsWith('jev-env:')) bumpDecisionCredentialRevision();
+    }
     else failedKeys.push(key);
   }
   if (importedKeys === 0) {
