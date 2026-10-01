@@ -29,6 +29,7 @@ import { useCommandPaletteStore } from '../../state/command-palette-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { WorkspaceCleanup } from './WorkspaceCleanup';
 import { NexusMark } from '../NexusMark';
+import { TrialNoticeCard } from './TrialNoticeCard';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
 import { workspacePathLabels } from './workspace-path-label';
 import { relativeAgeLabel } from '../../../shared/mission-kanban';
@@ -957,6 +958,7 @@ export function WorkspaceRail({
           encolhe (e rola) em vez de esmagar a lista de projetos acima.
         */}
         <div className="workspace-rail__utilities">
+        <TrialNoticeCard />
         <WorkspaceCleanup />
         {onOpenAttention && attentionCount > 0 ? (
           <button
