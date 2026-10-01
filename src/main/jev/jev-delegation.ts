@@ -1,3 +1,4 @@
+import { decisionResultUsage } from '../decision-models/decision-usage';
 /**
  * Conselho de delegação via TypeSafe Jev (superfície `delegation`, C2 25/09).
  * A cada mensagem que o operador manda a um pane dele, o hook UserPromptSubmit
@@ -8,7 +9,6 @@
 import {
   capText,
   judge,
-  USD_PER_INPUT_TOKEN,
   type JevQuestion,
 } from './jev-client';
 import { isJevSurfaceEnabled } from './jev-autopilot';
@@ -134,8 +134,7 @@ export async function advisePrompt(
     probabilities: jevAnswerProbabilities(result.answers),
     confidence: jevAnswerConfidences(result.answers),
     decision: advise ? `delegate:${parts}p/${writers}w` : 'solo',
-    inputTokens: result.usage.input_tokens,
-    usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+    ...decisionResultUsage(result),
   });
   const writesCodeAnswer = result.answers.writesCode;
   return {

@@ -1,3 +1,4 @@
+import { decisionResultUsage } from '../decision-models/decision-usage';
 /**
  * `nexus_computer_do` — autopilot de desktop ("Jev decide, Nexus executa").
  *
@@ -19,7 +20,6 @@ import { z } from 'zod';
 import {
   capText,
   judge,
-  USD_PER_INPUT_TOKEN,
   type JevAnswer,
   type JevQuestion,
   type JevResult,
@@ -518,8 +518,7 @@ async function runComputerDo(
       probabilities: jevAnswerProbabilities(result.answers),
       confidence: jevAnswerConfidences(result.answers),
       decision: operation,
-      inputTokens: result.usage.input_tokens,
-      usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+      ...decisionResultUsage(result),
     });
 
     const step: StepRecord = {

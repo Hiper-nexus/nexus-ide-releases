@@ -19,7 +19,7 @@ export interface DecisionJudgeDeps {
 
 function noAnswer(input: JudgeInput, route: DecisionRoute | null, reason: JevNoAnswerReason): null {
   if (input.surface && route) recordJevNoAnswer({ surface: input.surface, model: route.model,
-    sessionId: input.sessionId, missionId: input.missionId, reason });
+    sessionId: input.sessionId, missionId: input.missionId, reason, provider: route.provider, route });
   try { input.onNoAnswer?.(reason); }
   catch { console.warn('[decision-models] no-answer callback failed'); }
   return null;

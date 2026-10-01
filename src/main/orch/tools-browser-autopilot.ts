@@ -1,3 +1,4 @@
+import { decisionResultUsage } from '../decision-models/decision-usage';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import {
@@ -11,7 +12,6 @@ import {
 import {
   capText,
   judge,
-  USD_PER_INPUT_TOKEN,
   type JevAnswer,
   type JevQuestion,
   type JevResult,
@@ -401,8 +401,7 @@ async function runBrowserDo(
       probabilities: jevAnswerProbabilities(result.answers),
       confidence: jevAnswerConfidences(result.answers),
       decision: operation,
-      inputTokens: result.usage.input_tokens,
-      usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+      ...decisionResultUsage(result),
     });
 
     const step: StepRecord = {

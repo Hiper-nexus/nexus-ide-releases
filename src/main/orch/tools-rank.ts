@@ -9,7 +9,8 @@
 import { z } from 'zod';
 import type { McpToolDef } from './mcp-protocol';
 import type { AgentGateContext } from './gate';
-import { judge, USD_PER_INPUT_TOKEN, type JevResult } from '../jev/jev-client';
+import { judge, type JevResult } from '../jev/jev-client';
+import { decisionResultUsage } from '../decision-models/decision-usage';
 import { hasDecisionCredential } from '../decision-models/decision-availability';
 import { consumeJevRateSlots } from '../jev/jev-rate-limit';
 import { assertMcpInvocationCurrent } from './mcp-protocol';
@@ -196,7 +197,12 @@ const rankTool: McpToolDef = {
       (sum, { result }) => sum + (result?.usage.input_tokens ?? 0),
       0,
     );
+    const receipts = judged.map(({ result }) => decisionResultUsage(result!));
+    const firstUsage = receipts[0]!;
+    const requestCount = receipts.every(receipt => receipt.requestCount !== undefined)
+      ? receipts.reduce((sum, receipt) => sum + receipt.requestCount!, 0) : undefined;
     recordJevDecision({
+      ...firstUsage,
       surface: 'rankTool',
       sessionId: ctx.sessionId,
       missionId: ctx.missionId,
@@ -206,7 +212,8 @@ const rankTool: McpToolDef = {
       confidence: jevAnswerConfidences(judged[0]!.result!.answers),
       decision: 'rank',
       inputTokens,
-      usd: inputTokens * USD_PER_INPUT_TOKEN,
+      requestCount,
+      usd: receipts.reduce((sum, receipt) => sum + (receipt.usd ?? 0), 0),
     });
 
     return { model, ranking, lowConfidence };

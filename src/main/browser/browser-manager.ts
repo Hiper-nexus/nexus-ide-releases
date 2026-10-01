@@ -1,3 +1,4 @@
+import { decisionResultUsage } from '../decision-models/decision-usage';
 import {
   BrowserWindow,
   WebContentsView,
@@ -42,7 +43,7 @@ import type {
 import { redactBrowserText, redactPageUrl } from '../../shared/browser-redaction';
 import type { JevQuestion, JevResult } from '../jev/jev-client';
 import { judge } from '../jev/jev-client';
-import { hasDecisionCredential } from '../decision-models/decision-availability';
+import { hasDecisionCredential, decisionConfigurationKey } from '../decision-models/decision-availability';
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
 import { JevResponseCache } from '../jev/jev-response-cache';
 import { prepareBrowserFocus, resolveBrowserFocus, type BrowserContextSelection } from './browser-focused-context';
@@ -52,7 +53,6 @@ import {
   recordJevDecision,
   recordJevOptimization,
 } from '../jev/jev-decision-log';
-import { USD_PER_INPUT_TOKEN } from '../jev/jev-pricing';
 import type {
   BrowserPaneBounds,
   BrowserPaneState,
@@ -1830,8 +1830,7 @@ async function judgeBrowserPage(
         probabilities: jevAnswerProbabilities(result.answers),
         confidence: jevAnswerConfidences(result.answers),
         decision: kind && kind.type === 'choice' ? kind.choice : 'other',
-        inputTokens: result.usage.input_tokens,
-        usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+        ...decisionResultUsage(result),
         ...(focused?.selection.applied ? { optimization: {
           contextBytesBefore: focused.selection.beforeBytes,
           contextBytesAfter: focused.selection.afterBytes,
@@ -1859,6 +1858,7 @@ async function judgeBrowserPage(
       sessionId: options?.sessionId ?? null,
       missionId: options?.missionId ?? null,
       model: process.env.NEXUS_JEV_MODEL ?? 'jev-latest',
+      decisionConfiguration: decisionConfigurationKey(),
     })).digest('hex');
     const cached = await pageJudgmentCache.get(pageCacheOwner(cacheEntry, judgeFn), key, compute, (value) => value.judgment !== null);
     if (cached.reused && cached.value.judgment) {
@@ -2136,8 +2136,7 @@ async function resolveBrowserElementByText(
           probabilities: jevAnswerProbabilities(result.answers),
           confidence: jevAnswerConfidences(result.answers),
           decision: answer.choice,
-          inputTokens: result.usage.input_tokens,
-          usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+          ...decisionResultUsage(result),
         });
         if (answer.confidence >= 0.7 && answer.choice !== 'none') {
           const chosen = candidates.find((c) => c.ref === answer.choice);

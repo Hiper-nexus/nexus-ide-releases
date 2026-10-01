@@ -1,3 +1,4 @@
+import { decisionResultUsage } from '../decision-models/decision-usage';
 /**
  * Sugestão de skill via TypeSafe Jev (cookbook oficial "skill suggestion"):
  * o catálogo das skills bundled é levantado em código (frontmatter dos
@@ -10,7 +11,6 @@
 import {
   capText,
   judge,
-  USD_PER_INPUT_TOKEN,
   type JevAnswer,
   type JevQuestion,
 } from '../jev/jev-client';
@@ -246,8 +246,7 @@ export async function suggestSkillForTask(
       probabilities: jevAnswerProbabilities(result.answers),
       confidence: jevAnswerConfidences(result.answers),
       decision: `skill:${picked.name}`,
-      inputTokens: result.usage.input_tokens,
-      usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+      ...decisionResultUsage(result),
     });
     return picked;
   } catch {

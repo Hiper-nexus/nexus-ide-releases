@@ -1,3 +1,4 @@
+import { decisionResultUsage } from '../decision-models/decision-usage';
 /**
  * `nexus_tool_pick` — recomendação semântica de ferramenta via TypeSafe Jev.
  *
@@ -20,7 +21,7 @@ import {
   type AgentGateContext,
 } from './gate';
 import { isToolAllowedForReadOnlyContext } from './mcp-effect-policy';
-import { judge, USD_PER_INPUT_TOKEN, type JevQuestion } from '../jev/jev-client';
+import { judge, type JevQuestion } from '../jev/jev-client';
 import { hasDecisionCredential } from '../decision-models/decision-availability';
 import { consumeJevRateSlot } from '../jev/jev-rate-limit';
 import {
@@ -286,8 +287,7 @@ export async function runToolPick(
     probabilities: jevAnswerProbabilities(result.answers),
     confidence: jevAnswerConfidences(result.answers),
     decision: top ? `pick:${canonicalToolName(top)}` : 'pick:none',
-    inputTokens: result.usage.input_tokens,
-    usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+    ...decisionResultUsage(result),
   });
   return {
     picks,

@@ -1,10 +1,11 @@
+import { decisionResultUsage } from '../../decision-models/decision-usage';
 import type {
   BusinessFlow,
   BusinessInvariant,
   BusinessModelDocument,
 } from './business-model-contract';
 import type { BusinessHurdle } from './business-model-hurdles';
-import { capText, judge, USD_PER_INPUT_TOKEN, type JevQuestion } from '../../jev/jev-client';
+import { capText, judge, type JevQuestion } from '../../jev/jev-client';
 import { isJevSurfaceEnabled } from '../../jev/jev-autopilot';
 import { hasDecisionCredential } from '../../decision-models/decision-availability';
 import {
@@ -331,8 +332,7 @@ async function jevSelection(
       probabilities: jevAnswerProbabilities(result.answers),
       confidence: jevAnswerConfidences(result.answers),
       decision: `select:${pickedFlows.length}f/${pickedInvariants.length}i/${pickedHurdles.length}h`,
-      inputTokens: result.usage?.input_tokens ?? null,
-      usd: (result.usage?.input_tokens ?? 0) * USD_PER_INPUT_TOKEN,
+      ...decisionResultUsage(result),
     });
   } catch {
     // Diário nunca bloqueia a seleção.

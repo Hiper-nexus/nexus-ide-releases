@@ -1,3 +1,4 @@
+import { decisionResultUsage } from '../decision-models/decision-usage';
 /**
  * Triagem de pesquisa via TypeSafe Jev (superfície `researchTriage`).
  *
@@ -14,7 +15,6 @@
 import {
   capText,
   judge,
-  USD_PER_INPUT_TOKEN,
   type JevQuestion,
 } from '../jev/jev-client';
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
@@ -151,8 +151,7 @@ export async function triageResearchHits(
     probabilities: jevAnswerProbabilities(result.answers),
     confidence: jevAnswerConfidences(result.answers),
     decision: bestId ?? 'none',
-    inputTokens: result.usage.input_tokens,
-    usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+    ...decisionResultUsage(result),
   });
 
   return {

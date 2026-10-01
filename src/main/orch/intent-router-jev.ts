@@ -1,3 +1,4 @@
+import { decisionResultUsage } from '../decision-models/decision-usage';
 /**
  * Triagem do pedido via TypeSafe Jev (piloto automático, superfície
  * `intake`). UMA chamada `judge()` decide kind/complexidade/risco/
@@ -9,7 +10,6 @@ import { MISSION_ROUTING_SKILLS } from '../../shared/mission-routing-advice';
 import {
   capText,
   judge,
-  USD_PER_INPUT_TOKEN,
   type JevAnswer,
   type JevQuestion,
   type JevResult,
@@ -248,8 +248,7 @@ export async function routeWithJev(
     probabilities: jevAnswerProbabilities(result.answers),
     confidence: jevAnswerConfidences(result.answers),
     decision: `route:${route.kind}`,
-    inputTokens: result.usage.input_tokens,
-    usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+    ...decisionResultUsage(result),
     optimization: { llmRoutingBypassed: true },
   });
   return route;

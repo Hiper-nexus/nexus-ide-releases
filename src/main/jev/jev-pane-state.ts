@@ -1,3 +1,4 @@
+import { decisionResultUsage } from '../decision-models/decision-usage';
 /**
  * Classificador Jev do estado do pane (piloto automático, superfície
  * `paneState`). Os manifests do `AgentScreenDetector` resolvem os CLIs
@@ -11,7 +12,6 @@
 import { createHash } from 'node:crypto';
 import {
   judge,
-  USD_PER_INPUT_TOKEN,
   type JevQuestion,
 } from './jev-client';
 import { isJevSurfaceEnabled } from './jev-autopilot';
@@ -159,8 +159,7 @@ export async function classifyPaneTailForDigest(
         probabilities: jevAnswerProbabilities(result.answers),
         confidence: jevAnswerConfidences(result.answers),
         decision: `digest-state:${classified.state}`,
-        inputTokens: result.usage.input_tokens,
-        usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+        ...decisionResultUsage(result),
       });
     }
     if (digestClassifyCache.size >= DIGEST_CACHE_CAP) {
@@ -358,8 +357,7 @@ export function startJevPaneStateClassifier(
         probabilities: jevAnswerProbabilities(result.answers),
         confidence: jevAnswerConfidences(result.answers),
         decision: `state:${hint.state}`,
-        inputTokens: result.usage.input_tokens,
-        usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+        ...decisionResultUsage(result),
       });
       (deps.broadcast ?? broadcastPaneHint)({ sessionId, paneId, hint });
       if (

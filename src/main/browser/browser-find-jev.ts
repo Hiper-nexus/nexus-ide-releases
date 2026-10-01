@@ -1,3 +1,4 @@
+import { decisionResultUsage } from '../decision-models/decision-usage';
 /**
  * Desempate Jev do `nexus_browser_find` (superfície `browserTool`).
  *
@@ -13,7 +14,7 @@
 import type { BrowserFindMatch } from '../../shared/browser-automation';
 import { redactBrowserText, redactPageUrl } from '../../shared/browser-redaction';
 import type { JevQuestion, JevResult } from '../jev/jev-client';
-import { judge, USD_PER_INPUT_TOKEN } from '../jev/jev-client';
+import { judge } from '../jev/jev-client';
 import { hasDecisionCredential } from '../decision-models/decision-availability';
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
 import {
@@ -166,8 +167,7 @@ export async function pickBrowserFindElement(
     probabilities: jevAnswerProbabilities(result.answers),
     confidence: jevAnswerConfidences(result.answers),
     decision: answer.choice,
-    inputTokens: result.usage.input_tokens,
-    usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+    ...decisionResultUsage(result),
   });
 
   if (answer.choice === 'none' || answer.confidence < FIND_JEV_MIN_CONFIDENCE) {

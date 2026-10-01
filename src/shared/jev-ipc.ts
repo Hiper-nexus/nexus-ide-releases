@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { DecisionProvider, DecisionRoute } from './decision-models';
 
 /** Variável de ambiente da chave TypeSafe (espelha o CLI `jev`). */
 export const JEV_ENV_VAR = 'TYPESAFE_API_KEY';
@@ -60,6 +61,10 @@ export interface JevDecisionRow {
   sessionId?: string;
   missionId?: string;
   model: string;
+  provider?: DecisionProvider;
+  route?: DecisionRoute;
+  durationMs?: number;
+  requestCount?: number;
   questions: string[];
   probabilities: Record<string, number>;
   confidence?: Record<string, number>;
@@ -100,6 +105,8 @@ export interface JevWindowStatsResult {
 }
 
 export interface JevDecisionStatsResult {
+  byProvider?: Record<string, DecisionUsageStats>;
+  byModel?: Record<string, DecisionUsageStats>;
   /** calls = decisões respondidas; noAnswer = consultas sem resposta. */
   totals: { calls: number; usd: number; inputTokens: number; noAnswer: number };
   windows: {
@@ -122,6 +129,16 @@ export interface JevDecisionStatsResult {
     }
   >;
   pricing: { usdPerInputToken: number; source: 'typesafe-published' };
+}
+
+export interface DecisionUsageStats {
+  calls: number;
+  noAnswer: number;
+  inputTokens: number;
+  usd: number;
+  /** Null when the historical rows do not provide complete measurements. */
+  requests: number | null;
+  durationMs: number | null;
 }
 
 /** Hint do classificador Jev de estado do pane (surface `paneState`). */

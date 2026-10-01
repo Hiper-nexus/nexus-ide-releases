@@ -1,3 +1,4 @@
+import { decisionResultUsage } from '../decision-models/decision-usage';
 /**
  * `nexus_judge` — julgamento tipado do TypeSafe Jev como tool MCP para os
  * agentes. Read-only (egress à conta TypeSafe do usuário, rate-limit por
@@ -6,7 +7,7 @@
 import { z } from 'zod';
 import type { McpToolDef } from './mcp-protocol';
 import type { AgentGateContext } from './gate';
-import { judge, USD_PER_INPUT_TOKEN } from '../jev/jev-client';
+import { judge } from '../jev/jev-client';
 import { assertMcpInvocationCurrent } from './mcp-protocol';
 import { hasDecisionCredential } from '../decision-models/decision-availability';
 import {
@@ -151,8 +152,7 @@ const judgeTool: McpToolDef = {
       probabilities: jevAnswerProbabilities(result.answers),
       confidence: jevAnswerConfidences(result.answers),
       decision: 'judge',
-      inputTokens: result.usage.input_tokens,
-      usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+      ...decisionResultUsage(result),
     });
     return {
       model: result.model,

@@ -1,3 +1,4 @@
+import { decisionResultUsage } from '../decision-models/decision-usage';
 /**
  * Triagem de falha de comando via TypeSafe Jev (piloto automático,
  * superfície `terminalTriage`). Um `exitCode !== 0` no nexus_terminal_run
@@ -8,7 +9,6 @@
 import {
   capText,
   judge,
-  USD_PER_INPUT_TOKEN,
   type JevQuestion,
 } from './jev-client';
 import { isJevSurfaceEnabled } from './jev-autopilot';
@@ -115,8 +115,7 @@ export async function triageCommandFailure(
     probabilities: jevAnswerProbabilities(result.answers),
     confidence: jevAnswerConfidences(result.answers),
     decision: `triage:${kind}`,
-    inputTokens: result.usage.input_tokens,
-    usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+    ...decisionResultUsage(result),
   });
 
   return {

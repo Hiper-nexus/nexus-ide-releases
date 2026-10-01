@@ -1,3 +1,4 @@
+import { decisionResultUsage } from '../decision-models/decision-usage';
 /**
  * Guarda Jev do despacho MCP (piloto automático, superfície `dispatchGuard`).
  *
@@ -26,7 +27,6 @@ import {
   judge,
   redactSecrets,
   redactState,
-  USD_PER_INPUT_TOKEN,
   type JevAnswer,
   type JevQuestion,
 } from '../jev/jev-client';
@@ -428,8 +428,7 @@ export async function guardToolCall(
     questions: Object.keys(GUARD_QUESTIONS),
     probabilities: verdict.kind === 'skipped' ? {} : verdict.probabilities,
     decision: `${verdict.kind}:${canonical}`,
-    inputTokens: result.usage.input_tokens,
-    usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+    ...decisionResultUsage(result),
   });
   return verdict;
 }

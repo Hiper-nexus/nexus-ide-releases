@@ -1,3 +1,4 @@
+import { decisionResultUsage } from '../decision-models/decision-usage';
 /**
  * Reuso de helper ocioso (lote 0.76.135, superfície Jev `helperReuse`).
  * Em vez de pagar spawn + contexto novo, o nexus_pane_spawn pode devolver a
@@ -27,7 +28,6 @@ import { readSessionOutput, stripAnsi } from './pane-session-output';
 import {
   capText,
   judge,
-  USD_PER_INPUT_TOKEN,
   type JevQuestion,
 } from '../jev/jev-client';
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
@@ -297,8 +297,7 @@ export async function judgeIdleHelperReuse(
     probabilities: jevAnswerProbabilities(result.answers),
     confidence: jevAnswerConfidences(result.answers),
     decision: `reuse:${answer.choice}`,
-    inputTokens: result.usage.input_tokens,
-    usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+    ...decisionResultUsage(result),
     ...(input.callerSessionId ? { sessionId: input.callerSessionId } : {}),
     ...(input.missionId ? { missionId: input.missionId } : {}),
   });

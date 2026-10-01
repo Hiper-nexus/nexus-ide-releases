@@ -1,3 +1,4 @@
+import { decisionResultUsage } from '../decision-models/decision-usage';
 /**
  * Distilação de memória via TypeSafe Jev (piloto automático, superfície
  * `memoryDistill`). O resumo de um handoff aceito é texto do agente, então o
@@ -9,7 +10,6 @@
 import {
   capText,
   judge,
-  USD_PER_INPUT_TOKEN,
   type JevQuestion,
 } from './jev-client';
 import { isJevSurfaceEnabled } from './jev-autopilot';
@@ -126,8 +126,7 @@ export async function confirmOperatorPreference(
     probabilities: jevAnswerProbabilities(result.answers),
     confidence: jevAnswerConfidences(result.answers),
     decision: isPreference ? 'preference:retain' : 'preference:skip',
-    inputTokens: result.usage.input_tokens,
-    usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+    ...decisionResultUsage(result),
   });
 
   return isPreference;
@@ -181,8 +180,7 @@ export async function distillHandoffSummary(
     probabilities: jevAnswerProbabilities(result.answers),
     confidence: jevAnswerConfidences(result.answers),
     decision: retain ? 'retain' : 'skip',
-    inputTokens: result.usage.input_tokens,
-    usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+    ...decisionResultUsage(result),
   });
 
   return retain ? summary : null;

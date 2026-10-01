@@ -1,3 +1,4 @@
+import { decisionResultUsage } from '../decision-models/decision-usage';
 /**
  * Revisão de evidência do handoff de missão via TypeSafe Jev (piloto
  * automático). No `nexus_handoff_submit` declarado `success`, o Jev julga o
@@ -20,7 +21,6 @@
 import {
   capText,
   judge,
-  USD_PER_INPUT_TOKEN,
   type JevAnswer,
   type JevQuestion,
   type JevResult,
@@ -376,8 +376,7 @@ export async function reviewMissionHandoff(
       questions: Object.keys(questions),
       probabilities: jevAnswerProbabilities(result.answers),
       decision,
-      inputTokens: result.usage.input_tokens,
-      usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+      ...decisionResultUsage(result),
     });
 
   if (signals.length === 0) {

@@ -1,3 +1,4 @@
+import { decisionResultUsage } from '../decision-models/decision-usage';
 /**
  * Classificação de tarefa via TypeSafe Jev para o `nexus_route_task`
  * (piloto automático, superfície `taskRouting`).
@@ -13,7 +14,6 @@
 import {
   capText,
   judge,
-  USD_PER_INPUT_TOKEN,
   type JevQuestion,
   type JevResult,
 } from '../jev/jev-client';
@@ -242,8 +242,7 @@ export async function classifyTaskForRouting(
     probabilities: jevAnswerProbabilities(result.answers),
     confidence: jevAnswerConfidences(result.answers),
     decision: `tier:${classification.tier}/${classification.specialty}`,
-    inputTokens: result.usage.input_tokens,
-    usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+    ...decisionResultUsage(result),
   });
   return { kind: 'classified', classification };
 }
@@ -347,8 +346,7 @@ export async function classifyTaskWithSkillForRouting(
         : 'tier:invalid',
       `skill:${skillSuggestion?.name ?? 'none'}`,
     ].join('|'),
-    inputTokens: result.usage.input_tokens,
-    usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+    ...decisionResultUsage(result),
     ...(catalog.length > 0 ? { optimization: { jevRequestsAvoided: 1 } } : {}),
   });
   return classification

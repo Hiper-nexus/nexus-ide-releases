@@ -127,6 +127,7 @@ const state = vi.hoisted(() => {
     assertMutationAllowed: vi.fn(),
     fromWebContents: vi.fn(() => win),
     webContentsAvailable: true,
+    decisionConfiguration: 'initial',
     views: [] as Array<{ setVisible: ReturnType<typeof vi.fn>; setBounds: ReturnType<typeof vi.fn> }>,
   };
 });
@@ -180,6 +181,11 @@ vi.mock('./browser-automation-runtime', () => ({
   runBrowserAutomation: state.runAutomation,
   registerBrowserAutomationResponseHandler: vi.fn(),
   rejectPendingBrowserAutomation: vi.fn(),
+}));
+
+vi.mock('../decision-models/decision-availability', async original => ({
+  ...await original<typeof import('../decision-models/decision-availability')>(),
+  decisionConfigurationKey: () => state.decisionConfiguration,
 }));
 
 const installPinnedBrowserProxy = vi.hoisted(() => vi.fn());
@@ -246,6 +252,7 @@ async function boot(): Promise<void> {
 describe('browser manager actions (after/changed, errors, judge, text)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    state.decisionConfiguration = 'initial';
     state.guestHandlers.clear();
     state.views.length = 0;
     vi.mocked(isAgentRequestedBrowser).mockReturnValue(false);
@@ -619,6 +626,23 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
     expect(disabled.contextSelection).toBeUndefined();
     expect(jev).toHaveBeenCalledTimes(3);
     destroyBrowser(PANE, scope);
+  });
+
+  it('does not reuse a previous provider judgment after configuration changes', async () => {
+    await boot();
+    const jev = vi.fn(async () => ({ model: state.decisionConfiguration === 'initial' ? 'jev-1.13.0' : 'clef',
+      answers: { errorVisible: { type: 'noul' as const, noul: 0.1 } },
+      usage: { input_tokens: 100, output_tokens: 0 } }));
+    const options = { judge: true, deps: { jev, jevEnabled: () => true, jevReady: () => true, recordDecision: () => 'id', recordOptimization: () => 'id' } };
+    const first = await readBrowserPage(PANE, scope, options);
+    const reused = await readBrowserPage(PANE, scope, options);
+    expect(first.judgment?.model).toBe('jev-1.13.0');
+    expect(reused.judgmentReused).toBe(true);
+    state.decisionConfiguration = 'changed';
+    const changed = await readBrowserPage(PANE, scope, options);
+    expect(changed.judgment?.model).toBe('clef');
+    expect(changed.judgmentReused).not.toBe(true);
+    expect(jev).toHaveBeenCalledTimes(2);
   });
 
   it('press returns after/changed and errors too', async () => {

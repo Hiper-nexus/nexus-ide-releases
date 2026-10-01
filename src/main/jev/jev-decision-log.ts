@@ -12,8 +12,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { JevSurface } from './jev-autopilot';
 import type { JevAnswer } from './jev-client';
+import type { DecisionProvider, DecisionRoute } from '../../shared/decision-models';
 import { USD_PER_INPUT_TOKEN } from './jev-pricing';
-import type { JevOptimizationEvidence, JevOptimizationStats } from '../../shared/jev-ipc';
+import type { JevOptimizationEvidence, JevOptimizationStats, DecisionUsageStats } from '../../shared/jev-ipc';
 
 export type JevDecisionSurface =
   | JevSurface
@@ -42,6 +43,10 @@ export interface JevDecisionEntry {
   sessionId?: string;
   missionId?: string;
   model: string;
+  provider?: DecisionProvider;
+  route?: DecisionRoute;
+  durationMs?: number;
+  requestCount?: number;
   questions: string[];
   probabilities: Record<string, number>;
   confidence?: Record<string, number>;
@@ -132,7 +137,12 @@ export function recordJevDecision(
     } catch {
       // arquivo ainda não existe — nada a rotacionar
     }
-    const line: JevDecisionEntry = { ...entry, id, at: Date.now() };
+    const line: JevDecisionEntry = { id, at: Date.now(), surface: entry.surface,
+      kind: entry.kind, reason: entry.reason, sessionId: entry.sessionId, missionId: entry.missionId,
+      model: entry.model, questions: entry.questions, probabilities: entry.probabilities,
+      confidence: entry.confidence, decision: entry.decision, inputTokens: entry.inputTokens, usd: entry.usd,
+      provider: entry.provider, route: entry.route, durationMs: entry.durationMs, requestCount: entry.requestCount,
+      feedback: entry.feedback, feedbackAt: entry.feedbackAt, optimization: entry.optimization };
     fs.appendFileSync(file, JSON.stringify(line) + '\n');
   } catch (error) {
     console.warn('[jev] decision log write failed (ignored):', error);
@@ -163,6 +173,8 @@ export function recordJevNoAnswer(
     surface: JevDecisionSurface;
     reason: JevNoAnswerReason;
     model: string;
+    provider?: DecisionProvider;
+    route?: DecisionRoute;
     sessionId?: string;
     missionId?: string;
   },
@@ -176,6 +188,8 @@ export function recordJevNoAnswer(
       sessionId: input.sessionId,
       missionId: input.missionId,
       model: input.model,
+      provider: input.provider,
+      route: input.route,
       questions: [],
       probabilities: {},
       decision: 'rule',
@@ -243,6 +257,8 @@ export interface JevWindowStats {
 }
 
 export interface JevDecisionStats {
+  byProvider: Record<string, DecisionUsageStats>;
+  byModel: Record<string, DecisionUsageStats>;
   /** calls = decisões respondidas; noAnswer = consultas sem resposta. */
   totals: { calls: number; usd: number; inputTokens: number; noAnswer: number };
   windows: {
@@ -268,6 +284,17 @@ export interface JevDecisionStats {
 }
 
 const DAY_MS = 86_400_000;
+
+function addProviderUsage(buckets: Record<string, DecisionUsageStats>, key: string, entry: JevDecisionEntry): void {
+  const fresh = !buckets[key];
+  const bucket = buckets[key] ??= { calls: 0, noAnswer: 0, usd: 0, inputTokens: 0, requests: 0, durationMs: 0 };
+  if (entry.kind === 'no-answer') bucket.noAnswer += 1;
+  else { bucket.calls += 1; bucket.usd += entry.usd ?? 0; bucket.inputTokens += entry.inputTokens ?? 0; }
+  bucket.requests = entry.requestCount === undefined || (!fresh && bucket.requests === null)
+    ? null : (bucket.requests ?? 0) + entry.requestCount;
+  bucket.durationMs = entry.durationMs === undefined || (!fresh && bucket.durationMs === null)
+    ? null : (bucket.durationMs ?? 0) + entry.durationMs;
+}
 
 function emptyWindow(): JevWindowStats {
   return { consultations: 0, answered: 0, noAnswer: 0, usd: 0, inputTokens: 0 };
@@ -323,6 +350,7 @@ export function jevDecisionStats(deps?: {
     totals: { calls: 0, usd: 0, inputTokens: 0, noAnswer: 0 },
     windows: { today: emptyWindow(), last30d: emptyWindow(), allTime: emptyWindow() },
     bySurface: {},
+    byProvider: Object.create(null), byModel: Object.create(null),
     pricing: { usdPerInputToken: USD_PER_INPUT_TOKEN, source: 'typesafe-published' },
   };
   let entries: JevDecisionEntry[];
@@ -346,6 +374,9 @@ export function jevDecisionStats(deps?: {
     });
     addOptimization(bucket, entry.optimization);
     if (entry.kind === 'optimization') continue;
+    const provider = entry.provider ?? (entry.model === 'clef' || entry.model === 'clef-flash' || entry.model.startsWith('@cf/cloudflare/') ? 'clef' : 'jev');
+    addProviderUsage(stats.byProvider, provider, entry);
+    addProviderUsage(stats.byModel, entry.model, entry);
     if (isNoAnswer) {
       bucket.noAnswer += 1;
       stats.totals.noAnswer += 1;

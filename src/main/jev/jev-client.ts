@@ -201,9 +201,11 @@ async function judgeJev(
 
   let lastFailure = 'unknown error';
   let lastReason: JevNoAnswerReason = 'network';
+  let requestCount = 0;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       input.signal?.throwIfAborted();
+      requestCount += 1;
       // Sinal novo por tentativa: um retry após timeout não pode herdar o
       // AbortSignal já disparado da tentativa anterior.
       const res = await doFetch(`${BASE_URL}/v1/systemone`, {
@@ -238,7 +240,7 @@ async function judgeJev(
         const inputTokens = validated.usage.input_tokens;
         stats.inputTokens += inputTokens;
         stats.estimatedUsd += inputTokens * USD_PER_INPUT_TOKEN;
-        return validated;
+        return { ...validated, requestCount };
       }
       const retryable = res.status === 429 || res.status === 529 || res.status >= 500;
       lastFailure = `HTTP ${res.status}: ${errorMessage(data, res.status)}`;

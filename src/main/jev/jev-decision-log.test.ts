@@ -38,6 +38,45 @@ afterEach(() => {
 });
 
 describe('jev decision log', () => {
+  it('separates historical Jev and new Cloudflare model usage without repricing old rows', () => {
+    const d = setup();
+    recordJevDecision(entry({ model: 'jev-1.13.0', inputTokens: 1_000_000, usd: 0.042 }), { dir: d });
+    recordJevDecision(entry({ model: 'clef', provider: 'clef', inputTokens: 1_000_000, usd: 0.24, requestCount: 2, durationMs: 30 }), { dir: d });
+    recordJevDecision(entry({ model: 'clef-flash', provider: 'clef', inputTokens: 1_000_000, usd: 0.09, requestCount: 1, durationMs: 20 }), { dir: d });
+    const stats = jevDecisionStats({ dir: d });
+    expect(stats.totals.usd).toBeCloseTo(0.372, 10);
+    expect(stats.byProvider.jev).toMatchObject({ calls: 1, usd: 0.042 });
+    expect(stats.byProvider.clef).toMatchObject({ calls: 2, requests: 3 });
+    expect(stats.byProvider.clef.usd).toBeCloseTo(0.33, 10);
+    expect(stats.byModel['clef-flash']).toMatchObject({ calls: 1, usd: 0.09 });
+  });
+
+  it('does not persist raw state or pixels supplied alongside safe decision metadata', () => {
+    const d = setup();
+    recordJevDecision({ ...entry(), state: { token: 'must-not-persist' }, images: ['private-pixels'] } as any, { dir: d });
+    const raw = fs.readFileSync(path.join(d, 'decisions.jsonl'), 'utf8');
+    expect(raw).not.toContain('must-not-persist');
+    expect(raw).not.toContain('private-pixels');
+    expect(JSON.parse(raw)).not.toHaveProperty('state');
+  });
+
+  it('does not mutate global object prototypes through a model identifier', () => {
+    const names = ['calls', 'usd', 'inputTokens', 'noAnswer', 'requests', 'durationMs'];
+    const descriptors = new Map(names.map(name => [name, Object.getOwnPropertyDescriptor(Object.prototype, name)]));
+    try {
+      const d = setup();
+      recordJevDecision(entry({ model: '__proto__' }), { dir: d });
+      const stats = jevDecisionStats({ dir: d });
+      expect(Object.getOwnPropertyDescriptor(Object.prototype, 'calls')).toBe(descriptors.get('calls'));
+      expect(Object.hasOwn(stats.byModel, '__proto__')).toBe(true);
+    } finally {
+      for (const name of names) {
+        const descriptor = descriptors.get(name);
+        if (descriptor) Object.defineProperty(Object.prototype, name, descriptor);
+        else delete (Object.prototype as Record<string, unknown>)[name];
+      }
+    }
+  });
   function setup() {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jev-log-'));
     configureJevDecisionLog(dir);

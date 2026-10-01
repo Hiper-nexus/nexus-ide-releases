@@ -1,3 +1,4 @@
+import { decisionResultUsage } from '../decision-models/decision-usage';
 import type {
   BrowserExtractCandidates,
   BrowserExtractedField,
@@ -13,7 +14,6 @@ import {
   jevAnswerProbabilities,
   recordJevDecision,
 } from '../jev/jev-decision-log';
-import { USD_PER_INPUT_TOKEN } from '../jev/jev-pricing';
 
 /**
  * `nexus_browser_extract` resolution: the page lists bounded candidates
@@ -554,8 +554,7 @@ export async function resolveBrowserExtract(
           confidence: jevAnswerConfidences(result.answers),
           decision:
             `extract:${pending.map((entry) => entry.field.name).join(',')}`.slice(0, 200),
-          inputTokens: result.usage.input_tokens,
-          usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+          ...decisionResultUsage(result),
         });
       }
     }
