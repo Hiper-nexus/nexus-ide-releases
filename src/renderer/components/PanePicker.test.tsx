@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AccountInfo } from '../../shared/account-types';
 import type { ProviderSettingsInfo } from '../../shared/provider-settings-types';
 import { FAILOVER_HANDOFF_HEADER } from '../../shared/failover-handoff';
-import { createLeaf } from '../lib/split-tree';
+import { createLeaf, listPanes } from '../lib/split-tree';
 import { useAccountStore } from '../state/account-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
@@ -1035,11 +1035,15 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
 
 beforeEach(() => { useAccessStore.setState({ canUseApp: true, maxAgents: null }); });
 
-it('refuses every picker intent while access is unavailable', () => {
+it('refuses every picker intent while access is unavailable', async () => {
+  const { useToastStore } = await import('../state/toast-store');
   useAccessStore.setState({ canUseApp: false });
+  const panesBefore = listPanes(useLayoutStore.getState().root).length;
   expect(runPanePickerIntent({ kind: 'terminal' })).toBeUndefined();
   expect(runPanePickerIntent({ kind: 'browser' })).toBeUndefined();
   expect(runPanePickerIntent({ kind: 'agent', adapterId: 'codex', model: '' })).toBeUndefined();
+  expect(listPanes(useLayoutStore.getState().root)).toHaveLength(panesBefore);
+  expect(useToastStore.getState().toasts.at(-1)?.title).toBe('Acesso necessário');
 });
 
 describe('F-231 — "+ Pane" numa aba com missão viva escolhe o destino', () => {

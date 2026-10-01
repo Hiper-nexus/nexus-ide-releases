@@ -127,3 +127,51 @@ describe('periodic renewal', () => {
     finish(false);
   });
 });
+
+describe('F-228 — boot sync settled + fallback do mounted perdido', () => {
+  it('settled fica true quando o primeiro sync do boot termina', async () => {
+    vi.resetModules();
+    const mod = await import('./license-sync');
+    expect(mod.isLicenseBootSyncSettled()).toBe(false);
+    const sync = vi.fn().mockResolvedValue(true);
+    mod.syncLicenseOnBoot({ hasCachedAuthSession: () => true, sync, afterFirstPaint: () => {}, startPeriodic: () => {} });
+    await vi.waitFor(() => expect(mod.isLicenseBootSyncSettled()).toBe(true));
+  });
+
+  it('mounted perdido: o fallback de 10 s chama ready() uma única vez', async () => {
+    vi.useFakeTimers();
+    try {
+      const { afterFirstPaintOrFallback } = await import('./license-sync');
+      const callback = vi.fn();
+      const listeners: Array<() => void> = [];
+      afterFirstPaintOrFallback(callback, { ready: () => false, listen: (fire) => { listeners.push(fire); } });
+      await vi.advanceTimersByTimeAsync(10_999);
+      expect(callback).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1_001);
+      expect(callback).toHaveBeenCalledOnce();
+      // mounted tardio (ou duplo) não repete: guard `fired`.
+      for (const fire of listeners) fire();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(callback).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('janela já pronta dispara no mounted-path sem esperar o fallback', async () => {
+    vi.useFakeTimers();
+    try {
+      const { afterFirstPaintOrFallback } = await import('./license-sync');
+      const callback = vi.fn();
+      const listeners: Array<() => void> = [];
+      afterFirstPaintOrFallback(callback, { ready: () => true, listen: (fire) => { listeners.push(fire); } });
+      expect(listeners).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(callback).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(callback).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

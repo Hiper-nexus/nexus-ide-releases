@@ -59,6 +59,7 @@ export const PLANS: PlanDef[] = [
 ];
 
 export type AccessBlockedReason =
+  | 'startup-pending'
   | 'login-required' | 'verification-unavailable' | 'invalid-license'
   | 'account-mismatch' | 'license-expired' | 'trial-ended' | 'suspended' | 'inactive';
 

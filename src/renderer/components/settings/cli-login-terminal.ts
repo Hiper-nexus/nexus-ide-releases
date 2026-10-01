@@ -3,6 +3,7 @@ import { emailFromAuthDetail } from '../../../shared/auth-detail-identity';
 import type { AdapterAuthStatus } from '../../../shared/provider-settings-types';
 import { listPanes } from '../../lib/split-tree';
 import { useLayoutStore } from '../../state/layout-store';
+import { reportLicenseDenial } from '../../state/access-guard';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { useProviderStore } from '../../state/provider-store';
 import { useSessionStateStore } from '../../state/session-state-store';
@@ -169,7 +170,14 @@ export async function openCliLoginTerminal(input: {
   // Espera o PTY (waitForSession spawna headless). Só então sai de
   // Configurações — senão o operador some da tela antes do login existir.
   const layout = useLayoutStore.getState();
-  const paneId = layout.addShellPane({ focus: false });
+  let paneId: string;
+  try {
+    paneId = layout.addShellPane({ focus: false });
+  } catch (error) {
+    // F-228: acesso negado lança LicenseError — toast padrão, sem pane.
+    if (!reportLicenseDenial(error)) throw error;
+    return { ok: false, error: 'license_access_denied' };
+  }
   const paneTitle = `Login ${input.adapterLabel?.trim() || input.adapterId || 'CLI'}`;
   layout.renameTitle(paneId, paneTitle);
 

@@ -14,6 +14,8 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { DEFAULT_LICENSE, type AccessBlockedReason, type LicenseState } from '../shared/billing-types';
 import { verifyLicenseToken } from './persistence/billing-license';
+import { hasSecret } from './persistence/secrets-store';
+import { isLicenseBootSyncSettled } from './license-sync';
 import { resolveBackendUrl } from './backend-url';
 import { isLicenseSeal, persistLicenseSeal, readLicenseAccountState, invalidateLicenseAccountBinding, type LicenseSeal } from './license-account-state';
 import type { DesktopLicenseClaims } from '../../shared/contract';
@@ -28,6 +30,12 @@ export interface LicenseAccessDeps {
   monotonicNow: () => number;
   readSeal: () => LicenseSeal | null;
   writeSeal: (seal: LicenseSeal) => { ok: boolean };
+}
+
+/** On-disk session existence (no decrypt — the keychain cache is cold at boot). */
+function hasPersistedAuthSession(): boolean {
+  return hasSecret('auth:session') && hasSecret('auth:account') &&
+    hasSecret('auth:refresh');
 }
 
 export function createLicenseAccess(deps: LicenseAccessDeps) {
@@ -87,6 +95,12 @@ export function createLicenseAccess(deps: LicenseAccessDeps) {
   }
   function evaluate(): LicenseState {
     const account = deps.accountId();
+    // F-228: cold boot — sessão persistida no disco com o boot sync ainda em
+    // voo não é "sem login". `hasSecret` não exige decrypt (cache ainda frio).
+    if (!account && !cleared && hasPersistedAuthSession() &&
+      !isLicenseBootSyncSettled()) {
+      return blocked('startup-pending');
+    }
     if (cleared || !account) return blocked('login-required');
     const seal = currentSeal();
     if (!seal || seal.latestIat === null || seal.needsOnlineValidation) return blocked('login-required');

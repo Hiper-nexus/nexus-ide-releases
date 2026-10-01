@@ -1033,7 +1033,7 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
   },
 
   addShellPane: (options) => {
-    if (!allowPaneCreation()) return '';
+    if (!allowPaneCreation()) throw new LicenseError('license_access_denied', useAccessStore.getState().blockedReason ?? 'verification-unavailable');
     const {
       root: currentRoot,
       focusedPaneId,
@@ -1253,7 +1253,7 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
   },
 
   addBrowserPane: (url, paneId, browserOpenRequestId) => {
-    if (!browserOpenRequestId && !allowPaneCreation()) return '';
+    if (!browserOpenRequestId && !allowPaneCreation()) throw new LicenseError('license_access_denied', useAccessStore.getState().blockedReason ?? 'verification-unavailable');
     const { root: currentRoot, focusedPaneId } = get();
     if (paneId && listPanes(currentRoot).some((pane) => pane.id === paneId)) {
       throw new Error(`browser pane identity already exists: ${paneId}`);

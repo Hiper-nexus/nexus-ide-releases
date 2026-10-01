@@ -39,7 +39,11 @@ export async function refreshAccess(): Promise<void> {
     const license = await window.nexus.billing.get();
     if (request !== generation) return;
     useAccessStore.setState({
-      license, loading: false, failed: false,
+      license,
+      // F-228: 'startup-pending' (sessão no disco, boot sync ainda não rodou)
+      // segue na apresentação de loading — nunca na tela de login.
+      loading: license.blockedReason === 'startup-pending',
+      failed: false,
       canUseApp: license.canUseApp === true,
       blockedReason: license.blockedReason,
       maxAgents: license.limits?.maxAgents ?? (license.limits?.maxAgents === null ? null : 0),

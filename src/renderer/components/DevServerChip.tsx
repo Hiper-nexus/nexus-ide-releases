@@ -3,6 +3,7 @@ import type { PaneModel } from '../../shared/types';
 import { waitForBrowserPaneCreated } from '../browser/browser-host';
 import { useDevServerStore } from '../state/dev-server-store';
 import { useLayoutStore } from '../state/layout-store';
+import { reportLicenseDenial } from '../state/access-guard';
 
 type Props = {
   pane: PaneModel;
@@ -34,8 +35,10 @@ export function DevServerChip({ pane }: Props) {
       const paneId = useLayoutStore.getState().addBrowserPane('about:blank');
       await waitForBrowserPaneCreated(paneId);
       await window.nexus.browser.load(paneId, info.url);
-    } catch {
-      // Denied private-network confirmation or closed pane: nothing to clean.
+    } catch (error) {
+      // F-228: recusa de acesso vira o toast padrão; o resto (confirmação
+      // negada, pane fechado) não tem nada a limpar.
+      reportLicenseDenial(error);
     } finally {
       setIsOpening(false);
     }

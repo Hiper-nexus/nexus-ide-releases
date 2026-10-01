@@ -18,6 +18,7 @@ import { missionChromeTitle } from '../../shared/mission-identity';
 import { listPanes } from '../lib/split-tree';
 import { attentionMissionIdForPane } from '../lib/mission-attention-route';
 import { filterPaletteActions } from '../lib/command-palette-filter';
+import { reportLicenseDenial } from '../state/access-guard';
 import { formatShortcut } from '../lib/platform';
 import { shortcutKeys } from '../lib/shortcuts';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
@@ -178,7 +179,13 @@ export function CommandPalette() {
       'terminal',
       () => {
         useProductNavigationStore.getState().openTerminal();
-        layout.addShellPane();
+        // F-228: addShellPane recusado lança LicenseError, não devolve ''.
+        try {
+          layout.addShellPane();
+        } catch (error) {
+          if (!reportLicenseDenial(error)) throw error;
+          return;
+        }
         // F-560: sem focar a aba dos soltos, o terminal nasce fora do escopo
         // que está na tela e o operador vê a grade anterior — "abri e não
         // apareceu". Mesma regra do atalho equivalente no Novo pedido.
@@ -225,7 +232,11 @@ export function CommandPalette() {
       'browser',
       () => {
         useProductNavigationStore.getState().openTerminal();
-        layout.addBrowserPane();
+        try {
+          layout.addBrowserPane();
+        } catch (error) {
+          if (!reportLicenseDenial(error)) throw error;
+        }
       },
       '',
       'web browser',

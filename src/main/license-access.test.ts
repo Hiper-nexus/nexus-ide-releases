@@ -4,11 +4,13 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isLicenseSeal, type LicenseSeal } from './license-account-state';
 import { createLicenseAccess } from './license-access';
+import * as licenseSync from './license-sync';
+import * as secretsStore from './persistence/secrets-store';
 import { licenseFixture, LICENSE_NOW, publicKeyPem } from '../test/license-fixture';
 
 let dir: string;
 beforeEach(() => { vi.useFakeTimers(); dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-access-')); });
-afterEach(() => { vi.useRealTimers(); fs.rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); fs.rmSync(dir, { recursive: true, force: true }); });
 function setup() {
   let now = LICENSE_NOW, monotonic = 0, account: string | null = 'account-a';
   let seal: LicenseSeal | null = { clockFloor: LICENSE_NOW, latestIat: 0, revokedAt: null, needsOnlineValidation: false };
@@ -53,6 +55,22 @@ describe('main access authority', () => {
     setAccount('account-b');
     expect(access.getAccessState().blockedReason).toBe('account-mismatch');
     setAccount(null);
+    expect(access.getAccessState().blockedReason).toBe('login-required');
+  });
+  it('F-228: sessão persistida com boot sync em voo responde startup-pending, não login', () => {
+    const { access, setAccount } = setup();
+    setAccount(null);
+    // Cofre no disco com a sessão inteira; o cache frio não conta (hasSecret
+    // não decripta) e o boot sync ainda não rodou.
+    vi.spyOn(secretsStore, 'hasSecret').mockReturnValue(true);
+    vi.spyOn(licenseSync, 'isLicenseBootSyncSettled').mockReturnValue(false);
+    expect(access.getAccessState().blockedReason).toBe('startup-pending');
+    // Boot sync terminou: volta o estado real.
+    vi.mocked(licenseSync.isLicenseBootSyncSettled).mockReturnValue(true);
+    expect(access.getAccessState().blockedReason).toBe('login-required');
+    // Sem sessão persistida: login-required mesmo com sync pendente.
+    vi.mocked(licenseSync.isLicenseBootSyncSettled).mockReturnValue(false);
+    vi.mocked(secretsStore.hasSecret).mockReturnValue(false);
     expect(access.getAccessState().blockedReason).toBe('login-required');
   });
   it('enforces signed limits, expiry equality and trial deadline on every query, without a timer', () => {

@@ -12,6 +12,7 @@ import { UpdateNotifier } from './UpdateModal';
 import '../styles/access-boundary.css';
 
 export const ACCESS_COPY: Record<AccessBlockedReason, string> = {
+  'startup-pending': 'Consultando seu acesso…',
   'login-required': 'Entre na sua conta Nexus para começar.',
   'verification-unavailable': 'Não foi possível consultar seu acesso agora. Tente novamente.',
   'invalid-license': 'Não foi possível validar sua licença. Entre novamente para atualizar o acesso.',

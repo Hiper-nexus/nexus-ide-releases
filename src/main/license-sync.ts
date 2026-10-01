@@ -101,6 +101,27 @@ export function startPeriodicLicenseSync(deps: PeriodicLicenseSyncDeps): () => v
   return () => { stopped = true; clearTimeout(timer); unsubscribe(); };
 }
 let stopPeriodic: (() => void) | undefined;
+/**
+ * F-228: se o `mounted` do renderer se perder (crash, janela recriada) o sync
+ * nunca começaria — o fallback de 10 s chama ready() uma única vez.
+ */
+export function afterFirstPaintOrFallback(
+  callback: () => void,
+  api: { ready: () => boolean; listen: (fire: () => void) => void },
+): void {
+  let fired = false;
+  const ready = (): void => {
+    if (fired) return;
+    fired = true;
+    clearTimeout(fallback);
+    const timer = setTimeout(callback, 1000);
+    timer.unref?.();
+  };
+  const fallback = setTimeout(ready, 10_000);
+  fallback.unref?.();
+  if (api.ready()) ready();
+  else api.listen(ready);
+}
 function defaultBootSyncDeps(): LicenseBootSyncDeps {
   const secrets = require('./persistence/secrets-store') as typeof import('./persistence/secrets-store');
   const auth = require('./auth-client') as typeof import('./auth-client');
@@ -118,17 +139,18 @@ function defaultBootSyncDeps(): LicenseBootSyncDeps {
       // renderer's existing ready signal, then yield before any cold decryption.
       const { ipcMain, BrowserWindow } = require('electron') as typeof import('electron');
       const { WINDOW_CHANNELS } = require('../shared/channels') as typeof import('../shared/channels');
-      const ready = (): void => { const timer = setTimeout(callback, 1000); timer.unref(); };
       const win = BrowserWindow.getAllWindows()[0];
-      if (win && !win.webContents.isLoadingMainFrame() && win.isVisible()) ready();
-      else {
-        const mounted = (event: import('electron').IpcMainEvent): void => {
-          if (win && event.sender !== win.webContents) return;
-          ipcMain.removeListener(WINDOW_CHANNELS.mounted, mounted);
-          ready();
-        };
-        ipcMain.on(WINDOW_CHANNELS.mounted, mounted);
-      }
+      afterFirstPaintOrFallback(callback, {
+        ready: () => !!(win && !win.webContents.isLoadingMainFrame() && win.isVisible()),
+        listen: (fire) => {
+          const mounted = (event: import('electron').IpcMainEvent): void => {
+            if (win && event.sender !== win.webContents) return;
+            ipcMain.removeListener(WINDOW_CHANNELS.mounted, mounted);
+            fire();
+          };
+          ipcMain.on(WINDOW_CHANNELS.mounted, mounted);
+        },
+      });
     },
     startPeriodic: () => {
       stopPeriodic?.();
@@ -137,10 +159,17 @@ function defaultBootSyncDeps(): LicenseBootSyncDeps {
     },
   };
 }
+// F-228: enquanto o boot sync não rodou, uma sessão persistida no disco não
+// pode cair na tela de login — license-access responde 'startup-pending'.
+let bootSyncSettled = false;
+export function isLicenseBootSyncSettled(): boolean {
+  return bootSyncSettled;
+}
 export function syncLicenseOnBoot(deps: LicenseBootSyncDeps = defaultBootSyncDeps()): void {
-  if (deps.hasCachedAuthSession()) void deps.sync().catch(() => undefined);
+  const settle = (): void => { bootSyncSettled = true; };
+  if (deps.hasCachedAuthSession()) void deps.sync().catch(() => undefined).then(settle);
   deps.afterFirstPaint(() => {
     deps.startPeriodic();
-    void deps.sync().catch(() => undefined);
+    void deps.sync().catch(() => undefined).then(settle);
   });
 }

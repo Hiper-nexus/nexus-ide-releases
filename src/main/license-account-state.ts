@@ -5,7 +5,7 @@
  */
 import crypto from 'node:crypto';
 export const LICENSE_SEAL_KEY = 'auth:license-seal-key';
-export type LicenseAccountStore = Pick<typeof import('./persistence/secrets-store'), 'getSecret' | 'setInternalSecret' | 'hasCachedSecret'>;
+export type LicenseAccountStore = Pick<typeof import('./persistence/secrets-store'), 'getSecret' | 'setInternalSecret' | 'hasSecret' | 'hasCachedSecret'>;
 export interface LicenseSeal {
   clockFloor: number;
   latestIat: number | null;
@@ -73,6 +73,12 @@ export function bindLicenseAccount(id: string, session: string, store: LicenseAc
   store.getSecret(LICENSE_SEAL_KEY);
   store.getSecret('auth:account');
   if (!cachedKey(store)) {
+    // F-228: a chave no DISCO com decrypt negado (fora de cache) nunca é
+    // regenerada — uma chave nova tornaria ilegível todo o histórico
+    // anti-replay (`latestIat`/`revokedAt`). Só cria quando ela não existe.
+    if (store.hasSecret(LICENSE_SEAL_KEY) && !store.hasCachedSecret(LICENSE_SEAL_KEY)) {
+      return { ok: false, error: 'seal-key-unavailable' };
+    }
     const created = store.setInternalSecret(LICENSE_SEAL_KEY, crypto.randomBytes(32).toString('hex'));
     if (!created.ok) return { ok: false };
   }

@@ -12,6 +12,7 @@ import { useProviderStore } from '../../state/provider-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { useToastStore } from '../../state/toast-store';
 import { useLayoutStore } from '../../state/layout-store';
+import { reportLicenseDenial } from '../../state/access-guard';
 import { waitForSession, writeToPane } from '../../terminal/terminal-host';
 import { openExternalFromAnchor } from '../../lib/open-external';
 import { ActionCard } from '../ActionCard';
@@ -514,7 +515,14 @@ function ProviderDetail({
     const paneTitle = `Instalar ${provider.label}`;
     announceOp('terminal-install', 'running');
     const layout = useLayoutStore.getState();
-    const paneId = layout.addShellPane({ focus: true });
+    let paneId: string;
+    try {
+      paneId = layout.addShellPane({ focus: true });
+    } catch (error) {
+      // F-228: acesso negado lança LicenseError — toast padrão, sem pane.
+      reportLicenseDenial(error);
+      return;
+    }
     layout.renameTitle(paneId, paneTitle);
     try {
       await waitForSession(paneId, 10_000);

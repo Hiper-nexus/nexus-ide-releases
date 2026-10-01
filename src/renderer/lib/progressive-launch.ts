@@ -8,6 +8,7 @@ import {
 import { listPanes } from './split-tree';
 import { useLayoutStore } from '../state/layout-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
+import { reportLicenseDenial } from '../state/access-guard';
 
 const STORAGE_KEY = 'nexus.progressiveLaunch.v1';
 
@@ -51,7 +52,13 @@ export function applyProgressiveLaunchIfPending(): boolean {
   const target = Math.min(plan.paneCount, 12);
   while (listPanes(useLayoutStore.getState().root).length < target) {
     const before = listPanes(useLayoutStore.getState().root).length;
-    useLayoutStore.getState().addShellPane();
+    try {
+      useLayoutStore.getState().addShellPane();
+    } catch (error) {
+      // F-228: acesso negado lança LicenseError — toast padrão e para de abrir.
+      if (!reportLicenseDenial(error)) throw error;
+      break;
+    }
     const after = listPanes(useLayoutStore.getState().root).length;
     if (after <= before) break; // store refused (cap / no-op)
   }

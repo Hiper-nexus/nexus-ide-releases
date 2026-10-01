@@ -15,6 +15,7 @@ import {
   catalogEmptyKindFromMessage,
 } from '../empty-cta-policy';
 import { useLayoutStore } from '../../state/layout-store';
+import { reportLicenseDenial } from '../../state/access-guard';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { waitForSession, writeToPane } from '../../terminal/terminal-host';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
@@ -370,7 +371,15 @@ export function LlmsSection({ adapters }: { adapters: AdapterInfo[] }) {
     setPendingInstallId(adapter.id);
 
     const layout = useLayoutStore.getState();
-    const paneId = layout.addShellPane({ focus: false });
+    let paneId: string;
+    try {
+      paneId = layout.addShellPane({ focus: false });
+    } catch (error) {
+      // F-228: acesso negado lança LicenseError — toast padrão, sem pane.
+      if (!reportLicenseDenial(error)) throw error;
+      setPendingInstallId(null);
+      return;
+    }
     let sessionId: string | null = null;
     try {
       sessionId = await waitForSession(paneId);

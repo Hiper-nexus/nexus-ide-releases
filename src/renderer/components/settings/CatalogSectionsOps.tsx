@@ -11,6 +11,7 @@ import { RemoteServersSection } from './RemoteServersSection';
 import { useOrchStore } from '../../state/orch-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
 import { useLayoutStore } from '../../state/layout-store';
+import { reportLicenseDenial } from '../../state/access-guard';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { askConfirm } from '../../state/confirm-store';
 import { waitForSession } from '../../terminal/terminal-host';
@@ -487,7 +488,14 @@ export function RemoteSection() {
       });
       if (!proceed) return;
       const layout = useLayoutStore.getState();
-      const paneId = layout.addShellPane({ focus: false });
+      let paneId: string;
+      try {
+        paneId = layout.addShellPane({ focus: false });
+      } catch (error) {
+        // F-228: acesso negado lança LicenseError — toast padrão, sem pane.
+        if (!reportLicenseDenial(error)) throw error;
+        return;
+      }
       let sessionId: string | null = null;
       try {
         sessionId = await waitForSession(paneId);

@@ -127,6 +127,7 @@ describe('session identity binding', () => {
 function identityStore() {
   const values = new Map<string, string>();
   return { values, getSecret: (key: string) => values.get(key) ?? null,
+    hasSecret: (key: string) => values.has(key),
     hasCachedSecret: (key: string) => values.has(key),
     setInternalSecret: (key: string, value: string) => { values.set(key, value); return { ok: true }; } };
 }

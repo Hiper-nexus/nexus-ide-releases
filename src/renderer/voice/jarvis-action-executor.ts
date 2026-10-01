@@ -1,4 +1,4 @@
-import { allowPaneCreation } from '../state/access-guard';
+import { allowPaneCreation, reportLicenseDenial } from '../state/access-guard';
 import type { JarvisAction, JarvisContext, JarvisReply } from '../../shared/voice-ipc';
 import { isMissionRuntimeSquadId, type SquadAgent } from '../../shared/orch-types';
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
@@ -863,7 +863,13 @@ export async function executeJarvisAction(
         panes.length === 1 &&
         panes[0].kind === 'shell' &&
         !panes[0].orchRequestId;
-      const paneId = reusableShell ? panes[0].id : layout.addShellPane();
+      let paneId: string;
+      try {
+        paneId = reusableShell ? panes[0].id : layout.addShellPane();
+      } catch (error) {
+        reportLicenseDenial(error);
+        return { sayText: 'Abra Minha conta para atualizar seu acesso ao NexusIDE.', expectReply: false, toolResult: { tool: action.type, ok: false, summary: 'license_access_denied' } };
+      }
       if (reusableShell) layout.claimStructuralPlaceholder(paneId);
       revealPaneForUser(paneId);
       markEffect(control);
@@ -1008,7 +1014,13 @@ export async function executeJarvisAction(
         : 'voz sem pós-condição',
     };
   } else if (action.type === 'open_browser') {
-    const paneId = useLayoutStore.getState().addBrowserPane(action.url);
+    let paneId: string;
+    try {
+      paneId = useLayoutStore.getState().addBrowserPane(action.url);
+    } catch (error) {
+      reportLicenseDenial(error);
+      return { sayText: 'Abra Minha conta para atualizar seu acesso ao NexusIDE.', expectReply: false, toolResult: { tool: action.type, ok: false, summary: 'license_access_denied' } };
+    }
     revealPaneForUser(paneId);
     markEffect(control);
     try {
@@ -1246,7 +1258,13 @@ export async function executeJarvisAction(
             const scoped = pickFallbackInScope(shellIds, fp, panesNow, paneMissions);
             return scoped ? panesNow.find((p) => p.id === scoped) : undefined;
           })();
-    const targetPaneId = shellPane?.id ?? useLayoutStore.getState().addShellPane();
+    let targetPaneId: string;
+    try {
+      targetPaneId = shellPane?.id ?? useLayoutStore.getState().addShellPane();
+    } catch (error) {
+      reportLicenseDenial(error);
+      return { sayText: 'Abra Minha conta para atualizar seu acesso ao NexusIDE.', expectReply: false, toolResult: { tool: action.type, ok: false, summary: 'license_access_denied' } };
+    }
     revealPaneForUser(targetPaneId);
     markEffect(control);
     const sessionId = await waitForSession(targetPaneId, 5_000);

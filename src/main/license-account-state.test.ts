@@ -6,7 +6,7 @@ beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(now); });
 afterEach(() => vi.useRealTimers());
 function store() {
   const values = new Map([['auth:session', 'session-a']]);
-  return { values, hasCachedSecret: (key: string) => values.has(key), getSecret: (key: string) => values.get(key) ?? null,
+  return { values, hasSecret: (key: string) => values.has(key), hasCachedSecret: (key: string) => values.has(key), getSecret: (key: string) => values.get(key) ?? null,
     setInternalSecret: vi.fn((key: string, value: string) => { values.set(key, value); return { ok: true }; }) };
 }
 it.each(['removed-floor', 'invalid-floor', 'removed-record', 'legacy'])('H1: %s cannot retain authenticated offline access', async kind => {
@@ -46,6 +46,24 @@ it('a refused vault write never fabricates a sealed account', () => {
   expect(readLicenseAccountState(vault)).toBeNull();
 });
 
+it('F-228: seal key on disk but decrypt-denied fails closed — never regenerates', () => {
+  const disk = new Map([['auth:session', 'session-a'], ['auth:license-seal-key', 'a'.repeat(64)]]);
+  const cache = new Map([['auth:session', 'session-a']]);
+  const vault = {
+    hasSecret: (key: string) => disk.has(key),
+    hasCachedSecret: (key: string) => cache.has(key),
+    getSecret: (key: string) => cache.get(key) ?? null,
+    setInternalSecret: vi.fn((key: string, value: string) => { cache.set(key, value); disk.set(key, value); return { ok: true }; }),
+  };
+  expect(bindLicenseAccount('account-a', 'session-a', vault)).toEqual({ ok: false, error: 'seal-key-unavailable' });
+  expect(vault.setInternalSecret).not.toHaveBeenCalledWith('auth:license-seal-key', expect.anything());
+  expect(disk.get('auth:license-seal-key')).toBe('a'.repeat(64));
+});
+it('F-228: missing seal key is still created on first bind', () => {
+  const vault = store();
+  expect(bindLicenseAccount('account-a', 'session-a', vault).ok).toBe(true);
+  expect(vault.setInternalSecret).toHaveBeenCalledWith('auth:license-seal-key', expect.stringMatching(/^[a-f0-9]{64}$/));
+});
 it('H2: switching accounts preserves each account emission and revocation history', () => {
   const vault = store(); bindLicenseAccount('account-a', 'session-a', vault);
   persistLicenseSeal(vault, { clockFloor: now, latestIat: now / 1000, revokedAt: now / 1000, needsOnlineValidation: false });

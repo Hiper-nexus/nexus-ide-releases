@@ -1749,6 +1749,18 @@ it('B2: refuses an orchestration pane while access is blocked without changing l
   } finally { useAccessStore.setState({ canUseApp: true, maxAgents: null }); }
 });
 
+it('F-228: addShellPane/addBrowserPane negados lançam LicenseError, não ""', () => {
+  useAccessStore.setState({ canUseApp: false, blockedReason: 'login-required' });
+  const before = useLayoutStore.getState();
+  try {
+    expect(() => useLayoutStore.getState().addShellPane()).toThrow(/license_access_denied/);
+    expect(() => useLayoutStore.getState().addBrowserPane('about:blank')).toThrow(/license_access_denied/);
+    expect(useLayoutStore.getState().root).toBe(before.root);
+  } finally { useAccessStore.setState({ canUseApp: true, maxAgents: null, blockedReason: null }); }
+  // Liberado devolve id como antes.
+  expect(useLayoutStore.getState().addShellPane()).not.toBe('');
+});
+
 // ── F-231: casa persistida do pane solto na aba de missão ───────────────────
 
 describe('assignPaneHomeScopeKey (F-231 — "Nesta aba (solto)")', () => {
