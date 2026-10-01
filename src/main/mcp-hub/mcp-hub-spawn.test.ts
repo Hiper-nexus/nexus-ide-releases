@@ -109,3 +109,57 @@ describe('selectHubServersForSpawn — helpers enxutos', () => {
     expect(picked.map((server) => server.key)).toEqual(['node_repl', 'computer-use']);
   });
 });
+
+describe('selectHubServersForSpawn — pane de missão (F-247)', () => {
+  const remoteAuthed = (key: string): McpHubSpawnServer => ({
+    ...http(key, `https://mcp.example.com/${key}`),
+    headers: { authorization: 'Bearer x' },
+  });
+  const hub = [
+    stdio('firecrawl'),
+    stdio('github'),
+    remoteAuthed('sentry'),
+    http('higgsfield', 'https://mcp.example.com/higgsfield'),
+  ];
+
+  it('worker de missão sem allowedTools não recebe nenhum servidor do hub', () => {
+    expect(
+      selectHubServersForSpawn(hub, { operatorChild: false, allowedTools: null, role: 'worker' }),
+    ).toEqual([]);
+  });
+
+  it('worker de missão recebe só o MCP do hub pedido no allowedTools', () => {
+    const picked = selectHubServersForSpawn(hub, {
+      operatorChild: false,
+      allowedTools: ['mcp__github__*', 'Read'],
+      role: 'worker',
+    });
+    expect(picked.map((server) => server.key)).toEqual(['github']);
+  });
+
+  it('orquestrador recebe stdio + remotos autenticados; remoto OAuth sem headers fica fora', () => {
+    const picked = selectHubServersForSpawn(hub, {
+      operatorChild: false,
+      allowedTools: null,
+      role: 'orchestrator',
+    });
+    expect(picked.map((server) => server.key)).toEqual(['firecrawl', 'github', 'sentry']);
+  });
+
+  it('pane do operador (user/sem role) continua recebendo o hub inteiro', () => {
+    expect(selectHubServersForSpawn(hub, { operatorChild: false, allowedTools: null, role: 'user' }))
+      .toBe(hub);
+    expect(selectHubServersForSpawn(hub, { operatorChild: false, allowedTools: null }))
+      .toBe(hub);
+  });
+
+  it('operatorChild inalterado: só o que o allowlist pede', () => {
+    expect(
+      selectHubServersForSpawn(hub, {
+        operatorChild: true,
+        allowedTools: ['mcp__sentry__*'],
+        role: 'user',
+      }).map((server) => server.key),
+    ).toEqual(['sentry']);
+  });
+});

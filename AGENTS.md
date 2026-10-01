@@ -1023,6 +1023,15 @@ saber isto antes de mexer:
   pelo auto-route do spawn. Pane one-shot (`OwnedAgentSessionInfo.oneShot`,
   AGY `--print`/OpenCode `run`) não lê o terminal: `nexus_pane_ask` responde
   `state: 'oneshot'` sem digitar nada e `nexus_pane_write` avisa no recibo.
+- F-247: `selectHubServersForSpawn` filtra o hub MCP por papel. Worker de
+  missão e filho do operador recebem só os servidores pedidos em
+  `allowedTools` (`mcp__<server>__*`; sem pedido, nenhum — os 16 stdio e os
+  remotos OAuth do hub não entram mais no worker). Orquestrador recebe stdio
+  + remotos com `headers` (autenticados); remoto sem headers (OAuth
+  interativo) fica fora. Pane do operador (`user`/sem papel) recebe o hub
+  inteiro. O arg `allowedTools` de `nexus_pane_spawn` só estreita o que o
+  chamador e o roster já permitem (`attenuateTools` duas vezes); o trace
+  `mcp-hub-filtered` registra só as chaves descartadas.
 - Codex no Windows ≥ 0.157 lança `codex-code-mode-host.exe` a partir do
   próprio pacote npm. No prefixo do Node do WinGet o caminho passa de 260
   caracteres e toda ferramenta do Codex falha com `failed to spawn code-mode

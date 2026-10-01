@@ -7,6 +7,7 @@ import {
   type McpHubTransport,
 } from './mcp-hub-core';
 import { isSecretFieldName, isVaultRef } from './mcp-hub-secrets';
+import { trace } from '../observability/main-trace';
 
 /**
  * O hub (`<workspace>/.nexus/mcp-hub.json`) era um registro morto: ninguém
@@ -159,32 +160,66 @@ export function loadMcpHubServersForSpawn(
 const MCP_TOOL_SERVER = /^mcp__(.+?)__/u;
 
 /**
- * Servidores do hub que um spawn recebe. Pane do operador e pane de missão
- * recebem o hub inteiro, como sempre. Um helper que um agente abriu sem
- * missão (`operatorChild`) nasce só com o MCP do Nexus: decisão do operador
- * em 25/09, depois de medir 700–980 MB de servidores MCP por helper — o hub
- * do workspace tinha virado o perfil global inteiro. Um servidor entra quando
- * o allowlist do helper pede uma tool dele (`mcp__<servidor>__…`), o mesmo
- * formato de nome que o gate já usa para as tools de plugin.
+ * Servidores do hub que um spawn recebe. Pane do operador (`user`/sem role)
+ * recebe o hub inteiro, como sempre. F-247 — pane de missão não: o hub do
+ * operador tinha 22 servidores (16 `npx` + 6 remotos OAuth); workers MiMo
+ * morreram no watchdog com "mcp auth failure" porque um remoto sem credencial
+ * pede login que worker nunca pode fazer.
+ *
+ * - `worker` de missão e `operatorChild`: só os servidores que o allowlist
+ *   pede (`mcp__<servidor>__…`, o mesmo formato do gate de plugin); sem
+ *   pedido → nenhum servidor do hub.
+ * - `orchestrator`: todos os stdio + remotos COM `headers` (autenticados);
+ *   remoto sem headers (OAuth interativo) fica fora — ele exigiria um login
+ *   que nenhum pane de missão pode completar.
  */
 export function selectHubServersForSpawn(
   servers: readonly McpHubSpawnServer[],
-  spawn: { readonly operatorChild: boolean; readonly allowedTools: readonly string[] | null },
+  spawn: {
+    readonly operatorChild: boolean;
+    readonly allowedTools: readonly string[] | null;
+    readonly role?: 'orchestrator' | 'worker' | 'user';
+  },
 ): readonly McpHubSpawnServer[] {
-  if (!spawn.operatorChild) return servers;
-  const requested = new Set<string>();
-  for (const tool of spawn.allowedTools ?? []) {
-    const server = MCP_TOOL_SERVER.exec(tool.trim().toLowerCase())?.[1];
-    if (server) requested.add(server);
+  const finish = (kept: readonly McpHubSpawnServer[]): readonly McpHubSpawnServer[] => {
+    if (kept.length !== servers.length) {
+      const keptKeys = new Set(kept.map((server) => server.key));
+      trace({
+        kind: 'mcp-hub-filtered',
+        role: spawn.operatorChild ? 'operatorChild' : spawn.role ?? 'user',
+        kept: kept.length,
+        dropped: servers.filter((server) => !keptKeys.has(server.key)).map((server) => server.key),
+      });
+    }
+    return kept;
+  };
+  if (spawn.operatorChild || spawn.role === 'worker') {
+    const requested = new Set<string>();
+    for (const tool of spawn.allowedTools ?? []) {
+      const server = MCP_TOOL_SERVER.exec(tool.trim().toLowerCase())?.[1];
+      if (server) requested.add(server);
+    }
+    if (requested.size === 0) return finish(Object.freeze([]));
+    return finish(
+      Object.freeze(
+        servers.filter((server) => {
+          const key = server.key.toLowerCase();
+          // A CLI Claude recebe `computer-use` como `user-computer-use`.
+          return requested.has(key) || requested.has(`user-${key}`);
+        }),
+      ),
+    );
   }
-  if (requested.size === 0) return Object.freeze([]);
-  return Object.freeze(
-    servers.filter((server) => {
-      const key = server.key.toLowerCase();
-      // A CLI Claude recebe `computer-use` como `user-computer-use`.
-      return requested.has(key) || requested.has(`user-${key}`);
-    }),
-  );
+  if (spawn.role === 'orchestrator') {
+    return finish(
+      Object.freeze(
+        servers.filter(
+          (server) => isStdioHubServer(server) || Object.keys(server.headers).length > 0,
+        ),
+      ),
+    );
+  }
+  return servers;
 }
 
 /**

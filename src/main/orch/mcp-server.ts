@@ -1151,7 +1151,11 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     // Helper aberto por agente sem missão só leva os que o allowlist pede.
     const hubServers = selectHubServersForSpawn(
       loadMcpHubServersForSpawn((authority.coordinationScope ?? authority.scope).rootRealPath),
-      { operatorChild, allowedTools: meta?.allowedTools ?? null },
+      {
+        operatorChild,
+        allowedTools: meta?.allowedTools ?? null,
+        role: meta?.role,
+      },
     );
     // Delegação VISÍVEL (benchmark §4.5): Claude recebe o hard-deny de Task
     // pelo adapter base, então o bloqueio vale para panes diretos e

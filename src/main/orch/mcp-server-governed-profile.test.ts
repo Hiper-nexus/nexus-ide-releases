@@ -311,9 +311,17 @@ describe('mcp-server governed CLI profile wiring', () => {
     write(path.join(providerHome, 'data', 'auth.json'), '{"xiaomi":{"type":"api","key":"selected"}}');
     writeHub(cwd, { schemaVersion: 1, servers: [HUB_HTTP_SERVER, HUB_STDIO_SERVER] });
     vi.stubEnv('HOME', home);
+    // F-247: worker de missão só recebe MCPs do hub pedidos no allowlist.
+    const spawnAuthority = authority(cwd, governed);
+    if (spawnAuthority.context) {
+      spawnAuthority.context.allowedTools = [
+        'mcp__context7__*',
+        'mcp__linear__*',
+      ];
+    }
     const decoration = prepareAgentSpawnDecoration(
       adapter('mimo-code'), { kind: 'cli-agent', cols: 80, rows: 24 },
-      authority(cwd, governed), { MIMOCODE_HOME: providerHome },
+      spawnAuthority, { MIMOCODE_HOME: providerHome },
     );
     if (!decoration) throw new Error('expected MiMo decoration');
     try {
@@ -1496,10 +1504,16 @@ describe('mcp-server governed CLI profile wiring', () => {
       servers: [HUB_HTTP_SERVER, HUB_STDIO_SERVER],
     });
 
+    // F-247: worker de missão só recebe MCPs do hub pedidos no allowlist.
+    const missionAuthority = authority(cwd, true);
+    missionAuthority.context!.allowedTools = [
+      'mcp__context7__*',
+      'mcp__linear__*',
+    ];
     const claude = prepareAgentSpawnDecoration(
       adapter('claude'),
       { kind: 'cli-agent', cols: 80, rows: 24 },
-      authority(cwd, true),
+      missionAuthority,
       undefined,
     );
     if (!claude) throw new Error('expected Claude mission decoration');
@@ -1527,10 +1541,15 @@ describe('mcp-server governed CLI profile wiring', () => {
     homePolicyDeps.getOrchSettings.mockReturnValue({
       squadCliPolicy: 'governed',
     });
+    const governedAuthority = authority(cwd, true);
+    governedAuthority.context!.allowedTools = [
+      'mcp__context7__*',
+      'mcp__linear__*',
+    ];
     const governedClaude = prepareAgentSpawnDecoration(
       adapter('claude'),
       { kind: 'cli-agent', cols: 80, rows: 24 },
-      authority(cwd, true),
+      governedAuthority,
       undefined,
     );
     if (!governedClaude) throw new Error('expected governed Claude decoration');
@@ -1543,10 +1562,15 @@ describe('mcp-server governed CLI profile wiring', () => {
       squadCliPolicy: 'operator-choice',
     });
 
+    const codexAuthority = authority(cwd, true);
+    codexAuthority.context!.allowedTools = [
+      'mcp__context7__*',
+      'mcp__linear__*',
+    ];
     const codex = prepareAgentSpawnDecoration(
       adapter('codex'),
       { kind: 'cli-agent', cols: 80, rows: 24 },
-      authority(cwd, true),
+      codexAuthority,
       undefined,
     );
     if (!codex) throw new Error('expected Codex mission decoration');
@@ -1592,10 +1616,15 @@ describe('mcp-server governed CLI profile wiring', () => {
     expect(operatorArgs).toContain('mcp_servers.context7.command="npx"');
     expect(operatorArgs).toMatch(/mcp_servers\.nexus_[0-9a-f]{12}\.url=/);
 
+    const workerCodexAuthority = authority(cwd, true);
+    workerCodexAuthority.context!.allowedTools = [
+      'mcp__supabase__*',
+      'mcp__context7__*',
+    ];
     const workerCodex = prepareAgentSpawnDecoration(
       adapter('codex'),
       { kind: 'cli-agent', cols: 80, rows: 24 },
-      authority(cwd, true),
+      workerCodexAuthority,
       { CODEX_HOME: path.join(home, '.codex') },
     );
     if (!workerCodex) throw new Error('expected worker Codex decoration');
@@ -1607,10 +1636,15 @@ describe('mcp-server governed CLI profile wiring', () => {
       servers: [HUB_HTTP_SERVER, HUB_STDIO_SERVER],
     });
 
+    const opencodeAuthority = authority(cwd, true);
+    opencodeAuthority.context!.allowedTools = [
+      'mcp__context7__*',
+      'mcp__linear__*',
+    ];
     const opencode = prepareAgentSpawnDecoration(
       adapter('opencode'),
       { kind: 'cli-agent', cols: 80, rows: 24 },
-      authority(cwd, true),
+      opencodeAuthority,
       undefined,
     );
     if (!opencode) throw new Error('expected OpenCode mission decoration');
@@ -1621,10 +1655,12 @@ describe('mcp-server governed CLI profile wiring', () => {
     expect(Object.keys(opencodeConfig.mcp)).toContain('linear');
     expect(opencode.extraArgs).toContain('--pure');
 
+    const kimiAuthority = authority(cwd, true);
+    kimiAuthority.context!.allowedTools = ['mcp__context7__*'];
     const kimi = prepareAgentSpawnDecoration(
       adapter('kimi'),
       { kind: 'cli-agent', cols: 80, rows: 24 },
-      authority(cwd, true),
+      kimiAuthority,
       { KIMI_CODE_HOME: path.join(home, '.kimi-code') },
     );
     if (!kimi) throw new Error('expected Kimi mission decoration');
@@ -1632,10 +1668,12 @@ describe('mcp-server governed CLI profile wiring', () => {
       fs.readFileSync(path.join(kimi.env.KIMI_CODE_HOME, 'mcp.json'), 'utf8'),
     ).toContain('@upstash/context7-mcp');
 
+    const grokAuthority = authority(cwd, true);
+    grokAuthority.context!.allowedTools = ['mcp__linear__*'];
     const grok = prepareAgentSpawnDecoration(
       adapter('grok'),
       { kind: 'cli-agent', cols: 80, rows: 24 },
-      authority(cwd, true),
+      grokAuthority,
       { GROK_HOME: path.join(home, '.grok') },
     );
     if (!grok) throw new Error('expected Grok mission decoration');

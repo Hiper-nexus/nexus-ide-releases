@@ -758,6 +758,14 @@ const paneSpawn: McpToolDef = {
         type: 'boolean',
         description: 'Spawn this writer in its own git worktree/branch so several writers run in parallel (with or without a mission); the orchestrator integrates the branch afterwards. The worktree and branch are kept for integration after the pane closes; a merged, clean one is garbage-collected. It starts at the checkout HEAD without uncommitted changes (the receipt carries baseSha). Resuming such a pane reuses its original worktree. Errors in a tab with its own shared worktree (open writers there one at a time)',
       },
+      allowedTools: {
+        type: 'array',
+        items: { type: 'string' },
+        description:
+          'Optional tool allowlist for this pane — it can only NARROW what ' +
+          'the caller and the roster already allow, never widen. Worker de ' +
+          'missão só recebe MCPs do hub pedidos aqui (ex.: mcp__github__*).',
+      },
       autoCloseOnHandoff: {
         type: 'boolean',
         description:
@@ -1122,10 +1130,15 @@ const paneSpawnAfterTabMission = {
         contextRevision: ctx.contextRevision,
         agentName: agent.agentName,
         agentCategory: agent.category,
+        // F-247: `allowedTools` no arg só ESTREITA — o caller pede MCPs do
+        // hub (`mcp__<server>__*`) para o worker, nunca amplia o roster.
         allowedTools: attenuateTools(
-          ctx.allowedTools,
-          agent.allowedTools ??
-            (role === 'orchestrator' || inheritOperatorFreedom ? null : []),
+          attenuateTools(
+            ctx.allowedTools,
+            agent.allowedTools ??
+              (role === 'orchestrator' || inheritOperatorFreedom ? null : []),
+          ),
+          args.allowedTools === undefined ? null : strArray(args, 'allowedTools'),
         ),
         allowedSkills: attenuateSkills(ctx.allowedSkills, agent.allowedSkills ?? null),
         // Sem missão a categoria do roster não confere autoridade: o filho do
@@ -1302,9 +1315,11 @@ const paneSpawnAfterTabMission = {
         // unrestricted 'user'-role token (SEC#5). A mão do operador sem missão
         // é a exceção explícita: o filho É o operador (ver `operatorHand`) —
         // em Autopilot herda o allowlist dele (ver `inheritOperatorFreedom`).
+        // F-247: o arg `allowedTools` só estreita — é o opt-in que libera um
+        // MCP do hub (`mcp__<server>__*`) para o worker de missão.
         allowedTools: attenuateTools(
-          ctx.allowedTools,
-          inheritOperatorFreedom ? null : [],
+          attenuateTools(ctx.allowedTools, inheritOperatorFreedom ? null : []),
+          args.allowedTools === undefined ? null : strArray(args, 'allowedTools'),
         ),
         allowedSkills: adHocAllowedSkills,
         role: operatorHand ? undefined : 'worker',
