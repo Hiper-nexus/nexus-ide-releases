@@ -6,6 +6,11 @@ const nativeOpenCode = vi.hoisted(() => vi.fn(() => [{ providerId: 'custom', key
 vi.mock('./opencode-auth', () => ({ loadOpenCodeAuthKeys: nativeOpenCode }));
 const agyCli = vi.hoisted(() => vi.fn<() => Promise<QuotaWindow[] | null>>(async () => null));
 vi.mock('./agy-cli-usage', () => ({ fetchAgyCliUsageWindows: agyCli }));
+// The bridge probes the real process table (`ps`/`lsof`) and dials any live
+// Antigravity language server on loopback — mock it or the suite depends on
+// whatever happens to be running on the dev machine.
+const agyBridge = vi.hoisted(() => vi.fn<() => Promise<QuotaWindow[] | null>>(async () => null));
+vi.mock('./agy-bridge', () => ({ fetchAgyBridgeUsage: agyBridge }));
 
 describe('fetchLiveProviderWindows', () => {
   it('uses only the explicit MiMo console resolver, including saved API credentials', async () => {
