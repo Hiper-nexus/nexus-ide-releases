@@ -8,7 +8,9 @@ import {
 import { PALETTE, hex } from './palette.js';
 import { findCells } from './layout.js';
 
-const RACK = { w: 0.86, h: 2.05, d: 0.9 };
+/** Racks lado a lado, como num data center de verdade: com fresta, o dev aparecia
+ * e sumia entre um rack e outro ao andar atrás da fileira. */
+export const RACK = { w: 1, h: 2.05, d: 0.9 };
 const LED_ROWS = 5;
 const LEDS_PER_RACK = LED_ROWS * 2;
 const ATLAS = { cols: 3, rows: 6, width: 1024, height: 512 };
@@ -337,7 +339,8 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
   // ---------- Racks ----------
   const rackEntries = layout.racks.map(rack => ({ ...rack, cx: rack.x + 0.5, cz: rack.z + 0.5, front: rack.z + 0.5 + RACK.d / 2 }));
   kit.instanced(root, kit.boxGeo(RACK.w, RACK.h, RACK.d), kit.mat(PALETTE.rack, { roughness: 0.55, metalness: 0.35 }), rackEntries, (d, r) => d.position.set(r.cx, RACK.h / 2, r.cz));
-  kit.instanced(root, kit.boxGeo(RACK.w + 0.02, 0.06, RACK.d + 0.02), kit.mat(PALETTE.rackEdge, { metalness: 0.4 }), rackEntries, (d, r) => d.position.set(r.cx, 0.03, r.cz), { cast: false });
+  // Rodapé: sai à frente e atrás, recuado nas laterais para não dividir o plano com o vizinho.
+  kit.instanced(root, kit.boxGeo(RACK.w - 0.02, 0.06, RACK.d + 0.04), kit.mat(PALETTE.rackEdge, { metalness: 0.4 }), rackEntries, (d, r) => d.position.set(r.cx, 0.03, r.cz), { cast: false });
   const doorTex = kit.canvasTexture(64, 128, rackDoor);
   const doorMat = kit.own(kit.mat(0xffffff, { roughness: 0.5, metalness: 0.3 }).clone());
   doorMat.map = doorTex.texture;

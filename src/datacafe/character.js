@@ -1,10 +1,15 @@
 /** O dev: low-poly, moletom rosa com capuz, óculos e a caneca no cinto.
  * Animação procedural (sem esqueleto): pernas e braços por seno da passada,
- * caixa de GPU nas mãos quando carrega, ombros caídos e bocejo quando cansado. */
+ * caixa de GPU nas mãos quando carrega, ombros caídos e bocejo quando cansado,
+ * pose sentada com as mãos no teclado.
+ *
+ * Nenhuma face pode dividir o plano com outra de cor diferente (z-fighting), e a
+ * caneca fica abaixo do alcance dos braços: o art.test.js verifica as duas regras. */
 import { CylinderGeometry, Group } from 'three';
 import { PALETTE } from './palette.js';
 
 const STRIDE = 7.5;
+const TYPE_RATE = 14;
 
 export function createDev(kit, { palette = PALETTE } = {}) {
   const root = new Group();
@@ -37,9 +42,9 @@ export function createDev(kit, { palette = PALETTE } = {}) {
   kit.box(torso, [0.42, 0.44, 0.26], [0, 0.23, 0], hoodie);
   kit.box(torso, [0.44, 0.06, 0.28], [0, 0.02, 0], hoodieDark); // barra do moletom
   kit.box(torso, [0.2, 0.1, 0.02], [0, 0.14, 0.135], hoodieDark); // bolso canguru
-  kit.box(torso, [0.3, 0.18, 0.1], [0, 0.44, -0.14], hoodieDark); // capuz nas costas
-  // Caneca no cinto.
-  const mug = kit.mesh(torso, kit.geo('mug', () => new CylinderGeometry(0.055, 0.05, 0.11, 10)), mugMat, [0.24, 0.05, 0.02]);
+  kit.box(torso, [0.34, 0.18, 0.1], [0, 0.44, -0.14], hoodieDark); // capuz nas costas, mais largo que a cabeça
+  // Caneca pendurada no cinto, abaixo do ponto mais baixo que a mão alcança.
+  const mug = kit.mesh(torso, kit.geo('mug', () => new CylinderGeometry(0.055, 0.05, 0.11, 10)), mugMat, [0.24, -0.09, 0.02]);
   kit.box(mug, [0.02, 0.05, 0.04], [0.06, 0, 0], mugMat, { cast: false });
 
   // Braços com pivô no ombro.
@@ -56,7 +61,7 @@ export function createDev(kit, { palette = PALETTE } = {}) {
   head.position.set(0, 0.5, 0.01);
   torso.add(head);
   kit.box(head, [0.3, 0.3, 0.28], [0, 0.17, 0], skin);
-  kit.box(head, [0.32, 0.1, 0.3], [0, 0.34, -0.01], hair);
+  kit.box(head, [0.32, 0.1, 0.3], [0, 0.34, -0.005], hair); // franja 5 mm à frente da testa
   kit.box(head, [0.32, 0.16, 0.06], [0, 0.23, -0.14], hair);
   kit.box(head, [0.1, 0.06, 0.02], [-0.07, 0.19, 0.145], glass, { cast: false });
   kit.box(head, [0.1, 0.06, 0.02], [0.07, 0.19, 0.145], glass, { cast: false });
@@ -71,28 +76,32 @@ export function createDev(kit, { palette = PALETTE } = {}) {
   crate.visible = false;
   torso.add(crate);
 
-  let phase = 0, yawn = 0, yawnClock = 0, lean = 0, droop = 0;
+  let phase = 0, yawn = 0, yawnClock = 0, lean = 0, droop = 0, typeClock = 0;
+  const mix = (a, b, k) => a + (b - a) * k;
 
-  function setMotion({ speed = 0, heading = 0, carrying = false, tired = false, calm = false }, dt) {
+  /** `seat` vai de 0 (de pé) a 1 (sentado); `typing` mexe as mãos no teclado. */
+  function setMotion({ speed = 0, heading = 0, carrying = false, tired = false, calm = false, seat = 0, typing = false }, dt) {
     const step = Math.min(dt, 0.05);
     root.rotation.y = heading;
-    const moving = Math.min(1, speed / 3.4);
+    const moving = Math.min(1, speed / 3.4) * (1 - seat);
     phase += speed * STRIDE * step * (tired ? 0.8 : 1);
     const swing = calm ? moving * 0.35 : moving * 0.7;
     const s = Math.sin(phase);
-    legs[0].rotation.x = s * swing;
-    legs[1].rotation.x = -s * swing;
+    legs[0].rotation.x = mix(s * swing, -Math.PI / 2, seat);
+    legs[1].rotation.x = mix(-s * swing, -Math.PI / 2, seat);
     lean += ((calm ? 0 : moving * 0.12) - lean) * Math.min(1, 8 * step);
     droop += ((tired ? 1 : 0) - droop) * Math.min(1, 3 * step);
-    torso.rotation.x = lean + droop * 0.1;
+    torso.rotation.x = lean + droop * 0.1 + seat * 0.06;
     body.position.y = calm ? 0 : Math.abs(Math.cos(phase)) * 0.04 * moving;
     if (carrying) {
       arms[0].rotation.x = arms[1].rotation.x = -1.25;
       arms[0].rotation.z = 0.18; arms[1].rotation.z = -0.18;
     } else {
-      arms[0].rotation.x = -s * swing * 0.9 + droop * 0.15;
-      arms[1].rotation.x = s * swing * 0.9 + droop * 0.15;
-      arms[0].rotation.z = -0.06 - droop * 0.05; arms[1].rotation.z = 0.06 + droop * 0.05;
+      typeClock += typing && !calm ? step * TYPE_RATE : 0;
+      const tap = typing && !calm ? Math.sin(typeClock) * 0.07 : 0;
+      arms[0].rotation.x = mix(-s * swing * 0.9 + droop * 0.15, -1 + tap, seat);
+      arms[1].rotation.x = mix(s * swing * 0.9 + droop * 0.15, -1 - tap, seat);
+      arms[0].rotation.z = mix(-0.06 - droop * 0.05, 0.15, seat); arms[1].rotation.z = mix(0.06 + droop * 0.05, -0.15, seat);
     }
     crate.visible = carrying;
     // Bocejo lento a cada ~5 s quando cansado e parado.
@@ -100,9 +109,9 @@ export function createDev(kit, { palette = PALETTE } = {}) {
     if (tired && moving < 0.2 && !calm && yawnClock > 5) { yawn = 1; yawnClock = 0; }
     yawn = Math.max(0, yawn - step * 0.6);
     const open = Math.sin(Math.min(1, yawn) * Math.PI);
-    head.rotation.x = droop * 0.18 - open * 0.35;
+    head.rotation.x = droop * 0.18 - open * 0.35 + seat * 0.15;
     mouth.scale.y = 1 + open * 4;
   }
 
-  return { group: root, setMotion, parts: { crate, head } };
+  return { group: root, setMotion, parts: { crate, head, torso, mug, arms, legs } };
 }

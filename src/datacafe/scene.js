@@ -65,6 +65,8 @@ class DataCafeWorld {
     Object.assign(sun.shadow.camera, { left: -15, right: 15, top: 11, bottom: -11, near: 1, far: 45 });
     sun.shadow.bias = -0.0004;
     sun.shadow.normalBias = 0.03;
+    // Borda de sombra mais larga: o serrilhado da sombra própria do dev andava junto com ele.
+    sun.shadow.radius = 3;
     this.sun = sun;
     this.scene.add(sun, sun.target);
     const fill = new DirectionalLight(0x9fb2ff, 0.5);
