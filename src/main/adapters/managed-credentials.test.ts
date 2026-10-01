@@ -569,9 +569,11 @@ describe('F-567 checkout provider homes', () => {
 
     const second = prepareCheckoutProviderHome('agy', options);
     expect(second.stateHome).toBe(first.stateHome);
-    expect(fs.realpathSync(cliConfig)).toBe(
-      fs.realpathSync(path.join(sourceHome, 'antigravity-cli/mcp_config.json')),
-    );
+    // Mesmo arquivo: symlink no POSIX, hardlink no Windows (realpath de
+    // hardlink devolve o próprio caminho, então compare a identidade).
+    const linkedConfig = fs.statSync(cliConfig);
+    const sourceConfig = fs.statSync(path.join(sourceHome, 'antigravity-cli/mcp_config.json'));
+    expect([linkedConfig.dev, linkedConfig.ino]).toEqual([sourceConfig.dev, sourceConfig.ino]);
     expect(fs.readFileSync(cliConfig, 'utf8')).toBe('{"mcp":1}');
   });
 
@@ -590,6 +592,15 @@ describe('F-567 checkout provider homes', () => {
 
     expect(() => prepareCheckoutProviderHome('agy', options)).toThrow(/outside its auth source/);
     expect(fs.readlinkSync(target)).toBe(foreign);
+
+    // F-716: pasta irmã com o mesmo prefixo (native → native2) não é "dentro".
+    const sibling = path.join(`${sourceHome}2`, 'oauth_creds.json');
+    fs.mkdirSync(path.dirname(sibling), { recursive: true });
+    fs.writeFileSync(sibling, 'account B');
+    fs.unlinkSync(target);
+    fs.symlinkSync(sibling, target, 'junction');
+    expect(() => prepareCheckoutProviderHome('agy', options)).toThrow(/outside its auth source/);
+    expect(fs.readlinkSync(target)).toBe(sibling);
   });
 
   it('rejects AGY skills pointing at another profile and preserves that profile', () => {

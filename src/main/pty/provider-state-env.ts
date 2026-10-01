@@ -1,6 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { ensurePrivateDirectory } from '../orch/cli-mcp-session-artifacts';
+import { isStrictlyInside } from '../util/path-inside';
 
 /**
  * F-567: durable conversations below provider-state/<adapter>/<checkoutId>.
@@ -164,9 +165,7 @@ export function materializeProviderState(
         // root, and an older materialization may point at a different file
         // under the same profile source. Both are ours to re-point — the
         // link is never followed. Any other target is tampering.
-        const roots = [overlay.targetDir, overlay.sourceDir]
-          .map((root) => path.toNamespacedPath(path.resolve(root) + path.sep));
-        if (!roots.some((root) => path.toNamespacedPath(linked).startsWith(root))) {
+        if (![overlay.targetDir, overlay.sourceDir].some((root) => isStrictlyInside(root, linked))) {
           throw new Error('Provider config link points outside its auth source');
         }
         fs.unlinkSync(target);

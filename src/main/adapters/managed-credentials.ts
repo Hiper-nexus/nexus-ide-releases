@@ -10,6 +10,7 @@ import {
   isFileAuthAdapter,
   type FileAuthAdapterId,
 } from '../../shared/file-auth-adapters';
+import { isStrictlyInside } from '../util/path-inside';
 import { removeTreeSync } from '../util/remove-tree';
 
 export { isFileAuthAdapter };
@@ -765,8 +766,6 @@ export function prepareCheckoutProviderHome(
   // Explicit file allowlist: never project a native conversation directory.
   const shared = [spec.authRelativePath, ...(spec.authCandidates ?? []), ...(spec.identityCandidates ?? [])];
   if (kind === 'agy') shared.push('settings.json', 'antigravity-cli/settings.json', 'antigravity-cli/mcp_config.json', 'config/mcp_config.json');
-  const allowedLinkRoots = [providerHome, sourceHome]
-    .map((root) => path.toNamespacedPath(root + path.sep));
   for (const relative of shared) {
     const source = path.join(sourceHome, relative);
     if (!exists(source)) continue;
@@ -774,14 +773,14 @@ export function prepareCheckoutProviderHome(
     const target = path.join(providerHome, relative);
     let entry = fs.lstatSync(target, { throwIfNoEntry: false });
     if (entry?.isSymbolicLink()) {
-      const linked = path.toNamespacedPath(path.resolve(path.dirname(target), fs.readlinkSync(target)));
-      if (linked !== path.toNamespacedPath(source)) {
+      const linked = path.resolve(path.dirname(target), fs.readlinkSync(target));
+      if (path.toNamespacedPath(linked) !== path.toNamespacedPath(source)) {
         // The AGY CLI consolidates sibling config aliases (config/ vs
         // antigravity-cli/) into links INSIDE this managed home, and an older
         // materialization may point at a different file under the same auth
         // source. Both are ours to re-point — the link is never followed.
         // A link resolving anywhere else is tampering: fail closed.
-        if (!allowedLinkRoots.some((root) => linked.startsWith(root))) {
+        if (![providerHome, sourceHome].some((root) => isStrictlyInside(root, linked))) {
           throw new Error('Provider credential link points outside its auth source');
         }
         fs.unlinkSync(target);

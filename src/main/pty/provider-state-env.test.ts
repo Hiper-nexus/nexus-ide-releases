@@ -117,7 +117,7 @@ describe('materializeProviderState', () => {
     }
   });
 
-  it.each(['ancestor', 'profile', 'auth', 'source-directory'])('rejects redirected %s before writing outside checkout state', (attack) => {
+  it.each(['ancestor', 'profile', 'auth', 'sibling', 'source-directory'])('rejects redirected %s before writing outside checkout state', (attack) => {
     const f = fixture();
     try {
       if (attack === 'ancestor') {
@@ -127,9 +127,12 @@ describe('materializeProviderState', () => {
         fs.mkdirSync(path.join(f.home, '.factory', 'auth.json'));
       } else {
         materializeProviderState(f.plan, f.userDataDir);
-        const target = path.join(f.plan.env.HOME, '.factory', ...(attack === 'auth' ? ['auth.json'] : []));
+        const target = path.join(f.plan.env.HOME, '.factory', ...(attack === 'profile' ? [] : ['auth.json']));
         fs.rmSync(target, { recursive: true, force: true });
-        fs.symlinkSync(f.home, target, 'junction');
+        // F-716: a irmã com o mesmo prefixo (native → native2) não é o perfil.
+        const redirect = attack === 'sibling' ? `${f.home}2` : f.home;
+        fs.mkdirSync(redirect, { recursive: true });
+        fs.symlinkSync(redirect, target, 'junction');
       }
       expect(() => materializeProviderState(f.plan, f.userDataDir)).toThrow(/Provider/);
       expect(fs.existsSync(path.join(f.home, 'droid'))).toBe(false);
