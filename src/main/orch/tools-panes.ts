@@ -2669,6 +2669,7 @@ const paneClose: McpToolDef = {
         sessionId: pane.sessionId ?? undefined,
         missionId: pane.missionId,
         role: pane.role,
+        operatorOpened: pane.operatorOpened === true || undefined,
         scopeRoot: pane.scope?.rootRealPath,
       })),
       isMissionRunning: (missionId) =>

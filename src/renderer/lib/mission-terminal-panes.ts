@@ -1,4 +1,5 @@
 import type { PaneModel } from '../../shared/types';
+import { missionScopeKey } from './pane-spaces';
 
 /**
  * Terminais da missão: só os panes DESTA missão. O layout canônico continua
@@ -11,6 +12,10 @@ export function selectMissionTerminalPanes(
 ): PaneModel[] {
   if (!missionId) return [...panes];
   return panes.filter((pane) => {
+    // F-231: o pane "solto" que o operador abriu com "+ Pane → Nesta aba"
+    // carimba a casa persistida — a aba continua mostrando-o depois do
+    // restart, sem que ele vire participante da missão.
+    if (pane.homeScopeKey === missionScopeKey(missionId)) return true;
     if (pane.kind === 'shell') return false;
     return (pane.missionId ?? paneMissions[pane.id]) === missionId;
   });

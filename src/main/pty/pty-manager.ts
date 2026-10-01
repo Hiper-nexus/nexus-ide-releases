@@ -259,6 +259,11 @@ export interface OwnedAgentSessionInfo {
   /** Mão do operador adotada como orquestradora; volta a `user` no fim. */
   promotedFromUser?: true;
   /**
+   * F-231: worker de missão aberto pelo operador ("+ Pane" na aba da missão).
+   * A máquina da missão nunca o encerra; no fim ele volta a `user`.
+   */
+  operatorOpened?: true;
+  /**
    * F-662: o briefing nasceu no argv one-shot (AGY `--print`, OpenCode
    * `run`). A CLI não lê o terminal e só imprime ao terminar: pergunta ou
    * mensagem digitada nesse pane nunca é respondida.
@@ -2700,6 +2705,7 @@ export function spawnAgentSession(
       immediateMissionTitle: authority.context?.immediateMissionTitle,
       immediateMissionGoal: authority.context?.immediateMissionGoal,
       workerIncarnationId: authority.context?.workerIncarnationId,
+      operatorOpened: authority.context?.operatorOpened === true || undefined,
       readOnly: authority.context?.readOnly === true,
       // Report the authority actually applied to the provider process. The
       // default autopilot deliberately does not enforce the read-only profile;
@@ -3231,6 +3237,31 @@ export function adoptUserAgentSessionAsMissionOrchestrator(
     info?.role === "user" ? !info.missionId : info?.promotedFromUser === true;
   if (!session || !info || !operatorHand || !missionId) return false;
   session.agent = { ...info, role: "orchestrator", missionId, promotedFromUser: true };
+  return true;
+}
+
+/**
+ * F-231: o pane aberto pelo operador dentro da missão NUNCA é morto pelo
+ * fim dela — a ficha volta a `user` e o pane segue vivo como mão do
+ * operador. Só vale para sessão selada `operatorOpened` desta missão.
+ */
+export function releaseOperatorOpenedAgentSession(
+  sessionId: string,
+  missionId: string,
+): boolean {
+  const session = sessions.get(sessionId);
+  const info = session?.agent;
+  if (!session || !info || info.operatorOpened !== true || info.missionId !== missionId) {
+    return false;
+  }
+  const {
+    missionId: _mission,
+    workerIncarnationId: _worker,
+    authoritySeal: _seal,
+    operatorOpened: _opened,
+    ...rest
+  } = info;
+  session.agent = { ...rest, role: "user", allowedTools: null, allowedSkills: null };
   return true;
 }
 

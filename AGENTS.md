@@ -240,6 +240,13 @@ saber isto antes de mexer:
 
 ## Abas dos Terminais: aba = feature (23/09)
 
+- F-231: "+ Pane" numa aba que hospeda missão viva abre um passo de destino —
+  "Nesta missão" (worker `operatorOpened` via `missionSpawnOperatorPane`
+  Main-owned: entra no Quadro/ledger, roda na worktree da missão, mas só a
+  mão do operador o fecha; mortalidade/TTL/teardown o ignoram e no fim ele
+  volta a `user`), "Nesta aba (solto)" (spawn normal + `homeScopeKey`
+  persistido — sem ele o efeito foco-segue mandava o pane para "Terminais")
+  ou "Nova aba". Shell/browser nunca viram participantes.
 - `WorkspaceTabs` substituiu o rack de cartões (`MissionLaneBar`), os pinos
   A/B e o "Todos". Uma aba por escopo de `listPaneScopes`; visão geral é
   `ALL_SCOPES_KEY`; "ver ao lado" é `sideScopeKey` e desenha duas `PaneGrid`

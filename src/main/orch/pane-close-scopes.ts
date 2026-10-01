@@ -11,6 +11,8 @@ export interface ScopedCloseCandidate {
   readonly sessionId?: string;
   readonly missionId?: string;
   readonly role?: "orchestrator" | "worker";
+  /** F-231: mão do operador dentro da missão — o scope-close nunca a inclui. */
+  readonly operatorOpened?: boolean;
   readonly scopeRoot?: string;
 }
 
@@ -42,6 +44,11 @@ export function selectScopedPaneCloseTargets(input: {
     }
     if (pane.role === "orchestrator") {
       skipped.push({ paneId: pane.paneId, reason: "orchestrator" });
+      continue;
+    }
+    // F-231: "só ele fecha" — o scope-close do Maestro pula panes do operador.
+    if (pane.operatorOpened === true) {
+      skipped.push({ paneId: pane.paneId, reason: "operator-opened" });
       continue;
     }
     // Worker de OUTRA missão em execução: a autoridade é do scheduler dela —

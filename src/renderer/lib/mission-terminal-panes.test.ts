@@ -52,3 +52,33 @@ describe('selectMissionTerminalPanes', () => {
     ).toEqual(['pane-a']);
   });
 });
+
+describe('F-231 — pane solto carimbado na aba da missão', () => {
+  const looseHome: PaneModel = {
+    id: 'pane-loose',
+    kind: 'cli-agent',
+    title: 'Solto',
+    homeScopeKey: 'mission:mission-nova',
+  };
+
+  it('pane com homeScopeKey da missão aparece no grid dela sem ser participante', () => {
+    expect(
+      selectMissionTerminalPanes([maestro, looseHome, other, shell], 'mission-nova', {})
+        .map((pane) => pane.id),
+    ).toEqual(['pane-a', 'pane-loose']);
+    // Ele continua sem missionId — fora do ledger e do Quadro.
+    expect(looseHome.missionId).toBeUndefined();
+  });
+
+  it('homeScopeKey de OUTRA missão não invade o grid', () => {
+    const foreign: PaneModel = {
+      ...looseHome,
+      id: 'pane-foreign',
+      homeScopeKey: 'mission:mission-velha',
+    };
+    expect(
+      selectMissionTerminalPanes([maestro, foreign], 'mission-nova', {})
+        .map((pane) => pane.id),
+    ).toEqual(['pane-a']);
+  });
+});

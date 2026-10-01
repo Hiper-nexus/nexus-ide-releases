@@ -47,7 +47,9 @@ import {
   findPaneOwnedBy,
   getPaneRuntimeAuthorityBySession,
   getRenderedPaneTabKey,
+  spawnMainOwnedMissionPaneAsync,
 } from "./pane-registry";
+import { makeId } from "./store-util";
 import type {
   ProjectDomainStoreRegistry,
   ProjectDomainStoreSuite,
@@ -64,6 +66,7 @@ import {
 import type { OrchestrationEvidence } from "../../shared/adapter-types";
 import {
   getAdapter,
+  isAdapterInstalled,
   isBuiltinAdapter,
   orchestrationEvidenceForAdapter,
 } from "../adapters/adapter-registry";
@@ -1278,5 +1281,123 @@ export class RendererMissionAuthority {
       : "unsupported";
     if (evidence === "verified") return undefined;
     return `Provider "${adapterId}" não é orquestrador verificado; promoção livre aplicada por ação explícita do operador.`;
+  }
+
+  /**
+   * F-231 — "+ Pane" dentro da aba da missão com destino "Nesta missão".
+   *
+   * O pane nasce pelo MESMO caminho Main-owned dos workers do Maestro
+   * (`spawnMainOwnedMissionPaneAsync` resolve e revalida o selo de
+   * autoridade — sem invocação MCP, porque a autoridade aqui é a ação do
+   * operador vinda do renderer do próprio workspace). A diferença é a marca
+   * `operatorOpened`: participa do Quadro/`nexus_pane_list`/ledger como
+   * worker, mas mortalidade, TTL pós-handoff e teardown nunca o fecham —
+   * no fim da missão a ficha volta a `user` (ver mission-runtime-termination).
+   *
+   * Escolhas do renderer NUNCA viram autoridade: escopo, missão, status,
+   * adapter instalado, `cli-pty` e roster selado são conferidos aqui no
+   * Main, e adapter/modelo são explícitos (nenhum roteador é consultado).
+   */
+  async spawnOperatorPaneFromRenderer(
+    owner: WebContents,
+    input: {
+      readonly missionId: string;
+      readonly adapterId: string;
+      readonly model?: string;
+      readonly prompt?: string;
+      readonly tabKey?: string;
+    },
+  ): Promise<
+    | { ok: true; paneId: string; sessionId: string }
+    | { ok: false; error: string }
+  > {
+    const rendererScope = requireRendererWorkspaceScope(owner);
+    const suite = this.#stores.forScope(rendererScope);
+    const mission = suite.missions.get(input.missionId);
+    if (!mission) return { ok: false, error: "mission_unavailable" };
+    if (mission.status !== "running" && mission.status !== "pending") {
+      return { ok: false, error: "mission_not_running" };
+    }
+    const adapter = getAdapter(input.adapterId);
+    if (!adapter) return { ok: false, error: "adapter_not_installed" };
+    if (adapter.kind === "api-provider") {
+      return { ok: false, error: "adapter_not_spawnable" };
+    }
+    if (!isAdapterInstalled(adapter.id)) {
+      return { ok: false, error: "adapter_not_installed" };
+    }
+    // Roster selado (squad aprovado): adapter fora da composição é recusado
+    // com erro legível — o picker mostra a recusa em vez de abrir e morrer.
+    const squad = mission.squadId ? getSquad(mission.squadId) : null;
+    if (mission.squadId) {
+      if (!squad) return { ok: false, error: "roster_rejected" };
+      const inRoster = squad.agents.some((agent) => agent.cli === adapter.id);
+      if (!inRoster) return { ok: false, error: "roster_rejected" };
+    }
+    const executionScope = missionExecutionScope(rendererScope, mission);
+    const authoritySeal = resolveMissionPaneAuthoritySeal(
+      rendererScope,
+      mission,
+      squad,
+    );
+    if (!authoritySeal) {
+      return { ok: false, error: "mission_authority_stale" };
+    }
+    const title = `${adapter.label} · operador`;
+    // A encarnação nasce no spawn e vai à mesma linha durável — sem ela o
+    // fechamento mecânico nem os receptáculos de handoff reconhecem o worker.
+    const workerIncarnationId = makeId("workerinc");
+    const spawned = await spawnMainOwnedMissionPaneAsync({
+      adapterId: adapter.id,
+      ...(input.model ? { model: input.model } : {}),
+      scope: rendererScope,
+      executionScope,
+      cwd: executionScope.rootRealPath,
+      missionId: mission.id,
+      role: "worker",
+      operatorOpened: true,
+      title,
+      agentName: title,
+      authoritySeal,
+      workerIncarnationId,
+      ...(input.prompt ? { initialPrompt: input.prompt } : {}),
+    });
+    if (!spawned.ok || !spawned.paneId || !spawned.sessionId) {
+      return {
+        ok: false,
+        error: spawned.error ?? "pane spawn failed",
+      };
+    }
+    try {
+      suite.missionPanes.record({
+        missionId: mission.id,
+        paneId: spawned.paneId,
+        adapterId: adapter.id,
+        role: "worker",
+        model: input.model,
+        cwd: executionScope.rootRealPath,
+        title,
+        agentName: title,
+        workerIncarnationId,
+        executionScope,
+        authoritySeal,
+        operatorOpened: true,
+      });
+    } catch (error) {
+      // O pane físico já nasceu e é do operador — a linha durável é histórico
+      // da composição; falhar aqui não mata o pane, mas reporta legível.
+      return {
+        ok: false,
+        error:
+          error instanceof Error
+            ? `mission_pane_record_failed: ${error.message}`
+            : "mission_pane_record_failed",
+      };
+    }
+    return {
+      ok: true,
+      paneId: spawned.paneId,
+      sessionId: spawned.sessionId,
+    };
   }
 }

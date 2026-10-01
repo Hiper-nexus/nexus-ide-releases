@@ -1732,6 +1732,30 @@ export function detachOrchMissionMeta(
   panesVersion += 1;
 }
 
+/**
+ * F-231: ao devolver o worker `operatorOpened` à mão do operador, o meta
+ * confiável perde o vínculo com a missão — senão a varredura de órfãos e a
+ * próxima terminação ainda o enxergariam como alvo da missão encerrada.
+ * Cobre os dois espelhos (renderer-registered e Main-owned).
+ */
+export function detachOperatorOpenedPaneMission(
+  paneId: string,
+  missionId: string,
+): void {
+  for (const [key, meta] of [...orchMetaByPane]) {
+    if (meta.missionId === missionId && key.endsWith(`:${paneId}`)) {
+      orchMetaByPane.delete(key);
+      panesVersion += 1;
+    }
+  }
+  const mainOwned = getMainOwnedPane(paneId);
+  if (mainOwned?.meta?.missionId === missionId) {
+    const { missionId: _mission, ...rest } = mainOwned.meta;
+    setMainOwnedPane(paneId, { ...mainOwned, meta: rest });
+    panesVersion += 1;
+  }
+}
+
 /** Trusted main-side binding for direct panes that have no pending OrchMeta. */
 export function attachSessionScope(
   sessionId: string,
@@ -1881,6 +1905,7 @@ function authzInfoOf(registered: RegisteredPane): PaneAuthzInfo {
     role: meta?.role,
     workerIncarnationId: meta?.workerIncarnationId,
     operatorParentSessionId: meta?.operatorParentSessionId,
+    operatorOpened: meta?.operatorOpened === true || undefined,
     scope:
       context?.scope ?? meta?.scope ??
       (entry.sessionId ? scopeBySession.get(entry.sessionId) : undefined) ??
@@ -2729,6 +2754,7 @@ export function requestPaneSpawn(
         nativeReadOnly: options.nativeReadOnly,
         // Writer isolado que o Nexus criou: o token herda a guarda de git.
         ...(options.isolatedWriter === true ? { isolatedWriter: true } : {}),
+        ...(options.operatorOpened === true ? { operatorOpened: true } : {}),
         authoritySeal: options.authoritySeal
           ? Object.freeze({ ...options.authoritySeal })
           : undefined,

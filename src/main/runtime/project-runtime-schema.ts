@@ -969,4 +969,14 @@ export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
       appVersion: '0.76.154',
       sql: MISSION_REVIEW_VERDICTS_SCHEMA,
     }),
+    // F-231: "+ Pane" dentro de missão — pane do operador participante nunca
+    // é morto pelo fim da missão (TTL, teardown, mortalidade).
+    createProjectMigration({
+      id: '040-mission-pane-operator-opened',
+      schemaVersion: 40,
+      appVersion: '0.76.154',
+      sql: `ALTER TABLE mission_panes
+            ADD COLUMN operator_opened INTEGER NOT NULL DEFAULT 0
+            CHECK(operator_opened IN (0,1))`,
+    }),
   ]);

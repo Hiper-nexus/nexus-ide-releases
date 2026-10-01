@@ -755,6 +755,24 @@ export interface NexusApi {
       error?: string;
     }>;
     /**
+     * F-231 — "+ Pane" numa aba de missão com destino "Nesta missão": abre um
+     * worker `operatorOpened` pelo caminho Main-owned. Escopo, status da
+     * missão, adapter instalado/cli-pty e roster selado são conferidos no
+     * Main — o payload nunca vira autoridade. `error` legível na recusa
+     * (`roster_rejected`, `mission_not_running`, `adapter_not_installed`,
+     * `adapter_not_spawnable`, `hardened`).
+     */
+    spawnOperatorPane(input: {
+      missionId: string;
+      adapterId: string;
+      model?: string;
+      prompt?: string;
+      tabKey?: string;
+    }): Promise<
+      | { ok: true; paneId: string; sessionId: string }
+      | { ok: false; error: string }
+    >;
+    /**
      * Retry the orchestrator bootstrap of a mission the bootstrap itself
      * blocked (blocked_technical + marker). Main re-arms and re-validates.
      */

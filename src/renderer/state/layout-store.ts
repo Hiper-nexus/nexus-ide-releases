@@ -130,6 +130,13 @@ interface LayoutState {
    */
   assignPaneSpace(paneId: string, spaceId: string, spaceTitle: string, isolated?: boolean): void;
   /**
+   * F-231 — "Nesta aba (solto)" numa aba de missão: carimbo PERSISTENTE da
+   * casa do pane (a chave do escopo da aba). O pin de sessão zera no restart;
+   * sem o carimbo o pane voltava solto para "Terminais". Não é participação
+   * na missão — `paneScopeKey` só honra a marca enquanto o escopo existe.
+   */
+  assignPaneHomeScopeKey(paneId: string, homeScopeKey: string): void;
+  /**
    * Renomeia o espaço do operador inteiro: todos os panes carimbados com
    * `spaceId` passam a exibir o novo título na aba. Panes adotados por uma
    * missão não são tocados (a aba deles é a da missão, não a do espaço).
@@ -1364,7 +1371,17 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     // aqui, senão ele sairia da aba da missão que lidera.
     if (!pane || pane.missionId) return;
     const isolateSpace = isolated || listPanes(get().root).some((p) => p.spaceId === spaceId && p.isolateSpace);
-    const root = updatePane(get().root, paneId, { spaceId, spaceTitle, isolateSpace: isolateSpace ? true : undefined });
+    const root = updatePane(get().root, paneId, { spaceId, spaceTitle, isolateSpace: isolateSpace ? true : undefined, homeScopeKey: undefined });
+    set({ root });
+    persist();
+  },
+
+  assignPaneHomeScopeKey: (paneId, homeScopeKey) => {
+    const pane = listPanes(get().root).find((item) => item.id === paneId);
+    // Mesma fronteira do assignPaneSpace: a missão vence; recarimbar um pane
+    // já adotado o prendia na casa errada quando a missão o devolvesse.
+    if (!pane || pane.missionId || pane.spaceId) return;
+    const root = updatePane(get().root, paneId, { homeScopeKey });
     set({ root });
     persist();
   },

@@ -1320,6 +1320,8 @@ export function projectMissionEngineSnapshotView(
       agentId,
       state,
       ...(currentUnitId ? { currentUnitId } : {}),
+      // F-231: o quadro rotula "aberto por você" e o close do Maestro é recusado.
+      ...(pane.operatorOpened === true ? { operatorOpened: true } : {}),
     });
   }
 

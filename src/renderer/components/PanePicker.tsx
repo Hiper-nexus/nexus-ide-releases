@@ -14,6 +14,7 @@ import { useOrchStore } from '../state/orch-store';
 import { usePanePickerStore } from '../state/pane-picker-store';
 import { useProviderStore } from '../state/provider-store';
 import { useSessionStateStore } from '../state/session-state-store';
+import { useToastStore } from '../state/toast-store';
 import { getPaneSessionId } from '../terminal/terminal-host';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
 import { ProviderLogo } from './ProviderLogo';
@@ -732,14 +733,54 @@ export interface PanePickerTrigger {
   readonly title: string;
 }
 
+/**
+ * F-231 — a aba hospeda uma missão viva: o "+ Pane" pergunta o destino antes
+ * da lista de CLIs ("Nesta missão" padrão, "Nesta aba (solto)", "Nova aba").
+ * O id resolve o vínculo — o renderer nunca envia autoridade ao Main.
+ */
+export interface PanePickerMissionDestination {
+  readonly missionId: string;
+  readonly title: string;
+}
+
+/** Destino escolhido no passo extra do picker de uma aba de missão. */
+type PanePickerDestination = 'mission' | 'loose' | 'newTab';
+
+const OPERATOR_PANE_SPAWN_ERROR: Readonly<Record<string, string>> = {
+  roster_rejected: 'Esse provider não faz parte da equipe selada da missão',
+  mission_not_running: 'A missão não está em execução',
+  mission_unavailable: 'Missão indisponível neste workspace',
+  adapter_not_installed: 'CLI não instalada',
+  adapter_not_spawnable: 'Esse provider não abre pane (só API)',
+  mission_authority_stale:
+    'A autoridade da missão mudou — feche e reabra o picker',
+  hardened: 'A política endurecida não permite pane dentro da missão',
+};
+
 export function PanePicker({
   onPaneCreated,
   placement = 'grid',
   trigger,
   acceptsPendingOpen = true,
+  missionDestination,
+  onPaneCreatedLoose,
+  onPaneCreatedInNewTab,
 }: {
   /** Chamado com o id do pane criado — vistas filtradas o tornam visível. */
   readonly onPaneCreated?: (paneId: string) => void;
+  /**
+   * F-231: missão viva da aba. Presente, o picker abre um passo de destino
+   * antes da lista ("Nesta missão" é o padrão sob o cursor).
+   */
+  readonly missionDestination?: PanePickerMissionDestination;
+  /**
+   * F-231 — "Nesta aba (solto)": o chamador carimba a casa persistida do
+   * pane (aba de missão não é um espaço — sem o carimbo ele ia parar em
+   * "Terminais" no restart).
+   */
+  readonly onPaneCreatedLoose?: (paneId: string) => void;
+  /** F-231 — "Nova aba": o chamador cria o espaço novo e migra o pane. */
+  readonly onPaneCreatedInNewTab?: (paneId: string) => void;
   /**
    * `grid`: flutua no rodapé da grelha e abre para cima (o "+ Pane").
    * `tabbar`: mora na barra de abas e abre para baixo (o "+" de aba nova).
@@ -766,6 +807,44 @@ export function PanePicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
+  /** F-231: destino escolhido no passo extra de uma aba com missão viva. */
+  const [destination, setDestination] = useState<PanePickerDestination | null>(
+    null,
+  );
+  const destinationOptions = useMemo(
+    () =>
+      missionDestination
+        ? ([
+            {
+              id: 'mission' as const,
+              label: `Nesta missão: ${missionDestination.title}`,
+              detail: 'participante visível ao Maestro — só você fecha',
+              icon: 'orch' as const,
+            },
+            {
+              id: 'loose' as const,
+              label: 'Nesta aba (solto)',
+              detail: 'seu pane, fora da missão — o Maestro não o vê',
+              icon: 'terminal' as const,
+            },
+            {
+              id: 'newTab' as const,
+              label: 'Nova aba',
+              detail: 'abre numa aba própria, fora desta missão',
+              icon: 'grid' as const,
+            },
+          ] satisfies ReadonlyArray<{
+            id: PanePickerDestination;
+            label: string;
+            detail: string;
+            icon: PixelIconName;
+          }>)
+        : null,
+    [missionDestination],
+  );
+  /** O passo de destino está aberto quando ainda não houve escolha. */
+  const destinationPending =
+    open && destinationOptions !== null && destination === null;
   /** CLI cujo índice foi aberto: a matriz conta × modelo dela ocupa o painel. */
   const [drillCli, setDrillCli] = useState<string | null>(null);
   /** CLI cuja vista de contas está ocupando o painel (null = lista). */
@@ -840,6 +919,7 @@ export function PanePicker({
     setOpen(false);
     setAccountsFor(null);
     setDrillCli(null);
+    setDestination(null);
     triggerRef.current?.focus();
   }, []);
 
@@ -891,11 +971,14 @@ export function PanePicker({
   }, [open]);
 
   // Estado limpo a cada abertura: uma linha por CLI se navega com os olhos.
+  // Aba de missão começa no passo de destino — "Nesta missão" já é o padrão
+  // sob o cursor, mas a escolha é explícita (solto/participante não é igual).
   useEffect(() => {
     if (!open) return;
     setQuery('');
     setCursor(0);
     setDrillCli(null);
+    setDestination(null);
     setExpandedFolds(new Set());
   }, [open]);
 
@@ -978,11 +1061,77 @@ export function PanePicker({
       return;
     }
     setOpen(false);
-    const paneId = runPanePickerIntent(row.intent);
-    if (paneId) onPaneCreated?.(paneId);
+    const intent = row.intent;
+    // F-231: dentro de uma aba de missão o destino foi escolhido no passo
+    // anterior. Shell/browser nunca são participantes — "Nesta missão" cai
+    // para "solto" neles. Fora de missão `destination` é null e nada muda.
+    const picked: PanePickerDestination | null =
+      destinationOptions && intent.kind === 'agent'
+        ? destination
+        : destination === 'newTab'
+          ? 'newTab'
+          : destination !== null
+            ? 'loose'
+            : null;
+    if (picked === 'mission' && missionDestination) {
+      // Mesmo portão do caminho normal: sem acesso não nasce pane nenhum.
+      if (!allowPaneCreation()) return;
+      void window.nexus.orch
+        .spawnOperatorPane({
+          missionId: missionDestination.missionId,
+          adapterId: intent.kind === 'agent' ? intent.adapterId : '',
+          ...(intent.kind === 'agent' && intent.model
+            ? { model: intent.model }
+            : {}),
+        })
+        .then((result) => {
+          if (result.ok) {
+            onPaneCreated?.(result.paneId);
+            return;
+          }
+          useToastStore.getState().push(
+            'error',
+            'O pane não entrou na missão',
+            {
+              detail:
+                OPERATOR_PANE_SPAWN_ERROR[result.error] ?? result.error,
+              dedupeKey: `f231:${missionDestination.missionId}`,
+            },
+          );
+        });
+      return;
+    }
+    const paneId = runPanePickerIntent(intent);
+    if (!paneId) return;
+    if (picked === 'newTab') {
+      (onPaneCreatedInNewTab ?? onPaneCreated)?.(paneId);
+    } else if (picked === 'loose') {
+      (onPaneCreatedLoose ?? onPaneCreated)?.(paneId);
+    } else {
+      onPaneCreated?.(paneId);
+    }
   };
 
   const onKeyDown = (event: React.KeyboardEvent) => {
+    // F-231: no passo de destino as setas/Enter escolhem ONDE abrir; o cursor
+    // da lista de CLIs só existe depois dessa escolha.
+    if (destinationPending && destinationOptions) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        setCursor((current) =>
+          Math.min(current + 1, destinationOptions.length - 1),
+        );
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        setCursor((current) => Math.max(current - 1, 0));
+      } else if (event.key === 'Enter') {
+        event.preventDefault();
+        const option = destinationOptions[cursor] ?? destinationOptions[0]!;
+        setDestination(option.id);
+        setCursor(0);
+      }
+      return;
+    }
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       setCursor((current) => Math.min(current + 1, filtered.length - 1));
@@ -1078,6 +1227,53 @@ export function PanePicker({
                   }}
                 />
               </div>
+            </>
+          ) : destinationPending && destinationOptions ? (
+            <>
+              <div className="pane-picker__head">
+                <PixelIcon name="search" size={12} />
+                <span className="pane-picker__head-title">Onde abrir o pane</span>
+                <kbd className="pane-picker__esc">esc</kbd>
+              </div>
+              <ul
+                className="pane-picker__list"
+                id="pane-picker-list"
+                role="listbox"
+                aria-label="Destino do pane"
+                ref={listRef}
+              >
+                {destinationOptions.map((option, index) => (
+                  <li key={option.id} role="presentation">
+                    {index === 0 && (
+                      <div className="pane-picker__section" aria-hidden="true">
+                        Destino
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      role="option"
+                      id={`pane-picker-opt-${index}`}
+                      aria-selected={index === cursor}
+                      data-active={index === cursor}
+                      data-testid={`pane-picker-destination-${option.id}`}
+                      className="pane-picker__item"
+                      onMouseEnter={() => setCursor(index)}
+                      onClick={() => {
+                        setDestination(option.id);
+                        setCursor(0);
+                      }}
+                    >
+                      <PixelIcon name={option.icon} size={12} />
+                      <span className="pane-picker__item-label">
+                        {option.label}
+                      </span>
+                      <span className="pane-picker__item-detail">
+                        {option.detail}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
             </>
           ) : (
             <>

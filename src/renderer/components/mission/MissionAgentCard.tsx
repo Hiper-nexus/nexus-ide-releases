@@ -66,6 +66,7 @@ export function MissionAgentCard({
   const currentUnitTitle = currentUnit?.title;
   const accessibleText = [
     agent.agentName,
+    agent.operatorOpened === true ? 'Aberto por você' : null,
     `Papel: ${categoryLabel}`,
     `Estado: ${stateLabel}`,
     currentUnitId
@@ -115,6 +116,12 @@ export function MissionAgentCard({
       <strong className="mission-agent-card__name" title={agent.agentName}>
         {agent.agentName}
       </strong>
+
+      {agent.operatorOpened === true && (
+        <span className="mission-agent-card__operator-opened">
+          aberto por você
+        </span>
+      )}
 
       {currentUnitId && (
         <span className="mission-agent-card__unit">

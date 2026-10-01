@@ -119,6 +119,8 @@ const snapshotPaneViewSchema = z
     state: missionAgentStateSchema,
     currentUnitId: missionAgentSchema.shape.currentUnitId,
     detail: missionAgentSchema.shape.detail,
+    /** F-231: worker aberto pelo operador — o quadro o rotula "aberto por você". */
+    operatorOpened: z.boolean().optional(),
   })
   .strict();
 
@@ -602,6 +604,7 @@ export function projectMissionSnapshot(
           : {}),
         ...(pane ? { paneId: pane.paneId } : {}),
         ...(pane?.detail ? { detail: pane.detail } : {}),
+        ...(pane?.operatorOpened === true ? { operatorOpened: true } : {}),
       };
     }),
     edges: view.handoffs.map(({ settled: _settled, ...edge }) => edge),

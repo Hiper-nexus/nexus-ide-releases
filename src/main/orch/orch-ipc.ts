@@ -2225,6 +2225,41 @@ export function registerOrchIpc(): void {
     return result;
   });
 
+  // F-231: "+ Pane" na aba da missão → "Nesta missão". O worker nasce pelo
+  // caminho Main-owned com `operatorOpened`; escopo/missão/roster/adapter são
+  // revalidados no Main — nenhum campo do renderer vira autoridade.
+  const missionSpawnOperatorPaneSchema = z
+    .object({
+      missionId: z.string().min(1).max(128),
+      adapterId: z.string().min(1).max(64),
+      model: z.string().min(1).max(128).optional(),
+      prompt: z.string().max(8_192).optional(),
+      tabKey: z.string().min(1).max(256).optional(),
+    })
+    .strict();
+  ipcMain.handle(ORCH_CHANNELS.missionSpawnOperatorPane, async (event, raw) => {
+    try { assertLicenseAccess(); } catch (error) {
+      const failure = licenseFailure(error);
+      if (failure) return failure;
+      throw error;
+    }
+    const parsed = missionSpawnOperatorPaneSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: "invalid_payload" };
+    if (!isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)) {
+      return { ok: false, error: "hardened" };
+    }
+    const result =
+      await requireMissionAuthority().spawnOperatorPaneFromRenderer(
+        event.sender,
+        parsed.data,
+      );
+    if (result.ok) {
+      const scope = requireRendererWorkspaceScope(event.sender);
+      broadcastProjectStore(scope, "missions");
+    }
+    return result;
+  });
+
   const missionUpdateSchema = z.object({
     missionId: z.string().min(1).max(128),
     patch: missionPatchSchema,

@@ -145,6 +145,8 @@ function workerIsClosable(
   const authority = deps.getAuthority(sessionId);
   if (!authority) return null;
   if (authority.role !== 'worker') return null;
+  // F-231: pane aberto pelo operador nunca expira — a mão é dele.
+  if (authority.operatorOpened === true) return null;
   if (!authority.missionId || !authority.scope) return null;
   if (authority.sessionId !== sessionId) return null;
   // Missão fora de 'running' pertence à máquina de encerramento da missão.

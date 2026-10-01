@@ -476,6 +476,14 @@ export interface PaneModel {
    */
   missionHost?: true;
   /**
+   * F-231: casa persistida de um pane SOLTO aberto pelo "+ Pane" dentro de uma
+   * aba de missão ("Nesta aba (solto)"). Não é participação na missão — é só o
+   * agrupamento da aba, então o pane não é puxado para "Terminais" e volta à
+   * mesma aba depois do restart. O `paneScopeKey` só honra a marca enquanto o
+   * escopo apontado existe (missão encerrada devolve o pane aos soltos).
+   */
+  homeScopeKey?: string;
+  /**
    * Origem da rota de um pane aberto por agente do operador (chip "Jev" /
    * "sem Jev"). Informação do nascimento: fica FORA do paneModelSchema de
    * propósito, então não persiste nem volta no restart.

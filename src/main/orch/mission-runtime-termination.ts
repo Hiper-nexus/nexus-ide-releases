@@ -34,16 +34,19 @@ import {
   getSessionState,
   listAgentSessions,
   orchTerminateSession,
+  releaseOperatorOpenedAgentSession,
 } from '../pty/pty-manager';
 import {
   getAcpDriverSession,
   listAcpDriverAgentSessions,
 } from '../acp/acp-harness-driver';
 import {
+  detachOperatorOpenedPaneMission,
   getPaneRuntimeAuthorityBySession,
   listPaneSnapshots,
   requestMissionPaneClose,
 } from './pane-registry';
+import { returnOperatorOpenedSessionToUser } from './gate';
 import type { ProjectDomainStoreSuite } from './project-domain-store-registry';
 import { withMissionLifecycleLock } from './mission-lifecycle-lock';
 import { sameProjectScope } from './project-scoped-broadcast';
@@ -81,6 +84,40 @@ export interface MissionRuntimeDemotionResult {
 const TERMINATION_PENDING_MARKER =
   '<!-- nexus:mission-runtime-termination-pending -->';
 const TERMINATION_PENDING_CTA = 'Retomar missão';
+
+/**
+ * F-231: o pane aberto pelo operador dentro da missão (`operatorOpened`) é
+ * participante visível ao Maestro, mas a máquina da missão nunca o encerra —
+ * no teardown ele volta à mão do operador em vez de morrer. Três espelhos
+ * podem carregar a marca (linha persistida, autoridade do pane, ficha do PTY);
+ * qualquer um basta — a marca é Main-authored em todos.
+ */
+function targetIsOperatorOpened(target: RuntimeTarget): boolean {
+  if (target.spec?.operatorOpened === true) return true;
+  if (getPaneRuntimeAuthorityBySession(target.sessionId)?.operatorOpened === true) {
+    return true;
+  }
+  return (
+    listAgentSessions().find(
+      (session) => session.sessionId === target.sessionId,
+    )?.operatorOpened === true
+  );
+}
+
+/**
+ * Devolução à mão do operador (mesmo efeito de `returnOperatorHandFromEndedMission`
+ * para o líder adotado): a ficha do PTY e o contexto do gate voltam a `user`
+ * irrestrito e o meta do pane perde o vínculo com a missão, então as próximas
+ * passadas de inventário e a varredura de órfãos não o selecionam mais.
+ */
+function releaseOperatorOpenedTarget(
+  missionId: string,
+  target: RuntimeTarget,
+): void {
+  returnOperatorOpenedSessionToUser(target.sessionId, missionId);
+  releaseOperatorOpenedAgentSession(target.sessionId, missionId);
+  detachOperatorOpenedPaneMission(target.paneId, missionId);
+}
 
 interface RuntimeTarget {
   readonly paneId: string;
@@ -462,6 +499,12 @@ export async function closeOrphanedMissionRuntime(input: {
       );
       if (pending.length === 0) break;
       for (const target of pending) {
+        if (targetIsOperatorOpened(target)) {
+          // F-231: o pane é do operador — devolve a mão, não mata.
+          releaseOperatorOpenedTarget(input.missionId, target);
+          terminated.add(target.sessionId);
+          continue;
+        }
         emitFinalPaneScreen(input.scope, input.missionId, target);
         if (!(await terminatePhysicalSession(target.sessionId))) {
           return {
@@ -621,6 +664,13 @@ export async function terminateMissionRuntime(input: {
     );
     if (pending.length === 0) break;
     for (const target of pending) {
+      if (targetIsOperatorOpened(target)) {
+        // F-231: sobrevive ao fim da missão — volta à mão do operador e o
+        // pane NÃO entra no conjunto de colapso nem na lista de tela final.
+        releaseOperatorOpenedTarget(mission.id, target);
+        terminated.add(target.sessionId);
+        continue;
+      }
       panesToCollapse.add(target.paneId);
       emitFinalPaneScreen(input.scope, mission.id, target);
       const exited = await terminatePhysicalSession(target.sessionId);

@@ -1260,6 +1260,16 @@
   line-height: 1.35;
 }
 
+.mission-agent-card__operator-opened {
+  align-self: start;
+  padding: 1px var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: var(--text-2xs);
+  line-height: 1.4;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mission-graph__surface::after,
   .mission-board__inspector-rail::before {

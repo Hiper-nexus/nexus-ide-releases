@@ -48,6 +48,11 @@ export interface PaneAuthzInfo {
   role?: 'orchestrator' | 'worker';
   /** Exact physical worker generation; absent for orchestrators. */
   workerIncarnationId?: string;
+  /**
+   * F-231: worker de missão aberto pelo operador — mortalidade, TTL,
+   * teardown e `nexus_pane_close` do Maestro não o fecham.
+   */
+  operatorOpened?: boolean;
   scope?: ProjectExecutionScope;
   /** Narrower worktree authority used by mission workers, when present. */
   executionScope?: ProjectExecutionScope;
@@ -144,6 +149,16 @@ export function authorizePaneAccess(
   if (caller.role === 'user') return { allow: true };
   if (caller.role === 'orchestrator' && caller.promotedFromUserSession === true) {
     return { allow: true };
+  }
+
+  // F-231: pane aberto pelo operador dentro da missão é lido/escrito pelo
+  // Maestro, mas só a mão do operador o fecha. O caller `user` (a própria
+  // mão) já passou acima; qualquer participante de missão é recusado aqui.
+  if (pane.operatorOpened === true && action === 'close') {
+    return {
+      allow: false,
+      reason: 'pane aberto pelo operador: só ele fecha',
+    };
   }
 
   // A worker must never reach the user's shell/browser — read (secret capture)

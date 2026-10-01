@@ -840,6 +840,29 @@ export function returnOperatorHandFromEndedMission(
   return true;
 }
 
+/**
+ * F-231: o pane que o operador abriu dentro da missão volta à mão dele no
+ * fim — a máquina da missão nunca o fecha. Mesmo efeito da devolução do
+ * líder adotado, mas para o worker `operatorOpened`: allowlist aberta de
+ * volta ao que o operador tinha (null = irrestrito, como todo pane dele).
+ */
+export function returnOperatorOpenedSessionToUser(
+  sessionId: string,
+  missionId: string,
+): boolean {
+  const ctx = contextBySession.get(sessionId);
+  if (!ctx || ctx.missionId !== missionId) return false;
+  delete ctx.missionId;
+  delete ctx.contextRevision;
+  delete ctx.workerIncarnationId;
+  delete ctx.promotedFromUserSession;
+  ctx.role = "user";
+  ctx.allowedTools = null;
+  ctx.allowedSkills = null;
+  ctx.handoffSubmitted = false;
+  return true;
+}
+
 /** Toda sessão presa à missão que sumiu, devolvida de uma vez. */
 export function rollbackMissionSessionAuthorities(missionId: string): number {
   const target = missionId.trim();

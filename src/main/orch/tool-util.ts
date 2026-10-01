@@ -1289,6 +1289,11 @@ export interface SpawnToolOptions {
    */
   freeAgentChoice?: boolean;
   prompt?: string;
+  /**
+   * F-231: worker de missão aberto pelo operador — participa do Quadro e do
+   * ledger, mas mortalidade/TTL/teardown não o fecham; no fim volta a `user`.
+   */
+  operatorOpened?: boolean;
   /** Main-only original task, before execution-authority boilerplate is prepended. */
   memoryQuery?: string;
   scope: AgentGateContext['scope'];
@@ -1728,6 +1733,7 @@ export async function spawnPaneAndMaybePrompt(
         missionId: options.missionId,
         title: options.agentName ?? options.title,
         authoritySeal,
+        operatorOpened: options.operatorOpened === true || undefined,
       },
     );
   }
@@ -1847,6 +1853,7 @@ export async function spawnPaneAndMaybePrompt(
       allowedSkills: options.allowedSkills,
       readOnly: options.readOnly,
       authoritySeal,
+      operatorOpened: options.operatorOpened === true || undefined,
       // Chave do resume direcionado: o reopen reusa este paneId para o CLI
       // voltar à MESMA conversa (não à mais recente do cwd).
       paneId: result.paneId,
@@ -1926,10 +1933,14 @@ export async function spawnPaneAndMaybePrompt(
         adapterId: adapter.id,
         error,
       });
-      try {
-        await requestPaneClose(result.paneId);
-      } catch {
-        // best effort — the original error matters more
+      // F-231: pane do operador nunca é fechado pela máquina — fica vivo e
+      // mudo para o operador digitar; o erro ainda propaga como aviso.
+      if (options.operatorOpened !== true) {
+        try {
+          await requestPaneClose(result.paneId);
+        } catch {
+          // best effort — the original error matters more
+        }
       }
       throw error;
     }
@@ -1987,6 +1998,11 @@ export async function deliverPromptAfterPendingSpawn(
     readonly title?: string;
     /** Selo com que o pane foi aberto: revalidado antes de colar. */
     readonly authoritySeal?: MissionPaneAuthoritySeal;
+    /**
+     * F-231: pane do operador nunca é fechado pela máquina da missão — numa
+     * falha de entrega do brief ele fica vivo e mudo, para o operador digitar.
+     */
+    readonly operatorOpened?: boolean;
   },
 ): Promise<boolean> {
   const { paneId } = attempt;
@@ -2043,11 +2059,16 @@ export async function deliverPromptAfterPendingSpawn(
       error,
     });
     // Só fecha se o pane ainda roda a sessão desta tentativa: um substituto
-    // (resume) no mesmo paneId não é nosso.
+    // (resume) no mesmo paneId não é nosso. Pane `operatorOpened` (F-231)
+    // nunca é fechado pela máquina — a mão do operador decide o destino.
     const bound = pendingSpawnAttemptSession(attempt.requestId);
     const attemptSessionId =
       sessionId ?? (bound.state === 'bound' ? bound.sessionId : null);
-    if (attemptSessionId && getPaneAuthzInfo(paneId)?.sessionId === attemptSessionId) {
+    if (
+      notice.operatorOpened !== true &&
+      attemptSessionId &&
+      getPaneAuthzInfo(paneId)?.sessionId === attemptSessionId
+    ) {
       try {
         await requestPaneClose(paneId);
       } catch {

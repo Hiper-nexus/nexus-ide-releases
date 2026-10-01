@@ -66,6 +66,58 @@ vi.mock("./isolated-writer-worktree", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./isolated-writer-worktree")>()),
   allocateIsolatedWriterWorktree: physical.allocateIsolatedWriterWorktree,
 }));
+// F-231: o caminho Main-owned é o dos workers do Maestro — aqui só a borda
+// é substituída (o físico já é falso); validação/autoridade/roster/record
+// continuam reais.
+const operatorSpawn = vi.hoisted(() => ({
+  calls: [] as Array<Record<string, unknown>>,
+}));
+vi.mock("./pane-registry", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("./pane-registry")>();
+  return {
+    ...actual,
+    spawnMainOwnedMissionPaneAsync: vi.fn(
+      async (options: Record<string, unknown>) => {
+        operatorSpawn.calls.push(options);
+        return {
+          requestId: `req-op-${operatorSpawn.calls.length}`,
+          ok: true,
+          paneId: `pane-op-${operatorSpawn.calls.length}`,
+          sessionId: `pty-op-${operatorSpawn.calls.length}`,
+        };
+      },
+    ),
+  };
+});
+// F-231: o registry só é povoado por initAdapterRegistry (boot); nos testes
+// servimos direto o cli-pty de teste e um api-provider para a recusa "só API".
+const testAdapter = vi.hoisted(() => ({
+  cli: null as unknown,
+}));
+vi.mock("../adapters/adapter-registry", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../adapters/adapter-registry")>();
+  return {
+    ...actual,
+    getAdapter: (id: string) => {
+      if (id === "test-cli") {
+        return testAdapter.cli as ReturnType<typeof actual.getAdapter>;
+      }
+      if (id === "api-only-x") {
+        return {
+          kind: "api-provider",
+          id: "api-only-x",
+          label: "API Only",
+          auth: { method: "api_key" },
+        } as unknown as ReturnType<typeof actual.getAdapter>;
+      }
+      return actual.getAdapter(id);
+    },
+    isAdapterInstalled: (id: string) =>
+      id === "test-cli" || actual.isAdapterInstalled(id),
+  };
+});
 vi.mock("../feature-flags/feature-flag-registry", () => ({
   getFeatureFlagRegistry: () => ({ isEnabled: () => false }),
 }));
@@ -196,6 +248,7 @@ function register(entries: Array<{ paneId: string; sessionId: string }>): void {
 
 beforeEach(() => {
   resetGateForTests();
+  testAdapter.cli = adapter();
   setSquadCliPolicyLookupForTests(() => "operator-choice");
   setPtyHost(fakeHost());
   dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nexus-adoption-")));
@@ -216,6 +269,7 @@ beforeEach(() => {
 afterEach(async () => {
   setOperatorTabMissionProvider(null);
   physical.spawned.length = 0;
+  operatorSpawn.calls.length = 0;
   vi.restoreAllMocks();
   for (const sessionId of sessions.splice(0)) await orchTerminateSession(sessionId);
   syncPanes([], owner);
@@ -851,5 +905,103 @@ describe("missionId órfão do layout — a autoridade selada do Main vence (F: 
         manager,
       ),
     ).toThrow(/no longer registered/i);
+  });
+});
+
+describe("F-231 — '+ Pane' dentro da missão (spawnOperatorPaneFromRenderer)", () => {
+  function liveMission(): string {
+    const sessionId = operatorPane("pane-host");
+    register([{ paneId: "pane-host", sessionId }]);
+    const created = authority().createPaneMissionFromRenderer(owner, {
+      paneId: "pane-host",
+      title: "Missão · Operador",
+    });
+    expect(created).toMatchObject({ ok: true });
+    return created.mission!.id;
+  }
+
+  it("spawna worker do operador na missão viva: Main-owned, selado, operatorOpened", async () => {
+    const missionId = liveMission();
+
+    const result = await authority().spawnOperatorPaneFromRenderer(owner, {
+      missionId,
+      adapterId: "test-cli",
+      model: "default",
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      paneId: "pane-op-1",
+      sessionId: "pty-op-1",
+    });
+    const options = operatorSpawn.calls[0]!;
+    expect(options).toMatchObject({
+      missionId,
+      adapterId: "test-cli",
+      role: "worker",
+      operatorOpened: true,
+      cwd: expect.any(String),
+    });
+    expect(options.authoritySeal).toBeTruthy();
+    // A linha durável da composição carrega a marca (Quadro/list/authz).
+    const specs = requireProjectDomainStoreRegistry()
+      .forScope(scope)
+      .missionPanes.list(missionId);
+    const spec = specs.find((entry) => entry.paneId === "pane-op-1");
+    expect(spec).toMatchObject({
+      role: "worker",
+      operatorOpened: true,
+      adapterId: "test-cli",
+    });
+  });
+
+  it("recusa adapter fora do roster selado da missão", async () => {
+    const suite = requireProjectDomainStoreRegistry().forScope(scope);
+    const mission = suite.missions.create({
+      title: "Selada",
+      squadId: "nexus-pet-studio",
+    });
+    // test-cli instalado, mas fora do roster pet-studio (só codex).
+
+    const result = await authority().spawnOperatorPaneFromRenderer(owner, {
+      missionId: mission.id,
+      adapterId: "test-cli",
+    });
+
+    expect(result).toEqual({ ok: false, error: "roster_rejected" });
+    expect(operatorSpawn.calls).toHaveLength(0);
+  });
+
+  it("recusa missão que não está em execução", async () => {
+    const missionId = liveMission();
+    const suite = requireProjectDomainStoreRegistry().forScope(scope);
+    suite.missions.block(missionId, "technical");
+
+    const result = await authority().spawnOperatorPaneFromRenderer(owner, {
+      missionId,
+      adapterId: "test-cli",
+    });
+
+    expect(result).toEqual({ ok: false, error: "mission_not_running" });
+    expect(operatorSpawn.calls).toHaveLength(0);
+  });
+
+  it("recusa adapter inexistente e adapter api-provider (não abre pane)", async () => {
+    const missionId = liveMission();
+
+    await expect(
+      authority().spawnOperatorPaneFromRenderer(owner, {
+        missionId,
+        adapterId: "nao-existe-x",
+      }),
+    ).resolves.toEqual({ ok: false, error: "adapter_not_installed" });
+
+    await expect(
+      authority().spawnOperatorPaneFromRenderer(owner, {
+        missionId,
+        adapterId: "api-only-x",
+      }),
+    ).resolves.toEqual({ ok: false, error: "adapter_not_spawnable" });
+    expect(operatorSpawn.calls).toHaveLength(0);
   });
 });

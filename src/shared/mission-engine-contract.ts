@@ -191,6 +191,11 @@ export const missionAgentSchema = squadAgentObjectSchema
     currentUnitId: idSchema.optional(),
     paneId: idSchema.optional(),
     detail: detailSchema.optional(),
+    /**
+     * F-231: worker aberto pelo operador dentro da missão ("+ Pane" na aba).
+     * Participa do quadro e do ledger, mas só o operador o fecha.
+     */
+    operatorOpened: z.boolean().optional(),
   })
   .strict();
 export type MissionAgentSnapshot = z.infer<typeof missionAgentSchema>;

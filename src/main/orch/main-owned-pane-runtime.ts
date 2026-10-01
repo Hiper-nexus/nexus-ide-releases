@@ -89,6 +89,12 @@ export interface PaneOrchMeta {
   isolatedWriter?: boolean;
   /** Exact approved revision seal retained with the physical process. */
   authoritySeal?: MissionPaneAuthoritySeal;
+  /**
+   * F-231: pane aberto pelo operador DENTRO da missão ("+ Pane" na aba).
+   * Participa como worker mas nunca é morto pela missão (TTL, teardown,
+   * mortalidade) — no fim volta a ser a mão do operador.
+   */
+  operatorOpened?: boolean;
 }
 
 export interface PaneSpawnOptions {
@@ -143,6 +149,11 @@ export interface PaneSpawnOptions {
   isolatedWriter?: boolean;
   /** Exact approved revision seal retained by the physical PTY. */
   authoritySeal?: MissionPaneAuthoritySeal;
+  /**
+   * F-231: worker de missão aberto pela mão do operador — excluído de
+   * mortalidade, TTL e teardown; no fim da missão volta a `user`.
+   */
+  operatorOpened?: boolean;
   /**
    * Resume a CLOSED worker with its context intact. Triggers
    * --resume <sessionId> (or equivalent) via pty-manager resume logic.
@@ -224,6 +235,7 @@ function authzInfoOf(pane: MainOwnedPane): PaneAuthzInfo {
     role: pane.meta.role,
     workerIncarnationId: pane.meta.workerIncarnationId,
     operatorParentSessionId: pane.meta.operatorParentSessionId,
+    operatorOpened: pane.meta.operatorOpened === true || undefined,
     scope: pane.meta.scope,
     executionScope: pane.meta.executionScope,
   };
@@ -311,6 +323,7 @@ export async function fallbackPendingSpawnToMain(
       executionScope: pending.meta.executionScope,
       readOnly: pending.meta.readOnly,
       nativeReadOnly: pending.meta.nativeReadOnly,
+      operatorOpened: pending.meta.operatorOpened === true || undefined,
       authoritySeal: pending.meta.authoritySeal,
     },
     hooks,
@@ -695,6 +708,7 @@ export function spawnMainOwnedMissionPane(
     executionScope,
     readOnly: options.readOnly === true,
     nativeReadOnly,
+    operatorOpened: options.operatorOpened === true || undefined,
     authoritySeal: options.authoritySeal,
   });
   const spawnContext = Object.freeze({

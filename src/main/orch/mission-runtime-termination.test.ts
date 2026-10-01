@@ -58,6 +58,28 @@ vi.mock('../pty/pty-manager', () => ({
     }
     return result;
   },
+  // F-231: o pane do operador volta à mão dele — a ficha perde o vínculo
+  // com a missão em vez de morrer (espelho da implementação real).
+  releaseOperatorOpenedAgentSession: (sessionId: string, missionId: string) => {
+    const entry = runtime.pty.find(
+      (candidate) => candidate.sessionId === sessionId,
+    );
+    if (!entry || entry.missionId !== missionId) return false;
+    runtime.order.push(`release:${sessionId}`);
+    const { missionId: _m, workerIncarnationId: _w, operatorOpened: _o, authoritySeal: _s, ...rest } =
+      entry;
+    runtime.pty = runtime.pty.map((candidate) =>
+      candidate.sessionId === sessionId
+        ? { ...rest, role: 'user', allowedTools: null, allowedSkills: null }
+        : candidate,
+    );
+    return true;
+  },
+}));
+
+vi.mock('./gate', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./gate')>()),
+  returnOperatorOpenedSessionToUser: () => true,
 }));
 
 vi.mock('./pane-registry', () => ({
@@ -65,6 +87,9 @@ vi.mock('./pane-registry', () => ({
     runtime.pty.find((entry) => entry.sessionId === sessionId) ?? null,
   listPaneSnapshots: () => [...runtime.snapshots],
   requestMissionPaneClose: runtime.closeMissionPane,
+  detachOperatorOpenedPaneMission: (paneId: string, _missionId: string) => {
+    runtime.order.push(`detach:${paneId}`);
+  },
 }));
 
 import {
@@ -378,6 +403,58 @@ describe('mission runtime physical inventory termination', () => {
     ).resolves.toMatchObject({ ok: true });
     expect(runtime.terminatePty).toHaveBeenCalledWith('pty-broken');
     expect(runtime.emittedEvents).toHaveLength(0);
+  });
+
+  it('F-231: pane aberto pelo operador é devolvido à mão dele, nunca encerrado', async () => {
+    runtime.pty = [
+      { ...physical('pty-op', 'pane-op', 'inc-op'), operatorOpened: true },
+      physical('pty-worker', 'pane-worker', 'inc-worker'),
+    ];
+    runtime.snapshots = [
+      {
+        paneId: 'pane-op',
+        sessionId: 'pty-op',
+        missionId: mission.id,
+        role: 'worker',
+        scope,
+      },
+    ];
+
+    await expect(
+      terminateMissionRuntime({
+        scope,
+        suite: suite([
+          { ...pane('pane-op', 'inc-op'), operatorOpened: true },
+          pane('pane-worker', 'inc-worker'),
+        ]),
+        missionId: mission.id,
+        reason: 'authority-revoked',
+        collapsePanes: true,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      terminatedSessionIds: expect.arrayContaining(['pty-op', 'pty-worker']),
+    });
+
+    // O worker do Maestro morre; o do operador é RELEASE, nunca terminate,
+    // e não gera evento de tela final nem entra no colapso de panes.
+    expect(runtime.order).toContain('release:pty-op');
+    expect(runtime.order).toContain('detach:pane-op');
+    expect(runtime.order).toContain('terminate:pty-worker');
+    expect(runtime.order).not.toContain('terminate:pty-op');
+    expect(runtime.terminatePty).not.toHaveBeenCalledWith('pty-op');
+    expect(
+      runtime.emittedEvents.some(
+        (entry) => entry.idempotencyKey === 'pane_final_screen:pty-op',
+      ),
+    ).toBe(false);
+    // A ficha perdeu o vínculo com a missão (volta a user irrestrito).
+    const released = runtime.pty.find(
+      (entry) => entry.sessionId === 'pty-op',
+    );
+    expect(released).toMatchObject({ role: 'user' });
+    expect(released?.missionId).toBeUndefined();
+    expect(released?.operatorOpened).toBeUndefined();
   });
 
   it('sessão sem buffer de saída não gera evento de última tela (F-244)', async () => {

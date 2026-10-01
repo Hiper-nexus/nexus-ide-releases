@@ -43,6 +43,8 @@ export const ORCH_CHANNELS = {
   missionPromoteOrchestrator: 'orch:mission.promoteOrchestrator',
   /** "Tornar orquestrador" num pane solto: missão leve da aba, liderada por ele. */
   missionCreateForPane: 'orch:mission.createForPane',
+  /** F-231: "+ Pane" → "Nesta missão" — worker aberto pela mão do operador. */
+  missionSpawnOperatorPane: 'orch:mission.spawnOperatorPane',
   missionUpdate: 'orch:missions.update',
   /** Native-confirmed physical shutdown that preserves the durable mission. */
   missionCloseRuntime: 'orch:missions.closeRuntime',

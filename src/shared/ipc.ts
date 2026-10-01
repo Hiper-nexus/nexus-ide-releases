@@ -118,6 +118,8 @@ const paneModelSchema = z.object({
   spaceTitle: z.string().min(1).max(256).optional(),
   /** Mesma razão: sem a entrada, a missão hospedada voltaria à aba própria no restart. */
   missionHost: z.literal(true).optional(),
+  /** F-231: casa persistida do pane solto aberto dentro de uma aba de missão. */
+  homeScopeKey: z.string().min(1).max(256).optional(),
   transient: z.literal(true).optional(),
   terminalScrollback: z.string().max(256_000).optional(),
   /**

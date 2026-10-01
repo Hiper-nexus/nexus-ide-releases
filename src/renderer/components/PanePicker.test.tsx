@@ -1041,3 +1041,170 @@ it('refuses every picker intent while access is unavailable', () => {
   expect(runPanePickerIntent({ kind: 'browser' })).toBeUndefined();
   expect(runPanePickerIntent({ kind: 'agent', adapterId: 'codex', model: '' })).toBeUndefined();
 });
+
+describe('F-231 — "+ Pane" numa aba com missão viva escolhe o destino', () => {
+  const spawnOperatorPane = vi.fn(
+    async (): Promise<
+      | { ok: true; paneId: string; sessionId: string }
+      | { ok: false; error: string }
+    > => ({ ok: true, paneId: 'pane-op', sessionId: 'pty-op' }),
+  );
+  const missionDestination = { missionId: 'mission-1', title: 'Missão X' };
+
+  function mountMissionPicker(extra: Record<string, unknown> = {}): {
+    onPaneCreated: ReturnType<typeof vi.fn>;
+    onPaneCreatedLoose: ReturnType<typeof vi.fn>;
+    onPaneCreatedInNewTab: ReturnType<typeof vi.fn>;
+  } {
+    const onPaneCreated = vi.fn();
+    const onPaneCreatedLoose = vi.fn();
+    const onPaneCreatedInNewTab = vi.fn();
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    act(() =>
+      root.render(
+        <PanePicker
+          missionDestination={missionDestination}
+          onPaneCreated={onPaneCreated}
+          onPaneCreatedLoose={onPaneCreatedLoose}
+          onPaneCreatedInNewTab={onPaneCreatedInNewTab}
+          {...extra}
+        />,
+      ),
+    );
+    return { onPaneCreated, onPaneCreatedLoose, onPaneCreatedInNewTab };
+  }
+
+  function pickDestination(id: 'mission' | 'loose' | 'newTab'): void {
+    const button = host.querySelector<HTMLButtonElement>(
+      `[data-testid="pane-picker-destination-${id}"]`,
+    );
+    if (!button) throw new Error(`no destination ${id}`);
+    act(() => button.click());
+  }
+
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    spawnOperatorPane.mockClear();
+    (
+      window as unknown as { nexus: { orch: { spawnOperatorPane: unknown } } }
+    ).nexus = { orch: { spawnOperatorPane } };
+    useProviderStore.setState({
+      providers: [
+        provider('claude', 'Claude'),
+        provider('codex', 'Codex'),
+      ],
+    } as never);
+    useAccountStore.setState({ accounts: [] } as never);
+    useOrchStore.setState({ missions: [], paneMissions: {} });
+    useSessionStateStore.setState({ paneStates: new Map() });
+    useLayoutStore.setState({
+      spawnAgent,
+      addShellPane,
+      addBrowserPane,
+    } as never);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    document.body.replaceChildren();
+    (window as { nexus?: unknown }).nexus = undefined;
+    vi.clearAllMocks();
+  });
+
+  it('mostra o passo de destino antes das CLIs, com "Nesta missão" primeiro', () => {
+    mountMissionPicker();
+    openMenu();
+
+    const labels = optionLabels();
+    expect(labels[0]).toContain('Nesta missão');
+    expect(labels[0]).toContain('Missão X');
+    expect(labels.some((label) => label.includes('Nesta aba (solto)'))).toBe(true);
+    expect(labels.some((label) => label.includes('Nova aba'))).toBe(true);
+    // A lista de CLIs ainda não apareceu.
+    expect(labels.some((label) => label.includes('Claude'))).toBe(false);
+    expect(
+      host.querySelector('[data-testid="pane-picker-destination-mission"]'),
+    ).not.toBeNull();
+  });
+
+  it('"Nesta missão" spawna via Main (worker operatorOpened), não via layout', async () => {
+    const { onPaneCreated } = mountMissionPicker();
+    openMenu();
+    pickDestination('mission');
+
+    // Passo seguinte: a lista de CLIs normal aparece.
+    drillInto('codex');
+    clickEntry('agent:codex:default:codex-alt');
+
+    expect(spawnAgent).not.toHaveBeenCalled();
+    await act(async () => {});
+    expect(spawnOperatorPane).toHaveBeenCalledWith({
+      missionId: 'mission-1',
+      adapterId: 'codex',
+      model: 'codex-alt',
+    });
+    expect(onPaneCreated).toHaveBeenCalledWith('pane-op');
+  });
+
+  it('"Nesta aba (solto)" usa o caminho normal e avisa o callback solto', () => {
+    spawnAgent.mockReturnValueOnce('pane-loose');
+    const { onPaneCreatedLoose, onPaneCreatedInNewTab } = mountMissionPicker();
+    openMenu();
+    pickDestination('loose');
+    drillInto('codex');
+    clickEntry('agent:codex:default:codex-alt');
+
+    expect(spawnAgent).toHaveBeenCalledWith('codex', 'codex-alt');
+    expect(onPaneCreatedLoose).toHaveBeenCalledWith('pane-loose');
+    expect(onPaneCreatedInNewTab).not.toHaveBeenCalled();
+  });
+
+  it('"Nova aba" cria pelo caminho normal e avisa o callback de aba nova', () => {
+    spawnAgent.mockReturnValueOnce('pane-new');
+    const { onPaneCreatedInNewTab, onPaneCreatedLoose } = mountMissionPicker();
+    openMenu();
+    pickDestination('newTab');
+    drillInto('codex');
+    clickEntry('agent:codex:default:codex-alt');
+
+    expect(onPaneCreatedInNewTab).toHaveBeenCalledWith('pane-new');
+    expect(onPaneCreatedLoose).not.toHaveBeenCalled();
+  });
+
+  it('shell no destino "missão" nunca vira participante — cai solto na aba', () => {
+    addShellPane.mockReturnValueOnce('pane-sh');
+    const { onPaneCreatedLoose } = mountMissionPicker();
+    openMenu();
+    pickDestination('mission');
+    clickEntry('type:terminal');
+
+    expect(addShellPane).toHaveBeenCalled();
+    expect(spawnOperatorPane).not.toHaveBeenCalled();
+    expect(onPaneCreatedLoose).toHaveBeenCalledWith('pane-sh');
+  });
+
+  it('recusa do Main (roster selado) vira toast legível, não pane morto', async () => {
+    const { useToastStore } = await import('../state/toast-store');
+    spawnOperatorPane.mockResolvedValueOnce({
+      ok: false as const,
+      error: 'roster_rejected',
+    });
+    const { onPaneCreated } = mountMissionPicker();
+    openMenu();
+    pickDestination('mission');
+    drillInto('codex');
+    clickEntry('agent:codex:default:codex-alt');
+
+    await act(async () => {});
+    expect(onPaneCreated).not.toHaveBeenCalled();
+    const toast = useToastStore.getState().toasts.at(-1);
+    expect(toast?.title).toContain('missão');
+    expect(toast?.detail).toContain('equipe selada');
+    useToastStore.getState().dismiss(toast!.id);
+  });
+});

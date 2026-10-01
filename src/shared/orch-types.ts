@@ -642,6 +642,12 @@ export interface MissionPaneSpec {
    * retoma a conversa MAIS RECENTE do cwd — a da outra missão).
    */
   paneId?: string;
+  /**
+   * F-231: pane aberto pelo operador DENTRO da missão ("+ Pane" na aba da
+   * missão). Participa como worker (Quadro, nexus_pane_list, handoff) mas
+   * nunca é fechado pela máquina da missão — no fim volta à mão do operador.
+   */
+  operatorOpened?: boolean;
   createdAt: number;
   /**
    * Activity summary attached on read (orch:missions.panes) — never persisted;
@@ -747,6 +753,8 @@ export interface PaneSnapshot extends PaneRegistryEntry {
   readOnly?: boolean;
   /** Provider-native filesystem/process confinement, when enforceable. */
   nativeReadOnly?: boolean;
+  /** F-231: worker de missão aberto pelo operador ("+ Pane" na aba da missão). */
+  operatorOpened?: boolean;
   /** 0.76.45: quando estacionado, o instante (ms) e a sessão encerrada que o resume reabre. */
   parkedAt?: number;
   parkedSessionId?: string;

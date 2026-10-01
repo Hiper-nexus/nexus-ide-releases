@@ -154,10 +154,19 @@ export function paneScopeKey(
   paneMissions: Readonly<Record<string, string>>,
   looseHome: string | null = null,
   missionHomes: ReadonlyMap<string, string> | null = null,
+  liveScopeKeys: ReadonlySet<string> | null = null,
 ): string {
   const missionId = pane.missionId ?? paneMissions[pane.id];
   if (missionId) return missionHomes?.get(missionId) ?? missionScopeKey(missionId);
   if (pane.spaceId) return spaceScopeKey(pane.spaceId);
+  // F-231: o pane solto da aba de missão fica na aba — a marca só vale com o
+  // escopo vivo; sem o conjunto (chamadas soltas) confia na marca gravada.
+  if (
+    pane.homeScopeKey &&
+    (liveScopeKeys === null || liveScopeKeys.has(pane.homeScopeKey))
+  ) {
+    return pane.homeScopeKey;
+  }
   return looseHome ?? LOOSE_SCOPE_KEY;
 }
 
@@ -173,7 +182,20 @@ export function paneScopeResolver(
 ): (pane: PaneModel) => string {
   const looseHome = looseHomeScopeKey(panes, paneMissions);
   const homes = missionHomeScopeKeys(panes, paneMissions, looseHome);
-  return (pane) => paneScopeKey(pane, paneMissions, looseHome, homes);
+  // Escopos vivos conhecidos: um `homeScopeKey` persistido (F-231) só é
+  // honrado quando o escopo alvo ainda existe — missão encerrada devolve o
+  // pane solto a "Terminais" em vez de prendê-lo numa aba fantasma.
+  const liveScopeKeys = new Set<string>([LOOSE_SCOPE_KEY, ...homes.values()]);
+  for (const missionId of Object.values(paneMissions)) {
+    if (missionId) liveScopeKeys.add(missionScopeKey(missionId));
+  }
+  for (const pane of panes) {
+    const missionId = pane.missionId ?? paneMissions[pane.id];
+    if (missionId) liveScopeKeys.add(missionScopeKey(missionId));
+    if (pane.spaceId) liveScopeKeys.add(spaceScopeKey(pane.spaceId));
+  }
+  return (pane) =>
+    paneScopeKey(pane, paneMissions, looseHome, homes, liveScopeKeys);
 }
 
 export function scopeKeyForPaneId(

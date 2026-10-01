@@ -1748,3 +1748,50 @@ it('B2: refuses an orchestration pane while access is blocked without changing l
     expect(useLayoutStore.getState().focusedPaneId).toBe(before.focusedPaneId);
   } finally { useAccessStore.setState({ canUseApp: true, maxAgents: null }); }
 });
+
+// ── F-231: casa persistida do pane solto na aba de missão ───────────────────
+
+describe('assignPaneHomeScopeKey (F-231 — "Nesta aba (solto)")', () => {
+  it('carimba pane solto e sobrevive na árvore; assignPaneSpace limpa a marca', () => {
+    useLayoutStore.setState({ root: initialTree(), focusedPaneId: null, hydrated: true });
+    const store = useLayoutStore.getState();
+    const loose = store.addShellPane();
+
+    store.assignPaneHomeScopeKey(loose, 'mission:mission-1');
+    let pane = listPanes(useLayoutStore.getState().root).find((p) => p.id === loose)!;
+    expect(pane.homeScopeKey).toBe('mission:mission-1');
+
+    // Ganhar um espaço de verdade substitui o carimbo provisório.
+    store.assignPaneSpace(loose, 'space-1', 'Espaço');
+    pane = listPanes(useLayoutStore.getState().root).find((p) => p.id === loose)!;
+    expect(pane.spaceId).toBe('space-1');
+    expect(pane.homeScopeKey).toBeUndefined();
+  });
+
+  it('não carimba pane de missão nem pane já num espaço', () => {
+    const missionPane: PaneModel = {
+      id: 'pane-m',
+      kind: 'cli-agent',
+      title: 'Worker',
+      missionId: 'mission-1',
+    };
+    const spacedPane: PaneModel = {
+      id: 'pane-s',
+      kind: 'cli-agent',
+      title: 'Spaced',
+      spaceId: 'space-9',
+      spaceTitle: 'Nove',
+    };
+    useLayoutStore.setState({
+      root: buildGridTree([missionPane, spacedPane]),
+      focusedPaneId: null,
+      hydrated: true,
+    });
+    const store = useLayoutStore.getState();
+    store.assignPaneHomeScopeKey('pane-m', 'mission:mission-2');
+    store.assignPaneHomeScopeKey('pane-s', 'mission:mission-2');
+    const panes = listPanes(useLayoutStore.getState().root);
+    expect(panes.find((p) => p.id === 'pane-m')?.homeScopeKey).toBeUndefined();
+    expect(panes.find((p) => p.id === 'pane-s')?.homeScopeKey).toBeUndefined();
+  });
+});

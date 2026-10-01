@@ -1727,6 +1727,8 @@ function recordWorkerMortalityTick(
     state?: string;
     agentName?: string;
     title?: string;
+    /** F-231: mão do operador — nunca conta como mortalidade de worker. */
+    operatorOpened?: boolean;
   }[],
 ): void {
   const mission = getProjectDomainStores(scope).missions.get(missionId);
@@ -1779,6 +1781,9 @@ function recordWorkerMortalityTick(
       });
     }
     if (pane.state !== 'exited' && pane.state !== 'hibernated') continue;
+    // F-231: pane aberto pelo operador é mão dele — nunca conta como
+    // mortalidade de worker nem alimenta o breaker do adapter.
+    if (pane.operatorOpened === true) continue;
     if (mortalityCountedPanes.has(pane.paneId)) continue;
     mortalityCountedPanes.add(pane.paneId);
     const deaths = recordWorkerDeathWithoutDelivery(missionId, adapterId);

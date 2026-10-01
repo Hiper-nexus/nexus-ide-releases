@@ -9,6 +9,7 @@ import {
   nextPaneSpaceTitle,
   newPaneSpaceId,
   paneScopeKey,
+  paneScopeResolver,
   pickFallbackInScope,
   scopeKeyForPaneId,
   selectScopePanes,
@@ -492,5 +493,33 @@ describe('aba = feature — a missão mora na aba do pane que a começou (23/09)
       'orq-a',
       'wa',
     ]);
+  });
+});
+
+describe('F-231 — homeScopeKey: casa persistida do pane solto', () => {
+  it('pane solto carimbado resolve para o escopo vivo da aba de missão', () => {
+    const missionPane = pane({ id: 'm1p', missionId: 'mission-x' });
+    const solto = pane({ id: 's1', homeScopeKey: missionScopeKey('mission-x') });
+    const resolver = paneScopeResolver([missionPane, solto], {});
+    expect(resolver(solto)).toBe(missionScopeKey('mission-x'));
+  });
+
+  it('escopo morto devolve o pane a "Terminais" — nunca aba fantasma', () => {
+    const solto = pane({ id: 's1', homeScopeKey: 'mission:gone' });
+    const resolver = paneScopeResolver([solto], {});
+    expect(resolver(solto)).toBe(LOOSE_SCOPE_KEY);
+  });
+
+  it('o escopo da casa entra na lista de abas mesmo sem pane participante', () => {
+    const missionPane = pane({ id: 'm1p', missionId: 'mission-x' });
+    const solto = pane({ id: 's1', homeScopeKey: missionScopeKey('mission-x') });
+    const scopes = listPaneScopes({
+      panes: [missionPane, solto],
+      paneMissions: {},
+      missions: [{ id: 'mission-x', title: 'Missão X', state: 'running' }],
+    });
+    const missionScope = scopes.find((entry) => entry.key === missionScopeKey('mission-x'));
+    expect(missionScope?.paneCount).toBe(2);
+    expect(scopes.some((entry) => entry.key === LOOSE_SCOPE_KEY)).toBe(false);
   });
 });

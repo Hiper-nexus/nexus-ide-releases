@@ -710,6 +710,27 @@ describe('TerminalWorkspace — espaços separados da missão aberta (F-560)', (
     expect(useLayoutStore.getState().focusedPaneId).toBe('pane-novo-2');
   });
 
+  it('F-231: focar o pane solto carimbado na aba da missão não o puxa para Terminais', () => {
+    seedMissionPlusSpace();
+    // "+ Pane → Nesta aba (solto)" dentro da aba da missão: o carimbo
+    // persistido (`homeScopeKey`) faz o foco seguir para a aba da missão.
+    const solto = useLayoutStore.getState().addShellPane();
+    useLayoutStore.getState().assignPaneHomeScopeKey(
+      solto,
+      missionScopeKey('mission-a'),
+    );
+    usePaneScopeStore.getState().focusScope(missionScopeKey('mission-a'));
+    const { host } = mount(<TerminalWorkspace />);
+    expect(activeChipLabel(host)).toBe('Missão A');
+
+    act(() => useLayoutStore.getState().focus(solto));
+
+    // Sem o carimbo o pane solto pertenceria a "Terminais" e o campo pulava
+    // para lá. Com a casa persistida o campo segue o pane para a missão.
+    expect(activeChipLabel(host)).toBe('Missão A');
+    expect(useLayoutStore.getState().focusedPaneId).toBe(solto);
+  });
+
   it('cada escopo vira uma aba, com a contagem de painéis', () => {
     seedMissionPlusSpace();
     usePaneScopeStore.getState().focusScope(spaceScopeKey('space-novo'));

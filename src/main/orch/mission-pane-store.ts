@@ -50,6 +50,7 @@ const recordMissionPaneInputSchema = z
     paneId: entityIdSchema.optional(),
     executionScope: projectExecutionScopeSchema.optional(),
     authoritySeal: missionPaneAuthoritySealSchema.optional(),
+    operatorOpened: z.boolean().optional(),
   })
   .strict();
 
@@ -78,6 +79,7 @@ const missionPaneRowSchema = z
     scope_json: z.string().min(1),
     allowed_tools_json: z.string().nullable(),
     allowed_skills_json: z.string().nullable(),
+    operator_opened: z.number().int().min(0).max(1).nullable(),
     created_at: z.number().int().nonnegative(),
   })
   .strict();
@@ -343,6 +345,7 @@ export class ScopedMissionPaneStore {
         agentName: input.agentName,
         workerIncarnationId: input.workerIncarnationId,
         role,
+        operatorOpened: input.operatorOpened === true || undefined,
         paneId: input.paneId,
         allowedTools:
           input.allowedTools === null
@@ -368,8 +371,8 @@ export class ScopedMissionPaneStore {
         `INSERT INTO mission_panes
            (id, mission_id, adapter_id, model, account_id, effort, cwd, title,
             agent_name, role, pane_id, scope_json, allowed_tools_json,
-            allowed_skills_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            allowed_skills_json, operator_opened, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         spec.id,
         spec.missionId,
@@ -391,6 +394,7 @@ export class ScopedMissionPaneStore {
         }),
         encodeCapabilityList(spec.allowedTools),
         encodeCapabilityList(spec.allowedSkills),
+        spec.operatorOpened === true ? 1 : 0,
         spec.createdAt,
       );
       return { spec, changed: true };
@@ -694,7 +698,8 @@ export class ScopedMissionPaneStore {
       .prepare(
         `SELECT id, mission_id, adapter_id, model, account_id, effort, cwd,
                 title, agent_name, role, pane_id, scope_json,
-                allowed_tools_json, allowed_skills_json, created_at
+                allowed_tools_json, allowed_skills_json, operator_opened,
+                created_at
          FROM mission_panes
          WHERE mission_id = ?
          ORDER BY CASE role WHEN 'orchestrator' THEN 0 ELSE 1 END,
@@ -711,7 +716,8 @@ export class ScopedMissionPaneStore {
         .prepare(
           `SELECT id, mission_id, adapter_id, model, account_id, effort, cwd,
                   title, agent_name, role, pane_id, scope_json,
-                  allowed_tools_json, allowed_skills_json, created_at
+                  allowed_tools_json, allowed_skills_json, operator_opened,
+                created_at
            FROM mission_panes
            WHERE role = 'worker'
              AND title LIKE 'review-%'
@@ -738,7 +744,8 @@ export class ScopedMissionPaneStore {
       .prepare(
         `SELECT id, mission_id, adapter_id, model, account_id, effort, cwd,
                 title, agent_name, role, pane_id, scope_json,
-                allowed_tools_json, allowed_skills_json, created_at
+                allowed_tools_json, allowed_skills_json, operator_opened,
+                created_at
          FROM mission_panes WHERE pane_id = ?
          ORDER BY created_at ASC, id ASC
          LIMIT 2`,
@@ -817,6 +824,7 @@ export class ScopedMissionPaneStore {
       workerIncarnationId,
       authoritySeal,
       role: row.role,
+      operatorOpened: row.operator_opened === 1 || undefined,
       paneId: row.pane_id ?? undefined,
       allowedTools: parseCapabilityList(
         row.allowed_tools_json,

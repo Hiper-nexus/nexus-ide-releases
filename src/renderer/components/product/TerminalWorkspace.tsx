@@ -283,6 +283,11 @@ export function TerminalWorkspace({
       const scope = scopes.find((entry) => entry.key === scopeKey);
       if (scope?.kind === 'space' && scope.id) {
         useLayoutStore.getState().assignPaneSpace(paneId, scope.id, scope.title);
+      } else if (scope?.kind === 'mission') {
+        // F-231 — "Nesta aba (solto)" numa aba de missão: a aba não é um
+        // espaço, então o carimbo persistente é o `homeScopeKey` — sem ele o
+        // pane solto ia para "Terminais" no próximo restart.
+        useLayoutStore.getState().assignPaneHomeScopeKey(paneId, scopeKey);
       }
       setOperatorPins((previous) => {
         const current = previous[scopeKey];
@@ -302,6 +307,27 @@ export function TerminalWorkspace({
     (paneId: string) => pinPaneToScope(liveSideKey, paneId),
     [pinPaneToScope, liveSideKey],
   );
+
+  // F-231 — "+ Pane" numa aba que hospeda missão viva: o picker ganha o passo
+  // de destino ("Nesta missão" / "Nesta aba (solto)" / "Nova aba"). O Main é
+  // quem valida de verdade; aqui só se escolhe a missão EXIBIDA nesta aba.
+  const orchMissions = useOrchStore((state) => state.missions);
+  const missionDestinationFor = useCallback(
+    (scopeKey: string | null) => {
+      if (!scopeKey) return null;
+      const scope = scopes.find((entry) => entry.key === scopeKey);
+      const hosted = scope?.missions.find((mission) => {
+        const status =
+          orchMissions.find((item) => item.id === mission.id)?.status ??
+          mission.state;
+        return status === 'running' || status === 'pending';
+      });
+      return hosted ? { missionId: hosted.id, title: hosted.title } : null;
+    },
+    [scopes, orchMissions],
+  );
+  const missionDestination = missionDestinationFor(effectiveScopeKey);
+  const sideMissionDestination = missionDestinationFor(liveSideKey);
 
   // "+" da barra: o pane escolhido nasce numa aba NOVA, e o operador vai com ele.
   const handleTabPaneCreated = useCallback((paneId: string) => {
@@ -604,6 +630,9 @@ export function TerminalWorkspace({
                     <PaneGrid
                       visiblePaneIds={visiblePaneIds ?? visibleIdsFor(activeScope.key)}
                       onPaneCreated={handlePaneCreated}
+                      missionDestination={missionDestination ?? undefined}
+                      onPaneCreatedLoose={handlePaneCreated}
+                      onPaneCreatedInNewTab={handleTabPaneCreated}
                     />
                   </div>
                 </div>
@@ -630,6 +659,9 @@ export function TerminalWorkspace({
                       visiblePaneIds={sidePaneIds}
                       onPaneCreated={handleSidePaneCreated}
                       primary={false}
+                      missionDestination={sideMissionDestination ?? undefined}
+                      onPaneCreatedLoose={handleSidePaneCreated}
+                      onPaneCreatedInNewTab={handleTabPaneCreated}
                     />
                   </div>
                 </div>
@@ -640,6 +672,9 @@ export function TerminalWorkspace({
           <PaneGrid
             visiblePaneIds={visiblePaneIds}
             onPaneCreated={handlePaneCreated}
+            missionDestination={missionDestination ?? undefined}
+            onPaneCreatedLoose={handlePaneCreated}
+            onPaneCreatedInNewTab={handleTabPaneCreated}
           />
         )}
       </div>

@@ -170,6 +170,16 @@ describe('worker-handoff-ttl (paridade Overclock: worker fecha ~30s pós-handoff
     expect(h.closed[0]!.sessionId).toBe('pty-w1');
   });
 
+  it('F-231: worker aberto pelo operador nunca expira (a mão é dele)', () => {
+    const h = harness({
+      authority: authorityFor('pty-w1', { operatorOpened: true }),
+    });
+    initWorkerHandoffTtl(h.deps);
+    emitStatus('pty-w1', 'idle');
+    vi.advanceTimersByTime(WORKER_POST_HANDOFF_TTL_MS * 4);
+    expect(h.closed).toHaveLength(0);
+  });
+
   it('cancela o encerramento quando o worker volta a trabalhar', () => {
     const h = harness();
     initWorkerHandoffTtl(h.deps);

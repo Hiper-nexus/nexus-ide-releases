@@ -8,6 +8,7 @@ import { reconcileBrowserPanes } from '../browser/browser-host';
 import { minimumPaneGridSize } from '../lib/pane-grid-size';
 import { PaneLeaf } from './PaneLeaf';
 import { PanePicker } from './PanePicker';
+import type { PanePickerMissionDestination } from './PanePicker';
 import { EmptyState } from './ActionCard';
 
 /**
@@ -43,6 +44,9 @@ export function PaneGrid({
   onPaneCreated,
   primary = true,
   emptyState,
+  missionDestination,
+  onPaneCreatedLoose,
+  onPaneCreatedInNewTab,
 }: {
   readonly visiblePaneIds?: ReadonlySet<string>;
   readonly emptyState?: React.ReactNode;
@@ -53,6 +57,12 @@ export function PaneGrid({
    * pedidos globais de abrir o picker — só uma instância abre o menu.
    */
   readonly primary?: boolean;
+  /** F-231: missão viva na aba — o picker ganha o passo de destino. */
+  readonly missionDestination?: PanePickerMissionDestination;
+  /** F-231: destino "Nesta aba (solto)" — carimbo persistente. */
+  readonly onPaneCreatedLoose?: (paneId: string) => void;
+  /** F-231: destino "Nova aba". */
+  readonly onPaneCreatedInNewTab?: (paneId: string) => void;
 } = {}) {
   const root = useLayoutStore((s) => s.root);
   const maximizedPaneId = useLayoutStore((s) => s.maximizedPaneId);
@@ -212,7 +222,15 @@ export function PaneGrid({
         </div>
       )}
       {/* Controle flutuante da grelha: abrir um pane novo sem sair do trabalho. */}
-      <PanePicker onPaneCreated={onPaneCreated} acceptsPendingOpen={primary} />
+      <PanePicker
+        onPaneCreated={onPaneCreated}
+        acceptsPendingOpen={primary}
+        {...(missionDestination !== undefined ? { missionDestination } : {})}
+        {...(onPaneCreatedLoose !== undefined ? { onPaneCreatedLoose } : {})}
+        {...(onPaneCreatedInNewTab !== undefined
+          ? { onPaneCreatedInNewTab }
+          : {})}
+      />
     </div>
   );
 }

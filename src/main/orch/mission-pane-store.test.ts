@@ -71,6 +71,43 @@ describe('scoped mission pane store', () => {
     });
   });
 
+  it('F-231: record/list preserva operatorOpened e pane sem a marca não a ganha', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const missions = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => 'mission-a',
+    });
+    const panes = createScopedMissionPaneStore(runtimeManager, scope);
+    missions.create({ title: 'Mission A' });
+
+    panes.record({
+      missionId: 'mission-a',
+      adapterId: 'codex',
+      paneId: 'pane-op',
+      role: 'worker',
+      operatorOpened: true,
+    });
+    panes.record({
+      missionId: 'mission-a',
+      adapterId: 'codex',
+      paneId: 'pane-worker',
+      role: 'worker',
+    });
+
+    expect(panes.findByPaneId('pane-op')?.operatorOpened).toBe(true);
+    expect(panes.findByPaneId('pane-worker')?.operatorOpened).toBeUndefined();
+
+    runtimeManager.close(scope);
+    const reopened = createScopedMissionPaneStore(runtimeManager, scope);
+    // Sobrevive ao restart (coluna operator_opened, migração 040).
+    expect(reopened.findByPaneId('pane-op')?.operatorOpened).toBe(true);
+    expect(
+      reopened.list('mission-a').some(
+        (spec) => spec.paneId === 'pane-op' && spec.operatorOpened === true,
+      ),
+    ).toBe(true);
+  });
+
   it('keeps worker pane incarnations distinct and durable', () => {
     const runtimeManager = manager();
     const scope = testProjectScope();

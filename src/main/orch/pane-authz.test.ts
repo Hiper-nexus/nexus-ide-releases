@@ -135,6 +135,19 @@ describe('authorizePaneAccess', () => {
   it('fails closed for a pane without trusted project metadata', () => {
     expect(authorizePaneAccess(user, pane({ scope: undefined }), 'read').allow).toBe(false);
   });
+
+  it('F-231: Maestro lê/escreve o pane do operador, mas close é recusado ("só ele fecha")', () => {
+    const op = pane({ sessionId: 's-op', operatorOpened: true });
+    expect(authorizePaneAccess(orchestrator, op, 'read').allow).toBe(true);
+    expect(authorizePaneAccess(orchestrator, op, 'write').allow).toBe(true);
+    const close = authorizePaneAccess(orchestrator, op, 'close');
+    expect(close.allow).toBe(false);
+    expect(close.reason).toMatch(/aberto pelo operador/);
+    // Nem worker da mesma missão fecha a mão do operador.
+    expect(authorizePaneAccess(worker, op, 'close').allow).toBe(false);
+    // O próprio operador (role user) continua fechando o que é dele.
+    expect(authorizePaneAccess(user, op, 'close').allow).toBe(true);
+  });
 });
 
 describe('canListPane', () => {

@@ -60,6 +60,34 @@ describe("selectScopedPaneCloseTargets", () => {
     expect(result.close).not.toContain("p-other-ws");
   });
 
+  it("F-231: pane aberto pelo operador nunca entra no scope-close do Maestro", () => {
+    const withOperator = [
+      ...panes,
+      {
+        paneId: "p-operator",
+        sessionId: "s-operator",
+        missionId: "m1",
+        role: "worker" as const,
+        operatorOpened: true,
+        scopeRoot: "/ws",
+      },
+    ];
+    const result = selectScopedPaneCloseTargets({
+      scope: "caller_mission",
+      callerSessionId: "s-caller",
+      callerMissionId: "m1",
+      callerScopeRoot: "/ws",
+      panes: withOperator,
+      isMissionRunning: () => true,
+    });
+    expect(result.close).toEqual(["p-w1"]);
+    expect(result.skipped).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ paneId: "p-operator", reason: "operator-opened" }),
+      ]),
+    );
+  });
+
   it("caller_mission sem missionId do chamador não fecha nada", () => {
     const result = selectScopedPaneCloseTargets({
       scope: "caller_mission",
