@@ -1,4 +1,4 @@
-/** O dev: low-poly, moletom rosa com capuz, óculos e a caneca no cinto.
+/** O dev: low-poly, moletom rosa com capuz, óculos, a caneca no cinto e a lata do Nexus+ na mão ao beber.
  * Animação procedural (sem esqueleto): pernas e braços por seno da passada,
  * caixa de GPU nas mãos quando carrega, ombros caídos e bocejo quando cansado,
  * pose sentada com as mãos no teclado.
@@ -57,6 +57,15 @@ export function createDev(kit, { palette = PALETTE } = {}) {
     return pivot;
   });
 
+  // Lata do Nexus+ na mão direita, visível só enquanto o dev bebe.
+  const canProp = new Group();
+  canProp.position.set(0, -0.47, 0.07);
+  canProp.visible = false;
+  arms[1].add(canProp);
+  kit.mesh(canProp, kit.geo('handcan', () => new CylinderGeometry(0.04, 0.04, 0.11, 10)), kit.mat(palette.pink, { emissive: palette.pink, emissiveIntensity: 0.25 }), [0, 0, 0], { cast: false });
+  kit.mesh(canProp, kit.geo('handcanband', () => new CylinderGeometry(0.0415, 0.0415, 0.036, 10)), kit.mat(palette.ink), [0, 0, 0], { cast: false });
+  kit.mesh(canProp, kit.geo('handcanlid', () => new CylinderGeometry(0.034, 0.034, 0.014, 10)), kit.mat(palette.steel, { metalness: 0.6, roughness: 0.35 }), [0, 0.062, 0], { cast: false });
+
   const head = new Group();
   head.position.set(0, 0.5, 0.01);
   torso.add(head);
@@ -80,7 +89,7 @@ export function createDev(kit, { palette = PALETTE } = {}) {
   const mix = (a, b, k) => a + (b - a) * k;
 
   /** `seat` vai de 0 (de pé) a 1 (sentado); `typing` mexe as mãos no teclado. */
-  function setMotion({ speed = 0, heading = 0, carrying = false, tired = false, calm = false, seat = 0, typing = false }, dt) {
+  function setMotion({ speed = 0, heading = 0, carrying = false, tired = false, calm = false, seat = 0, typing = false, drinking = false }, dt) {
     const step = Math.min(dt, 0.05);
     root.rotation.y = heading;
     const moving = Math.min(1, speed / 3.4) * (1 - seat);
@@ -104,6 +113,10 @@ export function createDev(kit, { palette = PALETTE } = {}) {
       arms[0].rotation.z = mix(-0.06 - droop * 0.05, 0.15, seat); arms[1].rotation.z = mix(0.06 + droop * 0.05, -0.15, seat);
     }
     crate.visible = carrying;
+    // Bebendo (com as mãos livres): o braço direito leva a lata à boca e a cabeça inclina para trás.
+    const sipping = drinking && !carrying;
+    canProp.visible = sipping;
+    if (sipping) { arms[1].rotation.x = -2.45; arms[1].rotation.z = -0.12; }
     // Bocejo lento a cada ~5 s quando cansado e parado.
     yawnClock += step;
     if (tired && moving < 0.2 && !calm && yawnClock > 5) { yawn = 1; yawnClock = 0; }
@@ -111,7 +124,8 @@ export function createDev(kit, { palette = PALETTE } = {}) {
     const open = Math.sin(Math.min(1, yawn) * Math.PI);
     head.rotation.x = droop * 0.18 - open * 0.35 + seat * 0.15;
     mouth.scale.y = 1 + open * 4;
+    if (sipping) head.rotation.x -= 0.2;
   }
 
-  return { group: root, setMotion, parts: { crate, head, torso, mug, arms, legs } };
+  return { group: root, setMotion, parts: { crate, can: canProp, head, torso, mug, arms, legs } };
 }

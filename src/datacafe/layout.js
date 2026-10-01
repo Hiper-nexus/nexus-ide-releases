@@ -7,12 +7,13 @@
  *   'K' cafeteira 'D' mesa/balcão 'N' telão NOC  'T' mesa do café
  *   'P' planta    'B' painel de LED do sorteio   'L' TV da live
  *   'H' cadeira da estação de trabalho, na frente da mesa com o terminal
+ *   'F' freezer do Nexus+ (energético fictício do jogo), ao lado da cafeteira
  */
 import { MODELS } from './models.js';
 
 export const CELLS = [
   '##########################',
-  '#NNNNNN..DKDBBBBBLPCCCCC.#',
+  '#NNNNNNFFDKDBBBBBLPCCCCC.#',
   '#........................#',
   '#.......T...T............#',
   '#........................#',
@@ -49,6 +50,8 @@ export const LAYOUT = Object.freeze({
   spawn: { x: 10.5, z: 4.5 },
   racks: rackSlots().map((slot, index) => ({ id: MODELS[index].id, x: slot.x, z: slot.z, facing: 's' })),
   coffee: { x: 10, z: 1 },
+  /** O freezer do Nexus+: duas células na parede norte, entre o NOC e a cafeteira. */
+  freezer: { x: 7, z: 1, width: 2 },
   dock: { x: 19, z: 1, width: 5 },
   noc: { x: 1, z: 1, width: 6 },
   /** O painel do sorteio: cinco células de largura, a atração da parede norte. */
@@ -67,7 +70,7 @@ export const LAYOUT = Object.freeze({
 /** Altura de cada tipo de célula, a mesma da arte em datacenter.js. A câmera usa isto
  * para subir quando algo ficaria entre ela e o dev. */
 export const HEIGHTS = Object.freeze({
-  '#': 2.8, lowWall: 0.45, R: 2.05, N: 2.6, K: 1.45, D: 1.4, T: 0.8, P: 1.1, B: 2.1, L: 1.7, C: 0.95, H: 1,
+  '#': 2.8, lowWall: 0.45, R: 2.05, N: 2.6, K: 1.45, D: 1.4, T: 0.8, P: 1.1, B: 2.1, L: 1.7, C: 0.95, H: 1, F: 2.0,
 });
 
 /** Altura do que ocupa a célula (x, z); piso e fora do salão valem 0. */

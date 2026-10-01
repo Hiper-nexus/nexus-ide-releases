@@ -13,6 +13,7 @@ import { BILLBOARD, billboardView, chaseLevel, bulbRing } from './billboard.js';
 import { TOKEN, tokenPose, sparkleAt } from './token.js';
 import { BOARD_SIZE, COIN_SIZE, paintBillboard, paintCoinFace } from './prize-art.js';
 import { prizePath, pathMarks } from './showcase.js';
+import { buildFreezer } from './freezer.js';
 import { PRIZES } from '../sorteio/prizes.js';
 
 /** Racks lado a lado, como num data center de verdade: com fresta, o dev aparecia
@@ -345,7 +346,7 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
   }, { cast: false, receive: false });
   // Rodapé luminoso nas paredes altas.
   kit.instanced(root, kit.boxGeo(1, 0.05, 0.03), kit.mat(PALETTE.dusk, { basic: true }), tall.filter(c => c.z === 0 && c.x > 0 && c.x < W - 1), (d, c) => d.position.set(c.x + 0.5, 0.06, 1.02), { cast: false, receive: false });
-  kit.instanced(root, kit.boxGeo(0.04, 2.3, 0.03), kit.mat(PALETTE.pink, { basic: true }), [7.5, 18.55, 24.5], (d, x) => d.position.set(x, 1.3, 1.02), { cast: false, receive: false });
+  kit.instanced(root, kit.boxGeo(0.04, 2.3, 0.03), kit.mat(PALETTE.pink, { basic: true }), [18.55, 24.5], (d, x) => d.position.set(x, 1.3, 1.02), { cast: false, receive: false });
 
   // Janelas a oeste com o entardecer, e as manchas de luz que entram por elas.
   const windowTex = kit.canvasTexture(256, 160, sunsetWindow);
@@ -476,6 +477,9 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
   const menuTex = kit.canvasTexture(512, 128, menuArt);
   kit.mesh(root, kit.geo('menu', () => new PlaneGeometry(2.4, 0.6)), kit.own(new MeshBasicMaterial({ map: menuTex.texture, toneMapped: false })), [cx, 1.95, 1.02], { cast: false, receive: false });
   const coffee = { x: cx, z: cz, spout: { x: cx - 0.18, y: 1.02, z: cz + 0.1 } };
+
+  // ---------- Freezer do Nexus+ (marca fictícia, só do jogo) ----------
+  const freezer = layout.freezer ? buildFreezer(kit, root, layout.freezer) : null;
 
   // Mesas do café e banquinhos.
   const tables = findCells(layout, 'T').map(c => ({ x: c.x + 0.5, z: c.z + 0.5 }));
@@ -794,6 +798,7 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
       beam.material.opacity = 0.12 + 0.06 * Math.sin(time * 2.4);
     }
     updatePrize(dt, time, calm);
+    freezer?.update(dt, calm);
     if (calm !== nocState.calm) { nocState = { ...nocState, calm }; nocTex.redraw(); }
     nocClock += dt;
     if (!calm && nocClock > 1) { nocClock = 0; nocState = { ...nocState, clock: time }; nocTex.redraw(); }
@@ -819,5 +824,5 @@ export function buildDatacenter(kit, { scene, layout, models, tier = 'desktop' }
     setPathVisible(visible) { if (pathOn === visible) return; pathOn = visible; pathDirty = true; },
   };
 
-  return { root, racks, coffee, dock, workstation, prize, highlight, setObjective, setNoc, update, release, tier };
+  return { root, racks, coffee, freezer, dock, workstation, prize, highlight, setObjective, setNoc, update, release, tier };
 }

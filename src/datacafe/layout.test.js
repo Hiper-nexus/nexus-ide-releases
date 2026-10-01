@@ -35,6 +35,10 @@ test('os pontos de interação estão nas células certas', () => {
   for (let i = 0; i < LAYOUT.board.width; i++) assert.equal(LAYOUT.cells[LAYOUT.board.z][LAYOUT.board.x + i], 'B');
   assert.equal(LAYOUT.cells[LAYOUT.board.z][LAYOUT.board.x - 1] === 'B' || LAYOUT.cells[LAYOUT.board.z][LAYOUT.board.x + LAYOUT.board.width] === 'B', false, 'o painel não vaza para fora da largura declarada');
   assert.equal(LAYOUT.cells[LAYOUT.live.z][LAYOUT.live.x], 'L');
+  assert.equal(LAYOUT.freezer.width, 2, 'o freezer do Nexus+ ocupa duas células ao lado da cafeteira');
+  for (let i = 0; i < LAYOUT.freezer.width; i++) assert.equal(LAYOUT.cells[LAYOUT.freezer.z][LAYOUT.freezer.x + i], 'F');
+  assert.equal(findCells(LAYOUT, 'F').length, LAYOUT.freezer.width, 'nenhum F sobrando no mapa');
+  assert.ok(LAYOUT.freezer.x + LAYOUT.freezer.width <= LAYOUT.coffee.x - 1, 'o freezer não encosta no balcão do café');
   for (let i = 0; i < LAYOUT.dock.width; i++) assert.equal(LAYOUT.cells[LAYOUT.dock.z][LAYOUT.dock.x + i], 'C');
   for (let i = 0; i < LAYOUT.noc.width; i++) assert.equal(LAYOUT.cells[LAYOUT.noc.z][LAYOUT.noc.x + i], 'N');
 });
@@ -56,6 +60,7 @@ test('o dev nasce em piso livre e alcança a frente de todos os racks e objetos'
   }
   for (const rack of LAYOUT.racks) assert.ok(seen.has(`${rack.x},${rack.z + 1}`), `frente do rack ${rack.id}`);
   for (const spot of [LAYOUT.coffee, LAYOUT.board, LAYOUT.live, LAYOUT.dock]) assert.ok(seen.has(`${spot.x},${spot.z + 1}`));
+  for (let i = 0; i < LAYOUT.freezer.width; i++) assert.ok(seen.has(`${LAYOUT.freezer.x + i},${LAYOUT.freezer.z + 1}`), `frente do freezer, célula ${i}`);
   for (let i = 0; i < LAYOUT.board.width; i++) assert.ok(seen.has(`${LAYOUT.board.x + i},${LAYOUT.board.z + 1}`), `frente do painel, célula ${i}`);
   const { stand } = LAYOUT.workstation;
   assert.ok(seen.has(`${Math.floor(stand.x)},${Math.floor(stand.z)}`), 'lugar de levantar da estação');
@@ -79,6 +84,8 @@ test('a altura de cada obstáculo segue o diorama: paredes norte e oeste altas, 
   assert.equal(obstacleHeight(LAYOUT, LAYOUT.width - 1, 7), HEIGHTS.lowWall);
   assert.equal(obstacleHeight(LAYOUT, LAYOUT.racks[0].x, LAYOUT.racks[0].z), HEIGHTS.R);
   assert.equal(obstacleHeight(LAYOUT, 3, 3), 0, 'piso');
+  assert.equal(obstacleHeight(LAYOUT, LAYOUT.freezer.x, LAYOUT.freezer.z), HEIGHTS.F);
+  assert.ok(HEIGHTS.F >= 1.9 && HEIGHTS.F < HEIGHTS['#'], 'o freezer é alto, mas abaixo do teto da parede');
   assert.equal(obstacleHeight(LAYOUT, -1, 3), 0, 'fora do salão não há nada');
   for (const symbol of new Set(LAYOUT.cells.join('').replace(/[.#]/g, ''))) assert.ok(HEIGHTS[symbol] > 0, `altura de ${symbol}`);
 });

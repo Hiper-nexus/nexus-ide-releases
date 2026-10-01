@@ -81,6 +81,47 @@ test('a doca entrega caixas até esvaziar e é reabastecida até o limite', () =
   assert.equal(dc.dock.refill(99), dc.dock.max);
 });
 
+test('o freezer do Nexus+ mostra uma lata por unidade do estoque, abre a porta e acende o LED do estado', () => {
+  const { dc } = world();
+  const freezer = dc.freezer;
+  assert.ok(freezer, 'o data center devolve o freezer');
+  assert.equal(freezer.max, 12);
+  assert.equal(freezer.x, LAYOUT.freezer.x + LAYOUT.freezer.width / 2);
+  assert.ok(freezer.front >= LAYOUT.freezer.z + 1 - 0.01, 'a frente do freezer fica na borda da célula, sem invadir o corredor');
+  freezer.setStock(5);
+  assert.equal(freezer.cans(), 5);
+  freezer.setStock(99);
+  assert.equal(freezer.cans(), 12, 'nunca mais latas do que prateleiras');
+  for (const bad of [-3, NaN, undefined, 'x']) { freezer.setStock(bad); assert.equal(freezer.cans(), 0, String(bad)); }
+  for (const status of ['ready', 'cooling', 'empty']) freezer.setStatus(status);
+  assert.throws(() => freezer.setStatus('quebrado'), /inválido/);
+  freezer.setDoor(true);
+  for (let i = 0; i < 40; i++) dc.update(0.05, i * 0.05, false);
+  assert.ok(freezer.doorOpen() > 0.95, 'a porta termina de abrir');
+  freezer.setDoor(false);
+  for (let i = 0; i < 40; i++) dc.update(0.05, 2 + i * 0.05, false);
+  assert.ok(freezer.doorOpen() < 0.05, 'e termina de fechar');
+  freezer.setDoor(true);
+  dc.update(0.016, 5, true);
+  assert.equal(freezer.doorOpen(), 1, 'com redução de movimento a porta não anima: abre de uma vez');
+});
+
+test('o dev leva a lata do Nexus+ à boca enquanto bebe e a guarda depois', () => {
+  const { dev } = world();
+  dev.setMotion({ speed: 0 }, 0.016);
+  assert.equal(dev.parts.can.visible, false, 'sem beber, sem lata na mão');
+  const rest = dev.parts.arms[1].rotation.x;
+  for (let i = 0; i < 10; i++) dev.setMotion({ speed: 0, drinking: true }, 0.016);
+  assert.equal(dev.parts.can.visible, true);
+  assert.ok(dev.parts.arms[1].rotation.x < rest - 1, 'o braço direito sobe com a lata');
+  dev.setMotion({ speed: 2, drinking: true, calm: true }, 0.016);
+  assert.equal(dev.parts.can.visible, true, 'bebe andando e com redução de movimento também');
+  dev.setMotion({ speed: 0, drinking: false }, 0.016);
+  assert.equal(dev.parts.can.visible, false);
+  dev.setMotion({ speed: 0, carrying: true, drinking: true }, 0.016);
+  assert.equal(dev.parts.can.visible, false, 'com a GPU nas duas mãos não há lata');
+});
+
 test('o dev anima sem erro em todos os estados', () => {
   const { dev } = world();
   for (const motion of [{ speed: 0 }, { speed: 3.4, heading: 1 }, { speed: 2, carrying: true }, { speed: 0, tired: true }, { speed: 3, calm: true }]) {
@@ -138,6 +179,8 @@ test('a caneca do cinto nunca é atravessada por braços ou pernas', () => {
   const { mug, torso, arms, legs } = dev.parts;
   const states = [{ speed: 3.4 }, { speed: 3.4, tired: true }, { speed: 2, carrying: true }, { speed: 0, tired: true }, { speed: 0, seat: 1, typing: true }];
   const inverse = new THREE.Matrix4(), mugBox = new THREE.Box3(), limbBox = new THREE.Box3(), part = new THREE.Box3(), corner = new THREE.Vector3();
+  // A lata da mão só existe enquanto o dev bebe: peça escondida não atravessa nada.
+  const shown = mesh => { for (let node = mesh; node; node = node.parent) if (!node.visible) return false; return true; };
   const mugParts = [];
   mug.traverse(object => { if (object.isMesh) mugParts.push(object); });
   const mugIn = frame => { mugBox.makeEmpty(); for (const object of mugParts) mugBox.union(boxIn(frame, object, part)); return mugBox; };
@@ -157,9 +200,9 @@ test('a caneca do cinto nunca é atravessada por braços ou pernas', () => {
       dev.setMotion(motion, 1 / 60);
       dev.group.updateMatrixWorld(true);
       mugIn(torso);
-      for (const arm of arms) arm.traverse(part => { if (part.isMesh) assert.ok(!boxIn(torso, part, limbBox).intersectsBox(mugBox), `braço na caneca (${JSON.stringify(motion)})`); });
+      for (const arm of arms) arm.traverse(part => { if (part.isMesh && shown(part)) assert.ok(!boxIn(torso, part, limbBox).intersectsBox(mugBox), `braço na caneca (${JSON.stringify(motion)})`); });
       mugIn(torso.parent);
-      for (const leg of legs) leg.traverse(part => { if (part.isMesh) assert.ok(!boxIn(torso.parent, part, limbBox).intersectsBox(mugBox), `perna na caneca (${JSON.stringify(motion)})`); });
+      for (const leg of legs) leg.traverse(part => { if (part.isMesh && shown(part)) assert.ok(!boxIn(torso.parent, part, limbBox).intersectsBox(mugBox), `perna na caneca (${JSON.stringify(motion)})`); });
     }
   }
 });
