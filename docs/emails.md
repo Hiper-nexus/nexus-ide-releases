@@ -65,13 +65,13 @@ openssl rand -base64 32                     # gera o segredo dos links de descad
 npx wrangler secret put NOTICE_SECRET       # cole o valor gerado
 ```
 
-`secret put` publica uma versão nova na hora, mas isso não envia nada enquanto `EMAIL_ENABLED` for `"false"`.
+`secret put` publica uma versão nova na hora, mas isso não envia nada enquanto `EMAIL_ENABLED` for `"false"`. Com os dois segredos já dá para **provar o envio antes de ligar o disparo**: veja [Testar](#testar).
 
 `NOTICE_SECRET` assina os links de descadastro e precisa ter pelo menos 32 caracteres (o comando acima gera 44); com um segredo menor o envio não liga. **Não o troque sem necessidade:** todo e-mail já enviado carrega um link assinado com ele, e trocar o segredo faz esses links passarem a responder "link inválido". Guarde o valor num cofre.
 
 ### 4. Ligar e publicar
 
-Em `wrangler.jsonc`, troque `"EMAIL_ENABLED":"false"` por `"EMAIL_ENABLED":"true"` e publique:
+Só depois de o envio de teste (seção [Testar](#testar)) chegar na sua caixa. Em `wrangler.jsonc`, troque `"EMAIL_ENABLED":"false"` por `"EMAIL_ENABLED":"true"` e publique:
 
 ```sh
 npx wrangler deploy
@@ -81,9 +81,9 @@ A próxima execução do cron (minuto 17) já envia o que estiver na janela. Se 
 
 ## Testar
 
-Logo depois do passo 4, confira a ligação com o envio de teste do painel admin: `POST /v1/admin/notices/test`. Ele manda o aviso `trial_ending_3d` **só para o e-mail de quem chamou** (com um link de descadastro válido da própria conta), não marca nada em `account_notices` e registra `test_notice` em `admin_audit` sem o endereço. A resposta é `{"ok":true,"sent":true}` ou `{"ok":true,"sent":false,"reason":"http_403:..."}`.
+Depois do passo 3 e **antes de ligar o passo 4**, confira a ligação com o envio de teste do painel admin: `POST /v1/admin/notices/test`. Ele funciona com `EMAIL_ENABLED="false"` (o interruptor governa só o disparo do cron), manda o aviso `trial_ending_3d` **só para o e-mail de quem chamou** (com um link de descadastro válido da própria conta), não marca nada em `account_notices` e registra `test_notice` em `admin_audit` sem o endereço. A resposta é `{"ok":true,"sent":true}` ou `{"ok":true,"sent":false,"reason":"http_403:..."}` quando o Resend recusa.
 
-Sem `EMAIL_ENABLED`, `RESEND_API_KEY` e `NOTICE_SECRET` ele responde 503 com "Defina EMAIL_ENABLED, RESEND_API_KEY e NOTICE_SECRET para enviar e-mails." Ele exige a sessão do admin e o CSRF do site; pelo console do navegador, em `https://nexuside.app/admin/` já logado:
+Sem `RESEND_API_KEY` ou sem `NOTICE_SECRET` (32 caracteres ou mais) ele responde 503 com "Defina RESEND_API_KEY e NOTICE_SECRET (32 caracteres ou mais) para enviar e-mails." Ele exige a sessão do admin e o CSRF do site; pelo console do navegador, em `https://nexuside.app/admin/` já logado:
 
 ```js
 const api = 'https://api.nexuside.app';
@@ -99,8 +99,8 @@ console.log(response.status, await response.json());
 
 Todo e-mail traz a linha "Você recebeu este aviso porque criou uma conta no NexusIDE", um link de descadastro no corpo e os cabeçalhos `List-Unsubscribe` e `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058), que fazem o Gmail e o Outlook mostrarem o botão "cancelar inscrição".
 
-- `GET /v1/notices/unsubscribe?a=<conta>&t=<token>`: página de confirmação e `notices_opt_out=1`. Repetir o link é seguro. `HEAD` (pré-visualização de link) não descadastra.
-- `POST /v1/notices/unsubscribe?a=<conta>&t=<token>`: o one-click do cliente de e-mail.
+- `GET /v1/notices/unsubscribe?a=<conta>&t=<token>`: **só mostra a página de confirmação** (botão "Cancelar os avisos"); não muda nada. Scanners de link de empresa e pré-visualizações abrem todo link do e-mail e descadastrariam a pessoa antes de ela ler o aviso.
+- `POST /v1/notices/unsubscribe?a=<conta>&t=<token>`: quem descadastra (`notices_opt_out=1`, idempotente). Dois chamadores: o botão da página (`confirm=1`, responde a página "Avisos cancelados") e o one-click do cliente de e-mail (`List-Unsubscribe=One-Click`, RFC 8058, responde `{"ok":true}`).
 - O token é o HMAC-SHA256 da conta com `NOTICE_SECRET`, comparado em tempo constante. Não há login. Token errado, conta alheia ou parâmetro faltando devolvem a mesma página 400 genérica, sem revelar o motivo. As duas rotas passam pelo limitador da API.
 
 ## Resumo

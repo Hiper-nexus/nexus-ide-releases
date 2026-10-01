@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import type { AppEnv } from '../context.js';
-import { emailConfigured } from '../config.js';
+import { emailCredentialsPresent } from '../config.js';
 import { requireAdmin, requireCsrf, requireWebAuth } from '../middleware.js';
 import { sendTestNotice } from './dispatch.js';
 import { isDeliverableEmail } from './notices.js';
@@ -9,13 +9,15 @@ import { isDeliverableEmail } from './notices.js';
 interface AddressRow { readonly email: string; readonly name: string | null; readonly identity_email: string | null }
 
 /**
- * Painel admin: manda o aviso de 3 dias só para o e-mail de quem chamou, para provar o Resend antes de ligar o cron.
+ * Painel admin: manda o aviso de 3 dias só para o e-mail de quem chamou, para provar o Resend antes de ligar o cron
+ * (funciona com EMAIL_ENABLED="false").
  * As guardas são explícitas (e não herdadas do roteador de admin): esta rota tem de se proteger sozinha.
  */
 export function createNoticeAdminRoutes(fetchFn?: typeof fetch): Hono<AppEnv> {
   const routes = new Hono<AppEnv>();
   routes.post('/admin/notices/test', async (c, next) => { c.header('Cache-Control', 'no-store'); await next(); }, requireWebAuth, requireAdmin, requireCsrf, async (c) => {
-    if (!emailConfigured(c.get('config'))) throw new HTTPException(503, { message: 'Defina EMAIL_ENABLED, RESEND_API_KEY e NOTICE_SECRET para enviar e-mails.' });
+    // O interruptor EMAIL_ENABLED governa só o disparo do cron: o teste é do admin, vai só para ele e prova o Resend antes de ligar.
+    if (!emailCredentialsPresent(c.get('config'))) throw new HTTPException(503, { message: 'Defina RESEND_API_KEY e NOTICE_SECRET (32 caracteres ou mais) para enviar e-mails.' });
     const accountId = c.get('session').account_id;
     const row = await c.env.DB.prepare(`SELECT a.email AS email, a.name AS name,
         (SELECT i.email FROM identities i WHERE i.account_id=a.id AND i.email_verified=1 AND instr(i.email,'@')>1 ORDER BY i.created_at LIMIT 1) AS identity_email

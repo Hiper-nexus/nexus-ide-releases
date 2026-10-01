@@ -39,28 +39,45 @@ test('a URL de descadastro tem o formato do contrato e codifica a conta', async 
   assert.equal(buildUnsubscribeUrl(`${BASE}/`, 'a b&c', 'tok'), `${BASE}/v1/notices/unsubscribe?a=a+b%26c&t=tok`);
 });
 
-test('GET com token válido descadastra a conta, mostra a confirmação e não pede login', async () => {
-  const db = new SqliteD1();
-  await seedAccount(db, 'acc-1');
-  assert.equal(optOut(db, 'acc-1'), 0);
-  const response = await createApp().request(await linkFor('acc-1'), {}, env(db));
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get('content-type') ?? '', /text\/html/);
-  assert.match(response.headers.get('content-security-policy') ?? '', /default-src 'none'/);
-  assert.equal(response.headers.get('cache-control'), 'no-store');
-  assert.match(await response.text(), /Avisos cancelados/);
-  assert.equal(optOut(db, 'acc-1'), 1);
-  db.close();
-});
-
-test('GET é idempotente: repetir o link continua 200 e a conta continua descadastrada', async () => {
+test('GET com token válido só mostra a confirmação (botão que envia POST) e NÃO descadastra: scanner de link não pode tirar ninguém da lista', async () => {
   const db = new SqliteD1();
   await seedAccount(db, 'acc-1');
   const app = createApp();
   const link = await linkFor('acc-1');
-  assert.equal((await app.request(link, {}, env(db))).status, 200);
-  assert.equal((await app.request(link, {}, env(db))).status, 200);
-  assert.equal(optOut(db, 'acc-1'), 1);
+  for (let visit = 0; visit < 2; visit += 1) {
+    const response = await app.request(link, {}, env(db));
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type') ?? '', /text\/html/);
+    assert.match(response.headers.get('content-security-policy') ?? '', /form-action 'self'/);
+    assert.match(response.headers.get('content-security-policy') ?? '', /default-src 'none'/);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    const html = await response.text();
+    assert.match(html, /<form method="post" action="\/v1\/notices\/unsubscribe\?a=acc-1&amp;t=[A-Za-z0-9_-]{43}">/);
+    assert.match(html, /name="confirm" value="1"/);
+    assert.match(html, /Cancelar os avisos/);
+    assert.doesNotMatch(html, /Avisos cancelados/);
+    assert.equal(optOut(db, 'acc-1'), 0);
+  }
+  db.close();
+});
+
+test('o botão da página (POST com confirm=1) descadastra, mostra a confirmação e é idempotente', async () => {
+  const db = new SqliteD1();
+  await seedAccount(db, 'acc-1');
+  const app = createApp();
+  const init = { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'confirm=1' };
+  const link = await linkFor('acc-1');
+  for (let click = 0; click < 2; click += 1) {
+    const response = await app.request(link, init, env(db));
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type') ?? '', /text\/html/);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.match(await response.text(), /Avisos cancelados/);
+    assert.equal(optOut(db, 'acc-1'), 1);
+  }
+  const bad = await app.request('/v1/notices/unsubscribe?a=acc-1&t=nope', init, env(db));
+  assert.equal(bad.status, 400);
+  assert.match(await bad.text(), /Link inválido/);
   db.close();
 });
 

@@ -31,14 +31,14 @@ test('o envio de teste recusa visitante, usuário comum e requisição sem CSRF 
   db.close();
 });
 
-test('sem e-mail configurado o envio de teste explica o que definir e não envia nem audita', async () => {
-  for (const overrides of [{}, { ...ON, EMAIL_ENABLED: 'false' }, { ...ON, RESEND_API_KEY: '' }, { ...ON, NOTICE_SECRET: '' }]) {
+test('sem a chave do Resend ou sem o segredo o envio de teste explica o que definir e não envia nem audita', async () => {
+  for (const overrides of [{}, { ...ON, RESEND_API_KEY: '' }, { ...ON, NOTICE_SECRET: '' }, { ...ON, NOTICE_SECRET: 'curto' }]) {
     const { db, sent, post, audit, admin } = await setup();
     const response = await post(admin, overrides);
     assert.equal(response.status, 503);
     const body = await response.json() as { ok: boolean; error: string };
     assert.equal(body.ok, false);
-    assert.match(body.error, /Defina EMAIL_ENABLED, RESEND_API_KEY e NOTICE_SECRET/);
+    assert.match(body.error, /Defina RESEND_API_KEY e NOTICE_SECRET/);
     assert.equal(sent.length, 0);
     assert.deepEqual(audit(), []);
     db.close();
@@ -92,4 +92,14 @@ test('estender o teste reabre os avisos de fim de teste (o de boas-vindas não v
 
 test('sem e-mail configurado, estender o teste não toca na tabela de avisos', async () => {
   assert.deepEqual(await extendTrialWithMarks({}), ['trial_ended', 'trial_ending_1d', 'trial_ending_3d', 'welcome']);
+});
+
+test('o envio de teste funciona com o disparo geral DESLIGADO: dá para provar o Resend antes de ligar o cron', async () => {
+  const { db, sent, post, audit, admin } = await setup();
+  const response = await post(admin, { ...ON, EMAIL_ENABLED: 'false' });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, sent: true });
+  assert.equal(sent.length, 1);
+  assert.equal(audit().length, 1);
+  db.close();
 });

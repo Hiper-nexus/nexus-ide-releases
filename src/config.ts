@@ -7,4 +7,6 @@ export function billingConfigured(config:Config):boolean{return Boolean(config.S
 /** Os avisos por e-mail só saem com o interruptor ligado E as duas credenciais presentes (o segredo com tamanho decente): faltar uma é desligado, nunca erro. */
 /** Segredo curto deixaria os links de descadastro adivináveis: `openssl rand -base64 32` dá 44 caracteres. */
 export const NOTICE_SECRET_MIN_LENGTH=32;
-export function emailConfigured(config:Config):boolean{return config.EMAIL_ENABLED==='true'&&Boolean(config.RESEND_API_KEY)&&config.NOTICE_SECRET.trim().length>=NOTICE_SECRET_MIN_LENGTH;}
+/** Chave do Resend e segredo decente presentes: o suficiente para o admin provar o envio antes de ligar o disparo geral. */
+export function emailCredentialsPresent(config:Config):boolean{return Boolean(config.RESEND_API_KEY)&&config.NOTICE_SECRET.trim().length>=NOTICE_SECRET_MIN_LENGTH;}
+export function emailConfigured(config:Config):boolean{return config.EMAIL_ENABLED==='true'&&emailCredentialsPresent(config);}

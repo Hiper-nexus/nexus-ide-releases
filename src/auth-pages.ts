@@ -19,6 +19,7 @@ p{margin:0 0 20px;color:#aaa2a8;text-wrap:pretty}
 .cta{display:inline-block;padding:12px 20px;border-radius:8px;background:#faf7f9;color:#080709;font-weight:600;text-decoration:none}
 .cta:hover{background:#e6e2e5}
 .cta:focus-visible{outline:2px solid #ff4f8b;outline-offset:2px}
+.cta{border:0;font:inherit;font-weight:600;cursor:pointer}
 .hint{margin:20px 0 0;font-size:14px;color:#928b90}
 .error{padding:12px 14px;border:1px solid rgba(255,107,74,.45);border-radius:8px;background:rgba(255,107,74,.09);color:#faf7f9}
 `;
@@ -31,8 +32,11 @@ function layout(title: string, head: string, body: string): string {
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${escapeHtml(title)}</title>${head}<style>${STYLE}</style></head><body><main><p class="brand">NexusIDE</p>${body}</main></body></html>`;
 }
 
-function page(c: Context, html: string, status: ContentfulStatusCode): Response {
-  c.header('Content-Security-Policy', PAGE_CSP);
+/** Só a página de confirmação do descadastro tem formulário, e ele só pode enviar para a própria origem. */
+const FORM_PAGE_CSP = PAGE_CSP.replace("form-action 'none'", "form-action 'self'");
+
+function page(c: Context, html: string, status: ContentfulStatusCode, csp: string = PAGE_CSP): Response {
+  c.header('Content-Security-Policy', csp);
   return c.html(html, status);
 }
 
@@ -56,6 +60,22 @@ export function loginErrorPage(c: Context, message: string, status: ContentfulSt
 <h1>Não foi possível concluir o login</h1>
 <p class="error" role="alert">${escapeHtml(message)}</p>
 <p class="hint">Volte ao NexusIDE e clique em “Abrir de novo” para tentar outra vez.</p>`), status);
+}
+
+/**
+ * Confirmação do descadastro. O link do e-mail (GET) só abre esta página: quem descadastra é o clique (POST). Assim
+ * scanners de link e pré-visualizações, que fazem GET em tudo, não tiram ninguém da lista. `action` é montado a partir
+ * da conta e do token já verificados e é escapado mesmo assim.
+ */
+export function unsubscribeConfirmPage(c: Context, action: string): Response {
+  c.header('Cache-Control', 'no-store');
+  return page(c, layout('Cancelar avisos', '', `
+<h1>Cancelar os avisos por e-mail?</h1>
+<p>Você deixa de receber os avisos do período de teste do NexusIDE. Sua conta e o acesso continuam como estão.</p>
+<form method="post" action="${escapeHtml(action)}">
+<input type="hidden" name="confirm" value="1">
+<button class="cta" type="submit">Cancelar os avisos</button>
+</form>`), 200, FORM_PAGE_CSP);
 }
 
 /** Descadastro feito. Nada na página vem da requisição: o link só carrega o que já foi verificado. */

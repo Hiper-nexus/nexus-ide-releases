@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { AppEnv } from '../context.js';
-import { unsubscribeDonePage, unsubscribeInvalidPage } from '../auth-pages.js';
+import { unsubscribeConfirmPage, unsubscribeDonePage, unsubscribeInvalidPage } from '../auth-pages.js';
 import { verifyNoticeToken } from './unsubscribe.js';
 
 const ACCOUNT_ID = /^[\w:.-]{1,100}$/;
@@ -21,19 +21,28 @@ async function optOut(c: Context<AppEnv>, accountId: string): Promise<void> {
 
 /**
  * Sem login: o token assinado é a credencial. Passam pelo limitador da API como o resto de /v1.
- * O GET descadastra direto de propósito (quem clica no e-mail quer sair); o POST é o one-click do RFC 8058.
+ * O GET só mostra a página com o botão: scanners de link de empresa abrem todo link do e-mail e descadastrariam a
+ * pessoa antes de ela ler o aviso. Quem descadastra é o POST: o botão da página (`confirm=1`) e o one-click do RFC 8058
+ * que os provedores de e-mail enviam por conta própria (`List-Unsubscribe=One-Click`).
  */
 export const noticeRoutes = new Hono<AppEnv>()
   .get('/notices/unsubscribe', async (c) => {
-    // O Hono responde HEAD com o handler de GET; um HEAD (pré-visualização de link) não pode descadastrar ninguém.
-    if (c.req.method === 'HEAD') return c.body(null, 200);
     const account = await verifiedAccount(c);
     if (account === null) return unsubscribeInvalidPage(c);
-    await optOut(c, account);
-    return unsubscribeDonePage(c, c.get('config').PUBLIC_SITE_URL);
+    const action = new URL('/v1/notices/unsubscribe', 'https://placeholder.invalid');
+    action.searchParams.set('a', account);
+    action.searchParams.set('t', c.req.query('t') ?? '');
+    return unsubscribeConfirmPage(c, `${action.pathname}${action.search}`);
   })
   .post('/notices/unsubscribe', async (c) => {
     const account = await verifiedAccount(c);
+    const form: Record<string, unknown> = await c.req.parseBody().catch(() => ({}));
+    const fromPage = form['confirm'] === '1';
+    if (fromPage) {
+      if (account === null) return unsubscribeInvalidPage(c);
+      await optOut(c, account);
+      return unsubscribeDonePage(c, c.get('config').PUBLIC_SITE_URL);
+    }
     c.header('Cache-Control', 'no-store');
     if (account === null) return c.json({ ok: false, error: 'Link inválido.' }, 400);
     await optOut(c, account);
