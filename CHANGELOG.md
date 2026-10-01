@@ -14,6 +14,8 @@ Uso real no Mac em 30/09 e 01/10. Inclui a 0.76.153 (Segunda conta Grok). Primei
 - **Pane AGY não cai por link interno (F-229).** A CLI do AGY consolida atalhos de configuração dentro do próprio estado gerenciado; a guarda de credencial lia isso como adulteração e abortava o spawn.
 - **Diagnóstico não é entrega (F-227).** Pane que só lê e sinaliza é mandado resolver no mesmo pane — sem abrir outro.
 - **Gate longo não para a missão (F-714).** Enquanto um validador ou suíte de horas roda, os workers adiantam as próximas unidades.
+- **Fechar o app não trava mais por 45 s (F-240).** O orçamento para encerrar cada terminal (10 s + 20 s + 20 s) era maior que o teto do quit; uma CLI que ignorava o sinal levava o encerramento inteiro ao limite e deixava supervisores órfãos (50 incidentes desde 07/08). Orçamento agora 5 s + 8 s + 8 s, e cada fase do encerramento passa a ser medida — o incidente diz onde travou.
+- **Maestro recebe a saída no erro (F-241).** "unknown pane" lista os panes vivos da missão; "cwd escapes workspace" explica que o worker roda na worktree da missão e como pedir outra (`isolatedWriter:true`).
 - **Licença sem lockout falso (F-228).** Tela de bloqueio não pisca a cada renovação, resposta boa não vira "sessão expirou" quando outra requisição renovou a sessão, relógio até 5 min atrasado não invalida token novo, e o token é gravado antes de avançar a cerca de replay.
 - **Chrome bloqueado pelo macOS explica o que fazer (F-225).** Em vez de EPERM cru, o painel pede Acesso Total ao Disco em Ajustes do Sistema.
 
