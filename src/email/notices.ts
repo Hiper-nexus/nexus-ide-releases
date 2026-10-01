@@ -1,0 +1,70 @@
+import type { NoticeKind } from '../db/schema.js';
+
+/** Quais contas devem receber qual aviso agora. Puro: o relógio e o que já foi enviado entram por parâmetro. */
+export const NOTICE_KINDS = ['welcome', 'trial_ending_3d', 'trial_ending_1d', 'trial_ended'] as const satisfies readonly NoticeKind[];
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const ENDED_WINDOW_MS = 7 * DAY_MS;
+/** Do mais urgente ao menos urgente: só o primeiro que vale agora é considerado. */
+const URGENCY: readonly NoticeKind[] = ['trial_ended', 'trial_ending_1d', 'trial_ending_3d', 'welcome'];
+
+export interface NoticeCandidate {
+  readonly id: string;
+  readonly email: string;
+  readonly name: string | null;
+  readonly createdAt: number;
+  readonly suspendedAt: number | null;
+  readonly trialExpiresAt: number | null;
+  readonly noticesOptOut: boolean;
+  /** Assinatura ativa ou concessão (incl. código de licença), calculada pela mesma regra de accountAccess. */
+  readonly paid: boolean;
+  readonly isAdmin: boolean;
+  /** Tipos que já saíram para esta conta. */
+  readonly sentKinds: readonly NoticeKind[];
+}
+
+export interface DueNotice {
+  readonly accountId: string;
+  readonly email: string;
+  readonly name: string | null;
+  readonly kind: NoticeKind;
+  readonly trialEndsAt: string | null;
+}
+
+const ADDRESS_PART = String.raw`[^\s@<>"',;:()\[\]\\]`;
+const EMAIL = new RegExp(`^${ADDRESS_PART}+@${ADDRESS_PART}+\\.${ADDRESS_PART}+$`);
+
+/** Conservador de propósito: o login grava `provedor:id` quando não há e-mail verificado, e isso nunca é endereço. */
+export function isDeliverableEmail(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= 254 && EMAIL.test(value);
+}
+
+function candidateKinds(row: NoticeCandidate, now: number): Set<NoticeKind> {
+  const kinds = new Set<NoticeKind>();
+  const ends = row.trialExpiresAt;
+  if (typeof ends === 'number' && Number.isFinite(ends)) {
+    const remaining = ends - now;
+    if (remaining <= 0) { if (-remaining <= ENDED_WINDOW_MS) kinds.add('trial_ended'); }
+    else if (remaining <= DAY_MS) kinds.add('trial_ending_1d');
+    else if (remaining <= 3 * DAY_MS) kinds.add('trial_ending_3d');
+  }
+  const age = now - row.createdAt;
+  if (Number.isFinite(age) && age >= 0 && age <= DAY_MS) kinds.add('welcome');
+  return kinds;
+}
+
+export function dueNotices(rows: readonly NoticeCandidate[], now: number): DueNotice[] {
+  if (!Number.isFinite(now)) return [];
+  const due: DueNotice[] = [];
+  for (const row of rows) {
+    if (row.suspendedAt !== null || row.paid || row.isAdmin || row.noticesOptOut || !isDeliverableEmail(row.email)) continue;
+    const candidates = candidateKinds(row, now);
+    const kind = URGENCY.find(value => candidates.has(value));
+    if (kind === undefined || row.sentKinds.includes(kind)) continue;
+    due.push({
+      accountId: row.id, email: row.email, name: row.name, kind,
+      trialEndsAt: row.trialExpiresAt === null || !Number.isFinite(row.trialExpiresAt) ? null : new Date(row.trialExpiresAt).toISOString(),
+    });
+  }
+  return due;
+}

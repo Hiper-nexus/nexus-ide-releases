@@ -17,6 +17,7 @@ function database(t) {
   db.exec(readFileSync(new URL('../migrations/0003_checkout_reservation.sql', import.meta.url), 'utf8'));
   db.exec(readFileSync(new URL('../migrations/0004_oauth_client.sql', import.meta.url), 'utf8'));
   db.exec(readFileSync(new URL('../migrations/0005_license_codes.sql', import.meta.url), 'utf8'));
+  db.exec(readFileSync(new URL('../migrations/0006_account_notices.sql', import.meta.url), 'utf8'));
   return db;
 }
 
@@ -41,7 +42,7 @@ function project(db, accountId, projectId = 'same-project') {
 
 test('schema metadata records version without claiming PostgreSQL import', (t) => {
   const db = database(t);
-  assert.equal(db.prepare("SELECT value FROM system_metadata WHERE key = 'schema_version'").get().value, '5');
+  assert.equal(db.prepare("SELECT value FROM system_metadata WHERE key = 'schema_version'").get().value, '6');
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM system_metadata WHERE key LIKE 'import%'").get().n, 0);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM accounts").get().n, 0);
 });
@@ -284,4 +285,47 @@ test('accounts start without an open checkout window and the generation never go
   assert.equal(row.generation, 0);
   assert.equal(row.openUntil, null);
   assert.throws(() => db.prepare('UPDATE accounts SET checkout_generation = -1 WHERE id = ?').run(accountId), /CHECK|constraint/i);
+});
+
+test('avisos por e-mail: um por conta e tipo, só os quatro tipos, e sair da lista é 0 ou 1', (t) => {
+  const db = database(t);
+  const id = account(db);
+  const notice = (kind, sentAt = NOW, providerId = 're_1') => db.prepare('INSERT INTO account_notices (account_id, kind, sent_at, provider_id) VALUES (?, ?, ?, ?)').run(id, kind, sentAt, providerId);
+  for (const kind of ['welcome', 'trial_ending_3d', 'trial_ending_1d', 'trial_ended']) notice(kind);
+  assert.throws(() => notice('welcome'), /UNIQUE constraint failed/, 'o mesmo aviso nunca sai duas vezes para a mesma conta');
+  assert.throws(() => notice('promocao'), /CHECK constraint failed/);
+  assert.throws(() => notice('welcome', -1), /CHECK constraint failed|UNIQUE constraint failed/);
+  assert.equal(db.prepare('SELECT notices_opt_out AS v FROM accounts WHERE id = ?').get(id).v, 0, 'conta nova recebe avisos por padrão');
+  db.prepare('UPDATE accounts SET notices_opt_out = 1 WHERE id = ?').run(id);
+  assert.throws(() => db.prepare('UPDATE accounts SET notices_opt_out = 2 WHERE id = ?').run(id), /CHECK constraint failed/);
+});
+
+test('avisos por e-mail: apagar a conta apaga os avisos dela', (t) => {
+  const db = database(t);
+  const id = account(db);
+  db.prepare("INSERT INTO account_notices (account_id, kind, sent_at) VALUES (?, 'welcome', ?)").run(id, NOW);
+  db.prepare('DELETE FROM accounts WHERE id = ?').run(id);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM account_notices').get().n, 0);
+});
+
+test('auditoria aceita a ação test_notice e continua recusando ação desconhecida; linhas antigas sobrevivem', (t) => {
+  const db = database(t);
+  const id = account(db);
+  db.prepare("INSERT INTO admin_audit (id, actor_account_id, target_account_id, action, details) VALUES ('a1', ?, ?, 'test_notice', '{}')").run(id, id);
+  assert.throws(() => db.prepare("INSERT INTO admin_audit (id, actor_account_id, target_account_id, action, details) VALUES ('a2', ?, ?, 'hack', '{}')").run(id, id), /CHECK constraint failed/);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM admin_audit WHERE action = 'test_notice'").get().n, 1);
+});
+
+test('a migração 0006 preserva a auditoria que já existia em bancos com a 0005', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec('PRAGMA foreign_keys = ON');
+  for (const file of ['0001_core.sql', '0002_trial_admin.sql', '0003_checkout_reservation.sql', '0004_oauth_client.sql', '0005_license_codes.sql']) db.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), 'utf8'));
+  const id = randomUUID();
+  db.prepare('INSERT INTO accounts (id, email) VALUES (?, ?)').run(id, 'a@example.test');
+  db.prepare("INSERT INTO admin_audit (id, actor_account_id, target_account_id, action, details, created_at) VALUES ('old', ?, ?, 'suspend', '{\"reason\":\"x\"}', 123)").run(id, id);
+  db.exec(readFileSync(new URL('../migrations/0006_account_notices.sql', import.meta.url), 'utf8'));
+  const row = db.prepare("SELECT action, details, created_at FROM admin_audit WHERE id = 'old'").get();
+  assert.deepEqual({ ...row }, { action: 'suspend', details: '{"reason":"x"}', created_at: 123 });
+  assert.equal(db.prepare('SELECT notices_opt_out AS v FROM accounts WHERE id = ?').get(id).v, 0, 'contas que já existiam entram com avisos ligados');
+  db.close();
 });

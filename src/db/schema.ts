@@ -8,7 +8,8 @@ export type OwnerType = 'account' | 'team';
 export type TeamRole = 'owner' | 'member';
 export type AuthChannel = 'desktop' | 'web';
 export type AccountRole = 'user' | 'admin';
-export type AdminAuditAction = 'suspend' | 'resume' | 'extend_trial' | 'mint_license_code' | 'revoke_license_code';
+export type AdminAuditAction = 'suspend' | 'resume' | 'extend_trial' | 'mint_license_code' | 'revoke_license_code' | 'test_notice';
+export type NoticeKind = 'welcome' | 'trial_ending_3d' | 'trial_ending_1d' | 'trial_ended';
 export type CronStatus = 'active' | 'paused' | 'deleted';
 export type SqlBoolean = 0 | 1;
 export type EpochMilliseconds = number;
@@ -31,6 +32,7 @@ export interface AccountRow {
   readonly last_seen_at: EpochMilliseconds | null;
   readonly checkout_generation: number;
   readonly checkout_open_until: EpochMilliseconds | null;
+  readonly notices_opt_out: SqlBoolean;
 }
 
 export interface IdentityRow {
@@ -197,6 +199,13 @@ export interface LicenseRedemptionRow {
   readonly code_id: string;
   readonly account_id: string;
   readonly redeemed_at: EpochMilliseconds;
+}
+
+export interface AccountNoticeRow {
+  readonly account_id: string;
+  readonly kind: NoticeKind;
+  readonly sent_at: EpochMilliseconds;
+  readonly provider_id: string | null;
 }
 
 export interface AdminAuditRow {
