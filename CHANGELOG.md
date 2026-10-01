@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.157 — Kimi sem alarme falso
+
+Build do Windows. Inclui a 0.76.156 (Fechar sempre à vista).
+
+- **Estrangulamento do enxame do Kimi não é limite da conta (F-718).** No 429 de concorrência da Moonshot, o Kimi Code 2.1 re-enfileira os subagentes sozinho: backoff de 3 s ×2 e capacidade recuperada em 3 min. Enquanto isso, mostra "Rate limited…" no painel do enxame, e o tower pausa spawns por alguns segundos. Esses textos casavam o padrão de limite de 1 h, e o Nexus avisava "Limite temporário em kimi — Nenhuma outra conta está disponível" com a cota em 73%. O detector agora remove essas frases exatas da CLI antes dos padrões. O 429 real que derruba o agente continua detectado.
+
 ## 0.76.156 — Fechar sempre à vista
 
 Build do Windows. Inclui a 0.76.155 (Guarda no lugar).

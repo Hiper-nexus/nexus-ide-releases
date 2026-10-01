@@ -8795,7 +8795,7 @@ export const RELEASE_076155: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076156: AppRelease = {
   version: '0.76.156',
   date: '2026-10-01',
   codename: 'Fechar sempre à vista',
@@ -8811,6 +8811,28 @@ export const CURRENT_RELEASE: AppRelease = {
         'botão Fechar ficava cortado. Agora, quando os botões não cabem, ' +
         'eles viram ícones ou vão para o menu "⋯", e o Fechar fica sempre ' +
         'no canto direito.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.157',
+  date: '2026-10-01',
+  codename: 'Kimi sem alarme falso',
+  summary:
+    'O Nexus para de avisar "Limite temporário" no Kimi quando é só a ' +
+    'própria CLI organizando os subagentes. Inclui a 0.76.156.',
+  highlights: [
+    {
+      title: 'Kimi sem alarme falso de limite',
+      detail:
+        'Quando o Kimi roda vários subagentes juntos, o provider às vezes ' +
+        'pede para ir mais devagar. A própria CLI espera alguns segundos e ' +
+        'segue, mostrando "Rate limited…" no painel. O Nexus lia isso como ' +
+        'limite da conta e avisava "Limite temporário" com a cota sobrando. ' +
+        'Agora ele ignora esse aviso interno, e só um erro real do provider ' +
+        'conta como limite.',
     },
   ],
   fixes: [],
