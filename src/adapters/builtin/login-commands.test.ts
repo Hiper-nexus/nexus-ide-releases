@@ -18,14 +18,15 @@ const SESSION_LOGIN_IDS = [
   'openclaude',
 ] as const;
 
-const KEY_ONLY_IDS = ['aider', 'glm', 'glm-flash', 'longcat', 'muse-claude'] as const;
+// F-236: deepseek virou cli-pty no host Claude (chave de API, como glm/longcat).
+const KEY_ONLY_IDS = ['aider', 'deepseek', 'glm', 'glm-flash', 'longcat', 'muse-claude'] as const;
 
 describe('builtin CLI login commands', () => {
   const adapters = BUILTIN_ADAPTERS.map((raw) => adapterSchema.parse(raw));
 
   it('parses every builtin adapter', () => {
-    // Login commands são conceito de CLI local; os api-providers (deepseek,
-    // qwen) existem para gestão de key na aba Remotos e ficam fora desta lista.
+    // Login commands são conceito de CLI local; o api-provider (qwen) existe
+    // para gestão de key na aba Remotos e fica fora desta lista.
     const cliIds = adapters
       .filter((a) => a.kind === 'cli-pty')
       .map((a) => a.id)
@@ -35,7 +36,7 @@ describe('builtin CLI login commands', () => {
 
   it('api-providers remotos declaram endpoint e auth de key', () => {
     const remotes = adapters.filter((a) => a.kind === 'api-provider');
-    expect(remotes.map((a) => a.id).sort()).toEqual(['deepseek', 'qwen']);
+    expect(remotes.map((a) => a.id).sort()).toEqual(['qwen']);
     for (const adapter of remotes) {
       if (adapter.kind !== 'api-provider') continue;
       expect(adapter.endpoint.startsWith('https://')).toBe(true);
