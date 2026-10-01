@@ -1,6 +1,6 @@
 # Publicar a API e abrir assinaturas do NexusIDE
 
-Roteiro operacional. Revisado em 30/09/2026 contra o código e as fontes oficiais ao final. Os comandos abaixo são para o operador executar. A elaboração deste documento não publicou serviços nem configurou contas externas.
+Roteiro operacional. Revisado em 30/09/2026 contra o código e as fontes oficiais ao final; revisado de novo em 01/10/2026 contra o estado real da produção. Os comandos abaixo são para o operador executar. A elaboração deste documento não publicou serviços nem configurou contas externas.
 
 Destino: Worker `nexus-cloud-api`, API `https://api.nexuside.app`, site `https://nexuside.app`. Oferta: Nexus Pro por R$ 59,99/mês, em BRL. O teste do Nexus dura 15 dias, permite 2 agentes simultâneos e não permite sync em nuvem. Não existe Free permanente. O valor interno `plan=free` não significa acesso gratuito sem prazo.
 
@@ -54,7 +54,7 @@ Conferência: outra pessoa deve conseguir identificar qual banco e qual conjunto
 
 ### 2.1 Decidir os bancos antes de cadastrar usuários
 
-O binding `DB` aponta hoje para `nexus-cloud-staging`. Escolha e registre uma das opções:
+O binding `DB` aponta hoje para `nexus-cloud-staging`, que já tem as quatro migrations aplicadas (`schema_version` 4, conforme o levantamento de 01/10/2026). Não existe banco de produção separado ainda. Escolha e registre uma das opções:
 
 | Decisão | Banco de teste | Banco que receberá vendas reais |
 | --- | --- | --- |
@@ -233,7 +233,7 @@ Confira as 20 variáveis de `src/config.ts`:
 
 As variáveis não secretas ficam em `vars` no `wrangler.jsonc`. Preserve `DB`, `AUTH_RATE_LIMITER` e `API_RATE_LIMITER`. Preserve `main`, `nodejs_compat` e a data de compatibilidade. Não há `DATABASE_URL`, chave publishable Stripe ou segredo de cron a acrescentar: o código usa binding D1 e checkout hospedado.
 
-Ajuste o `wrangler.jsonc`: hoje `workers_dev` está `true` e não existe `preview_urls`. Mude para o bloco abaixo, preservando a rota `custom_domain`, o cron e a observabilidade já existentes, e comprove no ambiente publicado que não há entrada alternativa:
+Confira o `wrangler.jsonc`: `workers_dev` e `preview_urls` já estão `false` e a rota `custom_domain` já existe, então a entrada é só pelo domínio. Preserve esse bloco, o cron e a observabilidade, e comprove no ambiente publicado que não há entrada alternativa:
 
 ```jsonc
 "routes": [{ "pattern": "api.nexuside.app", "custom_domain": true }],
@@ -519,7 +519,7 @@ Esperado: versão 4 e base reservada vazia, sem clientes/assinaturas de teste. C
 
 ### 3.2 Preparar Stripe live e substituir o conjunto inteiro
 
-**Esta etapa configura dinheiro real.** No Stripe, conclua ativação da conta e confira recebimentos, dados comerciais, suporte e descritor. Selecione live. Crie o Product/Price live pelo painel ou repita `stripe:provision` com a chave live fornecida pelo cofre. Criar catálogo não cobra por si; checkout e renovações live cobram. Fonte: [checklist live][stripe-live].
+**Esta etapa configura dinheiro real.** No Stripe, conclua ativação da conta e confira recebimentos, dados comerciais, suporte e descritor. Selecione live. Na conta live já existe o produto NexusIDE Pro com preço mensal de R$ 59,99; o script `stripe:provision` reconhece esse produto do catálogo antigo (metadata `nexusProduct=nexuside_pro`) e não cria outro. Criar catálogo não cobra por si; checkout e renovações live cobram. Fonte: [checklist live][stripe-live].
 
 Confirme o Price live com uma chamada somente de leitura:
 
@@ -529,7 +529,7 @@ stripe prices retrieve <PRICE_ID_LIVE> --live
 
 Espere `livemode=true` e os mesmos BRL/5999/mês/interval_count 1. Configure o portal **também em live**. Não assuma que configurações do modo de teste foram copiadas.
 
-Crie um **novo destino de webhook live**, na URL de 2.7, com os mesmos seis eventos. Guarde seu novo signing secret. Desabilite o destino de teste somente depois de suas entregas finais. A API tem um único `STRIPE_WEBHOOK_SECRET`; não recebe os dois modos ao mesmo tempo.
+Crie um **novo destino de webhook live**, na URL de 2.7, com os mesmos seis eventos. O webhook de produção que já existe aponta para o host antigo `https://nexuside.app/v1/billing/webhook`; a API nova precisa do destino em `https://api.nexuside.app/v1/billing/webhook`. Também não há configuração padrão do Customer Portal em live: configure-a nesta etapa. Guarde seu novo signing secret. Desabilite o destino de teste somente depois de suas entregas finais. A API tem um único `STRIPE_WEBHOOK_SECRET`; não recebe os dois modos ao mesmo tempo.
 
 Com vendas fechadas, cadastre o par Stripe live:
 

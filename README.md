@@ -2,7 +2,7 @@
 
 API do NexusIDE em Cloudflare Workers (Hono, D1, Stripe). Atende o site `https://nexuside.app` (conta, assinatura, administração) e o app desktop (login, licença, times, cron, sync). Destino: `https://api.nexuside.app`.
 
-Ainda não está publicada. O roteiro de publicação fica em `docs/go-live.md` e depende do operador.
+A API está publicada em `https://api.nexuside.app` (Cloudflare Workers + D1, entrada só pelo domínio: `workers_dev` e preview URLs estão desligados). Ainda roda contra o banco de staging, com login OAuth e Stripe pendentes de credenciais. O roteiro para completar a publicação fica em `docs/go-live.md`.
 
 ## Rodar
 
@@ -43,7 +43,7 @@ Respostas: `{ok:true,data:{…}}` ou `{ok:false,error:"…"}`.
 ## Cobrança
 
 - O checkout só aceita o plano `pro` e confere o Price do Stripe (ativo, BRL, 5.999 centavos, mensal) antes de criar cliente ou sessão.
-- Enquanto `MIGRATION_READY` for `false`, o checkout responde 503. Portal e webhook continuam funcionando.
+- Enquanto `MIGRATION_READY` for `false` (estado atual), o checkout responde 503. A flag não bloqueia login, início do teste, webhook nem portal.
 - Cada conta tem no máximo uma sessão de checkout aberta. Tentativas repetidas, no site ou no app, recebem a mesma sessão do Stripe por até 23 horas. Ative também, no painel do Stripe, a opção de limitar clientes a uma assinatura.
 - Uma assinatura só vale para a conta cujo cliente Stripe foi criado no checkout dela. Assinatura de outro produto, sem dono, de dono inexistente ou com cliente divergente é registrada em `stripe_events` com o motivo e não concede acesso.
 - O webhook verifica a assinatura sobre o corpo exato, registra o evento em `stripe_events` e lê o estado atual da assinatura na API do Stripe. O payload do evento nunca decide acesso. Um evento que falha fica sem `processed_at` e o Stripe tenta de novo. Entregas simultâneas não se atropelam: uma leitura antiga nunca sobrescreve uma mais nova.
@@ -53,5 +53,7 @@ Respostas: `{ok:true,data:{…}}` ou `{ok:false,error:"…"}`.
 ## Configuração
 
 Variáveis em `wrangler.jsonc`. Segredos por `wrangler secret put`: `LICENSE_PRIVATE_KEY`, `LICENSE_PUBLIC_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `GITHUB_OAUTH_SECRET`, `GOOGLE_OAUTH_SECRET`. Para rodar local com segredos de teste, use `.dev.vars` (fora do git).
+
+Estado na produção atual (01/10/2026): faltam as variáveis `GOOGLE_OAUTH_ID`, `GITHUB_OAUTH_ID` e `STRIPE_PRICE_PRO` (vazias em `wrangler.jsonc`) e os secrets `GOOGLE_OAUTH_SECRET`, `GITHUB_OAUTH_SECRET`, `STRIPE_SECRET_KEY` e `STRIPE_WEBHOOK_SECRET`; o status público confirma `auth.google=false`, `auth.github=false` e `billing.available=false`. Os secrets de licença já estão cadastrados segundo o levantamento operacional. Um único provedor OAuth preenchido já destrava login e teste; o Stripe não é necessário para isso.
 
 O par de chaves da licença precisa ser o mesmo que os apps instalados reconhecem.
