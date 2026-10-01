@@ -349,6 +349,11 @@ saber isto antes de mexer:
   Comando pesado local (validador, `make verify`, suíte) continua um por vez —
   a regra é não deixar trabalho de LLM esperando CPU. Na noite de 30/09 a
   missão do HiperGO gastou 7h30 em validações em fila única, sem worker.
+- F-242: worker `working` sem atividade por 20 min com PTY parado = travado
+  → handoff `stalled` [travado] acorda o Maestro (renotifica a cada 60 min);
+  não bloqueia a missão. F-243: o Maestro Claude de missão recebe
+  `CLAUDE_CODE_AUTO_COMPACT_WINDOW=400000` (workers/operador inalterados;
+  adapters host-Claude já definem a janela).
 - F-702: worker nunca pergunta ao humano (`request_user_input_async` do
   Codex, AskUserQuestion): ninguém responde e o pane trava. Brief que
   contraria a autoridade de execução (clone próprio, push, outra branch)

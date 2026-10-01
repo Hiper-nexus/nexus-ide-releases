@@ -1,4 +1,9 @@
-import type { Handoff, Mission, PaneRuntimeState } from '../../shared/orch-types';
+import type {
+  Handoff,
+  Mission,
+  PaneRuntimeState,
+  PaneSnapshot,
+} from '../../shared/orch-types';
 import { wasUpdatedBeforeThisProcess } from '../../shared/session-restore-liveness';
 import { wasMissionApprovedByOperator } from '../../shared/mission-recovery-policy';
 import {
@@ -30,6 +35,7 @@ import {
   getAgentSemanticStatusBySession,
   SEMANTIC_WORKING_VETO_MS,
 } from './agent-status';
+import { trace } from '../observability/main-trace';
 import {
   persistLeftoverIsolation,
   shouldSkipLeftoverRemount,
@@ -46,6 +52,48 @@ const chefIdleTrackers = new Map<string, ChefIdleTracker>();
 /** Esteira (F-714): desde quando a missão está sem worker e o último lembrete. */
 const momentumSoloSince = new Map<string, number>();
 const momentumNudgedAt = new Map<string, number>();
+
+/**
+ * F-242: worker `working` sem ferramenta/saída por 20 min com o PTY parado =
+ * travado no meio do turno (API/CLI pendurada). O supervisor avisa o Maestro
+ * via handoff `stalled` [travado]; o relógio renotifica a cada 60 min enquanto
+ * o pane seguir travado. Não bloqueia a missão — o Maestro acordado destrava
+ * ou fecha o pane, e o chef-idle reseta sozinho quando o estado muda.
+ */
+export const WORKER_HUNG_AFTER_MS = 20 * 60_000;
+export const WORKER_HUNG_RENOTIFY_MS = 60 * 60_000;
+
+/** Último aviso por sessão de worker (mesma vida do supervisor). */
+const hungWorkerNotifiedAt = new Map<string, number>();
+
+export function decideWorkerHung(input: {
+  readonly semanticStatus: string | undefined;
+  readonly semanticUpdatedAt: number | undefined;
+  readonly paneState: PaneRuntimeState | undefined;
+  readonly notifiedAt: number | null;
+  readonly now: number;
+}): 'none' | 'notify' | 'renotify' {
+  if (input.semanticStatus !== 'working') return 'none';
+  if (input.semanticUpdatedAt === undefined) return 'none';
+  // PTY ocupado/spawnando pode estar produzindo saída que o status não viu
+  // ainda; morto/estacionado já é coberto por outros watchdogs.
+  if (
+    input.paneState === 'busy' ||
+    input.paneState === 'spawning' ||
+    input.paneState === 'exited' ||
+    input.paneState === 'parked' ||
+    input.paneState === 'hibernated'
+  ) {
+    return 'none';
+  }
+  if (input.now - input.semanticUpdatedAt < WORKER_HUNG_AFTER_MS) {
+    return 'none';
+  }
+  if (input.notifiedAt === null) return 'notify';
+  return input.now - input.notifiedAt >= WORKER_HUNG_RENOTIFY_MS
+    ? 'renotify'
+    : 'none';
+}
 
 /** Zero-entrega: Maestro dormiu esperando handoff com disco vazio. */
 const zeroDeliveryPoked = new Set<string>();
@@ -467,10 +515,66 @@ function recoverySummary(missionId: string, stage: 1 | 2): string {
   );
 }
 
+function notifyHungWorkerPanes(
+  suite: ProjectDomainStoreSuite,
+  mission: Mission,
+  panes: readonly PaneSnapshot[],
+  now: number,
+): void {
+  for (const pane of panes) {
+    if (pane.role !== 'worker' || !pane.sessionId) continue;
+    const semantic = getAgentSemanticStatusBySession(pane.sessionId);
+    const decision = decideWorkerHung({
+      semanticStatus: semantic?.status,
+      semanticUpdatedAt: semantic?.updatedAt,
+      paneState: pane.state,
+      notifiedAt: hungWorkerNotifiedAt.get(pane.sessionId) ?? null,
+      now,
+    });
+    if (decision === 'none') continue;
+    hungWorkerNotifiedAt.set(pane.sessionId, now);
+    const updatedAt = semantic!.updatedAt!;
+    const hungMinutes = Math.max(1, Math.floor((now - updatedAt) / 60_000));
+    const last = new Date(updatedAt);
+    const hhmm =
+      `${String(last.getHours()).padStart(2, '0')}:` +
+      `${String(last.getMinutes()).padStart(2, '0')}`;
+    trace({
+      kind: 'worker-hung',
+      missionId: mission.id,
+      paneId: pane.paneId,
+      adapterId: pane.adapterId ?? 'unknown',
+      hungMinutes,
+    });
+    try {
+      const handoff = suite.handoffs.submit({
+        missionId: mission.id,
+        status: 'stalled',
+        summary:
+          `[travado] worker "${pane.agentName ?? pane.title}" ` +
+          `(${pane.paneId}, ${pane.adapterId}) está há ${hungMinutes} min ` +
+          `no meio do turno sem ferramenta nem saída (última atividade ` +
+          `${hhmm}). Destrave com nexus_pane_write (Esc, depois Enter) ou ` +
+          `feche (nexus_pane_close) e re-despache a tarefa — a missão não ` +
+          `espera pane travado.`,
+        fromAgent: DELEGATION_SUPERVISOR_AGENT,
+      });
+      onHandoffSubmitted(handoff, suite.scope);
+    } catch (error) {
+      console.warn(
+        `[delegation-supervisor] falha ao avisar worker travado ` +
+          `${pane.paneId}:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+}
+
 function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
   const liveStates = new Set<PaneRuntimeState>([
     'spawning', 'busy', 'idle', 'unknown',
   ]);
+  const liveSessionIds = new Set<string>();
   for (const mission of suite.missions.list()) {
     const squad = mission.squadId ? getSquad(mission.squadId) : null;
     const lane = mission.intentContract?.lane;
@@ -488,6 +592,9 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
     const panes = listPaneSnapshots().filter(
       (pane) => pane.missionId === mission.id && liveStates.has(pane.state),
     );
+    for (const pane of panes) {
+      if (pane.sessionId) liveSessionIds.add(pane.sessionId);
+    }
     let recoveries = suite.handoffs
       .list({ missionId: mission.id, includeDelivered: true })
       .filter((handoff) => handoff.fromAgent === DELEGATION_SUPERVISOR_AGENT)
@@ -529,6 +636,7 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
 
     if (mission.status === 'pending' || mission.status === 'running') {
       flushAllNexusTaskFailClosedRetries(suite.scope, mission.id);
+      notifyHungWorkerPanes(suite, mission, panes, now);
     }
 
     // Re-arm de handoff: Maestro idle + pendente durable, COM OU SEM workers.
@@ -818,6 +926,10 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
       `[delegation-supervisor] recovery 1/2 submitted for ${mission.id}`,
     );
   }
+  // Sessão de worker saiu do inventário: o aviso pendente não é mais dela.
+  for (const sessionId of hungWorkerNotifiedAt.keys()) {
+    if (!liveSessionIds.has(sessionId)) hungWorkerNotifiedAt.delete(sessionId);
+  }
 }
 
 const suites = new Map<string, ProjectDomainStoreSuite>();
@@ -869,6 +981,7 @@ export function shutdownDelegationSupervisor(): void {
   zeroDeliveryPoked.clear();
   zeroDeliveryEscalated.clear();
   handoffRearmLastRun.clear();
+  hungWorkerNotifiedAt.clear();
   momentumSoloSince.clear();
   momentumNudgedAt.clear();
 }

@@ -6,9 +6,12 @@ import {
   DELEGATION_RETRY_MS,
   DELEGATION_SLA_MS,
   decideChefIdleEscalation,
+  decideWorkerHung,
   delegationRecoveryStage,
   isDelegationSupervisable,
   shouldRearmHandoffDelivery,
+  WORKER_HUNG_AFTER_MS,
+  WORKER_HUNG_RENOTIFY_MS,
 } from './delegation-supervisor';
 
 const mission: Mission = {
@@ -66,6 +69,57 @@ const dispatchedEmpty: Mission = {
     },
   },
 };
+
+describe('decideWorkerHung — worker travado no meio do turno (F-242)', () => {
+  const now = 10_000_000;
+  const working = {
+    semanticStatus: 'working' as const,
+    semanticUpdatedAt: now - WORKER_HUNG_AFTER_MS - 5 * 60_000, // 25 min
+    paneState: 'idle' as const,
+    notifiedAt: null,
+    now,
+  };
+
+  it('working há 25 min com PTY parado → notify', () => {
+    expect(decideWorkerHung(working)).toBe('notify');
+  });
+
+  it('working há menos de 20 min, PTY ocupado, ou sem updatedAt → none', () => {
+    expect(
+      decideWorkerHung({
+        ...working,
+        semanticUpdatedAt: now - 10 * 60_000,
+      }),
+    ).toBe('none');
+    expect(decideWorkerHung({ ...working, paneState: 'busy' })).toBe('none');
+    expect(decideWorkerHung({ ...working, paneState: 'spawning' })).toBe('none');
+    expect(decideWorkerHung({ ...working, paneState: 'exited' })).toBe('none');
+    expect(decideWorkerHung({ ...working, paneState: 'parked' })).toBe('none');
+    expect(
+      decideWorkerHung({ ...working, semanticUpdatedAt: undefined }),
+    ).toBe('none');
+  });
+
+  it('já notificado: silêncio até 60 min, renotify depois', () => {
+    expect(
+      decideWorkerHung({ ...working, notifiedAt: now - 30 * 60_000 }),
+    ).toBe('none');
+    expect(
+      decideWorkerHung({
+        ...working,
+        notifiedAt: now - WORKER_HUNG_RENOTIFY_MS - 60_000,
+      }),
+    ).toBe('renotify');
+  });
+
+  it('status que não é working → none', () => {
+    for (const status of ['awaiting-input', 'idle', 'completed', undefined]) {
+      expect(
+        decideWorkerHung({ ...working, semanticStatus: status }),
+      ).toBe('none');
+    }
+  });
+});
 
 describe('delegation supervisor policy', () => {
   it('chef idle aguardando workers: abaixo do teto só observa', () => {
