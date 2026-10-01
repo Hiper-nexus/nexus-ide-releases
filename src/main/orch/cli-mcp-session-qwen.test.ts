@@ -19,6 +19,14 @@ function tempDir(): string {
   return dir;
 }
 
+/** O MESMO arquivo, não uma cópia: symlink no POSIX, hardlink no Windows. */
+function expectSameFile(linked: string, source: string): void {
+  if (process.platform !== 'win32') expect(fs.lstatSync(linked).isSymbolicLink()).toBe(true);
+  const a = fs.statSync(linked);
+  const b = fs.statSync(source);
+  expect([a.dev, a.ino]).toEqual([b.dev, b.ino]);
+}
+
 const URL = 'http://127.0.0.1:43210/mcp';
 const TOKEN = 'fixture-session-token';
 
@@ -82,12 +90,10 @@ describe('prepareQwenMcpSession (F-238)', () => {
       expect(result.env.NEXUS_MCP_URL).toBe(URL);
       expect(result.env.NEXUS_MCP_TOKEN).toBe(TOKEN);
 
-      // Credencial: symlink para o perfil real — o segredo não é copiado.
+      // Credencial: link para o perfil real (symlink no POSIX, hardlink no
+      // Windows) — o segredo não é copiado.
       const linked = path.join(artifactDir, 'settings.json');
-      expect(fs.lstatSync(linked).isSymbolicLink()).toBe(true);
-      expect(fs.realpathSync(linked)).toBe(
-        fs.realpathSync(path.join(fx.providerHome, 'settings.json')),
-      );
+      expectSameFile(linked, path.join(fx.providerHome, 'settings.json'));
       expect(fs.readFileSync(linked, 'utf8')).toContain(
         'fixture-settings-secret',
       );
@@ -151,9 +157,10 @@ describe('prepareQwenMcpSession (F-238)', () => {
       expect(allowed).toEqual([result.serverName]);
       expect(allowed).not.toContain('blender');
       // Credencial continua ligada mesmo no perfil governado.
-      expect(
-        fs.lstatSync(path.join(artifactDir, 'settings.json')).isSymbolicLink(),
-      ).toBe(true);
+      expectSameFile(
+        path.join(artifactDir, 'settings.json'),
+        path.join(fx.providerHome, 'settings.json'),
+      );
       expect(result.providerSessionHome).toContain('checkout-2');
     } finally {
       cleanupCliMcpSession(TOKEN);

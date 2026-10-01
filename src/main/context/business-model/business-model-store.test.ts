@@ -93,7 +93,8 @@ describe('writeBusinessModel + readBusinessModelAt', () => {
     expect(jsons).toHaveLength(1);
     expect(files.some((name) => String(name).endsWith('.tmp'))).toBe(false);
     const stat = fs.statSync(path.join(dir, jsons[0]!));
-    expect(stat.mode & 0o777).toBe(0o600);
+    // O Windows não tem bits POSIX: o modo ali é sempre 0o666/0o444.
+    if (process.platform !== 'win32') expect(stat.mode & 0o777).toBe(0o600);
   });
 
   it('isola por projeto e por instalação', () => {
