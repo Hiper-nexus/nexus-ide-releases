@@ -1,6 +1,6 @@
 import '@fontsource-variable/geist';
 import './account.css';
-import { agentLimitLabel, billingFlags } from './plans/account-rules.js';
+import { agentLimitLabel, billingFlags, trialNotice } from './plans/account-rules.js';
 
 // VITE_API_ORIGIN só existe em desenvolvimento local, para apontar a página a uma API rodando na máquina.
 export const API_ORIGIN = import.meta.env?.VITE_API_ORIGIN || 'https://api.nexuside.app';
@@ -77,6 +77,12 @@ function renderIdentity() {
   byId('trial-end-row').hidden = entitlement.access !== 'trial';
   byId('trial-end').textContent = displayDate(entitlement.trialEndsAt);
   byId('agent-limit').textContent = agentLimitLabel(entitlement.maxAgents);
+  // Faltam até 3 dias, ou o teste já acabou: a pessoa vê isso aqui, com o que fazer, antes de ser bloqueada no app.
+  const notice = trialNotice(entitlement);
+  const alert = byId('trial-alert');
+  alert.hidden = notice === null;
+  alert.dataset.tone = notice?.tone ?? '';
+  alert.textContent = notice?.text ?? '';
   byId('subscription-status').textContent = subscriptionLabel(entitlement.status);
 }
 

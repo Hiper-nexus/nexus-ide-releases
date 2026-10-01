@@ -50,3 +50,7 @@
 .account-layout .account-actions{flex-direction:column;align-items:stretch;gap:12px}
 .account-layout .account-actions .button{width:100%;justify-content:center}
 .login-actions{max-width:none}
+
+/* Aviso de fim do teste: uma faixa quieta no quadro da conta; âmbar quando faltam dias, rosa quando já acabou. */
+.account-trial-alert{margin:var(--s3) 0 0;padding:var(--s2) var(--s3);border:1px solid color-mix(in srgb,var(--ember) 55%,transparent);border-radius:8px;background:color-mix(in srgb,var(--ember) 8%,var(--bar));font-size:14px;line-height:1.5;color:var(--ink)}
+.account-trial-alert[data-tone=error]{border-color:color-mix(in srgb,var(--pink) 55%,transparent);background:color-mix(in srgb,var(--pink) 9%,var(--bar))}

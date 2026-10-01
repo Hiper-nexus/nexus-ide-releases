@@ -39,3 +39,31 @@ export function billingFlags(availability, session, isBusy) {
     status,
   };
 }
+
+const DAY_MS = 86400000;
+const WARNING_DAYS = 3;
+
+/** Dia civil (aaaa-mm-dd) de um instante no fuso pedido, para contar "hoje", "amanhã" e "em N dias" como a pessoa conta. */
+function civilDay(ms, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(ms);
+  return Date.parse(`${parts}T00:00:00Z`);
+}
+
+/**
+ * Aviso de fim do teste, só para quem está no teste ou acabou de sair dele: nada com mais de 3 dias, nada para Pro ou suspenso.
+ * Devolve `{ tone: 'warning' | 'error', daysLeft, text }` ou null. Puro: o relógio e o fuso entram por parâmetro.
+ */
+export function trialNotice(entitlement, now = Date.now(), { timeZone } = {}) {
+  const end = Date.parse(entitlement?.trialEndsAt ?? '');
+  if (!Number.isFinite(end) || !['trial', 'inactive', 'expired'].includes(entitlement?.access)) return null;
+  const date = new Intl.DateTimeFormat('pt-BR', { timeZone, day: '2-digit', month: '2-digit', year: 'numeric' }).format(end);
+  const left = end - now;
+  if (left <= 0) {
+    return { tone: 'error', daysLeft: 0, text: `Seu teste terminou em ${date}. Assine o Nexus Pro para continuar usando o NexusIDE.` };
+  }
+  if (entitlement.access !== 'trial' || left > WARNING_DAYS * DAY_MS) return null;
+  const hour = new Intl.DateTimeFormat('pt-BR', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false }).format(end);
+  const calendarDays = Math.round((civilDay(end, timeZone) - civilDay(now, timeZone)) / DAY_MS);
+  const when = calendarDays <= 0 ? `hoje às ${hour}` : calendarDays === 1 ? `amanhã às ${hour}` : `em ${calendarDays} dias, em ${date}`;
+  return { tone: 'warning', daysLeft: Math.ceil(left / DAY_MS), text: `Seu teste termina ${when}. Assine o Nexus Pro para continuar sem interrupção.` };
+}

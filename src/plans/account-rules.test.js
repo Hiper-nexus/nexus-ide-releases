@@ -86,3 +86,44 @@ test('ocupado desliga o botão nos dois modos, para o clique duplo não repetir 
   assert.equal(billingFlags(open, { authenticated: false }, true).subscribeEnabled, false);
   assert.equal(billingFlags(open, trial, true).subscribeEnabled, false);
 });
+
+const DAY = 86400000;
+const NOW = Date.parse('2026-10-10T15:00:00Z');
+const tz = { timeZone: 'America/Sao_Paulo' };
+const trialEnding = (ms, access = 'trial') => ({ access, trialEndsAt: new Date(NOW + ms).toISOString() });
+
+test('aviso de fim do teste: com mais de 3 dias, Pro ou suspenso não há aviso', async () => {
+  const { trialNotice } = await import('./account-rules.js');
+  assert.equal(trialNotice(trialEnding(3 * DAY + 1000), NOW, tz), null);
+  assert.equal(trialNotice(trialEnding(10 * DAY), NOW, tz), null);
+  assert.equal(trialNotice({ access: 'pro', trialEndsAt: new Date(NOW + DAY).toISOString() }, NOW, tz), null);
+  assert.equal(trialNotice({ access: 'suspended', trialEndsAt: new Date(NOW - DAY).toISOString() }, NOW, tz), null);
+  assert.equal(trialNotice(null, NOW, tz), null);
+  assert.equal(trialNotice({ access: 'trial', trialEndsAt: null }, NOW, tz), null);
+  assert.equal(trialNotice({ access: 'trial', trialEndsAt: 'lixo' }, NOW, tz), null);
+});
+
+test('aviso de fim do teste: de 3 a 2 dias fala em dias e na data; até 24 h fala em hoje e na hora', async () => {
+  const { trialNotice } = await import('./account-rules.js');
+  const three = trialNotice(trialEnding(3 * DAY), NOW, tz);
+  assert.deepEqual([three.tone, three.daysLeft], ['warning', 3]);
+  assert.match(three.text, /termina em 3 dias, em 13\/10\/2026/);
+  const two = trialNotice(trialEnding(2 * DAY - 1000), NOW, tz);
+  assert.equal(two.daysLeft, 2);
+  const today = trialNotice(trialEnding(5 * 3600 * 1000), NOW, tz);
+  assert.equal(today.daysLeft, 1);
+  assert.match(today.text, /termina hoje às 17:00/);
+  const tomorrow = trialNotice(trialEnding(DAY), NOW, tz);
+  assert.match(tomorrow.text, /termina hoje às|termina amanhã/);
+  for (const notice of [three, two, today]) assert.match(notice.text, /Assine o Nexus Pro/);
+});
+
+test('aviso de fim do teste: depois do fim, sem Pro, é erro com a data e o caminho para assinar', async () => {
+  const { trialNotice } = await import('./account-rules.js');
+  for (const access of ['inactive', 'expired', 'trial']) {
+    const ended = trialNotice(trialEnding(-DAY, access), NOW, tz);
+    assert.equal(ended.tone, 'error', access);
+    assert.match(ended.text, /terminou em 09\/10\/2026/);
+    assert.match(ended.text, /Assine o Nexus Pro/);
+  }
+});
