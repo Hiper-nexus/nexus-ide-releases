@@ -8717,6 +8717,14 @@ export const CURRENT_RELEASE: AppRelease = {
         'última tela de cada pane para você ver o que aconteceu.',
     },
     {
+      title: 'Missão pausada tem saída',
+      detail:
+        '"Tentar início novamente" não fazia nada depois que o pane do ' +
+        'coordenador era fechado, e "Retomar" recusava a missão pausada por ' +
+        'ociosidade. Agora Retomar o coordenador funciona para qualquer ' +
+        'bloqueio técnico.',
+    },
+    {
       title: 'Licença sem bloqueio falso',
       detail:
         'A tela de bloqueio não pisca a cada renovação, uma resposta boa não ' +
