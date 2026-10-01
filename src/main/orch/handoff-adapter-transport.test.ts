@@ -33,6 +33,8 @@ const MCP_BUILTIN_IDS = new Set([
   "agy",
   // F-698: Devin lê a ponte stdio registrada no escopo de usuário.
   "devin",
+  // F-236: DeepSeek roda na CLI do Claude — MCP via mcpAutoload/bin claude.
+  "deepseek",
 ]);
 
 const PTY_FALLBACK_BUILTIN_IDS = new Set(["aider"]);
@@ -84,7 +86,7 @@ describe("handoffTransportForAdapter catalog", () => {
     expect(builtins.map((adapter) => adapter.id).sort()).toEqual(
       [...MCP_BUILTIN_IDS, ...PTY_FALLBACK_BUILTIN_IDS].sort(),
     );
-    expect(builtins).toHaveLength(16);
+    expect(builtins).toHaveLength(17);
   });
 
   it.each(builtins)(
