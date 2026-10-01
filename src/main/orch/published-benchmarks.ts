@@ -57,6 +57,9 @@ export const PUBLISHED_BENCHMARKS: Readonly<Record<string, PublishedBenchmark>> 
   'glm:glm-4.7': { swebenchVerified: 73.8, source: 'https://huggingface.co/zai-org/GLM-4.7' },
   'glm:glm-4.5-air': { swebenchVerified: 57.6, source: 'https://arxiv.org/abs/2508.06471' },
   'glm:glm-4.7-flash': { swebenchVerified: 59.2, source: 'https://huggingface.co/zai-org/GLM-4.7-Flash' },
+  // Gemini 4 Argon (30/09): o anúncio oficial publica só DeepSWE v1.1 (77,9%);
+  // Terminal-Bench 2.1 não foi divulgado (o 4.0 não é comparável — F-675).
+  'agy:gemini-4-argon': { deepSWE: 77.9, source: 'https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-4-argon/' },
   'agy:gemini-3.8-flash': { deepSWE: 73.7, terminalBench21: 89.4, source: 'https://deepmind.google/models/model-cards/gemini-3-8-flash/' },
   'agy:gemini-3.7-flash': { deepSWE: 65.3, terminalBench21: 85.8, source: 'https://deepmind.google/models/model-cards/gemini-3-7-flash/' },
   'agy:gemini-3.6-flash': { deepSWE: 49.0, terminalBench21: 78.0, source: 'https://deepmind.google/models/model-cards/gemini-3-6-flash/' },
