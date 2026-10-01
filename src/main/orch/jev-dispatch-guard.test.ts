@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../jev/jev-decision-log', () => ({
   recordJevDecision: vi.fn(() => 'id'),
+  recordJevOptimization: vi.fn(() => 'id'),
   jevAnswerProbabilities: (answers: Record<string, { type: string; noul?: number }>) =>
     Object.fromEntries(
       Object.entries(answers).map(([id, a]) => [id, a.noul ?? 0]),
@@ -168,8 +169,20 @@ describe('guardToolCall', () => {
     expect(second).toEqual(first);
     expect(judge).toHaveBeenCalledTimes(1);
     now += 61_000;
+    expect((await import('../jev/jev-decision-log')).recordJevOptimization).toHaveBeenCalledWith(expect.objectContaining({ model: 'jev-test' }));
     await guardToolCall(input(), deps);
     expect(judge).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not reuse another provider, variant or credential configuration verdict', async () => {
+    let configuration = 'jev';
+    const judge = vi.fn(async () => result(benign));
+    const deps = { judge, configurationKey: () => configuration };
+    await guardToolCall(input(), deps);
+    for (const next of ['clef', 'clef-flash', 'rotated-key']) {
+      configuration = next; await guardToolCall(input(), deps);
+    }
+    expect(judge).toHaveBeenCalledTimes(4);
   });
 
   it('sends compacted, redacted arguments — never long payloads or secrets', async () => {

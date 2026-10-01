@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('../persistence/settings-store', () => ({ getOrchSettings: () => ({}) }));
 vi.mock('../persistence/secrets-store', () => ({ getSecret: () => null, hasSecret: () => false, setSecret: () => ({ ok: true }), isSecureStorageAvailable: () => true }));
-vi.mock('../jev/jev-decision-log', () => ({ recordJevNoAnswer: () => 'id' }));
+vi.mock('../jev/jev-decision-log', () => ({ recordJevNoAnswer: vi.fn(() => 'id') }));
+import { recordJevNoAnswer } from '../jev/jev-decision-log';
 
 import { judgeDecision } from './decision-judge';
 import { bumpDecisionCredentialRevision } from './decision-revision';
@@ -44,6 +45,7 @@ describe('common decision service', () => {
       getConfigurationKey: () => revision,
     });
     expect(result).toBeNull(); expect(onNoAnswer).toHaveBeenCalledWith('aborted');
+    expect(recordJevNoAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ usage: expect.objectContaining({ inputTokens: 100, usageIncomplete: false }) }));
   });
 
   it('does not fall back to Jev after a Clef request is revoked', async () => {

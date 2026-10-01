@@ -2,7 +2,7 @@ import type { ClefModel } from '../../shared/decision-models';
 import type { JevTestResult } from '../../shared/jev-ipc';
 import type { JudgeInput, JevQuestion, JevResult, JevAnswer } from '../jev/jev-client';
 import type { JevNoAnswerReason } from '../jev/jev-decision-log';
-import { validateDecisionResponse } from './decision-response';
+import { decisionUsageSchema, validateDecisionResponse } from './decision-response';
 import { redactState, redactQuestions } from './decision-redaction';
 import { validateDecisionImages } from './decision-images';
 import { decisionResultCostUsd } from './decision-pricing';
@@ -117,30 +117,42 @@ export async function judgeClef(input: JudgeInput, connection: ClefConnection, d
   const now = deps.now ?? (() => performance.now());
   const started = now();
   let signal = input.signal ?? new AbortController().signal;
+  let inputTokens = 0; let outputTokens = 0; let requestCount = 0; let measuredBatches = 0;
   try {
     input.signal?.throwIfAborted();
     if (!inputIsValid(input, connection)) return notifyFailure(input, 'client-error');
     const timeout = AbortSignal.timeout(input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
     const answers = new Map<string, JevAnswer>();
-    let inputTokens = 0; let outputTokens = 0; let requestCount = 0;
     for (const batch of buildBatches(input.questions)) {
       signal.throwIfAborted();
       const body = JSON.stringify({ model: connection.model, state: redactState(input.state), questions: batch.questions,
         ...(input.images?.length ? { images: input.images } : {}) });
       if (Buffer.byteLength(body, 'utf8') > MAX_BODY_BYTES) throw new ClefFailure('client-error');
       const envelope = await requestBatch(body, connection, signal, deps.fetch ?? fetch, () => { requestCount++; });
+      const rawResult = (envelope as { result?: { model?: string; usage?: unknown } })?.result;
+      const measured = decisionUsageSchema.safeParse(rawResult?.usage);
+      if (typeof rawResult?.model === 'string' && rawResult.model.replace('@cf/cloudflare/', '') === connection.model && measured.success) {
+        inputTokens += measured.data.input_tokens; outputTokens += measured.data.output_tokens; measuredBatches++;
+      }
       signal.throwIfAborted();
       if (!envelope || typeof envelope !== 'object' || (envelope as Record<string, unknown>).success !== true) throw new ClefFailure('server-error');
       const result = validateDecisionResponse((envelope as Record<string, unknown>).result, batch.questions);
       if (!result || result.model.replace('@cf/cloudflare/', '') !== connection.model) throw new ClefFailure('malformed');
       for (const [id, answer] of Object.entries(result.answers)) answers.set(batch.ids.get(id)!, answer);
-      inputTokens += result.usage.input_tokens; outputTokens += result.usage.output_tokens;
     }
     const result: JevResult = { model: connection.model, answers: Object.fromEntries(answers),
       usage: { input_tokens: inputTokens, output_tokens: outputTokens }, requestCount, durationMs: now() - started };
     return { ...result, estimatedUsd: decisionResultCostUsd(result) };
-  } catch (error) { return notifyFailure(input, failureReason(error, input, signal)); }
+  } catch (error) {
+    if (requestCount) {
+      try { input.onUsage?.({ inputTokens: measuredBatches ? inputTokens : null, requestCount, durationMs: now() - started,
+        usd: measuredBatches ? decisionResultCostUsd({ model: connection.model, answers: {}, usage: { input_tokens: inputTokens, output_tokens: outputTokens } }) : null,
+        usageIncomplete: requestCount > measuredBatches }); }
+      catch { console.warn('[decision-models] usage callback failed'); }
+    }
+    return notifyFailure(input, failureReason(error, input, signal));
+  }
 }
 
 export async function testClefConnection(connection: ClefConnection, deps?: ClefDeps): Promise<JevTestResult> {

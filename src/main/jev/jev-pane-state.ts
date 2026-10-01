@@ -15,11 +15,12 @@ import {
   type JevQuestion,
 } from './jev-client';
 import { isJevSurfaceEnabled } from './jev-autopilot';
-import { hasDecisionCredential } from '../decision-models/decision-availability';
+import { hasDecisionCredential, decisionConfigurationKey } from '../decision-models/decision-availability';
 import {
   jevAnswerConfidences,
   jevAnswerProbabilities,
   recordJevDecision,
+  recordJevOptimization,
 } from './jev-decision-log';
 import { JEV_CHANNELS } from '../../shared/jev-channels';
 import { VOICE_CHANNELS } from '../../shared/voice-channels';
@@ -103,6 +104,7 @@ export interface PaneTailClassification {
 }
 
 export interface PaneTailClassifyDeps {
+  readonly configurationKey?: () => string;
   readonly judge?: typeof judge;
   readonly enabled?: () => boolean;
   readonly hasKey?: () => boolean;
@@ -111,7 +113,7 @@ export interface PaneTailClassifyDeps {
 
 const digestClassifyCache = new Map<
   string,
-  { at: number; result: PaneTailClassification | null }
+  { at: number; result: PaneTailClassification; model: string }
 >();
 
 export async function classifyPaneTailForDigest(
@@ -120,15 +122,18 @@ export async function classifyPaneTailForDigest(
 ): Promise<PaneTailClassification | null> {
   const now = deps.now ?? Date.now;
   const clipped = text.slice(-DIGEST_MAX_CHARS);
-  const hash = createHash('sha256').update(clipped).digest('hex');
-  const cached = digestClassifyCache.get(hash);
-  if (cached && now() - cached.at < DIGEST_CACHE_TTL_MS) {
-    return cached.result;
-  }
   try {
     const enabled = deps.enabled ?? (() => isJevSurfaceEnabled('paneState'));
     const hasKey = deps.hasKey ?? (() => hasDecisionCredential('paneState'));
     if (!enabled() || !hasKey()) return null;
+    const configuration = deps.configurationKey ?? decisionConfigurationKey;
+    const before = configuration();
+    const hash = createHash('sha256').update(before).update(clipped).digest('hex');
+    const cached = digestClassifyCache.get(hash);
+    if (cached && now() - cached.at < DIGEST_CACHE_TTL_MS) {
+      recordJevOptimization({ surface: 'paneState', model: cached.model, optimization: { jevRequestsAvoided: 1 } });
+      return cached.result;
+    }
     const judgeFn = deps.judge ?? judge;
     const result = await judgeFn({
       state: { screen: clipped },
@@ -136,6 +141,7 @@ export async function classifyPaneTailForDigest(
       timeoutMs: DIGEST_CLASSIFY_TIMEOUT_MS,
       surface: 'paneState',
     });
+    if (configuration() !== before || !enabled() || !hasKey()) return null;
     let classified: PaneTailClassification | null = null;
     const stateAnswer = result?.answers.state;
     if (
@@ -166,7 +172,7 @@ export async function classifyPaneTailForDigest(
       const oldest = digestClassifyCache.keys().next().value;
       if (oldest !== undefined) digestClassifyCache.delete(oldest);
     }
-    digestClassifyCache.set(hash, { at: now(), result: classified });
+    if (classified && result) digestClassifyCache.set(hash, { at: now(), result: classified, model: result.model });
     return classified;
   } catch {
     // Fail-open: digest sem estado vale mais que digest nenhum.

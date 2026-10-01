@@ -31,10 +31,11 @@ import {
   type JevQuestion,
 } from '../jev/jev-client';
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
-import { hasDecisionCredential } from '../decision-models/decision-availability';
+import { hasDecisionCredential, decisionConfigurationKey } from '../decision-models/decision-availability';
 import {
   jevAnswerProbabilities,
   recordJevDecision,
+  recordJevOptimization,
 } from '../jev/jev-decision-log';
 import { canonicalToolName, type AgentGateContext } from './gate';
 import { effectPolicyForTool } from './mcp-effect-policy';
@@ -211,6 +212,7 @@ export function recentDispatchedTools(sessionId: string): string[] {
 /* ------------------------------------------------------------------ */
 
 interface CachedVerdict {
+  model: string;
   verdict: JevGuardVerdict;
   at: number;
 }
@@ -240,19 +242,19 @@ function cacheKey(sessionId: string, toolName: string, args: unknown): string {
     .digest('hex')}`;
 }
 
-function cachedVerdict(key: string, now: number): JevGuardVerdict | null {
+function cachedVerdict(key: string, now: number): CachedVerdict | null {
   const hit = verdictCache.get(key);
   if (!hit) return null;
   if (now - hit.at > GUARD_CACHE_TTL_MS) {
     verdictCache.delete(key);
     return null;
   }
-  return hit.verdict;
+  return hit;
 }
 
-function rememberVerdict(key: string, verdict: JevGuardVerdict, now: number): void {
+function rememberVerdict(key: string, verdict: JevGuardVerdict, now: number, model: string): void {
   verdictCache.delete(key);
-  verdictCache.set(key, { verdict, at: now });
+  verdictCache.set(key, { verdict, at: now, model });
   if (verdictCache.size > GUARD_CACHE_MAX) {
     const oldest = verdictCache.keys().next().value;
     if (oldest !== undefined) verdictCache.delete(oldest);
@@ -313,6 +315,7 @@ export interface GuardToolCallInput {
 }
 
 export interface GuardToolCallDeps {
+  configurationKey?: () => string;
   judge?: typeof judge;
   enabled?: () => boolean;
   hasKey?: () => boolean;
@@ -391,9 +394,15 @@ export async function guardToolCall(
   const mode: GuardMode = operatorChild ? 'operator-child' : 'mission';
   const sessionId = input.sessionId ?? input.ctx.sessionId ?? 'anon';
   const argsJson = compactArgsJson(input.args);
-  const key = `${mode}:${cacheKey(sessionId, input.toolName, input.args)}`;
+  const configuration = deps.configurationKey ?? decisionConfigurationKey;
+  const before = configuration();
+  const key = `${before}:${mode}:${cacheKey(sessionId, input.toolName, input.args)}`;
   const cached = cachedVerdict(key, now());
-  if (cached) return cached;
+  if (cached) {
+    recordJevOptimization({ surface: 'dispatchGuard', model: cached.model, sessionId: input.ctx.sessionId,
+      missionId: input.ctx.missionId, optimization: { jevRequestsAvoided: 1 } });
+    return cached.verdict;
+  }
 
   const judgeFn = deps.judge ?? judge;
   const result = await judgeFn({
@@ -416,10 +425,10 @@ export async function guardToolCall(
     sessionId: input.ctx.sessionId,
     missionId: input.ctx.missionId,
   });
-  if (!result) return { kind: 'skipped', reason: 'judge-unavailable' };
+  if (!result || configuration() !== before || !enabled() || !hasKey()) return { kind: 'skipped', reason: 'judge-unavailable' };
 
   const verdict = evaluateGuardAnswers(result.answers, mode);
-  rememberVerdict(key, verdict, now());
+  rememberVerdict(key, verdict, now(), result.model);
   recordJevDecision({
     surface: 'dispatchGuard',
     sessionId: input.ctx.sessionId,

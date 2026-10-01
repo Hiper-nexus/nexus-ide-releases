@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { JevQuestion, JevResult, JevAnswer } from '../jev/jev-client';
 
 const probability = z.number().min(0).max(1);
+export const decisionUsageSchema = z.object({ input_tokens: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative() });
 const probabilities = z.record(z.string(), probability);
 const answerSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('noul'), noul: probability }),
@@ -11,7 +12,7 @@ const answerSchema = z.discriminatedUnion('type', [
 const resultSchema = z.object({
   model: z.string().min(1).max(100),
   answers: z.record(z.string(), answerSchema),
-  usage: z.object({ input_tokens: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative() }),
+  usage: decisionUsageSchema,
 });
 const PROBABILITY_SUM_TOLERANCE = 0.001;
 

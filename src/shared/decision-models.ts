@@ -21,6 +21,9 @@ export const testDecisionModelRequestSchema = z.object({
 
 export type DecisionSettings = z.infer<typeof decisionSettingsSchema>;
 export type DecisionMode = DecisionSettings['mode'];
+export interface DecisionUsageReceipt {
+  inputTokens: number | null; usd: number | null; requestCount: number; durationMs: number; usageIncomplete: boolean;
+}
 export type ClefModel = DecisionSettings['clefModel'];
 export type DecisionProvider = 'jev' | 'clef';
 export type SetDecisionKeyRequest = z.infer<typeof setDecisionKeyRequestSchema>;

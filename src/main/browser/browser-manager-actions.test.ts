@@ -50,6 +50,7 @@ const state = vi.hoisted(() => {
     isLoading: vi.fn(() => false),
     isDestroyed: vi.fn(() => false),
     isCrashed: vi.fn(() => false),
+    debugger: { isAttached: () => false, attach: vi.fn(), detach: vi.fn(), sendCommand: vi.fn(async () => ({ root: {} })) },
     setWebRTCIPHandlingPolicy: vi.fn(),
     loadURL: vi.fn(async () => {}),
     stop: vi.fn(),

@@ -58,10 +58,12 @@ describe('Cloudflare decision transport', () => {
   it('does not expose a partial result when the second batch fails', async () => {
     const questions = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`q${index}`, input.questions.q]));
     let requests = 0;
-    const result = await judgeClef({ ...input, questions }, connection, { fetch: (async (_url, options) => {
+    const receipt = vi.fn();
+    const result = await judgeClef({ ...input, questions, onUsage: receipt }, connection, { fetch: (async (_url, options) => {
       requests++; return requests === 1 ? answer(options) : Response.json({}, { status: 403 });
     }) as typeof fetch });
     expect(result).toBeNull(); expect(requests).toBe(2);
+    expect(receipt).toHaveBeenCalledWith(expect.objectContaining({ inputTokens: 100, usd: 0.000024, requestCount: 2, usageIncomplete: true }));
   });
 
   it('stops before another batch when authority is revoked', async () => {

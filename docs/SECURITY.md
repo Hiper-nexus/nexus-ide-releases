@@ -31,8 +31,10 @@ the fixed Workers AI HTTPS endpoint, reject redirects and validate every answer.
 preload supplies geometry only; Main makes an opaque pixel copy for editable
 fields, recognized secrets, frames and canvas. Navigation, scope, geometry,
 configuration changes and cancellation reject stale captures/results. Invalid
-masks or provider image limits stop egress. Captures remain in memory; original
-local artifacts are unchanged. Recognition does not guarantee removal of all
+masks or provider image limits stop egress. Closed shadow trees or an unavailable
+local inspector also stop egress before any capture is exported. The inspector
+never borrows a pre-existing session. Captures remain in memory; original local
+artifacts are unchanged. Recognition does not guarantee removal of all
 personal information on a page. Signals never authorize clicks or permissions.
 Desktop screenshot egress is not enabled by this feature.
 

@@ -107,6 +107,7 @@ import {
 import { sameProjectScope } from '../orch/project-scoped-broadcast';
 import { createScopedBrowserArtifactStore } from './browser-artifact-store';
 import { browserVisualMasksSchema, maskBrowserBitmap } from './browser-capture-redaction';
+import { assertInspectableBrowserDom } from './browser-visual-inspection';
 import { validateDecisionImages } from '../decision-models/decision-images';
 import {
   registerBrowserAutomationResponseHandler,
@@ -1360,12 +1361,15 @@ export async function captureRedactedBrowserVisual(
       JSON.stringify(entry.view.getBounds()) !== bounds) throw new Error('visual snapshot changed');
   };
   assertCurrent();
+  await assertInspectableBrowserDom(entry.view.webContents.debugger);
+  assertCurrent();
   const before = browserVisualMasksSchema.parse(await runBrowserAutomation(paneId, entry.view.webContents, 'visual_masks', {}));
   assertCurrent();
   const clip = entry.emulatedViewport ? { x: 0, y: 0, ...entry.emulatedViewport } : undefined;
   const image = await captureWithWakeRetry(() => entry.view.webContents.capturePage(clip), assertCurrent);
   assertCurrent();
   const after = browserVisualMasksSchema.parse(await runBrowserAutomation(paneId, entry.view.webContents, 'visual_masks', {}));
+  await assertInspectableBrowserDom(entry.view.webContents.debugger);
   assertCurrent();
   if (JSON.stringify(before) !== JSON.stringify(after)) throw new Error('visual masks changed during capture');
   const size = image.getSize();

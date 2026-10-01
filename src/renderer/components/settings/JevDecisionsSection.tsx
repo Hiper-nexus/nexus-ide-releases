@@ -220,7 +220,7 @@ export function JevDecisionsSection() {
             <div className="decision-models__table"><table aria-label="Consumo por modelo">
               <thead><tr><th>Modelo</th><th>Consultas</th><th>Estimativa</th><th>Sem resposta</th><th>Tentativas HTTP</th></tr></thead>
               <tbody>{Object.entries(stats.byModel).map(([model, usage]) => <tr key={model}>
-                <td>{model}</td><td>{usage.calls}</td><td>{formatUsd(usage.usd)}</td><td>{usage.noAnswer}</td><td>{usage.requests ?? 'Sem medição'}</td>
+                <td>{model}</td><td>{usage.calls}</td><td>{usage.incompleteUsageCalls ? '≥ ' : ''}{formatUsd(usage.usd)}</td><td>{usage.noAnswer}</td><td>{usage.requests ?? 'Sem medição'}</td>
               </tr>)}</tbody>
             </table></div>
           </>}

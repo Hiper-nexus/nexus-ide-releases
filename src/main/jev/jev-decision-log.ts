@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { JevSurface } from './jev-autopilot';
 import type { JevAnswer } from './jev-client';
-import type { DecisionProvider, DecisionRoute } from '../../shared/decision-models';
+import type { DecisionProvider, DecisionRoute, DecisionUsageReceipt } from '../../shared/decision-models';
 import { USD_PER_INPUT_TOKEN } from './jev-pricing';
 import type { JevOptimizationEvidence, JevOptimizationStats, DecisionUsageStats } from '../../shared/jev-ipc';
 
@@ -47,6 +47,7 @@ export interface JevDecisionEntry {
   route?: DecisionRoute;
   durationMs?: number;
   requestCount?: number;
+  usageIncomplete?: boolean;
   questions: string[];
   probabilities: Record<string, number>;
   confidence?: Record<string, number>;
@@ -142,6 +143,7 @@ export function recordJevDecision(
       model: entry.model, questions: entry.questions, probabilities: entry.probabilities,
       confidence: entry.confidence, decision: entry.decision, inputTokens: entry.inputTokens, usd: entry.usd,
       provider: entry.provider, route: entry.route, durationMs: entry.durationMs, requestCount: entry.requestCount,
+      usageIncomplete: entry.usageIncomplete,
       feedback: entry.feedback, feedbackAt: entry.feedbackAt, optimization: entry.optimization };
     fs.appendFileSync(file, JSON.stringify(line) + '\n');
   } catch (error) {
@@ -177,6 +179,7 @@ export function recordJevNoAnswer(
     route?: DecisionRoute;
     sessionId?: string;
     missionId?: string;
+    usage?: DecisionUsageReceipt;
   },
   deps?: { dir?: string },
 ): string {
@@ -193,8 +196,11 @@ export function recordJevNoAnswer(
       questions: [],
       probabilities: {},
       decision: 'rule',
-      inputTokens: null,
-      usd: null,
+      inputTokens: input.usage?.inputTokens ?? null,
+      usd: input.usage?.usd ?? null,
+      requestCount: input.usage?.requestCount,
+      durationMs: input.usage?.durationMs,
+      usageIncomplete: input.usage?.usageIncomplete,
     },
     deps,
   );
@@ -289,7 +295,9 @@ function addProviderUsage(buckets: Record<string, DecisionUsageStats>, key: stri
   const fresh = !buckets[key];
   const bucket = buckets[key] ??= { calls: 0, noAnswer: 0, usd: 0, inputTokens: 0, requests: 0, durationMs: 0 };
   if (entry.kind === 'no-answer') bucket.noAnswer += 1;
-  else { bucket.calls += 1; bucket.usd += entry.usd ?? 0; bucket.inputTokens += entry.inputTokens ?? 0; }
+  else bucket.calls += 1;
+  bucket.usd += entry.usd ?? 0; bucket.inputTokens += entry.inputTokens ?? 0;
+  if (entry.usageIncomplete) bucket.incompleteUsageCalls = (bucket.incompleteUsageCalls ?? 0) + 1;
   bucket.requests = entry.requestCount === undefined || (!fresh && bucket.requests === null)
     ? null : (bucket.requests ?? 0) + entry.requestCount;
   bucket.durationMs = entry.durationMs === undefined || (!fresh && bucket.durationMs === null)
@@ -304,13 +312,13 @@ function addToWindow(window: JevWindowStats, entry: JevDecisionEntry): void {
   addOptimization(window, entry.optimization);
   if (entry.kind === 'optimization') return;
   window.consultations += 1;
+  window.usd += entry.usd ?? 0;
+  window.inputTokens += entry.inputTokens ?? 0;
   if (entry.kind === 'no-answer') {
     window.noAnswer += 1;
     return;
   }
   window.answered += 1;
-  window.usd += entry.usd ?? 0;
-  window.inputTokens += entry.inputTokens ?? 0;
 }
 
 function addOptimization(
@@ -377,6 +385,10 @@ export function jevDecisionStats(deps?: {
     const provider = entry.provider ?? (entry.model === 'clef' || entry.model === 'clef-flash' || entry.model.startsWith('@cf/cloudflare/') ? 'clef' : 'jev');
     addProviderUsage(stats.byProvider, provider, entry);
     addProviderUsage(stats.byModel, entry.model, entry);
+    stats.totals.usd += entry.usd ?? 0;
+    stats.totals.inputTokens += entry.inputTokens ?? 0;
+    bucket.usd += entry.usd ?? 0;
+    if (entry.at >= last30dFrom) bucket.last30d.usd += entry.usd ?? 0;
     if (isNoAnswer) {
       bucket.noAnswer += 1;
       stats.totals.noAnswer += 1;
@@ -384,13 +396,9 @@ export function jevDecisionStats(deps?: {
       continue;
     }
     stats.totals.calls += 1;
-    stats.totals.usd += entry.usd ?? 0;
-    stats.totals.inputTokens += entry.inputTokens ?? 0;
     bucket.calls += 1;
-    bucket.usd += entry.usd ?? 0;
     if (entry.at >= last30dFrom) {
       bucket.last30d.jev += 1;
-      bucket.last30d.usd += entry.usd ?? 0;
     }
     bucket.decisions[entry.decision] = (bucket.decisions[entry.decision] ?? 0) + 1;
     if (entry.feedback === 'right') bucket.feedback.right += 1;

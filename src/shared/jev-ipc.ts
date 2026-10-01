@@ -133,6 +133,7 @@ export interface JevDecisionStatsResult {
 }
 
 export interface DecisionUsageStats {
+  incompleteUsageCalls?: number;
   calls: number;
   noAnswer: number;
   inputTokens: number;

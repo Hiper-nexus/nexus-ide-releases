@@ -1,4 +1,4 @@
-import type { DecisionSettings, DecisionRoute } from '../../shared/decision-models';
+import type { DecisionSettings, DecisionRoute, DecisionUsageReceipt } from '../../shared/decision-models';
 import type { JudgeInput, JevResult } from '../jev/jev-client';
 import { recordJevNoAnswer, type JevNoAnswerReason } from '../jev/jev-decision-log';
 import { judgeClef, type ClefConnection } from './clef-client';
@@ -17,9 +17,9 @@ export interface DecisionJudgeDeps {
   now?: () => number;
 }
 
-function noAnswer(input: JudgeInput, route: DecisionRoute | null, reason: JevNoAnswerReason): null {
+function noAnswer(input: JudgeInput, route: DecisionRoute | null, reason: JevNoAnswerReason, usage?: DecisionUsageReceipt): null {
   if (input.surface && route) recordJevNoAnswer({ surface: input.surface, model: route.model,
-    sessionId: input.sessionId, missionId: input.missionId, reason, provider: route.provider, route });
+    sessionId: input.sessionId, missionId: input.missionId, reason, provider: route.provider, route, usage });
   try { input.onNoAnswer?.(reason); }
   catch { console.warn('[decision-models] no-answer callback failed'); }
   return null;
@@ -40,16 +40,22 @@ async function performDecision(input: JudgeInput, deps: DecisionJudgeDeps): Prom
   const revoked = new AbortController();
   const unsubscribe = onDecisionConfigurationChanged(() => revoked.abort());
   const currentInput = { ...input, signal: input.signal ? AbortSignal.any([input.signal, revoked.signal]) : revoked.signal };
+  let failureUsage: DecisionUsageReceipt | undefined;
   try {
     if (currentInput.signal.aborted) return noAnswer(input, route, 'aborted');
     const connection = route.provider === 'clef' ? (deps.getClefConnection ?? (() => getClefConnection(settings)))() : undefined;
     const result = route.provider === 'jev'
       ? await deps.nativeJudge({ ...currentInput, model: route.model })
-      : connection ? await judgeClef({ ...currentInput, onNoAnswer: reason => { noAnswer(input, route, reason); } },
+      : connection ? await judgeClef({ ...currentInput, onUsage: receipt => { failureUsage = receipt; input.onUsage?.(receipt); },
+          onNoAnswer: reason => { noAnswer(input, route, reason, failureUsage); } },
           { ...connection, model: route.model as ClefConnection['model'] }, { fetch: deps.fetch, now: deps.now })
         : noAnswer(input, route, 'client-error');
     if (!result) return null;
-    if (currentInput.signal.aborted || configuration() !== before) return noAnswer(input, route, 'aborted');
+    if (currentInput.signal.aborted || configuration() !== before) return noAnswer(input, route, 'aborted', {
+      inputTokens: result.usage.input_tokens, usd: decisionResultCostUsd({ ...result, route }),
+      requestCount: result.requestCount ?? 1, durationMs: result.durationMs ?? (deps.now ?? (() => performance.now()))() - started,
+      usageIncomplete: false,
+    });
     const actualRoute = { ...route, model: result.model };
     return { ...result, route: actualRoute, requestCount: result.requestCount ?? 1,
       durationMs: result.durationMs ?? (deps.now ?? (() => performance.now()))() - started,

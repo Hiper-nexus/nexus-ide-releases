@@ -10,6 +10,7 @@ import {
 
 vi.mock('./jev-decision-log', () => ({
   recordJevDecision: vi.fn(() => 'id'),
+  recordJevOptimization: vi.fn(() => 'id'),
   jevAnswerProbabilities: vi.fn(() => ({})),
   jevAnswerConfidences: vi.fn(() => ({})),
 }));
@@ -248,6 +249,18 @@ describe('jev-pane-state classifier', () => {
 });
 
 describe('classifyPaneTailForDigest (digest do pane_read)', () => {
+  it('does not replay cached state after provider, variant, credential or consent changes', async () => {
+    let configuration = 'jev';
+    const judge = vi.fn<typeof jevJudge>(async () => jevResult('working', 0));
+    const deps = { judge, enabled: () => true, hasKey: () => true, configurationKey: () => configuration };
+    await classifyPaneTailForDigest('configuration-switch-tail', deps);
+    for (const next of ['clef', 'clef-flash', 'rotated-key']) {
+      configuration = next; await classifyPaneTailForDigest('configuration-switch-tail', deps);
+    }
+    expect(judge).toHaveBeenCalledTimes(4);
+    expect(await classifyPaneTailForDigest('configuration-switch-tail', { ...deps, enabled: () => false })).toBeNull();
+    expect(await classifyPaneTailForDigest('configuration-switch-tail', { ...deps, hasKey: () => false })).toBeNull();
+  });
   const digestDeps = (judge: typeof jevJudge, now = 1_000_000) => ({
     judge,
     enabled: () => true,
@@ -305,6 +318,7 @@ describe('classifyPaneTailForDigest (digest do pane_read)', () => {
     expect(second).toEqual(first);
     expect(judge).toHaveBeenCalledTimes(1);
     // Passados 60 s, o mesmo texto chama de novo.
+    expect((await import('./jev-decision-log')).recordJevOptimization).toHaveBeenCalledWith(expect.objectContaining({ model: 'jev-1.13.0' }));
     const later = await classifyPaneTailForDigest('same tail', digestDeps(judge, 6_061_000));
     expect(later).toEqual(first);
     expect(judge).toHaveBeenCalledTimes(2);

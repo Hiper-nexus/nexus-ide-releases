@@ -38,6 +38,15 @@ afterEach(() => {
 });
 
 describe('jev decision log', () => {
+  it('retains known spending on failed batches and marks incomplete usage', () => {
+    const d = setup();
+    recordJevNoAnswer({ surface: 'toolPick', reason: 'client-error', model: 'clef', provider: 'clef',
+      usage: { inputTokens: 100, usd: 0.000024, requestCount: 2, durationMs: 30, usageIncomplete: true } }, { dir: d });
+    const stats = jevDecisionStats({ dir: d });
+    expect(stats.totals.usd).toBeCloseTo(0.000024, 10);
+    expect(stats.windows.allTime.inputTokens).toBe(100);
+    expect(stats.byModel.clef).toMatchObject({ calls: 0, noAnswer: 1, requests: 2, durationMs: 30, incompleteUsageCalls: 1 });
+  });
   it('separates historical Jev and new Cloudflare model usage without repricing old rows', () => {
     const d = setup();
     recordJevDecision(entry({ model: 'jev-1.13.0', inputTokens: 1_000_000, usd: 0.042 }), { dir: d });
