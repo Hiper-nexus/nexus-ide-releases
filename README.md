@@ -2,13 +2,13 @@
 
 API do NexusIDE em Cloudflare Workers (Hono, D1, Stripe). Atende o site `https://nexuside.app` (conta, assinatura, administração) e o app desktop (login, licença, times, cron, sync). Destino: `https://api.nexuside.app`.
 
-A API está publicada em `https://api.nexuside.app` (Cloudflare Workers + D1, entrada só pelo domínio: `workers_dev` e preview URLs estão desligados). Ainda roda contra o banco de staging, com login OAuth e Stripe pendentes de credenciais. O roteiro para completar a publicação fica em `docs/go-live.md`.
+A API está publicada em `https://api.nexuside.app` (Cloudflare Workers + D1, entrada só pelo domínio: `workers_dev` e preview URLs estão desligados). Ainda roda contra o banco de staging, com login OAuth e Stripe pendentes de credenciais. O roteiro para completar a publicação fica em `docs/go-live.md`. Os avisos por e-mail do fim do teste (Resend) já estão no código, **desligados**: `docs/emails.md` traz os passos para conectar.
 
 ## Rodar
 
 ```sh
 npm ci
-npm test            # 78 testes TypeScript + 16 de schema
+npm test            # 175 testes TypeScript + 28 de schema
 npm run typecheck
 npx wrangler d1 migrations apply DB --local
 npx wrangler dev --local

@@ -6,6 +6,8 @@ Destino: Worker `nexus-cloud-api`, API `https://api.nexuside.app`, site `https:/
 
 Execute uma etapa por vez. Pare quando a conferência falhar. Substitua os marcadores `<...>` antes de executar. IDs, arquivos de credenciais e chaves usam placeholders. Endereços públicos, preço e parâmetros da oferta são as constantes decididas para o produto.
 
+Avisos por e-mail do teste (boas-vindas e fim do teste, via Resend): já estão no código e **desligados**. Aplique a migração `0006` junto com as demais e, quando for conectar o Resend, siga `docs/emails.md`; nada é enviado antes de `EMAIL_ENABLED` virar `"true"`.
+
 ## 1. Pré-requisitos
 
 ### 1.1 Separar acessos e contas de ensaio
