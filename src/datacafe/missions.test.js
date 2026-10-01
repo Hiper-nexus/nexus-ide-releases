@@ -87,3 +87,21 @@ test('tirar missão impossível repõe a vaga com a próxima possível', () => {
   assert.ok(next.active.every(entry => MISSIONS.find(mission => mission.id === entry.id).kind !== 'install'));
   assert.equal(new Set(next.active.map(entry => entry.id)).size, 3);
 });
+
+test('a missão do turbo Nexus+ existe no baralho, avança só com o evento de turbo e paga XP', () => {
+  const mission = MISSIONS.find(item => item.kind === 'turbo');
+  assert.ok(mission, 'missão de turbo no baralho');
+  assert.equal(mission.goal, 2);
+  assert.ok(mission.xp > 0 && mission.text.includes('Nexus+'));
+  const deck = [{ id: 'x', text: 'Ligue 2 racks', kind: 'install', goal: 2, xp: 50 }, mission];
+  let state = createMissions(deck, 2);
+  assert.equal(missionEvent(state, { kind: 'install' }, deck).finished.length, 0);
+  state = missionEvent(state, { kind: 'turbo' }, deck).state;
+  const done = missionEvent(state, { kind: 'turbo' }, deck);
+  assert.deepEqual(done.finished.map(item => item.id), [mission.id]);
+});
+
+test('o baralho continua com ids únicos e a abertura do turno não muda', () => {
+  assert.equal(new Set(MISSIONS.map(item => item.id)).size, MISSIONS.length);
+  assert.deepEqual(createMissions(MISSIONS).active.map(entry => entry.id), ['ligar-3', 'bombeiro-2', 'combo-3']);
+});

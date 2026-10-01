@@ -30,3 +30,19 @@ test('o medidor vai de 1 a 0 dentro da janela e parado não aloca', () => {
   assert.equal(comboLevel(comboStep(combo, COMBO.window / 2)), 0.5);
   assert.equal(comboLevel(idle), 0);
 });
+
+test('com o turbo a janela da sequência cresce 1,5 vez, e o medidor do HUD nunca passa de 1', () => {
+  const boosted = comboHit(createCombo(), 1.5);
+  assert.equal(boosted.left, COMBO.window * 1.5);
+  assert.equal(boosted.streak, 1);
+  assert.equal(comboLevel(boosted), 1, 'cheio até a janela normal acabar');
+  assert.equal(comboLevel(comboStep(boosted, COMBO.window * 1.25)), 0.25);
+  const next = comboHit(boosted, 1.5);
+  assert.equal(next.streak, 2);
+  assert.equal(next.left, COMBO.window * 1.5);
+});
+
+test('sem escala o combo é exatamente o de antes, e escala inválida vale 1', () => {
+  assert.deepEqual(comboHit(createCombo()), { streak: 1, left: COMBO.window });
+  for (const bad of [0, -2, NaN, Infinity, undefined, null, 'x']) assert.equal(comboHit(createCombo(), bad).left, COMBO.window, String(bad));
+});

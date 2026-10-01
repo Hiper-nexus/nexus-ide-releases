@@ -95,3 +95,23 @@ test('o aviso da premiação diz o XP total que entrou, todas as missões fechad
   const plain = scoreTicket(createProgression([]), initialProgress(), install('codex'), []);
   assert.equal(awardMessage('Codex no ar', plain), 'Codex no ar · +60 XP');
 });
+
+test('no turbo a janela do combo cresce e o ticket fechado conta para a missão do turbo', () => {
+  const turboPool = [{ id: 't', text: 'Feche 2 tickets no turbo Nexus+', kind: 'turbo', goal: 2, xp: 120 }, { id: 'a', text: 'Ligue 9 racks', kind: 'install', goal: 9, xp: 50 }];
+  const game = createProgression(turboPool);
+  const first = scoreTicket(game, initialProgress(), install('claude'), turboPool, [], { turbo: true });
+  assert.equal(first.state.combo.left, COMBO.window * 1.5);
+  assert.deepEqual(first.finished, []);
+  const second = scoreTicket(first.state, first.progress, install('codex'), turboPool, [], { turbo: true });
+  assert.deepEqual(second.finished.map(mission => mission.id), ['t']);
+  assert.equal(second.bonus, 120);
+});
+
+test('sem turbo nada muda, e café no turbo não conta para a missão do turbo', () => {
+  const turboPool = [{ id: 't', text: 'Feche 2 tickets no turbo Nexus+', kind: 'turbo', goal: 1, xp: 120 }];
+  const plain = scoreTicket(createProgression(turboPool), initialProgress(), install('claude'), turboPool);
+  assert.equal(plain.state.combo.left, COMBO.window);
+  assert.deepEqual(plain.finished, []);
+  const coffee = scoreTicket(createProgression(turboPool), initialProgress(), { id: 'coffee', kind: 'coffee', xp: 10 }, turboPool, [], { turbo: true });
+  assert.deepEqual(coffee.finished, [], 'café é manutenção, não ticket de entrega');
+});

@@ -1,14 +1,14 @@
 /** Progresso salvo só no navegador. Nunca lança: armazenamento ausente, cheio
  * ou corrompido vira progresso novo. XP não tem relação com o sorteio.
  * A chave continua a da versão 1: quem já jogou mantém XP, racks e selos, e os
- * campos da versão 2 (combo, recorde do turno, missões) nascem zerados. */
+ * campos da versão 2 (combo, recorde do turno, missões e latas do Nexus+) nascem zerados. */
 import { levelFor, BADGES } from './tickets.js';
 
 export const STORAGE_KEY = 'nexus-data-cafe:v1';
 export const SCHEMA = 2;
 
 export function initialProgress() {
-  return { schema: SCHEMA, xp: 0, level: 1, badges: [], racksOn: [], completed: 0, incidents: 0, bestCombo: 0, bestShift: 0, missions: 0 };
+  return { schema: SCHEMA, xp: 0, level: 1, badges: [], racksOn: [], completed: 0, incidents: 0, bestCombo: 0, bestShift: 0, missions: 0, cans: 0 };
 }
 
 const count = value => (Number.isInteger(value) && value > 0 ? value : 0);
@@ -28,6 +28,7 @@ export function normalizeProgress(raw) {
     bestCombo: count(raw.bestCombo),
     bestShift: count(raw.bestShift),
     missions: count(raw.missions),
+    cans: count(raw.cans),
   };
 }
 

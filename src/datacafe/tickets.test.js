@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ticketsFrom, completeTicket, levelFor, titleFor, levelProgress, badgesFor, speedPerk, perkText, TICKET_XP, LEVEL_TITLES } from './tickets.js';
+import { ticketsFrom, completeTicket, levelFor, titleFor, levelProgress, badgesFor, speedPerk, perkText, TICKET_XP, LEVEL_TITLES, BADGES } from './tickets.js';
 import { createRacks, installGpu, rackStep } from './racks.js';
 import { initialProgress } from './progress.js';
 
@@ -77,4 +77,13 @@ test('cada nível deixa o dev um pouco mais rápido e diz isso em texto', () => 
   assert.ok(speeds.at(-1) <= 1.2, 'o bônus não quebra o ritmo do jogo');
   assert.equal(perkText(1), '');
   assert.match(perkText(3), /%/);
+});
+
+test('o selo Combustível Nexus+ vem na quinta lata e nunca some', () => {
+  const racks = createRacks(IDS);
+  assert.ok(BADGES['combustivel-nexus'].includes('Nexus+'));
+  assert.equal(badgesFor({ ...initialProgress(), cans: 4 }, racks).includes('combustivel-nexus'), false);
+  assert.equal(badgesFor({ ...initialProgress(), cans: 5 }, racks).includes('combustivel-nexus'), true);
+  assert.equal(badgesFor({ ...initialProgress(), cans: 0, badges: ['combustivel-nexus'] }, racks).includes('combustivel-nexus'), true);
+  assert.equal(badgesFor({ ...initialProgress(), cans: undefined }, racks).includes('combustivel-nexus'), false, 'save antigo sem o campo');
 });

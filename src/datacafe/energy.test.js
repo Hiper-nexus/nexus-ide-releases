@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ENERGY, createEnergy, energyStep, drink, isTired, speedScale, energyLevel } from './energy.js';
+import { ENERGY, createEnergy, energyStep, drink, refill, isTired, speedScale, energyLevel } from './energy.js';
 
 test('andar cansa mais que ficar parado, e carregar cansa mais ainda', () => {
   const start = createEnergy();
@@ -45,4 +45,14 @@ test('propriedade: a energia fica sempre entre 0 e o teto', () => {
 test('um passo sem mudança devolve o mesmo objeto', () => {
   const empty = { value: 0, tired: true };
   assert.equal(energyStep(empty, 0.1, { moving: true }), empty);
+});
+
+test('o energético enche a energia até o máximo, desperta o dev e não passa do pico do café', () => {
+  const tired = { value: 0.1, tired: true };
+  const full = refill(tired);
+  assert.deepEqual(full, { value: ENERGY.max, tired: false });
+  assert.deepEqual(tired, { value: 0.1, tired: true }, 'o estado original não muda');
+  const peak = { value: ENERGY.overflow, tired: false };
+  assert.equal(refill(peak).value, ENERGY.overflow, 'quem já está no pico do café não perde o excedente');
+  assert.ok(refill(tired).value <= drink(tired).value);
 });

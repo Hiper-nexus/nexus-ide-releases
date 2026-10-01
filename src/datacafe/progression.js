@@ -4,20 +4,23 @@
 import { createCombo, comboHit, comboStep, comboMultiplier } from './combo.js';
 import { MISSIONS, createMissions, missionEvent } from './missions.js';
 import { createShift, shiftStep, shiftScore } from './shift.js';
+import { DRINK } from './energy-drink.js';
 import { completeTicket, levelFor, titleFor, perkText, BADGES } from './tickets.js';
 
 export function createProgression(pool = MISSIONS, unavailable = []) {
   return { combo: createCombo(), missions: createMissions(pool, undefined, unavailable), shift: createShift() };
 }
 
-/** Um ticket concluído: combo, XP multiplicado, missões fechadas e pontos do turno. */
-export function scoreTicket(state, progress, ticket, pool = MISSIONS, unavailable = []) {
-  // Café é manutenção: não entra na sequência nem a quebra.
+/** Um ticket concluído: combo, XP multiplicado, missões fechadas e pontos do turno.
+ * `turbo` (Nexus+) alarga a janela do combo e conta para a missão do turbo. */
+export function scoreTicket(state, progress, ticket, pool = MISSIONS, unavailable = [], { turbo = false } = {}) {
+  // Café é manutenção: não entra na sequência nem a quebra, nem vale para o turbo.
   const counts = ticket.kind !== 'coffee';
-  const combo = counts ? comboHit(state.combo) : state.combo;
+  const combo = counts ? comboHit(state.combo, turbo ? DRINK.comboScale : 1) : state.combo;
   const multiplier = counts ? comboMultiplier(combo) : 1;
   const result = completeTicket(progress, ticket, multiplier);
   const events = counts ? [{ kind: ticket.kind }, { kind: 'combo', value: combo.streak }] : [{ kind: ticket.kind }];
+  if (counts && turbo) events.push({ kind: 'turbo' });
   const step = missionEvent(state.missions, events, pool, unavailable);
   const { finished } = step;
   const bonus = finished.reduce((sum, mission) => sum + mission.xp, 0);

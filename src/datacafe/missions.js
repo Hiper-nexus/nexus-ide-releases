@@ -1,7 +1,8 @@
 /** Missões do turno: até três objetivos ativos, cada um com recompensa em XP.
  * Ao fechar uma, a vaga recebe a próxima do baralho. Puro e imutável.
  * `kind` é o tipo de evento que avança a missão: o tipo do ticket concluído
- * ('install', 'incident', 'coffee', 'deploy') ou 'combo', que guarda a maior sequência. */
+ * ('install', 'incident', 'coffee', 'deploy'), 'combo' (guarda a maior sequência) ou 'turbo'
+ * (ticket de entrega fechado com o turbo do Nexus+ ligado). */
 export const MISSIONS = [
   { id: 'ligar-3', text: 'Ligue 3 racks', kind: 'install', goal: 3, xp: 80 },
   { id: 'bombeiro-2', text: 'Resolva 2 incidentes', kind: 'incident', goal: 2, xp: 100 },
@@ -11,6 +12,7 @@ export const MISSIONS = [
   { id: 'ligar-5', text: 'Ligue 5 racks', kind: 'install', goal: 5, xp: 140 },
   { id: 'bombeiro-4', text: 'Resolva 4 incidentes', kind: 'incident', goal: 4, xp: 180 },
   { id: 'combo-5', text: 'Faça 5 entregas em sequência', kind: 'combo', goal: 5, xp: 160 },
+  { id: 'turbo-2', text: 'Feche 2 tickets no turbo Nexus+', kind: 'turbo', goal: 2, xp: 120 },
 ];
 export const MISSION_SLOTS = 3;
 

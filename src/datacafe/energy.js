@@ -40,6 +40,11 @@ export function drink(energy) {
   return { value: Math.min(ENERGY.overflow, Math.max(energy.value, ENERGY.drink)), tired: false };
 }
 
+/** Energético: enche até o máximo e desperta o dev, mas não passa do pico que o café dá. */
+export function refill(energy) {
+  return { value: Math.max(energy.value, ENERGY.max), tired: false };
+}
+
 export function isTired(energy) {
   return energy.tired;
 }

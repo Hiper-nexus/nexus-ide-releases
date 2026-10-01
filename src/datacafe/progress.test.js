@@ -53,3 +53,17 @@ test('recorde do turno, melhor combo e missões fechadas vão e voltam do armaze
   const loaded = loadProgress(storage);
   assert.deepEqual([loaded.bestCombo, loaded.bestShift, loaded.missions], [4, 620, 7]);
 });
+
+test('a contagem de latas do Nexus+ vai e volta do armazenamento e saves antigos começam com zero', () => {
+  const storage = memoryStorage();
+  assert.equal(initialProgress().cans, 0);
+  saveProgress({ ...initialProgress(), cans: 7 }, storage);
+  assert.equal(loadProgress(storage).cans, 7);
+  storage.data.set(STORAGE_KEY, JSON.stringify({ schema: 2, xp: 120, level: 2, badges: ['primeira-gpu'], racksOn: [], completed: 3, incidents: 0, bestCombo: 2, bestShift: 90, missions: 1 }));
+  const old = loadProgress(storage);
+  assert.equal(old.cans, 0);
+  assert.deepEqual([old.xp, old.bestCombo, old.bestShift, old.missions], [120, 2, 90, 1], 'nada do save anterior se perde');
+  assert.equal(normalizeProgress({ cans: -4 }).cans, 0);
+  assert.equal(normalizeProgress({ cans: 2.5 }).cans, 0);
+  assert.equal(normalizeProgress({ cans: 'muitas' }).cans, 0);
+});

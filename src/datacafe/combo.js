@@ -14,8 +14,10 @@ export function createCombo() {
   return IDLE;
 }
 
-export function comboHit(combo) {
-  return { streak: combo.left > 0 ? combo.streak + 1 : 1, left: COMBO.window };
+/** `windowScale` alarga a janela (turbo do Nexus+); escala inválida vale 1. */
+export function comboHit(combo, windowScale = 1) {
+  const scale = Number.isFinite(windowScale) && windowScale > 0 ? windowScale : 1;
+  return { streak: combo.left > 0 ? combo.streak + 1 : 1, left: COMBO.window * scale };
 }
 
 export function comboStep(combo, dt) {
@@ -30,5 +32,5 @@ export function comboMultiplier(combo) {
 
 /** Tempo restante de 1 a 0, para o medidor do HUD. */
 export function comboLevel(combo) {
-  return Math.max(0, combo.left) / COMBO.window;
+  return Math.min(1, Math.max(0, combo.left) / COMBO.window);
 }

@@ -15,6 +15,7 @@ export const BADGES = {
   'turno-500': 'Turno de 500 pontos',
   'bombeiro-10': 'Dez incidentes resolvidos',
   'missoes-5': 'Cinco missões fechadas',
+  'combustivel-nexus': 'Combustível Nexus+: cinco latas (marca fictícia do jogo)',
 };
 
 /** Cada nível acima do primeiro deixa o dev 3% mais rápido. */
@@ -91,5 +92,6 @@ export function badgesFor(progress, rackState) {
   if ((progress.bestShift ?? 0) >= 500) earned.add('turno-500');
   if (progress.incidents >= 10) earned.add('bombeiro-10');
   if ((progress.missions ?? 0) >= 5) earned.add('missoes-5');
+  if ((progress.cans ?? 0) >= 5) earned.add('combustivel-nexus');
   return Object.keys(BADGES).filter(badge => earned.has(badge));
 }
