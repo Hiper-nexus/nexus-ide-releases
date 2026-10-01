@@ -1511,6 +1511,70 @@ describe('managed Claude auth capability at the physical spawn boundary', () => 
   });
 });
 
+describe("F-243: janela de auto-compactação do Maestro Claude", () => {
+  async function spawnWithEnv(
+    adapterId: string,
+    authority: BoundSpawnAuthority,
+  ): Promise<{ sessionId: string; env: NodeJS.ProcessEnv }> {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "f243-spawn-"));
+    const worktree = path.join(root, "worktree");
+    fs.mkdirSync(worktree, { recursive: true });
+    const scopedAuthority: BoundSpawnAuthority = {
+      ...authority,
+      cwd: fs.realpathSync.native(worktree),
+      scope: { ...authority.scope, rootRealPath: fs.realpathSync.native(worktree) },
+      coordinationScope: {
+        ...authority.scope,
+        rootRealPath: fs.realpathSync.native(path.dirname(worktree)),
+      },
+    };
+    const host = fakeHost();
+    setPtyHost(host.host);
+    const { sessionId } = spawnAgentSession(
+      fakeWc(),
+      { kind: "cli-agent", cols: 80, rows: 24 },
+      builtinCliPtyAdapter(adapterId),
+      {},
+      scopedAuthority,
+    );
+    const env = host.specFor(sessionId).env;
+    await orchTerminateSession(sessionId);
+    fs.rmSync(root, { recursive: true, force: true });
+    return { sessionId, env };
+  }
+
+  it("orquestrador claude de missão recebe 400k; worker claude e operador não", async () => {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    setAgentSpawnHook(null);
+    const worker = revisionBoundWorker();
+    const orchestrator: BoundSpawnAuthority = {
+      ...worker,
+      context: { ...worker.context!, role: "orchestrator" },
+    };
+
+    const maestro = await spawnWithEnv("claude", orchestrator);
+    expect(maestro.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("400000");
+
+    const workerEnv = await spawnWithEnv("claude", revisionBoundWorker());
+    expect(workerEnv.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
+
+    const operatorEnv = await spawnWithEnv("claude", trustedSpawn());
+    expect(operatorEnv.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
+  });
+
+  it("adapter host-Claude (glm) mantém a janela que ele já define", async () => {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    setAgentSpawnHook(null);
+    const worker = revisionBoundWorker();
+    const orchestrator: BoundSpawnAuthority = {
+      ...worker,
+      context: { ...worker.context!, role: "orchestrator" },
+    };
+    const glm = await spawnWithEnv("glm", orchestrator);
+    expect(glm.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("1000000");
+  });
+});
+
 describe("AGY advisory native profile", () => {
   const macosIt = process.platform === "darwin" ? it : it.skip;
 

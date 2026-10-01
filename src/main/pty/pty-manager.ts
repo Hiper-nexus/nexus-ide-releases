@@ -1740,6 +1740,21 @@ export function spawnAgentSession(
   const gatewayApiKey = resolveGatewayApiKey();
   // TRANSPORTE: o env que a CLI realmente recebe, com as base URLs no gateway.
   const env = agentEnv(adapter, gatewayBaseUrl);
+  // F-243: o Maestro coordena, não precisa de 900 k de contexto relido a cada
+  // turno (859 k cacheRead/mensagem medidos em 30/09, ~US$ 533/dia estimados);
+  // 400 k mantém o resumo e corta o custo por turno pela metade. Workers e
+  // panes do operador não mudam. Adapters host-Claude (glm etc.) já definem a
+  // variável — o guard `=== undefined` os preserva.
+  if (
+    adapter.id === "claude" &&
+    authority.context?.role === "orchestrator" &&
+    authority.context?.missionId &&
+    env.CLAUDE_CODE_AUTO_COMPACT_WINDOW === undefined
+  ) {
+    env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(
+      MAESTRO_AUTO_COMPACT_WINDOW_TOKENS,
+    );
+  }
   // IDENTIDADE: o mesmo env SEM o gateway. É ele que responde "que plano é
   // este?" para o spawn hook (HOME efêmero, credencial nativa, third-party).
   // O gateway é infraestrutura do próprio operador, não outro plano: se
@@ -3474,6 +3489,15 @@ export function orchKillSession(
   destroySession(sessionId, session, options.origin);
   return true;
 }
+
+/**
+ * F-243: janela efetiva de auto-compactação do Maestro Claude
+ * (CLAUDE_CODE_AUTO_COMPACT_WINDOW). O pós-mortem da mission-defa0de5 mediu
+ * ~859 k tokens de cacheRead POR mensagem com o contexto do Fable perto de
+ * 900 k — ~US$ 533 estimados num dia de orquestração. 400 k mantém o resumo
+ * de coordenação e corta a releitura de cache pela metade.
+ */
+export const MAESTRO_AUTO_COMPACT_WINDOW_TOKENS = 400_000;
 
 export interface OrchTerminateSessionOptions {
   /** Grace window after SIGTERM. */
