@@ -176,7 +176,7 @@ function errorMessage(body: unknown, status: number): string {
   return `HTTP ${status}`;
 }
 
-async function judgeJev(
+export async function judgeJevTransport(
   input: JudgeInput,
   deps?: JudgeDeps,
 ): Promise<JevResult | null> {
@@ -302,7 +302,7 @@ async function judgeJev(
 }
 
 export async function judge(input: JudgeInput, deps?: JudgeDeps): Promise<JevResult | null> {
-  return judgeDecision(input, { ...deps, nativeJudge: nativeInput => judgeJev(nativeInput, deps),
+  return judgeDecision(input, { ...deps, nativeJudge: nativeInput => judgeJevTransport(nativeInput, deps),
     getAvailability: deps?.getAvailability ?? (deps?.resolveKey
       ? () => ({ ...getDecisionAvailability(), jev: Boolean(deps.resolveKey?.()) }) : undefined),
   });
