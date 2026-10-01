@@ -756,3 +756,13 @@ Depois, atualize `/conta/` e renove a licença no app; espere `inactive` na API.
 [node-crypto]: https://nodejs.org/docs/latest-v22.x/api/crypto.html
 [npm-ci]: https://docs.npmjs.com/cli/v11/commands/npm-ci/
 [curl]: https://curl.se/docs/manpage.html
+
+## Verificação pós-deploy da licença (produção)
+
+Depois de qualquer deploy da API, e sempre que a chave de licença mudar, rode:
+
+```sh
+node scripts/smoke-prod-license.mjs
+```
+
+Ele cria uma conta sintética (`@nexus-e2e.invalid`) com um código de login de uso único no D1 de produção, troca o código pelo endpoint real, confere a licença e **apaga a conta** (também se algo falhar no meio). Prova, em 12 conferências: sessão e renovação, código de uso único, licença **assinada pela API e aceita pela chave pública embutida no app** (`../nexus-ide/resources/license-pubkey.pem`), teste de 15 dias com teto de 2 agentes e validade de até 24 h. Se a chave pública do app divergir da de assinatura da API, todo cliente novo fica bloqueado e este é o teste que acusa. Não toca no Stripe nem em conta de cliente e não imprime token.
