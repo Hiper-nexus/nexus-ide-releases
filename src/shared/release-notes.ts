@@ -8838,7 +8838,7 @@ export const RELEASE_076157: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076158: AppRelease = {
   version: '0.76.158',
   date: '2026-10-01',
   codename: 'Uma linha por cota',
@@ -8861,6 +8861,34 @@ export const CURRENT_RELEASE: AppRelease = {
         'confere o servidor antes de abrir o navegador, mostra que está ' +
         'esperando e explica o motivo se o login falhar. A tela de acesso ' +
         'foi redesenhada e aceita código de licença.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.159',
+  date: '2026-10-01',
+  codename: 'Marca nova',
+  summary:
+    'O ícone do Nexus no Mac e no Windows, a tela do instalador e a marca ' +
+    'dentro do app passam a ser o "N" pixel rosa do site. Inclui as ' +
+    'versões 0.76.155 a 0.76.158.',
+  highlights: [
+    {
+      title: 'O "N" pixel do site é a marca do app',
+      detail:
+        'O ícone do Dock, do Finder e da barra de tarefas, a tela "Preparando ' +
+        'seu ambiente" do instalador do Windows e a marca da abertura e da ' +
+        'tela de acesso agora são o mesmo "N" pixel rosa do site, no lugar ' +
+        'do nó em losango. O ícone novo aparece depois de atualizar.',
+    },
+    {
+      title: 'Tudo que estava pendente chega junto',
+      detail:
+        'Login que diz o que está acontecendo e resgate de código de ' +
+        'licença, uma linha por cota, Kimi sem alarme falso e o botão Fechar ' +
+        'sempre à vista.',
     },
   ],
   fixes: [],

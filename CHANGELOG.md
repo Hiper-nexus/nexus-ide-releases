@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.159 — Marca nova
+
+Build do Mac. Inclui a 0.76.158 (Uma linha por cota), a 0.76.157 (Kimi sem alarme falso), a 0.76.156 (Fechar sempre à vista) e a 0.76.155 (Guarda no lugar).
+
+- **O "N" pixel rosa do site vira a marca do app.** O ícone do Mac e do Windows, a tela "Preparando seu ambiente" do instalador do Windows e a marca da abertura e da tela de acesso passam a ser o mesmo "N" pixel do site, no lugar do nó em losango. O ícone é gerado por `scripts/build-app-icon-source.mjs` (grade 4×4, rosa `#ff4f8b` sobre `#080709`, com o recuo de 100 px do macOS) e os testes conferem que o app e o favicon do site desenham o mesmo N. O Redline herda o ícone sozinho no próximo build. O ícone do app já instalado só muda depois de atualizar.
+- **Tudo que estava pendente desde a 0.76.154 chega junto.** O login que diz o que está acontecendo, a tela de acesso nova e o resgate de código de licença (F-719), uma linha por cota (F-720), o Kimi sem alarme falso (F-718), o botão Fechar sempre à vista (F-717) e a guarda de link no Windows (F-716).
+
 ## 0.76.158 — Uma linha por cota
 
 Build do Windows. Inclui a 0.76.157 (Kimi sem alarme falso) e o login novo do Mac.
