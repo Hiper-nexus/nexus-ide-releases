@@ -162,7 +162,18 @@ export function createAudio({ context = null, storage = defaultStorage(), create
     /** Uma tecla do teclado do PC. */
     typing() {
       if (!ready()) return;
-      noiseBurst({ type: 'highpass', frequency: 1800 + Math.random() * 900, q: 0.8, peak: 0.3, attack: 0.001, release: 0.03 });
+      noiseBurst({ type: 'highpass', frequency: 1800 + Math.random() * 900, q: 0.8, peak: 0.2, attack: 0.001, release: 0.03 });
+    },
+    /** A cadeira ao sentar e ao levantar. */
+    sit() {
+      if (!ready()) return;
+      noiseBurst({ type: 'lowpass', frequency: 260, q: 0.9, peak: 0.5, attack: 0.01, release: 0.16 });
+      tone({ frequency: 190, to: 120, peak: 0.18, release: 0.14 });
+    },
+    stand() {
+      if (!ready()) return;
+      noiseBurst({ type: 'lowpass', frequency: 320, q: 0.9, peak: 0.4, attack: 0.01, release: 0.12 });
+      tone({ frequency: 130, to: 200, peak: 0.16, release: 0.12 });
     },
     levelUp() {
       if (!ready()) return;

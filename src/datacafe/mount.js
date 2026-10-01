@@ -60,7 +60,7 @@ function hudMarkup(id) {
 <div class="dc-mission mono" hidden><span class="dc-mission-text"></span><span class="dc-mission-count"></span><span class="dc-mission-bar" aria-hidden="true"><span></span></span></div>
 <button class="dc-prompt" type="button" hidden><kbd class="dc-key">E</kbd><span class="dc-prompt-text"></span><span class="dc-hold" aria-hidden="true"><span></span></span></button>
 <div class="dc-joystick" aria-hidden="true"><span class="dc-ring"></span><span class="dc-knob"></span></div>
-<div class="dc-hints"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> anda</span><span>segure <kbd>E</kbd> para interagir</span><span><kbd>M</kbd> tickets</span><span>arraste para girar</span></div>
+<div class="dc-hints"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> anda</span><span>segure <kbd>E</kbd> para interagir</span><span><kbd>M</kbd> tickets</span><span>arraste gira, a roda aproxima</span></div>
 <div class="dc-toast" role="status" aria-live="polite"></div>
 <aside class="dc-station" hidden aria-labelledby="${id}-station-title"><button type="button" class="dc-close" aria-label="Fechar">✕</button><span class="mono dc-station-kicker"></span><h3 id="${id}-station-title" class="dc-station-title"></h3><p class="dc-station-copy"></p><a class="button dc-station-link" target="_blank" rel="noopener noreferrer"></a></aside>`;
 }

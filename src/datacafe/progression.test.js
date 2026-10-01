@@ -52,3 +52,16 @@ test('o tempo derruba o combo e fecha o turno; o recorde só sobe', () => {
   const worse = closeShift({ ...closed.state, shift: { left: 0, score: 20, over: true } }, closed.progress);
   assert.deepEqual([worse.record, worse.progress.bestShift], [false, 130]);
 });
+
+test('deploy no terminal entra no combo e avança a missão de deploy', () => {
+  const deployPool = [{ id: 'd', text: 'Faça 2 deploys no terminal', kind: 'deploy', goal: 2, xp: 90 }];
+  const deploy = { id: 'deploy', kind: 'deploy', xp: 35 };
+  const first = scoreTicket(createProgression(deployPool), initialProgress(), deploy, deployPool);
+  assert.equal(first.xpGained, 35);
+  assert.deepEqual(first.finished, []);
+  const second = scoreTicket(first.state, first.progress, deploy, deployPool);
+  assert.equal(second.multiplier, 1 + COMBO.step);
+  assert.deepEqual(second.finished.map(mission => mission.id), ['d']);
+  assert.equal(second.progress.xp, 35 + Math.round(35 * (1 + COMBO.step)) + 90);
+  assert.equal(second.progress.incidents, 0, 'deploy não conta como incidente');
+});

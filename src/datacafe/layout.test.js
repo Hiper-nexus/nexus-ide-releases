@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LAYOUT, findCells, cellCenter } from './layout.js';
+import { LAYOUT, findCells, cellCenter, obstacleHeight, HEIGHTS } from './layout.js';
 import { MODELS } from './models.js';
 import { createGrid, circleFree, cellAt } from './grid.js';
 
@@ -54,6 +54,30 @@ test('o dev nasce em piso livre e alcança a frente de todos os racks e objetos'
   }
   for (const rack of LAYOUT.racks) assert.ok(seen.has(`${rack.x},${rack.z + 1}`), `frente do rack ${rack.id}`);
   for (const spot of [LAYOUT.coffee, LAYOUT.board, LAYOUT.live, LAYOUT.dock]) assert.ok(seen.has(`${spot.x},${spot.z + 1}`));
+  const { stand } = LAYOUT.workstation;
+  assert.ok(seen.has(`${Math.floor(stand.x)},${Math.floor(stand.z)}`), 'lugar de levantar da estação');
+});
+
+test('a estação de trabalho tem mesa, cadeira à frente e um lugar livre para levantar', () => {
+  const { desk, chair, seat, stand, screen } = LAYOUT.workstation;
+  assert.equal(LAYOUT.cells[desk.z][desk.x], 'D', 'mesa');
+  assert.equal(LAYOUT.cells[chair.z][chair.x], 'H', 'cadeira');
+  assert.deepEqual([chair.x, chair.z], [desk.x, desk.z + 1], 'cadeira encostada na frente da mesa');
+  assert.equal(findCells(LAYOUT, 'H').length, 1, 'uma cadeira só');
+  assert.ok(seat.x > chair.x && seat.x < chair.x + 1 && seat.z > chair.z && seat.z < chair.z + 1, 'assento dentro da célula da cadeira');
+  assert.equal(circleFree(grid, stand.x, stand.z, RADIUS), true, 'levanta em piso livre');
+  assert.ok(screen.z > desk.z && screen.z < desk.z + 0.5 && screen.y > 0.8, 'monitor sobre a mesa, do lado de lá');
+});
+
+test('a altura de cada obstáculo segue o diorama: paredes norte e oeste altas, sul e leste baixas', () => {
+  assert.equal(obstacleHeight(LAYOUT, 5, 0), HEIGHTS['#']);
+  assert.equal(obstacleHeight(LAYOUT, 0, 7), HEIGHTS['#']);
+  assert.equal(obstacleHeight(LAYOUT, 5, LAYOUT.height - 1), HEIGHTS.lowWall);
+  assert.equal(obstacleHeight(LAYOUT, LAYOUT.width - 1, 7), HEIGHTS.lowWall);
+  assert.equal(obstacleHeight(LAYOUT, LAYOUT.racks[0].x, LAYOUT.racks[0].z), HEIGHTS.R);
+  assert.equal(obstacleHeight(LAYOUT, 3, 3), 0, 'piso');
+  assert.equal(obstacleHeight(LAYOUT, -1, 3), 0, 'fora do salão não há nada');
+  for (const symbol of new Set(LAYOUT.cells.join('').replace(/[.#]/g, ''))) assert.ok(HEIGHTS[symbol] > 0, `altura de ${symbol}`);
 });
 
 test('cellCenter devolve o centro da célula', () => {

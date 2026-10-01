@@ -91,7 +91,7 @@ test('os efeitos chegam audíveis: o jogo saía a uns -40 dBFS e ninguém ouvia'
   const master = ctx.gains[0];
   assert.ok(master.gain.value >= 0.5, `volume mestre ${master.gain.value}`);
   assert.ok(ctx.log.includes('connect:gain>limiter') && ctx.log.includes('connect:limiter>destination'), 'o mestre passa por um limitador');
-  for (const effect of ['footstep', 'pickup', 'coffee', 'alert', 'success', 'typing', 'levelUp', 'mission', 'denied', 'shiftEnd']) {
+  for (const effect of ['footstep', 'pickup', 'coffee', 'alert', 'success', 'typing', 'sit', 'stand', 'levelUp', 'mission', 'denied', 'shiftEnd']) {
     ctx.peaks.length = 0;
     audio[effect]();
     const loudest = Math.max(...ctx.peaks) * master.gain.value;

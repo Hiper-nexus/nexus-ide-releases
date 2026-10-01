@@ -1,11 +1,12 @@
 /** Missões do turno: até três objetivos ativos, cada um com recompensa em XP.
  * Ao fechar uma, a vaga recebe a próxima do baralho. Puro e imutável.
  * `kind` é o tipo de evento que avança a missão: o tipo do ticket concluído
- * ('install', 'incident', 'coffee') ou 'combo', que guarda a maior sequência. */
+ * ('install', 'incident', 'coffee', 'deploy') ou 'combo', que guarda a maior sequência. */
 export const MISSIONS = [
   { id: 'ligar-3', text: 'Ligue 3 racks', kind: 'install', goal: 3, xp: 80 },
   { id: 'bombeiro-2', text: 'Resolva 2 incidentes', kind: 'incident', goal: 2, xp: 100 },
   { id: 'combo-3', text: 'Chegue ao combo ×3', kind: 'combo', goal: 3, xp: 90 },
+  { id: 'deploy-2', text: 'Faça 2 deploys no terminal', kind: 'deploy', goal: 2, xp: 90 },
   { id: 'cafe-em-dia', text: 'Tome café antes de cansar', kind: 'coffee', goal: 1, xp: 40 },
   { id: 'ligar-5', text: 'Ligue 5 racks', kind: 'install', goal: 5, xp: 140 },
   { id: 'bombeiro-4', text: 'Resolva 4 incidentes', kind: 'incident', goal: 4, xp: 180 },

@@ -1,8 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { WALK, intentFrom, worldDirection, walkStep, angleDelta } from './walk.js';
-import { RIG, clampYaw, clampTarget, rigGoal, rigStep } from './rig.js';
-import { LAYOUT } from './layout.js';
 
 const close = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} ≈ ${b}`);
 
@@ -44,15 +42,4 @@ test('soltar os controles para o dev sem girar o corpo', () => {
 test('angleDelta escolhe o caminho mais curto', () => {
   close(angleDelta(Math.PI - 0.1, -Math.PI + 0.1), 0.2);
   close(angleDelta(0, Math.PI / 2), Math.PI / 2);
-});
-
-test('a câmera limita o giro, segue sem saltos e não mostra o vazio fora do salão', () => {
-  assert.equal(clampYaw(5), RIG.yawMax);
-  const goal = rigGoal({ x: 10, z: 5 }, 0);
-  close(goal.z, 5 + RIG.distance); close(goal.y, RIG.height);
-  const camera = { x: 0, y: 0, z: 0, tx: 0, ty: 0, tz: 0 };
-  rigStep(camera, goal, 0.016);
-  assert.ok(camera.x > 0 && camera.x < goal.x, 'aproxima sem chegar de uma vez');
-  const edge = clampTarget(-5, 99, LAYOUT);
-  assert.ok(edge.x >= RIG.margin && edge.z <= LAYOUT.height);
 });

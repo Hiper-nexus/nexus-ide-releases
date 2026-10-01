@@ -14,10 +14,11 @@ import { PALETTE } from './palette.js';
 import { createGrid, slideMove } from './grid.js';
 import { createInteractables, register, nearest, advanceHold } from './interact.js';
 import { WALK, intentFrom, worldDirection, walkStep } from './walk.js';
-import { RIG, clampYaw, clampTarget, rigGoal, rigStep } from './rig.js';
+import { RIG, clampYaw, clampPitch, createCamera, cameraStep, wheelZoom, pinchZoom } from './rig.js';
+import { DESK, createDesk, sit, deskStep, deployPlan, seatPose } from './desk.js';
 import { joystickInput, JOYSTICK_RADIUS } from './touch.js';
 import { ENERGY, createEnergy, energyStep, drink, speedScale, energyLevel } from './energy.js';
-import { createRacks, installGpu, reboot, rackStep, rackState, poweredCount, operationalCount, installedIds, allPowered } from './racks.js';
+import { createRacks, installGpu, reboot, rackStep, rackState, poweredCount, operationalCount, installedIds, incidentIds, allPowered } from './racks.js';
 import { ticketsFrom, badgesFor, speedPerk, TICKET_XP } from './tickets.js';
 import { createProgression, scoreTicket, progressionStep, closeShift } from './progression.js';
 import { dropUnavailable, missionView } from './missions.js';
@@ -36,6 +37,13 @@ const ANY_MISSION = [];
 const STEP_LENGTH = 0.62;
 const label = (text, { duration = 1, blocked = false } = {}) => Object.freeze({ text, duration, blocked });
 const modelOf = id => MODELS.find(model => model.id === id);
+const STATION = LAYOUT.workstation;
+const SEATED_LABELS = {
+  ready: label('Segure para fazer deploy · toque para levantar'),
+  running: label('Deploy em andamento · continue segurando'),
+  paused: label('Deploy pausado · segure para continuar'),
+  ok: label(`Deploy no ar · +${DESK.xp} XP`, { blocked: true }),
+};
 
 class DataCafeWorld {
   constructor(host, options = {}) {
@@ -72,6 +80,8 @@ class DataCafeWorld {
     Object.assign(sun.shadow.camera, { left: -15, right: 15, top: 11, bottom: -11, near: 1, far: 45 });
     sun.shadow.bias = -0.0004;
     sun.shadow.normalBias = 0.03;
+    // Borda de sombra mais larga: o serrilhado da sombra própria do dev andava junto com ele.
+    sun.shadow.radius = 3;
     this.sun = sun;
     this.scene.add(sun, sun.target);
     const fill = new DirectionalLight(0x9fb2ff, 0.5);
@@ -113,11 +123,24 @@ class DataCafeWorld {
     this.direction = { x: 0, z: 0 };
     this.keys = { up: false, down: false, left: false, right: false };
     this.analog = { x: 0, y: 0 };
-    this.yaw = 0;
-    this.yawTarget = 0;
-    this.target = { x: center.x, z: center.z };
-    this.goal = {};
-    this.cam = rigGoal({ x: center.x, z: center.z + 1 }, 0, {}, 1.2);
+    // Câmera: o jogador pede giro, inclinação e zoom; rig.js decide o resto.
+    this.view = { yaw: 0, pitch: RIG.pitch, zoom: 1 };
+    this.cam = createCamera();
+    this.camInput = { playing: false, calm: this.calm, aspect: 1, body: this.body, yaw: 0, pitch: RIG.pitch, zoom: 1, focus: null, seat: null, idle: { x: center.x, z: center.z - 0.5 } };
+    this.pointers = new Map();
+    this.pinch = null;
+    // Mesa do terminal: estado puro em desk.js, a cena só aplica pose, prompt e eventos.
+    this.desk = createDesk();
+    this.deskEvents = [];
+    this.seatFrom = { x: 0, z: 0, heading: 0 };
+    this.seatPose = { x: 0, z: 0, heading: 0, blend: 0 };
+    this.seatView = { blend: 0, screen: STATION.screen };
+    this.seatLabel = null;
+    this.seatLabels = new Map();
+    this.leaveSeat = false;
+    this.plan = { version: -1, seconds: -1, value: null };
+    this.terminal = { phase: 'standing', shown: 0, result: null, failure: null, progress: 0, status: '', blink: true };
+    this.toldDesk = false;
     this.scratch = new Vector3();
 
     this.hold = { item: null, label: null, duration: 1, elapsed: 0 };
@@ -136,7 +159,6 @@ class DataCafeWorld {
     this.frame = 0;
     this.lastTime = 0;
     this.slowFrames = 0;
-    this.dragging = null;
 
     this.items = createInteractables();
     this.registerInteractables();
@@ -145,6 +167,7 @@ class DataCafeWorld {
     this.resize();
     host.classList.add('dc-ready');
     this.refresh();
+    this.paintTerminal(this.deployPlan(), 0);
     this.on.energy?.(energyLevel(this.energy), this.energy.tired);
     this.on.xp?.({ progress: this.progress, gained: 0, leveledUp: false });
     this.emitGame();
@@ -196,6 +219,12 @@ class DataCafeWorld {
         if (!nocLabels.has(count)) nocLabels.set(count, label(count ? `NOC: ${count} ${count === 1 ? 'ticket aberto' : 'tickets abertos'}` : 'NOC: tudo em ordem', { blocked: true }));
         return nocLabels.get(count);
       },
+    });
+    const desk = { sit: label('Sentar no PC', { duration: 0.45 }), busy: label('Com a GPU na mão não dá para sentar: instale no rack', { blocked: true }) };
+    register(this.items, {
+      id: 'desk', x: STATION.seat.x, z: STATION.chair.z + 1.05, radius: 1.05,
+      label: game => (game.carrying ? desk.busy : desk.sit),
+      onComplete: () => this.sitDown(),
     });
   }
 
@@ -354,6 +383,106 @@ class DataCafeWorld {
     return { x: this.dc.dock.x, z: this.dc.dock.z + 0.7, kind: 'install', text: `Pegue uma GPU na doca · ${waiting} ${waiting === 1 ? 'rack esperando' : 'racks esperando'}` };
   }
 
+  // ---------- Mesa do terminal ----------
+  sitDown() {
+    if (this.desk.phase !== 'standing') return;
+    this.desk = sit(this.desk);
+    Object.assign(this.seatFrom, { x: this.body.x, z: this.body.z, heading: this.body.heading });
+    this.body.vx = this.body.vz = this.body.speed = 0;
+    this.promptItem = this.promptLabel = undefined;
+    this.seatLabel = null;
+    this.on.prompt?.(null);
+    this.dc.highlight(null);
+    this.audio?.sit?.();
+  }
+
+  /** Pode fazer deploy? Recalcula só quando o jogo muda ou o segundo da espera vira. */
+  deployPlan() {
+    const seconds = Math.ceil(this.desk.cooldown), cache = this.plan;
+    if (cache.version !== this.version || cache.seconds !== seconds) {
+      const incident = incidentIds(this.racks)[0];
+      cache.value = deployPlan({ cooldown: this.desk.cooldown, powered: poweredCount(this.racks), incident: incident ? modelOf(incident).name : null });
+      cache.version = this.version;
+      cache.seconds = seconds;
+    }
+    return cache.value;
+  }
+
+  seatedLabel(text) {
+    if (!this.seatLabels.has(text)) this.seatLabels.set(text, label(text, { blocked: true }));
+    return this.seatLabels.get(text);
+  }
+
+  sitStep(dt, seconds) {
+    intentFrom(this.keys, this.analog, this.intent);
+    const plan = this.deployPlan();
+    const events = this.deskEvents;
+    events.length = 0;
+    this.desk = deskStep(this.desk, {
+      dt, holding: this.holding, plan, calm: this.calm, leave: this.leaveSeat,
+      moving: Math.hypot(this.intent.x, this.intent.y) > 0.3,
+    }, events);
+    this.leaveSeat = false;
+    for (const event of events) this.deskEvent(event, plan);
+    const desk = this.desk;
+    if (desk.phase !== 'standing') {
+      seatPose(desk, this.seatFrom, STATION.seat, STATION.stand, this.seatPose);
+      Object.assign(this.body, { x: this.seatPose.x, z: this.seatPose.z, heading: this.seatPose.heading, vx: 0, vz: 0, speed: 0 });
+    }
+    this.seatView.blend = desk.phase === 'standing' ? 0 : this.seatPose.blend;
+    // Prompt e barra do HUD enquanto sentado; de pé quem cuida é interact().
+    let next = null;
+    if (desk.phase === 'seated') next = plan.blocked ? this.seatedLabel(`${plan.blocked} · toque para levantar`) : SEATED_LABELS.ready;
+    else if (desk.phase === 'acting') next = this.holding ? SEATED_LABELS.running : SEATED_LABELS.paused;
+    else if (desk.phase === 'done') next = desk.result === 'ok' ? SEATED_LABELS.ok : this.seatedLabel(`${desk.failure} · reinicie o rack e tente de novo`);
+    if (desk.phase !== 'standing' && next !== this.seatLabel) { this.seatLabel = next; this.on.prompt?.(next); }
+    if (desk.phase === 'acting') { this.on.hold?.(desk.progress); this.holdShown = true; } else if (this.holdShown && desk.phase !== 'standing') { this.on.hold?.(0); this.holdShown = false; }
+    this.paintTerminal(plan, seconds);
+  }
+
+  deskEvent(event, plan) {
+    if (event === 'seated' && !this.toldDesk) { this.toldDesk = true; this.on.toast?.('Sentado no PC. Segure para fazer deploy; toque, ande ou Esc para levantar.'); }
+    else if (event === 'typing') this.audio?.typing?.();
+    else if (event === 'blocked') this.on.toast?.(plan.blocked);
+    else if (event === 'abort') this.on.toast?.('Deploy cancelado.');
+    else if (event === 'rise') this.audio?.stand?.();
+    else if (event === 'failed') { this.audio?.alert(); this.on.toast?.(`${this.desk.failure}. Reinicie o rack e tente de novo.`); }
+    else if (event === 'deployed') {
+      const { screen } = STATION;
+      this.particles.burst(screen.x, screen.y + 0.3, screen.z + 0.1, { count: this.calm ? 8 : 22, colors: [PALETTE.green, PALETTE.pink, PALETTE.ink], speed: 1.4, up: 2 });
+      this.audio?.success();
+      this.award({ id: 'deploy', kind: 'deploy', xp: DESK.xp }, 'Deploy no ar');
+      this.version++;
+    } else if (event === 'standing') {
+      // De pé de novo, no piso livre ao lado da cadeira (sem animação o passo de levantar não acontece).
+      Object.assign(this.body, { x: STATION.stand.x, z: STATION.stand.z, vx: 0, vz: 0, speed: 0 });
+      // interact() volta a mandar no prompt.
+      this.seatLabel = null;
+      this.promptItem = this.promptLabel = undefined;
+      this.on.prompt?.(null);
+      if (this.holdShown) { this.on.hold?.(0); this.holdShown = false; }
+    }
+  }
+
+  paintTerminal(plan, seconds) {
+    const desk = this.desk, view = this.terminal;
+    let status;
+    if (desk.phase === 'acting') status = this.holding ? 'Deploy em andamento' : 'Pausado · segure para continuar';
+    else if (desk.phase === 'done') status = desk.result === 'ok' ? SEATED_LABELS.ok.text : 'Reinicie o rack e tente de novo';
+    else if (plan.blocked) status = plan.blocked;
+    else if (desk.phase === 'standing') status = plan.fail ? 'Há incidente aberto: o canary vai falhar' : 'Deploy pronto · sente e segure';
+    else status = 'Segure para fazer deploy';
+    view.phase = desk.phase;
+    view.shown = desk.shown;
+    view.result = desk.result;
+    view.failure = desk.failure;
+    view.progress = desk.progress;
+    view.status = status;
+    // O cursor só pisca com alguém sentado; de pé o monitor repinta no máximo uma vez por segundo.
+    view.blink = this.calm || desk.phase === 'standing' || Math.floor(seconds * 2) % 2 === 0;
+    this.dc.workstation?.show(view);
+  }
+
   // ---------- Simulação ----------
   simulate(dt) {
     this.clocks.energy += dt;
@@ -395,7 +524,7 @@ class DataCafeWorld {
 
   move(dt) {
     intentFrom(this.keys, this.analog, this.intent);
-    worldDirection(this.intent, this.yaw, this.direction);
+    worldDirection(this.intent, this.cam.yaw, this.direction);
     const scale = speedScale(this.energy) * speedPerk(this.progress.level) * (this.carrying ? WALK.carryScale : 1);
     const out = walkStep(this.body, this.direction, dt, scale, this.walkOut);
     const next = slideMove(this.grid, this.body, { x: out.dx, z: out.dz }, WALK.radius);
@@ -449,15 +578,16 @@ class DataCafeWorld {
     const seconds = time / 1000;
     const running = !this.paused;
     if (running && this.playing) {
-      this.move(dt);
+      this.sitStep(dt, seconds);
+      if (this.desk.phase === 'standing') this.move(dt);
       this.simulate(dt);
-      this.interact(dt);
+      if (this.desk.phase === 'standing') this.interact(dt);
       if (this.version !== this.shownVersion) this.refresh();
       else this.trackGoal(dt);
     }
     if (running) {
       this.dev.group.position.set(this.body.x, 0, this.body.z);
-      this.dev.setMotion({ speed: this.playing ? this.body.speed : 0, heading: this.body.heading, carrying: this.carrying, tired: this.energy.tired, calm: this.calm }, dt);
+      this.dev.setMotion({ speed: this.playing ? this.body.speed : 0, heading: this.body.heading, carrying: this.carrying, tired: this.energy.tired, calm: this.calm, seat: this.seatView.blend, typing: this.desk.phase === 'acting' && this.holding }, dt);
       this.dc.update(dt, seconds, this.calm);
     }
     const effects = running ? this.particles.update(dt) : false;
@@ -473,20 +603,24 @@ class DataCafeWorld {
       if (++this.slowFrames > 45) { this.renderer.setPixelRatio(1); this.resize(); }
     } else this.slowFrames = Math.max(0, this.slowFrames - 1);
     const animate = running && (this.playing || !this.calm);
-    if (animate || effects || this.dragging) this.schedule();
+    if (animate || effects || this.pointers.size) this.schedule();
   };
 
   updateCamera(dt, seconds) {
-    const portrait = this.camera.aspect < 0.9;
-    const zoom = this.playing ? (portrait ? 1.3 : 1) : (portrait ? 1.65 : 1.25);
-    if (!this.playing && !this.calm && !this.dragging) this.yawTarget = Math.sin(seconds * 0.12) * 0.45;
-    this.yaw += (this.yawTarget - this.yaw) * Math.min(1, (this.calm ? 20 : 4) * dt);
-    if (this.playing) clampTarget(this.body.x, this.body.z, LAYOUT, this.target);
-    else { this.target.x = LAYOUT.width / 2; this.target.z = LAYOUT.height / 2 - 0.5; }
-    rigGoal(this.target, this.yaw, this.goal, zoom);
-    rigStep(this.cam, this.goal, dt, this.calm ? 40 : RIG.follow);
-    this.camera.position.set(this.cam.x, this.cam.y, this.cam.z);
-    this.camera.lookAt(this.cam.tx, this.cam.ty, this.cam.tz);
+    const input = this.camInput;
+    if (!this.playing && !this.calm && !this.pointers.size) this.view.yaw = Math.sin(seconds * 0.12) * 0.45;
+    input.playing = this.playing;
+    input.calm = this.calm;
+    input.aspect = this.camera.aspect;
+    input.yaw = this.view.yaw;
+    input.pitch = this.view.pitch;
+    input.zoom = this.view.zoom;
+    // Aproxima enquanto o jogador segura uma ação; sentado, enquadra o monitor.
+    input.focus = this.holdShown && this.promptItem ? this.promptItem : null;
+    input.seat = this.seatView.blend > 0 ? this.seatView : null;
+    const cam = cameraStep(this.cam, input, LAYOUT, dt);
+    this.camera.position.set(cam.x, cam.y, cam.z);
+    this.camera.lookAt(cam.tx, cam.ty, cam.tz);
   }
 
   /** Seta na borda da tela quando o objetivo está fora do quadro. */
@@ -522,7 +656,10 @@ class DataCafeWorld {
   keydown = event => {
     if (!this.host.contains(event.target)) return;
     const key = event.key.toLowerCase();
-    if (key === 'escape') { this.clearInput(); this.host.blur(); return; }
+    if (key === 'escape') {
+      if (this.playing && this.desk.phase !== 'standing') { event.preventDefault(); this.leaveSeat = true; this.schedule(); return; }
+      this.clearInput(); this.host.blur(); return;
+    }
     if (!this.playing || this.paused) return;
     if (KEYS[key]) { event.preventDefault(); this.keys[KEYS[key]] = true; this.schedule(); return; }
     if (ACTION_KEYS.has(key)) { event.preventDefault(); if (!event.repeat) this.holdStart(); return; }
@@ -539,7 +676,8 @@ class DataCafeWorld {
     for (const key of Object.keys(this.keys)) this.keys[key] = false;
     this.analog.x = this.analog.y = 0;
     this.holdEnd();
-    this.dragging = null;
+    this.pointers.clear();
+    this.pinch = null;
   };
 
   holdStart = () => {
@@ -563,19 +701,42 @@ class DataCafeWorld {
     on(this.host, 'keydown', this.keydown);
     on(window, 'keyup', this.keyup);
     on(window, 'blur', this.clearInput);
+    // Um dedo ou o mouse orbitam um pouco (giro e inclinação); dois dedos fazem pinça.
+    const pair = () => { const [a, b] = this.pointers.values(); return Math.hypot(a.x - b.x, a.y - b.y); };
     on(canvas, 'pointerdown', event => {
       this.host.focus({ preventScroll: true });
-      this.dragging = { id: event.pointerId, x: event.clientX };
+      this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       capture(canvas, event);
+      if (this.pointers.size === 2) this.pinch = { distance: pair(), zoom: this.view.zoom };
       this.schedule();
     });
     on(canvas, 'pointermove', event => {
-      if (this.dragging?.id !== event.pointerId) return;
-      this.yawTarget = clampYaw(this.yawTarget - (event.clientX - this.dragging.x) * 0.004);
-      this.dragging.x = event.clientX;
+      const last = this.pointers.get(event.pointerId);
+      if (!last) return;
+      const dx = event.clientX - last.x, dy = event.clientY - last.y;
+      last.x = event.clientX;
+      last.y = event.clientY;
+      if (this.pinch && this.pointers.size >= 2) this.view.zoom = pinchZoom(this.pinch.zoom, this.pinch.distance, pair());
+      else if (!this.pinch) {
+        this.view.yaw = clampYaw(this.view.yaw - dx * 0.004);
+        this.view.pitch = clampPitch(this.view.pitch + dy * 0.003);
+      }
       this.schedule();
     });
-    for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) on(canvas, name, event => { if (this.dragging?.id === event.pointerId) this.dragging = null; });
+    const release = event => {
+      if (!this.pointers.delete(event.pointerId)) return;
+      if (!this.pointers.size) this.pinch = null;
+    };
+    for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) on(canvas, name, release);
+    // Roda (e pinça do trackpad, que chega com ctrl): só com o jogo em foco, e no limite do zoom a página rola.
+    on(canvas, 'wheel', event => {
+      if (!this.playing || this.paused || !this.host.contains(document.activeElement)) return;
+      const zoom = wheelZoom(this.view.zoom, event.deltaY * (event.deltaMode === 1 ? 16 : 1) * (event.ctrlKey ? 8 : 1));
+      if (zoom === this.view.zoom) return;
+      event.preventDefault();
+      this.view.zoom = zoom;
+      this.schedule();
+    }, { passive: false });
     const stick = this.joystick;
     if (stick) {
       const knob = stick.querySelector('.dc-knob');
@@ -636,7 +797,7 @@ class DataCafeWorld {
   start = () => {
     if (this.disposed) return;
     this.playing = true;
-    this.yawTarget = 0;
+    this.view.yaw = 0;
     this.paused = false;
     this.lastTime = 0;
     this.audio?.unlock();
