@@ -20,6 +20,8 @@ interface __BaseEnv_CloudflareBindings {
 	GITHUB_OAUTH_ID: string;
 	GOOGLE_OAUTH_ID: string;
 	STRIPE_PRICE_TEAM: string;
+	EMAIL_ENABLED: string;
+	EMAIL_FROM: string;
 }
 declare namespace Cloudflare {
 	interface GlobalProps {
@@ -32,7 +34,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "PUBLIC_BASE_URL" | "PUBLIC_SITE_URL" | "APP_DEEP_LINK_BASE" | "SHOT_DEEP_LINK_BASE" | "APP_MODE" | "MIGRATION_READY" | "ADMIN_EMAILS" | "TRIAL_DAYS" | "TRIAL_MAX_AGENTS" | "TRIAL_CLOUD_SYNC" | "STRIPE_PRICE_PRO" | "GITHUB_OAUTH_ID" | "GOOGLE_OAUTH_ID" | "STRIPE_PRICE_TEAM">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "PUBLIC_BASE_URL" | "PUBLIC_SITE_URL" | "APP_DEEP_LINK_BASE" | "SHOT_DEEP_LINK_BASE" | "APP_MODE" | "MIGRATION_READY" | "ADMIN_EMAILS" | "TRIAL_DAYS" | "TRIAL_MAX_AGENTS" | "TRIAL_CLOUD_SYNC" | "STRIPE_PRICE_PRO" | "GITHUB_OAUTH_ID" | "GOOGLE_OAUTH_ID" | "STRIPE_PRICE_TEAM" | "EMAIL_ENABLED" | "EMAIL_FROM">> {}
 }
 
 // Begin runtime types
