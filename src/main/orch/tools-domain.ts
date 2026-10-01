@@ -12,6 +12,7 @@ import {
   adoptUserContextAsMissionOrchestrator,
   assertCurrentMissionOrchestratorSession,
   assertOrchestratorMission,
+  executionScopeFor,
   returnOperatorHandFromEndedMission,
 } from './gate';
 import { requireMissionLeaderSession } from './mission-leader-gate';
@@ -34,11 +35,18 @@ import { listAdapters } from '../adapters/adapter-registry';
 import { canUseNexusMcp } from './cli-mcp-inject';
 import {
   adoptUserAgentSessionAsMissionOrchestrator,
+  getAgentSessionInfo,
   returnAdoptedAgentSessionToUser,
 } from '../pty/pty-manager';
+import {
+  assertIntegrationReviewed,
+  isIntegrationReviewRequiredError,
+  measureIntegrationState,
+} from './integration-review-gate';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import {
   GLOBAL_USE_WINDOW_MS,
+  isFrontierReviewer,
   routeTask,
   type TaskTier,
 } from './task-router';
@@ -507,6 +515,25 @@ function pushCompletedMission(
     }
     effectivePush = { ...push, branch };
   }
+  // F-234: o pushAfterDone obedece ao mesmo portão — sem veredito "approve"
+  // de ponta para o HEAD exato o status muda, mas o push NÃO roda.
+  try {
+    assertIntegrationReviewed(
+      getProjectDomainStores(ctx.scope),
+      expected.id,
+      execution.rootRealPath,
+      invocation?.signal,
+    );
+  } catch (error) {
+    if (!isIntegrationReviewRequiredError(error)) throw error;
+    return {
+      ...completed,
+      pushExecuted: false,
+      pushPending: false,
+      pushSkipped: 'review_required',
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
   const pushed = safeGitPush(execution, effectivePush);
   if (!pushed.ok) {
     console.warn(`[mission-set-status] git push falhou para ${expected.id}: ${pushed.error}`);
@@ -804,6 +831,99 @@ const missionSetStatusTool: McpToolDef = {
     const mission = stores.missions.setStatus(missionId, status);
     if (!mission) throw new Error('mission not found');
     return mission;
+  },
+};
+
+const reviewVerdictArgsSchema = z
+  .object({
+    verdict: z.enum(['approve', 'reject']),
+    summary: z.string().trim().min(1).max(2_000),
+    findings: z.array(z.string().trim().min(1).max(500)).max(40).optional(),
+  })
+  .strict();
+
+/**
+ * F-234: a tool registra o veredito da revisão; o portão de integração decide
+ * sozinho se ele satisfaz o push (approve + juiz de ponta + HEAD exato +
+ * árvore limpa). Um `reject` também é registrado — bloqueia até o HEAD andar.
+ */
+const reviewVerdictTool: McpToolDef = {
+  name: 'nexus_review_verdict',
+  description:
+    'Record a code-review verdict for the mission checkout (F-234). ' +
+    'The verdict binds to the exact current HEAD; push/integration only runs ' +
+    'after an "approve" from a frontier judge (Fable/Opus/Sonnet/Sol 6.1/Astra) ' +
+    'on a clean tree. Cheaper models may record, but their verdict never ' +
+    'satisfies the push gate.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      verdict: {
+        type: 'string',
+        enum: ['approve', 'reject'],
+        description: 'approve integrates; reject blocks until the next HEAD',
+      },
+      summary: {
+        type: 'string',
+        description: 'Short review summary (max 2000 chars)',
+      },
+      findings: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Optional findings (each max 500 chars, max 40)',
+      },
+    },
+    required: ['verdict', 'summary'],
+  },
+  handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
+    if (!ctx.missionId) {
+      throw new Error('nexus_review_verdict requires a mission pane');
+    }
+    if (ctx.role !== 'orchestrator' && ctx.role !== 'worker') {
+      throw new Error('only mission orchestrator/worker panes register verdicts');
+    }
+    const input = reviewVerdictArgsSchema.parse(args);
+    const { headSha, treeDirty } = measureIntegrationState(
+      executionScopeFor(ctx).rootRealPath,
+    );
+    const reviewerAdapter = ctx.providerId ?? 'unknown';
+    const reviewerModel = ctx.sessionId
+      ? getAgentSessionInfo(ctx.sessionId)?.model
+      : undefined;
+    const frontier = isFrontierReviewer(reviewerAdapter, reviewerModel);
+    const recorded = getProjectDomainStores(ctx.scope)
+      .missions.reviewVerdicts.record({
+        missionId: ctx.missionId,
+        headSha,
+        treeDirty,
+        verdict: input.verdict,
+        reviewerAdapter,
+        ...(reviewerModel === undefined ? {} : { reviewerModel }),
+        ...(ctx.sessionId === undefined ? {} : { reviewerSession: ctx.sessionId }),
+        frontier,
+        findings: input.findings,
+        summary: input.summary,
+      });
+    const satisfiesGate =
+      input.verdict === 'approve' && frontier && !treeDirty;
+    return {
+      recorded: true,
+      verdictId: recorded.verdictId,
+      headSha,
+      treeDirty,
+      frontier,
+      satisfiesGate,
+      ...(treeDirty
+        ? {
+            hint: 'árvore suja: commite antes do veredito — o portão exige veredito do HEAD exato',
+          }
+        : !frontier
+          ? {
+              hint: 'veredito registrado, mas só modelo de ponta (Fable/Opus/Sonnet/Sol 6.1/Astra) satisfaz o portão de push — o Maestro julga ou abre juiz via nexus_route_task "revisão"',
+            }
+          : {}),
+    };
   },
 };
 
@@ -2387,6 +2507,7 @@ export function buildDomainTools(): McpToolDef[] {
     missionGetTool,
     missionListTool,
     missionSetStatusTool,
+    reviewVerdictTool,
     missionSpawnPaneTool,
     squadSaveTool,
     catalogInstallTool,

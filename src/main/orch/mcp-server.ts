@@ -107,6 +107,7 @@ import {
 import { handleHookStatusHttp } from "./hook-status-endpoint";
 import { handleHookTriageHttp } from "./hook-triage-endpoint";
 import { handleHookRegressionHttp } from "./hook-regression-endpoint";
+import { handleHookIntegrationHttp } from "./hook-integration-endpoint";
 import { handleHookDelegateHttp } from "./hook-delegate-endpoint";
 import { authenticateArmsToken } from "../connectors/arms-token-store";
 import { handleArmsJsonRpc, markArmsBoot } from "../connectors/arms-endpoint";
@@ -402,6 +403,11 @@ function hookDelegateUrl(): string {
 /** Stop regression gate — same loopback server/bearer. */
 function hookRegressionUrl(): string {
   return `http://127.0.0.1:${port}/hook/regression`;
+}
+
+/** PreToolUse/Bash integration gate — same loopback server/bearer. */
+function hookIntegrationUrl(): string {
+  return `http://127.0.0.1:${port}/hook/integration`;
 }
 
 const SHA256_HEX = /^[a-f0-9]{64}$/u;
@@ -1120,6 +1126,8 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           NEXUS_HOOK_DELEGATE_URL: hookDelegateUrl(),
           // Stop regression gate hook — same transport contract.
           NEXUS_HOOK_REGRESSION_URL: hookRegressionUrl(),
+          // PreToolUse/Bash integration review gate — same transport contract.
+          NEXUS_HOOK_INTEGRATION_URL: hookIntegrationUrl(),
         }
       : {};
     const extraArgs: string[] = [];
@@ -2053,6 +2061,11 @@ export function startMcpServer(): Promise<void> {
       // Stop → portão de regressão (testes impactados) — nunca quebra o CLI.
       if (url === "/hook/regression" && req.method === "POST") {
         await handleHookRegressionHttp(req, res, ctx);
+        return;
+      }
+      // PreToolUse/Bash → portão de integração (veredito de ponta por HEAD).
+      if (url === "/hook/integration" && req.method === "POST") {
+        await handleHookIntegrationHttp(req, res, ctx);
         return;
       }
       sendJson(res, 404, { error: "not found" });

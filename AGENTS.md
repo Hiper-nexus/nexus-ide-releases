@@ -1127,7 +1127,7 @@ saber isto antes de mexer:
   segredo viaja por stdin em base64; teste nunca toca a vaga real (só com
   `exec` injetado). Conta AGY por chave de API não passa pela vaga.
 
-## Fair-share, lanes de topo e hosts Claude (F-232/F-233/F-235/F-236/F-237)
+## Fair-share, lanes de topo e hosts Claude (F-232/F-233/F-234/F-235/F-236/F-237)
 
 - F-232: `globalUseCounts` (reservas consumidas em 7d por adapter,
   `consumedCountsByAdapterSince` no ledger / `consumedRouteCountsByAdapterSince`
@@ -1157,6 +1157,19 @@ saber isto antes de mexer:
   barato e diverso, julga caro (veredito de ponta antes de integrar/push).
   O `DOCTRINE_BASE` tem teto de 2 KB testado: bullet novo exige comprimir os
   vizinhos SEM tocar nas frases que os testes fixam.
+- F-234: o veredito de ponta virou enforcement. `mission_review_verdicts`
+  (migração 039) grava cada veredito atado ao HEAD EXATO + `tree_dirty`;
+  `nexus_review_verdict` registra com identidade medida pelo Main
+  (`ctx.providerId` + `getAgentSessionInfo(sessionId).model`) e
+  `isFrontierReviewer` casa por linha com `JUDGE_FRONTIER_LANE` (opus-5-6 vale
+  pela linha do 5-5; sem modelo ou GLM nunca é ponta).
+  `assertIntegrationReviewed` é o ponto único: `nexus_git_push` de missão,
+  o `pushAfterDone` (sem veredito → status muda, push não roda,
+  `pushSkipped: 'review_required'`) e o hook `POST /hook/integration`
+  (PreToolUse/Bash: `git push`, `gh pr create|merge`, `git merge … main` —
+  `--dry-run` e cwd fora do checkout cobertos; pane sem missão sem portão)
+  só passam com `approve` de ponta para o HEAD atual e árvore limpa.
+  `review_reports` é do council PREVC — não reutilizar.
 
 ## Jev enxugando a orquestração (F-194/F-195/F-196/F-197)
 

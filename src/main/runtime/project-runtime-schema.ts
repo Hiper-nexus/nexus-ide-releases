@@ -825,6 +825,33 @@ BEGIN
 END;
 `;
 
+/**
+ * F-234: veredito de integração por HEAD exato. Push/integração de uma missão
+ * só roda com `approve` de modelo de ponta registrado contra o HEAD corrente e
+ * árvore limpa — o registro leve vive aqui (a tabela `review_reports` é do
+ * council PREVC, com binding por contractHash, e não se aplica à Via Rápida).
+ */
+const MISSION_REVIEW_VERDICTS_SCHEMA = `
+CREATE TABLE mission_review_verdicts (
+  verdict_id       TEXT PRIMARY KEY,
+  mission_id       TEXT NOT NULL,
+  head_sha         TEXT NOT NULL CHECK (length(head_sha) IN (40, 64)),
+  tree_dirty       INTEGER NOT NULL CHECK (tree_dirty IN (0, 1)),
+  verdict          TEXT NOT NULL CHECK (verdict IN ('approve', 'reject')),
+  reviewer_adapter TEXT NOT NULL,
+  reviewer_model   TEXT,
+  reviewer_session TEXT,
+  frontier         INTEGER NOT NULL CHECK (frontier IN (0, 1)),
+  findings_json    TEXT NOT NULL DEFAULT '[]' CHECK (length(findings_json) <= 16384),
+  summary          TEXT NOT NULL CHECK (length(summary) <= 2000),
+  created_at       INTEGER NOT NULL,
+  FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_mission_review_verdicts_head
+  ON mission_review_verdicts(mission_id, head_sha, created_at);
+`;
+
 export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
   validateProjectMigrations([
     createProjectMigration({
@@ -933,5 +960,13 @@ export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
       schemaVersion: 38,
       appVersion: '0.76.154',
       sql: HANDOFF_ROUNDED_OPERATION_IDENTITY_SCHEMA,
+    }),
+    // F-234: "código só integra/push após veredito de modelo de ponta" —
+    // registro durável do veredito, atado ao HEAD exato do checkout.
+    createProjectMigration({
+      id: '039-mission-review-verdicts',
+      schemaVersion: 39,
+      appVersion: '0.76.154',
+      sql: MISSION_REVIEW_VERDICTS_SCHEMA,
     }),
   ]);

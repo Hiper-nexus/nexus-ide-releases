@@ -66,10 +66,11 @@ const DOCTRINE_BASE = [
     'mesmo despacho; quem só sinalizou, mande-o executar; readOnly entrega texto.',
   // Regra do operador (01/10): escreve barato, julga caro — GLM/MiMo davam
   // "veredito APROVAR" em revisão de código.
-  '• JULGAMENTO: código só integra/push após veredito de modelo de ponta — ' +
+  '• JULGAMENTO: código só integra/push após veredito de ponta — ' +
     'você (Fable/Opus/Sonnet/Sol 6.1/Astra) julga ou abre juiz via route_task ' +
-    '"revisão"; barato nunca julga; judgeUnavailable = você julga.',
-  '• CUSTO: escreva com o que o route_task escolher (barato e diverso); o caro ' +
+    '"revisão"; barato nunca julga; judgeUnavailable = você julga; ' +
+    'registre com nexus_review_verdict.',
+  '• CUSTO: escreva com o route_task (barato e diverso); o caro ' +
     'corrige só o que o veredito apontou.',
   '• VOZ: ditado traduzido pode chegar em inglês; responda em PT-BR.',
 ].join('\n');

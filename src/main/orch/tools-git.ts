@@ -8,6 +8,8 @@ import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-regi
 import { OPERATOR_HAND_WORKTREE_KEY } from './isolated-writer-worktree';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { executionScopeFor } from './gate';
+import { assertIntegrationReviewed } from './integration-review-gate';
+import { getProjectDomainStores } from './project-domain-store-registry';
 import {
   assertSafeLocalGitConfig,
   ProcessGitRunner,
@@ -498,6 +500,16 @@ const gitPush: McpToolDef = {
     if (branch) assertSafePushBranch(branch);
     await assertSafeConfiguredRemote(cwd, remote, invocation?.signal);
     assertInvocationLive(invocation?.signal);
+    // F-234: push de missão exige veredito "approve" de modelo de ponta para o
+    // HEAD exato e árvore limpa. Pane sem missão (operador) não tem portão.
+    if (ctx.missionId) {
+      assertIntegrationReviewed(
+        getProjectDomainStores(ctx.scope),
+        ctx.missionId,
+        cwd,
+        invocation?.signal,
+      );
+    }
     const cmdArgs = ['push', remote];
     if (branch) cmdArgs.push(branch);
     const { stdout } = await gitExec(cmdArgs, cwd, invocation?.signal);

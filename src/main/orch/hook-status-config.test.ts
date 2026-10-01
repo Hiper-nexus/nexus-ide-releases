@@ -66,6 +66,17 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
     expect(triage!.hooks[0]!.command).not.toContain('--output /dev/null');
     expect(triage!.hooks[0]!.command).toContain('|| true');
 
+    // PreToolUse/Bash → portão de integração (/hook/integration, F-234).
+    const preToolUse = merged.PreToolUse as Array<{
+      matcher?: string;
+      hooks: Array<{ type: string; command: string; timeout?: number }>;
+    }>;
+    const integration = preToolUse.find((entry) => entry.matcher === 'Bash');
+    expect(integration).toBeDefined();
+    expect(integration!.hooks[0]!.command).toContain('$NEXUS_HOOK_INTEGRATION_URL');
+    expect(integration!.hooks[0]!.command).toContain(MARKER);
+    expect(integration!.hooks[0]!.command).toContain('|| true');
+
     const serialized = JSON.stringify(merged);
     expect(serialized).toContain(MARKER);
     expect(serialized).toContain('$NEXUS_HOOK_URL');
@@ -79,12 +90,13 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
 
     expect(twice).toEqual(once);
     // 6 status hooks (claudeHookSpecs) + 1 hook de triagem PostToolUseFailure
-    // + 1 hook de delegação UserPromptSubmit (C2) + 1 portão de regressão Stop.
+    // + 1 hook de delegação UserPromptSubmit (C2) + 1 portão de regressão Stop
+    // + 1 portão de integração PreToolUse/Bash (F-234).
     const commands = Object.values(twice)
       .flat()
       .flatMap((entry) => (entry as { hooks: Array<{ command: string }> }).hooks)
       .map((hook) => hook.command);
-    expect(commands.filter(isNexusHookText)).toHaveLength(9);
+    expect(commands.filter(isNexusHookText)).toHaveLength(10);
   });
 });
 
@@ -131,10 +143,10 @@ describe('codexStatusHookArgs (Codex TOML -c overrides)', () => {
       };
       const [event, entries] = Object.entries(parsed.hooks)[0]!;
       expect(entries).toHaveLength(1);
-      // UserPromptSubmit also carries the delegate hook and Stop the regression
-      // gate (tests below); status is first.
+      // UserPromptSubmit also carries the delegate hook, Stop the regression
+      // gate and PreToolUse the integration gate (F-234); status is first.
       expect(entries[0]!.hooks).toHaveLength(
-        event === 'UserPromptSubmit' || event === 'Stop' ? 2 : 1,
+        event === 'UserPromptSubmit' || event === 'Stop' || event === 'PreToolUse' ? 2 : 1,
       );
       const [hook] = entries[0]!.hooks;
       expect(hook!.type).toBe('command');
@@ -175,6 +187,21 @@ describe('codexStatusHookArgs (Codex TOML -c overrides)', () => {
     expect(regression).toContain('$NEXUS_HOOK_REGRESSION_URL');
     expect(regression).not.toContain('/dev/null');
     expect(regression).toContain(MARKER);
+  });
+
+  it('PreToolUse runs status and the integration gate in ONE array (F-234)', () => {
+    const values = codexStatusHookArgs().filter(
+      (arg, index) => index % 2 === 1 && arg.startsWith('hooks.PreToolUse='),
+    );
+    expect(values).toHaveLength(1);
+    const parsed = parseOverride(values[0]!) as {
+      hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> };
+    };
+    const [status, integration] = parsed.hooks.PreToolUse[0]!.hooks.map((hook) => hook.command);
+    expect(status).toContain('X-Nexus-Hook-Event: tool-use');
+    expect(integration).toContain('$NEXUS_HOOK_INTEGRATION_URL');
+    expect(integration).toContain(MARKER);
+    expect(integration).toContain('|| true');
   });
 
   it('is deterministic — a second spawn produces identical argv (no accumulation)', () => {

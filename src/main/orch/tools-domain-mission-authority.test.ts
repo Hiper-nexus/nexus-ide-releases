@@ -171,13 +171,24 @@ function completionPushFixture(status = 'running') {
     intentContract: { lane: 'standard' },
     result: status === 'done' ? result : undefined,
   };
+  // F-234: o portão de integração exige veredito "approve" de modelo de ponta
+  // para o HEAD exato; a fixture devolve um veredito aprovador por padrão.
+  const latestVerdict = vi.fn(() => ({
+    verdict: 'approve' as const,
+    frontier: true,
+  }));
   mocks.getProjectDomainStores.mockReturnValue({
-    missions: { get: () => stored, appendLearning: vi.fn() },
+    missions: {
+      get: () => stored,
+      appendLearning: vi.fn(),
+      reviewVerdicts: { latestFor: latestVerdict },
+    },
   });
   return {
     finish: () => { stored = { ...stored, status: 'done', result }; },
     bindSpace: (spaceId: string) => { stored.intentContract = Object.assign({}, stored.intentContract, { workspaceBinding: { version: 1, spaceId } }); },
     replaceSession: (sessionId = 'new-session') => { stored = { ...stored, orchestratorSessionId: sessionId }; },
+    latestVerdict,
   };
 }
 
@@ -187,7 +198,19 @@ describe('mission creation authority', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.reconcile.mockReset().mockResolvedValue({ action: 'wait', completed: false, reason: 'review-in-progress' });
-    mocks.gitRun.mockReset().mockReturnValue({ status: 0, stdout: 'Pushed', stderr: '' });
+    // F-234: o portão mede HEAD/árvore com o mesmo runner — responda por
+    // subcomando em vez de um stdout único.
+    mocks.gitRun.mockReset().mockImplementation(
+      (_cwd: unknown, args: readonly string[]) => {
+        if (args[0] === 'rev-parse') {
+          return { status: 0, stdout: 'a'.repeat(40), stderr: '' };
+        }
+        if (args[0] === 'status' || args[0] === 'config') {
+          return { status: 0, stdout: '', stderr: '' };
+        }
+        return { status: 0, stdout: 'Pushed', stderr: '' };
+      },
+    );
     vi.spyOn(ProcessGitRunner.prototype, 'run').mockImplementation(mocks.gitRun);
   });
 
@@ -211,7 +234,8 @@ describe('mission creation authority', () => {
 
     expect(waited).toBe(true);
     expect(result).toMatchObject({ status: 'done', pushExecuted: true, pushPending: false });
-    expect(mocks.gitRun).toHaveBeenCalledExactlyOnceWith(scope.rootRealPath, ['push', 'origin', 'main'], { timeoutMs: 60_000 });
+    const pushes = mocks.gitRun.mock.calls.filter((call) => call[1][0] === 'push');
+    expect(pushes).toEqual([[scope.rootRealPath, ['push', 'origin', 'main'], { timeoutMs: 60_000 }]]);
   });
 
   it('reports a pending push when verification is waiting for a repair', async () => {
@@ -263,7 +287,26 @@ describe('mission creation authority', () => {
 
     expect(result).toMatchObject({ status: 'done', pushExecuted: true });
     expect(mocks.reconcile).not.toHaveBeenCalled();
-    expect(mocks.gitRun).toHaveBeenCalledExactlyOnceWith(scope.rootRealPath, ['push', 'origin'], { timeoutMs: 60_000 });
+    const pushes = mocks.gitRun.mock.calls.filter((call) => call[1][0] === 'push');
+    expect(pushes).toEqual([[scope.rootRealPath, ['push', 'origin'], { timeoutMs: 60_000 }]]);
+  });
+
+  it('skips the push (not the status) when no frontier verdict covers the HEAD', async () => {
+    const f = completionPushFixture('done');
+    f.latestVerdict.mockReturnValue(null as never);
+    const result = await missionSetStatusTool().handler({
+      missionId: 'mission-existing', status: 'done', push: {},
+    }, context('orchestrator'));
+
+    expect(result).toMatchObject({
+      status: 'done',
+      pushExecuted: false,
+      pushSkipped: 'review_required',
+    });
+    expect((result as { message: string }).message).toContain('review_required');
+    expect(
+      mocks.gitRun.mock.calls.filter((call) => call[1][0] === 'push'),
+    ).toHaveLength(0);
   });
 
   it('requires an explicit current orchestrator binding for a completed push', async () => {
@@ -315,7 +358,11 @@ describe('mission creation authority', () => {
     }, context('orchestrator'));
 
     expect(result).toMatchObject({ pushExecuted: false });
-    expect(mocks.gitRun).not.toHaveBeenCalled();
+    // F-234: o portão de veredito mede HEAD/árvore pelo mesmo runner antes do
+    // push — a invariante é "nenhum `git push` roda", não "nenhum git roda".
+    expect(
+      mocks.gitRun.mock.calls.some((call) => call[1]?.[0] === 'push'),
+    ).toBe(false);
   });
 
   it.each(['worker', 'orchestrator'] as const)(

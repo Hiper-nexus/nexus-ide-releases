@@ -136,6 +136,10 @@ const ALWAYS_ALLOWED = new Set([
   // Decision helper for any role (TypeSafe Jev); allowlists still govern
   // everything effectful — judge itself only reads state and returns a verdict.
   "judge",
+  // F-234: um juiz spawnado com perfil readOnly precisa registrar o veredito;
+  // gravar a linha não tem efeito além do ledger — o portão de integração
+  // (frontier + HEAD exato + árvore limpa) é que decide se o veredito vale.
+  "review_verdict",
   // Same for candidate ranking: read-only judgment, composite computed in code.
   "rank",
   // Tool recommendation: reads the caller's own visible tool list and returns

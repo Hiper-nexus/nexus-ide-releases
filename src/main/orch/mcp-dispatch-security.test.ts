@@ -331,13 +331,29 @@ function completedPushDispatchFixture() {
     state = { ...state, mission: { ...state.mission, ...patch } };
   };
   update({ squadId: 'push-squad', orchestratorSessionId: 'push-session' });
+  // F-234: o portão de integração consulta o ledger de vereditos e mede
+  // HEAD/árvore pelo mesmo runner — fixture aprovada por padrão.
   vi.spyOn(domainStores, 'getProjectDomainStores').mockReturnValue({
-    missions: { get: () => state.mission, appendLearning: vi.fn() },
+    missions: {
+      get: () => state.mission,
+      appendLearning: vi.fn(),
+      reviewVerdicts: {
+        latestFor: () => ({ verdict: 'approve', frontier: true }),
+      },
+    },
   } as never);
   vi.spyOn(squads, 'getSquad').mockReturnValue(null);
   const reconcile = vi.spyOn(completion, 'maybeCompleteFastLaneOnDelivery');
   const push = vi.spyOn(ProcessGitRunner.prototype, 'run')
-    .mockReturnValue({ status: 0, stdout: 'Pushed to local fixture', stderr: '' });
+    .mockImplementation((_cwd: string, args: readonly string[]) => {
+      if (args[0] === 'rev-parse') {
+        return { status: 0, stdout: 'a'.repeat(40), stderr: '' };
+      }
+      if (args[0] === 'status' || args[0] === 'config') {
+        return { status: 0, stdout: '', stderr: '' };
+      }
+      return { status: 0, stdout: 'Pushed to local fixture', stderr: '' };
+    });
   const tool = buildDomainTools().find((item) => item.name === 'nexus_mission_set_status')!;
   const finish = () => update({ status: 'done', intentState: 'done',
     result: { outcome: 'success', summary: 'Verified fixture', evidenceIds: [], artifactRefs: [] } });
@@ -2236,7 +2252,8 @@ describe("MCP dispatch effect safety", () => {
     pending.resolve();
 
     expect(await running).toMatchObject({ ok: true, result: { status: 'done', pushExecuted: true } });
-    expect(f.push).toHaveBeenCalledExactlyOnceWith(auditScope.rootRealPath, ['push', 'origin'], { timeoutMs: 60_000 });
+    expect(f.push.mock.calls.filter((call) => call[1][0] === 'push'))
+      .toEqual([[auditScope.rootRealPath, ['push', 'origin'], { timeoutMs: 60_000 }]]);
   });
 
   it('accepts a fresh done-plus-push retry for the bound orchestrator through the real dispatcher', async () => {
@@ -2245,7 +2262,9 @@ describe("MCP dispatch effect safety", () => {
 
     expect(await f.run()).toMatchObject({ ok: true, result: { pushExecuted: true } });
     expect(f.reconcile).not.toHaveBeenCalled();
-    expect(f.push).toHaveBeenCalledTimes(1);
+    expect(
+      f.push.mock.calls.filter((call) => call[1][0] === 'push'),
+    ).toHaveLength(1);
   });
 
   it.each(['revoked', 'stale', 'bad-scope'] as const)('rejects completed push with %s authority through the dispatcher', async (failure) => {

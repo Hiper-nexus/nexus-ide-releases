@@ -50,6 +50,7 @@ import {
   type MissionKickoffAcceptance,
   type RecordMissionKickoffAcceptance,
 } from './mission-kickoff-proof-ledger';
+import { MissionReviewVerdictLedger } from './mission-review-verdict-ledger';
 import {
   MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_MARKER,
   MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_REASON,
@@ -362,6 +363,7 @@ export class ScopedMissionStore {
   readonly #assertCreateAccess: () => void;
   readonly #kickoffProofs: MissionKickoffProofLedger;
   readonly #routeReservations: MissionRouteReservationLedger;
+  readonly #reviewVerdicts: MissionReviewVerdictLedger;
 
   constructor(
     runtimeManager: ProjectRuntimeManager,
@@ -372,6 +374,12 @@ export class ScopedMissionStore {
     this.#binding = new ScopedStoreBinding(runtimeManager, scope, options);
     this.#kickoffProofs = new MissionKickoffProofLedger(this.#binding);
     this.#routeReservations = new MissionRouteReservationLedger(this.#binding);
+    this.#reviewVerdicts = new MissionReviewVerdictLedger(this.#binding);
+  }
+
+  /** F-234: vereditos de integração por HEAD exato (gate de push). */
+  get reviewVerdicts(): MissionReviewVerdictLedger {
+    return this.#reviewVerdicts;
   }
 
   get scope(): ProjectExecutionScope {

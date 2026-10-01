@@ -539,6 +539,23 @@ export const JUDGE_FRONTIER_LANE: ReadonlyArray<{
   { adapterId: 'codex', model: 'gpt-6-astra' },
 ]);
 
+/**
+ * F-234: juiz que satisfaz o portão de integração — o par (adapter, model)
+ * casa com um assento da {@link JUDGE_FRONTIER_LANE} por LINHA (a mesma salva
+ * do `applyFrontierLane`: `claude-opus-5-6` conta como linha do opus 5-5).
+ * Sem modelo (`undefined`) nunca é ponta — identidade incerta não julga.
+ */
+export function isFrontierReviewer(
+  adapterId: string,
+  model: string | undefined,
+): boolean {
+  if (model === undefined) return false;
+  return JUDGE_FRONTIER_LANE.some(
+    (seat) =>
+      seat.adapterId === adapterId && isSameLineAtLeast(model, seat.model),
+  );
+}
+
 export function frontierRoutePolicy(
   taskText: string,
   tier: TaskTier,

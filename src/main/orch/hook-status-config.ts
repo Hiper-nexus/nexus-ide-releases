@@ -43,6 +43,10 @@ import {
   REGRESSION_HOOK_TIMEOUT_SECONDS,
   makeRegressionHookCommand,
 } from './hook-regression-command';
+import {
+  INTEGRATION_HOOK_TIMEOUT_SECONDS,
+  makeIntegrationHookCommand,
+} from './hook-integration-command';
 
 // ── Claude (family: claude/glm/glm-flash/longcat) ───────────────────────────
 
@@ -85,6 +89,26 @@ export function mergeClaudeStatusHooks(existing: ClaudeHooksMap): ClaudeHooksMap
     {
       hooks: [
         { type: 'command', command: makeDelegateHookCommand(), timeout: 5 },
+      ],
+    },
+  ];
+  // PreToolUse/Bash → POST /hook/integration (F-234): `git push`,
+  // `gh pr create|merge` e `git merge … main` de pane de missão passam pelo
+  // portão de veredito de ponta ANTES de executar; a resposta
+  // (`decision: block`) impede o comando. O mergeNestedEntries do spec já
+  // removeu entradas Nexus antigas deste evento — a reescrita por spawn
+  // continua idempotente.
+  const preToolUse = Array.isArray(next.PreToolUse) ? next.PreToolUse : [];
+  next.PreToolUse = [
+    ...preToolUse,
+    {
+      matcher: 'Bash',
+      hooks: [
+        {
+          type: 'command',
+          command: makeIntegrationHookCommand(),
+          timeout: INTEGRATION_HOOK_TIMEOUT_SECONDS,
+        },
       ],
     },
   ];
@@ -134,13 +158,18 @@ export function codexStatusHookArgs(): string[] {
   for (const spec of codexHookSpecs()) {
     // UserPromptSubmit também pede contexto ao /hook/delegate, no MESMO array:
     // um segundo `-c` com a mesma chave sombrearia o hook de status.
-    // Stop idem com o portão de regressão (/hook/regression).
+    // Stop idem com o portão de regressão (/hook/regression), e PreToolUse
+    // com o portão de integração (/hook/integration, F-234) — o schema `-c`
+    // do Codex não tem matcher, então o endpoint decide pelo payload
+    // (só `tool_input.command` de push/merge é avaliado; o resto é `{}`).
     const commands =
       spec.hookKey === 'UserPromptSubmit'
         ? [spec.command, makeDelegateHookCommand()]
         : spec.hookKey === 'Stop'
           ? [spec.command, makeRegressionHookCommand()]
-          : [spec.command];
+          : spec.hookKey === 'PreToolUse'
+            ? [spec.command, makeIntegrationHookCommand()]
+            : [spec.command];
     const hooks = commands
       .map((command) => `{type="command",command=${tomlBasicString(command)}}`)
       .join(',');
