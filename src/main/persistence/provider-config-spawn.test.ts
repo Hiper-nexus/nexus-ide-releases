@@ -1716,6 +1716,11 @@ describe('generic OpenAI env key is host-gated for qwen (F-238)', () => {
     expect(resolveRuntimeApiKey('qwen')).toBe('fixture-bailian-key');
   });
 
+  it('opencode still accepts a bare OPENAI_API_KEY (the host gate is only for qwen)', () => {
+    vi.stubEnv('OPENAI_API_KEY', 'fixture-openai-key');
+    expect(resolveRuntimeApiKey('opencode')).toBe('fixture-openai-key');
+  });
+
   it('qwen accepts its own BAILIAN/DASHSCOPE env vars without a host gate', () => {
     vi.stubEnv('DASHSCOPE_API_KEY', 'fixture-dashscope-key');
     expect(resolveRuntimeApiKey('qwen')).toBe('fixture-dashscope-key');

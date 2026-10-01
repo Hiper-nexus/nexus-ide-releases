@@ -538,7 +538,9 @@ function openAiHostMatchesProvider(providerId: string): boolean {
  * (comportamento histórico: qualquer valor presente conta).
  */
 function genericEnvKeyAllowedForProvider(name: string, providerId: string): boolean {
-  if (name === 'OPENAI_API_KEY') return openAiHostMatchesProvider(providerId);
+  // Só o Qwen reaproveita a var da OpenAI para outro host; codex/opencode/
+  // aider/openclaude continuam aceitando OPENAI_API_KEY como sempre.
+  if (name === 'OPENAI_API_KEY' && providerId === 'qwen') return openAiHostMatchesProvider(providerId);
   return true;
 }
 
