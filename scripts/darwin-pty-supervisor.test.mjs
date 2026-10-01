@@ -28,6 +28,22 @@ const nexusPaneSkipReason =
     ? "AMBIENTE-PANE (F-714): inherited nexus-pty-supervisor responsibility rejects launch before disclaim; run outside a Nexus pane or via launchd."
     : undefined;
 
+// F-714: a write-denying sandbox (the Nexus regression gate's Seatbelt profile)
+// cannot open /dev/ptmx, so no real PTY exists there. Probed once, on first use.
+let ptySkipProbe;
+function ptySkipReason() {
+  if (ptySkipProbe) return ptySkipProbe.reason;
+  ptySkipProbe = { reason: undefined };
+  try {
+    nodePty.spawn("/usr/bin/true", [], {}).kill();
+  } catch (error) {
+    if (/posix_openpt failed: Operation not permitted/.test(String(error?.message))) {
+      ptySkipProbe.reason = "AMBIENTE-SANDBOX (F-714): posix_openpt is denied here, so no real PTY can be opened; run outside the sandbox.";
+    }
+  }
+  return ptySkipProbe.reason;
+}
+
 const isDarwin = process.platform === "darwin";
 const suite = isDarwin ? describe : describe.skip;
 const developerSigningIdentity = isDarwin
@@ -596,6 +612,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
 
   it("is the authenticated supervisor behind a real node-pty session", async ({ skip }) => {
     if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
+    if (ptySkipReason()) skip(ptySkipReason());
     const output = [];
     const terminal = spawnDarwinPty(
       helper,
@@ -889,6 +906,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
 
   it("reaps the direct child and entire responsibility cohort after SIGTERM", async ({ skip }) => {
     if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
+    if (ptySkipReason()) skip(ptySkipReason());
     const cohort = await launchLongLivedCohort("term");
     let terminalExited = false;
     try {
@@ -912,6 +930,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
 
   it("delivers Ctrl-C to a continuing child without closing the pane, then reaps on SIGTERM", async ({ skip }) => {
     if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
+    if (ptySkipReason()) skip(ptySkipReason());
     const cohort = await launchLongLivedCohort("ctrl-c", {
       keepRunningOnInterrupt: true,
     });

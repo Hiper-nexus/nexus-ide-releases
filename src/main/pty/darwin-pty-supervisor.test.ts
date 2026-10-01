@@ -39,6 +39,22 @@ const nexusPaneSkipReason =
     ? "AMBIENTE-PANE (F-714): inherited nexus-pty-supervisor responsibility rejects launch before disclaim; run outside a Nexus pane or via launchd."
     : undefined;
 
+// F-714: a write-denying sandbox (the Nexus regression gate's Seatbelt profile)
+// cannot open /dev/ptmx, so no real PTY exists there. Probed once, on first use.
+let ptySkipProbe: { reason: string | undefined } | undefined;
+function ptySkipReason(): string | undefined {
+  if (ptySkipProbe) return ptySkipProbe.reason;
+  ptySkipProbe = { reason: undefined };
+  try {
+    nodePty.spawn("/usr/bin/true", [], {}).kill();
+  } catch (error) {
+    if (/posix_openpt failed: Operation not permitted/.test(String((error as Error | undefined)?.message))) {
+      ptySkipProbe.reason = "AMBIENTE-SANDBOX (F-714): posix_openpt is denied here, so no real PTY can be opened; run outside the sandbox.";
+    }
+  }
+  return ptySkipProbe.reason;
+}
+
 const temporaryDirectories: string[] = [];
 const activeProcessGroups = new Set<number>();
 const activePtys = new Map<number, nodePty.IPty>();
@@ -1192,6 +1208,7 @@ describe.runIf(process.platform === "darwin")(
   () => {
     it("preserves a real foreground PTY, input, output, and provider PATH", async ({ skip }) => {
       if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
+      if (ptySkipReason()) skip(ptySkipReason());
       const { root, helper, runtime } = temporaryRuntime();
       buildNativeDevelopmentHelper(helper);
       const command = supervisedPtyCommand(runtime, "/bin/sh", [
