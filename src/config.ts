@@ -4,5 +4,7 @@ export type Config=z.infer<typeof schema>;
 export function configFrom(env:unknown):Config{return schema.parse(env);}
 export function authConfigured(config:Config,provider:'google'|'github'):boolean{return Boolean(config.LICENSE_PRIVATE_KEY&&config.LICENSE_PUBLIC_KEY&&(provider==='google'?config.GOOGLE_OAUTH_ID&&config.GOOGLE_OAUTH_SECRET:config.GITHUB_OAUTH_ID&&config.GITHUB_OAUTH_SECRET));}
 export function billingConfigured(config:Config):boolean{return Boolean(config.STRIPE_SECRET_KEY&&config.STRIPE_PRICE_PRO&&config.STRIPE_WEBHOOK_SECRET&&config.LICENSE_PRIVATE_KEY);}
-/** Os avisos por e-mail só saem com o interruptor ligado E as duas credenciais presentes: faltar uma é desligado, nunca erro. */
-export function emailConfigured(config:Config):boolean{return config.EMAIL_ENABLED==='true'&&Boolean(config.RESEND_API_KEY&&config.NOTICE_SECRET);}
+/** Os avisos por e-mail só saem com o interruptor ligado E as duas credenciais presentes (o segredo com tamanho decente): faltar uma é desligado, nunca erro. */
+/** Segredo curto deixaria os links de descadastro adivináveis: `openssl rand -base64 32` dá 44 caracteres. */
+export const NOTICE_SECRET_MIN_LENGTH=32;
+export function emailConfigured(config:Config):boolean{return config.EMAIL_ENABLED==='true'&&Boolean(config.RESEND_API_KEY)&&config.NOTICE_SECRET.trim().length>=NOTICE_SECRET_MIN_LENGTH;}

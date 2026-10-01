@@ -14,11 +14,13 @@ test('sem nenhuma variável de e-mail o padrão é desligado, com o remetente da
 });
 
 test('só conta como configurado com o interruptor ligado e as duas credenciais', () => {
-  const on = { ...base, EMAIL_ENABLED: 'true', RESEND_API_KEY: 're_x', NOTICE_SECRET: 'segredo' };
+  const on = { ...base, EMAIL_ENABLED: 'true', RESEND_API_KEY: 're_x', NOTICE_SECRET: 'segredo-de-teste-com-bastante-entropia-123456' };
   assert.equal(emailConfigured(configFrom(on)), true);
   assert.equal(emailConfigured(configFrom({ ...on, EMAIL_ENABLED: 'false' })), false);
   assert.equal(emailConfigured(configFrom({ ...on, RESEND_API_KEY: '' })), false);
   assert.equal(emailConfigured(configFrom({ ...on, NOTICE_SECRET: '' })), false);
+  assert.equal(emailConfigured(configFrom({ ...on, NOTICE_SECRET: 'curto' })), false, 'segredo curto não liga o envio');
+  assert.equal(emailConfigured(configFrom({ ...on, NOTICE_SECRET: ' '.repeat(40) })), false, 'só espaços também não');
 });
 
 test('valor inválido no interruptor falha cedo, como os demais interruptores', () => {

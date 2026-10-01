@@ -26,8 +26,8 @@ A cada hora (minuto 17) o Worker limpa o que expirou (`cleanupExpired`) e, depoi
 - **Desligado** (`EMAIL_ENABLED` diferente de `"true"`, ou falta `RESEND_API_KEY` ou `NOTICE_SECRET`): não faz nada. Nenhuma consulta, nenhuma chamada, nenhuma marca.
 - **Ligado:** uma consulta ao D1 reaproveita a mesma classificação de acesso do painel admin (`src/classified.ts`), pré-filtra pelas janelas acima e traz até 50 contas, as mais urgentes primeiro (24 h, terminou, 3 dias, boas-vindas). Cada envio leva `Idempotency-Key: <conta>:<tipo>` e, quando o Resend aceita, a marca vai para `account_notices` (em blocos de 10, para gastar poucas consultas D1).
 - **Falha que passa sozinha** (429, 5xx, rede, prazo de 10 s): não marca e tenta de novo na hora seguinte. Três seguidas interrompem o lote.
-- **Falha definitiva** (outros 4xx): não marca e registra uma linha por execução, sem endereço e sem chave. `401`/`403` (chave recusada, domínio não verificado) interrompem o lote inteiro.
-- **Queda entre enviar e marcar:** o Resend recusa o reenvio repetido pela chave de idempotência por 24 h, então a pessoa não recebe duas vezes.
+- **Falha definitiva** (outros 4xx): não marca e registra uma linha por execução, sem endereço e sem chave. `401`/`403` (chave recusada, domínio não verificado) interrompem o lote inteiro. Um endereço que o Resend recusa (422) volta a ser tentado a cada hora enquanto a janela do aviso durar; olhe o log se o mesmo erro se repetir.
+- **Queda entre enviar e marcar:** o Resend recusa o reenvio repetido pela chave de idempotência por 24 h, então a pessoa não recebe duas vezes. Se o corpo mudou entre as tentativas (o "faltam N dias"), o Resend responde 409 `invalid_idempotent_request`; o Worker entende que o envio anterior saiu e só marca.
 - Se não for possível gravar as marcas, o lote para em vez de continuar enviando sem registro.
 
 ## Conectar o Resend
@@ -64,7 +64,7 @@ npx wrangler secret put NOTICE_SECRET       # cole o valor gerado
 
 `secret put` publica uma versão nova na hora, mas isso não envia nada enquanto `EMAIL_ENABLED` for `"false"`.
 
-`NOTICE_SECRET` assina os links de descadastro. **Não o troque sem necessidade:** todo e-mail já enviado carrega um link assinado com ele, e trocar o segredo faz esses links passarem a responder "link inválido". Guarde o valor num cofre.
+`NOTICE_SECRET` assina os links de descadastro e precisa ter pelo menos 32 caracteres (o comando acima gera 44); com um segredo menor o envio não liga. **Não o troque sem necessidade:** todo e-mail já enviado carrega um link assinado com ele, e trocar o segredo faz esses links passarem a responder "link inválido". Guarde o valor num cofre.
 
 ### 4. Ligar e publicar
 
@@ -96,7 +96,7 @@ console.log(response.status, await response.json());
 
 Todo e-mail traz a linha "Você recebeu este aviso porque criou uma conta no NexusIDE", um link de descadastro no corpo e os cabeçalhos `List-Unsubscribe` e `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058), que fazem o Gmail e o Outlook mostrarem o botão "cancelar inscrição".
 
-- `GET /v1/notices/unsubscribe?a=<conta>&t=<token>`: página de confirmação e `notices_opt_out=1`. Repetir o link é seguro.
+- `GET /v1/notices/unsubscribe?a=<conta>&t=<token>`: página de confirmação e `notices_opt_out=1`. Repetir o link é seguro. `HEAD` (pré-visualização de link) não descadastra.
 - `POST /v1/notices/unsubscribe?a=<conta>&t=<token>`: o one-click do cliente de e-mail.
 - O token é o HMAC-SHA256 da conta com `NOTICE_SECRET`, comparado em tempo constante. Não há login. Token errado, conta alheia ou parâmetro faltando devolvem a mesma página 400 genérica, sem revelar o motivo. As duas rotas passam pelo limitador da API.
 

@@ -25,6 +25,8 @@ async function optOut(c: Context<AppEnv>, accountId: string): Promise<void> {
  */
 export const noticeRoutes = new Hono<AppEnv>()
   .get('/notices/unsubscribe', async (c) => {
+    // O Hono responde HEAD com o handler de GET; um HEAD (pré-visualização de link) não pode descadastrar ninguém.
+    if (c.req.method === 'HEAD') return c.body(null, 200);
     const account = await verifiedAccount(c);
     if (account === null) return unsubscribeInvalidPage(c);
     await optOut(c, account);

@@ -238,6 +238,30 @@ test('se não der para registrar o envio, o lote para em vez de seguir enviando 
   db.close();
 });
 
+test('chave de idempotência já usada com outro corpo (409) quer dizer que o envio anterior saiu: marca e não repete', async () => {
+  const db = new SqliteD1();
+  await seed(db, 'acc-1', { endsIn: 2 * DAY });
+  const logs: string[] = [];
+  const { calls, fetchFn } = resend(() => new Response(JSON.stringify({ name: 'invalid_idempotent_request', message: 'x' }), { status: 409 }));
+  const result = await sendDueNotices(env(db), { now: NOW, fetchFn, log: message => logs.push(message) });
+  assert.equal(result.sent, 1);
+  assert.deepEqual(notices(db), [{ account_id: 'acc-1', kind: 'trial_ending_3d', sent_at: NOW, provider_id: null }]);
+  assert.deepEqual(logs, []);
+  await sendDueNotices(env(db), { now: NOW + HOUR, fetchFn });
+  assert.equal(calls.length, 1, 'e a execução seguinte não tenta de novo');
+  db.close();
+});
+
+test('pedido simultâneo com a mesma chave (409 concurrent) vale nova tentativa: não marca', async () => {
+  const db = new SqliteD1();
+  await seed(db, 'acc-1', { endsIn: 2 * DAY });
+  const { fetchFn } = resend(() => new Response(JSON.stringify({ name: 'concurrent_idempotent_requests', message: 'x' }), { status: 409 }));
+  const result = await sendDueNotices(env(db), { now: NOW, fetchFn, log: () => {} });
+  assert.equal(result.sent, 0);
+  assert.deepEqual(notices(db), []);
+  db.close();
+});
+
 test('aceito sem id legível ainda é marcado, com provider_id nulo', async () => {
   const db = new SqliteD1();
   await seed(db, 'acc-1', { endsIn: 2 * DAY });

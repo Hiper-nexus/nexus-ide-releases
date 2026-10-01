@@ -70,6 +70,14 @@ function toCandidate(row: CandidateRow): NoticeCandidate {
   };
 }
 
+/**
+ * 409 `invalid_idempotent_request`: a chave `<conta>:<tipo>` já foi usada com outro corpo (o "faltam N dias" mudou entre uma execução e outra),
+ * ou seja, um envio anterior foi aceito e só a marca se perdeu. Marcar é o certo; tentar de novo só repetiria o 409 por dias.
+ */
+function alreadyAccepted(result: SendResult): boolean {
+  return !result.ok && result.status === 409 && result.reason.endsWith(':invalid_idempotent_request');
+}
+
 function daysLeft(trialEndsAt: string | null, now: number): number {
   if (trialEndsAt === null) return 0;
   return Math.max(1, Math.ceil((Date.parse(trialEndsAt) - now) / DAY_MS));
@@ -114,9 +122,9 @@ export async function sendDueNotices(env: { readonly DB: D1Database }, options: 
         to: notice.email, subject: rendered.subject, html: rendered.html, text: rendered.text,
         idempotencyKey: `${notice.accountId}:${notice.kind}`, headers: oneClickUnsubscribeHeaders(unsubscribeUrl),
       });
-      if (result.ok) {
+      if (result.ok || alreadyAccepted(result)) {
         sent += 1; consecutive = 0;
-        pending.push(db.prepare('INSERT OR IGNORE INTO account_notices(account_id,kind,sent_at,provider_id) VALUES(?,?,?,?)').bind(notice.accountId, notice.kind, now, result.id));
+        pending.push(db.prepare('INSERT OR IGNORE INTO account_notices(account_id,kind,sent_at,provider_id) VALUES(?,?,?,?)').bind(notice.accountId, notice.kind, now, result.ok ? result.id : null));
         if (pending.length >= MARK_CHUNK) await flush();
         continue;
       }

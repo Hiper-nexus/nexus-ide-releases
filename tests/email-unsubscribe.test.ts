@@ -91,6 +91,15 @@ test('GET com token errado, de outra conta, sem parâmetros ou sem segredo confi
   db.close();
 });
 
+test('HEAD (pré-visualização de link) não descadastra ninguém', async () => {
+  const db = new SqliteD1();
+  await seedAccount(db, 'acc-1');
+  const response = await createApp().request(await linkFor('acc-1'), { method: 'HEAD' }, env(db));
+  assert.equal(response.status, 200);
+  assert.equal(optOut(db, 'acc-1'), 0);
+  db.close();
+});
+
 test('token válido de conta que não existe responde como sucesso (não revela quais contas existem)', async () => {
   const db = new SqliteD1();
   const response = await createApp().request(await linkFor('ghost'), {}, env(db));
