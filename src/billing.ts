@@ -186,10 +186,14 @@ export function createBillingRoutes(stripeFor: StripeFactory = stripeFrom, now: 
   });
   routes.post('/billing/portal', requireNativeAuth, requireBilling, c => portal(c, stripeFor(c.get('config'))));
   routes.get('/license', requireNativeAuth, async c => c.json({ ok: true, data: { licenca: await licenseForAccount(c.env.DB, c.get('session').account_id, c.get('config')) } }));
-  routes.post('/billing/webhook', requireBilling, async (c) => {
+  // Sem assinatura a requisição nem é do Stripe: 400 antes de revelar se a cobrança está configurada.
+  const requireSignature: MiddlewareHandler<AppEnv> = async (c, next) => {
+    if (!c.req.header('stripe-signature')) throw new HTTPException(400, { message: 'Assinatura inválida.' });
+    await next();
+  };
+  routes.post('/billing/webhook', requireSignature, requireBilling, async (c) => {
     const config = c.get('config'), db = c.env.DB;
-    const signature = c.req.header('stripe-signature');
-    if (!signature) throw new HTTPException(400, { message: 'Assinatura inválida.' });
+    const signature = c.req.header('stripe-signature') as string;
     const body = await readBoundedBody(c.req.raw);
     const stripe = stripeFor(config);
     let event: StripeEvent;

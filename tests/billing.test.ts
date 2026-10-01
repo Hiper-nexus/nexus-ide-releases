@@ -112,7 +112,15 @@ test('billing routes answer 503 while Stripe is not configured', async () => {
   for (const [path, body] of [['/v1/web/checkout', { plan: 'pro', attemptId: ATTEMPT }], ['/v1/web/portal', {}]] as const) {
     assert.equal((await context.app.request(path, { method: 'POST', headers, body: JSON.stringify(body) }, env)).status, 503);
   }
-  assert.equal((await context.app.request('/v1/billing/webhook', { method: 'POST', body: '{}' }, env)).status, 503);
+  assert.equal((await context.app.request('/v1/billing/webhook', { method: 'POST', headers: { 'stripe-signature': 'fixture' }, body: '{}' }, env)).status, 503);
+  context.db.close();
+});
+
+test('webhook without a signature answers 400 before saying whether billing is configured', async () => {
+  const context = await setup();
+  const unconfigured = environment(context.db, { STRIPE_SECRET_KEY: '' });
+  assert.equal((await context.app.request('/v1/billing/webhook', { method: 'POST', body: '{}' }, unconfigured)).status, 400);
+  assert.equal((await context.app.request('/v1/billing/webhook', { method: 'POST', body: '{}' }, context.env)).status, 400);
   context.db.close();
 });
 

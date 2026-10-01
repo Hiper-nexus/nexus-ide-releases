@@ -15,10 +15,6 @@ export function selectEntitlement(rows:readonly SubscriptionRow[],now=Date.now()
 export async function entitlementFor(db:D1Database,accountId:string,now=Date.now()):Promise<Entitlement>{
   const rows=await db.prepare("SELECT s.* FROM subscriptions s WHERE (s.owner_type='account' AND s.account_id=?) OR (s.owner_type='team' AND s.team_id IN(SELECT team_id FROM team_members WHERE account_id=?)) ORDER BY CASE s.owner_type WHEN 'account' THEN 0 ELSE 1 END").bind(accountId,accountId).all<SubscriptionRow>();return selectEntitlement(rows.results,now);
 }
-export async function signLicense(account:AccountRow,entitlement:Entitlement,config:Config,now=Date.now()):Promise<string>{
-  const key=await importPKCS8(config.LICENSE_PRIVATE_KEY,'EdDSA');const issued=Math.floor(now/1000);
-  return new SignJWT({plan:entitlement.plan,email:account.email.includes('@')?account.email:null,status:entitlement.status,renewsAt:entitlement.renewsAt,graceUntil:entitlement.graceUntil}).setProtectedHeader({alg:'EdDSA',typ:'JWT'}).setSubject(account.id).setIssuer(new URL(config.PUBLIC_BASE_URL).origin).setAudience('nexus-desktop').setIssuedAt(issued).setExpirationTime(issued+entitlement.ttl).sign(key);
-}
 export async function licenseForAccount(db:D1Database,accountId:string,config:Config,now=Date.now()):Promise<string>{
   const account=await db.prepare('SELECT * FROM accounts WHERE id=?').bind(accountId).first<AccountRow>();if(!account)throw new Error('license account missing');
   const access=await accountAccess(db,accountId,config,now);const paid=await entitlementFor(db,accountId,now);const cacheSeconds=24*60*60;
