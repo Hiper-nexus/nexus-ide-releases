@@ -21,7 +21,7 @@ import {
 } from './gate';
 import { isToolAllowedForReadOnlyContext } from './mcp-effect-policy';
 import { judge, USD_PER_INPUT_TOKEN, type JevQuestion } from '../jev/jev-client';
-import { hasJevCredential } from '../jev/jev-secrets';
+import { hasDecisionCredential } from '../decision-models/decision-availability';
 import { consumeJevRateSlot } from '../jev/jev-rate-limit';
 import {
   jevAnswerConfidences,
@@ -198,7 +198,7 @@ export interface ToolPickDeps {
 
 const toolPickTool: McpToolDef = {
   name: TOOL_PICK_NAME,
-  available: () => hasJevCredential(),
+  available: () => hasDecisionCredential('toolPick'),
   description:
     'Semantic tool recommendation: describe what you need to do and get the ' +
     'best-matching nexus_* tools you are allowed to call, ranked by ' +
@@ -233,9 +233,9 @@ export async function runToolPick(
         .join('; ')}`,
     );
   }
-  if (!hasJevCredential()) {
+  if (!hasDecisionCredential('toolPick')) {
     throw new Error(
-      'nexus_tool_pick indisponível: configure a chave TypeSafe em Ajustes → Chaves de API',
+      'nexus_tool_pick indisponível: configure Jev ou Clef em Ajustes → Chaves de API',
     );
   }
   if (!consumeJevRateSlot(ctx.sessionId ?? ctx.token)) {
@@ -258,7 +258,7 @@ export async function runToolPick(
   assertMcpInvocationCurrent(invocation);
   if (!result) {
     throw new Error(
-      'nexus_tool_pick: serviço TypeSafe indisponível agora (timeout/erro). Escolha a ferramenta você mesmo.',
+      'nexus_tool_pick: modelo de decisão selecionado indisponível agora (timeout/erro). Escolha a ferramenta você mesmo.',
     );
   }
   const answer = result.answers.tool;

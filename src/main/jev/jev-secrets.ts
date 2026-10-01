@@ -5,6 +5,7 @@ import {
   setSecret,
 } from '../persistence/secrets-store';
 import { JEV_ENV_VAR } from '../../shared/jev-ipc';
+import { bumpDecisionCredentialRevision } from '../decision-models/decision-revision';
 
 const JEV_SECRET_PREFIX = 'jev-env:';
 
@@ -50,7 +51,9 @@ export function maskedJevApiKey(): string | null {
 }
 
 export function setJevApiKey(key: string): { ok: boolean; error?: string } {
-  return setSecret(jevSecretKey(), key);
+  const result = setSecret(jevSecretKey(), key);
+  if (result.ok) bumpDecisionCredentialRevision();
+  return result;
 }
 
 export function isJevSecretStorageAvailable(): boolean {

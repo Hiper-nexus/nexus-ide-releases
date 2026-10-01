@@ -6,7 +6,7 @@ import type {
 } from '../../shared/browser-automation';
 import type { JevQuestion, JevResult } from '../jev/jev-client';
 import { judge } from '../jev/jev-client';
-import { hasJevCredential } from '../jev/jev-secrets';
+import { hasDecisionCredential } from '../decision-models/decision-availability';
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
 import {
   jevAnswerConfidences,
@@ -404,7 +404,7 @@ export async function resolveBrowserExtract(
 ): Promise<BrowserExtractResolution> {
   const judgeFn = deps.jev ?? judge;
   const jevEnabled = deps.jevEnabled ?? (() => isJevSurfaceEnabled('browserTool'));
-  const jevReady = deps.jevReady ?? hasJevCredential;
+  const jevReady = deps.jevReady ?? (() => hasDecisionCredential('browserTool'));
   const record = deps.recordDecision ?? recordJevDecision;
 
   const out: Record<string, BrowserExtractedField> = {};

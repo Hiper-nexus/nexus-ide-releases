@@ -167,7 +167,7 @@ describe('runToolPick', () => {
     vi.mocked(hasJevCredential).mockReturnValue(false);
     await expect(
       runToolPick({ need: 'x' }, userCtx(), undefined, { judge, tools: TOOLS }),
-    ).rejects.toThrow(/configure a chave TypeSafe/);
+    ).rejects.toThrow(/indisponível/);
     vi.mocked(hasJevCredential).mockReturnValue(true);
     const ctx = userCtx();
     for (let i = 0; i < 30; i += 1) {

@@ -1,5 +1,6 @@
 import { CLEF_SECRET_NAME, CLOUDFLARE_TOKEN_ENV, CLOUDFLARE_ACCOUNT_ENV } from '../../shared/decision-models';
 import { getSecret, hasSecret, isSecureStorageAvailable, setSecret } from '../persistence/secrets-store';
+import { bumpDecisionCredentialRevision } from './decision-revision';
 
 export function getClefApiToken(): string | null {
   return getSecret(CLEF_SECRET_NAME);
@@ -33,7 +34,9 @@ export function maskedClefApiToken(): string | null {
 }
 
 export function setClefApiToken(token: string): { ok: boolean; error?: string } {
-  return setSecret(CLEF_SECRET_NAME, token.trim());
+  const result = setSecret(CLEF_SECRET_NAME, token.trim());
+  if (result.ok) bumpDecisionCredentialRevision();
+  return result;
 }
 
 export function isClefSecretStorageAvailable(): boolean {

@@ -12,7 +12,7 @@ import {
   type JevQuestion,
 } from './jev-client';
 import { isJevSurfaceEnabled } from './jev-autopilot';
-import { hasJevCredential } from './jev-secrets';
+import { hasDecisionCredential } from '../decision-models/decision-availability';
 import {
   jevAnswerConfidences,
   jevAnswerProbabilities,
@@ -100,7 +100,7 @@ export async function advisePrompt(
 ): Promise<PromptAdvice | null> {
   if (message.trim().length < DELEGATE_MIN_PROMPT_CHARS) return null;
   const enabled = deps.enabled ?? (() => isJevSurfaceEnabled('delegation'));
-  const hasKey = deps.hasKey ?? hasJevCredential;
+  const hasKey = deps.hasKey ?? (() => hasDecisionCredential('delegation'));
   if (!enabled() || !hasKey()) return null;
 
   const judgeFn = deps.judge ?? judge;

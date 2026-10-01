@@ -12,7 +12,7 @@ import {
   type JevQuestion,
 } from './jev-client';
 import { isJevSurfaceEnabled } from './jev-autopilot';
-import { hasJevCredential } from './jev-secrets';
+import { hasDecisionCredential } from '../decision-models/decision-availability';
 import {
   jevAnswerConfidences,
   jevAnswerProbabilities,
@@ -81,7 +81,7 @@ export async function triageCommandFailure(
 ): Promise<CommandTriage | null> {
   const judgeFn = deps.judge ?? judge;
   const enabled = deps.enabled ?? (() => isJevSurfaceEnabled('terminalTriage'));
-  const hasKey = deps.hasKey ?? hasJevCredential;
+  const hasKey = deps.hasKey ?? (() => hasDecisionCredential('terminalTriage'));
 
   if (!enabled() || !hasKey()) return null;
   if (input.exitCode === 0 || !input.output.trim()) return null;

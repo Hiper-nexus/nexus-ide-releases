@@ -14,7 +14,7 @@ import type { BrowserFindMatch } from '../../shared/browser-automation';
 import { redactBrowserText, redactPageUrl } from '../../shared/browser-redaction';
 import type { JevQuestion, JevResult } from '../jev/jev-client';
 import { judge, USD_PER_INPUT_TOKEN } from '../jev/jev-client';
-import { hasJevCredential } from '../jev/jev-secrets';
+import { hasDecisionCredential } from '../decision-models/decision-availability';
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
 import {
   jevAnswerConfidences,
@@ -127,7 +127,7 @@ export async function pickBrowserFindElement(
 
   const judgeFn = deps.jev ?? judge;
   const jevEnabled = deps.jevEnabled ?? (() => isJevSurfaceEnabled('browserTool'));
-  const jevReady = deps.jevReady ?? hasJevCredential;
+  const jevReady = deps.jevReady ?? (() => hasDecisionCredential('browserTool'));
   if (!jevEnabled() || !jevReady()) return null;
 
   let result: JevResult | null = null;

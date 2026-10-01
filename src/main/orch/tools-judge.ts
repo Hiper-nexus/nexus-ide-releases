@@ -8,7 +8,7 @@ import type { McpToolDef } from './mcp-protocol';
 import type { AgentGateContext } from './gate';
 import { judge, USD_PER_INPUT_TOKEN } from '../jev/jev-client';
 import { assertMcpInvocationCurrent } from './mcp-protocol';
-import { hasJevCredential } from '../jev/jev-secrets';
+import { hasDecisionCredential } from '../decision-models/decision-availability';
 import {
   consumeJevRateSlot,
   resetJevRateLimitsForTesting,
@@ -83,7 +83,7 @@ function rateLimitKey(ctx: AgentGateContext): string {
 const judgeTool: McpToolDef = {
   name: 'nexus_judge',
   description:
-    "Typed judgment from TypeSafe Jev (System One): send a `state` (text or " +
+    "Typed judgment from the configured Nexus decision model: send a `state` (text or " +
     'JSON) plus a map of questions and get calibrated answers your logic can ' +
     'branch on — no text generation. Types: noul {type:"noul", instructions} ' +
     '→ probability of yes; choice {type:"choice", instructions, ' +
@@ -94,8 +94,8 @@ const judgeTool: McpToolDef = {
     'to route, classify, rank, verify or gate with fixed answer sets; keep ' +
     'thresholds and rules in your own logic; ask small atomic questions. ' +
     "Never include secrets, tokens or customer data in state — it leaves the " +
-    "machine to the user's TypeSafe account.",
-  available: () => hasJevCredential(),
+    "machine to the user's configured decision provider.",
+  available: () => hasDecisionCredential('judgeTool'),
   inputSchema: {
     type: 'object',
     properties: {
@@ -114,9 +114,9 @@ const judgeTool: McpToolDef = {
           .join('; ')}`,
       );
     }
-    if (!hasJevCredential()) {
+    if (!hasDecisionCredential('judgeTool')) {
       throw new Error(
-        'nexus_judge indisponível: configure a chave TypeSafe em ' +
+        'nexus_judge indisponível: configure Jev ou Clef em ' +
           'Ajustes → Chaves de API',
       );
     }
@@ -138,7 +138,7 @@ const judgeTool: McpToolDef = {
     assertMcpInvocationCurrent(invocation);
     if (!result) {
       throw new Error(
-        'nexus_judge: serviço TypeSafe indisponível agora (timeout/erro). ' +
+        'nexus_judge: modelo de decisão selecionado indisponível agora (timeout/erro). ' +
           'Siga sem o julgamento ou tente de novo.',
       );
     }

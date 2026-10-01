@@ -1,5 +1,8 @@
 import type { DecisionImage, DecisionRoute } from '../../shared/decision-models';
 import { redactState, redactQuestions } from '../decision-models/decision-redaction';
+import { judgeDecision, type DecisionJudgeDeps } from '../decision-models/decision-judge';
+import { getDecisionAvailability } from '../decision-models/decision-availability';
+import { validateDecisionResponse } from '../decision-models/decision-response';
 export { redactSecrets, redactState, capText } from '../decision-models/decision-redaction';
 import type { JevTestResult } from '../../shared/jev-ipc';
 import { resolveJevApiKey } from './jev-secrets';
@@ -153,6 +156,10 @@ export interface JudgeDeps {
   fetch?: typeof fetch;
   resolveKey?: () => string | undefined;
   now?: () => number;
+  getSettings?: DecisionJudgeDeps['getSettings'];
+  getConfigurationKey?: DecisionJudgeDeps['getConfigurationKey'];
+  getAvailability?: DecisionJudgeDeps['getAvailability'];
+  getClefConnection?: DecisionJudgeDeps['getClefConnection'];
 }
 
 function errorMessage(body: unknown, status: number): string {
@@ -169,17 +176,7 @@ function errorMessage(body: unknown, status: number): string {
   return `HTTP ${status}`;
 }
 
-function isValidResult(data: unknown): data is JevResult {
-  return (
-    !!data &&
-    typeof data === 'object' &&
-    !!(data as Record<string, unknown>).answers &&
-    typeof (data as Record<string, unknown>).answers === 'object' &&
-    !Array.isArray((data as Record<string, unknown>).answers)
-  );
-}
-
-export async function judge(
+async function judgeJev(
   input: JudgeInput,
   deps?: JudgeDeps,
 ): Promise<JevResult | null> {
@@ -206,6 +203,7 @@ export async function judge(
   let lastReason: JevNoAnswerReason = 'network';
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
+      input.signal?.throwIfAborted();
       // Sinal novo por tentativa: um retry após timeout não pode herdar o
       // AbortSignal já disparado da tentativa anterior.
       const res = await doFetch(`${BASE_URL}/v1/systemone`, {
@@ -230,16 +228,17 @@ export async function judge(
         data = text;
       }
       if (res.ok) {
-        if (!isValidResult(data)) {
+        const validated = validateDecisionResponse(data, input.questions);
+        if (!validated) {
           lastFailure = 'malformed response body';
           lastReason = 'malformed';
           break;
         }
         stats.calls += 1;
-        const inputTokens = data.usage?.input_tokens ?? 0;
+        const inputTokens = validated.usage.input_tokens;
         stats.inputTokens += inputTokens;
         stats.estimatedUsd += inputTokens * USD_PER_INPUT_TOKEN;
-        return data;
+        return validated;
       }
       const retryable = res.status === 429 || res.status === 529 || res.status >= 500;
       lastFailure = `HTTP ${res.status}: ${errorMessage(data, res.status)}`;
@@ -271,6 +270,7 @@ export async function judge(
         : name === 'AbortError' || name === 'TimeoutError'
           ? 'timeout'
           : 'network';
+      if (lastReason === 'aborted') break;
       if (lastReason === 'timeout' && input.retryOnTimeout === false) break;
       if (attempt === 0) {
         await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
@@ -297,6 +297,13 @@ export async function judge(
   }
   warnRateLimited(lastFailure, now);
   return null;
+}
+
+export async function judge(input: JudgeInput, deps?: JudgeDeps): Promise<JevResult | null> {
+  return judgeDecision(input, { ...deps, nativeJudge: nativeInput => judgeJev(nativeInput, deps),
+    getAvailability: deps?.getAvailability ?? (deps?.resolveKey
+      ? () => ({ ...getDecisionAvailability(), jev: Boolean(deps.resolveKey?.()) }) : undefined),
+  });
 }
 
 export interface TestJevDeps {

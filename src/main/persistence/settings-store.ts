@@ -41,6 +41,7 @@ import {
   type VibeProductMigrations,
 } from './vibe-product-floor';
 import { applyPinkCityDefaultTheme } from './pink-city-default-migration';
+import { bumpDecisionCredentialRevision } from '../decision-models/decision-revision';
 
 /**
  * Terminal settings store: ~/.nexus/settings.json (same user-dir convention
@@ -218,7 +219,9 @@ export function replaceOrchSettings(patch: Partial<OrchSettings>): OrchSettings 
   const parsed = orchSettingsSchema.safeParse({ ...orchSettings, ...patch });
   if (!parsed.success) return orchSettings;
   persist(snapshot({ orch: parsed.data }));
+  const changedDecisionModels = JSON.stringify(orchSettings.decisionModels) !== JSON.stringify(parsed.data.decisionModels);
   orchSettings = parsed.data;
+  if (changedDecisionModels) bumpDecisionCredentialRevision();
   return orchSettings;
 }
 
@@ -356,7 +359,9 @@ export function registerSettingsIpc(): void {
         acpHarnessProbeRequest: null,
       };
       persist(snapshot({ orch: next }));
+      const changedDecisionModels = JSON.stringify(orchSettings.decisionModels) !== JSON.stringify(next.decisionModels);
       orchSettings = next;
+      if (changedDecisionModels) bumpDecisionCredentialRevision();
       const probe = parsed.data.acpHarnessProbeRequest;
       if (
         probe &&

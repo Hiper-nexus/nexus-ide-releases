@@ -26,7 +26,7 @@ import {
   type JevResult,
 } from '../jev/jev-client';
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
-import { hasJevCredential } from '../jev/jev-secrets';
+import { hasDecisionCredential } from '../decision-models/decision-availability';
 import {
   jevAnswerProbabilities,
   recordJevDecision,
@@ -313,7 +313,7 @@ export async function reviewMissionHandoff(
 ): Promise<JevReviewVerdict> {
   const judgeFn = deps?.judge ?? judge;
   const enabled = deps?.enabled ?? (() => isJevSurfaceEnabled('handoffReview'));
-  const hasKey = deps?.hasKey ?? hasJevCredential;
+  const hasKey = deps?.hasKey ?? (() => hasDecisionCredential('handoffReview'));
 
   if (params.declaredStatus !== 'success') {
     return { kind: 'skipped', reason: 'status-not-success' };

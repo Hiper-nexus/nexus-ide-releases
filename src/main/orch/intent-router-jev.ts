@@ -15,7 +15,7 @@ import {
   type JevResult,
 } from '../jev/jev-client';
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
-import { hasJevCredential } from '../jev/jev-secrets';
+import { hasDecisionCredential } from '../decision-models/decision-availability';
 import {
   jevAnswerConfidences,
   jevAnswerProbabilities,
@@ -171,7 +171,7 @@ export async function routeWithJev(
 ): Promise<JevIntentRoute | null> {
   const judgeFn = deps.judge ?? judge;
   const enabled = deps.enabled ?? (() => isJevSurfaceEnabled('intake'));
-  const hasKey = deps.hasKey ?? hasJevCredential;
+  const hasKey = deps.hasKey ?? (() => hasDecisionCredential('intake'));
   const designReferences = deps.designReferences ?? defaultDesignReferences;
 
   if (!enabled() || !hasKey()) return null;

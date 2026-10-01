@@ -24,7 +24,7 @@ import {
   type JevQuestion,
   type JevResult,
 } from '../jev/jev-client';
-import { hasJevCredential } from '../jev/jev-secrets';
+import { hasDecisionCredential } from '../decision-models/decision-availability';
 import {
   jevAnswerConfidences,
   jevAnswerProbabilities,
@@ -482,7 +482,7 @@ async function runComputerDo(
 
     if (!result) {
       return finish('error', {
-        error: 'computer_do: serviço TypeSafe (Jev) indisponível agora',
+        error: 'computer_do: modelo de decisão selecionado indisponível agora',
       });
     }
 
@@ -692,7 +692,7 @@ async function runComputerDo(
 const computerDoTool: McpToolDef = {
   name: 'nexus_computer_do',
   requiresConfirm: true,
-  available: () => process.platform === 'darwin' && hasJevCredential(),
+  available: () => process.platform === 'darwin' && hasDecisionCredential('computerTool'),
   description:
     'Autopilot for ONE goal in a macOS application: reads the app\'s ' +
     'accessibility tree (fallback: local OCR of the window — pixels never ' +
@@ -730,9 +730,9 @@ const computerDoTool: McpToolDef = {
           'dirigir a área de trabalho',
       );
     }
-    if (!hasJevCredential()) {
+    if (!hasDecisionCredential('computerTool')) {
       throw new Error(
-        'nexus_computer_do: configure a chave TypeSafe em Ajustes → Chaves de API',
+        'nexus_computer_do: configure Jev ou Clef em Ajustes → Chaves de API',
       );
     }
     if (process.platform !== 'darwin') {
@@ -764,9 +764,9 @@ export function buildComputerAutopilotTools(
               'dirigir a área de trabalho',
           );
         }
-        if (!hasJevCredential()) {
+        if (!hasDecisionCredential('computerTool')) {
           throw new Error(
-            'nexus_computer_do: configure a chave TypeSafe em Ajustes → Chaves de API',
+            'nexus_computer_do: configure Jev ou Clef em Ajustes → Chaves de API',
           );
         }
         if (process.platform !== 'darwin') {

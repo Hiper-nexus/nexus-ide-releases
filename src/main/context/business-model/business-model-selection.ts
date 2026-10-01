@@ -6,7 +6,7 @@ import type {
 import type { BusinessHurdle } from './business-model-hurdles';
 import { capText, judge, USD_PER_INPUT_TOKEN, type JevQuestion } from '../../jev/jev-client';
 import { isJevSurfaceEnabled } from '../../jev/jev-autopilot';
-import { hasJevCredential } from '../../jev/jev-secrets';
+import { hasDecisionCredential } from '../../decision-models/decision-availability';
 import {
   jevAnswerConfidences,
   jevAnswerProbabilities,
@@ -285,7 +285,7 @@ async function jevSelection(
   deps: SelectBusinessContextDeps,
 ): Promise<BusinessModelSelection | null> {
   const surfaceEnabled = deps.surfaceEnabled ?? isJevSurfaceEnabled;
-  const hasCredential = deps.hasCredential ?? hasJevCredential;
+  const hasCredential = deps.hasCredential ?? (() => hasDecisionCredential('businessModel'));
   if (!surfaceEnabled('businessModel') || !hasCredential()) return null;
   const candidates = jevCandidates(input, taskTokens);
   if (Object.keys(candidates.questions).length === 0) return null;

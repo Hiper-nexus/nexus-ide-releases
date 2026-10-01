@@ -15,7 +15,7 @@ import {
   type JevQuestion,
 } from '../jev/jev-client';
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
-import { hasJevCredential } from '../jev/jev-secrets';
+import { hasDecisionCredential } from '../decision-models/decision-availability';
 import {
   jevAnswerConfidences,
   jevAnswerProbabilities,
@@ -217,7 +217,7 @@ export async function suggestSkillForTask(
   },
 ): Promise<SkillSuggestionPick | null> {
   const enabled = opts.deps?.enabled ?? (() => isJevSurfaceEnabled('taskRouting'));
-  const hasKey = opts.deps?.hasKey ?? hasJevCredential;
+  const hasKey = opts.deps?.hasKey ?? (() => hasDecisionCredential('taskRouting'));
   const judgeFn = opts.deps?.judge ?? judge;
   const record = opts.deps?.record ?? recordJevDecision;
   if (!task.trim() || !enabled() || !hasKey()) return null;

@@ -31,7 +31,7 @@ import {
   type JevQuestion,
 } from '../jev/jev-client';
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
-import { hasJevCredential } from '../jev/jev-secrets';
+import { hasDecisionCredential } from '../decision-models/decision-availability';
 import {
   jevAnswerConfidences,
   jevAnswerProbabilities,
@@ -257,7 +257,7 @@ export async function judgeIdleHelperReuse(
   deps: IdleHelperReuseDeps = {},
 ): Promise<HelperReuseChoice | null> {
   const enabled = deps.surfaceEnabled ?? (() => isJevSurfaceEnabled('helperReuse'));
-  const hasKey = deps.hasKey ?? hasJevCredential;
+  const hasKey = deps.hasKey ?? (() => hasDecisionCredential('helperReuse'));
   if (!enabled() || !hasKey() || input.candidates.length === 0) return null;
   const helpers = input.candidates.map((candidate, index) => ({
     id: `h${index + 1}`,

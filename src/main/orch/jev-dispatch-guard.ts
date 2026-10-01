@@ -31,7 +31,7 @@ import {
   type JevQuestion,
 } from '../jev/jev-client';
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
-import { hasJevCredential } from '../jev/jev-secrets';
+import { hasDecisionCredential } from '../decision-models/decision-availability';
 import {
   jevAnswerProbabilities,
   recordJevDecision,
@@ -360,7 +360,7 @@ export async function guardToolCall(
   deps: GuardToolCallDeps = {},
 ): Promise<JevGuardVerdict> {
   const enabled = deps.enabled ?? (() => isJevSurfaceEnabled('dispatchGuard'));
-  const hasKey = deps.hasKey ?? hasJevCredential;
+  const hasKey = deps.hasKey ?? (() => hasDecisionCredential('dispatchGuard'));
   const now = deps.now ?? Date.now;
   const canonical = canonicalToolName(input.toolName);
 

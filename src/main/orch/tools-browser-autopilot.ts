@@ -16,7 +16,7 @@ import {
   type JevQuestion,
   type JevResult,
 } from '../jev/jev-client';
-import { hasJevCredential } from '../jev/jev-secrets';
+import { hasDecisionCredential } from '../decision-models/decision-availability';
 import {
   jevAnswerConfidences,
   jevAnswerProbabilities,
@@ -366,7 +366,7 @@ async function runBrowserDo(
 
     if (!result) {
       return finish('error', {
-        error: 'browser_do: serviço TypeSafe (Jev) indisponível agora',
+        error: 'browser_do: modelo de decisão selecionado indisponível agora',
       });
     }
 
@@ -520,7 +520,7 @@ async function runBrowserDo(
 const browserDoTool: McpToolDef = {
   name: 'nexus_browser_do',
   requiresConfirm: true,
-  available: () => hasJevCredential(),
+  available: () => hasDecisionCredential('browserTool'),
   description:
     'Autopilot for ONE browser goal inside the Nexus browser pane: TypeSafe ' +
     'Jev picks the operation and the target element from the page\'s element ' +
@@ -556,9 +556,9 @@ const browserDoTool: McpToolDef = {
     }
     const paneId = requireStr(parsed.data, 'paneId');
     authorizePaneRef(ctx, paneId, 'write');
-    if (!hasJevCredential()) {
+    if (!hasDecisionCredential('browserTool')) {
       throw new Error(
-        'nexus_browser_do: configure a chave TypeSafe em Ajustes → Chaves de API',
+        'nexus_browser_do: configure Jev ou Clef em Ajustes → Chaves de API',
       );
     }
     return runBrowserDo(parsed.data, ctx, invocation, {});
@@ -581,9 +581,9 @@ export function buildBrowserAutopilotTools(deps: BrowserDoDeps = {}): McpToolDef
         }
         const paneId = requireStr(parsed.data, 'paneId');
         authorizePaneRef(ctx, paneId, 'write');
-        if (!hasJevCredential()) {
+        if (!hasDecisionCredential('browserTool')) {
           throw new Error(
-            'nexus_browser_do: configure a chave TypeSafe em Ajustes → Chaves de API',
+            'nexus_browser_do: configure Jev ou Clef em Ajustes → Chaves de API',
           );
         }
         return runBrowserDo(parsed.data, ctx, invocation, deps);

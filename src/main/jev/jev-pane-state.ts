@@ -15,7 +15,7 @@ import {
   type JevQuestion,
 } from './jev-client';
 import { isJevSurfaceEnabled } from './jev-autopilot';
-import { hasJevCredential } from './jev-secrets';
+import { hasDecisionCredential } from '../decision-models/decision-availability';
 import {
   jevAnswerConfidences,
   jevAnswerProbabilities,
@@ -127,7 +127,7 @@ export async function classifyPaneTailForDigest(
   }
   try {
     const enabled = deps.enabled ?? (() => isJevSurfaceEnabled('paneState'));
-    const hasKey = deps.hasKey ?? hasJevCredential;
+    const hasKey = deps.hasKey ?? (() => hasDecisionCredential('paneState'));
     if (!enabled() || !hasKey()) return null;
     const judgeFn = deps.judge ?? judge;
     const result = await judgeFn({
@@ -310,7 +310,7 @@ export function startJevPaneStateClassifier(
 
   async function classify(sessionId: string, paneId?: string): Promise<void> {
     const enabled = deps.enabled ?? (() => isJevSurfaceEnabled('paneState'));
-    const hasKey = deps.hasKey ?? hasJevCredential;
+    const hasKey = deps.hasKey ?? (() => hasDecisionCredential('paneState'));
     if (!enabled() || !hasKey()) return;
     const screenText = deps.screenText ?? activeScreenText;
     const text = screenText(sessionId);

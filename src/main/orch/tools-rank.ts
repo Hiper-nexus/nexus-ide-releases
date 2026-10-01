@@ -10,7 +10,7 @@ import { z } from 'zod';
 import type { McpToolDef } from './mcp-protocol';
 import type { AgentGateContext } from './gate';
 import { judge, USD_PER_INPUT_TOKEN, type JevResult } from '../jev/jev-client';
-import { hasJevCredential } from '../jev/jev-secrets';
+import { hasDecisionCredential } from '../decision-models/decision-availability';
 import { consumeJevRateSlots } from '../jev/jev-rate-limit';
 import { assertMcpInvocationCurrent } from './mcp-protocol';
 import {
@@ -72,7 +72,7 @@ interface RankedCandidate {
 const rankTool: McpToolDef = {
   name: 'nexus_rank',
   description:
-    'Rank 2-8 candidates (deliveries, patches, options) with TypeSafe Jev: ' +
+    'Rank 2-8 candidates (deliveries, patches, options) with the configured Nexus decision model: ' +
     'send `candidates` (id + text) and `criteria` (id, instructions, ordered ' +
     'levels) — each candidate gets one score question per criterion and a ' +
     'weighted composite is computed in code. Optional `weights` maps ' +
@@ -80,8 +80,8 @@ const rankTool: McpToolDef = {
     'plus `lowConfidence` ids you should read yourself. Keep the final ' +
     'choice in your own logic; treat lowConfidence ids as needing your own ' +
     'reading. Never include secrets in candidate text — it leaves the ' +
-    "machine to the user's TypeSafe account.",
-  available: () => hasJevCredential(),
+    "machine to the user's configured decision provider.",
+  available: () => hasDecisionCredential('rankTool'),
   inputSchema: {
     type: 'object',
     properties: {
@@ -109,9 +109,9 @@ const rankTool: McpToolDef = {
         );
       }
     }
-    if (!hasJevCredential()) {
+    if (!hasDecisionCredential('rankTool')) {
       throw new Error(
-        'nexus_rank indisponível: configure a chave TypeSafe em ' +
+        'nexus_rank indisponível: configure Jev ou Clef em ' +
           'Ajustes → Chaves de API',
       );
     }
@@ -149,7 +149,7 @@ const rankTool: McpToolDef = {
     assertMcpInvocationCurrent(invocation);
     if (judged.some(({ result }) => result === null)) {
       throw new Error(
-        'nexus_rank: serviço TypeSafe indisponível agora; siga sem o ' +
+        'nexus_rank: modelo de decisão selecionado indisponível agora; siga sem o ' +
           'ranking',
       );
     }

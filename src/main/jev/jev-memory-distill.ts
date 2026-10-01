@@ -13,7 +13,7 @@ import {
   type JevQuestion,
 } from './jev-client';
 import { isJevSurfaceEnabled } from './jev-autopilot';
-import { hasJevCredential } from './jev-secrets';
+import { hasDecisionCredential } from '../decision-models/decision-availability';
 import {
   jevAnswerConfidences,
   jevAnswerProbabilities,
@@ -99,7 +99,7 @@ export async function confirmOperatorPreference(
 ): Promise<boolean> {
   const judgeFn = deps.judge ?? judge;
   const enabled = deps.enabled ?? (() => isJevSurfaceEnabled('memoryDistill'));
-  const hasKeyFn = deps.hasKey ?? hasJevCredential;
+  const hasKeyFn = deps.hasKey ?? (() => hasDecisionCredential('memoryDistill'));
 
   if (!enabled() || !hasKeyFn()) return false;
 
@@ -155,7 +155,7 @@ export async function distillHandoffSummary(
 ): Promise<string | null> {
   const judgeFn = deps.judge ?? judge;
   const enabled = deps.enabled ?? (() => isJevSurfaceEnabled('memoryDistill'));
-  const hasKeyFn = deps.hasKey ?? hasJevCredential;
+  const hasKeyFn = deps.hasKey ?? (() => hasDecisionCredential('memoryDistill'));
 
   const summary = normalizeDistilledSummary(input.summary);
   if (!summary || AGENT_DIRECTIVE_RE.test(summary) || !enabled() || !hasKeyFn()) return null;

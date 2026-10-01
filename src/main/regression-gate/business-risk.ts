@@ -8,7 +8,7 @@ import {
   type JevQuestion,
 } from '../jev/jev-client';
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
-import { hasJevCredential } from '../jev/jev-secrets';
+import { hasDecisionCredential } from '../decision-models/decision-availability';
 import {
   jevAnswerConfidences,
   jevAnswerProbabilities,
@@ -193,7 +193,7 @@ export async function evaluateGateBusinessRisk(
     const hurdleCandidates = rankedHurdles(tokens, allHurdles).slice(0, MAX_HURDLE_CANDIDATES);
 
     const surfaceEnabled = deps.surfaceEnabled ?? isJevSurfaceEnabled;
-    const hasCredential = deps.hasCredential ?? hasJevCredential;
+    const hasCredential = deps.hasCredential ?? (() => hasDecisionCredential('businessModel'));
     if (!surfaceEnabled('businessModel') || !hasCredential()) {
       return lexicalRisk(touched, hurdleCandidates);
     }

@@ -18,7 +18,7 @@ import {
   type JevResult,
 } from '../jev/jev-client';
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
-import { hasJevCredential } from '../jev/jev-secrets';
+import { hasDecisionCredential } from '../decision-models/decision-availability';
 import {
   jevAnswerConfidences,
   jevAnswerProbabilities,
@@ -216,7 +216,7 @@ export async function classifyTaskForRouting(
 ): Promise<JevTaskRoutingResult> {
   if (!task.trim()) return { kind: 'skipped' };
   const enabled = deps.enabled ?? (() => isJevSurfaceEnabled('taskRouting'));
-  const hasKey = deps.hasKey ?? hasJevCredential;
+  const hasKey = deps.hasKey ?? (() => hasDecisionCredential('taskRouting'));
   if (!enabled()) return { kind: 'unavailable', reason: 'disabled' };
   if (!hasKey()) return { kind: 'unavailable', reason: 'no-key' };
 
@@ -295,7 +295,7 @@ export async function classifyTaskWithSkillForRouting(
   const noBatch = { requestCount: 0, questionCount: 0 };
   if (!task.trim()) return { kind: 'skipped' };
   const enabled = opts.deps?.enabled ?? (() => isJevSurfaceEnabled('taskRouting'));
-  const hasKey = opts.deps?.hasKey ?? hasJevCredential;
+  const hasKey = opts.deps?.hasKey ?? (() => hasDecisionCredential('taskRouting'));
   if (!enabled()) {
     return { kind: 'unavailable', reason: 'disabled', skillSuggestion: null, batch: noBatch };
   }

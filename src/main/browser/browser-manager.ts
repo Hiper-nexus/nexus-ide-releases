@@ -42,7 +42,7 @@ import type {
 import { redactBrowserText, redactPageUrl } from '../../shared/browser-redaction';
 import type { JevQuestion, JevResult } from '../jev/jev-client';
 import { judge } from '../jev/jev-client';
-import { hasJevCredential } from '../jev/jev-secrets';
+import { hasDecisionCredential } from '../decision-models/decision-availability';
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
 import { JevResponseCache } from '../jev/jev-response-cache';
 import { prepareBrowserFocus, resolveBrowserFocus, type BrowserContextSelection } from './browser-focused-context';
@@ -1750,7 +1750,7 @@ async function judgeBrowserPage(
   const deps = options?.deps;
   const jevEnabled =
     deps?.jevEnabled ?? (() => isJevSurfaceEnabled('browserTool'));
-  const jevReady = deps?.jevReady ?? hasJevCredential;
+  const jevReady = deps?.jevReady ?? (() => hasDecisionCredential('browserTool'));
   if (!jevEnabled()) return { judgment: null, judgmentSkipped: 'surface-disabled' };
   if (!jevReady()) return { judgment: null, judgmentSkipped: 'no-credential' };
   try {
@@ -2089,7 +2089,7 @@ async function resolveBrowserElementByText(
   }
   const candidates = matches.slice(0, 5);
   const jevEnabled = deps?.jevEnabled ?? (() => isJevSurfaceEnabled('browserTool'));
-  const jevReady = deps?.jevReady ?? hasJevCredential;
+  const jevReady = deps?.jevReady ?? (() => hasDecisionCredential('browserTool'));
   if (candidates.length >= 2 && jevEnabled() && jevReady()) {
     try {
       const judgeFn = deps?.jev ?? judge;

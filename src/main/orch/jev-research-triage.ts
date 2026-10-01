@@ -18,7 +18,7 @@ import {
   type JevQuestion,
 } from '../jev/jev-client';
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
-import { hasJevCredential } from '../jev/jev-secrets';
+import { hasDecisionCredential } from '../decision-models/decision-availability';
 import {
   jevAnswerConfidences,
   jevAnswerProbabilities,
@@ -104,7 +104,7 @@ export async function triageResearchHits(
   const judgeFn = deps.judge ?? judge;
   const enabled = deps.enabled ?? (() => isJevSurfaceEnabled('researchTriage'));
   const record = deps.recordDecision ?? recordJevDecision;
-  if (!enabled() || !hasJevCredential()) return null;
+  if (!enabled() || !hasDecisionCredential('researchTriage')) return null;
   const usable = hits.filter((hit) => hit.id && hit.id.length > 0).slice(0, MAX_HITS);
   if (usable.length < 2) return null;
 
