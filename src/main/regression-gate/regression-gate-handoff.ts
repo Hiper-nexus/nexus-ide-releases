@@ -38,6 +38,7 @@ export interface RegressionGateArtifact {
     readonly testsNotRun: readonly string[];
     readonly failures: RegressionGateResult['failures'];
     readonly inheritedFailures: RegressionGateResult['inheritedFailures'];
+    readonly preexistingFailures: RegressionGateResult['preexistingFailures'];
     readonly untestedFiles: readonly string[];
     readonly invariantsTouched: RegressionGateResult['invariantsTouched'];
     readonly warnings: readonly string[];
@@ -74,6 +75,7 @@ function artifactOf(result: RegressionGateResult): RegressionGateArtifact {
       testsNotRun: result.testsNotRun.slice(0, 64),
       failures: result.failures.slice(0, 16),
       inheritedFailures: result.inheritedFailures.slice(0, 16),
+      preexistingFailures: result.preexistingFailures.slice(0, 16),
       untestedFiles: result.untestedFiles.slice(0, 32),
       invariantsTouched: result.invariantsTouched.slice(0, 16),
       warnings: result.warnings.slice(0, 8),

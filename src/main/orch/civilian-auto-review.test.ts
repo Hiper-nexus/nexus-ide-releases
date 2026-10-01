@@ -167,6 +167,7 @@ function regressionResult(
     testsNotRun: [],
     failures: [],
     inheritedFailures: [],
+    preexistingFailures: [],
     untestedFiles: [],
     invariantsTouched: [],
     runner: 'vitest',

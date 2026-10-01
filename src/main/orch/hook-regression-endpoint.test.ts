@@ -41,6 +41,7 @@ function result(partial: Partial<RegressionGateResult>): RegressionGateResult {
     testsNotRun: [],
     failures: [],
     inheritedFailures: [],
+    preexistingFailures: [],
     untestedFiles: [],
     invariantsTouched: [],
     runner: 'vitest',

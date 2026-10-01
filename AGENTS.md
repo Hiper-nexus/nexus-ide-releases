@@ -312,6 +312,14 @@ saber isto antes de mexer:
   verificado"; acusado que não dá para extrair continua barrando. Os caminhos
   das worktrees isoladas no macOS têm espaço (`Application Support`): a
   extração do caminho precisa aceitar espaço.
+- F-246: falha pré-existente não é do diff. Com `base.sha` conhecida, os
+  arquivos que falharam e existem na base rodam de novo num worktree
+  temporário dela (`git worktree add --detach` em tmp privado, removido em
+  `finally`; `node_modules` = link para o do `trustedDependencyRoot`, mesmo
+  destino que `externalDependencyReads` valida). O que reproduz na base vai
+  para `preexistingFailures` com aviso "não conta contra você" e sai do
+  veredito; base inatingível/sem prazo não reclassifica, só avisa.
+  Cache key não mudou — a comparação depende só de (diffHash, base).
 
 ## Orquestração automática e modelo por tarefa (F-200/F-214)
 

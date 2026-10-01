@@ -83,6 +83,8 @@ const GRAPH_LIMITS: OrientationLimits = Object.freeze({
 const CACHE_LIMIT = 32;
 /** Abaixo disso não vale subir o runner: vira "não rodou". */
 const MIN_RUN_BUDGET_MS = 3_000;
+/** F-246: comparação com a base só sobe runner com folga real de prazo. */
+const BASE_COMPARE_MIN_BUDGET_MS = 20_000;
 
 export const DEFAULT_REGRESSION_TEST_TIMEOUT_MS = 120_000;
 /**
@@ -284,6 +286,8 @@ export interface RegressionGateResult {
   readonly failures: readonly RegressionTestFailure[];
   /** Falhas só em testes impactados por WIP anterior ao spawn (não do agente): aviso. */
   readonly inheritedFailures: readonly RegressionTestFailure[];
+  /** Falhas que reproduzem na base do diff (F-246): pré-existentes, aviso. */
+  readonly preexistingFailures: readonly RegressionTestFailure[];
   /** Arquivos-fonte tocados sem nenhum teste mapeado — aviso, não bloqueia. */
   readonly untestedFiles: readonly string[];
   readonly invariantsTouched: readonly RegressionInvariantTouched[];
@@ -1528,6 +1532,110 @@ function planRunnerGroups(
   return { groups: [...byDir.values()], orphans };
 }
 
+/**
+ * F-246: "isso já falhava na base?" — os arquivos que falharam e EXISTEM na
+ * base do diff rodam de novo num worktree temporário dela, com o mesmo
+ * runner/ambiente/sandbox do portão. O `node_modules` do worktree é um link
+ * para o do `trustedDependencyRoot` — exatamente o destino que
+ * `externalDependencyReads` já aceita, então a leitura passa no sandbox.
+ * Devolve os arquivos que reproduzem na base (falha pré-existente); qualquer
+ * indisponibilidade (worktree, runner, prazo) sai vazio + warning, nunca
+ * reclassifica sem prova.
+ */
+async function compareFailuresAgainstBase(opts: {
+  readonly root: string;
+  readonly scope: ProjectExecutionScope;
+  readonly baseSha: string;
+  readonly failures: readonly RegressionTestFailure[];
+  readonly exec: RegressionExec;
+  readonly control: Pick<RunRegressionGateInput, 'signal' | 'authority' | 'trustedDependencyRoot'>;
+  readonly budgetMs: number;
+  readonly now: () => number;
+  readonly git: GitRunner;
+  readonly warnings: string[];
+}): Promise<ReadonlySet<string>> {
+  const { root, scope, baseSha, failures, exec, control, budgetMs, now, git, warnings } = opts;
+  const sha7 = baseSha.slice(0, 7);
+  // Falhas de runner sem arquivo (ex.: "(vitest)") não casam na base.
+  const candidates = [...new Set(failures.map((failure) => failure.file))].filter(
+    (file) => !file.startsWith('('),
+  );
+  const inBase = candidates.filter(
+    (file) =>
+      git.run(root, ['cat-file', '-e', `${baseSha}:${file}`], { allowFailure: true }).status === 0,
+  );
+  // Arquivo novo é do worker: não existe na base e segue contando; sem nada a
+  // comparar, nem sobe worktree.
+  if (inBase.length === 0) return new Set();
+  if (budgetMs < BASE_COMPARE_MIN_BUDGET_MS) {
+    warnings.push(
+      `comparação com a base não rodou (prazo restante insuficiente: ${Math.max(0, Math.round(budgetMs / 1000))}s)`,
+    );
+    return new Set();
+  }
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-gate-base-'));
+  fs.chmodSync(tmp, 0o700);
+  try {
+    const added = git.run(root, ['worktree', 'add', '--detach', tmp, baseSha], { allowFailure: true });
+    if (added.status !== 0) {
+      warnings.push(
+        `comparação com a base não rodou (${neutralizeRunnerText(added.stderr, 120) || 'git worktree add falhou'})`,
+      );
+      return new Set();
+    }
+    const trusted = control.trustedDependencyRoot
+      ? realOrNull(control.trustedDependencyRoot)
+      : null;
+    const trustedModules = trusted ? realOrNull(path.join(trusted, 'node_modules')) : null;
+    if (trustedModules && isInside(trusted!, trustedModules)) {
+      try {
+        fs.symlinkSync(trustedModules, path.join(tmp, 'node_modules'), 'junction');
+      } catch (error) {
+        warnings.push(
+          `comparação com a base: node_modules não linkado (${error instanceof Error ? error.message : String(error)})`,
+        );
+      }
+    }
+    const baseScope: ProjectExecutionScope = Object.freeze({
+      ...scope,
+      rootRealPath: tmp,
+    });
+    const { groups } = planRunnerGroups(tmp, inBase);
+    if (groups.length === 0) {
+      warnings.push(`comparação com a base não rodou (sem runner na base ${sha7})`);
+      return new Set();
+    }
+    const reproduced = new Set<string>();
+    const deadline = now() + budgetMs;
+    for (const group of groups) {
+      const left = deadline - now();
+      if (left < MIN_RUN_BUDGET_MS) break;
+      const outcome = await runTests(baseScope, group, left, exec, control);
+      for (const failure of outcome.failures) reproduced.add(failure.file);
+      for (const load of outcome.loadFailures ?? []) reproduced.add(load.file);
+    }
+    if (reproduced.size === 0) {
+      // Rodou mas nenhum arquivo falhou na base: não reclassifica (prova
+      // fraca também vale a favor do diff), só registra se houve aviso.
+      return new Set();
+    }
+    return reproduced;
+  } catch (error) {
+    warnings.push(
+      `comparação com a base não rodou (${error instanceof Error ? error.message : String(error)})`,
+    );
+    return new Set();
+  } finally {
+    try {
+      git.run(root, ['worktree', 'remove', '--force', tmp], { allowFailure: true });
+      git.run(root, ['worktree', 'prune'], { allowFailure: true });
+    } catch {
+      // A remoção manual abaixo cobre worktree órfã; o nunca bloqueia o portão.
+    }
+    removeTreeSync(tmp, { recursive: true, force: true });
+  }
+}
+
 async function safeExtension<T>(label: string, warnings: string[], call: () => Promise<T> | T): Promise<T | null> {
   try {
     return await call();
@@ -1627,6 +1735,7 @@ async function evaluate(
       testsNotRun: [],
       failures: [],
       inheritedFailures: [],
+      preexistingFailures: [],
       untestedFiles: [],
       invariantsTouched: touchedSummary(new Set()),
       runner: null,
@@ -1661,14 +1770,14 @@ async function evaluate(
     // de um diff que o portão nem viu inteiro — fica NÃO verificado.
     return finish({
       status: state.changed.truncated ? 'unavailable' : 'no-tests',
-      testsRun: [], testsNotRun: [], failures: [], inheritedFailures: [], runner: null,
+      testsRun: [], testsNotRun: [], failures: [], inheritedFailures: [], preexistingFailures: [], runner: null,
       businessRisk: await businessRiskPromise, ...common,
     });
   }
   const { groups, orphans } = planRunnerGroups(root, tests);
   if (groups.length === 0) {
     warnings.push('nenhum runner de teste detectado (vitest/jest/pytest): testes impactados NÃO verificados');
-    return finish({ status: 'unavailable', testsRun: [], testsNotRun: [...tests, ...overflow], failures: [], inheritedFailures: [], runner: null, businessRisk: await businessRiskPromise, ...common });
+    return finish({ status: 'unavailable', testsRun: [], testsNotRun: [...tests, ...overflow], failures: [], inheritedFailures: [], preexistingFailures: [], runner: null, businessRisk: await businessRiskPromise, ...common });
   }
   if (orphans.length > 0) {
     warnings.push(`sem runner para ${orphans.length} teste(s): ${orphans.slice(0, 5).join(', ')}`);
@@ -1768,29 +1877,60 @@ async function evaluate(
       `falha em teste puxado só por WIP anterior ao seu spawn (não conta contra você): ${[...new Set(inheritedFailures.map((failure) => failure.file))].slice(0, 5).join(', ')}`,
     );
   }
+  // F-246: falha que já quebrava na base não é do diff — antes de devolver,
+  // roda os arquivos falhados num worktree da base e reclassifica o que
+  // reproduzir. Metade do prazo restante, nunca a worktree do worker.
+  let preexistingFailures: RegressionTestFailure[] = [];
+  let countedFailures = ownFailures;
+  if (ownFailures.length > 0) {
+    if (!state.base.sha) {
+      warnings.push('comparação com a base não rodou (sem base conhecida)');
+    } else {
+      const reproduced = await compareFailuresAgainstBase({
+        root,
+        scope: input.scope,
+        baseSha: state.base.sha,
+        failures: ownFailures,
+        exec,
+        control,
+        budgetMs: Math.floor(remaining() / 2),
+        now,
+        git,
+        warnings,
+      });
+      if (reproduced.size > 0) {
+        preexistingFailures = ownFailures.filter((failure) => reproduced.has(failure.file));
+        countedFailures = ownFailures.filter((failure) => !reproduced.has(failure.file));
+        warnings.push(
+          `falha pré-existente na base ${state.base.sha.slice(0, 7)} (ambiente/suite já quebrava antes do seu diff; não conta contra você): ${[...new Set(preexistingFailures.map((failure) => failure.file))].slice(0, 5).join(', ')}`,
+        );
+      }
+    }
+  }
   const ownRun = testsRun.filter(owned);
   // Aprovação só com TODOS os impactados do agente executados: um que passou
   // não cobre o que ficou de fora (config, prazo, sandbox, sem runner).
   const ownNotRun = testsNotRun.filter(owned);
-  if (ownNotRun.length > 0 && ownFailures.length === 0) {
+  if (ownNotRun.length > 0 && countedFailures.length === 0) {
     warnings.push(`execução parcial: ${ownRun.length} rodaram, ${ownNotRun.length} não — resultado NÃO verificado`);
   }
   return finish({
     // Nenhum teste executado de verdade nunca é aprovação.
     // Diff além do limite: a seleção não cobre tudo, então só falha ou NÃO verificado.
     status:
-      ownFailures.length > 0
+      countedFailures.length > 0
         ? 'failed'
         : ownRun.length > 0 && ownNotRun.length === 0 && !state.changed.truncated
           ? 'passed'
           : 'unavailable',
     testsRun,
     testsNotRun,
-    failures: ownFailures,
+    failures: countedFailures,
     inheritedFailures,
+    preexistingFailures,
     runner: groups[0]!.runner.kind,
     untestedFiles: impacted.untestedFiles,
-    invariantsTouched: touchedSummary(new Set(ownFailures.map((failure) => failure.file))),
+    invariantsTouched: touchedSummary(new Set(countedFailures.map((failure) => failure.file))),
     businessRisk: await businessRiskPromise,
   });
 }
@@ -1829,6 +1969,7 @@ export async function runRegressionGate(
       testsNotRun: [],
       failures: [],
       inheritedFailures: [],
+      preexistingFailures: [],
       untestedFiles: [],
       invariantsTouched: [],
       businessRisk: null,
@@ -1913,6 +2054,14 @@ export function formatRegressionGateReport(result: RegressionGateResult): string
     lines.push(
       '[Nexus · portão de regressão] NÃO VERIFICADO: os testes impactados não rodaram — isto não conta como aprovado.',
     );
+  }
+  if (result.preexistingFailures.length > 0) {
+    lines.push(
+      `Falhas pré-existentes na base ${result.baseSha?.slice(0, 7) ?? '?'} (reproduzem sem o seu diff — não conta contra você — não gaste o turno consertando):`,
+    );
+    for (const failure of result.preexistingFailures.slice(0, 8)) {
+      lines.push(`- ${failure.file}: «${failure.message}»`);
+    }
   }
   if (result.testsNotRun.length > 0) {
     lines.push(

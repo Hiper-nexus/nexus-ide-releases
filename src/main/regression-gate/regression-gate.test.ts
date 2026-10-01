@@ -1169,3 +1169,106 @@ describe('evaluateHandoffRegressionGate', () => {
     expect(exec).not.toHaveBeenCalled();
   });
 });
+
+describe('comparação com a base do diff (F-246)', () => {
+  const baseSha = (root: string) =>
+    new ProcessGitRunner().run(root, ['rev-parse', 'HEAD']).stdout.trim();
+  const worktreeCount = (root: string) =>
+    new ProcessGitRunner()
+      .run(root, ['worktree', 'list', '--porcelain'])
+      .stdout.split('\n')
+      .filter((line) => line.startsWith('worktree ')).length;
+
+  it('falha que reproduz na base sai para preexistingFailures e o veredito fica verde', async () => {
+    const { root, scope } = project();
+    const sha = baseSha(root);
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec } = fakeVitest(['src/b.test.ts']);
+
+    const result = await runRegressionGate(
+      { scope, baseSha: sha, trustedDependencyRoot: root },
+      { exec },
+    );
+
+    expect(result.status).toBe('passed');
+    expect(result.failures).toEqual([]);
+    expect(result.preexistingFailures.map((failure) => failure.file)).toEqual(['src/b.test.ts']);
+    expect(result.warnings.join(' ')).toContain(`falha pré-existente na base ${sha.slice(0, 7)}`);
+    const report = formatRegressionGateReport(result);
+    expect(report).toContain('não conta contra você');
+    expect(report).toContain('src/b.test.ts');
+    expect(worktreeCount(root)).toBe(1);
+  });
+
+  it('falha que NÃO reproduz na base continua regressão do diff', async () => {
+    const { root, scope } = project();
+    const sha = baseSha(root);
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const failing = fakeVitest(['src/b.test.ts']);
+    const passing = fakeVitest();
+    const exec = vi.fn<RegressionExec>((file, args, options) =>
+      (options.cwd === root ? failing.exec : passing.exec)(file, args, options),
+    );
+
+    const result = await runRegressionGate(
+      { scope, baseSha: sha, trustedDependencyRoot: root },
+      { exec },
+    );
+
+    expect(result.status).toBe('failed');
+    expect(result.failures.map((failure) => failure.file)).toEqual(['src/b.test.ts']);
+    expect(result.preexistingFailures).toEqual([]);
+    expect(worktreeCount(root)).toBe(1);
+  });
+
+  it('arquivo de teste novo (ausente da base) segue contando como regressão', async () => {
+    const { root, scope } = project();
+    const sha = baseSha(root);
+    write(root, 'src/d.ts', 'export const d = 4;\n');
+    write(root, 'src/d.test.ts', "import { d } from './d';\n");
+    const { exec } = fakeVitest(['src/d.test.ts']);
+
+    const result = await runRegressionGate(
+      { scope, baseSha: sha, trustedDependencyRoot: root },
+      { exec },
+    );
+
+    expect(result.status).toBe('failed');
+    expect(result.failures.map((failure) => failure.file)).toContain('src/d.test.ts');
+    expect(result.preexistingFailures).toEqual([]);
+  });
+
+  it('sem base conhecida não compara — só avisa', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec } = fakeVitest(['src/b.test.ts']);
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(result.status).toBe('failed');
+    expect(result.preexistingFailures).toEqual([]);
+    expect(result.warnings.join(' ')).toContain('comparação com a base não rodou');
+    expect(worktreeCount(root)).toBe(1);
+  });
+
+  it('erro na execução da base ainda remove o worktree temporário', async () => {
+    const { root, scope } = project();
+    const sha = baseSha(root);
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const failing = fakeVitest(['src/b.test.ts']);
+    const exec = vi.fn<RegressionExec>((file, args, options) => {
+      if (options.cwd === root) return failing.exec(file, args, options);
+      throw new Error('sandbox recusou a base');
+    });
+
+    const result = await runRegressionGate(
+      { scope, baseSha: sha, trustedDependencyRoot: root },
+      { exec },
+    );
+
+    expect(result.status).toBe('failed');
+    expect(result.preexistingFailures).toEqual([]);
+    expect(result.warnings.join(' ')).toContain('comparação com a base não rodou');
+    expect(worktreeCount(root)).toBe(1);
+  });
+});
