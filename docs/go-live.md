@@ -550,6 +550,8 @@ curl --fail --silent --show-error https://api.nexuside.app/v1/public/status
 
 Espere banco pronto, `ready=false`, autenticação e billing disponíveis. Os `secret put` publicam versões intermediárias. Não faça essa sequência com vendas abertas ou assinaturas reais em atendimento. Para futura rotação sem interrupção, prepare uma mudança própria e coordenada. Não volte credenciais de teste sobre D1 live.
 
+**Atalho (01/10/2026):** `scripts/go-live-stripe.sh` faz 3.1 e 3.2 em ordem, com as vendas fechadas: fecha a venda, provisiona o Stripe live (recusa mexer num Customer Portal padrão que não seja do Nexus, porque a conta live é compartilhada), grava os dois segredos por pipe, troca o D1 para `nexus-cloud-prod`, `APP_MODE=production` e o Price live, e confere `/health`, `/ready` e o status. A chave live restrita do Nexus (seis permissões de escrita: Customers, Products, Checkout Sessions, Customer portal, Subscriptions, Webhook endpoints) é criada no painel e lida da área de transferência. `scripts/go-live-stripe.sh --abrir-vendas` é a cobrança real (3.4) e só roda depois da conferência.
+
 ### 3.3 Conferir OAuth público e site antes de abrir
 
 No Google Auth Platform, confira Audience/publicação para usuários reais e eventuais exigências de verificação exibidas no projeto. A aprovação efetiva desse cliente está **não confirmada** até conferência no painel e login com uma conta fora da lista de teste. No GitHub, confira novamente o callback final. Repita login com os dois provedores e acesso admin na nova base.

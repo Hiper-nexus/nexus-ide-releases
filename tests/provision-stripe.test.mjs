@@ -94,3 +94,26 @@ test('reaproveita o produto e o preço que já existem na conta de produção (m
   assert.equal(fake.store.prices.length, 1, 'não cria um segundo preço de R$ 59,99');
   assert.deepEqual(fake.calls, ['portal.create', 'webhook.create']);
 });
+
+test('em produção, recusa antes de mexer em qualquer coisa se o Customer Portal padrão é de outro uso da conta', async () => {
+  const fake = fakeStripe();
+  fake.store.portals.push({ id: 'bpc_outro', active: true, is_default: true, metadata: {}, features: { subscription_cancel: { enabled: false } } });
+  await assert.rejects(provision(fake.stripe, { protectForeignPortal: true }), /Customer Portal padrão/);
+  assert.deepEqual(fake.calls, [], 'nenhuma escrita antes da recusa: nem produto, nem preço, nem webhook');
+  assert.equal(fake.store.portals[0].features.subscription_cancel.enabled, false, 'o portal alheio fica como estava');
+});
+
+test('em produção, atualiza o portal que o próprio script criou e cria o do Nexus quando a conta não tem nenhum', async () => {
+  const mine = fakeStripe();
+  mine.store.portals.push({ id: 'bpc_nexus', active: true, is_default: true, metadata: { nexus_portal: 'pro' } });
+  await provision(mine.stripe, { protectForeignPortal: true });
+  assert.ok(mine.calls.includes('portal.update'));
+  const none = fakeStripe();
+  await provision(none.stripe, { protectForeignPortal: true });
+  assert.ok(none.calls.includes('portal.create'));
+});
+
+test('main só liga a proteção do portal alheio com chave de produção', async () => {
+  const source = (await import('node:fs')).readFileSync(new URL('../scripts/provision-stripe.mjs', import.meta.url), 'utf8');
+  assert.match(source, /protectForeignPortal: mode === 'live'/);
+});

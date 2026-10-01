@@ -57,7 +57,15 @@ export function keyMode(key) {
 }
 
 /** Faz o trabalho com um cliente Stripe injetado. Devolve o que foi encontrado ou criado. */
-export async function provision(stripe, { dryRun = false, log = () => {} } = {}) {
+export async function provision(stripe, { dryRun = false, log = () => {}, protectForeignPortal = false } = {}) {
+  // A conta de produção é compartilhada com outros usos: o portal padrão que não é do Nexus nunca é reescrito.
+  // A checagem vem antes de qualquer escrita, para uma recusa não deixar a configuração pela metade.
+  if (protectForeignPortal) {
+    const existing = await listAll(stripe.billingPortal.configurations, { active: true });
+    if (existing.some(item => item.is_default && item.metadata?.nexus_portal !== 'pro')) {
+      throw new Error('O Customer Portal padrão desta conta pertence a outro uso e não será alterado. Crie um portal do Nexus no painel (Billing > Customer portal) ou desative o padrão atual conscientemente, e rode de novo.');
+    }
+  }
   const result = { created: [], updated: [], webhookSecret: null };
   const note = (kind, what) => { result[kind].push(what); log(`${dryRun ? '[simulação] ' : ''}${kind === 'created' ? 'criar' : 'atualizar'}: ${what}`); };
 
@@ -141,7 +149,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
   if (mode === 'live' && !argv.includes('--live')) { console.error('Chave de produção detectada. Rode de novo com --live se é isso mesmo.'); return 2; }
   const { default: Stripe } = await import('stripe');
   const stripe = new Stripe(key);
-  const result = await provision(stripe, { dryRun, log: line => console.error(line) });
+  const result = await provision(stripe, { dryRun, log: line => console.error(line), protectForeignPortal: mode === 'live' });
   if (asJson) console.log(JSON.stringify(result, null, 2));
   else console.log(instructions(result, mode));
   return 0;
