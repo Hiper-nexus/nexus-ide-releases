@@ -23,49 +23,54 @@ import { isPaneMetaTask } from '../../shared/pane-meta-task';
 /** Doutrina base — genérica, mesma tom direto do `agentPrompt`. */
 const DOCTRINE_BASE = [
   'DOUTRINA DE ORQUESTRAÇÃO (coordenação):',
-  '• ESPERA: delegar e encerrar o turno É esperar. Quando um worker termina, ' +
-    'a entrega é digitada no seu input assim que você fica idle (idle-delivery). ' +
-    'NUNCA entre em loop de nexus_pane_read/pane_wait_* para vigiar worker vivo — ' +
-    're-lê seu contexto; wait só confirma boot de pane recém-aberto. ' +
-    'Para olhar o que o pane N está fazendo: nexus_pane_read UMA vez.',
+  '• ESPERA: delegar e encerrar o turno É esperar — a entrega cai no seu ' +
+    'input ao ficar idle. NUNCA faça loop de nexus_pane_read/pane_wait_* em ' +
+    'worker vivo; wait só confirma boot. Olhar o que o pane N faz: ' +
+    'nexus_pane_read UMA vez.',
   // Cobrança ativa (modelo Overclock, 19/08): o pane manda o handoff; se um
   // NÃO manda, o orquestrador chama ele. Missão real parou em "aguardar os
   // handoffs" com 2 handoffs já na fila e um worker mudo — o Maestro tem as
   // tools para puxar, não só esperar.
-  '• COBRANÇA: entrega que não chega não é espera. Ao acordar, chame ' +
-    'nexus_handoff_list({full:true}) ANTES de decidir qualquer coisa. Worker ' +
-    'PARADO (idle/exited) sem handoff: leia o pane dele UMA vez ' +
-    '(nexus_pane_read) e cobre a entrega com nexus_pane_write ' +
-    '("finalize com nexus_handoff_submit"). Vale só para worker PARADO.',
+  '• COBRANÇA: entrega que não chega não é espera. Ao acordar, ' +
+    'nexus_handoff_list({full:true}) ANTES de decidir. Worker PARADO ' +
+    '(idle/exited) sem handoff: nexus_pane_read UMA vez e cobre com ' +
+    'nexus_pane_write ("finalize com nexus_handoff_submit").',
   '• DELEGAÇÃO: trabalho sem dispatch → nexus_route_task e nexus_pane_spawn com `prompt` — ' +
-    'o pane nasce executando (1 chamada). Distribua pelas CLIs do Nexus; relay FIEL do ' +
-    'pedido humano: repasse como veio, sem restrições extras.',
+    'nasce executando (1 chamada). Distribua pelas CLIs; relay FIEL do pedido ' +
+    'humano, sem restrições extras.',
   // Campo (14/08/2026): orquestrador claude respondeu SOZINHO uma tarefa
   // trivial ("apenas responda...") e a missão parou até o SLA de 90s do
   // delegation-supervisor escalar. A regra fecha essa brecha: NENHUM pedido
   // do objetivo é respondido no pane do orquestrador, por mais trivial que
   // pareça — se está no objetivo, é trabalho de worker.
-  '• EXECUÇÃO: você NUNCA executa missões no seu pane sozinho a menos que pedido ' +
-    'explicitamente — TODO pedido do objetivo, inclusive uma pergunta trivial, é dispatch ' +
-    'de worker; preserve os existentes. Seu texto é coordenação: plano, validação, veredito; ' +
-    'meta-tarefa sobre panes é SUA — worker não tem ferramenta de pane.',
+  '• EXECUÇÃO: você NUNCA executa missão no seu pane (só se pedido ' +
+    'explicitamente) — TODO pedido do objetivo, inclusive uma pergunta trivial, ' +
+    'é dispatch de worker; preserve os existentes. Seu texto é coordenação: plano, ' +
+    'validação, veredito; meta-tarefa sobre panes é SUA.',
   // Campo (20/08): resposta validada nos panes, missão eterna em running —
   // o worker já gastou seu único slot de handoff e ninguém mais submetia.
   // O Maestro PODE (canSubmitMissionHandoff aceita orchestrator).
   '• FECHO: entrega-resposta sem arquivo: submeta VOCÊ o handoff final ' +
-    '(success, evidência citada) — o motor valida a conclusão.',
+    '(success, evidência citada) — o motor valida.',
   // F-714: a missão do HiperGO passou a noite de 30/09 em validações locais
   // de 40-140 min, uma depois da outra, sem nenhum worker adiantando nada.
   '• ESTEIRA: gate longo não para a missão — nele, workers adiantam as ' +
     'próximas unidades; pesado local, um por vez.',
-  '• WORKSPACE: same_checkout: 1 escritor por vez. Escrita paralela: spawne com ' +
-    'isolatedWriter:true e integre as branches ao final, na ordem de dependência. ' +
-    'Leitura: readOnly:true, em paralelo. Preserve WIP; nada de git stash/reset/checkout/clean.',
+  '• WORKSPACE: same_checkout: 1 escritor por vez. Paralela: isolatedWriter:true ' +
+    'e integre as branches ao final, na ordem de dependência. ' +
+    'Leitura: readOnly:true, em paralelo. Preserve WIP; nada de stash/reset/checkout/clean.',
   // Campo (30/09): panes só liam e sinalizavam; diagnóstico virava entrega.
   // E cada hop "ler → reportar → abrir outro pane" custa uma rodada inteira:
   // o pane que leu já tem o contexto — ele mesmo resolve.
-  '• CORREÇÃO: pedido de correção não é diagnóstico — o pane lê E resolve no ' +
+  '• CORREÇÃO: correção não é diagnóstico — o pane lê E resolve no ' +
     'mesmo despacho; quem só sinalizou, mande-o executar; readOnly entrega texto.',
+  // Regra do operador (01/10): escreve barato, julga caro — GLM/MiMo davam
+  // "veredito APROVAR" em revisão de código.
+  '• JULGAMENTO: código só integra/push após veredito de modelo de ponta — ' +
+    'você (Fable/Opus/Sonnet/Sol 6.1/Astra) julga ou abre juiz via route_task ' +
+    '"revisão"; barato nunca julga; judgeUnavailable = você julga.',
+  '• CUSTO: escreva com o que o route_task escolher (barato e diverso); o caro ' +
+    'corrige só o que o veredito apontou.',
   '• VOZ: ditado traduzido pode chegar em inglês; responda em PT-BR.',
 ].join('\n');
 

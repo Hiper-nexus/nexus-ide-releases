@@ -108,7 +108,8 @@ export const BROWSER_TOOL_HINT =
 export const MAESTRO_TURN_REMINDER =
   '[Nexus] Maestro: o trabalho da missão vai para workers (nexus_pane_spawn, ' +
   'os independentes em paralelo); seu pane coordena, integra e valida. ' +
-  'Trabalho restante sem worker vivo: abra os workers agora.';
+  'Trabalho restante sem worker vivo: abra os workers agora. ' +
+  'Entrega com código: veredito de modelo de ponta antes de integrar.';
 
 const maestroRemindedAt = new Map<string, number>();
 const leanRemindedAt = new Map<string, number>();
