@@ -45,3 +45,28 @@ if(!reduced)video.play().catch(()=>{audio.textContent='Assistir ao filme ↗';})
 audio.addEventListener('click',()=>{video.muted=!video.muted;audio.ariaPressed=String(!video.muted);audio.textContent=video.muted?'Ativar áudio ↗':'Silenciar áudio';video.play().catch(()=>{audio.textContent='Use os controles do vídeo para assistir.';});});
 if('IntersectionObserver' in window){const observer=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){entry.target.classList.add('visible');observer.unobserve(entry.target);}},{threshold:.08});document.querySelectorAll('.reveal').forEach(el=>{if(!reduced)el.classList.add('reveal-ready');observer.observe(el);});const videoObserver=new IntersectionObserver(entries=>{if(!entries[0].isIntersecting)video.pause();else if(!reduced&&video.muted)video.play().catch(()=>{});});videoObserver.observe(video);}
 window.addEventListener('pagehide',()=>{stop();video.pause();});
+
+// Nexus Data Café: o módulo 3D só baixa quando o visitante decide jogar.
+(() => {
+  const play = byId('datacafe-play'), stage = byId('datacafe-stage');
+  if (!play || !stage) return;
+  let game = null;
+  play.addEventListener('click', async () => {
+    if (game) return;
+    stage.classList.add('dc-loading');
+    play.textContent = 'Ligando o data center…';
+    try {
+      try { await document.fonts.load('80px VT323'); } catch { /* cai na monoespaçada */ }
+      const { mountDataCafe } = await import('./datacafe/mount.js');
+      game = mountDataCafe(stage, { host: byId('datacafe-host'), variant: 'embed', autostart: true });
+      stage.classList.remove('dc-loading');
+      stage.classList.add('dc-started');
+      window.addEventListener('pagehide', event => { if (!event.persisted) game.dispose(); });
+    } catch (error) {
+      console.warn('Nexus Data Café:', error.message);
+      stage.classList.remove('dc-loading');
+      play.textContent = 'Jogo 3D indisponível aqui';
+      play.disabled = true;
+    }
+  });
+})();
