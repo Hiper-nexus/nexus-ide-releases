@@ -3,7 +3,7 @@
 Duas propriedades na Cloudflare:
 
 - `https://nexuside.app/`: produto NexusIDE, filme original do usuário, demo ilustrativa de missão, recursos e downloads públicos.
-- `https://comunidade.nexuside.app/`: dev café jogável, missões, XP e links do grupo/canal. `/comunidade` e `/sorteio` no domínio principal redirecionam à comunidade.
+- `https://comunidade.nexuside.app/`: dev café jogável, missões, XP e links do grupo/canal. `/comunidade/` no domínio principal serve a mesma página (espelho com `Link: rel=canonical` para o subdomínio, para quem não consegue abrir o subdomínio por filtro de rede ou DNS); `/comunidade` sem barra, subcaminhos e `/sorteio` redirecionam ao subdomínio.
 
 ## Rodar
 

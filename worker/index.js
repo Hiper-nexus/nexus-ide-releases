@@ -4,7 +4,9 @@ const PRODUCTION_HOST = 'nexuside.app';
 const COMMUNITY_HOST = 'comunidade.nexuside.app';
 const BACKEND_PATHS = ['/v1', '/billing', '/join', '/health', '/ready'];
 const ACCOUNT_PATHS = ['/conta', '/admin'];
-const ALIASES = new Set(['/comunidade', '/comunidade/', '/sorteio', '/sorteio/']);
+const ALIASES = new Set(['/comunidade', '/sorteio', '/sorteio/']);
+// A comunidade também abre no endereço principal: quem não consegue o subdomínio (filtro de rede, DNS) chega por aqui.
+const COMMUNITY_MIRROR_PATH = '/comunidade/';
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
   'strict-transport-security': 'max-age=31536000',
@@ -43,7 +45,7 @@ export async function handleRequest(request, env, originFetch = fetch) {
   if (url.pathname === '/api/releases') {
     return url.hostname === COMMUNITY_HOST ? new Response('Not found', { status: 404 }) : releaseCatalogResponse(request);
   }
-  if (url.hostname === PRODUCTION_HOST && (ALIASES.has(url.pathname) || url.pathname.startsWith('/comunidade/'))) {
+  if (url.hostname === PRODUCTION_HOST && (ALIASES.has(url.pathname) || (url.pathname.startsWith('/comunidade/') && url.pathname !== COMMUNITY_MIRROR_PATH))) {
     const target = new URL('https://' + COMMUNITY_HOST);
     target.search = url.search;
     if (url.pathname.startsWith('/sorteio')) target.hash = 'premios';
@@ -64,6 +66,8 @@ export async function handleRequest(request, env, originFetch = fetch) {
   const headers = new Headers(response.headers);
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
   if (url.pathname.startsWith('/sorteio')) headers.set('x-robots-tag', 'noindex');
+  // O espelho no endereço principal aponta o subdomínio como o canônico, para os buscadores não duplicarem a página.
+  if (url.hostname === PRODUCTION_HOST && url.pathname === COMMUNITY_MIRROR_PATH) headers.set('link', `<https://${COMMUNITY_HOST}/>; rel="canonical"`);
   if (isAccountPath(url.pathname)) headers.set('x-robots-tag', 'noindex');
   return new Response(response.body, { status: response.status, headers });
 }

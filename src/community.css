@@ -141,3 +141,8 @@
 @media(hover:none){.drop-next.tilting{transform:none}.drop-next:after{display:none}}
 @media(max-width:760px){.intro-prize{margin-top:20px}.intro-prize-name{font-size:26px}.community-section-intro#sorteio{gap:24px}.sorteio-lead{gap:16px}.drop-next h3{font-size:clamp(2.75rem,12vw,3.5rem)}}
 @media(prefers-reduced-motion:reduce){.prize-ready .drop{clip-path:none}}
+
+/* Os dois bilhetes alinham o campo do ganhador na mesma linha, acima do canhoto, qualquer que seja a altura do título. */
+.drop>.drop-draw{margin:auto 0 32px}
+.drop>.drop-draw+.drop-stub{margin-top:0}
+@media(max-width:760px){.drop>.drop-draw{margin:24px 0}}

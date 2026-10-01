@@ -133,3 +133,24 @@ test('conta and admin documents stay out of the search index', () => {
     assert.match(html, /<meta name="robots" content="noindex">/, file);
   }
 });
+
+test('o endereço principal também serve a comunidade, para quem não consegue abrir o subdomínio', async () => {
+  for (const path of ['/comunidade/']) {
+    const res = await handleRequest(new Request('https://nexuside.app' + path), {
+      ASSETS: { fetch: async req => { assert.equal(new URL(req.url).pathname, '/comunidade/'); return new Response('Nexus community'); } },
+    }, () => assert.fail('must not hit backend'));
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), 'Nexus community');
+    assert.match(res.headers.get('link'), /<https:\/\/comunidade\.nexuside\.app\/>; rel="canonical"/, 'o subdomínio continua sendo o endereço canônico');
+  }
+});
+
+test('/comunidade sem barra, o sorteio e subcaminhos continuam indo para o subdomínio', async () => {
+  const noSlash = await handleRequest(new Request('https://nexuside.app/comunidade?from=youtube'), {});
+  assert.equal(noSlash.status, 307);
+  assert.equal(noSlash.headers.get('location'), 'https://comunidade.nexuside.app/?from=youtube');
+  const raffle = await handleRequest(new Request('https://nexuside.app/sorteio'), {});
+  assert.equal(raffle.headers.get('location'), 'https://comunidade.nexuside.app/#premios');
+  const sub = await handleRequest(new Request('https://nexuside.app/comunidade/qualquer-coisa'), {});
+  assert.equal(sub.status, 307);
+});

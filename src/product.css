@@ -146,3 +146,12 @@
 }
 @media(prefers-reduced-motion:reduce){.shot-playhead b{animation:none;left:38%}.shot-trim-range{animation:none}.shot-rec .live-dot{animation:none}}
 .shot-player svg{flex:none;width:12px;height:12px}
+
+/* Planos: os dois blocos têm a mesma altura e o botão de cada um fica na mesma linha, no pé do bloco, alinhado à esquerda. */
+.plans-grid{align-items:stretch}
+.plan-trial,.plan-pro{display:flex;flex-direction:column}
+.plan-trial{padding-bottom:calc(var(--s4) + 1px)}
+.plan-trial>.button,.plan-pro>.button{margin-top:auto;align-self:flex-start}
+.plan-trial>.plan-note{margin-bottom:var(--s4)}
+.plan-pro>.plain-benefits{margin-bottom:var(--s4)}
+@media(max-width:1150px){.plan-trial{padding-bottom:var(--s3)}}

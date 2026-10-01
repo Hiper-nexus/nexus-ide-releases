@@ -44,3 +44,9 @@
 /* "Entrar para assinar": o quadro de login chama a atenção uma vez, sem mover nada. */
 .account-panel.attention{animation:account-attention 1.4s var(--ease) 1}
 @keyframes account-attention{0%{box-shadow:0 0 0 0 rgb(255 79 139/.55)}100%{box-shadow:0 0 0 16px rgb(255 79 139/0)}}
+
+/* Alinhamento: os dois quadros começam na mesma linha e todo botão de ação ocupa a largura do quadro, com o rótulo centralizado. */
+.account-layout .account-panel>h2{margin:0 0 var(--s3);min-height:32px}
+.account-layout .account-actions{flex-direction:column;align-items:stretch;gap:12px}
+.account-layout .account-actions .button{width:100%;justify-content:center}
+.login-actions{max-width:none}
