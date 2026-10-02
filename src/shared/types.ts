@@ -5,6 +5,7 @@ import type {
   BugReportRequest,
   BugReportSubmitResult,
 } from './bug-report';
+import type { AccountChoiceReceipt } from './account-choice';
 /**
  * Shared, transport-safe types used across main / preload / renderer.
  * Everything here must be JSON-serializable (it crosses the IPC boundary).
@@ -464,6 +465,14 @@ export interface NexusApi {
     submit(request: BugReportRequest): Promise<BugReportSubmitResult>;
     /** Menu "Ajuda → Reportar um problema…" pediu o diálogo. */
     onOpenRequest(cb: () => void): Unsubscribe;
+  };
+  /**
+   * Recibo da escolha de conta de uma sessão PTY, somente leitura: qual conta o
+   * pane usa e por quê. O Main já devolve o recibo mascarado e saneado (nunca
+   * id, fingerprint, e-mail cru nem token); `null` = sessão sem recibo.
+   */
+  accountChoice: {
+    get(sessionId: string): Promise<AccountChoiceReceipt | null>;
   };
   pty: {
     spawn(req: SpawnRequest): Promise<SpawnResult>;

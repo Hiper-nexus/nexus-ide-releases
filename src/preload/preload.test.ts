@@ -117,6 +117,27 @@ describe('preload PTY delivery', () => {
     expect(Object.keys(api.bugReport).sort()).toEqual(['onOpenRequest', 'preview', 'submit']);
   });
 
+  it('exposes the account choice receipt as a read-only lookup over its own channel', async () => {
+    const api = await loadPreloadApi();
+    const receipt = { adapterId: 'claude', source: 'native', account: null, headroom: null, alternatives: [], decidedAt: 1 };
+    electronMock.ipcRenderer.invoke.mockResolvedValue(receipt);
+    expect(await api.accountChoice.get('sess-1')).toEqual(receipt);
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenCalledWith('accountChoice:get', { sessionId: 'sess-1' });
+    // Só leitura: nada que grave, esqueça ou escute o recibo.
+    expect(Object.keys(api.accountChoice)).toEqual(['get']);
+  });
+
+  it('forwards only the session id to the account choice channel, never extra caller data', async () => {
+    const api = await loadPreloadApi();
+    electronMock.ipcRenderer.invoke.mockResolvedValue(null);
+    const loose = api.accountChoice.get as (...args: unknown[]) => Promise<unknown>;
+    await loose('sess-2', { accountId: 'acct-1', sessionId: 'sess-1' });
+    const payloads = electronMock.ipcRenderer.invoke.mock.calls
+      .filter(([channel]) => channel === 'accountChoice:get')
+      .map(([, payload]) => payload);
+    expect(payloads).toEqual([{ sessionId: 'sess-2' }]);
+  });
+
   it('forwards the menu open request without IPC event data and supports unsubscribe', async () => {
     const api = await loadPreloadApi();
     const listener = vi.fn();

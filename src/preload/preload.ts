@@ -27,6 +27,7 @@ import type { PetPrefs } from '../shared/pet-types';
 import { VOICE_CHANNELS } from '../shared/voice-channels';
 import { JEV_CHANNELS } from '../shared/jev-channels';
 import { BUG_REPORT_CHANNELS } from '../shared/bug-report-channels';
+import { ACCOUNT_CHOICE_CHANNELS } from '../shared/account-choice-channels';
 import { DECISION_MODEL_CHANNELS } from '../shared/decision-model-channels';
 import { VISION_CHANNELS } from '../shared/vision-ipc';
 import type { ScreenCaptureMetadata } from '../shared/vision-ipc';
@@ -1454,6 +1455,11 @@ const api: NexusApi = {
     preview: (request) => ipcRenderer.invoke(BUG_REPORT_CHANNELS.preview, request),
     submit: (request) => ipcRenderer.invoke(BUG_REPORT_CHANNELS.submit, request),
     onOpenRequest: (cb) => addListener(bugReportOpenListeners, cb),
+  },
+  // Só leitura: o Main devolve o recibo já mascarado; o preload repassa apenas
+  // o id da sessão (nada mais do chamador chega ao canal).
+  accountChoice: {
+    get: (sessionId) => ipcRenderer.invoke(ACCOUNT_CHOICE_CHANNELS.get, { sessionId }),
   },
   // Fase 5 — Jarvis Vision: screen capture + AX tree + OCR
   vision: {
