@@ -20,6 +20,10 @@ export default defineConfig({
       'docs/analysis/*-extract/**',
       // Mobile companion is a separate React Native/Expo workspace with its own runner.
       'mobile/**',
+      // Site (nexuside.app) e API (api.nexuside.app) são projetos Cloudflare à parte, cada um com o seu
+      // runner (`node --test` e vitest próprio): a suíte do app não os coleta.
+      'site/**',
+      'cloud-api/**',
     ],
     setupFiles: ['./src/test/vitest.setup.ts'],
     // The root run also collects server PGlite suites, and `server/vitest.config.ts`

@@ -33,6 +33,25 @@ check before delivery:
 | `src/main/pty/` | PTY session manager, advisory process sandbox (macOS Seatbelt / Linux Bubblewrap / Windows OCI) |
 | `src/main/runtime/` | Process sandbox enforcement, `processHome` escape from macOS Seatbelt HOME confinement |
 
+## Site e API vivem aqui (monorepo, 02/10/2026)
+
+O site público e a API deixaram de ser repositórios locais soltos e moram neste repositório,
+com o histórico preservado: `site/` (nexuside.app, Worker `nexus-community-site`, Vite multipágina) e
+`cloud-api/` (api.nexuside.app, Worker `nexus-cloud-api`, D1 `nexus-cloud-prod`). Cada um é um projeto
+npm INDEPENDENTE (não são workspaces; `npm ci` roda dentro da própria pasta, nunca na raiz) com
+o seu runner de teste e o seu `wrangler`; a suíte do app (`vitest.config.ts`) exclui as duas pastas e o
+empacotamento do app (`shouldPackageFile`, lista permitida) nunca as leva.
+
+- **Deploy do site:** de uma cópia limpa do commit (`git archive HEAD site | tar -x -C <tmp>`), depois
+  `npm ci && npm test && npm run build && npx wrangler deploy` DENTRO da cópia; prove produção por `curl` antes
+  e depois (o deploy a partir de base presumida já desfez trabalho de outra sessão uma vez). `npm run deploy`
+  atualiza o snapshot de releases antes do build.
+- **Deploy da API:** `cd cloud-api && npm test && npx wrangler deploy`; segredos só por `wrangler secret put`.
+  Nunca commite `.dev.vars`/`.env`: o histórico importado foi varrido e só tem fixtures de teste.
+- **Sem comparação com concorrentes:** o site não nomeia outras ferramentas (decisão do operador, 02/10).
+- Ramos de trabalho que ficaram pendentes nos repositórios antigos estão preservados como
+  `archive/site/*` e `archive/cloud-api/*` neste remoto (árvore na raiz; use `git subtree`/cherry-pick para trazer).
+
 ## Install and Rebuild
 
 ```bash
