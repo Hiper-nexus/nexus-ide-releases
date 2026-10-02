@@ -30,7 +30,7 @@ export function collectBrowserVisualMasks(win: Window & typeof globalThis): Brow
   };
   const appendTextRects = (text: Node): void => {
     const range = win.document.createRange(); range.selectNodeContents(text);
-    if (typeof range.getClientRects !== 'function') { if (text.parentElement) append(text.parentElement.getBoundingClientRect()); return; }
+    if (typeof range.getClientRects !== 'function') { const owner = owningElement(text); if (owner) append(owner.getBoundingClientRect()); return; }
     for (const rect of range.getClientRects()) append(rect);
   };
   const maskElement = (element: Element): void => {
@@ -43,14 +43,17 @@ export function collectBrowserVisualMasks(win: Window & typeof globalThis): Brow
     append(rect);
     for (const child of element.querySelectorAll('*')) append(child.getBoundingClientRect());
   };
+  /** Text directly under a shadow root has no parentElement: its host stands in for it. */
+  const owningElement = (text: Node): Element | null =>
+    text.parentElement ?? (text.parentNode instanceof win.ShadowRoot ? text.parentNode.host : null);
   const maskSensitiveText = (text: Node): void => {
-    const block = sensitiveBlockAncestor(text.parentElement as unknown as MaskBlockNode | null) as unknown as Element | null;
+    const block = sensitiveBlockAncestor(owningElement(text) as unknown as MaskBlockNode | null) as unknown as Element | null;
     const rect = block?.getBoundingClientRect();
     if (rect && area(rect) <= viewportArea * MAX_BLOCK_VIEWPORT_SHARE) append(rect);
     else appendTextRects(text);
   };
   const visitText = (node: Node): void => {
-    const parent = node.parentElement;
+    const parent = owningElement(node);
     if (!parent || NON_RENDERED_TAGS.has(parent.tagName.toUpperCase())) return;
     if (isSensitiveVisualText(node.textContent ?? '')) maskSensitiveText(node);
   };

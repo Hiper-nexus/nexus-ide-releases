@@ -50,6 +50,13 @@ describe('isolated visual mask collection', () => {
     expect(rects(win)).toHaveLength(tokens.length);
   });
 
+  it('masks sensitive text that sits directly under a shadow root through its host', () => {
+    const { win, dom } = page('<div id="host" data-rect="10,20,300,40"></div>');
+    const shadow = dom.window.document.getElementById('host')!.attachShadow({ mode: 'open' });
+    shadow.append(dom.window.document.createTextNode('Chave: sk_live_51HabcdefghijKLMNOPQRstuv'));
+    expect(rects(win)).toEqual([{ x: 10, y: 20, width: 300, height: 40 }]);
+  });
+
   it('leaves ordinary non-sensitive text visible (negative case)', () => {
     const { win } = page('<p data-rect="0,0,300,20">Pedido confirmado</p><h1 data-rect="0,40,300,30">Obrigado pela compra</h1>');
     expect(rects(win)).toEqual([]);
