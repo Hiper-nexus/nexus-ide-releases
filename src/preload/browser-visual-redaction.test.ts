@@ -19,6 +19,13 @@ function page(html: string, size = { width: 1000, height: 800 }): { win: Collect
 const rects = (win: Collectable): BrowserVisualRect[] => collectBrowserVisualMasks(win).rectangles;
 
 describe('isolated visual mask collection', () => {
+  it('includes comments in the DOM budget before any Main inspection', () => {
+    const { win, dom } = page('<p>ordinary</p>');
+    const fragment = dom.window.document.createDocumentFragment();
+    for (let index = 0; index < 50_001; index++) fragment.append(dom.window.document.createComment('x'));
+    dom.window.document.body.append(fragment);
+    expect(() => rects(win)).toThrow('visual DOM limit');
+  });
   it.each([60, 1000])('masks an unrecognized sibling value overflowing a %s-pixel sensitive block', width => {
     const { win, dom } = page(`<div data-rect="0,100,${width},${width === 1000 ? 700 : 20}"><span>API token</span><span>abcdefghijklmnop</span></div>`);
     const original = dom.window.document.createRange.bind(dom.window.document);

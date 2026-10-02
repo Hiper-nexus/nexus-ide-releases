@@ -7,6 +7,7 @@ import {
 
 const MAX_NODES = 50_000;
 const MAX_RECTS = 2_000;
+const MAX_DOM_CHARS = 8 * 1024 * 1024;
 /** A block this large would hide the page, not the secret: fall back to the text's own rectangles. */
 const MAX_BLOCK_VIEWPORT_SHARE = 0.4;
 
@@ -25,6 +26,7 @@ export function collectBrowserVisualMasks(win: Window & typeof globalThis): Brow
   const maskedNodes = new WeakSet<Node>();
   let maskedVisits = 0;
   let visited = 0;
+  let inspectedChars = 0;
   const viewportArea = win.innerWidth * win.innerHeight;
   const append = (rect: { x: number; y: number; width: number; height: number }): void => {
     if (rect.width <= 0 || rect.height <= 0) return;
@@ -108,10 +110,13 @@ export function collectBrowserVisualMasks(win: Window & typeof globalThis): Brow
     if (isSensitiveVisualText(node.textContent ?? '')) maskSensitiveText(node);
   };
   const walk = (root: Node): void => {
-    const walker = win.document.createTreeWalker(root, win.NodeFilter.SHOW_ELEMENT | win.NodeFilter.SHOW_TEXT);
+    const walker = win.document.createTreeWalker(root, win.NodeFilter.SHOW_ALL);
     let node: Node | null;
     while ((node = walker.nextNode())) {
       if (++visited > MAX_NODES) throw new Error('visual DOM limit reached');
+      inspectedChars += node.nodeValue?.length ?? 0;
+      if (node.nodeType === win.Node.ELEMENT_NODE) for (const attribute of (node as Element).attributes) inspectedChars += attribute.value.length;
+      if (inspectedChars > MAX_DOM_CHARS) throw new Error('visual DOM text limit reached');
       if (node.nodeType !== win.Node.ELEMENT_NODE) { visitText(node); continue; }
       const element = node as Element;
       if (sensitiveElement(element)) maskElement(element);
