@@ -75,6 +75,11 @@ import {
   windowsNpmShimTarget,
 } from '../adapters/windows-npm-shim';
 import { assessCliUpdate } from '../adapters/cli-update-observation';
+import {
+  moveExecutableAside,
+  removeStaleExecutableCopies,
+  restoreExecutableIfMissing,
+} from '../adapters/in-use-executable';
 import { CliAutoUpdateQueue, CliUpdateLease, selectAutomaticCliUpdateRecipe, shouldOfferAutoCliConsent } from '../adapters/cli-auto-update';
 import { execFile } from 'node:child_process';
 import {
@@ -2374,7 +2379,10 @@ async function runScriptInstall(
  * Nunca usamos `irm | iex` dentro do processo do Nexus: o comando só aparece
  * como instrução manual; a instalação automática roda o arquivo baixado com
  * `powershell.exe -File`, sem um shell intermediário escondido. */
-async function runPowerShellScriptInstall(scriptUrl: string): Promise<void> {
+async function runPowerShellScriptInstall(
+  scriptUrl: string,
+  replacesLocalAppDataExecutable?: string,
+): Promise<void> {
   const url = new URL(scriptUrl);
   if (url.protocol !== 'https:') {
     throw new Error('instalador oficial precisa ser HTTPS');
@@ -2390,7 +2398,18 @@ async function runPowerShellScriptInstall(scriptUrl: string): Promise<void> {
     `nexus-cli-install-${Date.now()}-${process.pid}.ps1`,
   );
   fs.writeFileSync(file, body, { mode: 0o600 });
+  // F-747: o executável em uso por um pane sai do caminho do `Copy-Item`.
+  const localAppData = process.env.LOCALAPPDATA;
+  const entry =
+    replacesLocalAppDataExecutable && localAppData
+      ? path.join(localAppData, ...replacesLocalAppDataExecutable.split('/'))
+      : null;
+  let aside: string | null = null;
   try {
+    if (entry) {
+      removeStaleExecutableCopies(entry);
+      aside = moveExecutableAside(entry, String(Date.now()));
+    }
     await new Promise<void>((resolve, reject) => {
       execFile(
         resolveRunnerPath('powershell') ?? 'powershell.exe',
@@ -2401,6 +2420,10 @@ async function runPowerShellScriptInstall(scriptUrl: string): Promise<void> {
         (error) => (error ? reject(error) : resolve()),
       );
     });
+  } catch (error) {
+    // Falhou sem deixar binário novo: o antigo volta, a CLI não some.
+    if (entry) restoreExecutableIfMissing(entry, aside);
+    throw error;
   } finally {
     fs.rmSync(file, { force: true });
   }
@@ -2466,7 +2489,7 @@ async function runInstallRecipe(
     return;
   }
   if (recipe.kind === 'powershell-script') {
-    await runPowerShellScriptInstall(recipe.scriptUrl);
+    await runPowerShellScriptInstall(recipe.scriptUrl, recipe.replacesLocalAppDataExecutable);
     return;
   }
   const invocation = prepared ?? prepareArgvInstallInvocation(recipe);

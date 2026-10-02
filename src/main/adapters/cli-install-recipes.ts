@@ -78,6 +78,12 @@ interface PowerShellScriptInstallRecipe {
   readonly scriptUrl: string;
   readonly runner: 'powershell';
   readonly runnerHint: string;
+  /**
+   * F-747: executável (relativo a %LOCALAPPDATA%) que o script sobrescreve
+   * com `Copy-Item -Force`. Com um pane rodando a CLI, o Windows recusa a
+   * cópia; o runner o renomeia antes (renomear um .exe em uso é permitido).
+   */
+  readonly replacesLocalAppDataExecutable?: string;
 }
 
 export type CliInstallRecipe =
@@ -149,12 +155,18 @@ function scriptRecipe(scriptUrl: string): ScriptInstallRecipe {
   });
 }
 
-function powershellRecipe(scriptUrl: string): PowerShellScriptInstallRecipe {
+function powershellRecipe(
+  scriptUrl: string,
+  options: { readonly replacesLocalAppDataExecutable?: string } = {},
+): PowerShellScriptInstallRecipe {
   return Object.freeze({
     kind: 'powershell-script' as const,
     scriptUrl,
     runner: 'powershell' as const,
     runnerHint: POWERSHELL_HINT,
+    ...(options.replacesLocalAppDataExecutable
+      ? { replacesLocalAppDataExecutable: options.replacesLocalAppDataExecutable }
+      : {}),
   });
 }
 
@@ -247,7 +259,12 @@ const RECIPES: Readonly<Record<string, PlatformRecipes>> = Object.freeze({
   devin: {
     darwin: [scriptRecipe('https://cli.devin.ai/install.sh')],
     linux: [scriptRecipe('https://cli.devin.ai/install.sh')],
-    win32: [powershellRecipe('https://static.devin.ai/cli/setup.ps1')],
+    // F-747: `Copy-Item … devin.exe -Force` falha com pane Devin aberto.
+    win32: [
+      powershellRecipe('https://static.devin.ai/cli/setup.ps1', {
+        replacesLocalAppDataExecutable: 'devin/cli/bin/devin.exe',
+      }),
+    ],
   },
   muse: {
     darwin: [brewCaskRecipe('muse-code')],
