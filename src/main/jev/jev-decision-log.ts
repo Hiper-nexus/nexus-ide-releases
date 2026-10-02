@@ -188,6 +188,9 @@ export function recordJevNoAnswer(
   },
   deps?: { dir?: string },
 ): string {
+  const requestCount = input.usage?.requestCount ?? input.requestCount;
+  const inputTokens = input.usage?.inputTokens ?? (requestCount === 0 ? 0 : null);
+  const usd = input.usage?.usd ?? (requestCount === 0 ? 0 : null);
   return recordJevDecision(
     {
       kind: 'no-answer',
@@ -201,11 +204,11 @@ export function recordJevNoAnswer(
       questions: [],
       probabilities: {},
       decision: 'rule',
-      inputTokens: input.usage?.inputTokens ?? null,
-      usd: input.usage?.usd ?? null,
-      requestCount: input.usage?.requestCount ?? input.requestCount,
+      inputTokens,
+      usd,
+      requestCount,
       durationMs: input.usage?.durationMs,
-      usageIncomplete: input.usage?.usageIncomplete,
+      usageIncomplete: Boolean(input.usage?.usageIncomplete || (requestCount !== 0 && (inputTokens === null || usd === null))),
     },
     deps,
   );
@@ -301,7 +304,9 @@ function addProviderUsage(buckets: Record<string, DecisionUsageStats>, key: stri
   if (entry.kind === 'no-answer') bucket.noAnswer += 1;
   else bucket.calls += 1;
   bucket.usd += entry.usd ?? 0; bucket.inputTokens += entry.inputTokens ?? 0;
-  if (entry.usageIncomplete) bucket.incompleteUsageCalls = (bucket.incompleteUsageCalls ?? 0) + 1;
+  if (entry.usageIncomplete || (entry.kind === 'no-answer' && entry.requestCount !== 0 && (entry.inputTokens === null || entry.usd === null))) {
+    bucket.incompleteUsageCalls = (bucket.incompleteUsageCalls ?? 0) + 1;
+  }
   // Linhas antigas não medem tentativas: contam à parte e nunca apagam o que as novas mediram.
   if (entry.requestCount === undefined) bucket.legacyRows += 1;
   else { bucket.measuredRows += 1; bucket.requests = (bucket.requests ?? 0) + entry.requestCount; }

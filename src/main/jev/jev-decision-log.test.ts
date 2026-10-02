@@ -38,6 +38,20 @@ afterEach(() => {
 });
 
 describe('jev decision log', () => {
+  it('keeps failed HTTP attempts with absent spending explicitly unmeasured', () => {
+    const d = setup();
+    recordJevNoAnswer({ surface: 'intake', reason: 'timeout', model: 'jev-1.13.0', requestCount: 2 }, { dir: d });
+    expect(listJevDecisions({ dir: d, includeNoAnswer: true })[0]).toMatchObject({ usd: null, inputTokens: null, usageIncomplete: true });
+    expect(jevDecisionStats({ dir: d }).byModel['jev-1.13.0']).toMatchObject({ incompleteUsageCalls: 1, requests: 2 });
+  });
+  it('infers incomplete historical nullable failures but keeps zero-request failures measured', () => {
+    const d = setup();
+    recordJevDecision(entry({ kind: 'no-answer', usd: null, inputTokens: null, requestCount: 2 }), { dir: d });
+    expect(jevDecisionStats({ dir: d }).byModel['jev-1.13.0'].incompleteUsageCalls).toBe(1);
+    recordJevNoAnswer({ surface: 'intake', reason: 'client-error', model: 'zero-request', requestCount: 0 }, { dir: d });
+    const row = listJevDecisions({ dir: d, includeNoAnswer: true }).find(item => item.model === 'zero-request')!;
+    expect(row).toMatchObject({ usd: 0, inputTokens: 0, usageIncomplete: false });
+  });
   it('retains known spending on failed batches and marks incomplete usage', () => {
     const d = setup();
     recordJevNoAnswer({ surface: 'toolPick', reason: 'client-error', model: 'clef', provider: 'clef',
