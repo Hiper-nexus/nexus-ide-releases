@@ -42,6 +42,8 @@ delete process.env.TYPESAFE_BASE_URL;
 delete process.env.NEXUS_JEV_MODEL;
 delete process.env.CLOUDFLARE_API_TOKEN;
 delete process.env.CLOUDFLARE_ACCOUNT_ID;
+delete process.env.NEXUS_CLEF_API_TOKEN;
+delete process.env.NEXUS_CLEF_ACCOUNT_ID;
 
 /**
  * `localStorage` sob jsdom.

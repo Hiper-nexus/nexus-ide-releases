@@ -15,6 +15,17 @@ describe('decision model configuration', () => {
     expect(result.decisionModels).toMatchObject({ mode: 'auto', visionEnabled: false });
   });
 
+  it('drops the image-egress consent as soon as the mode can no longer send images', () => {
+    const account = '0123456789abcdef0123456789abcdef';
+    for (const mode of ['auto', 'clef'] as const) {
+      expect(orchSettingsSchema.parse({ decisionModels: { mode, cloudflareAccountId: account, visionEnabled: true } }).decisionModels.visionEnabled).toBe(true);
+    }
+    const jev = orchSettingsSchema.parse({ decisionModels: { mode: 'jev', cloudflareAccountId: account, visionEnabled: true } });
+    expect(jev.decisionModels.visionEnabled).toBe(false);
+    // Coming back to automatic never resurrects the old consent: it is not stored anywhere.
+    expect(orchSettingsSchema.parse({ decisionModels: { ...jev.decisionModels, mode: 'auto' } }).decisionModels.visionEnabled).toBe(false);
+  });
+
   it.each([
     { mode: 'unknown' }, { clefModel: 'other/model' },
     { cloudflareAccountId: '../../another-account' }, { cloudflareAccountId: 'not-an-account' },

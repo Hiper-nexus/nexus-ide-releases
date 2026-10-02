@@ -19,7 +19,7 @@ function trustedEvent() {
 }
 
 describe('trusted Clef configuration IPC', () => {
-  beforeEach(() => { handlers.clear(); delete process.env.CLOUDFLARE_ACCOUNT_ID; });
+  beforeEach(() => { handlers.clear(); delete process.env.NEXUS_CLEF_ACCOUNT_ID; });
 
   it('requires an account as well as a token and never exposes the token', () => {
     registerDecisionModelIpc({ getSettings: () => ({ mode: 'auto', clefModel: 'clef', cloudflareAccountId: '', visionEnabled: false }),

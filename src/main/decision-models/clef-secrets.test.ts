@@ -14,11 +14,12 @@ vi.mock('../persistence/secrets-store', () => ({
   isSecureStorageAvailable: () => true,
 }));
 
-import { getClefApiToken, hasClefCredential, resolveClefApiToken, setClefApiToken, maskedClefApiToken } from './clef-secrets';
+import { getClefApiToken, hasClefCredential, resolveClefApiToken, resolveCloudflareAccountId, setClefApiToken, maskedClefApiToken } from './clef-secrets';
 
 describe('Clef credentials', () => {
   beforeEach(() => {
-    vault.data.clear(); vault.read.mockClear(); delete process.env.CLOUDFLARE_API_TOKEN;
+    vault.data.clear(); vault.read.mockClear();
+    for (const name of ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID', 'NEXUS_CLEF_API_TOKEN', 'NEXUS_CLEF_ACCOUNT_ID']) delete process.env[name];
   });
 
   it('stores the Cloudflare token independently of the TypeSafe token', () => {
@@ -32,10 +33,20 @@ describe('Clef credentials', () => {
   });
 
   it('resolves the encrypted vault before the inherited environment', () => {
-    process.env.CLOUDFLARE_API_TOKEN = 'env-token';
+    process.env.NEXUS_CLEF_API_TOKEN = 'env-token';
     expect(resolveClefApiToken()).toBe('env-token');
     setClefApiToken('stored-token');
     expect(resolveClefApiToken()).toBe('stored-token');
+  });
+
+  it('never adopts the ambient wrangler variables: their token has account-wide scope', () => {
+    process.env.CLOUDFLARE_API_TOKEN = 'wide-scope-token';
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+    expect(hasClefCredential()).toBe(false);
+    expect(resolveClefApiToken()).toBeUndefined();
+    expect(resolveCloudflareAccountId('')).toBeUndefined();
+    process.env.NEXUS_CLEF_ACCOUNT_ID = 'fedcba9876543210fedcba9876543210';
+    expect(resolveCloudflareAccountId('')).toBe('fedcba9876543210fedcba9876543210');
   });
 
   it('checks presence without decrypting tokens', () => {

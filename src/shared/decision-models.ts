@@ -1,15 +1,21 @@
 import { z } from 'zod';
 
-export const CLOUDFLARE_TOKEN_ENV = 'CLOUDFLARE_API_TOKEN';
-export const CLOUDFLARE_ACCOUNT_ENV = 'CLOUDFLARE_ACCOUNT_ID';
-export const CLEF_SECRET_NAME = `clef-env:${CLOUDFLARE_TOKEN_ENV}`;
+/**
+ * Variáveis de ambiente PRÓPRIAS do Nexus. `CLOUDFLARE_API_TOKEN` e
+ * `CLOUDFLARE_ACCOUNT_ID` são as do wrangler e costumam guardar um token de
+ * escopo largo (deploy, DNS, KV…): o Nexus nunca as adota por tabela.
+ */
+export const CLEF_TOKEN_ENV = 'NEXUS_CLEF_API_TOKEN';
+export const CLEF_ACCOUNT_ENV = 'NEXUS_CLEF_ACCOUNT_ID';
+/** Rótulo do cofre (já gravado em instalações e bundles exportados): não renomear. */
+export const CLEF_SECRET_NAME = 'clef-env:CLOUDFLARE_API_TOKEN';
 
 export const decisionSettingsSchema = z.object({
   mode: z.enum(['auto', 'jev', 'clef']).default('jev'),
   clefModel: z.enum(['clef', 'clef-flash']).default('clef'),
   cloudflareAccountId: z.string().trim().regex(/^(?:[a-fA-F0-9]{32})?$/).default(''),
   visionEnabled: z.boolean().default(false),
-});
+}).transform(settings => settings.mode === 'jev' ? { ...settings, visionEnabled: false } : settings);
 
 export const setDecisionKeyRequestSchema = z.object({
   token: z.string().trim().max(512).refine(value => !/[\r\n]/.test(value)),
