@@ -71,15 +71,34 @@ describe('authorizePaneAccess', () => {
     expect(decision.reason).toMatch(/shell/);
   });
 
-  it("allows a worker to control the user's browser in its originating window", () => {
+  it("blocks a worker from the operator's browser tab, even in the same window", () => {
     const browser = pane({ sessionId: null, kind: 'browser', missionId: undefined, role: undefined });
     const decision = authorizePaneAccess(worker, browser, 'write');
-    expect(decision.allow).toBe(true);
+    expect(decision.allow).toBe(false);
+    expect(decision.reason).toMatch(/mission/);
   });
 
-  it('allows cross-mission browser navigation within the originating window', () => {
+  it('lets a worker control a browser pane of its OWN mission in its originating window', () => {
+    const own = pane({ sessionId: null, kind: 'browser', missionId: 'm1', role: 'worker' });
+    for (const action of ['read', 'wait', 'write', 'close'] as const) {
+      expect(authorizePaneAccess(worker, own, action).allow).toBe(true);
+    }
+    expect(canListPane(worker, own)).toBe(true);
+  });
+
+  it('keeps a worker out of a browser pane that belongs to another window or mission', () => {
+    const foreignWindow = pane({ sessionId: null, kind: 'browser', missionId: 'm1', ownerWebContentsId: 2 });
+    const foreignMission = pane({ sessionId: null, kind: 'browser', missionId: 'm2' });
+    for (const target of [foreignWindow, foreignMission]) {
+      expect(authorizePaneAccess(worker, target, 'read').allow).toBe(false);
+      expect(authorizePaneAccess(worker, target, 'write').allow).toBe(false);
+      expect(canListPane(worker, target)).toBe(false);
+    }
+  });
+
+  it('blocks cross-mission browser navigation', () => {
     const browser = pane({ sessionId: null, kind: 'browser', missionId: 'm2', role: undefined });
-    expect(authorizePaneAccess(orchestrator, browser, 'write').allow).toBe(true);
+    expect(authorizePaneAccess(orchestrator, browser, 'write').allow).toBe(false);
   });
 
   it('lets the orchestrator navigate browser panes in its own mission', () => {
@@ -173,16 +192,24 @@ describe('authorizePaneAccess — user-opened browser pane', () => {
     expect(authorizePaneAccess(user, userOpenedBrowser, 'write').allow).toBe(true);
   });
 
-  it('lets mission agents use existing tabs from the same originating window', () => {
-    for (const caller of [worker, orchestrator, user]) {
+  it('keeps mission agents out of a user-owned browser surface', () => {
+    for (const caller of [worker, orchestrator]) {
       for (const action of ['read', 'wait', 'write', 'close'] as const) {
-        expect(authorizePaneAccess(caller, userOpenedBrowser, action).allow).toBe(true);
+        expect(authorizePaneAccess(caller, userOpenedBrowser, action).allow).toBe(false);
       }
-      expect(canListPane(caller, userOpenedBrowser)).toBe(true);
+      expect(canListPane(caller, userOpenedBrowser)).toBe(false);
     }
   });
 
-  it('denies foreign and missing Main owner identity before user shortcuts', () => {
+  it("an orchestrator promoted from the operator's own pane keeps the operator's reach in its window", () => {
+    const promoted: CallerCtx = { ...orchestrator, promotedFromUserSession: true };
+    for (const action of ['read', 'write', 'close'] as const) {
+      expect(authorizePaneAccess(promoted, userOpenedBrowser, action).allow).toBe(true);
+    }
+    expect(authorizePaneAccess({ ...promoted, ownerWebContentsId: 2 }, userOpenedBrowser, 'read').allow).toBe(false);
+  });
+
+  it('denies foreign and missing Main owner identity to any caller that has a session', () => {
     for (const caller of [worker, orchestrator, user]) {
       for (const ownerWebContentsId of [undefined, 0, 2]) {
         const target = { ...userOpenedBrowser, ownerWebContentsId };
@@ -190,6 +217,23 @@ describe('authorizePaneAccess — user-opened browser pane', () => {
         expect(canListPane(caller, target)).toBe(false);
       }
       expect(authorizePaneAccess({ ...caller, ownerWebContentsId: undefined }, userOpenedBrowser, 'read').allow).toBe(false);
+    }
+  });
+
+  it("the operator's renderer hand (Jarvis/IPC, role user, no PTY session) keeps its reach in the exact scope", () => {
+    const { sessionId: _session, ...rendererHand } = user;
+    const handCtx: CallerCtx = { ...rendererHand, ownerWebContentsId: undefined };
+    for (const action of ['read', 'wait', 'write', 'close'] as const) {
+      expect(authorizePaneAccess(handCtx, userOpenedBrowser, action).allow).toBe(true);
+    }
+    expect(canListPane(handCtx, userOpenedBrowser)).toBe(true);
+    // O escopo exato continua valendo para quem não tem sessão.
+    expect(authorizePaneAccess(handCtx, { ...userOpenedBrowser, scope: { ...scope, rootRealPath: '/another/workspace' } }, 'read').allow).toBe(false);
+  });
+
+  it('lets the operator\'s own agent pane (role user, with session) use its own window tabs', () => {
+    for (const action of ['read', 'write', 'close'] as const) {
+      expect(authorizePaneAccess(user, userOpenedBrowser, action).allow).toBe(true);
     }
   });
 

@@ -12,9 +12,12 @@ import type { ProjectExecutionScope } from '../../shared/types';
  *  - you may always act on your OWN pane;
  *  - the human's own agents (role 'user') are unrestricted — they act for the user,
  *    and keep that reach while leading a mission they were adopted into;
- *  - browser access stays in the caller's originating window and workspace;
+ *  - a browser pane also requires the caller's originating window (derived by
+ *    Main from its physical session) and the exact workspace scope;
  *  - a worker may never touch a shell pane (the user's terminal);
- *  - other terminal access must stay inside the caller's OWN mission;
+ *  - every other cross-pane access — a browser pane included — must stay inside
+ *    the caller's OWN mission: a worker drives the browser it (or its mission)
+ *    opened, never the operator's tabs or another mission's;
  *  - a worker may read/wait on but never write/close the orchestrator pane.
  */
 
@@ -162,15 +165,20 @@ export function authorizePaneAccess(
     if (!sameExactPaneScope(caller.scope, pane.scope)) {
       return { allow: false, reason: 'browser pane belongs to another project checkout' };
     }
-    if (!Number.isInteger(caller.ownerWebContentsId) ||
-        !Number.isInteger(pane.ownerWebContentsId) ||
-        caller.ownerWebContentsId! <= 0 ||
-        caller.ownerWebContentsId !== pane.ownerWebContentsId) {
+    // The operator's renderer hand (Jarvis / mcp:invoke) is role `user` with no
+    // PTY session, so Main has no physical session to derive a window from; its
+    // reach is the operator's own and stays bounded by the exact scope above.
+    // Every caller that HAS a session must prove its window, failing closed.
+    const rendererHand = caller.role === 'user' && !caller.sessionId;
+    if (!rendererHand &&
+        (!Number.isInteger(caller.ownerWebContentsId) ||
+          !Number.isInteger(pane.ownerWebContentsId) ||
+          caller.ownerWebContentsId! <= 0 ||
+          caller.ownerWebContentsId !== pane.ownerWebContentsId)) {
       return { allow: false, reason: 'browser pane belongs to another originating window' };
     }
-    // Browser control follows the existing tool allowlist and effect policy,
-    // including tabs opened directly by the operator in this same window.
-    return { allow: true };
+    // Falls through to the shared rules: user / promoted orchestrator keep their
+    // reach, everyone else stays inside their own mission.
   }
   // Acting on your own pane is always fine (read your own tail, etc.).
   if (caller.sessionId && pane.sessionId && caller.sessionId === pane.sessionId) {
@@ -194,8 +202,9 @@ export function authorizePaneAccess(
     };
   }
 
-  // Browser control has its own origin boundary above. User shells retain the
-  // existing worker restriction for read (secret capture) and write.
+  // A worker never reaches the user's shell — read (secret capture) or write.
+  // (A browser pane is mission-bound by the rule below: a worker's own is fine,
+  // the operator's tabs are not.)
   if (caller.role === 'worker' && pane.kind === 'shell') {
     return {
       allow: false,

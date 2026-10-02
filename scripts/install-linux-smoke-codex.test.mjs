@@ -15,7 +15,8 @@ afterEach(() => {
   for (const dir of roots.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-describe('verified Linux Codex smoke prerequisite', () => {
+// Estes scripts só rodam em host Linux (exigem /bin/true e recusam outro SO); o CI Linux os executa.
+describe.skipIf(process.platform !== 'linux')('verified Linux Codex smoke prerequisite', () => {
   it('rejects a tampered archive before extraction or PATH publication', () => {
     const dir = root();
     const archive = path.join(dir, 'untrusted.tgz');

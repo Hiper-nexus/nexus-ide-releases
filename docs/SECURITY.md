@@ -141,9 +141,9 @@ npx vitest run src/main/orch/mcp-dispatch-security.test.ts \
 
 ## Authorized worker capabilities (2026-10-02)
 
-Autopilot workers may use native subagents and browser/desktop tools when the
-existing tool policy permits them. Claude/OpenClaude Task restrictions are
-computed at spawn for governed or read-only panes, rather than attached to every
+Autopilot workers may use native subagents and the browser tools of their own
+mission. Claude/OpenClaude Task restrictions are computed at spawn — for governed
+or read-only panes and for the orchestrator — rather than attached to every
 adapter invocation. Native subprocesses inherit their pane's existing authority;
 this change does not grant cross-workspace access or a global MCP profile.
 
@@ -151,10 +151,18 @@ Browser ownership is derived in Main from an exact project scope and a live PTY
 or ACP session. ACP proof includes its Main-owned runtime binding, account,
 provider, incarnation and coordination/execution scopes. A headless caller needs
 a unique live mission coordinator; stale, ambiguous or substituted bindings fail
-closed. Workers can use existing tabs in that authorized window. Personal-profile
-image export still requires its existing isolation/consent rules. The desktop
-loop retains macOS availability, Accessibility permission, per-goal confirmation,
-focus checks, sensitive-field refusal and irreversible-action handback.
+closed. A worker drives the browser panes of its OWN mission in that window; the
+operator's tabs and other missions' tabs stay out of reach (`pane-authz`). The
+operator's renderer hand (Jarvis/`mcp:invoke`, role `user`, no PTY session) keeps
+the operator's reach, bounded by the exact scope. Personal-profile image export
+still requires its existing isolation/consent rules; agent-opened tabs are
+isolated unless the operator turned on sharing.
+
+`nexus_computer_do` stays with the operator's own pane and the orchestrator
+(`assertMayDriveDesktop`): a worker may have been steered by web content, and in
+an approved mission there is no per-goal modal, so the role check is the barrier.
+The loop keeps macOS availability, Accessibility permission, focus checks,
+sensitive-field refusal and irreversible-action handback.
 
 Regression evidence lives in native-subagent-policy, worker-handoff-contract,
 pane-authz, pane-registry-browser-owner, gate-browser-access, tools-browser-workspace

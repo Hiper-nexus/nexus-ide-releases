@@ -552,13 +552,11 @@ export class AcpClient {
     }
     const sessionId = parsed.value.sessionId;
     const raw = result as Record<string, unknown>;
+    // A config list outside our bounds (duplicate ids, >64 options…) must not stop a
+    // session nobody asked to configure. It is kept as "nothing advertised": a later
+    // model/effort selection then fails closed in setSessionConfigOption — never guessed.
     const config = parseAcpConfigOptions(raw.configOptions ?? []);
-    if (!config.ok) {
-      const error = new AcpClientError('protocol', config.detail);
-      this.destroy(error);
-      throw error;
-    }
-    this.sessionConfigById.set(sessionId, config.value);
+    this.sessionConfigById.set(sessionId, config.ok ? config.value : []);
     return sessionId;
   }
 

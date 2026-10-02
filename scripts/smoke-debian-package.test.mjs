@@ -49,7 +49,8 @@ function fixture({ version = '1.2.3', withZip = true } = {}) {
   } };
 }
 
-describe('Debian package smoke host boundary', () => {
+// Estes scripts só rodam em host Linux (exigem /bin/true e recusam outro SO); o CI Linux os executa.
+describe.skipIf(process.platform !== 'linux')('Debian package smoke host boundary', () => {
   it('uses immutable amd64 image and read-only input mounts without forwarding credentials', () => {
     const f = fixture();
     const result = spawnSync('bash', ['scripts/smoke-debian-package.sh'], { cwd: f.root, env: f.env, encoding: 'utf8' });

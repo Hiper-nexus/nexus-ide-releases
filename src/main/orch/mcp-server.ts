@@ -1158,12 +1158,14 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         role: meta?.role,
       },
     );
-    // Free panes keep their native helper tools. Explicit governed/read-only
-    // authority retains the provider restriction without changing the adapter.
+    // Free workers and the operator's own panes keep their native helper tools.
+    // Governed/read-only authority and the orchestrator retain the provider
+    // restriction without changing the adapter.
     extraArgs.push(...nativeSubagentPolicyArgs(adapter, {
       squadCliPolicy: getOrchSettings().squadCliPolicy,
       readOnly: meta?.readOnly,
       nativeReadOnly: meta?.nativeReadOnly,
+      role: meta?.role,
     }));
     const mcpConfig = buildMcpConfig(ctx.token, hubServers);
     const thirdPartyClaudeFamily = isThirdPartyClaudeFamily(

@@ -268,12 +268,20 @@ describe('nexus_computer_do', () => {
     expect(isTerminalApp('Terminator Notes')).toBe(false);
   });
 
-  it('lets an authorized worker run the same desktop loop as its coordinator', async () => {
+  it('refuses workers — only operator/orchestrator drive the desktop', async () => {
     const deps = makeDeps();
-    const out = await toolFor(deps).handler(baseArgs, WORKER_CTX) as { status: string };
-    expect(out.status).toBe('done');
-    expect(deps.control.activate).toHaveBeenCalledWith('MyApp');
-    expect(deps.judge).toHaveBeenCalledTimes(1);
+    await expect(toolFor(deps).handler(baseArgs, WORKER_CTX)).rejects.toThrow(
+      /só a mão do operador ou o orquestrador/,
+    );
+    expect(deps.control.activate).not.toHaveBeenCalled();
+    expect(deps.judge).not.toHaveBeenCalled();
+  });
+
+  it('refuses a worker also through the registry tool (the one agents actually call)', async () => {
+    const tool = buildComputerAutopilotTools().find((item) => item.name === 'nexus_computer_do')!;
+    await expect(tool.handler(baseArgs, WORKER_CTX)).rejects.toThrow(
+      /só a mão do operador ou o orquestrador/,
+    );
   });
 
   it('errors when the app does not come to the foreground', async () => {

@@ -9117,24 +9117,28 @@ export const CURRENT_RELEASE: AppRelease = {
   date: '2026-10-02',
   codename: 'Workers com mais autonomia',
   summary:
-    'Workers podem usar o navegador e o desktop e criar subagentes quando a ' +
-    'CLI oferece esse recurso. O acesso continua vinculado à janela, ao ' +
-    'projeto e à conta da tarefa. Inclui a 0.76.165.',
+    'Workers abrem e verificam o navegador da própria missão e criam ' +
+    'subagentes quando a CLI oferece esse recurso. O acesso continua ' +
+    'vinculado à janela, ao projeto e à conta da tarefa, e o desktop segue ' +
+    'só do operador e do orquestrador. Inclui a 0.76.165.',
   highlights: [
     {
       title: 'Workers executam e verificam a interface',
       detail:
-        'Workers podem abrir e controlar o navegador da janela de origem e ' +
-        'usar o desktop com as ferramentas autorizadas para a tarefa. A ' +
-        'entrega deve informar a página, as interações e a evidência visual; ' +
-        'se a verificação não puder acontecer, a pendência fica explícita.',
+        'Workers abrem e controlam o navegador da própria missão, na janela ' +
+        'de origem. As abas do operador e as de outra missão continuam fora ' +
+        'do alcance deles, e o desktop segue só do operador e do ' +
+        'orquestrador. A entrega deve informar a página, as interações e a ' +
+        'evidência visual; se a verificação não puder acontecer, a pendência ' +
+        'fica explícita.',
     },
     {
       title: 'Subagentes nativos disponíveis',
       detail:
         'Claude e OpenClaude deixam de bloquear Task por padrão. Workers ' +
         'podem usar os subagentes da própria CLI dentro das permissões da ' +
-        'tarefa; o modo governado e as restrições explícitas continuam valendo.',
+        'tarefa; o orquestrador, o modo governado e as restrições ' +
+        'explícitas continuam sem Task.',
     },
   ],
   fixes: [

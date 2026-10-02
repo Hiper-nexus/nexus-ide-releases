@@ -29,6 +29,17 @@ describe('native subagent spawn policy', () => {
       .toEqual(['--disallowedTools', 'Task']);
   });
 
+  it('keeps Task denied to the orchestrator even in free mode: the Maestro delegates through visible panes', () => {
+    expect(nativeSubagentPolicyArgs(claude, { squadCliPolicy: 'operator-choice', role: 'orchestrator' }))
+      .toEqual(['--disallowedTools', 'Task']);
+    expect(nativeSubagentPolicyArgs(openclaude, { squadCliPolicy: undefined, role: 'orchestrator' }))
+      .toEqual(['--disallowed-tools', 'Task']);
+  });
+
+  it.each(['worker', 'user', undefined] as const)('leaves native helpers to a free %s', (role) => {
+    expect(nativeSubagentPolicyArgs(claude, { squadCliPolicy: 'operator-choice', role })).toEqual([]);
+  });
+
   it('never sends Claude flags to a different CLI binary', () => {
     expect(nativeSubagentPolicyArgs({ ...claude, bin: 'codex' }, { squadCliPolicy: 'governed' }))
       .toEqual([]);

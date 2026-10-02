@@ -67,7 +67,12 @@ rl.on('line', (line) => {
   }
 
   if (method === 'session/new') {
-    write({ jsonrpc: '2.0', id, result: { sessionId: 'ses_fake_0001' } });
+    // A harness may advertise a config list that is odd by our bounds (duplicate ids).
+    const odd = behavior === 'odd-config'
+      ? { configOptions: [{ id: 'model', type: 'select', currentValue: 'a', options: [{ value: 'a' }] },
+          { id: 'model', type: 'select', currentValue: 'a', options: [{ value: 'a' }] }] }
+      : {};
+    write({ jsonrpc: '2.0', id, result: { sessionId: 'ses_fake_0001', ...odd } });
     return;
   }
 
@@ -194,6 +199,22 @@ describe('AcpClient — handshake', () => {
       const sessionId = await client.sessionNew(fixtureDir, []);
 
       expect(sessionId).toBe('ses_fake_0001');
+    } finally {
+      await client.shutdown();
+    }
+  });
+
+  test('a config list we cannot parse does not fail session/new when nothing was selected', async () => {
+    const client = spawnFakePeer('odd-config');
+
+    try {
+      await client.initialize();
+      const sessionId = await client.sessionNew(fixtureDir, []);
+
+      expect(sessionId).toBe('ses_fake_0001');
+      expect(client.sessionConfigOptions(sessionId)).toEqual([]);
+      // A selection still fails closed: nothing was advertised, so nothing is guessed.
+      await expect(client.setSessionConfigOption(sessionId, 'model', 'b')).rejects.toMatchObject({ code: 'protocol' });
     } finally {
       await client.shutdown();
     }

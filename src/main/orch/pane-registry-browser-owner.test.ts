@@ -315,7 +315,8 @@ describe('Main-derived browser originating owner', () => {
 
   it('keeps the exact direct-user owner after workspace parking and the following empty pane sync', () => {
     const original = owner(1), latest = owner(2);
-    const caller = renderSession(original, 'direct', 'orchestrator');
+    // A direct operator pane adopted by a mission keeps the operator's reach.
+    const caller: CallerCtx = { ...renderSession(original, 'direct', 'orchestrator'), promotedFromUserSession: true };
     registry.syncPanes([
       { paneId: 'pane-direct', sessionId: 'direct', kind: 'cli-agent', title: 'direct' },
       { paneId: 'parked-browser', sessionId: null, kind: 'browser', title: 'old project' },
@@ -384,17 +385,21 @@ describe('Main-derived browser originating owner', () => {
     expect(registry.callerWithPaneOwner({ ...caller, scope: { ...scope, rootRealPath: '/other' } }).ownerWebContentsId).toBeUndefined();
   });
 
-  it('lists only browser tabs owned by the originating window, including existing user tabs', () => {
+  it("lists only the caller's mission browser tabs owned by the originating window, never the operator's", () => {
     const original = owner(1), foreign = owner(2);
     const caller = renderSession(original, 'worker');
     registry.syncPanes([
       { paneId: 'pane-worker', sessionId: 'worker', kind: 'cli-agent', title: 'worker' },
       { paneId: 'browser-own', sessionId: null, kind: 'browser', title: 'own' },
+      { paneId: 'browser-operator', sessionId: null, kind: 'browser', title: 'operator' },
       { paneId: 'shell-own', sessionId: null, kind: 'shell', title: 'shell' },
     ], original);
+    registry.attachOrchMeta(original, 'browser-own', { missionId: 'mission', role: 'worker', scope });
     registry.syncPanes([{ paneId: 'browser-foreign', sessionId: null, kind: 'browser', title: 'foreign' }], foreign);
+    registry.attachOrchMeta(foreign, 'browser-foreign', { missionId: 'mission', role: 'worker', scope });
     const ids = registry.listVisiblePaneSnapshots({ ...caller, ownerWebContentsId: 2 }).map((pane) => pane.paneId);
     expect(ids).toContain('browser-own');
+    expect(ids).not.toContain('browser-operator');
     expect(ids).not.toContain('browser-foreign');
     expect(ids).not.toContain('shell-own');
     expect(registry.getPaneAuthzInfo('browser-own')?.ownerWebContentsId).toBe(1);

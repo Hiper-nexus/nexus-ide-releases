@@ -58,14 +58,21 @@ describe('pane authorization origin boundary', () => {
 
   it('uses the Main-derived owner for browser access', () => {
     h.panes.set('browser', { paneId: 'browser', kind: 'browser', sessionId: null,
-      scope, ownerWebContentsId: 44 });
+      missionId: 'mission-a', role: 'worker', scope, ownerWebContentsId: 44 });
     const claimedOwner: AgentGateContext & CallerCtx = { ...caller, ownerWebContentsId: 99 };
     expect(authorizePaneRef(claimedOwner, 'browser', 'write').paneId).toBe('browser');
   });
 
+  it("keeps the operator's own tab out of a worker's reach even in the right window", () => {
+    h.panes.set('operator-tab', { paneId: 'operator-tab', kind: 'browser', sessionId: null,
+      scope, ownerWebContentsId: 44 });
+    expect(() => authorizePaneRef(caller, 'operator-tab', 'read')).toThrow(/another mission/);
+    expect(() => authorizePaneRef(caller, 'operator-tab', 'write')).toThrow(/another mission/);
+  });
+
   it('rejects a browser from another originating window', () => {
     h.panes.set('browser', { paneId: 'browser', kind: 'browser', sessionId: null,
-      scope, ownerWebContentsId: 45 });
+      missionId: 'mission-a', role: 'worker', scope, ownerWebContentsId: 45 });
     const claimedOwner: AgentGateContext & CallerCtx = { ...caller, ownerWebContentsId: 45 };
     expect(() => authorizePaneRef(claimedOwner, 'browser', 'write')).toThrow(/another originating window/);
   });
