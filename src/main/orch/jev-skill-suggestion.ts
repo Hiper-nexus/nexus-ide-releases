@@ -8,6 +8,7 @@ import { decisionResultUsage } from '../decision-models/decision-usage';
  * nem executa skill; quem age é o código chamador. FAIL-OPEN: superfície
  * desligada, sem chave, erro ou baixa confiança → null.
  */
+import path from 'node:path';
 import {
   capText,
   judge,
@@ -26,6 +27,7 @@ import {
   GENERATED_INLINE_SKILL_BODIES,
 } from './skill-mirror';
 import type { SkillAsset } from './impeccable-manifest';
+import { scanSkillsDirectory, type SkillEntry } from '../skills/skills-catalog';
 
 export const SKILL_SUGGESTION_MIN_CONFIDENCE = 0.6;
 const SKILL_SUGGESTION_TIMEOUT_MS = 4_000;
@@ -37,6 +39,92 @@ export interface BundledSkillCatalogEntry {
   name: string;
   description: string;
   pkg: string;
+  /**
+   * F-753: skill instalada NO PROJETO — caminho do SKILL.md relativo à raiz
+   * (`.claude/skills/<nome>/SKILL.md`), que qualquer CLI consegue ler.
+   */
+  path?: string;
+}
+
+/** Pacote das skills que moram no projeto (não vêm com o Nexus). */
+export const PROJECT_SKILL_PKG = 'project';
+
+/** Onde o painel Skills e o catálogo do Jev procuram skills do projeto. */
+const PROJECT_SKILL_DIRS = ['.claude/skills', '.nexus/skills'] as const;
+
+type ProjectSkillScan = (dir: string) => readonly Pick<SkillEntry, 'name' | 'description'>[];
+
+function unquoteDescription(raw: string): string {
+  const trimmed = raw.trim();
+  const quoted = /^(['"])([\s\S]*)\1$/.exec(trimmed);
+  return (quoted ? quoted[2] : trimmed).trim();
+}
+
+/**
+ * O hook do "+ Pane" pergunta a cada pedido: a pasta é relida no máximo uma
+ * vez por minuto por raiz (instalar uma skill nova aparece no minuto seguinte).
+ */
+const PROJECT_SKILL_CACHE_TTL_MS = 60_000;
+const PROJECT_SKILL_CACHE_MAX_ROOTS = 16;
+const projectSkillCache = new Map<string, { at: number; catalog: BundledSkillCatalogEntry[] }>();
+
+export function __resetProjectSkillCacheForTests(): void {
+  projectSkillCache.clear();
+}
+
+/**
+ * F-753: as skills que o operador instalou no projeto (o que o painel Skills
+ * lista: `.claude/skills` e `.nexus/skills`), pelo mesmo leitor seguro do
+ * painel (sem symlink, SKILL.md dentro da raiz). Sem raiz, nada.
+ */
+export function listProjectSkillCatalog(
+  projectRoot: string | undefined,
+  scan: ProjectSkillScan = scanSkillsDirectory,
+  now: number = Date.now(),
+): BundledSkillCatalogEntry[] {
+  if (!projectRoot) return [];
+  // Só o leitor real passa pelo cache; o injetado (testes) lê sempre.
+  const cacheable = scan === scanSkillsDirectory;
+  const cached = cacheable ? projectSkillCache.get(projectRoot) : undefined;
+  if (cached && now - cached.at < PROJECT_SKILL_CACHE_TTL_MS) return cached.catalog;
+  const catalog = scanProjectSkillDirs(projectRoot, scan);
+  if (cacheable) {
+    projectSkillCache.delete(projectRoot);
+    projectSkillCache.set(projectRoot, { at: now, catalog });
+    if (projectSkillCache.size > PROJECT_SKILL_CACHE_MAX_ROOTS) {
+      const oldest = projectSkillCache.keys().next().value;
+      if (oldest !== undefined) projectSkillCache.delete(oldest);
+    }
+  }
+  return catalog;
+}
+
+function scanProjectSkillDirs(
+  projectRoot: string,
+  scan: ProjectSkillScan,
+): BundledSkillCatalogEntry[] {
+  const catalog: BundledSkillCatalogEntry[] = [];
+  const seen = new Set<string>();
+  for (const dir of PROJECT_SKILL_DIRS) {
+    let entries: readonly Pick<SkillEntry, 'name' | 'description'>[];
+    try {
+      entries = scan(path.join(projectRoot, ...dir.split('/')));
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const key = entry.name.toLocaleLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      catalog.push({
+        name: entry.name,
+        description: unquoteDescription(entry.description).slice(0, DESCRIPTION_MAX_CHARS),
+        pkg: PROJECT_SKILL_PKG,
+        path: `${dir}/${entry.name}/SKILL.md`,
+      });
+    }
+  }
+  return catalog;
 }
 
 /** Lê `name:`/`description:` do frontmatter YAML de um SKILL.md. */
@@ -130,12 +218,16 @@ export interface SkillSuggestionDeps {
   enabled?: () => boolean;
   hasKey?: () => boolean;
   record?: typeof recordJevDecision;
+  /** Leitor das skills do projeto (testes); default = o do painel Skills. */
+  scanProjectSkills?: ProjectSkillScan;
 }
 
 export interface SkillSuggestionPick {
   name: string;
   pkg: string;
   confidence: number;
+  /** Skill do projeto: SKILL.md relativo à raiz (F-753). */
+  path?: string;
 }
 
 /**
@@ -148,16 +240,75 @@ export function allowedSkillCatalog(
   allowedSkills: string[] | null,
   manifests?: Record<string, Record<string, SkillAsset>>,
 ): BundledSkillCatalogEntry[] {
+  return filterByGrants(listBundledSkillCatalog(manifests), allowedSkills);
+}
+
+/**
+ * F-753: as skills instaladas no projeto, filtradas pelos mesmos grants (squad
+ * governado só recebe a que eles nomeiam). Vão numa pergunta PRÓPRIA no mesmo
+ * lote do Jev: misturadas às bundled (74 opções) a confiança se espalhava —
+ * medido em 60 tarefas reais do hipergo, 8 escolhas ≥ 0,7 contra 12 só com as
+ * bundled; em duas perguntas, 21 (11 bundled + 10 do projeto).
+ */
+export function allowedProjectSkillCatalog(
+  allowedSkills: string[] | null,
+  projectRoot: string | undefined,
+  scan?: ProjectSkillScan,
+): BundledSkillCatalogEntry[] {
+  return filterByGrants(listProjectSkillCatalog(projectRoot, scan), allowedSkills);
+}
+
+function filterByGrants(
+  catalog: readonly BundledSkillCatalogEntry[],
+  allowedSkills: string[] | null,
+): BundledSkillCatalogEntry[] {
   const allowed =
     allowedSkills === null
       ? null
       : new Set(allowedSkills.map((s) => s.trim().toLocaleLowerCase()));
-  return listBundledSkillCatalog(manifests).filter(
+  return catalog.filter(
     (entry) =>
       !allowed ||
       allowed.has(entry.name.toLocaleLowerCase()) ||
       allowed.has(entry.pkg.toLocaleLowerCase()),
   );
+}
+
+/** Chave da pergunta das skills do projeto no lote do Jev. */
+export const PROJECT_SKILL_QUESTION = 'projectSkill';
+
+/**
+ * As duas perguntas de skill do lote: bundled (`skill`) e do projeto
+ * (`projectSkill`), cada uma só quando o seu catálogo não está vazio.
+ */
+export function buildSkillSuggestionQuestions(
+  bundled: BundledSkillCatalogEntry[],
+  project: BundledSkillCatalogEntry[],
+): Record<string, JevQuestion> {
+  return {
+    ...(bundled.length > 0 ? { skill: buildSkillSuggestionQuestion(bundled) } : {}),
+    ...(project.length > 0
+      ? { [PROJECT_SKILL_QUESTION]: buildSkillSuggestionQuestion(project) }
+      : {}),
+  };
+}
+
+/**
+ * A skill do lote: a escolha mais confiante entre as duas perguntas (empate
+ * fica com a do projeto, que o operador instalou para ESTE projeto).
+ */
+export function parseSkillSuggestions(
+  answers: Record<string, JevAnswer>,
+  bundled: BundledSkillCatalogEntry[],
+  project: BundledSkillCatalogEntry[],
+): SkillSuggestionPick | null {
+  const fromBundled = bundled.length > 0 ? parseSkillSuggestion(answers, bundled) : null;
+  const fromProject =
+    project.length > 0 ? parseSkillSuggestion(answers, project, PROJECT_SKILL_QUESTION) : null;
+  if (fromProject && (!fromBundled || fromProject.confidence >= fromBundled.confidence)) {
+    return fromProject;
+  }
+  return fromBundled;
 }
 
 /**
@@ -188,8 +339,9 @@ export function buildSkillSuggestionQuestion(
 export function parseSkillSuggestion(
   answers: Record<string, JevAnswer>,
   catalog: BundledSkillCatalogEntry[],
+  questionKey = 'skill',
 ): SkillSuggestionPick | null {
-  const answer = answers['skill'];
+  const answer = answers[questionKey];
   if (answer?.type !== 'choice') return null;
   const eligible = catalog.slice(0, CRITERIA_SKILLS_MAX);
   if (
@@ -204,6 +356,7 @@ export function parseSkillSuggestion(
     name: answer.choice,
     pkg: picked?.pkg ?? '',
     confidence: answer.confidence,
+    ...(picked?.path ? { path: picked.path } : {}),
   };
 }
 
@@ -211,6 +364,8 @@ export async function suggestSkillForTask(
   task: string,
   opts: {
     allowedSkills: string[] | null;
+    /** Raiz do projeto: as skills instaladas nele entram no catálogo (F-753). */
+    projectRoot?: string;
     sessionId?: string;
     missionId?: string;
     deps?: SkillSuggestionDeps;
@@ -223,26 +378,32 @@ export async function suggestSkillForTask(
   if (!task.trim() || !enabled() || !hasKey()) return null;
 
   const catalog = allowedSkillCatalog(opts.allowedSkills);
-  if (catalog.length === 0) return null;
+  const projectCatalog = allowedProjectSkillCatalog(
+    opts.allowedSkills,
+    opts.projectRoot,
+    opts.deps?.scanProjectSkills,
+  );
+  const questions = buildSkillSuggestionQuestions(catalog, projectCatalog);
+  if (Object.keys(questions).length === 0) return null;
 
   try {
     const result = await judgeFn({
       state: { task: capText(task, TASK_MAX_CHARS) },
-      questions: { skill: buildSkillSuggestionQuestion(catalog) },
+      questions,
       timeoutMs: SKILL_SUGGESTION_TIMEOUT_MS,
       surface: 'taskRouting',
       sessionId: opts.sessionId,
       missionId: opts.missionId,
     });
     if (!result) return null;
-    const picked = parseSkillSuggestion(result.answers, catalog);
+    const picked = parseSkillSuggestions(result.answers, catalog, projectCatalog);
     if (!picked) return null;
     record({
       surface: 'taskRouting',
       sessionId: opts.sessionId,
       missionId: opts.missionId,
       model: result.model,
-      questions: ['skill'],
+      questions: Object.keys(questions),
       probabilities: jevAnswerProbabilities(result.answers),
       confidence: jevAnswerConfidences(result.answers),
       decision: `skill:${picked.name}`,

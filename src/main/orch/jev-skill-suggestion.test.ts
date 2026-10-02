@@ -1,8 +1,20 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
+import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import type { JevResult } from '../jev/jev-client';
 import type { SkillAsset } from './impeccable-manifest';
 import {
+  PROJECT_SKILL_QUESTION,
+  __resetProjectSkillCacheForTests,
+  allowedProjectSkillCatalog,
+  allowedSkillCatalog,
+  buildSkillSuggestionQuestions,
   listBundledSkillCatalog,
+  listProjectSkillCatalog,
+  parseSkillSuggestions,
   suggestSkillForTask,
 } from './jev-skill-suggestion';
 
@@ -32,6 +44,132 @@ function jevResult(answers: JevResult['answers']): JevResult {
 }
 
 const on = { enabled: () => true, hasKey: () => true };
+
+describe('skills do projeto no catálogo do Jev (F-753)', () => {
+  // 02/10: as 46 skills bmad do projeto só chegavam a um agente arrastadas
+  // à mão pelo painel; o Jev escolhia só entre as que vêm com o Nexus.
+  const scan = (dir: string) => {
+    const norm = dir.replaceAll('\\', '/');
+    if (norm.endsWith('/proj/.claude/skills')) {
+      return [
+        { name: 'bmad-create-prd', description: "'Create a PRD from scratch.'" },
+        { name: 'brainstorming', description: 'project brainstorming flavour' },
+      ];
+    }
+    if (norm.endsWith('/proj/.nexus/skills')) {
+      return [
+        { name: 'deploy-checklist', description: 'Run the deploy checklist.' },
+        { name: 'bmad-create-prd', description: 'duplicate in .nexus' },
+      ];
+    }
+    return [];
+  };
+  const bundled = {
+    superpowers: manifest({
+      'brainstorming/SKILL.md': SKILL_MD('brainstorming', 'bundled brainstorming'),
+      'writing-plans/SKILL.md': SKILL_MD('writing-plans', 'bundled plans'),
+    }),
+  };
+
+  it('lê .claude/skills e .nexus/skills com o caminho relativo do SKILL.md', () => {
+    expect(listProjectSkillCatalog('/w/proj', scan)).toEqual([
+      {
+        name: 'bmad-create-prd',
+        description: 'Create a PRD from scratch.',
+        pkg: 'project',
+        path: '.claude/skills/bmad-create-prd/SKILL.md',
+      },
+      {
+        name: 'brainstorming',
+        description: 'project brainstorming flavour',
+        pkg: 'project',
+        path: '.claude/skills/brainstorming/SKILL.md',
+      },
+      {
+        name: 'deploy-checklist',
+        description: 'Run the deploy checklist.',
+        pkg: 'project',
+        path: '.nexus/skills/deploy-checklist/SKILL.md',
+      },
+    ]);
+    expect(listProjectSkillCatalog(undefined, scan)).toEqual([]);
+  });
+
+  it('squad governado continua só com o que os grants nomeiam, nos dois catálogos', () => {
+    const grants = ['writing-plans', 'deploy-checklist'];
+    expect(allowedProjectSkillCatalog(grants, '/w/proj', scan).map((entry) => entry.name)).toEqual([
+      'deploy-checklist',
+    ]);
+    expect(allowedSkillCatalog(grants, bundled).map((entry) => entry.name)).toEqual(['writing-plans']);
+  });
+
+  it('o projeto é uma pergunta própria no lote: misturado, a confiança se espalhava', () => {
+    const project = allowedProjectSkillCatalog(null, '/w/proj', scan);
+    const questions = buildSkillSuggestionQuestions(allowedSkillCatalog(null, bundled), project);
+    expect(Object.keys(questions)).toEqual(['skill', PROJECT_SKILL_QUESTION]);
+    const projectCriteria = (questions[PROJECT_SKILL_QUESTION] as { criteria: Record<string, unknown> }).criteria;
+    expect(Object.keys(projectCriteria)).toEqual([
+      'bmad-create-prd',
+      'brainstorming',
+      'deploy-checklist',
+      'none',
+    ]);
+    expect(Object.keys(buildSkillSuggestionQuestions(allowedSkillCatalog(null, bundled), []))).toEqual([
+      'skill',
+    ]);
+  });
+
+  it('vence a escolha mais confiante; empate fica com a do projeto, com o caminho', () => {
+    const catalog = allowedSkillCatalog(null, bundled);
+    const project = allowedProjectSkillCatalog(null, '/w/proj', scan);
+    const answers = (bundledConfidence: number, projectConfidence: number) => ({
+      skill: { type: 'choice' as const, choice: 'writing-plans', confidence: bundledConfidence, probabilities: {} },
+      [PROJECT_SKILL_QUESTION]: {
+        type: 'choice' as const,
+        choice: 'bmad-create-prd',
+        confidence: projectConfidence,
+        probabilities: {},
+      },
+    });
+    expect(parseSkillSuggestions(answers(0.74, 0.82), catalog, project)).toEqual({
+      name: 'bmad-create-prd',
+      pkg: 'project',
+      confidence: 0.82,
+      path: '.claude/skills/bmad-create-prd/SKILL.md',
+    });
+    expect(parseSkillSuggestions(answers(0.9, 0.7), catalog, project)?.name).toBe('writing-plans');
+    expect(parseSkillSuggestions(answers(0.8, 0.8), catalog, project)?.name).toBe('bmad-create-prd');
+    // A do projeto abaixo do piso não derruba a bundled confiante.
+    expect(parseSkillSuggestions(answers(0.75, 0.4), catalog, project)?.name).toBe('writing-plans');
+  });
+
+  it('o leitor real relê a pasta no máximo uma vez por minuto por raiz', () => {
+    getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.skillsCatalog, true);
+    __resetProjectSkillCacheForTests();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-project-skills-'));
+    try {
+      const install = (name: string) => {
+        const dir = path.join(root, '.claude', 'skills', name);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, 'SKILL.md'), SKILL_MD(name, `${name} skill`));
+      };
+      install('bmad-index-docs');
+      const t0 = 1_000_000;
+      expect(listProjectSkillCatalog(root, undefined, t0).map((e) => e.name)).toEqual(['bmad-index-docs']);
+      install('bmad-create-prd');
+      expect(listProjectSkillCatalog(root, undefined, t0 + 59_000).map((e) => e.name)).toEqual([
+        'bmad-index-docs',
+      ]);
+      expect(listProjectSkillCatalog(root, undefined, t0 + 60_000).map((e) => e.name).sort()).toEqual([
+        'bmad-create-prd',
+        'bmad-index-docs',
+      ]);
+    } finally {
+      __resetProjectSkillCacheForTests();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('listBundledSkillCatalog', () => {
   it('parses frontmatter name/description incl. sub-skills, dedupes and caps', () => {
