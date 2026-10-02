@@ -30,6 +30,7 @@ describe('Linux preview workflow separation', () => {
     // As dependências ficam declaradas nos pacotes, não só presentes no runner.
     expect(workflow).toMatch(/dpkg-deb -f "\$DEB" Depends \| grep -Eq .*desktop-file-utils/);
     expect(workflow).toMatch(/rpm -qpR "\$RPM" \| grep -Eq '\^desktop-file-utils/);
+    expect(workflow).toMatch(/rpm -qpR "\$RPM" \| grep -Eq '\^alsa-lib/);
     expect(workflow).toContain('python3 scripts/extract-linux-zip.py');
     expect(workflow).toContain('scripts/smoke-packaged-app.mjs --app "$ZIP_BINARY"');
     expect(workflow.indexOf('--app "$ZIP_BINARY"')).toBeLessThan(workflow.indexOf('node scripts/collect-linux-preview.mjs'));

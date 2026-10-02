@@ -50,6 +50,7 @@ describe('protected Linux release candidate worker', () => {
     // As dependências ficam declaradas nos pacotes, não só presentes no runner.
     expect(workflow).toMatch(/dpkg-deb -f "\$DEB" Depends \| grep -Eq .*desktop-file-utils/);
     expect(workflow).toMatch(/rpm -qpR "\$RPM" \| grep -Eq '\^desktop-file-utils/);
+    expect(workflow).toMatch(/rpm -qpR "\$RPM" \| grep -Eq '\^alsa-lib/);
     expect(workflow).toContain('node scripts/verify-linux-desktop-identity.mjs');
     expect(workflow.indexOf('sudo apt-get install --no-install-recommends -y "$DEB"')).toBeLessThan(workflow.indexOf('node scripts/verify-linux-desktop-identity.mjs'));
     expect(workflow).toContain('rpm -qpl "$RPM" | grep -Fxq /usr/share/applications/nexus-ide.desktop');

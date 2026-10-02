@@ -240,8 +240,22 @@ export function createLinuxDebMakerConfig(): MakerDebConfig {
   };
 }
 
+/**
+ * O RPM acrescenta aos defaults do instalador (gtk3, nss, libdrm, mesa-libgbm,
+ * at-spi2-core…) o que o Electron liga direto e o instalador não conhece:
+ * `alsa-lib` (libasound.so.2). Sem ela, num Fedora enxuto o app nem abre
+ * ("error while loading shared libraries: libasound.so.2"). No DEB a
+ * libasound2 já vem pelas dependências do GTK.
+ */
+export const LINUX_RPM_EXTRA_REQUIRES = ['alsa-lib'];
+
 export function createLinuxRpmMakerConfig(): MakerRpmConfig {
-  return { options: { requires: [...LINUX_RUNTIME_DEPENDENCIES], ...LINUX_DESKTOP_IDENTITY } };
+  return {
+    options: {
+      requires: [...LINUX_RUNTIME_DEPENDENCIES, ...LINUX_RPM_EXTRA_REQUIRES],
+      ...LINUX_DESKTOP_IDENTITY,
+    },
+  };
 }
 
 export async function notarizeMacDmgArtifacts(

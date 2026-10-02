@@ -119,7 +119,8 @@ describe('Linux sandbox packaging', () => {
     // desktop-file-utils: sem o índice atualizado na instalação o portal do
     // desktop não oferece o Nexus para nexus:// (F-740).
     expect(createLinuxDebMakerConfig().options?.depends).toEqual(['bubblewrap', 'desktop-file-utils']);
-    expect(createLinuxRpmMakerConfig().options?.requires).toEqual(['bubblewrap', 'desktop-file-utils']);
+    // alsa-lib: o Electron liga libasound.so.2 direto; sem ela um Fedora enxuto não abre o app.
+    expect(createLinuxRpmMakerConfig().options?.requires).toEqual(['bubblewrap', 'desktop-file-utils', 'alsa-lib']);
   });
 
   it('ships the brand icon instead of the installer default Electron icon', () => {

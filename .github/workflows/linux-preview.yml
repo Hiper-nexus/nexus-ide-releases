@@ -176,6 +176,7 @@ jobs:
           test "$(rpm -qp --queryformat '%{ARCH}' "$RPM")" = x86_64
           rpm -qpR "$RPM" | grep -Eq '^bubblewrap([[:space:]]|$)'
           rpm -qpR "$RPM" | grep -Eq '^desktop-file-utils([[:space:]]|$)'
+          rpm -qpR "$RPM" | grep -Eq '^alsa-lib([[:space:]]|$)'
           sudo apt-get install --no-install-recommends -y "$DEB"
           test "$(dpkg-query -W -f='${Version}' nexus-ide)" = "$RELEASE_VERSION"
           # Installed desktop identity: brand icon and the nexus:// login handler.
