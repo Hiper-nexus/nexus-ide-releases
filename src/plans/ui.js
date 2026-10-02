@@ -17,7 +17,7 @@ export function renderPlans(section, view) {
 
 export async function initializePlans(fetchImpl = globalThis.fetch, timeoutMs = 8000) {
   const section = document.getElementById('planos');
-  if (!section) return;
+  if (!section) return null;
   let view;
   try {
     const response = await fetchImpl(STATUS_URL, {
@@ -31,4 +31,5 @@ export async function initializePlans(fetchImpl = globalThis.fetch, timeoutMs = 
     view = { state: PLAN_STATE.ERROR };
   }
   renderPlans(section, view);
+  return view;
 }

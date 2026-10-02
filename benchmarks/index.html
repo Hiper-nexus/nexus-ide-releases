@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#080709">
+<title>Benchmarks de modelos de IA para código, com fonte · NexusIDE</title>
+<meta name="description" content="Os números oficiais que os fabricantes publicaram (DeepSWE, Terminal-Bench e SWE-bench Verified) e que o NexusIDE usa para escolher o modelo de cada tarefa. Cada número com a fonte primária e a data da coleta.">
+<link rel="canonical" href="https://nexuside.app/benchmarks/">
+<link rel="icon" href="/favicon.svg">
+<meta property="og:title" content="Benchmarks com fonte e sem maquiagem · NexusIDE">
+<meta property="og:description" content="Números oficiais dos fabricantes, cada um com a fonte primária e a data da coleta.">
+<meta property="og:image" content="https://nexuside.app/og-product.png">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://nexuside.app/benchmarks/">
+<meta name="twitter:card" content="summary_large_image">
+<script type="module" src="/src/pages.js"></script>
+</head>
+<body class="doc-page">
+<a class="skip" href="#main">Pular para o conteúdo</a>
+<header class="nav"><a class="brand" href="/"><img src="/favicon.svg" width="32" height="32" alt="">nexus<span class="brand-ide">IDE</span></a><nav class="nav-links" aria-label="Principal"><a href="/#recursos">O produto</a><a href="/benchmarks/" aria-current="page">Benchmarks</a><a href="/comparacao/">Comparação</a><a href="/#planos">Planos</a><a href="/conta/">Minha conta</a><a class="button button-white" href="/#download" data-recommended-download>Baixar NexusIDE ↗</a></nav></header>
+<main id="main" class="doc-main">
+<section class="doc-intro" aria-labelledby="bench-title">
+<h1 id="bench-title"><small class="section-eyebrow pixel">BENCHMARKS</small>Números oficiais, com fonte e sem maquiagem.</h1>
+<p class="doc-lede">O NexusIDE escolhe o modelo certo para cada tarefa. Estes são os resultados que os próprios fabricantes publicaram e que o Nexus usa nessa escolha: <!--BENCHMARK_COUNT--> modelos, cada um com a fonte primária.</p>
+</section>
+
+<aside class="doc-note" aria-label="Como ler esta página">
+<ul>
+<li><strong>Coletados em <!--BENCHMARK_DATE-->.</strong> Os fabricantes publicam modelos novos o tempo todo; a data diz de quando é cada número.</li>
+<li><strong>São números dos fabricantes, não medições do Nexus.</strong> Cada fabricante roda o teste do jeito dele.</li>
+<li><strong>Só entram benchmarks comparáveis.</strong> Versões diferentes do mesmo teste não se comparam, então usamos apenas DeepSWE v1.1, Terminal-Bench 2.1 e SWE-bench Verified.</li>
+<li><strong>Traço (—) quer dizer que o fabricante não publicou.</strong> Nunca estimamos um número.</li>
+</ul>
+</aside>
+
+<section class="bench-section" aria-labelledby="bench-table-title">
+<h2 id="bench-table-title" class="sr-only">Tabela de benchmarks</h2>
+<!--BENCHMARK_FILTERS-->
+<p class="bench-count mono" id="bench-count" aria-live="polite"></p>
+<div class="bench-scroll" role="region" aria-label="Tabela de benchmarks (role para o lado em telas pequenas)" tabindex="0">
+<!--BENCHMARK_TABLE-->
+</div>
+<!--BENCHMARK_NOTES-->
+</section>
+
+<section class="doc-section" aria-labelledby="how-title">
+<h2 id="how-title"><small class="section-eyebrow pixel">COMO O NEXUS USA</small>O número ajuda. A tarefa decide.</h2>
+<ol class="doc-steps">
+<li><h3>A tarefa escolhe o modelo.</h3><p>O roteador lê o pedido (tamanho, especialidade e risco) e escolhe entre os modelos das CLIs que você conectou, com as suas próprias contas.</p></li>
+<li><h3>Qualidade pesa mais que a ordem da lista.</h3><p>A nota de qualidade vem destes números. Modelo sem número publicado recebe uma nota neutra, nunca uma nota inventada.</p></li>
+<li><h3>Barato escreve, caro revisa.</h3><p>Tarefa de rotina vai para modelos rápidos e baratos. Revisão e tarefa crítica vão para os modelos de topo.</p></li>
+</ol>
+</section>
+
+<section class="doc-section radar" aria-labelledby="radar-title">
+<h2 id="radar-title"><small class="section-eyebrow pixel">EM CONSTRUÇÃO</small>Radar da comunidade.</h2>
+<p class="doc-lede">O que os números dos fabricantes não mostram é como cada modelo se comporta no dia a dia: a velocidade, o tempo até a primeira resposta e a taxa de falha. A ideia é medir isso com quem usa o Nexus.</p>
+<ul class="doc-checks">
+<li>Só com a sua permissão. Nada é enviado por padrão.</li>
+<li>Apenas medidas (tokens por segundo, tempo até a primeira resposta, falhas). Nunca o conteúdo de um prompt, de um código ou de uma conversa.</li>
+<li>Sem identificador. Só publicamos um modelo quando há medidas suficientes, e a página mostra quantas existem.</li>
+</ul>
+<p class="doc-fine"><strong>Ainda não existe e não tem data.</strong> Hoje o Nexus não coleta nada para isso. Quando existir, o aviso aparece aqui.</p>
+</section>
+
+<section class="doc-cta" aria-label="Próximos passos">
+<h2>Veja o Nexus escolher por você.</h2>
+<div class="doc-cta-actions"><a class="button button-white" href="/#download" data-recommended-download>Baixar NexusIDE ↗</a><a class="button button-outline" href="/#planos">Ver o teste e os planos</a><a class="link-arrow" href="/comparacao/">Comparação honesta com outros apps →</a></div>
+</section>
+</main>
+<footer class="footer"><a class="brand" href="/"><img src="/favicon.svg" width="24" height="24" alt="">nexus<span class="brand-ide">IDE</span></a><span class="mono">SUA IDEIA NO COMANDO.</span><div><a href="/benchmarks/">Benchmarks</a><a href="/comparacao/">Comparação</a><a href="/privacidade">Privacidade do site</a><a href="/termos">Sobre este site</a></div></footer>
+</body>
+</html>

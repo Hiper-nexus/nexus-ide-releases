@@ -155,3 +155,7 @@
 .plan-trial>.plan-note{margin-bottom:var(--s4)}
 .plan-pro>.plain-benefits{margin-bottom:var(--s4)}
 @media(max-width:1150px){.plan-trial{padding-bottom:var(--s3)}}
+/* Prova do hero: oferta e frescor da release, lidas ao vivo (escondida até haver o que mostrar). */
+.hero-proof{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin:20px 0 0;max-width:46ch;font-size:12px;line-height:1.5;letter-spacing:.04em;color:var(--muted)}.hero-proof[hidden]{display:none}.hero-proof span:first-child::before{content:'';display:inline-block;width:6px;height:6px;margin-right:8px;border-radius:50%;background:var(--pink);vertical-align:middle}.hero-proof-sep{width:1px;height:12px;background:var(--strong)}
+@media(max-width:760px){.hero-proof{justify-content:center;text-align:center;margin-left:auto;margin-right:auto}.hero-proof-sep{display:none}}
+.plans-compare{margin-top:24px;text-align:center}

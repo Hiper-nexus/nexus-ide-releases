@@ -63,7 +63,9 @@ export async function initializeDownloads() {
     renderDownloads(catalog, device);
     const date = Number.isFinite(Date.parse(payload.checkedAt)) ? new Date(payload.checkedAt).toLocaleDateString('pt-BR') : '';
     status.textContent = payload.source === 'github' ? 'Catálogo consultado no GitHub. Somente versões estáveis publicadas.' : `Última consulta disponível${date ? `: ${date}` : ''}. Confira novas versões no GitHub.`;
+    return catalog;
   } catch {
     status.textContent = 'A consulta ao vivo está indisponível. Mostrando o último catálogo verificado; confira novas versões no GitHub.';
+    return snapshot.catalog;
   }
 }

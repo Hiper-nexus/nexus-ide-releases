@@ -5,12 +5,14 @@ import { buildMarquee } from './sorteio/marquee.js';
 import { startDrawSign } from './sorteio/reel.js';
 import { initializeDownloads } from './downloads/ui.js';
 import { initializePlans } from './plans/ui.js';
+import { initializeHeroProof } from './hero/proof.js';
 import './voice/demo.js';
 
 buildMarquee(document.getElementById('prize-marquee'));
 startDrawSign(document.getElementById('prize-draw'));
-void initializeDownloads();
-void initializePlans();
+const downloadsReady = initializeDownloads();
+const plansReady = initializePlans();
+void initializeHeroProof({ status: plansReady, releases: downloadsReady });
 
 const cases={
   app:{name:'app de agenda',folder:'agenda',brief:'Uma agenda com cadastro de clientes e horários disponíveis.',plan:['Definir cadastro e regras de horário.','Separar interface e persistência.','Escrever os critérios de revisão.'],build:['Criar a tela de agenda.','Validar disponibilidade no serviço.','Cobrir conflitos de horário com testes.'],review:'Verificar sobreposição de horários, acesso aos dados e funcionamento da interface.',result:'Agenda pronta para sua revisão.'},
