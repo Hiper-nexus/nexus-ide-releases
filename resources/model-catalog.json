@@ -1,0 +1,502 @@
+{
+  "version": 1,
+  "updatedAt": "2026-09-29T00:00:00.000Z",
+  "adapters": {
+    "claude": {
+      "default": "claude-sonnet-5",
+      "models": [
+        {
+          "id": "claude-opus-5-5",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
+          "id": "claude-opus-5",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
+          "id": "claude-fable-5-1",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote",
+          "warning": "Assinatura Max: até 50% da cota semanal (não incluso no Pro) — rota automática só em revisão cruzada e fallback do crítico."
+        },
+        {
+          "id": "claude-mythos-5-1",
+          "availability": "api-only",
+          "costTier": "high",
+          "source": "remote",
+          "warning": "Trusted-access only: o roteador automático evita este modelo. Só use se escolher manualmente."
+        },
+        {
+          "id": "claude-fable-5",
+          "availability": "api-only",
+          "costTier": "high",
+          "source": "remote",
+          "warning": "Saiu do free tier / API-only: o roteador automático evita este modelo. Só use se escolher manualmente e aceitar o custo."
+        },
+        {
+          "id": "claude-opus-4-8",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "nexus-eval"
+        },
+        {
+          "id": "claude-opus-4-7",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
+          "id": "claude-sonnet-5-5",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        },
+        {
+          "id": "claude-sonnet-5",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        },
+        {
+          "id": "claude-sonnet-4-6",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        },
+        {
+          "id": "claude-haiku-4-5",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "nexus-eval"
+        }
+      ]
+    },
+    "codex": {
+      "default": "gpt-6.1-sol",
+      "models": [
+        {
+          "id": "gpt-6.1-sol",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
+          "id": "gpt-6-sol",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
+          "id": "gpt-6-luna",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        },
+        {
+          "id": "gpt-6-astra",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote",
+          "warning": "Topo da OpenAI, caro: gasta a cota do Codex mais rápido — fora da rota automática, só quando pedido pelo nome."
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote",
+          "warning": "Topo da linha 5.6 — use em hard/critical; custo alto."
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        }
+      ]
+    },
+    "grok": {
+      "default": "grok-4.7",
+      "models": [
+        {
+          "id": "grok-4.7",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
+          "id": "grok-4.7-build-fast",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote",
+          "warning": "Variante fast do 4.7 — 2x o preço, não é opção barata."
+        },
+        {
+          "id": "grok-4.6",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
+          "id": "grok-4.5",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote",
+          "warning": "Modelo novo da xAI — confirme pricing/tier antes de tornar default."
+        },
+        {
+          "id": "grok-composer-2.5-fast",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        }
+      ]
+    },
+    "glm": {
+      "default": "glm-5.3",
+      "models": [
+        {
+          "id": "glm-5.3",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "glm-5.3-flash",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "glm-5.2",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "nexus-eval"
+        },
+        {
+          "id": "glm-4.7",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "glm-4.6",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "glm-4.5-air",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        }
+      ]
+    },
+    "glm-flash": {
+      "default": "glm-5.3-flash[1m]",
+      "models": [
+        {
+          "id": "glm-5.3-flash[1m]",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "glm-5.3-flash",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "glm-4.7-flash[1m]",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "glm-4.7-flash",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        }
+      ]
+    },
+    "agy": {
+      "default": "gemini-3.8-flash-high",
+      "models": [
+        {
+          "id": "gemini-3.8-flash-high",
+          "availability": "cheap",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
+          "id": "gemini-3.8-flash-medium",
+          "availability": "cheap",
+          "costTier": "medium",
+          "source": "remote"
+        },
+        {
+          "id": "gemini-3.8-flash-low",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "gemini-3.7-flash-low",
+          "availability": "free",
+          "costTier": "free",
+          "source": "remote"
+        },
+        {
+          "id": "gemini-3.7-flash-high",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "gemini-3.7-flash-medium",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "gemini-3.6-flash-low",
+          "availability": "free",
+          "costTier": "free",
+          "source": "remote"
+        },
+        {
+          "id": "gemini-3.6-flash-high",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "gemini-3.6-flash-medium",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        }
+      ]
+    },
+    "kimi": {
+      "default": "kimi-code/k3",
+      "models": [
+        {
+          "id": "kimi-code/k3",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        },
+        {
+          "id": "kimi-code/kimi-for-coding",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "kimi-code/kimi-for-coding-highspeed",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        }
+      ]
+    },
+    "devin": {
+      "default": "swe-2-high",
+      "models": [
+        {
+          "id": "swe-2-high",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
+          "id": "swe-2-max",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
+          "id": "swe-2-medium",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        },
+        {
+          "id": "claude-sonnet-5-medium",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        }
+      ]
+    },
+    "longcat": {
+      "default": "LongCat-2.0",
+      "models": [
+        {
+          "id": "LongCat-2.0",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        }
+      ]
+    },
+    "deepseek": {
+      "default": "deepseek-v4-pro",
+      "models": [
+        {
+          "id": "deepseek-v4-pro",
+          "availability": "paid",
+          "costTier": "low",
+          "source": "bundled"
+        },
+        {
+          "id": "deepseek-flash",
+          "availability": "cheap",
+          "costTier": "free",
+          "source": "bundled"
+        }
+      ]
+    },
+    "qwen": {
+      "default": "qwen3.8-max",
+      "models": [
+        {
+          "id": "qwen3.8-max",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "bundled"
+        },
+        {
+          "id": "qwen3.8-max-preview",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "bundled"
+        },
+        {
+          "id": "qwen3.7-max",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "bundled"
+        },
+        {
+          "id": "qwen3.7-plus",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "bundled"
+        },
+        {
+          "id": "qwen3.6-plus",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "bundled"
+        },
+        {
+          "id": "qwen3.6-flash",
+          "availability": "cheap",
+          "costTier": "free",
+          "source": "bundled"
+        }
+      ]
+    },
+    "muse": {
+      "default": "muse-spark-1.3",
+      "models": [
+        {
+          "id": "muse-spark-1.3",
+          "availability": "free",
+          "costTier": "free",
+          "source": "bundled"
+        },
+        {
+          "id": "muse-spark-1.2",
+          "availability": "free",
+          "costTier": "free",
+          "source": "bundled"
+        }
+      ]
+    },
+    "muse-claude": {
+      "default": "muse-spark-1.3",
+      "models": [
+        {
+          "id": "muse-spark-1.3",
+          "availability": "free",
+          "costTier": "free",
+          "source": "bundled"
+        },
+        {
+          "id": "muse-spark-1.2",
+          "availability": "free",
+          "costTier": "free",
+          "source": "bundled"
+        }
+      ]
+    },
+    "mimo-code": {
+      "default": "xiaomi/mimo-v2.6-flash",
+      "models": [
+        {
+          "id": "xiaomi/mimo-v2.6-flash",
+          "availability": "paid",
+          "costTier": "low",
+          "source": "bundled"
+        },
+        {
+          "id": "xiaomi/mimo-v2.6-pro",
+          "availability": "paid",
+          "costTier": "low",
+          "source": "bundled"
+        },
+        {
+          "id": "xiaomi/mimo-v2.6-pro-ultraspeed",
+          "availability": "api-only",
+          "costTier": "high",
+          "source": "bundled"
+        }
+      ]
+    },
+    "minimax-code": {
+      "default": "minimax/MiniMax-M3.1-Flash-Preview",
+      "models": [
+        {
+          "id": "minimax/MiniMax-M3.1-Flash-Preview",
+          "availability": "paid",
+          "costTier": "low",
+          "source": "bundled"
+        },
+        {
+          "id": "minimax/MiniMax-M3",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "bundled"
+        },
+        {
+          "id": "minimax/MiniMax-M2.7-highspeed",
+          "availability": "paid",
+          "costTier": "low",
+          "source": "bundled"
+        },
+        {
+          "id": "minimax/MiniMax-M2.7",
+          "availability": "paid",
+          "costTier": "low",
+          "source": "bundled"
+        }
+      ]
+    }
+  }
+}
