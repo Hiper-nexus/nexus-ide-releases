@@ -10,7 +10,7 @@ O app também envia relatos de bug (FASE 1: coletar, deduplicar e triar; nenhuma
 
 ```sh
 npm ci
-npm test            # 175 testes TypeScript + 28 de schema
+npm test            # 275 testes TypeScript + 34 de schema e scripts
 npm run typecheck
 npx wrangler d1 migrations apply DB --local
 npx wrangler dev --local
