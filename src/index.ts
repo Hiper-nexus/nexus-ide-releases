@@ -13,6 +13,7 @@ import { noticeRoutes } from './email/routes.js';
 import { createNoticeAdminRoutes } from './email/admin-routes.js';
 import { sendDueNotices } from './email/dispatch.js';
 import { bugReportRoutes } from './bugs/routes.js';
+import { createBugAdminRoutes } from './bugs/admin-routes.js';
 import { PRO_MONTHLY_PRICE } from './stripe.js';
 
 const WEBHOOK_PATH = '/v1/billing/webhook';
@@ -66,7 +67,7 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
   // Only the product site may read credentialed responses; the desktop app sends no Origin.
   app.use('/v1/*', cors({
     origin: (origin, c) => origin === new URL(c.get('config').PUBLIC_SITE_URL).origin ? origin : null,
-    credentials: true, allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'], allowHeaders: ['Content-Type', 'X-CSRF-Token'], maxAge: 600,
+    credentials: true, allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'], allowHeaders: ['Content-Type', 'X-CSRF-Token'], maxAge: 600,
   }));
   app.use('/v1/*', rateLimit);
   app.get('/v1/public/status', (c) => {
@@ -79,8 +80,8 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
       trial: { days: config.TRIAL_DAYS, maxAgents: config.TRIAL_MAX_AGENTS, cloudSync: config.TRIAL_CLOUD_SYNC === 'true' },
     } });
   });
-  // O envio de teste vem ANTES de adminRoutes: responde sozinho (com as próprias guardas) e não herda nem duplica o middleware de /admin/*.
-  app.route('/v1', createAuthRoutes(deps.fetchFn)).route('/v1', createBillingRoutes(deps.stripeFor, deps.now)).route('/v1', createNoticeAdminRoutes(deps.fetchFn)).route('/v1', bugReportRoutes).route('/v1', adminRoutes)
+  // O envio de teste e o painel de relatos de bug vêm ANTES de adminRoutes: respondem sozinhos (com as próprias guardas) e não herdam nem duplicam o middleware de /admin/*.
+  app.route('/v1', createAuthRoutes(deps.fetchFn)).route('/v1', createBillingRoutes(deps.stripeFor, deps.now)).route('/v1', createNoticeAdminRoutes(deps.fetchFn)).route('/v1', bugReportRoutes).route('/v1', createBugAdminRoutes()).route('/v1', adminRoutes)
     .route('/v1', teamRoutes).route('/v1', cronRoutes).route('/v1', syncRoutes).route('/v1', noticeRoutes);
   return app;
 }
