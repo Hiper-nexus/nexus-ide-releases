@@ -185,6 +185,11 @@ import {
   type CatalogInstallReview,
   type CatalogPreparedInstall,
 } from "./catalog";
+import { recommendCatalogItems } from "./catalog-recommend";
+import {
+  listBundledSkillCatalog,
+  listProjectSkillCatalog,
+} from "./jev-skill-suggestion";
 import { DesignMdApiClient } from "../design/designmd-api-client";
 import { buildDesignSystemTools } from "./tools-design-system";
 import { DEFAULT_DESIGN_TARGET_PATH } from "./design-system-authority";
@@ -2858,6 +2863,31 @@ export function registerOrchIpc(): void {
     requireLiveRendererWorkspaceScope(event.sender);
     const parsed = catalogIndexSchema.safeParse(raw ?? {});
     return getCatalogIndex(parsed.success ? parsed.data.refresh : false);
+  });
+
+  // F-757: o modelo de decisão escolhe itens do catálogo para a stack do
+  // workspace do PRÓPRIO renderer. Só recomenda: instalar continua no
+  // catalogInstall, com os dois diálogos nativos.
+  const catalogRecommendSchema = z.object({ refresh: z.boolean().optional() }).strict();
+  ipcMain.handle(ORCH_CHANNELS.catalogRecommend, async (event, raw) => {
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    const parsed = catalogRecommendSchema.safeParse(raw ?? {});
+    const catalog = await getCatalogIndex(false);
+    if (!catalog.ok || !catalog.index) {
+      return { ok: false, reason: "catalog-unavailable" };
+    }
+    requireLiveRendererWorkspaceScope(event.sender, scope);
+    return recommendCatalogItems({
+      root: scope.rootRealPath,
+      index: catalog.index,
+      installed: listInstalledCatalogItems(),
+      // Skill que já vem com o Nexus ou mora no projeto não é recomendada.
+      knownSkillNames: [
+        ...listBundledSkillCatalog().map((entry) => entry.name),
+        ...listProjectSkillCatalog(scope.rootRealPath).map((entry) => entry.name),
+      ],
+      refresh: parsed.success && parsed.data.refresh === true,
+    });
   });
 
   ipcMain.handle(ORCH_CHANNELS.catalogInstall, async (event, raw) => {

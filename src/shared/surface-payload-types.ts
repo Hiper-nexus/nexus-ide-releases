@@ -55,6 +55,42 @@ export interface CatalogIndexResult {
   error?: string;
 }
 
+/**
+ * F-757: área da stack que os arquivos do projeto provaram. `evidence` é o
+ * caminho relativo do arquivo que a provou: só aparece na tela, nunca vai ao
+ * modelo de decisão.
+ */
+export interface CatalogProjectArea {
+  id: string;
+  label: string;
+  evidence: string;
+}
+
+/** Item do catálogo que o modelo de decisão escolheu para uma ou mais áreas. */
+export interface CatalogRecommendation {
+  kind: 'agent' | 'skill';
+  slug: string;
+  name: string;
+  category: string;
+  /** Rótulos das áreas em que ele foi escolhido. */
+  areas: string[];
+  /** Arquivos que provaram essas áreas (mesma ordem de `areas`). */
+  evidence: string[];
+  /** Confiança da escolha (0..1, 2 casas). */
+  confidence: number;
+}
+
+export interface CatalogRecommendationsResult {
+  ok: boolean;
+  /** Por que não há lista. */
+  reason?: 'disabled' | 'no-credential' | 'no-areas' | 'catalog-unavailable' | 'no-answer';
+  areas?: CatalogProjectArea[];
+  recommendations?: CatalogRecommendation[];
+  /** Quem decidiu. */
+  provider?: 'jev' | 'clef';
+  decidedAt?: number;
+}
+
 /** Contract for the catalog-install tool (skip-if-exists). */
 export interface CatalogInstallResult {
   ok: boolean;

@@ -1094,6 +1094,8 @@ const api: NexusApi = {
       ipcRenderer.invoke(ORCH_CHANNELS.catalogIndex, { refresh }),
     installCatalogItem: (req) =>
       ipcRenderer.invoke(ORCH_CHANNELS.catalogInstall, req),
+    recommendCatalog: (refresh?: boolean) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.catalogRecommend, { refresh: refresh === true }),
     getRecipeOverlay: () =>
       ipcRenderer.invoke(ORCH_CHANNELS.recipeOverlay, {}),
     saveCatalogOverlay: (patch) =>

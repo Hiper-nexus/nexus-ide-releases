@@ -73,6 +73,7 @@ export const ORCH_CHANNELS = {
   mcpInfo: 'orch:mcp.info',
   catalogIndex: 'orch:catalog.index',
   catalogInstall: 'orch:catalog.install',
+  catalogRecommend: 'orch:catalog.recommend',
   recipeOverlay: 'orch:recipe.overlay',
   catalogOverlaySave: 'orch:catalog.overlaySave',
   recipePropose: 'orch:recipe.propose',

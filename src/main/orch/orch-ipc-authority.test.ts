@@ -100,6 +100,9 @@ const harness = vi.hoisted(() => {
     prepareAgentSpec: vi.fn(),
     reviewCatalogInstall: vi.fn(),
     installCatalogItem: vi.fn(),
+    getCatalogIndex: vi.fn(),
+    listInstalledCatalogItems: vi.fn(),
+    recommendCatalogItems: vi.fn(),
     buildRecipeOverlay: vi.fn(),
     proposeRecipes: vi.fn(),
     saveCatalogOverlay: vi.fn(),
@@ -583,12 +586,15 @@ vi.mock('./mcp-server', () => ({
   stopMcpServer: vi.fn(),
 }));
 vi.mock('./catalog', () => ({
-  getCatalogIndex: vi.fn(),
+  getCatalogIndex: harness.getCatalogIndex,
   installCatalogItem: harness.installCatalogItem,
   listHookHomes: vi.fn(),
-  listInstalledCatalogItems: vi.fn(),
+  listInstalledCatalogItems: harness.listInstalledCatalogItems,
   listPluginFiles: vi.fn(),
   reviewCatalogInstall: harness.reviewCatalogInstall,
+}));
+vi.mock('./catalog-recommend', () => ({
+  recommendCatalogItems: harness.recommendCatalogItems,
 }));
 
 import {
@@ -2150,6 +2156,35 @@ describe('catalog and overlay renderer authority', () => {
     if (!handler) throw new Error(`missing handler: ${channel}`);
     return { sender, handler };
   }
+
+  it('recomenda só para a raiz do workspace vivo do próprio renderer (F-757)', async () => {
+    const { sender, handler } = setupCatalog(ORCH_CHANNELS.catalogRecommend);
+    harness.getCatalogIndex.mockResolvedValueOnce({
+      ok: true,
+      index: { fetchedAt: 1, agents: [], skills: [] },
+    });
+    harness.listInstalledCatalogItems.mockReturnValueOnce([]);
+    harness.recommendCatalogItems.mockResolvedValueOnce({ ok: true, areas: [], recommendations: [] });
+
+    await expect(handler({ sender }, { refresh: true })).resolves.toEqual({
+      ok: true,
+      areas: [],
+      recommendations: [],
+    });
+    expect(harness.recommendCatalogItems).toHaveBeenCalledWith(
+      expect.objectContaining({ root: SCOPE_A.rootRealPath, refresh: true }),
+    );
+    await expect(handler({ sender: owner(799) }, {})).rejects.toThrow(/authorized workspace scope/i);
+  });
+
+  it('catálogo indisponível não chega ao modelo de decisão (F-757)', async () => {
+    const { sender, handler } = setupCatalog(ORCH_CHANNELS.catalogRecommend);
+    harness.getCatalogIndex.mockResolvedValueOnce({ ok: false, error: 'offline' });
+    harness.recommendCatalogItems.mockClear();
+
+    await expect(handler({ sender }, {})).resolves.toEqual({ ok: false, reason: 'catalog-unavailable' });
+    expect(harness.recommendCatalogItems).not.toHaveBeenCalled();
+  });
 
   it('does not download or publish a catalog payload when native source review is denied', async () => {
     const { sender, handler } = setupCatalog(ORCH_CHANNELS.catalogInstall);

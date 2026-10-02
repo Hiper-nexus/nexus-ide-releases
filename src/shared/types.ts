@@ -214,6 +214,7 @@ import type {
   BrowserPaneState,
   CatalogIndexResult,
   CatalogInstallResult,
+  CatalogRecommendationsResult,
   CatalogOverlayPatch,
   CatalogOverlayState,
   DesignActionResultPayload,
@@ -897,6 +898,11 @@ export interface NexusApi {
       kind: 'agent' | 'skill';
       slug: string;
     }): Promise<CatalogInstallResult>;
+    /**
+     * F-757: agentes e instruções do catálogo que o modelo de decisão escolheu
+     * para a stack do workspace. Nunca instala; `refresh` ignora o cache de 24 h.
+     */
+    recommendCatalog(refresh?: boolean): Promise<CatalogRecommendationsResult>;
     getRecipeOverlay(): Promise<RecipeOverlayResult>;
     saveCatalogOverlay(patch: CatalogOverlayPatch): Promise<CatalogOverlayState>;
     proposeRecipes(): Promise<RecipeSuggestion[]>;

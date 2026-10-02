@@ -117,6 +117,16 @@ describe('preload PTY delivery', () => {
     expect(Object.keys(api.bugReport).sort()).toEqual(['onOpenRequest', 'preview', 'submit']);
   });
 
+  it('exposes the Marketplace recommendations over their own channel, refresh as a strict boolean (F-757)', async () => {
+    const api = await loadPreloadApi();
+    const answer = { ok: true, areas: [], recommendations: [] };
+    electronMock.ipcRenderer.invoke.mockResolvedValue(answer);
+    expect(await api.orch.recommendCatalog(true)).toEqual(answer);
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenLastCalledWith('orch:catalog.recommend', { refresh: true });
+    await api.orch.recommendCatalog();
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenLastCalledWith('orch:catalog.recommend', { refresh: false });
+  });
+
   it('exposes the voice mission tie-break over its own channel and passes the request through untouched', async () => {
     const api = await loadPreloadApi();
     const answer = { decision: 'picked', index: 1, confidence: 0.9 };
