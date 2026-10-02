@@ -143,6 +143,24 @@ const KIMI_COMPOSER_READY = /\bcontext:\s*\d+(?:\.\d+)?%/i;
  * "Connect a Provider" (sem credencial) não casa, então a entrega espera.
  */
 const QWEN_COMPOSER_READY = /type your message|@path\/to\/file/i;
+/**
+ * F-742: rodapé do composer do MiMo Code (0.1.15). Retomada cola o brief
+ * depois do boot; colado antes da TUI, ele caía no aviso de bypass e o `\n`
+ * confirmava "No, exit". O rodapé só existe com a TUI de pé.
+ */
+const MIMO_COMPOSER_READY = /tab\s*switch\s*mode/i;
+function composerLabel(adapterId: string | undefined): string {
+  switch (adapterId) {
+    case 'kimi':
+      return 'Kimi';
+    case 'qwen':
+      return 'Qwen';
+    case 'mimo-code':
+      return 'MiMo';
+    default:
+      return 'Devin';
+  }
+}
 /** Cold Node boot + trust + welcome paint can exceed 8s; never paste blind. */
 const PASTE_COMPOSER_WAIT_MS = 30_000;
 /**
@@ -933,7 +951,8 @@ async function waitUntilPasteComposerReady(
 ): Promise<boolean> {
   const ready = adapterId === 'devin' ? DEVIN_COMPOSER_READY
     : adapterId === 'kimi' ? KIMI_COMPOSER_READY
-    : adapterId === 'qwen' ? QWEN_COMPOSER_READY : null;
+    : adapterId === 'qwen' ? QWEN_COMPOSER_READY
+    : adapterId === 'mimo-code' ? MIMO_COMPOSER_READY : null;
   if (!ready) return true;
   const deadline = Date.now() + PASTE_COMPOSER_WAIT_MS;
   while (Date.now() < deadline) {
@@ -994,7 +1013,7 @@ export async function deliverAgentPrompt(
     );
     if (!composerReady) {
       lastError = new Error(
-        `${options.adapterId === 'kimi' ? 'Kimi' : 'Devin'} composer did not become ready before prompt delivery`,
+        `${composerLabel(options.adapterId)} composer did not become ready before prompt delivery`,
       );
       continue;
     }

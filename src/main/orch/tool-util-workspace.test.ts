@@ -2537,6 +2537,45 @@ describe('agent prompt injection', () => {
     }
   });
 
+  it('F-742: retomada do MiMo não cola o brief antes da TUI; espera o rodapé do composer', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.injectable = true;
+      // 02/10: colado no boot, o brief caiu no aviso de bypass e o `\n` dele
+      // confirmou "No, exit" — o MiMo saiu em 5 s.
+      stubs.readSessionOutput.mockReturnValue(
+        'Performing one time database migration, may take a few minutes...\n' +
+          'Database migration complete.\n│\n▲  WARNING: Bypass Permissions mode\n' +
+          '│  ● No, exit (recommended)\n│  ○ Yes, I accept the risks and want to skip permissions',
+      );
+      const pending = deliverAgentPrompt('session-1', 'retome a revisão', undefined, {
+        adapterId: 'mimo-code',
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(stubs.writeSession).not.toHaveBeenCalled();
+      stubs.readSessionOutput.mockReturnValue(
+        '┃ \n Build · MiMo Auto (MiMo-V2.5)\n' +
+          '   tab switch mode  ctrl+p settings     @ attach file  $ subagent  / commands',
+      );
+      stubs.writeSession.mockImplementation(((sessionId: string, data: string) => {
+        if (data === '\r') queueMicrotask(() => {
+          stubs.sessionState.mockReturnValue('busy');
+          for (const tap of [...stubs.stateTaps]) tap(sessionId, 'busy');
+          for (const tap of [...stubs.dataTaps]) tap(sessionId, 'revisando');
+        });
+        return true;
+      }) as typeof stubs.writeSession);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(pending).resolves.toBe(true);
+      expect(stubs.writeSession).toHaveBeenCalledWith('session-1', 'retome a revisão', {
+        markInputBusy: false,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('F-186: Kimi sem composer falha sem digitar nem aceitar migração', async () => {
     vi.useFakeTimers();
     try {

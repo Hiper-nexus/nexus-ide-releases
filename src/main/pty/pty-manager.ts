@@ -1,6 +1,7 @@
 import { assertLicenseAccess, reserveLicensedAgent } from '../license-enforcement';
 import fs from "node:fs";
 import { canResumeMimoNativeSession } from "../adapters/mimo-session-owner";
+import { mimoSkipPermissionsViaEnv } from "../adapters/mimo-skip-permissions";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -2354,6 +2355,13 @@ export function spawnAgentSession(
     }
     // F-567: decoration and account overrides must not restore native TUI stores.
     if (tuiProviderState) Object.assign(env, tuiProviderState.env);
+    // F-742: a flag de bypass do MiMo abre um diálogo com "No, exit" marcado a
+    // cada boot; a variável liga o mesmo modo sem diálogo nenhum.
+    if (adapter.id === "mimo-code") {
+      const mimoPermissions = mimoSkipPermissionsViaEnv(args);
+      args = mimoPermissions.args;
+      Object.assign(env, mimoPermissions.env);
+    }
   } catch (error) {
     decoration?.onSpawnFailed?.();
     throw error;
