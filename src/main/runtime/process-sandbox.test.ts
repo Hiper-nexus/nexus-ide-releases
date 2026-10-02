@@ -485,6 +485,108 @@ describe('process sandbox', () => {
     expect(plan.args[runtimeIndex - 1]).toBe('--bind');
   });
 
+  // Os diretórios de teste precisam morar sob uma raiz mascarada (/tmp); no
+  // macOS o tmpdir real é /private/var/folders e no Windows não há /tmp.
+  describe.skipIf(process.platform !== 'linux')('Linux toolchain mounts (F-732)', () => {
+    function boundPaths(args: readonly string[], flag = '--ro-bind'): string[] {
+      const bound: string[] = [];
+      args.forEach((value, index) => {
+        if (value === flag && args[index + 1] === args[index + 2]) bound.push(args[index + 1]);
+      });
+      return bound;
+    }
+
+    function linuxPlanWithPath(root: string, runtime: string, envPath: string) {
+      return buildLinuxBubblewrapPlan({
+        platform: 'linux', executable: '/bin/sh', args: ['-c', 'true'], cwd: root,
+        rootRealPath: root, sandboxDir: runtime, env: { PATH: envPath },
+      }, '/usr/bin/bwrap');
+    }
+
+    it('binds a PATH directory hidden by the home/tmp mask, read-only', () => {
+      const root = makeDir('nexus-linux-tc-root');
+      const runtime = makeDir('nexus-linux-tc-runtime');
+      const tools = makeDir('nexus-linux-tc-tools');
+      const bin = path.join(tools, 'bin');
+      fs.mkdirSync(bin);
+      fs.writeFileSync(path.join(bin, 'mytool'), '#!/bin/sh\n', { mode: 0o755 });
+
+      const plan = linuxPlanWithPath(root, runtime, `${bin}:/usr/bin:/bin`);
+
+      expect(boundPaths(plan.args)).toContain(bin);
+      // Nunca gravável: o workspace e o runtime são os únicos `--bind`.
+      expect(boundPaths(plan.args, '--bind').sort()).toEqual([root, runtime].sort());
+      // /usr/bin já é visível pelo `--ro-bind / /`: não vira mount extra.
+      expect(boundPaths(plan.args)).not.toContain('/usr/bin');
+    });
+
+    it('binds the real target of a symlinked tool and the Node runtime tree', () => {
+      const root = makeDir('nexus-linux-tc-root');
+      const runtime = makeDir('nexus-linux-tc-runtime');
+      const node = makeDir('nexus-linux-tc-node');
+      const bin = path.join(node, 'bin');
+      const npmCli = path.join(node, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js');
+      fs.mkdirSync(bin);
+      fs.mkdirSync(path.dirname(npmCli), { recursive: true });
+      fs.writeFileSync(npmCli, '');
+      fs.writeFileSync(path.join(bin, 'node'), '');
+      fs.symlinkSync(npmCli, path.join(bin, 'npm'));
+      const elsewhere = makeDir('nexus-linux-tc-elsewhere');
+      const realTool = path.join(elsewhere, 'tool-1.2.3');
+      fs.writeFileSync(realTool, '');
+      const localBin = makeDir('nexus-linux-tc-localbin');
+      fs.symlinkSync(realTool, path.join(localBin, 'tool'));
+
+      const bound = boundPaths(linuxPlanWithPath(root, runtime, `${bin}:${localBin}`).args);
+
+      // `node` em <raiz>/bin/node libera a árvore do runtime inteira, que já
+      // contém bin/ e lib/node_modules/npm.
+      expect(bound).toContain(node);
+      expect(bound).not.toContain(bin);
+      expect(bound).toContain(localBin);
+      // O alvo do link é um ARQUIVO fora do diretório: entra sozinho, sem
+      // abrir a pasta onde ele mora.
+      expect(bound).toContain(realTool);
+      expect(bound).not.toContain(elsewhere);
+    });
+
+    it('never reopens the home directory, an ancestor of it or a masked root', () => {
+      const root = makeDir('nexus-linux-tc-root');
+      const runtime = makeDir('nexus-linux-tc-runtime');
+      const home = fs.realpathSync(os.homedir());
+      const envPath = [home, path.dirname(home), '/home', '/tmp', '/usr/bin'].join(':');
+
+      const bound = boundPaths(linuxPlanWithPath(root, runtime, envPath).args);
+
+      expect(bound).toEqual(['/']);
+    });
+
+    it('never remounts over the writable workspace or shadows it', () => {
+      const parent = makeDir('nexus-linux-tc-parent');
+      const root = path.join(parent, 'project');
+      const rootBin = path.join(root, 'node_modules', '.bin');
+      fs.mkdirSync(rootBin, { recursive: true });
+      fs.writeFileSync(path.join(rootBin, 'vitest'), '');
+      const runtime = makeDir('nexus-linux-tc-runtime');
+
+      // Uma entrada DENTRO do workspace ficaria somente-leitura; uma que o
+      // CONTÉM esconderia o workspace gravável. Nenhuma das duas entra.
+      const plan = linuxPlanWithPath(root, runtime, `${rootBin}:${parent}`);
+
+      expect(boundPaths(plan.args)).toEqual(['/']);
+      expect(boundPaths(plan.args, '--bind').sort()).toEqual([root, runtime].sort());
+    });
+
+    it('ignores relative and missing PATH entries', () => {
+      const root = makeDir('nexus-linux-tc-root');
+      const runtime = makeDir('nexus-linux-tc-runtime');
+      const bound = boundPaths(
+        linuxPlanWithPath(root, runtime, `relative/bin:.:${path.join(root, '..', 'nope-missing')}`).args,
+      );
+      expect(bound).toEqual(['/']);
+    });
+  });
+
   it('builds a digest-pinned, networkless Windows OCI sandbox plan', () => {
     const root = makeDir('nexus-windows-root');
     const runtime = makeDir('nexus-windows-runtime');

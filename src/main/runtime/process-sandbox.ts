@@ -677,6 +677,95 @@ function linuxBindArgs(
   return args;
 }
 
+/** Teto de mounts de toolchain: um PATH com milhares de links não vira argv. */
+const LINUX_TOOLCHAIN_MOUNT_LIMIT = 512;
+
+/**
+ * Par Linux de `collectToolchainReadRules`. O Bubblewrap cobre `/home` (e os
+ * demais `LINUX_MASKED_ROOTS`) com um tmpfs vazio; sem isto, tudo que o PATH
+ * resolve dentro do home some junto — Node de mise/nvm/volta, `~/.local/bin`,
+ * `~/.cargo/bin` — e o comando termina em `command not found` (F-732). No
+ * macOS o Seatbelt já libera a leitura desses diretórios.
+ *
+ * Mesma política do macOS, em mounts somente-leitura: o diretório de cada
+ * entrada do PATH, o alvo real de cada executável dele e, para as ferramentas
+ * Node, a árvore de runtime ao lado. Só entra o que mora sob uma raiz
+ * mascarada (o resto já é visível pelo `--ro-bind / /`).
+ *
+ * Nunca entra: uma raiz mascarada, o home inteiro ou qualquer ancestral dele
+ * (um PATH com `~` não reabre o home), nem um caminho que contenha ou esteja
+ * contido num mount já decidido (`occupied`) — o primeiro esconderia o
+ * workspace gravável, o segundo o tornaria somente-leitura.
+ */
+function collectLinuxToolchainMounts(
+  envPath: string | undefined,
+  maskedRoots: readonly string[],
+  occupied: readonly string[],
+  homeDir: string | undefined,
+): string[] {
+  const homeReal = homeDir ? existingRealPath(homeDir) : null;
+  const eligible = (candidate: string): boolean => {
+    if (!maskedRoots.some((root) => isWithin(root, candidate))) return false;
+    if (maskedRoots.includes(candidate)) return false;
+    if (homeReal && isWithin(candidate, homeReal)) return false;
+    return !occupied.some(
+      (mounted) => isWithin(mounted, candidate) || isWithin(candidate, mounted),
+    );
+  };
+  const candidates = new Set<string>();
+  const pathEntries = (envPath ?? '')
+    .split(path.delimiter)
+    .filter((entry) => path.isAbsolute(entry))
+    .slice(0, 128);
+  for (const entry of pathEntries) {
+    const dir = existingRealPath(entry);
+    // Entrada que é symlink não tem como existir dentro do tmpfs: o nome do
+    // PATH continuaria sem resolver. Só diretório real.
+    if (!dir || dir !== path.resolve(entry)) continue;
+    if (!maskedRoots.some((root) => isWithin(root, dir))) continue;
+    // Entrada larga demais (raiz mascarada, o home, um ancestral dele ou de um
+    // mount) é descartada INTEIRA: nem o diretório nem o que há dentro dele.
+    // Sem isto um PATH com `/tmp` ou `~` montaria cada arquivo, um por um.
+    if (
+      maskedRoots.includes(dir) ||
+      (homeReal !== null && isWithin(dir, homeReal)) ||
+      occupied.some((mounted) => isWithin(dir, mounted))
+    ) {
+      continue;
+    }
+    let names: string[];
+    try {
+      if (!fs.statSync(dir).isDirectory()) continue;
+      names = fs.readdirSync(dir).slice(0, 2_048);
+    } catch {
+      continue;
+    }
+    if (eligible(dir)) candidates.add(dir);
+    for (const name of names) {
+      const target = existingRealPath(path.join(dir, name));
+      if (!target) continue;
+      if (eligible(target)) candidates.add(target);
+      if (NODE_TOOL_NAMES.has(name)) {
+        const runtimeRoot = nodeRuntimeRoot(target);
+        if (runtimeRoot && eligible(runtimeRoot)) candidates.add(runtimeRoot);
+      }
+    }
+  }
+  // Do mais raso para o mais fundo: o que já está dentro de um mount aceito
+  // não precisa (nem pode) ser montado de novo.
+  const mounts: string[] = [];
+  for (const candidate of [...candidates].sort(
+    (left, right) =>
+      left.split(path.sep).length - right.split(path.sep).length ||
+      left.localeCompare(right),
+  )) {
+    if (mounts.some((mounted) => isWithin(mounted, candidate))) continue;
+    mounts.push(candidate);
+    if (mounts.length >= LINUX_TOOLCHAIN_MOUNT_LIMIT) break;
+  }
+  return mounts;
+}
+
 function linuxPlan(
   input: NormalizedExecPlanInput,
   bubblewrapExecutable: string,
@@ -729,6 +818,16 @@ function linuxPlan(
     args.push(
       ...linuxBindArgs(candidate, maskedRoots, createdDirectories, readOnly),
     );
+  }
+  // HOME do operador, não o do filho: `input.env.HOME` já é o home privado do
+  // sandbox. É a referência do que NÃO pode ser reaberto.
+  for (const toolchain of collectLinuxToolchainMounts(
+    input.env.PATH,
+    maskedRoots,
+    [input.rootRealPath, input.sandboxDir, ...supplementalMounts.keys()],
+    os.homedir(),
+  )) {
+    args.push(...linuxBindArgs(toolchain, maskedRoots, createdDirectories, true));
   }
   args.push(
     '--chdir', input.cwd,
