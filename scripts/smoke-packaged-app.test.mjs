@@ -44,6 +44,7 @@ import {
   toHostAsarPath,
 } from './smoke-packaged-app.mjs';
 import { buildIco, encodePngEntry } from './build-windows-icon.mjs';
+import * as packagedSmoke from './smoke-packaged-app.mjs';
 
 const tempDirs = [];
 
@@ -1058,6 +1059,126 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
     return child;
   }
 
+  it('reuses an owned private profile across launches and awaits the runtime probe', async () => {
+    const { targetPath } = fixturePackage({ platform: 'linux', arch: 'x64' });
+    const session = await packagedSmoke.createPackagedSmokeSession();
+    try {
+      const observed = [];
+      for (let launch = 0; launch < 2; launch += 1) {
+        const result = await runPackagedSmoke(targetPath, {
+          platform: 'linux', arch: 'x64', smokeSession: session, remoteDebugging: true,
+          runtimeProbe: async (_child, context) => {
+            await new Promise(resolve => setTimeout(resolve, 5));
+            expect(context.userData).toBe(session.userData);
+            return { launch };
+          },
+          spawnImpl: (_binary, args, opts) => {
+            expect(fs.existsSync(path.join(opts.env.NEXUS_USER_DATA_DIR, 'DevToolsActivePort'))).toBe(false);
+            observed.push({ args, env: opts.env });
+            return fakeChild({ writeMarker: () => {
+              const marker = packagedSmokeMarkerPath(opts.env.NEXUS_USER_DATA_DIR);
+              fs.mkdirSync(path.dirname(marker), { recursive: true });
+              fs.writeFileSync(marker, FUNCTIONAL_SMOKE_MARKER_CONTENT);
+            } });
+          },
+          inspectMainBundle: () => {}, inspectLegalArtifacts: () => {}, listTreePids: () => [],
+        });
+        expect(result.runtimeProof).toEqual({ launch });
+        expect(fs.existsSync(session.userData)).toBe(true);
+        fs.writeFileSync(path.join(session.userData, 'DevToolsActivePort'), 'previous process endpoint');
+      }
+      expect(observed.map(o => o.env.NEXUS_USER_DATA_DIR)).toEqual([session.userData, session.userData]);
+      expect(observed.every(o => o.env.HOME === path.join(session.userData, 'home'))).toBe(true);
+      expect(observed.every(o => o.args.includes('--remote-debugging-port=0'))).toBe(true);
+      expect(observed.every(o => o.args.includes('--remote-debugging-address=127.0.0.1'))).toBe(true);
+      if (process.platform !== 'win32') expect(fs.statSync(session.userData).mode & 0o077).toBe(0);
+    } finally {
+      await packagedSmoke.disposePackagedSmokeSession(session);
+    }
+    expect(fs.existsSync(session.userData)).toBe(false);
+  });
+
+  it('rejects a failed runtime probe even when renderer and functional smoke succeeded', async () => {
+    const { targetPath } = fixturePackage({ platform: 'linux', arch: 'x64' });
+    const session = await packagedSmoke.createPackagedSmokeSession();
+    const writes = [];
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(chunk => { writes.push(String(chunk)); return true; });
+    try {
+      await expect(runPackagedSmoke(targetPath, {
+        platform: 'linux', arch: 'x64', smokeSession: session,
+        runtimeProbe: async () => { throw new Error('preference did not survive restart'); },
+        spawnImpl: (_binary, _args, opts) => fakeChild({ stdoutText: '[smoke] renderer-mounted\n[smoke] functional-ready: 22 probes\n[smoke] shutdown-complete: physical PTY inventory proven\n[smoke] expected-exit\n', writeMarker: () => {
+          const marker = packagedSmokeMarkerPath(opts.env.NEXUS_USER_DATA_DIR);
+          fs.mkdirSync(path.dirname(marker), { recursive: true });
+          fs.writeFileSync(marker, FUNCTIONAL_SMOKE_MARKER_CONTENT);
+        } }),
+        inspectMainBundle: () => {}, inspectLegalArtifacts: () => {}, listTreePids: () => [],
+      })).rejects.toThrow('preference did not survive restart');
+      expect(writes.join('')).toContain('[smoke] functional-ready: 22 probes');
+      expect(writes.join('')).toContain('[smoke] shutdown-complete: physical PTY inventory proven');
+      expect(writes.join('')).toContain('[smoke] processTreeProof {"orphans":[]');
+      expect(writes.join('')).not.toContain('validation-matrix');
+      expect(writes.join('')).not.toContain('restartProof');
+      expect(fs.existsSync(session.userData)).toBe(true);
+    } finally {
+      stdout.mockRestore();
+      await packagedSmoke.disposePackagedSmokeSession(session);
+    }
+  });
+
+  it('refuses caller-created profiles and never spawns into them', async () => {
+    const { targetPath } = fixturePackage({ platform: 'linux', arch: 'x64' });
+    const outside = makeTemp('nexus-unowned-profile-');
+    const spawnImpl = vi.fn();
+    await expect(runPackagedSmoke(targetPath, {
+      platform: 'linux', arch: 'x64', smokeSession: { userData: outside }, spawnImpl,
+      inspectMainBundle: () => {}, inspectLegalArtifacts: () => {},
+    })).rejects.toThrow('must be created by this harness');
+    await expect(packagedSmoke.disposePackagedSmokeSession({ userData: outside })).rejects.toThrow('unowned');
+    expect(spawnImpl).not.toHaveBeenCalled();
+    expect(fs.existsSync(outside)).toBe(true);
+  });
+
+  it.skipIf(process.platform === 'win32')('refuses a replaced profile symlink without touching its target', async () => {
+    const { targetPath } = fixturePackage({ platform: 'linux', arch: 'x64' });
+    const session = await packagedSmoke.createPackagedSmokeSession();
+    const held = `${session.userData}.held`;
+    const outside = makeTemp('nexus-smoke-symlink-target-');
+    const marker = path.join(outside, 'preserve.txt');
+    fs.writeFileSync(marker, 'outside remains');
+    fs.renameSync(session.userData, held);
+    fs.symlinkSync(outside, session.userData);
+    const spawnImpl = vi.fn();
+    try {
+      await expect(runPackagedSmoke(targetPath, {
+        platform: 'linux', arch: 'x64', smokeSession: session, spawnImpl,
+        inspectMainBundle: () => {}, inspectLegalArtifacts: () => {},
+      })).rejects.toThrow('private ownership');
+      expect(spawnImpl).not.toHaveBeenCalled();
+      expect(fs.readFileSync(marker, 'utf8')).toBe('outside remains');
+    } finally {
+      fs.unlinkSync(session.userData);
+      fs.renameSync(held, session.userData);
+      await packagedSmoke.disposePackagedSmokeSession(session);
+    }
+  });
+
+  it('bounds a stalled runtime probe and aborts it after the application exits', async () => {
+    const { targetPath } = fixturePackage({ platform: 'linux', arch: 'x64' });
+    let signal;
+    await expect(runPackagedSmoke(targetPath, {
+      platform: 'linux', arch: 'x64', runtimeProbeTimeoutMs: 10,
+      runtimeProbe: async (_child, context) => { signal = context.signal; return new Promise(() => {}); },
+      spawnImpl: (_binary, _args, opts) => fakeChild({ writeMarker: () => {
+        const marker = packagedSmokeMarkerPath(opts.env.NEXUS_USER_DATA_DIR);
+        fs.mkdirSync(path.dirname(marker), { recursive: true });
+        fs.writeFileSync(marker, FUNCTIONAL_SMOKE_MARKER_CONTENT);
+      } }),
+      inspectMainBundle: () => {}, inspectLegalArtifacts: () => {}, listTreePids: () => [],
+    })).rejects.toThrow('runtime probe timed out');
+    expect(signal.aborted).toBe(true);
+  });
+
   it('runs structural checks and proves readiness via isolated marker', async () => {
     const { targetPath } = fixturePackage({ platform: 'darwin', arch: 'arm64' });
     let capturedEnv;
@@ -1085,6 +1206,7 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
     });
 
     expect(capturedArgs[0]).toBe('nexus-smoke-test');
+    expect(capturedArgs.some(arg => arg.startsWith('--remote-debugging-'))).toBe(false);
     expect(capturedOpts.shell).toBe(false);
     expect(capturedOpts.detached).toBe(true);
     expect(capturedEnv.HOME).toContain('nexus-packaged-smoke-');

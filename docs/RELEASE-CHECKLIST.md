@@ -98,8 +98,12 @@ limite explicitamente. Nunca marque a release pronta apenas por um build unsigne
 ## Linux x64 (canal independente)
 
 - [ ] Workflow `linux-release.yml` concluído para a tag anotada e o commit em `main` protegido, no runner hospedado `ubuntu-22.04`. Não exige candidata macOS nem worker Windows.
-- [ ] O job produziu exatamente `nexus-ide_<v>_amd64.deb` e `nexus-ide-<v>-1.x86_64.rpm` (um de cada), mais `linux-release-receipt.json` no artifact `linux-x64-release`.
-- [ ] O smoke empacotado rodou sob `xvfb-run` e o `.deb` foi instalado no próprio runner (`apt-get install`), com `dpkg-query` confirmando a versão e `rpm -qpR` mostrando a dependência `bubblewrap`.
-- [ ] `npm run release:publish:linux -- --version <v> --run <id>` revalidou run, recibo (commit/tagObject), bytes e SHA-256 antes de anexar deb, rpm e `SHA256SUMS-linux-x64.txt` na canônica e depois no espelho — nunca `--clobber`, nunca delete.
+- [ ] O job produziu exatamente `nexus-ide_<v>_amd64.deb`, `nexus-ide-<v>-1.x86_64.rpm` e `NexusIDE-linux-x64-<v>.zip` (um de cada), mais `linux-release-receipt.json` v2 no artifact `linux-x64-release`. Receipts históricos v1 aceitam somente DEB/RPM.
+- [ ] O smoke empacotado rodou sob `xvfb-run`; o DEB foi instalado e aberto no próprio runner (`apt-get install`), com `dpkg-query` confirmando a versão e `rpm -qpR` mostrando a dependência `bubblewrap`. O ZIP foi validado contra path/symlink escape, extraído e aberto pelo mesmo harness.
+- [ ] `npm run release:publish:linux -- --version <v> --run <id>` revalidou run, recibo (commit/tagObject), bytes e SHA-256 antes de anexar deb, rpm, ZIP e `SHA256SUMS-linux-x64.txt` na canônica e depois no espelho — nunca `--clobber`, nunca delete.
 - [ ] `bubblewrap` está instalado na máquina de validação (dependência de runtime declarada nos dois pacotes).
 - [ ] Nenhuma versão Linux estável maior já foi publicada. Linux não tem auto-update: o usuário instala o pacote novo por cima; uma release somente macOS/Windows não avança nem bloqueia o canal Linux.
+
+- [ ] O preview de PR/main registrou o SHA exato e os resultados de build/smokes; `linux-x64-preview` e `linux-browser-smoke` são evidência de CI, não candidatas publicáveis.
+- [ ] Compatibilidade Omarchy/Hyprland, se anunciada, tem prova na máquina alvo. Xvfb com sandbox desabilitada exclusivamente no harness não comprova essa sessão nem Bubblewrap real.
+

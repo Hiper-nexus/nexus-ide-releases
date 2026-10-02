@@ -113,11 +113,9 @@ export function withHandoffContract(
     "telemetry: {durationMs, tokensTotal, tokensByModel?, estimated?} no " +
     "nexus_handoff_submit — números REAIS do transcript; estimativa marca " +
     "estimated: true; sem dados, OMITA o campo (nunca invente zero).";
-  // F-702 (30/09): quatro workers Codex pararam em request_user_input_async
-  // perguntando "clone WSL do brief ou a worktree do Nexus?". Ninguém
-  // responde num worker: o pane fica parado até o operador clicar. E o
-  // spawn_agent interno do Codex (29 vezes em 3 dias) herda o modelo do pane
-  // e escapa da rota e do custo que o Nexus controla.
+  // Workers execute autonomously inside their existing pane authority.
+  // Native helpers are available in free mode; explicit provider/read-only
+  // restrictions still decide which tools the CLI exposes.
   const autonomy =
     'Não há humano acompanhando este pane: nunca pare para perguntar ' +
     '(request_user_input, AskUserQuestion, pergunta de múltipla escolha) — ' +
@@ -125,9 +123,21 @@ export function withHandoffContract(
     'execução do Nexus (worktree, branch, push, clone próprio), o Nexus vence: ' +
     'faça o que couber nela e registre o conflito como bloqueio no handoff. ' +
     'Dúvida que só o operador resolve: nexus_handoff_submit com status ' +
-    '"blocked" e a pergunta no summary. Não abra subagentes internos da CLI ' +
-    '(spawn_agent, Task) para dividir a tarefa: o Nexus distribui o trabalho — ' +
-    'se precisar de mais mãos, diga no handoff.';
+    '"blocked" e a pergunta no summary. Você pode usar ferramentas e subagentes nativos ' +
+    'da CLI (spawn_agent, Task) quando ajudarem a concluir a tarefa, dentro do ' +
+    'workspace, das permissões e da conta/sessão deste pane.';
+  const visualVerification = isUiShapedWork(
+    [prompt, ...(hints.hints ?? [])].filter(Boolean).join('\n'),
+  )
+    ? 'Validação visual de interface ou jogo: abra e exercite a entrega com as ' +
+      'ferramentas de navegador disponíveis neste pane. Registre URL/preview, viewport, ações ' +
+      'e o resultado observado; anexe screenshots reais quando disponíveis. Um caminho ou hash ' +
+      'de screenshot não é inspeção: observe a imagem com uma ferramenta autorizada disponível. Build, testes ' +
+      'e leitura do código não comprovam aparência nem gameplay. Se uma ferramenta ou ' +
+      'ambiente necessário falhar, registre a validação como não verificada e envie ' +
+      'handoff com status "partial" (ou "blocked" se impedir a tarefa), com os passos ' +
+      'restantes para o orquestrador. Nunca invente screenshots, cliques, movimento ou aprovação visual.'
+    : '';
   const peerRead =
     'Quando o operador pedir para olhar o que outro pane está fazendo, chame ' +
     'nexus_pane_read com o número falado ("7" ou "pane 7"). Na mesma missão ' +
@@ -141,13 +151,13 @@ export function withHandoffContract(
       ? "Sua resposta é entregue ao orquestrador AUTOMATICAMENTE pelo sistema. " +
         "Responda normalmente neste pane, exatamente UMA vez (nunca em arquivo " +
         "ou artifacts, a menos que a tarefa peça). Se a resposta inteira couber " +
-        "em 280 caracteres, apenas RESPONDA e ENCERRE o turno — o sistema " +
+        "em 280 caracteres E a tarefa estiver concluída e verificada, apenas RESPONDA e ENCERRE o turno — o sistema " +
         "entrega verbatim; NÃO chame ferramenta nenhuma e NÃO repita a resposta. " +
         "SOMENTE quando a resposta NÃO couber em 280 caracteres (ou você " +
-        "estiver bloqueado / tiver batido num erro), chame nexus_handoff_submit " +
+        "estiver bloqueado / tiver batido num erro / houver validação pendente), chame nexus_handoff_submit " +
         "como ÚLTIMA ação: " +
         '{summary: "1-2 frases — sua condensação da resposta (ou do bloqueio), ' +
-        'na língua da tarefa", status: "success"|"blocked"|"failed", ' +
+        'na língua da tarefa", status: "success"|"partial"|"blocked"|"failed", ' +
         'artifacts: [{fullText: "sua resposta completa, inalterada"}]}. ' +
         "Depois, uma linha curta de fechamento e PARE — não re-envie, não expanda. " +
         telemetryContract +
@@ -156,7 +166,7 @@ export function withHandoffContract(
       : null;
   const contract = systemDeliversContract ?? (viaMcp
     ? 'Ao concluir sua tarefa, finalize chamando a tool nexus_handoff_submit ' +
-      'com {status: "success"|"partial"|"failed", summary, artifacts} ' +
+      'com {status: "success"|"partial"|"blocked"|"failed", summary, artifacts} ' +
       '(opcionalmente estruture o fio da meada em accomplished: [...], blockers: [...], nextSteps: [...]). ' +
       telemetryContract +
       ' ' +
@@ -181,7 +191,6 @@ export function withHandoffContract(
   const design =
     orch.designPro && tier.design ? `\n\n${composeDesignCharter(orch)}` : '';
   const lean = orch.leanCode && tier.lean ? `\n\n${PONYTAIL_RULES}` : '';
-  return `${prompt}${charter}${design}${lean}\n\n${autonomy}\n\n${peerRead}\n\n${contract}`;
+  return `${prompt}${charter}${design}${lean}\n\n${autonomy}${visualVerification ? `\n\n${visualVerification}` : ''}\n\n${peerRead}\n\n${contract}`;
 }
-
 

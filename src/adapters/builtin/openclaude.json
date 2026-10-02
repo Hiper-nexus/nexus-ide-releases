@@ -35,10 +35,7 @@
     "resumeIdArgs": [
       "--resume"
     ],
-    "extraArgs": [
-      "--disallowed-tools",
-      "Task"
-    ],
+    "extraArgs": [],
     "sessionIdArg": "--session-id"
   },
   "env": {

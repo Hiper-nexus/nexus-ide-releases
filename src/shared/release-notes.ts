@@ -9055,7 +9055,7 @@ export const RELEASE_076164: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076165: AppRelease = {
   version: '0.76.165',
   date: '2026-10-02',
   codename: 'Decisões à vista',
@@ -9108,6 +9108,62 @@ export const CURRENT_RELEASE: AppRelease = {
         'Quando um chip não cabia na linha e ia para a escondida, o ' +
         'conteúdo do cabeçalho subia 3 px. A altura da primeira linha agora ' +
         'é fixa.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.166',
+  date: '2026-10-02',
+  codename: 'Workers com mais autonomia',
+  summary:
+    'Workers podem usar o navegador e o desktop e criar subagentes quando a ' +
+    'CLI oferece esse recurso. O acesso continua vinculado à janela, ao ' +
+    'projeto e à conta da tarefa. Inclui a 0.76.165.',
+  highlights: [
+    {
+      title: 'Workers executam e verificam a interface',
+      detail:
+        'Workers podem abrir e controlar o navegador da janela de origem e ' +
+        'usar o desktop com as ferramentas autorizadas para a tarefa. A ' +
+        'entrega deve informar a página, as interações e a evidência visual; ' +
+        'se a verificação não puder acontecer, a pendência fica explícita.',
+    },
+    {
+      title: 'Subagentes nativos disponíveis',
+      detail:
+        'Claude e OpenClaude deixam de bloquear Task por padrão. Workers ' +
+        'podem usar os subagentes da própria CLI dentro das permissões da ' +
+        'tarefa; o modo governado e as restrições explícitas continuam valendo.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Teclas para jogos no navegador',
+      detail:
+        'As teclas passam a fornecer event.code e podem ficar pressionadas ' +
+        'por até um segundo. A navegação e o cancelamento encerram a ação ' +
+        'sem mandar eventos para uma página antiga.',
+    },
+    {
+      title: 'Configuração e respostas ACP',
+      detail:
+        'Modelo e esforço precisam ser anunciados e confirmados pela CLI ' +
+        'antes do pedido. O coordenador recebe o texto público das respostas, ' +
+        'com separação entre turnos e sem incluir pensamentos internos.',
+    },
+    {
+      title: 'Catálogo remoto público',
+      detail:
+        'O catálogo usa uma fonte pública versionada e um prazo de refresh ' +
+        'validado no proxy. Falhas preservam o catálogo local existente.',
+    },
+    {
+      title: 'Build e verificação Linux no CI',
+      detail:
+        'Preview Linux registra o commit, os smokes e as evidências de ' +
+        'formulário, menu, viewport mobile e jogo. O canal de release Linux ' +
+        'confere os pacotes e o recibo antes da publicação.',
     },
   ],
 };

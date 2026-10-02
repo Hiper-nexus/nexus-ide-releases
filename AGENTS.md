@@ -400,7 +400,10 @@ saber isto antes de mexer:
   contraria a autoridade de execução (clone próprio, push, outra branch)
   perde para o Nexus e volta como bloqueio no handoff. `features.multi_agent`
   e `default_mode_request_user_input` do Codex não removem a ferramenta; a
-  regra vive no contrato (`withHandoffContract`).
+  regra vive no contrato (`withHandoffContract`). No Autopilot livre, workers podem usar
+  subagentes nativos (`Task` / `spawn_agent`) dentro da autoridade do pane.
+  Não acrescentar bloqueio estático de Task ao adapter: governado/read-only
+  aplica a restrição no spawn, em `native-subagent-policy.ts`.
 - Modelo mais novo sempre (regra do operador, F-691/F-217/F-218): dentro de
   uma linha (`modelLineOf` em `src/shared/model-line.ts`: só os números
   mudam), a versão mais nova que a CLI oferece substitui a velha na rota, no
@@ -911,6 +914,13 @@ saber isto antes de mexer:
   e devolve a proposta; trava de origem (`left_origin`); textos digitados são
   só os `values` fornecidos (Jev escolhe o label); cap de passos
   (`maxSteps ≤ 40`); uma entrada no decision log por passo.
+- **Browser de workers**: panes com escopo exato e proprietário vivo no Main
+  podem usar as abas da janela autorizada, inclusive abas existentes. PTY e
+  ACP são comprovados pelos respectivos runtimes; headless exige um único
+  coordenador vivo da missão. Nunca escolher a última janela como fallback.
+  `nexus_browser_press` fornece `event.code` e `holdMs` opcional (0–1000 ms)
+  para controles por código e movimento entre frames; cancelar/navegar impede
+  keyup no documento substituído. Não confundir build com validação visual.
 - **Browser do agente**: toda ação devolve `after`/`changed` (Main, cobre
   navegação entre documentos); `read: true` embute a página; `nexus_browser_find`
   e `click/fill` por `text` (nome acessível, nunca CSS; ambíguo devolve
@@ -946,8 +956,8 @@ saber isto antes de mexer:
   prefixa `noMatch:`. Rota de texto comum (não fixa no Jev).
 - `nexus_computer_do` (macOS, "Jev decide, Nexus executa no desktop"):
   exige permissão de Acessibilidade (`permission_required` aponta o caminho
-  dos Ajustes); só a mão do operador ou o orquestrador chamam — worker nunca
-  dirige o desktop; trava de app (`focus_lost`); lê a árvore AX do app e, se
+  dos Ajustes); workers autorizados usam o mesmo laço, sujeito às permissões
+  MCP, à confirmação por objetivo e à autoridade atual; trava de app (`focus_lost`); lê a árvore AX do app e, se
   ela vier pobre, OCR local da janela (pixels nunca saem da máquina — ao Jev
   vão só rótulos de elementos e labels de `values`); campos sensíveis
   (`AXSecureTextField`, password/senha) nunca têm valor lido nem recebem
@@ -1307,3 +1317,4 @@ saber isto antes de mexer:
   de orquestrador registrada e viva (`orchestrator-live-adopted`) quando
   `liveOrchestratorSessionId` não a reconhece; só o Retomar do operador pode
   encerrar e substituir um Maestro vivo.
+

@@ -47,9 +47,9 @@ const UNIT_STATUS_LABELS: Readonly<Record<MissionUnit['status'], string>> = {
 };
 
 const RESULT_OUTCOME_LABELS: Readonly<Record<NonNullable<MissionSnapshot['result']>['outcome'], string>> = {
-  success: 'Concluído com sucesso',
-  partial: 'Resultado parcial',
-  failed: 'Falhou',
+  success: 'Resultado registrado: sucesso',
+  partial: 'Resultado registrado: parcial',
+  failed: 'Resultado registrado: falha',
 };
 
 const BASIC_ACTIVITY_LABELS: Readonly<Partial<Record<MissionEvent['type'], string>>> = {
@@ -932,6 +932,9 @@ function ResultProjection({ snapshot }: { readonly snapshot: MissionSnapshot }) 
         <h2>{RESULT_OUTCOME_LABELS[result.outcome]}</h2>
       </header>
       <p className="mission-inspector__result-summary">{result.summary}</p>
+      <p>
+        Referências de evidência registradas: {result.evidenceIds.length}. O status de conclusão não atesta validação visual.
+      </p>
       <ChangedFiles artifactRefs={result.artifactRefs} />
       <details className="mission-inspector__technical">
         <summary>Detalhes técnicos</summary>

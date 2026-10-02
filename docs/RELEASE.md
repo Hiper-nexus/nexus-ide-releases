@@ -18,12 +18,15 @@ pelo diretório atual.
 ## Canal Linux independente
 
 Uma publicação Linux usa somente os artefatos x64 que o workflow
-`linux-release.yml` produziu para a tag anotada: um `.deb` e um `.rpm` com os
-nomes do Electron Forge (`nexus-ide_<v>_amd64.deb` e
-`nexus-ide-<v>-1.x86_64.rpm`), mais `SHA256SUMS-linux-x64.txt` gerado pelo
-publicador. O workflow verifica a tag anotada, o commit na `main` protegida,
+`linux-release.yml` produziu para a tag anotada: `.deb`, `.rpm` e ZIP
+portátil com os nomes do Electron Forge (`nexus-ide_<v>_amd64.deb`,
+`nexus-ide-<v>-1.x86_64.rpm` e `NexusIDE-linux-x64-<v>.zip`), mais
+`SHA256SUMS-linux-x64.txt` gerado pelo publicador. O workflow verifica a tag anotada, o commit na `main` protegida,
 o Node de `nexusRelease.node`, roda o smoke empacotado sob `xvfb-run` e ainda
-instala o `.deb` no próprio runner antes de publicar os artifacts.
+instala o `.deb` e abre o aplicativo extraído do ZIP no próprio runner antes
+de publicar os artifacts. O recibo `nexus.linux-release/v2` exige os três
+formatos e a prova `zipExtracted`. Recibos históricos `v1` continuam aceitos
+explicitamente apenas com o par DEB/RPM; um preview nunca é publicável.
 
 Para disparar a build Linux de uma versão já tagueada:
 
@@ -37,18 +40,59 @@ Depois de o run concluir com sucesso, publique com:
 npm run release:publish:linux -- --version <v> --run <id-do-run>
 ```
 
+A tag construída precisa conter os scripts de coleta e validação do respectivo
+contrato; o workflow não injeta ferramentas novas num fonte histórico. O
+preview permite provar o fonte atual antes de criar uma nova versão/tag.
+
 O publicador revalida o run (workflow, `workflow_dispatch` na `main`,
 conclusão `success`), baixa os artifacts, confere o recibo contra a tag
 anotada local (commit e objeto de tag), reconfere bytes e SHA-256 de cada
-arquivo e exige o inventário exato antes de anexar deb, rpm e
-`SHA256SUMS-linux-x64.txt` na release já publicada da canônica e, em seguida,
+arquivo e exige o inventário exato de cada schema antes de anexar deb, rpm,
+ZIP (v2) e `SHA256SUMS-linux-x64.txt` na release já publicada da canônica e, em seguida,
 do espelho público. Um asset com o mesmo nome só é ignorado quando o digest
 remoto bate; nunca usa `--clobber` e nunca apaga assets.
 
 Linux **não tem auto-update**: o atualizador responde "Plataforma sem
 atualização automática" e o usuário instala o pacote novo manualmente. Os
 dois pacotes declaram `bubblewrap` como dependência de runtime (sandbox dos
-PTYs); a máquina alvo precisa tê-lo.
+PTYs); o ZIP também precisa desse provider e das bibliotecas Linux do sistema.
+
+### Preview Linux em PR e main
+
+`linux-preview.yml` roda em pull requests para `main` e em pushes na `main`,
+sem exigir tag, worker Windows ou credenciais de publicação. Ele usa o mesmo
+runtime Node/npm verificado, constrói DEB/RPM/ZIP, roda os smokes empacotado,
+DEB instalado e ZIP extraído sob Xvfb e registra o SHA exato do checkout.
+O artifact `linux-x64-preview` contém os três formatos, checksums e
+`linux-preview-receipt.json` (`nexus.linux-preview/v1`, `preview-only`). Seu
+nome, evento e schema são recusados pelo publicador de produção.
+
+O preview também roda o smoke funcional do navegador em Electron real e
+salva `report.json` e screenshots no artifact separado `linux-browser-smoke`.
+Um resultado local ou estrutural não substitui esses runs hospedados.
+
+### ZIP portátil no Omarchy/Arch
+
+Omarchy usa Arch e Hyprland. O ZIP oferece o aplicativo Linux x64 sem precisar
+instalar um DEB/RPM; não registra menu, dependências ou auto-update. No Arch,
+instale o provider de sandbox pelo gerenciador de pacotes e execute o binário
+extraído como seu usuário habitual:
+
+```bash
+sudo pacman -S --needed bubblewrap
+unzip NexusIDE-linux-x64-<v>.zip
+cd NexusIDE-linux-x64
+./nexus-ide
+```
+
+O Electron 43 suporta Wayland por padrão. O smoke Xvfb prova o aplicativo
+empacotado no runner Ubuntu, mas não uma instalação Omarchy nem a execução
+real da sandbox Bubblewrap. O `--no-sandbox` permanece exclusivo dos harnesses
+de teste hospedados; não faz parte dessas instruções de lançamento normal.
+Valide terminais/PTYs, navegador, clipboard, atalhos, escala e persistência na
+sessão Hyprland antes de declarar Omarchy testado. Consulte o
+[manual do Omarchy](https://omarchy.org/manual/) e a
+[documentação Wayland do Electron](https://www.electronjs.org/blog/tech-talk-wayland).
 
 ## Canal Windows independente
 

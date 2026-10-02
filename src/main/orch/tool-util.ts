@@ -10,6 +10,7 @@ import { ensureBusinessModel } from '../context/business-model/business-model-en
 import type { SpawnRouteInfo } from '../../shared/spawn-route';
 import {
   getPaneAuthzInfo,
+  callerWithPaneOwner,
   listLivePaneNumbers,
   readSessionOutput,
   requestPaneClose,
@@ -346,7 +347,8 @@ function unknownPaneMessage(paneRef: string, ctx?: AgentGateContext): string {
  * Object-level authorization gate for the pane tools (SEC#5): resolve a pane
  * ref and confirm `ctx` may perform `action` on it. Inside the caller's
  * mission any pane may read any other (including the orchestrator); workers
- * still cannot write/close the orchestrator or touch the user's shell/browser.
+ * still cannot write/close the orchestrator or touch the user's shell. Browser
+ * access requires the caller's Main-derived originating window and workspace.
  * Throws on unknown pane or refusal. Returns the pane info (session may be
  * dead — fine for `close`).
  *
@@ -361,7 +363,8 @@ export function authorizePaneRef(
 ): PaneAuthzInfo {
   const info = getPaneAuthzInfo(paneRef);
   if (!info) throw new Error(unknownPaneMessage(paneRef, ctx));
-  const decision = authorizePaneAccess(ctx, info, action);
+  const caller = info.kind === 'browser' ? callerWithPaneOwner(ctx) : ctx;
+  const decision = authorizePaneAccess(caller, info, action);
   if (!decision.allow) {
     throw new Error(`not authorized: ${decision.reason}`);
   }

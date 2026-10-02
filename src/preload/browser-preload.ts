@@ -76,11 +76,18 @@ const automation = createBrowserAutomation(window, {
   evalInMainWorld: (source) => webFrame.executeJavaScript(source),
 });
 
+const pendingPresses = new Map<string, AbortController>();
+ipcRenderer.on(BROWSER_AUTOMATION_CHANNELS.cancel, (_event, requestId: unknown) => {
+  if (typeof requestId === 'string' && REQUEST_ID.test(requestId)) pendingPresses.get(requestId)?.abort();
+});
+
 ipcRenderer.on(BROWSER_AUTOMATION_CHANNELS.request, (_event, raw: unknown) => {
   const request = parseRequest(raw);
   if (!request) return;
+  const controller = request.command === 'press' ? new AbortController() : undefined;
+  if (controller) pendingPresses.set(request.requestId, controller);
   void automation
-    .run(request.command, request.args)
+    .run(request.command, request.args, controller ? { signal: controller.signal } : undefined)
     .then((result) => {
       const response: BrowserAutomationResponse = {
         requestId: request.requestId,
@@ -96,5 +103,6 @@ ipcRenderer.on(BROWSER_AUTOMATION_CHANNELS.request, (_event, raw: unknown) => {
         error: safeError(err),
       };
       ipcRenderer.send(BROWSER_AUTOMATION_CHANNELS.response, response);
-    });
+    })
+    .finally(() => { pendingPresses.delete(request.requestId); });
 });

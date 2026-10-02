@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.76.166 — Workers com mais autonomia
+
+Candidata ainda não publicada. Inclui integralmente a 0.76.165.
+
+- **Workers podem executar mais.** Navegador e desktop deixam de recusar o acesso apenas pelo papel de worker. O acesso continua limitado à janela de origem, ao projeto, à sessão viva, à conta e à lista de ferramentas do chamador; abas com perfil pessoal seguem recusadas pela análise visual.
+- **Subagentes nativos disponíveis no modo livre.** Claude e OpenClaude deixam de receber um bloqueio estático de `Task`. O contrato permite subagentes nativos dentro das permissões da tarefa; o bloqueio permanece nos caminhos explicitamente governados ou de leitura.
+- **Teclas compatíveis com jogos.** `press` fornece `event.code` e aceita `holdMs` opcional de 0 a 1000 ms, preservando o padrão imediato. Cancelamento e navegação encerram a ação sem soltar teclas em uma página antiga.
+- **Verificação visual declarada.** A entrega de UI/jogo informa página, viewport, ações e evidência observada; ausência de browser ou prova visual aparece como pendência, sem simular screenshot. Preview Linux exercita formulário/menu, mobile e jogo usando o preload real do Electron e guarda as evidências de CI. Preview não é uma candidata publicável.
+- **Streaming e seleção ACP.** Texto público entra no ring volátil do pane; pensamentos e sessões alheias não entram. Modelo e esforço precisam ser opções exatas anunciadas e confirmadas pelo harness antes do prompt. Conta Nexus explícita (inclusive default materializada na UI) é recusada antes de token/processo porque o harness genérico ainda não vincula essa autenticação; nenhum adapter é trocado silenciosamente.
+- **Browser preservado ao trocar de projeto.** A origem física comprovada no Main continua disponível para panes parked e coordenadores ACP, com revalidação de sessão, conta, missão, geração, escopo e proprietário.
+- **Respostas ACP separadas.** Chunks públicos da mesma resposta continuam juntos; novas respostas recebem um separador no ring do pane. Turnos vazios ou somente pensamentos não acrescentam texto.
+- **Mão do operador após a missão.** O navegador estacionado continua ligado à janela original quando o Main devolve ao usuário uma sessão que ele havia promovido a coordenador. Conta, sessão e escopos continuam revalidados; a missão antiga não conserva o coordenador devolvido.
+- **Catálogo remoto público.** Refresh usa o JSON versionado no mirror público de releases. O orçamento de 10 segundos evita o aborto reproduzido com 5 segundos no primeiro GET pelo proxy; um overlay existente continua preservado diante de erro. Node e Electron Main foram validados com proxy/CA ativos, separadamente da rede Chromium.
+- **Linux com prova de restart.** O CI provisiona o Codex nativo fixado com hashes verificados, mantém a probe real de missão e abre cada aplicativo duas vezes com perfil isolado para conferir versão e persistência. Instalações e artifacts dependem do run completo; os helpers de teste não alteram o launcher de produção.
+- **Limites da validação.** No d20d5ec, CI36961884068 aprovou typecheck, renderer sinks e18.656 testes; preview36961884071 executou formulário/menu, mobile e jogo no Electron real, com PNGs inspecionadas. O build Linux falhou depois no better-sqlite3/V8, impedindo os smokes de pacote nesse run. Alterações posteriores exigem checks no head final. Assinatura/notarização e publicação estável continuam sujeitas aos gates. Não houve comparação de qualidade entre modelos nem missão LLM contra provedores.
+
 ## 0.76.165 — Decisões à vista
 
 Build do Mac. Inclui integralmente a 0.76.164.

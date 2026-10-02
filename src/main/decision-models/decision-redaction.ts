@@ -21,6 +21,10 @@ const SECRET_PATTERNS: RegExp[] = [
 const ASSIGNMENT_PATTERN =
   /([A-Za-z_]{0,64}(?:KEY|TOKEN|SECRET|PASSWORD)[A-Za-z_]{0,64}\s*[=:]\s*)(["']?)([^\s"']+)/g;
 
+// Every case-sensitive assignment match contains one of these literal words.
+// Avoid the bounded name-prefix scan when none can possibly match.
+const ASSIGNMENT_KEYWORD_PATTERN = /KEY|TOKEN|SECRET|PASSWORD/;
+
 /**
  * Variante case-insensitive (camelCase tipo `apiKey:`) que exige um valor com
  * cara de credencial — ≥12 chars do alfabeto de tokens e ao menos um dígito —
@@ -35,7 +39,9 @@ export function redactSecrets(text: string): string {
   for (const pattern of SECRET_PATTERNS) {
     out = out.replace(pattern, '[REDACTED]');
   }
-  out = out.replace(ASSIGNMENT_PATTERN, '$1[REDACTED]');
+  if (ASSIGNMENT_KEYWORD_PATTERN.test(out)) {
+    out = out.replace(ASSIGNMENT_PATTERN, '$1[REDACTED]');
+  }
   return out.replace(CI_ASSIGNMENT_PATTERN, (match, p1: string, _q: string, val: string) =>
     /\d/.test(val) ? `${p1}[REDACTED]` : match,
   );

@@ -47,6 +47,7 @@ import {
   type JsonRpcId,
 } from '../../shared/acp-protocol';
 import { isReservedHarnessEnvKey } from '../../shared/harness-catalog';
+import { parseAcpConfigOptions, type AcpSessionConfigOption } from '../../shared/acp-session-config';
 
 // ---------------------------------------------------------------------------
 // Named timeout constants (defaults; each is overridable per client/turn)
@@ -390,6 +391,7 @@ export function killHarnessProcessTree(
 // ---------------------------------------------------------------------------
 
 export class AcpClient {
+  private readonly sessionConfigById = new Map<string, readonly AcpSessionConfigOption[]>();
   private readonly child: ChildProcess;
   private readonly decoder = new AcpNdjsonDecoder();
   private readonly pending = new Map<string, PendingRequest>();
@@ -548,7 +550,44 @@ export class AcpClient {
       this.destroy(error);
       throw error;
     }
-    return parsed.value.sessionId;
+    const sessionId = parsed.value.sessionId;
+    const raw = result as Record<string, unknown>;
+    const config = parseAcpConfigOptions(raw.configOptions ?? []);
+    if (!config.ok) {
+      const error = new AcpClientError('protocol', config.detail);
+      this.destroy(error);
+      throw error;
+    }
+    this.sessionConfigById.set(sessionId, config.value);
+    return sessionId;
+  }
+
+  sessionConfigOptions(sessionId: string): readonly AcpSessionConfigOption[] {
+    return this.sessionConfigById.get(sessionId) ?? [];
+  }
+
+  /** ACP v1 requires the peer to confirm the complete resulting config state. */
+  async setSessionConfigOption(sessionId: string, configId: string, value: string): Promise<void> {
+    const option = this.sessionConfigOptions(sessionId).find((entry) => entry.id === configId);
+    if (!option || (option.currentValue !== value && !option.values.includes(value))) {
+      throw new AcpClientError('protocol', 'ACP requested config option/value was not advertised');
+    }
+    const result = await this.sendRequest(
+      'session/set_config_option',
+      { sessionId, configId, value },
+      this.requestTimeoutMs,
+    );
+    const parsed = parseAcpConfigOptions(
+      typeof result === 'object' && result !== null && !Array.isArray(result)
+        ? (result as Record<string, unknown>).configOptions : undefined,
+    );
+    if (!parsed.ok || parsed.value.find((entry) => entry.id === configId)?.currentValue !== value) {
+      const error = new AcpClientError('protocol',
+        parsed.ok ? 'ACP harness did not confirm the requested config value' : parsed.detail);
+      this.destroy(error);
+      throw error;
+    }
+    this.sessionConfigById.set(sessionId, parsed.value);
   }
 
   /**

@@ -10,11 +10,12 @@ import { LicenseError } from '../../shared/license-errors';
 import { randomUUID } from 'node:crypto';
 
 import type { AcpMcpServerSpec } from '../../shared/acp-protocol';
+import { ACP_ACCOUNT_SELECTION_UNSUPPORTED, requestedAcpConfigOption } from '../../shared/acp-session-config';
 import type { HarnessDefinition } from '../../shared/harness-catalog';
 import type { ObserverFrameInput, ObserverSemanticStatus } from '../../shared/observer-frame';
 import type { MissionPaneAuthoritySeal } from '../../shared/orch-types';
 import type { OwnedAgentSessionInfo } from '../pty/pty-manager';
-import { recordPaneSessionExit, recordPaneSessionState } from '../orch/pane-session-output';
+import { recordPaneSessionData, recordPaneSessionExit, recordPaneSessionState } from '../orch/pane-session-output';
 import { publishObserverFrame } from '../orch/observer-bus';
 import {
   registerExternalWorkerSession,
@@ -75,6 +76,9 @@ export interface AcpDriverSpawnInput {
 const ACP_SHUTDOWN_TIMEOUT_MS = 10_000;
 const ACP_SHUTDOWN_TIMEOUT_MESSAGE = 'acp-shutdown-timeout';
 
+/** Keep each append below the existing pane output ring's retention bound. */
+const ACP_OUTPUT_APPEND_CHARS = 16 * 1024;
+
 export interface AcpDriverSession {
   readonly sessionId: string;
   readonly acpSessionId: string;
@@ -96,6 +100,7 @@ interface LiveSession {
   acpSessionId: string;
   scope: AcpObserverScope;
   turnSequence: number;
+  hasPublicResponse: boolean;
   lastStatus: ObserverSemanticStatus | null;
   activeTurn: AcpTurnHandle | null;
   closed: boolean;
@@ -202,8 +207,24 @@ async function promptLiveSession(
   setStatus(live, 'working');
   const turn = live.client.prompt(live.acpSessionId, text, options);
   live.activeTurn = turn;
+  let responseStarted = false;
   try {
     for await (const event of turn) {
+      // The observer journal carries lifecycle/tool activity, not transcript
+      // bodies. Retain public response text in the same session-local ring used
+      // by pane read/ask; thought chunks stay outside that output surface.
+      if (event.type === 'update' && event.update.sessionUpdate === 'agent_message_chunk') {
+        const text = event.update.content.text;
+        if (text.length > 0 && !responseStarted) {
+          // Preserve streaming chunks within a turn and separate distinct responses.
+          if (live.hasPublicResponse) recordPaneSessionData(sessionId, '\n\n');
+          responseStarted = true;
+          live.hasPublicResponse = true;
+        }
+        for (let offset = 0; offset < text.length; offset += ACP_OUTPUT_APPEND_CHARS) {
+          recordPaneSessionData(sessionId, text.slice(offset, offset + ACP_OUTPUT_APPEND_CHARS));
+        }
+      }
       for (const frame of framesForTurnEvent(live.scope, event)) {
         live.publish(frame);
       }
@@ -242,6 +263,11 @@ export async function spawnAcpHarnessSession(
   input: AcpDriverSpawnInput,
 ): Promise<AcpDriverSession> {
   assertLicenseAccess();
+  // A generic ACP harness has no account-projection contract. Do not claim
+  // a requested Nexus account while launching the harness's ambient profile.
+  if (input.accountId !== undefined) {
+    throw new AcpClientError('protocol', ACP_ACCOUNT_SELECTION_UNSUPPORTED);
+  }
   const sessionId = `acp-${randomUUID()}`;
   const publish = input.publishFrame ?? defaultPublish;
   const observerScope: AcpObserverScope = {
@@ -286,6 +312,7 @@ export async function spawnAcpHarnessSession(
     acpSessionId: '',
     scope: observerScope,
     turnSequence: 0,
+    hasPublicResponse: false,
     lastStatus: null,
     activeTurn: null,
     closed: false,
@@ -301,6 +328,26 @@ export async function spawnAcpHarnessSession(
       input.cwd,
       input.mcpServers ?? [],
     );
+    const selections = [
+      ['model', input.model],
+      ['effort', input.effort],
+    ] as const;
+    for (const [kind, value] of selections) {
+      if (value === undefined) continue;
+      const option = requestedAcpConfigOption(client.sessionConfigOptions(live.acpSessionId), kind, value);
+      if (option.currentValue !== value) {
+        await client.setSessionConfigOption(live.acpSessionId, option.id, value);
+      }
+    }
+    // Setting one option may change the available values or another selection.
+    // Verify the final state before binding authority or sending the first prompt.
+    for (const [kind, value] of selections) {
+      if (value === undefined) continue;
+      const option = requestedAcpConfigOption(client.sessionConfigOptions(live.acpSessionId), kind, value);
+      if (option.currentValue !== value) {
+        throw new AcpClientError('protocol', `ACP harness changed the requested ${kind} selection`);
+      }
+    }
     if (input.mcpToken) bindTokenToSession(input.mcpToken, sessionId);
   } catch (error) {
     const wrapped =

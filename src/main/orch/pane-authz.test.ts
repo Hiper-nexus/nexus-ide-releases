@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { ProjectExecutionScope } from '../../shared/types';
 import {
   authorizeAutomatedReviewBrowserAccess,
   authorizePaneAccess,
@@ -9,14 +10,15 @@ import {
 import { testProjectScope } from './__tests__/scope-fixture';
 
 const scope = testProjectScope({ projectId: 'project-a', checkoutId: 'checkout-a' });
-const worker: CallerCtx = { role: 'worker', missionId: 'm1', sessionId: 'wself', scope };
+const worker: CallerCtx = { role: 'worker', missionId: 'm1', sessionId: 'wself', scope, ownerWebContentsId: 1 };
 const orchestrator: CallerCtx = {
   role: 'orchestrator',
   missionId: 'm1',
   sessionId: 'oself',
   scope,
+  ownerWebContentsId: 1,
 };
-const user: CallerCtx = { role: 'user', sessionId: 'uself', scope };
+const user: CallerCtx = { role: 'user', sessionId: 'uself', scope, ownerWebContentsId: 1 };
 
 function pane(over: Partial<PaneAuthzInfo>): PaneAuthzInfo {
   return {
@@ -26,6 +28,7 @@ function pane(over: Partial<PaneAuthzInfo>): PaneAuthzInfo {
     missionId: 'm1',
     role: 'worker',
     scope,
+    ownerWebContentsId: 1,
     ...over,
   };
 }
@@ -68,16 +71,15 @@ describe('authorizePaneAccess', () => {
     expect(decision.reason).toMatch(/shell/);
   });
 
-  it("blocks a worker from the user's browser pane", () => {
+  it("allows a worker to control the user's browser in its originating window", () => {
     const browser = pane({ sessionId: null, kind: 'browser', missionId: undefined, role: undefined });
     const decision = authorizePaneAccess(worker, browser, 'write');
-    expect(decision.allow).toBe(false);
-    expect(decision.reason).toMatch(/browser/);
+    expect(decision.allow).toBe(true);
   });
 
-  it('blocks cross-mission browser navigation', () => {
+  it('allows cross-mission browser navigation within the originating window', () => {
     const browser = pane({ sessionId: null, kind: 'browser', missionId: 'm2', role: undefined });
-    expect(authorizePaneAccess(orchestrator, browser, 'write').allow).toBe(false);
+    expect(authorizePaneAccess(orchestrator, browser, 'write').allow).toBe(true);
   });
 
   it('lets the orchestrator navigate browser panes in its own mission', () => {
@@ -171,9 +173,40 @@ describe('authorizePaneAccess — user-opened browser pane', () => {
     expect(authorizePaneAccess(user, userOpenedBrowser, 'write').allow).toBe(true);
   });
 
-  it('keeps mission agents out of a user-owned browser surface', () => {
-    expect(authorizePaneAccess(orchestrator, userOpenedBrowser, 'read').allow).toBe(false);
-    expect(authorizePaneAccess(worker, userOpenedBrowser, 'read').allow).toBe(false);
+  it('lets mission agents use existing tabs from the same originating window', () => {
+    for (const caller of [worker, orchestrator, user]) {
+      for (const action of ['read', 'wait', 'write', 'close'] as const) {
+        expect(authorizePaneAccess(caller, userOpenedBrowser, action).allow).toBe(true);
+      }
+      expect(canListPane(caller, userOpenedBrowser)).toBe(true);
+    }
+  });
+
+  it('denies foreign and missing Main owner identity before user shortcuts', () => {
+    for (const caller of [worker, orchestrator, user]) {
+      for (const ownerWebContentsId of [undefined, 0, 2]) {
+        const target = { ...userOpenedBrowser, ownerWebContentsId };
+        expect(authorizePaneAccess(caller, target, 'write').allow).toBe(false);
+        expect(canListPane(caller, target)).toBe(false);
+      }
+      expect(authorizePaneAccess({ ...caller, ownerWebContentsId: undefined }, userOpenedBrowser, 'read').allow).toBe(false);
+    }
+  });
+
+  it('requires equality of every browser scope identity field', () => {
+    const foreignScopes: ProjectExecutionScope[] = [
+      { ...scope, version: 2 } as unknown as ProjectExecutionScope,
+      { ...scope, installationId: 'other-installation' },
+      { ...scope, projectId: 'other-project' },
+      { ...scope, checkoutId: 'other-checkout' },
+      { ...scope, rootRealPath: '/another/workspace' },
+      { ...scope, identitySource: 'other' } as unknown as ProjectExecutionScope,
+    ];
+    for (const caller of [worker, orchestrator, user]) {
+      for (const foreignScope of foreignScopes) {
+        expect(authorizePaneAccess(caller, { ...userOpenedBrowser, scope: foreignScope }, 'read').allow).toBe(false);
+      }
+    }
   });
 });
 

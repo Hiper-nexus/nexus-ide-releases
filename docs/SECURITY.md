@@ -138,6 +138,31 @@ npx vitest run src/main/orch/mcp-dispatch-security.test.ts \
   src/main/autonomy/autonomy-profiles.test.ts
 ```
 
+
+## Authorized worker capabilities (2026-10-02)
+
+Autopilot workers may use native subagents and browser/desktop tools when the
+existing tool policy permits them. Claude/OpenClaude Task restrictions are
+computed at spawn for governed or read-only panes, rather than attached to every
+adapter invocation. Native subprocesses inherit their pane's existing authority;
+this change does not grant cross-workspace access or a global MCP profile.
+
+Browser ownership is derived in Main from an exact project scope and a live PTY
+or ACP session. ACP proof includes its Main-owned runtime binding, account,
+provider, incarnation and coordination/execution scopes. A headless caller needs
+a unique live mission coordinator; stale, ambiguous or substituted bindings fail
+closed. Workers can use existing tabs in that authorized window. Personal-profile
+image export still requires its existing isolation/consent rules. The desktop
+loop retains macOS availability, Accessibility permission, per-goal confirmation,
+focus checks, sensitive-field refusal and irreversible-action handback.
+
+Regression evidence lives in native-subagent-policy, worker-handoff-contract,
+pane-authz, pane-registry-browser-owner, gate-browser-access, tools-browser-workspace
+and tools-computer-autopilot tests. Browser keyboard tests cover event.code,
+optional bounded hold duration, cancellation and document replacement. Hosted
+Xvfb smoke uses an isolated temporary fixture and an explicit test-only sandbox
+opt-in; production packaging never installs a no-sandbox launcher.
+
 ## Donos externos do reporte de problemas
 
 O endpoint de produção `api.nexuside.app/v1/bug-reports` pertence ao Worker

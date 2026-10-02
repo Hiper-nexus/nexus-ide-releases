@@ -11,6 +11,7 @@ import type {
   PaneRegistryEntry,
 } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
+import { ACP_ACCOUNT_SELECTION_UNSUPPORTED } from '../../shared/acp-session-config';
 import { getOrchSettings } from '../persistence/settings-store';
 import { mintToken, releaseSessionByToken } from './gate';
 import { getAcpHarness } from '../acp/harness-store';
@@ -107,6 +108,11 @@ export async function spawnMainOwnedAcpMissionPane(
     options.executionScope ?? options.scope,
     options.cwd,
   );
+  // This generic harness path does not project a Nexus account into the
+  // harness's effective provider binary. Reject before identity/token effects.
+  if (options.accountId !== undefined) {
+    return { requestId, ok: false, error: ACP_ACCOUNT_SELECTION_UNSUPPORTED };
+  }
   const { getMcpRuntimeInfo } = await import('./mcp-server');
   const mcp = getMcpRuntimeInfo();
   if (!mcp.running || !mcp.url) {

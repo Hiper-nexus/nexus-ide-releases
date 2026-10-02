@@ -2559,6 +2559,7 @@ export async function pressBrowserKey(
   scope: ProjectExecutionScope,
   options: {
     key: string;
+    holdMs?: number;
     ref?: string;
     modifiers?: readonly string[];
     read?: BrowserInlineRead;
@@ -2566,6 +2567,8 @@ export async function pressBrowserKey(
     sessionId?: string;
     missionId?: string;
     deps?: BrowserActionDeps;
+    signal?: AbortSignal;
+    assertCurrentAuthority?: () => void;
   },
 ): Promise<{
   paneId: string;
@@ -2581,21 +2584,34 @@ export async function pressBrowserKey(
 }> {
   const entry = withEntry(paneId, scope);
   const before = snapshotBrowserBefore(entry);
+  const generation = entry.loadGeneration;
+  const assertCurrent = (): void => {
+    options.assertCurrentAuthority?.();
+    if (options.signal?.aborted || withEntry(paneId, scope) !== entry ||
+        ((options.holdMs ?? 0) > 0 && (entry.loadGeneration !== generation || entry.navSeq !== before.navSeq))) {
+      throw new Error('browser press authority or document changed');
+    }
+  };
+  assertCurrent();
   const result = browserPressResultSchema.parse(
-    await runBrowserAutomationForPane(paneId, scope, 'press', {
+    await runBrowserAutomation(paneId, entry.view.webContents, 'press', {
       key: options.key,
+      ...(options.holdMs !== undefined ? { holdMs: options.holdMs } : {}),
       ...(options.ref ? { ref: options.ref } : {}),
       ...(options.modifiers && options.modifiers.length > 0
         ? { modifiers: options.modifiers }
         : {}),
-    }),
+    }, undefined, { signal: options.signal, assertCurrentAuthority: assertCurrent }),
   );
-  return attachAfterAndMaybePage(
+  assertCurrent();
+  const after = await attachAfterAndMaybePage(
     entry,
     before,
     { paneId, ...result },
     options,
   );
+  assertCurrent();
+  return after;
 }
 
 export async function hoverBrowserElement(

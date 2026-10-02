@@ -9,9 +9,9 @@ import { withPublicationLock } from './release-publication-lock.mjs';
 
 /**
  * Publishes the unsigned Linux x64 channel: the `linux-release.yml` workflow
- * builds .deb/.rpm on ubuntu-22.04 from the annotated tag; this script binds
- * the artifact to the tag object, verifies every byte, and attaches the two
- * packages plus SHA256SUMS-linux-x64.txt to the existing release on the
+ * builds .deb/.rpm and portable ZIP on ubuntu-22.04 from the annotated tag; this script binds
+ * the artifact to the tag object, verifies every byte, and attaches the three
+ * payloads plus SHA256SUMS-linux-x64.txt to the existing release on the
  * canonical repository first and the public mirror second. Idempotent: an
  * existing asset with the same digest is skipped; a different one fails.
  * Linux has no auto-update — users install the new package manually.
@@ -23,7 +23,8 @@ export const ASSETS_ARTIFACT = 'linux-x64-release';
 export const RECEIPT_ARTIFACT = 'linux-x64-receipt';
 export const RECEIPT_FILE = 'linux-release-receipt.json';
 export const SHA256SUMS_FILE = 'SHA256SUMS-linux-x64.txt';
-export const RECEIPT_SCHEMA = 'nexus.linux-release/v1';
+export const RECEIPT_SCHEMA = 'nexus.linux-release/v2';
+export const LEGACY_RECEIPT_SCHEMA = 'nexus.linux-release/v1';
 
 const STABLE = /^\d+\.\d+\.\d+$/u;
 const SHA1 = /^[a-f\d]{40}$/u;
@@ -58,11 +59,17 @@ export function githubRepositoryTarget(repo) {
 }
 
 /** The exact basenames the linux x64 maker chain produces for a version. */
-export function linuxAssetNames(version) {
-  return [
+export function linuxAssetNames(version, schema = RECEIPT_SCHEMA) {
+  if (![RECEIPT_SCHEMA, LEGACY_RECEIPT_SCHEMA].includes(schema)) {
+    fail('unsupported Linux release receipt schema');
+  }
+  const packages = [
     `nexus-ide_${version}_amd64.deb`,
     `nexus-ide-${version}-1.x86_64.rpm`,
   ];
+  return schema === LEGACY_RECEIPT_SCHEMA
+    ? packages
+    : [...packages, `NexusIDE-linux-x64-${version}.zip`];
 }
 
 export function sha256SumsContent(files) {
@@ -92,7 +99,7 @@ export function assertLinuxRun(run, runId) {
 export function assertLinuxReceipt(receipt, expected) {
   if (
     !receipt ||
-    receipt.schema !== RECEIPT_SCHEMA ||
+    ![RECEIPT_SCHEMA, LEGACY_RECEIPT_SCHEMA].includes(receipt.schema) ||
     receipt.version !== expected.version ||
     receipt.commit !== expected.commitSha ||
     receipt.tagObject !== expected.tagObjectSha ||
@@ -103,19 +110,20 @@ export function assertLinuxReceipt(receipt, expected) {
     receipt.arch !== 'x64' ||
     receipt.smoke?.packaged !== true ||
     receipt.smoke?.debInstalled !== true ||
+    (receipt.schema === RECEIPT_SCHEMA && receipt.smoke?.zipExtracted !== true) ||
     !Array.isArray(receipt.files)
   ) {
     fail('release receipt does not match this tag and worker run');
   }
 }
 
-/** Inventory: exactly the .deb and .rpm the makers produce, nothing else. */
-export function assertLinuxInventory(files, version) {
-  const expected = linuxAssetNames(version);
+/** v2 requires all three formats; historical v1 accepts only the DEB/RPM pair. */
+export function assertLinuxInventory(files, version, schema = RECEIPT_SCHEMA) {
+  const expected = linuxAssetNames(version, schema);
   const names = files.map((file) => file.name);
   if (
-    names.length !== 2 ||
-    new Set(names).size !== 2 ||
+    names.length !== expected.length ||
+    new Set(names).size !== expected.length ||
     names.some((name) => !expected.includes(name))
   ) {
     fail(`receipt inventory must be exactly ${expected.join(' + ')}`);
@@ -352,13 +360,13 @@ export async function publishLinuxReleaseCore(options = {}) {
       runAttempt: run.attempt,
       dispatchSha: run.headSha,
     });
-    assertLinuxInventory(receipt.files, version);
+    assertLinuxInventory(receipt.files, version, receipt.schema);
 
     const payloadPaths = receipt.files.map((entry) => readFileAsset(assetsDir, entry));
     const listing = fs.readdirSync(assetsDir).sort();
     const expectedListing = [...receipt.files.map((f) => f.name), RECEIPT_FILE].sort();
     if (listing.join('\n') !== expectedListing.join('\n')) {
-      fail('asset artifact must contain exactly the two packages and the receipt');
+      fail('asset artifact must contain exactly the schema payloads and the receipt');
     }
 
     const sumsPath = path.join(directory, SHA256SUMS_FILE);

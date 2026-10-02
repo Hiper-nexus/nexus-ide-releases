@@ -9,6 +9,7 @@ import {
   MIRROR_REPO,
   RECEIPT_FILE,
   RECEIPT_SCHEMA,
+  LEGACY_RECEIPT_SCHEMA,
   SHA256SUMS_FILE,
   assertLinuxInventory,
   assertLinuxReceipt,
@@ -64,10 +65,11 @@ function makeReceipt(patch = {}) {
     npm: '12.0.0',
     runner: 'ubuntu-22.04',
     arch: 'x64',
-    smoke: { packaged: true, debInstalled: true },
+    smoke: { packaged: true, debInstalled: true, zipExtracted: true },
     files: [
       { name: names[0], bytes: 11, sha256: digest('deb-payload') },
       { name: names[1], bytes: 11, sha256: digest('rpm-payload') },
+      { name: names[2], bytes: 11, sha256: digest('zip-payload') },
     ],
     ...patch,
   };
@@ -114,6 +116,7 @@ function makeSeams(overrides = {}) {
   const payloads = overrides.payloads ?? {
     [linuxAssetNames(VERSION)[0]]: 'deb-payload',
     [linuxAssetNames(VERSION)[1]]: 'rpm-payload',
+    [linuxAssetNames(VERSION)[2]]: 'zip-payload',
   };
   const uploads = [];
   const downloads = [];
@@ -193,7 +196,7 @@ function makeSeams(overrides = {}) {
 }
 
 describe('publish-linux-release', () => {
-  it('publishes deb, rpm and SHA256SUMS to canonical first then the mirror', async () => {
+  it('publishes deb, rpm, portable zip and SHA256SUMS to canonical first then the mirror', async () => {
     const root = makeRoot();
     const { seams, uploads } = makeSeams();
     const summary = await publishLinuxReleaseCore({
@@ -211,14 +214,14 @@ describe('publish-linux-release', () => {
     // Canonical uploads strictly precede the mirror's.
     const canonicalUploads = uploads.filter((u) => u.repo === CANONICAL_REPO);
     const mirrorUploads = uploads.filter((u) => u.repo === MIRROR_REPO);
-    expect(canonicalUploads).toHaveLength(3);
-    expect(mirrorUploads).toHaveLength(3);
-    expect(uploads.slice(0, 3).every((u) => u.repo === CANONICAL_REPO)).toBe(true);
-    expect(uploads.slice(3).every((u) => u.repo === MIRROR_REPO)).toBe(true);
+    expect(canonicalUploads).toHaveLength(4);
+    expect(mirrorUploads).toHaveLength(4);
+    expect(uploads.slice(0, 4).every((u) => u.repo === CANONICAL_REPO)).toBe(true);
+    expect(uploads.slice(4).every((u) => u.repo === MIRROR_REPO)).toBe(true);
     // SHA256SUMS uses the sha256sum two-space text format.
     const names = linuxAssetNames(VERSION);
     expect(sha256SumsContent(makeReceipt().files)).toBe(
-      `${digest('deb-payload')}  ${names[0]}\n${digest('rpm-payload')}  ${names[1]}\n`,
+      `${digest('deb-payload')}  ${names[0]}\n${digest('rpm-payload')}  ${names[1]}\n${digest('zip-payload')}  ${names[2]}\n`,
     );
   });
 
@@ -228,10 +231,10 @@ describe('publish-linux-release', () => {
     const existing = remoteAsset(names[0], digest('deb-payload'));
     const releases = {
       [CANONICAL_REPO]: makeRelease({ assets: [existing] }),
-      [MIRROR_REPO]: makeRelease({ assets: [{ ...existing }, remoteAsset(names[1], digest('rpm-payload')), remoteAsset(SHA256SUMS_FILE, digest('x'))] }),
+      [MIRROR_REPO]: makeRelease({ assets: [{ ...existing }, remoteAsset(names[1], digest('rpm-payload')), remoteAsset(names[2], digest('zip-payload')), remoteAsset(SHA256SUMS_FILE, digest('x'))] }),
     };
-    // Mirror already has all three with correct digests → nothing to upload there.
-    releases[MIRROR_REPO].assets[2] = remoteAsset(
+    // Mirror already has all four with correct digests → nothing to upload there.
+    releases[MIRROR_REPO].assets[3] = remoteAsset(
       SHA256SUMS_FILE,
       digest(sha256SumsContent(makeReceipt().files)),
     );
@@ -243,7 +246,7 @@ describe('publish-linux-release', () => {
     });
     expect(summary.repositories[0].skipped).toEqual([names[0]]);
     expect(summary.repositories[0].uploaded.sort()).toEqual(
-      [names[1], SHA256SUMS_FILE].sort(),
+      [names[1], names[2], SHA256SUMS_FILE].sort(),
     );
     expect(summary.repositories[1].uploaded).toEqual([]);
     expect(uploads.every((u) => u.repo === CANONICAL_REPO)).toBe(true);
@@ -349,6 +352,21 @@ describe('publish-linux-release', () => {
 });
 
 describe('pure helpers', () => {
+  it('requires ZIP smoke for v2 and preserves only the explicit historical v1 pair', async () => {
+    const expected = { version: VERSION, commitSha: COMMIT, tagObjectSha: TAG_OBJECT, runId: RUN_ID, runAttempt: 1, dispatchSha: DISPATCH_SHA };
+    const legacy = makeReceipt({ schema: LEGACY_RECEIPT_SCHEMA, smoke: { packaged: true, debInstalled: true } });
+    legacy.files = legacy.files.slice(0, 2);
+    expect(() => assertLinuxReceipt(legacy, expected)).not.toThrow();
+    expect(() => assertLinuxInventory(legacy.files, VERSION, legacy.schema)).not.toThrow();
+    expect(() => assertLinuxInventory(legacy.files, VERSION)).toThrow();
+    expect(() => assertLinuxInventory(makeReceipt().files, VERSION, LEGACY_RECEIPT_SCHEMA)).toThrow();
+    expect(() => assertLinuxReceipt(makeReceipt({ smoke: { packaged: true, debInstalled: true } }), expected)).toThrow();
+    expect(() => assertLinuxInventory(legacy.files, VERSION, 'nexus.linux-preview/v1')).toThrow();
+    const names = linuxAssetNames(VERSION, LEGACY_RECEIPT_SCHEMA);
+    const { seams } = makeSeams({ receipts: [legacy], assetsReceipt: legacy, payloads: { [names[0]]: 'deb-payload', [names[1]]: 'rpm-payload' } });
+    const result = await publishLinuxReleaseCore({ root: makeRoot(), argv: { version: VERSION, run: RUN_ID }, seams });
+    expect(result.assets.map((file) => file.name)).toEqual([...names, SHA256SUMS_FILE]);
+  });
   it('assertLinuxRun accepts only the successful workflow_dispatch on main', () => {
     expect(() => assertLinuxRun(makeRun(), RUN_ID)).not.toThrow();
     expect(() => assertLinuxRun(null, RUN_ID)).toThrow();

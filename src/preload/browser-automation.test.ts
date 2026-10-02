@@ -262,6 +262,108 @@ describe('isolated browser automation', () => {
     ).rejects.toThrow(/modifier/i);
   });
 
+  it('press supplies physical key codes for code-based game controls', async () => {
+    const { dom, automation } = fixture();
+    const seen: Array<{ key: string; code: string; type: string }> = [];
+    let moves = 0;
+    dom.window.document.addEventListener('keydown', (event) => {
+      seen.push({ key: event.key, code: event.code, type: event.type });
+      if (event.code === 'KeyW' || event.code === 'ArrowUp') moves += 1;
+    });
+    dom.window.document.addEventListener('keyup', (event) => {
+      seen.push({ key: event.key, code: event.code, type: event.type });
+    });
+
+    await automation.run('press', { key: 'w' });
+    await automation.run('press', { key: 'ArrowUp' });
+
+    expect(moves).toBe(2);
+    expect(seen).toEqual([
+      { type: 'keydown', key: 'w', code: 'KeyW' },
+      { type: 'keyup', key: 'w', code: 'KeyW' },
+      { type: 'keydown', key: 'ArrowUp', code: 'ArrowUp' },
+      { type: 'keyup', key: 'ArrowUp', code: 'ArrowUp' },
+    ]);
+  });
+
+  it('press preserves character keys while supplying their physical codes', async () => {
+    const { dom, automation } = fixture();
+    const seen: Array<{ key: string; code: string; shiftKey: boolean }> = [];
+    dom.window.document.addEventListener('keydown', (event) => {
+      seen.push({ key: event.key, code: event.code, shiftKey: event.shiftKey });
+    });
+    for (const key of ['W', '7', '!', '/', ' ', 'Space', 'Tab']) {
+      await automation.run('press', { key, modifiers: key === '!' ? ['Shift'] : [] });
+    }
+    expect(seen).toEqual([
+      { key: 'W', code: 'KeyW', shiftKey: false },
+      { key: '7', code: 'Digit7', shiftKey: false },
+      { key: '!', code: 'Digit1', shiftKey: true },
+      { key: '/', code: 'Slash', shiftKey: false },
+      { key: ' ', code: 'Space', shiftKey: false },
+      { key: ' ', code: 'Space', shiftKey: false },
+      { key: 'Tab', code: 'Tab', shiftKey: false },
+    ]);
+  });
+
+  it('holds a game key across animation frames only when requested and can restart', async () => {
+    const { dom, automation } = fixture();
+    let held = false;
+    dom.window.document.addEventListener('keydown', (event) => { if (event.code === 'ArrowRight') held = true; });
+    dom.window.document.addEventListener('keyup', (event) => { if (event.code === 'ArrowRight') held = false; });
+    await automation.run('press', { key: 'ArrowRight' });
+    expect(held).toBe(false);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const pending = automation.run('press', { key: 'ArrowRight', holdMs: 80 });
+      await new Promise<void>(resolve => dom.window.requestAnimationFrame(() => { expect(held).toBe(true); resolve(); }));
+      await pending;
+      expect(held).toBe(false);
+    }
+    dom.window.close();
+  });
+
+  it('cancels a held key, releases it in the live document, and permits another press', async () => {
+    const { dom, automation } = fixture();
+    const controller = new AbortController();
+    const events: string[] = [];
+    dom.window.document.addEventListener('keydown', () => events.push('down'));
+    dom.window.document.addEventListener('keyup', () => events.push('up'));
+    const pending = automation.run('press', { key: 'w', holdMs: 1_000 }, { signal: controller.signal });
+    const rejected = expect(pending).rejects.toThrow('cancelled');
+    controller.abort();
+    await rejected;
+    expect(events).toEqual(['down', 'up']);
+    await automation.run('press', { key: 'w' });
+    expect(events).toEqual(['down', 'up', 'down', 'up']);
+    dom.window.close();
+  });
+
+  it('does not send a held key release after the document begins navigation', async () => {
+    const { dom, automation } = fixture();
+    const events: string[] = [];
+    dom.window.document.addEventListener('keydown', () => events.push('down'));
+    dom.window.document.addEventListener('keyup', () => events.push('up'));
+    const pending = automation.run('press', { key: 'w', holdMs: 1_000 });
+    const rejected = expect(pending).rejects.toThrow('cancelled');
+    dom.window.dispatchEvent(new dom.window.Event('pagehide'));
+    await rejected;
+    expect(events).toEqual(['down']);
+    dom.window.close();
+  });
+
+  it('rejects invalid hold durations and already-cancelled presses before input', async () => {
+    const { dom, automation } = fixture();
+    let downs = 0;
+    dom.window.document.addEventListener('keydown', () => downs++);
+    for (const holdMs of [-1, 1_001, 1.5, '100']) {
+      await expect(automation.run('press', { key: 'w', holdMs })).rejects.toThrow('holdMs');
+    }
+    const controller = new AbortController(); controller.abort();
+    await expect(automation.run('press', { key: 'w', holdMs: 100 }, { signal: controller.signal })).rejects.toThrow('cancelled');
+    expect(downs).toBe(0);
+    dom.window.close();
+  });
+
   it('hover dispatches the mouse over sequence on a previously read ref', async () => {
     const { dom, automation } = fixture();
     const read = (await automation.run('read', {})) as {

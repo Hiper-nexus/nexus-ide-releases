@@ -1,0 +1,214 @@
+name: Linux x64 release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact stable annotated tag version (without v)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-x64-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'Hiper-nexus/nexus-ide' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.ref_protected
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+      NODE_OPTIONS: --max-old-space-size=4096
+      # GCC 11/12 reject the Electron 43 V8 attribute ordering.
+      CC: clang-15
+      CXX: clang++-15
+    steps:
+      - name: Require current protected main before executing repository code
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = Hiper-nexus/nexus-ide
+          test "$GITHUB_REF" = refs/heads/main
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          gh api repos/Hiper-nexus/nexus-ide/branches/main > "$RUNNER_TEMP/linux-release-main.json"
+          jq -e --arg sha "$GITHUB_SHA" '.protected == true and .commit.sha == $sha' "$RUNNER_TEMP/linux-release-main.json"
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate annotated tag on main and select immutable source
+        id: source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          RELEASE_TAG="refs/tags/v$RELEASE_VERSION"
+          test "$(git cat-file -t "$RELEASE_TAG")" = tag
+          RELEASE_COMMIT="$(git rev-parse --verify "$RELEASE_TAG^{commit}")"
+          git merge-base --is-ancestor "$RELEASE_COMMIT" "$GITHUB_SHA"
+          git checkout --detach "$RELEASE_COMMIT"
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          if (pkg.version !== process.env.RELEASE_VERSION) throw new Error('release version mismatch');
+          const nodeVersion = pkg.nexusRelease?.node;
+          if (!/^22\.\d+\.\d+$/.test(nodeVersion ?? '')) throw new Error('exact Node 22 release authority required');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `node_version=${nodeVersion}\n`);
+          NODE
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ steps.source.outputs.node_version }}
+          cache: npm
+
+      - name: Bootstrap repository-pinned npm with integrity verification
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { spawnSync } from 'node:child_process';
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import { readAndAssertReleaseAuthority } from './scripts/release-authority.mjs';
+          import { bootstrapPinnedNpm } from './scripts/make-release.mjs';
+          const authority = readAndAssertReleaseAuthority();
+          if (process.versions.node !== authority.nodeVersion || process.arch !== 'x64') throw new Error('Linux release runtime mismatch');
+          const execute = (command, args, options) => {
+            const result = spawnSync(command, args, { ...options, encoding: 'utf8', shell: false });
+            if (result.error) throw result.error;
+            if (result.status !== 0) throw new Error(`pinned npm bootstrap command failed: ${command}`);
+            return result;
+          };
+          const buildBase = path.join(process.env.RUNNER_TEMP, 'nexus-linux-toolchain');
+          const pinned = bootstrapPinnedNpm({
+            buildBase, version: authority.npmVersion, expectedIntegrity: authority.npmPackageIntegrity,
+            execute, environment: process.env,
+          });
+          const bin = path.join(buildBase, 'bin');
+          fs.mkdirSync(bin, { recursive: true });
+          fs.symlinkSync(pinned.npmCli, path.join(bin, 'npm'));
+          fs.symlinkSync(path.join(path.dirname(pinned.npmCli), 'npx-cli.js'), path.join(bin, 'npx'));
+          fs.appendFileSync(process.env.GITHUB_PATH, `${bin}\n`);
+          for (const name of ['NPM_CONFIG_CACHE', 'NPM_CONFIG_USERCONFIG', 'NPM_CONFIG_REGISTRY']) {
+            fs.appendFileSync(process.env.GITHUB_ENV, `${name}=${pinned.npmEnvironment[name]}\n`);
+          }
+          NODE
+          # GITHUB_PATH takes effect in the next step, including collector npm --version.
+
+      - name: Install Linux native build and runtime dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential clang-15 python3 pkg-config bubblewrap fakeroot rpm xvfb xauth unzip zip \
+            libgtk-3-0 libnss3 libasound2 libgbm1 libx11-xcb1 libdrm2 libxshmfence1
+          bwrap --version
+
+      - name: Verify Linux native C++20 compiler
+        run: |
+          set -euo pipefail
+          "$CC" --version
+          "$CXX" --version
+          test "$("$CC" -dumpversion | cut -d. -f1)" = 15
+          test "$("$CXX" -dumpversion | cut -d. -f1)" = 15
+          # Keep the libstdc++ headers selected from the image's GCC 12 toolchain.
+          "$CXX" -print-search-dirs
+          "$CXX" -print-search-dirs | grep -Eq "/gcc/x86_64-linux-gnu/12(:|$)"
+          # Electron 43 combines deprecation and export attributes in V8 headers.
+          "$CXX" -v -std=c++20 -fsyntax-only -x c++ - <<'CPP'
+          class [[deprecated("native compiler gate")]] __attribute__((visibility("default"))) NativeCompilerGate {
+           public: int value;
+          };
+          CPP
+
+      - name: Verify source and release security authority
+        run: |
+          set -euo pipefail
+          test "$(npm --version)" = "$(node -p 'require("./package.json").packageManager.slice(4)')"
+          npm ci
+          npm run typecheck
+          npm run security:renderer-sinks
+          npm test
+          npm run release:security
+
+      - name: Install verified native Codex smoke prerequisite
+        run: |
+          set -euo pipefail
+          node scripts/install-linux-smoke-codex.mjs --output release-artifacts/linux-codex-prerequisite.json
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: linux-codex-smoke-prerequisite
+          path: release-artifacts/linux-codex-prerequisite.json
+          if-no-files-found: warn
+          retention-days: 14
+
+
+      - name: Build Linux x64 packages
+        run: |
+          set -euo pipefail
+          npm run make -- --platform linux --arch x64
+
+      - name: Smoke packaged application on hosted X11 display
+        run: |
+          set -euo pipefail
+          # The smoke harness alone supplies --no-sandbox for hosted-runner policy.
+          # This does not prove a real Bubblewrap capability run or Hyprland session.
+          xvfb-run -a node scripts/smoke-packaged-app.mjs --verify-restart --expected-version "$RELEASE_VERSION"
+
+      - name: Install DEB and verify package metadata and installed runtime
+        run: |
+          set -euo pipefail
+          DEB="$GITHUB_WORKSPACE/out/make/deb/x64/nexus-ide_${RELEASE_VERSION}_amd64.deb"
+          RPM="$GITHUB_WORKSPACE/out/make/rpm/x64/nexus-ide-${RELEASE_VERSION}-1.x86_64.rpm"
+          test "$(dpkg-deb -f "$DEB" Version)" = "$RELEASE_VERSION"
+          test "$(dpkg-deb -f "$DEB" Architecture)" = amd64
+          dpkg-deb -f "$DEB" Depends | grep -Eq '(^|,)[[:space:]]*bubblewrap([[:space:](,]|$)'
+          test "$(rpm -qp --queryformat '%{VERSION}' "$RPM")" = "$RELEASE_VERSION"
+          test "$(rpm -qp --queryformat '%{ARCH}' "$RPM")" = x86_64
+          rpm -qpR "$RPM" | grep -Eq '^bubblewrap([[:space:]]|$)'
+          sudo apt-get install --no-install-recommends -y "$DEB"
+          test "$(dpkg-query -W -f='${Version}' nexus-ide)" = "$RELEASE_VERSION"
+          mapfile -t BINARIES < <(
+            dpkg-query -L nexus-ide | while IFS= read -r entry; do
+              if [[ "$entry" == */nexus-ide && -f "$entry" && -x "$entry" && ! -L "$entry" ]]; then
+                printf '%s\n' "$entry"
+              fi
+            done
+          )
+          test "${#BINARIES[@]}" = 1
+          test -x "${BINARIES[0]}"
+          xvfb-run -a node scripts/smoke-packaged-app.mjs --app "${BINARIES[0]}" --verify-restart --expected-version "$RELEASE_VERSION"
+
+      - name: Collect immutable Linux packages and receipt
+        # v2 records the portable archive only after its extracted runtime passed.
+        run: |
+          set -euo pipefail
+          ZIP="$GITHUB_WORKSPACE/out/make/zip/linux/x64/NexusIDE-linux-x64-${RELEASE_VERSION}.zip"
+          ZIP_BINARY="$(python3 scripts/extract-linux-zip.py --archive "$ZIP" --out "$RUNNER_TEMP/linux-release-zip")"
+          xvfb-run -a node scripts/smoke-packaged-app.mjs --app "$ZIP_BINARY" --verify-restart --expected-version "$RELEASE_VERSION"
+          node scripts/collect-linux-release.mjs \
+            --app "$GITHUB_WORKSPACE" --version "$RELEASE_VERSION" --out "$RUNNER_TEMP/linux-release-assets"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-x64-release
+          path: ${{ runner.temp }}/linux-release-assets/*
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-x64-receipt
+          path: ${{ runner.temp }}/linux-release-assets/linux-release-receipt.json
+          if-no-files-found: error
+          retention-days: 90

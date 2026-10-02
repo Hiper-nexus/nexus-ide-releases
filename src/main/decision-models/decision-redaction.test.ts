@@ -25,4 +25,32 @@ describe('decision provider egress redaction', () => {
     expect(redactSecrets('OPENAI_API_KEY=private-value')).toBe('OPENAI_API_KEY=[REDACTED]');
     expect(redactSecrets('MY_SERVICE_SECRET_TOKEN: private-value')).toContain('[REDACTED]');
   });
+
+  it.each([
+    ['apiKey: synthetic123456789', 'apiKey: [REDACTED]'],
+    ['access-key=synthetic123456789', 'access-key=[REDACTED]'],
+    ['token: synthetic123456789', 'token: [REDACTED]'],
+    ['password=synthetic123456789', 'password=[REDACTED]'],
+    ['token: the design token system', 'token: the design token system'],
+    ['secret: private-value', 'secret: private-value'],
+    ['API_KEY=short', 'API_KEY=[REDACTED]'],
+    ['MONKEY: short', 'MONKEY: [REDACTED]'],
+    ['cfat-synthetic_cloudflare_token_1234567890', '[REDACTED]'],
+    ['Bearer abcdefghijklmnopqrstuvwxyz012345', '[REDACTED]'],
+    ['sk-abcdefghijklmnopqrstuvwxyz012345', '[REDACTED]'],
+    ['npm_abcdefghijklmnopqrst0123456789', '[REDACTED]'],
+  ])('preserves independent and embedded credential rules for %s', (input, expected) => {
+    expect(redactSecrets(input)).toBe(expected);
+  });
+
+  it('redacts uppercase assignments on repeated calls and after long names or whitespace', () => {
+    const inputs = [
+      'KEY=short', 'TOKEN=short', 'SECRET=short', 'PASSWORD=short',
+      `${'a'.repeat(129)}API_KEY :\n\tshort`,
+    ];
+    for (let repetition = 0; repetition < 3; repetition += 1) {
+      for (const input of inputs) expect(redactSecrets(input)).toContain('[REDACTED]');
+      expect(redactSecrets('ordinary text: no credential')).toBe('ordinary text: no credential');
+    }
+  });
 });

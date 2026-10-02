@@ -47,6 +47,9 @@ function authorizeBrowserPane(
     action,
   );
   if (reviewAuthority) return reviewAuthority;
+  if (ctx.internalPrevcReviewerAuthority?.kind === 'automated-review') {
+    throw new Error('not authorized: automated reviewer browser surface is not current');
+  }
   authorizePaneRef(ctx, paneId, action);
   return null;
 }
@@ -144,15 +147,14 @@ const browserOpenTool: McpToolDef = {
     required: ['url'],
   },
   handler: async (args, ctx, invocation) => {
-    if (ctx.role === 'worker') {
+    const reviewPaneId = str(args, 'paneId');
+    const reviewAuthority = ctx.role === 'worker' && reviewPaneId
+      ? resolveAutomatedReviewBrowserAuthority(ctx, reviewPaneId, 'read')
+      : null;
+    if (reviewAuthority || ctx.internalPrevcReviewerAuthority?.kind === 'automated-review') {
       const paneId = requireStr(args, 'paneId');
-      const reviewAuthority = resolveAutomatedReviewBrowserAuthority(
-        ctx,
-        paneId,
-        'read',
-      );
       if (!reviewAuthority) {
-        throw new Error('not authorized: workers cannot open browser panes');
+        throw new Error('not authorized: automated reviewer browser surface is not current');
       }
       const url = requireStr(args, 'url');
       if (url !== reviewAuthority.surface.url) {
@@ -183,8 +185,9 @@ const browserOpenTool: McpToolDef = {
       title: str(args, 'title'),
       missionId: ctx.missionId,
       agentName: ctx.agentName ?? ctx.label,
-      ...(ctx.role === 'orchestrator' ? { role: 'orchestrator' as const } : {}),
+      ...(ctx.role !== 'user' ? { role: ctx.role } : {}),
       scope: ctx.scope,
+      caller: ctx,
     });
     if (!result.ok || !result.paneId) {
       throw new Error(result.error ?? 'browser open failed');
@@ -262,7 +265,11 @@ const browserNavigateTool: McpToolDef = {
 
 const browserScreenshotTool: McpToolDef = {
   name: 'nexus_browser_screenshot',
-  description: 'Capture an owned browser pane as a PNG with redacted URL metadata.',
+  description:
+    'Capture an owned browser pane as a local PNG artifact with redacted URL metadata. ' +
+    'The response contains a path and metadata, not image content. Inspect the image ' +
+    'with an available authorized image tool before claiming visual verification; ' +
+    'if that is unavailable, report visual verification as pending.',
   inputSchema: {
     type: 'object',
     properties: { paneId: { type: 'string' } },
@@ -699,13 +706,15 @@ const browserPressTool: McpToolDef = {
     'Press a keyboard key on the focused element, or on a `ref` when given ' +
     '(the element is focused first). Accepts named keys (Enter, Tab, Escape, ' +
     'ArrowUp/Down/Left/Right, Backspace, Delete, F1-F12, ...) or a single ' +
-    'printable character. Modifiers: Shift, Control, Alt, Meta.',
+    'printable character. Modifiers: Shift, Control, Alt, Meta. ' +
+    'Optional holdMs holds the key for up to 1000 ms before release.',
   inputSchema: {
     type: 'object',
     properties: {
       paneId: { type: 'string' },
       ref: { type: 'string' },
       key: { type: 'string' },
+      holdMs: { type: 'integer', minimum: 0, maximum: 1000 },
       modifiers: {
         type: 'array',
         items: { type: 'string', enum: ['Shift', 'Control', 'Alt', 'Meta'] },
@@ -715,15 +724,18 @@ const browserPressTool: McpToolDef = {
     },
     required: ['paneId', 'key'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const paneId = requireStr(args, 'paneId');
     authorizePaneRef(ctx, paneId, 'write');
     return pressBrowserKey(paneId, ctx.scope, {
       key: requireStr(args, 'key'),
+      holdMs: num(args, 'holdMs'),
       ref: str(args, 'ref'),
       modifiers: strArray(args, 'modifiers'),
       read: inlineReadArg(args),
       judge: args.judge === true,
+      signal: invocation?.signal,
+      assertCurrentAuthority: invocation?.assertCurrentAuthority,
       sessionId: ctx.sessionId,
       missionId: ctx.missionId,
     });
