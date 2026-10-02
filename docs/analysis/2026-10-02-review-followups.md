@@ -189,3 +189,58 @@ relatório GREEN 1aaf864607ecac6d1914a06fdcbe91049c4c71f0ecb0a6948ebd690860d4010
 A fixture não é Nexus166 nem prova restart/persistência entre processos; teste
 usa Xvfb/--no-sandbox exclusivamente no ambiente restrito. Os gates hospedados
 de pacote, restart e instalação continuam exigidos para validar a correção.
+
+
+## Rodada 6b61: limite de tempo de redação e resultado exibido na UI
+
+CI 36987291469 aprovou typecheck, renderer-sinks e 19.130 testes (166 ignorados,
+1.719 arquivos/8 ignorados); CodeQL 36987285970 aprovou. Windows 36987293974
+aprovou 135 testes e EXE extraído do NUPKG com versão166/22 probes/179 tools/18 adapters,
+renderer e PTY real encerrado; Setup não instalado, preview unsigned. Mac ARM64
+36987291221 aprovou 46 testes e app/ZIP com as mesmas 22 probes, shutdown graceful
+sem órfãos e assinatura ad-hoc. Root leu logs completos, metadata e o recibo
+Mac, verificando SHA/CRC dos diagnostics; checkout1228a40 tem árvore0bc2 igual
+à do head6b61. Esses resultados não constituem assinatura/notarização de release.
+
+Linux 36987291239 falhou somente no teste existente decision-redaction, que
+mediu 520,734334 ms contra o limite inalterado de 500 ms. 19.134 testes passaram,
+161 foram ignorados; 1 arquivo falhou/1.718 passaram/8 ignorados. A fonte do
+redator era idêntica à main. Nenhum browser/build/smoke/restart/instalação/recibo
+foi executado nesse run; artifacts vazio. A mensagem CDP do caso77c não foi
+reproduzida aqui porque a execução parou antes do pacote.
+
+O ASSIGNMENT_PATTERN já limitava o prefixo do nome a64 caracteres, mas fazia
+essa busca em cada posição de corridas longas sem qualquer palavra-chave.
+Agora um preflight não-global de KEY/TOKEN/SECRET/PASSWORD precede somente esse
+replace case-sensitive. Qualquer match original necessariamente contém uma
+dessas palavras; quando ausentes, o replace seria identidade. Todos os regex,
+limites, ordem, replacements, Cloudflare, segredos de provedores/PEM/JWT e o
+caminho camelCase independente permanecem. Nenhum threshold, retry ou gate muda.
+
+Os 17 testes passaram, incluindo o limite original e cobertura de credenciais
+sem palavras uppercase, nomes embutidos/longos e chamadas repetidas; autor, root
+e revisão independente repetiram a suíte. Em 1.455 casos diferenciais, as saídas
+foram idênticas ao baseline exato. Cinco pares em processos novos após as duas
+chamadas iniciais do teste mediram baseline77,62–86,67 ms e candidato26,15–28,22 ms;
+root repetiu o corpus e nove pares (74,48–79,64 ms versus25,89–28,56 ms), além de
+um par em processos novos (77,84/26,46 ms). Ganho relativo local não prevê a carga
+do runner; a mesma exigência de500 ms precisa passar no próximo CI.
+Fonte/teste SHA-256699c6f3e74f856260b4e020815f208a2d1ceb9af2d02097476c149c72caf22fa /
+dd5b1298f840127a3a75cf53a371b4b7a16d0b55744017cbdf481d21774b6296.
+
+A revisão também reproduziu o fechamento automático com status success a partir
+de texto que dizia não ter aberto ou inspecionado o preview. Handoff guarda
+claimTrust=untrusted/evidenceTrust=unverified quando faltam provas. MissionResult
+estrito contém outcome/summary/evidenceIds/artifactRefs e não transporta esses
+campos de trust nem uma prova visual; checagem técnica pode gerar refs sem validar
+aparência ou gameplay. O contrato textual novo orienta o worker, sem garantir
+obediência do modelo ou servir como verificador universal de qualidade.
+
+MissionInspector passa a exibir rótulos Resultado registrado e a contagem de
+referências fora dos detalhes, com a indicação explícita de que status de
+conclusão não atesta validação visual. Não muda schema, trust, autoclose, gates
+ou autonomia. Root conferiu baseline GitHub byte a byte, diff de JSX e syntax
+transpile; revisão independente sem bloqueios. A suíte local do componente está
+indisponível no checkout parcial (No test files found), sem alegar typecheck ou
+validação de renderer por transpile. Os testes existentes/typecheck do próximo
+CI permanecem exigidos. SHA-256 do componente7c0417b36e691931a5b095b1e49239436c6e95b3e09e66cd92d6f013e57f85c9.
