@@ -112,7 +112,12 @@ test('patch do admin: estrito, pelo menos uma mudança, https obrigatório e id 
   assert.equal(ok({ fixPrUrl: 'https://github.com/org/repo/pull/12' }), true);
   assert.equal(ok({ fixPrUrl: 'http://github.com/org/repo/pull/12' }), false);
   assert.equal(ok({ fixPrUrl: 'javascript:alert(1)' }), false);
+  for (const internal of ['https://127.0.0.1/x', 'https://[::1]/x', 'https://localhost/x', 'https://intranet/x', 'https://2130706433/x', 'https://servico.internal/x', 'https://nas.local/x']) {
+    assert.equal(ok({ fixPrUrl: internal }), false, `${internal} aponta para dentro da rede: um agente que o abrisse seria um SSRF`);
+  }
   assert.equal(ok({ fixPrUrl: 'https://user:senha@github.com/x' }), false);
+  assert.equal(ok({ fixPrUrl: `https://github.com/x/${'é'.repeat(200)}` }), false, 'o href normalizado também respeita os 500 caracteres do banco');
+  assert.equal(patchReportSchema.parse({ fixPrUrl: 'https://github.com/x/y/pull/1' }).fixPrUrl, 'https://github.com/x/y/pull/1');
   assert.equal(ok({ fixSummary: 'Corrigido o fechamento do terminal.' }), true);
   assert.equal(ok({ fixSummary: 'a'.repeat(2001) }), false);
   assert.equal(ok({ status: 'duplicate', duplicateOf: crypto.randomUUID() }), true);

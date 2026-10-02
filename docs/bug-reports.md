@@ -73,7 +73,7 @@ Resposta `201`: `{"ok":true,"data":{"id":"<uuid>","status":"new"}}`.
 | 413 | corpo acima de 64 KB |
 | 429 | mais de **5 relatos por hora** por conta. Traz `Retry-After` (segundos) e a mensagem "Você já enviou 5 relatos na última hora. Aguarde um pouco antes de enviar outro." |
 
-O teto é aplicado numa única instrução SQL (conta os relatos da última hora e grava, ou não grava), então rajadas paralelas não passam de 5. Além dele vale o limitador geral da API por IP.
+O teto é aplicado numa única instrução SQL (conta os relatos da última hora e grava, ou não grava), então rajadas paralelas não passam de 5. Além dele vale o limitador geral da API por IP (120 por minuto). **Limite conhecido:** o teto é por conta, e cada conta nova (login por Google ou GitHub) tem o seu; para conter um enxame de contas, configure uma regra de rate limiting do Cloudflare por IP em `POST /v1/bug-reports` (ou um binding `ratelimits` dedicado, como o `REDEEM_RATE_LIMITER`). Conta suspensa também pode reportar (decisão deliberada: pode ser um problema de cobrança).
 
 ### `GET /v1/bug-reports/mine`
 
@@ -97,7 +97,7 @@ O CORS passou a liberar o método `PATCH`, só para a origem do site.
 
 ### `GET /v1/admin/bug-reports`
 
-Filtros (todos opcionais; parâmetro desconhecido é 400): `status`, `category`, `severity`, `q` (busca no título, sem diferenciar caixa e sem curingas), `limit` (1 a 100, padrão 50) e `cursor`.
+Filtros (todos opcionais; parâmetro desconhecido é 400): `status`, `category`, `severity`, `q` (busca no título, sem diferenciar maiúsculas de minúsculas só para letras ASCII, e sem curingas: `%` e `_` são texto), `limit` (1 a 100, padrão 50) e `cursor`.
 
 ```json
 { "ok": true, "data": {
@@ -159,11 +159,11 @@ Corpo estrito de até 16 KB, com pelo menos um campo:
 | `note` | até 2000 caracteres; vira um evento `note` |
 | `duplicateOf` | uuid do relato original; só vale com `status: "duplicate"` |
 | `fixSummary` | até 2000 caracteres; é o que a pessoa lê em `mine` depois de `released` |
-| `fixPrUrl` | URL **https** sem credenciais, até 500 caracteres |
+| `fixPrUrl` | URL **https** pública, sem credenciais, até 500 caracteres (depois de normalizada). IP, `localhost` e hosts internos (`.local`, `.internal`…) são recusados: um agente que abrisse essa URL viraria um SSRF |
 
 Cada mudança grava um evento na linha do tempo e `updated_at` avança. A resposta é o mesmo corpo do detalhe. Erros: 400 (corpo inválido ou combinação inválida, como `duplicateOf` sem status `duplicate`), 404 (relato ou original inexistente), 409 (transição ilegal, mesmo status, nada mudou, original que já é duplicata, ou relato alterado por outra pessoa no meio do caminho), 413.
 
-Regras de duplicata: o status `duplicate` exige `duplicateOf` (existente, diferente do próprio e que **não** seja ele mesmo duplicata); sair de `duplicate` limpa o vínculo.
+Regras de duplicata: o status `duplicate` exige `duplicateOf` (existente, diferente do próprio e que **não** seja ele mesmo duplicata); um relato que já é o original de outras duplicatas **não** vira duplicata (409: aponte-as antes para o novo original), o que evita cadeias e ciclos; sair de `duplicate` limpa o vínculo. A conferência do original entra também na guarda da gravação, então uma corrida entre dois admins não cria ciclo.
 
 ## Fluxo de status
 
@@ -190,7 +190,7 @@ Eventos da linha do tempo (`bug_report_events.kind`): `created`, `status_changed
 - `actor_account_id`: o admin que autorizou;
 - `details_json`: `{"from":"fix_proposed","to":"approved","fixSummary":…,"fixPrUrl":…}`, a **foto da correção que foi aprovada**.
 
-A FASE 2 (agente de correção) **deve** agir só sobre relatos em `approved`, confirmar que existe o evento `approved` com um `actor_account_id` de admin e conferir que `fix_summary` e `fix_pr_url` atuais ainda são os da foto (se mudaram depois da aprovação, a aprovação não cobre a mudança). Esta fase não implementa nenhum agente nem correção automática; isso está coberto por teste apenas como registro da autorização.
+O servidor **prende** o que foi aprovado: propor (`triaged` para `fix_proposed`) e aprovar exigem `fixSummary` (400 sem ele), e enquanto o relato está em `approved` o `fixSummary` e o `fixPrUrl` **não mudam** (409, nem junto de `fixed` ou `released`); para alterar a correção é preciso retirar a aprovação (voltar a `fix_proposed`), o que exige uma nova aprovação. A FASE 2 (agente de correção) **deve**, mesmo assim, agir só sobre relatos em `approved`, confirmar que existe o evento `approved` com um `actor_account_id` de admin e conferir que `fix_summary` e `fix_pr_url` atuais são os da foto. Esta fase não implementa nenhum agente nem correção automática; isso está coberto por teste apenas como registro da autorização.
 
 Mudanças concorrentes são seguras: os eventos e o `UPDATE` entram numa batch atômica guardada pelo `status` e pelo `updated_at` que o admin viu. Quem perde a corrida recebe 409 e **não** deixa evento nem altera a linha.
 
@@ -214,13 +214,13 @@ A **impressão digital** é o `sha256` de (título normalizado + categoria + `ma
 
 O app já limpa o que coleta, mas o servidor **nunca confia nisso**: um cliente adulterado mandaria uma chave direto para o banco. Tudo que é texto livre e todo o diagnóstico passam por `src/bugs/scrub.ts` antes de gravar:
 
-- **Segredos** viram `[oculto]`: chaves `sk-…` (OpenAI e Anthropic), `sk_live_`/`sk_test_`, `whsec_`, `re_…` (Resend), `ghp_…`/`github_pat_…`, `glpat-`, `xox…`, `AKIA…`, `AIza…`, `npm_…`; JWT de três partes; `Bearer` e `Basic`; senha dentro de URL de conexão; blocos `-----BEGIN … PRIVATE KEY-----`; linhas `KEY=valor` de ambiente (inclusive `export`, `set` e `$env:`) e chaves de nome sensível (`api_key`, `secret`, `token`, `password`, `authorization`…).
+- **Segredos** viram `[oculto]`: chaves `sk-…` (OpenAI, Anthropic, OpenRouter), `sk_live_`/`sk_test_`, `whsec_`, `re_…` (Resend), `ghp_…`/`github_pat_…`, `glpat-`, `xox…`/`xapp-`, `AKIA…`/`ASIA…`, `AIza…`, `ya29.`, `npm_…`, `gsk_`, `xai-`, `hf_`, SendGrid, Mailgun e Twilio; JWT de três partes; `Bearer`, `Basic` e o resto da linha de um cabeçalho `Authorization:` ou `Cookie:`; **credenciais do próprio NexusIDE** (JSON de login com `session`/`refresh`/`csrf`, cookies `__Host-nexus_*`, `code`/`code_verifier` do deep link, token opaco solto de 40 caracteres ou mais e o **código de licença** `NEXUS-XXXX-XXXX-XXXX`, com ou sem traços); senha dentro de URL de conexão (`redis://:senha@host`) e token no lugar do usuário; parâmetros de URL (`?code=`, `&key=`, `X-Amz-Signature=`); flags de linha de comando (`--token X`, `--password=X`, `-u usuario:senha`); blocos `-----BEGIN … PRIVATE KEY-----` (também PGP, em minúsculas e com 4 hifens); linhas `KEY=valor` de ambiente (inclusive `export`, `set` e `$env:`); chaves de nome sensível (`api_key`, `secret`, `password`, `senha`, `passphrase`, `token`, `session`, `refresh`, `cookie`, `authorization`…); e frases do tipo "o token é …".
 - **Caminhos de HOME** viram `/Users/[usuario]/…`, `/home/[usuario]/…` e `C:\Users\[usuario]\…` (o resto do caminho fica).
-- **E-mails** viram `[email]`.
-- **Caracteres perigosos** são removidos antes de tudo: controle, sequências ANSI, marcas de direção (bidi), largura zero, hífen suave e o bloco Tag (U+E0000 a U+E007F, que esconde instruções em ASCII num texto aparentemente vazio). Isso vem **antes** das máscaras, senão um segredo partido por caractere invisível escaparia. O texto é normalizado em NFKC (letras de largura total viram ASCII).
+- **E-mails** viram `[email]` (com letras de qualquer alfabeto; `react@18.2.0` não é e-mail). **CPF e CNPJ já formatados** viram `[cpf]` e `[cnpj]`.
+- **Caracteres perigosos** são removidos antes de tudo: controle, sequências ANSI, marcas de direção (bidi), largura zero, hífen suave e o bloco Tag (U+E0000 a U+E007F, que esconde instruções em ASCII num texto aparentemente vazio). Isso vem **antes** das máscaras, senão um segredo partido por caractere invisível escaparia. Também saem os seletores de variação, o Braille em branco e todo caractere "ignorável" do Unicode. O texto é normalizado em NFKC (letras de largura total viram ASCII) e cortado logo depois, para a normalização não multiplicar o tamanho.
 - **Layout**: uma linha só nos campos de linha única; no máximo uma linha em branco seguida nos de várias linhas. O limite de tamanho vale **depois** da máscara e não corta emoji ao meio.
 
-A limpeza é **melhor esforço**: reduz muito o risco de vazamento, mas não é uma fronteira de segurança. Ela não impede texto em linguagem natural com instruções (veja a próxima seção).
+A limpeza é **melhor esforço**: reduz muito o risco de vazamento, mas não é uma fronteira de segurança. Ela não impede texto em linguagem natural com instruções (veja a seção de segurança). O que ela **não** reconhece: nomes de pessoas, telefones, IPs, nomes de máquina, segredos ofuscados de propósito (separados por espaço, em base64, invertidos), caminhos com espaço no nome do usuário no macOS/Linux e código de licença digitado sem o prefixo e sem traços. O app deve avisar a pessoa, antes de enviar, para não colar dados pessoais nem credenciais. Os regex são limitados (tempo medido abaixo de 10 ms para 4000 caracteres patológicos, com testes de orçamento), porque a limpeza roda antes do teto de 5 relatos por hora.
 
 ## Retenção
 
@@ -231,6 +231,7 @@ O diagnóstico (`diagnostics_json`) é **zerado 180 dias** depois da criação (
 - O relato só existe porque a pessoa o enviou. O diagnóstico exige consentimento explícito e separado (`consent.diagnostics`); sem ele nada é gravado, mesmo que o cliente o mande.
 - Finalidade: corrigir defeitos do NexusIDE. O texto não é usado para marketing nem compartilhado. O e-mail da conta só é visto pelo admin, para pedir mais informações.
 - Minimização: texto limpo no servidor, sem IP, sem conteúdo de terminal, e o diagnóstico expira em 180 dias.
+- **Em aberto (decisão do operador):** a retenção de 180 dias cobre só o diagnóstico. O texto do relato (`title`, `description`, `steps`) e o vínculo com a conta ficam sem prazo, enquanto forem úteis para o produto. Esse texto pode conter dado pessoal que a limpeza não reconhece (nome, telefone). Defina um prazo (por exemplo, anonimizar `account_id` e apagar o texto de relatos `released`/`wont_fix` depois de N meses) antes de crescer.
 - Se a conta for apagada, o relato **sobrevive sem dono** (`account_id` vira `NULL`; os eventos do admin também). Os dados já foram mascarados na entrada.
 - **Direito de exclusão:** a FASE 1 não tem rota para isso. Um pedido da pessoa é atendido à mão: `npx wrangler d1 execute DB --remote --command "DELETE FROM bug_reports WHERE account_id='<id da conta>'"` (a linha do tempo some junto, por `ON DELETE CASCADE`). Automatizar fica para a próxima fase.
 

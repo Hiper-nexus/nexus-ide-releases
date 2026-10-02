@@ -55,10 +55,17 @@ export const createReportSchema = z.strictObject({
 });
 export type CreateReportInput = z.output<typeof createReportSchema>;
 
-function isPlainHttps(value: string): boolean {
+/** Rótulos que só existem dentro de uma rede (um agente que abrisse a URL viraria SSRF): nunca são um repositório público. */
+const INTERNAL_SUFFIX = /\.(?:local|localhost|internal|lan|home|corp|intranet|private)$/;
+const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+
+/** https, sem credenciais e com um nome de domínio público: nada de IP, `localhost` ou host interno. */
+function isPublicHttps(value: string): boolean {
   try {
     const url = new URL(value);
-    return url.protocol === 'https:' && url.username === '' && url.password === '';
+    const host = url.hostname;
+    const isInternal = !host.includes('.') || host.startsWith('[') || IPV4.test(host) || INTERNAL_SUFFIX.test(host);
+    return url.protocol === 'https:' && url.username === '' && url.password === '' && !isInternal;
   } catch { return false; }
 }
 
@@ -69,7 +76,9 @@ export const patchReportSchema = z.strictObject({
   note: cleaned('text', 1, 2000).optional(),
   duplicateOf: z.uuid().optional(),
   fixSummary: cleaned('text', 1, 2000).optional(),
-  fixPrUrl: z.string().trim().max(500).refine(isPlainHttps, { message: 'Use uma URL https sem credenciais.' }).transform(value => new URL(value).href).optional(),
+  fixPrUrl: z.string().trim().max(500).refine(isPublicHttps, { message: 'Use uma URL https pública, sem credenciais.' }).transform(value => new URL(value).href)
+    // O href normalizado (com acentos em %xx) pode passar de 500: o CHECK do banco olharia para ele, não para o texto cru.
+    .refine(href => href.length <= 500, { message: 'URL longa demais.' }).optional(),
 }).refine(body => Object.values(body).some(value => value !== undefined), { message: 'Nada para alterar.' });
 export type PatchReportInput = z.output<typeof patchReportSchema>;
 

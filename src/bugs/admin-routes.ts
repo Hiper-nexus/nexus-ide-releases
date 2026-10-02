@@ -3,7 +3,7 @@ import { HTTPException } from 'hono/http-exception';
 import type { AppEnv } from '../context.js';
 import { jsonBody } from '../http.js';
 import { requireAdmin, requireCsrf, requireWebAuth } from '../middleware.js';
-import { applyPatch, findReport, getReportDetail, listReports, reportStats } from './admin-store.js';
+import { applyPatch, countDuplicates, findReport, getReportDetail, listReports, reportStats } from './admin-store.js';
 import { decodeCursor } from './cursor.js';
 import { planPatch } from './patch-plan.js';
 import { listQuerySchema, patchReportSchema } from './schemas.js';
@@ -52,8 +52,10 @@ export function createBugAdminRoutes(): Hono<AppEnv> {
     const patch = await jsonBody(c.req.raw, patchReportSchema, MAX_PATCH_BODY_BYTES);
     const current = await findReport(c.env.DB, id);
     if (current === null) throw new HTTPException(404, { message: 'Relato não encontrado.' });
+    // Só consulta o que o corpo pede: o original escolhido e, ao virar duplicata, se o relato já é original de outros.
     const original = patch.duplicateOf === undefined ? null : await findReport(c.env.DB, patch.duplicateOf);
-    const plan = planPatch(current, patch, original);
+    const duplicates = patch.status === 'duplicate' ? await countDuplicates(c.env.DB, id) : 0;
+    const plan = planPatch(current, patch, { original, duplicates });
     if (!await applyPatch(c.env.DB, current, plan, c.get('session').account_id, Date.now())) {
       throw new HTTPException(409, { message: 'Este relato foi alterado por outra pessoa. Atualize e tente de novo.' });
     }

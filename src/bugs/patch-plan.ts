@@ -17,6 +17,12 @@ export interface PatchPlan {
 export type PatchTarget = Pick<BugReportRow, 'id' | 'status' | 'severity' | 'duplicate_of' | 'fix_summary' | 'fix_pr_url'>;
 /** O relato escolhido como original (nulo = não existe). Só é consultado quando o corpo traz duplicateOf. */
 export type DuplicateTarget = Pick<BugReportRow, 'id' | 'status'> | null;
+/** O que o PATCH precisa saber do banco além do relato em si; a rota só consulta o que o corpo pede. */
+export interface PatchLookups { readonly original: DuplicateTarget; readonly duplicates: number }
+export const NO_LOOKUPS: PatchLookups = { original: null, duplicates: 0 };
+
+/** Depois de aprovada, a correção só muda se a aprovação for retirada (volta a fix_proposed) ou o relato dispensado. */
+const FIX_LOCKED_NEXT: ReadonlySet<BugStatus> = new Set(['approved', 'fixed', 'released']);
 
 /** Estados cujo evento carrega uma foto da correção: o que foi proposto, aprovado ou liberado. */
 const FIX_SNAPSHOT_KINDS: ReadonlySet<BugEventKind> = new Set(['fix_proposed', 'approved', 'released']);
@@ -27,13 +33,17 @@ function assertTransition(from: BugStatus, to: BugStatus): void {
 }
 
 /** O valor final de duplicate_of: exigido (e validado) com status duplicate, sempre nulo fora dele. */
-function resolveDuplicateOf(current: PatchTarget, patch: PatchReportInput, nextStatus: BugStatus, target: DuplicateTarget): string | null {
+function resolveDuplicateOf(current: PatchTarget, patch: PatchReportInput, nextStatus: BugStatus, lookups: PatchLookups): string | null {
+  const target = lookups.original;
   if (nextStatus !== 'duplicate') {
     if (patch.duplicateOf !== undefined) throw new HTTPException(400, { message: 'duplicateOf só vale junto do status "duplicate".' });
     return null;
   }
   const original = patch.duplicateOf ?? current.duplicate_of;
   if (original === null) throw new HTTPException(400, { message: 'Informe duplicateOf: o relato original.' });
+  if (current.status !== 'duplicate' && lookups.duplicates > 0) {
+    throw new HTTPException(409, { message: `Este relato é o original de ${lookups.duplicates} duplicata(s). Aponte-as para o novo original antes de marcá-lo como duplicata.` });
+  }
   if (patch.duplicateOf !== undefined) {
     if (patch.duplicateOf === current.id) throw new HTTPException(400, { message: 'Um relato não pode ser duplicata dele mesmo.' });
     if (target === null) throw new HTTPException(404, { message: 'Relato original não encontrado.' });
@@ -55,15 +65,31 @@ function statusEvent(current: PatchTarget, to: BugStatus, duplicateOf: string | 
 }
 
 /**
+ * A aprovação autoriza UMA correção concreta: propor ou aprovar exige o resumo dela, e depois de aprovada o resumo e a
+ * URL não mudam em silêncio (o evento `approved` guarda a foto do que foi aprovado; quem vier a agir confia nela).
+ */
+function assertFixPinned(current: PatchTarget, patch: PatchReportInput, nextStatus: BugStatus, fixSummary: string | null): void {
+  const proposing = patch.status === 'fix_proposed' && current.status === 'triaged';
+  if ((proposing || patch.status === 'approved') && fixSummary === null) {
+    throw new HTTPException(400, { message: `Informe fixSummary: ${proposing ? 'a correção proposta' : 'a correção que está sendo aprovada'}.` });
+  }
+  const changed = (patch.fixSummary !== undefined && patch.fixSummary !== current.fix_summary) || (patch.fixPrUrl !== undefined && patch.fixPrUrl !== current.fix_pr_url);
+  if (current.status === 'approved' && changed && FIX_LOCKED_NEXT.has(nextStatus)) {
+    throw new HTTPException(409, { message: 'A correção já foi aprovada e não pode mudar. Volte o relato para "fix_proposed" para alterá-la.' });
+  }
+}
+
+/**
  * Decide, sem tocar no banco, o que um PATCH muda e que eventos deixa na linha do tempo. Lança 400/404/409
  * (HTTPException) para o que não pode ser feito. Função pura: o estado atual entra por parâmetro.
  */
-export function planPatch(current: PatchTarget, patch: PatchReportInput, duplicateTarget: DuplicateTarget): PatchPlan {
+export function planPatch(current: PatchTarget, patch: PatchReportInput, lookups: PatchLookups = NO_LOOKUPS): PatchPlan {
   const nextStatus = patch.status ?? current.status;
   if (patch.status !== undefined) assertTransition(current.status, patch.status);
-  const duplicateOf = resolveDuplicateOf(current, patch, nextStatus, duplicateTarget);
+  const duplicateOf = resolveDuplicateOf(current, patch, nextStatus, lookups);
 
   const fix = { summary: patch.fixSummary ?? current.fix_summary, url: patch.fixPrUrl ?? current.fix_pr_url };
+  assertFixPinned(current, patch, nextStatus, fix.summary);
   const columns: Partial<Record<UpdatableColumn, string | null>> = {};
   const events: PlannedEvent[] = [];
 

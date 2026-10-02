@@ -150,3 +150,104 @@ test('a limpeza aguenta entrada patológica de 4000 caracteres sem estourar o or
     }
   }
 });
+
+const SESSION = 'Zk9XyWvUtSrQpOnMlKjIhGfEdCbA0123456789_-abc';
+const REFRESH = 'Qp8RsTuVwXyZaBcDeFgHiJkLmNoP9876543210-_xyz';
+
+/** Segredos achados pela revisão de segurança: cada entrada é [nome, texto, trecho que NÃO pode sobrar]. */
+const MORE_LEAKS: ReadonlyArray<readonly [string, string, string]> = [
+  ['JSON de login do app', JSON.stringify({ session: SESSION, refresh: REFRESH, csrf: null }), SESSION],
+  ['refresh do JSON', JSON.stringify({ session: SESSION, refresh: REFRESH }), REFRESH],
+  ['cabeçalho Cookie', `Cookie: __Host-nexus_session=${SESSION}; __Host-nexus_csrf=${REFRESH}`, SESSION],
+  ['cookie do site com =', `__Host-nexus_session=${SESSION}`, SESSION],
+  ['código OAuth no deep link', 'abri nexus://auth?code=AbCd1234EfGh5678&state=xYz98765', 'AbCd1234EfGh5678'],
+  ['code_verifier', 'code_verifier=vErIfIeR1234567890abcdefghij', 'vErIfIeR1234567890'],
+  ['código de licença', 'meu código NEXUS-7H3K-9QW2-XM4P não funcionou', '7H3K-9QW2-XM4P'],
+  ['código de licença minúsculo e com espaços', 'nexus 7h3k 9qw2 xm4p', '7h3k'],
+  ['token solto de 43 caracteres', `colei ${SESSION} sem querer`, SESSION],
+  ['pass=', 'pass=hunter2xyz', 'hunter2xyz'],
+  ['pw=', 'pw=hunter2xyz', 'hunter2xyz'],
+  ['passphrase=', 'passphrase=hunter2xyz', 'hunter2xyz'],
+  ['senha=', 'senha=hunter2xyz', 'hunter2xyz'],
+  ['senha: (PT-BR, valor curto)', 'senha: hunter2xyz', 'hunter2xyz'],
+  ['password: valor curto sem aspas', 'password: hunter2', 'hunter2'],
+  ['auth=', 'auth=hunter2xyz', 'hunter2xyz'],
+  ['jwt=', 'jwt=abc.def.ghi', 'abc.def.ghi'],
+  ['signature=', 'signature=hunter2xyz', 'hunter2xyz'],
+  ['--token X', 'rodei nexus --token hunter2xyz agora', 'hunter2xyz'],
+  ['--password X', 'mysql --password hunter2xyz', 'hunter2xyz'],
+  ['--api-key=X', 'tool --api-key=hunter2xyz', 'hunter2xyz'],
+  ['curl -u', 'curl -u admin:hunter2xyz https://x.exemplo.dev', 'hunter2xyz'],
+  ['?key= na URL', 'GET https://api.exemplo.dev/v1/x?key=hunter2xyz&id=1', 'hunter2xyz'],
+  ['?code= na URL', 'https://x.dev/cb?code=hunter2xyz', 'hunter2xyz'],
+  ['X-Amz-Signature', 'https://b.s3.amazonaws.com/o?X-Amz-Signature=hunter2xyz00', 'hunter2xyz00'],
+  ['redis sem usuário', 'redis://:hunter2xyz@cache.interno:6379', 'hunter2xyz'],
+  ['token como usuário da URL', 'git clone https://ghtokenvalue123@github.com/org/repo', 'ghtokenvalue123'],
+  ['Authorization: Token X', 'Authorization: Token hunter2xyz', 'hunter2xyz'],
+  ['chave gsk_', 'gsk_AbCdEfGhIjKlMnOpQrStUvWx', 'AbCdEfGhIjKlMnOpQrSt'],
+  ['chave xai-', 'xai-AbCdEfGhIjKlMnOpQrStUvWx', 'AbCdEfGhIjKlMnOpQrSt'],
+  ['token hf_', 'hf_AbCdEfGhIjKlMnOpQrStUvWx', 'AbCdEfGhIjKlMnOpQrSt'],
+  ['token ya29.', 'ya29.a0AfH6SMBAbCdEfGhIjKlMnOpQrSt', 'a0AfH6SMBAbCd'],
+  ['chave SendGrid', 'SG.AbCdEfGhIjKlMnOpQr.StUvWxYzAbCdEfGhIjKl', 'AbCdEfGhIjKlMnOpQr'],
+  ['token xapp-', 'xapp-1-A0123456789-abcdefghij', 'A0123456789'],
+  ['chave temporária da AWS', 'ASIAIOSFODNN7EXAMPLE', 'IOSFODNN7EXAMPLE'],
+  ['chave Mailgun', 'key-0123456789abcdef0123456789abcdef', '0123456789abcdef0123456789abcdef'],
+  ['SID/Key do Twilio', 'SK0123456789abcdef0123456789abcdef', '0123456789abcdef0123456789abcdef'],
+  ['PEM de PGP', '-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBF8abcdef\n-----END PGP PRIVATE KEY BLOCK-----', 'lQOYBF8abcdef'],
+  ['PEM em minúsculas', '-----begin private key-----\nMIIEvQabcdef\n-----end private key-----', 'MIIEvQabcdef'],
+  ['PEM com 4 hifens', '----BEGIN PRIVATE KEY----\nMIIEvQabcdef\n----END PRIVATE KEY----', 'MIIEvQabcdef'],
+  ['sk- com ponto no meio', 'sk-proj-AbCdEf1234567890.abc123XYZ789', 'abc123XYZ789'],
+  ['e-mail com acento', 'escreva para joão.conceição@gmail.com', 'conceição'],
+  ['e-mail com TLD unicode', 'a@b.中国', 'a@b'],
+  ['CPF formatado', 'meu CPF é 123.456.789-09', '123.456.789-09'],
+  ['CNPJ formatado', 'empresa 12.345.678/0001-95', '12.345.678/0001-95'],
+  ['caminho do Windows sem unidade', 'abriu \\Users\\maria\\Desktop\\x', 'maria'],
+  ['bearer= em minúsculas', 'bearer=Zq9Xk2Lm7Pw4Rt8Vb3Nc', 'Zq9Xk2Lm7Pw4Rt8Vb3Nc'],
+  ['Bearer: com dois pontos', 'Bearer: Zq9Xk2Lm7Pw4Rt8Vb3Nc', 'Zq9Xk2Lm7Pw4Rt8Vb3Nc'],
+  ['em prosa (inglês)', 'my token is Zq9Xk2Lm7Pw4Rt8Vb3Nc ok', 'Zq9Xk2Lm7Pw4Rt8Vb3Nc'],
+  ['em prosa (português)', 'a senha é Zq9Xk2Lm7Pw4Rt8Vb3Nc, anote', 'Zq9Xk2Lm7Pw4Rt8Vb3Nc'],
+  ['curl --user', 'curl --user admin:Zq9Xk2Lm7Pw4Rt8Vb3Nc https://x.dev', 'Zq9Xk2Lm7Pw4Rt8Vb3Nc'],
+  ['caminho UNC', '\\\\servidor\\c$\\Users\\joana\\x', 'joana'],
+];
+
+test('credenciais do próprio Nexus, flags, URLs, prefixos novos, PEM e e-mail unicode também são mascarados', () => {
+  for (const [name, text, leak] of MORE_LEAKS) {
+    assert.ok(!scrubText(text, LIMIT).includes(leak), `${name} vazou em scrubText`);
+    assert.ok(!scrubLine(text, LIMIT).includes(leak), `${name} vazou em scrubLine`);
+  }
+});
+
+test('a limpeza continua idempotente com as regras novas', () => {
+  const sample = MORE_LEAKS.map(([, text]) => text).join('\n');
+  const once = scrubText(sample, 20_000);
+  assert.equal(scrubText(once, 20_000), once);
+});
+
+test('hash de commit, UUID, versão de pacote, código de erro e nomes comuns não são confundidos com segredo', () => {
+  const plain = 'a senha é incorreta e o token é inválido; commit 3f2a124c8d9e0b1a2c3d4e5f60718293a4b5c6d7 no relato 3f2b8a52-8d0e-4f0a-9a9a-0123456789ab com react@18.2.0, node@22 e code=ENOENT; author=Maria, bypass de 12 painéis.';
+  assert.equal(scrubText(plain, LIMIT), plain);
+});
+
+test('remove também seletores de variação, o selo de Braille vazio e os preenchimentos invisíveis (esconderijo de instruções)', () => {
+  const hidden = 'a\uFE0Fb\u{E0100}c\u034Fd\u2800e\u3164f\uFFA0g\u180Eh\u061Ci';
+  assert.equal(scrubText(hidden, LIMIT), 'abcdefghi');
+});
+
+test('a normalização NFKC não amplifica o custo: o limite vale depois dela e o tempo continua baixo', () => {
+  const expands = '\u33C2'.repeat(4000); // cada um vira "a.m." (4 caracteres)
+  const started = performance.now();
+  const out = scrubText(expands, 4000);
+  const elapsed = performance.now() - started;
+  assert.ok(Array.from(out).length <= 4000);
+  assert.ok(elapsed < BUDGET_MS, `levou ${elapsed.toFixed(0)} ms`);
+});
+
+test('as entradas patológicas da revisão também ficam dentro do orçamento', () => {
+  for (const input of ['a.pwd.'.repeat(667), 'pwd-'.repeat(1000), 'passwd.'.repeat(570), 'secret.'.repeat(570), 'api_key.'.repeat(500), 'Cookie:'.repeat(570), '?code='.repeat(660), '--token '.repeat(500), 'NEXUS-'.repeat(660), 'a@b.'.repeat(1000), '\u2800'.repeat(4000)]) {
+    for (const scrub of [scrubText, scrubLine]) {
+      const started = performance.now();
+      scrub(input, LIMIT);
+      assert.ok(performance.now() - started < BUDGET_MS, `${input.slice(0, 12)}… levou ${(performance.now() - started).toFixed(0)} ms`);
+    }
+  }
+});

@@ -4,7 +4,7 @@ import {
   type BugCategory, type BugSeverity, type BugStatus,
 } from './constants.js';
 import { encodeCursor, type ListCursor } from './cursor.js';
-import type { PatchPlan, PatchTarget } from './patch-plan.js';
+import { UPDATABLE_COLUMNS, type PatchPlan, type PatchTarget, type UpdatableColumn } from './patch-plan.js';
 import type { ListQuery } from './schemas.js';
 
 /** Ainda exigem trabalho: o resto foi liberado, corrigido, descartado ou é duplicata. */
@@ -88,6 +88,12 @@ export async function findReport(db: D1Database, id: string): Promise<(PatchTarg
   return db.prepare('SELECT id, status, severity, duplicate_of, fix_summary, fix_pr_url, updated_at FROM bug_reports WHERE id=?').bind(id).first();
 }
 
+/** Quantas duplicatas apontam para este relato (um original com filhos não vira duplicata: evita cadeias). */
+export async function countDuplicates(db: D1Database, id: string): Promise<number> {
+  const row = await db.prepare('SELECT count(*) AS n FROM bug_reports WHERE duplicate_of=?').bind(id).first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
 const zeroed = <K extends string>(keys: readonly K[]): Record<K, number> => Object.fromEntries(keys.map(key => [key, 0])) as Record<K, number>;
 const filled = <K extends string>(keys: readonly K[], rows: ReadonlyArray<{ key: K; n: number }>): Record<K, number> =>
   rows.reduce((totals, row) => ({ ...totals, [row.key]: row.n }), zeroed(keys));
@@ -110,18 +116,40 @@ export async function reportStats(db: D1Database) {
 }
 
 /**
+ * A condição que o relato precisa continuar cumprindo no instante da gravação: o status e o updated_at que o admin viu e,
+ * para duplicatas, que o original não tenha virado duplicata nem o relato ganhado filhos nesse meio tempo.
+ */
+function rowGuard(current: PatchTarget & Pick<BugReportRow, 'updated_at'>, plan: PatchPlan): { readonly sql: string; readonly values: ReadonlyArray<string | number> } {
+  const clauses = ['id=?', 'status=?', 'updated_at=?'];
+  const values: Array<string | number> = [current.id, current.status, current.updated_at];
+  if (plan.columns.status === 'duplicate' && current.status !== 'duplicate') {
+    clauses.push('NOT EXISTS(SELECT 1 FROM bug_reports WHERE duplicate_of=?)');
+    values.push(current.id);
+  }
+  const original = plan.columns.duplicate_of;
+  if (typeof original === 'string') {
+    clauses.push("EXISTS(SELECT 1 FROM bug_reports WHERE id=? AND status<>'duplicate')");
+    values.push(original);
+  }
+  return { sql: clauses.join(' AND '), values };
+}
+
+/**
  * Aplica o plano numa batch atômica. Os eventos entram ANTES do UPDATE, os dois guardados pelo estado que o admin
  * viu (status + updated_at): quem perdeu a corrida não grava evento nem muda a linha. Devolve falso nesse caso.
  */
 export async function applyPatch(db: D1Database, current: PatchTarget & Pick<BugReportRow, 'updated_at'>, plan: PatchPlan, actorId: string, now: number): Promise<boolean> {
   // Sempre avança, mesmo que o relógio não tenha andado: updated_at também serve de versão da linha.
   const updatedAt = Math.max(now, current.updated_at + 1);
-  const guard = 'id=? AND status=? AND updated_at=?';
-  const guardValues = [current.id, current.status, current.updated_at];
+  const { sql: guard, values: guardValues } = rowGuard(current, plan);
   const events = plan.events.map(event => db.prepare(`INSERT INTO bug_report_events(id, report_id, actor_account_id, kind, details_json, created_at)
       SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM bug_reports WHERE ${guard})`)
     .bind(crypto.randomUUID(), current.id, actorId, event.kind, JSON.stringify(event.details), updatedAt, ...guardValues));
   const columns = Object.entries(plan.columns);
+  // Defesa em profundidade: o nome da coluna vai para o texto do SQL, então só entra o que está na lista fixa.
+  for (const [column] of columns) {
+    if (!UPDATABLE_COLUMNS.includes(column as UpdatableColumn)) throw new Error(`coluna não permitida em applyPatch: ${column}`);
+  }
   const assignments = [...columns.map(([column]) => `${column}=?`), 'updated_at=?'].join(',');
   const update = db.prepare(`UPDATE bug_reports SET ${assignments} WHERE ${guard} RETURNING id`)
     .bind(...columns.map(([, value]) => value), updatedAt, ...guardValues);

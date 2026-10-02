@@ -4,6 +4,7 @@ import { SqliteD1 } from './helpers/sqlite-d1.js';
 import { ADMIN_EMAIL, SITE, environment, nativeLogin, seedAccount, webLogin } from './helpers/fixtures.js';
 import { count, seedReport } from './helpers/bugs.js';
 import { createApp } from '../src/index.js';
+import { applyPatch, findReport } from '../src/bugs/admin-store.js';
 
 type Body = { ok: boolean; error?: string; data?: Record<string, any> };
 const json = async (response: Response): Promise<Body> => await response.json() as Body;
@@ -313,15 +314,16 @@ test('PATCH: corpo estrito (campo desconhecido, vazio, URL http, gravidade invá
 });
 
 /** Roda `effect` uma vez, logo depois da primeira instrução que casa com `pattern`: simula o outro admin chegando no meio. */
-function interleave(db: SqliteD1, pattern: RegExp, effect: () => Promise<void>): SqliteD1 {
+function interleave(db: SqliteD1, pattern: RegExp, effect: () => Promise<void>, nth = 1): SqliteD1 {
   let armed = true;
+  let seen = 0;
   const wrap = (statement: D1PreparedStatement): D1PreparedStatement => new Proxy(statement, {
     get(target, property) {
       if (property === 'bind') return (...values: unknown[]) => wrap(target.bind(...values));
       if (property !== 'first' && property !== 'run' && property !== 'all') return Reflect.get(target, property);
       return async (...args: unknown[]) => {
         const result = await (Reflect.get(target, property) as (...inner: unknown[]) => Promise<unknown>).apply(target, args);
-        if (armed) { armed = false; await effect(); }
+        if (armed && ++seen === nth) { armed = false; await effect(); }
         return result;
       };
     },
@@ -365,5 +367,76 @@ test('PATCH: corrigir só o resumo ou a URL da correção fica registrado como n
   const row = db.sqlite.prepare('SELECT fix_pr_url, status FROM bug_reports WHERE id = ?').get(id) as { fix_pr_url: string; status: string };
   assert.deepEqual({ ...row }, { fix_pr_url: PR, status: 'triaged' });
   assert.deepEqual(events(id), [{ kind: 'note', actor: 'admin', details: { updated: ['fixPrUrl'] } }]);
+  db.close();
+});
+
+test('PATCH: propor ou aprovar uma correção exige o resumo dela (a aprovação tem de autorizar algo concreto)', async () => {
+  const { db, patch, events } = await setup();
+  const triaged = seedReport(db, { status: 'triaged' });
+  assert.equal((await patch(triaged, { status: 'fix_proposed' })).status, 400, 'proposta sem resumo');
+  assert.equal((await patch(triaged, { status: 'fix_proposed', fixSummary: 'Corrige o fechamento do terminal.' })).status, 200);
+  const empty = seedReport(db, { status: 'fix_proposed' });
+  const refused = await patch(empty, { status: 'approved' });
+  assert.equal(refused.status, 400, 'aprovação sem resumo');
+  assert.match((await json(refused)).error!, /fixSummary/);
+  assert.deepEqual(events(empty), []);
+  assert.equal((await patch(empty, { status: 'approved', fixSummary: 'Resumo informado na própria aprovação.' })).status, 200);
+  assert.deepEqual(events(empty).find(event => event.kind === 'approved')!.details, { from: 'fix_proposed', to: 'approved', fixSummary: 'Resumo informado na própria aprovação.', fixPrUrl: null });
+  db.close();
+});
+
+test('PATCH: depois de aprovada, a correção fica TRAVADA (o que foi aprovado não muda sem revogar a aprovação)', async () => {
+  const { db, patch, events } = await setup();
+  const id = seedReport(db, { status: 'approved', fixSummary: 'Resumo aprovado.', fixPrUrl: PR });
+  const swap = await patch(id, { fixPrUrl: 'https://github.com/outro/repo/pull/9' });
+  assert.equal(swap.status, 409);
+  assert.match((await json(swap)).error!, /aprovad/i);
+  assert.equal((await patch(id, { fixSummary: 'Outro resumo, depois da aprovação.' })).status, 409);
+  assert.equal((await patch(id, { status: 'released', fixPrUrl: 'https://github.com/outro/repo/pull/9' })).status, 409, 'nem trocando junto com a liberação');
+  const row = db.sqlite.prepare('SELECT fix_summary, fix_pr_url, status FROM bug_reports WHERE id = ?').get(id) as Record<string, string>;
+  assert.deepEqual({ ...row }, { fix_summary: 'Resumo aprovado.', fix_pr_url: PR, status: 'approved' });
+  assert.deepEqual(events(id), []);
+  // Os mesmos valores, uma nota e a liberação seguem permitidos; para mudar a correção é preciso retirar a aprovação.
+  assert.equal((await patch(id, { fixSummary: 'Resumo aprovado.', note: 'Conferido.' })).status, 200);
+  assert.equal((await patch(id, { status: 'fix_proposed', fixSummary: 'Resumo novo, a aprovar de novo.' })).status, 200);
+  assert.equal((db.sqlite.prepare('SELECT status FROM bug_reports WHERE id = ?').get(id) as { status: string }).status, 'fix_proposed');
+  db.close();
+});
+
+test('PATCH: um original que já tem duplicatas não vira duplicata (evita cadeias); sem filhos, vira', async () => {
+  const { db, patch } = await setup();
+  const original = seedReport(db, { title: 'Original' });
+  const child = seedReport(db, { title: 'Filho', status: 'duplicate', duplicateOf: original });
+  const root = seedReport(db, { title: 'Outra raiz' });
+  const refused = await patch(original, { status: 'duplicate', duplicateOf: root });
+  assert.equal(refused.status, 409);
+  assert.match((await json(refused)).error!, /duplicata/i);
+  assert.equal((db.sqlite.prepare('SELECT status FROM bug_reports WHERE id = ?').get(original) as { status: string }).status, 'new');
+  assert.equal((await patch(child, { status: 'triaged' })).status, 200, 'solta o filho');
+  assert.equal((await patch(original, { status: 'duplicate', duplicateOf: root })).status, 200, 'agora sem filhos');
+  db.close();
+});
+
+test('PATCH: se o original virar duplicata no meio do caminho, quem chegou atrasado recebe 409 (sem ciclo A<->B)', async () => {
+  const { db, app, env, admin, patch, events } = await setup();
+  const a = seedReport(db, { title: 'A' });
+  const b = seedReport(db, { title: 'B' });
+  const c = seedReport(db, { title: 'C' });
+  // A pede para ser duplicata de B; depois de A ler o próprio relato E o original B, B vira duplicata de C.
+  const racing = interleave(db, /FROM bug_reports WHERE id=\?$/, async () => { assert.equal((await patch(b, { status: 'duplicate', duplicateOf: c })).status, 200); }, 2);
+  const late = await app.request(`${LIST}/${a}`, { method: 'PATCH', headers: admin, body: JSON.stringify({ status: 'duplicate', duplicateOf: b }) }, { ...env, DB: racing } as CloudflareBindings);
+  assert.equal(late.status, 409);
+  assert.equal((db.sqlite.prepare('SELECT status, duplicate_of FROM bug_reports WHERE id = ?').get(a) as { status: string }).status, 'new');
+  assert.deepEqual(events(a), []);
+  db.close();
+});
+
+test('applyPatch recusa um nome de coluna que não esteja na lista fixa (nada de SQL montado com texto de fora)', async () => {
+  const { db } = await setup();
+  const id = seedReport(db);
+  const current = (await findReport(db, id))!;
+  const forged = { columns: { 'status=status, severity': 'blocker' }, events: [] } as never;
+  await assert.rejects(applyPatch(db, current, forged, 'admin', Date.now()), /coluna/i);
+  assert.equal((db.sqlite.prepare('SELECT severity FROM bug_reports WHERE id = ?').get(id) as { severity: string }).severity, 'medium');
   db.close();
 });
