@@ -42,14 +42,21 @@ export const MANAGED_HOOK_TIMEOUT_SECONDS = 10;
  * Load port/token from the hook endpoint file. On Windows `call file.env`
  * is ShellExecute: every Claude/Codex hook opened the "choose an app for
  * .env" dialog. A `.cmd` may still be called; a `.env` is only parsed.
+ *
+ * F-745: outside a Nexus pane the variable is undefined, `%VAR:~-4%` does not
+ * expand and the multi-line `if … (` block fails to parse — "A sintaxe do
+ * comando está incorreta", exit 255, on every hook of a CLI the operator runs
+ * on their own. `goto` skips the block without parsing it.
  */
 export function windowsHookEndpointLoadLines(): readonly string[] {
   return [
-    'if defined NEXUS_AGENT_HOOK_ENDPOINT if /i "%NEXUS_AGENT_HOOK_ENDPOINT:~-4%"==".cmd" if exist "%NEXUS_AGENT_HOOK_ENDPOINT%" call "%NEXUS_AGENT_HOOK_ENDPOINT%"',
-    'if defined NEXUS_AGENT_HOOK_ENDPOINT if /i not "%NEXUS_AGENT_HOOK_ENDPOINT:~-4%"==".cmd" if exist "%NEXUS_AGENT_HOOK_ENDPOINT%" (',
+    'if not defined NEXUS_AGENT_HOOK_ENDPOINT goto nexus_hook_post',
+    'if /i "%NEXUS_AGENT_HOOK_ENDPOINT:~-4%"==".cmd" if exist "%NEXUS_AGENT_HOOK_ENDPOINT%" call "%NEXUS_AGENT_HOOK_ENDPOINT%"',
+    'if /i not "%NEXUS_AGENT_HOOK_ENDPOINT:~-4%"==".cmd" if exist "%NEXUS_AGENT_HOOK_ENDPOINT%" (',
     '  for /f "usebackq tokens=2 delims=\'" %%P in (`findstr /b /c:"export NEXUS_AGENT_HOOK_PORT=" "%NEXUS_AGENT_HOOK_ENDPOINT%"`) do set "NEXUS_AGENT_HOOK_PORT=%%P"',
     '  for /f "usebackq tokens=2 delims=\'" %%T in (`findstr /b /c:"export NEXUS_AGENT_HOOK_TOKEN=" "%NEXUS_AGENT_HOOK_ENDPOINT%"`) do set "NEXUS_AGENT_HOOK_TOKEN=%%T"',
     ')',
+    ':nexus_hook_post',
   ];
 }
 
