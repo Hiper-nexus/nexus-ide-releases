@@ -6,7 +6,7 @@
  * porta efêmera, token aleatório por sessão gravado em endpoint.json (0600)
  * sob userData. Validação de caminho é a fronteira de segurança: só entram
  * arquivos cujo realpath fica sob as raízes do Shot (~/Pictures/Nexus Shot,
- * ~/Movies/Nexus Shot; no Windows, Imagens/Vídeos\Nexus Shot) — sem
+ * ~/Movies/Nexus Shot; no Windows e no Linux, Imagens/Vídeos) — sem
  * traversal, sem symlink para fora, sem paths arbitrários do sistema.
  *
  * O módulo NÃO importa electron: a borda (foco de janela, notificação,
@@ -53,14 +53,15 @@ function tokenMatches(provided: string, expected: string): boolean {
 export type ShotKnownFolders = { pictures?: string; videos?: string };
 
 /** Raízes permitidas: apenas os diretórios de destino do Nexus Shot. O Shot
- *  grava gravações em ~/Movies no macOS e em Vídeos (~\Videos) no Windows. */
+ *  grava gravações em ~/Movies no macOS e em Vídeos no Windows (~\Videos) e
+ *  no Linux (~/Videos, o padrão XDG). */
 export function shotAllowedRoots(
   home: string = homedir(),
   platform: NodeJS.Platform = process.platform,
   knownFolders: ShotKnownFolders = {},
 ): string[] {
   const path = platform === 'win32' ? win32 : posix;
-  const videos = platform === 'win32' ? 'Videos' : 'Movies';
+  const videos = platform === 'darwin' ? 'Movies' : 'Videos';
   const roots = [path.join(home, 'Pictures', 'Nexus Shot'), path.join(home, videos, 'Nexus Shot')];
   for (const folder of [knownFolders.pictures, knownFolders.videos]) {
     if (folder && path.isAbsolute(folder)) roots.push(path.join(folder, 'Nexus Shot'));

@@ -28,8 +28,9 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'shot-bridge-home-'));
   userData = mkdtempSync(join(tmpdir(), 'shot-bridge-userdata-'));
   picturesDir = join(home, 'Pictures', 'Nexus Shot');
-  // Gravações: ~/Movies no macOS, ~\Videos no Windows (dirs::video_dir do Shot).
-  moviesDir = join(home, process.platform === 'win32' ? 'Videos' : 'Movies', 'Nexus Shot');
+  // Gravações: ~/Movies no macOS; ~\Videos no Windows e ~/Videos no Linux
+  // (dirs::video_dir do Shot).
+  moviesDir = join(home, process.platform === 'darwin' ? 'Movies' : 'Videos', 'Nexus Shot');
   mkdirSync(picturesDir, { recursive: true });
   mkdirSync(moviesDir, { recursive: true });
 });
@@ -113,6 +114,24 @@ describe('raízes e caminhos no Windows', () => {
     expect(shotAllowedRoots('C:\\Users\\u', 'win32')).toEqual([
       'C:\\Users\\u\\Pictures\\Nexus Shot',
       'C:\\Users\\u\\Videos\\Nexus Shot',
+    ]);
+    // Linux: o padrão XDG é ~/Videos. Antes caía em ~/Movies (regra do macOS)
+    // e a gravação do Shot só era aceita por acaso, via knownFolders.
+    expect(shotAllowedRoots('/home/u', 'linux')).toEqual([
+      '/home/u/Pictures/Nexus Shot',
+      '/home/u/Videos/Nexus Shot',
+    ]);
+    // Pastas XDG personalizadas (user-dirs.dirs) entram pelas pastas conhecidas.
+    expect(
+      shotAllowedRoots('/home/u', 'linux', {
+        pictures: '/home/u/Imagens',
+        videos: '/home/u/Vídeos',
+      }),
+    ).toEqual([
+      '/home/u/Pictures/Nexus Shot',
+      '/home/u/Videos/Nexus Shot',
+      '/home/u/Imagens/Nexus Shot',
+      '/home/u/Vídeos/Nexus Shot',
     ]);
     // Imagens redirecionada ao OneDrive entra; a pasta padrão repetida não
     // duplica.
