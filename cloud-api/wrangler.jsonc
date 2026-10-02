@@ -1,0 +1,21 @@
+{
+  "name":"nexus-cloud-api",
+  "account_id":"53446ce31f241717e814d3766cb43305",
+  "main":"src/index.ts",
+  "compatibility_date":"2026-09-30",
+  "compatibility_flags":["nodejs_compat"],
+  "workers_dev":false,
+  "preview_urls":false,
+  // The site and the desktop app both call this host; session cookies are bound to it.
+  "routes":[{"pattern":"api.nexuside.app","custom_domain":true}],
+  "d1_databases":[{"binding":"DB","database_name":"nexus-cloud-prod","database_id":"8997e871-cb89-4bf5-92b7-3d1b57de135f","migrations_dir":"migrations"}],
+  // MIGRATION_READY stays "false" until the operator opens sales: checkout answers 503 while it is.
+  // Secrets (wrangler secret put): LICENSE_PRIVATE_KEY, LICENSE_PUBLIC_KEY, STRIPE_SECRET_KEY,
+  // STRIPE_WEBHOOK_SECRET, GITHUB_OAUTH_SECRET, GOOGLE_OAUTH_SECRET.
+  // Avisos por e-mail (docs/emails.md): RESEND_API_KEY e NOTICE_SECRET são secrets; nada sai enquanto
+  // EMAIL_ENABLED for "false". Ligar é o último passo, depois de verificar o domínio no Resend.
+  "vars":{"PUBLIC_BASE_URL":"https://api.nexuside.app","PUBLIC_SITE_URL":"https://nexuside.app","APP_DEEP_LINK_BASE":"nexus://auth","SHOT_DEEP_LINK_BASE":"nexus-shot://auth/callback","APP_MODE":"production","MIGRATION_READY":"true","ADMIN_EMAILS":"admin@volarehost.com.br,retornoja@gmail.com","TRIAL_DAYS":"15","TRIAL_MAX_AGENTS":"2","TRIAL_CLOUD_SYNC":"false","STRIPE_PRICE_PRO":"price_1TtqDG4kFhDStKADVE8GSnoM","GITHUB_OAUTH_ID":"Ov23liYym8dKGRydr2Mi","GOOGLE_OAUTH_ID":"696325447792-m8nrl6nm9eeav9brhkhcmrs9ukitmkl2.apps.googleusercontent.com","STRIPE_PRICE_TEAM":"","EMAIL_ENABLED":"true","EMAIL_FROM":"NexusIDE <avisos@nexuside.app>"},
+  "triggers":{"crons":["17 * * * *"]},
+  "observability":{"enabled":true},
+  "ratelimits":[{"name":"AUTH_RATE_LIMITER","namespace_id":"2001","simple":{"limit":20,"period":60}},{"name":"API_RATE_LIMITER","namespace_id":"2002","simple":{"limit":120,"period":60}},{"name":"REDEEM_RATE_LIMITER","namespace_id":"2003","simple":{"limit":10,"period":60}}]
+}

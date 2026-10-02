@@ -1,0 +1,12 @@
+import { z } from 'zod';
+const schema=z.object({PUBLIC_BASE_URL:z.url(),PUBLIC_SITE_URL:z.url(),APP_DEEP_LINK_BASE:z.string().default('nexus://auth'),SHOT_DEEP_LINK_BASE:z.string().default('nexus-shot://auth/callback'),APP_MODE:z.enum(['staging','production']).default('staging'),MIGRATION_READY:z.enum(['true','false']).default('false'),ADMIN_EMAILS:z.string().default(''),TRIAL_DAYS:z.coerce.number().int().min(1).max(30).default(15),TRIAL_MAX_AGENTS:z.coerce.number().int().min(1).max(20).default(2),TRIAL_CLOUD_SYNC:z.enum(['true','false']).default('false'),GITHUB_OAUTH_ID:z.string().default(''),GITHUB_OAUTH_SECRET:z.string().default(''),GOOGLE_OAUTH_ID:z.string().default(''),GOOGLE_OAUTH_SECRET:z.string().default(''),LICENSE_PRIVATE_KEY:z.string().default(''),LICENSE_PUBLIC_KEY:z.string().default(''),STRIPE_SECRET_KEY:z.string().default(''),STRIPE_WEBHOOK_SECRET:z.string().default(''),STRIPE_PRICE_PRO:z.string().default(''),STRIPE_PRICE_TEAM:z.string().default(''),RESEND_API_KEY:z.string().default(''),NOTICE_SECRET:z.string().default(''),EMAIL_ENABLED:z.enum(['true','false']).default('false'),EMAIL_FROM:z.string().min(3).default('NexusIDE <avisos@nexuside.app>')});
+export type Config=z.infer<typeof schema>;
+export function configFrom(env:unknown):Config{return schema.parse(env);}
+export function authConfigured(config:Config,provider:'google'|'github'):boolean{return Boolean(config.LICENSE_PRIVATE_KEY&&config.LICENSE_PUBLIC_KEY&&(provider==='google'?config.GOOGLE_OAUTH_ID&&config.GOOGLE_OAUTH_SECRET:config.GITHUB_OAUTH_ID&&config.GITHUB_OAUTH_SECRET));}
+export function billingConfigured(config:Config):boolean{return Boolean(config.STRIPE_SECRET_KEY&&config.STRIPE_PRICE_PRO&&config.STRIPE_WEBHOOK_SECRET&&config.LICENSE_PRIVATE_KEY);}
+/** Os avisos por e-mail só saem com o interruptor ligado E as duas credenciais presentes (o segredo com tamanho decente): faltar uma é desligado, nunca erro. */
+/** Segredo curto deixaria os links de descadastro adivináveis: `openssl rand -base64 32` dá 44 caracteres. */
+export const NOTICE_SECRET_MIN_LENGTH=32;
+/** Chave do Resend e segredo decente presentes: o suficiente para o admin provar o envio antes de ligar o disparo geral. */
+export function emailCredentialsPresent(config:Config):boolean{return Boolean(config.RESEND_API_KEY)&&config.NOTICE_SECRET.trim().length>=NOTICE_SECRET_MIN_LENGTH;}
+export function emailConfigured(config:Config):boolean{return config.EMAIL_ENABLED==='true'&&emailCredentialsPresent(config);}
