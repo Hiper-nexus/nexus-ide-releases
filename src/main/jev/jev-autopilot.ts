@@ -28,7 +28,8 @@ export type JevSurface =
   | 'memoryDistill'
   | 'helperReuse'
   | 'businessModel'
-  | 'missionPick';
+  | 'missionPick'
+  | 'catalogPick';
 
 const JEV_SURFACES: readonly JevSurface[] = [
   'handoffReview',
@@ -46,6 +47,7 @@ const JEV_SURFACES: readonly JevSurface[] = [
   'helperReuse',
   'businessModel',
   'missionPick',
+  'catalogPick',
 ];
 
 /**

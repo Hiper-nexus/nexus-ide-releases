@@ -24,6 +24,7 @@ const SURFACE_LABELS: Record<string, string> = {
   rankTool: 'Tool nexus_rank',
   helperReuse: 'Reuso de helper ocioso',
   missionPick: 'Missão falada (desempate)',
+  catalogPick: 'Recomendações do Marketplace',
 };
 
 const NO_ANSWER_REASONS: Record<string, string> = {

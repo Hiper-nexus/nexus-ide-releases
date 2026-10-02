@@ -108,4 +108,21 @@ describe('isJevSurfaceEnabled', () => {
     } as never);
     expect(isJevSurfaceEnabled('missionPick')).toBe(false);
   });
+
+  it('catalogPick (F-757): ligada por padrão e desligável por setting e env', () => {
+    expect(JEV_SURFACES).toContain('catalogPick');
+    settings.getOrchSettings.mockReturnValue({ jevAutopilot: true, jevSurfaces: {} } as never);
+    expect(isJevSurfaceEnabled('catalogPick')).toBe(true);
+
+    settings.getOrchSettings.mockReturnValue({
+      jevAutopilot: true,
+      jevSurfaces: { catalogPick: false },
+    } as never);
+    expect(isJevSurfaceEnabled('catalogPick')).toBe(false);
+
+    settings.getOrchSettings.mockReturnValue({ jevAutopilot: true, jevSurfaces: {} } as never);
+    process.env.NEXUS_JEV_SURFACE_CATALOGPICK = '0';
+    expect(isJevSurfaceEnabled('catalogPick')).toBe(false);
+    delete process.env.NEXUS_JEV_SURFACE_CATALOGPICK;
+  });
 });

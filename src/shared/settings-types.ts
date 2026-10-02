@@ -159,6 +159,8 @@ export const orchSettingsSchema = z.object({
       businessModel: z.boolean().default(true),
       /** Desempate da missão falada ("abre a missão X") entre títulos parecidos. */
       missionPick: z.boolean().default(true),
+      /** F-757: agentes e instruções do Marketplace recomendados para a stack do projeto. */
+      catalogPick: z.boolean().default(true),
     })
     .prefault({}),
   /**

@@ -442,6 +442,7 @@ export function SquadsSection() {
     helperReuse: true,
     businessModel: true,
     missionPick: true,
+    catalogPick: true,
   });
   const [designPro, setDesignPro] = useState(true);
   const [memoryInjection, setMemoryInjection] = useState(true);
@@ -471,6 +472,7 @@ export function SquadsSection() {
         helperReuse: o.jevSurfaces?.helperReuse !== false,
         businessModel: o.jevSurfaces?.businessModel !== false,
         missionPick: o.jevSurfaces?.missionPick !== false,
+        catalogPick: o.jevSurfaces?.catalogPick !== false,
       });
       setDesignPro(o.designPro);
       setMemoryInjection(o.workspaceMemoryInjection !== false);
@@ -883,6 +885,10 @@ export function SquadsSection() {
               [
                 'missionPick',
                 'Missão falada (desempate entre títulos parecidos, por voz)',
+              ],
+              [
+                'catalogPick',
+                'Marketplace (agentes e instruções recomendados para a stack do projeto)',
               ],
             ] as const
           ).map(([surface, label]) => (
