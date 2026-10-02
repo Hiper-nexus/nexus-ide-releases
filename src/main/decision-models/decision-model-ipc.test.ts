@@ -32,6 +32,13 @@ describe('trusted Clef configuration IPC', () => {
     expect(status).not.toHaveProperty('apiKey');
   });
 
+  it('reports whether Jev is configured so the UI can warn about a provider fallback', () => {
+    for (const jev of [true, false]) {
+      registerDecisionModelIpc({ hasJev: () => jev });
+      expect(handlers.get('decisionModels:status')!(trustedEvent()).jevReady).toBe(jev);
+    }
+  });
+
   it('rejects invalid token payloads before accessing the vault', () => {
     const setKey = vi.fn(() => ({ ok: true }));
     registerDecisionModelIpc({ setKey });

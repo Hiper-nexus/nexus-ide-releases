@@ -109,6 +109,13 @@ export const SETTINGS_GROUPS: NavGroup[] = [
         'chaves',
         'tokens',
         'credenciais',
+        'clef',
+        'cloudflare',
+        'workers ai',
+        'jev',
+        'typesafe',
+        'modelos de decisão',
+        'account id',
       ],
     },
     {
@@ -209,7 +216,7 @@ export const SETTINGS_GROUPS: NavGroup[] = [
       pixelIcon: 'users',
       title: 'Equipes',
       subtitle: 'Integrantes para novas missões',
-      aliases: ['orquestração', 'teams', 'agents', 'squads'],
+      aliases: ['orquestração', 'teams', 'agents', 'squads', 'modelos de decisão', 'clef', 'jev', 'piloto automático'],
     },
     {
       id: 'harness',
@@ -369,8 +376,8 @@ export const SETTINGS_GROUPS: NavGroup[] = [
       icon: 'AUD',
       pixelIcon: 'files',
       title: 'Auditoria',
-      subtitle: 'Ações, confirmações e decisões do Jev',
-      aliases: ['audit', 'confirmations', 'jev', 'typesafe', 'julgamentos', 'decisões do jev', 'decisions', 'autopilot'],
+      subtitle: 'Ações, confirmações e decisões dos modelos (Jev e Clef)',
+      aliases: ['audit', 'confirmations', 'jev', 'typesafe', 'clef', 'cloudflare', 'julgamentos', 'decisões do jev', 'decisões dos modelos', 'decisions', 'autopilot'],
     },
     {
       id: 'labs',

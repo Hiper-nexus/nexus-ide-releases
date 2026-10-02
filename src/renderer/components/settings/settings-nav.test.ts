@@ -120,6 +120,24 @@ describe('filterSettingsGroups', () => {
     expect(result.every((g) => g.items.length > 0)).toBe(true);
   });
 
+  test('Clef e Cloudflare são encontrados nas chaves de API, nas equipes e na auditoria', () => {
+    for (const query of ['clef', 'cloudflare', 'modelos de decisão']) {
+      const ids = filterSettingsGroups(SETTINGS_GROUPS, query).flatMap((g) => g.items.map((i) => i.id));
+      expect(ids, query).toContain('api-keys');
+    }
+    for (const query of ['clef', 'decisões dos modelos']) {
+      const ids = filterSettingsGroups(SETTINGS_GROUPS, query).flatMap((g) => g.items.map((i) => i.id));
+      expect(ids, query).toContain('audit');
+    }
+    const squads = filterSettingsGroups(SETTINGS_GROUPS, 'clef').flatMap((g) => g.items.map((i) => i.id));
+    expect(squads).toContain('squads');
+  });
+
+  test('o subtítulo da auditoria fala dos modelos de decisão, não só do Jev', () => {
+    const audit = SETTINGS_GROUPS.flatMap((g) => g.items).find((i) => i.id === 'audit');
+    expect(audit?.subtitle).toMatch(/Clef/);
+  });
+
   test('returns nothing for a query that matches no section', () => {
     const result = filterSettingsGroups(SETTINGS_GROUPS, 'zzzznotathing');
     expect(result).toEqual([]);

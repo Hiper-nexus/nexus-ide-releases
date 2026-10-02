@@ -18,6 +18,33 @@
 .decision-models__table table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
 .decision-models__table th, .decision-models__table td { text-align: left; padding: var(--space-2); border-bottom: 1px solid var(--border); }
 .decision-models__table th { color: var(--text-dim); font-weight: 600; }
+.decision-models__notices {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+.decision-models__notice {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+.decision-models__notice--warn { border-left-color: var(--warn); color: var(--text); }
+.decision-models__notice--info { border-left-color: var(--accent); }
+.decision-models__confirm {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+.decision-models__confirm .settings-field__note { margin: 0 0 var(--space-2); }
 .decision-models__loading {
   min-height: var(--space-6);
   padding: var(--space-3);

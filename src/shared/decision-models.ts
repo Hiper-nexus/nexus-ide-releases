@@ -56,5 +56,7 @@ export interface DecisionModelStatus {
   accountId: string;
   accountIdSource: 'settings' | 'env' | 'missing';
   isReady: boolean;
+  /** A chave Jev existe (presença apenas): a UI avisa quando o Automático cairia na Cloudflare. */
+  jevReady: boolean;
   settings: DecisionSettings;
 }
