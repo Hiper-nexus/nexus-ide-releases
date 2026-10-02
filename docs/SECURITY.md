@@ -124,14 +124,21 @@ cobre a validação compartilhada.
 - **Entrada de menu do ZIP portátil.** `src/main/linux-desktop-entry.ts` escreve
   `$XDG_DATA_HOME/applications/nexus-ide.desktop` (e, se o caminho do binário
   tiver espaço ou caractere reservado, o symlink
-  `$XDG_DATA_HOME/nexus-ide/nexus-ide`) antes de registrar `nexus://`. São os
-  únicos arquivos que o app grava fora de `~/.nexus` e do `userData` por conta
-  própria. Regras: só no build empacotado e fora do smoke; só substitui arquivo
-  que carrega o marcador `X-NexusIDE-Portable=true`; entrada feita à mão e
-  arquivo comum no lugar do symlink não são tocados; escrita por temporário +
-  `rename` (um symlink plantado no destino é trocado, não seguido); caminho com
-  caractere de controle não é registrado. O `Exec` nunca passa por shell: é um
-  caminho absoluto cru, ou a forma entre aspas da Desktop Entry Specification.
+  `$XDG_DATA_HOME/nexus-ide/nexus-ide`) antes de registrar `nexus://`, e
+  garante a linha do handler em `$XDG_DATA_HOME/applications/mimeinfo.cache`
+  (`update-desktop-database`, ou mescla da própria linha sem tocar nas dos
+  outros). São os únicos arquivos que o app grava fora de `~/.nexus` e do
+  `userData` por conta própria. Regras: só no build empacotado e fora do smoke;
+  só substitui arquivo que carrega o marcador `X-NexusIDE-Portable=true`; o que
+  EXISTE e não é arquivo comum pequeno (symlink de gerenciador de dotfiles,
+  FIFO, arquivo enorme, sem permissão) é do operador e não é lido como "ausente"
+  nem substituído, vale para a entrada e para o índice; entrada feita à mão e
+  arquivo comum no lugar do symlink do lançador também não são tocados; escrita
+  por temporário + `rename`, nunca através de um symlink; caminho com caractere
+  de controle não é registrado. "Instalação por pacote" é só
+  `/usr/lib/` e `/usr/lib64/`: um ZIP extraído em `/usr/local` ou `/opt` é
+  portátil. O `Exec` nunca passa por shell: é um caminho absoluto cru, ou a
+  forma entre aspas da Desktop Entry Specification.
 - **O handler não amplia a superfície do deep link.** `nexus://` continua
   passando por `parseDeepLink` (hosts em lista fechada) e `open`/`license`
   vindos de URL continuam exigindo o diálogo nativo. A mudança só faz o link
@@ -141,7 +148,14 @@ cobre a validação compartilhada.
   `basic_text` em qualquer desktop que não reconhece (Hyprland, sway…). A
   recusa de `basic_text` em `isSecureStorageBackendAllowed` não mudou: sem
   Secret Service o cofre continua indisponível, nunca vira texto plano. Um
-  `--password-store` explícito do operador tem precedência.
+  `--password-store` explícito do operador tem precedência. Não verificado: com
+  o chaveiro TRAVADO no boot (autologin sem desbloqueio por PAM) o libsecret
+  pode esperar um diálogo de desbloqueio; no macOS esse bloqueio do Main
+  existiu, por isso o cofre não é sondado cedo demais lá.
+- **Links `nexus://` em rajada.** Cada link `open`/`license` vindo de URL abre um
+  diálogo nativo síncrono, um depois do outro. Não há coalescência, como no
+  macOS e no Windows; é incômodo, não escalada de privilégio. O Chrome ainda
+  pergunta antes de abrir o esquema.
 
 ## Sandbox de processo no Linux: toolchain do PATH (F-732 / F-733)
 
@@ -157,6 +171,17 @@ cobre a validação compartilhada.
   deles (ficaria somente-leitura). Entrada larga demais é descartada inteira,
   com o que há dentro. Teto de 512 mounts; entrada relativa ou symlink é
   ignorada.
+- **Diretórios protegidos (revisão independente de 02/10).** A árvore de runtime
+  do Node vem de `lastIndexOf('/bin/')`; um `node` real em `~/.local/bin/node`
+  (`n` com `N_PREFIX=$HOME/.local`) virava `--ro-bind ~/.local ~/.local` e
+  entregava `~/.local/share` (keyrings, auth das CLIs) ao agente, provado com
+  `bwrap` real. Agora nenhum mount pode ser igual ou ancestral de
+  `LINUX_PROTECTED_HOME_DIRS` (`.ssh`, `.gnupg`, `.nexus`, `.aws`, `.kube`,
+  `.docker`, `.config`, o estado das CLIs de IA, `.local/share`, `.local/state`
+  e os `XDG_*_HOME`), nem ficar DENTRO de `.ssh`, `.gnupg`, `.nexus`, `.aws` ou
+  `.kube`. Uma CLI de IA nova que guarde credencial em `~/.<nome>` entra na
+  lista. Limite honesto: um symlink dentro de um diretório do PATH do operador
+  monta o alvo dele; isso depende de o PATH não ser gravável por agente.
 - O PATH que decide esses mounts é o do OPERADOR. `nexus_terminal_run` não
   aceita mais `env.PATH` de quem chama (`CALLER_ENV_KEYS`): com ele, um agente pedia `PATH=~/.ssh` e o perfil —
   Seatbelt no macOS, e agora os mounts no Linux — liberava a leitura desse
