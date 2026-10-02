@@ -43,6 +43,8 @@ const harness = vi.hoisted(() => ({
   }>,
   terminate: vi.fn(async (_sessionId: string, _options?: unknown) => true),
   trace: vi.fn(),
+  /** F-721: roda dentro do spawn, antes do pane novo existir. */
+  onSpawn: undefined as undefined | (() => void),
 }));
 
 vi.mock('../pty/pty-manager', () => ({
@@ -100,6 +102,7 @@ vi.mock('./pane-registry', () => ({
       state: harness.sessionStates.get(pane.sessionId) ?? 'idle',
     })),
   requestPaneSpawn: async (options: typeof harness.spawnOptions[number]) => {
+    harness.onSpawn?.();
     harness.spawnOptions.push(options);
     harness.spawnCount += 1;
     const sessionId = `session-${harness.spawnCount}`;
@@ -274,6 +277,7 @@ beforeEach(async () => {
   harness.registeredOrchestrators.length = 0;
   harness.terminate.mockClear();
   harness.trace.mockClear();
+  harness.onSpawn = undefined;
   harness.movePane.mockReset().mockImplementation((_missionId, specId, paneId) => {
     const spec = harness.missionPaneSpecs.find((row) => row.id === specId);
     if (spec) spec.paneId = paneId;
@@ -452,6 +456,73 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
       expect((harness.spawnOptions[1] as Record<string, unknown>).resumeFromPaneId).toBe('pane-1');
       expect(harness.missionPaneSpecs[0]?.paneId).toBe('pane-2');
     }
+  });
+
+  it('F-721: a retomada da aba é a única dona do pane antigo enquanto leva a conversa', async () => {
+    // Campo 02/10 07:01: enquanto o Main levava a conversa para o pane novo, o
+    // renderer religou o pane antigo com sessão nova; ele ficou com a conta
+    // Claude e a retomada certa foi recusada. Durante a transferência o pane
+    // antigo é do Main e uma segunda retomada da mesma missão não começa.
+    liveMission = {
+      ...mission,
+      squadId: undefined,
+      intentContract: { workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' } },
+    } as unknown as Mission;
+    harness.missionPaneSpecs = [
+      {
+        id: 'mp-1', missionId: 'mission-1', paneId: 'pane-operador', adapterId: 'claude',
+        model: 'claude-opus-5-5', accountId: 'acct-operador', role: 'orchestrator',
+        title: 'Orquestrador', agentName: 'Orquestrador',
+      },
+    ];
+    const { isOperatorTabResumeTransferSource } = await import('./operator-tab-mission-resume');
+    let ownedDuringSpawn = false;
+    let concurrent: Promise<unknown> | undefined;
+    harness.onSpawn = () => {
+      harness.onSpawn = undefined;
+      ownedDuringSpawn = isOperatorTabResumeTransferSource('mission-1', 'pane-operador');
+      concurrent = fastLane
+        .resumeFastLaneMission(scope, 'mission-1', { remountKind: 'operator' })
+        .then(() => 'resolved', (error: unknown) => error);
+    };
+
+    await fastLane.fastLaneBootstrap(scope, 'mission-1');
+
+    expect(ownedDuringSpawn).toBe(true);
+    expect(String(await concurrent)).toMatch(/já está sendo retomada/);
+    // Um Maestro só, e ele carrega a conversa do pane antigo. A nota da
+    // retomada é colada depois do boot (resume não leva prompt no argv).
+    expect(harness.spawnCount).toBe(1);
+    expect(harness.spawnOptions[0]).toMatchObject({ resume: true, resumeFromPaneId: 'pane-operador' });
+    expect(harness.deliver).toHaveBeenCalledWith(
+      'session-1',
+      expect.stringContaining('Esta conversa foi retomada'),
+      undefined,
+      { adapterId: 'claude' },
+    );
+    // Com a conversa no pane novo, o antigo deixa de ser reservado.
+    expect(isOperatorTabResumeTransferSource('mission-1', 'pane-operador')).toBe(false);
+  });
+
+  it('F-721: falha da retomada da aba devolve o pane antigo para o restore', async () => {
+    liveMission = {
+      ...mission,
+      squadId: undefined,
+      intentContract: { workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' } },
+    } as unknown as Mission;
+    harness.missionPaneSpecs = [
+      {
+        id: 'mp-1', missionId: 'mission-1', paneId: 'pane-operador', adapterId: 'claude',
+        accountId: 'acct-operador', role: 'orchestrator', title: 'Orquestrador',
+      },
+    ];
+    harness.onSpawn = () => {
+      throw new Error('renderer recusou o pane novo');
+    };
+    const { isOperatorTabResumeTransferSource } = await import('./operator-tab-mission-resume');
+
+    await expect(fastLane.fastLaneBootstrap(scope, 'mission-1')).rejects.toThrow(/renderer recusou/);
+    expect(isOperatorTabResumeTransferSource('mission-1', 'pane-operador')).toBe(false);
   });
 
   it('marca antiga de "Pedir um ajuste" não deixa a conversa retomada parada (F-665)', async () => {

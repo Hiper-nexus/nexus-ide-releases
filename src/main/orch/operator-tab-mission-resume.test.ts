@@ -1,10 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { Mission, MissionPaneSpec } from '../../shared/orch-types';
 import {
   OPERATOR_TAB_RESUME_NOTE,
+  beginOperatorTabResumeTransfer,
+  isOperatorTabResumeTransferSource,
   operatorTabMissionResumeSpec,
   operatorTabResumeAgent,
   operatorTabResumeAwaitsAdjustment,
+  operatorTabResumeTransferInFlight,
+  resetOperatorTabResumeTransfersForTests,
 } from './operator-tab-mission-resume';
 
 const tabMission = {
@@ -61,5 +65,35 @@ describe('operatorTabResumeAwaitsAdjustment (F-665)', () => {
     expect(operatorTabResumeAwaitsAdjustment(at(`:${now - 3 * 60 * 60_000}`), now)).toBe(false);
     expect(operatorTabResumeAwaitsAdjustment(at(''), now)).toBe(false);
     expect(operatorTabResumeAwaitsAdjustment({ description: 'sem marcador' }, now)).toBe(false);
+  });
+});
+
+describe('transferência da conversa da aba (F-721)', () => {
+  afterEach(() => resetOperatorTabResumeTransfersForTests());
+
+  it('o pane de origem é do Main só enquanto a transferência está em andamento', () => {
+    const release = beginOperatorTabResumeTransfer('mission-a', 'pane-antigo');
+    expect(release).toBeTypeOf('function');
+    expect(isOperatorTabResumeTransferSource('mission-a', 'pane-antigo')).toBe(true);
+    expect(operatorTabResumeTransferInFlight('mission-a')).toBe(true);
+    // Outro pane ou outra missão não são tocados.
+    expect(isOperatorTabResumeTransferSource('mission-a', 'pane-novo')).toBe(false);
+    expect(isOperatorTabResumeTransferSource('mission-b', 'pane-antigo')).toBe(false);
+    expect(operatorTabResumeTransferInFlight('mission-b')).toBe(false);
+    release!();
+    expect(isOperatorTabResumeTransferSource('mission-a', 'pane-antigo')).toBe(false);
+    expect(operatorTabResumeTransferInFlight('mission-a')).toBe(false);
+  });
+
+  it('uma segunda retomada da mesma missão não começa enquanto a primeira não termina', () => {
+    const first = beginOperatorTabResumeTransfer('mission-a', 'pane-antigo');
+    expect(beginOperatorTabResumeTransfer('mission-a', 'pane-antigo')).toBeNull();
+    expect(beginOperatorTabResumeTransfer('mission-b', 'pane-outro')).toBeTypeOf('function');
+    first!();
+    // Liberar duas vezes não apaga a reserva de uma tentativa posterior.
+    const second = beginOperatorTabResumeTransfer('mission-a', 'pane-antigo');
+    first!();
+    expect(isOperatorTabResumeTransferSource('mission-a', 'pane-antigo')).toBe(true);
+    second!();
   });
 });

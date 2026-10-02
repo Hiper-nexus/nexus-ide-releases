@@ -12,6 +12,8 @@ import {
 } from "../persistence/renderer-workspace-scope";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import * as ptyManager from "../pty/pty-manager";
+import * as providerSessionStore from "../persistence/provider-session-store";
+import * as mainOwnedPaneRuntime from "./main-owned-pane-runtime";
 import type { CallerCtx } from "./pane-authz";
 import {
   attachOrchMeta,
@@ -516,6 +518,52 @@ describe("pending pane spawn authority", () => {
       ORCH_CHANNELS.paneCloseRequest,
       { requestId: request.requestId, paneId: request.paneId },
     );
+  });
+
+  it("F-721: conversa copiada na retomada exige resume exato e não cai no spawn headless", async () => {
+    vi.useFakeTimers();
+    const copy = vi
+      .spyOn(providerSessionStore, "copyProviderPaneSession")
+      .mockReturnValue(true);
+    const headless = vi.spyOn(mainOwnedPaneRuntime, "fallbackPendingSpawnToMain");
+    const owner = renderer();
+    registered = owner;
+    registerOrchRenderer(owner);
+    const scope = testProjectScope();
+    bindScope(owner, scope);
+    const options = {
+      adapterId: "claude",
+      accountId: "acct-a",
+      missionId: "mission-a",
+      role: "orchestrator" as const,
+      agentName: "Orquestrador",
+      contextRevision: missionAuthority.seal.contextRevision,
+      authoritySeal: missionAuthority.seal,
+      resume: true,
+      resumeFromPaneId: "pane-antigo",
+      scope,
+    };
+
+    const claimedResult = requestPaneSpawn(options);
+    const request = owner.send.mock.calls[0]?.[1] as OrchPaneSpawnRequest;
+    expect(copy).toHaveBeenCalledWith(
+      scope, "pane-antigo", request.paneId, "claude", "acct-a", undefined,
+    );
+    expect(request.resume).toBe(true);
+    expect(claimPendingSpawnMeta(request.requestId, owner)).toMatchObject({
+      exactResumeRequired: true,
+    });
+    resolvePaneSpawn({ requestId: request.requestId, ok: false, error: "test cleanup" }, owner);
+    await claimedResult;
+
+    // O renderer nunca respondeu: o spawn headless abriria conversa nova.
+    const unclaimed = requestPaneSpawn(options);
+    await vi.advanceTimersByTimeAsync(30 * 60_000 + 1_000);
+    await expect(unclaimed).resolves.toMatchObject({
+      ok: false,
+      error: "pane spawn timed out",
+    });
+    expect(headless).not.toHaveBeenCalled();
   });
 
   it("aborts idempotently and requests sealed cleanup exactly once", async () => {

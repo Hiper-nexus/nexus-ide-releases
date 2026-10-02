@@ -1362,6 +1362,14 @@ saber isto antes de mexer:
 - F-664: a retomada da missão da aba move a linha do orquestrador para o pane
   novo (`moveOrchestratorPane`) — `missionPanes.record` deduplica pela
   identidade e nunca troca `pane_id`.
+- F-721: a retomada da aba é a ÚNICA dona do líder. `respawnFastLaneOrchestrator`
+  reserva a transferência (`beginOperatorTabResumeTransfer`) antes da varredura;
+  enquanto ela vale, o renderer não religa o pane antigo (restore e limite do
+  spawn recusam) e outra retomada da missão é recusada. O pendente usa o
+  `resume` selado pelo Main (virava `false`: conversa vazia em Claude e Codex),
+  o lookup recebe a raiz selada do spawn e, com conversa copiada
+  (`exactResumeRequired`), o spawn retoma ou falha — nunca `fresh-context` nem
+  fallback headless. Spawn que retoma não leva brief no argv: ele é colado.
 - F-665: "Pedir um ajuste" deixa `<!-- nexus:awaiting-adjustment:<ts> -->`
   até a missão pedir conclusão. Na retomada da conversa da aba só o ajuste
   dos últimos 5 min (`operatorTabResumeAwaitsAdjustment`) prepende "AGUARDE O

@@ -32,6 +32,7 @@ import {
   sameMissionPaneApprovalSeal,
   sameMissionPaneAuthoritySeal,
 } from "./mission-pane-authority";
+import { isOperatorTabResumeTransferSource } from "./operator-tab-mission-resume";
 import { listSquads } from "./squad-store";
 import {
   bindSpawnAuthority,
@@ -212,10 +213,34 @@ function canonicalizePendingSpawnRequest(
     orchRequestId: sealed.requestId,
     missionId: sealed.missionId,
     paneId: sealed.paneId,
-    resume: false,
+    // F-721: o resume vem do pedido que o MAIN selou (retomada da aba,
+    // `nexus_pane_spawn { resume }`), nunca do renderer — a cerca acima segue
+    // exigindo `resume` ausente no payload. Descartá-lo aqui fazia a retomada
+    // da conversa nascer como conversa nova (`--session-id` ditado).
+    resume: sealed.resume === true,
     resumeLatestOnly: false,
     restorePersistedAuthority: false,
   };
+}
+
+/**
+ * F-721: o pane de origem de uma retomada da aba em andamento é do Main.
+ * Restore, remontagem e Reiniciar do renderer não o religam: o segundo
+ * processo nascia com sessão nova e ficava com a conta da retomada certa.
+ */
+function assertPersistedPaneNotInTabResumeTransfer(
+  persisted: Pick<ScopedMissionPaneSpec, "missionId" | "paneId">,
+): void {
+  if (
+    persisted.paneId &&
+    isOperatorTabResumeTransferSource(persisted.missionId, persisted.paneId)
+  ) {
+    throw new Error(
+      "persisted mission pane authority is moving: a retomada da missão da aba " +
+        "está levando a conversa deste orquestrador para outro pane; este pane " +
+        "não é religado",
+    );
+  }
 }
 
 /**
@@ -516,6 +541,7 @@ export function authorizeMainOwnedAgentSpawn(
         runtimeManager,
         found,
       );
+      assertPersistedPaneNotInTabResumeTransfer(persistedPane);
       const livenessPaneId = persistedPane.paneId ?? canonicalRequest.paneId;
       canonicalRequest = canonicalizePersistedSpawnRequest(
         canonicalRequest,
@@ -661,7 +687,12 @@ export function assertMainOwnedAgentSpawnGrantActive(input: {
   readonly requestId: string | undefined;
   readonly pending: PendingSpawnMeta | null;
   readonly recovery: PendingRecoverySpawnMeta | null;
+  /** F-721: a retomada da aba pode ter começado durante a preparação. */
+  readonly persistedPane?: Pick<ScopedMissionPaneSpec, "missionId" | "paneId"> | null;
 }): void {
+  if (input.persistedPane) {
+    assertPersistedPaneNotInTabResumeTransfer(input.persistedPane);
+  }
   if (input.pending && input.requestId) {
     assertPendingSpawnGrantActive(input.requestId, input.owner);
     if (

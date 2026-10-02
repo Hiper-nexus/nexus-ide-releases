@@ -63,6 +63,13 @@ vi.mock("../../shared/mission-intent", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../shared/mission-intent")>()),
   hasCurrentDispatchAuthority: () => true,
 }));
+// Selo atual da missão para o caminho do pane persistido (F-721): o resto da
+// comparação de selo é o código real.
+const sealDeps = vi.hoisted(() => ({ current: null as unknown }));
+vi.mock("./mission-pane-authority", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./mission-pane-authority")>()),
+  resolveMissionPaneAuthoritySeal: () => sealDeps.current,
+}));
 
 import {
   authorizeMainOwnedAgentSpawn,
@@ -70,6 +77,10 @@ import {
   bindMissionLaunchAuthority,
   settleSpawnedMainOwnedAgentSession,
 } from "./main-owned-agent-spawn";
+import {
+  beginOperatorTabResumeTransfer,
+  resetOperatorTabResumeTransfersForTests,
+} from "./operator-tab-mission-resume";
 import { PET_STUDIO_SQUAD_ID } from "../../shared/pet-studio";
 
 const scope = {
@@ -144,6 +155,8 @@ describe("main-owned agent spawn boundary", () => {
     vi.clearAllMocks();
     missionDeps.mission = null;
     missionPaneDeps.pane = null;
+    sealDeps.current = null;
+    resetOperatorTabResumeTransfersForTests();
     registryDeps.claimPendingSpawnMeta.mockReturnValue(null);
     registryDeps.claimPendingSpawnMetaByPane.mockReturnValue(null);
     registryDeps.claimPendingRecoverySpawnMeta.mockReturnValue(null);
@@ -292,6 +305,119 @@ describe("main-owned agent spawn boundary", () => {
         "mission-pet",
       ),
     ).toThrow(/mission squad does not match spawn authority/i);
+  });
+
+  it("F-721: o pane antigo do líder não religa enquanto a retomada da aba leva a conversa", () => {
+    // Campo 02/10 07:01: o renderer religou o pane do Maestro antigo durante
+    // a retomada da aba; ele nasceu com sessão nova e tomou a conta Claude.
+    missionDeps.mission = { id: "mission-a" };
+    sealDeps.current = authoritySeal;
+    const leaderPane = {
+      ...persistedPane,
+      role: "orchestrator" as const,
+      title: "Orquestrador",
+      agentName: "Orquestrador",
+      allowedTools: null,
+      allowedSkills: null,
+      authoritySeal,
+    };
+    missionPaneDeps.pane = leaderPane as never;
+    const restore = {
+      kind: "cli-agent" as const,
+      cols: 80,
+      rows: 24,
+      adapterId: "claude",
+      cwd: scope.rootRealPath,
+      paneId: "pane-a",
+      missionId: "mission-a",
+      resume: true,
+    };
+
+    const release = beginOperatorTabResumeTransfer("mission-a", "pane-a");
+    expect(release).toBeTypeOf("function");
+    try {
+      expect(() =>
+        authorizeMainOwnedAgentSpawn(owner as never, restore, {} as never),
+      ).toThrow(/persisted mission pane authority is moving/);
+      // A retomada pode começar enquanto o restore prepara a conta: a cerca
+      // pré-efeito confere de novo antes do processo nascer.
+      expect(() =>
+        assertMainOwnedAgentSpawnGrantActive({
+          owner: owner as never,
+          requestId: undefined,
+          pending: null,
+          recovery: null,
+          persistedPane: leaderPane,
+        }),
+      ).toThrow(/persisted mission pane authority is moving/);
+    } finally {
+      release!();
+    }
+
+    // Fora da transferência o mesmo pane volta a ser retomado no lugar.
+    expect(
+      authorizeMainOwnedAgentSpawn(owner as never, restore, {} as never).request,
+    ).toMatchObject({ paneId: "pane-a", resume: true, restorePersistedAuthority: false });
+  });
+
+  it.each(["claude", "codex"])("F-721: o resume selado pelo Main chega ao spawn do pane da retomada (%s)", (adapterId) => {
+    // O pedido pendente da retomada da aba nasce com `resume: true` no Main.
+    // Canonicalizado como `false`, o pane novo abria conversa nova (campo
+    // 02/10 09:14: o Maestro Codex retomado começou um rollout vazio).
+    const sealedRequest = {
+      requestId: "spawn-resume",
+      paneId: "pane-novo",
+      adapterId,
+      model: undefined,
+      accountId: "acct-a",
+      effort: undefined,
+      cwd: scope.rootRealPath,
+      title: "Orquestrador",
+      missionId: "mission-a",
+      agentName: "Orquestrador",
+      role: "orchestrator" as const,
+      resume: true,
+      resumeLatestOnly: false,
+      restorePersistedAuthority: false,
+    } as const;
+    const claimed = {
+      ...pending,
+      role: "orchestrator" as const,
+      requestedCwd: scope.rootRealPath,
+      exactResumeRequired: true as const,
+      sealedRequest,
+    };
+    const fromRenderer = {
+      kind: "cli-agent" as const,
+      cols: 80,
+      rows: 24,
+      adapterId,
+      accountId: "acct-a",
+      cwd: scope.rootRealPath,
+      paneId: "pane-novo",
+      missionId: "mission-a",
+      orchRequestId: "spawn-resume",
+    };
+    registryDeps.claimPendingSpawnMeta.mockReturnValueOnce(claimed);
+
+    const authorized = authorizeMainOwnedAgentSpawn(
+      owner as never,
+      fromRenderer,
+      {} as never,
+    );
+
+    expect(authorized.request).toMatchObject({ paneId: "pane-novo", resume: true });
+    expect(authorized.pending?.exactResumeRequired).toBe(true);
+
+    // O renderer continua sem poder pedir resume num token pendente.
+    registryDeps.claimPendingSpawnMeta.mockReturnValueOnce(claimed);
+    expect(() =>
+      authorizeMainOwnedAgentSpawn(
+        owner as never,
+        { ...fromRenderer, resume: true },
+        {} as never,
+      ),
+    ).toThrow(/divergências: resume/);
   });
 
   it("uses one pre-effect fence for pending and recovery grants", () => {

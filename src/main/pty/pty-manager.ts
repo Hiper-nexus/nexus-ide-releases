@@ -653,6 +653,12 @@ export type ResumeSessionLookup = (
   paneId: string,
   adapterId: string,
   accountId?: string,
+  /**
+   * F-721: autoridade selada pelo Main (pane persistido de missão ou pedido
+   * pendente). No primeiro spawn do pane neste processo o registro ainda não
+   * conhece a raiz dele; sem isto o resume exato virava sessão nova.
+   */
+  spawn?: { readonly executionScope: Readonly<ProjectExecutionScope> },
 ) => string | null;
 
 let resumeSessionLookup: ResumeSessionLookup | null = null;
@@ -1669,6 +1675,7 @@ export function spawnAgentSession(
               req.paneId,
               adapter.id,
               req.accountId,
+              { executionScope: authority.scope },
             ) ?? null)
           : null;
       if (captured && adapter.id === "mimo-code" && !req.accountId && !canResumeMimoNativeSession(authority.scope, captured, overrides.keyEnv?.XIAOMI_API_KEY)) captured = null;
@@ -1687,22 +1694,35 @@ export function spawnAgentSession(
         );
       }
     } else {
+      const lookupScope = authority.coordinationScope ?? authority.scope;
       let captured =
         !req.resumeLatestOnly &&
         req.paneId &&
         adapter.spawn.resumeIdArgs?.length
-          ? (resumeSessionLookup?.(
-              authority.coordinationScope ?? authority.scope,
-              req.paneId,
-              adapter.id,
-              req.accountId,
-            ) ?? null)
+          ? ((authority.source === "pending"
+              ? resumeSessionLookup?.(lookupScope, req.paneId, adapter.id, req.accountId, {
+                  executionScope: authority.scope,
+                })
+              : resumeSessionLookup?.(lookupScope, req.paneId, adapter.id, req.accountId)) ?? null)
           : null;
       if (captured && adapter.id === "mimo-code" && !req.accountId && !canResumeMimoNativeSession(authority.scope, captured, overrides.keyEnv?.XIAOMI_API_KEY)) captured = null;
       if (captured) {
         args.push(...adapter.spawn.resumeIdArgs!, captured);
         trustedResumeArgs = [...adapter.spawn.resumeIdArgs!, captured];
         resumeMode = "exact";
+      } else if (
+        authority.source === "pending" &&
+        authority.context?.exactResumeRequired === true &&
+        adapter.spawn.resumeIdArgs?.length
+      ) {
+        // F-721: o Main copiou para este pane uma conversa que existe (retomada
+        // da aba, `nexus_pane_spawn { resume }`). Abrir conversa nova no lugar
+        // dela é perder a conversa sem avisar — recusa visível em vez disso.
+        throw new Error(
+          `${adapter.label}: a conversa que este pane devia retomar não foi ` +
+            "encontrada no spawn; recusado para não abrir uma conversa nova " +
+            "no lugar dela",
+        );
       } else {
         // No captured ID is authority to select another pane's latest conversation.
         resumeMode = "fresh-context";

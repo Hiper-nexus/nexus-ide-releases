@@ -3108,7 +3108,12 @@ describe("cli-agent spawn argv hardening", () => {
       const spawned = spawnAgentSession(fakeWc(), { kind: 'cli-agent', paneId: 'pane-tab', resume: true, cols: 80, rows: 24 }, adapter, {}, authority);
       expect(spawned.resumeMode).toBe('exact');
       expect(h.specFor(spawned.sessionId).args).toContain('provider-tab-exact');
-      expect(lookup).toHaveBeenCalledWith(authority.coordinationScope, 'pane-tab', adapter.id, undefined);
+      // F-721: pane persistido de missão também entrega a raiz selada do spawn.
+      if (source === 'persisted-pane') {
+        expect(lookup).toHaveBeenCalledWith(authority.coordinationScope, 'pane-tab', adapter.id, undefined, { executionScope: authority.scope });
+      } else {
+        expect(lookup).toHaveBeenCalledWith(authority.coordinationScope, 'pane-tab', adapter.id, undefined);
+      }
       orchKillSession(spawned.sessionId);
     } finally { setResumeSessionLookup(null); fs.rmSync(temp, { recursive: true, force: true }); }
   });
@@ -3214,6 +3219,99 @@ describe("cli-agent spawn argv hardening", () => {
     } finally {
       setResumeSessionLookup(null);
     }
+  });
+
+  describe("F-721: retomada da conversa num pane novo (pedido pendente do Main)", () => {
+    function tabResumeGrant(exactResumeRequired: boolean): BoundSpawnAuthority {
+      const base = trustedSpawn();
+      return {
+        ...base,
+        source: "pending",
+        coordinationScope: base.scope,
+        context: {
+          missionId: "mission-tab",
+          agentName: "Orquestrador",
+          role: "orchestrator",
+          allowedTools: null,
+          allowedSkills: null,
+          scope: base.scope,
+          executionScope: base.scope,
+          ...(exactResumeRequired ? { exactResumeRequired: true as const } : {}),
+        },
+      };
+    }
+    // Formato do argv de retomada de cada CLI: Claude (`--resume <id>` e
+    // `--session-id` ditado no spawn fresco) e Codex (`resume <rollout>`, sem
+    // id ditado — o rollout novo só aparecia depois, no scanner: campo 02/10
+    // 09:14, Maestro gpt-6.1-sol abriu o rollout 01a0fc89 vazio).
+    const shapes = [
+      { cli: "claude", resumeIdArgs: ["--resume"], sessionIdArg: "--session-id" },
+      { cli: "codex", resumeIdArgs: ["resume"], sessionIdArg: undefined },
+    ] as const;
+    const adapter = (shape: (typeof shapes)[number]) =>
+      makeAdapter(
+        { static: {}, passthrough: [], ephemeralHome: false },
+        {
+          resumeIdArgs: [...shape.resumeIdArgs],
+          ...(shape.sessionIdArg ? { sessionIdArg: shape.sessionIdArg } : {}),
+        },
+      );
+    const request = {
+      kind: "cli-agent" as const,
+      paneId: "pane-retomado",
+      accountId: "acct-a",
+      resume: true,
+      cols: 80,
+      rows: 24,
+    };
+
+    it.each(shapes)("$cli: retoma a conversa copiada com a raiz selada do spawn", (shape) => {
+      const h = fakeHost();
+      setPtyHost(h.host);
+      const authority = tabResumeGrant(true);
+      const lookup = vi.fn(() => "conversa-do-lider");
+      setResumeSessionLookup(lookup);
+      try {
+        const spawned = spawnAgentSession(fakeWc(), request, adapter(shape), {}, authority);
+        expect(spawned.resumeMode).toBe("exact");
+        const args = h.specFor(spawned.sessionId).args;
+        expect(args).toEqual(
+          expect.arrayContaining([...shape.resumeIdArgs, "conversa-do-lider"]),
+        );
+        expect(args).not.toContain("--session-id");
+        expect(lookup).toHaveBeenCalledWith(
+          authority.coordinationScope,
+          "pane-retomado",
+          "test-cli",
+          "acct-a",
+          { executionScope: authority.scope },
+        );
+        orchKillSession(spawned.sessionId);
+      } finally {
+        setResumeSessionLookup(null);
+      }
+    });
+
+    it.each(shapes)("$cli: recusa abrir conversa nova quando a conversa copiada não é encontrada", (shape) => {
+      const h = fakeHost();
+      const physicalSpawn = vi.spyOn(h.host, "spawn");
+      setPtyHost(h.host);
+      setResumeSessionLookup(() => null);
+      try {
+        expect(() =>
+          spawnAgentSession(fakeWc(), request, adapter(shape), {}, tabResumeGrant(true)),
+        ).toThrow(/não foi encontrada no spawn/);
+        expect(physicalSpawn).not.toHaveBeenCalled();
+        // Sem conversa copiada (pane de origem sem sessão gravada) segue o
+        // contexto novo de sempre.
+        const fresh = spawnAgentSession(fakeWc(), request, adapter(shape), {}, tabResumeGrant(false));
+        expect(fresh.resumeMode).toBe("fresh-context");
+        expect(h.specFor(fresh.sessionId).args).not.toContain(shape.resumeIdArgs[0]);
+        orchKillSession(fresh.sessionId);
+      } finally {
+        setResumeSessionLookup(null);
+      }
+    });
   });
 
   it("injects the managed hook endpoint and the main-owned PTY session key", () => {

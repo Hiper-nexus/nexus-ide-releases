@@ -644,6 +644,60 @@ describe('agent pane workspace confinement', () => {
     );
   });
 
+  it('F-721: worker retomado não leva o brief no argv; ele é colado depois do boot', async () => {
+    // O spawn que retoma conversa não recebe prompt nativo no pty-manager.
+    // Prometer o brief no argv deixava a retomada esperando um turno que
+    // nunca abria (no ACK pendente, até o vigia de início).
+    vi.useFakeTimers();
+    try {
+      const onPromptAccepted = vi.fn();
+      stubs.sessionState.mockReturnValue('idle');
+      let briefPasted = false;
+      stubs.writeSession.mockImplementation(
+        ((sessionId: string, data: string) => {
+          if (data.includes('Ajuste o filtro')) briefPasted = true;
+          if (data === '\r' && briefPasted) {
+            queueMicrotask(() => {
+              stubs.sessionState.mockReturnValue('busy');
+              for (const tap of [...stubs.stateTaps]) tap(sessionId, 'busy');
+              for (const tap of [...stubs.dataTaps]) tap(sessionId, 'retomado e trabalhando');
+            });
+          }
+          return true;
+        }) as typeof stubs.writeSession,
+      );
+
+      const pending = spawnPaneAndMaybePrompt(
+        {
+          adapterId: 'codex',
+          missionId: 'm1',
+          role: 'worker',
+          prompt: 'Ajuste o filtro da lista e entregue o handoff.',
+          resume: true,
+          resumeFromPaneId: 'pane-old',
+          scope,
+          executionScope: taskExecutionScope,
+        },
+        { onPromptAccepted },
+      );
+      await vi.advanceTimersByTimeAsync(60_000);
+      await pending;
+
+      const spawnOptions = (
+        stubs.requestPaneSpawn.mock.calls as unknown as Array<[Record<string, unknown>]>
+      ).at(-1)?.[0];
+      expect(spawnOptions).toMatchObject({ resume: true, resumeFromPaneId: 'pane-old' });
+      expect(spawnOptions?.initialPrompt).toBeUndefined();
+      const written = (
+        stubs.writeSession.mock.calls as unknown as Array<readonly [string, string]>
+      ).map(([, data]) => data);
+      expect(written.some((data) => data.includes('Ajuste o filtro'))).toBe(true);
+      expect(onPromptAccepted).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('R6/F-213: subdivide o pty-spawn nos awaits internos (probe, alloc, writer, prompt)', async () => {
     stubs.sessionState.mockReturnValue('busy');
     const timer = startPhaseTimer();

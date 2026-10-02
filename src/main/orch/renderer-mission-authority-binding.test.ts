@@ -70,6 +70,7 @@ vi.mock("./pane-activity-summary", () => ({
 import { RendererMissionAuthority } from "./renderer-mission-authority";
 import { snapshotSquadAuthority } from "./squad-authority-snapshot";
 import { createMissionPaneAuthoritySeal } from "./mission-pane-authority";
+import { beginOperatorTabResumeTransfer } from "./operator-tab-mission-resume";
 
 const owner = { id: 7 } as WebContents;
 const scope = testProjectScope({
@@ -713,6 +714,20 @@ describe("renderer mission authority", () => {
         "pane-forged",
       ),
     ).toBe(false);
+
+    // F-721: enquanto a retomada da aba leva a conversa deste líder para
+    // outro pane, o restore do renderer não o religa.
+    const release = beginOperatorTabResumeTransfer("mission-a", "pane-a");
+    try {
+      expect(
+        authority.canRestoreMissionPaneForRenderer(owner, "mission-a", "pane-a"),
+      ).toBe(false);
+    } finally {
+      release?.();
+    }
+    expect(
+      authority.canRestoreMissionPaneForRenderer(owner, "mission-a", "pane-a"),
+    ).toBe(true);
   });
 
   it("restaura pane cujo selo de workflow rotacionou no restart (aprovação intacta)", () => {

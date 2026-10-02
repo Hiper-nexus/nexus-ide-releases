@@ -1722,7 +1722,10 @@ export async function spawnPaneAndMaybePrompt(
       (options.role === 'worker' || promptChannel.kind === 'positional') &&
       // F-668: brief grande demais para a linha de comando do Windows vai por
       // colagem (o caminho pendente abaixo já cola quando não há argv).
-      nativeArgvPromptFits(finalPrompt, process.platform),
+      nativeArgvPromptFits(finalPrompt, process.platform) &&
+      // F-721: spawn que retoma conversa não leva prompt no argv (regra do
+      // pty-manager); o brief vai por colagem depois do boot.
+      !options.resume,
   );
   let initialPrompt: string | undefined;
   if (shouldUseNativeInitialPrompt && finalPrompt) {

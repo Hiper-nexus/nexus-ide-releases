@@ -516,6 +516,7 @@ function spawnCliPtyAgentPane(
       requestId: request.orchRequestId,
       pending,
       recovery,
+      persistedPane,
     });
     // Auth refresh / CLI update above may outlive the operator's workspace.
     if (authority.source === 'direct-user' && authority.coordinationScope &&

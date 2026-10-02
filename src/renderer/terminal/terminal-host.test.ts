@@ -132,6 +132,7 @@ import {
   reconcileHosts,
   refitAllPanesBeforePaint,
   refreshHost,
+  releaseHeldSpawns,
   repaintPaneTui,
   revealTerminalHostsAfterWorkspaceShow,
   setHostVisibility,
@@ -139,6 +140,7 @@ import {
   waitForSession,
   writeToPane,
 } from './terminal-host';
+import { HOLD_RELEASED_NOTICE } from './mission-owned-pane-policy';
 
 const pane: PaneModel = { id: 'hidden-spawn-test', kind: 'shell', title: 'Terminal' };
 const spawn = vi.fn();
@@ -272,6 +274,45 @@ describe('spawn adiado sem ninguém esperando a sessão', () => {
     await vi.advanceTimersByTimeAsync(5_000);
     expect(spawn).not.toHaveBeenCalled();
     expect(host.disposed).toBe(true);
+  });
+});
+
+describe('F-721 — aviso de pausa não fica como estado do pane que religou', () => {
+  it('o pane segurado e depois solto diz que voltou, depois do aviso de pausa', async () => {
+    // Campo 02/10: o Maestro religou no mesmo pane e a tela seguia dizendo
+    // "Agente em pausa — a sessão anterior NÃO foi reiniciada".
+    const held: PaneModel = {
+      id: 'f721-held',
+      kind: 'cli-agent',
+      adapterId: 'claude',
+      title: 'Orquestrador',
+      missionId: 'mission-aba',
+      role: 'orchestrator',
+    };
+    useLayoutStore.setState({ root: buildGridTree([held]), focusedPaneId: held.id });
+    spawn.mockResolvedValueOnce({ ok: true, sessionId: 'pty-f721' });
+    holdSpawnUntilApproved(held.id);
+    const host = getOrCreateHost(held);
+    setHostSize(host.element, 1200, 800);
+    const writeln = vi.spyOn(host.term, 'writeln');
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(held, slot);
+
+    expect(spawn).not.toHaveBeenCalled();
+    const whileHeld = writeln.mock.calls.flat().join('\n');
+    expect(whileHeld).toContain('Agente em pausa');
+    expect(whileHeld).not.toContain(HOLD_RELEASED_NOTICE);
+
+    releaseHeldSpawns([held.id], { resume: true });
+    expect(await waitForSession(held.id, 1_000)).toBe('pty-f721');
+
+    const lines = writeln.mock.calls.map(([line]) => String(line));
+    const pausedAt = lines.findIndex((line) => line.includes('Agente em pausa'));
+    const resumedAt = lines.findIndex((line) => line.includes(HOLD_RELEASED_NOTICE));
+    expect(pausedAt).toBeGreaterThanOrEqual(0);
+    expect(resumedAt).toBeGreaterThan(pausedAt);
+    discardPaneSpawnState(held.id);
   });
 });
 

@@ -615,6 +615,53 @@ describe.skipIf(!sqliteAvailable)(
       service.stop();
     });
 
+    it('F-721: resume exato no primeiro spawn do pane usa a raiz da autoridade do spawn', () => {
+      // Depois de reiniciar o app (ou no pane novo da retomada da aba) o
+      // registro ainda não tem meta nem sessão do pane. O lookup devolvia
+      // null e o Maestro nascia com `--session-id` novo, sem a conversa.
+      const parent = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'usage-resume-first-spawn-'),
+      );
+      tempRoots.push(parent);
+      const scope = scopeFixture(parent, 'checkout-a');
+      const tabRoot = executionScope(scope, path.join(parent, 'wt', 'tab-a'));
+      const runtimeManager = new ProjectRuntimeManager({
+        baseDir: path.join(parent, 'runtime'),
+        appVersion: 'usage-service-test',
+      });
+      managers.push(runtimeManager);
+      const service = new UsageTelemetryService(
+        new ProjectUsageStoreRegistry(runtimeManager),
+      );
+      service.start();
+      // Espelho do renderer: o pane existe, sem sessão e sem meta do Main.
+      mocks.panes.set('pane-lider', {
+        paneId: 'pane-lider',
+        sessionId: null as unknown as string,
+        kind: 'cli-agent',
+      } as never);
+      mocks.providerPaneSession = { key: 'session_id', id: 'conversa-real' };
+
+      expect(
+        mocks.resumeLookup?.(scope, 'pane-lider', 'claude', 'acct-a'),
+      ).toBeNull();
+      expect(
+        mocks.resumeLookup?.(scope, 'pane-lider', 'claude', 'acct-a', {
+          executionScope: tabRoot,
+        }),
+      ).toBe('conversa-real');
+      expect([...(mocks.watcherOptions.at(-1)?.workspacePaths?.() ?? [])]).toContain(
+        tabRoot.rootRealPath,
+      );
+      // A autoridade de outro checkout nunca empresta a raiz.
+      expect(
+        mocks.resumeLookup?.(scope, 'pane-lider', 'claude', 'acct-a', {
+          executionScope: { ...tabRoot, checkoutId: 'checkout-b' },
+        }),
+      ).toBeNull();
+      service.stop();
+    });
+
     it('rejects a new event from outside the persisted Codex session root', () => {
       const parent = fs.mkdtempSync(
         path.join(os.tmpdir(), 'usage-codex-persisted-root-'),

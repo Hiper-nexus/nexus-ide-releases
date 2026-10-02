@@ -54,10 +54,12 @@ import { deliverAgentPrompt, proveNativeArgvBriefAccepted, withProjectContextBlo
 import { canUseNexusMcp } from './cli-mcp-inject';
 import {
   OPERATOR_TAB_RESUME_NOTE,
+  beginOperatorTabResumeTransfer,
   operatorTabMissionLeader,
   operatorTabMissionResumeSpec,
   operatorTabResumeAgent,
   operatorTabResumeAwaitsAdjustment,
+  operatorTabResumeTransferInFlight,
 } from './operator-tab-mission-resume';
 import {
   getProjectDomainStores,
@@ -1207,7 +1209,12 @@ async function spawnAgentPane(
   // OAuth sumirem. Se o pane já está idle com o briefing injetado, o recibo
   // pode ser aceito antes da prova de Enter (poke do operador não espera 70s).
   if (role === 'orchestrator' && initialPrompt) {
-    const delivery = resolveOrchestratorBriefDelivery(agent.cli, initialPrompt);
+    // F-721: o spawn que retoma conversa não leva brief no argv (o pty-manager
+    // só põe prompt nativo em spawn fresco): a nota da retomada é colada
+    // depois do boot, com prova de aceite.
+    const delivery = resumeFromPaneId
+      ? 'paste'
+      : resolveOrchestratorBriefDelivery(agent.cli, initialPrompt);
     if (delivery === 'paste') {
       const failure = await pasteBriefAfterBoot(spawn.sessionId, initialPrompt, agent.cli);
       if (failure) return { error: `${agent.agentName} (${agent.cli}): ${failure}` };
@@ -1589,6 +1596,9 @@ async function tickWatcher(state: WatcherState): Promise<void> {
   // No live processes: retry while budget remains, then expose the failure
   // so the operator can fix its cause and explicitly resume the mission.
   if (livePanes.length === 0) {
+    // F-721: a retomada da conversa da aba em andamento é a dona do líder. Um
+    // tick sobreposto não abre outra nem gasta orçamento com a recusa dela.
+    if (operatorTabResumeTransferInFlight(state.missionId)) return;
     let pendingHandoffs = 0;
     try {
       pendingHandoffs = stores.handoffs
@@ -1993,51 +2003,70 @@ async function respawnFastLaneOrchestrator(
     });
   }
 
-  // P0-1 (2026-08-17): NUNCA spawnar por cima de um orquestrador registrado.
-  // A cerca do pty-manager conta QUALQUER sessão registrada (exited/
-  // hibernated incluso); liveOrchestratorSessionId conta só busy/idle/
-  // spawning com pane. Quando discordavam, o respawn era recusado para
-  // sempre. A saída sancionada é terminar com prova física antes do spawn —
-  // e abortar (sem split-brain) se o processo teimoso não provar a morte.
-  const staleOrchestrators = registeredOrchestratorSessionsForMission(
-    mission.id,
-  );
-  for (const stale of staleOrchestrators) {
-    const proven = await orchTerminateSession(stale.sessionId, {
-      termTimeoutMs: 5_000,
-      killTimeoutMs: 10_000,
-      origin: 'fast-lane:respawn-stale-orchestrator',
-    });
-    if (!proven) {
-      throw new Error(
-        `orquestrador anterior (${stale.sessionId}, estado ${stale.state}, ` +
-          `${stale.adapterId}) não terminou fisicamente; respawn abortado ` +
-          'para não criar dois Maestros na mesma missão. Feche o pane antigo ' +
-          'ou reinicie o app e use Retomar.',
-      );
-    }
+  // F-721: dono único da conversa da aba. A reserva vem ANTES da varredura
+  // abaixo: um respawn do pane antigo que já subiu é terminado por ela, e
+  // nenhum outro caminho do renderer o religa até a conversa estar no pane
+  // novo (a cerca mora em main-owned-agent-spawn e na autoridade de restore).
+  const releaseTabResumeTransfer = operatorResume?.paneId
+    ? beginOperatorTabResumeTransfer(mission.id, operatorResume.paneId)
+    : undefined;
+  if (releaseTabResumeTransfer === null) {
+    throw new Error(
+      'a conversa do orquestrador desta missão da aba já está sendo retomada; ' +
+        'espere essa retomada terminar antes de tentar de novo',
+    );
   }
+  let spawned: SpawnedAgent;
+  try {
+    // P0-1 (2026-08-17): NUNCA spawnar por cima de um orquestrador registrado.
+    // A cerca do pty-manager conta QUALQUER sessão registrada (exited/
+    // hibernated incluso); liveOrchestratorSessionId conta só busy/idle/
+    // spawning com pane. Quando discordavam, o respawn era recusado para
+    // sempre. A saída sancionada é terminar com prova física antes do spawn —
+    // e abortar (sem split-brain) se o processo teimoso não provar a morte.
+    const staleOrchestrators = registeredOrchestratorSessionsForMission(
+      mission.id,
+    );
+    for (const stale of staleOrchestrators) {
+      const proven = await orchTerminateSession(stale.sessionId, {
+        termTimeoutMs: 5_000,
+        killTimeoutMs: 10_000,
+        origin: 'fast-lane:respawn-stale-orchestrator',
+      });
+      if (!proven) {
+        throw new Error(
+          `orquestrador anterior (${stale.sessionId}, estado ${stale.state}, ` +
+            `${stale.adapterId}) não terminou fisicamente; respawn abortado ` +
+            'para não criar dois Maestros na mesma missão. Feche o pane antigo ' +
+            'ou reinicie o app e use Retomar.',
+        );
+      }
+    }
 
-  const spawned = operatorResume
-    ? await spawnAgentPane(scope, live, orchestrator, prompt, operatorResume.title, {
-        resumeFromPaneId: operatorResume.paneId,
-        ...(operatorResume.accountId ? { accountId: operatorResume.accountId } : {}),
-      })
-    : await spawnAgentPane(scope, live, orchestrator, prompt);
-  if ('error' in spawned) {
-    throw new Error(`orquestrador não reabriu: ${spawned.error}`);
-  }
-  // F-664: a conversa agora mora no pane novo. Se o record() deduplicou o
-  // pane novo na linha retomada (mesma identidade), a linha passa a apontar
-  // para ele — a próxima retomada continua DESTA conversa, não da anterior.
-  if (operatorResume && !stores.missionPanes.findByPaneId(spawned.paneId)) {
-    try {
-      stores.missionPanes.moveOrchestratorPane(mission.id, operatorResume.id, spawned.paneId);
-    } catch (error) {
-      // O runtime já nasceu e tem autoridade própria. Uma falha no vínculo
-      // histórico não pode deixá-lo sem watcher nem re-entrega de handoffs.
-      console.warn('[fast-lane] vínculo do pane retomado não foi atualizado:', error);
+    const result = operatorResume
+      ? await spawnAgentPane(scope, live, orchestrator, prompt, operatorResume.title, {
+          resumeFromPaneId: operatorResume.paneId,
+          ...(operatorResume.accountId ? { accountId: operatorResume.accountId } : {}),
+        })
+      : await spawnAgentPane(scope, live, orchestrator, prompt);
+    if ('error' in result) {
+      throw new Error(`orquestrador não reabriu: ${result.error}`);
     }
+    spawned = result;
+    // F-664: a conversa agora mora no pane novo. Se o record() deduplicou o
+    // pane novo na linha retomada (mesma identidade), a linha passa a apontar
+    // para ele — a próxima retomada continua DESTA conversa, não da anterior.
+    if (operatorResume && !stores.missionPanes.findByPaneId(spawned.paneId)) {
+      try {
+        stores.missionPanes.moveOrchestratorPane(mission.id, operatorResume.id, spawned.paneId);
+      } catch (error) {
+        // O runtime já nasceu e tem autoridade própria. Uma falha no vínculo
+        // histórico não pode deixá-lo sem watcher nem re-entrega de handoffs.
+        console.warn('[fast-lane] vínculo do pane retomado não foi atualizado:', error);
+      }
+    }
+  } finally {
+    releaseTabResumeTransfer?.();
   }
 
   stopWatcher(scope, mission.id);

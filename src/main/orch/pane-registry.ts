@@ -251,6 +251,12 @@ interface PendingSpawn {
   timer: ReturnType<typeof setTimeout>;
   /** Main-only first turn; deliberately absent from the renderer request. */
   initialPrompt?: string;
+  /**
+   * F-721: a conversa do pane de origem foi copiada para este pane. O spawn
+   * tem de retomá-la (`--resume`); sem isso ele é recusado, nunca vira uma
+   * conversa nova no lugar da que existia.
+   */
+  exactResumeRequired?: true;
   meta: OrchMeta;
   requestedCwd?: string;
   owner: WebContents;
@@ -1385,7 +1391,9 @@ async function settlePendingSpawnFailure(
   }
 
   let fallback: OrchPaneSpawnResult | null = null;
-  if (options.allowMainFallback) {
+  // F-721: o spawn headless não retoma conversa. Quem tinha uma conversa
+  // copiada para retomar falha aqui em vez de nascer vazio sem o renderer.
+  if (options.allowMainFallback && !pending.exactResumeRequired) {
     try {
       fallback = await fallbackPendingSpawnToMainRuntime(
         pending,
@@ -2495,6 +2503,8 @@ export type PendingSpawnMeta = OrchMeta & {
   initialPrompt?: string;
   requestedCwd?: string;
   sealedRequest?: Readonly<OrchPaneSpawnRequest>;
+  /** F-721: Main copiou uma conversa real para este pane; o spawn a retoma ou falha. */
+  exactResumeRequired?: true;
 };
 
 export interface PendingRecoverySpawnMeta {
@@ -2525,6 +2535,7 @@ function claimPendingSpawn(
     ...(pending.requestedCwd === undefined
       ? {}
       : { requestedCwd: pending.requestedCwd }),
+    ...(pending.exactResumeRequired ? { exactResumeRequired: true as const } : {}),
     sealedRequest: Object.freeze({ ...pending.request }),
   };
 }
@@ -2952,6 +2963,9 @@ export function requestPaneSpawn(
   // 0.76.45: acordar/retomar a conversa de um pane antigo no pane novo — o
   // lookup de resume exato é por paneId, então o registro é copiado ANTES do
   // spawn. Sem registro antigo, o spawn segue (fresh) com aviso no log.
+  // F-721: com registro copiado, a conversa existe — o spawn a retoma ou é
+  // recusado (pty-manager), e não cai no spawn headless sem resume.
+  let exactResumeRequired = false;
   if (options.resumeFromPaneId && options.resumeFromPaneId !== paneId) {
     const nativeOwnerKey = options.adapterId === 'mimo-code' && !options.accountId
       ? currentMimoSessionOwnerKey(providerAuthStrategy('mimo-code', options.model) === 'api-key'
@@ -2970,6 +2984,7 @@ export function requestPaneSpawn(
         `[pane-registry] resumeFromPaneId=${options.resumeFromPaneId}: nenhuma sessão do provider gravada; o pane novo nasce sem contexto`,
       );
     }
+    exactResumeRequired = copied && options.resume != null && options.resume !== false;
   }
   const executionScope = options.executionScope ?? options.scope;
   const requestedCwd = options.cwd ?? executionScope.rootRealPath;
@@ -3021,6 +3036,7 @@ export function requestPaneSpawn(
       timer,
       owner,
       initialPrompt: options.initialPrompt,
+      ...(exactResumeRequired ? { exactResumeRequired: true as const } : {}),
       claimed: false,
       claimedSessionId: null,
       requestedCwd,

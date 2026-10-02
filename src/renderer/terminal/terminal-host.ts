@@ -60,6 +60,7 @@ import {
   decideOrchestratorProcessExit,
   decideStaleAuthorityRecovery,
   decideUnlockRetiredMissionPane,
+  HOLD_RELEASED_NOTICE,
   latestCivilianDeliverySummary,
   MISSION_HOLD_NOTICE,
   missionOwnedExitNotice,
@@ -1258,6 +1259,15 @@ function startSpawn(
       propagateHostSize(host);
       if (res.cwd) useLayoutStore.getState().setPaneCwd(pane.id, res.cwd);
       clearPaneSpawnError(pane.id);
+      // F-721: o aviso "Agente em pausa … NÃO foi reiniciada" ficou acima,
+      // escrito quando o pane foi segurado. O pane religou: a última palavra
+      // é que ele voltou. Sessão adotada limpa a tela logo abaixo (reset).
+      if (host.holdNoticeWritten) {
+        host.holdNoticeWritten = false;
+        if (!res.adopted) {
+          host.term.writeln(`\r\n\x1b[36m${HOLD_RELEASED_NOTICE}\x1b[0m`);
+        }
+      }
       const spawnedAt = Date.now();
       // Session boundary: a NEW session attaching to a pane that already shows
       // content (restored scrollback, respawn in the same xterm) gets a divider

@@ -427,3 +427,11 @@ export const MISSION_HOLD_NOTICE =
 export const STANDALONE_HOLD_NOTICE =
   '[Nexus] Agente em pausa — a sessão anterior NÃO foi reiniciada automaticamente.\r\n' +
   '  Confirme o diálogo ou retome a missão no rail quando quiser.\r\n';
+
+/**
+ * F-721: o aviso de pausa fica no scrollback quando o MESMO pane é solto e
+ * religa. A linha seguinte diz que a pausa acabou — sem ela o operador lia
+ * "NÃO foi reiniciada" num pane vivo.
+ */
+export const HOLD_RELEASED_NOTICE =
+  '[nexus] agente retomado — o aviso de pausa acima não vale mais.';

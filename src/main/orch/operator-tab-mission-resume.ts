@@ -80,6 +80,49 @@ export function operatorTabMissionLeader(
   return specs.find((spec) => spec.role === 'orchestrator' && Boolean(spec.adapterId)) ?? null;
 }
 
+/**
+ * F-721: dono único da retomada do líder da aba.
+ *
+ * Enquanto o Main leva a conversa do líder para um pane novo
+ * (`resumeFromPaneId`), o pane de origem é dele: nenhum caminho do renderer
+ * (portão de restore, remontagem do leaf, Reiniciar) pode religá-lo. No boot
+ * de 02/10 as duas restaurações correram juntas: o pane antigo subiu primeiro
+ * com sessão nova, ficou com a conta Claude (F-235) e a retomada certa foi
+ * recusada. Depois do spawn, `moveOrchestratorPane` tira o pane antigo da
+ * composição e a cerca exclusiva do pty-manager cobre o Maestro vivo.
+ */
+const tabResumeTransfers = new Map<string, { readonly fromPaneId: string }>();
+
+/**
+ * Reserva a transferência da conversa da missão. Devolve a liberação, ou null
+ * quando outra retomada da mesma missão já está em andamento.
+ */
+export function beginOperatorTabResumeTransfer(
+  missionId: string,
+  fromPaneId: string,
+): (() => void) | null {
+  if (tabResumeTransfers.has(missionId)) return null;
+  const transfer = { fromPaneId };
+  tabResumeTransfers.set(missionId, transfer);
+  return () => {
+    if (tabResumeTransfers.get(missionId) === transfer) tabResumeTransfers.delete(missionId);
+  };
+}
+
+/** O pane é a origem de uma transferência em andamento (o Main é o dono dele). */
+export function isOperatorTabResumeTransferSource(missionId: string, paneId: string): boolean {
+  return tabResumeTransfers.get(missionId)?.fromPaneId === paneId;
+}
+
+/** Há uma retomada da conversa desta missão em andamento. */
+export function operatorTabResumeTransferInFlight(missionId: string): boolean {
+  return tabResumeTransfers.has(missionId);
+}
+
+export function resetOperatorTabResumeTransfersForTests(): void {
+  tabResumeTransfers.clear();
+}
+
 /** O pane do operador descrito como o orquestrador que o spawn espera. */
 export function operatorTabResumeAgent(
   spec: MissionPaneSpec,

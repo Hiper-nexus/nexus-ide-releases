@@ -274,9 +274,15 @@ export class UsageTelemetryService {
     // atravessava o pty-manager e virava
     // `[nexus] falha ao iniciar o processo: usage telemetry scope identity
     // collision` — telemetria abortando o nascimento do processo.
-    setResumeSessionLookup((scope, paneId, adapterId, accountId) => {
+    setResumeSessionLookup((scope, paneId, adapterId, accountId, spawn) => {
       try {
-        return this.#resumeSessionForPane(scope, paneId, adapterId, accountId);
+        return this.#resumeSessionForPane(
+          scope,
+          paneId,
+          adapterId,
+          accountId,
+          spawn?.executionScope,
+        );
       } catch (error) {
         console.warn(
           '[usage] resume lookup indisponível; pane nasce com sessão nova',
@@ -505,6 +511,7 @@ export class UsageTelemetryService {
     paneId: string,
     adapterId: string,
     accountId?: string,
+    spawnExecutionScope?: Readonly<ProjectExecutionScope>,
   ): string | null {
     const state = this.#ensureScope(scope);
     // Exact resume is account-bound. When accountId is set, SQLite row must match.
@@ -515,7 +522,11 @@ export class UsageTelemetryService {
       accountId,
     );
     if (persisted) {
-      const executionRoot = this.#registerResumePaneRoot(state, paneId);
+      const executionRoot = this.#registerResumePaneRoot(
+        state,
+        paneId,
+        spawnExecutionScope,
+      );
       if (!executionRoot) return null;
       const existing = state.resumedSessions.get(persisted.id);
       if (existing && existing.adapterId !== adapterId) {
@@ -546,7 +557,11 @@ export class UsageTelemetryService {
     const captured = state.stores.usage.latestProviderSessionByPane(paneId);
     if (!captured) return null;
     if (captured.provider !== adapterId) return null;
-    const executionRoot = this.#registerResumePaneRoot(state, paneId);
+    const executionRoot = this.#registerResumePaneRoot(
+      state,
+      paneId,
+      spawnExecutionScope,
+    );
     if (!executionRoot) return null;
     const existing = state.resumedSessions.get(captured.sessionId);
     if (existing && existing.adapterId !== adapterId) {
@@ -571,13 +586,31 @@ export class UsageTelemetryService {
   #registerResumePaneRoot(
     state: ScopeTelemetryState,
     paneId: string,
+    spawnExecutionScope?: Readonly<ProjectExecutionScope>,
   ): string | null {
     const pane = getPaneAuthzInfo(paneId);
-    if (!pane?.scope || !sameProjectScope(pane.scope, state.scope)) {
+    let paneScope = pane?.scope;
+    let executionScope = pane?.executionScope;
+    if (!paneScope && spawnExecutionScope) {
+      // F-721: no primeiro spawn do pane neste processo (restauração depois de
+      // reiniciar o app, pane novo da retomada da aba) o registro ainda não tem
+      // meta nem sessão dele. A raiz vem da autoridade do spawn, selada pelo
+      // Main — sem ela o resume exato caía em sessão nova.
+      if (
+        spawnExecutionScope.installationId !== state.scope.installationId ||
+        spawnExecutionScope.projectId !== state.scope.projectId ||
+        spawnExecutionScope.checkoutId !== state.scope.checkoutId
+      ) {
+        return null;
+      }
+      paneScope = state.scope;
+      executionScope = spawnExecutionScope;
+    }
+    if (!paneScope || !sameProjectScope(paneScope, state.scope)) {
       return null;
     }
     const configuredRoot =
-      pane.executionScope?.rootRealPath ?? pane.scope.rootRealPath;
+      executionScope?.rootRealPath ?? paneScope.rootRealPath;
     let executionRoot: string;
     try {
       executionRoot = fs.realpathSync(configuredRoot);
