@@ -25,9 +25,10 @@ import {
   recordJevDecision,
 } from '../jev/jev-decision-log';
 import {
+  allowedProjectSkillCatalog,
   allowedSkillCatalog,
-  buildSkillSuggestionQuestion,
-  parseSkillSuggestion,
+  buildSkillSuggestionQuestions,
+  parseSkillSuggestions,
   type SkillSuggestionPick,
 } from './jev-skill-suggestion';
 import {
@@ -284,12 +285,16 @@ export type JevRouteTaskBatch =
 
 export interface RouteTaskJevBatchDeps extends ClassifyTaskDeps {
   record?: typeof recordJevDecision;
+  /** Leitor das skills do projeto (testes); default = o do painel Skills. */
+  scanProjectSkills?: Parameters<typeof allowedProjectSkillCatalog>[2];
 }
 
 export async function classifyTaskWithSkillForRouting(
   task: string,
   opts: {
     allowedSkills: string[] | null;
+    /** Raiz do projeto: as skills instaladas nele entram no catálogo (F-753). */
+    projectRoot?: string;
     sessionId?: string;
     missionId?: string;
     deps?: RouteTaskJevBatchDeps;
@@ -307,9 +312,16 @@ export async function classifyTaskWithSkillForRouting(
   }
 
   const catalog = allowedSkillCatalog(opts.allowedSkills);
+  const projectCatalog = allowedProjectSkillCatalog(
+    opts.allowedSkills,
+    opts.projectRoot,
+    opts.deps?.scanProjectSkills,
+  );
+  const skillQuestions = buildSkillSuggestionQuestions(catalog, projectCatalog);
+  const asksSkill = Object.keys(skillQuestions).length > 0;
   const questions: Record<string, JevQuestion> = {
     ...TASK_ROUTING_QUESTIONS,
-    ...(catalog.length > 0 ? { skill: buildSkillSuggestionQuestion(catalog) } : {}),
+    ...skillQuestions,
   };
   let noAnswer: JevUnavailableReason | undefined;
   const judgeFn = opts.deps?.judge ?? judge;
@@ -330,8 +342,9 @@ export async function classifyTaskWithSkillForRouting(
     return { kind: 'unavailable', reason: noAnswer ?? 'network', skillSuggestion: null, batch };
   }
   const classification = parseTaskClassification(result);
-  const skillSuggestion =
-    catalog.length > 0 ? parseSkillSuggestion(result.answers, catalog) : null;
+  const skillSuggestion = asksSkill
+    ? parseSkillSuggestions(result.answers, catalog, projectCatalog)
+    : null;
   if (!classification && !skillSuggestion) {
     return { kind: 'unavailable', reason: 'invalid-answer', skillSuggestion: null, batch };
   }
@@ -351,7 +364,7 @@ export async function classifyTaskWithSkillForRouting(
       `skill:${skillSuggestion?.name ?? 'none'}`,
     ].join('|'),
     ...decisionResultUsage(result),
-    ...(catalog.length > 0 ? { optimization: { jevRequestsAvoided: 1 } } : {}),
+    ...(asksSkill ? { optimization: { jevRequestsAvoided: 1 } } : {}),
   });
   return classification
     ? { kind: 'classified', classification, skillSuggestion, batch }

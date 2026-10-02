@@ -13,6 +13,7 @@ import type { JevResult, JudgeInput } from '../jev/jev-client';
 import {
   classifyTaskForRouting,
   classifyTaskWithJev,
+  classifyTaskWithSkillForRouting,
   routingOverridesFrom,
   type JevTaskClassification,
 } from './jev-task-routing';
@@ -297,5 +298,46 @@ describe('routingOverridesFrom — piso de revisão de código sobre o tier do J
   it('revisão de texto e tier do chamador seguem como antes', () => {
     expect(routingOverridesFrom(jevTrivial, undefined, 'revisar o texto do README').tierOverride).toBe('trivial');
     expect(routingOverridesFrom(jevTrivial, 'easy', review).tierOverride).toBe('easy');
+  });
+});
+
+describe('lote do route_task: skills do projeto numa pergunta própria (F-753)', () => {
+  it('uma chamada só leva tier, skill bundled e skill do projeto; a mais confiante sai com o caminho', async () => {
+    const base = answer('medium', 0.9, 'doc', 0.9);
+    const judge = vi.fn<JudgeMock>(async () => ({
+      ...base,
+      answers: {
+        ...base.answers,
+        skill: { type: 'choice', choice: 'writing-plans', probabilities: {}, confidence: 0.74 },
+        projectSkill: { type: 'choice', choice: 'bmad-index-docs', probabilities: {}, confidence: 0.82 },
+      },
+    }));
+    const out = await classifyTaskWithSkillForRouting('preparar mapa das peças documentais de fechamento', {
+      allowedSkills: null,
+      projectRoot: '/w/hipergo',
+      deps: {
+        judge,
+        enabled: () => true,
+        hasKey: () => true,
+        scanProjectSkills: (dir) =>
+          dir.replaceAll('\\', '/').endsWith('/hipergo/.claude/skills')
+            ? [{ name: 'bmad-index-docs', description: 'Index the docs of the project.' }]
+            : [],
+      },
+    });
+    expect(judge).toHaveBeenCalledTimes(1);
+    expect(Object.keys(judge.mock.calls[0]![0].questions)).toEqual(
+      expect.arrayContaining(['tier', 'specialty', 'skill', 'projectSkill']),
+    );
+    expect(out).toMatchObject({
+      kind: 'classified',
+      skillSuggestion: {
+        name: 'bmad-index-docs',
+        pkg: 'project',
+        confidence: 0.82,
+        path: '.claude/skills/bmad-index-docs/SKILL.md',
+      },
+      batch: { requestCount: 1 },
+    });
   });
 });

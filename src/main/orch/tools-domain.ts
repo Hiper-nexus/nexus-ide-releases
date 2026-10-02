@@ -1682,6 +1682,9 @@ export async function routeTaskForCaller(
   try {
     jevRouting = await classifyTaskWithSkillForRouting(task, {
       allowedSkills: ctx.allowedSkills ?? null,
+      // F-753: as skills instaladas no projeto concorrem com as do Nexus. A
+      // pasta é a de execução: é nela que o pane lê o `path` relativo.
+      projectRoot: executionScopeFor(ctx).rootRealPath,
       sessionId: ctx.sessionId,
       missionId: missionId ?? undefined,
     });
@@ -2045,8 +2048,10 @@ const routeTaskTool: McpToolDef = {
     ' Without a mission the answer is a free suggestion (no RouteReservation): ' +
     'pass adapterId/model/effort into nexus_pane_spawn — or omit adapterId in ' +
     'nexus_pane_spawn and pass `task` so Nexus routes it automatically. ' +
-    'The result also carries skillSuggestion: the single bundled skill Jev ' +
-    'judged clearly useful for the task (null when none). When Jev influenced ' +
+    'The result also carries skillSuggestion: the single installed skill Jev ' +
+    'judged clearly useful for the task — bundled with Nexus or installed in ' +
+    'the project (.claude/skills, .nexus/skills; then `path` points to its ' +
+    'SKILL.md) — null when none. When Jev influenced ' +
     'the classification it also returns a read-only receipt: confidence ' +
     '({tier?, specialty?, effort?} in 0..1, only the dimensions Jev actually ' +
     'decided) and ruleChoice (what the plain rule would have picked without ' +
