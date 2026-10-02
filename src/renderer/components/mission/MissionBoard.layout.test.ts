@@ -58,9 +58,13 @@ describe("MissionBoard layout system invariants (RED test)", () => {
   });
 
   it("ensures edge stroke uses a token/high-contrast color at >=1.5px and distinct dash patterns", () => {
-    const edgeLineRule = cssRule(missionCss, ".mission-graph__edges line");
+    // Racks: a relação é o núcleo do cabo (path) por cima da capa grossa.
+    const edgeLineRule = cssRule(missionCss, ".mission-graph__edge");
     expect(edgeLineRule).toMatch(/stroke:\s*var\(--/);
     expect(edgeLineRule).toMatch(/stroke-width:\s*(1\.5(px)?|[2-9](px)?)/);
+    const cableRule = cssRule(missionCss, ".mission-graph__cable");
+    expect(cableRule).toMatch(/stroke:\s*var\(--/);
+    expect(cableRule).toMatch(/stroke-width:\s*([4-9]|1\d)(px)?/);
 
     // Canonical edge kinds (e.g., dependency kinds) should have distinct dash patterns
     expect(missionCss).toMatch(/\.mission-graph__edge--[^:]+\s*\{[^}]*stroke-dasharray:/);

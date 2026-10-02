@@ -835,67 +835,138 @@
   pointer-events: none;
 }
 
-.mission-graph__edges line {
-  stroke: var(--mission-graph-edge);
-  stroke-width: 2px;
+/* Cabos (F-728): capa, núcleo com o traço do tipo de relação (a legenda) e o
+   sinal de pacotes. A energia corre só no cabo VIVO — missão rodando e a ponta
+   de trabalho trabalhando; parado, o cabo fica quieto e só tinge pelo estado
+   de quem está na ponta. */
+.mission-graph__cable-group {
+  --mission-cable-color: var(--mission-graph-edge);
+  --mission-cable-flow: var(--state-running);
+}
+
+.mission-graph__cable-group[data-edge-kind='handoff'] {
+  --mission-cable-flow: var(--state-done);
+}
+
+.mission-graph__cable-group[data-worker-state='done'] {
+  --mission-cable-color: color-mix(in srgb, var(--state-done) 50%, var(--text-faint));
+}
+
+.mission-graph__cable-group[data-worker-state='blocked'] {
+  --mission-cable-color: color-mix(in srgb, var(--state-blocked) 55%, var(--text-faint));
+}
+
+.mission-graph__cable-group[data-worker-state='failed'] {
+  --mission-cable-color: color-mix(in srgb, var(--state-failed) 55%, var(--text-faint));
+}
+
+.mission-graph__cable-group[data-edge-live='true'] {
+  --mission-cable-color: color-mix(in srgb, var(--mission-cable-flow) 72%, var(--text-faint));
+}
+
+.mission-graph__cable,
+.mission-graph__edge,
+.mission-graph__edge-signal {
+  fill: none;
   stroke-linecap: round;
   shape-rendering: geometricPrecision;
 }
 
+.mission-graph__cable {
+  stroke: var(--surface-3);
+  stroke-width: 7px;
+}
+
 .mission-graph__edge {
-  opacity: 0.72;
+  stroke: var(--mission-cable-color);
+  stroke-width: 1.5px;
+  opacity: 0.85;
+  transition: stroke 220ms var(--ease-out-quart);
 }
 
 .mission-graph__edge--topology {
-  stroke-width: 1.5px;
-  opacity: 0.64;
+  opacity: 0.7;
 }
 
 .mission-graph__edge-signal {
-  stroke: var(--mission-graph-flow);
-  stroke-width: 2px;
-  stroke-dasharray: var(--space-3) var(--space-5);
-  stroke-linecap: round;
+  stroke: var(--mission-cable-flow);
+  stroke-width: 3px;
+  stroke-linecap: butt;
+  stroke-dasharray: var(--space-1) var(--space-6);
   opacity: 0;
-  filter: drop-shadow(0 0 var(--space-1) var(--mission-graph-flow));
+  filter: drop-shadow(0 0 var(--space-1) var(--mission-cable-flow));
 }
 
-.mission-graph[data-mission-state='starting'] .mission-graph__edge-signal,
-.mission-graph[data-mission-state='running'] .mission-graph__edge-signal,
-.mission-graph[data-mission-state='recovering'] .mission-graph__edge-signal {
-  opacity: 0.92;
-  animation: mission-graph-signal-flow 1.6s linear infinite;
-}
-
-.mission-graph[data-mission-state='completed'] .mission-graph__edge-signal {
-  stroke-dasharray: none;
-  opacity: 0.28;
+.mission-graph__cable-group[data-edge-live='true'] .mission-graph__edge-signal {
+  opacity: 0.95;
+  animation: mission-graph-signal-flow 1.1s linear infinite;
 }
 
 @keyframes mission-graph-signal-flow {
   to {
-    stroke-dashoffset: calc(-1 * (var(--space-3) + var(--space-5)));
+    stroke-dashoffset: calc(-1 * (var(--space-1) + var(--space-6)));
   }
 }
 
-.mission-graph__edge--delegation,
-.mission-graph__edges line[data-edge-kind='delegation'] {
+/* "Algoritmos passando": fichas de forma (λ, fn, { }…) que percorrem o cabo
+   vivo. Não carregam conteúdo da missão. */
+.mission-graph__packet-chip {
+  fill: var(--surface-0);
+  stroke: color-mix(in srgb, var(--mission-cable-flow) 70%, transparent);
+  stroke-width: 1px;
+}
+
+.mission-graph__packet-glyph {
+  fill: var(--mission-cable-flow);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.mission-graph__edge--delegation {
   stroke-dasharray: none;
 }
 
-.mission-graph__edge--handoff,
-.mission-graph__edges line[data-edge-kind='handoff'] {
+.mission-graph__edge--handoff {
   stroke-dasharray: var(--space-5) var(--space-2);
 }
 
-.mission-graph__edge--dependency,
-.mission-graph__edges line[data-edge-kind='dependency'] {
+.mission-graph__edge--dependency {
   stroke-dasharray: var(--space-1) var(--space-2);
 }
 
-.mission-graph__edge--review,
-.mission-graph__edges line[data-edge-kind='review'] {
+.mission-graph__edge--review {
   stroke-dasharray: var(--space-4) var(--space-2) var(--space-1) var(--space-2);
+}
+
+/* Conectores nas portas: acima dos racks, para o cabo "entrar" no chassi. */
+.mission-graph__jacks {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: block;
+  width: var(--mission-graph-width);
+  height: var(--mission-graph-height);
+  overflow: visible;
+  pointer-events: none;
+}
+
+.mission-graph__jack {
+  fill: var(--surface-3);
+  stroke: var(--border-strong);
+  stroke-width: 1px;
+}
+
+.mission-graph__jack[data-edge-live='true'] {
+  fill: var(--state-running);
+  stroke: color-mix(in srgb, var(--state-running) 60%, var(--text));
+  filter: drop-shadow(0 0 var(--space-1) var(--state-running));
+}
+
+.mission-graph__jack[data-edge-live='true'][data-edge-kind='handoff'] {
+  fill: var(--state-done);
+  stroke: color-mix(in srgb, var(--state-done) 60%, var(--text));
+  filter: drop-shadow(0 0 var(--space-1) var(--state-done));
 }
 
 .mission-graph__cards {
@@ -1061,25 +1132,43 @@
   border-top-style: double;
 }
 
+/* Pacotes no cabo: só o cabo vivo leva o pulso de energia. */
+.mission-graph__legend-line--live {
+  height: var(--space-1);
+  border-top: 0;
+  border-radius: 1px;
+  background: repeating-linear-gradient(
+    to right,
+    var(--state-running) 0 var(--space-1),
+    transparent var(--space-1) var(--space-2-5)
+  );
+}
+
+/* Rack (F-728): cada agente é um chassi com trilhos e parafusos, a ferramenta
+   (logo + CLI + modelo), o LED e a palavra do estado, a régua de atividade e o
+   visor da unidade atual. O coordenador é o núcleo: mais largo, com o painel
+   de portas embaixo. Medidas vêm do canvas (`--mission-rack-*`). */
 .mission-agent-card {
   --mission-agent-state-color: var(--state-pending);
+  --mission-rack-ear: var(--space-2-5);
 
   position: absolute;
   top: var(--mission-agent-y);
   left: var(--mission-agent-x);
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
-  width: calc(var(--space-8) + var(--space-8) + var(--space-8));
-  height: calc(var(--space-8) + var(--space-8) + var(--space-4));
+  display: flex;
+  flex-direction: column;
+  width: var(--mission-rack-width);
+  height: var(--mission-rack-height);
   min-width: 0;
-  gap: var(--space-2);
+  gap: var(--space-1-5);
   margin: 0;
-  padding: var(--space-3);
+  padding: var(--space-2-5) calc(var(--mission-rack-ear) + var(--space-2-5));
   overflow: hidden;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-md);
   appearance: none;
-  background: var(--bg-elevated);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-1), var(--shadow-inset-hi);
   color: var(--text);
   font: inherit;
   text-align: start;
@@ -1091,6 +1180,71 @@
     border-color 160ms var(--ease-out-quart),
     color 160ms var(--ease-out-quart),
     outline-color 160ms var(--ease-out-quart);
+}
+
+/* Trilhos do rack, com dois parafusos cada. */
+.mission-agent-card::before,
+.mission-agent-card::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: var(--mission-rack-ear);
+  background:
+    radial-gradient(
+      circle at 50% var(--space-3),
+      var(--surface-0) 0 1.5px,
+      var(--border-strong) 2px 2.5px,
+      transparent 3px
+    ),
+    radial-gradient(
+      circle at 50% calc(100% - var(--space-3)),
+      var(--surface-0) 0 1.5px,
+      var(--border-strong) 2px 2.5px,
+      transparent 3px
+    ),
+    var(--surface-1);
+  content: '';
+  pointer-events: none;
+}
+
+.mission-agent-card::before {
+  left: 0;
+  border-right: 1px solid var(--border);
+}
+
+.mission-agent-card::after {
+  right: 0;
+  border-left: 1px solid var(--border);
+}
+
+.mission-agent-card[data-category='orchestrator'] {
+  width: var(--mission-core-width);
+  height: var(--mission-core-height);
+  padding-bottom: calc(var(--space-2-5) + var(--space-3));
+  border-color: color-mix(
+    in srgb,
+    var(--mission-agent-state-color) 34%,
+    var(--border-strong)
+  );
+}
+
+/* Painel de portas do núcleo: os conectores dos cabos se apoiam aqui. */
+.mission-agent-card__patch {
+  position: absolute;
+  right: var(--mission-rack-ear);
+  bottom: 0;
+  left: var(--mission-rack-ear);
+  height: var(--space-3);
+  border-top: 1px solid var(--border);
+  background:
+    repeating-linear-gradient(
+      to right,
+      var(--surface-0) 0 var(--space-3),
+      transparent var(--space-3) calc(var(--space-3) + var(--space-2))
+    )
+    center / 100% var(--space-1) no-repeat,
+    var(--surface-1);
+  pointer-events: none;
 }
 
 .mission-agent-card[data-state='working'] {
@@ -1119,7 +1273,7 @@
 
 .mission-agent-card:hover {
   border-color: color-mix(in srgb, var(--text) 30%, var(--border-strong));
-  background: color-mix(in srgb, var(--text) 6%, var(--bg-elevated));
+  background: color-mix(in srgb, var(--text) 4%, var(--surface-2));
 }
 
 .mission-agent-card--selected,
@@ -1127,7 +1281,7 @@
   border-color: var(--accent);
   outline: 1px solid var(--accent-soft);
   outline-offset: 1px;
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-elevated));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
 }
 
 .mission-agent-card:focus-visible {
@@ -1146,7 +1300,8 @@
 
 .mission-agent-card__category,
 .mission-agent-card__state,
-.mission-agent-card__unit-label {
+.mission-agent-card__tool-label,
+.mission-agent-card__unit-id {
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   line-height: 1.25;
@@ -1156,7 +1311,7 @@
   display: flex;
   align-items: center;
   min-width: 0;
-  gap: var(--space-2);
+  gap: var(--space-1-5);
   overflow: hidden;
   color: var(--text-dim);
 }
@@ -1173,7 +1328,7 @@
   background: color-mix(
     in srgb,
     var(--mission-agent-state-color) 10%,
-    var(--bg-elevated)
+    var(--surface-1)
   );
   color: var(--mission-agent-state-color);
 }
@@ -1194,22 +1349,37 @@
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  gap: var(--space-1);
+  gap: var(--space-1-5);
   color: var(--mission-agent-state-color);
   font-weight: 650;
   white-space: nowrap;
 }
 
+/* LED do rack: o estado também está escrito ao lado (nunca só cor). */
 .mission-agent-card__state::before {
   width: var(--space-2);
   height: var(--space-2);
   flex: 0 0 auto;
   border-radius: var(--radius-round);
   background: var(--mission-agent-state-color);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--mission-agent-state-color) 35%, transparent),
+    0 0 var(--space-2) color-mix(in srgb, var(--mission-agent-state-color) 55%, transparent);
   content: '';
 }
 
+.mission-agent-card[data-state='working'] .mission-agent-card__state::before {
+  animation: mission-rack-led 1.6s var(--ease-out-quart) infinite;
+}
+
+@keyframes mission-rack-led {
+  50% {
+    opacity: 0.4;
+  }
+}
+
 .mission-agent-card__name,
+.mission-agent-card__tool-label,
 .mission-agent-card__unit-title,
 .mission-agent-card__unit-id,
 .mission-agent-card__detail {
@@ -1221,22 +1391,101 @@
 }
 
 .mission-agent-card__name {
-  font-size: var(--text-lg);
+  font-size: var(--text-md);
   font-weight: 650;
   line-height: 1.25;
 }
 
+.mission-agent-card__tool {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  gap: var(--space-1-5);
+}
+
+.mission-agent-card__tool .provider-logo {
+  flex: 0 0 auto;
+}
+
+.mission-agent-card__tool-label {
+  color: var(--text-dim);
+}
+
+/* Régua de atividade: varre no acento enquanto o agente trabalha. */
+.mission-agent-card__activity {
+  display: flex;
+  flex: 0 0 var(--space-1);
+  gap: 2px;
+}
+
+.mission-agent-card__led {
+  flex: 1 1 0;
+  border-radius: 1px;
+  background: var(--border);
+}
+
+.mission-agent-card[data-state='working'] .mission-agent-card__led {
+  background: color-mix(in srgb, var(--state-running) 20%, var(--border));
+  animation: mission-rack-scan 1.8s linear infinite;
+  animation-delay: calc(var(--mission-led-index) * 0.12s);
+}
+
+@keyframes mission-rack-scan {
+  0%,
+  30%,
+  100% {
+    background: color-mix(in srgb, var(--state-running) 20%, var(--border));
+  }
+
+  8% {
+    background: var(--state-running);
+  }
+}
+
+.mission-agent-card[data-state='done'] .mission-agent-card__led {
+  background: color-mix(in srgb, var(--state-done) 50%, var(--border));
+}
+
+.mission-agent-card[data-state='blocked'] .mission-agent-card__led:nth-child(odd) {
+  background: color-mix(in srgb, var(--state-blocked) 70%, var(--border));
+}
+
+.mission-agent-card[data-state='failed'] .mission-agent-card__led:nth-child(-n + 3) {
+  background: var(--state-failed);
+}
+
+.mission-agent-card[data-state='waiting'] .mission-agent-card__led:nth-child(-n + 2) {
+  background: color-mix(in srgb, var(--text-dim) 55%, var(--border));
+}
+
+/* Visor: a unidade atual e o detalhe, no fundo mais escuro do chassi. */
+.mission-agent-card__display {
+  display: grid;
+  flex: 1 1 auto;
+  align-content: start;
+  min-height: 0;
+  gap: 2px;
+  padding: var(--space-1) var(--space-1-5);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-0);
+}
+
 .mission-agent-card__unit {
   display: grid;
-  align-content: start;
   min-width: 0;
-  gap: var(--space-1);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--border);
+  gap: 1px;
 }
 
 .mission-agent-card__unit-label {
-  color: var(--text-faint);
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .mission-agent-card__unit-title {
@@ -1248,16 +1497,21 @@
 
 .mission-agent-card__unit-id {
   color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
   line-height: 1.3;
 }
 
 .mission-agent-card__detail {
-  align-self: end;
   color: var(--text-dim);
   font-size: var(--text-xs);
   line-height: 1.35;
+}
+
+/* Visor apagado: rack sem unidade em curso (na fila, parado). */
+.mission-agent-card__idle {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 1.3;
 }
 
 .mission-agent-card__operator-opened {
@@ -1276,12 +1530,25 @@
     transition: none;
   }
 
-  .mission-graph[data-mission-state='starting'] .mission-graph__edge-signal,
-  .mission-graph[data-mission-state='running'] .mission-graph__edge-signal,
-  .mission-graph[data-mission-state='recovering'] .mission-graph__edge-signal {
+  /* Cabo vivo continua marcado pela cor e pelo conector aceso; sem
+     movimento e sem pacotes correndo. */
+  .mission-graph__cable-group[data-edge-live='true'] .mission-graph__edge-signal {
     stroke-dasharray: none;
     opacity: 0.58;
     animation: none;
+  }
+
+  .mission-graph__packets {
+    display: none;
+  }
+
+  .mission-agent-card[data-state='working'] .mission-agent-card__state::before,
+  .mission-agent-card[data-state='working'] .mission-agent-card__led {
+    animation: none;
+  }
+
+  .mission-agent-card[data-state='working'] .mission-agent-card__led {
+    background: color-mix(in srgb, var(--state-running) 55%, var(--border));
   }
 }
 

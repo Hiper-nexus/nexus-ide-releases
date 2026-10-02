@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.172 — Sala de racks
+
+Build do Windows. Inclui a 0.76.171.
+
+- **Sala de racks no Quadro da missão.** Pedido do operador (02/10): cada CLI/LLM é um rack, e os cabos ligam os racks com energia passando.
+  - **Rack:** cada agente vira um chassi com trilhos e parafusos. Mostra a ferramenta (`ProviderLogo` + `cli · modelo`), o LED e a palavra do estado, a régua de atividade e o visor da unidade atual, que fica apagado sem unidade. O coordenador é o núcleo, com o painel de portas.
+  - **Cabo:** cada relação vira um cabo, com capa, núcleo no traço do tipo e conector nas duas portas. As portas são ordenadas pela outra ponta para os cabos não cruzarem na saída (`mission-graph-cabling.ts`, puro).
+  - **Energia:** só o cabo vivo (missão rodando e a ponta de trabalho trabalhando) leva pulso e pacotes de forma (`λ`, `fn`, `{ }`, `0x`…). Os pacotes nunca carregam texto da missão e ficam fora da árvore de acessibilidade. O cabo parado tinge pelo estado da ponta.
+  - **Reduzir movimento:** `prefers-reduced-motion` desliga pulso, pacotes e a varredura dos LEDs. Regras em `DESIGN.md` §14.
+
 ## 0.76.171 — Entrega que chega
 
 Build do Windows. Inclui a 0.76.170 (Linux no desktop).

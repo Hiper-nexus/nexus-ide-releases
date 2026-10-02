@@ -6,15 +6,33 @@ import type {
 } from '../../../shared/mission-engine-contract';
 import { MissionAgentCard } from './MissionAgentCard';
 import { ActionCard, EmptyState } from '../ActionCard';
+import {
+  CORE_HEIGHT,
+  CORE_WIDTH,
+  RACK_HEIGHT,
+  RACK_WIDTH,
+  layoutCables,
+  rackSize,
+  type Cable,
+  type CablePort,
+  type CableSpec,
+  type RackBox,
+} from './mission-graph-cabling';
 
 const AGENTS_PER_ROW = 4;
 const GRAPH_WIDTH = 960;
 const COLUMN_STEP = GRAPH_WIDTH / AGENTS_PER_ROW;
-const ROOT_Y = 96;
-const FIRST_WORKER_ROW_Y = 288;
-const WORKER_ROW_STEP = 192;
-const GRAPH_BOTTOM_SPACE = 120;
+/** Espaço vertical dos cabos entre o painel do núcleo e a primeira fileira. */
+const CABLE_RUN = 132;
+const ROOT_Y = 32 + CORE_HEIGHT / 2;
+const FIRST_WORKER_ROW_Y = ROOT_Y + CORE_HEIGHT / 2 + CABLE_RUN + RACK_HEIGHT / 2;
+const WORKER_ROW_STEP = RACK_HEIGHT + 84;
+const GRAPH_BOTTOM_SPACE = RACK_HEIGHT / 2 + 48;
 const MIN_GRAPH_HEIGHT = 240;
+/** Uma volta completa de um pacote pelo cabo. */
+const PACKET_DURATION_S = 3.2;
+const JACK_LONG = 12;
+const JACK_SHORT = 7;
 
 const EDGE_KIND_LABELS = {
   delegation: 'Delegação',
@@ -45,23 +63,17 @@ export interface MissionGraphProps {
 
 interface PositionedEdge {
   readonly edge: MissionEdge;
-  readonly source: MissionGraphPosition;
-  readonly target: MissionGraphPosition;
   readonly sourceAgent: MissionAgentSnapshot;
   readonly targetAgent: MissionAgentSnapshot;
-}
-
-interface VisualEdge {
-  readonly id: string;
-  readonly kind: MissionEdge['kind'] | 'topology';
-  readonly label?: string;
-  readonly source: MissionGraphPosition;
-  readonly target: MissionGraphPosition;
 }
 
 type GraphSurfaceStyle = CSSProperties & {
   readonly '--mission-graph-width': string;
   readonly '--mission-graph-height': string;
+  readonly '--mission-rack-width': string;
+  readonly '--mission-rack-height': string;
+  readonly '--mission-core-width': string;
+  readonly '--mission-core-height': string;
 };
 
 /**
@@ -116,14 +128,66 @@ function positionedEdges(
 ): readonly PositionedEdge[] {
   const visibleEdges: PositionedEdge[] = [];
   for (const edge of edges) {
-    const source = positions.get(edge.sourceAgentId);
-    const target = positions.get(edge.targetAgentId);
     const sourceAgent = agents.get(edge.sourceAgentId);
     const targetAgent = agents.get(edge.targetAgentId);
-    if (!source || !target || !sourceAgent || !targetAgent) continue;
-    visibleEdges.push({ edge, source, target, sourceAgent, targetAgent });
+    if (
+      !positions.has(edge.sourceAgentId) ||
+      !positions.has(edge.targetAgentId) ||
+      !sourceAgent ||
+      !targetAgent
+    ) {
+      continue;
+    }
+    visibleEdges.push({ edge, sourceAgent, targetAgent });
   }
   return visibleEdges;
+}
+
+function jackRect(port: CablePort): {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+} {
+  const vertical = port.side === 'top' || port.side === 'bottom';
+  const width = vertical ? JACK_LONG : JACK_SHORT;
+  const height = vertical ? JACK_SHORT : JACK_LONG;
+  return { x: port.x - width / 2, y: port.y - height / 2, width, height };
+}
+
+function CablePackets({ cable }: { readonly cable: Cable }) {
+  return (
+    <g className="mission-graph__packets" aria-hidden="true">
+      {cable.glyphs.map((glyph, index) => {
+        const chipWidth = glyph.length * 6 + 10;
+        return (
+          <g key={index} className="mission-graph__packet">
+            <rect
+              className="mission-graph__packet-chip"
+              x={-chipWidth / 2}
+              y={-7}
+              width={chipWidth}
+              height={14}
+              rx={3}
+            />
+            <text
+              className="mission-graph__packet-glyph"
+              textAnchor="middle"
+              dominantBaseline="central"
+            >
+              {glyph}
+            </text>
+            <animateMotion
+              dur={`${PACKET_DURATION_S}s`}
+              begin={`${-index * (PACKET_DURATION_S / cable.glyphs.length)}s`}
+              repeatCount="indefinite"
+              path={cable.d}
+            />
+          </g>
+        );
+      })}
+    </g>
+  );
 }
 
 export function MissionGraph({
@@ -169,6 +233,10 @@ export function MissionGraph({
   const surfaceStyle: GraphSurfaceStyle = {
     '--mission-graph-width': `${GRAPH_WIDTH}px`,
     '--mission-graph-height': `${height}px`,
+    '--mission-rack-width': `${RACK_WIDTH}px`,
+    '--mission-rack-height': `${RACK_HEIGHT}px`,
+    '--mission-core-width': `${CORE_WIDTH}px`,
+    '--mission-core-height': `${CORE_HEIGHT}px`,
   };
   const positionsByAgentId = new Map(
     layout.map((position) => [position.agentId, position] as const),
@@ -184,21 +252,33 @@ export function MissionGraph({
     positionsByAgentId,
     agentsById,
   );
-  const visualEdges: readonly VisualEdge[] =
+  const boxes = new Map<string, RackBox>();
+  for (const position of layout) {
+    const agent = agentsById.get(position.agentId);
+    if (!agent) continue;
+    boxes.set(position.agentId, { ...position, ...rackSize(agent) });
+  }
+  const specs: readonly CableSpec[] =
     edges.length > 0
-      ? edges.map(({ edge, source, target }) => ({
+      ? edges.map(({ edge }) => ({
           id: edge.id,
           kind: edge.kind,
           label: edge.label,
-          source,
-          target,
+          sourceAgentId: edge.sourceAgentId,
+          targetAgentId: edge.targetAgentId,
         }))
       : layout.slice(1).map((target) => ({
           id: `topology-${layout[0].agentId}-${target.agentId}`,
-          kind: 'topology',
-          source: layout[0],
-          target,
+          kind: 'topology' as const,
+          sourceAgentId: layout[0].agentId,
+          targetAgentId: target.agentId,
         }));
+  const cables = layoutCables({
+    specs,
+    boxes,
+    agents: agentsById,
+    missionState: snapshot.state,
+  });
 
   return (
     <section
@@ -215,28 +295,30 @@ export function MissionGraph({
           aria-hidden="true"
           focusable="false"
         >
-          {visualEdges.map(({ id, kind, label, source, target }) => (
-            <g key={id}>
-              <line
-                className={`mission-graph__edge mission-graph__edge--${kind}`}
-                x1={source.x}
-                y1={source.y}
-                x2={target.x}
-                y2={target.y}
-                data-edge-id={id}
-                data-edge-kind={kind}
-                data-edge-label={label}
+          {cables.map((cable) => (
+            <g
+              key={cable.id}
+              className="mission-graph__cable-group"
+              data-edge-kind={cable.kind}
+              data-edge-live={cable.live ? 'true' : 'false'}
+              data-worker-state={cable.workerState}
+            >
+              <path className="mission-graph__cable" d={cable.d} />
+              <path
+                className={`mission-graph__edge mission-graph__edge--${cable.kind}`}
+                d={cable.d}
+                data-edge-id={cable.id}
+                data-edge-kind={cable.kind}
+                data-edge-label={cable.label}
                 vectorEffect="non-scaling-stroke"
               />
-              <line
+              <path
                 className="mission-graph__edge-signal"
-                x1={source.x}
-                y1={source.y}
-                x2={target.x}
-                y2={target.y}
-                data-edge-signal-for={id}
+                d={cable.d}
+                data-edge-signal-for={cable.id}
                 vectorEffect="non-scaling-stroke"
               />
+              {cable.live ? <CablePackets cable={cable} /> : null}
             </g>
           ))}
         </svg>
@@ -265,6 +347,34 @@ export function MissionGraph({
             );
           })}
         </div>
+
+        <svg
+          className="mission-graph__jacks"
+          viewBox={`0 0 ${GRAPH_WIDTH} ${height}`}
+          width="100%"
+          height="100%"
+          aria-hidden="true"
+          focusable="false"
+        >
+          {cables.flatMap((cable) =>
+            [cable.source, cable.target].map((port, end) => {
+              const rect = jackRect(port);
+              return (
+                <rect
+                  key={`${cable.id}-${end}`}
+                  className="mission-graph__jack"
+                  data-edge-kind={cable.kind}
+                  data-edge-live={cable.live ? 'true' : 'false'}
+                  x={rect.x}
+                  y={rect.y}
+                  width={rect.width}
+                  height={rect.height}
+                  rx={2}
+                />
+              );
+            }),
+          )}
+        </svg>
       </div>
 
       {edges.length > 0 ? (
@@ -328,6 +438,15 @@ export function MissionGraph({
               </span>
             </li>
           ))}
+          <li className="mission-graph__legend-item mission-graph__legend-item--live">
+            <span
+              className="mission-graph__legend-line mission-graph__legend-line--live"
+              aria-hidden="true"
+            />
+            <span className="mission-graph__legend-label">
+              Pacotes no cabo: agente trabalhando agora
+            </span>
+          </li>
         </ul>
       </aside>
     </section>

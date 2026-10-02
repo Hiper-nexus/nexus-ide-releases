@@ -347,3 +347,27 @@ com um caminho direto entre elas.
 - **Autonomia deve corresponder ao mecanismo.** A interface remove decisões
   técnicas obrigatórias; estados de execução, revisão e entrega continuam
   baseados no motor. Um redesign não certifica sozinho a qualidade do código.
+
+## 14. Sala de racks da missão (grafo do Quadro)
+
+Pedido do operador (02/10): cada CLI/LLM é um rack e as relações são cabos
+com energia passando. Código: `components/mission/MissionGraph.tsx`,
+`MissionAgentCard.tsx`, `mission-graph-cabling.ts` e `mission-board.css`.
+
+- **Rack.** Chassi em `--surface-2` com trilhos `--surface-1` e parafusos, a
+  ferramenta (`ProviderLogo` + `cli · modelo` em mono), o LED **e** a palavra
+  do estado (nunca só cor), a régua de atividade e o visor da unidade atual
+  em `--surface-0`. Sem unidade, o visor fica apagado com texto mudo. O
+  coordenador é o núcleo, mais largo, com o painel de portas embaixo.
+- **Cabo.** Capa `--surface-3` grossa, núcleo de 1,5px com o traço do tipo
+  de relação (a legenda) e conector nas duas portas. Cada cabo tem porta
+  própria, ordenada pela outra ponta para não cruzar na saída.
+- **Energia é estado, não enfeite.** Pulso e pacotes só no cabo vivo:
+  missão rodando e a ponta de trabalho (quem recebe a delegação; quem
+  entrega ou revisa) trabalhando. Parado, o cabo fica quieto e tinge pelo
+  estado dessa ponta. Os pacotes são glifos de forma (`λ`, `fn`, `{ }`,
+  `0x`…), nunca texto da missão, e ficam fora da árvore de acessibilidade.
+- **Motion.** A varredura dos LEDs e o pulso valem só para `working`.
+  `prefers-reduced-motion` tira o movimento e os pacotes. O cabo vivo segue
+  marcado pela cor e pelo conector aceso. Pink City só para vivo e
+  selecionado.
