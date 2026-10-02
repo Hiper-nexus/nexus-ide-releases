@@ -46,6 +46,16 @@ const activeProcesses = new Map<string, ActiveProcess>();
 let processCounter = 0;
 
 const SAFE_ENV_KEYS = new Set(['PATH', 'HOME', 'LANG', 'USER', 'SHELL']);
+/**
+ * O que o chamador da ferramenta pode sobrescrever. O PATH fica de fora: o
+ * sandbox LIBERA A LEITURA dos diretórios do PATH (regras de toolchain no
+ * Seatbelt, mounts no Bubblewrap). Com o PATH nas mãos de quem chama, um
+ * agente pedia `env: { PATH: '~/.ssh' }` e o perfil abria o diretório que o
+ * sandbox existe para esconder (F-733). O PATH é sempre o do operador; quem
+ * precisa de outro dentro do comando usa `PATH=… comando` na própria linha,
+ * que não muda o que o sandbox deixa ler.
+ */
+const CALLER_ENV_KEYS = new Set(['HOME', 'LANG', 'USER', 'SHELL']);
 const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_TIMEOUT_MS = 300_000;
 const OUTPUT_CAP_BYTES = 1024 * 1024;
@@ -57,7 +67,7 @@ interface OutputBuffer {
   truncated: boolean;
 }
 
-function sanitizeEnv(extraEnv: unknown): NodeJS.ProcessEnv {
+export function sanitizeEnv(extraEnv: unknown): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const key of SAFE_ENV_KEYS) {
     const value = process.env[key];
@@ -65,7 +75,7 @@ function sanitizeEnv(extraEnv: unknown): NodeJS.ProcessEnv {
   }
   if (extraEnv && typeof extraEnv === 'object' && !Array.isArray(extraEnv)) {
     for (const [key, value] of Object.entries(extraEnv as Record<string, unknown>)) {
-      if (SAFE_ENV_KEYS.has(key) && typeof value === 'string') {
+      if (CALLER_ENV_KEYS.has(key) && typeof value === 'string') {
         env[key] = value;
       }
     }
@@ -189,7 +199,10 @@ const terminalRun: McpToolDef = {
       },
       env: {
         type: 'object',
-        description: 'Extra environment variables',
+        description:
+          'Extra environment variables. Only HOME, LANG, USER and SHELL are ' +
+          'honored; PATH is always the operator PATH (prefix the command ' +
+          'with PATH=… to change lookup inside it).',
       },
       sandboxProfile: {
         type: 'string',

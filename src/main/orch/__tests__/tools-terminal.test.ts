@@ -5,6 +5,7 @@ import os from 'node:os';
 import {
   buildTerminalTools,
   resolveTerminalSandboxProfile,
+  sanitizeEnv,
 } from '../tools-terminal';
 import { testProjectScope } from './scope-fixture';
 import { processSandboxRuntimeAvailable } from '../../runtime/process-sandbox-capability';
@@ -32,6 +33,24 @@ describe('tools-terminal', () => {
       resolveTerminalSandboxProfile('workspace-only', 'operator-choice'),
     ).toBe('workspace-only');
     expect(resolveTerminalSandboxProfile('yolo', 'governed')).toBe('yolo');
+  });
+
+  it('never lets the caller choose the PATH the sandbox opens for reading (F-733)', () => {
+    // O perfil do sandbox libera a leitura de cada diretório do PATH. Se o
+    // chamador pudesse trocá-lo, `env: { PATH: '~/.ssh' }` abriria o que o
+    // sandbox esconde.
+    const env = sanitizeEnv({ PATH: '/home/u/.ssh:/usr/bin', LANG: 'pt_BR.UTF-8' });
+    expect(env.PATH).toBe(process.env.PATH);
+    expect(env.LANG).toBe('pt_BR.UTF-8');
+  });
+
+  it('copies only allowlisted keys and ignores non-string or malformed input', () => {
+    const env = sanitizeEnv({ NODE_OPTIONS: '--require ./x.js', HOME: 42, USER: 'agent' });
+    expect(env.NODE_OPTIONS).toBeUndefined();
+    expect(env.HOME).toBe(process.env.HOME);
+    expect(env.USER).toBe('agent');
+    expect(sanitizeEnv(['PATH=/x']).PATH).toBe(process.env.PATH);
+    expect(sanitizeEnv(null).PATH).toBe(process.env.PATH);
   });
 
   itSandboxed('nexus_terminal_run executes a simple command', async () => {
