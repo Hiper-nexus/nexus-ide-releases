@@ -9,6 +9,7 @@ const releaseHeldSpawns = vi.fn();
 const discardPaneSpawnState = vi.fn();
 const unlockRetiredMissionPane = vi.fn();
 const askConfirm = vi.fn();
+const askChoice = vi.fn();
 const setRestoredPanesHandler = vi.fn();
 const closePane = vi.fn();
 const pruneMissionBindings = vi.fn();
@@ -39,6 +40,10 @@ vi.mock('../terminal/terminal-host', () => ({
 
 vi.mock('../state/confirm-store', () => ({
   askConfirm: (...args: unknown[]) => askConfirm(...args),
+}));
+
+vi.mock('../state/choice-store', () => ({
+  askChoice: (...args: unknown[]) => askChoice(...args),
 }));
 
 vi.mock('../state/layout-store', () => ({
@@ -111,6 +116,7 @@ describe('restore-agents-gate', () => {
     discardPaneSpawnState.mockReset();
     unlockRetiredMissionPane.mockReset();
     askConfirm.mockReset();
+    askChoice.mockReset();
     setRestoredPanesHandler.mockReset();
     closePane.mockReset();
     pruneMissionBindings.mockReset();
@@ -138,18 +144,41 @@ describe('restore-agents-gate', () => {
     expect(askConfirm).not.toHaveBeenCalled();
   });
 
-  it('policy ask: holds agents and requires confirm (safe default)', async () => {
-    askConfirm.mockResolvedValue(false);
+  it('policy ask: holds agents and offers resume / pause / close', async () => {
+    askChoice.mockResolvedValue('pause');
     await gateRestoredAgents([agent('a1', 'Orquestrador'), shell]);
 
     expect(holdSpawnUntilApproved).toHaveBeenCalledWith('a1');
-    expect(askConfirm).toHaveBeenCalledOnce();
-    expect(askConfirm.mock.calls[0]?.[0]).toMatchObject({
-      confirmLabel: 'Retomar agentes',
-      cancelLabel: 'Deixar em pausa',
-      danger: true,
-    });
+    expect(askConfirm).not.toHaveBeenCalled();
+    expect(askChoice).toHaveBeenCalledOnce();
+    const request = askChoice.mock.calls[0]?.[0] as {
+      title: string;
+      options: Array<{ value: string; label: string }>;
+      cancelLabel?: string;
+    };
+    expect(request.title).toBe('Retomar agentes da sessão anterior?');
+    expect(request.options.map((option) => option.value).sort()).toEqual([
+      'close',
+      'pause',
+      'resume',
+    ]);
+    expect(request.options.find((o) => o.value === 'close')?.label).toMatch(
+      /fechar/i,
+    );
+    // O foco nasce na 1ª opção: tem de ser a que não faz nada irreversível.
+    expect(request.options[0]?.value).toBe('pause');
+    expect(request.cancelLabel).toBeTruthy();
     expect(releaseHeldSpawns).toHaveBeenCalledWith(['a1'], { resume: false });
+  });
+
+  it('on ask+cancel (Esc / clique fora / Cancelar), pauses and never closes', async () => {
+    askChoice.mockResolvedValue(null);
+    await gateRestoredAgents([agent('a1', 'Orq'), agent('a2', 'Worker')]);
+    expect(releaseHeldSpawns).toHaveBeenCalledWith(['a1', 'a2'], {
+      resume: false,
+    });
+    expect(closePane).not.toHaveBeenCalled();
+    expect(discardPaneSpawnState).not.toHaveBeenCalled();
   });
 
   it('policy pause: never asks, never auto-resumes', async () => {
@@ -458,12 +487,57 @@ describe('restore-agents-gate', () => {
     expect(orchGet).not.toHaveBeenCalled();
   });
 
-  it('on ask+approve, resumes agents', async () => {
-    askConfirm.mockResolvedValue(true);
+  it('on ask+resume, resumes agents', async () => {
+    askChoice.mockResolvedValue('resume');
     await gateRestoredAgents([agent('a1', 'Orq'), agent('a2', 'Worker')]);
     expect(releaseHeldSpawns).toHaveBeenCalledWith(['a1', 'a2'], {
       resume: true,
     });
+    expect(closePane).not.toHaveBeenCalled();
+  });
+
+  it('on ask+close, discards the loose agents: no spawn, panes leave the layout', async () => {
+    const a1 = agent('a1', 'Orq');
+    const a2 = agent('a2', 'Worker');
+    layoutRoot.current = buildGridTree([a1, a2]) as never;
+    askChoice.mockResolvedValue('close');
+    await gateRestoredAgents([a1, a2]);
+
+    const resumedIds = releaseHeldSpawns.mock.calls
+      .filter(([, opts]) => (opts as { resume: boolean }).resume)
+      .flatMap(([ids]) => ids as string[]);
+    expect(resumedIds).toEqual([]);
+    expect(discardPaneSpawnState).toHaveBeenCalledWith('a1');
+    expect(discardPaneSpawnState).toHaveBeenCalledWith('a2');
+    expect(closePane).toHaveBeenCalledWith('a1', 'restore-gate-discard');
+    expect(closePane).toHaveBeenCalledWith('a2', 'restore-gate-discard');
+  });
+
+  it('on ask+close, leaves mission agents and shells alone', async () => {
+    const loose = agent('loose', 'Avulso');
+    const mission = missionAgent('m1', 'Maestro');
+    layoutRoot.current = buildGridTree([loose, mission, shell]) as never;
+    askChoice.mockResolvedValue('close');
+    await gateRestoredAgents([loose, mission, shell]);
+
+    expect(closePane).toHaveBeenCalledTimes(1);
+    expect(closePane).toHaveBeenCalledWith('loose', 'restore-gate-discard');
+    expect(closePane).not.toHaveBeenCalledWith('m1', expect.anything());
+    expect(closePane).not.toHaveBeenCalledWith('sh-1', expect.anything());
+  });
+
+  it('on ask+close, skips panes that already left the layout while the dialog was open', async () => {
+    const gone = agent('gone', 'Já fechado');
+    const kept = agent('kept', 'Ainda aqui');
+    layoutRoot.current = buildGridTree([gone, kept]) as never;
+    askChoice.mockImplementation(async () => {
+      layoutRoot.current = buildGridTree([kept]) as never;
+      return 'close';
+    });
+    await gateRestoredAgents([gone, kept]);
+
+    expect(closePane).toHaveBeenCalledTimes(1);
+    expect(closePane).toHaveBeenCalledWith('kept', 'restore-gate-discard');
   });
 
   it('holds restored agents while blocked, preserving layout and policy', async () => {
@@ -502,13 +576,13 @@ describe('restore-agents-gate', () => {
     installRestoredAgentsGate();
     const panes = [agent('batch-a', 'A'), agent('batch-b', 'B')];
     layoutRoot.current = buildGridTree(panes) as never;
-    let decide!: (ok: boolean) => void;
-    askConfirm.mockImplementation(() => new Promise<boolean>(resolve => { decide = resolve; }));
+    let decide!: (value: string | null) => void;
+    askChoice.mockImplementation(() => new Promise<string | null>(resolve => { decide = resolve; }));
     const a = gateRestoredAgents([panes[0]]);
     const b = gateRestoredAgents([panes[1]]);
     for (let i = 0; i < 8; i++) await Promise.resolve();
     useAccessStore.setState({ canUseApp: false });
-    decide(true);
+    decide('resume');
     await Promise.all([a, b]);
     orchGet.mockResolvedValue({ agentRestorePolicy: 'resume' });
     useAccessStore.setState({ canUseApp: true });

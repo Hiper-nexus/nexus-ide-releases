@@ -7,8 +7,9 @@ import {
   setRestoredPanesHandler,
   useLayoutStore,
 } from '../state/layout-store';
-import { askConfirm } from '../state/confirm-store';
+import { askChoice } from '../state/choice-store';
 import {
+  discardPaneSpawnState,
   holdSpawnUntilApproved,
   releaseHeldSpawns,
 } from '../terminal/terminal-host';
@@ -26,6 +27,14 @@ import { getActiveWorkspacePath } from '../state/active-workspace';
  */
 
 export type AgentRestorePolicy = OrchSettings['agentRestorePolicy'];
+
+/**
+ * O que o operador decide para os agentes avulsos da sessão anterior.
+ * `close` descarta: o pane sai do layout sem nunca ter subido um processo
+ * (o spawn estava retido). Missão e shell nunca passam por aqui.
+ */
+type RestoreDecision = 'resume' | 'pause' | 'close';
+const CLOSE_REASON = 'restore-gate-discard';
 
 /** Pure: policy → action (unit-tested, OS-independent). */
 export function resolveAgentRestoreAction(
@@ -45,7 +54,7 @@ let promptInFlight: Promise<void> | null = null;
 /** Agent pane ids waiting for the in-flight ask decision. */
 const pendingAskIds = new Set<string>();
 /** Last ask outcome — waiters apply the same decision to their batch. */
-let lastAskDecision: 'resume' | 'pause' | null = null;
+let lastAskDecision: RestoreDecision | null = null;
 
 function agentLabel(pane: PaneModel): string {
   const name = pane.title?.trim() || pane.agentName?.trim() || pane.adapterId;
@@ -241,16 +250,36 @@ async function loadPolicy(): Promise<AgentRestorePolicy> {
 
 function applyDecision(
   ids: readonly string[],
-  decision: 'resume' | 'pause',
+  decision: RestoreDecision,
 ): void {
   if (ids.length === 0 || !useAccessStore.getState().canUseApp) return;
   if (decision === 'resume') {
     releaseHeldSpawns(ids, { resume: true });
     return;
   }
+  if (decision === 'close') {
+    closeRestoredAgents(ids);
+    return;
+  }
   releaseHeldSpawns(ids, { resume: false });
   // Stay held so a later attach cannot silent-spawn without an explicit reopen.
   for (const id of ids) holdSpawnUntilApproved(id);
+}
+
+/**
+ * Descarta agentes avulsos restaurados. O diálogo é assíncrono: reconfere o
+ * layout agora e só fecha o que ainda está lá — nunca age sobre estado velho.
+ * O spawn estava retido, então não há processo a encerrar; a conversa do
+ * provider continua no histórico dele e não é apagada.
+ */
+function closeRestoredAgents(ids: readonly string[]): void {
+  const layout = useLayoutStore.getState();
+  const stillThere = new Set(listPanes(layout.root).map((pane) => pane.id));
+  for (const id of ids) {
+    if (!stillThere.has(id)) continue;
+    discardPaneSpawnState(id);
+    layout.close(id, CLOSE_REASON);
+  }
 }
 
 /**
@@ -348,7 +377,7 @@ export async function gateRestoredAgents(
     const more =
       restorable.length > 5 ? ` e mais ${restorable.length - 5}` : '';
     const count = Math.max(snapshotIds.length, restorable.length);
-    const ok = await askConfirm({
+    const choice = await askChoice({
       title: 'Retomar agentes da sessão anterior?',
       body:
         `Este workspace tinha ${count} agente(s) avulso(s) ` +
@@ -358,13 +387,30 @@ export async function gateRestoredAgents(
         'Isso vale em qualquer SO (macOS, Linux, Windows). Missões do ' +
         'autopiloto retomam pela autoridade persistida; esta escolha afeta ' +
         'somente agentes avulsos.\n\n' +
-        'Cancelar deixa os agentes avulsos em pausa.',
-      confirmLabel: 'Retomar agentes',
-      cancelLabel: 'Deixar em pausa',
-      danger: true,
+        'Cancelar (ou Esc) deixa os agentes em pausa, sem fechar nada.',
+      // A 1ª opção recebe o foco: a que não faz nada irreversível vem primeiro.
+      options: [
+        {
+          value: 'pause',
+          label: 'Deixar em pausa',
+          detail: 'Os agentes ficam na tela parados; retome pelo rail quando quiser.',
+          primary: true,
+        },
+        {
+          value: 'resume',
+          label: 'Retomar agentes',
+          detail: 'Continuam a conversa anterior e podem agir sozinhos.',
+        },
+        {
+          value: 'close',
+          label: 'Fechar agentes',
+          detail: 'Remove esses terminais do projeto. Nada é executado.',
+        },
+      ],
+      cancelLabel: 'Cancelar',
     });
 
-    lastAskDecision = ok ? 'resume' : 'pause';
+    lastAskDecision = choice === 'resume' || choice === 'close' ? choice : 'pause';
     const batch = [...pendingAskIds];
     pendingAskIds.clear();
     if (!isCurrentRestoreWorkspaceGeneration(restoreGeneration)) return;
