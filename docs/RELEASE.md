@@ -140,8 +140,15 @@ Verificado:
 - Arranque a frio pelo mesmo link: o app abre e mostra o diálogo, sem cair.
 - Cofre: no Hyprland o `safeStorage` sai de `basic_text` para
   `gnome_libsecret` e cifra/decifra (F-729).
+- Login completo com conta real (0.76.175, feito pelo operador às 13:12 de
+  02/10): Google no Chrome, retorno por `nexus://` pelo portal e sessão gravada
+  no cofre (`~/.nexus/secrets.enc`) com o backend libsecret. Na 0.76.170 a
+  mesma tentativa caiu no F-740.
+- Instalação pelo comando do site (`curl -fsSL https://nexuside.app/install.sh
+  | sh`): baixou a 0.76.175, conferiu o SHA-256 e instalou o portátil em
+  `~/.local/share/nexus-ide`.
 - Redline ligado por padrão (F-739, 0.76.175): sem preferência salva o item
-  aparece no boot.
+  aparece no boot. Depois do login, "Uso e cotas" mostra a bandeja como ativa.
 - Redline: item registrado no `org.kde.StatusNotifierWatcher`, tooltip e menu
   com as contas, atualização ao gravar um snapshot novo, "Atualizar agora"
   consumido pelo Nexus, "Ocultar da bandeja" persiste e remove o item.
@@ -152,8 +159,7 @@ Verificado:
 Não verificado nesta máquina (não anuncie como testado):
 
 - Aparência do ícone do Redline na barra e o clique com o mouse (tela
-  bloqueada); o login completo com conta real (na 0.76.170 o operador tentou
-  e caiu no F-740; refazer na 0.76.175); missão com agentes reais;
+  bloqueada); missão com agentes reais;
   instalação do DEB/RPM (Arch não tem `dpkg`/`rpm`; isso fica com o workflow e
   o smoke do Debian 12); GNOME, KDE Plasma e XFCE; `xdg-open` com `Exec` entre
   aspas, que o xdg-utils genérico não entende — por isso a entrada portátil usa
