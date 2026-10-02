@@ -1,11 +1,15 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { captureNativeAuth, identityFromAuthBlob, managedHomeEnv, materializeManagedHome, readBackFresherAuth } from './managed-credentials';
 const roots: string[] = [];
 const blob = (uid: string, key: string) => JSON.stringify({ xiaomi: { type: 'api', key, metadata: { uid } } });
-afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
+// A sessão do operador pode exportar XDG_DATA_HOME / MIMOCODE_HOME reais (o
+// Omarchy exporta os XDG). O código honra essas variáveis; o teste precisa do
+// layout padrão sob o home temporário.
+beforeEach(() => { vi.stubEnv('XDG_DATA_HOME', undefined); vi.stubEnv('MIMOCODE_HOME', undefined); });
+afterEach(() => { vi.unstubAllEnvs(); for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
 it('saves only Xiaomi auth and isolates two managed accounts without copying conversation data', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mimo-accounts-')); roots.push(home);
   const native = path.join(home, '.local/share/mimocode'); fs.mkdirSync(native, { recursive: true });
