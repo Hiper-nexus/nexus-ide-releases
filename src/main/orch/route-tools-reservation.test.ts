@@ -234,4 +234,41 @@ describe('nexus_route_task RouteReservation durável', () => {
       ),
     ).rejects.toThrow(/child mission must match/i);
   });
+
+  it('o contrafactual da regra não reserva nada: uma só reserva, com a decisão final do Jev', async () => {
+    mocks.classifyTaskWithSkillForRouting.mockResolvedValueOnce({ kind: 'classified', classification: {
+      tier: 'medium', tierConfidence: 0.9, specialty: 'feature', specialtyConfidence: 0.9,
+      effort: 'high', effortConfidence: 0.9, escalate: 0.2, model: 'jev-test',
+    } });
+    const previousProviders = mocks.listProviderSettings();
+    mocks.listProviderSettings.mockReturnValue([{
+      adapterId: 'codex', enabled: true, installed: true, authStrategy: 'oauth',
+      models: ['gpt-5.6-sol'], efforts: ['low', 'medium', 'high'],
+    }]);
+    const missions = getProjectDomainStores(scope).missions;
+    const openBefore = missions.listOpenRouteAdapterIds(missionId).length;
+    const routeTool = buildDomainTools().find((tool) => tool.name === 'nexus_route_task')!;
+    try {
+      const result = await routeTool.handler({ task: 'implementar uma tarefa média no worker' }, context()) as {
+        effort?: string;
+        routeReservationId: string;
+        confidence?: Record<string, number>;
+        ruleChoice?: { adapterId: string; model?: string; effort?: string } | 'same';
+      };
+      // O Jev subiu o esforço: a regra (tier e esforço da heurística) fica abaixo.
+      expect(result.effort).toBe('high');
+      expect(result.confidence).toEqual({ tier: 0.9, specialty: 0.9, effort: 0.9 });
+      expect(result.ruleChoice).toMatchObject({ adapterId: 'codex', model: 'gpt-5.6-sol' });
+      expect((result.ruleChoice as { effort?: string }).effort).not.toBe('high');
+      // Uma chamada, uma reserva — a escolha da regra nunca foi reservada.
+      expect(missions.listOpenRouteAdapterIds(missionId)).toHaveLength(openBefore + 1);
+      expect(missions.getRouteReservation(result.routeReservationId)?.decision).toMatchObject({
+        adapterId: 'codex',
+        effort: 'high',
+      });
+      expect(missions.getRouteReservation(result.routeReservationId)?.decision).not.toHaveProperty('ruleChoice');
+    } finally {
+      mocks.listProviderSettings.mockReturnValue(previousProviders);
+    }
+  });
 });
