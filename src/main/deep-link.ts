@@ -3,6 +3,8 @@ import path from 'node:path';
 import { app, BrowserWindow } from 'electron';
 import { confirmNativeAction } from './native-confirm';
 import { finishAuthDeepLink } from './auth-deep-link';
+import { ensureLinuxDesktopEntry } from './linux-desktop-entry';
+import { isCurrentProcessSmokeTest } from './smoke-core';
 
 /**
  * Deep link `nexus://` + document open. O parser é PURO e valida com rigor
@@ -207,6 +209,17 @@ export function wireDeepLinks(customHandler?: DeepLinkHandler): boolean {
       path.resolve(process.argv[1]),
     ]);
   } else {
+    // Linux: o handler de nexus:// É uma entrada .desktop, e o registro abaixo
+    // só pega se ela já existir. DEB/RPM a instalam; o ZIP portátil não, então
+    // o app escreve a própria no diretório de dados do usuário (no-op fora do
+    // Linux, em dev e no smoke). Sem isto o login nunca volta para o app.
+    ensureLinuxDesktopEntry({
+      isPackaged: app.isPackaged,
+      automatedTest: isCurrentProcessSmokeTest(),
+      execPath: process.execPath,
+      resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath(),
+    });
     app.setAsDefaultProtocolClient(SCHEME);
   }
 

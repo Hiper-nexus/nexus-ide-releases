@@ -37,6 +37,9 @@ smoke_inside_container() {
   sha256sum "$deb" "$archive"
   apt-get install --no-install-recommends -y "$deb"
   test "$(dpkg-query -W -f='${Version}' nexus-ide)" = "$NEXUS_DEBIAN_VERSION"
+  # Desktop identity as Debian's own dpkg installed it: brand icon and the
+  # nexus:// handler the browser login returns through.
+  /opt/nexus-node/bin/node scripts/verify-linux-desktop-identity.mjs
   bwrap --version
 
   local -a binaries=()

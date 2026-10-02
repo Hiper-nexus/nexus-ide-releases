@@ -116,12 +116,29 @@ describe('Linux sandbox packaging', () => {
   });
 
   it('declares Bubblewrap as a runtime dependency for DEB and RPM installs', () => {
-    expect(createLinuxDebMakerConfig()).toEqual({
-      options: { depends: ['bubblewrap'] },
-    });
-    expect(createLinuxRpmMakerConfig()).toEqual({
-      options: { requires: ['bubblewrap'] },
-    });
+    expect(createLinuxDebMakerConfig().options?.depends).toEqual(['bubblewrap']);
+    expect(createLinuxRpmMakerConfig().options?.requires).toEqual(['bubblewrap']);
+  });
+
+  it('ships the brand icon instead of the installer default Electron icon', () => {
+    for (const config of [createLinuxDebMakerConfig(), createLinuxRpmMakerConfig()]) {
+      expect(config.options?.icon).toBe('assets/icon.png');
+      expect(existsSync(path.resolve(process.cwd(), String(config.options?.icon)))).toBe(true);
+    }
+  });
+
+  it('registers the nexus:// login deep link in the installed desktop entry', () => {
+    for (const config of [createLinuxDebMakerConfig(), createLinuxRpmMakerConfig()]) {
+      expect(config.options?.mimeType).toEqual(['x-scheme-handler/nexus']);
+      expect(config.options?.categories).toEqual(['Development']);
+      expect(config.options?.homepage).toBe('https://nexuside.app');
+    }
+    expect(createLinuxDebMakerConfig().options?.section).toBe('devel');
+  });
+
+  it('ships the runtime icon resource only in the Linux package', () => {
+    const resources = forgeConfig.packagerConfig?.extraResource ?? [];
+    expect(resources.includes('assets/icon.png')).toBe(process.platform === 'linux');
   });
 });
 

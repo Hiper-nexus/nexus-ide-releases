@@ -39,6 +39,7 @@ import {
   isLiveTrustedMainWindowSender,
 } from './security/trusted-ipc';
 import { resolveWindowsRuntimeIconPath } from './windows-app-identity';
+import { resolveLinuxRuntimeIconPath } from './linux-desktop-entry';
 
 export { bindTrustedMainWindow } from './security/trusted-ipc';
 
@@ -316,12 +317,16 @@ export function createMainWindow(
     return null;
   }
 
-  const windowsRuntimeIcon = resolveWindowsRuntimeIconPath({
+  const runtimeIconContext = {
     platform: process.platform,
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
     appPath: app.getAppPath(),
-  });
+  };
+  const windowsRuntimeIcon = resolveWindowsRuntimeIconPath(runtimeIconContext);
+  // Linux: no X11 a janela sem `icon` mostra o átomo do Electron na barra de
+  // tarefas e no alt-tab (no Wayland o ícone vem da entrada .desktop).
+  const linuxRuntimeIcon = resolveLinuxRuntimeIconPath(runtimeIconContext);
 
   const win = new BrowserWindow({
     width: 1280,
@@ -337,6 +342,7 @@ export function createMainWindow(
     // It is an explicit runtime source only on Windows; macOS continues to use
     // the signed ICNS from the app bundle.
     ...(windowsRuntimeIcon ? { icon: windowsRuntimeIcon } : {}),
+    ...(linuxRuntimeIcon ? { icon: linuxRuntimeIcon } : {}),
     // Do not expose the native surface while the custom protocol is still
     // retrying. A first ERR_FAILED is recoverable, but showing each retry makes
     // the entire Nexus window visibly blink during startup.

@@ -26,6 +26,7 @@ describe('Linux preview workflow separation', () => {
     expect(workflow).toContain('node scripts/browser-functional-smoke.mjs --output-dir release-artifacts/browser-smoke');
     expect(workflow).toContain('name: linux-browser-smoke');
     expect(workflow).toContain('sudo apt-get install --no-install-recommends -y "$DEB"');
+    expect(workflow).toContain('node scripts/verify-linux-desktop-identity.mjs');
     expect(workflow).toContain('python3 scripts/extract-linux-zip.py');
     expect(workflow).toContain('scripts/smoke-packaged-app.mjs --app "$ZIP_BINARY"');
     expect(workflow.indexOf('--app "$ZIP_BINARY"')).toBeLessThan(workflow.indexOf('node scripts/collect-linux-preview.mjs'));

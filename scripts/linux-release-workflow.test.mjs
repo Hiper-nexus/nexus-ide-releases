@@ -47,6 +47,9 @@ describe('protected Linux release candidate worker', () => {
     expect(workflow).toContain('sudo apt-get install --no-install-recommends -y "$DEB"');
     expect(workflow).toContain("dpkg-query -W -f='${Version}' nexus-ide");
     expect(workflow).toContain('rpm -qpR "$RPM"');
+    expect(workflow).toContain('node scripts/verify-linux-desktop-identity.mjs');
+    expect(workflow.indexOf('sudo apt-get install --no-install-recommends -y "$DEB"')).toBeLessThan(workflow.indexOf('node scripts/verify-linux-desktop-identity.mjs'));
+    expect(workflow).toContain('rpm -qpl "$RPM" | grep -Fxq /usr/share/applications/nexus-ide.desktop');
     expect(workflow).toContain('-f "$entry" && -x "$entry" && ! -L "$entry"');
     expect(workflow).toContain('node scripts/collect-linux-release.mjs');
     expect(workflow).toContain('python3 scripts/extract-linux-zip.py');

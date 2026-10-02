@@ -198,12 +198,36 @@ export function createMacDmgMakerConfig(
   };
 }
 
+/**
+ * Identidade do app no desktop Linux, igual nos dois pacotes.
+ *
+ * - `icon`: sem ele o instalador empacota o átomo padrão do Electron em
+ *   `/usr/share/pixmaps/nexus-ide.png` (foi o que saiu até a 0.76.168).
+ * - `mimeType`: o handler de `nexus://` é a entrada `.desktop`; é por ela que
+ *   o navegador devolve o código do login ao app.
+ * - `categories`: o padrão do instalador é `GNOME;GTK;Utility`, que joga o
+ *   IDE no menu de utilitários.
+ *
+ * O nome da entrada (`nexus-ide.desktop`) sai de `name` do package.json e
+ * precisa casar com `desktopName`; `linux-desktop-entry.test.ts` trava isso.
+ */
+export const LINUX_DEEP_LINK_MIME_TYPE = 'x-scheme-handler/nexus';
+const LINUX_DESKTOP_IDENTITY = {
+  icon: 'assets/icon.png',
+  mimeType: [LINUX_DEEP_LINK_MIME_TYPE],
+  categories: ['Development' as const],
+  genericName: 'IDE multi-agente',
+  homepage: 'https://nexuside.app',
+};
+
 export function createLinuxDebMakerConfig(): MakerDebConfig {
-  return { options: { depends: ['bubblewrap'] } };
+  return {
+    options: { depends: ['bubblewrap'], section: 'devel', ...LINUX_DESKTOP_IDENTITY },
+  };
 }
 
 export function createLinuxRpmMakerConfig(): MakerRpmConfig {
-  return { options: { requires: ['bubblewrap'] } };
+  return { options: { requires: ['bubblewrap'], ...LINUX_DESKTOP_IDENTITY } };
 }
 
 export async function notarizeMacDmgArtifacts(
@@ -407,6 +431,9 @@ const config: ForgeConfig = {
       // Herdr (Apache-2.0) agent screen-state manifests avaliados por
       // src/main/detect/ (ver THIRD_PARTY_NOTICES.md).
       'resources/agent-detection',
+      // Linux: ícone concreto da janela (X11) e da entrada de menu que o ZIP
+      // portátil escreve para si (`src/main/linux-desktop-entry.ts`).
+      ...(process.platform === 'linux' ? ['assets/icon.png'] : []),
       ...(process.platform === 'win32'
         ? [
             // Companheiro de bandeja (Nexus Redline): o pacote carrega o

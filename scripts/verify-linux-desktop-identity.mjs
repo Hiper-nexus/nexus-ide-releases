@@ -1,0 +1,122 @@
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * Confere a identidade de desktop de um pacote Linux INSTALADO (DEB/RPM).
+ *
+ * Até a 0.76.168 os pacotes saíram com o ícone padrão do Electron e sem o
+ * handler `x-scheme-handler/nexus`: o app aparecia no menu com o átomo do
+ * Electron e o login pelo navegador não tinha como voltar. O smoke empacotado
+ * não vê nada disso (abre o binário direto), então a conferência é estática,
+ * sobre os arquivos que o gerenciador de pacotes realmente gravou.
+ */
+export const DESKTOP_ENTRY_PATH = '/usr/share/applications/nexus-ide.desktop';
+export const INSTALLED_ICON_PATH = '/usr/share/pixmaps/nexus-ide.png';
+export const DEEP_LINK_MIME_TYPE = 'x-scheme-handler/nexus';
+
+const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+/** Chaves do grupo [Desktop Entry]; a primeira ocorrência vence, como na spec. */
+export function parseDesktopEntry(text) {
+  const keys = new Map();
+  let inMainGroup = false;
+  for (const raw of String(text).split(/\r?\n/u)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    if (line.startsWith('[')) {
+      inMainGroup = line === '[Desktop Entry]';
+      continue;
+    }
+    if (!inMainGroup) continue;
+    const separator = line.indexOf('=');
+    if (separator <= 0) continue;
+    const key = line.slice(0, separator).trim();
+    if (!keys.has(key)) keys.set(key, line.slice(separator + 1).trim());
+  }
+  return keys;
+}
+
+const listValue = (value) => String(value ?? '').split(';').filter(Boolean);
+
+/** PURO: devolve a lista de problemas (vazia = identidade correta). */
+export function desktopIdentityProblems({
+  desktopEntry,
+  installedIcon,
+  brandIcon,
+  installerDefaultIcons = [],
+  desktopName,
+}) {
+  const problems = [];
+  const expectedName = path.posix.basename(DESKTOP_ENTRY_PATH);
+  if (desktopName !== expectedName) {
+    problems.push(
+      `package.json desktopName é ${JSON.stringify(desktopName)}; precisa ser ${expectedName} ` +
+        '(é dele que o Electron tira o app_id e o alvo do handler nexus://)',
+    );
+  }
+  if (typeof desktopEntry !== 'string') {
+    problems.push(`${DESKTOP_ENTRY_PATH} não foi instalado`);
+  } else {
+    const entry = parseDesktopEntry(desktopEntry);
+    if (!listValue(entry.get('MimeType')).includes(DEEP_LINK_MIME_TYPE)) {
+      problems.push(`a entrada de menu não declara MimeType=${DEEP_LINK_MIME_TYPE}; (login não volta ao app)`);
+    }
+    if (entry.get('Exec') !== 'nexus-ide %U') {
+      problems.push(`Exec inesperado: ${JSON.stringify(entry.get('Exec'))}`);
+    }
+    if (entry.get('Icon') !== 'nexus-ide') {
+      problems.push(`Icon inesperado: ${JSON.stringify(entry.get('Icon'))}`);
+    }
+    if (!listValue(entry.get('Categories')).includes('Development')) {
+      problems.push('a entrada de menu não está na categoria Development');
+    }
+  }
+  if (!Buffer.isBuffer(installedIcon)) {
+    problems.push(`${INSTALLED_ICON_PATH} não foi instalado`);
+  } else {
+    const digest = sha256(installedIcon);
+    if (installerDefaultIcons.some((icon) => sha256(icon) === digest)) {
+      problems.push('o ícone instalado é o padrão do Electron, não o da marca');
+    } else if (!Buffer.isBuffer(brandIcon) || sha256(brandIcon) !== digest) {
+      problems.push('o ícone instalado difere de assets/icon.png');
+    }
+  }
+  return problems;
+}
+
+function readOptional(file, encoding) {
+  try {
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile()) return undefined;
+    return fs.readFileSync(file, encoding);
+  } catch {
+    return undefined;
+  }
+}
+
+export function verifyInstalledDesktopIdentity(root = process.cwd()) {
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  return desktopIdentityProblems({
+    desktopEntry: readOptional(DESKTOP_ENTRY_PATH, 'utf8'),
+    installedIcon: readOptional(INSTALLED_ICON_PATH),
+    brandIcon: readOptional(path.join(root, 'assets', 'icon.png')),
+    installerDefaultIcons: ['electron-installer-debian', 'electron-installer-redhat']
+      .map((name) => readOptional(path.join(root, 'node_modules', name, 'resources', 'icon.png')))
+      .filter(Buffer.isBuffer),
+    desktopName: pkg.desktopName,
+  });
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const problems = verifyInstalledDesktopIdentity();
+  if (problems.length > 0) {
+    for (const problem of problems) process.stderr.write(`[linux-desktop-identity] FAIL: ${problem}\n`);
+    process.exitCode = 1;
+  } else {
+    process.stdout.write(
+      `[linux-desktop-identity] ok: ${DESKTOP_ENTRY_PATH} registra ${DEEP_LINK_MIME_TYPE} e o ícone da marca\n`,
+    );
+  }
+}
