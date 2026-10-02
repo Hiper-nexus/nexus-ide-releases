@@ -37,6 +37,17 @@ describe('common decision service', () => {
     expect(result?.estimatedUsd).toBeCloseTo(0.000024, 10);
   });
 
+  it('returns a Jev answer whose provider omitted usage without inventing a cost or failing', async () => {
+    const { usage: _omitted, ...withoutUsage } = nativeResult;
+    const result = await judgeDecision({ ...input, surface: 'researchTriage' }, {
+      nativeJudge: async () => ({ ...withoutUsage, usage: { input_tokens: 0, output_tokens: 0 }, usageMissing: true as const }),
+      getSettings: () => settings, getAvailability: () => ({ jev: true, clef: true }), getConfigurationKey: () => 'stable',
+    });
+    expect(result?.route?.provider).toBe('jev');
+    expect(result?.usageMissing).toBe(true);
+    expect(result?.estimatedUsd).toBeUndefined();
+  });
+
   it('discards an answer when the user changes configuration during inference', async () => {
     let revision = 'before'; const onNoAnswer = vi.fn();
     const result = await judgeDecision({ ...input, surface: 'researchTriage', onNoAnswer }, {

@@ -51,15 +51,15 @@ async function performDecision(input: JudgeInput, deps: DecisionJudgeDeps): Prom
           { ...connection, model: route.model as ClefConnection['model'] }, { fetch: deps.fetch, now: deps.now })
         : noAnswer(input, route, 'client-error');
     if (!result) return null;
+    const elapsed = (): number => result.durationMs ?? (deps.now ?? (() => performance.now()))() - started;
     if (currentInput.signal.aborted || configuration() !== before) return noAnswer(input, route, 'aborted', {
-      inputTokens: result.usage.input_tokens, usd: decisionResultCostUsd({ ...result, route }),
-      requestCount: result.requestCount ?? 1, durationMs: result.durationMs ?? (deps.now ?? (() => performance.now()))() - started,
-      usageIncomplete: false,
+      inputTokens: result.usageMissing ? null : result.usage.input_tokens,
+      usd: result.usageMissing ? null : decisionResultCostUsd({ ...result, route }),
+      requestCount: result.requestCount ?? 1, durationMs: elapsed(), usageIncomplete: Boolean(result.usageMissing),
     });
     const actualRoute = { ...route, model: result.model };
-    return { ...result, route: actualRoute, requestCount: result.requestCount ?? 1,
-      durationMs: result.durationMs ?? (deps.now ?? (() => performance.now()))() - started,
-      estimatedUsd: decisionResultCostUsd({ ...result, route: actualRoute }) };
+    return { ...result, route: actualRoute, requestCount: result.requestCount ?? 1, durationMs: elapsed(),
+      ...(result.usageMissing ? {} : { estimatedUsd: decisionResultCostUsd({ ...result, route: actualRoute }) }) };
   } catch { return noAnswer(input, route, currentInput.signal.aborted ? 'aborted' : 'network'); }
   finally { unsubscribe(); }
 }

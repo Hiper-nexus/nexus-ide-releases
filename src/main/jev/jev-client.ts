@@ -2,7 +2,7 @@ import type { DecisionImage, DecisionRoute } from '../../shared/decision-models'
 import { redactState, redactQuestions } from '../decision-models/decision-redaction';
 import { judgeDecision, type DecisionJudgeDeps } from '../decision-models/decision-judge';
 import { getDecisionAvailability } from '../decision-models/decision-availability';
-import { validateDecisionResponse } from '../decision-models/decision-response';
+import { JEV_RESPONSE_POLICY, validateDecisionResponse } from '../decision-models/decision-response';
 export { redactSecrets, redactState, capText } from '../decision-models/decision-redaction';
 import type { JevTestResult } from '../../shared/jev-ipc';
 import { resolveJevApiKey } from './jev-secrets';
@@ -84,6 +84,8 @@ export interface JevResult {
   model: string;
   answers: Record<string, JevAnswer>;
   usage: { input_tokens: number; output_tokens: number };
+  /** O provedor não informou `usage`: `usage` vale zero só para satisfazer o tipo; tokens e custo seguem desconhecidos. */
+  usageMissing?: true;
 }
 
 interface JevStats {
@@ -231,7 +233,7 @@ export async function judgeJevTransport(
         data = text;
       }
       if (res.ok) {
-        const validated = validateDecisionResponse(data, input.questions);
+        const validated = validateDecisionResponse(data, input.questions, JEV_RESPONSE_POLICY);
         if (!validated) {
           lastFailure = 'malformed response body';
           lastReason = 'malformed';

@@ -9,4 +9,9 @@ describe('safe decision usage receipts', () => {
     expect(decisionResultUsage(result)).not.toHaveProperty('state');
     expect(decisionResultUsage(result)).not.toHaveProperty('images');
   });
+
+  it('keeps tokens and cost unknown (never zero) when the provider omitted usage', () => {
+    const result = { model: 'jev-1.13.0', answers: {}, usage: { input_tokens: 0, output_tokens: 0 }, usageMissing: true as const };
+    expect(decisionResultUsage(result)).toMatchObject({ provider: 'jev', inputTokens: null, usd: null, usageIncomplete: true });
+  });
 });
