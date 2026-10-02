@@ -69,6 +69,31 @@ describe('route log', () => {
     expect(e.effort).toBeUndefined();
   });
 
+  it('guarda confiança e ruleChoice só como ids e números, sem carregar o que não é recibo', () => {
+    recordRouteLog({
+      task: 'segredo do cliente',
+      tier: 'medium',
+      adapterId: 'claude',
+      reason: 'r',
+      classifierSource: 'jev',
+      confidence: { tier: 0.82, specialty: 0.71, task: 'segredo do cliente' } as never,
+      ruleChoice: { adapterId: 'glm', model: 'glm-5.3', reason: 'sinais: segredo' } as never,
+    });
+    const entry = recentRouteLog()[0];
+    expect(entry.confidence).toEqual({ tier: 0.82, specialty: 0.71 });
+    expect(entry.ruleChoice).toEqual({ adapterId: 'glm', model: 'glm-5.3' });
+    expect(JSON.stringify([entry.confidence, entry.ruleChoice])).not.toContain('segredo');
+  });
+
+  it('"same" fica como está e as chaves ausentes não aparecem', () => {
+    recordRouteLog(input({ ruleChoice: 'same' }));
+    expect(recentRouteLog()[0].ruleChoice).toBe('same');
+    recordRouteLog(input());
+    const plain = recentRouteLog()[0];
+    expect(plain).not.toHaveProperty('confidence');
+    expect(plain).not.toHaveProperty('ruleChoice');
+  });
+
   it('guarda classifierSource e jevUnavailable quando informados', () => {
     clearRouteLog();
     recordRouteLog({
