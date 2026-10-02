@@ -22,7 +22,7 @@ Main, package/server/lock/CURRENT_RELEASE e latest estável dos dois repositóri
 | Release Windows | `windows-release.yml`: dispatch protegido na main atual; self-hosted Windows X64 nexus-release-signing e environment protegido; certificado CKA HIPERSEND, assinatura/timestamp, smoke e recibo imutável. `release:publish:windows` independe de Mac. | Há runs históricos assinados bem-sucedidos; isso não prova runner online nem candidata 166. Inventário/status de runners é inacessível ao connector. |
 | Release Linux | Workflow novo ubuntu-22.04 exige main protegida/tag anotada e provas DEB/RPM/ZIP; publicador confere run/receipt/bytes/SHA e anexa payloads na release canônica publicada, depois no espelho, sem substituir bytes divergentes. | Requer integração e execução do workflow e release existente para a versão; não converter preview em release. Linux não oferece auto-update. |
 
-Não há workflow macOS ativo em `.github/workflows` no pin. `docs/archive/release-actions-workflow.yml` está arquivado, portanto não executável. Isso impede a produção Mac através do caminho Actions atualmente disponível; não invalida o caminho local Mac documentado. Criar um workflow sem host/certificado/perfil/provas disponíveis não resolve esse bloqueio.
+No pin inicial não havia workflow de release macOS ativo em `.github/workflows`. `docs/archive/release-actions-workflow.yml` está arquivado, portanto não executável. Isso impede assinatura Developer ID/notarização pelo caminho Actions de release atualmente disponível; não invalida o caminho local Mac documentado. Criar um workflow sem host/certificado/perfil/provas disponíveis não resolve esse bloqueio.
 
 O connector permite ler runs/jobs/logs/artifacts e baixar ZIP de artifact; expõe rerun de jobs existentes, mas não dispatch de workflow nem criar/upload/publicar release. Fetch rejeitou as coleções workflows/runners. Rerun de um job histórico mantém seu commit e não valida a candidata nova. Os publicadores de produção usam `gh` autenticado e transação canônica → espelho, com lock e SHA-256 remoto antes das transições.
 
@@ -35,3 +35,10 @@ O head e860b15 aprovou CI 36968857284 (19.038 testes/typecheck/sinks), CodeQL e 
 
 
 O site público e /api/releases responderam HTTPS200 em 2026-10-02T06:09Z com proxy/CA/TLS intactos. A API já informa Mac arm64 e Windows x64 externos165; isso não foi um deploy desta sessão e não inclui Linux166. Acesso ao source nexus-site e autenticação do projeto Cloudflare de produção continuam indisponíveis. A publicação do catálogo JSON no mirror público é separada da release de aplicativos e do deploy do site.
+
+
+## Preview macOS hospedado e revisão final
+
+A candidata acrescenta `macos-preview.yml` em `macos-15` ARM64, com permissões contents:read e sem credenciais Apple. Usa o Forge existente e sua assinatura ad hoc de desenvolvimento; exige runtime real do app e do ZIP, o contrato de 22 probes e encerramento físico do PTY. O recibo é explicitamente publishable:false/releaseEligible:false, sem notarização. O pacote Codex externo fixado é conferido por SRI, whitelist de tar e SHA/Mach-O ARM64 antes de executar `--version` no Mac. Os testes locais e a inspeção do pacote não são prova de execução macOS; o workflow deve passar antes de declarar esse preview validado. Os publicadores e gates de release continuam os existentes.
+
+O navegador de fallback também foi verificado: em 2026-10-02, a página Actions do repositório mostrou 404 e Sign in, sem sessão GitHub autenticada. O connector continua suficiente para commits/PR/merge, mas não substitui a autenticação exigida para dispatch/publicação na UI. Nenhuma credencial foi pedida ou exposta.

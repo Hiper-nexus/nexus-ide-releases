@@ -10,7 +10,8 @@ const facts = vi.hoisted(() => ({
   sessions: new Map<string, { ownerId: number | null; live: boolean; scope: ProjectExecutionScope;
     sessionId?: string; paneId?: string; missionId?: string; role?: CallerCtx['role']; adapterId?: string;
     accountId?: string; source?: 'direct-user' | 'orchestrator'; workerIncarnationId?: string;
-    authoritySeal?: typeof seal }>(),
+    authoritySeal?: typeof seal; operatorOpened?: true }>(),
+  releasePhysical: true,
   contexts: new Map<string, CallerCtx & { promotedFromUserSession?: true }>(),
   rendererScopes: new Map<number, ProjectExecutionScope>(),
   headless: new Map<string, PaneAuthzInfo>(),
@@ -37,6 +38,14 @@ vi.mock('../pty/pty-manager', () => ({
   getSessionState: (id: string) => facts.sessions.get(id)?.live ? 'idle' : null,
   isSessionOwnedBy: (owner: WebContents, id: string) => facts.sessions.get(id)?.ownerId === owner.id,
   isSessionDetached: (id: string) => facts.sessions.get(id)?.live === true && facts.sessions.get(id)?.ownerId === null,
+  listAgentSessions: () => [...facts.sessions.values()],
+  releaseOperatorOpenedAgentSession: vi.fn((id: string, missionId: string) => {
+    const session = facts.sessions.get(id);
+    if (!facts.releasePhysical || !session?.operatorOpened || session.missionId !== missionId) return false;
+    const { missionId: _mission, workerIncarnationId: _worker, authoritySeal: _seal, operatorOpened: _opened, ...rest } = session;
+    facts.sessions.set(id, { ...rest, role: 'user' });
+    return true;
+  }),
   listAgentSessionsForPane: () => [], orchTerminateSession: vi.fn(async () => true),
   reattachDetachedMissionAgentSession: vi.fn(), tapSessionData: vi.fn(), tapSessionExit: vi.fn(), tapSessionState: vi.fn(),
 }));
@@ -51,7 +60,11 @@ vi.mock('../persistence/renderer-workspace-scope', () => ({
     return scope;
   },
 }));
-vi.mock('./gate', () => ({ getContextBySession: (id: string) => facts.contexts.get(id) }));
+vi.mock('./gate', async (importOriginal) => ({ ...await importOriginal<typeof import('./gate')>(),
+  getContextBySession: (id: string) => facts.contexts.get(id) }));
+vi.mock('./mission-lifecycle-lock', () => ({ withMissionLifecycleLock: vi.fn() }));
+vi.mock('./mission-event-emit', () => ({ emitMissionEvent: vi.fn() }));
+vi.mock('./mission-orchestrator-exit-policy', () => ({ sanitizeMissionOrchestratorExitOutput: vi.fn() }));
 vi.mock('./main-owned-pane-runtime', () => ({
   deleteMainOwnedPane: (id: string) => facts.owned.delete(id), fallbackPendingSpawnToMain: vi.fn(),
   findMainOwnedPaneAuthz: (id: string) => facts.headless.has(id) ? [facts.headless.get(id)] : [],
@@ -79,7 +92,8 @@ vi.mock('./mission-pane-authority', () => ({ resolveMissionPaneAuthoritySeal: ()
   sameMissionPaneAuthoritySeal: (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b) }));
 vi.mock('./mission-pane-store', () => ({ isAutomatedReviewerCompositionPane: vi.fn() }));
 vi.mock('../persistence/settings-store', () => ({ getOrchSettings: () => ({}) }));
-vi.mock('../acp/acp-harness-driver', () => ({ getAcpDriverSession: (id: string) => facts.acp.get(id) ?? null }));
+vi.mock('../acp/acp-harness-driver', () => ({ getAcpDriverSession: (id: string) => facts.acp.get(id) ?? null,
+  listAcpDriverAgentSessions: () => [...facts.acp.values()].map(session => session.agent) }));
 vi.mock('./agent-identity-spawn', () => ({ issueAgentIdentityBestEffort: vi.fn() }));
 vi.mock('./worker-mortality', () => ({ shouldTripWorkerMortalityBreaker: vi.fn(), workerMortalityBreakerMessage: vi.fn(), workerMortalityCount: vi.fn() }));
 vi.mock('./writer-circuit-break', () => ({ writerCircuitBlocksSeat: vi.fn(), writerCircuitBreakEvent: vi.fn(), writerCircuitBreakMessage: vi.fn(), writerCircuitBreakers: vi.fn() }));
@@ -119,10 +133,65 @@ beforeEach(async () => {
   vi.resetModules();
   for (const map of [facts.sessions, facts.contexts, facts.rendererScopes, facts.headless, facts.acp, facts.owned, facts.specs]) map.clear();
   facts.scopeChange = undefined;
+  facts.releasePhysical = true;
   registry = await import('./pane-registry');
 });
 
 describe('Main-derived browser originating owner', () => {
+  it.each([false, true])('keeps a parked operator-opened browser after real runtime release (physical metadata returned=%s)', async (physicalReturned) => {
+    const wc = owner(1), latest = owner(2);
+    const previousCaller = renderSession(wc, 'opened', 'worker');
+    const gate = await import('./gate');
+    gate.releaseSession('opened');
+    const context = gate.mintToken({ label: 'opened', role: 'worker', missionId: 'mission',
+      scope, workerIncarnationId: 'opened-generation', allowedTools: [], allowedSkills: [] });
+    gate.bindTokenToSession(context.token, 'opened');
+    facts.contexts.set('opened', context);
+    Object.assign(facts.sessions.get('opened')!, { operatorOpened: true, workerIncarnationId: 'opened-generation' });
+    registry.attachOrchMeta(wc, 'pane-opened', { missionId: 'mission', role: 'worker', scope,
+      operatorOpened: true, workerIncarnationId: 'opened-generation' });
+    registry.syncPanes([
+      { paneId: 'pane-opened', sessionId: 'opened', kind: 'cli-agent', title: 'opened' },
+      { paneId: 'parked-opened-browser', sessionId: null, kind: 'browser', title: 'old project' },
+    ], wc);
+    const nextScope = { ...scope, projectId: 'another-project', rootRealPath: '/another' };
+    facts.rendererScopes.set(wc.id, nextScope);
+    facts.scopeChange!(wc, scope, nextScope);
+    registry.syncPanes([], wc);
+    registry.registerOrchRenderer(latest);
+    facts.releasePhysical = physicalReturned;
+    // Use the real runtime teardown and gate token store; only physical PTY
+    // inventory/lifetime and renderer effects are controlled boundaries here.
+    const runtime = await import('./mission-runtime-termination');
+    const suite = { missions: { get: () => ({ id: 'mission', status: 'done' }) },
+      missionPanes: { list: () => [] } };
+    await expect(runtime.terminateMissionRuntime({ scope, missionId: 'mission', suite: suite as never,
+      reason: 'operator-close' })).resolves.toMatchObject({ ok: true, terminatedSessionIds: ['opened'] });
+    expect(context.role).toBe('user');
+    expect(facts.sessions.get('opened')!.role).toBe(physicalReturned ? 'user' : 'worker');
+    expect(context.missionId).toBeUndefined();
+    expect(context.allowedTools).toBeNull();
+    expect(registry.callerWithPaneOwner(context).ownerWebContentsId).toBe(wc.id);
+    expect(registry.listVisiblePaneSnapshots(context).map(pane => pane.paneId)).toContain('parked-opened-browser');
+    expect(registry.callerWithPaneOwner(previousCaller).ownerWebContentsId).toBeUndefined();
+    for (const invalid of [
+      { ...context, scope: { ...scope, installationId: 'foreign-installation' } },
+      { ...context, executionScope: { ...scope, rootRealPath: '/foreign-checkout' } },
+      { ...context, workerIncarnationId: 'another-generation' },
+      { ...context, missionId: 'another-mission' },
+    ]) {
+      facts.contexts.set('opened', invalid);
+      expect(registry.callerWithPaneOwner(context).ownerWebContentsId).toBeUndefined();
+    }
+    facts.contexts.set('opened', context);
+    facts.sessions.get('opened')!.ownerId = latest.id;
+    expect(registry.callerWithPaneOwner(context).ownerWebContentsId).toBeUndefined();
+    facts.sessions.get('opened')!.ownerId = wc.id;
+    facts.sessions.get('opened')!.accountId = 'another-account';
+    expect(registry.callerWithPaneOwner(context).ownerWebContentsId).toBeUndefined();
+    gate.releaseSession('opened');
+  });
+
   it.each([false, true])('keeps a parked operator browser after Main returns the hand (physical metadata returned=%s)', async (physicalReturned) => {
     const wc = owner(1), latest = owner(2);
     const promoted = renderSession(wc, 'operator', 'orchestrator');

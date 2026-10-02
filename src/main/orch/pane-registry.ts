@@ -632,6 +632,7 @@ interface BrowserOriginBinding {
   readonly physicalIdentity: string;
   readonly physicalAuthority: string;
   readonly promotedOperatorHand: boolean;
+  readonly operatorOpened: boolean;
 }
 // A layout is a presentation, not the lifetime of its live Main session.
 // Retain the proven origin when a workspace parks that presentation.
@@ -667,6 +668,7 @@ function rememberBrowserOrigin(owner: WebContents, info: PaneAuthzInfo): void {
       (previous.owner !== owner && (acp || isSessionOwnedBy(previous.owner, sessionId))))) return;
   browserOriginBySession.set(sessionId, {
     owner, physicalIdentity, physicalAuthority: browserPhysicalAuthority(agent),
+    operatorOpened: agent.operatorOpened === true,
     promotedOperatorHand: (() => {
       const context = getContextBySession(sessionId);
       return context?.sessionId === sessionId && context.promotedFromUserSession === true &&
@@ -681,11 +683,11 @@ function rememberBrowserOrigin(owner: WebContents, info: PaneAuthzInfo): void {
 function browserOriginInfo(binding: BrowserOriginBinding): PaneAuthzInfo {
   const { info, owner } = binding;
   const sessionId = info.sessionId;
-  if (!sessionId || !binding.promotedOperatorHand || getAcpDriverSession(sessionId) ||
+  if (!sessionId || !(binding.promotedOperatorHand || binding.operatorOpened) || getAcpDriverSession(sessionId) ||
       !isSessionOwnedBy(owner, sessionId)) return info;
   const context = getContextBySession(sessionId);
-  // Main's gate may return an adopted operator to user while its presentation
-  // is parked, before the PTY metadata is returned. Only that captured hand,
+  // Main's gate may return an adopted or operator-opened pane to user while its
+  // presentation is parked, before the PTY metadata is returned. Only that captured hand,
   // still owned by its exact original window, can follow this transition.
   if (!context || context.sessionId !== sessionId || context.role !== 'user' ||
       context.missionId || context.workerIncarnationId || !info.scope ||

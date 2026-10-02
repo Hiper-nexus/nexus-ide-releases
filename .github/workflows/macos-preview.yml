@@ -1,0 +1,173 @@
+name: macOS ARM64 preview
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-arm64-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.repository == 'Hiper-nexus/nexus-ide' && (github.event_name == 'push' || github.event_name == 'pull_request')
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate event source and select pinned runtime
+        id: source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(uname -m)" = arm64
+          sw_vers
+          xcodebuild -version
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const nodeVersion = pkg.nexusRelease?.node;
+          if (!/^22\.\d+\.\d+$/.test(nodeVersion ?? '') || !/^\d+\.\d+\.\d+$/.test(pkg.version ?? '')) throw new Error('exact preview runtime and package version required');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `node_version=${nodeVersion}\n`);
+          NODE
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ steps.source.outputs.node_version }}
+          cache: npm
+
+      - name: Bootstrap repository-pinned npm with integrity verification
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { spawnSync } from 'node:child_process';
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import { readAndAssertReleaseAuthority } from './scripts/release-authority.mjs';
+          import { bootstrapPinnedNpm } from './scripts/make-release.mjs';
+          const authority = readAndAssertReleaseAuthority();
+          if (process.versions.node !== authority.nodeVersion || process.platform !== 'darwin' || process.arch !== 'arm64') throw new Error('macOS preview runtime mismatch');
+          const execute = (command, args, options) => {
+            const result = spawnSync(command, args, { ...options, encoding: 'utf8', shell: false });
+            if (result.error) throw result.error;
+            if (result.status !== 0) throw new Error(`pinned npm bootstrap command failed: ${command}`);
+            return result;
+          };
+          const buildBase = path.join(process.env.RUNNER_TEMP, 'nexus-macos-toolchain');
+          const pinned = bootstrapPinnedNpm({
+            buildBase, version: authority.npmVersion, expectedIntegrity: authority.npmPackageIntegrity,
+            execute, environment: process.env,
+          });
+          const bin = path.join(buildBase, 'bin');
+          fs.mkdirSync(bin, { recursive: true });
+          fs.symlinkSync(pinned.npmCli, path.join(bin, 'npm'));
+          fs.symlinkSync(path.join(path.dirname(pinned.npmCli), 'npx-cli.js'), path.join(bin, 'npx'));
+          fs.appendFileSync(process.env.GITHUB_PATH, `${bin}\n`);
+          for (const name of ['NPM_CONFIG_CACHE', 'NPM_CONFIG_USERCONFIG', 'NPM_CONFIG_REGISTRY']) {
+            fs.appendFileSync(process.env.GITHUB_ENV, `${name}=${pinned.npmEnvironment[name]}\n`);
+          }
+          NODE
+
+      - name: Install verified external Codex prerequisite without credentials
+        run: |
+          set -euo pipefail
+          node scripts/install-macos-smoke-codex.mjs
+
+      - name: Verify source and macOS preview guards
+        run: |
+          set -euo pipefail
+          test "$(npm --version)" = "$(node -p 'require("./package.json").packageManager.slice(4)')"
+          npm ci
+          npm run rebuild:node
+          npm run typecheck
+          npm run security:renderer-sinks
+          npx vitest run scripts/install-macos-smoke-codex.test.mjs scripts/macos-preview-workflow.test.mjs src/main/adapters/model-catalog.test.ts
+
+      - name: Build ad-hoc macOS ARM64 preview with the official Forge flow
+        run: |
+          set -euo pipefail
+          npm run make -- --platform darwin --arch arm64
+
+      - name: Verify ad-hoc signature and actual packaged app and ZIP runtimes
+        run: |
+          set -euo pipefail
+          node --import tsx --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import { createHash } from 'node:crypto';
+          import { spawnSync } from 'node:child_process';
+          import { runPackagedSmoke } from './scripts/smoke-packaged-app.mjs';
+          import { FUNCTIONAL_SMOKE_REQUIRED_PROBES, FUNCTIONAL_SMOKE_MIN_ADAPTERS, FUNCTIONAL_SMOKE_MIN_TOOLS } from './src/shared/smoke-types.ts';
+          if (process.platform !== 'darwin' || process.arch !== 'arm64') throw new Error('macOS ARM64 runtime required');
+          if (FUNCTIONAL_SMOKE_REQUIRED_PROBES.length !== 22) throw new Error('review the preview probe contract');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const assets = path.join(process.env.RUNNER_TEMP, 'macos-preview-assets');
+          fs.mkdirSync(assets, { recursive: true });
+          const app = path.resolve('out/NexusIDE-darwin-arm64/NexusIDE.app');
+          const zip = path.resolve(`out/make/zip/darwin/arm64/NexusIDE-darwin-arm64-${pkg.version}.zip`);
+          const extracted = path.join(process.env.RUNNER_TEMP, 'nexus-macos-preview-zip');
+          fs.mkdirSync(extracted, { mode: 0o700 });
+          const unpack = spawnSync('/usr/bin/ditto', ['-x', '-k', zip, extracted], { encoding: 'utf8', shell: false });
+          if (unpack.error || unpack.status !== 0) throw new Error('preview ZIP extraction failed');
+          const results = [];
+          for (const [kind, target] of [['app', app], ['zip', path.join(extracted, 'NexusIDE.app')]]) {
+            const signature = spawnSync('/usr/bin/codesign', ['-dv', '--verbose=4', target], { encoding: 'utf8', shell: false });
+            const verified = spawnSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', target], { encoding: 'utf8', shell: false });
+            if (signature.status !== 0 || verified.status !== 0 || !/Signature=adhoc/.test(signature.stderr) || !/TeamIdentifier=not set/.test(signature.stderr)) throw new Error('preview must have a valid ad-hoc signature');
+            const result = await runPackagedSmoke(target, { platform: 'darwin', arch: 'arm64' });
+            fs.writeFileSync(path.join(assets, `${kind}-runtime.log`), result.output);
+            const count = result.output.match(/\[smoke\] functional-ready: (\d+) probes, (\d+) tools, (\d+) adapters/u);
+            if (!result.matrix.darwin.localRuntime || result.shutdownMode !== 'graceful' || !result.treeProof?.ok || !count ||
+                Number(count[1]) !== FUNCTIONAL_SMOKE_REQUIRED_PROBES.length || Number(count[2]) < FUNCTIONAL_SMOKE_MIN_TOOLS || Number(count[3]) < FUNCTIONAL_SMOKE_MIN_ADAPTERS) throw new Error('actual complete macOS runtime proof required');
+            results.push({ kind, signature: 'ad-hoc', runtimeExecuted: true, probes: Number(count[1]), tools: Number(count[2]), adapters: Number(count[3]), matrix: result.matrix, shutdownMode: result.shutdownMode, processTreeProof: result.processTreeProof });
+          }
+          const files = [];
+          const collect = (directory) => {
+            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+              const file = path.join(directory, entry.name);
+              if (entry.isDirectory()) collect(file);
+              else if (entry.isFile() && /\.(zip|dmg)$/.test(entry.name)) {
+                const bytes = fs.readFileSync(file); fs.copyFileSync(file, path.join(assets, entry.name));
+                files.push({ name: entry.name, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
+              }
+            }
+          };
+          collect(path.resolve('out/make'));
+          if (files.filter((file) => file.name.endsWith('.zip')).length !== 1 || files.filter((file) => file.name.endsWith('.dmg')).length !== 1) throw new Error('expected one ARM64 ZIP and DMG');
+          const receipt = { schema: 'nexus.macos-preview/v1', commit: process.env.GITHUB_SHA, version: pkg.version, runner: 'macos-15', arch: 'arm64',
+            node: process.versions.node, signing: 'ad-hoc', notarizationRequested: false, publishable: false, releaseEligible: false,
+            imageVersion: process.env.ImageVersion ?? null, requiredProbes: [...FUNCTIONAL_SMOKE_REQUIRED_PROBES], results, files };
+          fs.copyFileSync('release-artifacts/macos-codex-prerequisite.json', path.join(assets, 'macos-codex-prerequisite.json'));
+          fs.writeFileSync(path.join(assets, 'macos-preview-receipt.json'), `${JSON.stringify(receipt, null, 2)}\n`);
+          NODE
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: macos-arm64-preview-diagnostics
+          path: |
+            release-artifacts/macos-codex-prerequisite.json
+            ${{ runner.temp }}/macos-preview-assets/*-runtime.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-arm64-preview
+          path: ${{ runner.temp }}/macos-preview-assets/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
