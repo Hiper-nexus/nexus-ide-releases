@@ -9783,7 +9783,7 @@ export const RELEASE_076185: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076188: AppRelease = {
   version: '0.76.188',
   date: '2026-10-02',
   codename: 'Bug à vista, anexo no pane, cotas à vista',
@@ -9826,4 +9826,25 @@ export const CURRENT_RELEASE: AppRelease = {
         'em vez de empurrar o percentual para fora da borda.',
     },
   ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.189',
+  date: '2026-10-02',
+  codename: 'Entrar pelo Perfil Nexus',
+  summary:
+    'No Windows, "Perfil e logins" do navegador deixa de ser um beco sem ' +
+    'saída: você digita o site, a aba passa ao Perfil Nexus e abre para você ' +
+    'entrar uma vez. Inclui a 0.76.188.',
+  highlights: [
+    {
+      title: 'Entrar nos seus sites pelo Perfil Nexus',
+      detail:
+        'Onde o Chrome não deixa outros programas lerem os logins dele, como ' +
+        'no Windows, a seção explica por quê e oferece um campo de endereço. O ' +
+        'site abre na própria aba, já no Perfil Nexus; o login feito ali fica ' +
+        'salvo e chega aos agentes quando "Usar o perfil em novos navegadores ' +
+        'dos agentes" está ligado.',
+    },
+  ],
+  fixes: [],
 };

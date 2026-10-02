@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.189 — Entrar pelo Perfil Nexus
+
+Build do Windows. Inclui a 0.76.188 (Bug à vista, anexo no pane, cotas à vista).
+
+- **"Perfil e logins" no Windows oferece entrar pelo Perfil Nexus (F-762).** A seção "Importar do Chrome" só dizia que a importação é do macOS. No Windows o Chrome protege os logins dele contra leitura por outros programas, e a importação continua só no macOS. Sem importação a seção vira "Entrar nos seus sites": explica por quê e abre o site digitado na própria aba, passando antes a aba ao Perfil Nexus. O login fica no Perfil Nexus e chega aos agentes. Só endereço http(s) é aceito.
+
 ## 0.76.188 — Bug à vista, anexo no pane, cotas à vista
 
 Build do Mac. Inclui o que já estava no código principal até esta versão.
