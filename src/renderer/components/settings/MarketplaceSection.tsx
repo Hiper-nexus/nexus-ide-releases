@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { CatalogEntryInfo } from '../../../shared/types';
+import type {
+  CatalogEntryInfo,
+  CatalogRecommendationsResult,
+} from '../../../shared/types';
 import { EmptyState } from '../ActionCard';
 import { PixelIcon } from '../PixelIcon';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
@@ -23,6 +26,132 @@ type Notice = { tone: 'ok' | 'danger'; text: string };
 /** Itens por página: a busca e a categoria sempre varrem o catálogo inteiro. */
 export const MARKETPLACE_PAGE_SIZE = 12;
 
+const RECOMMENDATION_UNAVAILABLE: Record<
+  NonNullable<CatalogRecommendationsResult['reason']>,
+  string
+> = {
+  disabled:
+    'As recomendações estão desligadas em Orquestração, entre as superfícies supervisionadas pelos modelos de decisão.',
+  'no-credential':
+    'Para recomendar, o Nexus precisa do Jev ou do Clef configurado em Chaves de API.',
+  'no-areas':
+    'Não reconheci a stack deste projeto pelos arquivos (package.json, go.mod, Dockerfile…).',
+  'catalog-unavailable': 'O catálogo não carregou. Use Atualizar e tente de novo.',
+  'no-answer': 'O modelo de decisão não respondeu agora. Tente Recalcular.',
+};
+
+function joinLabels(labels: readonly string[]): string {
+  if (labels.length <= 1) return labels[0] ?? '';
+  return `${labels.slice(0, -1).join(', ')} e ${labels[labels.length - 1]}`;
+}
+
+function recommendationIntro(
+  result: CatalogRecommendationsResult | null,
+  loading: boolean,
+): string {
+  if (loading) return 'Lendo a stack do projeto e consultando o modelo de decisão…';
+  if (!result) return '';
+  if (!result.ok) return RECOMMENDATION_UNAVAILABLE[result.reason ?? 'no-answer'];
+  const stack = joinLabels((result.areas ?? []).map((area) => area.label));
+  if ((result.recommendations ?? []).length === 0) {
+    return `Nenhum item do catálogo se destacou para ${stack}.`;
+  }
+  const decider =
+    result.provider === 'clef' ? 'Clef' : result.provider === 'jev' ? 'Jev' : 'modelo de decisão';
+  return (
+    `Escolhidos pelo ${decider} para a stack do projeto (${stack}). ` +
+    'Instalar pede a mesma confirmação de sempre.'
+  );
+}
+
+/**
+ * F-757: o que o modelo de decisão escolheu do catálogo para a stack deste
+ * workspace, com o motivo. Instalar usa o mesmo fluxo da lista abaixo.
+ */
+function MarketplaceRecommendations(props: {
+  result: CatalogRecommendationsResult | null;
+  loading: boolean;
+  busySlug: string | null;
+  isInstalled: (entry: CatalogEntryInfo) => boolean;
+  onInstall: (entry: CatalogEntryInfo) => void;
+  onRefresh: () => void;
+}) {
+  const { result, loading, busySlug, isInstalled, onInstall, onRefresh } = props;
+  const recommendations = !loading && result?.ok ? result.recommendations ?? [] : [];
+  return (
+    <section className="mkt-recs" aria-label="Recomendados para este projeto">
+      <div className="mkt-recs__head">
+        <div className="mkt-recs__intro">
+          <h3 className="mkt-recs__title">Recomendados para este projeto</h3>
+          <p className="settings-detail__hint" role="status">
+            {recommendationIntro(result, loading)}
+          </p>
+        </div>
+        <button
+          type="button"
+          className="settings-btn"
+          onClick={onRefresh}
+          disabled={loading}
+          title="Ler a stack de novo e pedir outra recomendação"
+        >
+          <PixelIcon name="refresh" size={11} /> Recalcular
+        </button>
+      </div>
+      {recommendations.length > 0 && (
+        <ul className="settings-list mkt-list">
+          {recommendations.map((rec) => {
+            const entry: CatalogEntryInfo = {
+              kind: rec.kind,
+              slug: rec.slug,
+              name: rec.name,
+              category: rec.category,
+            };
+            const installed = isInstalled(entry);
+            return (
+              <li key={`${rec.kind}:${rec.slug}`} className="settings-list__item mkt-rec">
+                <div className="mkt-item__main">
+                  <div className="mkt-item__id">
+                    <span className="settings-list__title settings-list__title--mono mkt-rec__name">
+                      {rec.name}
+                    </span>
+                    <span className="mkt-rec__why">
+                      {rec.kind === 'agent' ? 'Agente' : 'Instrução'} para{' '}
+                      {joinLabels(rec.areas)} · visto em {rec.evidence[0]}
+                    </span>
+                  </div>
+                  <div className="mkt-item__meta">
+                    <span
+                      className="settings-chip"
+                      title="Confiança do modelo de decisão nesta escolha"
+                    >
+                      {Math.round(rec.confidence * 100)}%
+                    </span>
+                    {installed ? (
+                      <span className="settings-chip settings-chip--ok mkt-item__state">
+                        <PixelIcon name="check" size={10} /> Instalado
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="settings-btn mkt-item__cta"
+                        onClick={() => onInstall(entry)}
+                        disabled={busySlug !== null}
+                        aria-busy={busySlug === entry.slug}
+                      >
+                        {busySlug === entry.slug ? 'Instalando…' : 'Instalar'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export function MarketplaceSection() {
   const [kind, setKind] = useState<Kind>('agent');
   const [query, setQuery] = useState('');
@@ -34,6 +163,9 @@ export function MarketplaceSection() {
   const [error, setError] = useState<string | null>(null);
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [recommendations, setRecommendations] = useState<CatalogRecommendationsResult | null>(null);
+  const [recommending, setRecommending] = useState(false);
+  const canRecommend = typeof window.nexus.orch.recommendCatalog === 'function';
   // Página ligada ao filtro atual: trocar tipo, busca ou categoria volta à 1ª.
   const filterKey = `${kind}|${query}|${category}`;
   const [page, setPage] = useState({ key: filterKey, count: MARKETPLACE_PAGE_SIZE });
@@ -57,9 +189,22 @@ export function MarketplaceSection() {
     setInstalledNames(new Set(items.map((item) => `${item.kind}:${item.name}`)));
   }
 
+  async function loadRecommendations(refresh = false) {
+    if (!canRecommend) return;
+    setRecommending(true);
+    try {
+      setRecommendations(await window.nexus.orch.recommendCatalog(refresh));
+    } catch {
+      setRecommendations({ ok: false, reason: 'no-answer' });
+    } finally {
+      setRecommending(false);
+    }
+  }
+
   useEffect(() => {
     void loadIndex();
     void loadInstalled();
+    void loadRecommendations();
   }, []);
 
   const entries = kind === 'agent' ? agents : skills;
@@ -153,6 +298,17 @@ export function MarketplaceSection() {
             <strong>{installedNames.size}</strong> instalados nesta máquina
           </span>
         </div>
+      )}
+
+      {canRecommend && (
+        <MarketplaceRecommendations
+          result={recommendations}
+          loading={recommending}
+          busySlug={busySlug}
+          isInstalled={isInstalled}
+          onInstall={(entry) => void install(entry)}
+          onRefresh={() => void loadRecommendations(true)}
+        />
       )}
 
       <div className="mkt-toolbar">

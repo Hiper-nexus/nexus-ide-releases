@@ -319,6 +319,55 @@
   color: var(--danger);
 }
 
+/* Recomendados para este projeto (F-757): bloco neutro acima do catálogo —
+   recomendação não é estado vivo, então nada de acento aqui. */
+.mkt-recs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+
+.mkt-recs__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+}
+
+.mkt-recs__intro {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.mkt-recs__title {
+  margin: 0 0 var(--space-1);
+  color: var(--text);
+  font-size: var(--text-md);
+  font-weight: 650;
+}
+
+.mkt-recs__intro .settings-detail__hint {
+  margin: 0;
+}
+
+.mkt-rec {
+  padding: var(--space-2-5) var(--space-3);
+  background: var(--bg);
+}
+
+.mkt-rec__why {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+
 /* ================================================================
    Referências de design — proposta ≠ contrato aplicado (§12)
    ================================================================ */
