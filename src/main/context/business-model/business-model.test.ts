@@ -76,13 +76,13 @@ describe('extractBusinessModel', () => {
     const gitDir = path.join(root, '.git');
     const realRmdir = fs.rmdirSync;
     let injectedErrors = 0;
-    const rmdir = vi.spyOn(fs, 'rmdirSync').mockImplementation((target, options) => {
+    const rmdir = vi.spyOn(fs, 'rmdirSync').mockImplementation((target) => {
       // Falha após esvaziar .git, no mesmo ponto do teardown observado no CI.
       if (String(target) === gitDir && injectedErrors === 0 && fs.readdirSync(gitDir).length === 0) {
         injectedErrors += 1;
         throw Object.assign(new Error('fixture directory briefly busy'), { code: 'ENOTEMPTY' });
       }
-      return realRmdir(target, options);
+      return realRmdir(target);
     });
 
     // Executa depois do afterEach real, sem duplicar a política de remoção.
@@ -589,4 +589,3 @@ describe('runBusinessModelBootstrap (store e atestações reais)', () => {
       .toBe(createHash('sha256').update(skeleton).digest('hex'));
   });
 });
-
