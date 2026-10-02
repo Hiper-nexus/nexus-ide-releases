@@ -36,6 +36,7 @@ import { currentViewNarration, currentViewToolOutput } from './current-view-read
 import { waitForActionEvidence } from './action-evidence';
 import { resolveWorkspaceByVoiceName } from './workspace-name-resolver';
 import { resolveSquadByVoiceName } from './squad-name-resolver';
+import { decideRestoreMission } from './restore-mission-target';
 import { logVoiceEvent } from './voice-live-ipc';
 import {
   isExecutionReadyDelegationPrompt,
@@ -1304,23 +1305,34 @@ export async function executeJarvisAction(
       sayText = 'Não tem nenhuma missão salva para abrir.';
       toolResult = { tool: action.type, ok: false, summary: 'sem missões' };
     } else {
-      const wanted = action.alvo?.toLowerCase();
-      const target = wanted
-        ? missions.find((mission) =>
-            mission.title.toLowerCase().includes(wanted),
-          ) ?? missions[0]
-        : missions[0];
-      const navigation = useProductNavigationStore.getState();
-      navigation.openMission(target.id);
-      useProductNavigationStore.getState().showMissionTerminals();
-      markEffect(control);
-      sayText = `Abrindo os terminais da missão ${target.title}.`;
-      toolResult = {
-        tool: action.type,
-        ok: true,
-        summary: `terminais da missão ${target.title} abertos`,
-        output: { missionId: target.id },
-      };
+      // Nenhuma missão é aberta "por palpite": nome sem par → diz que não achou;
+      // nomes parecidos → o Jev desempata ou a pessoa é perguntada.
+      const decision = await decideRestoreMission(action.alvo, missions);
+      checkpoint(control);
+      if (decision.kind === 'open') {
+        const navigation = useProductNavigationStore.getState();
+        navigation.openMission(decision.mission.id);
+        useProductNavigationStore.getState().showMissionTerminals();
+        markEffect(control);
+        sayText = decision.say;
+        toolResult = {
+          tool: action.type,
+          ok: true,
+          summary: `terminais da missão ${decision.mission.title} abertos`,
+          output: { missionId: decision.mission.id },
+        };
+      } else {
+        sayText = decision.say;
+        expectReply = true;
+        toolResult = {
+          tool: action.type,
+          ok: false,
+          summary:
+            decision.reason === 'none'
+              ? 'nenhuma missão com esse nome — nada aberto'
+              : 'nome de missão ambíguo — nada aberto',
+        };
+      }
     }
   } else if (action.type === 'ask_pane') {
     // C3: pergunta autorada por LLM só pode ir pra pane de agente/orquestrador
