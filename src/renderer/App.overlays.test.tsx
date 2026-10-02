@@ -390,6 +390,17 @@ describe('App bug report entry', () => {
     act(() => button.click());
     await expect(confirmed).resolves.toBe(true);
   });
+  it('does not steal focus from an existing confirmation when the report opens', async () => {
+    const bridge = installBugReportBridge(); mountApp(); await act(async () => {});
+    let decision!: Promise<boolean>;
+    act(() => { decision = useConfirmStore.getState().ask({ title: 'Pergunta pendente', body: 'Continuar?', confirmLabel: 'Continuar' }); });
+    const focused = document.activeElement;
+    act(() => bridge.open());
+    expect(document.activeElement).toBe(focused);
+    act(() => useConfirmStore.getState().decide(false));
+    await expect(decision).resolves.toBe(false);
+    expect(dialogContaining('Reportar um problema')?.contains(document.activeElement)).toBe(true);
+  });
 
   it('counts as a blocking overlay: reported to voice and the live browser pane steps aside', async () => {
     const bridge = installBugReportBridge();
