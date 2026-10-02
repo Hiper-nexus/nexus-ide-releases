@@ -128,7 +128,7 @@ Verificado:
   em X11 (`--ozone-platform=x11`). Antes: `nexuside` na janela principal.
 - Entrada de menu criada pelo build portátil; `xdg-mime query default
   x-scheme-handler/nexus` devolve `nexus-ide.desktop`.
-- Índice de tipos (F-738, 0.76.174): `gio mime x-scheme-handler/nexus` lista o
+- Índice de tipos (F-740, 0.76.175): `gio mime x-scheme-handler/nexus` lista o
   app em "Registered applications" e
   `org.freedesktop.portal.OpenURI.OpenURI nexus://quota` entrega o link ao app
   em execução. A 0.76.170 passou no `xdg-open` e falhou no login real pelo
@@ -140,7 +140,7 @@ Verificado:
 - Arranque a frio pelo mesmo link: o app abre e mostra o diálogo, sem cair.
 - Cofre: no Hyprland o `safeStorage` sai de `basic_text` para
   `gnome_libsecret` e cifra/decifra (F-729).
-- Redline ligado por padrão (F-739, 0.76.174): sem preferência salva o item
+- Redline ligado por padrão (F-739, 0.76.175): sem preferência salva o item
   aparece no boot.
 - Redline: item registrado no `org.kde.StatusNotifierWatcher`, tooltip e menu
   com as contas, atualização ao gravar um snapshot novo, "Atualizar agora"
@@ -153,7 +153,7 @@ Não verificado nesta máquina (não anuncie como testado):
 
 - Aparência do ícone do Redline na barra e o clique com o mouse (tela
   bloqueada); o login completo com conta real (na 0.76.170 o operador tentou
-  e caiu no F-738; refazer na 0.76.174); missão com agentes reais;
+  e caiu no F-740; refazer na 0.76.175); missão com agentes reais;
   instalação do DEB/RPM (Arch não tem `dpkg`/`rpm`; isso fica com o workflow e
   o smoke do Debian 12); GNOME, KDE Plasma e XFCE; `xdg-open` com `Exec` entre
   aspas, que o xdg-utils genérico não entende — por isso a entrada portátil usa

@@ -571,7 +571,7 @@ saber isto antes de mexer:
 - Definir o padrão não basta: o portal do desktop (por onde o Chrome abre
   `nexus://`) e o GIO só oferecem apps REGISTRADOS, e o registro vem do índice
   `mimeinfo.cache`, não do `MimeType=` da entrada. Sem a linha o login termina
-  em "Open With… No Apps available" (F-738). O ZIP portátil confere o índice
+  em "Open With… No Apps available" (F-740). O ZIP portátil confere o índice
   a cada boot (`ensureMimeIndex`: `update-desktop-database`, senão mescla a
   própria linha); DEB/RPM dependem de `desktop-file-utils`, cujo gatilho faz
   isso na instalação. Testar deep link só com `xdg-open` engana: ele lê o
