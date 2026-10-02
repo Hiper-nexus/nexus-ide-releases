@@ -534,10 +534,58 @@ saber isto antes de mexer:
   novo, ícone que vira ou dado que envelhece, ele só é refeito a cada 5 min
   (`REDLINE_LINUX_MENU_REFRESH_MS`; o tooltip anda livre). Não destrua o Tray
   de dentro do clique do próprio menu (o "Ocultar" roda no turno seguinte).
-- NÃO validado em desktop real (só testes unitários + PNG/menu decodificados no
-  Electron do macOS): GNOME (precisa da extensão AppIndicator), KDE Plasma,
-  XFCE e Waybar/Hyprland (módulo `tray` ligado). Antes de prometer o Linux a um
-  cliente, rode nesses quatro e confira ícone, tooltip, clique e atualização.
+- Validado no Omarchy/Hyprland 0.56 em 02/10 PELO BARRAMENTO (a tela estava
+  bloqueada): item registrado no `org.kde.StatusNotifierWatcher` do quickshell,
+  tooltip, menu `com.canonical.dbusmenu` com as contas, atualização ao gravar
+  um snapshot novo, "Atualizar agora" consumido e "Ocultar da bandeja"
+  persistindo. Falta ver a olho o ícone na barra e o clique do mouse. Para
+  repetir sem mouse: `busctl --user call <serviço> /org/chromium/DbusMenu
+  com.canonical.dbusmenu GetLayout iias -- 0 -1 0` e `Event isvu -- <id>
+  clicked s "" 0` (os ids mudam a cada republicação do menu).
+- Ainda NÃO validado: GNOME (precisa da extensão AppIndicator), KDE Plasma e
+  XFCE. Antes de prometer esses desktops a um cliente, rode neles e confira
+  ícone, tooltip, clique e atualização.
+
+## Linux: identidade de desktop, login e cofre (F-728, F-729, F-731)
+
+- `desktopName` do `package.json` (`nexus-ide.desktop`) é a identidade do app
+  no Linux: app_id do Wayland, classe da janela no X11 e alvo de
+  `app.setAsDefaultProtocolClient`. Sem ele o Electron 43 usa o slug do nome
+  (`nexuside.desktop`), que nenhum pacote instala: o `nexus://` do login não é
+  registrado e a janela fica sem ícone. Não renomeie o executável, o pacote ou
+  a entrada sem mexer nos três juntos (`linux-desktop-entry.test.ts` trava).
+- O handler de `nexus://` no Linux É a entrada `.desktop`. DEB/RPM a instalam
+  (`mimeType` em `forge.config.ts`); o ZIP portátil escreve a própria em
+  `$XDG_DATA_HOME/applications` (`src/main/linux-desktop-entry.ts`), ANTES de
+  registrar o protocolo.
+- O `Exec` da entrada portátil vai SEM aspas. O `xdg-open` genérico (Hyprland,
+  sway, qualquer desktop fora de GNOME/KDE/XFCE) trata `"/caminho/nexus-ide"`
+  com as aspas como nome do comando, não acha, e entrega o link ao `$BROWSER`
+  — o login voltava para uma aba em branco. Caminho com espaço ("Área de
+  Trabalho") passa por um symlink de nome simples em
+  `$XDG_DATA_HOME/nexus-ide/nexus-ide`.
+- Nunca trate um deep link DENTRO do evento `second-instance`. A segunda
+  instância espera a confirmação desse evento por 20 s e, sem ela, o Chromium
+  mata o app em execução e sobe no lugar. O diálogo nativo de `open`/`license`
+  é síncrono; por isso o link é agendado com `setImmediate`.
+- No Wayland, diálogo nativo preso a janela ainda não exibida derruba o app
+  (`zxdg_exporter_v2: surface must be an xdg_toplevel`). Use
+  `nativeDialogParent` (`native-confirm.ts`) em diálogo que possa abrir antes
+  do `ready-to-show`.
+- Fora de GNOME/KDE o Chromium escolhe o backend `basic_text` para o
+  `safeStorage`, que o cofre recusa. `linux-secret-store.ts` pede
+  `gnome-libsecret` antes do `ready`. O próprio Omarchy lança o Chromium com
+  `--password-store=gnome-libsecret` pelo mesmo motivo.
+- O smoke empacotado não enxerga nada disto: abre o binário direto, com HOME
+  isolado, sem menu, navegador ou keyring. Mudança em identidade, deep link ou
+  cofre pede teste num desktop real (roteiro e resultado de 02/10 em
+  `docs/RELEASE.md`, "Validação em desktop real").
+- Para testar sem tocar no perfil do operador, isole `HOME`, `XDG_CONFIG_HOME`,
+  `XDG_DATA_HOME`, `XDG_CACHE_HOME` e `XDG_STATE_HOME` (a sessão do Omarchy
+  exporta os XDG com o caminho real) e rode com `BROWSER` vazio: assim uma
+  falha do handler aparece como erro, em vez de abrir o navegador do operador.
+  Não use `--user-data-dir` nesse teste: a segunda instância lançada pela
+  entrada de menu não recebe a flag e deixa de ser "segunda instância".
 
 ## Overlay Kimi leva o catálogo de modelos (F-611)
 

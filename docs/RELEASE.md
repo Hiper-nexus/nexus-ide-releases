@@ -74,7 +74,7 @@ Um resultado local ou estrutural não substitui esses runs hospedados.
 ### ZIP portátil no Omarchy/Arch
 
 Omarchy usa Arch e Hyprland. O ZIP oferece o aplicativo Linux x64 sem precisar
-instalar um DEB/RPM; não registra menu, dependências ou auto-update. No Arch,
+instalar um DEB/RPM; não instala dependências nem se atualiza sozinho. No Arch,
 instale o provider de sandbox pelo gerenciador de pacotes e execute o binário
 extraído como seu usuário habitual:
 
@@ -85,14 +85,70 @@ cd NexusIDE-linux-x64
 ./nexus-ide
 ```
 
-O Electron 43 suporta Wayland por padrão. O smoke Xvfb prova o aplicativo
-empacotado no runner Ubuntu, mas não uma instalação Omarchy nem a execução
-real da sandbox Bubblewrap. O `--no-sandbox` permanece exclusivo dos harnesses
-de teste hospedados; não faz parte dessas instruções de lançamento normal.
-Valide terminais/PTYs, navegador, clipboard, atalhos, escala e persistência na
-sessão Hyprland antes de declarar Omarchy testado. Consulte o
+No primeiro boot o app escreve a própria entrada de menu em
+`~/.local/share/applications/nexus-ide.desktop` e se registra como handler de
+`nexus://` — é por esse link que o navegador devolve o login (F-728). Se a
+pasta mudar de lugar, basta abrir o app de novo. Para remover: apague esse
+arquivo (e `~/.local/share/nexus-ide/`, se existir).
+
+O login e as chaves de provider precisam de um Secret Service ativo
+(`gnome-keyring`, que o Omarchy instala, ou KeePassXC/KWallet). Fora de GNOME e
+KDE o app pede o backend libsecret por conta própria (F-729); sem Secret
+Service o cofre fica indisponível e o app avisa, nunca grava em texto plano.
+
+O `--no-sandbox` permanece exclusivo dos harnesses de teste hospedados; não faz
+parte dessas instruções de lançamento normal. Consulte o
 [manual do Omarchy](https://omarchy.org/manual/) e a
 [documentação Wayland do Electron](https://www.electronjs.org/blog/tech-talk-wayland).
+
+### Identidade de desktop dos pacotes
+
+DEB e RPM instalam `/usr/share/applications/nexus-ide.desktop` com
+`MimeType=x-scheme-handler/nexus;`, categoria `Development` e o ícone da marca
+em `/usr/share/pixmaps/nexus-ide.png`. O nome da entrada casa com
+`desktopName` do `package.json`: é dele que o Electron tira o app_id do
+Wayland, a classe da janela no X11 e o alvo do registro de `nexus://`.
+`scripts/verify-linux-desktop-identity.mjs` confere tudo isso sobre o pacote
+instalado, nos dois workflows e no smoke do Debian 12.
+
+### Validação em desktop real (Omarchy, 02/10/2026)
+
+Máquina: Omarchy (Arch), Hyprland 0.56.2 em Wayland, eDP-1 1920×1080 escala
+1,5, bandeja pelo `quickshell` do omarchy-shell, `gnome-keyring` ativo,
+`bubblewrap` 0.12.0. Build local do fonte desta versão (`npm run package`),
+com `HOME`/XDG isolados para não tocar no perfil do operador. A tela estava
+bloqueada durante o teste, então tudo abaixo foi conferido por `hyprctl` e pelo
+barramento D-Bus da sessão, não a olho.
+
+Verificado:
+
+- Smoke empacotado local (`linux: testado localmente`, 22 probes) e encerramento
+  por SIGTERM sem processo órfão.
+- Janela principal e diálogos com a mesma identidade `nexus-ide`, em Wayland e
+  em X11 (`--ozone-platform=x11`). Antes: `nexuside` na janela principal.
+- Entrada de menu criada pelo build portátil; `xdg-mime query default
+  x-scheme-handler/nexus` devolve `nexus-ide.desktop`.
+- `xdg-open 'nexus://open?path=…'` com o app aberto: o link chega à instância
+  em execução, o diálogo "Abrir pasta externa?" aparece e o app segue vivo
+  depois de mais de 20 s com o diálogo na tela (F-731).
+- Arranque a frio pelo mesmo link: o app abre e mostra o diálogo, sem cair.
+- Cofre: no Hyprland o `safeStorage` sai de `basic_text` para
+  `gnome_libsecret` e cifra/decifra (F-729).
+- Redline: item registrado no `org.kde.StatusNotifierWatcher`, tooltip e menu
+  com as contas, atualização ao gravar um snapshot novo, "Atualizar agora"
+  consumido pelo Nexus, "Ocultar da bandeja" persiste e remove o item.
+- `bwrap` executa o mesmo comando de `processSandboxRuntimeAvailable`; a suíte
+  `npm test` roda nesta máquina com os testes de sandbox que o runner
+  hospedado pula.
+
+Não verificado nesta máquina (não anuncie como testado):
+
+- Aparência do ícone do Redline na barra e o clique com o mouse (tela
+  bloqueada); o login completo com conta real; missão com agentes reais;
+  instalação do DEB/RPM (Arch não tem `dpkg`/`rpm`; isso fica com o workflow e
+  o smoke do Debian 12); GNOME, KDE Plasma e XFCE; `xdg-open` com `Exec` entre
+  aspas, que o xdg-utils genérico não entende — por isso a entrada portátil usa
+  caminho cru ou um symlink de nome simples.
 
 ## Canal Windows independente
 

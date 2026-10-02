@@ -114,6 +114,50 @@ MAC calculado pelo atacante, import/setKey e reinício; o acesso continua bloque
 `provider-config-spawn.test.ts` cobre o handler IPC; `provider-settings-types.test.ts`
 cobre a validação compartilhada.
 
+## Linux: identidade de desktop e backend do cofre (F-728 / F-729)
+
+- **Entrada de menu do ZIP portátil.** `src/main/linux-desktop-entry.ts` escreve
+  `$XDG_DATA_HOME/applications/nexus-ide.desktop` (e, se o caminho do binário
+  tiver espaço ou caractere reservado, o symlink
+  `$XDG_DATA_HOME/nexus-ide/nexus-ide`) antes de registrar `nexus://`. São os
+  únicos arquivos que o app grava fora de `~/.nexus` e do `userData` por conta
+  própria. Regras: só no build empacotado e fora do smoke; só substitui arquivo
+  que carrega o marcador `X-NexusIDE-Portable=true`; entrada feita à mão e
+  arquivo comum no lugar do symlink não são tocados; escrita por temporário +
+  `rename` (um symlink plantado no destino é trocado, não seguido); caminho com
+  caractere de controle não é registrado. O `Exec` nunca passa por shell: é um
+  caminho absoluto cru, ou a forma entre aspas da Desktop Entry Specification.
+- **O handler não amplia a superfície do deep link.** `nexus://` continua
+  passando por `parseDeepLink` (hosts em lista fechada) e `open`/`license`
+  vindos de URL continuam exigindo o diálogo nativo. A mudança só faz o link
+  chegar ao app no Linux, como já chegava no macOS e no Windows.
+- **Backend do cofre.** `src/main/linux-secret-store.ts` pede
+  `--password-store=gnome-libsecret` fora do KDE, porque o Chromium cai em
+  `basic_text` em qualquer desktop que não reconhece (Hyprland, sway…). A
+  recusa de `basic_text` em `isSecureStorageBackendAllowed` não mudou: sem
+  Secret Service o cofre continua indisponível, nunca vira texto plano. Um
+  `--password-store` explícito do operador tem precedência.
+
+## Sandbox de processo no Linux: toolchain do PATH (F-732 / F-733)
+
+- O Bubblewrap cobre `/home`, `/root`, `/tmp`, `/var/tmp`, `/run/user`, `/mnt` e
+  `/media` com tmpfs. `collectLinuxToolchainMounts` (`process-sandbox.ts`)
+  devolve, SOMENTE-LEITURA, o que o PATH resolve sob essas raízes: o diretório
+  de cada entrada, o alvo real de cada executável e, para node/npm/npx/
+  corepack/pnpm/yarn, a árvore do runtime. É a mesma política que
+  `collectToolchainReadRules` aplica no Seatbelt. Sem isso, Node instalado por
+  mise/nvm e `~/.local/bin` não existiam dentro do sandbox.
+- Nunca é montado: uma raiz mascarada, o home, um ancestral do home, um caminho
+  que contenha o workspace/runtime/mount suplementar, nem um caminho dentro
+  deles (ficaria somente-leitura). Entrada larga demais é descartada inteira,
+  com o que há dentro. Teto de 512 mounts; entrada relativa ou symlink é
+  ignorada.
+- O PATH que decide esses mounts é o do OPERADOR. `nexus_terminal_run` não
+  aceita mais `env.PATH` de quem chama (`CALLER_ENV_KEYS`): com ele, um agente pedia `PATH=~/.ssh` e o perfil —
+  Seatbelt no macOS, e agora os mounts no Linux — liberava a leitura desse
+  diretório. Quem adicionar um caminho novo de execução sandboxed precisa
+  garantir a mesma coisa: `env.PATH` do plano nunca vem de entrada de agente.
+
 ## Limits
 
 - Max redaction depth/size (audit-log constants).
