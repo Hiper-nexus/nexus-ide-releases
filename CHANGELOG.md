@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.163 — Reporte de problema
+
+Build do Mac. Inclui integralmente a 0.76.162.
+
+- **Reportar um problema dentro do app.** Ajuda → "Reportar um problema…" e a paleta de comandos abrem um diálogo com categoria, impacto, descrição e passos. A prévia mostra exatamente o corpo que será enviado; o diagnóstico técnico só entra com o consentimento marcado e é montado por lista de permissão (tipo do evento, código curto, versão, agente e modelo ativos, número de panes). Chaves (inclusive bloco de chave privada cortado e parâmetros de sessão em links), tokens, webhooks, e-mails e caminhos da pasta pessoal são ocultados antes do envio; a limpeza não pega tudo, por isso a prévia pede conferência e a cópia sem limpeza avisa. O corpo enviado é o da prévia: se mudou, o envio recusa. Os relatos chegam ao painel de administração do site, onde uma correção só avança depois de autorizada por uma pessoa.
+- **Visão do navegador mais cuidadosa.** Abas com perfil pessoal são recusadas; a máscara cobre o bloco do rótulo sensível e também os pixels do próprio texto, junta segredos partidos em trechos vizinhos, reconhece mais formatos de token e oculta mídia grande, e é feita por união de retângulos (sem congelar a thread principal). Ligar a visão pede nova confirmação. A ocultação continua parcial.
+- **Superfícies com efeito ficam no Jev.** Guarda de despacho, revisão de handoff, memória e pilotos de navegador e desktop não usam o Clef. `nexus_judge` não aceita mais um agente escolhendo o Clef.
+- **Contrato do Jev tolerante.** Soma de probabilidades com ±0,02 e uso ausente como "sem medição" (não zero); a validação estrita vale só para o Clef. O diário separa linhas medidas das legadas e ignora linhas corrompidas.
+- **Limite conhecido.** Transporte, teste de conexão e julgamento visual do Clef só foram exercitados com simulações; nada foi validado contra a Cloudflare real.
+
 ## 0.76.162 — Cloudflare protegido
 
 Build do Mac. Inclui integralmente a 0.76.161 e todas as melhorias de site, acesso, assinatura e licença da base.

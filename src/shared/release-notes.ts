@@ -8953,7 +8953,7 @@ export const RELEASE_076161: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076162: AppRelease = {
   version: '0.76.162',
   date: '2026-10-01',
   codename: 'Cloudflare protegido',
@@ -8968,4 +8968,54 @@ export const CURRENT_RELEASE: AppRelease = {
       'texto livre. A redação protege as consultas dos modelos e inclui a ' +
       'área do texto nas máscaras de captura. A visão continua optativa.',
   }],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.163',
+  date: '2026-10-02',
+  codename: 'Reporte de problema',
+  summary:
+    'Achou um problema? Ajuda → Reportar um problema… manda o relato direto ' +
+    'para a equipe, mostrando antes exatamente o que será enviado. Traz também ' +
+    'o endurecimento da visão do navegador com Clef. Inclui a 0.76.162.',
+  highlights: [
+    {
+      title: 'Reportar um problema, sem sair do app',
+      detail:
+        'No menu Ajuda ou na paleta de comandos. Você escolhe a categoria e o ' +
+        'impacto, descreve o que aconteceu e vê o texto exato que será ' +
+        'enviado. O diagnóstico técnico (versão, agente ativo, eventos ' +
+        'recentes) só vai se você marcar, e chaves, e-mails e caminhos da sua ' +
+        'pasta são ocultados antes do envio. A limpeza não pega tudo: confira ' +
+        'a prévia. Dá para copiar o relato e mandar por outro canal se a ' +
+        'conexão falhar.',
+    },
+    {
+      title: 'Visão do navegador mais cuidadosa',
+      detail:
+        'A análise de imagens recusa abas com o seu perfil pessoal, oculta o ' +
+        'bloco inteiro quando um rótulo sensível aparece (e não só o campo), ' +
+        'junta segredos partidos em trechos vizinhos e exige uma nova ' +
+        'confirmação ao ligar. A ocultação continua parcial: ' +
+        'fundos e dados pessoais em texto comum não são cobertos.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Guarda, revisão e memória ficam no Jev',
+      detail:
+        'A guarda de despacho, a revisão de handoff, a memória e os pilotos ' +
+        'de navegador e desktop não vão mais para o Clef, nem em "Somente ' +
+        'Clef": os limiares deles foram calibrados para o Jev. A tela de ' +
+        'configuração avisa quando isso desliga alguma delas.',
+    },
+    {
+      title: 'Resposta do Jev tolerada, não zerada',
+      detail:
+        'Uma soma de probabilidades com diferença mínima ou um uso de tokens ' +
+        'ausente não derrubam mais a decisão do Jev; o uso ausente aparece ' +
+        'como "sem medição", nunca como zero. O teste de conexão com a ' +
+        'Cloudflare ainda não foi validado contra o serviço real.',
+    },
+  ],
 };
