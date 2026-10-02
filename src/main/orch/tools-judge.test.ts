@@ -109,6 +109,15 @@ describe('nexus_judge handler', () => {
     );
   });
 
+  it('does not let the agent pick the Cloudflare route: provider and variant come from the operator settings', async () => {
+    for (const model of ['clef', 'clef-flash', '@cf/cloudflare/clef-flash']) {
+      await expect(tool.handler({ ...validArgs, model }, ctx)).rejects.toThrow(/configurações|Ajustes/);
+    }
+    expect(jev.judge).not.toHaveBeenCalled();
+    await tool.handler({ ...validArgs, model: 'jev-1.13.0' }, ctx);
+    expect(jev.judge).toHaveBeenCalledWith(expect.objectContaining({ model: 'jev-1.13.0' }));
+  });
+
   it('fails with the settings hint when there is no key', async () => {
     jev.hasJevCredential.mockReturnValue(false);
     await expect(tool.handler(validArgs, ctx)).rejects.toThrow(

@@ -10,6 +10,7 @@ import type { AgentGateContext } from './gate';
 import { judge } from '../jev/jev-client';
 import { assertMcpInvocationCurrent } from './mcp-protocol';
 import { hasDecisionCredential } from '../decision-models/decision-availability';
+import { clefModel } from '../decision-models/decision-routing';
 import {
   consumeJevRateSlot,
   resetJevRateLimitsForTesting,
@@ -95,7 +96,8 @@ const judgeTool: McpToolDef = {
     'to route, classify, rank, verify or gate with fixed answer sets; keep ' +
     'thresholds and rules in your own logic; ask small atomic questions. ' +
     "Never include secrets, tokens or customer data in state — it leaves the " +
-    "machine to the user's configured decision provider.",
+    "machine to the user's configured decision provider. The provider is chosen " +
+    'by the operator in settings; `model` may only name a Jev model.',
   available: () => hasDecisionCredential('judgeTool'),
   inputSchema: {
     type: 'object',
@@ -113,6 +115,13 @@ const judgeTool: McpToolDef = {
         `nexus_judge: argumentos inválidos: ${parsed.error.issues
           .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
           .join('; ')}`,
+      );
+    }
+    if (clefModel(parsed.data.model)) {
+      // A rota (e o custo 5,7x maior) vem da configuração do operador, não do argumento do agente.
+      throw new Error(
+        'nexus_judge: o provedor e a variante Clef são escolhidos pelo operador em ' +
+          'Ajustes → Modelos de decisão; não passe model=clef.',
       );
     }
     if (!hasDecisionCredential('judgeTool')) {
