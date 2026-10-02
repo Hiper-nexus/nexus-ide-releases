@@ -306,7 +306,7 @@ obrigatórios antes da publicação.
 Após cadastro seguro, os três candidatos responderam aos mesmos 18 casos
 sintéticos (9 de desenvolvimento e 9 heldout), sem falhas de transporte:
 
-| Modelo | Acertos totais | Heldout | Latência mediana | Custo observado do conjunto |
+| Modelo | Acertos totais | Heldout | Latência mediana | Custo estimado do conjunto (tarifa × tokens) |
 |---|---:|---:|---:|---:|
 | Jev 1.13.0 | 17/18 | 8/9 | 283 ms | US$ 0,00023499 |
 | Clef | 18/18 | 9/9 | 645 ms | US$ 0,00072888 |
@@ -353,5 +353,5 @@ A revisão da 0.76.161 mudou o desenho em pontos que valem registrar:
   linhas corrompidas são ignoradas em vez de derrubar o painel; falhas internas
   têm motivo próprio. Uma classificação de digest que falhou fica em cache por
   20 s para uma queda do provedor não custar 4 s por leitura de pane.
-- **Limites desta entrega.** Nada disto foi validado contra a Cloudflare real.
+- **Limites desta entrega.** Conexões e 18 casos sintéticos de texto foram validados na API real, assim como uma imagem sintética previamente redigida. As recusas, máscaras e consentimentos do fluxo visual endurecido foram cobertos em testes; isso não valida a precisão nem a privacidade em sites reais.
   Fundos CSS e dados pessoais em texto comum não são mascarados.

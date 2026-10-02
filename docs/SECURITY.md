@@ -132,3 +132,14 @@ npx vitest run src/main/orch/mcp-dispatch-security.test.ts \
   src/main/persistence/renderer-workspace-scope.test.ts \
   src/main/autonomy/autonomy-profiles.test.ts
 ```
+
+## Donos externos do reporte de problemas
+
+O endpoint de produção `api.nexuside.app/v1/bug-reports` pertence ao Worker
+`nexus-cloud-api` (repositório separado): `src/bugs/routes.ts`, `schemas.ts`,
+`build-report.ts` e `store.ts`. Ele exige a sessão nativa, limita o corpo a
+64 KB e aplica cota atômica por conta. O `server/` Express deste monorepo
+não é o dono desse endpoint. O site/admin é do repositório `nexus-site`.
+A revisão final confirmou os contratos locais e o GET protegido `/mine`
+retornou 401 sem credencial; isso não constitui envio de relato nem teste
+de administração em produção. Nenhuma dessas árvores externas foi alterada.
