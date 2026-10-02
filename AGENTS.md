@@ -505,9 +505,12 @@ saber isto antes de mexer:
   Waybar/Hyprland), em `src/main/redline/redline-linux.ts`. Sem toolchain
   nativa nova; viaja nos DEB/RPM/ZIP. "Instalar" no IPC = LIGAR a bandeja
   (`redline:install`), `redline:hide` = desligar. A escolha é um booleano em
-  `<userData>/redline-linux.json` (padrão DESLIGADO, só `true` estrito liga);
+  `<userData>/redline-linux.json` (padrão LIGADO quando o arquivo não existe);
   não entra no `settings.json` compartilhado. Sem diálogo nativo (só grava em
-  userData) e sem oferta one-time no boot: a descoberta é Uso e cotas.
+  userData) e sem oferta one-time no boot. F-739: sem escolha salva a bandeja
+  LIGA (só a ausência do arquivo liga; arquivo presente segue com leitura
+  estrita). O operador não achava o Redline: o botão ficava em Uso e cotas,
+  atrás do login. "Ocultar da bandeja" grava `false` e vale para sempre.
 - Limites honestos, ditos na UI: o ícone vive só enquanto o NexusIDE está
   aberto (Mac/Windows continuam depois de fechar o app); Wayland não deixa a
   bandeja posicionar um painel, então o painel escuro 400×600 vira uma lista
@@ -565,6 +568,18 @@ saber isto antes de mexer:
   (`mimeType` em `forge.config.ts`); o ZIP portátil escreve a própria em
   `$XDG_DATA_HOME/applications` (`src/main/linux-desktop-entry.ts`), ANTES de
   registrar o protocolo.
+- Definir o padrão não basta: o portal do desktop (por onde o Chrome abre
+  `nexus://`) e o GIO só oferecem apps REGISTRADOS, e o registro vem do índice
+  `mimeinfo.cache`, não do `MimeType=` da entrada. Sem a linha o login termina
+  em "Open With… No Apps available" (F-738). O ZIP portátil confere o índice
+  a cada boot (`ensureMimeIndex`: `update-desktop-database`, senão mescla a
+  própria linha); DEB/RPM dependem de `desktop-file-utils`, cujo gatilho faz
+  isso na instalação. Testar deep link só com `xdg-open` engana: ele lê o
+  padrão direto. Teste pelo portal:
+  `gdbus call --session --dest org.freedesktop.portal.Desktop --object-path
+  /org/freedesktop/portal/desktop --method
+  org.freedesktop.portal.OpenURI.OpenURI "" "nexus://quota" "{}"`, e confira
+  `gio mime x-scheme-handler/nexus` (precisa listar "Registered applications").
 - O `Exec` da entrada portátil vai SEM aspas. O `xdg-open` genérico (Hyprland,
   sway, qualquer desktop fora de GNOME/KDE/XFCE) trata `"/caminho/nexus-ide"`
   com as aspas como nome do comando, não acha, e entrega o link ao `$BROWSER`
