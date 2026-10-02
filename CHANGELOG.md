@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.76.185 — Marketplace recomendado
+
+Build do Windows. Inclui a 0.76.184 (Skills sem espera).
+
+- **Recomendados para este projeto no Marketplace (F-757).** O código lê as áreas da stack nos arquivos do projeto (dependências dos package.json do workspace, go.mod/go.work, requirements/pyproject, Gemfile, Dockerfile/compose, *.tf, .github/workflows; até 3 níveis, sem link, sem node_modules). Para cada área e tipo, os itens do catálogo cujo nome casa com ela viram até 12 opções, fora o que já está instalado. O Jev, ou o Clef, escolhe no máximo um agente e uma instrução por área (superfície `catalogPick`, desligável; aceite com confiança ≥ 0,7).
+  - Cada item mostra a área, o arquivo que a provou, a confiança e "Instalar", pelo mesmo fluxo de sempre (dois diálogos nativos). Nada é instalado sem o clique.
+  - Ao modelo vão só os rótulos das áreas e nome + categoria dos candidatos; nunca caminho, nome do projeto ou conteúdo.
+  - Avaliado com o Jev real em 7 projetos locais: 1 a 11 itens por projeto, uma consulta cada. A avaliação achou o `Gemfile` do fastlane de app mobile virando a área Ruby; corrigido antes de publicar.
+  - Cache de 24 h por projeto e versão do catálogo; "Recalcular" pergunta de novo.
+- **Ainda não visto a olho.** A tela foi validada pelos testes de componente; falta conferir no app instalado.
+
 ## 0.76.184 — Skills sem espera
 
 Build do Windows. Inclui a 0.76.183 (Skills escolhidas pelo Jev), que ficou só na tag: o instalador dela não foi publicado.

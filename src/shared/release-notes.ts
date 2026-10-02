@@ -9716,7 +9716,7 @@ export const RELEASE_076183: AppRelease = {
     },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076184: AppRelease = {
   version: '0.76.184',
   date: '2026-10-02',
   codename: 'Skills sem espera',
@@ -9749,6 +9749,36 @@ export const CURRENT_RELEASE: AppRelease = {
         'Uma pasta .claude/skills que aponta para fora do projeto é ignorada, ' +
         'como já fazia o painel Skills, e nome de pasta fora do formato de ' +
         'skill não chega ao agente.',
+    },
+  ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.185',
+  date: '2026-10-02',
+  codename: 'Marketplace recomendado',
+  summary:
+    'O Marketplace mostra os agentes e as instruções que o Jev escolheu para ' +
+    'a stack do seu projeto, cada um com o motivo. Instalar continua com a ' +
+    'mesma confirmação. Inclui a 0.76.184.',
+  highlights: [
+    {
+      title: 'Recomendados para este projeto',
+      detail:
+        'O Nexus lê a stack pelos arquivos do projeto (React, Go, Docker, ' +
+        'Supabase, testes…) e o Jev, ou o Clef, escolhe no catálogo o agente e ' +
+        'a instrução que mais ajudam em cada parte. Cada item diz para qual ' +
+        'parte foi escolhido e em qual arquivo ela apareceu. Nada é instalado ' +
+        'sem o seu clique.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Só o necessário sai da máquina',
+      detail:
+        'Para recomendar, o modelo de decisão recebe apenas os nomes das ' +
+        'tecnologias e dos itens do catálogo, nunca caminhos, o nome do ' +
+        'projeto ou conteúdo de arquivo. A recomendação pode ser desligada em ' +
+        'Orquestração, entre as superfícies dos modelos de decisão.',
     },
   ],
 };
