@@ -9172,7 +9172,7 @@ export const RELEASE_076166: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076167: AppRelease = {
   version: '0.76.167',
   date: '2026-10-02',
   codename: 'Qwen no ar',
@@ -9194,6 +9194,41 @@ export const CURRENT_RELEASE: AppRelease = {
         'Em qualquer faixa de tarefa, o Qwen chamado pelo Nexus usa o ' +
         'qwen3.8-max. O Qwen Code não tem mais login por OAuth (a Qwen ' +
         'encerrou em 15/04/2026); a assinatura é o Coding Plan, por chave.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.168',
+  date: '2026-10-02',
+  codename: 'Pane que começa',
+  summary:
+    'O Nexus confere se cada pane começou a tarefa e, se não começou, ' +
+    'corrige ali ou manda para outra CLI. Sair do app não encerra mais as ' +
+    'missões. Inclui a 0.76.167.',
+  highlights: [
+    {
+      title: 'Pane que não começa é corrigido ou trocado',
+      detail:
+        'Se um pane aberto para uma tarefa falha ao nascer, o Nexus fica ' +
+        'sabendo na hora. Se ele abre mas fica 90 segundos parado, a tarefa ' +
+        'é reenviada; se ainda assim não começar, o pane é fechado e a tarefa ' +
+        'vai para outra CLI, uma vez só. Quem pediu sempre recebe o aviso.',
+    },
+    {
+      title: 'Sair do Nexus não encerra as missões',
+      detail:
+        'O diálogo de sair agora tem "Sair e retomar ao abrir" como padrão: ' +
+        'as missões voltam sozinhas quando você abre o Nexus. "Sair e ' +
+        'encerrar missões" continua disponível como escolha explícita.',
+    },
+    {
+      title: 'O aviso de worker travado chega ao Maestro',
+      detail:
+        'O aviso de worker pendurado no meio do turno ficava preso na fila e ' +
+        'chegava a se repetir a cada 15 segundos. Agora ele é entregue ao ' +
+        'Maestro uma vez por hora, para ele destravar ou trocar o worker.',
     },
   ],
   fixes: [],

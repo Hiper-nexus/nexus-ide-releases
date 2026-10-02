@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.76.168 — Pane que começa
+
+Build do Windows. Inclui a 0.76.167 e o Redline do Linux que o Mac mandou depois dela.
+
+- **Pane solto tem que começar (F-723).** Um spawn pendente que falha ao nascer passa a ser liquidado no Main na hora (`reportPendingSpawnStartFailure`), em vez de esperar o grant de 30 min. O supervisor confere cada pane aberto por `nexus_pane_spawn` com briefing (`pane-start-watchdog.ts`).
+  - Sessão viva, parada e sem turno depois de 90 s: o briefing é reentregue uma vez.
+  - Ainda sem turno, sem sessão ou com falha provada: o pane morto é fechado (nunca o aberto pelo operador), o disjuntor do adapter conta a falha, e a tarefa reabre em outra CLI pela própria rota do spawn, uma vez por pedido.
+  - Quem pediu recebe `[nao-iniciou:<pane>]`. CLI nomeada pelo operador ou retomada só gera aviso.
+- **Sair do app não encerra as missões (F-726).** O único botão do diálogo ("Sair e encerrar processos") selava toda missão em execução como runtime-closed. Fechar para atualizar mandava a missão para o Arquivo e deixava todos os panes "em pausa". Agora "Sair e retomar ao abrir" é o padrão, e "Sair e encerrar missões" é a escolha explícita.
+- **[travado] uma vez por hora (F-725).** O registro "já avisei" do F-242 era global, mas a limpeza era por projeto. Com dois projetos abertos, o aviso se repetia a cada varredura de 15 s. Agora há um registro por projeto.
+- **[travado] chega ao Maestro (F-727).** `isDiagnosticDriverHandoff` descartava todo handoff `stalled`, inclusive o aviso do supervisor que existe para acordar o Maestro.
+
 ## 0.76.167 — Qwen no ar
 
 Build do Windows. Inclui a 0.76.166.
