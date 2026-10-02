@@ -19,14 +19,14 @@
   "spawn": {
     "interactive": [
       "qwen",
-      "-m",
+      "--model",
       "{{MODEL}}",
       "--approval-mode",
       "auto-edit"
     ],
     "headless": [
       "qwen",
-      "-m",
+      "--model",
       "{{MODEL}}",
       "-p",
       "{{PROMPT}}"

@@ -1,9 +1,40 @@
 import { describe, expect, it } from 'vitest';
+import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import {
   argvHonorsModel,
   firstDeclaredModel,
   interactiveTemplateForModel,
 } from './agent-model-argv';
+
+interface ManifestShape {
+  id: string;
+  spawn: { interactive: string[]; headless?: string[] };
+  models?: { flag?: string };
+}
+
+/**
+ * F-722: o manifesto do Qwen montava `-m {{MODEL}}` com `models.flag` em
+ * `--model`. A trava `argvHonorsModel` recusava todo spawn com modelo ("modelo
+ * selado não entrou no argv"), e sem modelo sobrava um `-m` solto. Todo
+ * manifesto embutido precisa montar o modelo com a MESMA flag que declara.
+ */
+describe('manifestos embutidos montam o modelo com a flag declarada (F-722)', () => {
+  const probe = 'probe-model';
+  for (const adapter of BUILTIN_ADAPTERS as ManifestShape[]) {
+    for (const mode of ['interactive', 'headless'] as const) {
+      const template = adapter.spawn[mode] ?? [];
+      if (!template.some((arg) => arg.includes('{{MODEL}}'))) continue;
+      it(`${adapter.id} (${mode})`, () => {
+        const flag = adapter.models?.flag;
+        const argv = template.map((arg) => arg.replace('{{MODEL}}', probe));
+        expect(argvHonorsModel(argv, flag, probe)).toBe(true);
+        const withoutModel = interactiveTemplateForModel(template, flag, '');
+        expect(withoutModel.some((arg) => arg.includes('{{MODEL}}'))).toBe(false);
+        if (flag && !flag.endsWith('=')) expect(withoutModel).not.toContain(flag);
+      });
+    }
+  }
+});
 
 describe('firstDeclaredModel', () => {
   it('ignores empty picks — "padrão da ferramenta" is not a model', () => {
