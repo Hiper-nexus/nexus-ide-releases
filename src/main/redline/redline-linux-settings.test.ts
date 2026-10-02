@@ -47,7 +47,8 @@ describe('redline linux settings (opt-in, default OFF)', () => {
     expect(readRedlineLinuxEnabled(nested)).toBe(true);
   });
 
-  it('writes the file private to the user (0600)', () => {
+  // O Windows não tem bits de modo POSIX (statSync devolve 0o666/0o444).
+  it.skipIf(process.platform === 'win32')('writes the file private to the user (0600)', () => {
     writeRedlineLinuxEnabled(dir, true);
     expect(statSync(file()).mode & 0o777).toBe(0o600);
   });
