@@ -6,7 +6,10 @@ const BACKEND_PATHS = ['/v1', '/billing', '/join', '/health', '/ready'];
 const ACCOUNT_PATHS = ['/conta', '/admin'];
 // Links permanentes de download: o HTML, os e-mails e a documentação apontam para cá e nunca ficam velhos.
 const DOWNLOAD_PREFIX = '/download/';
-const DOWNLOAD_SYSTEMS = { macos: 'macos', mac: 'macos', windows: 'windows', win: 'windows' };
+const DOWNLOAD_SYSTEMS = {
+  macos: 'macos', mac: 'macos', windows: 'windows', win: 'windows',
+  linux: 'linux', 'linux-deb': 'linux-deb', 'linux-rpm': 'linux-rpm', 'linux-zip': 'linux-zip',
+};
 const ALIASES = new Set(['/comunidade', '/sorteio', '/sorteio/']);
 // A comunidade também abre no endereço principal: quem não consegue o subdomínio (filtro de rede, DNS) chega por aqui.
 const COMMUNITY_MIRROR_PATH = '/comunidade/';
@@ -49,7 +52,8 @@ export async function handleRequest(request, env, originFetch = fetch) {
     return url.hostname === COMMUNITY_HOST ? new Response('Not found', { status: 404 }) : releaseCatalogResponse(request);
   }
   if (url.pathname.startsWith(DOWNLOAD_PREFIX)) {
-    const system = DOWNLOAD_SYSTEMS[url.pathname.slice(DOWNLOAD_PREFIX.length)];
+    const key = url.pathname.slice(DOWNLOAD_PREFIX.length);
+    const system = Object.hasOwn(DOWNLOAD_SYSTEMS, key) ? DOWNLOAD_SYSTEMS[key] : undefined;
     return system && url.hostname !== COMMUNITY_HOST ? downloadRedirectResponse(system) : new Response('Not found', { status: 404 });
   }
   if (url.hostname === PRODUCTION_HOST && (ALIASES.has(url.pathname) || (url.pathname.startsWith('/comunidade/') && url.pathname !== COMMUNITY_MIRROR_PATH))) {

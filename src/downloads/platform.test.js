@@ -28,3 +28,14 @@ test('Android and Linux retain manual download choices',()=>{
 test('Windows ARM and 32-bit devices are not promised x64 compatibility',()=>{
   for(const info of [{platform:'Windows',architecture:'arm',bitness:'64'},{platform:'Windows',architecture:'x86',bitness:'32'}])assert.equal(recommendDownload(detectPlatform(info),catalog).url,'#download');
 });
+
+test('Linux x64 é reconhecido e continua com escolha manual do pacote (a distribuição decide DEB, RPM ou ZIP)', () => {
+  const device = detectPlatform({ platform: 'Linux x86_64', userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' });
+  assert.deepEqual(device, { os: 'linux', architecture: 'x64' });
+  assert.equal(recommendDownload(device, catalog).url, '#download');
+});
+test('Linux ARM é reconhecido como ARM e não recebe promessa de pacote x64', () => {
+  const device = detectPlatform({ platform: 'Linux aarch64', userAgent: 'Mozilla/5.0 (X11; Linux aarch64)' });
+  assert.deepEqual(device, { os: 'linux', architecture: 'arm64' });
+  assert.equal(recommendDownload(device, catalog).url, '#download');
+});

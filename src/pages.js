@@ -2,8 +2,6 @@ import '@fontsource-variable/geist';
 import './content.css';
 import { browserPlatform } from './downloads/platform.js';
 import { nextSort, sortByValue } from './benchmarks/sort.js';
-import { STATUS_URL } from './plans/ui.js';
-import { describeStatus } from './plans/status.js';
 
 // Botões "Baixar": o link permanente de cada sistema (sempre a última release) conforme o computador de quem visita.
 async function recommendDownload() {
@@ -16,22 +14,6 @@ async function recommendDownload() {
   }
 }
 void recommendDownload().catch(() => {});
-
-// A tabela da comparação preenche preço e dias do teste com o que o servidor confirma agora; sem resposta, fica o texto de apoio.
-async function fillLiveSlots() {
-  const slots = document.querySelectorAll('[data-live]');
-  if (slots.length === 0) return;
-  try {
-    const response = await fetch(STATUS_URL, { credentials: 'omit', headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8000) });
-    const payload = response.ok ? await response.json() : null;
-    const view = describeStatus(payload && payload.ok === true && typeof payload.data === 'object' ? payload.data : null);
-    for (const slot of slots) {
-      if (slot.dataset.live === 'price' && view.price) slot.textContent = view.price;
-      if (slot.dataset.live === 'trial' && view.trial) slot.textContent = `${view.trial.days} ${view.trial.days === 1 ? 'dia' : 'dias'}`;
-    }
-  } catch { /* sem resposta: fica o texto de apoio */ }
-}
-void fillLiveSlots();
 
 function initializeBenchmarkTable() {
   const table = document.getElementById('bench-table');

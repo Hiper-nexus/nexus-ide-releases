@@ -90,18 +90,33 @@ export async function releaseCatalogResponse(request, deps = {}) {
 }
 
 /**
- * Link permanente de download: leva sempre ao instalador mais novo do sistema pedido. Só sai URL que passou
- * por `normalizeReleases` (github.com/Hiper-nexus/nexus-ide-releases); sem instalador, vai à página de releases.
+ * Para onde leva cada link permanente. macOS e Windows: o instalador mais novo do sistema (sem instalador, a página de
+ * releases). Linux: `linux-deb`, `linux-rpm` e `linux-zip` levam ao arquivo da versão mais nova; `linux` e qualquer formato
+ * ainda não publicado levam à seção de download do site, que diz em que pé o Linux está — nunca a um arquivo inexistente.
  */
-export async function downloadRedirectResponse(os, deps = {}) {
+function resolveDownload(catalog, target) {
+  if (target.startsWith('linux')) {
+    const latest = catalog.linux?.[0];
+    const file = latest?.files.find(item => `linux-${item.format}` === target);
+    return file ? { url: file.url, version: latest.version } : { url: `${CACHE_ORIGIN}/#download` };
+  }
+  const latest = catalog[target]?.[0];
+  return latest ? { url: latest.url, version: latest.version } : { url: `${RELEASE_REPOSITORY}/releases` };
+}
+
+/**
+ * Link permanente de download: leva sempre ao instalador mais novo do sistema pedido. Só sai URL que passou
+ * por `normalizeReleases` (github.com/Hiper-nexus/nexus-ide-releases).
+ */
+export async function downloadRedirectResponse(target, deps = {}) {
   const payload = await readReleaseCatalog(deps);
-  const latest = payload.catalog[os]?.[0];
+  const { url, version } = resolveDownload(payload.catalog, target);
   const headers = {
-    location: latest ? latest.url : `${RELEASE_REPOSITORY}/releases`,
+    location: url,
     'cache-control': `public, max-age=${REDIRECT_SECONDS}`,
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'strict-origin-when-cross-origin',
   };
-  if (latest) headers['x-nexus-version'] = latest.version;
+  if (version) headers['x-nexus-version'] = version;
   return new Response(null, { status: 302, headers });
 }

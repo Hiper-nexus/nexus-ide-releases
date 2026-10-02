@@ -9,14 +9,20 @@ function link(label, url) {
   return anchor;
 }
 
-function recommendationCopy(device, installer) {
+const LINUX_CHOICE = 'Escolha o pacote da sua distribuição: .deb (Debian, Ubuntu), .rpm (Fedora, openSUSE) ou o .zip portátil.';
+
+function recommendationCopy(device, installer, linux) {
+  if (device.os === 'linux') {
+    if (device.architecture === 'arm64' || device.architecture === 'arm32' || device.architecture === 'x86') return 'O Linux do NexusIDE é para x64; este computador não parece ser x64. Escolha somente se for compatível.';
+    return linux.length ? `Linux x64 identificado. ${LINUX_CHOICE}` : 'Linux x64 identificado. O pacote Linux ainda está em validação e não foi publicado; assim que sair, ele aparece aqui.';
+  }
   if (installer.url !== '#download') return `Instalador recomendado para ${device.os === 'macos' ? 'seu Mac Apple Silicon' : 'seu Windows x64'}. As duas opções continuam disponíveis abaixo.`;
   if (device.os === 'macos') return device.architecture === 'x64' || device.architecture === 'x86'
     ? 'Mac Intel identificado. O instalador disponível é para Apple Silicon; não há instalador Intel neste catálogo.'
     : 'Você está em um Mac. Este download exige Apple Silicon (M1 ou mais recente). Confira em  → Sobre Este Mac antes de escolher.';
   if (device.os === 'windows') return 'Este instalador é para Windows x64. A arquitetura deste computador não foi confirmada como x64; escolha somente se for compatível.';
   if (device.os === 'mobile') return 'Você está em um dispositivo móvel. Abra esta página no seu Mac ou PC para instalar o NexusIDE.';
-  return 'Escolha o sistema do computador onde você vai instalar. Downloads disponíveis: macOS Apple Silicon e Windows x64.';
+  return `Escolha o sistema do computador onde você vai instalar. Downloads disponíveis: macOS Apple Silicon, Windows x64${linux.length ? ' e Linux x64 (beta)' : '; o Linux está em validação'}.`;
 }
 
 function renderHistory(rows) {
@@ -32,7 +38,31 @@ function renderHistory(rows) {
   }));
 }
 
+const LINUX_FORMAT_LABEL = { deb: '.deb', rpm: '.rpm', zip: '.zip' };
+
+function renderLinux(rows) {
+  const card = document.querySelector('[data-download-linux]');
+  if (!card) return;
+  const latest = rows[0];
+  card.dataset.state = latest ? 'ready' : 'pending';
+  card.querySelector('[data-linux-status]').textContent = latest
+    ? `x64 · beta sem assinatura digital · v${latest.version} · sem atualização automática`
+    : 'x64 · .deb, .rpm e .zip portátil · em validação, ainda não publicado';
+  const formats = card.querySelector('[data-linux-formats]');
+  formats.hidden = !latest;
+  formats.replaceChildren(...(latest ? [
+    ...latest.files.map(file => {
+      const anchor = link(LINUX_FORMAT_LABEL[file.format], file.url);
+      anchor.className = 'linux-format';
+      anchor.setAttribute('aria-label', `Baixar o pacote ${LINUX_FORMAT_LABEL[file.format]} do Linux x64, versão ${latest.version}`);
+      return anchor;
+    }),
+    ...(latest.checksums ? [Object.assign(link('SHA-256 ↗', latest.checksums.url), { className: 'linux-sums' })] : []),
+  ] : []));
+}
+
 function renderDownloads(catalog, device) {
+  const linux = catalog.linux ?? [];
   for (const [os, label] of [['macos', 'Apple Silicon · .dmg'], ['windows', 'x64 · instalador']]) {
     const latest = catalog[os][0];
     if (!latest) continue;
@@ -45,7 +75,8 @@ function renderDownloads(catalog, device) {
     anchor.href = installer.url;
     anchor.textContent = installer.url === '#download' ? 'Escolher meu download ↓' : `Baixar para ${device.os === 'macos' ? 'macOS' : 'Windows'} ↗`;
   }
-  document.getElementById('download-compatibility').textContent = recommendationCopy(device, installer);
+  renderLinux(linux);
+  document.getElementById('download-compatibility').textContent = recommendationCopy(device, installer, linux);
   document.querySelectorAll('[data-download]').forEach(anchor => anchor.classList.toggle('recommended', installer.url !== '#download' && anchor.href === installer.url));
   renderHistory(catalog.windows);
 }

@@ -8,6 +8,10 @@ export function detectPlatform(info = {}) {
   const bitness = String(info.bitness || '');
   if (/^(arm|arm64|aarch64)$/.test(architecture)) return { os, architecture: bitness === '32' ? 'arm32' : 'arm64' };
   if (/^(x86|x64|x86_64|amd64)$/.test(architecture)) return { os, architecture: bitness === '32' ? 'x86' : bitness === '64' || architecture !== 'x86' ? 'x64' : 'unknown' };
+  if (os === 'linux') {
+    if (/aarch64|arm64/.test(ua)) return { os, architecture: 'arm64' };
+    if (/x86_64|amd64|x64/.test(ua)) return { os, architecture: 'x64' };
+  }
   if (os === 'windows') {
     if (/arm|aarch64/.test(ua)) return { os, architecture: 'arm64' };
     if (/win64|wow64|x64|amd64/.test(ua)) return { os, architecture: 'x64' };

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { injectPages, unresolvedPlaceholders } from './inject.js';
 
 test('os marcadores das páginas viram HTML dos dados, e a página pronta não tem marcador sobrando', () => {
-  for (const file of ['benchmarks/index.html', 'comparacao/index.html']) {
+  for (const file of ['benchmarks/index.html']) {
     const html = injectPages(readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8'));
     assert.deepEqual(unresolvedPlaceholders(html), [], file);
   }
@@ -16,13 +16,6 @@ test('a página de benchmarks recebe tabela, filtros por fabricante, notas e dat
   assert.match(html, /data-vendor-filter="Anthropic"/);
   assert.match(html, /bench-notes/);
   assert.match(html, /28 de setembro de 2026/);
-});
-
-test('a página de comparação recebe tabela, escolhas e data', () => {
-  const html = injectPages(readFileSync(new URL('../../comparacao/index.html', import.meta.url), 'utf8'));
-  assert.match(html, /<table class="compare-table"/);
-  assert.match(html, /compare-choice/);
-  assert.match(html, /2 de outubro de 2026/);
 });
 
 test('marcador desconhecido continua à vista (não some em silêncio)', () => {

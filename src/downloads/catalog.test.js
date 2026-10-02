@@ -124,3 +124,43 @@ test('HEAD no link permanente redireciona sem corpo', async () => {
   assert.equal(response.status, 302);
   assert.equal(await response.text(), '');
 });
+
+// ---- Linux: arquivo da versão mais nova quando os três pacotes existem; senão, a seção de download do site ----
+const linuxFiles = version => [`nexus-ide_${version}_amd64.deb`, `nexus-ide-${version}-1.x86_64.rpm`, `NexusIDE-linux-x64-${version}.zip`];
+const WITH_LINUX = [githubRelease('0.76.166', [dmg('0.76.166'), ...linuxFiles('0.76.166')]), ...SPLIT_RELEASES];
+
+test('linux-deb, linux-rpm e linux-zip levam ao arquivo da versão mais nova', async () => {
+  for (const [target, file] of [['linux-deb', 'nexus-ide_0.76.166_amd64.deb'], ['linux-rpm', 'nexus-ide-0.76.166-1.x86_64.rpm'], ['linux-zip', 'NexusIDE-linux-x64-0.76.166.zip']]) {
+    const response = await downloadRedirectResponse(target, { fetcher: upstream(WITH_LINUX) });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), `${REPO}/download/v0.76.166/${file}`);
+    assert.equal(response.headers.get('x-nexus-version'), '0.76.166');
+  }
+});
+
+test('/download/linux não escolhe pacote por quem visita: leva à seção de download do site', async () => {
+  const response = await downloadRedirectResponse('linux', { fetcher: upstream(WITH_LINUX) });
+  assert.equal(response.headers.get('location'), 'https://nexuside.app/#download');
+  assert.equal(response.headers.get('x-nexus-version'), null);
+});
+
+test('sem pacote de Linux publicado nenhum link de Linux aponta para arquivo inexistente', async () => {
+  for (const target of ['linux', 'linux-deb', 'linux-rpm', 'linux-zip']) {
+    const response = await downloadRedirectResponse(target, { fetcher: upstream(SPLIT_RELEASES) });
+    assert.equal(response.headers.get('location'), 'https://nexuside.app/#download', target);
+  }
+});
+
+test('Linux incompleto (só DEB e RPM) não é oferecido', async () => {
+  const half = [githubRelease('0.76.166', [dmg('0.76.166'), ...linuxFiles('0.76.166').slice(0, 2)]), ...SPLIT_RELEASES];
+  assert.equal((await downloadRedirectResponse('linux-deb', { fetcher: upstream(half) })).headers.get('location'), 'https://nexuside.app/#download');
+  const payload = await readReleaseCatalog({ fetcher: upstream(half) });
+  assert.deepEqual(payload.catalog.linux, []);
+});
+
+test('o catálogo público traz o Linux ao lado do Mac e do Windows', async () => {
+  const payload = await readReleaseCatalog({ fetcher: upstream(WITH_LINUX) });
+  assert.equal(payload.catalog.linux[0].version, '0.76.166');
+  assert.equal(payload.catalog.linux[0].files.length, 3);
+  assert.equal(payload.catalog.macos[0].version, '0.76.166');
+});

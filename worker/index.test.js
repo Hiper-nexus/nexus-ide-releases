@@ -183,7 +183,9 @@ test('/download/mac e /download/win são apelidos curtos', async t => {
 
 test('/download com sistema desconhecido não existe e o subdomínio da comunidade não serve download', async t => {
   const fetchMock = mockGitHubReleases(t);
-  assert.equal((await handleRequest(new Request('https://nexuside.app/download/linux'), {})).status, 404);
+  assert.equal((await handleRequest(new Request('https://nexuside.app/download/freebsd'), {})).status, 404);
+  for (const key of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) assert.equal((await handleRequest(new Request(`https://nexuside.app/download/${key}`), {})).status, 404, key);
+  assert.equal((await handleRequest(new Request('https://comunidade.nexuside.app/download/linux-deb'), {})).status, 404);
   assert.equal((await handleRequest(new Request('https://comunidade.nexuside.app/download/macos'), {})).status, 404);
   assert.equal(fetchMock.mock.callCount(), 0);
 });
@@ -193,4 +195,13 @@ test('/download/macos aceita HEAD e recusa POST', async t => {
   const head = await handleRequest(new Request('https://nexuside.app/download/macos', { method: 'HEAD' }), {});
   assert.equal(head.status, 302);
   assert.equal((await handleRequest(new Request('https://nexuside.app/download/macos', { method: 'POST' }), {})).status, 405);
+});
+
+test('/download/linux* existem: sem pacote publicado levam à seção de download do site', async t => {
+  mockGitHubReleases(t);
+  for (const path of ['linux', 'linux-deb', 'linux-rpm', 'linux-zip']) {
+    const response = await handleRequest(new Request(`https://nexuside.app/download/${path}`), {});
+    assert.equal(response.status, 302, path);
+    assert.equal(response.headers.get('location'), 'https://nexuside.app/#download', path);
+  }
 });
