@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.177 — Mac em dia
+
+Build do Mac. Inclui integralmente a 0.76.176 e traz para o Mac o que as builds do Windows (0.76.174 e 0.76.176) e do Linux (0.76.175) publicaram desde a 0.76.173, a última do Mac. Sem código novo além do que está nessas versões; o que é só de Windows ou de Linux continua restrito à plataforma.
+
+- **O que chega ao Mac:** o bloqueio do Maestro não vira "encerrada pelo operador" e sempre tem Retomar (F-738); missão parada à vista no Quadro, com Remover (F-741); o Maestro delega numa chamada só (F-744); o Enter do brief do Devin espera a colagem (F-743); o worker MiMo retomado não confirma "No, exit" (F-742); o Qwen volta a abrir (F-748); e a retomada do F-721 com as correções que o Windows publicou.
+- **Verificação no Mac:** suíte completa (19.851 testes) na base antes do bump; o portão de release (typecheck, renderer sinks, assinatura, notarização e smoke do app empacotado) é o juiz da publicação.
+- **Fora desta versão:** F-746 (a retomada e a rota não enxergam a cota medida de CLI com login nativo) continua registrado, sem correção.
+
 ## 0.76.176 — Helpers sem espera
 
 Build do Windows. Inclui a 0.76.175 (Login no Omarchy).

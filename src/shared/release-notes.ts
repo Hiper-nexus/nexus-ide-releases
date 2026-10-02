@@ -9477,7 +9477,7 @@ export const RELEASE_076175: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076176: AppRelease = {
   version: '0.76.176',
   date: '2026-10-02',
   codename: 'Helpers sem espera',
@@ -9543,6 +9543,47 @@ export const CURRENT_RELEASE: AppRelease = {
         'que o Nexus instala falhava a cada evento com "A sintaxe do comando ' +
         'está incorreta". Agora ele sai em silêncio quando não está num pane ' +
         'do Nexus.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.177',
+  date: '2026-10-02',
+  codename: 'Mac em dia',
+  summary:
+    'Build do Mac que traz o que saiu nas versões do Windows e do Linux ' +
+    'desde a 0.76.173: o bloqueio do Maestro sempre tem Retomar, a missão ' +
+    'parada fica à vista no Quadro, o Maestro abre os helpers numa chamada ' +
+    'só e os panes que nasciam parados (Qwen, Devin, MiMo) começam a ' +
+    'trabalhar. Inclui a 0.76.176.',
+  highlights: [
+    {
+      title: 'O Maestro bloqueado sempre tem saída',
+      detail:
+        'Um bloqueio que o Maestro declara não vira mais "encerrada pelo ' +
+        'operador" por engano, e a missão sempre mostra Retomar em vez de ' +
+        'ir para o Arquivo sem saída.',
+    },
+    {
+      title: 'Missão parada à vista no Quadro',
+      detail:
+        'Missão parada, dormindo ou sem sessão aparece em "Precisa de você", ' +
+        'e o card da missão sem processo ganha Remover, com confirmação.',
+    },
+    {
+      title: 'O Maestro abre os helpers mais rápido',
+      detail:
+        'O Maestro não consulta mais a rota de cada tarefa antes de abrir os ' +
+        'panes: delega numa chamada só.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Qwen, Devin e MiMo começam a trabalhar',
+      detail:
+        'O Qwen volta a abrir, o brief do Devin espera a colagem antes do ' +
+        'Enter e o worker MiMo retomado não fecha mais sozinho.',
     },
   ],
 };
