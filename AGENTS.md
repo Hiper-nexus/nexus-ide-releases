@@ -1192,7 +1192,16 @@ saber isto antes de mexer:
   incluída na chamada de classificação do `nexus_route_task`;
   `nexus_route_task` devolve `skillSuggestion`, o auto-route do `pane_spawn`
   acrescenta uma linha ao prompt do filho só com confiança ≥ 0.7 e skill
-  permitida. Cookbook oficial 'skill suggestion'.
+  permitida. Cookbook oficial 'skill suggestion'. F-753: as skills instaladas
+  no projeto (`.claude/skills`, `.nexus/skills` da pasta de execução, pelo
+  leitor do painel Skills, relido no máximo 1×/min) vão numa pergunta PRÓPRIA
+  (`projectSkill`) no mesmo lote. Misturadas às bundled, a confiança se
+  espalhava: em 60 tarefas reais do hipergo, as escolhas ≥ 0,7 foram 12 só
+  bundled, 8 misturado e 21 em duas perguntas. Vence a mais confiante, e o
+  empate fica com a do projeto, que leva `path` (SKILL.md relativo, formato
+  validado antes do brief). O pedido do "+ Pane" também ganha a dica (≥ 0,7,
+  1× a cada 30 min por pane e skill). Mudou a pergunta? Reavalie no mesmo
+  conjunto.
 - **Missão falada** (`jev-mission-pick.ts`, surface `missionPick`): "abre a
   missão X" no voice executor passa por `resolveMissionByName`
   (`shared/mission-name-match.ts`): nada casa → diz que não achou e lista as
