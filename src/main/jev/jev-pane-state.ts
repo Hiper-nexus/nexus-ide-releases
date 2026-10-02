@@ -94,6 +94,8 @@ export function getJevPaneHint(sessionId: string): JevPaneHint | null {
  */
 const DIGEST_CLASSIFY_TIMEOUT_MS = 4_000;
 const DIGEST_CACHE_TTL_MS = 60_000;
+/** A missing/invalid answer is remembered only briefly: long enough to survive an outage burst, short enough to recover. */
+const DIGEST_NEGATIVE_CACHE_TTL_MS = 20_000;
 const DIGEST_MAX_CHARS = 3_000;
 const DIGEST_CACHE_CAP = 256;
 
@@ -111,9 +113,10 @@ export interface PaneTailClassifyDeps {
   readonly now?: () => number;
 }
 
+/** `result: null` is a remembered failure (outage, malformed answer), keyed like any other by configuration. */
 const digestClassifyCache = new Map<
   string,
-  { at: number; result: PaneTailClassification; model: string }
+  { at: number; result: PaneTailClassification | null; model: string | null }
 >();
 
 export async function classifyPaneTailForDigest(
@@ -130,8 +133,8 @@ export async function classifyPaneTailForDigest(
     const before = configuration();
     const hash = createHash('sha256').update(before).update(clipped).digest('hex');
     const cached = digestClassifyCache.get(hash);
-    if (cached && now() - cached.at < DIGEST_CACHE_TTL_MS) {
-      recordJevOptimization({ surface: 'paneState', model: cached.model, optimization: { jevRequestsAvoided: 1 } });
+    if (cached && now() - cached.at < (cached.result ? DIGEST_CACHE_TTL_MS : DIGEST_NEGATIVE_CACHE_TTL_MS)) {
+      if (cached.result && cached.model) recordJevOptimization({ surface: 'paneState', model: cached.model, optimization: { jevRequestsAvoided: 1 } });
       return cached.result;
     }
     const judgeFn = deps.judge ?? judge;
@@ -172,7 +175,7 @@ export async function classifyPaneTailForDigest(
       const oldest = digestClassifyCache.keys().next().value;
       if (oldest !== undefined) digestClassifyCache.delete(oldest);
     }
-    if (classified && result) digestClassifyCache.set(hash, { at: now(), result: classified, model: result.model });
+    digestClassifyCache.set(hash, { at: now(), result: classified, model: result?.model ?? null });
     return classified;
   } catch {
     // Fail-open: digest sem estado vale mais que digest nenhum.

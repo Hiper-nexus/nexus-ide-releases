@@ -324,6 +324,28 @@ describe('classifyPaneTailForDigest (digest do pane_read)', () => {
     expect(judge).toHaveBeenCalledTimes(2);
   });
 
+  it('remembers a missing or invalid answer briefly, so an outage costs one call, not one per digest', async () => {
+    const judge = vi.fn<typeof jevJudge>(async () => null);
+    const deps = (now: number, configurationKey = 'cfg') => ({ ...digestDeps(judge, now), configurationKey: () => configurationKey });
+    expect(await classifyPaneTailForDigest('outage tail', deps(8_000_000))).toBeNull();
+    expect(await classifyPaneTailForDigest('outage tail', deps(8_019_000))).toBeNull();
+    expect(judge).toHaveBeenCalledTimes(1);
+    expect(await classifyPaneTailForDigest('outage tail', deps(8_021_000))).toBeNull();
+    expect(judge).toHaveBeenCalledTimes(2);
+    // A configuration change (new key, provider or consent) never reuses the remembered failure.
+    await classifyPaneTailForDigest('outage tail', deps(8_022_000, 'rotated'));
+    expect(judge).toHaveBeenCalledTimes(3);
+    // The brief memory does not count as a saved billable request.
+    const optimization = (await import('./jev-decision-log')).recordJevOptimization;
+    vi.mocked(optimization).mockClear();
+    await classifyPaneTailForDigest('outage tail', deps(8_023_000, 'rotated'));
+    expect(optimization).not.toHaveBeenCalled();
+    const invalid = vi.fn<typeof jevJudge>(async () => jevResult('bogus'));
+    await classifyPaneTailForDigest('bogus tail', { ...digestDeps(invalid, 9_000_000), configurationKey: () => 'cfg' });
+    await classifyPaneTailForDigest('bogus tail', { ...digestDeps(invalid, 9_005_000), configurationKey: () => 'cfg' });
+    expect(invalid).toHaveBeenCalledTimes(1);
+  });
+
   it('só os últimos 3.000 chars vão para o juiz', async () => {
     const judge = vi.fn<typeof jevJudge>(async () => jevResult('working', 0));
     const text = `${'x'.repeat(5_000)}FIM`;
