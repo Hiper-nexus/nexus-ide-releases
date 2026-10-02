@@ -137,7 +137,16 @@ export function verifyInstalledDesktopIdentity(root = process.cwd()) {
   });
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+/** `argv[1]` pode vir por um caminho com symlink; `import.meta.url` já é o real. */
+function isMainModule() {
+  try {
+    return fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
   const problems = verifyInstalledDesktopIdentity();
   if (problems.length > 0) {
     for (const problem of problems) process.stderr.write(`[linux-desktop-identity] FAIL: ${problem}\n`);

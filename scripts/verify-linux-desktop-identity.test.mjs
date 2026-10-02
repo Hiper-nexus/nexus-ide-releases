@@ -1,4 +1,7 @@
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   desktopIdentityProblems,
@@ -102,5 +105,25 @@ describe('installed Linux desktop identity', () => {
     const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
     expect(pkg.desktopName).toBe('nexus-ide.desktop');
     expect(pkg.name).toBe('nexus-ide');
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('running the check as a script', () => {
+  it('does not exit 0 in silence when invoked through a symlinked path (review 02/10)', () => {
+    // O guarda comparava argv[1] cru com o caminho real: por um symlink ele não
+    // reconhecia o próprio script, não rodava nada e saía 0 — um gate que passa
+    // sem conferir. Qualquer saída do script (ok ou FAIL) prova que ele rodou.
+    const real = path.resolve('scripts');
+    const holder = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-identity-link-'));
+    try {
+      const link = path.join(holder, 'scripts');
+      fs.symlinkSync(real, link);
+      const result = spawnSync(process.execPath, [path.join(link, 'verify-linux-desktop-identity.mjs')], {
+        encoding: 'utf8',
+      });
+      expect(`${result.stdout}${result.stderr}`).toMatch(/\[linux-desktop-identity\] (ok|FAIL)/);
+    } finally {
+      fs.rmSync(holder, { recursive: true, force: true });
+    }
   });
 });

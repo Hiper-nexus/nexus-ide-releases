@@ -169,9 +169,13 @@ jobs:
           test "$(dpkg-deb -f "$DEB" Version)" = "$RELEASE_VERSION"
           test "$(dpkg-deb -f "$DEB" Architecture)" = amd64
           dpkg-deb -f "$DEB" Depends | grep -Eq '(^|,)[[:space:]]*bubblewrap([[:space:](,]|$)'
+          # O runner pode ter desktop-file-utils pré-instalado, e aí o índice de tipos
+          # passaria mesmo sem a dependência: ela precisa estar declarada nos dois pacotes.
+          dpkg-deb -f "$DEB" Depends | grep -Eq '(^|,)[[:space:]]*desktop-file-utils([[:space:](,]|$)'
           test "$(rpm -qp --queryformat '%{VERSION}' "$RPM")" = "$RELEASE_VERSION"
           test "$(rpm -qp --queryformat '%{ARCH}' "$RPM")" = x86_64
           rpm -qpR "$RPM" | grep -Eq '^bubblewrap([[:space:]]|$)'
+          rpm -qpR "$RPM" | grep -Eq '^desktop-file-utils([[:space:]]|$)'
           sudo apt-get install --no-install-recommends -y "$DEB"
           test "$(dpkg-query -W -f='${Version}' nexus-ide)" = "$RELEASE_VERSION"
           # Installed desktop identity: brand icon and the nexus:// login handler.
