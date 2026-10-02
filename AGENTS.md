@@ -1201,7 +1201,20 @@ saber isto antes de mexer:
   empate fica com a do projeto, que leva `path` (SKILL.md relativo, formato
   validado antes do brief). O pedido do "+ Pane" também ganha a dica (≥ 0,7,
   1× a cada 30 min por pane e skill). Mudou a pergunta? Reavalie no mesmo
-  conjunto.
+  conjunto. A consulta do hook tem o teto TOTAL do conselho de delegação
+  (`DELEGATE_TIMEOUT_MS` + `AbortSignal`): o hook do Claude corta em 5 s.
+- **Recomendações do Marketplace** (F-757, `catalog-recommend.ts`, surface
+  `catalogPick`): o código lê as áreas da stack nos arquivos do projeto (até 3
+  níveis, sem link, sem `node_modules`; package.json do workspace,
+  go.mod/go.work, *.tf, compose…) e, por área e tipo, os itens do catálogo
+  cujo NOME casa com ela (máx. 12, os que começam pela área primeiro). Uma
+  `choice` por (área, tipo) num lote só; aceite ≥ 0,7. Ao modelo vão só os
+  rótulos das áreas e nome + categoria dos candidatos. Instalar continua nos
+  dois diálogos nativos: nunca instale por recomendação. Cache de 24 h por
+  raiz + commit do catálogo + candidatos; "Recalcular" ignora o cache.
+  Avaliado com o Jev real em 7 projetos locais: 1 a 11 itens por projeto. O
+  `Gemfile` do fastlane de app mobile virava "Ruby" (`notBeside`): regra nova
+  de área precisa de projeto real que a prove e de um que não deve casar.
 - **Missão falada** (`jev-mission-pick.ts`, surface `missionPick`): "abre a
   missão X" no voice executor passa por `resolveMissionByName`
   (`shared/mission-name-match.ts`): nada casa → diz que não achou e lista as
