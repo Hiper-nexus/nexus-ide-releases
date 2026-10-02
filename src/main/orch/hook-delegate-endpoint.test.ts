@@ -276,6 +276,8 @@ describe('hook /hook/delegate', () => {
       const deps = { advise, now: () => now, maestroDoctrine: () => 'DOUTRINA' };
       const delivery = '[nexus handoff delivery_metadata] from=pane-w1 handoff_id=h-7 summary: pronto';
       expect(text(await handleHookDelegateRequest(maestro, { prompt: delivery }, deps))).toBe(MAESTRO_TURN_REMINDER);
+      // O lembrete também carrega o dever de verificar (handoff é alegação, não prova).
+      expect(MAESTRO_TURN_REMINDER).toMatch(/alegação.*diff.*teste/);
       expect(advise).not.toHaveBeenCalled();
       now += 60_000;
       expect((await handleHookDelegateRequest(maestro, { prompt: 'solta mais panes' }, deps)).payload).toEqual({});

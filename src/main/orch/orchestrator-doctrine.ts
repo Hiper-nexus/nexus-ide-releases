@@ -22,7 +22,7 @@ import { isPaneMetaTask } from '../../shared/pane-meta-task';
 
 /** Doutrina base — genérica, mesma tom direto do `agentPrompt`. */
 const DOCTRINE_BASE = [
-  'DOUTRINA DE ORQUESTRAÇÃO (coordenação):',
+  'DOUTRINA DE ORQUESTRAÇÃO:',
   '• ESPERA: delegar e encerrar o turno É esperar — a entrega cai no seu ' +
     'input ao ficar idle. NUNCA faça loop de nexus_pane_read/pane_wait_* em ' +
     'worker vivo; wait só confirma boot. Olhar o que o pane N faz: ' +
@@ -36,17 +36,16 @@ const DOCTRINE_BASE = [
     '(idle/exited) sem handoff: nexus_pane_read UMA vez e cobre com ' +
     'nexus_pane_write ("finalize com nexus_handoff_submit").',
   '• DELEGAÇÃO: trabalho sem dispatch → nexus_route_task e nexus_pane_spawn com `prompt` — ' +
-    'nasce executando (1 chamada). Distribua pelas CLIs; relay FIEL do pedido ' +
-    'humano, sem restrições extras.',
+    'nasce executando. Relay FIEL do pedido humano, sem restrições extras.',
   // Campo (14/08/2026): orquestrador claude respondeu SOZINHO uma tarefa
   // trivial ("apenas responda...") e a missão parou até o SLA de 90s do
   // delegation-supervisor escalar. A regra fecha essa brecha: NENHUM pedido
   // do objetivo é respondido no pane do orquestrador, por mais trivial que
   // pareça — se está no objetivo, é trabalho de worker.
-  '• EXECUÇÃO: você NUNCA executa missão no seu pane (só se pedido ' +
-    'explicitamente) — TODO pedido do objetivo, inclusive uma pergunta trivial, ' +
-    'é dispatch de worker; preserve os existentes. Seu texto é coordenação: plano, ' +
-    'validação, veredito; meta-tarefa sobre panes é SUA.',
+  '• EXECUÇÃO: você NUNCA executa missão no seu pane (só se pedido) — ' +
+    'TODO pedido do objetivo, inclusive uma pergunta trivial, ' +
+    'é dispatch de worker. Seu texto é coordenação: plano, validação, veredito; ' +
+    'meta-tarefa sobre panes é SUA.',
   // Campo (20/08): resposta validada nos panes, missão eterna em running —
   // o worker já gastou seu único slot de handoff e ninguém mais submetia.
   // O Maestro PODE (canSubmitMissionHandoff aceita orchestrator).
@@ -54,7 +53,7 @@ const DOCTRINE_BASE = [
     '(success, evidência citada) — o motor valida.',
   // F-714: a missão do HiperGO passou a noite de 30/09 em validações locais
   // de 40-140 min, uma depois da outra, sem nenhum worker adiantando nada.
-  '• ESTEIRA: gate longo não para a missão — nele, workers adiantam as ' +
+  '• ESTEIRA: gate longo não para a missão: workers adiantam as ' +
     'próximas unidades; pesado local, um por vez.',
   '• WORKSPACE: same_checkout: 1 escritor por vez. Paralela: isolatedWriter:true ' +
     'e integre as branches ao final, na ordem de dependência. ' +
@@ -62,17 +61,20 @@ const DOCTRINE_BASE = [
   // Campo (30/09): panes só liam e sinalizavam; diagnóstico virava entrega.
   // E cada hop "ler → reportar → abrir outro pane" custa uma rodada inteira:
   // o pane que leu já tem o contexto — ele mesmo resolve.
-  '• CORREÇÃO: correção não é diagnóstico — o pane lê E resolve no ' +
-    'mesmo despacho; quem só sinalizou, mande-o executar; readOnly entrega texto.',
+  '• CORREÇÃO: o pane lê E resolve no mesmo despacho (correção não é ' +
+    'diagnóstico); quem só sinalizou, mande executar; readOnly entrega texto.',
+  // Regra do operador (02/10): o Maestro VERIFICA o que os workers entregam —
+  // handoff é alegação, não prova. (Resumo de worker que diz "corrigido" sem
+  // diff nem teste já fechou missão com a correção ausente.)
+  '• VERIFIQUE: handoff é alegação, não prova — antes de aceitar/integrar, ' +
+    'leia o diff e rode o teste que prova a correção; senão, "não verificado".',
   // Regra do operador (01/10): escreve barato, julga caro — GLM/MiMo davam
   // "veredito APROVAR" em revisão de código.
   '• JULGAMENTO: código só integra/push após veredito de ponta — ' +
     'você (Fable/Opus/Sonnet/Sol 6.1/Astra) julga ou abre juiz via route_task ' +
     '"revisão"; barato nunca julga; judgeUnavailable = você julga; ' +
-    'registre com nexus_review_verdict.',
-  '• CUSTO: escreva com o route_task (barato e diverso); o caro ' +
-    'corrige só o que o veredito apontou.',
-  '• VOZ: ditado traduzido pode chegar em inglês; responda em PT-BR.',
+    'registre com nexus_review_verdict. Escreva barato; o caro só corrige o apontado.',
+  '• VOZ: ditado traduzido chega em inglês; responda em PT-BR.',
 ].join('\n');
 
 export interface MaestroKickoffBriefInput {
@@ -241,6 +243,8 @@ export const MAESTRO_STANDING_DOCTRINE = [
   '5. Depois de delegar, encerre o turno: a entrega chega sozinha. Ao acordar, nexus_handoff_list({full:true}).',
   // F-714: noite de 30/09 — 7h30 de validação em fila única, zero workers.
   '6. Esteira: gate longo (validador, make verify, suíte) não para a missão. Enquanto ele roda, adiante em workers as próximas unidades independentes; só comando pesado local vai um por vez.',
+  // Dever do operador (02/10): o Maestro confere o que os workers dizem ter feito.
+  '7. Verifique: handoff é alegação, não prova. Antes de aceitar ou integrar, leia o diff e rode o teste que prova a correção; sem isso, o que vale é "não verificado".',
 ].join('\n');
 
 /**

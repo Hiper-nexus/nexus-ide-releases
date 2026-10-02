@@ -109,7 +109,8 @@ export const MAESTRO_TURN_REMINDER =
   '[Nexus] Maestro: o trabalho da missão vai para workers (nexus_pane_spawn, ' +
   'os independentes em paralelo); seu pane coordena, integra e valida. ' +
   'Trabalho restante sem worker vivo: abra os workers agora. ' +
-  'Entrega com código: veredito de modelo de ponta antes de integrar.';
+  'Entrega com código: veredito de modelo de ponta antes de integrar. ' +
+  'Handoff é alegação: confira o diff e rode o teste da correção antes de aceitar.';
 
 const maestroRemindedAt = new Map<string, number>();
 const leanRemindedAt = new Map<string, number>();

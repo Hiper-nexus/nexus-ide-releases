@@ -1483,6 +1483,14 @@ saber isto antes de mexer:
   barato e diverso, julga caro (veredito de ponta antes de integrar/push).
   O `DOCTRINE_BASE` tem teto de 2 KB testado: bullet novo exige comprimir os
   vizinhos SEM tocar nas frases que os testes fixam.
+- **O Maestro verifica, não confia (regra do operador, 02/10).** `VERIFIQUE:`
+  na doutrina base (kickoff), `7. Verifique` nas instruções permanentes e uma
+  frase no `MAESTRO_TURN_REMINDER`: handoff é alegação, não prova — antes de
+  aceitar ou integrar, o Maestro lê o diff e roda o teste que prova a correção;
+  sem isso, "não verificado". É doutrina (o modelo cumpre), não portão: o portão
+  mecânico é o veredito de ponta (F-234) e a revisão do Jev. A base ficou em 2046
+  bytes (teto 2048, testado): bullet novo exige comprimir os vizinhos sem tocar
+  nas frases que os testes fixam (`inclusive uma pergunta trivial`, `ESTEIRA`…).
 - F-234: o veredito de ponta virou enforcement. `mission_review_verdicts`
   (migração 039) grava cada veredito atado ao HEAD EXATO + `tree_dirty`;
   `nexus_review_verdict` registra com identidade medida pelo Main

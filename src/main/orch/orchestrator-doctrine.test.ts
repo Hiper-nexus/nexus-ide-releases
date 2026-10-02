@@ -325,6 +325,17 @@ describe('doutrina permanente do Maestro (F-701)', () => {
     expect(MAESTRO_STANDING_DOCTRINE).toContain('Esteira');
   });
 
+  it('o Maestro VERIFICA o que os workers entregam: handoff é alegação, não prova (dever do operador, 02/10)', () => {
+    // Nas três portas por onde a doutrina chega: kickoff, instruções permanentes e lembrete de turno.
+    const base = buildOrchestratorDoctrine(null, mission());
+    expect(base).toMatch(/VERIFIQUE: handoff é alegação, não prova/);
+    expect(base).toMatch(/leia o diff e rode o teste que prova a correção/);
+    expect(base).toMatch(/"não verificado"/);
+    expect(MAESTRO_STANDING_DOCTRINE).toMatch(/Verifique: handoff é alegação, não prova/);
+    expect(MAESTRO_STANDING_DOCTRINE).toMatch(/leia o diff e rode o teste que prova a correção/);
+    expect(MAESTRO_STANDING_DOCTRINE).toMatch(/"não verificado"/);
+  });
+
   it('execução direta e pergunta aos panes têm doutrina própria, que contradiz "delegue"', () => {
     for (const intentContract of [
       { lane: 'consult' },
