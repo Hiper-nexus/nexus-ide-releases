@@ -9,6 +9,7 @@ import { missionChromeTitle } from '../../shared/mission-identity';
 import { NEXUS_LEFTOVER_PARKED_MARKER } from '../../shared/mission-leftover-isolation';
 import {
   groupTaskBoardMissionsByLane,
+  isRemovableTaskBoardMission,
   isTaskBoardMissionEntry,
   projectTaskBoardEntries,
   taskBoardIsEmpty,
@@ -116,7 +117,7 @@ describe('task-board-projection — lanes derivadas do snapshot', () => {
     expect(entry?.stateLabel).toBe('Precisa de você');
   });
 
-  it('Parou (Encerrar) vai para o Arquivo com o rótulo civil', () => {
+  it('Parou (Encerrar) fica em Precisa de você com o rótulo civil (F-741)', () => {
     const [entry] = missionEntries({
       missions: [],
       missionSummaries: [
@@ -126,6 +127,22 @@ describe('task-board-projection — lanes derivadas do snapshot', () => {
         }),
       ],
       todoLists: [],
+    });
+    expect(entry?.lane).toBe('needs_you');
+    expect(entry?.stateLabel).toBe('Parou');
+  });
+
+  it('Parou arquivado pelo operador vai para o Arquivo', () => {
+    const [entry] = missionEntries({
+      missions: [],
+      missionSummaries: [
+        summary({
+          state: 'blocked_user',
+          stateReason: { code: 'runtime-closed', label: 'Parou' },
+        }),
+      ],
+      todoLists: [],
+      archivedMissionIds: ['mission-live'],
     });
     expect(entry?.lane).toBe('archive');
     expect(entry?.stateLabel).toBe('Parou');
@@ -190,7 +207,7 @@ describe('task-board-projection — fallback da linha legada (hidratação)', ()
     }
   });
 
-  it('linha legada encerrada pelo operador lê Parou no Arquivo', () => {
+  it('linha legada encerrada pelo operador lê Parou em Precisa de você', () => {
     const [entry] = missionEntries({
       missions: [
         mission({
@@ -200,11 +217,11 @@ describe('task-board-projection — fallback da linha legada (hidratação)', ()
       ],
       todoLists: [],
     });
-    expect(entry?.lane).toBe('archive');
+    expect(entry?.lane).toBe('needs_you');
     expect(entry?.stateLabel).toBe('Parou');
   });
 
-  it('linha legada leftover-park lê Dormindo no Arquivo', () => {
+  it('linha legada leftover-park lê Dormindo em Precisa de você', () => {
     const [entry] = missionEntries({
       missions: [
         mission({
@@ -214,7 +231,7 @@ describe('task-board-projection — fallback da linha legada (hidratação)', ()
       ],
       todoLists: [],
     });
-    expect(entry?.lane).toBe('archive');
+    expect(entry?.lane).toBe('needs_you');
     expect(entry?.stateLabel).toBe('Dormindo');
   });
 
@@ -286,6 +303,65 @@ describe('task-board-projection — agrupamento por lane', () => {
       true,
     );
     expect(Object.isFrozen(lanes)).toBe(true);
+  });
+});
+
+describe('task-board-projection — Remover no card (F-741)', () => {
+  function removable(
+    overrides: Partial<MissionSummarySnapshot>,
+    archivedMissionIds: readonly string[] = [],
+  ): boolean {
+    const [entry] = missionEntries({
+      missions: [],
+      missionSummaries: [summary(overrides)],
+      todoLists: [],
+      archivedMissionIds,
+    });
+    return isRemovableTaskBoardMission(entry!);
+  }
+
+  it('oferece Remover para missão parada, dormindo ou sem sessão', () => {
+    expect(
+      removable({
+        state: 'blocked_user',
+        stateReason: { code: 'runtime-closed', label: 'Parou' },
+      }),
+    ).toBe(true);
+    expect(
+      removable({
+        state: 'blocked_user',
+        stateReason: { code: 'session-sleeping', label: 'Dormindo' },
+      }),
+    ).toBe(true);
+    expect(
+      removable({
+        state: 'blocked_technical',
+        stateReason: { code: 'session-dead', label: 'Sem sessão' },
+        needsAttention: true,
+      }),
+    ).toBe(true);
+  });
+
+  it('oferece Remover para tudo que está no Arquivo', () => {
+    expect(removable({ state: 'failed', needsAttention: true })).toBe(true);
+    expect(removable({ state: 'completed' }, ['mission-live'])).toBe(true);
+    expect(removable({ state: 'review_ready' }, ['mission-live'])).toBe(true);
+  });
+
+  it('nunca oferece Remover para trabalho vivo ou pergunta aberta', () => {
+    for (const state of ['starting', 'running', 'recovering', 'stopping'] as const) {
+      expect(removable({ state })).toBe(false);
+      // Arquivar não esconde trabalho vivo, então também não o torna removível.
+      expect(removable({ state }, ['mission-live'])).toBe(false);
+    }
+    expect(
+      removable({
+        state: 'blocked_user',
+        stateReason: { code: 'open-question', label: 'Aguardando sua resposta' },
+        needsAttention: true,
+      }),
+    ).toBe(false);
+    expect(removable({ state: 'completed' })).toBe(false);
   });
 });
 

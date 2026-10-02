@@ -71,8 +71,10 @@ export type MissionKanbanSummary = Pick<
  * 1. Terminal durável é autoridade (mesma régua do main): `failed` é arquivo;
  *    `completed` só é "Pronto" com o aceite humano — antes disso é "Validando".
  * 2. Parou/Dormindo (Encerrar, leftover-park, session-dead): sem processo e
- *    sem pergunta. A doutrina da rail diz que isso não é pedido humano; aqui
- *    é histórico, como a seção "Encerradas".
+ *    sem pergunta, mas sem terminar — só volta pelo Retomar de quem pediu.
+ *    Fica em "Precisa de você" (F-741, 02/10: na gaveta recolhida do Arquivo
+ *    nem o dono achava a missão parada). Arquivada pelo operador, vai para o
+ *    Arquivo.
  * 3. Atenção viva vence o estado: pergunta aberta, reparo, recuperação que
  *    pede gente. É a única lane que pulsa.
  * 4. Trabalho vivo nunca se esconde, nem arquivado.
@@ -90,7 +92,9 @@ export function missionKanbanLane(
     if (archived) return 'archive';
     return input.awaitsOperatorReview ? 'validating' : 'ready';
   }
-  if (isIsolationStopReasonCode(summary.stateReason?.code)) return 'archive';
+  if (isIsolationStopReasonCode(summary.stateReason?.code)) {
+    return archived ? 'archive' : 'needs_you';
+  }
   if (
     summary.needsAttention ||
     state === 'blocked_user' ||

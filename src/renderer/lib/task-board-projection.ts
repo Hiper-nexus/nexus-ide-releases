@@ -13,6 +13,7 @@ import {
   wasMissionRuntimeClosedByOperator,
 } from '../../shared/mission-recovery-policy';
 import {
+  isIsolationStopReasonCode,
   persistClosedReason,
   sessionSleepingReason,
 } from '../../shared/session-restore-liveness';
@@ -187,6 +188,18 @@ export function isTaskBoardMissionEntry(
   entry: TaskBoardEntry,
 ): entry is TaskBoardMissionEntry {
   return entry.kind === 'mission';
+}
+
+/**
+ * F-741: o card oferece "Remover" só para missão sem processo — arquivada ou
+ * parada (Parou/Dormindo). Missão viva ou à espera de resposta se encerra no
+ * quadro dela, nunca por um clique no card.
+ */
+export function isRemovableTaskBoardMission(entry: TaskBoardMissionEntry): boolean {
+  return (
+    entry.lane === 'archive' ||
+    isIsolationStopReasonCode(entry.summary.stateReason?.code)
+  );
 }
 
 /** Missões por lane, já na ordem do quadro: atenção primeiro, depois recência. */

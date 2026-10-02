@@ -750,6 +750,48 @@
   border-top: 1px solid var(--border);
 }
 
+/* F-741: "Remover" no card de missão parada ou arquivada. */
+.mission-kanban__card {
+  position: relative;
+}
+
+.mission-kanban__card[data-removable='true'] .mission-kanban__card-open {
+  padding-inline-end: calc(var(--space-4) + 32px);
+}
+
+.mission-kanban__card-remove {
+  position: absolute;
+  inset-block-start: var(--space-2);
+  inset-inline-end: var(--space-2);
+  z-index: 1;
+  display: inline-grid;
+  inline-size: 32px;
+  block-size: 32px;
+  place-items: center;
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition:
+    color var(--duration-fast, 150ms) ease,
+    background-color var(--duration-fast, 150ms) ease,
+    border-color var(--duration-fast, 150ms) ease;
+}
+
+.mission-kanban__card-remove:hover {
+  border-color: color-mix(in srgb, var(--state-failed) 40%, var(--border));
+  background: color-mix(in srgb, var(--state-failed) 10%, transparent);
+  color: var(--state-failed);
+}
+
+.mission-kanban__card-remove:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .mission-kanban__card-open {
   display: flex;
   flex-direction: column;
@@ -871,7 +913,8 @@
   }
 
   .mission-kanban__archive-summary::before,
-  .mission-kanban__card-open {
+  .mission-kanban__card-open,
+  .mission-kanban__card-remove {
     transition: none;
   }
 }

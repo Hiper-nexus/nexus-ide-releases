@@ -122,7 +122,7 @@ describe('missionKanbanLane — aceite humano', () => {
   });
 });
 
-describe('missionKanbanLane — Parou/Dormindo não é pedido humano', () => {
+describe('missionKanbanLane — Parou/Dormindo fica à vista (F-741)', () => {
   const isolationCodes = [
     RUNTIME_CLOSED_REASON_CODE,
     SESSION_SLEEPING_REASON_CODE,
@@ -137,14 +137,19 @@ describe('missionKanbanLane — Parou/Dormindo não é pedido humano', () => {
     stoppedStates.flatMap((state) =>
       isolationCodes.map((code) => [state, code] as const),
     ),
-  )('%s + %s → Arquivo, mesmo que a atenção venha marcada', (state, code) => {
+  )('%s + %s → Precisa de você; arquivada pelo operador → Arquivo', (state, code) => {
+    // 02/10: na gaveta recolhida do Arquivo nem o dono achava a missão
+    // parada — "se eu não acho, imagina o cliente".
     const stopped = summary({
       state,
       stateReason: { code, label: 'Parou' },
     });
-    expect(missionKanbanLane(stopped, QUIET)).toBe('archive');
+    expect(missionKanbanLane(stopped, QUIET)).toBe('needs_you');
     expect(
       missionKanbanLane({ ...stopped, needsAttention: true }, QUIET),
+    ).toBe('needs_you');
+    expect(
+      missionKanbanLane(stopped, { ...QUIET, archivedByOperator: true }),
     ).toBe('archive');
   });
 

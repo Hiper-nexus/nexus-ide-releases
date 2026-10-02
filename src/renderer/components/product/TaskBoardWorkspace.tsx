@@ -9,11 +9,13 @@ import {
 } from '../../../shared/mission-kanban';
 import {
   groupTaskBoardMissionsByLane,
+  isRemovableTaskBoardMission,
   projectTaskBoardEntries,
   taskBoardIsEmpty,
   type TaskBoardMissionEntry,
   type TaskBoardTodoEntry,
 } from '../../lib/task-board-projection';
+import { confirmAndRemoveMission } from '../../orch/remove-mission-flow';
 import { useOrchStore } from '../../state/orch-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { useToastStore } from '../../state/toast-store';
@@ -56,15 +58,36 @@ interface MissionKanbanCardProps {
   readonly onOpen: (missionId: string) => void;
 }
 
-/** Card = título + estado em palavra + idade curta. Sem arrastar: a lane é derivada. */
+/**
+ * Card = título + estado em palavra + idade curta. Sem arrastar: a lane é
+ * derivada. Missão sem processo (arquivada ou parada) ganha "Remover" (F-741).
+ */
 function MissionKanbanCard({ entry, now, onOpen }: MissionKanbanCardProps) {
   const { summary } = entry;
+  const removable = isRemovableTaskBoardMission(entry);
   return (
     <li
       className="mission-kanban__card"
       data-state={summary.state}
       data-attention={summary.needsAttention ? 'true' : undefined}
+      data-removable={removable ? 'true' : undefined}
     >
+      {removable ? (
+        <button
+          type="button"
+          className="mission-kanban__card-remove"
+          aria-label={`Remover a missão ${entry.name}`}
+          title="Remover missão"
+          onClick={() => {
+            void confirmAndRemoveMission({
+              missionId: summary.id,
+              title: entry.name,
+            });
+          }}
+        >
+          <PixelIcon name="trash" size={12} />
+        </button>
+      ) : null}
       <button
         type="button"
         className="mission-kanban__card-open"

@@ -5,9 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MissionSummarySnapshot } from '../../../shared/mission-engine-contract';
 import { MISSION_OPERATOR_APPROVED_MARKER } from '../../../shared/mission-recovery-policy';
 import type { Mission, TodoList, TodoStatus } from '../../../shared/orch-types';
+import { useConfirmStore } from '../../state/confirm-store';
 import { useMissionSetupStore } from '../../state/mission-setup-store';
 import { useOrchStore } from '../../state/orch-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
+import { useWorkspaceStore } from '../../state/workspace-store';
 import { TaskBoardWorkspace } from './TaskBoardWorkspace';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -156,6 +158,8 @@ afterEach(() => {
   for (const { root } of mountedRoots.splice(0).reverse()) {
     act(() => root.unmount());
   }
+  useConfirmStore.setState({ pending: null, queue: [] });
+  useWorkspaceStore.setState({ current: null });
   document.body.replaceChildren();
   Reflect.deleteProperty(window, 'nexus');
   vi.clearAllMocks();
@@ -754,6 +758,77 @@ describe('TaskBoardWorkspace — lanes de missão derivadas do snapshot', () => 
     });
     expect(orchBoundary.updateMission).not.toHaveBeenCalled();
     expect(orchBoundary.removeMission).not.toHaveBeenCalled();
+  });
+
+  it('missão parada fica à vista em Precisa de você e só ela ganha Remover (F-741)', async () => {
+    useWorkspaceStore.setState({
+      current: { path: '/projeto', name: 'Projeto', lastOpenedAt: 1 },
+    });
+    orchBoundary.removeMission.mockResolvedValue({ removed: true });
+    useOrchStore.setState({
+      missions: [],
+      missionSummaries: [
+        summary({ id: 'live', title: 'Construindo agora', state: 'running' }),
+        summary({
+          id: 'stopped',
+          title: 'Parada pelo operador',
+          state: 'blocked_user',
+          stateReason: { code: 'runtime-closed', label: 'Parou' },
+        }),
+      ],
+      todoLists: [],
+    });
+    const host = mount(<TaskBoardWorkspace />);
+
+    const needsYou = host.querySelector('.mission-kanban__lane[data-lane="needs_you"]');
+    expect(cardTitles(needsYou)).toEqual(['Parada pelo operador']);
+    expect(host.querySelector('details.mission-kanban__archive')).toBeNull();
+    const removes = [
+      ...host.querySelectorAll<HTMLButtonElement>('.mission-kanban__card-remove'),
+    ];
+    expect(removes.map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Remover a missão Parada pelo operador',
+    ]);
+
+    act(() => removes[0]!.click());
+    const pending = useConfirmStore.getState().pending;
+    expect(pending?.title).toBe('Remover "Parada pelo operador"?');
+    expect(pending?.danger).toBe(true);
+    expect(orchBoundary.removeMission).not.toHaveBeenCalled();
+
+    await act(async () => {
+      useConfirmStore.getState().decide(true);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(orchBoundary.removeMission).toHaveBeenCalledWith('stopped');
+    expect(orchBoundary.updateMission).not.toHaveBeenCalled();
+  });
+
+  it('cancelar o Remover não apaga nada', async () => {
+    useWorkspaceStore.setState({
+      current: { path: '/projeto', name: 'Projeto', lastOpenedAt: 1 },
+    });
+    useOrchStore.setState({
+      missions: [],
+      missionSummaries: [
+        summary({ id: 'broken', title: 'Falhou feio', state: 'failed', needsAttention: true }),
+      ],
+      todoLists: [],
+    });
+    const host = mount(<TaskBoardWorkspace />);
+    const remove = host.querySelector<HTMLButtonElement>(
+      '.mission-kanban__archive .mission-kanban__card-remove',
+    );
+    if (!remove) throw new Error('Card do arquivo sem Remover');
+
+    act(() => remove.click());
+    await act(async () => {
+      useConfirmStore.getState().decide(false);
+      await Promise.resolve();
+    });
+    expect(orchBoundary.removeMission).not.toHaveBeenCalled();
+    expect(useConfirmStore.getState().pending).toBeNull();
   });
 
   it('sem tarefas, as colunas de tarefa saem de cena; com tarefas, voltam rotuladas', () => {
