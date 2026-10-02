@@ -162,6 +162,7 @@ describe('routingOverridesFrom', () => {
       effortOverride: 'high',
       classifierSource: 'jev',
       escalate: 0.7,
+      confidence: { tier: 0.9, specialty: 0.8, effort: 0.9 },
     });
   });
 
@@ -203,6 +204,75 @@ describe('routingOverridesFrom', () => {
     expect(routingOverridesFrom({ ...full, tierConfidence: 0.2, specialtyConfidence: 0.2 }, undefined)).toMatchObject({
       tierOverride: undefined, specialtyOverride: undefined, effortOverride: 'high', classifierSource: 'mixed',
     });
+  });
+});
+
+describe('routingOverridesFrom — confiança do recibo (só dimensão que o Jev decidiu)', () => {
+  const full: JevTaskClassification = {
+    tier: 'medium',
+    tierConfidence: 0.82,
+    specialty: 'feature',
+    specialtyConfidence: 0.71,
+    effort: 'medium',
+    effortConfidence: 0.66,
+    escalate: 0.1,
+    model: 'jev-test',
+  };
+
+  it('expõe a confiança das três dimensões aceitas', () => {
+    expect(routingOverridesFrom(full, undefined).confidence).toEqual({
+      tier: 0.82,
+      specialty: 0.71,
+      effort: 0.66,
+    });
+  });
+
+  it('0,59 não vira número: a dimensão caiu para a heurística, então não ganha confiança', () => {
+    const out = routingOverridesFrom({ ...full, tierConfidence: 0.59 }, undefined);
+    expect(out.confidence).toEqual({ specialty: 0.71, effort: 0.66 });
+    expect(out.confidence).not.toHaveProperty('tier');
+    // O piso é inclusivo: 0,6 exato foi aceito pelo roteador e aparece.
+    expect(routingOverridesFrom({ ...full, tierConfidence: 0.6 }, undefined).confidence).toMatchObject({ tier: 0.6 });
+  });
+
+  it('arredonda a 2 casas', () => {
+    expect(
+      routingOverridesFrom(
+        { ...full, tierConfidence: 0.8349, specialtyConfidence: 0.7551, effortConfidence: 0.6 },
+        undefined,
+      ).confidence,
+    ).toEqual({ tier: 0.83, specialty: 0.76, effort: 0.6 });
+  });
+
+  it('tier do chamador manda: sem confiança de tier, o resto segue', () => {
+    expect(routingOverridesFrom(full, 'easy').confidence).toEqual({ specialty: 0.71, effort: 0.66 });
+  });
+
+  it('esforço ausente ou inválido não ganha número mesmo com confiança alta', () => {
+    const out = routingOverridesFrom({ ...full, effort: undefined, effortConfidence: 0.95 }, undefined);
+    expect(out.confidence).toEqual({ tier: 0.82, specialty: 0.71 });
+  });
+
+  it('sem classificação ou sem nenhuma dimensão aceita: nada de objeto vazio', () => {
+    expect(routingOverridesFrom(null, 'medium').confidence).toBeUndefined();
+    expect(
+      routingOverridesFrom(
+        { ...full, tierConfidence: 0.2, specialtyConfidence: 0.2, effortConfidence: 0.2 },
+        undefined,
+      ).confidence,
+    ).toBeUndefined();
+  });
+
+  it('piso de revisão de código: o tier final não é o do Jev, então não carrega o número dele', () => {
+    const review = 'Revisão de código SÊNIOR (staff), SOMENTE LEITURA, da rodada final antes de publicar.';
+    const jevTrivial: JevTaskClassification = { ...full, tier: 'trivial', tierConfidence: 0.9 };
+    const out = routingOverridesFrom(jevTrivial, undefined, review);
+    expect(out.tierOverride).toBe('hard');
+    expect(out.confidence).not.toHaveProperty('tier');
+    // Quando o Jev já está no piso ou acima dele, o número é dele e fica.
+    expect(
+      routingOverridesFrom({ ...full, tier: 'critical', tierConfidence: 0.9 }, undefined, review).confidence,
+    ).toMatchObject({ tier: 0.9 });
   });
 });
 
