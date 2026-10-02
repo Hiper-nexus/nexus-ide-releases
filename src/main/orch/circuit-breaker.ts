@@ -27,6 +27,8 @@ interface BreakerEntry {
   state: CircuitState;
   failures: number[];
   openedAt: number | null;
+  /** Janela aberta própria de um `trip` (F-734); sem ela vale a da config. */
+  openMs?: number;
 }
 
 export interface CircuitSnapshot {
@@ -70,8 +72,9 @@ export class CircuitBreakerRegistry {
     const now = this.#now();
     this.#prune(e, now);
     if (e.state === 'open' && e.openedAt != null) {
-      if (now - e.openedAt >= this.#config.openMs) {
+      if (now - e.openedAt >= (e.openMs ?? this.#config.openMs)) {
         e.state = 'half-open';
+        e.openMs = undefined;
       }
     }
     return e;
@@ -97,7 +100,32 @@ export class CircuitBreakerRegistry {
     const e = this.#refresh(key);
     e.failures = [];
     e.openedAt = null;
+    e.openMs = undefined;
     e.state = 'closed';
+  }
+
+  /**
+   * F-734: abre na hora, por `openMs`, uma falha que repetir não cura — a
+   * credencial que TODOS os panes da chave usam foi recusada pelo provedor.
+   * Contar 1 de 3 em 60 s não bastava: cada recusa leva minutos de retry da
+   * CLI para aparecer, então o disjuntor nunca abria. Depois da janela segue
+   * o ciclo normal (half-open; o 1º sucesso fecha). Nunca encurta uma janela
+   * já aberta mais longa.
+   */
+  trip(key: string, openMs: number = this.#config.openMs): void {
+    const e = this.#refresh(key);
+    const now = this.#now();
+    e.failures.push(now);
+    if (
+      e.state === 'open' &&
+      e.openedAt != null &&
+      e.openedAt + (e.openMs ?? this.#config.openMs) >= now + openMs
+    ) {
+      return;
+    }
+    e.state = 'open';
+    e.openedAt = now;
+    e.openMs = openMs;
   }
 
   recordFailure(key: string): void {

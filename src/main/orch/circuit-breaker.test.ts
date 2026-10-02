@@ -66,4 +66,45 @@ describe('CircuitBreakerRegistry', () => {
   it('defaults match exported config', () => {
     expect(DEFAULT_CIRCUIT_CONFIG.failureThreshold).toBe(3);
   });
+
+  it('F-734: trip abre na hora pela janela própria e depois segue o ciclo normal', () => {
+    let now = 1_000_000;
+    const b = new CircuitBreakerRegistry(
+      { failureThreshold: 3, windowMs: 60_000, openMs: 30_000 },
+      () => now,
+    );
+    b.trip('deepseek', 15 * 60_000);
+    expect(b.state('deepseek')).toBe('open');
+    expect(b.snapshot('deepseek').recentFailures).toBe(1);
+    // A janela da config (30 s) não vale para o trip.
+    now += 10 * 60_000;
+    expect(b.isOpen('deepseek')).toBe(true);
+    now += 5 * 60_000;
+    expect(b.state('deepseek')).toBe('half-open');
+    // Falha no half-open reabre pela janela padrão — o trip não gruda.
+    b.recordFailure('deepseek');
+    expect(b.state('deepseek')).toBe('open');
+    now += 30_000;
+    expect(b.state('deepseek')).toBe('half-open');
+    b.recordSuccess('deepseek');
+    expect(b.state('deepseek')).toBe('closed');
+  });
+
+  it('F-734: sucesso de verdade fecha o trip; trip curto não encurta um longo', () => {
+    let now = 1_000_000;
+    const b = new CircuitBreakerRegistry(
+      { failureThreshold: 3, windowMs: 60_000, openMs: 30_000 },
+      () => now,
+    );
+    b.trip('glm', 15 * 60_000);
+    b.trip('glm', 1_000);
+    now += 5_000;
+    expect(b.isOpen('glm')).toBe(true);
+    b.recordSuccess('glm');
+    expect(b.state('glm')).toBe('closed');
+    // Sem janela própria, o trip usa a da config.
+    b.trip('glm');
+    now += 30_000;
+    expect(b.state('glm')).toBe('half-open');
+  });
 });
