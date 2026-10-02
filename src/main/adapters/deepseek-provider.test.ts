@@ -9,6 +9,7 @@ import {
   deepseekModelsForProvider,
   deepseekProviderChoice,
   deepseekProviderHost,
+  defaultDeepseekProviderChoice,
   httpsHostOf,
   isAlibabaPlanKey,
   isAlibabaTokenPlanUrl,
@@ -28,6 +29,32 @@ describe('provedor do DeepSeek (F-724)', () => {
     );
     expect(isDeepseekProviderChoice('deepseek-token-plan')).toBe(true);
     expect(isDeepseekProviderChoice('glm')).toBe(false);
+  });
+
+  it('sem escolha salva, segue o slot `deepseek` do launcher', () => {
+    const plan = 'sk-sp-fixture';
+    const direct = 'sk-0123456789abcdef';
+    // Forma do providers.conf do operador (02/10): chave do plano amarrada à Alibaba.
+    expect(defaultDeepseekProviderChoice({
+      key: plan,
+      baseUrl: ALIBABA_TOKEN_PLAN_ANTHROPIC_BASE_URL,
+    })).toBe(DEEPSEEK_TOKEN_PLAN_PROVIDER);
+    // Chave do plano sem base-url: na API direta ela só daria 401.
+    expect(defaultDeepseekProviderChoice({ key: plan, baseUrl: null }))
+      .toBe(DEEPSEEK_TOKEN_PLAN_PROVIDER);
+    // A base-url decide quando existe, nos dois sentidos.
+    expect(defaultDeepseekProviderChoice({
+      key: plan,
+      baseUrl: 'https://api.deepseek.com/anthropic',
+    })).toBe(DEEPSEEK_DIRECT_PROVIDER);
+    expect(defaultDeepseekProviderChoice({
+      key: direct,
+      baseUrl: 'https://token-plan.ap-southeast-1.maas.aliyuncs.com.evil.example/v1',
+    })).toBe(DEEPSEEK_DIRECT_PROVIDER);
+    expect(defaultDeepseekProviderChoice({ key: direct, baseUrl: null }))
+      .toBe(DEEPSEEK_DIRECT_PROVIDER);
+    expect(defaultDeepseekProviderChoice({ key: null, baseUrl: null }))
+      .toBe(DEEPSEEK_DIRECT_PROVIDER);
   });
 
   it('cada provedor tem o próprio host', () => {

@@ -111,6 +111,7 @@ import {
   deepseekModelForProvider,
   deepseekModelsForProvider,
   deepseekProviderChoice,
+  defaultDeepseekProviderChoice,
   httpsHostOf,
   isAlibabaPlanKey,
   isDeepseekProviderChoice,
@@ -193,6 +194,18 @@ function defaultPermissionModeFor(adapterId: string): string {
   return adapter?.kind === 'cli-pty' ? defaultPermissionMode(adapter) : '';
 }
 
+/**
+ * F-724: sem escolha salva, o provedor do DeepSeek segue o slot `deepseek` do
+ * launcher (`defaultDeepseekProviderChoice`). O select de Providers mostra o
+ * mesmo valor e, ao salvar o card, é ele que fica gravado.
+ */
+function defaultDeepseekUpstream(): DeepseekProviderChoice {
+  return defaultDeepseekProviderChoice({
+    key: loadLauncherProviderKey(DEEPSEEK_DIRECT_PROVIDER),
+    baseUrl: loadLauncherProviderBaseUrl(DEEPSEEK_DIRECT_PROVIDER),
+  });
+}
+
 function defaultConfigFor(adapterId: string): ProviderConfig {
   // Claude-compatible forks that always talk to a third-party Anthropic
   // endpoint (GLM/z.ai, LongCat) default their upstream so spawn injects
@@ -205,8 +218,8 @@ function defaultConfigFor(adapterId: string): ProviderConfig {
         ? 'glm-flash'
         : adapterId === 'longcat'
           ? 'longcat'
-          : adapterId === 'deepseek'
-            ? 'deepseek'
+          : adapterId === DEEPSEEK_DIRECT_PROVIDER
+            ? defaultDeepseekUpstream()
             : 'anthropic';
   return {
     adapterId,
@@ -286,7 +299,7 @@ function configFor(adapterId: string): ProviderConfig {
   return configs.get(adapterId) ?? defaultConfigFor(adapterId);
 }
 
-/** F-724: provedor escolhido para o DeepSeek (API direta é o padrão). */
+/** F-724: provedor do DeepSeek — o salvo ou, sem escolha, o do launcher. */
 function deepseekChoice(
   upstream: string = configFor('deepseek').upstream,
 ): DeepseekProviderChoice {

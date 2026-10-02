@@ -525,3 +525,46 @@ describe('F-724 — contas DeepSeek (multi-conta) e cota', () => {
       .toBeNull();
   });
 });
+
+describe('F-724 — sem escolha salva, o DeepSeek segue o launcher do operador', () => {
+  // Store novo, sem providers.json: o caso de quem nunca abriu o card do DeepSeek.
+  async function freshStore() {
+    fs.rmSync(path.join(fx.home, '.nexus', 'providers.json'), { force: true });
+    vi.resetModules();
+    const launcher = await import('../adapters/launcher-provider-manager');
+    launcher.setLauncherProvidersFileForTests(launcherFile);
+    return import('./provider-config-store');
+  }
+
+  it('chave do plano amarrada à Alibaba no launcher: sobe pelo Token Plan e o card mostra o plano', async () => {
+    // Forma do PC do operador (02/10): a mesma sk-sp- nas vagas deepseek e qwen
+    // do cofre e no `deepseek=` do launcher, com base-url na Alibaba. Antes o
+    // pane mandava essa chave para api.deepseek.com e morria em 401.
+    fx.vault.set('deepseek', PLAN_KEY);
+    fx.vault.set('qwen', PLAN_KEY);
+    writeLauncher([`deepseek=${PLAN_KEY}`, `deepseek-base-url=${TOKEN_PLAN_ANTHROPIC}`]);
+    const store = await freshStore();
+    const prepared = store.prepareProviderSpawn('deepseek', {});
+    if (!prepared.ok) throw new Error(prepared.error);
+    expect(prepared.overrides.keyEnv.ANTHROPIC_BASE_URL).toBe(TOKEN_PLAN_ANTHROPIC);
+    expect(prepared.overrides.keyEnv.ANTHROPIC_AUTH_TOKEN).toBe(PLAN_KEY);
+    expect(prepared.overrides.keyEnv.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('deepseek-v4-pro');
+    const info = store.listProviderSettings({ nonBlockingAuth: true })
+      .find((p) => p.adapterId === 'deepseek')!;
+    expect(info.upstream).toBe('deepseek-token-plan');
+    expect(store.hasRuntimeKey('deepseek')).toBe(true);
+  });
+
+  it('sem sinal do plano no launcher, continua na API direta', async () => {
+    fx.vault.set('deepseek', DIRECT_KEY);
+    writeLauncher([`deepseek=${DIRECT_KEY}`]);
+    const store = await freshStore();
+    const prepared = store.prepareProviderSpawn('deepseek', {});
+    if (!prepared.ok) throw new Error(prepared.error);
+    expect(prepared.overrides.keyEnv.ANTHROPIC_BASE_URL).toBe(DEEPSEEK_ANTHROPIC);
+    expect(prepared.overrides.keyEnv.ANTHROPIC_AUTH_TOKEN).toBe(DIRECT_KEY);
+    const info = store.listProviderSettings({ nonBlockingAuth: true })
+      .find((p) => p.adapterId === 'deepseek')!;
+    expect(info.upstream).toBe('deepseek');
+  });
+});

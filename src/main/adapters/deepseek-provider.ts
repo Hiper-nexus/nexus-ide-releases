@@ -100,6 +100,27 @@ export function isAlibabaTokenPlanUrl(raw: string | null | undefined): boolean {
   return httpsHostOf(raw) === ALIBABA_TOKEN_PLAN_HOST;
 }
 
+/**
+ * Provedor do DeepSeek enquanto o operador não escolheu um em Providers ›
+ * DeepSeek: segue o slot `deepseek` do launcher. `deepseek-base-url` no host
+ * do Token Plan, ou uma chave `sk-sp-` sem base-url, dizem que a credencial
+ * que o operador deu ao DeepSeek é do plano da Alibaba — na API direta ela só
+ * daria 401. Sem esses sinais, a API direta (o padrão histórico).
+ */
+export function defaultDeepseekProviderChoice(launcher: {
+  readonly key: string | null;
+  readonly baseUrl: string | null;
+}): DeepseekProviderChoice {
+  if (launcher.baseUrl !== null) {
+    return isAlibabaTokenPlanUrl(launcher.baseUrl)
+      ? DEEPSEEK_TOKEN_PLAN_PROVIDER
+      : DEEPSEEK_DIRECT_PROVIDER;
+  }
+  return isAlibabaPlanKey(launcher.key)
+    ? DEEPSEEK_TOKEN_PLAN_PROVIDER
+    : DEEPSEEK_DIRECT_PROVIDER;
+}
+
 /** Modelo que o provedor escolhido realmente serve para um id pedido. */
 export function deepseekModelForProvider(
   model: string,
