@@ -57,7 +57,7 @@ describe('fair-share global de rotas (F-232)', () => {
   it('F-238: qwen instalado com zero reservas pode assumir o medium', () => {
     const withQwen: AdapterAvailability[] = [
       ...adapters,
-      { id: 'qwen', installed: true, models: ['qwen3.7-plus'] },
+      { id: 'qwen', installed: true, models: ['qwen3.8-max'] },
     ];
     const decision = routeTask(
       'tarefa média qualquer',

@@ -22,8 +22,6 @@ const UNPUBLISHED_ROUTE_MODELS = new Set([
   'aider:claude-opus-4-8',
   // F-238: Qwen 3.x — sem nota oficial de coding publicada (model card da
   // Alibaba não traz DeepSWE/TB2.1/SWE-bench para estes ids); prior de custo.
-  'qwen:qwen3.6-flash',
-  'qwen:qwen3.7-plus',
   'qwen:qwen3.8-max',
 ]);
 
