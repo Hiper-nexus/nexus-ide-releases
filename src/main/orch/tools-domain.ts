@@ -73,7 +73,7 @@ import {
   peekKimiSeatReadiness,
 } from '../adapters/seat-auth-readiness';
 import { writerCircuitBlocksSeat } from './writer-circuit-break';
-import { appendMissionVerdict } from '../../shared/mission-block-cause';
+import { withAgentStatusVerdict } from '../../shared/mission-block-cause';
 import { missionStatusSchema, type SquadAgent } from '../../shared/orch-types';
 import { missionResultSchema } from '../../shared/mission-engine-contract';
 import { buildClarify } from '../../shared/clarify';
@@ -822,11 +822,11 @@ const missionSetStatusTool: McpToolDef = {
       const before = stores.missions.get(missionId);
       if (before) {
         stores.missions.update(missionId, {
-          description: appendMissionVerdict(
-            before.description,
-            '<!-- nexus:agent-status-block -->',
-            '[NEXUS_AGENT_STATUS_BLOCK]',
-            `O orquestrador declarou status=${status}: ${note}`,
+          // F-738: tira o selo velho de encerramento e o veredito anterior.
+          description: withAgentStatusVerdict(
+            before.description ?? '',
+            status,
+            note,
           ),
         });
       }

@@ -17,6 +17,36 @@ import {
   ORPHAN_SEALED_PLAN_CODE,
   ORPHAN_SEALED_PLAN_MARKER,
 } from './mission-plan-orphan';
+import { MISSION_RUNTIME_CLOSED_MARKER } from './mission-recovery-policy';
+
+/** Veredito do próprio orquestrador (`nexus_mission_set_status` blocked/failed). */
+export const AGENT_STATUS_BLOCK_MARKER = '<!-- nexus:agent-status-block -->';
+export const AGENT_STATUS_BLOCK_TOKEN = '[NEXUS_AGENT_STATUS_BLOCK]';
+
+/**
+ * F-738: descrição com o veredito do próprio orquestrador. Ele só declara o
+ * status da missão que coordena, viva: um selo de encerramento ainda na
+ * descrição é velho (sobreviveu a uma reabertura) e faria o bloqueio ser lido
+ * como "encerrada pelo operador" — a missão ia para o Arquivo. Um veredito
+ * anterior dele também sai: o motivo novo substitui o antigo, em vez de ser
+ * descartado por `appendMissionVerdict` (que não reescreve marcador existente).
+ */
+export function withAgentStatusVerdict(
+  description: string,
+  status: 'blocked' | 'failed',
+  note: string,
+): string {
+  const withoutStaleVerdicts = stripMissionVerdictParagraph(
+    stripMissionVerdictParagraph(description, MISSION_RUNTIME_CLOSED_MARKER),
+    AGENT_STATUS_BLOCK_MARKER,
+  );
+  return appendMissionVerdict(
+    withoutStaleVerdicts,
+    AGENT_STATUS_BLOCK_MARKER,
+    AGENT_STATUS_BLOCK_TOKEN,
+    `O orquestrador declarou status=${status}: ${note}`,
+  );
+}
 
 /** Closed vocabulary shared by operator surfaces and release evidence. */
 export const MISSION_BLOCK_CAUSE_CODES = [

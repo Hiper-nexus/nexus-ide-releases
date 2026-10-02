@@ -104,11 +104,24 @@ export function wasMissionRuntimeClosedByOperator(
   // APENAS pelo caminho de encerramento pelo operador. A presença dele numa
   // missão bloqueada é prova suficiente, qualquer que seja o intent final
   // da corrida. (Antes exigia blocked_user e o shutdown virava alerta.)
-  return (
-    mission.status === 'blocked' &&
-    (mission.description ?? '').includes(MISSION_RUNTIME_CLOSED_MARKER)
+  //
+  // F-738: prova só enquanto for o veredito MAIS RECENTE. Os vereditos são
+  // anexados em ordem; um selo que sobreviveu a uma reabertura (corrida da
+  // retomada de 02/10) e depois um bloqueio do próprio Maestro eram lidos
+  // como "encerrada pelo operador": a missão ia para o Arquivo e o Retomar
+  // seguia o caminho errado. O de "dormindo" (leftover-parked) é isolamento
+  // do mesmo encerramento e não o substitui.
+  if (mission.status !== 'blocked') return false;
+  const description = mission.description ?? '';
+  const sealAt = description.lastIndexOf(MISSION_RUNTIME_CLOSED_MARKER);
+  if (sealAt < 0) return false;
+  return !LATER_VERDICT_MARKER.test(
+    description.slice(sealAt + MISSION_RUNTIME_CLOSED_MARKER.length),
   );
 }
+
+/** Qualquer veredito anexado depois do selo, exceto o de "dormindo". */
+const LATER_VERDICT_MARKER = /<!--\s*nexus:(?!leftover-parked\b)/u;
 
 export function hasTerminalOperationalFailureMarker(value: string): boolean {
   return value.includes(TERMINAL_OPERATIONAL_FAILURE_MARKER);

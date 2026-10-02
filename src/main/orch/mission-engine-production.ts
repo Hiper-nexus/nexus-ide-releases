@@ -1797,6 +1797,29 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
         }
         return;
       }
+      // F-738: bloqueio declarado pelo próprio Maestro (`nexus_mission_set_status
+      // blocked`) é `blocked_user` SEM pergunta registrada — a pergunta dele
+      // ficou no chat, e o reconciliador encerra o processo de missão parada.
+      // O card anuncia "Retomar o coordenador" (projeção blocked_technical) e
+      // o motor recusava com "requires a technical block": a missão ficava sem
+      // saída. Retomar religa o Maestro na mesma conversa (F-721) para o
+      // operador responder ali. Com pergunta registrada a saída continua
+      // sendo answer-question.
+      if (
+        mission.status === "blocked" &&
+        mission.intentState === "blocked_user" &&
+        !projectMissionEngineSnapshotView(scope, stores, mission.id).openQuestion
+      ) {
+        await resumeFastLaneMission(scope, command.missionId, {
+          remountKind: "operator",
+          note:
+            "O operador retomou a missão que você tinha bloqueado esperando " +
+            "por ele. Releia no histórico a sua última pergunta ao operador e " +
+            "o motivo do bloqueio; se a resposta ainda faltar, peça-a no chat " +
+            "antes de despachar, e siga a partir dela.",
+        });
+        return;
+      }
       if (
         mission.status !== "blocked" ||
         mission.intentState !== "blocked_technical"

@@ -261,6 +261,54 @@ describe('engine resume — os estados em que a UI oferece Retomar', () => {
     );
   });
 
+  it('F-738: bloqueio declarado pelo Maestro, sem pergunta registrada, reabre via remount do operador', async () => {
+    // set_status blocked não registra pergunta e o reconciliador encerra o
+    // Maestro. O card anuncia "Retomar o coordenador"; o motor recusava com
+    // "requires a technical block" e a missão ficava sem saída.
+    liveMission = baseMission({
+      status: 'blocked',
+      intentState: 'blocked_user',
+      description:
+        'objetivo\n\n<!-- nexus:agent-status-block -->\n' +
+        '[NEXUS_AGENT_STATUS_BLOCK] O orquestrador declarou status=blocked: ' +
+        'pergunta de escopo sem resposta.',
+    });
+
+    await engine.command(scope, { kind: 'resume', missionId: 'mission-1' });
+
+    expect(harness.resumeFastLaneMission).toHaveBeenCalledTimes(1);
+    expect(harness.resumeFastLaneMission).toHaveBeenCalledWith(
+      scope,
+      'mission-1',
+      expect.objectContaining({
+        remountKind: 'operator',
+        note: expect.stringContaining('bloqueado esperando'),
+      }),
+    );
+  });
+
+  it('F-738: selo velho de encerramento antes do bloqueio do Maestro não vira "encerrada pelo operador"', async () => {
+    // Caso de campo 02/10: o selo sobreviveu à retomada das 09:14 e o Maestro
+    // bloqueou às 10:01. O Retomar seguia o caminho de reabrir o selo.
+    liveMission = baseMission({
+      status: 'blocked',
+      intentState: 'blocked_user',
+      description:
+        'objetivo\n\n' +
+        `${RUNTIME_CLOSED_MARKER}\n[NEXUS_RUNTIME_CLOSED] Execução encerrada pelo operador; histórico e receipts preservados.\n\n` +
+        '<!-- nexus:agent-status-block -->\n' +
+        '[NEXUS_AGENT_STATUS_BLOCK] O orquestrador declarou status=blocked: pedido original irrecuperável.',
+    });
+
+    await engine.command(scope, { kind: 'resume', missionId: 'mission-1' });
+
+    expect(harness.resumeFastLaneMission).toHaveBeenCalledWith(
+      scope,
+      'mission-1',
+      expect.objectContaining({ remountKind: 'operator' }),
+    );
+  });
+
   it('F-245: retry-kickoff com coordenador dispensado falha visível, nunca em silêncio', async () => {
     liveMission = baseMission({
       status: 'blocked',

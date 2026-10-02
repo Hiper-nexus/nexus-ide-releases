@@ -6,8 +6,41 @@ import {
   MISSION_BLOCK_CAUSE_TEXT_LIMIT,
   MISSION_DESCRIPTION_LIMIT,
   stripMissionVerdictParagraph,
+  withAgentStatusVerdict,
 } from './mission-block-cause';
 import { orphanSealedPlanMessage } from './mission-plan-orphan';
+
+describe('withAgentStatusVerdict (F-738)', () => {
+  const seal =
+    '<!-- nexus:runtime-closed -->\n' +
+    '[NEXUS_RUNTIME_CLOSED] Execução encerrada pelo operador; histórico e receipts preservados.';
+  const previous =
+    '<!-- nexus:agent-status-block -->\n' +
+    '[NEXUS_AGENT_STATUS_BLOCK] O orquestrador declarou status=blocked: pergunta de escopo sem resposta.';
+
+  it('o bloqueio do Maestro tira o selo velho de encerramento e troca o veredito anterior dele', () => {
+    const next = withAgentStatusVerdict(
+      ['objetivo do operador', seal, previous].join('\n\n'),
+      'blocked',
+      'pedido original irrecuperável',
+    );
+    expect(next).not.toContain('<!-- nexus:runtime-closed -->');
+    expect(next).not.toContain('pergunta de escopo sem resposta');
+    expect(next).toBe(
+      'objetivo do operador\n\n' +
+        '<!-- nexus:agent-status-block -->\n' +
+        '[NEXUS_AGENT_STATUS_BLOCK] O orquestrador declarou status=blocked: pedido original irrecuperável',
+    );
+  });
+
+  it('sem vereditos anteriores, só anexa o do Maestro', () => {
+    expect(withAgentStatusVerdict('objetivo', 'failed', 'build quebrado')).toBe(
+      'objetivo\n\n' +
+        '<!-- nexus:agent-status-block -->\n' +
+        '[NEXUS_AGENT_STATUS_BLOCK] O orquestrador declarou status=failed: build quebrado',
+    );
+  });
+});
 
 /**
  * O operador só decide se souber O QUE aconteceu e O QUE fazer. Estes testes

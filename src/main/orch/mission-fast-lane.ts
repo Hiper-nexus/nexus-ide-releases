@@ -21,7 +21,11 @@ import {
   missionAwaitsAdjustment,
   wasMissionRuntimeClosedByOperator,
 } from '../../shared/mission-recovery-policy';
-import { stripMissionVerdictParagraph } from '../../shared/mission-block-cause';
+import {
+  AGENT_STATUS_BLOCK_MARKER,
+  stripMissionVerdictParagraph,
+} from '../../shared/mission-block-cause';
+import { resolveOpenMissionQuestion } from './mission-open-question';
 import { wasUpdatedBeforeThisProcess } from '../../shared/session-restore-liveness';
 import {
   initialPromptChannel,
@@ -2983,19 +2987,33 @@ export async function resumeFastLaneMission(
   if (mission.status === 'blocked' && mission.intentState) {
     const runtimeClosedByOperator = wasMissionRuntimeClosedByOperator(mission);
     const leftoverParked = wasMissionLeftoverParked(mission);
+    // F-738: só a pergunta REGISTRADA (clarify no ledger) prende a missão à
+    // resposta. O bloqueio declarado pelo Maestro por set_status não registra
+    // pergunta, e o processo dele já foi encerrado — exigir answer-question
+    // ali deixava a missão sem saída.
     if (
       mission.intentState === 'blocked_user' &&
       !runtimeClosedByOperator &&
-      !leftoverParked
+      !leftoverParked &&
+      resolveOpenMissionQuestion(
+        mission,
+        getProjectDomainStores(scope).handoffs.list({
+          missionId,
+          includeDelivered: true,
+        }),
+        mission.orchestratorSessionId ?? null,
+      )
     ) {
       throw new Error(
         'missão bloqueada por pergunta do operador exige resposta ' +
           '(answer-question) antes de retomar',
       );
     }
-    const sealedMarker = leftoverParked
-      ? NEXUS_LEFTOVER_PARKED_MARKER
-      : MISSION_RUNTIME_CLOSED_MARKER;
+    // Reabrir tira o selo de quem parou: o de "dormindo", ou o de encerrado
+    // pelo operador junto com o bloqueio declarado pelo Maestro (F-738).
+    const sealedMarkers = leftoverParked
+      ? [NEXUS_LEFTOVER_PARKED_MARKER]
+      : [MISSION_RUNTIME_CLOSED_MARKER, AGENT_STATUS_BLOCK_MARKER];
     try {
       missionEngineForScope(scope).resumeTechnical(scope, {
         missionId,
@@ -3004,9 +3022,10 @@ export async function resumeFastLaneMission(
         expectedUpdatedAt: mission.updatedAt,
         expectedIntentVersion: mission.intentVersion ?? 0,
         description:
-          stripMissionVerdictParagraph(
+          sealedMarkers.reduce(
+            (description, marker) =>
+              stripMissionVerdictParagraph(description, marker),
             mission.description ?? '',
-            sealedMarker,
           ) || 'Missão reaberta pelo operador.',
       });
     } catch (error) {

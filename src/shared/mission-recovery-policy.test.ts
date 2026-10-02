@@ -7,7 +7,64 @@ import {
   RECOVERY_ATTEMPT_BLOCK_MARKER,
   replaceRecoveryAttemptBlock,
   TERMINAL_OPERATIONAL_FAILURE_MARKER,
+  wasMissionRuntimeClosedByOperator,
 } from './mission-recovery-policy';
+
+const RUNTIME_CLOSED_VERDICT =
+  '<!-- nexus:runtime-closed -->\n' +
+  '[NEXUS_RUNTIME_CLOSED] Execução encerrada pelo operador; histórico e receipts preservados.';
+const AGENT_BLOCK_VERDICT =
+  '<!-- nexus:agent-status-block -->\n' +
+  '[NEXUS_AGENT_STATUS_BLOCK] O orquestrador declarou status=blocked: pergunta de escopo sem resposta.';
+
+function blockedMission(...paragraphs: string[]) {
+  return {
+    status: 'blocked',
+    intentState: 'blocked_user',
+    description: paragraphs.join('\n\n'),
+  };
+}
+
+describe('wasMissionRuntimeClosedByOperator (F-738)', () => {
+  it('o selo como último veredito prova o encerramento pelo operador', () => {
+    expect(
+      wasMissionRuntimeClosedByOperator(blockedMission('objetivo', RUNTIME_CLOSED_VERDICT)),
+    ).toBe(true);
+  });
+
+  it('bloqueio do Maestro depois de um selo velho não é encerramento (caso de 02/10)', () => {
+    // O selo sobreviveu à retomada das 09:14; às 10:01 o Maestro bloqueou a
+    // missão esperando o operador. Lida como "encerrada", ela ia para o
+    // Arquivo e o Retomar seguia o caminho errado.
+    expect(
+      wasMissionRuntimeClosedByOperator(
+        blockedMission('objetivo', RUNTIME_CLOSED_VERDICT, AGENT_BLOCK_VERDICT),
+      ),
+    ).toBe(false);
+  });
+
+  it('"dormindo" depois do selo não o substitui', () => {
+    expect(
+      wasMissionRuntimeClosedByOperator(
+        blockedMission(
+          RUNTIME_CLOSED_VERDICT,
+          '<!-- nexus:leftover-parked -->\n[NEXUS_LEFTOVER_PARKED] sessão antiga.',
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it('só missão blocked pode estar encerrada', () => {
+    expect(
+      wasMissionRuntimeClosedByOperator({
+        status: 'running',
+        intentState: 'executing',
+        description: RUNTIME_CLOSED_VERDICT,
+      }),
+    ).toBe(false);
+    expect(wasMissionRuntimeClosedByOperator(blockedMission('objetivo'))).toBe(false);
+  });
+});
 
 function approvedContract(): MissionIntentContract {
   return {

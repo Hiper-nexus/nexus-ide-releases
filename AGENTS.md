@@ -255,6 +255,13 @@ saber isto antes de mexer:
   missão criada pelo MCP não tem botão de despacho. A invariante em
   `mcp-dispatch-security.test.ts` percorre todo status; trava nova no caminho
   do pane do operador precisa passar nela.
+- F-738: o selo `runtime-closed` só prova "encerrada pelo operador" se for o
+  veredito MAIS RECENTE da descrição (`wasMissionRuntimeClosedByOperator`;
+  `leftover-parked` não o substitui). O bloqueio que o Maestro declara por
+  `set_status` (`withAgentStatusVerdict`) tira selo velho e veredito anterior.
+  `blocked_user` sem pergunta REGISTRADA (o Maestro perguntou no chat e o
+  reconciliador o encerrou) sai por `resume`, com remount do operador. Só
+  pergunta registrada (`resolveOpenMissionQuestion`) exige answer-question.
 - F-245: `blocked_technical` oferece `resume` (remount do operador com nota de
   continuidade, qualquer causa — inclusive chef-idle sem marcador de dispatch);
   `retry-kickoff` com Maestro dispensado lança `orchestrator_operator_dismissed`
