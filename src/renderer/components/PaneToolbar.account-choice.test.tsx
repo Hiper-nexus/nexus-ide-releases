@@ -124,6 +124,13 @@ describe('PaneToolbar — chip da conta escolhida', () => {
     expect(get).toHaveBeenCalledWith('session-a');
   });
 
+  it('é o ÚLTIMO item do meta: quando falta largura quebra primeiro e nunca desloca os outros chips', async () => {
+    const { el } = await mount(agentPane);
+    const node = chip(el)!;
+    expect(node.parentElement?.classList.contains('toolbar__meta')).toBe(true);
+    expect(node.nextElementSibling).toBeNull();
+  });
+
   it('nunca imprime id, score nem nada fora do recibo mascarado', async () => {
     const { el } = await mount(agentPane);
     const html = el.innerHTML;
