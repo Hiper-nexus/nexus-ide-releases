@@ -19,6 +19,28 @@ function page(html: string, size = { width: 1000, height: 800 }): { win: Collect
 const rects = (win: Collectable): BrowserVisualRect[] => collectBrowserVisualMasks(win).rectangles;
 
 describe('isolated visual mask collection', () => {
+  it.each([60, 1000])('masks an unrecognized sibling value overflowing a %s-pixel sensitive block', width => {
+    const { win, dom } = page(`<div data-rect="0,100,${width},${width === 1000 ? 700 : 20}"><span>API token</span><span>abcdefghijklmnop</span></div>`);
+    const original = dom.window.document.createRange.bind(dom.window.document);
+    const valueRect = { x: 100, y: 100, width: 300, height: 20 };
+    dom.window.document.createRange = () => {
+      const range = original();
+      range.getClientRects = () => range.startContainer.textContent === 'API token'
+        ? [{ x: 0, y: 100, width: 80, height: 20 }] as unknown as DOMRectList
+        : [valueRect] as unknown as DOMRectList;
+      return range;
+    };
+    expect(rects(win)).toContainEqual(valueRect);
+  });
+  it('masks unrecognized text overflowing an open shadow host marked sensitive', () => {
+    const { win, dom } = page('<div id="api-token" data-rect="0,100,60,20"></div>');
+    const host = dom.window.document.getElementById('api-token')!;
+    const root = host.attachShadow({ mode: 'open' });
+    root.innerHTML = '<span>abcdefghijklmnop</span>';
+    const valueRect = { x: 100, y: 100, width: 300, height: 20 };
+    root.querySelector('span')!.getBoundingClientRect = () => valueRect as DOMRect;
+    expect(rects(win)).toContainEqual(valueRect);
+  });
   it('includes the pixels of a standalone Cloudflare token outside editable fields', () => {
     const dom = new JSDOM('<code>cfut-synthetic_cloudflare_token_1234567890</code>');
     const originalRange = dom.window.document.createRange.bind(dom.window.document);
@@ -35,7 +57,7 @@ describe('isolated visual mask collection', () => {
     const shadow = dom.window.document.querySelector('section')!.attachShadow({ mode: 'open' });
     shadow.innerHTML = '<input value="shadow-private-key">';
     const nodes = [...dom.window.document.querySelectorAll('input,textarea,iframe,div'), shadow.querySelector('input')!];
-    for (const element of nodes) element.getBoundingClientRect = () => ({ x: 10, y: 20, width: 60, height: 25 } as DOMRect);
+    for (const [index, element] of nodes.entries()) element.getBoundingClientRect = () => ({ x: 10, y: 20 + index * 30, width: 60, height: 25 } as DOMRect);
     const masks = collectBrowserVisualMasks(dom.window as unknown as Window & typeof globalThis);
     expect(masks.rectangles.length).toBeGreaterThanOrEqual(5);
     expect(JSON.stringify(masks)).not.toContain('private-');
