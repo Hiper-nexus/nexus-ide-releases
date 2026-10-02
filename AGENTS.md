@@ -881,6 +881,18 @@ saber isto antes de mexer:
   handoff do supervisor e ao pane pai do helper pela entrega sem missão
   (F-565). Só ids, adapter e motivo por categoria; nunca erro bruto, argv ou
   brief. Trace: `pane-start-redeliver` e `pane-not-started`.
+- F-734: na família Claude, turno aberto ainda não é "começou". O Claude Code
+  dispara `StopFailure` NO LUGAR do `Stop` quando um erro de API encerra o
+  turno; ele vai a `/hook/status` como `stop-failure` e chega ao Main só como
+  categoria da allowlist (`shared/agent-stop-failure.ts`). `error_details` e
+  `last_assistant_message` são texto do provedor (sufixo de chave): nunca
+  saem do parser nem viram handoff `[auto]`. A ficha espera o desfecho do
+  turno do brief (só ele é julgado): ferramenta, handoff ou Stop normal provam
+  o início; StopFailure de credencial, conta ou pedido sem trabalho é falha
+  provada (passo 2, motivo por categoria, trace `pane-start-rejected`). Limite
+  de uso e erro transitório ficam com o failover (F-249/F-718). Credencial
+  recusada sem conta gerenciada abre o disjuntor do adapter por 15 min
+  (`trip`); com conta, a pausa é por conta (F-676) e o adapter só conta.
 
 ## Terminais: geometria e retomada (F-356)
 
