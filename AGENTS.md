@@ -882,6 +882,23 @@ saber isto antes de mexer:
   catálogo/reserva intocados). Resultado ganha `classifierSource`
   (`jev|heuristic|mixed`) e `escalate` (0..1) — informação para o Maestro,
   nunca decisão do router.
+- **Recibo da rota: confiança e contrafactual** (`confidence` + `ruleChoice`;
+  `nexus_route_task`, `route` do `nexus_pane_spawn`, chip "Jev" do pane via
+  `SpawnRouteInfo`, `nexus_route_log`). `confidence` = `{tier?, specialty?,
+  effort?}` (0..1, 2 casas) SÓ das dimensões que o Jev decidiu: as aceitas pelo
+  limiar 0,6 — tier do chamador, dimensão da heurística e tier elevado pelo
+  piso de revisão de código ficam sem número. `ruleChoice` = o que heurística +
+  tabela escolheriam sem o Jev: `'same'` quando concorda, `{adapterId, model?,
+  effort?}` quando difere, AUSENTE quando o Jev não influenciou (a regra nem é
+  recalculada). É uma 2ª chamada em memória ao `routeTask` com o `ruleContext`
+  de `routeTaskForCaller` (sem `specialtyOverride`/`effortOverride`; tier só o do
+  chamador; mesmo roster selado aplicado aos dois lados). Nunca reaproveite os
+  overrides do Jev ali e nunca grave reserva, proveniência (`recordRouteDecision`)
+  ou log com a escolha da regra: ela abriria o gate de spawn ad-hoc para um
+  modelo que ninguém roteou. Só ids e números saem (`parseSpawnRouteConfidence`/
+  `parseSpawnRuleChoice`); nunca texto da tarefa, `reason`, conta, fingerprint
+  ou token. Recálculo que lança = fail-open (rota igual, sem `ruleChoice`).
+  Não validado contra o Jev real: os testes injetam a classificação.
 - `nexus_browser_do` ("Jev decide, Nexus executa"): UMA confirmação humana
   por objetivo; ação irreversível/custosa sempre para em `needs_confirmation`
   e devolve a proposta; trava de origem (`left_origin`); textos digitados são
