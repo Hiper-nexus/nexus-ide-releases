@@ -149,6 +149,16 @@ describe('buildMissionPickState', () => {
     expect(json).toContain('[REDACTED]');
   });
 
+  it('redacts before cutting: a secret straddling the length limit leaves no fragment behind', () => {
+    const secret = 'sk-abcdefghijklmnopqrstuvwxyz012345';
+    // Cortar em 100 antes de redigir deixaria "sk-abcdefghijk" (curto demais para o padrão).
+    const title = `${'x'.repeat(85)} ${secret}`;
+    const state = buildMissionPickState(request(title, 'B'), NOW);
+    const json = JSON.stringify(state);
+    expect(json).not.toContain('sk-');
+    expect(json).toContain('[REDACTED]');
+  });
+
   it('collapses line breaks so a title cannot forge extra structure', () => {
     const state = buildMissionPickState(request('Linha 1\n\n  Linha 2', 'B'), NOW);
     expect(state?.candidates[0]?.title).toBe('Linha 1 Linha 2');
