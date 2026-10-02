@@ -3017,6 +3017,13 @@ export function isSessionOwnedBy(wc: WebContents, sessionId: string): boolean {
   return ownedSession(wc, sessionId) !== null;
 }
 
+/** Main-only physical ownership check; a retained layout is not detach proof. */
+export function isSessionDetached(sessionId: string): boolean {
+  const session = sessions.get(sessionId);
+  return Boolean(session && session.wc === null &&
+    physicalTerminationFlights.get(sessionId)?.session !== session);
+}
+
 export function acknowledgeSessionOutput(
   wc: WebContents,
   sessionId: string,
@@ -4049,3 +4056,4 @@ export function countLiveAgentSessions(): number {
   }
   return count;
 }
+

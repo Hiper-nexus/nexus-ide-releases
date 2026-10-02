@@ -8,7 +8,7 @@ vi.mock('../persistence/settings-store', () => ({
   getOrchSettings: settings.getOrchSettings,
 }));
 
-import { isJevAutopilotEnabled, isJevSurfaceEnabled } from './jev-autopilot';
+import { JEV_SURFACES, isJevAutopilotEnabled, isJevSurfaceEnabled } from './jev-autopilot';
 
 describe('isJevAutopilotEnabled', () => {
   beforeEach(() => {
@@ -84,5 +84,28 @@ describe('isJevSurfaceEnabled', () => {
   it('jevSurfaces ausente (settings antigo) mantém tudo ligado', () => {
     settings.getOrchSettings.mockReturnValue({ jevAutopilot: true } as never);
     expect(isJevSurfaceEnabled('handoffReview')).toBe(true);
+  });
+
+  it('missionPick: ligada por padrão e desligável por setting, env e mestre', () => {
+    expect(JEV_SURFACES).toContain('missionPick');
+    expect(isJevSurfaceEnabled('missionPick')).toBe(true);
+
+    settings.getOrchSettings.mockReturnValue({
+      jevAutopilot: true,
+      jevSurfaces: { missionPick: false },
+    } as never);
+    expect(isJevSurfaceEnabled('missionPick')).toBe(false);
+    expect(isJevSurfaceEnabled('intake')).toBe(true);
+
+    settings.getOrchSettings.mockReturnValue({ jevAutopilot: true, jevSurfaces: {} } as never);
+    process.env.NEXUS_JEV_SURFACE_MISSIONPICK = '0';
+    expect(isJevSurfaceEnabled('missionPick')).toBe(false);
+    delete process.env.NEXUS_JEV_SURFACE_MISSIONPICK;
+
+    settings.getOrchSettings.mockReturnValue({
+      jevAutopilot: false,
+      jevSurfaces: { missionPick: true },
+    } as never);
+    expect(isJevSurfaceEnabled('missionPick')).toBe(false);
   });
 });

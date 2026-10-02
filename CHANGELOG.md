@@ -1,14 +1,28 @@
 # Changelog
 
-## 0.76.165 — Workers com mais autonomia
+## 0.76.166 — Workers com mais autonomia
 
-Candidata ainda não publicada. Inclui integralmente a 0.76.164.
+Candidata ainda não publicada. Inclui integralmente a 0.76.165.
 
 - **Workers podem executar mais.** Navegador e desktop deixam de recusar o acesso apenas pelo papel de worker. O acesso continua limitado à janela de origem, ao projeto, à sessão viva, à conta e à lista de ferramentas do chamador; abas com perfil pessoal seguem recusadas pela análise visual.
 - **Subagentes nativos disponíveis no modo livre.** Claude e OpenClaude deixam de receber um bloqueio estático de `Task`. O contrato permite subagentes nativos dentro das permissões da tarefa; o bloqueio permanece nos caminhos explicitamente governados ou de leitura.
 - **Teclas compatíveis com jogos.** `press` fornece `event.code` e aceita `holdMs` opcional de 0 a 1000 ms, preservando o padrão imediato. Cancelamento e navegação encerram a ação sem soltar teclas em uma página antiga.
 - **Verificação visual declarada.** A entrega de UI/jogo informa página, viewport, ações e evidência observada; ausência de browser ou prova visual aparece como pendência, sem simular screenshot. Preview Linux exercita formulário/menu, mobile e jogo usando o preload real do Electron e guarda as evidências de CI. Preview não é uma candidata publicável.
-- **Limites da validação.** Os testes focados de contrato, autorização e teclado passaram localmente. O ambiente local bloqueou a renderização do Electron; pixels, suíte completa, pacotes finais e assinatura/notarização ainda dependem dos gates correspondentes. Nesta investigação, não houve comparação de qualidade entre modelos nem execução de missão LLM contra provedores.
+- **Streaming e seleção ACP.** Texto público entra no ring volátil do pane; pensamentos e sessões alheias não entram. Modelo e esforço precisam ser opções exatas anunciadas e confirmadas pelo harness antes do prompt. Conta Nexus explícita (inclusive default materializada na UI) é recusada antes de token/processo porque o harness genérico ainda não vincula essa autenticação; nenhum adapter é trocado silenciosamente.
+- **Browser preservado ao trocar de projeto.** A origem física comprovada no Main continua disponível para panes parked e coordenadores ACP, com revalidação de sessão, conta, missão, geração, escopo e proprietário.
+- **Limites da validação.** No d20d5ec, CI36961884068 aprovou typecheck, renderer sinks e18.656 testes; preview36961884071 executou formulário/menu, mobile e jogo no Electron real, com PNGs inspecionadas. O build Linux falhou depois no better-sqlite3/V8, impedindo os smokes de pacote nesse run. Alterações posteriores exigem checks no head final. Assinatura/notarização e publicação estável continuam sujeitas aos gates. Não houve comparação de qualidade entre modelos nem missão LLM contra provedores.
+
+## 0.76.165 — Decisões à vista
+
+Build do Mac. Inclui integralmente a 0.76.164.
+
+- **Recibo da rota com a confiança do Jev e o contrafactual.** O chip "Jev" do pane, `nexus_route_task`, o recibo de `nexus_pane_spawn` e o log de rotas trazem a confiança por dimensão (só das que o Jev decidiu, aceitas pelo limiar de 0,6) e o que a regra teria escolhido (`'same'` quando coincide). O recálculo da regra é em memória, sem efeito colateral, e nunca vira rota reconhecida.
+- **Conta escolhida visível no pane.** Chip no cabeçalho com o rótulo mascarado e tooltip com quem decidiu, folga medida e alternativas. Canal novo `accountChoice:get`, somente leitura, só para a janela principal, com recibo reconstruído por lista de permissão. A decisão de conta continua sendo da regra de folga.
+- **Missão por voz sem palpite.** Resolvedor puro (igual > começa com > contém > palavras); nada casando não abre mais `missions[0]`; casos ambíguos vão ao Jev (superfície `missionPick`, confiança ≥ 0,7 e margem ≥ 0,15) e, sem decisão, a voz pergunta. Nome mal reconhecido (nada casou, de 1 a 8 missões) também é consultado, com piso de confiança ≥ 0,90 e margem ≥ 0,30. Medição real com 38 chamadas: acertos de erro de voz em 0,94 ou mais. Amostra pequena, só português, títulos sintéticos.
+- **Cabeçalho do pane.** A primeira linha do `toolbar__meta` tem altura fixa: um chip que quebra deixa de subir o conteúdo em 3 px.
+- **Revisão de segurança antes de publicar.** A voz confere de novo o projeto e a existência da missão depois da espera do Jev (se o projeto mudou, nada abre); título e fala são redigidos ANTES do corte; título hostil não leva controle nem marcação bidi ao resultado da ação; alvo falado só de palavras de ligação ("da") ou de menos de 4 letras dentro de outra palavra não casa mais; ids do recibo da regra aceitam só `._-:/[]` e alfanuméricos.
+- **Limites conhecidos desta versão.** A espera do Jev na voz pode passar de 3,5 s por causa do `retry-after` do cliente (o teto de 5 s do renderer segura); se o texto da tarefa fixar o esforço ("xhigh"), o tooltip ainda pode mostrar a confiança do Jev para o esforço; os pisos de confiança da missão falada só foram medidos com o Jev, e em "Somente Clef" valem pela mesma regra de aceitação, sem avaliação local no Clef.
+- **Documento de comparação** com o que o vídeo do Overclock mostra: `docs/analysis/2026-10-02-jev-clef-vs-overclock.md`. Os limites seguem ditos lá: o Clef não foi validado contra a Cloudflare real e não há comparação lado a lado com o produto concorrente.
 
 ## 0.76.164 — Revisão completa
 

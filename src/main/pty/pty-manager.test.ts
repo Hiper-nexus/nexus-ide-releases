@@ -231,6 +231,7 @@ import {
   getLastSessionInputOrigin,
   getOwnedAgentSessionInfo,
   getSessionState,
+  isSessionDetached,
   adoptMainOwnedAgentSession,
   killSession,
   killSessionsFor,
@@ -1053,12 +1054,15 @@ describe("PTY session ownership (renderer capability boundary)", () => {
       scope: authority.scope,
     };
 
+    expect(isSessionDetached('unknown-session')).toBe(false);
+    expect(isSessionDetached(sessionId)).toBe(true);
     const slotsBeforeAdoption = licensedAgentCount();
     expect(adoptMainOwnedAgentSession(owner, exactClaim)).toEqual({
       sessionId,
       state: "spawning",
     });
     expect(licensedAgentCount()).toBe(slotsBeforeAdoption);
+    expect(isSessionDetached(sessionId)).toBe(false);
     expect(writeSession(owner, sessionId, "continue\r")).toBe(false);
     expect(getOwnedAgentSessionInfo(owner, sessionId)).toMatchObject({
       workerIncarnationId: "worker-incarnation-main-owned",
@@ -1075,6 +1079,7 @@ describe("PTY session ownership (renderer capability boundary)", () => {
     expect(proc.kill).not.toHaveBeenCalled();
     expect(writeSession(owner, sessionId, "forged\r")).toBe(false);
     expect(orchWriteSession(sessionId, "main\r")).toBe(true);
+    expect(isSessionDetached(sessionId)).toBe(true);
     expect(publishSessionActivityState(sessionId, "busy")).toBe(true);
 
     const replacement = fakeWc();
@@ -1088,10 +1093,13 @@ describe("PTY session ownership (renderer capability boundary)", () => {
       sessionId,
       state: "busy",
     });
+    expect(isSessionDetached(sessionId)).toBe(false);
     killSession(replacement, sessionId);
     expect(proc.kill).not.toHaveBeenCalled();
     killSessionsFor(replacement);
+    expect(isSessionDetached(sessionId)).toBe(true);
     const shutdown = terminateAllSessions();
+    expect(isSessionDetached(sessionId)).toBe(false);
     await expect(shutdown).resolves.toEqual({
       ok: true,
       attemptedSessionIds: [sessionId],
@@ -1099,6 +1107,7 @@ describe("PTY session ownership (renderer capability boundary)", () => {
       failedSessionIds: [],
     });
     expect(proc.terminate).toHaveBeenCalledOnce();
+    expect(isSessionDetached(sessionId)).toBe(false);
     __resetPtyShutdownLifecycleForTests();
   });
 
@@ -5772,3 +5781,4 @@ describe('F-235: liveClaudeMissionAccountIds — contas com pane Claude vivo na 
     expect(liveClaudeMissionAccountIds('mission-z')).toEqual([]);
   });
 });
+

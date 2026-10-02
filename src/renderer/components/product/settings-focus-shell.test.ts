@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 
 /**
@@ -7,7 +8,7 @@ import { expect, it } from 'vitest';
  * Recentes e Limpar + coluna de configurações + abas) e o conteúdo ficava com
  * ~60% da largura. O shell entra em modo foco: o rail mantém só a navegação.
  */
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../');
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../');
 const appShellCss = fs.readFileSync(path.join(root, 'styles/app-shell.css'), 'utf8');
 const appSource = fs.readFileSync(path.join(root, 'App.tsx'), 'utf8');
 

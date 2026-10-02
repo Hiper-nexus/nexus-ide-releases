@@ -1,7 +1,11 @@
 import type { PaneRuntimeState } from '../../shared/orch-types';
 import {
   isJevUnavailableReason,
+  parseSpawnRouteConfidence,
+  parseSpawnRuleChoice,
+  type SpawnRouteConfidence,
   type SpawnRouteInfo,
+  type SpawnRuleChoiceReceipt,
 } from '../../shared/spawn-route';
 
 /**
@@ -133,6 +137,26 @@ export function adapterIdsWithoutNexusMcp<
     .map((adapter) => adapter.id);
 }
 
+/**
+ * Recibo da proveniência do Jev (confiança por dimensão + o que a regra teria
+ * escolhido), copiado do resultado da rota SÓ quando o Jev influenciou e só nos
+ * campos conhecidos: ids de CLI/modelo/esforço e números. O texto da tarefa e
+ * qualquer outra chave que alguém tenha pendurado no objeto não passam.
+ */
+export function routeJevReceipt(route: Record<string, unknown> | undefined): {
+  confidence?: SpawnRouteConfidence;
+  ruleChoice?: SpawnRuleChoiceReceipt;
+} {
+  const source = route?.classifierSource;
+  if (source !== 'jev' && source !== 'mixed') return {};
+  const confidence = parseSpawnRouteConfidence(route?.confidence);
+  const ruleChoice = parseSpawnRuleChoice(route?.ruleChoice);
+  return {
+    ...(confidence ? { confidence } : {}),
+    ...(ruleChoice ? { ruleChoice } : {}),
+  };
+}
+
 /** Origem da rota que o renderer exibe (chip + toast). */
 export function spawnRouteFrom(
   route: Record<string, unknown> | undefined,
@@ -140,9 +164,13 @@ export function spawnRouteFrom(
   if (!route) return undefined;
   const raw = route.classifierSource;
   const source = raw === 'jev' || raw === 'mixed' ? raw : 'heuristic';
-  return isJevUnavailableReason(route.jevUnavailable)
-    ? { source, jevUnavailable: route.jevUnavailable }
-    : { source };
+  return {
+    source,
+    ...(isJevUnavailableReason(route.jevUnavailable)
+      ? { jevUnavailable: route.jevUnavailable }
+      : {}),
+    ...routeJevReceipt(route),
+  };
 }
 
 export function routeString(

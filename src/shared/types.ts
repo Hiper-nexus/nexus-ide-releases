@@ -5,6 +5,7 @@ import type {
   BugReportRequest,
   BugReportSubmitResult,
 } from './bug-report';
+import type { AccountChoiceReceipt } from './account-choice';
 /**
  * Shared, transport-safe types used across main / preload / renderer.
  * Everything here must be JSON-serializable (it crosses the IPC boundary).
@@ -52,6 +53,7 @@ import type {
   JevTestResult,
   SetJevKeyRequest,
 } from './jev-ipc';
+import type { MissionPickRequest, MissionPickResult } from './mission-pick';
 import type {
   VoiceRuntimeInfo,
   TranscribeRequest,
@@ -465,6 +467,14 @@ export interface NexusApi {
     /** Menu "Ajuda → Reportar um problema…" pediu o diálogo. */
     onOpenRequest(cb: () => void): Unsubscribe;
   };
+  /**
+   * Recibo da escolha de conta de uma sessão PTY, somente leitura: qual conta o
+   * pane usa e por quê. O Main já devolve o recibo mascarado e saneado (nunca
+   * id, fingerprint, e-mail cru nem token); `null` = sessão sem recibo.
+   */
+  accountChoice: {
+    get(sessionId: string): Promise<AccountChoiceReceipt | null>;
+  };
   pty: {
     spawn(req: SpawnRequest): Promise<SpawnResult>;
     /** Pull retained output immediately (used after adopting a headless PTY). */
@@ -675,6 +685,11 @@ export interface NexusApi {
       verdict: 'right' | 'wrong';
     }): Promise<{ ok: boolean; error?: string }>;
     decisionsStats(): Promise<JevDecisionStatsResult>;
+    /**
+     * Desempate de "abre a missão X" entre títulos parecidos (surface
+     * missionPick). Devolve a posição escolhida ou "sem decisão"; nunca lança.
+     */
+    missionPick(req: MissionPickRequest): Promise<MissionPickResult>;
     /** Push do classificador Jev de estado do pane (surface paneState). */
     onPaneHint(cb: (event: JevPaneHintEvent) => void): Unsubscribe;
   };

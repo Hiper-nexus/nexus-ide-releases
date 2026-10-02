@@ -21,6 +21,9 @@ jobs:
     env:
       ONNXRUNTIME_NODE_INSTALL_CUDA: skip
       NODE_OPTIONS: --max-old-space-size=4096
+      # GCC 11/12 reject the Electron 43 V8 attribute ordering.
+      CC: clang-15
+      CXX: clang++-15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.0
         with:
@@ -85,9 +88,26 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
-            build-essential python3 pkg-config bubblewrap fakeroot rpm xvfb xauth unzip zip \
+            build-essential clang-15 python3 pkg-config bubblewrap fakeroot rpm xvfb xauth unzip zip \
             libgtk-3-0 libnss3 libasound2 libgbm1 libx11-xcb1 libdrm2 libxshmfence1
           bwrap --version
+
+      - name: Verify Linux native C++20 compiler
+        run: |
+          set -euo pipefail
+          "$CC" --version
+          "$CXX" --version
+          test "$("$CC" -dumpversion | cut -d. -f1)" = 15
+          test "$("$CXX" -dumpversion | cut -d. -f1)" = 15
+          # Keep the libstdc++ headers selected from the image's GCC 12 toolchain.
+          "$CXX" -print-search-dirs
+          "$CXX" -print-search-dirs | grep -Eq "/gcc/x86_64-linux-gnu/12(:|$)"
+          # Electron 43 combines deprecation and export attributes in V8 headers.
+          "$CXX" -v -std=c++20 -fsyntax-only -x c++ - <<'CPP'
+          class [[deprecated("native compiler gate")]] __attribute__((visibility("default"))) NativeCompilerGate {
+           public: int value;
+          };
+          CPP
 
       - name: Verify source without release or tag credentials
         run: |

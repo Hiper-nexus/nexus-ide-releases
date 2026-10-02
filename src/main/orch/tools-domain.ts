@@ -48,6 +48,7 @@ import {
   GLOBAL_USE_WINDOW_MS,
   isFrontierReviewer,
   routeTask,
+  type RouteContext,
   type TaskTier,
 } from './task-router';
 import {
@@ -58,6 +59,7 @@ import {
 import { mergeAdapterUseLists } from './route-pipeline';
 import { recordRouteDecision } from './route-provenance';
 import { recordRouteLog, recentRouteLog } from './route-log';
+import { ruleChoiceReceipt } from './route-rule-choice';
 import { loadSpecialtyBenchmark } from './specialty-benchmark';
 import {
   countAccountsWithLiveCredential,
@@ -1620,7 +1622,9 @@ const routeLogTool: McpToolDef = {
     'Inspect the recent nexus_route_task decisions with their reason — so ' +
     'the adapter/model choice is auditable instead of invisible. Returns the ' +
     'most-recent-first list of {seq, tier, adapterId, model, effort, reason, ' +
-    'taskPreview}. Read-only; useful to explain why a provider was (not) used.',
+    'taskPreview} plus, when known, classifierSource, confidence and ruleChoice ' +
+    '(what the plain rule would have picked without Jev). Read-only; useful to ' +
+    'explain why a provider was (not) used.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -1867,6 +1871,24 @@ export async function routeTaskForCaller(
         : adapter,
     );
   }
+  // Contexto da REGRA: tudo que o roteador sabe, menos o que o Jev decidiu.
+  // O contrafactual do recibo (`ruleChoice`, abaixo) reusa este objeto como
+  // está — por construção ele não carrega especialidade nem esforço do Jev.
+  const ruleContext: RouteContext = {
+    missionUsedAdapters:
+      usedAdapterIds.length > 0 ? new Set(usedAdapterIds) : undefined,
+    missionUseCounts,
+    preferAdapters: preferAdapters.length > 0 ? preferAdapters : undefined,
+    ...(globalUseCounts ? { globalUseCounts } : {}),
+    // Uso geral: o multi-score (benchmark oficial + diversidade + custo)
+    // vale também para o fan-out do operador sem missão — a ordem crua da
+    // tabela não é medida de capacidade.
+    multiScore: true,
+    specialtyBenchmark: loadSpecialtyBenchmark(),
+    ...(internal.tieBreakUseCounts
+      ? { tieBreakUseCounts: internal.tieBreakUseCounts }
+      : {}),
+  };
   let decision = routeTask(
     task,
     adapters,
@@ -1875,21 +1897,9 @@ export async function routeTaskForCaller(
     reserveClaude,
     undefined,
     {
-      missionUsedAdapters:
-        usedAdapterIds.length > 0 ? new Set(usedAdapterIds) : undefined,
-      missionUseCounts,
-      preferAdapters: preferAdapters.length > 0 ? preferAdapters : undefined,
-      ...(globalUseCounts ? { globalUseCounts } : {}),
-      // Uso geral: o multi-score (benchmark oficial + diversidade + custo)
-      // vale também para o fan-out do operador sem missão — a ordem crua da
-      // tabela não é medida de capacidade.
-      multiScore: true,
-      specialtyBenchmark: loadSpecialtyBenchmark(),
+      ...ruleContext,
       specialtyOverride: routing.specialtyOverride,
       effortOverride: routing.effortOverride,
-      ...(internal.tieBreakUseCounts
-        ? { tieBreakUseCounts: internal.tieBreakUseCounts }
-        : {}),
     },
   );
   if (!decision) {
@@ -1917,6 +1927,7 @@ export async function routeTaskForCaller(
         ignoredHealthyExclude.join(','),
     };
   }
+  const sealedSquad = missionId && mission?.squadId ? getSquad(mission.squadId) : null;
   if (!missionId) {
     // Sem missão vinculada não existe roster para honrar — e o chamador não
     // tem como saber disso pelo retorno. Dizer que é SUGESTÃO evita que uma
@@ -1927,12 +1938,31 @@ export async function routeTaskForCaller(
         `${decision.reason}; sugestão livre: nenhuma missão vinculada, ` +
         'portanto nenhum roster selado foi consultado',
     };
-  } else if (mission?.squadId) {
-    const squad = getSquad(mission.squadId);
-    if (squad) {
-      decision = pinUniqueSealedRosterOnDecision(decision, squad.agents);
-    }
+  } else if (sealedSquad) {
+    decision = pinUniqueSealedRosterOnDecision(decision, sealedSquad.agents);
   }
+  // Contrafactual do recibo: quando o Jev influenciou, o que a REGRA (heurística
+  // + tabela, sem tier/especialidade/esforço do Jev) teria escolhido. Só lê:
+  // não reserva, não registra proveniência nem log. O roster selado vale para
+  // os dois lados (se ele fixou o modelo, o Jev não mudou nada).
+  const ruleChoice = ruleChoiceReceipt({
+    jevInfluenced: routing.classifierSource !== 'heuristic',
+    final: decision,
+    routeByRule: () => {
+      const byRule = routeTask(
+        task,
+        adapters,
+        undefined,
+        callerTier,
+        reserveClaude,
+        undefined,
+        ruleContext,
+      );
+      return byRule && sealedSquad
+        ? pinUniqueSealedRosterOnDecision(byRule, sealedSquad.agents)
+        : byRule;
+    },
+  });
   // Proveniência: o spawn ad-hoc de modelos com warning de catálogo exige
   // uma decisão recente do router (ver adHocSpawnGateError em tools-panes).
   recordRouteDecision({ adapterId: decision.adapterId, model: decision.model });
@@ -1947,14 +1977,21 @@ export async function routeTaskForCaller(
     reason: decision.reason,
     classifierSource: routing.classifierSource,
     ...(jevUnavailable ? { jevUnavailable } : {}),
+    ...(routing.confidence ? { confidence: routing.confidence } : {}),
+    ...(ruleChoice ? { ruleChoice } : {}),
   });
   // Provenância da classificação (jev | heuristic | mixed) e o sinal
   // `escalate` do Jev — informação para o Maestro, nunca decisão do router.
   // A skillSuggestion do mesmo lote já foi resolvida acima (uma chamada judge).
+  // `confidence` (só das dimensões que o Jev decidiu) e `ruleChoice` (o que a
+  // regra teria escolhido) são recibo aditivo, somente leitura: ids e números,
+  // nunca o texto da tarefa.
   const provenance = {
     classifierSource: routing.classifierSource,
     ...(routing.escalate !== undefined ? { escalate: routing.escalate } : {}),
     ...(jevUnavailable ? { jevUnavailable } : {}),
+    ...(routing.confidence ? { confidence: routing.confidence } : {}),
+    ...(ruleChoice ? { ruleChoice } : {}),
   };
   // F-233: sem nenhum modelo de ponta para julgar, o Maestro é avisado de
   // que o veredito é dele — nunca delegado a um modelo barato.
@@ -2004,7 +2041,11 @@ const routeTaskTool: McpToolDef = {
     'pass adapterId/model/effort into nexus_pane_spawn — or omit adapterId in ' +
     'nexus_pane_spawn and pass `task` so Nexus routes it automatically. ' +
     'The result also carries skillSuggestion: the single bundled skill Jev ' +
-    'judged clearly useful for the task (null when none).',
+    'judged clearly useful for the task (null when none). When Jev influenced ' +
+    'the classification it also returns a read-only receipt: confidence ' +
+    '({tier?, specialty?, effort?} in 0..1, only the dimensions Jev actually ' +
+    'decided) and ruleChoice (what the plain rule would have picked without ' +
+    'Jev: "same" or {adapterId, model?, effort?}).',
   inputSchema: {
     type: 'object',
     properties: {

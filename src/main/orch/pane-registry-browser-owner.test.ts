@@ -6,13 +6,20 @@ import type { AcpDriverSession } from '../acp/acp-harness-driver';
 import type { MainOwnedPane } from './main-owned-pane-runtime';
 
 const facts = vi.hoisted(() => ({
-  sessions: new Map<string, { ownerId: number | null; live: boolean; scope: ProjectExecutionScope }>(),
+  sessions: new Map<string, { ownerId: number | null; live: boolean; scope: ProjectExecutionScope;
+    sessionId?: string; paneId?: string; missionId?: string; role?: CallerCtx['role']; adapterId?: string;
+    accountId?: string; source?: 'direct-user' | 'orchestrator'; workerIncarnationId?: string;
+    authoritySeal?: typeof seal }>(),
   contexts: new Map<string, CallerCtx>(),
   rendererScopes: new Map<number, ProjectExecutionScope>(),
   headless: new Map<string, PaneAuthzInfo>(),
   acp: new Map<string, AcpDriverSession>(),
   owned: new Map<string, MainOwnedPane>(),
+  specs: new Map<string, MainOwnedPane>(),
+  scopeChange: undefined as undefined | ((owner: { id: number }, previous: ProjectExecutionScope | null, next: ProjectExecutionScope | null) => void),
 }));
+const seal = vi.hoisted(() => ({ intentVersion: 1, intentContractHash: 'intent', contextRevision: 'revision',
+  contractHash: 'contract', squadRevisionHash: 'squad' }));
 vi.mock('../license-enforcement', () => ({ assertLicensedAgentCapacity: vi.fn() }));
 vi.mock('./operator-spawn-route', () => ({ parentPaneIdFor: vi.fn() }));
 vi.mock('../connectors/app-events', () => ({ emitAppEvent: vi.fn() }));
@@ -20,15 +27,21 @@ vi.mock('../persistence/provider-session-store', () => ({ copyProviderPaneSessio
 vi.mock('../adapters/mimo-session-owner', () => ({ currentMimoSessionOwnerKey: vi.fn() }));
 vi.mock('../persistence/provider-config-store', () => ({ providerAuthStrategy: vi.fn(), resolveRuntimeApiKey: vi.fn() }));
 vi.mock('../pty/pty-manager', () => ({
-  detachOwnedMissionAgentSession: vi.fn(), getAgentSessionInfo: (id: string) => facts.sessions.get(id),
+  detachOwnedMissionAgentSession: (owner: WebContents, id: string) => {
+    const session = facts.sessions.get(id);
+    if (!session?.live || session.ownerId !== owner.id) return false;
+    session.ownerId = null;
+    return true;
+  }, getAgentSessionInfo: (id: string) => facts.sessions.get(id),
   getSessionState: (id: string) => facts.sessions.get(id)?.live ? 'idle' : null,
   isSessionOwnedBy: (owner: WebContents, id: string) => facts.sessions.get(id)?.ownerId === owner.id,
+  isSessionDetached: (id: string) => facts.sessions.get(id)?.live === true && facts.sessions.get(id)?.ownerId === null,
   listAgentSessionsForPane: () => [], orchTerminateSession: vi.fn(async () => true),
   reattachDetachedMissionAgentSession: vi.fn(), tapSessionData: vi.fn(), tapSessionExit: vi.fn(), tapSessionState: vi.fn(),
 }));
 vi.mock('../persistence/renderer-workspace-scope', () => ({
   getRendererWorkspaceScope: (owner: WebContents) => facts.rendererScopes.get(owner.id),
-  onRendererWorkspaceScopeChange: vi.fn(),
+  onRendererWorkspaceScopeChange: (callback: typeof facts.scopeChange) => { facts.scopeChange = callback; },
   requireLiveRendererWorkspaceScope: (owner: WebContents, expected?: ProjectExecutionScope) => {
     const scope = facts.rendererScopes.get(owner.id);
     if (owner.isDestroyed() || owner.isCrashed() || !scope || (expected && JSON.stringify(scope) !== JSON.stringify(expected))) {
@@ -39,22 +52,30 @@ vi.mock('../persistence/renderer-workspace-scope', () => ({
 }));
 vi.mock('./gate', () => ({ getContextBySession: (id: string) => facts.contexts.get(id) }));
 vi.mock('./main-owned-pane-runtime', () => ({
-  deleteMainOwnedPane: vi.fn(), fallbackPendingSpawnToMain: vi.fn(),
+  deleteMainOwnedPane: (id: string) => facts.owned.delete(id), fallbackPendingSpawnToMain: vi.fn(),
   findMainOwnedPaneAuthz: (id: string) => facts.headless.has(id) ? [facts.headless.get(id)] : [],
   findMainOwnedPaneEntries: () => [],
-  findMainOwnedRuntimeAuthority: (id: string) => facts.headless.has(id) ? [{ ...facts.headless.get(id), owner: null }] : [],
+  findMainOwnedRuntimeAuthority: (id: string) => facts.headless.has(id) ? [{ ...facts.headless.get(id), owner: null }] :
+    [...facts.owned.values()].filter(pane => pane.entry.sessionId === id).map(pane => ({ ...pane.entry, ...pane.meta, owner: null })),
   getMainOwnedPane: (id: string) => facts.owned.get(id), hasMainOwnedPaneReference: vi.fn(), hasMainOwnedPaneSession: vi.fn(),
-  listMainOwnedPaneSnapshots: () => [], mainOwnedPaneValues: () => [], listVisibleMainOwnedPaneSnapshots: () => [],
-  retainClaimedPendingSpawn: vi.fn(), setMainOwnedPane: vi.fn(), spawnMainOwnedMissionPane: vi.fn(), spawnMainOwnedMissionPaneAsync: vi.fn(),
+  listMainOwnedPaneSnapshots: () => [], mainOwnedPaneValues: () => [...facts.owned.values()], listVisibleMainOwnedPaneSnapshots: () => [],
+  retainClaimedPendingSpawn: vi.fn(), setMainOwnedPane: (id: string, pane: MainOwnedPane) => facts.owned.set(id, pane), spawnMainOwnedMissionPane: vi.fn(), spawnMainOwnedMissionPaneAsync: vi.fn(),
 }));
 vi.mock('./pane-session-output', () => ({
   paneSessionStateForEntry: () => 'idle', recordPaneSessionData: vi.fn(), recordPaneSessionExit: vi.fn(), recordPaneSessionState: vi.fn(),
   newOutputSince: vi.fn(), readSessionOutput: vi.fn(), sessionOutputExitedAt: vi.fn(), stripAnsi: vi.fn(), waitForIdle: vi.fn(), waitForNextIdle: vi.fn(),
 }));
 vi.mock('./dev-server-registry', () => ({ createDevServerScanner: () => ({ get: vi.fn() }) }));
-vi.mock('./project-domain-store-registry', () => ({ getProjectDomainStores: vi.fn() }));
+vi.mock('./project-domain-store-registry', () => ({ getProjectDomainStores: () => ({
+  missions: { get: (id: string) => ({ id }) },
+  missionPanes: { findByPaneId: (id: string) => {
+    const pane = facts.specs.get(id);
+    return pane ? { ...pane.entry, ...pane.meta } : null;
+  } },
+}) }));
 vi.mock('./squad-store', () => ({ listSquads: () => [] }));
-vi.mock('./mission-pane-authority', () => ({ resolveMissionPaneAuthoritySeal: vi.fn(), sameMissionPaneAuthoritySeal: vi.fn() }));
+vi.mock('./mission-pane-authority', () => ({ resolveMissionPaneAuthoritySeal: () => seal,
+  sameMissionPaneAuthoritySeal: (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b) }));
 vi.mock('./mission-pane-store', () => ({ isAutomatedReviewerCompositionPane: vi.fn() }));
 vi.mock('../persistence/settings-store', () => ({ getOrchSettings: () => ({}) }));
 vi.mock('../acp/acp-harness-driver', () => ({ getAcpDriverSession: (id: string) => facts.acp.get(id) ?? null }));
@@ -73,9 +94,11 @@ type Registry = typeof import('./pane-registry');
 let registry: Registry;
 function renderSession(wc: WebContents, id: string, role: CallerCtx['role'] = 'worker', missionId = 'mission'): CallerCtx {
   const caller = { sessionId: id, role, missionId, scope };
-  facts.sessions.set(id, { ownerId: wc.id, live: true, scope });
+  facts.sessions.set(id, { ownerId: wc.id, live: true, scope, sessionId: id, paneId: `pane-${id}`,
+    missionId, role, adapterId: 'provider', accountId: 'account', source: 'direct-user' });
   facts.contexts.set(id, caller);
-  registry.syncPanes([{ paneId: `pane-${id}`, sessionId: id, kind: 'cli-agent', title: id }], wc);
+  registry.syncPanes([{ paneId: `pane-${id}`, sessionId: id, kind: 'cli-agent', title: id,
+    adapterId: 'provider', accountId: 'account' }], wc);
   registry.attachOrchMeta(wc, `pane-${id}`, { missionId, role: role === 'user' ? undefined : role, scope });
   return caller;
 }
@@ -93,11 +116,99 @@ async function finishOpen(pending: ReturnType<Registry['requestBrowserPane']>, w
 
 beforeEach(async () => {
   vi.resetModules();
-  for (const map of [facts.sessions, facts.contexts, facts.rendererScopes, facts.headless, facts.acp, facts.owned]) map.clear();
+  for (const map of [facts.sessions, facts.contexts, facts.rendererScopes, facts.headless, facts.acp, facts.owned, facts.specs]) map.clear();
+  facts.scopeChange = undefined;
   registry = await import('./pane-registry');
 });
 
 describe('Main-derived browser originating owner', () => {
+  it('retains the Main-presented ACP coordinator owner when the renderer snapshot has no session or role', () => {
+    const original = owner(1), latest = owner(2);
+    const pane: MainOwnedPane = { entry: { paneId: 'pane-acp-leader', sessionId: 'acp-leader', kind: 'cli-agent',
+      title: 'ACP coordinator', adapterId: 'acp-provider', accountId: 'approved-account' },
+      meta: { missionId: 'mission', role: 'orchestrator', scope, authoritySeal: seal } };
+    facts.owned.set(pane.entry.paneId, pane);
+    facts.specs.set(pane.entry.paneId, pane);
+    const acp = { sessionId: 'acp-leader', paneId: pane.entry.paneId, missionId: 'mission', role: 'orchestrator', scope,
+      agent: { sessionId: 'acp-leader', paneId: pane.entry.paneId, missionId: 'mission', role: 'orchestrator', scope,
+        adapterId: 'acp-provider', accountId: 'approved-account', authoritySeal: seal } } as AcpDriverSession;
+    facts.acp.set('acp-leader', acp);
+    // This is the actual ACP renderer shape: its terminal host has no PTY,
+    // and the snapshot omits the Main-owned mission role.
+    const snapshot = [{ paneId: pane.entry.paneId, sessionId: null, kind: 'cli-agent' as const, title: 'ACP coordinator' }];
+    registry.syncPanes(snapshot, original);
+    expect(original.send).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ sessionId: 'acp-leader', transport: 'acp' }));
+    registry.syncPanes([], latest);
+    const coordinator: CallerCtx = { sessionId: 'acp-leader', missionId: 'mission', role: 'orchestrator', scope };
+    expect(registry.callerWithPaneOwner(coordinator).ownerWebContentsId).toBe(1);
+    expect(registry.callerWithPaneOwner(headlessWorker()).ownerWebContentsId).toBe(1);
+    for (const replacement of [
+      { ...acp, agent: { ...acp.agent, accountId: 'substituted-account' } },
+      { ...acp, agent: { ...acp.agent, adapterId: 'substituted-provider' } },
+      { ...acp, agent: { ...acp.agent, paneId: 'substituted-pane' } },
+      { ...acp, agent: { ...acp.agent, workerIncarnationId: 'substituted-generation' } },
+      { ...acp, scope: { ...scope, rootRealPath: '/another' } },
+    ]) {
+      facts.acp.set('acp-leader', replacement);
+      expect(registry.callerWithPaneOwner(coordinator).ownerWebContentsId).toBeUndefined();
+      expect(registry.callerWithPaneOwner(headlessWorker()).ownerWebContentsId).toBeUndefined();
+    }
+    facts.acp.set('acp-leader', acp);
+    registry.unregisterOrchRenderer(original);
+    expect(registry.callerWithPaneOwner(coordinator).ownerWebContentsId).toBeUndefined();
+    facts.acp.delete('acp-leader');
+    expect(registry.callerWithPaneOwner(coordinator).ownerWebContentsId).toBeUndefined();
+  });
+
+  it('keeps the exact direct-user owner after workspace parking and the following empty pane sync', () => {
+    const original = owner(1), latest = owner(2);
+    const caller = renderSession(original, 'direct', 'orchestrator');
+    registry.syncPanes([
+      { paneId: 'pane-direct', sessionId: 'direct', kind: 'cli-agent', title: 'direct' },
+      { paneId: 'parked-browser', sessionId: null, kind: 'browser', title: 'old project' },
+    ], original);
+    const nextScope = { ...scope, projectId: 'another-project', checkoutId: 'another-checkout', rootRealPath: '/another' };
+    facts.rendererScopes.set(original.id, nextScope);
+    facts.scopeChange!(original, scope, nextScope);
+    registry.syncPanes([], original);
+    registry.registerOrchRenderer(latest);
+    expect(facts.sessions.get('direct')!.ownerId).toBe(1);
+    expect(registry.callerWithPaneOwner({ ...caller, ownerWebContentsId: 2 }).ownerWebContentsId).toBe(1);
+    expect(registry.listVisiblePaneSnapshots(caller).map(pane => pane.paneId)).toContain('parked-browser');
+    for (const substitutedScope of [
+      { ...scope, version: 2 } as unknown as ProjectExecutionScope, { ...scope, installationId: 'other-installation' },
+      { ...scope, projectId: 'other-project' }, { ...scope, checkoutId: 'other-checkout' },
+      { ...scope, rootRealPath: '/other' }, { ...scope, identitySource: 'provisional' as const },
+    ]) expect(registry.callerWithPaneOwner({ ...caller, scope: substitutedScope }).ownerWebContentsId).toBeUndefined();
+    facts.sessions.get('direct')!.ownerId = 2;
+    expect(registry.callerWithPaneOwner(caller).ownerWebContentsId).toBeUndefined();
+  });
+
+  it('keeps the mission owner after Main retains its detached coordinator during workspace parking', () => {
+    const original = owner(1), latest = owner(2);
+    const caller = renderSession(original, 'leader', 'orchestrator');
+    Object.assign(facts.sessions.get('leader')!, { source: 'orchestrator', authoritySeal: seal });
+    registry.attachOrchMeta(original, 'pane-leader', { missionId: 'mission', role: 'orchestrator', scope, authoritySeal: seal });
+    const nextScope = { ...scope, projectId: 'another-project', rootRealPath: '/another' };
+    facts.rendererScopes.set(original.id, nextScope);
+    facts.scopeChange!(original, scope, nextScope);
+    registry.syncPanes([], original);
+    registry.registerOrchRenderer(latest);
+    expect(facts.sessions.get('leader')!.ownerId).toBeNull();
+    expect(facts.owned.get('pane-leader')?.entry.sessionId).toBe('leader');
+    expect(registry.callerWithPaneOwner(caller).ownerWebContentsId).toBe(1);
+    expect(registry.callerWithPaneOwner(headlessWorker()).ownerWebContentsId).toBe(1);
+    // Adoption can precede this renderer's first pane sync. A stale Main-owned
+    // record must not retain the old origin after physical ownership changes.
+    facts.sessions.get('leader')!.ownerId = 999;
+    expect(registry.callerWithPaneOwner(caller).ownerWebContentsId).toBeUndefined();
+    expect(registry.callerWithPaneOwner(headlessWorker()).ownerWebContentsId).toBeUndefined();
+    facts.sessions.get('leader')!.ownerId = null;
+    facts.sessions.get('leader')!.live = false;
+    expect(registry.callerWithPaneOwner(caller).ownerWebContentsId).toBeUndefined();
+    expect(registry.callerWithPaneOwner(headlessWorker()).ownerWebContentsId).toBeUndefined();
+  });
+
   it('uses the caller session owner even when another same-workspace window registered last', async () => {
     const original = owner(1), latest = owner(2);
     const caller = renderSession(original, 'worker');

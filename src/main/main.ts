@@ -141,6 +141,7 @@ import { registerLayoutIpc } from "./persistence/layout-ipc";
 import { registerAdapterIpc } from "./adapters/adapter-ipc";
 import { registerVoiceIpc, closeVoiceIpc } from "./voice/voice-ipc";
 import { registerJevIpc } from "./jev/jev-ipc";
+import { registerMissionPickIpc } from "./jev/jev-mission-pick-ipc";
 import { registerDecisionModelIpc } from "./decision-models/decision-model-ipc";
 import { registerVisionIpc } from "./vision/ipc-bridge";
 import {
@@ -327,6 +328,7 @@ import {
   unregisterTokenSpeedListener,
 } from "./orch/token-speed-ipc";
 import { registerBillingIpc } from "./persistence/billing-ipc";
+import { registerAccountChoiceIpc } from "./persistence/account-choice-ipc";
 import { syncLicenseOnBoot } from "./license-sync";
 import { registerTeamIpc } from "./team-ipc";
 import { installAppMenu } from "./app-menu";
@@ -603,6 +605,7 @@ function bootstrap(): void {
   registerVoiceIpc(projectRuntimeManager);
   traceBootstrap('after voice IPC');
   registerJevIpc();
+  registerMissionPickIpc();
   registerDecisionModelIpc();
   // The window is created by the app-ready handler before bootstrap starts.
   // Keep the rest of registration below it so account/secrets/billing cannot
@@ -629,6 +632,9 @@ function bootstrap(): void {
   registerArmsIpc();
   registerFilesIpc();
   registerAccountIpc();
+  // Recibo da escolha de conta (somente leitura, já mascarado) para o chip do
+  // cabeçalho do pane.
+  registerAccountChoiceIpc();
   registerCostIpc();
   registerTokenSpeedIpc();
   registerMediaIpc(projectRuntimeManager);

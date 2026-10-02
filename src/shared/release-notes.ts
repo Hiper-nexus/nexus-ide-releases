@@ -9055,14 +9055,71 @@ export const RELEASE_076164: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076165: AppRelease = {
   version: '0.76.165',
+  date: '2026-10-02',
+  codename: 'Decisões à vista',
+  summary:
+    'Você passa a ver por que o Nexus escolheu: a confiança do Jev, o que a ' +
+    'regra teria escolhido e qual conta foi usada. A voz deixou de abrir ' +
+    'missão por palpite. Inclui a 0.76.164.',
+  highlights: [
+    {
+      title: 'Recibo da rota com a confiança do Jev',
+      detail:
+        'Ao passar o mouse no chip "Jev" do pane você vê a confiança por ' +
+        'dimensão (tarefa, especialidade, esforço) e o que a regra teria ' +
+        'escolhido sozinha. Quando o Jev só confirma a regra, o recibo diz ' +
+        'que a regra chegaria ao mesmo lugar. O mesmo dado aparece no ' +
+        'resultado de nexus_route_task e no log de rotas.',
+    },
+    {
+      title: 'Conta escolhida, à vista no pane',
+      detail:
+        'Um chip no cabeçalho do pane mostra qual conta foi usada (sempre ' +
+        'mascarada) e, no tooltip, quem decidiu, a folga medida na hora e as ' +
+        'alternativas com o motivo de cada uma ter perdido. A escolha de ' +
+        'conta continua sendo da regra de folga, que compara cota medida; o ' +
+        'Jev não decide conta.',
+    },
+    {
+      title: 'Missão falada com desempate do Jev',
+      detail:
+        'Ao dizer "abre a missão site", se duas missões parecem o que você ' +
+        'disse, o Jev desempata (só com confiança alta) e a voz avisa qual ' +
+        'abriu; sem certeza, ela pergunta qual. Um nome mal reconhecido ' +
+        'também é tratado, com critério mais rígido, e a voz diz que ' +
+        'interpretou. Há uma superfície nova, missionPick, com interruptor ' +
+        'próprio em Configurações.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'A voz não abre mais uma missão qualquer',
+      detail:
+        'Antes, um nome que não casava com nenhuma missão abria a primeira ' +
+        'da lista em silêncio, e dois nomes parecidos abriam sempre a ' +
+        'primeira. Agora, sem correspondência a voz diz que não achou e ' +
+        'lista as missões, e nada abre por palpite.',
+    },
+    {
+      title: 'Cabeçalho do pane sem pulo de 3 px',
+      detail:
+        'Quando um chip não cabia na linha e ia para a escondida, o ' +
+        'conteúdo do cabeçalho subia 3 px. A altura da primeira linha agora ' +
+        'é fixa.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.166',
   date: '2026-10-02',
   codename: 'Workers com mais autonomia',
   summary:
     'Workers podem usar o navegador e o desktop e criar subagentes quando a ' +
     'CLI oferece esse recurso. O acesso continua vinculado à janela, ao ' +
-    'projeto e à conta da tarefa. Inclui a 0.76.164.',
+    'projeto e à conta da tarefa. Inclui a 0.76.165.',
   highlights: [
     {
       title: 'Workers executam e verificam a interface',

@@ -4,6 +4,7 @@ import {
   operatorChildUseCounts,
   operatorRouteTask,
   parentPaneIdFor,
+  routeJevReceipt,
   routeString,
   spawnRouteFrom,
   sameAdapterDiversityHint,
@@ -50,6 +51,42 @@ describe('operator-spawn-route', () => {
     });
     expect(spawnRouteFrom({ classifierSource: 'lol', jevUnavailable: 'lol' })).toEqual({
       source: 'heuristic',
+    });
+  });
+
+  it('spawnRouteFrom leva confiança e ruleChoice saneados quando o Jev influenciou', () => {
+    expect(
+      spawnRouteFrom({
+        classifierSource: 'jev',
+        confidence: { tier: 0.8349, specialty: 0.71, task: 'texto da tarefa' },
+        ruleChoice: { adapterId: 'claude', model: 'sonnet', reason: 'sinais: texto da tarefa', accountId: 'a1' },
+      }),
+    ).toEqual({
+      source: 'jev',
+      confidence: { tier: 0.83, specialty: 0.71 },
+      ruleChoice: { adapterId: 'claude', model: 'sonnet' },
+    });
+    expect(spawnRouteFrom({ classifierSource: 'mixed', ruleChoice: 'same' })).toEqual({
+      source: 'mixed',
+      ruleChoice: 'same',
+    });
+  });
+
+  it('spawnRouteFrom ignora confiança/ruleChoice sem influência do Jev e valores inválidos', () => {
+    expect(
+      spawnRouteFrom({ classifierSource: 'heuristic', confidence: { tier: 0.9 }, ruleChoice: 'same' }),
+    ).toEqual({ source: 'heuristic' });
+    expect(
+      spawnRouteFrom({ classifierSource: 'jev', confidence: { tier: 7 }, ruleChoice: { model: 'sem-cli' } }),
+    ).toEqual({ source: 'jev' });
+  });
+
+  it('routeJevReceipt devolve só o que pode ir ao recibo, ou nada', () => {
+    expect(routeJevReceipt(undefined)).toEqual({});
+    expect(routeJevReceipt({ classifierSource: 'heuristic', ruleChoice: 'same' })).toEqual({});
+    expect(routeJevReceipt({ classifierSource: 'jev', ruleChoice: 'same', confidence: { effort: 0.66 } })).toEqual({
+      ruleChoice: 'same',
+      confidence: { effort: 0.66 },
     });
   });
 

@@ -14,6 +14,11 @@ were not reused as evidence for this baseline.
 - Browser authorization excluded workers by role. Browser access now proves the
   complete project scope and live Main-owned window/session, including ACP. It
   never borrows an unrelated window when a headless binding is missing.
+  Review reproduced two additional losses: ACP presentation had no renderer
+  PTY ID, and switching projects removed parked mission panes from that list.
+  Main now retains the proven origin and revalidates its live physical identity,
+  account, scope and authority; nine regression cases passed, including a
+  substituted owner before its first renderer sync.
 - Computer autopilot refused workers before executing the same injected loop.
   The regression failed with that exact error, then all 27 tests passed after
   removal of the two role-only checks. OS availability and MCP permissions remain.
@@ -45,11 +50,24 @@ movement, restart, console capture and load failures. PNGs and report.json are
 uploaded by Linux preview. It does not prove full Nexus boot or subjective design
 quality. Inspect the report and screenshots, not merely a successful build.
 
-Local Electron 43.7.4/Chromium 150.0.7871.250 could initialize but BrowserWindow
+Hosted Linux preview 36961884071, commit
+`d20d5ecdb14eb352941173fba32e20a7c7b8ee49`, executed the real Electron
+43.7.4/Chromium 150 preload/runtime under Xvfb. The form saved Ada, the menu
+opened, a 390 px viewport used one column without horizontal overflow, and the
+game advanced from x=40 to x=87 with two moves and seven held animation frames.
+Restart reset state, then another control moved to x=65. Console capture worked;
+there were no load failures. The five PNGs were downloaded, hashes verified,
+and frontend, game and mobile output visually inspected. These are synthetic
+DOM keyboard events, not trusted hardware input. Artifact 11209026664 SHA-256:
+`d743ae3af6ef8db9da6db3a775773423d34d51fd1e2c1349a103bedcb33cc7b0`.
+
+Local Electron could initialize but BrowserWindow
 crashed before rendering. Local Xvfb was blocked by AF_UNIX socket permission.
-No local screenshot was claimed. The hosted Ubuntu Xvfb workflow must supply
-execution evidence. Same-model Nexus versus direct-agent inference was not run:
+No local screenshot was claimed. Same-model Nexus versus direct-agent inference was not run:
 no authorized provider CLI session/credentials were present in this environment.
+
+Full CI 36961884068 passed on that same commit: 18,656 tests, typecheck and
+renderer sinks. Subsequent ACP/browser fixes require their own final-head CI.
 
 ## Model identities
 
@@ -58,6 +76,18 @@ The baseline catalog contains `claude-sonnet-5-5`, `claude-opus-5-5`,
 Claude CLI aliases are resolved by the actual host control stream; Codex model
 identities come from its model cache. No inference, model substitution or
 availability claim was made from a display name alone.
+
+The actual ACP client/driver plus a JSON-RPC subprocess fixture reproduced
+another loss: public response chunks reached the observer but not the existing
+volatile pane output ring. Public text now enters that bounded ring; thought
+chunks and unrelated sessions do not. Requested ACP model/effort also previously
+existed only in metadata. The corrected path requires exact peer-advertised
+config options, applies and confirms them before prompting, and fails explicitly
+when unsupported. This fixture does not prove provider entitlement. Nexus account
+IDs cannot currently be bound to generic ACP harness authentication; an explicit
+ID (including a UI-materialized default) is rejected before token/process creation
+instead of claiming a false binding. Native PTY account selection remains the
+existing supported path; no adapter is substituted silently.
 
 ## Catalogs, TLS and activation
 
@@ -92,6 +122,9 @@ do not disable TLS. BrowserWindow networking could not be tested locally.
 ## Delivery limits
 
 Linux preview and release preparation are described in the separate Linux report.
+The d20 preview passed its complete source checks and browser fixture but failed
+compiling pinned better-sqlite3 against Electron V8 headers. Package, installed
+DEB, portable ZIP and Debian smoke steps therefore did not run on this commit.
 Ubuntu installed DEB and portable ZIP checks run on hosted Ubuntu x86_64;
 Debian 12 checks are additionally scheduled in an immutable official amd64
 container with actual package installation and an unprivileged Xvfb runtime.
@@ -103,6 +136,7 @@ is asserted by source changes or a preview artifact.
 
 The production website source is a separate `nexus-site` repository, absent from
 the installed repository inventory; no authorized Cloudflare deploy token/project
-was available. The live /api/releases snapshot and download redirects lagged the
-public mirror's 0.76.163 release. Site deployment remains blocked on that source
+was available. An unrelated macOS 0.76.165 release was published while this PR
+was running; it does not contain this branch's worker changes. This candidate
+is 0.76.166, not that published release. Site deployment remains blocked on that source
 and its existing production authentication, not on permission from the user.

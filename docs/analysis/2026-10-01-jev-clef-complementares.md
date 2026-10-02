@@ -355,3 +355,71 @@ A revisão da 0.76.161 mudou o desenho em pontos que valem registrar:
   20 s para uma queda do provedor não custar 4 s por leitura de pane.
 - **Limites desta entrega.** Conexões e 18 casos sintéticos de texto foram validados na API real, assim como uma imagem sintética previamente redigida. As recusas, máscaras e consentimentos do fluxo visual endurecido foram cobertos em testes; isso não valida a precisão nem a privacidade em sites reais.
   Fundos CSS e dados pessoais em texto comum não são mascarados.
+
+## Missão falada: desempate entre títulos parecidos (superfície `missionPick`)
+
+O ramo `restore_mission_panes` do executor de voz abria `missions[0]` quando
+nenhum título casava e a primeira quando dois casavam: ação errada em silêncio.
+O Overclock resolve o caso com um modelo de decisão que escolhe entre os
+candidatos; aqui o código vem primeiro e o modelo só entra onde há dúvida real.
+
+- **Resolvedor puro** (`src/shared/mission-name-match.ts`): sem acento, caixa nem
+  pontuação; igual > começa com > contém > todas as palavras (sem as de ligação).
+  Nada casa → `none` (a voz lista as missões; nunca a primeira). `unique` só
+  com um título igual ao dito ou quando é o único que casa de alguma forma;
+  qualquer outro caso é `ambiguous`, com até 5 candidatos e o motivo de cada um.
+  Alvo vazio mantém "a mais recente".
+- **Nome mal reconhecido (`kind: 'noMatch'`, 02/10/2026).** Quando nada casa e há
+  de 1 a 8 missões, o Jev lê a fala contra TODAS as missões (mesma superfície,
+  mesma redação, 2 KB e fail-open; com 9 ou mais não consulta). O texto falado
+  pode ser ruído, então o piso é mais rígido: confiança ≥ 0,90 e margem ≥ 0,30.
+  Aceitando, a voz abre e diz "Abrindo a missão X. Entendi assim o que você
+  disse." (uma interpretação, não uma certeza); senão segue o "não achei". Falas
+  de uma letra só não são consultadas. O diário prefixa `noMatch:`.
+- **Desempate** (`src/main/jev/jev-mission-pick.ts`): UMA pergunta `choice`
+  (candidatos por posição `m1…m5` + `none`), estado de no máximo 2 KB, título
+  redigido antes do corte, timeout de 3 s sem retry. Aceita só com confiança
+  ≥ 0,7 e margem ≥ 0,15 sobre a 2ª opção (o `none` conta como opção). Sem
+  decisão a voz pergunta "Achei N missões parecidas… Qual delas?" e deixa o turno
+  aberto. Quando o Jev decide, a voz diz qual missão abriu.
+- **Rota.** É superfície de texto e a escolha só abre uma tela, dita em voz alta:
+  NÃO está em `JEV_PINNED_SURFACES`. Automático prefere Jev e cai no Clef sem
+  chave Jev; "Somente Clef" usa o Clef sob a mesma regra de aceitação; sem
+  nenhuma credencial não há rota e a voz pergunta. Os limiares não foram
+  avaliados contra o Clef, e contra o Jev só numa amostra pequena (abaixo).
+- **O que foi medido com o Jev real (01/10/2026, 16 casos sintéticos, uma
+  rodada).** A resposta no formato da pergunta passa na validação do Nexus e leva
+  250–420 ms. Empates reais (`api` entre "API de pagamento" e "API de estoque",
+  o mesmo título duas vezes, cinco títulos longos parecidos) voltaram `none` com
+  confiança 0,88–0,98 e a voz perguntaria. Casos claros ("pagamento pix", "versão dois" →
+  "Site da loja v2") voltaram 0,98–1,00. "site loja" entre "Site da loja" e "Site
+  da loja v2" escolheu "Site da loja" nas duas ordens e com a recência trocada
+  (0,70–0,93): o modelo desempata pelo título mais curto, não pela posição nem
+  pela recência. Pistas de estado ("a que está rodando", "a última") acertaram a
+  missão mas com confiança 0,59–0,62, então a regra manda perguntar. Dois casos com
+  texto de injeção num título apontando para a opção errada não desviaram a
+  escolha. Nesses casos a
+  `confidence` do Jev ficou abaixo da probabilidade da opção escolhida (0,62 contra
+  0,75), então a margem sobre a 2ª opção não é redundante com a confiança.
+- **Nome mal reconhecido, medido com o Jev real (02/10/2026, 19 casos × 2
+  rodadas = 38 chamadas, 246–440 ms).** Erros de STT com intenção clara ("sait da
+  lója", "versão dois", "api de pagamentu", "checkout pix v dois", "refatora o
+  chekaut", "chekaut cartão", "api do estoki", "relatorio mensual", com 1, 3, 4 e
+  8 missões) voltaram a missão certa com confiança 0,94–1,00 e margem 0,92–1,00
+  em 20 de 22 chamadas. As duas restantes foram "pagamento pics" entre "Pagamento
+  via PIX" e "API de pagamento" (0,79 e 0,83, abaixo do piso: a regra pergunta, e
+  a fala é de fato ambígua). Fala sem relação ("banana", "projeto do cliente", "o
+  outro projeto", "financeiro", "abre aquela outra") voltou `none` ou uma escolha
+  com confiança 0,34–0,45; com UMA missão só ele não se sente obrigado a escolhê-la
+  (`banana` → `none`, 0,85). Um caso quase-empate, "sait da" entre "Site da loja"
+  e "Site da loja v2", voltou "Site da loja" com 0,84 (recusado) e 0,85 (aberto):
+  o piso está na beirada exata para títulos quase iguais, e a margem não ajuda
+  (0,77–0,81, porque o Jev dá quase nada à 2ª opção). Em toda a amostra a margem
+  nunca foi o que barrou: quem separa é a confiança; 0,30 fica como rede de
+  segurança. Com o piso em 0,90 os 20 acertos claros (mínimo 0,94) seguiriam
+  abrindo e o quase-empate seria recusado nas duas rodadas; não mudei o número
+  (amostra pequena, duas rodadas, só português, só títulos sintéticos).
+- **Não validado.** Isso é amostra pequena, não rubrica: sem conjunto de pedidos
+  reais de missão, sem repetição para medir variância e sem nenhuma chamada ao
+  Clef (os limiares valem para ele só pela regra de aceitação). Recalibre pelo
+  painel Decisões do Jev (certo/errado) antes de relaxar qualquer número.
