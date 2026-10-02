@@ -7,6 +7,7 @@ const holdSpawnUntilApproved = vi.fn();
 const markResumeOnSpawn = vi.fn();
 const releaseHeldSpawns = vi.fn();
 const discardPaneSpawnState = vi.fn();
+const isSpawnHeld = vi.fn();
 const unlockRetiredMissionPane = vi.fn();
 const askConfirm = vi.fn();
 const askChoice = vi.fn();
@@ -34,6 +35,7 @@ vi.mock('../terminal/terminal-host', () => ({
   releaseHeldSpawns: (...args: unknown[]) => releaseHeldSpawns(...args),
   discardPaneSpawnState: (...args: unknown[]) =>
     discardPaneSpawnState(...args),
+  isSpawnHeld: (...args: unknown[]) => isSpawnHeld(...args),
   unlockRetiredMissionPane: (...args: unknown[]) =>
     unlockRetiredMissionPane(...args),
 }));
@@ -114,6 +116,8 @@ describe('restore-agents-gate', () => {
     markResumeOnSpawn.mockReset();
     releaseHeldSpawns.mockReset();
     discardPaneSpawnState.mockReset();
+    isSpawnHeld.mockReset();
+    isSpawnHeld.mockReturnValue(true);
     unlockRetiredMissionPane.mockReset();
     askConfirm.mockReset();
     askChoice.mockReset();
@@ -524,6 +528,39 @@ describe('restore-agents-gate', () => {
     expect(closePane).toHaveBeenCalledWith('loose', 'restore-gate-discard');
     expect(closePane).not.toHaveBeenCalledWith('m1', expect.anything());
     expect(closePane).not.toHaveBeenCalledWith('sh-1', expect.anything());
+  });
+
+  it('on ask+close, never closes a pane whose hold was cleared while the dialog was open (adopted / started)', async () => {
+    const adopted = agent('adopted', 'Adotado');
+    const held = agent('held', 'Retido');
+    layoutRoot.current = buildGridTree([adopted, held]) as never;
+    askChoice.mockImplementation(async () => {
+      // Main adotou o PTY vivo: o hold cai (markPersistedAuthorityOnSpawn).
+      isSpawnHeld.mockImplementation((id: string) => id !== 'adopted');
+      return 'close';
+    });
+    await gateRestoredAgents([adopted, held]);
+
+    expect(closePane).toHaveBeenCalledTimes(1);
+    expect(closePane).toHaveBeenCalledWith('held', 'restore-gate-discard');
+    expect(discardPaneSpawnState).not.toHaveBeenCalledWith('adopted');
+  });
+
+  it('on ask+close, never closes a pane that became a mission agent while the dialog was open', async () => {
+    const promoted = agent('promoted', 'Virou missão');
+    const loose = agent('loose', 'Avulso');
+    layoutRoot.current = buildGridTree([promoted, loose]) as never;
+    askChoice.mockImplementation(async () => {
+      layoutRoot.current = buildGridTree([
+        { ...promoted, missionId: 'mission-z', role: 'orchestrator' as const },
+        loose,
+      ]) as never;
+      return 'close';
+    });
+    await gateRestoredAgents([promoted, loose]);
+
+    expect(closePane).toHaveBeenCalledTimes(1);
+    expect(closePane).toHaveBeenCalledWith('loose', 'restore-gate-discard');
   });
 
   it('on ask+close, skips panes that already left the layout while the dialog was open', async () => {

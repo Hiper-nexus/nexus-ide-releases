@@ -11,6 +11,7 @@ import { askChoice } from '../state/choice-store';
 import {
   discardPaneSpawnState,
   holdSpawnUntilApproved,
+  isSpawnHeld,
   releaseHeldSpawns,
 } from '../terminal/terminal-host';
 import { isAutomatedReviewerPaneIdentity } from '../../shared/automated-reviewer-pane';
@@ -268,15 +269,19 @@ function applyDecision(
 
 /**
  * Descarta agentes avulsos restaurados. O diálogo é assíncrono: reconfere o
- * layout agora e só fecha o que ainda está lá — nunca age sobre estado velho.
- * O spawn estava retido, então não há processo a encerrar; a conversa do
- * provider continua no histórico dele e não é apagada.
+ * layout e o hold agora, pane a pane, e só fecha o que continua inerte e
+ * avulso — nunca age sobre estado velho. Pane que saiu do layout, que perdeu o
+ * hold (a Main adotou o PTY vivo ou o spawn começou) ou que virou agente de
+ * missão enquanto o diálogo estava aberto é deixado em paz: fechá-lo mataria o
+ * processo (o descarte do host encerra a sessão). A conversa do provider
+ * continua no histórico dele e não é apagada.
  */
 function closeRestoredAgents(ids: readonly string[]): void {
   const layout = useLayoutStore.getState();
-  const stillThere = new Set(listPanes(layout.root).map((pane) => pane.id));
+  const current = new Map(listPanes(layout.root).map((pane) => [pane.id, pane]));
   for (const id of ids) {
-    if (!stillThere.has(id)) continue;
+    const pane = current.get(id);
+    if (!pane || looksLikeMissionAgent(pane) || !isSpawnHeld(id)) continue;
     discardPaneSpawnState(id);
     layout.close(id, CLOSE_REASON);
   }
