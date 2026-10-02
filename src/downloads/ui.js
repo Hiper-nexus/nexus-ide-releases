@@ -50,6 +50,9 @@ function renderLinux(rows) {
     : 'x64 · .deb, .rpm e .zip portátil · em validação, ainda não publicado';
   const formats = card.querySelector('[data-linux-formats]');
   formats.hidden = !latest;
+  // O comando de um clique só aparece quando há pacote publicado para ele instalar.
+  const quick = card.querySelector('[data-linux-quick]');
+  if (quick) quick.hidden = !latest;
   formats.replaceChildren(...(latest ? [
     ...latest.files.map(file => {
       const anchor = link(LINUX_FORMAT_LABEL[file.format], file.url);
@@ -59,6 +62,33 @@ function renderLinux(rows) {
     }),
     ...(latest.checksums ? [Object.assign(link('SHA-256 ↗', latest.checksums.url), { className: 'linux-sums' })] : []),
   ] : []));
+}
+
+/** Copia o comando de instalação do Linux; sem a API de área de transferência, seleciona o texto para o Ctrl+C. */
+function initializeLinuxCopy() {
+  const button = document.querySelector('[data-linux-copy]');
+  const command = document.querySelector('[data-linux-cmd]');
+  const note = document.querySelector('[data-linux-copied]');
+  if (!button || !command || !note) return;
+  let timer;
+  const say = text => {
+    note.textContent = text;
+    clearTimeout(timer);
+    timer = setTimeout(() => { note.textContent = ''; }, 2500);
+  };
+  button.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(command.textContent.trim());
+      say('Copiado.');
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents(command);
+      const selection = getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      say('Selecionado: use Ctrl+C.');
+    }
+  });
 }
 
 function renderDownloads(catalog, device) {
@@ -82,6 +112,7 @@ function renderDownloads(catalog, device) {
 }
 
 export async function initializeDownloads() {
+  initializeLinuxCopy();
   const device = await browserPlatform(navigator);
   renderDownloads(snapshot.catalog, device);
   const status = document.getElementById('catalog-status');
