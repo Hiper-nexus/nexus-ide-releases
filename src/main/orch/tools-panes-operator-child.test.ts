@@ -616,6 +616,44 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     });
   });
 
+  it('F-753: skill do projeto leva o caminho do SKILL.md no brief, para qualquer CLI ler', async () => {
+    setOperatorRouteResolver(
+      vi.fn(async () => ({
+        adapterId: 'codex',
+        skill: {
+          name: 'bmad-create-prd',
+          pkg: 'project',
+          confidence: 0.82,
+          path: '.claude/skills/bmad-create-prd/SKILL.md',
+        },
+      })),
+    );
+    await paneSpawnTool.handler({ prompt: 'escreva o PRD do checkout' }, userPane());
+    const options = harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0] as {
+      prompt?: string;
+    };
+    expect(options.prompt).toBe(
+      'escreva o PRD do checkout\n\nSkill sugerida pelo Nexus: bmad-create-prd — ' +
+        'leia `.claude/skills/bmad-create-prd/SKILL.md` antes de começar.',
+    );
+  });
+
+  it('F-753: caminho fora do formato do catálogo do projeto nunca entra no brief', async () => {
+    setOperatorRouteResolver(
+      vi.fn(async () => ({
+        adapterId: 'codex',
+        skill: { name: 'x', pkg: 'project', confidence: 0.9, path: '../../.ssh/id_rsa' },
+      })),
+    );
+    await paneSpawnTool.handler({ prompt: 'implemente X' }, userPane());
+    const options = harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0] as {
+      prompt?: string;
+    };
+    expect(options.prompt).toBe(
+      'implemente X\n\nSkill sugerida pelo Nexus: x — leia a SKILL.md dela antes de começar.',
+    );
+  });
+
   it('skill com confiança < 0.7 não toca o prompt mas sai no recibo', async () => {
     setOperatorRouteResolver(
       vi.fn(async () => ({

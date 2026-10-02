@@ -609,7 +609,7 @@ export function attenuateSkills(
  */
 function skillSuggestionFromRoute(
   autoRoute: Record<string, unknown> | undefined,
-): { name: string; pkg: string; confidence: number } | null {
+): { name: string; pkg: string; confidence: number; path?: string } | null {
   const raw = autoRoute?.skill ?? autoRoute?.skillSuggestion;
   if (!raw || typeof raw !== 'object') return null;
   const rec = raw as Record<string, unknown>;
@@ -617,11 +617,25 @@ function skillSuggestionFromRoute(
   if (typeof rec.confidence !== 'number' || !Number.isFinite(rec.confidence)) {
     return null;
   }
+  // F-753: só o formato que o catálogo do projeto produz vira caminho no brief.
+  const path =
+    typeof rec.path === 'string' && PROJECT_SKILL_PATH.test(rec.path) ? rec.path : undefined;
   return {
     name: rec.name,
     pkg: typeof rec.pkg === 'string' ? rec.pkg : '',
     confidence: rec.confidence,
+    ...(path ? { path } : {}),
   };
+}
+
+/** `.claude/skills/<nome>/SKILL.md` ou `.nexus/skills/<nome>/SKILL.md`, nada fora disso. */
+const PROJECT_SKILL_PATH = /^\.(?:claude|nexus)\/skills\/[A-Za-z0-9._-]+\/SKILL\.md$/;
+
+/** A linha que o brief do worker ganha para a skill escolhida pela rota. */
+export function routeSkillHintLine(skill: { name: string; path?: string }): string {
+  return skill.path
+    ? `Skill sugerida pelo Nexus: ${skill.name} — leia \`${skill.path}\` antes de começar.`
+    : `Skill sugerida pelo Nexus: ${skill.name} — leia a SKILL.md dela antes de começar.`;
 }
 
 /** Worker may hand off; only orchestrator/maestro/user may create a pane. */
@@ -921,7 +935,7 @@ const paneSpawnAfterTabMission = {
     // Reserva criada pelo auto-roteamento em missão (C, 0.76.110).
     let autoRouteReservation = false;
     let autoRoute: Record<string, unknown> | undefined;
-    let routeSkill: { name: string; pkg: string; confidence: number } | null =
+    let routeSkill: { name: string; pkg: string; confidence: number; path?: string } | null =
       null;
     // F-218: um modelo pedido explicitamente (args.model, template de squad,
     // requestedModel do roster que vence o selo) sobe para o mais novo da sua
@@ -1314,9 +1328,7 @@ const paneSpawnAfterTabMission = {
                 skill.toLowerCase() === routeSkill!.pkg.toLowerCase()),
           ))
       ) {
-        adHocPrompt =
-          `${adHocPrompt}\n\nSkill sugerida pelo Nexus: ${routeSkill.name} ` +
-          '— leia a SKILL.md dela antes de começar.';
+        adHocPrompt = `${adHocPrompt}\n\n${routeSkillHintLine(routeSkill)}`;
       }
       const gateModel =
         selectedAdHocModel ?? defaultModelForAdapter(adHocAdapterId);
