@@ -50,6 +50,7 @@ function owner(id: number): WebContents {
     id,
     send: vi.fn(),
     isDestroyed: () => false,
+    isCrashed: () => false,
   } as unknown as WebContents;
 }
 

@@ -140,3 +140,10 @@ was available. An unrelated macOS 0.76.165 release was published while this PR
 was running; it does not contain this branch's worker changes. This candidate
 is 0.76.166, not that published release. Site deployment remains blocked on that source
 and its existing production authentication, not on permission from the user.
+
+
+## Final-head preview and fixture correction
+
+Windows preview 36966330197 passed on head 3e49a73, version 0.76.166: typecheck/sinks,135 focused tests and 22 probes of the NUPKG-extracted executable, renderer-mounted and shutdown-complete. Main proves its physical PTY inventory; the Windows harness does not enumerate every Electron helper, so its empty orphans array is not exhaustive OS evidence. Setup installation was not run. Artifacts are unsigned/private-preview, expire 2026-10-09, and were not downloaded/rehashed locally; GitHub/upload digests matched.
+
+The source suites on head 3e49a73 reached a single failure in pane-registry-pane-number.test.ts: the mock WebContents omitted isCrashed used by the new origin guard. The production method exists in Electron. The fixture is corrected without weakening the guard; final-head CI and Linux packages still require a successful fresh run. The Linux compiler gate itself passed with real Clang 15.0.7 and selected GCC 12 headers; package/build/installation steps were skipped after the fixture failure.
