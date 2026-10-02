@@ -4,6 +4,8 @@ API do NexusIDE em Cloudflare Workers (Hono, D1, Stripe). Atende o site `https:/
 
 A API está publicada em `https://api.nexuside.app` (Cloudflare Workers + D1, entrada só pelo domínio: `workers_dev` e preview URLs estão desligados). Ainda roda contra o banco de staging, com login OAuth e Stripe pendentes de credenciais. O roteiro para completar a publicação fica em `docs/go-live.md`. Os avisos por e-mail do fim do teste (Resend) já estão no código, **desligados**: `docs/emails.md` traz os passos para conectar.
 
+O app também envia relatos de bug (FASE 1: coletar, deduplicar e triar; nenhuma correção automática). A referência da API, o que é coletado, a retenção de 180 dias, a LGPD e o fluxo de status ficam em `docs/bug-reports.md`.
+
 ## Rodar
 
 ```sh
@@ -38,6 +40,8 @@ Respostas: `{ok:true,data:{…}}` ou `{ok:false,error:"…"}`.
 | `POST /v1/billing/checkout`, `POST /v1/billing/portal`, `GET /v1/license` | app (Bearer) |
 | `POST /v1/billing/webhook` | assinatura do Stripe |
 | `GET /v1/admin/overview`, `GET /v1/admin/accounts`, `POST /v1/admin/accounts/:id/{suspend,resume,extend-trial}` | site (cookie + admin; mutações com CSRF) |
+| `POST /v1/bug-reports`, `GET /v1/bug-reports/mine` | app (Bearer); corpo até 64 KB, 5 relatos por hora por conta (`docs/bug-reports.md`) |
+| `GET /v1/admin/bug-reports`, `GET /v1/admin/bug-reports/stats`, `GET`/`PATCH /v1/admin/bug-reports/:id` | site (cookie + admin; `PATCH` com CSRF) |
 | `/v1/team`, `/v1/team/*`, `/v1/cron/*`, `/v1/sync/*` | app (Bearer); cron exige teste ou assinatura para gravar, sync exige assinatura |
 
 ## Cobrança
