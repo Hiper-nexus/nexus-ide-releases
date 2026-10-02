@@ -235,3 +235,25 @@ it('does not return data from an authenticated request after session replacement
   response.resolve(json({ ok: true, data: { id: 'old-account' } }));
   expect((await flight).status).toBe(401);
 });
+
+it('repassa a política de redirecionamento pedida e não define nenhuma por padrão', async () => {
+  const d = deps();
+  (d.fetchFn as ReturnType<typeof vi.fn>).mockResolvedValue(json({ ok: true }));
+
+  await apiFetch('/v1/a', {}, d as never);
+  await apiFetch('/v1/b', { redirect: 'error' }, d as never);
+
+  const calls = (d.fetchFn as ReturnType<typeof vi.fn>).mock.calls;
+  expect(calls[0][1]).not.toHaveProperty('redirect');
+  expect(calls[1][1].redirect).toBe('error');
+});
+
+it('um redirecionamento recusado vira falha de rede, sem seguir o destino', async () => {
+  const d = deps();
+  (d.fetchFn as ReturnType<typeof vi.fn>).mockRejectedValue(new TypeError('unexpected redirect'));
+
+  const result = await apiFetch('/v1/bug-reports', { method: 'POST', body: {}, redirect: 'error' }, d as never);
+
+  expect(result).toEqual({ status: 0, json: null });
+  expect((d.fetchFn as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+});
