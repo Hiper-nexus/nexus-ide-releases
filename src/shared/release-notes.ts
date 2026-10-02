@@ -9364,7 +9364,7 @@ export const RELEASE_076171: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076172: AppRelease = {
   version: '0.76.172',
   date: '2026-10-02',
   codename: 'Sala de racks',
@@ -9390,4 +9390,40 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.173',
+  date: '2026-10-02',
+  codename: 'O Maestro lembra',
+  summary:
+    'Build do Mac que reúne tudo o que saiu desde a 0.76.166. O Maestro ' +
+    'passa a conferir o que os workers entregam, e a retomada do Maestro ' +
+    'depois de uma atualização não prende mais a missão num id velho. ' +
+    'Inclui a 0.76.172.',
+  highlights: [
+    {
+      title: 'O Maestro confere o que os workers entregam',
+      detail:
+        'Handoff é alegação, não prova: antes de aceitar ou integrar, o ' +
+        'Maestro lê o diff e roda o teste que prova a correção; sem isso o ' +
+        'que vale é "não verificado". Vale para qualquer CLI que seja o Maestro.',
+    },
+    {
+      title: 'Retomada do Maestro que não prende a missão',
+      detail:
+        'Se a conversa guardada do Maestro nunca virou uma conversa de ' +
+        'verdade, depois de duas falhas seguidas o Nexus a esquece e o ' +
+        'Maestro sobe limpo, em vez de a missão ficar bloqueada sem saída.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Aviso falso de "falha ao retomar"',
+      detail:
+        'Quando o próprio Nexus encerra um processo de propósito (por ' +
+        'exemplo, ao religar o Maestro), o pane não mostra mais "Falha ao ' +
+        'retomar a sessão".',
+    },
+  ],
 };

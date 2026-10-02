@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.173 — O Maestro lembra
+
+Build do Mac. Inclui integralmente a 0.76.172; traz para o Mac tudo o que as builds do Windows e do Linux publicaram desde a 0.76.166 (0.76.167 a 0.76.172).
+
+- **O Maestro verifica, não confia.** `VERIFIQUE` na doutrina base, item 7 nas instruções permanentes e uma frase no lembrete de turno: handoff é alegação, não prova; antes de aceitar ou integrar o Maestro lê o diff e roda o teste que prova a correção, senão "não verificado". É doutrina, não portão. A análise da entrega de handoffs ao Maestro Codex (macOS/Linux x Windows) está em `docs/analysis/2026-10-02-entrega-ao-maestro-codex.md`.
+- **Id de conversa que nunca virou transcrito não prende a missão (F-721, endurecimento).** Antes do F-721 o Maestro sempre subia limpo; com a retomada exata, um `--resume` de id que nunca virou transcrito sai com erro a cada restauração, o Retomar copia o mesmo id e a missão acaba em `blocked_technical`. Depois de DUAS saídas rápidas com o erro da própria CLI (código 1), não pedidas pelo Nexus, do mesmo (projeto, CLI, id da conversa) — chave sem o pane, porque cada Retomar abre um pane novo —, o vínculo é esquecido (toda linha do projeto com aquele id) e a restauração seguinte sobe limpa sob o mesmo contrato selado. Falha de ambiente (126/127, gate do SO 76, 137/143) nunca conta, um boot que sobrevive 10 s zera os golpes e o id esquecido não volta pela telemetria.
+- **Sem aviso falso de "falha ao retomar".** O `pty:exit` passa a levar `terminationOrigin` quando o próprio Nexus encerrou o processo (saída natural não leva o campo) e o renderer não trata essa morte como retomada que falhou.
+- **Limites da validação.** Revisão independente do F-721 e do F-735 da base apontou, além do que está acima: (a) o caminho em que o Main religa o Maestro sem renderer (janela fechada com o app vivo) ainda pode subir vazio e colar a nota de "conversa retomada" — não corrigido aqui; (b) `nexus_pane_spawn { resume }` ficou ativo para o orquestrador sem exigir que o pane de origem seja da mesma missão e esteja morto — não corrigido aqui; (c) o F-735 espera o marcador `[Pasted Content N chars]` do Codex com teto de 2 s + 1,5 ms/caractere e manda o Enter de qualquer jeito no teto, então o pior caso no Mac é latência, não quebra; não foi testado num TUI real do Codex no Mac. Dois golpes é uma escolha, não uma medição.
+
 ## 0.76.172 — Sala de racks
 
 Build do Windows. Inclui a 0.76.171.
