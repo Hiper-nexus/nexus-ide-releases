@@ -34,6 +34,7 @@ vi.mock('./AgentAvatar', () => ({
 vi.mock('./PixelIcon', () => ({ PixelIcon: () => null }));
 
 import { clearAccountChoiceReceiptCache } from '../lib/account-choice-receipt';
+import { useLayoutStore } from '../state/layout-store';
 import { PaneToolbar } from './PaneToolbar';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -129,6 +130,20 @@ describe('PaneToolbar — chip da conta escolhida', () => {
     const node = chip(el)!;
     expect(node.parentElement?.classList.contains('toolbar__meta')).toBe(true);
     expect(node.nextElementSibling).toBeNull();
+  });
+
+  it('com o modo Stage ligado continua depois do botão "Palco": a ação útil nunca perde lugar para o chip', async () => {
+    useLayoutStore.setState({ stageFocusMode: true, stagePaneId: 'outro-pane' });
+    try {
+      const { el } = await mount(agentPane);
+      const promote = el.querySelector('.toolbar__promote-stage-btn');
+      const node = chip(el)!;
+      expect(promote).not.toBeNull();
+      expect(node.nextElementSibling).toBeNull();
+      expect(promote!.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    } finally {
+      useLayoutStore.setState({ stageFocusMode: false, stagePaneId: null });
+    }
   });
 
   it('nunca imprime id, score nem nada fora do recibo mascarado', async () => {

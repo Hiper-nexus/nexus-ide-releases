@@ -1009,7 +1009,6 @@ export function PaneToolbar({ pane, isFocused }: Props) {
         {pane.kind === 'cli-agent' && <SpawnRouteChip route={pane.spawnRoute} />}
         {pane.kind === 'cli-agent' && <FootprintBadge paneId={pane.id} />}
         <DevServerChip pane={pane} />
-        {pane.kind === 'cli-agent' && <AccountChoiceChip paneId={pane.id} />}
         {stageFocusMode && stagePaneId && stagePaneId !== pane.id && (
           <button
             type="button"
@@ -1025,6 +1024,9 @@ export function PaneToolbar({ pane, isFocused }: Props) {
             <span>Palco</span>
           </button>
         )}
+        {/* Sempre o ÚLTIMO do meta (inclusive depois do "Palco"): é o primeiro a
+            quebrar para a linha recortada quando falta largura. */}
+        {pane.kind === 'cli-agent' && <AccountChoiceChip paneId={pane.id} />}
       </div>
 
       {pane.kind === 'cli-agent' && (
