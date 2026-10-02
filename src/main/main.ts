@@ -328,6 +328,7 @@ import {
   unregisterTokenSpeedListener,
 } from "./orch/token-speed-ipc";
 import { registerBillingIpc } from "./persistence/billing-ipc";
+import { registerAccountChoiceIpc } from "./persistence/account-choice-ipc";
 import { syncLicenseOnBoot } from "./license-sync";
 import { registerTeamIpc } from "./team-ipc";
 import { installAppMenu } from "./app-menu";
@@ -631,6 +632,9 @@ function bootstrap(): void {
   registerArmsIpc();
   registerFilesIpc();
   registerAccountIpc();
+  // Recibo da escolha de conta (somente leitura, já mascarado) para o chip do
+  // cabeçalho do pane.
+  registerAccountChoiceIpc();
   registerCostIpc();
   registerTokenSpeedIpc();
   registerMediaIpc(projectRuntimeManager);

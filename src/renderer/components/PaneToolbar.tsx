@@ -13,6 +13,8 @@ import {
   spawnRouteTooltip,
   type SpawnRouteInfo,
 } from '../../shared/spawn-route';
+import { accountChoiceChipView } from '../../shared/account-choice-display';
+import { useAccountChoiceReceipt } from '../lib/use-account-choice-receipt';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { usePaneParkedStore } from '../state/pane-parked-store';
@@ -259,6 +261,48 @@ function usePaneLiveSessionId(paneId: string): string | null {
     });
   }, [paneId]);
   return sessionId;
+}
+
+/**
+ * Qual conta este pane usa e POR QUÊ — o recibo da escolha de conta que o Main
+ * já guarda, agora também para a pessoa. O rótulo visível é só o mascarado; o
+ * tooltip traz quem decidiu, a folga medida e as alternativas. Sem recibo (ou
+ * caminho legado) não há chip. Fica por último no meta para ser o primeiro a
+ * sair quando o pane estreita (o meta recorta o que não cabe, sem crescer).
+ */
+function AccountChoiceChip({ paneId }: { paneId: string }) {
+  const sessionId = usePaneLiveSessionId(paneId);
+  const receipt = useAccountChoiceReceipt(sessionId);
+  // O recibo é um retrato do spawn, mas "reinicia"/"reiniciou" depende da hora:
+  // o texto é refeito no máximo uma vez por minuto (sem timer — só quando o
+  // toolbar já renderiza por outro motivo).
+  const minute = Math.floor(Date.now() / 60_000);
+  const view = useMemo(
+    () => (receipt ? accountChoiceChipView(receipt) : null),
+    [receipt, minute], // `minute` só invalida o texto (usa Date.now() lá dentro)
+  );
+  if (!receipt || !view) return null;
+  return (
+    <span
+      className={`toolbar__state toolbar__state--chip toolbar__state--account${
+        view.isWarning ? ' toolbar__state--account-warn' : ''
+      }`}
+      data-account-chip={receipt.source}
+      // `title` (tooltip nativo) e não `data-tip`: o ::after do data-tip nasce
+      // dentro do overflow:hidden do .toolbar e é cortado — aqui o tooltip É o
+      // valor do chip (folga medida e alternativas).
+      title={view.tooltip}
+      aria-label={view.ariaLabel}
+      role="img"
+    >
+      {view.isWarning && (
+        <span className="toolbar__account-mark" aria-hidden="true">
+          !
+        </span>
+      )}
+      <span className="toolbar__state-label">{view.label}</span>
+    </span>
+  );
 }
 
 /** Acima disto, o badge de custo (RAM) vira aviso — tom do tema, não hardcoded. */
@@ -984,6 +1028,9 @@ export function PaneToolbar({ pane, isFocused }: Props) {
             <span>Palco</span>
           </button>
         )}
+        {/* Sempre o ÚLTIMO do meta (inclusive depois do "Palco"): é o primeiro a
+            quebrar para a linha recortada quando falta largura. */}
+        {pane.kind === 'cli-agent' && <AccountChoiceChip paneId={pane.id} />}
       </div>
 
       {pane.kind === 'cli-agent' && (
