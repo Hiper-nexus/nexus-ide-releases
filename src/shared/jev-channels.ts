@@ -18,4 +18,6 @@ export const JEV_CHANNELS = {
   decisionsStats: 'jev:decisions.stats',
   /** send: main → renderer. Hint Jev do estado do pane (surface paneState). */
   paneHint: 'jev:paneHint',
+  /** invoke: renderer → main. Desempate de missão falada entre candidatos (surface missionPick). */
+  missionPick: 'jev:missionPick',
 } as const;

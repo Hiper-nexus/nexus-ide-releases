@@ -157,6 +157,8 @@ export const orchSettingsSchema = z.object({
       helperReuse: z.boolean().default(true),
       /** Seleção por tarefa de fluxos/invariantes/hurdles do modelo de negócio. */
       businessModel: z.boolean().default(true),
+      /** Desempate da missão falada ("abre a missão X") entre títulos parecidos. */
+      missionPick: z.boolean().default(true),
     })
     .prefault({}),
   /**

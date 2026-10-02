@@ -441,6 +441,7 @@ export function SquadsSection() {
     memoryDistill: true,
     helperReuse: true,
     businessModel: true,
+    missionPick: true,
   });
   const [designPro, setDesignPro] = useState(true);
   const [memoryInjection, setMemoryInjection] = useState(true);
@@ -469,6 +470,7 @@ export function SquadsSection() {
         memoryDistill: o.jevSurfaces?.memoryDistill !== false,
         helperReuse: o.jevSurfaces?.helperReuse !== false,
         businessModel: o.jevSurfaces?.businessModel !== false,
+        missionPick: o.jevSurfaces?.missionPick !== false,
       });
       setDesignPro(o.designPro);
       setMemoryInjection(o.workspaceMemoryInjection !== false);
@@ -877,6 +879,10 @@ export function SquadsSection() {
               [
                 'businessModel',
                 'Modelo de negócio por tarefa (fluxos, invariantes e hurdles relevantes)',
+              ],
+              [
+                'missionPick',
+                'Missão falada (desempate entre títulos parecidos, por voz)',
               ],
             ] as const
           ).map(([surface, label]) => (

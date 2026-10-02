@@ -52,6 +52,7 @@ import type {
   JevTestResult,
   SetJevKeyRequest,
 } from './jev-ipc';
+import type { MissionPickRequest, MissionPickResult } from './mission-pick';
 import type {
   VoiceRuntimeInfo,
   TranscribeRequest,
@@ -675,6 +676,11 @@ export interface NexusApi {
       verdict: 'right' | 'wrong';
     }): Promise<{ ok: boolean; error?: string }>;
     decisionsStats(): Promise<JevDecisionStatsResult>;
+    /**
+     * Desempate de "abre a missão X" entre títulos parecidos (surface
+     * missionPick). Devolve a posição escolhida ou "sem decisão"; nunca lança.
+     */
+    missionPick(req: MissionPickRequest): Promise<MissionPickResult>;
     /** Push do classificador Jev de estado do pane (surface paneState). */
     onPaneHint(cb: (event: JevPaneHintEvent) => void): Unsubscribe;
   };

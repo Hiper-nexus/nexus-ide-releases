@@ -117,6 +117,21 @@ describe('preload PTY delivery', () => {
     expect(Object.keys(api.bugReport).sort()).toEqual(['onOpenRequest', 'preview', 'submit']);
   });
 
+  it('exposes the voice mission tie-break over its own channel and passes the request through untouched', async () => {
+    const api = await loadPreloadApi();
+    const answer = { decision: 'picked', index: 1, confidence: 0.9 };
+    electronMock.ipcRenderer.invoke.mockResolvedValue(answer);
+    const request = {
+      spoken: 'site da loja',
+      candidates: [
+        { title: 'Site da loja', state: 'running' },
+        { title: 'Site da loja v2', state: 'completed' },
+      ],
+    };
+    expect(await api.jev.missionPick(request)).toEqual(answer);
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenCalledWith('jev:missionPick', request);
+  });
+
   it('forwards the menu open request without IPC event data and supports unsubscribe', async () => {
     const api = await loadPreloadApi();
     const listener = vi.fn();

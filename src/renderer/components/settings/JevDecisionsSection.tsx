@@ -23,6 +23,7 @@ const SURFACE_LABELS: Record<string, string> = {
   judgeTool: 'Tool nexus_judge',
   rankTool: 'Tool nexus_rank',
   helperReuse: 'Reuso de helper ocioso',
+  missionPick: 'Missão falada (desempate)',
 };
 
 const NO_ANSWER_REASONS: Record<string, string> = {
