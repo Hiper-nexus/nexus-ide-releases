@@ -628,6 +628,16 @@ saber isto antes de mexer:
   `safeStorage`, que o cofre recusa. `linux-secret-store.ts` pede
   `gnome-libsecret` antes do `ready`. O próprio Omarchy lança o Chromium com
   `--password-store=gnome-libsecret` pelo mesmo motivo.
+- Atualização no Linux é canal `manual` (F-751): `UpdateManager` consulta o
+  espelho público sem `gh` e `parseLinuxReleases` só aceita versão com os TRÊS
+  pacotes (`.deb`, `.rpm`, `.zip`), o mesmo crivo do catálogo do site e do
+  `install.sh`. O app só avisa e mostra o comando; não baixa nem troca nada.
+  Não reaproveite `parseGhReleases` (procura o ZIP do Squirrel do Mac).
+- O clique esquerdo no ícone do Redline abre Uso e cotas (F-750). Painel
+  flutuante próprio no Linux exige uma terceira `BrowserWindow`, e o Main
+  assume que só existem a principal e a do mascote (`isPetWindow`): alvo de
+  spawn dos panes em `browser-window-created`, `window-all-closed` e vários
+  `getAllWindows()[0]`. Não crie janela nova sem auditar esses pontos.
 - O smoke empacotado não enxerga nada disto: abre o binário direto, com HOME
   isolado, sem menu, navegador ou keyring. Mudança em identidade, deep link ou
   cofre pede teste num desktop real (roteiro e resultado de 02/10 em

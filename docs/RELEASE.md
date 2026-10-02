@@ -52,8 +52,10 @@ ZIP (v2) e `SHA256SUMS-linux-x64.txt` na release já publicada da canônica e, e
 do espelho público. Um asset com o mesmo nome só é ignorado quando o digest
 remoto bate; nunca usa `--clobber` e nunca apaga assets.
 
-Linux **não tem auto-update**: o atualizador responde "Plataforma sem
-atualização automática" e o usuário instala o pacote novo manualmente. Os
+Linux **não tem auto-update**, mas avisa (F-751): o app consulta o espelho
+público e, havendo uma versão Linux mais nova com os três pacotes, mostra
+"versão nova disponível" e o comando `curl -fsSL https://nexuside.app/install.sh
+| sh` para o usuário rodar. O app nunca baixa nem instala sozinho. Os
 dois pacotes declaram `bubblewrap` como dependência de runtime (sandbox dos
 PTYs); o ZIP também precisa desse provider e das bibliotecas Linux do sistema.
 
