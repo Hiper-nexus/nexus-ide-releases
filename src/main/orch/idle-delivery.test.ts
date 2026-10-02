@@ -8,6 +8,8 @@ const ptyMocks = vi.hoisted(() => ({
   writes: vi.fn((_sessionId: string, _data: string) => true),
   stateTaps: [] as Array<(sessionId: string, state: string) => void>,
   exitTaps: [] as Array<(sessionId: string) => void>,
+  dataTaps: [] as Array<(sessionId: string, data: string) => void>,
+  adapters: new Map<string, string>(),
 }));
 
 const paneMocks = vi.hoisted(() => ({
@@ -136,6 +138,17 @@ vi.mock('../pty/pty-manager', () => ({
       const index = ptyMocks.exitTaps.indexOf(tap);
       if (index >= 0) ptyMocks.exitTaps.splice(index, 1);
     };
+  }),
+  tapSessionData: vi.fn((tap: (sessionId: string, data: string) => void) => {
+    ptyMocks.dataTaps.push(tap);
+    return () => {
+      const index = ptyMocks.dataTaps.indexOf(tap);
+      if (index >= 0) ptyMocks.dataTaps.splice(index, 1);
+    };
+  }),
+  getAgentSessionInfo: vi.fn((sessionId: string) => {
+    const adapterId = ptyMocks.adapters.get(sessionId);
+    return adapterId ? { adapterId } : null;
   }),
 }));
 
@@ -462,6 +475,8 @@ beforeEach(() => {
   ptyMocks.writes.mockReturnValue(true);
   ptyMocks.stateTaps.length = 0;
   ptyMocks.exitTaps.length = 0;
+  ptyMocks.dataTaps.length = 0;
+  ptyMocks.adapters.clear();
   paneMocks.authorities.clear();
   semanticMocks.injectable = true;
   semanticMocks.status = 'idle';
@@ -764,6 +779,87 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
     ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
     expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-a' }]);
     delivery.shutdownIdleDelivery();
+  });
+
+  describe('F-735: Codex só recebe o CR depois de ingerir a colagem', () => {
+    // Forma do print do operador (02/10): handoff de ~4,5 mil caracteres para
+    // um Maestro Codex. O CR de 500 ms caía no meio da ingestão e virava
+    // quebra de linha dentro da colagem; cada nova tentativa colava outra cópia.
+    const bigHandoff = () => {
+      const big = handoff({ summary: 'resultado conferido '.repeat(200) });
+      storeMocks.handoffs.set(big.id, big);
+      return big;
+    };
+    const crs = () => ptyMocks.writes.mock.calls.filter(([, data]) => data === '\r');
+    const emit = (data: string) => {
+      for (const tap of [...ptyMocks.dataTaps]) tap('orchestrator-session', data);
+    };
+
+    it('segura o CR até o marcador [Pasted Content] e entrega depois dele', async () => {
+      const delivery = await import('./idle-delivery');
+      const { PASTE_INGEST_GRACE_MS } = await import('./paste-ingest');
+      const scope = testProjectScope();
+      authorizeTarget(scope);
+      ptyMocks.adapters.set('orchestrator-session', 'codex');
+      ptyMocks.state = 'idle';
+      delivery.initIdleDelivery();
+
+      delivery.onHandoffSubmitted(bigHandoff(), scope);
+      await advanceUntilPasted(delivery);
+      expect(ptyMocks.writes.mock.calls.filter(([, data]) =>
+        String(data).startsWith('\x1b[200~'))).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(crs()).toHaveLength(0);
+
+      // O ratatui desenha os espaços com movimento de cursor.
+      emit('\x1b[2;3H[Pasted\x1b[1CContent\x1b[1C4012\x1b[1Cchars]');
+      await vi.advanceTimersByTimeAsync(PASTE_INGEST_GRACE_MS - 1);
+      expect(crs()).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(crs()).toHaveLength(1);
+
+      ptyMocks.state = 'busy';
+      ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
+      expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-a' }]);
+      delivery.shutdownIdleDelivery();
+    });
+
+    it('sem marcador, o CR sai no teto proporcional ao tamanho', async () => {
+      const delivery = await import('./idle-delivery');
+      const { pasteIngestCapMs } = await import('./paste-ingest');
+      const scope = testProjectScope();
+      authorizeTarget(scope);
+      ptyMocks.adapters.set('orchestrator-session', 'codex');
+      ptyMocks.state = 'idle';
+      delivery.initIdleDelivery();
+
+      delivery.onHandoffSubmitted(bigHandoff(), scope);
+      await advanceUntilPasted(delivery);
+      const pasted = ptyMocks.writes.mock.calls.find(([, data]) =>
+        String(data).startsWith('\x1b[200~'))!;
+      const payloadChars = String(pasted[1]).length - '\x1b[200~\x1b[201~'.length;
+      const capMs = pasteIngestCapMs(payloadChars);
+      await vi.advanceTimersByTimeAsync(capMs - 1);
+      expect(crs()).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(crs()).toHaveLength(1);
+      delivery.shutdownIdleDelivery();
+    });
+
+    it('outras CLIs mantêm o CR de 500 ms mesmo com colagem grande', async () => {
+      const delivery = await import('./idle-delivery');
+      const scope = testProjectScope();
+      authorizeTarget(scope);
+      ptyMocks.adapters.set('orchestrator-session', 'claude');
+      ptyMocks.state = 'idle';
+      delivery.initIdleDelivery();
+
+      delivery.onHandoffSubmitted(bigHandoff(), scope);
+      await advanceUntilSubmitted(delivery);
+      expect(crs()).toHaveLength(1);
+      expect(ptyMocks.dataTaps).toHaveLength(0);
+      delivery.shutdownIdleDelivery();
+    });
   });
 
   it('refila idle transitório sem gastar tentativa nem recuperar um Maestro saudável', async () => {

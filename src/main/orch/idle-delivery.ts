@@ -32,6 +32,11 @@ import {
   MAX_HANDOFF_DELIVERY_ATTEMPTS,
 } from './handoff-delivery-policy';
 import { emitAppEvent } from '../connectors/app-events';
+import {
+  PASTE_INGEST_GRACE_MS,
+  pasteIngestPlanForSession,
+  watchPasteIngest,
+} from './paste-ingest';
 
 const announcedHandoffSubmits = new Set<string>();
 
@@ -87,6 +92,8 @@ interface PendingEnter {
   settleTimer?: ReturnType<typeof setTimeout>;
   retryTimer?: ReturnType<typeof setTimeout>;
   acceptanceTimer?: ReturnType<typeof setTimeout>;
+  /** F-735: desarma a espera pela ingestão da colagem (Codex). */
+  cancelIngest?: () => void;
   submitStarted?: boolean;
   submitTurnSequence?: number;
   submitStartedAt?: number;
@@ -466,6 +473,8 @@ function isCurrentAuthority(authority: DeliveryAuthority): boolean {
 }
 
 function clearPendingEnter(pending: PendingEnter): void {
+  pending.cancelIngest?.();
+  pending.cancelIngest = undefined;
   if (pending.settleTimer) clearTimeout(pending.settleTimer);
   if (pending.retryTimer) clearTimeout(pending.retryTimer);
   if (pending.acceptanceTimer) clearTimeout(pending.acceptanceTimer);
@@ -842,6 +851,10 @@ function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
     return false;
   }
   const payload = formatDelivery(current);
+  // F-735: o Codex no Windows leva segundos para ingerir a colagem; o CR só
+  // sai depois do marcador `[Pasted Content N chars]`. Armado antes da escrita.
+  const ingestPlan = pasteIngestPlanForSession(authority.sessionId, payload.length);
+  const ingest = ingestPlan ? watchPasteIngest(authority.sessionId, ingestPlan) : null;
   // Bracketed paste: one editor transaction, matching `injectPrompt` /
   // Overclock pane_write. A raw dump of a 4k summary can repaint the TUI
   // line-by-line and eat the CR that used to follow in the same turn.
@@ -853,6 +866,7 @@ function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
     },
   );
   if (!ok) {
+    ingest?.cancel();
     stores.handoffs.failDeliveryAttempt({
       attemptId: attempt.id,
       handoffId: current.id,
@@ -861,13 +875,17 @@ function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
     retryOrBlockDelivery(authority, current.id, attempt.attemptNo);
     return true;
   }
+  const pastedAt = Date.now();
   try {
     stores.handoffs.markDeliveryAttemptPasted({
       attemptId: attempt.id,
       handoffId: current.id,
-      acceptDeadlineAt: Date.now() + SUBMIT_ACCEPTANCE_WINDOW_MS,
+      // A janela de aceite conta a partir do CR, que espera a ingestão.
+      acceptDeadlineAt:
+        pastedAt + (ingestPlan?.capMs ?? 0) + SUBMIT_ACCEPTANCE_WINDOW_MS,
     });
   } catch {
+    ingest?.cancel();
     stores.handoffs.failDeliveryAttempt({
       attemptId: attempt.id,
       handoffId: current.id,
@@ -884,15 +902,33 @@ function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
     submitStarted: false,
   };
   pendingEnters.add(pending);
-  pending.settleTimer = setTimeout(() => {
-    pending.settleTimer = undefined;
-    if (!pendingEnters.has(pending)) return;
-    if (!isCurrentAuthority(authority)) {
-      clearPendingEnter(pending);
-      return;
-    }
-    submitDelivery(authority, pending);
-  }, HANDOFF_PROMPT_SETTLE_MS);
+  const scheduleSubmit = (delayMs: number) => {
+    pending.settleTimer = setTimeout(() => {
+      pending.settleTimer = undefined;
+      if (!pendingEnters.has(pending)) return;
+      if (!isCurrentAuthority(authority)) {
+        clearPendingEnter(pending);
+        return;
+      }
+      submitDelivery(authority, pending);
+    }, delayMs);
+  };
+  if (!ingest) {
+    scheduleSubmit(HANDOFF_PROMPT_SETTLE_MS);
+    return true;
+  }
+  pending.cancelIngest = ingest.cancel;
+  void ingest.done.then((outcome) => {
+    pending.cancelIngest = undefined;
+    // Sessão que saiu fica com o tap de saída; teto vencido tenta assim mesmo.
+    if (outcome === 'exit' || !pendingEnters.has(pending)) return;
+    scheduleSubmit(
+      Math.max(
+        outcome === 'marker' ? PASTE_INGEST_GRACE_MS : 0,
+        HANDOFF_PROMPT_SETTLE_MS - (Date.now() - pastedAt),
+      ),
+    );
+  });
   return true;
 }
 

@@ -1885,6 +1885,68 @@ describe('agent prompt injection', () => {
     }
   });
 
+  it('F-735: em pane Codex o Enter da colagem grande espera o [Pasted Content]', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.physicalSessionInfo.mockReturnValue({ adapterId: 'codex' });
+      stubs.sessionState.mockReturnValue('idle');
+      const pending = injectPrompt('session-1', 'linha do brief\n'.repeat(300));
+      // O Enter de 500 ms cairia no meio da ingestão (Codex 0.160, Windows).
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(stubs.writeSession).toHaveBeenCalledOnce();
+
+      for (const tap of [...stubs.dataTaps]) {
+        tap('session-1', '[Pasted\x1b[1CContent\x1b[1C4500\x1b[1Cchars]');
+      }
+      await vi.advanceTimersByTimeAsync(149);
+      expect(stubs.writeSession).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(stubs.writeSession).toHaveBeenNthCalledWith(
+        2,
+        'session-1',
+        '\r',
+        { markInputBusy: false },
+      );
+      stubs.sessionState.mockReturnValue('busy');
+      for (const tap of [...stubs.stateTaps]) tap('session-1', 'busy');
+      await vi.advanceTimersByTimeAsync(400);
+      await pending;
+      expect(stubs.writeSession).toHaveBeenCalledTimes(2);
+      expect(stubs.dataTaps).toHaveLength(0);
+    } finally {
+      stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
+      vi.useRealTimers();
+    }
+  });
+
+  it('F-735: o UserPromptSubmit do Codex prova o aceite sem busy do PTY', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.physicalSessionInfo.mockReturnValue({ adapterId: 'codex' });
+      stubs.sessionState.mockReturnValue('idle');
+      let result: boolean | undefined;
+      const pending = deliverAgentPrompt('session-1', 'quick task', undefined, {
+        adapterId: 'codex',
+      });
+      void pending.then((value) => { result = value; });
+      await vi.advanceTimersByTimeAsync(500);
+      expect(stubs.writeSession).toHaveBeenNthCalledWith(
+        2,
+        'session-1',
+        '\r',
+        { markInputBusy: false },
+      );
+
+      stubs.turnStartSequence = 1;
+      for (const tap of [...stubs.turnStartTaps]) tap({ sessionId: 'session-1', sequence: 1 });
+      await vi.advanceTimersByTimeAsync(400);
+      expect(result).toBe(true);
+    } finally {
+      stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
+      vi.useRealTimers();
+    }
+  });
+
   it('resubmits the prompt already restored in an idle agent editor', async () => {
     vi.useFakeTimers();
     try {

@@ -1318,6 +1318,23 @@ saber isto antes de mexer:
   `resumeFromPaneId` com a CLI, o modelo e a conta desse pane. Não volte a
   subir o Maestro do squad padrão para ela: vira um Claude vazio.
 
+## Colagem no Codex: Enter só depois do marcador (F-735)
+
+- No Windows o ConPTY não repassa o bracketed paste ao crossterm: o Codex
+  recebe a colagem como teclas soltas e a ingere a ~0,5 ms por caractere
+  (Codex 0.160, máquina ociosa). Enter que chega antes vira quebra de linha
+  DENTRO da colagem, e cada retentativa colava outra cópia
+  (`[Pasted Content 4531 chars] #2`).
+- A partir de 1.000 caracteres o Codex só mostra `[Pasted Content N chars]`
+  quando aceitou tudo. `paste-ingest.ts` arma a espera por esse marcador
+  ANTES de escrever (só a saída nova conta; a regex tolera espaços
+  desenhados por movimento de cursor) e o 1º Enter sai depois dele, com teto
+  de 2 s + 1,5 ms/caractere. Vale para a entrega de handoff
+  (`idle-delivery`) e para `injectPrompt`/`injectPastedPrompt`/
+  `injectWithBusyProof`. Caminho novo que cola e aperta Enter num pane passa
+  pelo mesmo plano (`pasteIngestPlanForSession`).
+- O `UserPromptSubmit` nativo prova o aceite também fora da família Claude.
+
 ## Remoção recursiva nunca segue link (F-663)
 
 - O `fs.rm`/`fs.rmSync` recursivo do Node 24 (Electron 43) ATRAVESSA junctions

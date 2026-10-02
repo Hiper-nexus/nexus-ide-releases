@@ -104,6 +104,12 @@ import {
   spawnBinaryName,
 } from '../../shared/cli-initial-prompt';
 import { ORCH_SPAWN_GRANT_TTL_MS } from './orch-spawn-grant-recovery';
+import {
+  PASTE_INGEST_GRACE_MS,
+  pasteIngestPlanForSession,
+  watchPasteIngest,
+  type PasteIngestWatch,
+} from './paste-ingest';
 
 export { assertSafePtyPrompt } from './pty-prompt-safety';
 
@@ -429,6 +435,16 @@ function adapterAcceptsBracketedPaste(adapterId: string | undefined): boolean {
   );
 }
 
+/**
+ * F-735: arma, ANTES da escrita, a espera pela ingestão da colagem (Codex no
+ * Windows engole o Enter enquanto ingere uma colagem grande). Null = Enter no
+ * tempo de sempre.
+ */
+function armPasteIngest(sessionId: string, pastedChars: number): PasteIngestWatch | null {
+  const plan = pasteIngestPlanForSession(sessionId, pastedChars);
+  return plan ? watchPasteIngest(sessionId, plan) : null;
+}
+
 /** Type text into a pane's PTY, then press Enter (as a user would). */
 export async function injectPrompt(
   sessionId: string,
@@ -439,10 +455,12 @@ export async function injectPrompt(
   const safePrompt = assertSafePtyPrompt(prompt);
   const input = injectedPromptInput(sessionId, safePrompt);
   assertMcpInvocationCurrent(invocation);
+  const ingest = armPasteIngest(sessionId, safePrompt.length);
   if (!orchWriteSession(sessionId, input, { markInputBusy: false })) {
+    ingest?.cancel();
     throw new Error('session is gone');
   }
-  await submitEnter(sessionId, invocation);
+  await submitEnter(sessionId, invocation, undefined, false, ingest);
 }
 
 const adaptiveEnterTimers = new Map<string, Set<ReturnType<typeof setTimeout>>>();
@@ -546,6 +564,7 @@ async function submitEnter(
   invocation?: McpToolInvocation,
   onBeforeSubmit?: () => boolean | void,
   requireInjectableIdle = false,
+  ingest: PasteIngestWatch | null = null,
 ): Promise<void> {
   let observedBusy = getSessionState(sessionId) === 'busy';
   const untapState = tapSessionState((changedSessionId, state) => {
@@ -555,7 +574,12 @@ async function submitEnter(
     }
   });
   try {
-    await delay(PROMPT_SETTLE_MS);
+    const settled = delay(PROMPT_SETTLE_MS);
+    // F-735: o Enter só sai depois que a TUI aceitou a colagem inteira.
+    if (ingest && (await ingest.done) === 'marker') {
+      await delay(PASTE_INGEST_GRACE_MS);
+    }
+    await settled;
     if (requireInjectableIdle && !isSessionInjectableIdle(sessionId)) {
       // After bracketed paste some CLIs flip to busy/semantic non-idle before
       // Enter; that is progress, not a permission modal. Only fail closed when
@@ -623,6 +647,7 @@ async function submitEnter(
     }
     throw error;
   } finally {
+    ingest?.cancel();
     untapState();
   }
 }
@@ -636,14 +661,16 @@ export async function injectPastedPrompt(
   clearAdaptiveEnterTimers(sessionId);
   const safePrompt = assertSafePtyPrompt(prompt);
   assertMcpInvocationCurrent(invocation);
+  const ingest = armPasteIngest(sessionId, safePrompt.length);
   if (!orchWriteSession(
     sessionId,
     `\x1b[200~${safePrompt}\x1b[201~`,
     { markInputBusy: false },
   )) {
+    ingest?.cancel();
     throw new Error('session is gone');
   }
-  await submitEnter(sessionId, invocation);
+  await submitEnter(sessionId, invocation, undefined, false, ingest);
 }
 
 async function assertAcceptedPromptAuthority(
@@ -694,10 +721,13 @@ async function injectWithBusyProof(
   let sustainedPhysicalTurn = false;
   let physicalConfirmTimer: ReturnType<typeof setTimeout> | null = null;
   let settle: ((accepted: boolean) => void) | null = null;
+  // F-735: o UserPromptSubmit nativo (Codex, Kimi…) também prova o aceite —
+  // é exatamente o turno que o Enter abriu, sem depender do busy do PTY.
   const hasAcceptanceProof = () =>
     requireTurnStartProof
       ? turnStartObserved || sustainedPhysicalTurn
-      : (postSubmitBusy || (submitted && observedBusy)) && observedOutput;
+      : turnStartObserved ||
+        ((postSubmitBusy || (submitted && observedBusy)) && observedOutput);
   const maybeAccept = () => {
     if (hasAcceptanceProof()) settle?.(true);
   };
@@ -782,7 +812,9 @@ async function injectWithBusyProof(
         : safePrompt;
     if (!isSessionInjectableIdle(sessionId)) return false;
     assertMcpInvocationCurrent(invocation);
+    const ingest = armPasteIngest(sessionId, safePrompt.length);
     if (!orchWriteSession(sessionId, input, { markInputBusy: false })) {
+      ingest?.cancel();
       return false;
     }
     // Voo real 19/08: colagem sem prova de Enter deixava o briefing LARGADO
@@ -810,6 +842,7 @@ async function injectWithBusyProof(
         return true;
       },
       true,
+      ingest,
     );
     if (!submitted) {
       clearStrandedComposer();
