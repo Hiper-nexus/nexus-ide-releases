@@ -73,7 +73,13 @@ export function buildAppInfo(deps: DiagnosticsDeps): AppInfo {
  * nem o diretório de trabalho.
  */
 export function buildContext(deps: DiagnosticsDeps, activePaneId?: string): Context {
-  const sessions = deps.listAgentSessions();
+  let sessions: readonly DiagnosticsAgentSession[];
+  try {
+    sessions = deps.listAgentSessions();
+  } catch {
+    // Inventário indisponível não impede o relato: descreve uma frota vazia.
+    sessions = [];
+  }
   const active =
     activePaneId === undefined
       ? sessions.at(-1)

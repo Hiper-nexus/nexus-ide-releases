@@ -82,6 +82,15 @@ describe('buildContext', () => {
     expect(buildContext(deps())).toEqual({ paneCount: 0, missionActive: false });
   });
 
+  it('reports an empty fleet instead of throwing when the inventory is unavailable', () => {
+    const broken = deps({
+      listAgentSessions: () => {
+        throw new Error('pty manager indisponível');
+      },
+    });
+    expect(buildContext(broken, 'p1')).toEqual({ paneCount: 0, missionActive: false });
+  });
+
   it('counts a pane once, caps the count, and ignores malformed ids', () => {
     const many = Array.from({ length: 80 }, (_, index) => ({
       paneId: `p${index}`,
