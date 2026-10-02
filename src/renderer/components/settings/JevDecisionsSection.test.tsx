@@ -134,6 +134,36 @@ describe('JevDecisionsSection', () => {
     expect(host.textContent).toContain('US$ 0.0001');
   });
 
+  it('never prints a fabricated floor for unmeasured usage, and counts legacy rows apart', async () => {
+    const stats: any = await jev.decisionsStats();
+    stats.byModel = {
+      'jev-1.13.0': { calls: 4, noAnswer: 0, inputTokens: 0, usd: 0.5, requests: null, durationMs: null, measuredRows: 0, legacyRows: 4 },
+      clef: { calls: 0, noAnswer: 2, inputTokens: 0, usd: 0, requests: 2, durationMs: 10, measuredRows: 2, legacyRows: 0, incompleteUsageCalls: 2 },
+      'clef-flash': { calls: 3, noAnswer: 0, inputTokens: 90, usd: 0.01, requests: 5, durationMs: 30, measuredRows: 3, legacyRows: 2, incompleteUsageCalls: 1 },
+    };
+    jev.decisionsStats.mockResolvedValueOnce(stats);
+    const host = mount(<JevDecisionsSection />);
+    await act(async () => Promise.resolve());
+    const rows = Object.fromEntries([...host.querySelectorAll('table[aria-label="Consumo por modelo"] tbody tr')]
+      .map(row => [row.querySelector('td')!.textContent!, [...row.querySelectorAll('td')].map(cell => cell.textContent!)]));
+    expect(rows['jev-1.13.0'][4]).toContain('Sem medição');
+    expect(rows['jev-1.13.0'][4]).toContain('4 linhas antigas');
+    expect(rows.clef[2]).toBe('Sem medição');
+    expect(rows.clef[2]).not.toContain('≥');
+    expect(rows['clef-flash'][2]).toContain('≥ US$ 0.0100');
+    expect(rows['clef-flash'][4]).toContain('5');
+    expect(rows['clef-flash'][4]).toContain('2 linhas antigas');
+    expect(host.textContent).not.toContain('≥ US$ 0.0000');
+  });
+
+  it('labels an internal failure instead of calling it a rule decision with no reason', async () => {
+    jev.decisionsList.mockResolvedValueOnce([{ id: 'n1', at: Date.now(), kind: 'no-answer', reason: 'internal-error', surface: 'intake',
+      model: 'jev-1.13.0', questions: [], probabilities: {}, decision: 'rule', inputTokens: null, usd: null }] as never);
+    const host = mount(<JevDecisionsSection />);
+    await act(async () => Promise.resolve());
+    expect(host.textContent).toContain('erro interno');
+  });
+
   it('lists decisions and sends feedback', async () => {
     const host = mount(<JevDecisionsSection />);
     await act(async () => Promise.resolve());

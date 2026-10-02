@@ -13,7 +13,11 @@ export function getDecisionSettings(): DecisionSettings {
 }
 
 export function getDecisionAvailability(settings = getDecisionSettings()): DecisionAvailability {
-  return { jev: hasJevCredential(), clef: hasClefCredential() && Boolean(resolveCloudflareAccountId(settings.cloudflareAccountId)) };
+  // O modo fixo nunca usa o outro provedor: não consulte o cofre à toa a cada avaliação.
+  return {
+    jev: settings.mode === 'clef' ? false : hasJevCredential(),
+    clef: settings.mode === 'jev' ? false : hasClefCredential() && Boolean(resolveCloudflareAccountId(settings.cloudflareAccountId)),
+  };
 }
 
 export function hasDecisionCredential(surface?: JevDecisionSurface): boolean {

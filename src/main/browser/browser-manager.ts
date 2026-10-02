@@ -108,6 +108,7 @@ import { sameProjectScope } from '../orch/project-scoped-broadcast';
 import { createScopedBrowserArtifactStore } from './browser-artifact-store';
 import { browserVisualMasksSchema, maskBrowserBitmap } from './browser-capture-redaction';
 import { assertInspectableBrowserDom } from './browser-visual-inspection';
+import { BrowserVisualRefusal } from './browser-visual-refusal';
 import { validateDecisionImages } from '../decision-models/decision-images';
 import {
   registerBrowserAutomationResponseHandler,
@@ -1345,6 +1346,14 @@ async function loadBrowserWithUserConfirmation(
   }
 }
 
+/** An emulated device paints only its viewSize: clamp it like a normal screenshot, never trust it blindly. */
+function visualCaptureClip(entry: BrowserEntry): { x: number; y: number; width: number; height: number } | null {
+  if (!entry.emulatedViewport) return null;
+  const clip = clampScreenshotClip({ x: 0, y: 0, ...entry.emulatedViewport }, entry.view.getBounds());
+  if (!clip) throw new BrowserVisualRefusal('unverifiable_geometry');
+  return clip;
+}
+
 /** Capture remains in memory; ordinary local screenshots are never overwritten. */
 export async function captureRedactedBrowserVisual(
   paneId: string,
@@ -1352,6 +1361,8 @@ export async function captureRedactedBrowserVisual(
   options: { signal?: AbortSignal; assertCurrentAuthority?: () => void } = {},
 ) {
   const entry = withEntry(paneId, scope);
+  // O perfil pessoal carrega os logins reais do operador: pixels dele nunca saem.
+  if (entry.profileMode === 'personal') throw new BrowserVisualRefusal('personal_profile');
   const navSeq = entry.navSeq; const generation = entry.loadGeneration;
   const bounds = JSON.stringify(entry.view.getBounds());
   const assertCurrent = (): void => {
@@ -1361,19 +1372,20 @@ export async function captureRedactedBrowserVisual(
       JSON.stringify(entry.view.getBounds()) !== bounds) throw new Error('visual snapshot changed');
   };
   assertCurrent();
-  await assertInspectableBrowserDom(entry.view.webContents.debugger);
-  assertCurrent();
+  // Cheap, bounded walk first: a hostile page fails here before the deep CDP inspection.
   const before = browserVisualMasksSchema.parse(await runBrowserAutomation(paneId, entry.view.webContents, 'visual_masks', {}));
   assertCurrent();
-  const clip = entry.emulatedViewport ? { x: 0, y: 0, ...entry.emulatedViewport } : undefined;
-  const image = await captureWithWakeRetry(() => entry.view.webContents.capturePage(clip), assertCurrent);
+  await assertInspectableBrowserDom(entry.view.webContents.debugger);
+  assertCurrent();
+  const clip = visualCaptureClip(entry);
+  const image = await captureWithWakeRetry(() => entry.view.webContents.capturePage(clip ?? undefined), assertCurrent);
   assertCurrent();
   const after = browserVisualMasksSchema.parse(await runBrowserAutomation(paneId, entry.view.webContents, 'visual_masks', {}));
   await assertInspectableBrowserDom(entry.view.webContents.debugger);
   assertCurrent();
   if (JSON.stringify(before) !== JSON.stringify(after)) throw new Error('visual masks changed during capture');
   const size = image.getSize();
-  const bitmap = maskBrowserBitmap(image.toBitmap(), size, before);
+  const bitmap = maskBrowserBitmap(image.toBitmap(), size, before, clip ? { width: clip.width, height: clip.height } : undefined);
   const png = nativeImage.createFromBitmap(bitmap, { ...size, scaleFactor: 1 }).toPNG();
   const decisionImage = { content_type: 'image/png' as const, base64: png.toString('base64') };
   if (!validateDecisionImages([decisionImage])) throw new Error('visual image exceeds provider limits');

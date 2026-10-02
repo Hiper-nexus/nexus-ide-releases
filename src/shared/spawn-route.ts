@@ -13,7 +13,8 @@ export type JevUnavailableReason =
   | 'server-error'
   | 'network'
   | 'malformed'
-  | 'aborted';
+  | 'aborted'
+  | 'internal-error';
 
 export type SpawnRouteSource = 'jev' | 'mixed' | 'heuristic';
 
@@ -33,6 +34,7 @@ export const JEV_UNAVAILABLE_LABEL: Readonly<Record<JevUnavailableReason, string
   network: 'sem rede',
   malformed: 'resposta malformada',
   aborted: 'cancelado',
+  'internal-error': 'erro interno do Nexus',
 };
 
 export function isJevUnavailableReason(value: unknown): value is JevUnavailableReason {

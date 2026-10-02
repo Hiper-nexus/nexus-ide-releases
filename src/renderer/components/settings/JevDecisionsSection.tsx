@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type {
+  DecisionUsageStats,
   JevDecisionRow,
   JevDecisionStatsResult,
   JevWindowStatsResult,
@@ -32,6 +33,7 @@ const NO_ANSWER_REASONS: Record<string, string> = {
   malformed: 'resposta inválida',
   aborted: 'cancelada',
   'client-error': 'configuração ou credencial',
+  'internal-error': 'erro interno',
 };
 
 function surfaceLabel(surface: string): string {
@@ -41,6 +43,18 @@ function surfaceLabel(surface: string): string {
 function formatUsd(usd: number): string {
   if (usd > 0 && usd < 0.0001) return '< US$ 0,0001';
   return `US$ ${usd.toFixed(4)}`;
+}
+
+/** Incomplete usage with no known spend is "not measured", never a floor of zero. */
+function formatEstimate(usage: DecisionUsageStats): string {
+  if (!usage.incompleteUsageCalls) return formatUsd(usage.usd);
+  return usage.usd > 0 ? `≥ ${formatUsd(usage.usd)}` : 'Sem medição';
+}
+
+/** Old rows carry no HTTP attempt count: say how many, instead of hiding or adding them as zero. */
+function formatAttempts(usage: DecisionUsageStats): string {
+  const measured = usage.requests === null ? 'Sem medição' : String(usage.requests);
+  return usage.legacyRows > 0 ? `${measured} · ${usage.legacyRows} ${usage.legacyRows === 1 ? 'linha antiga' : 'linhas antigas'} sem medição` : measured;
 }
 
 function formatTime(at: number): string {
@@ -220,7 +234,7 @@ export function JevDecisionsSection() {
             <div className="decision-models__table"><table aria-label="Consumo por modelo">
               <thead><tr><th>Modelo</th><th>Consultas</th><th>Estimativa</th><th>Sem resposta</th><th>Tentativas HTTP</th></tr></thead>
               <tbody>{Object.entries(stats.byModel).map(([model, usage]) => <tr key={model}>
-                <td>{model}</td><td>{usage.calls}</td><td>{usage.incompleteUsageCalls ? '≥ ' : ''}{formatUsd(usage.usd)}</td><td>{usage.noAnswer}</td><td>{usage.requests ?? 'Sem medição'}</td>
+                <td>{model}</td><td>{usage.calls}</td><td>{formatEstimate(usage)}</td><td>{usage.noAnswer}</td><td>{formatAttempts(usage)}</td>
               </tr>)}</tbody>
             </table></div>
           </>}

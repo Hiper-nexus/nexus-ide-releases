@@ -1,10 +1,22 @@
 import type { DecisionProvider, DecisionRoute, DecisionSettings, ClefModel } from '../../shared/decision-models';
 import type { JudgeInput } from '../jev/jev-client';
+import type { JevDecisionSurface } from '../jev/jev-decision-log';
 
 export interface DecisionAvailability { jev: boolean; clef: boolean }
 type RouteInput = Pick<JudgeInput, 'surface' | 'model' | 'images'>;
 
-function clefModel(model?: string): ClefModel | undefined {
+/**
+ * Surfaces that gate or feed an effect (dispatch guard, handoff acceptance,
+ * persistent memory, desktop and browser automation). Their thresholds were
+ * calibrated against Jev; the Clef public benchmarks do not cover them, so they
+ * never go to Clef until a local evaluation of their own says otherwise. Without
+ * a Jev key they have no route (the guard becomes `skipped`, fail-open as before).
+ */
+export const JEV_PINNED_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevDecisionSurface>([
+  'dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool',
+]);
+
+export function clefModel(model?: string): ClefModel | undefined {
   const selector = model?.replace('@cf/cloudflare/', '');
   return selector === 'clef' || selector === 'clef-flash' ? selector : undefined;
 }
@@ -24,6 +36,10 @@ export function resolveDecisionRoute(input: RouteInput, settings: DecisionSettin
     const selected = settings.mode === 'clef' ? settings.clefModel : explicitClef ?? 'clef';
     if (explicitClef && settings.mode === 'clef' && explicitClef !== selected) return null;
     return route('clef', selected, 'capability', 'vision');
+  }
+  if (input.surface && JEV_PINNED_SURFACES.has(input.surface)) {
+    if (explicitClef || settings.mode === 'clef' || !available.jev) return null;
+    return settings.mode === 'jev' ? route('jev', jevModel, 'manual', 'manual') : route('jev', jevModel, 'legacy', 'jev-pinned');
   }
   if (settings.mode === 'jev') return available.jev ? route('jev', jevModel, 'manual', 'manual') : null;
   if (settings.mode === 'clef') {

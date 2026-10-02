@@ -5,6 +5,7 @@ describe('spawn-route', () => {
   it('reconhece só motivos conhecidos', () => {
     expect(isJevUnavailableReason('no-key')).toBe(true);
     expect(isJevUnavailableReason('timeout')).toBe(true);
+    expect(isJevUnavailableReason('internal-error')).toBe(true);
     expect(isJevUnavailableReason('whatever')).toBe(false);
     expect(isJevUnavailableReason(undefined)).toBe(false);
   });

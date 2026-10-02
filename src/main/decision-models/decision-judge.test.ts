@@ -20,7 +20,38 @@ describe('common decision service', () => {
       nativeJudge: async () => nativeResult,
       getSettings: () => { throw new Error('private configuration failure'); },
     });
-    expect(result).toBeNull(); expect(onNoAnswer).toHaveBeenCalledWith('network');
+    expect(result).toBeNull(); expect(onNoAnswer).toHaveBeenCalledWith('internal-error');
+  });
+  it('tells an internal failure apart from a network one and warns once, with the error name only', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let clock = 1_000_000;
+    const deps = { nativeJudge: async () => nativeResult, now: () => clock,
+      getSettings: (): DecisionSettings => { throw new TypeError('private configuration failure with sk-secret'); } };
+    const first = vi.fn(); const second = vi.fn();
+    await judgeDecision({ ...input, onNoAnswer: first }, deps);
+    await judgeDecision({ ...input, onNoAnswer: second }, deps);
+    expect(first).toHaveBeenCalledWith('internal-error'); expect(second).toHaveBeenCalledWith('internal-error');
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0])).toContain('TypeError');
+    expect(String(warn.mock.calls[0])).not.toContain('private configuration failure');
+    expect(String(warn.mock.calls[0])).not.toContain('sk-secret');
+    clock += 120_000;
+    await judgeDecision({ ...input }, deps);
+    expect(warn).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+  it('records a failure before any HTTP request as a measured zero, not an unknown count', async () => {
+    const controller = new AbortController(); controller.abort();
+    await judgeDecision({ ...input, signal: controller.signal }, {
+      nativeJudge: async () => nativeResult, getSettings: () => settings,
+      getAvailability: () => ({ jev: true, clef: true }), getConfigurationKey: () => 'stable',
+    });
+    expect(recordJevNoAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ reason: 'aborted',
+      usage: expect.objectContaining({ requestCount: 0, usageIncomplete: false }) }));
+    await judgeDecision(input, { nativeJudge: async () => nativeResult, getSettings: () => settings,
+      getAvailability: () => ({ jev: true, clef: true }), getConfigurationKey: () => 'stable', getClefConnection: () => undefined });
+    expect(recordJevNoAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ reason: 'client-error',
+      usage: expect.objectContaining({ requestCount: 0 }) }));
   });
   it('calls the selected Cloudflare endpoint and attaches the actual provider receipt', async () => {
     let endpoint = ''; let nativeCalls = 0;
@@ -35,6 +66,17 @@ describe('common decision service', () => {
     expect(nativeCalls).toBe(0);
     expect(result?.route).toMatchObject({ provider: 'clef', evidence: 'public-benchmark' });
     expect(result?.estimatedUsd).toBeCloseTo(0.000024, 10);
+  });
+
+  it('returns a Jev answer whose provider omitted usage without inventing a cost or failing', async () => {
+    const { usage: _omitted, ...withoutUsage } = nativeResult;
+    const result = await judgeDecision({ ...input, surface: 'researchTriage' }, {
+      nativeJudge: async () => ({ ...withoutUsage, usage: { input_tokens: 0, output_tokens: 0 }, usageMissing: true as const }),
+      getSettings: () => settings, getAvailability: () => ({ jev: true, clef: true }), getConfigurationKey: () => 'stable',
+    });
+    expect(result?.route?.provider).toBe('jev');
+    expect(result?.usageMissing).toBe(true);
+    expect(result?.estimatedUsd).toBeUndefined();
   });
 
   it('discards an answer when the user changes configuration during inference', async () => {

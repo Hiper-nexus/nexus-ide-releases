@@ -8,9 +8,32 @@ const both = { jev: true, clef: true };
 describe('complementary decision routing', () => {
   it('uses Clef for tool selection and Jev for tasks without a local promotion', () => {
     expect(resolveDecisionRoute({ surface: 'toolPick' }, settings, both)).toMatchObject({ provider: 'clef', model: 'clef', evidence: 'public-benchmark' });
-    for (const surface of ['intake', 'taskRouting', 'delegation', 'paneState', 'terminalTriage', 'rank', 'dispatchGuard', 'handoffReview', 'researchTriage', 'memoryDistill', 'helperReuse', 'businessModel', 'browserTool'] as const) {
+    for (const surface of ['intake', 'taskRouting', 'delegation', 'paneState', 'terminalTriage', 'rank', 'rankTool', 'judgeTool', 'researchTriage', 'helperReuse', 'businessModel'] as const) {
       expect(resolveDecisionRoute({ surface }, settings, both)?.provider).toBe('jev');
     }
+  });
+
+  describe('effect-bearing surfaces stay on Jev (no Clef evaluation exists for their thresholds)', () => {
+    const pinned = ['dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool'] as const;
+    it('routes them to Jev in automatic and Jev-only modes', () => {
+      for (const surface of pinned) {
+        expect(resolveDecisionRoute({ surface }, settings, both)).toMatchObject({ provider: 'jev' });
+        expect(resolveDecisionRoute({ surface }, { ...settings, mode: 'jev' }, both)).toMatchObject({ provider: 'jev' });
+      }
+    });
+    it('never sends them to Clef: Clef-only mode and a missing Jev key yield no route', () => {
+      for (const surface of pinned) {
+        expect(resolveDecisionRoute({ surface }, { ...settings, mode: 'clef' }, both)).toBeNull();
+        expect(resolveDecisionRoute({ surface }, { ...settings, mode: 'clef' }, { jev: false, clef: true })).toBeNull();
+        expect(resolveDecisionRoute({ surface }, settings, { jev: false, clef: true })).toBeNull();
+        expect(resolveDecisionRoute({ surface, model: 'clef' }, settings, both)).toBeNull();
+        expect(resolveDecisionRoute({ surface, model: 'clef-flash' }, settings, both)).toBeNull();
+      }
+    });
+    it('still lets the explicit visual capability use Clef for an image on the browser surface', () => {
+      const images = [{ content_type: 'image/png' as const, base64: 'synthetic' }];
+      expect(resolveDecisionRoute({ surface: 'browserTool', images }, { ...settings, visionEnabled: true }, both)).toMatchObject({ provider: 'clef', evidence: 'capability' });
+    });
   });
 
   it('never silently switches a fixed provider when its credentials are missing', () => {
@@ -21,6 +44,7 @@ describe('complementary decision routing', () => {
   it('uses an available text provider in automatic mode and identifies the fallback', () => {
     expect(resolveDecisionRoute({ surface: 'toolPick' }, settings, { jev: true, clef: false })).toMatchObject({ provider: 'jev', reason: 'credential-fallback' });
     expect(resolveDecisionRoute({ surface: 'researchTriage' }, settings, { jev: false, clef: true })).toMatchObject({ provider: 'clef', reason: 'credential-fallback' });
+    expect(resolveDecisionRoute({ surface: 'judgeTool' }, settings, { jev: false, clef: true })).toMatchObject({ provider: 'clef', reason: 'credential-fallback' });
   });
 
   it('keeps image requests on Clef and requires explicit visual egress', () => {

@@ -5,6 +5,7 @@ import { judge, type JevQuestion } from '../jev/jev-client';
 import { recordJevDecision, jevAnswerProbabilities, jevAnswerConfidences } from '../jev/jev-decision-log';
 import { decisionResultUsage } from '../decision-models/decision-usage';
 import { captureRedactedBrowserVisual } from './browser-manager';
+import { BrowserVisualRefusal } from './browser-visual-refusal';
 
 const SIGNALS = {
   visibleError: 'Is there a visible error message on this page?',
@@ -57,5 +58,8 @@ export async function judgeBrowserVisual(input: BrowserVisualInput, deps = defau
       questions: Object.keys(questions), probabilities: jevAnswerProbabilities(result.answers),
       confidence: jevAnswerConfidences(result.answers), decision: 'visual-signals', ...decisionResultUsage(result) });
     return { status: 'answered' as const, signals, model: result.model, route: result.route };
-  } catch { return { status: 'unavailable' as const }; }
+  } catch (error) {
+    if (error instanceof BrowserVisualRefusal) return { status: 'unavailable' as const, reason: error.code, message: error.message };
+    return { status: 'unavailable' as const };
+  }
 }

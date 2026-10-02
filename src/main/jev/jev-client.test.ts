@@ -15,6 +15,7 @@ import {
   configureJevDecisionLog,
   listJevDecisions,
 } from './jev-decision-log';
+import { JEV_REAL_QUESTIONS, jevRealResponse } from '../decision-models/jev-real-response.fixture';
 
 function jsonResponse(status: number, body: unknown, headers?: Record<string, string>) {
   return new Response(typeof body === 'string' ? body : JSON.stringify(body), {
@@ -58,6 +59,20 @@ describe('judge', () => {
       String(((mockFetch.mock.calls[0] as unknown[])[1] as RequestInit).body),
     );
     expect(sentBody.model).toBe('jev-latest');
+  });
+
+  it('accepts a real production response and keeps legacy tolerance for rounding and missing usage', async () => {
+    const ask = (body: unknown) => judge({ state: 'x', questions: JEV_REAL_QUESTIONS },
+      { fetch: (async () => jsonResponse(200, body)) as unknown as typeof fetch, resolveKey: () => 'k' });
+    expect((await ask(jevRealResponse()))?.usage.input_tokens).toBe(422);
+    const rounded: any = jevRealResponse(); rounded.answers.kind.probabilities = { flaky: 0.98, regression: 0, environment: 0.01 };
+    expect(await ask(rounded)).not.toBeNull();
+    const { usage: _usage, ...withoutUsage } = jevRealResponse();
+    const unmeasured = await ask(withoutUsage);
+    expect(unmeasured).toMatchObject({ usageMissing: true });
+    expect(unmeasured?.estimatedUsd).toBeUndefined();
+    const guesswork: any = jevRealResponse(); guesswork.answers.kind.probabilities = { flaky: 0.5, regression: 0, environment: 0.01 };
+    expect(await ask(guesswork)).toBeNull();
   });
 
   it('returns null without a key and never calls fetch', async () => {
@@ -234,6 +249,18 @@ describe('judge — registro central de consultas sem resposta', () => {
     // nunca o texto do erro
     const raw = fs.readFileSync(path.join(logDir, 'decisions.jsonl'), 'utf8');
     expect(raw).not.toContain('timed out');
+  });
+
+  it('a falha do Jev grava o provedor e as tentativas HTTP realmente feitas', async () => {
+    const twice = vi.fn(async () => jsonResponse(500, { message: 'oops' }));
+    await judge({ state: 'x', questions: { q: question }, surface: 'dispatchGuard' },
+      { fetch: twice as unknown as typeof fetch, resolveKey: () => 'k' });
+    const once = vi.fn(async () => jsonResponse(401, { message: 'bad key' }));
+    await judge({ state: 'x', questions: { q: question }, surface: 'intake' },
+      { fetch: once as unknown as typeof fetch, resolveKey: () => 'k' });
+    const bySurface = Object.fromEntries(noAnswerLines().map(line => [line.surface, line]));
+    expect(bySurface.dispatchGuard).toMatchObject({ provider: 'jev', requestCount: 2 });
+    expect(bySurface.intake).toMatchObject({ provider: 'jev', requestCount: 1 });
   });
 
   it('HTTP 500 duas vezes grava server-error', async () => {

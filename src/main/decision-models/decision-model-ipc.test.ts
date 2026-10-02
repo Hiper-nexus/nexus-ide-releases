@@ -19,7 +19,7 @@ function trustedEvent() {
 }
 
 describe('trusted Clef configuration IPC', () => {
-  beforeEach(() => { handlers.clear(); delete process.env.CLOUDFLARE_ACCOUNT_ID; });
+  beforeEach(() => { handlers.clear(); delete process.env.NEXUS_CLEF_ACCOUNT_ID; });
 
   it('requires an account as well as a token and never exposes the token', () => {
     registerDecisionModelIpc({ getSettings: () => ({ mode: 'auto', clefModel: 'clef', cloudflareAccountId: '', visionEnabled: false }),
@@ -30,6 +30,13 @@ describe('trusted Clef configuration IPC', () => {
     expect(status.keyMasked).toBe('clo…3456');
     expect(status).not.toHaveProperty('token');
     expect(status).not.toHaveProperty('apiKey');
+  });
+
+  it('reports whether Jev is configured so the UI can warn about a provider fallback', () => {
+    for (const jev of [true, false]) {
+      registerDecisionModelIpc({ hasJev: () => jev });
+      expect(handlers.get('decisionModels:status')!(trustedEvent()).jevReady).toBe(jev);
+    }
   });
 
   it('rejects invalid token payloads before accessing the vault', () => {

@@ -128,6 +128,7 @@ const state = vi.hoisted(() => {
     assertMutationAllowed: vi.fn(),
     fromWebContents: vi.fn(() => win),
     webContentsAvailable: true,
+    profileMode: 'isolated' as 'isolated' | 'personal',
     decisionConfiguration: 'initial',
     encodeBitmap: vi.fn((_bitmap: Buffer, _size: unknown) => ({ toPNG: () => Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2WQAAAAASUVORK5CYII=', 'base64') })),
     views: [] as Array<{ setVisible: ReturnType<typeof vi.fn>; setBounds: ReturnType<typeof vi.fn> }>,
@@ -214,7 +215,8 @@ vi.mock('../orch/pane-registry', () => ({
   requestPaneClose: vi.fn(async () => true),
 }));
 vi.mock('./browser-personal-profile', () => ({
-  browserProfileMode: () => 'isolated',
+  browserProfileMode: () => state.profileMode,
+  connectPersonalProfile: vi.fn(async () => async () => {}),
   rememberAgentBrowser: vi.fn(),
 }));
 
@@ -273,9 +275,34 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
     await expect(captureRedactedBrowserVisual(PANE, { ...scope, checkoutId: 'another' })).rejects.toThrow();
     expect(state.guest.capturePage).not.toHaveBeenCalled();
   });
+  it('rejects a capture whose sensitive rectangles moved between the two collections', async () => {
+    await boot();
+    const base = { width: 4, height: 4, scrollX: 0, scrollY: 0 };
+    const first = { ...base, rectangles: [{ x: 0, y: 0, width: 1, height: 1 }] };
+    const moved = { ...base, rectangles: [{ x: 2, y: 2, width: 1, height: 1 }] };
+    const captured = { getSize: () => ({ width: 8, height: 8 }), toBitmap: () => Buffer.alloc(8 * 8 * 4, 70) } as never;
+    state.runAutomation.mockResolvedValueOnce(first).mockResolvedValueOnce(moved);
+    state.guest.capturePage.mockResolvedValueOnce(captured);
+    state.encodeBitmap.mockClear();
+    await expect(captureRedactedBrowserVisual(PANE, scope)).rejects.toThrow('visual masks changed');
+    expect(state.encodeBitmap).not.toHaveBeenCalled();
+  });
+  it('refuses to capture a pane bound to the personal profile before touching the page', async () => {
+    state.profileMode = 'personal';
+    bindResolvedRendererWorkspaceScope(state.owner, scope);
+    await boot();
+    state.runAutomation.mockClear(); state.guest.capturePage.mockClear();
+    await expect(captureRedactedBrowserVisual(PANE, scope)).rejects.toMatchObject({
+      code: 'personal_profile', message: expect.stringContaining('perfil pessoal'),
+    });
+    expect(state.runAutomation).not.toHaveBeenCalled();
+    expect(state.guest.capturePage).not.toHaveBeenCalled();
+    expect(state.guest.debugger.sendCommand).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     state.decisionConfiguration = 'initial';
+    state.profileMode = 'isolated';
     state.guestHandlers.clear();
     state.views.length = 0;
     vi.mocked(isAgentRequestedBrowser).mockReturnValue(false);
@@ -700,6 +727,20 @@ describe('loadBrowser device emulation', () => {
     expect(state.guest.enableDeviceEmulation).toHaveBeenCalledWith(
       expect.objectContaining({ viewSize: { width: 390, height: 844 } }),
     );
+    destroyBrowser(PANE, scope);
+  });
+
+  it('inspects masks before the deep CDP walk and clamps the emulated viewport like a screenshot', async () => {
+    await boot();
+    await loadBrowser(PANE, 'https://example.test/app', { scope, device: 'mobile' });
+    const masks = { width: 390, height: 844, scrollX: 0, scrollY: 0, rectangles: [{ x: 0, y: 0, width: 10, height: 10 }] };
+    state.guest.debugger.attach.mockClear(); state.runAutomation.mockClear();
+    state.runAutomation.mockResolvedValueOnce(masks).mockResolvedValueOnce(masks);
+    const captured = { getSize: () => ({ width: 390, height: 800 }), toBitmap: () => Buffer.alloc(390 * 800 * 4, 5) } as never;
+    state.guest.capturePage.mockResolvedValueOnce(captured);
+    await captureRedactedBrowserVisual(PANE, scope);
+    expect(state.runAutomation.mock.invocationCallOrder[0]).toBeLessThan(state.guest.debugger.attach.mock.invocationCallOrder[0]);
+    expect(state.guest.capturePage).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 390, height: 800 });
     destroyBrowser(PANE, scope);
   });
 

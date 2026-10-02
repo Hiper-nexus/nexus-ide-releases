@@ -36,6 +36,8 @@ import {
   setJevApiKey,
 } from './jev-secrets';
 
+import { decisionCredentialRevision } from '../decision-models/decision-revision';
+
 const ENV_VAR = 'TYPESAFE_API_KEY';
 
 describe('jev-secrets', () => {
@@ -97,5 +99,18 @@ describe('jev-secrets', () => {
   it('isJevSecretStorageAvailable usa probe: false', () => {
     expect(isJevSecretStorageAvailable()).toBe(true);
     expect(store.isSecureStorageAvailable).toHaveBeenCalledWith({ probe: false });
+  });
+});
+
+describe('Jev key changes invalidate in-flight decisions', () => {
+  it('bumps the decision revision when the key is stored, rotated or removed — and only when the vault accepted it', () => {
+    const before = decisionCredentialRevision();
+    expect(setJevApiKey('first-key')).toEqual({ ok: true });
+    expect(setJevApiKey('rotated-key')).toEqual({ ok: true });
+    expect(setJevApiKey('')).toEqual({ ok: true });
+    expect(decisionCredentialRevision()).toBe(before + 3);
+    store.setSecret.mockReturnValueOnce({ ok: false, error: 'vault locked' } as never);
+    expect(setJevApiKey('rejected').ok).toBe(false);
+    expect(decisionCredentialRevision()).toBe(before + 3);
   });
 });

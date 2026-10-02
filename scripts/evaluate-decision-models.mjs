@@ -10,6 +10,7 @@ if (options.some(option => /^--(?:token|key|api-key|credential)/.test(option))) 
 }
 if (options.includes('--help')) {
   console.log('node --import tsx scripts/evaluate-decision-models.mjs --out <relatório fora do git> [--cases <casos rotulados>]');
+  console.log('Credenciais só por ambiente: TYPESAFE_API_KEY, NEXUS_CLEF_API_TOKEN e NEXUS_CLEF_ACCOUNT_ID (nunca as CLOUDFLARE_* do wrangler).');
   process.exit(0);
 }
 function argument(name) { const index = options.indexOf(name); return index < 0 ? undefined : options[index + 1]; }
@@ -26,11 +27,11 @@ if (!parsedCases.success) {
 }
 const cases = parsedCases.data;
 const available = { jev: Boolean(process.env.TYPESAFE_API_KEY?.trim()),
-  clef: Boolean(process.env.CLOUDFLARE_API_TOKEN?.trim() && /^[a-fA-F0-9]{32}$/.test(process.env.CLOUDFLARE_ACCOUNT_ID ?? '')) };
+  clef: Boolean(process.env.NEXUS_CLEF_API_TOKEN?.trim() && /^[a-fA-F0-9]{32}$/.test(process.env.NEXUS_CLEF_ACCOUNT_ID ?? '')) };
 const report = await evaluateDecisionCases(cases, async (model, input) => {
   if (model === 'jev') return available.jev ? judgeJevTransport(input, { resolveKey: () => process.env.TYPESAFE_API_KEY }) : null;
-  return available.clef ? judgeClef(input, { model, token: process.env.CLOUDFLARE_API_TOKEN,
-    accountId: process.env.CLOUDFLARE_ACCOUNT_ID }) : null;
+  return available.clef ? judgeClef(input, { model, token: process.env.NEXUS_CLEF_API_TOKEN,
+    accountId: process.env.NEXUS_CLEF_ACCOUNT_ID }) : null;
 });
 await fs.mkdir(path.dirname(path.resolve(output)), { recursive: true, mode: 0o700 });
 await fs.writeFile(output, JSON.stringify({ available, ...report }, null, 2) + '\n', { mode: 0o600 });

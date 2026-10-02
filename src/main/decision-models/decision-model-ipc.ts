@@ -4,6 +4,7 @@ import { getOrchSettings } from '../persistence/settings-store';
 import { handleTrusted } from '../security/trusted-ipc';
 import { hasClefEnvToken, hasStoredClefApiToken, isClefSecretStorageAvailable, maskedClefApiToken, resolveCloudflareAccountId, resolveClefApiToken, setClefApiToken } from './clef-secrets';
 import { testClefConnection } from './clef-client';
+import { hasJevCredential } from '../jev/jev-secrets';
 
 interface DecisionModelIpcDeps {
   getSettings: () => DecisionSettings;
@@ -11,6 +12,7 @@ interface DecisionModelIpcDeps {
   hasEnv: () => boolean;
   keyMasked: () => string | null;
   secureStorageAvailable: () => boolean;
+  hasJev: () => boolean;
   setKey: typeof setClefApiToken;
   resolveToken: typeof resolveClefApiToken;
   testConnection: typeof testClefConnection;
@@ -22,6 +24,7 @@ const defaultDeps: DecisionModelIpcDeps = {
   hasEnv: hasClefEnvToken,
   keyMasked: maskedClefApiToken,
   secureStorageAvailable: isClefSecretStorageAvailable,
+  hasJev: hasJevCredential,
   setKey: setClefApiToken,
   resolveToken: resolveClefApiToken,
   testConnection: testClefConnection,
@@ -50,6 +53,7 @@ export function registerDecisionModelIpc(overrides: Partial<DecisionModelIpcDeps
       secureStorageAvailable: deps.secureStorageAvailable(),
       accountIdSource: !accountId ? 'missing' : settings.cloudflareAccountId ? 'settings' : 'env',
       isReady: Boolean(accountId && (hasStoredKey || hasEnv)),
+      jevReady: deps.hasJev(),
     };
   });
   handleTrusted(DECISION_MODEL_CHANNELS.setKey, (_event, raw) => {

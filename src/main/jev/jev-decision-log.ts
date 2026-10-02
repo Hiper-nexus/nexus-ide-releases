@@ -14,6 +14,7 @@ import type { JevSurface } from './jev-autopilot';
 import type { JevAnswer } from './jev-client';
 import type { DecisionProvider, DecisionRoute, DecisionUsageReceipt } from '../../shared/decision-models';
 import { USD_PER_INPUT_TOKEN } from './jev-pricing';
+import { parseDecisionRow } from './jev-decision-row';
 import type { JevOptimizationEvidence, JevOptimizationStats, DecisionUsageStats } from '../../shared/jev-ipc';
 
 export type JevDecisionSurface =
@@ -31,7 +32,9 @@ export type JevNoAnswerReason =
   | 'server-error'
   | 'network'
   | 'malformed'
-  | 'aborted';
+  | 'aborted'
+  /** Bug ou configuração quebrada dentro do Nexus (não do provedor): nunca o texto do erro. */
+  | 'internal-error';
 
 export interface JevDecisionEntry {
   id: string;
@@ -105,8 +108,8 @@ function readEntries(file: string): JevDecisionEntry[] {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
-      const parsed = JSON.parse(trimmed) as JevDecisionEntry;
-      if (parsed && typeof parsed.id === 'string') entries.push(parsed);
+      const row = parseDecisionRow(JSON.parse(trimmed));
+      if (row) entries.push(row);
     } catch {
       // linha truncada por rotação no meio da escrita — ignora
     }
@@ -180,6 +183,8 @@ export function recordJevNoAnswer(
     sessionId?: string;
     missionId?: string;
     usage?: DecisionUsageReceipt;
+    /** Tentativas HTTP já feitas; `0` = falhou antes de qualquer requisição (medido, não desconhecido). */
+    requestCount?: number;
   },
   deps?: { dir?: string },
 ): string {
@@ -198,7 +203,7 @@ export function recordJevNoAnswer(
       decision: 'rule',
       inputTokens: input.usage?.inputTokens ?? null,
       usd: input.usage?.usd ?? null,
-      requestCount: input.usage?.requestCount,
+      requestCount: input.usage?.requestCount ?? input.requestCount,
       durationMs: input.usage?.durationMs,
       usageIncomplete: input.usage?.usageIncomplete,
     },
@@ -292,16 +297,15 @@ export interface JevDecisionStats {
 const DAY_MS = 86_400_000;
 
 function addProviderUsage(buckets: Record<string, DecisionUsageStats>, key: string, entry: JevDecisionEntry): void {
-  const fresh = !buckets[key];
-  const bucket = buckets[key] ??= { calls: 0, noAnswer: 0, usd: 0, inputTokens: 0, requests: 0, durationMs: 0 };
+  const bucket = buckets[key] ??= { calls: 0, noAnswer: 0, usd: 0, inputTokens: 0, requests: null, durationMs: null, measuredRows: 0, legacyRows: 0 };
   if (entry.kind === 'no-answer') bucket.noAnswer += 1;
   else bucket.calls += 1;
   bucket.usd += entry.usd ?? 0; bucket.inputTokens += entry.inputTokens ?? 0;
   if (entry.usageIncomplete) bucket.incompleteUsageCalls = (bucket.incompleteUsageCalls ?? 0) + 1;
-  bucket.requests = entry.requestCount === undefined || (!fresh && bucket.requests === null)
-    ? null : (bucket.requests ?? 0) + entry.requestCount;
-  bucket.durationMs = entry.durationMs === undefined || (!fresh && bucket.durationMs === null)
-    ? null : (bucket.durationMs ?? 0) + entry.durationMs;
+  // Linhas antigas não medem tentativas: contam à parte e nunca apagam o que as novas mediram.
+  if (entry.requestCount === undefined) bucket.legacyRows += 1;
+  else { bucket.measuredRows += 1; bucket.requests = (bucket.requests ?? 0) + entry.requestCount; }
+  if (entry.durationMs !== undefined) bucket.durationMs = (bucket.durationMs ?? 0) + entry.durationMs;
 }
 
 function emptyWindow(): JevWindowStats {
