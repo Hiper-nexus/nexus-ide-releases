@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.174 — Missão que volta
+
+Build do Windows. Inclui a 0.76.173 (O Maestro lembra).
+
+- **O bloqueio do Maestro não vira "encerrada pelo operador" e sempre tem Retomar (F-738).** Caso no hipergo em 02/10: um selo `runtime-closed` que sobreviveu à retomada das 09:14 fez o bloqueio que o Maestro declarou às 10:01 ("pergunta de escopo sem resposta") ser lido como encerramento pelo operador. A missão foi para o Arquivo, com as tarefas "Em andamento", e não tinha saída.
+  - O selo só vale se for o veredito mais recente da descrição (`leftover-parked` não o substitui).
+  - O `set_status` do Maestro tira o selo velho e o veredito anterior dele (`withAgentStatusVerdict`).
+  - `blocked_user` sem pergunta registrada sai por `resume` (remount do operador com nota de continuidade): o motor exigia `blocked_technical` e a Via Rápida exigia answer-question. Só pergunta registrada (`resolveOpenMissionQuestion`) continua exigindo resposta.
+
 ## 0.76.173 — O Maestro lembra
 
 Build do Mac. Inclui integralmente a 0.76.172; traz para o Mac tudo o que as builds do Windows e do Linux publicaram desde a 0.76.166 (0.76.167 a 0.76.172).

@@ -9392,7 +9392,7 @@ export const RELEASE_076172: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076173: AppRelease = {
   version: '0.76.173',
   date: '2026-10-02',
   codename: 'O Maestro lembra',
@@ -9426,4 +9426,25 @@ export const CURRENT_RELEASE: AppRelease = {
         'retomar a sessão".',
     },
   ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.174',
+  date: '2026-10-02',
+  codename: 'Missão que volta',
+  summary:
+    'Quando o Maestro pausa a missão esperando você, ela aparece em ' +
+    '"Precisa de você" e volta com Retomar, em vez de cair no Arquivo como ' +
+    'encerrada. Inclui a 0.76.173.',
+  highlights: [
+    {
+      title: 'A missão que o Maestro pausou volta com Retomar',
+      detail:
+        'Se o Maestro para a missão para perguntar algo a você, a missão ' +
+        'fica em "Precisa de você" com o motivo dele. Retomar religa o ' +
+        'Maestro na mesma conversa para você responder ali. Antes ela podia ' +
+        'ir para o Arquivo como "encerrada pelo operador" e o Retomar falhava.',
+    },
+  ],
+  fixes: [],
 };
