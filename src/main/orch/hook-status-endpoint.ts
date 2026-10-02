@@ -24,6 +24,7 @@ import {
   type AgentStatusHookMeta,
 } from './agent-status';
 import { handleTurnEndMechanicalHandoff } from './turn-end-handoff';
+import { HOOK_JSON_CONTENT_TYPE } from './hook-http';
 
 /** Turn-end callback seam — the default runs the mechanical handoff closure. */
 export type TurnEndHook = (input: {
@@ -203,7 +204,7 @@ function sendJson(
 ): void {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
-    'content-type': 'application/json',
+    'content-type': HOOK_JSON_CONTENT_TYPE,
     'content-length': Buffer.byteLength(body),
   });
   res.end(body);
@@ -257,7 +258,7 @@ export async function handleHookStatusHttp(
     // in flight, so close the connection once the 400 has been flushed.
     const bodyOut = JSON.stringify({ ok: false, error: 'hook payload too large' });
     res.writeHead(400, {
-      'content-type': 'application/json',
+      'content-type': HOOK_JSON_CONTENT_TYPE,
       'content-length': Buffer.byteLength(bodyOut),
       connection: 'close',
     });

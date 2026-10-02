@@ -2,10 +2,18 @@
 // 401 sem bearer, 405 não-POST, 400 corpo grande/inválido; o resto é 200.
 import type http from 'node:http';
 
+/**
+ * F-737: o charset é obrigatório. O hook do Windows lê a resposta com o
+ * `Invoke-WebRequest` do PowerShell 5.1, que sem charset decodifica como
+ * ISO-8859-1: a doutrina chegava ao Maestro como "VOCÃ Ã O MAESTRO DESTA
+ * MISSÃO (vale a sessÃ£o)". O curl do macOS/Linux repassa os bytes e não muda.
+ */
+export const HOOK_JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
+
 export function sendHookJson(res: http.ServerResponse, status: number, payload: unknown): void {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
-    'content-type': 'application/json',
+    'content-type': HOOK_JSON_CONTENT_TYPE,
     'content-length': Buffer.byteLength(body),
   });
   res.end(body);
@@ -55,7 +63,7 @@ export async function handleHookJsonPost(
     // chegando, então a conexão fecha depois que o 400 sair.
     const bodyOut = JSON.stringify({ ok: false, error: 'hook payload too large' });
     res.writeHead(400, {
-      'content-type': 'application/json',
+      'content-type': HOOK_JSON_CONTENT_TYPE,
       'content-length': Buffer.byteLength(bodyOut),
       connection: 'close',
     });
