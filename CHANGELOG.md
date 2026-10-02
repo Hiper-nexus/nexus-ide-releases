@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.182 — Mac em dia
+
+Build do Mac. O Mac não recebeu instalador nas versões 0.76.177 a 0.76.179 (o Windows e o Linux publicaram antes que a notarização terminasse); esta traz tudo isso para o Mac, com o que mais já estava no código principal.
+
+- **O que chega ao Mac:** o diálogo de reabrir ganha "Fechar agentes" (F-752); o Linux avisa de versão nova e o clique do Redline abre as cotas (F-750, F-751); o bloqueio do Maestro sempre tem Retomar (F-738); missão parada à vista no Quadro, com Remover (F-741); o Maestro delega numa chamada só (F-744); o Enter do brief do Devin espera a colagem (F-743); o worker MiMo retomado não confirma "No, exit" (F-742); o Qwen volta a abrir (F-748).
+- **Verificação no Mac:** suíte completa na base (19.869 testes) e o portão de release (typecheck, renderer sinks, assinatura, notarização e smoke do app empacotado).
+
 ## 0.76.179 — Fechar agentes ao reabrir
 
 Build do Mac. Inclui a 0.76.178 (aviso de versão nova no Linux).

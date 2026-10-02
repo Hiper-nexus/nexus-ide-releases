@@ -9614,7 +9614,7 @@ export const RELEASE_076178: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076179: AppRelease = {
   version: '0.76.179',
   date: '2026-10-02',
   codename: 'Fechar agentes ao reabrir',
@@ -9637,6 +9637,45 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'Se a Main adotou o agente ou ele virou parte de uma missão com o ' +
         'diálogo aberto, "Fechar agentes" o deixa como está.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.182',
+  date: '2026-10-02',
+  codename: 'Mac em dia',
+  summary:
+    'Build do Mac que reúne o que saiu nas versões 0.76.177 a 0.76.179: ' +
+    'o diálogo de reabrir ganha "Fechar agentes", o Maestro bloqueado ' +
+    'sempre tem Retomar e os helpers abrem mais rápido. Inclui a 0.76.179.',
+  highlights: [
+    {
+      title: 'Fechar os agentes ao reabrir',
+      detail:
+        'O diálogo "Retomar agentes da sessão anterior?" agora tem três ' +
+        'escolhas: deixar em pausa, retomar ou fechar. Esc e Cancelar ' +
+        'deixam em pausa e nunca fecham nada.',
+    },
+    {
+      title: 'O Maestro bloqueado sempre tem saída',
+      detail:
+        'Um bloqueio que o Maestro declara não vira mais "encerrada pelo ' +
+        'operador" por engano, e a missão sempre mostra Retomar.',
+    },
+    {
+      title: 'Missão parada à vista no Quadro',
+      detail:
+        'Missão parada, dormindo ou sem sessão aparece em "Precisa de você", ' +
+        'e o card da missão sem processo ganha Remover, com confirmação.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Qwen, Devin e MiMo começam a trabalhar',
+      detail:
+        'O Qwen volta a abrir, o brief do Devin espera a colagem antes do ' +
+        'Enter e o worker MiMo retomado não fecha mais sozinho.',
     },
   ],
 };
