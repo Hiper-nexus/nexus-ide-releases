@@ -28,6 +28,7 @@ import {
 } from './skill-mirror';
 import type { SkillAsset } from './impeccable-manifest';
 import { scanSkillsDirectory, type SkillEntry } from '../skills/skills-catalog';
+import { tryResolveSubdirUnderRoot } from '../security/scoped-workspace-fs';
 
 export const SKILL_SUGGESTION_MIN_CONFIDENCE = 0.6;
 const SKILL_SUGGESTION_TIMEOUT_MS = 4_000;
@@ -52,7 +53,24 @@ export const PROJECT_SKILL_PKG = 'project';
 /** Onde o painel Skills e o catálogo do Jev procuram skills do projeto. */
 const PROJECT_SKILL_DIRS = ['.claude/skills', '.nexus/skills'] as const;
 
+/**
+ * O nome da pasta vira opção do Jev e texto no pedido do agente: só o formato
+ * de nome de skill. Uma pasta do repositório com crase ou quebra de linha no
+ * nome não escreve no contexto do agente.
+ */
+const SAFE_PROJECT_SKILL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+
 type ProjectSkillScan = (dir: string) => readonly Pick<SkillEntry, 'name' | 'description'>[];
+
+/**
+ * A pasta do painel Skills (`skillsDirs` do product-wave-ipc): resolvida
+ * dentro da raiz, então `.claude/skills` ligado para fora do projeto (ex.: a
+ * HOME) não entra no catálogo nem sai para o modelo de decisão.
+ */
+function scanProjectSkillsDir(projectRoot: string, dir: string) {
+  const resolved = tryResolveSubdirUnderRoot(projectRoot, dir);
+  return resolved ? scanSkillsDirectory(resolved) : [];
+}
 
 function unquoteDescription(raw: string): string {
   const trimmed = raw.trim();
@@ -75,16 +93,16 @@ export function __resetProjectSkillCacheForTests(): void {
 /**
  * F-753: as skills que o operador instalou no projeto (o que o painel Skills
  * lista: `.claude/skills` e `.nexus/skills`), pelo mesmo leitor seguro do
- * painel (sem symlink, SKILL.md dentro da raiz). Sem raiz, nada.
+ * painel (sem symlink, SKILL.md dentro da raiz). Sem raiz, nada. `scan`
+ * injetado (testes) recebe o caminho cru e não passa pelo cache.
  */
 export function listProjectSkillCatalog(
   projectRoot: string | undefined,
-  scan: ProjectSkillScan = scanSkillsDirectory,
+  scan?: ProjectSkillScan,
   now: number = Date.now(),
 ): BundledSkillCatalogEntry[] {
   if (!projectRoot) return [];
-  // Só o leitor real passa pelo cache; o injetado (testes) lê sempre.
-  const cacheable = scan === scanSkillsDirectory;
+  const cacheable = scan === undefined;
   const cached = cacheable ? projectSkillCache.get(projectRoot) : undefined;
   if (cached && now - cached.at < PROJECT_SKILL_CACHE_TTL_MS) return cached.catalog;
   const catalog = scanProjectSkillDirs(projectRoot, scan);
@@ -101,18 +119,21 @@ export function listProjectSkillCatalog(
 
 function scanProjectSkillDirs(
   projectRoot: string,
-  scan: ProjectSkillScan,
+  scan: ProjectSkillScan | undefined,
 ): BundledSkillCatalogEntry[] {
   const catalog: BundledSkillCatalogEntry[] = [];
   const seen = new Set<string>();
   for (const dir of PROJECT_SKILL_DIRS) {
     let entries: readonly Pick<SkillEntry, 'name' | 'description'>[];
     try {
-      entries = scan(path.join(projectRoot, ...dir.split('/')));
+      entries = scan
+        ? scan(path.join(projectRoot, ...dir.split('/')))
+        : scanProjectSkillsDir(projectRoot, dir);
     } catch {
       continue;
     }
     for (const entry of entries) {
+      if (!SAFE_PROJECT_SKILL_NAME.test(entry.name)) continue;
       const key = entry.name.toLocaleLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
