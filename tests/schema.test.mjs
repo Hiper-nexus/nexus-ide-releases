@@ -18,6 +18,7 @@ function database(t) {
   db.exec(readFileSync(new URL('../migrations/0004_oauth_client.sql', import.meta.url), 'utf8'));
   db.exec(readFileSync(new URL('../migrations/0005_license_codes.sql', import.meta.url), 'utf8'));
   db.exec(readFileSync(new URL('../migrations/0006_account_notices.sql', import.meta.url), 'utf8'));
+  db.exec(readFileSync(new URL('../migrations/0007_bug_reports.sql', import.meta.url), 'utf8'));
   return db;
 }
 
@@ -42,7 +43,7 @@ function project(db, accountId, projectId = 'same-project') {
 
 test('schema metadata records version without claiming PostgreSQL import', (t) => {
   const db = database(t);
-  assert.equal(db.prepare("SELECT value FROM system_metadata WHERE key = 'schema_version'").get().value, '6');
+  assert.equal(db.prepare("SELECT value FROM system_metadata WHERE key = 'schema_version'").get().value, '7');
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM system_metadata WHERE key LIKE 'import%'").get().n, 0);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM accounts").get().n, 0);
 });
@@ -327,5 +328,90 @@ test('a migração 0006 preserva a auditoria que já existia em bancos com a 000
   const row = db.prepare("SELECT action, details, created_at FROM admin_audit WHERE id = 'old'").get();
   assert.deepEqual({ ...row }, { action: 'suspend', details: '{"reason":"x"}', created_at: 123 });
   assert.equal(db.prepare('SELECT notices_opt_out AS v FROM accounts WHERE id = ?').get(id).v, 0, 'contas que já existiam entram com avisos ligados');
+  db.close();
+});
+
+const DAY = 24 * 60 * 60 * 1000;
+function bugReport(db, overrides = {}) {
+  const row = {
+    id: randomUUID(), account_id: null, title: 'Terminal fecha sozinho', description: 'Ao abrir três painéis o terminal fecha.', steps: null,
+    category: 'terminal', impact: 'blocks_work', app_version: '0.76.110', platform: 'darwin', arch: 'arm64', os_version: null, adapter: null, model: null,
+    diagnostics_json: null, fingerprint: 'a'.repeat(64), fix_pr_url: null, created_at: NOW, updated_at: NOW, diagnostics_expires_at: NOW + 180 * DAY, ...overrides,
+  };
+  const columns = Object.keys(row);
+  db.prepare(`INSERT INTO bug_reports (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`).run(...Object.values(row));
+  return row.id;
+}
+
+test('relatos de bug: nascem novos, com gravidade média, e só aceitam os valores do contrato', (t) => {
+  const db = database(t);
+  const id = bugReport(db);
+  const row = db.prepare('SELECT status, severity FROM bug_reports WHERE id = ?').get(id);
+  assert.deepEqual({ ...row }, { status: 'new', severity: 'medium' });
+  for (const [column, value] of [['category', 'seguranca'], ['impact', 'meh'], ['severity', 'critical'], ['status', 'open'], ['platform', 'android']]) {
+    assert.throws(() => bugReport(db, { [column]: value }), /CHECK constraint failed/, `${column}=${value} deveria ser recusado`);
+  }
+  for (const status of ['new', 'triaged', 'needs_info', 'fix_proposed', 'approved', 'fixed', 'released', 'wont_fix', 'duplicate']) bugReport(db, { status });
+  for (const category of ['crash', 'terminal', 'agents', 'license', 'billing', 'ui', 'performance', 'other']) bugReport(db, { category });
+});
+
+test('relatos de bug: diagnóstico precisa ser JSON, impressão digital tem 64 caracteres e a URL da correção é https', (t) => {
+  const db = database(t);
+  assert.throws(() => bugReport(db, { diagnostics_json: 'não é json' }), /CHECK constraint failed/);
+  bugReport(db, { diagnostics_json: '{"events":[],"errors":[]}' });
+  assert.throws(() => bugReport(db, { fingerprint: 'curta' }), /CHECK constraint failed/);
+  assert.throws(() => bugReport(db, { fix_pr_url: 'http://github.com/x/y/pull/1' }), /CHECK constraint failed/);
+  assert.throws(() => bugReport(db, { fix_pr_url: 'javascript:alert(1)' }), /CHECK constraint failed/);
+  bugReport(db, { fix_pr_url: 'https://github.com/x/y/pull/1' });
+  assert.throws(() => bugReport(db, { diagnostics_expires_at: null }), /NOT NULL constraint failed/);
+});
+
+test('relatos de bug: apagar a conta preserva o relato sem dono; duplicata aponta para outro relato existente', (t) => {
+  const db = database(t);
+  const owner = account(db);
+  const original = bugReport(db, { account_id: owner });
+  const copy = bugReport(db, { duplicate_of: original, status: 'duplicate' });
+  assert.throws(() => bugReport(db, { duplicate_of: randomUUID() }), /FOREIGN KEY constraint failed/);
+  assert.throws(() => bugReport(db, { account_id: randomUUID() }), /FOREIGN KEY constraint failed/);
+  db.prepare('DELETE FROM accounts WHERE id = ?').run(owner);
+  assert.equal(db.prepare('SELECT account_id FROM bug_reports WHERE id = ?').get(original).account_id, null);
+  assert.equal(db.prepare('SELECT duplicate_of FROM bug_reports WHERE id = ?').get(copy).duplicate_of, original);
+  assert.equal(db.prepare('PRAGMA foreign_key_check').all().length, 0);
+});
+
+test('relatos de bug: eventos só aceitam os tipos do contrato, JSON válido, e somem com o relato', (t) => {
+  const db = database(t);
+  const admin = account(db);
+  const report = bugReport(db);
+  const event = (kind, details = '{}', actor = admin, reportId = report) => db.prepare('INSERT INTO bug_report_events (id, report_id, actor_account_id, kind, details_json, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(randomUUID(), reportId, actor, kind, details, NOW);
+  for (const kind of ['created', 'status_changed', 'severity_changed', 'note', 'duplicate_marked', 'fix_proposed', 'approved', 'rejected', 'released']) event(kind);
+  assert.throws(() => event('deleted'), /CHECK constraint failed/);
+  assert.throws(() => event('note', 'não é json'), /CHECK constraint failed/);
+  assert.throws(() => event('note', '{}', admin, randomUUID()), /FOREIGN KEY constraint failed/);
+  db.prepare('DELETE FROM accounts WHERE id = ?').run(admin);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM bug_report_events WHERE actor_account_id IS NULL').get().n, 9, 'o evento sobrevive ao admin que o gerou');
+  db.prepare('DELETE FROM bug_reports WHERE id = ?').run(report);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM bug_report_events').get().n, 0);
+});
+
+test('relatos de bug: os índices do painel e da limpeza existem', (t) => {
+  const db = database(t);
+  const names = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'bug_reports'").all().map((row) => row.name);
+  for (const expected of ['bug_reports_status_created_idx', 'bug_reports_fingerprint_idx', 'bug_reports_account_created_idx', 'bug_reports_created_idx', 'bug_reports_diagnostics_expiry_idx']) {
+    assert.ok(names.includes(expected), `falta o índice ${expected}`);
+  }
+});
+
+test('a migração 0007 só acrescenta: contas e auditoria que já existiam em bancos com a 0006 ficam intactas', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec('PRAGMA foreign_keys = ON');
+  for (const file of ['0001_core.sql', '0002_trial_admin.sql', '0003_checkout_reservation.sql', '0004_oauth_client.sql', '0005_license_codes.sql', '0006_account_notices.sql']) db.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), 'utf8'));
+  const id = randomUUID();
+  db.prepare('INSERT INTO accounts (id, email) VALUES (?, ?)').run(id, 'a@example.test');
+  db.prepare("INSERT INTO admin_audit (id, actor_account_id, target_account_id, action, details, created_at) VALUES ('old', ?, ?, 'suspend', '{}', 123)").run(id, id);
+  db.exec(readFileSync(new URL('../migrations/0007_bug_reports.sql', import.meta.url), 'utf8'));
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM accounts').get().n, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM admin_audit WHERE id = 'old'").get().n, 1);
+  assert.equal(db.prepare("SELECT value FROM system_metadata WHERE key = 'schema_version'").get().value, '7');
   db.close();
 });
