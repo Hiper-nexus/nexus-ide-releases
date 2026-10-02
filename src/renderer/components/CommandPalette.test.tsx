@@ -10,6 +10,7 @@ import { useMissionSetupStore } from '../state/mission-setup-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
 import { useAttentionInboxStore } from '../state/attention-inbox-store';
+import { useBugReportDialogStore } from '../state/bug-report-dialog-store';
 import { useSessionStateStore } from '../state/session-state-store';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -74,6 +75,7 @@ beforeEach(() => {
   });
   useCommandPaletteStore.setState({ open: true });
   useAttentionInboxStore.setState({ open: false });
+  useBugReportDialogStore.setState({ isOpen: false });
 });
 
 afterEach(() => {
@@ -151,6 +153,27 @@ describe('CommandPalette product navigation', () => {
     act(() => actionButton(host, 'Lista de atenção').click());
     expect(useCommandPaletteStore.getState().open).toBe(false);
     expect(useAttentionInboxStore.getState().open).toBe(true);
+  });
+
+  it('oferece "Reportar um problema…" sem atalho novo, fecha o palette e abre o diálogo', () => {
+    const host = render(<CommandPalette />);
+    const action = actionButton(host, 'Reportar um problema…');
+    // Sem atalho próprio: nenhum acelerador novo (nem conflito com os existentes).
+    expect(action.querySelector('kbd')).toBeNull();
+    act(() => action.click());
+    expect(useCommandPaletteStore.getState().open).toBe(false);
+    expect(useBugReportDialogStore.getState().isOpen).toBe(true);
+  });
+
+  it('acha o comando por palavras de busca naturais (bug, erro, problema)', () => {
+    const host = render(<CommandPalette />);
+    const input = host.querySelector<HTMLInputElement>('input')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    act(() => {
+      setter.call(input, 'bug');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(actionButton(host, 'Reportar um problema…')).toBeDefined();
   });
 
   it('keeps a focused mission pane inside its named mission terminals', () => {
