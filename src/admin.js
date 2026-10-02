@@ -1,5 +1,6 @@
 import { api, byId, message, displayDate, subscriptionLabel, ACCESS_LABELS } from './account.js';
 import { initCodes, resetCodes } from './admin-codes.js';
+import { initBugs, resetBugs } from './admin-bugs.js';
 
 const FILTERS = new Set(['all', 'trial', 'active', 'suspended', 'expired']);
 const ACTIONS = { suspend: 'Suspender acesso', resume: 'Restaurar acesso', 'extend-trial': 'Estender teste' };
@@ -8,6 +9,7 @@ let session = null, selectedAction = null, isBusy = false;
 function denyAccess(text) {
   session = null;
   resetCodes();
+  resetBugs();
   selectedAction = null;
   byId('admin-content').hidden = true;
   byId('admin-denied').hidden = false;
@@ -167,6 +169,7 @@ async function initializeAdmin() {
     session = data;
     byId('admin-content').hidden = false;
     initCodes(session, { onDenied: denyAccess });
+    initBugs(session, { onDenied: denyAccess });
     await loadAccounts();
   } catch (error) { denyAccess(error.message); }
 }
