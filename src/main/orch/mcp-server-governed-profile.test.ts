@@ -282,6 +282,32 @@ afterEach(() => {
 });
 
 describe('mcp-server governed CLI profile wiring', () => {
+  it.each([
+    { squadCliPolicy: 'operator-choice' as const, readOnly: false, denied: false },
+    { squadCliPolicy: 'governed' as const, readOnly: false, denied: true },
+    { squadCliPolicy: 'operator-choice' as const, readOnly: true, denied: true },
+  ])('scopes the native Claude Task restriction to explicit authority ($squadCliPolicy/readOnly=$readOnly)', ({ squadCliPolicy, readOnly, denied }) => {
+    const home = path.join(tempRoot(), 'home');
+    const cwd = path.join(home, 'workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+    vi.stubEnv('HOME', home);
+    homePolicyDeps.getOrchSettings.mockReturnValue({ squadCliPolicy });
+    const spawnAuthority = authority(cwd, true);
+    spawnAuthority.context!.readOnly = readOnly;
+    const decoration = prepareAgentSpawnDecoration(
+      adapter('claude'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      spawnAuthority,
+    );
+    if (!decoration) throw new Error('expected Claude decoration');
+    try {
+      expect(decoration.extraArgs.includes('Task')).toBe(denied);
+      expect(decoration.extraArgs.includes('--disallowedTools')).toBe(denied);
+    } finally {
+      decoration.onSpawnFailed?.();
+    }
+  });
+
   it('pins the MiMo API key selected by Main instead of the native subscription account', () => {
     const home = path.join(tempRoot(), 'home');
     const cwd = path.join(home, 'workspace');

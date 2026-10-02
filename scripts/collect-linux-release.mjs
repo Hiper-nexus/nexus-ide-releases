@@ -6,10 +6,11 @@ import { fileURLToPath } from 'node:url';
 
 /**
  * Runs only on the ubuntu-22.04 GitHub runner, after Forge make, the packaged
- * smoke and the deb install proof. Collects the two Linux payloads into the
+ * smoke and the deb/ZIP install proof. Collects the three Linux payloads into the
  * upload directory and writes the release receipt the publisher verifies.
+ * v2 adds the portable ZIP and its extracted-application smoke proof.
  */
-export const RECEIPT_SCHEMA = 'nexus.linux-release/v1';
+export const RECEIPT_SCHEMA = 'nexus.linux-release/v2';
 export const RECEIPT_FILE = 'linux-release-receipt.json';
 export const LINUX_RUNNER = 'ubuntu-22.04';
 export const LINUX_ARCH = 'x64';
@@ -73,6 +74,7 @@ export function linuxPackageBasenames(version) {
   return {
     deb: `nexus-ide_${version}_amd64.deb`,
     rpm: `nexus-ide-${version}-1.x86_64.rpm`,
+    zip: `NexusIDE-linux-x64-${version}.zip`,
   };
 }
 
@@ -121,17 +123,21 @@ export function collectLinuxRelease({
   const expected = linuxPackageBasenames(version);
   const deb = oneFile(path.join(appDir, 'out', 'make', 'deb', LINUX_ARCH), '.deb');
   const rpm = oneFile(path.join(appDir, 'out', 'make', 'rpm', LINUX_ARCH), '.rpm');
+  const zip = oneFile(path.join(appDir, 'out', 'make', 'zip', 'linux', LINUX_ARCH), '.zip');
   if (path.basename(deb) !== expected.deb) {
     fail(`unexpected deb name ${path.basename(deb)}; expected ${expected.deb}`);
   }
   if (path.basename(rpm) !== expected.rpm) {
     fail(`unexpected rpm name ${path.basename(rpm)}; expected ${expected.rpm}`);
   }
+  if (path.basename(zip) !== expected.zip) {
+    fail(`unexpected zip name ${path.basename(zip)}; expected ${expected.zip}`);
+  }
 
   const outDir = path.resolve(out);
   fs.rmSync(outDir, { recursive: true, force: true });
   fs.mkdirSync(outDir, { recursive: true });
-  const files = [deb, rpm].map((source) => {
+  const files = [deb, rpm, zip].map((source) => {
     const target = path.join(outDir, path.basename(source));
     fs.copyFileSync(source, target);
     return {
@@ -153,7 +159,7 @@ export function collectLinuxRelease({
     npm: npmVersion(),
     runner: LINUX_RUNNER,
     arch: LINUX_ARCH,
-    smoke: { packaged: true, debInstalled: true },
+    smoke: { packaged: true, debInstalled: true, zipExtracted: true },
     files,
   };
   const receiptPath = path.join(outDir, RECEIPT_FILE);

@@ -4,9 +4,8 @@ import { decisionResultUsage } from '../decision-models/decision-usage';
  *
  * Lê a árvore de acessibilidade do app alvo (fallback: OCR local da janela —
  * pixels nunca saem da máquina), o TypeSafe Jev escolhe operação + elemento,
- * e o Nexus executa via System Events. Só a mão do operador ou o orquestrador
- * podem dirigir a área de trabalho: um worker (potencialmente injetado por
- * conteúdo web) nunca dirige o desktop do usuário.
+ * e o Nexus executa via System Events. Panes autorizados, inclusive workers,
+ * usam o mesmo laço, sujeito à autoridade e permissões do chamador no MCP.
  *
  * Mesmas garantias do `nexus_browser_do`: uma confirmação humana por objetivo,
  * valores digitados são apenas os fornecidos (o Jev recebe só os rótulos),
@@ -700,8 +699,8 @@ const computerDoTool: McpToolDef = {
     '`app`, `goal` and the exact `values` that may be typed. One human ' +
     'confirmation per goal; stops and hands back on done / blocked / low ' +
     'confidence / any irreversible or costly action (needs_confirmation) / ' +
-    'focus leaving the app / maxSteps. Only the operator\'s own pane or the ' +
-    'orchestrator may call it. Requires macOS Accessibility permission for ' +
+    'focus leaving the app / maxSteps. Authorized workers may use the same ' +
+    'loop. Requires macOS Accessibility permission for ' +
     'NexusIDE. `done` is Jev\'s judgment — verify the outcome yourself ' +
     '(read the app) before reporting success.',
   inputSchema: {
@@ -721,12 +720,6 @@ const computerDoTool: McpToolDef = {
         `nexus_computer_do: argumentos inválidos: ${parsed.error.issues
           .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
           .join('; ')}`,
-      );
-    }
-    if (ctx.role !== 'user' && ctx.role !== 'orchestrator') {
-      throw new Error(
-        'nexus_computer_do: só a mão do operador ou o orquestrador podem ' +
-          'dirigir a área de trabalho',
       );
     }
     if (!hasDecisionCredential('computerTool')) {
@@ -755,12 +748,6 @@ export function buildComputerAutopilotTools(
             `nexus_computer_do: argumentos inválidos: ${parsed.error.issues
               .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
               .join('; ')}`,
-          );
-        }
-        if (ctx.role !== 'user' && ctx.role !== 'orchestrator') {
-          throw new Error(
-            'nexus_computer_do: só a mão do operador ou o orquestrador podem ' +
-              'dirigir a área de trabalho',
           );
         }
         if (!hasDecisionCredential('computerTool')) {

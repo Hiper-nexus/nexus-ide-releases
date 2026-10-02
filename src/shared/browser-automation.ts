@@ -6,6 +6,7 @@
 export const BROWSER_AUTOMATION_CHANNELS = {
   request: 'browser:automation-request',
   response: 'browser:automation-response',
+  cancel: 'browser:automation-cancel',
 } as const;
 
 export type BrowserAutomationCommand =

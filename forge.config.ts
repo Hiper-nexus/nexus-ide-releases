@@ -543,7 +543,7 @@ const config: ForgeConfig = {
         },
   makers: [
     // .dmg is the installable macOS artifact; ZIP doubles as the
-    // Squirrel.Mac auto-update payload.
+    // Squirrel.Mac auto-update payload and the portable Linux distribution.
     // Code signing/notarization (osxSign/osxNotarize in packagerConfig)
     // activates when a Developer ID identity is present on the build machine.
     new MakerDMG(createMacDmgMakerConfig(process.env), ['darwin']),
@@ -569,7 +569,7 @@ const config: ForgeConfig = {
           }
         : {}),
     }, ['win32']),
-    new MakerZIP({}, ['darwin']),
+    new MakerZIP({}, ['darwin', 'linux']),
     new MakerRpm(createLinuxRpmMakerConfig(), ['linux']),
     new MakerDeb(createLinuxDebMakerConfig(), ['linux']),
   ],

@@ -17,6 +17,27 @@ const h = vi.hoisted(() => ({
 vi.mock('../jev/jev-secrets', () => ({
   hasJevCredential: h.hasJevCredential,
 }));
+// All loops use injected control/judge/OCR; keep these default OS/provider
+// boundaries hermetic and independent of the operator's real settings.
+vi.mock('../decision-models/decision-availability', () => ({
+  hasDecisionCredential: h.hasJevCredential,
+}));
+vi.mock('../decision-models/decision-judge', () => ({
+  judgeDecision: vi.fn(),
+}));
+vi.mock('../vision/screen-capture', () => ({
+  getScreenPermissionStatus: () => 'denied',
+}));
+vi.mock('../vision/ocr', () => ({
+  recognizeLinesWithBoxes: vi.fn(),
+}));
+// The loop uses the protocol's real authority assertion, without loading the
+// unrelated dispatcher and prompt-context persistence during this unit test.
+vi.mock('./mcp-dispatch', () => ({ dispatchToolCall: vi.fn() }));
+vi.mock('../context/business-model/business-model-ensure', () => ({ ensureBusinessModel: vi.fn() }));
+vi.mock('./operator-business-model', () => ({ operatorBusinessModelContext: () => '' }));
+vi.mock('./operator-workspace-memory', () => ({ operatorWorkspaceMemoryContext: () => '' }));
+vi.mock('./maestro-standing-context', () => ({ maestroStandingContext: () => '' }));
 vi.mock('../jev/jev-decision-log', () => ({
   recordJevDecision: h.record,
   jevAnswerProbabilities: (answers: Record<string, unknown>) =>
@@ -247,12 +268,12 @@ describe('nexus_computer_do', () => {
     expect(isTerminalApp('Terminator Notes')).toBe(false);
   });
 
-  it('refuses workers — only operator/orchestrator drive the desktop', async () => {
+  it('lets an authorized worker run the same desktop loop as its coordinator', async () => {
     const deps = makeDeps();
-    await expect(toolFor(deps).handler(baseArgs, WORKER_CTX)).rejects.toThrow(
-      /só a mão do operador ou o orquestrador/,
-    );
-    expect(deps.control.activate).not.toHaveBeenCalled();
+    const out = await toolFor(deps).handler(baseArgs, WORKER_CTX) as { status: string };
+    expect(out.status).toBe('done');
+    expect(deps.control.activate).toHaveBeenCalledWith('MyApp');
+    expect(deps.judge).toHaveBeenCalledTimes(1);
   });
 
   it('errors when the app does not come to the foreground', async () => {

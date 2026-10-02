@@ -42,7 +42,7 @@ import {
 } from "../persistence/renderer-workspace-scope";
 import { sameProjectScope } from "./project-scoped-broadcast";
 import { getContextBySession } from './gate';
-import { canListPane, type CallerCtx, type PaneAuthzInfo } from "./pane-authz";
+import { canListPane, sameExactPaneScope, type CallerCtx, type PaneAuthzInfo } from "./pane-authz";
 import { parsePaneNumberRef } from "../../shared/pane-number";
 import { makeId } from "./store-util";
 import type { ProjectExecutionScope } from "../../shared/types";
@@ -633,6 +633,66 @@ function liveOwnerForSession(sessionId: string): WebContents | null {
       !owner.isCrashed(),
   );
   return matches.length === 1 ? matches[0].owner : null;
+}
+
+/** Browser authority is derived from Main's physical session ownership. */
+function browserOwnerForCaller(caller: CallerCtx): WebContents | null {
+  if (!caller.sessionId) return null;
+  const rendered = panes.filter(({ entry }) => entry.sessionId === caller.sessionId);
+  if (rendered.length > 0) {
+    if (rendered.length !== 1) return null;
+    const registered = rendered[0]!;
+    const scope = authzInfoOf(registered).scope;
+    if (!scope || !sameExactPaneScope(caller.scope, scope) ||
+        getSessionState(caller.sessionId) === null ||
+        !isSessionOwnedBy(registered.owner, caller.sessionId) ||
+        registered.owner.isDestroyed() || registered.owner.isCrashed()) return null;
+    return registered.owner;
+  }
+  // A headless worker has no renderer owner. Only its unique live mission
+  // orchestrator can supply one; never use the most recently registered grid.
+  const headless = findMainOwnedRuntimeAuthority(caller.sessionId);
+  const authority = headless.length === 1 ? headless[0] : undefined;
+  if (!authority || !caller.missionId ||
+      authority.missionId !== caller.missionId || authority.role !== caller.role ||
+      caller.workerIncarnationId !== authority.workerIncarnationId ||
+      !authority.scope || !sameExactPaneScope(caller.scope, authority.scope)) return null;
+  const acp = getAcpDriverSession(caller.sessionId);
+  if (acp) {
+    // ACP sessions have no PTY state or renderer owner. Prove their live
+    // Main-owned identity before deriving the mission's presentation owner.
+    const owned = getMainOwnedPane(authority.paneId);
+    const agent = acp.agent;
+    if (!owned || owned.entry.sessionId !== caller.sessionId ||
+        acp.sessionId !== caller.sessionId || acp.paneId !== authority.paneId ||
+        acp.missionId !== caller.missionId || acp.role !== caller.role ||
+        agent.sessionId !== caller.sessionId || agent.paneId !== authority.paneId ||
+        agent.missionId !== caller.missionId || agent.role !== caller.role ||
+        agent.adapterId !== owned.entry.adapterId || agent.accountId !== owned.entry.accountId ||
+        agent.workerIncarnationId !== authority.workerIncarnationId ||
+        !sameExactPaneScope(acp.scope, agent.scope) ||
+        (!sameExactPaneScope(agent.scope, caller.scope) &&
+          !sameExactPaneScope(agent.scope, authority.executionScope ?? authority.scope)) ||
+        !sameExactPaneScope(caller.executionScope ?? caller.scope,
+          authority.executionScope ?? authority.scope)) return null;
+  } else if (getSessionState(caller.sessionId) === null) return null;
+  const owners = new Set<WebContents>();
+  for (const registered of panes) {
+    const info = authzInfoOf(registered);
+    if (info.role === "orchestrator" && info.missionId === caller.missionId &&
+        info.scope && sameExactPaneScope(caller.scope, info.scope) &&
+        info.sessionId && getSessionState(info.sessionId) !== null &&
+        isSessionOwnedBy(registered.owner, info.sessionId) &&
+        !registered.owner.isDestroyed() && !registered.owner.isCrashed()) {
+      owners.add(registered.owner);
+    }
+  }
+  return owners.size === 1 ? [...owners][0]! : null;
+}
+
+/** Ignore any owner id carried by callers; ownership never comes from MCP args. */
+export function callerWithPaneOwner(caller: CallerCtx): CallerCtx {
+  return { ...caller, ownerWebContentsId: browserOwnerForCaller(caller)?.id };
 }
 
 // Passive PTY scanning is process-global, but each finding is sent only to
@@ -1837,9 +1897,10 @@ export function listPaneSnapshots(): PaneSnapshot[] {
   ];
 }
 
-/** nexus_pane_list scoped to what the caller may see (SEC#5 info disclosure):
- * a worker sees only its own mission's panes, never the user's shells. */
+/** nexus_pane_list shows mission terminals and originating-window browsers;
+ * a worker never sees the user's other shell panes. */
 export function listVisiblePaneSnapshots(caller: CallerCtx): PaneSnapshot[] {
+  caller = callerWithPaneOwner(caller);
   const rendered = panes
     .filter((registered) => canListPane(caller, authzInfoOf(registered)))
     .map(snapshotOf);
@@ -1900,6 +1961,7 @@ function authzInfoOf(registered: RegisteredPane): PaneAuthzInfo {
     paneId: entry.paneId,
     sessionId: entry.sessionId,
     kind: entry.kind,
+    ownerWebContentsId: owner.id,
     missionId: meta?.missionId,
     contextRevision: meta?.contextRevision,
     role: meta?.role,
@@ -2794,8 +2856,13 @@ export function requestBrowserPane(options: {
   agentName?: string;
   role?: "orchestrator" | "worker";
   scope: Readonly<ProjectExecutionScope>;
+  /** Trusted Main gate context; never renderer or MCP argument metadata. */
+  caller?: CallerCtx;
 }): Promise<BrowserPaneOpenResult> {
-  const owner = rendererForMission(options.missionId, options.scope);
+  const owner = options.caller
+    ? (sameExactPaneScope(options.caller.scope, options.scope)
+      ? browserOwnerForCaller(options.caller) : null)
+    : options.role === "worker" ? null : rendererForMission(options.missionId, options.scope);
   if (!owner) {
     return Promise.resolve({
       requestId: "",

@@ -100,4 +100,34 @@ describe('browser automation runtime', () => {
 
     await rejection;
   });
+
+  it('cancels a held press by its Main-minted request id when authority is aborted', async () => {
+    const webContents = browserWebContents(89);
+    const controller = new AbortController();
+    const pending = runBrowserAutomation('pane-d', webContents as never, 'press', { key: 'w', holdMs: 1_000 }, undefined, { signal: controller.signal });
+    const [, request] = webContents.send.mock.calls[0] as [string, { requestId: string }];
+    const rejected = expect(pending).rejects.toThrow('cancelled');
+    controller.abort();
+    await rejected;
+    expect(webContents.send).toHaveBeenLastCalledWith(BROWSER_AUTOMATION_CHANNELS.cancel, request.requestId);
+    electron.responseHandler?.({ sender: { id: webContents.id } }, { requestId: request.requestId, ok: true, result: { pressed: true } });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('sends no input when the invocation has already been cancelled', async () => {
+    const webContents = browserWebContents(90);
+    const controller = new AbortController(); controller.abort();
+    await expect(runBrowserAutomation('pane-e', webContents as never, 'press', { key: 'w' }, undefined, { signal: controller.signal })).rejects.toThrow('cancelled');
+    expect(webContents.send).not.toHaveBeenCalled();
+  });
+
+  it('cancels the old press when its document is retired', async () => {
+    const webContents = browserWebContents(91);
+    const pending = runBrowserAutomation('pane-f', webContents as never, 'press', { key: 'w', holdMs: 1_000 });
+    const [, request] = webContents.send.mock.calls[0] as [string, { requestId: string }];
+    const rejected = expect(pending).rejects.toThrow('document changed');
+    rejectPendingBrowserAutomation(webContents.id, 'document changed');
+    await rejected;
+    expect(webContents.send).toHaveBeenLastCalledWith(BROWSER_AUTOMATION_CHANNELS.cancel, request.requestId);
+  });
 });

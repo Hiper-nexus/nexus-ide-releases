@@ -135,7 +135,7 @@ describe('platform-specific maker matrix', () => {
     ).toEqual([
       { name: 'dmg', platforms: ['darwin'] },
       { name: 'squirrel', platforms: ['win32'] },
-      { name: 'zip', platforms: ['darwin'] },
+      { name: 'zip', platforms: ['darwin', 'linux'] },
       { name: 'rpm', platforms: ['linux'] },
       { name: 'deb', platforms: ['linux'] },
     ]);
@@ -226,3 +226,4 @@ describe('agent detection manifests packaging', () => {
     );
   });
 });
+

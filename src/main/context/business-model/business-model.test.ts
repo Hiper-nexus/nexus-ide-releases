@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { testProjectScope } from '../../orch/__tests__/scope-fixture';
 import { ProjectRuntimeManager } from '../../runtime/project-runtime-manager';
 import { inspectContextAttestations } from '../context-attestation';
@@ -59,7 +59,9 @@ afterEach(() => {
   configureBusinessModelAttestedStore(null);
   fs.rmSync(attestedDir, { recursive: true, force: true });
   for (const manager of managers.splice(0)) manager.closeAll();
-  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) {
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
   fs.rmSync(baseDir, { recursive: true, force: true });
 });
 
@@ -69,6 +71,28 @@ function commitAll(root: string, message: string): void {
 }
 
 describe('extractBusinessModel', () => {
+  it('teardown remove o repo após ENOTEMPTY temporário em .git', ({ onTestFinished }) => {
+    const root = repo();
+    const gitDir = path.join(root, '.git');
+    const realRmdir = fs.rmdirSync;
+    let injectedErrors = 0;
+    const rmdir = vi.spyOn(fs, 'rmdirSync').mockImplementation((target, options) => {
+      // Falha após esvaziar .git, no mesmo ponto do teardown observado no CI.
+      if (String(target) === gitDir && injectedErrors === 0 && fs.readdirSync(gitDir).length === 0) {
+        injectedErrors += 1;
+        throw Object.assign(new Error('fixture directory briefly busy'), { code: 'ENOTEMPTY' });
+      }
+      return realRmdir(target, options);
+    });
+
+    // Executa depois do afterEach real, sem duplicar a política de remoção.
+    onTestFinished(() => {
+      rmdir.mockRestore();
+      expect(injectedErrors).toBe(1);
+      expect(fs.existsSync(root)).toBe(false);
+    });
+  });
+
   it('liga comanda → comissão: tabelas, trigger acoplado, chamador, teste e regra do AGENTS.md', async () => {
     const root = repo();
     const extraction = (await extractBusinessModel(root))!;
@@ -565,3 +589,4 @@ describe('runBusinessModelBootstrap (store e atestações reais)', () => {
       .toBe(createHash('sha256').update(skeleton).digest('hex'));
   });
 });
+

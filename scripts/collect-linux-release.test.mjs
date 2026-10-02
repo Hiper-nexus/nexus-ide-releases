@@ -30,7 +30,7 @@ afterEach(() => {
   }
 });
 
-function makeApp(root, { deb = true, rpm = true, debName, rpmName } = {}) {
+function makeApp(root, { deb = true, rpm = true, zip = true, debName, rpmName, zipName } = {}) {
   const app = path.join(root, 'app');
   const names = linuxPackageBasenames(VERSION);
   if (deb) {
@@ -42,6 +42,11 @@ function makeApp(root, { deb = true, rpm = true, debName, rpmName } = {}) {
     const file = path.join(app, 'out', 'make', 'rpm', 'x64', rpmName ?? names.rpm);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, 'rpm-payload');
+  }
+  if (zip) {
+    const file = path.join(app, 'out', 'make', 'zip', 'linux', 'x64', zipName ?? names.zip);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'zip-payload');
   }
   return app;
 }
@@ -68,7 +73,7 @@ const environment = {
 };
 
 describe('collect-linux-release', () => {
-  it('collects exactly one deb and one rpm and writes a bound receipt', () => {
+  it('collects exactly one deb, rpm and portable zip and writes a v2 bound receipt', () => {
     const root = tempRoot();
     const app = makeApp(root);
     const out = path.join(root, 'linux-release-assets');
@@ -85,7 +90,7 @@ describe('collect-linux-release', () => {
 
     const names = linuxPackageBasenames(VERSION);
     expect(fs.readdirSync(out).sort()).toEqual(
-      [names.deb, names.rpm, RECEIPT_FILE].sort(),
+      [names.deb, names.rpm, names.zip, RECEIPT_FILE].sort(),
     );
     expect(receipt.schema).toBe(RECEIPT_SCHEMA);
     expect(receipt.version).toBe(VERSION);
@@ -98,12 +103,12 @@ describe('collect-linux-release', () => {
     expect(receipt.arch).toBe('x64');
     expect(receipt.npm).toBe('12.0.0');
     expect(receipt.node).toBe(process.versions.node);
-    expect(receipt.smoke).toEqual({ packaged: true, debInstalled: true });
+    expect(receipt.smoke).toEqual({ packaged: true, debInstalled: true, zipExtracted: true });
     expect(
       receipt.files
         .map((file) => file.name)
         .sort(),
-    ).toEqual([names.deb, names.rpm].sort());
+    ).toEqual([names.deb, names.rpm, names.zip].sort());
     for (const file of receipt.files) {
       const bytes = fs.readFileSync(path.join(out, file.name));
       expect(file.bytes).toBe(bytes.length);
@@ -111,7 +116,7 @@ describe('collect-linux-release', () => {
     }
   });
 
-  it('fails when the payload inventory is not exactly one deb and one rpm', () => {
+  it('fails when a required payload is absent or duplicated', () => {
     const root = tempRoot();
     const app = makeApp(root);
     fs.writeFileSync(
@@ -141,6 +146,13 @@ describe('collect-linux-release', () => {
         npmVersion: () => '12.0.0',
       }),
     ).toThrow(/rpm/);
+
+    const missingZipRoot = tempRoot();
+    const missingZipApp = makeApp(missingZipRoot, { zip: false });
+    expect(() => collectLinuxRelease({
+      app: missingZipApp, version: VERSION, out: path.join(missingZipRoot, 'out3'),
+      environment, git: fakeGit().fn, npmVersion: () => '12.0.0',
+    })).toThrow(/zip/);
   });
 
   it('rejects payloads whose names do not match the maker contract', () => {
@@ -198,6 +210,7 @@ describe('collect-linux-release', () => {
     expect(linuxPackageBasenames('1.2.3')).toEqual({
       deb: 'nexus-ide_1.2.3_amd64.deb',
       rpm: 'nexus-ide-1.2.3-1.x86_64.rpm',
+      zip: 'NexusIDE-linux-x64-1.2.3.zip',
     });
     expect(() => linuxPackageBasenames('1.2.3-rc1')).toThrow(/stable/);
   });

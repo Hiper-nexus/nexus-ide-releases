@@ -36,7 +36,7 @@ describe("worker handoff transport contract", () => {
     expect(prompt).not.toContain(LEGACY_MARKER);
   });
 
-  it("F-702: worker não pergunta ao humano, segue o Nexus em conflito e não abre subagentes da CLI", () => {
+  it("worker não pergunta ao humano e conserva a autoridade de execução do pane", () => {
     for (const nexusMcp of ["codex", "none"]) {
       const prompt = withHandoffContract("Corrija o achado RU-263.", {
         quirks: { mcpAutoload: false, nexusMcp },
@@ -46,6 +46,8 @@ describe("worker handoff transport contract", () => {
       expect(prompt).toContain("o Nexus vence");
       expect(prompt).toContain('"blocked"');
       expect(prompt).toContain("spawn_agent");
+      expect(prompt).toContain("Você pode usar ferramentas e subagentes nativos");
+      expect(prompt).not.toContain("Não abra subagentes internos");
     }
   });
 });
@@ -99,7 +101,7 @@ describe('contrato condicional (systemDelivers, C-194.1)', () => {
     const prompt = withHandoffContract('Corrija o fluxo.', adapter, {
       systemDelivers: true,
     });
-    expect(prompt).toContain('"success"|"blocked"|"failed"');
+    expect(prompt).toContain('"success"|"partial"|"blocked"|"failed"');
     expect(prompt).not.toContain('"done"');
     expect(prompt).not.toContain('"error"');
   });
@@ -119,10 +121,37 @@ describe('contrato condicional (systemDelivers, C-194.1)', () => {
     expect(prompt).toContain('nx-mail send');
   });
 
+  it('não ensina uma resposta curta a fechar tarefa com validação pendente', () => {
+    const prompt = withHandoffContract('Crie um jogo Phaser.', adapter, {
+      systemDelivers: true,
+    });
+    expect(prompt).toContain('concluída e verificada');
+    expect(prompt).toContain('validação pendente');
+    expect(prompt).toContain('status "partial"');
+  });
+
   it('sem a flag, o contrato clássico permanece intacto (regressão)', () => {
     const prompt = withHandoffContract('Corrija o fluxo.', adapter);
     expect(prompt).toContain('finalize chamando a tool nexus_handoff_submit');
     expect(prompt).not.toContain('NÃO chame ferramenta nenhuma');
+  });
+});
+
+describe('evidência visual no handoff', () => {
+  const adapter = { quirks: { mcpAutoload: false, nexusMcp: 'codex' } };
+
+  it.each(['Implemente o frontend.', 'Crie um jogo Phaser.'])('pede validação real da entrega: %s', (task) => {
+    const prompt = withHandoffContract(task, adapter);
+    expect(prompt).toContain('Validação visual de interface ou jogo');
+    expect(prompt).toContain('URL/preview, viewport, ações');
+    expect(prompt).toContain('não verificada');
+    expect(prompt).toContain('partial');
+    expect(prompt).toContain('Nunca invente screenshots');
+  });
+
+  it('não acrescenta orientação visual a trabalho de backend', () => {
+    const prompt = withHandoffContract('Implemente cache LRU no serviço de sessões.', adapter);
+    expect(prompt).not.toContain('Validação visual de interface ou jogo');
   });
 });
 

@@ -703,6 +703,26 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
     expect(result.errors).toBeDefined();
     destroyBrowser(PANE, scope);
   });
+
+  it('forwards a bounded hold with the current invocation cancellation authority', async () => {
+    await boot();
+    const controller = new AbortController();
+    const assertCurrentAuthority = vi.fn();
+    await pressBrowserKey(PANE, scope, { key: 'Enter', holdMs: 80, signal: controller.signal, assertCurrentAuthority });
+    expect(state.runAutomation).toHaveBeenCalledWith(PANE, state.guest, 'press', { key: 'Enter', holdMs: 80 }, undefined,
+      expect.objectContaining({ signal: controller.signal, assertCurrentAuthority: expect.any(Function) }));
+    expect(assertCurrentAuthority).toHaveBeenCalled();
+    destroyBrowser(PANE, scope);
+  });
+
+  it('does not send a press after invocation cancellation', async () => {
+    await boot();
+    const controller = new AbortController(); controller.abort();
+    state.runAutomation.mockClear();
+    await expect(pressBrowserKey(PANE, scope, { key: 'Enter', holdMs: 80, signal: controller.signal })).rejects.toThrow('authority or document changed');
+    expect(state.runAutomation).not.toHaveBeenCalled();
+    destroyBrowser(PANE, scope);
+  });
 });
 
 describe('loadBrowser device emulation', () => {

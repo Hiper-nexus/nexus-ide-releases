@@ -245,6 +245,7 @@ import {
   acceptsClaudeMcpCliFlags,
   usesClaudeHomeLayout,
 } from "./spawn-home-policy";
+import { nativeSubagentPolicyArgs } from "./native-subagent-policy";
 import {
   findActiveContextDraftReviewerId,
 } from "../context/cli-context-draft-reviewer";
@@ -1157,9 +1158,13 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         role: meta?.role,
       },
     );
-    // Delegação VISÍVEL (benchmark §4.5): Claude recebe o hard-deny de Task
-    // pelo adapter base, então o bloqueio vale para panes diretos e
-    // orquestrados sem duplicar flags aqui.
+    // Free panes keep their native helper tools. Explicit governed/read-only
+    // authority retains the provider restriction without changing the adapter.
+    extraArgs.push(...nativeSubagentPolicyArgs(adapter, {
+      squadCliPolicy: getOrchSettings().squadCliPolicy,
+      readOnly: meta?.readOnly,
+      nativeReadOnly: meta?.nativeReadOnly,
+    }));
     const mcpConfig = buildMcpConfig(ctx.token, hubServers);
     const thirdPartyClaudeFamily = isThirdPartyClaudeFamily(
       adapter,

@@ -51,6 +51,7 @@ const stubs = vi.hoisted(() => ({
   })),
   assertBrowserAtExactUrl: vi.fn(),
   analyzeBrowserResponsive: vi.fn(async () => ({ paneId: 'browser-1', breakpoints: [] })),
+  pressBrowserKey: vi.fn(async () => ({ paneId: 'browser-1' })),
   resolveReviewAuthority: vi.fn(() => null as {
     reviewSessionId: string;
     reviewerSessionId: string;
@@ -89,7 +90,7 @@ vi.mock('../browser/browser-manager', () => ({
   extractBrowserFields: stubs.extractBrowserFields,
   waitForBrowser: stubs.waitForBrowser,
   scrollBrowserPane: vi.fn(),
-  pressBrowserKey: vi.fn(),
+  pressBrowserKey: stubs.pressBrowserKey,
   hoverBrowserElement: vi.fn(),
 }));
 vi.mock('../perf/perf-ipc', () => ({ collectPerfSnapshot: vi.fn() }));
@@ -113,6 +114,15 @@ vi.mock('./automated-review-browser-authority', () => ({
   resolveAutomatedReviewBrowserAuthority: stubs.resolveReviewAuthority,
   recordAutomatedReviewBrowserInspection: stubs.recordReviewInspection,
 }));
+// Keep the real invocation checkpoint while excluding unrelated protocol
+// dispatch and prompt-assembly side effects from these handler tests.
+vi.mock('./mcp-dispatch', () => ({ dispatchToolCall: vi.fn() }));
+vi.mock('./operator-delegation-doctrine', () => ({ operatorDelegationInstructions: vi.fn() }));
+vi.mock('./maestro-standing-context', () => ({ maestroStandingContext: vi.fn() }));
+vi.mock('./operator-business-model', () => ({ operatorBusinessModelContext: vi.fn() }));
+vi.mock('../context/business-model/business-model-ensure', () => ({ ensureBusinessModel: vi.fn() }));
+vi.mock('./prompt-context-blocks', () => ({ joinPromptContextBlocks: vi.fn() }));
+vi.mock('./operator-workspace-memory', () => ({ operatorWorkspaceMemoryContext: vi.fn() }));
 
 import { buildBrowserTools } from './tools-browser';
 import { authorizePaneRef } from './tool-util';
@@ -169,6 +179,23 @@ describe('nexus_browser_responsive', () => {
     });
     await expect(tool.handler({ paneId: 'browser-9' }, context)).rejects.toThrow(/not authorized/);
     expect(stubs.analyzeBrowserResponsive).not.toHaveBeenCalled();
+  });
+});
+
+describe('nexus_browser_press', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('publishes bounded hold duration and forwards caller cancellation and authority', async () => {
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_press')!;
+    expect((tool.inputSchema.properties as Record<string, unknown>).holdMs)
+      .toEqual({ type: 'integer', minimum: 0, maximum: 1000 });
+    const signal = new AbortController().signal;
+    const assertCurrentAuthority = vi.fn();
+    await tool.handler({ paneId: 'browser-1', key: 'ArrowRight', holdMs: 500 }, context,
+      { signal, assertCurrentAuthority });
+    expect(authorizePaneRef).toHaveBeenCalledWith(context, 'browser-1', 'write');
+    expect(stubs.pressBrowserKey).toHaveBeenCalledWith('browser-1', scope,
+      expect.objectContaining({ key: 'ArrowRight', holdMs: 500, signal, assertCurrentAuthority }));
   });
 });
 
@@ -268,22 +295,42 @@ describe('preview tool workspace confinement', () => {
     );
   });
 
-  it('never opens a new pane for a common worker', async () => {
+  it('opens a new browser for a worker through its Main-owned caller context', async () => {
     const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_open')!;
     const worker = {
       role: 'worker',
       scope,
       missionId: 'mission-a',
+      sessionId: 'worker-session',
     } as never;
 
     await expect(
-      tool.handler(
-        { paneId: 'browser-1', url: 'http://127.0.0.1:1234/' },
-        worker,
-      ),
-    ).rejects.toThrow(/workers cannot open browser panes/i);
+      tool.handler({ url: 'https://example.com' }, worker),
+    ).resolves.toMatchObject({ ok: true, paneId: 'browser-1' });
+    expect(stubs.requestBrowserPane).toHaveBeenCalledWith(expect.objectContaining({
+      caller: worker, role: 'worker', scope,
+    }));
+    expect(stubs.loadBrowser).toHaveBeenCalledWith('browser-1', 'https://example.com',
+      expect.objectContaining({ scope, privateAccessConfirmed: false }));
+  });
+
+  it('does not fall back to generic open when an internal review binding expired', async () => {
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_open')!;
+    const worker = { role: 'worker', scope, missionId: 'mission-a',
+      internalPrevcReviewerAuthority: { kind: 'automated-review' } } as never;
+    await expect(tool.handler({ paneId: 'browser-review', url: 'https://example.com' }, worker))
+      .rejects.toThrow(/reviewer browser surface is not current/);
     expect(stubs.requestBrowserPane).not.toHaveBeenCalled();
     expect(stubs.loadBrowser).not.toHaveBeenCalled();
+  });
+
+  it('does not read an unrelated tab when an internal review binding expired', async () => {
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_read')!;
+    const worker = { role: 'worker', scope, missionId: 'mission-a',
+      internalPrevcReviewerAuthority: { kind: 'automated-review' } } as never;
+    await expect(tool.handler({ paneId: 'browser-other' }, worker))
+      .rejects.toThrow(/reviewer browser surface is not current/);
+    expect(stubs.readBrowserPage).not.toHaveBeenCalled();
   });
 
   it('lets a verified reviewer reload only its already-bound local pane and URL', async () => {

@@ -12,8 +12,9 @@ import type { ProjectExecutionScope } from '../../shared/types';
  *  - you may always act on your OWN pane;
  *  - the human's own agents (role 'user') are unrestricted — they act for the user,
  *    and keep that reach while leading a mission they were adopted into;
+ *  - browser access stays in the caller's originating window and workspace;
  *  - a worker may never touch a shell pane (the user's terminal);
- *  - every other cross-pane access must stay inside the caller's OWN mission;
+ *  - other terminal access must stay inside the caller's OWN mission;
  *  - a worker may read/wait on but never write/close the orchestrator pane.
  */
 
@@ -32,6 +33,10 @@ export interface CallerCtx {
   contextRevision?: string;
   /** The caller's own PTY session — acting on it is always allowed. */
   sessionId?: string;
+  /** Exact Main-issued generation for a mission worker, when present. */
+  workerIncarnationId?: string;
+  /** Main-derived renderer owner of the caller's physical session. */
+  ownerWebContentsId?: number;
   /** Main-owned: this orchestrator is the operator's pane adopted by a mission. */
   promotedFromUserSession?: true;
 }
@@ -42,6 +47,8 @@ export interface PaneAuthzInfo {
   paneId: string;
   sessionId: string | null;
   kind: 'shell' | 'cli-agent' | 'browser';
+  /** Actual renderer owner, supplied only by the Main pane registry. */
+  ownerWebContentsId?: number;
   missionId?: string;
   /** Frozen PREVC revision restored by main; never renderer-authored. */
   contextRevision?: string;
@@ -64,6 +71,18 @@ export interface AuthzDecision {
 }
 
 const WRITE_ACTIONS = new Set<PaneAction>(['write', 'close']);
+
+export function sameExactPaneScope(
+  left: ProjectExecutionScope,
+  right: ProjectExecutionScope,
+): boolean {
+  return left.version === right.version &&
+    left.installationId === right.installationId &&
+    left.projectId === right.projectId &&
+    left.checkoutId === right.checkoutId &&
+    left.rootRealPath === right.rootRealPath &&
+    left.identitySource === right.identitySource;
+}
 
 export interface AutomatedReviewBrowserGrant {
   readonly paneId: string;
@@ -139,6 +158,20 @@ export function authorizePaneAccess(
   ) {
     return { allow: false, reason: 'pane belongs to another project checkout' };
   }
+  if (pane.kind === 'browser') {
+    if (!sameExactPaneScope(caller.scope, pane.scope)) {
+      return { allow: false, reason: 'browser pane belongs to another project checkout' };
+    }
+    if (!Number.isInteger(caller.ownerWebContentsId) ||
+        !Number.isInteger(pane.ownerWebContentsId) ||
+        caller.ownerWebContentsId! <= 0 ||
+        caller.ownerWebContentsId !== pane.ownerWebContentsId) {
+      return { allow: false, reason: 'browser pane belongs to another originating window' };
+    }
+    // Browser control follows the existing tool allowlist and effect policy,
+    // including tabs opened directly by the operator in this same window.
+    return { allow: true };
+  }
   // Acting on your own pane is always fine (read your own tail, etc.).
   if (caller.sessionId && pane.sessionId && caller.sessionId === pane.sessionId) {
     return { allow: true };
@@ -161,12 +194,12 @@ export function authorizePaneAccess(
     };
   }
 
-  // A worker must never reach the user's shell/browser — read (secret capture)
-  // or write/navigate.
-  if (caller.role === 'worker' && (pane.kind === 'shell' || pane.kind === 'browser')) {
+  // Browser control has its own origin boundary above. User shells retain the
+  // existing worker restriction for read (secret capture) and write.
+  if (caller.role === 'worker' && pane.kind === 'shell') {
     return {
       allow: false,
-      reason: 'workers cannot access shell/browser panes (user surface)',
+      reason: 'workers cannot access shell panes (user surface)',
     };
   }
 

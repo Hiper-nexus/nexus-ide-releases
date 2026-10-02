@@ -67,6 +67,23 @@ const ALLOWED_PRESS_KEYS = new Set([
 
 const ALLOWED_PRESS_MODIFIERS = new Set(['Shift', 'Control', 'Alt', 'Meta']);
 
+// KeyboardEvent.code names describe physical keys. The automation API accepts
+// printable ASCII, so punctuation uses the standard US keyboard positions.
+const PRINTABLE_PRESS_CODES: Record<string, string> = Object.fromEntries(
+  Object.entries({
+    Digit0: '0)', Digit1: '1!', Digit2: '2@', Digit3: '3#', Digit4: '4$',
+    Digit5: '5%', Digit6: '6^', Digit7: '7&', Digit8: '8*', Digit9: '9(',
+    Backquote: '`~', Minus: '-_', Equal: '=+', BracketLeft: '[{',
+    BracketRight: ']}', Backslash: '\\|', Semicolon: ';:', Quote: '\'"',
+    Comma: ',<', Period: '.>', Slash: '/?', Space: ' ',
+  }).flatMap(([code, chars]) => [...chars].map((char) => [char, code])),
+);
+
+function pressKeyCode(key: string): string {
+  if (/^[a-z]$/i.test(key)) return `Key${key.toUpperCase()}`;
+  return PRINTABLE_PRESS_CODES[key] ?? key;
+}
+
 function isAllowedPressKey(key: string): boolean {
   if (ALLOWED_PRESS_KEYS.has(key)) return true;
   // Single printable ASCII character (letters, digits, punctuation) — covers
@@ -323,7 +340,7 @@ function safeHref(element: Element): string | undefined {
 }
 
 export interface BrowserAutomation {
-  run(command: BrowserAutomationCommand, args: Record<string, unknown>): Promise<unknown>;
+  run(command: BrowserAutomationCommand, args: Record<string, unknown>, options?: { signal?: AbortSignal }): Promise<unknown>;
 }
 
 export interface BrowserAutomationOptions {
@@ -1011,15 +1028,20 @@ export function createBrowserAutomation(
     return scrollResult('page');
   }
 
-  function press(args: Record<string, unknown>): {
+  async function press(args: Record<string, unknown>, signal?: AbortSignal): Promise<{
     pressed: true;
     key: string;
     ref?: string;
-  } {
+  }> {
     const key = typeof args.key === 'string' ? args.key : '';
     if (!key || key.length > 32 || !isAllowedPressKey(key)) {
       throw new Error('browser press key is invalid or not allowed');
     }
+    const holdMs = args.holdMs === undefined ? 0 : args.holdMs;
+    if (typeof holdMs !== 'number' || !Number.isInteger(holdMs) || holdMs < 0 || holdMs > 1_000) {
+      throw new Error('browser press holdMs must be an integer from 0 to 1000');
+    }
+    if (signal?.aborted) throw new Error('browser press cancelled');
     const modifiers = Array.isArray(args.modifiers)
       ? (args.modifiers.filter((m): m is string => typeof m === 'string'))
       : [];
@@ -1045,7 +1067,8 @@ export function createBrowserAutomation(
     // non-CDP preload can do. React/Vue bind on keydown so this covers the
     // common case; sites that gate on isTrusted will not react.
     const opts = {
-      key,
+      key: key === 'Space' ? ' ' : key,
+      code: pressKeyCode(key),
       bubbles: true,
       cancelable: true,
       composed: true,
@@ -1054,8 +1077,39 @@ export function createBrowserAutomation(
       altKey: modifiers.includes('Alt'),
       metaKey: modifiers.includes('Meta'),
     };
-    target.dispatchEvent(new win.KeyboardEvent('keydown', opts));
-    target.dispatchEvent(new win.KeyboardEvent('keyup', opts));
+    const documentAtStart = win.document;
+    let pageHidden = false;
+    let cancelHold: (() => void) | undefined;
+    const onPageHide = (): void => { pageHidden = true; cancelHold?.(); };
+    win.addEventListener('pagehide', onPageHide, { once: true });
+    try {
+      target.dispatchEvent(new win.KeyboardEvent('keydown', opts));
+      if (holdMs > 0) {
+        await new Promise<void>((resolve, reject) => {
+          let timer: number | undefined;
+          const finish = (cancelled: boolean): void => {
+            if (timer !== undefined) win.clearTimeout(timer);
+            signal?.removeEventListener('abort', onAbort);
+            cancelHold = undefined;
+            if (cancelled) reject(new Error('browser press cancelled'));
+            else resolve();
+          };
+          const onAbort = (): void => finish(true);
+          cancelHold = onAbort;
+          signal?.addEventListener('abort', onAbort, { once: true });
+          timer = win.setTimeout(() => finish(false), holdMs);
+          if (signal?.aborted || pageHidden) finish(true);
+        });
+      }
+    } finally {
+      win.removeEventListener('pagehide', onPageHide);
+      // Cancellation releases a held key only in the same live document.
+      // Navigation must never deliver the old keyup to a replacement page.
+      if (!pageHidden && win.document === documentAtStart) {
+        const releaseTarget = target.isConnected ? target : documentAtStart;
+        releaseTarget.dispatchEvent(new win.KeyboardEvent('keyup', opts));
+      }
+    }
     const result: { pressed: true; key: string; ref?: string } = {
       pressed: true,
       key,
@@ -1196,7 +1250,7 @@ export function createBrowserAutomation(
   }
 
   return {
-    async run(command, args) {
+    async run(command, args, options) {
       if (command === 'read') return read(args);
       if (command === 'inspect') return inspect(args);
       if (command === 'find') return find(args);
@@ -1204,7 +1258,7 @@ export function createBrowserAutomation(
       if (command === 'fill') return fill(args);
       if (command === 'wait') return wait(args);
       if (command === 'scroll') return scroll(args);
-      if (command === 'press') return press(args);
+      if (command === 'press') return press(args, options?.signal);
       if (command === 'hover') return hover(args);
       if (command === 'extract_candidates') return extractCandidates();
       if (command === 'layout_audit') return layoutAudit();
