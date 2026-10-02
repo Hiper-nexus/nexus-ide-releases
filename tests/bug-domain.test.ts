@@ -131,7 +131,7 @@ test('filtros da lista do admin: limite até 100 (padrão 50), enums e busca lim
 });
 
 test('fingerprint: igual para o mesmo título depois de normalizar, e diferente por categoria ou por major.minor', async () => {
-  const base = { title: 'Terminal fecha sozinho!', category: 'terminal', appVersion: '0.76.110' };
+  const base = { title: 'Terminal fecha sozinho!', category: 'terminal' as const, appVersion: '0.76.110' };
   const fingerprint = await reportFingerprint(base);
   assert.match(fingerprint, /^[0-9a-f]{64}$/);
   assert.equal(await reportFingerprint({ ...base, title: '  TERMINAL   fecha, sozinho 3 vezes!!! '.replace(' 3 vezes', '') }), fingerprint, 'caixa, pontuação e espaços não contam');
