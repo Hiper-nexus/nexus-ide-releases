@@ -8,7 +8,7 @@
  * dele só vale se vier válida e passar o piso do Main:
  * - ambiguidade (2–5 títulos parecidos): desempate, piso 0,7 / margem 0,15;
  * - nada casou (a fala pode ser um nome mal reconhecido) e há 1–8 missões:
- *   ele lê a fala contra todas, piso mais rígido (0,85 / margem 0,30), e a voz
+ *   ele lê a fala contra todas, piso mais rígido (0,90 / margem 0,30), e a voz
  *   diz que foi uma interpretação. Com 9 ou mais missões não consulta.
  * Sem decisão, nada abre: a pessoa é perguntada ("Qual delas?") ou ouve "não
  * achei". Nada aqui escolhe "a primeira da lista" como consolo.

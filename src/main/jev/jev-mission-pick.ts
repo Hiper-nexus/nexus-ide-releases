@@ -41,7 +41,7 @@ export const MISSION_PICK_MIN_MARGIN = 0.15;
  * Nada casou com o que foi dito: o texto falado pode ser ruído do STT, então o
  * piso é mais rígido que o do desempate.
  */
-export const MISSION_PICK_NO_MATCH_MIN_CONFIDENCE = 0.85;
+export const MISSION_PICK_NO_MATCH_MIN_CONFIDENCE = 0.9;
 export const MISSION_PICK_NO_MATCH_MIN_MARGIN = 0.3;
 
 interface PickFloor {

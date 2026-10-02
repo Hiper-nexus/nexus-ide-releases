@@ -324,8 +324,8 @@ describe('end to end with the real Main picker (renderer decision + Main accepta
     expect(decision).toMatchObject({ kind: 'open', mission: SITE });
   });
 
-  it('opens nothing at 0.84', async () => {
-    const decision = await decideRestoreMission('sait da lója', THREE, viaMain({ choice: 'm1', confidence: 0.84, probabilities: probs(0.6, 0.2, 0.1, 0.1) }));
+  it('opens nothing at 0.89', async () => {
+    const decision = await decideRestoreMission('sait da lója', THREE, viaMain({ choice: 'm1', confidence: 0.89, probabilities: probs(0.6, 0.2, 0.1, 0.1) }));
     expect(decision).toMatchObject({ kind: 'refuse', reason: 'none' });
   });
 

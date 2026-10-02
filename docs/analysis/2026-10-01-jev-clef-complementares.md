@@ -372,7 +372,7 @@ candidatos; aqui o código vem primeiro e o modelo só entra onde há dúvida re
 - **Nome mal reconhecido (`kind: 'noMatch'`, 02/10/2026).** Quando nada casa e há
   de 1 a 8 missões, o Jev lê a fala contra TODAS as missões (mesma superfície,
   mesma redação, 2 KB e fail-open; com 9 ou mais não consulta). O texto falado
-  pode ser ruído, então o piso é mais rígido: confiança ≥ 0,85 e margem ≥ 0,30.
+  pode ser ruído, então o piso é mais rígido: confiança ≥ 0,90 e margem ≥ 0,30.
   Aceitando, a voz abre e diz "Abrindo a missão X. Entendi assim o que você
   disse." (uma interpretação, não uma certeza); senão segue o "não achei". Falas
   de uma letra só não são consultadas. O diário prefixa `noMatch:`.

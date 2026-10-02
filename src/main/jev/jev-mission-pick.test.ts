@@ -116,8 +116,8 @@ describe('evaluateMissionPickAnswer, no-match path (noisy speech: stricter floor
     none: 0.05,
   });
 
-  it('exposes the floor: confidence 0.85 and margin 0.30', () => {
-    expect(MISSION_PICK_NO_MATCH_MIN_CONFIDENCE).toBe(0.85);
+  it('exposes the floor: confidence 0.90 and margin 0.30', () => {
+    expect(MISSION_PICK_NO_MATCH_MIN_CONFIDENCE).toBe(0.9);
     expect(MISSION_PICK_NO_MATCH_MIN_MARGIN).toBe(0.3);
   });
 
@@ -129,15 +129,15 @@ describe('evaluateMissionPickAnswer, no-match path (noisy speech: stricter floor
     });
   });
 
-  it('refuses confidence 0.84 even with a wide margin', () => {
-    expect(evaluateMissionPickAnswer(choice('m2', withMargin(0.4), 0.84), 2, 'noMatch')).toEqual({
+  it('refuses confidence 0.89 even with a wide margin', () => {
+    expect(evaluateMissionPickAnswer(choice('m2', withMargin(0.4), 0.89), 2, 'noMatch')).toEqual({
       decision: 'undecided',
       reason: 'low-confidence',
     });
   });
 
-  it('accepts confidence of exactly 0.85 and margin of exactly 0.30', () => {
-    expect(evaluateMissionPickAnswer(choice('m2', withMargin(0.3), 0.85), 2, 'noMatch')).toMatchObject({
+  it('accepts confidence of exactly 0.90 and margin of exactly 0.30', () => {
+    expect(evaluateMissionPickAnswer(choice('m2', withMargin(0.3), 0.9), 2, 'noMatch')).toMatchObject({
       decision: 'picked',
       index: 1,
     });
@@ -426,9 +426,9 @@ describe('pickMissionWithJev', () => {
       expect(record).toHaveBeenCalledWith(expect.objectContaining({ surface: 'missionPick', decision: 'noMatch:pick:m2' }));
     });
 
-    it('refuses 0.84 and journals it as noMatch:ask, never as the tie-break path', async () => {
+    it('refuses 0.89 and journals it as noMatch:ask, never as the tie-break path', async () => {
       const { deps, record } = setup({
-        judge: async () => jevResult(choice('m2', { m1: 0.2, m2: 0.6, m3: 0.1, none: 0.1 }, 0.84)),
+        judge: async () => jevResult(choice('m2', { m1: 0.2, m2: 0.6, m3: 0.1, none: 0.1 }, 0.89)),
       });
       expect(await pickMissionWithJev(noMatchRequest(), deps)).toEqual({ decision: 'undecided', reason: 'low-confidence' });
       expect(record).toHaveBeenCalledWith(expect.objectContaining({ decision: 'noMatch:ask:low-confidence' }));

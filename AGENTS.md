@@ -934,7 +934,7 @@ saber isto antes de mexer:
   sobre a 2ª opção; sem decisão (sem chave, desligado, erro) a voz pergunta
   "Qual delas?" e não abre nada. Nada casou e há 1–8 missões (nome mal
   reconhecido pelo STT): o Jev lê a fala contra TODAS (`kind: 'noMatch'`, 9+
-  não consulta), piso mais rígido (confiança ≥ 0,85, margem ≥ 0,30) e a voz diz
+  não consulta), piso mais rígido (confiança ≥ 0,90, margem ≥ 0,30) e a voz diz
   "Entendi assim o que você disse"; sem aceite segue o "não achei". O diário
   prefixa `noMatch:`. Rota de texto comum (não fixa no Jev).
 - `nexus_computer_do` (macOS, "Jev decide, Nexus executa no desktop"):
