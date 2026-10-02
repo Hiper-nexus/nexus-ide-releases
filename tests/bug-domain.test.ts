@@ -184,3 +184,17 @@ test('tipo do evento na linha do tempo: a aprovação e a liberação têm event
   assert.equal(eventKindForTransition('new', 'triaged'), 'status_changed');
   assert.equal(eventKindForTransition('approved', 'fixed'), 'status_changed');
 });
+
+test('um corpo no tamanho máximo, todo patológico, é validado e limpo rápido (a limpeza roda antes do teto por hora)', () => {
+  const nasty = (size: number) => 'pwd.token.'.repeat(Math.ceil(size / 10)).slice(0, size);
+  const body = {
+    ...valid(),
+    title: nasty(120), description: nasty(4000), steps: nasty(2000), consent: { diagnostics: true },
+    app: { ...valid().app, osVersion: nasty(64) }, context: { adapter: nasty(40), model: nasty(80) },
+    diagnostics: { events: Array.from({ length: 50 }, () => ({ t: 1, kind: nasty(40), code: nasty(80) })), errors: Array.from({ length: 20 }, () => nasty(200)) },
+  };
+  const started = performance.now();
+  assert.equal(createReportSchema.safeParse(body).success, true);
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 300, `levou ${elapsed.toFixed(0)} ms`);
+});

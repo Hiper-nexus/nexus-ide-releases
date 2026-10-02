@@ -113,3 +113,40 @@ test('scrubDiagnostics mascara segredos, caminhos e e-mails em eventos e erros e
   assert.equal(out.errors[1]!.length, 200);
   assert.equal(out.events[0]!.t, 1700);
 });
+
+/** Entradas montadas para fazer regex com quantificadores gananciosos sobrepostos explodir. Cada uma cabe nos 4000 caracteres do contrato. */
+const PATHOLOGICAL: ReadonlyArray<readonly [string, string]> = [
+  ['pwd. repetido', 'pwd.'.repeat(1000)],
+  ['token. repetido', 'token.'.repeat(666)],
+  ['secret- repetido', 'secret-'.repeat(570)],
+  ['api_key sem valor', 'api_key'.repeat(570)],
+  ['só letras', 'a'.repeat(4000)],
+  ['a. repetido', 'a.'.repeat(2000)],
+  ['A_ repetido e =', `${'A_'.repeat(1999)}=`],
+  ['Bearer repetido', 'Bearer '.repeat(570)],
+  ['PEM repetido sem fim', '-----BEGIN PRIVATE KEY-----'.repeat(140)],
+  ['eyJ repetido', 'eyJ'.repeat(1333)],
+  ['esquema:// repetido', 'x://'.repeat(1000)],
+  ['arroba repetida', 'a@'.repeat(2000)],
+  ['e-mail sem fim', `${'a'.repeat(3990)}@b`],
+  ['aspas abertas', 'token="'.repeat(570)],
+  ['espaços após a chave', `token${' '.repeat(3990)}`],
+  ['barras de usuário', 'C:\\Users\\'.repeat(400)],
+  ['chave:valor encadeado', 'token=a.b.c:'.repeat(330)],
+  ['api_key: repetido', 'api_key: '.repeat(440)],
+  ['Authorization: Bearer repetido', 'Authorization: Bearer '.repeat(180)],
+  ['segmentos a.b.', 'a.b.'.repeat(1000)],
+  ['secret_ repetido', `${'secret_'.repeat(570)}x`],
+];
+const BUDGET_MS = 100;
+
+test('a limpeza aguenta entrada patológica de 4000 caracteres sem estourar o orçamento de CPU', () => {
+  for (const [name, input] of PATHOLOGICAL) {
+    for (const scrub of [scrubText, scrubLine]) {
+      const started = performance.now();
+      scrub(input.slice(0, LIMIT), LIMIT);
+      const elapsed = performance.now() - started;
+      assert.ok(elapsed < BUDGET_MS, `${name} levou ${elapsed.toFixed(0)} ms em ${scrub.name}`);
+    }
+  }
+});

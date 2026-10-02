@@ -55,21 +55,23 @@ const RULES: readonly Rule[] = [
   { pattern: /eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/g, replace: REDACTED },
   { pattern: new RegExp(String.raw`\b(?:${PREFIXED_TOKEN_BODIES.join('|')})`, 'g'), replace: REDACTED },
   // Senha dentro de uma URL de conexão: esquema://usuario:SENHA@host
-  { pattern: /(\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)[^\s@/]+@/gi, replace: (_match, head) => `${head}${REDACTED}@` },
+  { pattern: /(\b[a-z][a-z0-9+.-]{0,20}:\/\/[^\s:@/]{1,100}:)[^\s@/]{1,200}@/gi, replace: (_match, head) => `${head}${REDACTED}@` },
   // Linhas de ambiente: KEY=valor, export KEY=valor, set KEY=valor, $env:KEY=valor. A chave fica, o valor some.
   { pattern: new RegExp(String.raw`\b((?:export\s+)?[A-Z][A-Z0-9_]{2,})\s*=\s*(?:${QUOTED}|[^\s"']+)`, 'g'), replace: (_match, key) => `${key}=${REDACTED}` },
   {
-    pattern: new RegExp(String.raw`\b([A-Za-z0-9_.-]*${SENSITIVE_NAME}[A-Za-z0-9_.-]*)(["']?\s*[=:]\s*)(${SENSITIVE_VALUE})`, 'gi'),
-    replace: (match, key, separator, value) => {
-      const isStrong = separator.includes('=') || /^["']/.test(value) || LOOKS_LIKE_SECRET.test(value);
-      return isStrong ? `${key}${separator}${REDACTED}` : match;
+    // Sem prefixo antes do nome sensível e com o sufixo limitado: dois quantificadores gananciosos que se sobrepõem
+    // (`[\w.-]*nome[\w.-]*`) davam tempo quadrático em "pwd.pwd.pwd." e afins.
+    pattern: new RegExp(String.raw`(${SENSITIVE_NAME}[A-Za-z0-9_.-]{0,32}["']?\s{0,8}[=:]\s{0,8})(${SENSITIVE_VALUE})`, 'gi'),
+    replace: (match, head, value) => {
+      const isStrong = head.includes('=') || /^["']/.test(value) || LOOKS_LIKE_SECRET.test(value);
+      return isStrong ? `${head}${REDACTED}` : match;
     },
   },
   { pattern: /(\/Users\/)[^/\s]+/g, replace: (_match, head) => `${head}${USER_MASK}` },
   { pattern: /(\/home\/)[^/\s]+/g, replace: (_match, head) => `${head}${USER_MASK}` },
   // No Windows o nome do usuário pode ter espaço ("Maria Silva"): vale até a próxima barra.
   { pattern: /\b([A-Za-z]:[\\/]Users[\\/])[^\\/:*?"<>|\r\n]{1,64}/gi, replace: (_match, head) => `${head}${USER_MASK}` },
-  { pattern: /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g, replace: EMAIL_MASK },
+  { pattern: /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){1,8}/g, replace: EMAIL_MASK },
 ];
 
 function stripInvisible(value: string): string {
@@ -79,8 +81,8 @@ function stripInvisible(value: string): string {
     .replace(INVISIBLE_OR_CONTROL, '');
 }
 
-/** Só as máscaras de segredo, caminho e e-mail (sem layout nem corte). Exportada para os testes. */
-export function maskSecrets(value: string): string {
+/** Só as máscaras de segredo, caminho e e-mail (sem layout nem corte). */
+function maskSecrets(value: string): string {
   return RULES.reduce((text, rule) => text.replace(rule.pattern, rule.replace as never), value);
 }
 
