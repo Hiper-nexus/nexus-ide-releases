@@ -38,6 +38,7 @@ import {
 } from './tools-panes';
 import { trace } from '../observability/main-trace';
 import { maestroStandingDoctrineFor } from './maestro-standing-context';
+import { suggestSkillForTask } from './jev-skill-suggestion';
 
 export const HOOK_DELEGATE_MAX_BODY_BYTES = 64 * 1024;
 
@@ -120,6 +121,17 @@ const businessModelDeliveredAt = new Map<string, { hash: string; at: number }>()
 const businessEnsureAt = new Map<string, number>();
 const browserHintDeliveredAt = new Map<string, number>();
 const memoryDeliveredAt = new Map<string, { hash: string; at: number }>();
+/** F-753: mesma skill sugerida ao mesmo pane no máximo a cada 30 min. */
+const skillHintDeliveredAt = new Map<string, number>();
+
+/** Confiança mínima para a dica de skill entrar no pedido (a mesma do spawn). */
+export const OPERATOR_SKILL_HINT_MIN_CONFIDENCE = 0.7;
+
+export function operatorSkillHint(skill: { name: string; path?: string }): string {
+  return skill.path
+    ? `[Nexus · Jev] Skill útil para este pedido: ${skill.name} — leia \`${skill.path}\` antes de começar.`
+    : `[Nexus · Jev] Skill útil para este pedido: ${skill.name} — leia a SKILL.md dela antes de começar.`;
+}
 
 function remindedRecently(ledger: Map<string, number>, sessionId: string, now: number): boolean {
   const last = ledger.get(sessionId);
@@ -149,6 +161,7 @@ export function __resetLeanRemindersForTests(): void {
   businessEnsureAt.clear();
   browserHintDeliveredAt.clear();
   memoryDeliveredAt.clear();
+  skillHintDeliveredAt.clear();
 }
 
 type MemoryBlockFn = typeof operatorWorkspaceMemoryContext;
@@ -243,7 +256,15 @@ function memoryContextFor(
 
 type HookContext = Pick<AgentGateContext, 'role' | 'missionId' | 'sessionId'> &
   Partial<
-    Pick<AgentGateContext, 'scope' | 'executionScope' | 'providerId' | 'operatorParentSessionId' | 'promotedFromUserSession'>
+    Pick<
+      AgentGateContext,
+      | 'scope'
+      | 'executionScope'
+      | 'providerId'
+      | 'operatorParentSessionId'
+      | 'promotedFromUserSession'
+      | 'allowedSkills'
+    >
   >;
 
 /**
@@ -447,6 +468,8 @@ export async function handleHookDelegateRequest(
     adoptMission?: (ctx: HookContext, summary: string | null) => OperatorTabMission | null;
     /** Doutrina permanente do Maestro da missão (F-701); default lê a missão. */
     maestroDoctrine?: MaestroDoctrineFn;
+    /** F-753: skill do Nexus ou do projeto que o Jev/Clef acha útil no pedido. */
+    suggestSkill?: typeof suggestSkillForTask;
   } = {},
 ): Promise<{ statusCode: 200; payload: Record<string, unknown> }> {
   try {
@@ -485,6 +508,14 @@ export async function handleHookDelegateRequest(
     // prompt do operador pagava a soma dos timeouts no pior caso.
     const advicePromise = advise(prompt, { sessionId: ctx.sessionId }).catch(() => null);
     const businessModelPromise = businessContextFor(ctx, prompt, now, businessContext);
+    // F-753: a skill certa para o pedido, entre as do Nexus e as do projeto —
+    // antes o operador arrastava cada uma do painel para o pane.
+    const skillScope = ctx.executionScope ?? ctx.scope;
+    const skillPromise = (deps.suggestSkill ?? suggestSkillForTask)(prompt, {
+      allowedSkills: ctx.allowedSkills ?? null,
+      projectRoot: skillScope?.rootRealPath,
+      sessionId: ctx.sessionId,
+    }).catch(() => null);
     // Jev fora do ar não pode levar junto o contexto de design, que é local.
     const advice = await advicePromise;
     // O Codex não recebe a doutrina pelas instructions do MCP (ele as repete
@@ -510,6 +541,14 @@ export async function handleHookDelegateRequest(
     // com o pedido; a dedup por hash só suprime o bloco idêntico recente.
     const businessModel = await businessModelPromise;
     if (businessModel) parts.push(businessModel);
+    const skill = await skillPromise;
+    if (skill && skill.confidence >= OPERATOR_SKILL_HINT_MIN_CONFIDENCE && ctx.sessionId) {
+      const key = `${ctx.sessionId}\u0000${skill.name}`;
+      if (!remindedRecently(skillHintDeliveredAt, key, now)) {
+        markReminded(skillHintDeliveredAt, key, now);
+        parts.push(operatorSkillHint(skill));
+      }
+    }
     if (advice?.delegation) {
       const autopilot =
         deps.autopilot ??

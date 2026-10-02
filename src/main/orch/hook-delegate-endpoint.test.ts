@@ -51,6 +51,53 @@ describe('hook /hook/delegate', () => {
     expect(text.length).toBeLessThanOrEqual(400);
   });
 
+  it('F-753: a skill do projeto que o Jev escolhe chega ao pane do operador, uma vez por sessão', async () => {
+    __resetLeanRemindersForTests();
+    const suggestSkill = vi.fn(async () => ({
+      name: 'bmad-create-prd',
+      pkg: 'project',
+      confidence: 0.84,
+      path: '.claude/skills/bmad-create-prd/SKILL.md',
+    }));
+    const scoped = {
+      ...operator,
+      sessionId: 'skill-1',
+      scope: { rootRealPath: '/w/hipergo' } as never,
+    };
+    const first = await handleHookDelegateRequest(
+      scoped,
+      { prompt: 'escreva o PRD do checkout' },
+      { advise: vi.fn(async () => null), suggestSkill },
+    );
+    expect((first.payload.hookSpecificOutput as { additionalContext: string }).additionalContext).toContain(
+      '[Nexus · Jev] Skill útil para este pedido: bmad-create-prd — leia `.claude/skills/bmad-create-prd/SKILL.md` antes de começar.',
+    );
+    expect(suggestSkill).toHaveBeenCalledWith('escreva o PRD do checkout', {
+      allowedSkills: null,
+      projectRoot: '/w/hipergo',
+      sessionId: 'skill-1',
+    });
+    const again = await handleHookDelegateRequest(
+      scoped,
+      { prompt: 'agora ajuste o PRD' },
+      { advise: vi.fn(async () => null), suggestSkill },
+    );
+    expect(again.payload).toEqual({});
+  });
+
+  it('F-753: skill sem confiança suficiente não entra no pedido', async () => {
+    __resetLeanRemindersForTests();
+    const out = await handleHookDelegateRequest(
+      { ...operator, sessionId: 'skill-2' },
+      { prompt: 'escreva o PRD do checkout' },
+      {
+        advise: vi.fn(async () => null),
+        suggestSkill: vi.fn(async () => ({ name: 'bmad-create-prd', pkg: 'project', confidence: 0.65 })),
+      },
+    );
+    expect(out.payload).toEqual({});
+  });
+
   it('a mão promovida pelo Main continua recebendo conselho de delegação', async () => {
     __resetLeanRemindersForTests();
     const ctx = { role: 'orchestrator' as const, missionId: 'm', sessionId: 'promoted', promotedFromUserSession: true as const };
