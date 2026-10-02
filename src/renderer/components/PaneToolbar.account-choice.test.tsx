@@ -226,21 +226,26 @@ describe('PaneToolbar — chip da conta escolhida', () => {
   });
 
   it('resposta atrasada de uma sessão antiga não pinta o pane da sessão nova', async () => {
+    // As DUAS sessões ficam pendentes e a antiga responde primeiro: o recibo dela
+    // não pode aparecer no pane que já é da sessão nova (nem por um instante).
     let resolveOld: (value: AccountChoiceReceipt) => void = () => undefined;
+    let resolveNew: (value: AccountChoiceReceipt) => void = () => undefined;
     get.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }));
+    get.mockImplementationOnce(() => new Promise((resolve) => { resolveNew = resolve; }));
     const { el } = await mount(agentPane);
     expect(chip(el)).toBeNull();
 
-    get.mockResolvedValueOnce(other);
     await act(async () => {
       for (const cb of host.listeners) cb('p1', 'session-b');
     });
-    await flush();
-    expect(chip(el)!.textContent).toBe('p•••@q•••.io');
-
     await act(async () => resolveOld(rule));
     await flush();
+    expect(chip(el)).toBeNull();
+
+    await act(async () => resolveNew(other));
+    await flush();
     expect(chip(el)!.textContent).toBe('p•••@q•••.io');
+    expect(chip(el)!.getAttribute('title')).not.toContain('regra de folga');
   });
 
   it('sem bridge (ambiente sem preload) o toolbar continua inteira, sem chip', async () => {
