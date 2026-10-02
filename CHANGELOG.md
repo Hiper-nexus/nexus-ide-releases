@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.162 — Cloudflare protegido
+
+Build do Mac. Inclui integralmente a 0.76.161 e todas as melhorias de site, acesso, assinatura e licença da base.
+
+- **F-415: novo formato do token Cloudflare reconhecido.** Tokens prefixados de usuário/conta são ocultos mesmo em texto sem label ou input; a área entra na máscara visual antes de sair do navegador. Visão permanece optativa.
+- **Validação real inicial:** nos mesmos 18 casos sintéticos em português, Clef acertou 18, Jev 17 e Flash 16, sem falhas de transporte. Jev teve menor latência/custo. Amostra pequena; nenhuma rota de segurança foi promovida como resultado de produção.
+
 ## 0.76.161 — Jev e Clef juntos
 
 Build do Mac. Inclui integralmente a 0.76.160 (Teste à vista), com marca, site, acesso, assinatura e licença preservados.

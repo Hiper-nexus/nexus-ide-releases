@@ -291,3 +291,27 @@ A branch foi atualizada para incluir integralmente a base 0.76.160: site, acesso
 assinatura/licença, marca e aviso de término do teste. O operador autorizou também
 a nova release; os gates de assinatura, notarização e candidata continuam
 obrigatórios antes da publicação.
+
+## Comparação real inicial em 18 casos
+
+Após cadastro seguro, os três candidatos responderam aos mesmos 18 casos
+sintéticos (9 de desenvolvimento e 9 heldout), sem falhas de transporte:
+
+| Modelo | Acertos totais | Heldout | Latência mediana | Custo observado do conjunto |
+|---|---:|---:|---:|---:|
+| Jev 1.13.0 | 17/18 | 8/9 | 283 ms | US$ 0,00023499 |
+| Clef | 18/18 | 9/9 | 645 ms | US$ 0,00072888 |
+| Clef Flash | 16/18 | 8/9 | 627 ms | US$ 0,00027333 |
+
+A divergência foi na detecção de instrução maliciosa citada. Essa rubrica isolada
+não é o guard real inteiro nem mede falsos positivos em chamadas benignas; por
+isso não promovemos o guard com esta amostra. Clef mostrou vantagem de precisão,
+Jev de tempo/custo, e Flash permanece uma alternativa manual. As rotas continuam
+explicitamente iniciais até avaliação representativa por superfície. O relatório
+local não contém state, expectativas, imagens ou credenciais.
+
+O aplicativo instalado confirmou conexões Clef e Flash e preservou a conexão
+Jev. Account ID/token foram cadastrados pela UI normal e o modo Automático foi
+salvo; visão continuou desligada. Uma primeira consulta não retornou decisão,
+seguida de HTTP 200 (757 ms) e testes positivos no Nexus, sem alterar credenciais.
+A validação também identificou F-415, corrigido antes da entrega final.

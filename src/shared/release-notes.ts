@@ -8914,7 +8914,7 @@ export const RELEASE_076160: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076161: AppRelease = {
   version: '0.76.161',
   date: '2026-10-01',
   codename: 'Jev e Clef juntos',
@@ -8947,4 +8947,21 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.162',
+  date: '2026-10-01',
+  codename: 'Cloudflare protegido',
+  summary:
+    'Tokens Cloudflare no formato novo também são ocultos em texto e nos ' +
+    'pixels do navegador. Inclui Jev e Clef complementares da 0.76.161.',
+  highlights: [],
+  fixes: [{
+    title: 'Token Cloudflare protegido sem precisar de label',
+    detail:
+      'O formato prefixado de token de usuário ou conta é reconhecido em ' +
+      'texto livre. A redação protege as consultas dos modelos e inclui a ' +
+      'área do texto nas máscaras de captura. A visão continua optativa.',
+  }],
 };
