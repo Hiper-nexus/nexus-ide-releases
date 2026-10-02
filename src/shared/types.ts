@@ -494,7 +494,7 @@ export interface NexusApi {
     onData(sessionId: string, cb: (data: string) => void): Unsubscribe;
     onExit(
       sessionId: string,
-      cb: (event: { exitCode: number; signal?: number }) => void,
+      cb: (event: { exitCode: number; signal?: number; terminationOrigin?: string }) => void,
     ): Unsubscribe;
     onStateChange(
       sessionId: string,

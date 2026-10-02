@@ -7,6 +7,7 @@ import type { ProjectExecutionScope } from '../../shared/types';
 const mocks = vi.hoisted(() => ({
   dictationHook: null as null | ((info: unknown) => void),
   resumeLookup: null as null | ((...args: unknown[]) => unknown),
+  resumeForget: null as null | ((...args: unknown[]) => unknown),
   userDataDir: '' as string,
   watcherOptions: [] as Array<{
     workspacePath: string;
@@ -87,6 +88,9 @@ vi.mock('../pty/pty-manager', () => ({
   ) => {
     mocks.resumeLookup = lookup;
   },
+  setResumeSessionForget: (forget: null | ((...args: unknown[]) => unknown)) => {
+    mocks.resumeForget = forget;
+  },
 }));
 
 vi.mock('../orch/pane-registry', () => ({
@@ -100,6 +104,7 @@ vi.mock('../gamification/gamification-service', () => ({
 }));
 
 vi.mock('../persistence/provider-session-store', () => ({
+  forgetProviderSessionById: vi.fn(() => 0),
   getProviderPaneSession: vi.fn(
     (
       _scope: ProjectExecutionScope,
@@ -659,6 +664,38 @@ describe.skipIf(!sqliteAvailable)(
           executionScope: { ...tabRoot, checkoutId: 'checkout-b' },
         }),
       ).toBeNull();
+      service.stop();
+    });
+
+    it('F-721: um id esquecido (nunca virou transcrito) não volta pela telemetria', () => {
+      const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'usage-resume-forgotten-'));
+      tempRoots.push(parent);
+      const scope = scopeFixture(parent, 'checkout-a');
+      const runtimeManager = new ProjectRuntimeManager({
+        baseDir: path.join(parent, 'runtime'),
+        appVersion: 'usage-service-test',
+      });
+      managers.push(runtimeManager);
+      const registry = new ProjectUsageStoreRegistry(runtimeManager);
+      const service = new UsageTelemetryService(registry);
+      service.start();
+      mocks.panes.set('pane-same', { paneId: 'pane-same', sessionId: 'pty-same', kind: 'cli-agent' as const, scope, executionScope: scope });
+      mocks.providerPaneSession = null;
+      // Sem linha gravada, o lookup cai na telemetria do pane (último evento de uso).
+      vi.spyOn(registry.forScope(scope).usage, 'latestProviderSessionByPane').mockReturnValue({
+        provider: 'claude', sessionId: 'stale-conversation', accountId: null,
+      } as never);
+
+      expect(mocks.resumeLookup?.(scope, 'pane-same', 'claude')).toBe('stale-conversation');
+
+      // O pty-manager julgou o id inutilizável (2 saídas rápidas com erro) e mandou esquecer.
+      mocks.resumeForget?.(scope, 'claude', 'stale-conversation');
+      expect(mocks.resumeLookup?.(scope, 'pane-same', 'claude')).toBeNull();
+      // Outro id do mesmo pane segue normal.
+      vi.spyOn(registry.forScope(scope).usage, 'latestProviderSessionByPane').mockReturnValue({
+        provider: 'claude', sessionId: 'good-conversation', accountId: null,
+      } as never);
+      expect(mocks.resumeLookup?.(scope, 'pane-same', 'claude')).toBe('good-conversation');
       service.stop();
     });
 

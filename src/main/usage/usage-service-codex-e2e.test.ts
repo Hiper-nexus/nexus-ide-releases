@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
     string,
     { sessionId: string; accountId: string | null }
   >(),
+  forgetProviderSessionById: vi.fn(() => 0),
   saveProviderPaneSession: vi.fn(
     (
       _scope: ProjectExecutionScope,
@@ -61,6 +62,7 @@ vi.mock('../pty/pty-manager', () => ({
   ) => {
     mocks.resumeLookup = lookup;
   },
+  setResumeSessionForget: () => {},
 }));
 
 vi.mock('../orch/pane-registry', () => ({
@@ -74,6 +76,7 @@ vi.mock('../gamification/gamification-service', () => ({
 }));
 
 vi.mock('../persistence/provider-session-store', () => ({
+  forgetProviderSessionById: vi.fn(() => 0),
   getProviderPaneSession: vi.fn(
     (
       _scope: ProjectExecutionScope,

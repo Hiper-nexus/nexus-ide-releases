@@ -1372,12 +1372,15 @@ function startSpawn(
       );
       host.cleanups.push(() => discardTerminalOutput(host.term));
       host.cleanups.push(
-        window.nexus.pty.onExit(res.sessionId, ({ exitCode }) => {
+        window.nexus.pty.onExit(res.sessionId, ({ exitCode, terminationOrigin }) => {
           flushTerminalOutput(host.term);
+          // Morte pedida pelo próprio Nexus (respawn do Maestro, fechamento) não é
+          // retomada que falhou: sem origem rotulada é que o processo caiu sozinho.
           const failedExactResume =
             resume &&
             res.resumeMode === 'exact' &&
             exitCode !== 0 &&
+            !terminationOrigin &&
             Date.now() - spawnedAt < 10_000;
           if (failedExactResume) {
             const message = missionId

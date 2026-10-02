@@ -170,6 +170,35 @@ export function sessionBelongsToAccount(
 }
 
 /**
+ * F-721: esquece TODA linha deste projeto que aponta para a conversa `sessionId`
+ * — o id que nunca virou transcrito. São várias porque cada "Retomar" do
+ * Maestro copia a linha para o pane novo (a cópia vem da linha velha). Só toca
+ * esse id: uma conversa nova capturada depois (um `/resume` à mão) fica. Devolve
+ * quantas linhas apagou.
+ */
+export function forgetProviderSessionById(
+  scope: Readonly<{ installationId: string; projectId: string; checkoutId: string }>,
+  adapterId: string,
+  sessionId: string,
+): number {
+  const db = getDb();
+  if (!db) return 0;
+  const result = db.prepare(
+    `DELETE FROM provider_pane_sessions
+      WHERE installation_id = ? AND project_id = ? AND checkout_id = ?
+        AND adapter_id = ? AND session_id = ?`,
+  ).run(
+    scope.installationId,
+    scope.projectId,
+    scope.checkoutId,
+    adapterId,
+    sessionId,
+  );
+  const changes = (result as { changes?: number }).changes;
+  return typeof changes === 'number' ? changes : 0;
+}
+
+/**
  * 0.76.45: um pane NOVO retoma a conversa de um pane antigo (estacionado ou
  * fechado). Copia o registro de sessão do provider para o paneId novo, com o
  * mesmo dono de conta, para o lookup de resume exato (por paneId) encontrá-lo.

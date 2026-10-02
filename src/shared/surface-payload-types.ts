@@ -596,6 +596,13 @@ export interface PtyExitEvent {
   sessionId: string;
   exitCode: number;
   signal?: number;
+  /**
+   * F-721: presente só quando o próprio Nexus encerrou o processo (respawn,
+   * fechamento pedido, teardown) — a origem rotulada do pedido. Saída natural
+   * não leva o campo. O renderer o usa para não tratar uma morte deliberada
+   * como "falha ao retomar".
+   */
+  terminationOrigin?: string;
 }
 
 // 'exited'/'hibernated' são setados pelo renderer — o agente morreu/dormiu e o

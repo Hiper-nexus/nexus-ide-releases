@@ -242,6 +242,7 @@ import {
   setAgentSpawnHook,
   setDeferredInitialPromptHook,
   setResumeSessionLookup,
+  setResumeSessionForget,
   setSessionDictationHook,
   setSquadCliPolicyLookupForTests,
   spawnAgentSession,
@@ -5606,6 +5607,120 @@ describe('F-567 spawn contracts', () => {
       setAgentSpawnHook(null);
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("F-721: o id de retomada que nunca virou transcrito não prende o Maestro", () => {
+  const STALE = "b3df56cb-0000-4000-8000-0000000000aa";
+  const claudeLikeSpawn = { resumeArgs: [], resumeIdArgs: ["--resume"], sessionIdArg: "--session-id" };
+
+  function resumeHost() {
+    let handlers: PtySessionHandlers | null = null;
+    setPtyHost({
+      spawn(_spec, next) {
+        handlers = next;
+        return {
+          write: vi.fn(),
+          resize: vi.fn(),
+          kill: vi.fn(),
+          terminate: vi.fn(async () => ({ ok: true, rootExited: true, descendantsExited: true })),
+        };
+      },
+    });
+    return () => handlers!;
+  }
+  function spawnResumed(send: ReturnType<typeof vi.fn>, paneId = "pane-7f20afda") {
+    return spawnAgentSession(
+      { isDestroyed: () => false, isCrashed: () => false, send } as unknown as WebContents,
+      { kind: "cli-agent", paneId, resume: true, resumeLatestOnly: false, cols: 80, rows: 24 },
+      makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }, claudeLikeSpawn),
+      {},
+      persistedMissionGrant(),
+    );
+  }
+  const exited = (send: ReturnType<typeof vi.fn>, count: number) =>
+    send.mock.calls.filter(([channel]) => channel === PTY_CHANNELS.exit).length >= count;
+
+  it("depois do SEGUNDO boot rápido com erro do mesmo id — em panes DIFERENTES (cada Retomar abre um pane novo) —, o vínculo é esquecido; o primeiro só avisa", async () => {
+    const handlersOf = resumeHost();
+    const forget = vi.fn(() => 2);
+    setResumeSessionLookup(() => STALE);
+    setResumeSessionForget(forget);
+    try {
+      const send = vi.fn();
+      spawnResumed(send);
+      handlersOf().onExit(1);
+      await vi.waitFor(() => expect(exited(send, 1)).toBe(true));
+      expect(forget).not.toHaveBeenCalled();
+
+      spawnResumed(send, "pane-novo-do-retomar");
+      handlersOf().onExit(1);
+      await vi.waitFor(() => expect(exited(send, 2)).toBe(true));
+      expect(forget).toHaveBeenCalledTimes(1);
+      expect(forget).toHaveBeenCalledWith(
+        expect.objectContaining({ installationId: expect.any(String), projectId: expect.any(String), checkoutId: expect.any(String) }),
+        "test-cli",
+        STALE,
+      );
+    } finally {
+      setResumeSessionLookup(null);
+      setResumeSessionForget(null);
+    }
+  });
+
+  it("falha de ambiente (código ≠ 1) e encerramento pedido pelo Nexus não contam como golpe contra o id", async () => {
+    const handlersOf = resumeHost();
+    const forget = vi.fn(() => 1);
+    setResumeSessionLookup(() => STALE);
+    setResumeSessionForget(forget);
+    try {
+      const send = vi.fn();
+      for (let round = 1; round <= 3; round += 1) {
+        spawnResumed(send, `pane-env-${round}`);
+        handlersOf().onExit(127);
+        await vi.waitFor(() => expect(exited(send, round)).toBe(true));
+      }
+      expect(forget).not.toHaveBeenCalled();
+    } finally {
+      setResumeSessionLookup(null);
+      setResumeSessionForget(null);
+    }
+  });
+
+  it("o pty:exit leva a origem quando foi o próprio Nexus que encerrou, e nada quando o processo saiu sozinho", async () => {
+    const exitPayloads = (send: ReturnType<typeof vi.fn>, sessionId: string) =>
+      send.mock.calls
+        .filter(([channel, payload]) => channel === PTY_CHANNELS.exit && payload?.sessionId === sessionId)
+        .map(([, payload]) => payload as Record<string, unknown>);
+
+    const sendKilled = vi.fn();
+    setPtyHost(fakeHost().host);
+    const killed = spawnAgentSession(
+      { isDestroyed: () => false, isCrashed: () => false, send: sendKilled } as unknown as WebContents,
+      { kind: "cli-agent", paneId: "pane-killed", cols: 80, rows: 24 },
+      makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+      {},
+      missionGrantFor("mission-trace"),
+    );
+    await orchTerminateSession(killed.sessionId, { origin: "fast-lane:respawn-stale-orchestrator" });
+    expect(exitPayloads(sendKilled, killed.sessionId)).toEqual([
+      expect.objectContaining({ terminationOrigin: "fast-lane:respawn-stale-orchestrator" }),
+    ]);
+
+    const sendNatural = vi.fn();
+    const handlersOf = resumeHost();
+    const natural = spawnAgentSession(
+      { isDestroyed: () => false, isCrashed: () => false, send: sendNatural } as unknown as WebContents,
+      { kind: "cli-agent", paneId: "pane-natural-2", cols: 80, rows: 24 },
+      makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+      {},
+      missionGrantFor("mission-trace"),
+    );
+    handlersOf().onExit(1);
+    await vi.waitFor(() => {
+      expect(exitPayloads(sendNatural, natural.sessionId)).toHaveLength(1);
+    });
+    expect(exitPayloads(sendNatural, natural.sessionId)[0]).not.toHaveProperty("terminationOrigin");
   });
 });
 

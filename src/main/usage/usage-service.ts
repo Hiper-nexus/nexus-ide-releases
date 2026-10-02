@@ -24,12 +24,14 @@ import {
 } from '../orch/project-scoped-broadcast';
 import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
 import {
+  setResumeSessionForget,
   setResumeSessionLookup,
   setSessionDictationHook,
   type DictatedSessionInfo,
 } from '../pty/pty-manager';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import {
+  forgetProviderSessionById,
   getProviderPaneSession,
   saveProviderPaneSession,
 } from '../persistence/provider-session-store';
@@ -274,6 +276,12 @@ export class UsageTelemetryService {
     // atravessava o pty-manager e virava
     // `[nexus] falha ao iniciar o processo: usage telemetry scope identity
     // collision` — telemetria abortando o nascimento do processo.
+    // F-721: um `--resume <id>` que falha duas vezes seguidas no boot é um id que nunca
+    // virou transcrito — o vínculo é esquecido e a próxima restauração nasce limpa.
+    setResumeSessionForget((scope, adapterId, sessionId) => {
+      this.#rememberForgottenResumeId(scope, adapterId, sessionId);
+      return forgetProviderSessionById(scope, adapterId, sessionId);
+    });
     setResumeSessionLookup((scope, paneId, adapterId, accountId, spawn) => {
       try {
         return this.#resumeSessionForPane(
@@ -368,6 +376,7 @@ export class UsageTelemetryService {
     this.#stopped = true;
     setSessionDictationHook(null);
     setResumeSessionLookup(null);
+    setResumeSessionForget(null);
     for (const state of this.#states.values()) {
       state.watcher?.stop();
       state.watcher = null;
@@ -506,6 +515,38 @@ export class UsageTelemetryService {
     this.#watchProvider(state.scope, info.adapterId);
   }
 
+  /** Ids de conversa esquecidos nesta sessão do app (F-721), limitados. */
+  readonly #forgottenResumeIds = new Set<string>();
+
+  #forgottenKey(
+    scope: Readonly<{ installationId: string; projectId: string; checkoutId: string }>,
+    adapterId: string,
+    sessionId: string,
+  ): string {
+    return JSON.stringify([scope.installationId, scope.projectId, scope.checkoutId, adapterId, sessionId]);
+  }
+
+  #rememberForgottenResumeId(
+    scope: Readonly<{ installationId: string; projectId: string; checkoutId: string }>,
+    adapterId: string,
+    sessionId: string,
+  ): void {
+    this.#forgottenResumeIds.add(this.#forgottenKey(scope, adapterId, sessionId));
+    while (this.#forgottenResumeIds.size > 256) {
+      const oldest = this.#forgottenResumeIds.values().next().value;
+      if (oldest === undefined) break;
+      this.#forgottenResumeIds.delete(oldest);
+    }
+  }
+
+  #isForgottenResumeId(
+    scope: Readonly<{ installationId: string; projectId: string; checkoutId: string }>,
+    adapterId: string,
+    sessionId: string,
+  ): boolean {
+    return this.#forgottenResumeIds.has(this.#forgottenKey(scope, adapterId, sessionId));
+  }
+
   #resumeSessionForPane(
     scope: ProjectExecutionScope,
     paneId: string,
@@ -557,6 +598,8 @@ export class UsageTelemetryService {
     const captured = state.stores.usage.latestProviderSessionByPane(paneId);
     if (!captured) return null;
     if (captured.provider !== adapterId) return null;
+    // F-721: um id que o pty-manager já julgou inutilizável não volta pela telemetria.
+    if (this.#isForgottenResumeId(scope, adapterId, captured.sessionId)) return null;
     const executionRoot = this.#registerResumePaneRoot(
       state,
       paneId,

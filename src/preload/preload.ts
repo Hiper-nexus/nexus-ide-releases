@@ -170,7 +170,7 @@ function emitToListeners<TArgs extends unknown[]>(
 }
 
 type DataCb = (data: string) => void;
-type ExitCb = (event: { exitCode: number; signal?: number }) => void;
+type ExitCb = (event: { exitCode: number; signal?: number; terminationOrigin?: string }) => void;
 type StateCb = (state: PaneSessionState) => void;
 type AdapterChangedCb = (adapters: AdapterInfo[]) => void;
 
@@ -326,6 +326,7 @@ ipcRenderer.on(PTY_CHANNELS.exit, (_event, payload: PtyExitEvent) => {
   emitToListeners(exitSubs.get(payload.sessionId), 'exitSubs', {
     exitCode: payload.exitCode,
     signal: payload.signal,
+    ...(payload.terminationOrigin ? { terminationOrigin: payload.terminationOrigin } : {}),
   });
 });
 

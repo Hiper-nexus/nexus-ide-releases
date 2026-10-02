@@ -17,6 +17,7 @@ import {
   nativeArgvPromptFits,
 } from "../../shared/cli-initial-prompt";
 import { ensureUtf8Locale } from "./pty-env-locale";
+import { createExactResumeHealth, type ExactResumeAttempt } from "./exact-resume-health";
 import { materializeProviderState, providerStateEnvFor } from "./provider-state-env";
 import { applyPaneTerminalIdentity } from "./pane-terminal-identity";
 import { assertManagedClaudeAuthSupported, CLAUDE_MANAGED_AUTH_ENV } from "../adapters/managed-claude-auth";
@@ -193,6 +194,11 @@ interface Session {
    * Shells comuns não carregam esta ficha.
    */
   agentSpawn?: { paneId?: string; adapterId: string };
+  /**
+   * F-721: a retomada exata que este processo tentou (CLI + id). Só existe quando
+   * o argv levou `--resume <id>`; julgada na saída.
+   */
+  exactResume?: ExactResumeAttempt;
   missionOrchestratorGrantAvailable: boolean;
   missionOrchestratorGrantExpiresAt: number | null;
   missionOrchestratorGrantTimer: ReturnType<typeof setTimeout> | null;
@@ -668,6 +674,25 @@ export function setResumeSessionLookup(
 ): void {
   resumeSessionLookup = lookup;
 }
+
+/**
+ * F-721: esquece o vínculo de conversa (toda linha do projeto com aquele id).
+ * Injetado como o lookup: o pty-manager não importa a persistência.
+ */
+export type ResumeSessionForget = (
+  scope: Readonly<{ installationId: string; projectId: string; checkoutId: string }>,
+  adapterId: string,
+  sessionId: string,
+) => number;
+
+let resumeSessionForget: ResumeSessionForget | null = null;
+
+export function setResumeSessionForget(forget: ResumeSessionForget | null): void {
+  resumeSessionForget = forget;
+}
+
+/** Golpes por (projeto, CLI, id da conversa): ver exact-resume-health.ts. */
+const exactResumeHealth = createExactResumeHealth();
 
 function requireTrustedAgentCwd(
   authority: BoundSpawnAuthority | undefined,
@@ -1215,14 +1240,52 @@ function finalizeSession(
       terminationOrigin: tracedTerminationOrigin,
     });
   }
+  if (s.exactResume) judgeExactResumeExit(s, exitCode, tracedTerminationOrigin !== null);
   if (canSend(s.wc)) {
-    s.wc.send(PTY_CHANNELS.exit, { sessionId, exitCode, signal });
+    s.wc.send(PTY_CHANNELS.exit, {
+      sessionId,
+      exitCode,
+      signal,
+      ...(tracedTerminationOrigin ? { terminationOrigin: tracedTerminationOrigin } : {}),
+    });
   }
   fireTaps(exitTaps, sessionId, s.agent ? cloneAgentInfo(s.agent) : null);
   const termination = physicalTerminationFlights.get(sessionId);
   if (termination?.session === s) {
     physicalTerminationFlights.delete(sessionId);
     termination.resolveExited();
+  }
+}
+
+/**
+ * F-721: uma retomada exata que sai rápido com o erro da CLI duas vezes seguidas
+ * é um id que nunca vai funcionar — esquece o vínculo para o próximo spawn nascer
+ * limpo sob o mesmo contrato selado (senão cada Retomar copia o mesmo id até o
+ * orçamento de respawns estourar em blocked_technical). Nunca lança e só guarda
+ * ids/rótulos no trace, nunca texto.
+ */
+function judgeExactResumeExit(s: Session, exitCode: number, deliberate: boolean): void {
+  const attempt = s.exactResume;
+  if (!attempt) return;
+  try {
+    const verdict = exactResumeHealth.judge(attempt, {
+      exitCode,
+      uptimeMs: Math.max(0, Date.now() - s.spawnedAtMs),
+      deliberate,
+    });
+    if (verdict !== "forget") return;
+    const forgottenRows = resumeSessionForget?.(attempt.scope, attempt.adapterId, attempt.sessionId) ?? 0;
+    trace({
+      kind: "exact-resume-forgotten",
+      paneId: s.agentSpawn?.paneId ?? null,
+      adapterId: attempt.adapterId,
+      forgottenRows,
+    });
+  } catch (error) {
+    console.warn(
+      "[pty] julgamento da retomada exata falhou:",
+      error instanceof Error ? error.message : String(error),
+    );
   }
 }
 
@@ -1659,6 +1722,8 @@ export function spawnAgentSession(
   // Cross-account failover must spawn fresh + inject a continuity pack instead.
   let resumeMode: SpawnedSession["resumeMode"];
   let trustedResumeArgs: string[] = [];
+  /** F-721: o id que o argv pediu em `--resume` (julgado quando o processo sai). */
+  let exactResumeId: string | undefined;
   // A persisted mission pane whose exact provider session died with the app
   // must not fail into a dead pane: the sealed mission contract stays the
   // authority, so the pane respawns FRESH under the same contract (no resume
@@ -1682,6 +1747,7 @@ export function spawnAgentSession(
       if (captured) {
         args.push(...adapter.spawn.resumeIdArgs!, captured);
         trustedResumeArgs = [...adapter.spawn.resumeIdArgs!, captured];
+        exactResumeId = captured;
         resumeMode = "exact";
       } else if (authority.context?.missionId) {
         resumeMode = "fresh-context";
@@ -1709,6 +1775,7 @@ export function spawnAgentSession(
       if (captured) {
         args.push(...adapter.spawn.resumeIdArgs!, captured);
         trustedResumeArgs = [...adapter.spawn.resumeIdArgs!, captured];
+        exactResumeId = captured;
         resumeMode = "exact";
       } else if (
         authority.source === "pending" &&
@@ -2776,6 +2843,19 @@ export function spawnAgentSession(
         : {}),
     },
     agentSpawn: { paneId: req.paneId, adapterId: adapter.id },
+    ...(exactResumeId && req.paneId
+      ? {
+          exactResume: {
+            scope: {
+              installationId: (authority.coordinationScope ?? authority.scope).installationId,
+              projectId: (authority.coordinationScope ?? authority.scope).projectId,
+              checkoutId: (authority.coordinationScope ?? authority.scope).checkoutId,
+            },
+            adapterId: adapter.id,
+            sessionId: exactResumeId,
+          },
+        }
+      : {}),
     missionOrchestratorGrantAvailable,
     missionOrchestratorGrantExpiresAt: missionOrchestratorGrantAvailable
       ? Date.now() + MISSION_ORCHESTRATOR_GRANT_TTL_MS

@@ -146,7 +146,7 @@ const pane: PaneModel = { id: 'hidden-spawn-test', kind: 'shell', title: 'Termin
 const spawn = vi.fn();
 const kill = vi.fn();
 const ptyWrite = vi.fn();
-const ptyExitListeners = new Map<string, (event: { exitCode: number }) => void>();
+const ptyExitListeners = new Map<string, (event: { exitCode: number; terminationOrigin?: string }) => void>();
 const ptyDataListeners = new Map<string, (data: string) => void>();
 const originalNexus = Object.getOwnPropertyDescriptor(window, 'nexus');
 
@@ -1022,6 +1022,23 @@ describe('estacionamento de hosts na troca de workspace', () => {
   });
 });
 
+
+describe('F-721 retomada encerrada de propósito pelo Nexus', () => {
+  it('um --resume que o PRÓPRIO Nexus derrubou (respawn do Maestro) não vira "Falha ao retomar"', async () => {
+    spawn.mockResolvedValue({ ok: true, sessionId: 'pty-killed-by-nexus', resumeMode: 'exact' });
+    markResumeOnSpawn(pane.id);
+    const host = openHiddenHost();
+    const output = vi.spyOn(host.term, 'writeln');
+    host.element.parentElement!.hidden = false;
+    setHostSize(host.element, 1200, 800);
+    await vi.advanceTimersByTimeAsync(2_500);
+    // O restore concorrente perde a corrida e o Main o derruba com origem rotulada:
+    // sai com código ≠ 0 em segundos, mas não é um id velho.
+    ptyExitListeners.get('pty-killed-by-nexus')!({ exitCode: 143, terminationOrigin: 'fast-lane:respawn-stale-orchestrator' });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(output.mock.calls.flat().join(' ')).not.toContain('Falha ao retomar a sessão');
+  });
+});
 
 describe('F-567 exact resume failure', () => {
   it('reports the error and never retries the latest conversation', async () => {
