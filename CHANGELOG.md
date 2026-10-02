@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.184 — Skills sem espera
+
+Build do Windows. Inclui a 0.76.183 (Skills escolhidas pelo Jev), que ficou só na tag: o instalador dela não foi publicado.
+
+- **A dica de skill do "+ Pane" respeita o teto da delegação (F-753).** Na 0.76.183 a consulta de skill do `/hook/delegate` tinha 4 s por tentativa e retry, sem abort externo. Com o Jev lento, o hook do Claude (corte em 5 s) perderia também o conselho de delegação, que chega em até 2,5 s, e o prompt do Codex esperaria cerca de 8 s. A consulta agora recebe o mesmo teto total do conselho (`DELEGATE_TIMEOUT_MS` com `AbortSignal`).
+- **Skills do projeto pela pasta resolvida do painel (F-753).** O catálogo do Jev resolve `.claude/skills` dentro da raiz como o painel Skills: link para fora do projeto não manda nomes e descrições de fora ao modelo de decisão. Pasta com nome fora do formato de skill não vira opção nem texto no pedido do agente.
+
 ## 0.76.183 — Skills escolhidas pelo Jev
 
 Build do Windows. Inclui a 0.76.182 (Mac em dia).

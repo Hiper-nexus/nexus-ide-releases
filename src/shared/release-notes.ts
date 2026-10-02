@@ -9679,7 +9679,7 @@ export const RELEASE_076182: AppRelease = {
     },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076183: AppRelease = {
   version: '0.76.183',
   date: '2026-10-02',
   codename: 'Skills escolhidas pelo Jev',
@@ -9713,6 +9713,42 @@ export const CURRENT_RELEASE: AppRelease = {
         'As skills do projeto são uma pergunta separada das que vêm com o ' +
         'Nexus. Juntas numa lista só, a confiança se espalhava. Em 60 tarefas ' +
         'reais, as escolhas confiantes passaram de 12 para 21.',
+    },
+  ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.184',
+  date: '2026-10-02',
+  codename: 'Skills sem espera',
+  summary:
+    'O Jev escolhe também entre as skills instaladas no seu projeto e avisa ' +
+    'o agente qual SKILL.md ler, sem atrasar o pedido que você digita num ' +
+    'pane do "+ Pane". Inclui a 0.76.183, que não foi publicada no Windows.',
+  highlights: [
+    {
+      title: 'As skills do projeto chegam sozinhas ao agente',
+      detail:
+        'As skills em .claude/skills e .nexus/skills do projeto, que antes ' +
+        'precisavam ser arrastadas do painel Skills para o pane, entram na ' +
+        'escolha do Jev (ou do Clef, no modo Automático ou Somente Clef). ' +
+        'Quando uma delas serve para a tarefa, o helper recebe o caminho do ' +
+        'SKILL.md no brief, e o pedido digitado no "+ Pane" recebe a dica.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'A dica de skill não atrasa o seu pedido',
+      detail:
+        'A consulta da skill roda junto com a sugestão de delegação e tem o ' +
+        'mesmo limite de tempo. Com o Jev lento, o pedido segue sem a dica em ' +
+        'vez de esperar e perder também a sugestão de delegação.',
+    },
+    {
+      title: 'Skills de fora do projeto não entram na escolha',
+      detail:
+        'Uma pasta .claude/skills que aponta para fora do projeto é ignorada, ' +
+        'como já fazia o painel Skills, e nome de pasta fora do formato de ' +
+        'skill não chega ao agente.',
     },
   ],
 };
