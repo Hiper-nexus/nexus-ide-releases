@@ -156,6 +156,23 @@ export function sanitizeReceiptText(text: string, maxChars: number): string {
   return Array.from(cleaned).slice(0, maxChars).join('').trim();
 }
 
+/** O rótulo mascarado cabe com folga em 40 (um e-mail mascarado tem ~16-21). */
+export const RECEIPT_LABEL_MAX_CHARS = 40;
+/** Quanto do rótulo cru se lê antes de mascarar (o resto nunca chega ao resultado). */
+const RAW_LABEL_READ_CHARS = 320;
+
+/**
+ * Rótulo de conta pronto para a interface: sem controle/bidi, mascarado (como
+ * `maskAccountLabel`, de que é idempotente) e com teto — a máscara copia o
+ * último rótulo do domínio inteiro e 2 caracteres de cada ponta, então sem
+ * isto um rótulo digitado com 500 caracteres ou marca bidi chegaria à tela.
+ * Nunca vazio.
+ */
+export function safeAccountLabel(label: string): string {
+  const clean = sanitizeReceiptText(label, RAW_LABEL_READ_CHARS);
+  return sanitizeReceiptText(maskAccountLabel(clean), RECEIPT_LABEL_MAX_CHARS) || '•••';
+}
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -189,7 +206,7 @@ function parseAlternative(raw: unknown): AccountChoiceAlternative | null {
   if (typeof label !== 'string') return null;
   if (typeof skipped !== 'string' || !SKIPPED_REASONS.has(skipped)) return null;
   return {
-    label: maskAccountLabel(label),
+    label: safeAccountLabel(label),
     usedPct: percentOrNull(raw.usedPct),
     window: windowOrNull(raw.window),
     resetsAt: epochOrNull(raw.resetsAt),
@@ -215,7 +232,7 @@ function parseAccount(raw: unknown): AccountChoiceReceipt['account'] | undefined
     typeof raw.mode === 'string' && ACCOUNT_MODES.has(raw.mode)
       ? (raw.mode as ReceiptAccountMode)
       : 'unknown';
-  return { label: maskAccountLabel(raw.label), mode };
+  return { label: safeAccountLabel(raw.label), mode };
 }
 
 /**

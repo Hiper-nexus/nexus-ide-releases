@@ -2,13 +2,15 @@
  * Texto do chip "qual conta este pane usa" no cabeçalho do pane, derivado do
  * recibo da escolha de conta. Puro e sem React: o texto sai só do que o recibo
  * traz (nunca inventa folga, motivo ou horário) e todo rótulo passa de novo por
- * `maskAccountLabel` — idempotente sobre o já mascarado — para que um produtor
- * que esqueça a máscara não vaze e-mail na interface.
+ * `safeAccountLabel` (máscara + limpeza + teto, idempotente sobre o já
+ * mascarado), para que um produtor que esqueça a máscara não vaze e-mail na
+ * interface. A folga é a medida na HORA da escolha (o recibo é um retrato do
+ * spawn, o pane pode viver horas): por isso a frase diz "na escolha".
  */
 import {
-  maskAccountLabel,
   RECEIPT_NOTE_MAX_CHARS,
   RECEIPT_WINDOW_MAX_CHARS,
+  safeAccountLabel,
   sanitizeReceiptText,
   type AccountChoiceAlternative,
   type AccountChoiceReceipt,
@@ -40,7 +42,7 @@ export function accountChoiceChipLabel(receipt: AccountChoiceReceipt): string | 
   if (receipt.source === 'legacy') return null;
   const { account } = receipt;
   if (!account) return receipt.source === 'native' ? NATIVE_CHIP_LABEL : null;
-  const masked = maskAccountLabel(account.label);
+  const masked = safeAccountLabel(account.label);
   return account.mode === 'api_key' ? `${API_KEY_CHIP_PREFIX}${masked}` : masked;
 }
 
@@ -132,7 +134,7 @@ function alternativesSentence(receipt: AccountChoiceReceipt): string | null {
   if (shown.length === 0) return null;
   const items = shown.map(
     (alternative) =>
-      `${maskAccountLabel(alternative.label)} — ${skippedReason(alternative, receipt.source)}`,
+      `${safeAccountLabel(alternative.label)} — ${skippedReason(alternative, receipt.source)}`,
   );
   const rest = receipt.alternatives.length - shown.length;
   if (rest > 0) items.push(`+${rest} ${rest === 1 ? 'outra' : 'outras'}`);
@@ -159,22 +161,22 @@ function leadSentences(
     case 'active':
       return [
         'Conta ativa mantida (a ativa fica até a cota medida zerar).',
-        measured ? `Medido: ${measured}.` : 'Cota ainda não medida.',
+        measured ? `Medido na escolha: ${measured}.` : 'Cota não medida na escolha.',
       ];
     case 'active-fallback':
       return [
         'Conta ativa usada como último recurso.',
-        measured ? `Medido: ${measured}.` : 'Cota ainda não medida.',
+        measured ? `Medido na escolha: ${measured}.` : 'Cota não medida na escolha.',
       ];
     case 'pinned':
       return [
         'Conta fixada por quem abriu o pane.',
-        ...(measured ? [`Medido: ${measured}.`] : []),
+        ...(measured ? [`Medido na escolha: ${measured}.`] : []),
       ];
     case 'native':
       return [
         'Login nativo da CLI.',
-        ...(measured ? [`Medido: ${measured}.`] : []),
+        ...(measured ? [`Medido na escolha: ${measured}.`] : []),
       ];
     case 'legacy':
       return [];

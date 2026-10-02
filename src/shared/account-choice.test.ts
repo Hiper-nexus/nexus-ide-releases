@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   maskAccountLabel,
   parseAccountChoiceReceipt,
+  RECEIPT_LABEL_MAX_CHARS,
+  safeAccountLabel,
   sanitizeReceiptText,
   type AccountChoiceReceipt,
 } from './account-choice';
@@ -99,6 +101,41 @@ describe('sanitizeReceiptText', () => {
   });
 });
 
+describe('safeAccountLabel', () => {
+  it('mascara como maskAccountLabel quando o rótulo é normal', () => {
+    expect(safeAccountLabel('gabriel@lupygo.com.br')).toBe('g•••@l•••.com.br');
+    expect(safeAccountLabel('Conta Corporativa')).toBe('Co•••va');
+    expect(safeAccountLabel('adm')).toBe('•••');
+  });
+
+  it('é idempotente sobre o que já está mascarado', () => {
+    for (const raw of ['gabriel@lupygo.com.br', 'x@y.co.uk', 'Conta Corporativa', 'abcdefg', '']) {
+      const once = safeAccountLabel(raw);
+      expect(safeAccountLabel(once)).toBe(once);
+    }
+  });
+
+  it('limita o tamanho mesmo com sufixo de domínio gigante', () => {
+    const out = safeAccountLabel(`a@b.${'x'.repeat(500)}`);
+    expect(Array.from(out).length).toBeLessThanOrEqual(RECEIPT_LABEL_MAX_CHARS);
+    expect(out.startsWith('a•••@b•••')).toBe(true);
+    expect(safeAccountLabel('y'.repeat(2_000_000)).length).toBeLessThanOrEqual(RECEIPT_LABEL_MAX_CHARS);
+  });
+
+  it('tira controle e marcas bidi/largura zero que a máscara copiaria para o resultado', () => {
+    const out = safeAccountLabel('‮gabriel\u0000@lupygo​.com\u0007');
+    expect(out).not.toMatch(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩﻿]/);
+    expect(out).toMatch(/@/);
+    expect(out).not.toMatch(/gabriel|lupygo/);
+  });
+
+  it('nunca devolve vazio', () => {
+    expect(safeAccountLabel('')).toBe('•••');
+    expect(safeAccountLabel('\u0000\u0001\u0002')).toBe('•••');
+    expect(safeAccountLabel('​​')).toBe('•••');
+  });
+});
+
 const validReceipt: AccountChoiceReceipt = {
   adapterId: 'claude',
   source: 'headroom-rule',
@@ -153,6 +190,16 @@ describe('parseAccountChoiceReceipt', () => {
     expect(parsed?.account?.label).toBe('g•••@l•••.com.br');
     expect(parsed?.alternatives[0].label).toBe('a•••@g•••.com');
     expect(JSON.stringify(parsed)).not.toMatch(/gabriel|lupygo|silva|gmail/);
+  });
+
+  it('limita e limpa o rótulo da conta e o das alternativas', () => {
+    const parsed = parseAccountChoiceReceipt({
+      ...validReceipt,
+      account: { label: `a@b.${'x'.repeat(500)}`, mode: 'subscription' },
+      alternatives: [{ ...validReceipt.alternatives[0], label: '‮z@w.com\u0000' }],
+    });
+    expect(Array.from(parsed!.account!.label).length).toBeLessThanOrEqual(RECEIPT_LABEL_MAX_CHARS);
+    expect(parsed!.alternatives[0].label).toBe('z•••@w•••.com');
   });
 
   it('recusa source, mode e skipped fora do conjunto conhecido', () => {

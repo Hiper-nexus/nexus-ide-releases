@@ -125,6 +125,23 @@ describe('PaneToolbar — chip da conta escolhida', () => {
     expect(get).toHaveBeenCalledWith('session-a');
   });
 
+  it('o tempo verbal do reinício acompanha o relógio: depois do reset o tooltip diz "reiniciou"', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const t0 = Date.UTC(2026, 9, 2, 12, 0);
+      vi.setSystemTime(t0);
+      get.mockResolvedValue({ ...rule, headroom: { ...rule.headroom!, resetsAt: t0 + 30 * 60_000 } });
+      const { el, root } = await mount(agentPane);
+      expect(chip(el)!.getAttribute('title')).toContain('(reinicia ');
+
+      vi.setSystemTime(t0 + 2 * 3_600_000);
+      await act(async () => root.render(<PaneToolbar pane={{ ...agentPane, title: 'outro título' }} isFocused />));
+      expect(chip(el)!.getAttribute('title')).toContain('(reiniciou ');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('é o ÚLTIMO item do meta: quando falta largura quebra primeiro e nunca desloca os outros chips', async () => {
     const { el } = await mount(agentPane);
     const node = chip(el)!;

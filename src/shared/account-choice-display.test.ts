@@ -166,9 +166,17 @@ describe('accountChoiceTooltip — demais origens', () => {
     ).toBe('Conta fixada por quem abriu o pane.');
     const withHeadroom = accountChoiceTooltip(receipt({ source: 'pinned' }), OPTIONS)!;
     expect(withHeadroom).toBe(
-      'Conta fixada por quem abriu o pane. Medido: 12% usado na janela Sessão (reinicia às 18:30).',
+      'Conta fixada por quem abriu o pane. Medido na escolha: 12% usado na janela Sessão (reinicia às 18:30).',
     );
     expect(withHeadroom).not.toContain('Alternativas');
+  });
+
+  it('a medição é da hora da escolha: nunca é apresentada como estado atual da conta', () => {
+    for (const source of ['pinned', 'active', 'active-fallback', 'native'] as const) {
+      const tip = accountChoiceTooltip(receipt({ source }), OPTIONS)!;
+      expect(tip).toContain('Medido na escolha:');
+      expect(tip).not.toMatch(/Medido:/);
+    }
   });
 
   it('conta ativa: explica a regra de permanência e lista as alternativas', () => {
@@ -177,7 +185,7 @@ describe('accountChoiceTooltip — demais origens', () => {
       OPTIONS,
     )!;
     expect(tip).toContain('Conta ativa mantida (a ativa fica até a cota medida zerar).');
-    expect(tip).toContain('Medido: 12% usado na janela Sessão (reinicia às 18:30).');
+    expect(tip).toContain('Medido na escolha: 12% usado na janela Sessão (reinicia às 18:30).');
     // Sob "ativa mantida" a irmã não perdeu por folga: não foi comparada.
     expect(tip).toContain('x•••@y•••.com — disponível (44% usado).');
     expect(tip).not.toContain('menos folga');
@@ -190,7 +198,7 @@ describe('accountChoiceTooltip — demais origens', () => {
       OPTIONS,
     )!;
     expect(tip).toContain('Conta ativa usada como último recurso.');
-    expect(tip).toContain('Cota ainda não medida.');
+    expect(tip).toContain('Cota não medida na escolha.');
     expect(tip).toContain('z•••@w•••.com — em espera.');
     expect(tip).toContain(`Aviso: ${note}.`);
   });
@@ -208,7 +216,7 @@ describe('accountChoiceTooltip — demais origens', () => {
       ),
     ).toBe('Login nativo da CLI.');
     const slot = accountChoiceTooltip(receipt({ source: 'native' }), OPTIONS)!;
-    expect(slot).toBe('Login nativo da CLI. Medido: 12% usado na janela Sessão (reinicia às 18:30).');
+    expect(slot).toBe('Login nativo da CLI. Medido na escolha: 12% usado na janela Sessão (reinicia às 18:30).');
     expect(slot).not.toContain('Alternativas');
   });
 

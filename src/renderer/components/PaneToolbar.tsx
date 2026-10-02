@@ -273,9 +273,13 @@ function usePaneLiveSessionId(paneId: string): string | null {
 function AccountChoiceChip({ paneId }: { paneId: string }) {
   const sessionId = usePaneLiveSessionId(paneId);
   const receipt = useAccountChoiceReceipt(sessionId);
+  // O recibo é um retrato do spawn, mas "reinicia"/"reiniciou" depende da hora:
+  // o texto é refeito no máximo uma vez por minuto (sem timer — só quando o
+  // toolbar já renderiza por outro motivo).
+  const minute = Math.floor(Date.now() / 60_000);
   const view = useMemo(
     () => (receipt ? accountChoiceChipView(receipt) : null),
-    [receipt],
+    [receipt, minute], // `minute` só invalida o texto (usa Date.now() lá dentro)
   );
   if (!receipt || !view) return null;
   return (
