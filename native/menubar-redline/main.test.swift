@@ -328,5 +328,170 @@ check(fields(panel.view).contains { $0.stringValue.contains("Em espera · agora"
 panel.update(snapshot: nil, launchAtLogin: false)
 check(fields(panel.view).contains { $0.stringValue.contains("Sem dados ainda") }, "missing snapshots must explain how to load data")
 capture("panel-empty")
+// MARK: - Ampliar: TODAS as contas numa vista só (print)
+//
+// O painel compacto tem rolagem interna, então um print nunca pega todas as
+// contas. O modo ampliado reparte as contas em colunas de largura fixa, na
+// ordem do snapshot, e só rola quando nem o máximo de colunas cabe na tela.
+
+// Plano de colunas (puro, sem AppKit): partição contígua que minimiza a coluna mais alta.
+check(balancedColumns(heights: [], columns: 3).ranges.isEmpty, "no rows means no columns")
+check(
+    balancedColumns(heights: [100, 100, 100, 100, 100, 100], columns: 3).ranges == [0..<2, 2..<4, 4..<6],
+    "equal rows must split evenly across columns, in the original order"
+)
+let lopsided = balancedColumns(heights: [300, 50, 50, 50, 50], columns: 2)
+check(lopsided.ranges == [0..<1, 1..<5] && lopsided.tallest == 300,
+      "a tall row must get a column of its own instead of unbalancing the list (got \(lopsided.ranges))")
+check(balancedColumns(heights: [10, 10], columns: 4).columnCount == 2,
+      "never more columns than rows: an empty column is just a hole in the print")
+let tenRows = [CGFloat](repeating: 100, count: 10)
+check(planColumns(heights: tenRows, availableHeight: 500, minColumns: 2, maxColumns: 4).columnCount == 2,
+      "the smallest column count that fits must win")
+check(planColumns(heights: tenRows, availableHeight: 400, minColumns: 2, maxColumns: 4).columnCount == 3,
+      "one more column when two do not fit")
+let overflow = planColumns(heights: tenRows, availableHeight: 100, minColumns: 2, maxColumns: 4)
+check(overflow.columnCount == 4 && !overflow.fits(in: 100),
+      "when even the maximum does not fit the plan must report it, so the panel falls back to scrolling")
+
+let bigScreen = NSSize(width: 1728, height: 1080)
+let entries19 = Array(fixtureEntries.prefix(19))
+let snapshot19 = RedlineSnapshotFile(formatVersion: 1, generatedBy: "nexus", updatedAt: now,
+    worstUsedRatio: 0.91, entries: entries19, ranking: [:], statusBarEntryIds: [])
+
+let wide = QuotaPanelController(target: testDelegate)
+wide.availableScreenSize = bigScreen
+wide.update(snapshot: snapshot19, launchAtLogin: false)
+check(!wide.isExpanded, "the panel must open compact")
+check(wide.preferredContentSize() == NSSize(width: 400, height: 600), "the compact panel keeps its 400x600 popover")
+check(descendants(wide.view, of: NSButton.self).contains { $0.title == "Ampliar" },
+      "the header must offer Ampliar")
+
+var announcements = 0
+wide.onPreferredSizeChange = { announcements += 1 }
+wide.toggleExpanded()
+check(wide.isExpanded && announcements == 1, "toggling must flip the mode and tell the popover owner exactly once")
+let expandedSize = wide.preferredContentSize()
+check(expandedSize.width > 400, "the expanded panel must be wider than the compact one (got \(expandedSize.width))")
+check(expandedSize.height <= bigScreen.height - 32, "the expanded panel must fit the screen with its margin")
+check((2...4).contains(wide.expandedColumnCount), "expanded mode uses 2 to 4 columns (got \(wide.expandedColumnCount))")
+
+let bigWindow = NSWindow(contentRect: NSRect(origin: .zero, size: expandedSize), styleMask: [.borderless], backing: .buffered, defer: false)
+bigWindow.contentView = wide.view
+wide.view.setFrameSize(expandedSize)
+wide.view.layoutSubtreeIfNeeded()
+let wideScroll = wide.scrollView
+let columnsDocument = wideScroll.documentView!
+check(!wideScroll.hasVerticalScroller, "when every account fits there must be no inner scrollbar to hide the rest")
+check(columnsDocument.frame.height <= wideScroll.contentSize.height + 0.5,
+      "all rows must be visible without scrolling at a 1080pt-tall screen")
+check(columnsDocument.frame.width <= wideScroll.contentSize.width + 0.5, "the columns must fit the panel width")
+
+let columnStacks = columnsDocument.subviews.compactMap { $0 as? NSStackView }
+check(columnStacks.count == wide.expandedColumnCount, "one stack per planned column")
+check(columnsDocument.subviews.count == columnStacks.count * 2 - 1, "a hairline between columns, none at the edges")
+let allRows = columnStacks.flatMap { column in column.arrangedSubviews.map { (column: column, row: $0) } }
+check(allRows.count == 19, "every account must be laid out (got \(allRows.count) of 19)")
+let rowFrames = allRows.map { $0.column.convert($0.row.frame, to: columnsDocument) }
+for frame in rowFrames {
+    check(columnsDocument.bounds.insetBy(dx: -0.5, dy: -0.5).contains(frame),
+          "a row must stay inside the document (row \(frame), document \(columnsDocument.bounds))")
+}
+for first in 0..<rowFrames.count {
+    for second in (first + 1)..<rowFrames.count {
+        check(!rowFrames[first].insetBy(dx: 0.5, dy: 0.5).intersects(rowFrames[second]),
+              "rows must never overlap (\(rowFrames[first]) vs \(rowFrames[second]))")
+    }
+}
+let expandedFields = fields(wide.view)
+for number in 1...19 {
+    check(expandedFields.contains { $0.stringValue == "Conta \(number)" }, "account \(number) must be readable in the expanded view")
+}
+for field in fields(columnsDocument) where !field.stringValue.isEmpty {
+    check(field.frame.height + 1 >= field.intrinsicContentSize.height,
+          "text must not be clipped vertically: '\(field.stringValue.prefix(24))'")
+}
+check(!descendants(wide.view, of: NSButton.self).contains { $0.title == "Ampliar" }
+      && descendants(wide.view, of: NSButton.self).contains { $0.title == "Reduzir" },
+      "the header button must flip to Reduzir")
+let wideButtons = descendants(wide.view, of: NSButton.self)
+for title in ["Atualizar agora", "Abrir no Nexus", "Iniciar com o macOS", "Sair"] {
+    guard let control = wideButtons.first(where: { $0.title == title }) else {
+        print("FAIL: the expanded panel must keep the action: \(title)"); exit(1)
+    }
+    check(control.action != nil && control.target != nil, "the expanded panel must keep the working action: \(title)")
+    check(control.frame.maxY <= wideScroll.frame.minY + 0.5 && control.frame.minX >= 0 && control.frame.maxX <= wide.view.bounds.width,
+          "the footer control '\(title)' must sit below the list and inside the panel")
+}
+for control in wideButtons where control.title == "Reduzir" {
+    check(control.target === wide && control.action != nil, "Reduzir must be wired to the panel")
+    let ink = control.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+    check(ink != nil, "the header button must carry an explicit ink color")
+    check(contrastRatio(relativeLuminance(ink!), relativeLuminance(wide.surfaceColor)) >= 4.5,
+          "the header button label must clear AA on the dark surface")
+}
+let expandedDocumentBefore = wideScroll.documentView
+wide.update(snapshot: snapshot19, launchAtLogin: false)
+check(wideScroll.documentView === expandedDocumentBefore, "polling with the same snapshot must not rebuild the expanded columns")
+check(announcements == 1, "an unchanged snapshot must not resize the popover")
+if let directory = ProcessInfo.processInfo.environment["REDLINE_TEST_SCREENSHOTS"] {
+    wide.view.display()
+    let bitmap = wide.view.bitmapImageRepForCachingDisplay(in: wide.view.bounds)!
+    wide.view.cacheDisplay(in: wide.view.bounds, to: bitmap)
+    try! bitmap.representation(using: .png, properties: [:])!
+        .write(to: URL(fileURLWithPath: directory).appendingPathComponent("after-panel-expanded.png"))
+}
+
+// Dados novos com altura diferente: o popover ampliado acompanha.
+wide.update(snapshot: RedlineSnapshotFile(formatVersion: 1, generatedBy: "nexus", updatedAt: now,
+    worstUsedRatio: 0.91, entries: Array(fixtureEntries.prefix(4)), ranking: [:], statusBarEntryIds: []),
+    launchAtLogin: false)
+check(announcements == 2, "a snapshot that changes the layout must resize the expanded popover")
+
+// Voltar: o compacto é o painel de sempre, reconstruído mesmo com snapshot igual.
+wide.update(snapshot: snapshot19, launchAtLogin: false)
+wide.toggleExpanded()
+check(!wide.isExpanded, "Reduzir must go back to the compact panel")
+check(wide.preferredContentSize() == NSSize(width: 400, height: 600), "reduced size is the compact popover")
+check(wideScroll.documentView is NSStackView && wideScroll.hasVerticalScroller,
+      "the compact panel must be a vertical scrolling list again")
+check(descendants(wide.view, of: NSButton.self).contains { $0.title == "Ampliar" }, "the header button must flip back to Ampliar")
+check(wide.expandedColumnCount == 0, "no stale columns once compact")
+
+// Reabrir sempre compacto, sem avisar o popover (o dono define o tamanho a seguir).
+wide.toggleExpanded()
+let announcedBeforeReset = announcements
+wide.resetToCompact()
+check(!wide.isExpanded && announcements == announcedBeforeReset, "resetToCompact must be silent")
+
+// Tela pequena: nem o máximo de colunas cabe → rolagem vertical, sem cortar conta.
+let tight = QuotaPanelController(target: testDelegate)
+tight.availableScreenSize = NSSize(width: 1280, height: 720)
+tight.update(snapshot: snapshot(updatedAt: now), launchAtLogin: false)
+tight.toggleExpanded()
+let tightSize = tight.preferredContentSize()
+check(tightSize.height == 720 - 32, "a screen too small for every row must cap the popover at the screen (got \(tightSize.height))")
+check(tightSize.width <= 1280 - 32, "the expanded panel must never be wider than the screen")
+let tightWindow = NSWindow(contentRect: NSRect(origin: .zero, size: tightSize), styleMask: [.borderless], backing: .buffered, defer: false)
+tightWindow.contentView = tight.view
+tight.view.setFrameSize(tightSize)
+tight.view.layoutSubtreeIfNeeded()
+check(tight.scrollView.hasVerticalScroller, "when the columns do not fit the list must scroll instead of cutting accounts")
+check(tight.scrollView.documentView!.frame.height > tight.scrollView.contentSize.height, "the overflowing list extends below the viewport")
+check(tight.scrollView.documentView!.frame.width <= tight.scrollView.contentSize.width + 0.5,
+      "the scroller must not steal width from the columns")
+
+// O popover do app acompanha o modo: ampliado não fecha com clique fora (print).
+testDelegate.quotaPanel.availableScreenSize = bigScreen
+testDelegate.quotaPanel.update(snapshot: snapshot19, launchAtLogin: false)
+testDelegate.popover.behavior = .transient
+testDelegate.quotaPanel.toggleExpanded()
+check(testDelegate.popover.behavior == .applicationDefined,
+      "an expanded popover must stay open while the screenshot tool takes the capture")
+check(testDelegate.popover.contentSize.width > 400, "the popover must grow with the panel")
+testDelegate.quotaPanel.toggleExpanded()
+check(testDelegate.popover.behavior == .transient, "reducing must restore the click-outside-to-close behavior")
+check(testDelegate.popover.contentSize == NSSize(width: 400, height: 600), "reducing must restore the compact popover size")
+
 NSStatusBar.system.removeStatusItem(testDelegate.statusItem)
 print("Redline UI checks passed")

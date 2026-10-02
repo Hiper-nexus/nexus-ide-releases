@@ -140,11 +140,15 @@ describe('workspace mission-context import', () => {
       { homeDir, token: () => 'fixed-token' },
     );
 
+    const stored = `${MISSION_CONTEXT_ATTACHMENT_PREFIX}${droppedFileName('cliente.m4a', 'fixed-token')}`;
     expect(result).toEqual({
       ok: true,
-      path: `${MISSION_CONTEXT_ATTACHMENT_PREFIX}${droppedFileName('cliente.m4a', 'fixed-token')}`,
+      path: stored,
+      // F-760: onde o arquivo está de fato — é o que se digita no pane.
+      absolutePath: path.join(root, stored),
     });
     if (!result.ok) return;
+    expect(fs.existsSync(result.absolutePath ?? '')).toBe(true);
     const abs = path.join(root, result.path);
     expect(fs.readFileSync(abs, 'utf8')).toBe('audio-bytes');
     expect(fs.statSync(path.dirname(abs)).mode & 0o777).toBe(0o700);
@@ -175,9 +179,11 @@ describe('workspace mission-context import', () => {
         fs.fstatSync(sourceFd).size,
         { token: () => 'stream-tok' },
       );
+      const stored = `${MISSION_CONTEXT_ATTACHMENT_PREFIX}${droppedFileName('video.mp4', 'stream-tok')}`;
       expect(result).toEqual({
         ok: true,
-        path: `${MISSION_CONTEXT_ATTACHMENT_PREFIX}${droppedFileName('video.mp4', 'stream-tok')}`,
+        path: stored,
+        absolutePath: path.join(root, stored),
       });
       if (result.ok) {
         expect(

@@ -498,6 +498,16 @@ export function App() {
       }
       if (
         event.key.toLowerCase() === 'b' &&
+        event.shiftKey &&
+        !event.altKey
+      ) {
+        // Reportar um problema vale em qualquer tela, com ou sem projeto.
+        event.preventDefault();
+        useBugReportDialogStore.getState().open();
+        return;
+      }
+      if (
+        event.key.toLowerCase() === 'b' &&
         !event.shiftKey &&
         !event.altKey
       ) {

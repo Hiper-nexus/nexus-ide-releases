@@ -134,6 +134,12 @@ export const SHORTCUTS: readonly ShortcutEntry[] = Object.freeze([
     group: 'surfaces' as const,
   }),
   Object.freeze({
+    id: 'bug-report',
+    keys: formatShortcut('mod', 'shift', 'B'),
+    action: 'Reportar um problema (em qualquer tela)',
+    group: 'surfaces' as const,
+  }),
+  Object.freeze({
     id: 'dismiss-overlay',
     keys: 'Esc',
     action: 'Fechar o painel ou diálogo aberto',
@@ -183,6 +189,7 @@ export function primaryShortcuts(): readonly ShortcutEntry[] {
 export const GLOBAL_HANDLER_SHORTCUT_IDS: readonly string[] = Object.freeze([
   'settings',
   'operator-profile',
+  'bug-report',
   'task-board',
   'command-palette',
   'cheatsheet',

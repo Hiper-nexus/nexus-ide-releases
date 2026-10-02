@@ -241,6 +241,18 @@ export async function stageMissionAttachment(
   file: File,
   options: { allowAnyKind?: boolean } = {},
 ): Promise<MissionAttachment> {
+  return (await stageMissionAttachmentWithLocation(file, options)).attachment;
+}
+
+/**
+ * Como `stageMissionAttachment`, e devolve também onde o Main gravou o arquivo
+ * (caminho absoluto). Fica FORA de `MissionAttachment`: aquele tipo viaja para
+ * missões e não deve ganhar campo que o Main não espera.
+ */
+export async function stageMissionAttachmentWithLocation(
+  file: File,
+  options: { allowAnyKind?: boolean } = {},
+): Promise<{ attachment: MissionAttachment; absolutePath?: string }> {
   // O pane aceita QUALQUER arquivo (allowAnyKind): a cópia de bytes para
   // .nexus/attachments/ é inofensiva e o agente decide o que fazer com ela.
   const kind =
@@ -255,7 +267,7 @@ export async function stageMissionAttachment(
     throw new Error(result.error ?? `Não foi possível salvar ${fileName(file)}.`);
   }
   attachmentSequence += 1;
-  return {
+  const attachment: MissionAttachment = {
     id: `${Date.now().toString(36)}-${attachmentSequence}`,
     name: fileName(file),
     kind,
@@ -270,6 +282,10 @@ export async function stageMissionAttachment(
             : 'text/plain'),
     size: file.size,
     path: result.path,
+  };
+  return {
+    attachment,
+    ...(result.absolutePath ? { absolutePath: result.absolutePath } : {}),
   };
 }
 

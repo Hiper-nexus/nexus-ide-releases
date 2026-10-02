@@ -109,6 +109,7 @@ vi.mock('./terminal-ghost-assist', () => ({
 }));
 
 import { useLayoutStore } from '../state/layout-store';
+import { setActiveWorkspacePath } from '../state/active-workspace';
 import { useOrchStore } from '../state/orch-store';
 import { useToastStore } from '../state/toast-store';
 import { buildGridTree, listPanes } from '../lib/split-tree';
@@ -2380,5 +2381,147 @@ describe('license access at the PTY seam', () => {
     expect(spawn).toHaveBeenCalledTimes(1);
     expect(host.spawnStarted).toBe(true);
     expect(kill).not.toHaveBeenCalled();
+  });
+});
+
+describe('anexo solto/colado resolve contra a RAIZ do projeto, não a pasta do pane (F-760)', () => {
+  // Pane de aba com worktree: o cwd dele é a worktree, mas o Main grava o
+  // anexo na raiz do projeto (`.nexus/attachments/mission-context/`). Juntar o
+  // caminho relativo ao cwd do pane apontava para um arquivo que não existe, e
+  // o agente respondia "não consegui acessar os anexos".
+  const write = vi.fn();
+  const importDroppedUri = vi.fn();
+  const importMissionAttachment = vi.fn();
+  let filePath = '';
+  const WORKTREE = '/Users/ana/Library/Application Support/Nexus/wt/aba-feature';
+  const PROJECT = '/Users/ana/dev/barbearia';
+  const worktreePane: PaneModel = {
+    id: 'pane-worktree-drop',
+    kind: 'cli-agent',
+    title: 'Claude',
+    adapterId: 'claude',
+    cwd: WORKTREE,
+  };
+
+  beforeEach(() => {
+    write.mockReset();
+    importDroppedUri.mockReset();
+    importMissionAttachment.mockReset();
+    filePath = '';
+    setActiveWorkspacePath(PROJECT);
+    useLayoutStore.setState({
+      root: { kind: 'leaf', id: worktreePane.id, pane: worktreePane },
+    });
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        pty: {
+          spawn, kill, resize: vi.fn(), write,
+          onStateChange: () => () => {}, onData: () => () => {}, onExit: () => () => {},
+        },
+        files: {
+          importDroppedUri,
+          importMissionAttachment,
+          clipboardFileUris: vi.fn().mockResolvedValue({ uris: [] }),
+          pathForFile: () => filePath,
+        },
+      },
+    });
+    useToastStore.setState({ toasts: [] });
+  });
+
+  afterEach(() => setActiveWorkspacePath(null));
+
+  async function openWorktreeHost() {
+    const host = getOrCreateHost(worktreePane);
+    setHostSize(host.element, 1400, 900);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(worktreePane, slot);
+    expect(await waitForSession(worktreePane.id, 1000)).toBe('pty-hidden');
+    return host;
+  }
+
+  function drop(element: HTMLElement, data: Record<string, string>, files: File[] = []): void {
+    const event = new Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', {
+      value: {
+        files,
+        types: [...(files.length ? ['Files'] : []), ...Object.keys(data)],
+        getData: (type: string) => data[type] ?? '',
+        dropEffect: 'none',
+      },
+    });
+    element.dispatchEvent(event);
+  }
+
+  const STAGED = '.nexus/attachments/mission-context/k-foto.png';
+
+  it('file:// solto: o caminho aponta para a raiz do projeto, onde o Main gravou', async () => {
+    const host = await openWorktreeHost();
+    importDroppedUri.mockResolvedValue({ ok: true, path: STAGED });
+
+    drop(host.element, { 'text/uri-list': 'file:///Users/ana/Downloads/foto.png' });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(write).toHaveBeenCalledWith('pty-hidden', `${PROJECT}/${STAGED} `);
+    expect(write).not.toHaveBeenCalledWith('pty-hidden', expect.stringContaining('/wt/aba-feature'));
+  });
+
+  it('o caminho absoluto que o Main devolveu vale mais que qualquer recomposição', async () => {
+    const host = await openWorktreeHost();
+    // O Main grava pelo realpath (/private/..., volume, link): é ele quem sabe.
+    importDroppedUri.mockResolvedValue({
+      ok: true,
+      path: STAGED,
+      absolutePath: `/private${PROJECT}/${STAGED}`,
+    });
+
+    drop(host.element, { 'text/uri-list': 'file:///Users/ana/Downloads/foto.png' });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(write).toHaveBeenCalledWith('pty-hidden', `/private${PROJECT}/${STAGED} `);
+  });
+
+  it('File arrastado com caminho FORA do projeto (WhatsApp, Fotos) também vai para a raiz', async () => {
+    const host = await openWorktreeHost();
+    filePath = '/Users/ana/Library/Group Containers/whatsapp/WhatsApp Image 2026-10-02.jpeg';
+    const image = new File(['x'], 'WhatsApp Image 2026-10-02.jpeg', { type: 'image/jpeg' });
+    importDroppedUri.mockResolvedValue({ ok: true, path: STAGED });
+
+    drop(host.element, {}, [image]);
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(importDroppedUri).toHaveBeenCalledOnce();
+    expect(write).toHaveBeenCalledWith('pty-hidden', `${PROJECT}/${STAGED} `);
+  });
+
+  it('blob sem caminho (base64) estagiado: raiz do projeto, nunca a worktree', async () => {
+    const host = await openWorktreeHost();
+    const image = new File([new Uint8Array(512)], 'print.png', { type: 'image/png' });
+    importMissionAttachment.mockResolvedValue({
+      ok: true,
+      path: STAGED,
+      absolutePath: `${PROJECT}/${STAGED}`,
+    });
+
+    drop(host.element, {}, [image]);
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(importMissionAttachment).toHaveBeenCalledOnce();
+    expect(write).toHaveBeenCalledWith('pty-hidden', `${PROJECT}/${STAGED} `);
+  });
+
+  it('arquivo que JÁ está na pasta do pane segue relativo a ela (não é anexo estagiado)', async () => {
+    const host = await openWorktreeHost();
+    filePath = `${WORKTREE}/src/app.ts`;
+    const source = new File(['x'], 'app.ts', { type: 'text/plain' });
+
+    drop(host.element, {}, [source]);
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(importDroppedUri).not.toHaveBeenCalled();
+    expect(importMissionAttachment).not.toHaveBeenCalled();
+    expect(write).toHaveBeenCalledWith('pty-hidden', "'" + `${WORKTREE}/src/app.ts` + "' ");
   });
 });

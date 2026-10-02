@@ -300,6 +300,7 @@ import { useMissionSetupStore } from './state/mission-setup-store';
 import { useMissionInspectorStore } from './state/mission-inspector-store';
 import { useOrchStore } from './state/orch-store';
 import { useProductNavigationStore } from './state/product-navigation-store';
+import { useBugReportDialogStore } from './state/bug-report-dialog-store';
 import { useToastStore } from './state/toast-store';
 import { useVoiceStore } from './voice/voice-store';
 import { useWorkspaceStore } from './state/workspace-store';
@@ -1068,6 +1069,29 @@ describe('App Nexus V2 cutover', () => {
       }
     },
   );
+
+  it.each([
+    ['⌘⇧B', { metaKey: true }],
+    ['Ctrl+Shift+B', { ctrlKey: true }],
+  ] as const)('opens "Reportar um problema" with %s, from any screen', (_label, modifier) => {
+    useBugReportDialogStore.setState({ isOpen: false });
+    mountApp();
+    const event = new KeyboardEvent('keydown', {
+      key: 'B',
+      shiftKey: true,
+      ...modifier,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    act(() => window.dispatchEvent(event));
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(useBugReportDialogStore.getState().isOpen).toBe(true);
+    // Não confunde com ⌘B puro (Quadro de tarefas).
+    expect(useProductNavigationStore.getState().destination).not.toEqual({ kind: 'task-board' });
+    act(() => useBugReportDialogStore.getState().close());
+  });
 
   it('keeps a pane with a transient mission binding in that mission via ⌘1', () => {
     openWorkspace();

@@ -82,8 +82,32 @@ describe('resolveDroppedMissionContextPath', () => {
 
     await expect(
       resolveDroppedMissionContextPath('/workspace', file('app.ts', 'text/plain')),
-    ).resolves.toEqual({ ok: true, path: 'src/app.ts' });
+    ).resolves.toEqual({
+      ok: true,
+      path: 'src/app.ts',
+      absolutePath: '/workspace/src/app.ts',
+    });
     expect(window.nexus.files.importMissionAttachment).not.toHaveBeenCalled();
+  });
+
+  it('carries the absolute path Main wrote the staged copy to (F-760)', async () => {
+    const importMissionAttachment = vi.fn(async (name: string) => ({
+      ok: true as const,
+      path: `.nexus/attachments/mission-context/token-${name}`,
+      absolutePath: `/real/ws/.nexus/attachments/mission-context/token-${name}`,
+    }));
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: { files: { pathForFile: () => '', importMissionAttachment } },
+    });
+
+    await expect(
+      resolveDroppedMissionContextPath('/workspace', file('foto.png', 'image/png')),
+    ).resolves.toEqual({
+      ok: true,
+      path: '.nexus/attachments/mission-context/token-foto.png',
+      absolutePath: '/real/ws/.nexus/attachments/mission-context/token-foto.png',
+    });
   });
 
   it('copies external audio into .nexus/attachments/mission-context/', async () => {

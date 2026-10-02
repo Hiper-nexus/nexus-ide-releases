@@ -27,6 +27,19 @@ private let panelHairlineStrong = NSColor.white.withAlphaComponent(0.16)
 /// ~16pt para a esquerda e o logo nasce clipado na borda do clip view).
 private let rowHorizontalInset: CGFloat = 16
 
+/// Geometria do painel. O compacto é o popover de sempre (400 de largura,
+/// teto de 600 de altura). O ampliado põe TODAS as contas em colunas fixas.
+private let compactPanelWidth: CGFloat = 400
+private let compactPanelMaxHeight: CGFloat = 600
+private let expandedColumnWidth: CGFloat = 360
+private let expandedMaxColumns = 4
+/// Respiro que o popover precisa dos cantos da tela (era o `- 32` do togglePanel).
+private let screenMargin: CGFloat = 32
+private let panelHeaderHeight: CGFloat = 88
+private let compactFooterHeight: CGFloat = 96
+/// Ampliado: uma faixa só (botões + início automático + Sair), mais enxuta no print.
+private let expandedFooterHeight: CGFloat = 57
+
 private func quotaInk(for used: Double?) -> NSColor {
     guard let used else { return panelTextFaint }
     if used >= 0.85 { return panelDanger }
@@ -51,13 +64,30 @@ private final class PanelBackground: NSView {
 
 private final class Hairline: NSView {
     override func draw(_ dirtyRect: NSRect) {
+        // `bounds`, não `dirtyRect`: numa captura (cacheDisplay) o dirtyRect vem
+        // sem recorte e o fio pintaria o painel inteiro.
         panelHairline.setFill()
-        dirtyRect.fill()
+        bounds.fill()
     }
 }
 
 private final class AccountList: NSStackView {
     override var isFlipped: Bool { true }
+}
+
+/// Documento do modo ampliado: as colunas ficam lado a lado, posicionadas à
+/// mão (frames), porque a altura de cada uma já foi MEDIDA para repartir as
+/// contas. Flipped: a coluna mais curta encosta no topo, como a lista compacta.
+private final class ColumnsDocument: NSView {
+    override var isFlipped: Bool { true }
+}
+
+/// Fio vertical de 1pt entre colunas — mesma hierarquia por hairline das rows.
+private final class VerticalHairline: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        panelHairline.setFill()
+        bounds.fill()
+    }
 }
 
 /// Linha de conta: separador de hairline no pé (inset 16pt), nunca após a
@@ -108,7 +138,7 @@ private final class PanelButton: NSButton {
     enum Style { case primary, secondary, ghost }
 
     private let style: Style
-    private let buttonTitle: String
+    private var buttonTitle: String
     private var hovering = false
 
     /// Fill em repouso — o que o contraste mede. Só a CTA primária tem fill.
@@ -132,13 +162,26 @@ private final class PanelButton: NSButton {
         self.target = target
         self.action = action
         isBordered = false
-        attributedTitle = NSAttributedString(string: title, attributes: [
+        attributedTitle = titleText(title)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    private func titleText(_ text: String) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: [
             .font: NSFont.systemFont(ofSize: style == .ghost ? 11 : 12, weight: .medium),
             .foregroundColor: ink,
         ])
     }
 
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    /// Troca o rótulo (Ampliar ⇄ Reduzir) mantendo a tinta explícita que o
+    /// gate de contraste lê no attributedTitle.
+    func setLabel(_ text: String) {
+        buttonTitle = text
+        title = text
+        attributedTitle = titleText(text)
+        needsDisplay = true
+    }
 
     override func layout() {
         super.layout()
@@ -159,10 +202,7 @@ private final class PanelButton: NSButton {
         case .ghost:
             break
         }
-        let text = NSAttributedString(string: buttonTitle, attributes: [
-            .font: NSFont.systemFont(ofSize: style == .ghost ? 11 : 12, weight: .medium),
-            .foregroundColor: ink,
-        ])
+        let text = titleText(buttonTitle)
         let size = text.size()
         text.draw(at: NSPoint(x: (bounds.width - size.width) / 2,
                               y: (bounds.height - size.height) / 2))
@@ -197,9 +237,35 @@ final class QuotaPanelController: NSViewController {
     private let openButton: NSButton
     private let loginButton: NSButton
     private let quitButton: NSButton
+    private let expandButton = PanelButton(title: "Ampliar", style: .secondary,
+                                            target: nil, action: nil)
     private var renderedSnapshot: RedlineSnapshotFile?
+    /// Último snapshot recebido (renderizado ou não): trocar de modo reconstrói
+    /// a lista com ele, sem esperar o próximo ciclo de 2s do poll.
+    private var latestSnapshot: RedlineSnapshotFile?
     private var hasRendered = false
     private var updateCountdowns: [() -> Void] = []
+    /// Linhas atualmente na tela (compacto: na pilha; ampliado: nas colunas).
+    private var currentRows: [AccountRow] = []
+
+    /// Modo ampliado: todas as contas em colunas, sem rolagem quando cabem.
+    private(set) var isExpanded = false
+    /// visibleFrame da tela do status item. O AppDelegate atualiza antes de abrir;
+    /// o padrão é um notebook comum.
+    var availableScreenSize = NSSize(width: 1440, height: 900)
+    /// Avisa o dono do popover (tamanho e comportamento dependem do modo).
+    var onPreferredSizeChange: (() -> Void)?
+    private var announcedSize: NSSize?
+
+    private struct ExpandedLayout {
+        let columns: Int
+        let contentWidth: CGFloat
+        let listHeight: CGFloat
+        /// Nem com o máximo de colunas cabe: cai para a rolagem vertical.
+        let scrolls: Bool
+    }
+    private var expandedLayout: ExpandedLayout?
+    var expandedColumnCount: Int { expandedLayout?.columns ?? 0 }
 
     init(target: AppDelegate) {
         refreshButton = PanelButton(title: "Atualizar agora", style: .primary,
@@ -211,6 +277,9 @@ final class QuotaPanelController: NSViewController {
         quitButton = PanelButton(title: "Sair", style: .ghost,
                                  target: NSApp, action: #selector(NSApplication.terminate(_:)))
         super.init(nibName: nil, bundle: nil)
+        // O alvo é o próprio controlador: só existe depois do super.init.
+        expandButton.target = self
+        expandButton.action = #selector(toggleExpanded)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -243,43 +312,115 @@ final class QuotaPanelController: NSViewController {
         refreshButton.keyEquivalent = "r"
         openButton.keyEquivalent = "o"
         quitButton.keyEquivalent = "q"
+        expandButton.keyEquivalent = "e"
+        syncExpandButton()
         loginButton.attributedTitle = NSAttributedString(string: "Iniciar com o macOS", attributes: [
             .font: NSFont.systemFont(ofSize: 11), .foregroundColor: panelTextDim,
         ])
 
         for child in [titleLabel, summaryLabel, recommendationLabel,
-                      scrollView, headerHairline, footerHairline,
+                      scrollView, headerHairline, footerHairline, expandButton,
                       refreshButton, openButton, loginButton, quitButton] {
             view.addSubview(child)
         }
     }
 
+    private var footerHeight: CGFloat { isExpanded ? expandedFooterHeight : compactFooterHeight }
+
     override func viewDidLayout() {
         super.viewDidLayout()
         let width = view.bounds.width
         let height = view.bounds.height
-        titleLabel.frame = NSRect(x: 16, y: height - 34, width: width - 32, height: 20)
+        // O botão de ampliar divide o topo com o título.
+        let expandWidth: CGFloat = 76
+        titleLabel.frame = NSRect(x: 16, y: height - 34, width: width - 32 - expandWidth - 8, height: 20)
+        expandButton.frame = NSRect(x: width - 16 - expandWidth, y: height - 36, width: expandWidth, height: 24)
         summaryLabel.frame = NSRect(x: 16, y: height - 54, width: width - 32, height: 14)
         recommendationLabel.frame = NSRect(x: 16, y: height - 74, width: width - 32, height: 14)
-        headerHairline.frame = NSRect(x: 0, y: height - 88, width: width, height: 1)
-        footerHairline.frame = NSRect(x: 0, y: 96, width: width, height: 1)
-        scrollView.frame = NSRect(x: 0, y: 97, width: width, height: max(24, height - 185))
-        refreshButton.frame = NSRect(x: 16, y: 50, width: 172, height: 30)
-        openButton.frame = NSRect(x: width - 188, y: 50, width: 172, height: 30)
-        loginButton.frame = NSRect(x: 16, y: 18, width: 260, height: 20)
-        quitButton.frame = NSRect(x: width - 80, y: 18, width: 64, height: 20)
+        headerHairline.frame = NSRect(x: 0, y: height - panelHeaderHeight, width: width, height: 1)
+        footerHairline.frame = NSRect(x: 0, y: footerHeight, width: width, height: 1)
+        scrollView.frame = NSRect(x: 0, y: footerHeight + 1, width: width,
+                                  height: max(24, height - panelHeaderHeight - footerHeight - 1))
+        if isExpanded {
+            // Uma faixa só: ações à esquerda, início automático e Sair à direita.
+            refreshButton.frame = NSRect(x: 16, y: 14, width: 172, height: 30)
+            openButton.frame = NSRect(x: 196, y: 14, width: 172, height: 30)
+            quitButton.frame = NSRect(x: width - 80, y: 19, width: 64, height: 20)
+            loginButton.frame = NSRect(x: width - 80 - 12 - 190, y: 19, width: 190, height: 20)
+        } else {
+            refreshButton.frame = NSRect(x: 16, y: 50, width: 172, height: 30)
+            openButton.frame = NSRect(x: width - 188, y: 50, width: 172, height: 30)
+            loginButton.frame = NSRect(x: 16, y: 18, width: 260, height: 20)
+            quitButton.frame = NSRect(x: width - 80, y: 18, width: 64, height: 20)
+        }
         layoutAccounts()
     }
 
     private func layoutAccounts() {
         applyWrapWidths()
+        // Ampliado: o documento já nasceu com o tamanho exato das colunas.
+        guard !isExpanded || expandedLayout == nil else { return }
         let width = scrollView.contentSize.width
         accounts.setFrameSize(NSSize(width: width, height: accounts.fittingSize.height))
         accounts.layoutSubtreeIfNeeded()
     }
 
-    func update(snapshot: RedlineSnapshotFile?, launchAtLogin: Bool) {
+    // MARK: Modo ampliado
+
+    /// Tamanho que o popover deve ter agora. Compacto: o painel de sempre.
+    /// Ampliado: largura das colunas (+ rolagem, se não couber) e altura da
+    /// coluna mais alta — limitadas à tela do status item.
+    func preferredContentSize() -> NSSize {
+        let maxHeight = max(240, availableScreenSize.height - screenMargin)
+        guard isExpanded, let layout = expandedLayout else {
+            return NSSize(width: compactPanelWidth, height: min(compactPanelMaxHeight, maxHeight))
+        }
+        let scroller = layout.scrolls
+            ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
+        let chrome = panelHeaderHeight + expandedFooterHeight + 1
+        let height = layout.scrolls ? maxHeight : min(maxHeight, layout.listHeight + chrome)
+        return NSSize(width: layout.contentWidth + scroller, height: height)
+    }
+
+    @objc func toggleExpanded() {
         loadViewIfNeeded()
+        isExpanded.toggle()
+        syncExpandButton()
+        // Troca de modo SEMPRE reconstrói: o snapshot igual não basta para pular.
+        hasRendered = false
+        apply(snapshot: latestSnapshot, launchAtLogin: loginButton.state == .on, announce: false)
+        announcedSize = isExpanded ? preferredContentSize() : nil
+        onPreferredSizeChange?()
+    }
+
+    /// Volta ao compacto sem avisar o popover: quem chama (abrir o painel) já
+    /// define o tamanho logo em seguida.
+    func resetToCompact() {
+        guard isExpanded else { return }
+        isExpanded = false
+        expandedLayout = nil
+        announcedSize = nil
+        hasRendered = false
+        if isViewLoaded { syncExpandButton() }
+    }
+
+    private func syncExpandButton() {
+        expandButton.setLabel(isExpanded ? "Reduzir" : "Ampliar")
+        expandButton.toolTip = isExpanded
+            ? "Voltar ao painel compacto"
+            : "Ampliar para ver todas as contas de uma vez, ótimo para print"
+        expandButton.setAccessibilityLabel(isExpanded
+            ? "Reduzir o painel de cotas"
+            : "Ampliar o painel para ver todas as contas de uma vez")
+    }
+
+    func update(snapshot: RedlineSnapshotFile?, launchAtLogin: Bool) {
+        apply(snapshot: snapshot, launchAtLogin: launchAtLogin, announce: true)
+    }
+
+    private func apply(snapshot: RedlineSnapshotFile?, launchAtLogin: Bool, announce: Bool) {
+        loadViewIfNeeded()
+        latestSnapshot = snapshot
         loginButton.state = launchAtLogin ? .on : .off
         let entries = snapshot?.entries ?? []
         let providers = Set(entries.map(\.adapterId)).count
@@ -328,40 +469,127 @@ final class QuotaPanelController: NSViewController {
         updateCountdowns.removeAll()
         wrapRoles.removeAll()
         for row in accounts.arrangedSubviews { accounts.removeArrangedSubview(row); row.removeFromSuperview() }
+        currentRows = []
         if entries.isEmpty {
-            let empty = AccountRow()
-            empty.showsSeparator = false
-            empty.edgeInsets = NSEdgeInsets(
-                top: 12, left: rowHorizontalInset, bottom: 12, right: rowHorizontalInset)
-            for child in [
-                label("Sem dados ainda.", color: panelTextDim),
-                label("Abra o Nexus e atualize as cotas para ver o painel.",
-                      color: panelTextFaint, size: 11),
-            ] {
-                empty.addArrangedSubview(child)
-                child.translatesAutoresizingMaskIntoConstraints = false
-                child.widthAnchor.constraint(
-                    equalTo: empty.widthAnchor, constant: -rowHorizontalInset * 2
-                ).isActive = true
-            }
-            addRow(empty)
+            expandedLayout = nil
+            showEmptyRow()
+        } else if isExpanded {
+            showExpandedColumns(entries)
         } else {
-            for (index, entry) in entries.enumerated() {
-                let row = accountRow(entry)
-                row.showsSeparator = index < entries.count - 1
-                addRow(row)
-            }
+            expandedLayout = nil
+            showCompactRows(entries)
         }
         view.needsLayout = true
         view.layoutSubtreeIfNeeded()
-        scrollView.contentView.scroll(to: NSPoint(x: 0, y: min(offset.y, max(0, accounts.frame.height - scrollView.contentSize.height))))
+        let documentHeight = scrollView.documentView?.frame.height ?? 0
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: min(offset.y, max(0, documentHeight - scrollView.contentSize.height))))
         scrollView.reflectScrolledClipView(scrollView.contentView)
+        if announce && isExpanded { announceSizeIfChanged() }
     }
 
-    private func addRow(_ row: NSView) {
-        accounts.addArrangedSubview(row)
+    /// A lista pode mudar de altura com um snapshot novo (conta que entra, texto
+    /// que quebra): o popover ampliado precisa acompanhar.
+    private func announceSizeIfChanged() {
+        let size = preferredContentSize()
+        guard size != announcedSize else { return }
+        announcedSize = size
+        onPreferredSizeChange?()
+    }
+
+    private func showEmptyRow() {
+        scrollView.documentView = accounts
+        scrollView.hasVerticalScroller = true
+        let empty = AccountRow()
+        empty.showsSeparator = false
+        empty.edgeInsets = NSEdgeInsets(
+            top: 12, left: rowHorizontalInset, bottom: 12, right: rowHorizontalInset)
+        for child in [
+            label("Sem dados ainda.", color: panelTextDim),
+            label("Abra o Nexus e atualize as cotas para ver o painel.",
+                  color: panelTextFaint, size: 11),
+        ] {
+            empty.addArrangedSubview(child)
+            child.translatesAutoresizingMaskIntoConstraints = false
+            child.widthAnchor.constraint(
+                equalTo: empty.widthAnchor, constant: -rowHorizontalInset * 2
+            ).isActive = true
+        }
+        currentRows = [empty]
+        addRow(empty, to: accounts)
+    }
+
+    private func showCompactRows(_ entries: [RedlineEntry]) {
+        scrollView.documentView = accounts
+        scrollView.hasVerticalScroller = true
+        for (index, entry) in entries.enumerated() {
+            let row = accountRow(entry)
+            row.showsSeparator = index < entries.count - 1
+            currentRows.append(row)
+            addRow(row, to: accounts)
+        }
+    }
+
+    /// Ampliado: as MESMAS linhas do compacto (accountRow não muda), repartidas
+    /// em colunas de largura fixa. A altura de cada linha é medida numa pilha
+    /// de prova na largura da coluna, e só então o plano decide quantas colunas
+    /// e onde cortar — assim o que aparece no print é o que foi medido.
+    private func showExpandedColumns(_ entries: [RedlineEntry]) {
+        let rows = entries.map { accountRow($0) }
+        let probe = AccountList()
+        probe.orientation = .vertical
+        probe.alignment = .leading
+        probe.spacing = 0
+        probe.frame = NSRect(x: 0, y: 0, width: expandedColumnWidth, height: 10)
+        for row in rows { addRow(row, to: probe) }
+        applyWrapWidths(to: rows, rowWidth: expandedColumnWidth)
+        probe.setFrameSize(NSSize(width: expandedColumnWidth, height: probe.fittingSize.height))
+        probe.layoutSubtreeIfNeeded()
+        let heights = rows.map { $0.frame.height }
+
+        let maxHeight = max(240, availableScreenSize.height - screenMargin)
+        let availableList = maxHeight - (panelHeaderHeight + expandedFooterHeight + 1)
+        let perColumn = expandedColumnWidth + 1
+        let maxColumns = max(1, min(expandedMaxColumns,
+                                    Int((availableScreenSize.width - screenMargin + 1) / perColumn)))
+        let plan = planColumns(heights: heights, availableHeight: availableList,
+                               minColumns: min(2, maxColumns), maxColumns: maxColumns)
+
+        for row in rows { probe.removeArrangedSubview(row); row.removeFromSuperview() }
+        let document = ColumnsDocument()
+        var x: CGFloat = 0
+        for (index, range) in plan.ranges.enumerated() {
+            let column = AccountList()
+            column.orientation = .vertical
+            column.alignment = .leading
+            column.spacing = 0
+            for rowIndex in range {
+                // Sem fio no pé da última de cada coluna: o fio vertical já separa.
+                rows[rowIndex].showsSeparator = rowIndex < range.upperBound - 1
+                addRow(rows[rowIndex], to: column)
+            }
+            let height = heights[range].reduce(0, +)
+            column.frame = NSRect(x: x, y: 0, width: expandedColumnWidth, height: height)
+            column.layoutSubtreeIfNeeded()
+            document.addSubview(column)
+            x += expandedColumnWidth
+            if index < plan.ranges.count - 1 {
+                document.addSubview(VerticalHairline(frame: NSRect(x: x, y: 0, width: 1, height: plan.tallest)))
+                x += 1
+            }
+        }
+        document.frame = NSRect(x: 0, y: 0, width: x, height: plan.tallest)
+        currentRows = rows
+        let scrolls = !plan.fits(in: availableList)
+        expandedLayout = ExpandedLayout(columns: plan.columnCount, contentWidth: x,
+                                        listHeight: plan.tallest, scrolls: scrolls)
+        scrollView.hasVerticalScroller = scrolls
+        scrollView.documentView = document
+    }
+
+    private func addRow(_ row: NSView, to stack: NSStackView) {
+        stack.addArrangedSubview(row)
         row.translatesAutoresizingMaskIntoConstraints = false
-        row.widthAnchor.constraint(equalTo: accounts.widthAnchor).isActive = true
+        row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
     }
 
     /// Papel da linha dentro da row: quanto da coluna de conteúdo já está
@@ -389,7 +617,13 @@ final class QuotaPanelController: NSViewController {
     }
 
     private func applyWrapWidths() {
-        let column = scrollView.contentSize.width - rowHorizontalInset * 2
+        // Ampliado: a coluna tem largura fixa, independente do popover.
+        let width = expandedLayout != nil ? expandedColumnWidth : scrollView.contentSize.width
+        applyWrapWidths(to: currentRows, rowWidth: width)
+    }
+
+    private func applyWrapWidths(to rows: [AccountRow], rowWidth: CGFloat) {
+        let column = rowWidth - rowHorizontalInset * 2
         func walk(_ view: NSView) {
             if let field = view as? NSTextField,
                let role = wrapRoles[ObjectIdentifier(field)] {
@@ -397,7 +631,7 @@ final class QuotaPanelController: NSViewController {
             }
             for child in view.subviews { walk(child) }
         }
-        for row in accounts.arrangedSubviews { walk(row) }
+        for row in rows { walk(row) }
     }
 
     private func accountRow(_ entry: RedlineEntry) -> AccountRow {

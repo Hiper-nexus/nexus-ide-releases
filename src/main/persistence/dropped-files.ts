@@ -51,7 +51,17 @@ export interface SaveDroppedFileOptions extends DroppedFileSecurityOptions {
 }
 
 export type SaveDroppedFileResult =
-  | { readonly ok: true; readonly path: string }
+  | {
+      readonly ok: true;
+      /** Relativo à raiz do projeto (ou absoluto, nos imports que já o são). */
+      readonly path: string;
+      /**
+       * Onde o arquivo ESTÁ de fato (realpath, verificado depois da gravação).
+       * O renderer o digita no pane: recompor `path` contra a pasta do pane
+       * apontava para a worktree, onde o anexo não existe (F-760).
+       */
+      readonly absolutePath?: string;
+    }
   | { readonly ok: false; readonly error: string };
 
 export interface DroppedAttachmentSnapshot {
@@ -562,6 +572,7 @@ function stageMissionContextFile(
     return {
       ok: true,
       path: `${MISSION_CONTEXT_ATTACHMENT_PREFIX}${storedName}`,
+      absolutePath: canonical,
     };
   } catch (error) {
     if (fd !== null) {

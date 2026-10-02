@@ -43,6 +43,13 @@ describe('catálogo de atalhos', () => {
     }
   });
 
+  it('reportar um problema tem atalho global próprio, em qualquer tela', () => {
+    const entry = shortcutById('bug-report');
+    expect(entry?.action).toMatch(/problema/i);
+    expect(entry?.keys.toUpperCase()).toContain('B');
+    expect(GLOBAL_HANDLER_SHORTCUT_IDS).toContain('bug-report');
+  });
+
   it('todo atalho primary tem rótulo curto para o rodapé', () => {
     for (const entry of SHORTCUTS.filter((item) => item.primary)) {
       expect(

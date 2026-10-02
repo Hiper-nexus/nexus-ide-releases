@@ -18,16 +18,15 @@ import { useSessionStateStore } from '../../state/session-state-store';
 import { formatShortcut } from '../../lib/platform';
 import { useQuotaStore } from '../../state/quota-store';
 import { useLifetimeUsage } from '../../state/lifetime-usage';
-import { fmtTokens, fmtUsd } from '../../lib/lifetime-format';
 import { useAdapterStore } from '../../state/adapter-store';
-import { prioritizeReportedQuotas, shortWindowsLine } from '../../lib/quota-display';
-import { collapseSharedQuotaEntries } from '../../../shared/quota-types';
 import { useMinuteTick } from '../../lib/use-minute-tick';
 import { ProviderLogo } from '../ProviderLogo';
 import { useTerminalGridDialogStore } from '../../state/terminal-grid-dialog-store';
 import { useCommandPaletteStore } from '../../state/command-palette-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { WorkspaceCleanup } from './WorkspaceCleanup';
+import { RailQuotaCard } from './RailQuotaCard';
+import { ReportProblemButton } from '../bug-report/ReportProblemButton';
 import { NexusMark } from '../NexusMark';
 import { TrialNoticeCard } from './TrialNoticeCard';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
@@ -778,6 +777,12 @@ export function WorkspaceRail({
           </span>
           <strong className="workspace-rail__brand-name">Nexus</strong>
         </div>
+        <ReportProblemButton
+          className="workspace-rail__report"
+          title={`Reportar um problema (${formatShortcut('mod', 'shift', 'B')})`}
+        >
+          Reportar bug
+        </ReportProblemButton>
       </header>
 
       <div className="workspace-rail__search-wrap">
@@ -974,122 +979,12 @@ export function WorkspaceRail({
         ) : null}
 
         {quotaEntries.length > 0 ? (
-          <div
-            className="workspace-rail__cockpit"
-            onClick={onOpenUsageQuota ?? onOpenSettings}
-            role="button"
-            tabIndex={0}
-            aria-label="Ver uso de cotas nas Configurações"
-            title="Cotas de IA disponíveis — clique para detalhes"
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                (onOpenUsageQuota ?? onOpenSettings)();
-              }
-            }}
-          >
-            <div className="workspace-rail__cockpit-header">
-              <span className="workspace-rail__cockpit-title">Cotas</span>
-              <span className="workspace-rail__cockpit-detail-hint">Ver</span>
-            </div>
-            <div className="workspace-rail__cockpit-bars">
-              {prioritizeReportedQuotas(collapseSharedQuotaEntries(quotaEntries)).slice(0, 4).map((entry) => {
-                // A barra e o percentual vêm SOMENTE da telemetria real do
-                // serviço. Um cooldown/limit-hit jamais pinta 100% falso por
-                // cima de uma leitura fresca (ex.: conta pausada com Semanal
-                // 54%) — a pausa aparece como selo, o percentual é o fato.
-                const identityMismatch = entry.readHint === 'identity-mismatch';
-                const visibleEntry = identityMismatch ? { ...entry, windows: [] } : entry;
-                let worst: number | null = null;
-                for (const window of visibleEntry.windows) {
-                  if (window.usedRatio === null) continue;
-                  if (worst === null || window.usedRatio > worst) {
-                    worst = window.usedRatio;
-                  }
-                }
-                const authExpired = entry.readHint === 'auth-expired' || identityMismatch;
-                const tone =
-                  worst === null
-                    ? authExpired
-                      ? 'warn'
-                      : 'unknown'
-                    : worst >= 0.8
-                      ? 'danger'
-                      : worst >= 0.5
-                        ? 'warn'
-                        : 'ok';
-                const percentLabel =
-                  worst === null
-                    ? authExpired
-                      ? 'relogin'
-                      : '—'
-                    : `${Math.round(worst * 100)}%`;
-                // Estilo Orca compacto: janelas informadas ("Sem 41% · 5d").
-                const line = shortWindowsLine(visibleEntry, quotaTick, { compact: true });
-                const cooldownTitle = authExpired
-                  ? identityMismatch
-                    ? ' · credencial de outra conta Claude — entre novamente em Ajustes › Uso e cotas'
-                    : ' · sessão expirada — reautentique a conta em Ajustes › Uso e cotas'
-                  : entry.onCooldown
-                    ? ' · pausa temporária após sinal de limite (percentual = última leitura do serviço)'
-                    : '';
-                return (
-                  <div
-                    key={entry.id}
-                    className={`workspace-rail__quota-item${
-                      entry.onCooldown && !authExpired ? ' workspace-rail__quota-item--cool' : ''
-                    }`}
-                    title={`${line}${cooldownTitle}`}
-                  >
-                    <div className="workspace-rail__quota-info">
-                      <span className="workspace-rail__quota-name"><ProviderLogo adapterId={entry.adapterId} label={entry.label} size="xs" /><span>{entry.label}</span></span>
-                      <span className="workspace-rail__quota-tail">
-                        {entry.onCooldown && !authExpired ? (
-                          <span className="workspace-rail__quota-pause" title="Conta em pausa temporária">pausa</span>
-                        ) : null}
-                        <span
-                          className={`workspace-rail__quota-val workspace-rail__quota-val--${tone}`}
-                        >
-                          {percentLabel}
-                        </span>
-                      </span>
-                    </div>
-                    {line ? (
-                      <span
-                        className="workspace-rail__quota-line"
-                        title={line}
-                      >
-                        {line}
-                      </span>
-                    ) : null}
-                    <div className="workspace-rail__quota-track">
-                      <div
-                        className={`workspace-rail__quota-bar workspace-rail__quota-bar--${tone}`}
-                        style={{
-                          transform: `scaleX(${Math.min(1, Math.max(0, worst ?? 0))})`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            {lifetimeUsage &&
-            (lifetimeUsage.tokensBurned > 0 ||
-              lifetimeUsage.usdEquivalent > 0) ? (
-              <div
-                className="workspace-rail__cockpit-usage"
-                title="Consumo real acumulado em todos os projetos — o que custaria em API paga; a assinatura já cobre"
-              >
-                <span>
-                  ⚡ {fmtTokens(lifetimeUsage.tokensBurned)} tok torrados
-                </span>
-                <span className="workspace-rail__cockpit-usage-usd">
-                  {fmtUsd(lifetimeUsage.usdEquivalent)} em API
-                </span>
-              </div>
-            ) : null}
-          </div>
+          <RailQuotaCard
+            entries={quotaEntries}
+            now={quotaTick}
+            lifetimeUsage={lifetimeUsage}
+            onOpenUsage={onOpenUsageQuota ?? onOpenSettings}
+          />
         ) : null}
         </div>
 

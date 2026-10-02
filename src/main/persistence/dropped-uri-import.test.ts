@@ -160,6 +160,10 @@ describe('importDroppedUri — file://', () => {
     expect(fs.readFileSync(path.join(workspace, result.path), 'utf8')).toBe(
       'png-bytes',
     );
+    // F-760: o caminho absoluto aponta para o arquivo que existe, na raiz do
+    // projeto — não para a pasta de onde o pane roda.
+    expect(result.absolutePath).toBe(path.join(workspace, result.path));
+    expect(fs.readFileSync(result.absolutePath ?? '', 'utf8')).toBe('png-bytes');
   });
 
   it('stages a local file above 14 MB via the streaming route (F-582)', async () => {

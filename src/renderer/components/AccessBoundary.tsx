@@ -11,6 +11,7 @@ import { AccountSection } from './settings/AccountSection';
 import { AccessPaneList } from './access/AccessPaneList';
 import { ACCESS_COPY, accessTitle } from './access/access-view';
 import { NexusMark } from './NexusMark';
+import { ReportProblemButton } from './bug-report/ReportProblemButton';
 import { UpdateNotifier } from './UpdateModal';
 import '../styles/access-boundary.css';
 
@@ -71,6 +72,8 @@ function AccessScreen({ loading, reason }: { loading: boolean; reason: AccessBlo
       />
       <footer className="access-footer">
         <UpdateNotifier alwaysVisible />
+        {/* Quem está bloqueado é justamente quem mais precisa conseguir reportar. */}
+        <ReportProblemButton className="access-btn access-btn--quiet">Reportar um problema</ReportProblemButton>
         {workspace && <button type="button" className="access-btn access-btn--quiet" onClick={() => {
           setFolderError(false);
           void window.nexus.app.openTerminalPath(workspace.path).then(result => { if (!result.ok) setFolderError(true); }).catch(() => setFolderError(true));

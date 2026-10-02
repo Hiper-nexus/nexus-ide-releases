@@ -3,7 +3,7 @@ import { normalizeProjectContextPath } from '../state/mission-setup-store';
 import {
   classifyMissionAttachment,
   MISSION_ATTACHMENT_LIMITS,
-  stageMissionAttachment,
+  stageMissionAttachmentWithLocation,
 } from './mission-attachments';
 import { hasSkillDragType } from './pane-interactions';
 
@@ -35,6 +35,11 @@ export function droppedProjectContextPath(
   const prefix = `${comparableRoot}/`;
   if (!comparableCandidate.startsWith(prefix)) return null;
   return normalizeProjectContextPath(candidate.slice(root.length + 1));
+}
+
+/** Caminho absoluto em qualquer SO (POSIX, UNC e letra de unidade). */
+export function isAbsoluteContextPath(candidate: string): boolean {
+  return isAbsolutePath(candidate);
 }
 
 function isAbsolutePath(candidate: string): boolean {
@@ -116,7 +121,16 @@ export function partitionDroppedMissionFiles(
  * memória do renderer (o main já recusa payloads acima do teto dele).
  */
 export type DroppedPathResolution =
-  | { readonly ok: true; readonly path: string }
+  | {
+      readonly ok: true;
+      readonly path: string;
+      /**
+       * Onde o arquivo está, quando se sabe com certeza: o caminho absoluto
+       * que o Main gravou (anexo estagiado) ou o do próprio arquivo dentro da
+       * pasta pedida. É este que se digita no pane (F-760).
+       */
+      readonly absolutePath?: string;
+    }
   | { readonly ok: false; readonly error: string };
 
 /** Motivo honesto de uma recusa do intake do pane — nunca conteúdo. */
@@ -135,15 +149,23 @@ export async function resolveDroppedMissionContextPath(
 ): Promise<DroppedPathResolution> {
   if (workspacePath && workspacePath.length > 0) {
     const relative = droppedProjectContextPath(workspacePath, file);
-    if (relative) return { ok: true, path: relative };
+    if (relative) {
+      return {
+        ok: true,
+        path: relative,
+        absolutePath: toAbsoluteContextPath(workspacePath, relative),
+      };
+    }
   }
   if (file.size > MISSION_ATTACHMENT_LIMITS.maxBytesPerFile) {
     return { ok: false, error: droppedFileRejectionMessage(file) };
   }
   try {
+    const staged = await stageMissionAttachmentWithLocation(file, { allowAnyKind: true });
     return {
       ok: true,
-      path: (await stageMissionAttachment(file, { allowAnyKind: true })).path,
+      path: staged.attachment.path,
+      ...(staged.absolutePath ? { absolutePath: staged.absolutePath } : {}),
     };
   } catch (error) {
     // F-582: o catch mudo escondia o motivo real (leitura do File, IPC) —

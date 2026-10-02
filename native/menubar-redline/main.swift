@@ -151,7 +151,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var watchSource: DispatchSourceFileSystemObject?
     var pollTimer: Timer?
     let popover = NSPopover()
-    lazy var quotaPanel = QuotaPanelController(target: self)
+    lazy var quotaPanel: QuotaPanelController = {
+        let panel = QuotaPanelController(target: self)
+        // Ampliar/Reduzir muda o tamanho e o comportamento do popover.
+        panel.onPreferredSizeChange = { [weak self] in self?.applyPanelMode() }
+        return panel
+    }()
     /// Guarda o estado do login item sem depender de SMAppService a cada paint.
     var launchAtLoginEnabled = false
     /// NSKeyValueObservation morre ao sair de escopo: sem reter aqui, trocar o
@@ -190,12 +195,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button else { return }
         reloadSnapshot()
         refreshLaunchAtLoginState()
-        quotaPanel.update(snapshot: snapshot, launchAtLogin: launchAtLoginEnabled)
+        // Sempre abre compacto: o ampliado é uma decisão do momento (print).
+        quotaPanel.resetToCompact()
         // Keep the whole panel on the screen containing the status item.
-        let screenHeight = button.window?.screen?.visibleFrame.height ?? 700
-        popover.contentSize = NSSize(width: 400, height: min(600, max(240, screenHeight - 32)))
+        if let visible = button.window?.screen?.visibleFrame.size {
+            quotaPanel.availableScreenSize = visible
+        }
+        quotaPanel.update(snapshot: snapshot, launchAtLogin: launchAtLoginEnabled)
+        popover.behavior = .transient
+        popover.contentSize = quotaPanel.preferredContentSize()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
+    }
+
+    /// Ampliado vira o painel do print: um clique fora (ou o próprio atalho de
+    /// captura) não pode fechá-lo, então o popover deixa de ser transient. Quem
+    /// fecha é o ícone da barra, o "Abrir no Nexus" ou o botão Reduzir.
+    func applyPanelMode() {
+        popover.behavior = quotaPanel.isExpanded ? .applicationDefined : .transient
+        let size = quotaPanel.preferredContentSize()
+        if popover.contentSize != size { popover.contentSize = size }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

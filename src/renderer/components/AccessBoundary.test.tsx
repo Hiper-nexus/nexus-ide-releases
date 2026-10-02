@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, expect, it, vi } from 'vitest';
 import { DEFAULT_LICENSE } from '../../shared/billing-types';
 import { useAccessStore } from '../state/access-store';
+import { useBugReportDialogStore } from '../state/bug-report-dialog-store';
 import { OverlayLayer } from '../overlay/overlay-layer';
 import { AccessBoundary } from './AccessBoundary';
 vi.mock('./settings/AccountSection', () => ({ AccountSection: () => <button data-access-initial-focus="">Entrar com GitHub</button> }));
@@ -30,4 +31,14 @@ it.each(['login-required', 'invalid-license', 'license-expired', 'account-mismat
   expect(host.querySelector('input')).toBe(workspace);
   expect(workspace.value).toBe('preservado');
   expect(workspace.closest('[inert]')).toBeNull();
+});
+it('quem está bloqueado ainda consegue reportar um problema (botão na própria tela)', async () => {
+  Object.defineProperty(window, 'nexus', { configurable: true, value: { billing: { onChanged: () => () => {}, get: async () => ({ ...DEFAULT_LICENSE, blockedReason: 'login-required' }) } } });
+  useBugReportDialogStore.setState({ isOpen: false });
+  await act(async () => root.render(<AccessBoundary><input aria-label="Workspace" /></AccessBoundary>));
+  const report = host.querySelector('.access-footer [aria-label="Reportar um problema"]') as HTMLButtonElement | null;
+  expect(report).not.toBeNull();
+  act(() => report!.click());
+  expect(useBugReportDialogStore.getState().isOpen).toBe(true);
+  act(() => useBugReportDialogStore.getState().close());
 });

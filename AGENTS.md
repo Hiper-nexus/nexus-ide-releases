@@ -528,6 +528,16 @@ saber isto antes de mexer:
   Marca `mono` exige `isTemplate` + tinta clara, senão preto sobre near-black
   desaparece; o `NOTICE.md` de procedência viaja com elas para o bundle.
 
+- F-759: o painel do Mac tem "Ampliar"/"Reduzir". Ampliado, as contas vão em 2–4
+  colunas de 360pt (`column-plan.swift`, mínimo de colunas que cabe na altura da
+  tela; sem caber, volta à rolagem sem cortar conta), o popover vira
+  `.applicationDefined` (a captura de tela não o fecha) e reabrir é sempre
+  compacto. Fio de separação desenhado pelos limites da view: na captura de
+  tela o fio por `draw(_:)` pintava o painel inteiro.
+- F-758: no app, o card "Cotas" da barra lateral (`RailQuotaCard.tsx`) expande para
+  todas as contas com um clique (preferência em `rail-quota-prefs.ts`); com ≤4 contas
+  o cabeçalho abre o uso. Coluna da grade em `minmax(0, 1fr)`: nome longo corta.
+
 ## Redline no Linux: bandeja dentro do app (feature, sem F-id)
 
 - No Linux não há companheiro à parte: o Redline é um `Tray` + `Menu` do
@@ -751,6 +761,14 @@ saber isto antes de mexer:
   Blob sem caminho (base64) e downloads http(s) ficam em 14 MiB. Sem nada
   aproveitável, o toast "Nada foi colado no terminal" explica — WhatsApp sem
   arquivo materializado pede para salvar e copiar/arrastar do Finder.
+
+- F-760: anexo que o MAIN grava (drop sem `File`, `File` fora do projeto, blob base64)
+  vive na RAIZ do projeto, que em aba com worktree NÃO é o cwd do pane. O Main
+  devolve `absolutePath` (realpath verificado) e o pane digita ESSE
+  (`injectMainStagedPath`); sem ele resolve contra a raiz do projeto ativo e só
+  então contra o cwd. Arquivo que já está na pasta do pane segue relativo a ela.
+  Nunca junte um caminho relativo-à-raiz ao cwd do pane. `MissionAttachment` não
+  ganhou campo (viaja para missões): use `stageMissionAttachmentWithLocation`.
 
 ## Muse pane imprime `--help` e sai code 2 (F-596)
 

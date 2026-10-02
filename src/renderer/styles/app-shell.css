@@ -260,8 +260,46 @@
   -webkit-app-region: no-drag;
 }
 
+.workspace-rail__report {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+  -webkit-app-region: no-drag;
+}
+
+.workspace-rail__report > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-rail__report:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+  border-color: var(--border-strong, var(--border));
+}
+
+.workspace-rail__report:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .workspace-rail__brand {
   display: flex;
+  /* A marca não encolhe: num rail estreito quem cede é o rótulo do botão. */
+  flex: 0 0 auto;
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
@@ -1438,7 +1476,22 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  width: 100%;
   margin-bottom: var(--space-1);
+  padding: 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-rail__cockpit-header:focus-visible,
+.workspace-rail__cockpit-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm, 6px);
 }
 
 .workspace-rail__cockpit-title {
@@ -1459,11 +1512,68 @@
 
 .workspace-rail__cockpit-bars {
   display: grid;
+  /* A coluna nunca passa da largura do card: sem isso o nome longo (e-mail)
+     empurra o percentual para fora e a borda corta o dado. */
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-2);
+}
+
+/*
+  Card expandido: TODAS as contas, cada uma com a sua janela. A lista rola por
+  dentro (a barra lateral continua dona da altura). A linha de janelas fica
+  garantida aqui mesmo que a regra de janela baixa volte a escondê-la.
+*/
+.workspace-rail__cockpit--expanded {
+  cursor: default;
+}
+
+.workspace-rail__cockpit-summary {
+  margin-bottom: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.3;
+  color: var(--text-dim);
+}
+
+.workspace-rail__cockpit--expanded .workspace-rail__cockpit-bars {
+  max-height: min(50vh, 28rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: var(--space-1);
+  scrollbar-width: thin;
+}
+
+.workspace-rail__cockpit--expanded .workspace-rail__quota-item + .workspace-rail__quota-item {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+}
+
+.workspace-rail__cockpit--expanded .workspace-rail__quota-line {
+  display: block;
+}
+
+.workspace-rail__cockpit-open {
+  width: 100%;
+  margin-top: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  background: transparent;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  border-radius: var(--radius-sm, 6px);
+  font: inherit;
+  font-size: 10px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.workspace-rail__cockpit-open:hover {
+  color: var(--text);
+  border-color: var(--border, rgba(255, 255, 255, 0.15));
 }
 
 .workspace-rail__quota-item {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 2px;
 }
 

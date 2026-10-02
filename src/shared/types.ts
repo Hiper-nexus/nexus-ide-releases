@@ -1064,14 +1064,14 @@ export interface NexusApi {
     importMissionAttachment(
       name: string,
       base64: string,
-    ): Promise<{ ok: boolean; path?: string; error?: string }>;
+    ): Promise<{ ok: boolean; path?: string; absolutePath?: string; error?: string }>;
     /**
      * Drop that carried no `File`, only a `file://` path or an http(s) link:
      * main reads/downloads it and stages it in mission-context like above.
      */
     importDroppedUri(
       uri: string,
-    ): Promise<{ ok: boolean; path?: string; error?: string }>;
+    ): Promise<{ ok: boolean; path?: string; absolutePath?: string; error?: string }>;
     /**
      * Files copied in Finder/Explorer live on the system pasteboard as file
      * URLs Chromium does not always expose to the paste event; Main reads

@@ -36,6 +36,7 @@ import {
   pasteUrisFromClipboard,
   resolveDroppedMissionContextPath,
   resolveDropUris,
+  isAbsoluteContextPath,
   toAbsoluteContextPath,
   type DroppedUri,
   type DroppedPayload,
@@ -2440,10 +2441,36 @@ function hostBaseDir(host: Host): string | null {
   return paneCwd || getActiveWorkspacePath();
 }
 
-/** Escreve no PTY o caminho já estagiado/relativo, como um path digitado. */
+/**
+ * Escreve no PTY o caminho de um arquivo que JÁ está na pasta do pane
+ * (relativo a ela), como um path digitado.
+ */
 function injectStagedPath(host: Host, stagedPath: string): void {
   if (!host.sessionId) return;
   const fullPath = toAbsoluteContextPath(hostBaseDir(host), stagedPath);
+  window.nexus.pty.write(host.sessionId, `${shellQuote(fullPath)} `);
+}
+
+/**
+ * Digita no PTY o caminho de um anexo que o MAIN gravou (F-760). Ele vive na
+ * raiz do PROJETO (`.nexus/attachments/mission-context/`), que em aba com
+ * worktree NÃO é a pasta do pane — juntar o relativo ao cwd do pane apontava
+ * para um arquivo inexistente e o agente respondia "não consegui acessar os
+ * anexos". Ordem: o caminho absoluto que o Main devolveu (verificado depois
+ * da gravação) → a raiz do projeto ativo → só então a pasta do pane.
+ */
+function injectMainStagedPath(
+  host: Host,
+  staged: { readonly path: string; readonly absolutePath?: string },
+): void {
+  if (!host.sessionId) return;
+  const fullPath =
+    staged.absolutePath && isAbsoluteContextPath(staged.absolutePath)
+      ? staged.absolutePath
+      : toAbsoluteContextPath(
+          getActiveWorkspacePath() || hostBaseDir(host),
+          staged.path,
+        );
   window.nexus.pty.write(host.sessionId, `${shellQuote(fullPath)} `);
 }
 
@@ -2478,7 +2505,10 @@ async function injectDroppedFile(host: Host, file: File): Promise<void> {
           );
           return;
         }
-        injectStagedPath(host, result.path);
+        injectMainStagedPath(host, {
+          path: result.path,
+          absolutePath: result.absolutePath,
+        });
         return;
       }
       useToastStore.getState().push(
@@ -2502,7 +2532,7 @@ async function injectDroppedFile(host: Host, file: File): Promise<void> {
         );
         return;
       }
-      injectStagedPath(host, resolved.path);
+      injectMainStagedPath(host, resolved);
       return;
     }
     // "Não cola e não mostra" (screenshot 2026-08-18): arquivo que o intake
@@ -2604,7 +2634,10 @@ async function injectDroppedUri(host: Host, dropped: DroppedUri): Promise<void> 
         );
         return;
       }
-      injectStagedPath(host, result.path);
+      injectMainStagedPath(host, {
+          path: result.path,
+          absolutePath: result.absolutePath,
+        });
       return;
     }
     useToastStore.getState().push(

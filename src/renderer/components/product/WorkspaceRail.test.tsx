@@ -9,6 +9,7 @@ import {
 } from './WorkspaceRail';
 import { useTerminalGridDialogStore } from '../../state/terminal-grid-dialog-store';
 import { useQuotaStore } from '../../state/quota-store';
+import { useBugReportDialogStore } from '../../state/bug-report-dialog-store';
 import { useAdapterStore } from '../../state/adapter-store';
 import { useLayoutStore } from '../../state/layout-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
@@ -95,6 +96,19 @@ function renderRail(overrides: Partial<WorkspaceRailProps> = {}) {
 }
 
 describe('WorkspaceRail', () => {
+  it('mantém "Reportar bug" à vista no topo do rail e abre o diálogo de problema', () => {
+    useBugReportDialogStore.setState({ isOpen: false });
+    const { host } = renderRail();
+    const report = host.querySelector(
+      'header.workspace-rail__identity [aria-label="Reportar um problema"]',
+    ) as HTMLButtonElement | null;
+    expect(report, 'o botão mora no cabeçalho do rail, que não some em nenhuma tela').not.toBeNull();
+    expect(report?.textContent).toContain('Reportar bug');
+    act(() => report!.click());
+    expect(useBugReportDialogStore.getState().isOpen).toBe(true);
+    act(() => useBugReportDialogStore.getState().close());
+  });
+
   it('offers one new request action before a stable navigation and the history', () => {
     const { host, handlers } = renderRail({ onOpenLauncher: vi.fn() });
     const create = host.querySelectorAll('[aria-label="Novo pedido"], [data-testid="rail-new-mission"]');
@@ -630,9 +644,12 @@ describe('WorkspaceRail', () => {
     expect(cockpit).toBeTruthy();
     expect(cockpit?.textContent).toContain('Claude');
     expect(cockpit?.textContent).toContain('35%');
-    act(() => (cockpit as HTMLElement).click());
-    act(() => cockpit!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
-    expect(onOpenUsageQuota).toHaveBeenCalledTimes(2);
+    // Com poucas contas não há o que expandir: o cabeçalho (um botão de
+    // verdade, alcançável por teclado) leva direto ao uso e cotas.
+    const header = cockpit!.querySelector('.workspace-rail__cockpit-header') as HTMLButtonElement;
+    expect(header.tagName).toBe('BUTTON');
+    act(() => header.click());
+    expect(onOpenUsageQuota).toHaveBeenCalledTimes(1);
 
     const conn = host.querySelector('.workspace-rail__cockpit-conn');
     expect(conn?.textContent).toContain('Local');

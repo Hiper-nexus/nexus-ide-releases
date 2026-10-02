@@ -15,4 +15,9 @@ describe('PixelIcon', () => {
     const html = renderToStaticMarkup(<PixelIcon name="plus" size={14} />);
     expect(html).toContain('width="14"');
   });
+
+  it('draws a bug glyph (report entry point)', () => {
+    const html = renderToStaticMarkup(<PixelIcon name="bug" size={12} />);
+    expect(html).toContain('<rect');
+  });
 });
