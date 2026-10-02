@@ -1,7 +1,7 @@
 import type { DecisionImage } from '../../shared/decision-models';
 import type { JudgeInput, JevAnswer, JevQuestion, JevResult } from '../jev/jev-client';
 import type { JevDecisionSurface } from '../jev/jev-decision-log';
-import { decisionResultCostUsd } from './decision-pricing';
+import { decisionResultUsage } from './decision-usage';
 import { z } from 'zod';
 
 export const DECISION_EVAL_MODELS = ['jev', 'clef', 'clef-flash'] as const;
@@ -65,9 +65,10 @@ async function observe(testCase: DecisionEvalCase, requestedModel: DecisionEvalM
     const result = await judge(requestedModel, { state: testCase.state, questions: testCase.questions, images: testCase.images });
     if (!result) return { ...base, status: 'failed' };
     const correct = Object.entries(testCase.expected).every(([id, expected]) => matches(result.answers[id], expected));
+    const measured = decisionResultUsage(result);
     return { ...base, status: 'answered', correct, model: result.model,
       durationMs: result.durationMs ?? performance.now() - started,
-      inputTokens: result.usage.input_tokens, usd: decisionResultCostUsd(result) };
+      inputTokens: measured.inputTokens, usd: measured.usd };
   } catch { return { ...base, status: 'failed' }; }
 }
 

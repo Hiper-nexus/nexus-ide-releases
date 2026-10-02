@@ -74,6 +74,7 @@ export const LOGIN_FINISH_FALLBACK =
  * continua válida e a interface não deve tratá-las como falha do login atual.
  */
 const STALE_EXCHANGE_CODES: ReadonlySet<string> = new Set([
+  'login superseded',
   'nenhum login pendente',
   'state não confere com o login pendente',
 ]);

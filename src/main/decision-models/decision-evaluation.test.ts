@@ -9,6 +9,14 @@ const cases: DecisionEvalCase[] = [
 ];
 
 describe('decision workload evaluation', () => {
+  it('scores an answered Jev observation while keeping omitted usage unknown', async () => {
+    const report = await evaluateDecisionCases(cases, async model => ({ model,
+      answers: { action: { type: 'choice', choice: 'read', probabilities: { read: 1, none: 0 }, confidence: 1 } },
+      usageMissing: true, usage: { input_tokens: 0, output_tokens: 0 } }));
+    expect(report.models.jev.answered).toBe(2);
+    expect(report.models.jev.usd).toBeNull();
+    expect(report.observations[0].inputTokens).toBeNull();
+  });
   it('rejects empty labels, mismatched question IDs and reversed scoring ranges', () => {
     expect(decisionEvalCasesSchema.safeParse([{ ...cases[0], expected: {} }]).success).toBe(false);
     expect(decisionEvalCasesSchema.safeParse([{ ...cases[0], expected: { missing: true } }]).success).toBe(false);

@@ -55,7 +55,7 @@ describe('finishAuthDeepLink', () => {
     await expect(finishAuthDeepLink(link, notify, vi.fn().mockResolvedValue({ ok: true }))).resolves.toBeUndefined();
   });
 
-  it.each(['nenhum login pendente', 'state não confere com o login pendente'])(
+  it.each(['nenhum login pendente', 'state não confere com o login pendente', 'login superseded'])(
     'link velho/forjado (%s) chega marcado como stale para não derrubar a espera',
     async (error) => {
       const notify = vi.fn();

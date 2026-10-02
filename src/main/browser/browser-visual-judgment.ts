@@ -1,7 +1,7 @@
 import type { DecisionImage } from '../../shared/decision-models';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { decisionConfigurationKey, getDecisionAvailability, getDecisionSettings } from '../decision-models/decision-availability';
-import { judge, type JevQuestion } from '../jev/jev-client';
+import { judge, type JevQuestion, type JevResult } from '../jev/jev-client';
 import { recordJevDecision, jevAnswerProbabilities, jevAnswerConfidences } from '../jev/jev-decision-log';
 import { decisionResultUsage } from '../decision-models/decision-usage';
 import { captureRedactedBrowserVisual } from './browser-manager';
@@ -35,6 +35,8 @@ interface BrowserVisualInput {
 
 /** Advisory signals only; no actions, grants, artifact paths or raw pixels returned. */
 export async function judgeBrowserVisual(input: BrowserVisualInput, deps = defaults) {
+  let paidResult: JevResult | null = null;
+  let recorded = false;
   try {
     if (!deps.available() || input.signal?.aborted) return { status: 'unavailable' as const };
     const before = deps.configurationKey();
@@ -47,6 +49,7 @@ export async function judgeBrowserVisual(input: BrowserVisualInput, deps = defau
     snapshot.assertCurrent(); assertAuthority();
     const result = await deps.judge({ state: { goal: input.goal, privacy: 'Editable fields, recognized secrets, frames and canvas are masked.' },
       images: [snapshot.image], questions, surface: 'browserTool', signal: input.signal, sessionId: input.sessionId, missionId: input.missionId });
+    paidResult = result;
     snapshot.assertCurrent(); assertAuthority();
     if (!result) return { status: 'unavailable' as const };
     const signals = Object.fromEntries(Object.keys(SIGNALS).map(id => {
@@ -54,11 +57,18 @@ export async function judgeBrowserVisual(input: BrowserVisualInput, deps = defau
       if (answer?.type !== 'noul') throw new Error('invalid visual response');
       return [id, answer.noul];
     })) as Record<keyof typeof SIGNALS, number>;
+    recorded = true;
     deps.record({ surface: 'browserTool', sessionId: input.sessionId, missionId: input.missionId, model: result.model,
       questions: Object.keys(questions), probabilities: jevAnswerProbabilities(result.answers),
       confidence: jevAnswerConfidences(result.answers), decision: 'visual-signals', ...decisionResultUsage(result) });
     return { status: 'answered' as const, signals, model: result.model, route: result.route };
   } catch (error) {
+    if (paidResult && !recorded) {
+      try { deps.record({ kind: 'no-answer', reason: 'aborted', surface: 'browserTool', sessionId: input.sessionId,
+        missionId: input.missionId, model: paidResult.model, questions: Object.keys(questions), probabilities: {},
+        decision: 'visual-stale', ...decisionResultUsage(paidResult) }); }
+      catch { console.warn('[browser-visual] usage receipt failed'); }
+    }
     if (error instanceof BrowserVisualRefusal) return { status: 'unavailable' as const, reason: error.code, message: error.message };
     return { status: 'unavailable' as const };
   }

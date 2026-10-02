@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.76.164 — Decisões à vista
+## 0.76.165 — Decisões à vista
 
-Build do Mac. Inclui integralmente a 0.76.163.
+Build do Mac. Inclui integralmente a 0.76.164.
 
 - **Recibo da rota com a confiança do Jev e o contrafactual.** O chip "Jev" do pane, `nexus_route_task`, o recibo de `nexus_pane_spawn` e o log de rotas trazem a confiança por dimensão (só das que o Jev decidiu, aceitas pelo limiar de 0,6) e o que a regra teria escolhido (`'same'` quando coincide). O recálculo da regra é em memória, sem efeito colateral, e nunca vira rota reconhecida.
 - **Conta escolhida visível no pane.** Chip no cabeçalho com o rótulo mascarado e tooltip com quem decidiu, folga medida e alternativas. Canal novo `accountChoice:get`, somente leitura, só para a janela principal, com recibo reconstruído por lista de permissão. A decisão de conta continua sendo da regra de folga.
@@ -12,6 +12,17 @@ Build do Mac. Inclui integralmente a 0.76.163.
 - **Limites conhecidos desta versão.** A espera do Jev na voz pode passar de 3,5 s por causa do `retry-after` do cliente (o teto de 5 s do renderer segura); se o texto da tarefa fixar o esforço ("xhigh"), o tooltip ainda pode mostrar a confiança do Jev para o esforço; os pisos de confiança da missão falada só foram medidos com o Jev, e em "Somente Clef" valem pela mesma regra de aceitação, sem avaliação local no Clef.
 - **Documento de comparação** com o que o vídeo do Overclock mostra: `docs/analysis/2026-10-02-jev-clef-vs-overclock.md`. Os limites seguem ditos lá: o Clef não foi validado contra a Cloudflare real e não há comparação lado a lado com o produto concorrente.
 
+## 0.76.164 — Revisão completa
+
+Build do Mac. Preserva integralmente tudo do `main` até a 0.76.163: Jev/Clef/Flash, acesso e licença, assinatura, marca, cotas e reporte de problemas. Preparado após duas rodadas independentes de code review e correção dos achados.
+
+- **F-416:** máscara inclui a geometria de texto e descendentes do bloco sensível, inclusive valor vizinho fora da caixa, ancestral grande e sombra aberta.
+- **F-418:** inspeção DOM iterativa com orçamento de nós/profundidade; comentários e texto/atributos entram no limite do preload.
+- **F-030:** respostas de login antigo não interrompem a tentativa mais nova, inclusive nos caminhos de falha HTTP, JSON e rede.
+- **F-377:** confirmação de descarte do relato aparece acima do diálogo e pode ser usada.
+- **F-417/F-419/F-420:** ranking conserva custos parciais, falhas sem medidas permanecem sem medição e respostas visuais obsoletas conservam o recibo de gasto; avaliador respeita `usageMissing`.
+- **Evidência real:** 18 casos sintéticos de texto nos três serviços: Clef 18/18, Jev 17/18, Flash 16/18. Uma imagem sintética redigida foi aceita pelo Clef. Amostra pequena e sem promoção de limiares de segurança; não é prova de comportamento em sites reais. Visão permanece optativa.
+
 ## 0.76.163 — Reporte de problema
 
 Build do Mac. Inclui integralmente a 0.76.162.
@@ -20,7 +31,7 @@ Build do Mac. Inclui integralmente a 0.76.162.
 - **Visão do navegador mais cuidadosa.** Abas com perfil pessoal são recusadas; a máscara cobre o bloco do rótulo sensível e também os pixels do próprio texto, junta segredos partidos em trechos vizinhos, reconhece mais formatos de token e oculta mídia grande, e é feita por união de retângulos (sem congelar a thread principal). Ligar a visão pede nova confirmação. A ocultação continua parcial.
 - **Superfícies com efeito ficam no Jev.** Guarda de despacho, revisão de handoff, memória e pilotos de navegador e desktop não usam o Clef. `nexus_judge` não aceita mais um agente escolhendo o Clef.
 - **Contrato do Jev tolerante.** Soma de probabilidades com ±0,02 e uso ausente como "sem medição" (não zero); a validação estrita vale só para o Clef. O diário separa linhas medidas das legadas e ignora linhas corrompidas.
-- **Limite conhecido.** Transporte, teste de conexão e julgamento visual do Clef só foram exercitados com simulações; nada foi validado contra a Cloudflare real.
+- **Validação e limites.** Conexões e inferência de texto foram exercitadas na Cloudflare real. A API de imagem respondeu à cena sintética redigida; isso não prova privacidade nem precisão em sites reais. A captura do produto continua optativa, parcial e recusada nos casos não inspecionáveis.
 
 ## 0.76.162 — Cloudflare protegido
 

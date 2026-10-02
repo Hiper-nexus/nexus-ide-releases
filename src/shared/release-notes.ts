@@ -9014,20 +9014,55 @@ export const RELEASE_076163: AppRelease = {
       detail:
         'Uma soma de probabilidades com diferença mínima ou um uso de tokens ' +
         'ausente não derrubam mais a decisão do Jev; o uso ausente aparece ' +
-        'como "sem medição", nunca como zero. O teste de conexão com a ' +
-        'Cloudflare ainda não foi validado contra o serviço real.',
+        'como "sem medição", nunca como zero. Conexões e texto foram ' +
+        'validados com a Cloudflare; a visão segue optativa e limitada.',
     },
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076164: AppRelease = {
   version: '0.76.164',
+  date: '2026-10-02',
+  codename: 'Revisão completa',
+  summary:
+    'Todas as melhorias recentes juntas, com duas rodadas de revisão, ' +
+    'proteção visual reforçada, login que preserva a tentativa nova e ' +
+    'contabilidade correta quando uma consulta só responde em parte.',
+  highlights: [
+    { title: 'Jev e Clef, com controle pela interface', detail:
+      'Automático, Somente Jev ou Somente Clef/Flash; chave Cloudflare no ' +
+      'cofre local. A visão continua optativa e superfícies com efeito ' +
+      'conservam os controles Jev.' },
+    { title: 'Relato de problema com prévia e consentimento', detail:
+      'Menu Ajuda e paleta de comandos, prévia do texto a enviar e escolha ' +
+      'do diagnóstico técnico. Inclui acesso, licença, assinatura, marca ' +
+      'e aviso de fim do teste já integrados.' },
+  ],
+  fixes: [
+    { title: 'Dados sensíveis fora da caixa também são ocultos', detail:
+      'A máscara cobre texto e descendentes do bloco sensível, incluindo ' +
+      'valores vizinhos e sombras abertas. Árvores DOM excessivas são ' +
+      'recusadas com limites antes de processamento recursivo.' },
+    { title: 'A tentativa nova de login continua válida', detail:
+      'Uma resposta atrasada de uma tentativa anterior, inclusive falha ' +
+      'de rede ou do servidor, não interrompe o login mais recente.' },
+    { title: 'Confirmações do relato ficam acessíveis', detail:
+      'A confirmação de descartar alterações aparece acima do diálogo ' +
+      'de reporte e recebe interação.' },
+    { title: 'Custos parciais e medidas ausentes permanecem distintos', detail:
+      'Rankings preservam o uso conhecido dos candidatos que responderam ' +
+      'mesmo se outro falhar; uso ausente permanece sem medição.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.165',
   date: '2026-10-02',
   codename: 'Decisões à vista',
   summary:
     'Você passa a ver por que o Nexus escolheu: a confiança do Jev, o que a ' +
     'regra teria escolhido e qual conta foi usada. A voz deixou de abrir ' +
-    'missão por palpite. Inclui a 0.76.163.',
+    'missão por palpite. Inclui a 0.76.164.',
   highlights: [
     {
       title: 'Recibo da rota com a confiança do Jev',

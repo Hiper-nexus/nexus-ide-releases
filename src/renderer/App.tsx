@@ -1505,7 +1505,7 @@ export function App() {
       </AccessBoundary>
       {/* Fora de `canUseApp` de propósito: quem está bloqueado por licença ou
           cobrança é justamente quem precisa conseguir reportar. */}
-      <OverlayLayer><ConfirmDialog /><ChoiceDialog /><BugReportDialog /><Toasts /></OverlayLayer>
+      <OverlayLayer><BugReportDialog /><ConfirmDialog /><ChoiceDialog /><Toasts /></OverlayLayer>
     </div>
   );
 }

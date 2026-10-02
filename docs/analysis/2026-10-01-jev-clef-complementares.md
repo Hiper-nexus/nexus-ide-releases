@@ -13,10 +13,10 @@ fluxos do produto.
 
 Este documento nasceu como proposta e agora também registra o que foi
 implementado (seção "Evidência da implementação"). A integração, a tela, o
-avaliador e o julgamento visual existem e têm testes de contrato. As avaliações
-com chamadas reais à Cloudflare e o teste de conexão contra a conta real ainda
-não foram executados: a única chamada real feita até aqui foi ao Jev, para
-capturar uma resposta de fixture.
+avaliador e o julgamento visual existem e têm testes de contrato. Também foram
+executados testes de conexão na conta real, uma comparação de 18 casos sintéticos
+de texto nos três modelos e uma consulta Clef com imagem sintética redigida.
+Essa evidência, detalhada abaixo, não comprova precisão ou privacidade em sites reais.
 
 ## Comparação publicada
 
@@ -265,27 +265,27 @@ e a política; chamadas reais com conjuntos rotulados verificam a qualidade.
 
 A análise original não fez chamada de inferência paga, alteração de credencial,
 mudança no código do produto nem medição comparativa no Nexus; a implementação
-veio depois e está descrita em "Evidência da implementação". Nenhuma chamada real
-à Cloudflare (Clef ou Clef Flash) foi feita até hoje: o transporte, o teste de
-conexão e o julgamento visual foram verificados por stubs e testes de contrato.
-A única chamada real foi ao Jev (01/10/2026, estado sintético), cuja resposta
-virou a fixture `src/main/decision-models/jev-real-response.fixture.ts`.
+veio depois e está descrita em "Evidência da implementação". A resposta Jev de
+01/10/2026 virou a fixture `src/main/decision-models/jev-real-response.fixture.ts`.
+Após o cadastro autorizado das credenciais, os endpoints reais Jev, Clef e Flash
+foram verificados pela interface e pelo conjunto rotulado descrito abaixo.
 
 ## Evidência da implementação
 
 A implementação preserva os consumidores Jev pela fachada existente e registra
 provedor, modelo, rota, tokens, duração e tentativas HTTP. A UI oferece Automático,
 Somente Jev e Somente Clef, com Clef Flash opcional. Migrações começam em Jev e a
-visão começa desligada. A política automática inicial usa Clef na escolha de
-ferramentas e Jev nas outras tarefas de texto; indisponibilidade de credenciais
-pode escolher o outro provedor antes da chamada. Falha durante a chamada não
-provoca troca silenciosa. Nenhuma rota foi promovida por resultado simulado.
+visão começa desligada. A política automática usa Clef nas superfícies de texto
+permitidas pela tabela, preservando Jev nas decisões com efeito e limiares
+calibrados (ver "Correções da revisão tripla"). A seleção por disponibilidade
+respeita essas restrições. Falha durante a chamada não provoca troca silenciosa.
+Nenhuma rota foi promovida por resultado simulado.
 
 O avaliador tem 18 casos sintéticos rotulados em português, com desenvolvimento
 e heldout distintos, e separa respostas incorretas, falhas e visão não suportada.
 Esses casos e os testes de contrato não provam superioridade em produção.
-Comparação com as APIs reais depende do cadastro seguro e da disponibilidade dos
-modelos na conta. Relatórios excluem state, expectativas, imagens e credenciais.
+A primeira comparação com as APIs reais está registrada abaixo. Relatórios
+excluem state, expectativas, imagens e credenciais.
 
 O teste de integração no Electron usou o preload real em contexto isolado e
 sandbox, captura de 800×568 pixels e dois campos sintéticos. Senha e token ficaram
@@ -306,7 +306,7 @@ obrigatórios antes da publicação.
 Após cadastro seguro, os três candidatos responderam aos mesmos 18 casos
 sintéticos (9 de desenvolvimento e 9 heldout), sem falhas de transporte:
 
-| Modelo | Acertos totais | Heldout | Latência mediana | Custo observado do conjunto |
+| Modelo | Acertos totais | Heldout | Latência mediana | Custo estimado do conjunto (tarifa × tokens) |
 |---|---:|---:|---:|---:|
 | Jev 1.13.0 | 17/18 | 8/9 | 283 ms | US$ 0,00023499 |
 | Clef | 18/18 | 9/9 | 645 ms | US$ 0,00072888 |
@@ -353,7 +353,7 @@ A revisão da 0.76.161 mudou o desenho em pontos que valem registrar:
   linhas corrompidas são ignoradas em vez de derrubar o painel; falhas internas
   têm motivo próprio. Uma classificação de digest que falhou fica em cache por
   20 s para uma queda do provedor não custar 4 s por leitura de pane.
-- **Limites desta entrega.** Nada disto foi validado contra a Cloudflare real.
+- **Limites desta entrega.** Conexões e 18 casos sintéticos de texto foram validados na API real, assim como uma imagem sintética previamente redigida. As recusas, máscaras e consentimentos do fluxo visual endurecido foram cobertos em testes; isso não valida a precisão nem a privacidade em sites reais.
   Fundos CSS e dados pessoais em texto comum não são mascarados.
 
 ## Missão falada: desempate entre títulos parecidos (superfície `missionPick`)
