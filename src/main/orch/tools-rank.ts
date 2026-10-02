@@ -10,7 +10,7 @@ import { z } from 'zod';
 import type { McpToolDef } from './mcp-protocol';
 import type { AgentGateContext } from './gate';
 import { judge, type JevResult } from '../jev/jev-client';
-import { decisionResultUsage } from '../decision-models/decision-usage';
+import { aggregateDecisionUsage } from '../decision-models/decision-usage';
 import { hasDecisionCredential } from '../decision-models/decision-availability';
 import { consumeJevRateSlots } from '../jev/jev-rate-limit';
 import { assertMcpInvocationCurrent } from './mcp-protocol';
@@ -146,7 +146,16 @@ const rankTool: McpToolDef = {
         return { candidate, result };
       }),
     );
-    // Revogação durante as chamadas: aborta antes de registrar/retornar.
+    const successful = judged.flatMap(({ result }) => result ? [result] : []);
+    if (successful.length) recordJevDecision({
+      ...aggregateDecisionUsage(successful, successful.length !== judged.length || invocation?.signal?.aborted),
+      kind: successful.length === judged.length ? 'decision' : 'no-answer',
+      surface: 'rankTool', sessionId: ctx.sessionId, missionId: ctx.missionId,
+      model: successful[0].model, questions: Object.keys(questions),
+      probabilities: jevAnswerProbabilities(successful[0].answers), confidence: jevAnswerConfidences(successful[0].answers),
+      decision: successful.length === judged.length ? 'rank' : 'rank-incomplete',
+    });
+    // Billing evidence survives revocation; an obsolete ranking never returns.
     assertMcpInvocationCurrent(invocation);
     if (judged.some(({ result }) => result === null)) {
       throw new Error(
@@ -193,28 +202,6 @@ const rankTool: McpToolDef = {
       .map(({ candidate }) => candidate.id);
 
     const model = judged[0]!.result!.model;
-    const inputTokens = judged.reduce(
-      (sum, { result }) => sum + (result?.usage.input_tokens ?? 0),
-      0,
-    );
-    const receipts = judged.map(({ result }) => decisionResultUsage(result!));
-    const firstUsage = receipts[0]!;
-    const requestCount = receipts.every(receipt => receipt.requestCount !== undefined)
-      ? receipts.reduce((sum, receipt) => sum + receipt.requestCount!, 0) : undefined;
-    recordJevDecision({
-      ...firstUsage,
-      surface: 'rankTool',
-      sessionId: ctx.sessionId,
-      missionId: ctx.missionId,
-      model,
-      questions: Object.keys(questions),
-      probabilities: jevAnswerProbabilities(judged[0]!.result!.answers),
-      confidence: jevAnswerConfidences(judged[0]!.result!.answers),
-      decision: 'rank',
-      inputTokens,
-      requestCount,
-      usd: receipts.reduce((sum, receipt) => sum + (receipt.usd ?? 0), 0),
-    });
 
     return { model, ranking, lowConfidence };
   },
