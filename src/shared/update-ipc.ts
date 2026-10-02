@@ -37,17 +37,33 @@ export interface UpdateAvailableInfo {
   notes?: string;
 }
 
+export interface UpdateManualInstall {
+  /** Comando de uma linha que instala a versão mais nova (install.sh do site). */
+  command: string;
+  /** Página com os pacotes, para quem prefere baixar à mão. */
+  downloadUrl: string;
+}
+
 export interface UpdateState {
   phase: UpdatePhase;
   currentVersion: string;
-  /** De onde os updates vêm: feed Squirrel direto, gh CLI, ou nada. */
-  source: 'feed' | 'gh' | 'none';
+  /**
+   * De onde os updates vêm: feed Squirrel direto, gh CLI, `manual` (Linux: o
+   * app só avisa da versão nova e mostra como atualizar) ou nada.
+   */
+  source: 'feed' | 'gh' | 'manual' | 'none';
   available?: UpdateAvailableInfo;
   error?: string;
   /** Epoch ms da última checagem concluída (uptodate/available). */
   checkedAt?: number;
   /** false em dev (não empacotado): checa, mas não instala. */
   canInstall: boolean;
+  /**
+   * Linux: não há auto-update (DEB/RPM/ZIP não se trocam no lugar). O app
+   * consulta o espelho público e, havendo versão nova, mostra este comando e
+   * este link. Presente só quando `source === 'manual'`.
+   */
+  manual?: UpdateManualInstall;
   /**
    * Progresso do download da atualização (fase 'downloading').
    * Ausente = tamanho desconhecido (a UI mostra apenas "baixando").

@@ -11,6 +11,9 @@ import {
   isMacUpdatePlatform,
   parseGhReleases,
   type ParsedRelease,
+  LINUX_DOWNLOAD_URL,
+  LINUX_UPDATE_COMMAND,
+  parseLinuxReleases,
 } from './update-source';
 import { validateUpdateFeedUrl } from './update-feed-policy';
 import {
@@ -291,8 +294,11 @@ export class UpdateManager {
   private readonly isInstalledWindowsTarget: boolean;
   private readonly firstRunCheckDeadline: number | null;
   private firstRunCheckTimer: ReturnType<typeof setTimeout> | null = null;
-  /** 'feed' = NEXUS_UPDATE_FEED direto; 'gh' = release privado via gh. */
-  private mode: 'feed' | 'gh' | 'none' = 'none';
+  /**
+   * 'feed' = NEXUS_UPDATE_FEED direto; 'gh' = release privado via gh;
+   * 'manual' = Linux: só consulta o espelho público e avisa (F-751).
+   */
+  private mode: 'feed' | 'gh' | 'manual' | 'none' = 'none';
   private readonly checkSingleFlight = createSingleFlight(() => this.performCheck());
 
   constructor(
@@ -360,7 +366,27 @@ export class UpdateManager {
       return;
     }
     const isWindows = this.runtimePlatform === 'win32';
-    if (!isMacUpdatePlatform(this.runtimePlatform) && !this.isInstalledWindowsTarget) {
+    // Linux x64 empacotado: não há auto-update, mas o app avisa da versão nova
+    // e entrega o comando. Antes isto caía em "Plataforma sem atualização
+    // automática: linux." em vermelho, com um "Verificar agora" que não
+    // verificava nada, e ninguém ficava sabendo que havia versão nova (F-751).
+    const isLinuxManual =
+      this.runtimePlatform === 'linux' && this.runtimeArch === 'x64' && app.isPackaged;
+    if (isLinuxManual) {
+      this.mode = 'manual';
+      this.patch({
+        phase: 'idle',
+        source: 'manual',
+        canInstall: false,
+        error: undefined,
+        manual: { command: LINUX_UPDATE_COMMAND, downloadUrl: LINUX_DOWNLOAD_URL },
+      });
+    }
+    if (
+      !isLinuxManual &&
+      !isMacUpdatePlatform(this.runtimePlatform) &&
+      !this.isInstalledWindowsTarget
+    ) {
       const error = isWindows
         ? !app.isPackaged
           ? 'Atualizações automáticas exigem o NexusIDE instalado pelo Setup.exe.'
@@ -382,7 +408,7 @@ export class UpdateManager {
       return;
     }
 
-    const rawFeed = process.env.NEXUS_UPDATE_FEED?.trim();
+    const rawFeed = isLinuxManual ? undefined : process.env.NEXUS_UPDATE_FEED?.trim();
     const defaultWindowsFeed = this.isInstalledWindowsTarget
       ? officialWindowsUpdateFeed(this.state.currentVersion)
       : undefined;
@@ -399,7 +425,9 @@ export class UpdateManager {
         return;
       }
     }
-    if (feed && app.isPackaged) {
+    if (isLinuxManual) {
+      // Modo já definido acima; nada de feed nem de gh.
+    } else if (feed && app.isPackaged) {
       this.mode = 'feed';
       this.patch({ source: 'feed' });
       try {
@@ -519,6 +547,10 @@ export class UpdateManager {
       }
       return;
     }
+    if (this.mode === 'manual') {
+      await this.performManualCheck();
+      return;
+    }
     this.patch({ phase: 'checking', error: undefined });
     try {
       const raw = await this.loadReleaseJson();
@@ -567,6 +599,51 @@ export class UpdateManager {
           : `checagem falhou: ${message}`,
       });
     }
+  }
+
+  /**
+   * Linux: consulta só o espelho PÚBLICO (anônimo, sem gh) e avisa. Nunca
+   * baixa nem instala: quem atualiza é o operador, com o comando do estado.
+   */
+  private async performManualCheck(): Promise<void> {
+    this.patch({ phase: 'checking', error: undefined });
+    try {
+      const raw = await this.loadPublicReleaseJson();
+      const available = parseLinuxReleases(raw, this.state.currentVersion, this.runtimeArch);
+      if (available) {
+        writeUpdateLog('info', 'check:available', {
+          currentVersion: this.state.currentVersion,
+          availableVersion: available.version,
+          tag: available.tag,
+          manual: true,
+        });
+        this.patch({ phase: 'available', available, checkedAt: Date.now() });
+      } else {
+        writeUpdateLog('info', 'check:uptodate', {
+          currentVersion: this.state.currentVersion,
+          manual: true,
+        });
+        this.patch({ phase: 'uptodate', available: undefined, checkedAt: Date.now() });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      writeUpdateLog('warn', 'check:public-failed', { message });
+      this.patch({ phase: 'error', error: `checagem falhou: ${message.slice(0, 160)}` });
+    }
+  }
+
+  private async loadPublicReleaseJson(): Promise<string> {
+    const errors: string[] = [];
+    for (const repo of PUBLIC_RELEASES_REPOS) {
+      try {
+        const raw = await fetchPublicJson(githubReleasesApiUrl(repo), GH_CHECK_TIMEOUT_MS);
+        this.releaseRepo = repo;
+        return raw;
+      } catch (err) {
+        errors.push(`${repo}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    throw new Error(errors.at(-1) ?? 'nenhuma fonte de release');
   }
 
   private async loadReleaseJson(): Promise<string> {
@@ -715,6 +792,8 @@ export class UpdateManager {
   }
 
   private async install(): Promise<void> {
+    // Linux: a atualização é feita pelo operador (comando do estado `manual`).
+    if (this.mode === 'manual') return;
     if (this.state.phase !== 'available' || !this.release) return;
     if (!this.state.canInstall) {
       writeUpdateLog('warn', 'install:blocked-dev-build');

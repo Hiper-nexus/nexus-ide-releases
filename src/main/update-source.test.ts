@@ -5,6 +5,7 @@ import {
   macUpdateArchitecture,
   parseGhRelease,
   parseGhReleases,
+  parseLinuxReleases,
 } from './update-source';
 
 const RELEASE = {
@@ -209,5 +210,70 @@ describe('buildSquirrelFeed', () => {
       notes: expect.stringContaining('JARVIS'),
       pub_date: '2026-07-06T20:00:00Z',
     });
+  });
+});
+
+describe('parseLinuxReleases (F-751)', () => {
+  const linuxAssets = (version: string) => [
+    { name: `nexus-ide_${version}_amd64.deb` },
+    { name: `nexus-ide-${version}-1.x86_64.rpm` },
+    { name: `NexusIDE-linux-x64-${version}.zip` },
+    { name: 'SHA256SUMS-linux-x64.txt' },
+  ];
+  const release = (version: string, assets: Array<{ name: string }>, extra: object = {}) => ({
+    tag_name: `v${version}`,
+    draft: false,
+    prerelease: false,
+    published_at: '2026-10-02T15:00:19Z',
+    body: `notas da ${version}`,
+    assets,
+    ...extra,
+  });
+
+  it('picks the newest stable release that carries all three Linux packages', () => {
+    const raw = JSON.stringify([
+      release('0.76.176', [{ name: 'NexusIDE-0.76.176-win32-x64-Setup.exe' }]),
+      release('0.76.175', linuxAssets('0.76.175')),
+      release('0.76.170', linuxAssets('0.76.170')),
+    ]);
+    expect(parseLinuxReleases(raw, '0.76.170', 'x64')).toEqual({
+      version: '0.76.175',
+      tag: 'v0.76.175',
+      publishedAt: '2026-10-02T15:00:19Z',
+      notes: 'notas da 0.76.175',
+    });
+  });
+
+  it('is up to date when the only newer releases are Windows or macOS builds', () => {
+    // O canal Linux é independente: 0.76.176 só de Windows não é atualização.
+    const raw = JSON.stringify([
+      release('0.76.176', [{ name: 'NexusIDE-0.76.176-win32-x64-Setup.exe' }]),
+      release('0.76.175', linuxAssets('0.76.175')),
+    ]);
+    expect(parseLinuxReleases(raw, '0.76.175', 'x64')).toBeNull();
+  });
+
+  it('ignores a publication still missing one of the packages', () => {
+    // Foi o estado do espelho no meio da publicação da 0.76.175: só .deb e .rpm.
+    const partial = linuxAssets('0.76.177').slice(0, 2);
+    expect(parseLinuxReleases(JSON.stringify([release('0.76.177', partial)]), '0.76.175', 'x64')).toBeNull();
+  });
+
+  it('ignores drafts, prereleases, non-stable tags and other architectures', () => {
+    const raw = JSON.stringify([
+      release('0.76.180', linuxAssets('0.76.180'), { draft: true }),
+      release('0.76.179', linuxAssets('0.76.179'), { prerelease: true }),
+      { ...release('0.76.178', linuxAssets('0.76.178')), tag_name: 'v0.76.178-rc.1' },
+    ]);
+    expect(parseLinuxReleases(raw, '0.76.175', 'x64')).toBeNull();
+    expect(
+      parseLinuxReleases(JSON.stringify([release('0.76.177', linuxAssets('0.76.177'))]), '0.76.175', 'arm64'),
+    ).toBeNull();
+  });
+
+  it('never throws on malformed input', () => {
+    for (const raw of ['', 'not json', '{}', 'null', '[1,"x",null,{}]']) {
+      expect(parseLinuxReleases(raw, '0.76.175', 'x64')).toBeNull();
+    }
   });
 });

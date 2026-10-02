@@ -174,6 +174,75 @@ export function parseGhReleases(
   return best;
 }
 
+/** Linux: atualização manual. O comando é o mesmo da instalação no site. */
+export const LINUX_UPDATE_COMMAND = 'curl -fsSL https://nexuside.app/install.sh | sh';
+export const LINUX_DOWNLOAD_URL = 'https://nexuside.app/#download';
+
+/** Os três pacotes que o canal Linux x64 publica juntos numa versão. */
+function linuxAssetNames(version: string): string[] {
+  return [
+    `nexus-ide_${version}_amd64.deb`,
+    `nexus-ide-${version}-1.x86_64.rpm`,
+    `NexusIDE-linux-x64-${version}.zip`,
+  ];
+}
+
+/**
+ * Maior versão estável, acima da atual, que traz os TRÊS pacotes Linux — o
+ * mesmo crivo do catálogo do site e do `install.sh`. Release só de Windows ou
+ * de macOS não conta (o canal Linux é independente), e uma publicação ainda
+ * pela metade também não: o aviso só aparece quando o comando de atualização
+ * realmente entrega aquela versão.
+ */
+export function parseLinuxReleases(
+  raw: string,
+  currentVersion: string,
+  runtimeArch: string = process.arch,
+): UpdateAvailableInfo | null {
+  if (runtimeArch !== 'x64') return null;
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(json)) return null;
+  let best: UpdateAvailableInfo | null = null;
+  for (const value of json) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const release = value as GhReleaseJson;
+    if (
+      release.draft === true ||
+      release.isDraft === true ||
+      release.prerelease === true ||
+      release.isPrerelease === true
+    ) {
+      continue;
+    }
+    const tagValue = release.tagName ?? release.tag_name;
+    const tag = typeof tagValue === 'string' ? tagValue.trim() : '';
+    if (!STABLE_RELEASE_TAG_RE.test(tag)) continue;
+    const version = tag.replace(/^v/i, '');
+    if (cmpSemver(version, currentVersion) <= 0) continue;
+    const names = new Set(
+      (release.assets ?? []).map((asset) => asset.name).filter((name) => typeof name === 'string'),
+    );
+    if (!linuxAssetNames(version).every((name) => names.has(name))) continue;
+    if (best && cmpSemver(version, best.version) <= 0) continue;
+    const notes = typeof release.body === 'string' && release.body.trim()
+      ? release.body.trim().slice(0, NOTES_MAX_CHARS)
+      : undefined;
+    const publishedAtValue = release.publishedAt ?? release.published_at;
+    best = {
+      version,
+      tag,
+      ...(typeof publishedAtValue === 'string' ? { publishedAt: publishedAtValue } : {}),
+      ...(notes ? { notes } : {}),
+    };
+  }
+  return best;
+}
+
 /**
  * JSON de feed do Squirrel.Mac apontando para o zip (servido em localhost
  * depois que o gh baixou — o Squirrel valida assinatura e faz o swap seguro).

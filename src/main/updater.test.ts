@@ -252,6 +252,102 @@ describe('UpdateManager', () => {
     expect(apiRepos[1]).toContain('cleofasvolarehost/nexus-ide');
   });
 
+  describe('Linux manual channel (F-751)', () => {
+    const linuxRelease = (version: string) => ({
+      tag_name: `v${version}`,
+      published_at: '2026-10-02T15:00:19Z',
+      draft: false,
+      prerelease: false,
+      body: 'notas',
+      assets: [
+        { name: `nexus-ide_${version}_amd64.deb` },
+        { name: `nexus-ide-${version}-1.x86_64.rpm` },
+        { name: `NexusIDE-linux-x64-${version}.zip` },
+      ],
+    });
+    const stubReleases = (releases: unknown[]) => {
+      const fetchMock = vi.fn(async (url: string) => ({
+        ok: true,
+        status: 200,
+        text: async () => {
+          expect(String(url)).toContain('Hiper-nexus/nexus-ide-releases');
+          return JSON.stringify(releases);
+        },
+      }));
+      vi.stubGlobal('fetch', fetchMock);
+      return fetchMock;
+    };
+    const linuxManager = (runGh = vi.fn()) =>
+      new UpdateManager(true, { runGh, runtimeArch: 'x64', runtimePlatform: 'linux' });
+
+    it('boots as a manual channel instead of an unsupported platform error', () => {
+      const manager = linuxManager();
+      manager.init();
+      expect(manager.getState()).toMatchObject({
+        phase: 'idle',
+        source: 'manual',
+        canInstall: false,
+        manual: {
+          command: 'curl -fsSL https://nexuside.app/install.sh | sh',
+          downloadUrl: 'https://nexuside.app/#download',
+        },
+      });
+      expect(manager.getState().error).toBeUndefined();
+      expect(electron.autoUpdater.setFeedURL).not.toHaveBeenCalled();
+    });
+
+    it('announces a newer Linux release from the public mirror, without gh and without installing', async () => {
+      const runGh = vi.fn();
+      const fetchMock = stubReleases([linuxRelease('0.15.2'), apiRelease('0.15.9')]);
+      const manager = linuxManager(runGh);
+      manager.init();
+
+      await electron.handlers.get(UPDATE_CHANNELS.check)?.(trustedSenderEvent());
+
+      expect(manager.getState()).toMatchObject({
+        phase: 'available',
+        source: 'manual',
+        canInstall: false,
+        available: { version: '0.15.2', tag: 'v0.15.2' },
+      });
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(runGh).not.toHaveBeenCalled();
+
+      // "Instalar" não baixa nem troca nada no Linux: o estado não muda.
+      await electron.handlers.get(UPDATE_CHANNELS.install)?.(trustedSenderEvent());
+      expect(manager.getState().phase).toBe('available');
+      expect(manager.getState().error).toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledOnce();
+    });
+
+    it('is up to date when only other platforms have newer builds', async () => {
+      stubReleases([apiRelease('0.15.9'), linuxRelease('0.15.0')]);
+      const manager = linuxManager();
+      manager.init();
+      await electron.handlers.get(UPDATE_CHANNELS.check)?.(trustedSenderEvent());
+      expect(manager.getState()).toMatchObject({ phase: 'uptodate', source: 'manual' });
+      expect(manager.getState().available).toBeUndefined();
+      expect(manager.getState().checkedAt).toBeTypeOf('number');
+    });
+
+    it('reports a failed check and keeps the manual instructions', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503, text: async () => '' })));
+      const manager = linuxManager();
+      manager.init();
+      await electron.handlers.get(UPDATE_CHANNELS.check)?.(trustedSenderEvent());
+      expect(manager.getState().phase).toBe('error');
+      expect(manager.getState().error).toContain('checagem falhou');
+      expect(manager.getState().manual?.command).toContain('install.sh');
+    });
+
+    it('keeps other non-updating platforms and Linux arm64 on the unsupported path', () => {
+      const manager = new UpdateManager(true, { runtimeArch: 'arm64', runtimePlatform: 'linux' });
+      manager.init();
+      expect(manager.getState()).toMatchObject({ phase: 'unsupported', source: 'none' });
+      expect(manager.getState().manual).toBeUndefined();
+    });
+  });
+
   it('usa o espelho público da org nova quando gh não está disponível', async () => {
     const runGh = vi.fn(async () => {
       throw new Error('ENOENT gh');

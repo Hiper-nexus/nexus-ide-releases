@@ -225,8 +225,16 @@ type Props = {
 };
 
 export function UpdateModal({ state, onClose }: Props) {
-  const { phase, currentVersion, available, error, checkedAt } = state;
+  const { phase, currentVersion, available, error, checkedAt, manual } = state;
   const busy = phase === 'checking' || phase === 'downloading';
+  const [copied, setCopied] = useState(false);
+  const copyManualCommand = () => {
+    if (!manual) return;
+    void navigator.clipboard
+      ?.writeText(manual.command)
+      .then(() => setCopied(true))
+      .catch((err) => logRendererError('copy manual command failed', err));
+  };
   const runUpdateAction = (
     action: 'install' | 'restart' | 'check',
     task: () => Promise<unknown>,
@@ -287,6 +295,25 @@ export function UpdateModal({ state, onClose }: Props) {
           <pre className="update-modal__notes">{available.notes}</pre>
         )}
 
+        {manual && phase === 'available' && (
+          <div className="update-modal__manual">
+            <p className="update-modal__hint">
+              No Linux a atualização é manual. Feche o NexusIDE e rode no terminal:
+            </p>
+            <code className="update-modal__command">{manual.command}</code>
+            <p className="update-modal__hint">
+              O comando confere o SHA-256 e instala o pacote da sua distribuição.
+              Suas contas, projetos e missões ficam como estão.
+            </p>
+          </div>
+        )}
+        {manual && (phase === 'uptodate' || phase === 'idle') && (
+          <p className="update-modal__hint">
+            No Linux a atualização é manual: quando sair uma versão nova, o
+            Nexus avisa aqui e mostra o comando.
+          </p>
+        )}
+
         <div className="update-modal__actions">
           {phase === 'available' && state.canInstall && (
             <button
@@ -298,10 +325,28 @@ export function UpdateModal({ state, onClose }: Props) {
               Baixar e instalar
             </button>
           )}
-          {phase === 'available' && !state.canInstall && (
+          {phase === 'available' && !state.canInstall && !manual && (
             <span className="update-modal__hint">
               build de desenvolvimento — instale pelo app empacotado
             </span>
+          )}
+          {manual && phase === 'available' && (
+            <>
+              <button
+                type="button"
+                className="update-modal__btn update-modal__btn--primary"
+                onClick={copyManualCommand}
+              >
+                {copied ? 'Comando copiado ✓' : 'Copiar comando'}
+              </button>
+              <button
+                type="button"
+                className="update-modal__btn"
+                onClick={() => void window.nexus?.app?.openExternal(manual.downloadUrl)}
+              >
+                Abrir página de download
+              </button>
+            </>
           )}
           {phase === 'ready' && (
             <button
@@ -430,7 +475,9 @@ export function UpdateBannerNotice({
               ? 'Reinicie o NexusIDE para aplicar agora.'
               : state.phase === 'downloading'
                 ? getDownloadLabel(state.downloadProgress)
-                : 'Clique para atualizar agora ou ver notas.'}
+                : state.manual
+                  ? 'Clique para ver como atualizar.'
+                  : 'Clique para atualizar agora ou ver notas.'}
           </span>
         </div>
       </div>

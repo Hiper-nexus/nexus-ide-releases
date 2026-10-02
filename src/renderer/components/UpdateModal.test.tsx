@@ -78,6 +78,72 @@ describe('UpdateModal', () => {
     expect(installBtn).toBeDefined();
   });
 
+  describe('Linux manual update (F-751)', () => {
+    const manual = {
+      command: 'curl -fsSL https://nexuside.app/install.sh | sh',
+      downloadUrl: 'https://nexuside.app/#download',
+    };
+
+    it('shows the one-line command, copies it and links to the download page', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+      const state: UpdateState = {
+        phase: 'available',
+        currentVersion: '0.76.175',
+        source: 'manual',
+        canInstall: false,
+        manual,
+        available: { version: '0.76.177', tag: 'v0.76.177' },
+      };
+
+      mount(<UpdateModal state={state} onClose={vi.fn()} />);
+
+      const text = document.body.textContent ?? '';
+      expect(text).toContain('0.76.177');
+      expect(text).toContain(manual.command);
+      // Não é build de desenvolvimento nem erro: é o caminho normal do Linux.
+      expect(text).not.toContain('build de desenvolvimento');
+      expect(text).not.toContain('Plataforma sem atualização automática');
+      const buttons = Array.from(document.body.querySelectorAll('button'));
+      expect(buttons.find((b) => b.textContent?.includes('Baixar e instalar'))).toBeUndefined();
+
+      const copy = buttons.find((b) => b.textContent?.includes('Copiar comando'));
+      await act(async () => {
+        copy?.click();
+      });
+      expect(writeText).toHaveBeenCalledWith(manual.command);
+      expect(document.body.textContent).toContain('Comando copiado');
+
+      act(() => {
+        buttons.find((b) => b.textContent?.includes('Abrir página de download'))?.click();
+      });
+      expect(mockOpenExternal).toHaveBeenCalledWith(manual.downloadUrl);
+    });
+
+    it('says the update is manual when already on the newest version, with a working check', () => {
+      const state: UpdateState = {
+        phase: 'uptodate',
+        currentVersion: '0.76.177',
+        source: 'manual',
+        canInstall: false,
+        manual,
+        checkedAt: Date.now(),
+      };
+
+      mount(<UpdateModal state={state} onClose={vi.fn()} />);
+
+      expect(document.body.textContent).toContain('você está na mais recente');
+      expect(document.body.textContent).toContain('No Linux a atualização é manual');
+      expect(document.body.textContent).not.toContain(manual.command);
+      act(() => {
+        Array.from(document.body.querySelectorAll('button'))
+          .find((b) => b.textContent?.includes('Verificar agora'))
+          ?.click();
+      });
+      expect(mockCheck).toHaveBeenCalledOnce();
+    });
+  });
+
   it('renders error state with fallback DMG download and retry buttons', () => {
     const state: UpdateState = {
       phase: 'error',

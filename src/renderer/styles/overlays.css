@@ -394,6 +394,28 @@
   color: var(--text-dim);
 }
 
+/* Linux: atualização manual — o comando de uma linha, copiável. */
+.update-modal__manual {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.update-modal__command {
+  display: block;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  color: var(--text);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: nowrap;
+  user-select: all;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .agent-picker__btn {
     transition: none;
