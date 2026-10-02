@@ -1,0 +1,149 @@
+@import './tokens.css';
+
+/* ---------- Pink City: the game is the first screen ---------- */
+.game-stage{position:relative;height:100svh;min-height:560px;overflow:hidden;background:var(--bg);color:var(--ink)}
+#world{position:absolute;inset:0;overflow:hidden;outline:none;background:var(--bar)}
+#world:focus-visible{box-shadow:inset 0 0 0 2px var(--pink)}
+#world canvas{display:block;width:100%;height:100%}
+.world-fallback{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:24px;text-align:center;background:var(--surface)}
+.world-fallback>.pixel{font-size:64px;line-height:.9;color:var(--pink)}
+.dc-ready .world-fallback{display:none}
+.world-loading{position:absolute;inset:0;z-index:4;display:flex;justify-content:center;align-items:center;flex-direction:column;gap:24px;background:var(--bg);pointer-events:none}
+.world-loading .pixel{font-size:24px;color:var(--pink)}
+.world-loading[hidden]{display:none}
+.loading-track{height:3px;width:180px;background:var(--lift);overflow:hidden}
+.loading-track:after{content:'';display:block;width:80px;height:3px;background:var(--pink);animation:loading 1.8s var(--ease) infinite}
+
+/* Overlay chrome: nothing boxed, everything at the edges, the world stays visible. */
+.hud-top{position:absolute;top:0;left:0;right:0;z-index:6;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 24px;pointer-events:none;background:linear-gradient(rgb(8 7 9/.55),transparent)}
+.hud-top>*{pointer-events:auto}
+.hud-top .brand{font-size:22px;text-shadow:0 2px 12px rgb(8 7 9/.6)}
+.hud-top .brand small{color:var(--ink);opacity:.75}
+.hud-top-actions{display:flex;align-items:center;gap:20px}
+.hud-link{font-size:13px;color:var(--ink);opacity:.85;text-shadow:0 1px 8px rgb(8 7 9/.7)}
+.hud-link:hover{opacity:1;color:var(--pink)}
+.hud-whatsapp{min-height:44px;padding:8px 14px;font-size:13px;gap:8px}
+.hud-whatsapp svg{width:18px;height:18px}
+
+.game-intro{position:absolute;left:50%;top:54%;z-index:5;width:min(520px,calc(100% - 32px));padding:32px 24px;text-align:center;transform:translate(-50%,-50%);transition:opacity .35s var(--ease),transform .35s var(--ease)}
+.game-intro:before{content:'';position:absolute;inset:-48px -96px;z-index:-1;background:radial-gradient(closest-side,rgb(8 7 9/.82),rgb(8 7 9/.55) 62%,transparent);pointer-events:none}
+.intro-place{font-size:10px;color:var(--ink);opacity:.8;margin-bottom:8px}
+.game-intro h1{margin:0 0 12px}
+.game-intro h1>.pixel{font-size:88px;line-height:.8;color:var(--pink);letter-spacing:-.02em;text-shadow:0 4px 24px rgb(255 79 139/.35)}
+.game-intro>p:not(.intro-place){font-size:15px;line-height:1.55;color:var(--ink);opacity:.9;margin:0 auto 20px;max-width:38ch;text-shadow:0 1px 10px rgb(8 7 9/.6)}
+.game-intro .button{font-size:14px}
+.intro-skip{display:block;margin:14px 0 0;font-size:12px;color:var(--ink);opacity:.75}
+.intro-skip:hover{opacity:1}
+.dc-playing .game-intro{opacity:0;pointer-events:none;transform:translate(-50%,calc(-50% + 12px));visibility:hidden}
+
+#quest-toast{display:none}
+.scroll-cue{position:absolute;left:50%;bottom:8px;transform:translateX(-50%);z-index:5;font-size:11px;color:var(--ink);opacity:.7;text-shadow:0 1px 8px rgb(8 7 9/.7);display:none}
+.dc-playing .scroll-cue{display:block}
+
+@keyframes loading{from{transform:translateX(-80px)}to{transform:translateX(180px)}}
+
+@media(max-width:760px){
+  .game-stage{min-height:620px}
+  .hud-top{padding:12px 16px}
+  .hud-top .brand{font-size:20px}
+  .hud-link{display:none}
+  .hud-whatsapp{font-size:12px;min-height:44px;padding:6px 12px}
+  .hud-whatsapp span{display:none}
+  .game-intro{top:56%;padding:24px 8px}
+  .game-intro:before{inset:-32px -16px}
+  .game-intro h1>.pixel{font-size:64px}
+  .game-intro>p:not(.intro-place){font-size:14px}
+  .scroll-cue{display:none!important}
+}
+@media(prefers-reduced-motion:reduce){.loading-track:after{animation:none}}
+
+/* ---------- Below the game ---------- */
+.community-content{max-width:1280px;margin:auto;padding:96px 48px}.community-section-intro{display:flex;align-items:end;justify-content:space-between;gap:64px;margin-bottom:48px}.community-content h2{font-size:48px}.community-content h2 span{color:var(--muted)}.community-section-intro p{max-width:380px;color:var(--muted)}.invert-logo{filter:brightness(0) invert(1)}.group-invite{text-align:center;margin-top:64px}.group-invite h3{font-size:24px;font-weight:500}.group-invite p{color:var(--muted);margin:16px auto 24px;max-width:600px}.group-invite .game-note{font-size:11px;color:var(--faint);margin-top:24px}.community-lives{border-top:1px solid var(--line);border-bottom:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;align-items:center;gap:96px}.community-lives p{color:var(--muted);margin:24px 0;max-width:400px}.live-art{display:flex;justify-content:center}.live-art .pixel{font-size:72px;line-height:.8;color:var(--pink);transform:rotate(-6deg)}.community-faq{display:grid;grid-template-columns:1fr 1.3fr;gap:48px}.clear-progress{grid-column:2;background:none;border:1px solid var(--line);border-radius:8px;padding:12px 24px;width:max-content;font-size:12px;color:var(--muted)}
+
+@media(max-width:760px){.community-nav{padding:16px}.community-nav .brand{font-size:20px}.community-nav .button{font-size:10px;min-height:44px;padding:8px 10px}.community-content{padding:64px 24px}.community-section-intro{display:block;margin-bottom:32px}.community-content h2{font-size:36px}.community-section-intro p{font-size:14px;margin-top:24px}.group-invite{margin-top:40px}.group-invite h3{font-size:20px}.group-invite p{font-size:14px}.group-invite .button{font-size:13px}.community-lives{grid-template-columns:1fr;gap:48px}.community-lives p{font-size:14px}.live-art .pixel{font-size:60px}.community-faq{display:block}.community-faq h2{margin-bottom:32px}.community-faq summary{font-size:14px}.clear-progress{margin-top:32px}}
+
+/* Sorteio: the group is the raffle */
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.sorteio-lead{max-width:380px}
+.sorteio-lead .button{margin-top:24px}
+/* Os prêmios são bilhetes: o próximo a sair é maior e aceso; o seguinte espera a vez. */
+.sorteio-board{display:grid;grid-template-columns:1.35fr 1fr;gap:24px;margin-bottom:64px}
+.drop{--pad:32px;position:relative;display:flex;flex-direction:column;padding:var(--pad) var(--pad) 20px;border:1px solid var(--strong);border-radius:12px;background:var(--surface)}
+.drop-next{background:radial-gradient(90% 75% at 100% 0,rgb(255 111 145/.22),transparent 62%),radial-gradient(60% 50% at 0 100%,rgb(255 178 122/.07),transparent 70%),var(--surface);box-shadow:0 24px 70px rgb(0 0 0/.3)}
+.drop header{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.drop header .pixel{font-size:28px;line-height:1;color:var(--faint)}
+.drop-next header .pixel{color:var(--pink)}
+.drop-state{font-size:10px;color:var(--faint);border:1px solid var(--line);border-radius:4px;padding:4px 8px}
+.drop-next .drop-state{display:inline-flex;align-items:center;gap:8px;color:var(--pink);border-color:rgb(255 79 139/.4)}
+.drop-next .drop-state:before{content:'';width:6px;height:6px;border-radius:50%;background:var(--pink);animation:drop-live 1.6s var(--ease) infinite alternate}
+.drop img{display:block;margin:40px 0 24px}
+.drop h3{font-size:36px;font-weight:500;letter-spacing:-.04em;line-height:1.05}
+.drop-next h3{font-size:clamp(3.5rem,2rem + 4vw,5.5rem)}
+.drop h3 span{color:var(--muted)}
+.drop>p{font-size:14px;color:var(--muted);margin-top:16px;max-width:400px}
+/* O letreiro do ganhador: gira e fecha na frase, como o nome saindo na live. */
+.drop>.drop-draw{display:flex;align-items:center;justify-content:space-between;gap:16px;max-width:none;margin:32px 0;padding:12px 16px;border:1px solid var(--line);border-radius:4px;background:var(--bar)}
+.drop-draw .mono{font-size:10px;color:var(--faint)}
+.drop-draw .pixel{font-size:28px;line-height:1;letter-spacing:.06em;color:var(--faint);white-space:pre}
+.drop-next .drop-draw .pixel{color:var(--pink)}
+/* O canhoto: picote tracejado e dois furos na borda do bilhete. */
+.drop-stub{position:relative;display:flex;align-items:baseline;justify-content:space-between;gap:8px 16px;flex-wrap:wrap;margin:auto calc(var(--pad)*-1) 0;padding:20px var(--pad) 0;border-top:1px dashed var(--strong)}
+.drop-stub:before,.drop-stub:after{content:'';position:absolute;top:-10px;width:20px;height:20px;border-radius:50%;border:1px solid var(--strong);background:var(--bg)}
+.drop-stub:before{left:-11px;clip-path:inset(-1px -1px -1px 9px)}
+.drop-stub:after{right:-11px;clip-path:inset(-1px 9px -1px -1px)}
+.drop-stub .pixel{font-size:24px;line-height:1}
+.drop-stub .mono{font-size:10px;color:var(--faint)}
+@keyframes drop-live{from{opacity:.35}to{opacity:1}}
+.sorteio-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;list-style:none;margin:0;padding:0}
+.sorteio-steps li{border-top:1px solid var(--strong);padding-top:24px}
+.sorteio-steps .mono{display:block;font-size:10px;color:var(--pink);margin-bottom:16px}
+.sorteio-steps h3{font-size:24px;font-weight:500;letter-spacing:-.04em}
+.sorteio-steps p{font-size:14px;color:var(--muted);margin-top:12px;max-width:360px}
+.sorteio-rules{border:1px solid var(--strong);border-radius:12px;background:var(--surface);padding:32px;margin-top:48px}
+.sorteio-rules h3{font-size:20px;font-weight:500}
+.sorteio-rules ul{list-style:none;margin:16px 0 0;padding:0;display:grid;gap:12px}
+.sorteio-rules li{font-size:14px;color:var(--muted);padding-left:20px;position:relative;max-width:70ch}
+.sorteio-rules li:before{content:'+';position:absolute;left:0;color:var(--pink)}
+@media(max-width:760px){.sorteio-lead{max-width:none}.sorteio-board{grid-template-columns:1fr;gap:16px;margin-bottom:40px}.drop{--pad:20px}.drop img{width:48px;height:48px;margin:24px 0 16px}.drop h3{font-size:28px}.drop-next h3{font-size:40px}.drop>.drop-draw{margin:24px 0}.drop-draw .pixel{font-size:22px}.drop-stub .pixel{font-size:20px}.sorteio-steps{grid-template-columns:1fr;gap:24px}.sorteio-steps h3{font-size:20px}.sorteio-rules{padding:24px;margin-top:32px}}
+
+/* ---------- O prêmio é a estrela: letreiro, bilhete que reage ao ponteiro, marca que flutua ---------- */
+.intro-prize{position:relative;display:flex;flex-direction:column;gap:2px;width:max-content;max-width:100%;margin:24px auto 0;padding:10px 18px;border:1px solid rgb(255 79 139/.5);border-radius:4px;background:rgb(13 11 15/.78);transition:transform .22s var(--ease),border-color .22s var(--ease)}
+.intro-prize:before,.intro-prize:after{content:'';position:absolute;top:50%;width:10px;height:10px;margin-top:-5px;border-radius:50%;border:1px solid rgb(255 79 139/.5);background:var(--bg)}
+.intro-prize:before{left:-6px;clip-path:inset(-1px -1px -1px 5px)}
+.intro-prize:after{right:-6px;clip-path:inset(-1px 5px -1px -1px)}
+.intro-prize:hover{transform:translateY(-3px);border-color:var(--pink)}
+.intro-prize-name{font-size:30px;line-height:1;letter-spacing:.06em;color:var(--pink)}
+.intro-prize-goal{font-size:10px;color:var(--ink);opacity:.85}
+
+
+.community-section-intro#sorteio{flex-direction:column;align-items:flex-start;gap:32px}
+.community-content h2.prize-title{font-size:clamp(2.5rem,1.3rem + 4.8vw,5.5rem);line-height:1}
+.sorteio-lead{max-width:none;display:flex;align-items:center;gap:20px 32px;flex-wrap:wrap}
+.sorteio-lead p{max-width:52ch}
+.sorteio-lead .button{margin-top:0}
+
+.sorteio-board{perspective:1400px}
+.drop-next{transition:transform .6s var(--ease);will-change:auto}
+.drop-next.tilting{transition:transform .12s linear;transform:rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg)) translateZ(0)}
+.drop-next:after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0;transition:opacity .3s var(--ease);background:radial-gradient(360px circle at var(--mx,70%) var(--my,10%),rgb(255 255 255/.09),transparent 62%)}
+.drop-next.tilting:after{opacity:1}
+.drop.drop-next h3 span{color:var(--pink)}
+.drop-mark{animation:drop-float 5.5s ease-in-out infinite}
+.drop:not(.drop-next) .drop-mark{animation-delay:-2.4s}
+@keyframes drop-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
+
+/* O bilhete sai da impressora: aparece de cima para baixo, uma vez, quando chega à tela. */
+.prize-ready .drop{clip-path:inset(0 0 100% 0)}
+.prize-ready .drop.printed{clip-path:inset(-120px);transition:clip-path 1s var(--ease)}
+.prize-ready .drop-next.printed{transition:clip-path 1s var(--ease),transform .6s var(--ease)}
+.prize-ready .drop-next.printed.tilting{transition:clip-path 1s var(--ease),transform .12s linear}
+.prize-ready .drop+.drop.printed{transition-delay:.18s}
+
+@media(hover:none){.drop-next.tilting{transform:none}.drop-next:after{display:none}}
+@media(max-width:760px){.intro-prize{margin-top:20px}.intro-prize-name{font-size:26px}.community-section-intro#sorteio{gap:24px}.sorteio-lead{gap:16px}.drop-next h3{font-size:clamp(2.75rem,12vw,3.5rem)}}
+@media(prefers-reduced-motion:reduce){.prize-ready .drop{clip-path:none}}
+
+/* Os dois bilhetes alinham o campo do ganhador na mesma linha, acima do canhoto, qualquer que seja a altura do título. */
+.drop>.drop-draw{margin:auto 0 32px}
+.drop>.drop-draw+.drop-stub{margin-top:0}
+@media(max-width:760px){.drop>.drop-draw{margin:24px 0}}

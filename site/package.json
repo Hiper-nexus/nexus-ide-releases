@@ -1,0 +1,23 @@
+{
+  "name": "nexus-community-site",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 4173",
+    "build": "node scripts/social-card.mjs && vite build",
+    "test": "node --test worker/*.test.js src/datacafe/*.test.js src/downloads/*.test.js src/plans/*.test.js src/sorteio/*.test.js src/voice/*.test.js src/benchmarks/*.test.js src/hero/*.test.js src/pages/*.test.js",
+    "releases:update": "node scripts/update-release-catalog.mjs",
+    "benchmarks:update": "node scripts/update-benchmarks.mjs",
+    "preview": "vite preview --host 127.0.0.1 --port 4173",
+    "deploy": "(npm run releases:update || echo 'snapshot de releases mantido (GitHub indisponível)') && npm run build && wrangler deploy"
+  },
+  "dependencies": {
+    "@fontsource-variable/geist": "5.2.8",
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "vite": "8.3.1"
+  }
+}

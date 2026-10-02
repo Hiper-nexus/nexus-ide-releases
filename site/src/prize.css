@@ -1,0 +1,50 @@
+/* Peças do sorteio que a home e a comunidade dividem: o letreiro corrido e o bilhete horizontal. */
+.prize-marquee{overflow:hidden;border-block:1px solid var(--strong);background:var(--bar);padding:12px 0}
+.prize-marquee:empty{display:none}
+.prize-marquee-track{display:flex;width:max-content;animation:prize-marquee 42s linear infinite}
+.prize-marquee:hover .prize-marquee-track{animation-play-state:paused}
+.prize-marquee-group{display:flex;flex:none}
+.prize-marquee-item{display:flex;align-items:center;gap:20px;padding-right:28px;font-family:VT323,monospace;font-size:28px;line-height:1;letter-spacing:.08em;white-space:nowrap;color:var(--ink)}
+.prize-marquee-item:after{content:'';width:8px;height:8px;background:var(--pink);transform:rotate(45deg)}
+@keyframes prize-marquee{to{transform:translateX(-50%)}}
+
+/* Bilhete horizontal da home: corpo com o prêmio e canhoto picotado com o letreiro do ganhador. */
+.prize-band{max-width:1440px;margin:auto;padding:var(--s6) 40px}
+.prize-ticket{position:relative;display:flex;flex-direction:column;border:1px solid var(--strong);border-radius:12px;overflow:hidden;background:radial-gradient(70% 120% at 100% 0,rgb(255 111 145/.2),transparent 62%),radial-gradient(45% 80% at 0 100%,rgb(255 178 122/.07),transparent 70%),var(--surface);box-shadow:0 24px 70px rgb(0 0 0/.35)}
+.prize-ticket-main{display:grid;grid-template-columns:1.45fr .55fr;align-items:center;gap:40px;padding:56px 56px 48px}
+.prize-ticket h2{font-size:clamp(2.25rem,1.2rem + 3.4vw,4.5rem);line-height:1.02}
+.prize-ticket h2 span{color:var(--pink)}
+.prize-ticket-copy>p{max-width:52ch;margin-top:24px;color:var(--muted)}
+.prize-ticket-actions{display:flex;align-items:center;gap:20px 28px;flex-wrap:wrap;margin-top:32px}
+.prize-ticket-art{position:relative;display:flex;justify-content:center;align-items:center;min-height:240px}
+.prize-ticket-art img{position:absolute;display:block}
+.prize-ticket-art .prize-art-claude{width:168px;height:168px;left:calc(50% - 150px);top:14px;animation:prize-float 5.6s ease-in-out infinite}
+.prize-ticket-art .prize-art-codex{width:120px;height:120px;right:calc(50% - 150px);bottom:10px;filter:brightness(0) invert(1);opacity:.85;animation:prize-float 5.6s ease-in-out -2.6s infinite}
+.prize-ticket-stub{position:relative;display:flex;align-items:baseline;justify-content:space-between;gap:8px 24px;flex-wrap:wrap;padding:20px 56px 22px;border-top:1px dashed var(--strong);background:rgb(13 11 15/.6)}
+.prize-ticket-stub:before,.prize-ticket-stub:after{content:'';position:absolute;top:-11px;width:22px;height:22px;border-radius:50%;border:1px solid var(--strong);background:var(--bg)}
+.prize-ticket-stub:before{left:-12px;clip-path:inset(-1px -1px -1px 10px)}
+.prize-ticket-stub:after{right:-12px;clip-path:inset(-1px 10px -1px -1px)}
+.prize-ticket-stub .pixel{font-size:32px;line-height:1;letter-spacing:.08em;color:var(--pink);white-space:pre}
+.prize-ticket-stub .mono{font-size:10px;color:var(--faint)}
+@keyframes prize-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+
+@media(max-width:1150px){.prize-band{padding:var(--s5) 40px}.prize-ticket-main{gap:24px;padding:40px 40px 36px}.prize-ticket-stub{padding:18px 40px 20px}}
+@media(max-width:760px){
+  .prize-marquee-item{font-size:24px}
+  .prize-band{padding:var(--s5) 20px}
+  .prize-ticket-main{grid-template-columns:1fr;padding:32px 24px 28px}
+  .prize-ticket-art{order:-1;min-height:150px}
+  .prize-ticket-art .prize-art-claude{width:104px;height:104px;left:calc(50% - 96px);top:6px}
+  .prize-ticket-art .prize-art-codex{width:76px;height:76px;right:calc(50% - 96px);bottom:4px}
+  .prize-ticket-actions{flex-direction:column;align-items:stretch}
+  .prize-ticket-actions .button{width:100%}
+  .prize-ticket-stub{padding:16px 24px 18px}
+  .prize-ticket-stub .pixel{font-size:26px}
+}
+@media(prefers-reduced-motion:reduce){
+  .prize-marquee-track{width:auto;justify-content:center;padding:0 24px}
+  .prize-marquee-group{flex:0 1 auto;flex-wrap:wrap;justify-content:center}
+  .prize-marquee-group+.prize-marquee-group{display:none}
+}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.prize-ticket-copy>.prize-ticket-note{margin-top:12px;font-size:12px;color:var(--faint)}
