@@ -20,9 +20,7 @@
     "interactive": [
       "qwen",
       "--model",
-      "{{MODEL}}",
-      "--approval-mode",
-      "auto-edit"
+      "{{MODEL}}"
     ],
     "headless": [
       "qwen",

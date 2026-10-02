@@ -219,6 +219,22 @@ describe('buildControlArgs', () => {
     }
   });
 
+  it('F-748: o argv do Qwen nunca junta --yolo com --approval-mode (o Qwen 0.24 recusa e sai 1)', () => {
+    // 02/10: "+ Pane" Qwen imprimia o --help e morria — "Cannot use both
+    // --yolo (-y) and --approval-mode together". O base trazia
+    // `--approval-mode auto-edit` e o modo padrão somava `--yolo`.
+    const qwen = BUILTIN_ADAPTERS.map((raw) => adapterSchema.parse(raw))
+      .find((item): item is CliPtyAdapter => item.kind === 'cli-pty' && item.id === 'qwen')!;
+    for (const permissionMode of ['', 'yolo', ...availablePermissionModes(qwen)]) {
+      const argv = [...qwen.spawn.interactive, ...buildControlArgs(qwen, { permissionMode })];
+      const approvals = argv.filter((arg) => arg === '--approval-mode').length;
+      const yolo = argv.includes('--yolo') || argv.includes('-y');
+      expect(yolo && approvals > 0, `${permissionMode}: ${argv.join(' ')}`).toBe(false);
+      expect(approvals, `${permissionMode}: ${argv.join(' ')}`).toBeLessThanOrEqual(1);
+    }
+    expect(qwen.spawn.interactive).not.toContain('--approval-mode');
+  });
+
   it('does not pass unsupported max effort to AGY 1.2', () => {
     const agy = BUILTIN_ADAPTERS.map((raw) => adapterSchema.parse(raw))
       .find((item): item is CliPtyAdapter => item.kind === 'cli-pty' && item.id === 'agy')!;
