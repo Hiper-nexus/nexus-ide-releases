@@ -1734,6 +1734,32 @@ describe('spawnOrchPane — helper nasce na aba do pai (C3/B1)', () => {
     }) as unknown as { pane: Record<string, unknown> };
     expect(parsed.pane.spawnRoute).toBeUndefined();
   });
+
+  it('guarda confiança e ruleChoice da rota só em memória (nunca no layout persistido)', async () => {
+    const spawnRoute = {
+      source: 'jev' as const,
+      confidence: { tier: 0.82, specialty: 0.71 },
+      ruleChoice: { adapterId: 'claude', model: 'sonnet' },
+    };
+    const id = useLayoutStore.getState().spawnOrchPane({
+      orchRequestId: 'req-receipt',
+      paneId: 'pane-receipt',
+      adapterId: 'codex',
+      parentPaneId: 'pane-parent',
+      spawnRoute,
+    });
+    const child = listPanes(useLayoutStore.getState().root).find((p) => p.id === id)!;
+    expect(child.spawnRoute).toEqual(spawnRoute);
+
+    const { layoutNodeSchema } = await import('../../shared/ipc');
+    const parsed = layoutNodeSchema.parse({
+      kind: 'leaf',
+      id: 'n2',
+      pane: { id: 'p', kind: 'cli-agent', title: 't', spawnRoute },
+    }) as unknown as { pane: Record<string, unknown> };
+    expect(parsed.pane.spawnRoute).toBeUndefined();
+    expect(JSON.stringify(parsed)).not.toContain('ruleChoice');
+  });
 });
 
 beforeEach(() => { useAccessStore.setState({ canUseApp: true, maxAgents: null }); });
