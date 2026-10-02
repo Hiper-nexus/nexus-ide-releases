@@ -88,6 +88,7 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
   const stepsRef = useRef<HTMLTextAreaElement>(null);
   const failureRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const previewPanelRef = useRef<HTMLElement>(null);
   const previewSeq = useRef(0);
   const mounted = useRef(true);
 
@@ -132,6 +133,12 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     if (failure) failureRef.current?.focus();
   }, [failure]);
+
+  // A prévia nasce abaixo da dobra num painel com rolagem: traz-la à vista sem
+  // roubar o foco de quem acionou o botão.
+  useEffect(() => {
+    if (preview.status === 'ready') previewPanelRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [preview.status]);
 
   const invalidatePreview = useCallback(() => {
     previewSeq.current += 1;
@@ -186,6 +193,7 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
   };
 
   const togglePreview = async (): Promise<void> => {
+    if (preview.status === 'loading') return;
     if (preview.status !== 'idle') {
       invalidatePreview();
       return;
@@ -457,13 +465,19 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
                 type="button"
                 className="confirm__btn bug-report__preview-toggle"
                 aria-expanded={previewOpen}
-                disabled={preview.status === 'loading' || sending}
+                aria-busy={preview.status === 'loading' ? 'true' : undefined}
+                // Não desabilita enquanto monta: botão desabilitado perde o foco.
+                disabled={sending}
                 onClick={() => void togglePreview()}
               >
                 {previewLabel}
               </button>
               {preview.status === 'ready' ? (
-                <section aria-labelledby={ids.previewTitle} className="bug-report__preview-panel">
+                <section
+                  ref={previewPanelRef}
+                  aria-labelledby={ids.previewTitle}
+                  className="bug-report__preview-panel"
+                >
                   <h3 id={ids.previewTitle} className="bug-report__preview-title">
                     O que será enviado
                   </h3>

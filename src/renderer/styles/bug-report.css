@@ -6,6 +6,9 @@
   max-height: min(90vh, 800px);
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* A barra de ações é fixa no rodapé: foco e scrollIntoView não podem
+     deixar o campo por baixo dela. */
+  scroll-padding-block-end: calc(var(--space-8) + var(--space-2));
 }
 
 /* O painel recebe foco por código (enviando) para o teclado não se perder;
@@ -112,6 +115,10 @@
   border: 0;
 }
 
+.bug-report__impact > legend {
+  padding: 0;
+}
+
 .bug-report__impact-options {
   display: flex;
   flex-wrap: wrap;
@@ -146,6 +153,7 @@
 
 .bug-report__consent .bug-report__choice {
   align-items: flex-start;
+  min-height: 0;
   font-weight: 600;
 }
 
@@ -239,8 +247,15 @@
   color: var(--status-success);
 }
 
+/* Enviar/Cancelar ficam à vista mesmo com a prévia aberta e o painel rolando. */
 .bug-report__actions {
-  margin-top: var(--space-1);
+  position: sticky;
+  bottom: calc(-1 * var(--space-5));
+  z-index: 1;
+  margin: var(--space-1) calc(-1 * var(--space-5)) calc(-1 * var(--space-5));
+  padding: var(--space-2-5) var(--space-5) var(--space-3);
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
 }
 
 /* Alvos de pelo menos 32px nos botões do diálogo (DESIGN.md §6). */

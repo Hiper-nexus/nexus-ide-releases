@@ -300,6 +300,26 @@ describe('BugReportDialog — preview ("o que será enviado")', () => {
     expect(button(/Ver exatamente|Ocultar/).getAttribute('aria-expanded')).toBe('true');
   });
 
+  it('scrolls the opened preview into view without stealing focus', async () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    try {
+      mount();
+      openDialog();
+      fillValid();
+      const toggle = button(/Ver exatamente o que será enviado/);
+      toggle.focus();
+      await click(toggle);
+      expect(scrollIntoView).toHaveBeenCalled();
+      expect(document.activeElement).toBe(button(/Ocultar o que será enviado/));
+    } finally {
+      Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+    }
+  });
+
   it('previews the same request that submit later sends', async () => {
     mount();
     openDialog();
