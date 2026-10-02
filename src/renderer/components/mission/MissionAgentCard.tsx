@@ -4,6 +4,7 @@ import type {
   MissionUnit,
 } from '../../../shared/mission-engine-contract';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
+import { ProviderLogo } from '../ProviderLogo';
 
 const CATEGORY_LABELS: Readonly<
   Record<MissionAgentSnapshot['category'], string>
@@ -35,6 +36,9 @@ const STATE_LABELS: Readonly<Record<MissionAgentSnapshot['state'], string>> = {
   stopped: 'Interrompido',
 };
 
+/** Régua de LEDs de atividade do rack (só desenho; o estado vem em palavra). */
+const ACTIVITY_LEDS = 12;
+
 export interface MissionAgentCardPosition {
   readonly x: number;
   readonly y: number;
@@ -53,6 +57,19 @@ type PositionedCardStyle = CSSProperties & {
   readonly '--mission-agent-y': string;
 };
 
+/** Ferramenta e modelo do rack, como o operador os reconhece. */
+export function rackToolLabel(
+  agent: Pick<MissionAgentSnapshot, 'cli' | 'model'>,
+): string {
+  return agent.model ? `${agent.cli} · ${agent.model}` : agent.cli;
+}
+
+/**
+ * Um agente da missão desenhado como rack: trilhos com parafusos, a
+ * ferramenta (logo + CLI + modelo), o LED e a palavra do estado, a régua de
+ * atividade e o visor com a unidade atual. O coordenador é o núcleo, mais
+ * largo, com o painel de portas onde os cabos se ligam.
+ */
 export function MissionAgentCard({
   agent,
   currentUnit,
@@ -62,12 +79,14 @@ export function MissionAgentCard({
 }: MissionAgentCardProps) {
   const categoryLabel = CATEGORY_LABELS[agent.category];
   const stateLabel = STATE_LABELS[agent.state];
+  const toolLabel = rackToolLabel(agent);
   const currentUnitId = currentUnit?.id ?? agent.currentUnitId;
   const currentUnitTitle = currentUnit?.title;
   const accessibleText = [
     agent.agentName,
     agent.operatorOpened === true ? 'Aberto por você' : null,
     `Papel: ${categoryLabel}`,
+    `Ferramenta: ${toolLabel}`,
     `Estado: ${stateLabel}`,
     currentUnitId
       ? currentUnitTitle
@@ -82,6 +101,7 @@ export function MissionAgentCard({
     '--mission-agent-x': `${position.x}px`,
     '--mission-agent-y': `${position.y}px`,
   };
+  const isCore = agent.category === 'orchestrator';
 
   return (
     <button
@@ -117,34 +137,67 @@ export function MissionAgentCard({
         {agent.agentName}
       </strong>
 
+      <span className="mission-agent-card__tool" title={toolLabel}>
+        <ProviderLogo adapterId={agent.cli} label={agent.cli} size="xs" />
+        <code className="mission-agent-card__tool-label">{toolLabel}</code>
+      </span>
+
+      <span className="mission-agent-card__activity" aria-hidden="true">
+        {Array.from({ length: ACTIVITY_LEDS }, (_, index) => (
+          <span
+            key={index}
+            className="mission-agent-card__led"
+            style={{ '--mission-led-index': index } as CSSProperties}
+          />
+        ))}
+      </span>
+
       {agent.operatorOpened === true && (
         <span className="mission-agent-card__operator-opened">
           aberto por você
         </span>
       )}
 
-      {currentUnitId && (
-        <span className="mission-agent-card__unit">
-          <span className="mission-agent-card__unit-label">Unidade atual</span>
-          {currentUnitTitle && (
-            <span
-              className="mission-agent-card__unit-title"
-              title={currentUnitTitle}
-            >
-              {currentUnitTitle}
+      <span className="mission-agent-card__display">
+        {!currentUnitId && !agent.detail && (
+          <span className="mission-agent-card__idle" aria-hidden="true">
+            sem unidade em curso
+          </span>
+        )}
+        {(currentUnitId || agent.detail) && (
+          <>
+          {currentUnitId && (
+            <span className="mission-agent-card__unit">
+              <span className="mission-agent-card__unit-label">
+                Unidade atual
+              </span>
+              {currentUnitTitle && (
+                <span
+                  className="mission-agent-card__unit-title"
+                  title={currentUnitTitle}
+                >
+                  {currentUnitTitle}
+                </span>
+              )}
+              <code
+                className="mission-agent-card__unit-id"
+                title={currentUnitId}
+              >
+                {currentUnitId}
+              </code>
             </span>
           )}
-          <code className="mission-agent-card__unit-id" title={currentUnitId}>
-            {currentUnitId}
-          </code>
-        </span>
-      )}
 
-      {agent.detail && (
-        <span className="mission-agent-card__detail" title={agent.detail}>
-          {agent.detail}
-        </span>
-      )}
+          {agent.detail && (
+            <span className="mission-agent-card__detail" title={agent.detail}>
+              {agent.detail}
+            </span>
+          )}
+          </>
+        )}
+      </span>
+
+      {isCore && <span className="mission-agent-card__patch" aria-hidden="true" />}
     </button>
   );
 }

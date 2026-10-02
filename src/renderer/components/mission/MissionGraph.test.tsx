@@ -368,6 +368,81 @@ describe('MissionGraph', () => {
     ).toHaveLength(2);
   });
 
+  it('energia no cabo: pacotes só no cabo vivo (missão rodando e ponta de trabalho trabalhando)', () => {
+    const live = {
+      ...snapshot,
+      agents: snapshot.agents.map((item) =>
+        item.id === 'worker-implementation' ? { ...item, state: 'working' as const } : item,
+      ),
+    } satisfies MissionSnapshot;
+    const { host } = renderGraph(null, { snapshot: live });
+    const group = (edgeId: string) =>
+      host
+        .querySelector<SVGElement>(`.mission-graph__edge[data-edge-id="${edgeId}"]`)!
+        .closest<SVGGElement>('.mission-graph__cable-group')!;
+
+    const delegated = group('edge-coordinate-implementation');
+    const delivered = group('edge-discovery-coordinate');
+    expect(delegated.dataset.edgeLive).toBe('true');
+    expect(delegated.dataset.workerState).toBe('working');
+    expect(delegated.querySelectorAll('animateMotion')).toHaveLength(2);
+    // Entrega de quem já concluiu: cabo quieto, tingido pelo estado.
+    expect(delivered.dataset.edgeLive).toBe('false');
+    expect(delivered.dataset.workerState).toBe('done');
+    expect(delivered.querySelector('.mission-graph__packets')).toBeNull();
+    // Os pacotes são decoração: fora da árvore de acessibilidade.
+    expect(
+      host.querySelector('.mission-graph__packets')?.getAttribute('aria-hidden'),
+    ).toBe('true');
+    // Um conector em cada ponta de cada cabo, por cima dos racks.
+    expect(
+      host.querySelectorAll('.mission-graph__jacks .mission-graph__jack'),
+    ).toHaveLength(4);
+    expect(
+      host.querySelectorAll('.mission-graph__jack[data-edge-live="true"]'),
+    ).toHaveLength(2);
+
+    const { host: completed } = renderGraph(null, {
+      snapshot: { ...live, state: 'completed' } satisfies MissionSnapshot,
+    });
+    expect(completed.querySelector('.mission-graph__packets')).toBeNull();
+    expect(
+      completed.querySelectorAll('.mission-graph__cable-group[data-edge-live="true"]'),
+    ).toHaveLength(0);
+  });
+
+  it('cada rack mostra a ferramenta (logo, CLI e modelo) e o visor apagado quando não há unidade', () => {
+    const racks = {
+      ...snapshot,
+      agents: [
+        ...snapshot.agents,
+        {
+          id: 'worker-idle',
+          agentName: 'Worker ocioso',
+          category: 'executor',
+          cli: 'qwen',
+          model: 'qwen3.8-max',
+          state: 'queued',
+        },
+      ],
+    } satisfies MissionSnapshot;
+    const { host } = renderGraph(null, { snapshot: racks });
+    const idle = agentButton(host, 'Worker ocioso');
+    expect(
+      idle.querySelector('.mission-agent-card__tool-label')?.textContent,
+    ).toBe('qwen · qwen3.8-max');
+    expect(idle.querySelector('.mission-agent-card__tool .provider-logo')).not.toBeNull();
+    expect(idle.getAttribute('aria-label')).toContain('Ferramenta: qwen · qwen3.8-max');
+    const placeholder = idle.querySelector('.mission-agent-card__idle');
+    expect(placeholder?.getAttribute('aria-hidden')).toBe('true');
+    expect(idle.querySelector('.mission-agent-card__detail')).toBeNull();
+    // Só o núcleo tem o painel de portas.
+    expect(host.querySelectorAll('.mission-agent-card__patch')).toHaveLength(1);
+    expect(
+      host.querySelector('.mission-agent-card[data-category="orchestrator"] .mission-agent-card__patch'),
+    ).not.toBeNull();
+  });
+
   it('draws topology guides when no canonical relationship has been persisted', () => {
     const graphWithoutEdges = {
       ...snapshot,
