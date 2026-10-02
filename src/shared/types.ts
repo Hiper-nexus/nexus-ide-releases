@@ -1,5 +1,10 @@
 import type { LicenseErrorCode, LicenseDenialReason } from './license-errors';
 import type { LoginResultEvent } from './auth-login';
+import type {
+  BugReportPreviewResult,
+  BugReportRequest,
+  BugReportSubmitResult,
+} from './bug-report';
 /**
  * Shared, transport-safe types used across main / preload / renderer.
  * Everything here must be JSON-serializable (it crosses the IPC boundary).
@@ -448,6 +453,17 @@ export interface NexusApi {
     invite(): Promise<{ ok: boolean; data?: { code: string; url: string } & Partial<InviteInfo>; error?: string; code?: LicenseErrorCode; blockedReason?: LicenseDenialReason }>;
     removeMember(accountId: string): Promise<{ ok: boolean; error?: string; code?: LicenseErrorCode; blockedReason?: LicenseDenialReason }>;
     leave(): Promise<{ ok: boolean; error?: string; code?: LicenseErrorCode; blockedReason?: LicenseDenialReason }>;
+  };
+  /**
+   * Reporte de problema. O renderer só entrega o que a pessoa digitou e
+   * escolheu; diagnóstico, redação e envio (com a sessão) são do Main.
+   */
+  bugReport: {
+    /** Corpo exato (já redigido) que o envio mandaria. Não envia nada. */
+    preview(request: BugReportRequest): Promise<BugReportPreviewResult>;
+    submit(request: BugReportRequest): Promise<BugReportSubmitResult>;
+    /** Menu "Ajuda → Reportar um problema…" pediu o diálogo. */
+    onOpenRequest(cb: () => void): Unsubscribe;
   };
   pty: {
     spawn(req: SpawnRequest): Promise<SpawnResult>;

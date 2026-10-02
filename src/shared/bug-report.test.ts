@@ -184,7 +184,7 @@ describe('formatBugReportMarkdown', () => {
   });
 
   it('includes context, events and errors when diagnostics are present', () => {
-    const markdown = formatBugReportMarkdown({
+    const payload: BugReportPayload = {
       ...validPayload,
       consent: { diagnostics: true },
       context: { adapter: 'claude', model: 'opus', paneCount: 2, missionActive: true },
@@ -192,7 +192,8 @@ describe('formatBugReportMarkdown', () => {
         events: [{ t: Date.UTC(2026, 9, 1, 12, 0, 0), kind: 'agent-pty-exit', code: '1' }],
         errors: ['agent-pty-exit:1'],
       },
-    });
+    };
+    const markdown = formatBugReportMarkdown(payload);
     expect(markdown).toContain('## Diagnóstico técnico');
     expect(markdown).toContain('claude');
     expect(markdown).toContain('2026-10-01T12:00:00.000Z');
