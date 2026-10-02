@@ -15,6 +15,11 @@ smoke_inside_container() {
   test "$VERSION_ID" = 12
   test "$(dpkg --print-architecture)" = amd64
   test "$(/opt/nexus-node/bin/node --version)" = "v$NEXUS_DEBIAN_NODE_VERSION"
+  local codex=/opt/nexus-smoke-codex/vendor/x86_64-unknown-linux-musl/bin/codex
+  test "$NEXUS_SMOKE_CODEX_VERSION" = 0.145.0
+  test "$NEXUS_SMOKE_CODEX_SHA256" = a2a05dafaa1acb002a45eaec0a462de5b13694fcfcd7bc43305f14781ce7be14
+  test -f "$codex" && test -x "$codex" && test ! -L "$codex"
+  test "$(sha256sum "$codex" | cut -d' ' -f1)" = "$NEXUS_SMOKE_CODEX_SHA256"
   printf '[debian-smoke] os=%s version=%s arch=amd64 node=%s\n' "$ID" "$VERSION_ID" "$NEXUS_DEBIAN_NODE_VERSION"
 
   export DEBIAN_FRONTEND=noninteractive
@@ -54,10 +59,14 @@ smoke_inside_container() {
   # Apt runs as root; the real Electron/PTY/persistence smoke runs as a user.
   useradd --uid 10001 --create-home --shell /bin/bash nexus-smoke
   install -d -o nexus-smoke -g nexus-smoke /tmp/nexus-debian-smoke
+  # Check the same real CLI under the unprivileged Debian identity. No login
+  # or inference runs; mission.prepare retains its provider installation gate.
+  test "$(runuser -u nexus-smoke -- "$codex" --version)" = "codex-cli $NEXUS_SMOKE_CODEX_VERSION"
+  printf '[debian-smoke] native codex-cli %s hash and unprivileged version verified\n' "$NEXUS_SMOKE_CODEX_VERSION"
   printf '[debian-smoke] installed-deb begin uid=10001\n'
   runuser -u nexus-smoke -- dbus-run-session -- \
     xvfb-run -a -s '-screen 0 1280x1024x24' \
-    /opt/nexus-node/bin/node scripts/smoke-packaged-app.mjs --app "${binaries[0]}"
+    /opt/nexus-node/bin/node scripts/smoke-packaged-app.mjs --app "${binaries[0]}" --verify-restart --expected-version "$NEXUS_DEBIAN_VERSION"
 
   local zip_binary
   zip_binary="$(runuser -u nexus-smoke -- python3 scripts/extract-linux-zip.py \
@@ -66,12 +75,12 @@ smoke_inside_container() {
   printf '[debian-smoke] extracted-zip begin uid=10001\n'
   runuser -u nexus-smoke -- dbus-run-session -- \
     xvfb-run -a -s '-screen 0 1280x1024x24' \
-    /opt/nexus-node/bin/node scripts/smoke-packaged-app.mjs --app "$zip_binary"
+    /opt/nexus-node/bin/node scripts/smoke-packaged-app.mjs --app "$zip_binary" --verify-restart --expected-version "$NEXUS_DEBIAN_VERSION"
   printf '[debian-smoke] installed-deb and extracted-zip passed\n'
 }
 
 smoke_from_host() {
-  local workspace node_binary node_root version node_version
+  local workspace node_binary node_root version node_version codex_root codex_binary
   workspace="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
   cd "$workspace"
   node_binary="$(node -p 'process.execPath')"
@@ -84,6 +93,15 @@ smoke_from_host() {
   test -x "$node_root/bin/node"
   test -f "out/make/deb/x64/nexus-ide_${version}_amd64.deb"
   test -f "out/make/zip/linux/x64/NexusIDE-linux-x64-${version}.zip"
+  # The installer emits a dedicated pristine native package root; do not mount
+  # runner profiles, npm caches, or the broader temporary directory.
+  codex_root="${NEXUS_SMOKE_CODEX_ROOT:?verified Linux Codex prerequisite is required}"
+  codex_binary="$codex_root/vendor/x86_64-unknown-linux-musl/bin/codex"
+  [[ "$codex_root" = /* && "$codex_root" != *','* && "$codex_root" != *$'\n'* && "$codex_root" != *$'\r'* ]]
+  test -f "$codex_root/package.json"
+  test -f "$codex_binary" && test -x "$codex_binary" && test ! -L "$codex_binary"
+  test "${NEXUS_SMOKE_CODEX_VERSION:-}" = 0.145.0
+  test "${NEXUS_SMOKE_CODEX_SHA256:-}" = a2a05dafaa1acb002a45eaec0a462de5b13694fcfcd7bc43305f14781ce7be14
   docker info > /dev/null
   docker pull --platform linux/amd64 "$DEBIAN_IMAGE"
   test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$DEBIAN_IMAGE")" = linux/amd64
@@ -91,11 +109,14 @@ smoke_from_host() {
   docker run --rm --init --platform linux/amd64 --shm-size=1g \
     --mount "type=bind,src=$workspace,dst=/workspace,readonly" \
     --mount "type=bind,src=$node_root,dst=/opt/nexus-node,readonly" \
+    --mount "type=bind,src=$codex_root,dst=/opt/nexus-smoke-codex,readonly" \
     --workdir /workspace \
-    --env PATH=/opt/nexus-node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    --env PATH=/opt/nexus-smoke-codex/vendor/x86_64-unknown-linux-musl/bin:/opt/nexus-node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     --env NEXUS_DEBIAN_CONTAINER=1 \
     --env "NEXUS_DEBIAN_VERSION=$version" \
     --env "NEXUS_DEBIAN_NODE_VERSION=$node_version" \
+    --env "NEXUS_SMOKE_CODEX_VERSION=$NEXUS_SMOKE_CODEX_VERSION" \
+    --env "NEXUS_SMOKE_CODEX_SHA256=$NEXUS_SMOKE_CODEX_SHA256" \
     --entrypoint /bin/bash "$DEBIAN_IMAGE" \
     /workspace/scripts/smoke-debian-package.sh --inside-container
 }

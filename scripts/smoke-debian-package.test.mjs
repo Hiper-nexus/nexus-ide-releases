@@ -28,14 +28,24 @@ function fixture({ version = '1.2.3', withZip = true } = {}) {
     fs.writeFileSync(target, 'test artifact');
   }
   const recorded = path.join(root, 'docker-arguments.jsonl');
+  const codexRoot = path.join(root, 'verified-codex', 'package');
+  const codexBin = path.join(codexRoot, 'vendor/x86_64-unknown-linux-musl/bin/codex');
+  fs.mkdirSync(path.dirname(codexBin), { recursive: true });
+  // Real executable fixture for the host Docker envelope only. The container
+  // gate must verify the pinned Codex hash and --version before app launch.
+  fs.copyFileSync('/bin/true', codexBin);
+  fs.writeFileSync(path.join(codexRoot, 'package.json'), JSON.stringify({ name: '@openai/codex', version: '0.145.0-linux-x64' }));
   fs.writeFileSync(path.join(bin, 'docker'), `#!${process.execPath}\n` +
     "const fs=require('node:fs'); const args=process.argv.slice(2); " +
     "fs.appendFileSync(process.env.NEXUS_TEST_DOCKER_CALLS, JSON.stringify(args)+'\\n'); " +
     "if(args[0]==='image') process.stdout.write('linux/amd64\\n');\n", { mode: 0o755 });
-  return { root, recorded, env: {
+  return { root, recorded, codexRoot, env: {
     ...process.env,
     PATH: `${bin}:${path.dirname(process.execPath)}:${process.env.PATH}`,
     NEXUS_TEST_DOCKER_CALLS: recorded,
+    NEXUS_SMOKE_CODEX_ROOT: codexRoot,
+    NEXUS_SMOKE_CODEX_VERSION: '0.145.0',
+    NEXUS_SMOKE_CODEX_SHA256: 'a2a05dafaa1acb002a45eaec0a462de5b13694fcfcd7bc43305f14781ce7be14',
   } };
 }
 
@@ -52,11 +62,22 @@ describe('Debian package smoke host boundary', () => {
       'run', '--rm', '--init', '--platform', 'linux/amd64', '--shm-size=1g',
       '--mount', `type=bind,src=${f.root},dst=/workspace,readonly`,
       '--mount', `type=bind,src=${path.dirname(path.dirname(process.execPath))},dst=/opt/nexus-node,readonly`,
-      '--workdir', '/workspace', '--env', 'PATH=/opt/nexus-node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+      '--mount', `type=bind,src=${f.codexRoot},dst=/opt/nexus-smoke-codex,readonly`,
+      '--workdir', '/workspace', '--env', 'PATH=/opt/nexus-smoke-codex/vendor/x86_64-unknown-linux-musl/bin:/opt/nexus-node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
       '--env', 'NEXUS_DEBIAN_CONTAINER=1',
       '--env', 'NEXUS_DEBIAN_VERSION=1.2.3', '--env', `NEXUS_DEBIAN_NODE_VERSION=${process.versions.node}`,
+      '--env', 'NEXUS_SMOKE_CODEX_VERSION=0.145.0',
+      '--env', 'NEXUS_SMOKE_CODEX_SHA256=a2a05dafaa1acb002a45eaec0a462de5b13694fcfcd7bc43305f14781ce7be14',
       '--entrypoint', '/bin/bash', image, '/workspace/scripts/smoke-debian-package.sh', '--inside-container',
     ]);
+  });
+
+  it('does not start Docker when the real Codex prerequisite is absent', () => {
+    const f = fixture();
+    delete f.env.NEXUS_SMOKE_CODEX_ROOT;
+    const result = spawnSync('bash', ['scripts/smoke-debian-package.sh'], { cwd: f.root, env: f.env, encoding: 'utf8' });
+    expect(result.status).not.toBe(0);
+    expect(fs.existsSync(f.recorded)).toBe(false);
   });
 
   it('does not start Docker when the built ZIP is missing', () => {

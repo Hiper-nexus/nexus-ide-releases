@@ -138,6 +138,20 @@ jobs:
           npm test
           npm run release:security
 
+      - name: Install verified native Codex smoke prerequisite
+        run: |
+          set -euo pipefail
+          node scripts/install-linux-smoke-codex.mjs --output release-artifacts/linux-codex-prerequisite.json
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: linux-codex-smoke-prerequisite
+          path: release-artifacts/linux-codex-prerequisite.json
+          if-no-files-found: warn
+          retention-days: 14
+
+
       - name: Build Linux x64 packages
         run: |
           set -euo pipefail
@@ -148,7 +162,7 @@ jobs:
           set -euo pipefail
           # The smoke harness alone supplies --no-sandbox for hosted-runner policy.
           # This does not prove a real Bubblewrap capability run or Hyprland session.
-          xvfb-run -a node scripts/smoke-packaged-app.mjs
+          xvfb-run -a node scripts/smoke-packaged-app.mjs --verify-restart --expected-version "$RELEASE_VERSION"
 
       - name: Install DEB and verify package metadata and installed runtime
         run: |
@@ -172,7 +186,7 @@ jobs:
           )
           test "${#BINARIES[@]}" = 1
           test -x "${BINARIES[0]}"
-          xvfb-run -a node scripts/smoke-packaged-app.mjs --app "${BINARIES[0]}"
+          xvfb-run -a node scripts/smoke-packaged-app.mjs --app "${BINARIES[0]}" --verify-restart --expected-version "$RELEASE_VERSION"
 
       - name: Collect immutable Linux packages and receipt
         # v2 records the portable archive only after its extracted runtime passed.
@@ -180,7 +194,7 @@ jobs:
           set -euo pipefail
           ZIP="$GITHUB_WORKSPACE/out/make/zip/linux/x64/NexusIDE-linux-x64-${RELEASE_VERSION}.zip"
           ZIP_BINARY="$(python3 scripts/extract-linux-zip.py --archive "$ZIP" --out "$RUNNER_TEMP/linux-release-zip")"
-          xvfb-run -a node scripts/smoke-packaged-app.mjs --app "$ZIP_BINARY"
+          xvfb-run -a node scripts/smoke-packaged-app.mjs --app "$ZIP_BINARY" --verify-restart --expected-version "$RELEASE_VERSION"
           node scripts/collect-linux-release.mjs \
             --app "$GITHUB_WORKSPACE" --version "$RELEASE_VERSION" --out "$RUNNER_TEMP/linux-release-assets"
 

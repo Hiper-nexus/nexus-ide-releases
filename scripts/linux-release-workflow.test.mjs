@@ -4,6 +4,12 @@ import { describe, expect, it } from 'vitest';
 const workflow = fs.readFileSync(new URL('../.github/workflows/linux-release.yml', import.meta.url), 'utf8');
 
 describe('protected Linux release candidate worker', () => {
+  it('provisions the real pinned Linux Codex prerequisite before mission smoke', () => {
+    const install = workflow.indexOf('node scripts/install-linux-smoke-codex.mjs');
+    expect(install).toBeGreaterThan(0);
+    expect(install).toBeLessThan(workflow.indexOf('xvfb-run -a node scripts/smoke-packaged-app.mjs'));
+    expect(workflow).toContain('name: linux-codex-smoke-prerequisite');
+  });
   it('accepts only explicit dispatch from protected canonical main and never publishes', () => {
     expect(workflow).toContain('name: Linux x64 release');
     expect(workflow).toContain("github.repository == 'Hiper-nexus/nexus-ide'");

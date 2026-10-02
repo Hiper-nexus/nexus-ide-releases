@@ -446,10 +446,10 @@ describe('remote model catalog URL', () => {
     ).toBe('https://example.test/catalog.json');
   });
 
-  it('falls back to the published GitHub raw default', () => {
+  it('falls back to the public release mirror catalog branch', () => {
     expect(resolveModelCatalogUrl({})).toBe(DEFAULT_MODEL_CATALOG_URL);
-    expect(DEFAULT_MODEL_CATALOG_URL).toContain(
-      'raw.githubusercontent.com/cleofasvolarehost/nexus-ide/catalog/resources/model-catalog.json',
+    expect(DEFAULT_MODEL_CATALOG_URL).toBe(
+      'https://raw.githubusercontent.com/Hiper-nexus/nexus-ide-releases/catalog/resources/model-catalog.json',
     );
   });
 
@@ -587,6 +587,57 @@ describe('refreshRemoteModelCatalog', () => {
     expect(written.adapters.grok.models.some((m: { id: string }) => m.id === 'grok-4.5')).toBe(
       true,
     );
+  });
+
+  it('preserves a newer existing overlay when the default URL fails', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-model-catalog-'));
+    tmpDirs.push(dir);
+    const file = path.join(dir, 'model-catalog.json');
+    const local = {
+      version: 9,
+      updatedAt: '2099-01-01T00:00:00.000Z',
+      adapters: {
+        grok: {
+          models: [{ id: 'grok-4.7', availability: 'free', costTier: 'free' }],
+        },
+      },
+    };
+    fs.writeFileSync(file, JSON.stringify(local, null, 2) + '\n');
+    const before = fs.readFileSync(file);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404 })));
+
+    expect(await refreshRemoteModelCatalog(DEFAULT_MODEL_CATALOG_URL, file)).toBe(false);
+    expect(fs.readFileSync(file).equals(before)).toBe(true);
+    expect(modelCatalogInfo(loadModelCatalog(file), 'grok', 'grok-4.7')).toMatchObject({
+      availability: 'free', costTier: 'free',
+    });
+  });
+
+  it('allows a cold connection ten seconds, then aborts without replacing an existing overlay', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-model-catalog-'));
+    tmpDirs.push(dir);
+    const file = path.join(dir, 'model-catalog.json');
+    const before = JSON.stringify({ version: 9, adapters: {} });
+    fs.writeFileSync(file, before);
+    let requestSignal: AbortSignal | undefined;
+    vi.stubGlobal('fetch', vi.fn((_url: string, init: RequestInit) => {
+      requestSignal = init.signal as AbortSignal;
+      return new Promise((_resolve, reject) => {
+        requestSignal!.addEventListener('abort', () => reject(new Error('request aborted')), { once: true });
+      });
+    }));
+    vi.useFakeTimers();
+    try {
+      const pending = refreshRemoteModelCatalog(DEFAULT_MODEL_CATALOG_URL, file);
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(requestSignal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(requestSignal?.aborted).toBe(true);
+      expect(await pending).toBe(false);
+      expect(fs.readFileSync(file, 'utf8')).toBe(before);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('returns false when a non-default fetch fails without writing a file', async () => {

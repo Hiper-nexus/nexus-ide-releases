@@ -77,3 +77,6 @@ nem atribuído fora dela.
 Run 36961884071 no commit d20d5ec aprovou typecheck/sinks/suíte e o browser funcional real sob Xvfb. O build falhou depois no better-sqlite3 fixado 12.11.1 contra headers V8 do Electron 43.7.4: GCC 11 e GCC 12 rejeitam a combinação de atributos de depreciação/exportação. A reprodução local preservou source e headers oficiais SHA-verificados. Clang 15 compilou o módulo completo; Electron 43.7.4 real carregou a ABI 148 e executou SELECT 42. Ambos workflows selecionam CC=clang-15/CXX=clang++-15, instalam o pacote oficial Ubuntu e conferem versão/sintaxe antes do primeiro rebuild. Nenhuma versão Node/Electron/SQLite, políticaTLS ou launcher de produção foi alterada.
 
 O teste local usou Clang 15.0.7 e stdlib GCC 12.4 de pacotes oficiaisUbuntu em extração isolada; isso fundamenta a escolha do compilador, sem comprovar instalação Debian/Omarchy. DEB/RPM/ZIP, abertura instalada Ubuntu e container Debian continuam dependentes do novo run completo.
+
+
+O run 36968857288 em e860 comprovou a correção Clang 15/GCC 12 no build real DEB/RPM/ZIP depois de 19.043 testes, typecheck/sinks/audit e browser fixture. O primeiro smoke empacotado falhou no mission-prepare por Codex não instalada/executável. Instalação DEB/Debian e coleta de artifacts foram pulados; não existem pacotes validados ou recibo de release desse run.

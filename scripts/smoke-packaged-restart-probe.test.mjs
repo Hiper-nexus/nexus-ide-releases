@@ -1,0 +1,147 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import http from 'node:http';
+import vm from 'node:vm';
+import { EventEmitter } from 'node:events';
+import { WebSocketServer } from 'ws';
+import { afterEach, describe, expect, it } from 'vitest';
+import { probeRestartPreferences } from './smoke-packaged-restart-probe.mjs';
+
+const cleanup = [];
+afterEach(async () => { while (cleanup.length) await cleanup.pop()(); });
+async function fixture(options = {}) {
+  const userData = await fs.mkdtemp(path.join(os.tmpdir(), 'nexus-restart-probe-'));
+  const child = Object.assign(new EventEmitter(), { pid: 4321, exitCode: null, signalCode: null });
+  let pixelMode = options.initial ?? false;
+  const operations = [];
+  const peers = new Set();
+  const sockets = new Set();
+  const server = http.createServer((req, res) => {
+    if (options.httpStall) return;
+    const targets = options.targets?.(port) ?? [{ id: 'page-a', type: 'page', url: 'file:///fixture.html', webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/page/page-a` }];
+    res.writeHead(options.httpStatus ?? 200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(targets));
+  });
+  server.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
+  const ws = new WebSocketServer({ server });
+  ws.on('connection', (peer, req) => {
+    peers.add(peer); peer.on('close', () => peers.delete(peer));
+    peer.on('message', async bytes => {
+      const message = JSON.parse(String(bytes));
+      if (options.rpcStall) return;
+      if (message.method === 'SystemInfo.getProcessInfo') {
+        peer.send(JSON.stringify({ id: message.id, result: { processInfo: [{ type: 'browser', id: options.browserPid ?? child.pid, cpuTime: 0 }] } }));
+        return;
+      }
+      if (message.method !== 'Runtime.evaluate') throw new Error('unexpected CDP command');
+      const nexus = {
+        settings: {
+          uiGet: async () => { operations.push('get'); return { pixelMode }; },
+          uiSet: async patch => { operations.push('set'); if (options.forbidSet) throw new Error('read phase must never set'); if (!options.dropWrite) pixelMode = patch.pixelMode; return { pixelMode }; },
+        },
+        ops: { releaseReadiness: async () => { operations.push('version'); return { appVersion: options.version ?? '0.76.166', packaged: options.packaged ?? true, privateField: 'must not appear in proof' }; } },
+      };
+      try {
+        const value = await vm.runInNewContext(message.params.expression, { window: options.noApi ? {} : { nexus } });
+        peer.send(JSON.stringify({ id: message.id, result: { result: { type: typeof value, value } } }));
+      } catch {
+        peer.send(JSON.stringify({ id: message.id, result: { exceptionDetails: { text: 'fixture exception' } } }));
+      }
+    });
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  await fs.writeFile(path.join(userData, 'DevToolsActivePort'), `${port}\n/devtools/browser/browser-a\n`);
+  cleanup.push(async () => {
+    for (const peer of peers) peer.terminate();
+    for (const socket of sockets) socket.destroy();
+    await new Promise(resolve => ws.close(resolve));
+    await new Promise(resolve => server.close(resolve));
+    await fs.rm(userData, { recursive: true, force: true });
+  });
+  return { child, userData, port, operations, peers, get pixelMode() { return pixelMode; } };
+}
+const run = (f, options = {}) => probeRestartPreferences(f.child, { userData: f.userData, phase: 'write', expectedVersion: '0.76.166', timeoutMs: 500, ...options });
+
+describe('packaged restart preference proof', () => {
+  it('writes through real CDP transport after checking version and the initial preference', async () => {
+    const f = await fixture();
+    expect(await run(f)).toEqual({ phase: 'write', pid: 4321, appVersion: '0.76.166', packaged: true, pixelMode: true });
+    expect(f.pixelMode).toBe(true);
+    expect(f.operations).toEqual(['version', 'get', 'set', 'get']);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(f.peers.size).toBe(0);
+    expect(f.child.eventNames()).toEqual([]);
+  });
+  it('reads the restarted preference without writing it again', async () => {
+    const f = await fixture({ initial: true, forbidSet: true });
+    expect(await run(f, { phase: 'read' })).toEqual({ phase: 'read', pid: 4321, appVersion: '0.76.166', packaged: true, pixelMode: true });
+    expect(f.operations).toEqual(['version', 'get']);
+  });
+  it.each([
+    [{ version: '0.76.165' }, /version/],
+    [{ packaged: false }, /packaged/],
+    [{ initial: true }, /initial preference/],
+    [{ dropWrite: true }, /persisted preference/],
+  ])('fails closed on invalid runtime or preference %j', async (options, message) => {
+    const f = await fixture(options);
+    await expect(run(f)).rejects.toThrow(message);
+    if (options.version || options.packaged === false || options.initial) expect(f.operations).not.toContain('set');
+  });
+  it('rejects a missing restart value instead of manufacturing it with a setter', async () => {
+    const f = await fixture({ initial: false, forbidSet: true });
+    await expect(run(f, { phase: 'read' })).rejects.toThrow(/persisted preference/);
+    expect(f.operations).toEqual(['version', 'get']);
+  });
+  it.each(['other', '', null])('rejects invalid phase %j before connecting', async phase => {
+    const f = await fixture();
+    await expect(run(f, { phase })).rejects.toThrow(/phase/);
+    expect(f.operations).toEqual([]);
+  });
+  it.each([
+    port => `ws://localhost:${port}/devtools/page/page-a`,
+    port => `ws://127.0.0.1:${port + 1}/devtools/page/page-a`,
+    port => `ws://user:pass@127.0.0.1:${port}/devtools/page/page-a`,
+    port => `ws://127.0.0.1:${port}/devtools/page/page-a#fragment`,
+    port => `wss://127.0.0.1:${port}/devtools/page/page-a`,
+  ])('rejects unsafe or mismatched websocket endpoints', async webSocketDebuggerUrl => {
+    const f = await fixture({ targets: port => [{ id: 'page-a', type: 'page', webSocketDebuggerUrl: webSocketDebuggerUrl(port) }] });
+    await expect(run(f)).rejects.toThrow(/CDP endpoint/);
+    expect(f.operations).toEqual([]);
+  });
+  it('rejects two pages exposing the Nexus API without mutating either', async () => {
+    const f = await fixture({ targets: port => ['a', 'b'].map(id => ({ id, type: 'page', webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/page/${id}` })) });
+    await expect(run(f)).rejects.toThrow(/ambiguous/);
+    expect(f.operations).toEqual([]);
+  });
+  it('rejects a stale endpoint belonging to a different browser process', async () => {
+    const f = await fixture({ browserPid: 9999 });
+    await expect(run(f)).rejects.toThrow(/process identity/);
+    expect(f.operations).toEqual([]);
+  });
+  it.each([{ rpcStall: true }, { httpStall: true }, { noApi: true }])('bounds stalled discovery and closes resources %j', async options => {
+    const f = await fixture(options);
+    await expect(run(f, { timeoutMs: 100 })).rejects.toThrow(/timed out/);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(f.peers.size).toBe(0);
+    expect(f.child.eventNames()).toEqual([]);
+  });
+  it('honors caller cancellation while CDP is stalled and removes listeners', async () => {
+    const f = await fixture({ rpcStall: true });
+    const controller = new AbortController();
+    const result = run(f, { signal: controller.signal });
+    setTimeout(() => controller.abort(), 30);
+    await expect(result).rejects.toThrow(/cancelled/);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(f.peers.size).toBe(0);
+    expect(f.child.eventNames()).toEqual([]);
+  });
+  it('stops probing when the owned child closes before readiness', async () => {
+    const f = await fixture({ rpcStall: true });
+    const result = run(f);
+    setTimeout(() => f.child.emit('close', 1), 30);
+    await expect(result).rejects.toThrow(/child exited/);
+    expect(f.child.eventNames()).toEqual([]);
+  });
+});

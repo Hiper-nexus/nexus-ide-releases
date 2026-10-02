@@ -27,3 +27,11 @@ Não há workflow macOS ativo em `.github/workflows` no pin. `docs/archive/relea
 O connector permite ler runs/jobs/logs/artifacts e baixar ZIP de artifact; expõe rerun de jobs existentes, mas não dispatch de workflow nem criar/upload/publicar release. Fetch rejeitou as coleções workflows/runners. Rerun de um job histórico mantém seu commit e não valida a candidata nova. Os publicadores de produção usam `gh` autenticado e transação canônica → espelho, com lock e SHA-256 remoto antes das transições.
 
 Os canais Mac e Windows têm publicadores independentes (`--macos`/`--windows`); o comando legado sem seletor é composto. `release:mac` publica automaticamente por padrão **depois** de seus gates, mas não escolhe versão/tag. Até os gates aplicáveis passarem, preservar a stable externa 165 e registrar 166 somente como candidata no PR. Ausência de Mac/notary nesta sessão é bloqueio operacional de entrega Mac, não motivo para fabricar recibo, renomear preview como estável ou alterar o canal público.
+
+
+## Provas posteriores vinculadas ao commit
+
+O head e860b15 aprovou CI 36968857284 (19.038 testes/typecheck/sinks), CodeQL e Windows 36968864403 (135 testes/22 probes). Linux 36968857288 aprovou fonte, browser e build DEB/RPM/ZIP, mas falhou no smoke mission-prepare por Codex indisponível; instalação/coleta/recibos foram pulados. Esses resultados são específicos do head, não autorização para promover previews unsigned ou publicar uma release incompleta. As regressões da revisão são documentadas em 2026-10-02-review-followups.md e exigem checks do head que as integra.
+
+
+O site público e /api/releases responderam HTTPS200 em 2026-10-02T06:09Z com proxy/CA/TLS intactos. A API já informa Mac arm64 e Windows x64 externos165; isso não foi um deploy desta sessão e não inclui Linux166. Acesso ao source nexus-site e autenticação do projeto Cloudflare de produção continuam indisponíveis. A publicação do catálogo JSON no mirror público é separada da release de aplicativos e do deploy do site.

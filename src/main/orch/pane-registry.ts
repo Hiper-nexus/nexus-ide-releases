@@ -631,6 +631,7 @@ interface BrowserOriginBinding {
   readonly info: PaneAuthzInfo;
   readonly physicalIdentity: string;
   readonly physicalAuthority: string;
+  readonly promotedOperatorHand: boolean;
 }
 // A layout is a presentation, not the lifetime of its live Main session.
 // Retain the proven origin when a workspace parks that presentation.
@@ -666,31 +667,56 @@ function rememberBrowserOrigin(owner: WebContents, info: PaneAuthzInfo): void {
       (previous.owner !== owner && (acp || isSessionOwnedBy(previous.owner, sessionId))))) return;
   browserOriginBySession.set(sessionId, {
     owner, physicalIdentity, physicalAuthority: browserPhysicalAuthority(agent),
+    promotedOperatorHand: (() => {
+      const context = getContextBySession(sessionId);
+      return context?.sessionId === sessionId && context.promotedFromUserSession === true &&
+        context.role === 'orchestrator' && context.missionId === info.missionId &&
+        sameExactPaneScope(context.scope, info.scope!);
+    })(),
     info: { ...info, scope: Object.freeze({ ...info.scope }),
       executionScope: info.executionScope ? Object.freeze({ ...info.executionScope }) : undefined },
   });
 }
 
+function browserOriginInfo(binding: BrowserOriginBinding): PaneAuthzInfo {
+  const { info, owner } = binding;
+  const sessionId = info.sessionId;
+  if (!sessionId || !binding.promotedOperatorHand || getAcpDriverSession(sessionId) ||
+      !isSessionOwnedBy(owner, sessionId)) return info;
+  const context = getContextBySession(sessionId);
+  // Main's gate may return an adopted operator to user while its presentation
+  // is parked, before the PTY metadata is returned. Only that captured hand,
+  // still owned by its exact original window, can follow this transition.
+  if (!context || context.sessionId !== sessionId || context.role !== 'user' ||
+      context.missionId || context.workerIncarnationId || !info.scope ||
+      !sameExactPaneScope(context.scope, info.scope) ||
+      !sameExactPaneScope(context.executionScope ?? context.scope, info.executionScope ?? info.scope)) return info;
+  return { ...info, role: 'user', missionId: undefined, workerIncarnationId: undefined };
+}
+
 function liveBrowserOrigin(binding: BrowserOriginBinding): boolean {
-  const { owner, info } = binding;
+  const { owner } = binding;
+  const info = browserOriginInfo(binding);
   const sessionId = info.sessionId;
   if (!sessionId || owner.isDestroyed() || owner.isCrashed()) return false;
   const acp = getAcpDriverSession(sessionId);
   const agent = acp?.agent ?? getAgentSessionInfo(sessionId);
-  if (!agent || browserPhysicalIdentity(agent) !== binding.physicalIdentity ||
-      browserPhysicalAuthority(agent) !== binding.physicalAuthority) return false;
+  if (!agent || browserPhysicalIdentity(agent) !== binding.physicalIdentity) return false;
+  const authority = browserPhysicalAuthority(agent);
+  if (authority !== binding.physicalAuthority &&
+      !(info !== binding.info && authority === browserPhysicalAuthority({ role: 'user' }))) return false;
   if (!acp && getSessionState(sessionId) === null) return false;
   if (!acp && isSessionOwnedBy(owner, sessionId)) return true;
   // Detached mission PTYs and ACP have a unique Main-owned runtime. Its
   // authority must still describe the exact session captured at presentation.
   const authorities = findMainOwnedRuntimeAuthority(sessionId);
-  const authority = authorities.length === 1 ? authorities[0] : undefined;
-  const owned = authority ? getMainOwnedPane(authority.paneId) : undefined;
-  if (!authority || !owned || authority.paneId !== info.paneId ||
-      owned.entry.sessionId !== sessionId || authority.missionId !== info.missionId ||
-      authority.role !== info.role || authority.workerIncarnationId !== info.workerIncarnationId ||
-      !authority.scope || !info.scope || !sameExactPaneScope(authority.scope, info.scope) ||
-      !sameExactPaneScope(authority.executionScope ?? authority.scope, info.executionScope ?? info.scope) ||
+  const runtime = authorities.length === 1 ? authorities[0] : undefined;
+  const owned = runtime ? getMainOwnedPane(runtime.paneId) : undefined;
+  if (!runtime || !owned || runtime.paneId !== info.paneId ||
+      owned.entry.sessionId !== sessionId || runtime.missionId !== info.missionId ||
+      runtime.role !== info.role || runtime.workerIncarnationId !== info.workerIncarnationId ||
+      !runtime.scope || !info.scope || !sameExactPaneScope(runtime.scope, info.scope) ||
+      !sameExactPaneScope(runtime.executionScope ?? runtime.scope, info.executionScope ?? info.scope) ||
       owned.entry.adapterId !== agent.adapterId || owned.entry.accountId !== agent.accountId) return false;
   if (acp) {
     return acp.sessionId === sessionId && acp.paneId === info.paneId &&
@@ -728,10 +754,11 @@ function browserOwnerForCaller(caller: CallerCtx): WebContents | null {
   }
   const origin = browserOriginBySession.get(caller.sessionId);
   if (origin) {
-    return origin.info.scope && liveBrowserOrigin(origin) && sameExactPaneScope(caller.scope, origin.info.scope) &&
-      sameExactPaneScope(caller.executionScope ?? caller.scope, origin.info.executionScope ?? origin.info.scope) &&
-      caller.missionId === origin.info.missionId && caller.role === (origin.info.role ?? 'user') &&
-      caller.workerIncarnationId === origin.info.workerIncarnationId ? origin.owner : null;
+    const info = browserOriginInfo(origin);
+    return info.scope && liveBrowserOrigin(origin) && sameExactPaneScope(caller.scope, info.scope) &&
+      sameExactPaneScope(caller.executionScope ?? caller.scope, info.executionScope ?? info.scope) &&
+      caller.missionId === info.missionId && caller.role === (info.role ?? 'user') &&
+      caller.workerIncarnationId === info.workerIncarnationId ? origin.owner : null;
   }
   // A headless worker has no renderer owner. Only its unique live mission
   // orchestrator can supply one; never use the most recently registered grid.
@@ -772,7 +799,7 @@ function browserOwnerForCaller(caller: CallerCtx): WebContents | null {
     }
   }
   for (const binding of browserOriginBySession.values()) {
-    const info = binding.info;
+    const info = browserOriginInfo(binding);
     if (info.role === 'orchestrator' && info.missionId === caller.missionId && info.scope &&
         sameExactPaneScope(caller.scope, info.scope) && liveBrowserOrigin(binding)) owners.add(binding.owner);
   }

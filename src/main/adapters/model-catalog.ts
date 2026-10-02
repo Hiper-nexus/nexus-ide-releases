@@ -44,7 +44,7 @@ export const MODEL_CATALOG_URL_ENV = 'NEXUS_MODEL_CATALOG_URL';
  * local/dev refresh without GitHub auth.
  */
 export const DEFAULT_MODEL_CATALOG_URL =
-  'https://raw.githubusercontent.com/cleofasvolarehost/nexus-ide/catalog/resources/model-catalog.json';
+  'https://raw.githubusercontent.com/Hiper-nexus/nexus-ide-releases/catalog/resources/model-catalog.json';
 
 /** Resolve the URL used for remote refresh (env wins, else default). */
 export function resolveModelCatalogUrl(
@@ -470,7 +470,8 @@ async function loadCatalogFromUrl(url: string): Promise<ModelCatalog | null> {
 
   if (!globalThis.fetch) return null;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5_000);
+  // Allow a cold proxy/TLS connection while keeping refresh bounded.
+  const timer = setTimeout(() => controller.abort(), 10_000);
   try {
     const res = await globalThis.fetch(url, {
       signal: controller.signal,

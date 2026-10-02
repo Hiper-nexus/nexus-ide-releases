@@ -53,6 +53,16 @@ rl.on('line', (line) => {
     if (prompt === 'large-stream-proof') {
       update('ses_driver', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'x'.repeat(300_000) + 'response end' } });
     }
+    if (prompt === 'boundary-hello' || prompt === 'boundary-world') {
+      const chunks = prompt === 'boundary-hello' ? ['he', 'llo'] : ['wor', 'ld'];
+      for (const text of chunks) {
+        update('ses_driver', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
+      }
+    }
+    if (prompt === 'boundary-empty') {
+      update('ses_driver', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '' } });
+      update('ses_driver', { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'thought-only turn' } });
+    }
     write({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
   }
 });
@@ -118,6 +128,27 @@ describe('acp-harness-driver', () => {
       await session.prompt('stream-proof');
       expect(readSessionOutput(session.sessionId)).toBe('hello world');
       expect(readSessionOutput('foreign-session')).toBe('');
+    } finally {
+      await session.shutdown();
+    }
+  });
+
+  test('separates responses across turns while preserving chunks and empty-turn output', async () => {
+    const session = await spawnAcpHarnessSession({
+      harness: { ...PRESET_HARNESSES[0], command: process.execPath, args: [fakePeerPath] },
+      cwd: fixtureDir,
+      paneId: 'pane-turn-boundaries',
+      missionId: 'mission-turn-boundaries',
+      scope: { version: 1, installationId: 'install-test', projectId: 'p', checkoutId: 'c', rootRealPath: fixtureDir, identitySource: 'manifest' },
+      publishFrame: () => {},
+    });
+    try {
+      await session.prompt('boundary-hello');
+      expect(readSessionOutput(session.sessionId)).toBe('hello');
+      await session.prompt('boundary-empty');
+      expect(readSessionOutput(session.sessionId)).toBe('hello');
+      await session.prompt('boundary-world');
+      expect(readSessionOutput(session.sessionId)).toBe('hello\n\nworld');
     } finally {
       await session.shutdown();
     }

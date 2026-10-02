@@ -2,6 +2,12 @@ import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
 const workflow = fs.readFileSync(new URL('../.github/workflows/linux-preview.yml', import.meta.url), 'utf8');
 describe('Linux preview workflow separation', () => {
+  it('provisions the real pinned Linux Codex prerequisite before mission smoke', () => {
+    const install = workflow.indexOf('node scripts/install-linux-smoke-codex.mjs');
+    expect(install).toBeGreaterThan(0);
+    expect(install).toBeLessThan(workflow.indexOf('xvfb-run -a node scripts/smoke-packaged-app.mjs'));
+    expect(workflow).toContain('name: linux-codex-smoke-prerequisite');
+  });
   it('builds unprivileged PR and main push sources without release credentials or tags', () => {
     expect(workflow).toContain('name: Linux x64 preview');
     expect(workflow).toContain('pull_request:');

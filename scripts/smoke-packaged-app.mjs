@@ -1213,6 +1213,49 @@ export function formatValidationMatrix(matrix) {
     .join('\n');
 }
 
+// Only sessions created here may keep a profile across two test launches.
+// A caller cannot redirect cleanup or the app's HOME to an operator profile.
+const ownedSmokeSessions = new WeakSet();
+
+export async function createPackagedSmokeSession() {
+  const userData = await fs.realpath(await fs.mkdtemp(
+    path.join(os.tmpdir(), 'nexus-packaged-smoke-'),
+  ));
+  try {
+    await fs.mkdir(path.join(userData, 'home'), { mode: 0o700 });
+    await fs.mkdir(path.join(userData, 'tmp'), { mode: 0o700 });
+    const session = Object.freeze({ userData });
+    ownedSmokeSessions.add(session);
+    return session;
+  } catch (error) {
+    await fs.rm(userData, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function assertOwnedSmokeSession(session) {
+  if (!session || !ownedSmokeSessions.has(session)) {
+    throw new Error('packaged smoke session must be created by this harness');
+  }
+  for (const directory of [session.userData, path.join(session.userData, 'home'), path.join(session.userData, 'tmp')]) {
+    const stat = await fs.lstat(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || await fs.realpath(directory) !== directory ||
+        (process.platform !== 'win32' && ((stat.mode & 0o077) !== 0 ||
+          (typeof process.getuid === 'function' && stat.uid !== process.getuid())))) {
+      throw new Error('packaged smoke session directory lost its private ownership');
+    }
+  }
+}
+
+export async function disposePackagedSmokeSession(session) {
+  if (!session || !ownedSmokeSessions.has(session)) {
+    throw new Error('cannot dispose an unowned packaged smoke session');
+  }
+  ownedSmokeSessions.delete(session);
+  // fs.rm unlinks symlinks; it never follows a replaced profile into its target.
+  await fs.rm(session.userData, { recursive: true, force: true });
+}
+
 export async function runPackagedSmoke(
   targetPath,
   {
@@ -1232,8 +1275,17 @@ export async function runPackagedSmoke(
     inspectMainBundle = inspectPackagedMainBundle,
     inspectLegalArtifacts = inspectPackagedLegalArtifacts,
     inspectWakeModel = inspectPackagedWakeModel,
+    smokeSession = null,
+    remoteDebugging = false,
+    runtimeProbe = null,
+    runtimeProbeTimeoutMs = 30_000,
   } = {},
 ) {
+  if (typeof remoteDebugging !== 'boolean' ||
+      (runtimeProbe !== null && typeof runtimeProbe !== 'function') ||
+      !Number.isFinite(runtimeProbeTimeoutMs) || runtimeProbeTimeoutMs <= 0 || runtimeProbeTimeoutMs > TIMEOUT_MS) {
+    throw new Error('invalid packaged smoke runtime probe options');
+  }
   const target = resolvePackagedTarget(targetPath, { platform, arch });
   await fs.access(
     target.binary,
@@ -1247,11 +1299,12 @@ export async function runPackagedSmoke(
     assertPackagedWindowsRuntimeIcon(target.resourcesDir);
   }
 
-  const userData = await fs.mkdtemp(
-    path.join(os.tmpdir(), 'nexus-packaged-smoke-'),
-  );
-  await fs.mkdir(path.join(userData, 'home'), { recursive: true, mode: 0o700 });
-  await fs.mkdir(path.join(userData, 'tmp'), { recursive: true, mode: 0o700 });
+  const ownsSession = smokeSession === null;
+  const session = smokeSession ?? await createPackagedSmokeSession();
+  let userData;
+  const probeController = new AbortController();
+  let probeTimeout;
+  let runtimeProofTask = null;
 
   let output = '';
   let runtimeExecuted = false;
@@ -1265,12 +1318,42 @@ export async function runPackagedSmoke(
   let treeProof = null;
 
   try {
+    await assertOwnedSmokeSession(session);
+    userData = session.userData;
+    if (remoteDebugging) {
+      // Chromium leaves this endpoint file in a reused profile. Never let the
+      // second launch connect to the previous process's debugging endpoint.
+      try {
+        await fs.unlink(path.join(userData, 'DevToolsActivePort'));
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+      }
+    }
     const code = await new Promise((resolve, reject) => {
       const child = spawnImpl(
         target.binary,
-        packagedSmokeArgs(userData, platform),
+        [...packagedSmokeArgs(userData, platform), ...(remoteDebugging
+          ? ['--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1']
+          : [])],
         packagedSmokeSpawnOptions(userData, env, platform),
       );
+      if (runtimeProbe) {
+        runtimeProofTask = new Promise(resolveProbe => {
+          let completed = false;
+          const finishProbe = outcome => {
+            if (completed) return;
+            completed = true;
+            clearTimeout(probeTimeout);
+            resolveProbe(outcome);
+          };
+          probeTimeout = setTimeout(() => {
+            probeController.abort();
+            finishProbe({ error: new Error('packaged smoke runtime probe timed out') });
+          }, runtimeProbeTimeoutMs);
+          Promise.resolve().then(() => runtimeProbe(child, { userData, signal: probeController.signal }))
+            .then(value => finishProbe({ value }), error => finishProbe({ error }));
+        });
+      }
       runtimeExecuted = true;
       let settled = false;
       let readySeen = false;
@@ -1539,6 +1622,8 @@ export async function runPackagedSmoke(
 
     assertPackagedSmokeProof(code, output);
     await assertFunctionalMarker(userData);
+    const runtimeOutcome = runtimeProofTask ? await runtimeProofTask : null;
+    if (runtimeOutcome && 'error' in runtimeOutcome) throw runtimeOutcome.error;
     process.stdout.write(output);
     const processTreeProof =
       treeProof?.processTreeProof ?? emptyProcessTreeProof(0);
@@ -1570,9 +1655,12 @@ export async function runPackagedSmoke(
       treeProof,
       shutdownMode,
       processTreeProof,
+      runtimeProof: runtimeOutcome?.value ?? null,
     };
   } finally {
-    await fs.rm(userData, { recursive: true, force: true });
+    clearTimeout(probeTimeout);
+    probeController.abort();
+    if (ownsSession) await disposePackagedSmokeSession(session);
   }
 }
 
@@ -1586,7 +1674,17 @@ async function main() {
     throw new Error(`packaged smoke does not support arch: ${arch}`);
   }
 
-  const explicit = resolveAppArgument(process.argv.slice(2));
+  const args = process.argv.slice(2);
+  if (args.includes('--verify-restart')) {
+    const { parseRestartSmokeArguments, runPackagedRestartSmoke } = await import('./smoke-packaged-restart.mjs');
+    const options = parseRestartSmokeArguments(args);
+    const target = options.app ?? defaultPackagedTargetPath({ platform, arch });
+    const probe = resolvePackagedTarget(target, { platform, arch });
+    const targetArch = detectPackagedTargetArch(probe.binary, { platform, fallbackArch: arch });
+    await runPackagedRestartSmoke(target, { expectedVersion: options.expectedVersion, platform, arch: targetArch });
+    return;
+  }
+  const explicit = resolveAppArgument(args);
   if (explicit) {
     const probe = resolvePackagedTarget(explicit, { platform, arch });
     const targetArch = detectPackagedTargetArch(probe.binary, {

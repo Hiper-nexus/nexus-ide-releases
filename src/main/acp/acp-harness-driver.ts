@@ -100,6 +100,7 @@ interface LiveSession {
   acpSessionId: string;
   scope: AcpObserverScope;
   turnSequence: number;
+  hasPublicResponse: boolean;
   lastStatus: ObserverSemanticStatus | null;
   activeTurn: AcpTurnHandle | null;
   closed: boolean;
@@ -206,6 +207,7 @@ async function promptLiveSession(
   setStatus(live, 'working');
   const turn = live.client.prompt(live.acpSessionId, text, options);
   live.activeTurn = turn;
+  let responseStarted = false;
   try {
     for await (const event of turn) {
       // The observer journal carries lifecycle/tool activity, not transcript
@@ -213,6 +215,12 @@ async function promptLiveSession(
       // by pane read/ask; thought chunks stay outside that output surface.
       if (event.type === 'update' && event.update.sessionUpdate === 'agent_message_chunk') {
         const text = event.update.content.text;
+        if (text.length > 0 && !responseStarted) {
+          // Preserve streaming chunks within a turn and separate distinct responses.
+          if (live.hasPublicResponse) recordPaneSessionData(sessionId, '\n\n');
+          responseStarted = true;
+          live.hasPublicResponse = true;
+        }
         for (let offset = 0; offset < text.length; offset += ACP_OUTPUT_APPEND_CHARS) {
           recordPaneSessionData(sessionId, text.slice(offset, offset + ACP_OUTPUT_APPEND_CHARS));
         }
@@ -304,6 +312,7 @@ export async function spawnAcpHarnessSession(
     acpSessionId: '',
     scope: observerScope,
     turnSequence: 0,
+    hasPublicResponse: false,
     lastStatus: null,
     activeTurn: null,
     closed: false,

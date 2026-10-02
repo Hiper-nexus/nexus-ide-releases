@@ -99,7 +99,7 @@ Electron 43.7.4 embeds Node 24.21.0 / ABI 148.
 The real marketplace loader returned 424 agents and 913 skills from immutable
 upstream commit `b9b77d4093b125ed8548d5aafdf167381bae6208` after the commits/main
 and recursive tree requests. Its 24-hour cache and SHA/path validation remain.
-The real model loader's configured cleofasvolarehost URL returned 404; an earlier
+At the baseline, the real model loader's configured cleofasvolarehost URL returned 404; an earlier
 request timed out after 5 s. Both preserved the bundled/existing catalog. No
 replacement URL or public-provider key was invented. Catalog tests: 46 passed.
 
@@ -147,3 +147,13 @@ and its existing production authentication, not on permission from the user.
 Windows preview 36966330197 passed on head 3e49a73, version 0.76.166: typecheck/sinks,135 focused tests and 22 probes of the NUPKG-extracted executable, renderer-mounted and shutdown-complete. Main proves its physical PTY inventory; the Windows harness does not enumerate every Electron helper, so its empty orphans array is not exhaustive OS evidence. Setup installation was not run. Artifacts are unsigned/private-preview, expire 2026-10-09, and were not downloaded/rehashed locally; GitHub/upload digests matched.
 
 The source suites on head 3e49a73 reached a single failure in pane-registry-pane-number.test.ts: the mock WebContents omitted isCrashed used by the new origin guard. The production method exists in Electron. The fixture is corrected without weakening the guard; final-head CI and Linux packages still require a successful fresh run. The Linux compiler gate itself passed with real Clang 15.0.7 and selected GCC 12 headers; package/build/installation steps were skipped after the fixture failure.
+
+
+## Review followups
+
+See `2026-10-02-review-followups.md` for the exact e860 CI/Windows results, the ACP response-boundary regression and the parked operator-hand transition. Linux e860 built DEB/RPM/ZIP with the fixed compiler, but packaged mission preparation failed because Codex was unavailable. No installed Ubuntu/Debian or publishable package proof is claimed for that failed run. Later changes require their own complete hosted checks.
+
+
+## Public catalog correction
+
+The unchanged versioned bundle was published at Hiper-nexus/nexus-ide-releases/catalog in public commit 40c8408c08cc4f5cc12d47126554df6df34042dc, with only public ancestry and one JSON addition. Anonymous GET returned 200 and SHA-256 814c237d0dda678b90caf603e24d82f71dec6a768c0973f00a1c834863956f1c. The corrected loader default points there. A cold first refresh without preflight/retry failed in four new Node/Electron Main processes at the old 5-second timeout. The bounded 10-second timeout passed in new Node 22/Electron Main processes (5641/5312 ms), with NODE_USE_ENV_PROXY=1 and NODE_USE_SYSTEM_CA=1, TLS intact and no provider keys. Cache/overlay/version rules remain; all 25 catalog tests passed. This does not prove Chromium trust or provider entitlement. Details are in `../validation/catalog-public-refresh-2026-10-02.md`.

@@ -9146,6 +9146,19 @@ export const CURRENT_RELEASE: AppRelease = {
         'sem mandar eventos para uma página antiga.',
     },
     {
+      title: 'Configuração e respostas ACP',
+      detail:
+        'Modelo e esforço precisam ser anunciados e confirmados pela CLI ' +
+        'antes do pedido. O coordenador recebe o texto público das respostas, ' +
+        'com separação entre turnos e sem incluir pensamentos internos.',
+    },
+    {
+      title: 'Catálogo remoto público',
+      detail:
+        'O catálogo usa uma fonte pública versionada e um prazo de refresh ' +
+        'validado no proxy. Falhas preservam o catálogo local existente.',
+    },
+    {
       title: 'Build e verificação Linux no CI',
       detail:
         'Preview Linux registra o commit, os smokes e as evidências de ' +

@@ -250,17 +250,17 @@ plus `costTier`). Sources, in order:
 2. Local overlay: `~/.nexus/model-catalog.json` (hot-reloaded)
 3. Startup refresh → writes that local file from URL / path / bundled published JSON
 
-**Publishable source of truth:** `resources/model-catalog.json`  
-**Publish lane:** branch `catalog` (JSON only).
+**Bundled source of truth:** `resources/model-catalog.json` in the private app repository.  
+**Public refresh copy:** `Hiper-nexus/nexus-ide-releases`, branch `catalog`, same JSON path.
 
-Default URL (GitHub raw — works when the repo is public or the machine has auth):
+Default URL (public GitHub raw, no credentials required):
 
 ```
-https://raw.githubusercontent.com/cleofasvolarehost/nexus-ide/catalog/resources/model-catalog.json
+https://raw.githubusercontent.com/Hiper-nexus/nexus-ide-releases/catalog/resources/model-catalog.json
 ```
 
-If that URL 404s (private repo), Nexus falls back to the same JSON **bundled**
-from `resources/model-catalog.json` and seeds `~/.nexus/model-catalog.json`.
+If the default URL fails, Nexus seeds a missing `~/.nexus/model-catalog.json`
+from the JSON **bundled** with the app. An existing local overlay is preserved.
 
 Override (HTTPS, `file://`, or absolute path):
 
@@ -275,8 +275,8 @@ export NEXUS_MODEL_CATALOG_URL="$PWD/resources/model-catalog.json"
 
 **Update when a model goes paid / a new Grok lands:**
 
-1. Edit `resources/model-catalog.json` (set `availability: "api-only"` / add the new id).
-2. Push to branch `catalog` (or copy into `~/.nexus/model-catalog.json`).
+1. Edit `resources/model-catalog.json` in the private app repository (set `availability: "api-only"` / add the new id).
+2. Copy and publish only that JSON to the same path on the public mirror's `catalog` branch (or copy it into `~/.nexus/model-catalog.json`). Keep the public branch based on public mirror history: create it from the mirror's public `main` if absent, otherwise update its existing public history. Never merge or copy private Git ancestry, source code or credentials into the mirror.
 3. Restart Nexus — boot refresh reloads the overlay; `fs.watch` also picks up local edits.
 
 ## Security notes

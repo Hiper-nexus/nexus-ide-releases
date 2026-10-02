@@ -4,13 +4,14 @@ import type { CallerCtx, PaneAuthzInfo } from './pane-authz';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { AcpDriverSession } from '../acp/acp-harness-driver';
 import type { MainOwnedPane } from './main-owned-pane-runtime';
+import type { AgentGateContext } from './gate';
 
 const facts = vi.hoisted(() => ({
   sessions: new Map<string, { ownerId: number | null; live: boolean; scope: ProjectExecutionScope;
     sessionId?: string; paneId?: string; missionId?: string; role?: CallerCtx['role']; adapterId?: string;
     accountId?: string; source?: 'direct-user' | 'orchestrator'; workerIncarnationId?: string;
     authoritySeal?: typeof seal }>(),
-  contexts: new Map<string, CallerCtx>(),
+  contexts: new Map<string, CallerCtx & { promotedFromUserSession?: true }>(),
   rendererScopes: new Map<number, ProjectExecutionScope>(),
   headless: new Map<string, PaneAuthzInfo>(),
   acp: new Map<string, AcpDriverSession>(),
@@ -122,6 +123,47 @@ beforeEach(async () => {
 });
 
 describe('Main-derived browser originating owner', () => {
+  it.each([false, true])('keeps a parked operator browser after Main returns the hand (physical metadata returned=%s)', async (physicalReturned) => {
+    const wc = owner(1), latest = owner(2);
+    const promoted = renderSession(wc, 'operator', 'orchestrator');
+    const context: AgentGateContext = { ...promoted, token: 'test-token', label: 'operator',
+      allowedTools: null, allowedSkills: null, stopAttempts: 0, handoffSubmitted: false,
+      promotedFromUserSession: true };
+    facts.contexts.set('operator', context);
+    registry.attachOrchMeta(wc, 'pane-operator', { missionId: 'mission', role: 'orchestrator', scope });
+    registry.syncPanes([
+      { paneId: 'pane-operator', sessionId: 'operator', kind: 'cli-agent', title: 'operator' },
+      { paneId: 'parked-operator-browser', sessionId: null, kind: 'browser', title: 'old project' },
+    ], wc);
+    const nextScope = { ...scope, projectId: 'another-project', rootRealPath: '/another' };
+    facts.rendererScopes.set(wc.id, nextScope);
+    facts.scopeChange!(wc, scope, nextScope);
+    registry.syncPanes([], wc);
+    registry.registerOrchRenderer(latest);
+    const gate = await vi.importActual<typeof import('./gate')>('./gate');
+    expect(gate.returnOperatorHandFromEndedMission(context)).toBe(true);
+    if (physicalReturned) Object.assign(facts.sessions.get('operator')!, { role: 'user', missionId: undefined });
+    expect(registry.callerWithPaneOwner(context).ownerWebContentsId).toBe(wc.id);
+    expect(registry.listVisiblePaneSnapshots(context).map(pane => pane.paneId)).toContain('parked-operator-browser');
+    expect(registry.callerWithPaneOwner(promoted).ownerWebContentsId).toBeUndefined();
+    expect(registry.callerWithPaneOwner(headlessWorker()).ownerWebContentsId).toBeUndefined();
+    for (const invalid of [
+      { ...context, scope: { ...scope, installationId: 'foreign-installation' } },
+      { ...context, executionScope: { ...scope, rootRealPath: '/foreign-checkout' } },
+      { ...context, workerIncarnationId: 'another-generation' },
+      { ...context, missionId: 'another-mission' },
+    ]) {
+      facts.contexts.set('operator', invalid);
+      expect(registry.callerWithPaneOwner(context).ownerWebContentsId).toBeUndefined();
+    }
+    facts.contexts.set('operator', context);
+    facts.sessions.get('operator')!.ownerId = latest.id;
+    expect(registry.callerWithPaneOwner(context).ownerWebContentsId).toBeUndefined();
+    facts.sessions.get('operator')!.ownerId = wc.id;
+    facts.sessions.get('operator')!.accountId = 'another-account';
+    expect(registry.callerWithPaneOwner(context).ownerWebContentsId).toBeUndefined();
+  });
+
   it('retains the Main-presented ACP coordinator owner when the renderer snapshot has no session or role', () => {
     const original = owner(1), latest = owner(2);
     const pane: MainOwnedPane = { entry: { paneId: 'pane-acp-leader', sessionId: 'acp-leader', kind: 'cli-agent',
