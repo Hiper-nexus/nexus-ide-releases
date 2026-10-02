@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.76.171 — Entrega que chega
+
+Build do Windows. Inclui a 0.76.170 (Linux no desktop).
+
+- **Enter no Codex só depois de ingerir a colagem (F-735).** No Windows o ConPTY não repassa o bracketed paste ao crossterm. O Codex ingere a colagem tecla a tecla (~0,5 ms por caractere no Codex 0.160) e o Enter de 500 ms caía no meio dela, virando quebra de linha. O Maestro acumulava `[Pasted Content 4531 chars] #2, #3` e só 17% das entregas eram aceitas na 1ª tentativa.
+  - `paste-ingest.ts` espera o marcador `[Pasted Content N chars]`, que o Codex só mostra com a colagem inteira, antes do 1º Enter. Vale para a entrega de handoff e para os caminhos de injeção do `tool-util`. Teto de 2 s + 1,5 ms por caractere.
+  - O `UserPromptSubmit` nativo passa a provar o aceite também fora da família Claude.
+- **Turno recusado pelo provedor é falha de início (F-734).** O hook `StopFailure` da família Claude não era registrado: um pane com chave recusada (`401 … Please run /login`) ficava `working` para sempre e o vigia do F-723 o dava por iniciado.
+  - O hook entra só com a categoria saneada (credencial, cobrança, pedido inválido). O texto do provedor nunca sai do parser.
+  - O turno do brief que termina recusado e sem trabalho vira falha provada: reenvio para outra CLI e disjuntor aberto por 15 min quando a credencial é a de todos os panes da CLI.
+- **Retomada da aba é a única dona do Maestro (F-721).** Ao religar o app, o pane antigo do Maestro e a retomada da aba corriam juntos. O antigo subia com conversa nova e ficava com a conta, e a retomada certa era recusada.
+  - A retomada reserva a transferência: o pane antigo não é religado por nenhum caminho do renderer.
+  - O resume selado pelo Main chega ao spawn. O lookup acha a conversa no 1º spawn do pane depois de reiniciar.
+  - Conversa copiada que não é encontrada vira erro visível, nunca uma sessão vazia. Vale também para o Codex (`codex resume <rollout>`).
+- **Disjuntor do adapter conta só o início provado (F-736).** O Qwen morreu no boot 7 vezes em 8 min e a rota o escolheu a cada vez: o sucesso registrado quando o PTY ficava gravável zerava a contagem.
+  - O sucesso agora é o início provado.
+  - Janela de 10 min.
+  - Recuo exponencial nas sondas que falham (30 s → 2 min → 8 min → 30 min).
+- **Charset nas respostas dos hooks (F-737).** O PowerShell 5.1 decodificava a resposta sem charset como ISO-8859-1. A doutrina chegava como "VOCÃ Ã O MAESTRO DESTA MISSÃO".
+
 ## 0.76.170 — Linux no desktop
 
 Build do Linux (DEB, RPM e ZIP). Inclui a 0.76.167, a 0.76.168 (com o Redline na bandeja) e a 0.76.169, que não tiveram pacote Linux. Tudo abaixo foi achado e conferido rodando o app num Omarchy/Hyprland de verdade, não só no smoke do CI.

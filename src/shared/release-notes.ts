@@ -9263,7 +9263,7 @@ export const RELEASE_076169: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076170: AppRelease = {
   version: '0.76.170',
   date: '2026-10-02',
   codename: 'Linux no desktop',
@@ -9317,6 +9317,49 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Gravações do Nexus Shot na pasta Vídeos',
       detail:
         'O Nexus passa a aceitar gravações enviadas da pasta Vídeos do Linux.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.171',
+  date: '2026-10-02',
+  codename: 'Entrega que chega',
+  summary:
+    'O Maestro Codex recebe as entregas dos workers sem ficar parado no ' +
+    'Enter, retomar a missão retoma a conversa do Maestro, e a CLI que falha ' +
+    'ao começar sai da rota em vez de ser escolhida de novo. Inclui a 0.76.170.',
+  highlights: [
+    {
+      title: 'Entregas chegam ao Maestro Codex',
+      detail:
+        'No Windows, a entrega de um worker ficava colada no Maestro Codex como ' +
+        '"[Pasted Content]" e não era enviada; cada nova tentativa colava outra ' +
+        'cópia. Agora o Nexus espera o Codex terminar de receber o texto antes ' +
+        'de apertar Enter.',
+    },
+    {
+      title: 'Retomar a missão retoma a conversa',
+      detail:
+        'Depois de reiniciar o app, a missão da aba volta com o Maestro na ' +
+        'mesma conversa, sem um segundo Maestro vazio disputando a conta. ' +
+        'O aviso de "Agente em pausa" some quando o pane volta.',
+    },
+    {
+      title: 'CLI que não começa sai da rota',
+      detail:
+        'Pane cuja chave o provedor recusa já no primeiro pedido é tratado ' +
+        'como pane que não começou: a tarefa vai para outra CLI e aquela CLI ' +
+        'fica fora da rota por um tempo. Uma CLI que morre ao abrir também é ' +
+        'pausada, por mais tempo a cada nova falha.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Texto em português chega certo aos agentes no Windows',
+      detail:
+        'As orientações do Nexus aos agentes chegavam com acentos trocados ' +
+        '("sessão" virava "sessÃ£o").',
     },
   ],
 };
