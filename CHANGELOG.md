@@ -1047,7 +1047,7 @@ Do lote 0.76.85–0.76.92 que este pacote do Mac ganha (detalhe nas datas acima)
 - **Spawn paralelo não revoga mais o refresh token do Codex (ciclo 5)**: `managed-auth-spawn-gate.ts` serializa o refresh entre painéis da mesma conta gerenciada (líder assume, seguidores esperam a reescrita com lock e teto de 12s) em vez de deixar N painéis rotacionarem o mesmo `auth.json` ao mesmo tempo.
 - **Grok não roda mais `grok models` (ciclo 5)**: esse binário rotaciona o refresh token a cada chamada; descoberta de modelos passa a ler `~/.grok/models_cache.json` + catálogo bundled, e a cota usa o JWT já presente em `auth.json` direto contra o endpoint de billing.
 - **Devin sobe pelo PTY (ciclo 5)**: spawn deixa de reportar "did not start after prompt delivery" no caminho read-only.
-- **Limpador de hooks legados cobre HOMEs de CLI e todo workspace registrado**: varredura de sobras do Overclock (`~/.overclock-app`) alcança também `~/.codex`, `~/.grok`, `~/.kimi-code`, e roda por workspace registrado, não só pelo cwd do app.
+- **Limpador de hooks legados cobre HOMEs de CLI e todo workspace registrado**: varredura de sobras de hooks de outra ferramenta alcança também `~/.codex`, `~/.grok`, `~/.kimi-code`, e roda por workspace registrado, não só pelo cwd do app.
 - **Contrato da liderança fechado antes de religar**: `MissionLeadershipError` com códigos tipados (`split_brain`, `existing_session`, `target_not_live`, `write_incomplete`, `scope_mismatch`, `busy`, `mission_missing`); sessão `exited` não trava mais a resolução; origens `create`/`release` completam o vocabulário.
 - **Publicação `--macos` pelo caminho oficial (F-564)**: `npm run release:publish -- --macos` consome só a candidata local aprovada pelo gate, sem build nem espera por candidato Windows.
 - **Gate de release não trava mais com app preso em exit do kernel**: smoke copia o app via `ditto`, desmonta a imagem antes do smoke, e trata processo em `STAT` de saída do kernel (E/Z) como encerrado, com teto de 60s.
@@ -1061,7 +1061,7 @@ Do lote 0.76.85–0.76.92 que este pacote do Mac ganha (detalhe nas datas acima)
 - **Recusa do handoff sem missão sugere só o que aquele painel alcança**: a dica de "mission effect blocked" é recalculada pela allowlist do painel — um pane somente-leitura ouve `nexus_pane_ask`, não ferramentas que o próprio gate barra. A cerca de autoridade não mudou.
 - **Quit não espera backend de cron pendurado**: `stopCronLoop`, primeiro passo do encerramento, ganhou teto de 3 s; o tick em voo segue em background e o diário reconcilia na sessão seguinte. Fim do "quit excedeu o teto de 45000ms".
 - **"Entrar novamente" no painel de cotas é um botão de verdade**: quando a conta pede novo login, o selo abre o terminal de login da conta pela mesma rota do gerenciador de contas. Antes era um texto inerte na posição de botão.
-- **Limpador de hooks legados cobre três alvos e caminho morto**: sobras do Overclock em `~/.claude/settings.json`, `<workspace>/.codex/hooks.json` e `<workspace>/.agents/hooks.json` apontando para `~/.overclock-app` são removidas no boot quando o executável não existe no disco. Fim do "Hook failed — exited with code 127" a cada tool e do modal "1 hook needs review" do Codex.
+- **Limpador de hooks legados cobre três alvos e caminho morto**: sobras de hooks de outra ferramenta em `~/.claude/settings.json`, `<workspace>/.codex/hooks.json` e `<workspace>/.agents/hooks.json`, apontando para um diretório removido, são removidas no boot quando o executável não existe no disco. Fim do "Hook failed — exited with code 127" a cada tool e do modal "1 hook needs review" do Codex.
 
 ## 0.76.41 — Panes Windows sem eco e sem limite
 
@@ -2768,7 +2768,7 @@ o restart do app ressuscita missões running, e worker de
 missão que bate limite de conta troca sozinho para a conta
 reserva e continua trabalhando.
 
-- **Missão ininterrupta (doutrina Overclock).** Todos os panes
+- **Missão ininterrupta.** Todos os panes
   morrerem não fecha a missão: o orquestrador é respawnado com
   nota de continuidade (até 3 tentativas por episódio, recarregado
   por atividade real) e consome os handoffs pendentes. O watcher

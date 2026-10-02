@@ -43,9 +43,9 @@ export const RELEASE_0721: AppRelease = {
 export const RELEASE_0730: AppRelease = {
   version: '0.73.0',
   date: '2026-09-02',
-  codename: 'Paridade Overclock 1.33.18 e Super Swarm',
+  codename: 'Super Swarm',
   summary:
-    'Incorporação das inovações do Overclock 1.33.18: warm pool de panes CPU-aware (~80ms spawn), ' +
+    'Novidades de orquestração: warm pool de panes CPU-aware (~80ms spawn), ' +
     'session lease registry com startKey anticorrida, handoff mecânico com preservação de fullText e modo attach, ' +
     'squads embutidos qa-swarm, qa-vision, absurd-landing e cinema-site, e expansão da superfície MCP.',
   highlights: [
@@ -86,9 +86,9 @@ export const RELEASE_0730: AppRelease = {
 export const RELEASE_0740: AppRelease = {
   version: '0.74.0',
   date: '2026-09-03',
-  codename: 'BridgeSpace 3.4.18 Parity & Autonomous Swarm Engine',
+  codename: 'Autonomous Swarm Engine',
   summary:
-    'Port completo dos 10 domínios do BridgeSpace 3.4.18: design tokens com elevação glass/depth hierarchy, ' +
+    'Dez novos domínios: design tokens com elevação glass/depth hierarchy, ' +
     'terminal ghost assist com refinery assist, shell integration para macOS login shell (.zprofile) e OSC 9;9, ' +
     'drop-box watcher de agent hooks com ingest offline tolerante a falhas, swarm mailbox com escrita transcript-first ' +
     'e anti-social chatter filter, knowledge graph MCP com detecção de órfãos e sugestão de conexões, e sentinela de sobrevivência de sessão.',
@@ -645,9 +645,9 @@ export const RELEASE_0761: AppRelease = {
 export const RELEASE_06100: AppRelease = {
   version: '0.61.0',
   date: '2026-08-19',
-  codename: 'Herança do concorrente',
+  codename: 'Três candidatos de volta',
   summary:
-    'Os três candidatos do overclick entram de vez: cada story selada ganha ' +
+    'Três candidatos entram de vez: cada story selada ganha ' +
     'um roteiro "como confirmar" que o revisor recebe verbatim, handoffs ' +
     'carregam telemetria autorrelatada (min · tokens no Quadro) e assentos ' +
     'caminham cadeias de sucessão. O wizard fala: dite o objetivo por voz. ' +
@@ -679,7 +679,7 @@ export const RELEASE_06100: AppRelease = {
     {
       title: 'Maestro cobra, não espera',
       detail:
-        'Doutrina COBRANÇA (modelo overclock): worker parado sem handoff ' +
+        'Doutrina COBRANÇA: worker parado sem handoff ' +
         'leva nexus_pane_read + cobrança direta — fim do "aguardando ' +
         'handoffs" com worker mudo.',
     },
@@ -1030,7 +1030,7 @@ export const RELEASE_05000: AppRelease = {
   codename: 'Imbatível: a missão vai do início ao fim',
   summary:
     'A campanha 0.50 cruzou a evidência das suas missões reais com a ' +
-    'doutrina do Overclock e as novidades do Orca upstream: a entrega ' +
+    'doutrina de cobrança e as novidades do Orca upstream: a entrega ' +
     'que morria "Handoff não entregue" tendo entregue, o worker que ' +
     'nascia morto invisível e respawna 6×, a sentinela de HEAD que ' +
     'disparava à toa, o app empacotado sem NENHUM log — tudo com teste, ' +
@@ -1330,7 +1330,7 @@ export const RELEASE_03224: AppRelease = {
     'reserva e continua trabalhando.',
   highlights: [
     {
-      title: 'Missão ininterrupta (doutrina Overclock)',
+      title: 'Missão ininterrupta',
       detail:
         'Todos os panes morreram não fecha a missão: o orquestrador ' +
         'é respawnado com nota de continuidade (até 3 tentativas ' +
@@ -3852,7 +3852,7 @@ export const RELEASE_07637: AppRelease = {
       title: 'Régua do summary e receipt de harness',
       detail:
         'Summary acima de 400 caracteres é condensado na fronteira de frase e a íntegra vai para ' +
-        'overclock.fullText. A resposta do spawn traz harness {adapterId, model, effort, source}.',
+        'o artifact de texto integral do handoff. A resposta do spawn traz harness {adapterId, model, effort, source}.',
     },
     {
       title: 'Hooks de worker vivos (F-536/F-555)',
@@ -5290,7 +5290,7 @@ export const RELEASE_07654: AppRelease = {
         'credencial, menos folga, sem medição). A regra continua ' +
         'decidindo — Jev não escolhe conta: comparar cota medida é ' +
         'aritmética, e um decisor com 38% de confiança escolhendo a conta ' +
-        'com 77% queimado foi exatamente o caso observado no Overclock.',
+        'com 77% queimado foi exatamente o caso que a revisão do desenho encontrou.',
     },
     {
       title: 'Consumo do Jev por janela',
@@ -6043,7 +6043,7 @@ export const RELEASE_07643: AppRelease = {
     {
       title: 'Limpador de hooks legados cobre HOMEs de CLI e todo workspace registrado',
       detail:
-        'Sobras do Overclock apontando para `~/.overclock-app` agora são varridas também em ' +
+        'Sobras de hooks de outra ferramenta, apontando para um diretório removido, agora são varridas também em ' +
         '`~/.codex`, `~/.grok` e `~/.kimi-code`, e a varredura roda por workspace REGISTRADO ' +
         '— não só pelo cwd do app — fechando o caso do hook morto num workspace fora do ' +
         'diretório corrente.',
@@ -6082,8 +6082,8 @@ export const RELEASE_07642: AppRelease = {
     'Atualização macOS com os seis bugs cobrados hoje: "Tornar orquestrador" volta a ser ' +
     'um clique num painel solto, o cofre deixa de insistir com o Keychain (adeus modal ' +
     '"Chaves Não Encontradas"), o spawn de painel não reporta falha de um painel vivo, o ' +
-    'quit não espera backend pendurado, "Entrar novamente" funciona e os hooks mortos do ' +
-    'Overclock somem do boot.',
+    'quit não espera backend pendurado, "Entrar novamente" funciona e os hooks mortos de ' +
+    'outra ferramenta somem do boot.',
   highlights: [
     {
       title: '"Tornar orquestrador" num clique',
@@ -6123,10 +6123,10 @@ export const RELEASE_07642: AppRelease = {
         'que abre o terminal de login pela mesma rota do gerenciador de contas.',
     },
     {
-      title: 'Hooks mortos do Overclock limpos em três alvos',
+      title: 'Hooks mortos de outra ferramenta limpos em três alvos',
       detail:
         'Sobras em ~/.claude/settings.json, .codex/hooks.json e .agents/hooks.json apontando ' +
-        'para ~/.overclock-app são removidas no boot quando o executável não existe. Fim do ' +
+        'para um diretório que não existe mais são removidas no boot quando o executável não existe. Fim do ' +
         '"Hook failed — exited with code 127" a cada tool e do modal "1 hook needs review".',
     },
     {
@@ -6792,7 +6792,7 @@ export const RELEASE_07696: AppRelease = {
   date: '2026-09-24',
   codename: 'Harness declarado',
   summary:
-    'Paridade Overclock 1.4: a tabela de harness por tarefa vira editável e ' +
+    'A tabela de harness por tarefa vira editável e ' +
     'persistida, o recibo do spawn declara o que foi decidido, a cota de ' +
     'conta aparece como janela honesta (missing ≠ zero) e o pane ganha ' +
     'identidade na sessão MCP. Warm pool retargeta pane em boot; tools/list ' +
