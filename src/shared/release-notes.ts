@@ -9199,7 +9199,7 @@ export const RELEASE_076167: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076168: AppRelease = {
   version: '0.76.168',
   date: '2026-10-02',
   codename: 'Pane que começa',
@@ -9229,6 +9229,35 @@ export const CURRENT_RELEASE: AppRelease = {
         'O aviso de worker pendurado no meio do turno ficava preso na fila e ' +
         'chegava a se repetir a cada 15 segundos. Agora ele é entregue ao ' +
         'Maestro uma vez por hora, para ele destravar ou trocar o worker.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.169',
+  date: '2026-10-02',
+  codename: 'DeepSeek pelo plano',
+  summary:
+    'O DeepSeek agora roda pela API direta da DeepSeek ou pelo Alibaba ' +
+    'Token Plan, à sua escolha. A chave do plano nunca vai para a DeepSeek. ' +
+    'O Qwen Code também ganha o DeepSeek V4 Pro do plano.',
+  highlights: [
+    {
+      title: 'Escolha o provedor do DeepSeek',
+      detail:
+        'Em Providers › DeepSeek, escolha "DeepSeek (API direta)" ou ' +
+        '"Alibaba Token Plan". Cada provedor usa o endpoint e a chave dele: ' +
+        'a chave do plano (sk-sp-…) nunca é enviada para a DeepSeek, que ' +
+        'respondia 401 e derrubava o pane. Se você ainda não escolheu, o ' +
+        'Nexus segue o seu launcher: chave do plano lá significa Token Plan.',
+    },
+    {
+      title: 'DeepSeek V4 Pro também pelo Qwen Code',
+      detail:
+        'Com o Qwen Code no Token Plan, o DeepSeek V4 Pro aparece no catálogo ' +
+        'dele. O plano não serve o DeepSeek Flash: tarefas que pediriam o ' +
+        'Flash sobem no V4 Pro em vez de falhar.',
     },
   ],
   fixes: [],

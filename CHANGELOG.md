@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.169 — DeepSeek pelo plano
+
+Build do Windows.
+
+- **DeepSeek pela API direta ou pelo Alibaba Token Plan (F-724).** O adapter `deepseek` (CLI do Claude no endpoint Anthropic-compatible) ganhou o seletor "Provedor do DeepSeek". A rota `deepseek-token-plan` usa `https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic` com a chave do Token Plan, e o modelo é sempre `deepseek-v4-pro`.
+  - Chaves disjuntas: chave `sk-sp-` nunca vai para api.deepseek.com, nem do cofre, nem do launcher, nem do intent router. A chave da DeepSeek nunca vai para a Alibaba.
+  - No plano, `deepseek-flash`/`deepseek-v4-flash` (que respondem 403) sobem como `deepseek-v4-pro`. O Qwen Code no Token Plan também lista o `deepseek-v4-pro`.
+  - Conta DeepSeek fixada não entra no plano. Na API direta, conta com chave `sk-sp-` é recusada.
+- **Sem escolha salva, o DeepSeek segue o launcher (F-724, reabertura).** O pane DeepSeek do operador morria em `401 Authentication Fails` porque a 0.76.168 mandava a chave do Token Plan para a DeepSeek. Sem `providers.json` salvo, o provedor vem do slot `deepseek` do launcher: `deepseek-base-url` no host do Token Plan (ou chave `sk-sp-` sem base-url) aponta o Token Plan, e o resto fica na API direta. Quando há escolha salva, ela prevalece.
+
 ## 0.76.168 — Pane que começa
 
 Build do Windows. Inclui a 0.76.167 e o Redline do Linux que o Mac mandou depois dela.
