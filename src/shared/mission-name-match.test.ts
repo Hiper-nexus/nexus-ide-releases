@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_AMBIGUOUS_MISSION_CANDIDATES,
+  isMissionNameNoise,
   normalizeMissionName,
   resolveMissionByName,
 } from './mission-name-match';
@@ -22,6 +23,16 @@ describe('normalizeMissionName', () => {
 
   it('returns an empty string when nothing readable is left', () => {
     expect(normalizeMissionName('?!…  ')).toBe('');
+  });
+});
+
+describe('isMissionNameNoise', () => {
+  it.each(['a', 'é', '?', '', '   ', undefined])('treats %j as a sound, not a name', (text) => {
+    expect(isMissionNameNoise(text)).toBe(true);
+  });
+
+  it.each(['2', 'ab', 'sait da lója', 'versão dois'])('treats %j as a possible name', (text) => {
+    expect(isMissionNameNoise(text)).toBe(false);
   });
 });
 

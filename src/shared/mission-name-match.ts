@@ -90,6 +90,14 @@ function isTooShortToMatch(wanted: string): boolean {
   return wanted.length < 2 && !/\p{N}/u.test(wanted);
 }
 
+/**
+ * A fala é curta demais para ser um nome (um som solto, não uma missão). Quem
+ * pede ajuda ao Jev quando nada casa usa isto para não gastar a consulta com ruído.
+ */
+export function isMissionNameNoise(wanted: string | undefined): boolean {
+  return isTooShortToMatch(normalizeMissionName(wanted ?? ''));
+}
+
 export function resolveMissionByName<T extends { readonly title: string }>(
   wanted: string | undefined,
   missions: readonly T[],

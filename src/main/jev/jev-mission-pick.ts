@@ -16,6 +16,7 @@
  */
 import {
   MISSION_PICK_LIMITS,
+  type MissionPickKind,
   type MissionPickRequest,
   type MissionPickResult,
   type MissionPickUndecidedReason,
@@ -32,10 +33,29 @@ import {
 } from './jev-decision-log';
 import { consumeJevRateSlot } from './jev-rate-limit';
 
-/** Confiança mínima da resposta para a escolha valer. */
+/** Desempate entre títulos parecidos: confiança mínima da resposta para a escolha valer. */
 export const MISSION_PICK_MIN_CONFIDENCE = 0.7;
-/** Distância mínima entre a opção escolhida e a 2ª mais provável (o `none` conta). */
+/** Desempate: distância mínima entre a escolhida e a 2ª mais provável (o `none` conta). */
 export const MISSION_PICK_MIN_MARGIN = 0.15;
+/**
+ * Nada casou com o que foi dito: o texto falado pode ser ruído do STT, então o
+ * piso é mais rígido que o do desempate.
+ */
+export const MISSION_PICK_NO_MATCH_MIN_CONFIDENCE = 0.85;
+export const MISSION_PICK_NO_MATCH_MIN_MARGIN = 0.3;
+
+interface PickFloor {
+  readonly minConfidence: number;
+  readonly minMargin: number;
+}
+
+const PICK_FLOORS: Readonly<Record<MissionPickKind, PickFloor>> = {
+  ambiguous: { minConfidence: MISSION_PICK_MIN_CONFIDENCE, minMargin: MISSION_PICK_MIN_MARGIN },
+  noMatch: {
+    minConfidence: MISSION_PICK_NO_MATCH_MIN_CONFIDENCE,
+    minMargin: MISSION_PICK_NO_MATCH_MIN_MARGIN,
+  },
+};
 /** Espera por tentativa; a voz não pode ficar muda além disto. */
 export const MISSION_PICK_TIMEOUT_MS = 3_000;
 /** Teto total (inclui o retry de erro de rede do cliente). */
@@ -116,27 +136,45 @@ export function buildMissionPickState(
   return null;
 }
 
+const TIE_BREAK_INSTRUCTIONS =
+  'The person asked a voice assistant to open one of their saved missions. ' +
+  '`said` is what they said (speech recognition can garble names). ' +
+  'Pick the single mission in `candidates` they most likely mean, judging by the title. ' +
+  '`status` and `lastActivity` matter only if `said` refers to them (for example ' +
+  '"the running one" or "the latest"); never use them to break a tie between titles ' +
+  'that fit equally well. Choose none when no title clearly fits or when two or more fit equally well.';
+
+const NO_MATCH_INSTRUCTIONS =
+  'The person asked a voice assistant to open one of their saved missions, but `said` does not ' +
+  'literally match any title: speech recognition may have garbled the name (wrong letters, ' +
+  'split or merged words, numbers spelled out). Pick the single mission in `candidates` that ' +
+  '`said` is most plausibly a garbled version of, by sound or by meaning. Do not guess: ' +
+  'choose none when `said` is unrelated to every title, or when two or more fit about equally well.';
+
+const NONE_CRITERION: Readonly<Record<MissionPickKind, string>> = {
+  ambiguous:
+    'No candidate clearly matches what the person said, or two or more of them fit equally well.',
+  noMatch:
+    'No candidate is clearly what the person meant: `said` is unrelated to every title, or two or more fit about equally well.',
+};
+
 /**
  * Uma opção por candidato mais `none`. O título é texto digitado pela pessoa e
  * por isso NÃO é colado na pergunta: o critério aponta o caminho no `state`.
  */
-export function buildMissionPickQuestion(candidateCount: number): JevQuestion {
+export function buildMissionPickQuestion(
+  candidateCount: number,
+  kind: MissionPickKind = 'ambiguous',
+): JevQuestion {
   const criteria: Record<string, string | null> = {};
   for (let index = 0; index < candidateCount; index += 1) {
     criteria[`m${index + 1}`] =
       `The mission whose title is \`candidates[${index}].title\`.`;
   }
-  criteria[NONE_ID] =
-    'No candidate clearly matches what the person said, or two or more of them fit equally well.';
+  criteria[NONE_ID] = NONE_CRITERION[kind];
   return {
     type: 'choice',
-    instructions:
-      'The person asked a voice assistant to open one of their saved missions. ' +
-      '`said` is what they said (speech recognition can garble names). ' +
-      'Pick the single mission in `candidates` they most likely mean, judging by the title. ' +
-      '`status` and `lastActivity` matter only if `said` refers to them (for example ' +
-      '"the running one" or "the latest"); never use them to break a tie between titles ' +
-      'that fit equally well. Choose none when no title clearly fits or when two or more fit equally well.',
+    instructions: kind === 'noMatch' ? NO_MATCH_INSTRUCTIONS : TIE_BREAK_INSTRUCTIONS,
     criteria,
   };
 }
@@ -156,7 +194,9 @@ function candidateIndex(choice: string, candidateCount: number): number | null {
 export function evaluateMissionPickAnswer(
   answer: JevAnswer | undefined,
   candidateCount: number,
+  kind: MissionPickKind = 'ambiguous',
 ): MissionPickResult {
+  const floor = PICK_FLOORS[kind];
   if (answer?.type !== 'choice') return undecided('invalid-answer');
   if (answer.choice === NONE_ID) return undecided('none');
   const index = candidateIndex(answer.choice, candidateCount);
@@ -167,9 +207,9 @@ export function evaluateMissionPickAnswer(
     .reduce((best, [, probability]) => Math.max(best, probability), 0);
   // A escolha tem de ser a opção mais provável da própria distribuição.
   if (runnerUp > own) return undecided('invalid-answer');
-  if (answer.confidence < MISSION_PICK_MIN_CONFIDENCE) return undecided('low-confidence');
+  if (answer.confidence < floor.minConfidence) return undecided('low-confidence');
   const margin = Math.round((own - runnerUp) * PROBABILITY_PRECISION) / PROBABILITY_PRECISION;
-  if (margin < MISSION_PICK_MIN_MARGIN) return undecided('narrow-margin');
+  if (margin < floor.minMargin) return undecided('narrow-margin');
   return { decision: 'picked', index, confidence: answer.confidence };
 }
 
@@ -182,8 +222,11 @@ export interface MissionPickDeps {
   now?: () => number;
 }
 
-function journalDecision(result: MissionPickResult): string {
-  return result.decision === 'picked' ? `pick:m${result.index + 1}` : `ask:${result.reason}`;
+/** `pick:mN` / `ask:motivo`; o caminho "nada casou" leva o prefixo `noMatch:`. Nunca texto. */
+function journalDecision(result: MissionPickResult, kind: MissionPickKind): string {
+  const outcome =
+    result.decision === 'picked' ? `pick:m${result.index + 1}` : `ask:${result.reason}`;
+  return kind === 'noMatch' ? `noMatch:${outcome}` : outcome;
 }
 
 /**
@@ -204,12 +247,15 @@ export async function pickMissionWithJev(
     if (!(deps.consumeRate ?? (() => consumeJevRateSlot(RATE_LIMIT_KEY)))()) {
       return undecided('rate-limited');
     }
+    const kind: MissionPickKind = request.kind ?? 'ambiguous';
     const state = buildMissionPickState(request, (deps.now ?? Date.now)());
     if (!state) return undecided('invalid-request');
 
     const outcome = await (deps.judge ?? judge)({
       state,
-      questions: { [PICK_QUESTION_ID]: buildMissionPickQuestion(request.candidates.length) },
+      questions: {
+        [PICK_QUESTION_ID]: buildMissionPickQuestion(request.candidates.length, kind),
+      },
       timeoutMs: MISSION_PICK_TIMEOUT_MS,
       // Teto total: sem isto o retry do cliente dobraria a espera da voz.
       signal: AbortSignal.timeout(MISSION_PICK_TOTAL_TIMEOUT_MS),
@@ -221,6 +267,7 @@ export async function pickMissionWithJev(
     const result = evaluateMissionPickAnswer(
       outcome.answers[PICK_QUESTION_ID],
       request.candidates.length,
+      kind,
     );
     try {
       (deps.record ?? recordJevDecision)({
@@ -229,7 +276,7 @@ export async function pickMissionWithJev(
         questions: [PICK_QUESTION_ID],
         probabilities: jevAnswerProbabilities(outcome.answers),
         confidence: jevAnswerConfidences(outcome.answers),
-        decision: journalDecision(result),
+        decision: journalDecision(result, kind),
         ...decisionResultUsage(outcome),
       });
     } catch {

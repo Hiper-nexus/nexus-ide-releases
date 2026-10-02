@@ -36,4 +36,35 @@ describe('missionPickRequestSchema', () => {
   ])('refuses %s', (_label, payload) => {
     expect(missionPickRequestSchema.safeParse(payload).success).toBe(false);
   });
+
+  describe('no-match requests (nothing matched the spoken name: 1 to 8 missions)', () => {
+    const many = (n: number) => Array.from({ length: n }, (_, i) => candidate(`Missão ${i}`));
+
+    it('accepts between one and eight candidates', () => {
+      for (const n of [1, 2, 5, 8]) {
+        expect(missionPickRequestSchema.safeParse({ kind: 'noMatch', spoken: 'sait da loja', candidates: many(n) }).success, `n=${n}`).toBe(true);
+      }
+      expect(MISSION_PICK_LIMITS.noMatchCandidatesMax).toBe(8);
+    });
+
+    it.each([0, 9])('refuses %i candidates', (n) => {
+      expect(missionPickRequestSchema.safeParse({ kind: 'noMatch', spoken: 'x1', candidates: many(n) }).success).toBe(false);
+    });
+
+    it('keeps the 2 to 5 range for the default and the explicit ambiguous kind', () => {
+      expect(missionPickRequestSchema.safeParse({ spoken: 'loja', candidates: many(8) }).success).toBe(false);
+      expect(missionPickRequestSchema.safeParse({ kind: 'ambiguous', spoken: 'loja', candidates: many(6) }).success).toBe(false);
+      expect(missionPickRequestSchema.safeParse({ kind: 'ambiguous', spoken: 'loja', candidates: many(1) }).success).toBe(false);
+      expect(missionPickRequestSchema.safeParse({ kind: 'ambiguous', spoken: 'loja', candidates: many(5) }).success).toBe(true);
+    });
+
+    it('refuses an unknown kind', () => {
+      expect(missionPickRequestSchema.safeParse({ kind: 'anything', spoken: 'loja', candidates: many(3) }).success).toBe(false);
+    });
+
+    it('still refuses real ids riding along on a no-match request', () => {
+      const withId = [{ ...candidate('A'), id: 'mission-1' }];
+      expect(missionPickRequestSchema.safeParse({ kind: 'noMatch', spoken: 'loja', candidates: withId }).success).toBe(false);
+    });
+  });
 });

@@ -54,6 +54,20 @@ describe('registerMissionPickIpc', () => {
     expect(pick).not.toHaveBeenCalled();
   });
 
+  it('accepts a no-match request with one to eight candidates and refuses nine or none', async () => {
+    const answer: MissionPickResult = { decision: 'undecided', reason: 'none' };
+    const pick = vi.fn(async () => answer);
+    registerMissionPickIpc(pick);
+    const many = (n: number) => Array.from({ length: n }, (_, i) => ({ title: `Missão ${i}`, state: 'running' }));
+    for (const n of [1, 8]) {
+      expect(await call({ kind: 'noMatch', spoken: 'sait da lója', candidates: many(n) })).toEqual(answer);
+    }
+    expect(pick).toHaveBeenCalledTimes(2);
+    expect(await call({ kind: 'noMatch', spoken: 'sait da lója', candidates: many(9) })).toEqual({ decision: 'undecided', reason: 'invalid-request' });
+    expect(await call({ kind: 'noMatch', spoken: 'sait da lója', candidates: [] })).toEqual({ decision: 'undecided', reason: 'invalid-request' });
+    expect(pick).toHaveBeenCalledTimes(2);
+  });
+
   it('hands the parsed request to the picker and returns its answer', async () => {
     const answer: MissionPickResult = { decision: 'picked', index: 1, confidence: 0.9 };
     const pick = vi.fn(async () => answer);

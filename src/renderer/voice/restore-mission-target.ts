@@ -4,16 +4,23 @@
  * `open`; em qualquer dúvida ela devolve `refuse` com a frase para falar.
  *
  * Ordem: o resolvedor local (`mission-name-match`) vê se há uma missão óbvia;
- * só na ambiguidade entra o Jev (superfície `missionPick`, via Main), e a
- * escolha dele só vale se vier válida. Sem decisão, a pessoa é perguntada.
- * Nada aqui escolhe "a primeira da lista" como consolo.
+ * o Jev (superfície `missionPick`, via Main) entra em dois casos, e a escolha
+ * dele só vale se vier válida e passar o piso do Main:
+ * - ambiguidade (2–5 títulos parecidos): desempate, piso 0,7 / margem 0,15;
+ * - nada casou (a fala pode ser um nome mal reconhecido) e há 1–8 missões:
+ *   ele lê a fala contra todas, piso mais rígido (0,85 / margem 0,30), e a voz
+ *   diz que foi uma interpretação. Com 9 ou mais missões não consulta.
+ * Sem decisão, nada abre: a pessoa é perguntada ("Qual delas?") ou ouve "não
+ * achei". Nada aqui escolhe "a primeira da lista" como consolo.
  */
 import {
   MAX_AMBIGUOUS_MISSION_CANDIDATES,
+  isMissionNameNoise,
   resolveMissionByName,
 } from '../../shared/mission-name-match';
 import {
   MISSION_PICK_LIMITS,
+  type MissionPickKind,
   type MissionPickRequest,
   type MissionPickResult,
 } from '../../shared/mission-pick';
@@ -100,10 +107,12 @@ export async function requestMissionPick(
 }
 
 function toPickRequest(
+  kind: MissionPickKind,
   wanted: string,
   candidates: readonly RestorableMission[],
 ): MissionPickRequest {
   return {
+    kind,
     spoken: clamp(wanted, MISSION_PICK_LIMITS.spokenMax).text,
     candidates: candidates.map((mission) => ({
       title: clamp(mission.title, MISSION_PICK_LIMITS.titleMax).text,
@@ -121,15 +130,32 @@ function pickedIndex(answer: MissionPickResult | null, count: number): number | 
 }
 
 async function askJev(
+  kind: MissionPickKind,
   wanted: string,
   candidates: readonly RestorableMission[],
   pick: MissionPick,
 ): Promise<number | null> {
   try {
-    return pickedIndex(await pick(toPickRequest(wanted, candidates)), candidates.length);
+    return pickedIndex(await pick(toPickRequest(kind, wanted, candidates)), candidates.length);
   } catch {
     return null;
   }
+}
+
+/**
+ * Nada casou: a fala pode ser um nome mal reconhecido. Só então vale consultar o
+ * Jev, e só com poucas missões (o estado fica pequeno e o chute, mais certo) e
+ * quando o que foi dito é mais que um som solto.
+ */
+function canAskAboutMisheardName(
+  wanted: string | undefined,
+  missions: readonly RestorableMission[],
+): wanted is string {
+  return (
+    missions.length >= MISSION_PICK_LIMITS.noMatchCandidatesMin &&
+    missions.length <= MISSION_PICK_LIMITS.noMatchCandidatesMax &&
+    !isMissionNameNoise(wanted)
+  );
 }
 
 function noneSay(missions: readonly RestorableMission[]): string {
@@ -155,6 +181,18 @@ export async function decideRestoreMission<M extends RestorableMission>(
 ): Promise<RestoreMissionDecision<M>> {
   const resolution = resolveMissionByName(wanted, missions);
   if (resolution.kind === 'none') {
+    const index = canAskAboutMisheardName(wanted, missions)
+      ? await askJev('noMatch', wanted, missions, pick)
+      : null;
+    const understood = index === null ? undefined : missions[index];
+    if (understood) {
+      return {
+        kind: 'open',
+        mission: understood,
+        // Deixa claro que é uma interpretação, para a pessoa poder corrigir.
+        say: `Abrindo a missão ${spokenTitle(understood.title)}. Entendi assim o que você disse.`,
+      };
+    }
     return { kind: 'refuse', reason: 'none', say: noneSay(missions) };
   }
   if (resolution.kind === 'unique') {
@@ -166,7 +204,7 @@ export async function decideRestoreMission<M extends RestorableMission>(
   }
 
   const candidates = resolution.candidates.map((candidate) => candidate.mission);
-  const index = await askJev(wanted ?? '', candidates, pick);
+  const index = await askJev('ambiguous', wanted ?? '', candidates, pick);
   const chosen = index === null ? undefined : candidates[index];
   if (chosen) {
     return {

@@ -132,6 +132,7 @@ describe('voice: restore_mission_panes picks the right mission or opens nothing'
   });
 
   it('does NOT open the first mission when no name matches: says so, lists what exists, opens nothing', async () => {
+    missionPick.mockResolvedValue({ decision: 'undecided', reason: 'none' } satisfies MissionPickResult);
     const onEffectMayHaveCommitted = vi.fn();
     const execution = await executeJarvisAction(restore('banana'), context, { onEffectMayHaveCommitted });
     expect(openedMissionId()).toBeNull();
@@ -143,7 +144,50 @@ describe('voice: restore_mission_panes picks the right mission or opens nothing'
     expect(execution.toolResult?.output).toBeUndefined();
     expect(execution.expectReply).toBe(true);
     expect(onEffectMayHaveCommitted).not.toHaveBeenCalled();
-    expect(missionPick).not.toHaveBeenCalled();
+  });
+
+  describe('nothing matches the spoken name (it may have been misheard)', () => {
+    it('opens the mission the Jev read through the noise, and says it was an interpretation', async () => {
+      missionPick.mockResolvedValue({ decision: 'picked', index: 0, confidence: 0.95 } satisfies MissionPickResult);
+      const onEffectMayHaveCommitted = vi.fn();
+      const execution = await executeJarvisAction(restore('sait da lója'), context, { onEffectMayHaveCommitted });
+      expect(openedMissionId()).toBe('mission-a');
+      expect(execution.sayText).toBe('Abrindo a missão Site da loja. Entendi assim o que você disse.');
+      expect(execution.toolResult).toMatchObject({ ok: true, output: { missionId: 'mission-a' } });
+      expect(onEffectMayHaveCommitted).toHaveBeenCalledOnce();
+      const request = missionPick.mock.calls[0]![0] as MissionPickRequest;
+      expect(request.kind).toBe('noMatch');
+      expect(request.candidates).toHaveLength(3);
+      expect(JSON.stringify(request)).not.toContain('mission-');
+    });
+
+    it('keeps "não achei" and opens nothing without a decision, without the bridge, or with nine missions', async () => {
+      missionPick.mockResolvedValue({ decision: 'undecided', reason: 'low-confidence' } satisfies MissionPickResult);
+      const undecided = await executeJarvisAction(restore('sait da lója'), context);
+      expect(undecided.sayText).toMatch(/^Não achei nenhuma missão com esse nome\./);
+      expect(openedMissionId()).toBeNull();
+
+      vi.stubGlobal('window', {
+        nexus: { adapters: { list: vi.fn(async () => []) }, voice: { confirmCommand: vi.fn(), logVoice: vi.fn() } },
+      });
+      const noBridge = await executeJarvisAction(restore('sait da lója'), context);
+      expect(noBridge.sayText).toMatch(/^Não achei nenhuma missão com esse nome\./);
+
+      vi.stubGlobal('window', {
+        nexus: {
+          adapters: { list: vi.fn(async () => []) },
+          voice: { confirmCommand: vi.fn(), logVoice: vi.fn() },
+          jev: { missionPick },
+        },
+      });
+      missionPick.mockClear();
+      missionPick.mockResolvedValue({ decision: 'picked', index: 0, confidence: 0.99 });
+      orchState.missionSummaries = Array.from({ length: 9 }, (_, i) => summary(`mission-${i}`, `Missão ${i + 1}`));
+      const nine = await executeJarvisAction(restore('sait da lója'), context);
+      expect(nine.sayText).toMatch(/^Não achei nenhuma missão com esse nome\./);
+      expect(missionPick).not.toHaveBeenCalled();
+      expect(openedMissionId()).toBeNull();
+    });
   });
 
   it('still says there is nothing to open when no mission is saved', async () => {

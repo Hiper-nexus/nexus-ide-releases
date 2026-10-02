@@ -5,6 +5,8 @@ import type { MissionPickRequest } from '../../shared/mission-pick';
 import {
   MISSION_PICK_MIN_CONFIDENCE,
   MISSION_PICK_MIN_MARGIN,
+  MISSION_PICK_NO_MATCH_MIN_CONFIDENCE,
+  MISSION_PICK_NO_MATCH_MIN_MARGIN,
   MISSION_PICK_STATE_MAX_BYTES,
   buildMissionPickQuestion,
   buildMissionPickState,
@@ -105,6 +107,76 @@ describe('evaluateMissionPickAnswer (accept rule)', () => {
   });
 });
 
+describe('evaluateMissionPickAnswer, no-match path (noisy speech: stricter floor)', () => {
+  // Confiança e margem são medidas independentes: aqui a confiança vem do campo do
+  // Jev e a margem da distribuição (m2 0,6 contra a 2ª opção).
+  const withMargin = (margin: number, chosen = 'm2') => ({
+    [chosen]: 0.6,
+    m1: Number((0.6 - margin).toFixed(2)),
+    none: 0.05,
+  });
+
+  it('exposes the floor: confidence 0.85 and margin 0.30', () => {
+    expect(MISSION_PICK_NO_MATCH_MIN_CONFIDENCE).toBe(0.85);
+    expect(MISSION_PICK_NO_MATCH_MIN_MARGIN).toBe(0.3);
+  });
+
+  it('accepts confidence 0.9 with margin 0.4', () => {
+    expect(evaluateMissionPickAnswer(choice('m2', withMargin(0.4), 0.9), 2, 'noMatch')).toEqual({
+      decision: 'picked',
+      index: 1,
+      confidence: 0.9,
+    });
+  });
+
+  it('refuses confidence 0.84 even with a wide margin', () => {
+    expect(evaluateMissionPickAnswer(choice('m2', withMargin(0.4), 0.84), 2, 'noMatch')).toEqual({
+      decision: 'undecided',
+      reason: 'low-confidence',
+    });
+  });
+
+  it('accepts confidence of exactly 0.85 and margin of exactly 0.30', () => {
+    expect(evaluateMissionPickAnswer(choice('m2', withMargin(0.3), 0.85), 2, 'noMatch')).toMatchObject({
+      decision: 'picked',
+      index: 1,
+    });
+  });
+
+  it('refuses a margin of 0.29 even with high confidence', () => {
+    expect(evaluateMissionPickAnswer(choice('m2', withMargin(0.29), 0.95), 2, 'noMatch')).toEqual({
+      decision: 'undecided',
+      reason: 'narrow-margin',
+    });
+  });
+
+  it('counts "none" as the runner-up here too', () => {
+    const noneClose = { m1: 0.01, m2: 0.6, none: 0.39 };
+    expect(evaluateMissionPickAnswer(choice('m2', noneClose, 0.9), 2, 'noMatch')).toMatchObject({
+      reason: 'narrow-margin',
+    });
+  });
+
+  it('refuses a "none" answer however confident', () => {
+    expect(evaluateMissionPickAnswer(choice('none', { m1: 0.01, m2: 0.01, none: 0.98 }, 0.98), 2, 'noMatch')).toEqual({
+      decision: 'undecided',
+      reason: 'none',
+    });
+  });
+
+  it('is stricter than the tie-break floor: the same answer passes there and not here', () => {
+    const answer = choice('m2', { m1: 0.1, m2: 0.75, none: 0.15 }, 0.8);
+    expect(evaluateMissionPickAnswer(answer, 2)).toMatchObject({ decision: 'picked' });
+    expect(evaluateMissionPickAnswer(answer, 2, 'ambiguous')).toMatchObject({ decision: 'picked' });
+    expect(evaluateMissionPickAnswer(answer, 2, 'noMatch')).toMatchObject({ reason: 'low-confidence' });
+  });
+
+  it('applies the same validity checks (index range, argmax)', () => {
+    expect(evaluateMissionPickAnswer(choice('m9', { m1: 0.05, m2: 0.05, none: 0.9 }, 0.95), 2, 'noMatch')).toMatchObject({ reason: 'invalid-answer' });
+    expect(evaluateMissionPickAnswer(choice('m1', { m1: 0.2, m2: 0.7, none: 0.1 }, 0.95), 2, 'noMatch')).toMatchObject({ reason: 'invalid-answer' });
+  });
+});
+
 describe('buildMissionPickState', () => {
   it('gives each candidate an opaque position id and a relative last-activity', () => {
     const state = buildMissionPickState(request('Site da loja', 'Site da loja v2'), NOW);
@@ -177,6 +249,19 @@ describe('buildMissionPickState', () => {
     expect(state?.candidates).toHaveLength(5);
   });
 
+  it('fits eight maximum-size 4-byte titles (the no-match path) in 2 KB', () => {
+    const huge: MissionPickRequest = {
+      kind: 'noMatch',
+      spoken: '🙂'.repeat(120),
+      candidates: Array.from({ length: 8 }, () => ({ title: '😀'.repeat(100), state: 'blocked_technical', updatedAt: NOW })),
+    };
+    const state = buildMissionPickState(huge, NOW);
+    expect(state).not.toBeNull();
+    expect(Buffer.byteLength(JSON.stringify(state), 'utf8')).toBeLessThanOrEqual(MISSION_PICK_STATE_MAX_BYTES);
+    expect(state?.candidates).toHaveLength(8);
+    expect(state?.candidates.map((c) => c.id)).toEqual(['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8']);
+  });
+
   it('keeps ordinary titles whole when they already fit', () => {
     const state = buildMissionPickState(request('Site da loja', 'Site da loja v2'), NOW);
     expect(state?.candidates[1]?.title).toBe('Site da loja v2');
@@ -194,6 +279,23 @@ describe('buildMissionPickQuestion', () => {
     if (question.type !== 'choice') return;
     expect(Object.keys(question.criteria)).toEqual(['m1', 'm2', 'm3', 'none']);
     expect(question.criteria.m2).toContain('candidates[1].title');
+  });
+});
+
+describe('buildMissionPickQuestion, no-match path', () => {
+  it('has the same options, but tells the model the name may be garbled and to prefer none over a guess', () => {
+    const question = buildMissionPickQuestion(3, 'noMatch');
+    expect(question.type).toBe('choice');
+    if (question.type !== 'choice') return;
+    expect(Object.keys(question.criteria)).toEqual(['m1', 'm2', 'm3', 'none']);
+    expect(String(question.instructions)).toMatch(/garbled/i);
+    expect(String(question.instructions)).toMatch(/choose none/i);
+    // O texto falado nunca entra na pergunta, só no state.
+    expect(JSON.stringify(question)).not.toContain('sait');
+  });
+
+  it('is not the tie-break question', () => {
+    expect(JSON.stringify(buildMissionPickQuestion(3, 'noMatch'))).not.toEqual(JSON.stringify(buildMissionPickQuestion(3)));
   });
 });
 
@@ -307,5 +409,79 @@ describe('pickMissionWithJev', () => {
       record: () => { throw new Error('disk full'); },
     });
     expect(result).toMatchObject({ decision: 'picked', index: 1 });
+  });
+
+  describe('no-match path', () => {
+    const noMatchRequest = (n = 3): MissionPickRequest => ({
+      kind: 'noMatch',
+      spoken: 'sait da lója',
+      candidates: Array.from({ length: n }, (_, i) => ({ title: `Missão ${i + 1}`, state: 'running', updatedAt: NOW - i * MINUTE })),
+    });
+
+    it('accepts 0.9 / margin 0.4 and journals it as noMatch:pick', async () => {
+      const { deps, record } = setup({
+        judge: async () => jevResult(choice('m2', { m1: 0.2, m2: 0.6, m3: 0.1, none: 0.1 }, 0.9)),
+      });
+      expect(await pickMissionWithJev(noMatchRequest(), deps)).toEqual({ decision: 'picked', index: 1, confidence: 0.9 });
+      expect(record).toHaveBeenCalledWith(expect.objectContaining({ surface: 'missionPick', decision: 'noMatch:pick:m2' }));
+    });
+
+    it('refuses 0.84 and journals it as noMatch:ask, never as the tie-break path', async () => {
+      const { deps, record } = setup({
+        judge: async () => jevResult(choice('m2', { m1: 0.2, m2: 0.6, m3: 0.1, none: 0.1 }, 0.84)),
+      });
+      expect(await pickMissionWithJev(noMatchRequest(), deps)).toEqual({ decision: 'undecided', reason: 'low-confidence' });
+      expect(record).toHaveBeenCalledWith(expect.objectContaining({ decision: 'noMatch:ask:low-confidence' }));
+    });
+
+    it('refuses a 0.29 margin', async () => {
+      const { deps } = setup({
+        judge: async () => jevResult(choice('m2', { m1: 0.31, m2: 0.6, m3: 0.04, none: 0.05 }, 0.95)),
+      });
+      expect(await pickMissionWithJev(noMatchRequest(), deps)).toEqual({ decision: 'undecided', reason: 'narrow-margin' });
+    });
+
+    it('treats a Jev "none" as no decision', async () => {
+      const { deps, record } = setup({
+        judge: async () => jevResult(choice('none', { m1: 0.02, m2: 0.02, m3: 0.01, none: 0.95 }, 0.95)),
+      });
+      expect(await pickMissionWithJev(noMatchRequest(), deps)).toEqual({ decision: 'undecided', reason: 'none' });
+      expect(record).toHaveBeenCalledWith(expect.objectContaining({ decision: 'noMatch:ask:none' }));
+    });
+
+    it('asks the no-match question, with the spoken text only in the state, and journals no text', async () => {
+      const { judge, deps, record } = setup({
+        judge: async () => jevResult(choice('m1', { m1: 0.9, m2: 0.05, m3: 0.03, none: 0.02 }, 0.9)),
+      });
+      await pickMissionWithJev(noMatchRequest(), deps);
+      const input = (judge.mock.calls[0] as unknown as [Record<string, unknown>])[0];
+      expect(JSON.stringify(input.questions)).toMatch(/garbled/i);
+      expect(JSON.stringify(input.state)).toContain('sait da lója');
+      expect(input.surface).toBe('missionPick');
+      expect(input.retryOnTimeout).toBe(false);
+      const dump = JSON.stringify(record.mock.calls[0]?.[0]);
+      expect(dump).not.toContain('sait');
+      expect(dump).not.toContain('Missão 1');
+    });
+
+    it('works with a single mission and with eight', async () => {
+      const one = setup({ judge: async () => jevResult(choice('m1', { m1: 0.95, none: 0.05 }, 0.95)) });
+      expect(await pickMissionWithJev(noMatchRequest(1), one.deps)).toMatchObject({ decision: 'picked', index: 0 });
+      const eight = setup({ judge: async () => jevResult(choice('m8', { m1: 0.01, m2: 0.01, m3: 0.01, m4: 0.01, m5: 0.01, m6: 0.01, m7: 0.01, m8: 0.9, none: 0.03 }, 0.9)) });
+      expect(await pickMissionWithJev(noMatchRequest(8), eight.deps)).toMatchObject({ decision: 'picked', index: 7 });
+    });
+
+    it('keeps the same fail-open: no key, toggle off, no answer, throw', async () => {
+      expect(await pickMissionWithJev(noMatchRequest(), setup({ hasKey: false }).deps)).toEqual({ decision: 'undecided', reason: 'unavailable' });
+      expect(await pickMissionWithJev(noMatchRequest(), setup({ enabled: false }).deps)).toEqual({ decision: 'undecided', reason: 'disabled' });
+      expect(await pickMissionWithJev(noMatchRequest(), setup({ judge: async () => null }).deps)).toEqual({ decision: 'undecided', reason: 'unavailable' });
+      expect(await pickMissionWithJev(noMatchRequest(), setup({ judge: async () => { throw new Error('x'); } }).deps)).toEqual({ decision: 'undecided', reason: 'error' });
+    });
+
+    it('does not change the tie-break path: a request without kind still journals pick:mN and uses the 0.7 floor', async () => {
+      const { deps, record } = setup({ judge: async () => jevResult(choice('m2', { m1: 0.1, m2: 0.75, none: 0.15 }, 0.8)) });
+      expect(await pickMissionWithJev(twoMissions, deps)).toMatchObject({ decision: 'picked', index: 1 });
+      expect(record).toHaveBeenCalledWith(expect.objectContaining({ decision: 'pick:m2' }));
+    });
   });
 });
