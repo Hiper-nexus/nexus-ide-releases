@@ -49,6 +49,9 @@ const TIER_BY_REASON: Readonly<Record<MissionMatchReason, number>> = {
   words: 1,
 };
 
+/** Abaixo disto o alvo só casa palavra inteira. */
+const SHORT_TARGET_CHARS = 4;
+
 /** Palavras de ligação que não distinguem uma missão de outra. */
 const FILLER_WORDS: ReadonlySet<string> = new Set([
   'a', 'o', 'as', 'os', 'um', 'uma', 'de', 'da', 'do', 'das', 'dos', 'em',
@@ -78,8 +81,10 @@ function matchReason(
   wantedWords: readonly string[],
 ): MissionMatchReason | null {
   if (title === wanted) return 'exact';
-  if (title.startsWith(wanted)) return 'prefix';
-  if (title.includes(wanted)) return 'contains';
+  // Alvo curto (< 4 letras) só casa palavra inteira: "da"/"pag" dentro de outra palavra é ruído.
+  const wholeWord = wanted.length >= SHORT_TARGET_CHARS;
+  if (wholeWord ? title.startsWith(wanted) : title.startsWith(`${wanted} `)) return 'prefix';
+  if (wholeWord ? title.includes(wanted) : ` ${title} `.includes(` ${wanted} `)) return 'contains';
   if (wantedWords.length === 0) return null;
   const titleWords = new Set(meaningfulWords(title));
   return wantedWords.every((word) => titleWords.has(word)) ? 'words' : null;
@@ -87,7 +92,9 @@ function matchReason(
 
 /** Um único caractere casaria com quase tudo; só um dígito ainda é um nome. */
 function isTooShortToMatch(wanted: string): boolean {
-  return wanted.length < 2 && !/\p{N}/u.test(wanted);
+  if (wanted.length < 2 && !/\p{N}/u.test(wanted)) return true;
+  // Só palavras de ligação ("da", "a missão"): não nomeia nenhuma missão.
+  return wanted !== '' && meaningfulWords(wanted).length === 0;
 }
 
 /**

@@ -85,10 +85,15 @@ export function parseSpawnRouteConfidence(raw: unknown): SpawnRouteConfidence | 
   return Object.keys(picked).length > 0 ? picked : undefined;
 }
 
+/** Ids de CLI e modelo: letras, dígitos e `._-:/[]`. Nada de controle, bidi nem marcação. */
+const RULE_CHOICE_ID_PATTERN = /^[\w.\-:/[\]]+$/;
+
 function idField(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
-  return trimmed.length > 0 && trimmed.length <= RULE_CHOICE_FIELD_MAX_CHARS ? trimmed : undefined;
+  return trimmed.length > 0 && trimmed.length <= RULE_CHOICE_FIELD_MAX_CHARS && RULE_CHOICE_ID_PATTERN.test(trimmed)
+    ? trimmed
+    : undefined;
 }
 
 /** `'same'` ou `{adapterId, model?, effort?}`; qualquer outra coisa → undefined. */

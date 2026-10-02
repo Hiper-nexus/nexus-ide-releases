@@ -343,4 +343,12 @@ describe('end to end with the real Main picker (renderer decision + Main accepta
     const decision = await decideRestoreMission('site', [SITE, SITE_V2], viaMain({ choice: 'm2', confidence: 0.8, probabilities: { m1: 0.25, m2: 0.75, none: 0 } }));
     expect(decision).toMatchObject({ kind: 'open', mission: SITE_V2 });
   });
+
+  it('redacts a secret in a title BEFORE cutting it, so no fragment of the token leaves (revisão de segurança, B1)', async () => {
+    const long = `site ${'x'.repeat(80)} sk-ant-api03-${'aB3dE5fG7hJ9kL1mN2pQ'.repeat(3)}`;
+    const pick = vi.fn(async (_request: MissionPickRequest) => undecided);
+    await decideRestoreMission('site', [mission('a', long), mission('b', 'Site da loja v2'), mission('c', 'Site da loja')], pick);
+    const sent = JSON.stringify(pick.mock.calls[0]![0]);
+    expect(sent).not.toContain('sk-ant-api03-');
+  });
 });

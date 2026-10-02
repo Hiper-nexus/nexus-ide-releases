@@ -118,4 +118,14 @@ describe('spawnRouteTooltip', () => {
   it('confiança vazia não vira "(confiança: )"', () => {
     expect(spawnRouteTooltip({ source: 'jev', confidence: {} })).toBe('CLI escolhida pelo Jev para esta tarefa');
   });
+
+describe('parseSpawnRuleChoice: charset of ids (revisão de segurança, B6)', () => {
+  it('drops ids carrying control, bidi or markup characters', () => {
+    expect(parseSpawnRuleChoice({ adapterId: 'claude', model: 'sonnet\u202eevil' })).toEqual({ adapterId: 'claude' });
+    expect(parseSpawnRuleChoice({ adapterId: 'cl<b>aude' })).toBeUndefined();
+    expect(parseSpawnRuleChoice({ adapterId: 'codex', model: 'gpt-5.5[1m]', effort: 'xhigh' })).toEqual({
+      adapterId: 'codex', model: 'gpt-5.5[1m]', effort: 'xhigh',
+    });
+  });
+});
 });

@@ -36,7 +36,7 @@ import { currentViewNarration, currentViewToolOutput } from './current-view-read
 import { waitForActionEvidence } from './action-evidence';
 import { resolveWorkspaceByVoiceName } from './workspace-name-resolver';
 import { resolveSquadByVoiceName } from './squad-name-resolver';
-import { decideRestoreMission, requestMissionPick } from './restore-mission-target';
+import { decideRestoreMission, requestMissionPick, spokenTitle } from './restore-mission-target';
 import { logVoiceEvent } from './voice-live-ipc';
 import {
   isExecutionReadyDelegationPrompt,
@@ -1301,6 +1301,9 @@ export async function executeJarvisAction(
     if (mcp) return { ...mcp, expectReply };
   } else if (action.type === 'restore_mission_panes') {
     const missions = useOrchStore.getState().missionSummaries;
+    // F-634/F-635: a espera do Jev pode durar segundos; quem espera e depois age
+    // confere o escopo de novo. Projeto trocado ou missão removida no meio = nada abre.
+    const epochBefore = useOrchStore.getState().workspaceEpoch;
     if (missions.length === 0) {
       sayText = 'Não tem nenhuma missão salva para abrir.';
       toolResult = { tool: action.type, ok: false, summary: 'sem missões' };
@@ -1311,7 +1314,19 @@ export async function executeJarvisAction(
         requestMissionPick(request, control.signal),
       );
       checkpoint(control);
-      if (decision.kind === 'open') {
+      const scopeNow = useOrchStore.getState();
+      const scopeChanged =
+        decision.kind === 'open' &&
+        (scopeNow.workspaceEpoch !== epochBefore ||
+          !scopeNow.missionSummaries.some((mission) => mission.id === decision.mission.id));
+      if (decision.kind === 'open' && scopeChanged) {
+        sayText = 'O projeto mudou enquanto eu procurava a missão. Peça de novo.';
+        toolResult = {
+          tool: action.type,
+          ok: false,
+          summary: 'projeto mudou durante a escolha — nada aberto',
+        };
+      } else if (decision.kind === 'open') {
         const navigation = useProductNavigationStore.getState();
         navigation.openMission(decision.mission.id);
         useProductNavigationStore.getState().showMissionTerminals();
@@ -1320,7 +1335,7 @@ export async function executeJarvisAction(
         toolResult = {
           tool: action.type,
           ok: true,
-          summary: `terminais da missão ${decision.mission.title} abertos`,
+          summary: `terminais da missão ${spokenTitle(decision.mission.title)} abertos`,
           output: { missionId: decision.mission.id },
         };
       } else {

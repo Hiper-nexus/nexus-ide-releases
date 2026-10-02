@@ -219,4 +219,21 @@ describe('resolveMissionByName', () => {
       expect(JSON.stringify(list)).toBe(snapshot);
     });
   });
+
+  describe('words that only connect or sound short (revisão de segurança, B3)', () => {
+    const lojas = [{ title: 'Pedidos da loja' }, { title: 'Dashboard' }, { title: 'API de pagamento' }];
+    it('treats a target made only of connecting words as noise, never as a match', () => {
+      expect(resolveMissionByName('da', lojas)).toEqual({ kind: 'none' });
+      expect(resolveMissionByName('de', lojas)).toEqual({ kind: 'none' });
+      expect(isMissionNameNoise('da')).toBe(true);
+      expect(isMissionNameNoise('a missão')).toBe(true);
+    });
+    it('does not match a short target inside another word', () => {
+      expect(resolveMissionByName('das', lojas)).toEqual({ kind: 'none' });
+      expect(resolveMissionByName('pag', lojas)).toEqual({ kind: 'none' });
+    });
+    it('still matches a short target as a whole word or a whole-word prefix', () => {
+      expect(resolveMissionByName('api', lojas)).toMatchObject({ kind: 'unique', reason: 'prefix' });
+    });
+  });
 });

@@ -6,6 +6,7 @@ const { layoutState, missionPick, orchState, voiceState } = vi.hoisted(() => ({
   layoutState: { focusedPaneId: null as string | null, panes: [] as unknown[] },
   missionPick: vi.fn(),
   orchState: {
+    workspaceEpoch: 0,
     squads: [] as unknown[],
     missionSummaries: [] as Array<{
       id: string;
@@ -96,6 +97,7 @@ describe('voice: restore_mission_panes picks the right mission or opens nothing'
     vi.clearAllMocks();
     vi.unstubAllGlobals();
     useAccessStore.setState({ canUseApp: true, maxAgents: null });
+    orchState.workspaceEpoch = 0;
     orchState.missionSummaries = [
       summary('mission-a', 'Site da loja'),
       summary('mission-b', 'Site da loja v2'),
@@ -273,5 +275,37 @@ describe('voice: restore_mission_panes picks the right mission or opens nothing'
       expect(openedMissionId()).toBeNull();
       expect(onEffectMayHaveCommitted).not.toHaveBeenCalled();
     });
+  });
+
+  it('opens nothing when the project changed while the Jev was deciding (F-634/F-635)', async () => {
+    missionPick.mockImplementation(async () => {
+      // A pessoa trocou de projeto durante a espera: o resumo de missões é outro.
+      orchState.workspaceEpoch += 1;
+      orchState.missionSummaries = [summary('mission-z', 'Outro projeto')];
+      return { decision: 'picked', index: 0, confidence: 0.95 } satisfies MissionPickResult;
+    });
+    const onEffectMayHaveCommitted = vi.fn();
+    const execution = await executeJarvisAction(restore('site'), context, { onEffectMayHaveCommitted });
+    expect(openedMissionId()).toBeNull();
+    expect(onEffectMayHaveCommitted).not.toHaveBeenCalled();
+    expect(execution.toolResult).toMatchObject({ ok: false });
+    expect(execution.sayText).toMatch(/projeto mudou/i);
+  });
+
+  it('opens nothing when the chosen mission was removed while the Jev was deciding', async () => {
+    missionPick.mockImplementation(async () => {
+      orchState.missionSummaries = orchState.missionSummaries.filter((entry) => entry.id !== 'mission-a');
+      return { decision: 'picked', index: 0, confidence: 0.95 } satisfies MissionPickResult;
+    });
+    const execution = await executeJarvisAction(restore('site'), context);
+    expect(openedMissionId()).toBeNull();
+    expect(execution.toolResult).toMatchObject({ ok: false });
+  });
+
+  it('keeps control and bidi characters of a hostile title out of the tool result summary (revisão de segurança, B2)', async () => {
+    orchState.missionSummaries = [summary('mission-h', 'Loja\u202eevil\u0000 \u200bnome')];
+    const execution = await executeJarvisAction(restore('loja'), context);
+    expect(openedMissionId()).toBe('mission-h');
+    expect(JSON.stringify(execution.toolResult)).not.toMatch(/[\u202a-\u202e\u2066-\u2069\u200b-\u200f\u0000]/);
   });
 });

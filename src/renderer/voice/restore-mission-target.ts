@@ -24,6 +24,7 @@ import {
   type MissionPickRequest,
   type MissionPickResult,
 } from '../../shared/mission-pick';
+import { redactVisibleSecrets } from '../../shared/vision-ipc';
 
 /** A voz não pode ficar muda esperando o Main/Jev: passou disto, vira "sem decisão". */
 export const MISSION_PICK_CLIENT_TIMEOUT_MS = 5_000;
@@ -53,8 +54,12 @@ type MissionPick = (request: MissionPickRequest) => Promise<MissionPickResult | 
  * partir um par substituto ao meio: 100 emojis seriam 200 unidades e o Main
  * recusaria o pedido inteiro.
  */
+/** Controle C0/C1 e marcas bidi/invisíveis: não têm lugar num título falado nem enviado. */
+// eslint-disable-next-line no-control-regex
+const UNSAFE_TEXT_CHARS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
+
 function clamp(text: string, maxUnits: number): { text: string; clipped: boolean } {
-  const normalized = text.replace(/\s+/g, ' ').trim();
+  const normalized = text.replace(UNSAFE_TEXT_CHARS, ' ').replace(/\s+/g, ' ').trim();
   if (normalized.length <= maxUnits) return { text: normalized, clipped: false };
   let out = '';
   for (const character of normalized) {
@@ -64,7 +69,7 @@ function clamp(text: string, maxUnits: number): { text: string; clipped: boolean
   return { text: out.trimEnd(), clipped: true };
 }
 
-function spokenTitle(title: string): string {
+export function spokenTitle(title: string): string {
   const { text, clipped } = clamp(title, SPOKEN_TITLE_MAX);
   return clipped ? `${text}…` : text;
 }
@@ -113,9 +118,10 @@ function toPickRequest(
 ): MissionPickRequest {
   return {
     kind,
-    spoken: clamp(wanted, MISSION_PICK_LIMITS.spokenMax).text,
+    // Redige ANTES de cortar: um segredo na fronteira do corte deixaria um pedaço dele sair.
+    spoken: clamp(redactVisibleSecrets(wanted), MISSION_PICK_LIMITS.spokenMax).text,
     candidates: candidates.map((mission) => ({
-      title: clamp(mission.title, MISSION_PICK_LIMITS.titleMax).text,
+      title: clamp(redactVisibleSecrets(mission.title), MISSION_PICK_LIMITS.titleMax).text,
       state: mission.state,
       ...(mission.updatedAt === undefined ? {} : { updatedAt: mission.updatedAt }),
     })),
