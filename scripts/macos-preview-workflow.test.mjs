@@ -32,6 +32,11 @@ describe('macOS preview authority and runtime proof', () => {
     expect(upload.every((step) => step.with.name.startsWith('macos-arm64-preview'))).toBe(true);
     expect(upload.at(-1).if).toBeUndefined();
   });
+  it('makes the final runtime receipt available in the small diagnostic artifact', () => {
+    const diagnostics = job.steps.find((step) => step.with?.name === 'macos-arm64-preview-diagnostics');
+    expect(diagnostics.if).toBe('always()');
+    expect(diagnostics.with.path.split('\n')).toContain('${{ runner.temp }}/macos-preview-assets/macos-preview-receipt.json');
+  });
   it('keeps every hosted shell step syntactically valid without executing it', () => {
     for (const run of runs) {
       const result = spawnSync('bash', ['-n'], { input: run, encoding: 'utf8', shell: false });

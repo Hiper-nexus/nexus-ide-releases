@@ -79,3 +79,55 @@ Linux 36974887561 aprovou typecheck/compilador, mas a fonte falhou somente no te
 A revisão reproduziu mais duas falhas em panes operatorOpened estacionados: terminateMissionRuntime e releaseOperatorOpenedTarget reais devolviam o gate ao usuário, enquanto a origem só aceitava promotedOperatorHand. A origem agora captura também a marca operatorOpened do inventário físico Main. O caminho exige o mesmo gate user limpo, proprietário original e escopos exatos, preservando provider/conta/sessão/pane. Chamadas da missão anterior ou com owner/account/scope/incarnation/mission diferentes continuam recusadas. As duas regressões falharam antes e passaram com 21/21 testes, repetidos pelo autor, root e revisão independente. A fronteira física do PTY é simulada nesses testes; os checks completos do novo head são necessários.
 
 O preview macOS ARM64 adicional usa os gates ad hoc existentes, sem alterar o publicador/notary. A preparação local não demonstra execução Mac; CI hospedado e seus recibos devem registrar o resultado real.
+
+## Rodada 8dac: execução real e origem destacada
+
+CI 36978350328 aprovou typecheck, renderer-sinks e 19.113 testes (1.719 arquivos,
+166 testes/8 arquivos ignorados). Windows 36978353719 aprovou 135 testes focados
+e o aplicativo extraído do NUPKG: versão 0.76.166, renderer, 22 probes,
+179 ferramentas/18 adapters e encerramento do inventário físico PTY.
+Setup não foi instalado; o preview permanece unsigned.
+
+macOS ARM64 36978350381 aprovou 45 testes focados e Forge. O app e a cópia
+extraída do ZIP passaram nas mesmas 22 probes, com versão 0.76.166 e encerramento
+graceful. O recibo nexus.macos-preview/v1 foi lido e validado por CRC32 por
+ranges do artifact autorizado. Seu SHA-256 é
+aec41cd4c704be34a09a3eb5d6a7d9a00b765bd5dd0ab000aea63f9b68642460.
+O checkout real foi cff2f49a572268d4ee60c1ee5142d88418d38b6c, merge de
+62c304/8dac, com árvore 08ce7614fc4446d3685f0e8571ea510c6dcc4428 idêntica ao
+head. Assinatura ad-hoc; publishable=false, releaseEligible=false e
+notarizationRequested=false. DMG não foi instalado. O hash completo do archive
+460 MB veio do GitHub/upload; não foi recalculado localmente. O follow-up de
+diagnostics inclui o recibo final no artifact pequeno; sua regressão passou 4/4.
+
+Linux 36978350426 aprovou 19.118 testes/161 ignorados, browser real, CLI Codex
+verificado e Forge DEB/RPM/ZIP. O primeiro smoke de pacote/restart falhou com
+CDP command failed. O helper ocultava a captura do app antes de relançar o erro;
+isso não demonstra a causa do erro CDP. Instalação Ubuntu/Debian e recibo Linux
+ficaram skipped. O limite existente de 500 ms foi preservado e passou nesta
+rodada. Nenhuma instalação ou compatibilidade Wayland é atribuída a esse run.
+
+A revisão seguinte usou source:pending, como a criação real de operatorOpened.
+A retenção real de workspace chamou detach e transferiu o pane ao Main; as
+duas variantes falharam em 8dac. A correção aceita a devolução confirmada pelo
+gate para uma origem operatorOpened fisicamente destacada, exigindo ainda um
+runtime Main único, identidade/provider/conta e escopos exatos. A devolução
+limpa role e workerIncarnationId no registro Main, além da missão. Adoção por
+outra janela antes do primeiro sync, runtime duplicado/ausente e autoridade
+alheia continuam negados. Autor, root e revisão independente passaram 23/23.
+Inventário e lifetime físico do PTY são fronteiras simuladas nessa regressão;
+retenção, termination e gate são produção real. Checks do próximo head continuam
+necessários; os resultados de 8dac acima não os substituem.
+
+O follow-up CDP expõe somente método, etapa local e código numérico seguro;
+mensagens/dados/expressões do peer não entram no diagnóstico. O harness imprime
+a captura e a árvore de processos antes de relançar o mesmo erro, sem emitir
+matriz de sucesso ou restartProof nesse caminho. A regressão passou de sete
+falhas para 98/98 testes, repetida por root e revisão independente. Não há retry,
+alteração de prazo ou gate; a causa do app real ainda exige a próxima execução.
+
+O preload real também foi rastreado no head 8dac: as probes dictation-delivery
+e dictation-hold-to-talk criam um shell por IPC, exigem writeConfirmed e dois
+ecos onData antes do cleanup. Isso torna os 22 resultados Mac/Windows evidência
+de PTY real, além do encerramento. Não é inferência Codex/LLM, input físico de
+teclado, inventário de PTY vivo nem prova de todos os helpers Windows no OS.

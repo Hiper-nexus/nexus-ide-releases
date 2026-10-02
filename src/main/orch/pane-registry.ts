@@ -684,11 +684,12 @@ function browserOriginInfo(binding: BrowserOriginBinding): PaneAuthzInfo {
   const { info, owner } = binding;
   const sessionId = info.sessionId;
   if (!sessionId || !(binding.promotedOperatorHand || binding.operatorOpened) || getAcpDriverSession(sessionId) ||
-      !isSessionOwnedBy(owner, sessionId)) return info;
+      (!isSessionOwnedBy(owner, sessionId) && !(binding.operatorOpened && isSessionDetached(sessionId)))) return info;
   const context = getContextBySession(sessionId);
   // Main's gate may return an adopted or operator-opened pane to user while its
-  // presentation is parked, before the PTY metadata is returned. Only that captured hand,
-  // still owned by its exact original window, can follow this transition.
+  // presentation is parked, before the PTY metadata is returned. A detached
+  // operator-opened pane still needs its unique Main runtime validated below;
+  // a PTY adopted by another renderer cannot follow the captured origin.
   if (!context || context.sessionId !== sessionId || context.role !== 'user' ||
       context.missionId || context.workerIncarnationId || !info.scope ||
       !sameExactPaneScope(context.scope, info.scope) ||
@@ -1944,7 +1945,7 @@ export function detachOperatorOpenedPaneMission(
   }
   const mainOwned = getMainOwnedPane(paneId);
   if (mainOwned?.meta?.missionId === missionId) {
-    const { missionId: _mission, ...rest } = mainOwned.meta;
+    const { missionId: _mission, role: _role, workerIncarnationId: _worker, ...rest } = mainOwned.meta;
     setMainOwnedPane(paneId, { ...mainOwned, meta: rest });
     panesVersion += 1;
   }

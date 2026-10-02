@@ -1101,19 +1101,27 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
   it('rejects a failed runtime probe even when renderer and functional smoke succeeded', async () => {
     const { targetPath } = fixturePackage({ platform: 'linux', arch: 'x64' });
     const session = await packagedSmoke.createPackagedSmokeSession();
+    const writes = [];
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(chunk => { writes.push(String(chunk)); return true; });
     try {
       await expect(runPackagedSmoke(targetPath, {
         platform: 'linux', arch: 'x64', smokeSession: session,
         runtimeProbe: async () => { throw new Error('preference did not survive restart'); },
-        spawnImpl: (_binary, _args, opts) => fakeChild({ writeMarker: () => {
+        spawnImpl: (_binary, _args, opts) => fakeChild({ stdoutText: '[smoke] renderer-mounted\n[smoke] functional-ready: 22 probes\n[smoke] shutdown-complete: physical PTY inventory proven\n[smoke] expected-exit\n', writeMarker: () => {
           const marker = packagedSmokeMarkerPath(opts.env.NEXUS_USER_DATA_DIR);
           fs.mkdirSync(path.dirname(marker), { recursive: true });
           fs.writeFileSync(marker, FUNCTIONAL_SMOKE_MARKER_CONTENT);
         } }),
         inspectMainBundle: () => {}, inspectLegalArtifacts: () => {}, listTreePids: () => [],
       })).rejects.toThrow('preference did not survive restart');
+      expect(writes.join('')).toContain('[smoke] functional-ready: 22 probes');
+      expect(writes.join('')).toContain('[smoke] shutdown-complete: physical PTY inventory proven');
+      expect(writes.join('')).toContain('[smoke] processTreeProof {"orphans":[]');
+      expect(writes.join('')).not.toContain('validation-matrix');
+      expect(writes.join('')).not.toContain('restartProof');
       expect(fs.existsSync(session.userData)).toBe(true);
     } finally {
+      stdout.mockRestore();
       await packagedSmoke.disposePackagedSmokeSession(session);
     }
   });

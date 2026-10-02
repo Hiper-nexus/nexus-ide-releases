@@ -111,25 +111,28 @@ export async function probeRestartPreferences(child, {
       const request = pending.get(message.id);
       if (!request) return;
       pending.delete(message.id);
-      if (message.error) request.reject(new Error('CDP command failed'));
+      if (message.error) {
+        const code = Number.isSafeInteger(message.error.code) ? message.error.code : 'unavailable';
+        request.reject(new Error(`CDP command failed: method=${request.method} stage=${request.stage} code=${code}`));
+      }
       else request.resolve(message.result);
     });
     await Promise.race([ready, aborted]);
-    const send = (method, params = {}) => {
+    const send = (method, params = {}, stage) => {
       signal.throwIfAborted();
       const id = ++nextId;
       const response = new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
+        pending.set(id, { resolve, reject, method, stage });
         socket.send(JSON.stringify({ id, method, params }), error => {
-          if (error) { pending.delete(id); reject(new Error('CDP command failed')); }
+          if (error) { pending.delete(id); reject(new Error(`CDP command failed: method=${method} stage=${stage} code=unavailable`)); }
         });
       });
       return Promise.race([response, aborted]);
     };
     return {
       send, dispose,
-      async evaluate(expression) {
-        const result = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+      async evaluate(expression, stage) {
+        const result = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, stage);
         if (result?.exceptionDetails || !result?.result) throw new Error('restart probe browser validation failed');
         return result.result.value;
       },
@@ -153,7 +156,7 @@ export async function probeRestartPreferences(child, {
     }
     // A stale profile file must never redirect the proof to an earlier launch.
     const browser = await connect(endpoint(`ws://127.0.0.1:${port}${browserPath}`, port, 'browser'));
-    const processes = await browser.send('SystemInfo.getProcessInfo');
+    const processes = await browser.send('SystemInfo.getProcessInfo', {}, 'browser-process-identity');
     const browserProcesses = processes?.processInfo?.filter(entry => entry.type === 'browser');
     if (!Array.isArray(browserProcesses) || browserProcesses.length !== 1 || Number(browserProcesses[0].id) !== child.pid) throw new Error('CDP process identity mismatch');
     browser.dispose();
@@ -164,21 +167,21 @@ export async function probeRestartPreferences(child, {
       const matches = [];
       for (const target of listing.filter(entry => entry?.type === 'page')) {
         const page = await connect(endpoint(target.webSocketDebuggerUrl, port, 'page'));
-        if (await page.evaluate(API_AVAILABLE) === true) matches.push(page);
+        if (await page.evaluate(API_AVAILABLE, 'api-availability') === true) matches.push(page);
         else page.dispose();
       }
       if (matches.length > 1) throw new Error('ambiguous Nexus CDP page');
       if (matches.length === 1) { [selected] = matches; break; }
       await pause();
     }
-    const version = await selected.evaluate(VERSION);
+    const version = await selected.evaluate(VERSION, 'app-version');
     if (version?.packaged !== true) throw new Error('restart probe target is not packaged');
     if (version.appVersion !== expectedVersion) throw new Error('restart probe version mismatch');
-    const initial = await selected.evaluate(GET_PIXEL_MODE);
+    const initial = await selected.evaluate(GET_PIXEL_MODE, 'preference-read');
     if (phase === 'write') {
       if (initial !== false) throw new Error('restart probe initial preference mismatch');
-      await selected.evaluate(SET_PIXEL_MODE);
-      if (await selected.evaluate(GET_PIXEL_MODE) !== true) throw new Error('restart probe persisted preference mismatch');
+      await selected.evaluate(SET_PIXEL_MODE, 'preference-write');
+      if (await selected.evaluate(GET_PIXEL_MODE, 'preference-read') !== true) throw new Error('restart probe persisted preference mismatch');
     } else if (initial !== true) throw new Error('restart probe persisted preference mismatch');
     signal.throwIfAborted();
     return { phase, pid: child.pid, appVersion: version.appVersion, packaged: true, pixelMode: true };

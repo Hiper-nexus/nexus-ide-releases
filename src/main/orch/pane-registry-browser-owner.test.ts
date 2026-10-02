@@ -9,7 +9,7 @@ import type { AgentGateContext } from './gate';
 const facts = vi.hoisted(() => ({
   sessions: new Map<string, { ownerId: number | null; live: boolean; scope: ProjectExecutionScope;
     sessionId?: string; paneId?: string; missionId?: string; role?: CallerCtx['role']; adapterId?: string;
-    accountId?: string; source?: 'direct-user' | 'orchestrator'; workerIncarnationId?: string;
+    accountId?: string; source?: 'direct-user' | 'orchestrator' | 'pending'; workerIncarnationId?: string;
     authoritySeal?: typeof seal; operatorOpened?: true }>(),
   releasePhysical: true,
   contexts: new Map<string, CallerCtx & { promotedFromUserSession?: true }>(),
@@ -29,12 +29,12 @@ vi.mock('../persistence/provider-session-store', () => ({ copyProviderPaneSessio
 vi.mock('../adapters/mimo-session-owner', () => ({ currentMimoSessionOwnerKey: vi.fn() }));
 vi.mock('../persistence/provider-config-store', () => ({ providerAuthStrategy: vi.fn(), resolveRuntimeApiKey: vi.fn() }));
 vi.mock('../pty/pty-manager', () => ({
-  detachOwnedMissionAgentSession: (owner: WebContents, id: string) => {
+  detachOwnedMissionAgentSession: vi.fn((owner: WebContents, id: string) => {
     const session = facts.sessions.get(id);
     if (!session?.live || session.ownerId !== owner.id) return false;
     session.ownerId = null;
     return true;
-  }, getAgentSessionInfo: (id: string) => facts.sessions.get(id),
+  }), getAgentSessionInfo: (id: string) => facts.sessions.get(id),
   getSessionState: (id: string) => facts.sessions.get(id)?.live ? 'idle' : null,
   isSessionOwnedBy: (owner: WebContents, id: string) => facts.sessions.get(id)?.ownerId === owner.id,
   isSessionDetached: (id: string) => facts.sessions.get(id)?.live === true && facts.sessions.get(id)?.ownerId === null,
@@ -138,7 +138,12 @@ beforeEach(async () => {
 });
 
 describe('Main-derived browser originating owner', () => {
-  it.each([false, true])('keeps a parked operator-opened browser after real runtime release (physical metadata returned=%s)', async (physicalReturned) => {
+  it.each([
+    { source: 'direct-user' as const, physicalReturned: false },
+    { source: 'direct-user' as const, physicalReturned: true },
+    { source: 'pending' as const, physicalReturned: false },
+    { source: 'pending' as const, physicalReturned: true },
+  ])('keeps a parked operator-opened browser after real runtime release ($source, physical metadata returned=$physicalReturned)', async ({ source, physicalReturned }) => {
     const wc = owner(1), latest = owner(2);
     const previousCaller = renderSession(wc, 'opened', 'worker');
     const gate = await import('./gate');
@@ -147,11 +152,13 @@ describe('Main-derived browser originating owner', () => {
       scope, workerIncarnationId: 'opened-generation', allowedTools: [], allowedSkills: [] });
     gate.bindTokenToSession(context.token, 'opened');
     facts.contexts.set('opened', context);
-    Object.assign(facts.sessions.get('opened')!, { operatorOpened: true, workerIncarnationId: 'opened-generation' });
+    Object.assign(facts.sessions.get('opened')!, { source, operatorOpened: true,
+      workerIncarnationId: 'opened-generation', authoritySeal: seal });
     registry.attachOrchMeta(wc, 'pane-opened', { missionId: 'mission', role: 'worker', scope,
-      operatorOpened: true, workerIncarnationId: 'opened-generation' });
+      operatorOpened: true, workerIncarnationId: 'opened-generation', authoritySeal: seal });
     registry.syncPanes([
-      { paneId: 'pane-opened', sessionId: 'opened', kind: 'cli-agent', title: 'opened' },
+      { paneId: 'pane-opened', sessionId: 'opened', kind: 'cli-agent', title: 'opened',
+        adapterId: 'provider', accountId: 'account' },
       { paneId: 'parked-opened-browser', sessionId: null, kind: 'browser', title: 'old project' },
     ], wc);
     const nextScope = { ...scope, projectId: 'another-project', rootRealPath: '/another' };
@@ -159,6 +166,17 @@ describe('Main-derived browser originating owner', () => {
     facts.scopeChange!(wc, scope, nextScope);
     registry.syncPanes([], wc);
     registry.registerOrchRenderer(latest);
+    if (source === 'pending') {
+      // Real workspace retention follows the production pending-spawn source,
+      // transfers the pane to Main, and detaches the physical PTY boundary.
+      const pty = await import('../pty/pty-manager');
+      expect(pty.detachOwnedMissionAgentSession).toHaveBeenCalledWith(wc, 'opened');
+      expect(facts.sessions.get('opened')!.ownerId).toBeNull();
+      expect(facts.owned.get('pane-opened')).toMatchObject({
+        entry: { sessionId: 'opened', adapterId: 'provider', accountId: 'account' },
+        meta: { missionId: 'mission', role: 'worker', workerIncarnationId: 'opened-generation', operatorOpened: true },
+      });
+    }
     facts.releasePhysical = physicalReturned;
     // Use the real runtime teardown and gate token store; only physical PTY
     // inventory/lifetime and renderer effects are controlled boundaries here.
@@ -173,6 +191,30 @@ describe('Main-derived browser originating owner', () => {
     expect(context.allowedTools).toBeNull();
     expect(registry.callerWithPaneOwner(context).ownerWebContentsId).toBe(wc.id);
     expect(registry.listVisiblePaneSnapshots(context).map(pane => pane.paneId)).toContain('parked-opened-browser');
+    if (source === 'pending') {
+      expect(facts.owned.get('pane-opened')!.meta.missionId).toBeUndefined();
+      expect(facts.owned.get('pane-opened')!.meta.role).toBeUndefined();
+      expect(facts.owned.get('pane-opened')!.meta.workerIncarnationId).toBeUndefined();
+      const retained = facts.owned.get('pane-opened')!;
+      for (const invalid of [
+        { ...retained, entry: { ...retained.entry, accountId: 'another-account' } },
+        { ...retained, entry: { ...retained.entry, adapterId: 'another-provider' } },
+        { ...retained, meta: { ...retained.meta, missionId: 'another-mission' } },
+        { ...retained, meta: { ...retained.meta, workerIncarnationId: 'another-generation' } },
+        { ...retained, meta: { ...retained.meta, scope: { ...scope, installationId: 'foreign-installation' } } },
+        { ...retained, meta: { ...retained.meta, executionScope: { ...scope, rootRealPath: '/foreign-checkout' } } },
+      ]) {
+        facts.owned.set('pane-opened', invalid);
+        expect(registry.callerWithPaneOwner(context).ownerWebContentsId).toBeUndefined();
+      }
+      facts.owned.set('pane-opened', retained);
+      facts.owned.set('duplicate', { ...retained, entry: { ...retained.entry, paneId: 'duplicate' } });
+      expect(registry.callerWithPaneOwner(context).ownerWebContentsId).toBeUndefined();
+      facts.owned.delete('duplicate');
+      facts.owned.delete('pane-opened');
+      expect(registry.callerWithPaneOwner(context).ownerWebContentsId).toBeUndefined();
+      facts.owned.set('pane-opened', retained);
+    }
     expect(registry.callerWithPaneOwner(previousCaller).ownerWebContentsId).toBeUndefined();
     for (const invalid of [
       { ...context, scope: { ...scope, installationId: 'foreign-installation' } },
@@ -186,7 +228,7 @@ describe('Main-derived browser originating owner', () => {
     facts.contexts.set('opened', context);
     facts.sessions.get('opened')!.ownerId = latest.id;
     expect(registry.callerWithPaneOwner(context).ownerWebContentsId).toBeUndefined();
-    facts.sessions.get('opened')!.ownerId = wc.id;
+    facts.sessions.get('opened')!.ownerId = source === 'pending' ? null : wc.id;
     facts.sessions.get('opened')!.accountId = 'another-account';
     expect(registry.callerWithPaneOwner(context).ownerWebContentsId).toBeUndefined();
     gate.releaseSession('opened');

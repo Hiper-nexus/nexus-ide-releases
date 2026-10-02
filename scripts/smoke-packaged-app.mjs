@@ -1623,7 +1623,6 @@ export async function runPackagedSmoke(
     assertPackagedSmokeProof(code, output);
     await assertFunctionalMarker(userData);
     const runtimeOutcome = runtimeProofTask ? await runtimeProofTask : null;
-    if (runtimeOutcome && 'error' in runtimeOutcome) throw runtimeOutcome.error;
     process.stdout.write(output);
     const processTreeProof =
       treeProof?.processTreeProof ?? emptyProcessTreeProof(0);
@@ -1638,6 +1637,7 @@ export async function runPackagedSmoke(
         `[smoke] processTreeProof ${JSON.stringify(processTreeProof)}\n`,
       );
     }
+    if (runtimeOutcome && 'error' in runtimeOutcome) throw runtimeOutcome.error;
 
     const matrix = packagedSmokeValidationMatrix({
       hostPlatform: process.platform,

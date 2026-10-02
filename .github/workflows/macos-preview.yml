@@ -161,6 +161,7 @@ jobs:
           path: |
             release-artifacts/macos-codex-prerequisite.json
             ${{ runner.temp }}/macos-preview-assets/*-runtime.log
+            ${{ runner.temp }}/macos-preview-assets/macos-preview-receipt.json
           if-no-files-found: warn
           retention-days: 14
 

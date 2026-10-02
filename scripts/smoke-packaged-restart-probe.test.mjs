@@ -30,6 +30,10 @@ async function fixture(options = {}) {
     peer.on('message', async bytes => {
       const message = JSON.parse(String(bytes));
       if (options.rpcStall) return;
+      if (options.rpcErrorWhen?.(message)) {
+        peer.send(JSON.stringify({ id: message.id, error: options.rpcError }));
+        return;
+      }
       if (message.method === 'SystemInfo.getProcessInfo') {
         peer.send(JSON.stringify({ id: message.id, result: { processInfo: [{ type: 'browser', id: options.browserPid ?? child.pid, cpuTime: 0 }] } }));
         return;
@@ -65,6 +69,28 @@ async function fixture(options = {}) {
 const run = (f, options = {}) => probeRestartPreferences(f.child, { userData: f.userData, phase: 'write', expectedVersion: '0.76.166', timeoutMs: 500, ...options });
 
 describe('packaged restart preference proof', () => {
+  it.each([
+    ['SystemInfo.getProcessInfo', 'browser-process-identity', -32601, message => message.method === 'SystemInfo.getProcessInfo'],
+    ['Runtime.evaluate', 'api-availability', -32000, message => message.params?.expression?.startsWith('Boolean(')],
+    ['Runtime.evaluate', 'app-version', -32000, message => message.params?.expression?.includes('releaseReadiness();')],
+    ['Runtime.evaluate', 'preference-read', -32000, message => message.params?.expression?.includes('uiGet()')],
+    ['Runtime.evaluate', 'preference-write', -32000, message => message.params?.expression?.includes('uiSet(')],
+  ])('identifies %s during %s without disclosing remote values', async (method, stage, code, rpcErrorWhen) => {
+    const f = await fixture({ rpcErrorWhen, rpcError: { code, message: 'PRIVATE_REMOTE_MESSAGE', data: { token: 'PRIVATE_REMOTE_VALUE' } } });
+    let failure;
+    try { await run(f); } catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure.message).toBe(`CDP command failed: method=${method} stage=${stage} code=${code}`);
+    expect(failure.message).not.toContain('PRIVATE_REMOTE');
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(f.peers.size).toBe(0);
+    expect(f.child.eventNames()).toEqual([]);
+  });
+  it('does not disclose a nonnumeric remote error code', async () => {
+    const f = await fixture({ rpcErrorWhen: () => true, rpcError: { code: 'PRIVATE_REMOTE_CODE', message: 'PRIVATE_REMOTE_MESSAGE' } });
+    await expect(run(f)).rejects.toThrow('CDP command failed: method=SystemInfo.getProcessInfo stage=browser-process-identity code=unavailable');
+    expect(f.operations).toEqual([]);
+  });
   it('writes through real CDP transport after checking version and the initial preference', async () => {
     const f = await fixture();
     expect(await run(f)).toEqual({ phase: 'write', pid: 4321, appVersion: '0.76.166', packaged: true, pixelMode: true });
