@@ -126,6 +126,13 @@ saber isto antes de mexer:
   sessionId no spawn e devolvido em `nexus_pane_spawn` (`harness.account`) e
   `nexus_pane_whoami`. Rótulos sempre mascarados (`maskAccountLabel`); nunca
   id, fingerprint ou token.
+- **O recibo da escolha de conta também aparece no cabeçalho do pane** (chip
+  por último no meta do `PaneToolbar`; `accountChoice:get` →
+  `accountChoiceChipView` em `shared/account-choice-display.ts`), com a mesma
+  máscara. O IPC devolve o recibo já saneado (`parseAccountChoiceReceipt`, lista
+  de permissão); o tooltip é o `title` nativo, porque o `::after` do `data-tip`
+  é cortado pelo overflow do toolbar. Só diz o que o recibo traz: `pinned` e
+  `native` não listam alternativas (não concorreram), `legacy` não tem chip.
 - **A conta ativa fica até a cota medida zerar.** `chooseAccount` não entrega
   o pane à irmã só porque ela tem mais folga. Troca quando a ativa está fora
   da lista (cooldown, sem credencial, excluída pelo hit) ou quando a
