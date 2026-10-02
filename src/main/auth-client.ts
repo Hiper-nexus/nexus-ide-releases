@@ -199,6 +199,8 @@ export async function exchangeAuthCode(
   }
   const generation = authGeneration;
   const codeVerifier = pending.codeVerifier;
+  const attempt = beginSequence;
+  const superseded = (): boolean => generation !== authGeneration || attempt !== beginSequence;
   pending = null; // nonce é single-use: consome ANTES da rede (anti-replay)
 
   let failure = 'exchange-network';
@@ -209,22 +211,24 @@ export async function exchangeAuthCode(
       body: JSON.stringify({ code, code_verifier: codeVerifier }),
       signal: AbortSignal.timeout(10000),
     });
+    if (superseded()) return { ok: false, error: 'login superseded' };
     if (!res.ok) return { ok: false, error: 'exchange-http' };
     failure = 'exchange-invalid-response';
     const json = (await res.json()) as {
       ok: boolean;
       data?: { session: string; refresh: string; licenca: string };
     };
-    if (generation !== authGeneration) return { ok: false, error: 'login superseded' };
+    if (superseded()) return { ok: false, error: 'login superseded' };
     if (!json.ok || !json.data || !['session', 'refresh', 'licenca'].every(key => typeof json.data?.[key as keyof typeof json.data] === 'string' && json.data[key as keyof typeof json.data])) return { ok: false, error: 'exchange-invalid-response' };
     // A signed license does not prove which account owns this opaque session.
     failure = 'exchange-network';
     const profileResponse = await deps.fetchFn(`${deps.backendUrl}/v1/me`, {
       headers: { authorization: `Bearer ${json.data.session}` }, signal: AbortSignal.timeout(10000),
     });
+    if (superseded()) return { ok: false, error: 'login superseded' };
     failure = 'exchange-invalid-response';
     const profile = await profileResponse.json() as { ok?: boolean; data?: { id?: unknown } };
-    if (generation !== authGeneration) return { ok: false, error: 'login superseded' };
+    if (superseded()) return { ok: false, error: 'login superseded' };
     if (!profileResponse.ok || !profile.ok || typeof profile.data?.id !== 'string' || !profile.data.id.trim()) return { ok: false, error: 'account identity unavailable' };
     const proof = deps.validateLicense(json.data.licenca, profile.data.id);
     if (!proof.ok) return { ok: false, error: 'exchange-license-invalid' };
@@ -243,7 +247,7 @@ export async function exchangeAuthCode(
     if (!lic.ok) return { ok: false, error: 'exchange-license-invalid' };
     return { ok: true };
   } catch {
-    return { ok: false, error: failure };
+    return { ok: false, error: superseded() ? 'login superseded' : failure };
   }
 }
 

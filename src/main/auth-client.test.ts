@@ -229,6 +229,19 @@ describe('session identity binding', () => {
     expect(d.setSecret).not.toHaveBeenCalled();
     expect(d.applyLicense).not.toHaveBeenCalled();
   });
+  it.each(['http', 'network', 'json'])('ignores an old %s failure after a new login starts', async kind => {
+    let resolve!: (response: Response) => void; let reject!: (error: Error) => void;
+    const d = deps({ fetchFn: vi.fn(() => new Promise<Response>((yes, no) => { resolve = yes; reject = no; })) });
+    await beginLogin('github', d);
+    const state = new URL(d.openExternal.mock.calls[0][0]).searchParams.get('app_state');
+    const old = exchangeAuthCode('old-code', state, d);
+    await beginLogin('google', d);
+    if (kind === 'network') reject(new Error('offline'));
+    else resolve(kind === 'http' ? new Response('denied', { status: 403 }) : new Response('not json'));
+    expect(await old).toEqual({ ok: false, error: 'login superseded' });
+    expect(d.setSecret).not.toHaveBeenCalled();
+    expect(d.bindAccount).not.toHaveBeenCalled();
+  });
 });
 
 

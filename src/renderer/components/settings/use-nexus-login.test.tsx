@@ -4,6 +4,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LOGIN_PENDING_TTL_MS, type LoginResultEvent } from '../../../shared/auth-login';
 import { useNexusLogin, waitingProviderOf, type NexusLogin } from './use-nexus-login';
+import { finishAuthDeepLink } from '../../../main/auth-deep-link';
+import { WINDOW_CHANNELS } from '../../../shared/channels';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -54,6 +56,18 @@ afterEach(() => {
 });
 
 describe('useNexusLogin', () => {
+  it('keeps the new login waiting when the old Main exchange finishes as superseded', async () => {
+    installBridge(async () => ({ ok: true })); await mount();
+    await act(async () => { await login.start('github'); });
+    let finish!: (result: { ok: boolean; error?: string }) => void;
+    const old = finishAuthDeepLink({ code: 'old', state: 'old' }, (channel, payload) => {
+      if (channel === WINDOW_CHANNELS.authLoginResult) emitResult(payload as LoginResultEvent);
+    }, () => new Promise(resolve => { finish = resolve; }));
+    await act(async () => { await login.start('google'); });
+    await act(async () => { finish({ ok: false, error: 'login superseded' }); await old; });
+    expect(login.phase).toEqual({ kind: 'waiting', provider: 'google' });
+    expect(onCompleted).not.toHaveBeenCalled();
+  });
   it('começa ocioso', async () => {
     installBridge(async () => ({ ok: true }));
     await mount();
