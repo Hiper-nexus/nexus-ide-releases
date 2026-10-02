@@ -1136,6 +1136,33 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
     delivery.shutdownIdleDelivery();
   });
 
+  it('F-727: entrega ao Maestro o [travado] do supervisor (F-242) sem bloquear a missão', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(
+      handoff({
+        id: 'handoff-hung',
+        fromAgent: 'nexus-delegation-supervisor',
+        status: 'stalled',
+        summary: '[travado] worker "DeepSeek" (pane-x, deepseek) está há 46 min no meio do turno',
+      }),
+      scope,
+    );
+    await advanceUntilSubmitted(delivery);
+
+    expect(ptyMocks.writes).toHaveBeenCalled();
+    expect(storeMocks.missionUpdates).toEqual([]);
+    expect(
+      storeMocks.missions.get(`${scope.projectId}:${scope.checkoutId}:mission-a`)
+        ?.status,
+    ).toBe('running');
+    delivery.shutdownIdleDelivery();
+  });
+
   it('retries Enter once when the CLI swallowed submit and stayed idle', async () => {
     const delivery = await import('./idle-delivery');
     const scope = testProjectScope();

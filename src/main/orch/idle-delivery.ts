@@ -614,7 +614,14 @@ function acceptPendingEnters(sessionId: string): void {
   }
 }
 
+/** Mesmo id do supervisor (delegation-supervisor importa este módulo). */
+const DELEGATION_SUPERVISOR_AGENT = 'nexus-delegation-supervisor';
+
 function isDiagnosticDriverHandoff(handoff: Handoff): boolean {
+  // F-727: o "[travado]" do F-242 vem do supervisor de delegação e existe para
+  // ACORDAR o Maestro. Barrado aqui junto com os diagnósticos, ele só chegava
+  // ao ledger e nenhum Maestro ficava sabendo do worker pendurado.
+  if (handoff.fromAgent === DELEGATION_SUPERVISOR_AGENT) return false;
   // mission-driver "stalled / no progress" signals are ledger/UI diagnostics.
   // Pasting them into a busy orchestrator and then demoting the mission to
   // blocked after two failed CR attempts can kill a fully completed guided
