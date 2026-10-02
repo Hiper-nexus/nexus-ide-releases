@@ -275,6 +275,18 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
     await expect(captureRedactedBrowserVisual(PANE, { ...scope, checkoutId: 'another' })).rejects.toThrow();
     expect(state.guest.capturePage).not.toHaveBeenCalled();
   });
+  it('rejects a capture whose sensitive rectangles moved between the two collections', async () => {
+    await boot();
+    const base = { width: 4, height: 4, scrollX: 0, scrollY: 0 };
+    const first = { ...base, rectangles: [{ x: 0, y: 0, width: 1, height: 1 }] };
+    const moved = { ...base, rectangles: [{ x: 2, y: 2, width: 1, height: 1 }] };
+    const captured = { getSize: () => ({ width: 8, height: 8 }), toBitmap: () => Buffer.alloc(8 * 8 * 4, 70) } as never;
+    state.runAutomation.mockResolvedValueOnce(first).mockResolvedValueOnce(moved);
+    state.guest.capturePage.mockResolvedValueOnce(captured);
+    state.encodeBitmap.mockClear();
+    await expect(captureRedactedBrowserVisual(PANE, scope)).rejects.toThrow('visual masks changed');
+    expect(state.encodeBitmap).not.toHaveBeenCalled();
+  });
   it('refuses to capture a pane bound to the personal profile before touching the page', async () => {
     state.profileMode = 'personal';
     bindResolvedRendererWorkspaceScope(state.owner, scope);

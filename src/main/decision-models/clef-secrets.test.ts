@@ -14,6 +14,7 @@ vi.mock('../persistence/secrets-store', () => ({
   isSecureStorageAvailable: () => true,
 }));
 
+import { decisionCredentialRevision } from './decision-revision';
 import { getClefApiToken, hasClefCredential, resolveClefApiToken, resolveCloudflareAccountId, setClefApiToken, maskedClefApiToken } from './clef-secrets';
 
 describe('Clef credentials', () => {
@@ -61,5 +62,11 @@ describe('Clef credentials', () => {
     expect(maskedClefApiToken()).toBe('clo…3456');
     setClefApiToken('short');
     expect(maskedClefApiToken()).toBe('••••');
+  });
+
+  it('bumps the decision revision on every accepted token change', () => {
+    const before = decisionCredentialRevision();
+    setClefApiToken('first-token'); setClefApiToken('rotated-token'); setClefApiToken('');
+    expect(decisionCredentialRevision()).toBe(before + 3);
   });
 });

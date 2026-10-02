@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { judgeClef } from './clef-client';
+import { judgeClef, testClefConnection } from './clef-client';
 import type { JudgeInput } from '../jev/jev-client';
 
 const connection = { accountId: '0123456789abcdef0123456789abcdef', token: 'synthetic-cloudflare-token', model: 'clef' as const };
@@ -117,5 +117,68 @@ describe('Cloudflare decision transport', () => {
       expect(await judgeClef({ ...input, images: images as any }, connection, { fetch: fetcher })).toBeNull();
     }
     expect(requests).toBe(0);
+  });
+
+  it('maps a transport failure to a network no-answer after one counted attempt', async () => {
+    const reason = vi.fn(); const usage = vi.fn(); let requests = 0;
+    const result = await judgeClef({ ...input, onNoAnswer: reason, onUsage: usage }, connection, {
+      fetch: (async () => { requests++; throw new TypeError('fetch failed: ECONNRESET with synthetic-cloudflare-token'); }) as typeof fetch });
+    expect(result).toBeNull(); expect(requests).toBe(1);
+    expect(reason).toHaveBeenCalledWith('network');
+    expect(usage).toHaveBeenCalledWith(expect.objectContaining({ requestCount: 1, inputTokens: null, usageIncomplete: true }));
+    expect(JSON.stringify(reason.mock.calls)).not.toContain('synthetic-cloudflare-token');
+  });
+
+  it('treats a non-JSON success body as malformed', async () => {
+    const reason = vi.fn();
+    expect(await judgeClef({ ...input, onNoAnswer: reason }, connection, { fetch: (async () => new Response('<html>gateway</html>', { status: 200 })) as typeof fetch })).toBeNull();
+    expect(reason).toHaveBeenCalledWith('malformed');
+  });
+
+  it('refuses a response larger than 2 MiB before it is parsed', async () => {
+    const reason = vi.fn();
+    const huge = new Response(new Uint8Array(3 * 1024 * 1024).fill(0x20), { status: 200 });
+    expect(await judgeClef({ ...input, onNoAnswer: reason }, connection, { fetch: (async () => huge) as typeof fetch })).toBeNull();
+    expect(reason).toHaveBeenCalledWith('malformed');
+  });
+
+  it('gives up with a server-error after the single retry of a 5xx is spent', async () => {
+    vi.useFakeTimers(); let requests = 0; const reason = vi.fn();
+    const pending = judgeClef({ ...input, onNoAnswer: reason }, connection, { fetch: (async () => { requests++; return Response.json({}, { status: 503 }); }) as typeof fetch });
+    await vi.runAllTimersAsync();
+    expect(await pending).toBeNull(); expect(requests).toBe(2);
+    expect(reason).toHaveBeenCalledWith('server-error');
+  });
+
+  it('never sends a request body above 13 MiB', async () => {
+    let requests = 0; const reason = vi.fn();
+    const result = await judgeClef({ ...input, state: '1 '.repeat(7 * 1024 * 1024), onNoAnswer: reason }, connection, {
+      fetch: (async () => { requests++; return answer({ body: JSON.stringify(input) }); }) as typeof fetch });
+    expect(result).toBeNull(); expect(requests).toBe(0);
+    expect(reason).toHaveBeenCalledWith('client-error');
+  });
+
+  it('sends the same invalid-input guard for out-of-range questions', async () => {
+    let requests = 0;
+    const tooFewLevels = { type: 'score' as const, instructions: 'Rate it.', criteria: ['only one'] };
+    expect(await judgeClef({ ...input, questions: { q: tooFewLevels } }, connection, { fetch: (async () => { requests++; return answer({ body: JSON.stringify(input) }); }) as typeof fetch })).toBeNull();
+    expect(requests).toBe(0);
+  });
+});
+
+describe('Cloudflare connection test', () => {
+  it('asks one tiny synthetic question and reports the connected model', async () => {
+    let body: Record<string, any> | undefined;
+    const result = await testClefConnection(connection, { fetch: (async (_url, options) => { body = JSON.parse(String(options?.body)); return answer(options); }) as typeof fetch });
+    expect(result).toEqual({ ok: true, detail: 'Conectado — clef' });
+    expect(Object.keys(body!.questions)).toHaveLength(1);
+    expect(body!.state).toEqual({ sample: 'connection-check' });
+  });
+
+  it('explains a rejected token without ever echoing it', async () => {
+    const result = await testClefConnection(connection, { fetch: (async () => Response.json({ success: false, errors: [{ message: 'Invalid synthetic-cloudflare-token' }] }, { status: 401 })) as typeof fetch });
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/conta|token/i);
+    expect(result.detail).not.toContain('synthetic-cloudflare-token');
   });
 });

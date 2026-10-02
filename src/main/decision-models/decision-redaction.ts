@@ -16,8 +16,9 @@ const SECRET_PATTERNS: RegExp[] = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
 ];
 
+/** Prefixo/sufixo do nome limitados: `[A-Za-z_]*` sem teto era quadrático numa corrida longa de letras. */
 const ASSIGNMENT_PATTERN =
-  /([A-Za-z_]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Za-z_]*\s*[=:]\s*)(["']?)([^\s"']+)/g;
+  /([A-Za-z_]{0,64}(?:KEY|TOKEN|SECRET|PASSWORD)[A-Za-z_]{0,64}\s*[=:]\s*)(["']?)([^\s"']+)/g;
 
 /**
  * Variante case-insensitive (camelCase tipo `apiKey:`) que exige um valor com
