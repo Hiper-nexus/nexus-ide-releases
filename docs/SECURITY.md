@@ -50,7 +50,12 @@ What can leave the machine for Cloudflare, by mode:
   redacted titles typed by the person, ≤ 2 KB), `judgeTool`,
   `rankTool`; `businessModel` carries
   up to 12 KB of the changed code from the regression gate, redacted for known
-  secret formats only). Automatic prefers Jev
+  secret formats only; `taskRouting` also carries the skill catalog: names and
+  descriptions (≤ 300 characters each, at most 120 per question) of the skills
+  bundled with Nexus and of the skills installed in the project's
+  `.claude/skills` / `.nexus/skills` (F-753, read by the Skills panel's
+  symlink-refusing scanner), plus the request typed in a "+ Pane" (≤ 1,500
+  characters, redacted)). Automatic prefers Jev
   for everything except `toolPick`; it only falls back to Cloudflare when no Jev
   key exists, and the settings screen says so (`credential-fallback`).
 - **Never Clef (pinned to Jev):** `dispatchGuard`, `handoffReview`,
