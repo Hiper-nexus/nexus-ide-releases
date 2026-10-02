@@ -15,6 +15,9 @@ describe('automatic CLI updates', () => {
   it('does not run scripts, WinGet, or privileged update recipes unattended', () => {
     expect(isSafeAutomaticCliRecipe({ kind: 'script', scriptUrl: 'https://claude.ai/install.sh', runner: 'bash', runnerHint: '' })).toBe(false);
     expect(isSafeAutomaticCliRecipe({ kind: 'powershell-script', scriptUrl: 'https://example.test/setup.ps1', runner: 'powershell', runnerHint: '' })).toBe(false);
+    // F-749: só o canal oficial que a tabela marca entra, e só por HTTPS.
+    expect(isSafeAutomaticCliRecipe({ kind: 'powershell-script', scriptUrl: 'https://static.devin.ai/cli/setup.ps1', runner: 'powershell', runnerHint: '', automaticUpdate: true })).toBe(true);
+    expect(isSafeAutomaticCliRecipe({ kind: 'script', scriptUrl: 'http://cli.devin.ai/install.sh', runner: 'bash', runnerHint: '', automaticUpdate: true })).toBe(false);
     expect(isSafeAutomaticCliRecipe({ kind: 'argv', argv: ['winget', 'upgrade', 'Anthropic.ClaudeCode'], runner: 'winget', runnerHint: '' })).toBe(false);
     expect(isSafeAutomaticCliRecipe({ kind: 'argv', argv: ['sudo', 'npm', 'install'], runner: 'sudo', runnerHint: '' })).toBe(false);
     expect(isSafeAutomaticCliRecipe({ kind: 'argv', argv: ['/Users/operator/.local/bin/claude', 'update'], runner: '/Users/operator/.local/bin/claude', runnerHint: '' })).toBe(true);
@@ -37,7 +40,7 @@ describe('automatic CLI updates', () => {
     expect(selectAutomaticCliUpdateRecipe({ ...base, isTargetWritable: () => false })).toBeNull();
   });
 
-  it('skips WinGet and official script channels during background passes', () => {
+  it('skips WinGet during background passes', () => {
     expect(selectAutomaticCliUpdateRecipe({
       adapterId: 'claude', platform: 'win32',
       binPath: 'C:\\Users\\operator\\AppData\\Local\\Microsoft\\WinGet\\Links\\claude.exe',
@@ -45,12 +48,41 @@ describe('automatic CLI updates', () => {
       userHome: 'C:\\Users\\operator', isRunnerResolvable: () => true,
       isTargetWritable: () => true,
     })).toBeNull();
+  });
+
+  it('F-749: o script oficial do Devin entra na atualização diária, no Mac e no Windows', () => {
+    // 02/10: "ideal o Nexus todo dia atualizar todas as CLIs por padrão" — o
+    // Devin era a CLI que ficava para trás (canal oficial = script).
     expect(selectAutomaticCliUpdateRecipe({
       adapterId: 'devin', platform: 'darwin',
       binPath: '/Users/operator/.local/bin/devin',
       realBinPath: '/Users/operator/.local/share/devin/cli/_versions/1.0.0/devin',
       installationDistribution: 'curl-bash',
       userHome: '/Users/operator', isRunnerResolvable: () => true,
+      isTargetWritable: () => true,
+    })).toMatchObject({
+      kind: 'script', scriptUrl: 'https://cli.devin.ai/install.sh', automaticUpdate: true,
+    });
+    expect(selectAutomaticCliUpdateRecipe({
+      adapterId: 'devin', platform: 'win32',
+      binPath: 'C:\\Users\\operator\\AppData\\Local\\devin\\cli\\bin\\devin.exe',
+      realBinPath: 'C:\\Users\\operator\\AppData\\Local\\devin\\cli\\bin\\devin.exe',
+      windowsLocalAppData: 'C:\\Users\\operator\\AppData\\Local',
+      installationDistribution: 'irm-iex',
+      userHome: 'C:\\Users\\operator', isRunnerResolvable: () => true,
+      isTargetWritable: () => true,
+    })).toMatchObject({
+      kind: 'powershell-script',
+      scriptUrl: 'https://static.devin.ai/cli/setup.ps1',
+      replacesLocalAppDataExecutable: 'devin/cli/bin/devin.exe',
+      automaticUpdate: true,
+    });
+    // Instalação que o Nexus não reconhece continua manual.
+    expect(selectAutomaticCliUpdateRecipe({
+      adapterId: 'devin', platform: 'win32',
+      binPath: 'D:\\tools\\devin.exe', realBinPath: 'D:\\tools\\devin.exe',
+      windowsLocalAppData: 'C:\\Users\\operator\\AppData\\Local',
+      userHome: 'C:\\Users\\operator', isRunnerResolvable: () => true,
       isTargetWritable: () => true,
     })).toBeNull();
   });

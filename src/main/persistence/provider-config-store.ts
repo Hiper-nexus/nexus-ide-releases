@@ -2085,8 +2085,9 @@ type AutomaticCliCandidate = {
   readonly label: string;
   readonly binPath: string;
   readonly realBinPath: string;
-  readonly recipe: Extract<CliInstallRecipe, { kind: 'argv' }>;
-  readonly prepared: ArgvInstallInvocation;
+  readonly recipe: CliInstallRecipe;
+  /** Null para o script oficial do fornecedor (F-749): não há argv a montar. */
+  readonly prepared: ArgvInstallInvocation | null;
 };
 
 function resolveCliRealPath(filePath: string): string | null {
@@ -2115,11 +2116,24 @@ function automaticCliCandidate(adapterId: string): AutomaticCliCandidate | null 
       catch { return false; }
     },
   });
-  if (!recipe || recipe.kind !== 'argv') return null;
+  if (!recipe) return null;
+  if (recipe.kind !== 'argv') {
+    return { adapterId, label: adapter.label, binPath, realBinPath, recipe, prepared: null };
+  }
   try {
     return { adapterId, label: adapter.label, binPath, realBinPath, recipe,
       prepared: prepareArgvInstallInvocation(recipe) };
   } catch { return null; }
+}
+
+/** Linha do diálogo de consentimento: o comando exato ou o script oficial. */
+function describeAutomaticCliCandidate(candidate: AutomaticCliCandidate): string {
+  if (candidate.prepared) {
+    return describeArgvInstallInvocation(candidate.prepared).replaceAll('\n', ' ');
+  }
+  return candidate.recipe.kind === 'argv'
+    ? candidate.recipe.argv.join(' ')
+    : `script oficial ${candidate.recipe.scriptUrl}`;
 }
 
 type AutoCliPreferences = {
@@ -2174,7 +2188,7 @@ async function confirmAutomaticCliConsent(candidates: readonly AutomaticCliCandi
       'Se escolher Agora não, perguntaremos novamente em 7 dias. ' +
       'Estes são os comandos reconhecidos agora; instalações desconhecidas e canais que pedem privilégios ficam manuais:\n\n' +
       candidates.map((candidate) =>
-        `• ${candidate.label}: ${describeArgvInstallInvocation(candidate.prepared).replaceAll('\n', ' ')}`,
+        `• ${candidate.label}: ${describeAutomaticCliCandidate(candidate)}`,
       ).join('\n'),
     noLink: true,
   };
@@ -2254,7 +2268,7 @@ export function startCliAutoUpdate(
               powerMonitor.getSystemIdleTime() < CLI_AUTO_UPDATE_IDLE_SECONDS ||
               readAutoCliPreferences(file)?.enabled !== true ||
               activeProviderBinary(id) !== selected.binPath) return false;
-          try { await runInstallRecipe(selected.recipe, selected.prepared); }
+          try { await runInstallRecipe(selected.recipe, selected.prepared ?? undefined); }
           catch (error) {
             console.warn(`[cli-auto-update] ${id}: update failed`, error);
             return false;

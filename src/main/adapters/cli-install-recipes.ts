@@ -70,6 +70,8 @@ interface ScriptInstallRecipe {
   readonly env?: Readonly<Record<string, string>>;
   readonly runner: string;
   readonly runnerHint: string;
+  /** F-749: canal oficial do fornecedor aceito na atualização diária. */
+  readonly automaticUpdate?: boolean;
 }
 
 interface PowerShellScriptInstallRecipe {
@@ -84,6 +86,8 @@ interface PowerShellScriptInstallRecipe {
    * cópia; o runner o renomeia antes (renomear um .exe em uso é permitido).
    */
   readonly replacesLocalAppDataExecutable?: string;
+  /** F-749: canal oficial do fornecedor aceito na atualização diária. */
+  readonly automaticUpdate?: boolean;
 }
 
 export type CliInstallRecipe =
@@ -146,18 +150,25 @@ function brewCaskRecipe(cask: string): ArgvInstallRecipe {
   });
 }
 
-function scriptRecipe(scriptUrl: string): ScriptInstallRecipe {
+function scriptRecipe(
+  scriptUrl: string,
+  options: { readonly automaticUpdate?: boolean } = {},
+): ScriptInstallRecipe {
   return Object.freeze({
     kind: 'script' as const,
     scriptUrl,
     runner: 'bash',
     runnerHint: BASH_HINT,
+    ...(options.automaticUpdate ? { automaticUpdate: true } : {}),
   });
 }
 
 function powershellRecipe(
   scriptUrl: string,
-  options: { readonly replacesLocalAppDataExecutable?: string } = {},
+  options: {
+    readonly replacesLocalAppDataExecutable?: string;
+    readonly automaticUpdate?: boolean;
+  } = {},
 ): PowerShellScriptInstallRecipe {
   return Object.freeze({
     kind: 'powershell-script' as const,
@@ -167,6 +178,7 @@ function powershellRecipe(
     ...(options.replacesLocalAppDataExecutable
       ? { replacesLocalAppDataExecutable: options.replacesLocalAppDataExecutable }
       : {}),
+    ...(options.automaticUpdate ? { automaticUpdate: true } : {}),
   });
 }
 
@@ -257,12 +269,16 @@ const RECIPES: Readonly<Record<string, PlatformRecipes>> = Object.freeze({
     win32: [powershellRecipe('https://antigravity.google/cli/install.ps1')],
   },
   devin: {
-    darwin: [scriptRecipe('https://cli.devin.ai/install.sh')],
-    linux: [scriptRecipe('https://cli.devin.ai/install.sh')],
+    // F-749: o operador pediu a atualização diária de TODAS as CLIs. O canal
+    // do Devin é o script oficial (zip com SHA-256 conferido pelo próprio
+    // script), o mesmo do botão "Atualizar CLI".
+    darwin: [scriptRecipe('https://cli.devin.ai/install.sh', { automaticUpdate: true })],
+    linux: [scriptRecipe('https://cli.devin.ai/install.sh', { automaticUpdate: true })],
     // F-747: `Copy-Item … devin.exe -Force` falha com pane Devin aberto.
     win32: [
       powershellRecipe('https://static.devin.ai/cli/setup.ps1', {
         replacesLocalAppDataExecutable: 'devin/cli/bin/devin.exe',
+        automaticUpdate: true,
       }),
     ],
   },

@@ -85,8 +85,16 @@ export class CliUpdateLease {
   }
 }
 
-/** Remote scripts, WinGet and privileged installers require the manual flow. */
+/**
+ * WinGet and privileged installers require the manual flow. Remote scripts do
+ * too, except a vendor's official channel the recipe table marks for the daily
+ * update (F-749, operator request 02/10: keep EVERY CLI current) — never a
+ * script from anywhere else, and only over HTTPS.
+ */
 export function isSafeAutomaticCliRecipe(recipe: CliInstallRecipe): boolean {
+  if (recipe.kind === 'script' || recipe.kind === 'powershell-script') {
+    return recipe.automaticUpdate === true && recipe.scriptUrl.startsWith('https://');
+  }
   if (recipe.kind !== 'argv') return false;
   const command = recipe.runner.toLowerCase();
   return command !== 'winget' && command !== 'sudo' &&
