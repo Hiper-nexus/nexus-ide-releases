@@ -12,6 +12,13 @@
  * quando aceitou a colagem inteira — é ESSE o sinal. Abaixo disso o Enter de
  * 500 ms já passava (950 caracteres, medido). No macOS o marcador chega junto
  * com a colagem e a espera é nula.
+ *
+ * F-743: o Devin (também Rust) tem o mesmo defeito: em 02/10 o brief de um worker
+ * retomado ficou largado como `[Pasted text #1 +117 lines]`, sem Enter, com a
+ * máquina carregada — a TUI leu colagem e Enter no mesmo lote. Ele recebe o
+ * brief cru (sem bracketed paste) e só troca a colagem pelo marcador quando
+ * ela tem várias linhas: medido no 3000.11.1, 20/30/60/117 linhas → marcador
+ * em ~150 ms; 3 e 10 linhas, ou uma linha de até 3.000 caracteres → nunca.
  */
 import {
   getAgentSessionInfo,
@@ -27,6 +34,11 @@ export const CODEX_LARGE_PASTE_CHARS = 1000;
  * o marcador chega como `PastedContent4531chars`.
  */
 export const CODEX_PASTE_MARKER = /Pasted\s*Content\s*\d+\s*chars/i;
+/** O Devin colapsa a colagem a partir daqui (20 linhas medidas; 10 nunca). */
+export const DEVIN_LARGE_PASTE_LINES = 20;
+/** `[Pasted text #1 +117 lines]` ou `[Pasted text #2 (3000 chars)]`. */
+export const DEVIN_PASTE_MARKER =
+  /Pasted\s*text\s*#\s*\d+\s*(?:\+\s*\d+\s*lines|\(\s*\d+\s*chars\s*\))/i;
 /** Folga entre o marcador e o Enter (o Codex aceitou com 0 ms; 150 é margem). */
 export const PASTE_INGEST_GRACE_MS = 150;
 /**
@@ -61,22 +73,40 @@ export function pasteIngestCapMs(pastedChars: number): number {
   );
 }
 
-/** Plano de espera para colar `pastedChars` caracteres neste adapter; null = Enter no tempo de sempre. */
+function lineCount(text: string): number {
+  let lines = 1;
+  for (let index = 0; index < text.length; index += 1) {
+    if (text.charCodeAt(index) === 10) lines += 1;
+  }
+  return lines;
+}
+
+/** Plano de espera para colar `pasted` neste adapter; null = Enter no tempo de sempre. */
 export function pasteIngestPlan(
   adapterId: string | undefined,
-  pastedChars: number,
+  pasted: string,
 ): PasteIngestPlan | null {
-  if (adapterId !== 'codex' || pastedChars < CODEX_LARGE_PASTE_CHARS) return null;
-  return { marker: CODEX_PASTE_MARKER, capMs: pasteIngestCapMs(pastedChars) };
+  if (adapterId === 'codex' && pasted.length >= CODEX_LARGE_PASTE_CHARS) {
+    return { marker: CODEX_PASTE_MARKER, capMs: pasteIngestCapMs(pasted.length) };
+  }
+  if (adapterId === 'devin' && lineCount(pasted) >= DEVIN_LARGE_PASTE_LINES) {
+    return { marker: DEVIN_PASTE_MARKER, capMs: pasteIngestCapMs(pasted.length) };
+  }
+  return null;
 }
 
 /** Mesmo plano, resolvendo o adapter pela sessão física (colagem curta nem consulta). */
 export function pasteIngestPlanForSession(
   sessionId: string,
-  pastedChars: number,
+  pasted: string,
 ): PasteIngestPlan | null {
-  if (pastedChars < CODEX_LARGE_PASTE_CHARS) return null;
-  return pasteIngestPlan(getAgentSessionInfo(sessionId)?.adapterId, pastedChars);
+  if (
+    pasted.length < CODEX_LARGE_PASTE_CHARS &&
+    lineCount(pasted) < DEVIN_LARGE_PASTE_LINES
+  ) {
+    return null;
+  }
+  return pasteIngestPlan(getAgentSessionInfo(sessionId)?.adapterId, pasted);
 }
 
 /**

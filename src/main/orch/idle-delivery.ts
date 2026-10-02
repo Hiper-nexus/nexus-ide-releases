@@ -853,7 +853,7 @@ function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
   const payload = formatDelivery(current);
   // F-735: o Codex no Windows leva segundos para ingerir a colagem; o CR só
   // sai depois do marcador `[Pasted Content N chars]`. Armado antes da escrita.
-  const ingestPlan = pasteIngestPlanForSession(authority.sessionId, payload.length);
+  const ingestPlan = pasteIngestPlanForSession(authority.sessionId, payload);
   const ingest = ingestPlan ? watchPasteIngest(authority.sessionId, ingestPlan) : null;
   // Bracketed paste: one editor transaction, matching `injectPrompt` /
   // Overclock pane_write. A raw dump of a 4k summary can repaint the TUI

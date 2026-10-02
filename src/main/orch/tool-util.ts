@@ -436,12 +436,12 @@ function adapterAcceptsBracketedPaste(adapterId: string | undefined): boolean {
 }
 
 /**
- * F-735: arma, ANTES da escrita, a espera pela ingestão da colagem (Codex no
- * Windows engole o Enter enquanto ingere uma colagem grande). Null = Enter no
- * tempo de sempre.
+ * F-735: arma, ANTES da escrita, a espera pela ingestão da colagem (Codex e
+ * Devin no Windows engolem o Enter enquanto ingerem uma colagem grande). Null
+ * = Enter no tempo de sempre.
  */
-function armPasteIngest(sessionId: string, pastedChars: number): PasteIngestWatch | null {
-  const plan = pasteIngestPlanForSession(sessionId, pastedChars);
+function armPasteIngest(sessionId: string, pasted: string): PasteIngestWatch | null {
+  const plan = pasteIngestPlanForSession(sessionId, pasted);
   return plan ? watchPasteIngest(sessionId, plan) : null;
 }
 
@@ -455,7 +455,7 @@ export async function injectPrompt(
   const safePrompt = assertSafePtyPrompt(prompt);
   const input = injectedPromptInput(sessionId, safePrompt);
   assertMcpInvocationCurrent(invocation);
-  const ingest = armPasteIngest(sessionId, safePrompt.length);
+  const ingest = armPasteIngest(sessionId, safePrompt);
   if (!orchWriteSession(sessionId, input, { markInputBusy: false })) {
     ingest?.cancel();
     throw new Error('session is gone');
@@ -661,7 +661,7 @@ export async function injectPastedPrompt(
   clearAdaptiveEnterTimers(sessionId);
   const safePrompt = assertSafePtyPrompt(prompt);
   assertMcpInvocationCurrent(invocation);
-  const ingest = armPasteIngest(sessionId, safePrompt.length);
+  const ingest = armPasteIngest(sessionId, safePrompt);
   if (!orchWriteSession(
     sessionId,
     `\x1b[200~${safePrompt}\x1b[201~`,
@@ -812,7 +812,7 @@ async function injectWithBusyProof(
         : safePrompt;
     if (!isSessionInjectableIdle(sessionId)) return false;
     assertMcpInvocationCurrent(invocation);
-    const ingest = armPasteIngest(sessionId, safePrompt.length);
+    const ingest = armPasteIngest(sessionId, safePrompt);
     if (!orchWriteSession(sessionId, input, { markInputBusy: false })) {
       ingest?.cancel();
       return false;

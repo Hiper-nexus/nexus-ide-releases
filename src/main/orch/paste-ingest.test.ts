@@ -27,6 +27,8 @@ vi.mock('../pty/pty-manager', () => ({
 
 import {
   CODEX_LARGE_PASTE_CHARS,
+  DEVIN_LARGE_PASTE_LINES,
+  DEVIN_PASTE_MARKER,
   PASTE_INGEST_MAX_MS,
   pasteIngestCapMs,
   pasteIngestPlan,
@@ -38,6 +40,10 @@ import {
 const emit = (sessionId: string, data: string) => {
   for (const tap of [...pty.dataTaps]) tap(sessionId, data);
 };
+
+/** Brief de `count` linhas curtas, como o do Nexus. */
+const linesOf = (count: number) =>
+  Array.from({ length: count }, (_, index) => `linha ${index}`).join('\n');
 
 describe('espera pela ingestão da colagem (F-735)', () => {
   beforeEach(() => {
@@ -52,16 +58,37 @@ describe('espera pela ingestão da colagem (F-735)', () => {
   });
 
   it('só o Codex com colagem de 1.000+ caracteres espera; o resto mantém o Enter de sempre', () => {
-    expect(pasteIngestPlan('codex', CODEX_LARGE_PASTE_CHARS)).not.toBeNull();
+    expect(pasteIngestPlan('codex', 'x'.repeat(CODEX_LARGE_PASTE_CHARS))).not.toBeNull();
     // 950 caracteres passavam com o Enter de 500 ms (medido no Codex 0.160).
-    expect(pasteIngestPlan('codex', 950)).toBeNull();
+    expect(pasteIngestPlan('codex', 'x'.repeat(950))).toBeNull();
     for (const adapterId of ['claude', 'kimi', 'qwen', 'deepseek', undefined]) {
-      expect(pasteIngestPlan(adapterId, 9_000)).toBeNull();
+      expect(pasteIngestPlan(adapterId, 'x'.repeat(9_000))).toBeNull();
+      expect(pasteIngestPlan(adapterId, linesOf(120))).toBeNull();
     }
     pty.adapters.set('pty-codex', 'codex');
-    expect(pasteIngestPlanForSession('pty-codex', 4_531)).not.toBeNull();
-    expect(pasteIngestPlanForSession('pty-codex', 200)).toBeNull();
-    expect(pasteIngestPlanForSession('pty-sem-info', 4_531)).toBeNull();
+    expect(pasteIngestPlanForSession('pty-codex', 'x'.repeat(4_531))).not.toBeNull();
+    expect(pasteIngestPlanForSession('pty-codex', 'x'.repeat(200))).toBeNull();
+    expect(pasteIngestPlanForSession('pty-sem-info', 'x'.repeat(4_531))).toBeNull();
+  });
+
+  it('F-743: o Devin espera o marcador quando a colagem tem 20+ linhas (medido no 3000.11.1)', () => {
+    // 02/10: brief de 117 linhas largado como `[Pasted text #1 +117 lines]`.
+    expect(pasteIngestPlan('devin', linesOf(117))?.marker).toBe(DEVIN_PASTE_MARKER);
+    expect(pasteIngestPlan('devin', linesOf(DEVIN_LARGE_PASTE_LINES))).not.toBeNull();
+    // 3 e 10 linhas, ou uma linha de 3.000 caracteres, nunca viram marcador:
+    // esperar por ele só atrasaria o Enter até o teto.
+    expect(pasteIngestPlan('devin', linesOf(10))).toBeNull();
+    expect(pasteIngestPlan('devin', 'x'.repeat(3_000))).toBeNull();
+    pty.adapters.set('pty-devin', 'devin');
+    expect(pasteIngestPlanForSession('pty-devin', linesOf(117))).not.toBeNull();
+    expect(pasteIngestPlanForSession('pty-devin', linesOf(3))).toBeNull();
+  });
+
+  it('o marcador do Devin casa nas duas formas, mesmo com espaços pulados', () => {
+    expect(DEVIN_PASTE_MARKER.test('❭ [Pasted text #1 +117 lines]')).toBe(true);
+    expect(DEVIN_PASTE_MARKER.test('[Pasted text #2 (3000 chars)]')).toBe(true);
+    expect(DEVIN_PASTE_MARKER.test('[Pastedtext#1+117lines]')).toBe(true);
+    expect(DEVIN_PASTE_MARKER.test('Ask Devin to build features')).toBe(false);
   });
 
   it('o teto cresce com o tamanho da colagem e para em 30 s', () => {
@@ -72,7 +99,7 @@ describe('espera pela ingestão da colagem (F-735)', () => {
   });
 
   it('resolve no marcador desenhado com movimento de cursor no lugar dos espaços', async () => {
-    const plan = pasteIngestPlan('codex', 4_500)!;
+    const plan = pasteIngestPlan('codex', 'x'.repeat(4_500))!;
     const watch = watchPasteIngest('pty-codex', plan);
     let outcome: PasteIngestOutcome | null = null;
     void watch.done.then((value) => { outcome = value; });
@@ -94,7 +121,7 @@ describe('espera pela ingestão da colagem (F-735)', () => {
   });
 
   it('marcador antigo no composer não conta: só a saída depois do arme', async () => {
-    const plan = pasteIngestPlan('codex', 4_500)!;
+    const plan = pasteIngestPlan('codex', 'x'.repeat(4_500))!;
     emit('pty-codex', '[Pasted Content 4531 chars][Pasted Content 4531 chars] #2');
     const watch = watchPasteIngest('pty-codex', plan);
     let outcome: PasteIngestOutcome | null = null;
@@ -104,7 +131,7 @@ describe('espera pela ingestão da colagem (F-735)', () => {
   });
 
   it('sem marcador, o teto libera o Enter; sessão que sai resolve na hora', async () => {
-    const plan = pasteIngestPlan('codex', 4_500)!;
+    const plan = pasteIngestPlan('codex', 'x'.repeat(4_500))!;
     const capped = watchPasteIngest('pty-a', plan);
     let cappedOutcome: PasteIngestOutcome | null = null;
     void capped.done.then((value) => { cappedOutcome = value; });
@@ -122,7 +149,7 @@ describe('espera pela ingestão da colagem (F-735)', () => {
   });
 
   it('cancelar desarma os taps e o teto sem resolver', async () => {
-    const plan = pasteIngestPlan('codex', 4_500)!;
+    const plan = pasteIngestPlan('codex', 'x'.repeat(4_500))!;
     const watch = watchPasteIngest('pty-codex', plan);
     let outcome: PasteIngestOutcome | null = null;
     void watch.done.then((value) => { outcome = value; });

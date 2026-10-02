@@ -1988,6 +1988,48 @@ describe('agent prompt injection', () => {
     }
   });
 
+  it('F-743: em pane Devin o Enter do brief de muitas linhas espera o [Pasted text #N +M lines]', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.physicalSessionInfo.mockReturnValue({ adapterId: 'devin' });
+      stubs.sessionState.mockReturnValue('idle');
+      const pending = injectPrompt('session-1', 'linha do brief\n'.repeat(117));
+      // 02/10: com a máquina carregada o Enter de 500 ms entrou na colagem
+      // como quebra de linha e o brief ficou largado no composer.
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(stubs.writeSession).toHaveBeenCalledOnce();
+      // O Devin recebe o brief cru, sem bracketed paste.
+      expect(stubs.writeSession).toHaveBeenNthCalledWith(
+        1,
+        'session-1',
+        expect.not.stringMatching(/^\x1b\[200~/),
+        { markInputBusy: false },
+      );
+
+      for (const tap of [...stubs.dataTaps]) {
+        tap('session-1', '\x1b[38;5;8m❭\x1b[0m [Pasted\x1b[1Ctext #1 +117 lines]');
+      }
+      await vi.advanceTimersByTimeAsync(149);
+      expect(stubs.writeSession).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(stubs.writeSession).toHaveBeenNthCalledWith(
+        2,
+        'session-1',
+        '\r',
+        { markInputBusy: false },
+      );
+      stubs.sessionState.mockReturnValue('busy');
+      for (const tap of [...stubs.stateTaps]) tap('session-1', 'busy');
+      await vi.advanceTimersByTimeAsync(400);
+      await pending;
+      expect(stubs.writeSession).toHaveBeenCalledTimes(2);
+      expect(stubs.dataTaps).toHaveLength(0);
+    } finally {
+      stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
+      vi.useRealTimers();
+    }
+  });
+
   it('F-735: o UserPromptSubmit do Codex prova o aceite sem busy do PTY', async () => {
     vi.useFakeTimers();
     try {
