@@ -691,7 +691,7 @@ function browserOriginInfo(binding: BrowserOriginBinding): PaneAuthzInfo {
       context.missionId || context.workerIncarnationId || !info.scope ||
       !sameExactPaneScope(context.scope, info.scope) ||
       !sameExactPaneScope(context.executionScope ?? context.scope, info.executionScope ?? info.scope)) return info;
-  return { ...info, role: 'user', missionId: undefined, workerIncarnationId: undefined };
+  return { ...info, role: undefined, missionId: undefined, workerIncarnationId: undefined };
 }
 
 function liveBrowserOrigin(binding: BrowserOriginBinding): boolean {
