@@ -151,6 +151,20 @@ jobs:
           test -x "${BINARIES[0]}"
           xvfb-run -a node scripts/smoke-packaged-app.mjs --app "${BINARIES[0]}"
 
+      - name: Install and smoke DEB and ZIP on pinned Debian 12
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts/debian-smoke
+          bash scripts/smoke-debian-package.sh 2>&1 | tee release-artifacts/debian-smoke/debian-12-install-smoke.log
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: linux-debian-12-install-smoke
+          path: release-artifacts/debian-smoke/
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Collect non-publicable preview packages and receipt
         # Preview receipts are deliberately rejected by the production publisher.
         run: |

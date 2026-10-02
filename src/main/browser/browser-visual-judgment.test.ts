@@ -57,6 +57,6 @@ describe('scoped visual judgments', () => {
     const originalJudge = deps.judge;
     deps.judge = async input => { const result = await originalJudge(input); assertCurrent.mockImplementation(() => { throw new Error('disposed'); }); return result; };
     expect(await judgeBrowserVisual({ paneId: 'pane', goal: 'Verify success', scope }, deps)).toMatchObject({ status: 'unavailable' });
-    expect(deps.record).not.toHaveBeenCalled();
+    expect(deps.record).toHaveBeenCalledWith(expect.objectContaining({ kind: 'no-answer', reason: 'aborted', inputTokens: 10, probabilities: {} }));
   });
 });

@@ -265,7 +265,11 @@ const browserNavigateTool: McpToolDef = {
 
 const browserScreenshotTool: McpToolDef = {
   name: 'nexus_browser_screenshot',
-  description: 'Capture an owned browser pane as a PNG with redacted URL metadata.',
+  description:
+    'Capture an owned browser pane as a local PNG artifact with redacted URL metadata. ' +
+    'The response contains a path and metadata, not image content. Inspect the image ' +
+    'with an available authorized image tool before claiming visual verification; ' +
+    'if that is unavailable, report visual verification as pending.',
   inputSchema: {
     type: 'object',
     properties: { paneId: { type: 'string' } },

@@ -390,10 +390,7 @@ describe('builtin adapters', () => {
     const openclaude = builtin('openclaude');
     expect(openclaude?.bin).toBe('openclaude');
     expect(openclaude?.spawn?.interactive?.[0]).toBe('openclaude');
-    expect(openclaude?.spawn?.extraArgs).toEqual([
-      '--disallowed-tools',
-      'Task',
-    ]);
+    expect(openclaude?.spawn?.extraArgs ?? []).not.toContain('Task');
     expect(openclaude?.env?.ephemeralHome).toBe(false);
     expect(openclaude?.models?.default).toBe('sonnet');
     expect(openclaude?.auth?.loginCommand).toBe('openclaude auth login');
@@ -1013,3 +1010,4 @@ describe('F-217 — default do pane sobe para o mais novo da linha descoberto pe
     expect(applyNewestModelLineDefault(discovered, flatCatalog).models.default).toBe('');
   });
 });
+

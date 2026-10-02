@@ -12,6 +12,7 @@ import {
 } from "../persistence/renderer-workspace-scope";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import * as ptyManager from "../pty/pty-manager";
+import type { CallerCtx } from "./pane-authz";
 import {
   attachOrchMeta,
   bindPendingSpawnSession,
@@ -99,6 +100,24 @@ const scopedRenderers = new Set<WebContents>();
 function bindScope(owner: WebContents, scope = testProjectScope()): void {
   bindResolvedRendererWorkspaceScope(owner, scope);
   scopedRenderers.add(owner);
+}
+
+function bindLiveBrowserWorker(owner: ReturnType<typeof renderer>, scope: CallerCtx["scope"]): CallerCtx {
+  const sessionId = "browser-worker-session";
+  const paneId = "browser-worker-pane";
+  const caller: CallerCtx = { sessionId, missionId: "mission-browser", role: "worker", scope };
+  // Browser opens derive their owner from the live Main session, rather than
+  // whichever renderer registered last. Mirror the exact PTY ownership proof.
+  vi.spyOn(ptyManager, "isSessionOwnedBy").mockImplementation(
+    (candidate, id) => candidate.id === owner.id && id === sessionId,
+  );
+  vi.spyOn(ptyManager, "getSessionState").mockImplementation(
+    (id) => id === sessionId ? "idle" : null,
+  );
+  syncPanes([{ paneId, sessionId, kind: "cli-agent", title: "Browser worker" }], owner);
+  attachOrchMeta(owner, paneId, { missionId: caller.missionId, role: "worker", scope });
+  owner.send.mockClear();
+  return caller;
 }
 
 afterEach(() => {
@@ -277,12 +296,14 @@ describe("pending pane spawn authority", () => {
     registerOrchRenderer(owner);
     const scope = testProjectScope();
     bindScope(owner, scope);
+    const caller = bindLiveBrowserWorker(owner, scope);
 
     const pending = requestBrowserPane({
       url: "https://example.com",
       missionId: "mission-browser",
       role: "worker",
       scope,
+      caller,
     });
     const request = owner.send.mock.calls[0]?.[1] as BrowserPaneOpenRequest;
     expect(request.paneId).toMatch(/^browser-/);
@@ -313,12 +334,14 @@ describe("pending pane spawn authority", () => {
     registerOrchRenderer(owner);
     const scope = testProjectScope();
     bindScope(owner, scope);
+    const caller = bindLiveBrowserWorker(owner, scope);
 
     const pending = requestBrowserPane({
       url: "https://example.com/failure",
       missionId: "mission-browser",
       role: "worker",
       scope,
+      caller,
     });
     const request = owner.send.mock.calls[0]?.[1] as BrowserPaneOpenRequest;
     expect(

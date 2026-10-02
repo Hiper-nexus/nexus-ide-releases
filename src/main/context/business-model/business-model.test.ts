@@ -6,6 +6,7 @@ import os from 'node:os';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { testProjectScope } from '../../orch/__tests__/scope-fixture';
 import { ProjectRuntimeManager } from '../../runtime/project-runtime-manager';
+import { removeTreeSync } from '../../util/remove-tree';
 import { inspectContextAttestations } from '../context-attestation';
 import { ensureContextScaffold } from '../context-doctor';
 import { ContextKnowledgeService } from '../context-knowledge-service';
@@ -52,17 +53,35 @@ let attestedDir = '';
 beforeEach(() => {
   __clearBusinessModelExtractionCacheForTests();
   baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-bm-runtime-'));
+  // O init copia esta config local antes do primeiro commit do fixture.
+  const gitTemplate = path.join(baseDir, 'git-template');
+  fs.mkdirSync(gitTemplate);
+  fs.writeFileSync(path.join(gitTemplate, 'config'), '[gc]\n\tauto = 0\n[maintenance]\n\tauto = false\n');
+  vi.stubEnv('GIT_TEMPLATE_DIR', gitTemplate);
   attestedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-bm-attested-'));
   configureBusinessModelAttestedStore(attestedDir);
 });
 afterEach(() => {
-  configureBusinessModelAttestedStore(null);
-  fs.rmSync(attestedDir, { recursive: true, force: true });
-  for (const manager of managers.splice(0)) manager.closeAll();
-  for (const root of roots.splice(0)) {
-    fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  try {
+    configureBusinessModelAttestedStore(null);
+    fs.rmSync(attestedDir, { recursive: true, force: true });
+    for (const manager of managers.splice(0)) manager.closeAll();
+    for (const root of roots.splice(0)) {
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          removeTreeSync(root, { force: true, maxRetries: 3, retryDelay: 100 });
+          break;
+        } catch (error) {
+          // O retry interno do rm repete rmdir, sem reler objetos Git novos.
+          // Recomeçar a árvore até 5 vezes limita a espera a cerca de 3 s.
+          if ((error as NodeJS.ErrnoException).code !== 'ENOTEMPTY' || attempt === 4) throw error;
+        }
+      }
+    }
+    fs.rmSync(baseDir, { recursive: true, force: true });
+  } finally {
+    vi.unstubAllEnvs();
   }
-  fs.rmSync(baseDir, { recursive: true, force: true });
 });
 
 function commitAll(root: string, message: string): void {
@@ -71,24 +90,37 @@ function commitAll(root: string, message: string): void {
 }
 
 describe('extractBusinessModel', () => {
-  it('teardown remove o repo após ENOTEMPTY temporário em .git', ({ onTestFinished }) => {
+  it('teardown remove objetos Git recriados depois de esvaziar o diretório', ({ onTestFinished }) => {
     const root = repo();
-    const gitDir = path.join(root, '.git');
+    expect(git(root, 'config', '--local', '--get', 'gc.auto')).toBe('0');
+    expect(git(root, 'config', '--local', '--get', 'maintenance.auto')).toBe('false');
+    const objectsDir = path.join(root, '.git', 'objects');
     const realRmdir = fs.rmdirSync;
-    let injectedErrors = 0;
+    let recreatedObjects = 0;
+    let notEmptyErrors = 0;
     const rmdir = vi.spyOn(fs, 'rmdirSync').mockImplementation((target) => {
-      // Falha após esvaziar .git, no mesmo ponto do teardown observado no CI.
-      if (String(target) === gitDir && injectedErrors === 0 && fs.readdirSync(gitDir).length === 0) {
-        injectedErrors += 1;
-        throw Object.assign(new Error('fixture directory briefly busy'), { code: 'ENOTEMPTY' });
+      // Um writer real repovoa objects entre o readdir e o rmdir do teardown.
+      if (String(target) === objectsDir && recreatedObjects < 4 && fs.readdirSync(objectsDir).length === 0) {
+        recreatedObjects += 1;
+        const packDir = path.join(objectsDir, 'pack');
+        fs.mkdirSync(packDir);
+        fs.writeFileSync(path.join(packDir, 'late-object'), 'fixture background write');
       }
-      return realRmdir(target);
+      try {
+        return realRmdir(target);
+      } catch (error) {
+        if (String(target) === objectsDir && (error as NodeJS.ErrnoException).code === 'ENOTEMPTY') {
+          notEmptyErrors += 1;
+        }
+        throw error;
+      }
     });
 
     // Executa depois do afterEach real, sem duplicar a política de remoção.
     onTestFinished(() => {
       rmdir.mockRestore();
-      expect(injectedErrors).toBe(1);
+      expect(recreatedObjects).toBe(4);
+      expect(notEmptyErrors).toBeGreaterThanOrEqual(4);
       expect(fs.existsSync(root)).toBe(false);
     });
   });

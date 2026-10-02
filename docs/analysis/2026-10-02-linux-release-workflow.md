@@ -62,7 +62,9 @@ Omarchy. O teste na sessão Hyprland continua pendente até haver prova real.
 tag ou credenciais de release: registra o SHA exato, mantém artifacts e schema
 distintos e explicitamente não publicáveis, e abre DEB/ZIP sob Xvfb. O smoke
 funcional de browser também roda em Electron real e salva sua evidência num
-artifact separado. A versão do fonte permanece inalterada até os checks.
+artifact separado. A versão candidata acompanha a autoridade de versão do projeto; o preview não altera o canal estável.
+
+O preview também instala DEB e executa DEB/ZIP como usuário sem privilégios em Debian 12.15 amd64, com imagem oficial fixada por digest. O container mantém source/toolchain em mounts somente leitura e não recebe credenciais, capacidades extras ou Docker socket. A execução hospedada ainda precisa confirmar o resultado; o teste não cobre Wayland ou sandbox em desktop real.
 
 Este registro fica em `docs/analysis` porque a alteração adiciona a
 infraestrutura de produção de candidatas já descrita pelo contrato de release.

@@ -149,7 +149,6 @@ vi.mock('./components/KeyboardCheatsheet', () => ({
   KeyboardCheatsheet: () => null,
 }));
 vi.mock('./components/AttentionInbox', () => ({ AttentionInbox: () => null }));
-vi.mock('./components/ConfirmDialog', () => ({ ConfirmDialog: () => null }));
 vi.mock('./components/CloseWorkspaceDialog', async (importActual) => ({
   ...(await importActual<Record<string, unknown>>()),
   CloseWorkspaceDialog: () => null,
@@ -378,6 +377,29 @@ describe('App bug report entry', () => {
       );
     });
     expect(dialogContaining('Reportar um problema')).toBeNull();
+  });
+  it('places the report beneath the interactive hard confirmation', async () => {
+    const bridge = installBugReportBridge(); mountApp(); await act(async () => {});
+    act(() => bridge.open());
+    let confirmed!: Promise<boolean>;
+    act(() => { confirmed = useConfirmStore.getState().ask({ title: 'Descartar relato', body: 'Descartar alterações?', confirmLabel: 'Descartar' }); });
+    const report = dialogContaining('Reportar um problema')!;
+    const confirmation = document.querySelector('[role="alertdialog"]')!;
+    expect(report.compareDocumentPosition(confirmation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const button = [...confirmation.querySelectorAll('button')].find(item => item.textContent === 'Descartar')!;
+    act(() => button.click());
+    await expect(confirmed).resolves.toBe(true);
+  });
+  it('does not steal focus from an existing confirmation when the report opens', async () => {
+    const bridge = installBugReportBridge(); mountApp(); await act(async () => {});
+    let decision!: Promise<boolean>;
+    act(() => { decision = useConfirmStore.getState().ask({ title: 'Pergunta pendente', body: 'Continuar?', confirmLabel: 'Continuar' }); });
+    const focused = document.activeElement;
+    act(() => bridge.open());
+    expect(document.activeElement).toBe(focused);
+    act(() => useConfirmStore.getState().decide(false));
+    await expect(decision).resolves.toBe(false);
+    expect(dialogContaining('Reportar um problema')?.contains(document.activeElement)).toBe(true);
   });
 
   it('counts as a blocking overlay: reported to voice and the live browser pane steps aside', async () => {

@@ -131,7 +131,8 @@ export function withHandoffContract(
   )
     ? 'Validação visual de interface ou jogo: abra e exercite a entrega com as ' +
       'ferramentas de navegador disponíveis neste pane. Registre URL/preview, viewport, ações ' +
-      'e o resultado observado; anexe screenshots reais quando disponíveis. Build, testes ' +
+      'e o resultado observado; anexe screenshots reais quando disponíveis. Um caminho ou hash ' +
+      'de screenshot não é inspeção: observe a imagem com uma ferramenta autorizada disponível. Build, testes ' +
       'e leitura do código não comprovam aparência nem gameplay. Se uma ferramenta ou ' +
       'ambiente necessário falhar, registre a validação como não verificada e envie ' +
       'handoff com status "partial" (ou "blocked" se impedir a tarefa), com os passos ' +
@@ -192,5 +193,4 @@ export function withHandoffContract(
   const lean = orch.leanCode && tier.lean ? `\n\n${PONYTAIL_RULES}` : '';
   return `${prompt}${charter}${design}${lean}\n\n${autonomy}${visualVerification ? `\n\n${visualVerification}` : ''}\n\n${peerRead}\n\n${contract}`;
 }
-
 

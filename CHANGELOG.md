@@ -1,14 +1,25 @@
 # Changelog
 
-## 0.76.164 — Workers com mais autonomia
+## 0.76.165 — Workers com mais autonomia
 
-Candidata ainda não publicada. Inclui integralmente a 0.76.163.
+Candidata ainda não publicada. Inclui integralmente a 0.76.164.
 
 - **Workers podem executar mais.** Navegador e desktop deixam de recusar o acesso apenas pelo papel de worker. O acesso continua limitado à janela de origem, ao projeto, à sessão viva, à conta e à lista de ferramentas do chamador; abas com perfil pessoal seguem recusadas pela análise visual.
 - **Subagentes nativos disponíveis no modo livre.** Claude e OpenClaude deixam de receber um bloqueio estático de `Task`. O contrato permite subagentes nativos dentro das permissões da tarefa; o bloqueio permanece nos caminhos explicitamente governados ou de leitura.
 - **Teclas compatíveis com jogos.** `press` fornece `event.code` e aceita `holdMs` opcional de 0 a 1000 ms, preservando o padrão imediato. Cancelamento e navegação encerram a ação sem soltar teclas em uma página antiga.
 - **Verificação visual declarada.** A entrega de UI/jogo informa página, viewport, ações e evidência observada; ausência de browser ou prova visual aparece como pendência, sem simular screenshot. Preview Linux exercita formulário/menu, mobile e jogo usando o preload real do Electron e guarda as evidências de CI. Preview não é uma candidata publicável.
-- **Limites da validação.** Os testes focados de contrato, autorização e teclado passaram localmente. O ambiente local bloqueou a renderização do Electron; pixels, suíte completa, pacotes finais e assinatura/notarização ainda dependem dos gates correspondentes. Não houve comparação de qualidade entre modelos nem execução de missão LLM contra provedores.
+- **Limites da validação.** Os testes focados de contrato, autorização e teclado passaram localmente. O ambiente local bloqueou a renderização do Electron; pixels, suíte completa, pacotes finais e assinatura/notarização ainda dependem dos gates correspondentes. Nesta investigação, não houve comparação de qualidade entre modelos nem execução de missão LLM contra provedores.
+
+## 0.76.164 — Revisão completa
+
+Build do Mac. Preserva integralmente tudo do `main` até a 0.76.163: Jev/Clef/Flash, acesso e licença, assinatura, marca, cotas e reporte de problemas. Preparado após duas rodadas independentes de code review e correção dos achados.
+
+- **F-416:** máscara inclui a geometria de texto e descendentes do bloco sensível, inclusive valor vizinho fora da caixa, ancestral grande e sombra aberta.
+- **F-418:** inspeção DOM iterativa com orçamento de nós/profundidade; comentários e texto/atributos entram no limite do preload.
+- **F-030:** respostas de login antigo não interrompem a tentativa mais nova, inclusive nos caminhos de falha HTTP, JSON e rede.
+- **F-377:** confirmação de descarte do relato aparece acima do diálogo e pode ser usada.
+- **F-417/F-419/F-420:** ranking conserva custos parciais, falhas sem medidas permanecem sem medição e respostas visuais obsoletas conservam o recibo de gasto; avaliador respeita `usageMissing`.
+- **Evidência real:** 18 casos sintéticos de texto nos três serviços: Clef 18/18, Jev 17/18, Flash 16/18. Uma imagem sintética redigida foi aceita pelo Clef. Amostra pequena e sem promoção de limiares de segurança; não é prova de comportamento em sites reais. Visão permanece optativa.
 
 ## 0.76.163 — Reporte de problema
 
@@ -18,7 +29,7 @@ Build do Mac. Inclui integralmente a 0.76.162.
 - **Visão do navegador mais cuidadosa.** Abas com perfil pessoal são recusadas; a máscara cobre o bloco do rótulo sensível e também os pixels do próprio texto, junta segredos partidos em trechos vizinhos, reconhece mais formatos de token e oculta mídia grande, e é feita por união de retângulos (sem congelar a thread principal). Ligar a visão pede nova confirmação. A ocultação continua parcial.
 - **Superfícies com efeito ficam no Jev.** Guarda de despacho, revisão de handoff, memória e pilotos de navegador e desktop não usam o Clef. `nexus_judge` não aceita mais um agente escolhendo o Clef.
 - **Contrato do Jev tolerante.** Soma de probabilidades com ±0,02 e uso ausente como "sem medição" (não zero); a validação estrita vale só para o Clef. O diário separa linhas medidas das legadas e ignora linhas corrompidas.
-- **Limite conhecido.** Transporte, teste de conexão e julgamento visual do Clef só foram exercitados com simulações; nada foi validado contra a Cloudflare real.
+- **Validação e limites.** Conexões e inferência de texto foram exercitadas na Cloudflare real. A API de imagem respondeu à cena sintética redigida; isso não prova privacidade nem precisão em sites reais. A captura do produto continua optativa, parcial e recusada nos casos não inspecionáveis.
 
 ## 0.76.162 — Cloudflare protegido
 

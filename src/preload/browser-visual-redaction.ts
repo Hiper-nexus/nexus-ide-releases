@@ -7,6 +7,7 @@ import {
 
 const MAX_NODES = 50_000;
 const MAX_RECTS = 2_000;
+const MAX_DOM_CHARS = 8 * 1024 * 1024;
 /** A block this large would hide the page, not the secret: fall back to the text's own rectangles. */
 const MAX_BLOCK_VIEWPORT_SHARE = 0.4;
 
@@ -21,11 +22,18 @@ const area = (rect: { width: number; height: number }): number => rect.width * r
 /** Only geometry leaves the isolated world. Frames, canvas and media are opaque. */
 export function collectBrowserVisualMasks(win: Window & typeof globalThis): BrowserVisualMasks {
   const rectangles: BrowserVisualRect[] = [];
+  const rectangleKeys = new Set<string>();
+  const maskedNodes = new WeakSet<Node>();
+  let maskedVisits = 0;
   let visited = 0;
+  let inspectedChars = 0;
   const viewportArea = win.innerWidth * win.innerHeight;
   const append = (rect: { x: number; y: number; width: number; height: number }): void => {
     if (rect.width <= 0 || rect.height <= 0) return;
+    const key = `${rect.x},${rect.y},${rect.width},${rect.height}`;
+    if (rectangleKeys.has(key)) return;
     if (rectangles.length >= MAX_RECTS) throw new Error('visual mask limit reached');
+    rectangleKeys.add(key);
     rectangles.push({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
   };
   const sameRect = (a: { x: number; y: number; width: number; height: number } | null, b: { x: number; y: number; width: number; height: number }): boolean =>
@@ -41,6 +49,22 @@ export function collectBrowserVisualMasks(win: Window & typeof globalThis): Brow
     }
     for (const rect of range.getClientRects()) if (!sameRect(already, rect)) append(rect);
   };
+  const maskSubtree = (root: Node, already: { x: number; y: number; width: number; height: number } | null): void => {
+    const pending = [root];
+    while (pending.length) {
+      const node = pending.pop()!;
+      if (maskedNodes.has(node)) continue;
+      maskedNodes.add(node);
+      if (++maskedVisits > MAX_NODES) throw new Error('visual mask DOM limit reached');
+      if (node.nodeType === win.Node.ELEMENT_NODE) {
+        const element = node as Element;
+        if (NON_RENDERED_TAGS.has(element.tagName.toUpperCase())) continue;
+        if (node !== root) append(element.getBoundingClientRect());
+        if (element.shadowRoot) pending.push(element.shadowRoot);
+      } else if (node.nodeType === win.Node.TEXT_NODE) appendTextRects(node, already);
+      for (const child of node.childNodes) pending.push(child);
+    }
+  };
   const maskElement = (element: Element): void => {
     const rect = element.getBoundingClientRect();
     if (isMediaTag(element.tagName)) {
@@ -49,7 +73,7 @@ export function collectBrowserVisualMasks(win: Window & typeof globalThis): Brow
       return;
     }
     append(rect);
-    for (const child of element.querySelectorAll('*')) append(child.getBoundingClientRect());
+    maskSubtree(element, rect);
   };
   /** Text directly under a shadow root has no parentElement: its host stands in for it. */
   const owningElement = (text: Node): Element | null =>
@@ -60,6 +84,7 @@ export function collectBrowserVisualMasks(win: Window & typeof globalThis): Brow
     // Bloco sem caixa (display:none, sem layout) não esconde nada: o texto cai nos próprios retângulos.
     const usable = rect !== undefined && rect.width > 0 && rect.height > 0 && area(rect) <= viewportArea * MAX_BLOCK_VIEWPORT_SHARE;
     if (usable) append(rect);
+    if (block) maskSubtree(block, usable ? rect : null);
     // O texto pode ser desenhado fora da caixa do bloco (overflow visível, coluna estreita): os próprios retângulos entram sempre.
     appendTextRects(text, usable ? rect : null);
   };
@@ -85,10 +110,13 @@ export function collectBrowserVisualMasks(win: Window & typeof globalThis): Brow
     if (isSensitiveVisualText(node.textContent ?? '')) maskSensitiveText(node);
   };
   const walk = (root: Node): void => {
-    const walker = win.document.createTreeWalker(root, win.NodeFilter.SHOW_ELEMENT | win.NodeFilter.SHOW_TEXT);
+    const walker = win.document.createTreeWalker(root, win.NodeFilter.SHOW_ALL);
     let node: Node | null;
     while ((node = walker.nextNode())) {
       if (++visited > MAX_NODES) throw new Error('visual DOM limit reached');
+      inspectedChars += node.nodeValue?.length ?? 0;
+      if (node.nodeType === win.Node.ELEMENT_NODE) for (const attribute of (node as Element).attributes) inspectedChars += attribute.value.length;
+      if (inspectedChars > MAX_DOM_CHARS) throw new Error('visual DOM text limit reached');
       if (node.nodeType !== win.Node.ELEMENT_NODE) { visitText(node); continue; }
       const element = node as Element;
       if (sensitiveElement(element)) maskElement(element);

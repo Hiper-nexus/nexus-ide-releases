@@ -24,6 +24,7 @@ import {
   rankArgsSchema,
 } from './tools-rank';
 import { resetJevRateLimitsForTesting } from '../jev/jev-rate-limit';
+import { recordJevDecision } from '../jev/jev-decision-log';
 import type { AgentGateContext } from './gate';
 
 const tool = buildRankTools()[0];
@@ -118,6 +119,22 @@ describe('rankArgsSchema', () => {
 });
 
 describe('nexus_rank handler', () => {
+  it('keeps later unknown candidate usage incomplete and retains known spending', async () => {
+    jev.judge.mockReset().mockResolvedValueOnce(judgeResult(2, 2))
+      .mockResolvedValueOnce({ ...judgeResult(1, 1), usageMissing: true, usage: { input_tokens: 0, output_tokens: 0 } });
+    await tool.handler(validArgs, ctx);
+    expect(recordJevDecision).toHaveBeenLastCalledWith(expect.objectContaining({ inputTokens: 300, usageIncomplete: true }));
+  });
+  it('keeps all-unknown ranking usage null rather than fabricating measured zero', async () => {
+    jev.judge.mockReset().mockResolvedValue({ ...judgeResult(1, 1), usageMissing: true, usage: { input_tokens: 0, output_tokens: 0 } });
+    await tool.handler(validArgs, ctx);
+    expect(recordJevDecision).toHaveBeenLastCalledWith(expect.objectContaining({ inputTokens: null, usd: null, usageIncomplete: true }));
+  });
+  it('records billed successes even when another candidate fails', async () => {
+    jev.judge.mockReset().mockResolvedValueOnce(judgeResult(2, 2)).mockResolvedValueOnce(null);
+    await expect(tool.handler(validArgs, ctx)).rejects.toThrow('indisponível');
+    expect(recordJevDecision).toHaveBeenCalledWith(expect.objectContaining({ inputTokens: 300, kind: 'no-answer', usageIncomplete: true }));
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     resetJevRateLimitsForTesting();

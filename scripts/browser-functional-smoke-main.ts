@@ -1,5 +1,6 @@
 import { app, BrowserWindow } from 'electron';
 import { randomUUID, createHash } from 'node:crypto';
+import { createServer, type Server } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -15,9 +16,54 @@ const consoleMessages: Array<{ level: unknown; message: string }> = [];
 const loadFailures: unknown[] = [];
 app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-browser-smoke-user-')));
 
+let fixtureServer: Server | undefined;
+let fixtureServerClose: Promise<void> | undefined;
+async function startFixtureServer() {
+  const fixture = fs.readFileSync(path.join(__dirname, 'fixture.html'));
+  const server = createServer((request, response) => {
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      response.writeHead(405, { Allow: 'GET, HEAD' }); response.end(); return;
+    }
+    // Chromium probes the favicon even though this single-file fixture has none.
+    if (request.url === '/favicon.ico') {
+      response.writeHead(204); response.end(); return;
+    }
+    if (request.url !== '/' && request.url !== '/fixture.html') {
+      response.writeHead(404); response.end(); return;
+    }
+    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    response.end(request.method === 'HEAD' ? undefined : fixture);
+  });
+  fixtureServer = server;
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string' && address.address === '127.0.0.1', 'Fixture must bind only loopback');
+  return { url: `http://127.0.0.1:${address.port}/fixture.html`, address };
+}
+function closeFixtureServer(): Promise<void> {
+  if (fixtureServerClose) return fixtureServerClose;
+  const server = fixtureServer;
+  fixtureServer = undefined;
+  if (!server) return Promise.resolve();
+  fixtureServerClose = new Promise<void>((resolve) => {
+    const deadline = setTimeout(resolve, 1000);
+    server.close(() => { clearTimeout(deadline); resolve(); });
+    server.closeAllConnections();
+    server.unref();
+  });
+  return fixtureServerClose;
+}
+app.on('before-quit', () => { void closeFixtureServer(); });
+
 async function main() {
   await app.whenReady();
   registerBrowserAutomationResponseHandler();
+  const fixture = await startFixtureServer();
+  report.fixtureUrl = fixture.url;
+  report.fixtureServerAddress = fixture.address;
   const win = new BrowserWindow({ width: 840, height: 660, show: true, webPreferences: { preload: path.join(__dirname, 'preload.js'), sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, partition: `nexus-regression-${randomUUID()}` } });
   const wc = win.webContents;
   wc.on('console-message', (event, details, ...legacy) => {
@@ -41,7 +87,7 @@ async function main() {
     fs.writeFileSync(path.join(out, `${name}.png`), png);
     return { name, ...size, bytes: png.length, sha256: createHash('sha256').update(png).digest('hex') };
   };
-  await win.loadFile(path.join(__dirname, 'fixture.html'));
+  await win.loadURL(fixture.url);
   report.desktopBefore = await shot('desktop-before');
   report.read = await command('read', { maxChars: 3000 });
   await command('fill', { ref: await ref('Name'), text: 'Ada' });
@@ -82,6 +128,6 @@ async function main() {
   report.consoleMessages = consoleMessages; report.loadFailures = loadFailures; report.status = 'passed';
   fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify(report, null, 2));
   console.log(`Browser functional smoke passed: ${out}`);
-  win.destroy(); app.quit();
+  win.destroy(); await closeFixtureServer(); app.quit();
 }
-main().catch(error => { report.status = 'failed'; report.error = String(error.stack ?? error); report.consoleMessages = consoleMessages; report.loadFailures = loadFailures; fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify(report, null, 2)); console.error(error); app.exit(1); });
+main().catch(async error => { await closeFixtureServer(); report.status = 'failed'; report.error = String(error.stack ?? error); report.consoleMessages = consoleMessages; report.loadFailures = loadFailures; fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify(report, null, 2)); console.error(error); app.exit(1); });

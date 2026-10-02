@@ -28,3 +28,13 @@ describe('Linux preview workflow separation', () => {
     expect(workflow).not.toMatch(/name: linux-x64-release\s|name: linux-x64-receipt\s/);
   });
 });
+
+
+describe('Debian installed package proof', () => {
+  it('runs the additional OS smoke after package creation before collecting preview receipts', () => {
+    expect(workflow).toContain('bash scripts/smoke-debian-package.sh 2>&1 | tee release-artifacts/debian-smoke/debian-12-install-smoke.log');
+    expect(workflow.indexOf('npm run make -- --platform linux --arch x64')).toBeLessThan(workflow.indexOf('bash scripts/smoke-debian-package.sh'));
+    expect(workflow.indexOf('bash scripts/smoke-debian-package.sh')).toBeLessThan(workflow.indexOf('node scripts/collect-linux-preview.mjs'));
+    expect(workflow).toContain('name: linux-debian-12-install-smoke');
+  });
+});

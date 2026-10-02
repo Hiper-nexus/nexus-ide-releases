@@ -363,7 +363,8 @@ export function authorizePaneRef(
 ): PaneAuthzInfo {
   const info = getPaneAuthzInfo(paneRef);
   if (!info) throw new Error(unknownPaneMessage(paneRef, ctx));
-  const decision = authorizePaneAccess(callerWithPaneOwner(ctx), info, action);
+  const caller = info.kind === 'browser' ? callerWithPaneOwner(ctx) : ctx;
+  const decision = authorizePaneAccess(caller, info, action);
   if (!decision.allow) {
     throw new Error(`not authorized: ${decision.reason}`);
   }

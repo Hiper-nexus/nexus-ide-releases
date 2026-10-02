@@ -22,7 +22,8 @@ import {
 } from '../../../shared/bug-report';
 import { focusableWithin } from '../../lib/focus-trap';
 import { useBugReportDialogStore } from '../../state/bug-report-dialog-store';
-import { askConfirm } from '../../state/confirm-store';
+import { askConfirm, useConfirmStore } from '../../state/confirm-store';
+import { useChoiceStore } from '../../state/choice-store';
 import { useLayoutStore } from '../../state/layout-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import {
@@ -75,6 +76,9 @@ export function BugReportDialog() {
 }
 
 function BugReportForm({ onClose }: { onClose: () => void }) {
+  const confirmOpen = useConfirmStore(state => Boolean(state.pending));
+  const choiceOpen = useChoiceStore(state => Boolean(state.pending));
+  const initialFocusDone = useRef(false);
   const [form, setForm] = useState<BugReportFormState>(INITIAL_BUG_REPORT_FORM);
   const [phase, setPhase] = useState<Phase>('editing');
   const [failure, setFailure] = useState<Failure | null>(null);
@@ -129,13 +133,18 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     mounted.current = true;
-    titleRef.current?.focus();
     return () => {
       mounted.current = false;
       previewSeq.current += 1;
       if (returnFocus?.isConnected) returnFocus.focus();
     };
   }, [returnFocus]);
+
+  useEffect(() => {
+    if (confirmOpen || choiceOpen || initialFocusDone.current) return;
+    titleRef.current?.focus();
+    initialFocusDone.current = true;
+  }, [confirmOpen, choiceOpen]);
 
   useEffect(() => {
     if (phase === 'sending') panelRef.current?.focus();
