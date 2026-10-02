@@ -44,6 +44,43 @@ A tag construída precisa conter os scripts de coleta e validação do respectiv
 contrato; o workflow não injeta ferramentas novas num fonte histórico. O
 preview permite provar o fonte atual antes de criar uma nova versão/tag.
 
+### Sem GitHub Actions: build em container (Docker)
+
+O Actions é caro e para de iniciar jobs quando a cobrança trava (02/10/2026: a
+organização gastou o limite com CodeQL, CI e previews a cada push no `main`).
+Para esse caso, e para uma VPS própria depois, existe o mesmo build num container
+`ubuntu:22.04`:
+
+```bash
+git fetch --tags
+scripts/build-linux-release-docker.sh <v> [saída]     # DOCKER="sudo docker" se preciso
+```
+
+O container espelha o `linux-release.yml`: tag anotada na ancestralidade da
+`main`, Node exato de `nexusRelease.node` com SHA-256 conferido, npm fixado,
+`npm ci`, typecheck, sinks do renderer, `npm test`, `release:security`, build,
+smoke do app empacotado, do DEB instalado e do ZIP extraído, e o teto de glibc
+2.35. Roda como usuário comum com `sudo`, Git recente e `LANG=C.UTF-8`, como o
+runner. A saída traz os três pacotes, `SHA256SUMS-linux-x64.txt` e
+`build-provenance.json`.
+
+Limites que importam:
+
+- **Não gera o recibo `nexus.linux-release/v2`.** Ele prova um run do workflow, e
+  `release:publish:linux` o exige. A publicação é manual: criar a release nos dois
+  repositórios, `gh release upload` dos quatro arquivos (nunca `--clobber`),
+  conferir o `digest` de cada asset e dizer nas notas que o build foi local.
+- **Não compile no Arch/Omarchy para distribuir.** A glibc de lá é nova demais e
+  os módulos nativos quebram em Ubuntu 22.04 e Debian 12.
+- **O repositório NÃO pode ser montado em `/repo`:** testes usam esse caminho como
+  raiz fictícia de projeto e passam a ler a pasta de verdade. O script monta em
+  `/source-ro`.
+- **`sudo` guarda a credencial por processo pai.** Rode o driver com `source` no
+  mesmo shell em que fez `sudo -v`; um script filho pede a senha de novo.
+- Depois de gerar, instale os pacotes de verdade em containers de cada distro
+  (Debian 12, Ubuntu 22.04 e 24.04, Fedora) e abra o app. Foi assim que se achou o
+  `alsa-lib` que faltava no RPM (F-763).
+
 O publicador revalida o run (workflow, `workflow_dispatch` na `main`,
 conclusão `success`), baixa os artifacts, confere o recibo contra a tag
 anotada local (commit e objeto de tag), reconfere bytes e SHA-256 de cada
