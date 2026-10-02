@@ -141,6 +141,7 @@ import { registerLayoutIpc } from "./persistence/layout-ipc";
 import { registerAdapterIpc } from "./adapters/adapter-ipc";
 import { registerVoiceIpc, closeVoiceIpc } from "./voice/voice-ipc";
 import { registerJevIpc } from "./jev/jev-ipc";
+import { registerMissionPickIpc } from "./jev/jev-mission-pick-ipc";
 import { registerDecisionModelIpc } from "./decision-models/decision-model-ipc";
 import { registerVisionIpc } from "./vision/ipc-bridge";
 import {
@@ -603,6 +604,7 @@ function bootstrap(): void {
   registerVoiceIpc(projectRuntimeManager);
   traceBootstrap('after voice IPC');
   registerJevIpc();
+  registerMissionPickIpc();
   registerDecisionModelIpc();
   // The window is created by the app-ready handler before bootstrap starts.
   // Keep the rest of registration below it so account/secrets/billing cannot

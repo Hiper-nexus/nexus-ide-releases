@@ -8,7 +8,7 @@ const both = { jev: true, clef: true };
 describe('complementary decision routing', () => {
   it('uses Clef for tool selection and Jev for tasks without a local promotion', () => {
     expect(resolveDecisionRoute({ surface: 'toolPick' }, settings, both)).toMatchObject({ provider: 'clef', model: 'clef', evidence: 'public-benchmark' });
-    for (const surface of ['intake', 'taskRouting', 'delegation', 'paneState', 'terminalTriage', 'rank', 'rankTool', 'judgeTool', 'researchTriage', 'helperReuse', 'businessModel'] as const) {
+    for (const surface of ['intake', 'taskRouting', 'delegation', 'paneState', 'terminalTriage', 'rank', 'rankTool', 'judgeTool', 'researchTriage', 'helperReuse', 'businessModel', 'missionPick'] as const) {
       expect(resolveDecisionRoute({ surface }, settings, both)?.provider).toBe('jev');
     }
   });
@@ -33,6 +33,24 @@ describe('complementary decision routing', () => {
     it('still lets the explicit visual capability use Clef for an image on the browser surface', () => {
       const images = [{ content_type: 'image/png' as const, base64: 'synthetic' }];
       expect(resolveDecisionRoute({ surface: 'browserTool', images }, { ...settings, visionEnabled: true }, both)).toMatchObject({ provider: 'clef', evidence: 'capability' });
+    });
+  });
+
+  describe('missionPick (voice mission tie-break) is a text surface that is NOT pinned to Jev', () => {
+    // O que a escolha faz é abrir uma tela de missão — reversível e dita em voz alta —, e a
+    // regra de aceitação (confiança ≥ 0,7 e margem ≥ 0,15) vale para qualquer provedor.
+    // Sem decisão, o assistente pergunta; por isso nunca fica sem rota por falta de Jev.
+    it('follows the generic text policy in every mode', () => {
+      expect(resolveDecisionRoute({ surface: 'missionPick' }, settings, both)).toMatchObject({ provider: 'jev' });
+      expect(resolveDecisionRoute({ surface: 'missionPick' }, settings, { jev: false, clef: true })).toMatchObject({ provider: 'clef', reason: 'credential-fallback' });
+      expect(resolveDecisionRoute({ surface: 'missionPick' }, { ...settings, mode: 'jev' }, both)).toMatchObject({ provider: 'jev', evidence: 'manual' });
+      expect(resolveDecisionRoute({ surface: 'missionPick' }, { ...settings, mode: 'clef' }, both)).toMatchObject({ provider: 'clef', evidence: 'manual' });
+    });
+
+    it('has no route (so no call and no decision) without any credential, or with the other provider fixed', () => {
+      expect(resolveDecisionRoute({ surface: 'missionPick' }, settings, { jev: false, clef: false })).toBeNull();
+      expect(resolveDecisionRoute({ surface: 'missionPick' }, { ...settings, mode: 'jev' }, { jev: false, clef: true })).toBeNull();
+      expect(resolveDecisionRoute({ surface: 'missionPick' }, { ...settings, mode: 'clef' }, { jev: true, clef: false })).toBeNull();
     });
   });
 

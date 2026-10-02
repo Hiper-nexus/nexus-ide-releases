@@ -924,6 +924,19 @@ saber isto antes de mexer:
   `nexus_route_task` devolve `skillSuggestion`, o auto-route do `pane_spawn`
   acrescenta uma linha ao prompt do filho só com confiança ≥ 0.7 e skill
   permitida. Cookbook oficial 'skill suggestion'.
+- **Missão falada** (`jev-mission-pick.ts`, surface `missionPick`): "abre a
+  missão X" no voice executor passa por `resolveMissionByName`
+  (`shared/mission-name-match.ts`): nada casa → diz que não achou e lista as
+  missões (nunca `missions[0]`); um título igual ou um único que casa → abre;
+  vários → UMA `choice` do Jev entre os candidatos (+`none`, por posição
+  `m1…m5`, título redigido, state ≤ 2 KB, IPC `jev:missionPick` com
+  `handleTrusted` e schema estrito). Só vale com confiança ≥ 0,7 E margem ≥ 0,15
+  sobre a 2ª opção; sem decisão (sem chave, desligado, erro) a voz pergunta
+  "Qual delas?" e não abre nada. Nada casou e há 1–8 missões (nome mal
+  reconhecido pelo STT): o Jev lê a fala contra TODAS (`kind: 'noMatch'`, 9+
+  não consulta), piso mais rígido (confiança ≥ 0,85, margem ≥ 0,30) e a voz diz
+  "Entendi assim o que você disse"; sem aceite segue o "não achei". O diário
+  prefixa `noMatch:`. Rota de texto comum (não fixa no Jev).
 - `nexus_computer_do` (macOS, "Jev decide, Nexus executa no desktop"):
   exige permissão de Acessibilidade (`permission_required` aponta o caminho
   dos Ajustes); só a mão do operador ou o orquestrador chamam — worker nunca
