@@ -355,3 +355,49 @@ A revisão da 0.76.161 mudou o desenho em pontos que valem registrar:
   20 s para uma queda do provedor não custar 4 s por leitura de pane.
 - **Limites desta entrega.** Nada disto foi validado contra a Cloudflare real.
   Fundos CSS e dados pessoais em texto comum não são mascarados.
+
+## Missão falada: desempate entre títulos parecidos (superfície `missionPick`)
+
+O ramo `restore_mission_panes` do executor de voz abria `missions[0]` quando
+nenhum título casava e a primeira quando dois casavam: ação errada em silêncio.
+O Overclock resolve o caso com um modelo de decisão que escolhe entre os
+candidatos; aqui o código vem primeiro e o modelo só entra onde há dúvida real.
+
+- **Resolvedor puro** (`src/shared/mission-name-match.ts`): sem acento, caixa nem
+  pontuação; igual > começa com > contém > todas as palavras (sem as de ligação).
+  Nada casa → `none` (a voz lista as missões; nunca a primeira). `unique` só
+  com um título igual ao dito ou quando é o único que casa de alguma forma;
+  qualquer outro caso é `ambiguous`, com até 5 candidatos e o motivo de cada um.
+  Alvo vazio mantém "a mais recente".
+- **Desempate** (`src/main/jev/jev-mission-pick.ts`): UMA pergunta `choice`
+  (candidatos por posição `m1…m5` + `none`), estado de no máximo 2 KB, título
+  redigido antes do corte, timeout de 3 s sem retry. Aceita só com confiança
+  ≥ 0,7 e margem ≥ 0,15 sobre a 2ª opção (o `none` conta como opção). Sem
+  decisão a voz pergunta "Achei N missões parecidas… Qual delas?" e deixa o turno
+  aberto. Quando o Jev decide, a voz diz qual missão abriu.
+- **Rota.** É superfície de texto e a escolha só abre uma tela, dita em voz alta:
+  NÃO está em `JEV_PINNED_SURFACES`. Automático prefere Jev e cai no Clef sem
+  chave Jev; "Somente Clef" usa o Clef sob a mesma regra de aceitação; sem
+  nenhuma credencial não há rota e a voz pergunta. Os limiares não foram
+  avaliados contra o Clef, e contra o Jev só numa amostra pequena (abaixo).
+- **O que foi medido com o Jev real (01/10/2026, 16 casos sintéticos, uma
+  rodada).** A resposta no formato da pergunta passa na validação do Nexus e leva
+  250–420 ms. Empates reais (`api` entre "API de pagamento" e "API de estoque",
+  o mesmo título duas vezes, cinco títulos longos parecidos) voltaram `none` com
+  confiança 0,88–0,98 e a voz perguntaria. Casos claros ("pagamento pix", "versão dois" →
+  "Site da loja v2") voltaram 0,98–1,00. "site loja" entre "Site da loja" e "Site
+  da loja v2" escolheu "Site da loja" nas duas ordens e com a recência trocada
+  (0,70–0,93): o modelo desempata pelo título mais curto, não pela posição nem
+  pela recência. Pistas de estado ("a que está rodando", "a última") acertaram a
+  missão mas com confiança 0,59–0,62, então a regra manda perguntar. Dois casos com
+  texto de injeção num título apontando para a opção errada não desviaram a
+  escolha. Nesses casos a
+  `confidence` do Jev ficou abaixo da probabilidade da opção escolhida (0,62 contra
+  0,75), então a margem sobre a 2ª opção não é redundante com a confiança.
+- **Não validado.** Isso é amostra pequena, não rubrica: sem conjunto de pedidos
+  reais de missão, sem repetição para medir variância e sem nenhuma chamada ao
+  Clef (os limiares valem para ele só pela regra de aceitação). Nomes mal
+  reconhecidos pelo STT ("sait da lója", "versão dois") não casam no resolvedor
+  local e caem em "não achei" (o Jev os escolheria certo com 0,98, mas só é
+  consultado na ambiguidade). Recalibre pelo painel Decisões do Jev
+  (certo/errado) antes de relaxar qualquer número.
