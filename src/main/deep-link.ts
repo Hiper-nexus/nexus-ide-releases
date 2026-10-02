@@ -229,8 +229,13 @@ export function wireDeepLinks(customHandler?: DeepLinkHandler): boolean {
   if (!gotLock) return false;
   app.on('second-instance', (_e, argv) => {
     const link = deepLinkFromArgv(argv);
-    if (link) handler(link, false); // veio de URL → não confiável
     focusMainWindow();
+    // O link é tratado no turno SEGUINTE. A segunda instância fica esperando a
+    // confirmação de entrega deste evento, e o Chromium dá 20 s: se o handler
+    // segurar o evento (o diálogo nativo de `open`/`license` é síncrono), a
+    // segunda instância conclui que o app travou, MATA o processo em execução
+    // — com todos os terminais e missões — e sobe no lugar dele (F-731).
+    if (link) setImmediate(() => handler(link, false)); // veio de URL → não confiável
   });
 
   // macOS: deep link e abertura de documento chegam por evento (app já vivo).

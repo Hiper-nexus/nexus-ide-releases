@@ -38,8 +38,33 @@ export function confirmNativeAction(
     detail: opts.detail,
     noLink: true,
   };
-  const res = win
-    ? dialog.showMessageBoxSync(win, boxOpts)
+  const parent = nativeDialogParent(win);
+  const res = parent
+    ? dialog.showMessageBoxSync(parent, boxOpts)
     : dialog.showMessageBoxSync(boxOpts);
   return res === 1;
+}
+
+/**
+ * A janela à qual o diálogo pode ser preso. No Linux/Wayland o Chromium exporta
+ * a superfície da janela-mãe (xdg-foreign) para o diálogo GTK; uma janela ainda
+ * não exibida não tem papel de toplevel e o compositor responde com erro de
+ * protocolo fatal (`zxdg_exporter_v2: surface must be an xdg_toplevel`) — o app
+ * inteiro cai. Acontecia no arranque a frio por `nexus://open` ou
+ * `nexus://license`, quando a janela principal ainda está com `show: false`
+ * (F-731). Nesse caso o diálogo sai sem janela-mãe; continua síncrono e
+ * fail-closed.
+ */
+export function nativeDialogParent<W extends DialogParentWindow>(
+  win: W | null | undefined,
+  platform: NodeJS.Platform = process.platform,
+): W | undefined {
+  if (!win || win.isDestroyed()) return undefined;
+  if (platform === 'linux' && !win.isVisible()) return undefined;
+  return win;
+}
+
+interface DialogParentWindow {
+  isDestroyed(): boolean;
+  isVisible(): boolean;
 }
