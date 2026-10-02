@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.76.170 — Linux no desktop
+
+Build do Linux (DEB, RPM e ZIP). Inclui a 0.76.167, a 0.76.168 (com o Redline na bandeja) e a 0.76.169, que não tiveram pacote Linux. Tudo abaixo foi achado e conferido rodando o app num Omarchy/Hyprland de verdade, não só no smoke do CI.
+
+- **O login volta para o app (F-728).** Sem `desktopName`, o Electron usava a identidade `nexuside`, que nenhum pacote instala: o handler de `nexus://` nunca era registrado e o navegador não tinha para quem devolver o código do login. Agora janela, diálogos e handler usam `nexus-ide`. DEB e RPM declaram `x-scheme-handler/nexus`, saem com o ícone da marca (antes era o do Electron) e aparecem em Desenvolvimento. O ZIP portátil escreve a própria entrada em `~/.local/share/applications`.
+  - O `Exec` da entrada portátil vai sem aspas: o `xdg-open` do Hyprland/sway não entende aspas e mandava o link para o navegador. Pasta com espaço no caminho passa por um symlink.
+- **Cofre no Omarchy/Hyprland e sway (F-729).** Fora de GNOME e KDE o cofre ficava desligado (backend `basic_text`, que o Nexus recusa), mesmo com gnome-keyring rodando: a sessão do login e as chaves não eram salvas. O app passa a pedir o backend libsecret. Sem Secret Service o cofre continua indisponível; nunca grava em texto plano.
+- **Link `nexus://` não derruba mais o app (F-731).** Com o app aberto, um link `open`/`license` deixado 20 s no diálogo de confirmação fazia a segunda instância matar o Nexus em execução, com todos os terminais. Com o app fechado, o mesmo link derrubava o arranque no Wayland. O link é tratado fora do evento de segunda instância, e o diálogo só é preso a uma janela já visível.
+- **Sandbox enxerga o Node do home (F-732).** No Bubblewrap, `node`/`npm` instalados por mise/nvm e o `~/.local/bin` davam "command not found" em `nexus_terminal_run`: o `/home` é coberto e o Linux não tinha as regras de toolchain do macOS. Os diretórios do PATH entram somente-leitura; o home inteiro nunca.
+- **`nexus_terminal_run` não aceita PATH de quem chama (F-733, segurança).** O sandbox libera a leitura dos diretórios do PATH, e o parâmetro `env` deixava o agente escolher o PATH. Vale para macOS e Linux.
+- **Gravações do Nexus Shot em `~/Videos` (F-730).** A ponte procurava `~/Movies` no Linux.
+- **Redline na bandeja, conferido no Hyprland.** Item registrado, tooltip, menu com as contas, atualização ao vivo, "Atualizar agora" e "Ocultar da bandeja" verificados pelo barramento da sessão.
+- O pacote instalado passa a ser conferido no CI (`verify-linux-desktop-identity.mjs`): ícone da marca e handler do login, depois do `apt-get install`.
+
 ## 0.76.169 — DeepSeek pelo plano
 
 Build do Windows.

@@ -9234,7 +9234,7 @@ export const RELEASE_076168: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076169: AppRelease = {
   version: '0.76.169',
   date: '2026-10-02',
   codename: 'DeepSeek pelo plano',
@@ -9261,4 +9261,62 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.170',
+  date: '2026-10-02',
+  codename: 'Linux no desktop',
+  summary:
+    'Versão do Linux, conferida num Omarchy/Hyprland de verdade: o login ' +
+    'volta para o app, o cofre funciona fora de GNOME e KDE e o Redline ' +
+    'aparece na bandeja. Inclui as versões 0.76.167 a 0.76.169.',
+  highlights: [
+    {
+      title: 'Login que volta para o app no Linux',
+      detail:
+        'Depois de entrar pelo navegador, o Nexus recebe o retorno e conclui ' +
+        'o login. Vale para o pacote .deb, o .rpm e o ZIP portátil, que ' +
+        'agora cria a própria entrada no menu de aplicativos.',
+    },
+    {
+      title: 'Cofre de segredos no Omarchy, Hyprland e sway',
+      detail:
+        'A sessão e as suas chaves passam a ser guardadas no chaveiro do ' +
+        'sistema (gnome-keyring, KeePassXC) também fora de GNOME e KDE. ' +
+        'Sem chaveiro ativo, o Nexus avisa e não grava nada em texto plano.',
+    },
+    {
+      title: 'Redline na bandeja do Linux',
+      detail:
+        'Ligue em Uso e cotas › Bandeja do sistema para ver o consumo das ' +
+        'suas contas no ícone da bandeja enquanto o Nexus está aberto.',
+    },
+    {
+      title: 'Ícone do Nexus no menu e na janela',
+      detail:
+        'O app instalado aparece com o ícone do Nexus, na categoria ' +
+        'Desenvolvimento.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Link nexus:// não fecha mais o Nexus',
+      detail:
+        'Abrir um link de pasta ou de licença com o Nexus em uso podia ' +
+        'encerrar o app e os terminais se a confirmação ficasse aberta por ' +
+        'mais de 20 segundos.',
+    },
+    {
+      title: 'Comandos dos agentes encontram o Node instalado no seu usuário',
+      detail:
+        'No Linux, node e npm instalados por mise ou nvm não eram ' +
+        'encontrados pelos comandos que os agentes rodam no modo protegido.',
+    },
+    {
+      title: 'Gravações do Nexus Shot na pasta Vídeos',
+      detail:
+        'O Nexus passa a aceitar gravações enviadas da pasta Vídeos do Linux.',
+    },
+  ],
 };
