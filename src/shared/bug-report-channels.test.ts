@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { BUG_REPORT_CHANNELS } from './bug-report-channels';
 
@@ -11,7 +12,8 @@ describe('BUG_REPORT_CHANNELS', () => {
   });
 
   it('does not collide with any other channel constant in the shared folder', () => {
-    const sharedDir = path.dirname(new URL(import.meta.url).pathname);
+    // `URL.pathname` vira `/C:/…` no Windows; fileURLToPath dá o caminho nativo.
+    const sharedDir = path.dirname(fileURLToPath(import.meta.url));
     const own = new Set<string>(Object.values(BUG_REPORT_CHANNELS));
     for (const file of fs.readdirSync(sharedDir)) {
       if (!file.endsWith('.ts') || file.includes('.test.') || file === 'bug-report-channels.ts') continue;
