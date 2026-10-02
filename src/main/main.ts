@@ -255,6 +255,7 @@ import {
   initRedlineIpc,
   maybeOfferRedlineInstall,
   shutdownRedlineIpc,
+  startRedlineLinuxIfEnabled,
   syncInstalledRedline,
 } from "./redline/redline-install";
 import {
@@ -689,6 +690,10 @@ function bootstrap(): void {
     void syncInstalledRedline(process.resourcesPath).catch((err) =>
       console.warn("[redline] sync da instalação falhou:", err),
     );
+  }
+  // Linux: o Redline é uma bandeja dentro do app; sobe só se o operador ligou.
+  if (process.platform === "linux" && !isAutomatedReleaseTest()) {
+    startRedlineLinuxIfEnabled();
   }
   initQuotaService({
     listProviders: () => listProviderSettings({ nonBlockingAuth: true }),

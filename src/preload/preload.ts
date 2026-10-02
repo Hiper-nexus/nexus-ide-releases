@@ -1375,6 +1375,7 @@ const api: NexusApi = {
     status: () => ipcRenderer.invoke(REDLINE_IPC.status),
     install: () => ipcRenderer.invoke(REDLINE_IPC.install),
     open: () => ipcRenderer.invoke(REDLINE_IPC.open),
+    hide: () => ipcRenderer.invoke(REDLINE_IPC.hide),
   },
   gamification: {
     snapshot: (options?: { rescan?: boolean }) =>

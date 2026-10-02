@@ -146,10 +146,23 @@ function defaultHandler(link: DeepLink, trusted: boolean): void {
   } else if (link.kind === 'quota') {
     // Read-only: só foca a janela e navega para a seção de cotas. Sem efeito
     // colateral — qualquer site pode disparar este link.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { WINDOW_CHANNELS } = require('../shared/channels') as typeof import('../shared/channels');
-    win?.webContents.send(WINDOW_CHANNELS.deepOpenQuota);
+    sendOpenQuota(win);
   }
+}
+
+function sendOpenQuota(win?: BrowserWindow | null): void {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { WINDOW_CHANNELS } = require('../shared/channels') as typeof import('../shared/channels');
+  win?.webContents.send(WINDOW_CHANNELS.deepOpenQuota);
+}
+
+/**
+ * Foca a janela principal e leva o renderer a Uso e cotas — o mesmo efeito de
+ * `nexus://quota`, para quem já está dentro do app (bandeja do Redline no
+ * Linux). Read-only.
+ */
+export function openQuotaInMainWindow(): void {
+  sendOpenQuota(focusMainWindow());
 }
 
 /** Diálogo nativo (não-forjável) confirmando abertura de um caminho externo. */

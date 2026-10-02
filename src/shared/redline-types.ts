@@ -27,6 +27,8 @@ export const REDLINE_IPC = {
   status: 'redline:status',
   install: 'redline:install',
   open: 'redline:open',
+  /** Linux: tira o Redline da bandeja (no macOS/Windows não há o que ocultar). */
+  hide: 'redline:hide',
 } as const;
 
 /** Janela de uso achatada para consumo externo. */
@@ -134,6 +136,21 @@ export function maskEmail(email: string | undefined): string | undefined {
   return `${local.slice(0, 2)}****@${domainHead.slice(0, 1)}**${tld}`;
 }
 
+/**
+ * Linux: o Redline é uma bandeja DENTRO do app em execução (Electron `Tray`),
+ * não um companheiro à parte. `off` = desligada (padrão, opt-in); `running` =
+ * o ícone foi criado; `unavailable` = ligada, mas o ícone não pôde ser criado.
+ */
+export type RedlineTrayState = 'off' | 'running' | 'unavailable';
+
+export interface RedlineInAppTrayStatus {
+  /** Preferência persistida do operador (padrão false). */
+  enabled: boolean;
+  state: RedlineTrayState;
+  /** Motivo curto e sem dados sensíveis quando `unavailable`. */
+  reason?: string;
+}
+
 /** Estado do companheiro para a seção Uso e cotas (renderer). */
 export interface RedlineInstallStatus {
   platform: string;
@@ -143,4 +160,6 @@ export interface RedlineInstallStatus {
   /** Cópia em /Applications (onde o login item funciona). */
   installedPath?: string;
   running: boolean;
+  /** Só no Linux: a bandeja do próprio app (sem companheiro instalável). */
+  inAppTray?: RedlineInAppTrayStatus;
 }

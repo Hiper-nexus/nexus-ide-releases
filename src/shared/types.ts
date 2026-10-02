@@ -1207,6 +1207,8 @@ export interface NexusApi {
     status(): Promise<import('./redline-types').RedlineInstallStatus>;
     install(): Promise<{ ok: boolean; message: string }>;
     open(): Promise<{ ok: boolean; message: string }>;
+    /** Linux: tira o Redline da bandeja do sistema. */
+    hide(): Promise<{ ok: boolean; message: string }>;
   };
   /** Gamificação power-scaling: XP por entrega, nunca por consumo. */
   gamification: {

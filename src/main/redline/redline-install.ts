@@ -1,11 +1,14 @@
 /**
  * Nexus Redline — instalação do app companheiro (menu bar no macOS,
- * bandeja no Windows).
+ * bandeja no Windows) e liga/desliga da bandeja do Linux.
  *
  * macOS: o .app viaja dentro do Nexus (Contents/Resources/nexus-redline).
  * Windows: o NexusRedline.exe viaja em Resources/nexus-redline e instala em
  * %LocalAppData%\NexusRedline (sem admin). Quem recusar a oferta instala depois
  * em Uso e cotas.
+ * Linux: não há companheiro a instalar. O Redline é uma bandeja do próprio
+ * Nexus (`redline-linux.ts`); "instalar" = ligar, "ocultar" = desligar, e a
+ * preferência (padrão desligado) mora em userData.
  *
  * Doutrina de segurança: nenhum shell, argv fixo, caminhos resolvidos em
  * código; a única escrita fora do userData é a cópia para o diretório de
@@ -24,11 +27,16 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { openQuotaInMainWindow } from '../deep-link';
 import { handleTrusted } from '../security/trusted-ipc';
 import {
   REDLINE_IPC,
   type RedlineInstallStatus,
 } from '../../shared/redline-types';
+import {
+  createRedlineLinuxController,
+  type RedlineLinuxController,
+} from './redline-linux';
 import {
   installRedlineWin,
   isRedlineRunningWin,
@@ -65,6 +73,88 @@ export function resolveBundledRedlineApp(
 export function resolveInstalledRedlineApp(): string | null {
   const candidate = path.join('/Applications', REDLINE_APP_NAME);
   return existsSync(candidate) ? candidate : null;
+}
+
+// ── Linux: bandeja dentro do app ─────────────────────────────────────────────
+
+let linuxController: RedlineLinuxController | null = null;
+
+function redlineLinuxController(): RedlineLinuxController {
+  linuxController ??= createRedlineLinuxController({
+    userDataDir: app.getPath('userData'),
+    openQuota: openQuotaInMainWindow,
+  });
+  return linuxController;
+}
+
+const LINUX_TRAY_ON_MESSAGE =
+  'Nexus Redline ligado na bandeja do sistema. Ele fica lá enquanto o NexusIDE estiver aberto.';
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function enableRedlineLinux(): RedlineInstallResult {
+  try {
+    const tray = redlineLinuxController().enable();
+    if (tray.state === 'running') return { ok: true, message: LINUX_TRAY_ON_MESSAGE };
+    return {
+      ok: false,
+      message: tray.reason ?? 'Não consegui ligar o Redline na bandeja do sistema.',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: `Não consegui ligar o Redline na bandeja: ${errorText(error)}`,
+    };
+  }
+}
+
+function openRedlineLinux(): RedlineInstallResult {
+  const tray = redlineLinuxController().status();
+  if (tray.state === 'running') {
+    // O Electron não abre o menu da bandeja por código no Linux.
+    return {
+      ok: true,
+      message: 'O Redline está na bandeja do sistema — clique no ícone para ver as cotas.',
+    };
+  }
+  if (!tray.enabled) {
+    return {
+      ok: false,
+      message: 'O Redline da bandeja está desligado. Ligue em Uso e cotas.',
+    };
+  }
+  return enableRedlineLinux();
+}
+
+/** Desliga a bandeja do Linux e lembra a escolha. Só existe no Linux. */
+export function hideRedline(): RedlineInstallResult {
+  if (process.platform !== 'linux') {
+    return { ok: false, message: 'Ocultar da bandeja existe só no Linux.' };
+  }
+  try {
+    redlineLinuxController().disable();
+    return {
+      ok: true,
+      message: 'Nexus Redline saiu da bandeja. Ligue de novo em Uso e cotas quando quiser.',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: `Não consegui salvar a escolha: ${errorText(error)}`,
+    };
+  }
+}
+
+/** Boot: sobe a bandeja do Linux só se o operador já a ligou. Nunca lança. */
+export function startRedlineLinuxIfEnabled(): void {
+  if (process.platform !== 'linux') return;
+  try {
+    redlineLinuxController().startIfEnabled();
+  } catch (error) {
+    console.warn('[redline] bandeja do Linux falhou ao subir:', errorText(error));
+  }
 }
 
 function isRunning(): boolean {
@@ -112,6 +202,16 @@ async function stopRunningRedline(): Promise<void> {
 }
 
 export function redlineStatus(resourcesPath?: string): RedlineInstallStatus {
+  if (process.platform === 'linux') {
+    const inAppTray = redlineLinuxController().status();
+    return {
+      platform: process.platform,
+      // Embutido por construção: não há bundle a copiar, só ligar.
+      bundled: true,
+      running: inAppTray.state === 'running',
+      inAppTray,
+    };
+  }
   if (process.platform === 'win32') {
     const bundledPath = resolveBundledRedlineExe(
       resourcesPath,
@@ -142,6 +242,9 @@ export interface RedlineInstallResult {
   message: string;
 }
 
+const UNSUPPORTED_PLATFORM_MESSAGE =
+  'O Redline existe para macOS, Windows e Linux.';
+
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -155,8 +258,11 @@ export async function installRedline(
   if (process.platform === 'win32') {
     return installRedlineWin(resourcesPath, app.isPackaged);
   }
+  if (process.platform === 'linux') {
+    return enableRedlineLinux();
+  }
   if (process.platform !== 'darwin') {
-    return { ok: false, message: 'O Redline é exclusivo do macOS e do Windows.' };
+    return { ok: false, message: UNSUPPORTED_PLATFORM_MESSAGE };
   }
   const source = resolveBundledRedlineApp(resourcesPath, app.isPackaged);
   if (!source) {
@@ -261,8 +367,14 @@ export async function confirmAndInstallRedline(
     }
     return installRedline(resourcesPath);
   }
+  if (process.platform === 'linux') {
+    // Sem diálogo nativo: ligar a bandeja só grava em userData (nada fora
+    // dele, ao contrário da cópia para /Applications ou %LocalAppData%) e o
+    // clique em "Mostrar na bandeja" já é o gesto explícito.
+    return installRedline(resourcesPath);
+  }
   if (process.platform !== 'darwin') {
-    return { ok: false, message: 'O Redline é exclusivo do macOS e do Windows.' };
+    return { ok: false, message: UNSUPPORTED_PLATFORM_MESSAGE };
   }
   const win =
     BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
@@ -282,6 +394,9 @@ export async function confirmAndInstallRedline(
 export async function openRedline(): Promise<RedlineInstallResult> {
   if (process.platform === 'win32') {
     return openRedlineWin(process.resourcesPath, app.isPackaged);
+  }
+  if (process.platform === 'linux') {
+    return openRedlineLinux();
   }
   const installed = resolveInstalledRedlineApp();
   const target = installed ?? resolveBundledRedlineApp(process.resourcesPath, app.isPackaged);
@@ -311,6 +426,8 @@ export async function syncInstalledRedline(
     await syncInstalledRedlineWin(resourcesPath, app.isPackaged);
     return;
   }
+  // Linux: nada instalado para atualizar — a bandeja sobe no boot
+  // (`startRedlineLinuxIfEnabled`).
   if (process.platform !== 'darwin') return;
   const bundled = resolveBundledRedlineApp(resourcesPath, app.isPackaged);
   const installed = resolveInstalledRedlineApp();
@@ -388,12 +505,16 @@ export function initRedlineIpc(): void {
     confirmAndInstallRedline(process.resourcesPath),
   );
   handleTrusted(REDLINE_IPC.open, () => openRedline());
+  handleTrusted(REDLINE_IPC.hide, () => hideRedline());
 }
 
 export function shutdownRedlineIpc(): void {
   ipcMain.removeHandler(REDLINE_IPC.status);
   ipcMain.removeHandler(REDLINE_IPC.install);
   ipcMain.removeHandler(REDLINE_IPC.open);
+  ipcMain.removeHandler(REDLINE_IPC.hide);
+  // Quit do app: a bandeja some, mas a preferência do operador fica.
+  linuxController?.stop();
 }
 
 // Cooldown exportado para testes futuros de repetição da oferta.

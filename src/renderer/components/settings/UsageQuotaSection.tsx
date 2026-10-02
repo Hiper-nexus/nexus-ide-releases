@@ -26,6 +26,7 @@ import { openCliLoginTerminal, type CliLoginFinish } from './cli-login-terminal'
 import { defaultAccountLabel, emailFromAuthDetail } from './account-default-label';
 import type { AdapterAuthStatus } from '../../../shared/provider-settings-types';
 import type { RedlineInstallStatus } from '../../../shared/redline-types';
+import { RedlineLinuxTrayRow } from './RedlineLinuxTrayRow';
 import { buildPulseMarkers, buildPulseTicks } from '../../lib/quota-pulse';
 // Puro (só imports de shared) — o chip "melhor folga" usa a MESMA aritmética
 // que o scorer do main e o app de menu bar; nenhuma implementação paralela.
@@ -34,7 +35,8 @@ import { scoreFleet } from '../../../main/quota/smart-pick';
 /**
  * Linha do Nexus Redline (menu bar no macOS, bandeja no Windows): instala
  * na primeira vez, abre quando já instalado (/Applications ou %LocalAppData%).
- * Sumida fora de macOS/Windows ou sem o companheiro no pacote.
+ * No Linux o Redline é a bandeja do próprio app (`RedlineLinuxTrayRow`).
+ * Sumida em outras plataformas ou sem o companheiro no pacote.
  */
 function RedlineMenuBarRow() {
   const [status, setStatus] = useState<RedlineInstallStatus | null>(null);
@@ -51,6 +53,9 @@ function RedlineMenuBarRow() {
         setStatus({ platform: 'unknown', bundled: false, running: false }),
       );
   }, []);
+  if (status?.platform === 'linux') {
+    return status.inAppTray ? <RedlineLinuxTrayRow status={status} onChange={setStatus} /> : null;
+  }
   if (!status || (status.platform !== 'darwin' && status.platform !== 'win32') || !status.bundled) return null;
   const installed = Boolean(status.installedPath);
   const isWin = status.platform === 'win32';

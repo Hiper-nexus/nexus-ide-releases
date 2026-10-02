@@ -1850,6 +1850,14 @@
 .quota-panel__redline .settings-detail__hint {
   margin: 0;
 }
+.quota-panel__redline .settings-detail__hint + .settings-detail__hint {
+  margin-top: var(--space-1);
+}
+.quota-panel__redline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
 /* Fleet Pulse — eixo de renovação (horizonte 7d). Instrumento, não wallpaper:
    status-dots operacionais, hairlines de borda, zero gradiente e zero vidro. */
 .quota-pulse {

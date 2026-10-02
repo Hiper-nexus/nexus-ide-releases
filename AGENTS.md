@@ -491,6 +491,46 @@ saber isto antes de mexer:
   Marca `mono` exige `isTemplate` + tinta clara, senão preto sobre near-black
   desaparece; o `NOTICE.md` de procedência viaja com elas para o bundle.
 
+## Redline no Linux: bandeja dentro do app (feature, sem F-id)
+
+- No Linux não há companheiro à parte: o Redline é um `Tray` + `Menu` do
+  Electron (StatusNotifierItem: KDE, GNOME com AppIndicator, XFCE,
+  Waybar/Hyprland), em `src/main/redline/redline-linux.ts`. Sem toolchain
+  nativa nova; viaja nos DEB/RPM/ZIP. "Instalar" no IPC = LIGAR a bandeja
+  (`redline:install`), `redline:hide` = desligar. A escolha é um booleano em
+  `<userData>/redline-linux.json` (padrão DESLIGADO, só `true` estrito liga);
+  não entra no `settings.json` compartilhado. Sem diálogo nativo (só grava em
+  userData) e sem oferta one-time no boot: a descoberta é Uso e cotas.
+- Limites honestos, ditos na UI: o ícone vive só enquanto o NexusIDE está
+  aberto (Mac/Windows continuam depois de fechar o app); Wayland não deixa a
+  bandeja posicionar um painel, então o painel escuro 400×600 vira uma lista
+  de menu nativa; o Electron não diz se algum host está exibindo o ícone —
+  `running` quer dizer "o Tray foi criado". Tray que lança vira `unavailable`
+  com motivo (log único) e NÃO persiste o "ligado".
+- Toda decisão e formatação mora em `redline-tray-model.ts` (PURO: snapshot →
+  descrição do menu; mesmas regras de `redline-model.cc`: 60%/85%, pior janela
+  da faixa, barra de 5 blocos, desconhecido = «—», nunca 0%). Dado velho (>10
+  min) diz «leitura desatualizada», não «Nexus offline»: aqui o Nexus está
+  rodando. A lista mostra as contas de `statusBarEntryIds` (teto 6, ordem do
+  snapshot) com a recomendada marcada; o resto vai para o submenu «Outras
+  contas» (teto 25).
+- O arquivo NUNCA é confiado: `redline-snapshot-parse.ts` é o único ponto de
+  entrada dos bytes (teto de 1 MiB em bytes, `formatVersion` exatamente 1,
+  campo desconhecido descartado, texto sem controle/bidi, e-mail inteiro que
+  escape do contrato é re-mascarado). Read-only: o único efeito é o
+  `redline-refresh.request` ("Atualizar agora"), que o sink já consome.
+  "Abrir cotas no Nexus" usa `openQuotaInMainWindow` (o mesmo caminho do
+  `nexus://quota`). O ícone é gerado em código (`redline-tray-icon.ts`, PNG
+  próprio, placa clara + losango da marca + ponto de urgência; dado velho
+  vaza o ponto) — não há asset de bandeja nem variante «template» no Linux.
+- `&` em rótulo de menu do Electron é acelerador: todo texto passa por
+  `escapeMenuLabel`. Não republique o menu sem mudança (fecha o menu aberto em
+  vários hosts) e não destrua o Tray de dentro do clique do próprio menu.
+- NÃO validado em desktop real (só testes unitários + PNG/menu decodificados no
+  Electron do macOS): GNOME (precisa da extensão AppIndicator), KDE Plasma,
+  XFCE e Waybar/Hyprland (módulo `tray` ligado). Antes de prometer o Linux a um
+  cliente, rode nesses quatro e confira ícone, tooltip, clique e atualização.
+
 ## Overlay Kimi leva o catálogo de modelos (F-611)
 
 - `$KIMI_CODE_HOME` do pane é o overlay efêmero, não `~/.kimi-code`. Sem

@@ -722,7 +722,31 @@ describe('UsageQuotaSection', () => {
     act(() => root.unmount());
   });
 
-  it('esconde a linha do Redline fora de macOS/Windows', async () => {
+  it('esconde a linha do Redline em plataforma sem Redline', async () => {
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        quota: {
+          snapshot: vi.fn(async () => sampleSnapshot),
+          refresh: vi.fn(async () => sampleSnapshot),
+        },
+        redline: {
+          status: vi.fn(async () => ({ platform: 'freebsd', bundled: false, running: false })),
+          install: vi.fn(),
+          open: vi.fn(),
+          hide: vi.fn(),
+        },
+      },
+    });
+
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(host.querySelector('.quota-panel__redline')).toBeNull();
+    act(() => root.unmount());
+  });
+
+  it('esconde a linha no Linux de um Main antigo, sem a bandeja do app', async () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
@@ -734,6 +758,7 @@ describe('UsageQuotaSection', () => {
           status: vi.fn(async () => ({ platform: 'linux', bundled: false, running: false })),
           install: vi.fn(),
           open: vi.fn(),
+          hide: vi.fn(),
         },
       },
     });
@@ -742,6 +767,49 @@ describe('UsageQuotaSection', () => {
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
     expect(host.querySelector('.quota-panel__redline')).toBeNull();
+    act(() => root.unmount());
+  });
+
+  it('no Linux mostra a bandeja do sistema, não o texto de barra do menu do Mac', async () => {
+    const status = vi.fn(async () => ({
+      platform: 'linux',
+      bundled: true,
+      running: false,
+      inAppTray: { enabled: false, state: 'off' },
+    }));
+    const install = vi.fn(async () => ({ ok: true, message: 'ligado' }));
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        quota: {
+          snapshot: vi.fn(async () => sampleSnapshot),
+          refresh: vi.fn(async () => sampleSnapshot),
+        },
+        redline: { status, install, open: vi.fn(), hide: vi.fn() },
+      },
+    });
+
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    const row = host.querySelector('.quota-panel__redline');
+    expect(row).not.toBeNull();
+    expect(row?.textContent).toContain('Bandeja do sistema');
+    expect(row?.textContent).toContain('Mostrar na bandeja');
+    expect(row?.textContent).not.toContain('barra do menu');
+    expect(row?.textContent).not.toContain('Mac');
+
+    status.mockResolvedValueOnce({
+      platform: 'linux',
+      bundled: true,
+      running: true,
+      inAppTray: { enabled: true, state: 'running' },
+    });
+    const btn = row?.querySelector<HTMLButtonElement>('button');
+    await act(async () => { btn?.click(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(install).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('.quota-panel__redline')?.textContent).toContain('Ocultar da bandeja');
     act(() => root.unmount());
   });
 
