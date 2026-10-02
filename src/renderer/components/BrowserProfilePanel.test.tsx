@@ -2,7 +2,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BrowserProfilePanel } from './BrowserProfilePanel';
+import { BrowserProfilePanel, siteSignInUrl } from './BrowserProfilePanel';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root | undefined;
@@ -29,5 +29,63 @@ describe('Perfil e logins', () => {
     expect(imported).toHaveBeenCalledWith('browser-test', 'chrome-profile', ['example.com']);
     expect(container.textContent).toContain('1 site');
     expect(container.textContent).toContain('1 item');
+  });
+
+  describe('sem importação (Windows/Linux)', () => {
+    function mountWithoutImport(mode: 'isolated' | 'personal') {
+      const profileChange = vi.fn(async () => ({ mode: 'personal', enabled: true, shareWithAgents: true, storedCookies: 0, importSupported: false }));
+      const load = vi.fn(async () => undefined);
+      const onClose = vi.fn();
+      Object.defineProperty(window, 'nexus', { configurable: true, value: { browser: {
+        profileStatus: vi.fn(async () => ({ mode, enabled: true, shareWithAgents: true, storedCookies: 0, importSupported: false })),
+        chromeProfiles: vi.fn(async () => []),
+        chromeSites: vi.fn(async () => []),
+        chromeImport: vi.fn(),
+        profileChange,
+        load,
+      } } });
+      container = document.createElement('div'); document.body.append(container); root = createRoot(container);
+      return { profileChange, load, onClose };
+    }
+
+    function typeAddress(value: string) {
+      const input = container!.querySelector<HTMLInputElement>('input[aria-label="Site para entrar"]')!;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      act(() => {
+        setter.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    }
+
+    it('não promete importação: passa a aba ao Perfil Nexus e abre o site para entrar', async () => {
+      const { profileChange, load, onClose } = mountWithoutImport('isolated');
+      await act(async () => root!.render(<BrowserProfilePanel paneId="browser-win" onClose={onClose} />));
+      expect(container!.textContent).toContain('Entrar nos seus sites');
+      expect(container!.textContent).not.toContain('Importar do Chrome');
+      typeAddress('github.com');
+      const submit = [...container!.querySelectorAll('button')].find((button) => button.textContent === 'Usar o Perfil Nexus e abrir')!;
+      await act(async () => submit.click());
+      expect(profileChange).toHaveBeenCalledWith('browser-win', { mode: 'personal' });
+      expect(load).toHaveBeenCalledWith('browser-win', 'https://github.com/');
+      expect(onClose).toHaveBeenCalled();
+    });
+
+    it('já no Perfil Nexus só abre o site', async () => {
+      const { profileChange, load, onClose } = mountWithoutImport('personal');
+      await act(async () => root!.render(<BrowserProfilePanel paneId="browser-win" onClose={onClose} />));
+      typeAddress('https://mail.example.com/inbox');
+      const submit = [...container!.querySelectorAll('button')].find((button) => button.textContent === 'Abrir para entrar')!;
+      await act(async () => submit.click());
+      expect(profileChange).not.toHaveBeenCalled();
+      expect(load).toHaveBeenCalledWith('browser-win', 'https://mail.example.com/inbox');
+    });
+  });
+
+  it('só abre endereço http(s)', () => {
+    expect(siteSignInUrl('github.com')).toBe('https://github.com/');
+    expect(siteSignInUrl(' http://intranet.local:8080/login ')).toBe('http://intranet.local:8080/login');
+    expect(siteSignInUrl('file:///C:/Users/x/secret.txt')).toBeNull();
+    expect(siteSignInUrl('javascript:alert(1)')).toBeNull();
+    expect(siteSignInUrl('   ')).toBeNull();
   });
 });
