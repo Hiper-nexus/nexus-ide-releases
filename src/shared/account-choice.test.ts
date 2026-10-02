@@ -85,6 +85,14 @@ describe('sanitizeReceiptText', () => {
     expect(sanitizeReceiptText('use ana@gmail.com.', 200)).toBe('use a•••@g•••.com.');
   });
 
+  it('texto enorme sem "@" não trava (o regex de e-mail é quadrático sem teto de entrada)', () => {
+    const started = performance.now();
+    expect(sanitizeReceiptText('a'.repeat(60_000), 240)).toBe('a'.repeat(240));
+    expect(sanitizeReceiptText(`${'a'.repeat(60_000)}@${'b'.repeat(60_000)}`, 32).length).toBeLessThanOrEqual(32);
+    // Antes do teto: ~1,8 s só no primeiro caso.
+    expect(performance.now() - started).toBeLessThan(250);
+  });
+
   it('texto vazio ou só de controle vira string vazia', () => {
     expect(sanitizeReceiptText('', 10)).toBe('');
     expect(sanitizeReceiptText('\u0007\u0001', 10)).toBe('');

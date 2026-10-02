@@ -133,9 +133,17 @@ const INVISIBLE_CHARS = /[​-‏‪-‮⁦-⁩﻿]/g;
 const EMAIL_LIKE = /[^\s"'`<>()[\]{},;]+@[^\s"'`<>()[\]{},;]+/g;
 const TRAILING_PUNCTUATION = /[.:!?]+$/;
 
+/**
+ * Folga da entrada sobre o teto de saída: o teto vem ANTES dos regexes porque o
+ * de e-mail é quadrático em texto longo sem "@" (60 mil caracteres ≈ 1,8 s) e
+ * `window` chega de resposta de API de cota. A máscara só encurta o texto.
+ */
+const INPUT_CAP_FACTOR = 4;
+
 /** Texto livre seguro para a UI: sem controle, e-mail mascarado, com teto. */
 export function sanitizeReceiptText(text: string, maxChars: number): string {
-  const cleaned = text
+  const bounded = text.length > maxChars * INPUT_CAP_FACTOR ? text.slice(0, maxChars * INPUT_CAP_FACTOR) : text;
+  const cleaned = bounded
     .replace(INVISIBLE_CHARS, '')
     .replace(CONTROL_CHARS, ' ')
     .replace(EMAIL_LIKE, (match) => {
