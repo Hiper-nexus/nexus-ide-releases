@@ -1,3 +1,5 @@
+import type { BugCategory, BugEventKind, BugImpact, BugPlatform, BugSeverity, BugStatus } from '../bugs/constants.js';
+
 /** D1 SELECT row contracts. SQL names are intentionally preserved for imports.
  * UUIDs are created by crypto.randomUUID() before inserts. Dates are epoch-ms.
  * Hash fields contain SHA-256 digests, never raw session/refresh/invite tokens.
@@ -214,5 +216,42 @@ export interface AdminAuditRow {
   readonly target_account_id: string | null;
   readonly action: AdminAuditAction;
   readonly details: SerializedJson;
+  readonly created_at: EpochMilliseconds;
+}
+
+export interface BugReportRow {
+  readonly id: string;
+  readonly account_id: string | null;
+  readonly title: string;
+  readonly description: string;
+  readonly steps: string | null;
+  readonly category: BugCategory;
+  readonly impact: BugImpact;
+  readonly severity: BugSeverity;
+  readonly status: BugStatus;
+  readonly app_version: string;
+  readonly platform: BugPlatform;
+  readonly arch: string;
+  readonly os_version: string | null;
+  readonly adapter: string | null;
+  readonly model: string | null;
+  readonly pane_count: number | null;
+  readonly mission_active: SqlBoolean | null;
+  readonly diagnostics_json: SerializedJson | null;
+  readonly fingerprint: string;
+  readonly duplicate_of: string | null;
+  readonly fix_summary: string | null;
+  readonly fix_pr_url: string | null;
+  readonly created_at: EpochMilliseconds;
+  readonly updated_at: EpochMilliseconds;
+  readonly diagnostics_expires_at: EpochMilliseconds;
+}
+
+export interface BugReportEventRow {
+  readonly id: string;
+  readonly report_id: string;
+  readonly actor_account_id: string | null;
+  readonly kind: BugEventKind;
+  readonly details_json: SerializedJson;
   readonly created_at: EpochMilliseconds;
 }

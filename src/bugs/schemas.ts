@@ -31,13 +31,14 @@ const contextSchema = z.strictObject({
   missionActive: z.boolean().optional(),
 });
 
+/** Só valida tamanhos; a limpeza do diagnóstico é feita num ponto único, em scrubDiagnostics (buildNewReport). */
 const diagnosticsSchema = z.strictObject({
   events: z.array(z.strictObject({
     t: z.number().int().min(0),
-    kind: cleaned('line', 1, 40),
-    code: cleaned('line', 1, 80).optional(),
+    kind: z.string().min(1).max(40),
+    code: z.string().min(1).max(80).optional(),
   })).max(50),
-  errors: z.array(cleaned('line', 0, 200)).max(20),
+  errors: z.array(z.string().max(200)).max(20),
 });
 
 /** POST /v1/bug-reports. A gravidade não existe aqui: nasce 'medium' e o admin ajusta. */

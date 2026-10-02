@@ -12,6 +12,7 @@ import { syncRoutes } from './sync.js';
 import { noticeRoutes } from './email/routes.js';
 import { createNoticeAdminRoutes } from './email/admin-routes.js';
 import { sendDueNotices } from './email/dispatch.js';
+import { bugReportRoutes } from './bugs/routes.js';
 import { PRO_MONTHLY_PRICE } from './stripe.js';
 
 const WEBHOOK_PATH = '/v1/billing/webhook';
@@ -79,7 +80,7 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
     } });
   });
   // O envio de teste vem ANTES de adminRoutes: responde sozinho (com as próprias guardas) e não herda nem duplica o middleware de /admin/*.
-  app.route('/v1', createAuthRoutes(deps.fetchFn)).route('/v1', createBillingRoutes(deps.stripeFor, deps.now)).route('/v1', createNoticeAdminRoutes(deps.fetchFn)).route('/v1', adminRoutes)
+  app.route('/v1', createAuthRoutes(deps.fetchFn)).route('/v1', createBillingRoutes(deps.stripeFor, deps.now)).route('/v1', createNoticeAdminRoutes(deps.fetchFn)).route('/v1', bugReportRoutes).route('/v1', adminRoutes)
     .route('/v1', teamRoutes).route('/v1', cronRoutes).route('/v1', syncRoutes).route('/v1', noticeRoutes);
   return app;
 }
