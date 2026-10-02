@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.175 — Login no Omarchy
+
+Build do Linux (DEB, RPM e ZIP). Inclui a 0.76.171 a 0.76.174, que não tiveram pacote Linux. Corrige a 0.76.170, que não completava o login no Omarchy.
+
+- **O login pelo navegador volta para o app (F-740).** Na 0.76.170 o ZIP portátil criava a entrada de menu e definia o padrão, mas o Chrome abre `nexus://` pelo portal do desktop, e o portal só oferece apps registrados no índice `mimeinfo.cache`. O login terminava em "Open With… No Apps available". O app passa a conferir o índice a cada boot: roda `update-desktop-database` e, sem a ferramenta, acrescenta a própria linha. DEB e RPM dependem de `desktop-file-utils`, cujo gatilho atualiza o índice na instalação, e o CI reprova pacote instalado sem a linha.
+- **Redline aparece sem configurar (F-739).** A bandeja do Linux nascia desligada e o botão ficava em Uso e cotas, atrás do login. Sem escolha salva ela liga; "Ocultar da bandeja" grava a escolha e é respeitado. No Omarchy o ícone fica na gaveta da seta `<` da barra.
+
 ## 0.76.174 — Missão que volta
 
 Build do Windows. Inclui a 0.76.173 (O Maestro lembra).

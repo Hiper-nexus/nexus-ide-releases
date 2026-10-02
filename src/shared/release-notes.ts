@@ -9428,7 +9428,7 @@ export const RELEASE_076173: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076174: AppRelease = {
   version: '0.76.174',
   date: '2026-10-02',
   codename: 'Missão que volta',
@@ -9444,6 +9444,34 @@ export const CURRENT_RELEASE: AppRelease = {
         'fica em "Precisa de você" com o motivo dele. Retomar religa o ' +
         'Maestro na mesma conversa para você responder ali. Antes ela podia ' +
         'ir para o Arquivo como "encerrada pelo operador" e o Retomar falhava.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.175',
+  date: '2026-10-02',
+  codename: 'Login no Omarchy',
+  summary:
+    'Versão do Linux. O login pelo navegador agora volta para o Nexus no ' +
+    'Omarchy e em outros desktops que abrem links pelo portal do sistema, e ' +
+    'o Redline aparece na bandeja sem precisar ligar. Inclui as versões ' +
+    '0.76.171 a 0.76.174.',
+  highlights: [
+    {
+      title: 'Login que conclui no Linux',
+      detail:
+        'Depois de entrar pelo navegador, o sistema reconhece o Nexus como o ' +
+        'app que recebe o retorno. Antes aparecia a janela "Open With" sem ' +
+        'nenhum aplicativo e o login não terminava.',
+    },
+    {
+      title: 'Redline visível desde o primeiro uso',
+      detail:
+        'O ícone do Redline já aparece na bandeja enquanto o Nexus está ' +
+        'aberto. Para tirar, use "Ocultar da bandeja" no menu do ícone ou ' +
+        'em Uso e cotas.',
     },
   ],
   fixes: [],
