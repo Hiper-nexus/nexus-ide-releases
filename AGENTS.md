@@ -416,6 +416,17 @@ saber isto antes de mexer:
   Comando pesado local (validador, `make verify`, suíte) continua um por vez —
   a regra é não deixar trabalho de LLM esperando CPU. Na noite de 30/09 a
   missão do HiperGO gastou 7h30 em validações em fila única, sem worker.
+- F-744: delegar é UMA chamada — `nexus_pane_spawn({task, prompt})` sem
+  `adapterId` já roteia com reserva dentro da missão (`missionAutoRoute`). A
+  doutrina do kickoff e a descrição da `nexus_route_task` mandavam rotear
+  antes, e o Maestro Codex gastava uma rodada inteira do modelo (~60 s) só
+  para isso. `nexus_route_task` é para inspecionar uma rota (juiz,
+  alternativas, custo). Medido e ainda aberto no Windows: o Codex roda cada
+  hook pelo PowerShell (o nosso abre outro PowerShell com
+  `Invoke-WebRequest`), ~1–2 s por chamada de ferramenta, e serializa as
+  chamadas MCP (`supports_parallel_tool_calls` falso por padrão). Hook
+  `async` reordena o status contra o `Stop` — o portão de regressão devolve
+  o turno sem prompt novo —, então precisa de outro desenho.
 - F-242: worker `working` sem atividade por 20 min com PTY parado = travado
   → handoff `stalled` [travado] acorda o Maestro (renotifica a cada 60 min);
   não bloqueia a missão. F-243: o Maestro Claude de missão recebe
@@ -850,6 +861,12 @@ saber isto antes de mexer:
   `devin mcp list`. URL/bearer só por ENV, que o Devin repassa ao stdio
   (provado com `devin -p` no 3000.11.1). Registro falho em worker de missão
   derruba o spawn. Orquestrador declarado (coroável à mão), não verificado.
+- F-743: o Devin recebe o brief CRU (`NO_BRACKETED_PASTE_ADAPTERS`) e, sob
+  carga, lê colagem e Enter no mesmo lote — o Enter vira quebra de linha e o
+  brief fica `[Pasted text #1 +117 lines]` no composer. Sem hooks, a
+  repintura conta como aceite e ninguém reenvia. `paste-ingest.ts` espera o
+  marcador antes do Enter a partir de 20 linhas (3000.11.1: 20+ linhas →
+  marcador em ~150 ms; 10 linhas ou uma linha de 3.000 caracteres, nunca).
 
 ## Panes: quem abre, fecha (F-572)
 
@@ -1259,6 +1276,14 @@ saber isto antes de mexer:
 - Tokens do SQLite: input exclui cache; output exclui reasoning (somar uma vez).
   Reescrita da mensagem atualiza uma linha. Custo reportado pela CLI é estimativa,
   não fatura do Token Plan. Nenhum texto de prompt entra na telemetria.
+- F-742: com `--dangerously-skip-permissions` e stdin TTY o MiMo (0.1.15) abre
+  "Bypass Permissions mode" a CADA boot, com "No, exit" marcado e sem memória
+  do aceite; aceitar só liga `MIMOCODE_DANGEROUSLY_SKIP_PERMISSIONS=1`
+  (superfície oficial da doc do MiMo). O spawn troca a flag pela variável
+  (`mimo-skip-permissions.ts`, no pty-manager antes do sandbox/launcher). Não
+  volte a passar a flag: na retomada o brief é colado depois do boot, e o
+  `\n` dele confirmava a saída do diálogo (worker morto em 5 s). A colagem no
+  MiMo espera o rodapé `tab switch mode` (`MIMO_COMPOSER_READY`).
 
 ## MiniMax Code (F-655)
 
