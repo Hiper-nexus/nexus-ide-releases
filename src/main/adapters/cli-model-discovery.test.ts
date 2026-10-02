@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Adapter } from '../../shared/adapter-types';
 import {
+  CLI_MODEL_CACHE_SOURCES,
   applyDiscoveredModelsToAdapter,
   applyDiscoveredEffortsToAdapter,
   discoverCliModels,
@@ -12,6 +13,29 @@ import {
 } from './cli-model-discovery';
 
 describe('CLI model discovery', () => {
+  it('F-724: catálogo vivo do Qwen Code traz o deepseek-v4-pro só no Token Plan', () => {
+    const qwen = CLI_MODEL_CACHE_SOURCES.find((source) => source.adapterId === 'qwen')!;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-cli-models-qwen-'));
+    const file = path.join(home, '.qwen', 'settings.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    vi.stubEnv('QWEN_HOME', path.dirname(file));
+    try {
+      const write = (baseUrl: string) => fs.writeFileSync(file, JSON.stringify({
+        modelProviders: { openai: [{ id: 'qwen3.8-max' }, { id: 'deepseek-v4-flash' }] },
+        security: { auth: { selectedType: 'openai', baseUrl } },
+      }));
+      write('https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1');
+      expect(discoverCliModels([{ ...qwen, files: [file] }]).get('qwen'))
+        .toEqual(['qwen3.8-max', 'deepseek-v4-pro']);
+      write('https://dashscope.aliyuncs.com/compatible-mode/v1');
+      expect(discoverCliModels([{ ...qwen, files: [file] }]).get('qwen'))
+        .toEqual(['qwen3.8-max']);
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('reads official cache rows and ignores hidden/invalid identifiers', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-cli-models-'));
     const file = path.join(dir, 'models_cache.json');

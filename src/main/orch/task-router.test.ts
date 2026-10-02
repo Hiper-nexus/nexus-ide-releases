@@ -235,6 +235,45 @@ describe('routeTask', () => {
     expect(decision!.effort).toBe('medium');
   });
 
+  it('F-724: DeepSeek no Token Plan — tarefa trivial roteada no flash sobe no v4-pro', () => {
+    const planDeepseek: AdapterAvailability = {
+      id: 'deepseek',
+      installed: true,
+      // O catálogo do provedor Token Plan só tem o v4-pro (flash dá 403).
+      models: ['deepseek-v4-pro'],
+      modelAliases: {
+        'deepseek-flash': 'deepseek-v4-pro',
+        'deepseek-v4-flash': 'deepseek-v4-pro',
+      },
+    };
+    for (const tier of ['trivial', 'easy'] as const) {
+      const decision = routeTask('tarefa barata', [planDeepseek], DEFAULT_ROUTING_TABLE, tier);
+      expect(decision!.adapterId).toBe('deepseek');
+      expect(decision!.model).toBe('deepseek-v4-pro');
+      // Mantém o esforço da linha barata e diz no motivo que o provedor trocou.
+      expect(decision!.effort).toBe('low');
+      expect(decision!.reason).toContain('deepseek:deepseek-flash→deepseek-v4-pro');
+      expect(decision!.alternatives.map((c) => c.model)).not.toContain('deepseek-flash');
+    }
+    // API direta (sem alias): o trivial continua no flash.
+    const direct = routeTask(
+      'tarefa barata',
+      [{ id: 'deepseek', installed: true, models: ['deepseek-v4-pro', 'deepseek-flash'] }],
+      DEFAULT_ROUTING_TABLE,
+      'trivial',
+    );
+    expect(direct!.model).toBe('deepseek-flash');
+  });
+
+  it('F-724: Qwen 3.8 continua só no Qwen Code — o DeepSeek do Claude nunca roteia modelo qwen', () => {
+    for (const tier of ['trivial', 'easy', 'medium', 'hard', 'critical'] as const) {
+      for (const row of DEFAULT_ROUTING_TABLE[tier]) {
+        if (row.adapterId === 'deepseek') expect(row.model).toMatch(/^deepseek-/);
+        if (row.model?.startsWith('qwen')) expect(row.adapterId).toBe('qwen');
+      }
+    }
+  });
+
   it('does not route to LongCat when the caller marks it unavailable', () => {
     const decision = routeTask(
       'tarefa de complexidade média',

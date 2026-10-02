@@ -45,6 +45,26 @@ export interface UpstreamOption {
   requiresToken: boolean;
 }
 
+/**
+ * F-724: escolha de provedor de um adapter com mais de uma origem (hoje só o
+ * DeepSeek: API direta ou Alibaba Token Plan). Persistida como `upstream`.
+ */
+export interface ProviderChoiceInfo {
+  /** Opção ativa (um dos `options[].id`). */
+  value: string;
+  options: Array<{ id: string; label: string; hint?: string }>;
+  /** Vaga de chave que o provedor escolhido usa — o valor nunca sai do Main. */
+  key: {
+    /** Vaga do cofre que o bloco de chave grava/testa (`deepseek` ou `qwen`). */
+    adapterId: string;
+    label: string;
+    envVar: string | null;
+    hasKey: boolean;
+    keyMasked: string | null;
+    hint?: string;
+  };
+}
+
 /** Secret-free runtime view of a provider for the settings UI. */
 export interface ProviderSettingsInfo {
   adapterId: string;
@@ -100,6 +120,14 @@ export interface ProviderSettingsInfo {
   routable: boolean;
   /** Available upstreams to route to. */
   upstreams: UpstreamOption[];
+  /** F-724: provedor escolhido (substitui o seletor genérico de upstream). */
+  providerChoice?: ProviderChoiceInfo;
+  /**
+   * F-724: ids que o provedor escolhido serve com outro modelo (ex.: no
+   * Token Plan o `deepseek-flash` sobe como `deepseek-v4-pro`). A rota usa o
+   * modelo servido; ausente = nenhum id trocado.
+   */
+  modelAliases?: Record<string, string>;
   /** Current auto-operation settings + what this CLI supports. */
   permissionMode: string;
   permissionModes: string[];

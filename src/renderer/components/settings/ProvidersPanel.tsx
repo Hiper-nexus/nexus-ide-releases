@@ -92,17 +92,27 @@ function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
   const [draft, setDraft] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const credentialLink = credentialLinkForKeySlot({
-    envVar: provider.keyEnvVar,
-    providerId: provider.adapterId,
-    upstreamId: provider.routable ? provider.upstream : null,
-  });
+  // F-724: com provedor escolhido (DeepSeek), a vaga é a do provedor — a da
+  // DeepSeek ou a do Token Plan (a mesma do Qwen Code). O valor nunca chega aqui.
+  const slot = provider.providerChoice?.key;
+  const keyAdapterId = slot?.adapterId ?? provider.adapterId;
+  const keyLabel = slot?.label ?? 'API key';
+  const keyEnvVar = slot ? slot.envVar : provider.keyEnvVar;
+  const hasKey = slot ? slot.hasKey : provider.hasKey;
+  const keyMasked = slot ? slot.keyMasked : provider.keyMasked;
+  const credentialLink = keyAdapterId === provider.adapterId
+    ? credentialLinkForKeySlot({
+        envVar: keyEnvVar,
+        providerId: provider.adapterId,
+        upstreamId: provider.routable ? provider.upstream : null,
+      })
+    : null;
 
   async function save() {
     setBusy(true);
     setStatus(null);
     try {
-      const result = await setKey(provider.adapterId, draft);
+      const result = await setKey(keyAdapterId, draft);
       setDraft('');
       setStatus(result.ok ? 'key salva no Keychain' : result.error ?? 'falhou');
     } catch (err) {
@@ -116,7 +126,7 @@ function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
     setBusy(true);
     setStatus(null);
     try {
-      await setKey(provider.adapterId, '');
+      await setKey(keyAdapterId, '');
       setStatus('key removida');
     } catch (err) {
       setStatus(err instanceof Error ? err.message : 'falhou ao limpar key');
@@ -129,7 +139,7 @@ function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
     setBusy(true);
     setStatus('testando…');
     try {
-      const result = await testKey(provider.adapterId);
+      const result = await testKey(keyAdapterId);
       setStatus(`${result.ok ? '✓' : '✗'} ${result.detail}`);
     } catch (err) {
       setStatus(err instanceof Error ? `✗ ${err.message}` : '✗ teste falhou');
@@ -141,10 +151,10 @@ function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
   return (
     <div className="prov__key">
       <div className="prov__key-row">
-        <span className="prov__key-label">
-          API key
-          {provider.keyEnvVar && (
-            <code className="prov__env"> → {provider.keyEnvVar}</code>
+        <span className="prov__key-label" data-testid="prov-key-label">
+          {keyLabel}
+          {keyEnvVar && (
+            <code className="prov__env"> → {keyEnvVar}</code>
           )}
           {credentialLink && (
             <>
@@ -160,17 +170,19 @@ function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
           )}
         </span>
         <span
-          className={`settings-chip ${provider.hasKey ? 'settings-chip--ok' : 'settings-chip--warn'}`}
+          className={`settings-chip ${hasKey ? 'settings-chip--ok' : 'settings-chip--warn'}`}
         >
-          {provider.hasKey ? provider.keyMasked ?? 'set' : 'sem key'}
+          {hasKey ? keyMasked ?? 'set' : 'sem key'}
         </span>
       </div>
+      {slot?.hint && <p className="prov__block-hint">{slot.hint}</p>}
       <div className="prov__key-input">
         <input
           className="settings-input"
           type="password"
           value={draft}
-          placeholder={provider.hasKey ? '•••• (substituir)' : 'colar API key'}
+          aria-label={keyLabel}
+          placeholder={hasKey ? '•••• (substituir)' : 'colar API key'}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && draft && void save()}
         />
@@ -193,7 +205,7 @@ function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
           onClick={() => void test()}
           disabled={busy}
         />
-        {provider.hasKey && (
+        {hasKey && (
           <ActionCard
             icon="close"
             title="Limpar"
@@ -212,6 +224,44 @@ function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
         </p>
       )}
       {status && <p className="prov__status">{status}</p>}
+    </div>
+  );
+}
+
+/**
+ * F-724: provedor de um adapter com mais de uma origem (DeepSeek: API direta
+ * ou Alibaba Token Plan). Persistido como `upstream` pelo setConfig; o Main
+ * recusa qualquer valor fora das opções.
+ */
+function ProviderChoiceField({
+  provider,
+  onChange,
+}: {
+  provider: ProviderSettingsInfo;
+  onChange: (value: string) => void;
+}) {
+  const choice = provider.providerChoice;
+  if (!choice) return null;
+  const title = `Provedor do ${provider.label}`;
+  const selected = choice.options.find((option) => option.id === choice.value);
+  return (
+    <div className="prov__block" data-testid="prov-provider-choice">
+      <span className="prov__block-title">{title}</span>
+      <label className="prov__field prov__field--wide">
+        <select
+          className="settings-input"
+          aria-label={title}
+          value={choice.value}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          {choice.options.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        {selected?.hint && <span className="prov__hint">{selected.hint}</span>}
+      </label>
     </div>
   );
 }
@@ -712,12 +762,20 @@ function ProviderDetail({
         </label>
       </div>
 
+      {provider.providerChoice && (
+        <ProviderChoiceField
+          provider={provider}
+          onChange={(value) => patch({ upstream: value })}
+        />
+      )}
+
       {(provider.keyEnvVar || provider.hasKey || !isLocalCliProvider(provider)) && (
         <div className="prov__block">
           <span className="prov__block-title">API key do provider</span>
           <p className="prov__block-hint">
-            Key do provedor (env). Contas de assinatura/failover ficam no bloco
-            de contas — não misture os dois.
+            {provider.providerChoice
+              ? 'A chave segue o provedor escolhido acima — cada uma só vai para o endpoint dela.'
+              : 'Key do provedor (env). Contas de assinatura/failover ficam no bloco de contas — não misture os dois.'}
           </p>
           <KeyField provider={provider} />
         </div>
@@ -770,7 +828,7 @@ function ProviderDetail({
                     }
                   />
                 </label>
-                {provider.routable && (
+                {provider.routable && !provider.providerChoice && (
                   <label className="prov__field prov__field--wide">
                     Roteamento (upstream)
                     <select

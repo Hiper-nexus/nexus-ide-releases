@@ -6,8 +6,10 @@ import {
   buildProviderRoutingEnv,
   getUpstreamProvider,
   listUpstreamProviders,
+  loadLauncherProviderBaseUrl,
   loadLauncherProviderKey,
   setLauncherProvidersFileForTests,
+  upstreamAllowedForAdapter,
   UPSTREAM_PROVIDERS,
 } from './launcher-provider-manager';
 
@@ -103,6 +105,37 @@ describe('launcher provider routing (ported from ~/ai-launcher)', () => {
     expect(getUpstreamProvider('nope')).toBeNull();
     expect(buildProviderRoutingEnv('nope', 'x')).toEqual({});
   });
+
+  it('F-724: DeepSeek pelo Token Plan aponta o endpoint Anthropic do plano com todos os slots no v4-pro', () => {
+    const env = buildProviderRoutingEnv('deepseek-token-plan', 'sk-sp-fixture');
+    expect(env.ANTHROPIC_BASE_URL).toBe(
+      'https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic',
+    );
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-sp-fixture');
+    for (const slot of [
+      'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+      'ANTHROPIC_DEFAULT_SONNET_MODEL',
+      'ANTHROPIC_DEFAULT_OPUS_MODEL',
+    ]) {
+      expect(env[slot]).toBe('deepseek-v4-pro');
+    }
+    // O plano dá 403 no flash e nunca serve Qwen por este caminho.
+    expect(Object.values(env).join(' ')).not.toMatch(/flash|qwen/);
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(buildProviderRoutingEnv('deepseek-token-plan', null)).toEqual({});
+    // A API direta continua idêntica.
+    expect(buildProviderRoutingEnv('deepseek', 'sk-direct').ANTHROPIC_BASE_URL).toBe(
+      'https://api.deepseek.com/anthropic',
+    );
+  });
+
+  it('F-724: a rota do Token Plan é só do adapter deepseek', () => {
+    expect(listUpstreamProviders().map((p) => p.id)).not.toContain('deepseek-token-plan');
+    expect(upstreamAllowedForAdapter('deepseek', 'deepseek-token-plan')).toBe(true);
+    expect(upstreamAllowedForAdapter('claude', 'deepseek-token-plan')).toBe(false);
+    expect(upstreamAllowedForAdapter('claude', 'glm')).toBe(true);
+    expect(upstreamAllowedForAdapter('claude', 'nope')).toBe(true);
+  });
 });
 
 describe('loadLauncherProviderKey (ai-launcher providers.conf bridge)', () => {
@@ -155,5 +188,22 @@ describe('loadLauncherProviderKey (ai-launcher providers.conf bridge)', () => {
     expect(loadLauncherProviderKey('glm')).toBeNull();
     expect(loadLauncherProviderKey('../evil')).toBeNull();
     expect(loadLauncherProviderKey('')).toBeNull();
+    expect(loadLauncherProviderBaseUrl('deepseek')).toBeNull();
+  });
+
+  it('F-724: lê o endpoint que o launcher amarra ao slot (`<id>-base-url`)', () => {
+    fs.writeFileSync(
+      conf,
+      'deepseek=sk-sp-fixture\n' +
+        'deepseek-base-url=https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic\n' +
+        'glm=zai\n',
+      { mode: 0o600 },
+    );
+    setLauncherProvidersFileForTests(conf);
+    expect(loadLauncherProviderBaseUrl('deepseek')).toBe(
+      'https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic',
+    );
+    expect(loadLauncherProviderBaseUrl('glm')).toBeNull();
+    expect(loadLauncherProviderBaseUrl('../evil')).toBeNull();
   });
 });

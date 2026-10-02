@@ -18,6 +18,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {
+  ALIBABA_TOKEN_PLAN_ANTHROPIC_BASE_URL,
+  DEEPSEEK_TOKEN_PLAN_MODEL,
+  DEEPSEEK_TOKEN_PLAN_PROVIDER,
+} from './deepseek-provider';
 
 export interface UpstreamProvider {
   id: string;
@@ -32,6 +37,11 @@ export interface UpstreamProvider {
   requiresToken: boolean;
   /** local endpoints (ollama/lmstudio/litellm) need no auth token. */
   local: boolean;
+  /**
+   * Rota que só existe para um adapter (F-724: o DeepSeek pelo Token Plan).
+   * Fica fora do seletor genérico de roteamento e da conta de upstream.
+   */
+  scopedTo?: string;
 }
 
 // Ported verbatim from the launcher's declare -A PROVIDER_* maps.
@@ -188,6 +198,26 @@ export const UPSTREAM_PROVIDERS: Record<string, UpstreamProvider> = {
     requiresToken: true,
     local: false,
   },
+  // F-724: o mesmo DeepSeek pelo Alibaba Model Studio Token Plan (endpoint
+  // Anthropic-compatible do plano). Só o adapter `deepseek` escolhe esta rota
+  // e a chave é a do Token Plan (a do Qwen Code), nunca a da DeepSeek. O
+  // plano só serve o v4-pro: os três slots ficam nele (o flash dá 403).
+  [DEEPSEEK_TOKEN_PLAN_PROVIDER]: {
+    id: DEEPSEEK_TOKEN_PLAN_PROVIDER,
+    label: 'DeepSeek via Alibaba Token Plan',
+    baseUrl: ALIBABA_TOKEN_PLAN_ANTHROPIC_BASE_URL,
+    defaultModel: DEEPSEEK_TOKEN_PLAN_MODEL,
+    extraEnv: {
+      ...THIRD_PARTY_EXTRA,
+      CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT: '1',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: DEEPSEEK_TOKEN_PLAN_MODEL,
+      ANTHROPIC_DEFAULT_SONNET_MODEL: DEEPSEEK_TOKEN_PLAN_MODEL,
+      ANTHROPIC_DEFAULT_OPUS_MODEL: DEEPSEEK_TOKEN_PLAN_MODEL,
+    },
+    requiresToken: true,
+    local: false,
+    scopedTo: 'deepseek',
+  },
   'muse-claude': {
     id: 'muse-claude',
     label: 'Muse Spark (via Claude)',
@@ -249,8 +279,21 @@ export const UPSTREAM_PROVIDERS: Record<string, UpstreamProvider> = {
   },
 };
 
+/** Upstreams do seletor genérico de roteamento (sem as rotas de um adapter só). */
 export function listUpstreamProviders(): UpstreamProvider[] {
-  return Object.values(UPSTREAM_PROVIDERS);
+  return Object.values(UPSTREAM_PROVIDERS).filter((p) => !p.scopedTo);
+}
+
+/**
+ * Pode `adapterId` rotear para `upstreamId`? Rota com dono só serve ao dono;
+ * id desconhecido segue o comportamento histórico (o spawn não monta env).
+ */
+export function upstreamAllowedForAdapter(
+  adapterId: string,
+  upstreamId: string,
+): boolean {
+  const scopedTo = UPSTREAM_PROVIDERS[upstreamId]?.scopedTo;
+  return !scopedTo || scopedTo === adapterId;
 }
 
 export function getUpstreamProvider(id: string): UpstreamProvider | null {
@@ -380,4 +423,22 @@ export function loadLauncherProviderKey(
     }
   }
   return null;
+}
+
+/**
+ * Endpoint que o launcher associa ao slot (`deepseek-base-url=…`): quando
+ * existe, a chave do mesmo slot é credencial DESSE host, não do provider
+ * nativo. F-724: o `deepseek=` do launcher do operador guarda a chave do
+ * Token Plan com `deepseek-base-url` na Alibaba — enviá-la para
+ * api.deepseek.com vazava a chave e dava 401. Só leitura; nunca loga.
+ */
+export function loadLauncherProviderBaseUrl(
+  providerId: string,
+  file = launcherProvidersFileOverride ?? defaultLauncherProvidersFile(),
+): string | null {
+  if (!providerId || !PROVIDER_NAME_RE.test(providerId)) return null;
+  const value = readLauncherProvidersMap(file).get(`${providerId}-base-url`);
+  return typeof value === 'string' && value.trim().length > 0
+    ? value.trim()
+    : null;
 }

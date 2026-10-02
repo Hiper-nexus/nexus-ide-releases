@@ -394,6 +394,8 @@ vi.mock('../adapters/launcher-provider-manager', () => ({
   buildProviderRoutingEnv: () => ({}),
   listUpstreamProviders: () => [],
   loadLauncherProviderKey: spawnDeps.launcherKey,
+  loadLauncherProviderBaseUrl: () => null,
+  upstreamAllowedForAdapter: () => true,
 }));
 
 vi.mock('../adapters/model-catalog', () => ({

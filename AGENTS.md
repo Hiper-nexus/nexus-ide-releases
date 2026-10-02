@@ -560,9 +560,37 @@ saber isto antes de mexer:
   `BAILIAN_TOKEN_PLAN_API_KEY`/`DASHSCOPE_API_KEY` — conta como `present` sem
   nunca copiar o segredo.
 - O catálogo vivo vem de `modelProviders.*[].id` do settings (só ids `qwen*`;
-  `deepseek-*` no mesmo settings é de outro provider). Um `OPENAI_API_KEY`
-  solto só vale para qwen com `OPENAI_BASE_URL` em `*.aliyuncs.com` — mesmo
-  gate de host do ANTHROPIC_*.
+  `deepseek-*` no mesmo settings é de outro provider). Exceção F-724: com a
+  auth OpenAI-compatible no Alibaba Token Plan entra o `deepseek-v4-pro`
+  (e só ele). Um `OPENAI_API_KEY` solto só vale para qwen com
+  `OPENAI_BASE_URL` em `*.aliyuncs.com` — mesmo gate de host do ANTHROPIC_*.
+
+## DeepSeek: API direta ou Alibaba Token Plan (F-724)
+
+- Providers › DeepSeek tem "Provedor do DeepSeek", persistido como `upstream`
+  do adapter `deepseek`: `deepseek` (API direta, o padrão) ou
+  `deepseek-token-plan` (Claude Code em
+  `token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic`). O setConfig
+  recusa qualquer outro valor para o DeepSeek. A rota do plano tem
+  `scopedTo: 'deepseek'` e nenhuma outra CLI a escolhe. Lógica pura em
+  `src/main/adapters/deepseek-provider.ts`.
+- As fontes de chave são disjuntas (`resolveDeepseekProviderKey`). A API
+  direta usa o cofre `deepseek`, o `deepseek=` do launcher (só sem
+  `deepseek-base-url` de outro host), `DEEPSEEK_API_KEY` e o token com BASE_URL
+  na DeepSeek. Chave `sk-sp-` nunca vai para api.deepseek.com. O plano usa a
+  chave do Qwen Code: cofre `qwen`, `qwen`/`dashscope`/`bailian` do launcher,
+  `BAILIAN_TOKEN_PLAN_API_KEY`/`DASHSCOPE_API_KEY` e o token com BASE_URL no
+  Token Plan. Nunca usa a chave da DeepSeek nem copia o `~/.qwen/settings.json`.
+  `resolveRuntimeApiKey('deepseek')` (o intent router, que fala com
+  api.deepseek.com) devolve só a chave da API direta.
+- O plano só serve o `deepseek-v4-pro` (sonda de 02/10: o v4-flash dá 403).
+  Os três slots `ANTHROPIC_DEFAULT_*` ficam nele. `modelAliases` troca
+  `deepseek-flash`/`deepseek-v4-flash` por v4-pro na rota (task-router,
+  `servido pelo provedor escolhido`) e no `--model` do spawn (pty-manager).
+- No plano as contas DeepSeek (chaves da API direta) não entram: o pane sem
+  conta usa a chave do plano e o pane com conta fixada é recusado.
+- O Qwen 3.8 fica só no Qwen Code. Nenhuma linha de rota põe modelo `qwen*` no
+  adapter `deepseek`.
 - MCP do Nexus chega por `--mcp-config <arquivo por sessão>` +
   `--allowed-mcp-server-names`; worker de missão fica restrito ao `nexus`+hub
   (o MCP ambiente do operador, ex.: blender, não entra). `QWEN_HOME` aponta

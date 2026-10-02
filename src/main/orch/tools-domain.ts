@@ -1785,6 +1785,8 @@ export async function routeTaskForCaller(
           }),
         models,
         efforts: a.efforts,
+        // F-724: o provedor escolhido serve alguns ids com outro modelo.
+        ...(a.modelAliases ? { modelAliases: a.modelAliases } : {}),
       };
     });
   let adapters = buildAdapters(new Set([...excluded, ...quotaExcluded]));

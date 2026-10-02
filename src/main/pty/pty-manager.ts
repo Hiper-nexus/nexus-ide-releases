@@ -1330,6 +1330,21 @@ export interface AgentSpawnOverrides {
    * silently divert billing from the plan to the API.
    */
   suppressEnv?: string[];
+  /**
+   * F-724: ids que o provedor escolhido serve com outro modelo (o DeepSeek no
+   * Alibaba Token Plan só tem o v4-pro). Decidido pelo hub de providers;
+   * o spawn só troca o `--model` — nunca inventa um id.
+   */
+  modelAliases?: Readonly<Record<string, string>>;
+}
+
+/** Modelo que o provedor escolhido realmente serve para o id pedido. */
+function providerServedModel(
+  model: string,
+  aliases: Readonly<Record<string, string>> | undefined,
+): string {
+  const served = model && aliases ? aliases[model] : undefined;
+  return typeof served === "string" && served.trim() ? served.trim() : model;
 }
 
 function normalizeAgentModel(
@@ -1544,18 +1559,21 @@ export function spawnAgentSession(
       (authority.context.role === "worker" ||
         authority.context.role === "orchestrator"),
   );
-  const normalizedModel = normalizeAgentModel(
-    adapter,
-    firstDeclaredModel([
-      req.model,
-      overrides.defaultModel,
-      adapter.models.default,
-    ]),
-    missionSealedModel,
-    {
-      transientModel: adapter.id === "kimi" && Boolean(overrides.keyEnv?.KIMI_MODEL_NAME),
-      kimiCodeHome: overrides.keyEnv?.KIMI_CODE_HOME,
-    },
+  const normalizedModel = providerServedModel(
+    normalizeAgentModel(
+      adapter,
+      firstDeclaredModel([
+        req.model,
+        overrides.defaultModel,
+        adapter.models.default,
+      ]),
+      missionSealedModel,
+      {
+        transientModel: adapter.id === "kimi" && Boolean(overrides.keyEnv?.KIMI_MODEL_NAME),
+        kimiCodeHome: overrides.keyEnv?.KIMI_CODE_HOME,
+      },
+    ),
+    overrides.modelAliases,
   );
   // F-705: o AGY recusa `--effort` diferente do sufixo do modelo.
   const agyEffort =

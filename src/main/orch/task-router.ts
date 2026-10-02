@@ -601,6 +601,22 @@ export interface AdapterAvailability {
   models?: string[];
   /** Live native capabilities; [] = no effort control, absent = bundled contract. */
   efforts?: readonly string[];
+  /**
+   * F-724: ids que o provedor escolhido serve com outro modelo (o DeepSeek no
+   * Alibaba Token Plan só tem o v4-pro). A linha da tabela que pede o id
+   * trocado sobe no modelo servido em vez de ser descartada.
+   */
+  modelAliases?: Readonly<Record<string, string>>;
+}
+
+/** Modelo que o provedor do adapter realmente serve para o id da tabela. */
+function providerServedModel(
+  adapter: AdapterAvailability,
+  model: string | undefined,
+): string | undefined {
+  if (!model || !adapter.modelAliases) return model;
+  const served = adapter.modelAliases[model];
+  return typeof served === 'string' && served.trim() ? served.trim() : model;
 }
 
 const BUNDLED_EFFORTS = new Map(BUILTIN_ADAPTERS.map((raw) => {
@@ -1090,6 +1106,7 @@ export function routeTask(
   const skippedRisk: string[] = [];
   const missingFromCli: string[] = [];
   const lineUpgrades: string[] = [];
+  const providerServed: string[] = [];
   // F-217 (regra do operador 29/09): a CLI anuncia modelos que ninguém
   // catalogou ainda. Entre os elegíveis (não bloqueados pelo catálogo nem
   // recusados pelo provider), o mais novo DA MESMA LINHA substitui o modelo
@@ -1109,9 +1126,16 @@ export function routeTask(
   };
   for (const candidateTier of searchOrder) {
     const tierCandidates = routingTable[candidateTier]
-      .flatMap((c) => {
-        const adapter = available.get(c.adapterId);
+      .flatMap((row) => {
+        const adapter = available.get(row.adapterId);
         if (!adapter) return [];
+        // F-724: o provedor escolhido pode servir o id da tabela com outro
+        // modelo (DeepSeek no Token Plan: flash → v4-pro).
+        const served = providerServedModel(adapter, row.model);
+        if (served !== row.model) {
+          providerServed.push(`${row.adapterId}:${row.model}→${served}`);
+        }
+        const c: RouteCandidate = served === row.model ? row : { ...row, model: served };
         // Resolve o modelo da tabela para um que o adapter REALMENTE roda
         // (variante de família quando a geração foi renomeada). Sem família
         // disponível, descarta — nunca cai no default silencioso do CLI.
@@ -1521,12 +1545,19 @@ export function routeTask(
       skippedRisk.length > 0
         ? `; evitou ${[...new Set(skippedRisk)].slice(0, 3).join(', ')}`
         : '';
+    const pickServed = [...new Set(providerServed)].filter((entry) =>
+      entry.startsWith(`${pick.adapterId}:`) && entry.endsWith(`→${pick.model}`),
+    );
+    const servedNote =
+      pickServed.length > 0
+        ? `; servido pelo provedor escolhido: ${pickServed.slice(0, 2).join(', ')}`
+        : '';
     return {
       tier,
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${lineUpgradeNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
       alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId) })),
       specialty: specialtyVerdict.specialty,
       policySource,

@@ -11,17 +11,52 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { MODEL_ID_PATTERN } from '../../shared/model-id';
+import {
+  DEEPSEEK_TOKEN_PLAN_MODEL,
+  isAlibabaTokenPlanUrl,
+} from './deepseek-provider';
 
 export interface QwenSettingsSummary {
   /** Alguma credencial utilizável presente no settings (`env.*` ou envKey). */
   readonly hasCredential: boolean;
   /** `model.baseUrl` — endpoint OpenAI-compatible configurado. */
   readonly baseUrl: string | null;
-  /** Ids `qwen*` do catálogo `modelProviders.*[]` (outros providers não entram). */
+  /**
+   * F-724: a autenticação OpenAI-compatible do Qwen Code aponta para o
+   * Alibaba Model Studio Token Plan.
+   */
+  readonly tokenPlan: boolean;
+  /**
+   * Ids `qwen*` do catálogo `modelProviders.*[]` (outros providers não
+   * entram) e, só no Token Plan, o `deepseek-v4-pro` que o plano serve.
+   */
   readonly modelIds: readonly string[];
 }
 
 const QWEN_MODEL_ID = /^qwen[0-9a-z.-]*$/i;
+
+function objectField(value: unknown, key: string): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const field = (value as Record<string, unknown>)[key];
+  return field && typeof field === 'object' && !Array.isArray(field)
+    ? (field as Record<string, unknown>)
+    : null;
+}
+
+/**
+ * F-724: o Qwen Code autentica no Token Plan quando a auth selecionada é a
+ * OpenAI-compatible e a base URL dela (ou a do modelo) é o Token Plan. Uma
+ * auth de outro tipo (ex.: OAuth) nunca vira Token Plan pela base URL.
+ */
+function settingsUseTokenPlan(settings: Record<string, unknown>): boolean {
+  const auth = objectField(objectField(settings, 'security'), 'auth');
+  const selectedType = nonEmptyString(auth?.selectedType);
+  if (selectedType && selectedType !== 'openai') return false;
+  const model = objectField(settings, 'model');
+  return [auth?.baseUrl, model?.baseUrl].some(
+    (url) => typeof url === 'string' && isAlibabaTokenPlanUrl(url),
+  );
+}
 
 function nonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0
@@ -39,6 +74,7 @@ export function readQwenSettingsSummary(
   const empty: QwenSettingsSummary = {
     hasCredential: false,
     baseUrl: null,
+    tokenPlan: false,
     modelIds: [],
   };
   let raw: unknown;
@@ -97,7 +133,13 @@ export function readQwenSettingsSummary(
       ? nonEmptyString((model as Record<string, unknown>).baseUrl)
       : null;
 
-  return { hasCredential, baseUrl, modelIds: [...modelIds] };
+  // F-724: o Token Plan serve o DeepSeek V4 Pro pelo mesmo endpoint do Qwen
+  // (sonda 02/10: v4-pro 200, v4-flash 403). Só ele entra, e só no plano —
+  // outros `deepseek-*` do settings continuam fora.
+  const tokenPlan = settingsUseTokenPlan(settings);
+  if (tokenPlan) modelIds.add(DEEPSEEK_TOKEN_PLAN_MODEL);
+
+  return { hasCredential, baseUrl, tokenPlan, modelIds: [...modelIds] };
 }
 
 /** Prontidão: a chave em settings conta como `present` — nunca lida p/ fora. */

@@ -34,6 +34,7 @@ describe('readQwenSettingsSummary (F-238)', () => {
     expect(readQwenSettingsSummary(home)).toEqual({
       hasCredential: false,
       baseUrl: null,
+      tokenPlan: false,
       modelIds: [],
     });
     expect(qwenSettingsHasCredential(home)).toBe(false);
@@ -72,12 +73,12 @@ describe('readQwenSettingsSummary (F-238)', () => {
     expect(readQwenSettingsSummary(home).hasCredential).toBe(true);
   });
 
-  it('catálogo lê modelProviders.*[].id — só ids qwen*', () => {
+  it('catálogo lê modelProviders.*[].id — só ids qwen* fora do Token Plan', () => {
     const home = tempHome();
     writeSettings(home, {
       model: {
         name: 'qwen3.8-max',
-        baseUrl: 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+        baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       },
       modelProviders: {
         openai: [
@@ -94,8 +95,9 @@ describe('readQwenSettingsSummary (F-238)', () => {
     });
     const summary = readQwenSettingsSummary(home);
     expect(summary.baseUrl).toBe(
-      'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+      'https://dashscope.aliyuncs.com/compatible-mode/v1',
     );
+    expect(summary.tokenPlan).toBe(false);
     expect(summary.modelIds).toEqual([
       'qwen3.8-max',
       'qwen3.8-max-preview',
@@ -104,6 +106,47 @@ describe('readQwenSettingsSummary (F-238)', () => {
       'qwen3.6-plus',
       'qwen3.6-flash',
     ]);
+    expect(summary.modelIds).not.toContain('deepseek-v4-pro');
+  });
+
+  it('F-724: auth no Token Plan põe o deepseek-v4-pro no catálogo — e só ele', () => {
+    const home = tempHome();
+    const tokenPlan =
+      'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
+    // Forma do settings do operador (02/10): auth openai no Token Plan e só o
+    // qwen3.8-max em modelProviders.
+    writeSettings(home, {
+      env: { DASHSCOPE_API_KEY: 'fixture-secret-key' },
+      modelProviders: {
+        openai: [
+          { id: 'qwen3.8-max', baseUrl: tokenPlan, envKey: 'DASHSCOPE_API_KEY' },
+          { id: 'deepseek-v4-flash', baseUrl: tokenPlan },
+          { id: 'deepseek-chat', baseUrl: tokenPlan },
+        ],
+      },
+      security: { auth: { selectedType: 'openai', apiKey: 'fixture-secret-key', baseUrl: tokenPlan } },
+      model: { name: 'qwen3.8-max', baseUrl: tokenPlan },
+    });
+    const summary = readQwenSettingsSummary(home);
+    expect(summary.tokenPlan).toBe(true);
+    expect(summary.modelIds).toEqual(['qwen3.8-max', 'deepseek-v4-pro']);
+    // flash dá 403 no plano; outros deepseek-* continuam de fora.
+    expect(summary.modelIds).not.toContain('deepseek-v4-flash');
+    expect(summary.modelIds).not.toContain('deepseek-chat');
+    expect(JSON.stringify(summary)).not.toContain('fixture-secret-key');
+  });
+
+  it('F-724: auth que não é OpenAI-compatible nunca vira Token Plan pela base URL', () => {
+    const home = tempHome();
+    writeSettings(home, {
+      security: { auth: { selectedType: 'qwen-oauth' } },
+      model: {
+        name: 'qwen3.8-max',
+        baseUrl: 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+      },
+    });
+    const summary = readQwenSettingsSummary(home);
+    expect(summary.tokenPlan).toBe(false);
     expect(summary.modelIds).not.toContain('deepseek-v4-pro');
   });
 

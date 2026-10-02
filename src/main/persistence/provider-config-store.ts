@@ -25,6 +25,7 @@ import {
   importSecretsSchema,
   providerConfigPatchSchema,
   setKeySchema,
+  type ProviderChoiceInfo,
   type ProviderConfig,
   type ProviderSettingsInfo,
   type TestConnectionResult,
@@ -94,8 +95,27 @@ import { testProviderKey } from '../adapters/provider-test';
 import {
   buildProviderRoutingEnv,
   listUpstreamProviders,
+  loadLauncherProviderBaseUrl,
   loadLauncherProviderKey,
+  upstreamAllowedForAdapter,
 } from '../adapters/launcher-provider-manager';
+import {
+  ALIBABA_TOKEN_PLAN_HOST,
+  DEEPSEEK_DIRECT_HOST,
+  DEEPSEEK_DIRECT_PROVIDER,
+  DEEPSEEK_TOKEN_PLAN_MODEL,
+  DEEPSEEK_TOKEN_PLAN_MODEL_ALIASES,
+  DEEPSEEK_TOKEN_PLAN_PROVIDER,
+  TOKEN_PLAN_KEY_ENV_VARS,
+  TOKEN_PLAN_KEY_VAULT_SLOT,
+  deepseekModelForProvider,
+  deepseekModelsForProvider,
+  deepseekProviderChoice,
+  httpsHostOf,
+  isAlibabaPlanKey,
+  isDeepseekProviderChoice,
+  type DeepseekProviderChoice,
+} from '../adapters/deepseek-provider';
 import {
   loadModelCatalog,
   modelInfoForAdapter,
@@ -266,6 +286,26 @@ function configFor(adapterId: string): ProviderConfig {
   return configs.get(adapterId) ?? defaultConfigFor(adapterId);
 }
 
+/** F-724: provedor escolhido para o DeepSeek (API direta é o padrão). */
+function deepseekChoice(
+  upstream: string = configFor('deepseek').upstream,
+): DeepseekProviderChoice {
+  return deepseekProviderChoice(upstream);
+}
+
+/** Vaga do cofre com a chave do provedor: a da DeepSeek ou a do Token Plan. */
+function deepseekKeyVaultSlot(choice: DeepseekProviderChoice): string {
+  return choice === DEEPSEEK_TOKEN_PLAN_PROVIDER
+    ? TOKEN_PLAN_KEY_VAULT_SLOT
+    : DEEPSEEK_DIRECT_PROVIDER;
+}
+
+/** No Token Plan as contas DeepSeek (chaves da API direta) não se aplicam. */
+const DEEPSEEK_TOKEN_PLAN_ACCOUNT_ERROR =
+  'O provedor do DeepSeek está no Alibaba Token Plan: contas DeepSeek são ' +
+  'da API direta e não vão para a Alibaba. Troque o provedor em Providers › ' +
+  'DeepSeek ou abra o pane sem conta fixada.';
+
 /** Control-flag args (permission mode, effort, verbose) chosen for an adapter. */
 function controlArgsFor(adapterId: string, effortOverride?: string): string[] {
   const adapter = getAdapter(adapterId);
@@ -303,6 +343,11 @@ export interface ProviderSpawnOverrides {
   accountChoice?: AccountChoiceReceipt;
   /** Main-only account binding for the physical session; never part of the receipt. */
   selectedAccountId?: string;
+  /**
+   * F-724: ids que o provedor escolhido serve com outro modelo — o spawn troca
+   * o `--model` pedido (ex.: `deepseek-flash` → `deepseek-v4-pro` no Token Plan).
+   */
+  modelAliases?: Readonly<Record<string, string>>;
 }
 
 /** Key/token env vars an adapter could pick up from the parent environment. */
@@ -454,6 +499,11 @@ function effectiveProviderModel(
  * Never logs the value.
  */
 function resolveApiKey(adapterId: string, upstream?: string): string | null {
+  // F-724: a chave do DeepSeek depende do provedor escolhido — cada um com
+  // fontes próprias (a vaga `deepseek` nunca serve ao Token Plan).
+  if (adapterId === DEEPSEEK_DIRECT_PROVIDER) {
+    return resolveDeepseekProviderKey(deepseekChoice(upstream), { vault: 'read' });
+  }
   const fromVault = getKey(adapterId);
   if (fromVault) return fromVault;
   return resolveApiKeyWithoutVault(adapterId, upstream);
@@ -461,6 +511,12 @@ function resolveApiKey(adapterId: string, upstream?: string): string | null {
 
 /** Main-process request-time access; never expose the raw key through IPC. */
 export function resolveRuntimeApiKey(adapterId: string): string | null {
+  // F-724: quem pede a chave do DeepSeek em runtime (o intent router) fala
+  // com api.deepseek.com — só a chave da API direta, qualquer que seja o
+  // provedor dos panes. A do Token Plan nunca vai para a DeepSeek.
+  if (adapterId === DEEPSEEK_DIRECT_PROVIDER) {
+    return resolveDeepseekProviderKey(DEEPSEEK_DIRECT_PROVIDER, { vault: 'read' });
+  }
   return resolveApiKey(adapterId);
 }
 
@@ -481,6 +537,18 @@ export function resolveQuotaApiKey(request: ApiQuotaKeyRequest): string | null {
     const key = `acctkey:${account.id}`;
     return hasCachedSecret(key) ? getSecret(key)?.trim() || null : null;
   }
+  if (adapterId === DEEPSEEK_DIRECT_PROVIDER) {
+    // F-724: a leitura de cota usa as fontes do provedor da própria linha —
+    // a do Token Plan nunca devolve a chave da DeepSeek, e vice-versa.
+    const choice = deepseekChoice(upstream);
+    if (target !== choice) return null;
+    const slot = deepseekKeyVaultSlot(choice);
+    if (hasSecret(slot) && !hasCachedSecret(slot)) return null;
+    return resolveDeepseekProviderKey(choice, {
+      vault: 'cached',
+      allowEnv: (name) => quotaEnvMatchesProvider(name, usageProviderId),
+    });
+  }
   // A cold owner credential could shadow every later source at spawn. Do not
   // decrypt it here or substitute a different account while it is unavailable.
   if (hasSecret(adapterId) && !hasCachedSecret(adapterId)) return null;
@@ -494,6 +562,10 @@ export function resolveQuotaApiKey(request: ApiQuotaKeyRequest): string | null {
  * Um ANTHROPIC_AUTH_TOKEN/ANTHROPIC_API_KEY solto no env só é credencial do
  * provider quando ANTHROPIC_BASE_URL aponta para o host dele — sem o gate, um
  * token da z.ai (ou da própria Anthropic) era enviado para api.deepseek.com.
+ *
+ * F-724: o DeepSeek tem dois provedores e o id do provedor ESCOLHIDO decide o
+ * host: `deepseek` (API direta) só aceita api.deepseek.com e
+ * `deepseek-token-plan` só aceita o host do Token Plan da Alibaba.
  */
 function anthropicHostForProvider(providerId: string): string | null {
   switch (providerId) {
@@ -502,13 +574,120 @@ function anthropicHostForProvider(providerId: string): string | null {
       return 'api.z.ai';
     case 'longcat':
       return 'api.longcat.chat';
-    case 'deepseek':
-      return 'api.deepseek.com';
+    case DEEPSEEK_DIRECT_PROVIDER:
+      return DEEPSEEK_DIRECT_HOST;
+    case DEEPSEEK_TOKEN_PLAN_PROVIDER:
+      return ALIBABA_TOKEN_PLAN_HOST;
     case 'muse-claude':
       return 'api.meta.ai';
     default:
       return null;
   }
+}
+
+/**
+ * Token Anthropic genérico do env é credencial de `providerId` só com
+ * ANTHROPIC_BASE_URL (HTTPS, sem credencial embutida) no host dele.
+ */
+function envAnthropicBaseUrlMatches(providerId: string): boolean {
+  const host = anthropicHostForProvider(providerId);
+  return host !== null && httpsHostOf(process.env.ANTHROPIC_BASE_URL) === host;
+}
+
+/** Valor não vazio de uma variável do env do processo (aparado). */
+function envValue(name: string): string | null {
+  const value = process.env[name];
+  return typeof value === 'string' && value.trim().length > 0
+    ? value.trim()
+    : null;
+}
+
+/**
+ * F-724: a chave do slot `<id>` do launcher só vale para `host` quando o
+ * próprio launcher não a amarrou a outro endpoint (`<id>-base-url`).
+ */
+function launcherKeyForHost(providerId: string, host: string): string | null {
+  const key = loadLauncherProviderKey(providerId);
+  if (!key) return null;
+  const baseUrl = loadLauncherProviderBaseUrl(providerId);
+  return baseUrl === null || httpsHostOf(baseUrl) === host ? key : null;
+}
+
+/**
+ * Chave do launcher para uma rota de upstream (outra CLI Claude-compatible
+ * roteada para ela). F-724: a da rota `deepseek` só vale se for da API direta
+ * — nunca a `sk-sp-` que o launcher amarra ao Token Plan.
+ */
+function launcherKeyForRoute(route: string): string | null {
+  if (route !== DEEPSEEK_DIRECT_PROVIDER) return loadLauncherProviderKey(route);
+  const key = launcherKeyForHost(DEEPSEEK_DIRECT_PROVIDER, DEEPSEEK_DIRECT_HOST);
+  return key && !isAlibabaPlanKey(key) ? key : null;
+}
+
+interface DeepseekKeyOptions {
+  /**
+   * `read` decifra o cofre (spawn); `cached` só aceita valor já em memória
+   * (cota/snapshot, nunca cruza o Keychain); `skip` ignora o cofre.
+   */
+  readonly vault: 'read' | 'cached' | 'skip';
+  /** Mesmo filtro de env do caminho genérico (cota: env do provider certo). */
+  readonly allowEnv?: (name: string) => boolean;
+}
+
+/**
+ * F-724: chave do provedor ESCOLHIDO do DeepSeek. As fontes são disjuntas:
+ *  - API direta: cofre `deepseek` → launcher `deepseek` (sem base-url de outro
+ *    host) → DEEPSEEK_API_KEY / ANTHROPIC_AUTH_TOKEN com BASE_URL na DeepSeek.
+ *    Chave `sk-sp-` (plano da Alibaba) nunca sai para api.deepseek.com.
+ *  - Token Plan: cofre `qwen` → launcher `qwen`/`dashscope`/`bailian` (e
+ *    `deepseek` só se o launcher o amarra ao Token Plan) →
+ *    BAILIAN_TOKEN_PLAN_API_KEY / DASHSCOPE_API_KEY / ANTHROPIC_AUTH_TOKEN com
+ *    BASE_URL no Token Plan. Nunca a chave da DeepSeek.
+ * O `~/.qwen/settings.json` não é fonte: o segredo do Qwen Code não é copiado
+ * para outro processo (F-238). Nunca loga o valor.
+ */
+function resolveDeepseekProviderKey(
+  choice: DeepseekProviderChoice,
+  options: DeepseekKeyOptions,
+): string | null {
+  const plan = choice === DEEPSEEK_TOKEN_PLAN_PROVIDER;
+  const accept = (key: string | null | undefined): string | null => {
+    const value = key?.trim();
+    if (!value) return null;
+    return !plan && isAlibabaPlanKey(value) ? null : value;
+  };
+  const slot = deepseekKeyVaultSlot(choice);
+  if (options.vault !== 'skip') {
+    const fromVault =
+      options.vault === 'read' || hasCachedSecret(slot) ? getKey(slot) : null;
+    const accepted = accept(fromVault);
+    if (accepted) return accepted;
+  }
+  const launcher = plan
+    ? [
+        launcherKeyForHost(TOKEN_PLAN_KEY_VAULT_SLOT, ALIBABA_TOKEN_PLAN_HOST),
+        loadLauncherProviderBaseUrl(DEEPSEEK_DIRECT_PROVIDER) !== null
+          ? launcherKeyForHost(DEEPSEEK_DIRECT_PROVIDER, ALIBABA_TOKEN_PLAN_HOST)
+          : null,
+      ]
+    : [launcherKeyForHost(DEEPSEEK_DIRECT_PROVIDER, DEEPSEEK_DIRECT_HOST)];
+  for (const key of launcher) {
+    const accepted = accept(key);
+    if (accepted) return accepted;
+  }
+  const envNames = plan
+    ? [...TOKEN_PLAN_KEY_ENV_VARS, 'ANTHROPIC_AUTH_TOKEN']
+    : ['ANTHROPIC_AUTH_TOKEN', 'DEEPSEEK_API_KEY'];
+  for (const name of envNames) {
+    if (name === 'ANTHROPIC_AUTH_TOKEN' && !envAnthropicBaseUrlMatches(choice)) {
+      continue;
+    }
+    const accepted = accept(envValue(name));
+    if (!accepted) continue;
+    if (options.allowEnv && !options.allowEnv(name)) return null;
+    return accepted;
+  }
+  return null;
 }
 
 /**
@@ -547,12 +726,16 @@ function genericEnvKeyAllowedForProvider(name: string, providerId: string): bool
 function quotaEnvMatchesProvider(name: string, providerId: string): boolean {
   if (['ZAI_API_KEY', 'ZHIPU_API_KEY', 'ZHIPUAI_API_KEY'].includes(name)) return ['glm', 'glm-flash', 'zai', 'zhipu'].includes(providerId);
   if (name === 'LONGCAT_API_KEY') return providerId === 'longcat';
-  if (name === 'DEEPSEEK_API_KEY') return providerId === 'deepseek';
+  // F-724: a chave da DeepSeek é só da API direta; a do Token Plan é do Qwen
+  // Code e do DeepSeek pelo plano — nunca uma no lugar da outra.
+  if (name === 'DEEPSEEK_API_KEY') return providerId === DEEPSEEK_DIRECT_PROVIDER;
   if (name === 'MINIMAX_API_KEY') return providerId === 'minimax-code';
   if (['KIMI_MODEL_API_KEY', 'KIMI_API_KEY', 'KIMI_CODING_API_KEY', 'MOONSHOT_API_KEY'].includes(name)) return providerId === 'kimi';
   if (name === 'XAI_API_KEY') return providerId === 'grok';
   if (name === 'OPENAI_API_KEY') return openAiHostMatchesProvider(providerId);
-  if (['BAILIAN_TOKEN_PLAN_API_KEY', 'DASHSCOPE_API_KEY'].includes(name)) return providerId === 'qwen';
+  if ((TOKEN_PLAN_KEY_ENV_VARS as readonly string[]).includes(name)) {
+    return providerId === 'qwen' || providerId === DEEPSEEK_TOKEN_PLAN_PROVIDER;
+  }
   if (!['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'].includes(name)) return false;
   const host = anthropicHostForProvider(providerId);
   if (!host) return false;
@@ -572,6 +755,15 @@ export function hasRuntimeKey(
   // main thread while the Keychain session is locked or stale. Presence in
   // the encrypted index is enough for readiness; the actual key is resolved
   // only when a provider is spawned.
+  if (adapterId === DEEPSEEK_DIRECT_PROVIDER) {
+    // F-724: a prontidão segue o provedor escolhido (vaga `deepseek` ou a do
+    // Token Plan), nunca a soma dos dois.
+    const choice = deepseekChoice();
+    return (
+      hasSecret(deepseekKeyVaultSlot(choice)) ||
+      resolveDeepseekProviderKey(choice, { vault: 'skip' }) !== null
+    );
+  }
   if (hasSecret(adapterId)) return true;
   // F-238: a credencial do Qwen pode viver só em ~/.qwen/settings.json
   // (`env.BAILIAN_TOKEN_PLAN_API_KEY` / envKey por modelo) — conta como
@@ -585,12 +777,18 @@ function resolveApiKeyWithoutVault(
   upstream = configFor(adapterId).upstream,
   allowEnv?: (name: string) => boolean,
 ): string | null {
+  if (adapterId === DEEPSEEK_DIRECT_PROVIDER) {
+    return resolveDeepseekProviderKey(deepseekChoice(upstream), {
+      vault: 'skip',
+      ...(allowEnv ? { allowEnv } : {}),
+    });
+  }
   const fromLauncher = loadLauncherProviderKey(adapterId);
   if (fromLauncher) return fromLauncher;
 
   const route = upstream;
   if (route && route !== 'anthropic' && route !== adapterId) {
-    const viaUpstream = loadLauncherProviderKey(route);
+    const viaUpstream = launcherKeyForRoute(route);
     if (viaUpstream) return viaUpstream;
   }
 
@@ -813,6 +1011,24 @@ function buildProviderSpawnOverrides(
     cached && revalidateExecutable(cached) ? cached : null;
   const discovered =
     userBin ?? cachedValid ?? resolveAdapterBinary(adapterId);
+  // F-724: no Token Plan o DeepSeek só existe como v4-pro — o default salvo e
+  // o `--model` pedido sobem nele em vez de morrer em 403.
+  const deepseekPlan =
+    adapterId === DEEPSEEK_DIRECT_PROVIDER &&
+    deepseekChoice(cfg.upstream) === DEEPSEEK_TOKEN_PLAN_PROVIDER;
+  const savedDefault =
+    cfg.defaultModel.trim() && adapter
+      ? effectiveDefaultModel(
+          adapterId,
+          cfg.defaultModel,
+          [
+            ...adapter.models.list,
+            ...getCustomModels(adapterId),
+            ...discoveredModelsFor(adapterId),
+          ],
+          adapter.models.default,
+        )
+      : null;
   const base = {
     // Defense in depth (SEC#4): only an ABSOLUTE path is ever used as the
     // executable. A bare/relative binPath (e.g. from a hand-edited config) is
@@ -823,21 +1039,13 @@ function buildProviderSpawnOverrides(
         ? discovered
         : null,
     defaultModel:
-      cfg.defaultModel.trim() && adapter
-        ? effectiveDefaultModel(
-            adapterId,
-            cfg.defaultModel,
-            [
-              ...adapter.models.list,
-              ...getCustomModels(adapterId),
-              ...discoveredModelsFor(adapterId),
-            ],
-            adapter.models.default,
-          )
-        : null,
+      savedDefault && deepseekPlan
+        ? deepseekModelForProvider(savedDefault, DEEPSEEK_TOKEN_PLAN_PROVIDER)
+        : savedDefault,
     extraArgs: [...controlArgsFor(adapterId, perSpawn.effort), ...cfg.extraArgs],
     accountChoice: receipt,
     ...(account ? { selectedAccountId: account.id } : {}),
+    ...(deepseekPlan ? { modelAliases: DEEPSEEK_TOKEN_PLAN_MODEL_ALIASES } : {}),
   };
 
   if (options.nativeAuthAttempt) {
@@ -895,10 +1103,40 @@ function buildProviderSpawnOverrides(
     const accKey =
       preparedAccount?.apiKey ??
       accountKey(account) ??
-      (account.upstream && account.upstream !== 'anthropic'
-        ? loadLauncherProviderKey(account.upstream)
-        : null) ??
-      loadLauncherProviderKey(adapterId);
+      (adapterId === DEEPSEEK_DIRECT_PROVIDER
+        // F-724: o fallback legado só lê o `deepseek=` do launcher que não
+        // está amarrado a outro host.
+        ? launcherKeyForHost(DEEPSEEK_DIRECT_PROVIDER, DEEPSEEK_DIRECT_HOST)
+        : (account.upstream && account.upstream !== 'anthropic'
+            ? launcherKeyForRoute(account.upstream)
+            : null) ?? loadLauncherProviderKey(adapterId));
+    if (adapterId === DEEPSEEK_DIRECT_PROVIDER) {
+      // F-724: conta DeepSeek é chave da API direta e só sai para
+      // api.deepseek.com — nem rota para a Alibaba, nem chave `sk-sp-`.
+      if (
+        account.upstream &&
+        account.upstream !== 'anthropic' &&
+        account.upstream !== DEEPSEEK_DIRECT_PROVIDER
+      ) {
+        throw new Error(
+          `a conta "${account.label}" do DeepSeek só roteia para a API direta`,
+        );
+      }
+      if (accKey && isAlibabaPlanKey(accKey)) {
+        throw new Error(
+          `a conta "${account.label}" guarda uma chave do Alibaba Token Plan ` +
+            '(sk-sp-…), que nunca vai para api.deepseek.com — escolha o ' +
+            'provedor "Alibaba Token Plan" em Providers › DeepSeek',
+        );
+      }
+    } else if (
+      account.upstream &&
+      !upstreamAllowedForAdapter(adapterId, account.upstream)
+    ) {
+      throw new Error(
+        `selected account "${account.label}" cannot route this provider`,
+      );
+    }
     if (account.upstream && account.upstream !== 'anthropic') {
       if (preparedAccount && !isRoutable(adapterId)) {
         throw new Error(
@@ -933,7 +1171,37 @@ function buildProviderSpawnOverrides(
   // ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN + extras and DROP the native
   // API-key env (the launcher unsets ANTHROPIC_API_KEY for third parties).
   // An explicit route is the user's choice — it wins over subscription auth.
+  if (adapterId === DEEPSEEK_DIRECT_PROVIDER) {
+    // F-724: o DeepSeek sempre sobe pela rota do provedor escolhido, com a
+    // chave DESSE provedor. Sem chave o spawn é recusado: um pane sem token
+    // no endpoint de terceiro só morreria depois, mudo.
+    const choice = deepseekChoice(cfg.upstream);
+    const key = resolveDeepseekProviderKey(choice, { vault: 'read' });
+    if (!key) {
+      throw new Error(
+        choice === DEEPSEEK_TOKEN_PLAN_PROVIDER
+          ? 'DeepSeek pelo Alibaba Token Plan sem a chave do Token Plan — ' +
+              'cole-a em Providers › DeepSeek (é a mesma do Qwen Code).'
+          : 'DeepSeek (API direta) sem chave da DeepSeek — cole-a em ' +
+              'Providers › DeepSeek. Chave sk-sp-… é do Alibaba Token Plan: ' +
+              'escolha esse provedor.',
+      );
+    }
+    const keyEnv = buildProviderRoutingEnv(choice, key);
+    if (Object.keys(keyEnv).length === 0) {
+      throw new Error(`DeepSeek: rota "${choice}" indisponível`);
+    }
+    return {
+      ...base,
+      keyEnv,
+      // Nada da API direta entra no processo que fala com a Alibaba.
+      suppressEnv: choice === DEEPSEEK_TOKEN_PLAN_PROVIDER ? ['DEEPSEEK_API_KEY'] : [],
+    };
+  }
   if (cfg.upstream && cfg.upstream !== 'anthropic' && isRoutable(adapterId)) {
+    if (!upstreamAllowedForAdapter(adapterId, cfg.upstream)) {
+      throw new Error(`${adapter?.label ?? adapterId}: rota "${cfg.upstream}" não serve a este provider`);
+    }
     const key = resolveApiKey(adapterId, cfg.upstream);
     return {
       ...base,
@@ -1001,6 +1269,13 @@ function prepareProviderSpawnWithDecision(
   if (!readiness.ready) return { ok: false, error: readiness.reason };
 
   let preparedAccount: PreparedAccount | null = null;
+  if (
+    perSpawn.accountId &&
+    adapterId === DEEPSEEK_DIRECT_PROVIDER &&
+    deepseekChoice() === DEEPSEEK_TOKEN_PLAN_PROVIDER
+  ) {
+    return { ok: false, error: DEEPSEEK_TOKEN_PLAN_ACCOUNT_ERROR };
+  }
   if (perSpawn.accountId) {
     const prepared = prepareAccountForSpawn(
       adapterId,
@@ -1178,6 +1453,25 @@ function resolveSpawnAccountChoice(
           decidedAt,
         ),
         decidedAt,
+      },
+    };
+  }
+  if (
+    adapterId === DEEPSEEK_DIRECT_PROVIDER &&
+    deepseekChoice() === DEEPSEEK_TOKEN_PLAN_PROVIDER
+  ) {
+    // F-724: contas DeepSeek guardam chaves da API direta; no Token Plan o
+    // pane usa a chave do plano e nenhuma conta da DeepSeek é escolhida.
+    return {
+      account: null,
+      receipt: {
+        adapterId,
+        source: 'legacy',
+        account: null,
+        headroom: null,
+        alternatives: [],
+        decidedAt,
+        note: 'provedor Alibaba Token Plan: contas DeepSeek (API direta) não se aplicam',
       },
     };
   }
@@ -1533,7 +1827,20 @@ function toInfo(
   const discovered = discoveredModelsFor(adapterId).filter(
     (m) => !staticIds.includes(m),
   );
-  const models = [...staticIds, ...discovered];
+  // F-724: o catálogo do DeepSeek é o que o provedor escolhido serve (no
+  // Token Plan só o v4-pro; o flash dá 403).
+  const deepseekSelected =
+    adapterId === DEEPSEEK_DIRECT_PROVIDER ? deepseekChoice(cfg.upstream) : null;
+  const models = deepseekSelected
+    ? deepseekModelsForProvider([...staticIds, ...discovered], deepseekSelected)
+    : [...staticIds, ...discovered];
+  const keySlot = deepseekSelected
+    ? deepseekKeyVaultSlot(deepseekSelected)
+    : adapterId;
+  const resolveKeyWithoutVault = (): string | null =>
+    deepseekSelected
+      ? resolveDeepseekProviderKey(deepseekSelected, { vault: 'skip' })
+      : resolveApiKeyWithoutVault(adapterId);
   const authReadyModels = models.filter((model) => {
     const strategy = authDecision(adapterId, model, {
       statusSnapshot: options.nonBlockingAuth === true,
@@ -1577,16 +1884,7 @@ function toInfo(
     hasKey: hasRuntimeKey(adapterId, defaultModel),
     // Prefer vault mask; if only the launcher has the key, mask that instead
     // so Settings doesn't look "empty" while readiness is already true.
-    keyMasked: (() => {
-      // A cached value is safe to mask. For a cold boot, only inspect the
-      // encrypted index and return a generic mask; never decrypt Keychain data
-      // while constructing the provider snapshot.
-      const vault = hasCachedSecret(adapterId) ? maskedKey(adapterId) : null;
-      if (vault) return vault;
-      if (hasSecret(adapterId)) return '••••••';
-      const resolved = resolveApiKeyWithoutVault(adapterId);
-      return resolved ? maskToken(resolved) : null;
-    })(),
+    keyMasked: maskedRuntimeKey(keySlot, resolveKeyWithoutVault),
     authMethod: adapter.kind === 'cli-pty' ? adapter.auth.method : 'api_key',
     loginHint:
       adapter.kind === 'cli-pty' ? adapter.auth.loginHint : undefined,
@@ -1604,13 +1902,19 @@ function toInfo(
     authStrategy: strategy,
     authState: strategy !== 'login-needed' ? 'ok' :
       subscriptionAuthStatusIsUnknown(adapterId) ? 'unknown' : 'missing',
-    upstream: cfg.upstream || 'anthropic',
+    upstream: deepseekSelected ?? (cfg.upstream || 'anthropic'),
     routable: isRoutable(adapterId),
     upstreams: listUpstreamProviders().map((p) => ({
       id: p.id,
       label: p.label,
       requiresToken: p.requiresToken,
     })),
+    ...(deepseekSelected
+      ? { providerChoice: deepseekProviderChoiceInfo(deepseekSelected) }
+      : {}),
+    ...(deepseekSelected === DEEPSEEK_TOKEN_PLAN_PROVIDER
+      ? { modelAliases: { ...DEEPSEEK_TOKEN_PLAN_MODEL_ALIASES } }
+      : {}),
     permissionMode: cfg.permissionMode,
     permissionModes:
       adapter.kind === 'cli-pty' ? availablePermissionModes(adapter) : [],
@@ -1620,9 +1924,70 @@ function toInfo(
     supportsVerbose: adapter.kind === 'cli-pty' ? supportsVerbose(adapter) : false,
     // L4: true when the key comes from the plaintext launcher providers.conf
     // (not the encrypted vault). The UI should warn about cleartext storage.
-    plaintextKeyFallback: !hasCachedSecret(adapterId) && !hasSecret(adapterId)
-      ? resolveApiKeyWithoutVault(adapterId) !== null
+    plaintextKeyFallback: !hasCachedSecret(keySlot) && !hasSecret(keySlot)
+      ? resolveKeyWithoutVault() !== null
       : false,
+  };
+}
+
+/**
+ * Máscara da chave de uma vaga para o snapshot da UI. Valor em cache é seguro
+ * de mascarar; no boot frio só o índice cifrado é consultado — nunca decifra
+ * o Keychain para montar o snapshot.
+ */
+function maskedRuntimeKey(
+  slot: string,
+  resolveWithoutVault: () => string | null,
+): string | null {
+  const vault = hasCachedSecret(slot) ? maskedKey(slot) : null;
+  if (vault) return vault;
+  if (hasSecret(slot)) return '••••••';
+  const resolved = resolveWithoutVault();
+  return resolved ? maskToken(resolved) : null;
+}
+
+/** F-724: o seletor "Provedor do DeepSeek" e a vaga de chave que ele usa. */
+function deepseekProviderChoiceInfo(
+  choice: DeepseekProviderChoice,
+): ProviderChoiceInfo {
+  const plan = choice === DEEPSEEK_TOKEN_PLAN_PROVIDER;
+  const slot = deepseekKeyVaultSlot(choice);
+  const resolveWithoutVault = () =>
+    resolveDeepseekProviderKey(choice, { vault: 'skip' });
+  const hasKey = hasSecret(slot) || resolveWithoutVault() !== null;
+  return {
+    value: choice,
+    options: [
+      {
+        id: DEEPSEEK_DIRECT_PROVIDER,
+        label: 'DeepSeek (API direta)',
+        hint: 'Chave da DeepSeek (platform.deepseek.com), enviada só para api.deepseek.com.',
+      },
+      {
+        id: DEEPSEEK_TOKEN_PLAN_PROVIDER,
+        label: 'Alibaba Token Plan',
+        hint:
+          `Chave do Token Plan (a mesma do Qwen Code). O plano só serve o ` +
+          `${DEEPSEEK_TOKEN_PLAN_MODEL}: o flash sobe nele.`,
+      },
+    ],
+    key: {
+      adapterId: slot,
+      label: plan
+        ? 'Chave do Token Plan (a mesma do Qwen Code)'
+        : 'Chave da DeepSeek',
+      envVar: 'ANTHROPIC_AUTH_TOKEN',
+      hasKey,
+      keyMasked: maskedRuntimeKey(slot, resolveWithoutVault),
+      ...(plan && !hasKey && qwenSettingsHasCredential()
+        ? {
+            hint:
+              'A chave do Qwen Code está só no ~/.qwen/settings.json, que o ' +
+              'Nexus não copia para outro processo. Cole-a aqui: ela vai para o ' +
+              'cofre, na mesma vaga do Qwen Code.',
+          }
+        : {}),
+    },
   };
 }
 
@@ -2555,6 +2920,18 @@ export function registerProviderIpc(): void {
     if (!parsed.success) return listProviderSettingsForRenderer();
     const { adapterId, ...patch } = parsed.data;
     const current = configFor(adapterId);
+    if (patch.upstream !== undefined) {
+      // F-724: o DeepSeek só escolhe entre a API direta e o Token Plan; a rota
+      // do Token Plan é dele e de mais ninguém (outra CLI mandaria a própria
+      // chave para a Alibaba).
+      const upstream = patch.upstream.trim();
+      const allowed =
+        adapterId === DEEPSEEK_DIRECT_PROVIDER
+          ? isDeepseekProviderChoice(upstream)
+          : upstreamAllowedForAdapter(adapterId, upstream);
+      if (allowed) patch.upstream = upstream;
+      else delete patch.upstream;
+    }
 
     // SEC#4: binPath/extraArgs become the executed binary + argv at spawn. A
     // NEW value must pass validation AND an explicit native confirmation the

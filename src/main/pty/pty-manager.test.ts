@@ -2139,6 +2139,60 @@ describe("AGY advisory native profile", () => {
     }
   });
 
+  it("F-724: no Token Plan o --model deepseek-flash selado sobe como deepseek-v4-pro", async () => {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-deepseek-plan-"));
+    const worktree = path.join(root, "worktree");
+    fs.mkdirSync(worktree);
+    const host = fakeHost();
+    setPtyHost(host.host);
+    // Worker de missão: modelo selado — a trava argvHonorsModel confere o
+    // modelo SERVIDO, não recusa o spawn.
+    const authority = revisionBoundWorker(fs.realpathSync.native(worktree));
+    const adapter: CliPtyAdapter = {
+      ...makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+      id: "deepseek",
+      bin: "claude",
+      label: "DeepSeek",
+      spawn: {
+        ...makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }).spawn,
+        interactive: ["claude", "--model", "{{MODEL}}"],
+      },
+      models: {
+        flag: "--model",
+        list: ["deepseek-v4-pro", "deepseek-flash"],
+        default: "deepseek-v4-pro",
+      },
+    };
+    const opened: string[] = [];
+    try {
+      const plan = spawnMainOwnedAgentSession(
+        { kind: "cli-agent", paneId: "deepseek-plan-flash", cols: 100, rows: 30, model: "deepseek-flash" },
+        adapter,
+        { modelAliases: { "deepseek-flash": "deepseek-v4-pro", "deepseek-v4-flash": "deepseek-v4-pro" } },
+        authority,
+      );
+      opened.push(plan.sessionId);
+      const planArgs = host.specFor(plan.sessionId).args;
+      expect(planArgs).toEqual(expect.arrayContaining(["--model", "deepseek-v4-pro"]));
+      expect(planArgs).not.toContain("deepseek-flash");
+      // Sem alias (API direta) o flash continua flash.
+      const direct = spawnMainOwnedAgentSession(
+        { kind: "cli-agent", paneId: "deepseek-direct-flash", cols: 100, rows: 30, model: "deepseek-flash" },
+        adapter,
+        {},
+        authority,
+      );
+      opened.push(direct.sessionId);
+      expect(host.specFor(direct.sessionId).args).toEqual(
+        expect.arrayContaining(["--model", "deepseek-flash"]),
+      );
+    } finally {
+      for (const sessionId of opened) await orchTerminateSession(sessionId);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("entrega o prompt posicional no argv do grok — sem allowlist de ids", async () => {
     setSquadCliPolicyLookupForTests(() => "operator-choice");
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-grok-argv-"));

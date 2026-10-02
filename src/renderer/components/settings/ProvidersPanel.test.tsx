@@ -474,4 +474,94 @@ describe('ProvidersPanel hub', () => {
     expect(counts.map((c) => c.textContent)).toEqual(['3', '3', '1']);
     act(() => root.unmount());
   });
+
+  describe('F-724 — Provedor do DeepSeek', () => {
+    const options = [
+      { id: 'deepseek', label: 'DeepSeek (API direta)', hint: 'Chave da DeepSeek.' },
+      {
+        id: 'deepseek-token-plan',
+        label: 'Alibaba Token Plan',
+        hint: 'Chave do Token Plan (a mesma do Qwen Code). O plano só serve o deepseek-v4-pro: o flash sobe nele.',
+      },
+    ];
+    const deepseek = (value: 'deepseek' | 'deepseek-token-plan') =>
+      provider('deepseek', 'DeepSeek', {
+        authMethod: 'api_key',
+        authStrategy: 'api-key',
+        keyEnvVar: 'ANTHROPIC_AUTH_TOKEN',
+        routable: true,
+        upstream: value,
+        upstreams: [{ id: 'glm', label: 'GLM / Z.ai', requiresToken: true }],
+        hasKey: true,
+        keyMasked: value === 'deepseek' ? 'sk-…dire' : 'sk-…plan',
+        providerChoice: {
+          value,
+          options,
+          key: value === 'deepseek'
+            ? { adapterId: 'deepseek', label: 'Chave da DeepSeek', envVar: 'ANTHROPIC_AUTH_TOKEN', hasKey: true, keyMasked: 'sk-…dire' }
+            : { adapterId: 'qwen', label: 'Chave do Token Plan (a mesma do Qwen Code)', envVar: 'ANTHROPIC_AUTH_TOKEN', hasKey: true, keyMasked: 'sk-…plan' },
+        },
+      });
+
+    it('escolhe o provedor num seletor próprio e persiste pelo setConfig', async () => {
+      const setConfig = vi.fn(async () => undefined);
+      useProviderStore.setState({ providers: [deepseek('deepseek')], setConfig } as never);
+      const { host, root } = mount();
+      await act(async () => { await Promise.resolve(); });
+
+      const select = host.querySelector<HTMLSelectElement>('select[aria-label="Provedor do DeepSeek"]');
+      expect(select).toBeTruthy();
+      expect([...select!.options].map((o) => o.textContent)).toEqual([
+        'DeepSeek (API direta)',
+        'Alibaba Token Plan',
+      ]);
+      expect(select!.value).toBe('deepseek');
+      expect(host.querySelector('[data-testid="prov-key-label"]')?.textContent).toContain('Chave da DeepSeek');
+
+      await act(async () => {
+        select!.value = 'deepseek-token-plan';
+        select!.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      expect(setConfig).toHaveBeenCalledWith({ adapterId: 'deepseek', upstream: 'deepseek-token-plan' });
+
+      // O seletor genérico de roteamento não aparece para o DeepSeek.
+      await act(async () => host.querySelector<HTMLButtonElement>('.prov-advanced__toggle')!.click());
+      expect(host.textContent).not.toContain('Roteamento (upstream)');
+      act(() => root.unmount());
+    });
+
+    it('no Token Plan o bloco de chave mostra e grava a chave do plano (a mesma do Qwen Code)', async () => {
+      const setKey = vi.fn(async () => ({ ok: true }));
+      const testKey = vi.fn(async () => ({ ok: true, detail: 'ok' }));
+      useProviderStore.setState({
+        providers: [deepseek('deepseek-token-plan')], setKey, testKey,
+      } as never);
+      const { host, root } = mount();
+      await act(async () => { await Promise.resolve(); });
+
+      const select = host.querySelector<HTMLSelectElement>('select[aria-label="Provedor do DeepSeek"]');
+      expect(select!.value).toBe('deepseek-token-plan');
+      expect(host.textContent).toContain('O plano só serve o deepseek-v4-pro');
+      expect(host.querySelector('[data-testid="prov-key-label"]')?.textContent)
+        .toContain('Chave do Token Plan (a mesma do Qwen Code)');
+      expect(host.textContent).toContain('sk-…plan');
+
+      const input = host.querySelector<HTMLInputElement>('input[aria-label="Chave do Token Plan (a mesma do Qwen Code)"]');
+      expect(input).toBeTruthy();
+      await act(async () => {
+        const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+        setValue.call(input, 'sk-sp-colada');
+        input!.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      const save = [...host.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent?.includes('Salvar key'));
+      await act(async () => { save!.click(); await Promise.resolve(); });
+      expect(setKey).toHaveBeenCalledWith('qwen', 'sk-sp-colada');
+      const test = [...host.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent?.includes('Testar'));
+      await act(async () => { test!.click(); await Promise.resolve(); });
+      expect(testKey).toHaveBeenCalledWith('qwen');
+      act(() => root.unmount());
+    });
+  });
 });

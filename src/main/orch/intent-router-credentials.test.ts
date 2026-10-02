@@ -27,6 +27,8 @@ vi.mock('../persistence/secrets-store', async (importOriginal) => ({
 vi.mock('../adapters/launcher-provider-manager', async (importOriginal) => ({
   ...await importOriginal<typeof import('../adapters/launcher-provider-manager')>(),
   loadLauncherProviderKey: (id: string) => credentials.launcher.get(id) ?? null,
+  // F-724: o `<id>-base-url` do launcher real desta máquina não entra no teste.
+  loadLauncherProviderBaseUrl: () => null,
 }));
 
 // Load the real adapter contracts without starting registry discovery/watchers.

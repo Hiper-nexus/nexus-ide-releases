@@ -50,7 +50,8 @@ export const CLI_MODEL_CACHE_SOURCES: CliModelCacheSource[] = [
   {
     adapterId: 'qwen',
     // F-238: sem subcomando de listar — o catálogo vivo é o
-    // `modelProviders.*[].id` do settings do operador (só ids qwen*).
+    // `modelProviders.*[].id` do settings do operador (só ids qwen*). F-724:
+    // com a auth no Alibaba Token Plan entra também o `deepseek-v4-pro`.
     files: [path.join(home, '.qwen', 'settings.json')],
     read: (file) =>
       readQwenSettingsSummary(path.dirname(path.dirname(file))).modelIds as string[],
