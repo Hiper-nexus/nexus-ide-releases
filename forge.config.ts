@@ -220,14 +220,28 @@ const LINUX_DESKTOP_IDENTITY = {
   homepage: 'https://nexuside.app',
 };
 
+/**
+ * Dependências de runtime dos dois pacotes.
+ * - `bubblewrap`: sandbox dos PTYs.
+ * - `desktop-file-utils`: é o gatilho dele que atualiza
+ *   `/usr/share/applications/mimeinfo.cache` na instalação. Sem esse índice o
+ *   portal do desktop não lista o Nexus como app de `nexus://` e o login
+ *   termina em "Open With… No Apps available" (F-740).
+ */
+export const LINUX_RUNTIME_DEPENDENCIES = ['bubblewrap', 'desktop-file-utils'];
+
 export function createLinuxDebMakerConfig(): MakerDebConfig {
   return {
-    options: { depends: ['bubblewrap'], section: 'devel', ...LINUX_DESKTOP_IDENTITY },
+    options: {
+      depends: [...LINUX_RUNTIME_DEPENDENCIES],
+      section: 'devel',
+      ...LINUX_DESKTOP_IDENTITY,
+    },
   };
 }
 
 export function createLinuxRpmMakerConfig(): MakerRpmConfig {
-  return { options: { requires: ['bubblewrap'], ...LINUX_DESKTOP_IDENTITY } };
+  return { options: { requires: [...LINUX_RUNTIME_DEPENDENCIES], ...LINUX_DESKTOP_IDENTITY } };
 }
 
 export async function notarizeMacDmgArtifacts(

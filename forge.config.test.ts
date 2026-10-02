@@ -115,9 +115,11 @@ describe('Linux sandbox packaging', () => {
     expect(forgeConfig.packagerConfig?.executableName).toBe('nexus-ide');
   });
 
-  it('declares Bubblewrap as a runtime dependency for DEB and RPM installs', () => {
-    expect(createLinuxDebMakerConfig().options?.depends).toEqual(['bubblewrap']);
-    expect(createLinuxRpmMakerConfig().options?.requires).toEqual(['bubblewrap']);
+  it('declares Bubblewrap and the MIME index updater as runtime dependencies for DEB and RPM', () => {
+    // desktop-file-utils: sem o índice atualizado na instalação o portal do
+    // desktop não oferece o Nexus para nexus:// (F-740).
+    expect(createLinuxDebMakerConfig().options?.depends).toEqual(['bubblewrap', 'desktop-file-utils']);
+    expect(createLinuxRpmMakerConfig().options?.requires).toEqual(['bubblewrap', 'desktop-file-utils']);
   });
 
   it('ships the brand icon instead of the installer default Electron icon', () => {

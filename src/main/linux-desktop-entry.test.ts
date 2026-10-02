@@ -8,6 +8,9 @@ import {
   buildPortableDesktopEntry,
   desktopExecToken,
   ensureLinuxDesktopEntry,
+  ensureMimeIndex,
+  mergeMimeCacheHandler,
+  mimeCacheListsHandler,
   isPackageManagedExecutable,
   isPlainDesktopExecPath,
   linuxLauncherLinkPath,
@@ -288,6 +291,85 @@ describe('planLinuxDesktopEntry', () => {
   });
 });
 
+describe('MIME index (F-740)', () => {
+  const OURS = 'x-scheme-handler/nexus=nexus-ide.desktop;';
+
+  it('recognises the handler only inside the MIME Cache group', () => {
+    expect(mimeCacheListsHandler(`[MIME Cache]\n${OURS}\n`)).toBe(true);
+    expect(mimeCacheListsHandler('[MIME Cache]\nx-scheme-handler/nexus=other.desktop;nexus-ide.desktop;\n')).toBe(true);
+    expect(mimeCacheListsHandler(null)).toBe(false);
+    expect(mimeCacheListsHandler('')).toBe(false);
+    expect(mimeCacheListsHandler(`[Other]\n${OURS}\n`)).toBe(false);
+    expect(mimeCacheListsHandler('[MIME Cache]\nx-scheme-handler/nexus=other.desktop;\n')).toBe(false);
+    // O Nexus Shot tem o próprio esquema; não vale pelo do IDE.
+    expect(mimeCacheListsHandler('[MIME Cache]\nx-scheme-handler/nexus-shot=nexus-ide.desktop;\n')).toBe(false);
+  });
+
+  it('merges our line without touching anyone else', () => {
+    expect(mergeMimeCacheHandler(null)).toBe(`[MIME Cache]\n${OURS}\n`);
+    expect(mergeMimeCacheHandler('')).toBe(`[MIME Cache]\n${OURS}\n`);
+    expect(mergeMimeCacheHandler('[MIME Cache]\ntext/html=a.desktop;\n')).toBe(
+      `[MIME Cache]\ntext/html=a.desktop;\n${OURS}\n`,
+    );
+    expect(mergeMimeCacheHandler('[MIME Cache]\nx-scheme-handler/nexus=other.desktop;\n')).toBe(
+      '[MIME Cache]\nx-scheme-handler/nexus=nexus-ide.desktop;other.desktop;\n',
+    );
+    expect(mergeMimeCacheHandler('[Other]\nk=v\n')).toBe(`[Other]\nk=v\n[MIME Cache]\n${OURS}\n`);
+    expect(mergeMimeCacheHandler('[MIME Cache]\ntext/html=a.desktop;\n[Other]\nk=v\n')).toBe(
+      `[MIME Cache]\ntext/html=a.desktop;\n${OURS}\n[Other]\nk=v\n`,
+    );
+    for (const input of [null, '[MIME Cache]\ntext/html=a.desktop;\n', '[Other]\nk=v\n']) {
+      expect(mimeCacheListsHandler(mergeMimeCacheHandler(input))).toBe(true);
+    }
+  });
+
+  function deps(initial: string | null, toolWrites: string | null) {
+    const state = { cache: initial, toolRuns: 0, writes: 0 };
+    return {
+      state,
+      deps: {
+        readCache: () => state.cache,
+        runUpdateDesktopDatabase: () => {
+          state.toolRuns += 1;
+          if (toolWrites === null) return false;
+          state.cache = toolWrites;
+          return true;
+        },
+        writeCache: (_file: string, content: string) => {
+          state.writes += 1;
+          state.cache = content;
+        },
+      },
+    };
+  }
+
+  it('does nothing when the index already lists the handler', () => {
+    const { state, deps: d } = deps(`[MIME Cache]\n${OURS}\n`, null);
+    expect(ensureMimeIndex('/home/u/.local/share/applications', d)).toBe('already-listed');
+    expect(state).toMatchObject({ toolRuns: 0, writes: 0 });
+  });
+
+  it('prefers the system tool and trusts it only if the line really appeared', () => {
+    const ok = deps(null, `[MIME Cache]\n${OURS}\n`);
+    expect(ensureMimeIndex('/home/u/.local/share/applications', ok.deps)).toBe('updated');
+    expect(ok.state).toMatchObject({ toolRuns: 1, writes: 0 });
+
+    // A ferramenta rodou "com sucesso" mas não registrou (entrada inválida para
+    // ela, versão antiga…): a mescla garante a linha.
+    const silent = deps(null, '[MIME Cache]\ntext/html=a.desktop;\n');
+    expect(ensureMimeIndex('/home/u/.local/share/applications', silent.deps)).toBe('merged');
+    expect(mimeCacheListsHandler(silent.state.cache)).toBe(true);
+    expect(silent.state.cache).toContain('text/html=a.desktop;');
+  });
+
+  it('falls back to the merge when the tool is not installed', () => {
+    const { state, deps: d } = deps(null, null);
+    expect(ensureMimeIndex('/home/u/.local/share/applications', d)).toBe('merged');
+    expect(state).toMatchObject({ toolRuns: 1, writes: 1 });
+    expect(state.cache).toBe(`[MIME Cache]\n${OURS}\n`);
+  });
+});
+
 describe('resolveLinuxRuntimeIconPath', () => {
   const context = {
     platform: 'linux' as const,
@@ -335,6 +417,18 @@ describe.skipIf(process.platform === 'win32')('ensureLinuxDesktopEntry (filesyst
         homeDir: home,
         // Sem entrada de sistema visível: o teste não depende da máquina.
         env: { XDG_DATA_DIRS: path.join(root, 'no-system-data') },
+        // Sem a ferramenta do sistema: o caminho de mescla é o determinístico.
+        mimeIndex: {
+          readCache: (target: string) => {
+            try {
+              return fs.readFileSync(target, 'utf8');
+            } catch {
+              return null;
+            }
+          },
+          runUpdateDesktopDatabase: () => false,
+          writeCache: (target: string, content: string) => fs.writeFileSync(target, content),
+        },
       },
     };
   }
@@ -349,8 +443,26 @@ describe.skipIf(process.platform === 'win32')('ensureLinuxDesktopEntry (filesyst
     const content = fs.readFileSync(file, 'utf8');
     expect(content).toContain('MimeType=x-scheme-handler/nexus;');
     expect(content).toContain(LINUX_PORTABLE_MARKER);
-    expect(fs.readdirSync(path.dirname(file))).toEqual([LINUX_DESKTOP_FILE_NAME]);
+    // Só a entrada e o índice de tipos: nenhum temporário fica para trás.
+    expect(fs.readdirSync(path.dirname(file)).sort()).toEqual(['mimeinfo.cache', LINUX_DESKTOP_FILE_NAME]);
     expect(ensureLinuxDesktopEntry(options)).toEqual({ action: 'none', reason: 'up-to-date' });
+  });
+
+  it.skipIf(systemInstalled)('lists the handler in the MIME index the desktop portal reads (F-740)', () => {
+    const { file, options } = sandbox();
+    const cache = path.join(path.dirname(file), 'mimeinfo.cache');
+    ensureLinuxDesktopEntry(options);
+    expect(fs.readFileSync(cache, 'utf8')).toBe(
+      '[MIME Cache]\nx-scheme-handler/nexus=nexus-ide.desktop;\n',
+    );
+
+    // Outro app regenerou o índice sem a nossa linha (foi o que aconteceu no
+    // Omarchy): o próximo boot cura, com a entrada já em dia.
+    fs.writeFileSync(cache, '[MIME Cache]\ntext/html=browser.desktop;\n');
+    expect(ensureLinuxDesktopEntry(options)).toEqual({ action: 'none', reason: 'up-to-date' });
+    expect(fs.readFileSync(cache, 'utf8')).toBe(
+      '[MIME Cache]\ntext/html=browser.desktop;\nx-scheme-handler/nexus=nexus-ide.desktop;\n',
+    );
   });
 
   it.skipIf(systemInstalled)('replaces a planted symlink instead of writing through it', () => {

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   desktopIdentityProblems,
+  mimeCacheListsHandler,
   parseDesktopEntry,
 } from './verify-linux-desktop-identity.mjs';
 
@@ -74,6 +75,19 @@ describe('installed Linux desktop identity', () => {
       '/usr/share/applications/nexus-ide.desktop não foi instalado',
       '/usr/share/pixmaps/nexus-ide.png não foi instalado',
     ]);
+  });
+
+  it('requires the installed MIME index to list the handler (F-740)', () => {
+    const listed = '[MIME Cache]\ntext/html=a.desktop;\nx-scheme-handler/nexus=nexus-ide.desktop;\n';
+    expect(desktopIdentityProblems(input({ mimeCache: listed }))).toEqual([]);
+    // O que aconteceu no Omarchy: entrada e padrão corretos, índice sem a linha.
+    for (const stale of [null, '', '[MIME Cache]\ntext/html=a.desktop;\n']) {
+      const problems = desktopIdentityProblems(input({ mimeCache: stale }));
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toMatch(/mimeinfo\.cache não lista nexus-ide\.desktop/);
+    }
+    expect(mimeCacheListsHandler('[MIME Cache]\nx-scheme-handler/nexus-shot=nexus-ide.desktop;\n', 'nexus-ide.desktop')).toBe(false);
+    expect(mimeCacheListsHandler('[Other]\nx-scheme-handler/nexus=nexus-ide.desktop;\n', 'nexus-ide.desktop')).toBe(false);
   });
 
   it('reads only the main group and lets the first key win', () => {

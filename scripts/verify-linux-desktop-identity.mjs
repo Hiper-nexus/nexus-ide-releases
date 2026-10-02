@@ -14,6 +14,8 @@ import { fileURLToPath } from 'node:url';
  */
 export const DESKTOP_ENTRY_PATH = '/usr/share/applications/nexus-ide.desktop';
 export const INSTALLED_ICON_PATH = '/usr/share/pixmaps/nexus-ide.png';
+/** Índice que o gatilho do desktop-file-utils atualiza na instalação. */
+export const MIME_CACHE_PATH = '/usr/share/applications/mimeinfo.cache';
 export const DEEP_LINK_MIME_TYPE = 'x-scheme-handler/nexus';
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -41,12 +43,29 @@ export function parseDesktopEntry(text) {
 const listValue = (value) => String(value ?? '').split(';').filter(Boolean);
 
 /** PURO: devolve a lista de problemas (vazia = identidade correta). */
+/** O índice lista a entrada como app de nexus://? (só o grupo [MIME Cache]) */
+export function mimeCacheListsHandler(text, desktopFile) {
+  if (typeof text !== 'string') return false;
+  let inGroup = false;
+  for (const raw of text.split(/\r?\n/u)) {
+    const line = raw.trim();
+    if (line.startsWith('[')) {
+      inGroup = line === '[MIME Cache]';
+      continue;
+    }
+    if (!inGroup || !line.startsWith(`${DEEP_LINK_MIME_TYPE}=`)) continue;
+    if (listValue(line.slice(DEEP_LINK_MIME_TYPE.length + 1)).includes(desktopFile)) return true;
+  }
+  return false;
+}
+
 export function desktopIdentityProblems({
   desktopEntry,
   installedIcon,
   brandIcon,
   installerDefaultIcons = [],
   desktopName,
+  mimeCache,
 }) {
   const problems = [];
   const expectedName = path.posix.basename(DESKTOP_ENTRY_PATH);
@@ -72,6 +91,14 @@ export function desktopIdentityProblems({
     if (!listValue(entry.get('Categories')).includes('Development')) {
       problems.push('a entrada de menu não está na categoria Development');
     }
+  }
+  // `undefined` = quem chama não conferiu o índice (teste de unidade antigo);
+  // a conferência do pacote instalado sempre passa o texto ou `null`.
+  if (mimeCache !== undefined && !mimeCacheListsHandler(mimeCache, expectedName)) {
+    problems.push(
+      `${MIME_CACHE_PATH} não lista ${expectedName} para ${DEEP_LINK_MIME_TYPE} ` +
+        '(o portal do desktop não oferece o Nexus e o login termina em "No Apps available")',
+    );
   }
   if (!Buffer.isBuffer(installedIcon)) {
     problems.push(`${INSTALLED_ICON_PATH} não foi instalado`);
@@ -106,6 +133,7 @@ export function verifyInstalledDesktopIdentity(root = process.cwd()) {
       .map((name) => readOptional(path.join(root, 'node_modules', name, 'resources', 'icon.png')))
       .filter(Buffer.isBuffer),
     desktopName: pkg.desktopName,
+    mimeCache: readOptional(MIME_CACHE_PATH, 'utf8') ?? null,
   });
 }
 
@@ -116,7 +144,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.exitCode = 1;
   } else {
     process.stdout.write(
-      `[linux-desktop-identity] ok: ${DESKTOP_ENTRY_PATH} registra ${DEEP_LINK_MIME_TYPE} e o ícone da marca\n`,
+      `[linux-desktop-identity] ok: ${DESKTOP_ENTRY_PATH} registra ${DEEP_LINK_MIME_TYPE}, ` +
+        'o índice de tipos lista a entrada e o ícone é o da marca\n',
     );
   }
 }

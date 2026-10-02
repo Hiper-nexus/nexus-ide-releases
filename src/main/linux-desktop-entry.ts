@@ -24,6 +24,7 @@
  * Nunca lança: integração de desktop não pode impedir o app de abrir.
  */
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -36,6 +37,15 @@ export const LINUX_RUNTIME_ICON_FILE = 'icon.png';
 const DEEP_LINK_MIME = 'x-scheme-handler/nexus';
 /** Uma entrada nossa nunca passa disto; arquivo maior não é nosso. */
 const MAX_ENTRY_BYTES = 16 * 1024;
+/** Índice de tipos do diretório de aplicativos (`update-desktop-database`). */
+export const LINUX_MIME_CACHE_FILE = 'mimeinfo.cache';
+const MIME_CACHE_GROUP = '[MIME Cache]';
+const MAX_MIME_CACHE_BYTES = 4 * 1024 * 1024;
+const UPDATE_DESKTOP_DATABASE_CANDIDATES = [
+  '/usr/bin/update-desktop-database',
+  '/bin/update-desktop-database',
+  '/usr/local/bin/update-desktop-database',
+] as const;
 
 export interface LinuxRuntimeIconContext {
   platform: NodeJS.Platform;
@@ -272,12 +282,12 @@ export function planLinuxDesktopEntry(input: LinuxDesktopEntryInput): LinuxDeskt
 }
 
 /** Lê só arquivo comum e pequeno; symlink/FIFO/arquivo enorme = "não é nosso". */
-function readSmallRegularFile(file: string): string | null {
+function readSmallRegularFile(file: string, maxBytes: number = MAX_ENTRY_BYTES): string | null {
   let fd: number | undefined;
   try {
     fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
     const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || stat.size > MAX_ENTRY_BYTES) return null;
+    if (!stat.isFile() || stat.size > maxBytes) return null;
     return fs.readFileSync(fd, 'utf8');
   } catch {
     return null;
@@ -338,6 +348,117 @@ function applyPlan(plan: LinuxDesktopEntryPlan): void {
   }
 }
 
+/**
+ * O índice de tipos lista o Nexus como app de `nexus://`?
+ *
+ * Definir o padrão (`mimeapps.list`, o que `setAsDefaultProtocolClient` faz)
+ * não basta. O portal do desktop (xdg-desktop-portal, por onde o Chrome e os
+ * apps em sandbox abrem links) e o GIO só oferecem apps REGISTRADOS para o
+ * tipo, e o registro vem deste índice — não do `MimeType=` lido de cada
+ * `.desktop`. Sem a linha, o login terminava em "Open With… No Apps
+ * available" (F-740, medido no Omarchy com xdg-desktop-portal 1.22).
+ */
+export function mimeCacheListsHandler(cacheText: string | null): boolean {
+  if (cacheText === null) return false;
+  let inGroup = false;
+  for (const raw of cacheText.split('\n')) {
+    const line = raw.trim();
+    if (line.startsWith('[')) {
+      inGroup = line === MIME_CACHE_GROUP;
+      continue;
+    }
+    if (!inGroup || !line.startsWith(`${DEEP_LINK_MIME}=`)) continue;
+    if (line.slice(DEEP_LINK_MIME.length + 1).split(';').includes(LINUX_DESKTOP_FILE_NAME)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Último recurso, quando `update-desktop-database` não existe na máquina:
+ * acrescenta a nossa linha ao índice sem tocar nas dos outros. O formato é o
+ * mesmo keyfile que a ferramenta gera, e a próxima execução dela reescreve o
+ * arquivo inteiro a partir dos `.desktop` — incluindo o nosso.
+ */
+export function mergeMimeCacheHandler(cacheText: string | null): string {
+  const ours = `${DEEP_LINK_MIME}=${LINUX_DESKTOP_FILE_NAME};`;
+  if (cacheText === null || cacheText.trim() === '') return `${MIME_CACHE_GROUP}\n${ours}\n`;
+  const lines = cacheText.replace(/\n+$/, '').split('\n');
+  let inGroup = false;
+  let groupSeen = false;
+  let insertAt = lines.length;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (line.startsWith('[')) {
+      if (inGroup) insertAt = index;
+      inGroup = line === MIME_CACHE_GROUP;
+      groupSeen = groupSeen || inGroup;
+      continue;
+    }
+    if (inGroup && line.startsWith(`${DEEP_LINK_MIME}=`)) {
+      const apps = line.slice(DEEP_LINK_MIME.length + 1).split(';').filter(Boolean);
+      if (!apps.includes(LINUX_DESKTOP_FILE_NAME)) apps.unshift(LINUX_DESKTOP_FILE_NAME);
+      lines[index] = `${DEEP_LINK_MIME}=${apps.join(';')};`;
+      return `${lines.join('\n')}\n`;
+    }
+  }
+  if (!groupSeen) return `${lines.join('\n')}\n${MIME_CACHE_GROUP}\n${ours}\n`;
+  lines.splice(insertAt, 0, ours);
+  return `${lines.join('\n')}\n`;
+}
+
+export interface MimeIndexDeps {
+  readCache: (file: string) => string | null;
+  /** Roda `update-desktop-database <dir>`; `false` se não existe ou falhou. */
+  runUpdateDesktopDatabase: (applicationsDir: string) => boolean;
+  writeCache: (file: string, content: string) => void;
+}
+
+export type MimeIndexOutcome = 'already-listed' | 'updated' | 'merged';
+
+/** Garante a linha no índice: a ferramenta do sistema primeiro, a mescla depois. */
+export function ensureMimeIndex(applicationsDir: string, deps: MimeIndexDeps): MimeIndexOutcome {
+  const cacheFile = path.posix.join(applicationsDir, LINUX_MIME_CACHE_FILE);
+  if (mimeCacheListsHandler(deps.readCache(cacheFile))) return 'already-listed';
+  if (deps.runUpdateDesktopDatabase(applicationsDir) && mimeCacheListsHandler(deps.readCache(cacheFile))) {
+    return 'updated';
+  }
+  deps.writeCache(cacheFile, mergeMimeCacheHandler(deps.readCache(cacheFile)));
+  return 'merged';
+}
+
+function runUpdateDesktopDatabase(applicationsDir: string): boolean {
+  for (const tool of UPDATE_DESKTOP_DATABASE_CANDIDATES) {
+    if (!fs.existsSync(tool)) continue;
+    try {
+      // argv fixo, sem shell; o diretório é derivado do home do operador.
+      execFileSync(tool, [applicationsDir], { timeout: 5_000, stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function writeFileAtomic(file: string, content: string): void {
+  const temp = `${file}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temp, content, { mode: 0o644, flag: 'wx' });
+    fs.renameSync(temp, file);
+  } catch (error) {
+    fs.rmSync(temp, { force: true });
+    throw error;
+  }
+}
+
+const SYSTEM_MIME_INDEX_DEPS: MimeIndexDeps = {
+  readCache: (file) => readSmallRegularFile(file, MAX_MIME_CACHE_BYTES),
+  runUpdateDesktopDatabase,
+  writeCache: writeFileAtomic,
+};
+
 export interface EnsureLinuxDesktopEntryOptions {
   platform?: NodeJS.Platform;
   isPackaged: boolean;
@@ -347,6 +468,8 @@ export interface EnsureLinuxDesktopEntryOptions {
   appPath: string;
   homeDir?: string;
   env?: Readonly<Record<string, string | undefined>>;
+  /** Seam de teste; o padrão usa a ferramenta e os arquivos reais. */
+  mimeIndex?: MimeIndexDeps;
 }
 
 /**
@@ -376,6 +499,17 @@ export function ensureLinuxDesktopEntry(
       readLink: readSymlink,
     });
     applyPlan(plan);
+    // A entrada portátil é nossa (acabou de ser escrita ou já estava em dia):
+    // o índice de tipos precisa listá-la, senão o portal não acha o app.
+    // Conferido a cada boot — um índice regenerado sem a nossa linha se cura.
+    if (plan.action === 'write' || (plan.action === 'none' && plan.reason === 'up-to-date')) {
+      const homeDir = options.homeDir ?? os.homedir();
+      const userFile = linuxUserDesktopEntryPath(homeDir, options.env ?? process.env);
+      ensureMimeIndex(path.posix.dirname(userFile), options.mimeIndex ?? SYSTEM_MIME_INDEX_DEPS);
+    } else if (plan.action === 'remove') {
+      // Tira do índice a linha da entrada portátil que acabou de sair.
+      runUpdateDesktopDatabase(path.posix.dirname(plan.file));
+    }
     return plan;
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
