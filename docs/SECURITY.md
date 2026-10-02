@@ -55,7 +55,12 @@ What can leave the machine for Cloudflare, by mode:
   bundled with Nexus and of the skills installed in the project's
   `.claude/skills` / `.nexus/skills` (F-753, read by the Skills panel's
   symlink-refusing scanner), plus the request typed in a "+ Pane" (≤ 1,500
-  characters, redacted)). Automatic prefers Jev
+  characters, redacted); `catalogPick` (Marketplace recommendations, F-757)
+  carries only the labels of the stack areas detected from the project's own
+  files — "React", "Go" — and the name and category of up to 12 catalog
+  candidates per question: never a path, the project name or file content,
+  and installing stays behind the Marketplace's two native confirmations).
+  Automatic prefers Jev
   for everything except `toolPick`; it only falls back to Cloudflare when no Jev
   key exists, and the settings screen says so (`credential-fallback`).
 - **Never Clef (pinned to Jev):** `dispatchGuard`, `handoffReview`,
