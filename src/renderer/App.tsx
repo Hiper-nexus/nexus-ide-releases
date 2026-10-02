@@ -254,6 +254,7 @@ export function App() {
   const paletteOpen = useCommandPaletteStore((state) => state.open);
   const confirmOpen = useConfirmStore((state) => state.pending !== null);
   const cheatsheetOpen = useCheatsheetStore((state) => state.open);
+  const bugReportOpen = useBugReportDialogStore((state) => state.isOpen);
   // Precisa ficar AQUI, com os demais hooks: abaixo há dois early returns de
   // BootScreen, e um hook depois deles muda a contagem entre renders
   // ("Rendered more hooks than during the previous render") — tela branca no
@@ -297,6 +298,7 @@ export function App() {
     paletteOpen ||
     confirmOpen ||
     cheatsheetOpen ||
+    bugReportOpen ||
     orchestrationModeOpen ||
     mediaStudioOpen ||
     operatorProfileOpen;

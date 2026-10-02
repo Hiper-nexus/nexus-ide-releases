@@ -380,6 +380,22 @@ describe('App bug report entry', () => {
     expect(dialogContaining('Reportar um problema')).toBeNull();
   });
 
+  it('counts as a blocking overlay: reported to voice and the live browser pane steps aside', async () => {
+    const bridge = installBugReportBridge();
+    mountApp();
+    await act(async () => {});
+    expect(lastBrowserSuppression()).toBe(false);
+
+    act(() => bridge.open());
+    expect(blockingLabels()).toMatch(/reportar um problema/);
+    expect(terminalVisibility().visible).toBe(false);
+    expect(lastBrowserSuppression()).toBe(true);
+
+    act(() => useBugReportDialogStore.getState().close());
+    expect(blockingLabels()).not.toMatch(/reportar um problema/);
+    expect(lastBrowserSuppression()).toBe(false);
+  });
+
   it('stays reachable while access is blocked (license and billing problems are reports too)', async () => {
     const bridge = installBugReportBridge();
     mountApp();

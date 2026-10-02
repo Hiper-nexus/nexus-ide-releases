@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { ProductDestination } from '../state/product-navigation-store';
+import { useBugReportDialogStore } from '../state/bug-report-dialog-store';
 import {
   assessTerminalVisibility,
   listBlockingOverlayLabels,
+  readUiVisibilityState,
   type BlockingOverlayFlags,
   type UiVisibilityState,
 } from './terminal-visibility';
@@ -85,6 +87,25 @@ describe('terminal visibility follows mounted product surfaces', () => {
     expect(result.visible).toBe(false);
     expect(listBlockingOverlayLabels(overlays)).toContain('perfil operador');
     expect(result.reasons).toContain('overlay: perfil operador');
+  });
+
+  it('reports the bug report dialog as a blocking overlay and reads it from its store', () => {
+    const overlays = {
+      ...NO_MOUNTED_OVERLAYS,
+      bugReport: true,
+    } as BlockingOverlayFlags;
+    expect(listBlockingOverlayLabels(overlays)).toContain('reportar um problema');
+    expect(
+      assessTerminalVisibility('shell-1', baseState({ kind: 'terminal' }, { overlays }), true).reasons,
+    ).toContain('overlay: reportar um problema');
+
+    useBugReportDialogStore.setState({ isOpen: true });
+    try {
+      expect(readUiVisibilityState().overlays.bugReport).toBe(true);
+    } finally {
+      useBugReportDialogStore.setState({ isOpen: false });
+    }
+    expect(readUiVisibilityState().overlays.bugReport).toBe(false);
   });
 
   it('still rejects an unfocused pane on a terminal-bearing destination', () => {
