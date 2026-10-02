@@ -209,4 +209,75 @@ describe('F-242: worker travado no meio do turno acorda o Maestro', () => {
     reconcileDelegationSupervisor(NOW);
     expect(h.submit).not.toHaveBeenCalled();
   });
+
+  it('F-725: com dois projetos abertos o worker travado é avisado uma vez, não a cada varredura', () => {
+    // Campo 02/10: "[travado] worker DeepSeek … há 45/46 min" saiu a cada
+    // 15 s. A limpeza do aviso usava as sessões vivas de UMA suite e apagava
+    // o aviso da outra — o worker parecia novo em toda varredura.
+    const mission = runningMission();
+    h.onScope!(SCOPE, suite(mission));
+    const otherScope = { projectId: 'p2', checkoutId: 'c2' };
+    const otherSubmit = vi.fn();
+    h.onScope!(otherScope, {
+      scope: otherScope,
+      missions: {
+        list: () => [{ ...runningMission(), id: 'mission-outro-projeto', orchestratorSessionId: undefined }],
+        setStatus: vi.fn(),
+      },
+      tasks: { list: () => [] },
+      handoffs: { list: vi.fn(() => []), submit: otherSubmit, markSubmitted: vi.fn(() => true) },
+    });
+    h.listPaneSnapshots.mockReturnValue([
+      {
+        paneId: 'pane-orch',
+        sessionId: 'session-orch',
+        title: 'Maestro',
+        kind: 'cli-agent',
+        role: 'orchestrator',
+        state: 'busy',
+        missionId: mission.id,
+      },
+      {
+        paneId: 'pane-deepseek',
+        sessionId: 'session-worker',
+        title: 'worker DeepSeek',
+        kind: 'cli-agent',
+        role: 'worker',
+        state: 'idle',
+        adapterId: 'deepseek',
+        missionId: mission.id,
+      },
+    ] as never);
+    h.getSemantic.mockImplementation((sessionId: string) =>
+      sessionId === 'session-worker'
+        ? { status: 'working', updatedAt: NOW - WORKER_HUNG_AFTER_MS - 25 * 60_000 }
+        : { status: 'working', updatedAt: NOW - 10_000 },
+    );
+
+    reconcileDelegationSupervisor(NOW);
+    reconcileDelegationSupervisor(NOW + 15_000);
+    reconcileDelegationSupervisor(NOW + 30_000);
+
+    expect(h.submit).toHaveBeenCalledTimes(1);
+    expect(h.submit.mock.calls[0]![0].summary).toContain('[travado]');
+    expect(otherSubmit).not.toHaveBeenCalled();
+
+    // A sessão saiu do inventário DA PRÓPRIA suite: o próximo episódio avisa.
+    h.listPaneSnapshots.mockReturnValue([]);
+    reconcileDelegationSupervisor(NOW + 45_000);
+    h.listPaneSnapshots.mockReturnValue([
+      {
+        paneId: 'pane-deepseek',
+        sessionId: 'session-worker',
+        title: 'worker DeepSeek',
+        kind: 'cli-agent',
+        role: 'worker',
+        state: 'idle',
+        adapterId: 'deepseek',
+        missionId: mission.id,
+      },
+    ] as never);
+    reconcileDelegationSupervisor(NOW + 60_000);
+    expect(h.submit).toHaveBeenCalledTimes(2);
+  });
 });

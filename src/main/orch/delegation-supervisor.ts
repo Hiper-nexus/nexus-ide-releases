@@ -96,8 +96,26 @@ const momentumNudgedAt = new Map<string, number>();
 export const WORKER_HUNG_AFTER_MS = 20 * 60_000;
 export const WORKER_HUNG_RENOTIFY_MS = 60 * 60_000;
 
-/** Último aviso por sessão de worker (mesma vida do supervisor). */
-const hungWorkerNotifiedAt = new Map<string, number>();
+/**
+ * Último aviso por sessão de worker, POR suite (mesma vida do supervisor).
+ * F-725: o supervisor varre várias suites (um projeto aberto cada) e a limpeza
+ * de uma usa só as sessões vivas DELA — num mapa global, varrer o projeto B
+ * apagava o aviso do worker travado do projeto A, que voltava a ser "novo" e
+ * era avisado a cada 15 s.
+ */
+const hungWorkerNotifiedAt = new Map<string, Map<string, number>>();
+
+function hungWorkerNotifiedAtFor(
+  suite: ProjectDomainStoreSuite,
+): Map<string, number> {
+  const key = scopeKey(suite);
+  let notified = hungWorkerNotifiedAt.get(key);
+  if (!notified) {
+    notified = new Map();
+    hungWorkerNotifiedAt.set(key, notified);
+  }
+  return notified;
+}
 
 export function decideWorkerHung(input: {
   readonly semanticStatus: string | undefined;
@@ -557,6 +575,7 @@ function notifyHungWorkerPanes(
   panes: readonly PaneSnapshot[],
   now: number,
 ): void {
+  const notifiedAt = hungWorkerNotifiedAtFor(suite);
   for (const pane of panes) {
     if (pane.role !== 'worker' || !pane.sessionId) continue;
     const semantic = getAgentSemanticStatusBySession(pane.sessionId);
@@ -564,11 +583,11 @@ function notifyHungWorkerPanes(
       semanticStatus: semantic?.status,
       semanticUpdatedAt: semantic?.updatedAt,
       paneState: pane.state,
-      notifiedAt: hungWorkerNotifiedAt.get(pane.sessionId) ?? null,
+      notifiedAt: notifiedAt.get(pane.sessionId) ?? null,
       now,
     });
     if (decision === 'none') continue;
-    hungWorkerNotifiedAt.set(pane.sessionId, now);
+    notifiedAt.set(pane.sessionId, now);
     const updatedAt = semantic!.updatedAt!;
     const hungMinutes = Math.max(1, Math.floor((now - updatedAt) / 60_000));
     const last = new Date(updatedAt);
@@ -1259,9 +1278,13 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
       `[delegation-supervisor] recovery 1/2 submitted for ${mission.id}`,
     );
   }
-  // Sessão de worker saiu do inventário: o aviso pendente não é mais dela.
-  for (const sessionId of hungWorkerNotifiedAt.keys()) {
-    if (!liveSessionIds.has(sessionId)) hungWorkerNotifiedAt.delete(sessionId);
+  // Sessão de worker saiu do inventário DESTA suite: o aviso pendente não é
+  // mais dela. Os avisos das outras suites ficam com elas (F-725).
+  const notifiedAt = hungWorkerNotifiedAt.get(scopeKey(suite));
+  if (notifiedAt) {
+    for (const sessionId of notifiedAt.keys()) {
+      if (!liveSessionIds.has(sessionId)) notifiedAt.delete(sessionId);
+    }
   }
 }
 
