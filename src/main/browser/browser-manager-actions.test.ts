@@ -128,6 +128,7 @@ const state = vi.hoisted(() => {
     assertMutationAllowed: vi.fn(),
     fromWebContents: vi.fn(() => win),
     webContentsAvailable: true,
+    profileMode: 'isolated' as 'isolated' | 'personal',
     decisionConfiguration: 'initial',
     encodeBitmap: vi.fn((_bitmap: Buffer, _size: unknown) => ({ toPNG: () => Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2WQAAAAASUVORK5CYII=', 'base64') })),
     views: [] as Array<{ setVisible: ReturnType<typeof vi.fn>; setBounds: ReturnType<typeof vi.fn> }>,
@@ -214,7 +215,8 @@ vi.mock('../orch/pane-registry', () => ({
   requestPaneClose: vi.fn(async () => true),
 }));
 vi.mock('./browser-personal-profile', () => ({
-  browserProfileMode: () => 'isolated',
+  browserProfileMode: () => state.profileMode,
+  connectPersonalProfile: vi.fn(async () => async () => {}),
   rememberAgentBrowser: vi.fn(),
 }));
 
@@ -273,9 +275,22 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
     await expect(captureRedactedBrowserVisual(PANE, { ...scope, checkoutId: 'another' })).rejects.toThrow();
     expect(state.guest.capturePage).not.toHaveBeenCalled();
   });
+  it('refuses to capture a pane bound to the personal profile before touching the page', async () => {
+    state.profileMode = 'personal';
+    bindResolvedRendererWorkspaceScope(state.owner, scope);
+    await boot();
+    state.runAutomation.mockClear(); state.guest.capturePage.mockClear();
+    await expect(captureRedactedBrowserVisual(PANE, scope)).rejects.toMatchObject({
+      code: 'personal_profile', message: expect.stringContaining('perfil pessoal'),
+    });
+    expect(state.runAutomation).not.toHaveBeenCalled();
+    expect(state.guest.capturePage).not.toHaveBeenCalled();
+    expect(state.guest.debugger.sendCommand).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     state.decisionConfiguration = 'initial';
+    state.profileMode = 'isolated';
     state.guestHandlers.clear();
     state.views.length = 0;
     vi.mocked(isAgentRequestedBrowser).mockReturnValue(false);

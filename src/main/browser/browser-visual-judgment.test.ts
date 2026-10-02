@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { judgeBrowserVisual, type BrowserVisualDeps } from './browser-visual-judgment';
 import { testProjectScope } from '../orch/__tests__/scope-fixture';
+import { BrowserVisualRefusal } from './browser-visual-refusal';
 
 const scope = testProjectScope({ rootRealPath: '/tmp/visual-test' });
 function fixture(): BrowserVisualDeps {
@@ -25,6 +26,18 @@ describe('scoped visual judgments', () => {
     vi.mocked(deps.judge).mockClear();
     expect(await judgeBrowserVisual({ paneId: 'alien', goal: 'Verify success', scope }, deps)).toMatchObject({ status: 'unavailable' });
     expect(deps.judge).not.toHaveBeenCalled();
+  });
+  it('explains a categorical refusal to the agent without calling any model', async () => {
+    for (const code of ['personal_profile', 'mostly_masked', 'unverifiable_geometry'] as const) {
+      const deps = fixture();
+      deps.capture = vi.fn(async () => { throw new BrowserVisualRefusal(code); });
+      const result = await judgeBrowserVisual({ paneId: 'pane', goal: 'Verify success', scope }, deps);
+      expect(result).toMatchObject({ status: 'unavailable', reason: code, message: expect.stringContaining('nada foi') });
+      expect(deps.judge).not.toHaveBeenCalled(); expect(deps.record).not.toHaveBeenCalled();
+    }
+    const deps = fixture(); deps.capture = vi.fn(async () => { throw new Error('private page detail'); });
+    const generic = await judgeBrowserVisual({ paneId: 'pane', goal: 'Verify success', scope }, deps);
+    expect(generic).toEqual({ status: 'unavailable' });
   });
   it('stops egress after navigation, configuration change or abort and discards stale answers', async () => {
     for (const cause of ['navigation', 'configuration', 'abort']) {

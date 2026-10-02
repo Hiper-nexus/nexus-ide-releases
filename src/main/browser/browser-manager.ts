@@ -108,6 +108,7 @@ import { sameProjectScope } from '../orch/project-scoped-broadcast';
 import { createScopedBrowserArtifactStore } from './browser-artifact-store';
 import { browserVisualMasksSchema, maskBrowserBitmap } from './browser-capture-redaction';
 import { assertInspectableBrowserDom } from './browser-visual-inspection';
+import { BrowserVisualRefusal } from './browser-visual-refusal';
 import { validateDecisionImages } from '../decision-models/decision-images';
 import {
   registerBrowserAutomationResponseHandler,
@@ -1352,6 +1353,8 @@ export async function captureRedactedBrowserVisual(
   options: { signal?: AbortSignal; assertCurrentAuthority?: () => void } = {},
 ) {
   const entry = withEntry(paneId, scope);
+  // O perfil pessoal carrega os logins reais do operador: pixels dele nunca saem.
+  if (entry.profileMode === 'personal') throw new BrowserVisualRefusal('personal_profile');
   const navSeq = entry.navSeq; const generation = entry.loadGeneration;
   const bounds = JSON.stringify(entry.view.getBounds());
   const assertCurrent = (): void => {

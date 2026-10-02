@@ -7,7 +7,7 @@ import { consumeJevRateSlot } from '../jev/jev-rate-limit';
 const argsSchema = z.object({ paneId: z.string().min(1).max(200), goal: z.string().min(1).max(2_000) }).strict();
 export function buildBrowserVisualTools(): McpToolDef[] {
   return [{ name: 'nexus_browser_judge_visual', requiresConfirm: false, available: canJudgeBrowserVisual,
-    description: 'Read-only Clef visual signals for a scoped Nexus browser pane: visible error, goal achieved, loading, human blocker and layout problem. Requires opt-in vision and Cloudflare credentials. Recognized fields/secrets, frames and canvas are masked locally before egress. Advisory probabilities never authorize actions; verify success with page evidence. Accepts no URLs, paths or uploaded images.',
+    description: 'Read-only Clef visual signals for a scoped Nexus browser pane: visible error, goal achieved, loading, human blocker and layout problem. Requires opt-in vision and Cloudflare credentials. Panes using the operator's personal profile (real logins) are refused: only isolated panes can be judged. Recognized fields/secrets, frames and canvas are masked locally before egress. Advisory probabilities never authorize actions; verify success with page evidence. Accepts no URLs, paths or uploaded images.',
     inputSchema: { type: 'object', properties: { paneId: { type: 'string' }, goal: { type: 'string' } }, required: ['paneId', 'goal'], additionalProperties: false },
     handler: async (raw, ctx, invocation) => {
       const args = argsSchema.parse(raw);
