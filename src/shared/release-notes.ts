@@ -8925,17 +8925,21 @@ export const CURRENT_RELEASE: AppRelease = {
     {
       title: 'Dois modelos de decisão, uma configuração',
       detail:
-        'Account ID e token Cloudflare no cofre local, teste de conexão e ' +
-        'escolha entre Automático, Somente Jev e Somente Clef, com Clef Flash ' +
-        'opcional. Jev e suas credenciais permanecem disponíveis.',
+        'Account ID e token Cloudflare no cofre local, um botão de teste de ' +
+        'conexão (ainda não validado contra a Cloudflare real) e escolha ' +
+        'entre Automático, Somente Jev e Somente Clef, com Clef Flash ' +
+        'opcional. Jev e suas credenciais permanecem disponíveis; guarda de ' +
+        'despacho, revisão de handoff, memória e pilotos seguem só no Jev.',
     },
     {
       title: 'Visão do navegador com Clef',
       detail:
-        'Ao ativar a análise de imagens, o agente pode consultar sinais ' +
-        'visuais de erro, sucesso, carregamento, bloqueio humano e layout. ' +
-        'Campos reconhecidos e frames são ocultos antes do envio. A ' +
-        'consulta não clica nem concede permissões.',
+        'Ao ativar a análise de imagens (com confirmação), o agente pode ' +
+        'consultar sinais visuais de erro, sucesso, carregamento, bloqueio ' +
+        'humano e layout em abas isoladas; abas com o seu perfil pessoal são ' +
+        'recusadas. Campos, segredos reconhecidos, frames e mídia são ' +
+        'ocultos antes do envio, mas a ocultação é parcial. A consulta não ' +
+        'clica nem concede permissões.',
     },
     {
       title: 'Uso e custos por modelo',

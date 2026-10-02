@@ -11,8 +11,12 @@ usar qualquer um. Empates favorecem custo e desempenho medidos. Benchmarks
 públicos orientam os candidatos iniciais, mas não comprovam o vencedor nos
 fluxos do produto.
 
-Este documento apresenta uma proposta. A integração, a tela e as avaliações
-com chamadas reais ainda não foram implementadas ou executadas.
+Este documento nasceu como proposta e agora também registra o que foi
+implementado (seção "Evidência da implementação"). A integração, a tela, o
+avaliador e o julgamento visual existem e têm testes de contrato. As avaliações
+com chamadas reais à Cloudflare e o teste de conexão contra a conta real ainda
+não foram executados: a única chamada real feita até aqui foi ao Jev, para
+capturar uma resposta de fixture.
 
 ## Comparação publicada
 
@@ -259,8 +263,13 @@ dos testes co-localizados dos consumidores alterados. Mudanças de renderer/IPC
 também exigem typecheck e renderer sinks. Testes sintéticos verificam o transporte
 e a política; chamadas reais com conjuntos rotulados verificam a qualidade.
 
-Não houve chamada de inferência paga nesta análise, alteração de credencial,
-mudança no código do produto ou medição comparativa executada no Nexus.
+A análise original não fez chamada de inferência paga, alteração de credencial,
+mudança no código do produto nem medição comparativa no Nexus; a implementação
+veio depois e está descrita em "Evidência da implementação". Nenhuma chamada real
+à Cloudflare (Clef ou Clef Flash) foi feita até hoje: o transporte, o teste de
+conexão e o julgamento visual foram verificados por stubs e testes de contrato.
+A única chamada real foi ao Jev (01/10/2026, estado sintético), cuja resposta
+virou a fixture `src/main/decision-models/jev-real-response.fixture.ts`.
 
 ## Evidência da implementação
 
@@ -291,3 +300,34 @@ A branch foi atualizada para incluir integralmente a base 0.76.160: site, acesso
 assinatura/licença, marca e aviso de término do teste. O operador autorizou também
 a nova release; os gates de assinatura, notarização e candidata continuam
 obrigatórios antes da publicação.
+
+## Correções da revisão tripla (segurança, correção, interface)
+
+A revisão da 0.76.161 mudou o desenho em pontos que valem registrar:
+
+- **Superfícies com efeito ficam no Jev.** `dispatchGuard`, `handoffReview`,
+  `memoryDistill`, `computerTool` e `browserTool` (texto) nunca vão ao Clef: seus
+  limiares foram calibrados para o Jev e nenhum benchmark público os cobre. Sem
+  chave Jev elas não têm rota (o guard vira `skipped`), inclusive em "Somente
+  Clef". O argumento `model` de `nexus_judge` não escolhe mais o provedor.
+- **Visão do navegador.** Abas com perfil pessoal (logins reais) são recusadas;
+  a máscara esconde o bloco ancestral quando um rótulo sensível tem o valor num
+  nó vizinho, reconhece mais formatos de token e oculta mídia grande; os
+  retângulos são unidos por varredura (2.000 retângulos pintados um a um
+  levavam ~5,5 s na thread principal) e capturas quase todas mascaradas ou de
+  escala não verificável são recusadas. A ocultação continua parcial.
+- **Consentimento.** `visionEnabled` é zerado fora de Automático/Clef e exige
+  nova confirmação ao religar; a tela diz o que sai para a Cloudflare e avisa
+  quando o Automático cairia na Cloudflare por falta de chave Jev. As variáveis
+  de ambiente do Clef são `NEXUS_CLEF_API_TOKEN` e `NEXUS_CLEF_ACCOUNT_ID`; as do
+  wrangler (`CLOUDFLARE_*`) não são adotadas.
+- **Contrato Jev.** A validação estrita (soma 1±0,001 e `usage` obrigatório) vale
+  só para o Clef; o Jev tolera ±0,02 e `usage` ausente (que permanece
+  desconhecido, não zero). Medido com a API real em 01/10/2026: 16 respostas
+  somavam exatamente 1,0000 e traziam `usage`.
+- **Diário.** Tentativas HTTP medidas e linhas antigas são contadas à parte;
+  linhas corrompidas são ignoradas em vez de derrubar o painel; falhas internas
+  têm motivo próprio. Uma classificação de digest que falhou fica em cache por
+  20 s para uma queda do provedor não custar 4 s por leitura de pane.
+- **Limites desta entrega.** Nada disto foi validado contra a Cloudflare real.
+  Fundos CSS e dados pessoais em texto comum não são mascarados.

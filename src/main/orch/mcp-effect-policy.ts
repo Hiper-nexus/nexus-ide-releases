@@ -22,6 +22,8 @@ const READ_ONLY_TOOLS = new Set([
   'agent_list',
   'browser_inspect',
   'browser_read',
+  // Sem mutação, mas com egress de pixels mascarados: o dispatch guard não o julga,
+  // então a cerca vive no Main (captureRedactedBrowserVisual recusa perfil pessoal).
   'browser_judge_visual',
   'browser_screenshot',
   'browser_wait',

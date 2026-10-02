@@ -828,10 +828,22 @@ saber isto antes de mexer:
   (read-only, ALWAYS_ALLOWED, 30/min/sessão, state ≤ 32 KB); toggle
   `orch.jevAutopilot` / `NEXUS_JEV_AUTOPILOT=0`; skill `typesafe-ai` bundled e
   concedida aos roles `clean-code`.
-- Sem chave: `nexus_judge`/`nexus_rank`/`nexus_tool_pick`/`nexus_browser_do`/
-  `nexus_computer_do` somem do `tools/list` (`McpToolDef.available`) e a skill
-  bundled não é espelhada (`bundledSkillFilter` no `skill-mirror`); nada mais
-  muda — o cliente vê um Nexus 100% clássico.
+- Sem credencial utilizável para a rota: `nexus_judge`/`nexus_rank`/
+  `nexus_tool_pick`/`nexus_browser_do`/`nexus_computer_do` somem do
+  `tools/list` (`McpToolDef.available` = `hasDecisionCredential(surface)`) e a
+  skill bundled não é espelhada (`bundledSkillFilter` no `skill-mirror`); nada
+  mais muda — o cliente vê um Nexus 100% clássico. "Credencial utilizável"
+  depende do modo (`orch.decisionModels.mode`: `jev` padrão, `auto`, `clef`),
+  não só da chave TypeSafe: a rota sai de `src/main/decision-models/`
+  (`resolveDecisionRoute`), e em "Somente Clef" sem token + Account ID as tools
+  somem do mesmo jeito (a UI avisa). `dispatchGuard`, `handoffReview`,
+  `memoryDistill`, `computerTool` e `browserTool` (texto) ficam FIXOS no Jev
+  (`JEV_PINNED_SURFACES`): sem chave Jev não têm rota, nem em "Somente Clef",
+  e o guard vira `skipped`. Novo egress: texto redigido e, só com a visão ligada
+  pelo operador, imagens mascaradas de abas isoladas do navegador vão à
+  Cloudflare (Clef) — token só no cofre (`clef-env:CLOUDFLARE_API_TOKEN`), env
+  próprio `NEXUS_CLEF_API_TOKEN`/`NEXUS_CLEF_ACCOUNT_ID` (nunca as
+  `CLOUDFLARE_*` do wrangler). Detalhes e tabela de egress em `docs/SECURITY.md`.
 - **Guarda de despacho** (`orch/jev-dispatch-guard.ts`, hook em
   `mcp-dispatch.ts`, surface `dispatchGuard`): toda chamada `nexus_*` COM
   efeito, dentro de missão e fora da mão do operador (a MÃO do operador nunca
