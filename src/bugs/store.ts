@@ -43,3 +43,12 @@ export async function listMine(db: D1Database, accountId: string): Promise<MineI
       FROM bug_reports WHERE account_id=? ORDER BY created_at DESC, id DESC LIMIT ?`).bind(accountId, MINE_LIMIT).all<MineRow>();
   return rows.results.map(row => ({ id: row.id, title: row.title, status: row.status, createdAt: new Date(row.created_at).toISOString(), fixSummary: row.fix_summary }));
 }
+
+/**
+ * Retenção: zera o diagnóstico (e SÓ ele) dos relatos cujo prazo passou. O relato, a linha do tempo e o resto
+ * ficam. Devolve quantos relatos foram limpos.
+ */
+export async function purgeExpiredDiagnostics(db: D1Database, now: number): Promise<number> {
+  const result = await db.prepare('UPDATE bug_reports SET diagnostics_json=NULL WHERE diagnostics_json IS NOT NULL AND diagnostics_expires_at<?').bind(now).run();
+  return result.meta.changes;
+}

@@ -14,6 +14,7 @@ import { createNoticeAdminRoutes } from './email/admin-routes.js';
 import { sendDueNotices } from './email/dispatch.js';
 import { bugReportRoutes } from './bugs/routes.js';
 import { createBugAdminRoutes } from './bugs/admin-routes.js';
+import { purgeExpiredDiagnostics } from './bugs/store.js';
 import { PRO_MONTHLY_PRICE } from './stripe.js';
 
 const WEBHOOK_PATH = '/v1/billing/webhook';
@@ -87,13 +88,20 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
 }
 
 const LEASE_RETENTION_MS = 60 * 60 * 1000;
-/** Removes login state, tokens and cron leases that can no longer be used. */
+/** Removes login state, tokens and cron leases that can no longer be used, and the expired diagnostics of bug reports. */
 export async function cleanupExpired(db: D1Database, now = Date.now()): Promise<void> {
   await db.batch([
     ...['oauth_states', 'auth_codes', 'sessions', 'refresh_tokens'].map(table => db.prepare(`DELETE FROM ${table} WHERE expires_at<?`).bind(now)),
     // An expired lease can be re-acquired by any peer, so keeping it only grows the table.
     db.prepare('DELETE FROM cron_leases WHERE expires_at<?').bind(now - LEASE_RETENTION_MS),
   ]);
+  // Retenção do diagnóstico dos relatos de bug (180 dias; o relato fica). Separada da batch acima: se a migração 0007
+  // ainda não foi aplicada, a falha fica no log e a limpeza de sessões, tokens e avisos por e-mail segue normalmente.
+  try {
+    await purgeExpiredDiagnostics(db, now);
+  } catch (error) {
+    console.error('nexus-cloud-api: limpeza do diagnóstico dos relatos de bug falhou:', error instanceof Error ? error.message : 'unknown');
+  }
 }
 
 /** Cron horário: a limpeza vem primeiro; os avisos por e-mail depois, e uma falha deles nunca desfaz nem esconde a limpeza. */
