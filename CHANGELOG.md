@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.190 — Linux em dia
+
+Build do Linux (DEB, RPM e ZIP). Inclui tudo que Mac e Windows receberam da 0.76.179 à 0.76.189.
+
+- **Correção de segurança na sandbox dos agentes (F-754).** Quem instalou o Node em `~/.local/bin` (o `n` com prefixo no home, por exemplo) tinha `~/.local/share` montado, somente leitura, dentro da sandbox do Bubblewrap, e os agentes podiam ler chaveiros e credenciais de CLIs. Nenhum mount da toolchain pode mais conter ou ficar dentro de diretórios de credenciais. Vale para as versões Linux 0.76.170 a 0.76.178.
+- **O RPM declara `alsa-lib` (F-763).** Num Fedora enxuto o app não abria por falta da `libasound.so.2`. O DEB não tinha o problema.
+- **Arquivos do operador que o app não consegue ler não são mais tratados como "ausentes" (F-755).** Um symlink de gerenciador de dotfiles não é substituído, e uma preferência ilegível do Redline não liga a bandeja.
+- Os pacotes saem de um container `ubuntu:22.04` com as mesmas etapas do workflow de release (`scripts/build-linux-release-docker.sh`), porque o GitHub Actions estava bloqueado por cobrança. Instalados e abertos de verdade em Debian 12, Ubuntu 22.04 e 24.04 e Fedora.
+
 ## 0.76.189 — Entrar pelo Perfil Nexus
 
 Build do Windows. Inclui a 0.76.188 (Bug à vista, anexo no pane, cotas à vista).

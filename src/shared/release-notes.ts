@@ -9827,7 +9827,7 @@ export const RELEASE_076188: AppRelease = {
     },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076189: AppRelease = {
   version: '0.76.189',
   date: '2026-10-02',
   codename: 'Entrar pelo Perfil Nexus',
@@ -9844,6 +9844,39 @@ export const CURRENT_RELEASE: AppRelease = {
         'site abre na própria aba, já no Perfil Nexus; o login feito ali fica ' +
         'salvo e chega aos agentes quando "Usar o perfil em novos navegadores ' +
         'dos agentes" está ligado.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.190',
+  date: '2026-10-02',
+  codename: 'Linux em dia',
+  summary:
+    'Versão do Linux com tudo que Mac e Windows receberam desde a 0.76.178, ' +
+    'uma correção de segurança na sandbox dos agentes e o pacote RPM ' +
+    'corrigido para o Fedora.',
+  highlights: [
+    {
+      title: 'Sandbox dos agentes mais fechada no Linux',
+      detail:
+        'Se você instalou o Node em ~/.local/bin, os agentes podiam ler ' +
+        'arquivos de ~/.local/share, como chaveiros e credenciais de CLIs. ' +
+        'Isso foi corrigido: a sandbox não expõe mais esses diretórios.',
+    },
+    {
+      title: 'Fedora e openSUSE abrem o Nexus em instalações enxutas',
+      detail:
+        'O pacote RPM agora traz a biblioteca de áudio que o app exige. ' +
+        'Antes, num Fedora sem ela, o Nexus nem abria.',
+    },
+    {
+      title: 'Tudo que chegou ao Mac e ao Windows',
+      detail:
+        'Fechar agentes ao reabrir, helpers sem espera, skills escolhidas ' +
+        'pelo Jev, recomendados do Marketplace, "Reportar bug" à vista, ' +
+        'anexo no pane e cotas de todas as contas na barra lateral.',
     },
   ],
   fixes: [],
