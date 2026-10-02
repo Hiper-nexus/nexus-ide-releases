@@ -1,6 +1,7 @@
 import type { PaneModel } from '../../shared/types';
 import { useCloseWorkspaceStore } from '../components/CloseWorkspaceDialog';
 import { listPanes } from '../lib/split-tree';
+import { useBugReportDialogStore } from '../state/bug-report-dialog-store';
 import { useCheatsheetStore } from '../state/cheatsheet-store';
 import { useCommandPaletteStore } from '../state/command-palette-store';
 import { useConfirmStore } from '../state/confirm-store';
@@ -26,6 +27,7 @@ export interface BlockingOverlayFlags {
   commandPalette: boolean;
   confirmation: boolean;
   keyboardCheatsheet: boolean;
+  bugReport: boolean;
 }
 
 export interface UiVisibilityState {
@@ -52,6 +54,7 @@ export function listBlockingOverlayLabels(overlays: BlockingOverlayFlags): strin
   if (overlays.commandPalette) labels.push('paleta de comandos');
   if (overlays.confirmation) labels.push('confirmação');
   if (overlays.keyboardCheatsheet) labels.push('atalhos de teclado');
+  if (overlays.bugReport) labels.push('reportar um problema');
   return labels;
 }
 
@@ -82,6 +85,7 @@ export function readUiVisibilityState(): UiVisibilityState {
       commandPalette: useCommandPaletteStore.getState().open,
       confirmation: useConfirmStore.getState().pending !== null,
       keyboardCheatsheet: useCheatsheetStore.getState().open,
+      bugReport: useBugReportDialogStore.getState().isOpen,
     },
   };
 }

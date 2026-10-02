@@ -179,6 +179,7 @@ import { useWorkspaceStore } from './state/workspace-store';
 import { useCommandPaletteStore } from './state/command-palette-store';
 import { useConfirmStore } from './state/confirm-store';
 import { useCheatsheetStore } from './state/cheatsheet-store';
+import { useBugReportDialogStore } from './state/bug-report-dialog-store';
 import { useVoiceStore } from './voice/voice-store';
 import {
   assessTerminalVisibility,
@@ -327,6 +328,7 @@ beforeEach(() => {
   useCommandPaletteStore.setState({ open: false });
   useConfirmStore.setState({ pending: null });
   useCheatsheetStore.setState({ open: false });
+  useBugReportDialogStore.setState({ isOpen: false });
   useVoiceStore.setState({ settingsOpen: false } as never);
 });
 
@@ -342,6 +344,84 @@ afterEach(() => {
   } else {
     Reflect.deleteProperty(window, 'nexus');
   }
+});
+
+describe('App bug report entry', () => {
+  function installBugReportBridge(): { open: () => void; unsubscribe: ReturnType<typeof vi.fn> } {
+    const bridge = { open: () => {}, unsubscribe: vi.fn() };
+    Object.assign(window.nexus, {
+      bugReport: {
+        onOpenRequest: vi.fn((callback: () => void) => {
+          bridge.open = callback;
+          return bridge.unsubscribe;
+        }),
+        preview: vi.fn(),
+        submit: vi.fn(),
+      },
+    });
+    return bridge;
+  }
+
+  it('opens "Reportar um problema" when the Ajuda menu asks for it, and Escape closes it', async () => {
+    const bridge = installBugReportBridge();
+    mountApp();
+    await act(async () => {});
+    expect(dialogContaining('Reportar um problema')).toBeNull();
+
+    act(() => bridge.open());
+    const dialog = dialogContaining('Reportar um problema');
+    expect(dialog).not.toBeNull();
+
+    act(() => {
+      dialog?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+    });
+    expect(dialogContaining('Reportar um problema')).toBeNull();
+  });
+
+  it('counts as a blocking overlay: reported to voice and the live browser pane steps aside', async () => {
+    const bridge = installBugReportBridge();
+    mountApp();
+    await act(async () => {});
+    expect(lastBrowserSuppression()).toBe(false);
+
+    act(() => bridge.open());
+    expect(blockingLabels()).toMatch(/reportar um problema/);
+    expect(terminalVisibility().visible).toBe(false);
+    expect(lastBrowserSuppression()).toBe(true);
+
+    act(() => useBugReportDialogStore.getState().close());
+    expect(blockingLabels()).not.toMatch(/reportar um problema/);
+    expect(lastBrowserSuppression()).toBe(false);
+  });
+
+  it('stays reachable while access is blocked (license and billing problems are reports too)', async () => {
+    const bridge = installBugReportBridge();
+    mountApp();
+    await act(async () => {});
+    act(() =>
+      useAccessStore.setState({ canUseApp: false, loading: false, blockedReason: 'inactive' } as never),
+    );
+    act(() => bridge.open());
+    expect(dialogContaining('Reportar um problema')).not.toBeNull();
+  });
+
+  it('unsubscribes from the menu request on unmount', async () => {
+    const bridge = installBugReportBridge();
+    mountApp();
+    await act(async () => {});
+    act(() => {
+      for (const root of roots.splice(0)) root.unmount();
+    });
+    expect(bridge.unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps working with a preload that has no bug report bridge', async () => {
+    mountApp();
+    await act(async () => {});
+    expect(dialogContaining('Reportar um problema')).toBeNull();
+  });
 });
 
 describe('App root blocking overlays', () => {

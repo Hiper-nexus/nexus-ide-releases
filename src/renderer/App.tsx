@@ -18,6 +18,8 @@ import { CommandPalette } from './components/CommandPalette';
 import { useCommandPaletteStore } from './state/command-palette-store';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { ChoiceDialog } from './components/ChoiceDialog';
+import { BugReportDialog } from './components/bug-report/BugReportDialog';
+import { useBugReportDialogStore } from './state/bug-report-dialog-store';
 import { TerminalGridDialog } from './components/TerminalGridDialog';
 import { OverlayLayer } from './overlay/overlay-layer';
 import { OrchestrationModeDialog } from './components/OrchestrationModeDialog';
@@ -252,6 +254,7 @@ export function App() {
   const paletteOpen = useCommandPaletteStore((state) => state.open);
   const confirmOpen = useConfirmStore((state) => state.pending !== null);
   const cheatsheetOpen = useCheatsheetStore((state) => state.open);
+  const bugReportOpen = useBugReportDialogStore((state) => state.isOpen);
   // Precisa ficar AQUI, com os demais hooks: abaixo há dois early returns de
   // BootScreen, e um hook depois deles muda a contagem entre renders
   // ("Rendered more hooks than during the previous render") — tela branca no
@@ -295,6 +298,7 @@ export function App() {
     paletteOpen ||
     confirmOpen ||
     cheatsheetOpen ||
+    bugReportOpen ||
     orchestrationModeOpen ||
     mediaStudioOpen ||
     operatorProfileOpen;
@@ -913,6 +917,13 @@ export function App() {
     });
   }, []);
 
+  // Menu "Ajuda → Reportar um problema…" (Main) abre o diálogo. Guarda para
+  // preloads antigos e mocks de teste sem a ponte.
+  useEffect(
+    () => window.nexus.bugReport?.onOpenRequest?.(() => useBugReportDialogStore.getState().open()),
+    [],
+  );
+
   useEffect(() => initDevServerStore(), []);
   useEffect(() => initShotIngestToasts(), []);
   useEffect(() => initDesignSelectionStore(), []);
@@ -1492,7 +1503,9 @@ export function App() {
         }
       />
       </AccessBoundary>
-      <OverlayLayer><ConfirmDialog /><ChoiceDialog /><Toasts /></OverlayLayer>
+      {/* Fora de `canUseApp` de propósito: quem está bloqueado por licença ou
+          cobrança é justamente quem precisa conseguir reportar. */}
+      <OverlayLayer><ConfirmDialog /><ChoiceDialog /><BugReportDialog /><Toasts /></OverlayLayer>
     </div>
   );
 }

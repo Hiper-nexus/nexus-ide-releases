@@ -1,0 +1,273 @@
+/* Reportar um problema. Idioma .confirm__* (panels.css) com um painel mais
+   largo e os campos do formulário. Só tokens: nenhum hex fora de :root. */
+
+.confirm__panel--bug-report {
+  width: min(560px, 94vw);
+  max-height: min(90vh, 800px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* A barra de ações é fixa no rodapé: foco e scrollIntoView não podem
+     deixar o campo por baixo dela. */
+  scroll-padding-block-end: calc(var(--space-8) + var(--space-2));
+}
+
+/* O painel recebe foco por código (enviando) para o teclado não se perder;
+   anel de foco aqui seria ruído — os controles têm o seu. */
+.confirm__panel--bug-report:focus {
+  outline: none;
+}
+
+.bug-report__intro {
+  margin-bottom: var(--space-3);
+}
+
+.bug-report__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.bug-report__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.bug-report__field {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+  min-width: 0;
+}
+
+.bug-report__field--grow {
+  flex: 1 1 200px;
+}
+
+.bug-report__label {
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.bug-report__optional {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
+.bug-report__control {
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  line-height: 1.45;
+}
+
+.bug-report__textarea {
+  resize: vertical;
+  min-height: 64px;
+}
+
+.bug-report__control[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.bug-report__counter {
+  align-self: flex-end;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.bug-report__error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.bug-report__hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.bug-report__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.bug-report__impact {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.bug-report__impact > legend {
+  padding: 0;
+  margin-bottom: var(--space-1-5);
+}
+
+.bug-report__impact-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+}
+
+.bug-report__choice {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  color: var(--text);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.bug-report__choice input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+/* Consentimento: um bloco próprio, sempre visível, nunca escondido num rodapé. */
+.bug-report__consent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+  padding: var(--space-2-5) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+}
+
+.bug-report__consent .bug-report__choice {
+  align-items: flex-start;
+  min-height: 0;
+  font-weight: 600;
+}
+
+.bug-report__consent .bug-report__choice input {
+  margin-top: 3px;
+}
+
+.bug-report__preview-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.bug-report__preview-toggle {
+  align-self: flex-start;
+}
+
+.bug-report__preview-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+  min-width: 0;
+}
+
+.bug-report__preview-title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+
+.bug-report__preview {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: var(--space-2-5) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bug-report__failure {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2-5) var(--space-3);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.bug-report__failure:focus {
+  outline: none;
+}
+
+.bug-report__failure-text {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.bug-report__failure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.bug-report__sent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.bug-report__sent-text {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-md);
+  line-height: 1.5;
+}
+
+.bug-report__sent-text strong {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--status-success);
+}
+
+/* Enviar/Cancelar ficam à vista mesmo com a prévia aberta e o painel rolando. */
+.bug-report__actions {
+  position: sticky;
+  bottom: calc(-1 * var(--space-5));
+  z-index: 1;
+  margin: var(--space-1) calc(-1 * var(--space-5)) calc(-1 * var(--space-5));
+  padding: var(--space-2-5) var(--space-5) var(--space-3);
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+/* Alvo secundário >= 32px; o CTA primário >= 40px (DESIGN.md §6). */
+.confirm__panel--bug-report .confirm__btn {
+  min-height: 32px;
+}
+
+.confirm__panel--bug-report .confirm__btn--primary {
+  min-height: 40px;
+}
+
+.confirm__panel--bug-report .confirm__btn:disabled {
+  cursor: default;
+}

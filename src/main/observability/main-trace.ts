@@ -85,6 +85,15 @@ function ensurePaths(): { dir: string; file: string } | null {
   }
 }
 
+/**
+ * Caminho do trace corrente (sem criar o arquivo). Quem lê o trace — o
+ * diagnóstico do reporte de problema — resolve por aqui em vez de repetir a
+ * regra de `userData/logs`.
+ */
+export function getTraceFilePath(): string | null {
+  return ensurePaths()?.file ?? null;
+}
+
 function rotate(file: string): void {
   try {
     for (let i = TRACE_ROTATION_GENERATIONS - 1; i >= 1; i -= 1) {

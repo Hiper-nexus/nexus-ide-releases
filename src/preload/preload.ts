@@ -26,6 +26,7 @@ import { REDLINE_IPC } from '../shared/redline-types';
 import type { PetPrefs } from '../shared/pet-types';
 import { VOICE_CHANNELS } from '../shared/voice-channels';
 import { JEV_CHANNELS } from '../shared/jev-channels';
+import { BUG_REPORT_CHANNELS } from '../shared/bug-report-channels';
 import { DECISION_MODEL_CHANNELS } from '../shared/decision-model-channels';
 import { VISION_CHANNELS } from '../shared/vision-ipc';
 import type { ScreenCaptureMetadata } from '../shared/vision-ipc';
@@ -203,6 +204,10 @@ ipcRenderer.on(WINDOW_CHANNELS.authLoginResult, (_event, result: LoginResultEven
 const deepOpenQuotaListeners = new Set<() => void>();
 ipcRenderer.on(WINDOW_CHANNELS.deepOpenQuota, () =>
   emitToListeners(deepOpenQuotaListeners, 'deepOpenQuotaListeners'),
+);
+const bugReportOpenListeners = new Set<() => void>();
+ipcRenderer.on(BUG_REPORT_CHANNELS.open, () =>
+  emitToListeners(bugReportOpenListeners, 'bugReportOpenListeners'),
 );
 
 // shot-bridge: arquivos entregues pelo Nexus Shot (contrato em
@@ -1444,6 +1449,11 @@ const api: NexusApi = {
     removeMember: (accountId: string) =>
       ipcRenderer.invoke(TEAM_CHANNELS.remove, accountId),
     leave: () => ipcRenderer.invoke(TEAM_CHANNELS.leave),
+  },
+  bugReport: {
+    preview: (request) => ipcRenderer.invoke(BUG_REPORT_CHANNELS.preview, request),
+    submit: (request) => ipcRenderer.invoke(BUG_REPORT_CHANNELS.submit, request),
+    onOpenRequest: (cb) => addListener(bugReportOpenListeners, cb),
   },
   // Fase 5 — Jarvis Vision: screen capture + AX tree + OCR
   vision: {

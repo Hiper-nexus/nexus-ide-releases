@@ -21,6 +21,7 @@
 @import './settings-appearance.css';
 @import './ui-actions.css';
 @import './panels.css';
+@import './bug-report.css';
 @import './terminal-setup.css';
 @import './endorphin.css';
 @import './endorphin-surfaces.css';

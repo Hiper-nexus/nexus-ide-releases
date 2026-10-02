@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCommandPaletteStore } from '../state/command-palette-store';
 import { useAttentionInboxStore } from '../state/attention-inbox-store';
 import { useCheatsheetStore } from '../state/cheatsheet-store';
+import { useBugReportDialogStore } from '../state/bug-report-dialog-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useSessionStateStore } from '../state/session-state-store';
@@ -307,6 +308,15 @@ export function CommandPalette() {
       () => useCheatsheetStore.getState().toggle(),
       shortcutKeys('cheatsheet'),
       'ajuda help teclas shortcuts atalhos comandos dúvida como',
+    );
+    tool(
+      'bug-report',
+      'Reportar um problema…',
+      'warn',
+      // `runAction` já fecha a paleta; o store ainda fecha o que mais estiver aberto.
+      () => useBugReportDialogStore.getState().open(),
+      undefined,
+      'bug erro problema reportar relatar feedback defeito falha suporte ajuda',
     );
 
     return out;

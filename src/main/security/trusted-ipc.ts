@@ -68,6 +68,21 @@ export function bindTrustedMainWindow(
   });
 }
 
+/**
+ * A janela principal registrada em `bindTrustedMainWindow`, entre as janelas
+ * dadas. Serve a quem precisa falar com a janela do app (menu, atalhos
+ * globais) sem adivinhar por posição: outras janelas (pet, console) nunca são
+ * registradas aqui.
+ */
+export function findTrustedMainWindow(
+  windows: readonly BrowserWindow[],
+): BrowserWindow | undefined {
+  return windows.find((window) => {
+    if (window.isDestroyed()) return false;
+    return trustedMainWindows.get(window.webContents)?.window === window;
+  });
+}
+
 type SenderEvent = Pick<IpcMainInvokeEvent, 'sender' | 'senderFrame'>;
 
 export function isLiveTrustedMainWindowSender(event: SenderEvent): boolean {

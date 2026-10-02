@@ -23,6 +23,12 @@ export interface ApiRequestInit {
   timeoutMs?: number;
   maxResponseBytes?: number;
   signal?: AbortSignal;
+  /**
+   * Política de redirecionamento do fetch. Sem valor, vale o padrão do fetch.
+   * Envio de conteúdo do usuário (ex.: reporte de problema) passa `'error'`:
+   * o destino é fixo, e um 3xx nunca deve levar o corpo a outro lugar.
+   */
+  redirect?: RequestRedirect;
 }
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -69,6 +75,7 @@ async function doFetch(
       ...(init.body !== undefined ? { 'content-type': 'application/json' } : {}),
     },
     ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
+    ...(init.redirect !== undefined ? { redirect: init.redirect } : {}),
     signal,
   });
 }

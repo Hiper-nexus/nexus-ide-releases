@@ -329,6 +329,12 @@ import {
 import { registerBillingIpc } from "./persistence/billing-ipc";
 import { syncLicenseOnBoot } from "./license-sync";
 import { registerTeamIpc } from "./team-ipc";
+import { installAppMenu } from "./app-menu";
+import { findTrustedMainWindow } from "./security/trusted-ipc";
+import {
+  registerBugReportIpc,
+  requestOpenBugReportDialog,
+} from "./bug-report/bug-report-ipc";
 import { initDesktopPet, ingestPetGamification, isPetWindow } from "./pet/pet-window";
 import {
   registerPipeIpc,
@@ -764,6 +770,17 @@ function bootstrap(): void {
   traceBootstrap('after quota service');
   registerBillingIpc();
   registerTeamIpc();
+  // Reporte de problema: IPC (prévia/envio com a sessão do Main) + a entrada
+  // "Ajuda → Reportar um problema…" no menu da aplicação.
+  registerBugReportIpc();
+  installAppMenu({
+    platform: process.platform,
+    onReportProblem: () => {
+      requestOpenBugReportDialog(
+        findTrustedMainWindow(BrowserWindow.getAllWindows()),
+      );
+    },
+  });
   // Packaged smoke must prove the app can boot without touching the user's
   // real Keychain. License sync is useful in normal launches, but it can block
   // inside SecItemCopyMatching — window already open above.

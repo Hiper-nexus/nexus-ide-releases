@@ -100,6 +100,34 @@ describe('preload PTY delivery', () => {
     expect(electronMock.ipcRenderer.invoke).toHaveBeenCalledWith('billing:logout');
   });
 
+  it('exposes bug report preview/submit over their own channels and nothing that reads the session', async () => {
+    const api = await loadPreloadApi();
+    electronMock.ipcRenderer.invoke.mockResolvedValue({ ok: true });
+    const request = {
+      title: 'O terminal trava ao colar',
+      description: 'Ao colar um texto longo o pane congela por alguns segundos.',
+      category: 'terminal' as const,
+      impact: 'annoying' as const,
+      includeDiagnostics: false,
+    };
+    await api.bugReport.preview(request);
+    await api.bugReport.submit(request);
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenCalledWith('bugReport:preview', request);
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenCalledWith('bugReport:submit', request);
+    expect(Object.keys(api.bugReport).sort()).toEqual(['onOpenRequest', 'preview', 'submit']);
+  });
+
+  it('forwards the menu open request without IPC event data and supports unsubscribe', async () => {
+    const api = await loadPreloadApi();
+    const listener = vi.fn();
+    const off = api.bugReport.onOpenRequest(listener);
+    emitIpc('bugReport:open', { token: 'must-not-forward' });
+    expect(listener).toHaveBeenCalledWith();
+    off();
+    emitIpc('bugReport:open', {});
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
   it('exposes billing changes without IPC event data and supports unsubscribe', async () => {
     const api = await loadPreloadApi();
     const listener = vi.fn();
