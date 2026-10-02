@@ -369,6 +369,13 @@ candidatos; aqui o código vem primeiro e o modelo só entra onde há dúvida re
   com um título igual ao dito ou quando é o único que casa de alguma forma;
   qualquer outro caso é `ambiguous`, com até 5 candidatos e o motivo de cada um.
   Alvo vazio mantém "a mais recente".
+- **Nome mal reconhecido (`kind: 'noMatch'`, 02/10/2026).** Quando nada casa e há
+  de 1 a 8 missões, o Jev lê a fala contra TODAS as missões (mesma superfície,
+  mesma redação, 2 KB e fail-open; com 9 ou mais não consulta). O texto falado
+  pode ser ruído, então o piso é mais rígido: confiança ≥ 0,85 e margem ≥ 0,30.
+  Aceitando, a voz abre e diz "Abrindo a missão X. Entendi assim o que você
+  disse." (uma interpretação, não uma certeza); senão segue o "não achei". Falas
+  de uma letra só não são consultadas. O diário prefixa `noMatch:`.
 - **Desempate** (`src/main/jev/jev-mission-pick.ts`): UMA pergunta `choice`
   (candidatos por posição `m1…m5` + `none`), estado de no máximo 2 KB, título
   redigido antes do corte, timeout de 3 s sem retry. Aceita só com confiança
@@ -394,10 +401,25 @@ candidatos; aqui o código vem primeiro e o modelo só entra onde há dúvida re
   escolha. Nesses casos a
   `confidence` do Jev ficou abaixo da probabilidade da opção escolhida (0,62 contra
   0,75), então a margem sobre a 2ª opção não é redundante com a confiança.
+- **Nome mal reconhecido, medido com o Jev real (02/10/2026, 19 casos × 2
+  rodadas = 38 chamadas, 246–440 ms).** Erros de STT com intenção clara ("sait da
+  lója", "versão dois", "api de pagamentu", "checkout pix v dois", "refatora o
+  chekaut", "chekaut cartão", "api do estoki", "relatorio mensual", com 1, 3, 4 e
+  8 missões) voltaram a missão certa com confiança 0,94–1,00 e margem 0,92–1,00
+  em 20 de 22 chamadas. As duas restantes foram "pagamento pics" entre "Pagamento
+  via PIX" e "API de pagamento" (0,79 e 0,83, abaixo do piso: a regra pergunta, e
+  a fala é de fato ambígua). Fala sem relação ("banana", "projeto do cliente", "o
+  outro projeto", "financeiro", "abre aquela outra") voltou `none` ou uma escolha
+  com confiança 0,34–0,45; com UMA missão só ele não se sente obrigado a escolhê-la
+  (`banana` → `none`, 0,85). Um caso quase-empate, "sait da" entre "Site da loja"
+  e "Site da loja v2", voltou "Site da loja" com 0,84 (recusado) e 0,85 (aberto):
+  o piso está na beirada exata para títulos quase iguais, e a margem não ajuda
+  (0,77–0,81, porque o Jev dá quase nada à 2ª opção). Em toda a amostra a margem
+  nunca foi o que barrou: quem separa é a confiança; 0,30 fica como rede de
+  segurança. Com o piso em 0,90 os 20 acertos claros (mínimo 0,94) seguiriam
+  abrindo e o quase-empate seria recusado nas duas rodadas; não mudei o número
+  (amostra pequena, duas rodadas, só português, só títulos sintéticos).
 - **Não validado.** Isso é amostra pequena, não rubrica: sem conjunto de pedidos
   reais de missão, sem repetição para medir variância e sem nenhuma chamada ao
-  Clef (os limiares valem para ele só pela regra de aceitação). Nomes mal
-  reconhecidos pelo STT ("sait da lója", "versão dois") não casam no resolvedor
-  local e caem em "não achei" (o Jev os escolheria certo com 0,98, mas só é
-  consultado na ambiguidade). Recalibre pelo painel Decisões do Jev
-  (certo/errado) antes de relaxar qualquer número.
+  Clef (os limiares valem para ele só pela regra de aceitação). Recalibre pelo
+  painel Decisões do Jev (certo/errado) antes de relaxar qualquer número.
