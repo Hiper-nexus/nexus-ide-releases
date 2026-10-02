@@ -52,7 +52,10 @@ import {
   waitForRotatingAuthSpawnGate,
 } from "../adapters/managed-auth-spawn-gate";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
-import { attachSessionScope } from "../orch/pane-registry";
+import {
+  attachSessionScope,
+  reportPendingSpawnStartFailure,
+} from "../orch/pane-registry";
 import {
   assertMainOwnedAgentSpawnGrantActive,
   authorizeMainOwnedAgentSpawn,
@@ -629,22 +632,37 @@ export function registerPtyIpc(): void {
       // (sucesso, recusa de adapter/autoridade ou exceção).
       const spawnTiming = startPhaseTimer();
       let timingSpawn: ResolvedMainOwnedAgentSpawn | undefined;
-      const reportTiming = (ok: boolean): void =>
+      // F-723: grant pendente que ESTA chamada reivindicou. Se o PTY dele não
+      // subir, o Main liquida a tentativa agora (não em 30 min) e o watchdog
+      // de início avisa quem pediu e reroteia.
+      let claimedPendingRequestId: string | undefined;
+      const reportTiming = (ok: boolean, error?: string): void => {
         reportPaneSpawnTiming(spawnTiming, req, timingSpawn, ok);
+        if (!ok && claimedPendingRequestId) {
+          reportPendingSpawnStartFailure(
+            claimedPendingRequestId,
+            event.sender,
+            error ?? "failed to spawn agent",
+          );
+        }
+      };
       try {
         const envelope = authorizeMainOwnedAgentSpawn(
           event.sender,
           req,
           projectRuntimeManager,
         );
+        claimedPendingRequestId = envelope.pending
+          ? envelope.request.orchRequestId
+          : undefined;
         const adapterId = envelope.request.adapterId;
         if (!adapterId) {
-          reportTiming(false);
+          reportTiming(false, "cli-agent spawn requires adapterId");
           return { ok: false, error: "cli-agent spawn requires adapterId" };
         }
         const adapter = getAdapter(adapterId);
         if (!adapter) {
-          reportTiming(false);
+          reportTiming(false, `unknown adapter: ${adapterId}`);
           return { ok: false, error: `unknown adapter: ${adapterId}` };
         }
         const isolatedTab = req.worktreeSpaceId && !envelope.pending &&
@@ -656,7 +674,7 @@ export function registerPtyIpc(): void {
         );
         timingSpawn = spawn;
         if (adapter.kind !== "cli-pty") {
-          reportTiming(false);
+          reportTiming(false, `adapter ${adapterId} is not a cli-pty adapter`);
           return {
             ok: false,
             error: `adapter ${adapterId} is not a cli-pty adapter`,
@@ -693,21 +711,24 @@ export function registerPtyIpc(): void {
         if (outcome instanceof Promise) {
           return outcome.then(
             (result) => {
-              reportTiming(result.ok);
+              reportTiming(result.ok, result.ok ? undefined : result.error);
               return result;
             },
             (error) => {
-              reportTiming(false);
+              reportTiming(
+                false,
+                error instanceof Error ? error.message : "failed to spawn agent",
+              );
               throw error;
             },
           );
         }
-        reportTiming(outcome.ok);
+        reportTiming(outcome.ok, outcome.ok ? undefined : outcome.error);
         return outcome;
       } catch (err) {
-        reportTiming(false);
         const message =
           err instanceof Error ? err.message : "failed to spawn agent";
+        reportTiming(false, message);
         if (err instanceof WorkspaceRootMissingError) {
           probeCurrentWorkspaceLiveness();
         }

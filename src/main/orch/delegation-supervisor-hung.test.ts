@@ -29,6 +29,8 @@ vi.mock('./project-domain-store-registry', () => ({
 }));
 vi.mock('./pane-registry', () => ({
   listPaneSnapshots: h.listPaneSnapshots,
+  // F-723: o supervisor instala o tap de falha de início no prepare.
+  tapPendingSpawnStartFailure: vi.fn(() => () => {}),
 }));
 vi.mock('./agent-status', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./agent-status')>()),

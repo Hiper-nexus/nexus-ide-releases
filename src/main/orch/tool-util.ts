@@ -44,6 +44,7 @@ import {
 import { trace } from '../observability/main-trace';
 import type { PhaseTimer } from '../observability/phase-timer';
 import { emitWorkerSpawnFailed } from './spawn-fail-events';
+import { notePaneStartAccepted, notePaneStartFailure } from './pane-start-watchdog';
 import { getAdapter } from '../adapters/adapter-registry';
 import { discoverCliModels } from '../adapters/cli-model-discovery';
 import {
@@ -1346,7 +1347,30 @@ export interface SpawnPaneHooks {
   readonly timer?: PhaseTimer;
   /** Exact dispatch authority propagated across asynchronous preflight. */
   readonly invocation?: McpToolInvocation;
+  /**
+   * F-723: o pane com briefing nasceu com ACK pendente — a tool vai responder
+   * antes de a sessão existir. Quem pediu registra a ficha do watchdog de
+   * início; `redeliver` é a mesma entrega comprovada deste spawn.
+   */
+  readonly onPendingSpawn?: (attempt: PendingSpawnAttemptInfo) => void;
 }
+
+/** F-723: tentativa pendente com briefing (nunca carrega o texto do brief). */
+export interface PendingSpawnAttemptInfo {
+  readonly requestId: string;
+  readonly paneId: string;
+  readonly adapterId: string;
+  /** CLI cujo UserPromptSubmit é prova confiável de turno (família Claude). */
+  readonly turnProof: boolean;
+  /** Reentrega o briefing na sessão desta tentativa; true = turno aceito. */
+  readonly redeliver: () => Promise<boolean>;
+}
+
+/**
+ * Brief adiado que perdeu a autoridade DURÁVEL do spawn (missão encerrada ou
+ * selo trocado): não é falha da CLI e não vira reenvio para outra.
+ */
+class StaleBriefError extends Error {}
 
 function requireMissionPaneAuthoritySeal(options: SpawnToolOptions) {
   if (!options.missionId) return undefined;
@@ -1711,6 +1735,34 @@ export async function spawnPaneAndMaybePrompt(
       : {}),
   });
   hooks.timer?.mark('pane-alloc');
+  if (result.ok && result.pending === true && result.paneId && finalPrompt) {
+    // F-723: a ficha nasce ANTES da entrega adiada, que pode falhar e avisar.
+    const attempt = { requestId: result.requestId, paneId: result.paneId };
+    const argvBrief = initialPrompt !== undefined;
+    const sealNotice = {
+      scope: options.scope,
+      missionId: options.missionId,
+      authoritySeal,
+    };
+    try {
+      hooks.onPendingSpawn?.({
+        ...attempt,
+        adapterId: adapter.id,
+        turnProof: requiresClaudeFamilyTurnProof(adapter.id),
+        redeliver: () =>
+          redeliverPendingSpawnBrief(
+            attempt,
+            finalPrompt,
+            adapter.id,
+            argvBrief,
+            sealNotice,
+          ),
+      });
+    } catch (error) {
+      // A ficha é vigilância: nunca derruba um spawn que já nasceu.
+      console.warn('[pane-start] ficha do spawn pendente não registrada:', error);
+    }
+  }
   if (
     result.ok &&
     result.pending === true &&
@@ -1974,9 +2026,9 @@ function assertMissionStillWantsBrief(notice: {
 }): void {
   if (!notice.missionId) return;
   const mission = getProjectDomainStores(notice.scope).missions.get(notice.missionId);
-  if (!mission) throw new Error(`mission ${notice.missionId} is gone; stale brief not delivered`);
+  if (!mission) throw new StaleBriefError(`mission ${notice.missionId} is gone; stale brief not delivered`);
   if (mission.status === 'done' || mission.status === 'failed' || mission.status === 'blocked') {
-    throw new Error(`mission ${notice.missionId} is ${mission.status}; stale brief not delivered`);
+    throw new StaleBriefError(`mission ${notice.missionId} is ${mission.status}; stale brief not delivered`);
   }
   if (!notice.authoritySeal) return;
   const squads = listSquads().filter((candidate) => candidate.id === mission.squadId);
@@ -1986,8 +2038,40 @@ function assertMissionStillWantsBrief(notice: {
     squads.length === 1 ? squads[0] : null,
   );
   if (live && !sameMissionPaneAuthoritySeal(notice.authoritySeal, live)) {
-    throw new Error('mission authority changed while the pane booted; stale brief not delivered');
+    throw new StaleBriefError('mission authority changed while the pane booted; stale brief not delivered');
   }
+}
+
+/**
+ * F-723 "corrigir ali": reentrega o briefing de uma tentativa pendente na
+ * sessão que o Main vinculou a ELA (nunca na do paneId), pela mesma entrega
+ * comprovada do spawn — argv: Enter de resgate e colagem com prova de turno
+ * (`ensureNativeArgvPromptAccepted`); colagem: `deliverAgentPrompt`. Missão
+ * encerrada ou selo trocado não recebe o brief velho.
+ */
+async function redeliverPendingSpawnBrief(
+  attempt: { readonly requestId: string; readonly paneId: string },
+  prompt: string,
+  adapterId: string,
+  argvBrief: boolean,
+  notice: {
+    readonly scope: SpawnToolOptions['scope'];
+    readonly missionId?: string;
+    readonly authoritySeal?: MissionPaneAuthoritySeal;
+  },
+): Promise<boolean> {
+  const bound = pendingSpawnAttemptSession(attempt.requestId);
+  if (bound.state !== 'bound') return false;
+  const info = getAgentSessionInfo(bound.sessionId);
+  if (info?.paneId !== attempt.paneId || info.adapterId !== adapterId) {
+    return false;
+  }
+  assertMissionStillWantsBrief(notice);
+  if (argvBrief) {
+    await ensureNativeArgvPromptAccepted(bound.sessionId, prompt, adapterId);
+    return true;
+  }
+  return deliverAgentPrompt(bound.sessionId, prompt, undefined, { adapterId });
 }
 
 export async function deliverPromptAfterPendingSpawn(
@@ -2050,8 +2134,23 @@ export async function deliverPromptAfterPendingSpawn(
     if (!accepted) {
       throw new Error('agent prompt remained live without physical acceptance proof');
     }
+    // F-723: prova física de turno — o watchdog de início dá o pane por iniciado.
+    notePaneStartAccepted(paneId);
     return true;
   } catch (error) {
+    // F-723: falha de início da CLI (saiu no boot ou não aceitou o brief) vai
+    // ao watchdog, que avisa quem pediu e reroteia. Brief velho (missão
+    // encerrada/selo trocado) e chamador revogado não são falha da CLI.
+    if (!(error instanceof StaleBriefError) && !invocation?.signal?.aborted) {
+      notePaneStartFailure(
+        paneId,
+        /exited (?:during boot|before the brief)/.test(
+          error instanceof Error ? error.message : String(error),
+        )
+          ? 'boot-exit'
+          : 'brief-rejected',
+      );
+    }
     logAgentPromptFailure(adapterId, sessionId ?? paneId, error);
     recordWorkerPromptDeliveryFailure({
       scope: notice.scope,

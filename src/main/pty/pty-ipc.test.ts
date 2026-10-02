@@ -64,6 +64,9 @@ const authorityDeps = vi.hoisted(() => {
     ),
     bindPendingSpawnSession: vi.fn(() => true),
     bindPendingRecoverySpawnSession: vi.fn(() => true),
+    reportPendingSpawnStartFailure: vi.fn(
+      (_requestId: string, _owner: unknown, _error: string) => true,
+    ),
     assertPendingSpawnGrantActive: vi.fn(),
     assertPendingRecoverySpawnGrantActive: vi.fn(),
     assertMissionSpawnAuthorityCurrent: vi.fn(),
@@ -157,6 +160,7 @@ vi.mock("../orch/pane-registry", () => ({
     authorityDeps.assertMissionSpawnAuthorityCurrent,
   attachOrchMeta: authorityDeps.attachOrchMeta,
   attachSessionScope: authorityDeps.attachSessionScope,
+  reportPendingSpawnStartFailure: authorityDeps.reportPendingSpawnStartFailure,
 }));
 
 vi.mock("../orch/mission-pane-store", () => ({
@@ -761,6 +765,54 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/selected account.*pin/i) });
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
     expect(authGateDeps.track).not.toHaveBeenCalled();
+  });
+
+  it("F-723: liquida no Main, na hora, o grant pendente cujo PTY foi recusado", async () => {
+    // Campo 02/10: o Qwen do Maestro morreu no spawn ("modelo selado ... não
+    // entrou no argv") e o grant ficou pendurado 30 min — ninguém soube.
+    const base = sealedPendingSpawn();
+    const pending = { ...base, sealedRequest: { ...base.sealedRequest, adapterId: "codex" } };
+    authorityDeps.claimPendingSpawnMeta.mockReturnValueOnce(pending);
+    authorityDeps.getMission.mockReturnValueOnce(approvedMissionForSpawn());
+    const refusal = 'Qwen Code: modelo selado "qwen3.7-plus" não entrou no argv do spawn';
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: false, error: refusal });
+    const sender = { id: 7 };
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+
+    const result = await handler?.({ sender }, {
+      ...pending.sealedRequest, kind: "cli-agent", orchRequestId: "orchspawn-1", cols: 100, rows: 30,
+    });
+
+    expect(result).toEqual({ ok: false, error: refusal });
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+    expect(authorityDeps.reportPendingSpawnStartFailure).toHaveBeenCalledTimes(1);
+    expect(authorityDeps.reportPendingSpawnStartFailure).toHaveBeenCalledWith(
+      "orchspawn-1",
+      sender,
+      refusal,
+    );
+  });
+
+  it("F-723: spawn sem grant pendente reivindicado não liquida grant nenhum", async () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: false, error: "selected account unavailable" });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+    await handler?.({ sender: { id: 7 } }, {
+      kind: "cli-agent", adapterId: "codex", orchRequestId: "orchspawn-alheio", cols: 100, rows: 30,
+    });
+    expect(authorityDeps.reportPendingSpawnStartFailure).not.toHaveBeenCalled();
+  });
+
+  it("F-723: grant pendente cujo PTY sobe não é reportado como falha", async () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: {} });
+    authorityDeps.claimPendingSpawnMeta.mockReturnValueOnce(sealedPendingSpawn());
+    authorityDeps.getMission.mockReturnValueOnce(approvedMissionForSpawn());
+    authorityDeps.resolveCwdForScope.mockReturnValueOnce("/workspace/a/packages/api");
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+    const result = await handler?.({ sender: { id: 7 } }, {
+      ...sealedPendingSpawn().sealedRequest, kind: "cli-agent", orchRequestId: "orchspawn-1", cols: 100, rows: 30,
+    });
+    expect(result).toEqual({ ok: true, sessionId: "pty-created" });
+    expect(authorityDeps.reportPendingSpawnStartFailure).not.toHaveBeenCalled();
   });
 
   it("does not create a PTY after auth refresh coordination times out", async () => {

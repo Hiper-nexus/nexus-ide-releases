@@ -767,6 +767,45 @@ saber isto antes de mexer:
   (`~/.claude.json`); só a mão do operador (`role user`) herda. Quem precisa
   de um servidor MCP extra declara por allowlist.
 
+## Pane solto tem que começar (F-723)
+
+- Regra do operador (02/10): o Nexus solta um pane e confere se ele está
+  executando; se não está, corrige ali ou manda para outro. Campo: o Qwen do
+  Maestro morreu no spawn ("modelo selado ... não entrou no argv") e ficou
+  parado 30 min (`ORCH_SPAWN_GRANT_TTL_MS`) sem ninguém saber.
+- Todo `nexus_pane_spawn` com briefing e ACK pendente (worker de missão ou
+  helper do operador) ganha a ficha de `pane-start-watchdog.ts`; os efeitos
+  rodam no `delegation-supervisor` (varredura de 15 s + chute imediato em
+  falha provada). Orquestrador e o pane do próprio operador nunca são vigiados.
+- Falha provada não espera prazo: PTY recusado num grant pendente
+  reivindicado (`pty-ipc` → `reportPendingSpawnStartFailure`, que liquida a
+  tentativa na hora e recusa bind tardio), saída SOZINHA no boot (tap de
+  terminação sem origem pedida, fora de one-shot, < 90 s) e brief de colagem
+  recusado. Encerramento pedido, one-shot que terminou e morte tardia não são
+  falha de início. Missão encerrada/selo trocado e chamador revogado também não.
+- Começou = UserPromptSubmit (`getAgentTurnStartSequence > 0`), status
+  semântico working/completed/error, entrega do brief comprovada ou handoff da
+  sessão. Sessão VIVA só é julgada em CLI com prova de turno (família Claude,
+  `requiresClaudeFamilyTurnProof`); nas outras, viva = sem veredito (F-242 e
+  mortalidade de worker cuidam). Ficha sem veredito sai em 30 min.
+- Passo 1 (`START_GRACE_MS` = 90 s, sessão ociosa sem turno): reenvia o
+  briefing UMA vez pela entrega comprovada do próprio spawn (argv:
+  `ensureNativeArgvPromptAccepted`; colagem: `deliverAgentPrompt`). Passo 2
+  (falha provada, nenhuma sessão em 90 s, ou ainda sem turno 90 s depois do
+  reenvio): revoga a tentativa sem sessão (`abandonPendingOrchSpawn`), fecha o
+  pane (nunca `operatorOpened`, F-231), `adapterCircuitBreakers.recordFailure`
+  e reabre o MESMO pedido pelo handler do `nexus_pane_spawn` com a autoridade
+  ATUAL de quem pediu (`getContextBySession`) e a CLI que falhou em
+  `excludeAdapterIds` (agente de roster: `selectSpawnFailSuccessor`). Pin,
+  `routeReservationId` e `resume` não viajam: a rota cria e consome reserva nova.
+- No máximo UM reenvio por pedido (`rerouted`). CLI pedida pelo operador,
+  retomada de conversa, segunda tentativa ou nenhuma alternativa → só avisa.
+- O aviso sai em todo desfecho: `[nao-iniciou:<paneId>] ...`, status
+  `progress` (`stalled` é diagnóstico e não chega ao PTY), ao Maestro pelo
+  handoff do supervisor e ao pane pai do helper pela entrega sem missão
+  (F-565). Só ids, adapter e motivo por categoria; nunca erro bruto, argv ou
+  brief. Trace: `pane-start-redeliver` e `pane-not-started`.
+
 ## Terminais: geometria e retomada (F-356)
 
 - F-356 (terminal): `fitHostGrid` mede com `proposeDimensions`, aplica o piso

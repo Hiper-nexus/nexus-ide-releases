@@ -300,6 +300,14 @@ function noteTerminationRequest(sessionId: string, origin: string): void {
   terminationOrigins.set(sessionId, origin);
   trace({ kind: "agent-pty-terminate", sessionId, origin });
 }
+
+/**
+ * F-723: rótulo do encerramento PEDIDO desta sessão (somente leitura). Lido
+ * no tap de terminação: `null` ali = o processo saiu sozinho.
+ */
+export function getRequestedTerminationOrigin(sessionId: string): string | null {
+  return terminationOrigins.get(sessionId) ?? null;
+}
 let allSessionsTerminationFlight: Promise<TerminateAllSessionsResult> | null =
   null;
 let allSessionsTerminationInProgress = false;

@@ -291,6 +291,10 @@ import {
   syncPanes,
   takePendingPaneSpawnResult,
   unregisterOrchRenderer,
+  abandonPendingOrchSpawn,
+  reportPendingSpawnStartFailure,
+  tapPendingSpawnStartFailure,
+  type PendingSpawnStartFailure,
   wasOrchestratorOperatorDismissed,
   wasParkedBrowserClosed,
 } from "./pane-registry";
@@ -482,6 +486,113 @@ describe("main-owned mission pane spawn", () => {
         owner,
       ),
     ).toBe(true);
+    unregisterOrchRenderer(owner);
+    clearRendererWorkspaceScope(owner);
+  });
+
+  it("F-723: PTY recusado depois do ACK pendente liquida a tentativa na hora e publica a falha", async () => {
+    const owner = {
+      id: 942,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents & { send: ReturnType<typeof vi.fn> };
+    const stranger = { ...owner, id: 943 } as unknown as WebContents;
+    const signal = new AbortController().signal;
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerOrchRenderer(owner);
+    const failures: PendingSpawnStartFailure[] = [];
+    const untap = tapPendingSpawnStartFailure((failure) => failures.push(failure));
+
+    const resultPromise = requestPaneSpawn({
+      adapterId: "codex",
+      missionId: "mission-headless",
+      agentName: "Worker Headless",
+      workerIncarnationId: "worker-incarnation-main",
+      role: "worker",
+      scope,
+      abortSignal: signal,
+      [PENDING_SPAWN_RESULT]: true,
+    });
+    const request = owner.send.mock.calls[0]?.[1] as {
+      requestId: string;
+      paneId: string;
+    };
+    // Grant ainda não reivindicado pelo PTY: nada a liquidar.
+    expect(reportPendingSpawnStartFailure(request.requestId, owner, "x")).toBe(false);
+    expect(claimPendingSpawnMeta(request.requestId, owner)).not.toBeNull();
+    resolvePaneSpawn(
+      { requestId: request.requestId, ok: true, paneId: request.paneId, sessionId: null, pending: true },
+      owner,
+    );
+    await expect(resultPromise).resolves.toMatchObject({ pending: true });
+    takePendingPaneSpawnResult(signal);
+    owner.send.mockClear();
+
+    // Outro renderer não liquida a tentativa alheia.
+    expect(reportPendingSpawnStartFailure(request.requestId, stranger, "x")).toBe(false);
+    const refusal = 'Qwen Code: modelo selado "qwen3.7-plus" não entrou no argv do spawn';
+    expect(reportPendingSpawnStartFailure(request.requestId, owner, refusal)).toBe(true);
+
+    // Antes do F-723 o grant ficava `waiting` por 30 min (SPAWN_TIMEOUT_MS).
+    expect(pendingSpawnAttemptSession(request.requestId)).toEqual({ state: "gone" });
+    expect(failures).toEqual([
+      {
+        requestId: request.requestId,
+        paneId: request.paneId,
+        adapterId: "codex",
+        missionId: "mission-headless",
+        error: refusal,
+      },
+    ]);
+    expect(owner.send).toHaveBeenCalledWith(ORCH_CHANNELS.paneCloseRequest, {
+      requestId: request.requestId,
+      paneId: request.paneId,
+    });
+    // Um PTY atrasado desta tentativa não se vincula mais.
+    expect(bindPendingSpawnSession(request.requestId, owner, "pty-atrasado")).toBe(false);
+    expect(reportPendingSpawnStartFailure(request.requestId, owner, refusal)).toBe(false);
+    expect(failures).toHaveLength(1);
+    untap();
+    unregisterOrchRenderer(owner);
+    clearRendererWorkspaceScope(owner);
+  });
+
+  it("F-723: o watchdog abandona uma tentativa sem sessão sem publicar falha de CLI", async () => {
+    const owner = {
+      id: 944,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents & { send: ReturnType<typeof vi.fn> };
+    const signal = new AbortController().signal;
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerOrchRenderer(owner);
+    const failures: PendingSpawnStartFailure[] = [];
+    const untap = tapPendingSpawnStartFailure((failure) => failures.push(failure));
+    const resultPromise = requestPaneSpawn({
+      adapterId: "codex",
+      missionId: "mission-headless",
+      agentName: "Worker Headless",
+      workerIncarnationId: "worker-incarnation-main",
+      role: "worker",
+      scope,
+      abortSignal: signal,
+      [PENDING_SPAWN_RESULT]: true,
+    });
+    const request = owner.send.mock.calls[0]?.[1] as { requestId: string; paneId: string };
+    resolvePaneSpawn(
+      { requestId: request.requestId, ok: true, paneId: request.paneId, sessionId: null, pending: true },
+      owner,
+    );
+    await resultPromise;
+    takePendingPaneSpawnResult(signal);
+
+    expect(abandonPendingOrchSpawn(request.requestId, "pane did not start")).toBe(true);
+    expect(pendingSpawnAttemptSession(request.requestId)).toEqual({ state: "gone" });
+    expect(failures).toEqual([]);
+    expect(abandonPendingOrchSpawn(request.requestId, "pane did not start")).toBe(false);
+    untap();
     unregisterOrchRenderer(owner);
     clearRendererWorkspaceScope(owner);
   });

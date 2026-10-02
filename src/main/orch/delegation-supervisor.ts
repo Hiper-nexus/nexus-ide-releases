@@ -14,10 +14,42 @@ import {
   resolveEffectiveIntentState,
 } from '../../shared/mission-intent';
 import type { ProjectDomainStoreSuite } from './project-domain-store-registry';
-import { requireProjectDomainStoreRegistry } from './project-domain-store-registry';
+import {
+  getProjectDomainStores,
+  requireProjectDomainStoreRegistry,
+} from './project-domain-store-registry';
 import { onHandoffSubmitted, redeliverPendingHandoffs } from './idle-delivery';
 import { getSquad } from './squad-store';
-import { listPaneSnapshots } from './pane-registry';
+import {
+  abandonPendingOrchSpawn,
+  listPaneSnapshots,
+  pendingSpawnAttemptSession,
+  requestPaneClose,
+  tapPendingSpawnStartFailure,
+} from './pane-registry';
+import {
+  getRequestedTerminationOrigin,
+  getSessionSpawnedAtMs,
+  getSessionState,
+  tapSessionTermination,
+} from '../pty/pty-manager';
+import { adapterCircuitBreakers } from './circuit-breaker';
+import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from './workspace-handoff-delivery';
+import {
+  decideStartAction,
+  finishPaneStartWatch,
+  listPaneStartWatches,
+  notePaneSessionEnded,
+  notePaneStartFailure,
+  notStartedCause,
+  paneStartNoticeSummary,
+  paneStartWatchForSession,
+  setPaneStartKick,
+  shortStartError,
+  START_WATCH_TTL_MS,
+  type PaneStartOutcome,
+  type PaneStartWatch,
+} from './pane-start-watchdog';
 import { emitMissionIntentEvent } from './mission-intent-events';
 import {
   emitChefIdleAwaitingWorkers,
@@ -33,6 +65,7 @@ import { flushAllNexusTaskFailClosedRetries } from './nexus-task-fail-closed-rec
 import { decideMomentumNudge, momentumNudgeSummary } from './mission-momentum-watchdog';
 import {
   getAgentSemanticStatusBySession,
+  getAgentTurnStartSequence,
   SEMANTIC_WORKING_VETO_MS,
 } from './agent-status';
 import { trace } from '../observability/main-trace';
@@ -574,6 +607,302 @@ function notifyHungWorkerPanes(
   }
 }
 
+/**
+ * F-723: o Nexus solta um pane e confere se ele começou a tarefa. A ficha de
+ * cada spawn pendente com briefing (worker de missão ou helper do operador)
+ * vem do `nexus_pane_spawn`; aqui moram os efeitos. Evidência de início: turno
+ * aberto (UserPromptSubmit), status semântico de trabalho, entrega do brief
+ * comprovada ou handoff da sessão.
+ */
+function hasPaneStartEvidence(watch: PaneStartWatch, sessionId: string): boolean {
+  if (watch.accepted) return true;
+  if (getAgentTurnStartSequence(sessionId) > 0) return true;
+  const semantic = getAgentSemanticStatusBySession(sessionId);
+  if (
+    semantic?.status === 'working' ||
+    semantic?.status === 'completed' ||
+    semantic?.status === 'error'
+  ) {
+    return true;
+  }
+  try {
+    return (
+      suiteForScope(watch.scope).handoffs.list({
+        sessionIds: [sessionId],
+        includeDelivered: true,
+      }).length > 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Aviso a quem pediu, pelo caminho de handoff do supervisor (F-242/F-714):
+ * worker de missão → Maestro (`onHandoffSubmitted`); helper sem missão → linha
+ * de workspace (F-565) entregue ao pane pai pelo mesmo `injectPrompt`. Status
+ * `progress`: `stalled` é diagnóstico e não chega ao PTY do Maestro.
+ */
+function notifyPaneStartCaller(watch: PaneStartWatch, summary: string): void {
+  const suite = suiteForScope(watch.scope);
+  if (watch.missionId) {
+    const handoff = suite.handoffs.submit({
+      missionId: watch.missionId,
+      status: 'progress',
+      summary,
+      fromAgent: DELEGATION_SUPERVISOR_AGENT,
+    });
+    onHandoffSubmitted(handoff, suite.scope);
+    return;
+  }
+  const handoff = suite.handoffs.submit({
+    status: 'progress',
+    summary,
+    fromAgent: DELEGATION_SUPERVISOR_AGENT,
+  });
+  const parentSessionId = watch.callerSessionId;
+  if (getSessionState(parentSessionId) === null) return; // fica listada
+  void import('./tool-util')
+    .then(({ injectPrompt }) =>
+      injectPrompt(
+        parentSessionId,
+        `${WORKSPACE_HANDOFF_DELIVERY_PREFIX} de ${watch.paneId} (sistema Nexus): ${summary}\n`,
+      ),
+    )
+    .then(() => suite.handoffs.markSubmitted(handoff.id))
+    .catch((error) => {
+      // A linha durável fica `queued`: o operador ainda a lista.
+      console.warn(
+        `[delegation-supervisor] aviso de pane que não iniciou não entregue ao pai ` +
+          `(pane=${watch.paneId}): ${shortStartError(error)}`,
+      );
+    });
+}
+
+/** Passo 1 — "corrigir ali": a mesma entrega comprovada do spawn, uma vez. */
+async function redeliverPaneStartBrief(
+  watch: PaneStartWatch,
+  now: number,
+): Promise<void> {
+  watch.redeliveredAt = now;
+  watch.redelivering = true;
+  trace({
+    kind: 'pane-start-redeliver',
+    paneId: watch.paneId,
+    adapterId: watch.adapterId,
+    missionId: watch.missionId ?? null,
+  });
+  try {
+    if (watch.redeliver && (await watch.redeliver())) watch.accepted = true;
+  } catch (error) {
+    console.warn(
+      `[delegation-supervisor] reenvio do briefing falhou (pane=${watch.paneId}, ` +
+        `${watch.adapterId}): ${shortStartError(error)}`,
+    );
+  } finally {
+    watch.redelivering = false;
+  }
+}
+
+/** Pane morto sai da grade, desde que ninguém tenha outra sessão viva nele. */
+async function closeNotStartedPane(watch: PaneStartWatch): Promise<void> {
+  const snapshot = listPaneSnapshots().find((pane) => pane.paneId === watch.paneId);
+  if (!snapshot) return;
+  const current = snapshot.sessionId ?? undefined;
+  if (current && current !== watch.sessionId) return;
+  try {
+    await requestPaneClose(watch.paneId, current);
+  } catch {
+    // Fechar é limpeza; o aviso e o reenvio importam mais.
+  }
+}
+
+/**
+ * Passo 2 — "mandar para outro": revoga a tentativa sem sessão, fecha o pane
+ * morto (nunca o do operador, F-231), conta a falha no disjuntor do adapter,
+ * reabre a tarefa em outra CLI pela rota do spawn (um reenvio por pedido) e
+ * avisa quem pediu em todos os desfechos.
+ */
+async function handlePaneNotStarted(
+  watch: PaneStartWatch,
+  action: 'reroute' | 'notify-only',
+): Promise<void> {
+  watch.phase = 'acting';
+  const cause = notStartedCause({
+    failure: watch.failure?.cause ?? null,
+    hasSession: watch.sessionId !== null,
+  });
+  if (watch.sessionId === null) {
+    // Um PTY atrasado desta tentativa não pode nascer depois do reenvio.
+    abandonPendingOrchSpawn(watch.requestId, 'pane did not start within the start window');
+  }
+  if (!watch.operatorOpened) {
+    await closeNotStartedPane(watch);
+    adapterCircuitBreakers.recordFailure(watch.adapterId);
+  }
+  let outcome: PaneStartOutcome;
+  if (action === 'reroute' && watch.reroute) {
+    try {
+      const next = await watch.reroute([watch.adapterId]);
+      outcome = { kind: 'rerouted', paneId: next.paneId, adapterId: next.adapterId };
+    } catch (error) {
+      outcome = { kind: 'reroute-failed', error: shortStartError(error) };
+    }
+  } else {
+    outcome = {
+      kind: 'not-rerouted',
+      why: watch.operatorOpened
+        ? 'operator'
+        : watch.rerouted
+          ? 'second-attempt'
+          : watch.pinnedRuntime
+            ? 'pinned'
+            : 'no-alternative',
+    };
+  }
+  const summary = paneStartNoticeSummary({
+    paneId: watch.paneId,
+    adapterId: watch.adapterId,
+    cause,
+    outcome,
+  });
+  trace({
+    kind: 'pane-not-started',
+    paneId: watch.paneId,
+    adapterId: watch.adapterId,
+    missionId: watch.missionId ?? null,
+    role: watch.role,
+    cause,
+    outcome: outcome.kind,
+    ...(outcome.kind === 'rerouted'
+      ? { nextPaneId: outcome.paneId, nextAdapterId: outcome.adapterId }
+      : {}),
+  });
+  console.warn(`[delegation-supervisor] ${summary}`);
+  try {
+    notifyPaneStartCaller(watch, summary);
+  } catch (error) {
+    console.warn(
+      `[delegation-supervisor] aviso de pane que não iniciou falhou ` +
+        `(pane=${watch.paneId}): ${shortStartError(error)}`,
+    );
+  } finally {
+    finishPaneStartWatch(watch);
+  }
+}
+
+async function checkPaneStart(watch: PaneStartWatch, now: number): Promise<void> {
+  // Varredura e chute imediato podem se cruzar: um efeito por ficha por vez.
+  if (watch.phase !== 'watching' || watch.redelivering) return;
+  if (watch.sessionId === null) {
+    const bound = pendingSpawnAttemptSession(watch.requestId);
+    if (bound.state === 'bound') {
+      watch.sessionId = bound.sessionId;
+      watch.sessionSpawnedAt = getSessionSpawnedAtMs(bound.sessionId);
+    } else if (bound.state === 'gone' && !watch.failure && !watch.accepted) {
+      // Tentativa liquidada sem falha de início (chamador revogado, janela
+      // fechada, troca de workspace): não foi a CLI que falhou.
+      finishPaneStartWatch(watch);
+      return;
+    }
+  }
+  const sessionId = watch.sessionId;
+  if (
+    !watch.failure &&
+    (watch.accepted || (sessionId !== null && hasPaneStartEvidence(watch, sessionId)))
+  ) {
+    adapterCircuitBreakers.recordSuccess(watch.adapterId);
+    finishPaneStartWatch(watch);
+    return;
+  }
+  const state = sessionId !== null ? getSessionState(sessionId) : null;
+  if (
+    !watch.failure &&
+    (watch.sessionEnded ||
+      (sessionId !== null && state === null) ||
+      now - watch.createdAt >= START_WATCH_TTL_MS)
+  ) {
+    // Encerramento pedido, one-shot que terminou, morte tardia ou CLI sem
+    // prova de turno: o veredito é do F-242 e da mortalidade de worker.
+    finishPaneStartWatch(watch);
+    return;
+  }
+  const action = decideStartAction({
+    role: watch.role,
+    operatorOpened: watch.operatorOpened === true,
+    started: false,
+    failed: watch.failure !== null,
+    session:
+      sessionId === null
+        ? 'none'
+        : state === 'busy' || state === 'spawning'
+          ? 'busy'
+          : 'idle',
+    canJudgeLiveSession: watch.turnProof,
+    spawnedAt: sessionId === null ? watch.createdAt : watch.sessionSpawnedAt ?? watch.createdAt,
+    redeliveredAt: watch.redeliveredAt,
+    rerouted: watch.rerouted,
+    pinnedRuntime: watch.pinnedRuntime,
+    hasAlternative: watch.hasAlternative?.() ?? false,
+    now,
+  });
+  if (action === 'none') return;
+  if (action === 'redeliver') {
+    await redeliverPaneStartBrief(watch, now);
+    return;
+  }
+  await handlePaneNotStarted(watch, action);
+}
+
+/** Uma passada do watchdog de início (varredura de 15 s ou falha provada). */
+export async function checkPaneStarts(now: number = Date.now()): Promise<void> {
+  await Promise.all(
+    listPaneStartWatches()
+      .filter((watch) => watch.phase === 'watching' && !watch.redelivering)
+      .map((watch) =>
+        checkPaneStart(watch, now).catch((error) => {
+          console.warn(
+            `[delegation-supervisor] verificação de início falhou ` +
+              `(pane=${watch.paneId}): ${shortStartError(error)}`,
+          );
+        }),
+      ),
+  );
+}
+
+let disposePaneStartTaps: (() => void) | null = null;
+
+function installPaneStartTaps(): void {
+  if (disposePaneStartTaps) return;
+  const untapFailure = tapPendingSpawnStartFailure((failure) => {
+    console.warn(
+      `[delegation-supervisor] spawn pendente não subiu (pane=${failure.paneId}, ` +
+        `${failure.adapterId ?? '?'}): ${shortStartError(failure.error)}`,
+    );
+    notePaneStartFailure(failure.paneId, 'spawn-refused');
+  });
+  const untapTermination = tapSessionTermination((sessionId, agent) => {
+    const watch = paneStartWatchForSession(sessionId, agent?.paneId);
+    if (!watch || (agent && agent.adapterId !== watch.adapterId)) return;
+    notePaneSessionEnded(watch, {
+      sessionId,
+      requested: getRequestedTerminationOrigin(sessionId) !== null,
+      oneShot: agent?.oneShot === true,
+      spawnedAt: getSessionSpawnedAtMs(sessionId),
+      started: hasPaneStartEvidence(watch, sessionId),
+      now: Date.now(),
+    });
+  });
+  setPaneStartKick(() => {
+    void checkPaneStarts(Date.now());
+  });
+  disposePaneStartTaps = () => {
+    untapFailure();
+    untapTermination();
+    setPaneStartKick(null);
+  };
+}
+
 function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
   const liveStates = new Set<PaneRuntimeState>([
     'spawning', 'busy', 'idle', 'unknown',
@@ -940,13 +1269,24 @@ const suites = new Map<string, ProjectDomainStoreSuite>();
 let timer: ReturnType<typeof setInterval> | null = null;
 let unsubscribeScopes: (() => void) | null = null;
 
-function scopeKey(suite: ProjectDomainStoreSuite): string {
+function scopeKeyOf(scope: ProjectDomainStoreSuite['scope']): string {
   return [
-    suite.scope.installationId,
-    suite.scope.projectId,
-    suite.scope.checkoutId,
-    suite.scope.rootRealPath,
+    scope.installationId,
+    scope.projectId,
+    scope.checkoutId,
+    scope.rootRealPath,
   ].join('\0');
+}
+
+function scopeKey(suite: ProjectDomainStoreSuite): string {
+  return scopeKeyOf(suite.scope);
+}
+
+/** Suite do escopo de coordenação de um pane vigiado (F-723). */
+function suiteForScope(
+  scope: ProjectDomainStoreSuite['scope'],
+): ProjectDomainStoreSuite {
+  return suites.get(scopeKeyOf(scope)) ?? getProjectDomainStores(scope);
 }
 
 export function initDelegationSupervisor(): void {
@@ -958,6 +1298,7 @@ export function initDelegationSupervisor(): void {
 
 /** Install store discovery without creating a supervisor timer. */
 export function prepareDelegationSupervisor(): void {
+  installPaneStartTaps();
   if (unsubscribeScopes) return;
   unsubscribeScopes = requireProjectDomainStoreRegistry().onScope((_scope, suite) => {
     suites.set(scopeKey(suite), suite);
@@ -973,6 +1314,8 @@ export function reconcileDelegationSupervisor(now: number = Date.now()): void {
       console.warn('[delegation-supervisor] scan failed:', error);
     }
   }
+  // F-723: panes soltos que ainda não provaram que começaram a tarefa.
+  void checkPaneStarts(now);
 }
 
 export function shutdownDelegationSupervisor(): void {
@@ -980,6 +1323,8 @@ export function shutdownDelegationSupervisor(): void {
   timer = null;
   unsubscribeScopes?.();
   unsubscribeScopes = null;
+  disposePaneStartTaps?.();
+  disposePaneStartTaps = null;
   suites.clear();
   chefIdleTrackers.clear();
   zeroDeliveryPoked.clear();

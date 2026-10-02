@@ -256,6 +256,11 @@ import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
 import { getPaneAuthzInfo, pendingSpawnAttemptSession } from './pane-registry';
 import { onWorkerSpawnFailed } from './spawn-fail-events';
 import { adapterCircuitBreakers } from './circuit-breaker';
+import {
+  getPaneStartWatch,
+  resetPaneStartWatchdogForTests,
+  trackPaneStart,
+} from './pane-start-watchdog';
 import { testProjectScope } from './__tests__/scope-fixture';
 const KIMI_COMPOSER_SCREEN = 'Welcome to Kimi Code!\n│ >   │\nAsk When Needed K3 thinking: high\ncontext: 0% (0/1M)';
 import fs from 'node:fs';
@@ -1601,6 +1606,99 @@ describe('agent prompt injection', () => {
       expect(typedInto('session-kimi')).toEqual([]);
       expect(stubs.requestPaneClose).toHaveBeenCalledWith('pane-kimi');
       expect(failures).toEqual([]);
+      // F-723: chamador revogado não é falha de início da CLI.
+      expect(getPaneStartWatch('pane-kimi')).toBeNull();
+    });
+
+    describe('F-723: watchdog de início', () => {
+      const watchKimi = () =>
+        trackPaneStart({
+          paneId: 'pane-kimi',
+          requestId: 'req-kimi',
+          adapterId: 'kimi',
+          scope,
+          role: 'helper',
+          callerSessionId: 'session-operador',
+          turnProof: false,
+          pinnedRuntime: false,
+          rerouted: false,
+          createdAt: Date.now(),
+        });
+      afterEach(() => resetPaneStartWatchdogForTests());
+
+      it('o ACK pendente com briefing entrega a ficha com a entrega comprovada como reenvio', async () => {
+        const onPendingSpawn = vi.fn();
+        stubs.sessionState.mockReturnValue('idle');
+        stubs.requestPaneSpawn.mockResolvedValueOnce({
+          requestId: 'req-kimi', ok: true, pending: true, paneId: 'pane-kimi', sessionId: null,
+        } as never);
+        vi.mocked(getPaneAuthzInfo).mockReturnValue(null as never);
+        vi.mocked(pendingSpawnAttemptSession).mockReturnValue({ state: 'waiting' });
+        await expect(
+          spawnPaneAndMaybePrompt(
+            { adapterId: 'kimi', prompt: 'revise o diff', scope },
+            { onPendingSpawn },
+          ),
+        ).rejects.toThrow();
+        expect(onPendingSpawn).toHaveBeenCalledTimes(1);
+        const attempt = onPendingSpawn.mock.calls[0]![0];
+        expect(attempt).toMatchObject({
+          requestId: 'req-kimi', paneId: 'pane-kimi', adapterId: 'kimi', turnProof: false,
+        });
+        // A ficha nunca leva o texto do brief.
+        expect(JSON.stringify(attempt)).not.toContain('revise o diff');
+
+        // Sessão ainda não vinculada à tentativa: nada a reentregar.
+        await expect(attempt.redeliver()).resolves.toBe(false);
+        answerEnterWithTurn();
+        bindAttempt('session-kimi');
+        await vi.advanceTimersByTimeAsync(3_000);
+        stubs.writeSession.mockClear();
+        stubs.sessionState.mockReturnValue('idle');
+        answerEnterWithTurn();
+        const redelivered = attempt.redeliver();
+        await vi.advanceTimersByTimeAsync(3_000);
+        await expect(redelivered).resolves.toBe(true);
+        expect(typedInto('session-kimi')[0]?.[1]).toContain('revise o diff');
+      });
+
+      it('brief aceito na colagem adiada dá o pane por iniciado', async () => {
+        answerEnterWithTurn();
+        const watch = watchKimi();
+        await spawnPendingKimi();
+        bindAttempt('session-kimi');
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(watch.accepted).toBe(true);
+        expect(watch.failure).toBeNull();
+      });
+
+      it('brief não aceito vira falha de início no watchdog (antes: só toast, ninguém reenviava)', async () => {
+        const watch = watchKimi();
+        await spawnPendingKimi();
+        bindAttempt('session-kimi');
+        await vi.advanceTimersByTimeAsync(120_000);
+        expect(failures).toHaveLength(1);
+        expect(watch.failure?.cause).toBe('brief-rejected');
+      });
+
+      it('missão encerrada enquanto o pane subia não é falha da CLI', async () => {
+        const watch = watchKimi();
+        answerEnterWithTurn();
+        stubs.sessionState.mockReturnValue('idle');
+        stubs.waitForIdle.mockResolvedValue('idle');
+        bindAttempt('session-kimi');
+        stubs.missionGet.mockImplementationOnce(() => ({ id: 'm1', squadId: 'squad-1', status: 'blocked' }));
+        const delivered = deliverPromptAfterPendingSpawn(
+          { requestId: 'req-kimi', paneId: 'pane-kimi' },
+          'revise o diff',
+          'kimi',
+          undefined,
+          { scope, missionId: 'm1' },
+        );
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(await delivered).toBe(false);
+        expect(watch.failure).toBeNull();
+      });
     });
   });
 

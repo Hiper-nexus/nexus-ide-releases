@@ -1229,6 +1229,99 @@ function retainClaimedPendingSpawnHeadless(
   return null;
 }
 
+/**
+ * F-723: o CLI de um spawn com ACK pendente não subiu. O chamador MCP já
+ * recebeu `pending: true` e não tem como saber; quem escuta (o watchdog de
+ * início do supervisor) avisa e reroteia. Só ids, adapter e o erro do Main.
+ */
+export interface PendingSpawnStartFailure {
+  readonly requestId: string;
+  readonly paneId: string;
+  readonly adapterId?: string;
+  readonly missionId?: string;
+  readonly error: string;
+}
+type PendingSpawnStartFailureTap = (failure: PendingSpawnStartFailure) => void;
+const pendingSpawnStartFailureTaps = new Set<PendingSpawnStartFailureTap>();
+
+export function tapPendingSpawnStartFailure(
+  cb: PendingSpawnStartFailureTap,
+): () => void {
+  pendingSpawnStartFailureTaps.add(cb);
+  return () => pendingSpawnStartFailureTaps.delete(cb);
+}
+
+function publishPendingSpawnStartFailure(
+  requestId: string,
+  pending: PendingSpawn,
+  error: string,
+): void {
+  const failure: PendingSpawnStartFailure = {
+    requestId,
+    paneId: pending.request.paneId,
+    ...(pending.request.adapterId ? { adapterId: pending.request.adapterId } : {}),
+    ...(pending.meta.missionId ? { missionId: pending.meta.missionId } : {}),
+    error,
+  };
+  for (const tap of pendingSpawnStartFailureTaps) {
+    try {
+      tap(failure);
+    } catch (tapError) {
+      console.warn("[pane-registry] start-failure tap threw:", tapError);
+    }
+  }
+}
+
+/**
+ * F-723: o PTY do grant pendente que ESTE renderer reivindicou foi recusado
+ * ou lançou (pty-ipc devolveu ok:false). Um grant reivindicado nunca é
+ * reivindicado de novo, então esperar os 30 min do timeout só escondia a
+ * falha: liquida agora, revoga um bind tardio e publica a falha a quem escuta
+ * (o chamador MCP já tinha recebido o ACK pendente).
+ */
+export function reportPendingSpawnStartFailure(
+  requestId: string,
+  owner: WebContents,
+  error: string,
+): boolean {
+  const pending = pendingSpawns.get(requestId);
+  if (
+    !pending ||
+    pending.owner !== owner ||
+    !pending.claimed ||
+    pending.claimedSessionId !== null ||
+    pending.settled ||
+    !pending.allowPendingResult
+  ) {
+    return false;
+  }
+  void settlePendingSpawnFailure(requestId, pending, error, {
+    retainClaimed: false,
+    startFailure: true,
+  });
+  return true;
+}
+
+/**
+ * F-723: o watchdog de início desistiu de uma tentativa sem sessão (nenhum PTY
+ * na graça). Liquida o grant para que um bind tardio seja recusado e o
+ * processo que nascer atrasado seja encerrado pelo pty-ipc — o pedido já foi
+ * mandado para outra CLI. Tentativa com sessão vinculada não é abandonada.
+ */
+export function abandonPendingOrchSpawn(
+  requestId: string,
+  reason: string,
+): boolean {
+  const pending = pendingSpawns.get(requestId);
+  if (!pending || pending.settled || pending.claimedSessionId !== null) {
+    return false;
+  }
+  void settlePendingSpawnFailure(requestId, pending, reason, {
+    retainClaimed: false,
+  });
+  return true;
+}
+
 async function settlePendingSpawnFailure(
   requestId: string,
   pending: PendingSpawn,
@@ -1236,6 +1329,8 @@ async function settlePendingSpawnFailure(
   options: {
     readonly allowMainFallback?: boolean;
     readonly retainClaimed?: boolean;
+    /** F-723: falha de início do CLI (não abort, janela ou workspace). */
+    readonly startFailure?: boolean;
   } = {},
 ): Promise<void> {
   if (pending.settled) return;
@@ -1249,6 +1344,11 @@ async function settlePendingSpawnFailure(
     // the process it just created.
     rememberOrchSpawnGrantTombstone(requestId, pending, "expired");
     pendingSpawns.delete(requestId);
+  }
+  // Síncrono, antes de qualquer await: quem escuta vê a falha no mesmo tick
+  // em que a tentativa some do registro.
+  if (options.startFailure && pending.pendingResultSent) {
+    publishPendingSpawnStartFailure(requestId, pending, error);
   }
 
   const retained =
