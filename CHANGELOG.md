@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.164 — Workers com mais autonomia
+
+Candidata ainda não publicada. Inclui integralmente a 0.76.163.
+
+- **Workers podem executar mais.** Navegador e desktop deixam de recusar o acesso apenas pelo papel de worker. O acesso continua limitado à janela de origem, ao projeto, à sessão viva, à conta e à lista de ferramentas do chamador; abas com perfil pessoal seguem recusadas pela análise visual.
+- **Subagentes nativos disponíveis no modo livre.** Claude e OpenClaude deixam de receber um bloqueio estático de `Task`. O contrato permite subagentes nativos dentro das permissões da tarefa; o bloqueio permanece nos caminhos explicitamente governados ou de leitura.
+- **Teclas compatíveis com jogos.** `press` fornece `event.code` e aceita `holdMs` opcional de 0 a 1000 ms, preservando o padrão imediato. Cancelamento e navegação encerram a ação sem soltar teclas em uma página antiga.
+- **Verificação visual declarada.** A entrega de UI/jogo informa página, viewport, ações e evidência observada; ausência de browser ou prova visual aparece como pendência, sem simular screenshot. Preview Linux exercita formulário/menu, mobile e jogo usando o preload real do Electron e guarda as evidências de CI. Preview não é uma candidata publicável.
+- **Limites da validação.** Os testes focados de contrato, autorização e teclado passaram localmente. O ambiente local bloqueou a renderização do Electron; pixels, suíte completa, pacotes finais e assinatura/notarização ainda dependem dos gates correspondentes. Não houve comparação de qualidade entre modelos nem execução de missão LLM contra provedores.
+
 ## 0.76.163 — Reporte de problema
 
 Build do Mac. Inclui integralmente a 0.76.162.

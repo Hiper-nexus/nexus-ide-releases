@@ -8970,7 +8970,7 @@ export const RELEASE_076162: AppRelease = {
   }],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076163: AppRelease = {
   version: '0.76.163',
   date: '2026-10-02',
   codename: 'Reporte de problema',
@@ -9016,6 +9016,50 @@ export const CURRENT_RELEASE: AppRelease = {
         'ausente não derrubam mais a decisão do Jev; o uso ausente aparece ' +
         'como "sem medição", nunca como zero. O teste de conexão com a ' +
         'Cloudflare ainda não foi validado contra o serviço real.',
+    },
+  ],
+};
+
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.164',
+  date: '2026-10-02',
+  codename: 'Workers com mais autonomia',
+  summary:
+    'Workers podem usar o navegador e o desktop e criar subagentes quando a ' +
+    'CLI oferece esse recurso. O acesso continua vinculado à janela, ao ' +
+    'projeto e à conta da tarefa. Inclui a 0.76.163.',
+  highlights: [
+    {
+      title: 'Workers executam e verificam a interface',
+      detail:
+        'Workers podem abrir e controlar o navegador da janela de origem e ' +
+        'usar o desktop com as ferramentas autorizadas para a tarefa. A ' +
+        'entrega deve informar a página, as interações e a evidência visual; ' +
+        'se a verificação não puder acontecer, a pendência fica explícita.',
+    },
+    {
+      title: 'Subagentes nativos disponíveis',
+      detail:
+        'Claude e OpenClaude deixam de bloquear Task por padrão. Workers ' +
+        'podem usar os subagentes da própria CLI dentro das permissões da ' +
+        'tarefa; o modo governado e as restrições explícitas continuam valendo.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Teclas para jogos no navegador',
+      detail:
+        'As teclas passam a fornecer event.code e podem ficar pressionadas ' +
+        'por até um segundo. A navegação e o cancelamento encerram a ação ' +
+        'sem mandar eventos para uma página antiga.',
+    },
+    {
+      title: 'Build e verificação Linux no CI',
+      detail:
+        'Preview Linux registra o commit, os smokes e as evidências de ' +
+        'formulário, menu, viewport mobile e jogo. O canal de release Linux ' +
+        'confere os pacotes e o recibo antes da publicação.',
     },
   ],
 };
