@@ -9449,7 +9449,7 @@ export const RELEASE_076174: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076175: AppRelease = {
   version: '0.76.175',
   date: '2026-10-02',
   codename: 'Login no Omarchy',
@@ -9475,4 +9475,74 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.176',
+  date: '2026-10-02',
+  codename: 'Helpers sem espera',
+  summary:
+    'O Maestro abre os helpers numa chamada só, sem a rodada extra de ' +
+    'roteamento, e os panes que nasciam parados (Qwen que não abria, Devin ' +
+    'com o brief sem Enter, MiMo retomado que fechava sozinho) começam a ' +
+    'trabalhar. A missão parada fica à vista no Quadro, com Remover. Inclui ' +
+    'a 0.76.175.',
+  highlights: [
+    {
+      title: 'O Maestro abre os helpers mais rápido',
+      detail:
+        'O Maestro consultava a rota de cada tarefa antes de abrir os panes, ' +
+        'uma rodada inteira de raciocínio a mais antes do primeiro helper ' +
+        'nascer. Abrir o pane já escolhe a CLI, o modelo e o esforço, e as ' +
+        'instruções do Maestro agora mandam fazer só isso.',
+    },
+    {
+      title: 'Missão parada à vista no Quadro, com Remover',
+      detail:
+        'A missão parada ou dormindo aparece em "Precisa de você", não mais ' +
+        'escondida na gaveta do Arquivo. O card de missão sem processo ganha ' +
+        '"Remover", com a mesma confirmação da lista lateral.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'O Qwen volta a abrir',
+      detail:
+        'O Qwen Code novo recusa duas opções de permissão que o Nexus passava ' +
+        'juntas e fechava mostrando a ajuda. O pane do Qwen volta a abrir, ' +
+        'pelo "+ Pane" e nas missões.',
+    },
+    {
+      title: 'Atualizar o Devin com panes abertos',
+      detail:
+        'O botão "Atualizar CLI" do Devin falhava se algum pane Devin ' +
+        'estivesse aberto. A atualização passa a acontecer, e os panes ' +
+        'abertos seguem na versão anterior até fechar.',
+    },
+    {
+      title: 'Brief do Devin não fica mais parado sem Enter',
+      detail:
+        'Com a máquina carregada, o Enter do brief chegava junto com a ' +
+        'colagem e virava quebra de linha: o brief ficava no campo de texto ' +
+        'sem ser enviado. O Nexus espera o Devin terminar de receber a ' +
+        'colagem antes do Enter, como já fazia com o Codex.',
+    },
+    {
+      title: 'Worker MiMo retomado não fecha mais sozinho',
+      detail:
+        'O MiMo pergunta, a cada abertura, se aceita rodar sem pedir ' +
+        'permissão, com "não, sair" marcado. Na retomada, o brief colado cedo ' +
+        'respondia essa pergunta e o pane fechava em 5 segundos. O Nexus liga ' +
+        'o mesmo modo pela variável que o MiMo documenta, sem a pergunta, e ' +
+        'só cola o brief com o campo de texto pronto.',
+    },
+    {
+      title: 'Codex e Claude fora do Nexus sem erro de hook no Windows',
+      detail:
+        'Quando você usava o Codex ou o Claude num terminal comum, o hook ' +
+        'que o Nexus instala falhava a cada evento com "A sintaxe do comando ' +
+        'está incorreta". Agora ele sai em silêncio quando não está num pane ' +
+        'do Nexus.',
+    },
+  ],
 };

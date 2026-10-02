@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.76.176 — Helpers sem espera
+
+Build do Windows. Inclui a 0.76.175 (Login no Omarchy).
+
+- **Maestro delega numa chamada só (F-744).** A doutrina do kickoff ("nexus_route_task e nexus_pane_spawn") e a descrição da `nexus_route_task` ("Call it for every delegation") faziam o Maestro Codex rotear a leva inteira antes de abrir os panes. O primeiro pane nasceu 3 min 17 s depois do pedido; uma rodada inteira do modelo (~60 s de raciocínio) foi só para rotear. Desde 0.76.110 o spawn sem `adapterId` dentro da missão já roteia com reserva. A doutrina e as descrições ensinam `nexus_pane_spawn({task, prompt})`; a rota fica para inspecionar antes de decidir.
+  - Medido e ainda aberto: no Windows cada chamada de ferramenta do Codex paga ~1–2 s de hooks (PowerShell aninhado com `Invoke-WebRequest`), e o Codex serializa as chamadas MCP (`supports_parallel_tool_calls` falso por padrão).
+- **Missão parada à vista no Quadro (F-741).** Parou/Dormindo/sem sessão vão para "Precisa de você"; só o arquivo do operador manda para a gaveta. O card de missão sem processo ganha "Remover" (confirmação de perigo + `removeMissionVerified`).
+- **Enter do brief do Devin espera a colagem (F-743).** O Devin recebe o brief cru e, sob carga, lia colagem e Enter no mesmo lote: o brief ficava como `[Pasted text #1 +117 lines]` sem envio. A espera do F-735 vale para o Devin a partir de 20 linhas (marcador em ~150 ms no 3000.11.1).
+- **Worker MiMo retomado não confirma "No, exit" (F-742).** O MiMo 0.1.15 abre o aviso de bypass a cada boot com a flag e sem memória do aceite; aceitar só liga `MIMOCODE_DANGEROUSLY_SKIP_PERMISSIONS=1`. Na retomada o brief é colado depois do boot e o `\n` dele confirmava a saída (pane morto em 5 s). O spawn passa a variável no lugar da flag, e a colagem no MiMo espera o rodapé do composer.
+- **Qwen volta a abrir (F-748).** O Qwen Code 0.24 recusa `--yolo` junto de `--approval-mode` ("Cannot use both…") e sai 1 com o `--help`: o argv base trazia `--approval-mode auto-edit` e o modo padrão somava `--yolo`. Era também a morte no boot dos workers Qwen. O base não leva flag de permissão; o controle do adapter decide.
+- **"Atualizar CLI" do Devin com pane aberto (F-747).** O `setup.ps1` oficial sobrescreve `devin.exe` com `Copy-Item -Force`, que o Windows recusa com o binário em uso. O runner renomeia o atual para `.old-<marca>` antes, devolve-o se o script falhar e limpa cópias `.old` que já não estão em uso.
+- **Hook global do Windows sai 0 fora de um pane (F-745).** Sem `NEXUS_AGENT_HOOK_ENDPOINT` o bloco multilinha do `codex-hook.cmd`/`claude-hook.cmd` não parseava (exit 255 a cada evento do Codex/Claude rodado fora do Nexus). Um `goto` pula o bloco.
+- **Registrado, sem correção (F-746).** Retomada e rota não enxergam a cota medida de CLI com login nativo: o Maestro retomou um Devin com 0% restante.
+
 ## 0.76.175 — Login no Omarchy
 
 Build do Linux (DEB, RPM e ZIP). Inclui a 0.76.171 a 0.76.174, que não tiveram pacote Linux. Corrige a 0.76.170, que não completava o login no Omarchy.
