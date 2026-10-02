@@ -49,7 +49,8 @@ export function collectBrowserVisualMasks(win: Window & typeof globalThis): Brow
   const maskSensitiveText = (text: Node): void => {
     const block = sensitiveBlockAncestor(owningElement(text) as unknown as MaskBlockNode | null) as unknown as Element | null;
     const rect = block?.getBoundingClientRect();
-    if (rect && area(rect) <= viewportArea * MAX_BLOCK_VIEWPORT_SHARE) append(rect);
+    // Bloco sem caixa (display:none, sem layout) não esconde nada: o texto cai nos próprios retângulos.
+    if (rect && rect.width > 0 && rect.height > 0 && area(rect) <= viewportArea * MAX_BLOCK_VIEWPORT_SHARE) append(rect);
     else appendTextRects(text);
   };
   const visitText = (node: Node): void => {
