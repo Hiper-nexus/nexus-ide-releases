@@ -200,6 +200,22 @@ describe('voice: restore_mission_panes picks the right mission or opens nothing'
       expect(execution.toolResult).toMatchObject({ ok: false });
     });
 
+    it('does not sit out the Jev wait when the turn is cancelled: the abort surfaces right away', async () => {
+      missionPick.mockImplementation(() => new Promise(() => {}));
+      const abort = new AbortController();
+      const running = executeJarvisAction(restore('site'), context, { signal: abort.signal });
+      abort.abort();
+      const outcome = await Promise.race([
+        running.then(
+          () => 'resolved',
+          (error: unknown) => (error as { name?: string }).name ?? 'error',
+        ),
+        new Promise<string>((resolve) => setTimeout(() => resolve('still waiting'), 1_000)),
+      ]);
+      expect(outcome).toBe('AbortError');
+      expect(openedMissionId()).toBeNull();
+    });
+
     it('honours a cancellation that arrives while the Jev is thinking: nothing opens', async () => {
       const abort = new AbortController();
       missionPick.mockImplementation(async () => {

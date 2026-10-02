@@ -41,11 +41,20 @@ export type RestoreMissionDecision<M extends RestorableMission> =
 
 type MissionPick = (request: MissionPickRequest) => Promise<MissionPickResult | null>;
 
-function clamp(text: string, maxCodePoints: number): { text: string; clipped: boolean } {
-  const points = Array.from(text.replace(/\s+/g, ' ').trim());
-  return points.length <= maxCodePoints
-    ? { text: points.join(''), clipped: false }
-    : { text: points.slice(0, maxCodePoints).join(''), clipped: true };
+/**
+ * Corta por unidades UTF-16 (o que `z.string().max()` do schema conta), sem
+ * partir um par substituto ao meio: 100 emojis seriam 200 unidades e o Main
+ * recusaria o pedido inteiro.
+ */
+function clamp(text: string, maxUnits: number): { text: string; clipped: boolean } {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxUnits) return { text: normalized, clipped: false };
+  let out = '';
+  for (const character of normalized) {
+    if (out.length + character.length > maxUnits) break;
+    out += character;
+  }
+  return { text: out.trimEnd(), clipped: true };
 }
 
 function spokenTitle(title: string): string {
@@ -61,25 +70,32 @@ function joinNatural(items: readonly string[]): string {
 
 /**
  * Pede o desempate ao Main. Nunca lança e nunca espera sem teto: ponte
- * ausente, erro ou demora viram `null` ("sem decisão").
+ * ausente, erro, demora ou turno cancelado viram `null` ("sem decisão"). O
+ * cancelamento resolve na hora, para o executor não esperar o teto de 5 s só
+ * para descobrir que o turno já morreu.
  */
 export async function requestMissionPick(
   request: MissionPickRequest,
+  signal?: AbortSignal,
 ): Promise<MissionPickResult | null> {
   const bridge = typeof window === 'undefined' ? undefined : window.nexus?.jev;
-  if (typeof bridge?.missionPick !== 'function') return null;
+  if (typeof bridge?.missionPick !== 'function' || signal?.aborted) return null;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
   try {
     return await Promise.race([
       bridge.missionPick(request),
       new Promise<null>((resolve) => {
         timer = setTimeout(() => resolve(null), MISSION_PICK_CLIENT_TIMEOUT_MS);
+        onAbort = () => resolve(null);
+        signal?.addEventListener('abort', onAbort, { once: true });
       }),
     ]);
   } catch {
     return null;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
   }
 }
 

@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { MissionPickRequest, MissionPickResult } from '../../shared/mission-pick';
+import {
+  missionPickRequestSchema,
+  type MissionPickRequest,
+  type MissionPickResult,
+} from '../../shared/mission-pick';
 import {
   MISSION_PICK_CLIENT_TIMEOUT_MS,
   decideRestoreMission,
@@ -114,6 +118,16 @@ describe('decideRestoreMission', () => {
       expect(decision).toMatchObject({ kind: 'refuse', reason: 'ambiguous' });
     });
 
+    it('builds a request the Main schema accepts, even when titles are made of astral characters', async () => {
+      const emojiA = mission('id-a', `Foguete ${'🚀'.repeat(150)} A`);
+      const emojiB = mission('id-b', `Foguete ${'🚀'.repeat(150)} B`);
+      const pick = vi.fn(async (_request: MissionPickRequest) => undecided);
+      await decideRestoreMission('foguete', [emojiA, emojiB], pick);
+      const request = pick.mock.calls[0]![0];
+      // O limite do schema conta unidades UTF-16; cortar por "caracteres" estouraria.
+      expect(missionPickRequestSchema.safeParse(request).success).toBe(true);
+    });
+
     it('clamps long titles for the model and for the voice', async () => {
       const longTitle = 'Refatoração '.repeat(30);
       const a = mission('id-a', `${longTitle}A`);
@@ -160,6 +174,27 @@ describe('requestMissionPick', () => {
     const pending = requestMissionPick(request);
     await vi.advanceTimersByTimeAsync(MISSION_PICK_CLIENT_TIMEOUT_MS + 1);
     expect(await pending).toBeNull();
+  });
+
+  it('stops waiting as soon as the turn is cancelled, so the cancellation is not delayed', async () => {
+    vi.stubGlobal('window', { nexus: { jev: { missionPick: () => new Promise(() => {}) } } });
+    const abort = new AbortController();
+    const pending = requestMissionPick(request, abort.signal);
+    abort.abort();
+    const outcome = await Promise.race([
+      pending.then((value) => (value === null ? 'null' : 'value')),
+      new Promise<string>((resolve) => setTimeout(() => resolve('still waiting'), 1_000)),
+    ]);
+    expect(outcome).toBe('null');
+  });
+
+  it('does not even call the bridge when the turn was already cancelled', async () => {
+    const missionPick = vi.fn(async () => picked(0));
+    vi.stubGlobal('window', { nexus: { jev: { missionPick } } });
+    const abort = new AbortController();
+    abort.abort();
+    expect(await requestMissionPick(request, abort.signal)).toBeNull();
+    expect(missionPick).not.toHaveBeenCalled();
   });
 
   it('returns null instead of throwing when the call is rejected', async () => {

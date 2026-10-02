@@ -36,7 +36,7 @@ import { currentViewNarration, currentViewToolOutput } from './current-view-read
 import { waitForActionEvidence } from './action-evidence';
 import { resolveWorkspaceByVoiceName } from './workspace-name-resolver';
 import { resolveSquadByVoiceName } from './squad-name-resolver';
-import { decideRestoreMission } from './restore-mission-target';
+import { decideRestoreMission, requestMissionPick } from './restore-mission-target';
 import { logVoiceEvent } from './voice-live-ipc';
 import {
   isExecutionReadyDelegationPrompt,
@@ -1307,7 +1307,9 @@ export async function executeJarvisAction(
     } else {
       // Nenhuma missão é aberta "por palpite": nome sem par → diz que não achou;
       // nomes parecidos → o Jev desempata ou a pessoa é perguntada.
-      const decision = await decideRestoreMission(action.alvo, missions);
+      const decision = await decideRestoreMission(action.alvo, missions, (request) =>
+        requestMissionPick(request, control.signal),
+      );
       checkpoint(control);
       if (decision.kind === 'open') {
         const navigation = useProductNavigationStore.getState();
