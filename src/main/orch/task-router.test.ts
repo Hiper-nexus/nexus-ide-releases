@@ -191,7 +191,7 @@ describe('routeTask', () => {
     expect(decision!.model).toBe('kimi-code/k3');
   });
 
-  it('routes easy/trivial work to qwen3.6-flash when only qwen is installed (F-238)', () => {
+  it('routes easy/trivial work to qwen3.8-max when only qwen is installed (F-722)', () => {
     for (const tier of ['trivial', 'easy'] as const) {
       const decision = routeTask(
         'tarefa barata',
@@ -200,11 +200,11 @@ describe('routeTask', () => {
         tier,
       );
       expect(decision!.adapterId).toBe('qwen');
-      expect(decision!.model).toBe('qwen3.6-flash');
+      expect(decision!.model).toBe('qwen3.8-max');
     }
   });
 
-  it('routes medium/hard to the configured Qwen tiers (F-238)', () => {
+  it('routes medium/hard to qwen3.8-max too: Qwen is always the 3.8 Max (F-722)', () => {
     const medium = routeTask(
       'tarefa média',
       adapters('qwen'),
@@ -212,7 +212,7 @@ describe('routeTask', () => {
       'medium',
     );
     expect(medium!.adapterId).toBe('qwen');
-    expect(medium!.model).toBe('qwen3.7-plus');
+    expect(medium!.model).toBe('qwen3.8-max');
     const hard = routeTask(
       'tarefa difícil',
       adapters('qwen'),

@@ -9112,7 +9112,7 @@ export const RELEASE_076165: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076166: AppRelease = {
   version: '0.76.166',
   date: '2026-10-02',
   codename: 'Workers com mais autonomia',
@@ -9170,4 +9170,31 @@ export const CURRENT_RELEASE: AppRelease = {
         'confere os pacotes e o recibo antes da publicação.',
     },
   ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.167',
+  date: '2026-10-02',
+  codename: 'Qwen no ar',
+  summary:
+    'O pane do Qwen volta a abrir, e o Qwen chamado pelo Nexus é sempre o ' +
+    'qwen3.8-max. Inclui a 0.76.166.',
+  highlights: [
+    {
+      title: 'Qwen volta a abrir',
+      detail:
+        'Todo pane do Qwen com modelo definido era recusado com "modelo ' +
+        'selado não entrou no argv". O comando passava o modelo com uma ' +
+        'flag diferente da que o Nexus confere. Agora as duas batem, e um ' +
+        'teste confere isso em todas as CLIs embutidas.',
+    },
+    {
+      title: 'Qwen sempre no 3.8 Max',
+      detail:
+        'Em qualquer faixa de tarefa, o Qwen chamado pelo Nexus usa o ' +
+        'qwen3.8-max. O Qwen Code não tem mais login por OAuth (a Qwen ' +
+        'encerrou em 15/04/2026); a assinatura é o Coding Plan, por chave.',
+    },
+  ],
+  fixes: [],
 };

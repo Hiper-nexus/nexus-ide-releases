@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.167 — Qwen no ar
+
+Build do Windows. Inclui a 0.76.166.
+
+- **Qwen volta a abrir (F-722).** O manifesto do Qwen montava `-m {{MODEL}}`, mas declarava `models.flag: "--model"`. A trava `argvHonorsModel` recusava todo pane do Qwen com modelo ("modelo selado não entrou no argv"), e, sem modelo, sobrava um `-m` solto. O manifesto agora monta `--model`. Um teste de guarda passa todos os manifestos embutidos pela mesma trava.
+- **Qwen sempre no qwen3.8-max (F-722).** Regra do operador: trivial, easy, medium e hard chamam o 3.8 Max. O Qwen Code 0.24 não tem mais login OAuth (encerrado pela Qwen em 15/04/2026); a assinatura é o Alibaba Cloud Coding Plan, autenticado por chave.
+
 ## 0.76.166 — Workers com mais autonomia
 
 Build do Mac. Inclui integralmente a 0.76.165.
