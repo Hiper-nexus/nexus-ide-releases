@@ -155,10 +155,17 @@ Verificado:
   com a 0.76.178 (log `check:available`). A atualização 0.76.175 → 0.76.178 foi
   feita pelo `install.sh` do site. NÃO visto a olho: o painel com o comando e o
   botão "Copiar comando".
-- Clique no ícone do Redline (F-750, 0.76.178): o `Activate` do
-  StatusNotifierItem foi aceito por D-Bus, mas com a tela bloqueada o foco não
-  muda, então o efeito (abrir Uso e cotas) não foi visto. Coberto por teste de
-  unidade. Confirmar com a sessão desbloqueada.
+- Clique no ícone do Redline (F-750, 0.76.178), visto a olho com mouse e
+  teclado reais (`ydotool`, sessão desbloqueada, 02/10 15:05): o ícone está na
+  gaveta da seta `<` da barra do Omarchy com o tooltip "Nexus Redline · 4
+  contas · 100% em Codex"; o clique esquerdo trouxe o Nexus à frente e, partindo
+  de Início, levou a Configurações › Uso e cotas e atualizou as cotas.
+- Painel de atualização (F-751, 0.76.178), visto a olho: "atual v0.76.178 · você
+  está na mais recente", a explicação de que no Linux é manual e o botão
+  "Verificar agora", sem texto de erro; o botão disparou uma nova consulta no
+  log (`check:start`). O bloco com o comando e o "Copiar comando" só aparece com
+  versão nova e não foi visto na interface; o caminho de dados dele foi
+  verificado com o build 0.76.176 contra o espelho público.
 - Redline ligado por padrão (F-739, 0.76.175): sem preferência salva o item
   aparece no boot. Depois do login, "Uso e cotas" mostra a bandeja como ativa.
 - Redline: item registrado no `org.kde.StatusNotifierWatcher`, tooltip e menu
