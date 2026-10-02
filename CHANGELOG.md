@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.188 — Bug à vista, anexo no pane, cotas à vista
+
+Build do Mac. Inclui o que já estava no código principal até esta versão.
+
+- **Reportar bug fica à vista em qualquer tela (F-761).** O diálogo "Reportar um problema" só abria pelo menu Ajuda e pela paleta. Agora há o botão "Reportar bug" no topo da barra lateral (presente em toda tela, inclusive nas Configurações), o mesmo botão na tela de acesso bloqueado (login, licença, teste encerrado) e o atalho ⌘⇧B / Ctrl+Shift+B.
+- **Arrastar um arquivo para o pane sempre entrega um caminho que existe (F-760).** O anexo era gravado na raiz do projeto, mas o caminho digitado no pane era montado a partir da pasta do pane, que numa aba com worktree é outra: o agente respondia "não consegui acessar os anexos". Agora o Main devolve o caminho absoluto onde gravou o arquivo e o pane digita exatamente esse. Vale para arrastar, colar e para imagem, áudio e qualquer arquivo.
+- **O card "Cotas" da barra lateral expande para todas as contas (F-758).** Um clique mostra todas (17 provedores, 19 contas) com percentual e janelas de cada uma; outro recolhe, e a escolha fica salva. "Abrir uso e cotas" leva à página completa. Nome longo (e-mail) corta com reticências em vez de empurrar o percentual para fora.
+- **Redline com "Ampliar" (F-759).** O painel da barra de menu ganha um modo ampliado que mostra todas as contas de uma vez, em colunas, sem rolagem, e não fecha com clique fora — feito para tirar um print completo.
+
 ## 0.76.185 — Marketplace recomendado
 
 Build do Windows. Inclui a 0.76.184 (Skills sem espera).

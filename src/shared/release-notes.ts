@@ -9752,7 +9752,7 @@ export const RELEASE_076184: AppRelease = {
     },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076185: AppRelease = {
   version: '0.76.185',
   date: '2026-10-02',
   codename: 'Marketplace recomendado',
@@ -9779,6 +9779,51 @@ export const CURRENT_RELEASE: AppRelease = {
         'tecnologias e dos itens do catálogo, nunca caminhos, o nome do ' +
         'projeto ou conteúdo de arquivo. A recomendação pode ser desligada em ' +
         'Orquestração, entre as superfícies dos modelos de decisão.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.188',
+  date: '2026-10-02',
+  codename: 'Bug à vista, anexo no pane, cotas à vista',
+  summary:
+    'Build do Mac. Reportar um bug fica à vista em qualquer tela, arrastar ' +
+    'um arquivo para o pane entrega ao agente o caminho onde ele realmente ' +
+    'está, o card de cotas expande para todas as contas e o Redline ganha um ' +
+    'modo ampliado para print.',
+  highlights: [
+    {
+      title: 'Reportar bug em qualquer tela',
+      detail:
+        'Botão "Reportar bug" no topo da barra lateral e na tela de acesso ' +
+        'bloqueado, e o atalho ⌘⇧B (Ctrl+Shift+B) em qualquer lugar.',
+    },
+    {
+      title: 'Arquivo arrastado chega ao agente',
+      detail:
+        'Imagem, áudio ou qualquer arquivo solto no pane agora vai com o ' +
+        'caminho exato onde foi guardado, também em abas com worktree.',
+    },
+    {
+      title: 'Todas as cotas num clique',
+      detail:
+        'O card "Cotas" da barra lateral expande para todas as contas, com ' +
+        'o consumo e as janelas de cada uma, e recolhe com outro clique.',
+    },
+    {
+      title: 'Redline ampliado para print',
+      detail:
+        'O painel da barra de menu tem um modo ampliado que mostra todas as ' +
+        'contas de uma vez, sem rolagem, e fica aberto para a captura de tela.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Nome longo não esconde o percentual',
+      detail:
+        'No card de cotas, um e-mail comprido agora é cortado com reticências ' +
+        'em vez de empurrar o percentual para fora da borda.',
     },
   ],
 };
