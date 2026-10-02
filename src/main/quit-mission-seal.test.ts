@@ -182,27 +182,27 @@ describe('quit com missões ativas', () => {
     expect(hasCurrentDispatchAuthority(sealedMission)).toBe(false);
   });
 
-  it('o diálogo de quit sela missões no botão certo, com teto, antes do app.quit', () => {
+  it('o diálogo de quit sela missões só no botão "encerrar missões", com teto, antes do app.quit (F-726)', () => {
     const source = fs.readFileSync(path.join(__dirname, 'main.ts'), 'utf-8');
     const beforeQuit = source.indexOf('app.on("before-quit"');
-    const buttons = source.indexOf(
-      'buttons: ["Cancelar", "Sair e encerrar processos"]',
-      beforeQuit,
-    );
-    const confirm = source.indexOf('if (response !== 1) return;', beforeQuit);
-    const seal = source.indexOf(
-      'await closeAllActiveMissionsForShutdown();',
-      confirm,
-    );
-    const authorize = source.indexOf('authorizeAppQuit();', seal);
+    const buttons = source.indexOf('buttons: [...QUIT_DIALOG_BUTTONS]', beforeQuit);
+    const choice = source.indexOf('const choice = quitChoiceFromResponse(response);', beforeQuit);
+    const cancel = source.indexOf('if (choice === "cancel") return;', choice);
+    const closeBranch = source.indexOf('if (choice === "quit-close-missions") {', cancel);
+    const seal = source.indexOf('await closeAllActiveMissionsForShutdown();', closeBranch);
+    const branchEnd = source.indexOf('}', seal);
+    const authorize = source.indexOf('authorizeAppQuit();', branchEnd);
     const quit = source.indexOf('app.quit();', authorize);
 
     expect(beforeQuit).toBeGreaterThanOrEqual(0);
     expect(buttons).toBeGreaterThan(beforeQuit);
-    expect(buttons).toBeLessThan(confirm);
-    expect(confirm).toBeGreaterThan(buttons);
-    expect(seal).toBeGreaterThan(confirm);
-    expect(authorize).toBeGreaterThan(seal);
+    expect(choice).toBeGreaterThan(buttons);
+    expect(cancel).toBeGreaterThan(choice);
+    expect(closeBranch).toBeGreaterThan(cancel);
+    // O selo mora DENTRO do ramo explícito; sair e retomar não o executa.
+    expect(seal).toBeGreaterThan(closeBranch);
+    expect(source.slice(cancel, closeBranch)).not.toContain('closeAllActiveMissionsForShutdown');
+    expect(authorize).toBeGreaterThan(branchEnd);
     expect(quit).toBeGreaterThan(authorize);
     expect(source).toContain('QUIT_MISSION_SEAL_BUDGET_MS = 4_000');
     const sealFn = source.indexOf(

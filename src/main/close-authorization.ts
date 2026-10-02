@@ -21,6 +21,27 @@ export function closeNeedsConfirmation(opts: {
   return opts.sessionCount > 0 && !opts.authorized && !opts.smokeTest;
 }
 
+/**
+ * F-726: sair do app não é o mesmo que encerrar as missões. O único botão
+ * ("Sair e encerrar processos") selava toda missão em execução como
+ * runtime-closed, e o operador que só fechou para instalar uma atualização
+ * reabria com a missão no Arquivo e todos os panes em pausa. Agora sair e
+ * retomar é o padrão; encerrar as missões é escolha explícita.
+ */
+export const QUIT_DIALOG_BUTTONS = [
+  'Cancelar',
+  'Sair e retomar ao abrir',
+  'Sair e encerrar missões',
+] as const;
+
+export type QuitChoice = 'cancel' | 'quit-resume' | 'quit-close-missions';
+
+export function quitChoiceFromResponse(response: number): QuitChoice {
+  if (response === 1) return 'quit-resume';
+  if (response === 2) return 'quit-close-missions';
+  return 'cancel';
+}
+
 export interface ConfirmedWindowCloseDeps {
   readonly sealRuntimeAdmission: () => void;
   readonly quitApp: () => void;

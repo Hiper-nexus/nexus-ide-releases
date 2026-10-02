@@ -414,6 +414,8 @@ import { SessionAliveSentinel } from './crash-reporting/session-alive-sentinel';
 import {
   authorizeAppQuit,
   closeNeedsConfirmation,
+  QUIT_DIALOG_BUTTONS,
+  quitChoiceFromResponse,
   isAppQuitAuthorized,
   revokeAppQuitAuthorization,
 } from "./close-authorization";
@@ -1521,11 +1523,13 @@ app.on("before-quit", (event) => {
       title: "Sair do NexusIDE?",
       message: `${summary.total} processo${summary.total === 1 ? "" : "s"} ainda em execução`,
       detail:
-        summary.busy > 0
-          ? `${summary.busy} ainda estão trabalhando. Sair encerra esses processos e tarefas.`
-          : "Sair encerra os processos de todos os panes.",
-      buttons: ["Cancelar", "Sair e encerrar processos"],
-      defaultId: 0,
+        (summary.busy > 0
+          ? `${summary.busy} ainda estão trabalhando. Sair encerra esses processos agora.`
+          : "Sair encerra os processos de todos os panes.") +
+        "\n\nSair e retomar ao abrir: as missões voltam sozinhas quando você abrir o Nexus." +
+        "\nSair e encerrar missões: elas ficam paradas até você retomá-las no Quadro.",
+      buttons: [...QUIT_DIALOG_BUTTONS],
+      defaultId: 1,
       cancelId: 0,
       noLink: true,
     };
@@ -1535,13 +1539,15 @@ app.on("before-quit", (event) => {
       .showMessageBox(options)
       .then(async ({ response }) => {
         quitPromptOpen = false;
-        if (response !== 1) return;
+        const choice = quitChoiceFromResponse(response);
+        if (choice === "cancel") return;
         sealRuntimeProcessAdmissionForShutdown();
-        // Encerra todas as missões running antes do quit, persistindo o selo
-        // runtime-closed para que o reopen não restaure os workers. O operador
-        // confirmou "Sair e encerrar processos" — isso deve matar o runtime E
-        // marcar as missões como encerradas, não só os PTYs.
-        await closeAllActiveMissionsForShutdown();
+        // F-726: só "Sair e encerrar missões" grava o selo runtime-closed (o
+        // reopen não restaura os workers). "Sair e retomar ao abrir" encerra
+        // os processos e deixa a missão em execução para o boot religar.
+        if (choice === "quit-close-missions") {
+          await closeAllActiveMissionsForShutdown();
+        }
         authorizeAppQuit();
         app.quit();
       })

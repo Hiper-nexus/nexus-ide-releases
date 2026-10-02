@@ -4,11 +4,29 @@ import {
   closeNeedsConfirmation,
   completeConfirmedWindowClose,
   isAppQuitAuthorized,
+  QUIT_DIALOG_BUTTONS,
+  quitChoiceFromResponse,
   resetCloseAuthorizationForTest,
   revokeAppQuitAuthorization,
 } from './close-authorization';
 
 beforeEach(resetCloseAuthorizationForTest);
+
+describe('diálogo de sair (F-726)', () => {
+  it('sair e retomar é o padrão; só o botão explícito encerra as missões', () => {
+    expect(QUIT_DIALOG_BUTTONS).toEqual([
+      'Cancelar',
+      'Sair e retomar ao abrir',
+      'Sair e encerrar missões',
+    ]);
+    expect(quitChoiceFromResponse(0)).toBe('cancel');
+    expect(quitChoiceFromResponse(1)).toBe('quit-resume');
+    expect(quitChoiceFromResponse(2)).toBe('quit-close-missions');
+    // Esc / fechar o diálogo / resposta inesperada nunca encerra nada.
+    expect(quitChoiceFromResponse(-1)).toBe('cancel');
+    expect(quitChoiceFromResponse(7)).toBe('cancel');
+  });
+});
 
 describe('close authorization', () => {
   it('requires confirmation only while live sessions would be destroyed', () => {
