@@ -9547,7 +9547,7 @@ export const RELEASE_076176: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076177: AppRelease = {
   version: '0.76.177',
   date: '2026-10-02',
   codename: 'Mac em dia',
@@ -9586,4 +9586,30 @@ export const CURRENT_RELEASE: AppRelease = {
         'Enter e o worker MiMo retomado não fecha mais sozinho.',
     },
   ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.178',
+  date: '2026-10-02',
+  codename: 'Linux avisa da versão nova',
+  summary:
+    'Versão do Linux. O Nexus passa a avisar quando sai uma versão nova e ' +
+    'mostra o comando para atualizar, e o clique no ícone do Redline abre ' +
+    'as suas cotas. Inclui as versões 0.76.176 e 0.76.177.',
+  highlights: [
+    {
+      title: 'Aviso de versão nova no Linux',
+      detail:
+        'O painel de atualização agora verifica se há versão nova para ' +
+        'Linux e mostra o comando de uma linha para atualizar, com botão ' +
+        'de copiar. Suas contas, projetos e missões ficam como estão.',
+    },
+    {
+      title: 'Redline abre com um clique',
+      detail:
+        'Clique no ícone do Redline na bandeja para abrir Uso e cotas no ' +
+        'Nexus. O botão direito continua mostrando a lista das contas.',
+    },
+  ],
+  fixes: [],
 };

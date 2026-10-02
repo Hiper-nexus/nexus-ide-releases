@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.178 — Linux avisa da versão nova
+
+Build do Linux (DEB, RPM e ZIP). Inclui a 0.76.176 e a 0.76.177, que não tiveram pacote Linux.
+
+- **O Linux avisa quando sai versão nova (F-751).** O painel de atualização mostrava "Plataforma sem atualização automática: linux." como erro, e "Verificar agora" não consultava nada. Agora o app consulta o espelho público, só considera versão com os três pacotes Linux e mostra o comando `curl -fsSL https://nexuside.app/install.sh | sh` com botão de copiar. O app não baixa nem instala sozinho.
+- **Clicar no ícone do Redline abre as cotas (F-750).** O clique esquerdo na bandeja não fazia nada e o Redline parecia não abrir. Agora abre o Nexus em Uso e cotas; o menu continua no botão direito. No Omarchy o ícone fica na gaveta da seta `<` da barra.
+- Login com conta real conferido na 0.76.175 no Omarchy (F-740 verificado).
+
 ## 0.76.177 — Mac em dia
 
 Build do Mac. Inclui integralmente a 0.76.176 e traz para o Mac o que as builds do Windows (0.76.174 e 0.76.176) e do Linux (0.76.175) publicaram desde a 0.76.173, a última do Mac. Sem código novo além do que está nessas versões; o que é só de Windows ou de Linux continua restrito à plataforma.
