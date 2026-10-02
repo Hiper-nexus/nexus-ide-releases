@@ -231,6 +231,27 @@ describe('planLinuxDesktopEntry', () => {
     });
   });
 
+  it('treats an entry it cannot read as the user\'s, never as absent (review 02/10)', () => {
+    // `undefined` = existe mas não é arquivo comum pequeno: symlink de dotfiles
+    // (stow, chezmoi, home-manager), FIFO, arquivo enorme, sem permissão.
+    expect(planLinuxDesktopEntry(input({ readEntry: () => undefined }))).toEqual({
+      action: 'none',
+      reason: 'user-entry-present',
+    });
+  });
+
+  it('keeps an unreadable user entry even when a system entry exists', () => {
+    expect(
+      planLinuxDesktopEntry(
+        input({
+          execPath: '/usr/lib/nexus-ide/nexus-ide',
+          readEntry: () => undefined,
+          entryExists: (file) => file === SYSTEM_FILE,
+        }),
+      ),
+    ).toEqual({ action: 'none', reason: 'system-entry-present' });
+  });
+
   it('leaves the package manager entry alone on DEB/RPM installs', () => {
     expect(
       planLinuxDesktopEntry(
@@ -276,6 +297,24 @@ describe('planLinuxDesktopEntry', () => {
         input({
           execPath: '/usr/lib/nexus-ide/nexus-ide',
           readEntry: () => '[Desktop Entry]\nName=Meu Nexus\n',
+          entryExists: (file) => file === SYSTEM_FILE,
+        }),
+      ),
+    ).toEqual({ action: 'none', reason: 'system-entry-present' });
+  });
+
+  it('still registers a ZIP extracted under /usr/local or /usr/share (review 02/10)', () => {
+    // `/usr/` inteiro era "gerenciado por pacote": quem extrai o ZIP em
+    // /usr/local/nexus e tem o DEB instalado perdia a própria entrada.
+    for (const execPath of ['/usr/local/nexus/nexus-ide', '/usr/local/lib/nexus-ide/nexus-ide', '/usr/share/nexus/nexus-ide', '/usr/bin/nexus-ide']) {
+      expect(isPackageManagedExecutable(execPath), execPath).toBe(false);
+    }
+    const stale = buildPortableDesktopEntry({ exec: '/usr/local/nexus/nexus-ide' });
+    expect(
+      planLinuxDesktopEntry(
+        input({
+          execPath: '/usr/local/nexus/nexus-ide',
+          readEntry: () => stale,
           entryExists: (file) => file === SYSTEM_FILE,
         }),
       ),
@@ -360,6 +399,22 @@ describe('MIME index (F-740)', () => {
     expect(ensureMimeIndex('/home/u/.local/share/applications', silent.deps)).toBe('merged');
     expect(mimeCacheListsHandler(silent.state.cache)).toBe(true);
     expect(silent.state.cache).toContain('text/html=a.desktop;');
+  });
+
+  it('does nothing when the index exists but is not a plain file we may rewrite', () => {
+    const state = { toolRuns: 0, writes: 0 };
+    const outcome = ensureMimeIndex('/home/u/.local/share/applications', {
+      readCache: () => undefined,
+      runUpdateDesktopDatabase: () => {
+        state.toolRuns += 1;
+        return true;
+      },
+      writeCache: () => {
+        state.writes += 1;
+      },
+    });
+    expect(outcome).toBe('skipped');
+    expect(state).toEqual({ toolRuns: 0, writes: 0 });
   });
 
   it('falls back to the merge when the tool is not installed', () => {
@@ -465,16 +520,17 @@ describe.skipIf(process.platform === 'win32')('ensureLinuxDesktopEntry (filesyst
     );
   });
 
-  it.skipIf(systemInstalled)('replaces a planted symlink instead of writing through it', () => {
+  it.skipIf(systemInstalled)('never writes through a symlink at the entry path, and does not replace it either', () => {
     const { home, file, options } = sandbox();
     const victim = path.join(home, 'victim.txt');
     fs.writeFileSync(victim, 'untouched');
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.symlinkSync(victim, file);
-    // Um symlink não é "arquivo comum": lido como ausente, e o rename o troca.
-    expect(ensureLinuxDesktopEntry(options).action).toBe('write');
+    // Um symlink existe: é do operador (dotfiles) ou foi plantado. Nos dois casos
+    // o app não escreve através dele nem o troca por uma entrada própria.
+    expect(ensureLinuxDesktopEntry(options)).toEqual({ action: 'none', reason: 'user-entry-present' });
     expect(fs.readFileSync(victim, 'utf8')).toBe('untouched');
-    expect(fs.lstatSync(file).isSymbolicLink()).toBe(false);
+    expect(fs.lstatSync(file).isSymbolicLink()).toBe(true);
   });
 
   it.skipIf(systemInstalled)('creates and repoints the launcher symlink for a path with spaces', () => {
@@ -491,6 +547,38 @@ describe.skipIf(process.platform === 'win32')('ensureLinuxDesktopEntry (filesyst
     const moved = `${spaced} 2`;
     expect(ensureLinuxDesktopEntry({ ...options, execPath: moved }).action).toBe('write');
     expect(fs.readlinkSync(link)).toBe(moved);
+  });
+
+  it.skipIf(systemInstalled)('does not replace a dotfile-managed symlink with its own entry (review 02/10)', () => {
+    const { home, file, options } = sandbox();
+    const managed = path.join(home, 'dotfiles', 'nexus-ide.desktop');
+    fs.mkdirSync(path.dirname(managed), { recursive: true });
+    fs.writeFileSync(managed, '[Desktop Entry]\nName=Meu Nexus\nExec=/x/nexus-ide %U\n');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.symlinkSync(managed, file);
+
+    expect(ensureLinuxDesktopEntry(options)).toEqual({ action: 'none', reason: 'user-entry-present' });
+
+    expect(fs.lstatSync(file).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(managed, 'utf8')).toContain('Name=Meu Nexus');
+  });
+
+  it.skipIf(systemInstalled)('leaves a symlinked MIME index alone instead of rewriting it', () => {
+    const { home, file, options } = sandbox();
+    const managed = path.join(home, 'dotfiles', 'mimeinfo.cache');
+    fs.mkdirSync(path.dirname(managed), { recursive: true });
+    fs.writeFileSync(managed, '[MIME Cache]\ntext/html=a.desktop;\n');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.symlinkSync(managed, path.join(path.dirname(file), 'mimeinfo.cache'));
+    // O cache do teste lê com readFileSync (segue o link); o padrão do app não.
+    const real = options.mimeIndex;
+    expect(real).toBeDefined();
+    ensureLinuxDesktopEntry({
+      ...options,
+      mimeIndex: { ...real!, readCache: () => undefined },
+    });
+    expect(fs.lstatSync(path.join(path.dirname(file), 'mimeinfo.cache')).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(managed, 'utf8')).toBe('[MIME Cache]\ntext/html=a.desktop;\n');
   });
 
   it('never throws when the applications directory cannot be created', () => {

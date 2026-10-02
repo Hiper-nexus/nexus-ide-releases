@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -75,6 +75,31 @@ describe('redline linux settings (default ON, explicit choice respected)', () =>
   it('an oversized file reads as OFF without being parsed', () => {
     writeFileSync(file(), `{"enabled":true,"pad":"${'x'.repeat(100_000)}"}`);
     expect(readRedlineLinuxEnabled(dir)).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'an explicit OFF that cannot be opened stays OFF (only a missing file turns it on)',
+    () => {
+      writeFileSync(file(), '{"enabled":false}');
+      chmodSync(file(), 0o000);
+      expect(readRedlineLinuxEnabled(dir)).toBe(false);
+      chmodSync(file(), 0o600);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')('a dangling or looping symlink is not "missing": it reads as OFF', () => {
+    symlinkSync(path.join(dir, 'does-not-exist'), file());
+    expect(readRedlineLinuxEnabled(dir)).toBe(false);
+    rmSync(file());
+    // Laço: o arquivo aponta para si mesmo (ELOOP).
+    symlinkSync(path.basename(file()), file());
+    expect(readRedlineLinuxEnabled(dir)).toBe(false);
+  });
+
+  it('a path component that is a file (ENOTDIR) still counts as nothing saved', () => {
+    const blocker = path.join(dir, 'blocker');
+    writeFileSync(blocker, 'x');
+    expect(readRedlineLinuxEnabled(path.join(blocker, 'sub'))).toBe(true);
   });
 
   it('a directory squatting on the file name reads as OFF instead of throwing', () => {

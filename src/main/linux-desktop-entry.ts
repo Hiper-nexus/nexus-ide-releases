@@ -163,11 +163,13 @@ export function buildPortableDesktopEntry(input: PortableDesktopEntryInput): str
 }
 
 /**
- * Binário instalado por DEB/RPM (`/usr/lib/nexus-ide`, `/usr/lib64/nexus-ide`).
- * `/opt` fica de fora de propósito: é onde muita gente extrai o ZIP portátil.
+ * Binário instalado por DEB/RPM: `/usr/lib/nexus-ide` ou `/usr/lib64/nexus-ide`.
+ * `/opt`, `/usr/local` e `/usr/share` ficam de fora de propósito: é onde se
+ * extrai o ZIP portátil. Casar `/usr/` inteiro apagava a entrada de quem tem o
+ * DEB instalado E o ZIP em /usr/local/nexus.
  */
 export function isPackageManagedExecutable(execPath: string): boolean {
-  return execPath.startsWith('/usr/');
+  return /^\/usr\/lib(64)?\//.test(execPath);
 }
 
 export interface LinuxDesktopEntryInput {
@@ -179,8 +181,12 @@ export interface LinuxDesktopEntryInput {
   iconPath?: string;
   homeDir: string;
   env: Readonly<Record<string, string | undefined>>;
-  /** Conteúdo do arquivo, ou `null` se não existe / não é arquivo comum. */
-  readEntry: (file: string) => string | null;
+  /**
+   * Conteúdo do arquivo, `null` se NÃO EXISTE, ou `undefined` se existe e não é
+   * um arquivo comum pequeno que se possa ler (symlink de gerenciador de
+   * dotfiles, FIFO, arquivo enorme, sem permissão): isso é do operador.
+   */
+  readEntry: (file: string) => string | null | undefined;
   entryExists: (file: string) => boolean;
   /** Alvo do symlink, `null` se não existe, `undefined` se NÃO é symlink. */
   readLink: (file: string) => string | null | undefined;
@@ -231,8 +237,8 @@ function systemDesktopEntryPaths(
   ];
 }
 
-function isOwnedEntry(content: string | null): boolean {
-  return content !== null && content.split('\n').includes(LINUX_PORTABLE_MARKER);
+function isOwnedEntry(content: string | null | undefined): boolean {
+  return typeof content === 'string' && content.split('\n').includes(LINUX_PORTABLE_MARKER);
 }
 
 /** PURO: decide o que fazer com a entrada do usuário. */
@@ -279,6 +285,22 @@ export function planLinuxDesktopEntry(input: LinuxDesktopEntryInput): LinuxDeskt
   const content = buildPortableDesktopEntry({ exec, iconPath: input.iconPath });
   if (existing === content && !link) return { action: 'none', reason: 'up-to-date' };
   return { action: 'write', file: userFile, content, ...(link ? { link } : {}) };
+}
+
+/**
+ * Para arquivos do operador que o app pode reescrever (entrada de menu e índice
+ * de tipos): `null` = não existe; `undefined` = existe e não é um arquivo comum
+ * pequeno (symlink, FIFO, enorme, sem permissão) — não se toca.
+ */
+function readUserFile(file: string, maxBytes: number): string | null | undefined {
+  try {
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.size > maxBytes) return undefined;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' || code === 'ENOTDIR' ? null : undefined;
+  }
+  return readSmallRegularFile(file, maxBytes) ?? undefined;
 }
 
 /** Lê só arquivo comum e pequeno; symlink/FIFO/arquivo enorme = "não é nosso". */
@@ -409,22 +431,31 @@ export function mergeMimeCacheHandler(cacheText: string | null): string {
 }
 
 export interface MimeIndexDeps {
-  readCache: (file: string) => string | null;
+  /** `null` = não existe; `undefined` = existe e não é arquivo comum (não se toca). */
+  readCache: (file: string) => string | null | undefined;
   /** Roda `update-desktop-database <dir>`; `false` se não existe ou falhou. */
   runUpdateDesktopDatabase: (applicationsDir: string) => boolean;
   writeCache: (file: string, content: string) => void;
 }
 
-export type MimeIndexOutcome = 'already-listed' | 'updated' | 'merged';
+export type MimeIndexOutcome = 'already-listed' | 'updated' | 'merged' | 'skipped';
 
 /** Garante a linha no índice: a ferramenta do sistema primeiro, a mescla depois. */
 export function ensureMimeIndex(applicationsDir: string, deps: MimeIndexDeps): MimeIndexOutcome {
   const cacheFile = path.posix.join(applicationsDir, LINUX_MIME_CACHE_FILE);
-  if (mimeCacheListsHandler(deps.readCache(cacheFile))) return 'already-listed';
-  if (deps.runUpdateDesktopDatabase(applicationsDir) && mimeCacheListsHandler(deps.readCache(cacheFile))) {
-    return 'updated';
+  const before = deps.readCache(cacheFile);
+  // Um índice que existe mas não é arquivo comum (symlink de dotfiles…) é do
+  // operador: nem a ferramenta nem a mescla o reescrevem.
+  if (before === undefined) return 'skipped';
+  if (mimeCacheListsHandler(before)) return 'already-listed';
+  if (deps.runUpdateDesktopDatabase(applicationsDir)) {
+    const after = deps.readCache(cacheFile);
+    if (mimeCacheListsHandler(after ?? null)) return 'updated';
+    if (after === undefined) return 'skipped';
+    deps.writeCache(cacheFile, mergeMimeCacheHandler(after));
+    return 'merged';
   }
-  deps.writeCache(cacheFile, mergeMimeCacheHandler(deps.readCache(cacheFile)));
+  deps.writeCache(cacheFile, mergeMimeCacheHandler(before));
   return 'merged';
 }
 
@@ -454,7 +485,7 @@ function writeFileAtomic(file: string, content: string): void {
 }
 
 const SYSTEM_MIME_INDEX_DEPS: MimeIndexDeps = {
-  readCache: (file) => readSmallRegularFile(file, MAX_MIME_CACHE_BYTES),
+  readCache: (file) => readUserFile(file, MAX_MIME_CACHE_BYTES),
   runUpdateDesktopDatabase,
   writeCache: writeFileAtomic,
 };
@@ -494,7 +525,7 @@ export function ensureLinuxDesktopEntry(
       }),
       homeDir: options.homeDir ?? os.homedir(),
       env: options.env ?? process.env,
-      readEntry: readSmallRegularFile,
+      readEntry: (file) => readUserFile(file, MAX_ENTRY_BYTES),
       entryExists: (file) => fs.existsSync(file),
       readLink: readSymlink,
     });

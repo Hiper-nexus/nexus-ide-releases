@@ -10,7 +10,14 @@
  * read. Symlink para arquivo regular é seguido de propósito (dotfiles).
  */
 
-import { closeSync, constants as fsConstants, fstatSync, openSync, readSync } from 'node:fs';
+import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readSync,
+} from 'node:fs';
 
 export type SafeRead =
   /** `stamp` = `mtimeMs:tamanho`, para o chamador pular leituras repetidas. */
@@ -30,8 +37,24 @@ export function readRegularFileCapped(
   let fd: number;
   try {
     fd = openSync(file, fsConstants.O_RDONLY | O_NONBLOCK);
-  } catch {
-    return { kind: 'none', stamp: 'missing' };
+  } catch (error) {
+    // SÓ "não existe" é `missing` (e `missing` liga a bandeja por padrão, F-739).
+    // EACCES, ELOOP (symlink pendurado ou em laço), EMFILE… são um arquivo que
+    // EXISTE e não se consegue abrir: um `enabled:false` do operador não pode
+    // virar "ligado" por isso.
+    const code = (error as NodeJS.ErrnoException).code;
+    let absent = code === 'ENOENT' || code === 'ENOTDIR';
+    if (absent && code === 'ENOENT') {
+      // Symlink pendurado (dotfile cujo alvo sumiu): o NOME existe no
+      // diretório, só o conteúdo não. Não é "nunca houve escolha".
+      try {
+        lstatSync(file);
+        absent = false;
+      } catch {
+        // lstat também falhou: não há nada com esse nome.
+      }
+    }
+    return { kind: 'none', stamp: absent ? 'missing' : 'unreadable' };
   }
   try {
     const stat = fstatSync(fd);
