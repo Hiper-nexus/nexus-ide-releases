@@ -29,6 +29,7 @@ export const INITIAL_BUG_REPORT_FORM: BugReportFormState = {
 export function toBugReportRequest(
   form: BugReportFormState,
   activePaneId?: string | null,
+  previewDigest?: string,
 ): BugReportRequest {
   const steps = form.steps.trim();
   return {
@@ -39,6 +40,7 @@ export function toBugReportRequest(
     impact: form.impact,
     includeDiagnostics: form.includeDiagnostics,
     ...(form.includeDiagnostics && activePaneId ? { activePaneId } : {}),
+    ...(previewDigest ? { previewDigest } : {}),
   };
 }
 

@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BugReportDialog } from './BugReportDialog';
 import { useBugReportDialogStore } from '../../state/bug-report-dialog-store';
+import { useLayoutStore } from '../../state/layout-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import type {
   BugReportPayload,
@@ -14,6 +15,8 @@ import type {
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
+
+const DIGEST = 'c'.repeat(64);
 
 const payload: BugReportPayload = {
   title: 'O terminal trava ao colar',
@@ -116,7 +119,7 @@ async function click(el: HTMLElement): Promise<void> {
 
 beforeEach(() => {
   submit = vi.fn<Submit>(async () => ({ ok: true, id: 'BR-0001' }));
-  preview = vi.fn<Preview>(async () => ({ ok: true, payload }));
+  preview = vi.fn<Preview>(async () => ({ ok: true, payload, digest: DIGEST }));
   writeText = vi.fn(async () => undefined);
   Object.defineProperty(window, 'nexus', {
     configurable: true,
@@ -320,14 +323,61 @@ describe('BugReportDialog — preview ("o que será enviado")', () => {
     }
   });
 
-  it('previews the same request that submit later sends', async () => {
+  it('previews the same request that submit later sends, tied to the body the person saw', async () => {
     mount();
     openDialog();
     fillValid();
     await click(field<HTMLInputElement>(/Incluir diagnóstico técnico/));
     await click(button(/Ver exatamente o que será enviado/));
     await click(button(/Enviar relato/));
-    expect(preview.mock.calls[0]![0]).toEqual(submit.mock.calls[0]![0]);
+    expect(submit.mock.calls[0]![0]).toEqual({ ...preview.mock.calls[0]![0], previewDigest: DIGEST });
+    // A prévia não leva o resumo: ele só existe depois que o Main responde.
+    expect(preview.mock.calls[0]![0]).not.toHaveProperty('previewDigest');
+  });
+
+  it('sends no digest when the person never opened the preview, or closed it', async () => {
+    submit.mockResolvedValueOnce({ ok: false, code: 'network', message: 'Sem conexão.', payload });
+    mount();
+    openDialog();
+    fillValid();
+    await click(button(/Enviar relato/));
+    expect(submit.mock.calls[0]![0]).not.toHaveProperty('previewDigest');
+    await click(button(/Ver exatamente o que será enviado/));
+    await click(button(/Ocultar o que será enviado/));
+    await click(button(/Enviar relato/));
+    expect(submit.mock.calls[1]![0]).not.toHaveProperty('previewDigest');
+  });
+
+  it('uses the pane that was focused when the dialog opened, for both preview and submit', async () => {
+    useLayoutStore.setState({ focusedPaneId: 'pane-A' } as never);
+    mount();
+    openDialog();
+    fillValid();
+    await click(field<HTMLInputElement>(/Incluir diagnóstico técnico/));
+    useLayoutStore.setState({ focusedPaneId: 'pane-B' } as never);
+    await click(button(/Ver exatamente o que será enviado/));
+    await click(button(/Enviar relato/));
+    expect(preview.mock.calls[0]![0].activePaneId).toBe('pane-A');
+    expect(submit.mock.calls[0]![0].activePaneId).toBe('pane-A');
+    useLayoutStore.setState({ focusedPaneId: null } as never);
+  });
+
+  it('when Main says the preview is stale, hides it, explains and keeps the text', async () => {
+    submit.mockResolvedValueOnce({
+      ok: false,
+      code: 'stale-preview',
+      message: 'O conteúdo mudou desde a prévia que você conferiu.',
+    });
+    mount();
+    openDialog();
+    fillValid();
+    await click(button(/Ver exatamente o que será enviado/));
+    await click(button(/Enviar relato/));
+    expect(dialog().querySelector('pre')).toBeNull();
+    expect(dialog().querySelector('[role="alert"]')?.textContent).toContain('mudou desde a prévia');
+    expect(field<HTMLInputElement>(/^Título/).value).toBe('O terminal trava ao colar');
+    await click(button(/Ver exatamente o que será enviado/));
+    expect(dialog().querySelector('pre')).not.toBeNull();
   });
 
   it('hides a stale preview as soon as anything changes', async () => {
@@ -347,6 +397,7 @@ describe('BugReportDialog — preview ("o que será enviado")', () => {
     preview.mockResolvedValue({
       ok: true,
       payload: { ...payload, description: '<img src=x onerror="alert(1)"> descrição longa o bastante' },
+      digest: DIGEST,
     });
     mount();
     openDialog();

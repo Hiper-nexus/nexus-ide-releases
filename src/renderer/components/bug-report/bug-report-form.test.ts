@@ -49,6 +49,15 @@ describe('toBugReportRequest', () => {
   });
 });
 
+describe('toBugReportRequest — preview digest', () => {
+  it('forwards the digest of the preview the person saw, and only then', () => {
+    const digest = 'b'.repeat(64);
+    expect(toBugReportRequest(filled, null, digest).previewDigest).toBe(digest);
+    expect(toBugReportRequest(filled, null)).not.toHaveProperty('previewDigest');
+    expect(bugReportRequestSchema.safeParse(toBugReportRequest(filled, null, digest)).success).toBe(true);
+  });
+});
+
 describe('toMarkdownDraft', () => {
   it('shapes the form as a report without app information', () => {
     const draft = toMarkdownDraft({ ...filled, steps: '1. Colar' });

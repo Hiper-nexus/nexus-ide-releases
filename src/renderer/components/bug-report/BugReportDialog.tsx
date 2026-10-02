@@ -45,7 +45,7 @@ type CopyState = 'idle' | 'copied' | 'failed';
 type PreviewState =
   | { status: 'idle' }
   | { status: 'loading' }
-  | { status: 'ready'; text: string }
+  | { status: 'ready'; text: string; digest: string }
   | { status: 'error'; message: string };
 
 interface Failure {
@@ -80,6 +80,9 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
   const [returnFocus] = useState<HTMLElement | null>(() =>
     document.activeElement instanceof HTMLElement ? document.activeElement : null,
   );
+  // Congelado na abertura: prévia e envio descrevem o MESMO agente em foco,
+  // mesmo que o foco dos panes mude com o diálogo aberto.
+  const [activePaneId] = useState<string | null>(() => useLayoutStore.getState().focusedPaneId);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -152,7 +155,8 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
     invalidatePreview();
   };
 
-  const buildRequest = () => toBugReportRequest(form, useLayoutStore.getState().focusedPaneId);
+  const buildRequest = (previewDigest?: string) =>
+    toBugReportRequest(form, activePaneId, previewDigest);
 
   const focusFirstInvalid = (): void => {
     const target = errors.title
@@ -176,13 +180,16 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
     setFailure(null);
     setCopy('idle');
     try {
-      const result = await window.nexus.bugReport.submit(buildRequest());
+      const shown = preview.status === 'ready' ? preview.digest : undefined;
+      const result = await window.nexus.bugReport.submit(buildRequest(shown));
       if (!mounted.current) return;
       if (result.ok) {
         setSentId(result.id);
         setPhase('sent');
         return;
       }
+      // Corpo diferente do conferido: a prévia na tela deixou de valer.
+      if (result.code === 'stale-preview') invalidatePreview();
       setFailure({ code: result.code, message: result.message, payload: result.payload });
     } catch {
       // Nunca mostra o texto da exceção do IPC.
@@ -210,7 +217,7 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
     try {
       const result = await window.nexus.bugReport.preview(buildRequest());
       next = result.ok
-        ? { status: 'ready', text: JSON.stringify(result.payload, null, 2) }
+        ? { status: 'ready', text: JSON.stringify(result.payload, null, 2), digest: result.digest }
         : { status: 'error', message: result.message };
     } catch {
       next = { status: 'error', message: GENERIC_PREVIEW_FAILURE };
@@ -219,8 +226,8 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
   };
 
   const copyReport = async (): Promise<void> => {
-    const markdown = formatBugReportMarkdown(failure?.payload ?? toMarkdownDraft(form));
     try {
+      const markdown = formatBugReportMarkdown(failure?.payload ?? toMarkdownDraft(form));
       await navigator.clipboard.writeText(markdown);
       if (mounted.current) setCopy('copied');
     } catch {

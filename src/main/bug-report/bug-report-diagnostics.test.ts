@@ -106,6 +106,16 @@ describe('buildContext', () => {
     expect(odd.model).toBeUndefined();
   });
 
+  it('keeps real model ids (dates, brackets, vendor slashes) and drops org-scoped or id-shaped ones', () => {
+    const adapterWith = (model: string) =>
+      buildContext(deps({ listAgentSessions: () => [{ paneId: 'a', adapterId: 'claude', model }] }), 'a');
+    expect(adapterWith('claude-sonnet-4-5-20250929').model).toBe('claude-sonnet-4-5-20250929');
+    expect(adapterWith('claude-opus-4-1[1m]').model).toBe('claude-opus-4-1[1m]');
+    expect(adapterWith('moonshotai/kimi-k2').model).toBe('moonshotai/kimi-k2');
+    expect(adapterWith('ft:gpt-4o:acme-corp:custom:abc123').model).toBeUndefined();
+    expect(adapterWith('3f2a9c1e-7b4d-4e8a-9c3f-1a2b3c4d5e6f').model).toBeUndefined();
+  });
+
   it('never carries pane ids, cwd, accounts or mission ids', () => {
     const context = buildContext(
       deps({
@@ -195,6 +205,48 @@ describe('parseTraceTail', () => {
       line({ kind: 'valido', at: 7 }),
     ].join('\n');
     expect(parseTraceTail(raw).events).toEqual([{ t: 7, kind: 'valido' }]);
+  });
+
+  it('drops id-shaped, dotted, uppercase or path-like kinds (a future dynamic id cannot leak)', () => {
+    const raw = [
+      line({ kind: '3f2a9c1e-7b4d-4e8a-9c3f-1a2b3c4d5e6f', at: 1 }),
+      line({ kind: 'user.john.doe', at: 2 }),
+      line({ kind: 'Main-Boot', at: 3 }),
+      line({ kind: 'session-0123456789abcdef', at: 4 }),
+      line({ kind: 'pane-spawn-timing', at: 5 }),
+      line({ kind: 'account-failover', at: 6, outcome: 'switched' }),
+    ].join('\n');
+    expect(parseTraceTail(raw).events).toEqual([
+      { t: 5, kind: 'pane-spawn-timing' },
+      { t: 6, kind: 'account-failover', code: 'switched' },
+    ]);
+  });
+
+  it('drops codes that look like ids or timestamps but keeps real codes', () => {
+    const raw = [
+      line({ kind: 'a-one', at: 1, code: '1790901515020' }),
+      line({ kind: 'a-two', at: 2, code: '3f2a9c1e-7b4d-4e8a-9c3f-1a2b3c4d5e6f' }),
+      line({ kind: 'a-three', at: 3, code: 'deadbeefcafe0123' }),
+      line({ kind: 'a-four', at: 4, code: 'ENOENT' }),
+      line({ kind: 'a-five', at: 5, code: 137 }),
+      line({ kind: 'a-six', at: 6, code: 'E_ACCES' }),
+    ].join('\n');
+    expect(parseTraceTail(raw).events).toEqual([
+      { t: 1, kind: 'a-one' },
+      { t: 2, kind: 'a-two' },
+      { t: 3, kind: 'a-three' },
+      { t: 4, kind: 'a-four', code: 'ENOENT' },
+      { t: 5, kind: 'a-five', code: '137' },
+      { t: 6, kind: 'a-six', code: 'E_ACCES' },
+    ]);
+  });
+
+  it('drops events whose time is beyond what a Date can hold', () => {
+    const raw = [
+      line({ kind: 'far-future', at: Number.MAX_SAFE_INTEGER }),
+      line({ kind: 'ok-event', at: 8.64e15 }),
+    ].join('\n');
+    expect(parseTraceTail(raw).events).toEqual([{ t: 8.64e15, kind: 'ok-event' }]);
   });
 
   it('returns the last 50 events in chronological order', () => {

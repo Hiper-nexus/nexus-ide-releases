@@ -3,6 +3,7 @@ import os from 'node:os';
 import {
   BUG_REPORT_LIMITS,
   BUG_REPORT_PLATFORMS,
+  MAX_EVENT_TIME_MS,
   type BugReportDiagnosticEvent,
   type BugReportPayload,
   type BugReportPlatform,
@@ -47,10 +48,20 @@ const TRACE_TAIL_BYTES = 256 * 1024;
 /** Eventos recentes considerados ao derivar a lista de erros. */
 const ERROR_WINDOW = 200;
 
-const KIND_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,39}$/;
+/**
+ * Os `kind` reais do trace são slugs minúsculos (`pane-spawn-timing`,
+ * `writer_circuit_break`). O formato é fechado de propósito: ponto, maiúscula,
+ * barra ou um id embutido deixam o evento de fora, então um emissor futuro que
+ * ponha um valor dinâmico em `kind` não consegue vazá-lo por aqui.
+ */
+const KIND_TOKEN = /^[a-z][a-z0-9]*(?:[-_:][a-z0-9]+)*$/;
 const CODE_TOKEN = /^-?[A-Za-z0-9][A-Za-z0-9._:-]{0,78}$/;
 const ADAPTER_TOKEN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
-const MODEL_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,79}$/;
+/** Sem `:` — ids de fine-tune levam o nome da organização depois dele. */
+const MODEL_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._/[\]-]{0,79}$/;
+const UUID_SHAPE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+/** Forma de id/instante: UUID, hex longo ou número longo. */
+const ID_SHAPE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{8,}|\d{7,}/i;
 const FAILURE_WORDS = /error|fail|crash|gone|denied|timeout|dropped|killed|hang|refused|invalid|abort|died|dead/i;
 
 function isContractPlatform(value: string): value is BugReportPlatform {
@@ -85,8 +96,14 @@ export function buildContext(deps: DiagnosticsDeps, activePaneId?: string): Cont
       ? sessions.at(-1)
       : sessions.find((session) => session.paneId === activePaneId);
   const paneKeys = new Set(sessions.map((session, index) => session.paneId ?? `#${index}`));
-  const adapter = active && ADAPTER_TOKEN.test(active.adapterId) ? active.adapterId : undefined;
-  const model = active?.model && MODEL_TOKEN.test(active.model) ? active.model : undefined;
+  const adapter =
+    active && ADAPTER_TOKEN.test(active.adapterId) && !UUID_SHAPE.test(active.adapterId)
+      ? active.adapterId
+      : undefined;
+  const model =
+    active?.model && MODEL_TOKEN.test(active.model) && !UUID_SHAPE.test(active.model)
+      ? active.model
+      : undefined;
   return {
     ...(adapter ? { adapter } : {}),
     ...(model ? { model } : {}),
@@ -109,7 +126,7 @@ function codeOf(record: Record<string, unknown>): string | undefined {
         : typeof value === 'string'
           ? value
           : undefined;
-    if (text !== undefined && CODE_TOKEN.test(text)) return text;
+    if (text !== undefined && CODE_TOKEN.test(text) && !ID_SHAPE.test(text)) return text;
   }
   return undefined;
 }
@@ -132,8 +149,11 @@ function parseLine(raw: string): ParsedEvent | null {
   if (!record || typeof record !== 'object' || Array.isArray(record)) return null;
   const fields = record as Record<string, unknown>;
   const { kind, at } = fields;
-  if (typeof kind !== 'string' || !KIND_TOKEN.test(kind)) return null;
-  if (typeof at !== 'number' || !Number.isSafeInteger(at) || at < 0) return null;
+  if (typeof kind !== 'string' || kind.length > BUG_REPORT_LIMITS.kindMax) return null;
+  if (!KIND_TOKEN.test(kind) || ID_SHAPE.test(kind)) return null;
+  if (typeof at !== 'number' || !Number.isSafeInteger(at) || at < 0 || at > MAX_EVENT_TIME_MS) {
+    return null;
+  }
   const code = codeOf(fields);
   return {
     event: { t: at, kind, ...(code === undefined ? {} : { code }) },

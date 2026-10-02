@@ -35,9 +35,34 @@ const EXTRA_SECRET_PATTERNS: readonly RegExp[] = [
 /** `Bearer` curto (o compartilhado exige 16+): o esquema fica, o valor some. */
 const SHORT_BEARER = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi;
 
-/** `Authorization: <esquema> <credencial>` em qualquer caixa. */
-const AUTHORIZATION_HEADER =
-  /(authorization\s*[:=]\s*["']?)(?:(?:bearer|basic|token|digest)\s+)?[^\s"']+/gi;
+/**
+ * Cabeçalhos de credencial: o valor INTEIRO da linha some, seja qual for o
+ * esquema (`Bearer`, `Negotiate`, `ApiKey`…) ou o formato do cookie.
+ */
+const CREDENTIAL_HEADER =
+  /((?:proxy-)?authorization\s*[:=]\s*|(?:set-)?cookie\s*[:=]\s*)[^\r\n]+/gi;
+
+/** Palavras que nomeiam credencial. `token` não casa `tokens`/`tokenizer`. */
+const CREDENTIAL_WORD =
+  '(?:api[_-]?key|access[_-]?key|secret|token(?![a-z])|password|passwd|pwd|credential)';
+
+/** `"password": "x"` / `'secret': 'x'` — a aspas já diz que é valor, sem piso de tamanho. */
+const QUOTED_ASSIGNMENT = new RegExp(
+  `(["'])([\\w.-]{0,40}${CREDENTIAL_WORD}[\\w.-]{0,40})\\1(\\s*[:=]\\s*)(["'])(.*?)\\4`,
+  'gi',
+);
+
+/** `password=valor`, `?access_token=valor`: `=` sem espaço não é prosa. */
+const EQUALS_ASSIGNMENT = new RegExp(
+  `([\\w.-]{0,40}${CREDENTIAL_WORD}[\\w.-]{0,40}=)[^\\s&"']+`,
+  'gi',
+);
+
+/** `--password valor`, `--api-key valor` (o `--token=valor` já cai na regra do `=`). */
+const CREDENTIAL_FLAG = new RegExp(
+  `(--[\\w-]{0,40}${CREDENTIAL_WORD}[\\w-]{0,40}\\s+)(?!-)\\S+`,
+  'gi',
+);
 
 /** `esquema://usuario:senha@host` — o host e o caminho ficam. */
 const URL_CREDENTIALS = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+(?::[^\s/@]*)?@/gi;
@@ -46,19 +71,29 @@ const URL_CREDENTIALS = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+(?::[^\s/@]*)?@/gi;
  * Token opaco: 40+ caracteres do alfabeto de tokens com letra E dígito. Pega a
  * sessão do Nexus e chaves de formato desconhecido; hash git completo também
  * cai aqui (os curtos de 7–12 caracteres, que são os que as pessoas citam, não).
+ * Tudo limitado a 200: sem isso a busca é quadrática em texto longo, e uma
+ * sequência maior é mascarada em blocos consecutivos (não sobra cauda).
  */
-const OPAQUE_TOKEN = /\b(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{40,}\b/g;
+const OPAQUE_TOKEN =
+  /(?=[A-Za-z0-9_-]{0,200}\d)(?=[A-Za-z0-9_-]{0,200}[A-Za-z])[A-Za-z0-9_-]{40,200}/g;
 
-const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
+/** Local part e rótulos de domínio limitados: sem isso o casamento é quadrático. */
+const EMAIL =
+  /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){0,8}\.[A-Za-z]{2,24}/g;
 
 /**
  * `C:\Users\Nome Sobrenome\…` — nome de usuário do Windows pode ter espaço.
  * Até 3 palavras, e só quando há separador depois; sem separador cai na forma
- * de uma palavra, para não engolir a frase que vem em seguida.
+ * de uma palavra, para não engolir a frase que vem em seguida. A letra do
+ * drive não pode ser o fim de outra palavra (`file:///Users/…`).
  */
 const WINDOWS_HOME_SPACED =
-  /[A-Za-z]:[\\/]+Users[\\/]+[^\\/:*?"<>|\r\n\s]+(?: [^\\/:*?"<>|\r\n\s]+){0,2}(?=[\\/])/gi;
-const WINDOWS_HOME = /[A-Za-z]:[\\/]+Users[\\/]+[^\\/:*?"<>|\r\n\s]+/gi;
+  /(?<![A-Za-z0-9_])[A-Za-z]:[\\/]+Users[\\/]+[^\\/:*?"<>|\r\n\s]+(?: [^\\/:*?"<>|\r\n\s]+){0,2}(?=[\\/])/gi;
+const WINDOWS_HOME = /(?<![A-Za-z0-9_])[A-Za-z]:[\\/]+Users[\\/]+[^\\/:*?"<>|\r\n\s]+/gi;
+/** Git Bash/MSYS: `/c/Users/Nome`. */
+const MSYS_HOME = /(?<![\w.~-])\/[A-Za-z]\/Users\/[^/\s"'\\]+/g;
+/** WSL por UNC: `\\wsl$\Distro\home\nome`. */
+const WSL_HOME = /\\\\wsl(?:\$|\.localhost)\\[^\\\s]+\\home\\[^\\\s"']+/gi;
 const POSIX_HOME = /(?<![\w.~-])\/(?:Users|home)\/[^/\s"'\\]+/g;
 
 function escapeRegExp(text: string): string {
@@ -83,7 +118,7 @@ function collapseLiteralHome(text: string, home: string | null): string {
     const trimmed = variant.replace(/[\\/]+$/, '');
     if (!trimmed) continue;
     out = out.replace(
-      new RegExp(`(?<![\\w.~-])${escapeRegExp(trimmed)}(?=$|[\\\\/\\s"'])`, 'g'),
+      new RegExp(`(?<![\\w.~-])${escapeRegExp(trimmed)}(?![A-Za-z0-9_-])`, 'g'),
       '~',
     );
   }
@@ -93,13 +128,18 @@ function collapseLiteralHome(text: string, home: string | null): string {
 export function redactBugReportText(text: string, context: RedactionContext = {}): string {
   let out = redactSecrets(text);
   for (const pattern of EXTRA_SECRET_PATTERNS) out = out.replace(pattern, MASK);
-  out = out.replace(AUTHORIZATION_HEADER, `$1${MASK}`);
+  out = out.replace(CREDENTIAL_HEADER, `$1${MASK}`);
   out = out.replace(SHORT_BEARER, `Bearer ${MASK}`);
+  out = out.replace(QUOTED_ASSIGNMENT, `$1$2$1$3$4${MASK}$4`);
+  out = out.replace(EQUALS_ASSIGNMENT, `$1${MASK}`);
+  out = out.replace(CREDENTIAL_FLAG, `$1${MASK}`);
   out = out.replace(URL_CREDENTIALS, `$1${MASK}@`);
   out = out.replace(OPAQUE_TOKEN, MASK);
   out = out.replace(EMAIL, EMAIL_MASK);
   out = collapseLiteralHome(out, currentHomeDir(context));
+  out = out.replace(WSL_HOME, '~');
   out = out.replace(WINDOWS_HOME_SPACED, '~').replace(WINDOWS_HOME, '~');
+  out = out.replace(MSYS_HOME, '~');
   return out.replace(POSIX_HOME, '~');
 }
 

@@ -76,6 +76,77 @@ describe('redactBugReportText — credentials', () => {
   });
 });
 
+describe('redactBugReportText — pasted configs, flags and headers', () => {
+  it('masks values of quoted JSON / dict keys regardless of length or digits', () => {
+    const json = redactBugReportText('{"password":"hunter2","apiKey":"abcd1234efgh5678ijkl","name":"Ana","note":"ok"}');
+    expect(json).not.toContain('hunter2');
+    expect(json).not.toContain('abcd1234efgh5678ijkl');
+    expect(json).toContain('"name":"Ana"');
+    expect(json).toContain('"note":"ok"');
+    const dict = redactBugReportText("{'secret': 'valor-curto', 'user': 'ana'}");
+    expect(dict).not.toContain('valor-curto');
+    expect(dict).toContain("'user': 'ana'");
+  });
+
+  it('masks key=value assignments and URL query credentials without a length floor', () => {
+    const out = redactBugReportText('password=MySecretPass e GET /cb?access_token=zzz999&page=2');
+    expect(out).not.toContain('MySecretPass');
+    expect(out).not.toContain('zzz999');
+    expect(out).toContain('page=2');
+  });
+
+  it('does not mistake token counts or tokenizers for credentials', () => {
+    const text = 'max_tokens=4096 e tokenizer=bpe';
+    expect(redactBugReportText(text)).toBe(text);
+  });
+
+  it('masks the value that follows CLI credential flags', () => {
+    const out = redactBugReportText('rodei com --password hunter2 --api-key valor123 --token=abc e --verbose');
+    expect(out).not.toContain('hunter2');
+    expect(out).not.toContain('valor123');
+    expect(out).not.toContain('=abc');
+    expect(out).toContain('--verbose');
+  });
+
+  it('masks the whole value of Authorization, Cookie and Set-Cookie lines for any scheme', () => {
+    const lines = [
+      `Authorization: Negotiate ${body(30)}`,
+      `Authorization: ApiKey ${body(20)}`,
+      `Cookie: session=${body(32)}; theme=dark`,
+      `Set-Cookie: sid=${body(24)}; HttpOnly`,
+    ].join('\n');
+    const out = redactBugReportText(lines);
+    expect(out).not.toContain(body(20));
+    expect(out).not.toContain('theme=dark');
+    expect(out).toContain('Authorization:');
+    expect(out.split('\n')).toHaveLength(4);
+  });
+
+  it('masks long credentials in chunks instead of leaving a tail', () => {
+    const blob = body(450);
+    const out = redactBugReportText(`chave ${blob} fim`);
+    expect(out).not.toContain(body(60));
+  });
+});
+
+describe('redactBugReportText — adversarial input stays fast', () => {
+  const cases: Array<[string, string]> = [
+    ['long run of letters', 'a'.repeat(4000)],
+    ['dashed run', 'a-'.repeat(2000)],
+    ['dotted local parts', 'a.'.repeat(2000)],
+    ['many at signs', 'a@'.repeat(2000)],
+    ['digit run', '1'.repeat(4000)],
+    ['spaced assignments', 'token = '.repeat(500)],
+  ];
+  for (const [label, input] of cases) {
+    it(`finishes quickly on ${label}`, () => {
+      const started = performance.now();
+      redactBugReportText(input);
+      expect(performance.now() - started).toBeLessThan(750);
+    });
+  }
+});
+
 describe('redactBugReportText — personal data', () => {
   it('masks e-mail addresses', () => {
     const out = redactBugReportText('fale com maria.silva+nexus@exemplo.com.br ou joao@x.io');
@@ -110,6 +181,18 @@ describe('redactBugReportText — personal data', () => {
     const bare = redactBugReportText(String.raw`o erro foi em C:\Users\Joao e depois travou`);
     expect(bare).not.toContain('Joao');
     expect(bare).toContain('e depois travou');
+  });
+
+  it('handles Git Bash, WSL, file URLs and punctuation after a literal home', () => {
+    expect(redactBugReportText('em /c/Users/Maria/proj')).not.toContain('Maria');
+    expect(redactBugReportText(String.raw`em \\wsl$\Ubuntu\home\maria\proj`)).not.toContain('maria');
+    const fileUrl = redactBugReportText('abri file:///Users/ana/doc.txt agora');
+    expect(fileUrl).not.toContain('ana');
+    expect(fileUrl).toContain('file://');
+    const punctuated = redactBugReportText('(veja /data/joao), ou /data/joao: ou /data/joao.', {
+      homeDir: '/data/joao',
+    });
+    expect(punctuated).not.toContain('joao');
   });
 
   it('masks a home directory at the very end of the text', () => {

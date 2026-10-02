@@ -67,6 +67,9 @@ export const BUG_REPORT_LIMITS = {
 
 const LIMITS = BUG_REPORT_LIMITS;
 
+/** Maior instante que um `Date` representa (`new Date(t).toISOString()` não lança). */
+export const MAX_EVENT_TIME_MS = 8.64e15;
+
 /** Renderer → Main. Estrito: chave desconhecida é recusada. */
 export const bugReportRequestSchema = z
   .object({
@@ -82,6 +85,12 @@ export const bugReportRequestSchema = z
      * O id nunca vai ao servidor.
      */
     activePaneId: z.string().min(1).max(128).optional(),
+    /**
+     * Resumo (sha-256) do corpo que a pessoa viu na prévia. Se o corpo que
+     * seria enviado agora for outro, o Main recusa em vez de enviar algo que
+     * a pessoa não conferiu.
+     */
+    previewDigest: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   })
   .strict();
 export type BugReportRequest = z.infer<typeof bugReportRequestSchema>;
@@ -107,7 +116,7 @@ const contextSchema = z
 const diagnosticEventSchema = z
   .object({
     /** Instante do evento, em milissegundos desde a época Unix. */
-    t: z.number().int().nonnegative(),
+    t: z.number().int().min(0).max(MAX_EVENT_TIME_MS),
     kind: z.string().min(1).max(LIMITS.kindMax),
     code: z.string().min(1).max(LIMITS.codeMax).optional(),
   })
@@ -146,6 +155,7 @@ export type BugReportDiagnosticEvent = z.infer<typeof diagnosticEventSchema>;
 export type BugReportFailureCode =
   | 'invalid'
   | 'busy'
+  | 'stale-preview'
   | 'no-session'
   | 'too-large'
   | 'rejected'
@@ -155,7 +165,12 @@ export type BugReportFailureCode =
   | 'invalid-response';
 
 export type BugReportPreviewResult =
-  | { ok: true; payload: BugReportPayload }
+  | {
+      ok: true;
+      payload: BugReportPayload;
+      /** sha-256 do corpo exato; volta em `previewDigest` ao enviar. */
+      digest: string;
+    }
   | { ok: false; code: BugReportFailureCode; message: string };
 
 /**
@@ -207,6 +222,11 @@ const PLATFORM_LABELS: Readonly<Record<BugReportPlatform, string>> = {
   linux: 'Linux',
 };
 
+function formatEventTime(t: number): string {
+  const date = new Date(t);
+  return Number.isNaN(date.getTime()) ? String(t) : date.toISOString();
+}
+
 export type BugReportMarkdownInput = Pick<
   BugReportPayload,
   'title' | 'description' | 'category' | 'impact'
@@ -247,7 +267,7 @@ export function formatBugReportMarkdown(report: BugReportMarkdownInput): string 
       lines.push('', 'Eventos recentes:');
       for (const event of events) {
         const code = event.code ? ` · ${event.code}` : '';
-        lines.push(`- ${new Date(event.t).toISOString()} · ${event.kind}${code}`);
+        lines.push(`- ${formatEventTime(event.t)} · ${event.kind}${code}`);
       }
     }
     const errors = report.diagnostics?.errors ?? [];

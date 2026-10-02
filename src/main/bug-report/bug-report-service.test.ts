@@ -198,6 +198,53 @@ describe('submit', () => {
     expect(lastBody(api)).toEqual(previewed.payload);
   });
 
+  it('returns a digest of the exact body with the preview', async () => {
+    const { service } = setup();
+    const previewed = await service.preview(baseRequest);
+    expect(previewed.ok).toBe(true);
+    if (!previewed.ok) return;
+    expect(previewed.digest).toMatch(/^[0-9a-f]{64}$/);
+    const again = await service.preview(baseRequest);
+    expect(again.ok && again.digest).toBe(previewed.digest);
+    const other = await service.preview({ ...baseRequest, title: 'Outro título para o relato' });
+    expect(other.ok && other.digest).not.toBe(previewed.digest);
+  });
+
+  it('sends when the digest the person saw matches the body', async () => {
+    const { service, api } = setup();
+    const previewed = await service.preview(baseRequest);
+    if (!previewed.ok) throw new Error('preview failed');
+    expect(await service.submit({ ...baseRequest, previewDigest: previewed.digest })).toEqual({
+      ok: true,
+      id: 'BR-0001',
+    });
+    expect(lastBody(api)).toEqual(previewed.payload);
+  });
+
+  it('refuses to send a body that differs from the one the person previewed', async () => {
+    let now = 5_000;
+    const { service, api, setTrace } = setup({ now: () => now });
+    const request = { ...baseRequest, includeDiagnostics: true };
+    const previewed = await service.preview(request);
+    if (!previewed.ok) throw new Error('preview failed');
+    // A prévia expirou e o trace andou: o corpo reconstruído seria outro.
+    setTrace(traceLine({ kind: 'evento-novo', at: 8_000 }));
+    now += 60 * 60 * 1000;
+    const result = await service.submit({ ...request, previewDigest: previewed.digest });
+    expect(result).toMatchObject({ ok: false, code: 'stale-preview' });
+    expect((result as { message: string }).message).toMatch(/prévia/);
+    expect(api).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed digest', async () => {
+    const { service, api } = setup();
+    expect(await service.submit({ ...baseRequest, previewDigest: 'nao-e-hash' })).toMatchObject({
+      ok: false,
+      code: 'invalid',
+    });
+    expect(api).not.toHaveBeenCalled();
+  });
+
   it('rebuilds the payload when the request changed after the preview', async () => {
     const { service, api } = setup();
     await service.preview(baseRequest);
@@ -244,6 +291,23 @@ describe('submit', () => {
     expect(second).toMatchObject({ ok: false, code: 'busy' });
     release({ status: 201, json: { ok: true, data: { id: 'BR-9', status: 'new' } } });
     expect(await first).toEqual({ ok: true, id: 'BR-9' });
+  });
+
+  it('limits how many sends one process attempts in a short window', async () => {
+    let now = 1_000;
+    const { service, api } = setup({ now: () => now });
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      now += 1_000;
+      expect(await service.submit(baseRequest)).toMatchObject({ ok: true });
+    }
+    now += 1_000;
+    const blocked = await service.submit(baseRequest);
+    expect(blocked).toMatchObject({ ok: false, code: 'rate-limited' });
+    expect((blocked as { message: string }).message).toMatch(/Aguarde/);
+    expect(api).toHaveBeenCalledTimes(10);
+    // Passada a janela, volta a enviar.
+    now += 11 * 60 * 1000;
+    expect(await service.submit(baseRequest)).toMatchObject({ ok: true });
   });
 
   it('can send again after a failure', async () => {
@@ -333,6 +397,16 @@ describe('error mapping', () => {
       });
       expect(JSON.stringify(result)).not.toContain(SESSION_TOKEN);
     }
+  });
+
+  it('caps a hostile oversized server message before redacting it (no main-thread stall)', async () => {
+    const started = performance.now();
+    const result = await failWith(400, { ok: false, error: `${'aaaa '.repeat(13_000)}` });
+    expect(performance.now() - started).toBeLessThan(750);
+    expect((result as { message: string }).message.length).toBeLessThanOrEqual(400);
+    const dense = await failWith(400, { ok: false, error: 'a'.repeat(64 * 1024) });
+    expect(performance.now() - started).toBeLessThan(1500);
+    expect((dense as { message: string }).message.length).toBeLessThanOrEqual(400);
   });
 
   it('strips control characters and caps the length of server messages', async () => {

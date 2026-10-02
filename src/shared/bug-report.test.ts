@@ -65,6 +65,14 @@ describe('bugReportRequestSchema', () => {
     expect(bugReportRequestSchema.safeParse(withoutConsent).success).toBe(false);
   });
 
+  it('accepts an optional preview digest and nothing else shaped like it', () => {
+    const digest = 'a'.repeat(64);
+    expect(bugReportRequestSchema.safeParse({ ...validRequest, previewDigest: digest }).success).toBe(true);
+    for (const bad of ['', 'A'.repeat(64), 'a'.repeat(63), `${'a'.repeat(63)}g`, 5]) {
+      expect(bugReportRequestSchema.safeParse({ ...validRequest, previewDigest: bad }).success).toBe(false);
+    }
+  });
+
   it('lists every category of the v1 contract', () => {
     expect([...BUG_REPORT_CATEGORIES]).toEqual([
       'crash', 'terminal', 'agents', 'license', 'billing', 'ui', 'performance', 'other',
@@ -139,6 +147,17 @@ describe('bugReportPayloadSchema (wire contract v1)', () => {
     expect(bugReportPayloadSchema.safeParse(extraApp).success).toBe(false);
   });
 
+  it('keeps event timestamps inside the range of a JS Date', () => {
+    const base = { ...validPayload, consent: { diagnostics: true } };
+    const make = (t: number) => ({
+      ...base,
+      diagnostics: { events: [{ t, kind: 'k' }], errors: [] },
+    });
+    expect(bugReportPayloadSchema.safeParse(make(8.64e15)).success).toBe(true);
+    expect(bugReportPayloadSchema.safeParse(make(8.64e15 + 1)).success).toBe(false);
+    expect(bugReportPayloadSchema.safeParse(make(Number.MAX_SAFE_INTEGER)).success).toBe(false);
+  });
+
   it('only allows the three desktop platforms', () => {
     const freebsd = { ...validPayload, app: { ...validPayload.app, platform: 'freebsd' } };
     expect(bugReportPayloadSchema.safeParse(freebsd).success).toBe(false);
@@ -199,6 +218,16 @@ describe('formatBugReportMarkdown', () => {
     expect(markdown).toContain('2026-10-01T12:00:00.000Z');
     expect(markdown).toContain('agent-pty-exit');
     expect(markdown).toContain('Erros recentes');
+  });
+
+  it('never throws on an event time outside the Date range', () => {
+    const payload: BugReportPayload = {
+      ...validPayload,
+      consent: { diagnostics: true },
+      diagnostics: { events: [{ t: Number.MAX_SAFE_INTEGER, kind: 'agent-pty-exit' }], errors: [] },
+    };
+    expect(() => formatBugReportMarkdown(payload)).not.toThrow();
+    expect(formatBugReportMarkdown(payload)).toContain('agent-pty-exit');
   });
 
   it('omits the steps section when there are none and tolerates a draft without app info', () => {

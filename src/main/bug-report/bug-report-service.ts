@@ -58,12 +58,20 @@ const REQUEST_TIMEOUT_MS = 8_000;
 const RESPONSE_MAX_BYTES = 64 * 1024;
 const PREVIEW_TTL_MS = 10 * 60 * 1000;
 const SERVER_MESSAGE_MAX = 300;
+/** A mensagem do servidor é cortada ANTES de redigir: o corpo pode ter 64 KB hostis. */
+const SERVER_MESSAGE_SCAN_MAX = 1_000;
+/** No máximo 10 tentativas de envio por processo a cada 10 minutos. */
+const SUBMIT_WINDOW_MS = 10 * 60 * 1000;
+const SUBMIT_WINDOW_MAX = 10;
 
 const MESSAGES = {
   invalid: 'Confira o relato: título, descrição e as opções precisam estar preenchidos corretamente.',
   collapsed:
     'Depois de remover dados pessoais (e-mails, caminhos e chaves), o título ou a descrição ficou curto demais. Reescreva sem esses dados.',
   busy: 'Já estou enviando um relato. Aguarde o resultado.',
+  stalePreview:
+    'O conteúdo mudou desde a prévia que você conferiu. Abra "Ver exatamente o que será enviado" de novo e confirme.',
+  tooManyAttempts: 'Muitas tentativas seguidas. Aguarde alguns minutos e tente de novo.',
   noSession:
     'Você precisa entrar na sua conta Nexus para enviar o relato. Abra Configurações → Minha conta, entre e tente de novo.',
   tooLarge:
@@ -91,8 +99,17 @@ function failure(
   return { ok: false, code, message, ...(payload ? { payload } : {}) };
 }
 
-function fingerprint(request: BugReportRequest): string {
-  return createHash('sha256').update(JSON.stringify(request)).digest('hex');
+function sha256(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
+}
+
+/** Chave do pedido sem o resumo da prévia: o resumo descreve o corpo, não o pedido. */
+function fingerprint(request: Omit<BugReportRequest, 'previewDigest'>): string {
+  return sha256(JSON.stringify(request));
+}
+
+function digestOf(payload: BugReportPayload): string {
+  return sha256(JSON.stringify(payload));
 }
 
 /** Mensagem do servidor, pronta para a tela: sem controle, redigida, curta. */
@@ -107,7 +124,7 @@ function serverMessage(json: unknown, redaction: RedactionContext | undefined): 
   );
   if (!candidate) return null;
   // eslint-disable-next-line no-control-regex
-  const flat = candidate.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const flat = candidate.slice(0, SERVER_MESSAGE_SCAN_MAX).replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
   const safe = redactBugReportText(flat, redaction).slice(0, SERVER_MESSAGE_MAX).trim();
   return safe || null;
 }
@@ -163,6 +180,7 @@ async function buildPayload(
 export function createBugReportService(getDeps: () => BugReportServiceDeps): BugReportService {
   let lastPreview: { key: string; payload: BugReportPayload; at: number } | null = null;
   let inFlight = false;
+  let attempts: number[] = [];
 
   const parse = (raw: unknown): BugReportRequest | null => {
     const parsed = bugReportRequestSchema.safeParse(raw);
@@ -176,8 +194,9 @@ export function createBugReportService(getDeps: () => BugReportServiceDeps): Bug
       const deps = getDeps();
       const payload = await buildPayload(request, deps);
       if (!payload) return failure('invalid', MESSAGES.collapsed);
-      lastPreview = { key: fingerprint(request), payload, at: (deps.now ?? Date.now)() };
-      return { ok: true, payload };
+      const { previewDigest: _ignored, ...core } = request;
+      lastPreview = { key: fingerprint(core), payload, at: (deps.now ?? Date.now)() };
+      return { ok: true, payload, digest: digestOf(payload) };
     },
 
     async submit(raw) {
@@ -188,12 +207,22 @@ export function createBugReportService(getDeps: () => BugReportServiceDeps): Bug
       try {
         const deps = getDeps();
         const now = (deps.now ?? Date.now)();
+        const { previewDigest, ...core } = request;
         const previewed =
-          lastPreview && lastPreview.key === fingerprint(request) && now - lastPreview.at <= PREVIEW_TTL_MS
+          lastPreview && lastPreview.key === fingerprint(core) && now - lastPreview.at <= PREVIEW_TTL_MS
             ? lastPreview.payload
             : null;
         const payload = previewed ?? (await buildPayload(request, deps));
         if (!payload) return failure('invalid', MESSAGES.collapsed);
+        // O que a pessoa conferiu é o que sai: corpo diferente do da prévia não é enviado.
+        if (previewDigest !== undefined && previewDigest !== digestOf(payload)) {
+          return failure('stale-preview', MESSAGES.stalePreview);
+        }
+        attempts = attempts.filter((at) => now - at < SUBMIT_WINDOW_MS);
+        if (attempts.length >= SUBMIT_WINDOW_MAX) {
+          return failure('rate-limited', MESSAGES.tooManyAttempts, payload);
+        }
+        attempts.push(now);
         const maxBytes = deps.maxBodyBytes ?? BUG_REPORT_LIMITS.bodyMaxBytes;
         if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > maxBytes) {
           return failure('too-large', MESSAGES.tooLarge, payload);
