@@ -19,6 +19,8 @@ vi.mock('../pty/pty-manager', () => ({
 import {
   __resetAgentStatusForTests,
   applyCanonicalHookEvent,
+  getAgentLastTurnEnd,
+  getAgentToolActivityCount,
   getAgentTurnStartSequence,
   getAgentSemanticStatus,
   isSessionInjectableIdle,
@@ -29,7 +31,9 @@ import {
   resetAgentStatusOnExit,
   semanticStatusForEvent,
   tapAgentSemanticStatus,
+  tapAgentTurnEnd,
   tapAgentTurnStart,
+  type AgentTurnEndEntry,
 } from './agent-status';
 
 const start: CanonicalHookEvent = { kind: 'status', type: 'start' };
@@ -360,6 +364,81 @@ describe('isSessionIdleForCleanup — silêncio não autoriza encerrar trabalho'
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('fim de turno sem conteúdo (F-734)', () => {
+  const tool: CanonicalHookEvent = { kind: 'status', type: 'start', toolActivity: true };
+  const authFailure: CanonicalHookEvent = {
+    kind: 'status',
+    type: 'stop',
+    stopFailure: 'auth',
+  };
+
+  it('StopFailure sem ferramenta: turno em erro, sem trabalho, e o pane fica idle/injetável', () => {
+    harness.agentInfo.mockReturnValue({ paneId: 'pane-ds' });
+    const ends: AgentTurnEndEntry[] = [];
+    tapAgentTurnEnd((entry) => ends.push(entry));
+    applyCanonicalHookEvent({ sessionId: 'pty-ds', event: userSubmit, now: 1_000 });
+    applyCanonicalHookEvent({ sessionId: 'pty-ds', event: authFailure, now: 2_000 });
+
+    const expected: AgentTurnEndEntry = {
+      sessionId: 'pty-ds',
+      paneId: 'pane-ds',
+      sequence: 1,
+      outcome: 'error',
+      stopFailure: 'auth',
+      worked: false,
+      observedAt: 2_000,
+    };
+    expect(ends).toEqual([expected]);
+    expect(getAgentLastTurnEnd('pty-ds')).toEqual(expected);
+    expect(getAgentToolActivityCount('pty-ds')).toBe(0);
+    // A semântica de `done` não muda: o pane está parado no prompt.
+    expect(getAgentSemanticStatus('pane-ds')?.status).toBe('completed');
+    expect(isSessionInjectableIdle('pty-ds')).toBe(true);
+    expect(isAgentAwaitingOperator('pty-ds')).toBe(false);
+  });
+
+  it('ferramenta no turno marca trabalho; o turno seguinte começa sem trabalho', () => {
+    const ends: AgentTurnEndEntry[] = [];
+    tapAgentTurnEnd((entry) => ends.push(entry));
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: userSubmit });
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: tool });
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: tool });
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: authFailure });
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: userSubmit });
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: stop });
+
+    expect(ends.map(({ sequence, outcome, worked, stopFailure }) => ({
+      sequence,
+      outcome,
+      worked,
+      stopFailure,
+    }))).toEqual([
+      { sequence: 1, outcome: 'error', worked: true, stopFailure: 'auth' },
+      { sequence: 2, outcome: 'completed', worked: false, stopFailure: undefined },
+    ]);
+    expect(getAgentToolActivityCount('pty-1')).toBe(2);
+    expect(getAgentLastTurnEnd('pty-1')).not.toHaveProperty('stopFailure');
+  });
+
+  it('a saída do PTY apaga os fatos de turno da sessão', () => {
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: userSubmit });
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: tool });
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: stop });
+    resetAgentStatusOnExit('pty-1');
+    expect(getAgentToolActivityCount('pty-1')).toBe(0);
+    expect(getAgentLastTurnEnd('pty-1')).toBeNull();
+  });
+
+  it('tap que lança não derruba o reducer', () => {
+    tapAgentTurnEnd(() => {
+      throw new Error('boom');
+    });
+    const result = applyCanonicalHookEvent({ sessionId: 'pty-1', event: authFailure });
+    expect(result.applied).toBe(true);
+    expect(getAgentLastTurnEnd('pty-1')?.stopFailure).toBe('auth');
   });
 });
 

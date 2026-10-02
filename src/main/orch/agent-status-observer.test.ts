@@ -153,6 +153,27 @@ describe('turn lifecycle emission', () => {
     });
   });
 
+  it('F-734: a StopFailure stop closes the turn with outcome error (status stays completed)', () => {
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: userSubmit });
+    applyCanonicalHookEvent({
+      sessionId: 'pty-1',
+      event: { kind: 'status', type: 'stop', stopFailure: 'auth' },
+    });
+
+    const frames = snapshotObserverFrames('pty-1');
+    expect(frames.map((f) => f.kind)).toEqual([
+      'turn_started',
+      'status_changed',
+      'status_changed',
+      'turn_ended',
+    ]);
+    expect(frames[2]).toMatchObject({ payload: { status: 'completed' } });
+    expect(frames[3]).toMatchObject({
+      kind: 'turn_ended',
+      payload: { turnId: 'turn-1', outcome: 'error' },
+    });
+  });
+
   it('error ends the turn with outcome error; without a turn, turnId is null', () => {
     applyCanonicalHookEvent({ sessionId: 'pty-1', event: failure });
 

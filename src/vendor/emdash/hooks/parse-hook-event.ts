@@ -1,8 +1,9 @@
 // Vendored from generalaction/emdash@c1af543 — Apache-2.0
 // Source: packages/core/src/agents/plugins/helpers/parse-hook-event.ts
 // See src/vendor/emdash/hooks/LICENSE.md. Nexus changes: attribution header,
-// local hooks-types import, and a main-owned interactive-question/explicit-
-// clear event mapping. The waiting-intent addition also adapts the pattern in
+// local hooks-types import, a main-owned interactive-question/explicit-
+// clear event mapping, and the content-free `toolActivity` bit on tool events
+// (F-734). The waiting-intent addition also adapts the pattern in
 // Adapted from stablyai/orca @ 0121f571e4c9929f4d299f1a339d6e72c5d58c8b
 // (secondary MIT waiting-intent pattern); see the Orca ledger.
 
@@ -123,6 +124,7 @@ export function defaultHookEventParser(
         type: 'notification',
         notificationType: 'elicitation_dialog',
         message: String(hookToolName(body)),
+        toolActivity: true,
       };
     }
     return {
@@ -131,6 +133,8 @@ export function defaultHookEventParser(
       // A non-interactive tool running in parallel must never clear an
       // outstanding AskUserQuestion/request_user_input latch.
       clearsAwaitingInput: eventType !== 'tool-use' && interactive,
+      // F-734: content-free proof that the turn reached a tool (did work).
+      toolActivity: true,
     };
   }
 

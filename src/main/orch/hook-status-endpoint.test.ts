@@ -377,4 +377,64 @@ describe('turn-end mechanical handoff trigger', () => {
     expect(result.statusCode).toBe(200);
     expect(seen).toHaveLength(0);
   });
+
+  it('F-734: StopFailure da família Claude fecha o turno sem fechamento mecânico e sem texto do provedor', () => {
+    const providerText =
+      'Please run /login · API Error: 401 Authentication Fails, Your api key: ****WXYZ is invalid';
+    const seen: unknown[] = [];
+    const applied: unknown[] = [];
+    const result = handleHookStatusRequest(
+      ctx,
+      {
+        eventType: 'stop-failure',
+        flavor: 'claude',
+        body: {
+          hook_event_name: 'StopFailure',
+          error: 'authentication_failed',
+          error_details: providerText,
+          last_assistant_message: providerText,
+        },
+      },
+      (input) => {
+        applied.push(input.event);
+        return { applied: true, transitioned: true, entry: null };
+      },
+      (input) => seen.push(input),
+    );
+    expect(result.statusCode).toBe(200);
+    // O body cru (texto do provedor) nunca vira handoff `[auto]`.
+    expect(seen).toHaveLength(0);
+    // Só a categoria chega ao reducer.
+    expect(applied).toEqual([{ kind: 'status', type: 'stop', stopFailure: 'auth' }]);
+    expect(JSON.stringify(applied)).not.toContain('WXYZ');
+  });
+});
+
+describe('F-734: StopFailure pelo HTTP real', () => {
+  it('claude stop-failure → completed, turn_ended em erro, fim de turno com a categoria', async () => {
+    await boot();
+    await postHook({ event: 'user-submit', flavor: 'claude' });
+    const response = await postHook({
+      event: 'stop-failure',
+      flavor: 'claude',
+      body: JSON.stringify({
+        hook_event_name: 'StopFailure',
+        error: 'billing_error',
+        error_details: 'Your credit balance is too low (key ****WXYZ)',
+      }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      applied: true,
+      status: 'completed',
+    });
+    expect(getAgentSemanticStatus('pty-hook-1')?.status).toBe('completed');
+    const frames = snapshotObserverFrames('pty-hook-1');
+    expect(frames.at(-1)).toMatchObject({
+      kind: 'turn_ended',
+      payload: { turnId: 'turn-1', outcome: 'error' },
+    });
+    expect(JSON.stringify(frames)).not.toContain('WXYZ');
+  });
 });

@@ -160,9 +160,12 @@ export function handleHookStatusRequest(
     // C-194.1: o turno do worker acabou. Quem garante que a resposta chega ao
     // orquestrador quando ele NÃO chamou a tool é o fechamento mecânico —
     // fire-and-forget, nunca no caminho da resposta HTTP nem do reducer.
+    // F-734: StopFailure não é resposta — o corpo dele é texto de erro do
+    // provedor (pode trazer sufixo de chave) e nunca vira handoff `[auto]`.
     if (
       event.kind === 'status' &&
       event.type === 'stop' &&
+      event.stopFailure === undefined &&
       ctx.sessionId
     ) {
       onTurnEnd({ sessionId: ctx.sessionId, body });

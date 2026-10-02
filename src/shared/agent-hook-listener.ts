@@ -32,6 +32,7 @@ import {
 import { join } from 'node:path'
 
 import { parseAgentStatusPayload, type ParsedAgentStatusPayload } from './agent-status-types'
+import { agentStopFailureCategory } from './agent-stop-failure'
 import { ORCA_HOOK_PROTOCOL_VERSION } from './agent-hook-types'
 import { REMOTE_AGENT_HOOK_ENV, type AgentHookSource } from './agent-hook-relay'
 import {
@@ -2196,6 +2197,11 @@ function normalizeClaudeEvent(
 
   const interrupted =
     eventName === 'Stop' && hookPayload['is_interrupt'] === true ? true : undefined
+  // F-734: StopFailure stays `done`, but carries ONLY the allowlisted category
+  // of its `error` enum. `error_details` / `last_assistant_message` are
+  // provider text (they can hold an API key suffix) and are never read here.
+  const stopFailure =
+    eventName === 'StopFailure' ? agentStopFailureCategory(hookPayload['error']) : undefined
 
   return parseAgentStatusPayload(
     JSON.stringify({
@@ -2208,7 +2214,8 @@ function normalizeClaudeEvent(
       toolInput: snapshot.toolInput,
       interactivePrompt: snapshot.interactivePrompt,
       lastAssistantMessage: snapshot.lastAssistantMessage,
-      interrupted
+      interrupted,
+      stopFailure
     })
   )
 }

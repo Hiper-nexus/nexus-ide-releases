@@ -30,6 +30,7 @@ import type {
   CanonicalHookEvent,
   NotificationType,
 } from '../../vendor/emdash/hooks/hooks-types';
+import type { AgentStopFailureCategory } from '../../shared/agent-stop-failure';
 import type { PaneSessionState } from '../../shared/types';
 import type { ObserverFrameInput } from '../../shared/observer-frame';
 import {
@@ -96,6 +97,26 @@ export interface AgentTurnStartEntry {
 }
 
 /**
+ * F-734: content-free outcome of one closed turn (Stop, StopFailure or error)
+ * of a physical PTY session. Lets the pane-start watchdog tell "the brief's
+ * turn did work" from "the provider refused the turn before any work" without
+ * ever reading provider text.
+ */
+export interface AgentTurnEndEntry {
+  sessionId: string;
+  paneId: string;
+  /** Turn-start sequence this end closes (0 = no UserPromptSubmit observed). */
+  sequence: number;
+  /** 'error' = an API error ended the turn (StopFailure) or an error event. */
+  outcome: 'completed' | 'error';
+  /** Allowlisted StopFailure category; absent on a normal Stop. */
+  stopFailure?: AgentStopFailureCategory;
+  /** A tool ran in this turn before it ended. */
+  worked: boolean;
+  observedAt: number;
+}
+
+/**
  * Pure event → status mapping. Returns null for events without status
  * content (kind session / ignore), leaving the pane untouched.
  */
@@ -143,11 +164,19 @@ const paneBySession = new Map<string, string>();
 const turnStartSequenceBySession = new Map<string, number>();
 /** Sequência do último turno fechado por Stop/erro (F-660). */
 const turnEndSequenceBySession = new Map<string, number>();
+/** F-734: tool events per physical PTY session (a count, never content). */
+const toolActivityCountBySession = new Map<string, number>();
+/** F-734: sessions whose currently open turn already reached a tool. */
+const toolActivityInOpenTurn = new Set<string>();
+/** F-734: last closed turn per physical PTY session. */
+const lastTurnEndBySession = new Map<string, AgentTurnEndEntry>();
 
 export type AgentSemanticStatusTap = (entry: AgentSemanticStatusEntry) => void;
 const statusTaps = new Set<AgentSemanticStatusTap>();
 export type AgentTurnStartTap = (entry: AgentTurnStartEntry) => void;
 const turnStartTaps = new Set<AgentTurnStartTap>();
+export type AgentTurnEndTap = (entry: AgentTurnEndEntry) => void;
+const turnEndTaps = new Set<AgentTurnEndTap>();
 
 /**
  * Transition-only tap — fires exclusively when a pane's semantic status
@@ -170,6 +199,25 @@ export function tapAgentTurnStart(cb: AgentTurnStartTap): () => void {
 
 export function getAgentTurnStartSequence(sessionId: string): number {
   return turnStartSequenceBySession.get(sessionId) ?? 0;
+}
+
+/**
+ * F-734: event-level turn-end tap — every Stop/StopFailure/error fires, even
+ * when the semantic status does not change. Entries are content-free.
+ */
+export function tapAgentTurnEnd(cb: AgentTurnEndTap): () => void {
+  turnEndTaps.add(cb);
+  return () => turnEndTaps.delete(cb);
+}
+
+/** F-734: how many tool events this physical PTY session reported. */
+export function getAgentToolActivityCount(sessionId: string): number {
+  return toolActivityCountBySession.get(sessionId) ?? 0;
+}
+
+/** F-734: the last closed turn of this physical PTY session, if any. */
+export function getAgentLastTurnEnd(sessionId: string): AgentTurnEndEntry | null {
+  return lastTurnEndBySession.get(sessionId) ?? null;
 }
 
 /**
@@ -464,7 +512,12 @@ function publishHookObserverFrames(args: {
         kind: 'turn_ended',
         payload: {
           turnId: scope.turnId ?? null,
-          outcome: event.type === 'stop' ? 'completed' : 'error',
+          // F-734: a StopFailure is a turn closed by an API error, not a
+          // completion — the frame must not claim otherwise.
+          outcome:
+            event.type === 'stop' && event.stopFailure === undefined
+              ? 'completed'
+              : 'error',
         },
       });
     }
@@ -557,6 +610,8 @@ export function applyCanonicalHookEvent(input: {
     ) {
       const sequence = getAgentTurnStartSequence(sessionId) + 1;
       turnStartSequenceBySession.set(sessionId, sequence);
+      // F-734: a new turn starts without work of its own.
+      toolActivityInOpenTurn.delete(sessionId);
       const turnStart: AgentTurnStartEntry = {
         sessionId,
         paneId,
@@ -572,11 +627,47 @@ export function applyCanonicalHookEvent(input: {
       }
     }
 
+    // F-734: tool activity is the proof that a turn did work (count only).
+    if (event.kind === 'status' && event.toolActivity === true) {
+      toolActivityCountBySession.set(
+        sessionId,
+        getAgentToolActivityCount(sessionId) + 1,
+      );
+      toolActivityInOpenTurn.add(sessionId);
+    }
+
     if (
       event.kind === 'status' &&
       (event.type === 'stop' || event.type === 'error')
     ) {
-      turnEndSequenceBySession.set(sessionId, getAgentTurnStartSequence(sessionId));
+      const sequence = getAgentTurnStartSequence(sessionId);
+      turnEndSequenceBySession.set(sessionId, sequence);
+      // F-734: content-free record of how the turn ended — StopFailure keeps
+      // the `completed` status above (the pane IS idle at the prompt), but the
+      // turn itself ended in error, with or without work.
+      const turnEnd: AgentTurnEndEntry = {
+        sessionId,
+        paneId,
+        sequence,
+        outcome:
+          event.type === 'error' || event.stopFailure !== undefined
+            ? 'error'
+            : 'completed',
+        ...(event.stopFailure !== undefined
+          ? { stopFailure: event.stopFailure }
+          : {}),
+        worked: toolActivityInOpenTurn.has(sessionId),
+        observedAt: entry.updatedAt,
+      };
+      toolActivityInOpenTurn.delete(sessionId);
+      lastTurnEndBySession.set(sessionId, turnEnd);
+      for (const tap of turnEndTaps) {
+        try {
+          tap(turnEnd);
+        } catch (err) {
+          console.warn('[agent-status] turn-end tap threw:', err);
+        }
+      }
     }
 
     const transitioned = prev?.status !== next;
@@ -743,6 +834,9 @@ export function resetAgentStatusOnExit(sessionId: string, now = Date.now()): voi
     paneBySession.delete(sessionId);
     turnStartSequenceBySession.delete(sessionId);
     turnEndSequenceBySession.delete(sessionId);
+    toolActivityCountBySession.delete(sessionId);
+    toolActivityInOpenTurn.delete(sessionId);
+    lastTurnEndBySession.delete(sessionId);
     if (!paneId) return;
     const prev = statusByPane.get(paneId);
     if (!prev) return;
@@ -773,7 +867,11 @@ export function __resetAgentStatusForTests(): void {
   paneBySession.clear();
   turnStartSequenceBySession.clear();
   turnEndSequenceBySession.clear();
+  toolActivityCountBySession.clear();
+  toolActivityInOpenTurn.clear();
+  lastTurnEndBySession.clear();
   observerToolCallsBySession.clear();
   statusTaps.clear();
   turnStartTaps.clear();
+  turnEndTaps.clear();
 }

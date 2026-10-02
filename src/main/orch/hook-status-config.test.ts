@@ -34,8 +34,11 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
       'PostToolUseFailure',
       'PreToolUse',
       'Stop',
+      'StopFailure',
       'UserPromptSubmit',
     ]);
+    // F-734: StopFailure só tem o hook de status (a CLI ignora a saída dele).
+    expect(merged.StopFailure).toHaveLength(1);
     // Skill-gate Stop entry intact, ours appended alongside: status +
     // portão de regressão (/hook/regression, resposta = saída do hook).
     expect(merged.Stop).toHaveLength(3);
@@ -89,14 +92,15 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
     const twice = mergeClaudeStatusHooks(once);
 
     expect(twice).toEqual(once);
-    // 6 status hooks (claudeHookSpecs) + 1 hook de triagem PostToolUseFailure
-    // + 1 hook de delegação UserPromptSubmit (C2) + 1 portão de regressão Stop
-    // + 1 portão de integração PreToolUse/Bash (F-234).
+    // 7 status hooks (claudeHookSpecs, com o StopFailure do F-734) + 1 hook de
+    // triagem PostToolUseFailure + 1 hook de delegação UserPromptSubmit (C2)
+    // + 1 portão de regressão Stop + 1 portão de integração PreToolUse/Bash
+    // (F-234).
     const commands = Object.values(twice)
       .flat()
       .flatMap((entry) => (entry as { hooks: Array<{ command: string }> }).hooks)
       .map((hook) => hook.command);
-    expect(commands.filter(isNexusHookText)).toHaveLength(10);
+    expect(commands.filter(isNexusHookText)).toHaveLength(11);
   });
 });
 

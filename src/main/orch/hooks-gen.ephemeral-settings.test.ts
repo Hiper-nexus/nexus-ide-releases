@@ -65,6 +65,8 @@ describe('Claude-family zero-click settings (system default)', () => {
       'PostToolUseFailure',
       'PreToolUse',
       'Stop',
+      // F-734: o turno que acaba em erro de API também chega ao Main.
+      'StopFailure',
       'UserPromptSubmit',
     ]);
     // skill-gate + status + portão de regressão (/hook/regression).
@@ -93,6 +95,8 @@ describe('Claude-family zero-click settings (system default)', () => {
       'PostToolUseFailure',
       'PreToolUse',
       'Stop',
+      // F-734: o turno que acaba em erro de API também chega ao Main.
+      'StopFailure',
       'UserPromptSubmit',
     ]);
     const serialized = JSON.stringify(settings);

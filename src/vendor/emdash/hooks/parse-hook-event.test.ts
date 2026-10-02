@@ -66,6 +66,23 @@ describe('defaultHookEventParser', () => {
     })).not.toHaveProperty('promptSubmitted');
   });
 
+  it('Nexus F-734: tool events carry only the content-free toolActivity bit', () => {
+    const toolEvents = [
+      defaultHookEventParser('tool-use', { tool_name: 'Bash', tool_input: { command: 'ls' } }),
+      defaultHookEventParser('tool-complete', { tool_name: 'Edit', tool_response: 'ok' }),
+      defaultHookEventParser('tool-use-failure', { tool_name: 'Bash', error: 'exit 1' }),
+      // AskUserQuestion: the turn reached a tool even while it waits on a human.
+      defaultHookEventParser('tool-use', { tool_name: 'AskUserQuestion' }),
+    ];
+    for (const event of toolEvents) {
+      expect(event).toMatchObject({ kind: 'status', toolActivity: true });
+      expect(JSON.stringify(event)).not.toMatch(/"ls"|exit 1|"ok"/);
+    }
+    for (const eventType of ['user-submit', 'stop', 'error', 'notification', 'start']) {
+      expect(defaultHookEventParser(eventType, {})).not.toHaveProperty('toolActivity');
+    }
+  });
+
   it('carries title/message/lastAssistantMessage when present', () => {
     expect(
       defaultHookEventParser('stop', {

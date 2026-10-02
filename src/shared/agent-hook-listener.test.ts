@@ -611,9 +611,67 @@ describe('shared agent-hook-listener', () => {
     expect(event?.payload).toMatchObject({
       state: 'done',
       prompt: 'say hi',
-      agentType: 'claude'
+      agentType: 'claude',
+      // F-734: only the allowlisted category of the `error` enum crosses over.
+      stopFailure: 'invalid_request'
     })
     expect(event?.payload.lastAssistantMessage).toBeUndefined()
+    expect(JSON.stringify(event?.payload)).not.toContain('not supported')
+  })
+
+  it('F-734: carries the auth category of a StopFailure and never the provider text', () => {
+    normalizeHookPayload(
+      state,
+      'claude',
+      {
+        paneKey: PANE_KEY,
+        payload: { hook_event_name: 'UserPromptSubmit', prompt: 'brief' }
+      },
+      'production'
+    )
+    const providerText =
+      'Please run /login · API Error: 401 Authentication Fails, Your api key: ****WXYZ is invalid'
+    const event = normalizeHookPayload(
+      state,
+      'claude',
+      {
+        paneKey: PANE_KEY,
+        payload: {
+          hook_event_name: 'StopFailure',
+          error: 'authentication_failed',
+          error_details: providerText,
+          last_assistant_message: providerText
+        }
+      },
+      'production'
+    )
+
+    expect(event?.payload).toMatchObject({ state: 'done', stopFailure: 'auth' })
+    const serialized = JSON.stringify(event)
+    expect(serialized).not.toContain('WXYZ')
+    expect(serialized).not.toContain('API Error')
+  })
+
+  it('F-734: a StopFailure category outside the allowlist becomes other, never the raw value', () => {
+    for (const error of ['rate_limit', 'server_error', 'unknown', 'API Error: 401 ****WXYZ', 7]) {
+      const event = normalizeHookPayload(
+        state,
+        'claude',
+        { paneKey: PANE_KEY, payload: { hook_event_name: 'StopFailure', error } },
+        'production'
+      )
+      expect(event?.payload.state).toBe('done')
+      expect(event?.payload.stopFailure).toBe('other')
+    }
+    const plainStop = normalizeHookPayload(
+      state,
+      'claude',
+      { paneKey: PANE_KEY, payload: { hook_event_name: 'Stop', error: 'authentication_failed' } },
+      'production'
+    )
+    // A normal Stop never carries the field, even with an `error` key around.
+    expect(plainStop?.payload.state).toBe('done')
+    expect(plainStop?.payload.stopFailure).toBeUndefined()
   })
 
   it('normalizes Devin documented lifecycle events', () => {

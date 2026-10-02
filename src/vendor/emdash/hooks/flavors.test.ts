@@ -55,6 +55,50 @@ describe('parseClaudeHookEvent', () => {
     expect(parseClaudeHookEvent('start', {})).toMatchObject({ kind: 'status', type: 'start' });
     expect(parseClaudeHookEvent('mystery', {})).toEqual({ kind: 'ignore' });
   });
+
+  // Nexus F-734: payload shape of Claude Code 2.1.287's StopFailure.
+  it('parses StopFailure to a stop carrying only the allowlisted category', () => {
+    const providerText =
+      'Please run /login · API Error: 401 Authentication Fails, Your api key: ****WXYZ is invalid';
+    const event = parseClaudeHookEvent('stop-failure', {
+      session_id: 'provider-session',
+      transcript_path: '/tmp/t.jsonl',
+      hook_event_name: 'StopFailure',
+      error: 'authentication_failed',
+      error_details: providerText,
+      last_assistant_message: providerText,
+    });
+    expect(event).toEqual({ kind: 'status', type: 'stop', stopFailure: 'auth' });
+    expect(JSON.stringify(event)).not.toContain('WXYZ');
+
+    expect(parseClaudeHookEvent('stop-failure', { error: 'billing_error' })).toEqual({
+      kind: 'status',
+      type: 'stop',
+      stopFailure: 'billing',
+    });
+    expect(parseClaudeHookEvent('stop-failure', { error: 'model_not_found' })).toEqual({
+      kind: 'status',
+      type: 'stop',
+      stopFailure: 'invalid_request',
+    });
+    // Limite de uso, transitório e valor desconhecido: categoria `other`.
+    for (const error of ['rate_limit', 'server_error', 'unknown', providerText, undefined]) {
+      expect(parseClaudeHookEvent('stop-failure', { error })).toEqual({
+        kind: 'status',
+        type: 'stop',
+        stopFailure: 'other',
+      });
+    }
+  });
+
+  it('a normal Stop never carries a stopFailure category', () => {
+    const event = parseClaudeHookEvent('stop', {
+      error: 'authentication_failed',
+      last_assistant_message: 'done',
+    });
+    expect(event).toMatchObject({ kind: 'status', type: 'stop' });
+    expect(event).not.toHaveProperty('stopFailure');
+  });
 });
 
 describe('parseCodexHookEvent', () => {
@@ -136,6 +180,13 @@ describe('parseFlavorHookEvent dispatch', () => {
       tool_name: 'AskUserQuestion',
     })).toMatchObject({ type: 'start', clearsAwaitingInput: true });
   });
+
+  it('Nexus F-734: only the Claude flavor understands stop-failure', () => {
+    expect(parseFlavorHookEvent('claude', 'stop-failure', { error: 'invalid_request' }))
+      .toEqual({ kind: 'status', type: 'stop', stopFailure: 'invalid_request' });
+    expect(parseFlavorHookEvent('default', 'stop-failure', { error: 'invalid_request' }))
+      .toEqual({ kind: 'ignore' });
+  });
 });
 
 describe('flavor hook spec tables', () => {
@@ -149,7 +200,15 @@ describe('flavor hook spec tables', () => {
       'PostToolUseFailure',
       'Notification',
       'Stop',
+      'StopFailure',
     ]);
+    // Nexus F-734: StopFailure pipes stdin under its own event type, so the
+    // endpoint can tell it from a Stop (never a mechanical turn-end handoff).
+    const claudeStopFailure = claudeHookSpecs(linux).find(
+      (spec) => spec.hookKey === 'StopFailure',
+    );
+    expect(claudeStopFailure?.command).toContain('-d @-');
+    expect(claudeStopFailure?.command).toContain('X-Nexus-Hook-Event: stop-failure');
     expect(codexHookSpecs(linux).map((s) => s.hookKey)).toEqual([
       'SessionStart',
       'UserPromptSubmit',

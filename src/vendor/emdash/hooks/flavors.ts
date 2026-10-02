@@ -16,7 +16,12 @@
 //    `last_agent_message` reaches turn-end-handoff (a stub idle_prompt
 //    discarded short answers the worker was taught not to tool-submit).
 //  - Kimi/Grok are covered by the default parser upstream; kept that way.
+//  - F-734: Claude gains StopFailure -> `stop-failure` (emdash wires none). It
+//    parses to a `stop` carrying ONLY the allowlisted category of the payload's
+//    `error` enum; `error_details` / `last_assistant_message` are provider
+//    text (they can hold an API key suffix) and never leave the parser.
 
+import { agentStopFailureCategory } from '../../../shared/agent-stop-failure';
 import type { CanonicalHookEvent } from './hooks-types';
 import {
   defaultHookEventParser,
@@ -68,6 +73,16 @@ export function parseClaudeHookEvent(
     };
   }
 
+  if (eventType === 'stop-failure') {
+    // Nexus (F-734): an API error ended the turn — Claude fires StopFailure
+    // INSTEAD of Stop. Category only; no message/title/lastAssistantMessage.
+    return {
+      kind: 'status',
+      type: 'stop',
+      stopFailure: agentStopFailureCategory(body.error),
+    };
+  }
+
   return defaultHookEventParser(eventType, body);
 }
 
@@ -80,6 +95,9 @@ export function claudeHookSpecs(opts: HookCommandOptions = {}): FlavorHookSpec[]
     { hookKey: 'PostToolUseFailure', command: makeStdinHookCommand('tool-use-failure', withFlavor) },
     { hookKey: 'Notification', command: makeStdinHookCommand('notification', withFlavor) },
     { hookKey: 'Stop', command: makeStdinHookCommand('stop', withFlavor) },
+    // F-734: sem isto o turno que acaba em erro de API não chega ao Main — o
+    // pane fica `working` para sempre e o watchdog de início não vê a recusa.
+    { hookKey: 'StopFailure', command: makeStdinHookCommand('stop-failure', withFlavor) },
   ];
 }
 

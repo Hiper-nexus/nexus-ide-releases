@@ -351,6 +351,30 @@ describe('parseAgentStatusPayload', () => {
     }
   })
 
+  it('F-734: keeps an allowlisted stopFailure category on done only', () => {
+    expect(parseAgentStatusPayload('{"state":"done","stopFailure":"auth"}')!.stopFailure).toBe(
+      'auth'
+    )
+    for (const state of ['working', 'blocked', 'waiting'] as const) {
+      const result = parseAgentStatusPayload(`{"state":"${state}","stopFailure":"auth"}`)
+      expect(result!.stopFailure).toBeUndefined()
+    }
+  })
+
+  it('F-734: drops a stopFailure that is not an allowlisted category (never copies text)', () => {
+    for (const raw of [
+      '"authentication_failed"',
+      '"API Error: 401 Your api key: ****WXYZ is invalid"',
+      '1',
+      '{"category":"auth"}'
+    ]) {
+      const result = parseAgentStatusPayload(`{"state":"done","stopFailure":${raw}}`)
+      expect(result!.stopFailure).toBeUndefined()
+      expect(JSON.stringify(result)).not.toContain('WXYZ')
+      expect(Object.hasOwn(result!, 'stopFailure')).toBe(false)
+    }
+  })
+
   it('requires strict boolean true for interrupted (rejects truthy non-boolean)', () => {
     // Why: the parser uses `=== true` to guard against agents that surface a
     // string or numeric truthy sentinel; only an explicit boolean counts.

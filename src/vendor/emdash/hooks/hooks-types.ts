@@ -3,7 +3,10 @@
 // See src/vendor/emdash/hooks/LICENSE.md. Nexus adds an activity-only
 // `clearsAwaitingInput` marker used by the main-owned injectable-idle latch,
 // plus a content-free `promptSubmitted` provenance bit used to prove that a
-// native UserPromptSubmit boundary really fired.
+// native UserPromptSubmit boundary really fired. F-734 adds the content-free
+// `toolActivity` bit and the allowlisted `stopFailure` category.
+
+import type { AgentStopFailureCategory } from '../../../shared/agent-stop-failure';
 
 export const HOOK_EVENTS = [
   'notification',
@@ -48,6 +51,14 @@ export type CanonicalHookEvent =
       /** Nexus-only provenance bit emitted exclusively for UserPromptSubmit.
        * It deliberately carries neither the prompt nor provider output. */
       promptSubmitted?: true;
+      /** Nexus-only (F-734): the event is tool activity (PreToolUse,
+       * PostToolUse, PostToolUseFailure) — proof the turn did work. Carries
+       * neither the tool name nor its input/output. */
+      toolActivity?: true;
+      /** Nexus-only (F-734): this `stop` is a Claude StopFailure — an API
+       * error ended the turn. Only the allowlisted category travels; the
+       * provider's error text never enters the canonical event. */
+      stopFailure?: AgentStopFailureCategory;
     }
   | { kind: 'session'; providerSessionId: string }
   | { kind: 'ignore' };

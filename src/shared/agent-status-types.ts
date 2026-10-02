@@ -13,6 +13,10 @@ import {
   normalizeAgentProviderSession,
   type AgentProviderSessionMetadata,
 } from './agent-session-resume'
+import {
+  isAgentStopFailureCategory,
+  type AgentStopFailureCategory,
+} from './agent-stop-failure'
 
 export const AGENT_STATUS_STATES = ['working', 'blocked', 'waiting', 'done'] as const
 export type AgentStatusState = (typeof AGENT_STATUS_STATES)[number]
@@ -181,6 +185,9 @@ export type AgentStatusPayload = {
   interactivePrompt?: string
   lastAssistantMessage?: string
   interrupted?: boolean
+  /** F-734: o `done` veio de um StopFailure (erro de API encerrou o turno).
+   *  Só a categoria da allowlist — o texto do provedor nunca viaja aqui. */
+  stopFailure?: AgentStopFailureCategory
   providerSession?: AgentProviderSessionMetadata
   workingMode?: AgentWorkingMode
   model?: string
@@ -479,6 +486,11 @@ function normalizeAgentStatusObject(parsed: unknown): ParsedAgentStatusPayload |
     // Why: only meaningful on `done`. Coerce to undefined on other states so
     // the field doesn't leak stale truth through state transitions.
     interrupted: obj.interrupted === true && state === 'done' ? true : undefined,
+    // F-734: same `done`-only rule, and only an allowlisted category survives —
+    // a payload carrying provider text here is dropped, never copied.
+    ...(state === 'done' && isAgentStopFailureCategory(obj.stopFailure)
+      ? { stopFailure: obj.stopFailure }
+      : {}),
     providerSession: normalizeAgentProviderSession(obj.providerSession) ?? undefined,
   }
 }
