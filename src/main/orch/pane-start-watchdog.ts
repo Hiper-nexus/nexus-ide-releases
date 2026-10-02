@@ -11,7 +11,14 @@
  * conhece o briefing e a rota (tool-util / tools-panes) entra aqui como
  * closure. A ficha nunca vai para disco, log, trace ou handoff: lá só passam
  * ids, adapter e um motivo curto por categoria.
+ *
+ * F-734: na família Claude (prova de turno), turno aberto ainda não é "começou".
+ * O pane que recebeu o brief e teve o turno encerrado por StopFailure de
+ * configuração (credencial, conta ou pedido recusados pelo provedor) sem fazer
+ * nada não começou — e repetir não cura. A ficha espera o desfecho do turno:
+ * ferramenta, handoff ou Stop normal provam o início.
  */
+import type { AgentStopFailureCategory } from '../../shared/agent-stop-failure';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { sanitizeMissionOrchestratorExitOutput } from './mission-orchestrator-exit-policy';
 
@@ -28,13 +35,29 @@ export const START_WATCH_TTL_MS = 30 * 60_000;
 const EARLY_MARK_TTL_MS = 2 * 60_000;
 const MAX_EARLY_MARKS = 256;
 
+/**
+ * F-734: credencial recusada (auth/billing) sem conta gerenciada é a chave de
+ * todos os panes da CLI — o disjuntor do adapter fica aberto por este tempo
+ * (o mesmo da pausa de auth do failover, `limit-detector`).
+ */
+export const CREDENTIAL_REJECTED_OPEN_MS = 15 * 60_000;
+
 export type PaneStartRole = 'worker' | 'helper' | 'orchestrator' | 'operator';
 export type StartAction = 'none' | 'redeliver' | 'reroute' | 'notify-only';
+/**
+ * F-734: o provedor recusou o turno do brief antes de qualquer trabalho
+ * (StopFailure de configuração): credencial, conta ou pedido.
+ */
+export type ProviderRejectedCause =
+  | 'provider-auth'
+  | 'provider-billing'
+  | 'provider-request';
 /** Falha física provada por quem a viu (Main), antes de qualquer prazo. */
 export type PaneStartFailureCause =
   | 'spawn-refused'
   | 'boot-exit'
-  | 'brief-rejected';
+  | 'brief-rejected'
+  | ProviderRejectedCause;
 export type PaneNotStartedCause =
   | PaneStartFailureCause
   | 'no-session'
@@ -112,6 +135,79 @@ export function notStartedCause(input: {
   return input.hasSession ? 'never-started' : 'no-session';
 }
 
+/**
+ * F-734: só o StopFailure que repetir não cura vira falha de início —
+ * credencial, conta e pedido recusados pelo provedor. Limite de uso é do
+ * failover de conta (F-249/F-718); erro transitório a CLI já tentou de novo.
+ */
+export function providerRejectedCause(
+  category: AgentStopFailureCategory | undefined,
+): ProviderRejectedCause | null {
+  switch (category) {
+    case 'auth':
+      return 'provider-auth';
+    case 'billing':
+      return 'provider-billing';
+    case 'invalid_request':
+      return 'provider-request';
+    default:
+      return null;
+  }
+}
+
+/**
+ * F-734: onde o pane está no caminho até "começou". `turn-open` só existe na
+ * família Claude (prova de turno): o turno abriu, mas ainda não fez trabalho
+ * nem terminou — o veredito é do desfecho dele. `not-ours`: o turno acabou em
+ * limite de uso ou erro transitório, que são do failover (F-249/F-718).
+ */
+export type PaneStartProgress =
+  | { readonly kind: 'none' | 'turn-open' | 'started' | 'not-ours' }
+  | { readonly kind: 'rejected'; readonly cause: ProviderRejectedCause };
+
+export function paneStartProgress(input: {
+  readonly turnProof: boolean;
+  /** Turno aberto: UserPromptSubmit, entrega aceita ou status semântico. */
+  readonly turnOpened: boolean;
+  /** Trabalho provado: ferramenta na sessão ou handoff da sessão. */
+  readonly worked: boolean;
+  /** Último turno fechado da sessão (sem conteúdo). */
+  readonly lastTurnEnd: {
+    readonly outcome: 'completed' | 'error';
+    readonly stopFailure?: AgentStopFailureCategory;
+  } | null;
+}): PaneStartProgress {
+  if (input.worked) return { kind: 'started' };
+  // Sem prova de turno não há StopFailure: turno aberto basta (F-723).
+  if (!input.turnProof) return { kind: input.turnOpened ? 'started' : 'none' };
+  const end = input.lastTurnEnd;
+  if (end) {
+    if (end.outcome === 'completed') return { kind: 'started' };
+    const cause = providerRejectedCause(end.stopFailure);
+    return cause ? { kind: 'rejected', cause } : { kind: 'not-ours' };
+  }
+  return { kind: input.turnOpened ? 'turn-open' : 'none' };
+}
+
+/**
+ * F-734: o que a falha de início faz no disjuntor do adapter. A credencial é
+ * o escopo: recusa de credencial ou conta (auth/billing) SEM conta gerenciada
+ * é a chave que todo pane da CLI usa → abre o disjuntor por
+ * `CREDENTIAL_REJECTED_OPEN_MS`. Com conta gerenciada a chave é da conta — a
+ * pausa POR CONTA é do failover (F-676) e o adapter só conta a falha, como
+ * qualquer outra falha de início. Pedido recusado é do modelo/pedido: conta.
+ */
+export function startFailureBreakerAction(input: {
+  readonly cause: PaneNotStartedCause;
+  readonly accountBound: boolean;
+}): 'trip' | 'count' {
+  const credential =
+    input.cause === 'provider-auth' || input.cause === 'provider-billing';
+  return credential && !input.accountBound ? 'trip' : 'count';
+}
+
+const PROVIDER_REJECTED_TAIL = 'o turno do brief acabou antes de qualquer trabalho';
+
 const CAUSE_TEXT: Readonly<Record<PaneNotStartedCause, string>> = {
   'spawn-refused': 'o CLI não subiu (o spawn foi recusado)',
   'boot-exit': 'o processo saiu antes de abrir o primeiro turno',
@@ -119,6 +215,11 @@ const CAUSE_TEXT: Readonly<Record<PaneNotStartedCause, string>> = {
   'no-session': `nenhuma sessão nasceu em ${Math.round(START_GRACE_MS / 1000)} s`,
   'never-started':
     'a sessão ficou parada sem abrir turno, mesmo com o briefing reenviado',
+  'provider-auth': `credencial recusada pelo provedor (${PROVIDER_REJECTED_TAIL})`,
+  'provider-billing':
+    `conta recusada pelo provedor — cobrança, crédito ou bloqueio (${PROVIDER_REJECTED_TAIL})`,
+  'provider-request':
+    `pedido recusado pelo provedor — modelo ou parâmetro inválido (${PROVIDER_REJECTED_TAIL})`,
 };
 
 export type PaneStartOutcome =
@@ -210,6 +311,11 @@ export interface PaneStartWatch extends PaneStartWatchInit {
   failure: { readonly cause: PaneStartFailureCause; readonly at: number } | null;
   /** A sessão acabou sem falha provada (pedido de encerramento, one-shot, fora da janela). */
   sessionEnded: boolean;
+  /**
+   * F-734: desfecho do primeiro turno fechado (o do brief). Só ele é julgado —
+   * um turno seguinte (o Maestro escrevendo no pane) nunca reverte o veredito.
+   */
+  turnOutcome: 'started' | 'not-ours' | null;
   redeliveredAt: number | null;
   /** Passo 1 em curso: a varredura espera, mas a saída da sessão ainda conta. */
   redelivering: boolean;
@@ -268,6 +374,7 @@ export function trackPaneStart(init: PaneStartWatchInit): PaneStartWatch {
     accepted: early?.accepted === true,
     failure: early?.failure ? { cause: early.failure, at: early.at } : null,
     sessionEnded: false,
+    turnOutcome: null,
     redeliveredAt: null,
     redelivering: false,
     phase: 'watching',
@@ -322,6 +429,47 @@ export function notePaneStartFailure(
   if (watch.phase !== 'watching' || watch.accepted || watch.failure) return;
   watch.failure = { cause, at: now };
   scheduleKick();
+}
+
+/**
+ * F-734: o primeiro turno fechado da sessão vigiada — o do brief — acabou
+ * (Stop ou StopFailure). StopFailure de configuração SEM trabalho no turno
+ * (nenhuma ferramenta, nenhum handoff) é falha provada: o pane recebeu o brief,
+ * mas o provedor recusou a credencial, a conta ou o pedido. Vale mesmo com o
+ * turno aceito — foi justamente o turno aceito que o provedor recusou. Trabalho
+ * ou Stop normal provam o início; limite e transitório saem para o failover.
+ * Turnos seguintes não são julgados. Devolve a causa anotada (null = sem falha).
+ */
+export function notePaneTurnEnded(
+  watch: PaneStartWatch,
+  input: {
+    readonly sessionId: string;
+    readonly outcome: 'completed' | 'error';
+    readonly stopFailure?: AgentStopFailureCategory;
+    readonly worked: boolean;
+    readonly now: number;
+  },
+): ProviderRejectedCause | null {
+  if (watch.phase !== 'watching' || watch.failure || watch.turnOutcome !== null) {
+    return null;
+  }
+  if (watch.sessionId === null) watch.sessionId = input.sessionId;
+  const progress = paneStartProgress({
+    turnProof: watch.turnProof,
+    turnOpened: true,
+    worked: input.worked,
+    lastTurnEnd: {
+      outcome: input.outcome,
+      ...(input.stopFailure ? { stopFailure: input.stopFailure } : {}),
+    },
+  });
+  if (progress.kind === 'rejected') {
+    watch.failure = { cause: progress.cause, at: input.now };
+    scheduleKick();
+    return progress.cause;
+  }
+  watch.turnOutcome = progress.kind === 'not-ours' ? 'not-ours' : 'started';
+  return null;
 }
 
 /** A entrega comprovada do spawn (colagem com ACK pendente) abriu o turno. */

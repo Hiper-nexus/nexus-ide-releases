@@ -11,11 +11,15 @@ import {
   notePaneSessionEnded,
   notePaneStartAccepted,
   notePaneStartFailure,
+  notePaneTurnEnded,
   notStartedCause,
   paneStartNoticeSummary,
+  paneStartProgress,
+  providerRejectedCause,
   resetPaneStartWatchdogForTests,
   setPaneStartKick,
   shortStartError,
+  startFailureBreakerAction,
   trackPaneStart,
   type StartCheckInput,
 } from './pane-start-watchdog';
@@ -116,6 +120,103 @@ describe('decideStartAction (F-723)', () => {
     expect(
       decideStartAction(input({ pinnedRuntime: true, session: 'none' })),
     ).toBe('notify-only');
+  });
+});
+
+describe('turno do brief recusado pelo provedor (F-734)', () => {
+  const progress = (
+    overrides: Partial<Parameters<typeof paneStartProgress>[0]> = {},
+  ) =>
+    paneStartProgress({
+      turnProof: true,
+      turnOpened: true,
+      worked: false,
+      lastTurnEnd: null,
+      ...overrides,
+    });
+
+  it('só credencial, conta e pedido recusados viram falha de início', () => {
+    expect(providerRejectedCause('auth')).toBe('provider-auth');
+    expect(providerRejectedCause('billing')).toBe('provider-billing');
+    expect(providerRejectedCause('invalid_request')).toBe('provider-request');
+    // Limite de uso e transitórios são do failover (F-249/F-718).
+    expect(providerRejectedCause('other')).toBeNull();
+    expect(providerRejectedCause(undefined)).toBeNull();
+  });
+
+  it('família Claude: turno aberto sem trabalho nem fim espera o desfecho', () => {
+    expect(progress()).toEqual({ kind: 'turn-open' });
+    expect(progress({ turnOpened: false })).toEqual({ kind: 'none' });
+  });
+
+  it('ferramenta, handoff ou Stop normal provam o início', () => {
+    expect(progress({ worked: true })).toEqual({ kind: 'started' });
+    expect(
+      progress({ worked: true, lastTurnEnd: { outcome: 'error', stopFailure: 'auth' } }),
+    ).toEqual({ kind: 'started' });
+    expect(progress({ lastTurnEnd: { outcome: 'completed' } })).toEqual({ kind: 'started' });
+  });
+
+  it('StopFailure de configuração sem trabalho: recusa; limite ou transitório: não é deste watchdog', () => {
+    expect(progress({ lastTurnEnd: { outcome: 'error', stopFailure: 'auth' } })).toEqual({
+      kind: 'rejected',
+      cause: 'provider-auth',
+    });
+    expect(
+      progress({ lastTurnEnd: { outcome: 'error', stopFailure: 'invalid_request' } }),
+    ).toEqual({ kind: 'rejected', cause: 'provider-request' });
+    expect(progress({ lastTurnEnd: { outcome: 'error', stopFailure: 'other' } })).toEqual({
+      kind: 'not-ours',
+    });
+    expect(progress({ lastTurnEnd: { outcome: 'error' } })).toEqual({ kind: 'not-ours' });
+  });
+
+  it('CLI sem prova de turno segue o F-723: turno aberto já é início', () => {
+    expect(progress({ turnProof: false })).toEqual({ kind: 'started' });
+    expect(progress({ turnProof: false, turnOpened: false })).toEqual({ kind: 'none' });
+  });
+
+  it('disjuntor: credencial sem conta gerenciada abre; com conta ou pedido recusado, só conta', () => {
+    for (const cause of ['provider-auth', 'provider-billing'] as const) {
+      expect(startFailureBreakerAction({ cause, accountBound: false })).toBe('trip');
+      expect(startFailureBreakerAction({ cause, accountBound: true })).toBe('count');
+    }
+    expect(
+      startFailureBreakerAction({ cause: 'provider-request', accountBound: false }),
+    ).toBe('count');
+    expect(startFailureBreakerAction({ cause: 'spawn-refused', accountBound: false })).toBe(
+      'count',
+    );
+  });
+
+  it('aviso: categoria do motivo, nunca texto do provedor', () => {
+    const summary = paneStartNoticeSummary({
+      paneId: 'pane-ds',
+      adapterId: 'deepseek',
+      cause: 'provider-auth',
+      outcome: { kind: 'rerouted', paneId: 'pane-novo', adapterId: 'codex' },
+    });
+    expect(summary).toBe(
+      '[nao-iniciou:pane-ds] O pane pane-ds (deepseek) não começou a tarefa: ' +
+        'credencial recusada pelo provedor (o turno do brief acabou antes de ' +
+        'qualquer trabalho). Reenviada para codex (pane pane-novo).',
+    );
+    expect(
+      paneStartNoticeSummary({
+        paneId: 'p',
+        adapterId: 'glm',
+        cause: 'provider-billing',
+        outcome: { kind: 'not-rerouted', why: 'pinned' },
+      }),
+    ).toContain('conta recusada pelo provedor — cobrança, crédito ou bloqueio');
+    expect(
+      paneStartNoticeSummary({
+        paneId: 'p',
+        adapterId: 'claude',
+        cause: 'provider-request',
+        outcome: { kind: 'not-rerouted', why: 'no-alternative' },
+      }),
+    ).toContain('pedido recusado pelo provedor — modelo ou parâmetro inválido');
   });
 });
 
@@ -241,5 +342,80 @@ describe('ficha do spawn pendente (F-723)', () => {
     const watch = trackPaneStart({ ...base(), redeliver: async () => true });
     expect(JSON.stringify(watch)).not.toMatch(/brief|prompt/i);
     expect(getPaneStartWatch('pane-a')).toBe(watch);
+  });
+
+  it('F-734: StopFailure de credencial sem trabalho é falha provada mesmo com o turno aceito', () => {
+    vi.useFakeTimers();
+    const kick = vi.fn();
+    setPaneStartKick(kick);
+    const watch = trackPaneStart({ ...base(), adapterId: 'deepseek' });
+    notePaneStartAccepted('pane-a');
+    expect(watch.accepted).toBe(true);
+
+    const cause = notePaneTurnEnded(watch, {
+      sessionId: 'session-a',
+      outcome: 'error',
+      stopFailure: 'auth',
+      worked: false,
+      now: NOW + 70_000,
+    });
+    expect(cause).toBe('provider-auth');
+    expect(watch.sessionId).toBe('session-a');
+    expect(watch.failure).toEqual({ cause: 'provider-auth', at: NOW + 70_000 });
+    vi.runAllTimers();
+    expect(kick).toHaveBeenCalledTimes(1);
+
+    // A primeira falha anotada vale: outro fim de turno não a troca.
+    expect(
+      notePaneTurnEnded(watch, {
+        sessionId: 'session-a',
+        outcome: 'error',
+        stopFailure: 'billing',
+        worked: false,
+        now: NOW + 80_000,
+      }),
+    ).toBeNull();
+    expect(watch.failure?.cause).toBe('provider-auth');
+  });
+
+  it('F-734: trabalho no turno, Stop normal, limite ou transitório não são falha de início', () => {
+    const cases = [
+      { outcome: 'error' as const, stopFailure: 'auth' as const, worked: true, expected: 'started' },
+      { outcome: 'completed' as const, worked: false, expected: 'started' },
+      { outcome: 'error' as const, stopFailure: 'other' as const, worked: false, expected: 'not-ours' },
+      { outcome: 'error' as const, worked: false, expected: 'not-ours' },
+    ];
+    for (const { expected, ...end } of cases) {
+      resetPaneStartWatchdogForTests();
+      const watch = trackPaneStart(base());
+      expect(
+        notePaneTurnEnded(watch, { sessionId: 'session-a', now: NOW, ...end }),
+      ).toBeNull();
+      expect(watch.failure).toBeNull();
+      expect(watch.turnOutcome).toBe(expected);
+      expect(watch.phase).toBe('watching');
+    }
+  });
+
+  it('F-734: só o turno do brief é julgado — o turno seguinte nunca reverte o início', () => {
+    const watch = trackPaneStart(base());
+    notePaneTurnEnded(watch, {
+      sessionId: 'session-a',
+      outcome: 'completed',
+      worked: false,
+      now: NOW,
+    });
+    // O Maestro escreve no pane e o turno seguinte falha: não é falha de início.
+    expect(
+      notePaneTurnEnded(watch, {
+        sessionId: 'session-a',
+        outcome: 'error',
+        stopFailure: 'invalid_request',
+        worked: false,
+        now: NOW + 5_000,
+      }),
+    ).toBeNull();
+    expect(watch.failure).toBeNull();
+    expect(watch.turnOutcome).toBe('started');
   });
 });

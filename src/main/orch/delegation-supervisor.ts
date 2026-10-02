@@ -28,6 +28,7 @@ import {
   tapPendingSpawnStartFailure,
 } from './pane-registry';
 import {
+  getAgentSessionInfo,
   getRequestedTerminationOrigin,
   getSessionSpawnedAtMs,
   getSessionState,
@@ -36,19 +37,25 @@ import {
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from './workspace-handoff-delivery';
 import {
+  CREDENTIAL_REJECTED_OPEN_MS,
   decideStartAction,
   finishPaneStartWatch,
   listPaneStartWatches,
   notePaneSessionEnded,
   notePaneStartFailure,
+  notePaneTurnEnded,
   notStartedCause,
   paneStartNoticeSummary,
+  paneStartProgress,
   paneStartWatchForSession,
   setPaneStartKick,
   shortStartError,
+  startFailureBreakerAction,
   START_WATCH_TTL_MS,
   type PaneStartOutcome,
+  type PaneStartProgress,
   type PaneStartWatch,
+  type ProviderRejectedCause,
 } from './pane-start-watchdog';
 import { emitMissionIntentEvent } from './mission-intent-events';
 import {
@@ -64,9 +71,12 @@ import {
 import { flushAllNexusTaskFailClosedRetries } from './nexus-task-fail-closed-recovery';
 import { decideMomentumNudge, momentumNudgeSummary } from './mission-momentum-watchdog';
 import {
+  getAgentLastTurnEnd,
   getAgentSemanticStatusBySession,
+  getAgentToolActivityCount,
   getAgentTurnStartSequence,
   SEMANTIC_WORKING_VETO_MS,
+  tapAgentTurnEnd,
 } from './agent-status';
 import { trace } from '../observability/main-trace';
 import {
@@ -629,21 +639,23 @@ function notifyHungWorkerPanes(
 /**
  * F-723: o Nexus solta um pane e confere se ele começou a tarefa. A ficha de
  * cada spawn pendente com briefing (worker de missão ou helper do operador)
- * vem do `nexus_pane_spawn`; aqui moram os efeitos. Evidência de início: turno
- * aberto (UserPromptSubmit), status semântico de trabalho, entrega do brief
- * comprovada ou handoff da sessão.
+ * vem do `nexus_pane_spawn`; aqui moram os efeitos. Evidência de turno: turno
+ * aberto (UserPromptSubmit), status semântico de trabalho ou entrega do brief
+ * comprovada.
  */
-function hasPaneStartEvidence(watch: PaneStartWatch, sessionId: string): boolean {
+function hasTurnEvidence(watch: PaneStartWatch, sessionId: string): boolean {
   if (watch.accepted) return true;
   if (getAgentTurnStartSequence(sessionId) > 0) return true;
   const semantic = getAgentSemanticStatusBySession(sessionId);
-  if (
+  return (
     semantic?.status === 'working' ||
     semantic?.status === 'completed' ||
     semantic?.status === 'error'
-  ) {
-    return true;
-  }
+  );
+}
+
+/** Handoff desta sessão, entregue ou não (prova de trabalho). */
+function sessionHasHandoff(watch: PaneStartWatch, sessionId: string): boolean {
   try {
     return (
       suiteForScope(watch.scope).handoffs.list({
@@ -654,6 +666,54 @@ function hasPaneStartEvidence(watch: PaneStartWatch, sessionId: string): boolean
   } catch {
     return false;
   }
+}
+
+/** F-723: turno aberto ou handoff — a sessão saiu do boot. */
+function hasPaneStartEvidence(watch: PaneStartWatch, sessionId: string): boolean {
+  return hasTurnEvidence(watch, sessionId) || sessionHasHandoff(watch, sessionId);
+}
+
+/**
+ * F-734: na família Claude o turno aberto ainda não prova o início — provam o
+ * trabalho (ferramenta, handoff) ou um Stop normal. StopFailure de
+ * configuração sem trabalho é recusa do provedor (`rejected`).
+ */
+function paneStartProgressFor(
+  watch: PaneStartWatch,
+  sessionId: string | null,
+): PaneStartProgress {
+  // O desfecho do turno do brief, visto pelo tap, vale sobre o último turno.
+  if (watch.turnOutcome !== null) return { kind: watch.turnOutcome };
+  if (sessionId === null) {
+    return paneStartProgress({
+      turnProof: watch.turnProof,
+      turnOpened: watch.accepted,
+      worked: false,
+      lastTurnEnd: null,
+    });
+  }
+  const handoff = sessionHasHandoff(watch, sessionId);
+  return paneStartProgress({
+    turnProof: watch.turnProof,
+    turnOpened: handoff || hasTurnEvidence(watch, sessionId),
+    worked: handoff || getAgentToolActivityCount(sessionId) > 0,
+    lastTurnEnd: getAgentLastTurnEnd(sessionId),
+  });
+}
+
+/** F-734: a recusa do provedor foi anotada na ficha (só ids e a categoria). */
+function tracePaneStartRejected(
+  watch: PaneStartWatch,
+  cause: ProviderRejectedCause,
+): void {
+  trace({
+    kind: 'pane-start-rejected',
+    paneId: watch.paneId,
+    adapterId: watch.adapterId,
+    missionId: watch.missionId ?? null,
+    role: watch.role,
+    cause,
+  });
 }
 
 /**
@@ -755,9 +815,19 @@ async function handlePaneNotStarted(
     // Um PTY atrasado desta tentativa não pode nascer depois do reenvio.
     abandonPendingOrchSpawn(watch.requestId, 'pane did not start within the start window');
   }
+  let breaker: 'trip' | 'count' | 'skipped' = 'skipped';
   if (!watch.operatorOpened) {
+    // F-734: o escopo da credencial é lido antes de fechar (a sessão some).
+    const accountBound =
+      watch.sessionId !== null &&
+      Boolean(getAgentSessionInfo(watch.sessionId)?.accountId);
     await closeNotStartedPane(watch);
-    adapterCircuitBreakers.recordFailure(watch.adapterId);
+    breaker = startFailureBreakerAction({ cause, accountBound });
+    if (breaker === 'trip') {
+      adapterCircuitBreakers.trip(watch.adapterId, CREDENTIAL_REJECTED_OPEN_MS);
+    } else {
+      adapterCircuitBreakers.recordFailure(watch.adapterId);
+    }
   }
   let outcome: PaneStartOutcome;
   if (action === 'reroute' && watch.reroute) {
@@ -793,6 +863,7 @@ async function handlePaneNotStarted(
     role: watch.role,
     cause,
     outcome: outcome.kind,
+    breaker,
     ...(outcome.kind === 'rerouted'
       ? { nextPaneId: outcome.paneId, nextAdapterId: outcome.adapterId }
       : {}),
@@ -826,25 +897,38 @@ async function checkPaneStart(watch: PaneStartWatch, now: number): Promise<void>
     }
   }
   const sessionId = watch.sessionId;
-  if (
-    !watch.failure &&
-    (watch.accepted || (sessionId !== null && hasPaneStartEvidence(watch, sessionId)))
-  ) {
-    adapterCircuitBreakers.recordSuccess(watch.adapterId);
-    finishPaneStartWatch(watch);
-    return;
-  }
   const state = sessionId !== null ? getSessionState(sessionId) : null;
-  if (
-    !watch.failure &&
-    (watch.sessionEnded ||
+  if (!watch.failure) {
+    const progress = paneStartProgressFor(watch, sessionId);
+    if (progress.kind === 'started') {
+      adapterCircuitBreakers.recordSuccess(watch.adapterId);
+      finishPaneStartWatch(watch);
+      return;
+    }
+    if (progress.kind === 'not-ours') {
+      // F-734: limite de uso ou erro transitório encerrou o turno — isso é do
+      // failover de conta (F-249/F-718), não deste watchdog.
+      finishPaneStartWatch(watch);
+      return;
+    }
+    if (progress.kind === 'rejected') {
+      // Rede de segurança do tap de fim de turno: a recusa vale igual.
+      watch.failure = { cause: progress.cause, at: now };
+      tracePaneStartRejected(watch, progress.cause);
+    } else if (
+      watch.sessionEnded ||
       (sessionId !== null && state === null) ||
-      now - watch.createdAt >= START_WATCH_TTL_MS)
-  ) {
-    // Encerramento pedido, one-shot que terminou, morte tardia ou CLI sem
-    // prova de turno: o veredito é do F-242 e da mortalidade de worker.
-    finishPaneStartWatch(watch);
-    return;
+      now - watch.createdAt >= START_WATCH_TTL_MS
+    ) {
+      // Encerramento pedido, one-shot que terminou, morte tardia ou CLI sem
+      // prova de turno: o veredito é do F-242 e da mortalidade de worker.
+      finishPaneStartWatch(watch);
+      return;
+    } else if (progress.kind === 'turn-open') {
+      // F-734: turno aberto na família Claude, sem trabalho nem fim ainda —
+      // o veredito é do desfecho dele (ferramenta, Stop ou StopFailure).
+      return;
+    }
   }
   const action = decideStartAction({
     role: watch.role,
@@ -912,12 +996,31 @@ function installPaneStartTaps(): void {
       now: Date.now(),
     });
   });
+  // F-734: o turno do brief que o provedor recusou (StopFailure de
+  // configuração, sem trabalho) é falha provada — não espera a varredura.
+  const untapTurnEnd = tapAgentTurnEnd((entry) => {
+    const watch = paneStartWatchForSession(entry.sessionId, entry.paneId);
+    if (!watch) return;
+    const agent = getAgentSessionInfo(entry.sessionId);
+    if (agent && agent.adapterId !== watch.adapterId) return;
+    const cause = notePaneTurnEnded(watch, {
+      sessionId: entry.sessionId,
+      outcome: entry.outcome,
+      ...(entry.stopFailure ? { stopFailure: entry.stopFailure } : {}),
+      worked:
+        entry.worked ||
+        (entry.stopFailure !== undefined && sessionHasHandoff(watch, entry.sessionId)),
+      now: entry.observedAt,
+    });
+    if (cause) tracePaneStartRejected(watch, cause);
+  });
   setPaneStartKick(() => {
     void checkPaneStarts(Date.now());
   });
   disposePaneStartTaps = () => {
     untapFailure();
     untapTermination();
+    untapTurnEnd();
     setPaneStartKick(null);
   };
 }

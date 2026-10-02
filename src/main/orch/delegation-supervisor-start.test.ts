@@ -32,6 +32,11 @@ const h = vi.hoisted(() => ({
   getSemantic: vi.fn(
     (_sessionId: string): { status: string; updatedAt: number } | null => null,
   ),
+  // F-734: fatos de turno sem conteúdo e o tap de fim de turno.
+  toolActivity: vi.fn((_sessionId: string) => 0),
+  lastTurnEnd: vi.fn((_sessionId: string): Record<string, unknown> | null => null),
+  turnEndTap: null as null | ((entry: Record<string, unknown>) => void),
+  agentInfo: vi.fn((_sessionId: string): Record<string, unknown> | null => null),
   onHandoffSubmitted: vi.fn(),
   submit: vi.fn(),
   markSubmitted: vi.fn(() => true),
@@ -65,6 +70,7 @@ vi.mock('./pane-registry', () => ({
 }));
 vi.mock('../pty/pty-manager', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../pty/pty-manager')>()),
+  getAgentSessionInfo: h.agentInfo,
   getSessionState: h.sessionState,
   getSessionSpawnedAtMs: h.spawnedAt,
   getRequestedTerminationOrigin: h.terminationOrigin,
@@ -81,6 +87,14 @@ vi.mock('./agent-status', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./agent-status')>()),
   getAgentSemanticStatusBySession: h.getSemantic,
   getAgentTurnStartSequence: h.turnStart,
+  getAgentToolActivityCount: h.toolActivity,
+  getAgentLastTurnEnd: h.lastTurnEnd,
+  tapAgentTurnEnd: (cb: (entry: Record<string, unknown>) => void) => {
+    h.turnEndTap = cb;
+    return () => {
+      h.turnEndTap = null;
+    };
+  },
 }));
 vi.mock('./idle-delivery', () => ({
   onHandoffSubmitted: h.onHandoffSubmitted,
@@ -205,6 +219,9 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     h.terminationOrigin.mockReturnValue(null);
     h.turnStart.mockReturnValue(0);
     h.getSemantic.mockReturnValue(null);
+    h.toolActivity.mockReturnValue(0);
+    h.lastTurnEnd.mockReturnValue(null);
+    h.agentInfo.mockReturnValue(null);
     h.handoffList.mockReturnValue([]);
     h.listPaneSnapshots.mockReturnValue([]);
     reroute.mockResolvedValue({ paneId: 'pane-novo', adapterId: 'codex' });
@@ -312,7 +329,7 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     );
   });
 
-  it('reenvio aceito: o pane começou e a falha anterior do adapter é zerada', async () => {
+  it('reenvio aceito: o turno abriu; quando ele trabalha, o pane começou e a falha anterior do adapter é zerada', async () => {
     adapterCircuitBreakers.recordFailure('claude');
     trackPaneStart(watchInit({ adapterId: 'claude', turnProof: true }));
     h.pendingSession.mockReturnValue({ state: 'bound', sessionId: 'session-claude' });
@@ -322,15 +339,23 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
 
     await checkPaneStarts(NOW);
     expect(redeliver).toHaveBeenCalledTimes(1);
-    await checkPaneStarts(NOW + 15_000);
+    // F-734: turno aceito na família Claude ainda não é início — espera o
+    // desfecho dele, sem reenviar de novo nem rerotear.
+    await checkPaneStarts(NOW + START_GRACE_MS + 15_000);
+    expect(getPaneStartWatch('pane-qwen')).not.toBeNull();
+    expect(redeliver).toHaveBeenCalledTimes(1);
+    expect(adapterCircuitBreakers.snapshot('claude').recentFailures).toBe(1);
+
+    h.toolActivity.mockReturnValue(1);
+    await checkPaneStarts(NOW + START_GRACE_MS + 30_000);
     expect(getPaneStartWatch('pane-qwen')).toBeNull();
     expect(adapterCircuitBreakers.snapshot('claude').recentFailures).toBe(0);
     expect(reroute).not.toHaveBeenCalled();
     expect(h.submit).not.toHaveBeenCalled();
   });
 
-  it('turno aberto: nada a fazer', async () => {
-    trackPaneStart(watchInit({ turnProof: true }));
+  it('CLI sem prova de turno: turno aberto já é início (F-723)', async () => {
+    trackPaneStart(watchInit({ turnProof: false }));
     h.pendingSession.mockReturnValue({ state: 'bound', sessionId: 'session-w' });
     h.spawnedAt.mockReturnValue(NOW - 10 * 60_000);
     h.sessionState.mockReturnValue('idle');
@@ -340,6 +365,25 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     expect(redeliver).not.toHaveBeenCalled();
     expect(reroute).not.toHaveBeenCalled();
     expect(getPaneStartWatch('pane-qwen')).toBeNull();
+  });
+
+  it('família Claude: turno aberto sem trabalho espera o desfecho; Stop normal prova o início (F-734)', async () => {
+    trackPaneStart(watchInit({ adapterId: 'claude', turnProof: true }));
+    h.pendingSession.mockReturnValue({ state: 'bound', sessionId: 'session-w' });
+    h.spawnedAt.mockReturnValue(NOW - 10 * 60_000);
+    h.sessionState.mockReturnValue('idle');
+    h.turnStart.mockReturnValue(1);
+
+    await checkPaneStarts(NOW);
+    expect(redeliver).not.toHaveBeenCalled();
+    expect(reroute).not.toHaveBeenCalled();
+    expect(getPaneStartWatch('pane-qwen')).not.toBeNull();
+
+    h.lastTurnEnd.mockReturnValue({ outcome: 'completed', worked: false });
+    await checkPaneStarts(NOW + 15_000);
+    expect(getPaneStartWatch('pane-qwen')).toBeNull();
+    expect(reroute).not.toHaveBeenCalled();
+    expect(h.submit).not.toHaveBeenCalled();
   });
 
   it('nenhuma sessão nasceu na graça: revoga a tentativa e manda para outro', async () => {
@@ -450,5 +494,267 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     const summary = String((h.submit.mock.calls[0]![0] as { summary: string }).summary);
     expect(summary).toContain('O reenvio automático falhou (mission_worker_route_unavailable');
     expect(summary).toContain('decida');
+  });
+});
+
+/**
+ * F-734 (campo 02/10): o worker DeepSeek recebeu o brief (UserPromptSubmit),
+ * toda chamada de API voltou 401 ("Retrying in 3s · attempt 8/10") e o turno
+ * acabou em StopFailure `authentication_failed`. O F-723 contava o turno
+ * aberto como "começou": ninguém reroteou e o Maestro nunca soube.
+ */
+describe('F-734: turno do brief recusado pelo provedor é falha de início', () => {
+  const PROVIDER_TEXT = 'Your api key: ****WXYZ is invalid';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.pendingSession.mockReturnValue({ state: 'bound', sessionId: 'session-ds' });
+    h.sessionState.mockReturnValue('idle');
+    h.spawnedAt.mockReturnValue(NOW - 60_000);
+    h.terminationOrigin.mockReturnValue(null);
+    // UserPromptSubmit chegou: o turno do brief abriu.
+    h.turnStart.mockReturnValue(1);
+    h.getSemantic.mockReturnValue({ status: 'working', updatedAt: NOW - 50_000 });
+    h.toolActivity.mockReturnValue(0);
+    h.lastTurnEnd.mockReturnValue(null);
+    h.agentInfo.mockReturnValue(null);
+    h.handoffList.mockReturnValue([]);
+    h.listPaneSnapshots.mockReturnValue([
+      {
+        paneId: 'pane-ds',
+        sessionId: 'session-ds',
+        kind: 'cli-agent',
+        role: 'worker',
+        state: 'idle',
+        missionId: 'mission-f723',
+      },
+    ]);
+    reroute.mockResolvedValue({ paneId: 'pane-novo', adapterId: 'codex' });
+    adapterCircuitBreakers.reset();
+    resetPaneStartWatchdogForTests();
+    shutdownDelegationSupervisor();
+    prepareDelegationSupervisor();
+    registerSuite();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    shutdownDelegationSupervisor();
+    resetPaneStartWatchdogForTests();
+  });
+
+  const deepseekWatch = (overrides: Partial<PaneStartWatchInit> = {}) =>
+    trackPaneStart(
+      watchInit({
+        paneId: 'pane-ds',
+        requestId: 'orchspawn-ds',
+        adapterId: 'deepseek',
+        turnProof: true,
+        ...overrides,
+      }),
+    );
+
+  const stopFailure = (
+    stopFailureCategory: string,
+    worked = false,
+  ): Record<string, unknown> => ({
+    sessionId: 'session-ds',
+    paneId: 'pane-ds',
+    sequence: 1,
+    outcome: 'error',
+    stopFailure: stopFailureCategory,
+    worked,
+    observedAt: NOW + 70_000,
+  });
+
+  const summaryOf = (call = 0): string =>
+    String((h.submit.mock.calls[call]![0] as { summary: string }).summary);
+
+  it('credencial recusada sem trabalho: fecha o pane, abre o disjuntor da chave, reroteia e avisa o Maestro', async () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    deepseekWatch();
+
+    // Antes do F-734 o turno aberto já encerrava a ficha aqui.
+    await checkPaneStarts(NOW);
+    expect(getPaneStartWatch('pane-ds')).not.toBeNull();
+    expect(adapterCircuitBreakers.state('deepseek')).toBe('closed');
+
+    h.turnEndTap!(stopFailure('auth'));
+    // Falha provada não espera a varredura de 15 s.
+    await vi.advanceTimersByTimeAsync(0);
+    await flush();
+
+    expect(h.trace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'pane-start-rejected',
+        paneId: 'pane-ds',
+        adapterId: 'deepseek',
+        missionId: 'mission-f723',
+        cause: 'provider-auth',
+      }),
+    );
+    expect(h.abandon).not.toHaveBeenCalled();
+    expect(h.requestPaneClose).toHaveBeenCalledWith('pane-ds', 'session-ds');
+    expect(reroute).toHaveBeenCalledTimes(1);
+    expect(reroute).toHaveBeenCalledWith(['deepseek']);
+    // Sem conta gerenciada a chave recusada é a de TODO pane da CLI.
+    expect(adapterCircuitBreakers.isOpen('deepseek')).toBe(true);
+    expect(h.submit).toHaveBeenCalledTimes(1);
+    expect(h.submit.mock.calls[0]![0]).toMatchObject({
+      missionId: 'mission-f723',
+      status: 'progress',
+      fromAgent: 'nexus-delegation-supervisor',
+    });
+    expect(summaryOf()).toBe(
+      '[nao-iniciou:pane-ds] O pane pane-ds (deepseek) não começou a tarefa: ' +
+        'credencial recusada pelo provedor (o turno do brief acabou antes de ' +
+        'qualquer trabalho). Reenviada para codex (pane pane-novo).',
+    );
+    expect(h.onHandoffSubmitted).toHaveBeenCalledTimes(1);
+    expect(h.trace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'pane-not-started',
+        paneId: 'pane-ds',
+        cause: 'provider-auth',
+        outcome: 'rerouted',
+        breaker: 'trip',
+        nextAdapterId: 'codex',
+      }),
+    );
+    expect(getPaneStartWatch('pane-ds')).toBeNull();
+    // Nem o aviso nem o trace carregam texto do provedor.
+    expect(JSON.stringify(h.submit.mock.calls)).not.toContain('WXYZ');
+    expect(JSON.stringify(h.trace.mock.calls)).not.toContain(PROVIDER_TEXT);
+
+    // Nada se repete nas varreduras seguintes.
+    reconcileDelegationSupervisor(NOW + 60_000);
+    await flush();
+    expect(reroute).toHaveBeenCalledTimes(1);
+    expect(h.submit).toHaveBeenCalledTimes(1);
+  });
+
+  it('com conta gerenciada a chave é da conta: o adapter só conta a falha (pausa por conta é do failover, F-676)', async () => {
+    h.agentInfo.mockReturnValue({
+      sessionId: 'session-ds',
+      adapterId: 'deepseek',
+      accountId: 'acct-ds-1',
+    });
+    deepseekWatch();
+    h.turnEndTap!(stopFailure('billing'));
+    await checkPaneStarts(NOW);
+
+    expect(reroute).toHaveBeenCalledWith(['deepseek']);
+    expect(adapterCircuitBreakers.snapshot('deepseek')).toMatchObject({
+      state: 'closed',
+      recentFailures: 1,
+    });
+    expect(summaryOf()).toContain('conta recusada pelo provedor — cobrança, crédito ou bloqueio');
+    expect(h.trace).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'pane-not-started', cause: 'provider-billing', breaker: 'count' }),
+    );
+  });
+
+  it('StopFailure depois de ferramenta: o pane começou (trabalhou e falhou depois)', async () => {
+    deepseekWatch();
+    h.turnEndTap!(stopFailure('auth', true));
+    h.toolActivity.mockReturnValue(4);
+    await checkPaneStarts(NOW);
+
+    expect(reroute).not.toHaveBeenCalled();
+    expect(h.requestPaneClose).not.toHaveBeenCalled();
+    expect(h.submit).not.toHaveBeenCalled();
+    expect(getPaneStartWatch('pane-ds')).toBeNull();
+    expect(h.trace).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'pane-start-rejected' }),
+    );
+  });
+
+  it('limite de uso (rate_limit → other) é do failover: a ficha sai sem rerotear nem tocar no disjuntor', async () => {
+    deepseekWatch();
+    h.turnEndTap!(stopFailure('other'));
+    h.lastTurnEnd.mockReturnValue(stopFailure('other'));
+    await checkPaneStarts(NOW);
+
+    expect(reroute).not.toHaveBeenCalled();
+    expect(h.requestPaneClose).not.toHaveBeenCalled();
+    expect(h.submit).not.toHaveBeenCalled();
+    expect(getPaneStartWatch('pane-ds')).toBeNull();
+    expect(adapterCircuitBreakers.snapshot('deepseek')).toMatchObject({
+      state: 'closed',
+      recentFailures: 0,
+    });
+  });
+
+  it('handoff da sessão conta como trabalho: o StopFailure não é recusa', async () => {
+    deepseekWatch();
+    h.handoffList.mockReturnValue([{ id: 'handoff-w', sessionId: 'session-ds' }]);
+    h.turnEndTap!(stopFailure('auth'));
+    await checkPaneStarts(NOW);
+
+    expect(reroute).not.toHaveBeenCalled();
+    expect(h.submit).not.toHaveBeenCalled();
+    expect(getPaneStartWatch('pane-ds')).toBeNull();
+  });
+
+  it('CLI pedida pelo operador: fecha e avisa com o motivo, sem trocar sozinho', async () => {
+    deepseekWatch({ pinnedRuntime: true });
+    h.turnEndTap!(stopFailure('auth'));
+    await checkPaneStarts(NOW);
+
+    expect(reroute).not.toHaveBeenCalled();
+    expect(h.requestPaneClose).toHaveBeenCalledWith('pane-ds', 'session-ds');
+    expect(adapterCircuitBreakers.isOpen('deepseek')).toBe(true);
+    expect(summaryOf()).toContain('credencial recusada pelo provedor');
+    expect(summaryOf()).toContain('A CLI foi pedida pelo operador');
+  });
+
+  it('pane aberto pelo operador (F-231): avisa, mas nunca fecha nem mexe no disjuntor', async () => {
+    deepseekWatch({ operatorOpened: true });
+    h.turnEndTap!(stopFailure('auth'));
+    await checkPaneStarts(NOW);
+
+    expect(h.requestPaneClose).not.toHaveBeenCalled();
+    expect(reroute).not.toHaveBeenCalled();
+    expect(adapterCircuitBreakers.snapshot('deepseek')).toMatchObject({
+      state: 'closed',
+      recentFailures: 0,
+    });
+    expect(summaryOf()).toContain('O pane é do operador e continua aberto');
+  });
+
+  it('sem o tap, a varredura acha a recusa no último fim de turno (pedido recusado só conta)', async () => {
+    deepseekWatch();
+    h.lastTurnEnd.mockReturnValue(stopFailure('invalid_request'));
+    await checkPaneStarts(NOW);
+
+    expect(reroute).toHaveBeenCalledWith(['deepseek']);
+    expect(summaryOf()).toContain('pedido recusado pelo provedor — modelo ou parâmetro inválido');
+    expect(adapterCircuitBreakers.snapshot('deepseek')).toMatchObject({
+      state: 'closed',
+      recentFailures: 1,
+    });
+    expect(h.trace).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'pane-start-rejected', cause: 'provider-request' }),
+    );
+  });
+
+  it('turno do brief terminou normal e o seguinte falhou antes da varredura: o pane começou', async () => {
+    deepseekWatch();
+    h.turnEndTap!({ ...stopFailure('auth'), outcome: 'completed', stopFailure: undefined });
+    // O Maestro escreveu no pane; o turno seguinte acabou em erro de pedido.
+    h.turnEndTap!({ ...stopFailure('invalid_request'), sequence: 2 });
+    h.lastTurnEnd.mockReturnValue({ ...stopFailure('invalid_request'), sequence: 2 });
+    await checkPaneStarts(NOW);
+
+    expect(reroute).not.toHaveBeenCalled();
+    expect(h.requestPaneClose).not.toHaveBeenCalled();
+    expect(h.submit).not.toHaveBeenCalled();
+    expect(getPaneStartWatch('pane-ds')).toBeNull();
+  });
+
+  it('fim de turno de outra CLI no mesmo pane não vale para a ficha', async () => {
+    h.agentInfo.mockReturnValue({ sessionId: 'session-ds', adapterId: 'claude' });
+    deepseekWatch();
+    h.turnEndTap!(stopFailure('auth'));
+    expect(getPaneStartWatch('pane-ds')?.failure).toBeNull();
   });
 });
