@@ -38,6 +38,7 @@ export async function probeRestartPreferences(child, {
   const controller = new AbortController();
   const signal = controller.signal;
   const resources = new Set();
+  const navigationIncompleteErrors = new WeakSet();
   const abort = message => { if (!signal.aborted) controller.abort(new Error(message)); };
   const onCallerAbort = () => abort('restart probe cancelled');
   const onExit = () => abort('restart probe child exited');
@@ -113,7 +114,12 @@ export async function probeRestartPreferences(child, {
       pending.delete(message.id);
       if (message.error) {
         const code = Number.isSafeInteger(message.error.code) ? message.error.code : 'unavailable';
-        request.reject(new Error(`CDP command failed: method=${request.method} stage=${request.stage} code=${code}`));
+        const error = new Error(`CDP command failed: method=${request.method} stage=${request.stage} code=${code}`);
+        if (request.method === 'Runtime.evaluate' && request.stage === 'api-availability' &&
+            code === -32000 && message.error.message === 'Inspected target navigated or closed') {
+          navigationIncompleteErrors.add(error);
+        }
+        request.reject(error);
       }
       else request.resolve(message.result);
     });
@@ -139,6 +145,8 @@ export async function probeRestartPreferences(child, {
     };
   }
   async function run() {
+    const discoveryStarted = performance.now();
+    let transientRounds = 0;
     let port, browserPath;
     for (;;) {
       signal.throwIfAborted();
@@ -165,10 +173,28 @@ export async function probeRestartPreferences(child, {
       signal.throwIfAborted();
       const listing = await targets(port);
       const matches = [];
+      let incomplete = false;
       for (const target of listing.filter(entry => entry?.type === 'page')) {
         const page = await connect(endpoint(target.webSocketDebuggerUrl, port, 'page'));
-        if (await page.evaluate(API_AVAILABLE, 'api-availability') === true) matches.push(page);
-        else page.dispose();
+        try {
+          if (await page.evaluate(API_AVAILABLE, 'api-availability') === true) matches.push(page);
+          else page.dispose();
+        } catch (error) {
+          page.dispose();
+          if (!navigationIncompleteErrors.has(error)) throw error;
+          incomplete = true;
+          break;
+        }
+      }
+      if (incomplete) {
+        for (const page of matches) page.dispose();
+        transientRounds += 1;
+        process.stdout.write(`[smoke] restart-discovery ${JSON.stringify({
+          phase, transientRounds, elapsedMs: Math.round(performance.now() - discoveryStarted),
+          classification: 'target-navigated-or-closed',
+        })}\n`);
+        await pause();
+        continue;
       }
       if (matches.length > 1) throw new Error('ambiguous Nexus CDP page');
       if (matches.length === 1) { [selected] = matches; break; }

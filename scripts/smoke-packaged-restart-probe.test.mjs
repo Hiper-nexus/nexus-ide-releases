@@ -5,7 +5,7 @@ import http from 'node:http';
 import vm from 'node:vm';
 import { EventEmitter } from 'node:events';
 import { WebSocketServer } from 'ws';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { probeRestartPreferences } from './smoke-packaged-restart-probe.mjs';
 
 const cleanup = [];
@@ -30,7 +30,7 @@ async function fixture(options = {}) {
     peer.on('message', async bytes => {
       const message = JSON.parse(String(bytes));
       if (options.rpcStall) return;
-      if (options.rpcErrorWhen?.(message)) {
+      if (options.rpcErrorWhen?.(message, req)) {
         peer.send(JSON.stringify({ id: message.id, error: options.rpcError }));
         return;
       }
@@ -69,6 +69,70 @@ async function fixture(options = {}) {
 const run = (f, options = {}) => probeRestartPreferences(f.child, { userData: f.userData, phase: 'write', expectedVersion: '0.76.166', timeoutMs: 500, ...options });
 
 describe('packaged restart preference proof', () => {
+  it('re-enumerates a navigation-incomplete discovery and records only safe local progress', async () => {
+    let attempts = 0;
+    const f = await fixture({
+      rpcErrorWhen: message => message.params?.expression?.startsWith('Boolean(') && ++attempts === 1,
+      rpcError: { code: -32000, message: 'Inspected target navigated or closed', data: { token: 'PRIVATE_REMOTE_VALUE' } },
+    });
+    const writes = [];
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(chunk => { writes.push(String(chunk)); return true; });
+    try {
+      expect(await run(f)).toEqual({ phase: 'write', pid: 4321, appVersion: '0.76.166', packaged: true, pixelMode: true });
+    } finally { stdout.mockRestore(); }
+    expect(attempts).toBe(2);
+    expect(f.operations).toEqual(['version', 'get', 'set', 'get']);
+    const records = writes.join('').trim().split('\n').map(line => JSON.parse(line.replace('[smoke] restart-discovery ', '')));
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ phase: 'write', transientRounds: 1, classification: 'target-navigated-or-closed' });
+    expect(Number.isSafeInteger(records[0].elapsedMs)).toBe(true);
+    expect(records[0].elapsedMs).toBeGreaterThanOrEqual(0);
+    expect(Object.keys(records[0]).sort()).toEqual(['classification', 'elapsedMs', 'phase', 'transientRounds']);
+    expect(writes.join('')).not.toContain('PRIVATE_REMOTE');
+  });
+  it('discards the entire incomplete round before proving a unique Nexus target', async () => {
+    let attempts = 0;
+    const f = await fixture({
+      targets: port => ['a', 'b'].map(id => ({ id, type: 'page', webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/page/${id}` })),
+      rpcErrorWhen: (message, req) => req.url.endsWith('/b') && message.params?.expression?.startsWith('Boolean(') && ++attempts === 1,
+      rpcError: { code: -32000, message: 'Inspected target navigated or closed' },
+    });
+    await expect(run(f)).rejects.toThrow('ambiguous Nexus CDP page');
+    expect(attempts).toBe(2);
+    expect(f.operations).toEqual([]);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(f.peers.size).toBe(0);
+    expect(f.child.eventNames()).toEqual([]);
+  });
+  it.each([
+    message => message.method === 'SystemInfo.getProcessInfo',
+    message => message.params?.expression?.includes('releaseReadiness();'),
+    message => message.params?.expression?.includes('uiGet()'),
+    message => message.params?.expression?.includes('uiSet('),
+  ])('never retries the same navigation response outside read-only availability discovery', async matches => {
+    let attempts = 0;
+    const f = await fixture({ rpcErrorWhen: message => matches(message) && ++attempts > 0, rpcError: { code: -32000, message: 'Inspected target navigated or closed' } });
+    await expect(run(f)).rejects.toThrow('CDP command failed:');
+    expect(attempts).toBe(1);
+    expect(f.operations).not.toContain('set');
+  });
+  it('does not accept the same navigation message under a different protocol code', async () => {
+    let attempts = 0;
+    const f = await fixture({ rpcErrorWhen: message => message.params?.expression?.startsWith('Boolean(') && ++attempts > 0, rpcError: { code: -32601, message: 'Inspected target navigated or closed' } });
+    await expect(run(f)).rejects.toThrow('stage=api-availability code=-32601');
+    expect(attempts).toBe(1);
+    expect(f.operations).toEqual([]);
+  });
+  it('keeps the original deadline when every discovery round remains incomplete', async () => {
+    let attempts = 0;
+    const f = await fixture({ rpcErrorWhen: message => message.params?.expression?.startsWith('Boolean(') && ++attempts > 0, rpcError: { code: -32000, message: 'Inspected target navigated or closed' } });
+    await expect(run(f, { timeoutMs: 100 })).rejects.toThrow('restart probe timed out');
+    expect(attempts).toBeGreaterThan(0);
+    expect(f.operations).toEqual([]);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(f.peers.size).toBe(0);
+    expect(f.child.eventNames()).toEqual([]);
+  });
   it.each([
     ['SystemInfo.getProcessInfo', 'browser-process-identity', -32601, message => message.method === 'SystemInfo.getProcessInfo'],
     ['Runtime.evaluate', 'api-availability', -32000, message => message.params?.expression?.startsWith('Boolean(')],

@@ -131,3 +131,61 @@ e dictation-hold-to-talk criam um shell por IPC, exigem writeConfirmed e dois
 ecos onData antes do cleanup. Isso torna os 22 resultados Mac/Windows evidência
 de PTY real, além do encerramento. Não é inferência Codex/LLM, input físico de
 teclado, inventário de PTY vivo nem prova de todos os helpers Windows no OS.
+
+
+## Rodada 77c e descoberta de contexto CDP durante a navegação inicial
+
+CI 36982170400 aprovou typecheck, renderer-sinks e 19.122 testes (166 ignorados,
+1.719 arquivos aprovados/8 ignorados). CodeQL 36982164898 também aprovou.
+Windows 36982180762 aprovou 135 testes e EXE extraído do NUPKG: versão
+0.76.166, 22 probes/179 ferramentas/18 adapters, ecos de shell reais por IPC e
+encerramento PTY. Setup não instalado; preview unsigned, sem inferência.
+
+macOS ARM64 36982170427 aprovou 46 testes, Forge, app e ZIP extraído com as
+mesmas 22 probes e shutdown graceful sem órfãos. Checkout 13a53dc858e78517d9dcda5b0a980aa56d0e4bf0,
+árvore 9e0d32229186a276bbf1ef6177de2b362ad87209 idêntica ao head 77c.
+Root baixou o artifact pequeno de diagnostics, verificou hash/CRC e leu o
+recibo final: SHA-256 eb3e0b4955c3fdda8955637f508784999c5952da75f3a084feffdd9db202c150.
+Ad-hoc/TeamIdentifier ausente, sem Developer ID, notarização ou stapling;
+DMG não instalado e captura de voz desabilitada. Não é release elegível.
+
+Linux 36982170396 aprovou 19.127 testes (161 ignorados), typecheck/sinks,
+fixture de browser real, CLI Codex verificado e Forge DEB/RPM/ZIP. O primeiro
+startup do pacote Nexus 0.76.166 passou nas 22 probes/179 ferramentas/18 adapters,
+com shell/PTY real e shutdown graceful. O probe de restart falhou com
+Runtime.evaluate, api-availability, -32000. Sua mensagem remota foi suprimida
+por design; esse resultado sozinho não prova navegação inicial ou autoquit.
+Instalação Ubuntu/Debian, persistência e recibo permaneceram skipped.
+
+Uma fixture empacotada de Electron 43.7.4, versão 9.8.7, reproduziu um caso
+específico: BrowserWindow criado sem load, consulta de disponibilidade pendente
+e primeira loadFile retornam -32000 / Inspected target navigated or closed,
+com o processo vivo. Após os eventos de contexto isolated/default, a mesma
+consulta e o helper baseline passam. O baseline foi conferido byte a byte com
+o arquivo GitHub 77c (SHA-256 05c53f1a78f76993c18c2e88b8f2dfa650c77913b7f30890e74b8ba473cd82f5).
+Main/window atuais também adiam o primeiro load até bootstrap; isso descreve a
+topologia compatível, sem atribuir a mensagem oculta do runner à fixture.
+
+A correção é limitada à descoberta read-only: método Runtime.evaluate, etapa
+api-availability, código inteiro -32000 e classificação exata observada acima.
+Um WeakSet privado marca somente esse erro; raw message/data nunca são emitidos.
+A rodada inteira fica inconclusiva, todos os sockets são descartados e a
+listagem completa é refeita dentro do mesmo timer e pause de 50 ms existentes.
+Um alvo válido e outro transitório não podem ocultar ambiguidade. PID real,
+endpoint loopback, unicidade, cancelamento e cleanup continuam obrigatórios.
+SystemInfo, VERSION, GET/SET, exceptionDetails, códigos ou mensagens diferentes
+continuam fatais, sem repetição de escrita. Telemetria contém somente phase,
+transientRounds, elapsedMs e classificação fixa, para confirmar o caso no runner.
+
+Três regressões falharam no baseline (33/36 aprovadas); candidato passou 36/36,
+repetido por root. A fixture real também passou com o candidato no mesmo
+script congelado: erro bruto reproduzido/processo vivo, uma rodada descartada,
+helper pré-load bem-sucedido e read após load aprovado. Root repetiu baseline
+RED e candidato GREEN; fonte/teste permaneceram com SHA-256
+02004ae604f95b666c1e3fc44269988bedcf4089f0177a5f1a43bac1f3d4f769 e
+fe7dbdf8e81cbff016a40d2be4879470523cc29a47f634b23a93f2acccd20c36.
+Fixture SHA-256 f47107b3881bed48146c1c28ca1c198cad6094f7c32749091a669c9baa5868dd;
+relatório GREEN 1aaf864607ecac6d1914a06fdcbe91049c4c71f0ecb0a6948ebd690860d40103.
+A fixture não é Nexus166 nem prova restart/persistência entre processos; teste
+usa Xvfb/--no-sandbox exclusivamente no ambiente restrito. Os gates hospedados
+de pacote, restart e instalação continuam exigidos para validar a correção.
