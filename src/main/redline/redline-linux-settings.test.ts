@@ -9,7 +9,7 @@ import {
   writeRedlineLinuxEnabled,
 } from './redline-linux-settings';
 
-describe('redline linux settings (opt-in, default OFF)', () => {
+describe('redline linux settings (default ON, explicit choice respected)', () => {
   let dir: string;
 
   beforeEach(() => {
@@ -21,12 +21,18 @@ describe('redline linux settings (opt-in, default OFF)', () => {
 
   const file = () => path.join(dir, REDLINE_LINUX_SETTINGS_FILE);
 
-  it('is OFF when nothing was ever saved', () => {
-    expect(readRedlineLinuxEnabled(dir)).toBe(false);
+  it('is ON when nothing was ever saved (F-739: the tray shows without hunting in settings)', () => {
+    expect(readRedlineLinuxEnabled(dir)).toBe(true);
   });
 
-  it('is OFF when the directory does not exist', () => {
-    expect(readRedlineLinuxEnabled(path.join(dir, 'nope', 'deeper'))).toBe(false);
+  it('is ON when the directory does not exist yet (first boot)', () => {
+    expect(readRedlineLinuxEnabled(path.join(dir, 'nope', 'deeper'))).toBe(true);
+  });
+
+  it('stays OFF for good once the operator hid it', () => {
+    writeRedlineLinuxEnabled(dir, false);
+    expect(readRedlineLinuxEnabled(dir)).toBe(false);
+    expect(JSON.parse(readFileSync(file(), 'utf8'))).toEqual({ enabled: false });
   });
 
   it('persists ON and reads it back', () => {

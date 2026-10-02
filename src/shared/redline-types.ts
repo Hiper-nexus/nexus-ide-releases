@@ -138,13 +138,13 @@ export function maskEmail(email: string | undefined): string | undefined {
 
 /**
  * Linux: o Redline é uma bandeja DENTRO do app em execução (Electron `Tray`),
- * não um companheiro à parte. `off` = desligada (padrão, opt-in); `running` =
+ * não um companheiro à parte. `off` = o operador a ocultou; `running` =
  * o ícone foi criado; `unavailable` = ligada, mas o ícone não pôde ser criado.
  */
 export type RedlineTrayState = 'off' | 'running' | 'unavailable';
 
 export interface RedlineInAppTrayStatus {
-  /** Preferência persistida do operador (padrão false). */
+  /** Preferência do operador; sem escolha salva vale `true` (F-739). */
   enabled: boolean;
   state: RedlineTrayState;
   /** Motivo curto e sem dados sensíveis quando `unavailable`. */

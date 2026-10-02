@@ -6,9 +6,16 @@
  * `~/.nexus/settings.json` de propósito: é preferência da máquina, não do
  * perfil sincronizável, e não mexe no schema compartilhado de configurações.
  *
- * Opt-in: sem arquivo, arquivo ilegível ou valor que não seja EXATAMENTE
- * `true` significa desligado. Leitura nunca lança; escrita lança (quem chama
- * precisa dizer ao operador que não salvou).
+ * LIGADO por padrão (F-739): sem arquivo nenhum, a bandeja aparece. No Mac e
+ * no Windows o Redline é oferecido no primeiro boot; no Linux a única porta
+ * era um botão em Uso e cotas, atrás do login, e o operador simplesmente não
+ * via o Redline. Quem não quer usa "Ocultar da bandeja" (no menu do ícone ou
+ * em Uso e cotas), que grava `false` — e essa escolha é respeitada para sempre.
+ *
+ * Só a AUSÊNCIA do arquivo liga. Arquivo presente vale pelo que diz, com
+ * leitura estrita: ilegível, grande demais, FIFO, JSON quebrado ou qualquer
+ * valor que não seja EXATAMENTE `true` significa desligado. Leitura nunca
+ * lança; escrita lança (quem chama precisa dizer ao operador que não salvou).
  */
 
 import path from 'node:path';
@@ -24,7 +31,9 @@ export function readRedlineLinuxEnabled(userDataDir: string): boolean {
     path.join(userDataDir, REDLINE_LINUX_SETTINGS_FILE),
     MAX_SETTINGS_BYTES,
   );
-  if (read.kind !== 'text') return false;
+  // `missing` = nunca houve escolha: padrão ligado. Qualquer outro "sem texto"
+  // (rejeitado, ilegível, instável) é um arquivo que existe e não se entende.
+  if (read.kind !== 'text') return read.kind === 'none' && read.stamp === 'missing';
   try {
     const parsed: unknown = JSON.parse(read.text);
     return (

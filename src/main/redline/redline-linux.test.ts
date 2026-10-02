@@ -79,7 +79,11 @@ import {
   type RedlineLinuxController,
   type RedlineLinuxDeps,
 } from './redline-linux';
-import { readRedlineLinuxEnabled, writeRedlineLinuxEnabled } from './redline-linux-settings';
+import {
+  REDLINE_LINUX_SETTINGS_FILE,
+  readRedlineLinuxEnabled,
+  writeRedlineLinuxEnabled,
+} from './redline-linux-settings';
 
 const NOW = 1_780_000_000_000;
 
@@ -181,7 +185,14 @@ describe('redline linux controller', () => {
   });
 
   describe('opt-in and platform gating', () => {
-    it('is OFF by default: boot creates nothing', () => {
+    it('is ON by default: the first boot shows the tray without a saved choice (F-739)', () => {
+      const status = make().startIfEnabled();
+      expect(status).toEqual({ enabled: true, state: 'running' });
+      expect(fake.FakeTray.instances).toHaveLength(1);
+    });
+
+    it('boot creates nothing once the operator hid it', () => {
+      writeRedlineLinuxEnabled(userData, false);
       const status = make().startIfEnabled();
       expect(status).toEqual({ enabled: false, state: 'off' });
       expect(fake.FakeTray.instances).toHaveLength(0);
@@ -253,7 +264,8 @@ describe('redline linux controller', () => {
       expect(status.enabled).toBe(false);
       expect(status.state).toBe('unavailable');
       expect(status.reason).toContain('no status icon host');
-      expect(readRedlineLinuxEnabled(userData)).toBe(false);
+      // Nada é gravado: a falha não vira uma escolha salva.
+      expect(existsSync(path.join(userData, REDLINE_LINUX_SETTINGS_FILE))).toBe(false);
       expect(vi.getTimerCount()).toBe(0);
     });
 
