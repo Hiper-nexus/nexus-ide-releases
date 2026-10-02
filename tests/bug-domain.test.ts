@@ -198,8 +198,9 @@ test('um corpo no tamanho máximo, todo patológico, é validado e limpo rápido
     app: { ...valid().app, osVersion: nasty(64) }, context: { adapter: nasty(40), model: nasty(80) },
     diagnostics: { events: Array.from({ length: 50 }, () => ({ t: 1, kind: nasty(40), code: nasty(80) })), errors: Array.from({ length: 20 }, () => nasty(200)) },
   };
-  const started = performance.now();
+  const before = process.cpuUsage();
   assert.equal(createReportSchema.safeParse(body).success, true);
-  const elapsed = performance.now() - started;
-  assert.ok(elapsed < 300, `levou ${elapsed.toFixed(0)} ms`);
+  const used = process.cpuUsage(before);
+  const elapsed = (used.user + used.system) / 1000;
+  assert.ok(elapsed < 300, `levou ${elapsed.toFixed(0)} ms de CPU`);
 });

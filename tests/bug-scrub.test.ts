@@ -138,15 +138,20 @@ const PATHOLOGICAL: ReadonlyArray<readonly [string, string]> = [
   ['segmentos a.b.', 'a.b.'.repeat(1000)],
   ['secret_ repetido', `${'secret_'.repeat(570)}x`],
 ];
+/** Orçamento em tempo de CPU do processo: o relógio de parede incha quando a suíte inteira roda em paralelo. */
 const BUDGET_MS = 100;
+function cpuMs(work: () => void): number {
+  const before = process.cpuUsage();
+  work();
+  const after = process.cpuUsage(before);
+  return (after.user + after.system) / 1000;
+}
 
 test('a limpeza aguenta entrada patológica de 4000 caracteres sem estourar o orçamento de CPU', () => {
   for (const [name, input] of PATHOLOGICAL) {
     for (const scrub of [scrubText, scrubLine]) {
-      const started = performance.now();
-      scrub(input.slice(0, LIMIT), LIMIT);
-      const elapsed = performance.now() - started;
-      assert.ok(elapsed < BUDGET_MS, `${name} levou ${elapsed.toFixed(0)} ms em ${scrub.name}`);
+      const elapsed = cpuMs(() => { scrub(input.slice(0, LIMIT), LIMIT); });
+      assert.ok(elapsed < BUDGET_MS, `${name} levou ${elapsed.toFixed(0)} ms de CPU em ${scrub.name}`);
     }
   }
 });
@@ -235,19 +240,17 @@ test('remove também seletores de variação, o selo de Braille vazio e os preen
 
 test('a normalização NFKC não amplifica o custo: o limite vale depois dela e o tempo continua baixo', () => {
   const expands = '\u33C2'.repeat(4000); // cada um vira "a.m." (4 caracteres)
-  const started = performance.now();
-  const out = scrubText(expands, 4000);
-  const elapsed = performance.now() - started;
+  let out = '';
+  const elapsed = cpuMs(() => { out = scrubText(expands, 4000); });
   assert.ok(Array.from(out).length <= 4000);
-  assert.ok(elapsed < BUDGET_MS, `levou ${elapsed.toFixed(0)} ms`);
+  assert.ok(elapsed < BUDGET_MS, `levou ${elapsed.toFixed(0)} ms de CPU`);
 });
 
 test('as entradas patológicas da revisão também ficam dentro do orçamento', () => {
   for (const input of ['a.pwd.'.repeat(667), 'pwd-'.repeat(1000), 'passwd.'.repeat(570), 'secret.'.repeat(570), 'api_key.'.repeat(500), 'Cookie:'.repeat(570), '?code='.repeat(660), '--token '.repeat(500), 'NEXUS-'.repeat(660), 'a@b.'.repeat(1000), '\u2800'.repeat(4000)]) {
     for (const scrub of [scrubText, scrubLine]) {
-      const started = performance.now();
-      scrub(input, LIMIT);
-      assert.ok(performance.now() - started < BUDGET_MS, `${input.slice(0, 12)}… levou ${(performance.now() - started).toFixed(0)} ms`);
+      const elapsed = cpuMs(() => { scrub(input, LIMIT); });
+      assert.ok(elapsed < BUDGET_MS, `${input.slice(0, 12)}… levou ${elapsed.toFixed(0)} ms de CPU`);
     }
   }
 });
