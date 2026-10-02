@@ -9321,7 +9321,7 @@ export const RELEASE_076170: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076171: AppRelease = {
   version: '0.76.171',
   date: '2026-10-02',
   codename: 'Entrega que chega',
@@ -9362,4 +9362,32 @@ export const CURRENT_RELEASE: AppRelease = {
         '("sessão" virava "sessÃ£o").',
     },
   ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.172',
+  date: '2026-10-02',
+  codename: 'Sala de racks',
+  summary:
+    'O quadro da missão virou uma sala de racks: cada CLI é um rack com a ' +
+    'ferramenta, o modelo e o estado, e as relações são cabos que acendem ' +
+    'quando o agente está trabalhando. Inclui a 0.76.171.',
+  highlights: [
+    {
+      title: 'Cada agente é um rack',
+      detail:
+        'O logo e o modelo da CLI, a luz e a palavra do estado, uma régua de ' +
+        'atividade e o visor com a unidade em que o agente está. O Maestro é ' +
+        'o núcleo, com o painel de portas de onde saem os cabos.',
+    },
+    {
+      title: 'Cabos com energia passando',
+      detail:
+        'Delegação, entrega, dependência e revisão viram cabos entre os ' +
+        'racks. Enquanto o agente trabalha, o cabo acende e leva pacotes; ' +
+        'parado, fica quieto e na cor do estado. Com "reduzir movimento" ' +
+        'ligado no sistema, nada se mexe.',
+    },
+  ],
+  fixes: [],
 };
