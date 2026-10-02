@@ -296,6 +296,8 @@ export async function judgeJevTransport(
       surface: input.surface,
       reason: lastReason,
       model,
+      provider: 'jev',
+      requestCount,
       sessionId: input.sessionId,
       missionId: input.missionId,
     });

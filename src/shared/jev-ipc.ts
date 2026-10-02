@@ -57,7 +57,8 @@ export interface JevDecisionRow {
     | 'server-error'
     | 'network'
     | 'malformed'
-    | 'aborted';
+    | 'aborted'
+    | 'internal-error';
   surface: string;
   sessionId?: string;
   missionId?: string;
@@ -138,9 +139,12 @@ export interface DecisionUsageStats {
   noAnswer: number;
   inputTokens: number;
   usd: number;
-  /** Null when the historical rows do not provide complete measurements. */
+  /** Soma só das linhas medidas; `null` quando nenhuma linha mediu tentativas HTTP. */
   requests: number | null;
   durationMs: number | null;
+  /** Linhas com tentativas medidas × linhas antigas sem medição (contadas à parte, nunca somadas como zero). */
+  measuredRows: number;
+  legacyRows: number;
 }
 
 /** Hint do classificador Jev de estado do pane (surface `paneState`). */

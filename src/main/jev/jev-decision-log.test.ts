@@ -60,6 +60,54 @@ describe('jev decision log', () => {
     expect(stats.byModel['clef-flash']).toMatchObject({ calls: 1, usd: 0.09 });
   });
 
+  it('counts measured and legacy rows apart instead of letting one old row hide every measured request', () => {
+    const d = setup();
+    recordJevDecision(entry({ model: 'jev-1.13.0' }), { dir: d });
+    expect(jevDecisionStats({ dir: d }).byProvider.jev).toMatchObject({ requests: null, measuredRows: 0, legacyRows: 1 });
+    recordJevDecision(entry({ model: 'jev-1.13.0', requestCount: 2, durationMs: 40 }), { dir: d });
+    recordJevDecision(entry({ model: 'jev-1.13.0', requestCount: 1, durationMs: 10 }), { dir: d });
+    recordJevNoAnswer({ surface: 'intake', reason: 'timeout', model: 'jev-1.13.0', provider: 'jev', requestCount: 0 }, { dir: d });
+    const jev = jevDecisionStats({ dir: d }).byProvider.jev;
+    expect(jev).toMatchObject({ requests: 3, durationMs: 50, measuredRows: 3, legacyRows: 1 });
+  });
+
+  it('records a preflight failure as zero HTTP requests, not as an unknown number', () => {
+    const d = setup();
+    recordJevNoAnswer({ surface: 'toolPick', reason: 'aborted', model: 'clef', provider: 'clef', requestCount: 0 }, { dir: d });
+    const [row] = listJevDecisions({ dir: d, includeNoAnswer: true });
+    expect(row.requestCount).toBe(0);
+    expect(jevDecisionStats({ dir: d }).byProvider.clef).toMatchObject({ requests: 0, measuredRows: 1 });
+  });
+
+  it('survives a corrupted or hand-edited log: invalid rows are skipped, never thrown on', () => {
+    const d = setup();
+    const valid = JSON.stringify({ id: 'a1', at: Date.now(), surface: 'intake', model: 'jev-1.13.0', questions: ['q'],
+      probabilities: { q: 0.5 }, decision: 'ok', inputTokens: 10, usd: 0.1 });
+    const lines = [valid,
+      JSON.stringify({ id: 'a2', at: Date.now(), surface: 'intake', questions: [], probabilities: {}, decision: 'ok', inputTokens: 1, usd: 1 }),
+      JSON.stringify({ id: 'a3', at: Date.now(), surface: 'intake', model: 42, questions: [], probabilities: {}, decision: 'ok' }),
+      JSON.stringify({ id: 'a4', at: 'yesterday', surface: 'intake', model: 'm', decision: 'ok' }),
+      JSON.stringify({ id: 'a5', at: Date.now(), surface: 7, model: 'm', decision: 'ok' }),
+      JSON.stringify({ id: 'a6', at: Date.now(), surface: 'rank', model: 'jev-1.13.0', questions: 'nope', probabilities: 'nope', decision: 'ok', inputTokens: 'many', usd: 'free' }),
+      JSON.stringify([1, 2, 3]), 'null', '"text"', '{broken'];
+    fs.writeFileSync(path.join(d, 'decisions.jsonl'), lines.join('\n') + '\n');
+    expect(() => jevDecisionStats({ dir: d })).not.toThrow();
+    const stats = jevDecisionStats({ dir: d });
+    expect(stats.totals.calls).toBe(2);
+    expect(stats.totals.usd).toBeCloseTo(0.1, 10);
+    expect(listJevDecisions({ dir: d }).map(row => row.id).sort()).toEqual(['a1', 'a6']);
+    const sanitized = listJevDecisions({ dir: d }).find(row => row.id === 'a6')!;
+    expect(sanitized).toMatchObject({ questions: [], probabilities: {}, inputTokens: null, usd: null });
+  });
+
+  it('keeps unknown fields of valid rows when feedback rewrites the file (forward compatibility)', () => {
+    const d = setup();
+    fs.writeFileSync(path.join(d, 'decisions.jsonl'), JSON.stringify({ id: 'f1', at: Date.now(), surface: 'intake', model: 'm',
+      questions: [], probabilities: {}, decision: 'ok', inputTokens: 1, usd: 0, futureField: { keep: true } }) + '\n');
+    expect(setJevDecisionFeedback('f1', 'right', { dir: d })).toBe(true);
+    expect(fs.readFileSync(path.join(d, 'decisions.jsonl'), 'utf8')).toContain('"futureField":{"keep":true}');
+  });
+
   it('does not persist raw state or pixels supplied alongside safe decision metadata', () => {
     const d = setup();
     recordJevDecision({ ...entry(), state: { token: 'must-not-persist' }, images: ['private-pixels'] } as any, { dir: d });

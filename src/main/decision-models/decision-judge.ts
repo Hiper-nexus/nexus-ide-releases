@@ -17,6 +17,26 @@ export interface DecisionJudgeDeps {
   now?: () => number;
 }
 
+/** Nothing was sent: a measured zero, so the journal never reads it as an unknown count. */
+const NO_REQUEST_USAGE: DecisionUsageReceipt = { inputTokens: 0, usd: 0, requestCount: 0, durationMs: 0, usageIncomplete: false };
+const INTERNAL_WARN_INTERVAL_MS = 60_000;
+let lastInternalWarnAt = -Infinity;
+
+/** Only the error class leaves this function: messages can carry paths, keys or page text. */
+function warnInternalFailure(error: unknown, now: () => number): void {
+  const at = now();
+  const since = at - lastInternalWarnAt;
+  if (since >= 0 && since < INTERNAL_WARN_INTERVAL_MS) return;
+  lastInternalWarnAt = at;
+  console.warn(`[decision-models] internal failure (${error instanceof Error ? error.name : 'unknown'})`);
+}
+
+function failureReason(error: unknown, input: JudgeInput, now: () => number): JevNoAnswerReason {
+  if (input.signal?.aborted) return 'aborted';
+  warnInternalFailure(error, now);
+  return 'internal-error';
+}
+
 function noAnswer(input: JudgeInput, route: DecisionRoute | null, reason: JevNoAnswerReason, usage?: DecisionUsageReceipt): null {
   if (input.surface && route) recordJevNoAnswer({ surface: input.surface, model: route.model,
     sessionId: input.sessionId, missionId: input.missionId, reason, provider: route.provider, route, usage });
@@ -42,14 +62,14 @@ async function performDecision(input: JudgeInput, deps: DecisionJudgeDeps): Prom
   const currentInput = { ...input, signal: input.signal ? AbortSignal.any([input.signal, revoked.signal]) : revoked.signal };
   let failureUsage: DecisionUsageReceipt | undefined;
   try {
-    if (currentInput.signal.aborted) return noAnswer(input, route, 'aborted');
+    if (currentInput.signal.aborted) return noAnswer(input, route, 'aborted', NO_REQUEST_USAGE);
     const connection = route.provider === 'clef' ? (deps.getClefConnection ?? (() => getClefConnection(settings)))() : undefined;
     const result = route.provider === 'jev'
       ? await deps.nativeJudge({ ...currentInput, model: route.model })
       : connection ? await judgeClef({ ...currentInput, onUsage: receipt => { failureUsage = receipt; input.onUsage?.(receipt); },
           onNoAnswer: reason => { noAnswer(input, route, reason, failureUsage); } },
           { ...connection, model: route.model as ClefConnection['model'] }, { fetch: deps.fetch, now: deps.now })
-        : noAnswer(input, route, 'client-error');
+        : noAnswer(input, route, 'client-error', NO_REQUEST_USAGE);
     if (!result) return null;
     const elapsed = (): number => result.durationMs ?? (deps.now ?? (() => performance.now()))() - started;
     if (currentInput.signal.aborted || configuration() !== before) return noAnswer(input, route, 'aborted', {
@@ -60,12 +80,12 @@ async function performDecision(input: JudgeInput, deps: DecisionJudgeDeps): Prom
     const actualRoute = { ...route, model: result.model };
     return { ...result, route: actualRoute, requestCount: result.requestCount ?? 1, durationMs: elapsed(),
       ...(result.usageMissing ? {} : { estimatedUsd: decisionResultCostUsd({ ...result, route: actualRoute }) }) };
-  } catch { return noAnswer(input, route, currentInput.signal.aborted ? 'aborted' : 'network'); }
+  } catch (error) { return noAnswer(input, route, failureReason(error, currentInput, deps.now ?? Date.now)); }
   finally { unsubscribe(); }
 }
 
 /** Configuration and credential failures cannot escape the advisory decision boundary. */
 export async function judgeDecision(input: JudgeInput, deps: DecisionJudgeDeps): Promise<JevResult | null> {
   try { return await performDecision(input, deps); }
-  catch { return noAnswer(input, null, input.signal?.aborted ? 'aborted' : 'network'); }
+  catch (error) { return noAnswer(input, null, failureReason(error, input, deps.now ?? Date.now)); }
 }

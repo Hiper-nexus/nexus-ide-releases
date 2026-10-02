@@ -251,6 +251,18 @@ describe('judge — registro central de consultas sem resposta', () => {
     expect(raw).not.toContain('timed out');
   });
 
+  it('a falha do Jev grava o provedor e as tentativas HTTP realmente feitas', async () => {
+    const twice = vi.fn(async () => jsonResponse(500, { message: 'oops' }));
+    await judge({ state: 'x', questions: { q: question }, surface: 'dispatchGuard' },
+      { fetch: twice as unknown as typeof fetch, resolveKey: () => 'k' });
+    const once = vi.fn(async () => jsonResponse(401, { message: 'bad key' }));
+    await judge({ state: 'x', questions: { q: question }, surface: 'intake' },
+      { fetch: once as unknown as typeof fetch, resolveKey: () => 'k' });
+    const bySurface = Object.fromEntries(noAnswerLines().map(line => [line.surface, line]));
+    expect(bySurface.dispatchGuard).toMatchObject({ provider: 'jev', requestCount: 2 });
+    expect(bySurface.intake).toMatchObject({ provider: 'jev', requestCount: 1 });
+  });
+
   it('HTTP 500 duas vezes grava server-error', async () => {
     const mockFetch = vi.fn(async () => jsonResponse(500, { message: 'oops' }));
     const result = await judge(
