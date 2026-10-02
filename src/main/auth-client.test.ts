@@ -229,6 +229,31 @@ describe('session identity binding', () => {
     expect(d.setSecret).not.toHaveBeenCalled();
     expect(d.applyLicense).not.toHaveBeenCalled();
   });
+  it('preserves an accepted exchange when reopening login is rejected by preflight', async () => {
+    let done!: (response: Response) => void;
+    const fetchFn = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => { done = resolve; }))
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true, data: { id: 'account-a' } })));
+    const d = deps({ fetchFn, probeLogin: vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce({ status: 503 }) });
+    await beginLogin('github', d);
+    const state = new URL(d.openExternal.mock.calls[0][0]).searchParams.get('app_state');
+    const old = exchangeAuthCode('accepted-code', state, d);
+    expect((await beginLogin('google', d)).ok).toBe(false);
+    done(new Response(JSON.stringify({ ok: true, data: { session: 's', refresh: 'r', licenca: 'jwt' } })));
+    expect(await old).toEqual({ ok: true });
+    expect(d.bindAccount).toHaveBeenCalledWith('account-a', 's');
+  });
+  it('marks an old failure stale while a reopened login preflight is still pending', async () => {
+    let exchangeDone!: (response: Response) => void; let probeDone!: (value: null) => void;
+    const fetchFn = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => { exchangeDone = resolve; }));
+    const d = deps({ fetchFn, probeLogin: vi.fn().mockResolvedValueOnce(null).mockImplementationOnce(() => new Promise(resolve => { probeDone = resolve; })) });
+    await beginLogin('github', d);
+    const state = new URL(d.openExternal.mock.calls[0][0]).searchParams.get('app_state');
+    const old = exchangeAuthCode('old-code', state, d);
+    const newer = beginLogin('google', d);
+    exchangeDone(new Response('denied', { status: 403 }));
+    expect(await old).toEqual({ ok: false, error: 'login superseded' });
+    probeDone(null); expect((await newer).ok).toBe(true);
+  });
   it.each(['http', 'network', 'json'])('ignores an old %s failure after a new login starts', async kind => {
     let resolve!: (response: Response) => void; let reject!: (error: Error) => void;
     const d = deps({ fetchFn: vi.fn(() => new Promise<Response>((yes, no) => { resolve = yes; reject = no; })) });

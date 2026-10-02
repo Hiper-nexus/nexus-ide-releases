@@ -200,7 +200,11 @@ export async function exchangeAuthCode(
   const generation = authGeneration;
   const codeVerifier = pending.codeVerifier;
   const attempt = beginSequence;
-  const superseded = (): boolean => generation !== authGeneration || attempt !== beginSequence;
+  const superseded = (): boolean => generation !== authGeneration;
+  // Rejected probes do not revoke accepted storage authority; older failures
+  // still cannot replace the UI of a newer probe currently opening.
+  const reject = (reason: string): { ok: false; error: string } => ({ ok: false,
+    error: superseded() || attempt !== beginSequence ? 'login superseded' : reason });
   pending = null; // nonce é single-use: consome ANTES da rede (anti-replay)
 
   let failure = 'exchange-network';
@@ -212,14 +216,14 @@ export async function exchangeAuthCode(
       signal: AbortSignal.timeout(10000),
     });
     if (superseded()) return { ok: false, error: 'login superseded' };
-    if (!res.ok) return { ok: false, error: 'exchange-http' };
+    if (!res.ok) return reject('exchange-http');
     failure = 'exchange-invalid-response';
     const json = (await res.json()) as {
       ok: boolean;
       data?: { session: string; refresh: string; licenca: string };
     };
     if (superseded()) return { ok: false, error: 'login superseded' };
-    if (!json.ok || !json.data || !['session', 'refresh', 'licenca'].every(key => typeof json.data?.[key as keyof typeof json.data] === 'string' && json.data[key as keyof typeof json.data])) return { ok: false, error: 'exchange-invalid-response' };
+    if (!json.ok || !json.data || !['session', 'refresh', 'licenca'].every(key => typeof json.data?.[key as keyof typeof json.data] === 'string' && json.data[key as keyof typeof json.data])) return reject('exchange-invalid-response');
     // A signed license does not prove which account owns this opaque session.
     failure = 'exchange-network';
     const profileResponse = await deps.fetchFn(`${deps.backendUrl}/v1/me`, {
@@ -229,25 +233,25 @@ export async function exchangeAuthCode(
     failure = 'exchange-invalid-response';
     const profile = await profileResponse.json() as { ok?: boolean; data?: { id?: unknown } };
     if (superseded()) return { ok: false, error: 'login superseded' };
-    if (!profileResponse.ok || !profile.ok || typeof profile.data?.id !== 'string' || !profile.data.id.trim()) return { ok: false, error: 'account identity unavailable' };
+    if (!profileResponse.ok || !profile.ok || typeof profile.data?.id !== 'string' || !profile.data.id.trim()) return reject('account identity unavailable');
     const proof = deps.validateLicense(json.data.licenca, profile.data.id);
-    if (!proof.ok) return { ok: false, error: 'exchange-license-invalid' };
+    if (!proof.ok) return reject('exchange-license-invalid');
     failure = 'exchange-storage';
     deps.clearAccess();
     // Falha FECHADO: se qualquer persistência falhar, o login não "parece"
     // ter dado certo com sessão/licença ausentes.
     const s1 = deps.setSecret('auth:session', json.data.session);
-    if (!s1.ok) return { ok: false, error: 'exchange-storage' };
+    if (!s1.ok) return reject('exchange-storage');
     const s2 = deps.setSecret('auth:refresh', json.data.refresh);
-    if (!s2.ok) return { ok: false, error: 'exchange-storage' };
+    if (!s2.ok) return reject('exchange-storage');
     const binding = deps.bindAccount(profile.data.id, json.data.session);
-    if (!binding.ok) return { ok: false, error: 'exchange-storage' };
+    if (!binding.ok) return reject('exchange-storage');
     failure = 'exchange-license-invalid';
     const lic = deps.applyLicense(json.data.licenca);
-    if (!lic.ok) return { ok: false, error: 'exchange-license-invalid' };
+    if (!lic.ok) return reject('exchange-license-invalid');
     return { ok: true };
   } catch {
-    return { ok: false, error: superseded() ? 'login superseded' : failure };
+    return reject(failure);
   }
 }
 
