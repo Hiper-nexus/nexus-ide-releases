@@ -25,13 +25,18 @@ const URL_CREDENTIAL_RE =
 const SECRET_ASSIGNMENT_RE =
   /(\b(?:api[_-]?key|access[_-]?key|private[_-]?key|password|passwd|secret|token|access[_-]?token|refresh[_-]?token|authorization|cookie|credential|auth)\b\s*[:=]\s*)(["'`]?)([^\s,"'`;]+)/gi;
 
+/** User/account API tokens now carry an explicit Cloudflare prefix. */
+export function redactCloudflareTokens(value: string): string {
+  return value.replace(/\bcf(?:ut|at)[-_][A-Za-z0-9._~+/-]{16,}=*/gi, VISIBLE_SECRET_REDACTED);
+}
+
 /**
  * Pure, reusable redaction for visible text that may leave the machine via
  * vision prompts, OCR summaries, AX digests or MCP-shaped tool output.
  * Never mutates the input string; only values are redacted, labels preserved.
  */
 export function redactVisibleSecrets(value: string): string {
-  return value
+  return redactCloudflareTokens(value)
     .replace(PRIVATE_KEY_RE, '[REDACTED_PRIVATE_KEY]')
     .replace(UNTERMINATED_PRIVATE_KEY_RE, '[REDACTED_PRIVATE_KEY]')
     .replace(

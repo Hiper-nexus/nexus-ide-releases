@@ -1,4 +1,5 @@
 import type { JevQuestion } from '../jev/jev-client';
+import { redactCloudflareTokens } from '../../shared/vision-ipc';
 
 const SECRET_PATTERNS: RegExp[] = [
   /Bearer\s+[A-Za-z0-9._-]{16,}/g,
@@ -29,7 +30,7 @@ const CI_ASSIGNMENT_PATTERN =
 
 /** Substitui segredos conhecidos por [REDACTED] antes do state sair do processo. */
 export function redactSecrets(text: string): string {
-  let out = text;
+  let out = redactCloudflareTokens(text);
   for (const pattern of SECRET_PATTERNS) {
     out = out.replace(pattern, '[REDACTED]');
   }
@@ -88,4 +89,3 @@ export function capText(
     ? `\n[... ${omitted} chars omitted]${text.slice(omitted)}`
     : `${text.slice(0, maxChars)}\n[... ${omitted} chars omitted]`;
 }
-
