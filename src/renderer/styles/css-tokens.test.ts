@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -7,7 +8,7 @@ import { describe, expect, it } from 'vitest';
  * hover some, a cor de texto herda, a borda não aparece. Foi assim que os
  * hovers da barra lateral morreram (`--surface-hover` nunca existiu).
  */
-const STYLES_DIR = path.dirname(new URL(import.meta.url).pathname);
+const STYLES_DIR = path.dirname(fileURLToPath(import.meta.url));
 const RENDERER_DIR = path.resolve(STYLES_DIR, '..');
 
 /** Definidos em runtime (style inline no TSX ou ui-theme.ts), não em CSS. */

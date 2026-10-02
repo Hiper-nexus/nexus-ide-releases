@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -11,7 +12,7 @@ import { describe, expect, it } from 'vitest';
  * do meta) fixa a altura da primeira linha: o conteúdo fica no mesmo `y` com ou
  * sem quebra.
  */
-const BASE_CSS = path.join(path.dirname(new URL(import.meta.url).pathname), 'base.css');
+const BASE_CSS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'base.css');
 
 function stripComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, '');
