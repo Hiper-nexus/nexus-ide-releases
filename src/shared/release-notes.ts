@@ -9641,7 +9641,7 @@ export const RELEASE_076179: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076182: AppRelease = {
   version: '0.76.182',
   date: '2026-10-02',
   codename: 'Mac em dia',
@@ -9676,6 +9676,43 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'O Qwen volta a abrir, o brief do Devin espera a colagem antes do ' +
         'Enter e o worker MiMo retomado não fecha mais sozinho.',
+    },
+  ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.183',
+  date: '2026-10-02',
+  codename: 'Skills escolhidas pelo Jev',
+  summary:
+    'O Jev escolhe também entre as skills instaladas no seu projeto, não só ' +
+    'entre as que vêm com o Nexus, e avisa o agente qual SKILL.md ler: no ' +
+    'helper que o Maestro abre e no pedido que você digita num pane do ' +
+    '"+ Pane". Inclui a 0.76.182.',
+  highlights: [
+    {
+      title: 'As skills do projeto chegam sozinhas ao agente',
+      detail:
+        'As skills em .claude/skills e .nexus/skills do projeto, que antes ' +
+        'precisavam ser arrastadas do painel Skills para o pane, entram na ' +
+        'escolha do Jev (ou do Clef, no modo Automático ou Somente Clef). ' +
+        'Quando uma delas serve para a tarefa, o helper recebe o caminho do ' +
+        'SKILL.md no brief.',
+    },
+    {
+      title: 'Dica de skill no pedido digitado',
+      detail:
+        'Quando o Jev tem confiança alta de que uma skill ajuda no pedido que ' +
+        'você digitou num pane do "+ Pane", o agente recebe a dica junto com ' +
+        'o pedido, no máximo uma vez a cada 30 minutos para a mesma skill.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Mais escolhas de skill com confiança',
+      detail:
+        'As skills do projeto são uma pergunta separada das que vêm com o ' +
+        'Nexus. Juntas numa lista só, a confiança se espalhava. Em 60 tarefas ' +
+        'reais, as escolhas confiantes passaram de 12 para 21.',
     },
   ],
 };

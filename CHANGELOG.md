@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.76.183 — Skills escolhidas pelo Jev
+
+Build do Windows. Inclui a 0.76.182 (Mac em dia).
+
+- **O Jev escolhe entre as skills do projeto (F-753).** A sugestão de skill do Jev (superfície `taskRouting`, que o Clef serve em Automático/Somente Clef) só conhecia as skills que vêm com o Nexus. As do projeto (`.claude/skills`, `.nexus/skills`; no hipergo, 46 skills `bmad-*`) dependiam de o operador arrastar cada uma do painel Skills para o pane.
+  - O catálogo do projeto é lido pelo mesmo leitor do painel (sem symlink, SKILL.md dentro da raiz) na pasta de execução, relido no máximo uma vez por minuto por raiz.
+  - As skills do projeto vão numa pergunta própria no mesmo lote do Jev. Medido com o Jev real em 60 tarefas delegadas no hipergo, escolhas com confiança ≥ 0,7: 12 só com as do Nexus, 8 com as duas listas misturadas, 21 em duas perguntas (11 do Nexus + 10 do projeto). Vence a mais confiante; o empate fica com a do projeto.
+  - O brief do helper e o pedido digitado no "+ Pane" (≥ 0,7, no máximo uma vez a cada 30 min por pane e skill) recebem o caminho relativo do SKILL.md.
+  - Squads governados continuam limitados às skills que os grants nomeiam.
+- **Próximo passo.** Recomendar agentes e instruções do Marketplace por projeto e tarefa. Instalar continuará pedindo um clique do operador.
+
 ## 0.76.182 — Mac em dia
 
 Build do Mac. O Mac não recebeu instalador nas versões 0.76.177 a 0.76.179 (o Windows e o Linux publicaram antes que a notarização terminasse); esta traz tudo isso para o Mac, com o que mais já estava no código principal.
