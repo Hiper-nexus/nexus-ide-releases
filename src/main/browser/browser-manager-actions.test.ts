@@ -718,6 +718,20 @@ describe('loadBrowser device emulation', () => {
     destroyBrowser(PANE, scope);
   });
 
+  it('inspects masks before the deep CDP walk and clamps the emulated viewport like a screenshot', async () => {
+    await boot();
+    await loadBrowser(PANE, 'https://example.test/app', { scope, device: 'mobile' });
+    const masks = { width: 390, height: 844, scrollX: 0, scrollY: 0, rectangles: [{ x: 0, y: 0, width: 10, height: 10 }] };
+    state.guest.debugger.attach.mockClear(); state.runAutomation.mockClear();
+    state.runAutomation.mockResolvedValueOnce(masks).mockResolvedValueOnce(masks);
+    const captured = { getSize: () => ({ width: 390, height: 800 }), toBitmap: () => Buffer.alloc(390 * 800 * 4, 5) } as never;
+    state.guest.capturePage.mockResolvedValueOnce(captured);
+    await captureRedactedBrowserVisual(PANE, scope);
+    expect(state.runAutomation.mock.invocationCallOrder[0]).toBeLessThan(state.guest.debugger.attach.mock.invocationCallOrder[0]);
+    expect(state.guest.capturePage).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 390, height: 800 });
+    destroyBrowser(PANE, scope);
+  });
+
   it('reaplica a emulação no commit de cada navegação (o widget novo nasce sem ela)', async () => {
     // Smoke 28/09: "mobile" de 390 media viewport 989 — a emulação morria com
     // o RenderFrameHost trocado pela navegação e o responsive auditava a
