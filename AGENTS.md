@@ -1330,6 +1330,17 @@ saber isto antes de mexer:
   `resumeFromPaneId` com a CLI, o modelo e a conta desse pane. Não volte a
   subir o Maestro do squad padrão para ela: vira um Claude vazio.
 
+## Disjuntor do adapter: sucesso é início provado (F-736)
+
+- PTY gravável não prova que a CLI funciona: o Qwen chegava ao writer-ready e
+  morria no boot 3 s depois, e o `recordSuccess` dali zerava a contagem a cada
+  spawn — a rota o escolheu 7 vezes em 8 min. O sucesso do adapter é o início
+  provado do turno (pane-start watchdog). Não volte a registrar sucesso no
+  spawn.
+- Janela de 10 min (3 mortes abrem, mesmo espaçadas) e recuo exponencial a
+  cada sonda half-open que falha: 30 s → 2 min → 8 min → 30 min (teto),
+  partindo do último período aberto (depois de um `trip` de 15 min, 30 min).
+
 ## Colagem no Codex: Enter só depois do marcador (F-735)
 
 - No Windows o ConPTY não repassa o bracketed paste ao crossterm: o Codex

@@ -1889,7 +1889,10 @@ export async function spawnPaneAndMaybePrompt(
     );
   }
   writerCircuitBreakers.recordConnectSuccess(writerKey);
-  adapterCircuitBreakers.recordSuccess(options.adapterId);
+  // F-736: PTY gravável não prova que a CLI funciona — o Qwen chegava aqui e
+  // morria no boot 3 s depois, e este sucesso zerava a contagem a cada spawn:
+  // o disjuntor nunca abria. O sucesso do adapter é o início provado do turno
+  // (pane-start watchdog, delegation-supervisor).
   hooks.onPaneCreated?.(result.paneId, result.sessionId);
   if (seatRemap) {
     // O pane ABRIU — em outro CLI. Sem este aviso o operador só descobre a

@@ -4,6 +4,12 @@
  *
  * closed → open (after failureThreshold in window) → half-open (after openMs)
  * → closed (on success) or open (on failure in half-open).
+ *
+ * F-736: o Qwen morreu no boot 7 vezes em 02/10 e a rota o escolheu de novo a
+ * cada vez. A janela de 60 s não juntava 3 falhas de spawns espaçados, e o
+ * half-open reabria por só 30 s a cada sonda que falhava. A janela agora é de
+ * 10 min e cada sonda que falha multiplica o tempo aberto (30 s → 2 min →
+ * 8 min → 30 min); o 1º sucesso volta ao começo.
  */
 
 export type CircuitState = 'closed' | 'open' | 'half-open';
@@ -11,16 +17,22 @@ export type CircuitState = 'closed' | 'open' | 'half-open';
 export interface CircuitBreakerConfig {
   /** Failures in the sliding window that trip the breaker. Default 3. */
   failureThreshold: number;
-  /** Sliding window for counting failures (ms). Default 60s. */
+  /** Sliding window for counting failures (ms). Default 10 min (F-736). */
   windowMs: number;
-  /** How long to stay open before half-open probe (ms). Default 30s. */
+  /** How long to stay open before the first half-open probe (ms). Default 30s. */
   openMs: number;
+  /** F-736: each failed half-open probe multiplies the open period by this. */
+  backoffFactor: number;
+  /** F-736: ceiling of the open period (ms). Default 30 min. */
+  maxOpenMs: number;
 }
 
 export const DEFAULT_CIRCUIT_CONFIG: CircuitBreakerConfig = {
   failureThreshold: 3,
-  windowMs: 60_000,
+  windowMs: 10 * 60_000,
   openMs: 30_000,
+  backoffFactor: 4,
+  maxOpenMs: 30 * 60_000,
 };
 
 interface BreakerEntry {
@@ -29,6 +41,8 @@ interface BreakerEntry {
   openedAt: number | null;
   /** Janela aberta própria de um `trip` (F-734); sem ela vale a da config. */
   openMs?: number;
+  /** F-736: duração do último período aberto — base do recuo da próxima sonda. */
+  lastOpenMs?: number;
 }
 
 export interface CircuitSnapshot {
@@ -101,7 +115,15 @@ export class CircuitBreakerRegistry {
     e.failures = [];
     e.openedAt = null;
     e.openMs = undefined;
+    e.lastOpenMs = undefined;
     e.state = 'closed';
+  }
+
+  #open(e: BreakerEntry, now: number, openMs: number): void {
+    e.state = 'open';
+    e.openedAt = now;
+    e.openMs = openMs;
+    e.lastOpenMs = openMs;
   }
 
   /**
@@ -123,25 +145,30 @@ export class CircuitBreakerRegistry {
     ) {
       return;
     }
-    e.state = 'open';
-    e.openedAt = now;
-    e.openMs = openMs;
+    this.#open(e, now, openMs);
   }
 
   recordFailure(key: string): void {
     const e = this.#refresh(key);
     const now = this.#now();
     if (e.state === 'half-open') {
-      e.state = 'open';
-      e.openedAt = now;
+      // F-736: a sonda falhou — o próximo período aberto é maior que o último.
+      const base = e.lastOpenMs ?? this.#config.openMs;
       e.failures.push(now);
+      this.#open(
+        e,
+        now,
+        Math.min(
+          this.#config.maxOpenMs,
+          Math.max(this.#config.openMs, base * this.#config.backoffFactor),
+        ),
+      );
       return;
     }
     e.failures.push(now);
     this.#prune(e, now);
-    if (e.failures.length >= this.#config.failureThreshold) {
-      e.state = 'open';
-      e.openedAt = now;
+    if (e.state === 'closed' && e.failures.length >= this.#config.failureThreshold) {
+      this.#open(e, now, this.#config.openMs);
     }
   }
 

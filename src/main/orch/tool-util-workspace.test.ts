@@ -320,6 +320,21 @@ describe('agent pane workspace confinement', () => {
     });
   });
 
+  it('F-736: PTY gravável não fecha o disjuntor do adapter (não prova que a CLI funciona)', async () => {
+    // 02/10: o Qwen chegava ao writer-ready e morria no boot 3 s depois; o
+    // sucesso registrado aqui zerava a contagem e o disjuntor nunca abria.
+    adapterCircuitBreakers.reset();
+    for (let i = 0; i < 3; i += 1) adapterCircuitBreakers.recordFailure('codex');
+    expect(adapterCircuitBreakers.isOpen('codex')).toBe(true);
+    try {
+      await spawnPaneAndMaybePrompt({ adapterId: 'codex', scope });
+      expect(adapterCircuitBreakers.isOpen('codex')).toBe(true);
+      expect(adapterCircuitBreakers.snapshot('codex').recentFailures).toBe(3);
+    } finally {
+      adapterCircuitBreakers.reset();
+    }
+  });
+
   it('persists the physical Main account without trusting an account in the spawn reply', async () => {
     stubs.physicalSessionInfo.mockReturnValue({
       sessionId: 'session-1', paneId: 'pane-1', adapterId: 'codex', missionId: 'm1',

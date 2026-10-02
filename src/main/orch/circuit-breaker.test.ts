@@ -81,13 +81,54 @@ describe('CircuitBreakerRegistry', () => {
     expect(b.isOpen('deepseek')).toBe(true);
     now += 5 * 60_000;
     expect(b.state('deepseek')).toBe('half-open');
-    // Falha no half-open reabre pela janela padrão — o trip não gruda.
+    // F-736: a sonda que falha depois do trip reabre por MAIS que o trip
+    // (15 min × 4, teto de 30 min) — a credencial continua recusada.
     b.recordFailure('deepseek');
     expect(b.state('deepseek')).toBe('open');
-    now += 30_000;
+    now += 29 * 60_000;
+    expect(b.isOpen('deepseek')).toBe(true);
+    now += 60_000;
     expect(b.state('deepseek')).toBe('half-open');
     b.recordSuccess('deepseek');
     expect(b.state('deepseek')).toBe('closed');
+  });
+
+  it('F-736: três mortes no boot em 10 min abrem, mesmo espaçadas', () => {
+    let now = 1_000_000;
+    const b = new CircuitBreakerRegistry({}, () => now);
+    // Forma de 02/10: Qwen morreu no boot a cada ~40 s–4 min.
+    b.recordFailure('qwen');
+    now += 2 * 60_000;
+    b.recordFailure('qwen');
+    expect(b.isOpen('qwen')).toBe(false);
+    now += 3 * 60_000;
+    b.recordFailure('qwen');
+    expect(b.isOpen('qwen')).toBe(true);
+  });
+
+  it('F-736: cada sonda que falha recua mais (30 s → 2 min → 8 min → 30 min) e o sucesso zera', () => {
+    let now = 1_000_000;
+    const b = new CircuitBreakerRegistry({}, () => now);
+    for (let i = 0; i < 3; i += 1) b.recordFailure('opencode');
+    const openFor = (ms: number) => {
+      now += ms - 1;
+      expect(b.isOpen('opencode')).toBe(true);
+      now += 1;
+      expect(b.state('opencode')).toBe('half-open');
+    };
+    openFor(30_000);
+    b.recordFailure('opencode');
+    openFor(2 * 60_000);
+    b.recordFailure('opencode');
+    openFor(8 * 60_000);
+    b.recordFailure('opencode');
+    openFor(30 * 60_000);
+    b.recordFailure('opencode');
+    openFor(30 * 60_000);
+    b.recordSuccess('opencode');
+    expect(b.state('opencode')).toBe('closed');
+    for (let i = 0; i < 3; i += 1) b.recordFailure('opencode');
+    openFor(30_000);
   });
 
   it('F-734: sucesso de verdade fecha o trip; trip curto não encurta um longo', () => {
