@@ -149,6 +149,16 @@ Verificado:
 - Instalação pelo comando do site (`curl -fsSL https://nexuside.app/install.sh
   | sh`): baixou a 0.76.175, conferiu o SHA-256 e instalou o portátil em
   `~/.local/share/nexus-ide`.
+- Aviso de versão nova (F-751, 0.76.178): o app instalado (0.76.178) sobe em
+  modo `manual`, consulta o espelho público e responde "na mais recente". Um
+  build 0.76.176 rodando contra o espelho de verdade passou para `available`
+  com a 0.76.178 (log `check:available`). A atualização 0.76.175 → 0.76.178 foi
+  feita pelo `install.sh` do site. NÃO visto a olho: o painel com o comando e o
+  botão "Copiar comando".
+- Clique no ícone do Redline (F-750, 0.76.178): o `Activate` do
+  StatusNotifierItem foi aceito por D-Bus, mas com a tela bloqueada o foco não
+  muda, então o efeito (abrir Uso e cotas) não foi visto. Coberto por teste de
+  unidade. Confirmar com a sessão desbloqueada.
 - Redline ligado por padrão (F-739, 0.76.175): sem preferência salva o item
   aparece no boot. Depois do login, "Uso e cotas" mostra a bandeja como ativa.
 - Redline: item registrado no `org.kde.StatusNotifierWatcher`, tooltip e menu
