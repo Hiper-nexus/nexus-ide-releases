@@ -11,20 +11,22 @@
  * precisa dizer ao operador que não salvou).
  */
 
-import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { writeJsonAtomic } from '../util/atomic-write';
+import { readRegularFileCapped } from './redline-safe-read';
 
 export const REDLINE_LINUX_SETTINGS_FILE = 'redline-linux.json';
 /** O arquivo tem uma chave; qualquer coisa maior que isso não é nosso. */
 const MAX_SETTINGS_BYTES = 4096;
 
 export function readRedlineLinuxEnabled(userDataDir: string): boolean {
-  const file = path.join(userDataDir, REDLINE_LINUX_SETTINGS_FILE);
+  const read = readRegularFileCapped(
+    path.join(userDataDir, REDLINE_LINUX_SETTINGS_FILE),
+    MAX_SETTINGS_BYTES,
+  );
+  if (read.kind !== 'text') return false;
   try {
-    const stat = statSync(file);
-    if (!stat.isFile() || stat.size > MAX_SETTINGS_BYTES) return false;
-    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    const parsed: unknown = JSON.parse(read.text);
     return (
       typeof parsed === 'object' &&
       parsed !== null &&

@@ -58,6 +58,7 @@ const WINDOW_LABEL_MAX = 24;
 const INDENT = '  ';
 const SEP = ' · ';
 const DASH = '—';
+const MAX_DAYS_SHOWN = 99;
 
 const BAR_KINDS: ReadonlySet<string> = new Set(['hours', 'session', 'weekly', 'monthly']);
 
@@ -108,7 +109,8 @@ export function durationText(targetMs: number | undefined, nowMs: number): strin
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
   if (hours < 48) return minutes === 0 ? `${hours}h` : `${hours}h${String(minutes).padStart(2, '0')}`;
-  return `${Math.ceil(totalMinutes / 60 / 24)}d`;
+  const days = Math.ceil(totalMinutes / 60 / 24);
+  return days > MAX_DAYS_SHOWN ? `${MAX_DAYS_SHOWN}d+` : `${days}d`;
 }
 
 /** "reset em 1h20" / "reset agora" / "" (sem horário conhecido). */
@@ -128,8 +130,12 @@ export function ageLabel(updatedAtMs: number, nowMs: number): string {
   return `há ${Math.trunc(hours / 24)}d`;
 }
 
+/** Relógio adiantado em até 5 min ainda é "agora"; além disso o dado não é de fiar. */
+const FUTURE_SKEW_MS = 5 * 60 * 1000;
+
 export function isStale(updatedAtMs: number, nowMs: number): boolean {
-  return (nowMs - updatedAtMs) / 1000 > REDLINE_STALE_MS / 1000;
+  const ageMs = nowMs - updatedAtMs;
+  return ageMs > REDLINE_STALE_MS || ageMs < -FUTURE_SKEW_MS;
 }
 
 const PROVIDER_NAMES: Readonly<Record<string, string>> = {
@@ -143,8 +149,10 @@ const PROVIDER_NAMES: Readonly<Record<string, string>> = {
 };
 
 export function providerName(adapterId: string): string {
-  const known = PROVIDER_NAMES[adapterId];
-  if (known) return known;
+  // `hasOwn`: "constructor"/"toString" não podem resolver para a Object.prototype.
+  if (Object.prototype.hasOwnProperty.call(PROVIDER_NAMES, adapterId)) {
+    return PROVIDER_NAMES[adapterId];
+  }
   return adapterId === '' ? adapterId : adapterId.charAt(0).toUpperCase() + adapterId.slice(1);
 }
 
@@ -199,7 +207,10 @@ function hasReading(entry: RedlineEntry): boolean {
 export function entriesForBar(snapshot: RedlineSnapshotFile): RedlineEntry[] {
   if (snapshot.statusBarEntryIds.length > 0) {
     const wanted = new Set(snapshot.statusBarEntryIds);
-    const picked = snapshot.entries.filter((entry) => wanted.has(entry.id));
+    // Teto 6 mesmo que o arquivo cite mais ids: o menu não cresce sem limite.
+    const picked = snapshot.entries
+      .filter((entry) => wanted.has(entry.id))
+      .slice(0, REDLINE_STATUS_BAR_MAX);
     if (picked.length > 0) return picked;
   }
   return snapshot.entries.filter(hasReading).slice(0, REDLINE_STATUS_BAR_MAX);

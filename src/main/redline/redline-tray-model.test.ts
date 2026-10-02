@@ -144,6 +144,21 @@ describe('formatting parity with the Mac/Windows companions', () => {
     expect(isStale(0, NOW)).toBe(true);
   });
 
+  it('a snapshot dated far in the future is treated as stale (clock skew or forged)', () => {
+    expect(isStale(NOW + 30 * MIN, NOW)).toBe(true);
+    expect(isStale(NOW + 2 * MIN, NOW)).toBe(false);
+    expect(buildRedlineTrayModel(snapshot([entry()], { updatedAt: NOW + 3 * HOUR }), NOW).stale).toBe(true);
+  });
+
+  it('providerName is safe for names that exist on Object.prototype', () => {
+    expect(providerName('constructor')).toBe('Constructor');
+    expect(providerName('toString')).toBe('ToString');
+    expect(providerName('__proto__')).toBe('__proto__');
+    expect(() =>
+      buildRedlineTrayModel(snapshot([entry({ adapterId: 'constructor', label: '' })]), NOW),
+    ).not.toThrow();
+  });
+
   it('providerName follows the companions', () => {
     expect(providerName('claude')).toBe('Claude');
     expect(providerName('agy')).toBe('Antigravity');
@@ -173,6 +188,12 @@ describe('reset countdown wording', () => {
     expect(resetText(NOW, NOW)).toBe('reset agora');
     expect(resetText(NOW - 5 * HOUR, NOW)).toBe('reset agora');
     expect(durationText(NOW - 1, NOW)).toBe('agora');
+  });
+
+  it('an absurd reset time is bounded instead of printing 1e+296d', () => {
+    expect(resetText(NOW + 400 * 24 * HOUR, NOW)).toBe('reset em 99d+');
+    expect(resetText(Number.MAX_VALUE, NOW)).toBe('reset em 99d+');
+    expect(resetText(NOW + 99 * 24 * HOUR, NOW)).toBe('reset em 99d');
   });
 
   it('an unknown reset time prints nothing', () => {
@@ -222,6 +243,13 @@ describe('entriesForBar / worstBarWindow / bestRankingPick', () => {
       ...Array.from({ length: 8 }, (_, i) => entry({ id: `k${i}` })),
     ];
     const snap = snapshot(entries, { statusBarEntryIds: [] });
+    expect(entriesForBar(snap).map((e) => e.id)).toEqual(['k0', 'k1', 'k2', 'k3', 'k4', 'k5']);
+  });
+
+  it('never lists more than 6 accounts even if the file names more ids', () => {
+    const entries = Array.from({ length: 10 }, (_, i) => entry({ id: `k${i}`, label: `Conta ${i}` }));
+    const snap = snapshot(entries, { statusBarEntryIds: entries.map((e) => e.id) });
+    expect(entriesForBar(snap)).toHaveLength(6);
     expect(entriesForBar(snap).map((e) => e.id)).toEqual(['k0', 'k1', 'k2', 'k3', 'k4', 'k5']);
   });
 
@@ -582,13 +610,13 @@ describe('buildRedlineTrayModel — hostile input goes through the parser', () =
         {
           id: 'a',
           adapterId: 'claude',
-          label: 'Cla‮ude\u0007\nLinha2',
+          label: 'Cla\u202Eude\u0007\nLinha2',
           windows: [{ kind: 'weekly', label: 'Semanal', usedRatio: 0.5 }],
         },
       ]),
     );
     const all = flat(model.items);
-    expect(all).not.toMatch(/[‮\u0007]/);
+    expect(all).not.toMatch(/[\u202E\u0007]/);
     expect(all).not.toContain('\nLinha2');
   });
 

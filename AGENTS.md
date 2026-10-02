@@ -514,18 +514,26 @@ saber isto antes de mexer:
   rodando. A lista mostra as contas de `statusBarEntryIds` (teto 6, ordem do
   snapshot) com a recomendada marcada; o resto vai para o submenu «Outras
   contas» (teto 25).
-- O arquivo NUNCA é confiado: `redline-snapshot-parse.ts` é o único ponto de
-  entrada dos bytes (teto de 1 MiB em bytes, `formatVersion` exatamente 1,
-  campo desconhecido descartado, texto sem controle/bidi, e-mail inteiro que
-  escape do contrato é re-mascarado). Read-only: o único efeito é o
-  `redline-refresh.request` ("Atualizar agora"), que o sink já consome.
+- O arquivo NUNCA é confiado. A leitura (`redline-safe-read.ts`) abre UMA vez
+  com `O_NONBLOCK` e confere no descritor (regular, ≤ 1 MiB): um FIFO ou
+  `/dev/zero` plantado no lugar não pendura o Main. `redline-snapshot-parse.ts`
+  é o único ponto de entrada dos bytes (`formatVersion` exatamente 1, campo
+  desconhecido descartado, texto sem controle/bidi, e-mail inteiro que escape
+  do contrato — inclusive em `adapterId` — é re-mascarado). O texto é CORTADO
+  antes de qualquer regex e as regex têm quantificador limitado: a versão
+  ingênua do e-mail era quadrática (80 mil caracteres ≈ 6 s, 1 MiB ≈ minutos de
+  Main travado a cada boot). Read-only: o único efeito é o
+  `redline-refresh.request` ("Atualizar agora", `O_NOFOLLOW`, 0600), que o sink
+  já consome.
   "Abrir cotas no Nexus" usa `openQuotaInMainWindow` (o mesmo caminho do
   `nexus://quota`). O ícone é gerado em código (`redline-tray-icon.ts`, PNG
   próprio, placa clara + losango da marca + ponto de urgência; dado velho
   vaza o ponto) — não há asset de bandeja nem variante «template» no Linux.
 - `&` em rótulo de menu do Electron é acelerador: todo texto passa por
-  `escapeMenuLabel`. Não republique o menu sem mudança (fecha o menu aberto em
-  vários hosts) e não destrua o Tray de dentro do clique do próprio menu.
+  `escapeMenuLabel`. Republicar o menu o fecha em vários hosts: sem arquivo
+  novo, ícone que vira ou dado que envelhece, ele só é refeito a cada 5 min
+  (`REDLINE_LINUX_MENU_REFRESH_MS`; o tooltip anda livre). Não destrua o Tray
+  de dentro do clique do próprio menu (o "Ocultar" roda no turno seguinte).
 - NÃO validado em desktop real (só testes unitários + PNG/menu decodificados no
   Electron do macOS): GNOME (precisa da extensão AppIndicator), KDE Plasma,
   XFCE e Waybar/Hyprland (módulo `tray` ligado). Antes de prometer o Linux a um

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -71,6 +72,11 @@ describe('redline linux settings (opt-in, default OFF)', () => {
 
   it('a directory squatting on the file name reads as OFF instead of throwing', () => {
     mkdirSync(file());
+    expect(readRedlineLinuxEnabled(dir)).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('a FIFO squatting on the file name never hangs the boot', () => {
+    execFileSync('mkfifo', [file()]);
     expect(readRedlineLinuxEnabled(dir)).toBe(false);
   });
 

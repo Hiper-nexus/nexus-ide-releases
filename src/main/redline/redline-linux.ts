@@ -25,10 +25,8 @@
 import {
   closeSync,
   constants as fsConstants,
-  fstatSync,
   mkdirSync,
   openSync,
-  readSync,
   watch as fsWatch,
   writeSync,
 } from 'node:fs';
@@ -49,6 +47,7 @@ import {
   resolveRedlineRefreshPath,
   resolveRedlineSnapshotPath,
 } from '../quota/redline-sink';
+import { readRegularFileCapped } from './redline-safe-read';
 import { REDLINE_SNAPSHOT_MAX_BYTES, parseRedlineSnapshot } from './redline-snapshot-parse';
 import {
   readRedlineLinuxEnabled,
@@ -66,6 +65,12 @@ import {
 export const REDLINE_LINUX_POLL_MS = 30_000;
 /** Junta a rajada de eventos do rename atômico num único reload. */
 export const REDLINE_LINUX_DEBOUNCE_MS = 250;
+/**
+ * Sem mudança no arquivo, o menu só é republicado a cada 5 min (a contagem
+ * regressiva e a idade andam, mas republicar fecha o menu aberto em vários
+ * hosts). Arquivo novo, ícone que muda ou dado que fica velho publicam já.
+ */
+export const REDLINE_LINUX_MENU_REFRESH_MS = 5 * 60_000;
 /** O PNG tem 64 px e entra como @2x (32 DIP): nítido em 22–48 px. */
 const ICON_SCALE_FACTOR = 2;
 const FAILURE_REASON_MAX = 100;
@@ -83,8 +88,15 @@ export interface RedlineLinuxDeps {
   homedir?: string;
   now?: () => number;
   platform?: NodeJS.Platform;
-  /** Vigia o diretório do snapshot (seam de teste). Pode lançar. */
-  watchDirectory?: (dir: string, onChange: () => void) => RedlineLinuxDirectoryWatcher;
+  /**
+   * Vigia o diretório do snapshot (seam de teste). Pode lançar. `onDead` avisa
+   * que o vigia morreu sozinho (inotify esgotado, diretório removido).
+   */
+  watchDirectory?: (
+    dir: string,
+    onChange: () => void,
+    onDead: () => void,
+  ) => RedlineLinuxDirectoryWatcher;
 }
 
 export interface RedlineLinuxController {
@@ -99,49 +111,7 @@ export interface RedlineLinuxController {
   status(): RedlineInAppTrayStatus;
 }
 
-const O_NONBLOCK = fsConstants.O_NONBLOCK ?? 0;
 const O_NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
-
-/** Resultado de uma leitura do snapshot: texto, ou o motivo de não haver. */
-type SnapshotRead =
-  | { kind: 'text'; stamp: string; text: string }
-  | { kind: 'unchanged' }
-  | { kind: 'none'; stamp: string };
-
-/**
- * Abre UMA vez (O_NONBLOCK: um FIFO plantado no lugar não pendura o Main),
- * confere no próprio descritor que é arquivo regular dentro do teto e lê no
- * máximo teto+1 bytes — sem janela entre o stat e o read.
- */
-function readSnapshotFile(file: string, knownStamp: string): SnapshotRead {
-  let fd: number;
-  try {
-    fd = openSync(file, fsConstants.O_RDONLY | O_NONBLOCK);
-  } catch {
-    return { kind: 'none', stamp: 'missing' };
-  }
-  try {
-    const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.size > REDLINE_SNAPSHOT_MAX_BYTES) {
-      return { kind: 'none', stamp: `rejected:${stat.size}` };
-    }
-    const stamp = `${stat.mtimeMs}:${stat.size}`;
-    if (stamp === knownStamp) return { kind: 'unchanged' };
-    const buffer = Buffer.alloc(REDLINE_SNAPSHOT_MAX_BYTES + 1);
-    let filled = 0;
-    while (filled < buffer.length) {
-      const read = readSync(fd, buffer, filled, buffer.length - filled, filled);
-      if (read === 0) break;
-      filled += read;
-    }
-    // Cresceu depois do fstat: acima do teto o parse recusa pelo tamanho.
-    return { kind: 'text', stamp, text: buffer.toString('utf8', 0, filled) };
-  } catch {
-    return { kind: 'none', stamp: 'unreadable' };
-  } finally {
-    closeSync(fd);
-  }
-}
 
 /**
  * Escreve o arquivo-sinal sem seguir symlink plantado no lugar (O_NOFOLLOW) e
@@ -171,13 +141,20 @@ export function escapeMenuLabel(text: string): string {
   return text.replace(/&/g, '&&');
 }
 
-function defaultWatchDirectory(dir: string, onChange: () => void): RedlineLinuxDirectoryWatcher {
+function defaultWatchDirectory(
+  dir: string,
+  onChange: () => void,
+  onDead: () => void,
+): RedlineLinuxDirectoryWatcher {
   const watcher = fsWatch(dir, { persistent: false }, (_event, filename) => {
     // Sem nome (alguns FS) ou o alvo / seu temporário: vale recarregar.
     if (!filename || String(filename).includes(REDLINE_SNAPSHOT_FILENAME)) onChange();
   });
-  // inotify esgotado (ENOSPC) ou diretório removido: o poll cobre.
-  watcher.on('error', () => watcher.close());
+  // inotify esgotado (ENOSPC) ou diretório removido: o poll cobre e rearma.
+  watcher.on('error', () => {
+    watcher.close();
+    onDead();
+  });
   return watcher;
 }
 
@@ -230,6 +207,7 @@ export function createRedlineLinuxController(deps: RedlineLinuxDeps): RedlineLin
   let snapshot: RedlineSnapshotFile | null = null;
   let snapshotStamp = '';
   let applied: AppliedState | null = null;
+  let menuPublishedAt = 0;
   let failureReason: string | undefined;
   let warned = false;
 
@@ -243,17 +221,17 @@ export function createRedlineLinuxController(deps: RedlineLinuxDeps): RedlineLin
 
   // ── Snapshot ────────────────────────────────────────────────────────────
 
-  /** Relê o arquivo só quando mtime/tamanho mudaram. Nunca lança. */
-  function reloadSnapshotIfChanged(): void {
-    const result = readSnapshotFile(snapshotPath, snapshotStamp);
-    if (result.kind === 'unchanged') return;
-    if (result.kind === 'none') {
-      snapshot = null;
-      snapshotStamp = result.stamp;
-      return;
-    }
-    snapshot = parseRedlineSnapshot(result.text);
+  /**
+   * Relê o arquivo só quando mtime/tamanho mudaram. Nunca lança. Devolve true
+   * quando o que se sabe do arquivo mudou (inclusive sumir ou ficar inválido).
+   */
+  function reloadSnapshotIfChanged(): boolean {
+    const result = readRegularFileCapped(snapshotPath, REDLINE_SNAPSHOT_MAX_BYTES, snapshotStamp);
+    if (result.kind === 'unchanged') return false;
+    const changed = result.stamp !== snapshotStamp;
+    snapshot = result.kind === 'text' ? parseRedlineSnapshot(result.text) : null;
     snapshotStamp = result.stamp;
+    return changed;
   }
 
   // ── Menu / ícone ────────────────────────────────────────────────────────
@@ -288,8 +266,12 @@ export function createRedlineLinuxController(deps: RedlineLinuxDeps): RedlineLin
     });
   }
 
-  /** Aplica só o que mudou: re-publicar o menu aberto o fecha em vários hosts. */
-  function render(): void {
+  /**
+   * Aplica só o que mudou. Tooltip e ícone andam livremente; o menu, só
+   * quando o arquivo mudou, o ícone virou ou passaram 5 min (republicar o menu
+   * aberto o fecha em vários hosts).
+   */
+  function render(snapshotChanged: boolean): void {
     if (!tray) return;
     if (tray.isDestroyed()) {
       // O sistema derrubou o ícone por baixo de nós: nada a atualizar, e
@@ -298,21 +280,31 @@ export function createRedlineLinuxController(deps: RedlineLinuxDeps): RedlineLin
       teardown();
       return;
     }
-    const model = buildRedlineTrayModel(snapshot, now());
+    const at = now();
+    const model = buildRedlineTrayModel(snapshot, at);
     const iconKey = iconKeyOf(model);
     const menuKey = JSON.stringify(model.items);
-    if (applied === null || applied.icon !== iconKey) tray.setImage(iconFor(model));
-    if (applied === null || applied.tooltip !== model.tooltip) tray.setToolTip(model.tooltip);
-    if (applied === null || applied.menu !== menuKey) {
+    const before = applied;
+    const iconChanged = before === null || before.icon !== iconKey;
+    if (iconChanged) tray.setImage(iconFor(model));
+    if (before === null || before.tooltip !== model.tooltip) tray.setToolTip(model.tooltip);
+    let publishedMenu = before?.menu ?? null;
+    const menuDue =
+      snapshotChanged ||
+      iconChanged ||
+      publishedMenu === null ||
+      at - menuPublishedAt >= REDLINE_LINUX_MENU_REFRESH_MS;
+    if (menuDue && publishedMenu !== menuKey) {
       tray.setContextMenu(Menu.buildFromTemplate(toTemplate(model.items, onAction)));
+      publishedMenu = menuKey;
+      menuPublishedAt = at;
     }
-    applied = { icon: iconKey, tooltip: model.tooltip, menu: menuKey };
+    applied = { icon: iconKey, tooltip: model.tooltip, menu: publishedMenu };
   }
 
   function refreshView(): void {
     try {
-      reloadSnapshotIfChanged();
-      render();
+      render(reloadSnapshotIfChanged());
     } catch (error) {
       warnOnce(error);
     }
@@ -343,12 +335,25 @@ export function createRedlineLinuxController(deps: RedlineLinuxDeps): RedlineLin
     const current = tray;
     tray = null;
     applied = null;
+    menuPublishedAt = 0;
     snapshot = null;
     snapshotStamp = '';
     try {
       if (current && !current.isDestroyed()) current.destroy();
     } catch {
       /* já destruído */
+    }
+  }
+
+  /** Liga o vigia do diretório se ainda não há um; falha = só o poll cobre. */
+  function armWatcher(): void {
+    if (watcher) return;
+    try {
+      watcher = watchDirectory(snapshotDir, scheduleReload, () => {
+        watcher = null;
+      });
+    } catch {
+      watcher = null; // diretório ausente ou inotify esgotado: o poll tenta de novo.
     }
   }
 
@@ -363,7 +368,7 @@ export function createRedlineLinuxController(deps: RedlineLinuxDeps): RedlineLin
       tray = new Tray(iconFor(model));
       // O Tray já nasce com o ícone certo; falta publicar tooltip e menu.
       applied = { icon: iconKeyOf(model), tooltip: null, menu: null };
-      render();
+      render(true);
       if (!tray) throw new Error('o ícone da bandeja foi destruído ao nascer');
     } catch (error) {
       warnOnce(error);
@@ -372,12 +377,11 @@ export function createRedlineLinuxController(deps: RedlineLinuxDeps): RedlineLin
       return false;
     }
     failureReason = undefined;
-    try {
-      watcher = watchDirectory(snapshotDir, scheduleReload);
-    } catch {
-      watcher = null; // diretório ausente ou inotify esgotado: só o poll.
-    }
-    pollTimer = setInterval(refreshView, REDLINE_LINUX_POLL_MS);
+    armWatcher();
+    pollTimer = setInterval(() => {
+      armWatcher();
+      refreshView();
+    }, REDLINE_LINUX_POLL_MS);
     pollTimer.unref?.();
     return true;
   }

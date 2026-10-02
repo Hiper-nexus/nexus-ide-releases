@@ -71,6 +71,7 @@ vi.mock('electron', () => ({
 
 import {
   REDLINE_LINUX_DEBOUNCE_MS,
+  REDLINE_LINUX_MENU_REFRESH_MS,
   REDLINE_LINUX_POLL_MS,
   createRedlineLinuxController,
   escapeMenuLabel,
@@ -121,7 +122,7 @@ describe('redline linux controller', () => {
   let userData: string;
   let now = NOW;
   let openQuota: Mock<() => void>;
-  let watchers: Array<{ onChange: () => void; closed: boolean }>;
+  let watchers: Array<{ onChange: () => void; onDead: () => void; closed: boolean }>;
   let watchShouldThrow = false;
   let warn: ReturnType<typeof vi.spyOn>;
 
@@ -140,9 +141,9 @@ describe('redline linux controller', () => {
       now: () => now,
       platform: 'linux',
       openQuota,
-      watchDirectory: (_dir, onChange) => {
+      watchDirectory: (_dir, onChange, onDead) => {
         if (watchShouldThrow) throw new Error('ENOENT');
-        const handle = { onChange, closed: false };
+        const handle = { onChange, onDead, closed: false };
         watchers.push(handle);
         return {
           close: () => {
@@ -461,6 +462,73 @@ describe('redline linux controller', () => {
         tip: created?.setToolTipCalls,
         image: created?.setImageCalls,
       }).toEqual(before);
+    });
+
+    it('countdown drift alone republishes the menu at most every 5 minutes', () => {
+      writeSnapshot(snapshotJson(), 1_780_000_000);
+      make().enable();
+      const created = tray();
+      const menuCalls = () => created?.setContextMenuCalls ?? 0;
+      const first = menuCalls();
+      expect(menuLabels()).toContain('  5h ▮▮▮▯▯ 62% · reset em 1h20');
+      // 2 min depois: o texto da contagem mudaria ("1h18"), mas o menu aberto
+      // do operador não é derrubado por isso.
+      now = NOW + 2 * 60_000;
+      vi.advanceTimersByTime(REDLINE_LINUX_POLL_MS);
+      expect(menuCalls()).toBe(first);
+      expect(menuLabels()).toContain('  5h ▮▮▮▯▯ 62% · reset em 1h20');
+      // Passados 5 min, o menu é reconstruído com a contagem nova.
+      now = NOW + REDLINE_LINUX_MENU_REFRESH_MS + 60_000;
+      vi.advanceTimersByTime(REDLINE_LINUX_POLL_MS);
+      expect(menuCalls()).toBe(first + 1);
+      expect(menuLabels()).toContain('  5h ▮▮▮▯▯ 62% · reset em 1h14');
+    });
+
+    it('the tooltip still ages every tick (it never closes anything)', () => {
+      writeSnapshot(snapshotJson(), 1_780_000_000);
+      make().enable();
+      expect(tray()?.tooltip).toContain('agora mesmo');
+      now = NOW + 4 * 60_000;
+      vi.advanceTimersByTime(REDLINE_LINUX_POLL_MS);
+      expect(tray()?.tooltip).toContain('há 4 min');
+    });
+
+    it('a snapshot change republishes the menu at once, even inside the 5 min window', () => {
+      writeSnapshot(snapshotJson(), 1_780_000_000);
+      make().enable();
+      const created = tray();
+      const before = created?.setContextMenuCalls ?? 0;
+      writeSnapshot(snapshotJson({}, 'Conta Trocada'), 1_780_000_300);
+      watchers[0].onChange();
+      vi.advanceTimersByTime(REDLINE_LINUX_DEBOUNCE_MS);
+      expect(created?.setContextMenuCalls).toBe(before + 1);
+      expect(menuLabels().some((l) => l.includes('Conta Trocada'))).toBe(true);
+    });
+
+    it('re-arms the directory watcher on the poll once it can start again', () => {
+      watchShouldThrow = true;
+      const controller = make();
+      controller.enable();
+      expect(watchers).toHaveLength(0);
+      watchShouldThrow = false;
+      vi.advanceTimersByTime(REDLINE_LINUX_POLL_MS);
+      expect(watchers).toHaveLength(1);
+      // Não empilha vigias a cada tick.
+      vi.advanceTimersByTime(REDLINE_LINUX_POLL_MS * 3);
+      expect(watchers).toHaveLength(1);
+    });
+
+    it('re-arms after the watcher dies on its own (inotify exhausted, dir removed)', () => {
+      const controller = make();
+      controller.enable();
+      expect(watchers).toHaveLength(1);
+      // O vigia real fecha a si mesmo antes de avisar que morreu.
+      watchers[0].closed = true;
+      watchers[0].onDead();
+      vi.advanceTimersByTime(REDLINE_LINUX_POLL_MS);
+      expect(watchers).toHaveLength(2);
+      controller.disable();
+      expect(watchers.every((w) => w.closed)).toBe(true);
     });
 
     it('swaps the icon only when urgency or staleness changes', () => {

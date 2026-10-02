@@ -51,11 +51,22 @@ const EXCLUDED_REASONS: ReadonlySet<string> = new Set([
 ]);
 
 // Controles C0/C1, DEL, marcas e overrides bidi, espaços de largura zero,
-// separadores de linha/parágrafo e a marca de ordem de bytes.
-// eslint-disable-next-line no-control-regex
-const INVISIBLE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F​-‏‪-‮⁠-⁯﻿]/g;
+// separadores de linha/parágrafo e a marca de ordem de bytes. Escapes \u de
+// propósito: caractere invisível literal some em editor e em linter.
+const INVISIBLE =
+  /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g;
 const WHITESPACE_RUN = /\s+/g;
-const EMAIL_LIKE = /[^\s@<>()[\]{}"',;:]+@[^\s@<>()[\]{}"',;:]+\.[^\s@<>()[\]{}"',;:]+/g;
+// Quantificadores LIMITADOS: com `+` livre este padrão é quadrático (80 mil
+// caracteres sem '@' levavam ~6 s) e o texto vem de um arquivo não confiável.
+// Os tetos cobrem endereço real (local 64, domínio 255, TLD 63).
+const EMAIL_LIKE =
+  /[^\s@<>()[\]{}",;:]{1,64}@[^\s@<>()[\]{}",;:]{1,255}\.[^\s@<>()[\]{}",;:]{1,63}/g;
+// Forma exata que `maskEmail` produz: só ela passa como "já mascarado".
+const MASKED_EMAIL = /^[^*\s@]{0,2}\*{4}@[^*\s@]\*{2}(?:\.[^*\s@]{1,63})?$/;
+/** Sobra para o que a limpeza remove (espaços, invisíveis) antes do teto. */
+const RAW_SLICE_FACTOR = 4;
+const RAW_SLICE_EXTRA = 32;
+const MAX_ADAPTER_ID_CHARS = 64;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -65,21 +76,33 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
-/** Substitui e-mail inteiro por versão mascarada; o já mascarado (`*`) passa. */
+/** Substitui e-mail inteiro por versão mascarada; só a forma exata do mascarado passa. */
 function scrubEmails(text: string): string {
   return text.replace(EMAIL_LIKE, (match) =>
-    match.includes('*') ? match : (maskEmail(match) ?? '***'),
+    MASKED_EMAIL.test(match) ? match : (maskEmail(match) ?? '***'),
   );
+}
+
+/** Corta o texto cru num teto proporcional ao de exibição, sem partir par substituto. */
+function boundedRaw(value: string, maxCodePoints: number): string {
+  const limit = maxCodePoints * RAW_SLICE_FACTOR + RAW_SLICE_EXTRA;
+  if (value.length <= limit) return value;
+  const cut = value.slice(0, limit);
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
 }
 
 /**
  * Texto de exibição seguro para um item de menu: sem controle/bidi/zero-width,
  * espaços colapsados, e-mail inteiro re-mascarado, teto em code points (nunca
- * parte um par substituto). Não-string vira vazio.
+ * parte um par substituto). Não-string vira vazio. O custo é limitado pelo
+ * teto, não pelo tamanho da entrada: o corte vem ANTES de qualquer regex.
  */
 export function sanitizeDisplayText(value: unknown, maxCodePoints: number): string {
   if (typeof value !== 'string') return '';
-  const cleaned = scrubEmails(value.replace(INVISIBLE, '').replace(WHITESPACE_RUN, ' ').trim());
+  const cleaned = scrubEmails(
+    boundedRaw(value, maxCodePoints).replace(INVISIBLE, '').replace(WHITESPACE_RUN, ' ').trim(),
+  );
   const points = Array.from(cleaned);
   if (points.length <= maxCodePoints) return cleaned;
   return `${points.slice(0, Math.max(0, maxCodePoints - 1)).join('')}…`;
@@ -94,6 +117,11 @@ function readRatio(value: unknown): number | null {
 function readId(value: unknown): string {
   if (typeof value !== 'string') return '';
   return value.length > MAX_ID_CHARS ? '' : value.replace(INVISIBLE, '').trim();
+}
+
+/** Id do provedor aparece em menu e tooltip: é texto de exibição, não só chave. */
+function readAdapterId(value: unknown): string {
+  return sanitizeDisplayText(value, MAX_ADAPTER_ID_CHARS);
 }
 
 function readWindow(raw: unknown): RedlineWindow | null {
@@ -123,7 +151,7 @@ function readDecisive(raw: unknown): RedlineDecisiveWindow | undefined {
 function readEntry(raw: unknown): RedlineEntry | null {
   if (!isRecord(raw)) return null;
   const id = readId(raw.id);
-  const adapterId = readId(raw.adapterId);
+  const adapterId = readAdapterId(raw.adapterId);
   if (id === '' || adapterId === '') return null;
   const windows = (Array.isArray(raw.windows) ? raw.windows : [])
     .slice(0, REDLINE_MAX_WINDOWS * 4)
@@ -161,7 +189,7 @@ function readEntry(raw: unknown): RedlineEntry | null {
 function readRankingRow(raw: unknown): RedlineRankingRow | null {
   if (!isRecord(raw)) return null;
   const entryId = readId(raw.entryId);
-  const adapterId = readId(raw.adapterId);
+  const adapterId = readAdapterId(raw.adapterId);
   const headroom = readRatio(raw.headroom);
   if (entryId === '' || adapterId === '' || headroom === null) return null;
   const row: RedlineRankingRow = {

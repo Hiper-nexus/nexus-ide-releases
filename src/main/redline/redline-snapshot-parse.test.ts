@@ -267,13 +267,98 @@ describe('masked emails are never expanded (privacy guard)', () => {
   });
 });
 
+describe('hostile strings cannot stall the main process (ReDoS guard)', () => {
+  it('a 900 KB label without whitespace parses in well under a second and is capped', () => {
+    const hostile = 'a'.repeat(900_000);
+    const started = performance.now();
+    const snap = parseRedlineSnapshot(file({ entries: [entry({ label: hostile })] }));
+    const elapsed = performance.now() - started;
+    expect(elapsed).toBeLessThan(500);
+    expect(Array.from(snap?.entries[0].label ?? '').length).toBeLessThanOrEqual(120);
+  });
+
+  it('the same for strings built to maximize regex backtracking', () => {
+    // Cada forma aparece em dois campos: o arquivo inteiro fica abaixo de 1 MiB.
+    const shapes = [
+      'a@'.repeat(120_000),
+      `${'a.'.repeat(180_000)}@`,
+      `x@${'a.'.repeat(180_000)}`,
+      `${'a'.repeat(240_000)}@${'b'.repeat(240_000)}`,
+    ];
+    for (const shape of shapes) {
+      const started = performance.now();
+      const snap = parseRedlineSnapshot(
+        file({ entries: [entry({ label: shape, emailMasked: shape })] }),
+      );
+      expect(performance.now() - started).toBeLessThan(500);
+      expect(snap).not.toBeNull();
+    }
+  });
+
+  it('sanitizeDisplayText itself is bounded even for a huge direct input', () => {
+    const started = performance.now();
+    const out = sanitizeDisplayText('a'.repeat(5_000_000), 40);
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(Array.from(out).length).toBeLessThanOrEqual(40);
+  });
+
+  it('never leaves a lone surrogate when the bounded slice lands inside a pair', () => {
+    const out = sanitizeDisplayText('😀'.repeat(5_000), 40);
+    expect(() => encodeURIComponent(out)).not.toThrow();
+  });
+});
+
+describe('email scrubbing edge cases', () => {
+  it('re-masks an address that only looks masked because of a trailing asterisk', () => {
+    const snap = parseRedlineSnapshot(file({ entries: [entry({ label: 'me@corp.com*' })] }));
+    expect(snap?.entries[0].label).not.toContain('me@corp.com');
+    expect(snap?.entries[0].label).toContain('me****@c**.com');
+  });
+
+  it('masks an address whose local part has an apostrophe completely', () => {
+    const snap = parseRedlineSnapshot(file({ entries: [entry({ label: "o'brien@x.com" })] }));
+    expect(snap?.entries[0].label).not.toContain("o'brien");
+    expect(snap?.entries[0].label).not.toContain('brien@');
+  });
+
+  it('leaves a properly masked address untouched, with surrounding punctuation', () => {
+    const snap = parseRedlineSnapshot(
+      file({ entries: [entry({ label: 'Conta (gu****@g**.com), ativa' })] }),
+    );
+    expect(snap?.entries[0].label).toBe('Conta (gu****@g**.com), ativa');
+  });
+});
+
+describe('adapterId is display text too', () => {
+  it('strips control characters and re-masks an address in adapterId', () => {
+    const snap = parseRedlineSnapshot(
+      file({
+        entries: [
+          entry({ id: 'a', adapterId: 'claude\nFAKE ROW' }),
+          entry({ id: 'b', adapterId: 'bob@gmail.com' }),
+        ],
+      }),
+    );
+    const ids = snap?.entries.map((e) => e.adapterId) ?? [];
+    expect(ids[0]).toBe('claude FAKE ROW');
+    expect(ids[1]).toBe('bo****@g**.com');
+  });
+
+  it('a very long adapterId is capped', () => {
+    const snap = parseRedlineSnapshot(
+      file({ entries: [entry({ adapterId: 'z'.repeat(5000) })] }),
+    );
+    expect(Array.from(snap?.entries[0].adapterId ?? '').length).toBeLessThanOrEqual(64);
+  });
+});
+
 describe('sanitizeDisplayText', () => {
   it('strips control characters and collapses whitespace', () => {
     expect(sanitizeDisplayText('a\u0000b\u0007c\n\t d   e', 50)).toBe('abc d e');
   });
 
   it('strips bidi overrides and zero-width characters', () => {
-    expect(sanitizeDisplayText('ab‮cd​ef⁦gh⁩', 50)).toBe('abcdefgh');
+    expect(sanitizeDisplayText('ab\u202Ecd\u200Bef\u2066gh\u2069', 50)).toBe('abcdefgh');
   });
 
   it('caps by code point without splitting a surrogate pair', () => {
