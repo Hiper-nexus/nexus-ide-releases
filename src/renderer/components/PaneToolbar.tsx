@@ -13,6 +13,8 @@ import {
   JEV_UNAVAILABLE_LABEL,
   type SpawnRouteInfo,
 } from '../../shared/spawn-route';
+import { accountChoiceChipView } from '../../shared/account-choice-display';
+import { useAccountChoiceReceipt } from '../lib/use-account-choice-receipt';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { usePaneParkedStore } from '../state/pane-parked-store';
@@ -259,6 +261,44 @@ function usePaneLiveSessionId(paneId: string): string | null {
     });
   }, [paneId]);
   return sessionId;
+}
+
+/**
+ * Qual conta este pane usa e POR QUÊ — o recibo da escolha de conta que o Main
+ * já guarda, agora também para a pessoa. O rótulo visível é só o mascarado; o
+ * tooltip traz quem decidiu, a folga medida e as alternativas. Sem recibo (ou
+ * caminho legado) não há chip. Fica por último no meta para ser o primeiro a
+ * sair quando o pane estreita (o meta recorta o que não cabe, sem crescer).
+ */
+function AccountChoiceChip({ paneId }: { paneId: string }) {
+  const sessionId = usePaneLiveSessionId(paneId);
+  const receipt = useAccountChoiceReceipt(sessionId);
+  const view = useMemo(
+    () => (receipt ? accountChoiceChipView(receipt) : null),
+    [receipt],
+  );
+  if (!receipt || !view) return null;
+  return (
+    <span
+      className={`toolbar__state toolbar__state--chip toolbar__state--account${
+        view.isWarning ? ' toolbar__state--account-warn' : ''
+      }`}
+      data-account-chip={receipt.source}
+      // `title` (tooltip nativo) e não `data-tip`: o ::after do data-tip nasce
+      // dentro do overflow:hidden do .toolbar e é cortado — aqui o tooltip É o
+      // valor do chip (folga medida e alternativas).
+      title={view.tooltip}
+      aria-label={view.ariaLabel}
+      role="img"
+    >
+      {view.isWarning && (
+        <span className="toolbar__account-mark" aria-hidden="true">
+          !
+        </span>
+      )}
+      <span className="toolbar__state-label">{view.label}</span>
+    </span>
+  );
 }
 
 /** Acima disto, o badge de custo (RAM) vira aviso — tom do tema, não hardcoded. */
@@ -969,6 +1009,7 @@ export function PaneToolbar({ pane, isFocused }: Props) {
         {pane.kind === 'cli-agent' && <SpawnRouteChip route={pane.spawnRoute} />}
         {pane.kind === 'cli-agent' && <FootprintBadge paneId={pane.id} />}
         <DevServerChip pane={pane} />
+        {pane.kind === 'cli-agent' && <AccountChoiceChip paneId={pane.id} />}
         {stageFocusMode && stagePaneId && stagePaneId !== pane.id && (
           <button
             type="button"

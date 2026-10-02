@@ -207,3 +207,28 @@ export function accountChoiceAriaLabel(
   if (label === null || tooltip === null) return null;
   return `Conta do pane: ${label}. ${tooltip}`;
 }
+
+export interface AccountChoiceChipView {
+  readonly label: string;
+  readonly tooltip: string;
+  readonly ariaLabel: string;
+  /** Fallback na ativa ou recibo com aviso: o chip ganha tom de alerta (e marca "!"). */
+  readonly isWarning: boolean;
+}
+
+/** Tudo que o chip precisa, ou `null` quando o pane não mostra chip. */
+export function accountChoiceChipView(
+  receipt: AccountChoiceReceipt,
+  options: AccountChoiceDisplayOptions = {},
+): AccountChoiceChipView | null {
+  const label = accountChoiceChipLabel(receipt);
+  const tooltip = accountChoiceTooltip(receipt, options);
+  const ariaLabel = accountChoiceAriaLabel(receipt, options);
+  if (label === null || tooltip === null || ariaLabel === null) return null;
+  return {
+    label,
+    tooltip,
+    ariaLabel,
+    isWarning: receipt.source === 'active-fallback' || Boolean(receipt.note),
+  };
+}

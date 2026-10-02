@@ -7,6 +7,7 @@ import type {
 import {
   accountChoiceAriaLabel,
   accountChoiceChipLabel,
+  accountChoiceChipView,
   accountChoiceTooltip,
 } from './account-choice-display';
 
@@ -265,6 +266,31 @@ describe('texto exibido — o que nunca aparece', () => {
     expect(accountChoiceTooltip(badZone, { now: NOW, timeZone: 'Nao/Existe' })).toBe(
       'Conta escolhida pela regra de folga: 12% usado na janela Sessão.',
     );
+  });
+});
+
+describe('accountChoiceChipView', () => {
+  it('junta rótulo, tooltip e aria do mesmo recibo', () => {
+    const r = receipt();
+    expect(accountChoiceChipView(r, OPTIONS)).toEqual({
+      label: accountChoiceChipLabel(r),
+      tooltip: accountChoiceTooltip(r, OPTIONS),
+      ariaLabel: accountChoiceAriaLabel(r, OPTIONS),
+      isWarning: false,
+    });
+  });
+
+  it('é nulo exatamente quando não há chip', () => {
+    expect(accountChoiceChipView(receipt({ source: 'legacy' }), OPTIONS)).toBeNull();
+    expect(accountChoiceChipView(receipt({ source: 'pinned', account: null }), OPTIONS)).toBeNull();
+  });
+
+  it('marca alerta no fallback na ativa e em qualquer recibo com aviso', () => {
+    expect(accountChoiceChipView(receipt({ source: 'active-fallback' }), OPTIONS)?.isWarning).toBe(true);
+    expect(accountChoiceChipView(receipt({ note: 'algo deu errado' }), OPTIONS)?.isWarning).toBe(true);
+    for (const source of ['pinned', 'headroom-rule', 'active', 'native'] as const) {
+      expect(accountChoiceChipView(receipt({ source }), OPTIONS)?.isWarning).toBe(false);
+    }
   });
 });
 

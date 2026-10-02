@@ -19,6 +19,29 @@
   text-transform: none;
 }
 
+/* Chip da conta do pane (recibo da escolha de conta). Discreto: tinta
+   --text-dim. Fallback na ativa vira alerta (--warn) e leva a marca "!" —
+   estado nunca viaja só em cor. O rótulo mascarado corta com reticências em
+   vez de alargar o chip; o tooltip é o `title` nativo (o ::after do data-tip
+   é cortado pelo overflow do toolbar). Vai por último no meta: é o primeiro a
+   quebrar para a linha recortada quando falta largura. */
+.toolbar__state--account {
+  color: var(--text-dim);
+}
+.toolbar__state--account-warn {
+  color: var(--warn);
+}
+.toolbar__state--account .toolbar__state-label {
+  min-width: 0;
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.toolbar__account-mark {
+  font-weight: 700;
+}
+
 
 /* Boot: primeiro hit — anel + cumprimento */
 .boot {
