@@ -58,6 +58,7 @@ import {
   ignoredRouteChoice,
   operatorChildUseCounts,
   operatorRouteTask,
+  routeJevReceipt,
   routeString,
   spawnRouteFrom,
 } from './operator-spawn-route';
@@ -1825,6 +1826,9 @@ const paneSpawnAfterTabMission = {
               ...(typeof autoRoute.escalate === 'number'
                 ? { escalate: autoRoute.escalate }
                 : {}),
+              // Recibo do Jev, só leitura: confiança por dimensão e o que a
+              // regra teria escolhido (ids e números, saneados).
+              ...routeJevReceipt(autoRoute),
               ...(routeSkill ? { skill: routeSkill } : {}),
               ...(typeof autoRoute.jevUnavailable === 'string'
                 ? { jevUnavailable: autoRoute.jevUnavailable }
