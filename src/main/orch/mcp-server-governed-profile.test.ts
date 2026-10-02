@@ -308,6 +308,30 @@ describe('mcp-server governed CLI profile wiring', () => {
     }
   });
 
+  it.each([
+    { role: 'orchestrator' as const, denied: true },
+    { role: 'worker' as const, denied: false },
+  ])('denies native Claude Task to the orchestrator even in free mode, never to a free $role', ({ role, denied }) => {
+    const home = path.join(tempRoot(), 'home');
+    const cwd = path.join(home, 'workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+    vi.stubEnv('HOME', home);
+    homePolicyDeps.getOrchSettings.mockReturnValue({ squadCliPolicy: 'operator-choice' });
+    const spawnAuthority = sealedMissionAuthority(cwd, { role });
+    spawnAuthority.context!.readOnly = false;
+    const decoration = prepareAgentSpawnDecoration(
+      adapter('claude'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      spawnAuthority,
+    );
+    if (!decoration) throw new Error('expected Claude decoration');
+    try {
+      expect(decoration.extraArgs.includes('Task')).toBe(denied);
+    } finally {
+      decoration.onSpawnFailed?.();
+    }
+  });
+
   it('pins the MiMo API key selected by Main instead of the native subscription account', () => {
     const home = path.join(tempRoot(), 'home');
     const cwd = path.join(home, 'workspace');

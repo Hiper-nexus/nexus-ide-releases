@@ -86,6 +86,17 @@ describe('authorizePaneAccess', () => {
     expect(canListPane(worker, own)).toBe(true);
   });
 
+  it('denies a caller without a mission a browser pane without a mission (undefined is not a match)', () => {
+    const { missionId: _mission, ...noMission } = worker;
+    const operatorTab = pane({ sessionId: null, kind: 'browser', missionId: undefined, role: undefined });
+    for (const caller of [noMission as CallerCtx, { ...noMission, role: 'orchestrator' } as CallerCtx]) {
+      for (const action of ['read', 'wait', 'write', 'close'] as const) {
+        expect(authorizePaneAccess(caller, operatorTab, action).allow).toBe(false);
+      }
+      expect(canListPane(caller, operatorTab)).toBe(false);
+    }
+  });
+
   it('keeps a worker out of a browser pane that belongs to another window or mission', () => {
     const foreignWindow = pane({ sessionId: null, kind: 'browser', missionId: 'm1', ownerWebContentsId: 2 });
     const foreignMission = pane({ sessionId: null, kind: 'browser', missionId: 'm2' });
