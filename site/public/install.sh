@@ -210,6 +210,9 @@ case "$METHOD" in
       *) warn "$BIN_DIR não está no seu PATH; abra o NexusIDE pelo menu ou rode $BIN_DIR/nexus-ide" ;;
     esac
 
+    # DEB e RPM puxam o bubblewrap como dependência; o portátil não instala nada do sistema.
+    have bwrap || warn "o NexusIDE usa o bubblewrap para proteger os terminais dos agentes. Instale: sudo pacman -S bubblewrap (Arch, Omarchy), sudo apt install bubblewrap ou sudo dnf install bubblewrap"
+
     # A primeira abertura do portátil cria a entrada no menu de aplicativos e o retorno do login.
     if [ "$LAUNCH" -eq 1 ] && { [ -n "${WAYLAND_DISPLAY:-}" ] || [ -n "${DISPLAY:-}" ]; }; then
       say "Abrindo o NexusIDE (a primeira abertura cria o atalho no menu)…"

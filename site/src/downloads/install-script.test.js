@@ -46,3 +46,10 @@ test('não executa texto baixado nem mexe no sistema além do pacote', () => {
   const removals = [...script.matchAll(/rm -rf ("[^"]+"|\S+)/g)].map(match => match[1]);
   for (const target of removals) assert.match(target, /\$TMP|\$DEST\.(new|old)|"\$TMP"/, `rm -rf inesperado: ${target}`);
 });
+
+test('o portátil avisa quando falta o bubblewrap, que só os pacotes puxam como dependência', () => {
+  const zipBranch = script.slice(script.indexOf('  zip)\n'));
+  assert.match(zipBranch, /have bwrap \|\| warn /);
+  // É só um aviso: o instalador não chama gerenciador de pacotes no modo portátil.
+  assert.doesNotMatch(zipBranch.slice(0, zipBranch.indexOf('esac\n\nsay ""')), /as_root /);
+});
