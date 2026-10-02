@@ -263,3 +263,31 @@ describe('redactBugReportPayload', () => {
     expect(out.description.length).toBeLessThanOrEqual(4000);
   });
 });
+
+describe('redactBugReportText — formatos que a revisão de segurança apontou', () => {
+  it('masks a private key block even when the END line was cut off', () => {
+    const lines = [body(64), `${body(60, 'aB3+/dE5')}`, body(64), body(40)];
+    const text = `log:\n-----BEGIN ${'RSA'} PRIVATE KEY-----\n${lines.join('\n')}\nfim do relato`;
+    const out = redactBugReportText(text);
+    for (const line of lines) expect(out).not.toContain(line.slice(0, 24));
+    expect(out).toContain('log:');
+  });
+
+  it('masks session-like query parameters but keeps ordinary "code=" prose', () => {
+    const url = `https://app.exemplo.com/cb?session=${body(20)}&sid=${body(12)}&auth=${body(14)}&key=${body(16)}&page=2`;
+    const out = redactBugReportText(url);
+    for (const secret of [body(20), body(12), body(14), body(16)]) expect(out).not.toContain(secret);
+    expect(out).toContain('page=2');
+    expect(redactBugReportText('o processo saiu com exit code=76 ao colar')).toContain('code=76');
+  });
+
+  it('masks Slack webhooks, Telegram bot tokens and Mailgun keys', () => {
+    const slack = `https://hooks.${'slack'}.com/services/T${body(8)}/B${body(8)}/${body(24)}`;
+    const telegram = `${'123456789'}:${body(35)}`;
+    const mailgun = `key-${'0123456789abcdef'.repeat(2)}`;
+    const out = redactBugReportText(`${slack} ${telegram} ${mailgun}`);
+    expect(out).not.toContain(body(24));
+    expect(out).not.toContain(body(35).slice(0, 20));
+    expect(out).not.toContain('0123456789abcdef0123');
+  });
+});

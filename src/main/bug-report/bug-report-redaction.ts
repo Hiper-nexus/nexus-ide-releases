@@ -30,7 +30,19 @@ const EXTRA_SECRET_PATTERNS: readonly RegExp[] = [
   /\bwhsec_[A-Za-z0-9]{16,}/g,
   /\bya29\.[A-Za-z0-9._-]{20,}/g,
   /\bglpat-[A-Za-z0-9_-]{16,}/g,
+  /\bhooks\.slack\.com\/services\/[A-Za-z0-9/]{12,}/g,
+  /\b\d{8,10}:[A-Za-z0-9_-]{35}\b/g,
+  /\bkey-[0-9a-f]{32}\b/g,
 ];
+
+/**
+ * Bloco de chave privada cortado (sem a linha END): o compartilhado só cobre o
+ * bloco completo. Limitado: o relato tem 4000 caracteres, mas o teto evita varredura longa.
+ */
+const UNTERMINATED_PRIVATE_KEY = /-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----[\s\S]{0,8192}/g;
+
+/** Credencial em query string (`?session=`, `&sid=`, `&auth=`, `&key=`): só depois de `?`/`&`, para não engolir `exit code=1`. */
+const QUERY_CREDENTIAL = /([?&;](?:session(?:[_-]?id)?|sid|auth(?:[_-]?\w{0,12})?|key|sig(?:nature)?|code|state)=)[^\s&"'#]+/gi;
 
 /** `Bearer` curto (o compartilhado exige 16+): o esquema fica, o valor some. */
 const SHORT_BEARER = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi;
@@ -127,7 +139,9 @@ function collapseLiteralHome(text: string, home: string | null): string {
 
 export function redactBugReportText(text: string, context: RedactionContext = {}): string {
   let out = redactSecrets(text);
+  out = out.replace(UNTERMINATED_PRIVATE_KEY, MASK);
   for (const pattern of EXTRA_SECRET_PATTERNS) out = out.replace(pattern, MASK);
+  out = out.replace(QUERY_CREDENTIAL, `$1${MASK}`);
   out = out.replace(CREDENTIAL_HEADER, `$1${MASK}`);
   out = out.replace(SHORT_BEARER, `Bearer ${MASK}`);
   out = out.replace(QUOTED_ASSIGNMENT, `$1$2$1$3$4${MASK}$4`);

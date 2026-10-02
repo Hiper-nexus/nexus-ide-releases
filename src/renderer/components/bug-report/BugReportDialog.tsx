@@ -44,7 +44,7 @@ import {
  */
 
 type Phase = 'editing' | 'sending' | 'sent';
-type CopyState = 'idle' | 'copied' | 'failed';
+type CopyState = 'idle' | 'copied' | 'copied-raw' | 'failed';
 type PreviewState =
   | { status: 'idle' }
   | { status: 'loading' }
@@ -61,6 +61,8 @@ const LIMITS = BUG_REPORT_LIMITS;
 
 const GENERIC_SEND_FAILURE = 'Não consegui enviar o relato. Verifique a conexão e tente de novo.';
 const GENERIC_PREVIEW_FAILURE = 'Não consegui montar a prévia agora. Tente de novo.';
+const COPIED_RAW =
+  'Copiei o que você digitou, sem a limpeza automática de chaves, e-mails e caminhos. Revise antes de colar em outro lugar.';
 const COPY_FAILED =
   'Não foi possível copiar. Abra "Ver exatamente o que será enviado" e copie o texto de lá.';
 
@@ -242,16 +244,18 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
   const copyReport = async (): Promise<void> => {
     try {
       let report: BugReportMarkdownInput | undefined = failure?.payload;
+      let redacted = report !== undefined;
       if (!report) {
         // Texto mudou depois da falha: pede ao Main uma versão redigida do
-        // que está na tela; se não der, cai no que foi digitado.
+        // que está na tela; se não der, cai no que foi digitado (sem limpeza).
         const rebuilt = await window.nexus.bugReport.preview(buildRequest()).catch(() => null);
+        redacted = rebuilt?.ok === true;
         report = rebuilt?.ok ? rebuilt.payload : toMarkdownDraft(form);
       }
       await navigator.clipboard.writeText(formatBugReportMarkdown(report));
       if (!mounted.current) return;
-      setCopy('copied');
-      setAnnouncement('Relato copiado para a área de transferência.');
+      setCopy(redacted ? 'copied' : 'copied-raw');
+      setAnnouncement(redacted ? 'Relato copiado para a área de transferência.' : COPIED_RAW);
     } catch {
       if (!mounted.current) return;
       setCopy('failed');
@@ -557,7 +561,8 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
                     O que será enviado
                   </h3>
                   <p className="bug-report__hint">
-                    E-mails, caminhos de pasta e chaves já foram trocados por marcadores. O envio usa
+                    A limpeza automática troca por marcadores e-mails, caminhos de pasta e chaves de
+                    formatos conhecidos, mas não pega tudo: confira o texto antes de enviar. O envio usa
                     exatamente este conteúdo.
                   </p>
                   <pre
@@ -595,6 +600,7 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
                 {copy === 'copied' ? (
                   <p className="bug-report__hint">Relato copiado para a área de transferência.</p>
                 ) : null}
+                {copy === 'copied-raw' ? <p className="bug-report__error">{COPIED_RAW}</p> : null}
                 {copy === 'failed' ? (
                   <p className="bug-report__error">{COPY_FAILED}</p>
                 ) : null}

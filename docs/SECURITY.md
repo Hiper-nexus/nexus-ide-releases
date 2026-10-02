@@ -43,7 +43,9 @@ What can leave the machine for Cloudflare, by mode:
 - **Automatic / Somente Clef (text):** the redacted state of pane screens,
   terminal output, requests and tool candidates (`paneState`, `terminalTriage`,
   `intake`, `taskRouting`, `delegation`, `toolPick`, `rank`, `researchTriage`,
-  `helperReuse`, `businessModel`, `judgeTool`, `rankTool`). Automatic prefers Jev
+  `helperReuse`, `businessModel`, `judgeTool`, `rankTool`; `businessModel` carries
+  up to 12 KB of the changed code from the regression gate, redacted for known
+  secret formats only). Automatic prefers Jev
   for everything except `toolPick`; it only falls back to Cloudflare when no Jev
   key exists, and the settings screen says so (`credential-fallback`).
 - **Never Clef (pinned to Jev):** `dispatchGuard`, `handoffReview`,

@@ -38,7 +38,7 @@ describe('decision model readiness notices', () => {
 
   it('explains that Clef-only switches the Jev-calibrated safeguards off', () => {
     const notice = decisionNotices(status({ settings: { mode: 'clef' } })).find(entry => entry.id === 'clef-only-scope');
-    expect(notice?.tone).toBe('info');
+    expect(notice?.tone).toBe('warn');
     expect(notice?.text).toMatch(/guarda de despacho/i);
   });
 

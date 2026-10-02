@@ -53,6 +53,10 @@ describe('complementary decision routing', () => {
     expect(resolveDecisionRoute({ images }, { ...settings, visionEnabled: true }, both)).toMatchObject({ provider: 'clef', evidence: 'capability' });
     expect(resolveDecisionRoute({ images }, { ...settings, mode: 'jev', visionEnabled: true }, both)).toBeNull();
     expect(resolveDecisionRoute({ images }, { ...settings, visionEnabled: true }, { jev: true, clef: false })).toBeNull();
+    // Imagem não contorna a fixação: só o julgamento visual do navegador pode levar imagem ao Clef.
+    for (const surface of ['dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool'] as const) {
+      expect(resolveDecisionRoute({ surface, images }, { ...settings, visionEnabled: true }, both)).toBeNull();
+    }
   });
 
   it('honors a configured Flash variant in Clef-only mode', () => {

@@ -3,7 +3,7 @@ import { redactCloudflareTokens } from '../../shared/vision-ipc';
 
 const SECRET_PATTERNS: RegExp[] = [
   /Bearer\s+[A-Za-z0-9._-]{16,}/g,
-  /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
+  /eyJ[A-Za-z0-9_-]{10,4096}\.[A-Za-z0-9_-]{10,4096}\.[A-Za-z0-9_-]{10,4096}/g,
   /sk-[A-Za-z0-9_-]{16,}/g,
   /xai-[A-Za-z0-9]{16,}/g,
   /gsk_[A-Za-z0-9]{16,}/g,

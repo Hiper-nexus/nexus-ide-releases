@@ -97,4 +97,35 @@ describe('isolated visual mask collection', () => {
     (dom.window.Range.prototype as unknown as { getClientRects: () => DOMRect[] }).getClientRects = () => [{ x: 5, y: 6, width: 200, height: 18 } as DOMRect];
     expect(rects(win)).toEqual([{ x: 5, y: 6, width: 200, height: 18 }]);
   });
+
+  /** Todo Range devolve o mesmo retângulo de texto: o jsdom não tem layout. */
+  function withTextRect(dom: JSDOM, rect: { x: number; y: number; width: number; height: number }): void {
+    const original = dom.window.document.createRange.bind(dom.window.document);
+    dom.window.document.createRange = () => {
+      const range = original();
+      range.getClientRects = () => [rect] as unknown as DOMRectList;
+      return range;
+    };
+  }
+
+  it('also hides the text pixels when the text is drawn wider than its block', () => {
+    const { win, dom } = page('<p data-rect="0,100,100,20">Chave: sk_live_51HabcdefghijKLMNOPQRstuv</p>');
+    withTextRect(dom, { x: 0, y: 100, width: 320, height: 20 });
+    const found = rects(win);
+    expect(found).toContainEqual({ x: 0, y: 100, width: 100, height: 20 });
+    expect(found).toContainEqual({ x: 0, y: 100, width: 320, height: 20 });
+  });
+
+  it('hides a secret that is split across neighbouring text nodes', () => {
+    const { win, dom } = page('<p data-rect="0,50,500,20"><span>sk_live_</span><span>51HabcdefghijKLMNOPQRstuv</span></p>');
+    withTextRect(dom, { x: 0, y: 50, width: 200, height: 20 });
+    expect(rects(win).length).toBeGreaterThan(0);
+  });
+
+  it('does not treat a long ordinary paragraph made of several nodes as a secret', () => {
+    const prose = 'Esta é uma frase comum da documentação, sem nada sensível. '.repeat(10);
+    const { win, dom } = page(`<p data-rect="0,50,500,200"><b>Aviso:</b> ${prose}<i>fim</i></p>`);
+    withTextRect(dom, { x: 0, y: 50, width: 200, height: 20 });
+    expect(rects(win)).toEqual([]);
+  });
 });

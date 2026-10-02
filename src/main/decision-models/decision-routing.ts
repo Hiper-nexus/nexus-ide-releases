@@ -32,6 +32,8 @@ export function resolveDecisionRoute(input: RouteInput, settings: DecisionSettin
   const jevModel = input.model ?? process.env.NEXUS_JEV_MODEL ?? 'jev-latest';
   if (settings.mode !== 'auto' && explicitProvider && explicitProvider !== settings.mode) return null;
   if (input.images?.length) {
+    // Imagem não contorna a fixação no Jev: só o julgamento visual do navegador (browserTool) a leva ao Clef.
+    if (input.surface && input.surface !== 'browserTool' && JEV_PINNED_SURFACES.has(input.surface)) return null;
     if (!settings.visionEnabled || settings.mode === 'jev' || explicitProvider === 'jev' || !available.clef) return null;
     const selected = settings.mode === 'clef' ? settings.clefModel : explicitClef ?? 'clef';
     if (explicitClef && settings.mode === 'clef' && explicitClef !== selected) return null;

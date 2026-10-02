@@ -705,6 +705,8 @@ describe('BugReportDialog — "Copiar relato"', () => {
     setValue(field<HTMLInputElement>(/^Título/), 'Título novo digitado');
     await click(button(/Copiar relato/));
     expect(writeText.mock.calls[0]![0]).toContain('# Título novo digitado');
+    // Sem corpo redigido do Main, a cópia é do texto digitado: a tela diz que não houve limpeza.
+    expect(dialog().textContent).toMatch(/sem a limpeza automática/i);
   });
 
   it('falls back to the typed text when Main returned no body', async () => {

@@ -33,13 +33,22 @@ function hasOpaqueSecretRun(text: string): boolean {
   return false;
 }
 
+/** The text itself looks like a credential (no label needed): known formats, prefixed tokens, opaque runs. */
+export function hasSecretShape(text: string): boolean {
+  if (!text.trim()) return false;
+  if (text.length > MAX_SCANNED_TEXT_CHARS) return true;
+  return redactBrowserText(text) !== text || PREFIXED_TOKEN_PATTERNS.some(pattern => pattern.test(text)) || hasOpaqueSecretRun(text);
+}
+
 /** A label such as "API key" or "Token" counts too: its value usually sits in a neighbouring node. */
 export function isSensitiveVisualText(text: string): boolean {
   if (!text.trim()) return false;
-  if (text.length > MAX_SCANNED_TEXT_CHARS) return true;
-  return redactBrowserText(text) !== text || isSensitiveBrowserMarker(text) ||
-    PREFIXED_TOKEN_PATTERNS.some(pattern => pattern.test(text)) || hasOpaqueSecretRun(text);
+  return isSensitiveBrowserMarker(text) || hasSecretShape(text);
 }
+
+/** A secret split by inline markup (`<span>sk_live_</span><span>…</span>`) is only visible in the joined text. */
+export const SPLIT_SECRET_MAX_CHILD_NODES = 12;
+export const SPLIT_SECRET_MAX_CHARS = 400;
 
 /** Frames and embedded media can show anything the DOM text cannot reveal. */
 export const OPAQUE_VISUAL_SELECTOR = 'input,textarea,select,[contenteditable],[role="textbox"],iframe,canvas,object,embed,img,svg,video,picture';

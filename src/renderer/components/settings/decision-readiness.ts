@@ -21,7 +21,7 @@ export function decisionNotices(status: DecisionModelStatus): DecisionNotice[] {
     notices.push({ id: 'clef-not-ready', tone: 'warn', text: `Somente Clef está escolhido, mas falta ${missingClef(status)} da Cloudflare. As ferramentas de decisão ficam ocultas e as triagens seguem as regras locais até a configuração terminar.` });
   }
   if (mode === 'clef') {
-    notices.push({ id: 'clef-only-scope', tone: 'info', text: `Em Somente Clef, ${SAFEGUARDS} ficam desligados: eles só rodam no Jev.` });
+    notices.push({ id: 'clef-only-scope', tone: 'warn', text: `Em Somente Clef, ${SAFEGUARDS} ficam desligados: eles só rodam no Jev.` });
   }
   if (mode === 'auto' && !jevReady && !clefReady) {
     notices.push({ id: 'no-provider', tone: 'warn', text: 'O Automático está escolhido, mas nenhum provedor está configurado. Configure o Jev ou a Cloudflare em Chaves de API.' });
