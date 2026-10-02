@@ -9588,7 +9588,7 @@ export const RELEASE_076177: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076178: AppRelease = {
   version: '0.76.178',
   date: '2026-10-02',
   codename: 'Linux avisa da versão nova',
@@ -9612,4 +9612,31 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.179',
+  date: '2026-10-02',
+  codename: 'Fechar agentes ao reabrir',
+  summary:
+    'Build do Mac. Ao reabrir o Nexus, o diálogo dos agentes da sessão ' +
+    'anterior ganha a opção de fechá-los, além de retomar ou deixar em ' +
+    'pausa. Inclui a 0.76.178.',
+  highlights: [
+    {
+      title: 'Fechar os agentes ao reabrir',
+      detail:
+        'O diálogo "Retomar agentes da sessão anterior?" agora tem três ' +
+        'escolhas: deixar em pausa, retomar ou fechar. Esc e Cancelar ' +
+        'deixam em pausa e nunca fecham nada.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Fechar não derruba um agente que já começou',
+      detail:
+        'Se a Main adotou o agente ou ele virou parte de uma missão com o ' +
+        'diálogo aberto, "Fechar agentes" o deixa como está.',
+    },
+  ],
 };

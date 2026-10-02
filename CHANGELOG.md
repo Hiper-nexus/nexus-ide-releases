@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.179 — Fechar agentes ao reabrir
+
+Build do Mac. Inclui a 0.76.178 (aviso de versão nova no Linux).
+
+- **Reabrir o Nexus agora deixa fechar os agentes da sessão anterior (F-752).** O diálogo "Retomar agentes da sessão anterior?" só tinha Retomar e Deixar em pausa. Agora tem três escolhas: Deixar em pausa (a que recebe o foco, nada irreversível), Retomar agentes e Fechar agentes. Esc, clique fora e Cancelar continuam significando pausa — cancelar nunca fecha nada.
+- **Fechar descarta só o que está inerte e avulso.** Reconfere o layout, o hold de spawn e o papel do pane depois que você responde: um pane que a Main adotou, que começou a rodar ou que virou agente de missão enquanto o diálogo estava aberto fica como está. A conversa do provider continua no histórico dele.
+
 ## 0.76.178 — Linux avisa da versão nova
 
 Build do Linux (DEB, RPM e ZIP). Inclui a 0.76.176 e a 0.76.177, que não tiveram pacote Linux.
