@@ -8,6 +8,10 @@ const mocks = vi.hoisted(() => ({
   providerReadiness: vi.fn(() => ({ ready: true, reason: 'ready' })),
   hasAvailableAccount: vi.fn(),
   classifyTaskWithSkillForRouting: vi.fn(async (): Promise<unknown> => ({ kind: 'skipped' })),
+  // Espião do motor: passa a chamada para o routeTask real, só conta e lê os
+  // argumentos (o contrafactual da regra é uma SEGUNDA chamada e não pode herdar
+  // nada do Jev).
+  routeTask: vi.fn(),
 }));
 
 vi.mock('../persistence/provider-config-store', () => ({
@@ -29,6 +33,12 @@ vi.mock('./jev-task-routing', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./jev-task-routing')>()),
   classifyTaskWithSkillForRouting: mocks.classifyTaskWithSkillForRouting,
 }));
+
+vi.mock('./task-router', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./task-router')>();
+  mocks.routeTask.mockImplementation(actual.routeTask);
+  return { ...actual, routeTask: mocks.routeTask };
+});
 
 import { rememberKimiSeatReadiness } from '../adapters/seat-auth-readiness';
 import { adapterCircuitBreakers } from './circuit-breaker';
@@ -70,6 +80,7 @@ beforeEach(() => {
   mocks.hasAvailableAccount.mockReturnValue(true);
   mocks.classifyTaskWithSkillForRouting.mockReset();
   mocks.classifyTaskWithSkillForRouting.mockResolvedValue({ kind: 'skipped' });
+  mocks.routeTask.mockClear();
 });
 
 afterEach(() => {
@@ -425,5 +436,180 @@ describe('nexus_route_task — preferAdapters é soft (uso geral)', () => {
     // preferência fica atrás do glm-5.3 — soft, nunca pin.
     expect(decision.adapterId).toBe('glm');
     expect(decision.reason).toContain('longcat=preterido no multi-score');
+  });
+});
+
+describe('nexus_route_task — recibo: confiança do Jev e o que a regra teria escolhido', () => {
+  // 'tarefa de complexidade média' classifica medium/general pela regra: o
+  // glm-5.3 lidera. Com o Jev julgando "visual", a lane de topo (claude opus)
+  // assume — a rota MUDA por causa do Jev, e o recibo precisa dizer isso.
+  const providers = [
+    { adapterId: 'claude', enabled: true, installed: true, authStrategy: 'oauth', models: ['claude-opus-5-5', 'claude-sonnet-5-5'] },
+    { adapterId: 'glm', enabled: true, installed: true, authStrategy: 'oauth', models: ['glm-5.3', 'glm-5.2'] },
+    { adapterId: 'codex', enabled: true, installed: true, authStrategy: 'oauth', models: ['gpt-5.6-luna'] },
+  ];
+  const TASK = 'tarefa de complexidade média';
+
+  function jev(overrides: Record<string, unknown> = {}) {
+    return {
+      kind: 'classified',
+      classification: {
+        tier: 'medium', tierConfidence: 0.9,
+        specialty: 'visual', specialtyConfidence: 0.85,
+        effort: 'medium', effortConfidence: 0.7,
+        escalate: 0.1, model: 'jev-test',
+        ...overrides,
+      },
+    };
+  }
+
+  type Receipt = {
+    adapterId: string;
+    model?: string;
+    classifierSource: string;
+    confidence?: Record<string, number>;
+    ruleChoice?: 'same' | { adapterId: string; model?: string; effort?: string };
+  };
+
+  async function route(args: Record<string, unknown> = { task: TASK }): Promise<Receipt> {
+    return (await tool('nexus_route_task').handler(args, context())) as Receipt;
+  }
+
+  /** Argumentos de uma chamada ao routeTask: tier (4º) e contexto (7º). */
+  function routerCall(index: number): { tier: unknown; ctx: Record<string, unknown> } {
+    const call = mocks.routeTask.mock.calls[index] as unknown[];
+    return { tier: call[3], ctx: call[6] as Record<string, unknown> };
+  }
+
+  beforeEach(() => {
+    mocks.listProviderSettings.mockReturnValue(providers);
+  });
+
+  it('o Jev muda a rota: devolve a confiança aceita e o que a regra escolheria', async () => {
+    mocks.classifyTaskWithSkillForRouting.mockResolvedValue(jev());
+    const decision = await route();
+
+    expect(decision.classifierSource).toBe('jev');
+    expect(decision.adapterId).toBe('claude');
+    expect(decision.confidence).toEqual({ tier: 0.9, specialty: 0.85, effort: 0.7 });
+    expect(decision.ruleChoice).not.toBe('same');
+    expect(decision.ruleChoice).toMatchObject({ adapterId: 'glm', model: 'glm-5.3' });
+  });
+
+  it('o recálculo da regra NÃO herda tier/especialidade/esforço do Jev', async () => {
+    mocks.classifyTaskWithSkillForRouting.mockResolvedValue(jev({ tier: 'hard' }));
+    await route();
+
+    expect(mocks.routeTask).toHaveBeenCalledTimes(2);
+    const withJev = routerCall(0);
+    const byRule = routerCall(1);
+    expect(withJev.tier).toBe('hard');
+    expect(withJev.ctx).toMatchObject({ specialtyOverride: 'visual', effortOverride: 'medium' });
+    expect(byRule.tier).toBeUndefined();
+    expect(byRule.ctx.specialtyOverride).toBeUndefined();
+    expect(byRule.ctx.effortOverride).toBeUndefined();
+  });
+
+  it('o tier do chamador vale nos dois lados (não é decisão do Jev)', async () => {
+    mocks.classifyTaskWithSkillForRouting.mockResolvedValue(jev());
+    const decision = await route({ task: TASK, tier: 'easy' });
+
+    expect(routerCall(0).tier).toBe('easy');
+    expect(routerCall(1).tier).toBe('easy');
+    expect(decision.confidence).toEqual({ specialty: 0.85, effort: 0.7 });
+  });
+
+  it('sem efeito colateral: uma única decisão registrada, a da regra nunca vira rota reconhecida', async () => {
+    mocks.classifyTaskWithSkillForRouting.mockResolvedValue(jev());
+    const decision = await route();
+    const rule = decision.ruleChoice as { adapterId: string; model?: string };
+
+    expect(recentRouteLog()).toHaveLength(1);
+    expect(recentRouteLog()[0]).toMatchObject({ adapterId: 'claude' });
+    // O gate de spawn ad-hoc só reconhece o que foi ROTEADO de fato.
+    expect(hasRecentRouteMatch('claude', 'claude-opus-5-5')).toBe(true);
+    expect(hasRecentRouteMatch(rule.adapterId, rule.model)).toBe(false);
+  });
+
+  it('o Jev concorda com a regra: "same" (e a confiança continua no recibo)', async () => {
+    mocks.classifyTaskWithSkillForRouting.mockResolvedValue(jev({ specialty: 'general' }));
+    const decision = await route();
+
+    expect(decision.classifierSource).toBe('jev');
+    expect(decision.ruleChoice).toBe('same');
+    expect(decision.confidence).toMatchObject({ specialty: 0.85 });
+  });
+
+  it('só dimensão aceita ganha número: 0,59 cai para a heurística e some da confiança', async () => {
+    mocks.classifyTaskWithSkillForRouting.mockResolvedValue(jev({ tierConfidence: 0.59 }));
+    const decision = await route();
+
+    expect(decision.classifierSource).toBe('mixed');
+    expect(decision.confidence).toEqual({ specialty: 0.85, effort: 0.7 });
+    expect(decision.confidence).not.toHaveProperty('tier');
+  });
+
+  it.each([
+    ['sem classificação (tarefa em branco)', { kind: 'skipped' }],
+    ['Jev fora do ar', { kind: 'unavailable', reason: 'timeout' }],
+    ['Jev pouco confiante em tudo', jev({ tierConfidence: 0.2, specialtyConfidence: 0.2, effortConfidence: 0.2 })],
+  ])('%s: sem confiança, sem ruleChoice e sem recálculo', async (_label, batch) => {
+    mocks.classifyTaskWithSkillForRouting.mockResolvedValue(batch);
+    const decision = await route();
+
+    expect(decision.classifierSource).toBe('heuristic');
+    expect(decision).not.toHaveProperty('confidence');
+    expect(decision).not.toHaveProperty('ruleChoice');
+    expect(mocks.routeTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('fail-open: se o recálculo da regra lançar, a rota sai igual, só sem ruleChoice', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    mocks.classifyTaskWithSkillForRouting.mockResolvedValue(jev());
+    const real = mocks.routeTask.getMockImplementation()!;
+    let calls = 0;
+    // 1ª chamada (a rota com o Jev) é real; a 2ª (o contrafactual) quebra.
+    mocks.routeTask.mockImplementation((...args: Parameters<typeof real>) => {
+      calls += 1;
+      if (calls === 2) throw new Error('boom');
+      return real(...args);
+    });
+    try {
+      const decision = await route();
+
+      expect(decision.adapterId).toBe('claude');
+      expect(decision.confidence).toEqual({ tier: 0.9, specialty: 0.85, effort: 0.7 });
+      expect(decision).not.toHaveProperty('ruleChoice');
+      expect(calls).toBe(2);
+    } finally {
+      mocks.routeTask.mockImplementation(real);
+      warn.mockRestore();
+    }
+  });
+
+  it('o diário de rotas guarda confiança e ruleChoice (só nomes e números)', async () => {
+    mocks.classifyTaskWithSkillForRouting.mockResolvedValue(jev());
+    await route();
+
+    expect(recentRouteLog()[0]).toMatchObject({
+      classifierSource: 'jev',
+      confidence: { tier: 0.9, specialty: 0.85, effort: 0.7 },
+      ruleChoice: { adapterId: 'glm', model: 'glm-5.3' },
+    });
+  });
+
+  it('privacidade: confiança e ruleChoice só têm ids e números, nunca o texto da tarefa', async () => {
+    const sentinel = 'SEGREDO-CLIENTE-XYZ-123';
+    mocks.classifyTaskWithSkillForRouting.mockResolvedValue(jev());
+    const decision = await route({ task: `${TASK} ${sentinel}` });
+
+    const receipt = JSON.stringify({ confidence: decision.confidence, ruleChoice: decision.ruleChoice });
+    expect(receipt).not.toContain(sentinel);
+    expect(decision.ruleChoice).not.toBe('same');
+    for (const key of Object.keys(decision.ruleChoice as object)) {
+      expect(['adapterId', 'model', 'effort']).toContain(key);
+    }
+    const logged = JSON.stringify({ c: recentRouteLog()[0].confidence, r: recentRouteLog()[0].ruleChoice });
+    expect(logged).not.toContain(sentinel);
   });
 });

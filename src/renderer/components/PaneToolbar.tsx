@@ -10,7 +10,7 @@ import {
 import type { PaneModel } from '../../shared/types';
 import type { JevPaneHint } from '../../shared/jev-ipc';
 import {
-  JEV_UNAVAILABLE_LABEL,
+  spawnRouteTooltip,
   type SpawnRouteInfo,
 } from '../../shared/spawn-route';
 import { useLayoutStore } from '../state/layout-store';
@@ -230,19 +230,19 @@ function JevHintChip({ paneId }: { paneId: string }) {
 /** Quem escolheu a CLI deste pane: o Jev, ou a heurística porque ele caiu. */
 function SpawnRouteChip({ route }: { route: SpawnRouteInfo | undefined }) {
   if (!route) return null;
-  if (route.jevUnavailable) {
-    const tip = `CLI escolhida pela heurística — Jev ${JEV_UNAVAILABLE_LABEL[route.jevUnavailable]}`;
-    return (
-      <span className="toolbar__state toolbar__state--chip" data-rota-chip="fallback" data-tip={tip} aria-label={tip}>
-        <span className="toolbar__state-label">sem Jev</span>
-      </span>
-    );
-  }
-  if (route.source === 'heuristic') return null;
-  const tip = 'CLI escolhida pelo Jev para esta tarefa';
+  // O texto (confiança por dimensão + o que a regra teria escolhido) mora no
+  // tooltip: o rótulo visível continua só "Jev"/"sem Jev", sem crescer o cabeçalho.
+  const tip = spawnRouteTooltip(route);
+  if (!tip) return null;
+  const fallback = Boolean(route.jevUnavailable);
   return (
-    <span className="toolbar__state toolbar__state--chip" data-rota-chip="jev" data-tip={tip} aria-label={tip}>
-      <span className="toolbar__state-label">Jev</span>
+    <span
+      className="toolbar__state toolbar__state--chip"
+      data-rota-chip={fallback ? 'fallback' : 'jev'}
+      data-tip={tip}
+      aria-label={tip}
+    >
+      <span className="toolbar__state-label">{fallback ? 'sem Jev' : 'Jev'}</span>
     </span>
   );
 }

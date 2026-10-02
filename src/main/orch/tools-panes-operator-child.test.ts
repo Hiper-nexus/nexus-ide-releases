@@ -420,6 +420,49 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     });
   });
 
+  it('Jev influenciou: recibo e opções do pane levam confiança e ruleChoice só como ids e números', async () => {
+    setOperatorRouteResolver(vi.fn(async () => ({
+      adapterId: 'codex',
+      model: 'gpt-5.6-luna',
+      classifierSource: 'jev',
+      confidence: { tier: 0.8349, specialty: 0.71, prompt: 'segredo do cliente' },
+      ruleChoice: { adapterId: 'claude', model: 'sonnet', reason: 'sinais: segredo do cliente', accountId: 'conta-1' },
+    })));
+    const result = (await paneSpawnTool.handler({ prompt: 'implemente X' }, userPane())) as Record<string, unknown>;
+    expect(result.route).toMatchObject({
+      classifierSource: 'jev',
+      confidence: { tier: 0.83, specialty: 0.71 },
+      ruleChoice: { adapterId: 'claude', model: 'sonnet' },
+    });
+    expect(JSON.stringify(result.route)).not.toMatch(/segredo|conta-1/);
+    const spawnRoute = (harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0] as { spawnRoute?: unknown }).spawnRoute;
+    expect(spawnRoute).toEqual({
+      source: 'jev',
+      confidence: { tier: 0.83, specialty: 0.71 },
+      ruleChoice: { adapterId: 'claude', model: 'sonnet' },
+    });
+  });
+
+  it('o Jev concordou com a regra: ruleChoice "same" chega ao recibo e ao chip', async () => {
+    setOperatorRouteResolver(vi.fn(async () => ({
+      adapterId: 'codex', classifierSource: 'mixed', ruleChoice: 'same',
+    })));
+    const result = (await paneSpawnTool.handler({ prompt: 'implemente X' }, userPane())) as Record<string, unknown>;
+    expect(result.route).toMatchObject({ ruleChoice: 'same' });
+    expect(harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0]).toMatchObject({
+      spawnRoute: { source: 'mixed', ruleChoice: 'same' },
+    });
+  });
+
+  it('retrocompatível: rota sem confiança nem ruleChoice mantém o recibo de antes', async () => {
+    setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex', classifierSource: 'jev', escalate: 0.2 })));
+    const result = (await paneSpawnTool.handler({ prompt: 'implemente X' }, userPane())) as Record<string, unknown>;
+    expect(result.route).not.toHaveProperty('confidence');
+    expect(result.route).not.toHaveProperty('ruleChoice');
+    expect(harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0]).toMatchObject({ spawnRoute: { source: 'jev' } });
+    expect((harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0] as { spawnRoute: object }).spawnRoute).toEqual({ source: 'jev' });
+  });
+
   it('auto-route without native effort keeps a null receipt instead of table medium', async () => {
     setOperatorRouteResolver(async () => ({ adapterId: 'kimi', model: 'kimi-code/k3', classifierSource: 'jev' }));
     const result = await paneSpawnTool.handler({ task: 'Read the file names only' }, userPane()) as {

@@ -37,7 +37,11 @@ import {
   type RouteSpecialty,
 } from '../../shared/mission-route-specialty';
 import { codeReviewTierFloor, raiseToTierFloor, type TaskTier } from './task-router';
-import type { JevUnavailableReason } from '../../shared/spawn-route';
+import {
+  parseSpawnRouteConfidence,
+  type JevUnavailableReason,
+  type SpawnRouteConfidence,
+} from '../../shared/spawn-route';
 
 export const TASK_ROUTING_MIN_CONFIDENCE = 0.6;
 const TASK_ROUTING_TIMEOUT_MS = 5_000;
@@ -385,6 +389,12 @@ export function routingOverridesFrom(
   effortOverride: RouteEffort | undefined;
   classifierSource: ClassifierSource;
   escalate: number | undefined;
+  /**
+   * Confiança do Jev SÓ nas dimensões que ele de fato decidiu (aceitas pelo
+   * limiar). Dimensão da heurística, do chamador ou rebaixada/elevada por piso
+   * de regra não tem número. Vai para o recibo da rota, nunca para a decisão.
+   */
+  confidence: SpawnRouteConfidence | undefined;
 } {
   if (!classification) {
     return {
@@ -393,6 +403,7 @@ export function routingOverridesFrom(
       effortOverride: undefined,
       classifierSource: 'heuristic',
       escalate: undefined,
+      confidence: undefined,
     };
   }
   const tierFromJev =
@@ -403,15 +414,25 @@ export function routingOverridesFrom(
   const effortFromJev = isRouteEffort(classification.effort) &&
     (classification.effortConfidence ?? 0) >= TASK_ROUTING_MIN_CONFIDENCE;
   const usedJev = Number(tierFromJev) + Number(specialtyFromJev) + Number(effortFromJev);
+  const tierOverride =
+    callerTier ??
+    (tierFromJev
+      ? raiseToTierFloor(classification.tier, taskText ? codeReviewTierFloor(taskText) : null)
+      : undefined);
   return {
-    tierOverride:
-      callerTier ??
-      (tierFromJev
-        ? raiseToTierFloor(classification.tier, taskText ? codeReviewTierFloor(taskText) : null)
-        : undefined),
+    tierOverride,
     specialtyOverride: specialtyFromJev ? classification.specialty : undefined,
     effortOverride: effortFromJev ? classification.effort : undefined,
     classifierSource: usedJev === 3 ? 'jev' : usedJev > 0 ? 'mixed' : 'heuristic',
     escalate: classification.escalate,
+    // O piso de revisão de código pode ter elevado o tier do Jev: aí o tier
+    // final é da regra, e o número dele ao lado seria mentira.
+    confidence: parseSpawnRouteConfidence({
+      ...(tierFromJev && tierOverride === classification.tier
+        ? { tier: classification.tierConfidence }
+        : {}),
+      ...(specialtyFromJev ? { specialty: classification.specialtyConfidence } : {}),
+      ...(effortFromJev ? { effort: classification.effortConfidence } : {}),
+    }),
   };
 }
