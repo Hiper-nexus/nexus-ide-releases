@@ -117,6 +117,7 @@
 
 .bug-report__impact > legend {
   padding: 0;
+  margin-bottom: var(--space-1-5);
 }
 
 .bug-report__impact-options {
@@ -258,9 +259,13 @@
   background: var(--bg-elevated);
 }
 
-/* Alvos de pelo menos 32px nos botões do diálogo (DESIGN.md §6). */
+/* Alvo secundário >= 32px; o CTA primário >= 40px (DESIGN.md §6). */
 .confirm__panel--bug-report .confirm__btn {
   min-height: 32px;
+}
+
+.confirm__panel--bug-report .confirm__btn--primary {
+  min-height: 40px;
 }
 
 .confirm__panel--bug-report .confirm__btn:disabled {

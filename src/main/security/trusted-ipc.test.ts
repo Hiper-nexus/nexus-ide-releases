@@ -9,6 +9,7 @@ vi.mock('electron', () => ({
 
 import {
   bindTrustedMainWindow,
+  findTrustedMainWindow,
   handleTrusted,
   isLiveTrustedMainWindowSender,
   onTrusted,
@@ -74,6 +75,18 @@ describe('trusted IPC seam', () => {
 
     contents.crashed = true;
     expect(isLiveTrustedMainWindowSender(eventFor(contents))).toBe(false);
+  });
+
+  it('finds the bound main window among all windows and ignores unbound or dead ones', () => {
+    const console = fakeWindow();
+    const main = fakeWindow();
+    const closed = fakeWindow();
+    bindTrustedMainWindow(main.win as never, 'nexus://app/index.html');
+    bindTrustedMainWindow(closed.win as never, 'nexus://app/index.html');
+    closed.win.destroyed = true;
+    expect(findTrustedMainWindow([console.win, closed.win, main.win] as never)).toBe(main.win);
+    expect(findTrustedMainWindow([console.win, closed.win] as never)).toBeUndefined();
+    expect(findTrustedMainWindow([])).toBeUndefined();
   });
 
   it('denies unknown, destroyed and cross-origin senders', () => {

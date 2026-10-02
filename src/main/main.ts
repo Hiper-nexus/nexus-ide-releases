@@ -330,6 +330,7 @@ import { registerBillingIpc } from "./persistence/billing-ipc";
 import { syncLicenseOnBoot } from "./license-sync";
 import { registerTeamIpc } from "./team-ipc";
 import { installAppMenu } from "./app-menu";
+import { findTrustedMainWindow } from "./security/trusted-ipc";
 import {
   registerBugReportIpc,
   requestOpenBugReportDialog,
@@ -776,7 +777,7 @@ function bootstrap(): void {
     platform: process.platform,
     onReportProblem: () => {
       requestOpenBugReportDialog(
-        BrowserWindow.getAllWindows().find((win) => !isPetWindow(win)),
+        findTrustedMainWindow(BrowserWindow.getAllWindows()),
       );
     },
   });

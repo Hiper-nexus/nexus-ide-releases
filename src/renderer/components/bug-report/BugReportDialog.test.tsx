@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BugReportDialog } from './BugReportDialog';
 import { useBugReportDialogStore } from '../../state/bug-report-dialog-store';
+import { useConfirmStore } from '../../state/confirm-store';
 import { useLayoutStore } from '../../state/layout-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import type {
@@ -127,6 +128,7 @@ beforeEach(() => {
   });
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
   useBugReportDialogStore.setState({ isOpen: false });
+  useConfirmStore.setState({ pending: null, queue: [] });
 });
 
 afterEach(() => {
@@ -490,11 +492,33 @@ describe('BugReportDialog — sending states', () => {
     await click(button(/Enviar relato/));
     expect(dialog().querySelector('[role="alert"]')?.textContent).toContain('entrar na sua conta');
     await click(button(/Abrir Minha conta/));
+    // O texto digitado seria descartado: pergunta antes de sair.
+    expect(useConfirmStore.getState().pending?.title).toMatch(/Sair do relato/);
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    await act(async () => {
+      useConfirmStore.getState().decide(true);
+      await Promise.resolve();
+    });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(useProductNavigationStore.getState().destination).toMatchObject({
       kind: 'settings',
       section: 'account',
     });
+  });
+
+  it('stays on the report when the person declines to leave for the account screen', async () => {
+    submit.mockResolvedValueOnce({ ok: false, code: 'no-session', message: 'Entre na conta.', payload });
+    mount();
+    openDialog();
+    fillValid();
+    await click(button(/Enviar relato/));
+    await click(button(/Abrir Minha conta/));
+    await act(async () => {
+      useConfirmStore.getState().decide(false);
+      await Promise.resolve();
+    });
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(field<HTMLInputElement>(/^Título/).value).toBe('O terminal trava ao colar');
   });
 
   it('only offers the account shortcut for the no-session failure', async () => {
@@ -504,6 +528,114 @@ describe('BugReportDialog — sending states', () => {
     fillValid();
     await click(button(/Enviar relato/));
     expect(Array.from(dialog().querySelectorAll('button')).some((b) => /Minha conta/.test(b.textContent ?? ''))).toBe(false);
+  });
+});
+
+describe('BugReportDialog — closing without losing what was typed', () => {
+  async function decide(ok: boolean): Promise<void> {
+    await act(async () => {
+      useConfirmStore.getState().decide(ok);
+      await Promise.resolve();
+    });
+  }
+
+  it('asks before Escape discards typed text, and keeps the report when declined', async () => {
+    mount();
+    openDialog();
+    setValue(field<HTMLInputElement>(/^Título/), 'Algo que eu digitei');
+    keydown(dialog(), 'Escape');
+    expect(useConfirmStore.getState().pending?.title).toMatch(/Descartar o relato/);
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    await decide(false);
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(field<HTMLInputElement>(/^Título/).value).toBe('Algo que eu digitei');
+    expect(document.activeElement).toBe(field(/^Título/));
+  });
+
+  it('closes after the person confirms the discard', async () => {
+    mount();
+    openDialog();
+    setValue(field<HTMLInputElement>(/^Título/), 'Algo que eu digitei');
+    keydown(dialog(), 'Escape');
+    await decide(true);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('Cancelar follows the same rule', async () => {
+    mount();
+    openDialog();
+    setValue(field<HTMLInputElement>(/^Título/), 'Algo que eu digitei');
+    await click(button(/Cancelar/));
+    expect(useConfirmStore.getState().pending).not.toBeNull();
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  });
+
+  it('closes at once when nothing was typed', async () => {
+    mount();
+    openDialog();
+    await click(button(/Cancelar/));
+    expect(useConfirmStore.getState().pending).toBeNull();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('ignores Escape while an input method is composing', () => {
+    mount();
+    openDialog();
+    const event = keydown(dialog(), 'Escape', { isComposing: true });
+    expect(event.defaultPrevented).toBe(false);
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  });
+});
+
+describe('BugReportDialog — announcements and implicit submission', () => {
+  it('has a persistent polite live region from the first render, empty until something happens', () => {
+    mount();
+    openDialog();
+    const region = dialog().querySelector('[role="status"][aria-live="polite"]');
+    expect(region).not.toBeNull();
+    expect(region?.textContent).toBe('');
+  });
+
+  it('announces sending, then the sent code, in that same region', async () => {
+    let finish: (result: BugReportSubmitResult) => void = () => undefined;
+    submit.mockImplementation(() => new Promise<BugReportSubmitResult>((resolve) => { finish = resolve; }));
+    mount();
+    openDialog();
+    fillValid();
+    await click(button(/Enviar relato/));
+    const region = dialog().querySelector('[role="status"][aria-live="polite"]');
+    expect(region?.textContent).toMatch(/Enviando/);
+    await act(async () => {
+      finish({ ok: true, id: 'BR-0042' });
+      await Promise.resolve();
+    });
+    await flush();
+    expect(dialog().querySelector('[role="status"][aria-live="polite"]')?.textContent).toBe(
+      'Relato enviado, obrigado. Código: BR-0042',
+    );
+  });
+
+  it('does not send on implicit form submission (Enter in the title field)', async () => {
+    mount();
+    openDialog();
+    fillValid();
+    const form = dialog().querySelector('form')!;
+    const event = new Event('submit', { bubbles: true, cancelable: true });
+    act(() => {
+      form.dispatchEvent(event);
+    });
+    await flush();
+    expect(event.defaultPrevented).toBe(true);
+    expect(submit).not.toHaveBeenCalled();
+    expect(button(/Enviar relato/).type).toBe('button');
+  });
+
+  it('labels the scrollable preview as a region', async () => {
+    mount();
+    openDialog();
+    fillValid();
+    await click(button(/Ver exatamente o que será enviado/));
+    expect(dialog().querySelector('pre')?.getAttribute('role')).toBe('region');
   });
 });
 
@@ -526,6 +658,53 @@ describe('BugReportDialog — "Copiar relato"', () => {
     expect(copied).toContain('Descrição já redigida pelo Main');
     expect(copied).toContain('NexusIDE 0.76.161');
     expect(dialog().querySelector('[role="status"]')?.textContent).toMatch(/copiado/i);
+  });
+
+  it('does not copy a stale body after the text changed: it asks Main for a fresh redacted one', async () => {
+    submit.mockResolvedValueOnce({
+      ok: false,
+      code: 'network',
+      message: 'Sem conexão.',
+      payload: {
+        ...payload,
+        title: 'Título antigo da falha',
+        consent: { diagnostics: true },
+        context: { adapter: 'claude', paneCount: 1, missionActive: false },
+        diagnostics: { events: [{ t: 1, kind: 'agent-pty-exit' }], errors: [] },
+      },
+    });
+    preview.mockResolvedValueOnce({
+      ok: true,
+      payload: { ...payload, title: 'Título novo redigido' },
+      digest: DIGEST,
+    });
+    mount();
+    openDialog();
+    fillValid();
+    await click(field<HTMLInputElement>(/Incluir diagnóstico técnico/));
+    await click(button(/Enviar relato/));
+    // Depois da falha a pessoa desliga o diagnóstico e muda o título.
+    await click(field<HTMLInputElement>(/Incluir diagnóstico técnico/));
+    setValue(field<HTMLInputElement>(/^Título/), 'Título novo digitado');
+    await click(button(/Copiar relato/));
+    expect(preview).toHaveBeenCalledTimes(1);
+    expect(preview.mock.calls[0]![0].includeDiagnostics).toBe(false);
+    const copied = writeText.mock.calls[0]![0];
+    expect(copied).toContain('Título novo redigido');
+    expect(copied).not.toContain('Título antigo');
+    expect(copied).not.toContain('Diagnóstico técnico');
+  });
+
+  it('falls back to the typed text when the fresh body cannot be built', async () => {
+    submit.mockResolvedValueOnce({ ok: false, code: 'network', message: 'Sem conexão.', payload });
+    preview.mockRejectedValueOnce(new Error('boom'));
+    mount();
+    openDialog();
+    fillValid();
+    await click(button(/Enviar relato/));
+    setValue(field<HTMLInputElement>(/^Título/), 'Título novo digitado');
+    await click(button(/Copiar relato/));
+    expect(writeText.mock.calls[0]![0]).toContain('# Título novo digitado');
   });
 
   it('falls back to the typed text when Main returned no body', async () => {

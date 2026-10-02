@@ -17,9 +17,12 @@ import {
   formatBugReportMarkdown,
   validateBugReportDraft,
   type BugReportFailureCode,
+  type BugReportMarkdownInput,
   type BugReportPayload,
 } from '../../../shared/bug-report';
+import { focusableWithin } from '../../lib/focus-trap';
 import { useBugReportDialogStore } from '../../state/bug-report-dialog-store';
+import { askConfirm } from '../../state/confirm-store';
 import { useLayoutStore } from '../../state/layout-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import {
@@ -55,11 +58,11 @@ interface Failure {
 }
 
 const LIMITS = BUG_REPORT_LIMITS;
-const FOCUSABLE =
-  'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
 
 const GENERIC_SEND_FAILURE = 'Não consegui enviar o relato. Verifique a conexão e tente de novo.';
 const GENERIC_PREVIEW_FAILURE = 'Não consegui montar a prévia agora. Tente de novo.';
+const COPY_FAILED =
+  'Não foi possível copiar. Abra "Ver exatamente o que será enviado" e copie o texto de lá.';
 
 export function BugReportDialog() {
   const isOpen = useBugReportDialogStore((state) => state.isOpen);
@@ -76,6 +79,9 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
   const [sentId, setSentId] = useState<string | null>(null);
   const [preview, setPreview] = useState<PreviewState>({ status: 'idle' });
   const [copy, setCopy] = useState<CopyState>('idle');
+  // Região viva única e persistente: leitor de tela só anuncia o que MUDA numa
+  // região que já existia, não um nó inserido já com o texto.
+  const [announcement, setAnnouncement] = useState('');
   const [showErrors, setShowErrors] = useState(false);
   const [returnFocus] = useState<HTMLElement | null>(() =>
     document.activeElement instanceof HTMLElement ? document.activeElement : null,
@@ -117,6 +123,7 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
   const errors = useMemo(() => validateBugReportDraft(form), [form]);
   const hasErrors = Boolean(errors.title || errors.description || errors.steps);
   const sending = phase === 'sending';
+  const dirty = Boolean(form.title.trim() || form.description.trim() || form.steps.trim());
 
   useEffect(() => {
     mounted.current = true;
@@ -151,6 +158,9 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
   const update = (patch: Partial<BugReportFormState>): void => {
     setForm((current) => ({ ...current, ...patch }));
     setCopy('idle');
+    // O corpo que veio com a falha descreve o texto ANTIGO (e o consentimento
+    // antigo): ao copiar, o Main refaz uma versão redigida do que está na tela.
+    setFailure((current) => (current?.payload ? { ...current, payload: undefined } : current));
     // O que a prévia mostrava deixou de ser o que sairia.
     invalidatePreview();
   };
@@ -179,21 +189,25 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
     setPhase('sending');
     setFailure(null);
     setCopy('idle');
+    setAnnouncement('Enviando relato…');
     try {
       const shown = preview.status === 'ready' ? preview.digest : undefined;
       const result = await window.nexus.bugReport.submit(buildRequest(shown));
       if (!mounted.current) return;
       if (result.ok) {
         setSentId(result.id);
+        setAnnouncement(`Relato enviado, obrigado. Código: ${result.id}`);
         setPhase('sent');
         return;
       }
+      setAnnouncement('');
       // Corpo diferente do conferido: a prévia na tela deixou de valer.
       if (result.code === 'stale-preview') invalidatePreview();
       setFailure({ code: result.code, message: result.message, payload: result.payload });
     } catch {
       // Nunca mostra o texto da exceção do IPC.
       if (!mounted.current) return;
+      setAnnouncement('');
       setFailure({ code: 'network', message: GENERIC_SEND_FAILURE });
     }
     setPhase('editing');
@@ -227,31 +241,83 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
 
   const copyReport = async (): Promise<void> => {
     try {
-      const markdown = formatBugReportMarkdown(failure?.payload ?? toMarkdownDraft(form));
-      await navigator.clipboard.writeText(markdown);
-      if (mounted.current) setCopy('copied');
+      let report: BugReportMarkdownInput | undefined = failure?.payload;
+      if (!report) {
+        // Texto mudou depois da falha: pede ao Main uma versão redigida do
+        // que está na tela; se não der, cai no que foi digitado.
+        const rebuilt = await window.nexus.bugReport.preview(buildRequest()).catch(() => null);
+        report = rebuilt?.ok ? rebuilt.payload : toMarkdownDraft(form);
+      }
+      await navigator.clipboard.writeText(formatBugReportMarkdown(report));
+      if (!mounted.current) return;
+      setCopy('copied');
+      setAnnouncement('Relato copiado para a área de transferência.');
     } catch {
-      if (mounted.current) setCopy('failed');
+      if (!mounted.current) return;
+      setCopy('failed');
+      setAnnouncement(COPY_FAILED);
     }
   };
 
+  const hasUnsavedText = phase === 'editing' && dirty;
+
+  /** Pergunta antes de perder texto digitado; devolve o foco se a pessoa desistir. */
+  const askToDiscard = async (title: string, body: string, confirmLabel: string): Promise<boolean> => {
+    const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const ok = await askConfirm({
+      title,
+      body,
+      confirmLabel,
+      cancelLabel: 'Continuar editando',
+      danger: true,
+    });
+    if (!ok && mounted.current) before?.focus();
+    return ok && mounted.current;
+  };
+
+  const dismiss = (): void => {
+    if (sending) return;
+    if (!hasUnsavedText) {
+      onClose();
+      return;
+    }
+    void askToDiscard('Descartar o relato?', 'O que você digitou será perdido.', 'Descartar relato').then(
+      (ok) => {
+        if (ok) onClose();
+      },
+    );
+  };
+
   const openAccount = (): void => {
-    onClose();
-    useProductNavigationStore.getState().openSettings('account');
+    const go = (): void => {
+      onClose();
+      useProductNavigationStore.getState().openSettings('account');
+    };
+    if (!hasUnsavedText) {
+      go();
+      return;
+    }
+    void askToDiscard(
+      'Sair do relato?',
+      'Para entrar na conta, o relato digitado será descartado. Use "Copiar relato" antes se quiser guardá-lo.',
+      'Descartar e abrir conta',
+    ).then((ok) => {
+      if (ok) go();
+    });
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (event.key === 'Escape') {
+      // Esc que confirma uma composição (IME, tecla morta) não é "fechar".
+      if (event.nativeEvent.isComposing) return;
       // Nada atravessa o diálogo: o Esc não fecha o overlay de baixo.
       event.preventDefault();
       event.stopPropagation();
-      if (!sending) onClose();
+      dismiss();
       return;
     }
     if (event.key !== 'Tab') return;
-    const focusables = Array.from(
-      event.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE),
-    ).filter((element) => element.getAttribute('aria-hidden') !== 'true');
+    const focusables = focusableWithin(event.currentTarget);
     const first = focusables[0];
     const last = focusables[focusables.length - 1];
     if (!first || !last) {
@@ -267,15 +333,14 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
     }
   };
 
+  // Enviar é um clique deliberado no botão: Enter num campo não envia.
   const onSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
-    void send();
   };
 
   const titleLength = form.title.trim().length;
   const descriptionLength = form.description.trim().length;
   const stepsLength = form.steps.trim().length;
-  const dirty = Boolean(form.title || form.description || form.steps);
 
   const previewOpen = preview.status !== 'idle';
   const previewLabel =
@@ -304,6 +369,9 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
         }}
       />
       <div ref={panelRef} tabIndex={-1} className="confirm__panel confirm__panel--bug-report">
+        <div role="status" aria-live="polite" className="settings-visually-hidden">
+          {announcement}
+        </div>
         <h2 id={ids.heading} className="confirm__title">
           Reportar um problema
         </h2>
@@ -314,7 +382,7 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
 
         {phase === 'sent' ? (
           <div className="bug-report__sent">
-            <p role="status" className="bug-report__sent-text">
+            <p className="bug-report__sent-text">
               Relato enviado, obrigado. Código: <strong>{sentId}</strong>
             </p>
             <p className="bug-report__hint">
@@ -492,7 +560,12 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
                     E-mails, caminhos de pasta e chaves já foram trocados por marcadores. O envio usa
                     exatamente este conteúdo.
                   </p>
-                  <pre className="bug-report__preview" tabIndex={0} aria-labelledby={ids.previewTitle}>
+                  <pre
+                    className="bug-report__preview"
+                    role="region"
+                    tabIndex={0}
+                    aria-labelledby={ids.previewTitle}
+                  >
                     {preview.text}
                   </pre>
                 </section>
@@ -520,27 +593,28 @@ function BugReportForm({ onClose }: { onClose: () => void }) {
                   ) : null}
                 </div>
                 {copy === 'copied' ? (
-                  <p role="status" className="bug-report__hint">
-                    Relato copiado para a área de transferência.
-                  </p>
+                  <p className="bug-report__hint">Relato copiado para a área de transferência.</p>
                 ) : null}
                 {copy === 'failed' ? (
-                  <p className="bug-report__error">
-                    Não foi possível copiar. Abra &ldquo;Ver exatamente o que será enviado&rdquo; e copie
-                    o texto de lá.
-                  </p>
+                  <p className="bug-report__error">{COPY_FAILED}</p>
                 ) : null}
               </div>
             ) : null}
 
             <div className="confirm__actions bug-report__actions">
-              <button type="button" className="confirm__btn" disabled={sending} onClick={onClose}>
+              <button
+                type="button"
+                className="confirm__btn"
+                disabled={sending}
+                onClick={dismiss}
+              >
                 Cancelar
               </button>
               <button
-                type="submit"
+                type="button"
                 className="confirm__btn confirm__btn--primary"
                 disabled={sending}
+                onClick={() => void send()}
               >
                 {sending ? 'Enviando…' : 'Enviar relato'}
               </button>

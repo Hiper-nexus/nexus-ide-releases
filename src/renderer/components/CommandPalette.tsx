@@ -313,10 +313,8 @@ export function CommandPalette() {
       'bug-report',
       'Reportar um problema…',
       'warn',
-      () => {
-        close();
-        useBugReportDialogStore.getState().open();
-      },
+      // `runAction` já fecha a paleta; o store ainda fecha o que mais estiver aberto.
+      () => useBugReportDialogStore.getState().open(),
       undefined,
       'bug erro problema reportar relatar feedback defeito falha suporte ajuda',
     );
