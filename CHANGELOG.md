@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.164 — Decisões à vista
+
+Build do Mac. Inclui integralmente a 0.76.163.
+
+- **Recibo da rota com a confiança do Jev e o contrafactual.** O chip "Jev" do pane, `nexus_route_task`, o recibo de `nexus_pane_spawn` e o log de rotas trazem a confiança por dimensão (só das que o Jev decidiu, aceitas pelo limiar de 0,6) e o que a regra teria escolhido (`'same'` quando coincide). O recálculo da regra é em memória, sem efeito colateral, e nunca vira rota reconhecida.
+- **Conta escolhida visível no pane.** Chip no cabeçalho com o rótulo mascarado e tooltip com quem decidiu, folga medida e alternativas. Canal novo `accountChoice:get`, somente leitura, só para a janela principal, com recibo reconstruído por lista de permissão. A decisão de conta continua sendo da regra de folga.
+- **Missão por voz sem palpite.** Resolvedor puro (igual > começa com > contém > palavras); nada casando não abre mais `missions[0]`; casos ambíguos vão ao Jev (superfície `missionPick`, confiança ≥ 0,7 e margem ≥ 0,15) e, sem decisão, a voz pergunta. Nome mal reconhecido (nada casou, de 1 a 8 missões) também é consultado, com piso de confiança ≥ 0,90 e margem ≥ 0,30. Medição real com 38 chamadas: acertos de erro de voz em 0,94 ou mais. Amostra pequena, só português, títulos sintéticos.
+- **Cabeçalho do pane.** A primeira linha do `toolbar__meta` tem altura fixa: um chip que quebra deixa de subir o conteúdo em 3 px.
+- **Documento de comparação** com o que o vídeo do Overclock mostra: `docs/analysis/2026-10-02-jev-clef-vs-overclock.md`. Os limites seguem ditos lá: o Clef não foi validado contra a Cloudflare real e não há comparação lado a lado com o produto concorrente.
+
 ## 0.76.163 — Reporte de problema
 
 Build do Mac. Inclui integralmente a 0.76.162.
