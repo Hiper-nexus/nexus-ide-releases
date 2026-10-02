@@ -12,6 +12,7 @@ import { isOperatorHandContext } from './operator-hand-context';
 import {
   advisePrompt,
   AUTO_ORCHESTRATE_MIN_CONFIDENCE,
+  DELEGATE_TIMEOUT_MS,
   type DelegationAdvice,
 } from '../jev/jev-delegation';
 import { handleHookJsonPost } from './hook-http';
@@ -509,12 +510,16 @@ export async function handleHookDelegateRequest(
     const advicePromise = advise(prompt, { sessionId: ctx.sessionId }).catch(() => null);
     const businessModelPromise = businessContextFor(ctx, prompt, now, businessContext);
     // F-753: a skill certa para o pedido, entre as do Nexus e as do projeto —
-    // antes o operador arrastava cada uma do painel para o pane.
+    // antes o operador arrastava cada uma do painel para o pane. Mesmo teto
+    // TOTAL do conselho de delegação: o hook do Claude corta em 5 s e levaria
+    // o conselho junto, e o prompt do Codex esperaria o retry inteiro.
     const skillScope = ctx.executionScope ?? ctx.scope;
     const skillPromise = (deps.suggestSkill ?? suggestSkillForTask)(prompt, {
       allowedSkills: ctx.allowedSkills ?? null,
       projectRoot: skillScope?.rootRealPath,
       sessionId: ctx.sessionId,
+      timeoutMs: DELEGATE_TIMEOUT_MS,
+      signal: AbortSignal.timeout(DELEGATE_TIMEOUT_MS),
     }).catch(() => null);
     // Jev fora do ar não pode levar junto o contexto de design, que é local.
     const advice = await advicePromise;

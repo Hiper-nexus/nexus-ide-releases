@@ -327,6 +327,22 @@ describe('suggestSkillForTask', () => {
     );
   });
 
+  it('passa o teto e o abort de quem espera num hook ao judge (F-753)', async () => {
+    const judge = vi.fn(async (_req: unknown) => null);
+    const signal = new AbortController().signal;
+    await suggestSkillForTask('refine the landing page', {
+      allowedSkills: null,
+      timeoutMs: 2_500,
+      signal,
+      deps: { judge, ...on },
+    });
+    expect(judge).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 2_500, signal }));
+    await suggestSkillForTask('refine the landing page', { allowedSkills: null, deps: { judge, ...on } });
+    const plain = judge.mock.calls[1]![0] as { timeoutMs?: number; signal?: AbortSignal };
+    expect(plain.timeoutMs).toBe(4_000);
+    expect(plain.signal).toBeUndefined();
+  });
+
   it('returns null when Jev picks none or is not confident', async () => {
     const judgeNone = vi.fn(async (_req: unknown) =>
       jevResult({

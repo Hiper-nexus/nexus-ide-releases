@@ -13,6 +13,7 @@ vi.mock('../context/business-model/business-model-ensure', () => ({
 import { trace } from '../observability/main-trace';
 import { ensureBusinessModel } from '../context/business-model/business-model-ensure';
 import { FAILOVER_HANDOFF_HEADER } from '../../shared/failover-handoff';
+import { DELEGATE_TIMEOUT_MS } from '../jev/jev-delegation';
 import { OPERATOR_DELEGATION_DOCTRINE } from './operator-delegation-doctrine';
 import {
   AUXILIARY_CONTEXT_HEADER,
@@ -76,6 +77,8 @@ describe('hook /hook/delegate', () => {
       allowedSkills: null,
       projectRoot: '/w/hipergo',
       sessionId: 'skill-1',
+      timeoutMs: DELEGATE_TIMEOUT_MS,
+      signal: expect.any(AbortSignal),
     });
     const again = await handleHookDelegateRequest(
       scoped,
@@ -84,6 +87,23 @@ describe('hook /hook/delegate', () => {
     );
     expect(again.payload).toEqual({});
   });
+
+  it('F-753: consulta de skill sem resposta não segura o pedido além do teto da delegação', async () => {
+    // O hook do Claude corta em 5 s e levaria junto o conselho de delegação.
+    __resetLeanRemindersForTests();
+    const hanging = vi.fn(
+      (_prompt: string, opts: { signal?: AbortSignal }) =>
+        new Promise<null>((resolve) => opts.signal?.addEventListener('abort', () => resolve(null))),
+    );
+    const startedAt = Date.now();
+    const out = await handleHookDelegateRequest(
+      { ...operator, sessionId: 'skill-slow' },
+      { prompt: LONG },
+      { advise: vi.fn(async () => delegation(3, 1)), suggestSkill: hanging as never },
+    );
+    expect(Date.now() - startedAt).toBeLessThan(DELEGATE_TIMEOUT_MS + 1_500);
+    expect(JSON.stringify(out.payload)).toContain('nexus_pane_spawn');
+  }, 10_000);
 
   it('F-753: skill sem confiança suficiente não entra no pedido', async () => {
     __resetLeanRemindersForTests();

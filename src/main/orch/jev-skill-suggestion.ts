@@ -389,6 +389,12 @@ export async function suggestSkillForTask(
     projectRoot?: string;
     sessionId?: string;
     missionId?: string;
+    /**
+     * Teto por tentativa e abort externo. Quem espera a resposta num hook
+     * passa o teto total dele: sem o `signal`, o retry do judge dobrava a espera.
+     */
+    timeoutMs?: number;
+    signal?: AbortSignal;
     deps?: SkillSuggestionDeps;
   },
 ): Promise<SkillSuggestionPick | null> {
@@ -411,7 +417,8 @@ export async function suggestSkillForTask(
     const result = await judgeFn({
       state: { task: capText(task, TASK_MAX_CHARS) },
       questions,
-      timeoutMs: SKILL_SUGGESTION_TIMEOUT_MS,
+      timeoutMs: opts.timeoutMs ?? SKILL_SUGGESTION_TIMEOUT_MS,
+      ...(opts.signal ? { signal: opts.signal } : {}),
       surface: 'taskRouting',
       sessionId: opts.sessionId,
       missionId: opts.missionId,
