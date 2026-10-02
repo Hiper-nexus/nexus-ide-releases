@@ -88,6 +88,15 @@ afterEach(() => {
 });
 
 describe('nexus_route_task wiring', () => {
+  it('a descrição não manda rotear antes de cada spawn: o spawn sem adapterId já roteia', () => {
+    // Campo (02/10): "Call it for every delegation" levava o Maestro Codex a
+    // gastar uma rodada inteira do modelo roteando 5 tarefas antes de abri-las.
+    const description = tool('nexus_route_task').description;
+    expect(description).not.toMatch(/every delegation/i);
+    expect(description).toMatch(/do NOT need it to delegate/);
+    expect(description).toMatch(/nexus_pane_spawn\(\{task, prompt\}\) without adapterId/);
+  });
+
   it('registra a decisão na proveniência E no route-log com o motivo', async () => {
     mocks.listProviderSettings.mockReturnValue([
       { adapterId: 'shell', enabled: true, installed: true, authStrategy: 'none', models: ['shell'] },

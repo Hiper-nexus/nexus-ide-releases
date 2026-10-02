@@ -35,8 +35,11 @@ const DOCTRINE_BASE = [
     'nexus_handoff_list({full:true}) ANTES de decidir. Worker PARADO ' +
     '(idle/exited) sem handoff: nexus_pane_read UMA vez e cobre com ' +
     'nexus_pane_write ("finalize com nexus_handoff_submit").',
-  '• DELEGAÇÃO: trabalho sem dispatch → nexus_route_task e nexus_pane_spawn com `prompt` — ' +
-    'nasce executando. Relay FIEL do pedido humano, sem restrições extras.',
+  // Campo (02/10): o Maestro Codex chamava nexus_route_task antes de cada
+  // spawn — uma rodada inteira do modelo (~1 min) para nada: o spawn sem
+  // adapterId já roteia, com reserva, na MESMA chamada.
+  '• DELEGAÇÃO: trabalho sem dispatch → nexus_pane_spawn({task, prompt}) sem adapterId ' +
+    'roteia e nasce executando. Relay FIEL do pedido humano, sem restrições extras.',
   // Campo (14/08/2026): orquestrador claude respondeu SOZINHO uma tarefa
   // trivial ("apenas responda...") e a missão parou até o SLA de 90s do
   // delegation-supervisor escalar. A regra fecha essa brecha: NENHUM pedido

@@ -665,8 +665,10 @@ const paneSpawn: McpToolDef = {
     '(Codex Luna / DeepSeek Flash / adapter.models.default). Pass adapterId ' +
     'only to fail over to a different CLI — never to substitute the sealed ' +
     'model on the same CLI. If the sealed model cannot be applied, spawn fails ' +
-    'visibly. In a running mission, pass routeReservationId when the CLI is ' +
-    'not the sticky roster route. Prompt is delivered in the CLI argv AT BIRTH. ' +
+    'visibly. In a running mission, omit adapterId and describe `task`: the ' +
+    'spawn routes itself (no nexus_route_task call first); pass ' +
+    'routeReservationId only when you already called nexus_route_task. ' +
+    'Prompt is delivered in the CLI argv AT BIRTH. ' +
     'From the operator\'s own pane without a mission, omit adapterId and ' +
     'describe the work in `task` (or prompt/title) to let Nexus route it ' +
     '(a model/effort without adapterId is listed under route.ignored); pass ' +

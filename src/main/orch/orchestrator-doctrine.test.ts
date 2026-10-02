@@ -52,6 +52,14 @@ describe('orchestrator doctrine', () => {
     expect(text).toMatch(/relay/i);
   });
 
+  it('delegar não passa por nexus_route_task: o spawn sem adapterId já roteia (02/10)', () => {
+    // O Maestro Codex roteava 5 tarefas e só depois abria os panes: uma rodada
+    // inteira do modelo a mais antes do primeiro worker nascer.
+    const text = buildOrchestratorDoctrine(squad(), mission());
+    expect(text).toMatch(/nexus_pane_spawn\(\{task, prompt\}\) sem adapterId/);
+    expect(text).not.toMatch(/nexus_route_task e nexus_pane_spawn/);
+  });
+
   it('carrega a política de workspace same_checkout sem stash/reset/checkout/clean', () => {
     const text = buildOrchestratorDoctrine(squad(), mission());
     expect(text).toContain('same_checkout');

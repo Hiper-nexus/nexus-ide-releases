@@ -2028,10 +2028,13 @@ const routeTaskTool: McpToolDef = {
     'Classifies the task (trivial|easy|medium|hard|critical) and the work ' +
     'specialty (visual|security|bug|feature|doc|ops|general), then returns ' +
     '{tier, specialty, policySource, adapterId, model, effort, reason, ' +
-    'alternatives, routeReservationId, routeReservationExpiresAt}: ' +
-    'for a mission, pass routeReservationId and adapterId/model/effort straight ' +
-    'into nexus_pane_spawn. Call it for every delegation and trust the ' +
-    'returned runtime snapshot so removed, deprecated or unavailable models are never forced by a stale playbook. ' +
+    'alternatives, routeReservationId, routeReservationExpiresAt}. ' +
+    'You do NOT need it to delegate: nexus_pane_spawn({task, prompt}) without ' +
+    'adapterId runs this same routing (reservation included) inside the spawn ' +
+    'call — one round trip instead of two. Call it only to inspect a route ' +
+    'before deciding (judge availability, alternatives, cost); then pass ' +
+    'routeReservationId and adapterId/model/effort into nexus_pane_spawn and ' +
+    'trust the returned runtime snapshot so removed, deprecated or unavailable models are never forced by a stale playbook. ' +
     'Inside a running mission, candidates follow the active squad CLI policy: ' +
     'Autopilot admits ready handoff-capable CLIs (MCP or PTY); Hardened requires ' +
     'release-qualified autonomous writers. Installed alone does not imply eligible. ' +
