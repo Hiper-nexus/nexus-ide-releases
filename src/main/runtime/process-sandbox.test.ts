@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
+import { processSandboxRuntimeAvailable } from './process-sandbox-capability';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildLinuxBubblewrapPlan,
@@ -559,6 +560,145 @@ describe('process sandbox', () => {
       const bound = boundPaths(linuxPlanWithPath(root, runtime, envPath).args);
 
       expect(bound).toEqual(['/']);
+    });
+
+    describe('data directories of the operator are never exposed (review 02/10)', () => {
+      // Restaura variável por variável: trocar o objeto `process.env` desliga a
+      // ligação com o ambiente real que `os.homedir()` lê.
+      const KEYS = ['HOME', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME'] as const;
+      const saved = Object.fromEntries(KEYS.map((key) => [key, process.env[key]]));
+      afterEach(() => {
+        for (const key of KEYS) {
+          if (saved[key] === undefined) delete process.env[key];
+          else process.env[key] = saved[key];
+        }
+      });
+
+      /** Home falso sob /tmp, com os diretórios que guardam credenciais. */
+      function fakeHome(): string {
+        const home = makeDir('nexus-linux-fakehome');
+        for (const dir of ['.local/bin', '.local/share/opencode', '.config/gh', '.ssh/bin', '.nexus', '.gnupg']) {
+          fs.mkdirSync(path.join(home, dir), { recursive: true });
+        }
+        fs.writeFileSync(path.join(home, '.local/share/opencode/auth.json'), '{"secret":"TOKEN"}');
+        fs.writeFileSync(path.join(home, '.config/gh/hosts.yml'), 'token');
+        process.env.HOME = home;
+        delete process.env.XDG_DATA_HOME;
+        delete process.env.XDG_CONFIG_HOME;
+        delete process.env.XDG_STATE_HOME;
+        return home;
+      }
+
+      const exposes = (bound: readonly string[], secret: string) =>
+        bound.some((mounted) => secret === mounted || secret.startsWith(`${mounted}${path.sep}`));
+
+      it('does not bind ~/.local just because node lives in ~/.local/bin', () => {
+        // `n` com N_PREFIX=$HOME/.local, ou um tarball extraído lá: o node real
+        // fica em ~/.local/bin/node, e `lastIndexOf('/bin/')` entregava ~/.local
+        // inteiro — com share/ (keyrings, auth de CLIs) — ao agente.
+        const home = fakeHome();
+        fs.writeFileSync(path.join(home, '.local/bin/node'), '', { mode: 0o755 });
+        const root = makeDir('nexus-linux-tc-root');
+        const runtime = makeDir('nexus-linux-tc-runtime');
+
+        const bound = boundPaths(
+          linuxPlanWithPath(root, runtime, `${path.join(home, '.local/bin')}:/usr/bin`).args,
+        );
+
+        expect(bound).toContain(path.join(home, '.local/bin'));
+        for (const secret of [
+          path.join(home, '.local/share/opencode/auth.json'),
+          path.join(home, '.config/gh/hosts.yml'),
+          path.join(home, '.ssh'),
+          path.join(home, '.nexus'),
+          path.join(home, '.gnupg'),
+        ]) {
+          expect(exposes(bound, secret), `${secret} ficou exposto por ${bound.join(', ')}`).toBe(false);
+        }
+      });
+
+      it('still binds a Node tarball extracted in a plain folder under the home', () => {
+        const home = fakeHome();
+        const prefix = path.join(home, 'tools', 'node-v22');
+        fs.mkdirSync(path.join(prefix, 'bin'), { recursive: true });
+        fs.mkdirSync(path.join(prefix, 'lib/node_modules/npm/bin'), { recursive: true });
+        fs.writeFileSync(path.join(prefix, 'bin/node'), '', { mode: 0o755 });
+        const root = makeDir('nexus-linux-tc-root');
+        const runtime = makeDir('nexus-linux-tc-runtime');
+
+        const bound = boundPaths(linuxPlanWithPath(root, runtime, `${path.join(prefix, 'bin')}:/usr/bin`).args);
+
+        expect(bound).toContain(prefix);
+      });
+
+      it('honours XDG_DATA_HOME and XDG_CONFIG_HOME outside the default locations', () => {
+        const home = fakeHome();
+        const xdgData = path.join(home, 'dados');
+        fs.mkdirSync(path.join(xdgData, 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(xdgData, 'bin/node'), '', { mode: 0o755 });
+        fs.mkdirSync(path.join(xdgData, 'keyrings'));
+        process.env.XDG_DATA_HOME = xdgData;
+        const root = makeDir('nexus-linux-tc-root');
+        const runtime = makeDir('nexus-linux-tc-runtime');
+
+        const bound = boundPaths(linuxPlanWithPath(root, runtime, `${path.join(xdgData, 'bin')}:/usr/bin`).args);
+
+        expect(exposes(bound, path.join(xdgData, 'keyrings'))).toBe(false);
+        expect(bound).not.toContain(xdgData);
+      });
+
+      it('never mounts a PATH entry that sits inside a credentials directory', () => {
+        const home = fakeHome();
+        fs.writeFileSync(path.join(home, '.ssh/bin/tool'), '', { mode: 0o755 });
+        const root = makeDir('nexus-linux-tc-root');
+        const runtime = makeDir('nexus-linux-tc-runtime');
+
+        const bound = boundPaths(
+          linuxPlanWithPath(root, runtime, `${path.join(home, '.ssh/bin')}:/usr/bin`).args,
+        );
+
+        // Nem o diretório de credenciais nem nada dentro dele: ninguém instala
+        // executável em ~/.ssh, então uma entrada de PATH ali não é toolchain.
+        expect(bound.filter((mounted) => mounted.startsWith(path.join(home, '.ssh')))).toEqual([]);
+      });
+
+      // Prova com o bwrap de verdade, não só com a lista de argumentos: foi assim
+      // que a revisão mostrou `cat ~/.local/share/opencode/auth.json` funcionando.
+      it.runIf(processSandboxRuntimeAvailable())(
+        'a real sandboxed process cannot read ~/.local/share even with node in ~/.local/bin',
+        () => {
+          const home = fakeHome();
+          fs.writeFileSync(path.join(home, '.local/bin/node'), '', { mode: 0o755 });
+          const root = makeDir('nexus-linux-tc-root');
+          const runtime = makeDir('nexus-linux-tc-runtime');
+          const plan = buildLinuxBubblewrapPlan(
+            {
+              platform: 'linux',
+              executable: '/bin/sh',
+              args: ['-c', `cat '${path.join(home, '.local/share/opencode/auth.json')}'; ls '${path.join(home, '.local/bin')}'`],
+              cwd: root,
+              rootRealPath: root,
+              sandboxDir: runtime,
+              env: { PATH: `${path.join(home, '.local/bin')}:/usr/bin:/bin` },
+            },
+            '/usr/bin/bwrap',
+          );
+          const result = spawnSync(plan.file, plan.args, { cwd: plan.cwd, env: plan.env, encoding: 'utf8' });
+          expect(result.stdout).not.toContain('TOKEN');
+          // O que o agente precisa continua visível: o node do PATH.
+          expect(result.stdout).toContain('node');
+        },
+      );
+
+      it('drops a PATH entry that is the parent of a data directory', () => {
+        const home = fakeHome();
+        const root = makeDir('nexus-linux-tc-root');
+        const runtime = makeDir('nexus-linux-tc-runtime');
+
+        const bound = boundPaths(linuxPlanWithPath(root, runtime, `${path.join(home, '.local')}:/usr/bin`).args);
+
+        expect(exposes(bound, path.join(home, '.local/share/opencode/auth.json'))).toBe(false);
+      });
     });
 
     it('never remounts over the writable workspace or shadows it', () => {

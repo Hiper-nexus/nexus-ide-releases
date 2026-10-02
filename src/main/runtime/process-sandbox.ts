@@ -681,6 +681,46 @@ function linuxBindArgs(
 const LINUX_TOOLCHAIN_MOUNT_LIMIT = 512;
 
 /**
+ * Diretórios do operador que NENHUM mount de toolchain pode conter (ser igual
+ * ou ancestral): credenciais, chaveiros e o estado das CLIs de IA. Sem esta
+ * lista, `nodeRuntimeRoot` ('/bin/' mais à direita) transformava um node real
+ * em ~/.local/bin/node — o caso do `n` com N_PREFIX=$HOME/.local — em
+ * `--ro-bind ~/.local ~/.local`, e com ele todo ~/.local/share (keyrings,
+ * auth.json do opencode/mimo/devin) ficava legível pelo agente.
+ */
+const LINUX_PROTECTED_HOME_DIRS = [
+  '.ssh', '.gnupg', '.nexus', '.aws', '.kube', '.docker', '.config', '.agents',
+  '.claude', '.codex', '.gemini', '.kimi-code', '.minimax', '.qwen', '.grok',
+  '.opencode', '.devin', '.local/share', '.local/state',
+] as const;
+
+/** Onde nada executável mora: tampouco se monta um caminho DENTRO deles. */
+const LINUX_SECRET_HOME_DIRS = ['.ssh', '.gnupg', '.nexus', '.aws', '.kube'] as const;
+
+function linuxProtectedDirs(
+  homeReal: string | null,
+  env: NodeJS.ProcessEnv,
+): { protectedDirs: string[]; secretDirs: string[] } {
+  const protectedDirs: string[] = [];
+  const secretDirs: string[] = [];
+  const add = (target: string[], candidate: string): void => {
+    target.push(candidate);
+    const real = existingRealPath(candidate);
+    if (real && real !== candidate) target.push(real);
+  };
+  if (homeReal) {
+    for (const rel of LINUX_PROTECTED_HOME_DIRS) add(protectedDirs, path.join(homeReal, rel));
+    for (const rel of LINUX_SECRET_HOME_DIRS) add(secretDirs, path.join(homeReal, rel));
+  }
+  // XDG fora do padrão: o mesmo cuidado com os diretórios que o operador escolheu.
+  for (const key of ['XDG_DATA_HOME', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME'] as const) {
+    const value = env[key];
+    if (value && path.isAbsolute(value)) add(protectedDirs, path.resolve(value));
+  }
+  return { protectedDirs, secretDirs };
+}
+
+/**
  * Par Linux de `collectToolchainReadRules`. O Bubblewrap cobre `/home` (e os
  * demais `LINUX_MASKED_ROOTS`) com um tmpfs vazio; sem isto, tudo que o PATH
  * resolve dentro do home some junto — Node de mise/nvm/volta, `~/.local/bin`,
@@ -702,12 +742,19 @@ function collectLinuxToolchainMounts(
   maskedRoots: readonly string[],
   occupied: readonly string[],
   homeDir: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
 ): string[] {
   const homeReal = homeDir ? existingRealPath(homeDir) : null;
+  const { protectedDirs, secretDirs } = linuxProtectedDirs(homeReal, env);
+  /** Largo demais (contém algo protegido) ou dentro de uma pasta de credenciais. */
+  const exposesProtected = (candidate: string): boolean =>
+    protectedDirs.some((dir) => isWithin(candidate, dir)) ||
+    secretDirs.some((dir) => isWithin(dir, candidate));
   const eligible = (candidate: string): boolean => {
     if (!maskedRoots.some((root) => isWithin(root, candidate))) return false;
     if (maskedRoots.includes(candidate)) return false;
     if (homeReal && isWithin(candidate, homeReal)) return false;
+    if (exposesProtected(candidate)) return false;
     return !occupied.some(
       (mounted) => isWithin(mounted, candidate) || isWithin(candidate, mounted),
     );
@@ -729,6 +776,7 @@ function collectLinuxToolchainMounts(
     if (
       maskedRoots.includes(dir) ||
       (homeReal !== null && isWithin(dir, homeReal)) ||
+      exposesProtected(dir) ||
       occupied.some((mounted) => isWithin(dir, mounted))
     ) {
       continue;
@@ -826,6 +874,7 @@ function linuxPlan(
     maskedRoots,
     [input.rootRealPath, input.sandboxDir, ...supplementalMounts.keys()],
     os.homedir(),
+    process.env,
   )) {
     args.push(...linuxBindArgs(toolchain, maskedRoots, createdDirectories, true));
   }
