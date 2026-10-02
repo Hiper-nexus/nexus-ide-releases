@@ -366,6 +366,10 @@ export function createRedlineLinuxController(deps: RedlineLinuxDeps): RedlineLin
       reloadSnapshotIfChanged();
       const model = buildRedlineTrayModel(snapshot, now());
       tray = new Tray(iconFor(model));
+      // Clique esquerdo (Activate do StatusNotifierItem): abre o painel de
+      // cotas dentro do Nexus. O menu fica no clique direito; sem isto o
+      // clique não fazia nada e o Redline parecia "não abrir" (F-750).
+      tray.on('click', () => onAction('open-quota'));
       // O Tray já nasce com o ícone certo; falta publicar tooltip e menu.
       applied = { icon: iconKeyOf(model), tooltip: null, menu: null };
       render(true);

@@ -10,7 +10,7 @@ import { useToastStore } from '../../state/toast-store';
  */
 
 const GUIDANCE =
-  'Se o ícone não aparecer: no GNOME falta a extensão AppIndicator; no Waybar/Hyprland, o módulo tray precisa estar ligado.';
+  'Se o ícone não aparecer: no Omarchy ele fica na gaveta da seta < da barra; no GNOME falta a extensão AppIndicator; no Waybar/Hyprland, o módulo tray precisa estar ligado.';
 
 type TrayAction = 'install' | 'hide';
 
@@ -21,7 +21,7 @@ interface Props {
 
 function headline(tray: NonNullable<RedlineInstallStatus['inAppTray']>): string {
   if (tray.state === 'running') {
-    return 'Nexus Redline está na bandeja do sistema mostrando as cotas, enquanto o NexusIDE estiver aberto. Clique no ícone para ver a lista.';
+    return 'Nexus Redline está na bandeja do sistema mostrando as cotas, enquanto o NexusIDE estiver aberto. Clique no ícone para abrir as cotas aqui; o botão direito mostra a lista.';
   }
   if (tray.state === 'unavailable') {
     return `${tray.reason ?? 'O ícone não apareceu na bandeja.'} Sua área de trabalho precisa expor uma bandeja do tipo StatusNotifier/AppIndicator.`;

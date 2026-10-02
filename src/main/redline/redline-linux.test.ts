@@ -32,6 +32,11 @@ const fake = vi.hoisted(() => {
     setImageCalls = 0;
     setToolTipCalls = 0;
     setContextMenuCalls = 0;
+    listeners = new Map<string, () => void>();
+    on(event: string, listener: () => void): this {
+      this.listeners.set(event, listener);
+      return this;
+    }
     constructor(image: unknown) {
       if (FakeTray.failWith) throw FakeTray.failWith;
       this.image = image;
@@ -189,6 +194,13 @@ describe('redline linux controller', () => {
       const status = make().startIfEnabled();
       expect(status).toEqual({ enabled: true, state: 'running' });
       expect(fake.FakeTray.instances).toHaveLength(1);
+    });
+
+    it('a left click on the icon opens the quota panel inside Nexus (F-750)', () => {
+      make().startIfEnabled();
+      expect(openQuota).not.toHaveBeenCalled();
+      fake.FakeTray.instances[0].listeners.get('click')?.();
+      expect(openQuota).toHaveBeenCalledOnce();
     });
 
     it('boot creates nothing once the operator hid it', () => {
