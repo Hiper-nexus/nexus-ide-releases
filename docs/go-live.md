@@ -777,3 +777,11 @@ O redirecionamento de ida funciona mesmo com segredo errado; quem quebra o login
 4. Abra o `Location` do passo 2 com `curl`: 302 para a tela de login do provedor = client id e `redirect_uri` cadastrados; uma página 400 de `redirect_uri_mismatch` = faltou cadastrar o endereço de retorno.
 
 Verificado em 01/10/2026: os dois provedores aceitam as credenciais de produção e o endereço de retorno. Só o clique de consentimento de uma pessoa fica sem prova automática.
+
+## Verificação pós-deploy dos relatos de bug (produção)
+
+```sh
+node scripts/smoke-prod-bugs.mjs
+```
+
+Cria uma conta sintética, envia relatos pelo endpoint real e confere: 401 sem login, 400 (esquema estrito), 413 (acima de 64 KB), 201, o texto mascarado no banco (chave, caminho do HOME e e-mail), o limite de 5 por hora (6º = 429), `GET /mine` só com os próprios relatos, nenhum e-mail nas respostas e a guarda de admin. Apaga tudo no fim, também se algo falhar.
