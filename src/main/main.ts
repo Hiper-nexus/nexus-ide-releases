@@ -34,11 +34,21 @@ import {
   stopMacOSDockWatchdog,
 } from './macos-activation-policy';
 import { configureWindowsAppIdentity } from './windows-app-identity';
+import { configureLinuxSecretStore } from './linux-secret-store';
 
 // Squirrel supplies this same AUMID to the installed launcher. Make the
 // Electron process explicit too, before a BrowserWindow is created, so Windows
 // resolves a fresh NexusIDE icon instead of a generic pinned shortcut tile.
 configureWindowsAppIdentity(process.platform, (id) => app.setAppUserModelId(id));
+
+// Linux fora de GNOME/KDE (Hyprland/Omarchy, sway…): o Chromium cairia no
+// backend `basic_text`, que o cofre recusa, e o login não teria onde salvar a
+// sessão. Precisa valer antes do `ready`, quando o OSCrypt lê o switch.
+configureLinuxSecretStore(app.commandLine, {
+  platform: process.platform,
+  env: process.env,
+  automatedTest: isCurrentProcessSmokeTest(),
+});
 
 // Must run before Electron emits `ready`. The handler itself is installed in
 // bootstrap (after ready), before the first BrowserWindow is created.
