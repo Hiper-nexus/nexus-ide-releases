@@ -20,6 +20,11 @@ export interface PaneTaskRerouteRequest {
   readonly preferAdapterIds?: readonly string[];
   /** Texto do Nexus anexado ao brief original (pacote de continuidade). */
   readonly appendPrompt?: string;
+  /**
+   * F-775: o pane novo continua na worktree isolada do pane parado (o
+   * trabalho não commitado está lá) — sem retomar a conversa do provedor.
+   */
+  readonly worktreeFromPaneId?: string;
 }
 
 export interface PaneTaskRerouteHandle {
@@ -27,6 +32,12 @@ export interface PaneTaskRerouteHandle {
   readonly adapterId: string;
   readonly missionId?: string;
   readonly role: 'worker' | 'helper';
+  /** Quem pediu o pane (Maestro ou pane do operador): autoridade da rota. */
+  readonly callerSessionId: string;
+  /** Texto que roteia a tarefa (task ?? prompt ?? title), nunca exposto. */
+  readonly routeTask: string | null;
+  /** Pane do pedido ORIGINAL: as reaberturas encadeadas são a mesma tarefa. */
+  readonly lineageId: string;
   /** F-231: pane aberto pelo operador — a máquina nunca o troca. */
   readonly operatorOpened: boolean;
   /** CLI pedida pelo operador (ou conversa retomada): troca nunca é sozinha. */
@@ -39,7 +50,7 @@ export interface PaneTaskRerouteHandle {
 }
 
 /** Teto de reaberturas automáticas encadeadas do mesmo pedido: sem cascata. */
-export const MAX_PANE_TASK_REROUTES = 2;
+export const MAX_PANE_TASK_REROUTES = 3;
 const HANDLE_TTL_MS = 24 * 60 * 60_000;
 const MAX_HANDLES = 256;
 
@@ -89,6 +100,49 @@ export function paneTaskRerouteBlocker(
   if (handle.pinnedRuntime) return 'pinned';
   if (handle.generation >= MAX_PANE_TASK_REROUTES) return 'chain-limit';
   return null;
+}
+
+/** F-775: a próxima CLI escolhida pela rota (sem spawnar nada). */
+export interface NextCliRoute {
+  readonly adapterId: string;
+  readonly model?: string;
+  readonly effort?: string;
+}
+
+export type NextCliResolver = (request: {
+  /** Sessão com autoridade de rota: o Maestro da missão ou o pane do operador. */
+  readonly callerSessionId: string;
+  readonly task: string;
+  /** CLIs fora (a esgotada e as que seguem sem conta livre). */
+  readonly excludeAdapterIds: readonly string[];
+  readonly preferAdapterIds?: readonly string[];
+}) => Promise<NextCliRoute | null>;
+
+let nextCliResolver: NextCliResolver | null = null;
+
+/**
+ * Registrado por quem tem a rota do `nexus_pane_spawn` (tools-panes): o
+ * failover pede "qual a próxima CLI para esta tarefa" pelo MESMO roteador —
+ * especialidade, capacidade, diversidade, cota e login — sem importar o grafo
+ * de ferramentas MCP.
+ */
+export function setNextCliResolver(resolver: NextCliResolver | null): void {
+  nextCliResolver = resolver;
+}
+
+export function hasNextCliResolver(): boolean {
+  return nextCliResolver !== null;
+}
+
+export async function resolveNextCli(
+  request: Parameters<NextCliResolver>[0],
+): Promise<NextCliRoute | null> {
+  if (!nextCliResolver) return null;
+  try {
+    return await nextCliResolver(request);
+  } catch {
+    return null;
+  }
 }
 
 export function resetPaneTaskReroutesForTests(): void {

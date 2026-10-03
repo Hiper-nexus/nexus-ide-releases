@@ -12,9 +12,14 @@ import {
 } from './failover-decision';
 import {
   blockedFailoverToastCopy,
+  cliSwitchToastCopy,
   recoveredFailoverToastCopy,
   reroutedFailoverToastCopy,
 } from './failover-toast-copy';
+
+/** F-775: o próximo passo do pacote quando a conta troca no meio da tarefa. */
+const CONTINUITY_NEXT_STEP =
+  'Check the touched files and the diff above (the real state of the work), then continue from the first pending step.';
 
 /**
  * Reacts to main-process failover events.
@@ -33,6 +38,34 @@ export function useFailoverController(): void {
           detail: copy.detail,
           dedupeKey: `failover:${event.paneId}`,
         });
+        return;
+      }
+      // F-775: a CLI esgotou em todas as contas e o Main escolheu a próxima
+      // pela rota. O pane troca de CLI no lugar, com sessão nova e o pacote
+      // de continuidade, e o operador vê o aviso na hora; só o recibo diz se
+      // a troca existiu.
+      if (event.cliSwitchPhase) {
+        const copy = cliSwitchToastCopy(event);
+        const dedupeKey = `failover:${event.paneId}`;
+        if (event.cliSwitchPhase === 'applied') {
+          push(event.switched ? 'success' : 'error', copy.title, { detail: copy.detail, dedupeKey });
+          return;
+        }
+        const pane = listPanes(useLayoutStore.getState().root).find(
+          (p) => p.id === event.paneId,
+        );
+        if (!pane || !event.toAdapterId) return;
+        useLayoutStore.getState().setPaneAdapter(pane.id, event.toAdapterId, event.toModel);
+        const updated = listPanes(useLayoutStore.getState().root).find(
+          (candidate) => candidate.id === pane.id,
+        );
+        if (!updated) return;
+        respawnWithResume(
+          updated,
+          `[nexus] ${copy.title} — sessão nova com o pacote de continuidade…`,
+          { mode: 'cross-account-continuity', continuityPack: event.continuityPack },
+        );
+        push('warn', copy.title, { detail: copy.detail, dedupeKey });
         return;
       }
       // F-765: o pedido religa; somente o recibo do Main anuncia aplicação.
@@ -145,6 +178,8 @@ export function useFailoverController(): void {
           missions: orch.missions,
           eventMissionId: event.missionId,
         });
+        // F-775: janela/reset e estado da tarefa vêm medidos pelo Main.
+        const facts = event.continuity;
         const continuityPack = buildContinuityPack({
           fromAccountLabel: event.fromAccountLabel,
           toAccountLabel: event.toAccountLabel,
@@ -153,6 +188,13 @@ export function useFailoverController(): void {
           missionId: mission.missionId,
           openWorkHint: mission.openWorkHint,
           scrollbackExcerpt: getScrollbackExcerpt(updated.id),
+          ...(event.kind ? { limitKind: event.kind } : {}),
+          limitWindow: facts?.limitWindow ?? null,
+          limitResetsAt: facts?.limitResetsAt ?? event.nextUnblockAtMs ?? null,
+          limitCooldownMs: facts?.limitCooldownMs ?? null,
+          ...(facts?.touchedFiles ? { touchedFiles: facts.touchedFiles } : {}),
+          ...(facts?.diffStat ? { diffStat: facts.diffStat } : {}),
+          nextStep: CONTINUITY_NEXT_STEP,
         });
         respawnWithResume(
           updated,

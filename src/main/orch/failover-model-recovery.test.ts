@@ -78,6 +78,7 @@ vi.mock('../persistence/account-store', () => ({
   adoptNativeAccountForFailover: vi.fn(() => null),
   ensureFreshClaudeSubscription: vi.fn(async () => false),
   isAccountBlockedForScope: vi.fn(() => false),
+  hasAvailableAccount: vi.fn(() => true),
   setCooldown: vi.fn(),
   clearCooldown: vi.fn(),
   prepareAccountForSpawn: vi.fn(() => ({ ok: false, error: 'not in test' })),
@@ -184,6 +185,9 @@ function handle(overrides: Partial<PaneTaskRerouteHandle> = {}): PaneTaskReroute
     adapterId: 'codex',
     missionId: 'mission-1',
     role: 'worker',
+    callerSessionId: 'session-maestro',
+    routeTask: 'implementar o login',
+    lineageId: 'pane-codex',
     operatorOpened: false,
     pinnedRuntime: false,
     generation: 0,
@@ -401,9 +405,9 @@ describe('F-765: pane de missão — a tarefa é reaberta pela rota do spawn', (
     expect(String(h.submit.mock.calls[0]![0].summary)).toContain('Decida');
   });
 
-  it('teto de reaberturas encadeadas: a terceira não acontece sozinha', async () => {
+  it('teto de reaberturas encadeadas: a quarta não acontece sozinha', async () => {
     codexPane({ missionId: 'mission-1' });
-    const chained = handle({ generation: 2 });
+    const chained = handle({ generation: 3 });
     registerPaneTaskReroute(chained);
     h.dataTaps[0]('session-codex', 'MODEL_REFUSED');
     await settle();

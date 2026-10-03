@@ -19,8 +19,15 @@ import {
   modelCatalogInfo,
 } from '../adapters/model-catalog';
 import { migrateModelId } from '../../shared/model-defaults';
-import { sanitizeHandoffExcerptForDetector } from '../../shared/failover-handoff';
-import { respawnMainOwnedPaneWithAccount } from './failover-mission-respawn';
+import {
+  buildContinuityPack,
+  sanitizeHandoffExcerptForDetector,
+} from '../../shared/failover-handoff';
+import { maskAccountLabel } from '../../shared/account-choice';
+import {
+  collectGitTaskState,
+  respawnMainOwnedPaneWithAccount,
+} from './failover-mission-respawn';
 import {
   getRendererWorkspaceScope,
   onRendererWorkspaceScopeChange,
@@ -30,6 +37,7 @@ import {
   findPaneBySessionOwnedBy,
   getOwnedPaneAuthzInfoBySession,
   getPaneRuntimeAuthorityBySession,
+  readSessionOutput,
   requestPaneClose,
   type OwnedPaneAuthzInfo,
 } from './pane-registry';
@@ -37,7 +45,10 @@ import { releasePaneStartWatch, shortStartError } from './pane-start-watchdog';
 import {
   forgetPaneTaskReroute,
   getPaneTaskReroute,
+  hasNextCliResolver,
   paneTaskRerouteBlocker,
+  registerPaneTaskReroute,
+  resolveNextCli,
   type PaneTaskRerouteBlocker,
   type PaneTaskRerouteHandle,
   type PaneTaskRerouteRequest,
@@ -57,6 +68,7 @@ import {
   ensureFreshClaudeSubscription,
   getAccount,
   getActiveAccount,
+  hasAvailableAccount,
   isAccountBlockedForScope,
   pickAvailableForFailover,
   prepareAccountForSpawn,
@@ -500,6 +512,38 @@ function resolvePaneDetails(
  */
 const CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS = 15 * 60 * 1000;
 
+/**
+ * F-775: o MESMO limite longo, sem leitura do provedor, batendo de novo na
+ * mesma conta DEPOIS da pausa curta é a confirmação que a sonda não trouxe —
+ * a sessão retomada recebeu o limite outra vez. Repaint dentro da pausa não
+ * conta. Sem isto, conta única (ou todas assim) girava em ciclos de 15 min e
+ * a troca de CLI nunca chegava.
+ */
+const UNCONFIRMED_STRIKE_WINDOW_MS = 3 * 60 * 60 * 1000;
+const unconfirmedStrikes = new Map<string, number>();
+
+function strikeKey(adapterId: string, accountId: string | undefined, kind: string): string {
+  return `${adapterId}\0${accountId ?? ''}\0${kind}`;
+}
+
+/** true = segunda batida depois da pausa (consome a anterior); senão anota a 1ª. */
+function repeatedUnconfirmedLimit(
+  adapterId: string,
+  accountId: string | undefined,
+  kind: string,
+  now: number,
+): boolean {
+  const key = strikeKey(adapterId, accountId, kind);
+  const first = unconfirmedStrikes.get(key);
+  if (first !== undefined && now - first < UNCONFIRMED_STRIKE_WINDOW_MS) {
+    if (now - first < CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS) return false;
+    unconfirmedStrikes.delete(key);
+    return true;
+  }
+  unconfirmedStrikes.set(key, now);
+  return false;
+}
+
 function quotaEntryFor(
   adapterId: string,
   accountId: string,
@@ -577,6 +621,8 @@ interface SwitchRequest {
   attempt: number;
   /** Sufixo pt-BR no reason do evento (ex.: retry automático). */
   reasonSuffix: string;
+  /** F-249: limite longo só com o texto do PTY — não autoriza trocar de CLI. */
+  unconfirmed?: boolean;
 }
 
 /**
@@ -629,6 +675,385 @@ async function prepareFailoverAccount(
   }
   return prepareAccountForSpawn(adapterId, accountId, now,
     verifiedClaudeBlob ? { ...options, expectedClaudeBlob: verifiedClaudeBlob } : options);
+}
+
+/* ------------------------------------------------------------------------ *
+ * F-775: troca de CLI quando TODAS as contas da CLI atual estão esgotadas.
+ * Automática, nos dois tipos de pane: o pane do operador ("+ Pane", sem
+ * missão) troca de CLI no lugar, com aviso; a tarefa de missão é reaberta
+ * pela rota do spawn. A próxima CLI é a do roteador (especialidade,
+ * capacidade, diversidade, cota e login); a esgotada não volta antes de
+ * liberar, e cada tarefa troca no máximo MAX_CLI_SWITCHES_PER_TASK vezes.
+ * ------------------------------------------------------------------------ */
+
+/**
+ * Espera mínima (própria conta ou irmã) que justifica levar a tarefa para
+ * outra CLI. Limite curto espera a irmã — a conversa atual vale mais.
+ */
+const CLI_SWITCH_MIN_WAIT_MS = 10 * 60_000;
+/** Trocas de CLI por tarefa (linhagem de panes) — mais que isso é cascata. */
+const MAX_CLI_SWITCHES_PER_TASK = 3;
+const CLI_SWITCH_HISTORY_MS = 12 * 60 * 60_000;
+/** Trecho final do PTY que vai no pacote (o próprio builder poda e mascara). */
+const CLI_SWITCH_EXCERPT_LINES = 120;
+const CLI_SWITCH_NEXT_STEP =
+  'Inspect the touched files and the diff above (they are the real state of the work), ' +
+  'then continue the task from its first pending step.';
+
+/** Linhagem (pane do pedido original) → CLIs que esgotaram nesta tarefa. */
+const cliSwitchHistory = new Map<
+  string,
+  Array<{ readonly adapterId: string; readonly at: number; readonly until: number }>
+>();
+
+function cliSwitchesOf(lineageId: string, now: number) {
+  const recent = (cliSwitchHistory.get(lineageId) ?? []).filter(
+    (entry) => now - entry.at < CLI_SWITCH_HISTORY_MS,
+  );
+  cliSwitchHistory.set(lineageId, recent);
+  return recent;
+}
+
+function noteCliExhausted(lineageId: string, adapterId: string, now: number, until: number): void {
+  cliSwitchesOf(lineageId, now).push({ adapterId, at: now, until });
+}
+
+function adapterLabelOf(adapterId: string): string {
+  return getAdapter(adapterId)?.label ?? adapterId;
+}
+
+type CliSwitchPlan =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'blocked'; readonly note: string }
+  | {
+      readonly kind: 'go';
+      readonly lineageId: string;
+      /** A esgotada e as que esgotaram nesta tarefa e seguem sem liberar. */
+      readonly exclude: readonly string[];
+      readonly handle: PaneTaskRerouteHandle | null;
+    };
+
+/**
+ * A tarefa deste pane segue em outra CLI? Limite de cota, de uso ou
+ * credencial sem conta livre (erro do provedor e modelo têm caminho próprio),
+ * com espera longa. Pedido explícito do operador não segura a troca — o
+ * esgotamento vence —, mas o pane aberto pelo operador DENTRO de uma missão
+ * (F-231) não é fechado pela máquina.
+ */
+function planCliSwitch(req: SwitchRequest, retryTargetMs: number | undefined): CliSwitchPlan {
+  const { hit, now, paneId, adapterId } = req;
+  if (hit.kind !== 'quota' && hit.kind !== 'rate-limit' && hit.kind !== 'auth') {
+    return { kind: 'none' };
+  }
+  // F-249: o texto sozinho não troca de conta — nem de CLI.
+  if (req.unconfirmed) return { kind: 'none' };
+  if (retryTargetMs !== undefined && retryTargetMs - now < CLI_SWITCH_MIN_WAIT_MS) {
+    return { kind: 'none' };
+  }
+  const handle = getPaneTaskReroute(paneId);
+  // Caminhos: no lugar (pane fora de missão), pane novo pela rota do spawn
+  // (pedido guardado) ou religar o worker main-owned pela rota do Maestro.
+  // Sem caminho, a espera-pela-irmã sai na hora, sem esperar rota nenhuma.
+  const inPlace = Boolean(req.authority.owner) && !req.authority.missionId;
+  const mainOwnedRoute = !req.authority.owner && Boolean(req.authority.missionId);
+  if (!handle && !inPlace && !mainOwnedRoute) return { kind: 'none' };
+  if ((inPlace || !handle) && !hasNextCliResolver()) return { kind: 'none' };
+  const lineageId = handle?.lineageId ?? paneId;
+  const history = cliSwitchesOf(lineageId, now);
+  if (history.length >= MAX_CLI_SWITCHES_PER_TASK) {
+    return {
+      kind: 'blocked',
+      note: `a tarefa já trocou de CLI ${MAX_CLI_SWITCHES_PER_TASK} vezes; o Nexus não troca de novo sozinho`,
+    };
+  }
+  if (req.authority.missionId) {
+    const blocker = paneTaskRerouteBlocker(handle);
+    if (blocker === 'operator' || blocker === 'chain-limit') {
+      return { kind: 'blocked', note: REROUTE_BLOCKER_TEXT[blocker] };
+    }
+  }
+  const exclude = [
+    ...new Set([
+      adapterId,
+      ...history
+        .filter((entry) => entry.until > now || !hasAvailableAccount(entry.adapterId, now))
+        .map((entry) => entry.adapterId),
+    ]),
+  ];
+  return { kind: 'go', lineageId, exclude, handle };
+}
+
+/** Texto de rota para o pane do operador: só o rótulo do pane, nunca o terminal. */
+function operatorPaneRouteTask(sessionId: string, adapterLabel: string): string {
+  const title = getOwnedPaneAuthzInfoBySession(sessionId)?.title?.trim();
+  return `Continuar o trabalho do terminal ${title ? `"${title}"` : adapterLabel} em outra CLI`;
+}
+
+/** Maestro da missão do pane: a autoridade de rota de um worker sem pedido guardado. */
+async function missionOrchestratorSessionId(authority: FailoverAuthority): Promise<string | null> {
+  if (!authority.missionId) return null;
+  try {
+    const { getProjectDomainStores } = await import('./project-domain-store-registry');
+    return (
+      getProjectDomainStores(authority.scope).missions.get(authority.missionId)
+        ?.orchestratorSessionId ?? null
+    );
+  } catch {
+    return null;
+  }
+}
+
+function cliSwitchPack(req: SwitchRequest, facts: NonNullable<FailoverEvent['continuity']>): string {
+  const { authority, adapterId, hit, current } = req;
+  return buildContinuityPack({
+    fromAccountLabel: current?.label ?? adapterId,
+    toAccountLabel: '',
+    reason: hit.reason,
+    role: 'worker',
+    missionId: authority.missionId,
+    limitKind: hit.kind,
+    limitWindow: facts.limitWindow ?? null,
+    limitResetsAt: facts.limitResetsAt ?? null,
+    limitCooldownMs: facts.limitCooldownMs ?? null,
+    touchedFiles: facts.touchedFiles,
+    diffStat: facts.diffStat,
+    scrollbackExcerpt: readSessionOutput(authority.sessionId, CLI_SWITCH_EXCERPT_LINES),
+    nextStep: CLI_SWITCH_NEXT_STEP,
+    fromAdapterLabel: adapterLabelOf(adapterId),
+  });
+}
+
+type CliSwitchResult = { readonly handled: true } | { readonly handled: false; readonly note: string };
+
+/**
+ * Executa a troca de CLI. `handled:false` = o pane parado continua lá e a
+ * espera-pela-irmã segue (com a nota); `handled:true` = o recibo já saiu.
+ */
+async function continueOnAnotherCli(
+  req: SwitchRequest,
+  plan: Extract<CliSwitchPlan, { kind: 'go' }>,
+  retryTargetMs: number | undefined,
+  nextUnblockAtMs: number | undefined,
+): Promise<CliSwitchResult> {
+  const { authority, paneId, adapterId, hit, current, now } = req;
+  const fromCli = adapterLabelOf(adapterId);
+  const fromLabel = current?.label ?? adapterId;
+  const until = retryTargetMs ?? now + hit.cooldownMs;
+  const handle = plan.handle;
+  const base = {
+    paneId,
+    fromAccountLabel: fromLabel,
+    toAccountLabel: '',
+    kind: hit.kind,
+    fromAccountId: current?.id,
+    fromAdapterId: adapterId,
+    fromAdapterLabel: fromCli,
+    missionId: authority.missionId,
+    ...(nextUnblockAtMs !== undefined ? { nextUnblockAtMs } : {}),
+  };
+  const traceOutcome = (outcome: string, extra: Record<string, unknown> = {}): void =>
+    trace({
+      kind: 'account-failover',
+      outcome,
+      paneId,
+      adapterId,
+      fromAccountId: current?.id ?? null,
+      limitKind: hit.kind,
+      reason: hit.reason,
+      missionId: authority.missionId ?? null,
+      ...extra,
+    });
+
+  // (b) Pane do operador / helper fora de missão: troca NO LUGAR, com aviso.
+  if (authority.owner && !authority.missionId) {
+    const route = await resolveNextCli({
+      callerSessionId: handle?.callerSessionId ?? authority.sessionId,
+      task: handle?.routeTask ?? operatorPaneRouteTask(authority.sessionId, fromCli),
+      excludeAdapterIds: plan.exclude,
+    });
+    if (!route || plan.exclude.includes(route.adapterId)) {
+      return { handled: false, note: 'nenhuma outra CLI elegível agora' };
+    }
+    if (!isCurrentAuthority(authority)) return { handled: true };
+    noteCliExhausted(plan.lineageId, adapterId, now, until);
+    const facts = await continuityFacts(authority, adapterId, current?.id, hit, nextUnblockAtMs);
+    const toCli = adapterLabelOf(route.adapterId);
+    const headline = `${fromCli} esgotou em todas as contas; continuando em ${toCli}`;
+    const switchFields = {
+      ...base,
+      toAdapterId: route.adapterId,
+      toAdapterLabel: toCli,
+      ...(route.model ? { toModel: route.model } : {}),
+    };
+    emitFailover(authority, {
+      ...switchFields,
+      reason: `${headline} (${hit.reason})`,
+      switched: false,
+      cliSwitchPhase: 'requested',
+      continuityPack: cliSwitchPack(req, facts),
+    });
+    traceOutcome('cli-switch-requested', { toAdapterId: route.adapterId, toModel: route.model ?? null });
+    const proven = await waitForPaneRespawn(
+      paneId,
+      authority.sessionId,
+      (session) => session.adapterId === route.adapterId,
+    );
+    if (proven) {
+      releasePaneStartWatch(paneId);
+      // O pane segue com a MESMA tarefa, agora na CLI nova.
+      if (handle) registerPaneTaskReroute({ ...handle, adapterId: route.adapterId });
+    }
+    emitFailoverReceipt(authority, {
+      ...switchFields,
+      reason: proven
+        ? `${headline} (${hit.reason})`
+        : `${headline} — o pane não religou em ${toCli} em ` +
+          `${Math.round(MODEL_ROTATION_PROOF_MS / 1000)} s; nada foi trocado`,
+      switched: proven,
+      cliSwitchPhase: 'applied',
+    });
+    traceOutcome(proven ? 'cli-switched' : 'cli-switch-failed', { toAdapterId: route.adapterId });
+    return { handled: true };
+  }
+
+  // (a) Tarefa de missão com o pedido guardado: pane novo pela rota do spawn.
+  if (handle) {
+    const facts = await continuityFacts(authority, adapterId, current?.id, hit, nextUnblockAtMs);
+    noteCliExhausted(plan.lineageId, adapterId, now, until);
+    const outcome = await reopenTaskElsewhere(
+      authority,
+      { paneId, adapterId, model: req.paneModel, accountId: current?.id },
+      handle,
+      {
+        excludeAdapterIds: plan.exclude,
+        appendPrompt: cliSwitchPack(req, facts),
+        worktreeFromPaneId: paneId,
+      },
+    );
+    if (!outcome.ok && !outcome.closed) {
+      return { handled: false, note: `troca de CLI indisponível: ${outcome.error}` };
+    }
+    const toCli = outcome.ok ? adapterLabelOf(outcome.adapterId) : '';
+    const reason = outcome.ok
+      ? `${fromCli} esgotou em todas as contas; a tarefa seguiu em ${toCli} ` +
+        `(pane ${outcome.paneId}) com o pacote de continuidade (${hit.reason})`
+      : `${fromCli} esgotou em todas as contas e a tarefa não foi reaberta em outra CLI: ` +
+        `${outcome.error} (${hit.reason})`;
+    emitFailoverReceipt(authority, {
+      ...base,
+      reason,
+      switched: outcome.ok,
+      ...(outcome.ok
+        ? { toAdapterId: outcome.adapterId, toAdapterLabel: toCli, toPaneId: outcome.paneId }
+        : {}),
+    });
+    traceOutcome(outcome.ok ? 'cli-switched' : 'cli-switch-failed', {
+      ...(outcome.ok ? { toAdapterId: outcome.adapterId, toPaneId: outcome.paneId } : {}),
+    });
+    await notifyCliSwitch(authority, req, outcome.ok
+      ? { toAdapterId: outcome.adapterId, toPaneId: outcome.paneId }
+      : { error: outcome.error });
+    return { handled: true };
+  }
+
+  // (a') Worker main-owned sem pedido guardado: a rota do Maestro escolhe a
+  // CLI e o Main religa a mesma missão nela, com o pacote.
+  if (!authority.owner && authority.missionId) {
+    const maestro = await missionOrchestratorSessionId(authority);
+    const agent = getAgentSessionInfo(authority.sessionId)?.agentName;
+    const route = maestro
+      ? await resolveNextCli({
+          callerSessionId: maestro,
+          task: `Continuar a tarefa do worker ${agent ? `"${agent}"` : paneId} em outra CLI`,
+          excludeAdapterIds: plan.exclude,
+        })
+      : null;
+    if (!route || plan.exclude.includes(route.adapterId)) {
+      return { handled: false, note: 'nenhuma outra CLI elegível agora' };
+    }
+    const facts = await continuityFacts(authority, adapterId, current?.id, hit, nextUnblockAtMs);
+    noteCliExhausted(plan.lineageId, adapterId, now, until);
+    let respawned = false;
+    try {
+      respawned = await respawnMainOwnedPaneWithAccount({
+        paneId,
+        sessionId: authority.sessionId,
+        adapterId: route.adapterId,
+        ...(route.model ? { toModel: route.model } : {}),
+        fromAccountLabel: fromLabel,
+        reason: hit.reason,
+        continuityPack: cliSwitchPack(req, facts),
+      });
+    } catch (error) {
+      console.warn(
+        '[failover] troca de CLI main-owned falhou:',
+        error instanceof Error ? error.message : error,
+      );
+    }
+    const toCli = adapterLabelOf(route.adapterId);
+    emitFailoverReceipt(authority, {
+      ...base,
+      reason: respawned
+        ? `${fromCli} esgotou em todas as contas; a tarefa seguiu em ${toCli} (${hit.reason})`
+        : `${fromCli} esgotou em todas as contas e o worker não pôde ser religado em ${toCli} (${hit.reason})`,
+      switched: respawned,
+      ...(respawned ? { toAdapterId: route.adapterId, toAdapterLabel: toCli } : {}),
+    });
+    traceOutcome(respawned ? 'cli-switched' : 'cli-switch-failed', { toAdapterId: route.adapterId });
+    await notifyCliSwitch(authority, req, respawned
+      ? { toAdapterId: route.adapterId }
+      : { error: `o worker não pôde ser religado em ${toCli}` });
+    return { handled: true };
+  }
+  return { handled: false, note: 'o Nexus não tem como reabrir esta tarefa sozinho' };
+}
+
+/** Aviso ao Maestro da troca de CLI (rótulos de conta mascarados). */
+async function notifyCliSwitch(
+  authority: FailoverAuthority,
+  req: SwitchRequest,
+  outcome: { readonly toAdapterId: string; readonly toPaneId?: string } | { readonly error: string },
+): Promise<void> {
+  const agent = getAgentSessionInfo(authority.sessionId)?.agentName ?? req.paneId;
+  const fromCli = adapterLabelOf(req.adapterId);
+  await notifyMissionOrchestrator(
+    authority,
+    `[troca-de-cli:${req.paneId}] O worker "${agent}" (${req.adapterId}, conta ` +
+      `"${maskAccountLabel(req.current?.label ?? req.adapterId)}") ficou sem conta com folga em ${fromCli}. ` +
+      ('error' in outcome
+        ? `A tarefa não foi reaberta em outra CLI (${outcome.error}). Decida: reabra com outra ` +
+          'CLI ou espere a conta liberar.'
+        : `A tarefa seguiu em ${outcome.toAdapterId}` +
+          (outcome.toPaneId ? ` (pane ${outcome.toPaneId})` : '') +
+          ' com o pacote de continuidade (arquivos tocados, diff e próximo passo); espere o handoff dela.'),
+  );
+}
+
+/**
+ * F-775: fatos medidos para o pacote de continuidade que o RENDERER monta na
+ * troca de conta — janela/reset da conta esgotada e o estado da tarefa no cwd
+ * do pane. O Main coleta (git assíncrono, F-764); o renderer só escreve.
+ */
+async function continuityFacts(
+  authority: FailoverAuthority,
+  adapterId: string,
+  fromAccountId: string | undefined,
+  hit: LimitHit,
+  nextUnblockAtMs: number | undefined,
+): Promise<NonNullable<FailoverEvent['continuity']>> {
+  const window = measuredLimitWindow(adapterId, fromAccountId);
+  // F-822: só a worktree do PRÓPRIO pane; checkout compartilhado não entra.
+  const runtime = getPaneRuntimeAuthorityBySession(authority.sessionId);
+  const git = await collectGitTaskState(runtime?.executionScope?.rootRealPath, {
+    sharedRootPath: (runtime?.scope ?? authority.scope).rootRealPath,
+  });
+  return {
+    limitWindow: window?.label ?? null,
+    limitResetsAt: window?.resetsAt ?? nextUnblockAtMs ?? null,
+    limitCooldownMs: hit.cooldownMs,
+    touchedFiles: git.touchedFiles.slice(0, 50),
+    ...(git.diffStat ? { diffStat: git.diffStat.slice(0, 4_000) } : {}),
+  };
 }
 
 async function performSwitch(req: SwitchRequest): Promise<void> {
@@ -773,6 +1198,16 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
       ownUnblockAtMs: req.ownUnblockAtMs,
       nextUnblockAtMs,
     });
+    // F-775: todas as contas desta CLI esgotadas por bastante tempo — a
+    // tarefa segue em OUTRA CLI elegível. Sem saída (ou falhando antes de o
+    // pane sair), continua a espera-pela-irmã de sempre, com o motivo.
+    const cliPlan = planCliSwitch(req, retryTarget);
+    let cliSwitchNote = cliPlan.kind === 'blocked' ? cliPlan.note : undefined;
+    if (cliPlan.kind === 'go') {
+      const switched = await continueOnAnotherCli(req, cliPlan, retryTarget, nextUnblockAtMs);
+      if (switched.handled) return;
+      cliSwitchNote = switched.note;
+    }
     let scheduledRetryAtMs: number | undefined;
     if (retryTarget !== undefined && attempt < MAX_SCHEDULED_RETRIES) {
       scheduledRetryAtMs = scheduleFailoverRetry(key, authority, hit, retryTarget + RETRY_BUFFER_MS, attempt + 1);
@@ -798,9 +1233,9 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
       paneId,
       fromAccountLabel: fromLabel,
       toAccountLabel: '',
-      reason: prepareError
-        ? `${hit.reason} (troca indisponível: ${prepareError})`
-        : hit.reason,
+      reason:
+        (prepareError ? `${hit.reason} (troca indisponível: ${prepareError})` : hit.reason) +
+        (cliSwitchNote ? ` — ${cliSwitchNote}` : ''),
       kind: hit.kind,
       switched: false,
       fromAccountId,
@@ -865,6 +1300,8 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
         limitWindow: limitWindowInfo?.label ?? null,
         limitResetsAt: limitWindowInfo?.resetsAt ?? nextUnblockAtMs ?? null,
         limitCooldownMs: hit.cooldownMs,
+        // O trecho final do PTY (memória do Main) — o builder poda e mascara.
+        scrollbackExcerpt: readSessionOutput(authority.sessionId, CLI_SWITCH_EXCERPT_LINES),
       });
     } catch (error) {
       console.warn(
@@ -913,6 +1350,10 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
     return;
   }
 
+  // F-775: o pacote do renderer (troca de conta) leva janela e estado da tarefa.
+  const continuity = crossAccount
+    ? await continuityFacts(authority, adapterId, fromAccountId, hit, nextUnblockAtMs)
+    : undefined;
   emitFailover(authority, {
     paneId,
     fromAccountLabel: fromLabel,
@@ -926,6 +1367,7 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
     coalesced,
     missionId: authority.missionId,
     ...(probe ? { probe } : {}),
+    ...(continuity ? { continuity } : {}),
   });
   trace({
     kind: 'account-failover',
@@ -1626,15 +2068,15 @@ function emitFailoverReceipt(authority: FailoverAuthority, event: FailoverEvent)
 }
 
 /**
- * Prova do religamento: uma sessão NOVA do mesmo pane, viva, no modelo pedido.
- * Só memória do pty-manager — nada de disco nem de processo.
+ * Prova do religamento: uma sessão NOVA do mesmo pane, viva, que satisfaz o
+ * pedido (modelo novo, CLI nova). Só memória do pty-manager — nada de disco
+ * nem de processo.
  */
-function waitForModelRespawn(
+function waitForPaneRespawn(
   paneId: string,
   previousSessionId: string,
-  toModel: string,
+  matches: (session: ReturnType<typeof listAgentSessionsForPane>[number]) => boolean,
 ): Promise<boolean> {
-  const wanted = toModel.trim().toLowerCase();
   const deadline = Date.now() + MODEL_ROTATION_PROOF_MS;
   rotationProofs.get(paneId)?.resolve(false);
   return new Promise((resolve) => {
@@ -1643,9 +2085,7 @@ function waitForModelRespawn(
       const respawned = listAgentSessionsForPane(paneId).some(
         (session) =>
           session.sessionId !== previousSessionId &&
-          [session.model, session.requestedModel].some(
-            (model) => model?.trim().toLowerCase() === wanted,
-          ) &&
+          matches(session) &&
           (getSessionState(session.sessionId) ?? 'exited') !== 'exited',
       );
       if (respawned || Date.now() >= deadline) {
@@ -1665,6 +2105,20 @@ function waitForModelRespawn(
     };
     check();
   });
+}
+
+/** O religamento no modelo pedido (F-765). */
+function waitForModelRespawn(
+  paneId: string,
+  previousSessionId: string,
+  toModel: string,
+): Promise<boolean> {
+  const wanted = toModel.trim().toLowerCase();
+  return waitForPaneRespawn(paneId, previousSessionId, (session) =>
+    [session.model, session.requestedModel].some(
+      (model) => model?.trim().toLowerCase() === wanted,
+    ),
+  );
 }
 
 /**
@@ -1701,7 +2155,8 @@ async function notifyMissionOrchestrator(
 
 type TaskReopenOutcome =
   | { readonly ok: true; readonly paneId: string; readonly adapterId: string }
-  | { readonly ok: false; readonly error: string };
+  /** `closed`: o pane parado já saiu — não há mais nada a esperar nele. */
+  | { readonly ok: false; readonly error: string; readonly closed: boolean };
 
 /**
  * F-765/F-775: a tarefa sai do pane parado e é reaberta pela rota do
@@ -1716,18 +2171,20 @@ async function reopenTaskElsewhere(
   request: PaneTaskRerouteRequest,
 ): Promise<TaskReopenOutcome> {
   if (!handle.hasAlternative(request.excludeAdapterIds)) {
-    return { ok: false, error: 'nenhuma CLI pode receber a tarefa agora' };
+    return { ok: false, error: 'nenhuma CLI pode receber a tarefa agora', closed: false };
   }
   // A ficha de início (F-723) não reabre a mesma tarefa de novo.
   releasePaneStartWatch(pane.paneId);
   const closed = await requestPaneClose(pane.paneId, authority.sessionId).catch(() => false);
-  if (!closed) return { ok: false, error: 'o pane parado não fechou; nada foi reaberto' };
+  if (!closed) {
+    return { ok: false, error: 'o pane parado não fechou; nada foi reaberto', closed: false };
+  }
   forgetPaneTaskReroute(pane.paneId);
   try {
     const next = await handle.reroute(request);
     return { ok: true, paneId: next.paneId, adapterId: next.adapterId };
   } catch (error) {
-    return { ok: false, error: shortStartError(error) };
+    return { ok: false, error: shortStartError(error), closed: true };
   }
 }
 
@@ -2024,6 +2481,11 @@ async function confirmLimitByProbe(
     commitLimitHit(authority, pane, key, hit, now, source, current, adapterId);
     return;
   }
+  if (repeatedUnconfirmedLimit(adapterId, current?.id, hit.kind, probedAt)) {
+    logSuppressedFailover(pane, current, hit, 'unconfirmed-limit-repeated-after-pause', source);
+    commitLimitHit(authority, pane, key, hit, now, source, current, adapterId);
+    return;
+  }
   // F-249: sonda sem resposta NÃO troca o pane. O único indício é o texto da
   // CLI (ou narração do Maestro citando erro de outro pane — "usage limit
   // reached" casa no detector mesmo sem erro na conta do narrador). A conta
@@ -2051,6 +2513,7 @@ async function confirmLimitByProbe(
       source,
       current,
       adapterId,
+      { unconfirmed: true },
     );
     return;
   }
@@ -2094,6 +2557,7 @@ function commitLimitHit(
   source: FailoverSignalSource,
   current: ReturnType<typeof paneAccount>,
   adapterId: string,
+  options: { readonly unconfirmed?: boolean } = {},
 ): void {
   // Feed fleet quota UI (session/5h/weekly bars) from the same limit signal.
   noteQuotaLimitHit(adapterId, hit, current?.id);
@@ -2175,6 +2639,7 @@ function commitLimitHit(
     ownUnblockAtMs: current ? now + hit.cooldownMs : undefined,
     attempt: 0,
     reasonSuffix: '',
+    ...(options.unconfirmed ? { unconfirmed: true } : {}),
   });
 }
 
@@ -2381,6 +2846,8 @@ export function shutdownFailover(): void {
   // F-765: provas de religamento pendentes terminam sem troca.
   for (const proof of [...rotationProofs.values()]) proof.resolve(false);
   modelRotationsByPane.clear();
+  cliSwitchHistory.clear();
+  unconfirmedStrikes.clear();
   installationIds.clear();
   setModelQuarantineScopeResolver(null);
   coalesceByFrom.clear();

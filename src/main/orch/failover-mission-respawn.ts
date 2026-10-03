@@ -55,6 +55,11 @@ export interface MainOwnedFailoverPlanInput {
   readonly touchedFiles?: readonly string[];
   readonly diffStat?: string;
   readonly toAccountLabel?: string;
+  /**
+   * F-775: pacote pronto (troca de CLI) — vale sobre o de conta e o de modelo.
+   * `adapterId` é então a CLI NOVA, escolhida pela rota.
+   */
+  readonly continuityPack?: string;
 }
 
 export type MainOwnedFailoverPlan =
@@ -148,7 +153,9 @@ export function planMainOwnedFailoverRespawn(
   // F-520: o prompt de modelo NUNCA ecoa o reason cru — o texto canónico
   // ("model requires a newer version", …) casaria de novo no detector ao ser
   // digitado no PTY novo e dispararia um failover fantasma na sessão sadia.
-  const initialPrompt = input.toModel
+  const initialPrompt = input.continuityPack
+    ? input.continuityPack
+    : input.toModel
     ? `O modelo anterior foi rejeitado pelo provider. ` +
       `Você foi religado automaticamente no modelo "${input.toModel}" — ` +
       `continuar a tarefa de onde parou, sem repetir trabalho já entregue.`
@@ -229,12 +236,15 @@ export async function respawnMainOwnedPaneWithAccount(input: {
   readonly touchedFiles?: readonly string[];
   readonly diffStat?: string;
   readonly toAccountLabel?: string;
+  /** F-775: pacote pronto da troca de CLI (`adapterId` é a CLI nova). */
+  readonly continuityPack?: string;
 }, deps: { readonly git?: AsyncGitRunner } = {}): Promise<boolean> {
   const entry = getMainOwnedPane(input.paneId);
   // Troca de conta leva o estado da tarefa — coletado AQUI, assíncrono e só
   // na worktree do próprio pane (F-822); rotação de modelo (F-520) não.
   const worktree =
     !input.toModel &&
+    !input.continuityPack &&
     input.touchedFiles === undefined &&
     input.diffStat === undefined
       ? entry?.meta?.executionScope?.rootRealPath
@@ -262,6 +272,7 @@ export async function respawnMainOwnedPaneWithAccount(input: {
     touchedFiles: git.touchedFiles,
     diffStat: git.diffStat,
     toAccountLabel: input.toAccountLabel,
+    continuityPack: input.continuityPack,
   });
   if (plan.action === 'skip') {
     console.info(

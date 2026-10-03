@@ -8,6 +8,7 @@ import { useFailoverController } from './failover-controller';
 import { useToastStore } from '../state/toast-store';
 import { useLayoutStore } from '../state/layout-store';
 import { respawnWithResume } from '../terminal/terminal-host';
+import { listPanes } from '../lib/split-tree';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 function Harness() { useFailoverController(); return null; }
 
@@ -64,6 +65,90 @@ describe('failover notifications', () => {
       const toast = useToastStore.getState().toasts.find((entry) => entry.dedupeKey === 'failover:mission-pane');
       expect(toast?.title).toBe('Tarefa reaberta em codex');
       expect(toast?.detail).toContain('pane-novo');
+    } finally {
+      await act(async () => root.unmount()); container.remove();
+      useLayoutStore.setState({ root: originalRoot });
+      for (const toast of useToastStore.getState().toasts) useToastStore.getState().dismiss(toast.id);
+    }
+  });
+
+  it('F-775: CLI esgotada no "+ Pane": troca a CLI do pane no lugar, religa com o pacote e avisa na hora', async () => {
+    let notify!: (event: FailoverEvent) => void;
+    Object.defineProperty(window, 'nexus', { configurable: true, value: { accounts: {
+      onFailover: (callback: typeof notify) => { notify = callback; return () => {}; },
+    } } });
+    const originalRoot = useLayoutStore.getState().root;
+    useLayoutStore.setState({ root: { kind: 'leaf', id: 'cli-leaf', pane: {
+      id: 'op-pane', kind: 'cli-agent', title: 'Refatorar login', adapterId: 'claude', accountId: 'claude-a',
+    } } });
+    vi.mocked(respawnWithResume).mockClear();
+    const container = document.createElement('div'); document.body.append(container);
+    const root = createRoot(container);
+    const base: FailoverEvent = {
+      paneId: 'op-pane', kind: 'quota', fromAccountLabel: 'Conta', toAccountLabel: '',
+      reason: 'Claude esgotou em todas as contas; continuando em Codex (quota)', switched: false,
+      fromAdapterId: 'claude', fromAdapterLabel: 'Claude', toAdapterId: 'codex', toAdapterLabel: 'Codex',
+      toModel: 'gpt-6.1-sol',
+    };
+    try {
+      await act(async () => root.render(<Harness />));
+      notify({ ...base, cliSwitchPhase: 'requested', continuityPack: '[NEXUS FAILOVER HANDOFF]\nExecute the next concrete step now.' });
+      const pane = listPanes(useLayoutStore.getState().root).find((entry) => entry.id === 'op-pane')!;
+      expect(pane).toMatchObject({ adapterId: 'codex', model: 'gpt-6.1-sol' });
+      expect(pane.accountId).toBeUndefined();
+      expect(respawnWithResume).toHaveBeenCalledTimes(1);
+      expect(respawnWithResume).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'op-pane', adapterId: 'codex' }),
+        expect.stringContaining('Claude esgotou em todas as contas; continuando em Codex'),
+        { mode: 'cross-account-continuity', continuityPack: '[NEXUS FAILOVER HANDOFF]\nExecute the next concrete step now.' },
+      );
+      const toast = () => useToastStore.getState().toasts.find((entry) => entry.dedupeKey === 'failover:op-pane');
+      expect(toast()?.title).toBe('Claude esgotou em todas as contas; continuando em Codex');
+      // O recibo não religa de novo: só confirma (ou diz que não trocou).
+      notify({ ...base, cliSwitchPhase: 'applied', switched: true });
+      expect(respawnWithResume).toHaveBeenCalledTimes(1);
+      expect(toast()?.kind).toBe('success');
+      notify({ ...base, cliSwitchPhase: 'applied', switched: false, reason: 'o pane não religou' });
+      expect(toast()?.kind).toBe('error');
+      expect(toast()?.title).toBe('Troca de Claude para Codex não aplicada');
+    } finally {
+      await act(async () => root.unmount()); container.remove();
+      useLayoutStore.setState({ root: originalRoot });
+      for (const toast of useToastStore.getState().toasts) useToastStore.getState().dismiss(toast.id);
+    }
+  });
+
+  it('F-775: troca de conta passa ao pacote a janela, os arquivos e o diff medidos pelo Main', async () => {
+    let notify!: (event: FailoverEvent) => void;
+    Object.defineProperty(window, 'nexus', { configurable: true, value: { accounts: {
+      onFailover: (callback: typeof notify) => { notify = callback; return () => {}; },
+    } } });
+    const originalRoot = useLayoutStore.getState().root;
+    useLayoutStore.setState({ root: { kind: 'leaf', id: 'acct-leaf', pane: {
+      id: 'acct-pane', kind: 'cli-agent', title: 'Claude', adapterId: 'claude', accountId: 'claude-a',
+    } } });
+    vi.mocked(respawnWithResume).mockClear();
+    const container = document.createElement('div'); document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<Harness />));
+      notify({
+        paneId: 'acct-pane', kind: 'rate-limit', switched: true, crossAccount: true,
+        fromAccountLabel: 'gustavo@example.com', toAccountLabel: 'ana@example.org',
+        fromAccountId: 'claude-a', toAccountId: 'claude-b', reason: "You've hit your session limit",
+        continuity: {
+          limitWindow: '5 Horas', limitResetsAt: Date.UTC(2026, 9, 3, 20, 0, 0), limitCooldownMs: 18_000_000,
+          touchedFiles: ['src/login.ts'], diffStat: 'src/login.ts | 4 ++--',
+        },
+      });
+      const [, , options] = vi.mocked(respawnWithResume).mock.calls[0]!;
+      const pack = options?.continuityPack ?? '';
+      expect(pack).toContain('kind rate-limit');
+      expect(pack).toContain('window 5 Horas');
+      expect(pack).toContain('resets 2026-10-03T20:00:00.000Z');
+      expect(pack).toContain('- src/login.ts');
+      expect(pack).toContain('src/login.ts | 4 ++--');
+      expect(pack).toContain('Next step:');
     } finally {
       await act(async () => root.unmount()); container.remove();
       useLayoutStore.setState({ root: originalRoot });

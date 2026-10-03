@@ -94,14 +94,45 @@ export function reroutedFailoverToastCopy(
   event: FailoverEvent,
 ): FailoverToastCopy {
   const to = event.toAdapterId ?? 'outra CLI';
+  if (effectiveKind(event) === 'model') {
+    return {
+      title: `Tarefa reaberta em ${to}`,
+      detail:
+        `${event.reason}. O pane parado foi fechado; o trabalho segue no pane ` +
+        `${event.toPaneId ?? 'novo'}.`,
+    };
+  }
+  // F-775: todas as contas da CLI esgotaram — a tarefa trocou de CLI.
   return {
     title:
-      effectiveKind(event) === 'model'
-        ? `Tarefa reaberta em ${to}`
-        : `Tarefa seguiu em ${to}`,
+      `${event.fromAdapterLabel ?? event.fromAdapterId ?? 'A CLI'} esgotou em todas as contas; ` +
+      `continuando em ${event.toAdapterLabel ?? to}`,
     detail:
-      `${event.reason}. O pane parado foi fechado; o trabalho segue no pane ` +
-      `${event.toPaneId ?? 'novo'}.`,
+      `${event.reason}. O pane novo (${event.toPaneId ?? 'novo'}) recebeu o pacote de ` +
+      'continuidade: arquivos tocados, diff e próximo passo.',
+  };
+}
+
+/**
+ * F-775: troca de CLI no lugar (pane do operador). O pedido já avisa — o dono
+ * quer ver na hora que a CLI esgotou e para onde o trabalho foi —; o recibo
+ * confirma ou diz que nada foi trocado.
+ */
+export function cliSwitchToastCopy(event: FailoverEvent): FailoverToastCopy {
+  const from = event.fromAdapterLabel ?? event.fromAdapterId ?? 'A CLI';
+  const to = event.toAdapterLabel ?? event.toAdapterId ?? 'outra CLI';
+  if (event.cliSwitchPhase === 'applied' && !event.switched) {
+    return {
+      title: `Troca de ${from} para ${to} não aplicada`,
+      detail: `${event.reason}.`,
+    };
+  }
+  return {
+    title: `${from} esgotou em todas as contas; continuando em ${to}`,
+    detail:
+      event.cliSwitchPhase === 'applied'
+        ? 'O pane já roda na CLI nova, com o pacote de continuidade (arquivos tocados, diff e próximo passo).'
+        : 'Sessão nova na CLI escolhida pela rota, com o pacote de continuidade — o histórico do terminal fica.',
   };
 }
 
