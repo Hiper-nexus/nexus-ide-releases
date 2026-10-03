@@ -100,6 +100,13 @@ describe('preload PTY delivery', () => {
     expect(electronMock.ipcRenderer.invoke).toHaveBeenCalledWith('billing:logout');
   });
 
+  it('pinga o main por app:heartbeat sem carga nenhuma (F-764 C.7)', async () => {
+    const api = await loadPreloadApi();
+    electronMock.ipcRenderer.invoke.mockResolvedValue({ at: 42 });
+    expect(await api.app.heartbeat()).toEqual({ at: 42 });
+    expect(electronMock.ipcRenderer.invoke.mock.calls).toContainEqual(['app:heartbeat']);
+  });
+
   it('exposes bug report preview/submit over their own channels and nothing that reads the session', async () => {
     const api = await loadPreloadApi();
     electronMock.ipcRenderer.invoke.mockResolvedValue({ ok: true });

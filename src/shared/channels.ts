@@ -225,6 +225,12 @@ export const WINDOW_CHANNELS = {
   deepOpenQuota: 'app:deepOpenQuota',
   /** invoke: renderer → main. Open a trusted https URL in the OS browser. */
   openExternal: 'app:openExternal',
+  /**
+   * invoke: renderer → main. Eco trivial (`{ at }`) que só prova que o main
+   * está atendendo IPC (F-764 C.7). Sem resposta em 10 s, o renderer mostra a
+   * faixa "Nexus ocupado" — nunca mata nada.
+   */
+  heartbeat: 'app:heartbeat',
   /** invoke: renderer → main. Inicia o login OAuth: o main gera o nonce
    * local (binding do deep link) e abre o browser — o renderer nunca monta
    * a URL de auth. */

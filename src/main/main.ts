@@ -482,6 +482,7 @@ import {
   startEventLoopMonitor,
   stopEventLoopMonitor,
 } from "./observability/event-loop-monitor";
+import { registerMainHeartbeatIpc } from "./observability/main-heartbeat-ipc";
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
 let hookDropBoxWatcher: AgentHookDropBoxWatcher | null = null;
@@ -663,6 +664,8 @@ function bootstrap(): void {
   registerBrowserIpc(projectRuntimeManager);
   registerDesignWritebackIpc({ allowSourceMutation: !app.isPackaged });
   registerPerfIpc();
+  // F-764 C.7: eco trivial que o renderer pinga para acusar main ocupado.
+  registerMainHeartbeatIpc();
   registerLayoutIpc(projectRuntimeManager);
   registerAdapterIpc();
   traceBootstrap('before voice IPC');

@@ -70,6 +70,7 @@ import { useFailoverController } from './orch/failover-controller';
 import { useAccountRestartController } from './orch/account-restart-controller';
 import { useWorkerSpawnFailedController } from './orch/worker-spawn-failed-controller';
 import { Toasts } from './components/Toasts';
+import { MainBusyBanner } from './components/MainBusyBanner';
 import { useVoiceStore } from './voice/voice-store';
 import { removeMissionVerified } from './orch/remove-mission-verified';
 import { requestPaneClose } from './terminal/pane-close-guard';
@@ -1514,8 +1515,9 @@ export function App() {
       />
       </AccessBoundary>
       {/* Fora de `canUseApp` de propósito: quem está bloqueado por licença ou
-          cobrança é justamente quem precisa conseguir reportar. */}
-      <OverlayLayer><BugReportDialog /><ConfirmDialog /><ChoiceDialog /><Toasts /></OverlayLayer>
+          cobrança é justamente quem precisa conseguir reportar — e a faixa de
+          main ocupado (F-764 C.7) vale para qualquer tela. */}
+      <OverlayLayer><BugReportDialog /><ConfirmDialog /><ChoiceDialog /><Toasts /><MainBusyBanner /></OverlayLayer>
     </div>
   );
 }
