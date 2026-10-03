@@ -5816,6 +5816,50 @@ describe("F-212 PTY lifecycle tracing (exit + termination origin)", () => {
     );
   });
 
+  it("F-792: o tap de terminação recebe a saída da raiz que saiu sozinha; o encerramento pedido chega sem ela", async () => {
+    const seen = new Map<string, unknown>();
+    const dispose = tapSessionTermination((sessionId, _agent, rootExit) => {
+      seen.set(sessionId, rootExit);
+    });
+    try {
+      let handlers: PtySessionHandlers | null = null;
+      setPtyHost({
+        spawn(_spec, next) {
+          handlers = next;
+          return {
+            write: vi.fn(),
+            resize: vi.fn(),
+            kill: vi.fn(),
+            terminate: vi.fn(async () => ({
+              ok: true,
+              rootExited: true,
+              descendantsExited: true,
+            })),
+          };
+        },
+      });
+      const natural = spawnAgentSession(
+        fakeWc(),
+        { kind: "cli-agent", paneId: "pane-f792-natural", cols: 80, rows: 24 },
+        makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+        {},
+        missionGrantFor("mission-f792"),
+      );
+      handlers!.onExit(1, 0);
+      expect(seen.get(natural.sessionId)).toEqual({ exitCode: 1, signal: 0 });
+      await vi.waitFor(() => {
+        expect(lifecycleEvents("agent-pty-exit", natural.sessionId)).toHaveLength(1);
+      });
+
+      const killed = tracedAgentSession(fakeHost().host, "pane-f792-killed");
+      await orchTerminateSession(killed.sessionId, { origin: "pane-close" });
+      expect(seen.has(killed.sessionId)).toBe(true);
+      expect(seen.get(killed.sessionId)).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
   it("onExit duplicado não duplica o evento de exit no trace", async () => {
     let handlers: PtySessionHandlers | null = null;
     setPtyHost({

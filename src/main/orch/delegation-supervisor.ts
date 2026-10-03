@@ -992,13 +992,15 @@ function installPaneStartTaps(): void {
     );
     notePaneStartFailure(failure.paneId, 'spawn-refused');
   });
-  const untapTermination = tapSessionTermination((sessionId, agent) => {
+  const untapTermination = tapSessionTermination((sessionId, agent, rootExit) => {
     const watch = paneStartWatchForSession(sessionId, agent?.paneId);
     if (!watch || (agent && agent.adapterId !== watch.adapterId)) return;
     notePaneSessionEnded(watch, {
       sessionId,
       requested: getRequestedTerminationOrigin(sessionId) !== null,
       oneShot: agent?.oneShot === true,
+      // F-792: one-shot com código de erro morreu; com 0, terminou.
+      exit: rootExit,
       spawnedAt: getSessionSpawnedAtMs(sessionId),
       started: hasPaneStartEvidence(watch, sessionId),
       now: Date.now(),

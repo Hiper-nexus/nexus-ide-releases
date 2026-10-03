@@ -318,11 +318,34 @@ describe('ficha do spawn pendente (F-723)', () => {
     expect(watch.failure).toEqual({ cause: 'boot-exit', at: NOW + 5_000 });
   });
 
+  it('F-792: one-shot que saiu sozinho com erro ou sinal no boot, sem turno, não começou', () => {
+    for (const exit of [{ exitCode: 1, signal: 0 }, { exitCode: 0, signal: 9 }]) {
+      resetPaneStartWatchdogForTests();
+      const watch = trackPaneStart(base());
+      notePaneSessionEnded(watch, {
+        sessionId: 'session-a',
+        requested: false,
+        oneShot: true,
+        exit,
+        spawnedAt: NOW,
+        started: false,
+        now: NOW + 4_276,
+      });
+      expect(watch.failure).toEqual({ cause: 'boot-exit', at: NOW + 4_276 });
+      expect(watch.sessionEnded).toBe(false);
+    }
+  });
+
   it('encerramento pedido, one-shot que terminou e morte tardia não são falha de início', () => {
     const cases = [
       { requested: true, oneShot: false, now: NOW + 5_000 },
-      { requested: false, oneShot: true, now: NOW + 5_000 },
+      { requested: false, oneShot: true, exit: { exitCode: 0, signal: 0 }, now: NOW + 5_000 },
+      // Sem a saída da raiz não há prova de morte: o one-shot terminou.
+      { requested: false, oneShot: true, exit: null, now: NOW + 5_000 },
+      // Encerramento pedido pelo Nexus num one-shot também não é falha.
+      { requested: true, oneShot: true, exit: { exitCode: 1, signal: 0 }, now: NOW + 5_000 },
       { requested: false, oneShot: false, now: NOW + START_GRACE_MS + 1 },
+      { requested: false, oneShot: true, exit: { exitCode: 1, signal: 0 }, now: NOW + START_GRACE_MS + 1 },
     ];
     for (const end of cases) {
       resetPaneStartWatchdogForTests();

@@ -458,10 +458,20 @@ export type SessionInputTap = (
   data: string,
   origin: SessionInputOrigin,
 ) => void;
-/** Logical authority revocation starts before physical PTY exit is proven. */
+/** Saída da raiz do PTY, quando ela chegou antes de qualquer pedido de encerramento. */
+export interface SessionRootExit {
+  readonly exitCode: number;
+  readonly signal?: number;
+}
+/**
+ * Logical authority revocation starts before physical PTY exit is proven.
+ * F-792: `rootExit` vem preenchido quando o processo saiu sozinho (é o exit
+ * que abriu a terminação); num encerramento pedido ele ainda não existe.
+ */
 export type SessionTerminationTap = (
   sessionId: string,
   agent: OwnedAgentSessionInfo | null,
+  rootExit: SessionRootExit | null,
 ) => void;
 
 const dataTaps = new Set<SessionDataTap>();
@@ -1160,7 +1170,11 @@ function finalizeSession(
   if (!s) return;
   let pendingTermination = physicalTerminationFlights.get(sessionId);
   if (!pendingTermination || pendingTermination.session !== s) {
-    pendingTermination = ensurePhysicalTerminationFlight(sessionId, s);
+    // F-792: saída sozinha — os taps de terminação já recebem o código.
+    pendingTermination = ensurePhysicalTerminationFlight(sessionId, s, {
+      exitCode,
+      ...(signal === undefined ? {} : { signal }),
+    });
   }
   if (!pendingTermination.physicalTreeProven) {
     pendingTermination.rootExit ??= {
@@ -3706,6 +3720,7 @@ export const APP_SHUTDOWN_PTY_TERMINATION = Object.freeze({
 function ensurePhysicalTerminationFlight(
   sessionId: string,
   session: Session,
+  rootExit: SessionRootExit | null = null,
 ): PhysicalTerminationFlight {
   const existing = physicalTerminationFlights.get(sessionId);
   if (existing?.session === session) return existing;
@@ -3717,7 +3732,7 @@ function ensurePhysicalTerminationFlight(
       resolveExited = resolve;
     }),
     resolveExited: () => resolveExited(),
-    rootExit: null,
+    rootExit,
     physicalTreeProven: false,
     revocationPublished: true,
     attempt: null,
@@ -3727,6 +3742,7 @@ function ensurePhysicalTerminationFlight(
     terminationTaps,
     sessionId,
     session.agent ? cloneAgentInfo(session.agent) : null,
+    rootExit,
   );
   return flight;
 }
