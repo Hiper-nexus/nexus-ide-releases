@@ -63,3 +63,15 @@ Pin the version exactly in the manifest/lockfile (`package.json` without
 
 `{linguagem, framework, libs[{nome, versão}], justificativa ≤ 3 frases, fontes}` —
 one `fontes` registry URL per library, plus the versions you actually queried.
+
+## 5. Preserve the project decision
+
+Propose `.context/docs/stack-decision.md` with `nexus_context_draft_propose`:
+use `targetPath`, the complete decision as `content`, and real `sources` that
+the context tools can verify. Include the six constraints, chosen versions,
+registry URLs, rejected alternatives and verification commands. Never invent
+source hashes. The existing independent review/apply flow must accept the draft
+before it becomes project authority; never write `.context` directly.
+
+If your role cannot call the proposal tool, include the complete draft and its
+sources in your handoff to the Maestro. A short summary is not the record.

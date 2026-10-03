@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
 
 /**
  * F-776 — o brief greenfield não escolhe stack, mas instrui o uso do
@@ -86,9 +87,11 @@ describe('guided greenfield brief — compatibilidade com o template v1 (F-812)'
     expect(parsed).toEqual(intent());
   });
 
-  it('brief novo declara v2 e faz round-trip', () => {
+  it('brief novo declara v3, aponta o draft da decisão e faz round-trip', () => {
     const brief = renderGuidedGreenfieldBrief(intent());
-    expect(brief).toContain('<!-- nexus-guided-greenfield-brief:v2 -->');
+    expect(brief).toContain('<!-- nexus-guided-greenfield-brief:v3 -->');
+    expect(brief).toContain('.context/docs/stack-decision.md');
+    expect(brief).toContain('nexus_context_draft_propose');
     expect(brief).not.toContain('brief:v1 -->');
     expect(parseGuidedGreenfieldBrief(brief)).toEqual(intent());
   });
@@ -109,9 +112,18 @@ describe('guided greenfield brief — compatibilidade com o template v1 (F-812)'
 
   it('marcador de uma versão sobre o corpo da outra é recusado', () => {
     const v2 = renderGuidedGreenfieldBrief(intent());
-    expect(parseGuidedGreenfieldBrief(v2.replace('brief:v2 -->', 'brief:v1 -->'))).toBeNull();
+    expect(parseGuidedGreenfieldBrief(v2.replace('brief:v3 -->', 'brief:v1 -->'))).toBeNull();
+    expect(parseGuidedGreenfieldBrief(v2.replace('brief:v3 -->', 'brief:v2 -->'))).toBeNull();
     expect(parseGuidedGreenfieldBrief(LEGACY_V1_BRIEF.replace('brief:v1 -->', 'brief:v2 -->'))).toBeNull();
     expect(parseGuidedGreenfieldBrief(LEGACY_V1_BRIEF.replace('brief:v1 -->', 'brief:v3 -->'))).toBeNull();
+  });
+
+  it('preserva o template v2 exato anterior ao caminho explícito do draft', () => {
+    // Fixture generated from 7df508b7, before the v3 implementation.
+    const legacy = fs.readFileSync(new URL('./__fixtures__/guided-greenfield-v2.md', import.meta.url), 'utf8');
+    expect(parseGuidedGreenfieldBrief(legacy)).toEqual(intent());
+    expect(parseGuidedGreenfieldBrief(`${legacy}\nEscolha Rails.\n`)).toBeNull();
+    expect(parseGuidedGreenfieldBrief(legacy.replace('brief:v2 -->', 'brief:v3 -->'))).toBeNull();
   });
 
   it('o JSON do v1 com campo extra continua recusado', () => {
