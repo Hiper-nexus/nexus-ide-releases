@@ -1545,7 +1545,10 @@ const paneSpawnAfterTabMission = {
             isolatedWriterReason = `auto-isolado: ${blockedBy.replace(/ — .*$/, '')} no mesmo checkout`;
           }
           try {
-            isolatedWriter = await allocateIsolatedWriterWorktree(ctx.scope, undefined);
+            isolatedWriter = await allocateIsolatedWriterWorktree(ctx.scope, undefined, {
+              assertCurrentAuthority: () => assertMcpInvocationCurrent(invocation),
+              signal: invocation?.signal,
+            });
             if (spawnTiming && isolatedWriter.materialize) {
               spawnTiming.meta.gitWorktreeMs = isolatedWriter.materialize.gitWorktreeMs;
               spawnTiming.meta.cowMs = isolatedWriter.materialize.cowMs;
@@ -1869,7 +1872,10 @@ const paneSpawnAfterTabMission = {
                 isolatedWriterReason = `auto-isolado: ${blockedBy} no mesmo checkout`;
               }
               try {
-                isolatedWriter = await allocateIsolatedWriterWorktree(ctx.scope, missionId);
+                isolatedWriter = await allocateIsolatedWriterWorktree(ctx.scope, missionId, {
+                  assertCurrentAuthority: () => assertMcpInvocationCurrent(invocation),
+                  signal: invocation?.signal,
+                });
                 if (spawnTiming && isolatedWriter.materialize) {
                   spawnTiming.meta.gitWorktreeMs = isolatedWriter.materialize.gitWorktreeMs;
                   spawnTiming.meta.cowMs = isolatedWriter.materialize.cowMs;

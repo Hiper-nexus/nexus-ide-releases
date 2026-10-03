@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { ProjectExecutionScope } from "../../shared/types";
@@ -262,8 +263,14 @@ export class WorktreeManager {
   }
 
   async create(input: CreateWorktreeInput): Promise<WorktreeRecord> {
+    const assertCurrentAuthority = () => {
+      input.assertCurrentAuthority?.();
+      input.signal?.throwIfAborted();
+    };
+    assertCurrentAuthority();
     const requireClean = input.ownerKind !== "pane";
     const repository = await readRepositorySnapshotAsync(this.#asyncGit, input.scope, requireClean);
+    assertCurrentAuthority();
     const missionId = assertIdentifier(input.missionId, "missionId");
     const taskId = assertIdentifier(input.taskId, "taskId");
     const workerId = assertIdentifier(input.workerId, "workerId");
@@ -297,6 +304,7 @@ export class WorktreeManager {
     const now = this.#timestamp();
     const candidate = cloneRecord({
       ...(input.ownerKind ? { ownerKind: input.ownerKind } : {}),
+      reservationGeneration: randomUUID(),
       id: `worktree-${taskKey}`,
       scopeKey,
       projectId: input.scope.projectId,
@@ -357,9 +365,14 @@ export class WorktreeManager {
           );
         }
         if (existing.status === "ready" || existing.status === "queued") {
+          // Adopt legacy records once, without changing path/base or bindings.
+          const reused = existing.reservationGeneration ? existing : cloneRecord({
+            ...existing, reservationGeneration: randomUUID(),
+          });
           return {
-            records,
-            result: { record: existing, isNew: false, resurrected: false },
+            records: reused === existing ? records : records.map((record) =>
+              record.taskKey === taskKey ? reused : record),
+            result: { record: reused, isNew: false, resurrected: false },
           };
         }
         if (releasedByDeadOwner) {
@@ -379,6 +392,7 @@ export class WorktreeManager {
             // Reatribuição: no reroute o reclamante é OUTRO agente do roster;
             // no resume clássico é o mesmo worker e isto é um no-op.
             workerId,
+            reservationGeneration: candidate.reservationGeneration,
             status: "reserved" as const,
             failureReason: undefined,
             updatedAt: now,
@@ -435,9 +449,11 @@ export class WorktreeManager {
 
     if (!reservation.isNew) {
       await assertTaskWorktreeAsync(this.#asyncGit, reservation.record);
+      assertCurrentAuthority();
       const current = this.#snapshot(scopeKey).records.find((record) => record.taskKey === taskKey);
       if (!current || !["ready", "queued"].includes(current.status) ||
-          current.workerId !== workerId || current.baseSha !== reservation.record.baseSha) {
+          current.workerId !== workerId || current.baseSha !== reservation.record.baseSha ||
+          current.reservationGeneration !== reservation.record.reservationGeneration) {
         throw new WorktreeStateConflictError("worktree reservation changed during reuse");
       }
       return cloneRecord(current);
@@ -445,6 +461,7 @@ export class WorktreeManager {
 
     try {
       await assertRepositoryUnchangedAsync(this.#asyncGit, repository, requireClean);
+      assertCurrentAuthority();
       if (reservation.resurrected) {
         // The derived path and branch exist by design: the slot was released
         // without touching Git. Prove the exact physical identity instead of
@@ -469,6 +486,12 @@ export class WorktreeManager {
             branchExists,
           );
         }
+        assertCurrentAuthority();
+        const current = this.#snapshot(scopeKey).records.find((record) => record.taskKey === taskKey);
+        if (current?.status !== "reserved" ||
+            current.reservationGeneration !== reservation.record.reservationGeneration) {
+          throw new WorktreeStateConflictError("worktree reservation changed during creation");
+        }
         // CoW-aware materialization (APFS clonefile path when enabled; else git).
         const materialized = await materializeGitWorktree({
           repositoryRoot: repository.rootRealPath,
@@ -477,12 +500,17 @@ export class WorktreeManager {
           headSha: repository.headSha,
           git: this.#asyncGit,
         });
+        assertCurrentAuthority();
         input.onMaterialized?.(materialized);
+        assertCurrentAuthority();
         await assertTaskWorktreeAsync(this.#asyncGit, candidate);
       }
+      assertCurrentAuthority();
       await assertRepositoryUnchangedAsync(this.#asyncGit, repository, requireClean);
+      assertCurrentAuthority();
       return this.#transition(scopeKey, taskKey, (record) => {
-        if (record.status !== "reserved" || record.workerId !== workerId) {
+        if (record.status !== "reserved" || record.workerId !== workerId ||
+            record.reservationGeneration !== reservation.record.reservationGeneration) {
           throw new WorktreeStateConflictError("worktree reservation changed during creation");
         }
         return { ...record, status: "ready", updatedAt: this.#timestamp() };
@@ -491,7 +519,8 @@ export class WorktreeManager {
       try {
         this.#transition(scopeKey, taskKey, (record) => {
           // A close/reroute that happened during Git owns its terminal state.
-          if (record.status !== "reserved" || record.workerId !== workerId) return record;
+          if (record.status !== "reserved" || record.workerId !== workerId ||
+              record.reservationGeneration !== reservation.record.reservationGeneration) return record;
           return {
             ...record,
             status: "failed",
@@ -754,6 +783,7 @@ export class WorktreeManager {
       }
       return {
         ...record,
+        reservationGeneration: randomUUID(),
         status: "ready",
         taskHeadSha: undefined,
         integratedSha: undefined,
@@ -963,7 +993,8 @@ export class WorktreeManager {
       if (current.status !== "failed" || current.integratedSha !== undefined) {
         throw new WorktreeStateConflictError(`pane writer worktree is ${current.status}`);
       }
-      return { ...current, status: "ready", failureReason: undefined, updatedAt: this.#timestamp() };
+      return { ...current, reservationGeneration: randomUUID(), status: "ready",
+        failureReason: undefined, updatedAt: this.#timestamp() };
     });
   }
 

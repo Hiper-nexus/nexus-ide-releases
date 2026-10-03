@@ -30,6 +30,8 @@ import {
 } from "./prevc-reviewer-profile";
 import type { McpRegistry, McpToolDef } from "./mcp-protocol";
 import type { Mission } from "../../shared/orch-types";
+import { buildContextTools } from "./tools-context";
+import * as worktreeRuntime from "../runtime/worktree-runtime-registry";
 import { buildDomainTools } from "./tools-domain";
 import * as domainStores from "./project-domain-store-registry";
 import * as completion from "./civilian-delivery-completion";
@@ -3007,6 +3009,39 @@ describe("MCP dispatch effect safety", () => {
     const entries = readAuditLog(auditContext);
     expect(entries.map((entry) => entry.result)).toEqual(["intent", "error"]);
     expect(entries[1].invocation_id).toBe(entries[0].invocation_id);
+  });
+
+  it("F-764: worktree handler fences revoked invocation before task-running commit", async () => {
+    const caller = new AbortController();
+    const ctx = orchestratorMissionContext();
+    const update = vi.fn();
+    vi.spyOn(domainStores, 'getProjectDomainStores').mockReturnValue({
+      missions: { get: () => dispatchedMissionFixture().mission },
+      tasks: { list: () => [{ id: 'task-a' }], update },
+    } as never);
+    workflowRegistryMocks.getContextWorkflowService.mockReturnValue({
+      assertMutationAllowed: () => undefined,
+      getMissionWorkflow: () => ({ contract: null }),
+    });
+    vi.spyOn(worktreeRuntime, 'requireWorktreeRuntimeRegistry').mockReturnValue({
+      create: async () => {
+        await new Promise(resolve => setImmediate(resolve));
+        caller.abort('caller gone during create');
+        return { status: 'ready' };
+      },
+    } as never);
+    const tool = buildContextTools().find(item => item.name === 'nexus_worktree_create')!;
+    const result = await dispatchToolCall('ipc-renderer', registryWith(tool), tool.name, {
+      missionId: TEST_MISSION_ID, taskId: 'task-a', workerId: 'worker-a',
+      ownership: { files: ['src/a.ts'] },
+    }, ctx, {
+      ...workflowOptions({ confirm: async () => true }),
+      callerSignal: caller.signal, assertCurrentCaller: () => true,
+    });
+    expect(caller.signal.aborted).toBe(true);
+    expect(result).toMatchObject({ ok: false, error: 'session_authority_revoked' });
+    expect(update).not.toHaveBeenCalled();
+    expect(readAuditLog(auditContext).map(entry => entry.result)).toEqual(['intent', 'error']);
   });
 
   it("joins a same-tool warm bootstrap retry instead of denying prompt_queue_busy", async () => {

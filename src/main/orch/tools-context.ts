@@ -785,7 +785,17 @@ const worktreeCreateTool: McpToolDef = {
     } catch {
       // ownership expansion is advisory
     }
-    assertCurrentAuthority();
+    const assertCreateAuthority = () => {
+      assertCurrentAuthority();
+      assertMission(ctx, input.missionId);
+      const stores = getProjectDomainStores(ctx.scope);
+      assertMainTaskDispatcherAuthority(stores, input.missionId, 'nexus_worktree_create');
+      getContextWorkflowService(ctx.scope).assertMutationAllowed(input.missionId, 'nexus_worktree_create', {});
+      if (!stores.tasks.list(input.missionId).some((task) => task.id === input.taskId)) {
+        throw new Error('worktree task is outside the sealed Nexus mission plan');
+      }
+    };
+    assertCreateAuthority();
     const created = await requireWorktreeRuntimeRegistry().create({
       scope: ctx.scope,
       missionId: input.missionId,
@@ -793,7 +803,10 @@ const worktreeCreateTool: McpToolDef = {
       workerId: input.workerId,
       ownership,
       dependsOn: input.dependsOn,
+      assertCurrentAuthority: assertCreateAuthority,
+      signal: invocation?.signal,
     });
+    assertCreateAuthority();
     tasks.update(input.taskId, { status: 'running' });
     return Object.freeze({ ...created, ownershipExpanded });
   },

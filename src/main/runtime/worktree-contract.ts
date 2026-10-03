@@ -39,6 +39,8 @@ export interface WorktreeRecord {
    */
   readonly paneIds?: readonly string[];
   readonly sessionIds?: readonly string[];
+  /** Unique reservation attempt; absent on legacy records until reused/reclaimed. */
+  readonly reservationGeneration?: string;
   readonly id: string;
   readonly scopeKey: string;
   readonly projectId: string;
@@ -90,6 +92,9 @@ export interface CreateWorktreeInput {
   readonly workerId: string;
   readonly ownership: WorktreeOwnership;
   readonly dependsOn?: readonly WorktreeDependencyInput[];
+  /** Main-owned checkpoint: revalidate authority after async proofs, before effects. */
+  readonly assertCurrentAuthority?: () => void;
+  readonly signal?: AbortSignal;
   /**
    * F-215: callback com o resultado efêmero do materialize (método, dirs
    * CoW-copiados, tempos por etapa). Nunca persistido no registro durável —

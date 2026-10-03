@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { ProjectExecutionScope } from '../../shared/types';
-import type { WorktreeRecord } from '../runtime/worktree-contract';
+import type { CreateWorktreeInput, WorktreeRecord } from '../runtime/worktree-contract';
 import type { MaterializeWorktreeResult } from '../runtime/worktree-cow';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { tapSessionExit } from '../pty/pty-manager';
@@ -195,12 +195,16 @@ export function resetWorktreeSalvageSweepForTests(): void {
 export async function allocateIsolatedWriterWorktree(
   scope: ProjectExecutionScope,
   missionId: string | undefined,
+  authority: Pick<CreateWorktreeInput, 'assertCurrentAuthority' | 'signal'> = {},
 ): Promise<IsolatedWriterAllocation> {
+  authority.assertCurrentAuthority?.();
+  authority.signal?.throwIfAborted();
   const workerId = randomUUID();
   const registryKey = missionId ?? OPERATOR_HAND_WORKTREE_KEY;
   if (!missionId) scheduleOperatorHandGc(scope);
   let materialize: MaterializeWorktreeResult | undefined;
   const record = await requireWorktreeRuntimeRegistry().create({
+    ...authority,
     scope,
     missionId: registryKey,
     taskId: `pane-${workerId}`,

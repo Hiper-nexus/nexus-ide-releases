@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -5,6 +6,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
+  DEAD_OWNER_WORKTREE_RELEASE_MARKER,
   OwnershipOverlapError,
   OwnershipViolationError,
   ProcessGitRunner,
@@ -196,6 +198,148 @@ describe("WorktreeManager", () => {
     reusing = true;
     await expect(replayManager.create(input)).rejects.toThrow(/reservation.*changed/i);
     expect(replayManager.get(scope, "f764", "replay")?.status).toBe("failed");
+  });
+
+  it.each([false, true])("F-764: ended same-worker create cannot mutate a new reservation (late error=%s)", async (lateError) => {
+    const scope = projectScope();
+    const context = new AsyncLocalStorage<string>();
+    const real = new AsyncProcessGitRunner();
+    let second!: Promise<WorktreeRecord>;
+    let secondReads = 0;
+    let materialized = false;
+    let reserved!: () => void;
+    const secondReserved = new Promise<void>((resolve) => { reserved = resolve; });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const racing = new WorktreeManager({ runtimeRoot, stateStore, now: () => 1_700_000_000_000,
+      asyncGitRunner: { run: async (cwd, args, options) => {
+        if (context.getStore() === "second" && cwd === scope.rootRealPath && args.includes("--show-toplevel")) {
+          if (++secondReads === 2) { reserved(); await held; }
+        }
+        if (context.getStore() === "first" && materialized && cwd !== scope.rootRealPath) {
+          await secondReserved;
+          if (lateError) throw new Error("old attempt proof failed");
+        }
+        return real.run(cwd, args, options);
+      } },
+    });
+    const input = { scope, missionId: "aba", taskId: "same", workerId: "same-worker",
+      ownership: { files: ["src/aba.ts"], symbols: [], domains: [] } };
+    const first = context.run("first", () => racing.create({ ...input, onMaterialized: () => {
+      materialized = true;
+      racing.markFailed(scope, "aba", "same", DEAD_OWNER_WORKTREE_RELEASE_MARKER + " ended");
+      second = context.run("second", () => racing.create(input));
+      void second.catch(() => {});
+    } }));
+    // Settle the old call before releasing the new attempt's proof.
+    const result = await first.then((record) => ({ record, error: undefined }),
+      (error: unknown) => ({ record: undefined, error }));
+    const pending = racing.get(scope, "aba", "same");
+    release();
+    const successor = await second.then((record) => ({ record, error: undefined }),
+      (error: unknown) => ({ record: undefined, error }));
+    expect(result.error).toBeInstanceOf(Error);
+    expect(String(result.error)).toMatch(lateError ? /old attempt proof failed/ : /reservation.*changed/i);
+    expect(pending?.status).toBe("reserved");
+    expect(successor.error).toBeUndefined();
+    expect(successor.record?.status).toBe("ready");
+    expect(fs.existsSync(pending!.worktreePath)).toBe(true);
+  });
+
+  it.each(["reclaim", "retry"])("F-764: same-worker ready reuse rejects an ended and reopened generation (%s)", async (reopen) => {
+    const scope = projectScope();
+    const real = new AsyncProcessGitRunner();
+    let replay = false;
+    const racing = new WorktreeManager({ runtimeRoot, stateStore, now: () => 1_700_000_000_000,
+      asyncGitRunner: { run: async (cwd, args, options) => {
+        const result = await real.run(cwd, args, options);
+        if (replay && cwd !== scope.rootRealPath && args[0] === "status") {
+          replay = false;
+          racing.markFailed(scope, "aba", "reuse", DEAD_OWNER_WORKTREE_RELEASE_MARKER + " ended");
+          if (reopen === "reclaim") await racing.create(input);
+          else racing.reopenFailedForRetry(scope, "aba", "reuse", git(cwd, "rev-parse", "HEAD"));
+        }
+        return result;
+      } },
+    });
+    const input = { scope, missionId: "aba", taskId: "reuse", workerId: "same-worker",
+      ownership: { files: ["src/aba.ts"], symbols: [], domains: [] } };
+    const initial = await racing.create(input);
+    if (reopen === "retry") {
+      write("src/aba.ts", "export const retry = true;\n", initial.worktreePath);
+      git(initial.worktreePath, "add", "src/aba.ts");
+      git(initial.worktreePath, "commit", "-qm", "retry output");
+    }
+    replay = true;
+    await expect(racing.create(input)).rejects.toThrow(/reservation.*changed/i);
+    expect(racing.get(scope, "aba", "reuse")?.status).toBe("ready");
+  });
+
+  it.each(["initial", "branch", "materialized"])("F-764: revoked authority at %s cannot reserve/materialize/promote", async (phase) => {
+    const scope = projectScope();
+    const real = new AsyncProcessGitRunner();
+    let revoked = false;
+    let added = false;
+    const guarded = new WorktreeManager({ runtimeRoot, stateStore,
+      asyncGitRunner: { run: async (cwd, args, options) => {
+        const result = await real.run(cwd, args, options);
+        if ((phase === "initial" && args.includes("--show-toplevel")) ||
+            (phase === "branch" && args[0] === "show-ref")) revoked = true;
+        if (args[0] === "worktree" && args[1] === "add") added = true;
+        return result;
+      } },
+    });
+    await expect(guarded.create({ scope, missionId: "authority", taskId: "revoked", workerId: "worker",
+      ownership: { files: ["src/revoked.ts"], symbols: [], domains: [] },
+      assertCurrentAuthority: () => { if (revoked) throw new Error("session_authority_revoked"); },
+      onMaterialized: () => { if (phase === "materialized") revoked = true; },
+    } as Parameters<WorktreeManager["create"]>[0])).rejects.toThrow("session_authority_revoked");
+    const record = guarded.get(scope, "authority", "revoked");
+    expect(record?.status).toBe(phase === "initial" ? undefined : "failed");
+    expect(added).toBe(phase === "materialized");
+    if (phase === "materialized") {
+      expect(fs.existsSync(record!.worktreePath)).toBe(true);
+      expect(git(record!.worktreePath, "rev-parse", "HEAD")).toBe(record!.baseSha);
+    }
+  });
+
+  it("F-764: legacy generations migrate on reuse, persist across bindings, and rotate on reopen", async () => {
+    const scope = projectScope();
+    const input = { scope, missionId: "operator-hand", taskId: "pane-legacy", workerId: "legacy-worker",
+      ownerKind: "pane" as const, ownership: { files: [], symbols: [], domains: ["legacy"] } };
+    const created = await manager.create(input);
+    const { reservationGeneration: _generation, ...legacy } = created;
+    stateStore.overwrite(manager.scopeKey(scope), [legacy]);
+    expect(makeManager().get(scope, input.missionId, input.taskId)?.reservationGeneration).toBeUndefined();
+    const reused = await makeManager().create(input);
+    expect(reused.reservationGeneration).toEqual(expect.any(String));
+    const bound = manager.bindPaneWriter(scope, input.missionId, input.taskId, { paneId: "p", sessionId: "s" });
+    expect(bound.reservationGeneration).toBe(reused.reservationGeneration);
+    manager.markFailed(scope, input.missionId, input.taskId, "pane closed");
+    const reopened = makeManager().reopenPaneWriter(scope, input.missionId, input.taskId);
+    expect(reopened.reservationGeneration).not.toBe(reused.reservationGeneration);
+    expect(reopened.paneIds).toEqual(["p"]);
+    expect(reopened.sessionIds).toEqual(["s"]);
+    expect(reopened.worktreePath).toBe(created.worktreePath);
+    stateStore.overwrite(manager.scopeKey(scope), [{ ...reopened, reservationGeneration: "forged" }]);
+    expect(() => manager.get(scope, input.missionId, input.taskId)).toThrow("invalid worktree state record");
+  });
+
+  it("F-764: abort during initial Git proof leaves no reservation", async () => {
+    const scope = projectScope();
+    const real = new AsyncProcessGitRunner();
+    const controller = new AbortController();
+    const guarded = new WorktreeManager({ runtimeRoot, stateStore,
+      asyncGitRunner: { run: async (cwd, args, options) => {
+        const result = await real.run(cwd, args, options);
+        controller.abort(new Error("invocation cancelled"));
+        return result;
+      } },
+    });
+    await expect(guarded.create({ scope, missionId: "abort", taskId: "task", workerId: "w",
+      ownership: { files: ["abort.ts"], symbols: [], domains: [] }, signal: controller.signal,
+    })).rejects.toThrow("invocation cancelled");
+    expect(guarded.get(scope, "abort", "task")).toBeNull();
   });
 
   it("creates concurrent pane-owned branches from HEAD even with coordination WIP, and recovers reservations", async () => {

@@ -129,6 +129,27 @@ afterEach(async () => {
 });
 
 describe('Via Rápida isolated writers', () => {
+  it.each([false, true])('F-764: revoked creation cannot reserve or spawn an isolated writer (operator=%s)', async (operator) => {
+    const caller = new AbortController();
+    const current = operator
+      ? { ...ctx, role: 'user' as const, missionId: undefined, sessionId: 'op-session' }
+      : ctx;
+    const create = registry.create.bind(registry);
+    const spy = vi.spyOn(registry, 'create').mockImplementation(async (input) => {
+      await new Promise(resolve => setImmediate(resolve));
+      caller.abort(new Error('session_authority_revoked'));
+      return create(input);
+    });
+    try {
+      await expect(paneSpawnTool.handler({ adapterId: 'codex', ...(operator ? {} : { agentName: 'Executor' }), isolatedWriter: true }, current,
+        { signal: caller.signal })).rejects.toThrow('session_authority_revoked');
+      expect(h.spawn).not.toHaveBeenCalled();
+      expect(registry.listMission(ctx.scope, operator ? OPERATOR_HAND_WORKTREE_KEY : ctx.missionId!)).toHaveLength(0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('uses the target mission root even when its caller is currently in another tab worktree', async () => {
     ctx.executionScope = { ...ctx.scope, rootRealPath: path.join(temp, 'another-tab') };
     await paneSpawnTool.handler({ agentName: 'Executor' }, ctx);

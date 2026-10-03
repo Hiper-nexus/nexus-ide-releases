@@ -139,6 +139,9 @@ function validateRecord(
     !isOptionalSha(record.taskHeadSha) ||
     !isOptionalSha(record.integratedSha) ||
     !isOptionalFailureReason(record.failureReason) ||
+    (record.reservationGeneration !== undefined &&
+      (typeof record.reservationGeneration !== 'string' ||
+        !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(record.reservationGeneration))) ||
     !isOptionalPaneBinding(record.paneIds, record.ownerKind) ||
     !isOptionalPaneBinding(record.sessionIds, record.ownerKind) ||
     !Array.isArray(dependencies) ||

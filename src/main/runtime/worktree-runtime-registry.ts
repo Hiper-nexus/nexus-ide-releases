@@ -328,6 +328,8 @@ export class WorktreeRuntimeRegistry {
   }
 
   async create(input: CreateWorktreeInput): Promise<WorktreeRecord> {
+    input.assertCurrentAuthority?.();
+    input.signal?.throwIfAborted();
     const runtime = this.forScope(input.scope);
     // `forScope` memoizes, so observe both stale-record lanes again before
     // the ownership-overlap check evaluates them.
