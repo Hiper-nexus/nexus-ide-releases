@@ -55,6 +55,8 @@ function safeInlineJson(payload: GuidedGreenfieldBriefPayload): string {
  * Main-owned, deterministic source projection for a physically empty guided
  * workspace. It records only the approved intent and names every absent
  * product/technical dimension as unknown; it does not select a stack.
+ * The stack decision belongs to the stack-advisor skill — the brief points
+ * at it and records the decision, without creating a new authority or UI.
  */
 export function renderGuidedGreenfieldBrief(
   input: GuidedGreenfieldApprovedIntent,
@@ -79,6 +81,10 @@ export function renderGuidedGreenfieldBrief(
     "- Target users, domain vocabulary, business model, pricing, billing, tenancy, legal and regulatory requirements are unknown unless stated in the approved intent.",
     "- Language, runtime, framework, dependencies, architecture, data model, deployment target and verification commands are not selected yet.",
     "- Any product or technical choice not present in the exact approved intent remains undecided and requires governed implementation evidence.",
+    "",
+    "## Stack decision (not selected here)",
+    "",
+    "- This brief does not select a stack. Decide it through the `stack-advisor` skill and record the outcome as governed implementation evidence.",
     "",
   ].join("\n");
   if (Buffer.byteLength(content, "utf8") > MAX_BRIEF_BYTES) {
