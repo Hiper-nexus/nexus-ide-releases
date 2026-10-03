@@ -433,7 +433,7 @@ describe('builtin adapters', () => {
     expect(claude?.models?.list?.[0]).toBe('claude-opus-5-5');
     expect(claude?.models?.list).toContain('claude-opus-5-5');
     expect(claude?.models?.list).toContain('claude-sonnet-5-5');
-    expect(claude?.models?.default).toBe('claude-sonnet-5');
+    expect(claude?.models?.default).toBe('claude-sonnet-5-5');
   });
 
   it('abre Codex no melhor modelo GA em vez de cair no default nativo 5.5', () => {
@@ -1010,4 +1010,3 @@ describe('F-217 — default do pane sobe para o mais novo da linha descoberto pe
     expect(applyNewestModelLineDefault(discovered, flatCatalog).models.default).toBe('');
   });
 });
-
