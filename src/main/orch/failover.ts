@@ -478,6 +478,30 @@ function quotaEntryFor(
   }
 }
 
+/**
+ * F-775: pior janela MEDIDA da conta exausta (label + resetsAt) para o pack
+ * de continuidade. Sem snapshot ou sem janela conhecida, devolve undefined —
+ * o pack nunca inventa reset.
+ */
+function measuredLimitWindow(
+  adapterId: string,
+  accountId: string | undefined,
+): { label: string; resetsAt: number | null } | undefined {
+  if (!accountId) return undefined;
+  const entry = quotaEntryFor(adapterId, accountId);
+  if (!entry?.windows?.length) return undefined;
+  let worst = entry.windows[0];
+  for (const w of entry.windows) {
+    const a = w.usedRatio ?? -1;
+    const b = worst.usedRatio ?? -1;
+    if (a > b) worst = w;
+  }
+  return {
+    label: worst.label,
+    resetsAt: worst.resetsAt != null ? worst.resetsAt : null,
+  };
+}
+
 /** Prefer freer cota among eligible accounts when fleet snapshot exists. */
 function quotaScoresFor(adapterId: string): Map<string, number> | undefined {
   try {
@@ -789,13 +813,21 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
   if (!authority.owner) {
     let respawned = false;
     try {
+      // F-775: o pack de continuidade leva a janela/reset medidos da conta
+      // exausta (quando o snapshot tem) para o agente novo saber o horário.
+      const limitWindowInfo = measuredLimitWindow(adapterId, fromAccountId);
       respawned = await respawnMainOwnedPaneWithAccount({
         paneId,
         sessionId: authority.sessionId,
         adapterId,
         toAccountId: next.id,
+        toAccountLabel: next.label,
         fromAccountLabel: fromLabel,
         reason: hit.reason,
+        limitKind: hit.kind,
+        limitWindow: limitWindowInfo?.label ?? null,
+        limitResetsAt: limitWindowInfo?.resetsAt ?? nextUnblockAtMs ?? null,
+        limitCooldownMs: hit.cooldownMs,
       });
     } catch (error) {
       console.warn(
