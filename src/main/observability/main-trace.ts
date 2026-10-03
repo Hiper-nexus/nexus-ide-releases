@@ -1,137 +1,90 @@
-/**
- * main.trace.ndjson — o log persistido do processo main (campanha 0.50, A7;
- * doutrina Orca `observability/local-file-sink`): o app empacotado descarta
- * o stdout, então TODO pós-mortem noturno era cego. Este sink grava eventos
- * estruturados em `userData/logs/main.trace.ndjson`, best-effort e
- * NUNCA lançando — instrumentação não pode derrubar o que instrumenta.
- */
-
-import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
+/** Bounded Main diagnostics. File IO and rotation never run synchronously on the caller. */
 import { join } from 'node:path';
+import { TraceFileSink } from './trace-file-sink';
 
-/** Teto do arquivo corrente antes de girar (5 MB). */
 export const TRACE_ROTATION_BYTES = 5 * 1024 * 1024;
-/** Gerações rotacionadas mantidas (main.trace.ndjson.1 … .3). */
 export const TRACE_ROTATION_GENERATIONS = 3;
-
 const SENSITIVE_KEY_RE = /key|token|secret|password|authorization|bearer|credential/i;
 
-/** Redige recursivamente valores de chaves sensíveis (nunca lança). */
-export function redactSecrets(value: unknown, depth = 0): unknown {
-  if (depth > 6 || value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) {
-    return value.map((item) => redactSecrets(item, depth + 1));
-  }
+/** Bounded redaction also handles cycles and excessive depth without exposing their leaves. */
+export function redactSecrets(value: unknown, depth = 0, budget = { left: 256 }, seen = new WeakSet<object>()): unknown {
+  if (--budget.left < 0 || depth > 6) return '[truncated]';
+  if (typeof value === 'string') return value.length > 4096 ? `${value.slice(0, 4096)}[truncated]` : value;
+  if (value === null || typeof value !== 'object') return value;
+  if (seen.has(value)) return '[circular]';
+  seen.add(value);
+  if (Array.isArray(value)) return value.slice(0, 64).map(item => redactSecrets(item, depth + 1, budget, seen));
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    out[k] = SENSITIVE_KEY_RE.test(k) ? '[redacted]' : redactSecrets(v, depth + 1);
+  let keys = 0;
+  for (const key in value) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+    if (++keys > 64 || budget.left <= 0) { out.truncated = true; break; }
+    out[key] = SENSITIVE_KEY_RE.test(key) ? '[redacted]' : redactSecrets((value as Record<string, unknown>)[key], depth + 1, budget, seen);
   }
   return out;
 }
 
-/** Linha NDJSON determinística (testável sem I/O). */
-export function formatTraceLine(
-  event: Record<string, unknown>,
-  at: number,
-): string {
+export function formatTraceLine(event: Record<string, unknown>, at: number): string {
   return `${JSON.stringify({ ...event, at })}\n`;
 }
+export function shouldRotate(sizeBytes: number): boolean { return sizeBytes >= TRACE_ROTATION_BYTES; }
 
-/** Decide rotação por tamanho (testável sem I/O). */
-export function shouldRotate(sizeBytes: number): boolean {
-  return sizeBytes >= TRACE_ROTATION_BYTES;
-}
-
-let traceDir: string | null = null;
-let tracePath: string | null = null;
-let lastErrorLoggedAt = 0;
+const recent: Readonly<Record<string, string | number | boolean>>[] = [];
+const sinks = new Map<string, TraceFileSink>();
 let directoryOverride: string | null = null;
-
-/**
- * Diretório explícito (testes/boot). Sem override, resolve pelo
- * app.getPath('userData') do Electron — no main process ele sempre existe;
- * fora dele (testes puros) o trace no-op silenciosamente.
- */
-export function setTraceDirectory(dir: string | null): void {
-  directoryOverride = dir;
-  traceDir = null;
-  tracePath = null;
-}
-
+export function setTraceDirectory(dir: string | null): void { directoryOverride = dir; }
 function resolveUserDataDir(): string | null {
   if (directoryOverride) return directoryOverride;
   try {
-    // Dynamic require: mantém o módulo importável em contexto sem Electron.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const electron = require('electron') as typeof import('electron');
     return electron.app?.getPath?.('userData') ?? null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
-
-function ensurePaths(): { dir: string; file: string } | null {
-  if (traceDir && tracePath) return { dir: traceDir, file: tracePath };
-  try {
-    const root = resolveUserDataDir();
-    if (!root) return null;
-    const dir = join(root, 'logs');
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    traceDir = dir;
-    tracePath = join(dir, 'main.trace.ndjson');
-    return { dir, file: tracePath };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Caminho do trace corrente (sem criar o arquivo). Quem lê o trace — o
- * diagnóstico do reporte de problema — resolve por aqui em vez de repetir a
- * regra de `userData/logs`.
- */
 export function getTraceFilePath(): string | null {
-  return ensurePaths()?.file ?? null;
+  const root = resolveUserDataDir();
+  return root ? join(root, 'logs', 'main.trace.ndjson') : null;
 }
 
-function rotate(file: string): void {
-  try {
-    for (let i = TRACE_ROTATION_GENERATIONS - 1; i >= 1; i -= 1) {
-      const from = `${file}.${i}`;
-      const to = `${file}.${i + 1}`;
-      if (existsSync(from)) renameSync(from, to);
-    }
-    if (existsSync(file)) renameSync(file, `${file}.1`);
-  } catch {
-    // Rotação falhou: segue gravando no corrente — melhor que perder o trace.
+/** Long-lived history and hang context contain labels, counters and Main IDs only. */
+export function traceContextEvent(event: Record<string, unknown>, at: number): Readonly<Record<string, string | number | boolean>> {
+  const kind = typeof event.kind === 'string' && /^[a-zA-Z][a-zA-Z0-9:_-]{0,95}$/.test(event.kind) ? event.kind : 'event';
+  const out: Record<string, string | number | boolean> = { kind, at };
+  for (const key of ['sessionId', 'paneId', 'missionId', 'taskId', 'workerId']) {
+    const value = event[key];
+    if (typeof value === 'string' && /^(?:[a-f0-9-]{16,64}|(?:pty|pane|session|mission|task|worker)-[a-z0-9-]{1,96})$/i.test(value)) out[key] = value;
   }
+  for (const key of ['adapterId', 'phase', 'status', 'name', 'origin', 'signal']) {
+    const value = event[key];
+    if (typeof value === 'string' && /^[a-z][a-z0-9:_-]{0,63}$/i.test(value)) out[key] = value;
+  }
+  for (const key of ['durationMs', 'elapsedMs', 'windowMs', 'p50Ms', 'p99Ms', 'maxMs', 'liveAgents', 'bytes', 'count', 'code', 'exitCode', 'signal', 'pendingBytes', 'highwaterBytes', 'dropped']) {
+    const value = event[key];
+    if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
+  }
+  return Object.freeze(out);
 }
+export function recentTraceContext(): readonly Readonly<Record<string, string | number | boolean>>[] { return recent.slice(); }
+export function mainTraceStatus() {
+  return [...sinks.values()].reduce((total, sink) => {
+    const stats = sink.stats();
+    return { queuedBytes: total.queuedBytes + stats.queuedBytes, dropped: total.dropped + stats.dropped, failed: total.failed || stats.failed };
+  }, { queuedBytes: 0, dropped: 0, failed: false });
+}
+export async function flushMainTrace(): Promise<void> { await Promise.all([...sinks.values()].map(sink => sink.flush())); }
 
-/**
- * Grava um evento no trace. Fire-and-forget, síncrono de propósito (linhas
- * pequenas, append atômico em APEND — o custo é desprezível e a durabilidade
- * do caminho de quit não depende de flush pendente). Falhas viram warn
- * THROTTLED: um disco cheio não pode virar spam de log a cada evento.
- */
+const LIFECYCLE_KIND = /^(?:(?:pty|pane|worker|agent|agent-pty|mission)-(?:spawn|exit|close|terminate|died|start|stop|created|ended|failed)|main-thread-hang|app-shutdown|exact-resume-forgotten)/;
 export function trace(event: Record<string, unknown>): void {
   try {
-    const paths = ensurePaths();
-    if (!paths) return;
-    try {
-      if (shouldRotate(statSync(paths.file).size)) rotate(paths.file);
-    } catch {
-      // Arquivo ainda não existe: sem rotação.
-    }
-    appendFileSync(
-      paths.file,
-      formatTraceLine(redactSecrets(event) as Record<string, unknown>, Date.now()),
-      'utf8',
-    );
-  } catch (error) {
-    const now = Date.now();
-    if (now - lastErrorLoggedAt > 60_000) {
-      lastErrorLoggedAt = now;
-      console.warn('[main-trace] gravação falhou (throttled):', error);
-    }
-  }
+    const at = Date.now();
+    const context = traceContextEvent(event, at);
+    recent.push(context);
+    if (recent.length > 128) recent.shift();
+    const root = resolveUserDataDir();
+    if (!root) return;
+    const dir = join(root, 'logs');
+    let sink = sinks.get(dir);
+    if (!sink) { sink = new TraceFileSink(dir); sinks.set(dir, sink); }
+    sink.enqueue(formatTraceLine(redactSecrets(event) as Record<string, unknown>, at), at,
+      LIFECYCLE_KIND.test(String(context.kind)) ? formatTraceLine(context, at) : undefined);
+  } catch { /* Diagnostics never throw into product work. */ }
 }

@@ -145,7 +145,7 @@ export interface HangProfileFrame {
 
 /** Linhas que a worker grava em `main-hang.ndjson` (e repassa ao main). */
 export type HangWatchdogRecord =
-  | (HangMarker & { readonly eventLoop: unknown })
+  | (HangMarker & { readonly eventLoop: unknown; readonly runtimeContext?: unknown })
   | {
       readonly kind: 'main-thread-hang-profile';
       readonly appVersion: string;

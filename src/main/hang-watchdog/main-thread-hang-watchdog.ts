@@ -48,6 +48,8 @@ export interface StartHangWatchdogOptions {
   readonly tuning?: HangWatchdogTuning;
   /** Intervalo do heartbeat do main (padrão HANG_WATCHDOG_HEARTBEAT_MS). */
   readonly heartbeatMs?: number;
+  /** Bounded sanitized Main snapshot, retained by the worker if Main stops responding. */
+  readonly runtimeContext?: () => object;
   /**
    * Cada linha que a worker grava no `main-hang.ndjson`. Chega quando o main
    * volta a processar mensagens — é o caminho para o `main.trace.ndjson`.
@@ -116,10 +118,14 @@ export function startMainThreadHangWatchdog(
       }
     };
     // Primeiro heartbeat na hora: a medição começa com a worker, não 5 s depois.
-    post({ type: 'heartbeat', at: Date.now() });
-    const heartbeat = setInterval(periodicCallback('main-heartbeat', () => {
+    const sendHeartbeat = () => {
       post({ type: 'heartbeat', at: Date.now() });
-    }, { cadenceMs: heartbeatMs, timeoutMs: Math.max(1000, heartbeatMs) }), heartbeatMs);
+      try { if (options.runtimeContext) post({ type: 'runtime-context', context: options.runtimeContext() }); }
+      catch { /* Snapshot failure never suppresses liveness. */ }
+    };
+    sendHeartbeat();
+    const heartbeat = setInterval(periodicCallback('main-heartbeat', sendHeartbeat,
+      { cadenceMs: heartbeatMs, timeoutMs: Math.max(1000, heartbeatMs) }), heartbeatMs);
     heartbeat.unref?.();
     const stop = async (): Promise<void> => {
       clearInterval(heartbeat);

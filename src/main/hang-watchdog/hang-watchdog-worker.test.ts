@@ -260,6 +260,9 @@ describe('createHangWatchdog (máquina de estados da worker)', () => {
     const h = harness({}, inspector);
     h.watchdog.handleMessage({ type: 'heartbeat', at: Date.now() });
     h.watchdog.handleMessage({ type: 'event-loop', summary: { p99Ms: 420, maxMs: 1800 } });
+    const runtimeContext = { sampledAt: Date.now(), events: [{ kind: 'agent-pty-exit' }],
+      periodic: { tasks: [{ name: 'delegation-supervisor', running: 1 }] }, analysis: { outputBytesPerSecond: 5_000_000 } };
+    h.watchdog.handleMessage({ type: 'runtime-context', context: runtimeContext });
 
     await runChecks(h.watchdog, 1_000);
     expect(h.records()).toEqual([]);
@@ -284,6 +287,7 @@ describe('createHangWatchdog (máquina de estados da worker)', () => {
       'Profiler.stop',
     ]);
     expect(inspector.calls[1]?.[1]).toEqual({ interval: 500 });
+    expect(h.records().find(record => record.kind === 'main-thread-hang')?.runtimeContext).toEqual(runtimeContext);
     expect(inspector.session.disconnect).toHaveBeenCalledTimes(1);
     const profileRecord = h.records().find((r) => r.kind === 'main-thread-hang-profile');
     expect(profileRecord).toMatchObject({

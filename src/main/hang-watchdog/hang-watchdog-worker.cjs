@@ -179,6 +179,7 @@ function createHangWatchdog(deps) {
   let lastHeartbeatAt = null;
   let lastCheckAt = null;
   let eventLoop = null;
+  let runtimeContext = null;
   let episode = null;
   let captureInFlight = false;
 
@@ -380,6 +381,10 @@ function createHangWatchdog(deps) {
     if (message.type === 'event-loop' && message.summary && typeof message.summary === 'object') {
       eventLoop = message.summary;
     }
+    if (message.type === 'runtime-context' && message.context && typeof message.context === 'object') {
+      try { if (JSON.stringify(message.context).length <= 65_536) runtimeContext = message.context; }
+      catch { /* Ignore malformed diagnostics. */ }
+    }
   }
 
   function check() {
@@ -408,6 +413,7 @@ function createHangWatchdog(deps) {
           lastHeartbeatAt,
           detectedAt: now,
           eventLoop,
+          runtimeContext,
         },
         true,
       );

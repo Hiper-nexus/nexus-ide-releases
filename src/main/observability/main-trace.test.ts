@@ -4,11 +4,13 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   formatTraceLine,
+  flushMainTrace,
   getTraceFilePath,
   redactSecrets,
   setTraceDirectory,
   shouldRotate,
   trace,
+  traceContextEvent,
 } from './main-trace';
 
 describe('formatTraceLine', () => {
@@ -51,11 +53,12 @@ describe('shouldRotate', () => {
 describe('getTraceFilePath', () => {
   afterEach(() => setTraceDirectory(null));
 
-  it('aponta para o arquivo que o trace realmente grava', () => {
+  it('aponta para o arquivo que o trace realmente grava', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-trace-path-'));
     try {
       setTraceDirectory(dir);
       trace({ kind: 'path-probe' });
+      await flushMainTrace();
       const file = getTraceFilePath();
       expect(file).toBe(path.join(dir, 'logs', 'main.trace.ndjson'));
       expect(fs.readFileSync(file as string, 'utf8')).toContain('path-probe');
@@ -68,5 +71,14 @@ describe('getTraceFilePath', () => {
     setTraceDirectory(null);
     // Fora do Electron (vitest) o `electron` não expõe `app.getPath`.
     expect(getTraceFilePath()).toBeNull();
+  });
+});
+
+describe('long-lived trace context', () => {
+  it('excludes prompts, paths, credentials and arbitrary identifiers', () => {
+    const event = traceContextEvent({ kind: 'pty-exit', sessionId: 'pty-example-1',
+      prompt: 'private input', cwd: '/private/account', apiKey: 'secret', reason: 'raw report',
+      workerId: '/private/file', durationMs: 12 }, 42);
+    expect(event).toEqual({ kind: 'pty-exit', sessionId: 'pty-example-1', durationMs: 12, at: 42 });
   });
 });

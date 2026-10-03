@@ -112,6 +112,9 @@ try {
 // Main thread vigiada (F-764). O handle fica no módulo: o monitor de
 // event-loop alimenta a linha de travamento com o "como estava antes".
 let hangWatchdog: HangWatchdogHandle | null = null;
+configurePeriodicTaskSlowSink(diagnostic => {
+  if (diagnostic.name !== 'event-loop-monitor') trace({ kind: 'periodic-task-slow', ...diagnostic });
+});
 try {
   const hangProbe = isSmokeHangProbeRequested({
     smokeTest: isCurrentProcessSmokeTest(),
@@ -124,6 +127,7 @@ try {
     hangWatchdog = startMainThreadHangWatchdog({
       logsDir: path.join(app.getPath("userData"), "logs"),
       version: app.getVersion(),
+      runtimeContext: sampleHangRuntimeContext,
       ...(hangProbe
         ? { tuning: SMOKE_HANG_PROBE_TUNING, heartbeatMs: SMOKE_HANG_PROBE_HEARTBEAT_MS }
         : {}),
@@ -479,7 +483,9 @@ import {
   isAppQuitAuthorized,
   revokeAppQuitAuthorization,
 } from "./close-authorization";
-import { trace } from "./observability/main-trace";
+import { trace, flushMainTrace } from "./observability/main-trace";
+import { configurePeriodicTaskSlowSink } from './observability/periodic-task';
+import { sampleHangRuntimeContext } from './hang-watchdog/runtime-context';
 import {
   startMainThreadHangWatchdog,
   type HangWatchdogHandle,
@@ -1577,6 +1583,7 @@ function shutdown(): Promise<void> {
         adapterId: sessionAdapterId(sessionId) ?? "unknown",
       })),
     });
+    await flushMainTrace();
     shutdownComplete = true;
     if (isCurrentProcessSmokeTest()) {
       // Reader-visible release evidence: the app itself reached the end of the
