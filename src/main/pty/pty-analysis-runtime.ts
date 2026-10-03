@@ -7,6 +7,7 @@ import type { AnalysisBinding, AnalysisConsumer, AnalysisFence, AnalysisInput, A
 
 let enabled = false;
 let worker: Worker | null = null;
+let physicalStop: Promise<void> = Promise.resolve();
 let ready = false;
 let pending: AnalysisInput | null = null;
 let deadline: ReturnType<typeof setTimeout> | null = null;
@@ -25,8 +26,10 @@ function stopDeadline() { if (deadline) clearTimeout(deadline); deadline = null;
 function fail(reason: string) {
   stopDeadline(); const old = worker; worker = null; ready = false; pending = null;
   if (reason === 'work-timeout' && riskyManifest) quarantinedManifests.add(riskyManifest);
-  failures.push(Date.now()); riskyManifest = null;
-  analysisClient.fail(reason); void old?.terminate();
+  if (reason !== 'shutdown') failures.push(Date.now()); riskyManifest = null;
+  analysisClient.fail(reason);
+  if (old) { physicalStop = Promise.all([physicalStop, old.terminate()]).then(() => {}); void physicalStop.catch(() => {}); }
+  return physicalStop;
 }
 function armDeadline(ms: number, reason: string) {
   stopDeadline(); deadline = setTimeout(() => fail(reason), ms); deadline.unref?.();
@@ -99,7 +102,7 @@ export function subscribePtyAnalysis(consumer: AnalysisConsumer, callback: (id: 
   return analysisClient.subscribe(consumer, callback, config);
 }
 export function flushPtyAnalysis(id: string): Promise<boolean> { return analysisClient.barrier(id); }
-export function shutdownPtyAnalysis() { fail('shutdown'); }
+export async function shutdownPtyAnalysis(): Promise<void> { enabled = false; await fail('shutdown'); }
 
 /** Per-session finite watch. Watch ids fence cancellation/re-arm independently
  * of the worker subscription's generation, so simultaneous pastes are safe. */

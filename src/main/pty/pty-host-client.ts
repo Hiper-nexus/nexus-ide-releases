@@ -69,9 +69,13 @@ export function createRealPtyHost(): PtyHost {
 }
 
 /** Kill the host on app quit. Its death takes every child PTY with it. */
-export function shutdownPtyHost(): void {
-  shutdownPtyAnalysis();
-  const c = child;
-  child = null;
-  c?.kill();
+export async function shutdownPtyHost(): Promise<void> {
+  const analysisStopped = shutdownPtyAnalysis();
+  const c = child; child = null;
+  const hostStopped = c ? new Promise<void>((resolve, reject) => {
+    c.once('exit', () => resolve());
+    if (!c.kill()) reject(new Error('PTY host stop could not be signalled'));
+  }) : Promise.resolve();
+  // Both process lifetimes physically settle before Main closes stores.
+  await Promise.all([analysisStopped, hostStopped]);
 }

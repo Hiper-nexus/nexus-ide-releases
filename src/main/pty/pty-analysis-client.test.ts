@@ -74,6 +74,14 @@ describe('ordered off-Main analysis', () => {
     expect(seen).toHaveLength(1);
   });
 
+  it('exposes bounded per-session byte diagnostics without terminal content', () => {
+    const { client, ack } = fixture(); client.bind('s', {}); ack(); client.data('s', 'secret é'); ack();
+    const diagnostics = client.diagnostics();
+    expect(diagnostics.sessions).toEqual([{ sessionId: 's', status: 'active', pendingBytes: 0, totalAdmittedBytes: 9, totalAckedBytes: 9 }]);
+    expect(JSON.stringify(diagnostics)).not.toContain('secret');
+    client.bind('s', {}); ack(); expect(client.diagnostics().sessions[0].totalAckedBytes).toBe(9);
+  });
+
   it('hard bounds held-ack queues and declares degraded without a synchronous text fallback', () => {
     const { client, pauses, ack } = fixture();
     client.bind('s', {}); ack();

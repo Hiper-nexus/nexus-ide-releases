@@ -6,7 +6,7 @@ import {
 
 type InputBody<T = AnalysisInput> = T extends AnalysisFence ? Omit<T, keyof AnalysisFence> : never;
 interface Session {
-  generation: number; seq: number; lastDataSeq: number; accepted: number; queue: AnalysisInput[];
+  totalAdmitted: number; totalAcked: number; generation: number; seq: number; lastDataSeq: number; accepted: number; queue: AnalysisInput[];
   bytes: number; status: 'active' | 'sealed' | 'degraded' | 'terminated';
   paused: boolean; text: string; latest: Map<AnalysisConsumer, { value: unknown; fence: AnalysisFence }>; evidence: Map<AnalysisConsumer, unknown[]>;
 }
@@ -37,7 +37,7 @@ export class PtyAnalysisClient {
   bind(id: string, binding: AnalysisBinding): number {
     const prior = this.#sessions.get(id);
     if (prior) { this.deps.acknowledged?.(id, prior.bytes); this.#discard(id, prior); }
-    const session: Session = { generation: ++this.#generation, seq: 0, lastDataSeq: 0, accepted: 0,
+    const session: Session = { totalAdmitted: prior?.totalAdmitted ?? 0, totalAcked: prior?.totalAcked ?? 0, generation: ++this.#generation, seq: 0, lastDataSeq: 0, accepted: 0,
       queue: [], bytes: 0, status: this.#degraded ? 'degraded' : 'active', paused: false, text: '', latest: new Map(), evidence: new Map() };
     this.#sessions.set(id, session);
     this.#enqueue(id, { kind: 'bind', binding });
@@ -68,7 +68,7 @@ export class PtyAnalysisClient {
       if (end < data.length && data.charCodeAt(end - 1) >= 0xd800 && data.charCodeAt(end - 1) <= 0xdbff) end--;
       const part = data.slice(start, end);
       const partBytes = Buffer.byteLength(part);
-      s.bytes += partBytes; this.#bytes += partBytes; this.#admitted += partBytes;
+      s.bytes += partBytes; this.#bytes += partBytes; this.#admitted += partBytes; s.totalAdmitted += partBytes;
       this.#enqueue(id, { kind: 'data', data: part, endOfChunk: end === data.length });
       start = end;
     }
@@ -135,7 +135,7 @@ export class PtyAnalysisClient {
     if (ack) {
       const bytes = flight.kind === 'data' ? Buffer.byteLength(flight.data) : 0;
       if (r.ackBytes !== bytes) return false;
-      this.#flight = null; s.bytes -= bytes; this.#bytes -= bytes; this.#acked += bytes;
+      this.#flight = null; s.bytes -= bytes; this.#bytes -= bytes; this.#acked += bytes; s.totalAcked += bytes;
       this.deps.acknowledged?.(r.sessionId, bytes);
       if (s.bytes < ANALYSIS_SESSION_BYTES / 2 && s.status === 'active') this.#pause(r.sessionId, s, false);
     }
@@ -160,6 +160,11 @@ export class PtyAnalysisClient {
       this.deps.acknowledged?.(id, s.bytes); this.#discard(id, s); this.#pause(id, s, false);
     }
     this.deps.trace?.({ kind: 'pty-analysis-degraded', workerEpoch: this.#epoch, reason });
+  }
+  diagnostics() {
+    const sessions = [...this.#sessions.entries()].sort(([, a], [, b]) => Number(b.status === 'active') - Number(a.status === 'active')).slice(0, 64)
+      .map(([sessionId, s]) => ({ sessionId, status: s.status, pendingBytes: s.bytes, totalAdmittedBytes: s.totalAdmitted, totalAckedBytes: s.totalAcked }));
+    return { metrics: this.metrics(), sessions };
   }
   recoverFreshSessions(): void { this.#degraded = false; }
   metrics() { return { degradedSessions: [...this.#sessions.values()].filter((s) => s.status === 'degraded').length, workerEpoch: this.#epoch, pendingBytes: this.#bytes, inFlight: this.#flight !== null,
