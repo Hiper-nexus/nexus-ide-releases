@@ -124,6 +124,17 @@ const snapshotPaneViewSchema = z
   })
   .strict();
 
+/**
+ * F-777: quem já entregou handoff nesta missão. Pinta o cabo de Entrega e
+ * mantém no grafo, com o estado da entrega, o helper cujo pane já fechou.
+ */
+const snapshotDeliveryViewSchema = z
+  .object({
+    agentId: missionEdgeSchema.shape.sourceAgentId,
+    state: z.enum(['done', 'failed', 'blocked']),
+  })
+  .strict();
+
 /** Worktree como o registry de runtime o conhece; `branchRef` pode vir `refs/heads/…`. */
 const snapshotWorktreeViewSchema = z
   .object({
@@ -151,6 +162,7 @@ export const projectMissionSnapshotViewSchema = z
     tasks: z.array(snapshotTaskViewSchema).max(256),
     handoffs: z.array(snapshotHandoffViewSchema).max(256),
     panes: z.array(snapshotPaneViewSchema).max(64),
+    deliveries: z.array(snapshotDeliveryViewSchema).max(64).optional(),
     openQuestion: missionQuestionSchema.optional(),
     roster: z.array(strictSquadAgentSchema).max(64),
     worktrees: z.array(snapshotWorktreeViewSchema).max(64).optional(),
@@ -568,6 +580,43 @@ function fallbackAgentState(
   return 'queued';
 }
 
+/**
+ * F-777: sem arestas gravadas, o grafo nasce da equipe do quadro — Delegação
+ * do orquestrador para cada agente (o roster já é só quem tem pane, entrega
+ * ou papel no plano) e Entrega de volta de cada um que submeteu handoff. Os
+ * pacotes no cabo seguem o estado de quem trabalha na ponta.
+ */
+function missionTeamEdges(
+  view: ParsedView,
+): z.infer<typeof missionEdgeSchema>[] {
+  const orchestrator = view.roster.find(
+    (agent) => agent.category === 'orchestrator',
+  );
+  if (!orchestrator) return [];
+  const delivered = new Set(
+    (view.deliveries ?? []).map((delivery) => delivery.agentId),
+  );
+  const edges: z.infer<typeof missionEdgeSchema>[] = [];
+  for (const agent of view.roster) {
+    if (agent.id === orchestrator.id) continue;
+    edges.push({
+      id: `delegation:${orchestrator.id}->${agent.id}`,
+      sourceAgentId: orchestrator.id,
+      targetAgentId: agent.id,
+      kind: 'delegation',
+    });
+    if (delivered.has(agent.id)) {
+      edges.push({
+        id: `handoff:${agent.id}->${orchestrator.id}`,
+        sourceAgentId: agent.id,
+        targetAgentId: orchestrator.id,
+        kind: 'handoff',
+      });
+    }
+  }
+  return edges;
+}
+
 export function projectMissionSnapshot(
   rawView: ProjectMissionSnapshotView,
 ): MissionSnapshot {
@@ -590,15 +639,21 @@ export function projectMissionSnapshot(
     progress: { completed, total: view.tasks.length },
     agents: view.roster.map((agent) => {
       const pane = view.panes.find((candidate) => candidate.agentId === agent.id);
+      const delivery = view.deliveries?.find(
+        (candidate) => candidate.agentId === agent.id,
+      );
       return {
         id: agent.id,
         agentName: agent.agentName,
         category: agent.category,
         cli: agent.cli,
+        ...(agent.model ? { model: agent.model } : {}),
         state:
           state === 'completed'
             ? 'done'
-            : (pane?.state ?? fallbackAgentState(view, agent.id, state)),
+            : (pane?.state ??
+              delivery?.state ??
+              fallbackAgentState(view, agent.id, state)),
         ...(pane?.currentUnitId
           ? { currentUnitId: pane.currentUnitId }
           : {}),
@@ -607,7 +662,10 @@ export function projectMissionSnapshot(
         ...(pane?.operatorOpened === true ? { operatorOpened: true } : {}),
       };
     }),
-    edges: view.handoffs.map(({ settled: _settled, ...edge }) => edge),
+    edges:
+      view.handoffs.length > 0
+        ? view.handoffs.map(({ settled: _settled, ...edge }) => edge)
+        : missionTeamEdges(view),
     units: view.tasks.map(({ evidence, ...task }) => ({
       ...task,
       evidenceIds: evidence.map(({ id }) => id),
