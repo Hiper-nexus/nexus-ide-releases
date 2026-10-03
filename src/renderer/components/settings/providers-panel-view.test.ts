@@ -14,6 +14,13 @@ import {
   tabDetectedLabel,
 } from './providers-panel-view';
 
+it('shows a verified key rejection before a cached connected status', () => {
+  const qwen = provider({ adapterId: 'qwen', label: 'Qwen', kind: 'cli-pty',
+    authStrategy: 'api-key', credentialReadiness: 'invalid-credential' });
+  expect(providerStatusLabel(qwen, { authState: 'ok' })).toEqual({ label: 'chave inválida', tone: 'danger' });
+  expect(providerStatusLabel({ ...qwen, authStrategy: 'subscription' }, { authState: 'ok' }).label).toBe('conectado');
+});
+
 function provider(
   partial: Partial<ProviderSettingsInfo> &
     Pick<ProviderSettingsInfo, 'adapterId' | 'label' | 'kind'>,

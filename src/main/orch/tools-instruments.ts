@@ -873,6 +873,7 @@ const cliInventoryTool: McpToolDef = {
         authStrategy: string;
         hasKey: boolean;
         authReadyModels?: string[];
+        credentialReadiness?: string;
       }
     >();
     let authSource: 'provider-settings' | 'unavailable' = 'provider-settings';
@@ -891,6 +892,7 @@ const cliInventoryTool: McpToolDef = {
             authStrategy: p.authStrategy,
             hasKey: p.hasKey,
             authReadyModels: p.authReadyModels,
+            credentialReadiness: p.credentialReadiness,
           },
         ]),
       );
@@ -922,6 +924,7 @@ const cliInventoryTool: McpToolDef = {
           authStrategy: auth ? auth.authStrategy : null,
           hasStoredKey: auth ? auth.hasKey : null,
           authReadyModelCount: auth ? (auth.authReadyModels?.length ?? 0) : null,
+          ...(auth?.credentialReadiness ? { credentialReadiness: auth.credentialReadiness } : {}),
           defaultModel: adapter.models.default,
           modelCount: adapter.models.list.length,
           models: adapter.models.list.slice(0, MAX_MODELS_PER_CLI),

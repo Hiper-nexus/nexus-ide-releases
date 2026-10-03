@@ -224,6 +224,7 @@ export function filterPresentWriterAgents(
       adapterId: agent.cli,
       authStrategy: (agent as { authStrategy?: string }).authStrategy ?? '',
       hasKey: (agent as { hasKey?: boolean }).hasKey,
+      credentialReadiness: (agent as { credentialReadiness?: string }).credentialReadiness,
     }),
 ): SquadAgent[] {
   return writableRosterAgents(agents).filter((agent) => canSeat(classify(agent)));
@@ -340,6 +341,7 @@ function defaultClassify(agent: SquadAgent): SeatAuthReadiness {
     adapterId: agent.cli,
     authStrategy: (agent as { authStrategy?: string }).authStrategy ?? '',
     hasKey: (agent as { hasKey?: boolean }).hasKey,
+      credentialReadiness: (agent as { credentialReadiness?: string }).credentialReadiness,
   });
 }
 

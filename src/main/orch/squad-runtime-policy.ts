@@ -43,6 +43,7 @@ export interface SquadRuntimeProviderSnapshot {
   readonly models?: readonly string[];
   readonly authReadyModels?: readonly string[];
   readonly hasKey?: boolean;
+  readonly credentialReadiness?: string;
   /**
    * When set, only `present` enters the roster. Absent keeps the legacy
    * authStrategy gate so focused policy tests stay isolated.
@@ -259,6 +260,7 @@ export function buildSquadRuntimeCliPolicy(
         adapterId: provider.adapterId,
         authStrategy: provider.authStrategy,
         hasKey: provider.hasKey,
+        credentialReadiness: provider.credentialReadiness,
         kimiListReadiness:
           provider.adapterId === "kimi" ? peekKimiSeatReadiness() : undefined,
       });

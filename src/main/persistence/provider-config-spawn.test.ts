@@ -340,6 +340,7 @@ vi.mock('../adapters/adapter-registry', () => ({
     opencodeAdapter,
     agyAdapter,
     credentiallessAdapter,
+    qwenAdapter,
   ],
   notifyAdaptersChanged: vi.fn(),
   primaryKeyEnvVar: (adapter: { auth: { envVarFallback?: string } }) =>
@@ -453,6 +454,13 @@ vi.mock('./agy-keyring-activation', () => ({
 
 const qwenSettingsProbe = vi.hoisted(() => ({
   hasCredential: vi.fn<() => boolean>(() => false),
+  readiness: 'unknown' as 'unknown' | 'present' | 'invalid-credential',
+}));
+vi.mock('../adapters/qwen-readiness-cache', () => ({
+  peekQwenReadiness: () => ({ state: qwenSettingsProbe.readiness }),
+  requestQwenReadiness: vi.fn(async () => {}),
+  invalidateQwenReadiness: vi.fn(),
+  verifyQwenReadiness: vi.fn(async () => ({ state: qwenSettingsProbe.readiness })),
 }));
 vi.mock('../adapters/qwen-settings', () => ({
   qwenSettingsHasCredential: qwenSettingsProbe.hasCredential,
@@ -1747,12 +1755,13 @@ describe('generic OpenAI env key is host-gated for qwen (F-238)', () => {
     spawnDeps.hasCachedSecret.mockReturnValue(false);
     spawnDeps.launcherKey.mockReturnValue(null);
     qwenSettingsProbe.hasCredential.mockReturnValue(false);
+    qwenSettingsProbe.readiness = 'unknown';
     vi.stubEnv('BAILIAN_TOKEN_PLAN_API_KEY', '');
     vi.stubEnv('DASHSCOPE_API_KEY', '');
     vi.stubEnv('OPENAI_API_KEY', '');
     vi.stubEnv('OPENAI_BASE_URL', '');
   });
-  afterEach(() => vi.unstubAllEnvs());
+  afterEach(() => { vi.unstubAllEnvs(); qwenSettingsProbe.readiness = 'unknown'; });
 
   it('qwen rejects a bare OPENAI_API_KEY without OPENAI_BASE_URL', () => {
     vi.stubEnv('OPENAI_API_KEY', 'fixture-openai-key');
@@ -1786,6 +1795,20 @@ describe('generic OpenAI env key is host-gated for qwen (F-238)', () => {
 
   it('qwen has no runtime key when nothing is configured', () => {
     expect(hasRuntimeKey('qwen')).toBe(false);
+  });
+  it('reports a rejected configured key and removes its models, while native and managed accounts remain eligible', () => {
+    vi.stubEnv('DASHSCOPE_API_KEY', 'configured-key');
+    spawnDeps.resolveAuthStrategy.mockReturnValue({ strategy: 'api-key', injectKey: true, suppressKeyEnv: false });
+    spawnDeps.listAccounts.mockReturnValue([]);
+    qwenSettingsProbe.readiness = 'invalid-credential';
+    expect(providerReadiness('qwen')).toMatchObject({ ready: false, reason: expect.stringContaining('chave inválida') });
+    expect(listProviderSettings().find(p => p.adapterId === 'qwen')).toMatchObject({ hasKey: true, authReadyModels: [], credentialReadiness: 'invalid-credential' });
+    spawnDeps.listAccounts.mockReturnValue([{ id: 'managed-qwen' }]);
+    expect(providerReadiness('qwen').ready).toBe(true);
+    expect(listProviderSettings().find(p => p.adapterId === 'qwen')?.credentialReadiness).toBeUndefined();
+    spawnDeps.listAccounts.mockReturnValue([]);
+    spawnDeps.resolveAuthStrategy.mockReturnValue({ strategy: 'subscription', injectKey: false, suppressKeyEnv: true });
+    expect(providerReadiness('qwen').ready).toBe(true);
   });
 
   it('credential living only in ~/.qwen/settings.json counts as present', () => {

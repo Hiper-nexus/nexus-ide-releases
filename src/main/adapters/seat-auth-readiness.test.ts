@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AUTH_READINESS,
   SEAT_AUTH_READINESS,
@@ -20,7 +20,15 @@ import {
 } from './seat-auth-readiness';
 
 afterEach(() => {
+  vi.restoreAllMocks();
   rememberKimiSeatReadiness(undefined);
+});
+
+describe('Qwen verified credential rejection', () => {
+  it('excludes the known-invalid API credential but preserves a healthy native subscription', () => {
+    expect(firstWaveCanSeat({ adapterId: 'qwen', authStrategy: 'api-key', hasKey: true, credentialReadiness: 'invalid-credential' })).toBe(false);
+    expect(firstWaveCanSeat({ adapterId: 'qwen', authStrategy: 'subscription', hasKey: true, credentialReadiness: 'invalid-credential' })).toBe(true);
+  });
 });
 
 describe('canSeat — só AuthReadiness=present senta', () => {

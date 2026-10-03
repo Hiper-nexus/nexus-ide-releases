@@ -4,6 +4,7 @@ import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../
 import { readRegularFileCappedAsync } from '../redline/redline-safe-read';
 import { mimoCredentialSupportsModel } from '../adapters/mimo-auth';
 import { qwenSettingsHasCredential } from '../adapters/qwen-settings';
+import { requestQwenReadiness, peekQwenReadiness, invalidateQwenReadiness } from '../adapters/qwen-readiness-cache';
 import { migrateModelId } from '../../shared/model-defaults';
 import fs from 'node:fs';
 import { z } from 'zod';
@@ -909,6 +910,11 @@ function resolveProviderReadiness(
   const effectiveModel = effectiveProviderModel(adapterId, selectedModel);
   const decision =
     options.decision ?? authDecision(adapterId, selectedModel);
+  if (adapterId === 'qwen' && decision.strategy === 'api-key' && listAccounts('qwen').length === 0) {
+    const credential = peekQwenReadiness();
+    if (credential.state === 'invalid-credential') return { ready: false, reason: 'Qwen: chave inválida. Atualize a chave em Contas de IA.' };
+    if (credential.state === 'no-credential') return { ready: false, reason: 'Qwen: nenhuma chave utilizável foi encontrada.' };
+  }
   if (decision.strategy === 'login-needed') {
     const credentiallessReady =
       isProviderAuthReadyForModel(
@@ -1878,10 +1884,23 @@ function toInfo(
     deepseekSelected
       ? resolveDeepseekProviderKey(deepseekSelected, { vault: 'skip' })
       : resolveApiKeyWithoutVault(adapterId);
+  const qwenUsesConfiguredKey = adapterId === 'qwen' && listAccounts('qwen').length === 0 &&
+    authDecision(adapterId, undefined, { statusSnapshot: options.nonBlockingAuth === true }).strategy === 'api-key';
+  if (qwenUsesConfiguredKey && cfg.enabled && installed) {
+    if (hasSecret('qwen') && !hasCachedSecret('qwen')) {
+      // A cold encrypted vault cannot be replaced by a different settings key.
+      invalidateQwenReadiness();
+    } else {
+      void requestQwenReadiness({ key: (hasCachedSecret('qwen') ? getKey('qwen') : null) ?? resolveKeyWithoutVault(),
+        onChange: broadcast });
+    }
+  }
+  const credentialReadiness = qwenUsesConfiguredKey ? peekQwenReadiness().state : undefined;
   const authReadyModels = models.filter((model) => {
     const strategy = authDecision(adapterId, model, {
       statusSnapshot: options.nonBlockingAuth === true,
     }).strategy;
+    if (strategy === 'api-key' && (credentialReadiness === 'invalid-credential' || credentialReadiness === 'no-credential')) return false;
     return isProviderAuthReadyForModel(
       { adapterId, authStrategy: strategy },
       model,
@@ -1915,6 +1934,7 @@ function toInfo(
     defaultModel,
     models,
     authReadyModels,
+    ...(strategy === 'api-key' && credentialReadiness ? { credentialReadiness } : {}),
     modelInfo: modelInfoForAdapter(loadModelCatalog(), adapterId, models),
     customModels: getCustomModels(adapterId),
     extraArgs: cfg.extraArgs,
@@ -3131,6 +3151,7 @@ export function registerProviderIpc(): void {
     if (patch.effort !== undefined) merged.effort = patch.effort;
     if (patch.verbose !== undefined) merged.verbose = patch.verbose;
     configs.set(adapterId, merged);
+    if (adapterId === 'qwen') invalidateQwenReadiness();
     persist();
     broadcast();
     return listProviderSettingsForRenderer();
@@ -3141,6 +3162,7 @@ export function registerProviderIpc(): void {
     if (!parsed.success) return { ok: false, error: 'invalid key request' };
     if (!getAdapter(parsed.data.adapterId)) return { ok: false, error: 'unknown provider' };
     const result = setKey(parsed.data.adapterId, parsed.data.key);
+    if (parsed.data.adapterId === 'qwen' && result.ok) invalidateQwenReadiness();
     broadcast();
     return result;
   });

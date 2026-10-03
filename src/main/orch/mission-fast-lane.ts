@@ -124,6 +124,7 @@ import {
   hasRuntimeKey,
   listProviderSettings,
   providerAuthStrategy,
+  providerReadiness,
 } from '../persistence/provider-config-store';
 import {
   PREFERRED_AUTO_SEAT_CLIS,
@@ -2810,6 +2811,7 @@ export async function dispatchFastLaneFirstWave(
       ...extraPresentClis,
     ]);
     const classifySeat = (agent: SquadAgent) => {
+      if (agent.cli === 'qwen' && !providerReadiness('qwen').ready) return 'no-credential' as const;
       const readiness = detectSubscriptionAuthReadiness(agent.cli);
       return classifySeatAuth({
         adapterId: agent.cli,

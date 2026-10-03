@@ -1,4 +1,5 @@
 import { stopOrientationForWorkspace } from './context/orientation/orientation-bootstrap';
+import { stopQwenReadiness } from './adapters/qwen-readiness-cache';
 import { stopPaneSessionOutputGc } from './orch/pane-session-output';
 import { stopPetPeriodicWork } from './pet/pet-window';
 import { stopPreGoneCrashSampling } from './crash-reporting/process-gone-diagnostics';
@@ -1485,6 +1486,7 @@ function shutdown(): Promise<void> {
     await stopPaneSessionOutputGc();
     await stopManagedAuthSpawnGateWatchers();
     await stopClaudeSubscriptionFreshness();
+    await stopQwenReadiness();
     await stopAutoUpdater();
     await stopLicenseSync();
     await stopOrientationForWorkspace();

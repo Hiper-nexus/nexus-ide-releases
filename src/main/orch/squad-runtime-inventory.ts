@@ -53,6 +53,7 @@ export function liveSquadRuntimeInventory(): LiveSquadRuntimeInventory {
           adapterId: provider.adapterId,
           authStrategy: provider.authStrategy,
           hasKey: provider.hasKey,
+          credentialReadiness: provider.credentialReadiness,
           kimiListReadiness:
             provider.adapterId === "kimi"
               ? peekKimiSeatReadiness()

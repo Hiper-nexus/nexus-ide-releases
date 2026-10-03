@@ -33,6 +33,7 @@ import { detectSubscriptionAuthReadiness } from '../adapters/subscription-auth';
 import {
   hasRuntimeKey,
   providerAuthStrategy,
+  providerReadiness,
 } from '../persistence/provider-config-store';
 import { firstSeatableCli } from '../../shared/seat-chains';
 import type { MissionEngine } from './mission-engine';
@@ -313,6 +314,7 @@ export function shouldLogCivilianRefusal(
 /** Auth present real do CLI (mesma classificação do first-wave). */
 function reviewerCliCanSeat(cli: string): boolean {
   try {
+    if (cli === 'qwen' && !providerReadiness(cli).ready) return false;
     const readiness = detectSubscriptionAuthReadiness(cli);
     return (
       classifySeatAuth({

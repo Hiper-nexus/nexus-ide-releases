@@ -1,15 +1,20 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   probeQwenCredential,
   QWEN_INVALID_CREDENTIAL_MESSAGE,
 } from './qwen-readiness';
 
 const tempDirs: string[] = [];
+beforeEach(() => {
+  for (const name of ['BAILIAN_TOKEN_PLAN_API_KEY', 'DASHSCOPE_API_KEY', 'OPENAI_API_KEY', 'OPENAI_BASE_URL']) vi.stubEnv(name, '');
+  vi.stubEnv('QWEN_HOME', undefined);
+});
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -30,6 +35,44 @@ function writeSettings(home: string, settings: unknown): void {
 const okFetch = async () => ({ status: 200 });
 
 describe('probeQwenCredential (F-238)', () => {
+  it('does not send an unrelated OpenAI key to the default Alibaba endpoint', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'unrelated-openai-key');
+    vi.stubEnv('OPENAI_BASE_URL', '');
+    const fetchImpl = vi.fn(async () => ({ status: 200 }));
+    expect((await probeQwenCredential({ home: tempHome(), fetchImpl })).state).toBe('no-credential');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+  it('uses the selected provider env key before deprecated auth fields, with shell env over settings env', async () => {
+    const home = tempHome();
+    writeSettings(home, { model: { name: 'qwen3.8-max' }, env: { SELECTED_QWEN_KEY: 'settings-key' },
+      modelProviders: { openai: [{ id: 'qwen3.8-max', envKey: 'SELECTED_QWEN_KEY', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' }] },
+      security: { auth: { selectedType: 'openai', apiKey: 'deprecated-key' } } });
+    vi.stubEnv('SELECTED_QWEN_KEY', 'shell-key');
+    const fetchImpl = vi.fn(async () => ({ status: 200 }));
+    await probeQwenCredential({ home, fetchImpl });
+    expect(fetchImpl).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ headers: { authorization: 'Bearer shell-key' } }));
+  });
+  it('does not treat an upstream failure as accepted credentials', async () => {
+    const result = await probeQwenCredential({ home: tempHome(), key: 'fixture', fetchImpl: async () => ({ status: 503 }) });
+    expect(result.state).toBe('unknown');
+  });
+  it('never follows credential-bearing redirects or probes an untrusted endpoint', async () => {
+    const fetchImpl = vi.fn(async () => ({ status: 200 }));
+    await probeQwenCredential({ home: tempHome(), key: 'fixture', fetchImpl });
+    expect(fetchImpl).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ redirect: 'error' }));
+    fetchImpl.mockClear();
+    expect((await probeQwenCredential({ home: tempHome(), key: 'fixture', baseUrl: 'https://attacker.invalid/v1', fetchImpl })).state).toBe('unknown');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+  it('reads the selected modern OpenAI-compatible auth configuration', async () => {
+    const home = tempHome();
+    writeSettings(home, { security: { auth: { selectedType: 'openai', apiKey: 'selected-key',
+      baseUrl: 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1' } } });
+    const fetchImpl = vi.fn(async () => ({ status: 401 }));
+    expect((await probeQwenCredential({ home, fetchImpl })).state).toBe('invalid-credential');
+    expect(fetchImpl).toHaveBeenCalledWith(expect.stringContaining('token-plan.'),
+      expect.objectContaining({ headers: { authorization: 'Bearer selected-key' } }));
+  });
   it('sem credencial nenhuma → no-credential, sem fetch', async () => {
     const home = tempHome();
     const fetchImpl = vi.fn(okFetch);

@@ -87,6 +87,8 @@ export interface ProviderSettingsInfo {
    * Exact model ids whose provider-specific auth is ready in this snapshot.
    */
   authReadyModels?: string[];
+  /** Latest credential-bound API probe; native subscription health is independent. */
+  credentialReadiness?: 'present' | 'invalid-credential' | 'unknown' | 'no-credential';
   modelInfo?: ModelInfoMap;
   extraArgs: string[];
   /** Env var the key is injected as (e.g. ANTHROPIC_API_KEY). */

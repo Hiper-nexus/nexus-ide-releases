@@ -34,6 +34,7 @@ export interface SeatAuthInput {
   readonly adapterId: string;
   readonly authStrategy: string;
   readonly hasKey?: boolean;
+  readonly credentialReadiness?: string;
   /**
    * Kimi: classified `kimi provider list` result. Absent means the live list
    * has not been probed — file OAuth alone is incomplete, not a seat.
@@ -54,6 +55,10 @@ export function classifySeatAuth(input: SeatAuthInput): AuthReadiness {
   const adapterId = input.adapterId.trim().toLowerCase();
   const strategy = input.authStrategy.trim().toLowerCase();
   const hasKey = input.hasKey === true;
+  if (adapterId === 'qwen' && strategy === 'api-key') {
+    const state = input.credentialReadiness;
+    if (state === 'invalid-credential' || state === 'no-credential') return 'no-credential';
+  }
 
   if (adapterId === 'kimi') {
     const listed = input.kimiListReadiness;
@@ -334,6 +339,7 @@ export function canSeatFromProvider(provider: {
   readonly adapterId: string;
   readonly authStrategy: string;
   readonly hasKey?: boolean;
+  readonly credentialReadiness?: string;
 }): boolean {
   const listed =
     provider.adapterId === 'kimi' ? peekKimiSeatReadiness() : undefined;
@@ -342,6 +348,7 @@ export function canSeatFromProvider(provider: {
       adapterId: provider.adapterId,
       authStrategy: provider.authStrategy,
       hasKey: provider.hasKey,
+      credentialReadiness: provider.credentialReadiness,
       kimiListReadiness: listed,
     }),
   );

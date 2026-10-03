@@ -73,6 +73,7 @@ import { detectSubscriptionAuthReadiness } from '../adapters/subscription-auth';
 import {
   hasRuntimeKey,
   providerAuthStrategy,
+  providerReadiness,
 } from '../persistence/provider-config-store';
 import {
   isCredentialProbeFailure,
@@ -1530,6 +1531,7 @@ export { assertReleaseQualifiedMissionWorkerSpawn } from './mission-worker-spawn
 /** Auth present real do CLI (mesma classificação do first-wave/revisor). */
 function cliHasPresentAuth(cli: string): boolean {
   try {
+    if (cli === 'qwen' && !providerReadiness(cli).ready) return false;
     const readiness = detectSubscriptionAuthReadiness(cli);
     return (
       classifySeatAuth({

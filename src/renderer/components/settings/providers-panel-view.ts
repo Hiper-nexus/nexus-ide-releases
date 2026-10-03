@@ -127,6 +127,11 @@ export function providerStatusLabel(
     return { label: 'não instalada', tone: 'warn' };
   }
   if (!provider.enabled) return { label: 'desligada', tone: 'muted' };
+  if (provider.authStrategy === 'api-key') {
+    if (provider.credentialReadiness === 'invalid-credential') return { label: 'chave inválida', tone: 'danger' };
+    if (provider.credentialReadiness === 'no-credential') return { label: 'sem chave', tone: 'warn' };
+    if (provider.credentialReadiness === 'unknown') return { label: 'chave não verificada', tone: 'muted' };
+  }
   if (health?.authState === 'ok') return { label: 'conectado', tone: 'ok' };
   if (health?.authState === 'unknown') return { label: 'não verificado', tone: 'muted' };
   if (health?.authState === 'checking') return { label: 'verificando…', tone: 'muted' };
@@ -173,8 +178,8 @@ export function providerStateChips(
   if (provider.keyEnvVar || provider.hasKey) {
     chips.push({
       id: 'credential',
-      label: provider.hasKey ? 'chave configurada' : 'sem chave',
-      tone: provider.hasKey ? 'ok' : 'warn',
+      label: provider.authStrategy === 'api-key' && provider.credentialReadiness === 'invalid-credential' ? 'chave inválida' : provider.hasKey ? 'chave configurada' : 'sem chave',
+      tone: provider.authStrategy === 'api-key' && provider.credentialReadiness === 'invalid-credential' ? 'danger' : provider.hasKey ? 'ok' : 'warn',
     });
   }
   return chips;
@@ -197,6 +202,7 @@ export function providerRowCta(
       : null;
   }
   if (!provider.enabled) return null;
+  if (provider.authStrategy === 'api-key' && provider.credentialReadiness === 'invalid-credential') return { kind: 'key', label: 'Trocar chave' };
   if (health?.authState === 'ok') return null;
   if (health?.authState === 'checking') return null;
   if (health?.authState === 'unknown') return { kind: 'verify', label: 'Verificar sessão' };

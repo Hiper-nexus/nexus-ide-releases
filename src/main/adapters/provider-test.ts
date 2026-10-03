@@ -1,7 +1,7 @@
 import type { Adapter } from '../../shared/adapter-types';
 import type { TestConnectionResult } from '../../shared/provider-settings-types';
 import { isBinResolvable } from './adapter-registry';
-import { probeQwenCredential } from './qwen-readiness';
+import { verifyQwenReadiness } from './qwen-readiness-cache';
 
 /**
  * Test-connection for a provider's configured key. For api-provider adapters
@@ -58,7 +58,7 @@ export async function testProviderKey(
   // F-238: sonda viva só no painel de Providers — nunca no spawn. A chave do
   // Qwen pode viver só em ~/.qwen/settings.json; a sonda a usa em memória.
   if (adapter.id === 'qwen') {
-    const probe = await probeQwenCredential({ key });
+    const probe = await verifyQwenReadiness(key);
     switch (probe.state) {
       case 'present':
         return { ok: true, detail: 'reachable; credential accepted' };

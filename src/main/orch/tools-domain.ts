@@ -1848,6 +1848,7 @@ export async function routeTaskForCaller(
             adapterId: a.adapterId,
             authStrategy: a.authStrategy,
             hasKey: a.hasKey,
+            credentialReadiness: a.credentialReadiness,
             kimiListReadiness:
               a.adapterId === 'kimi' ? peekKimiSeatReadiness() : undefined,
             hasCredentiallessModel:
