@@ -40,6 +40,7 @@ export function readMimoDatabase(raw: MimoWorkerRequest): MimoWorkerReply {
     ) SELECT m.id, m.session_id, m.time_updated, m.data FROM message m JOIN owned o ON m.session_id = o.id
       WHERE (m.time_updated > ? OR (m.time_updated = ? AND m.id > ?))
         AND typeof(m.time_updated) = 'integer' AND m.time_updated BETWEEN 0 AND ?
+        AND typeof(m.id) = 'text' AND length(CAST(m.id AS BLOB)) BETWEEN 1 AND 256
         AND length(CAST(m.data AS BLOB)) <= ?
       ORDER BY m.time_updated, m.id LIMIT ?`).all(input.rootId, cursor.at, cursor.at, cursor.id,
         Number.MAX_SAFE_INTEGER, MIMO_RAW_ROW_BYTES, MIMO_SCAN_ROWS) as

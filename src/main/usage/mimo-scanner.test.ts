@@ -84,6 +84,17 @@ describe('MiMo checkout database reader', () => {
     expect(await validateMimoRootSession(binding, 'ses_root')).toBe(false);
   });
 
+  it('reaches valid usage after a full page of unrepresentable native message IDs', async () => {
+    const { db, binding, message } = fixture();
+    for (let i = 1; i <= 128; i++) message(`${'x'.repeat(257)}-${i}`, 'ses_root', 99, i);
+    db.prepare('INSERT INTO message VALUES (?, ?, ?, ?)').run(Buffer.from('blob-id'), 'ses_root', 129, '{}');
+    message('msg-reachable', 'ses_root', 7, 130);
+    const onEvent = vi.fn(); const scanner = new MimoUsageScanner(onEvent); scanners.push(scanner);
+    scanner.bind(binding); await scanner.scan(); await scanner.scan();
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(onEvent.mock.calls[0][1]).toMatchObject({ messageId: 'msg-reachable', outputTokens: 10 });
+  });
+
   it('reads root and child usage without attributing a neighboring pane, and notices streaming rewrites', async () => {
     const { binding, message } = fixture();
     message('msg-root', 'ses_root', 2); message('msg-child', 'ses_child', 4); message('msg-other', 'ses_other', 99);
