@@ -171,6 +171,7 @@ vi.mock('./agy-keyring-activation', () => ({
 }));
 
 import { setLauncherProvidersFileForTests } from '../adapters/launcher-provider-manager';
+import * as secretsStore from './secrets-store';
 import {
   hasRuntimeKey,
   listProviderSettings,
@@ -244,6 +245,21 @@ beforeEach(async () => {
 });
 
 describe('F-724 — DeepSeek pela API direta (padrão, comportamento histórico)', () => {
+  it('o índice cifrado frio mantém DeepSeek pronto no inventário sem decifrar a chave', () => {
+    fx.vault.set('deepseek', DIRECT_KEY);
+    const decrypt = vi.spyOn(secretsStore, 'getKey').mockImplementation(() => {
+      throw new Error('snapshot não pode decifrar o cofre');
+    });
+    try {
+      const info = deepseekInfo();
+      expect(info).toMatchObject({ hasKey: true, authStrategy: 'api-key', authState: 'ok' });
+      expect(info.authReadyModels).toEqual(['deepseek-v4-pro', 'deepseek-flash']);
+      expect(decrypt).not.toHaveBeenCalled();
+    } finally {
+      decrypt.mockRestore();
+    }
+  });
+
   it('sobe em api.deepseek.com com a chave da DeepSeek e o slot barato no flash', () => {
     fx.vault.set('deepseek', DIRECT_KEY);
     const overrides = spawnEnv();
