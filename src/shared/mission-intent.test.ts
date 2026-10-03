@@ -33,7 +33,7 @@ import {
   transitionIntentState,
   type MissionIntentContract,
 } from './mission-intent';
-import { suggestMissionLaneFromGoal } from './mission-intent';
+import { isExplicitGitSyncGoal, suggestMissionLaneFromGoal } from './mission-intent';
 import type { Mission } from './orch-types';
 
 const baseMission = (over: Partial<Mission> = {}): Mission => ({
@@ -945,5 +945,104 @@ describe('sincronização Git somente operacional (F-785)', () => {
     expect(
       suggestMissionLaneFromGoal('implementar a sincronização de dados em tempo real'),
     ).toBeNull();
+  });
+});
+
+/**
+ * F-811: o classificador "só sincronização" era largo — verbo de sync + a
+ * palavra git/github/repo virava `ops`, e em `ops` o done é aceito sem arquivo
+ * (e `maxWorkers` zera). Agora o texto INTEIRO precisa ser sincronização, em
+ * forma explícita.
+ */
+describe('sincronização Git EXPLÍCITA (F-811)', () => {
+  it.each([
+    'atualize as dependências do repositório para a versão mais nova',
+    'atualizar o workflow do GitHub Actions',
+    'atualize o README do repositório',
+    'fetch os dados da API do GitHub e mostre no dashboard',
+    'puxe as issues do github e gere um relatório em docs/',
+    'atualize o repositório com as novas regras de lint',
+    'atualize o repositório e reescreva o módulo de pagamentos',
+    'atualiza o repositório, depois mexa nos testes',
+    'update the repo dependencies',
+    'puxe os pacotes do repositório e rode o build',
+    'sincronize o projeto com o github',
+    'faça merge da branch feature na main',
+    'git pull --rebase origin main',
+  ])('tarefa de escrita/outro objeto NÃO é ops: %s', (goal) => {
+    expect(isExplicitGitSyncGoal(goal)).toBe(false);
+    expect(suggestMissionLaneFromGoal(goal)).not.toBe('ops');
+  });
+
+  it('"investigue por que o git pull falha" é investigação (consult), não ops', () => {
+    expect(isExplicitGitSyncGoal('investigue por que o git pull falha')).toBe(false);
+    expect(suggestMissionLaneFromGoal('investigue por que o git pull falha')).toBe('consult');
+    expect(suggestMissionLaneFromGoal('analise por que o git fetch demora tanto')).toBe('consult');
+  });
+
+  it.each([
+    'atualiza o repositório local com o GitHub',
+    'Atualiza o repositório local com o GitHub.',
+    'Sincronizar git com git merge --ff-only origin/main',
+    'sincronize o repositório com origin',
+    'faça git pull --ff-only na branch principal',
+    'git pull',
+    'git fetch origin',
+    'Sync repo com upstream/main (fast-forward)',
+    'puxe as últimas mudanças do origin',
+    'sincronize a branch main com o origin/main, por favor',
+    'faça fast-forward da main',
+    'Sincronizar repositório — somente fast-forward',
+  ])('forma explícita de sincronização É ops: %s', (goal) => {
+    expect(isExplicitGitSyncGoal(goal)).toBe(true);
+    expect(suggestMissionLaneFromGoal(goal)).toBe('ops');
+  });
+
+  it('merge só é transporte quando a própria frase diz fast-forward', () => {
+    expect(isExplicitGitSyncGoal('git merge origin/main')).toBe(false);
+    expect(isExplicitGitSyncGoal('atualize o repositório com merge do origin')).toBe(false);
+    expect(isExplicitGitSyncGoal('git merge --ff-only origin/main')).toBe(true);
+  });
+
+  it('verbo sem objeto de repositório, ou objeto sem verbo, não basta', () => {
+    expect(isExplicitGitSyncGoal('atualize')).toBe(false);
+    expect(isExplicitGitSyncGoal('pull')).toBe(false);
+    expect(isExplicitGitSyncGoal('o repositório local')).toBe(false);
+    expect(isExplicitGitSyncGoal('')).toBe(false);
+  });
+
+  it('recusa explícita de alterar continua vencendo (consult)', () => {
+    expect(
+      suggestMissionLaneFromGoal('sem alterar nada, mostre o que o git pull traria'),
+    ).toBe('consult');
+  });
+
+  describe('varredura linear', () => {
+    const SIZE = 16_384;
+    const inputs: Array<[string, string]> = [
+      ['"atualiza " repetido', 'atualiza '.repeat(SIZE / 9)],
+      ['"git pull " repetido', 'git pull '.repeat(SIZE / 9)],
+      ['verbo + espaços sem objeto', `atualiza${' '.repeat(SIZE - 8)}`],
+      ['só espaços', ' '.repeat(SIZE)],
+      ['pontuação solta', '.'.repeat(SIZE)],
+      ['aspas aninhadas', `${'"\'`('.repeat(SIZE / 4)}`],
+      ['"--ff-" parcial repetido', '--ff-'.repeat(SIZE / 5)],
+      ['origin/ longo', `origin/${'a'.repeat(SIZE - 7)}`],
+      ['acentos combinantes', `a${'́'.repeat(SIZE - 1)}`],
+      ['frase de sync + lixo', `sincronize o repositório com origin ${'x'.repeat(SIZE - 36)}`],
+    ];
+
+    it.each(inputs)('%s: tempo linear (teto 50 ms)', (_label, text) => {
+      // Aquece: compilação/tier-up não é o que está sendo medido.
+      isExplicitGitSyncGoal(text);
+      suggestMissionLaneFromGoal(text);
+      const startedAt = performance.now();
+      const verdict = isExplicitGitSyncGoal(text);
+      const lane = suggestMissionLaneFromGoal(text);
+      const elapsedMs = performance.now() - startedAt;
+      expect(verdict).toBe(false);
+      expect(lane).not.toBe('ops');
+      expect(elapsedMs).toBeLessThan(50);
+    });
   });
 });

@@ -975,6 +975,101 @@ export function isDocumentWritablePath(relativePath: string): boolean {
 }
 
 /**
+ * F-811: o pedido INTEIRO é "só sincronizar o repositório com o remoto" — e em
+ * forma explícita. Duas formas, e só elas:
+ *   - comando git literal: `git pull`, `git fetch`, `--ff-only`, `fast-forward`
+ *     (`merge` só vale junto de `--ff-only`/`fast-forward`);
+ *   - verbo de sincronização (sincronizar/atualizar/puxar/pull/fetch/sync) com
+ *     objeto repositório/branch/origin/upstream/remoto.
+ * Em ambas, QUALQUER palavra fora do vocabulário fechado abaixo desclassifica:
+ * é isso que impede "atualize as dependências do repositório", "atualize o
+ * README do repositório", "atualizar o workflow do GitHub Actions", "fetch os
+ * dados da API do GitHub e mostre no dashboard" e "puxe as issues do github e
+ * gere um relatório em docs/" de virarem `ops` (done sem arquivo). O custo de
+ * errar para o lado conservador é só a missão ficar `standard`; o de errar para
+ * o outro é uma tarefa de escrita entregar sem arquivo.
+ *
+ * Linear: o objetivo é cortado em 280 caracteres antes de qualquer varredura e
+ * cada token é consultado em um Set (sem regex com backtracking sobre o texto).
+ */
+const GIT_SYNC_GOAL_MAX_CHARS = 280;
+const GIT_SYNC_VERBS: ReadonlySet<string> = new Set([
+  'sincronizar', 'sincronize', 'sincroniza', 'sincronizando', 'sincronizem',
+  'atualizar', 'atualize', 'atualiza', 'atualizando', 'atualizem',
+  'puxar', 'puxe', 'puxa', 'puxando', 'pull', 'fetch', 'sync', 'synchronize',
+]);
+const GIT_SYNC_OBJECTS: ReadonlySet<string> = new Set([
+  'repositorio', 'repositorios', 'repo', 'repos', 'branch', 'branches',
+  'origin', 'upstream', 'remoto', 'remote', 'main', 'master', 'develop',
+  'git', 'github',
+]);
+const GIT_SYNC_NEUTRAL_WORDS: ReadonlySet<string> = new Set([
+  // fazer/rodar o comando
+  'faca', 'fazer', 'rode', 'rodar', 'execute', 'executar', 'run',
+  // artigos, preposições, conjunções
+  'o', 'a', 'os', 'as', 'um', 'uma', 'de', 'do', 'da', 'dos', 'das', 'em',
+  'no', 'na', 'nos', 'nas', 'com', 'para', 'pra', 'por', 'pelo', 'pela', 'ao',
+  'e', 'ou', 'que', 'se', 'me', 'meu', 'minha', 'nosso', 'nossa', 'esse',
+  'essa', 'este', 'esta', 'isso', 'the', 'with', 'from', 'to', 'of', 'on',
+  'and', 'my', 'our',
+  // cortesia e qualificadores da própria sincronização
+  'please', 'favor', 'pf', 'agora', 'apenas', 'so', 'somente', 'sem',
+  'conflito', 'conflitos', 'local', 'locais', 'atual', 'principal', 'mais',
+  'recente', 'recentes', 'ultimo', 'ultima', 'ultimos', 'ultimas', 'novo',
+  'nova', 'novos', 'novas', 'mudancas', 'alteracoes', 'commit', 'commits',
+]);
+const GIT_SYNC_FAST_FORWARD: ReadonlySet<string> = new Set([
+  '--ff-only', 'ff-only', 'fast-forward', 'fastforward',
+]);
+const GIT_SYNC_REMOTE_REF_RE = /^(?:origin|upstream)\/[a-z0-9._/-]{1,64}$/;
+const GIT_SYNC_TRIM_CHARS = '"\'`()[]{}<>.,;:!?';
+
+function trimGitSyncToken(token: string): string {
+  let from = 0;
+  let to = token.length;
+  while (from < to && GIT_SYNC_TRIM_CHARS.includes(token[from]!)) from += 1;
+  while (to > from && GIT_SYNC_TRIM_CHARS.includes(token[to - 1]!)) to -= 1;
+  return token.slice(from, to);
+}
+
+export function isExplicitGitSyncGoal(goal: string): boolean {
+  const text = goal.trim();
+  if (text.length === 0 || text.length > GIT_SYNC_GOAL_MAX_CHARS) return false;
+  const tokens = text
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .split(/\s+/);
+  let sawVerb = false;
+  let sawObject = false;
+  let sawFastForward = false;
+  let sawMerge = false;
+  let sawGitCommand = false;
+  let previous = '';
+  for (const raw of tokens) {
+    const token = trimGitSyncToken(raw);
+    // Pontuação solta ("—", "·", "-") é separador, não conteúdo.
+    if (token.length === 0 || !/[a-z0-9]/.test(token)) continue;
+    if (GIT_SYNC_VERBS.has(token)) {
+      sawVerb = true;
+      if (previous === 'git' && (token === 'pull' || token === 'fetch')) sawGitCommand = true;
+    } else if (GIT_SYNC_OBJECTS.has(token) || GIT_SYNC_REMOTE_REF_RE.test(token)) {
+      sawObject = true;
+    } else if (GIT_SYNC_FAST_FORWARD.has(token)) {
+      sawFastForward = true;
+    } else if (token === 'merge') {
+      sawMerge = true;
+    } else if (!GIT_SYNC_NEUTRAL_WORDS.has(token)) {
+      return false;
+    }
+    previous = token;
+  }
+  // `merge` só é transporte quando a própria frase diz que é fast-forward.
+  if (sawMerge && !sawFastForward) return false;
+  return sawGitCommand || sawFastForward || (sawVerb && sawObject);
+}
+
+/**
  * Soft lane suggestion from goal text for the mission wizard autopilot.
  * Returns null when the goal is neutral (keep standard). Never forces a lane
  * after the operator has manually picked one (wizard owns that).
@@ -1039,26 +1134,17 @@ export function suggestMissionLaneFromGoal(goal: string): MissionLane | null {
     );
   if (planArtifact) return 'plan';
 
-  // 3.5. SOMENTE sincronização/operação Git ("atualiza o repositório local com
-  //     o GitHub", "sincronizar com origin/main", "git merge --ff-only"): o
-  //     merge/pull daqui é o TRANSPORTE da atualização, não integração de
-  //     código novo — a missão não produz arquivo e o gate de entrega já
-  //     aceita ops com nota durável (F-785). Fica ANTES do passo 4 porque
-  //     "merge" é verbo de escrita ali; pedido misto ("sincronize e corrija")
-  //     tem outro verbo de escrita e segue para o 4 (standard).
-  const syncVerb = /\b(?:sincroniz(?:ar|e|a|ando)?|atualiz(?:ar|a|e)|pux(?:ar|a|e)|pull|fetch)\b/i;
-  const repoWord = /\b(?:reposit[oó]rio|repo\b|github|origin|upstream|git)\b/i;
-  const gitSyncOnly =
-    (syncVerb.test(g) && repoWord.test(g)) || /--ff-only|fast-?forward/i.test(g);
-  if (gitSyncOnly) {
-    // A mesma régua do passo 4, SEM o `merge` (o merge da sincronização é
-    // transporte): qualquer outro verbo de escrita desclassifica.
-    const writesBeyondSync =
-      /\b(implement(?:ar|e|a|em)|implementa[cç][aã]o|codar|escrever\s+c[oó]digo|cri(?:ar|e|a)|constru(?:ir|a|am)|mont(?:ar|e|a)|desenvolv(?:er|a)|refator(?:ar|e|a|ando)?|otimiz(?:ar|e|a)|adicion(?:ar|e|a)|integr(?:ar|e|a)|traduz(?:ir|a)|fix(ar)?\s|corrig(?:ir|e|em)|corrija|arrum(?:ar|e|a)|consert(?:ar|e|a)|resolv(?:er|a|e)|proteg(?:er|e)|proteja|bug|feature|worktree|testes?\s+e\s+c[oó]digo)\b/i.test(
-        g,
-      );
-    if (!writesBeyondSync) return 'ops';
-  }
+  // 3.5. SOMENTE sincronização Git em forma EXPLÍCITA ("atualiza o repositório
+  //     local com o GitHub", "git pull --ff-only", "sincronizar com origin/main"):
+  //     o pull/merge daqui é o TRANSPORTE da atualização, não integração de
+  //     código novo — a missão não produz arquivo e o gate de entrega aceita
+  //     ops com nota durável (F-785). F-811: o predicado é o TEXTO INTEIRO ser
+  //     sincronização (vocabulário fechado); "atualize as dependências do
+  //     repositório", "puxe as issues do github e gere um relatório" e
+  //     "investigue por que o git pull falha" NÃO são ops — nesses o done sem
+  //     arquivo deixava passar tarefa de escrita. Fica ANTES do passo 4 porque
+  //     `merge --ff-only` é transporte ali; pedido misto segue para o 4.
+  if (isExplicitGitSyncGoal(g)) return 'ops';
 
   // 4. Qualquer verbo que escreve. Em missão MISTA ("analise E refatore",
   //    "diagnostique E otimize"), escrever vence — a lane excludente
