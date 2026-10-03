@@ -969,10 +969,20 @@ function rendererForMission(
 }
 
 export function initPaneRegistry(): void {
-  tapSessionData((sessionId, data) => {
-    recordPaneSessionData(sessionId, data);
-    devServerScanner.onData(sessionId, data);
-  });
+  // F-764 C.1/C.2: o anel de saída é o que os agentes leem do pane — recebe o
+  // lote inteiro. O scanner de dev server é análise: sob inundação, só o tail.
+  tapSessionData(
+    (sessionId, data) => {
+      recordPaneSessionData(sessionId, data);
+    },
+    { name: "pane-output", delivery: "complete" },
+  );
+  tapSessionData(
+    (sessionId, data) => {
+      devServerScanner.onData(sessionId, data);
+    },
+    { name: "dev-server-scanner" },
+  );
 
   tapSessionState((sessionId, state) => {
     recordPaneSessionState(sessionId, state);

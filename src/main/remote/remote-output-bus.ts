@@ -59,6 +59,8 @@ export function subscribeEncodedSessionOutput(
 ): () => void {
   consumers.add(consumer);
   if (!tapDispose) {
+    // F-764: o terminal remoto reconstrói a tela com o texto inteiro — lote
+    // completo, nunca só o tail de uma sessão inundando.
     tapDispose = tapSessionData((sessionId, data) => {
       if (!data) return;
       const interested = [...consumers].filter((candidate) => {
@@ -84,7 +86,7 @@ export function subscribeEncodedSessionOutput(
           }
         }
       }
-    });
+    }, { name: 'remote-output-bus', delivery: 'complete' });
   }
   return () => {
     consumers.delete(consumer);

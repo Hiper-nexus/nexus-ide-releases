@@ -46,6 +46,7 @@ import { loadManifestDir, resolveManifestDir } from './manifest';
 import { OscTracker } from './osc';
 import type { DetectionInput } from './regions';
 import { SessionScreenBuffer } from './screen-buffer';
+import { trace } from '../observability/main-trace';
 
 export const PENDING_IDLE_RECHECK_MS = 100;
 export const PENDING_IDLE_CONFIRMATIONS = 3;
@@ -54,6 +55,18 @@ export const PENDING_IDLE_CAP_MS = 700;
 const STABLE_VISIBLE_SIGNAL_REFRESH_MS = 800;
 /** Max evaluation rate per session while output streams. */
 const EVAL_INTERVAL_MS = 100;
+/**
+ * F-764 C.3: a avaliação olha só a janela final do buffer (a TELA — o Herdr
+ * avalia a grade visível), não os 256 KB de histórico. Cabe com folga um
+ * quadro inteiro de terminal grande.
+ */
+export const DETECTION_WINDOW_CHARS = 32_768;
+/** Avaliação acima disto é cara demais para o main: a sessão espera. */
+export const EVAL_BUDGET_MS = 25;
+/** Espera de uma sessão cuja avaliação estourou o orçamento. */
+export const EVAL_SLOW_BACKOFF_MS = 2_000;
+/** No máximo um trace `detector-eval-slow` por sessão neste intervalo. */
+const EVAL_SLOW_TRACE_INTERVAL_MS = 60_000;
 
 export interface DetectionPublishState {
   state: DetectedAgentState;
@@ -144,6 +157,9 @@ interface SessionRuntime {
   evalTimer: ReturnType<typeof setTimeout> | null;
   pendingRecheckTimer: ReturnType<typeof setTimeout> | null;
   lastExplain: DetectionExplain | null;
+  /** Avaliação estourou o orçamento: a próxima só depois disto (F-764). */
+  slowUntil: number;
+  lastSlowTraceAt: number | null;
 }
 
 export interface AgentScreenDetectorDeps {
@@ -155,6 +171,8 @@ export interface AgentScreenDetectorDeps {
   /** Publish sink for accepted transitions (agent-status in prod). */
   publish: (record: ScreenDetectionRecord) => void;
   now: () => number;
+  /** Trace persistido do main (`detector-eval-slow`); opcional nos testes. */
+  trace?: (event: Record<string, unknown>) => void;
 }
 
 /**
@@ -252,6 +270,8 @@ export class AgentScreenDetector {
         evalTimer: null,
         pendingRecheckTimer: null,
         lastExplain: null,
+        slowUntil: 0,
+        lastSlowTraceAt: null,
       };
       this.sessions.set(sessionId, runtime);
     }
@@ -261,15 +281,53 @@ export class AgentScreenDetector {
   private scheduleEval(sessionId: string): void {
     const runtime = this.runtime(sessionId);
     if (runtime.evalTimer) return;
+    const now = this.deps.now();
     const wait = Math.max(
       0,
-      EVAL_INTERVAL_MS - (this.deps.now() - runtime.lastEvalAt),
+      EVAL_INTERVAL_MS - (now - runtime.lastEvalAt),
+      runtime.slowUntil - now,
     );
     runtime.evalTimer = setTimeout(() => {
       runtime.evalTimer = null;
       this.evaluateSession(sessionId);
     }, wait);
     runtime.evalTimer.unref?.();
+  }
+
+  /**
+   * F-764 C.3: manifesto é dado (TOML do Herdr) e pode trazer uma regex cara
+   * para tela de TUI. Estourou o orçamento: a sessão só volta a ser avaliada
+   * depois do backoff — o texto segue no buffer e a próxima avaliação cobre
+   * tudo — e o trace registra qual manifesto, uma vez por minuto por sessão.
+   */
+  private noteSlowEvaluation(
+    sessionId: string,
+    runtime: SessionRuntime,
+    compiled: CompiledManifest,
+    evalMs: number,
+    screenChars: number,
+    now: number,
+  ): void {
+    runtime.slowUntil = now + EVAL_SLOW_BACKOFF_MS;
+    if (
+      runtime.lastSlowTraceAt !== null &&
+      now - runtime.lastSlowTraceAt < EVAL_SLOW_TRACE_INTERVAL_MS
+    ) {
+      return;
+    }
+    runtime.lastSlowTraceAt = now;
+    try {
+      this.deps.trace?.({
+        kind: 'detector-eval-slow',
+        sessionId,
+        manifestId: compiled.manifest.id,
+        evalMs: Math.round(evalMs),
+        screenChars,
+        backoffMs: EVAL_SLOW_BACKOFF_MS,
+      });
+    } catch {
+      // Instrumentação nunca derruba a detecção.
+    }
   }
 
   /** One evaluation pass; exported shape kept synchronous for tests. */
@@ -307,11 +365,16 @@ export class AgentScreenDetector {
     runtime.lastScannedSeq = contentSeq;
 
     const input: DetectionInput = {
-      screen: this.buffers.text(sessionId),
+      screen: this.buffers.tail(sessionId, DETECTION_WINDOW_CHARS),
       oscTitle: this.osc.title(sessionId),
       oscProgress: this.osc.progress(sessionId),
     };
+    const evalStartedAt = performance.now();
     const explain = evaluateManifest(compiled, input);
+    const evalMs = performance.now() - evalStartedAt;
+    if (evalMs > EVAL_BUDGET_MS) {
+      this.noteSlowEvaluation(sessionId, runtime, compiled, evalMs, input.screen.length, now);
+    }
     runtime.lastExplain = explain;
     // detection_update_for_publish: skip_state_update rules never publish.
     if (explain.skipStateUpdate) return null;
@@ -444,6 +507,7 @@ export function startAgentScreenDetection(): () => void {
         });
       },
       now: () => Date.now(),
+      trace,
     });
   } catch (err) {
     // A broken bundled manifest must not take down the MCP bootstrap; the
@@ -451,13 +515,16 @@ export function startAgentScreenDetection(): () => void {
     console.warn('[detect] screen detection disabled (manifest load failed):', err);
     return () => {};
   }
-  const untapData = tapSessionData((sessionId, data) => {
-    try {
-      detector.onData(sessionId, data);
-    } catch (err) {
-      console.warn('[detect] data tap failed:', err);
-    }
-  });
+  const untapData = tapSessionData(
+    (sessionId, data) => {
+      try {
+        detector.onData(sessionId, data);
+      } catch (err) {
+        console.warn('[detect] data tap failed:', err);
+      }
+    },
+    { name: 'detector' },
+  );
   const untapExit = tapSessionExit((sessionId) => {
     try {
       detector.onExit(sessionId);

@@ -273,7 +273,7 @@ export function initTokenSpeedTracker(): void {
   if (initialized) return
   initialized = true
   tapSessionInput(handleInput)
-  tapSessionData(handleChunk)
+  tapSessionData(handleChunk, 'token-speed')
   tapSessionExit(handleExit)
   tapSessionTermination(handleExit)
 }

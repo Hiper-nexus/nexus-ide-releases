@@ -7,6 +7,7 @@ import {
   scanMissionMarker,
   trimLineDecoration,
 } from './mission-completion-marker';
+import { cpuTimeMs } from '../../test/cpu-time';
 
 function mission(overrides: Partial<Mission> = {}): Mission {
   return {
@@ -267,5 +268,38 @@ describe('marcador de conclusão — ciclo de vida do observador', () => {
     observer.registerPrompt('s2', DELIVERED);
     observer.clear();
     expect(observer.isWatching('s2')).toBe(false);
+  });
+});
+
+describe('moldura de fim de linha em tempo linear (F-764 C.3)', () => {
+  /** A versão anterior, só como referência: `[…]+$` sem âncora de início. */
+  function referenceTrim(line: string): string {
+    return line
+      .replace(/^[\s─-▟|>*#`'"•-]+/, '')
+      .replace(/[\s─-▟|`]+$/, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  it('apara igual à versão anterior em 20 mil linhas aleatórias', () => {
+    const pieces = [' ', '\t', '─', '│', '|', '`', 'a', 'PRONTO:', '>', '#', '•', '-', '▟'];
+    let seed = 7;
+    const random = () => {
+      seed = (seed * 1_103_515_245 + 12_345) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    };
+    for (let round = 0; round < 20_000; round += 1) {
+      let line = '';
+      const length = Math.floor(random() * 16);
+      for (let i = 0; i < length; i += 1) line += pieces[Math.floor(random() * pieces.length)];
+      expect(trimLineDecoration(line), JSON.stringify(line)).toBe(referenceTrim(line));
+    }
+  });
+
+  it.each([
+    ['espaços entre letras', `a${' '.repeat(16_382)}b`],
+    ['moldura entre letras', `a${'─'.repeat(16_382)}b`],
+  ])('%s: 16 KB em tempo linear', (_label, line) => {
+    expect(cpuTimeMs(() => trimLineDecoration(line))).toBeLessThan(20);
   });
 });

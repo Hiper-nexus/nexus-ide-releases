@@ -9,10 +9,16 @@
 // upstream. Sequences may span chunk boundaries, so each session keeps a
 // small pending tail. Terminators: BEL or ST (ESC \), per ECMA-48.
 
+import { MonotoneSearch } from '../../shared/monotone-search';
+
 const MAX_OSC_PAYLOAD = 4096;
 const AGENT_OSC_MAX_CHARS = 256;
 /** Cap on the held tail when a sequence never terminates (broken writer). */
 const MAX_PENDING_TAIL = MAX_OSC_PAYLOAD + 16;
+
+const INTRODUCER = '\x1b]';
+const BEL = '\x07';
+const ST = '\x1b\\';
 
 interface OscSessionState {
   title: string;
@@ -32,24 +38,30 @@ export class OscTracker {
       this.sessions.set(sessionId, state);
     }
     // Fast path: most chunks carry no OSC at all.
-    let text = state.pending + data;
+    const text = state.pending + data;
     state.pending = '';
     if (!text.includes('\x1b]')) {
       state.pending = extractTail(text);
       return;
     }
 
+    // F-764 C.3: a posição só anda para a frente, então cada busca guarda a
+    // próxima ocorrência e só procura de novo quando a posição passa dela.
+    // Antes, cada `ESC ]` abandonado refazia as três buscas até o fim do
+    // texto: 16 KB de introdutores sem terminador custavam ~300 ms.
+    const next = new MonotoneSearch(text);
+    let position = 0;
     for (;;) {
-      const start = text.indexOf('\x1b]');
+      const start = next.find(INTRODUCER, position);
       if (start < 0) {
-        state.pending = extractTail(text);
+        state.pending = extractTail(text.slice(position));
         return;
       }
       // A fresh sequence start before any terminator means the previous one
       // was abandoned by the writer — drop it and resync.
-      const resync = text.indexOf('\x1b]', start + 2);
-      const belEnd = text.indexOf('\x07', start + 2);
-      const stEnd = text.indexOf('\x1b\\', start + 2);
+      const resync = next.find(INTRODUCER, start + 2);
+      const belEnd = next.find(BEL, start + 2);
+      const stEnd = next.find(ST, start + 2);
       let end = -1;
       let endLen = 1;
       if (belEnd >= 0 && (stEnd < 0 || belEnd < stEnd)) {
@@ -59,7 +71,7 @@ export class OscTracker {
         endLen = 2;
       }
       if (resync >= 0 && (end < 0 || resync < end)) {
-        text = text.slice(resync);
+        position = resync;
         continue;
       }
       if (end < 0) {
@@ -69,7 +81,7 @@ export class OscTracker {
       }
       const payload = text.slice(start + 2, end).slice(0, MAX_OSC_PAYLOAD);
       this.applyPayload(state, payload);
-      text = text.slice(end + endLen);
+      position = end + endLen;
     }
   }
 

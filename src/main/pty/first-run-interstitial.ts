@@ -192,7 +192,11 @@ export function normalizeScreenText(text: string): string {
 // Paths keep their original case: POSIX filesystems are case-sensitive.
 const POSIX_PATH_CANDIDATE = /(?:~|\/)[^\s"'`,;:()[\]{}<>]+/g;
 const WINDOWS_PATH_CANDIDATE = /[A-Za-z]:[\\/][^\s"'`,;()[\]{}<>]*/g;
-const TRAILING_NOISE = /[.,;:!?)\]}…]+$/;
+// F-764 C.3: `(?<!…)` faz a busca começar só no INÍCIO de uma corrida —
+// `[…]+$` recomeçava em cada caractere dela e varria até o fim (quadrático:
+// 16 KB de pontos antes de uma letra custavam ~190 ms). Mesmo casamento: o
+// mais à esquerda de `[…]+$` é justamente o início da corrida final.
+const TRAILING_NOISE = /(?<![.,;:!?)\]}…])[.,;:!?)\]}…]+$/;
 
 function normalizePath(raw: string, homeDir?: string): string {
   let value = raw.trim().replace(TRAILING_NOISE, '');

@@ -96,6 +96,34 @@ export class SessionScreenBuffer {
     return state ? materialize(state) : '';
   }
 
+  /**
+   * Últimos `maxChars` do texto, começando numa linha inteira (F-764 C.3).
+   * A avaliação dos manifestos olha a TELA, não 256 KB de histórico: com o
+   * buffer cheio cada avaliação custava até ~9 ms (claude), dez vezes por
+   * segundo por sessão. Junta só os chunks do fim, sem materializar o resto.
+   */
+  tail(sessionId: string, maxChars: number): string {
+    const state = this.sessions.get(sessionId);
+    if (!state) return '';
+    let first = state.chunks.length;
+    let collected = 0;
+    while (first > 0 && collected < maxChars) {
+      first -= 1;
+      collected += state.chunks[first].length;
+    }
+    const joined =
+      first === state.chunks.length - 1
+        ? state.chunks[first]
+        : state.chunks.slice(first).join('');
+    if (joined.length <= maxChars) return joined;
+    const window = joined.slice(-maxChars);
+    // A primeira linha da janela veio cortada: só entram linhas inteiras.
+    const newline = window.indexOf('\n');
+    return newline >= 0 && newline < window.length - 1
+      ? window.slice(newline + 1)
+      : window;
+  }
+
   contentSeq(sessionId: string): number {
     return this.sessions.get(sessionId)?.contentSeq ?? 0;
   }

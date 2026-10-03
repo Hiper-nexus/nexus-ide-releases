@@ -75,9 +75,13 @@ export class CommandBlockTracker {
 
   start(): void {
     if (this.#untapData) return;
-    this.#untapData = tapSessionData((sessionId, data) => {
-      this.handleData(sessionId, data);
-    });
+    // Eventos OSC 133 não podem cair no meio: o tap recebe o lote inteiro.
+    this.#untapData = tapSessionData(
+      (sessionId, data) => {
+        this.handleData(sessionId, data);
+      },
+      { name: 'command-blocks', delivery: 'complete' },
+    );
     this.#untapExit = tapSessionExit((sessionId) => {
       this.handleExit(sessionId);
     });

@@ -141,7 +141,7 @@ export function watchPasteIngest(
     if (changedSessionId !== sessionId || settled || data.length === 0) return;
     tail = (tail + data).slice(-PASTE_INGEST_TAIL_CHARS);
     if (plan.marker.test(stripAnsi(tail))) finish('marker');
-  });
+  }, 'paste-ingest');
   untapExit = tapSessionExit((exitedSessionId) => {
     if (exitedSessionId === sessionId) finish('exit');
   });

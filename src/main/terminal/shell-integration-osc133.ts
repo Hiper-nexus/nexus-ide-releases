@@ -13,6 +13,8 @@
  * some terminals. Shells without integration never emit sequences → no-op.
  */
 
+import { MonotoneSearch } from '../../shared/monotone-search';
+
 export type Osc133Event =
   | { readonly kind: 'prompt_start' }
   | { readonly kind: 'command_start' }
@@ -39,8 +41,11 @@ export class Osc133Scanner {
 
   push(chunk: string): Osc133Event[] {
     const events: Osc133Event[] = [];
-    let data = this.#partial + chunk;
+    const data = this.#partial + chunk;
     this.#partial = '';
+    // F-764 C.3: BEL e ST buscados com memória — sem ela, um lote só com OSC
+    // terminados por BEL refazia a busca de ST até o fim a cada sequência.
+    const search = new MonotoneSearch(data);
 
     let i = 0;
     while (i < data.length) {
@@ -54,8 +59,8 @@ export class Osc133Scanner {
       }
 
       const bodyStart = esc + 2;
-      const bel = data.indexOf(BEL, bodyStart);
-      const st = data.indexOf(ST, bodyStart);
+      const bel = search.find(BEL, bodyStart);
+      const st = search.find(ST, bodyStart);
       let end = -1;
       let endLen = 0;
       if (bel >= 0 && (st < 0 || bel < st)) {

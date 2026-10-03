@@ -5,6 +5,7 @@ import {
   isSafeOscCwd,
   Osc133Scanner,
 } from './shell-integration-osc133';
+import { cpuTimeMs } from '../../test/cpu-time';
 
 describe('Osc133Scanner', () => {
   it('parses A/B/C/D lifecycle and ignores plain text', () => {
@@ -75,5 +76,86 @@ describe('Osc133Scanner', () => {
     expect(script).toContain('return 0');
     expect(script).toContain('string escape --style=url');
     expect(script).not.toMatch(/\bexit 0\b/);
+  });
+});
+
+/**
+ * F-764 C.3: a varredura anterior, só como referência — refazia a busca de BEL
+ * e de ST até o fim do texto a cada sequência. Devolve os corpos de OSC na
+ * ordem em que o scanner os interpretaria.
+ */
+function referenceBodies(chunks: readonly string[]): string[] {
+  const bodies: string[] = [];
+  let partial = '';
+  for (const chunk of chunks) {
+    const data = partial + chunk;
+    partial = '';
+    let i = 0;
+    while (i < data.length) {
+      const esc = data.indexOf('\x1b', i);
+      if (esc < 0) break;
+      if (data[esc + 1] !== ']') {
+        i = esc + 1;
+        continue;
+      }
+      const bodyStart = esc + 2;
+      const bel = data.indexOf('\x07', bodyStart);
+      const st = data.indexOf('\x1b\\', bodyStart);
+      let end = -1;
+      let endLen = 0;
+      if (bel >= 0 && (st < 0 || bel < st)) {
+        end = bel;
+        endLen = 1;
+      } else if (st >= 0) {
+        end = st;
+        endLen = 2;
+      }
+      if (end < 0) {
+        const tail = data.slice(esc);
+        partial = tail.length > 4096 ? tail.slice(-4096) : tail;
+        break;
+      }
+      bodies.push(data.slice(bodyStart, end));
+      i = end + endLen;
+    }
+  }
+  return bodies;
+}
+
+describe('Osc133Scanner em tempo linear (F-764 C.3)', () => {
+  const ALPHABET = ['\x1b', ']', '\\', '\x07', '133;', 'A', 'D;0', ';', '7;file:///t', 'x'];
+  let seed = 133;
+  const random = () => {
+    seed = (seed * 1_103_515_245 + 12_345) & 0x7fffffff;
+    return seed / 0x7fffffff;
+  };
+  const randomChunk = () => {
+    let out = '';
+    const length = Math.floor(random() * 16);
+    for (let i = 0; i < length; i += 1) {
+      out += ALPHABET[Math.floor(random() * ALPHABET.length)];
+    }
+    return out;
+  };
+
+  it('emite os mesmos eventos que a varredura anterior em 10 mil fluxos aleatórios', () => {
+    for (let round = 0; round < 10_000; round += 1) {
+      const chunks = Array.from({ length: 1 + Math.floor(random() * 4) }, randomChunk);
+      const scanner = new Osc133Scanner();
+      const events = chunks.flatMap((chunk) => scanner.push(chunk));
+      // Cada corpo de referência interpretado isolado pelo próprio parser.
+      const expected = referenceBodies(chunks).flatMap((body) =>
+        new Osc133Scanner().push(`\x1b]${body}\x07`),
+      );
+      expect(events, JSON.stringify(chunks)).toEqual(expected);
+    }
+  });
+
+  it.each([
+    ['OSC com BEL e sem ST', '\x1b]133;A\x07'.repeat(1_638)],
+    ['OSC com ST e sem BEL', '\x1b]133;A\x1b\\'.repeat(1_489)],
+    ['ESC ] sem terminador', '\x1b]'.repeat(8_192)],
+  ])('%s: 16 KB em tempo linear', (_label, text) => {
+    expect(cpuTimeMs(() => new Osc133Scanner().push(text))).toBeLessThan(20);
   });
 });

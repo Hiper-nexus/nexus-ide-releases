@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   extractJsonObject,
   extractLegacyHandoffsFromText,
+  findLegacyMarker,
   isPlaceholderSummary,
   LEGACY_DEDUPE_TTL_MS,
   LEGACY_MARKER,
@@ -10,6 +11,7 @@ import {
   type LegacyHandoffPayload,
   normalizeHandoffStatusInput,
 } from './legacy-handoff';
+import { cpuTimeMs } from '../../test/cpu-time';
 
 function collect(): {
   parser: LegacyHandoffParser;
@@ -325,5 +327,78 @@ describe('normalizeHandoffStatusInput (aliases do Overclock na fronteira)', () =
     expect(normalizeHandoffStatusInput('partial')).toBe('partial');
     expect(normalizeHandoffStatusInput('banana')).toBe('banana');
     expect(normalizeHandoffStatusInput(undefined)).toBe(undefined);
+  });
+});
+
+/** F-764 C.3: a busca anterior (dez `indexOf`), só como referência. */
+const REFERENCE_VARIANTS = [
+  '### NEXUS_HANDOFF v1',
+  '## NEXUS_HANDOFF v1',
+  '#### NEXUS_HANDOFF v1',
+  '# NEXUS_HANDOFF v1',
+  '### NEXUS_HANDOFF',
+  '## NEXUS_HANDOFF',
+  '#### NEXUS_HANDOFF',
+  '# NEXUS_HANDOFF',
+  'NEXUS_HANDOFF v1',
+  'NEXUS_HANDOFF',
+];
+function referenceFindLegacyMarker(text: string): { index: number; length: number } | null {
+  let found: { index: number; length: number } | null = null;
+  for (const marker of REFERENCE_VARIANTS) {
+    const index = text.indexOf(marker);
+    if (index === -1) continue;
+    if (
+      found === null ||
+      index < found.index ||
+      (index === found.index && marker.length > found.length)
+    ) {
+      found = { index, length: marker.length };
+    }
+  }
+  return found;
+}
+
+describe('marcador legado em tempo linear (F-764 C.3)', () => {
+  it('acha o mesmo marcador que as dez buscas antigas em 20 mil textos aleatórios', () => {
+    const pieces = ['#', '#', ' ', 'NEXUS_HANDOFF', ' v1', 'v1', ' ', 'x', 'NEXUS_HANDOF', '\n'];
+    let seed = 764;
+    const random = () => {
+      seed = (seed * 1_103_515_245 + 12_345) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    };
+    for (let round = 0; round < 20_000; round += 1) {
+      let text = '';
+      const length = Math.floor(random() * 12);
+      for (let i = 0; i < length; i += 1) {
+        text += pieces[Math.floor(random() * pieces.length)];
+      }
+      expect(findLegacyMarker(text), JSON.stringify(text)).toEqual(
+        referenceFindLegacyMarker(text),
+      );
+    }
+  });
+
+  it.each([16_384, 262_144])(
+    '%i caracteres de blocos vazios: sem estourar a pilha, em tempo linear',
+    (size) => {
+      const text = 'NEXUS_HANDOFF{}'.repeat(Math.floor(size / 15));
+      // A versão recursiva estourava a pilha a partir de ~64 KB; com a
+      // validação do zod em cada bloco, 256 KB passavam de 300 ms.
+      expect(extractLegacyHandoffsFromText(text)).toEqual([]);
+      expect(cpuTimeMs(() => extractLegacyHandoffsFromText(text))).toBeLessThan(
+        size > 16_384 ? 100 : 20,
+      );
+    },
+  );
+
+  it('blocos válidos seguidos no mesmo texto continuam saindo em ordem', () => {
+    const block = (summary: string) =>
+      `### NEXUS_HANDOFF v1\n{"status":"success","summary":"${summary}"}\n`;
+    const text = block('primeiro resumo com tamanho real') + block('segundo resumo com tamanho real');
+    expect(extractLegacyHandoffsFromText(text).map((payload) => payload.summary)).toEqual([
+      'primeiro resumo com tamanho real',
+      'segundo resumo com tamanho real',
+    ]);
   });
 });

@@ -1,4 +1,5 @@
 import { getOrchSettings } from '../persistence/settings-store';
+import { removeTerminatedSequences } from '../../shared/ansi-escape-sequences';
 
 const PROMPT_WINDOW = 4_096;
 /** After auto-accepting a boot prompt, hold prompt injection briefly so the TUI can leave the menu. */
@@ -285,6 +286,39 @@ function compactPromptText(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9?]/g, '');
 }
 
+/* eslint-disable no-control-regex */
+const MENU_CSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+const MENU_OSC_INTRODUCER = /\x1b\]/g;
+const MENU_OSC_TERMINATOR = /\x07/g;
+/* eslint-enable no-control-regex */
+
+/**
+ * Tela do menu sem CSI e sem OSC terminado por BEL — o mesmo que
+ * `.replace(CSI, '').replace(/\x1b\][^\x07]*\x07/g, '')`. O OSC sai por
+ * varredura linear (F-764 C.3): a regex recomeçava em cada `ESC ]` sem BEL e
+ * varria até o fim (16 KB: ~65 ms).
+ */
+function plainMenuText(raw: string): string {
+  return removeTerminatedSequences(
+    raw.replace(MENU_CSI, ''),
+    MENU_OSC_INTRODUCER,
+    MENU_OSC_TERMINATOR,
+  );
+}
+
+/**
+ * F-764 C.3: `(?:(cursor)|(?<![ \t]))[ \t]*…` em vez de `(cursor)?[ \t]*…`.
+ * Sem cursor, um casamento só pode começar onde a corrida de espaços começa:
+ * de dentro dela o `[ \t]*` absorveria os espaços de trás e o casamento mais
+ * à esquerda já teria saído no início da corrida. O resultado é o mesmo; o que
+ * some é recomeçar a varredura em cada espaço (16 KB de espaço: ~150 ms).
+ * Vale enquanto nenhuma opção termina em espaço — a busca seguinte não pode
+ * começar logo depois de um espaço consumido.
+ */
+function menuOptionPattern(cursor: string, body: string): RegExp {
+  return new RegExp(`(?:(${cursor})|(?<![ \\t]))[ \\t]*${body}`, 'gi');
+}
+
 /**
  * Qual tecla aceita o trust do Claude Code — lida da PRÓPRIA tela.
  *
@@ -308,13 +342,13 @@ export function focusedMenuResponse(
   labels: readonly string[],
   target: string,
 ): string | null {
-  const plain = raw
-    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
-    .replace(/\x1b\][^\x07]*\x07/g, '');
+  const plain = plainMenuText(raw);
   const start = plain.toLowerCase().lastIndexOf(banner);
   if (start < 0) return null;
   const escaped = labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  const re = new RegExp(`([❯›])?[ \\t]*(${escaped.join('|')})`, 'gi');
+  const re = labels.some((label) => /^\s|\s$/.test(label))
+    ? new RegExp(`([❯›])?[ \\t]*(${escaped.join('|')})`, 'gi')
+    : menuOptionPattern('[❯›]', `(${escaped.join('|')})`);
   const found: Array<{ label: string; focused: boolean }> = [];
   for (const match of plain.slice(start).matchAll(re)) {
     const label = match[2].toLowerCase();
@@ -352,8 +386,10 @@ function claudeWorkspaceTrustResponse(raw: string): string | null {
     : ACCEPT_DEFAULT_PROMPT_RESPONSE;
 }
 
-const CODEX_FOLDER_OPTION_RE =
-  /(›|>)?[ \t]*(\d)\.[ \t]*(open restricted|trust and continue|open existing task|quit)/gi;
+const CODEX_FOLDER_OPTION_RE = menuOptionPattern(
+  '›|>',
+  '(\\d)\\.[ \\t]*(open restricted|trust and continue|open existing task|quit)',
+);
 
 /**
  * Teclas até "Open restricted" no "Folder access" do Codex, lidas da última
@@ -362,9 +398,7 @@ const CODEX_FOLDER_OPTION_RE =
  * restricted" desenhado, `null` — o operador responde.
  */
 export function codexFolderAccessResponse(raw: string): string | null {
-  const plain = raw
-    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
-    .replace(/\x1b\][^\x07]*\x07/g, '');
+  const plain = plainMenuText(raw);
   const start = plain.toLowerCase().lastIndexOf('folder access');
   if (start < 0) return null;
   const options = new Map<number, { focused: boolean; label: string }>();
@@ -388,9 +422,7 @@ export function codexFolderAccessResponse(raw: string): string | null {
  * não está pintada — nunca um chute.
  */
 export function codexFolderTrustResponse(raw: string): string | null {
-  const plain = raw
-    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
-    .replace(/\x1b\][^\x07]*\x07/g, '');
+  const plain = plainMenuText(raw);
   const start = plain.toLowerCase().lastIndexOf('trust this folder?');
   if (start < 0) return null;
   const tail = plain.slice(start);

@@ -2807,7 +2807,7 @@ export function initFailover(): void {
     } catch (err) {
       console.warn('[failover] tap error:', err);
     }
-  });
+  }, 'failover');
   untapExit = tapSessionExit((sessionId) => {
     for (const [key, watch] of [...watches]) {
       if (watch.authority.sessionId !== sessionId) continue;

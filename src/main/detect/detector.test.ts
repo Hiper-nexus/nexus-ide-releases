@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { compileManifest } from './compiler';
 import {
   AgentScreenDetector,
+  DETECTION_WINDOW_CHARS,
+  EVAL_SLOW_BACKOFF_MS,
   PendingIdleConfirmation,
   PENDING_IDLE_CAP_MS,
   PENDING_IDLE_RECHECK_MS,
@@ -232,5 +234,81 @@ describe('getScreenText — cauda do buffer limpo', () => {
     expect(detector.getScreenText('s1')).toContain('terceira\n');
     detector.onExit('s1');
     expect(detector.getScreenText('s1')).toBeNull();
+  });
+});
+
+describe('avaliação com janela e orçamento (F-764 C.3)', () => {
+  const WHOLE_RECENT_MANIFEST = [
+    'id = "testcli"',
+    'version = "1.0.0"',
+    '[[rules]]',
+    'id = "old_banner_working"',
+    'state = "working"',
+    'priority = 100',
+    'visible_working = true',
+    'region = "whole_recent"',
+    'contains = ["banner-antigo"]',
+  ].join('\n');
+
+  function detectorWith(manifest: string, trace?: (event: Record<string, unknown>) => void) {
+    const published: ScreenDetectionRecord[] = [];
+    const detector = new AgentScreenDetector({
+      manifests: [compileManifest(parseManifest(manifest))],
+      getAgentInfo: () => ({ adapterId: 'testcli', paneId: 'p1' }),
+      publish: (record) => published.push(record),
+      now: () => Date.now(),
+      ...(trace ? { trace } : {}),
+    });
+    return { detector, published };
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('avalia só a janela final do buffer, em linhas inteiras', () => {
+    const { detector } = detectorWith(WHOLE_RECENT_MANIFEST);
+    detector.onData('s', 'banner-antigo\n');
+    expect(detector.evaluateSession('s')?.state).toBe('working');
+    // Mais que a janela depois do banner: ele saiu da TELA avaliada.
+    const filler = `${'x'.repeat(99)}\n`.repeat(Math.ceil((DETECTION_WINDOW_CHARS + 1_000) / 100));
+    detector.onData('s', filler);
+    expect(detector.evaluateSession('s')?.state).not.toBe('working');
+    // O texto inteiro segue disponível para quem lê a tela.
+    expect(detector.getScreenText('s', 1_000_000)).toContain('banner-antigo');
+  });
+
+  it('avaliação acima do orçamento adia a próxima e registra o trace uma vez', () => {
+    vi.useFakeTimers();
+    try {
+      const events: Array<Record<string, unknown>> = [];
+      const { detector } = detectorWith(TEST_MANIFEST, (event) => events.push(event));
+      let clock = 0;
+      // Cada avaliação "custa" 30 ms no relógio de alta resolução.
+      vi.spyOn(performance, 'now').mockImplementation(() => {
+        clock += 30;
+        return clock;
+      });
+      detector.onData('s', 'working...\n');
+      vi.advanceTimersByTime(0);
+      expect(events).toEqual([
+        expect.objectContaining({
+          kind: 'detector-eval-slow',
+          sessionId: 's',
+          manifestId: 'testcli',
+          backoffMs: EVAL_SLOW_BACKOFF_MS,
+        }),
+      ]);
+      const evaluate = vi.spyOn(detector, 'evaluateSession');
+      detector.onData('s', 'ready>\n');
+      vi.advanceTimersByTime(EVAL_SLOW_BACKOFF_MS - 50);
+      expect(evaluate).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(100);
+      expect(evaluate).toHaveBeenCalledTimes(1);
+      // Segunda avaliação lenta dentro do minuto: sem trace novo.
+      expect(events).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

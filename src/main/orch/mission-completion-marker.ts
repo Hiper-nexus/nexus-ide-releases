@@ -73,7 +73,10 @@ export const MAX_TRACKED_SESSIONS = 256;
 // quantificador — nada de `(?:X+)+`, que é a forma clássica de backtracking
 // catastrófico em cima de saída de terminal arbitrária.
 const LEADING_DECORATION = /^[\s─-▟|>*#`'"•-]+/;
-const TRAILING_FRAME = /[\s─-▟|`]+$/;
+// F-764 C.3: o `(?<!…)` deixa a busca começar só onde a corrida final começa;
+// sem ele, `[…]+$` recomeçava em cada caractere da corrida (quadrático numa
+// linha de TUI longa). O casamento é o mesmo — o mais à esquerda.
+const TRAILING_FRAME = /(?<![\s─-▟|`])[\s─-▟|`]+$/;
 
 /** Tira moldura/marcação das pontas e colapsa espaço interno. */
 export function trimLineDecoration(line: string): string {

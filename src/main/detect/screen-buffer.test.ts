@@ -55,3 +55,29 @@ describe('SessionScreenBuffer', () => {
     expect(buffer.text('b')).toBe('bbb');
   });
 });
+
+describe('SessionScreenBuffer.tail (F-764 C.3)', () => {
+  it('devolve tudo quando o texto cabe na janela', () => {
+    const buffer = new SessionScreenBuffer();
+    buffer.append('s', 'a\nb\n');
+    buffer.append('s', 'c');
+    expect(buffer.tail('s', 100)).toBe('a\nb\nc');
+    expect(buffer.tail('nada', 100)).toBe('');
+  });
+
+  it('corta no início de uma linha inteira e junta só os chunks do fim', () => {
+    const buffer = new SessionScreenBuffer();
+    buffer.append('s', 'linha-velha-1\n');
+    buffer.append('s', 'linha-velha-2\n');
+    buffer.append('s', 'nova\nfim');
+    // 12 caracteres pegam "a-2\nnova\nfim": a linha cortada sai.
+    expect(buffer.tail('s', 12)).toBe('nova\nfim');
+    expect(buffer.text('s')).toBe('linha-velha-1\nlinha-velha-2\nnova\nfim');
+  });
+
+  it('linha única maior que a janela: devolve o fim dela', () => {
+    const buffer = new SessionScreenBuffer();
+    buffer.append('s', 'x'.repeat(50));
+    expect(buffer.tail('s', 10)).toBe('x'.repeat(10));
+  });
+});
