@@ -225,9 +225,17 @@ describe('topo entre CLIs (F-214 — revisão e critical, 29/09)', () => {
   });
 
   it('sem modelo de topo roteável, o ranking não muda', () => {
+    // O que o invariante protege (F-214/F-233): sem NENHUM assento de topo
+    // roteável o passo de topo não inventa vencedor — vale o ranking do
+    // multi-score e o Maestro julga. O fixture original tinha o grok, e o
+    // F-779 pôs o grok-4.7 na lane de julgamento DE PROPÓSITO (DeepSWE medido
+    // 71,0 = Sonnet 5.5): com ele no pool a premissa "sem topo roteável"
+    // deixou de ser verdade. O fixture agora tem só CLIs fora da lane, o que
+    // mantém a premissa — e a asserção fica a mesma. O caso do grok é o teste
+    // seguinte (política que mudou por decisão, F-817).
     const decision = routeTask(
       FIELD_TEXT,
-      inventory(['mimo-code', 'glm', 'kimi', 'grok']),
+      inventory(['mimo-code', 'glm', 'kimi']),
       DEFAULT_ROUTING_TABLE,
       'hard',
       false,
@@ -239,6 +247,28 @@ describe('topo entre CLIs (F-214 — revisão e critical, 29/09)', () => {
       model: 'xiaomi/mimo-v2.6-pro',
     });
     expect(decision!.reason).not.toContain('topo entre CLIs');
+    expect(decision!.reason).not.toContain('lane de julgamento');
+    expect(decision!.judgeUnavailable).toBe(true);
+  });
+
+  it('F-779/F-817: com o Grok 4.7 no pool (assento da lane), a revisão vai a ele — decisão de política, não regressão', () => {
+    // Antes do F-779 este pool caía no MiMo Pro (ver o teste acima). Mudou de
+    // propósito: o operador pediu "usar todas as LLMs" e o Grok 4.7 tem
+    // DeepSWE publicado igual ao do Sonnet 5.5, o piso da lane. O Grok é o
+    // default da própria CLI (sem prova de acesso extra, ao contrário do
+    // Argon). GLM/Kimi/MiMo seguem fora por experiência do operador (F-233).
+    const decision = routeTask(
+      FIELD_TEXT,
+      inventory(['mimo-code', 'glm', 'kimi', 'grok']),
+      DEFAULT_ROUTING_TABLE,
+      'hard',
+      false,
+      catalog,
+      missionHistory,
+    );
+    expect(decision).toMatchObject({ adapterId: 'grok', model: 'grok-4.7' });
+    expect(decision!.reason).toContain('lane de julgamento');
+    expect(decision!.judgeUnavailable).toBeUndefined();
   });
 
   it('modelo citado no texto continua vencendo a política de topo', () => {

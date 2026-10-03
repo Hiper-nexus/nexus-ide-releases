@@ -552,6 +552,45 @@ export const JUDGE_FRONTIER_LANE: ReadonlyArray<{
 ]);
 
 /**
+ * F-817 (decisão do coordenador, 03/10; registrada no F-779): a abertura da
+ * lane a outros laboratórios fica, com duas travas.
+ *
+ * 1) Assento que exige PROVA de acesso. O Argon é "acesso restrito
+ *    (Fairwind → Ultra → API paga)" no próprio catálogo e NÃO é o default do
+ *    agy: sem a conta, o pane de revisão morreria depois de gastar o ciclo
+ *    inteiro do Maestro. A prova é a sonda que já existe — o modelo consta do
+ *    que a PRÓPRIA CLI anunciou (`agy models`, `AdapterAvailability.liveModels`)
+ *    e passou pelo filtro de autenticação — somada ao que a lane já checa:
+ *    fora da quarentena do F-683 (a rotação de modelo do F-520 quarentena o
+ *    recusado) e fora do bloqueio do catálogo. Sem prova, o assento nem entra
+ *    (lista vazia ≠ "confiar na lane", como no contrato bundled). O Grok é o
+ *    default da própria CLI, então não precisa.
+ * 2) Auditoria de SEGURANÇA crítica fica com o conjunto frontier provado
+ *    (Claude e Codex, F-233). Argon e Grok têm DeepSWE publicado, não
+ *    histórico de julgar segurança; sem Claude/Codex roteável o Maestro julga
+ *    (nenhum empréstimo de assento).
+ *
+ * `isFrontierReviewer` (F-234) NÃO muda: a identidade do revisor é o modelo
+ * da sessão, medida pelo Main — quem rodou, rodou com acesso.
+ */
+const JUDGE_LANE_ACCESS_PROOF_REQUIRED: ReadonlySet<string> = new Set([
+  'agy:gemini-4-argon',
+]);
+
+const JUDGE_SECURITY_CRITICAL_ADAPTERS: ReadonlySet<string> = new Set([
+  'claude',
+  'codex',
+]);
+
+/** O assento só entra quando a CLI anunciou o modelo (sonda viva). */
+export function judgeSeatNeedsAccessProof(seat: {
+  adapterId: string;
+  model: string;
+}): boolean {
+  return JUDGE_LANE_ACCESS_PROOF_REQUIRED.has(`${seat.adapterId}:${seat.model}`);
+}
+
+/**
  * F-234: juiz que satisfaz o portão de integração — o par (adapter, model)
  * casa com um assento da {@link JUDGE_FRONTIER_LANE} por LINHA (a mesma salva
  * do `applyFrontierLane`: `claude-opus-5-6` conta como linha do opus 5-5).
@@ -627,6 +666,12 @@ export interface AdapterAvailability {
   installed: boolean;
   /** Optional resolved model list; when present, candidates outside it are skipped. */
   models?: string[];
+  /**
+   * F-817: subconjunto de `models` que a PRÓPRIA CLI anunciou na descoberta
+   * viva (`agy models`), já filtrado por autenticação. É a prova de acesso dos
+   * assentos da lane de julgamento que a exigem (Argon). Ausente = sem prova.
+   */
+  liveModels?: readonly string[];
   /** Live native capabilities; [] = no effort control, absent = bundled contract. */
   efforts?: readonly string[];
   /**
@@ -1422,6 +1467,11 @@ export function routeTask(
       // Lista de modelos exposta pela CLI: o modelo tem que estar nela.
       // Sem lista (contrato bundled), confia na lane como a tabela confia.
       if (adapter.models !== undefined && !eligible.includes(chosen)) return;
+      // F-817: assento de acesso restrito só com a prova da sonda viva.
+      if (
+        judgeSeatNeedsAccessProof(seat) &&
+        !(adapter.liveModels ?? []).includes(chosen)
+      ) return;
       if (
         isModelBlockedForAutoRouting(modelCatalogInfo(modelCatalog, seat.adapterId, chosen)) ||
         modelAccessQuarantine(seat.adapterId, chosen)
@@ -1471,8 +1521,19 @@ export function routeTask(
     policy.source !== 'benchmark' &&
     mention.model === undefined
   ) {
-    if (applyFrontierLane(JUDGE_FRONTIER_LANE)) {
-      judgeNote = '; lane de julgamento (modelos de ponta)';
+    // F-817: auditoria de segurança crítica só com o conjunto frontier
+    // provado (Claude/Codex); sem eles o Maestro julga, sem empréstimo.
+    const securityCriticalAudit =
+      tier === 'critical' && specialtyVerdict.specialty === 'security';
+    const judgeLane = securityCriticalAudit
+      ? JUDGE_FRONTIER_LANE.filter((seat) =>
+          JUDGE_SECURITY_CRITICAL_ADAPTERS.has(seat.adapterId),
+        )
+      : JUDGE_FRONTIER_LANE;
+    if (applyFrontierLane(judgeLane)) {
+      judgeNote = securityCriticalAudit
+        ? '; lane de julgamento (segurança crítica: Claude/Codex)'
+        : '; lane de julgamento (modelos de ponta)';
     } else {
       judgeNote = '; sem juiz frontier disponível — o Maestro julga';
       judgeUnavailable = true;
