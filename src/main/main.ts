@@ -201,10 +201,12 @@ import {
   listLiveSessionLocations,
   orchTerminateSession,
   sessionAdapterId,
+  tapSessionExit,
   terminateAllSessions,
 } from "./pty/pty-manager";
 import { setPaneTerminalIdentity } from "./pty/pane-terminal-identity";
 import {
+  rememberExitedSessionAttribution,
   routeAttributionFromSession,
   setHandoffRouteAttributionResolver,
 } from "./orch/handoff-store";
@@ -535,6 +537,11 @@ function bootstrap(): void {
   // sweep abaixo: o store não pode importar o pty-manager.
   setHandoffRouteAttributionResolver((sessionId) =>
     routeAttributionFromSession(getAgentSessionInfo(sessionId)),
+  );
+  // O enforcement grava "terminou sem entregar" depois do exit, quando a
+  // sessão já saiu do registro: o tap de saída guarda quem ela era.
+  tapSessionExit((sessionId, agent) =>
+    rememberExitedSessionAttribution(sessionId, routeAttributionFromSession(agent)),
   );
   // Liga a varredura de PTY do teardown de worktree. Injetado aqui, e não
   // importado dentro do registry, porque pty-manager já importa de runtime/ —

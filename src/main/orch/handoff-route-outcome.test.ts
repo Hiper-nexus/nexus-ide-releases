@@ -14,7 +14,9 @@ import { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import { INITIAL_PROJECT_MIGRATIONS } from "../runtime/project-runtime-schema";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import {
+  clearExitedSessionAttributionsForTesting,
   createScopedHandoffStore,
+  rememberExitedSessionAttribution,
   routeAttributionFromSession,
   setHandoffRouteAttributionResolver,
 } from "./handoff-store";
@@ -46,6 +48,7 @@ describe("F-773: handoff grava quem entregou e alimenta a taxa de sucesso", () =
 
   afterEach(() => {
     setHandoffRouteAttributionResolver(null);
+    clearExitedSessionAttributionsForTesting();
     manager?.closeAll();
     if (baseDir) fs.rmSync(baseDir, { recursive: true, force: true });
   });
@@ -126,6 +129,37 @@ describe("F-773: handoff grava quem entregou e alimenta a taxa de sucesso", () =
     expect(handoffs.routeOutcomeCountsSince(0)).toEqual([
       { adapterId: "kimi", model: "kimi-code/k3", successes: 1, total: 2 },
     ]);
+  });
+
+  it("falha gravada depois do exit (sessão fora do registro) conta para a CLI que morreu", () => {
+    // O enforcement grava "a sessão terminou sem entregar" depois do exit: o
+    // registro vivo já não conhece a sessão, o tap de saída lembrou quem era.
+    rememberExitedSessionAttribution("pty-agy-1", { adapterId: "agy", model: "gemini-4-argon" });
+    const failure = submit("pty-agy-1", "failed", "nexus-handoff-enforcement");
+    expect(attributionOf(failure.id)).toEqual({ adapter_id: "agy", model: "gemini-4-argon" });
+    expect(handoffs.routeOutcomeCountsSince(0)).toEqual([
+      { adapterId: "agy", model: "gemini-4-argon", successes: 0, total: 1 },
+    ]);
+  });
+
+  it("o registro vivo vence a lembrança, e a lista de sessões encerradas é limitada", () => {
+    rememberExitedSessionAttribution("pty-kimi-1", { adapterId: "grok", model: "grok-4.7" });
+    expect(attributionOf(submit("pty-kimi-1", "success").id)).toEqual({
+      adapter_id: "kimi",
+      model: "kimi-code/k3",
+    });
+    rememberExitedSessionAttribution("pty-antiga-0", { adapterId: "agy" });
+    for (let index = 1; index <= 256; index += 1) {
+      rememberExitedSessionAttribution(`pty-nova-${index}`, { adapterId: "agy" });
+    }
+    expect(attributionOf(submit("pty-antiga-0", "failed").id)).toEqual({
+      adapter_id: null,
+      model: null,
+    });
+    expect(attributionOf(submit("pty-nova-256", "failed").id)).toEqual({
+      adapter_id: "agy",
+      model: null,
+    });
   });
 
   it("só a janela pedida entra", () => {

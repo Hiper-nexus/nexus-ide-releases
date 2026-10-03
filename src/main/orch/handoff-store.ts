@@ -471,12 +471,44 @@ export function routeAttributionFromSession(
   return { adapterId: agent.adapterId, ...(model ? { model } : {}) };
 }
 
+/**
+ * F-773: quem era cada sessão que já encerrou. O enforcement grava "a sessão
+ * terminou sem entregar" DEPOIS do exit, quando ela já saiu do registro do
+ * PTY — sem isto a falha mais importante (worker que morreu) ficava sem CLI e
+ * a taxa saía otimista. Lista curta e limitada: só a janela entre o exit e a
+ * falha sintética importa.
+ */
+const EXITED_SESSION_ATTRIBUTION_CAP = 256;
+const exitedSessionAttributions = new Map<string, HandoffRouteAttribution>();
+
+export function rememberExitedSessionAttribution(
+  sessionId: string,
+  attribution: HandoffRouteAttribution | null,
+): void {
+  if (!sessionId || !attribution?.adapterId) return;
+  exitedSessionAttributions.delete(sessionId);
+  exitedSessionAttributions.set(sessionId, attribution);
+  while (exitedSessionAttributions.size > EXITED_SESSION_ATTRIBUTION_CAP) {
+    const oldest = exitedSessionAttributions.keys().next().value;
+    if (oldest === undefined) break;
+    exitedSessionAttributions.delete(oldest);
+  }
+}
+
+/** Para testes: esquece as sessões encerradas lembradas. */
+export function clearExitedSessionAttributionsForTesting(): void {
+  exitedSessionAttributions.clear();
+}
+
 function resolveRouteAttribution(
   sessionId: string | undefined,
 ): HandoffRouteAttribution | null {
-  if (!sessionId || !routeAttributionResolver) return null;
+  if (!sessionId) return null;
   try {
-    const attribution = routeAttributionResolver(sessionId);
+    const attribution =
+      routeAttributionResolver?.(sessionId) ??
+      exitedSessionAttributions.get(sessionId) ??
+      null;
     if (!attribution?.adapterId) return null;
     const adapterId = attribution.adapterId.slice(0, 128);
     const model = attribution.model?.slice(0, 256);
