@@ -19,7 +19,10 @@ vi.mock("electron", async () => {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), "adoption-userdata-"));
   return { app: { getPath: () => userData } };
 });
-vi.mock("../path-resolver", () => ({
+vi.mock("../path-resolver", async (importOriginal) => ({
+  // Parcial: o gate do Codex (F-790) e o aquecimento de versão leem outros
+  // exports do resolvedor; só o que o teste controla é substituído.
+  ...(await importOriginal<typeof import("../path-resolver")>()),
   resolveSpawnBinary: (command: string) => ({
     binPath: `/mock/bin/${command || "cli"}`,
     effectivePath: "/mock/bin",

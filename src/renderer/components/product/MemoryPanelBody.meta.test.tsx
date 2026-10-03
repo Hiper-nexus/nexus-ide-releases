@@ -60,7 +60,7 @@ describe("MemoryPanelBody — origem e data de cada nota (fatia 5)", () => {
     const items = host.querySelectorAll(".product-pane__item");
     expect(items.length).toBe(2);
 
-    const metas = host.querySelectorAll(".product-pane__meta");
+    const metas = host.querySelectorAll(".product-pane__item .product-pane__meta");
     expect(metas.length).toBe(2);
     expect(metas[0]!.textContent).toContain("preferência do operador");
     expect(metas[0]!.textContent).not.toContain("trusted:");

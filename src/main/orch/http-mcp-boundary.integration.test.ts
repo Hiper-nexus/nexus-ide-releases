@@ -778,6 +778,9 @@ describe("physical HTTP MCP handoff boundary", () => {
       }),
     ).toBe(true);
 
+    // F-768: o aceite da entrega também pede memória (a retenção deduplica por
+    // conteúdo); o que este teste garante é a contribuição do ACK físico.
+    const retainCallsBeforeAck = retainAcknowledged.mock.calls.length;
     await expect(dispatchAck()).resolves.toMatchObject({
       ok: true,
       result: {
@@ -786,7 +789,7 @@ describe("physical HTTP MCP handoff boundary", () => {
       },
     });
     expect(handoffs.get(handoff.id)?.deliveryState).toBe("consumed");
-    expect(retainAcknowledged).toHaveBeenCalledTimes(1);
+    expect(retainAcknowledged).toHaveBeenCalledTimes(retainCallsBeforeAck + 1);
     expect(retainAcknowledged).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -821,7 +824,7 @@ describe("physical HTTP MCP handoff boundary", () => {
         .get(),
     ).toEqual({ count: 1 });
     // ACK repetido é replay: não pede memória de novo.
-    expect(retainAcknowledged).toHaveBeenCalledTimes(1);
+    expect(retainAcknowledged).toHaveBeenCalledTimes(retainCallsBeforeAck + 1);
 
     const stale = mintToken({
       label: "stale Maestro",
