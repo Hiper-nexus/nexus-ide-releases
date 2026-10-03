@@ -374,6 +374,190 @@ export function syncCanonicalMemoryProjections(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Vault markdown legível (F-769): exportação one-shot para
+// <workspace>/.nexus-memory/, fora do git (.gitignore próprio), abrindo
+// direto como vault no Obsidian. É uma visão morta: a ingestão de edições
+// só roda sobre raízes registradas em userData, e o checkout nunca é
+// registrado — quem edita memória é o app, não o arquivo.
+// ---------------------------------------------------------------------------
+
+const VAULT_GITIGNORE = '*\n';
+const VAULT_BANNER =
+  '<!-- Cópia legível da memória canônica (SQLite), reescrita a cada ' +
+  'exportação: edite a memória no app Nexus. Esta pasta abre como vault ' +
+  'no Obsidian. -->';
+
+const VAULT_INDEX_KINDS = ['decision', 'mission', 'agent', 'note'] as const;
+const VAULT_INDEX_TITLES: Readonly<Record<MemoryNote['kind'], string>> = {
+  decision: 'Decisões',
+  mission: 'Missões',
+  agent: 'Notas de agentes',
+  note: 'Notas',
+};
+
+function vaultSlug(title: string): string {
+  const slug = title
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60)
+    .replace(/-+$/g, '');
+  return slug || 'memoria';
+}
+
+/**
+ * Nome legível e determinístico: slug do título + sufixo curto do id, para
+ * que reexportações não criem um arquivo novo a cada sync nem colidam dois
+ * títulos iguais.
+ */
+export function memoryVaultFileName(
+  input: CanonicalMemoryProjectionInput,
+): string {
+  const parsedId = canonicalProjectionInputSchema.shape.id.parse(input.id);
+  return `${vaultSlug(projectionTitle(input.content, parsedId))}-${parsedId.slice(4, 10)}.md`;
+}
+
+const FILE_PATH_TOKEN_RE =
+  /(?<![\w@+.~:/[\]-])((?:[\w@+.~-]+\/)+[\w+.~-]+\.[A-Za-z0-9]{1,8})(?![\w\]|])/g;
+
+/**
+ * Envolve caminhos de arquivo citados no texto em wikilinks Obsidian
+ * (`[[src/caminho.ts]]`). Wikilinks já existentes e URLs são preservados.
+ */
+export function linkifyFilePaths(content: string): string {
+  return content
+    .split(/(\[\[[^\]]{1,256}\]\])/g)
+    .map((part, index) =>
+      index % 2 === 1 ? part : part.replace(FILE_PATH_TOKEN_RE, '[[$1]]'),
+    )
+    .join('');
+}
+
+function vaultNoteMarkdown(
+  input: CanonicalMemoryProjectionInput,
+  kind: MemoryNote['kind'],
+  missionId: string | undefined,
+): string {
+  return [
+    '---',
+    `id: ${input.id}`,
+    `canonical: ${CANONICAL_MEMORY_PROJECTION}`,
+    'generated: true',
+    `kind: ${kind}`,
+    `memoryKind: ${input.kind}`,
+    `scope: ${input.scope}`,
+    `importance: ${input.importance}`,
+    `source: ${yamlString(input.source)}`,
+    `missionId: ${yamlString(missionId ?? null)}`,
+    `createdAt: ${input.createdAt}`,
+    `updatedAt: ${input.updatedAt}`,
+    '---',
+    '',
+    VAULT_BANNER,
+    '',
+    linkifyFilePaths(projectionBody(input)),
+    '',
+  ].join('\n');
+}
+
+function vaultIndexName(kind: MemoryNote['kind']): string {
+  return `INDEX-${kind}.md`;
+}
+
+function vaultIndexMarkdown(
+  kind: MemoryNote['kind'],
+  entries: ReadonlyArray<{ file: string; title: string }>,
+): string {
+  const lines = entries.map(
+    (entry) => `- [[${entry.file.replace(/\.md$/, '')}|${entry.title}]]`,
+  );
+  return [`# Índice — ${VAULT_INDEX_TITLES[kind]}`, '', ...lines, ''].join('\n');
+}
+
+function writeFileIfChanged(filePath: string, content: string): void {
+  let isCurrent = false;
+  try {
+    isCurrent =
+      fs.lstatSync(filePath).isFile() &&
+      fs.readFileSync(filePath, 'utf8') === content;
+  } catch {
+    // Missing/unreadable/stale file is repaired by the atomic write.
+  }
+  if (!isCurrent) writeFileAtomic(filePath, content);
+}
+
+/**
+ * Exporta a memória ativa do workspace como vault markdown legível: nomes de
+ * arquivo por slug do título, um `INDEX-<kind>.md` por tipo, wikilinks
+ * automáticos para caminhos de arquivo citados e `.gitignore` próprio —
+ * nada aqui entra no git. Arquivos gerados que saíram do conjunto ativo são
+ * colhidos; markdown sem o marcador canônico (nota humana solta na pasta)
+ * fica intacto.
+ */
+export function exportMemoryVault(
+  projectRoot: string,
+  rawInputs: readonly CanonicalMemoryProjectionInput[],
+  dirname = DEFAULT_MEMORY_DIR,
+): string {
+  const inputs = rawInputs.map((input) =>
+    canonicalProjectionInputSchema.parse(input),
+  );
+  const root = resolveMemoryRoot(projectRoot, dirname);
+  ensureProjectionRoot(root);
+  writeFileIfChanged(path.join(root, '.gitignore'), VAULT_GITIGNORE);
+
+  const active = new Set<string>();
+  const byKind = new Map<
+    MemoryNote['kind'],
+    Array<{ file: string; title: string }>
+  >();
+  for (const input of inputs) {
+    const name = memoryVaultFileName(input);
+    const kind = projectionKind(input);
+    const markdown = vaultNoteMarkdown(
+      input,
+      kind,
+      projectionMissionId(input.source),
+    );
+    active.add(name);
+    writeFileIfChanged(path.join(root, name), markdown);
+    const entries = byKind.get(kind) ?? [];
+    entries.push({ file: name, title: projectionTitle(input.content, input.id) });
+    byKind.set(kind, entries);
+  }
+
+  for (const kind of VAULT_INDEX_KINDS) {
+    const entries = byKind.get(kind);
+    if (!entries) continue;
+    const name = vaultIndexName(kind);
+    active.add(name);
+    writeFileIfChanged(path.join(root, name), vaultIndexMarkdown(kind, entries));
+  }
+
+  for (const name of fs.readdirSync(root)) {
+    const filePath = path.join(root, name);
+    const stat = fs.lstatSync(filePath);
+    if (!stat.isFile()) continue;
+    // Sweep temp files orphaned by a crash between open() and rename().
+    if (/\.[0-9a-f]{16}\.tmp$/.test(name)) {
+      fs.unlinkSync(filePath);
+      continue;
+    }
+    if (!name.endsWith('.md') || active.has(name)) continue;
+    if (
+      VAULT_INDEX_KINDS.some((kind) => name === vaultIndexName(kind)) ||
+      parseFrontmatter(fs.readFileSync(filePath, 'utf8')).canonical ===
+        CANONICAL_MEMORY_PROJECTION
+    ) {
+      fs.unlinkSync(filePath);
+    }
+  }
+  return root;
+}
+
 /**
  * Cheap staleness token for a projection directory: one readdir plus an lstat
  * per candidate, no file contents. Everything that can change what the
@@ -471,7 +655,7 @@ function readProjectionNotes(
   projectRoot: string,
   dirname: string,
 ): { readonly notes: readonly MemoryNote[]; readonly cached: boolean } {
-  const key = `${projectRoot} ${dirname}`;
+  const key = `${projectRoot}\0${dirname}`;
   const signature = projectionSignature(projectRoot, dirname);
   const hit = scanCache.get(key);
   if (hit?.signature === signature) return { notes: hit.notes, cached: true };

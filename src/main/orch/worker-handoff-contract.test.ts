@@ -50,6 +50,23 @@ describe("worker handoff transport contract", () => {
       expect(prompt).not.toContain("Não abra subagentes internos");
     }
   });
+
+  it("ensina a doutrina da memória compartilhada onde as tools MCP existem (F-769)", () => {
+    const withMcp = withHandoffContract("Corrija o fluxo da missão.", {
+      quirks: { mcpAutoload: false, nexusMcp: "agy" },
+    });
+    expect(withMcp).toContain("nexus_memory_recall");
+    expect(withMcp).toContain("nexus_memory_retain");
+    expect(withMcp).toMatch(/antes de mexer numa área desconhecida/);
+    expect(withMcp).toMatch(/Antes do handoff, grave as pegadinhas/);
+
+    // CLI sem MCP do Nexus (shim de disco): a menção seria ruído.
+    const shimOnly = withHandoffContract("Corrija o fluxo da missão.", {
+      quirks: { mcpAutoload: false, nexusMcp: "none" },
+    });
+    expect(shimOnly).not.toContain("nexus_memory_recall");
+    expect(shimOnly).not.toContain("nexus_memory_retain");
+  });
 });
 
 // REGRESSAO: este arquivo tinha a QUINTA gramatica de "isto e UI?" do produto,

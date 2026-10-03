@@ -199,7 +199,11 @@ const recallTool: McpToolDef = {
     requireMemoryEnabled();
     const input = recallArgsSchema.parse(args);
     const store = getWorkspaceMemoryStore(ctx.scope);
-    return store.recall(input);
+    const hits = store.recall(input);
+    // Tudo que esta chamada devolve é injetado no contexto do agente — é
+    // exatamente o que o contador honesto deve registrar (F-769).
+    store.markRecalled(hits.map((hit) => hit.id));
+    return hits;
   },
 };
 

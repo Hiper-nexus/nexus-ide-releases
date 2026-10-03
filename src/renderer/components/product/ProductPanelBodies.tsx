@@ -276,6 +276,34 @@ type ProductMemoryFailure = {
   message: string;
 };
 
+const DAY_MS = 86_400_000;
+/** Acima disso a tela Memória entra em alerta (F-769). */
+export const MEMORY_STALE_DAYS_THRESHOLD = 3;
+
+/**
+ * Dias desde a memória mais recente do workspace; null quando nenhuma nota
+ * traz data. Contador visível do "a memória parou de andar" — antes disto a
+ * escrita falhava em silêncio por semanas sem sinal na UI (F-769).
+ */
+export function memoryStalenessDays(
+  notes: ReadonlyArray<Pick<ProductMemoryNote, 'createdAt' | 'updatedAt'>>,
+  now = Date.now(),
+): number | null {
+  let latest = 0;
+  for (const note of notes) {
+    const stamp = note.updatedAt ?? note.createdAt ?? 0;
+    if (stamp > latest) latest = stamp;
+  }
+  if (latest <= 0) return null;
+  return Math.max(0, Math.floor((now - latest) / DAY_MS));
+}
+
+/** Linha "última memória há N dias" da tela Memória. */
+export function memoryStalenessLabel(days: number): string {
+  if (days === 0) return 'Última memória hoje';
+  return `Última memória há ${days} ${days === 1 ? 'dia' : 'dias'}`;
+}
+
 export interface MemoryPanelBodyProps {
   showOnboarding?: boolean;
   presentation?: 'compact' | 'full';
@@ -557,6 +585,26 @@ export function MemoryPanelBody({
             <h2>Memórias salvas</h2>
             {!loading && !failure ? <span>{notes.length}</span> : null}
           </header>
+          {!loading && !failure
+            ? (() => {
+                const stalenessDays = memoryStalenessDays(notes);
+                if (stalenessDays === null) return null;
+                const stale =
+                  stalenessDays > MEMORY_STALE_DAYS_THRESHOLD;
+                return (
+                  <p
+                    className="product-pane__meta memory-workspace__staleness"
+                    data-stale={stale ? 'true' : undefined}
+                    role="status"
+                  >
+                    {memoryStalenessLabel(stalenessDays)}
+                    {stale
+                      ? ' — acima de 3 dias sem gravar: o projeto pode estar esquecendo o que aprendeu'
+                      : ''}
+                  </p>
+                );
+              })()
+            : null}
           {collection}
         </section>
       ) : collection}

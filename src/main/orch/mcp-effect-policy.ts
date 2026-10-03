@@ -202,6 +202,10 @@ const READ_ONLY_CONTEXT_METADATA_TOOLS = new Set([
   // "nexus_merge_review_submit endpoint is not exposed").
   'merge_review_submit',
   'review_submit',
+  // F-769: um pane read-only (revisor, juiz) também consulta e grava a memória
+  // compartilhada. O retain é validado/redigido no handler e escreve só no
+  // banco de memória em userData — nunca no workspace nem fora dele.
+  'memory_retain',
 ]);
 
 /**

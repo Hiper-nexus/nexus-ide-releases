@@ -98,6 +98,12 @@ describe('isToolAllowed', () => {
     expect(isToolAllowed([], 'nexus_pane_spawn')).toBe(false);
   });
 
+  it('always allows the shared-memory tools, even with empty allowlist (F-769)', () => {
+    expect(isToolAllowed([], 'nexus_memory_recall')).toBe(true);
+    expect(isToolAllowed([], 'nexus_memory_stats')).toBe(true);
+    expect(isToolAllowed([], 'nexus_memory_retain')).toBe(true);
+  });
+
   it('never grants high-impact tools implicitly (null allowlist)', () => {
     // These reach outside the sandbox — a prompt-injected agent with the
     // default (unrestricted) allowlist must NOT inherit them.

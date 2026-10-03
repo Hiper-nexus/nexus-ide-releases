@@ -145,6 +145,14 @@ const ALWAYS_ALLOWED = new Set([
   // Tool recommendation: reads the caller's own visible tool list and returns
   // a ranking; the agent still calls the recommended tool through every gate.
   "tool_pick",
+  // Memória compartilhada de longa duração (F-769): workers nascem com
+  // allowlist vazia e nunca podiam consultar nem gravar — 0 retains na
+  // auditoria. recall/stats são leitura FTS local; retain é validado e
+  // redigido no handler (bootstrap-authority) e só escreve no banco de
+  // memória em userData, nunca no workspace.
+  "memory_recall",
+  "memory_stats",
+  "memory_retain",
 ]);
 
 /**
