@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 const mainSource = fs.readFileSync(new URL("./main.ts", import.meta.url), "utf8");
 const bootstrapSource = mainSource.slice(
-  mainSource.indexOf("function bootstrap(): void"),
+  mainSource.indexOf("async function bootstrap(): Promise<void>"),
   mainSource.indexOf("function isAutomatedReleaseTest"),
 );
 const appReadySource = mainSource.slice(
@@ -55,7 +55,7 @@ describe("main bootstrap settings migration order", () => {
       "createMainWindow({ deferRendererLoad: true })",
     );
     const resolvePath = appReadySource.indexOf("await resolveUserPath();");
-    const bootstrap = appReadySource.indexOf("bootstrap();");
+    const bootstrap = appReadySource.indexOf("await bootstrap();");
     const startRenderer = appReadySource.indexOf(
       "startMainWindowRenderer(mainWindow)",
     );

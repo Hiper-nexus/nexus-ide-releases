@@ -554,7 +554,7 @@ if (process.platform === "win32") {
   }
 }
 
-function bootstrap(): void {
+async function bootstrap(): Promise<void> {
   // Persisted overrides live under userData; must be configured before the
   // first getFeatureFlagRegistry() call anywhere in bootstrap.
   configureFeatureFlagRegistry({
@@ -744,7 +744,7 @@ function bootstrap(): void {
   traceBootstrap('after secondary IPC registration');
   // Telemetria REAL de tokens (transcript watchers → SQLite). Convive com o
   // cost-tracker heurístico: a UI prefere o real quando ele existe.
-  initUsageTelemetry(projectRuntimeManager);
+  await initUsageTelemetry(projectRuntimeManager);
   traceBootstrap('after usage telemetry');
   // Tokens das contas Claude secundárias renovados em background — spawn e
   // failover sempre encontram credencial viva no vault (mata o "401 OAuth
@@ -1021,7 +1021,7 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
     // freeze Electron's main event loop.
     try {
       await resolveUserPath();
-      bootstrap();
+      await bootstrap();
       // Shell de login lento (oh-my-zsh + nvm num login frio) estoura o prazo
       // curto do boot e CLIs via nvm/fnm pareciam "não instaladas" a sessão
       // toda. Uma segunda sondagem, longa e em background, corrige sozinha.
