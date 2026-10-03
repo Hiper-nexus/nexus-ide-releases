@@ -57,7 +57,11 @@ describe('ícone-fonte do app (1024×1024)', () => {
   });
 
   it('o ícone versionado em assets/icon.png é exatamente o que o script gera', () => {
-    const committed = readFileSync(resolve(ROOT, 'assets', 'icon.png'));
-    expect(Buffer.compare(committed, png)).toBe(0);
+    // Compara a imagem, não os bytes: o deflate do zlib muda entre versões do
+    // Node e o mesmo desenho saía com 15633 ou 15599 bytes, quebrando o teste
+    // sem nenhum pixel diferente.
+    const committed = decodePng(readFileSync(resolve(ROOT, 'assets', 'icon.png')));
+    expect([committed.width, committed.height]).toEqual([image.width, image.height]);
+    expect(Buffer.compare(Buffer.from(committed.data), Buffer.from(image.data))).toBe(0);
   });
 });
