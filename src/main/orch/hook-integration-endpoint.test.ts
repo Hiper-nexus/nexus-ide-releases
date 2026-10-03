@@ -146,6 +146,178 @@ describe('integrationCommandHit', () => {
   });
 });
 
+/**
+ * F-814: `git merge-base`/`merge-tree`/`merge-file` e o fim de um merge
+ * (`--abort`/`--quit`/`--continue`) não integram nada; barrá-los no checkout
+ * `main` deixava o agente sem o comando de recuperação no meio de um conflito.
+ */
+describe('F-814: merge-* de leitura e controle de merge não são integração', () => {
+  /** `main` e `feature` editam a mesma linha de a.txt; deixa o merge em conflito. */
+  function startConflictedMerge(): void {
+    git('checkout', '-q', '-b', 'feature');
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'lado da feature');
+    git('commit', '-qam', 'feature edita a.txt');
+    git('checkout', '-q', 'main');
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'lado do main');
+    git('commit', '-qam', 'main edita a.txt');
+    expect(() => git('merge', 'feature')).toThrow();
+    expect(git('status', '--porcelain')).toContain('UU a.txt');
+    expect(git('rev-parse', '-q', '--verify', 'MERGE_HEAD')).toMatch(/^[a-f0-9]{40}$/u);
+  }
+
+  function createFeatureBranch(): void {
+    git('checkout', '-q', '-b', 'feature');
+    fs.writeFileSync(path.join(repo, 'feat.txt'), 'feature code');
+    git('add', 'feat.txt');
+    git('commit', '-qm', 'feature commit');
+    git('checkout', '-q', 'main');
+  }
+
+  const READ_ONLY_MERGE_COMMANDS = [
+    'git merge-base HEAD feature',
+    'git merge-base --is-ancestor HEAD feature',
+    'git merge-base --is-ancestor feature main',
+    'git merge-base origin/main HEAD',
+    'git merge-tree --write-tree HEAD feature',
+    'git merge-file a.txt base.txt other.txt',
+    'cd . && git merge-base HEAD main',
+    'git merge-base HEAD main | head -1',
+  ];
+
+  it.each(READ_ONLY_MERGE_COMMANDS)('%s não é bloqueado no main limpo', async (command) => {
+    createFeatureBranch();
+    await expect(
+      handleHookIntegrationRequest(hookCtx(), bash(command), { storesFor }),
+    ).resolves.toMatchObject({ payload: {} });
+    expect(integrationCommandHit(command, repo)).toBe(false);
+  });
+
+  it.each(READ_ONLY_MERGE_COMMANDS)('%s não é bloqueado no meio de um conflito', async (command) => {
+    startConflictedMerge();
+    await expect(
+      handleHookIntegrationRequest(hookCtx(), bash(command), { storesFor }),
+    ).resolves.toMatchObject({ payload: {} });
+    expect(integrationCommandHit(command, repo)).toBe(false);
+  });
+
+  const MERGE_CONTROL_COMMANDS = [
+    'git merge --abort',
+    'git merge --quit',
+    'git merge --continue',
+    '  git merge --abort  ',
+    'git merge --abort 2>&1',
+    'git merge --abort >/dev/null 2>&1 || true',
+    'git merge --abort && git status',
+    "git merge '--abort'",
+  ];
+
+  it.each(MERGE_CONTROL_COMMANDS)('%s passa no main com conflito em andamento', async (command) => {
+    startConflictedMerge();
+    await expect(
+      handleHookIntegrationRequest(hookCtx(), bash(command), { storesFor }),
+    ).resolves.toMatchObject({ payload: {} });
+    expect(integrationCommandHit(command, repo)).toBe(false);
+  });
+
+  it('o --abort liberado de fato desfaz o merge: a recuperação existe de ponta a ponta', async () => {
+    startConflictedMerge();
+    const result = await handleHookIntegrationRequest(hookCtx(), bash('git merge --abort'), { storesFor });
+    expect(result.payload).toEqual({});
+    git('merge', '--abort');
+    expect(git('status', '--porcelain')).toBe('');
+    expect(fs.readFileSync(path.join(repo, 'a.txt'), 'utf8')).toBe('lado do main');
+  });
+
+  it('merge de verdade no main continua exigindo o veredito', async () => {
+    createFeatureBranch();
+    for (const command of [
+      'git merge feature',
+      'git merge --no-ff feature',
+      'git merge --squash feature',
+      'git merge -m "msg" feature',
+      'git merge-base HEAD main && git merge feature',
+      'git merge --abort || git merge feature',
+    ]) {
+      const result = await handleHookIntegrationRequest(hookCtx(), bash(command), { storesFor });
+      expect(result.payload, command).toMatchObject({
+        decision: 'block',
+        reason: expect.stringContaining('review_required'),
+      });
+    }
+  });
+
+  it('não dá para esconder um merge real atrás de "--abort" como argumento de outra opção', () => {
+    createFeatureBranch();
+    expect(integrationCommandHit("git merge -m '--abort' feature", repo)).toBe(true);
+    expect(integrationCommandHit('git merge --abort feature', repo)).toBe(true);
+    expect(integrationCommandHit('git merge --continue --no-ff feature', repo)).toBe(true);
+    expect(integrationCommandHit('git merge --abort; git push origin main', repo)).toBe(true);
+  });
+
+  it('merge explícito para main fora do checkout main continua sendo integração; merge-base não', () => {
+    expect(integrationCommandHit('git merge feature main')).toBe(true);
+    expect(integrationCommandHit('git merge origin/main')).toBe(true);
+    expect(integrationCommandHit('git merge-base feature main')).toBe(false);
+    expect(integrationCommandHit('git merge-base --is-ancestor feature master')).toBe(false);
+    expect(integrationCommandHit('git merge-tree --write-tree main feature')).toBe(false);
+    expect(integrationCommandHit('git merge-file main.txt a b')).toBe(false);
+  });
+
+  it('merge em andamento recebe mensagem própria, nunca "commite" (push com conflito no main)', async () => {
+    startConflictedMerge();
+    for (const command of ['git push origin main', 'git merge feature']) {
+      const result = await handleHookIntegrationRequest(hookCtx(), bash(command), { storesFor });
+      expect(result.payload, command).toMatchObject({
+        decision: 'block',
+        reason: expect.stringContaining('review_required'),
+      });
+      const reason = String((result.payload as { reason?: unknown }).reason);
+      expect(reason, command).toContain('merge em andamento');
+      expect(reason, command).toContain('git merge --abort');
+      expect(reason, command).not.toMatch(/commit/iu);
+      expect(reason, command).not.toContain('árvore suja');
+    }
+  });
+
+  it('árvore suja sem merge em andamento continua pedindo commit e veredito', async () => {
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'edição solta');
+    const result = await handleHookIntegrationRequest(hookCtx(), bash('git push origin main'), { storesFor });
+    expect(result.payload).toMatchObject({
+      decision: 'block',
+      reason: expect.stringContaining('árvore suja'),
+    });
+  });
+
+  describe('varredura linear (16 KB, teto de 50 ms)', () => {
+    const SIZE = 16_384;
+    // Runner espião: a branch vem sem processo, então o tempo medido é só o da regex.
+    const onMain: GitRunner = { run: () => ({ status: 0, stdout: 'main\n', stderr: '' }) };
+    const inputs: Array<[string, string, boolean]> = [
+      ['git merge e espaços sem fim', `git merge${' '.repeat(SIZE)}`, true],
+      ['git merge-base e espaços', `git merge-base${' '.repeat(SIZE)}`, false],
+      ['merge --abort e espaços', `git merge --abort${' '.repeat(SIZE)}`, false],
+      ['espaços antes do comando', `${' '.repeat(SIZE)}git merge-base HEAD main`, false],
+      ['merge com muitos argumentos sem main', `git merge ${'feature '.repeat(SIZE / 8)}`, true],
+      ['merge-base com muitos argumentos', `git merge-base ${'ref '.repeat(SIZE / 4)}`, false],
+      ['milhares de segmentos merge-base', 'git merge-base a b; '.repeat(SIZE / 20), false],
+      ['aspas desbalanceadas', `git merge --abort ${'"'.repeat(SIZE)}`, true],
+      ['redirecionamentos em série', `git merge --abort${' 2>&1'.repeat(SIZE / 5)}`, false],
+      ['dígitos e espaços', `git merge --abort ${'1 '.repeat(SIZE / 2)}`, true],
+      ['linhas em branco', '\n'.repeat(SIZE), false],
+    ];
+
+    it.each(inputs)('%s', (_label, text, expected) => {
+      // Aquece: a compilação da regex não é o que está sendo medido.
+      integrationCommandHit(text, { cwd: '/repo', git: onMain });
+      const startedAt = performance.now();
+      const hit = integrationCommandHit(text, { cwd: '/repo', git: onMain });
+      const elapsedMs = performance.now() - startedAt;
+      expect(hit).toBe(expected);
+      expect(elapsedMs).toBeLessThan(50);
+    });
+  });
+});
+
 describe('POST /hook/integration', () => {
   it('bloqueia git push de sessão de missão sem veredito', async () => {
     const result = await handleHookIntegrationRequest(
