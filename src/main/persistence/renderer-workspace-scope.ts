@@ -1,4 +1,5 @@
 import type { ProjectExecutionScope } from '../../shared/types';
+import { bindMemoryCoordinationScope } from '../memory/memory-coordination-authority';
 import {
   resolveProjectExecutionScopeCached,
   type ProjectIdentityResolveOptions,
@@ -47,6 +48,7 @@ export function bindRendererWorkspaceScope(
   options?: ProjectIdentityResolveOptions,
 ): ProjectExecutionScope {
   const scope = resolveProjectExecutionScopeCached(workspaceRoot, options);
+  bindMemoryCoordinationScope(scope);
   const previous = scopesByRenderer.get(owner.id) ?? null;
   scopesByRenderer.set(owner.id, scope);
   publishScopeChange(owner, previous, scope);
@@ -59,6 +61,7 @@ export function bindResolvedRendererWorkspaceScope(
 ): void {
   const previous = scopesByRenderer.get(owner.id) ?? null;
   const immutable = Object.freeze({ ...scope });
+  bindMemoryCoordinationScope(immutable);
   scopesByRenderer.set(owner.id, immutable);
   publishScopeChange(owner, previous, immutable);
 }

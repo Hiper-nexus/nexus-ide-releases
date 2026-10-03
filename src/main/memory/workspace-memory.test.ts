@@ -242,7 +242,7 @@ describe('workspace memory engine (FTS5)', () => {
 
     // Opt-in ligado ("Memória visível no projeto"): o vault vai para o
     // checkout, fora do git — agendado fora do caminho da gravação (F-764).
-    configureWorkspaceMemory({ baseDir, vaultExportEnabled: vaultOn });
+    configureWorkspaceMemory({ baseDir, vaultExportEnabled: vaultOn, coordinationScopeFor: () => ({ rootRealPath: projectRoot }) });
     const store = getWorkspaceMemoryStore(scope);
     store.retain({
       content: '# Decisão\n\nUsar uma única camada de domínio.',
@@ -288,7 +288,7 @@ describe('workspace memory engine (FTS5)', () => {
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-wm-fixed-main-'));
     const worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-wm-fixed-worktree-'));
     dirs.push(baseDir, projectRoot, worktree);
-    configureWorkspaceMemory({ baseDir, vaultExportEnabled: vaultOn });
+    configureWorkspaceMemory({ baseDir, vaultExportEnabled: vaultOn, coordinationScopeFor: () => ({ rootRealPath: projectRoot }) });
     const base = {
       version: 1 as const,
       installationId: 'installation-a',

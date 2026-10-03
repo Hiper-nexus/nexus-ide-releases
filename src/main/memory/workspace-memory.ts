@@ -22,6 +22,7 @@ import { z } from 'zod';
 import type Database from 'better-sqlite3';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { redactSecretText } from '../terminal/command-redaction';
+import { memoryCoordinationScope } from './memory-coordination-authority';
 import {
   exportMemoryVault,
   exportMemoryVaultIncremental,
@@ -505,7 +506,7 @@ export class WorkspaceMemoryStore {
   /** Interrompe a passada em voo quando o store fecha. */
   readonly #projectionAbort = new AbortController();
   /** Raiz do checkout, fixa na criação (F-806): nunca troca em leitura. */
-  readonly #workspaceRoot: string | undefined;
+  #workspaceRoot: string | undefined;
   readonly #vaultExportEnabled: () => boolean;
   /** Raízes que já receberam a exportação completa neste processo. */
   readonly #vaultColdExported = new Set<string>();
@@ -705,6 +706,16 @@ export class WorkspaceMemoryStore {
   /** Raiz do checkout fixada na criação; undefined fora de um workspace. */
   get workspaceRoot(): string | undefined {
     return this.#workspaceRoot;
+  }
+
+  /** Late binding supports search opening the bank before Main opens the workspace. */
+  bindCoordinationRoot(root: string): void {
+    this.#assertOpen();
+    const resolved = path.resolve(root);
+    if (this.#workspaceRoot && this.#workspaceRoot !== resolved) {
+      throw new Error('memory coordination root identity changed');
+    }
+    this.#workspaceRoot = resolved;
   }
 
   /** O vault na pasta do projeto só existe com o opt-in do operador (F-806). */
@@ -2283,6 +2294,8 @@ export interface WorkspaceMemoryRuntimeOptions {
   readonly now?: () => number;
   /** Opt-in do vault na pasta do projeto; default lê Ajustes (desligado). */
   readonly vaultExportEnabled?: () => boolean;
+  /** Main-owned resolver; fixtures can supply an explicit coordination authority. */
+  readonly coordinationScopeFor?: (projectId: string) => Pick<ProjectExecutionScope, 'rootRealPath'> | null;
 }
 
 let runtimeOptions: WorkspaceMemoryRuntimeOptions | null = null;
@@ -2337,12 +2350,13 @@ export function getWorkspaceMemoryStore(
   scope: Pick<ProjectExecutionScope, 'projectId'> &
     Partial<Omit<ProjectExecutionScope, 'projectId'>>,
 ): WorkspaceMemoryStore {
-  // F-806: a raiz do vault é a do PRIMEIRO escopo que abriu o store neste
-  // processo (o workspace aberto); leituras a partir de worktrees de abas
-  // nunca a movem.
-  const cached = storesByProject.get(scope.projectId);
-  if (cached) return cached;
   runtimeOptions ??= defaultRuntimeOptions();
+  const coordinator = (runtimeOptions.coordinationScopeFor ?? memoryCoordinationScope)(scope.projectId);
+  const cached = storesByProject.get(scope.projectId);
+  if (cached) {
+    if (coordinator) cached.bindCoordinationRoot(coordinator.rootRealPath);
+    return cached;
+  }
   const paths = resolveWorkspaceMemoryPaths(runtimeOptions.baseDir, scope);
   fs.mkdirSync(paths.projectionRoot, {
     recursive: true,
@@ -2350,7 +2364,7 @@ export function getWorkspaceMemoryStore(
   });
   const store = new WorkspaceMemoryStore({
     ...paths,
-    ...(scope.rootRealPath ? { workspaceRoot: scope.rootRealPath } : {}),
+    ...(coordinator ? { workspaceRoot: coordinator.rootRealPath } : {}),
     ...(runtimeOptions.now ? { now: runtimeOptions.now } : {}),
     ...(runtimeOptions.vaultExportEnabled
       ? { vaultExportEnabled: runtimeOptions.vaultExportEnabled }
