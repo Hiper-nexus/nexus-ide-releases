@@ -45,7 +45,9 @@ import {
 import { materializeGitWorktree } from "./worktree-cow";
 import { DEAD_OWNER_WORKTREE_RELEASE_MARKER } from "./worktree-manager-markers";
 import {
-  assertRepositoryUnchanged,
+  assertRepositoryUnchangedAsync,
+  assertTaskWorktreeAsync,
+  readRepositorySnapshotAsync,
   assertTaskWorktree,
   readRepositorySnapshot,
   reconcileInterruptedReservation,
@@ -261,7 +263,7 @@ export class WorktreeManager {
 
   async create(input: CreateWorktreeInput): Promise<WorktreeRecord> {
     const requireClean = input.ownerKind !== "pane";
-    const repository = readRepositorySnapshot(this.#git, input.scope, requireClean);
+    const repository = await readRepositorySnapshotAsync(this.#asyncGit, input.scope, requireClean);
     const missionId = assertIdentifier(input.missionId, "missionId");
     const taskId = assertIdentifier(input.taskId, "taskId");
     const workerId = assertIdentifier(input.workerId, "workerId");
@@ -432,22 +434,27 @@ export class WorktreeManager {
     });
 
     if (!reservation.isNew) {
-      assertTaskWorktree(this.#git, reservation.record);
-      return cloneRecord(reservation.record);
+      await assertTaskWorktreeAsync(this.#asyncGit, reservation.record);
+      const current = this.#snapshot(scopeKey).records.find((record) => record.taskKey === taskKey);
+      if (!current || !["ready", "queued"].includes(current.status) ||
+          current.workerId !== workerId || current.baseSha !== reservation.record.baseSha) {
+        throw new WorktreeStateConflictError("worktree reservation changed during reuse");
+      }
+      return cloneRecord(current);
     }
 
     try {
-      assertRepositoryUnchanged(this.#git, repository, requireClean);
+      await assertRepositoryUnchangedAsync(this.#asyncGit, repository, requireClean);
       if (reservation.resurrected) {
         // The derived path and branch exist by design: the slot was released
         // without touching Git. Prove the exact physical identity instead of
         // materializing, mirroring the ready/queued reuse contract.
-        assertTaskWorktree(this.#git, reservation.record);
+        await assertTaskWorktreeAsync(this.#asyncGit, reservation.record);
       } else {
         if (fs.existsSync(worktreePath)) {
           throw new Error("derived worktree path already exists");
         }
-        const branchExists = this.#git.run(
+        const branchExists = await this.#asyncGit.run(
           repository.rootRealPath,
           ["show-ref", "--verify", "--quiet", branchRef],
           { allowFailure: true },
@@ -468,25 +475,30 @@ export class WorktreeManager {
           worktreePath,
           branchRef,
           headSha: repository.headSha,
-          git: this.#git,
+          git: this.#asyncGit,
         });
         input.onMaterialized?.(materialized);
-        assertTaskWorktree(this.#git, candidate);
+        await assertTaskWorktreeAsync(this.#asyncGit, candidate);
       }
-      assertRepositoryUnchanged(this.#git, repository, requireClean);
-      return this.#transition(scopeKey, taskKey, (record) => ({
-        ...record,
-        status: "ready",
-        updatedAt: this.#timestamp(),
-      }));
+      await assertRepositoryUnchangedAsync(this.#asyncGit, repository, requireClean);
+      return this.#transition(scopeKey, taskKey, (record) => {
+        if (record.status !== "reserved" || record.workerId !== workerId) {
+          throw new WorktreeStateConflictError("worktree reservation changed during creation");
+        }
+        return { ...record, status: "ready", updatedAt: this.#timestamp() };
+      });
     } catch (error) {
       try {
-        this.#transition(scopeKey, taskKey, (record) => ({
-          ...record,
-          status: "failed",
-          failureReason: this.#failureMessage(error),
-          updatedAt: this.#timestamp(),
-        }));
+        this.#transition(scopeKey, taskKey, (record) => {
+          // A close/reroute that happened during Git owns its terminal state.
+          if (record.status !== "reserved" || record.workerId !== workerId) return record;
+          return {
+            ...record,
+            status: "failed",
+            failureReason: this.#failureMessage(error),
+            updatedAt: this.#timestamp(),
+          };
+        });
       } catch {
         // Prefer the materialize/create failure; transition races must not
         // mask the original cause for callers.

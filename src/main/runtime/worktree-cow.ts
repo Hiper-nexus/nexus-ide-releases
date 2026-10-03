@@ -11,9 +11,9 @@
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { GitRunner } from './git-command';
+import type { AsyncGitRunner } from './git-command';
 import { GitCommandError } from './git-command';
-import { removeTreeSync } from '../util/remove-tree';
+import { removeTree, removeTreeSync } from '../util/remove-tree';
 
 export type WorktreeMaterializeMethod = 'clonefile' | 'git-worktree';
 
@@ -23,7 +23,7 @@ export interface MaterializeWorktreeInput {
   /** Full ref e.g. refs/heads/nexus/... */
   branchRef: string;
   headSha: string;
-  git: GitRunner;
+  git: AsyncGitRunner;
   /** Heavy dirs to CoW-copy after git worktree add (default: node_modules). */
   cowDirs?: readonly string[];
 }
@@ -64,6 +64,7 @@ const NESTED_COW_SKIP_DIRS = new Set(['node_modules', '.worktrees']);
  * milhares de untracked na worktree e reprova as checagens de limpeza.
  */
 export type CowIgnorePredicate = (rel: string) => boolean;
+type AsyncCowIgnorePredicate = (rel: string) => boolean | Promise<boolean>;
 
 export type ClonefileExecSync = typeof spawnSync;
 export type ClonefileExecAsync = (
@@ -175,6 +176,14 @@ function removePartialCloneDest(dest: string): void {
   }
 }
 
+async function removePartialCloneDestAsync(dest: string): Promise<void> {
+  try {
+    await removeTree(dest, { recursive: true, force: true });
+  } catch {
+    // best-effort cleanup, preserving the same no-follow policy as the sync path
+  }
+}
+
 /**
  * macOS APFS clonefile via `cp -c` (copy-on-write when filesystem supports it).
  * Async — does not block the Electron main event loop.
@@ -203,14 +212,14 @@ export async function tryClonefileCopy(
       return true;
     }
     // -1 / falha / timeout: tira o que sobrou e cai no `cp -cR` de sempre.
-    removePartialCloneDest(dest);
+    await removePartialCloneDestAsync(dest);
   }
   const result = await exec('cp', ['-cR', source, dest], {
     encoding: 'utf8',
     timeout: CLONEFILE_TIMEOUT_MS,
   });
   if (result.status !== 0 || !fs.existsSync(dest)) {
-    removePartialCloneDest(dest);
+    await removePartialCloneDestAsync(dest);
     return false;
   }
   return true;
@@ -340,6 +349,41 @@ function cowDirsEffective(
   );
 }
 
+/** F-764: discovery and each Git ignore probe yield on the creation path. */
+async function discoverNestedCowDirsAsync(
+  repositoryRoot: string,
+  worktreePath: string,
+  isIgnored: AsyncCowIgnorePredicate,
+): Promise<string[]> {
+  const found: string[] = [];
+  async function visit(parent: string, depth: number): Promise<void> {
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.promises.readdir(path.join(repositoryRoot, parent), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('.') || NESTED_COW_SKIP_DIRS.has(entry.name)) continue;
+      const rel = parent ? `${parent}/${entry.name}` : entry.name;
+      const modules = `${rel}/node_modules`;
+      const dir = path.join(repositoryRoot, rel);
+      const packageExists = await fs.promises.stat(path.join(dir, 'package.json')).then(() => true, () => false);
+      const modulesStat = await fs.promises.lstat(path.join(repositoryRoot, modules)).catch(() => null);
+      if (packageExists && modulesStat?.isDirectory() &&
+          !fs.existsSync(path.join(worktreePath, modules)) && await isIgnored(modules)) {
+        found.push(modules);
+        if (found.length >= NESTED_COW_MAX_DIRS) return;
+      }
+      if (depth < 2) await visit(rel, depth + 1);
+      if (found.length >= NESTED_COW_MAX_DIRS) return;
+    }
+  }
+  await visit('', 1);
+  return found;
+}
+
 /**
  * After a correct `git worktree add`, optionally CoW-copy heavy sibling dirs
  * from the main repository working tree (e.g. node_modules) so workers start
@@ -351,16 +395,15 @@ export async function cowCopyHeavyDirs(
   dirs?: readonly string[],
   exec: ClonefileExecAsync = defaultClonefileExecAsync,
   osaExec: OsascriptExecAsync = defaultOsascriptExecAsync,
-  isIgnored?: CowIgnorePredicate,
+  isIgnored?: AsyncCowIgnorePredicate,
 ): Promise<string[]> {
   if (!cowWorktreeAvailable()) return [];
   const copied: string[] = [];
-  for (const rel of cowDirsEffective(
-    repositoryRoot,
-    worktreePath,
-    dirs,
-    isIgnored,
-  )) {
+  const effectiveDirs = dirs ?? [
+    ...DEFAULT_COW_DIRS,
+    ...(isIgnored ? await discoverNestedCowDirsAsync(repositoryRoot, worktreePath, isIgnored) : []),
+  ];
+  for (const rel of effectiveDirs) {
     if (!rel || rel.includes('..') || path.isAbsolute(rel)) continue;
     const src = path.join(repositoryRoot, rel);
     const dest = path.join(worktreePath, rel);
@@ -412,7 +455,7 @@ export async function materializeGitWorktree(
   }
 
   const gitStart = Date.now();
-  const result = input.git.run(input.repositoryRoot, [
+  const result = await input.git.run(input.repositoryRoot, [
     'worktree',
     'add',
     '-b',
@@ -430,12 +473,12 @@ export async function materializeGitWorktree(
   const gitWorktreeMs = Date.now() - gitStart;
 
   const cowStart = Date.now();
-  const isIgnored: CowIgnorePredicate = (rel) =>
-    input.git.run(
+  const isIgnored: AsyncCowIgnorePredicate = async (rel) =>
+    (await input.git.run(
       input.repositoryRoot,
       ['check-ignore', '--quiet', rel],
       { allowFailure: true },
-    ).status === 0;
+    )).status === 0;
   const cowCopied = await cowCopyHeavyDirs(
     input.repositoryRoot,
     input.worktreePath,

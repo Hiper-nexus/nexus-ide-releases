@@ -133,6 +133,71 @@ afterEach(() => {
 });
 
 describe("WorktreeManager", () => {
+  it("F-764: cria e reutiliza a worktree sem executar Git síncrono", async () => {
+    const asyncGit = new AsyncProcessGitRunner();
+    let heartbeatDuringAdd = false;
+    const responsive = new WorktreeManager({
+      runtimeRoot, stateStore,
+      gitRunner: { run: () => { throw new Error("Git síncrono no Main"); } },
+      asyncGitRunner: { run: async (cwd, args, options) => {
+        if (args[0] === "worktree" && args[1] === "add") {
+          await new Promise<void>((resolve) => setTimeout(() => {
+            heartbeatDuringAdd = true;
+            resolve();
+          }, 25));
+        }
+        return asyncGit.run(cwd, args, options);
+      } },
+    });
+    const input = {
+      scope: projectScope(), missionId: "f764", taskId: "async", workerId: "worker",
+      ownership: { files: ["src/async.ts"], symbols: [], domains: [] },
+    };
+    const record = await responsive.create(input);
+    expect(record.status).toBe("ready");
+    expect(heartbeatDuringAdd).toBe(true);
+    expect(git(record.worktreePath, "rev-parse", "HEAD")).toBe(record.baseSha);
+    expect((await responsive.create(input)).id).toBe(record.id);
+  });
+
+  it("F-764: reserva encerrada durante a materialização nunca volta a ready", async () => {
+    const scope = projectScope();
+    await expect(manager.create({
+      scope, missionId: "f764", taskId: "closed", workerId: "worker",
+      ownership: { files: ["src/closed.ts"], symbols: [], domains: [] },
+      onMaterialized: () => { manager.markFailed(scope, "f764", "closed", "pane closed"); },
+    })).rejects.toThrow(/reservation.*changed/i);
+    const record = manager.get(scope, "f764", "closed");
+    expect(record?.status).toBe("failed");
+    expect(record?.failureReason).toBe("pane closed");
+    expect(fs.existsSync(record!.worktreePath)).toBe(true);
+  });
+
+  it("F-764: reutilização não entrega reserva encerrada durante a prova Git", async () => {
+    const scope = projectScope();
+    const asyncGit = new AsyncProcessGitRunner();
+    let reusing = false;
+    const replayManager = new WorktreeManager({
+      runtimeRoot, stateStore,
+      asyncGitRunner: { run: async (cwd, args, options) => {
+        const result = await asyncGit.run(cwd, args, options);
+        if (reusing && cwd !== scope.rootRealPath && args[0] === "status") {
+          reusing = false;
+          replayManager.markFailed(scope, "f764", "replay", "pane closed during proof");
+        }
+        return result;
+      } },
+    });
+    const input = {
+      scope, missionId: "f764", taskId: "replay", workerId: "worker",
+      ownership: { files: ["src/replay.ts"], symbols: [], domains: [] },
+    };
+    await replayManager.create(input);
+    reusing = true;
+    await expect(replayManager.create(input)).rejects.toThrow(/reservation.*changed/i);
+    expect(replayManager.get(scope, "f764", "replay")?.status).toBe("failed");
+  });
+
   it("creates concurrent pane-owned branches from HEAD even with coordination WIP, and recovers reservations", async () => {
     const scope = projectScope();
     const head = git(root, "rev-parse", "HEAD");

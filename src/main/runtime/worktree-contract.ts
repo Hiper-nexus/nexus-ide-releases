@@ -137,7 +137,7 @@ export interface WorktreeManagerOptions {
   readonly worktreesRoot?: string;
   readonly stateStore: WorktreeStateStore;
   readonly gitRunner?: GitRunner;
-  /** Git fora do thread principal para trabalho de fundo (GC de writers de pane). */
+  /** Git fora do thread principal para criação e GC de worktrees. */
   readonly asyncGitRunner?: AsyncGitRunner;
   readonly now?: () => number;
 }
