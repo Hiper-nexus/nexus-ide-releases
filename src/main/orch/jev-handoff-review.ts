@@ -30,6 +30,7 @@ import { hasDecisionCredential } from '../decision-models/decision-availability'
 import {
   jevAnswerProbabilities,
   recordJevDecision,
+  setJevDecisionFeedback,
 } from '../jev/jev-decision-log';
 
 export interface HandoffReviewInput {
@@ -260,6 +261,11 @@ export interface JevReviewArtifact {
     model: string;
     probabilities: Record<string, number>;
     signals: string[];
+    /**
+     * F-782: id da linha desta revisão no diário do Jev. O ACK do Maestro
+     * marca certo/errado exatamente nela (ver `recordHandoffAckFeedback`).
+     */
+    decisionId?: string;
   };
 }
 
@@ -277,6 +283,12 @@ export type JevReviewVerdict =
       readonly kind: 'weak';
       readonly signals: string[];
       readonly artifact: JevReviewArtifact;
+      /**
+       * F-823: os sinais que o MCP devolveria ao worker (ver
+       * `handoffBounceSignals`). Vazio = fraca só por sinal que nem o MCP
+       * devolve (pendência admitida, revisão/plano sem teste).
+       */
+      readonly bounceSignals?: string[];
     };
 
 interface ReviewBudget {
@@ -290,6 +302,7 @@ function reviewArtifact(
   outcome: 'ok' | 'weak',
   result: JevResult,
   signals: string[],
+  decisionId: string,
 ): JevReviewArtifact {
   const probabilities: Record<string, number> = {};
   for (const [id, answer] of Object.entries(result.answers)) {
@@ -297,7 +310,7 @@ function reviewArtifact(
   }
   return {
     kind: 'nexus.jevReview',
-    payload: { outcome, model: result.model, probabilities, signals },
+    payload: { outcome, model: result.model, probabilities, signals, decisionId },
   };
 }
 
@@ -308,7 +321,13 @@ export interface ReviewMissionHandoffDeps {
 }
 
 export async function reviewMissionHandoff(
-  params: { sessionId: string | undefined; signal?: AbortSignal; maxBounces?: number } & HandoffReviewInput,
+  params: {
+    sessionId: string | undefined;
+    /** F-782: missão do handoff — vai para o diário junto com a sessão. */
+    missionId?: string;
+    signal?: AbortSignal;
+    maxBounces?: number;
+  } & HandoffReviewInput,
   deps?: ReviewMissionHandoffDeps,
 ): Promise<JevReviewVerdict> {
   const judgeFn = deps?.judge ?? judge;
@@ -353,6 +372,7 @@ export async function reviewMissionHandoff(
     recordJevDecision({
       surface: 'handoffReview',
       sessionId: params.sessionId,
+      missionId: params.missionId,
       model: 'unavailable',
       questions: Object.keys(questions),
       probabilities: {},
@@ -371,10 +391,11 @@ export async function reviewMissionHandoff(
   const signals = evaluateHandoffEvidence(result.answers, facts);
   const bounceSignals = handoffBounceSignals(result.answers, facts);
   const sessionId = params.sessionId;
-  const record = (decision: 'ok' | 'retry' | 'weak') =>
+  const record = (decision: 'ok' | 'retry' | 'weak'): string =>
     recordJevDecision({
       surface: 'handoffReview',
       sessionId,
+      missionId: params.missionId,
       model: result.model,
       questions: Object.keys(questions),
       probabilities: jevAnswerProbabilities(result.answers),
@@ -384,8 +405,8 @@ export async function reviewMissionHandoff(
 
   if (signals.length === 0) {
     budgetBySession.delete(sessionId);
-    record('ok');
-    return { kind: 'ok', artifact: reviewArtifact('ok', result, signals) };
+    const decisionId = record('ok');
+    return { kind: 'ok', artifact: reviewArtifact('ok', result, signals, decisionId) };
   }
 
   const budget = budgetBySession.get(sessionId) ?? { attempts: 0 };
@@ -411,11 +432,12 @@ export async function reviewMissionHandoff(
   // fica marcada para o Maestro. O orçamento é limpo — um handoff futuro da
   // mesma sessão recomeça do zero.
   budgetBySession.delete(sessionId);
-  record('weak');
+  const decisionId = record('weak');
   return {
     kind: 'weak',
     signals,
-    artifact: reviewArtifact('weak', result, signals),
+    artifact: reviewArtifact('weak', result, signals, decisionId),
+    bounceSignals,
   };
 }
 
@@ -424,13 +446,87 @@ export function resetJevReviewBudgetsForTesting(): void {
 }
 
 /**
+ * F-782: veredito do Maestro ao consumir o handoff (`nexus_handoff_ack`).
+ * `accepted` = entrega aceita como veio; `rework` = devolvida ou refeita.
+ */
+export type HandoffAckVerdict = 'accepted' | 'rework';
+
+/**
+ * F-782: o Jev acerta quando concorda com o Maestro. Revisão `ok` aceita e
+ * revisão `weak` devolvida são certas; `ok` devolvida (deixou passar) e
+ * `weak` aceita (limiar rígido demais) são erradas. É exatamente o rótulo que
+ * separa "limiar rígido" de "handoff ruim" nas 81% de recusas da revisão.
+ */
+export function handoffReviewFeedback(
+  outcome: JevReviewArtifact['payload']['outcome'],
+  verdict: HandoffAckVerdict,
+): 'right' | 'wrong' {
+  return (outcome === 'ok') === (verdict === 'accepted') ? 'right' : 'wrong';
+}
+
+/**
+ * Recibo da revisão Jev nos artifacts do handoff. O Main anexa o dele por
+ * último; o worker também escreve artifacts, por isso vale o ÚLTIMO e o id
+ * ainda é conferido contra o diário (superfície e sessão) antes de marcar.
+ */
+export function jevReviewReceipt(
+  artifacts: readonly unknown[],
+): { decisionId: string; outcome: 'ok' | 'weak' } | null {
+  for (let index = artifacts.length - 1; index >= 0; index -= 1) {
+    const artifact = artifacts[index];
+    if (!artifact || typeof artifact !== 'object') continue;
+    const { kind, payload } = artifact as { kind?: unknown; payload?: unknown };
+    if (kind !== 'nexus.jevReview' || !payload || typeof payload !== 'object') continue;
+    const { decisionId, outcome } = payload as { decisionId?: unknown; outcome?: unknown };
+    if (typeof decisionId !== 'string' || decisionId.length === 0) return null;
+    if (outcome !== 'ok' && outcome !== 'weak') return null;
+    return { decisionId, outcome };
+  }
+  return null;
+}
+
+/**
+ * F-782: aplica o veredito do Maestro à decisão do Jev que revisou ESTE
+ * handoff. Sem recibo (revisão pulada, handoff antigo) não há o que marcar.
+ * Só marca linha `handoffReview` da mesma sessão do handoff — um id copiado
+ * de outra sessão não rotula nada. Contabilidade derivada: nunca lança.
+ */
+export function recordHandoffAckFeedback(
+  handoff: { readonly artifacts: readonly unknown[]; readonly sessionId?: string },
+  verdict: HandoffAckVerdict,
+  deps?: { dir?: string },
+): 'right' | 'wrong' | null {
+  try {
+    const receipt = jevReviewReceipt(handoff.artifacts);
+    if (!receipt || !handoff.sessionId) return null;
+    const feedback = handoffReviewFeedback(receipt.outcome, verdict);
+    const marked = setJevDecisionFeedback(receipt.decisionId, feedback, {
+      dir: deps?.dir,
+      accept: (entry) =>
+        entry.surface === 'handoffReview' &&
+        entry.sessionId === handoff.sessionId &&
+        entry.decision === receipt.outcome,
+    });
+    return marked ? feedback : null;
+  } catch (error) {
+    console.warn('[jev] feedback do ACK falhou (ignorado):', error);
+    return null;
+  }
+}
+
+/**
  * F-786: destino do veredito no caminho SEM canal de devolução (fechamento
- * mecânico PTY). No MCP o `weak` fica success marcado porque o worker já teve
- * a devolução dele; aqui a entrega NASCE fraca — nunca foi revista — então
- * vira `partial` com o texto integral preservado nos artifacts. `retry` não
+ * mecânico PTY). Fraca por sinal que o MCP devolveria (resumo genérico,
+ * código sem verificação ou sem dizer onde) vira `partial`: aqui não há
+ * devolução, e a entrega nunca é success sem a prova requerida. `retry` não
  * deve ocorrer (a revisão roda com maxBounces 0), mas se ocorrer o destino é
- * o mesmo: nunca success sem a prova requerida. `skipped` é fail-open, como
- * no MCP.
+ * o mesmo. `skipped` é fail-open, como no MCP.
+ *
+ * F-823: fraca SÓ por sinal que nem o MCP devolve (pendência admitida,
+ * revisão/plano sem teste) espelha o MCP — success marcado `[evidência
+ * fraca]`. Rebaixar a partial tirava a entrega do portão de regressão e do
+ * done e fazia CLI sem MCP entrar em loop de redespacho. Sem a informação
+ * (`bounceSignals` ausente), fica o destino conservador de antes.
  */
 export function mechanicalHandoffReviewOutcome(verdict: JevReviewVerdict): {
   readonly status: 'success' | 'partial';
@@ -441,7 +537,11 @@ export function mechanicalHandoffReviewOutcome(verdict: JevReviewVerdict): {
     case 'ok':
       return { status: 'success', mark: false, artifacts: [verdict.artifact] };
     case 'weak':
-      return { status: 'partial', mark: true, artifacts: [verdict.artifact] };
+      return {
+        status: verdict.bounceSignals?.length === 0 ? 'success' : 'partial',
+        mark: true,
+        artifacts: [verdict.artifact],
+      };
     case 'retry':
       return { status: 'partial', mark: true, artifacts: [] };
     default:

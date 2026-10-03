@@ -397,8 +397,9 @@ async function preparePtyHandoff(
       : [];
   // F-786: a MESMA revisão de evidência do handoff MCP (tools-handoff), sem
   // canal de devolução — o worker já encerrou, então a revisão roda com
-  // orçamento zero de devoluções e a entrega que NASCE fraca é registrada
-  // partial (texto integral preservado nos artifacts), nunca success.
+  // orçamento zero de devoluções. Fraca por sinal que o MCP devolveria vira
+  // partial (texto integral preservado nos artifacts); fraca só por sinal que
+  // nem o MCP devolve fica success marcado, como no MCP (F-823).
   // Fail-open como no MCP: exceção vira skipped e nada muda.
   let jevOutcome = mechanicalHandoffReviewOutcome({
     kind: "skipped",

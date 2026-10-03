@@ -3,6 +3,8 @@ import {
   clearRouteLog,
   recentRouteLog,
   recordRouteLog,
+  type RouteLogEntry,
+  type RouteLogSink,
 } from './route-log';
 
 function input(overrides: Partial<Parameters<typeof recordRouteLog>[0]> = {}) {
@@ -108,5 +110,60 @@ describe('route log', () => {
       classifierSource: 'heuristic',
       jevUnavailable: 'no-key',
     });
+  });
+});
+
+// F-773 (G6): a linha também vai para um coletor durável; a memória fica
+// como fallback quando ele falha ou não existe.
+describe('route log com coletor persistente (F-773)', () => {
+  beforeEach(() => clearRouteLog());
+
+  const memorySink = () => {
+    const rows: RouteLogEntry[] = [];
+    const sink: RouteLogSink = {
+      append: (entry) => {
+        rows.push({ ...entry, seq: rows.length + 1000, at: 42 });
+      },
+      recent: (limit) => [...rows].reverse().slice(0, limit),
+    };
+    return { rows, sink };
+  };
+
+  it('grava no coletor e lê dele (sobrevive ao clear da memória, como num restart)', () => {
+    const { rows, sink } = memorySink();
+    recordRouteLog(input({ adapterId: 'grok', missionId: 'mission-1' }), sink);
+    expect(rows).toHaveLength(1);
+    clearRouteLog();
+    expect(recentRouteLog()).toEqual([]);
+    expect(recentRouteLog(10, sink)).toMatchObject([
+      { adapterId: 'grok', missionId: 'mission-1', at: 42, seq: 1000 },
+    ]);
+  });
+
+  it('coletor que falha na escrita não derruba a rota e a memória guarda a linha', () => {
+    const broken: RouteLogSink = {
+      append: () => {
+        throw new Error('disco cheio');
+      },
+      recent: () => {
+        throw new Error('banco fechado');
+      },
+    };
+    const entry = recordRouteLog(input({ adapterId: 'kimi' }), broken);
+    expect(entry.adapterId).toBe('kimi');
+    expect(recentRouteLog(10, broken)).toMatchObject([{ adapterId: 'kimi' }]);
+  });
+
+  it('alternativas: só ids de CLI/modelo, na ordem, com teto de 12', () => {
+    const alternatives = [
+      { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'high', reason: 'texto livre' },
+      { adapterId: '', model: 'sem-cli' },
+      { model: 'sem-adapter' },
+      ...Array.from({ length: 20 }, (_, i) => ({ adapterId: `cli-${i}` })),
+    ];
+    const entry = recordRouteLog(input({ alternatives }));
+    expect(entry.alternatives?.[0]).toEqual({ adapterId: 'kimi', model: 'kimi-code/k3' });
+    expect(entry.alternatives?.length).toBeLessThanOrEqual(12);
+    expect(JSON.stringify(entry.alternatives)).not.toContain('texto livre');
   });
 });

@@ -222,6 +222,52 @@ describe('jev decision log', () => {
     expect(setJevDecisionFeedback('nonexistent', 'right', { dir: d })).toBe(false);
   });
 
+  it('F-782: regrava só a linha marcada; as outras ficam byte a byte (inclusive as que não parseiam)', () => {
+    const d = setup();
+    const file = path.join(d, 'decisions.jsonl');
+    const first = recordJevDecision(entry({ sessionId: 's-a' }));
+    fs.appendFileSync(file, '{"id":"truncada","at":1,"surf\n');
+    const target = recordJevDecision(entry({ sessionId: 's-b' }));
+    recordJevDecision(entry({ sessionId: 's-c' }));
+    const before = fs.readFileSync(file, 'utf8').split('\n');
+
+    expect(setJevDecisionFeedback(target, 'right', { dir: d })).toBe(true);
+
+    const after = fs.readFileSync(file, 'utf8').split('\n');
+    expect(after).toHaveLength(before.length);
+    const changed = after.flatMap((line, index) => (line === before[index] ? [] : [index]));
+    expect(changed).toHaveLength(1);
+    expect(JSON.parse(after[changed[0]!]!)).toMatchObject({ id: target, feedback: 'right' });
+    expect(after).toContain('{"id":"truncada","at":1,"surf');
+    expect(listJevDecisions({ dir: d }).find((e) => e.id === first)?.feedback).toBeUndefined();
+  });
+
+  it('F-782: o id citado em outro campo não confunde a busca da linha', () => {
+    const d = setup();
+    const target = recordJevDecision(entry({ sessionId: 's-alvo' }));
+    // Uma linha anterior que cita o mesmo texto em outro campo.
+    const file = path.join(d, 'decisions.jsonl');
+    const raw = fs.readFileSync(file, 'utf8');
+    const decoy = JSON.stringify({ ...entry(), id: 'outra', at: 1, decision: target });
+    fs.writeFileSync(file, `${decoy}\n${raw}`);
+
+    expect(setJevDecisionFeedback(target, 'wrong', { dir: d })).toBe(true);
+    const list = listJevDecisions({ dir: d });
+    expect(list.find((e) => e.id === target)?.feedback).toBe('wrong');
+    expect(list.find((e) => e.id === 'outra')?.feedback).toBeUndefined();
+  });
+
+  it('F-782: predicado recusado não marca nem regrava o arquivo', () => {
+    const d = setup();
+    const id = recordJevDecision(entry({ sessionId: 's-dono' }));
+    const file = path.join(d, 'decisions.jsonl');
+    const before = fs.readFileSync(file, 'utf8');
+    expect(
+      setJevDecisionFeedback(id, 'wrong', { dir: d, accept: (row) => row.sessionId === 's-outro' }),
+    ).toBe(false);
+    expect(fs.readFileSync(file, 'utf8')).toBe(before);
+  });
+
   it('rotates when over 5 MB keeping one generation', () => {
     const d = setup();
     const file = path.join(d, 'decisions.jsonl');

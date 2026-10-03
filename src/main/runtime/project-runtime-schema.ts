@@ -852,6 +852,52 @@ CREATE INDEX idx_mission_review_verdicts_head
   ON mission_review_verdicts(mission_id, head_sha, created_at);
 `;
 
+/**
+ * F-773 (G4): laço de resultado da rota. O handoff passa a dizer QUEM entregou
+ * (CLI e modelo da sessão física) e o que o Maestro fez com a entrega no ACK
+ * (`accepted` | `rework`, F-782). Colunas novas são nulas: linha antiga fica
+ * sem atribuição e simplesmente não entra na taxa. O índice parcial cobre a
+ * consulta da janela de 14 dias sem ler `summary`/`artifacts_json` da linha.
+ */
+const HANDOFF_ROUTE_OUTCOME_SCHEMA = `
+ALTER TABLE handoffs ADD COLUMN adapter_id TEXT;
+ALTER TABLE handoffs ADD COLUMN model TEXT;
+ALTER TABLE handoffs ADD COLUMN ack_verdict TEXT
+  CHECK (ack_verdict IS NULL OR ack_verdict IN ('accepted', 'rework'));
+
+CREATE INDEX idx_handoffs_route_outcome
+  ON handoffs(created_at, adapter_id, model, status, ack_verdict, from_agent, session_id)
+  WHERE adapter_id IS NOT NULL;
+`;
+
+/**
+ * F-773 (G6): o log de decisões de rota (nexus_route_log) era só memória com
+ * teto de 50 e voltava vazio a cada boot. A mesma linha agora persiste aqui;
+ * a retenção (30 dias / 5.000 linhas) é aplicada na escrita.
+ */
+const ROUTE_DECISION_LOG_SCHEMA = `
+CREATE TABLE route_decisions (
+  seq               INTEGER PRIMARY KEY AUTOINCREMENT,
+  mission_id        TEXT,
+  task_preview      TEXT NOT NULL CHECK (length(task_preview) <= 120),
+  tier              TEXT NOT NULL CHECK (length(tier) <= 32),
+  adapter_id        TEXT NOT NULL CHECK (length(adapter_id) <= 128),
+  model             TEXT CHECK (model IS NULL OR length(model) <= 256),
+  effort            TEXT CHECK (effort IS NULL OR length(effort) <= 64),
+  reason            TEXT NOT NULL CHECK (length(reason) <= 16384),
+  classifier_source TEXT CHECK (classifier_source IS NULL OR length(classifier_source) <= 32),
+  jev_unavailable   TEXT CHECK (jev_unavailable IS NULL OR length(jev_unavailable) <= 64),
+  confidence_json   TEXT CHECK (confidence_json IS NULL OR length(confidence_json) <= 1024),
+  rule_choice_json  TEXT CHECK (rule_choice_json IS NULL OR length(rule_choice_json) <= 1024),
+  alternatives_json TEXT CHECK (alternatives_json IS NULL OR length(alternatives_json) <= 8192),
+  created_at        INTEGER NOT NULL CHECK (created_at >= 0),
+  FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_route_decisions_created
+  ON route_decisions(created_at);
+`;
+
 export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
   validateProjectMigrations([
     createProjectMigration({
@@ -978,5 +1024,20 @@ export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
       sql: `ALTER TABLE mission_panes
             ADD COLUMN operator_opened INTEGER NOT NULL DEFAULT 0
             CHECK(operator_opened IN (0,1))`,
+    }),
+    // F-773 (G4): quem entregou cada handoff e o veredito do Maestro — a
+    // taxa de sucesso real por (CLI, modelo) que entra na nota da rota.
+    createProjectMigration({
+      id: '041-handoff-route-outcome',
+      schemaVersion: 41,
+      appVersion: '0.76.191',
+      sql: HANDOFF_ROUTE_OUTCOME_SCHEMA,
+    }),
+    // F-773 (G6): o log de rota sobrevive ao restart ("por que X perdeu").
+    createProjectMigration({
+      id: '042-route-decision-log',
+      schemaVersion: 42,
+      appVersion: '0.76.191',
+      sql: ROUTE_DECISION_LOG_SCHEMA,
     }),
   ]);

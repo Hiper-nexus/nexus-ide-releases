@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentGateContext } from './gate';
 import { testProjectScope } from './__tests__/scope-fixture';
@@ -45,6 +48,11 @@ import { adapterCircuitBreakers } from './circuit-breaker';
 import { buildDomainTools, routeTaskForCaller } from './tools-domain';
 import { clearRouteProvenance, hasRecentRouteMatch } from './route-provenance';
 import { clearRouteLog, recentRouteLog } from './route-log';
+import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import {
+  configureProjectDomainStoreRegistry,
+  disposeProjectDomainStoreRegistry,
+} from './project-domain-store-registry';
 
 const scope = testProjectScope();
 
@@ -229,6 +237,57 @@ describe('nexus_route_log handler', () => {
       decisions: unknown[];
     };
     expect(all.decisions.length).toBe(3);
+  });
+});
+
+// F-773 (G6): a decisão do nexus_route_task persiste no checkout e o
+// nexus_route_log a devolve depois do restart, com quem disputou e perdeu.
+describe('nexus_route_log persistente (F-773)', () => {
+  let baseDir = '';
+  let manager: ProjectRuntimeManager | null = null;
+
+  const boot = () => {
+    manager = new ProjectRuntimeManager({ baseDir, appVersion: 'f773-route-tools' });
+    configureProjectDomainStoreRegistry(manager);
+  };
+
+  beforeEach(() => {
+    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-f773-route-tools-'));
+    boot();
+  });
+
+  afterEach(() => {
+    disposeProjectDomainStoreRegistry();
+    manager?.closeAll();
+    manager = null;
+    fs.rmSync(baseDir, { recursive: true, force: true });
+  });
+
+  it('a decisão sobrevive ao restart e o nexus_route_log lê do checkout', async () => {
+    mocks.listProviderSettings.mockReturnValue([
+      { adapterId: 'kimi', enabled: true, installed: true, authStrategy: 'oauth', models: ['kimi-code/k3'] },
+      { adapterId: 'codex', enabled: true, installed: true, authStrategy: 'oauth', models: ['gpt-5.6-luna'] },
+    ]);
+    const decision = (await tool('nexus_route_task').handler(
+      { task: 'tarefa de complexidade média' },
+      context(),
+    )) as { adapterId: string; reason: string; alternatives: Array<{ adapterId: string }> };
+
+    // Restart: memória e registro somem; o banco do checkout fica.
+    clearRouteLog();
+    disposeProjectDomainStoreRegistry();
+    manager?.closeAll();
+    boot();
+
+    const out = (await tool('nexus_route_log').handler({}, context())) as {
+      decisions: Array<{ adapterId: string; reason: string; at?: number; alternatives?: Array<{ adapterId: string }> }>;
+    };
+    expect(out.decisions).toHaveLength(1);
+    expect(out.decisions[0]).toMatchObject({ adapterId: decision.adapterId, reason: decision.reason });
+    expect(out.decisions[0]!.at).toEqual(expect.any(Number));
+    expect(out.decisions[0]!.alternatives?.map((alt) => alt.adapterId)).toEqual(
+      decision.alternatives.map((alt) => alt.adapterId).slice(0, 12),
+    );
   });
 });
 

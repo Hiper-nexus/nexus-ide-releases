@@ -237,9 +237,15 @@ import {
   listLiveSessionLocations,
   orchTerminateSession,
   sessionAdapterId,
+  tapSessionExit,
   terminateAllSessions,
 } from "./pty/pty-manager";
 import { setPaneTerminalIdentity } from "./pty/pane-terminal-identity";
+import {
+  rememberExitedSessionAttribution,
+  routeAttributionFromSession,
+  setHandoffRouteAttributionResolver,
+} from "./orch/handoff-store";
 import { configureWorktreePtySweep } from "./runtime/worktree-pty-sweep";
 import {
   liveRuntimeProcessSummary,
@@ -579,6 +585,17 @@ function bootstrap(): void {
   configureAuditLogRuntime(projectRuntimeManager);
   configurePtyProjectRuntimeManager(projectRuntimeManager);
   configureRendererMissionAuthority(projectRuntimeManager);
+  // F-773: cada handoff grava a CLI e o modelo da sessão física que o
+  // entregou — base da taxa de sucesso da rota. Injetado pelo mesmo motivo do
+  // sweep abaixo: o store não pode importar o pty-manager.
+  setHandoffRouteAttributionResolver((sessionId) =>
+    routeAttributionFromSession(getAgentSessionInfo(sessionId)),
+  );
+  // O enforcement grava "terminou sem entregar" depois do exit, quando a
+  // sessão já saiu do registro: o tap de saída guarda quem ela era.
+  tapSessionExit((sessionId, agent) =>
+    rememberExitedSessionAttribution(sessionId, routeAttributionFromSession(agent)),
+  );
   // Liga a varredura de PTY do teardown de worktree. Injetado aqui, e não
   // importado dentro do registry, porque pty-manager já importa de runtime/ —
   // o import de volta fecharia um ciclo ESM.

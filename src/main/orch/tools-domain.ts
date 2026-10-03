@@ -58,9 +58,14 @@ import {
   type JevRouteTaskBatch,
 } from './jev-task-routing';
 import { cliSupportsSkillSurface } from './jev-skill-suggestion';
-import { mergeAdapterUseLists } from './route-pipeline';
+import {
+  buildRouteSuccessIndex,
+  mergeAdapterUseLists,
+  ROUTE_OUTCOME_WINDOW_MS,
+  type RouteSuccessIndex,
+} from './route-pipeline';
 import { recordRouteDecision } from './route-provenance';
-import { recordRouteLog, recentRouteLog } from './route-log';
+import { recordRouteLog, recentRouteLog, type RouteLogSink } from './route-log';
 import { ruleChoiceReceipt } from './route-rule-choice';
 import { loadSpecialtyBenchmark } from './specialty-benchmark';
 import {
@@ -1635,7 +1640,9 @@ const routeLogTool: McpToolDef = {
     'most-recent-first list of {seq, tier, adapterId, model, effort, reason, ' +
     'taskPreview} plus, when known, classifierSource, confidence and ruleChoice ' +
     '(what the plain rule would have picked without Jev). Read-only; useful to ' +
-    'explain why a provider was (not) used.',
+    'explain why a provider was (not) used. Persisted per checkout (survives ' +
+    'restarts, 30 days): entries also carry at, missionId and alternatives ' +
+    '(who competed and lost, in rank order).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -1645,14 +1652,26 @@ const routeLogTool: McpToolDef = {
       },
     },
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const limitRaw = args.limit;
     const limit = typeof limitRaw === 'number' && Number.isFinite(limitRaw)
       ? Math.max(1, Math.min(50, Math.floor(limitRaw)))
       : 20;
-    return { decisions: recentRouteLog(limit) };
+    return { decisions: recentRouteLog(limit, routeLogSinkFor(ctx.scope)) };
   },
 };
+
+/**
+ * F-773 (G6): o log de rota persiste no SQLite do checkout e sobrevive ao
+ * restart. Store indisponível (boot, teste sem registro) = só a memória.
+ */
+function routeLogSinkFor(scope: ProjectExecutionScope): RouteLogSink | null {
+  try {
+    return getProjectDomainStores(scope).missions.routeDecisions ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Corpo do nexus_route_task. `internal` só é preenchido pelo resolver do spawn
@@ -1867,6 +1886,20 @@ export async function routeTaskForCaller(
       globalUseCounts = undefined;
     }
   }
+  // F-773 (G4): laço de resultado — o que cada (CLI, modelo) entregou de
+  // verdade nos últimos 14 dias neste checkout (status do worker + veredito
+  // do Maestro no ACK). Vale também para o fan-out sem missão. Fail-open
+  // isolado: sem leitura, a rota segue exatamente como antes.
+  let routeOutcomes: RouteSuccessIndex | undefined;
+  try {
+    routeOutcomes = buildRouteSuccessIndex(
+      getProjectDomainStores(ctx.scope).handoffs.routeOutcomeCountsSince(
+        Date.now() - ROUTE_OUTCOME_WINDOW_MS,
+      ),
+    );
+  } catch {
+    routeOutcomes = undefined;
+  }
   // Preferência interna (pin de adapterId que virou preferência suave no
   // spawn) vale tanto quanto a do caller; nunca vira exclusão.
   const preferAdapters = [
@@ -1911,6 +1944,7 @@ export async function routeTaskForCaller(
     missionUseCounts,
     preferAdapters: preferAdapters.length > 0 ? preferAdapters : undefined,
     ...(globalUseCounts ? { globalUseCounts } : {}),
+    ...(routeOutcomes ? { routeOutcomes } : {}),
     // Uso geral: o multi-score (benchmark oficial + diversidade + custo)
     // vale também para o fan-out do operador sem missão — a ordem crua da
     // tabela não é medida de capacidade.
@@ -2010,7 +2044,11 @@ export async function routeTaskForCaller(
     ...(jevUnavailable ? { jevUnavailable } : {}),
     ...(routing.confidence ? { confidence: routing.confidence } : {}),
     ...(ruleChoice ? { ruleChoice } : {}),
-  });
+    // F-773 (G6): quem disputou e perdeu, e a missão — a auditoria "por que
+    // X perdeu" persiste junto com o motivo.
+    ...(missionId ? { missionId } : {}),
+    alternatives: decision.alternatives,
+  }, routeLogSinkFor(ctx.scope));
   // Provenância da classificação (jev | heuristic | mixed) e o sinal
   // `escalate` do Jev — informação para o Maestro, nunca decisão do router.
   // A skillSuggestion do mesmo lote já foi resolvida acima (uma chamada judge).

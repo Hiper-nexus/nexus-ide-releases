@@ -8,6 +8,11 @@
  * router's return value the LLM consumed — the user could never see why Kimi
  * lost to Codex. Now the last N decisions are queryable with their tier,
  * pick, effort and human-readable reason.
+ *
+ * F-773 (G6): a memória (teto 50) sumia a cada boot. Quem chama passa um
+ * `RouteLogSink` (a tabela `route_decisions` do checkout, ver
+ * route-decision-ledger.ts) e a linha também persiste; sem coletor, ou com
+ * ele falhando, fica a memória de sempre.
  */
 
 import {
@@ -34,6 +39,17 @@ export interface RouteLogEntry {
   confidence?: SpawnRouteConfidence;
   /** O que a regra teria escolhido sem o Jev ('same' = a mesma coisa). */
   ruleChoice?: SpawnRuleChoiceReceipt;
+  /** F-773: missão da decisão (rota sem missão = fan-out do operador). */
+  missionId?: string;
+  /** F-773: quem disputou e perdeu, na ordem do ranking — só ids. */
+  alternatives?: RouteLogAlternative[];
+  /** F-773: instante gravado pelo coletor persistente (a memória não tem relógio). */
+  at?: number;
+}
+
+export interface RouteLogAlternative {
+  adapterId: string;
+  model?: string;
 }
 
 export interface RouteLogInput {
@@ -51,9 +67,22 @@ export interface RouteLogInput {
   confidence?: SpawnRouteConfidence;
   /** O que a regra teria escolhido sem o Jev ('same' = a mesma coisa). */
   ruleChoice?: SpawnRuleChoiceReceipt;
+  missionId?: string;
+  alternatives?: ReadonlyArray<{ adapterId?: unknown; model?: unknown }>;
+}
+
+/**
+ * F-773 (G6): destino durável da mesma linha. `append` grava; `recent` lê as
+ * mais novas primeiro. Erros do coletor nunca derrubam a rota.
+ */
+export interface RouteLogSink {
+  append(entry: RouteLogEntry): void;
+  recent(limit: number): RouteLogEntry[];
 }
 
 const LOG_CAP = 50;
+const ALTERNATIVES_CAP = 12;
+const ALTERNATIVE_ID_MAX_CHARS = 256;
 const TASK_PREVIEW_CHARS = 120;
 
 let log: RouteLogEntry[] = [];
@@ -64,11 +93,34 @@ export function clearRouteLog(): void {
   seq = 0;
 }
 
-export function recordRouteLog(input: RouteLogInput): RouteLogEntry {
+/** Só ids de CLI/modelo, na ordem do ranking, com teto — nunca texto livre. */
+export function parseRouteLogAlternatives(raw: unknown): RouteLogAlternative[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const id = (value: unknown): string | undefined =>
+    typeof value === 'string' && value.length > 0 && value.length <= ALTERNATIVE_ID_MAX_CHARS
+      ? value
+      : undefined;
+  const picked: RouteLogAlternative[] = [];
+  for (const item of raw.slice(0, ALTERNATIVES_CAP)) {
+    if (!item || typeof item !== 'object') continue;
+    const source = item as Record<string, unknown>;
+    const adapterId = id(source.adapterId);
+    if (!adapterId) continue;
+    const model = id(source.model);
+    picked.push({ adapterId, ...(model ? { model } : {}) });
+  }
+  return picked.length > 0 ? picked : undefined;
+}
+
+export function recordRouteLog(
+  input: RouteLogInput,
+  sink?: RouteLogSink | null,
+): RouteLogEntry {
   seq += 1;
   // Passa pelos sanitizadores do recibo: só ids e números entram no diário.
   const confidence = parseSpawnRouteConfidence(input.confidence);
   const ruleChoice = parseSpawnRuleChoice(input.ruleChoice);
+  const alternatives = parseRouteLogAlternatives(input.alternatives);
   const entry: RouteLogEntry = {
     seq,
     taskPreview: input.task.slice(0, TASK_PREVIEW_CHARS),
@@ -81,12 +133,35 @@ export function recordRouteLog(input: RouteLogInput): RouteLogEntry {
     ...(input.jevUnavailable ? { jevUnavailable: input.jevUnavailable } : {}),
     ...(confidence ? { confidence } : {}),
     ...(ruleChoice ? { ruleChoice } : {}),
+    ...(input.missionId ? { missionId: input.missionId } : {}),
+    ...(alternatives ? { alternatives } : {}),
   };
   log = [...log.slice(-(LOG_CAP - 1)), entry];
+  if (sink) {
+    try {
+      sink.append(entry);
+    } catch (error) {
+      console.warn('[route-log] persistência falhou (fica só a memória):', error);
+    }
+  }
   return entry;
 }
 
-/** Most-recent-first snapshot, capped at `limit` (default all retained). */
-export function recentRouteLog(limit = LOG_CAP): RouteLogEntry[] {
-  return [...log].reverse().slice(0, Math.max(0, limit));
+/**
+ * Most-recent-first snapshot, capped at `limit` (default all retained). Com
+ * coletor legível, a fonte é a persistida — sobrevive ao restart.
+ */
+export function recentRouteLog(
+  limit = LOG_CAP,
+  sink?: RouteLogSink | null,
+): RouteLogEntry[] {
+  const capped = Math.max(0, limit);
+  if (sink) {
+    try {
+      return sink.recent(capped).slice(0, capped);
+    } catch (error) {
+      console.warn('[route-log] leitura persistida falhou (usando a memória):', error);
+    }
+  }
+  return [...log].reverse().slice(0, capped);
 }

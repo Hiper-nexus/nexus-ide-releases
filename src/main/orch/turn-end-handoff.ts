@@ -281,17 +281,50 @@ export interface MechanicalHandoffPayload extends PtyStreamHandoffPayload {
  * F-786: admissão explícita, no próprio texto, de que a tarefa ficou sem a
  * prova requerida ("não consegui abrir nem inspecionar o preview"). O
  * fechamento mecânico nunca nasce `success` sobre ela — a entrega é `partial`
- * com o texto integral preservado. Detector estreito por desenho: a revisão
- * Jev (jev-handoff-review, compartilhada no pty-stream-handoff) refina o
- * resto; regex sobre prosa não é verificador universal.
+ * com o texto integral preservado.
+ *
+ * F-823: só o FECHAMENTO conta, e só com verbo de entrega ("não consegui
+ * concluir/abrir/rodar …"). "Não foi possível reproduzir o bug antes do fix;
+ * agora os 12 testes passam" é relato do caminho, não pendência — e o partial
+ * tirava a entrega boa do portão de regressão e do done (só success conta),
+ * com loop de redespacho em CLI sem MCP. O resto fica com a revisão Jev, que
+ * pergunta sobre a PRÓPRIA tarefa do worker. Linear por construção: palavras
+ * fixas em alternância, sem quantificador aninhado.
  */
-const ADMITS_INCOMPLETE_RE =
-  /\bn[aã]o\s+(?:consegui|conseguimos|pude|pudemos)\b|\bn[aã]o\s+foi\s+poss[ií]vel\b/i;
+const CLOSING_ADMISSION_RE =
+  /(?<!\p{L})n[aã]o\s+(?:consegui|conseguimos|pude|pudemos|foi\s+poss[ií]vel)\s+(?:(?:nem|sequer|ainda|mais)\s+)?(?:concluir|terminar|finalizar|completar|entregar|implementar|corrigir|resolver|aplicar|validar|verificar|testar|rodar|executar|abrir|inspecionar|acessar|compilar|instalar|commitar|publicar|integrar|migrar)(?!\p{L})/iu;
+
+/** Fechamento curto ("Pronto.", "É isso.") não esconde a admissão de cima. */
+const SIGN_OFF_MAX_CHARS = 40;
+
+/**
+ * Último parágrafo do texto (e o anterior, quando o último é só despedida).
+ * Varredura de linhas, sem regex sobre o texto inteiro.
+ */
+export function closingParagraph(text: string): string {
+  const lines = text.split('\n');
+  const paragraphs: string[] = [];
+  let current: string[] = [];
+  for (let index = lines.length - 1; index >= 0 && paragraphs.length < 2; index -= 1) {
+    const line = lines[index]!;
+    if (line.trim().length === 0) {
+      if (current.length > 0) {
+        paragraphs.push(current.reverse().join('\n'));
+        current = [];
+        if (paragraphs[0]!.replace(/\s/g, '').length >= SIGN_OFF_MAX_CHARS) break;
+      }
+      continue;
+    }
+    current.push(line);
+  }
+  if (current.length > 0 && paragraphs.length < 2) paragraphs.push(current.reverse().join('\n'));
+  return paragraphs.reverse().join('\n\n');
+}
 
 export function mechanicalHandoffStatusFor(
   replyText: string,
 ): 'success' | 'partial' {
-  return ADMITS_INCOMPLETE_RE.test(replyText) ? 'partial' : 'success';
+  return CLOSING_ADMISSION_RE.test(closingParagraph(replyText)) ? 'partial' : 'success';
 }
 
 /**

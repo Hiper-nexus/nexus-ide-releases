@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JevResult } from '../jev/jev-client';
 
 // O módulo importa jev-client/jev-secrets (cadeia electron); os deps injetados
@@ -15,13 +18,21 @@ import {
   ADMITS_INCOMPLETE_MAX,
   buildHandoffReviewState,
   evaluateHandoffEvidence,
+  handoffReviewFeedback,
+  jevReviewReceipt,
   mechanicalHandoffReviewOutcome,
+  recordHandoffAckFeedback,
   resetJevReviewBudgetsForTesting,
   reviewMissionHandoff,
   type HandoffReviewInput,
   type JevReviewArtifact,
 } from './jev-handoff-review';
 import type { JevQuestion } from '../jev/jev-client';
+import {
+  configureJevDecisionLog,
+  listJevDecisions,
+  recordJevDecision,
+} from '../jev/jev-decision-log';
 
 const baseInput: HandoffReviewInput = {
   summary: 'Implemented the login form. Ran npm test (42 passing). Commit a1b2c3d.',
@@ -182,6 +193,32 @@ describe('reviewMissionHandoff', () => {
     expect(verdict).toEqual({ kind: 'skipped', reason: 'judge-unavailable' });
   });
 
+  it('F-823: o weak diz quais sinais o MCP devolveria (vazio para achado de revisão)', async () => {
+    const reviewerFindings = await reviewMissionHandoff(
+      {
+        sessionId: 's-revisor',
+        ...baseInput,
+        summary: 'Revisão somente leitura: 1 MEDIUM, 2 LOW. Nenhum arquivo alterado.',
+        declaredFiles: [],
+        maxBounces: 0,
+      },
+      deps(vi.fn(async () =>
+        result({ is_specific: 0.9, has_verification: 0.2, admits_incomplete: 0.9, changed_code: 0.05, names_changes: 0.9 }),
+      )),
+    );
+    expect(reviewerFindings.kind).toBe('weak');
+    if (reviewerFindings.kind === 'weak') expect(reviewerFindings.bounceSignals).toEqual([]);
+
+    const codeWithoutProof = await reviewMissionHandoff(
+      { sessionId: 's-codigo', ...baseInput, maxBounces: 0 },
+      deps(vi.fn(async () => result({ is_specific: 0.9, has_verification: 0.1, admits_incomplete: 0.1 }))),
+    );
+    expect(codeWithoutProof.kind).toBe('weak');
+    if (codeWithoutProof.kind === 'weak') {
+      expect(codeWithoutProof.bounceSignals?.join(' ')).toContain('sem evidência de verificação');
+    }
+  });
+
   it('F-786: sem canal de retry (maxBounces 0) o primeiro fraco já é weak, nunca retry', async () => {
     // O fechamento mecânico PTY não pode devolver a entrega ao worker (ele já
     // encerrou): orçamento zero de devoluções — nasce weak de cara.
@@ -303,15 +340,35 @@ describe('mechanicalHandoffReviewOutcome (F-786 — caminho sem canal de devolu�
     expect(outcome.artifacts).toHaveLength(1);
   });
 
-  it('weak → partial com marca: entrega que NASCE fraca não é success', () => {
+  it('weak com sinal que o MCP devolveria → partial com marca (aqui não há devolução)', () => {
     const outcome = mechanicalHandoffReviewOutcome({
       kind: 'weak',
       signals: ['sem evidência'],
+      bounceSignals: ['sem evidência'],
       artifact,
     });
     expect(outcome.status).toBe('partial');
     expect(outcome.mark).toBe(true);
     expect(outcome.artifacts).toHaveLength(1);
+  });
+
+  it('F-823: weak só por sinal que nem o MCP devolve → success marcado, como no MCP', () => {
+    // Rebaixar a partial tirava a entrega do portão de regressão e do done
+    // (só success conta) e fazia CLI sem MCP entrar em loop de redespacho.
+    const outcome = mechanicalHandoffReviewOutcome({
+      kind: 'weak',
+      signals: ['o texto admite pendências, mas o status é success'],
+      bounceSignals: [],
+      artifact,
+    });
+    expect(outcome.status).toBe('success');
+    expect(outcome.mark).toBe(true);
+    expect(outcome.artifacts).toHaveLength(1);
+  });
+
+  it('weak sem a informação de devolução → destino conservador (partial)', () => {
+    const outcome = mechanicalHandoffReviewOutcome({ kind: 'weak', signals: ['s'], artifact });
+    expect(outcome.status).toBe('partial');
   });
 
   it('retry → partial (defesa: com maxBounces 0 não deve ocorrer)', () => {
@@ -331,5 +388,113 @@ describe('mechanicalHandoffReviewOutcome (F-786 — caminho sem canal de devolu�
     expect(outcome.status).toBe('success');
     expect(outcome.mark).toBe(false);
     expect(outcome.artifacts).toHaveLength(0);
+  });
+});
+
+// F-782: 0 rótulos Certo/Errado em 760 decisões — o ACK do Maestro passa a
+// rotular a revisão que levou àquele handoff.
+describe('F-782: o ACK do Maestro rotula a revisão do Jev', () => {
+  let logDir = '';
+
+  beforeEach(() => {
+    resetJevReviewBudgetsForTesting();
+    logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-jev-ack-feedback-'));
+    configureJevDecisionLog(logDir);
+  });
+
+  afterEach(() => {
+    configureJevDecisionLog(undefined);
+    fs.rmSync(logDir, { recursive: true, force: true });
+  });
+
+  const weakResult = () =>
+    result({ is_specific: 0.9, has_verification: 0.2, admits_incomplete: 0.9, changed_code: 0.05, names_changes: 0.9 });
+  const readOnlyReport: HandoffReviewInput = {
+    ...baseInput,
+    summary: 'Revisão somente leitura: 1 MEDIUM, 2 LOW. Nenhum arquivo alterado.',
+    declaredFiles: [],
+  };
+
+  async function reviewed(kind: 'ok' | 'weak', sessionId: string) {
+    const verdict = await reviewMissionHandoff(
+      { sessionId, missionId: 'mission-f782', ...(kind === 'ok' ? baseInput : readOnlyReport) },
+      deps(vi.fn(async () => (kind === 'ok' ? allPass() : weakResult()))),
+    );
+    if (verdict.kind !== kind) throw new Error(`esperava ${kind}, veio ${verdict.kind}`);
+    return verdict.artifact;
+  }
+
+  const feedbackOf = (decisionId: string | undefined) =>
+    listJevDecisions({ surface: 'handoffReview', dir: logDir }).find((e) => e.id === decisionId)?.feedback;
+
+  it('o recibo da revisão carrega o id da linha do diário, com sessão e missão', async () => {
+    const artifact = await reviewed('ok', 's-recibo');
+    const [entry] = listJevDecisions({ surface: 'handoffReview', dir: logDir });
+    expect(artifact.payload.decisionId).toBe(entry?.id);
+    expect(entry).toMatchObject({ sessionId: 's-recibo', missionId: 'mission-f782', decision: 'ok' });
+    expect(jevReviewReceipt([artifact])).toEqual({ decisionId: entry?.id, outcome: 'ok' });
+  });
+
+  it('concordar com o Maestro é certo; discordar é errado (as 4 combinações)', () => {
+    expect(handoffReviewFeedback('ok', 'accepted')).toBe('right');
+    expect(handoffReviewFeedback('ok', 'rework')).toBe('wrong');
+    expect(handoffReviewFeedback('weak', 'rework')).toBe('right');
+    // Limiar rígido: o Jev marcou fraca e o Maestro aceitou como veio.
+    expect(handoffReviewFeedback('weak', 'accepted')).toBe('wrong');
+  });
+
+  it('revisar ok e aceitar grava certo; revisar ok e devolver grava errado', async () => {
+    const accepted = await reviewed('ok', 's-ok-aceito');
+    expect(recordHandoffAckFeedback({ artifacts: [accepted], sessionId: 's-ok-aceito' }, 'accepted')).toBe('right');
+    expect(feedbackOf(accepted.payload.decisionId)).toBe('right');
+
+    const reworked = await reviewed('ok', 's-ok-devolvido');
+    expect(recordHandoffAckFeedback({ artifacts: [reworked], sessionId: 's-ok-devolvido' }, 'rework')).toBe('wrong');
+    expect(feedbackOf(reworked.payload.decisionId)).toBe('wrong');
+  });
+
+  it('revisão fraca devolvida grava certo; fraca aceita grava errado', async () => {
+    const reworked = await reviewed('weak', 's-fraca-devolvida');
+    recordHandoffAckFeedback({ artifacts: [reworked], sessionId: 's-fraca-devolvida' }, 'rework');
+    expect(feedbackOf(reworked.payload.decisionId)).toBe('right');
+
+    const accepted = await reviewed('weak', 's-fraca-aceita');
+    recordHandoffAckFeedback({ artifacts: [accepted], sessionId: 's-fraca-aceita' }, 'accepted');
+    expect(feedbackOf(accepted.payload.decisionId)).toBe('wrong');
+  });
+
+  it('id copiado de outra sessão não rotula nada', async () => {
+    const other = await reviewed('ok', 's-vitima');
+    const forged = { kind: 'nexus.jevReview', payload: { ...other.payload } };
+    expect(recordHandoffAckFeedback({ artifacts: [forged], sessionId: 's-atacante' }, 'rework')).toBeNull();
+    expect(feedbackOf(other.payload.decisionId)).toBeUndefined();
+  });
+
+  it('desfecho trocado no artifact (weak→ok) não rotula a linha', async () => {
+    const weak = await reviewed('weak', 's-troca');
+    const flipped = { kind: 'nexus.jevReview', payload: { ...weak.payload, outcome: 'ok' } };
+    expect(recordHandoffAckFeedback({ artifacts: [flipped], sessionId: 's-troca' }, 'accepted')).toBeNull();
+    expect(feedbackOf(weak.payload.decisionId)).toBeUndefined();
+  });
+
+  it('o recibo do Main (último) vence um recibo do worker anexado antes', async () => {
+    const real = await reviewed('ok', 's-ordem');
+    const decoyId = recordJevDecision(
+      {
+        surface: 'handoffReview', sessionId: 's-ordem', model: 'jev-test', questions: [],
+        probabilities: {}, decision: 'weak', inputTokens: 0, usd: 0,
+      },
+      { dir: logDir },
+    );
+    const decoy = { kind: 'nexus.jevReview', payload: { outcome: 'weak', decisionId: decoyId } };
+    recordHandoffAckFeedback({ artifacts: [decoy, real], sessionId: 's-ordem' }, 'accepted');
+    expect(feedbackOf(real.payload.decisionId)).toBe('right');
+    expect(feedbackOf(decoyId)).toBeUndefined();
+  });
+
+  it('sem recibo (revisão pulada) não há o que rotular', () => {
+    expect(recordHandoffAckFeedback({ artifacts: [], sessionId: 's1' }, 'accepted')).toBeNull();
+    expect(recordHandoffAckFeedback({ artifacts: [{ kind: 'overclock.fullText', payload: 'x' }], sessionId: 's1' }, 'rework')).toBeNull();
+    expect(listJevDecisions({ dir: logDir })).toEqual([]);
   });
 });

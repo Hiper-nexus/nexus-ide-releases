@@ -214,6 +214,8 @@ describe("submitPtyStreamHandoff MCP parity", () => {
     mocks.reviewMissionHandoff.mockResolvedValueOnce({
       kind: "weak",
       signals: ["sem evidência de verificação"],
+      // O MCP devolveria este sinal ao worker; sem canal de devolução, partial.
+      bounceSignals: ["sem evidência de verificação"],
       artifact: {
         kind: "nexus.jevReview",
         payload: {
@@ -237,6 +239,57 @@ describe("submitPtyStreamHandoff MCP parity", () => {
     expect(JSON.stringify(persisted.artifacts)).toContain(
       "não consegui abrir nem inspecionar o preview",
     );
+    expect(JSON.stringify(persisted.artifacts)).toContain("nexus.jevReview");
+  });
+
+  it("F-823: revisão fraca só por sinal que nem o MCP devolve fica success marcado, como no MCP", async () => {
+    // Revisão adversarial M7: no MCP esse weak é success marcado; no PTY virava
+    // partial, saía do portão de regressão e do done, e o CLI sem MCP entrava
+    // em loop de redespacho.
+    const reply = "Revisão somente leitura do parser: 1 MEDIUM (data sem fuso), 2 LOW.";
+    const submitWithReplay = vi.fn((_input: Record<string, unknown>) => ({
+      handoff: {
+        id: "hoff-weak-review",
+        evidenceTrust: "nexus-trusted",
+        deliveryState: "queued",
+      },
+      replayed: false,
+    }));
+    mocks.getContextBySession.mockReturnValue(workerCtx());
+    mocks.getStores.mockReturnValue({
+      missions: { get: () => approvedMission() },
+      tasks: { list: () => [] },
+      missionPanes: { list: () => [] },
+      taskDispatches: { list: () => [] },
+      handoffs: {
+        submitFromPhysicalAgentBoundaryWithReplay: submitWithReplay,
+        submitFromPhysicalAgentBoundaryAndTransitionDispatch: vi.fn(),
+      },
+    });
+    mocks.reviewMissionHandoff.mockResolvedValueOnce({
+      kind: "weak",
+      signals: ["o texto admite pendências, mas o status é success"],
+      bounceSignals: [],
+      artifact: {
+        kind: "nexus.jevReview",
+        payload: {
+          outcome: "weak",
+          model: "jev-test",
+          probabilities: { admits_incomplete: 0.9 },
+          signals: ["o texto admite pendências, mas o status é success"],
+        },
+      },
+    });
+
+    await submitPtyStreamHandoff("agy-session", {
+      status: "success",
+      summary: reply,
+      artifacts: [{ auto: true, fullText: reply }],
+    });
+
+    const persisted = submitWithReplay.mock.calls[0]![0];
+    expect(persisted.status).toBe("success");
+    expect(persisted.summary).toContain("[evidência fraca]");
     expect(JSON.stringify(persisted.artifacts)).toContain("nexus.jevReview");
   });
 

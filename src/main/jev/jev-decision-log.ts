@@ -240,18 +240,35 @@ export function listJevDecisions(opts?: {
 export function setJevDecisionFeedback(
   id: string,
   verdict: 'right' | 'wrong',
-  deps?: { dir?: string },
+  deps?: {
+    dir?: string;
+    /**
+     * F-782: feedback vindo de um gesto do fluxo (ACK do Maestro), não da
+     * tela. O id chega por um artifact do handoff, que o worker também
+     * escreve — só marca a linha que passar no predicado (superfície/sessão).
+     */
+    accept?: (entry: JevDecisionEntry) => boolean;
+  },
 ): boolean {
   try {
     const file = logFile(deps?.dir);
-    const entries = readEntries(file);
-    const index = entries.findIndex((e) => e.id === id);
-    if (index < 0) return false;
-    entries[index] = { ...entries[index], feedback: verdict, feedbackAt: Date.now() };
+    let raw: string;
+    try {
+      raw = fs.readFileSync(file, 'utf8');
+    } catch {
+      return false;
+    }
+    // F-782: o ACK do Maestro chama isto no Main. Só a linha da decisão é
+    // relida e regravada; as outras seguem byte a byte. Reparsear e
+    // reserializar o diário inteiro custava ~55 ms no teto de 5 MB.
+    const line = findDecisionLine(raw, id);
+    if (!line) return false;
+    if (deps?.accept && !deps.accept(line.entry)) return false;
+    const updated = { ...line.entry, feedback: verdict, feedbackAt: Date.now() };
     const tmp = file + '.tmp';
     fs.writeFileSync(
       tmp,
-      entries.map((e) => JSON.stringify(e)).join('\n') + '\n',
+      raw.slice(0, line.start) + JSON.stringify(updated) + raw.slice(line.end),
     );
     fs.renameSync(tmp, file);
     return true;
@@ -259,6 +276,28 @@ export function setJevDecisionFeedback(
     console.warn('[jev] decision feedback failed (ignored):', error);
     return false;
   }
+}
+
+/** Primeira linha válida cujo `id` é exatamente `id` (o texto pode aparecer em outros campos). */
+function findDecisionLine(
+  raw: string,
+  id: string,
+): { start: number; end: number; entry: JevDecisionEntry } | null {
+  if (!id) return null;
+  const needle = JSON.stringify(id).slice(1, -1);
+  for (let hit = raw.indexOf(needle); hit >= 0; ) {
+    const start = raw.lastIndexOf('\n', hit) + 1;
+    const newline = raw.indexOf('\n', hit);
+    const end = newline < 0 ? raw.length : newline;
+    try {
+      const entry = parseDecisionRow(JSON.parse(raw.slice(start, end)));
+      if (entry?.id === id) return { start, end, entry };
+    } catch {
+      // linha truncada por rotação no meio da escrita — segue procurando
+    }
+    hit = newline < 0 ? -1 : raw.indexOf(needle, end + 1);
+  }
+  return null;
 }
 
 export interface JevWindowStats {

@@ -51,6 +51,7 @@ import {
   type RecordMissionKickoffAcceptance,
 } from './mission-kickoff-proof-ledger';
 import { MissionReviewVerdictLedger } from './mission-review-verdict-ledger';
+import { RouteDecisionLedger } from './route-decision-ledger';
 import {
   MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_MARKER,
   MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_REASON,
@@ -364,6 +365,7 @@ export class ScopedMissionStore {
   readonly #kickoffProofs: MissionKickoffProofLedger;
   readonly #routeReservations: MissionRouteReservationLedger;
   readonly #reviewVerdicts: MissionReviewVerdictLedger;
+  readonly #routeDecisions: RouteDecisionLedger;
 
   constructor(
     runtimeManager: ProjectRuntimeManager,
@@ -375,11 +377,17 @@ export class ScopedMissionStore {
     this.#kickoffProofs = new MissionKickoffProofLedger(this.#binding);
     this.#routeReservations = new MissionRouteReservationLedger(this.#binding);
     this.#reviewVerdicts = new MissionReviewVerdictLedger(this.#binding);
+    this.#routeDecisions = new RouteDecisionLedger(this.#binding);
   }
 
   /** F-234: vereditos de integração por HEAD exato (gate de push). */
   get reviewVerdicts(): MissionReviewVerdictLedger {
     return this.#reviewVerdicts;
+  }
+
+  /** F-773 (G6): log persistente das decisões de rota (nexus_route_log). */
+  get routeDecisions(): RouteDecisionLedger {
+    return this.#routeDecisions;
   }
 
   get scope(): ProjectExecutionScope {

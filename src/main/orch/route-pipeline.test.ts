@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { loadModelCatalog } from '../adapters/model-catalog';
 import {
+  buildRouteSuccessIndex,
   countAdapterUses,
   mergeAdapterUseLists,
   multiScoreRerank,
   NEUTRAL_UNPUBLISHED_QUALITY,
+  ROUTE_OUTCOME_MIN_SAMPLES,
+  ROUTE_OUTCOME_WINDOW_MS,
+  routeSuccessRate,
   scoreRouteCandidate,
   tieBreakByUse,
   TIE_MARGIN,
@@ -351,5 +355,122 @@ describe('tieBreakByUse', () => {
   it('sem contagem ou topo ainda não usado: ordem intacta, mesmo array', () => {
     expect(run({}).ranked).toBe(ranked);
     expect(run({ agy: 2 }).ranked).toBe(ranked);
+  });
+});
+
+// F-773 (G4): laço de resultado — a nota aprende com o que cada (CLI, modelo)
+// entregou de verdade, sem dominar tier, diversidade nem menção.
+describe('termo de sucesso 14d (F-773)', () => {
+  // Catálogo vazio: qualidade neutra e custo iguais; só posição e sucesso variam.
+  const flat = { adapters: {} } as ModelCatalog;
+  const outcomes = (rows: Array<[string, string | undefined, number, number]>) =>
+    buildRouteSuccessIndex(
+      rows.map(([adapterId, model, successes, total]) => ({ adapterId, model, successes, total })),
+    );
+
+  it('janela de 14 dias e amostra mínima de 5', () => {
+    expect(ROUTE_OUTCOME_WINDOW_MS).toBe(14 * 24 * 60 * 60 * 1000);
+    expect(ROUTE_OUTCOME_MIN_SAMPLES).toBe(5);
+  });
+
+  it('CLI com taxa 0,3 (≥5 amostras) perde para uma neutra na mesma posição de tabela', () => {
+    const ranked = [entry('grok', 'grok-4.7'), entry('kimi', 'kimi-code/k3')];
+    // Sem o laço: a posição (−0,5) mantém o grok na frente.
+    expect(multiScoreRerank({ ranked, tier: 'medium', modelCatalog: flat }).ranked[0]?.c.adapterId)
+      .toBe('grok');
+
+    const { ranked: out, scored, note } = multiScoreRerank({
+      ranked,
+      tier: 'medium',
+      modelCatalog: flat,
+      context: { routeOutcomes: outcomes([['grok', 'grok-4.7', 3, 10]]) },
+    });
+    expect(out[0]?.c.adapterId).toBe('kimi');
+    expect(scored.find((s) => s.c.adapterId === 'grok')!.score.success).toBeCloseTo(-2);
+    expect(scored.find((s) => s.c.adapterId === 'kimi')!.score.success).toBe(0);
+    expect(note).toContain('sucesso 14d: grok:grok-4.7 0,30 (10)');
+  });
+
+  it('abaixo de 5 amostras não há termo (a CLI não é penalizada)', () => {
+    const index = outcomes([['grok', 'grok-4.7', 0, ROUTE_OUTCOME_MIN_SAMPLES - 1]]);
+    expect(routeSuccessRate(index, 'grok', 'grok-4.7')).toBeNull();
+    const { ranked: out, scored, note } = multiScoreRerank({
+      ranked: [entry('grok', 'grok-4.7'), entry('kimi', 'kimi-code/k3')],
+      tier: 'medium',
+      modelCatalog: flat,
+      context: { routeOutcomes: index },
+    });
+    expect(out[0]?.c.adapterId).toBe('grok');
+    expect(scored[0]!.score.success).toBe(0);
+    expect(note).not.toContain('sucesso 14d');
+  });
+
+  it('modelo sem amostra própria usa a taxa da CLI inteira, e o recibo diz isso', () => {
+    const index = outcomes([
+      ['agy', 'gemini-4-argon', 0, 3],
+      ['agy', 'gemini-3.8-flash-high', 1, 4],
+    ]);
+    // 3 e 4 não bastam por modelo; somados, 7 amostras da CLI (1/7).
+    expect(routeSuccessRate(index, 'agy', 'gemini-4-argon')).toEqual({
+      rate: 1 / 7,
+      samples: 7,
+      scope: 'cli',
+    });
+    const { note } = multiScoreRerank({
+      ranked: [entry('agy', 'gemini-4-argon'), entry('kimi', 'kimi-code/k3')],
+      tier: 'medium',
+      modelCatalog: flat,
+      context: { routeOutcomes: index },
+    });
+    expect(note).toContain('agy:gemini-4-argon 0,14 (7, CLI)');
+  });
+
+  it('taxa alta soma; o termo fica entre −5 e +5', () => {
+    const best = scoreRouteCandidate(entry('kimi', 'kimi-code/k3'), 0, {
+      tier: 'medium',
+      modelCatalog: flat,
+      context: { routeOutcomes: outcomes([['kimi', 'kimi-code/k3', 10, 10]]) },
+    });
+    const worst = scoreRouteCandidate(entry('kimi', 'kimi-code/k3'), 0, {
+      tier: 'medium',
+      modelCatalog: flat,
+      context: { routeOutcomes: outcomes([['kimi', 'kimi-code/k3', 0, 10]]) },
+    });
+    expect(best.success).toBe(5);
+    expect(worst.success).toBe(-5);
+  });
+
+  it('não domina: taxa 0 no tier certo ainda vence 100% a um degrau de distância', () => {
+    const { ranked: out } = multiScoreRerank({
+      ranked: [entry('grok', 'grok-4.7', 'medium'), entry('kimi', 'kimi-code/k3', 'hard')],
+      tier: 'medium',
+      modelCatalog: flat,
+      context: {
+        routeOutcomes: outcomes([
+          ['grok', 'grok-4.7', 0, 10],
+          ['kimi', 'kimi-code/k3', 10, 10],
+        ]),
+      },
+    });
+    expect(out[0]?.c.adapterId).toBe('grok');
+  });
+
+  it('não domina: 100% de sucesso não vence a diversidade de quem já tem assento', () => {
+    const { ranked: out } = multiScoreRerank({
+      ranked: [entry('grok', 'grok-4.7'), entry('kimi', 'kimi-code/k3')],
+      tier: 'medium',
+      modelCatalog: flat,
+      missionUseCounts: new Map([['grok', 1]]),
+      context: { routeOutcomes: outcomes([['grok', 'grok-4.7', 10, 10]]) },
+    });
+    expect(out[0]?.c.adapterId).toBe('kimi');
+  });
+
+  it('linha inválida (total 0, sucesso > total) é ignorada', () => {
+    const index = buildRouteSuccessIndex([
+      { adapterId: 'grok', model: 'grok-4.7', successes: 0, total: 0 },
+      { adapterId: 'grok', model: 'grok-4.7', successes: 9, total: 5 },
+    ]);
+    expect(routeSuccessRate(index, 'grok', 'grok-4.7')).toBeNull();
   });
 });

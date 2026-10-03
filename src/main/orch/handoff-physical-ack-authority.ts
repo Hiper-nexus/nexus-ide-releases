@@ -14,6 +14,11 @@ interface PhysicalAckInput {
   readonly handoffId: string;
   readonly missionId: string;
   readonly orchestratorSessionId: string;
+  /**
+   * F-773/F-782: veredito do Maestro, gravado junto do consumo. Fora do
+   * digest do recibo (que continua `{handoffId}`): é rótulo, não autoridade.
+   */
+  readonly verdict?: "accepted" | "rework";
 }
 
 interface AcceptedAttempt {
@@ -215,7 +220,8 @@ function consumeHandoffRow(
        SET delivery_state = 'consumed',
            acknowledged_at = COALESCE(acknowledged_at, ?),
            consumed_at = ?, consumed_by_session = ?,
-           consumed_delivery_attempt_id = ?
+           consumed_delivery_attempt_id = ?,
+           ack_verdict = ?
        WHERE id = ? AND mission_id = ? AND delivered = 1
          AND delivery_state IN ('submitted', 'acknowledged')`,
     )
@@ -224,6 +230,7 @@ function consumeHandoffRow(
       now,
       input.orchestratorSessionId,
       attemptId,
+      input.verdict ?? "accepted",
       input.handoffId,
       input.missionId,
     );

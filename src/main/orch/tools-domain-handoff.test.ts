@@ -873,15 +873,57 @@ describe("handoff MCP stop receipt", () => {
       ok: true,
       handoffId: "handoff-a",
       deliveryState: "consumed",
+      verdict: "accepted",
     });
     expect(mocks.markConsumedFromPhysicalAck).toHaveBeenCalledWith(
       {
         handoffId: "handoff-a",
         missionId: "mission-a",
         orchestratorSessionId: "orchestrator-session",
+        verdict: "accepted",
       },
       expect.any(Object),
     );
+  });
+
+  it('F-782: verdict "rework" chega ao store junto do ACK', async () => {
+    mocks.markConsumedFromPhysicalAck.mockReturnValue(true);
+    const orchestrator = {
+      ...context(),
+      role: "orchestrator" as const,
+      sessionId: "orchestrator-session",
+      workerIncarnationId: undefined,
+    };
+
+    await expect(
+      acknowledgeTool().handler(
+        { handoffId: "handoff-a", verdict: "rework" },
+        orchestrator,
+        invocation({ toolCallId: "ack-tool-call-rework", toolName: "nexus_handoff_ack" }),
+      ),
+    ).resolves.toMatchObject({ ok: true, verdict: "rework" });
+    expect(mocks.markConsumedFromPhysicalAck).toHaveBeenCalledWith(
+      expect.objectContaining({ handoffId: "handoff-a", verdict: "rework" }),
+      expect.any(Object),
+    );
+  });
+
+  it("F-782: veredito inválido é recusado ANTES de consumir o handoff", async () => {
+    const orchestrator = {
+      ...context(),
+      role: "orchestrator" as const,
+      sessionId: "orchestrator-session",
+      workerIncarnationId: undefined,
+    };
+
+    await expect(
+      acknowledgeTool().handler(
+        { handoffId: "handoff-a", verdict: "rejeitado" },
+        orchestrator,
+        invocation({ toolCallId: "ack-tool-call-bad", toolName: "nexus_handoff_ack" }),
+      ),
+    ).rejects.toThrow(/verdict must be "accepted" or "rework"/);
+    expect(mocks.markConsumedFromPhysicalAck).not.toHaveBeenCalled();
   });
 
   it("denies ack from a stale orchestrator token even with the right role/mission", async () => {
