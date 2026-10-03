@@ -44,7 +44,8 @@ async function until(check: () => boolean): Promise<void> {
   }
 }
 
-it.runIf(process.platform !== 'win32')('serializes real foreground and background launches in the same project', async () => {
+it.runIf(process.platform !== 'win32').each(['mission', 'loose helper'])('serializes real foreground/background launches for %s', async scenario => {
+  if (scenario === 'loose helper') { ctx.missionId = undefined; ctx.role = 'user'; ctx.operatorParentSessionId = 'operator'; }
   const log = path.join(dir, 'order'); const firstGate = path.join(dir, 'first-gate'); const secondGate = path.join(dir, 'second-gate');
   const first = script('first', `printf 'first-start\\n' >> ${quote(log)}\nwhile ! test -e ${quote(firstGate)}; do sleep .05; done\nprintf 'first-end\\n' >> ${quote(log)}`);
   const second = script('second', `printf 'second-start\\n' >> ${quote(log)}\nwhile ! test -e ${quote(secondGate)}; do sleep .05; done`);

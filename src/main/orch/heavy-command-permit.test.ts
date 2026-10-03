@@ -57,9 +57,18 @@ it('expires a pressure-blocked waiter without starting work, and closes queued w
   const second = value.acquire(request()); const closed = expect(second).rejects.toThrow('closed'); value.close(); await closed;
 });
 
-it('uses one machine slot when RAM is unknown and bypasses unowned operator commands', async () => {
+it('uses one machine slot when RAM is unknown', async () => {
   const value = pool(() => null); const first = await value.acquire(request()); let admitted = false;
   const second = value.acquire(request('another')).then(p => { admitted = true; return p; });
-  const user = await value.acquire({ ...request(), missionId: undefined }); expect(user.id).toBe('');
   await Promise.resolve(); expect(admitted).toBe(false); first.release(); (await second).release();
+});
+
+it('queues Main-owned loose helpers without a mission, including direct assistant tools', async () => {
+  const value = pool();
+  const helper = await value.acquire({ ...request(), missionId: undefined });
+  expect(helper.id).not.toBe('');
+  let admitted = false;
+  const assistant = value.acquire({ ...request(), missionId: undefined, sessionId: undefined }).then(p => { admitted = true; return p; });
+  await Promise.resolve(); expect(admitted).toBe(false);
+  helper.release(); (await assistant).release();
 });

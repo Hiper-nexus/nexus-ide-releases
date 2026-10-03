@@ -30,7 +30,6 @@ interface PermitPoolOptions {
   readonly waitMs?: number;
   readonly pollMs?: number;
 }
-const OPERATOR_PERMIT: HeavyCommandPermit = Object.freeze({ id: '', release() {} });
 const error = (code: string) => new Error(`heavy_command_${code}`);
 
 /** One physical heavy job per project; machine RAM reservations span projects. */
@@ -50,7 +49,9 @@ export class HeavyCommandPermitPool {
   }
 
   acquire(request: HeavyCommandRequest): Promise<HeavyCommandPermit> {
-    if (!request.missionId || !request.sessionId) return Promise.resolve(OPERATOR_PERMIT);
+    // Callers are Main-owned agent execution paths. A loose helper has no
+    // mission, and role=user is also used by CLI agents: neither means a
+    // command came from a human shell outside Nexus.
     if (this.#closed) return Promise.reject(error('closed'));
     if (request.signal?.aborted) return Promise.reject(error('aborted'));
     if (this.#waiters.length >= (this.#options.maxWaiters ?? 128)) return Promise.reject(error('queue_full'));
