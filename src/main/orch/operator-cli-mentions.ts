@@ -5,6 +5,12 @@
  * (`origin === 'human'`) em memória volátil e responde "o operador nomeou
  * esta CLI nos últimos 15 min?".
  *
+ * O compositor do Nexus e o teclado do pane governado já entram como `human`
+ * (`orch:panes.operatorInput`). A orientação do Quadro entra por
+ * `noteOperatorDirection`. Escrita `system` (kickoff, handoff, injeção) não
+ * conta. O buffer por sessão concatena teclas sem separador e aplica
+ * backspace; setas não movem o cursor (teto: linha linear, sem edição no meio).
+ *
  * Contrato do SessionInputTap: o texto é observacional — NUNCA persistido,
  * logado nem encaminhado. Só timestamps + trechos sanitizados em RAM, com
  * retenção de 30 minutos e teto de 4.000 caracteres por sessão.
@@ -49,21 +55,72 @@ const CLI_MENTION_ALIASES: Readonly<Record<string, readonly string[]>> = {
 const OSC_PATTERN = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 const CSI_PATTERN = /\x1b\[[0-9;?]*[ -\/]*[@-~]/g;
 const ESC_PATTERN = /\x1b[@-_]/g;
-const CONTROL_PATTERN = /[\x00-\x09\x0b\x0c\x0e-\x1f\x7f]/g;
+// Backspace (\b/\x7f), tab e newline ficam: o replay apaga ou vira fronteira.
+const CONTROL_PATTERN = /[\x00-\x07\x0b\x0c\x0e-\x1f]/g;
 /* eslint-enable no-control-regex */
 
 /**
- * Tira ANSI/OSC/CSI/paste e controles por inteiro — um escape no meio de uma
- * palavra não vira fronteira (o terminal também renderia contíguo). Newline
- * vira espaço de fronteira.
+ * Tira ANSI/OSC/CSI/paste e controles que não editam — um escape no meio de
+ * uma palavra não vira fronteira. Backspace e newline sobrevivem para o replay.
  */
 function sanitizeInput(data: string): string {
   return data
     .replace(OSC_PATTERN, '')
     .replace(CSI_PATTERN, '')
     .replace(ESC_PATTERN, '')
-    .replace(/[\r\n]+/g, ' ')
     .replace(CONTROL_PATTERN, '');
+}
+
+function isBackspace(ch: string): boolean {
+  return ch === '\b' || ch === '\x7f';
+}
+
+function startsWithSpaceOrBackspace(text: string): boolean {
+  const ch = text[0];
+  return ch !== undefined && (isBackspace(ch) || /\s/u.test(ch));
+}
+
+/** Colagem (mais de um caractere visível). Tecla solta não leva separador. */
+function isPasteChunk(text: string): boolean {
+  let visible = 0;
+  for (const ch of text) {
+    if (!isBackspace(ch)) visible += 1;
+    if (visible > 1) return true;
+  }
+  return false;
+}
+
+/**
+ * Reconstrói a linha: teclas coladas, backspace apaga a anterior, newline/tab
+ * viram espaço. Colagem nova ganha fronteira se o buffer não terminou nela.
+ * ponytail: não rastreia cursor — seta é CSI e some; edição no meio da linha
+ * não existe. Subir isso exige posição de cursor no tap.
+ */
+function replayInput(chunks: readonly InputChunk[]): string {
+  let out = '';
+  for (const chunk of chunks) {
+    const text = chunk.text;
+    if (
+      isPasteChunk(text) &&
+      out.length > 0 &&
+      !/\s$/u.test(out) &&
+      !startsWithSpaceOrBackspace(text)
+    ) {
+      out += ' ';
+    }
+    for (const ch of text) {
+      if (isBackspace(ch)) {
+        out = out.slice(0, -1);
+        continue;
+      }
+      if (ch === '\n' || ch === '\r' || ch === '\t') {
+        if (!out.endsWith(' ')) out += ' ';
+        continue;
+      }
+      out += ch;
+    }
+  }
+  return out;
 }
 
 function normalizeForMatch(text: string): string {
@@ -81,9 +138,71 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** "anti gravity" / "anti-gravity" casam "antigravity". Apelido curto fica exato. */
+function flexibleAliasPattern(core: string): RegExp {
+  const parts = [...core].map((ch) => escapeRegex(ch));
+  return new RegExp(`(?<![a-z0-9])${parts.join('[\\s-]*')}(?![a-z0-9])`, 'u');
+}
+
+/**
+ * Uma edição (troca ou letra a mais/a menos). Sem relação de prefixo: "code"
+ * não vira codex e "use" não vira muse. Apelido com menos de 4 letras nem chega aqui.
+ */
+function withinOneEdit(a: string, b: string): boolean {
+  if (a === b) return false;
+  const diff = a.length - b.length;
+  if (diff === 0) {
+    let changes = 0;
+    for (let i = 0; i < a.length; i += 1) {
+      if (a[i] !== b[i]) changes += 1;
+      if (changes > 1) return false;
+    }
+    return changes === 1;
+  }
+  if (diff !== 1 && diff !== -1) return false;
+  const [shorter, longer] = a.length < b.length ? [a, b] : [b, a];
+  let i = 0;
+  let j = 0;
+  let skipped = false;
+  while (i < shorter.length && j < longer.length) {
+    if (shorter[i] === longer[j]) {
+      i += 1;
+      j += 1;
+    } else if (skipped) {
+      return false;
+    } else {
+      skipped = true;
+      j += 1;
+    }
+  }
+  return true;
+}
+
+function aliasMatches(text: string, alias: string): boolean {
+  const normalizedAlias = normalizeForMatch(alias);
+  if (!normalizedAlias) return false;
+  const core = normalizedAlias.replace(/[\s-]+/g, '');
+  if (core.length < 4) {
+    return new RegExp(
+      `(?<![a-z0-9])${escapeRegex(normalizedAlias)}(?![a-z0-9])`,
+      'u',
+    ).test(text);
+  }
+  if (flexibleAliasPattern(core).test(text)) return true;
+  if (!/^[a-z]+$/u.test(core)) return false;
+  for (const word of text.split(/[^a-z0-9]+/u)) {
+    if (word.length < 4 || Math.abs(word.length - core.length) > 1) continue;
+    if (word.startsWith(core) || core.startsWith(word)) continue;
+    if (withinOneEdit(word, core)) return true;
+  }
+  return false;
+}
+
 function remember(sessionId: string, data: string): void {
   const text = sanitizeInput(data);
-  if (!text.trim()) return;
+  // Espaço e backspace são teclas: descartar o que não tem trim apagava a
+  // fronteira entre palavras quando cada tecla chega num chunk.
+  if (text.length === 0) return;
   const now = Date.now();
   const chunks = [...(inputBySession.get(sessionId) ?? []), { at: now, text }]
     .filter((chunk) => now - chunk.at <= RETENTION_MS);
@@ -138,8 +257,9 @@ export function installOperatorCliMentionTap(): () => void {
 
 /**
  * O operador nomeou esta CLI nesta sessão nos últimos 15 minutos? Casa alias
- * como PALAVRA INTEIRA sobre o input humano sanitizado (caixa e acentos
- * ignorados). Sem sessão → false (o pin volta a ser preferência).
+ * como palavra (espaço/hífen opcionais; apelido de 4+ letras tolera uma
+ * edição, ex. "qwhen" → qwen). Apelido curto ("glm") fica exato. Sem sessão
+ * → false (o pin volta a ser preferência).
  */
 export function operatorRecentlyNamedCli(
   sessionId: string | undefined,
@@ -155,14 +275,6 @@ export function operatorRecentlyNamedCli(
     (chunk) => now - chunk.at >= 0 && now - chunk.at <= window,
   );
   if (recent.length === 0) return false;
-  const normalized = normalizeForMatch(
-    recent.map((chunk) => chunk.text).join(' '),
-  );
-  return aliasesFor(adapterId).some((alias) => {
-    const normalizedAlias = normalizeForMatch(alias);
-    if (!normalizedAlias) return false;
-    return new RegExp(`\\b${escapeRegex(normalizedAlias)}\\b`, 'u').test(
-      normalized,
-    );
-  });
+  const normalized = normalizeForMatch(replayInput(recent));
+  return aliasesFor(adapterId).some((alias) => aliasMatches(normalized, alias));
 }
