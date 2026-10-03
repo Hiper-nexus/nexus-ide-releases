@@ -1108,13 +1108,52 @@ function evaluatedCandidates(
 }
 
 /**
- * F-771 (G3): pedido explícito de busca/grounding na web (pt + en). "Estado
- * da arte" e "versões atuais" exigem dado vivo — um CLI sem ferramenta de
- * busca responderia de memória (o MiMo respondeu "WebSearch indisponível
- * neste pane" numa pesquisa real, 02/10).
+ * F-771 (G3): pedido explícito de busca/grounding na web (pt + en). Dado vivo
+ * ("estado da arte", "versão atual") exige uma CLI com ferramenta de busca — o
+ * MiMo respondeu "WebSearch indisponível neste pane" numa pesquisa real
+ * (02/10).
+ *
+ * F-819: o pedido tem de ter VERBO explícito de busca. As frases soltas
+ * ("versão atual", "estado da arte") apareciam em texto comum de código — "a
+ * versão atual do app trava ao abrir o login" — e tiravam Codex/GLM do pool
+ * para concentrar o trabalho nas CLIs de busca (claude, agy, kimi, grok).
+ * Duas formas, ambas com verbo:
+ *  1. verbo + alvo web: "busque/pesquise/procure/consulte na web/internet/
+ *     online", "search the web", "web search for …", "do a web search";
+ *  2. verbo de pesquisa (busque/pesquise/levante, research, search for, look
+ *     up) + (até 2 palavras de ligação) + dado vivo: "pesquise as versões
+ *     atuais", "levante o estado da arte", "search for the latest version". A
+ *     ligação não carrega palavra de conteúdo, então "procure no código a
+ *     versão atual" não casa.
+ * Varredura linear: só alternâncias de literais e quantificadores limitados.
  */
-const WEB_SEARCH_NEED =
-  /\b(?:bus(?:ca|cando|car|que)\s+na\s+(?:web|internet)|pesquis(?:a|e|ar|ando)\s+(?:na\s+)?(?:web|internet|online|externa)|web[\s-]?search|search(?:ing)?\s+(?:the\s+)?(?:web|internet|online)|estado\s+da\s+arte|state[\s-]of[\s-]the[\s-]art|vers(?:ão|ões|oes|ion|ions)\s+(?:atual|atuais|current|latest)|últimas?\s+vers(?:ão|ões)|latest\s+(?:version|release|docs?|documentation|prices?|news)|documenta(?:ção|cao)\s+atualizada|current\s+(?:docs?|documentation|versions?|pricing|news)|notícias\s+(?:recentes|atuais)|recent\s+news)\b/iu;
+const WEB_SEARCH_VERB_PT =
+  '(?:busc(?:a|ar|ando)|busque|pesquis(?:a|e|ar|ando)|procur(?:a|e|ar|ando)|consult(?:a|e|ar|ando))';
+// Sem alvo web, só verbo de PESQUISA: "procure/consulte a versão atual" também
+// se lê como olhar o repositório/doc local.
+const WEB_RESEARCH_VERB_PT =
+  '(?:busc(?:a|ar|ando)|busque|pesquis(?:a|e|ar|ando)|levant(?:e|ar|ando))';
+const WEB_SEARCH_LIVE_DATA =
+  '(?:estado\\s+da\\s+arte|state[\\s-]of[\\s-]the[\\s-]art' +
+  '|vers(?:ão|ões|oes|ion|ions)\\s+(?:atual|atuais|current|latest)' +
+  '|últimas?\\s+vers(?:ão|ões|oes)' +
+  '|(?:current|latest)\\s+(?:versions?|releases?|docs?|documentation|pricing|prices?|news)' +
+  '|documenta(?:ção|cao)\\s+atualizada|notícias\\s+(?:recentes|atuais)|recent\\s+news)';
+const WEB_SEARCH_NEED = new RegExp(
+  '(?<![\\p{L}\\p{N}])(?:' +
+    // 1) verbo + alvo web
+    `${WEB_SEARCH_VERB_PT}\\s+(?:(?:na|a|em)\\s+)?(?:web|internet|online)` +
+    '|pesquis(?:a|e|ar|ando)\\s+externa' +
+    '|search(?:ing)?\\s+(?:the\\s+)?(?:web|internet|online)' +
+    '|(?:do|perform)\\s+(?:a\\s+)?web[\\s-]?search' +
+    '|web[\\s-]?search\\s+(?:for|about|on)' +
+    // 2) verbo de pesquisa + ligação curta + dado vivo
+    `|(?:${WEB_RESEARCH_VERB_PT}|research|search(?:ing)?\\s+for|look\\s+up|find\\s+out)` +
+    '\\s+(?:(?:por|sobre|a|o|as|os|de|do|da|dos|das|for|about|on|the)\\s+){0,2}' +
+    `${WEB_SEARCH_LIVE_DATA}` +
+    ')(?![\\p{L}\\p{N}])',
+  'iu',
+);
 
 /** A tarefa exige que a CLI roteada tenha ferramenta de busca na web. */
 export function taskNeedsWebSearch(taskText: string): boolean {
