@@ -109,9 +109,9 @@ export function isUnverifiedMemorySource(source: string | null): boolean {
   );
 }
 
-/** Fontes que o OPERADOR controla: a nota dele e o que ele mandou importar. */
+/** Only canonical operator notes; an imported:* string never proves operator authority. */
 function isOperatorTierSource(source: string | null): boolean {
-  return source !== null && (source.startsWith('operator:') || source.startsWith('imported:'));
+  return source !== null && source.startsWith('operator:');
 }
 
 /**

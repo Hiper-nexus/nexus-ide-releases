@@ -23,6 +23,7 @@ const agenticMemoryBoundary = {
   forget: vi.fn(),
   promote: vi.fn(),
   attest: vi.fn(),
+  importNative: vi.fn(),
 };
 
 const mountedRoots: Array<{ host: HTMLDivElement; root: Root }> = [];
@@ -101,6 +102,7 @@ beforeEach(() => {
   memoryBoundary.memoryRemember.mockReset();
   agenticMemoryBoundary.forget.mockReset();
   agenticMemoryBoundary.attest.mockReset();
+  agenticMemoryBoundary.importNative.mockReset();
   installNexusBoundary();
 });
 
@@ -114,6 +116,16 @@ afterEach(() => {
 });
 
 describe('MemoryWorkspace contracts', () => {
+  it('explicit native import refreshes scoped notes and describes quarantine without asking for a path', async () => {
+    memoryBoundary.memoryList.mockResolvedValue([]);
+    agenticMemoryBoundary.importNative.mockResolvedValue({ enabled: true, imported: 2, deduped: 1, skipped: 0, cancelled: false });
+    const host = mount(<MemoryWorkspace />); await settleMemoryEffects();
+    await act(async () => { findButton(host, /importar memórias nativas/i).click(); await Promise.resolve(); });
+    expect(agenticMemoryBoundary.importNative).toHaveBeenCalledWith();
+    expect(memoryBoundary.memoryList).toHaveBeenCalledTimes(2);
+    expect(host.querySelector('[role="status"]')?.textContent).toContain('2 importadas, 1 já existentes');
+    expect(host.textContent).toContain('arquivos originais');
+  });
   it('saves architecture rules and global preferences only after explicit operator selection', async () => {
     memoryBoundary.memoryList.mockResolvedValue([]);
     agenticMemoryBoundary.attest.mockResolvedValue({ enabled: true, id: 'attested', scope: 'global' });

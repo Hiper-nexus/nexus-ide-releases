@@ -4,6 +4,8 @@ import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import type { ProjectDomainStoreRegistry, ProjectDomainStoreSuite } from '../orch/project-domain-store-registry';
 import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
 import { maintainWorkspaceMemory } from './workspace-memory-maintenance';
+import { backfillWorkspaceMemory } from './workspace-memory-backfill';
+import { retryPendingMemoryRetentions } from './trusted-memory';
 
 export interface WorkspaceMemoryService { stop(): Promise<void> }
 export const MEMORY_MAINTENANCE_CADENCE_MS = 60_000;
@@ -19,7 +21,10 @@ export function startWorkspaceMemoryService(registry: ProjectDomainStoreRegistry
       await runPeriodicTask(`memory-maintenance:${scope.projectId}`, async (ctx) => {
         await maintainWorkspaceMemory(scope, ctx);
         ctx.assertCurrent();
-      }, { signal: controller.signal, timeoutMs: 10_000, sliceMs: 10, cadenceMs: MEMORY_MAINTENANCE_CADENCE_MS });
+        await ctx.wait(retryPendingMemoryRetentions(scope, { signal: ctx.signal }));
+        ctx.assertCurrent();
+        await backfillWorkspaceMemory(scope, suite.handoffs, ctx);
+      }, { signal: controller.signal, timeoutMs: 30_000, sliceMs: 10, cadenceMs: MEMORY_MAINTENANCE_CADENCE_MS });
     } catch {
       // Auxiliary memory unavailable/cancelled: never block domain registration or the operator.
     }

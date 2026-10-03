@@ -78,6 +78,9 @@ export interface MemoryAttestationRequest {
 export type MemoryAttestationResult =
   | { readonly enabled: false }
   | { readonly enabled: true; readonly id: string; readonly scope: MemoryUiScope };
+export type MemoryNativeImportResult =
+  | { readonly enabled: false }
+  | { readonly enabled: true; readonly imported: number; readonly deduped: number; readonly skipped: number; readonly cancelled: boolean };
 
 /**
  * Shape of `window.nexus.memory` exposed by the preload bridge. Declared here
@@ -91,6 +94,7 @@ export interface MemoryBridge {
   /** F-808: libera uma nota em quarentena para o brief dos panes do projeto. */
   promote(id: string): Promise<MemoryPromoteResult>;
   attest(input: MemoryAttestationRequest): Promise<MemoryAttestationResult>;
+  importNative(): Promise<MemoryNativeImportResult>;
 }
 
 /** Human labels (pt-BR) for kinds — shared so panel and future surfaces agree. */

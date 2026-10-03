@@ -4,6 +4,7 @@ import { clampUtf8TextPrefix } from '../../shared/utf8-byte-limits';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
+import { runPeriodicTask } from '../observability/periodic-task';
 import {
   distillHandoffSummary,
   type DistillHandoffSummaryDeps,
@@ -428,6 +429,8 @@ export async function distillMemoryWithRetry(
     const queuedId = store.enqueueRetention(key);
     try {
       const approved = await distillOverride({ summary: agentSummary }, { ...deps, onSkip });
+      // Cancellation keeps the durable retry payload, but never commits a late provider result.
+      if (deps.signal?.aborted) return null;
       if (!approved) {
         if (!reason) { reason = 'jev-skip'; recordMemoryRetentionSkip(scope, reason); deps.onSkip?.('jev-skip'); }
         if (!retryableSkips.has(reason)) store.removePendingRetention(queuedId);
@@ -457,7 +460,9 @@ export async function retryPendingMemoryRetentions(
   if (retryingStores.has(store)) return;
   retryingStores.add(store);
   try {
-    for (const row of store.pendingRetentions()) {
+    await runPeriodicTask(`memory-retention:${scope.projectId}`, async (ctx) => {
+    for (const row of store.pendingRetentions(4)) {
+      ctx.assertCurrent();
       let payload: z.infer<typeof pendingRetentionSchema>;
       try { payload = pendingRetentionSchema.parse(JSON.parse(row.payload)); }
       catch { recordMemoryRetentionSkip(scope, 'malformed'); store.removePendingRetention(row.id); continue; }
@@ -465,11 +470,14 @@ export async function retryPendingMemoryRetentions(
         delete payload.options.supersedes;
       }
       let skipped: string | undefined;
-      const result = await distillMemoryWithRetry(scope, payload.event, payload.agentSummary,
-        { ...deps, onSkip: (reason) => { skipped = reason; deps.onSkip?.(reason); } }, payload.options, distillOverride);
+      const result = await ctx.wait(distillMemoryWithRetry(scope, payload.event, payload.agentSummary,
+        { ...deps, signal: ctx.signal, onSkip: (reason) => { skipped = reason; deps.onSkip?.(reason); } }, payload.options, distillOverride));
+      ctx.assertCurrent();
       if (result || (skipped && !retryableSkips.has(skipped))) store.removePendingRetention(row.id);
       if (skipped && retryableSkips.has(skipped)) break; // provider unavailable: avoid hammering the backlog
+      await ctx.checkpoint();
     }
+    }, { signal: deps.signal, timeoutMs: 30_000, sliceMs: 10 });
   } finally { retryingStores.delete(store); }
 }
 

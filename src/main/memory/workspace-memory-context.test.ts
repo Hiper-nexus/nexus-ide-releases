@@ -180,12 +180,14 @@ describe('automatic workspace-memory recall', () => {
     expect(promoted).toContain('Página lida pelo scout');
   });
 
-  it('F-798: nota importada da auto-memória do Claude entra como não verificada para todo pane', () => {
-    getWorkspaceMemoryStore(scope).retain({
+  it('F-798: imported source strings cannot grant operator authority; promotion is explicit', () => {
+    const retained = getWorkspaceMemoryStore(scope).retain({
       content: '# Build do Node\n\nEmpacotar exige Node 22; Node 26 quebra o make.',
       kind: 'fact',
       source: 'imported:claude-auto-memory',
     });
+    expect(workspaceMemoryContextBlock(scope, 'Rodar o make do empacotamento com Node.')).toBeNull();
+    getWorkspaceMemoryStore(scope).promoteMemory(retained.id);
     const block = workspaceMemoryContextBlock(scope, 'Rodar o make do empacotamento com Node.');
     expect(block).toContain('Unverified notes');
     expect(block).toContain('Node 26 quebra o make');
@@ -215,11 +217,12 @@ describe('automatic workspace-memory recall', () => {
       source: 'operator:note',
     });
     clock = 2_000;
-    store.retain({
+    const imported = store.retain({
       content: '# Regra do pool\n\nO pool do PostgreSQL aceita 16 conexões desde o F-700.',
       kind: 'note',
       source: 'imported:claude-auto-memory',
     });
+    store.promoteMemory(imported.id);
     const block = workspaceMemoryContextBlock(scope, 'Quantas conexões o pool do PostgreSQL aceita?');
     expect(block).toContain('16 conexões');
     expect(block).not.toContain('aceita 8 conexões');

@@ -15,13 +15,14 @@
  * "desligado" e nunca quebra. Nada é logado (o conteúdo pode conter segredos já
  * redigidos na escrita; a leitura jamais toca o logger).
  */
-import { ipcMain } from 'electron';
+import { BrowserWindow, dialog, ipcMain } from 'electron';
 import { z } from 'zod';
 import { MEMORY_CHANNELS } from '../../shared/channels';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import type {
   MemoryForgetResult,
   MemoryAttestationResult,
+  MemoryNativeImportResult,
   MemoryPromoteResult,
   MemoryRecallResult,
   MemoryStatsResult,
@@ -30,7 +31,7 @@ import type {
   MemoryUiStats,
 } from '../../shared/memory-ui-types';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
-import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
+import { requireLiveRendererWorkspaceScope, requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
 import {
   getWorkspaceMemoryStore,
   MEMORY_KINDS,
@@ -39,6 +40,10 @@ import {
   type WorkspaceMemoryStats,
 } from './workspace-memory';
 import { operatorMemoryAttestationSchema, retainOperatorMemoryAttestation } from './operator-memory-attestation';
+import { importNativeMemoryFile } from './native-memory-import';
+import { runPeriodicTask } from '../observability/periodic-task';
+
+const nativeImports = new Set<number>();
 
 const recallRequestSchema = z
   .object({
@@ -130,5 +135,39 @@ export function registerMemoryIpc(): void {
     const input = operatorMemoryAttestationSchema.parse(raw);
     const result = retainOperatorMemoryAttestation(scope, input);
     return { enabled: true, id: result.id, scope: result.scope };
+  });
+
+  // No caller-supplied path: only the operator's native file picker grants this read.
+  ipcMain.handle(MEMORY_CHANNELS.importNative, async (event): Promise<MemoryNativeImportResult> => {
+    if (!memoryEnabled()) return { enabled: false };
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    if (nativeImports.has(event.sender.id)) throw new Error('native memory import already running');
+    nativeImports.add(event.sender.id);
+    try {
+      const owner = BrowserWindow.fromWebContents(event.sender);
+      const options: Electron.OpenDialogOptions = { title: 'Importar memórias nativas',
+        properties: ['openFile', 'multiSelections'], filters: [{ name: 'Memórias em texto', extensions: ['md', 'txt'] }] };
+      const selection = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
+      requireLiveRendererWorkspaceScope(event.sender, scope);
+      let imported = 0; let deduped = 0; let skipped = 0;
+      if (!selection.canceled) {
+        if (selection.filePaths.length > 32) throw new Error('select at most 32 native memory files');
+        await runPeriodicTask(`memory-native-import:${scope.projectId}:${event.sender.id}`, async (ctx) => {
+          const guard = () => { ctx.assertCurrent(); requireLiveRendererWorkspaceScope(event.sender, scope); };
+          for (const file of selection.filePaths) {
+            guard();
+            try {
+              const result = await ctx.wait(importNativeMemoryFile(scope, file, guard));
+              guard();
+              if (result.deduped) deduped++; else imported++;
+            } catch {
+              guard(); skipped++;
+            }
+            await ctx.checkpoint();
+          }
+        }, { timeoutMs: 15_000, sliceMs: 10 });
+      }
+      return { enabled: true, imported, deduped, skipped, cancelled: selection.canceled };
+    } finally { nativeImports.delete(event.sender.id); }
   });
 }

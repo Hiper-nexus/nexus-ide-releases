@@ -1524,6 +1524,35 @@ export class ScopedHandoffStore {
     return rows.map((row) => this.#fromRow(row, db));
   }
 
+  /** Main-owned bounded replay: rowid keyset never materializes the whole ledger. */
+  memoryBackfillPage(afterRow = 0, limit = 4): {
+    scope: ProjectExecutionScope;
+    cursor: number;
+    scanned: number;
+    items: Array<{ handoff: ScopedHandoff; accepted?: {
+      missionId: string; taskId: string; dispatchId: string; acceptedAt: number;
+    } }>;
+  } {
+    const cursor = z.number().int().nonnegative().parse(afterRow);
+    const count = z.number().int().min(1).max(16).parse(limit);
+    const db = this.#binding.readDatabase();
+    const rows = db.prepare('SELECT rowid AS cursor, id FROM handoffs WHERE rowid > ? ORDER BY rowid LIMIT ?')
+      .all(cursor, count) as Array<{ cursor: number; id: string }>;
+    const items: Array<{ handoff: ScopedHandoff; accepted?: { missionId: string; taskId: string; dispatchId: string; acceptedAt: number } }> = [];
+    for (const row of rows) {
+      const handoff = this.get(row.id);
+      if (!handoff || handoff.status !== 'success') continue;
+      const dispatch = db.prepare(`SELECT id, mission_id, task_id, handoff_accepted_at FROM task_dispatch_queue
+        WHERE handoff_id = ? AND handoff_accepted_at IS NOT NULL LIMIT 1`).get(row.id) as
+        { id: string; mission_id: string; task_id: string; handoff_accepted_at: number } | undefined;
+      if (dispatch) items.push({ handoff, accepted: { missionId: dispatch.mission_id,
+        taskId: dispatch.task_id, dispatchId: dispatch.id, acceptedAt: dispatch.handoff_accepted_at } });
+      // Loose helpers use the same committed Main-derived, Jev-distilled path as live retention.
+      else if (handoff.delivered || !handoff.missionId) items.push({ handoff });
+    }
+    return { scope: this.#binding.scope, cursor: rows.at(-1)?.cursor ?? 0, scanned: rows.length, items };
+  }
+
   /**
    * Bounded durable outbox scan for live missions. Accepted-but-not-consumed
    * rows are included while their mission is running so a crash between

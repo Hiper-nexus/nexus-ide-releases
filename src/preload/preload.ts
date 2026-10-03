@@ -1315,6 +1315,7 @@ const api: NexusApi = {
     forget: (id) => ipcRenderer.invoke(MEMORY_CHANNELS.forget, { id }),
     promote: (id) => ipcRenderer.invoke(MEMORY_CHANNELS.promote, { id }),
     attest: (input) => ipcRenderer.invoke(MEMORY_CHANNELS.attest, input),
+    importNative: () => ipcRenderer.invoke(MEMORY_CHANNELS.importNative),
   },
   model: {
     richMetadata: (adapterId, modelId) =>

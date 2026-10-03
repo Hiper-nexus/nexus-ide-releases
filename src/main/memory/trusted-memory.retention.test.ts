@@ -36,6 +36,25 @@ afterEach(() => {
 });
 
 describe('F-768 durable retention retry', () => {
+  it('a retry opportunity processes at most four pending summaries', async () => {
+    const store = getWorkspaceMemoryStore(scope);
+    for (let i = 0; i < 6; i++) store.enqueueRetention(JSON.stringify({
+      event: { type: 'session-digest', summary: 'Pending distillation' },
+      agentSummary: `Useful persisted summary number ${i}`, options: {},
+    }));
+    distill.mockReset().mockImplementation(async (input) => input.summary);
+    await retryPendingMemoryRetentions(scope);
+    expect(distill).toHaveBeenCalledTimes(4);
+    expect(store.pendingRetentions()).toHaveLength(2);
+  });
+
+  it('cancelled retention never writes a late approved summary and preserves retry', async () => {
+    const controller = new AbortController();
+    distill.mockImplementation(async () => { controller.abort(); return 'Late approved summary'; });
+    await retainAcknowledgedHandoffMemoryBestEffort(scope, delivered, 'Candidate before cancellation.', { signal: controller.signal });
+    expect(getWorkspaceMemoryStore(scope).stats().workspace.active).toBe(0);
+    expect(getWorkspaceMemoryStore(scope).pendingRetentions()).toHaveLength(1);
+  });
   it('dedupes unavailable handoffs and replays the backlog on database reopen', async () => {
     distill.mockImplementation(async (_, deps) => { deps?.onSkip?.('no-route'); return null; });
     await retainAcknowledgedHandoffMemoryBestEffort(scope, delivered, 'The parser rejects invalid dates.');

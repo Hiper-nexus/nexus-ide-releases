@@ -23,6 +23,7 @@ import type Database from 'better-sqlite3';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { redactSecretText } from '../terminal/command-redaction';
 import { memoryCoordinationScope } from './memory-coordination-authority';
+import { stopPeriodicTask } from '../observability/periodic-task';
 import {
   exportMemoryVault,
   exportMemoryVaultIncremental,
@@ -2056,10 +2057,10 @@ export class WorkspaceMemoryStore {
     return id;
   }
 
-  pendingRetentions(): Array<{ id: string; payload: string }> {
+  pendingRetentions(limit = 20): Array<{ id: string; payload: string }> {
     this.#assertOpen();
     return this.#workspaceDb.prepare(`SELECT id, payload FROM memory_retention_pending
-      ORDER BY created_at, id LIMIT 20`).all() as Array<{ id: string; payload: string }>;
+      ORDER BY created_at, id LIMIT ?`).all(Math.max(1, Math.min(limit, 20))) as Array<{ id: string; payload: string }>;
   }
 
   removePendingRetention(id: string): void {
@@ -2437,6 +2438,7 @@ export async function flushWorkspaceMemoryProjections(
 
 /** Fecha e descarta todos os stores abertos (shutdown e testes). */
 export function disposeWorkspaceMemoryStores(): void {
+  for (const projectId of storesByProject.keys()) void stopPeriodicTask(`memory-retention:${projectId}`);
   for (const store of storesByProject.values()) {
     try {
       store.close();

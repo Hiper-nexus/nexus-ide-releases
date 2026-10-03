@@ -159,6 +159,7 @@ export const MEMORY_CHANNELS = {
    */
   promote: 'memory:promote',
   attest: 'memory:attest',
+  importNative: 'memory:import-native',
 } as const;
 
 /**

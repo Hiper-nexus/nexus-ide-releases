@@ -257,7 +257,7 @@ type ProductMemoryNote = {
 
 /** Rótulo pt-BR das marcas de uma nota (F-800/F-808). */
 export function memoryFlagLabel(flag: string, reverify?: string | null): string | null {
-  if (flag === 'quarantine') return 'em quarentena: gravada por sessão somente-leitura ou exposta à web; fora dos briefs até você promover';
+  if (flag === 'quarantine') return 'em quarentena: origem ainda não aprovada; fora dos briefs até você promover';
   if (flag === 'promoted') return 'promovida por você: entra nos briefs deste projeto';
   if (flag === 'reverify') return `a reverificar: ${reverify ?? 'um arquivo citado sumiu do checkout'}`;
   return null;
@@ -335,6 +335,7 @@ export function MemoryPanelBody({
   const [preferenceScope, setPreferenceScope] = useState<'workspace' | 'global'>('workspace');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [importStatus, setImportStatus] = useState<string | null>(null);
   const [forgettingId, setForgettingId] = useState<string | null>(null);
   const [failure, setFailure] = useState<ProductMemoryFailure | null>(null);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
@@ -431,6 +432,21 @@ export function MemoryPanelBody({
       savingRef.current = false;
       if (mountedRef.current) setSaving(false);
     }
+  };
+
+  const importNative = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true; setSaving(true); setFailure(null); setImportStatus(null);
+    try {
+      const result = await memoryApi()?.importNative();
+      if (!result?.enabled) throw new Error('native import unavailable');
+      if (!mountedRef.current || result.cancelled) return;
+      await reload();
+      if (!mountedRef.current) return;
+      setImportStatus(`${result.imported} importadas, ${result.deduped} já existentes, ${result.skipped} ignoradas. Revise as notas em quarentena antes de promover.`);
+    } catch {
+      if (mountedRef.current) setFailure({ operation: 'remember', message: 'Não foi possível importar as memórias. Selecione até 32 arquivos de texto de até 8 KB cada.' });
+    } finally { savingRef.current = false; if (mountedRef.current) setSaving(false); }
   };
 
   const forget = async (id: string) => {
@@ -673,6 +689,10 @@ export function MemoryPanelBody({
         <p className="product-pane__hint">
           Salva nos dados do app para este projeto, não no repositório.
         </p>
+        <button type="button" className="product-pane__retry" disabled={saving}
+          onClick={() => void importNative()}>Importar memórias nativas</button>
+        <p className="product-pane__hint">Selecione arquivos .md ou .txt, até 8 KB cada. A importação fica em quarentena e preserva os arquivos originais.</p>
+        {importStatus ? <p className="product-pane__hint" role="status">{importStatus}</p> : null}
       </div>
 
       {presentation === 'full' ? (
