@@ -591,14 +591,31 @@ function shellSingleQuoted(value: string): string {
 }
 
 /**
+ * Veredito que o hook do WebFetch imprime: o mesmo caminho do portão de
+ * integração (F-234), `{"decision":"block","reason":…}` no stdout, mais a forma
+ * atual do Claude Code (`hookSpecificOutput.permissionDecision`) para versões
+ * que já não leem a antiga. O agente lê só o motivo.
+ */
+export const WEB_FETCH_DENY_VERDICT = Object.freeze({
+  decision: 'block',
+  reason: WEB_FETCH_DENY_MESSAGE,
+  hookSpecificOutput: Object.freeze({
+    hookEventName: 'PreToolUse',
+    permissionDecision: 'deny',
+    permissionDecisionReason: WEB_FETCH_DENY_MESSAGE,
+  }),
+});
+
+/**
  * F-781: PreToolUse que nega o WebFetch e diz ao agente o que usar no lugar.
  * Hook e não `permissions.deny`: a regra de deny não carrega mensagem (a tool
- * some e o agente não sabe que existe o navegador do Nexus), e o hook é o
- * canal que o Nexus já usa para barrar com motivo (nexus-gate.mjs, exit 2 →
- * o stderr chega ao agente). Local de propósito: sem rede nem Main, não
- * depende do gate estar de pé. POSIX — o Claude Code do Windows também roda
- * hooks pelo Git Bash (F-704); se o shell não o executar, a tool passa
- * (falha aberta), nunca trava o pane.
+ * some e o agente não sabe que existe o navegador do Nexus). Veredito em JSON
+ * no stdout, e não `exit 2`: com exit 2 o Claude Code ecoa o comando inteiro
+ * antes do stderr (`PreToolUse:Read hook error: [node …]: …`, transcript do
+ * DeepSeek em 03/10) e a dica chegaria duplicada. Local de propósito: sem rede
+ * nem Main, não depende do gate estar de pé. POSIX — o Claude Code do Windows
+ * também roda hooks pelo Git Bash (F-704); se o shell não o executar, a tool
+ * passa (falha aberta), nunca trava o pane.
  */
 export function claudeWebFetchDenyHook(): Record<string, unknown> {
   return {
@@ -608,7 +625,7 @@ export function claudeWebFetchDenyHook(): Record<string, unknown> {
         type: 'command',
         command:
           `${NEXUS_HOOK_MARKER}=1 printf '%s\\n' ` +
-          `${shellSingleQuoted(WEB_FETCH_DENY_MESSAGE)} >&2; exit 2`,
+          shellSingleQuoted(JSON.stringify(WEB_FETCH_DENY_VERDICT)),
       },
     ],
   };

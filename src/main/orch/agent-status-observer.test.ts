@@ -237,6 +237,31 @@ describe('tool_call / tool_result emission', () => {
     });
   });
 
+  it('F-780: rótulos do hook (skillName, toolKind) entram no tool_call; sem eles o payload não muda', () => {
+    applyCanonicalHookEvent({
+      sessionId: 'pty-1',
+      event: start,
+      hook: { eventType: 'tool-use', toolName: 'Skill', skillName: 'ponytail' },
+    });
+    applyCanonicalHookEvent({
+      sessionId: 'pty-1',
+      event: start,
+      hook: { eventType: 'tool-use', toolName: 'Bash', toolKind: 'shell-http' },
+    });
+    applyCanonicalHookEvent({
+      sessionId: 'pty-1',
+      event: start,
+      hook: { eventType: 'tool-use', toolName: 'Bash' },
+    });
+
+    const calls = snapshotObserverFrames('pty-1').filter((f) => f.kind === 'tool_call');
+    expect(calls.map((f) => f.payload)).toEqual([
+      { callId: 'call-1', toolName: 'Skill', skillName: 'ponytail' },
+      { callId: 'call-2', toolName: 'Bash', toolKind: 'shell-http' },
+      { callId: 'call-3', toolName: 'Bash' },
+    ]);
+  });
+
   it('tool-complete pairs with the open call of the same tool (mutate-in-place)', () => {
     applyCanonicalHookEvent({
       sessionId: 'pty-1',

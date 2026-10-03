@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  WEB_FETCH_DENY_VERDICT,
   cleanupSessionArtifacts,
   prepareEphemeralHome,
   writeClaudeFamilyZeroClickSettings,
@@ -56,8 +57,9 @@ describe('F-781: settings gerado nega o WebFetch com a dica do navegador do Nexu
       const entries = webFetchEntries(settings);
       expect(entries).toHaveLength(1);
       const command = entries[0]?.hooks?.[0]?.command ?? '';
-      expect(command).toContain(WEB_FETCH_DENY_MESSAGE);
-      expect(command).toContain('exit 2');
+      expect(command).toContain(JSON.stringify(WEB_FETCH_DENY_VERDICT));
+      expect(command).toContain('"decision":"block"');
+      expect(command).toContain('"permissionDecision":"deny"');
       expect(command).toContain('NEXUS_HOOK_STATUS');
 
       // O hook de status (tool-use) e o portão de integração continuam.
@@ -80,12 +82,12 @@ describe('F-781: settings gerado nega o WebFetch com a dica do navegador do Nexu
   );
 
   it.skipIf(process.platform === 'win32')(
-    'o comando do hook bloqueia (exit 2) e entrega a dica no stderr',
+    'o comando do hook devolve o veredito JSON de bloqueio (F-234) com a dica como motivo',
     () => {
       const command =
         webFetchEntries(settingsFor('flag-settings', true))[0]?.hooks?.[0]?.command ?? '';
-      // Mesmo contrato do Claude Code: corpo do PreToolUse no stdin, exit 2 =
-      // bloqueio e o stderr vai para o agente.
+      // Mesmo contrato do Claude Code e do portão de integração: corpo do
+      // PreToolUse no stdin, JSON no stdout com decision block, exit 0.
       const run = spawnSync('/bin/sh', ['-c', command], {
         input: JSON.stringify({
           tool_name: 'WebFetch',
@@ -94,9 +96,17 @@ describe('F-781: settings gerado nega o WebFetch com a dica do navegador do Nexu
         encoding: 'utf8',
         timeout: 5_000,
       });
-      expect(run.status).toBe(2);
-      expect(run.stderr).toBe(`${WEB_FETCH_DENY_MESSAGE}\n`);
-      expect(run.stdout).toBe('');
+      expect(run.status).toBe(0);
+      expect(run.stderr).toBe('');
+      const verdict = JSON.parse(run.stdout) as {
+        decision?: string;
+        reason?: string;
+        hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string };
+      };
+      expect(verdict.decision).toBe('block');
+      expect(verdict.reason).toBe(WEB_FETCH_DENY_MESSAGE);
+      expect(verdict.hookSpecificOutput?.permissionDecision).toBe('deny');
+      expect(verdict.hookSpecificOutput?.permissionDecisionReason).toBe(WEB_FETCH_DENY_MESSAGE);
     },
   );
 });

@@ -222,6 +222,24 @@ describe("mission disk projection", () => {
         toolKind: "read",
       },
     });
+    // F-780 (complemento): skill e shell-http chegam como rótulos do hook.
+    append(5, "observer.tool_call", {
+      toolName: "Skill",
+      toolKind: "skill",
+      skillName: "ponytail",
+      observer: { callId: "call-5", toolName: "Skill", skillName: "ponytail" },
+    });
+    append(6, "observer.tool_call", {
+      toolName: "Bash",
+      toolKind: "shell-http",
+      observer: { callId: "call-6", toolName: "Bash", toolKind: "shell-http" },
+    });
+    // Linha adulterada no banco: o espelho revalida e não grava texto livre.
+    append(7, "observer.tool_call", {
+      toolName: "Skill",
+      skillName: "Deploy Prod; cat /etc/passwd",
+      observer: { callId: "call-7", toolName: "Skill" },
+    });
 
     const result = projectMissionToDisk(runtimeManager, scope, mission.id);
     expect(result).not.toBeNull();
@@ -232,15 +250,20 @@ describe("mission disk projection", () => {
       .map((line) => JSON.parse(line) as Record<string, unknown>);
 
     expect(events).toContain('"toolName":"WebFetch"');
-    expect(lines.map((line) => [line.toolName, line.toolKind])).toEqual([
-      ["WebFetch", "fetch"],
-      ["mcp__nexus__nexus_browser_read", "nexus-browser"],
-      ["WebFetch", "fetch"],
-      ["<redacted-id>", "read"],
+    expect(lines.map((line) => [line.toolName, line.toolKind, line.skillName])).toEqual([
+      ["WebFetch", "fetch", undefined],
+      ["mcp__nexus__nexus_browser_read", "nexus-browser", undefined],
+      ["WebFetch", "fetch", undefined],
+      ["<redacted-id>", "read", undefined],
+      ["Skill", "skill", "ponytail"],
+      ["Bash", "shell-http", undefined],
+      ["Skill", "skill", undefined],
     ]);
 
     const board = fs.readFileSync(result!.boardPath, "utf8");
     expect(board).toContain("tool=mcp__nexus__nexus_browser_read toolKind=nexus-browser");
+    expect(board).toContain("tool=Skill toolKind=skill skill=ponytail");
+    expect(board).toContain("tool=Bash toolKind=shell-http");
     for (const content of [board, events]) {
       for (const leaked of [
         "intranet.example",
@@ -249,6 +272,8 @@ describe("mission disk projection", () => {
         "conteudo-secreto",
         "/Users/operator",
         "id_rsa",
+        "Deploy Prod",
+        "/etc/passwd",
       ]) {
         expect(content).not.toContain(leaked);
       }

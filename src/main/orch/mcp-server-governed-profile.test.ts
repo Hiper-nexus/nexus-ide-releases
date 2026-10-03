@@ -11,6 +11,7 @@ import { getContext, resetGateForTests } from './gate';
 import { assertIsolatedWriterGitTool, isIsolatedWriterContext } from './isolated-writer-policy';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
 import { resetHandoffSpoolForTests, startHandoffSpool } from './handoff-spool';
+import { NEXUS_BROWSER_WORKER_TOOLS } from './nexus-browser-policy';
 
 vi.mock('electron', () => ({
   app: {
@@ -1985,13 +1986,9 @@ describe('F-781: WebFetch negado só onde o navegador do Nexus está ao alcance'
     }
   });
 
-  it('worker governado com o navegador na allowlist: o settings.json do HOME efêmero nega', () => {
+  it('F-797: worker governado com a allowlist padrão de página (GLM): o settings.json do HOME efêmero nega', () => {
     const decoration = spawnClaudeFamily('glm', (context) => {
-      context.allowedTools = [
-        'nexus_browser_open',
-        'nexus_browser_navigate',
-        'nexus_browser_read',
-      ];
+      context.allowedTools = [...NEXUS_BROWSER_WORKER_TOOLS];
     });
     try {
       // GLM com allowlist = HOME efêmero com o portão de skill, sem --settings.

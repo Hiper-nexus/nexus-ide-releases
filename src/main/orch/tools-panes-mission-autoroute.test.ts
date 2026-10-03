@@ -26,6 +26,8 @@ const h = vi.hoisted(() => ({
   consumeRouteReservation: vi.fn(),
   mission: {} as Record<string, unknown>,
   panes: [] as Array<Record<string, unknown>>,
+  // F-797: expor o navegador ao worker não pode abrir aba nenhuma.
+  requestBrowserPane: vi.fn(async () => ({ requestId: 'never', ok: false, error: 'não deveria ser chamado' })),
 }));
 vi.mock('./tool-util', async (original) => ({
   ...(await original<typeof import('./tool-util')>()),
@@ -37,6 +39,7 @@ vi.mock('./pane-registry', async (original) => ({
   listPaneSnapshots: () => h.panes,
   takePendingPaneSpawnResult: () => h.pending(),
   getPaneRuntimeAuthorityBySession: (sessionId: string) => h.authority(sessionId),
+  requestBrowserPane: h.requestBrowserPane,
 }));
 vi.mock('../pty/pty-manager', async (original) => ({
   ...(await original<typeof import('../pty/pty-manager')>()),
@@ -109,6 +112,7 @@ vi.mock('../adapters/cli-model-discovery', async (original) => ({
 import { operatorRecentlyNamedCli } from './operator-cli-mentions';
 
 import { paneSpawnTool, reserveWorkerSpawnSlot, setOperatorRouteResolver } from './tools-panes';
+import { NEXUS_BROWSER_WORKER_TOOLS } from './nexus-browser-policy';
 import type { MissionIntentContract } from '../../shared/mission-intent';
 
 const ctx: AgentGateContext = {
@@ -598,5 +602,57 @@ describe('reuso de helper ocioso (helperReuse)', () => {
       paneId: 'pane-h1', sessionId: 'sess-h1', reused: true,
       harness: { source: 'reuse' },
     });
+  });
+});
+
+/**
+ * F-797: o worker de missão que o orquestrador abre sem roster nem allowlist
+ * explícita nascia com `[]` e nunca enxergava o navegador do Nexus — os 30
+ * workers da missão Terminais. Agora leva as tools de página por padrão;
+ * a exposição não abre aba (aba só nasce em nexus_browser_open).
+ */
+describe('F-797: worker de missão nasce com as tools de página do navegador do Nexus', () => {
+  const route = () =>
+    setOperatorRouteResolver(vi.fn(async () => ({
+      adapterId: 'codex', model: 'gpt-5.4', effort: 'high', routeReservationId: 'rr-797',
+    })));
+
+  it('spawn padrão (sem allowedTools): só leitura e extração, e nenhuma aba abre', async () => {
+    route();
+    await paneSpawnTool.handler({ task: 'ler a documentação da API', prompt: 'leia' }, ctx);
+    const options = h.spawn.mock.calls[0][0] as { allowedTools?: unknown; role?: string; readOnly?: boolean };
+    expect(options).toMatchObject({ role: 'worker', missionId: 'mission-a' });
+    expect(options.allowedTools).toEqual([...NEXUS_BROWSER_WORKER_TOOLS]);
+    expect(options.allowedTools).not.toContain('nexus_browser_click');
+    expect(options.allowedTools).not.toContain('nexus_browser_fill');
+    expect(h.requestBrowserPane).not.toHaveBeenCalled();
+  });
+
+  it('analista somente leitura continua sem o navegador (não pode abrir aba)', async () => {
+    route();
+    await paneSpawnTool.handler({ task: 'revisar o código', prompt: 'revise', readOnly: true }, ctx);
+    const options = h.spawn.mock.calls[0][0] as { allowedTools?: unknown; readOnly?: boolean };
+    expect(options.readOnly).toBe(true);
+    expect(options.allowedTools).toEqual([]);
+  });
+
+  it('allowedTools explícita só estreita o padrão (F-247)', async () => {
+    route();
+    await paneSpawnTool.handler(
+      { task: 'ler a página', prompt: 'leia', allowedTools: ['nexus_browser_read', 'nexus_browser_click'] },
+      ctx,
+    );
+    const options = h.spawn.mock.calls[0][0] as { allowedTools?: unknown };
+    expect(options.allowedTools).toEqual(['nexus_browser_read']);
+  });
+
+  it('orquestrador com allowlist restrita não escala: o worker fica sem o navegador', async () => {
+    route();
+    await paneSpawnTool.handler(
+      { task: 'ler a página', prompt: 'leia' },
+      { ...ctx, allowedTools: ['nexus_pane_spawn', 'nexus_pane_read'] },
+    );
+    const options = h.spawn.mock.calls[0][0] as { allowedTools?: unknown };
+    expect(options.allowedTools).toEqual([]);
   });
 });

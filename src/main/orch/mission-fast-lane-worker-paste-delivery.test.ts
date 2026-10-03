@@ -120,7 +120,7 @@ vi.mock('./project-domain-store-registry', () => ({
   }),
 }));
 
-import { dispatchFastLaneFirstWave } from './mission-fast-lane';
+import { agentPrompt, dispatchFastLaneFirstWave } from './mission-fast-lane';
 import { NEXUS_BROWSER_BRIEF_RULE } from './nexus-browser-policy';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { adapterSchema } from '../../shared/adapter-types';
@@ -270,5 +270,43 @@ describe('Via Rápida first-wave — regra do navegador do Nexus no briefing (F-
     const { scope, mission } = prepare();
     expect(await dispatchFastLaneFirstWave(scope, mission.id)).toBe(1);
     expect(state.spawnPrompts[0] ?? '').not.toContain('nexus_browser_open');
+  });
+});
+
+/**
+ * F-781 (complemento): o Maestro de qualquer CLI com o MCP do Nexus recebe a
+ * regra do navegador no kickoff — o mesmo prompt vai para o pane spawnado e
+ * para o pane do operador adotado como Maestro. Na família Claude o hook do
+ * WebFetch ainda nega; no Codex/Kimi/Grok o kickoff é a única trava.
+ */
+describe('kickoff do Maestro — regra do navegador do Nexus (F-781)', () => {
+  const orchestrator = {
+    id: 'agent-Maestro',
+    agentName: 'Maestro',
+    category: 'orchestrator',
+    cli: 'kimi',
+    instructions: '',
+  } as Squad['agents'][number];
+
+  it('Maestro em CLI com MCP do Nexus e navegador ao alcance recebe a regra', () => {
+    const kimi = BUILTIN_ADAPTERS.find((adapter) => (adapter as { id?: unknown }).id === 'kimi');
+    state.adapters.set('kimi', adapterSchema.parse(kimi));
+    const { mission } = prepare();
+    const prompt = agentPrompt(orchestrator, mission, ['Maestro', 'Kimi'], false);
+    expect(prompt).toContain(NEXUS_BROWSER_BRIEF_RULE);
+    expect(prompt.indexOf(NEXUS_BROWSER_BRIEF_RULE)).toBeLessThan(prompt.indexOf('ORQUESTRAÇÃO'));
+  });
+
+  it('sem adapter conhecido (sem MCP do Nexus) ou com allowlist sem o navegador, a regra não entra', () => {
+    const { mission } = prepare();
+    expect(agentPrompt(orchestrator, mission, ['Maestro'], false)).not.toContain(
+      NEXUS_BROWSER_BRIEF_RULE,
+    );
+    const kimi = BUILTIN_ADAPTERS.find((adapter) => (adapter as { id?: unknown }).id === 'kimi');
+    state.adapters.set('kimi', adapterSchema.parse(kimi));
+    const restricted = { ...orchestrator, allowedTools: ['nexus_pane_spawn'] };
+    expect(agentPrompt(restricted, mission, ['Maestro'], false)).not.toContain(
+      NEXUS_BROWSER_BRIEF_RULE,
+    );
   });
 });

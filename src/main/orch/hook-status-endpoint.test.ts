@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   HOOK_STATUS_MAX_BODY_BYTES,
   HOOK_TOOL_NAME_MAX_LENGTH,
+  extractHookToolLabels,
   extractHookToolName,
   handleHookStatusHttp,
   handleHookStatusRequest,
@@ -247,6 +248,51 @@ describe('observer-frame flow (real HTTP → reducer → bus)', () => {
     });
   });
 
+  it('F-780: a chamada da tool Skill leva o nome da skill (validado), nunca os args', async () => {
+    await boot();
+
+    await postHook({
+      event: 'tool-use',
+      flavor: 'claude',
+      body: JSON.stringify({
+        tool_name: 'Skill',
+        tool_input: { skill: 'Ponytail', args: 'sk-proj-SEGREDO --force' },
+      }),
+    });
+
+    const [call] = snapshotObserverFrames('pty-hook-1');
+    expect(call).toMatchObject({
+      kind: 'tool_call',
+      payload: { callId: 'call-1', toolName: 'Skill', skillName: 'ponytail' },
+    });
+    expect(JSON.stringify(call)).not.toContain('SEGREDO');
+    expect(JSON.stringify(call)).not.toContain('--force');
+  });
+
+  it('F-780: Bash com curl vira toolKind shell-http sem o comando', async () => {
+    await boot();
+
+    await postHook({
+      event: 'tool-use',
+      flavor: 'claude',
+      body: JSON.stringify({
+        tool_name: 'Bash',
+        tool_input: { command: 'curl -sL https://intranet.example/relatorio?token=abc' },
+      }),
+    });
+    await postHook({
+      event: 'tool-use',
+      flavor: 'claude',
+      body: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'npm test' } }),
+    });
+
+    const calls = snapshotObserverFrames('pty-hook-1').filter((f) => f.kind === 'tool_call');
+    expect(calls[0]?.payload).toEqual({ callId: 'call-1', toolName: 'Bash', toolKind: 'shell-http' });
+    expect(calls[1]?.payload).toEqual({ callId: 'call-2', toolName: 'Bash' });
+    expect(JSON.stringify(calls)).not.toContain('intranet.example');
+    expect(JSON.stringify(calls)).not.toContain('token=abc');
+  });
+
   it('a PostToolUse post pairs a tool_result with its call', async () => {
     await boot();
 
@@ -285,6 +331,41 @@ describe('observer-frame flow (real HTTP → reducer → bus)', () => {
       'status_changed',
       'turn_ended',
     ]);
+  });
+});
+
+describe('extractHookToolLabels (F-780)', () => {
+  it('skill: só o campo `skill`, normalizado; args e demais campos ficam de fora', () => {
+    expect(
+      extractHookToolLabels('tool-use', 'Skill', {
+        tool_input: { skill: 'Impeccable', args: 'segredo' },
+      }),
+    ).toEqual({ skillName: 'impeccable' });
+    expect(extractHookToolLabels('tool-use', 'Skill', { toolInput: { skill: 'oc-scout' } })).toEqual({
+      skillName: 'oc-scout',
+    });
+    expect(extractHookToolLabels('tool-use', 'Skill', { tool_input: { skill: 'Deploy Prod' } })).toEqual({});
+    expect(extractHookToolLabels('tool-use', 'Skill', { tool_input: { args: 'x' } })).toEqual({});
+    expect(extractHookToolLabels('tool-use', 'Skill', {})).toEqual({});
+  });
+
+  it('shell: curl/wget no comando vira shell-http; o resto não ganha categoria', () => {
+    expect(
+      extractHookToolLabels('tool-use', 'Bash', { tool_input: { command: 'curl -s https://x' } }),
+    ).toEqual({ toolKind: 'shell-http' });
+    expect(
+      extractHookToolLabels('tool-use', 'exec_command', { tool_input: { cmd: ['bash', '-lc', 'wget x'] } }),
+    ).toEqual({ toolKind: 'shell-http' });
+    expect(
+      extractHookToolLabels('tool-use', 'run_command', { tool_input: { CommandLine: 'curl x' } }),
+    ).toEqual({ toolKind: 'shell-http' });
+    expect(extractHookToolLabels('tool-use', 'Bash', { tool_input: { command: 'npm test' } })).toEqual({});
+    expect(extractHookToolLabels('tool-use', 'Read', { tool_input: { command: 'curl x' } })).toEqual({});
+  });
+
+  it('fora dos eventos de tool, ou sem tool identificada, nada é derivado', () => {
+    expect(extractHookToolLabels('stop', 'Bash', { tool_input: { command: 'curl x' } })).toEqual({});
+    expect(extractHookToolLabels('tool-use', undefined, { tool_input: { skill: 'ponytail' } })).toEqual({});
   });
 });
 

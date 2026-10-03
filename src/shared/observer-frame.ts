@@ -113,6 +113,11 @@ export interface ObserverToolCallPayload {
   toolName: string | null;
   /** Optional tool kind or category classification (e.g. shell, read, edit, etc.) */
   toolKind?: string | null;
+  /**
+   * F-780: nome da skill quando a tool é `Skill` — rótulo de catálogo já
+   * validado (minúsculas, padrão estrito), nunca os demais argumentos.
+   */
+  skillName?: string | null;
   /** Raw or structured tool invocation parameters / command */
   input?: unknown;
 }

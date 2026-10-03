@@ -39,6 +39,7 @@ import {
   publishSessionActivityState,
 } from '../pty/pty-manager';
 import { publishObserverFrame } from './observer-bus';
+import type { ObserverToolKind } from './observer-tool-kind';
 import { detectLimit } from './limit-detector';
 
 export const AGENT_SEMANTIC_STATUSES = [
@@ -83,6 +84,10 @@ export interface AgentStatusHookMeta {
   eventType?: string;
   /** Tool name extracted from the raw hook body, when present. */
   toolName?: string;
+  /** F-780: nome da skill (rótulo validado) quando a tool é `Skill`. */
+  skillName?: string;
+  /** F-780: categoria derivada no hook (`shell-http`); nunca o comando. */
+  toolKind?: ObserverToolKind;
 }
 
 /**
@@ -455,7 +460,13 @@ function publishHookObserverFrames(args: {
         ...observerFrameScope(sessionId, paneId),
         at,
         kind: 'tool_call',
-        payload: { callId, toolName },
+        payload: {
+          callId,
+          toolName,
+          // F-780: só rótulos derivados no hook; argumento nenhum entra aqui.
+          ...(args.hook?.toolKind ? { toolKind: args.hook.toolKind } : {}),
+          ...(args.hook?.skillName ? { skillName: args.hook.skillName } : {}),
+        },
       });
     } else if (phase !== undefined && OBSERVER_TOOL_RESULT_PHASES.has(phase)) {
       publishObserverFrame({

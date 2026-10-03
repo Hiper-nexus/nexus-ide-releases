@@ -148,6 +148,7 @@ import {
   resumeIsolatedWriterWorktree,
   type IsolatedWriterAllocation,
 } from './isolated-writer-worktree';
+import { defaultMissionWorkerTools } from './nexus-browser-policy';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { isOperatorTabMission } from './operator-tab-mission-resume';
@@ -1208,7 +1209,14 @@ const paneSpawnAfterTabMission = {
           attenuateTools(
             ctx.allowedTools,
             agent.allowedTools ??
-              (role === 'orchestrator' || inheritOperatorFreedom ? null : []),
+              (role === 'orchestrator' || inheritOperatorFreedom
+                ? null
+                // F-797: worker sem allowlist no roster ganha as tools de
+                // página do navegador do Nexus (só leitura; aba só ao chamar).
+                : defaultMissionWorkerTools({
+                    missionWorker: !operatorHand,
+                    readOnly: args.readOnly === true || ctx.readOnly === true,
+                  })),
           ),
           args.allowedTools === undefined ? null : strArray(args, 'allowedTools'),
         ),
@@ -1393,7 +1401,17 @@ const paneSpawnAfterTabMission = {
         // F-247: o arg `allowedTools` só estreita — é o opt-in que libera um
         // MCP do hub (`mcp__<server>__*`) para o worker de missão.
         allowedTools: attenuateTools(
-          attenuateTools(ctx.allowedTools, inheritOperatorFreedom ? null : []),
+          attenuateTools(
+            ctx.allowedTools,
+            inheritOperatorFreedom
+              ? null
+              // F-797: o worker ad hoc de missão nascia com `[]` e nunca via o
+              // navegador do Nexus; agora leva as tools de página (só leitura).
+              : defaultMissionWorkerTools({
+                  missionWorker: !operatorHand,
+                  readOnly: args.readOnly === true || ctx.readOnly === true,
+                }),
+          ),
           args.allowedTools === undefined ? null : strArray(args, 'allowedTools'),
         ),
         allowedSkills: adHocAllowedSkills,

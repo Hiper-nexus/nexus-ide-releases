@@ -100,7 +100,17 @@ describe('F-780: hook PreToolUse → events.jsonl da missão', () => {
       tool_name: 'mcp__nexus__nexus_browser_read',
       tool_input: { paneId: 'browser-1', format: 'compact' },
     });
-    postPreToolUse({ tool_name: 'Skill', tool_input: { skill: 'ponytail' } });
+    // Skill: o NOME da skill é rótulo e sai; os args não.
+    postPreToolUse({
+      tool_name: 'Skill',
+      tool_input: { skill: 'Ponytail', args: '--token sk-proj-SEGREDO' },
+    });
+    // Shell que faz HTTP: só a categoria sai, nunca o comando.
+    postPreToolUse({
+      tool_name: 'Bash',
+      tool_input: { command: 'cd app && curl -sL https://intranet.example/relatorio?key=xyz | head' },
+    });
+    postPreToolUse({ tool_name: 'Bash', tool_input: { command: 'npm test -- --run' } });
 
     const result = projectMissionToDisk(runtimeManager, scope, mission.id);
     expect(result).not.toBeNull();
@@ -112,12 +122,24 @@ describe('F-780: hook PreToolUse → events.jsonl da missão', () => {
       .filter((line) => line.type === 'observer.tool_call');
 
     expect(events).toContain('"toolName":"WebFetch"');
-    expect(toolCalls.map((line) => [line.toolName, line.toolKind])).toEqual([
-      ['WebFetch', 'fetch'],
-      ['mcp__nexus__nexus_browser_read', 'nexus-browser'],
-      ['Skill', 'skill'],
+    expect(toolCalls.map((line) => [line.toolName, line.toolKind, line.skillName])).toEqual([
+      ['WebFetch', 'fetch', undefined],
+      ['mcp__nexus__nexus_browser_read', 'nexus-browser', undefined],
+      ['Skill', 'skill', 'ponytail'],
+      ['Bash', 'shell-http', undefined],
+      ['Bash', 'execute', undefined],
     ]);
-    for (const leaked of ['docs.example.com', 'token=abc', 'política interna', 'browser-1', 'ponytail']) {
+    for (const leaked of [
+      'docs.example.com',
+      'token=abc',
+      'política interna',
+      'browser-1',
+      'SEGREDO',
+      '--token',
+      'intranet.example',
+      'key=xyz',
+      'npm test',
+    ]) {
       expect(events).not.toContain(leaked);
     }
   });

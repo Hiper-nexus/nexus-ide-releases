@@ -10,7 +10,11 @@ import { getAgentSessionInfo } from "../pty/pty-manager";
 import { getAcpDriverSession } from "../acp/acp-harness-driver";
 import { emitMissionEvent } from "./mission-event-emit";
 import { tapObserverFrames } from "./observer-bus";
-import { observerToolKind, type ObserverToolKind } from "./observer-tool-kind";
+import {
+  normalizeSkillName,
+  observerToolKind,
+  type ObserverToolKind,
+} from "./observer-tool-kind";
 
 const EVENT_TYPE_BY_FRAME_KIND: Readonly<
   Record<ObserverFrameKind, MissionEventType>
@@ -58,9 +62,13 @@ const TOOL_NAME_MAX_LENGTH = 200;
 function observerToolIdentity(frame: ObserverFrame): {
   toolName?: string | null;
   toolKind?: ObserverToolKind | null;
+  skillName?: string;
 } {
   if (frame.kind !== "tool_call" && frame.kind !== "tool_result") return {};
   const toolName = frame.payload.toolName;
+  // Revalidado aqui: o rótulo da skill nunca sai do padrão estrito.
+  const skillName =
+    frame.kind === "tool_call" ? normalizeSkillName(frame.payload.skillName) : null;
   return {
     toolName:
       typeof toolName === "string"
@@ -70,6 +78,7 @@ function observerToolIdentity(frame: ObserverFrame): {
       toolName,
       frame.kind === "tool_call" ? frame.payload.toolKind : undefined,
     ),
+    ...(skillName ? { skillName } : {}),
   };
 }
 
