@@ -85,14 +85,19 @@ export function integrationCommandHit(
     if (cwdOrOptions.git) runner = cwdOrOptions.git;
   }
 
-  // ponytail: branch atual inferida do cwd (main/master) fecha o falso negativo
-  const currentBranch = cwd ? currentBranchName(runner, cwd) : null;
-  const onProtected = isProtectedBranch(currentBranch);
+  // ponytail: branch atual inferida do cwd (main/master) fecha o falso negativo.
+  // O git é spawnSync no Main e este hook roda em TODO Bash de pane de missão:
+  // só pergunta a branch quando o segmento é de fato um `git merge`.
+  let onProtected: boolean | undefined;
+  const protectedCwd = (): boolean => {
+    onProtected ??= cwd ? isProtectedBranch(currentBranchName(runner, cwd)) : false;
+    return onProtected;
+  };
 
   for (const segment of command.split(/&&|\|\||[;\n|]/u)) {
     if (segment.includes('--dry-run')) continue;
     if (INTEGRATION_SEGMENT.test(segment)) return true;
-    if (onProtected && /^\s*git\s+merge\b/u.test(segment)) return true;
+    if (/^\s*git\s+merge\b/u.test(segment) && protectedCwd()) return true;
   }
   return false;
 }

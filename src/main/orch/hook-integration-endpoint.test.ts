@@ -11,6 +11,7 @@ import {
   integrationCommandHit,
 } from './hook-integration-endpoint';
 import type { AgentGateContext } from './gate';
+import type { GitRunner } from '../runtime/git-command';
 
 let dir = '';
 let repo = '';
@@ -79,6 +80,23 @@ describe('integrationCommandHit', () => {
     expect(integrationCommandHit('git status')).toBe(false);
     expect(integrationCommandHit('git push --dry-run')).toBe(false);
     expect(integrationCommandHit('git merge feature hotfix')).toBe(false);
+  });
+
+  it('só pergunta a branch ao git quando o comando é um git merge', () => {
+    // O hook roda em todo Bash de pane de missão e o git do runner é
+    // spawnSync no Main: comando comum não pode pagar um processo git.
+    const calls: string[][] = [];
+    const spy: GitRunner = {
+      run: (_cwd, args) => {
+        calls.push([...args]);
+        return { status: 0, stdout: 'main\n', stderr: '' };
+      },
+    };
+    expect(integrationCommandHit('ls -la && npx vitest run', { cwd: '/repo', git: spy })).toBe(false);
+    expect(integrationCommandHit('git status', { cwd: '/repo', git: spy })).toBe(false);
+    expect(calls).toEqual([]);
+    expect(integrationCommandHit('git merge feature', { cwd: '/repo', git: spy })).toBe(true);
+    expect(calls).toEqual([['symbolic-ref', '--short', '-q', 'HEAD']]);
   });
 });
 
