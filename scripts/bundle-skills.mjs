@@ -48,6 +48,7 @@ const SKILLS = [
   { dir: 'oc-builder', constName: 'OC_BUILDER_MANIFEST', outFile: 'oc-builder-manifest.ts' },
   { dir: 'oc-scout', constName: 'OC_SCOUT_MANIFEST', outFile: 'oc-scout-manifest.ts' },
   { dir: 'oc-conveyor', constName: 'OC_CONVEYOR_MANIFEST', outFile: 'oc-conveyor-manifest.ts' },
+  { dir: 'stack-advisor', constName: 'STACK_ADVISOR_MANIFEST', outFile: 'stack-advisor-manifest.ts' },
 ];
 
 function walk(dir) {

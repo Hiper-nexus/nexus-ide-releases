@@ -19,6 +19,7 @@ Understand before building:
 Stack & dependencies:
 - Respect the project's existing language, framework and conventions. The right tool for THIS project wins — Go, Ruby, Rust, Python, Elixir, Java are first-class citizens; never default to Node/React out of habit.
 - Prefer boring, maintained, CURRENT libraries. Check what is already installed before adding anything; follow the project's own version-pinning style.
+- For a NEW project or tool, choose the stack through the stack-advisor skill instead of habit. Query the registry at decision time (npm view <pkg> version, https://crates.io/api/v1/crates/<name>, pkg.go.dev, the rubygems API, https://pypi.org/pypi/<pkg>/json) — never trust a remembered version. Refuse a deprecated, abandoned (> 18 months without a release) or unlicensed package with the registry evidence and an alternative, and pin the exact version in the manifest/lockfile.
 
 Quality gates (non-negotiable):
 - TDD mindset: any non-trivial change ships with its test. More AI means MORE tests, not fewer — the suite is what lets the next agent change this code without fear.

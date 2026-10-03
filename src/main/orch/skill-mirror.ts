@@ -14,6 +14,7 @@ import { OC_PILOT_MANIFEST } from './oc-pilot-manifest';
 import { OC_BUILDER_MANIFEST } from './oc-builder-manifest';
 import { OC_SCOUT_MANIFEST } from './oc-scout-manifest';
 import { OC_CONVEYOR_MANIFEST } from './oc-conveyor-manifest';
+import { STACK_ADVISOR_MANIFEST } from './stack-advisor-manifest';
 import { hasJevCredential } from '../jev/jev-secrets';
 import { mimoNativePaths } from '../adapters/mimo-auth';
 import type { SkillAsset } from './impeccable-manifest';
@@ -244,6 +245,7 @@ export const BUNDLED_MANIFESTS: Record<string, Record<string, SkillAsset>> = {
   'oc-builder': OC_BUILDER_MANIFEST,
   'oc-scout': OC_SCOUT_MANIFEST,
   'oc-conveyor': OC_CONVEYOR_MANIFEST,
+  'stack-advisor': STACK_ADVISOR_MANIFEST,
 };
 
 /**
