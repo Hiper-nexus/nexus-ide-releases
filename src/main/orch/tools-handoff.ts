@@ -74,6 +74,7 @@ import {
 } from "./worker-files-modified";
 import {
   reviewMissionHandoff,
+  type HandoffAckVerdict,
   type JevReviewVerdict,
 } from "./jev-handoff-review";
 import {
@@ -444,6 +445,7 @@ const handoffSubmitTool: McpToolDef = {
       try {
         jevVerdict = await reviewMissionHandoff({
           sessionId: ctx.sessionId,
+          missionId: ctx.missionId,
           signal: invocation?.signal,
           declaredStatus,
           summary,
@@ -894,10 +896,22 @@ const handoffAcknowledgeTool: McpToolDef = {
   description:
     "Mark one delivered handoff as consumed after you actually processed its result. " +
     "Orchestrator-only; the ACK is bound to the exact accepted delivery. It never " +
-    "completes a mission by itself, but verified completion requires this receipt.",
+    "completes a mission by itself, but verified completion requires this receipt. " +
+    'verdict (default "accepted"): pass "rework" when you do NOT accept the delivery ' +
+    "as-is (you send it back, or redo it elsewhere). It only records the verdict — " +
+    "you still send the correction yourself — and Nexus learns from it: the " +
+    "evidence review is labeled right/wrong against your decision.",
   inputSchema: {
     type: "object",
-    properties: { handoffId: { type: "string" } },
+    properties: {
+      handoffId: { type: "string" },
+      verdict: {
+        type: "string",
+        enum: ["accepted", "rework"],
+        description:
+          'accepted (default) = delivery accepted as-is; rework = sent back or redone',
+      },
+    },
     required: ["handoffId"],
   },
   handler: async (args, ctx, invocation) => {
@@ -915,6 +929,9 @@ const handoffAcknowledgeTool: McpToolDef = {
       );
     }
     const handoffId = requireStr(args, "handoffId");
+    // F-782: o veredito é validado ANTES do consumo — valor inválido não
+    // pode consumir o handoff e perder o rótulo.
+    const verdict = handoffAckVerdictArg(args.verdict);
     const physicalReceipt = requireHandoffAckPhysicalReceipt(invocation);
     const consumed = getProjectDomainStores(
       ctx.scope,
@@ -923,14 +940,22 @@ const handoffAcknowledgeTool: McpToolDef = {
         handoffId,
         missionId: ctx.missionId,
         orchestratorSessionId: ctx.sessionId,
+        verdict,
       },
       physicalReceipt,
     );
     if (!consumed)
       throw new Error("handoff is not awaiting consumption in this mission");
-    return { ok: true, handoffId, deliveryState: "consumed" };
+    return { ok: true, handoffId, deliveryState: "consumed", verdict };
   },
 };
+
+/** F-782: ausente = aceito como veio (o ACK de sempre). */
+function handoffAckVerdictArg(raw: unknown): HandoffAckVerdict {
+  if (raw === undefined || raw === null || raw === "accepted") return "accepted";
+  if (raw === "rework") return "rework";
+  throw new Error('nexus_handoff_ack verdict must be "accepted" or "rework"');
+}
 
 const workerHeartbeatTool: McpToolDef = {
   name: "nexus_worker_heartbeat",

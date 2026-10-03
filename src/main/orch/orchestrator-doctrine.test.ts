@@ -344,6 +344,11 @@ describe('doutrina permanente do Maestro (F-701)', () => {
     expect(MAESTRO_STANDING_DOCTRINE).toMatch(/"não verificado"/);
   });
 
+  it('F-782: a recusa do Maestro tem gesto próprio no ACK (o Nexus aprende com ela)', () => {
+    expect(MAESTRO_STANDING_DOCTRINE).toMatch(/nexus_handoff_ack com verdict:"rework"/);
+    expect(MAESTRO_STANDING_DOCTRINE.length).toBeLessThan(1_500);
+  });
+
   it('execução direta e pergunta aos panes têm doutrina própria, que contradiz "delegue"', () => {
     for (const intentContract of [
       { lane: 'consult' },

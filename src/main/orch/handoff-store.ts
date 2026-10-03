@@ -44,6 +44,10 @@ import {
 } from "./http-mcp-boundary";
 import { markHandoffConsumedFromPhysicalAck } from "./handoff-physical-ack-authority";
 import {
+  recordHandoffAckFeedback,
+  type HandoffAckVerdict,
+} from "./jev-handoff-review";
+import {
   commitTaskDispatchHandoffInTransaction,
   completeBlockedTaskDispatchHandoffPostCommit,
   resolveCommittedTaskDispatchHandoffReplayInTransaction,
@@ -1913,6 +1917,8 @@ export class ScopedHandoffStore {
       readonly handoffId: string;
       readonly missionId: string;
       readonly orchestratorSessionId: string;
+      /** F-782: veredito do Maestro; ausente = aceito como veio. */
+      readonly verdict?: HandoffAckVerdict;
     },
     physicalReceipt: AgentTransportPhysicalReceipt,
   ): boolean {
@@ -1933,8 +1939,24 @@ export class ScopedHandoffStore {
     if (outcome === "created") {
       this.#binding.emitChange();
       this.#retainAcknowledgedHandoffMemory(id, missionId);
+      this.#recordAckReviewFeedback(id, input.verdict ?? "accepted");
     }
     return outcome !== null;
+  }
+
+  /**
+   * F-782: o ACK do Maestro é o rótulo real da revisão de evidência do Jev —
+   * concordou com o Maestro, certo; discordou, errado. Só no primeiro ACK
+   * (replay não rotula de novo). Contabilidade derivada: nunca desfaz nem
+   * trava o ACK.
+   */
+  #recordAckReviewFeedback(id: string, verdict: HandoffAckVerdict): void {
+    try {
+      const handoff = this.get(id);
+      if (handoff) recordHandoffAckFeedback(handoff, verdict);
+    } catch {
+      // O diário do Jev é best-effort: o consumo já está gravado.
+    }
   }
 
   /**

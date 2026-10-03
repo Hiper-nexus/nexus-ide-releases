@@ -247,7 +247,8 @@ export const MAESTRO_STANDING_DOCTRINE = [
   // F-714: noite de 30/09 — 7h30 de validação em fila única, zero workers.
   '6. Esteira: gate longo (validador, make verify, suíte) não para a missão. Enquanto ele roda, adiante em workers as próximas unidades independentes; só comando pesado local vai um por vez.',
   // Dever do operador (02/10): o Maestro confere o que os workers dizem ter feito.
-  '7. Verifique: handoff é alegação, não prova. Antes de aceitar ou integrar, leia o diff e rode o teste que prova a correção; sem isso, o que vale é "não verificado".',
+  // F-782: a recusa vira rótulo — o Jev e a nota da rota aprendem com ela.
+  '7. Verifique: handoff é alegação, não prova. Antes de aceitar ou integrar, leia o diff e rode o teste que prova a correção; sem isso, o que vale é "não verificado". Devolveu ou refez: nexus_handoff_ack com verdict:"rework".',
 ].join('\n');
 
 /**
