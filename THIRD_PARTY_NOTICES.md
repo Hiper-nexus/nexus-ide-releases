@@ -112,28 +112,63 @@ Adapted modules in this harvest:
 Every adapted source file carries an attribution header pointing at the pin
 and license. Existing copyright notices inside copied code are preserved.
 
-## brace-expansion 5.0.8 security compatibility package
+## brace-expansion 5.0.12 security compatibility package
 
 The build toolchain uses an exact copy of the patched
-[`brace-expansion@5.0.8`](https://github.com/juliangruber/brace-expansion/tree/v5.0.8)
+[`brace-expansion@5.0.12`](https://github.com/juliangruber/brace-expansion/tree/v5.0.12)
 CommonJS implementation (MIT, Copyright Julian Gruber; TypeScript port
 Copyright Isaac Z. Schlueter). A Nexus-authored export adapter keeps legacy
 minimatch 3.x/5.x consumers callable while retaining the modern `.expand` and
 named ESM contracts. The expansion algorithm itself is unmodified.
 
 This temporary local package addresses
-[`GHSA-mh99-v99m-4gvg`](https://github.com/advisories/GHSA-mh99-v99m-4gvg)
-until compatible v1/v2 maintenance releases are published and consumed by the
-complete Electron Forge maker tree. Removal is tracked against upstream pull
-requests
-[#129](https://github.com/juliangruber/brace-expansion/pull/129),
-[#130](https://github.com/juliangruber/brace-expansion/pull/130),
-[#134](https://github.com/juliangruber/brace-expansion/pull/134), and
-[#135](https://github.com/juliangruber/brace-expansion/pull/135).
+[`GHSA-mh99-v99m-4gvg`](https://github.com/advisories/GHSA-mh99-v99m-4gvg),
+[`GHSA-rgw5-rvv9-x895`](https://github.com/advisories/GHSA-rgw5-rvv9-x895),
+[`GHSA-6j4f-fj2g-mc7p`](https://github.com/advisories/GHSA-6j4f-fj2g-mc7p),
+[`GHSA-qhr7-859c-m2p7`](https://github.com/advisories/GHSA-qhr7-859c-m2p7) and
+[`GHSA-q2hr-2g5m-vwhr`](https://github.com/advisories/GHSA-q2hr-2g5m-vwhr)
+until compatible maintenance releases are consumed by the complete Electron
+Forge maker tree without the override.
 
 License text: `third_party/licenses/brace-expansion-MIT.txt`. Source hashes,
 npm integrity, commit/tag pin, and compatibility rationale:
-`third_party/provenance/brace-expansion-5.0.8-compat.json`.
+`third_party/provenance/brace-expansion-5.0.12-compat.json`.
+
+## braces 3.0.3 security build (3.0.4-nexus.1)
+
+The build toolchain (fast-glob and micromatch under Electron Forge) uses
+[`braces@3.0.3`](https://github.com/micromatch/braces/tree/3.0.3) (MIT,
+Copyright (c) 2014-present, Jon Schlinkert) with one Nexus patch in
+`lib/parse.js`: patterns nested deeper than 512 brace or parenthesis levels
+are rejected with a `SyntaxError`, so the recursive AST walkers can no longer
+exhaust the stack
+([`GHSA-vfj7-8cjw-p6xm`](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm),
+no fixed upstream release yet). Every other file is an exact copy. It is not
+part of the packaged app.
+
+License text: `third_party/licenses/braces-MIT.txt`. Source hashes, npm
+integrity, commit/tag pin, patch summary and removal criteria:
+`third_party/provenance/braces-3.0.3-compat.json` and
+`third_party/braces-compat/NOTICE.md`.
+
+## http-cache-semantics 4.2.0 security build (4.2.1-nexus.1)
+
+The build toolchain (got/cacheable-request and make-fetch-happen under
+Electron Forge) uses
+[`http-cache-semantics@4.2.0`](https://github.com/kornelski/http-cache-semantics)
+(BSD-2-Clause, Copyright 2016-2018 Kornel Lesiński) with two Nexus patches in
+`index.js`: request `max-stale` can no longer reuse responses whose lifetime
+was zeroed because reuse is prohibited
+([`GHSA-ch52-4w7c-c8xp`](https://github.com/advisories/GHSA-ch52-4w7c-c8xp)),
+and `Vary` wildcards in non-canonical form or prototype field names no longer
+match ([`GHSA-f27v-pv5m-c5g6`](https://github.com/advisories/GHSA-f27v-pv5m-c5g6),
+logic of upstream commit `9fb520be`). Neither has a fixed upstream release
+yet. It is not part of the packaged app.
+
+License text: `third_party/licenses/http-cache-semantics-BSD-2-Clause.txt`.
+Source hashes, npm integrity, commit pins, patch summary and removal criteria:
+`third_party/provenance/http-cache-semantics-4.2.0-compat.json` and
+`third_party/http-cache-semantics-compat/NOTICE.md`.
 
 ## JavaScript and native dependencies
 

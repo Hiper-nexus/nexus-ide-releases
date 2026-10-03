@@ -1,0 +1,14 @@
+{
+  "name": "http-cache-semantics",
+  "version": "4.2.1-nexus.1",
+  "description": "Nexus security build of http-cache-semantics 4.2.0 with fixes for GHSA-ch52-4w7c-c8xp and GHSA-f27v-pv5m-c5g6",
+  "private": true,
+  "license": "BSD-2-Clause",
+  "main": "index.js",
+  "types": "index.js",
+  "files": [
+    "index.js",
+    "LICENSE",
+    "NOTICE.md"
+  ]
+}

@@ -1,0 +1,92 @@
+{
+  "source": "micromatch/braces",
+  "upstreamVersion": "3.0.3",
+  "nexusVersion": "3.0.4-nexus.1",
+  "upstreamCommit": "74b2db2938fad48a2ea54a9c8bf27a37a62c350d",
+  "upstreamTag": "3.0.3",
+  "upstreamTagObject": "483836c3484f6bd0ff6db6e00d1dc35505efda15",
+  "upstreamRepository": "https://github.com/micromatch/braces",
+  "npmPackage": "braces@3.0.3",
+  "npmIntegrity": "sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA==",
+  "npmTarballSha256": "1cd18e862c8640b4568b1425a7df4ee030ff201d45b2da8f9f222d2987494ffc",
+  "license": "MIT",
+  "copyright": [
+    "Copyright (c) 2014-present, Jon Schlinkert."
+  ],
+  "licenseFile": "third_party/licenses/braces-MIT.txt",
+  "importedAt": "2026-10-03",
+  "rationale": "Temporary security build for GHSA-vfj7-8cjw-p6xm (CVE-2026-93687: stack exhaustion in the recursive AST walkers through deeply nested patterns), which affects every published braces release with no fixed version. braces is reached only by the Electron Forge build toolchain (fast-glob/micromatch), not by the packaged app. The 3.0.3 code is used unchanged except for a parse-time nesting limit.",
+  "removalCriteria": "Remove after upstream publishes a braces release that fixes GHSA-vfj7-8cjw-p6xm and the advisory lists it as patched, with npm audit remaining at zero. If the advisory range becomes < 3.0.4, npm audit (which compares prereleases) reports 3.0.4-nexus.1 on purpose, forcing the switch.",
+  "upstreamTracking": [
+    "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
+    "https://github.com/micromatch/braces/issues/70",
+    "https://github.com/micromatch/braces/pull/72"
+  ],
+  "files": [
+    {
+      "upstreamUrl": "https://github.com/micromatch/braces/blob/74b2db2938fad48a2ea54a9c8bf27a37a62c350d/index.js",
+      "originalPath": "index.js",
+      "nexusPath": "third_party/braces-compat/index.js",
+      "originalSha256": "332ea07c7b006361aad12aa994ca75dc1db8e8382b884909e2f38f10b85c88a4",
+      "type": "copied",
+      "changeSummary": "Exact byte-for-byte copy from the braces 3.0.3 npm tarball."
+    },
+    {
+      "upstreamUrl": "https://github.com/micromatch/braces/blob/74b2db2938fad48a2ea54a9c8bf27a37a62c350d/lib/compile.js",
+      "originalPath": "lib/compile.js",
+      "nexusPath": "third_party/braces-compat/lib/compile.js",
+      "originalSha256": "dc98f22eee3d511785d92a00758d5f0d48efed5f5813bdecc2de430c529b5c9f",
+      "type": "copied",
+      "changeSummary": "Exact byte-for-byte copy from the braces 3.0.3 npm tarball."
+    },
+    {
+      "upstreamUrl": "https://github.com/micromatch/braces/blob/74b2db2938fad48a2ea54a9c8bf27a37a62c350d/lib/constants.js",
+      "originalPath": "lib/constants.js",
+      "nexusPath": "third_party/braces-compat/lib/constants.js",
+      "originalSha256": "c18ac5adb57308f1ce42a28552da3a31f5d83709743ebd9a636336813a744d4b",
+      "type": "copied",
+      "changeSummary": "Exact byte-for-byte copy from the braces 3.0.3 npm tarball."
+    },
+    {
+      "upstreamUrl": "https://github.com/micromatch/braces/blob/74b2db2938fad48a2ea54a9c8bf27a37a62c350d/lib/expand.js",
+      "originalPath": "lib/expand.js",
+      "nexusPath": "third_party/braces-compat/lib/expand.js",
+      "originalSha256": "41ccc196ebfa7b7781a634e721eb744e4e7bcb54cba427a7e3d6806a1b9e58f7",
+      "type": "copied",
+      "changeSummary": "Exact byte-for-byte copy from the braces 3.0.3 npm tarball."
+    },
+    {
+      "upstreamUrl": "https://github.com/micromatch/braces/blob/74b2db2938fad48a2ea54a9c8bf27a37a62c350d/lib/parse.js",
+      "originalPath": "lib/parse.js",
+      "nexusPath": "third_party/braces-compat/lib/parse.js",
+      "originalSha256": "e572166565f15fa6ad9865ae49d678218e32aabfd1b3720f6d0d43d39800d310",
+      "nexusSha256": "f730fede0c8ebc696e8bbda2112bdee46a31527a8cfddb988cb79c3ffa7a8ad9",
+      "type": "patched",
+      "changeSummary": "Nexus security patch for GHSA-vfj7-8cjw-p6xm: adds MAX_DEPTH = 512 and assertDepth(), and parse() calls assertDepth(stack.length) before opening each brace or parenthesis block, throwing SyntaxError(\"Input nesting depth (N), exceeds max depth (512)\") so compile/expand/stringify never recurse deeper than 512 levels on string input. No other byte changes."
+    },
+    {
+      "upstreamUrl": "https://github.com/micromatch/braces/blob/74b2db2938fad48a2ea54a9c8bf27a37a62c350d/lib/stringify.js",
+      "originalPath": "lib/stringify.js",
+      "nexusPath": "third_party/braces-compat/lib/stringify.js",
+      "originalSha256": "379f22d77bfa1478341ccd49c5e4267464aabcbba03558bab332aac23fc6f23a",
+      "type": "copied",
+      "changeSummary": "Exact byte-for-byte copy from the braces 3.0.3 npm tarball."
+    },
+    {
+      "upstreamUrl": "https://github.com/micromatch/braces/blob/74b2db2938fad48a2ea54a9c8bf27a37a62c350d/lib/utils.js",
+      "originalPath": "lib/utils.js",
+      "nexusPath": "third_party/braces-compat/lib/utils.js",
+      "originalSha256": "b5a7596aa67730412b3c029ef09e84e6b67b8e445cffd35d1d295549c89066c7",
+      "type": "copied",
+      "changeSummary": "Exact byte-for-byte copy from the braces 3.0.3 npm tarball."
+    },
+    {
+      "upstreamUrl": "https://github.com/micromatch/braces/blob/74b2db2938fad48a2ea54a9c8bf27a37a62c350d/LICENSE",
+      "originalPath": "LICENSE",
+      "nexusPath": "third_party/braces-compat/LICENSE",
+      "originalSha256": "35bdd8a44339719441900fb50fbefc5e2dca1ca662cbaed7a687de842c8b70f2",
+      "type": "copied",
+      "changeSummary": "Exact byte-for-byte copy from the braces 3.0.3 npm tarball."
+    }
+  ]
+}
