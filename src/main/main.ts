@@ -104,7 +104,9 @@ try {
   console.warn("[main] GPU fallback marker read failed:", err);
 }
 
-// Main thread vigiada (F-764).
+// Main thread vigiada (F-764). O handle fica no módulo: o monitor de
+// event-loop alimenta a linha de travamento com o "como estava antes".
+let hangWatchdog: HangWatchdogHandle | null = null;
 try {
   const hangProbe = isSmokeHangProbeRequested({
     smokeTest: isCurrentProcessSmokeTest(),
@@ -114,7 +116,7 @@ try {
   // em disco e `.cpuprofile` do que ela estava rodando. Só empacotado — dev
   // pausa em debugger por design (doutrina Orca) — ou no probe do smoke.
   if (app.isPackaged || hangProbe) {
-    startMainThreadHangWatchdog({
+    hangWatchdog = startMainThreadHangWatchdog({
       logsDir: path.join(app.getPath("userData"), "logs"),
       version: app.getVersion(),
       ...(hangProbe
@@ -128,6 +130,12 @@ try {
       },
     });
   }
+  // F-764 A.3: p50/p99/max do event-loop a cada 30 s. Trace só com agente
+  // vivo ou atraso perceptível; todo resumo segue para o watchdog.
+  startEventLoopMonitor({
+    liveAgents: countLiveAgentSessions,
+    onSummary: (summary) => hangWatchdog?.reportEventLoop(summary),
+  });
   if (hangProbe) {
     // Probe do smoke empacotado: trava a main AQUI, antes de qualquer serviço
     // ou timer do boot existir; o harness confere o `.cpuprofile`.
@@ -136,7 +144,7 @@ try {
     console.log("[smoke] hang-probe: main liberada");
   }
 } catch (err) {
-  console.warn("[main] main-thread watchdog failed to arm:", err);
+  console.warn("[main] main-thread watchdog/event-loop monitor failed to arm:", err);
 }
 
 // Remote debugging (Chrome DevTools Protocol) is a full local-RCE surface: any
@@ -224,6 +232,7 @@ import {
 import {
   configureAgentHookEndpointPath,
   APP_SHUTDOWN_PTY_TERMINATION,
+  countLiveAgentSessions,
   getAgentSessionInfo,
   listLiveSessionLocations,
   orchTerminateSession,
@@ -457,7 +466,10 @@ import {
   revokeAppQuitAuthorization,
 } from "./close-authorization";
 import { trace } from "./observability/main-trace";
-import { startMainThreadHangWatchdog } from "./hang-watchdog/main-thread-hang-watchdog";
+import {
+  startMainThreadHangWatchdog,
+  type HangWatchdogHandle,
+} from "./hang-watchdog/main-thread-hang-watchdog";
 import {
   SMOKE_HANG_PROBE_BLOCK_MS,
   SMOKE_HANG_PROBE_HEARTBEAT_MS,
@@ -466,6 +478,10 @@ import {
   induceSmokeMainHang,
   isSmokeHangProbeRequested,
 } from "./hang-watchdog/smoke-hang-probe";
+import {
+  startEventLoopMonitor,
+  stopEventLoopMonitor,
+} from "./observability/event-loop-monitor";
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
 let hookDropBoxWatcher: AgentHookDropBoxWatcher | null = null;
@@ -1430,6 +1446,7 @@ function shutdown(): Promise<void> {
     // teardown físico — a varredura e os timers param antes do PTY.
     shutdownNonWorkerAutoClose();
     stopPaneFootprintBroadcast();
+    stopEventLoopMonitor();
     // Quiesce periodic orchestration before physical teardown, but retain its
     // exact exit observer and stores until PTY proof and reconciliation are
     // complete. A failed proof must leave the next retry operational.
