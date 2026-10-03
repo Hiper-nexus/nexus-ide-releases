@@ -70,6 +70,54 @@ describe("observer mission event projector", () => {
     );
   });
 
+  it("F-780: lifts the tool name and kind to the top of the payload, keeping the frame intact", () => {
+    mocks.getAgentSessionInfo.mockReturnValue({
+      missionId: "mission-a",
+      scope: SCOPE,
+    });
+    installObserverMissionEventProjector();
+
+    publishObserverFrame({
+      sessionId: "session-a",
+      paneId: "pane-a",
+      missionId: "mission-a",
+      kind: "tool_call",
+      at: 200,
+      payload: { callId: "call-1", toolName: "mcp__nexus__nexus_browser_read" },
+    });
+    publishObserverFrame({
+      sessionId: "session-a",
+      paneId: "pane-a",
+      missionId: "mission-a",
+      kind: "tool_result",
+      at: 201,
+      payload: { callId: "call-1", toolName: "WebFetch", ok: false },
+    });
+    publishObserverFrame({
+      sessionId: "session-a",
+      kind: "status_changed",
+      payload: {
+        paneId: "pane-a",
+        status: "working",
+        previousStatus: null,
+        transitioned: true,
+      },
+    });
+
+    const payloads = mocks.emitMissionEvent.mock.calls.map(
+      (call) => (call as unknown as [unknown, { payload: Record<string, unknown> }])[1].payload,
+    );
+    expect(payloads[0]).toMatchObject({
+      toolName: "mcp__nexus__nexus_browser_read",
+      toolKind: "nexus-browser",
+      observer: { callId: "call-1", toolName: "mcp__nexus__nexus_browser_read" },
+    });
+    expect(payloads[1]).toMatchObject({ toolName: "WebFetch", toolKind: "fetch" });
+    // Só quadros de tool ganham os campos; status segue como era.
+    expect(payloads[2]).not.toHaveProperty("toolName");
+    expect(payloads[2]).not.toHaveProperty("toolKind");
+  });
+
   it("retains detached sessions in the observer ring without inventing a mission event", () => {
     mocks.getAgentSessionInfo.mockReturnValue(null);
     installObserverMissionEventProjector();
