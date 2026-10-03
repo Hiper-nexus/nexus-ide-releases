@@ -693,6 +693,8 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
       expect.stringMatching(
         new RegExp(`^\\${WORKSPACE_HANDOFF_DELIVERY_PREFIX.slice(0, -1)}\\] de pane-qwen`),
       ),
+      undefined,
+      'supervisor',
     );
   });
 

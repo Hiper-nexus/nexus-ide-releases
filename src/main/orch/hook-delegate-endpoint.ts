@@ -46,6 +46,7 @@ import { maestroStandingDoctrineFor } from './maestro-standing-context';
 import { suggestSkillForTask } from './jev-skill-suggestion';
 import { helpersToOpenNow, type ParallelHelperBudget } from './pane-admission';
 import { currentParallelHelperBudget } from './parallel-helper-budget';
+import { isRecentHumanPrompt } from './operator-input-receipts';
 
 export const HOOK_DELEGATE_MAX_BODY_BYTES = 64 * 1024;
 
@@ -697,7 +698,7 @@ export async function handleHookDelegateRequest(
     const preferenceScope = ctx.scope;
     if (preferenceScope && ctx.sessionId && operatorPrompt && typedByOperator(ctx, prompt) &&
       (isOperatorHandContext(ctx) || isMissionMaestro(ctx)) &&
-      deps.proveOperatorPrompt?.(ctx.sessionId, prompt) === true) {
+      (deps.proveOperatorPrompt ?? isRecentHumanPrompt)(ctx.sessionId, prompt) === true) {
       void distillPreference(preferenceScope, prompt).catch(() => {});
     }
     if (!isOperatorHandContext(ctx) || !operatorPrompt) {

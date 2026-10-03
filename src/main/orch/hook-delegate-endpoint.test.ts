@@ -34,6 +34,7 @@ import {
 import type { distillOperatorPreferenceMemory } from '../memory/operator-preference-memory';
 import type { operatorWorkspaceMemoryContext } from './operator-workspace-memory';
 import type { ParallelHelperBudget } from './pane-admission';
+import { recordSessionInputReceipt, forgetSessionInputReceipt } from './operator-input-receipts';
 
 const operator = { role: 'user' as const, sessionId: 's1' };
 const LONG = 'Implemente a tela de login, escreva os testes e revise a segurança do fluxo.';
@@ -704,6 +705,22 @@ describe('preferência do operador (fatia 3 da memória)', () => {
       retained: false,
       reason: 'no-marker',
     }));
+
+  it('the production default uses the physical human receipt and revokes it after a system write', async () => {
+    const sessionId = 'physical-preference-proof';
+    const prompt = 'Sempre use pnpm neste projeto.';
+    const distillPreference = noDistill();
+    try {
+      recordSessionInputReceipt(sessionId, `${prompt}\r`, 'human');
+      await handleHookDelegateRequest({ role: 'user', sessionId, scope }, { prompt },
+        { advise: vi.fn(async () => null), distillPreference });
+      expect(distillPreference).toHaveBeenCalledTimes(1);
+      recordSessionInputReceipt(sessionId, `${prompt}\r`, 'system', 'supervisor');
+      await handleHookDelegateRequest({ role: 'user', sessionId, scope }, { prompt },
+        { advise: vi.fn(async () => null), distillPreference });
+      expect(distillPreference).toHaveBeenCalledTimes(1);
+    } finally { forgetSessionInputReceipt(sessionId); }
+  });
 
   it('chama a destilação de preferência com o scope do workspace', async () => {
     const distillPreference = noDistill();

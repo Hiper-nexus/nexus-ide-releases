@@ -1662,7 +1662,7 @@ export async function closeOrchestration(): Promise<void> {
     stopAllPreviews();
     stopRemoteBridge();
     stopMcpServer();
-    disposeProjectDomainStoreRegistry();
+    await disposeProjectDomainStoreRegistry();
     projectDomainStores = null;
     rendererMissionAuthority = null;
     lastMissionsByScope.clear();
