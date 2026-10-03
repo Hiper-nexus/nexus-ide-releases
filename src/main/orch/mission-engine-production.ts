@@ -35,13 +35,16 @@ import {
   wasUpdatedBeforeThisProcess,
 } from "../../shared/session-restore-liveness";
 import type {
+  Handoff,
   Mission,
   MissionIntentState,
   MissionOrchestratorBootstrapResult,
   MissionPaneSpec,
   MissionStatus,
+  PaneSnapshot,
   SquadAgent,
 } from "../../shared/orch-types";
+import { listAdapters } from "../adapters/adapter-registry";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
   PET_STUDIO_SQUAD,
@@ -1099,7 +1102,15 @@ export function projectMissionEngineSnapshotView(
 ): ProjectMissionSnapshotView {
   const mission = stores.missions.get(missionId);
   if (!mission) throw new Error("mission not found");
-  const missionPanes = stores.missionPanes.list(missionId);
+  const livePaneSnapshots = listPaneSnapshots();
+  // F-777: o helper aberto por nexus_pane_spawn com ACK pendente nasce sem
+  // linha em missionPanes — o quadro desenhava só o orquestrador numa missão
+  // com dez helpers vivos. O pane vivo da missão conta como membro.
+  const missionPanes = withUnrecordedLiveHelperPanes(
+    stores.missionPanes.list(missionId),
+    livePaneSnapshots,
+    missionId,
+  );
   const worktrees = missionWorktreeViews(scope, mission.id);
   // Pane e sessão do orquestrador vêm do MESMO par (sessionId,paneId)
   // provado por resolveMissionLeader — nunca de duas derivações
@@ -1162,7 +1173,7 @@ export function projectMissionEngineSnapshotView(
   // nasce dos panes que a missão gravou (Maestro provado/à deriva + cada
   // worker pelo próprio paneId). Sem isso roster=[] e o grafo dizia
   // "Não foi possível carregar a equipe" numa missão cheia de agentes.
-  const roster = squad
+  const roster: SquadAgent[] = squad
     ? squad.agents.map((agent) => ({
         ...agent,
         allowedTools: agent.allowedTools
@@ -1209,7 +1220,6 @@ export function projectMissionEngineSnapshotView(
       taskFallbackByAgent.set(agent.id, "queued");
     }
   }
-  const livePaneSnapshots = listPaneSnapshots();
   const sessionByPaneId = new Map<string, string>();
   for (const snapshot of livePaneSnapshots) {
     if (snapshot.sessionId) {
@@ -1247,6 +1257,15 @@ export function projectMissionEngineSnapshotView(
     currentUnitByAgent.set(dispatch.agentRef, dispatch.taskId);
   }
 
+  const missionHandoffs = stores.handoffs.list({
+    missionId: mission.id,
+    includeDelivered: true,
+  });
+  const deliveries = missionHandoffDeliveries(missionHandoffs, [
+    sessionId,
+    leaderDrift?.sessionId ?? null,
+  ]);
+  const deliveryByAgentId = new Map<string, MissionHandoffDelivery>();
   const panes: ProjectMissionSnapshotView["panes"] = [];
   const claimedAgentIds = new Set<string>();
   // Mais NOVO primeiro: após uma retomada existem linhas antigas de panes
@@ -1289,12 +1308,23 @@ export function projectMissionEngineSnapshotView(
       );
       if (dispatch?.agentRef && rosterById.has(dispatch.agentRef)) {
         agentId = dispatch.agentRef;
+      } else if (pane.role === "worker" && roster.length < 64) {
+        // F-777: helper sem assento no squad (nexus_pane_spawn da missão) —
+        // card próprio pelo paneId, nunca descartado do grafo.
+        agentId = `pane:${pane.paneId}`;
+        if (!rosterById.has(agentId)) {
+          const helper = missionHelperAgent(pane, agentId);
+          roster.push(helper);
+          rosterById.set(agentId, helper);
+        }
       }
     }
     if (!agentId || claimedAgentIds.has(agentId)) continue;
     claimedAgentIds.add(agentId);
 
     const paneSessionId = sessionByPaneId.get(pane.paneId) ?? null;
+    const delivery = deliveries.claim(paneSessionId, pane.workerIncarnationId);
+    if (delivery) deliveryByAgentId.set(agentId, delivery);
     const liveSessionState = paneSessionId
       ? runtimeSessionState(paneSessionId)
       : null;
@@ -1312,7 +1342,11 @@ export function projectMissionEngineSnapshotView(
         liveSessionState === "idle"
           ? liveSessionState
           : null,
-      taskState: taskFallbackByAgent.get(agentId) ?? "queued",
+      // F-777: helper que entregou e ficou ocioso é Concluído, não Na fila.
+      taskState:
+        delivery?.state === "done" || delivery?.state === "failed"
+          ? delivery.state
+          : (taskFallbackByAgent.get(agentId) ?? "queued"),
     });
     const currentUnitId = currentUnitByAgent.get(agentId);
     panes.push({
@@ -1325,9 +1359,33 @@ export function projectMissionEngineSnapshotView(
     });
   }
 
+  // F-777: helper que entregou e já fechou o pane continua no grafo, com o
+  // estado da entrega. A sessão é atribuída antes ao agente planejado que a
+  // despachou; só a que sobra vira card próprio.
+  for (const delivery of deliveries.unclaimed()) {
+    const dispatch = dispatches.find(
+      (candidate) =>
+        candidate.agentRef !== undefined &&
+        rosterById.has(candidate.agentRef) &&
+        (candidate.sessionId === delivery.sessionId ||
+          (delivery.workerIncarnationId !== undefined &&
+            candidate.workerIncarnationId === delivery.workerIncarnationId)),
+    );
+    let agentId = dispatch?.agentRef;
+    if (!agentId) {
+      if (roster.length >= 64) continue;
+      agentId = `session:${delivery.sessionId}`;
+      const helper = closedHelperAgent(agentId, delivery.fromAgent);
+      roster.push(helper);
+      rosterById.set(agentId, helper);
+    }
+    claimedAgentIds.add(agentId);
+    if (!deliveryByAgentId.has(agentId)) deliveryByAgentId.set(agentId, delivery);
+  }
+
   const openQuestion = resolveOpenMissionQuestion(
     mission,
-    stores.handoffs.list({ missionId: mission.id, includeDelivered: true }),
+    missionHandoffs,
     sessionId,
   );
 
@@ -1375,6 +1433,14 @@ export function projectMissionEngineSnapshotView(
     tasks,
     handoffs: [],
     panes,
+    ...(deliveryByAgentId.size > 0
+      ? {
+          deliveries: [...deliveryByAgentId].map(([agentId, delivery]) => ({
+            agentId,
+            state: delivery.state,
+          })),
+        }
+      : {}),
     roster: boardRoster,
     ...(openQuestion ? { openQuestion } : {}),
     ...(worktrees.length > 0 ? { worktrees } : {}),
@@ -1448,16 +1514,171 @@ function squadlessMissionPaneRoster(
     if (spec.role !== "worker" || spec.paneId === orchestratorSpec?.paneId) {
       continue;
     }
-    agents.push({
-      id: `pane:${spec.paneId}`,
-      agentName: spec.agentName?.trim() || spec.title?.trim() || spec.adapterId,
-      category: "executor",
-      cli: spec.adapterId,
-      ...(spec.model ? { model: spec.model } : {}),
-    });
+    agents.push(missionHelperAgent(spec, `pane:${spec.paneId}`));
     if (agents.length >= 64) break;
   }
   return agents;
+}
+
+/** Rótulo de pane/CLI cabe no `agentName` do roster (128, sem controle). */
+function helperLabel(value: string | undefined, max = 128): string {
+  return (value ?? "")
+    .replace(/[\0-\x1f\x7f‪-‮⁦-⁩]/gu, "")
+    .trim()
+    .slice(0, max)
+    .trim();
+}
+
+/** F-777: papel do helper pelo que ele faz — revisão, análise read-only ou escrita. */
+function missionHelperCategory(spec: {
+  readonly agentName?: string;
+  readonly title?: string;
+  readonly readOnly?: boolean;
+}): SquadAgent["category"] {
+  const label = `${spec.agentName ?? ""} ${spec.title ?? ""}`;
+  if (/\b(revis|review)|\bqa\b/iu.test(label)) return "reviewer";
+  return spec.readOnly === true ? "scout" : "executor";
+}
+
+function missionHelperAgent(
+  spec: Pick<MissionPaneSpec, "adapterId" | "model" | "title" | "agentName" | "readOnly">,
+  id: string,
+): SquadAgent {
+  const tool = spec.model ? `${spec.adapterId} · ${spec.model}` : spec.adapterId;
+  return {
+    id,
+    agentName: helperLabel(spec.agentName) || helperLabel(spec.title) || helperLabel(tool),
+    category: missionHelperCategory(spec),
+    cli: spec.adapterId,
+    ...(spec.model ? { model: spec.model } : {}),
+  };
+}
+
+/** Helper que entregou e fechou o pane: só o handoff sobrou para nomeá-lo. */
+function closedHelperAgent(id: string, fromAgent: string | undefined): SquadAgent {
+  const label = helperLabel(fromAgent);
+  let adapterId: string | undefined;
+  try {
+    adapterId = label
+      ? listAdapters().find((adapter) => adapter.label === label || adapter.id === label)?.id
+      : undefined;
+  } catch {
+    adapterId = undefined;
+  }
+  return {
+    id,
+    agentName: label || "Helper",
+    category: missionHelperCategory({ agentName: label }),
+    cli: adapterId ?? (helperLabel(label, 64) || "agente"),
+  };
+}
+
+/**
+ * F-777: pane vivo da missão que não tem linha em missionPanes (spawn com ACK
+ * pendente não chega a `missionPanes.record`) entra como membro sintético —
+ * só leitura, nunca persistido nem usado como autoridade.
+ */
+function withUnrecordedLiveHelperPanes(
+  recorded: readonly MissionPaneSpec[],
+  snapshots: readonly PaneSnapshot[],
+  missionId: string,
+): MissionPaneSpec[] {
+  const recordedPaneIds = new Set(recorded.map((pane) => pane.paneId));
+  const unrecorded = snapshots
+    .filter(
+      (snapshot) =>
+        snapshot.missionId === missionId &&
+        snapshot.kind === "cli-agent" &&
+        snapshot.role === "worker" &&
+        Boolean(snapshot.adapterId) &&
+        !recordedPaneIds.has(snapshot.paneId),
+    )
+    .map(
+      (snapshot): MissionPaneSpec => ({
+        id: `live:${snapshot.paneId}`,
+        missionId,
+        adapterId: snapshot.adapterId!,
+        ...(snapshot.model ? { model: snapshot.model } : {}),
+        title: snapshot.title,
+        ...(snapshot.agentName ? { agentName: snapshot.agentName } : {}),
+        ...(snapshot.workerIncarnationId
+          ? { workerIncarnationId: snapshot.workerIncarnationId }
+          : {}),
+        role: "worker",
+        createdAt: Date.now(),
+        ...(snapshot.readOnly === true ? { readOnly: true } : {}),
+        ...(snapshot.operatorOpened === true ? { operatorOpened: true } : {}),
+        paneId: snapshot.paneId,
+      }),
+    );
+  return unrecorded.length > 0 ? [...recorded, ...unrecorded] : [...recorded];
+}
+
+interface MissionHandoffDelivery {
+  readonly sessionId: string;
+  readonly workerIncarnationId?: string;
+  readonly fromAgent?: string;
+  readonly state: "done" | "failed" | "blocked";
+}
+
+const HANDOFF_DELIVERY_STATE: Partial<
+  Record<Handoff["status"], MissionHandoffDelivery["state"]>
+> = {
+  success: "done",
+  partial: "done",
+  failed: "failed",
+  blocked: "blocked",
+};
+
+/**
+ * Última entrega de cada sessão worker da missão (os sintéticos progress /
+ * stalled não são entrega). `claim` liga a entrega ao pane que a fez; o que
+ * sobra em `unclaimed` é helper cujo pane já fechou.
+ */
+function missionHandoffDeliveries(
+  handoffs: readonly Handoff[],
+  excludedSessionIds: readonly (string | null)[],
+): {
+  claim(
+    sessionId: string | null,
+    workerIncarnationId: string | undefined,
+  ): MissionHandoffDelivery | null;
+  unclaimed(): MissionHandoffDelivery[];
+} {
+  const excluded = new Set(excludedSessionIds.filter(Boolean));
+  const bySession = new Map<string, MissionHandoffDelivery>();
+  for (const handoff of [...handoffs].sort((a, b) => a.createdAt - b.createdAt)) {
+    const state = HANDOFF_DELIVERY_STATE[handoff.status];
+    const sessionId = handoff.sessionId?.trim();
+    if (!state || !sessionId || excluded.has(sessionId)) continue;
+    bySession.set(sessionId, {
+      sessionId,
+      ...(handoff.workerIncarnationId
+        ? { workerIncarnationId: handoff.workerIncarnationId }
+        : {}),
+      ...(handoff.fromAgent ? { fromAgent: handoff.fromAgent } : {}),
+      state,
+    });
+  }
+  const claimed = new Set<string>();
+  return {
+    claim(sessionId, workerIncarnationId) {
+      for (const delivery of bySession.values()) {
+        if (claimed.has(delivery.sessionId)) continue;
+        if (
+          delivery.sessionId === sessionId ||
+          (workerIncarnationId !== undefined &&
+            delivery.workerIncarnationId === workerIncarnationId)
+        ) {
+          claimed.add(delivery.sessionId);
+          return delivery;
+        }
+      }
+      return null;
+    },
+    unclaimed: () =>
+      [...bySession.values()].filter((delivery) => !claimed.has(delivery.sessionId)),
+  };
 }
 
 /**
