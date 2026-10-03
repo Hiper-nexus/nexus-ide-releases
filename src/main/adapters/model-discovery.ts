@@ -3,7 +3,9 @@ import { isModelId } from '../../shared/model-id';
 import { getEffectivePath, resolveCliBinary } from '../path-resolver';
 import {
   CLI_MODEL_CACHE_SOURCES,
+  cliCacheConsumerVersion,
   readCliModelCache,
+  type CliModelCacheReadOptions,
 } from './cli-model-discovery';
 
 /**
@@ -282,6 +284,8 @@ interface CacheEntry {
   readonly models: readonly string[];
   readonly fetchedAt: number;
   readonly failed: boolean;
+  /** Present only when the source declared producer-version metadata. */
+  readonly consumerVersion?: string | null;
 }
 
 const cache = new Map<string, CacheEntry>();
@@ -299,9 +303,9 @@ export function usesCliExecForModelDiscovery(adapterId: string): boolean {
   return adapterId in STRATEGIES;
 }
 
-export function modelsFromOfficialCliCache(files: readonly string[]): string[] {
+export function modelsFromOfficialCliCache(files: readonly string[], options: CliModelCacheReadOptions = {}): string[] {
   return sanitizeDiscoveredModels(
-    files.flatMap((file) => readCliModelCache(file)),
+    files.flatMap((file) => readCliModelCache(file, options)),
   );
 }
 
@@ -314,7 +318,14 @@ function officialCacheFiles(adapterId: string): readonly string[] {
 
 /** Leitura síncrona do cache — usada na montagem de listProviderSettings. */
 export function discoveredModelsFor(adapterId: string): readonly string[] {
-  return cache.get(adapterId)?.models ?? [];
+  const entry = cache.get(adapterId);
+  if (entry && 'consumerVersion' in entry &&
+      entry.consumerVersion !== (cliCacheConsumerVersion(adapterId) ?? null)) {
+    cache.delete(adapterId);
+    void hydrateFromOfficialCache(adapterId, { force: true });
+    return [];
+  }
+  return entry?.models ?? [];
 }
 
 export function sanitizeDiscoveredModels(raw: readonly string[]): string[] {
@@ -383,11 +394,20 @@ function hydrateFromOfficialCache(
     return Promise.resolve();
   }
   const files = options.cacheFiles ?? officialCacheFiles(adapterId);
-  const models = modelsFromOfficialCliCache(files);
+  let producerChecked = false;
+  let consumerVersion: string | null = null;
+  const models = modelsFromOfficialCliCache(files, {
+    clientVersion: () => {
+      producerChecked = true;
+      consumerVersion = cliCacheConsumerVersion(adapterId) ?? null;
+      return consumerVersion;
+    },
+  });
   cache.set(adapterId, {
     models,
     fetchedAt: Date.now(),
     failed: models.length === 0,
+    ...(producerChecked ? { consumerVersion } : {}),
   });
   return Promise.resolve();
 }

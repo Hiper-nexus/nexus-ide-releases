@@ -5,12 +5,53 @@ import type { Adapter } from '../../shared/adapter-types';
 import { MODEL_ID_PATTERN } from '../../shared/model-id';
 import { parseKimiConfigModelAliases } from './kimi-runtime-env';
 import { readQwenSettingsSummary } from './qwen-settings';
+import { cachedCliBinaryVersion, resolveCliBinary } from '../path-resolver';
+import { compareAppVersions, isValidAppVersion } from '../../shared/app-version';
+
+export interface CliModelCacheReadOptions {
+  /** Version of the resolved binary, never a synchronous CLI probe. */
+  clientVersion?: string | null | (() => string | null | undefined);
+}
 
 export interface CliModelCacheSource {
   adapterId: string;
   files: string[];
   /** Custom reader for non-`models`-shaped files (e.g. Qwen settings.json). */
   read?(file: string): string[];
+  clientVersion?: () => string | null | undefined;
+}
+
+export function cliCacheConsumerVersion(adapterId: string): string | null | undefined {
+  const binary = resolveCliBinary(adapterId)?.binPath;
+  return binary ? cachedCliBinaryVersion(binary, adapterId) : null;
+}
+
+const MAX_CACHE_BYTES = 4 * 1024 * 1024;
+
+function readCacheText(file: string): string {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_CACHE_BYTES) throw new Error('invalid CLI model cache size');
+    const bytes = Buffer.alloc(Math.min(stat.size, MAX_CACHE_BYTES) + 1);
+    let read = 0;
+    while (read < bytes.length) {
+      const count = fs.readSync(fd, bytes, read, bytes.length - read, null);
+      if (count === 0) break;
+      read += count;
+    }
+    if (read === bytes.length) throw new Error('CLI model cache grew during read');
+    return bytes.subarray(0, read).toString('utf8');
+  } finally { fs.closeSync(fd); }
+}
+
+function cacheMatchesConsumer(raw: unknown, options: CliModelCacheReadOptions): boolean {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !('client_version' in raw)) return true;
+  const producer = (raw as { client_version: unknown }).client_version;
+  const consumer = typeof options.clientVersion === 'function' ? options.clientVersion() : options.clientVersion;
+  if (typeof producer !== 'string' || producer.length > 128 || !isValidAppVersion(producer) ||
+      typeof consumer !== 'string' || consumer.length > 128 || !isValidAppVersion(consumer)) return false;
+  return compareAppVersions(producer, consumer) <= 0;
 }
 
 const home = os.homedir();
@@ -74,13 +115,14 @@ function modelId(value: unknown): string | null {
   return null;
 }
 
-export function readCliModelCache(file: string): string[] {
+export function readCliModelCache(file: string, options: CliModelCacheReadOptions = {}): string[] {
   try {
     if (file.endsWith('.toml')) {
-      return parseKimiConfigModelAliases(fs.readFileSync(file, 'utf8'))
+      return parseKimiConfigModelAliases(readCacheText(file))
         .filter((alias) => MODEL_ID.test(alias));
     }
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown;
+    const raw = JSON.parse(readCacheText(file)) as unknown;
+    if (!cacheMatchesConsumer(raw, options)) return [];
     const models = raw && typeof raw === 'object'
       ? (raw as { models?: unknown }).models
       : undefined;
@@ -106,9 +148,10 @@ const EFFORT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
  * example, publishes `supported_reasoning_levels` per model. Keeping this
  * separate from model ids lets older/other CLI cache shapes degrade safely.
  */
-export function readCliEfforts(file: string): string[] {
+export function readCliEfforts(file: string, options: CliModelCacheReadOptions = {}): string[] {
   try {
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown;
+    const raw = JSON.parse(readCacheText(file)) as unknown;
+    if (!cacheMatchesConsumer(raw, options)) return [];
     const models = raw && typeof raw === 'object'
       ? (raw as { models?: unknown }).models
       : undefined;
@@ -147,7 +190,10 @@ export function discoverCliModels(
   for (const source of sources) {
     const ids = new Set<string>();
     for (const file of source.files) {
-      for (const id of (source.read ?? readCliModelCache)(file)) ids.add(id);
+      const models = source.read ? source.read(file) : readCliModelCache(file, {
+        clientVersion: source.clientVersion ?? (() => cliCacheConsumerVersion(source.adapterId)),
+      });
+      for (const id of models) ids.add(id);
     }
     if (ids.size > 0) discovered.set(source.adapterId, [...ids]);
   }
@@ -161,7 +207,9 @@ export function discoverCliEfforts(
   for (const source of sources) {
     const levels = new Set<string>();
     for (const file of source.files) {
-      for (const effort of readCliEfforts(file)) levels.add(effort);
+      for (const effort of readCliEfforts(file, {
+        clientVersion: source.clientVersion ?? (() => cliCacheConsumerVersion(source.adapterId)),
+      })) levels.add(effort);
     }
     if (levels.size > 0) discovered.set(source.adapterId, [...levels]);
   }

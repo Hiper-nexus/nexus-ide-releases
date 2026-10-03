@@ -48,6 +48,35 @@ describe('CLI model discovery', () => {
     expect(readCliModelCache(file)).toEqual(['gpt-5.6-sol', 'provider/model-new']);
   });
 
+  it('rejects models and efforts produced by a newer CLI than the resolved installation', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-cli-provenance-'));
+    const file = path.join(dir, 'models_cache.json');
+    try {
+      fs.writeFileSync(file, JSON.stringify({ client_version: '0.160.0', models: [{
+        slug: 'future-model', supported_reasoning_levels: [{ effort: 'ultra' }],
+      }] }));
+      expect(readCliModelCache(file, { clientVersion: '0.146.0' })).toEqual([]);
+      expect(readCliEfforts(file, { clientVersion: '0.146.0' })).toEqual([]);
+      expect(readCliModelCache(file, { clientVersion: '0.160.0' })).toEqual(['future-model']);
+      expect(readCliEfforts(file, { clientVersion: '0.161.0' })).toEqual(['ultra']);
+      expect(readCliModelCache(file, { clientVersion: null })).toEqual([]);
+      expect(discoverCliModels([{ adapterId: 'codex', files: [file], clientVersion: () => '0.146.0' }]).has('codex')).toBe(false);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('does not treat malformed producer metadata as a current CLI offer', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-cli-provenance-'));
+    const file = path.join(dir, 'models_cache.json');
+    try {
+      for (const client_version of ['not-a-version', 160, '', null]) {
+        fs.writeFileSync(file, JSON.stringify({ client_version, models: [{ slug: 'future-model' }] }));
+        expect(readCliModelCache(file, { clientVersion: '0.160.0' })).toEqual([]);
+      }
+      fs.writeFileSync(file, JSON.stringify({ models: [{ slug: 'legacy-model' }] }));
+      expect(readCliModelCache(file)).toEqual(['legacy-model']);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it('lê os aliases do config.toml do Kimi Code como lista oficial', () => {
     // Kimi Code 2.x não tem models_cache.json: `--model` aceita só os aliases
     // de [models."…"]; sem esta fonte a lista vinha do bundled velho (kimi-k2.7).
