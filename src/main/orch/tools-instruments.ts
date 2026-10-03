@@ -814,7 +814,10 @@ const cliInventoryTool: McpToolDef = {
     'can actually run: installed, binary resolved, enabled, authStrategy ' +
     '(subscription | api-key | login-needed | credentialless), whether a key ' +
     'is stored, how many models are auth-ready, and the orchestration/handoff ' +
-    'capability ladder. Consult BEFORE routing or rerouting work to a ' +
+    'capability ladder. autonomousWorkspaceWriteCapable is the proven native ' +
+    'write confinement needed in Hardened; a worktree alone does not provide it. ' +
+    'Autopilot uses its own operator-choice authority and still requires handoff. ' +
+    'Consult BEFORE routing or rerouting work to a ' +
     'provider. Complements nexus_pane_list_providers, which reports adapters ' +
     'but not auth posture. Never returns binary paths, key previews or key ' +
     'env var names. Orchestrator/user only.',

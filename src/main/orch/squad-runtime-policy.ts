@@ -82,15 +82,11 @@ export interface SquadRuntimeAgentLike {
  * Current-release id backstop for unattended mission workers under the
  * `governed` squad CLI policy.
  *
- * F-525 (2026-09-14, decisão do dono do produto): a lane governada abre para
- * os CLIs builtin writáveis do produto. O Codex continua no seu sandbox
- * nativo (workspace-write probe-verified); os demais escrevem sob o MESMO
- * boundary já provado do Autopilot — worktree isolada por tarefa + merge
- * validado pelo Main — em vez de exigir um sandbox nativo que só o Codex
- * expõe. A concentração de toda missão num único CLI (Codex) era o sintoma
- * relatado; a distribuição (route multi-score, first-wave spread, squad
- * architect round-robin) já existia e agora tem pool multi-CLI para trabalhar
- * nos dois modos.
+ * Esta lista é somente o filtro de IDs de release. Ela não concede isolamento.
+ * No modo governado, o registry ainda precisa provar a capacidade nativa de
+ * escrita confinada. Worktree e revisão de merge não substituem sandbox de
+ * processos. A política operatorChoice do Autopilot admite outros participantes
+ * com handoff, dentro da autoridade e das restrições próprias desse modo.
  *
  * Capability metadata (autonomousWorkspaceWriteCapable / handoff) continua
  * sendo filtro necessário nas demais camadas.

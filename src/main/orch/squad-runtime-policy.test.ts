@@ -121,7 +121,7 @@ describe("buildSquadRuntimeCliPolicy", () => {
     expect(policy.routableWorkerCliIds.has("claude")).toBe(false);
   });
 
-  it("F-525: qualified builtin writers (Kimi) join the governed worker pool; non-qualified stay out", () => {
+  it("release ID and proven native capability are both required for governed writers", () => {
     const policy = buildSquadRuntimeCliPolicy(
       [
         provider("codex"),
@@ -140,8 +140,8 @@ describe("buildSquadRuntimeCliPolicy", () => {
     );
 
     expect(policy.routableCliIds.has("kimi")).toBe(true);
-    // Kimi agora é release-qualified (boundary worktree+merge, F-525);
-    // opencode continua fora do pool governado de writers.
+    // A fixture injeta capacidade nativa provada; isto não afirma que o Kimi
+    // real a possui. Mesmo com capacidade, um ID não qualificado fica fora.
     expect(policy.routableWorkerCliIds.has("kimi")).toBe(true);
     expect(policy.routableWorkerCliIds.has("opencode")).toBe(false);
   });
