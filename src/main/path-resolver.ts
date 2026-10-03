@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { BUILTIN_ADAPTERS } from '../adapters/builtin';
 import { windowsNpmShimSpawn, windowsNpmShimTarget } from './adapters/windows-npm-shim';
 import { compareAppVersions, isValidAppVersion } from '../shared/app-version';
@@ -464,43 +464,199 @@ const aiCliCommands = new Map<string, string>([
   ['cursor-agent', 'cursor-agent'], ['qodercli', 'qoder'],
   ['prime-agent', 'prime-agent'], ['omp', 'omp'], ['codex-fugu', 'sakana'],
 ]);
+/** Versão por arquivo real + mtime, inclusive sondas que falharam (F-790). */
 const cliVersionCache = new Map<string, { mtimeMs: number; version: string | null }>();
+/** Sondas em voo, uma por arquivo real + mtime. */
+const cliVersionProbes = new Map<string, Promise<string | null>>();
+const cliVersionListeners = new Set<() => void>();
+/** Sobe a cada reset de teste: sonda de geração antiga não grava no cache. */
+let cliVersionGeneration = 0;
+const CLI_VERSION_PROBE_TIMEOUT_MS = 1_500;
 
-/** One bounded --version probe per real executable + mtime, including failed probes. */
-export function readCliBinaryVersion(
+function aiAdapterIdFor(binPath: string): string | undefined {
+  return aiCliCommands.get(path.basename(binPath).replace(/\.(?:exe|com|cmd|bat)$/iu, ''));
+}
+
+/** Arquivo real + mtime que identificam a instalação; null se ela sumiu. */
+function cliVersionKey(
   binPath: string,
-  effectivePath = getEffectivePath(),
-  adapterId = aiCliCommands.get(path.basename(binPath).replace(/\.(?:exe|com|cmd|bat)$/iu, '')),
-): string | null {
-  if (!adapterId) return null;
+  adapterId: string,
+): { realPath: string; mtimeMs: number } | null {
   try {
     const target = process.platform === 'win32'
       ? windowsNpmShimTarget(adapterId, binPath) ?? binPath : binPath;
     const realPath = fs.realpathSync(target);
-    const { mtimeMs } = fs.statSync(realPath);
-    const cached = cliVersionCache.get(realPath);
-    if (cached?.mtimeMs === mtimeMs) return cached.version;
-    let version: string | null = null;
+    return { realPath, mtimeMs: fs.statSync(realPath).mtimeMs };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Versão já sondada desta instalação (cache por caminho real + mtime,
+ * inclusive falhas). `undefined` = ainda não sondada: quem resolve mantém a
+ * ordem do PATH e agenda a sonda assíncrona. Nunca executa a CLI.
+ */
+export function cachedCliBinaryVersion(
+  binPath: string,
+  adapterId = aiAdapterIdFor(binPath),
+): string | null | undefined {
+  if (!adapterId) return null;
+  const key = cliVersionKey(binPath, adapterId);
+  if (!key) return null;
+  const cached = cliVersionCache.get(key.realPath);
+  return cached?.mtimeMs === key.mtimeMs ? cached.version : undefined;
+}
+
+function runCliVersionProbe(
+  binPath: string,
+  adapterId: string,
+  effectivePath: string,
+): Promise<string | null> {
+  return new Promise((resolve) => {
     try {
       const launch = process.platform === 'win32' && /\.cmd$/iu.test(binPath)
         ? windowsNpmShimSpawn(adapterId, binPath) : { file: binPath, argsPrefix: [] };
-      if (launch) {
-        const output = execFileSync(launch.file, [...launch.argsPrefix, '--version'], {
-          encoding: 'utf8', timeout: 1500, maxBuffer: 16 * 1024, stdio: 'pipe',
-          windowsHide: true, env: { ...process.env, PATH: effectivePath },
-        });
-        version = /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/.exec(output)?.[0] ?? null;
+      if (!launch) {
+        resolve(null);
+        return;
       }
-    } catch { /* Unreadable version: retain PATH order, and memoise the failure. */ }
-    cliVersionCache.set(realPath, { mtimeMs, version });
+      execFile(launch.file, [...launch.argsPrefix, '--version'], {
+        encoding: 'utf8', timeout: CLI_VERSION_PROBE_TIMEOUT_MS, maxBuffer: 16 * 1024,
+        windowsHide: true, env: { ...process.env, PATH: effectivePath },
+      }, (error, stdout) => {
+        // Unreadable version: retain PATH order, and memoise the failure.
+        resolve(error ? null : /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/.exec(stdout)?.[0] ?? null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+/**
+ * Sonda `--version` FORA do event loop do Main (F-764): `execFile` assíncrono,
+ * sem shell, 1,5 s, deduplicada por caminho real + mtime. Grava o resultado
+ * no cache — falha também — e avisa quem escuta. Nunca rejeita.
+ */
+export function probeCliBinaryVersion(
+  binPath: string,
+  effectivePath = getEffectivePath(),
+  adapterId = aiAdapterIdFor(binPath),
+): Promise<string | null> {
+  if (!adapterId) return Promise.resolve(null);
+  const key = cliVersionKey(binPath, adapterId);
+  if (!key) return Promise.resolve(null);
+  const cached = cliVersionCache.get(key.realPath);
+  if (cached?.mtimeMs === key.mtimeMs) return Promise.resolve(cached.version);
+  const probeKey = `${key.realPath}\0${key.mtimeMs}`;
+  const inFlight = cliVersionProbes.get(probeKey);
+  if (inFlight) return inFlight;
+  const generation = cliVersionGeneration;
+  const probe = runCliVersionProbe(binPath, adapterId, effectivePath).then((version) => {
+    if (generation !== cliVersionGeneration) return version;
+    cliVersionProbes.delete(probeKey);
+    cliVersionCache.set(key.realPath, { mtimeMs: key.mtimeMs, version });
+    for (const listener of cliVersionListeners) {
+      try {
+        listener();
+      } catch { /* Quem escuta nunca derruba a sonda. */ }
+    }
     return version;
-  } catch { return null; }
+  });
+  cliVersionProbes.set(probeKey, probe);
+  return probe;
+}
+
+/** Avisa quando uma sonda aprende uma versão: a escolha entre instalações pode mudar. */
+export function onCliVersionLearned(listener: () => void): () => void {
+  cliVersionListeners.add(listener);
+  return () => {
+    cliVersionListeners.delete(listener);
+  };
+}
+
+/** Instalações reais distintas de uma CLI de IA no PATH, na ordem do PATH. */
+function aiCliCandidates(
+  command: string,
+  adapterId: string,
+  processPath: string,
+  effective: string,
+): string[] {
+  const candidates = new Map<string, string>();
+  for (const dir of new Set([...processPath.split(path.delimiter), ...effective.split(path.delimiter)])) {
+    if (!dir) continue;
+    const candidate = lookupInPath(command, dir);
+    if (!candidate) continue;
+    try {
+      const target = process.platform === 'win32'
+        ? windowsNpmShimTarget(adapterId, candidate) ?? candidate : candidate;
+      const realPath = fs.realpathSync(target);
+      if (!candidates.has(realPath)) candidates.set(realPath, candidate);
+    } catch { /* Raced with removal: no candidate. */ }
+  }
+  return [...candidates.values()];
+}
+
+function resolutionEffectivePath(
+  processPath: string,
+  options: { processPath?: string; effectivePath?: string; home?: string },
+): string {
+  // Prefer memoised effective PATH (one login-shell probe per process lifetime
+  // unless refreshUserPath clears it). Tests inject effectivePath directly.
+  return options.effectivePath ??
+    (options.processPath !== undefined || options.home !== undefined
+      ? buildEffectivePath({
+          processPath,
+          home: options.home,
+          loginPath: '',
+        })
+      : getEffectivePath());
+}
+
+/**
+ * Aquecimento (boot, "Reexaminar CLIs"): sonda fora do Main as versões que a
+ * resolução vai pedir — todas as instalações reais das CLIs de IA duplicadas
+ * no PATH e, para os comandos em `alsoSingle`, também a instalação única (o
+ * gate de versão do Codex lê o mesmo cache). Resolve quando as sondas
+ * terminam e devolve quantas rodaram; nunca rejeita.
+ */
+export async function warmCliBinaryVersions(
+  options: {
+    commands?: readonly string[];
+    alsoSingle?: readonly string[];
+    processPath?: string;
+    effectivePath?: string;
+    home?: string;
+  } = {},
+): Promise<number> {
+  const processPath = options.processPath ?? process.env.PATH ?? '';
+  const effective = resolutionEffectivePath(processPath, options);
+  const probes: Array<Promise<string | null>> = [];
+  for (const command of options.commands ?? [...aiCliCommands.keys()]) {
+    const adapterId = aiCliCommands.get(command);
+    // node/git/instaladores nunca competem por versão nem são sondados.
+    if (!adapterId) continue;
+    const bins = aiCliCandidates(command, adapterId, processPath, effective);
+    if (bins.length < 2 && !options.alsoSingle?.includes(command)) continue;
+    for (const bin of bins) {
+      if (cachedCliBinaryVersion(bin, adapterId) === undefined) {
+        probes.push(probeCliBinaryVersion(bin, effective, adapterId));
+      }
+    }
+  }
+  await Promise.all(probes);
+  return probes.length;
 }
 
 /**
  * Resolve a CLI command (or absolute path) to an absolute executable.
  * AI adapters with distinct installations use the newest readable version.
  * Other commands and unreadable versions preserve process/effective PATH order.
+ *
+ * F-764: síncrona, mas nunca executa uma CLI — só lê versões já em cache.
+ * Enquanto a versão de algum candidato é desconhecida, mantém a ordem do PATH
+ * e dispara a sonda assíncrona; a próxima resolução já escolhe a mais nova.
  */
 export function resolveCliBinary(
   command: string,
@@ -536,17 +692,7 @@ export function resolveCliBinary(
     return { binPath: fromProcess, effectivePath: processPath, source: 'process-path' };
   }
 
-  // Prefer memoised effective PATH (one login-shell probe per process lifetime
-  // unless refreshUserPath clears it). Tests inject effectivePath directly.
-  const effective =
-    options.effectivePath ??
-    (options.processPath !== undefined || options.home !== undefined
-      ? buildEffectivePath({
-          processPath,
-          home: options.home,
-          loginPath: '',
-        })
-      : getEffectivePath());
+  const effective = resolutionEffectivePath(processPath, options);
 
   const home = options.home ?? realUserHome();
   const fromEffective = effective === processPath ? null : lookupInPath(trimmed, effective);
@@ -557,29 +703,26 @@ export function resolveCliBinary(
   if (!resolved) return null;
   let installationWarning: string | undefined;
   if (isAiCli) {
-    const candidates = new Map<string, string>();
-    for (const dir of new Set([...processPath.split(path.delimiter), ...effective.split(path.delimiter)])) {
-      if (!dir) continue;
-      const candidate = lookupInPath(trimmed, dir);
-      if (!candidate) continue;
-      try {
-        const target = process.platform === 'win32'
-          ? windowsNpmShimTarget(aiCliCommands.get(aiCommand)!, candidate) ?? candidate : candidate;
-        const realPath = fs.realpathSync(target);
-        if (!candidates.has(realPath)) candidates.set(realPath, candidate);
-      } catch { /* Raced with removal: no candidate. */ }
-    }
-    if (candidates.size > 1) {
-      const bins = [...candidates.values()];
-      const versions = bins.map((bin) => readCliBinaryVersion(bin, effective));
-      if (versions.every((version) => version !== null)) {
-        const newest = versions.reduce((best, version, index) =>
-          compareAppVersions(version!, versions[best]!) > 0 ? index : best, 0);
-        resolved = bins[newest];
-      }
-      if (new Set(versions).size > 1) {
-        const chosen = versions[bins.indexOf(resolved)] ?? 'não identificada';
-        installationWarning = `${bins.length} instalações: ${versions.map((v) => v ?? 'não identificada').join(' e ')}; usando ${chosen}`;
+    const adapterId = aiCliCommands.get(aiCommand)!;
+    const bins = aiCliCandidates(trimmed, adapterId, processPath, effective);
+    if (bins.length > 1) {
+      const versions = bins.map((bin) => cachedCliBinaryVersion(bin, adapterId));
+      if (versions.includes(undefined)) {
+        // Ainda não sondada: nada de subprocesso no Main. Mantém a ordem do
+        // PATH agora e sonda fora dele; a próxima resolução já escolhe a nova.
+        bins.forEach((bin, index) => {
+          if (versions[index] === undefined) void probeCliBinaryVersion(bin, effective, adapterId);
+        });
+      } else {
+        if (versions.every((version) => version !== null)) {
+          const newest = versions.reduce((best, version, index) =>
+            compareAppVersions(version!, versions[best]!) > 0 ? index : best, 0);
+          resolved = bins[newest];
+        }
+        if (new Set(versions).size > 1) {
+          const chosen = versions[bins.indexOf(resolved)] ?? 'não identificada';
+          installationWarning = `${bins.length} instalações: ${versions.map((v) => v ?? 'não identificada').join(' e ')}; usando ${chosen}`;
+        }
       }
     }
   }
@@ -694,4 +837,6 @@ export function __resetPathResolverForTests(): void {
   memoizedEffectivePath = null;
   bootLoginProbe = null;
   cliVersionCache.clear();
+  cliVersionProbes.clear();
+  cliVersionGeneration += 1;
 }

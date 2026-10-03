@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { __resetPathResolverForTests, resolveCliBinary, resolveSpawnBinary } from '../path-resolver';
+import { __resetPathResolverForTests, resolveCliBinary, resolveSpawnBinary, warmCliBinaryVersions } from '../path-resolver';
 import { describe, expect, it } from 'vitest';
 import { CliAutoUpdateQueue, CliUpdateLease, isSafeAutomaticCliRecipe, selectAutomaticCliUpdateRecipe, shouldOfferAutoCliConsent } from './cli-auto-update';
 
 describe('automatic CLI updates', () => {
-  it.skipIf(process.platform === 'win32')('F-790: updates the same newer npm installation selected for the pane', () => {
+  it.skipIf(process.platform === 'win32')('F-790: updates the same newer npm installation selected for the pane', async () => {
     const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-cli-update-')));
     try {
       const oldDir = path.join(home, 'homebrew', 'bin');
@@ -18,7 +18,10 @@ describe('automatic CLI updates', () => {
       fs.writeFileSync(path.join(oldDir, 'codex'), '#!/bin/sh\necho codex-cli 0.146.0\n', { mode: 0o755 });
       fs.writeFileSync(entry, '#!/bin/sh\necho codex-cli 0.160.0\n', { mode: 0o755 });
       const launcher = path.join(newDir, 'codex'); fs.symlinkSync(entry, launcher);
-      const selected = resolveCliBinary('codex', { processPath: oldDir, effectivePath: [oldDir, newDir].join(path.delimiter), home })!;
+      const options = { processPath: oldDir, effectivePath: [oldDir, newDir].join(path.delimiter), home };
+      // F-764: as versões são sondadas fora do Main; o aquecimento vem antes da escolha.
+      await warmCliBinaryVersions({ commands: ['codex'], ...options });
+      const selected = resolveCliBinary('codex', options)!;
       expect(resolveSpawnBinary('codex', selected.binPath)?.binPath).toBe(launcher);
       expect(selectAutomaticCliUpdateRecipe({
         adapterId: 'codex', platform: 'darwin', binPath: selected.binPath,

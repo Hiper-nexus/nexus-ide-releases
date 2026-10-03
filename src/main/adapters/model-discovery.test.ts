@@ -41,6 +41,8 @@ describe('model discovery', () => {
         fs.writeFileSync(path.join(dir, 'agy'), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo agy ${version}; else echo ${model}; fi\n`, { mode: 0o755 });
       }
       const options = { processPath: oldDir, effectivePath: [oldDir, newDir].join(path.delimiter), home };
+      // F-764: as versões são sondadas fora do Main; o aquecimento vem antes da escolha.
+      await resolver.warmCliBinaryVersions({ commands: ['agy'], ...options });
       vi.mocked(resolveCliBinary).mockImplementation((command) => resolver.resolveCliBinary(command, options));
       const selected = resolveCliBinary('agy')!;
       expect(resolveSpawnBinary('agy', selected.binPath)?.binPath).toBe(path.join(newDir, 'agy'));

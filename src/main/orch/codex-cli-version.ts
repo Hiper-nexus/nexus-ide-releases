@@ -10,7 +10,12 @@
 import { execFileSync } from 'node:child_process';
 import { resolveLoginShellPath } from '../adapters/adapter-registry';
 import { windowsNpmShimSpawn } from '../adapters/windows-npm-shim';
-import { readCliBinaryVersion, resolveCliBinary, resolveWindowsCodexNpmShimLaunch } from '../path-resolver';
+import {
+  cachedCliBinaryVersion,
+  probeCliBinaryVersion,
+  resolveCliBinary,
+  resolveWindowsCodexNpmShimLaunch,
+} from '../path-resolver';
 
 /** Minimum codex version that honors --dangerously-bypass-hook-trust. */
 const HOOK_TRUST_BYPASS_MIN_VERSION: [number, number, number] = [0, 134, 0];
@@ -72,6 +77,11 @@ export function windowsCodexVersionLaunch(
  * Resolve the selected codex version, sharing the real-path/mtime cache with
  * binary selection. Injected executors retain the per-bin test cache. Returns
  * null when the binary or its version cannot be determined — callers must treat null as "feature unavailable".
+ *
+ * F-764: o caminho real só lê o cache, aquecido no boot e no "Reexaminar
+ * CLIs" (adapter-registry → `warmCliBinaryVersions`). Versão ainda não sondada
+ * é versão desconhecida — o gate age como sempre agiu nesse caso — e a sonda
+ * roda fora do Main; a chamada seguinte já sabe. A API continua síncrona.
  */
 export function resolveCodexCliVersion(
   bin = 'codex',
@@ -81,7 +91,11 @@ export function resolveCodexCliVersion(
   if (execImpl === (execFileSync as unknown as CodexVersionExec) &&
       launchImpl === windowsCodexVersionLaunch) {
     const selected = resolveCliBinary(bin);
-    return selected ? readCliBinaryVersion(selected.binPath, resolveLoginShellPath(), 'codex') : null;
+    if (!selected) return null;
+    const known = cachedCliBinaryVersion(selected.binPath, 'codex');
+    if (known !== undefined) return known;
+    void probeCliBinaryVersion(selected.binPath, resolveLoginShellPath(), 'codex');
+    return null;
   }
   const cached = versionCache.get(bin);
   if (cached !== undefined) return cached;
@@ -89,6 +103,18 @@ export function resolveCodexCliVersion(
   const version = probeCodexCli(bin, ['--version'], parseCodexCliVersion, execImpl, launchImpl);
   versionCache.set(bin, version);
   return version;
+}
+
+/**
+ * Aquecimento do gate (F-764): sonda fora do Main a versão do Codex que a
+ * resolução escolhe e deixa o cache pronto para `resolveCodexCliVersion`.
+ * Nunca rejeita; null quando o binário ou a versão não se determinam.
+ */
+export async function warmCodexCliVersion(bin = 'codex'): Promise<string | null> {
+  const selected = resolveCliBinary(bin);
+  return selected
+    ? probeCliBinaryVersion(selected.binPath, resolveLoginShellPath(), 'codex')
+    : null;
 }
 
 /**
