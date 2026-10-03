@@ -63,3 +63,20 @@ it('production maintenance rotates fact pages, marks only missing files and clea
   await runPeriodicTask('memory-maintenance:test', (ctx) => maintainWorkspaceMemory(scope, ctx));
   expect(store.flagsOf([missing]).has(missing)).toBe(false);
 });
+
+it('file verification resumes after restart beyond the first bounded page', async () => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-file-pages-'));
+  const scope = testProjectScope({ rootRealPath: fs.realpathSync(root) });
+  const options = { baseDir: path.join(root, 'bank'), coordinationScopeFor: () => scope };
+  configureWorkspaceMemory(options);
+  const store = getWorkspaceMemoryStore(scope);
+  const ids = Array.from({ length: 18 }, (_, i) => store.retain({
+    content: `Missing file src/missing-${i}.ts`, kind: 'fact', source: 'trusted:resolved-problem',
+  }).id);
+  const { maintainWorkspaceMemory } = await import('./workspace-memory-maintenance');
+  await runPeriodicTask('memory-maintenance:pages-test', (ctx) => maintainWorkspaceMemory(scope, ctx));
+  expect(store.flagsOf(ids).size).toBe(16);
+  configureWorkspaceMemory(options);
+  await runPeriodicTask('memory-maintenance:pages-test', (ctx) => maintainWorkspaceMemory(scope, ctx));
+  expect(getWorkspaceMemoryStore(scope).flagsOf(ids).size).toBe(18);
+});
