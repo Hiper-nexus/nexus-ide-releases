@@ -710,9 +710,37 @@ describe('preferência do operador (fatia 3 da memória)', () => {
     await handleHookDelegateRequest(
       { role: 'user', sessionId: 's1', scope },
       { prompt: 'Sempre use pnpm neste projeto.' },
-      { advise: vi.fn(async () => null), distillPreference },
+      { advise: vi.fn(async () => null), distillPreference, proveOperatorPrompt: () => true },
     );
     expect(distillPreference).toHaveBeenCalledWith(scope, 'Sempre use pnpm neste projeto.');
+  });
+
+  it('role and preference regex alone cannot grant operator provenance', async () => {
+    const distillPreference = noDistill();
+    await handleHookDelegateRequest({ ...operator, scope }, { prompt: 'Sempre use pnpm neste projeto.' },
+      { advise: vi.fn(async () => null), distillPreference });
+    expect(distillPreference).not.toHaveBeenCalled();
+  });
+
+  it('passes exact session and prompt to non-consuming Main proof and refuses a mismatch', async () => {
+    const distillPreference = noDistill();
+    const proof = vi.fn((sessionId: string, prompt: string) => sessionId === operator.sessionId && prompt === 'Sempre use pnpm neste projeto.');
+    await handleHookDelegateRequest({ ...operator, scope }, { prompt: 'Sempre use pnpm neste projeto.' },
+      { advise: vi.fn(async () => null), distillPreference, proveOperatorPrompt: proof });
+    expect(proof).toHaveBeenCalledWith(operator.sessionId, 'Sempre use pnpm neste projeto.');
+    expect(distillPreference).toHaveBeenCalledTimes(1);
+    await handleHookDelegateRequest({ ...operator, scope }, { prompt: 'Sempre use npm neste projeto.' },
+      { advise: vi.fn(async () => null), distillPreference, proveOperatorPrompt: proof });
+    expect(distillPreference).toHaveBeenCalledTimes(1);
+  });
+
+  it('a genuine human message in the Maestro can retain a preference when Main proves it', async () => {
+    const distillPreference = noDistill();
+    const prompt = 'Sempre use pnpm neste projeto.';
+    await handleHookDelegateRequest({ role: 'orchestrator', missionId: 'm', sessionId: 'maestro-human', scope },
+      { prompt }, { advise: vi.fn(async () => null), maestroDoctrine: () => null,
+        distillPreference, proveOperatorPrompt: (sessionId, text) => sessionId === 'maestro-human' && text === prompt });
+    expect(distillPreference).toHaveBeenCalledWith(scope, prompt);
   });
 
   it('não destila sem scope, em pane de missão nem em entrega de handoff', async () => {

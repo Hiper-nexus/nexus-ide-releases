@@ -643,6 +643,8 @@ export async function handleHookDelegateRequest(
     design?: DesignContextFn;
     /** Destilação de preferência (fatia 3); default fire-and-forget. */
     distillPreference?: typeof distillOperatorPreferenceMemory;
+    /** Main-owned exact human input receipt. Absent proof fails closed. */
+    proveOperatorPrompt?: (sessionId: string, prompt: string) => boolean;
     /** Bloco <workspace-memory> do primeiro prompt do Codex (fatia 4). */
     memoryBlock?: MemoryBlockFn;
     /** Bloco <business-model> por tarefa; default = seleção Jev + fallback. */
@@ -688,16 +690,18 @@ export async function handleHookDelegateRequest(
         : null;
     const maestro = maestroDirective ?? maestroContextFor(ctx, now, doctrineFor, budgetOf);
     const parts: string[] = maestro ? [maestro] : [];
-    if (!isOperatorHandContext(ctx) || !operatorPrompt) {
-      return additionalContextResponse(ctx, parts);
-    }
     // Preferência do operador: pré-filtro regex no próprio módulo; o Jev só é
     // chamado quando há marcador. Fire-and-forget — não segura o prompt.
     const distillPreference = deps.distillPreference ?? distillOperatorPreferenceMemory;
     // Memória é por projeto; o escopo primário evita abrir o store pela worktree da aba (F-806).
     const preferenceScope = ctx.scope;
-    if (preferenceScope && typedByOperator(ctx, prompt)) {
+    if (preferenceScope && ctx.sessionId && operatorPrompt && typedByOperator(ctx, prompt) &&
+      (isOperatorHandContext(ctx) || isMissionMaestro(ctx)) &&
+      deps.proveOperatorPrompt?.(ctx.sessionId, prompt) === true) {
       void distillPreference(preferenceScope, prompt).catch(() => {});
+    }
+    if (!isOperatorHandContext(ctx) || !operatorPrompt) {
+      return additionalContextResponse(ctx, parts);
     }
     const advise = deps.advise ?? advisePrompt;
     const businessContext = deps.businessContext ?? defaultBusinessContext;
