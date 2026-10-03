@@ -6156,3 +6156,77 @@ describe("F-788: Qwen numa worktree longa abre com cwd lógico curto", () => {
     }
   });
 });
+
+describe("F-789: MiniMax abre pelo Node que carrega o SQLite nativo do mcode", () => {
+  function mcodeFixture() {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "f789-mcode-")));
+    const pkg = path.join(root, "lib", "node_modules", "@minimax-ai", "code");
+    const addonDir = path.join(pkg, "node_modules", "better-sqlite3", "build", "Release");
+    fs.mkdirSync(addonDir, { recursive: true });
+    fs.writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "@minimax-ai/code", bin: { mcode: "./cli.js" } }));
+    const entry = path.join(pkg, "cli.js");
+    fs.writeFileSync(entry, "#!/usr/bin/env node\n");
+    fs.writeFileSync(path.join(addonDir, "better_sqlite3.node"), "abi-147");
+    const bin = path.join(root, "bin", "mcode");
+    fs.mkdirSync(path.dirname(bin));
+    fs.symlinkSync(entry, bin);
+    const nodes = ["node22", "node26"].map((version) => {
+      const node = path.join(root, version, "bin", "node");
+      fs.mkdirSync(path.dirname(node), { recursive: true });
+      fs.writeFileSync(node, "", { mode: 0o755 });
+      return node;
+    });
+    const home = path.join(root, "home");
+    fs.mkdirSync(home);
+    return { root, entry, bin, nodes, home };
+  }
+
+  async function spawnMcode(bin: string): Promise<PtySpawnSpec> {
+    const host = fakeHost();
+    setPtyHost(host.host);
+    const { sessionId } = spawnAgentSession(
+      fakeWc(),
+      { kind: "cli-agent", cols: 80, rows: 24, model: "minimax/MiniMax-M3" },
+      builtinCliPtyAdapter("minimax-code"),
+      { binPath: bin },
+      revisionBoundWorker(),
+    );
+    const spec = host.specFor(sessionId);
+    await orchTerminateSession(sessionId);
+    return spec;
+  }
+
+  it("decisão pronta do permit: Node que carrega o addon + entrypoint; sem decisão, o shebang de sempre", async () => {
+    const { minimaxNodeRuntimeForSpawn, resetMinimaxNodeRuntimeForTests, prepareMinimaxNodeRuntime } =
+      await import("../adapters/minimax-node-runtime");
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    setAgentSpawnHook(null);
+    const fx = mcodeFixture();
+    // PATH do spawn = PATH do processo, com o Node 22 (ABI errado) à frente.
+    vi.stubEnv("PATH", fx.nodes.map((node) => path.dirname(node)).join(path.delimiter));
+    vi.stubEnv("HOME", fx.home);
+    resetMinimaxNodeRuntimeForTests();
+    try {
+      const shebang = await spawnMcode(fx.bin);
+      expect(shebang.file).toBe(fx.bin);
+      expect(shebang.args[0]).not.toBe(fx.entry);
+      // O spawn sem decisão deixou a preparação correndo para o próximo spawn.
+      await vi.waitFor(() => {
+        expect(minimaxNodeRuntimeForSpawn(fx.bin, process.env.PATH ?? "")).toBeDefined();
+      });
+
+      // O permit da CLI decide antes do spawn (aqui com a sonda do ABI simulada).
+      resetMinimaxNodeRuntimeForTests();
+      await prepareMinimaxNodeRuntime(fx.bin, process.env.PATH ?? "",
+        async (node) => (node === fx.nodes[1] ? "loads" : "fails"));
+      const pinned = await spawnMcode(fx.bin);
+      expect(pinned.file).toBe(fx.nodes[1]);
+      expect(pinned.args[0]).toBe(fx.entry);
+      expect(pinned.args.slice(1)).toEqual(expect.arrayContaining(["--model", "minimax/MiniMax-M3"]));
+    } finally {
+      vi.unstubAllEnvs();
+      resetMinimaxNodeRuntimeForTests();
+      fs.rmSync(fx.root, { recursive: true, force: true });
+    }
+  });
+});

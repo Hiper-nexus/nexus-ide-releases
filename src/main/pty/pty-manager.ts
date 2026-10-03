@@ -88,6 +88,10 @@ import { agyModelForEffort, withoutEffortArg } from "../adapters/agy-effort-mode
 import { windowsMuseLauncherSpawn } from "../adapters/muse-windows-launcher";
 import { codexNoDaemonArgs } from "../orch/codex-cli-version";
 import { ensureMinimaxFullAccess } from "../orch/cli-mcp-session-minimax";
+import {
+  minimaxNodeRuntimeForSpawn,
+  prepareMinimaxNodeRuntime,
+} from "../adapters/minimax-node-runtime";
 import { windowsArgvPromptPlacement } from "./windows-command-line";
 import { qwenLogicalCwdLaunch, qwenNeedsLogicalCwd } from "./qwen-long-cwd";
 import {
@@ -2397,6 +2401,24 @@ export function spawnAgentSession(
         Object.assign(env, launch.env);
       } else {
         console.warn("[pty] Qwen: worktree longa sem apelido curto; o --session-id pode ser recusado");
+      }
+    }
+    // F-789: o mcode do npm sobe pelo primeiro Node do PATH; quando esse Node
+    // não carrega o SQLite nativo dele, abre pelo Node que carrega. A decisão
+    // vem pronta do permit da CLI (sondagem assíncrona, em cache).
+    if (adapter.id === "minimax-code") {
+      const runtime = minimaxNodeRuntimeForSpawn(bin, env.PATH ?? "");
+      if (runtime === undefined) {
+        // Spawn fora do permit (warm pool): segue pelo shebang e decide para o próximo.
+        void prepareMinimaxNodeRuntime(bin, env.PATH ?? "");
+      } else if (runtime.kind === "pinned") {
+        bin = runtime.launch.file;
+        args = [...runtime.launch.argsPrefix, ...args];
+      } else if (runtime.kind === "incompatible") {
+        console.warn(
+          "[pty] MiniMax Code: nenhum Node do PATH carrega o SQLite nativo do mcode; " +
+            "reinstale @minimax-ai/code com o Node em uso",
+        );
       }
     }
   } catch (error) {
