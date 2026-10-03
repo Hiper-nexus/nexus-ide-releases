@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';;
 import type { ProjectExecutionScope } from '../../shared/types';
-import type { CronJob } from './cron-loop';
+import { withCronJobsMutationLock, type CronJob } from './cron-loop';
+import type { McpToolInvocation } from './mcp-protocol';
 import {
   CronPortableScheduleConflictError,
   CronPortableScheduleService,
@@ -142,6 +143,39 @@ afterEach(() => {
 vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 
 describe('CronPortableScheduleService', () => {
+  it('passes current authority to async persistence while retaining the mutation mutex', async () => {
+    const backend = new MemoryPortableBackend();
+    const writing = deferred<void>();
+    const finish = deferred<void>();
+    let current = true;
+    const invocation: McpToolInvocation = {
+      assertCurrentAuthority: () => { if (!current) throw new Error('revoked'); },
+    };
+    const pc = new CronPortableScheduleService({
+      backend,
+      load: () => [],
+      save: async (_jobs, authority) => {
+        expect(authority).toBe(invocation);
+        writing.resolve();
+        await finish.promise;
+        authority?.assertCurrentAuthority?.();
+      },
+      now: () => 20_000,
+      idFactory: () => '2a21a665-d7fd-45d5-b81f-41f433c665ad',
+    });
+    const pending = pc.create({ name: 'Nightly', schedule: '0 0 * * *', brief: 'review', agentName: 'reviewer' }, scope('installation-a', 'checkout-a'), invocation);
+    void pending.catch(() => undefined);
+    await writing.promise;
+    let nextEntered = false;
+    const next = withCronJobsMutationLock(async () => { nextEntered = true; });
+    await Promise.resolve();
+    expect(nextEntered).toBe(false);
+    current = false;
+    finish.resolve();
+    await expect(pending).rejects.toThrow('revoked');
+    await next;
+    expect(nextEntered).toBe(true);
+  });
   it('publishes a versioned definition and keeps machine coordinates local', async () => {
     const backend = new MemoryPortableBackend();
     const pcA = service(backend, localStore(), () => '2a21a665-d7fd-45d5-b81f-41f433c665ad');

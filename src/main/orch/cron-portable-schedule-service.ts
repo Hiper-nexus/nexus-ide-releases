@@ -50,7 +50,7 @@ export interface PortableCronUpdateInput {
 export interface CronPortableScheduleServiceOptions {
   readonly backend: PortableCronScheduleBackend;
   readonly load: () => CronJob[] | Promise<CronJob[]>;
-  readonly save: (jobs: CronJob[]) => void | Promise<void>;
+  readonly save: (jobs: CronJob[], invocation?: McpToolInvocation) => void | Promise<void>;
   readonly now?: () => number;
   readonly idFactory?: () => string;
 }
@@ -174,7 +174,7 @@ function scopedJob(job: CronJob, scope: ProjectExecutionScope): boolean {
 export class CronPortableScheduleService {
   readonly #backend: PortableCronScheduleBackend;
   readonly #load: () => CronJob[] | Promise<CronJob[]>;
-  readonly #save: (jobs: CronJob[]) => void | Promise<void>;
+  readonly #save: (jobs: CronJob[], invocation?: McpToolInvocation) => void | Promise<void>;
   readonly #now: () => number;
   readonly #idFactory: () => string;
 
@@ -283,7 +283,7 @@ export class CronPortableScheduleService {
         }
       : materialized;
     assertMcpInvocationCurrent(invocation);
-    await this.#save([...jobs, created]);
+    await this.#save([...jobs, created], invocation);
     return created;
   }
 
@@ -396,7 +396,7 @@ export class CronPortableScheduleService {
     const next = [...jobs];
     next[index] = updated;
     assertMcpInvocationCurrent(invocation);
-    await this.#save(next);
+    await this.#save(next, invocation);
     return updated;
   }
 
@@ -441,7 +441,7 @@ export class CronPortableScheduleService {
       ),
     );
     assertMcpInvocationCurrent(invocation);
-    await this.#save(jobs.filter((_job, candidate) => candidate !== index));
+    await this.#save(jobs.filter((_job, candidate) => candidate !== index), invocation);
     return true;
   }
 
@@ -545,7 +545,7 @@ export class CronPortableScheduleService {
     }
     if (changed) {
       assertMcpInvocationCurrent(invocation);
-      await this.#save(next);
+      await this.#save(next, invocation);
     }
     return conflicts.size > 0
       ? {

@@ -1,14 +1,60 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import {
   createCronJob,
   matchesCron,
   nextCronAfter,
   parseCronJobs,
   parseCronJobsBudgeted,
+  saveCronJobsAsync,
   parseCronExpr,
   shouldFire,
   type CronJob,
 } from './cron-loop';
+
+it('does not rename the cron store after authority is revoked during temporary IO', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cron-write-authority-'));
+  vi.spyOn(os, 'homedir').mockReturnValue(root);
+  const directory = path.join(root, '.nexus');
+  fs.mkdirSync(directory);
+  const file = path.join(directory, 'crons.json');
+  fs.writeFileSync(file, '[]');
+  let started!: () => void;
+  let finish!: () => void;
+  let current = true;
+  const entered = new Promise<void>((resolve) => { started = resolve; });
+  const held = new Promise<void>((resolve) => { finish = resolve; });
+  const realWrite = fsp.writeFile.bind(fsp);
+  vi.spyOn(fsp, 'writeFile').mockImplementation(async (...args) => {
+    await realWrite(...args);
+    started();
+    await held;
+  });
+  try {
+    const pending = saveCronJobsAsync([createCronJob({ name: 'new job', schedule: '* * * * *', brief: 'new body' }, 0, () => 'new-job')], undefined, {
+      assertCurrentAuthority: () => { if (!current) throw new Error('revoked cron authority'); },
+    });
+    void pending.catch(() => undefined);
+    await entered;
+    current = false;
+    finish();
+    await expect(pending).rejects.toThrow('revoked cron authority');
+    expect(fs.readFileSync(file, 'utf8')).toBe('[]');
+    expect(fs.readdirSync(directory)).toEqual(['crons.json']);
+  } finally { finish(); vi.restoreAllMocks(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+it('yields while scanning a large whitespace prefix and suffix', async () => {
+  const events: string[] = [];
+  const pulse = new Promise<void>((resolve) => setImmediate(() => { events.push('heartbeat'); resolve(); }));
+  await parseCronJobsBudgeted(`${' '.repeat(200_000)}[]${' '.repeat(200_000)}`);
+  events.push('parsed');
+  await pulse;
+  expect(events).toEqual(['heartbeat', 'parsed']);
+});
 
 it('parses cron arrays cooperatively in order and refuses malformed trailing data', async () => {
   const jobs = Array.from({ length: 70 }, (_, index) => createCronJob({ name: `job ${index}`, schedule: '* * * * *', brief: 'quoted " } ] text' }, 0, () => `job-${index}`));

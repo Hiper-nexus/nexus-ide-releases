@@ -170,7 +170,7 @@ export function configureCronRuntime(options: {
     ? new CronPortableScheduleService({
         backend: options.scheduleBackend,
         load: loadCronJobsAsync,
-        save: saveCronJobsAsync,
+        save: (jobs, invocation) => saveCronJobsAsync(jobs, undefined, invocation),
       })
     : null;
   configuredScopeList = options.listScopes ?? null;

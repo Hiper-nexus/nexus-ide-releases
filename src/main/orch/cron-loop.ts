@@ -1,3 +1,4 @@
+import { assertMcpInvocationCurrent, type McpToolInvocation } from './mcp-protocol';
 import fsp from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { readRegularFileCappedAsync } from '../redline/redline-safe-read';
@@ -261,16 +262,25 @@ export function loadCronJobs(): CronJob[] {
 export async function parseCronJobsBudgeted(text: string, context?: PeriodicTaskContext): Promise<CronJob[]> {
   const white = (character: string | undefined) => character === ' ' || character === '\n' || character === '\r' || character === '\t';
   let position = 0;
-  while (white(text[position])) position++;
+  const skipWhitespace = async () => {
+    while (white(text[position])) {
+      position++;
+      if (position % 65536 === 0) {
+        if (context) await context.checkpoint();
+        else await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+    }
+  };
+  await skipWhitespace();
   if (text[position++] !== '[') throw new Error('invalid cron job array');
   const jobs: CronJob[] = [];
   let needJob = false;
   for (;;) {
-    while (white(text[position])) position++;
+    await skipWhitespace();
     if (text[position] === ']') {
       if (needJob) throw new Error('invalid cron trailing comma');
       position++;
-      while (white(text[position])) position++;
+      await skipWhitespace();
       if (position !== text.length) throw new Error('invalid cron trailing data');
       return jobs;
     }
@@ -299,7 +309,7 @@ export async function parseCronJobsBudgeted(text: string, context?: PeriodicTask
     if (jobs.length > 10_000) throw new Error('cron job count exceeds limit');
     if (context) await context.checkpoint();
     else if (jobs.length % 32 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
-    while (white(text[position])) position++;
+    await skipWhitespace();
     if (text[position] === ',') { position++; needJob = true; }
     else if (text[position] === ']') needJob = false;
     else throw new Error('invalid cron job delimiter');
@@ -314,12 +324,14 @@ export async function loadCronJobsAsync(context?: PeriodicTaskContext): Promise<
   return parseCronJobsBudgeted(read.text, context);
 }
 
-export async function saveCronJobsAsync(jobs: CronJob[], context?: PeriodicTaskContext): Promise<void> {
+export async function saveCronJobsAsync(jobs: CronJob[], context?: PeriodicTaskContext, invocation?: McpToolInvocation): Promise<void> {
+  const assertCurrent = () => { context?.assertCurrent(); assertMcpInvocationCurrent(invocation); };
   const records: string[] = [];
   let bytes = 2;
   for (const job of jobs) {
     if (context) await context.checkpoint();
     else if (records.length % 32 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+    assertCurrent();
     const text = JSON.stringify(cronJobSchema.parse(job));
     bytes += Buffer.byteLength(text) + 1;
     if (bytes > 16 * 1024 * 1024 || records.length >= 10_000) throw new Error('cron job store exceeds budget');
@@ -329,9 +341,9 @@ export async function saveCronJobsAsync(jobs: CronJob[], context?: PeriodicTaskC
   const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
   try {
     await fsp.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-    context?.assertCurrent();
+    assertCurrent();
     await fsp.writeFile(temporary, `[${records.join(',')}]`, { mode: 0o600, flag: 'wx' });
-    context?.assertCurrent();
+    assertCurrent();
     await fsp.rename(temporary, file);
   } finally { await fsp.unlink(temporary).catch(() => undefined); }
 }
