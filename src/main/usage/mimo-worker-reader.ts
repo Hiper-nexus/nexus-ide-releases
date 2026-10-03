@@ -10,7 +10,7 @@ export function configureMimoUsageWorkerPath(value: string): void { workerPath =
 let validator: MimoWorkerReader | null = null;
 export function mimoValidationReader(): MimoWorkerReader { return validator ??= new MimoWorkerReader(); }
 export async function stopMimoValidationReader(): Promise<void> {
-  const old = validator; validator = null; await old?.stop();
+  const old = validator; await old?.stop(); if (validator === old) validator = null;
 }
 
 /** One physical worker and bounded FIFO, never a synchronous Main fallback. */

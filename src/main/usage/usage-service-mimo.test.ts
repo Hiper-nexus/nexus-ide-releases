@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, expect, it, vi } from 'vitest';
+import { prepareMimoWorker } from './__tests__/mimo-worker-fixture';
 import type { MimoSessionBinding } from './mimo-scanner';
 const deps = vi.hoisted(() => ({ listener: null as null | ((id: string, binding: MimoSessionBinding | null) => void), speed: vi.fn() }));
 vi.mock('../agent-hooks/mimo-session-registry', () => ({ tapMimoSessionBindings: (listener: typeof deps.listener) => { deps.listener = listener; return () => { deps.listener = null; }; } }));
@@ -16,15 +17,15 @@ let root = '';
 let manager: ProjectRuntimeManager | null = null;
 let service: UsageTelemetryService | null = null;
 const databases: Database.Database[] = [];
-afterEach(() => {
-  service?.stop(); manager?.closeAll();
+beforeAll(prepareMimoWorker);
+afterEach(async () => {
+  await service?.stop(); manager?.closeAll();
   for (const db of databases.splice(0)) db.close();
   if (root) fs.rmSync(root, { recursive: true, force: true });
   vi.useRealTimers();
 });
 
-it('ingests measured MiMo tokens into exact checkout/account totals with idempotent streaming corrections', () => {
-  vi.useFakeTimers();
+it('ingests measured MiMo tokens into exact checkout/account totals with idempotent streaming corrections', async () => {
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mimo-usage-service-')));
   manager = new ProjectRuntimeManager({ baseDir: path.join(root, 'runtime'), appVersion: 'test' });
   service = new UsageTelemetryService(new ProjectUsageStoreRegistry(manager));
@@ -52,11 +53,13 @@ it('ingests measured MiMo tokens into exact checkout/account totals with idempot
     return { binding, write };
   };
   const a = setup('a', 4); const b = setup('b', 20);
-  vi.advanceTimersByTime(1000);
+  await vi.waitFor(() => expect(service!.snapshot(a.binding.scope)?.global.outputTokens).toBe(6), { timeout: 4_000 });
+  await vi.waitFor(() => expect(service!.snapshot(b.binding.scope)?.global.outputTokens).toBe(22), { timeout: 4_000 });
   expect(service.snapshot(a.binding.scope)?.global).toMatchObject({ inputTokens: 10, outputTokens: 6, costUsd: 0.004, turns: 1 });
   expect(service.snapshot(b.binding.scope)?.global).toMatchObject({ outputTokens: 22, costUsd: 0.02, turns: 1 });
   expect(service.snapshot(a.binding.scope)?.byAccount['acct-a']).toMatchObject({ outputTokens: 6 });
-  a.write(8); vi.advanceTimersByTime(1000);
+  a.write(8);
+  await vi.waitFor(() => expect(service!.snapshot(a.binding.scope)?.global.outputTokens).toBe(10), { timeout: 4_000 });
   expect(service.snapshot(a.binding.scope)?.global).toMatchObject({ outputTokens: 10, costUsd: 0.008, turns: 1 });
   expect(service.snapshot(b.binding.scope)?.global.outputTokens).toBe(22);
   expect(deps.speed).toHaveBeenCalledWith('pane-a', expect.objectContaining({ key: 'mimo-code:ses_same:msg_same', outputTokens: 10 }));

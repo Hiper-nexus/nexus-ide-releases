@@ -80,8 +80,8 @@ beforeEach(() => {
   electronMock.handlers.clear();
 });
 
-afterEach(() => {
-  shutdownUsageTelemetry();
+afterEach(async () => {
+  await shutdownUsageTelemetry();
   for (const value of renderers.splice(0)) {
     clearRendererWorkspaceScope(value);
   }
@@ -90,7 +90,7 @@ afterEach(() => {
 });
 
 describe('usage snapshot IPC project authority', () => {
-  it('captures sender scope and never returns another checkout totals', () => {
+  it('captures sender scope and never returns another checkout totals', async () => {
     const scopeA = scope(parent, 'project-a', 'checkout-a');
     const scopeB = scope(parent, 'project-a', 'checkout-b');
     const windowA = renderer(101);
@@ -99,7 +99,7 @@ describe('usage snapshot IPC project authority', () => {
     renderers.push(windowA, windowB, unauthorized);
     bindResolvedRendererWorkspaceScope(windowA, scopeA);
     bindResolvedRendererWorkspaceScope(windowB, scopeB);
-    initUsageTelemetry(runtimeManager);
+    await initUsageTelemetry(runtimeManager);
     requireProjectUsageStores(scopeA).usage.record('claude', {
       sessionId: 'session-a',
       messageId: 'message-a',

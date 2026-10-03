@@ -39,6 +39,7 @@ import { ClaudeTranscriptWatcher } from './claude-transcript-watcher';
 import { ClaudeTranscriptResumeStore } from './claude-transcript-resume-store';
 import { MimoUsageScanner, type MimoSessionBinding } from './mimo-scanner';
 import { tapMimoSessionBindings } from '../agent-hooks/mimo-session-registry';
+import { stopMimoValidationReader } from './mimo-worker-reader';
 import type { UsageRecord } from './usage-store';
 import type { UsageEvent } from './claude-transcript';
 import {
@@ -254,6 +255,7 @@ export class UsageTelemetryService {
   #mimoScanner: MimoUsageScanner | null = null;
   #stopMimoBindings: (() => void) | null = null;
   #stopped = false;
+  #stopFlight: Promise<void> | null = null;
 
   constructor(registry: ProjectUsageStoreRegistry) {
     this.#registry = registry;
@@ -371,31 +373,38 @@ export class UsageTelemetryService {
     if (provider === 'codex') this.#ensureCodexScanner();
   }
 
-  stop(): void {
-    if (this.#stopped) return;
+  stop(): Promise<void> {
+    if (this.#stopFlight) return this.#stopFlight;
     this.#stopped = true;
     setSessionDictationHook(null);
     setResumeSessionLookup(null);
     setResumeSessionForget(null);
-    for (const state of this.#states.values()) {
-      state.watcher?.stop();
-      state.watcher = null;
-      if (state.broadcastTimer) clearTimeout(state.broadcastTimer);
-      state.broadcastTimer = null;
-      state.executionRoots.clear();
-      state.dictated.clear();
-      state.resumedSessions.clear();
-      state.accountIdByProviderSession.clear();
-      state.pendingLaunches.clear();
-    }
-    this.#states.clear();
-    this.#rootOwners.clear();
-    this.#codexScanner?.stop();
-    this.#codexScanner = null;
     this.#stopMimoBindings?.();
     this.#stopMimoBindings = null;
-    this.#mimoScanner?.stop();
-    this.#mimoScanner = null;
+    const stops: Promise<void>[] = [];
+    const stop = (run: () => void | Promise<void>) => {
+      try { stops.push(Promise.resolve(run())); } catch (error) { stops.push(Promise.reject(error)); }
+    };
+    for (const state of this.#states.values()) {
+      if (state.broadcastTimer) clearTimeout(state.broadcastTimer);
+      state.broadcastTimer = null;
+      if (state.watcher) stop(() => state.watcher!.stop());
+    }
+    if (this.#codexScanner) stop(() => this.#codexScanner!.stop());
+    if (this.#mimoScanner) stop(() => this.#mimoScanner!.stop());
+    stop(stopMimoValidationReader);
+    this.#stopFlight = Promise.allSettled(stops).then(results => {
+      const failed = results.find(result => result.status === 'rejected');
+      if (failed?.status === 'rejected') throw failed.reason;
+      for (const state of this.#states.values()) {
+        state.watcher = null;
+        state.executionRoots.clear(); state.dictated.clear(); state.resumedSessions.clear();
+        state.accountIdByProviderSession.clear(); state.pendingLaunches.clear();
+      }
+      this.#states.clear(); this.#rootOwners.clear(); this.#forgottenResumeIds.clear();
+      this.#codexScanner = null; this.#mimoScanner = null;
+    });
+    return this.#stopFlight;
   }
 
   #ensureScope(scope: ProjectExecutionScope): ScopeTelemetryState {
@@ -449,6 +458,7 @@ export class UsageTelemetryService {
   }
 
   #onSessionDictated(info: DictatedSessionInfo): void {
+    if (this.#stopped) return;
     if (info.adapterId !== 'claude' && info.adapterId !== 'codex') return;
     const ctx = getContextBySession(info.ptySessionId);
     if (!ctx) {
@@ -666,6 +676,7 @@ export class UsageTelemetryService {
   }
 
   #onMimoEvent(binding: MimoSessionBinding, event: UsageRecord): void {
+    if (this.#stopped) return;
     const state = this.#ensureScope(binding.scope);
     state.stores.usage.record('mimo-code', {
       ...event, paneId: binding.paneId, accountId: binding.accountId ?? null,
@@ -680,6 +691,7 @@ export class UsageTelemetryService {
     event: UsageEvent,
     requestStartedAt: number | null = null,
   ): void {
+    if (this.#stopped) return;
     if (!this.#acceptProviderEvent(state, 'claude', event)) return;
     const attribution = this.#attributionForEvent(
       state,
@@ -708,6 +720,7 @@ export class UsageTelemetryService {
     observedCwd: string,
     source: CodexRolloutSource,
   ): void {
+    if (this.#stopped) return;
     if (
       source.providerSessionId !== event.sessionId ||
       !source.rolloutSessionId ||
@@ -1060,6 +1073,7 @@ export class UsageTelemetryService {
   }
 
   #scheduleBroadcast(state: ScopeTelemetryState): void {
+    if (this.#stopped) return;
     if (state.broadcastTimer) return;
     state.broadcastTimer = setTimeout(() => {
       state.broadcastTimer = null;
@@ -1102,20 +1116,27 @@ export function tapUsageSnapshot(listener: UsageSnapshotListener): () => void {
 
 let configuredService: UsageTelemetryService | null = null;
 
-export function initUsageTelemetry(
-  runtimeManager: ProjectRuntimeManager,
-): UsageTelemetryService {
-  configuredService?.stop();
-  const registry = configureProjectUsageStoreRegistry(runtimeManager);
-  configuredService = new UsageTelemetryService(registry);
-  configuredService.start();
+let usageLifecycle: Promise<void> = Promise.resolve();
+let usageLifecycleEpoch = 0;
+
+export function initUsageTelemetry(runtimeManager: ProjectRuntimeManager): Promise<UsageTelemetryService | null> {
+  const epoch = ++usageLifecycleEpoch;
+  const previous = configuredService; configuredService = null;
   ipcMain.removeHandler(USAGE_CHANNELS.snapshot);
-  ipcMain.handle(USAGE_CHANNELS.snapshot, (event): UsageSnapshot | null => {
-    return configuredService!.snapshot(
-      requireRendererWorkspaceScope(event.sender),
-    );
+  const stopping = previous?.stop(); // closes admission before the first await
+  const init = usageLifecycle.then(async () => {
+    await stopping;
+    if (epoch !== usageLifecycleEpoch) return null;
+    const registry = configureProjectUsageStoreRegistry(runtimeManager);
+    const service = new UsageTelemetryService(registry);
+    configuredService = service; service.start();
+    ipcMain.handle(USAGE_CHANNELS.snapshot, (event): UsageSnapshot | null =>
+      service.snapshot(requireRendererWorkspaceScope(event.sender)));
+    return service;
   });
-  return configuredService;
+  usageLifecycle = init.then(() => undefined);
+  void usageLifecycle.catch(() => {}); // returned init retains the failure; no store fallback
+  return init;
 }
 
 export function notifyMediaGenerated(scope: ProjectExecutionScope): void {
@@ -1125,9 +1146,15 @@ export function notifyMediaGenerated(scope: ProjectExecutionScope): void {
   configuredService.notifyMediaGenerated(scope);
 }
 
-export function shutdownUsageTelemetry(): void {
+export function shutdownUsageTelemetry(): Promise<void> {
+  usageLifecycleEpoch++;
   ipcMain.removeHandler(USAGE_CHANNELS.snapshot);
-  configuredService?.stop();
-  configuredService = null;
-  disposeProjectUsageStoreRegistry();
+  const service = configuredService; configuredService = null;
+  const stopping = service?.stop();
+  usageLifecycle = usageLifecycle.then(async () => {
+    await stopping;
+    disposeProjectUsageStoreRegistry();
+  });
+  void usageLifecycle.catch(() => {});
+  return usageLifecycle;
 }
