@@ -3,14 +3,15 @@ import { decisionResultUsage } from '../decision-models/decision-usage';
  * Distilação de memória via TypeSafe Jev (piloto automático, superfície
  * `memoryDistill`). O resumo de um handoff aceito é texto do agente, então o
  * Nexus pede ao Jev UMA decisão `judge()` — vale a pena lembrar isto depois?
- * — antes de deixar o resumo entrar na linha trusted. Fail-open: sem chave,
- * superfície desligada ou judge fora do ar → null, e a linha nasce exatamente
- * como nasce hoje (só identificadores Main-owned).
+ * — e seleciona um trecho durável, antes de deixar o resumo entrar na memória.
+ * Sem rota, superfície desligada ou judge fora do ar → null, com motivo
+ * observável para o chamador poder contar e repetir a tentativa.
  */
 import {
   capText,
   judge,
   type JevQuestion,
+  type JevResult,
 } from './jev-client';
 import { isJevSurfaceEnabled } from './jev-autopilot';
 import { hasDecisionCredential } from '../decision-models/decision-availability';
@@ -18,9 +19,12 @@ import {
   jevAnswerConfidences,
   jevAnswerProbabilities,
   recordJevDecision,
+  type JevNoAnswerReason,
 } from './jev-decision-log';
 
 const DISTILL_TIMEOUT_MS = 6_000;
+// O teto de saída não é teto de entrada: o fato durável pode estar no fim.
+const DISTILL_INPUT_MAX_CHARS = 65_536;
 
 /** Teto do resumo destilado — o mesmo limite aceito pela linha trusted. */
 export const DISTILLED_SUMMARY_MAX_CHARS = 400;
@@ -64,12 +68,44 @@ const DISTILL_QUESTIONS: Record<string, JevQuestion> = {
   },
 };
 
+export type MemoryDistillSkipReason =
+  | 'flag-off' | 'no-route' | 'empty' | 'directive' | 'jev-skip'
+  | 'timeout' | 'jev-off' | 'aborted' | 'malformed';
+
 export interface DistillHandoffSummaryDeps {
   judge?: typeof judge;
   enabled?: () => boolean;
   hasKey?: () => boolean;
   /** Abort externo combinado ao timeout interno. */
   signal?: AbortSignal;
+  /** Motivo categórico: nunca inclui texto do agente nem erro do provedor. */
+  onSkip?: (reason: MemoryDistillSkipReason) => void;
+}
+
+/** O skip é decisão local; sua linha não conta como outra chamada à API. */
+function skipped(
+  reason: MemoryDistillSkipReason,
+  deps: DistillHandoffSummaryDeps,
+  questions: Record<string, JevQuestion>,
+  result?: JevResult,
+): null {
+  recordJevDecision({
+    surface: 'memoryDistill',
+    model: result?.model ?? 'unavailable',
+    questions: Object.keys(questions),
+    probabilities: result ? jevAnswerProbabilities(result.answers) : {},
+    confidence: result ? jevAnswerConfidences(result.answers) : {},
+    decision: `skip:${reason}`,
+    ...(result ? decisionResultUsage(result) : { inputTokens: 0, usd: 0, requestCount: 0 }),
+  });
+  try { deps.onSkip?.(reason); }
+  catch { console.warn('[memory] distillation skip callback failed'); }
+  return null;
+}
+
+function noAnswerSkip(reason?: JevNoAnswerReason): MemoryDistillSkipReason {
+  return reason === 'timeout' || reason === 'aborted' || reason === 'malformed'
+    ? reason : 'jev-off';
 }
 
 const PREFERENCE_QUESTIONS: Record<string, JevQuestion> = {
@@ -101,7 +137,10 @@ export async function confirmOperatorPreference(
   const enabled = deps.enabled ?? (() => isJevSurfaceEnabled('memoryDistill'));
   const hasKeyFn = deps.hasKey ?? (() => hasDecisionCredential('memoryDistill'));
 
-  if (!enabled() || !hasKeyFn()) return false;
+  if (!enabled()) { skipped('flag-off', deps, PREFERENCE_QUESTIONS); return false; }
+  if (!hasKeyFn()) { skipped('no-route', deps, PREFERENCE_QUESTIONS); return false; }
+  if (!input.candidate.trim()) { skipped('empty', deps, PREFERENCE_QUESTIONS); return false; }
+  let noAnswerReason: JevNoAnswerReason | undefined;
 
   const result = await judgeFn({
     state: {
@@ -112,12 +151,15 @@ export async function confirmOperatorPreference(
     timeoutMs: DISTILL_TIMEOUT_MS,
     signal: deps.signal,
     surface: 'memoryDistill',
+    retryOnTimeout: false,
+    onNoAnswer: reason => { noAnswerReason = reason; },
   });
-  if (!result) return false;
+  if (!result) { skipped(noAnswerSkip(noAnswerReason), deps, PREFERENCE_QUESTIONS); return false; }
 
   const answer = result.answers.is_preference;
-  if (answer?.type !== 'noul') return false;
+  if (answer?.type !== 'noul') { skipped('malformed', deps, PREFERENCE_QUESTIONS, result); return false; }
   const isPreference = answer.noul >= RETAIN_THRESHOLD;
+  if (!isPreference) { skipped('jev-skip', deps, PREFERENCE_QUESTIONS, result); return false; }
 
   recordJevDecision({
     surface: 'memoryDistill',
@@ -125,7 +167,7 @@ export async function confirmOperatorPreference(
     questions: Object.keys(PREFERENCE_QUESTIONS),
     probabilities: jevAnswerProbabilities(result.answers),
     confidence: jevAnswerConfidences(result.answers),
-    decision: isPreference ? 'preference:retain' : 'preference:skip',
+    decision: 'preference:retain',
     ...decisionResultUsage(result),
   });
 
@@ -144,9 +186,9 @@ export function normalizeDistilledSummary(summary: string): string | null {
 }
 
 /**
- * Decide se o resumo Main-validado de um handoff aceito deve virar memória.
- * Retorna o resumo normalizado quando sim, null quando não (incluindo toda
- * falha do Jev — o fail-open preserva o comportamento atual).
+ * Jev só produz noul/choice/score, não texto livre. A destilação é extrativa:
+ * seleciona um trecho durável do relatório, sem promover o ACK a conteúdo ou
+ * fingir que a aprovação de relevância prova a veracidade do que o agente diz.
  */
 export async function distillHandoffSummary(
   input: { summary: string },
@@ -156,32 +198,69 @@ export async function distillHandoffSummary(
   const enabled = deps.enabled ?? (() => isJevSurfaceEnabled('memoryDistill'));
   const hasKeyFn = deps.hasKey ?? (() => hasDecisionCredential('memoryDistill'));
 
-  const summary = normalizeDistilledSummary(input.summary);
-  if (!summary || AGENT_DIRECTIVE_RE.test(summary) || !enabled() || !hasKeyFn()) return null;
-
+  if (!enabled()) return skipped('flag-off', deps, DISTILL_QUESTIONS);
+  if (!hasKeyFn()) return skipped('no-route', deps, DISTILL_QUESTIONS);
+  if (deps.signal?.aborted) return skipped('aborted', deps, DISTILL_QUESTIONS);
+  // Testar antes do corte de saída também impede esconder diretivas no tail.
+  if (AGENT_DIRECTIVE_RE.test(input.summary)) return skipped('directive', deps, DISTILL_QUESTIONS);
+  const cleaned = capText(input.summary, DISTILL_INPUT_MAX_CHARS)
+    .replace(/Handoff acknowledged by the mission orchestrator\.?/gi, '')
+    .replace(/^[\t ]*(?:[-*]\s*)?(?:\*\*)?Summary:(?:\*\*)?[\t ]*/gim, '');
+  const excerpts = [...new Set(cleaned
+    .split(/\r?\n+|(?<=[.!?])\s+(?=[A-ZÀ-Ü])/u)
+    .map(text => text.replace(/\s+/g, ' ').trim())
+    .filter(Boolean))];
+  if (!excerpts.length) return skipped('empty', deps, DISTILL_QUESTIONS);
+  const candidates: Record<string, string> = Object.fromEntries(
+    excerpts.map((text, index) => [`excerpt_${index}`, text]),
+  );
+  const questions: Record<string, JevQuestion> = {
+    ...DISTILL_QUESTIONS,
+    distilled_summary: {
+      type: 'choice',
+      instructions:
+        'Select the excerpt that best captures a durable project result from this ' +
+        'agent report. Prefer the concrete decision, solved problem or behavior ' +
+        'change over progress, receipt identifiers and acknowledgements. Select ' +
+        'none when no excerpt is useful. This selects content to remember; it ' +
+        'does not verify the agent claim as a fact.',
+      criteria: { ...candidates, none: 'No useful durable result to retain.' },
+    },
+  };
+  let noAnswerReason: JevNoAnswerReason | undefined;
   const result = await judgeFn({
-    state: { summary },
-    questions: DISTILL_QUESTIONS,
+    state: { summary: cleaned.replace(/\s+/g, ' ').trim() },
+    questions,
     timeoutMs: DISTILL_TIMEOUT_MS,
     signal: deps.signal,
     surface: 'memoryDistill',
+    retryOnTimeout: false,
+    onNoAnswer: reason => { noAnswerReason = reason; },
   });
-  if (!result) return null;
+  if (!result) return skipped(noAnswerSkip(noAnswerReason), deps, questions);
 
   const answer = result.answers.worth_retaining;
   const clean = result.answers.instruction_free;
-  if (answer?.type !== 'noul' || clean?.type !== 'noul') return null;
-  const retain = answer.noul >= RETAIN_THRESHOLD && clean.noul >= RETAIN_THRESHOLD;
+  const selection = result.answers.distilled_summary;
+  if (answer?.type !== 'noul' || clean?.type !== 'noul' || selection?.type !== 'choice') {
+    return skipped('malformed', deps, questions, result);
+  }
+  if (clean.noul < RETAIN_THRESHOLD) return skipped('directive', deps, questions, result);
+  if (answer.noul < RETAIN_THRESHOLD || selection.choice === 'none') {
+    return skipped('jev-skip', deps, questions, result);
+  }
+  if (!Object.hasOwn(candidates, selection.choice)) return skipped('malformed', deps, questions, result);
+  const distilled = normalizeDistilledSummary(candidates[selection.choice]!);
+  if (!distilled) return skipped('empty', deps, questions, result);
 
   recordJevDecision({
     surface: 'memoryDistill',
     model: result.model,
-    questions: Object.keys(DISTILL_QUESTIONS),
+    questions: Object.keys(questions),
     probabilities: jevAnswerProbabilities(result.answers),
     confidence: jevAnswerConfidences(result.answers),
-    decision: retain ? 'retain' : 'skip',
+    decision: 'retain',
     ...decisionResultUsage(result),
   });
-
-  return retain ? summary : null;
+  return distilled;
 }

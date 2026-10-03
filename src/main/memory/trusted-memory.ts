@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { recordJevDecision } from '../jev/jev-decision-log';
 import { clampUtf8TextPrefix } from '../../shared/utf8-byte-limits';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import type { ProjectExecutionScope } from '../../shared/types';
@@ -6,6 +7,7 @@ import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import {
   distillHandoffSummary,
   type DistillHandoffSummaryDeps,
+  type MemoryDistillSkipReason,
 } from '../jev/jev-memory-distill';
 import {
   getWorkspaceMemoryStore,
@@ -174,7 +176,10 @@ function trustedContent(
     ? [`# ${event.title}`, '', `${policy.label}:`]
     : [`${policy.label}:`];
   // Knowledge must survive the byte cap even when the evidence list is large.
-  lines.push(`Summary: ${event.summary}`);
+  const provenance = event.type === 'accepted-handoff' || event.type === 'session-digest'
+    ? '[Agent report, unverified; Jev approved for retention, not factual verification.] ' : '';
+  // Keep provenance on the Summary line: the prompt formatter selects that line.
+  lines.push(`Summary: ${provenance}${event.summary}`);
   if (event.missionId) lines.push(`Mission: ${event.missionId}`);
   if (event.reference) lines.push(`Reference: ${event.reference}`);
   if (event.evidenceIds?.length) {
@@ -193,8 +198,7 @@ export function buildAcceptedHandoffTrustedEvent(
 ): TrustedMemoryEvent {
   const input = acceptedHandoffMemoryInputSchema.parse(rawInput);
   const lines = [
-    'Handoff accepted by Nexus Main.',
-    ...(input.distilledSummary ? [`Summary: ${input.distilledSummary}`] : []),
+    ...(input.distilledSummary ? [input.distilledSummary] : []),
     `Handoff: ${input.handoffId}`,
     `Mission: ${input.missionId}`,
     `Task: ${input.taskId}`,
@@ -279,8 +283,9 @@ export function retainAcceptedHandoffMemory(
   scope: ProjectExecutionScope,
   rawInput: AcceptedHandoffMemoryInput,
   options: { supersedes?: string } = {},
-): RetainResult {
+): RetainResult | null {
   requireTrustedMemoryEnabled();
+  if (!rawInput.distilledSummary) { recordMemoryRetentionSkip(scope, 'empty'); return null; }
   return retainParsedTrustedMemory(
     scope,
     buildAcceptedHandoffTrustedEvent(rawInput),
@@ -296,11 +301,13 @@ export function retainAcceptedHandoffMemoryBestEffort(
   if (
     !getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory)
   ) {
+    recordMemoryRetentionSkip(scope, 'flag-off');
     return null;
   }
   try {
     return retainAcceptedHandoffMemory(scope, rawInput, options);
   } catch (error) {
+    recordMemoryRetentionSkip(scope, 'store-unavailable');
     const message = error instanceof Error ? error.message : String(error);
     if (!message.includes('requires configureWorkspaceMemory')) {
       console.warn(
@@ -312,47 +319,26 @@ export function retainAcceptedHandoffMemoryBestEffort(
   }
 }
 
-/**
- * Retenção do handoff aceito com destilação do resumo: a linha de
- * identificadores nasce na hora (no mesmo tick do aceite, como antes do
- * Jev); depois o Jev (superfície memoryDistill) decide se o resumo do agente
- * vale memória e, se sim, uma linha com o `Summary:` destilado substitui a
- * primeira. Fail-open total — sair do app ou Jev fora do ar mantém a linha
- * de identificadores. Nunca lança.
- */
+/** Only Jev-approved substance is retained; receipts alone are not knowledge. */
 export async function retainAcceptedHandoffMemoryDistilledBestEffort(
   scope: ProjectExecutionScope,
   rawInput: AcceptedHandoffMemoryInput,
   agentSummary: string | null | undefined,
   deps: DistillHandoffSummaryDeps = {},
 ): Promise<RetainResult | null> {
-  if (
-    !getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory)
-  ) {
+  try {
+    const event = buildAcceptedHandoffTrustedEvent({ ...rawInput, distilledSummary: undefined });
+    return await distillMemoryWithRetry(scope, event, agentSummary, deps, { summarySuffix: event.summary });
+  } catch {
+    recordMemoryRetentionSkip(scope, 'store-unavailable');
     return null;
   }
-  const base = retainAcceptedHandoffMemoryBestEffort(scope, rawInput);
-  if (!base || !agentSummary?.trim()) return base;
-  let distilled: string | null = null;
-  try {
-    distilled = await distillHandoffSummary({ summary: agentSummary }, deps);
-  } catch {
-    // fail-open: fica a linha de identificadores.
-  }
-  if (!distilled) return base;
-  return (
-    retainAcceptedHandoffMemoryBestEffort(
-      scope,
-      { ...rawInput, distilledSummary: distilled },
-      { supersedes: base.id },
-    ) ?? base
-  );
 }
 
 export const acknowledgedHandoffMemoryInputSchema = z
   .object({
     handoffId: trustedIdentifierSchema,
-    missionId: trustedIdentifierSchema,
+    missionId: trustedIdentifierSchema.optional(),
     status: z.literal('success'),
     mcpReceiptId: trustedIdentifierSchema.optional(),
   })
@@ -362,60 +348,129 @@ export type AcknowledgedHandoffMemoryInput = z.infer<
   typeof acknowledgedHandoffMemoryInputSchema
 >;
 
-/**
- * F-703: entrega de sucesso que o Maestro confirmou com o `nexus_handoff_ack`
- * físico, fora do plano selado (worker aberto pelo `nexus_pane_spawn`). Era o
- * trabalho inteiro da missão HiperGO — 77 entregas confirmadas, zero memórias,
- * porque só a tarefa despachada pelo plano chegava ao aceite. Mesma barreira
- * do aceite: o texto do agente só entra destilado e aprovado pelo Jev (sem
- * diretiva, vale lembrar), numa linha de até 400 caracteres. Diferente do
- * aceite, resumo que o Jev descarta não grava nada: um ACK sem conteúdo não
- * é conhecimento do projeto.
- */
+/** Shared path for delivered helpers, mission handoffs and the ACK fallback. */
 export async function retainAcknowledgedHandoffMemoryBestEffort(
   scope: ProjectExecutionScope,
   rawInput: AcknowledgedHandoffMemoryInput,
   agentSummary: string | null | undefined,
   deps: DistillHandoffSummaryDeps = {},
 ): Promise<RetainResult | null> {
-  if (
-    !getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory) ||
-    !agentSummary?.trim()
-  ) {
-    return null;
-  }
   try {
     const input = acknowledgedHandoffMemoryInputSchema.parse(rawInput);
-    const distilled = await distillHandoffSummary({ summary: agentSummary }, deps);
-    if (!distilled) return null;
-    const lines = [
-      'Handoff acknowledged by the mission orchestrator.',
-      `Summary: ${distilled}`,
-      `Handoff: ${input.handoffId}`,
-      `Mission: ${input.missionId}`,
-      'Status: acknowledged',
-      // Sem o horário do ACK: o Maestro religado confirma a mesma entrega de
-      // novo, e o conteúdo idêntico cai no dedupe do store (a linha guarda a
-      // data sozinha).
-      ...(input.mcpReceiptId ? [`MCP receipt: ${input.mcpReceiptId}`] : []),
-    ];
-    return retainParsedTrustedMemory(
-      scope,
-      trustedMemoryEventSchema.parse({
-        type: 'accepted-handoff',
-        title: 'Acknowledged handoff',
-        summary: lines.join('\n'),
-        missionId: input.missionId,
-        reference: input.handoffId,
-      }),
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!message.includes('requires configureWorkspaceMemory')) {
-      console.warn('[memory] trusted acknowledged-handoff retention unavailable:', message);
-    }
+    return await distillMemoryWithRetry(scope, {
+      type: 'accepted-handoff',
+      title: 'Delivered handoff',
+      summary: 'Pending distillation',
+      ...(input.missionId ? { missionId: input.missionId } : {}),
+      reference: input.handoffId,
+    }, agentSummary, deps, { summarySuffix: `Handoff: ${input.handoffId}` });
+  } catch {
+    recordMemoryRetentionSkip(scope, 'store-unavailable');
     return null;
   }
+}
+
+/** Categorical diagnostics, never the content or exception text. */
+export function recordMemoryRetentionSkip(
+  scope: ProjectExecutionScope | null | undefined,
+  reason: string,
+): void {
+  recordJevDecision({ surface: 'memoryDistill', model: 'unavailable', questions: [],
+    probabilities: {}, decision: `skip:${reason}`, inputTokens: null, usd: null });
+  countMemoryRetentionSkip(scope, reason);
+}
+
+function countMemoryRetentionSkip(scope: ProjectExecutionScope | null | undefined, reason: string): void {
+  if (!scope) return;
+  try { getWorkspaceMemoryStore(scope).recordRetentionSkip(reason); }
+  catch { console.warn('[memory] retention diagnostics unavailable:', reason); }
+}
+
+const pendingRetentionSchema = z.object({
+  event: trustedMemoryEventSchema,
+  agentSummary: z.string().min(1).max(3 * 65_536 + 6),
+  options: z.object({ supersedes: z.string().max(128).optional(), summarySuffix: z.string().max(16_384).optional() }).strict(),
+}).strict();
+const retryableSkips = new Set(['no-route', 'timeout', 'jev-off', 'flag-off', 'aborted', 'malformed']);
+const retryingStores = new WeakSet<object>();
+const pendingWrites = new WeakMap<object, Map<string, Promise<RetainResult | null>>>();
+
+/** Persist failures in the existing workspace database, then redistill on boot/opportunity. */
+export async function distillMemoryWithRetry(
+  scope: ProjectExecutionScope,
+  event: TrustedMemoryEvent,
+  agentSummary: string | null | undefined,
+  deps: DistillHandoffSummaryDeps = {},
+  options: { supersedes?: string; summarySuffix?: string } = {},
+  distillOverride: typeof distillHandoffSummary = distillHandoffSummary,
+): Promise<RetainResult | null> {
+  if (!getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory)) {
+    recordMemoryRetentionSkip(scope, 'flag-off');
+    return null;
+  }
+  if (!agentSummary?.trim()) { recordMemoryRetentionSkip(scope, 'empty'); return null; }
+  let store: ReturnType<typeof getWorkspaceMemoryStore>;
+  try { store = getWorkspaceMemoryStore(scope); }
+  catch { recordMemoryRetentionSkip(scope, 'store-unavailable'); return null; }
+  if (!retryingStores.has(store) && store.stats().retention.pending > 0) {
+    void retryPendingMemoryRetentions(scope, deps, distillOverride).catch(() => {
+      recordMemoryRetentionSkip(scope, 'store-unavailable');
+    });
+  }
+  const payload = pendingRetentionSchema.parse({ event, agentSummary, options });
+  const key = JSON.stringify(payload);
+  const pending = pendingWrites.get(store) ?? new Map<string, Promise<RetainResult | null>>();
+  if (pending.has(key)) return pending.get(key)!;
+  pendingWrites.set(store, pending);
+  const attempt = (async () => {
+    let reason: string | undefined;
+    const onSkip = (skip: MemoryDistillSkipReason) => { reason = skip; countMemoryRetentionSkip(scope, skip); deps.onSkip?.(skip); };
+    const queuedId = store.enqueueRetention(key);
+    try {
+      const approved = await distillOverride({ summary: agentSummary }, { ...deps, onSkip });
+      if (!approved) {
+        if (!reason) { reason = 'jev-skip'; recordMemoryRetentionSkip(scope, reason); deps.onSkip?.('jev-skip'); }
+        if (!retryableSkips.has(reason)) store.removePendingRetention(queuedId);
+        return null;
+      }
+      const summary = options.summarySuffix ? `${approved}\n${options.summarySuffix}` : approved;
+      const result = retainParsedTrustedMemory(scope, trustedMemoryEventSchema.parse({ ...event, summary }), options);
+      store.removePendingRetention(queuedId);
+      return result;
+    } catch {
+      recordMemoryRetentionSkip(scope, 'store-unavailable');
+      return null;
+    }
+  })();
+  pending.set(key, attempt);
+  try { return await attempt; }
+  finally { pending.delete(key); }
+}
+
+export async function retryPendingMemoryRetentions(
+  scope: ProjectExecutionScope,
+  deps: DistillHandoffSummaryDeps = {},
+  distillOverride: typeof distillHandoffSummary = distillHandoffSummary,
+): Promise<void> {
+  if (!getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory)) return;
+  const store = getWorkspaceMemoryStore(scope);
+  if (retryingStores.has(store)) return;
+  retryingStores.add(store);
+  try {
+    for (const row of store.pendingRetentions()) {
+      let payload: z.infer<typeof pendingRetentionSchema>;
+      try { payload = pendingRetentionSchema.parse(JSON.parse(row.payload)); }
+      catch { recordMemoryRetentionSkip(scope, 'malformed'); store.removePendingRetention(row.id); continue; }
+      if (payload.options.supersedes && store.activeWorkspaceSource(payload.options.supersedes) !== `trusted:${payload.event.type}`) {
+        delete payload.options.supersedes;
+      }
+      let skipped: string | undefined;
+      const result = await distillMemoryWithRetry(scope, payload.event, payload.agentSummary,
+        { ...deps, onSkip: (reason) => { skipped = reason; deps.onSkip?.(reason); } }, payload.options, distillOverride);
+      if (result || (skipped && !retryableSkips.has(skipped))) store.removePendingRetention(row.id);
+      if (skipped && retryableSkips.has(skipped)) break; // provider unavailable: avoid hammering the backlog
+    }
+  } finally { retryingStores.delete(store); }
 }
 
 /**
@@ -430,11 +485,13 @@ export function retainTrustedMemoryBestEffort(
   if (
     !getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory)
   ) {
+    recordMemoryRetentionSkip(scope, 'flag-off');
     return null;
   }
   try {
     return retainTrustedMemory(scope, rawEvent, options);
   } catch (error) {
+    recordMemoryRetentionSkip(scope, 'store-unavailable');
     const message = error instanceof Error ? error.message : String(error);
     if (!message.includes('requires configureWorkspaceMemory')) {
       console.warn(

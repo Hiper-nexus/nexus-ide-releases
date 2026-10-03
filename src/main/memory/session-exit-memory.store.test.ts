@@ -147,7 +147,7 @@ describe('session-exit digest com o handoff-store real', () => {
     expect(hit?.source).toBe('trusted:session-digest');
   });
 
-  it('declaração de sucesso sem evidência verificada não vira memória trusted', async () => {
+  it('F-768: declaração de sucesso sem evidência passa pela barreira Jev e mantém a procedência', async () => {
     const handoffs = createScopedHandoffStore(runtime, scope, { idFactory: () => 'handoff-b' });
     handoffs.submit({
       sessionId: 'session-a',
@@ -157,10 +157,13 @@ describe('session-exit digest com o handoff-store real', () => {
 
     const outcome = await distillSessionExitMemory(
       { sessionId: 'session-a', agent: agent() },
-      { getStores: () => ({ handoffs }), distill: approve },
+      { getStores: () => ({ handoffs }), distill: async () => 'Helper reported test results; rerun tests before relying on them.' },
     );
 
-    expect(outcome).toMatchObject({ retained: false, reason: 'unverified' });
-    expect(getWorkspaceMemoryStore(scope).stats().workspace.total).toBe(0);
+    expect(outcome).toMatchObject({ retained: true, reason: 'ok' });
+    const [hit] = getWorkspaceMemoryStore(scope).recall({ query: 'test results', includeGlobal: false });
+    expect(hit?.content).toContain('Helper reported test results');
+    expect(hit?.content).toContain('Agent report, unverified; Jev approved for retention, not factual verification.');
+    expect(hit?.content).not.toContain('todos os testes passam');
   });
 });

@@ -145,6 +145,8 @@ export interface MemoryBankStats {
 }
 
 export interface WorkspaceMemoryStats {
+  /** Durable write diagnostics; contains no agent text. */
+  readonly retention: { readonly skips: Readonly<Record<string, number>>; readonly pending: number };
   readonly workspace: MemoryBankStats;
   readonly global: MemoryBankStats;
   /** Counts of the readable projection, served without a full re-read. */
@@ -235,6 +237,12 @@ const projectionMemoryRowSchema = z.object({
 // memories_fts é FTS5 de conteúdo externo (content='memories') mantida em
 // sincronia pelos triggers ai/ad/au — o mesmo padrão do fts_episodes do beam.
 const SCHEMA = `
+CREATE TABLE IF NOT EXISTS memory_retention_skips (
+  reason TEXT PRIMARY KEY, count INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS memory_retention_pending (
+  id TEXT PRIMARY KEY, payload TEXT NOT NULL, created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS memories (
   id               TEXT PRIMARY KEY,
   content          TEXT NOT NULL,
@@ -395,6 +403,19 @@ export class WorkspaceMemoryStore {
     }
     if (options.projectionRoot) {
       this.#registerProjectionRootBestEffort(options.projectionRoot);
+    }
+    // F-768: retire only recognizable historical receipts with no substance.
+    const legacyReceipts = this.#workspaceDb.prepare(`SELECT id, content FROM memories
+      WHERE source = 'trusted:accepted-handoff' AND superseded_by IS NULL
+      AND (content LIKE '%Summary: Handoff accepted by Nexus Main.%'
+        OR content LIKE '%Summary: Handoff acknowledged by the mission orchestrator.%')`)
+      .all() as Array<{ id: string; content: string }>;
+    for (const row of legacyReceipts) {
+      const summaries = row.content.split('\n').filter((line) => line.startsWith('Summary:'))
+        .map((line) => line.slice('Summary:'.length).trim());
+      if (summaries.every((summary) => /^(?:Handoff accepted by Nexus Main\.|Handoff acknowledged by the mission orchestrator\.)$/.test(summary))) {
+        this.forget(row.id);
+      }
     }
   }
 
@@ -1125,9 +1146,43 @@ export class WorkspaceMemoryStore {
     return false;
   }
 
+  recordRetentionSkip(reason: string): void {
+    this.#assertOpen();
+    this.#workspaceDb.prepare(`INSERT INTO memory_retention_skips(reason, count) VALUES (?, 1)
+      ON CONFLICT(reason) DO UPDATE SET count = count + 1`).run(reason);
+  }
+
+  enqueueRetention(payload: string): string {
+    this.#assertOpen();
+    // Pending text receives the same secret scrub as canonical memory.
+    const safePayload = redactSecretText(payload).text;
+    const id = createHash('sha256').update(safePayload).digest('hex');
+    this.#workspaceDb.prepare(`INSERT OR IGNORE INTO memory_retention_pending(id, payload, created_at)
+      VALUES (?, ?, ?)`).run(id, safePayload, this.#now());
+    return id;
+  }
+
+  pendingRetentions(): Array<{ id: string; payload: string }> {
+    this.#assertOpen();
+    return this.#workspaceDb.prepare(`SELECT id, payload FROM memory_retention_pending
+      ORDER BY created_at, id LIMIT 20`).all() as Array<{ id: string; payload: string }>;
+  }
+
+  removePendingRetention(id: string): void {
+    this.#assertOpen();
+    this.#workspaceDb.prepare('DELETE FROM memory_retention_pending WHERE id = ?').run(id);
+  }
+
   stats(): WorkspaceMemoryStats {
     this.#assertOpen();
     return Object.freeze({
+      retention: Object.freeze({
+        skips: Object.freeze(Object.fromEntries(
+          (this.#workspaceDb.prepare('SELECT reason, count FROM memory_retention_skips').all() as Array<{ reason: string; count: number }>)
+            .map((row) => [row.reason, row.count]),
+        )),
+        pending: (this.#workspaceDb.prepare('SELECT COUNT(*) AS n FROM memory_retention_pending').get() as { n: number }).n,
+      }),
       workspace: this.#statsFor(this.#workspaceDb),
       global: this.#statsFor(this.#globalDb),
       projection: this.#projectionStats(),
@@ -1405,6 +1460,12 @@ export function getWorkspaceMemoryStore(
     ...(runtimeOptions.now ? { now: runtimeOptions.now } : {}),
   });
   storesByProject.set(scope.projectId, store);
+  // First open after boot is a retry opportunity, independently of new handoffs.
+  if (store.pendingRetentions().length > 0) {
+    void import('./trusted-memory').then(({ retryPendingMemoryRetentions }) =>
+      retryPendingMemoryRetentions(scope as ProjectExecutionScope),
+    ).catch(() => { console.warn('[memory] pending retention replay unavailable'); });
+  }
   return store;
 }
 

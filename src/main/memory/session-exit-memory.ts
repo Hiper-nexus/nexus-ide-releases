@@ -1,27 +1,23 @@
 /**
  * Destilação de memória no fim de sessão de pane (fatia 2 da memória Jev).
  * Quando um pane de CLI termina, os resumos dos handoffs de sucesso daquela
- * sessão com evidência verificada pelo Main (`evidenceTrust: nexus-trusted`)
- * viram UMA linha trusted `session-digest` — se o Jev aprovar. Declaração do
- * agente sem evidência nunca vira memória trusted.
+ * sessão viram UMA linha `session-digest` — se o Jev aprovar a retenção. A
+ * procedência deixa explícito que relato de agente não é prova factual.
  *
  * Ordens de custo: sessão trivial (sem handoff com resumo), duplicata contra
  * o top-3 do FTS5 e o mesmo digest já aguardando o Jev pulam com ZERO
  * chamadas ao Jev. Sem teto diário (decisão do operador, 2026-09-27): o que
  * segura tempestade de saídas simultâneas é o dedupe por conteúdo, não uma
- * cota. Fail-open: qualquer falha apenas não grava.
+ * cota. Jev indisponível deixa o resumo na fila durável para uma nova chance.
  */
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getProjectDomainStores } from '../orch/project-domain-store-registry';
 import type { OwnedAgentSessionInfo } from '../pty/pty-manager';
 import { tapSessionExit } from '../pty/pty-manager';
-import {
-  normalizeDistilledSummary,
-  distillHandoffSummary,
-} from '../jev/jev-memory-distill';
+import { distillHandoffSummary } from '../jev/jev-memory-distill';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
-import { retainTrustedMemoryBestEffort } from './trusted-memory';
+import { distillMemoryWithRetry, recordMemoryRetentionSkip } from './trusted-memory';
 import { getWorkspaceMemoryStore } from './workspace-memory';
 
 /** Resumos por sessão que entram no digest. */
@@ -36,7 +32,6 @@ export interface SessionDigestOutcome {
     | 'flag-off'
     | 'store-unavailable'
     | 'trivial'
-    | 'unverified'
     | 'dedupe'
     | 'jev-skip'
     | 'ok';
@@ -80,11 +75,15 @@ export async function distillSessionExitMemory(
   deps: SessionExitMemoryDeps = {},
 ): Promise<SessionDigestOutcome> {
   const scope = input.agent?.scope;
-  if (!scope) return { retained: false, reason: 'no-scope' };
+  const skip = (reason: Exclude<SessionDigestOutcome['reason'], 'ok'>): SessionDigestOutcome => {
+    recordMemoryRetentionSkip(scope, reason);
+    return { retained: false, reason };
+  };
+  if (!scope) return skip('no-scope');
   if (
     !getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory)
   ) {
-    return { retained: false, reason: 'flag-off' };
+    return skip('flag-off');
   }
 
   let handoffs: SessionHandoffRow[];
@@ -100,7 +99,7 @@ export async function distillSessionExitMemory(
       includeDelivered: true,
     });
   } catch {
-    return { retained: false, reason: 'store-unavailable' };
+    return skip('store-unavailable');
   }
 
   const delivered = handoffs.filter(
@@ -110,22 +109,26 @@ export async function distillSessionExitMemory(
       typeof handoff.summary === 'string' &&
       handoff.summary.trim(),
   );
-  if (delivered.length === 0) return { retained: false, reason: 'trivial' };
+  if (delivered.length === 0) return skip('trivial');
   const summaries = delivered
-    .filter((handoff) => handoff.evidenceTrust === 'nexus-trusted')
     // list() vem em created_at ASC: os mais recentes são o fim da sessão.
     .slice(-DIGEST_MAX_HANDOFFS)
     .map((handoff) => handoff.summary!.trim());
-  if (summaries.length === 0) return { retained: false, reason: 'unverified' };
+  // O limite de 400 chars é do resultado destilado. Cortar a entrada aqui
+  // apagava correções e fatos do fim da sessão antes da avaliação do Jev.
+  const digest = summaries.join(' | ').replace(/\s+/g, ' ').trim();
+  if (!digest) return skip('trivial');
 
-  const digest = normalizeDistilledSummary(summaries.join(' | '));
-  if (!digest) return { retained: false, reason: 'trivial' };
-
-  const store = getWorkspaceMemoryStore(scope);
+  let store: ReturnType<typeof getWorkspaceMemoryStore>;
+  try {
+    store = getWorkspaceMemoryStore(scope);
+  } catch {
+    return skip('store-unavailable');
+  }
   // Saídas simultâneas com o mesmo conteúdo: só a primeira vai ao Jev (o FTS
   // ainda não vê a linha que ela vai gravar).
   const pending = pendingDigests.get(store) ?? new Set<string>();
-  if (pending.has(digest)) return { retained: false, reason: 'dedupe' };
+  if (pending.has(digest)) return skip('dedupe');
   pending.add(digest);
   pendingDigests.set(store, pending);
   try {
@@ -137,35 +140,39 @@ export async function distillSessionExitMemory(
       trustedOnly: true,
     });
     if (hits.some((hit) => hit.content.includes(digest))) {
-      return { retained: false, reason: 'dedupe' };
+      return skip('dedupe');
     }
-
-    const distill = deps.distill ?? distillHandoffSummary;
-    const approved = await distill({ summary: digest });
-    if (!approved) return { retained: false, reason: 'jev-skip' };
 
     // O digest anterior da missão é achado pela identidade, não por palavras.
     const missionId = input.agent?.missionId;
     const stale = missionId
       ? store.latestActiveWithLine(SESSION_DIGEST_SOURCE, `Mission: ${missionId}`)
       : null;
-    const result = retainTrustedMemoryBestEffort(
+    const result = await distillMemoryWithRetry(
       scope,
       {
         type: 'session-digest',
         title: 'Session digest',
-        summary: digest,
+        // Só o resultado aprovado substitui este marcador. Não duplicar o
+        // digest bruto na fila nem aplicar o teto de um handoff ao conjunto.
+        summary: 'Pending distillation',
         ...(missionId ? { missionId } : {}),
         reference: input.sessionId,
       },
+      digest,
+      {},
       stale ? { supersedes: stale } : {},
+      deps.distill ?? distillHandoffSummary,
     );
-    if (!result) return { retained: false, reason: 'store-unavailable' };
+    // O helper registra a razão precisa (incluindo timeout/sem rota) e fila.
+    if (!result) return { retained: false, reason: 'jev-skip' };
     return {
       retained: true,
       reason: 'ok',
       ...(stale ? { supersededId: stale } : {}),
     };
+  } catch {
+    return skip('store-unavailable');
   } finally {
     pending.delete(digest);
     if (pending.size === 0) pendingDigests.delete(store);
@@ -182,7 +189,7 @@ export function ensureSessionExitMemoryDistiller(): void {
   if (ensureDisposer) return;
   ensureDisposer = tapSessionExit((sessionId, agent) => {
     void distillSessionExitMemory({ sessionId, agent }).catch(() => {
-      // best-effort: sem memória é melhor que pane preso no exit.
+      recordMemoryRetentionSkip(agent?.scope, 'store-unavailable');
     });
   });
 }

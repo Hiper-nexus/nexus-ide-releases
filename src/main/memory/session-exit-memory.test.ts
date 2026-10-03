@@ -13,6 +13,7 @@ import {
   getWorkspaceMemoryStore,
 } from './workspace-memory';
 import { distillSessionExitMemory } from './session-exit-memory';
+import * as trustedMemory from './trusted-memory';
 
 const dirs: string[] = [];
 let scope: ProjectExecutionScope;
@@ -72,6 +73,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   disposeWorkspaceMemoryStores();
   getFeatureFlagRegistry().clearOverride(FEATURE_FLAG_IDS.workspaceMemory);
   for (const dir of dirs.splice(0)) {
@@ -80,6 +82,101 @@ afterEach(() => {
 });
 
 describe('session-exit memory distillation', () => {
+  it('F-768: registra o motivo de cada sessão que pula antes do Jev', async () => {
+    const recordSkip = vi.spyOn(trustedMemory, 'recordMemoryRetentionSkip');
+    expect(await distillSessionExitMemory({ sessionId: 'missing-scope', agent: null }))
+      .toMatchObject({ retained: false, reason: 'no-scope' });
+    expect(recordSkip).toHaveBeenCalledWith(undefined, 'no-scope');
+
+    getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.workspaceMemory, false);
+    expect(await distillSessionExitMemory({ sessionId: 'pty-session-1', agent: agent({ scope }) }))
+      .toMatchObject({ retained: false, reason: 'flag-off' });
+    expect(recordSkip).toHaveBeenCalledWith(scope, 'flag-off');
+    getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.workspaceMemory, true);
+
+    expect(await distillSessionExitMemory(
+      { sessionId: 'pty-session-1', agent: agent({ scope }) },
+      { getStores: () => { throw new Error('runtime unavailable'); } },
+    )).toMatchObject({ retained: false, reason: 'store-unavailable' });
+    expect(recordSkip).toHaveBeenCalledWith(scope, 'store-unavailable');
+
+    expect(await distillSessionExitMemory(
+      { sessionId: 'pty-session-1', agent: agent({ scope }) },
+      { getStores: () => stores([]) },
+    )).toMatchObject({ retained: false, reason: 'trivial' });
+    expect(recordSkip).toHaveBeenCalledWith(scope, 'trivial');
+    expect(getWorkspaceMemoryStore(scope).stats().retention.skips).toMatchObject({
+      'flag-off': 1,
+      'store-unavailable': 1,
+      trivial: 1,
+    });
+  });
+
+  it('F-768: retém o resumo aprovado de um handoff não verificado, com procedência explícita', async () => {
+    const outcome = await distillSessionExitMemory(
+      { sessionId: 'pty-session-1', agent: agent({ scope }) },
+      {
+        getStores: () => stores([{ id: 'unverified', sessionId: 'pty-session-1', status: 'success',
+          summary: 'Helper afirma que a versão é v2.0.0.', evidenceTrust: 'unverified' }]),
+        distill: async () => 'Helper reported a version change; verify the current release version.',
+      },
+    );
+    expect(outcome).toMatchObject({ retained: true, reason: 'ok' });
+    const [hit] = getWorkspaceMemoryStore(scope).recall({ query: 'version change', includeGlobal: false });
+    expect(hit?.content).toContain('Helper reported a version change; verify the current release version.');
+    expect(hit?.content).toContain('Agent report, unverified; Jev approved for retention, not factual verification.');
+    expect(hit?.content).not.toContain('v2.0.0');
+  });
+
+  it('F-768: envia o digest completo ao Jev antes de limitar o resumo retido', async () => {
+    const summary = `${'Parser accepts explicit timezones. '.repeat(20)}The final correction rejects invalid dates.`;
+    const distill = vi.fn<typeof distillHandoffSummary>(async () => 'Parser rejects invalid dates.');
+    await distillSessionExitMemory(
+      { sessionId: 'pty-session-1', agent: agent({ scope }) },
+      { getStores: () => stores([handoff('h-long', summary)]), distill },
+    );
+    expect(distill.mock.calls[0]?.[0]).toEqual({ summary });
+    const [hit] = getWorkspaceMemoryStore(scope).recall({ query: 'invalid dates', includeGlobal: false });
+    expect(hit?.content).toContain('Parser rejects invalid dates.');
+    expect(hit?.content).not.toContain('explicit timezones');
+  });
+
+  it('F-768: três resumos válidos podem ultrapassar o teto de um handoff', async () => {
+    const summaries = [
+      `${'date parser '.repeat(4_000)}Initial implementation.`,
+      `${'date parser '.repeat(4_000)}Timezone support.`,
+      `${'date parser '.repeat(4_000)}Final fix rejects invalid dates.`,
+    ];
+    const distill = vi.fn<typeof distillHandoffSummary>(async () => 'Parser rejects invalid dates.');
+    const outcome = await distillSessionExitMemory(
+      { sessionId: 'pty-session-1', agent: agent({ scope }) },
+      { getStores: () => stores(summaries.map((summary, index) => handoff(`h-${index}`, summary))), distill },
+    );
+    expect(outcome).toMatchObject({ retained: true, reason: 'ok' });
+    expect(distill.mock.calls[0]?.[0]).toEqual({ summary: summaries.join(' | ') });
+  });
+
+  it('F-768: timeout mantém o digest pendente até a redestilação aprovada', async () => {
+    const outcome = await distillSessionExitMemory(
+      { sessionId: 'pty-session-1', agent: agent({ scope }) },
+      {
+        getStores: () => stores([handoff('h-retry', 'Unverified raw parser claim.')]),
+        distill: async (_input, deps) => { deps?.onSkip?.('timeout'); return null; },
+      },
+    );
+    expect(outcome).toMatchObject({ retained: false, reason: 'jev-skip' });
+    const store = getWorkspaceMemoryStore(scope);
+    expect(store.stats().retention.pending).toBe(1);
+    expect(store.stats().workspace.total).toBe(0);
+
+    await trustedMemory.retryPendingMemoryRetentions(scope, {}, async () => 'Parser behavior needs verification.');
+    expect(store.stats().retention.pending).toBe(0);
+    const [hit] = store.recall({ query: 'parser behavior', includeGlobal: false });
+    expect(hit?.content).toContain('Parser behavior needs verification.');
+    expect(hit?.content).not.toContain('Unverified raw parser claim');
+    expect(hit?.content).toContain('not factual verification');
+  });
+
   it('skips a trivial session with zero Jev calls', async () => {
     const distill = vi.fn<typeof distillHandoffSummary>();
     const outcome = await distillSessionExitMemory(

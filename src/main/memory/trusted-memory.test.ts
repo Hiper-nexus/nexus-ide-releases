@@ -19,6 +19,7 @@ import {
   trustedMemoryEventSchema,
   TRUSTED_MEMORY_EVENT_TYPES,
 } from './trusted-memory';
+import { configureJevDecisionLog } from '../jev/jev-decision-log';
 import type { judge as jevJudge } from '../jev/jev-client';
 
 const dirs: string[] = [];
@@ -57,10 +58,12 @@ beforeEach(() => {
     identitySource: 'manifest',
   };
   configureWorkspaceMemory({ baseDir });
+  configureJevDecisionLog(path.join(baseDir, 'jev'));
   getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.workspaceMemory, true);
 });
 
 afterEach(() => {
+  configureJevDecisionLog(undefined);
   disposeWorkspaceMemoryStores();
   getFeatureFlagRegistry().clearOverride(FEATURE_FLAG_IDS.workspaceMemory);
   for (const dir of dirs.splice(0)) {
@@ -149,7 +152,8 @@ describe('trusted automatic memory retention', () => {
       }),
     ).toThrow(/canonical Main-owned projection/);
 
-    retainAcceptedHandoffMemory(scope, input);
+    expect(retainAcceptedHandoffMemory(scope, input)).toBeNull();
+    retainAcceptedHandoffMemory(scope, { ...input, distilledSummary: 'Main checked the dispatch binding.' });
     const [hit] = getWorkspaceMemoryStore(scope).recall({
       query: 'handoff task dispatch accepted',
       includeGlobal: false,
@@ -173,7 +177,7 @@ describe('trusted automatic memory retention', () => {
       distilledSummary: 'Fixed pane focus loss.\nMission: forged line',
     });
     expect(event.summary).toContain(
-      'Summary: Fixed pane focus loss. Mission: forged line',
+      'Fixed pane focus loss. Mission: forged line',
     );
     expect(event.summary).not.toContain('\nMission: forged line');
 
@@ -187,7 +191,7 @@ describe('trusted automatic memory retention', () => {
       trustedOnly: true,
     });
     expect(hit.content).toContain(
-      'Summary: Shipped stable sessions across distributed panes.',
+      'Shipped stable sessions across distributed panes.',
     );
     expect(hit.source).toBe('trusted:accepted-handoff');
   });
@@ -209,7 +213,7 @@ describe('trusted automatic memory retention', () => {
       distilledSummary: summary,
     });
     const [hit] = getWorkspaceMemoryStore(scope).recall({ query: 'accepted', includeGlobal: false, trustedOnly: true });
-    expect(hit.content).toContain(`Summary: ${summary}`);
+    expect(hit.content).toContain(`${summary}`);
     expect(Buffer.byteLength(hit.content)).toBeLessThanOrEqual(7_800);
   });
 
@@ -220,6 +224,7 @@ describe('trusted automatic memory retention', () => {
       answers: {
         worth_retaining: { type: 'noul', noul: 0.9 },
         instruction_free: { type: 'noul', noul: 0.95 },
+        distilled_summary: { type: 'choice', choice: 'excerpt_0', probabilities: { excerpt_0: 0.95, none: 0.05 }, confidence: 0.95 },
       },
     }));
 
@@ -236,12 +241,12 @@ describe('trusted automatic memory retention', () => {
       includeGlobal: false,
       trustedOnly: true,
     });
-    expect(hit.content).toContain('Summary: Slice shipped: workspace memory');
+    expect(hit.content).toContain('Slice shipped: workspace memory');
     expect(hit.source).toBe('trusted:accepted-handoff');
   });
 
-  it('fails open to the identifier-only line when Jev is unavailable', async () => {
-    const judge = vi.fn<typeof jevJudge>(async () => null);
+  it('F-768: Jev indisponível não cria recibo vazio e enfileira o conteúdo', async () => {
+    const judge = vi.fn<typeof jevJudge>(async (request) => { request.onNoAnswer?.('timeout'); return null; });
 
     const result = await retainAcceptedHandoffMemoryDistilledBestEffort(
       scope,
@@ -250,17 +255,14 @@ describe('trusted automatic memory retention', () => {
       { judge, enabled: () => true, hasKey: () => true },
     );
 
-    expect(result).not.toBeNull();
-    const [hit] = getWorkspaceMemoryStore(scope).recall({
-      query: 'handoff task dispatch accepted',
-      includeGlobal: false,
-      trustedOnly: true,
-    });
-    expect(hit.content).toContain('Handoff: handoff-7');
-    expect(hit.content).not.toContain('should NOT be retained');
+    expect(result).toBeNull();
+    const stats = getWorkspaceMemoryStore(scope).stats();
+    expect(stats.workspace.active).toBe(0);
+    expect(stats.retention.pending).toBe(1);
+    expect(stats.retention.skips.timeout).toBe(1);
   });
 
-  it('a linha de identificadores nasce no mesmo tick, sem esperar o Jev', async () => {
+  it('F-768: não grava identificadores enquanto espera o Jev', async () => {
     let release: (value: Awaited<ReturnType<typeof jevJudge>>) => void = () => {};
     const judge = vi.fn<typeof jevJudge>(
       () => new Promise((resolve) => { release = resolve; }),
@@ -272,7 +274,7 @@ describe('trusted automatic memory retention', () => {
       { judge, enabled: () => true, hasKey: () => true },
     );
     const store = getWorkspaceMemoryStore(scope);
-    expect(store.stats().workspace.active).toBe(1);
+    expect(store.stats().workspace.active).toBe(0);
 
     release({
       model: 'jev-1.13.0',
@@ -280,13 +282,14 @@ describe('trusted automatic memory retention', () => {
       answers: {
         worth_retaining: { type: 'noul', noul: 0.9 },
         instruction_free: { type: 'noul', noul: 0.95 },
+        distilled_summary: { type: 'choice', choice: 'excerpt_0', probabilities: { excerpt_0: 0.95, none: 0.05 }, confidence: 0.95 },
       },
     });
     await pending;
     expect(store.stats().workspace.active).toBe(1);
     const [hit] = store.recall({ query: 'parser datas fuso', includeGlobal: false, trustedOnly: true });
     expect(hit.content).toContain('Handoff: handoff-7');
-    expect(hit.content).toContain('Summary: Parser de datas');
+    expect(hit.content).toContain('Parser de datas');
   });
 
   describe('entrega confirmada pelo Maestro fora do plano selado (F-703)', () => {
@@ -303,6 +306,7 @@ describe('trusted automatic memory retention', () => {
         answers: {
           worth_retaining: { type: 'noul', noul: worth },
           instruction_free: { type: 'noul', noul: 0.95 },
+        distilled_summary: { type: 'choice', choice: 'excerpt_0', probabilities: { excerpt_0: 0.95, none: 0.05 }, confidence: 0.95 },
         },
       }));
     const on = { enabled: () => true, hasKey: () => true };
@@ -321,8 +325,10 @@ describe('trusted automatic memory retention', () => {
         trustedOnly: true,
       });
       expect(hit.source).toBe('trusted:accepted-handoff');
-      expect(hit.content).toContain('Handoff acknowledged by the mission orchestrator.');
-      expect(hit.content).toContain('Summary: RU-268 rodada 2: PASS');
+      expect(hit.content).not.toContain('Handoff acknowledged by the mission orchestrator.');
+      expect(hit.content).toContain('Agent report, unverified');
+      expect(hit.content.match(/Summary:/g)).toHaveLength(1);
+      expect(hit.content).toContain('RU-268 rodada 2: PASS');
       expect(hit.content).toContain('Handoff: handoff-9');
 
       // Maestro religado confirma a mesma entrega: continua uma memória só.

@@ -26,6 +26,7 @@ import type { MissionEngine } from "./mission-engine";
 import {
   retainAcceptedHandoffMemoryDistilledBestEffort,
   retainAcknowledgedHandoffMemoryBestEffort,
+  recordMemoryRetentionSkip,
 } from "../memory/trusted-memory";
 import {
   encodeJsonArray,
@@ -870,7 +871,15 @@ export class ScopedHandoffStore {
               : {}),
           },
           committed.handoff.summary,
-        ).catch(() => {});
+        ).catch(() =>
+          recordMemoryRetentionSkip(this.#binding.scope, "store-unavailable"),
+        );
+      } else if (
+        committed.handoff.status === "success" &&
+        !committed.handoff.missionId &&
+        !committed.taskDispatch
+      ) {
+        this.#retainAcknowledgedHandoffMemory(committed.handoff.id);
       }
     }
     return {
@@ -1521,6 +1530,7 @@ export class ScopedHandoffStore {
       .run(now, id);
     if (result.changes === 0) return false;
     this.#binding.emitChange();
+    this.#retainAcknowledgedHandoffMemory(id);
     return true;
   }
 
@@ -1725,7 +1735,10 @@ export class ScopedHandoffStore {
         return true;
       })
       .immediate();
-    if (accepted) this.#binding.emitChange();
+    if (accepted) {
+      this.#binding.emitChange();
+      this.#retainAcknowledgedHandoffMemory(handoffId);
+    }
     return accepted;
   }
 
@@ -1925,15 +1938,16 @@ export class ScopedHandoffStore {
   }
 
   /**
-   * F-703: a entrega de sucesso confirmada pelo Maestro vira memória do
-   * projeto. A tarefa do plano selado já foi retida no aceite (mesmo handoff
-   * na fila de despacho) e fica de fora. Assíncrono e best-effort: a
-   * destilação é uma chamada ao Jev e nunca segura o ACK.
+   * F-768/F-703: helper sem missão no commit e entrega ao Maestro usam a
+   * mesma destilação. O ACK conserva o fallback; a memória deduplica conteúdo.
+   * Tarefa do plano selado já foi retida no aceite e fica de fora.
+   * Assíncrono e best-effort: o Jev nunca segura a entrega nem o ACK.
    */
-  #retainAcknowledgedHandoffMemory(id: string, missionId: string): void {
+  #retainAcknowledgedHandoffMemory(id: string, missionId?: string): void {
     try {
       const handoff = this.get(id);
       if (handoff?.status !== "success" || !handoff.summary?.trim()) return;
+      const memoryMissionId = missionId ?? handoff.missionId;
       const dispatched = this.#binding
         .readDatabase()
         .prepare(`SELECT 1 FROM task_dispatch_queue WHERE handoff_id = ? LIMIT 1`)
@@ -1943,16 +1957,19 @@ export class ScopedHandoffStore {
         this.#binding.scope,
         {
           handoffId: id,
-          missionId,
+          ...(memoryMissionId ? { missionId: memoryMissionId } : {}),
           status: "success",
           ...(handoff.mcpProvenance
             ? { mcpReceiptId: handoff.mcpProvenance.receiptId }
             : {}),
         },
         handoff.summary,
-      ).catch(() => {});
+      ).catch(() =>
+        recordMemoryRetentionSkip(this.#binding.scope, "store-unavailable"),
+      );
     } catch {
       // Memória é contabilidade derivada: nunca desfaz nem trava o ACK.
+      recordMemoryRetentionSkip(this.#binding.scope, "store-unavailable");
     }
   }
 

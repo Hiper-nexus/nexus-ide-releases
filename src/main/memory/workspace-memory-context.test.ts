@@ -88,7 +88,7 @@ describe('automatic workspace-memory recall', () => {
     );
   });
 
-  it('recibos sem aprendizado ficam auditáveis, mas não ocupam o contexto automático', () => {
+  it('recibos sem aprendizado não viram memória nem ocupam o contexto automático', () => {
     const receipt = { missionId: 'm', taskId: 't', dispatchId: 'd', status: 'success' as const, acceptedAt: 1 };
     retainAcceptedHandoffMemory(scope, { ...receipt, handoffId: 'receipt-only' });
     expect(standingWorkspaceMemoryBlock(scope)).toBeNull();
@@ -101,7 +101,7 @@ describe('automatic workspace-memory recall', () => {
     expect(block).not.toContain('Handoff:');
     expect(block).not.toContain('Dispatch:');
     const stored = getWorkspaceMemoryStore(scope).recall({ query: 'Handoff', trustedOnly: true });
-    expect(stored.some((hit) => hit.content.includes('receipt-only'))).toBe(true);
+    expect(stored.some((hit) => hit.content.includes('receipt-only'))).toBe(false);
   });
 
   it('injeta notas de agentes e do operador numa seção não verificada, com teto menor (F-769)', () => {
