@@ -18,7 +18,9 @@ vi.mock('./mimo-scanner', () => ({ MimoUsageScanner: class {
   constructor(callback: typeof deps.mimoEvent) { deps.mimoEvent = callback; }
   start() { deps.mimoStarts++; } bind() {} remove() {} stop() { return deps.stops.get('mimo'); }
 } }));
-vi.mock('../agent-hooks/mimo-session-registry', () => ({ tapMimoSessionBindings: (callback: typeof deps.mimoTap) => {
+vi.mock('../agent-hooks/mimo-session-registry', () => ({ isMimoUsageBindingProved: () => true,
+  resolveMimoUsageBinding: (binding: unknown) => binding,
+  releaseMimoUsageBinding: () => {}, tapMimoSessionBindings: (callback: typeof deps.mimoTap) => {
   deps.mimoTap = callback; return () => { deps.mimoTap = null; };
 } }));
 vi.mock('../persistence/provider-session-store', () => ({ saveProviderPaneSession: () => true,

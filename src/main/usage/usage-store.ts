@@ -427,16 +427,13 @@ export class ScopedUsageStore {
   record(
     rawProvider: UsageProvider,
     rawRecord: UsageRecord,
+    options: { readonly exactNativeAttribution?: true } = {},
   ): boolean {
     const provider = usageProviderSchema.parse(rawProvider);
+    if (options.exactNativeAttribution && provider !== 'mimo-code') throw new Error('Exact native attribution requires MiMo');
     const record = usageEventSchema.parse(rawRecord);
     const db = this.#binding.writeDatabase();
     const now = this.#binding.now();
-    const ownership = this.#resolvePaneOwnership(
-      db,
-      record.paneId ?? null,
-      record.missionId ?? null,
-    );
     const accountId =
       record.accountId ??
       this.accountIdForProviderSession(provider, record.sessionId);
@@ -469,12 +466,16 @@ export class ScopedUsageStore {
       existing !== null &&
       existing.provider === provider &&
       existing.event_type === TOKEN_EVENT_TYPE;
+    // The MiMo service activates this only after private registry/timeline proof;
+    // it is not part of UsageRecord or any provider/renderer/MCP payload schema.
+    const ownership = this.#resolvePaneOwnership(db, record.paneId ?? null, record.missionId ?? null,
+      options.exactNativeAttribution === true, sameRow ? existing : null);
     // A transcript replay of a session that is only "known" (not dictated or
     // resumed by this process) carries no pane or mission. It must never erase
     // the attribution a live spawn recorded — that lost per-mission cost on
     // every restart.
     const keepAttribution =
-      sameRow &&
+      sameRow && !options.exactNativeAttribution &&
       ownership.internalPaneId === null &&
       ownership.missionId === null;
     const missionId = keepAttribution ? existing.mission_id : ownership.missionId;
@@ -830,7 +831,20 @@ export class ScopedUsageStore {
     db: Database.Database,
     paneId: string | null,
     claimedMissionId: string | null,
+    exactNative = false,
+    existing: PersistedUsageRow | null = null,
   ): PaneOwnership {
+    if (exactNative) {
+      if (!claimedMissionId) return { internalPaneId: null, missionId: null };
+      if (existing?.mission_id === claimedMissionId) return { internalPaneId: existing.pane_id, missionId: claimedMissionId };
+      if (!paneId) return { internalPaneId: null, missionId: claimedMissionId };
+      const rows = db.prepare('SELECT id FROM mission_panes WHERE pane_id = ? AND mission_id = ? LIMIT 2')
+        .all(paneId, claimedMissionId) as Array<{ id: unknown }>;
+      if (rows.length > 1) throw new ScopedStoreCorruptionError('usage native pane ownership');
+      // A released mission's historical row may have lost its live pane id.
+      // Registry proof retains the message mission; never borrow the new owner.
+      return { internalPaneId: rows[0] ? entityIdSchema.parse(rows[0].id) : null, missionId: claimedMissionId };
+    }
     if (!paneId) {
       return { internalPaneId: null, missionId: claimedMissionId };
     }

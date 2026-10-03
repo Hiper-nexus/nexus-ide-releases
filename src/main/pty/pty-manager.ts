@@ -1,3 +1,4 @@
+import { noteMimoMissionAuthority } from '../agent-hooks/mimo-mission-authority';
 import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
 import { recordSessionInputReceipt, forgetSessionInputReceipt, type SystemInputWriter } from '../orch/operator-input-receipts';
 import { configurePtyAnalysis, bindPtyAnalysisSession, feedPtyAnalysis, inputPtyAnalysis, statePtyAnalysis, exitPtyAnalysis, terminatePtyAnalysis } from './pty-analysis-runtime';
@@ -3471,6 +3472,7 @@ export function bindOwnedAgentSessionMission(
     return false;
   }
   session.agent = { ...info, missionId };
+  noteMimoMissionAuthority(sessionId, session.agent.missionId);
   bindPtyAnalysisSession(sessionId);
   return true;
 }
@@ -3515,6 +3517,7 @@ export function updateOwnedAgentSessionRole(
           ? null
           : [...input.allowedSkills],
   };
+  noteMimoMissionAuthority(sessionId, session.agent.missionId);
   bindPtyAnalysisSession(sessionId);
   return true;
 }
@@ -3537,6 +3540,7 @@ export function adoptUserAgentSessionAsMissionOrchestrator(
     info?.role === "user" ? !info.missionId : info?.promotedFromUser === true;
   if (!session || !info || !operatorHand || !missionId) return false;
   session.agent = { ...info, role: "orchestrator", missionId, promotedFromUser: true };
+  noteMimoMissionAuthority(sessionId, session.agent.missionId);
   bindPtyAnalysisSession(sessionId);
   return true;
 }
@@ -3563,6 +3567,7 @@ export function releaseOperatorOpenedAgentSession(
     ...rest
   } = info;
   session.agent = { ...rest, role: "user", allowedTools: null, allowedSkills: null };
+  noteMimoMissionAuthority(sessionId, session.agent.missionId);
   bindPtyAnalysisSession(sessionId);
   return true;
 }
@@ -3579,6 +3584,7 @@ export function returnAdoptedAgentSessionToUser(
   }
   const { missionId: _mission, promotedFromUser: _promoted, workerIncarnationId: _worker, ...rest } = info;
   session.agent = { ...rest, role: "user" };
+  noteMimoMissionAuthority(sessionId, session.agent.missionId);
   bindPtyAnalysisSession(sessionId);
   return true;
 }
@@ -3593,6 +3599,7 @@ export function rollbackOwnedAgentSessionMission(
   if (!session || !info || info.missionId !== missionId) return false;
   const { missionId: _discarded, ...restored } = info;
   session.agent = restored;
+  noteMimoMissionAuthority(sessionId, session.agent.missionId);
   bindPtyAnalysisSession(sessionId);
   return true;
 }

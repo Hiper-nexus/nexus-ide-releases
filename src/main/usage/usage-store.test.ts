@@ -87,6 +87,29 @@ describe('computeRealCost', () => {
 });
 
 describe.skipIf(!sqliteAvailable)('ScopedUsageStore', () => {
+  it('uses proved MiMo message attribution across demotion and a pane reused by another mission', () => {
+    const { baseDir, scope } = fixture(); const runtimeManager = manager(baseDir);
+    const missions = createScopedMissionStore(runtimeManager, scope);
+    const a = missions.create({ title: 'Mission A' }); const b = missions.create({ title: 'Mission B' });
+    const panes = createScopedMissionPaneStore(runtimeManager, scope);
+    panes.record({ missionId: a.id, adapterId: 'mimo-code', paneId: 'pane-reused', title: 'MiMo' });
+    const store = createScopedUsageStore(runtimeManager, scope);
+    const owned = { exactNativeAttribution: true as const };
+    store.record('mimo-code', usage({ messageId: 'a', paneId: 'pane-reused', missionId: a.id, outputTokens: 2 }), owned);
+    store.record('mimo-code', usage({ messageId: 'loose', paneId: 'pane-reused', missionId: null, outputTokens: 3 }), owned);
+    expect(store.totalsByMission(a.id).outputTokens).toBe(2);
+    missions.setStatus(a.id, 'failed');
+    panes.record({ missionId: b.id, adapterId: 'mimo-code', paneId: 'pane-reused', title: 'MiMo reused' });
+    store.record('mimo-code', usage({ messageId: 'b', paneId: 'pane-reused', missionId: b.id, outputTokens: 5 }), owned);
+    store.record('mimo-code', usage({ messageId: 'a', paneId: 'pane-reused', missionId: a.id, outputTokens: 7 }), owned);
+    // Unknown replay preserves previously proved mission/pane attribution.
+    store.record('mimo-code', usage({ messageId: 'a', paneId: null, missionId: null, outputTokens: 9 }));
+    expect(store.totalsByMission(a.id).outputTokens).toBe(9);
+    expect(store.totalsByMission(b.id).outputTokens).toBe(5);
+    expect(store.totals().outputTokens).toBe(17);
+    expect(() => store.record('codex', usage(), owned)).toThrow(/MiMo/);
+    expect(() => store.record('mimo-code', { ...usage(), exactNativeAttribution: true } as UsageRecord)).toThrow();
+  });
   it('upserts MiMo tokens with the CLI-reported cost rather than re-pricing them', () => {
     const { baseDir, scope } = fixture();
     const store = createScopedUsageStore(manager(baseDir), scope);

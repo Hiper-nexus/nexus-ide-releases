@@ -38,7 +38,7 @@ import {
 import { ClaudeTranscriptWatcher } from './claude-transcript-watcher';
 import { ClaudeTranscriptResumeStore } from './claude-transcript-resume-store';
 import { MimoUsageScanner, type MimoSessionBinding } from './mimo-scanner';
-import { tapMimoSessionBindings } from '../agent-hooks/mimo-session-registry';
+import { tapMimoSessionBindings, resolveMimoUsageBinding, releaseMimoUsageBinding, isMimoUsageBindingProved } from '../agent-hooks/mimo-session-registry';
 import { stopMimoValidationReader } from './mimo-worker-reader';
 import type { UsageRecord } from './usage-store';
 import type { UsageEvent } from './claude-transcript';
@@ -265,7 +265,8 @@ export class UsageTelemetryService {
     if (this.#stopped) throw new Error('usage telemetry service is stopped');
     setSessionDictationHook((info) => this.#onSessionDictated(info));
     if (!this.#mimoScanner) {
-      this.#mimoScanner = new MimoUsageScanner((binding, event) => this.#onMimoEvent(binding, event));
+      this.#mimoScanner = new MimoUsageScanner((binding, event) => this.#onMimoEvent(binding, event),
+        resolveMimoUsageBinding, releaseMimoUsageBinding);
       this.#stopMimoBindings = tapMimoSessionBindings((id, binding) => {
         if (binding) this.#mimoScanner?.bind(binding);
         else this.#mimoScanner?.remove(id);
@@ -676,13 +677,13 @@ export class UsageTelemetryService {
   }
 
   #onMimoEvent(binding: MimoSessionBinding, event: UsageRecord): void {
-    if (this.#stopped) return;
+    if (this.#stopped || !isMimoUsageBindingProved(binding)) return;
     const state = this.#ensureScope(binding.scope);
     state.stores.usage.record('mimo-code', {
-      ...event, paneId: binding.paneId, accountId: binding.accountId ?? null,
+      ...event, paneId: binding.historicalUnowned ? null : binding.paneId, accountId: binding.accountId ?? null,
       missionId: binding.missionId ?? null,
-    });
-    this.#feedTokenSpeed('mimo-code', event, binding.paneId);
+    }, binding.historicalUnowned ? {} : { exactNativeAttribution: true });
+    if (!binding.historicalUnowned) this.#feedTokenSpeed('mimo-code', event, binding.paneId);
     this.#scheduleBroadcast(state);
   }
 

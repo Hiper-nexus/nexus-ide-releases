@@ -6,7 +6,10 @@ import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { prepareMimoWorker } from './__tests__/mimo-worker-fixture';
 import type { MimoSessionBinding } from './mimo-scanner';
 const deps = vi.hoisted(() => ({ listener: null as null | ((id: string, binding: MimoSessionBinding | null) => void), speed: vi.fn() }));
-vi.mock('../agent-hooks/mimo-session-registry', () => ({ tapMimoSessionBindings: (listener: typeof deps.listener) => { deps.listener = listener; return () => { deps.listener = null; }; } }));
+vi.mock('../agent-hooks/mimo-session-registry', () => ({ isMimoUsageBindingProved: () => true,
+  resolveMimoUsageBinding: (binding: MimoSessionBinding) => binding,
+  releaseMimoUsageBinding: () => {},
+  tapMimoSessionBindings: (listener: typeof deps.listener) => { deps.listener = listener; return () => { deps.listener = null; }; } }));
 vi.mock('../orch/token-speed-tracker', () => ({ recordTokenSpeedUsage: deps.speed }));
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getVersion: () => 'test' }, BrowserWindow: { getAllWindows: () => [] }, ipcMain: {} }));
 import { UsageTelemetryService } from './usage-service';

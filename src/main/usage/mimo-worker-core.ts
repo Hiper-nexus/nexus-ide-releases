@@ -95,7 +95,7 @@ export function readMimoDatabase(raw: MimoWorkerRequest, privateRoot?: string): 
         AND typeof(m.id) = 'text' AND length(CAST(m.id AS BLOB)) BETWEEN 1 AND 256
         AND length(CAST(m.data AS BLOB)) <= ?
       ORDER BY m.time_updated, m.id LIMIT ?`).all(input.rootId, cursor.at, cursor.at, cursor.id,
-        Number.MAX_SAFE_INTEGER, MIMO_RAW_ROW_BYTES, MIMO_SCAN_ROWS) as
+        input.through ?? Number.MAX_SAFE_INTEGER, MIMO_RAW_ROW_BYTES, MIMO_SCAN_ROWS) as
         Array<{ id: string; session_id: string; time_updated: number; data: string }>;
     const events = [];
     let last = cursor; let highWatermark = cursor.at;
@@ -103,14 +103,15 @@ export function readMimoDatabase(raw: MimoWorkerRequest, privateRoot?: string): 
       if (typeof row.id !== 'string' || row.id.length > 256) continue;
       last = { at: row.time_updated, id: row.id }; highWatermark = Math.max(highWatermark, row.time_updated);
       const parsed = parseMimoUsageRow(row);
-      if (!parsed) continue;
+      if (!parsed || parsed.event.timestamp === null) continue;
       try {
         const cwd = fs.realpathSync(parsed.cwd);
         if (![input.runtime.cwd, path.join(input.runtime.stateRoot, 'worktree')].some(rootPath => {
           const relative = path.relative(rootPath, cwd);
           return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
         })) continue;
-        events.push({ ...parsed.event, sessionId: row.session_id, messageId: row.id });
+        events.push({ ...parsed.event, timestamp: parsed.event.timestamp, sessionId: row.session_id,
+          messageId: row.id, nativeUpdatedAt: row.time_updated });
       } catch { /* unavailable/foreign cwd is never attributed */ }
     }
     return { job: input.job, valid: true, fetched: rows.length, cursor: last, highWatermark, events };

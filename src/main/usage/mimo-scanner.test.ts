@@ -121,9 +121,11 @@ describe('MiMo checkout database reader', () => {
     const scanner = new MimoUsageScanner(onEvent); scanner.bind(binding);
     scanners.push(scanner);
     message('msg-last', 'ses_root', 17);
+    message('msg-after-retirement', 'ses_root', 99, Date.now() + 60_000);
     scanner.bind({ ...binding, providerSessionId: 'ses_other' });
     await scanner.scan();
     expect(onEvent).toHaveBeenCalledWith(binding, expect.objectContaining({ messageId: 'msg-last', outputTokens: 20 }));
+    expect(onEvent.mock.calls.map(([, event]) => event.messageId)).not.toContain('msg-after-retirement');
     await scanner.stop();
   });
 
