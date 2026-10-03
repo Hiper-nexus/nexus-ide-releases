@@ -59,3 +59,10 @@ describe('detectDevServerUrls', () => {
     ]);
   });
 });
+
+it('bounds long URL punctuation runs whose last character is meaningful', () => {
+  const url = 'http://localhost:5173/' + '.'.repeat(32_000) + 'x';
+  const before = performance.now(); expect(detectDevServerUrls('Local: ' + url + '\n')).toEqual([url]);
+  expect(performance.now() - before).toBeLessThan(50);
+  expect(detectDevServerUrls('http://localhost:5173/hello...')).toEqual(['http://localhost:5173/hello']);
+});

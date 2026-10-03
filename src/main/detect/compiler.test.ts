@@ -220,3 +220,32 @@ describe('prefixo `.*` redundante (F-764 C.3)', () => {
     expect(matches(doc, 'qualquer coisa')).toBe(true);
   });
 });
+
+
+describe('F-764 optional prompt glyph ambiguity', () => {
+  it('preserves literal optional-glyph matching without quadratic whitespace repartitioning', () => {
+    const manifest = parseManifest([
+      'id = "test-prefix"',
+      '[[rules]]',
+      'id = "accept"', 'state = "blocked"', 'region = "whole_recent"',
+      "line_regex = ['^\\s*❯?\\s*Accept\\b']",
+    ].join('\n'));
+    const regex = compileManifest(manifest).rules[0].gate.lineRegex[0];
+    const original = /^\s*❯?\s*Accept\b/u;
+    for (const spaces of ['', ' ', '\t', '\n', ' '.repeat(64)]) {
+      for (const text of ['Accept', '❯Accept', '❯ Accept', 'Decline', 'xAccept']) {
+        expect(regex.test(spaces + text)).toBe(original.test(spaces + text));
+      }
+    }
+    const before = performance.now();
+    expect(regex.test(' '.repeat(32_767) + 'x')).toBe(false);
+    expect(performance.now() - before).toBeLessThan(50);
+  });
+});
+
+it('normalizes an optional explicit non-space glyph class with the same language', () => {
+  const doc = ['id = "class-prefix"', '[[rules]]', 'id = "allow"', "line_regex = ['^\\s*[▸>]?\\s*1\\.\\s*allow']"].join('\n');
+  const regex = compileDoc(doc).rules[0].gate.lineRegex[0]; const original = /^\s*[▸>]?\s*1\.\s*allow/u;
+  for (const text of ['1. allow', ' > 1. allow', '\t▸\t1. allow', '2. deny', ' '.repeat(64) + 'x']) expect(regex.test(text)).toBe(original.test(text));
+  const before = performance.now(); expect(regex.test(' '.repeat(32_767) + 'x')).toBe(false); expect(performance.now() - before).toBeLessThan(50);
+});

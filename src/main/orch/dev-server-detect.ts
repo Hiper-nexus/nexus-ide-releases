@@ -17,7 +17,7 @@ const LOCAL_URL_PATTERN = new RegExp(
   'gi',
 );
 
-const TRAILING_PUNCTUATION = /[.,;:!?)\]}>]+$/;
+const TRAILING_PUNCTUATION = /(?<![.,;:!?)\]}>])[.,;:!?)\]}>]+$/;
 const MAX_URLS_PER_CHUNK = 8;
 
 function normalizeDevServerUrl(raw: string): string | null {

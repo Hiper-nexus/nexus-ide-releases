@@ -93,6 +93,20 @@ function translatePattern(
     source = source.slice(source.startsWith('.*?') ? 3 : 2);
   }
 
+  // Two whitespace stars around an optional NON-whitespace prompt glyph
+  // repartition the same run quadratically when the following word is absent.
+  // If the glyph is absent those stars are one run; if present its following
+  // whitespace belongs inside the optional group. Same language, linear scan.
+  const optionalGlyph = /^\^\\s\*(\\u\{[a-f0-9]+\}|\[[^\]]+\]|[^\s\\()[\]{}|.*+?$^])\?\\s\*/iu.exec(source);
+  if (optionalGlyph) {
+    const atom = optionalGlyph[1];
+    const unicode = /^\\u\{([a-f0-9]+)\}$/i.exec(atom);
+    const glyph = unicode ? String.fromCodePoint(Number.parseInt(unicode[1], 16)) : atom;
+    const classBody = atom.startsWith('[') ? atom.slice(1, -1) : null;
+    const safeClass = classBody !== null && !['\\', '^', '-', '[', ']'].some((syntax) => classBody.includes(syntax)) && [...classBody].every((value) => !/\s/u.test(value));
+    if ((classBody !== null ? safeClass : !/\s/u.test(glyph))) source = '^\\s*(?:' + atom + '\\s*)?' + source.slice(optionalGlyph[0].length);
+  }
+
   return { source, flags };
 }
 
