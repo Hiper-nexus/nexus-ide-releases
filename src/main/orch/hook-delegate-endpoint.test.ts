@@ -9,8 +9,14 @@ vi.mock('../persistence/settings-store', () => ({
 vi.mock('../context/business-model/business-model-ensure', () => ({
   ensureBusinessModel: vi.fn(async () => null),
 }));
+// F-784: o teto seguro real depende da RAM e dos panes desta máquina; os
+// testes antigos rodam sem teto e os novos injetam o orçamento.
+vi.mock('./parallel-helper-budget', () => ({
+  currentParallelHelperBudget: vi.fn(() => null),
+}));
 
 import { trace } from '../observability/main-trace';
+import { currentParallelHelperBudget } from './parallel-helper-budget';
 import { ensureBusinessModel } from '../context/business-model/business-model-ensure';
 import { FAILOVER_HANDOFF_HEADER } from '../../shared/failover-handoff';
 import { DELEGATE_TIMEOUT_MS } from '../jev/jev-delegation';
@@ -26,6 +32,7 @@ import {
 } from './hook-delegate-endpoint';
 import type { distillOperatorPreferenceMemory } from '../memory/operator-preference-memory';
 import type { operatorWorkspaceMemoryContext } from './operator-workspace-memory';
+import type { ParallelHelperBudget } from './pane-admission';
 
 const operator = { role: 'user' as const, sessionId: 's1' };
 const LONG = 'Implemente a tela de login, escreva os testes e revise a segurança do fluxo.';
@@ -431,6 +438,9 @@ describe('hook /hook/delegate', () => {
       '[Nexus · Jev] Esta tarefa se divide em ~3 partes — delegue',
       '  <pasted_content id="p2"><task-notification>done</task-notification></pasted_content>',
       `contexto do crash\n\n${FAILOVER_HANDOFF_HEADER}\nrecupere a missão anterior`,
+      // F-784: o empurrão de continuidade que o Nexus digita (28/09 foi ao Jev).
+      'Continue the current mission from exactly where you stopped as the orchestrator. ' +
+        'Preserve existing context and execute the next pending step now.',
     ])('cai fora sem chamar o Jev: %.36s…', async (prompt) => {
       __resetLeanRemindersForTests();
       const advise = vi.fn(async () => ({ delegation: { parts: 5, writers: 2, confidence: 0.95, model: 'j' }, writesCode: 0.9 }));
@@ -537,7 +547,9 @@ describe('hook /hook/delegate', () => {
         { prompt: FIELD_PROMPT },
         deps,
       );
-      expect(context(helper)).toContain('Delegue com nexus_pane_spawn');
+      // F-784: helper faz a parte dele — nem dica de delegar (cascata).
+      expect(helper.payload).toEqual({});
+      expect(deps.advise).not.toHaveBeenCalled();
       const inMission = await handleHookDelegateRequest(
         { ...operator, missionId: 'm-1' },
         { prompt: FIELD_PROMPT },
@@ -596,10 +608,13 @@ describe('hook /hook/delegate', () => {
     expect((await handleHookDelegateRequest(operator, { prompt: brief }, { advise })).payload).toEqual({});
   });
 
-  it('formatDelegationContext conta leitura e escrita', () => {
-    expect(formatDelegationContext({ parts: 4, writers: 1, confidence: 0.9, model: 'j' })).toContain(
-      '3 de leitura em paralelo, 1 de escrita',
-    );
+  it('formatDelegationContext conta leitura e escrita, e as escritas também vão em paralelo (F-784)', () => {
+    const text = formatDelegationContext({ parts: 4, writers: 1, confidence: 0.9, model: 'j' });
+    expect(text).toContain('(3 de leitura, 1 de escrita)');
+    expect(text).toContain('4 em paralelo agora');
+    expect(text).toContain('isolatedWriter: true nas de escrita');
+    // Antes: "1 de escrita, uma por vez" — o pane enfileirava os writers.
+    expect(text).not.toContain('uma por vez');
   });
 
   describe('HTTP', () => {
@@ -871,5 +886,183 @@ describe('<business-model> por tarefa no hook do operador', () => {
     now += 31 * 60_000;
     await handleHookDelegateRequest(codex, { prompt: LONG }, deps);
     expect(ensureBusinessModel).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('F-784: leque da delegação amarrado ao teto seguro da máquina', () => {
+  const budget = (
+    slots: number,
+    overrides: Partial<ParallelHelperBudget> = {},
+  ): ParallelHelperBudget => ({
+    slots,
+    limitedBy: 'cap',
+    liveAgentPanes: 12 - slots,
+    maxAgentPanes: 12,
+    freeMB: null,
+    ...overrides,
+  });
+  const advice = (parts: number, writers: number, confidence = 0.8, heavyRead?: true) => ({
+    delegation: { parts, writers, confidence, model: 'j', ...(heavyRead ? { heavyRead } : {}) },
+    writesCode: 0.1,
+  });
+  const text = (out: { payload: Record<string, unknown> }) =>
+    (out.payload.hookSpecificOutput as { additionalContext: string }).additionalContext;
+  const maestro = { role: 'orchestrator' as const, missionId: 'm', sessionId: 'maestro-784' };
+
+  it('3 partes independentes com folga: as 3 em paralelo, escritas em worktree própria', async () => {
+    __resetLeanRemindersForTests();
+    const out = await handleHookDelegateRequest(
+      { ...operator, sessionId: 'f784-a' },
+      { prompt: LONG },
+      { advise: vi.fn(async () => advice(3, 2, 0.65)), parallelBudget: () => budget(8) },
+    );
+    expect(text(out)).toContain('~3 partes (1 de leitura, 2 de escrita)');
+    expect(text(out)).toContain('3 em paralelo agora;');
+    expect(text(out)).toContain('isolatedWriter: true nas de escrita');
+    expect(text(out)).not.toContain('uma por vez');
+    expect(text(out).length).toBeLessThanOrEqual(400);
+  });
+
+  it('5 partes e 2 vagas: abre 2 agora, diz o teto e deixa o resto para depois', async () => {
+    __resetLeanRemindersForTests();
+    const out = await handleHookDelegateRequest(
+      { ...operator, sessionId: 'f784-b' },
+      { prompt: LONG },
+      { advise: vi.fn(async () => advice(5, 2, 0.65)), parallelBudget: () => budget(2) },
+    );
+    expect(text(out)).toContain(
+      '2 em paralelo agora (teto seguro: 10 de 12 panes de agente vivos), o resto quando esses entregarem',
+    );
+    expect(text(out).length).toBeLessThanOrEqual(400);
+    const lowMemory = formatDelegationContext(
+      { parts: 4, writers: 1, confidence: 0.9, model: 'j' },
+      budget(1, { limitedBy: 'memory', freeMB: 4_700 }),
+    );
+    expect(lowMemory).toContain('1 em paralelo agora (teto seguro: 4,6 GB de memória livre)');
+  });
+
+  it('máquina no teto (03/10: 15 CLIs vivas): não abre helper nem promove o pane', async () => {
+    __resetLeanRemindersForTests();
+    const adoptMission = vi.fn();
+    const out = await handleHookDelegateRequest(
+      { ...operator, sessionId: 'f784-c' },
+      { prompt: LONG },
+      {
+        advise: vi.fn(async () => advice(5, 2, 0.84)),
+        autopilot: () => true,
+        adoptMission,
+        parallelBudget: () => budget(0, { liveAgentPanes: 15 }),
+      },
+    );
+    expect(text(out)).toContain('mas a máquina está no teto seguro agora (15 de 12 panes de agente vivos)');
+    expect(text(out)).toContain('não abra helpers');
+    expect(text(out)).not.toContain('Delegue com nexus_pane_spawn');
+    expect(adoptMission).not.toHaveBeenCalled();
+  });
+
+  it('com vaga, a adoção do Autopilot também abre só o que cabe', async () => {
+    __resetLeanRemindersForTests();
+    const out = await handleHookDelegateRequest(
+      { ...operator, sessionId: 'f784-d' },
+      { prompt: LONG },
+      {
+        advise: vi.fn(async () => advice(4, 2, 0.84)),
+        autopilot: () => true,
+        adoptMission: () => ({ missionId: 'm-784', discardIfUnused: vi.fn() }),
+        parallelBudget: () => budget(3),
+      },
+    );
+    expect(text(out)).toContain('O Nexus tornou este pane orquestrador');
+    expect(text(out)).toContain('3 em paralelo agora (teto seguro: 9 de 12 panes de agente vivos)');
+  });
+
+  it('Maestro: a diretiva abre o que cabe, e o lembrete avisa quando a máquina está no teto', async () => {
+    __resetLeanRemindersForTests();
+    const directive = await handleHookDelegateRequest(
+      maestro,
+      { prompt: LONG },
+      {
+        advise: vi.fn(async () => advice(5, 2)),
+        maestroDoctrine: () => 'DOUTRINA',
+        parallelBudget: () => budget(2),
+      },
+    );
+    expect(text(directive)).toContain('~5 partes (3 de leitura, 2 de escrita)');
+    expect(text(directive)).toContain('2 em paralelo agora (teto seguro: 10 de 12 panes de agente vivos)');
+    expect(text(directive)).toContain('Não faça as partes você mesmo');
+
+    const delivery = '[nexus handoff delivery_metadata] from=pane-w1 handoff_id=h-9 summary: pronto';
+    const reminder = await handleHookDelegateRequest(
+      { ...maestro, sessionId: 'maestro-784-b' },
+      { prompt: delivery },
+      {
+        advise: vi.fn(async () => null),
+        maestroDoctrine: () => 'DOUTRINA',
+        parallelBudget: () => budget(0, { liveAgentPanes: 15 }),
+      },
+    );
+    expect(text(reminder)).toContain(MAESTRO_TURN_REMINDER);
+    expect(text(reminder)).toContain(
+      'Teto seguro desta máquina atingido agora (15 de 12 panes de agente vivos)',
+    );
+  });
+
+  it('Maestro: o empurrão de continuidade do Nexus não vai ao Jev', async () => {
+    __resetLeanRemindersForTests();
+    const advise = vi.fn(async () => advice(5, 2));
+    const out = await handleHookDelegateRequest(
+      { ...maestro, sessionId: 'maestro-784-c' },
+      {
+        prompt:
+          'Continue the current mission from exactly where you stopped as the orchestrator. ' +
+          'Preserve existing context and execute the next pending step now.',
+      },
+      { advise, maestroDoctrine: () => 'DOUTRINA', parallelBudget: () => budget(8) },
+    );
+    expect(advise).not.toHaveBeenCalled();
+    expect(text(out)).toBe(MAESTRO_TURN_REMINDER);
+  });
+
+  it('leitura pesada: um helper readOnly no pane do operador e no Maestro, sem adoção', async () => {
+    __resetLeanRemindersForTests();
+    const adoptMission = vi.fn();
+    const hand = await handleHookDelegateRequest(
+      { ...operator, sessionId: 'f784-e' },
+      { prompt: LONG },
+      {
+        advise: vi.fn(async () => advice(1, 0, 0.86, true)),
+        autopilot: () => true,
+        adoptMission,
+        parallelBudget: () => budget(8),
+      },
+    );
+    expect(text(hand)).toContain('Leitura pesada');
+    expect(text(hand)).toContain('nexus_pane_spawn({ task, prompt, readOnly: true })');
+    expect(adoptMission).not.toHaveBeenCalled();
+
+    const conductor = await handleHookDelegateRequest(
+      { ...maestro, sessionId: 'maestro-784-d' },
+      { prompt: LONG },
+      {
+        advise: vi.fn(async () => advice(1, 0, 0.86, true)),
+        maestroDoctrine: () => 'DOUTRINA',
+        parallelBudget: () => budget(8),
+      },
+    );
+    expect(text(conductor)).toContain('leitura pesada');
+    expect(text(conductor)).toContain('readOnly: true');
+    expect(text(conductor)).not.toContain(MAESTRO_TURN_REMINDER);
+  });
+
+  it('sem orçamento injetado, o hook lê o teto vivo da máquina', async () => {
+    __resetLeanRemindersForTests();
+    vi.mocked(currentParallelHelperBudget).mockReturnValueOnce(budget(0, { liveAgentPanes: 12 }));
+    const out = await handleHookDelegateRequest(
+      { ...operator, sessionId: 'f784-live' },
+      { prompt: LONG },
+      { advise: vi.fn(async () => advice(3, 1)) },
+    );
+    expect(text(out)).toContain('não abra helpers');
+    expect(currentParallelHelperBudget).toHaveBeenCalled();
   });
 });

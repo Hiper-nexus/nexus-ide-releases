@@ -3,8 +3,9 @@ import { decisionResultUsage } from '../decision-models/decision-usage';
  * Conselho de delegação via TypeSafe Jev (superfície `delegation`, C2 25/09).
  * A cada mensagem que o operador manda a um pane dele, o hook UserPromptSubmit
  * pergunta: isto se divide? em quantas partes? quantas escrevem? Com 2+ partes
- * e confiança ≥ 0,6 o pane recebe um lembrete para delegar. FAIL-OPEN: null =
- * nenhum lembrete, o pane segue como hoje.
+ * e confiança ≥ 0,6 o pane recebe um lembrete para delegar; sem partes, uma
+ * leitura pesada (≥ 0,7) vai para um helper readOnly (F-784). FAIL-OPEN:
+ * null = nenhum lembrete, o pane segue como hoje.
  */
 import {
   capText,
@@ -21,6 +22,14 @@ import {
 
 export const DELEGATE_MIN_PROMPT_CHARS = 40;
 export const DELEGATE_MIN_CONFIDENCE = 0.6;
+/**
+ * F-784: leitura pesada (varrer código, logs ou fontes) vai para UM helper
+ * readOnly mesmo sem partes independentes — a doutrina do operador manda
+ * delegar o que é "divisível, pesado ou paralelizável", e a pergunta de
+ * divisão só enxergava o primeiro. Limiar acima do da divisão: pergunta
+ * respondida com o que está à mão fica no pane.
+ */
+export const HEAVY_READ_MIN_CONFIDENCE = 0.7;
 /** Confiança a partir da qual o Nexus promove o pane a orquestrador (Autopilot). */
 export const AUTO_ORCHESTRATE_MIN_CONFIDENCE = 0.7;
 export const DELEGATE_TIMEOUT_MS = 2_500;
@@ -33,8 +42,22 @@ const DELEGATION_QUESTIONS: Record<string, JevQuestion> = {
       'Does this request to a coding agent ask for work that splits into ' +
       'independent parts that separate agents could do in parallel?',
     criteria: {
-      true: 'several independent pieces of work (research, implementation, tests, review…), or the same feature or fix to be built in separate apps or surfaces (for example the native app and the web or PWA)',
-      false: 'one cohesive task, a small change, a question or conversation, or a short follow-up or confirmation of work already under way',
+      // F-784: em 03/10 a mensagem que listava quatro defeitos distintos num
+      // parágrafo só, como continuação, saiu "solo" (0,29).
+      true: 'several independent pieces of work (research, implementation, tests, review…), a message that lists several distinct problems or requests (even in one paragraph or as a follow-up), or the same feature or fix to be built in separate apps or surfaces (for example the native app and the web or PWA)',
+      false: 'one cohesive task, a small change, a single bug, a question or conversation, or a short follow-up or confirmation of work already under way',
+    },
+  },
+  heavyRead: {
+    type: 'noul',
+    instructions:
+      'Does this request ask for a broad read-only investigation — reading ' +
+      'many files, logs, documents or web sources, an audit or an analysis ' +
+      'across the system — that a helper agent could carry out while this ' +
+      'agent stays free?',
+    criteria: {
+      true: 'a broad investigation, audit, research or analysis that needs reading many files, logs or sources',
+      false: 'a question answerable from what is already at hand, a small lookup, a change to make, or conversation',
     },
   },
   parts: {
@@ -65,6 +88,8 @@ export interface DelegationAdvice {
   readonly writers: number;
   readonly confidence: number;
   readonly model: string;
+  /** F-784: sem partes independentes, mas leitura pesada — um helper readOnly. */
+  readonly heavyRead?: true;
 }
 
 export interface PromptAdvice {
@@ -124,7 +149,12 @@ export async function advisePrompt(
     parts,
     writersAnswer?.type === 'choice' ? countOf(writersAnswer.choice) : 0,
   );
-  const advise = divisible.noul >= DELEGATE_MIN_CONFIDENCE && parts >= 2;
+  const split = divisible.noul >= DELEGATE_MIN_CONFIDENCE && parts >= 2;
+  const heavyReadAnswer = result.answers.heavyRead;
+  const heavyRead = heavyReadAnswer?.type === 'noul' ? heavyReadAnswer.noul : 0;
+  // F-784: sem partes independentes, leitura pesada ainda sai do pane — vai
+  // para um helper readOnly e o pane segue livre.
+  const readAlone = !split && heavyRead >= HEAVY_READ_MIN_CONFIDENCE;
 
   recordJevDecision({
     surface: 'delegation',
@@ -133,14 +163,20 @@ export async function advisePrompt(
     questions: Object.keys(DELEGATION_QUESTIONS),
     probabilities: jevAnswerProbabilities(result.answers),
     confidence: jevAnswerConfidences(result.answers),
-    decision: advise ? `delegate:${parts}p/${writers}w` : 'solo',
+    decision: split
+      ? `delegate:${parts}p/${writers}w`
+      : readAlone
+        ? 'delegate:heavy-read'
+        : 'solo',
     ...decisionResultUsage(result),
   });
   const writesCodeAnswer = result.answers.writesCode;
   return {
-    delegation: advise
+    delegation: split
       ? { parts, writers, confidence: divisible.noul, model: result.model }
-      : null,
+      : readAlone
+        ? { parts: 1, writers: 0, confidence: heavyRead, model: result.model, heavyRead: true }
+        : null,
     writesCode: writesCodeAnswer?.type === 'noul' ? writesCodeAnswer.noul : 0,
   };
 }

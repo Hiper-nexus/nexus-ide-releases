@@ -234,6 +234,78 @@ export function readPaneAdmissionLimits(
 }
 
 // ---------------------------------------------------------------------------
+// F-784: orçamento de paralelismo — o teto que amarra o leque da delegação.
+// ---------------------------------------------------------------------------
+
+/** Régua de `limitsForMachine`: ~1,25 GB por pane de agente (CLI + MCP filhos). */
+export const AGENT_PANE_FOOTPRINT_MB = 1280;
+
+export interface ParallelHelperBudget {
+  /** Helpers novos que cabem agora; 0 = não abrir mais. */
+  readonly slots: number;
+  /** O que fixou o número: teto de panes vivos, memória disponível ou swap armado. */
+  readonly limitedBy: 'cap' | 'memory' | 'swap';
+  readonly liveAgentPanes: number;
+  readonly maxAgentPanes: number;
+  /** Memória disponível do kernel; null = sem amostra (só o teto de panes decide). */
+  readonly freeMB: number | null;
+}
+
+/**
+ * Quantos helpers o Nexus pode PEDIR agora em paralelo (F-784). Missão
+ * Terminais, 03/10: ~15 CLIs vivas, dois `tsc` de 720 MB e 9,2 de 10 GB de
+ * swap — e a diretiva de delegação ainda mandava abrir "um worker por parte".
+ * Mesmos insumos do gate de spawn (F-572): panes de agente vivos contra o
+ * teto proporcional à RAM e a memória disponível do kernel acima do mínimo
+ * livre, à régua de ~1,25 GB por pane. Sem amostra de memória só o teto de
+ * panes conta (o gate nunca inventa pressão); guard desligado
+ * (`NEXUS_PANE_GUARD=off`) = sem orçamento (null).
+ */
+export function parallelHelperBudget(input: {
+  readonly liveAgentPanes: number;
+  readonly limits: PaneAdmissionLimits;
+  readonly memory: SystemMemorySample | null;
+}): ParallelHelperBudget | null {
+  const { limits, memory, liveAgentPanes } = input;
+  if (!limits.enabled) return null;
+  const capSlots = Math.max(0, limits.maxAgentPanes - liveAgentPanes);
+  const freeMB = memory?.freeMB ?? null;
+  const base = {
+    liveAgentPanes,
+    maxAgentPanes: limits.maxAgentPanes,
+    freeMB,
+  };
+  // Swap só pesa onde a máquina armou o gate dela (ver isUnderMemoryPressure).
+  if (
+    limits.maxSwapUsedMB > 0 &&
+    memory !== null &&
+    memory.swapUsedMB !== null &&
+    memory.swapUsedMB > limits.maxSwapUsedMB
+  ) {
+    return { ...base, slots: 0, limitedBy: 'swap' };
+  }
+  const memorySlots =
+    freeMB === null
+      ? capSlots
+      : Math.max(0, Math.floor((freeMB - limits.minFreeMB) / AGENT_PANE_FOOTPRINT_MB));
+  return memorySlots < capSlots
+    ? { ...base, slots: memorySlots, limitedBy: 'memory' }
+    : { ...base, slots: capSlots, limitedBy: 'cap' };
+}
+
+/**
+ * Helpers a abrir AGORA para `parts` partes independentes: todas, até o teto
+ * seguro. Sem orçamento (guard desligado) não há corte.
+ */
+export function helpersToOpenNow(
+  parts: number,
+  budget: ParallelHelperBudget | null,
+): number {
+  const wanted = Math.max(0, Math.floor(parts));
+  return budget ? Math.min(wanted, budget.slots) : wanted;
+}
+
+// ---------------------------------------------------------------------------
 // Leitura da memória do sistema (barata, com cache curto).
 // ---------------------------------------------------------------------------
 

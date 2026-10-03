@@ -279,15 +279,13 @@ export const orchSettingsSchema = z.object({
     .enum(['governed', 'operator-choice'])
     .default('operator-choice'),
   /**
-   * Escada adaptativa de concorrência da política Hardened (governed). Só tem
-   * efeito quando `squadCliPolicy === 'governed'`; no Autopiloto o teto da onda
-   * é o `maxWorkers` aprovado, sem escada.
-   *
-   * O padrão antigo era fixo (começa em 2, para em 6) e engessava projetos
-   * grandes numa máquina capaz de mais — sem o operador poder mudar nada sem
-   * editar código. Agora é ajustável, e `maxCap: null` significa "alinhe ao
-   * teto real da máquina" (cores-2 / orçamento de panes), para o usuário nunca
-   * ficar calado abaixo do que o hardware aguenta.
+   * INERTE desde ac0bc643 (10/08): a escada adaptativa da política Hardened
+   * saiu junto com o scheduler/dispatch, e nenhum código lê este campo — o
+   * `startCap: 2` não limita onda nenhuma (F-784: a análise de 03/10 o culpou
+   * pelo "solo" do Jev). Fica no schema só para não invalidar settings
+   * gravados. O leque de hoje é amarrado ao orçamento de paralelismo
+   * (`parallelHelperBudget` em pane-admission: panes de agente vivos × teto
+   * da RAM × memória livre) e ao `maxWorkers` aprovado da missão.
    */
   adaptiveWaveLadder: z
     .object({

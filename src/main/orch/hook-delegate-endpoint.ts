@@ -40,6 +40,8 @@ import {
 import { trace } from '../observability/main-trace';
 import { maestroStandingDoctrineFor } from './maestro-standing-context';
 import { suggestSkillForTask } from './jev-skill-suggestion';
+import { helpersToOpenNow, type ParallelHelperBudget } from './pane-admission';
+import { currentParallelHelperBudget } from './parallel-helper-budget';
 
 export const HOOK_DELEGATE_MAX_BODY_BYTES = 64 * 1024;
 
@@ -291,6 +293,9 @@ const NON_OPERATOR_PROMPT_PREFIXES = [
   'Base directory for this skill:',
   '[Nexus]',
   '[Nexus ·',
+  // F-784: o empurrão de continuidade que o próprio Nexus digita no pane
+  // (failover-continuity, terminal-host) também ia ao Jev como pedido.
+  'Continue the current mission from exactly where you stopped',
 ];
 
 function isNonOperatorPrompt(prompt: string): boolean {
@@ -299,18 +304,58 @@ function isNonOperatorPrompt(prompt: string): boolean {
 }
 
 type MaestroDoctrineFn = (ctx: HookContext) => string | null;
+type ParallelBudgetFn = () => ParallelHelperBudget | null;
+
+/** Uma leitura do orçamento por pedido, só se alguém precisar dele. */
+function onceBudget(read: ParallelBudgetFn): ParallelBudgetFn {
+  let cached: ParallelHelperBudget | null | undefined;
+  return () => {
+    if (cached === undefined) cached = read();
+    return cached;
+  };
+}
+
+/** O que fixou o teto seguro, em pt-BR curto (vai dentro das dicas). */
+function budgetCeilingNote(budget: ParallelHelperBudget): string {
+  if (budget.limitedBy === 'swap') return 'swap acima do limite desta máquina';
+  if (budget.limitedBy === 'memory' && budget.freeMB !== null) {
+    return `${(budget.freeMB / 1024).toFixed(1).replace('.', ',')} GB de memória livre`;
+  }
+  return `${budget.liveAgentPanes} de ${budget.maxAgentPanes} panes de agente vivos`;
+}
+
+/**
+ * F-784: quantos abrir agora — todas as partes até o teto seguro; o que não
+ * cabe vai quando os primeiros entregarem (nada de "um por parte" numa
+ * máquina com 15 CLIs vivas e o swap cheio).
+ */
+function parallelWave(parts: number, budget: ParallelHelperBudget | null): string {
+  const open = helpersToOpenNow(parts, budget);
+  return budget && open < parts
+    ? `${open} em paralelo agora (teto seguro: ${budgetCeilingNote(budget)}), o resto quando esses entregarem`
+    : `${open} em paralelo agora`;
+}
 
 function maestroContextFor(
   ctx: HookContext,
   now: number,
   doctrineFor: MaestroDoctrineFn,
+  budgetOf: ParallelBudgetFn,
 ): string | null {
   if (ctx.role !== 'orchestrator' || !ctx.missionId || !ctx.sessionId) return null;
   if (remindedRecently(maestroRemindedAt, ctx.sessionId, now)) return null;
   const doctrine = doctrineFor(ctx);
   if (!doctrine) return null;
   markReminded(maestroRemindedAt, ctx.sessionId, now);
-  return ctx.providerId === 'codex' ? doctrine : MAESTRO_TURN_REMINDER;
+  const text = ctx.providerId === 'codex' ? doctrine : MAESTRO_TURN_REMINDER;
+  // F-784: o lembrete manda abrir workers; com a máquina no teto seguro ele
+  // diz o contrário, com o número.
+  const budget = budgetOf();
+  return budget && budget.slots === 0
+    ? `${text}\n[Nexus] Teto seguro desta máquina atingido agora ` +
+        `(${budgetCeilingNote(budget)}): não abra workers novos até algum ` +
+        'entregar; feche os panes que já entregaram.'
+    : text;
 }
 
 /** Maestro de missão que não é a mão do operador (essa já recebe o conselho). */
@@ -330,18 +375,36 @@ async function maestroDelegationDirective(
   prompt: string,
   advise: typeof advisePrompt,
   doctrineFor: MaestroDoctrineFn,
+  budgetOf: ParallelBudgetFn,
 ): Promise<string | null> {
   if (!doctrineFor(ctx)) return null;
   const advice = await advise(prompt, { sessionId: ctx.sessionId }).catch(() => null);
   const delegation = advice?.delegation;
-  if (!delegation || delegation.parts < 2) return null;
+  if (!delegation || (delegation.parts < 2 && !delegation.heavyRead)) return null;
+  const budget = budgetOf();
   const reads = Math.max(0, delegation.parts - delegation.writers);
-  const text =
-    `[Nexus · Jev] Maestro: este pedido se divide em ~${delegation.parts} partes ` +
-    `(${reads} de leitura, ${delegation.writers} de escrita). Abra agora um worker ` +
-    'por parte com nexus_pane_spawn({ task, prompt }), todos em paralelo — ' +
-    'readOnly: true nas de leitura, isolatedWriter: true nas de escrita — e ' +
-    'encerre o turno. Não faça as partes você mesmo.';
+  const work = delegation.heavyRead
+    ? 'este pedido é uma leitura pesada'
+    : `este pedido se divide em ~${delegation.parts} partes ` +
+      `(${reads} de leitura, ${delegation.writers} de escrita)`;
+  let text: string;
+  if (budget && helpersToOpenNow(delegation.parts, budget) === 0) {
+    text =
+      `[Nexus · Jev] Maestro: ${work}, mas a máquina está no teto seguro agora ` +
+      `(${budgetCeilingNote(budget)}): não abra workers — espere as entregas, ` +
+      'feche os panes que já entregaram e despache quando houver vaga.';
+  } else if (delegation.heavyRead) {
+    text =
+      `[Nexus · Jev] Maestro: ${work}. Abra um worker com ` +
+      'nexus_pane_spawn({ task, prompt, readOnly: true }) para ela e encerre o ' +
+      'turno. Não faça a leitura você mesmo.';
+  } else {
+    text =
+      `[Nexus · Jev] Maestro: ${work}. Abra um worker por parte com ` +
+      `nexus_pane_spawn({ task, prompt }) — ${parallelWave(delegation.parts, budget)}; ` +
+      'readOnly: true nas de leitura, isolatedWriter: true nas de escrita — e ' +
+      'encerre o turno. Não faça as partes você mesmo.';
+  }
   return text.length > 500 ? `${text.slice(0, 499)}…` : text;
 }
 
@@ -366,14 +429,38 @@ function designContextFor(
   return text;
 }
 
-/** Texto pt-BR (≤ 400 caracteres) injetado como additionalContext. */
-export function formatDelegationContext(advice: DelegationAdvice): string {
-  const reads = Math.max(0, advice.parts - advice.writers);
-  const text =
-    `[Nexus · Jev] Esta tarefa se divide em ~${advice.parts} partes ` +
-    `(${reads} de leitura em paralelo, ${advice.writers} de escrita, uma por vez). ` +
-    'Delegue com nexus_pane_spawn({ task, prompt }) — readOnly: true nas de ' +
-    'leitura — e encerre o turno; não execute tudo sozinho.';
+/**
+ * Texto pt-BR (≤ 400 caracteres) injetado como additionalContext. F-784: as
+ * escritas também vão em paralelo, cada uma na sua worktree (o "uma por vez"
+ * era de antes da auto-isolação da 0.76.110 e fazia o pane enfileirar
+ * writers), e o número de helpers vem do teto seguro da máquina.
+ */
+export function formatDelegationContext(
+  advice: DelegationAdvice,
+  budget: ParallelHelperBudget | null = null,
+): string {
+  const work = advice.heavyRead
+    ? 'Leitura pesada'
+    : `Esta tarefa se divide em ~${advice.parts} partes`;
+  let text: string;
+  if (budget && helpersToOpenNow(advice.parts, budget) === 0) {
+    text =
+      `[Nexus · Jev] ${work}, mas a máquina está no teto seguro agora ` +
+      `(${budgetCeilingNote(budget)}): não abra helpers — feche os que já ` +
+      'entregaram ou faça em sequência.';
+  } else if (advice.heavyRead) {
+    text =
+      '[Nexus · Jev] Leitura pesada: delegue a investigação a um helper com ' +
+      'nexus_pane_spawn({ task, prompt, readOnly: true }) e encerre o turno; ' +
+      'a entrega chega sozinha.';
+  } else {
+    const reads = Math.max(0, advice.parts - advice.writers);
+    text =
+      `[Nexus · Jev] ${work} (${reads} de leitura, ${advice.writers} de escrita). ` +
+      'Delegue com nexus_pane_spawn({ task, prompt }), um helper por parte — ' +
+      `${parallelWave(advice.parts, budget)}; readOnly: true nas de leitura, ` +
+      'isolatedWriter: true nas de escrita. Encerre o turno; não execute tudo sozinho.';
+  }
   return text.length > 400 ? `${text.slice(0, 399)}…` : text;
 }
 
@@ -381,16 +468,19 @@ export function formatDelegationContext(advice: DelegationAdvice): string {
  * Diretiva da adoção (Autopilot, confiança ≥ 0,7): o pane JÁ virou
  * orquestrador — a ordem muda de "delegue" para "abra os helpers e encerre".
  */
-function formatAutoOrchestrateDirective(advice: DelegationAdvice): string {
+function formatAutoOrchestrateDirective(
+  advice: DelegationAdvice,
+  budget: ParallelHelperBudget | null,
+): string {
   const reads = Math.max(0, advice.parts - advice.writers);
   const text =
     `[Nexus · Jev] Esta tarefa se divide em ~${advice.parts} partes ` +
     `(${reads} de leitura, ${advice.writers} de escrita). O Nexus tornou ` +
     'este pane orquestrador de uma missão para ela. Abra um helper por ' +
-    'parte com nexus_pane_spawn({ task, prompt }) — readOnly: true nas de ' +
-    'leitura, isolatedWriter: true nas de escrita em paralelo —, encerre o ' +
-    'turno e integre as entregas quando chegarem. Não faça as partes você ' +
-    'mesmo.';
+    `parte com nexus_pane_spawn({ task, prompt }) — ${parallelWave(advice.parts, budget)}; ` +
+    'readOnly: true nas de leitura, isolatedWriter: true nas de escrita —, ' +
+    'encerre o turno e integre as entregas quando chegarem. Não faça as ' +
+    'partes você mesmo.';
   return text.length > 500 ? `${text.slice(0, 499)}…` : text;
 }
 
@@ -411,8 +501,9 @@ function missionSummaryFromPrompt(prompt: string): string | null {
 /**
  * Pedido do operador que se divide, com confiança alta e em Autopilot: o
  * Nexus torna o pane orquestrador pela missão sob demanda da aba (mesmo
- * provedor do "1º helper") e troca a dica pela diretiva. Helper, pane com
- * missão, Hardened, confiança menor e adoção recusada ficam na dica.
+ * provedor do "1º helper") e troca a dica pela diretiva. Pane com missão,
+ * Hardened, confiança menor, máquina no teto seguro e adoção recusada ficam
+ * na dica (helper nem chega aqui: F-784).
  */
 function delegationContextFor(
   ctx: HookContext,
@@ -420,11 +511,15 @@ function delegationContextFor(
   advice: DelegationAdvice,
   autopilot: () => boolean,
   adoptMission: (ctx: HookContext, summary: string | null) => OperatorTabMission | null,
+  budget: ParallelHelperBudget | null,
 ): string {
-  const hint = formatDelegationContext(advice);
+  const hint = formatDelegationContext(advice, budget);
   if (
     advice.confidence < AUTO_ORCHESTRATE_MIN_CONFIDENCE ||
     advice.parts < 2 ||
+    // F-784: no teto seguro não há helper a abrir — promover o pane só
+    // trocaria a dica por uma ordem impossível.
+    helpersToOpenNow(advice.parts, budget) === 0 ||
     ctx.role !== 'user' ||
     ctx.missionId ||
     !typedByOperator(ctx, prompt) ||
@@ -447,7 +542,7 @@ function delegationContextFor(
     writers: advice.writers,
     confidence: advice.confidence,
   });
-  return formatAutoOrchestrateDirective(advice);
+  return formatAutoOrchestrateDirective(advice, budget);
 }
 
 export async function handleHookDelegateRequest(
@@ -471,12 +566,15 @@ export async function handleHookDelegateRequest(
     maestroDoctrine?: MaestroDoctrineFn;
     /** F-753: skill do Nexus ou do projeto que o Jev/Clef acha útil no pedido. */
     suggestSkill?: typeof suggestSkillForTask;
+    /** F-784: teto seguro de helpers agora; default = panes vivos × RAM livre. */
+    parallelBudget?: ParallelBudgetFn;
   } = {},
 ): Promise<{ statusCode: 200; payload: Record<string, unknown> }> {
   try {
     const prompt = parseUserPrompt(body);
     if (!prompt) return { statusCode: 200, payload: {} };
     const now = (deps.now ?? Date.now)();
+    const budgetOf = onceBudget(deps.parallelBudget ?? currentParallelHelperBudget);
     // A entrega de um helper chega como prompt, mas não é pedido novo do operador.
     const operatorPrompt =
       !prompt.startsWith(WORKSPACE_HANDOFF_DELIVERY_PREFIX) &&
@@ -489,9 +587,15 @@ export async function handleHookDelegateRequest(
     // processando entregas que ele passa a fazer o trabalho.
     const maestroDirective =
       operatorPrompt && isMissionMaestro(ctx)
-        ? await maestroDelegationDirective(ctx, prompt, deps.advise ?? advisePrompt, doctrineFor)
+        ? await maestroDelegationDirective(
+            ctx,
+            prompt,
+            deps.advise ?? advisePrompt,
+            doctrineFor,
+            budgetOf,
+          )
         : null;
-    const maestro = maestroDirective ?? maestroContextFor(ctx, now, doctrineFor);
+    const maestro = maestroDirective ?? maestroContextFor(ctx, now, doctrineFor, budgetOf);
     const parts: string[] = maestro ? [maestro] : [];
     if (!isOperatorHandContext(ctx) || !operatorPrompt) {
       return additionalContextResponse(ctx, parts);
@@ -507,7 +611,14 @@ export async function handleHookDelegateRequest(
     const businessContext = deps.businessContext ?? defaultBusinessContext;
     // Duas consultas Jev no mesmo turno rodam em PARALELO: sequenciais, o
     // prompt do operador pagava a soma dos timeouts no pior caso.
-    const advicePromise = advise(prompt, { sessionId: ctx.sessionId }).catch(() => null);
+    // F-784: só o pane raiz (o do operador) é empurrado a delegar. O brief de
+    // um helper julgado "divisível" virava "delegue" e abria helpers de
+    // helpers — a cascata que já levou o Mac ao swap (F-572: 33 panes); o
+    // decisions.jsonl de 26–27/09 tem briefs de helper com delegate:5p.
+    const advicePromise =
+      ctx.operatorParentSessionId === undefined
+        ? advise(prompt, { sessionId: ctx.sessionId }).catch(() => null)
+        : Promise.resolve(null);
     const businessModelPromise = businessContextFor(ctx, prompt, now, businessContext);
     // F-753: a skill certa para o pedido, entre as do Nexus e as do projeto —
     // antes o operador arrastava cada uma do painel para o pane. Mesmo teto
@@ -566,7 +677,14 @@ export async function handleHookDelegateRequest(
         ((context: HookContext, summary: string | null) =>
           adoptThroughOperatorTabMission(context as AgentGateContext, summary));
       parts.push(
-        delegationContextFor(ctx, prompt, advice.delegation, autopilot, adoptMission),
+        delegationContextFor(
+          ctx,
+          prompt,
+          advice.delegation,
+          autopilot,
+          adoptMission,
+          budgetOf(),
+        ),
       );
     }
     if (

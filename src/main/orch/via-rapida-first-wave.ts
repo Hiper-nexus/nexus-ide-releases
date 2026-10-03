@@ -382,17 +382,27 @@ export function planFirstWaveSeats(input: {
   readonly extraPresentClis?: readonly string[];
   /** CLI do Maestro — não ganha assento de writer extra. */
   readonly orchestratorCli?: string;
+  /**
+   * F-784: panes novos que cabem agora (orçamento de paralelismo: panes de
+   * agente vivos × teto da RAM × memória livre). A onda abre todas as
+   * histórias até esse teto, nunca além. Ausente = sem teto da máquina.
+   */
+  readonly maxNewSeats?: number;
 }): {
   readonly targetSeats: number;
   readonly presentWriters: readonly SquadAgent[];
   readonly seats: readonly FirstWaveSeat[];
   readonly skippedNoCredential: readonly string[];
 } {
-  const target = Math.max(
+  const byStories = Math.max(
     0,
     targetFirstWaveWriterSeats(input.storyCount) -
       (input.liveWritableWorkers ?? 0),
   );
+  const target =
+    input.maxNewSeats === undefined
+      ? byStories
+      : Math.min(byStories, Math.max(0, input.maxNewSeats));
   const classify = input.classifySeat ?? defaultClassify;
   const allWriters = writableRosterAgents(input.agents);
   const blocked = new Set(
