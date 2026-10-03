@@ -20,12 +20,14 @@ describe('MiMo task routing', () => {
   );
 
   it.each(['hard', 'critical'] satisfies TaskTier[])(
-    'offers Pro before the costlier Ultraspeed variant for %s work', (tier) => {
+    'offers Pro for %s work and never the api-only Ultraspeed variant', (tier) => {
       const decision = routeTask('tarefa', [
         { id: 'mimo-code', installed: true, models: [flash, pro, ultra] },
       ], DEFAULT_ROUTING_TABLE, tier, false, catalog);
       expect(decision).toMatchObject({ adapterId: 'mimo-code', model: pro });
-      expect(decision?.alternatives).toContainEqual({ adapterId: 'mimo-code', model: ultra });
+      // F-774: o ultraspeed saiu da tabela (api-only no catálogo e ausente da
+      // CLI instalada) — não pode aparecer nem como alternativa.
+      expect([decision, ...(decision?.alternatives ?? [])].some((row) => row?.model === ultra)).toBe(false);
     },
   );
 

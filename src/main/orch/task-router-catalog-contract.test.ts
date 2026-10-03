@@ -55,12 +55,29 @@ describe('contrato: tabela de roteamento × catálogos', () => {
     expect(row.model, 'candidato sem modelo explícito').toBeTruthy();
     expect(retired(row.model), `${row.model} está em RETIRED_MODEL_MIGRATIONS`).toBe(false);
     expect(adapter!.models.list, `${row.adapterId} não lista ${row.model}`).toContain(row.model);
-    // api-only NÃO reprova: é política do catálogo (overlay do usuário pode
-    // liberar) e o roteador já o pula com "evitou" no reason.
+    // F-774: a tabela DEFAULT também não pode carregar id que o roteador pula
+    // por padrão — api-only/deprecated gera "evitou" no reason e, quando a CLI
+    // não expõe o id, "CLI sem o modelo roteado" em toda decisão (o
+    // mimo-v2.6-pro-ultraspeed poluiu 9/10 rotas até 03/10/2026). Um overlay
+    // do usuário que libere o id pode reordenar, mas não reabre a tabela.
+    const info = modelCatalogInfo(catalog, row.adapterId, row.model);
+    // Cobertura do catálogo é incremental (openclaude/aider/opencode roteiam
+    // modelos de outros providers e ainda não têm seção própria): exigir o id
+    // só quando o adapter já é catalogado — um id inventado para adapter
+    // coberto reprova aqui.
+    const adapterCatalogued =
+      (catalog.adapters?.[row.adapterId]?.models ?? []).length > 0;
+    if (adapterCatalogued) {
+      expect(info, `${row.adapterId}:${row.model} fora do catálogo do adapter`).not.toBeNull();
+    }
     expect(
-      modelCatalogInfo(catalog, row.adapterId, row.model)?.availability,
+      info?.availability,
       `${row.adapterId}:${row.model} está deprecated no catálogo`,
     ).not.toBe('deprecated');
+    expect(
+      info?.availability,
+      `${row.adapterId}:${row.model} está api-only no catálogo — o roteador nunca o escolhe por padrão`,
+    ).not.toBe('api-only');
   });
 
   it('defaults de adapter e de catálogo não apontam para id aposentado ou fora da lista', () => {
