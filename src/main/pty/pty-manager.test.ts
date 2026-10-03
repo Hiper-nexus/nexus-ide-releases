@@ -72,7 +72,10 @@ vi.mock("../path-resolver", () => ({
   revalidateExecutable: (binPath: string) =>
     typeof binPath === "string" && binPath.startsWith("/"),
   resolveCliBinary: (command: string) => ({
-    binPath: `/mock/bin/${command}`,
+    // O smoke de boot real (opt-in) precisa de um Node que exista de verdade.
+    binPath: process.env.NEXUS_PROVIDER_BOOT_SMOKE === "1" && command === "node"
+      ? process.execPath
+      : `/mock/bin/${command}`,
     effectivePath: "/mock/bin",
     source: "process-path",
   }),
@@ -6230,3 +6233,101 @@ describe("F-789: MiniMax abre pelo Node que carrega o SQLite nativo do mcode", (
     }
   });
 });
+
+// Smoke opt-in (NEXUS_PROVIDER_BOOT_SMOKE=1, fora da suíte normal): a CLI
+// instalada roda num PTY de verdade (scripts/provider-boot-pty.py) com o spawn
+// spec que o Nexus monta, por 20 s e SEM prompt (nenhuma chamada de modelo).
+// A credencial é a do perfil nativo, lida só pela própria CLI; spec e saída
+// ficam em memória e só a cauda sanitizada é impressa.
+it.skipIf(process.env.NEXUS_PROVIDER_BOOT_SMOKE !== "1").each([
+  ["qwen", "worktree longa (F-788)"],
+  ["minimax-code", "Node do PATH com outro ABI (F-789)"],
+])("smoke de boot real: %s — %s", async (provider) => {
+  const { prepareQwenMcpSession } = await import("../orch/cli-mcp-session-qwen");
+  const { prepareMinimaxMcpSession } = await import("../orch/cli-mcp-session-minimax");
+  const { prepareMinimaxNodeRuntime } = await import("../adapters/minimax-node-runtime");
+  const { sanitizePaneBootOutput } = await import("../orch/pane-boot-output");
+  const { execFile } = await import("node:child_process");
+  const { createServer } = await import("node:http");
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nexus-provider-boot-")));
+  // MCP do Nexus de mentira: só responde ao handshake.
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      const call = JSON.parse(body) as { id?: unknown; method?: string };
+      if (call.id === undefined) { res.writeHead(202).end(); return; }
+      const result = call.method === "initialize"
+        ? { protocolVersion: "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: "nexus", version: "1.0.0" } }
+        : call.method === "tools/list" ? { tools: [] } : {};
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ jsonrpc: "2.0", id: call.id, result }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`;
+  const token = "fixture-provider-boot-smoke";
+  const bin = path.join(os.homedir(), ".npm-global", "bin", provider === "qwen" ? "qwen" : "mcode");
+  // Writer do Qwen numa worktree com o formato da do Nexus (nome de projeto > 255).
+  const cwd = provider === "qwen"
+    ? path.join(root, `project-${"a".repeat(64)}`, `checkout-${"b".repeat(64)}`, "worktrees", `task-${"c".repeat(64)}`)
+    : fs.realpathSync(process.cwd());
+  fs.mkdirSync(cwd, { recursive: true });
+  const authority = preRevisionMissionWorker(cwd);
+  const host = fakeHost();
+  setPtyHost(host.host);
+  setSquadCliPolicyLookupForTests(() => "operator-choice");
+  const prepared = provider === "qwen"
+    ? prepareQwenMcpSession(url, token, {
+        home: path.join(root, "home"), providerHome: path.join(os.homedir(), ".qwen"),
+        artifactRoot: path.join(root, "artifacts"), userDataPath: app.getPath("userData"),
+        checkoutId: authority.scope.checkoutId, cwd, workspaceRoot: cwd,
+        governed: true, allowedSkills: [], allowedTools: [],
+      })
+    : { ...prepareMinimaxMcpSession(url, token, { home: path.join(root, "home"), nodePath: process.execPath }), extraArgs: [] };
+  // Qwen: settings de sistema (precedência máxima) só desligam o auto-update
+  // durante o smoke; a instalação global do operador não muda.
+  const systemSettings = path.join(root, "qwen-system-settings.json");
+  fs.writeFileSync(systemSettings, JSON.stringify({ general: { enableAutoUpdate: false } }));
+  const env = provider === "qwen"
+    ? { ...prepared.env, QWEN_CODE_SYSTEM_SETTINGS_PATH: systemSettings }
+    : prepared.env;
+  setAgentSpawnHook(() => ({ authorityToken: token, env, extraArgs: prepared.extraArgs }));
+  // O permit da CLI decide o Node do mcode antes do spawn (F-789).
+  const runtime = provider === "minimax-code"
+    ? await prepareMinimaxNodeRuntime(bin, process.env.PATH ?? "")
+    : null;
+  let id: string | undefined;
+  try {
+    const spawned = spawnAgentSession(fakeWc(), {
+      kind: "cli-agent", cols: 100, rows: 30,
+      model: provider === "qwen" ? "qwen3.8-max" : "minimax/MiniMax-M3",
+    }, builtinCliPtyAdapter(provider), { binPath: bin }, authority);
+    id = spawned.sessionId;
+    const spec = host.specFor(id);
+    const result = await new Promise<string>((resolve, reject) => {
+      const child = execFile("python3", ["scripts/provider-boot-pty.py"],
+        { timeout: 40_000, maxBuffer: 4 * 1024 * 1024 },
+        (error, stdout) => (error ? reject(error) : resolve(stdout)));
+      child.stdin!.end(JSON.stringify({ ...spec, seconds: 20 }));
+    });
+    const captured = JSON.parse(result) as { exitCode: number | null; output: string };
+    console.log(JSON.stringify({
+      provider,
+      file: spec.file,
+      argsHead: spec.args.slice(0, 3),
+      runtime,
+      logicalCwd: spec.env.NEXUS_QWEN_LOGICAL_CWD ?? null,
+      exitCode: captured.exitCode,
+      tail: sanitizePaneBootOutput(captured.output),
+    }, null, 2));
+    // Vivo depois de 20 s = passou do boot (Qwen morria em 2 s, MiniMax em ~10 s).
+    expect(captured.exitCode).toBe(null);
+  } finally {
+    if (id) await orchTerminateSession(id);
+    setAgentSpawnHook(null);
+    cleanupCliMcpSession(token);
+    server.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);
