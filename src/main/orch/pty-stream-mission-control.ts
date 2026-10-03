@@ -44,6 +44,7 @@ export interface PtyStreamMissionActionOutcome {
 
 export interface PtyStreamMissionControlPorts {
   readonly createChannelId?: () => string;
+  readonly onChannel?: (sessionId: string, channelId: string) => void;
   readonly invoke: (
     sessionId: string,
     request: PtyStreamMissionAction,
@@ -178,6 +179,7 @@ export class PtyStreamMissionControl {
       results: [],
     };
     this.channels.set(sessionId, channel);
+    this.ports.onChannel?.(sessionId, channel.id);
     return channel.id;
   }
 
@@ -204,6 +206,12 @@ export class PtyStreamMissionControl {
   isCollecting(sessionId: string): boolean {
     const channel = this.channels.get(sessionId);
     return channel ? channel.collectingText !== null : false;
+  }
+
+  /** Typed Worker result. Recheck authority before admitting effects. */
+  acceptObservedAction(sessionId: string, request: PtyStreamMissionAction): void {
+    const channel = this.channels.get(sessionId);
+    if (channel && this.ports.isAuthorized(sessionId)) this.acceptAction(sessionId, channel, request);
   }
 
   feed(sessionId: string, chunk: string): void {

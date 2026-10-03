@@ -35,6 +35,18 @@ describe('ordered off-Main analysis', () => {
     expect(sent.filter((r) => r.kind === 'data').every((r) => Buffer.byteLength(r.data) <= 65_536)).toBe(true);
   });
 
+  it('coalesces small output without crossing an input/control edge or losing chunk descriptors', () => {
+    const { client, sent, ack } = fixture(); client.bind('s', {}); ack();
+    client.data('s', 'first'); client.data('s', 'second'); client.data('s', 'third');
+    client.input('s', '\r'); client.data('s', 'fourth');
+    ack();
+    const batch = sent.at(-1)!;
+    expect(batch.kind).toBe('data');
+    if (batch.kind === 'data') { expect(batch.data).toBe('secondthird'); expect(batch.pieces?.map((p) => p.chars)).toEqual([6, 5]); }
+    ack(); expect(sent.at(-1)?.kind).toBe('input');
+    ack(); expect(sent.at(-1)?.kind).toBe('data');
+  });
+
   it('serves another session before draining a flood', () => {
     const { client, sent, ack } = fixture();
     client.bind('a', {}); ack(); client.bind('b', {}); ack();

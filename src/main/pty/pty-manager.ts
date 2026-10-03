@@ -1495,7 +1495,7 @@ export function spawnSession(
     const lease = sessionLeaseRegistry.issueLease(sessionId, { kind: "shell" });
     session.startKey = lease.startKey;
     sessions.set(sessionId, session);
-  bindPtyAnalysisSession(sessionId);
+    bindPtyAnalysisSession(sessionId);
     return { sessionId, startKey: lease.startKey };
   } catch (err) {
     cleanupShellIntegrationPaths(cleanupPaths);
@@ -3469,6 +3469,7 @@ export function bindOwnedAgentSessionMission(
     return false;
   }
   session.agent = { ...info, missionId };
+  bindPtyAnalysisSession(sessionId);
   return true;
 }
 
@@ -3512,6 +3513,7 @@ export function updateOwnedAgentSessionRole(
           ? null
           : [...input.allowedSkills],
   };
+  bindPtyAnalysisSession(sessionId);
   return true;
 }
 
@@ -3533,6 +3535,7 @@ export function adoptUserAgentSessionAsMissionOrchestrator(
     info?.role === "user" ? !info.missionId : info?.promotedFromUser === true;
   if (!session || !info || !operatorHand || !missionId) return false;
   session.agent = { ...info, role: "orchestrator", missionId, promotedFromUser: true };
+  bindPtyAnalysisSession(sessionId);
   return true;
 }
 
@@ -3558,6 +3561,7 @@ export function releaseOperatorOpenedAgentSession(
     ...rest
   } = info;
   session.agent = { ...rest, role: "user", allowedTools: null, allowedSkills: null };
+  bindPtyAnalysisSession(sessionId);
   return true;
 }
 
@@ -3573,6 +3577,7 @@ export function returnAdoptedAgentSessionToUser(
   }
   const { missionId: _mission, promotedFromUser: _promoted, workerIncarnationId: _worker, ...rest } = info;
   session.agent = { ...rest, role: "user" };
+  bindPtyAnalysisSession(sessionId);
   return true;
 }
 
@@ -3586,6 +3591,7 @@ export function rollbackOwnedAgentSessionMission(
   if (!session || !info || info.missionId !== missionId) return false;
   const { missionId: _discarded, ...restored } = info;
   session.agent = restored;
+  bindPtyAnalysisSession(sessionId);
   return true;
 }
 

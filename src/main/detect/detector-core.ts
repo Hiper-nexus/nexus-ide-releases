@@ -119,6 +119,9 @@ interface SessionRuntime {
 
 export interface AgentScreenDetectorDeps {
   manifests: CompiledManifest[];
+  beforeEvaluate?: (sessionId: string, manifestId: string) => void;
+  afterEvaluate?: () => void;
+  diagnostic?: (sessionId: string, adapterId: string, explain: DetectionExplain, state: DetectionPublishState) => void;
   /** Exact PTY-id agent lookup (pty-manager getAgentSessionInfo in prod). */
   getAgentInfo: (
     sessionId: string,
@@ -325,12 +328,15 @@ export class AgentScreenDetector {
       oscProgress: this.osc.progress(sessionId),
     };
     const evalStartedAt = performance.now();
-    const explain = evaluateManifest(compiled, input);
+    this.deps.beforeEvaluate?.(sessionId, compiled.manifest.id);
+    let explain: DetectionExplain;
+    try { explain = evaluateManifest(compiled, input); } finally { this.deps.afterEvaluate?.(); }
     const evalMs = performance.now() - evalStartedAt;
     if (evalMs > EVAL_BUDGET_MS) {
       this.noteSlowEvaluation(sessionId, runtime, compiled, evalMs, input.screen.length, now);
     }
     runtime.lastExplain = explain;
+    this.deps.diagnostic?.(sessionId, adapterId, explain, runtime.published);
     // detection_update_for_publish: skip_state_update rules never publish.
     if (explain.skipStateUpdate) return null;
 

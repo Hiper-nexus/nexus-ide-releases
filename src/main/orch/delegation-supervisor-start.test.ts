@@ -93,6 +93,19 @@ vi.mock('../pty/pty-manager', async (importOriginal) => ({
     };
   },
 }));
+vi.mock('../pty/pty-analysis-runtime', async (original) => {
+  const actual = await original<typeof import('../pty/pty-analysis-runtime')>();
+  const { detectLimit } = await import('./limit-detector');
+  const { listPaneStartWatches } = await import('./pane-start-watchdog');
+  return {
+    ...actual,
+    isPtyAnalysisEnabled: () => false,
+    getPtyAnalysisLimitEvidence: (sessionId: string) => {
+      const watch = listPaneStartWatches().find((entry) => entry.sessionId === sessionId);
+      return watch ? { status: 'accepted', binding: { paneId: watch.paneId, adapterId: watch.adapterId }, hit: detectLimit(h.sessionOutput(sessionId, 80)) } : { status: 'unavailable' };
+    },
+  };
+});
 vi.mock('./agent-status', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./agent-status')>()),
   getAgentSemanticStatusBySession: h.getSemantic,

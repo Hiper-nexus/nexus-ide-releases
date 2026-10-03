@@ -6,9 +6,9 @@ import {
 
 type InputBody<T = AnalysisInput> = T extends AnalysisFence ? Omit<T, keyof AnalysisFence> : never;
 interface Session {
-  generation: number; seq: number; accepted: number; queue: AnalysisInput[];
+  generation: number; seq: number; lastDataSeq: number; accepted: number; queue: AnalysisInput[];
   bytes: number; status: 'active' | 'sealed' | 'degraded' | 'terminated';
-  paused: boolean; text: string;
+  paused: boolean; text: string; latest: Map<AnalysisConsumer, { value: unknown; fence: AnalysisFence }>; evidence: Map<AnalysisConsumer, unknown[]>;
 }
 interface Subscription {
   registration: number;
@@ -36,9 +36,9 @@ export class PtyAnalysisClient {
 
   bind(id: string, binding: AnalysisBinding): number {
     const prior = this.#sessions.get(id);
-    if (prior) this.#discard(id, prior);
-    const session: Session = { generation: ++this.#generation, seq: 0, accepted: 0,
-      queue: [], bytes: 0, status: this.#degraded ? 'degraded' : 'active', paused: false, text: '' };
+    if (prior) { this.deps.acknowledged?.(id, prior.bytes); this.#discard(id, prior); }
+    const session: Session = { generation: ++this.#generation, seq: 0, lastDataSeq: 0, accepted: 0,
+      queue: [], bytes: 0, status: this.#degraded ? 'degraded' : 'active', paused: false, text: '', latest: new Map(), evidence: new Map() };
     this.#sessions.set(id, session);
     this.#enqueue(id, { kind: 'bind', binding });
     for (const [consumer, sub] of this.#subscribers) this.#enqueue(id, {
@@ -50,6 +50,8 @@ export class PtyAnalysisClient {
   generation(id: string): number | null { return this.#sessions.get(id)?.generation ?? null; }
   status(id: string): Session['status'] | null { return this.#sessions.get(id)?.status ?? null; }
   text(id: string): string { return this.#sessions.get(id)?.text ?? ''; }
+  latest(id: string, consumer: AnalysisConsumer) { const s = this.#sessions.get(id); const entry = s?.latest.get(consumer); return entry && entry.fence.eventSeq >= (s?.lastDataSeq ?? Infinity) ? entry : null; }
+  evidence(id: string, consumer: AnalysisConsumer): readonly unknown[] { return this.#sessions.get(id)?.evidence.get(consumer) ?? []; }
   data(id: string, data: string): boolean {
     const s = this.#sessions.get(id);
     if (!s || s.status !== 'active') return false;
@@ -67,7 +69,7 @@ export class PtyAnalysisClient {
       const part = data.slice(start, end);
       const partBytes = Buffer.byteLength(part);
       s.bytes += partBytes; this.#bytes += partBytes; this.#admitted += partBytes;
-      this.#enqueue(id, { kind: 'data', data: part });
+      this.#enqueue(id, { kind: 'data', data: part, endOfChunk: end === data.length });
       start = end;
     }
     this.#highwater = Math.max(this.#highwater, this.#bytes);
@@ -96,7 +98,8 @@ export class PtyAnalysisClient {
   barrier(id: string): Promise<boolean> {
     const s = this.#sessions.get(id);
     if (!s || s.status === 'degraded' || s.status === 'terminated') return Promise.resolve(false);
-    this.#enqueue(id, { kind: 'flush' });
+    if (s.status === 'active') this.#enqueue(id, { kind: 'flush' });
+    if (s.accepted >= s.seq) return Promise.resolve(true);
     return new Promise((resolve) => {
       const pending = this.#barriers.get(id) ?? [];
       pending.push({ seq: s.seq, resolve }); this.#barriers.set(id, pending);
@@ -108,6 +111,7 @@ export class PtyAnalysisClient {
   }
   exit(id: string): void {
     const s = this.#sessions.get(id); if (!s) return;
+    if (s.status === 'sealed' || s.status === 'terminated') return;
     if (s.status === 'active') s.status = 'sealed';
     this.#enqueue(id, { kind: 'exit' });
     // Finite immutable tombstones, never retain dead PTY authority.
@@ -157,12 +161,17 @@ export class PtyAnalysisClient {
     }
     this.deps.trace?.({ kind: 'pty-analysis-degraded', workerEpoch: this.#epoch, reason });
   }
-  metrics() { return { workerEpoch: this.#epoch, pendingBytes: this.#bytes, inFlight: this.#flight !== null,
+  recoverFreshSessions(): void { this.#degraded = false; }
+  metrics() { return { degradedSessions: [...this.#sessions.values()].filter((s) => s.status === 'degraded').length, workerEpoch: this.#epoch, pendingBytes: this.#bytes, inFlight: this.#flight !== null,
     admittedBytes: this.#admitted, ackedBytes: this.#acked, highwaterBytes: this.#highwater, sessions: this.#sessions.size, degraded: this.#degraded }; }
   #apply(r: AnalysisResult, s: Session, e: AnalysisEvent) {
+    if (e.consumer !== 'failover' || ((e.value as { scanned?: boolean }).scanned || (e.value as { unavailable?: boolean }).unavailable)) s.latest.set(e.consumer, { value: e.value, fence: { workerEpoch: r.workerEpoch, sessionId: r.sessionId, generation: r.generation, eventSeq: r.eventSeq, observedAt: r.observedAt } });
+    if (e.archival && (e.consumer === 'handoff' || e.consumer === 'completion')) {
+      const items = s.evidence.get(e.consumer) ?? []; items.push(e.value); if (items.length > 4) items.shift(); s.evidence.set(e.consumer, items);
+    }
     const sub = this.#subscribers.get(e.consumer);
     if (sub && sub.registration === e.registration && (s.status === 'active' || (s.status === 'sealed' && e.archival))) {
-      try { sub.callback(r.sessionId, e.value, r); } catch (error) { this.deps.trace?.({ kind: 'pty-analysis-consumer-error', consumer: e.consumer, error: String(error).slice(0, 200) }); }
+      try { sub.callback(r.sessionId, e.value, r); } catch { this.deps.trace?.({ kind: 'pty-analysis-consumer-error', consumer: e.consumer, error: 'callback-failed' }); }
     }
   }
   #pause(id: string, s: Session, paused: boolean) { if (s.paused !== paused) { s.paused = paused; this.deps.flow(id, paused); } }
@@ -175,7 +184,14 @@ export class PtyAnalysisClient {
     const s = this.#sessions.get(id); if (!s || this.#degraded) return;
     const record = { ...body, workerEpoch: this.#epoch, sessionId: id, generation: s.generation,
       eventSeq: ++s.seq, observedAt: this.deps.now() } as AnalysisInput;
-    s.queue.push(record); this.#pump();
+    if (record.kind === 'data') s.lastDataSeq = record.eventSeq;
+    const previous = s.queue.at(-1);
+    if (record.kind === 'data' && previous?.kind === 'data' && record.endOfChunk !== false && previous.endOfChunk !== false &&
+        previous.data.length + record.data.length <= ANALYSIS_UNIT_BYTES / 3 && (previous.pieces?.length ?? 1) < 512) {
+      const pieces = [...(previous.pieces ?? [{ chars: previous.data.length, at: previous.observedAt }]), { chars: record.data.length, at: record.observedAt }];
+      s.queue[s.queue.length - 1] = { ...record, data: previous.data + record.data, pieces };
+    } else s.queue.push(record);
+    this.#pump();
   }
   #pump() {
     if (this.#flight || this.#degraded) return;

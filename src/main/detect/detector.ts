@@ -37,19 +37,20 @@ import type { DetectionExplain } from './evaluator';
 import type { DetectionPublishState, ScreenDetectionRecord, ScreenDetectionTap } from './detector-core';
 export * from './detector-core';
 
-let active: { dispose: () => void; taps: Set<ScreenDetectionTap>; explains: Map<string, DetectionExplain>; states: Map<string, DetectionPublishState> } | null = null;
+let active: { dispose: () => void; taps: Set<ScreenDetectionTap>; explains: Map<string, { generation: number; explain: DetectionExplain }>; states: Map<string, DetectionPublishState> } | null = null;
 /** Production never evaluates a manifest in Main. Queries read accepted caches. */
 export function startAgentScreenDetection(): () => void {
   if (active) return active.dispose;
   const taps = new Set<ScreenDetectionTap>();
-  const explains = new Map<string, DetectionExplain>();
+  const explains = new Map<string, { generation: number; explain: DetectionExplain }>();
   const states = new Map<string, DetectionPublishState>();
-  const untap = subscribePtyAnalysis('screen', (sessionId, value) => {
-    const { record, explain, state } = value as { record: ScreenDetectionRecord; explain: DetectionExplain | null; state: DetectionPublishState | null };
+  const untap = subscribePtyAnalysis('screen', (sessionId, value, fence) => {
+    const { record, explain, state, adapterId } = value as { adapterId?: string; record?: ScreenDetectionRecord; explain: DetectionExplain | null; state: DetectionPublishState | null };
     const info = getAgentSessionInfo(sessionId);
-    if (!info || info.adapterId !== record.adapterId || info.paneId !== record.paneId) return;
-    if (explain) explains.set(sessionId, explain);
+    if (!info || info.adapterId !== (record?.adapterId ?? adapterId) || (record && info.paneId !== record.paneId)) return;
+    if (explain) explains.set(sessionId, { generation: fence.generation, explain });
     if (state) states.set(sessionId, state);
+    if (!record) return;
     applyScreenDetectionEvent({ sessionId, state: record.state, visibleIdle: record.visibleIdle,
       visibleBlocker: record.visibleBlocker, visibleWorking: record.visibleWorking, now: record.at });
     for (const tap of taps) { try { tap(record); } catch (error) { console.warn('[detect] detection tap failed:', error); } }
@@ -64,5 +65,5 @@ export function tapActiveScreenDetections(cb: ScreenDetectionTap): (() => void) 
 export function activeScreenText(sessionId: string, maxChars = 6_000): string | null {
   if (!active) return null; const text = analysisClient.text(sessionId); return text ? text.slice(-maxChars) : null;
 }
-export function getScreenDetectionExplain(sessionId: string): DetectionExplain | null { return active?.explains.get(sessionId) ?? null; }
+export function getScreenDetectionExplain(sessionId: string): DetectionExplain | null { const cached = active?.explains.get(sessionId); return cached && cached.generation === analysisClient.generation(sessionId) ? cached.explain : null; }
 export function __resetAgentScreenDetectionForTests(): void { active?.dispose(); active = null; }

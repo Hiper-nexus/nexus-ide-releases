@@ -14,7 +14,7 @@ export interface AnalysisFence {
 export interface AnalysisBinding { readonly adapterId?: string; readonly paneId?: string; readonly model?: string }
 export type AnalysisInput = AnalysisFence & (
   | { readonly kind: 'bind'; readonly binding: AnalysisBinding }
-  | { readonly kind: 'data'; readonly data: string }
+  | { readonly kind: 'data'; readonly data: string; readonly endOfChunk?: boolean; readonly pieces?: readonly { chars: number; at: number }[] }
   | { readonly kind: 'input'; readonly data: string }
   | { readonly kind: 'arm'; readonly consumer: AnalysisConsumer; readonly registration: number; readonly config?: unknown }
   | { readonly kind: 'disarm'; readonly consumer: AnalysisConsumer; readonly registration: number }
@@ -36,7 +36,8 @@ export type AnalysisResult = AnalysisFence & {
   readonly done?: boolean;
   readonly screenText?: string;
 };
-export type AnalysisWorkerMessage = AnalysisResult | { kind: 'ready' } | { kind: 'work-start'; workerEpoch: number; job: number; sessionId: string } | { kind: 'failed'; reason: string };
+export type AnalysisWorkerMessage = AnalysisResult | { kind: 'ready' } | { kind: 'work-start'; workerEpoch: number; job: number; sessionId: string } | { kind: 'work-end' } | { kind: 'failed'; reason: string };
+const CONSUMERS = new Set<AnalysisConsumer>(['screen', 'dev-server', 'failover', 'completion', 'handoff', 'paste', 'command', 'pipe', 'token', 'prompt', 'first-run', 'mission-control']);
 export function validAnalysisResult(value: unknown): value is AnalysisResult {
   if (!value || typeof value !== 'object') return false;
   const r = value as AnalysisResult;
@@ -44,6 +45,6 @@ export function validAnalysisResult(value: unknown): value is AnalysisResult {
     Number.isSafeInteger(r.workerEpoch) && Number.isSafeInteger(r.generation) && Number.isSafeInteger(r.eventSeq) &&
     typeof r.observedAt === 'number' && Number.isFinite(r.observedAt) &&
     Number.isSafeInteger(r.ackBytes) && r.ackBytes >= 0 && r.ackBytes <= ANALYSIS_UNIT_BYTES &&
-    Array.isArray(r.events) && r.events.length <= ANALYSIS_EVENT_CAP &&
+    Array.isArray(r.events) && r.events.length <= ANALYSIS_EVENT_CAP && r.events.every((event) => event && CONSUMERS.has(event.consumer) && Number.isSafeInteger(event.registration) && event.registration > 0 && (event.archival === undefined || typeof event.archival === 'boolean')) &&
     (r.screenText === undefined || (typeof r.screenText === 'string' && r.screenText.length <= 262_144));
 }

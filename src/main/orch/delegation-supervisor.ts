@@ -37,7 +37,7 @@ import {
   tapSessionTermination,
 } from '../pty/pty-manager';
 import { adapterCircuitBreakers } from './circuit-breaker';
-import { detectLimit } from './limit-detector';
+import { getPtyAnalysisLimitEvidence } from '../pty/pty-analysis-runtime';
 import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from './workspace-handoff-delivery';
 import {
   CREDENTIAL_REJECTED_OPEN_MS,
@@ -683,8 +683,10 @@ function hasPaneStartEvidence(watch: PaneStartWatch, sessionId: string): boolean
  * F-765: o PTY da sessão mostra a recusa do modelo pela CLI DA FICHA — a frase
  * do Codex citada no pane de outra CLI não é recusa deste pane.
  */
-function sessionShowsModelRejection(watch: PaneStartWatch, sessionId: string): boolean {
-  const hit = detectLimit(readSessionOutput(sessionId, 80));
+function sessionShowsModelRejection(watch: PaneStartWatch, sessionId: string): boolean | null {
+  const evidence = getPtyAnalysisLimitEvidence(sessionId);
+  if (evidence.status !== 'accepted' || evidence.binding.paneId !== watch.paneId || evidence.binding.adapterId !== watch.adapterId) return null;
+  const hit = evidence.hit;
   return hit?.kind === 'model' && (!hit.adapterId || hit.adapterId === watch.adapterId);
 }
 
@@ -714,7 +716,10 @@ function paneStartProgressFor(
   }
   const handoff = sessionHasHandoff(watch, sessionId);
   const worked = handoff || getAgentToolActivityCount(sessionId) > 0;
-  if (!worked && sessionShowsModelRejection(watch, sessionId)) {
+  const modelRejection = worked ? false : sessionShowsModelRejection(watch, sessionId);
+  // Unknown analysis is not a no-limit verdict. Existing content-free hook
+  // evidence and explicit turn outcomes remain independently authoritative.
+  if (!worked && modelRejection === true) {
     // A recuperação é do failover: a ficha fica, sem sucesso no disjuntor e
     // sem abrir outra recuperação — até MODEL_REJECTION_HANDOFF_MS.
     watch.modelRejectedAt ??= now;
@@ -1057,7 +1062,7 @@ function installPaneStartTaps(): void {
       sessionId: entry.sessionId,
       outcome: entry.outcome,
       ...(entry.stopFailure ? { stopFailure: entry.stopFailure } : {}),
-      modelRejected: !entry.worked && sessionShowsModelRejection(watch, entry.sessionId),
+      modelRejected: !entry.worked && sessionShowsModelRejection(watch, entry.sessionId) === true,
       worked:
         entry.worked ||
         (entry.stopFailure !== undefined && sessionHasHandoff(watch, entry.sessionId)),

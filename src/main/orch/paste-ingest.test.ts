@@ -25,6 +25,20 @@ vi.mock('../pty/pty-manager', () => ({
   },
 }));
 
+vi.mock('../pty/pty-analysis-runtime', async () => {
+  const { PtyAnalysisCore } = await import('../pty/pty-analysis-core');
+  return { watchPtyAnalysisSession: (_consumer: string, id: string, config: object, callback: (value: unknown) => void) => {
+    let seq = 0;
+    const core = new PtyAnalysisCore([], (result) => { for (const event of result.events) if (event.consumer === 'paste') callback(event.value); });
+    const feed = (body: object) => core.process({ sessionId: id, generation: 1, workerEpoch: 1, eventSeq: ++seq, observedAt: Date.now(), ...body } as Parameters<typeof core.process>[0]);
+    feed({ kind: 'bind', binding: { adapterId: pty.adapters.get(id) } });
+    feed({ kind: 'arm', consumer: 'paste', registration: 1, config });
+    const tap = (sessionId: string, data: string) => { if (sessionId === id) feed({ kind: 'data', data }); };
+    pty.dataTaps.push(tap);
+    return () => { const index = pty.dataTaps.indexOf(tap); if (index >= 0) pty.dataTaps.splice(index, 1); core.close(); };
+  } };
+});
+
 import {
   CODEX_LARGE_PASTE_CHARS,
   DEVIN_LARGE_PASTE_LINES,

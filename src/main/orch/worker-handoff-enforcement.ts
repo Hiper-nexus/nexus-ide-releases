@@ -63,7 +63,6 @@ import {
 import {
   getPaneRuntimeAuthorityBySession,
   readSessionOutput,
-  stripAnsi,
   type PaneRuntimeAuthority,
 } from './pane-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
@@ -223,7 +222,7 @@ function productionDeps(): WorkerHandoffEnforcementDeps {
     promoteObserved: async (sessionId, tail) => {
       const promoted = await promoteObservedPtyHandoffs(
         sessionId,
-        stripAnsi(tail),
+        tail,
       );
       return promoted > 0;
     },
@@ -526,7 +525,7 @@ function enforce(
   clearTimer(watch);
   let tail = '';
   try {
-    tail = stripAnsi(deps.readTail(sessionId)).trim();
+    tail = deps.readTail(sessionId).trim();
   } catch {
     tail = '';
   }

@@ -12,11 +12,20 @@ let pending: AnalysisInput | null = null;
 let deadline: ReturnType<typeof setTimeout> | null = null;
 let flow: (id: string, paused: boolean) => void = () => {};
 let credit: (id: string, bytes: number) => void = () => {};
+let workerFactory: (() => Worker) | null = null;
+export function setPtyAnalysisWorkerFactoryForTests(factory: () => Worker): void {
+  if (worker) throw new Error('analysis worker already started'); workerFactory = factory;
+}
 let describe: (id: string) => AnalysisBinding = () => ({});
+const failures: number[] = [];
+const quarantinedManifests = new Set<string>();
+let riskyManifest: string | null = null;
 const bindings = new Map<string, AnalysisBinding>();
 function stopDeadline() { if (deadline) clearTimeout(deadline); deadline = null; }
 function fail(reason: string) {
   stopDeadline(); const old = worker; worker = null; ready = false; pending = null;
+  if (reason === 'work-timeout' && riskyManifest) quarantinedManifests.add(riskyManifest);
+  failures.push(Date.now()); riskyManifest = null;
   analysisClient.fail(reason); void old?.terminate();
 }
 function armDeadline(ms: number, reason: string) {
@@ -27,7 +36,7 @@ function ensureWorker() {
   let appPath = process.cwd(); let packaged = false;
   try { const { app } = require('electron') as typeof import('electron'); appPath = app.getAppPath(); packaged = app.isPackaged; } catch {}
   const manifestDir = resolveManifestDir({ appPath, packaged, resourcesPath: process.resourcesPath });
-  const created = new Worker(path.join(__dirname, 'pty-analysis-worker-entry.js'), { workerData: { manifestDir } });
+  const created = workerFactory ? workerFactory() : new Worker(path.join(__dirname, 'pty-analysis-worker-entry.js'), { workerData: { manifestDir, quarantinedManifests: [...quarantinedManifests] } });
   worker = created;
   armDeadline(2_000, 'startup-timeout');
   created.on('message', (message: AnalysisWorkerMessage) => {
@@ -35,7 +44,11 @@ function ensureWorker() {
     if (message.kind === 'ready') {
       ready = true; stopDeadline();
       if (pending) { const record = pending; pending = null; send(record); }
+    } else if (message.kind === 'work-end') {
+      riskyManifest = null; stopDeadline();
     } else if (message.kind === 'work-start') {
+      const manifest = (message as { manifestId?: unknown }).manifestId;
+      riskyManifest = typeof manifest === 'string' && manifest.length <= 128 ? manifest : null;
       armDeadline(250, 'work-timeout');
     } else if (message.kind === 'failed') fail(message.reason);
     else {
@@ -61,6 +74,8 @@ export function startPtyAnalysis() { enabled = true; }
 export function isPtyAnalysisEnabled() { return enabled; }
 export function bindPtyAnalysisSession(id: string) {
   if (!enabled) return 0;
+  while (failures.length && Date.now() - failures[0] >= 60_000) failures.shift();
+  if (analysisClient.metrics().degraded && failures.length <= 3 && !worker) analysisClient.recoverFreshSessions();
   const binding = describe(id); bindings.set(id, binding); return analysisClient.bind(id, binding);
 }
 function ensureBinding(id: string) {
@@ -105,4 +120,15 @@ export function watchPtyAnalysisSession(consumer: AnalysisConsumer, sessionId: s
   const watch = { id: ++watchId, callback }; watches.set(sessionId, watch);
   analysisClient.arm(sessionId, consumer, { ...config, watchId: watch.id });
   return () => { if (watches!.get(sessionId) === watch) { watches!.delete(sessionId); analysisClient.control(sessionId, consumer, { cancel: watch.id }); } };
+}
+
+export function getPtyAnalysisLimitEvidence(sessionId: string, now = Date.now()):
+  { status: 'accepted'; binding: { paneId: string; adapterId: string }; hit: import('../orch/limit-detector').LimitHit | null } | { status: 'unavailable' } {
+  if (analysisClient.status(sessionId) !== 'active') return { status: 'unavailable' };
+  const binding = describe(sessionId);
+  if (!binding.paneId || !binding.adapterId) return { status: 'unavailable' };
+  const cached = analysisClient.latest(sessionId, 'failover');
+  if (!cached || now - cached.fence.observedAt > 10_000 || now < cached.fence.observedAt) return { status: 'unavailable' };
+  const proposal = cached.value as import('../orch/failover-text-core').FailoverTextProposal;
+  return proposal.scanned ? { status: 'accepted', binding: { paneId: binding.paneId, adapterId: binding.adapterId }, hit: proposal.hit ?? null } : { status: 'unavailable' };
 }

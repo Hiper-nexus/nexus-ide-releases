@@ -29,6 +29,11 @@ const h = vi.hoisted(() => ({
   longNeedsApi: false,
 }));
 
+vi.mock('../pty/pty-analysis-runtime', async () => {
+  const { failoverAnalysisFixture } = await import('../pty/__tests__/failover-analysis-fixture');
+  return failoverAnalysisFixture(h.dataTaps);
+});
+
 vi.mock('../pty/pty-manager', () => ({
   tapSessionData: vi.fn((tap: (sessionId: string, data: string) => void) => {
     h.dataTaps.push(tap);

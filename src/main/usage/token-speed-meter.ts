@@ -167,7 +167,7 @@ export const MIN_UNPROMPTED_OPEN_TOKENS = 12
  */
 export const MAX_STREAMED_CHUNK_TOKENS = 256
 
-function unseenVisibleText(state: PaneState, visible: string): string {
+function unseenVisibleText(state: Pick<PaneState, 'seenLines'>, visible: string): string {
   const kept: string[] = []
   for (const segment of visible.split('\n')) {
     const normalized = segment.replace(/\s+/g, ' ').trim()
@@ -379,6 +379,18 @@ export class TokenSpeedMeter {
     }
 
     const tokens = estimateVisibleTokens(unseenVisibleText(state, visible))
+    return this.noteAnalyzedOutput(paneId, at, tokens, model)
+  }
+
+  /** Worker-computed text count; numeric timing/state changes remain Main. */
+  noteAnalyzedOutput(paneId: string, at: number, tokens: number, model?: string | null): boolean {
+    if (!paneId || !Number.isFinite(at)) return false
+    const state = this.#state(paneId, at)
+    if (typeof model === 'string' && model.length > 0) state.model = model
+    let open = state.open
+    if (open && open.firstTokenAt !== null && this.#isSilent(open.lastTokenAt, at)) {
+      this.#closeTurn(state); open = null
+    }
     if (tokens === 0) return false
 
     if (!open) {
@@ -987,5 +999,19 @@ export class TokenSpeedMeter {
     ].slice(-this.historyLimit)
     state.turns += 1
     return true
+  }
+}
+
+/** Stateful text-only analyzer used by the dedicated PTY worker. */
+export class TokenSpeedTextAnalyzer {
+  readonly seenLines = new Map<string, true>()
+  echo: string | null = null
+  submit(prompt: string) { this.echo = normalizeForEcho(prompt).slice(0, PROMPT_ECHO_MEMORY_CHARS) }
+  output(chunk: string): number {
+    const visible = visibleText(chunk)
+    if (isTuiNoise(visible) || isPromptEcho(visible, this.echo)) return 0
+    const tokens = estimateVisibleTokens(unseenVisibleText(this, visible))
+    if (tokens > 0) this.echo = null
+    return tokens
   }
 }

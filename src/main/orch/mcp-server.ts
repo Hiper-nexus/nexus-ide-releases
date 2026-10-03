@@ -1,3 +1,5 @@
+import { analysisClient, flushPtyAnalysis, subscribePtyAnalysis } from '../pty/pty-analysis-runtime';
+import type { AnalysisFence } from '../pty/pty-analysis-protocol';
 import http from "node:http";
 import { isSharedPaneSpaceWorktree } from '../pty/pane-space-worktree';
 import { FEATURE_FLAG_IDS } from "../../shared/feature-flags";
@@ -17,14 +19,13 @@ import {
   orchWriteSession,
   setAgentSpawnHook,
   setDeferredInitialPromptHook,
-  tapSessionData,
   tapSessionExit,
   tapSessionState,
   tapSessionTermination,
   type AgentSpawnDecoration,
   type AgentSpawnHook,
 } from "../pty/pty-manager";
-import { FirstRunInterstitialResponder } from "../pty/first-run-interstitial";
+
 import { deliverAgentPrompt } from "./tool-util";
 import {
   revalidateSealedAttachmentSnapshots,
@@ -84,20 +85,16 @@ import { MAX_MCP_PAYLOAD_BYTES } from "./mcp-args-validation";
 import { buildToolset } from "./tools";
 import {
   assertMissionSpawnAuthorityCurrent,
-  readSessionOutput,
-  stripAnsi,
 } from "./pane-registry";
 import {
   isPlaceholderSummary,
   LegacyHandoffDedupe,
-  LegacyHandoffParser,
 } from "./legacy-handoff";
 import { missionMarkerObserver } from "./mission-completion-marker";
 import { requireMissionLeaderSession } from "./mission-leader-gate";
 import { getProjectDomainStores } from "./project-domain-store-registry";
 import {
   isStaleReadOnlyObservationHandoffResult,
-  promoteObservedPtyHandoffs,
   submitPtyStreamHandoff,
   terminateStaleReadOnlyMcpSession,
   terminateStaleReadOnlyPtyStreamSession,
@@ -313,9 +310,7 @@ const legacyParserTaps = new ReplaceableEventTapScope();
  * `cliPromptAutoResponder`: one switch in Settings › Mission Driver disables
  * every automatic keypress Nexus can make.
  */
-const firstRunInterstitialResponder = new FirstRunInterstitialResponder(
-  () => getOrchSettings().cliPromptAutoResponderEnabled,
-);
+
 
 function disposeMissionShim(runtime: MissionShimRuntime | null): void {
   if (!runtime) return;
@@ -1751,12 +1746,12 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
             nativeOwnerKey: mimoNativeOwnerKey,
           }, env.NEXUS_MIMO_HOOK_TOKEN);
         }
-        firstRunInterstitialResponder.bind(sessionId, {
+        analysisClient.control(sessionId, 'first-run', { bind: {
           adapterId: spawned.adapterId,
           ...(spawned.missionId ? { missionId: spawned.missionId } : {}),
           cwd: spawned.cwd,
           homeDir: os.homedir(),
-        });
+        } });
       }
       if (missionShim) {
         missionShim.bindSession(sessionId);
@@ -1830,6 +1825,7 @@ export function currentPtyMaestroContext(
 
 function createPtyMissionControl(): PtyStreamMissionControl {
   return new PtyStreamMissionControl({
+    onChannel: (sessionId, channelId) => analysisClient.control(sessionId, 'mission-control', { channelId }),
     isAuthorized: (sessionId) =>
       currentPtyMaestroContext(sessionId) !== null,
     isInjectableIdle: (sessionId) =>
@@ -1861,11 +1857,11 @@ function createPtyMissionControl(): PtyStreamMissionControl {
 }
 
 /** Legacy handoff + provider-independent Maestro control stream parsers. */
-function installLegacyParser(
+export function installLegacyParser(
   missionControl: PtyStreamMissionControl,
 ): void {
   const dedupe = new LegacyHandoffDedupe();
-  const parser = new LegacyHandoffParser((sessionId, payload) => {
+  const onPayload = (sessionId: string, payload: import("./legacy-handoff").LegacyHandoffPayload) => {
     if (isPlaceholderSummary(payload.summary)) {
       console.log(
         `[handoff] bloco PTY com summary placeholder ignorado (${sessionId})`,
@@ -1897,111 +1893,48 @@ function installLegacyParser(
           );
         });
     });
-  });
-  // Prefiltro: stripAnsi + parse custam ~104ms/10k chunks e rodavam em TODO
-  // output de PTY. Só paga quando o chunk pode conter o marker (tail cru curto
-  // cobre marker dividido entre chunks) ou quando um bloco já está aberto.
-  const rawTails = new Map<string, string>();
-  const MARKER_HINT = "NEXUS_HANDOFF";
+  };
+  const delayedWrite = (sessionId: string, data: string, fence: AnalysisFence) => {
+    const original = getAgentSessionInfo(sessionId);
+    if (!original) return;
+    setTimeout(() => {
+      const current = getAgentSessionInfo(sessionId);
+      if (analysisClient.generation(sessionId) !== fence.generation || analysisClient.status(sessionId) !== 'active' ||
+          !current || current.paneId !== original.paneId || current.adapterId !== original.adapterId ||
+          current.missionId !== original.missionId || current.workerIncarnationId !== original.workerIncarnationId) return;
+      orchWriteSession(sessionId, data);
+    }, 50);
+  };
   legacyParserTaps.replace((track) => {
-    track(tapSessionData((sessionId, data) => {
-      let plain: string | null = null;
-      if (
-        cliPromptAutoResponder.isPending(sessionId) ||
-        // F-529: resposta enviada aguarda prova de aceite — o repaint que
-        // prova chega por ESTE tap; sem ele os reenvios disparariam às cegas.
-        cliPromptAutoResponder.isVerifying(sessionId)
-      ) {
-        plain = stripAnsi(data);
-      }
-      const response =
-        plain !== null
-          ? cliPromptAutoResponder.observe(sessionId, plain)
-          : null;
-      if (response !== null) {
-        setTimeout(() => {
-          orchWriteSession(sessionId, response);
-        }, 50);
-      }
-      // First-run interstitial responder (src/main/pty/first-run-interstitial):
-      // the ONE place it reads PTY output. `isWatching` is the cheap gate — it
-      // is false outside the short post-spawn window and once every screen this
-      // CLI can show has been answered, so no stripAnsi is paid on the hot path.
-      if (firstRunInterstitialResponder.isWatching(sessionId)) {
-        plain ??= stripAnsi(data);
-        const firstRun = firstRunInterstitialResponder.observe(
-          sessionId,
-          plain,
-          {
-            agentWorkObserved:
-              getAgentSemanticStatusBySession(sessionId)?.status === "working",
-          },
-        );
-        if (firstRun) {
-          console.warn(
-            `[first-run] respondendo "${firstRun.pattern}" na sessão ` +
-              `${sessionId} (missão ${
-                firstRunInterstitialResponder.missionOf(sessionId) ?? "?"
-              })`,
-          );
-          setTimeout(() => {
-            orchWriteSession(sessionId, firstRun.answer);
-          }, 50);
-        }
-      }
-      // Mission completion marker (src/main/orch/mission-completion-marker):
-      // the ONE place the fast lane hears the agent's OWN words. The engine
-      // used to decide completion purely from the PTY state machine, so a CLI
-      // whose parsing never flips to `busy` was re-fed the whole prompt every
-      // 90s forever even after it had written "PRONTO:". `isWatching` is the
-      // cheap gate — false for every pane the fast lane did not arm, and false
-      // again once that pane has spoken, so the hot path pays no extra
-      // stripAnsi.
-      if (missionMarkerObserver.isWatching(sessionId)) {
-        plain ??= stripAnsi(data);
-        missionMarkerObserver.observe(sessionId, plain);
-      }
-      if (missionControl.hasChannel(sessionId)) {
-        plain ??= stripAnsi(data);
-        missionControl.feed(sessionId, plain);
-      }
-      const tail = rawTails.get(sessionId) ?? "";
-      const probe = tail + data;
-      rawTails.set(sessionId, probe.slice(-32));
-      const isCollecting = parser.isCollecting(sessionId);
-      if (!isCollecting && !probe.includes(MARKER_HINT)) {
-        return;
-      }
-      // When the marker crosses the PTY chunk boundary, the parser never saw
-      // `tail` because the cheap prefilter skipped that previous chunk.
-      parser.feed(
-        sessionId,
-        isCollecting ? (plain ?? stripAnsi(data)) : stripAnsi(probe),
-      );
-    }, "mcp-server"));
+    track(subscribePtyAnalysis('mission-control', (sessionId, request) => missionControl.acceptObservedAction(sessionId, request as import('./pty-stream-mission-control').PtyStreamMissionAction)));
+    track(subscribePtyAnalysis('handoff', (sessionId, payload) => {
+      // Sealed final evidence remains in the immutable archive. A dead PTY
+      // cannot mint a new tool transport or authorize late writes.
+      if (analysisClient.status(sessionId) === 'active') onPayload(sessionId, payload as import('./legacy-handoff').LegacyHandoffPayload);
+    }));
+    track(subscribePtyAnalysis('prompt', (sessionId, value, fence) => {
+      if (!getOrchSettings().cliPromptAutoResponderEnabled) return;
+      const result = value as Parameters<typeof cliPromptAutoResponder.acceptWorker>[1];
+      cliPromptAutoResponder.acceptWorker(sessionId, result, fence.observedAt);
+      if (result.response) delayedWrite(sessionId, result.response, fence);
+    }));
+    track(subscribePtyAnalysis('first-run', (sessionId, value, fence) => {
+      if (!getOrchSettings().cliPromptAutoResponderEnabled || getAgentSemanticStatusBySession(sessionId)?.status === 'working') return;
+      delayedWrite(sessionId, (value as { answer: string }).answer, fence);
+    }));
     track(tapSessionState((sessionId, state) => {
-      missionControl.observeSessionState(sessionId, state);
-      // Overclock Stop-hook parity: the live chunk parser can miss a TUI
-      // repaint (ANSI split across NEXUS_HANDOFF). When the pane goes idle,
-      // re-read the already-stripped ring buffer and promote any completed
-      // block so the Maestro of this mission wakes.
-      if (state === "idle") {
-        const tail = readSessionOutput(sessionId, 400);
-        if (tail.includes("NEXUS_HANDOFF")) {
-          void promoteObservedPtyHandoffs(sessionId, tail);
-        }
-      }
+      // State effects wait through their output cutoff, then revalidate in the
+      // Main-owned channel. No idle reparse of terminal text in Main.
+      void flushPtyAnalysis(sessionId).then((ok) => { if (ok) missionControl.observeSessionState(sessionId, state); });
     }));
     track(tapSessionExit((sessionId) => {
       cliPromptAutoResponder.drop(sessionId);
-      firstRunInterstitialResponder.drop(sessionId);
+      analysisClient.control(sessionId, 'first-run', { drop: true });
       // `seal`, not `drop`: an agent that writes "PRONTO:" and exits in the
       // same breath must still be heard by the next fast-lane tick. Buffers
       // and prompts are freed; only the verdict survives.
       missionMarkerObserver.seal(sessionId);
-      parser.dropSession(sessionId);
       dedupe.dropSession(sessionId);
-      rawTails.delete(sessionId);
       missionControl.dropSession(sessionId);
       // PTY died without a stop hook → semantic status resets to idle (kills
       // the "busy preso" class the 5-minute hook watchdog merely bounds).
@@ -2231,7 +2164,7 @@ export function stopMcpServer(): void {
   disposeTerminationRevocation = null;
   httpConfirmationScheduler.close();
   cliPromptAutoResponder.clear();
-  firstRunInterstitialResponder.clear();
+
   missionMarkerObserver.clear();
   disposePtyMissionControl?.();
   disposePtyMissionControl = null;

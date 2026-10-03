@@ -1,3 +1,4 @@
+import { analysisClient, flushPtyAnalysis, isPtyAnalysisEnabled } from '../pty/pty-analysis-runtime';
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
@@ -681,7 +682,10 @@ export async function promoteObservedPtyHandoffs(
   sessionId: string,
   text: string,
 ): Promise<number> {
-  const payloads = extractPromotablePtyHandoffs(text);
+  if (isPtyAnalysisEnabled()) await flushPtyAnalysis(sessionId);
+  const payloads = isPtyAnalysisEnabled()
+    ? analysisClient.evidence(sessionId, 'handoff') as readonly PtyStreamHandoffPayload[]
+    : extractPromotablePtyHandoffs(text);
   let promoted = 0;
   for (const payload of payloads) {
     try {

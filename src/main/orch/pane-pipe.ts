@@ -1,10 +1,10 @@
+import { flushPtyAnalysis, subscribePtyAnalysis } from '../pty/pty-analysis-runtime';
 import type { WebContents } from 'electron';
 import type { Pipe, PipeMode } from '../../shared/pipe-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   getSessionState,
   orchWriteSession,
-  tapSessionData,
   tapSessionExit,
   tapSessionState,
 } from '../pty/pty-manager';
@@ -13,8 +13,6 @@ import {
   getOwnedPaneAuthzInfoBySession,
   getPaneAuthzInfoOwnedByPane,
   getPanesVersion,
-  readSessionOutput,
-  stripAnsi,
 } from './pane-registry';
 import type { PaneAuthzInfo } from './pane-authz';
 import { sameProjectScope } from './project-scoped-broadcast';
@@ -23,7 +21,6 @@ import {
   InjectionGuard,
   PIPE_MARKER,
   canForward,
-  extractCompleteLines,
   sanitizeForInjection,
 } from './pane-pipe-core';
 import {
@@ -37,6 +34,7 @@ import {
  * forwarding operation re-resolves the current session from that authority.
  */
 
+const idlePipeText = new Map<string, string>();
 const MAX_PIPES_PER_PARTITION = 64;
 const FLUSH_INTERVAL_MS = 150;
 const FLUSH_INTERVAL_FAST_MS = 50; // Used when queue is deep (high throughput)
@@ -46,8 +44,6 @@ const MAX_LINES_PER_FLUSH = 8;
 const MAX_LINES_PER_FLUSH_FAST = 16; // Deliver more lines when queue is deep
 const MAX_QUEUED_LINES = 400;
 const IDLE_THROTTLE_MS = 3_000;
-const IDLE_TAIL_LINES = 60;
-const MAX_IDLE_DELIVERY_CHARS = 4_000;
 const SUBMIT_ENTER_DELAY_MS = 150;
 
 interface StreamState {
@@ -320,39 +316,6 @@ function enqueueLine(
   scheduleFlush(partition, pipeId);
 }
 
-function renderedLine(rawLine: string): string {
-  const segments = stripAnsi(rawLine).split('\n');
-  for (let index = segments.length - 1; index >= 0; index -= 1) {
-    const segment = segments[index].trim();
-    if (segment.length > 0) return segment;
-  }
-  return '';
-}
-
-function handleStreamChunk(
-  partition: PipePartition,
-  scopedPipe: ScopedPipe,
-  sourceSessionId: string,
-  data: string,
-): void {
-  const pipeId = scopedPipe.pipe.id;
-  let state = partition.streamStates.get(pipeId);
-  if (!state || state.sessionId !== sourceSessionId) {
-    state = { sessionId: sourceSessionId, rest: '' };
-    partition.streamStates.set(pipeId, state);
-  }
-  const { lines, rest } = extractCompleteLines(state.rest, data);
-  state.rest = rest;
-
-  for (const rawLine of lines) {
-    const line = renderedLine(rawLine);
-    if (line.length === 0) continue;
-    if (line.includes(PIPE_MARKER)) continue;
-    if (partition.guard.isEcho(sourceSessionId, line)) continue;
-    enqueueLine(partition, pipeId, line);
-  }
-}
-
 function scheduleSubmit(
   partition: PipePartition,
   scopedPipe: ScopedPipe,
@@ -393,13 +356,7 @@ function deliverIdle(
   if (!targetSessionId) return;
   if (!isSessionInjectableIdle(targetSessionId)) return;
 
-  const tail = readSessionOutput(sourceSessionId, IDLE_TAIL_LINES);
-  const text = sanitizeForInjection(
-    tail
-      .split('\n')
-      .filter((line) => !line.includes(PIPE_MARKER))
-      .join('\n'),
-  ).slice(0, MAX_IDLE_DELIVERY_CHARS);
+  const text = idlePipeText.get(sourceSessionId) ?? '';
   if (
     text.length === 0 ||
     text === partition.lastIdleDeliveryText.get(pipe.id)
@@ -470,26 +427,21 @@ export function initPanePipes(): void {
   if (tapsInstalled) return;
   tapsInstalled = true;
 
-  // Pipe em modo stream encaminha LINHAS: recebe o lote inteiro.
-  tapSessionData(
-    (sessionId, data) => {
-      const partition = partitionForSession(sessionId);
-      if (!partition) return;
-      const attached = pipesBySource(partition).get(sessionId);
-      if (!attached) return;
-      for (const scopedPipe of attached) {
-        if (scopedPipe.pipe.mode === 'stream') {
-          handleStreamChunk(partition, scopedPipe, sessionId, data);
-        } else {
-          partition.idleDirty.add(scopedPipe.pipe.id);
-        }
-      }
-    },
-    { name: 'pane-pipe', delivery: 'complete' },
-  );
+  subscribePtyAnalysis('pipe', (sessionId, value) => {
+    if (!Array.isArray(value)) { idlePipeText.set(sessionId, (value as { idleText: string }).idleText); return; }
+    const partition = partitionForSession(sessionId); if (!partition) return;
+    const attached = pipesBySource(partition).get(sessionId); if (!attached) return;
+    for (const scopedPipe of attached) {
+      if (scopedPipe.pipe.mode === 'stream') {
+        for (const line of value as string[]) if (!partition.guard.isEcho(sessionId, line)) enqueueLine(partition, scopedPipe.pipe.id, line);
+      } else partition.idleDirty.add(scopedPipe.pipe.id);
+    }
+  });
 
   tapSessionState((sessionId, state) => {
     if (state !== 'idle') return;
+    void flushPtyAnalysis(sessionId).then((ok) => {
+    if (!ok || getSessionState(sessionId) !== 'idle') return;
     const partition = partitionForSession(sessionId);
     if (!partition) return;
     for (const scopedPipe of pipesBySource(partition).get(sessionId) ?? []) {
@@ -500,6 +452,7 @@ export function initPanePipes(): void {
         tryDeliverIdle(partition, scopedPipe);
       }
     }
+    });
   });
 
   tapAgentSemanticStatus((entry) => {

@@ -178,6 +178,7 @@ interface SessionWatch {
   errorSignatures: Set<string>;
   /** F-764: varredura estourou o orçamento — nenhuma nova antes disto. */
   slowDetectUntil: number;
+  analysisUnavailable?: boolean;
 }
 
 /**
@@ -1794,7 +1795,7 @@ function checkTransientRecoveryNow(
   attempt: number,
 ): void {
   const watch = watches.get(key);
-  if (!watch || watch.transientAt === 0) return;
+  if (!watch || watch.transientAt === 0 || watch.analysisUnavailable) return;
   const pane = isCurrentAuthority(authority) ? resolvePaneDetails(authority) : null;
   const state = getSessionState(authority.sessionId);
   if (!pane || state === null || state === 'exited' || state === 'hibernated') {
@@ -2576,6 +2577,9 @@ function acceptAnalysisProposal(sessionId: string, proposal: FailoverTextProposa
   if (!authority || !isCurrentAuthority(authority)) return;
   const pane = resolvePaneDetails(authority); if (!pane) return;
   const [key, watch] = watchFor(authority);
+  watch.analysisUnavailable = proposal.unavailable === true;
+  if (proposal.slowScanMs) trace({ kind: 'failover-detect-slow', sessionId, paneId: pane.paneId, scanMs: proposal.slowScanMs, backoffMs: 5_000 });
+  if (proposal.unavailable) return;
   if (proposal.hit) {
     if (proposal.at - watch.firedAt < REARM_MS) return;
     if (proposal.hit.kind === 'transient') {

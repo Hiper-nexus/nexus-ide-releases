@@ -1,12 +1,10 @@
 import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
+import { subscribePtyAnalysis } from '../pty/pty-analysis-runtime';
 import type { ProjectExecutionScope } from '../../shared/types'
 import type { TokenSpeedSnapshot } from '../../shared/token-speed-types'
 import { EMPTY_TOKEN_SPEED_SNAPSHOT } from '../../shared/token-speed-types'
-import { stripAnsiEscapeSequences } from '../../shared/ansi-escape-sequences'
 import {
-  tapSessionData,
   tapSessionExit,
-  tapSessionInput,
   tapSessionTermination,
 } from '../pty/pty-manager'
 import { findPane, getPaneAuthzInfo } from './pane-registry'
@@ -31,16 +29,6 @@ const LIVE_TICK_MS = 250
 /** Folga sobre o idle do medidor para fechar a rodada e emitir o número final. */
 const SETTLE_GRACE_MS = 120
 /** Teto do rascunho de prompt mantido em memória volátil por sessão. */
-const PROMPT_DRAFT_LIMIT = 4_000
-/** Ctrl+C e Ctrl+Z. */
-const CANCEL_KEY_PATTERN = /[\u0003\u001a]/
-/** Bytes de controle sem semântica de edição nem quebra de linha. */
-const NON_EDITING_CONTROL_PATTERN =
-  /[\u0000-\u0007\u0009\u000b\u000c\u000e-\u0014\u0016\u0018-\u001f]/g
-const BACKSPACE_KEYS = new Set(['\b', '\u007f'])
-const CTRL_U = '\u0015'
-const CTRL_W = '\u0017'
-
 interface ScopeSpeedState {
   readonly scope: ProjectExecutionScope
   readonly meter: TokenSpeedMeter
@@ -64,7 +52,6 @@ export type TokenSpeedChangeListener = (
 const states = new Map<string, ScopeSpeedState>()
 const bindings = new Map<string, SessionBinding>()
 /** Rascunho do que foi digitado e ainda não submetido. Some no Enter. */
-const drafts = new Map<string, string>()
 const listeners = new Set<TokenSpeedChangeListener>()
 let initialized = false
 
@@ -177,56 +164,7 @@ function meteredPane(
  * Enter (CR/LF) é o sinal universal de submit nas CLIs de agente. O rascunho
  * acumulado serve SÓ para reconhecer o eco do TUI e é descartado no submit.
  */
-export function splitSubmittedInput(
-  draft: string,
-  data: string,
-): { submitted: string | null; draft: string } {
-  // Ctrl+C / Ctrl+Z abortam a composição: o rascunho morre e nada é submetido.
-  if (CANCEL_KEY_PATTERN.test(data)) return { submitted: null, draft: '' }
-  const clean = stripAnsiEscapeSequences(data)
-    .replace(NON_EDITING_CONTROL_PATTERN, '')
-    .replace(/\r\n?/g, '\n')
-  const marker = clean.lastIndexOf('\n')
-  if (marker < 0) {
-    return {
-      submitted: null,
-      draft: applyDraftEditing(draft + clean),
-    }
-  }
-  const submitted = applyDraftEditing(draft + clean.slice(0, marker))
-  return {
-    submitted,
-    draft: applyDraftEditing(clean.slice(marker + 1)),
-  }
-}
-
-function applyDraftEditing(value: string): string {
-  const chars: string[] = []
-  for (const char of value) {
-    if (BACKSPACE_KEYS.has(char)) {
-      chars.pop()
-      continue
-    }
-    if (char === CTRL_U) {
-      const lineStart = chars.lastIndexOf('\n') + 1
-      chars.splice(lineStart)
-      continue
-    }
-    if (char === CTRL_W) {
-      const lineStart = chars.lastIndexOf('\n') + 1
-      while (chars.length > lineStart && /\s/u.test(chars.at(-1)!)) chars.pop()
-      while (chars.length > lineStart && !/\s/u.test(chars.at(-1)!)) chars.pop()
-      continue
-    }
-    chars.push(char)
-  }
-  return chars.join('').slice(-PROMPT_DRAFT_LIMIT)
-}
-
-export function hasSubmittedPrompt(submitted: string): boolean {
-  return submitted.trim().length > 0
-}
-
+export { splitSubmittedInput, hasSubmittedPrompt } from '../usage/token-speed-input'
 export function tokenSpeedUsageEventAt(
   event: TokenSpeedUsageEvent,
   observedAt: number,
@@ -236,36 +174,15 @@ export function tokenSpeedUsageEventAt(
     : observedAt
 }
 
-function handleInput(sessionId: string, data: string): void {
-  const pane = meteredPane(sessionId)
-  if (!pane) return
-  const { submitted, draft } = splitSubmittedInput(
-    drafts.get(sessionId) ?? '',
-    data,
-  )
-  if (draft.length > 0) drafts.set(sessionId, draft)
-  else drafts.delete(sessionId)
-  if (submitted === null || !hasSubmittedPrompt(submitted)) return
-
+function handleAnalysis(sessionId: string, value: { submit?: boolean; tokens?: number; at: number }): void {
+  const pane = meteredPane(sessionId); if (!pane) return
   const state = stateFor(pane.scope, true)!
   bindings.set(sessionId, { scopeKey: scopeKey(state.scope), paneId: pane.paneId })
-  state.meter.noteSubmit(pane.paneId, Date.now(), submitted)
-  scheduleEmit(state)
-}
-
-function handleChunk(sessionId: string, data: string): void {
-  if (data.length === 0) return
-  const pane = meteredPane(sessionId)
-  if (!pane) return
-  const state = stateFor(pane.scope, true)!
-  bindings.set(sessionId, { scopeKey: scopeKey(state.scope), paneId: pane.paneId })
-  if (state.meter.noteOutput(pane.paneId, Date.now(), data, pane.model)) {
-    scheduleEmit(state)
-  }
+  if (value.submit) { state.meter.noteSubmit(pane.paneId, value.at); scheduleEmit(state) }
+  else if (value.tokens !== undefined && state.meter.noteAnalyzedOutput(pane.paneId, value.at, value.tokens, pane.model)) scheduleEmit(state)
 }
 
 function handleExit(sessionId: string): void {
-  drafts.delete(sessionId)
   const binding = bindings.get(sessionId)
   bindings.delete(sessionId)
   if (!binding) return
@@ -278,8 +195,7 @@ function handleExit(sessionId: string): void {
 export function initTokenSpeedTracker(): void {
   if (initialized) return
   initialized = true
-  tapSessionInput(handleInput)
-  tapSessionData(handleChunk, 'token-speed')
+  subscribePtyAnalysis('token', (sessionId, value) => handleAnalysis(sessionId, value as Parameters<typeof handleAnalysis>[1]))
   tapSessionExit(handleExit)
   tapSessionTermination(handleExit)
 }
@@ -338,6 +254,5 @@ export function resetTokenSpeedTrackerForTests(): void {
   }
   states.clear()
   bindings.clear()
-  drafts.clear()
   listeners.clear()
 }

@@ -1,10 +1,16 @@
+import { TokenSpeedTextAnalyzer } from '../usage/token-speed-meter';
+import { splitSubmittedInput, hasSubmittedPrompt } from '../usage/token-speed-input';
+import { PtyStreamActionParser } from '../orch/pty-stream-action-parser';
+import { PIPE_MARKER, sanitizeForInjection } from '../orch/pane-pipe-core';
+import { CliPromptAutoResponder } from '../orch/cli-prompt-autoresponder-core';
+import { FirstRunInterstitialResponder } from './first-run-interstitial';
 import type { CompiledManifest } from '../detect/compiler';
 import { AgentScreenDetector } from '../detect/detector-core';
 import { SessionScreenBuffer } from '../detect/screen-buffer';
 import { detectDevServerUrls } from '../orch/dev-server-detect';
 import { FailoverTextReducer } from '../orch/failover-text-core';
 import { LegacyHandoffParser } from '../orch/legacy-handoff';
-import { MissionMarkerObserver } from '../orch/mission-completion-marker';
+import { MissionMarkerObserver } from '../orch/mission-completion-marker-core';
 import { Osc133Scanner } from '../terminal/shell-integration-osc133';
 import { redactCommandLine } from '../terminal/command-redaction';
 import { ANALYSIS_EVENT_CAP, type AnalysisBinding, type AnalysisConsumer, type AnalysisEvent, type AnalysisInput, type AnalysisResult } from './pty-analysis-protocol';
@@ -13,6 +19,9 @@ interface Consumer { registration: number; config?: unknown }
 interface Session {
   binding: AnalysisBinding; fence: AnalysisInput; consumers: Map<AnalysisConsumer, Consumer>;
   failover: FailoverTextReducer; marker: MissionMarkerObserver; osc: Osc133Scanner;
+  token: TokenSpeedTextAnalyzer; tokenParts: string[]; draft: string;
+  action?: PtyStreamActionParser;
+  prompt: CliPromptAutoResponder; firstRun: FirstRunInterstitialResponder;
   devTail: string; devUrls: Set<string>; pasteTail: string; lines: string;
   publishAt: number; timer: ReturnType<typeof setTimeout> | null;
 }
@@ -26,8 +35,13 @@ export class PtyAnalysisCore {
   readonly #handoff: LegacyHandoffParser;
   #events: AnalysisEvent[] = [];
   #current: Session | null = null;
-  constructor(manifests: CompiledManifest[], private readonly publish: (result: AnalysisResult) => void) {
-    this.#detector = new AgentScreenDetector({ manifests, getAgentInfo: (id) => {
+  constructor(manifests: CompiledManifest[], private readonly publish: (result: AnalysisResult) => void, risky?: { start: (sessionId: string, manifestId: string) => void; end: () => void }) {
+    this.#detector = new AgentScreenDetector({ manifests, diagnostic: (id, adapterId, explain, state) => {
+      const session = this.#sessions.get(id); if (!session) return;
+      const value = { adapterId, explain, state };
+      if (this.#current === session) this.#emit(session, 'screen', value);
+      else { const event = this.#event(session, 'screen', value); if (event) this.#publish(session, [event], 0, false); }
+    }, beforeEvaluate: risky?.start, afterEvaluate: risky?.end, getAgentInfo: (id) => {
       const binding = this.#sessions.get(id)?.binding;
       return binding?.adapterId ? { adapterId: binding.adapterId, paneId: binding.paneId } : null;
     }, now: Date.now, publish: (record) => {
@@ -45,6 +59,8 @@ export class PtyAnalysisCore {
       this.#drop(record.sessionId);
       this.#sessions.set(record.sessionId, { binding: record.binding, fence: record, consumers: new Map(),
         failover: new FailoverTextReducer(), marker: new MissionMarkerObserver(), osc: new Osc133Scanner(),
+        token: new TokenSpeedTextAnalyzer(), tokenParts: [], draft: '',
+        prompt: new CliPromptAutoResponder(() => true, () => {}), firstRun: new FirstRunInterstitialResponder(),
         devTail: '', devUrls: new Set(), pasteTail: '', lines: '', publishAt: 0, timer: null });
     }
     const s = this.#sessions.get(record.sessionId);
@@ -63,6 +79,18 @@ export class PtyAnalysisCore {
         if (s.consumers.get(record.consumer)?.registration === record.registration) s.consumers.delete(record.consumer);
         break;
       case 'control':
+        if (record.consumer === 'mission-control' && (record.value as { channelId?: string }).channelId) s.action = new PtyStreamActionParser((record.value as { channelId: string }).channelId);
+        if (record.consumer === 'prompt') {
+          const v = record.value as { bind?: { adapterId: string; now: number; governed: boolean }; drop?: boolean; accepted?: Parameters<CliPromptAutoResponder['acceptAnalysis']>[1] };
+          if (v.accepted) s.prompt.acceptAnalysis(record.sessionId, v.accepted, record.observedAt);
+          if (v.bind) s.prompt.bind(record.sessionId, v.bind.adapterId, v.bind.now, { governed: v.bind.governed });
+          if (v.drop) s.prompt.drop(record.sessionId);
+        }
+        if (record.consumer === 'first-run') {
+          const v = record.value as { bind?: Parameters<FirstRunInterstitialResponder['bind']>[1]; agentWorkObserved?: boolean; drop?: boolean };
+          if (v.bind) s.firstRun.bind(record.sessionId, v.bind, record.observedAt);
+          if (v.drop || v.agentWorkObserved) s.firstRun.drop(record.sessionId);
+        }
         if (record.consumer === 'paste' && (record.value as { cancel?: number }).cancel === (s.consumers.get('paste')?.config as { watchId?: number } | undefined)?.watchId) s.consumers.delete('paste');
         if (record.consumer === 'screen' && (record.value as { binding?: AnalysisBinding }).binding) s.binding = (record.value as { binding: AnalysisBinding }).binding;
         if (record.consumer === 'failover') {
@@ -76,16 +104,36 @@ export class PtyAnalysisCore {
           if (v.prompt) s.marker.registerPrompt(record.sessionId, v.prompt);
         }
         break;
-      case 'data':
-        // Each scanner sees bounded slices, including the initial flood burst.
-        for (let offset = 0; offset < record.data.length; offset += 16_384) this.#data(s, record.data.slice(offset, offset + 16_384));
+      case 'data': {
+        let offset = 0;
+        for (const piece of record.pieces ?? [{ chars: record.data.length, at: record.observedAt }]) {
+          const raw = record.data.slice(offset, offset + piece.chars); offset += piece.chars;
+          s.fence = { ...record, observedAt: piece.at };
+          for (let index = 0; index < raw.length; index += 16_384) this.#data(s, raw.slice(index, index + 16_384));
+          if (s.consumers.has('token') && record.endOfChunk !== false) {
+            const tokens = s.token.output(s.tokenParts.join('')); s.tokenParts = [];
+            this.#emit(s, 'token', { tokens, at: piece.at });
+          }
+        }
+        s.fence = record;
         break;
+      }
+      case 'input': {
+        if (s.consumers.has('token')) {
+          const result = splitSubmittedInput(s.draft, record.data); s.draft = result.draft;
+          if (result.submitted !== null && hasSubmittedPrompt(result.submitted)) { s.token.submit(result.submitted); this.#emit(s, 'token', { submit: true, at: record.observedAt }); }
+        }
+        break;
+      }
       case 'state': case 'flush': case 'exit':
+        if (s.consumers.has('screen')) this.#detector.evaluateSession(record.sessionId);
         for (const proposal of s.failover.feed('', record.observedAt, true)) this.#emit(s, 'failover', proposal);
         this.#dev(s, '', true);
+        if (s.consumers.has('pipe')) this.#emit(s, 'pipe', { idleText: sanitizeForInjection(this.#screen.text(record.sessionId).split('\n').slice(-60).filter((line) => !line.includes(PIPE_MARKER)).join('\n')).slice(0, 4_000) });
         if (record.kind === 'exit') {
+          const priorMarker = s.marker.markerOf(record.sessionId);
           const marker = s.marker.seal(record.sessionId, record.observedAt);
-          if (marker) this.#emit(s, 'completion', marker, true);
+          if (marker && !priorMarker) this.#emit(s, 'completion', marker, true);
           if (s.lines) this.#emit(s, 'pipe', [s.lines], true);
         }
         break;
@@ -106,7 +154,19 @@ export class PtyAnalysisCore {
       // Secrets never return to Main command-block persistence or diagnostics.
       this.#emit(s, 'command', event.kind === 'command_line' ? { ...event, ...redactCommandLine(event.command) } : event, true);
     }
+    if (s.consumers.has('token')) s.tokenParts.push(plain);
     if (!plain) return;
+    if (s.consumers.has('prompt')) {
+      const before = s.prompt.isVerifying(id);
+      const response = s.prompt.observe(id, plain, s.fence.observedAt);
+      const snapshot = s.prompt.analysisSnapshot(id, s.fence.observedAt);
+      if (response || (before && !snapshot.verifying)) this.#emit(s, 'prompt', { ...snapshot, response: response ?? undefined, verified: before && !snapshot.verifying });
+      else if (s.prompt.isPending(id, s.fence.observedAt)) this.#emit(s, 'prompt', snapshot);
+    }
+    if (s.consumers.has('first-run')) {
+      const response = s.firstRun.observe(id, plain, { now: s.fence.observedAt });
+      if (response) this.#emit(s, 'first-run', response);
+    }
     if (s.consumers.has('dev-server')) this.#dev(s, plain);
     if (s.consumers.has('failover')) {
       for (const proposal of s.failover.feed(plain, s.fence.observedAt)) this.#emit(s, 'failover', proposal);
@@ -117,9 +177,10 @@ export class PtyAnalysisCore {
           const sub = s.consumers.get('failover'); if (!sub) return;
           const events = s.failover.feed('', Date.now(), true).map((value) => ({ consumer: 'failover' as const, registration: sub.registration, value }));
           this.#publish(s, events, 0, false);
-        }, 250); s.timer.unref?.();
+        }, Math.max(250, s.failover.slowUntil - Date.now())); s.timer.unref?.();
       }
     }
+    if (s.consumers.has('mission-control') && s.action) for (const request of s.action.feed(plain)) this.#emit(s, 'mission-control', request);
     if (s.consumers.has('handoff')) this.#handoff.feed(id, plain);
     if (s.consumers.has('completion')) {
       const marker = s.marker.observe(id, plain, s.fence.observedAt);
@@ -135,7 +196,7 @@ export class PtyAnalysisCore {
     if (s.consumers.has('pipe')) {
       const input = s.lines + plain;
       const end = input.lastIndexOf('\n');
-      if (end >= 0) for (const line of input.slice(0, end).split('\n')) this.#emit(s, 'pipe', [line]);
+      if (end >= 0) for (const line of input.slice(0, end).split('\n')) { const clean = sanitizeForInjection(line.trim()); if (clean && !clean.includes(PIPE_MARKER)) this.#emit(s, 'pipe', [clean]); }
       s.lines = input.slice(end + 1).slice(-16_384);
     }
   }
@@ -159,7 +220,8 @@ export class PtyAnalysisCore {
     }
   }
   #publish(s: Session, events: readonly AnalysisEvent[], ackBytes: number, done: boolean, snapshot = false) {
-    this.publish({ ...s.fence, kind: 'result', events: [...events], ackBytes, done,
+    const { workerEpoch, sessionId, generation, eventSeq, observedAt } = s.fence;
+    this.publish({ workerEpoch, sessionId, generation, eventSeq, observedAt, kind: 'result', events: [...events], ackBytes, done,
       ...(snapshot ? { screenText: this.#screen.text(s.fence.sessionId) } : {}) });
   }
   #drop(id: string) {
