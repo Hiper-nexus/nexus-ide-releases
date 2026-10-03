@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   SMOKE_HANG_PROBE_ENV,
+  SMOKE_HANG_PROBE_BLOCK_MS,
   SMOKE_HANG_PROBE_TUNING,
   describeHangRecordForSmoke,
   induceSmokeMainHang,
@@ -16,8 +17,9 @@ describe('probe de travamento do smoke empacotado (F-764 A.1)', () => {
   });
 
   it('o travamento cabe na detecção + captura com folga', () => {
+    expect(SMOKE_HANG_PROBE_BLOCK_MS).toBe(40_000);
     const tuning = SMOKE_HANG_PROBE_TUNING;
-    expect((tuning.thresholdMs ?? 0) + (tuning.checkIntervalMs ?? 0) + (tuning.profileDurationMs ?? 0)).toBeLessThan(6_000 - 1_000);
+    expect((tuning.thresholdMs ?? 0) + (tuning.checkIntervalMs ?? 0) + (tuning.profileDurationMs ?? 0)).toBeLessThan(SMOKE_HANG_PROBE_BLOCK_MS - 1_000);
   });
 
   it('trava a main de verdade pelo tempo pedido', () => {

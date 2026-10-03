@@ -7,7 +7,7 @@
  * ID, hardened runtime, asar com integridade — fica com este probe, que roda
  * DENTRO dele: ligado só no modo smoke (`nexus-smoke-test`) com
  * `NEXUS_SMOKE_HANG_PROBE=1`. O watchdog arma com limiar curto e a main trava
- * ~6 s de propósito no carregamento do módulo, antes de qualquer serviço ou
+ * ~40 s de propósito no carregamento do módulo, antes de qualquer serviço ou
  * timer do boot existir (nada para disparar fora de hora). O harness
  * `node scripts/smoke-packaged-app.mjs --verify-hang-probe` confere o
  * `.cpuprofile` e o smoke funcional segue normal depois.
@@ -18,9 +18,9 @@ import type { HangWatchdogRecord, HangWatchdogTuning } from './hang-watchdog-log
 export const SMOKE_HANG_PROBE_ENV = 'NEXUS_SMOKE_HANG_PROBE';
 /** O nome que o profile do app empacotado tem de mostrar no topo. */
 export const SMOKE_HANG_PROBE_FUNCTION = 'nexusSmokeInducedMainHang';
-export const SMOKE_HANG_PROBE_BLOCK_MS = 6_000;
+export const SMOKE_HANG_PROBE_BLOCK_MS = 40_000;
 export const SMOKE_HANG_PROBE_HEARTBEAT_MS = 250;
-/** Limiar curto: detecta em ~1,5 s, perfila 1,5 s — tudo dentro dos 6 s. */
+/** Limiar curto: detecta em ~1,5 s e perfila 1,5 s durante o bloqueio de 40 s. */
 export const SMOKE_HANG_PROBE_TUNING: HangWatchdogTuning = {
   thresholdMs: 1_500,
   checkIntervalMs: 250,

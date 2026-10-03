@@ -6,7 +6,7 @@
  *   node scripts/smoke-packaged-app.mjs --verify-hang-probe [--app <caminho>]
  *
  * Roda o smoke empacotado normal com NEXUS_SMOKE_HANG_PROBE=1: a main trava
- * ~6 s no carregamento (src/main/hang-watchdog/smoke-hang-probe.ts), a worker
+ * ~40 s no carregamento (src/main/hang-watchdog/smoke-hang-probe.ts), a worker
  * do watchdog perfila pelo inspector e grava `logs/main-hang.ndjson` e
  * `logs/main-hang-<ts>.cpuprofile` no perfil temporário. Este harness exige o
  * profile gravado, um `.cpuprofile` válido com o laço do probe no topo — e o
@@ -19,7 +19,8 @@ import { runPackagedSmoke } from './smoke-packaged-app.mjs';
 /** Espelham src/main/hang-watchdog/smoke-hang-probe.ts (contrato testado). */
 export const HANG_PROBE_ENV = 'NEXUS_SMOKE_HANG_PROBE';
 export const HANG_PROBE_FUNCTION = 'nexusSmokeInducedMainHang';
-export const HANG_PROBE_TIMEOUT_MS = 60_000;
+export const HANG_PROBE_BLOCK_MS = 40_000;
+export const HANG_PROBE_TIMEOUT_MS = 75_000;
 const PROFILE_FILE_RE = /^main-hang-[^/\\]+\.cpuprofile$/u;
 
 export function parseHangProbeArguments(args) {
@@ -60,8 +61,9 @@ export function readHangRecords(text) {
 
 /** O que o app empacotado tem de ter gravado para o probe passar. */
 export function assertHangProbeProof({ records, profile }) {
-  const hang = records.find((record) => record.kind === 'main-thread-hang');
   const capture = records.find((record) => record.kind === 'main-thread-hang-profile');
+  const hang = records.find((record) => record.kind === 'main-thread-hang' &&
+    (!capture || record.lastHeartbeatAt === capture.lastHeartbeatAt));
   if (!hang) throw new Error('hang probe: o watchdog não marcou o travamento induzido');
   if (!capture) throw new Error('hang probe: o watchdog não registrou a captura do profile');
   if (capture.profilerUnavailable) {
@@ -81,9 +83,17 @@ export function assertHangProbeProof({ records, profile }) {
       !nodes.some((node) => node?.callFrame?.functionName === HANG_PROBE_FUNCTION)) {
     throw new Error(`hang probe: ${capture.profileFile} não é um .cpuprofile com o laço do probe`);
   }
+  const recovery = records.find(record => record.kind === 'main-thread-hang-recovered' &&
+    Number.isFinite(capture.lastHeartbeatAt) && record.lastHeartbeatAt === capture.lastHeartbeatAt);
+  if (!recovery) throw new Error('hang probe: falta recuperação do mesmo episódio de travamento');
+  if (!Number.isFinite(recovery.hangDurationMs) || recovery.hangDurationMs < HANG_PROBE_BLOCK_MS ||
+    recovery.recoveredAt - recovery.lastHeartbeatAt !== recovery.hangDurationMs) {
+    throw new Error('hang probe: recuperação não prova o bloqueio exigido de 40 segundos');
+  }
   return {
-    schema: 'nexus.hang-probe/v1',
-    hangDurationMs: hang.hangDurationMs,
+    schema: 'nexus.hang-probe/v2',
+    requiredDurationMs: HANG_PROBE_BLOCK_MS,
+    hangDurationMs: recovery.hangDurationMs,
     profileFile: capture.profileFile,
     sampleCount: capture.sampleCount,
     top: {
@@ -114,7 +124,9 @@ export async function waitForHangProof(userData, {
       // Ainda não existe.
     }
     const capture = records.find((record) => record.kind === 'main-thread-hang-profile');
-    if (capture) {
+    const recovered = capture && records.some(record => record.kind === 'main-thread-hang-recovered' &&
+      record.lastHeartbeatAt === capture.lastHeartbeatAt);
+    if (capture && (recovered || capture.profilerUnavailable)) {
       let profile = null;
       if (typeof capture.profileFile === 'string' && PROFILE_FILE_RE.test(capture.profileFile)) {
         try {
@@ -144,7 +156,7 @@ export async function runPackagedHangProbe(targetPath, {
     runtimeProbeTimeoutMs: HANG_PROBE_TIMEOUT_MS + 5_000,
   });
   const proof = result?.runtimeProof;
-  if (!proof || proof.schema !== 'nexus.hang-probe/v1') {
+  if (!proof || proof.schema !== 'nexus.hang-probe/v2') {
     throw new Error('packaged hang probe did not return its proof');
   }
   process.stdout.write(`[smoke] hangProbeProof ${JSON.stringify(proof)}\n`);
