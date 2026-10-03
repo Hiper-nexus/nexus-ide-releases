@@ -147,6 +147,50 @@ describe('operatorRecentlyNamedCli', () => {
   });
 });
 
+describe('pedido tecla a tecla do operador (F-766)', () => {
+  function typeKeys(sessionId: string, text: string) {
+    for (const ch of text) type(sessionId, ch);
+  }
+
+  it('junta "cade grok" digitado letra a letra e aplica backspace no meio', () => {
+    const now = 1_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(now - MIN);
+    typeKeys('pty-musg', 'cade grx');
+    type('pty-musg', '\x7f');
+    typeKeys('pty-musg', 'ok');
+    expect(operatorRecentlyNamedCli('pty-musg', 'grok', now)).toBe(true);
+    typeKeys('pty-bs', 'cade gro');
+    type('pty-bs', '\b');
+    typeKeys('pty-bs', 'ok');
+    expect(operatorRecentlyNamedCli('pty-bs', 'grok', now)).toBe(true);
+  });
+
+  it('casa "anti gravity" com agy e "qwhen" com qwen; "glm" continua exato', () => {
+    const now = 1_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(now - MIN);
+    typeKeys('anti', 'cade o anti gravity');
+    typeKeys('typo', 'cade qwhen');
+    type('curto', 'abre o gln');
+    expect(operatorRecentlyNamedCli('anti', 'agy', now)).toBe(true);
+    expect(operatorRecentlyNamedCli('typo', 'qwen', now)).toBe(true);
+    expect(operatorRecentlyNamedCli('curto', 'glm', now)).toBe(false);
+  });
+
+  it('a frase inteira do compositor (um bloco humano) nomeia as CLIs; origem system não', () => {
+    const now = 1_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(now - MIN);
+    const phrase = 'cade muse cade qwhen cade grok cade devin cade o anti gravity';
+    type('composer', phrase);
+    expect(operatorRecentlyNamedCli('composer', 'muse', now)).toBe(true);
+    expect(operatorRecentlyNamedCli('composer', 'qwen', now)).toBe(true);
+    expect(operatorRecentlyNamedCli('composer', 'grok', now)).toBe(true);
+    expect(operatorRecentlyNamedCli('composer', 'devin', now)).toBe(true);
+    expect(operatorRecentlyNamedCli('composer', 'agy', now)).toBe(true);
+    type('sistema', phrase, 'system');
+    expect(operatorRecentlyNamedCli('sistema', 'grok', now)).toBe(false);
+  });
+});
+
 describe('prova do operatorChoice (F-682)', () => {
   it('orientação do Quadro aceita conta como pedido do operador naquela sessão', () => {
     noteOperatorDirection('maestro', 'abre um helper no MiniMax para a revisão');
