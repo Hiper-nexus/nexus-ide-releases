@@ -157,6 +157,63 @@ describe('HOOK_SCRIPT', () => {
     expect(result.stderr).toContain('gate unreachable');
   });
 
+  describe('gate INALCANÇÁVEL: degradação estreita (F-795)', () => {
+    const unreachable = { NEXUS_GATE_URL: 'http://127.0.0.1:9/gate', NEXUS_GATE_OFFLINE_POLICY: 'read-handoff' };
+
+    it.each(['Read', 'Grep', 'Glob', 'LS', 'ToolSearch'])('libera a leitura local %s', async (tool) => {
+      const result = await runHook(writeHook(), 'pretool', { tool_name: tool, tool_input: {} }, unreachable);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe('');
+    });
+
+    it.each(['Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'Task', 'Skill', 'mcp__nexus__nexus_pane_write', 'mcp__nexus__nexus_git_commit', 'mcp__other__delete'])(
+      'continua bloqueando %s',
+      async (tool) => {
+        const result = await runHook(writeHook(), 'pretool', { tool_name: tool, tool_input: { command: 'rm -rf /' } }, unreachable);
+        expect(result.status).toBe(2);
+        expect(result.stderr).toContain('gate unreachable — blocking tool call');
+        expect(result.stderr).toContain('só leitura');
+      },
+    );
+
+    it('libera as leituras do Nexus que todo papel já tem (o MCP reaplica o gate ao chegar)', async () => {
+      for (const tool of ['mcp__nexus__nexus_pane_read', 'mcp__nexus__nexus_handoff_list', 'mcp__nexus__nexus_memory_recall']) {
+        const result = await runHook(writeHook(), 'pretool', { tool_name: tool, tool_input: {} }, unreachable);
+        expect(result.status, tool).toBe(0);
+      }
+    });
+
+    it('handoff sem spool disponível segue para o MCP em vez de ser bloqueado', async () => {
+      const result = await runHook(writeHook(), 'pretool', {
+        tool_name: 'mcp__nexus__nexus_handoff_submit', tool_input: { status: 'blocked', summary: 'x' },
+      }, unreachable);
+      expect(result.status).toBe(0);
+    });
+
+    it('sem a política do Main (env ausente ou "closed", ex.: revisor interno) tudo continua bloqueado', async () => {
+      for (const env of [{ NEXUS_GATE_URL: 'http://127.0.0.1:9/gate' }, { ...unreachable, NEXUS_GATE_OFFLINE_POLICY: 'closed' }]) {
+        const read = await runHook(writeHook(), 'pretool', { tool_name: 'Read', tool_input: {} }, env);
+        expect(read.status).toBe(2);
+        const handoff = await runHook(writeHook(), 'pretool', { tool_name: 'mcp__nexus__nexus_handoff_submit', tool_input: { status: 'blocked', summary: 'x' } }, env);
+        expect(handoff.status).toBe(2);
+      }
+    });
+
+    it('gate alcançável continua mandando: veredito negado bloqueia até leitura', async () => {
+      const gate = await listen((req, res) => {
+        void readBody(req).then(() => {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ allow: false, reason: 'perfil exato' }));
+        });
+      });
+      const result = await runHook(writeHook(), 'pretool', { tool_name: 'Read', tool_input: {} }, {
+        NEXUS_GATE_URL: gate.url, NEXUS_GATE_OFFLINE_POLICY: 'read-handoff',
+      });
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('perfil exato');
+    });
+  });
+
   it('blocks pretool with the gate verdict reason', async () => {
     const gate = await listen((req, res) => {
       void readBody(req).then(() => {

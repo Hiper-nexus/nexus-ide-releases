@@ -28,6 +28,14 @@ describe('forma do hook por evento', () => {
     expect(HOOK_SCRIPT).toMatch(/pretool[\s\S]*exit\(2\)|exit\(2\)[\s\S]*pretool/);
   });
 
+  it('a degradação de gate inalcançável é estreita, vem do Main e nasce fechada (F-795)', () => {
+    // Só leitura e o handoff (spool) degradam; o resto segue exit(2). Sem a
+    // política explícita do Main no env, nada degrada.
+    expect(HOOK_SCRIPT).toContain("!== 'read-handoff') return { allow: false }");
+    expect(HOOK_SCRIPT).toContain('OFFLINE_NATIVE_READ_TOOLS');
+    expect(HOOK_SCRIPT).not.toMatch(/OFFLINE_NATIVE_READ_TOOLS = new Set\([^)]*'(bash|edit|write|webfetch|task|skill)'/i);
+  });
+
   it('stop NÃO bloqueia quando o gate está fora do ar (fail-open)', () => {
     // O worker precisa conseguir encerrar mesmo com o gate indisponível.
     expect(HOOK_SCRIPT).toMatch(/stop[\s\S]*fail-open|fail-open[\s\S]*stop/i);

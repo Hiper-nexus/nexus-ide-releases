@@ -4,6 +4,9 @@
  * que precisam enxergar TODO submit, de qualquer transporte (http-mcp,
  * mission-shim, pty-stream):
  *
+ *  - F-795: o submit fica marcado EM VOO por sessão enquanto o handler roda
+ *    (`handoff-submit-inflight`): a ingestão do spool adia a sessão até ele
+ *    terminar, para o original e a cópia do spool não virarem dois handoffs.
  *  - F-794: depois de um handoff persistido por writer isolado, agenda a
  *    salvaguarda da worktree (alteração sem commit vira commit em
  *    refs/nexus-salvage/, sem tocar branch, índice ou arquivos).
@@ -15,6 +18,7 @@ import { OPERATOR_HAND_WORKTREE_KEY } from './isolated-writer-worktree';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import type { WorktreeRecord } from '../runtime/worktree-contract';
 import { scheduleWorktreeSalvage } from './isolated-writer-salvage';
+import { beginHandoffSubmitInFlight } from './handoff-submit-inflight';
 
 function handoffIdOf(result: unknown): string | undefined {
   if (!result || typeof result !== 'object') return undefined;
@@ -62,17 +66,22 @@ export function withHandoffSubmitResilience(tool: McpToolDef): McpToolDef {
   return {
     ...tool,
     handler: async (args, ctx, invocation) => {
-      const result = await tool.handler(args, ctx, invocation);
-      const handoffId = handoffIdOf(result);
-      if (handoffId) {
-        try {
-          scheduleHandoffWorktreeSalvage(ctx, handoffId);
-        } catch (error) {
-          // Salvaguarda é rede de segurança: nunca derruba o handoff entregue.
-          console.warn('[worktree-salvage] agendamento no handoff falhou:', error);
+      const release = ctx.sessionId ? beginHandoffSubmitInFlight(ctx.sessionId) : () => undefined;
+      try {
+        const result = await tool.handler(args, ctx, invocation);
+        const handoffId = handoffIdOf(result);
+        if (handoffId) {
+          try {
+            scheduleHandoffWorktreeSalvage(ctx, handoffId);
+          } catch (error) {
+            // Salvaguarda é rede de segurança: nunca derruba o handoff entregue.
+            console.warn('[worktree-salvage] agendamento no handoff falhou:', error);
+          }
         }
+        return result;
+      } finally {
+        release();
       }
-      return result;
     },
   };
 }

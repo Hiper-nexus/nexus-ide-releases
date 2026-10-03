@@ -24,6 +24,7 @@ import {
   linkDeveloperIdentity,
 } from '../pty/private-home-operator';
 import { removeTreeSync } from '../util/remove-tree';
+import { HANDOFF_SPOOL_WRITER_JS } from './handoff-spool-entry';
 
 export { DEVELOPER_IDENTITY_HOME_ENTRIES, linkDeveloperIdentity };
 
@@ -42,6 +43,13 @@ export const HOOK_SCRIPT = `#!/usr/bin/env node
 // A FORMA DEPENDE DO EVENTO, e a divergência é deliberada. Não unifique:
 //   · pretool = gate de AUTORIZAÇÃO -> SÍNCRONO e FAIL-CLOSED. Gate inalcançável
 //     BLOQUEIA a tool call. Um gate de autorização fail-open não é gate, é convite.
+//     Degradação estreita (F-795, política em docs/qa/items/F-795.md): com o
+//     Main inalcançável, LEITURA local (Read/Grep/Glob/LS/NotebookRead/
+//     ToolSearch) e leituras do Nexus que todo papel já tem seguem; o
+//     nexus_handoff_submit vai para o spool em disco e o agente ouve
+//     "guardado"; todo o resto (Bash, Edit, Write, WebFetch, Task, Skill, MCP
+//     com efeito) continua BLOQUEADO. A política vem do Main por env e ausente
+//     = fechada.
 //   · stop = obrigação de RELATO -> DESACOPLADO e FAIL-OPEN. O pai grava o
 //     payload, relança a si mesmo detached e sai em ms; a rede roda no neto.
 //     Gate fora do ar NUNCA trava o encerramento do worker.
@@ -52,6 +60,7 @@ export const HOOK_SCRIPT = `#!/usr/bin/env node
 // eventos, que é a razão documentada (auditoria 0fe423aa) de nunca o termos
 // posto no caminho padrão. worker-handoff-enforcement segue como backstop.
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -60,6 +69,37 @@ const event = process.argv[2];
 const url = process.env.NEXUS_GATE_URL;
 const token = process.env.NEXUS_GATE_TOKEN;
 const IS_STOP = event === 'stop';
+const OFFLINE_NATIVE_READ_TOOLS = new Set(['read', 'glob', 'grep', 'ls', 'notebookread', 'toolsearch']);
+const OFFLINE_NEXUS_READ_TOOLS = new Set([
+  'nexus_pane_read', 'nexus_pane_read_many', 'nexus_pane_list', 'nexus_pane_whoami',
+  'nexus_handoff_list', 'nexus_memory_recall', 'nexus_memory_stats', 'nexus_tool_pick',
+  'nexus_pr_inspect',
+]);
+${HANDOFF_SPOOL_WRITER_JS}
+// Política do gate INALCANÇÁVEL (F-795). O Main manda por env; ausente = fechada.
+//  · leitura local nativa: o gate alcançável já libera estas para todo papel;
+//  · leituras do Nexus que todo papel tem (ALWAYS_ALLOWED): o servidor MCP
+//    reaplica o gate inteiro quando o pedido chegar;
+//  · nexus_handoff_submit: vai para o spool assinado da sessão e o agente
+//    recebe "guardado" (a chamada não segue para o Main inalcançável — a
+//    cópia do spool é a única, sem duplicata); sem spool, a chamada segue;
+//  · todo o resto continua bloqueado.
+function offlineVerdict(raw) {
+  if (String(process.env.NEXUS_GATE_OFFLINE_POLICY || '') !== 'read-handoff') return { allow: false };
+  let input;
+  try { input = JSON.parse(raw); } catch { return { allow: false }; }
+  const name = String((input && input.tool_name) || '').trim().toLowerCase();
+  const nexus = /^mcp__nexus(?:_[a-z0-9]+)?__(nexus_[a-z0-9_]+)$/.exec(name);
+  if (nexus) {
+    if (nexus[1] === 'nexus_handoff_submit') {
+      const spooled = nexusSpoolHandoff(process.env, 'gate-hook', input.tool_input, undefined);
+      return spooled ? { allow: false, spooled } : { allow: true };
+    }
+    return { allow: OFFLINE_NEXUS_READ_TOOLS.has(nexus[1]) };
+  }
+  return { allow: OFFLINE_NATIVE_READ_TOOLS.has(name) };
+}
+
 const CHILD = process.env.NEXUS_HOOK_CHILD === '1';
 
 function normalizeBaseUrl(value) {
@@ -188,7 +228,8 @@ if (CHILD) {
     }
     process.exit(0);
   }
-  // pretool: SÍNCRONO e FAIL-CLOSED. Toda falha bloqueia.
+  // pretool: SÍNCRONO e FAIL-CLOSED. Toda falha bloqueia — exceto a degradação
+  // estreita de gate INALCANÇÁVEL logo abaixo (offlineVerdict).
   if (!url || !token) {
     console.error('[nexus-hook] gate credentials unavailable — blocking');
     process.exit(2);
@@ -204,11 +245,23 @@ if (CHILD) {
       process.exit(2);
     }
   } catch {
+    // F-795: gate inalcançável (Main travado ou fechado). Leitura e handoff
+    // degradam com segurança; o resto continua bloqueado.
+    const offline = offlineVerdict(raw);
+    if (offline.spooled) {
+      console.error('[nexus-hook] ' + NEXUS_SPOOL_MESSAGE + ' (spool ' + offline.spooled.entryId + ')');
+      process.exit(2);
+    }
+    if (offline.allow) process.exit(0);
     console.error('[nexus-hook] gate unreachable — blocking tool call');
+    if (String(process.env.NEXUS_GATE_OFFLINE_POLICY || '') === 'read-handoff') {
+      console.error('[nexus-hook] Nexus sem resposta: só leitura (Read/Grep/Glob/LS) e o nexus_handoff_submit seguem liberados; tente o resto quando o Nexus voltar.');
+    }
     process.exit(2);
   }
   process.exit(0);
 }
+
 `;
 
 function hookCommand(scriptPath: string, event: string): string {

@@ -16,6 +16,11 @@ vi.mock('../runtime/worktree-runtime-registry', () => ({
 }));
 
 import { withHandoffSubmitResilience } from './handoff-submit-resilience';
+import {
+  hasHandoffSubmitInFlight,
+  onHandoffSubmitSettled,
+  resetHandoffSubmitInFlightForTests,
+} from './handoff-submit-inflight';
 
 const coordination = testProjectScope({ rootRealPath: '/repo/checkout' });
 const worktreePath = '/repo/worktrees/task-a';
@@ -35,6 +40,7 @@ function submitTool(handler: McpToolDef['handler']): McpToolDef {
 }
 
 beforeEach(() => {
+  resetHandoffSubmitInFlightForTests();
   h.schedule.mockClear();
   h.records = [{
     missionId: 'mission-a', ownerKind: 'pane', worktreePath, taskId: 'pane-1',
@@ -43,6 +49,29 @@ beforeEach(() => {
 });
 
 describe('envoltório do nexus_handoff_submit', () => {
+  it('marca o submit em voo pela sessão e avisa quem espera quando ele termina (F-795)', async () => {
+    const settled: string[] = [];
+    onHandoffSubmitSettled((sessionId) => settled.push(sessionId));
+    let seenInFlight = false;
+    const tool = withHandoffSubmitResilience(submitTool(async () => {
+      seenInFlight = hasHandoffSubmitInFlight('session-w');
+      return { ok: true, handoffId: 'handoff-1' };
+    }));
+    await tool.handler({ status: 'success', summary: 'x' }, ctx());
+    expect(seenInFlight).toBe(true);
+    expect(hasHandoffSubmitInFlight('session-w')).toBe(false);
+    expect(settled).toEqual(['session-w']);
+  });
+
+  it('solta a marca em voo mesmo quando o handler recusa (F-795)', async () => {
+    const tool = withHandoffSubmitResilience(submitTool(async () => {
+      expect(hasHandoffSubmitInFlight('session-w')).toBe(true);
+      throw new Error('retry: faltou evidência');
+    }));
+    await expect(tool.handler({}, ctx())).rejects.toThrow('retry');
+    expect(hasHandoffSubmitInFlight('session-w')).toBe(false);
+  });
+
   it('handler que recusa (retry do contrato/Jev) não agenda salvaguarda', async () => {
     const tool = withHandoffSubmitResilience(submitTool(async () => {
       throw new Error('summary inválido');

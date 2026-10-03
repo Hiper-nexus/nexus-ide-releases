@@ -973,7 +973,7 @@ const workerHeartbeatTool: McpToolDef = {
 
 export function buildHandoffTools(): McpToolDef[] {
   return [
-    // F-794: salvaguarda da worktree do writer isolado depois do handoff.
+    // F-794/F-795: submit em voo (spool) + salvaguarda da worktree do writer.
     withHandoffSubmitResilience(handoffSubmitTool),
     handoffListTool,
     handoffAcknowledgeTool,

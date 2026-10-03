@@ -18,6 +18,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { resolveCliBinary } from '../path-resolver';
+import { HANDOFF_SPOOL_WRITER_JS } from './handoff-spool-entry';
 
 export const MINIMAX_NEXUS_MCP_SERVER = 'nexus';
 const BRIDGE_FILE = 'nexus-mcp-bridge.cjs';
@@ -25,7 +26,10 @@ const BRIDGE_FILE = 'nexus-mcp-bridge.cjs';
 /** Ponte stdio → HTTP loopback do Nexus. Sem ENV, servidor vazio (não quebra o /mcp). */
 export const MINIMAX_NEXUS_MCP_BRIDGE_SCRIPT = String.raw`'use strict';
 // Nexus IDE — ponte MCP para o MiniMax Code. Gerado pelo Nexus; não edite.
+const crypto = require('node:crypto');
+const fs = require('node:fs');
 const http = require('node:http');
+const path = require('node:path');
 const readline = require('node:readline');
 
 const rawUrl = process.env.NEXUS_MCP_URL || '';
@@ -73,7 +77,11 @@ function forward(payload) {
       res.on('end', () => {
         const status = res.statusCode || 500;
         if (status === 202 || status === 204 || text.length === 0) return resolve(null);
-        if (status < 200 || status >= 300) return reject(new Error('Nexus MCP HTTP ' + status));
+        if (status < 200 || status >= 300) {
+          const httpError = new Error('Nexus MCP HTTP ' + status);
+          httpError.httpStatus = status;
+          return reject(httpError);
+        }
         try { resolve(JSON.parse(text)); } catch { reject(new Error('Nexus MCP returned a non-JSON response')); }
       });
     });
@@ -81,6 +89,24 @@ function forward(payload) {
     req.on('error', reject);
     req.end(body);
   });
+}
+
+${HANDOFF_SPOOL_WRITER_JS}
+// F-795: só falha de TRANSPORTE (rede, timeout, 5xx, resposta não-JSON) vai
+// para o spool. 4xx é autoridade (sessão revogada/desconhecida) e segue erro.
+function isTransportFailure(error) {
+  const status = error && error.httpStatus;
+  return typeof status !== 'number' || status >= 500;
+}
+
+function isHandoffSubmit(payload) {
+  return Boolean(payload && payload.method === 'tools/call' && payload.params &&
+    payload.params.name === 'nexus_handoff_submit');
+}
+
+function spooledReply(payload, spooled) {
+  const text = JSON.stringify({ ok: true, spooled: true, spoolEntryId: spooled.entryId, message: NEXUS_SPOOL_MESSAGE });
+  return { jsonrpc: '2.0', id: payload.id, result: { content: [{ type: 'text', text: text }] } };
 }
 
 function failure(payload, error) {
@@ -108,6 +134,14 @@ input.on('line', (line) => {
       const reply = await forward(payload);
       if (reply !== null) write(reply);
     } catch (error) {
+      if (isHandoffSubmit(payload) && isTransportFailure(error)) {
+        const args = payload.params.arguments && typeof payload.params.arguments === 'object' ? payload.params.arguments : {};
+        const spooled = nexusSpoolHandoff(process.env, 'mcp-bridge', args, undefined);
+        if (spooled) {
+          write(spooledReply(payload, spooled));
+          return;
+        }
+      }
       write(failure(payload, error));
     }
   });
