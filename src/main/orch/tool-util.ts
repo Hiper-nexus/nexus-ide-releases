@@ -58,6 +58,7 @@ import { hasBoundHandoffForExactDispatchWorker } from './task-dispatch-codec';
 import { migrateModelId } from '../../shared/model-defaults';
 import { resolveCwdForScope } from './workspace-path';
 import { withHandoffContract } from './worker-handoff-contract';
+import { hasNexusBrowserAlternative } from './nexus-browser-policy';
 import {
   assertReleaseQualifiedMissionWorkerSpawn,
   isRevisionBoundWritableWorkerAdapterAllowed,
@@ -1716,6 +1717,19 @@ export async function spawnPaneAndMaybePrompt(
           // contrato ensina a regra condicional, não "sempre chame a tool".
           systemDelivers:
             options.role === 'worker' && Boolean(options.missionId),
+          // F-781: mesma resposta que o spawn usa para negar o WebFetch. Sem
+          // papel o token nasce `user`; o filho do operador chega aqui com o
+          // pane pai (tools-panes.ts, `operatorParentSessionId`).
+          nexusBrowser: hasNexusBrowserAlternative({
+            role: options.role ?? 'user',
+            missionId: options.missionId,
+            readOnly: options.readOnly,
+            allowedTools: options.allowedTools ?? null,
+            operatorChild:
+              options.role === undefined &&
+              typeof (options as { operatorParentSessionId?: unknown })
+                .operatorParentSessionId === 'string',
+          }),
         })
     : undefined;
   const finalPrompt = handoffPrompt

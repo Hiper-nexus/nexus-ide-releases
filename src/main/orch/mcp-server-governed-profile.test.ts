@@ -1895,3 +1895,89 @@ describe('Muse is not Claude MCP autoload (F-596)', () => {
     }
   });
 });
+
+describe('F-781: WebFetch negado só onde o navegador do Nexus está ao alcance', () => {
+  /** Settings Claude-family que o spawn realmente montou (os dois canais). */
+  function claudeSettingsFiles(decoration: AgentSpawnDecoration): string[] {
+    const files: string[] = [];
+    const flag = decoration.extraArgs.indexOf('--settings');
+    if (flag >= 0) files.push(decoration.extraArgs[flag + 1]!);
+    const ephemeral = path.join(decoration.env.HOME ?? '', '.claude', 'settings.json');
+    if (decoration.env.HOME && fs.existsSync(ephemeral)) files.push(ephemeral);
+    return files;
+  }
+
+  function deniesWebFetch(decoration: AgentSpawnDecoration): boolean {
+    return claudeSettingsFiles(decoration).some((file) => {
+      const settings = JSON.parse(fs.readFileSync(file, 'utf8')) as {
+        hooks?: { PreToolUse?: Array<{ matcher?: string }> };
+      };
+      return (settings.hooks?.PreToolUse ?? []).some(
+        (entry) => entry.matcher === 'WebFetch',
+      );
+    });
+  }
+
+  function spawnClaudeFamily(
+    id: 'claude' | 'glm',
+    configure: (context: NonNullable<BoundSpawnAuthority['context']>) => void,
+  ): AgentSpawnDecoration {
+    const home = path.join(tempRoot(), 'home');
+    const cwd = path.join(home, 'workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+    vi.stubEnv('HOME', home);
+    const spawnAuthority = authority(cwd, true, true);
+    configure(spawnAuthority.context!);
+    const decoration = prepareAgentSpawnDecoration(
+      adapter(id),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      spawnAuthority,
+    );
+    if (!decoration) throw new Error(`expected ${id} decoration`);
+    return decoration;
+  }
+
+  it('worker de missão livre (operator-choice): o --settings do pane nega o WebFetch', () => {
+    const decoration = spawnClaudeFamily('claude', () => {});
+    try {
+      expect(decoration.extraArgs).toContain('--settings');
+      expect(deniesWebFetch(decoration)).toBe(true);
+    } finally {
+      decoration.onSpawnFailed?.();
+    }
+  });
+
+  it('worker governado com o navegador na allowlist: o settings.json do HOME efêmero nega', () => {
+    const decoration = spawnClaudeFamily('glm', (context) => {
+      context.allowedTools = [
+        'nexus_browser_open',
+        'nexus_browser_navigate',
+        'nexus_browser_read',
+      ];
+    });
+    try {
+      // GLM com allowlist = HOME efêmero com o portão de skill, sem --settings.
+      expect(decoration.extraArgs).not.toContain('--settings');
+      expect(deniesWebFetch(decoration)).toBe(true);
+    } finally {
+      decoration.onSpawnFailed?.();
+    }
+  });
+
+  it.each([
+    ['allowlist vazia (padrão do worker ad hoc)', (context: NonNullable<BoundSpawnAuthority['context']>) => {
+      context.allowedTools = [];
+    }],
+    ['pane somente leitura', (context: NonNullable<BoundSpawnAuthority['context']>) => {
+      context.readOnly = true;
+    }],
+  ])('%s: o WebFetch fica (o pane não tem o navegador do Nexus)', (_label, configure) => {
+    const decoration = spawnClaudeFamily('claude', configure);
+    try {
+      expect(claudeSettingsFiles(decoration).length).toBeGreaterThan(0);
+      expect(deniesWebFetch(decoration)).toBe(false);
+    } finally {
+      decoration.onSpawnFailed?.();
+    }
+  });
+});

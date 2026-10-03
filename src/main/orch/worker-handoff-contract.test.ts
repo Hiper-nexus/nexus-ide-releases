@@ -9,6 +9,7 @@ vi.mock("../persistence/settings-store", () => ({
 }));
 
 import { LEGACY_MARKER } from "./legacy-handoff";
+import { NEXUS_BROWSER_BRIEF_RULE } from "./nexus-browser-policy";
 import { charterTierForWorker, withHandoffContract } from "./worker-handoff-contract";
 
 describe("worker handoff transport contract", () => {
@@ -66,6 +67,34 @@ describe("worker handoff transport contract", () => {
     });
     expect(shimOnly).not.toContain("nexus_memory_recall");
     expect(shimOnly).not.toContain("nexus_memory_retain");
+  });
+
+  it.each(["codex", "kimi", "grok", "agy"])(
+    "F-781: o brief do %s manda página web para o navegador do Nexus quando o pane o alcança",
+    (nexusMcp) => {
+      const prompt = withHandoffContract("Leia a documentação da API e corrija o cliente.", {
+        quirks: { mcpAutoload: false, nexusMcp },
+      }, { nexusBrowser: true });
+      expect(prompt).toContain(NEXUS_BROWSER_BRIEF_RULE);
+      expect(prompt).toContain("nexus_browser_open");
+      expect(prompt).toContain("Não use WebFetch nem o fetch de página nativo");
+      // A regra vem antes do contrato de entrega (a última instrução do brief).
+      expect(prompt.indexOf("nexus_browser_open")).toBeLessThan(
+        prompt.indexOf("Ao concluir sua tarefa"),
+      );
+    },
+  );
+
+  it("F-781: sem o navegador ao alcance (ou sem MCP), o brief não manda usar o que não existe", () => {
+    const withoutBrowser = withHandoffContract("Leia a documentação da API.", {
+      quirks: { mcpAutoload: false, nexusMcp: "codex" },
+    });
+    expect(withoutBrowser).not.toContain("nexus_browser_open");
+
+    const shimOnly = withHandoffContract("Leia a documentação da API.", {
+      quirks: { mcpAutoload: false, nexusMcp: "none" },
+    }, { nexusBrowser: true });
+    expect(shimOnly).not.toContain("nexus_browser_open");
   });
 });
 
