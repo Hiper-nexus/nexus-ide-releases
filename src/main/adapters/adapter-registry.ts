@@ -16,10 +16,12 @@ import type {
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { ADAPTER_CHANNELS } from '../../shared/channels';
 import {
+  onCliVersionLearned,
   resolveCliBinary,
   revalidateExecutable,
   refreshUserPath,
   getEffectivePath,
+  warmCliBinaryVersions,
   type CliBinaryResolution,
 } from '../path-resolver';
 import { getCustomModels } from './custom-models';
@@ -409,11 +411,18 @@ let modelCatalogWatcher: fs.FSWatcher | null = null;
 const cliModelWatchers: fs.FSWatcher[] = [];
 let periodicRefresh: ReturnType<typeof setInterval> | null = null;
 let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+let cliVersionRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let stopCliVersionListener: (() => void) | null = null;
 
 // Atomic saves (write-temp + rename) fire 2-4 fs.watch events per file change,
 // and each reload() walks PATH for every adapter — enough to stall the main
 // thread. Collapse the burst into one reload after a short quiet period.
 const WATCH_DEBOUNCE_MS = 100;
+/**
+ * Comandos cuja instalação ÚNICA também é sondada no aquecimento: o gate de
+ * versão do Codex (`--dangerously-bypass-hook-trust`) lê o mesmo cache.
+ */
+const VERSION_GATED_CLIS = ['codex'] as const;
 
 function resolveAdapterBin(adapter: Adapter): AdapterBinResolution {
   if (adapter.kind === 'api-provider') {
@@ -539,6 +548,28 @@ function scheduleReloadAndBroadcast(): void {
   }, WATCH_DEBOUNCE_MS);
 }
 
+/**
+ * F-790/F-764: a sonda `--version` roda fora do Main. Quando ela aprende uma
+ * versão, a escolha entre instalações duplicadas pode mudar — refaz o cache
+ * de binários (só PATH, sem subprocesso) e avisa o renderer, uma vez por
+ * rajada de sondas.
+ */
+function scheduleCliVersionRefresh(): void {
+  if (cliVersionRefreshTimer) return;
+  cliVersionRefreshTimer = setTimeout(() => {
+    cliVersionRefreshTimer = null;
+    refreshInstalledCache();
+    invalidateAdapterHotCache();
+    broadcast();
+  }, WATCH_DEBOUNCE_MS);
+  cliVersionRefreshTimer.unref?.();
+}
+
+/** Aquecimento das versões das CLIs de IA; nunca rejeita. */
+function warmAdapterCliVersions(): Promise<number> {
+  return warmCliBinaryVersions({ alsoSingle: VERSION_GATED_CLIS }).catch(() => 0);
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
 export function initAdapterRegistry(): void {
@@ -550,6 +581,11 @@ export function initAdapterRegistry(): void {
     invalidateModelCatalogCache();
   }
   reload();
+  // F-764: o inventário acima só lê versões já em cache (instalação duplicada
+  // sem versão conhecida fica na ordem do PATH). As sondas rodam fora do Main;
+  // quando voltam, o cache de binários é refeito e o renderer avisado.
+  stopCliVersionListener ??= onCliVersionLearned(scheduleCliVersionRefresh);
+  void warmAdapterCliVersions();
 
   try {
     watcher = fs.watch(USER_ADAPTER_DIR, { persistent: false }, () => {
@@ -696,6 +732,9 @@ export function resolveAdapterBinary(id: string): string | null {
  */
 export async function rescanAdapterBinaries(): Promise<AdapterInfo[]> {
   await refreshUserPath();
+  // Reexame é pedido explícito (ou pós-atualização): espera as sondas, que
+  // rodam fora do Main, e já devolve a instalação mais nova.
+  await warmAdapterCliVersions();
   refreshInstalledCache();
   invalidateAdapterHotCache();
   const infos = listAdapterInfos();
@@ -718,6 +757,12 @@ export function closeAdapterRegistry(): void {
     clearTimeout(reloadTimer);
     reloadTimer = null;
   }
+  if (cliVersionRefreshTimer) {
+    clearTimeout(cliVersionRefreshTimer);
+    cliVersionRefreshTimer = null;
+  }
+  stopCliVersionListener?.();
+  stopCliVersionListener = null;
   watcher?.close();
   watcher = null;
   modelCatalogWatcher?.close();

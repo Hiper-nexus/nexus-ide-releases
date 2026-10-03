@@ -2,18 +2,21 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { __resetPathResolverForTests } from '../path-resolver';
 import {
   codexHookTrustBypassArgs,
   codexNoDaemonArgs,
   parseCodexCliVersion,
   resetCodexCliVersionCacheForTests,
   resolveCodexCliVersion,
+  warmCodexCliVersion,
   type CodexVersionExec,
   type CodexVersionLaunch,
 } from './codex-cli-version';
 
 beforeEach(() => {
   resetCodexCliVersionCacheForTests();
+  __resetPathResolverForTests();
 });
 
 const execReturning =
@@ -35,16 +38,32 @@ describe('parseCodexCliVersion', () => {
 });
 
 describe('resolveCodexCliVersion', () => {
-  it.skipIf(process.platform === 'win32')('F-790: the real version cache refreshes after an in-place CLI update', () => {
+  it.skipIf(process.platform === 'win32')('F-790: the real version cache refreshes after an in-place CLI update', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-codex-version-'));
     const bin = path.join(dir, 'codex');
     try {
       fs.writeFileSync(bin, '#!/bin/sh\necho codex-cli 0.133.0\n', { mode: 0o755 });
+      await expect(warmCodexCliVersion(bin)).resolves.toBe('0.133.0');
       expect(resolveCodexCliVersion(bin)).toBe('0.133.0');
       expect(codexHookTrustBypassArgs(bin)).toEqual([]);
       fs.writeFileSync(bin, '#!/bin/sh\necho codex-cli 0.160.0\n', { mode: 0o755 });
       const later = new Date(Date.now() + 10_000); fs.utimesSync(bin, later, later);
+      await warmCodexCliVersion(bin);
       expect(resolveCodexCliVersion(bin)).toBe('0.160.0');
+      expect(codexHookTrustBypassArgs(bin)).toEqual(['--dangerously-bypass-hook-trust']);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it.skipIf(process.platform === 'win32')('F-764: versão ainda não sondada é desconhecida — o gate não bloqueia e a próxima chamada já sabe', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-codex-cold-'));
+    const bin = path.join(dir, 'codex');
+    try {
+      fs.writeFileSync(bin, '#!/bin/sh\necho codex-cli 0.160.0\n', { mode: 0o755 });
+      // Cache frio: comportamento de versão desconhecida (sem a flag), sem
+      // esperar o subprocesso; a sonda sai em segundo plano.
+      expect(resolveCodexCliVersion(bin)).toBeNull();
+      expect(codexHookTrustBypassArgs(bin)).toEqual([]);
+      await warmCodexCliVersion(bin);
       expect(codexHookTrustBypassArgs(bin)).toEqual(['--dangerously-bypass-hook-trust']);
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
