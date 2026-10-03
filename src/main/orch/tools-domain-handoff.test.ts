@@ -86,6 +86,7 @@ vi.mock("../regression-gate/regression-gate-handoff", () => ({
 }));
 
 import { buildDomainTools } from "./tools-domain";
+import { visualTaskRequirement } from './visual-handoff-gate';
 import {
   armDeliveryContract,
   armedDeliveryContract,
@@ -312,7 +313,7 @@ describe("handoff MCP stop receipt", () => {
   });
 
   it('marks a visual assignment partial despite success prose and a claimed PNG', async () => {
-    const ctx = { ...context(), visualTask: { since: Date.now() } };
+    const ctx = { ...context(), visualTask: visualTaskRequirement('Corrija o bug no layout responsivo da tela de login.') };
     mocks.submit.mockReturnValue(handoff('nexus-trusted'));
     const result = await submitTool().handler({ status: 'success', summary: 'Interface pronta e validada.',
       artifacts: [{ path: '/tmp/claimed.png', kind: 'screenshot' }],

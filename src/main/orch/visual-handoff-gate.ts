@@ -1,5 +1,6 @@
 import type { ProjectExecutionScope } from '../../shared/types';
-import { requiresDesignAuthority } from '../../shared/mission-work-kind';
+import { classifyWorkKind, requiresDesignAuthority } from '../../shared/mission-work-kind';
+import { isUiWorkText } from '../../shared/ui-work-signal';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { createScopedBrowserArtifactStore } from '../browser/browser-artifact-store';
 import { getMissionEventRuntimeManager } from './mission-event-emit';
@@ -20,7 +21,12 @@ export type VisualHandoffVerdict = { readonly required: false; readonly verified
 
 /** Only the Main assignment/immutable task is classified, never the reported result. */
 export function visualTaskRequirement(assignment: string | undefined, now = Date.now()): VisualTaskRequirement | undefined {
-  return assignment && requiresDesignAuthority(assignment.slice(0, 16_384)) ? Object.freeze({ since: now }) : undefined;
+  if (!assignment) return undefined;
+  const text = assignment.slice(0, 16_384);
+  // A UI defect is still a visual delivery. Requiring a capture does not
+  // reclassify it as new design work or grant design-authority capabilities.
+  const required = requiresDesignAuthority(text) || (classifyWorkKind(text).kind === 'bug' && isUiWorkText(text));
+  return required ? Object.freeze({ since: now }) : undefined;
 }
 
 /** A supplied undefined is Main's negative classification, before adding boilerplate. */

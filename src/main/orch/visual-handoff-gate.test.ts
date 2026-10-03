@@ -22,7 +22,10 @@ afterEach(() => { manager.closeAll(); fs.rmSync(dir, { recursive: true, force: t
 it('derives a visual requirement from the assigned task, not from a completion claim', () => {
   expect(visualTaskRequirement('Crie a tela de login com layout responsivo.', 1000)).toEqual({ since: 1000 });
   expect(visualTaskRequirement('Documente os endpoints da API de login.', 1000)).toBeUndefined();
+  expect(visualTaskRequirement('Corrija o bug na paginação da API de estoque.', 1000)).toBeUndefined();
 });
+it.each(['Corrija o bug no layout responsivo da tela de login.', 'Corrija o botão que não funciona na interface do dashboard.'])
+  ('requires a capture for a UI bug: %s', assignment => expect(visualTaskRequirement(assignment, 1000)).toEqual({ since: 1000 }));
 it('preserves an already classified nonvisual task instead of reclassifying appended instructions', () => {
   const initialPrompt = 'Crie a tela de login com layout responsivo.';
   expect(visualTaskAtSpawn({ role: 'worker', visualTask: undefined, initialPrompt })).toBeUndefined();
@@ -48,7 +51,7 @@ it('requires the exact worker generation, execution root, assignment time and cu
 
 it('requires evidence from a sealed visual task even without a spawn hint', async () => {
   expect(await checkVisualHandoff({ ...context(), visualTask: undefined }, { manager,
-    task: { plannedTitle: 'Crie a tela de login', plannedDetail: 'Layout responsivo com formulário.', task: { createdAt: 1000 } },
+    task: { plannedTitle: 'Corrija o bug da tela de login', plannedDetail: 'Layout responsivo com formulário.', task: { createdAt: 1000 } },
   })).toMatchObject({ required: true, verified: false });
 });
 

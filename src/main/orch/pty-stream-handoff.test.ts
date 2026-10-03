@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentGateContext } from "./gate";
 import { testProjectScope } from "./__tests__/scope-fixture";
+import { visualTaskRequirement } from './visual-handoff-gate';
 
 const mocks = vi.hoisted(() => ({
   getContextBySession: vi.fn(),
@@ -191,7 +192,7 @@ describe("submitPtyStreamHandoff MCP parity", () => {
     const persist = vi.fn((_input: Record<string, unknown>) => ({
       handoff: { id: 'visual-handoff', evidenceTrust: 'nexus-trusted', deliveryState: 'queued' }, replayed: false,
     }));
-    mocks.getContextBySession.mockReturnValue({ ...workerCtx(), visualTask: { since: Date.now() } });
+    mocks.getContextBySession.mockReturnValue({ ...workerCtx(), visualTask: visualTaskRequirement('Corrija o botão que não funciona na interface do dashboard.') });
     mocks.getStores.mockReturnValue({
       missions: { get: () => approvedMission() }, tasks: { list: () => [], getPlannedTask: () => null },
       missionPanes: { list: () => [] }, taskDispatches: { list: () => [] },
