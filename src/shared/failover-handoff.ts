@@ -100,6 +100,8 @@ const EXCERPT_TRIGGER_MASKS: ReadonlyArray<readonly [RegExp, string]> = [
   [/invalid[_\s]?(?:api[_\s]?key|x-api-key)/gi, 'invalid [api-key citada]'],
   [/(usage|5-hour|daily|token) limit (?:reached|exceeded|hit)/gi, '$1 limit [citado]'],
   [/quota (?:exceeded|exhausted)/gi, 'quota [esgotada — citada]'],
+  // Ordem inversa (OpenAI): o detector casa "exceeded your current quota".
+  [/exceeded your (?:current |monthly |plan )?quota/gi, '[estouro de cota — citado]'],
   [/payment required/gi, '[pagamento — citado]'],
   [/(n[aã]o autenticado|sess[aã]o expirada|token inv[aá]lido)/gi, '[$1 — citado]'],
   [/limite de (?:uso|utiliza[cç][aã]o) (?:atingido|excedido|alcan[cç]ado)/gi, '[limite de uso — citado]'],
@@ -145,6 +147,11 @@ export interface ContinuityPackInput {
   diffStat?: string;
   /** Concrete next step for the replacement agent. */
   nextStep?: string;
+  /**
+   * F-775: CLI whose accounts all ran out — the task moves to ANOTHER CLI
+   * (chosen by the spawn route after this text is built), not another account.
+   */
+  fromAdapterLabel?: string;
 }
 
 const MAX_EXCERPT = 2_400;
@@ -224,8 +231,16 @@ export function buildContinuityPack(input: ContinuityPackInput): string {
   const lines = [
     FAILOVER_HANDOFF_HEADER,
     formatLimitLine(input, fromMasked),
-    `You are now running on account "${toMasked}" in a NEW provider session.`,
-    `Terminal scrollback above is historical context only — the previous conversation id is NOT transferable across accounts.`,
+    ...(input.fromAdapterLabel
+      ? [
+          // F-775: troca de CLI — o destino é escolhido pela rota depois.
+          `No ${clip(input.fromAdapterLabel, 40)} account can take more work right now, so this task moved to another CLI in a NEW session.`,
+          `The previous conversation is NOT transferable — the touched files and the diff below are the real state of the work.`,
+        ]
+      : [
+          `You are now running on account "${toMasked}" in a NEW provider session.`,
+          `Terminal scrollback above is historical context only — the previous conversation id is NOT transferable across accounts.`,
+        ]),
     `Continue as the ${role} from the next pending step. Do not re-do completed work. Prefer files/MCP mission state over guessing.`,
   ];
   if (input.missionId) {

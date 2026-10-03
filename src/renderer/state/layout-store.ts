@@ -124,6 +124,12 @@ interface LayoutState {
   /** Pin the model used by this pane (used by model failover: rejected model → catalog fallback). */
   setPaneModel(paneId: string, model: string | undefined): void;
   /**
+   * F-775: troca a CLI do pane no lugar (todas as contas da CLI anterior
+   * esgotaram). A conta pinada era da CLI anterior: sai, e o spawn escolhe
+   * uma conta livre da CLI nova.
+   */
+  setPaneAdapter(paneId: string, adapterId: string, model: string | undefined): void;
+  /**
    * Adota o pane no ESPAÇO do operador (F-560). Quem cria pane pelo "+ Pane"
    * dentro de um espaço quer o pane NAQUELE espaço — sem o carimbo o pane
    * nasceria solto e pularia para outra aba no próximo restart.
@@ -1348,6 +1354,12 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
 
   setPaneModel: (paneId, model) => {
     const root = updatePane(get().root, paneId, { model });
+    set({ root });
+    persist();
+  },
+
+  setPaneAdapter: (paneId, adapterId, model) => {
+    const root = updatePane(get().root, paneId, { adapterId, model, accountId: undefined });
     set({ root });
     persist();
   },

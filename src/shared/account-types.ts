@@ -102,6 +102,29 @@ export interface FailoverEvent {
   toAdapterId?: string;
   /** CLI do pane que parou. */
   fromAdapterId?: string;
+  /**
+   * F-775: troca de CLI NO LUGAR (pane do operador, sem missão): 'requested'
+   * pede ao renderer que religue o pane em `toAdapterId` (e `toModel`) com o
+   * `continuityPack`; só o recibo 'applied' diz se a troca existiu.
+   */
+  cliSwitchPhase?: 'requested' | 'applied';
+  /** F-775: pacote de continuidade pronto (montado pelo Main) para o pedido. */
+  continuityPack?: string;
+  /** F-775: nomes das CLIs para o aviso ("Claude esgotou…; continuando em Codex"). */
+  fromAdapterLabel?: string;
+  toAdapterLabel?: string;
+  /**
+   * F-775: fatos medidos pelo Main para o pacote de continuidade que o
+   * renderer monta na troca de conta: janela/reset da conta esgotada e o
+   * estado da tarefa no cwd do pane (arquivos tocados, `git diff --stat`).
+   */
+  continuity?: {
+    limitWindow?: string | null;
+    limitResetsAt?: number | null;
+    limitCooldownMs?: number | null;
+    touchedFiles?: string[];
+    diffStat?: string;
+  };
   /** Exhausted account id (when known). */
   fromAccountId?: string;
   /**

@@ -150,6 +150,27 @@ describe('failover continuity pack', () => {
     expect(huge.endsWith(FAILOVER_HANDOFF_FOOTER)).toBe(true);
   });
 
+  it('F-775: troca de CLI diz que a tarefa mudou de CLI, sem prometer conta, e não re-arma o detector', () => {
+    const pack = buildContinuityPack({
+      fromAccountLabel: 'gustavo.lupygo@example.com',
+      toAccountLabel: '',
+      reason: 'You exceeded your current quota',
+      role: 'agent',
+      limitKind: 'quota',
+      fromAdapterLabel: 'Claude',
+      touchedFiles: ['src/login.ts'],
+      diffStat: 'src/login.ts | 4 ++--',
+      nextStep: 'Continue from the first pending step.',
+      scrollbackExcerpt: 'ERROR: API Error: 429 Too Many Requests\nYou exceeded your current quota',
+    });
+    expect(pack).toContain('No Claude account can take more work right now, so this task moved to another CLI in a NEW session.');
+    expect(pack).toContain('The previous conversation is NOT transferable');
+    expect(pack).not.toContain('You are now running on account');
+    expect(pack).not.toContain('gustavo.lupygo@example.com');
+    expect(detectLimit(pack)).toBeNull();
+    expect(detectLimit(pack.replace(FAILOVER_HANDOFF_HEADER, ''))).toBeNull();
+  });
+
   it('rótulos curtos viram máscara opaca, nunca o texto cru', () => {
     const pack = buildContinuityPack({
       fromAccountLabel: 'Pessoal',

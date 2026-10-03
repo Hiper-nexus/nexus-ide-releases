@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   liveCtx: null as unknown,
   current: true,
   mentionedCli: null as string | null,
+  resumeWorktree: vi.fn((..._args: unknown[]) => null),
 }));
 vi.mock('./tool-util', async (original) => ({
   ...(await original<typeof import('./tool-util')>()),
@@ -76,7 +77,7 @@ vi.mock('./operator-cli-mentions', () => ({
 }));
 vi.mock('./isolated-writer-worktree', async (original) => ({
   ...(await original<typeof import('./isolated-writer-worktree')>()),
-  resumeIsolatedWriterWorktree: () => null,
+  resumeIsolatedWriterWorktree: h.resumeWorktree,
 }));
 vi.mock('../adapters/cli-model-discovery', async (original) => ({
   ...(await original<typeof import('../adapters/cli-model-discovery')>()),
@@ -97,7 +98,11 @@ import {
   resetPaneStartWatchdogForTests,
 } from './pane-start-watchdog';
 import { adapterCircuitBreakers } from './circuit-breaker';
-import { getPaneTaskReroute, resetPaneTaskReroutesForTests } from './pane-task-reroute';
+import {
+  getPaneTaskReroute,
+  resetPaneTaskReroutesForTests,
+  resolveNextCli,
+} from './pane-task-reroute';
 
 const orchestrator: AgentGateContext = {
   token: 'orch', label: 'Maestro', role: 'orchestrator', sessionId: 'orch-session',
@@ -269,6 +274,32 @@ describe('F-723: ficha de início e reenvio pela rota do spawn', () => {
     // A reabertura é marcada: o pedido novo conta como a 1ª reabertura.
     expect(getPaneTaskReroute('pane-2')).toMatchObject({ generation: 1 });
     expect(getPaneStartWatch('pane-2')).toMatchObject({ rerouted: true });
+  });
+
+  it('F-775: a próxima CLI vem do MESMO roteador, com a autoridade atual de quem pediu', async () => {
+    const resolver = vi.fn(async () => ({ adapterId: 'codex', model: 'gpt-6-sol', effort: 'high' }));
+    setOperatorRouteResolver(resolver);
+    await expect(resolveNextCli({
+      callerSessionId: 'orch-session', task: 'implementar o login', excludeAdapterIds: ['qwen'],
+    })).resolves.toEqual({ adapterId: 'codex', model: 'gpt-6-sol', effort: 'high' });
+    expect(resolver).toHaveBeenCalledWith('implementar o login', orchestrator, { excludeAdapterIds: ['qwen'] });
+    // Quem pediu não tem mais sessão viva: nenhuma rota sai em nome dele.
+    h.current = false;
+    await expect(resolveNextCli({
+      callerSessionId: 'orch-session', task: 'implementar o login', excludeAdapterIds: [],
+    })).resolves.toBeNull();
+  });
+
+  it('F-775: reaberturas em cadeia são a MESMA tarefa (linhagem) e continuam na worktree do pane parado', async () => {
+    const resolver = vi.fn(async () => ({ adapterId: 'qwen', routeReservationId: 'rr-1' }));
+    setOperatorRouteResolver(resolver);
+    await paneSpawnTool.handler({ task: 'implementar o login', prompt: 'faça o login' }, orchestrator);
+    resolver.mockResolvedValue({ adapterId: 'codex', routeReservationId: 'rr-2' });
+    await getPaneTaskReroute('pane-1')!.reroute({ excludeAdapterIds: ['qwen'], worktreeFromPaneId: 'pane-1' });
+    expect(getPaneTaskReroute('pane-2')).toMatchObject({ lineageId: 'pane-1', generation: 1, adapterId: 'codex' });
+    expect(h.resumeWorktree).toHaveBeenCalledWith(expect.anything(), 'mission-a', 'pane-1');
+    await getPaneTaskReroute('pane-2')!.reroute({ excludeAdapterIds: ['codex'] });
+    expect(getPaneTaskReroute('pane-3')).toMatchObject({ lineageId: 'pane-1', generation: 2 });
   });
 
   it('F-765: CLI nomeada pelo operador fica guardada como fixa (o failover não a troca)', async () => {

@@ -594,6 +594,8 @@ describe('F-511: excerpt sanitizado nunca re-dispara failover (anti-drift)', () 
     const fuel = [
       'Error: 429 Too Many Requests — rate_limit_exceeded, try again',
       'quota exceeded, usage limit reached, payment required',
+      // F-775: a frase da OpenAI na ordem inversa também é mascarada.
+      'You exceeded your current quota, please check your plan and billing details.',
     ].join('\n');
     expect(detectLimit(fuel)).not.toBeNull();
     expect(detectLimit(sanitizeHandoffExcerptForDetector(fuel))).toBeNull();

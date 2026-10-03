@@ -101,6 +101,7 @@ import {
 import {
   forgetPaneTaskReroute,
   registerPaneTaskReroute,
+  setNextCliResolver,
   type PaneTaskRerouteRequest,
 } from './pane-task-reroute';
 import { selectSpawnFailSuccessor } from './spawn-fail-reroute';
@@ -573,6 +574,25 @@ export function setOperatorRouteResolver(
 }
 
 /**
+ * F-775: o failover pergunta a próxima CLI de uma tarefa pelo MESMO roteador
+ * do spawn, com a autoridade ATUAL de quem pediu (Maestro ou operador) — sem
+ * spawnar nem reservar nada além do que a rota já faz.
+ */
+setNextCliResolver(async ({ callerSessionId, task, excludeAdapterIds, preferAdapterIds }) => {
+  const ctx = getContextBySession(callerSessionId);
+  if (!ctx || !isCurrentGateContext(ctx) || !operatorRouteResolver) return null;
+  const route = await operatorRouteResolver(task, ctx, {
+    excludeAdapterIds,
+    ...(preferAdapterIds?.length ? { preferAdapterIds } : {}),
+  });
+  const adapterId = routeString(route, 'adapterId');
+  if (!adapterId) return null;
+  const model = routeString(route, 'model');
+  const effort = routeString(route, 'effort');
+  return { adapterId, ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
+});
+
+/**
  * Cria (ou reusa) a missão leve da aba do pane chamador e o adota como
  * orquestrador dela, pelo mesmo caminho do "Tornar orquestrador". Devolve o id
  * da missão, ou `null` quando não deu (o pane segue mão do operador).
@@ -935,6 +955,17 @@ const paneSpawnAfterTabMission = {
     const recoveryExcluded = startRecovery?.excludeAdapterIds ?? [];
     // F-765: a reabertura pelo failover prefere (sem fixar) a CLI de antes.
     const recoveryPreferred = startRecovery?.preferAdapterIds ?? [];
+    // F-775: e continua na worktree isolada do pane parado, onde está o
+    // trabalho não commitado. Indisponível → writer novo, como antes.
+    const recoveryWorktree = (missionId: string | undefined) => {
+      if (!startRecovery?.worktreeFromPaneId) return null;
+      try {
+        return resumeIsolatedWriterWorktree(ctx.scope, missionId, startRecovery.worktreeFromPaneId);
+      } catch (error) {
+        console.warn('[tools-panes] worktree do pane parado indisponível; writer novo:', error);
+        return null;
+      }
+    };
     let routeReservationId = str(args, 'routeReservationId');
     let options: SpawnToolOptions;
     let executionMode: 'same_checkout' | 'isolated_worktree' | undefined;
@@ -1431,7 +1462,9 @@ const paneSpawnAfterTabMission = {
     // recusado). Helpers de leitura seguem em paralelo no checkout. `resume`
     // de um writer isolado volta à worktree/branch original.
     if (operatorHand && !options.missionId) {
-      const resumed = resumeIsolatedWriterWorktree(ctx.scope, undefined, options.resumeFromPaneId);
+      const resumed =
+        resumeIsolatedWriterWorktree(ctx.scope, undefined, options.resumeFromPaneId) ??
+        recoveryWorktree(undefined);
       if (resumed) {
         isolatedWriter = resumed;
       } else if (options.readOnly !== true) {
@@ -1760,7 +1793,10 @@ const paneSpawnAfterTabMission = {
           const checkoutRoot = callerExecutionScope.rootRealPath;
           const spawnReadOnly =
             options.readOnly === true || options.executionMode === 'read_only';
-          isolatedWriter = resumeIsolatedWriterWorktree(ctx.scope, missionId, options.resumeFromPaneId) ?? undefined;
+          isolatedWriter =
+            resumeIsolatedWriterWorktree(ctx.scope, missionId, options.resumeFromPaneId) ??
+            recoveryWorktree(missionId) ??
+            undefined;
           if (!isolatedWriter && !spawnReadOnly) {
             let blockedBy: string | undefined;
             if (args.isolatedWriter !== true) {
@@ -2014,7 +2050,11 @@ const paneSpawnAfterTabMission = {
       // "Mandar para outro" deste pedido: este mesmo handler, autoridade atual
       // de quem pediu. Agente de roster selado numa missão com squad: o
       // sucessor é o próximo do roster (spawn-fail-reroute), não uma CLI avulsa.
-      const taskRerouteFor = (failedAdapterId: string, callerSessionId: string) => {
+      const taskRerouteFor = (
+        failedAdapterId: string,
+        callerSessionId: string,
+        lineageId: string,
+      ) => {
         const rosterSquadId =
           agentRef && !forceOperatorRoute && missionRow?.squadId
             ? missionRow.squadId
@@ -2033,6 +2073,7 @@ const paneSpawnAfterTabMission = {
               callerSessionId,
               args,
               ...request,
+              lineageId,
               generation: rerouteGeneration + 1,
               ...(rosterSquadId ? { rosterSuccessor: rosterSuccessor() ?? null } : {}),
             }),
@@ -2051,17 +2092,24 @@ const paneSpawnAfterTabMission = {
           adapterId,
           ...(options.missionId ? { missionId: options.missionId } : {}),
           role: startWatchRole,
+          callerSessionId: startCallerSessionId,
+          routeTask: operatorRouteTask(args),
+          lineageId: startRecovery?.lineageId ?? paneId,
           operatorOpened: options.operatorOpened === true,
           pinnedRuntime,
           generation: rerouteGeneration,
-          ...taskRerouteFor(adapterId, startCallerSessionId),
+          ...taskRerouteFor(adapterId, startCallerSessionId, startRecovery?.lineageId ?? paneId),
         });
       };
       let trackedStartPaneId: string | undefined;
       const onPendingSpawn =
         startWatchRole && startCallerSessionId
           ? (attempt: PendingSpawnAttemptInfo) => {
-              const taskReroute = taskRerouteFor(attempt.adapterId, startCallerSessionId);
+              const taskReroute = taskRerouteFor(
+                attempt.adapterId,
+                startCallerSessionId,
+                startRecovery?.lineageId ?? attempt.paneId,
+              );
               trackPaneStart({
                 paneId: attempt.paneId,
                 requestId: attempt.requestId,
@@ -2272,6 +2320,10 @@ interface PaneStartRecovery {
   readonly preferAdapterIds?: readonly string[];
   /** F-765/F-775: quantas reaberturas automáticas este pedido já teve. */
   readonly generation: number;
+  /** F-775: continuar na worktree isolada do pane parado (sem resume do provider). */
+  readonly worktreeFromPaneId?: string;
+  /** F-775: pane do pedido original — as reaberturas são a mesma tarefa. */
+  readonly lineageId?: string;
 }
 
 /**
@@ -2353,6 +2405,10 @@ async function rerouteNotStartedSpawn(input: {
   readonly preferAdapterIds?: readonly string[];
   /** F-775: texto do Nexus anexado ao brief (pacote de continuidade). */
   readonly appendPrompt?: string;
+  /** F-775: continuar na worktree isolada deste pane (o parado). */
+  readonly worktreeFromPaneId?: string;
+  /** F-775: pane do pedido original (a tarefa é a mesma). */
+  readonly lineageId?: string;
   /** Reabertura automática nº N deste pedido (teto no failover). */
   readonly generation: number;
   /** Agente de roster: o sucessor; null = o roster não tem outra CLI. */
@@ -2413,6 +2469,8 @@ async function rerouteNotStartedSpawn(input: {
       {
         excludeAdapterIds: input.excludeAdapterIds,
         ...(input.preferAdapterIds?.length ? { preferAdapterIds: input.preferAdapterIds } : {}),
+        ...(input.worktreeFromPaneId ? { worktreeFromPaneId: input.worktreeFromPaneId } : {}),
+        ...(input.lineageId ? { lineageId: input.lineageId } : {}),
         generation: input.generation,
       },
     )) as { paneId?: unknown; harness?: { adapterId?: unknown } };
