@@ -104,6 +104,86 @@ describe('automatic workspace-memory recall', () => {
     expect(stored.some((hit) => hit.content.includes('receipt-only'))).toBe(true);
   });
 
+  it('injeta notas de agentes e do operador numa seção não verificada, com teto menor (F-769)', () => {
+    getWorkspaceMemoryStore(scope).retain({
+      content: 'Architecture rule: PostgreSQL writes use one explicit transaction.',
+      kind: 'decision',
+      importance: 5,
+      source: 'trusted:architecture-rule',
+    });
+    getWorkspaceMemoryStore(scope).retainAgentAuthored(
+      {
+        content: 'Pegadinha: o pool do PostgreSQL esgota com 9 panes paralelos.',
+        kind: 'fact',
+        importance: 3,
+      },
+      { source: `agent-authored:pane:${'a'.repeat(64)}` },
+    );
+    getWorkspaceMemoryStore(scope).retain({
+      content: 'Operador: nunca rode VACUUM no PostgreSQL de produção.',
+      kind: 'note',
+      importance: 4,
+      source: 'operator:note',
+    });
+    // Fonte que não é de agente nem do operador continua fora das duas camadas.
+    getWorkspaceMemoryStore(scope).retain({
+      content: 'Agent guess: PostgreSQL writes should bypass transactions.',
+      kind: 'fact',
+      importance: 5,
+      source: 'mission:unverified-worker',
+    });
+
+    const block = workspaceMemoryContextBlock(
+      scope,
+      'Fix the PostgreSQL write flow and its pool.',
+    );
+
+    expect(block).toContain('PostgreSQL writes use one explicit transaction');
+    expect(block).toContain('Unverified notes from agents and the operator');
+    expect(block).toContain('pool do PostgreSQL esgota');
+    expect(block).toContain('nunca rode VACUUM');
+    expect(block).not.toContain('bypass transactions');
+    expect(Buffer.byteLength(block ?? '', 'utf8')).toBeLessThanOrEqual(
+      AUTO_RECALL_DEFAULT_MAX_BYTES,
+    );
+  });
+
+  it('bloco só de notas não verificadas também é entregue', () => {
+    getWorkspaceMemoryStore(scope).retain({
+      content: 'Operador: prefira sempre o Redis local para cache de sessão.',
+      kind: 'note',
+      importance: 3,
+      source: 'operator:note',
+    });
+
+    const block = workspaceMemoryContextBlock(scope, 'Onde guardar o cache Redis?');
+
+    expect(block).toContain('Unverified notes from agents and the operator');
+    expect(block).toContain('Redis local');
+  });
+
+  it('recall_count só conta o que foi efetivamente injetado (F-769)', () => {
+    const receipt = { missionId: 'm', taskId: 't', dispatchId: 'd', status: 'success' as const, acceptedAt: 1 };
+    retainAcceptedHandoffMemory(scope, { ...receipt, handoffId: 'receipt-only' });
+    const store = getWorkspaceMemoryStore(scope);
+    const before = store.stats().workspace.totalRecalls;
+    // O recibo sem Summary é candidato do recall mas é filtrado pelo
+    // formatador: nada é injetado, nada pode ser contado.
+    expect(workspaceMemoryContextBlock(scope, 'Nexus handoff mission')).toBeNull();
+    expect(store.stats().workspace.totalRecalls).toBe(before);
+
+    retainAcceptedHandoffMemory(scope, { ...receipt, handoffId: 'learned',
+      distilledSummary: 'Use cobrarUmaVez para cobrança idempotente.',
+    });
+    expect(workspaceMemoryContextBlock(scope, 'Nexus handoff mission')).toContain(
+      'cobrarUmaVez',
+    );
+    expect(store.stats().workspace.totalRecalls).toBe(before + 1);
+    // A consulta FTS crua também não incrementa: quem injeta marca.
+    store.recall({ query: 'cobrarUmaVez', trustedOnly: true });
+    expect(store.stats().workspace.totalRecalls).toBe(before + 1);
+  });
+
   it('caps formatted memory between the architectural 2–4 KB envelope', () => {
     const context = formatAutoRecallContext(
       Array.from({ length: 12 }, (_, index) => ({

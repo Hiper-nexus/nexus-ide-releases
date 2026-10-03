@@ -17,7 +17,7 @@ const stores: WorkspaceMemoryStore[] = [];
 
 function makeStore(
   now?: () => number,
-  options: { readonly projectionRoot?: string } = {},
+  options: { readonly projectionRoot?: string; readonly workspaceRoot?: string } = {},
 ): WorkspaceMemoryStore {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-wm-'));
   dirs.push(root);
@@ -26,6 +26,9 @@ function makeStore(
     globalDbPath: path.join(root, 'memory-global.sqlite3'),
     ...(options.projectionRoot
       ? { projectionRoot: options.projectionRoot }
+      : {}),
+    ...(options.workspaceRoot
+      ? { workspaceRoot: options.workspaceRoot }
       : {}),
     ...(now ? { now } : {}),
   });
@@ -189,7 +192,7 @@ describe('workspace memory engine (FTS5)', () => {
     ).toBe(false);
   });
 
-  it('projeta por padrão fora do checkout e só exporta para ele explicitamente', () => {
+  it('projeta em userData e exporta o vault legível fora do git (F-769)', () => {
     const baseDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'nexus-wm-runtime-base-'),
     );
@@ -215,7 +218,9 @@ describe('workspace memory engine (FTS5)', () => {
       source: 'trusted:operator-decision',
     });
 
-    expect(fs.existsSync(path.join(projectRoot, '.nexus-memory'))).toBe(false);
+    // A gravação exporta o vault legível para o checkout, fora do git.
+    const exported = path.join(fs.realpathSync(projectRoot), '.nexus-memory');
+    expect(fs.existsSync(exported)).toBe(true);
     expect(
       execFileSync('git', ['status', '--porcelain'], {
         cwd: projectRoot,
@@ -233,30 +238,19 @@ describe('workspace memory engine (FTS5)', () => {
       ),
     ).toBe(true);
 
-    const exported = store.exportProjectionsToWorkspace(projectRoot);
-    expect(exported).toBe(
-      path.join(fs.realpathSync(projectRoot), '.nexus-memory'),
-    );
+    // O vault usa nomes legíveis; a exportação explícita devolve a mesma raiz.
+    expect(store.exportProjectionsToWorkspace(projectRoot)).toBe(exported);
+    const vaultNames = fs.readdirSync(exported);
     expect(
-      fs.existsSync(path.join(exported, `${retained.id}.md`)),
+      vaultNames.some((name) => name.startsWith('decisao-') && name.endsWith('.md')),
     ).toBe(true);
-    expect(
-      execFileSync('git', ['status', '--porcelain'], {
-        cwd: projectRoot,
-        encoding: 'utf8',
-      }),
-    ).toContain('?? .nexus-memory/');
+    expect(vaultNames).toContain('.gitignore');
 
     const retainedAfterExport = store.retain({
       content: 'Novo fato automático depois do snapshot explícito.',
       kind: 'fact',
       source: 'trusted:accepted-handoff',
     });
-    expect(
-      fs.existsSync(
-        path.join(exported, `${retainedAfterExport.id}.md`),
-      ),
-    ).toBe(false);
     expect(
       fs.existsSync(
         path.join(
@@ -415,14 +409,51 @@ describe('workspace memory engine (FTS5)', () => {
     expect(hits[0].content).toContain('[REDACTED]');
   });
 
-  it('incrementa recall_count a cada recall', () => {
+  it('recall não incrementa: markRecalled conta só o que foi injetado (F-769)', () => {
     const store = makeStore();
     store.retain({ content: 'vitest workers are capped at four' });
     const first = store.recall({ query: 'vitest workers' });
-    expect(first[0].recallCount).toBe(1);
+    expect(first[0].recallCount).toBe(0);
+    expect(store.stats().workspace.totalRecalls).toBe(0);
+    store.markRecalled(first.map((hit) => hit.id));
     const second = store.recall({ query: 'vitest workers' });
-    expect(second[0].recallCount).toBe(2);
-    expect(store.stats().workspace.totalRecalls).toBe(2);
+    expect(second[0].recallCount).toBe(1);
+    expect(store.stats().workspace.totalRecalls).toBe(1);
+    store.markRecalled(['mem-id-que-nao-existe']);
+    expect(store.stats().workspace.totalRecalls).toBe(1);
+  });
+
+  it('gravação exporta o vault legível .nexus-memory/ no workspace (F-769)', () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-wm-vault-'));
+    dirs.push(workspace);
+    const store = makeStore(undefined, { workspaceRoot: workspace });
+    const retained = store.retain({
+      content: '# Regra do pool\n\nO pool vive em src/main/db/pool.ts.',
+      kind: 'decision',
+      importance: 4,
+      source: 'trusted:architecture-rule',
+    });
+
+    const vaultRoot = path.join(fs.realpathSync(workspace), '.nexus-memory');
+    expect(store.exportProjectionsToWorkspace(workspace)).toBe(vaultRoot);
+    expect(fs.readFileSync(path.join(vaultRoot, '.gitignore'), 'utf8')).toBe('*\n');
+    const names = fs.readdirSync(vaultRoot);
+    const noteName = names.find(
+      (name) => name.startsWith('regra-do-pool-') && name.endsWith('.md'),
+    );
+    expect(noteName).toBeDefined();
+    expect(fs.readFileSync(path.join(vaultRoot, noteName!), 'utf8')).toContain(
+      '[[src/main/db/pool.ts]]',
+    );
+    expect(names).toContain('INDEX-decision.md');
+
+    // Esquecer remove a nota do vault; o índice vazio é colhido junto.
+    expect(store.forget(retained.id)).toBe(true);
+    expect(fs.existsSync(path.join(vaultRoot, noteName!))).toBe(false);
+    const indexPath = path.join(vaultRoot, 'INDEX-decision.md');
+    if (fs.existsSync(indexPath)) {
+      expect(fs.readFileSync(indexPath, 'utf8')).not.toContain('regra-do-pool');
+    }
   });
 
   it('valida entradas: importance fora de 1..5 e query vazia', () => {

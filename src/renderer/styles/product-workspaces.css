@@ -984,6 +984,15 @@
   margin: 0;
 }
 
+.memory-workspace .memory-workspace__staleness {
+  margin: 0;
+}
+
+.memory-workspace .memory-workspace__staleness[data-stale='true'] {
+  color: var(--status-warning);
+  font-weight: 600;
+}
+
 .memory-workspace .product-pane__field {
   display: flex;
   flex-direction: column;

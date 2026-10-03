@@ -143,6 +143,15 @@ export function withHandoffContract(
     'nexus_pane_read com o número falado ("7" ou "pane 7"). Na mesma missão ' +
     'qualquer pane lê o outro, inclusive o orquestrador; panes de outra missão ' +
     'e o terminal do usuário ficam fora. Uma leitura basta — não entre em loop.';
+  // F-769: a memória compartilhada só volta a andar se todo worker a usar.
+  // Só faz sentido onde as tools MCP existem (viaMcp) — para o shim de disco
+  // a menção seria ruído.
+  const memoryDoctrine = viaMcp
+    ? 'Memória do projeto: antes de mexer numa área desconhecida, consulte ' +
+      'nexus_memory_recall com os termos da área.\n' +
+      'Antes do handoff, grave as pegadinhas que descobriu com ' +
+      'nexus_memory_retain (uma linha, sem segredos).'
+    : '';
   // C-194.1: com fechamento mecânico no Main, a regra muda de "sempre chame a
   // tool" para CONDICIONAL por tamanho — curta viaja verbatim por cópia de
   // código; longa ou blocked/failed é onde o resumo do modelo tem valor.
@@ -191,6 +200,6 @@ export function withHandoffContract(
   const design =
     orch.designPro && tier.design ? `\n\n${composeDesignCharter(orch)}` : '';
   const lean = orch.leanCode && tier.lean ? `\n\n${PONYTAIL_RULES}` : '';
-  return `${prompt}${charter}${design}${lean}\n\n${autonomy}${visualVerification ? `\n\n${visualVerification}` : ''}\n\n${peerRead}\n\n${contract}`;
+  return `${prompt}${charter}${design}${lean}\n\n${autonomy}${visualVerification ? `\n\n${visualVerification}` : ''}\n\n${peerRead}${memoryDoctrine ? `\n\n${memoryDoctrine}` : ''}\n\n${contract}`;
 }
 

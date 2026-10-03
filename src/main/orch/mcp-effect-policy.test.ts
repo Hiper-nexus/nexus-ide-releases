@@ -161,6 +161,8 @@ describe('MCP effect policy', () => {
       // Merge/plan council submit: read-only reviewers must list and call these.
       'nexus_merge_review_submit',
       'nexus_review_submit',
+      // F-769: shared long-term memory is retainable from a read-only pane.
+      'nexus_memory_retain',
     ]) {
       expect(isToolAllowedForReadOnlyContext(tool), tool).toBe(true);
     }

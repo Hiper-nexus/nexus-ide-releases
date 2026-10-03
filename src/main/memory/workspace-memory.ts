@@ -23,11 +23,11 @@ import type Database from 'better-sqlite3';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { redactSecretText } from '../terminal/command-redaction';
 import {
+  exportMemoryVault,
   projectionCounts,
   projectionSignature,
   projectionTitle,
   removeCanonicalMemoryProjection,
-  resolveMemoryRoot,
   syncCanonicalMemoryProjections,
   writeCanonicalMemoryProjection,
   type CanonicalMemoryProjectionInput,
@@ -127,7 +127,12 @@ export interface MemoryRecallHit {
   readonly source: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
-  /** Já reflete o incremento causado por este recall. */
+  /**
+   * Contagem persistida. O incremento NÃO acontece no recall: só
+   * `markRecalled()` conta, chamado com os ids efetivamente injetados no
+   * contexto de um agente (F-769 — contar candidato filtrado depois inflava
+   * o número de linhas que nenhum agente viu).
+   */
   readonly recallCount: number;
   readonly score: number;
 }
@@ -151,6 +156,11 @@ export interface WorkspaceMemoryStoreOptions {
   readonly globalDbPath: string;
   /** Nexus-owned root receiving the generated `.nexus-memory/*.md` view. */
   readonly projectionRoot?: string;
+  /**
+   * Raiz do checkout do workspace: quando presente, toda gravação também
+   * exporta o vault legível `<root>/.nexus-memory/` (F-769), best-effort.
+   */
+  readonly workspaceRoot?: string;
   readonly now?: () => number;
 }
 
@@ -366,6 +376,7 @@ export class WorkspaceMemoryStore {
   readonly #projectionRoots = new Set<string>();
   readonly #unsyncedProjectionRoots = new Set<string>();
   readonly #projectionSignatures = new Map<string, string>();
+  #workspaceRoot: string | undefined;
   #closed = false;
 
   constructor(options: WorkspaceMemoryStoreOptions) {
@@ -373,6 +384,7 @@ export class WorkspaceMemoryStore {
       throw new Error('workspace and global memory databases must be distinct files');
     }
     this.#now = options.now ?? Date.now;
+    this.#workspaceRoot = options.workspaceRoot;
     const Constructor = loadDatabaseConstructor();
     this.#workspaceDb = this.#openDatabase(Constructor, options.workspaceDbPath);
     try {
@@ -487,21 +499,38 @@ export class WorkspaceMemoryStore {
   }
 
   /**
-   * Explicit export only. The workspace is not registered as a live target,
-   * so later retention continues writing exclusively to Nexus userData.
-   *
-   * This is also why markdown-as-input does not turn `.nexus-memory/` inside a
-   * checkout into a write port for every agent holding a shell: ingestion runs
-   * only over *registered* roots, and a checkout is never registered. The copy
-   * exported here stays a one-shot dead view.
+   * Exporta a memória ativa do workspace como vault markdown legível em
+   * `<projectRoot>/.nexus-memory/` (F-769): nomes por slug do título, um
+   * INDEX por tipo, wikilinks para arquivos citados e `.gitignore` próprio.
+   * Visão morta e one-shot: o workspace nunca é registrado como raiz viva,
+   * então a ingestão de edições segue restrita às projeções em userData.
    */
   exportProjectionsToWorkspace(projectRoot: string): string {
     this.#assertOpen();
-    syncCanonicalMemoryProjections(
-      projectRoot,
-      this.#activeProjectionRecords(),
-    );
-    return resolveMemoryRoot(projectRoot);
+    return exportMemoryVault(projectRoot, this.#activeProjectionRecords());
+  }
+
+  /**
+   * Atualiza a raiz do checkout que recebe o vault legível (F-769). O store
+   * é compartilhado por todos os checkouts do projeto; a raiz mais recente
+   * vence, mantendo o vault perto de quem gravou por último.
+   */
+  noteWorkspaceRoot(root: string | undefined): void {
+    if (root) this.#workspaceRoot = root;
+  }
+
+  /** Exportação best-effort do vault: nunca derruba uma gravação de memória. */
+  #exportVaultBestEffort(): void {
+    const root = this.#workspaceRoot;
+    if (!root) return;
+    try {
+      exportMemoryVault(root, this.#activeProjectionRecords());
+    } catch (error) {
+      console.warn(
+        `[memory] could not export readable vault for ${path.basename(root)}:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
   }
 
   #activeProjectionRecords(): CanonicalMemoryProjectionInput[] {
@@ -773,6 +802,7 @@ export class WorkspaceMemoryStore {
     const result = transactionResult.result;
     if (result.scope === 'workspace') {
       this.#writeProjectionBestEffort(result.id);
+      this.#exportVaultBestEffort();
     }
     if (
       transactionResult.superseded &&
@@ -846,8 +876,8 @@ export class WorkspaceMemoryStore {
   /**
    * Busca FTS5 (MATCH + bm25) com re-ranking por importância e recência.
    * Consulta o banco do workspace primeiro; com includeGlobal (default),
-   * completa as vagas restantes com o banco global. Incrementa recall_count
-   * e last_recalled_at das memórias retornadas.
+   * completa as vagas restantes com o banco global. NÃO incrementa contadores:
+   * quem injeta o resultado num contexto marca os ids com `markRecalled()`.
    */
   recall(rawInput: RecallInput): MemoryRecallHit[] {
     this.#assertOpen();
@@ -873,6 +903,30 @@ export class WorkspaceMemoryStore {
       );
     }
     return hits;
+  }
+
+  /**
+   * Marca como injetadas as memórias que de fato chegaram ao contexto de um
+   * agente: incrementa recall_count e last_recalled_at só desses ids, em
+   * qualquer um dos dois bancos. Ids desconhecidos são ignorados.
+   */
+  markRecalled(ids: readonly string[]): void {
+    this.#assertOpen();
+    if (ids.length === 0) return;
+    const now = this.#now();
+    const bumpWorkspace = this.#workspaceDb.prepare(
+      'UPDATE memories SET recall_count = recall_count + 1, last_recalled_at = ? WHERE id = ?',
+    );
+    const bumpGlobal = this.#globalDb.prepare(
+      'UPDATE memories SET recall_count = recall_count + 1, last_recalled_at = ? WHERE id = ?',
+    );
+    this.#workspaceDb.transaction(() => {
+      for (const id of ids) {
+        if (bumpWorkspace.run(now, id).changes === 0) {
+          bumpGlobal.run(now, id);
+        }
+      }
+    })();
   }
 
   #recallFrom(
@@ -918,27 +972,20 @@ export class WorkspaceMemoryStore {
           a.row.id.localeCompare(b.row.id),
       )
       .slice(0, limit);
-    const bump = db.prepare(
-      'UPDATE memories SET recall_count = recall_count + 1, last_recalled_at = ? WHERE id = ?',
-    );
-    const hits = db.transaction((): MemoryRecallHit[] =>
-      scored.map(({ row, score }) => {
-        bump.run(now, row.id);
-        return Object.freeze({
-          id: row.id,
-          content: row.content,
-          kind: row.kind,
-          scope: row.scope,
-          importance: row.importance,
-          source: row.source,
-          createdAt: row.created_at,
-          updatedAt: row.updated_at,
-          recallCount: row.recall_count + 1,
-          score,
-        });
+    return scored.map(({ row, score }) =>
+      Object.freeze({
+        id: row.id,
+        content: row.content,
+        kind: row.kind,
+        scope: row.scope,
+        importance: row.importance,
+        source: row.source,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        recallCount: row.recall_count,
+        score,
       }),
-    )();
-    return hits;
+    );
   }
 
   /**
@@ -953,7 +1000,10 @@ export class WorkspaceMemoryStore {
       FORGOTTEN_SENTINEL,
       this.#now(),
     );
-    if (forgotten) this.#removeProjectionBestEffort(id);
+    if (forgotten) {
+      this.#removeProjectionBestEffort(id);
+      this.#exportVaultBestEffort();
+    }
     return forgotten;
   }
 
@@ -985,6 +1035,7 @@ export class WorkspaceMemoryStore {
     const forgotten = result.changes > 0;
     if (forgotten && input.scope === 'workspace') {
       this.#removeProjectionBestEffort(input.id);
+      this.#exportVaultBestEffort();
     }
     return forgotten;
   }
@@ -1338,7 +1389,10 @@ export function getWorkspaceMemoryStore(
     Partial<Omit<ProjectExecutionScope, 'projectId'>>,
 ): WorkspaceMemoryStore {
   const cached = storesByProject.get(scope.projectId);
-  if (cached) return cached;
+  if (cached) {
+    cached.noteWorkspaceRoot(scope.rootRealPath);
+    return cached;
+  }
   runtimeOptions ??= defaultRuntimeOptions();
   const paths = resolveWorkspaceMemoryPaths(runtimeOptions.baseDir, scope);
   fs.mkdirSync(paths.projectionRoot, {
@@ -1347,6 +1401,7 @@ export function getWorkspaceMemoryStore(
   });
   const store = new WorkspaceMemoryStore({
     ...paths,
+    ...(scope.rootRealPath ? { workspaceRoot: scope.rootRealPath } : {}),
     ...(runtimeOptions.now ? { now: runtimeOptions.now } : {}),
   });
   storesByProject.set(scope.projectId, store);

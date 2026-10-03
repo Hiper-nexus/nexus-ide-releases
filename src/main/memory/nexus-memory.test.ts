@@ -4,7 +4,9 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   backlinks,
+  exportMemoryVault,
   extractWikilinks,
+  linkifyFilePaths,
   listMemoryNotes,
   removeCanonicalMemoryProjection,
   resolveMemoryRoot,
@@ -172,5 +174,110 @@ describe('nexus memory', () => {
     ]);
     expect(removeCanonicalMemoryProjection(root, 'mem-current')).toBe(true);
     expect(removeCanonicalMemoryProjection(root, 'mem-current')).toBe(false);
+  });
+});
+
+describe('exportMemoryVault — vault markdown legível (F-769)', () => {
+  const input = (
+    id: string,
+    content: string,
+    kind: 'fact' | 'decision' | 'preference' | 'note',
+    source: string | null,
+  ) => ({
+    id,
+    content,
+    kind,
+    scope: 'workspace' as const,
+    importance: 3,
+    source,
+    createdAt: 1,
+    updatedAt: 1,
+  });
+
+  it('gera nomes legíveis, INDEX por tipo, .gitignore e wikilinks de arquivo', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-vault-'));
+    dirs.push(root);
+
+    const vaultRoot = exportMemoryVault(root, [
+      input(
+        'mem-aaaa1111-1111-4111-8111-111111111111',
+        '# Regra do pool do PostgreSQL\n\nO pool vive em src/main/db/pool.ts e esgota com 9 panes.',
+        'decision',
+        'trusted:architecture-rule',
+      ),
+      input(
+        'mem-bbbb2222-2222-4222-8222-222222222222',
+        '# Preferência do operador\n\nSempre Redis local, ver docs/cache.md.',
+        'preference',
+        'operator:note',
+      ),
+    ]);
+
+    expect(vaultRoot).toBe(path.join(fs.realpathSync(root), '.nexus-memory'));
+    expect(fs.readFileSync(path.join(vaultRoot, '.gitignore'), 'utf8')).toBe(
+      '*\n',
+    );
+    const files = fs.readdirSync(vaultRoot).filter((n) => n.endsWith('.md')).sort();
+    expect(files).toEqual([
+      'INDEX-decision.md',
+      'INDEX-note.md',
+      'preferencia-do-operador-bbbb22.md',
+      'regra-do-pool-do-postgresql-aaaa11.md',
+    ]);
+    const note = fs.readFileSync(
+      path.join(vaultRoot, 'regra-do-pool-do-postgresql-aaaa11.md'),
+      'utf8',
+    );
+    expect(note).toContain('[[src/main/db/pool.ts]]');
+    const index = fs.readFileSync(path.join(vaultRoot, 'INDEX-decision.md'), 'utf8');
+    expect(index).toContain('# Índice — Decisões');
+    expect(index).toContain(
+      '[[regra-do-pool-do-postgresql-aaaa11|Regra do pool do PostgreSQL]]',
+    );
+    // A projeção da preferência também recebe wikilink no caminho citado.
+    const pref = fs.readFileSync(
+      path.join(vaultRoot, 'preferencia-do-operador-bbbb22.md'),
+      'utf8',
+    );
+    expect(pref).toContain('[[docs/cache.md]]');
+  });
+
+  it('colhe arquivos gerados que saíram do conjunto e preserva markdown humano', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-vault-reap-'));
+    dirs.push(root);
+    const first = input(
+      'mem-aaaa1111-1111-4111-8111-111111111111',
+      '# Nota viva\n\ncorpo',
+      'note',
+      'operator:note',
+    );
+    const second = input(
+      'mem-bbbb2222-2222-4222-8222-222222222222',
+      '# Nota efêmera\n\ncorpo',
+      'note',
+      'operator:note',
+    );
+    const vaultRoot = exportMemoryVault(root, [first, second]);
+    fs.writeFileSync(path.join(vaultRoot, 'minha-nota.md'), '# Minha\n\nmanual');
+
+    exportMemoryVault(root, [first]);
+
+    const names = fs.readdirSync(vaultRoot).sort();
+    expect(names).toContain('minha-nota.md');
+    expect(names).not.toContain('nota-efemera-bbbb22.md');
+    expect(names).toContain('nota-viva-aaaa11.md');
+    expect(names).toContain('INDEX-note.md');
+  });
+
+  it('linkifyFilePaths não toca wikilinks nem URLs', () => {
+    expect(linkifyFilePaths('ver src/a.ts e [[src/b.ts]]')).toBe(
+      'ver [[src/a.ts]] e [[src/b.ts]]',
+    );
+    expect(linkifyFilePaths('em https://exemplo.com/x/y.ts nada')).toBe(
+      'em https://exemplo.com/x/y.ts nada',
+    );
+    expect(linkifyFilePaths('src/main/foo.ts:42 quebrou')).toBe(
+      '[[src/main/foo.ts]]:42 quebrou',
+    );
   });
 });

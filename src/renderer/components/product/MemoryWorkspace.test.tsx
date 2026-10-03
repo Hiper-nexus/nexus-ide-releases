@@ -121,6 +121,48 @@ describe('MemoryWorkspace contracts', () => {
     expect(collection?.querySelector('.memory-workspace__empty')).not.toBeNull();
   });
 
+  it('mostra há quantos dias veio a última memória e alerta acima de 3 dias (F-769)', async () => {
+    const dayMs = 86_400_000;
+    memoryBoundary.memoryList.mockResolvedValue([
+      {
+        id: 'memory-stale',
+        title: 'Decisão antiga',
+        body: 'corpo',
+        kind: 'note',
+        updatedAt: Date.now() - 10 * dayMs,
+      },
+    ]);
+    const host = mount(<MemoryWorkspace />);
+    await settleMemoryEffects();
+
+    const line = host.querySelector<HTMLElement>(
+      '.memory-workspace__staleness',
+    );
+    expect(line?.textContent).toContain('Última memória há 10 dias');
+    expect(line?.getAttribute('data-stale')).toBe('true');
+    expect(line?.textContent).toMatch(/pode estar esquecendo/);
+  });
+
+  it('memória recente mostra a linha sem o alerta', async () => {
+    memoryBoundary.memoryList.mockResolvedValue([
+      {
+        id: 'memory-fresh',
+        title: 'Decisão de hoje',
+        body: 'corpo',
+        kind: 'note',
+        updatedAt: Date.now(),
+      },
+    ]);
+    const host = mount(<MemoryWorkspace />);
+    await settleMemoryEffects();
+
+    const line = host.querySelector<HTMLElement>(
+      '.memory-workspace__staleness',
+    );
+    expect(line?.textContent).toContain('Última memória hoje');
+    expect(line?.hasAttribute('data-stale')).toBe(false);
+  });
+
   it('teaches the empty state and focuses the first-note form from its primary CTA', async () => {
     memoryBoundary.memoryList.mockResolvedValue([]);
     const host = mount(<MemoryWorkspace />);
