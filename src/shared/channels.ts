@@ -153,6 +153,11 @@ export const MEMORY_CHANNELS = {
   recall: 'memory:recall',
   /** invoke: esquece uma memória por id (tombstone auditável). */
   forget: 'memory:forget',
+  /**
+   * invoke: promove uma nota em quarentena (sessão read-only/exposta à web)
+   * para poder entrar no brief dos panes deste projeto (F-808).
+   */
+  promote: 'memory:promote',
 } as const;
 
 /**

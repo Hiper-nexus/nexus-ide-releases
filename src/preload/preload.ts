@@ -1313,6 +1313,7 @@ const api: NexusApi = {
     stats: () => ipcRenderer.invoke(MEMORY_CHANNELS.stats),
     recall: (input) => ipcRenderer.invoke(MEMORY_CHANNELS.recall, input),
     forget: (id) => ipcRenderer.invoke(MEMORY_CHANNELS.forget, { id }),
+    promote: (id) => ipcRenderer.invoke(MEMORY_CHANNELS.promote, { id }),
   },
   model: {
     richMetadata: (adapterId, modelId) =>

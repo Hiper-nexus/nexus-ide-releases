@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   backlinks,
   exportMemoryVault,
+  exportMemoryVaultIncremental,
   extractWikilinks,
   linkifyFilePaths,
   listMemoryNotes,
@@ -279,5 +280,101 @@ describe('exportMemoryVault — vault markdown legível (F-769)', () => {
     expect(linkifyFilePaths('src/main/foo.ts:42 quebrou')).toBe(
       '[[src/main/foo.ts]]:42 quebrou',
     );
+  });
+});
+
+describe('vault: hub de missão e exportação incremental (F-801/F-807)', () => {
+  const input = (
+    id: string,
+    content: string,
+    kind: 'fact' | 'decision' | 'preference' | 'note',
+    source: string | null,
+    extra: Partial<{ reverify: string }> = {},
+  ) => ({
+    id,
+    content,
+    kind,
+    scope: 'workspace' as const,
+    importance: 3,
+    source,
+    createdAt: 1,
+    updatedAt: 1,
+    ...extra,
+  });
+
+  it('a linha Mission: vira wikilink para o hub da missão, que lista as notas dela', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-vault-hub-'));
+    dirs.push(root);
+    const vaultRoot = await exportMemoryVault(root, [
+      input(
+        'mem-aaaa1111-1111-4111-8111-111111111111',
+        '# Delivered handoff\n\nSummary: parser aceita fuso.\nMission: m-42\nHandoff: h-1',
+        'fact',
+        'trusted:accepted-handoff',
+      ),
+      input(
+        'mem-bbbb2222-2222-4222-8222-222222222222',
+        '# Nota da missão\n\ncorpo',
+        'note',
+        'operator:mission:m-42',
+      ),
+      input('mem-cccc3333-3333-4333-8333-333333333333', '# Solta\n\ncorpo', 'note', 'operator:note'),
+    ]);
+    const names = fs.readdirSync(vaultRoot).sort();
+    expect(names).toContain('missao-m-42.md');
+    const hub = fs.readFileSync(path.join(vaultRoot, 'missao-m-42.md'), 'utf8');
+    expect(hub).toContain('# Missão m-42');
+    expect(hub).toContain('[[delivered-handoff-aaaa11|Delivered handoff]]');
+    expect(hub).toContain('[[nota-da-missao-bbbb22|Nota da missão]]');
+    expect(hub).not.toContain('solta');
+    const handoff = fs.readFileSync(path.join(vaultRoot, 'delivered-handoff-aaaa11.md'), 'utf8');
+    expect(handoff).toContain('Mission: [[missao-m-42|m-42]]');
+    const operatorNote = fs.readFileSync(path.join(vaultRoot, 'nota-da-missao-bbbb22.md'), 'utf8');
+    expect(operatorNote).toContain('Missão: [[missao-m-42|m-42]]');
+
+    // Sem notas da missão, o hub é colhido como qualquer arquivo gerado.
+    await exportMemoryVault(root, [
+      input('mem-cccc3333-3333-4333-8333-333333333333', '# Solta\n\ncorpo', 'note', 'operator:note'),
+    ]);
+    expect(fs.readdirSync(vaultRoot)).not.toContain('missao-m-42.md');
+  });
+
+  it('exportação incremental escreve/remove só o lote e reescreve índice e hub afetados', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-vault-incremental-'));
+    dirs.push(root);
+    const kept = input('mem-aaaa1111-1111-4111-8111-111111111111', '# Fica\n\ncorpo', 'note', 'operator:note');
+    const gone = input('mem-bbbb2222-2222-4222-8222-222222222222', '# Sai\n\ncorpo', 'note', 'operator:note');
+    const vaultRoot = await exportMemoryVault(root, [kept, gone]);
+    fs.writeFileSync(path.join(vaultRoot, 'minha-nota.md'), '# Minha\n\nmanual');
+
+    const added = input(
+      'mem-dddd4444-4444-4444-8444-444444444444',
+      '# Entrega\n\nSummary: ok.\nMission: m-9',
+      'fact',
+      'trusted:accepted-handoff',
+      { reverify: 'src/x.ts não existe mais' },
+    );
+    await exportMemoryVaultIncremental(root, {
+      changed: [added],
+      removed: [gone],
+      indexes: new Map([
+        ['note', [{ record: kept }]],
+        ['mission', []],
+        ['decision', []],
+      ]),
+      hubs: new Map([['m-9', [{ record: added }]]]),
+    });
+
+    const names = fs.readdirSync(vaultRoot).sort();
+    expect(names).toContain('fica-aaaa11.md');
+    expect(names).not.toContain('sai-bbbb22.md');
+    expect(names).toContain('entrega-dddd44.md');
+    expect(names).toContain('missao-m-9.md');
+    expect(names).toContain('minha-nota.md');
+    expect(names).not.toContain('INDEX-mission.md');
+    expect(fs.readFileSync(path.join(vaultRoot, 'INDEX-note.md'), 'utf8')).not.toContain('Sai');
+    const entrega = fs.readFileSync(path.join(vaultRoot, 'entrega-dddd44.md'), 'utf8');
+    expect(entrega).toContain('reverify: "src/x.ts não existe mais"');
+    expect(entrega).toContain('Mission: [[missao-m-9|m-9]]');
   });
 });

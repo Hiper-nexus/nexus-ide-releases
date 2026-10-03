@@ -446,6 +446,7 @@ export function SquadsSection() {
   });
   const [designPro, setDesignPro] = useState(true);
   const [memoryInjection, setMemoryInjection] = useState(true);
+  const [memoryVaultExport, setMemoryVaultExport] = useState(false);
   const [designDirection, setDesignDirection] = useState<DesignDirection>('auto');
   const [designVariance, setDesignVariance] = useState(5);
   const [designMotion, setDesignMotion] = useState(5);
@@ -476,6 +477,7 @@ export function SquadsSection() {
       });
       setDesignPro(o.designPro);
       setMemoryInjection(o.workspaceMemoryInjection !== false);
+      setMemoryVaultExport(o.workspaceMemoryVaultExport === true);
       setDesignDirection(o.designDirection ?? 'auto');
       setDesignVariance(o.designVariance ?? 5);
       setDesignMotion(o.designMotion ?? 5);
@@ -924,6 +926,15 @@ export function SquadsSection() {
           onChange={(checked) => {
             setMemoryInjection(checked);
             void window.nexus.settings.orchSet({ workspaceMemoryInjection: checked });
+          }}
+        />
+        <OrchestrationToggle
+          checked={memoryVaultExport}
+          title="Memória visível no projeto (abre no Obsidian)"
+          detail="Grava uma cópia legível da memória em .nexus-memory/ na pasta do projeto, fora do git. Desligado, a memória continua em userData; panes somente-leitura nunca escrevem na pasta."
+          onChange={(checked) => {
+            setMemoryVaultExport(checked);
+            void window.nexus.settings.orchSet({ workspaceMemoryVaultExport: checked });
           }}
         />
         <OrchestrationToggle

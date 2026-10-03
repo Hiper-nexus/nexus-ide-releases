@@ -65,6 +65,10 @@ export type MemoryForgetResult =
   | { readonly enabled: false }
   | { readonly enabled: true; readonly forgotten: boolean };
 
+export type MemoryPromoteResult =
+  | { readonly enabled: false }
+  | { readonly enabled: true; readonly promoted: boolean };
+
 /**
  * Shape of `window.nexus.memory` exposed by the preload bridge. Declared here
  * (not only inside NexusApi) so the renderer store can type the bridge without
@@ -74,6 +78,8 @@ export interface MemoryBridge {
   stats(): Promise<MemoryStatsResult>;
   recall(input: MemoryRecallRequest): Promise<MemoryRecallResult>;
   forget(id: string): Promise<MemoryForgetResult>;
+  /** F-808: libera uma nota em quarentena para o brief dos panes do projeto. */
+  promote(id: string): Promise<MemoryPromoteResult>;
 }
 
 /** Human labels (pt-BR) for kinds — shared so panel and future surfaces agree. */

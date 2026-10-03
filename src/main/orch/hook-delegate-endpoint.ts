@@ -694,7 +694,8 @@ export async function handleHookDelegateRequest(
     // Preferência do operador: pré-filtro regex no próprio módulo; o Jev só é
     // chamado quando há marcador. Fire-and-forget — não segura o prompt.
     const distillPreference = deps.distillPreference ?? distillOperatorPreferenceMemory;
-    const preferenceScope = ctx.executionScope ?? ctx.scope;
+    // Memória é por projeto; o escopo primário evita abrir o store pela worktree da aba (F-806).
+    const preferenceScope = ctx.scope;
     if (preferenceScope && typedByOperator(ctx, prompt)) {
       void distillPreference(preferenceScope, prompt).catch(() => {});
     }

@@ -531,4 +531,17 @@ describe('Settings → Squads retained management capability', () => {
     act(() => input!.click());
     expect(window.nexus.settings.orchSet).toHaveBeenCalledWith({ workspaceMemoryInjection: false });
   });
+
+  it('F-806: a cópia da memória na pasta do projeto é opt-in, desligada por padrão', async () => {
+    const host = renderSquads();
+    await settle();
+
+    const row = [...host.querySelectorAll('label.settings-toggle-row')].find((label) =>
+      label.textContent?.includes('Memória visível no projeto'),
+    );
+    const input = row?.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+    expect(input?.checked).toBe(false);
+    act(() => input!.click());
+    expect(window.nexus.settings.orchSet).toHaveBeenCalledWith({ workspaceMemoryVaultExport: true });
+  });
 });

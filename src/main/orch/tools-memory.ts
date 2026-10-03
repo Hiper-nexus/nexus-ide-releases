@@ -13,8 +13,11 @@ import {
   listOrphans,
   suggestConnections,
 } from '../memory/nexus-memory';
+import { missionLinkTarget } from '../memory/memory-links';
 import type { AgentGateContext } from './gate';
 import type { McpToolDef } from './mcp-protocol';
+import { getProjectDomainStores } from './project-domain-store-registry';
+import { isSessionWebExposed } from './session-web-exposure';
 
 /**
  * F-764: a projeção é gravada fora do caminho da gravação; quem lê o grafo
@@ -68,6 +71,38 @@ function defaultSource(ctx: AgentGateContext): string {
   return `agent-authored:${ctx.missionId ? 'mission' : 'pane'}:${authority}`;
 }
 
+/** Missão de consulta ("sem alterar nada"): o pane é tratado como read-only. */
+function isConsultMission(ctx: AgentGateContext): boolean {
+  if (!ctx.missionId) return false;
+  try {
+    return (
+      getProjectDomainStores(ctx.scope).missions.get(ctx.missionId)?.intentContract?.lane ===
+      'consult'
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Contexto Main-derived da gravação (F-806/F-808). Nada aqui vem de argumento
+ * do agente: a quarentena e o veto ao vault seguem a sessão física.
+ */
+export function agentRetainContext(ctx: AgentGateContext): {
+  readonly readOnlyContext: boolean;
+  readonly quarantine: string | null;
+  readonly links: string[];
+} {
+  const readOnlyContext = ctx.readOnly === true || isConsultMission(ctx);
+  const quarantine = isSessionWebExposed(ctx.sessionId)
+    ? 'web-exposed session'
+    : readOnlyContext
+      ? 'read-only session'
+      : null;
+  const mission = ctx.missionId ? missionLinkTarget(ctx.missionId) : null;
+  return { readOnlyContext, quarantine, links: mission ? [mission] : [] };
+}
+
 const retainArgsSchema = z
   .object({
     content: z.string().min(1).max(MAX_MEMORY_CONTENT_BYTES),
@@ -100,13 +135,19 @@ const retainTool: McpToolDef = {
     'progress narration ("finished step 2"); anything true only inside this ' +
     'task. Retaining noise costs every future agent context.\n' +
     'Behaviour to count on: identical content is deduplicated (the same id comes ' +
-    'back, only its timestamp is renewed), secret-like tokens are masked before ' +
-    'anything touches disk, and provenance is fixed by Nexus — you cannot choose ' +
-    'it. What you retain is a *candidate*: explicit recall returns it, automatic ' +
-    'prompt context does not (that is reserved for Nexus-verified events).\n' +
+    'back, only its timestamp is renewed), a new "# Title" that repeats the title ' +
+    'of an earlier note of yours replaces it instead of piling up, secret-like ' +
+    'tokens are masked before anything touches disk, and provenance is fixed by ' +
+    'Nexus — you cannot choose it. What you retain is a *candidate*: explicit ' +
+    'recall returns it; the automatic prompt context of other panes only shows it ' +
+    'to workers of the SAME mission, in a section marked unverified, and never ' +
+    'when it was retained from a read-only or web-exposed session (the operator ' +
+    'can promote it later). Everything writes the memory bank in userData, never ' +
+    'the project tree.\n' +
     'Use supersedes=<id> only to correct a memory this same agent authority ' +
     'retained in the same scope; a denial names up to three ids you may replace. ' +
-    'Correcting is better than piling a second memory on top of a stale one.',
+    'Correcting is better than piling a second memory on top of a stale one. ' +
+    'Rate limit: 20 retains per 10 minutes per agent — consolidate.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -151,7 +192,18 @@ const retainTool: McpToolDef = {
     requireMemoryEnabled();
     const input = retainArgsSchema.parse(args);
     const store = getWorkspaceMemoryStore(ctx.scope);
-    return store.retainAgentAuthored(input, { source: defaultSource(ctx) });
+    const context = agentRetainContext(ctx);
+    return store.retainAgentAuthored(
+      input,
+      { source: defaultSource(ctx) },
+      {
+        links: context.links,
+        quarantine: context.quarantine,
+        // F-806: contexto read-only/consulta nunca dispara escrita na pasta do
+        // projeto (o vault opt-in); a projeção em userData segue normal.
+        vault: !context.readOnlyContext,
+      },
+    );
   },
 };
 
@@ -219,7 +271,8 @@ const statsTool: McpToolDef = {
   description:
     'Cheap shape-of-the-bank check: totals, active counts, counts per kind and ' +
     'recall totals for this workspace and the user-global bank, plus counts of ' +
-    'the readable `.nexus-memory/` projection.\n' +
+    'the readable markdown projection kept in Nexus userData (a copy inside the ' +
+    'project folder exists only when the operator enabled it in Settings).\n' +
     'Counts only — it never reads memory contents, never returns filesystem ' +
     'paths, and never walks the projection directory when nothing has changed ' +
     'since the last read. Use it to decide whether recall is even worth a call ' +

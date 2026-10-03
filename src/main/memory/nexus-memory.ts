@@ -8,6 +8,7 @@ import {
 } from '../../shared/mission-id';
 import { resolveSubdirUnderRoot } from '../security/scoped-workspace-fs';
 import { writeFileAtomicAsync } from '../util/atomic-write';
+import { FILE_PATH_TOKEN_RE } from './memory-links';
 
 /**
  * Human-readable projection of the canonical SQLite/FTS5 memory — and, since
@@ -43,6 +44,11 @@ const canonicalProjectionInputSchema = z
     source: z.string().max(256).nullable(),
     createdAt: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative(),
+    /**
+     * F-800: marca "a reverificar" (arquivo citado sumiu do checkout). Só
+     * frontmatter: a linha segue ativa e o corpo não muda.
+     */
+    reverify: z.string().max(512).optional(),
   })
   .strict();
 
@@ -135,6 +141,13 @@ function projectionKind(
   return 'note';
 }
 
+/** Tipo de projeção de uma linha (o que decide o `INDEX-<kind>.md` do vault). */
+export function projectionKindOf(
+  input: Pick<CanonicalMemoryProjectionInput, 'kind' | 'source'>,
+): MemoryNote['kind'] {
+  return projectionKind(input as CanonicalMemoryProjectionInput);
+}
+
 /**
  * O antigo `/(?:^|:)mission:(.+)$/` devolvia o resto da string inteiro — `../x`
  * incluído — para um campo que a projeção de missão usa como identidade (e como
@@ -216,6 +229,7 @@ function projectionMarkdown(
     `missionId: ${yamlString(missionId ?? null)}`,
     `createdAt: ${input.createdAt}`,
     `updatedAt: ${input.updatedAt}`,
+    ...(input.reverify ? [`reverify: ${yamlString(input.reverify)}`] : []),
     '---',
     '',
     PROJECTION_BANNER,
@@ -474,12 +488,11 @@ export function memoryVaultFileName(
   return `${vaultSlug(projectionTitle(input.content, parsedId))}-${parsedId.slice(4, 10)}.md`;
 }
 
-const FILE_PATH_TOKEN_RE =
-  /(?<![\w@+.~:/[\]-])((?:[\w@+.~-]+\/)+[\w+.~-]+\.[A-Za-z0-9]{1,8})(?![\w\]|])/g;
-
 /**
  * Envolve caminhos de arquivo citados no texto em wikilinks Obsidian
  * (`[[src/caminho.ts]]`). Wikilinks já existentes e URLs são preservados.
+ * O padrão de caminho é o mesmo das arestas do SQLite (memory-links): o que
+ * vira link aqui é o que vira `file:` lá.
  */
 export function linkifyFilePaths(content: string): string {
   return content
@@ -490,12 +503,43 @@ export function linkifyFilePaths(content: string): string {
     .join('');
 }
 
+/** Nome do hub de missão no vault (`missao-<id>.md`); o id já passou pelo charset. */
+export function missionHubFileName(missionId: string): string {
+  return `missao-${missionId}.md`;
+}
+
+const MISSION_LINE_RE = /^(Mission:[ \t]+)([a-z0-9][a-z0-9-]{0,63})[ \t]*$/gm;
+
+/**
+ * Wikilink automático de `[[missão]]` (F-801): a linha `Mission: <id>` dos
+ * eventos trusted aponta para o hub da missão, e a nota atribuída pelo
+ * operador (`operator:mission:<id>`) ganha a mesma ligação no fim do corpo.
+ * Devolve também os ids de missão ligados, para o export montar os hubs.
+ */
+export function linkifyMissions(
+  body: string,
+  missionIdFromSource: string | undefined,
+): { readonly body: string; readonly missionIds: readonly string[] } {
+  const ids = new Set<string>();
+  let out = body.replace(MISSION_LINE_RE, (_match, label: string, id: string) => {
+    if (!isProjectableMissionId(id)) return `${label}${id}`;
+    ids.add(id);
+    return `${label}[[${missionHubFileName(id).replace(/\.md$/, '')}|${id}]]`;
+  });
+  if (missionIdFromSource && !ids.has(missionIdFromSource)) {
+    ids.add(missionIdFromSource);
+    out += `\n\nMissão: [[${missionHubFileName(missionIdFromSource).replace(/\.md$/, '')}|${missionIdFromSource}]]`;
+  }
+  return { body: out, missionIds: [...ids] };
+}
+
 function vaultNoteMarkdown(
   input: CanonicalMemoryProjectionInput,
   kind: MemoryNote['kind'],
   missionId: string | undefined,
-): string {
-  return [
+): { readonly markdown: string; readonly missionIds: readonly string[] } {
+  const linked = linkifyMissions(linkifyFilePaths(projectionBody(input)), missionId);
+  const markdown = [
     '---',
     `id: ${input.id}`,
     `canonical: ${CANONICAL_MEMORY_PROJECTION}`,
@@ -508,11 +552,41 @@ function vaultNoteMarkdown(
     `missionId: ${yamlString(missionId ?? null)}`,
     `createdAt: ${input.createdAt}`,
     `updatedAt: ${input.updatedAt}`,
+    ...(input.reverify ? [`reverify: ${yamlString(input.reverify)}`] : []),
     '---',
     '',
     VAULT_BANNER,
     '',
-    linkifyFilePaths(projectionBody(input)),
+    linked.body,
+    '',
+  ].join('\n');
+  return { markdown, missionIds: linked.missionIds };
+}
+
+/**
+ * Hub de uma missão: uma nota gerada por missão com a lista das memórias que
+ * a citam. É o nó que o grafo do Obsidian mostra ligando as entregas de uma
+ * mesma missão; leva o marcador canônico para ser colhido quando a missão
+ * deixa de ter memória ativa.
+ */
+function missionHubMarkdown(
+  missionId: string,
+  entries: ReadonlyArray<{ file: string; title: string }>,
+): string {
+  return [
+    '---',
+    `id: hub-${missionId}`,
+    `canonical: ${CANONICAL_MEMORY_PROJECTION}`,
+    'generated: true',
+    'kind: mission',
+    `missionId: ${yamlString(missionId)}`,
+    '---',
+    '',
+    VAULT_BANNER,
+    '',
+    `# Missão ${missionId}`,
+    '',
+    ...entries.map((entry) => `- [[${entry.file.replace(/\.md$/, '')}|${entry.title}]]`),
     '',
   ].join('\n');
 }
@@ -577,19 +651,26 @@ export async function exportMemoryVault(
     MemoryNote['kind'],
     Array<{ file: string; title: string }>
   >();
+  const byMission = new Map<string, Array<{ file: string; title: string }>>();
   for (const input of inputs) {
     const name = memoryVaultFileName(input);
     const kind = projectionKind(input);
-    const markdown = vaultNoteMarkdown(
+    const note = vaultNoteMarkdown(
       input,
       kind,
       projectionMissionId(input.source),
     );
     active.add(name);
-    await writeFileIfChanged(path.join(root, name), markdown, signal);
+    await writeFileIfChanged(path.join(root, name), note.markdown, signal);
+    const title = projectionTitle(input.content, input.id);
     const entries = byKind.get(kind) ?? [];
-    entries.push({ file: name, title: projectionTitle(input.content, input.id) });
+    entries.push({ file: name, title });
     byKind.set(kind, entries);
+    for (const missionId of note.missionIds) {
+      const hub = byMission.get(missionId) ?? [];
+      hub.push({ file: name, title });
+      byMission.set(missionId, hub);
+    }
   }
 
   for (const kind of VAULT_INDEX_KINDS) {
@@ -600,6 +681,17 @@ export async function exportMemoryVault(
     await writeFileIfChanged(
       path.join(root, name),
       vaultIndexMarkdown(kind, entries),
+      signal,
+    );
+  }
+
+  // F-801: um hub por missão — o nó que liga as memórias de uma mesma missão.
+  for (const [missionId, entries] of byMission) {
+    const name = missionHubFileName(missionId);
+    active.add(name);
+    await writeFileIfChanged(
+      path.join(root, name),
+      missionHubMarkdown(missionId, entries),
       signal,
     );
   }
@@ -622,6 +714,98 @@ export async function exportMemoryVault(
     ) {
       await fs.promises.unlink(filePath);
     }
+  }
+  return root;
+}
+
+/** Entrada de índice/hub do vault: a própria linha, de onde saem nome e título. */
+export interface VaultIndexEntry {
+  readonly record: CanonicalMemoryProjectionInput;
+}
+
+export interface MemoryVaultDelta {
+  /** Linhas ativas cujo arquivo deve ser (re)escrito. */
+  readonly changed: readonly CanonicalMemoryProjectionInput[];
+  /** Linhas esquecidas/substituídas cujo arquivo deve sair. */
+  readonly removed: readonly CanonicalMemoryProjectionInput[];
+  /** Índices dos tipos afetados, já com TODAS as entradas ativas do tipo. */
+  readonly indexes: ReadonlyMap<MemoryNote['kind'], readonly VaultIndexEntry[]>;
+  /** Hubs das missões afetadas, já com TODAS as notas ativas da missão. */
+  readonly hubs: ReadonlyMap<string, readonly VaultIndexEntry[]>;
+}
+
+/** Remove um arquivo gerado do vault se ele ainda for o que o escritor emitiu. */
+async function removeVaultGeneratedFile(filePath: string): Promise<boolean> {
+  let stat: fs.Stats;
+  try {
+    stat = await fs.promises.lstat(filePath);
+  } catch {
+    return false;
+  }
+  if (!stat.isFile()) return false;
+  const raw = await fs.promises.readFile(filePath, 'utf8');
+  if (parseFrontmatter(raw).canonical !== CANONICAL_MEMORY_PROJECTION) return false;
+  await fs.promises.unlink(filePath);
+  return true;
+}
+
+function indexEntriesOf(
+  entries: readonly VaultIndexEntry[],
+): Array<{ file: string; title: string }> {
+  return entries.map(({ record }) => ({
+    file: memoryVaultFileName(record),
+    title: projectionTitle(record.content, record.id),
+  }));
+}
+
+/**
+ * Exportação INCREMENTAL do vault (F-807): só as notas do lote, os índices
+ * dos tipos afetados e os hubs das missões afetadas — O(lote + índice), não
+ * O(N notas). A exportação completa (`exportMemoryVault`) fica para a
+ * primeira passada de uma raiz no processo e para a reconciliação explícita.
+ */
+export async function exportMemoryVaultIncremental(
+  projectRoot: string,
+  delta: MemoryVaultDelta,
+  dirname = DEFAULT_MEMORY_DIR,
+  signal?: AbortSignal,
+): Promise<string> {
+  const root = resolveMemoryRoot(projectRoot, dirname);
+  await ensureProjectionRoot(root, signal);
+  await writeFileIfChanged(path.join(root, '.gitignore'), VAULT_GITIGNORE, signal);
+
+  for (const raw of delta.changed) {
+    const input = canonicalProjectionInputSchema.parse(raw);
+    const note = vaultNoteMarkdown(input, projectionKind(input), projectionMissionId(input.source));
+    await writeFileIfChanged(path.join(root, memoryVaultFileName(input)), note.markdown, signal);
+  }
+  for (const raw of delta.removed) {
+    signal?.throwIfAborted();
+    const input = canonicalProjectionInputSchema.parse(raw);
+    await removeVaultGeneratedFile(path.join(root, memoryVaultFileName(input)));
+  }
+  for (const [kind, entries] of delta.indexes) {
+    signal?.throwIfAborted();
+    const filePath = path.join(root, vaultIndexName(kind));
+    if (entries.length === 0) {
+      await fs.promises.unlink(filePath).catch(() => undefined);
+      continue;
+    }
+    await writeFileIfChanged(filePath, vaultIndexMarkdown(kind, indexEntriesOf(entries)), signal);
+  }
+  for (const [missionId, entries] of delta.hubs) {
+    signal?.throwIfAborted();
+    if (!isProjectableMissionId(missionId)) continue;
+    const filePath = path.join(root, missionHubFileName(missionId));
+    if (entries.length === 0) {
+      await removeVaultGeneratedFile(filePath);
+      continue;
+    }
+    await writeFileIfChanged(
+      filePath,
+      missionHubMarkdown(missionId, indexEntriesOf(entries)),
+      signal,
+    );
   }
   return root;
 }

@@ -141,9 +141,10 @@ const BOOTSTRAP_AUTHORITY_TOOLS = new Set([
   'mission_create',
   'mission_set_status',
   // Memória agentic (C2): mutação estreita e validada (≤8KB, redação de
-  // segredos, dedupe) do banco de memórias em userData — não toca workspace
-  // nem dados externos e precisa funcionar antes/fora de missão para TODAS
-  // as CLIs hospedadas (panes livres inclusive).
+  // segredos, dedupe) do banco de memórias em userData — não toca dados
+  // externos e precisa funcionar antes/fora de missão para TODAS as CLIs
+  // hospedadas (panes livres inclusive). A cópia legível no workspace só
+  // existe com o opt-in do operador (F-806), fora deste caminho.
   'memory_retain',
 ]);
 
@@ -204,7 +205,9 @@ const READ_ONLY_CONTEXT_METADATA_TOOLS = new Set([
   'review_submit',
   // F-769: um pane read-only (revisor, juiz) também consulta e grava a memória
   // compartilhada. O retain é validado/redigido no handler e escreve só no
-  // banco de memória em userData — nunca no workspace nem fora dele.
+  // banco de memória em userData — nunca no workspace nem fora dele: o vault
+  // opt-in da pasta do projeto nunca é disparado por contexto read-only, e a
+  // nota nasce em quarentena (fora de todo brief até promoção) — F-806/F-808.
   'memory_retain',
 ]);
 

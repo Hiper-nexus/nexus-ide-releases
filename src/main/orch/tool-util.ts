@@ -1278,7 +1278,9 @@ export function withProjectContextBlocks(options: BriefCandidate): string | unde
   return mountPromptContextBlocks(options.prompt, [
     businessModelContextBlock(options.executionScope ?? options.scope, options.scope),
     recallsWorkspaceMemory(options)
-      ? workspaceMemoryContextBlock(options.scope, options.memoryQuery ?? options.prompt, autoRecallPhaseForAgent(options))
+      ? workspaceMemoryContextBlock(options.scope, options.memoryQuery ?? options.prompt, autoRecallPhaseForAgent(options), {
+          missionId: options.missionId ?? undefined,
+        })
       : null,
   ]);
 }
@@ -1305,7 +1307,9 @@ export async function withProjectContextBlocksAsync(
   return mountPromptContextBlocks(options.prompt, [
     selected ?? businessModelContextBlock(execScope, options.scope),
     recallsWorkspaceMemory(options)
-      ? workspaceMemoryContextBlock(options.scope, options.memoryQuery ?? options.prompt, autoRecallPhaseForAgent(options))
+      ? workspaceMemoryContextBlock(options.scope, options.memoryQuery ?? options.prompt, autoRecallPhaseForAgent(options), {
+          missionId: options.missionId ?? undefined,
+        })
       : null,
   ]);
 }

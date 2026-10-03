@@ -15,6 +15,7 @@ import {
   observerToolKind,
   type ObserverToolKind,
 } from "./observer-tool-kind";
+import { noteSessionToolCall } from "./session-web-exposure";
 
 const EVENT_TYPE_BY_FRAME_KIND: Readonly<
   Record<ObserverFrameKind, MissionEventType>
@@ -69,6 +70,11 @@ function observerToolIdentity(frame: ObserverFrame): {
   // Revalidado aqui: o rótulo da skill nunca sai do padrão estrito.
   const skillName =
     frame.kind === "tool_call" ? normalizeSkillName(frame.payload.skillName) : null;
+  // F-808: WebFetch/WebSearch nativos (fora do MCP do Nexus) também expõem a
+  // sessão — o hook é o único lugar que os vê.
+  if (frame.kind === "tool_call") {
+    noteSessionToolCall(frame.sessionId, toolName, frame.payload.toolKind);
+  }
   return {
     toolName:
       typeof toolName === "string"

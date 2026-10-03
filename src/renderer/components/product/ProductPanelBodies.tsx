@@ -249,7 +249,19 @@ type ProductMemoryNote = {
   source?: string | null;
   createdAt?: number;
   updatedAt?: number;
+  /** F-800/F-808: quarantine (fora do brief até promover), promoted, reverify. */
+  flags?: readonly string[];
+  /** Detalhe de "a reverificar": qual arquivo citado sumiu do checkout. */
+  reverify?: string | null;
 };
+
+/** Rótulo pt-BR das marcas de uma nota (F-800/F-808). */
+export function memoryFlagLabel(flag: string, reverify?: string | null): string | null {
+  if (flag === 'quarantine') return 'em quarentena: gravada por sessão somente-leitura ou exposta à web; fora dos briefs até você promover';
+  if (flag === 'promoted') return 'promovida por você: entra nos briefs deste projeto';
+  if (flag === 'reverify') return `a reverificar: ${reverify ?? 'um arquivo citado sumiu do checkout'}`;
+  return null;
+}
 
 const TRUSTED_MEMORY_SOURCE_LABELS: Readonly<Record<string, string>> = {
   'trusted:operator-decision': 'decisão do operador',
@@ -268,6 +280,9 @@ function memorySourceLabel(source: string | null | undefined): string | null {
     return 'manual';
   }
   if (source.startsWith('agent-authored:')) return 'agente';
+  // F-798: auto-memória nativa de uma CLI importada (não verificada).
+  if (source === 'imported:claude-auto-memory') return 'importada do Claude';
+  if (source.startsWith('imported:')) return 'importada';
   return TRUSTED_MEMORY_SOURCE_LABELS[source] ?? source;
 }
 
@@ -445,6 +460,37 @@ export function MemoryPanelBody({
     }
   };
 
+  // F-808: promover uma nota em quarentena é decisão do operador, aqui.
+  const promote = async (id: string) => {
+    if (!id || forgettingRef.current) return;
+    forgettingRef.current = true;
+    setForgettingId(id);
+    setFailure(null);
+    try {
+      const api = memoryApi();
+      if (!api) throw new Error('workspace memory API unavailable');
+      const result = await api.promote(id);
+      if (!result.enabled || !result.promoted) {
+        throw new Error('memory was not promoted');
+      }
+      if (!mountedRef.current) return;
+      await reload(
+        'A memória foi promovida, mas não foi possível atualizar a lista. Tente recarregar.',
+      );
+    } catch {
+      if (mountedRef.current) {
+        setFailure({
+          operation: 'forget',
+          message:
+            'Não foi possível promover esta memória. Tente novamente em instantes.',
+        });
+      }
+    } finally {
+      forgettingRef.current = false;
+      if (mountedRef.current) setForgettingId(null);
+    }
+  };
+
   const collection = (
     <>
       {showOnboarding && !loading && !failure && notes.length === 0 ? (
@@ -492,6 +538,33 @@ export function MemoryPanelBody({
                     {MEMORY_KIND_LABELS[note.kind] ?? note.kind}
                   </span>
                 ) : null}
+                {(note.flags ?? []).map((flag) => {
+                  const label = memoryFlagLabel(flag, note.reverify);
+                  if (!label) return null;
+                  return (
+                    <p
+                      key={flag}
+                      className="product-pane__meta memory-workspace__flag"
+                      data-flag={flag}
+                    >
+                      {label}
+                      {flag === 'quarantine' ? (
+                        <>
+                          {' '}
+                          <button
+                            type="button"
+                            className="product-pane__retry"
+                            disabled={forgettingId !== null}
+                            aria-label={`Promover memória ${note.title}`}
+                            onClick={() => void promote(note.id)}
+                          >
+                            Promover
+                          </button>
+                        </>
+                      ) : null}
+                    </p>
+                  );
+                })}
                 {note.source !== undefined ||
                 note.updatedAt !== undefined ? (
                   <p className="product-pane__meta">

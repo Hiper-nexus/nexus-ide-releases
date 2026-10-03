@@ -10,6 +10,7 @@ import {
   type MemoryRecallHit,
   type WorkspaceMemoryStore,
 } from './workspace-memory';
+import { memorySubjectKey } from './memory-links';
 
 export const AUTO_RECALL_MIN_BYTES = 2_048;
 export const AUTO_RECALL_DEFAULT_MAX_BYTES = 3_072;
@@ -87,14 +88,71 @@ function buildRecallQuery(prompt: string): string {
 
 /**
  * Segunda camada da injeção (F-769): memória escrita por agentes
- * (`agent-authored:*`) e notas do operador (`operator:*`). Não é verificada
+ * (`agent-authored:*`), notas do operador (`operator:*`) e notas importadas
+ * da auto-memória nativa de uma CLI (`imported:*`, F-798). Não é verificada
  * pelo Nexus — entra numa seção própria, marcada, com teto menor.
  */
 export function isUnverifiedMemorySource(source: string | null): boolean {
   return (
     source !== null &&
-    (source.startsWith('agent-authored:') || source.startsWith('operator:'))
+    (source.startsWith('agent-authored:') ||
+      source.startsWith('operator:') ||
+      source.startsWith('imported:'))
   );
+}
+
+/** Fontes que o OPERADOR controla: a nota dele e o que ele mandou importar. */
+function isOperatorTierSource(source: string | null): boolean {
+  return source !== null && (source.startsWith('operator:') || source.startsWith('imported:'));
+}
+
+/**
+ * F-808: o que da camada não verificada pode entrar num brief. Notas do
+ * operador e notas promovidas por ele: sempre. Nota de agente: só para
+ * workers da MESMA missão. Nota em quarentena (sessão read-only ou exposta à
+ * web): nunca, até o operador promover. Fecha o canal em que o texto de uma
+ * página lida por um scout virava "pegadinha" em todo worker futuro.
+ */
+export function briefEligibleUnverified(
+  store: Pick<WorkspaceMemoryStore, 'idsLinkedToMission'>,
+  hits: readonly MemoryRecallHit[],
+  missionId: string | undefined,
+): MemoryRecallHit[] {
+  const candidates = hits.filter(
+    (hit) => isUnverifiedMemorySource(hit.source) && !hit.flags?.includes('quarantine'),
+  );
+  const agentNotes = candidates.filter(
+    (hit) => !isOperatorTierSource(hit.source) && !hit.flags?.includes('promoted'),
+  );
+  const sameMission =
+    missionId && agentNotes.length > 0
+      ? store.idsLinkedToMission(agentNotes.map((hit) => hit.id), missionId)
+      : new Set<string>();
+  return candidates.filter(
+    (hit) =>
+      isOperatorTierSource(hit.source) ||
+      hit.flags?.includes('promoted') ||
+      sameMission.has(hit.id),
+  );
+}
+
+/**
+ * Dedupe por assunto na leitura (F-800): duas versões ativas do mesmo
+ * `# Título` (fontes distintas — a escrita só substitui dentro da mesma
+ * fonte) entram uma vez, a mais recente. A ordem de ranking é preservada.
+ */
+export function dedupeHitsBySubject(hits: readonly MemoryRecallHit[]): MemoryRecallHit[] {
+  const newest = new Map<string, MemoryRecallHit>();
+  for (const hit of hits) {
+    const subject = memorySubjectKey(hit.content);
+    if (!subject) continue;
+    const current = newest.get(subject);
+    if (!current || hit.updatedAt > current.updatedAt) newest.set(subject, hit);
+  }
+  return hits.filter((hit) => {
+    const subject = memorySubjectKey(hit.content);
+    return !subject || newest.get(subject) === hit;
+  });
 }
 
 const UNVERIFIED_SECTION_HEADER =
@@ -102,8 +160,10 @@ const UNVERIFIED_SECTION_HEADER =
 
 function memoryLineFor(hit: MemoryRecallHit): string {
   const source = hit.source ? `; source=${hit.source}` : '';
+  // F-800: arquivo citado sumiu do checkout — a nota segue, marcada.
+  const reverify = hit.reverify ? `; REVERIFY: ${hit.reverify}` : '';
   const prefix =
-    `- [${hit.kind}; ${hit.scope}; importance=${hit.importance}${source}] `;
+    `- [${hit.kind}; ${hit.scope}; importance=${hit.importance}${source}${reverify}] `;
   return `${sanitizeMemoryLine(`${prefix}${hit.content}`)}\n`;
 }
 
@@ -162,14 +222,16 @@ export function planAutoRecallInjection(
 ): AutoRecallInjection | null {
   // Accepted receipts remain in the audit bank, but IDs alone are not reusable
   // knowledge. Only their distilled summary belongs in an agent's context.
-  const memories = hits.flatMap((hit) => {
+  const memories = dedupeHitsBySubject(hits).flatMap((hit) => {
     if (hit.source !== 'trusted:accepted-handoff') return [hit];
     const summary = /^Summary: (?!Handoff accepted by Nexus Main\.$)(.+)$/m.exec(hit.content)?.[1];
     return summary ? [{ ...hit, content: summary }] : [];
   }).slice(0, AUTO_RECALL_LIMIT);
-  const notes = unverifiedHits
-    .filter((hit) => isUnverifiedMemorySource(hit.source))
-    .slice(0, AUTO_RECALL_LIMIT);
+  const notes = dedupeHitsBySubject(
+    unverifiedHits.filter(
+      (hit) => isUnverifiedMemorySource(hit.source) && !hit.flags?.includes('quarantine'),
+    ),
+  ).slice(0, AUTO_RECALL_LIMIT);
   if (memories.length === 0 && notes.length === 0) return null;
   const phase = autoRecallPhaseSchema.parse(rawPhase);
   const maxBytes = z
@@ -264,18 +326,27 @@ function blockFrom(
   }
 }
 
+export interface WorkspaceMemoryContextOptions {
+  /**
+   * Missão do pane que recebe o bloco (F-808): só notas de agentes DESTA
+   * missão entram na camada não verificada. Sem missão, só as do operador.
+   */
+  readonly missionId?: string;
+}
+
 /**
  * Bloco `<workspace-memory>` com as memórias relevantes ao prompt, para o
  * ponto de montagem de contexto (prompt-context-blocks): brief de spawn e
  * hook UserPromptSubmit. Camada trusted como sempre, mais uma seção menor de
- * notas de agentes/operador não verificadas (F-769). null com a injeção
- * desligada, prompt que já traz o bloco, banco vazio/sem hits ou falha —
- * nunca bloqueia o prompt.
+ * notas do operador e de agentes da mesma missão, não verificadas (F-769/
+ * F-808). null com a injeção desligada, prompt que já traz o bloco, banco
+ * vazio/sem hits ou falha — nunca bloqueia o prompt.
  */
 export function workspaceMemoryContextBlock(
   scope: ProjectExecutionScope,
   prompt: string,
   phase: AutoRecallPhase = 'execution',
+  options: WorkspaceMemoryContextOptions = {},
 ): string | null {
   if (hasMountedPromptContextBlock(prompt, 'workspace-memory') || !injectionEnabled()) return null;
   const query = buildRecallQuery(prompt);
@@ -288,11 +359,15 @@ export function workspaceMemoryContextBlock(
         limit: AUTO_RECALL_CANDIDATES,
         trustedOnly: true,
       }),
-      unverifiedHits: store.recall({
-        query,
-        limit: AUTO_RECALL_CANDIDATES,
-        trustedOnly: false,
-      }),
+      unverifiedHits: briefEligibleUnverified(
+        store,
+        store.recall({
+          query,
+          limit: AUTO_RECALL_CANDIDATES,
+          trustedOnly: false,
+        }),
+        options.missionId,
+      ),
     }),
     phase,
     AUTO_RECALL_DEFAULT_MAX_BYTES,

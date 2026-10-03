@@ -99,12 +99,10 @@ describe('search mixer bootstrap', () => {
       }),
     ]);
     expect(result.hits[0]).not.toHaveProperty('path');
-    // A busca lê a projeção canônica em userData. O checkout só recebe o
-    // vault legível do F-769 (agendado fora da gravação, F-764), que se exclui
-    // do git pelo próprio `.gitignore`.
+    // A busca lê a projeção canônica em userData. A cópia legível na pasta do
+    // projeto é OPT-IN do operador (F-806), desligada por padrão: um retain
+    // nunca cria `.nexus-memory/` no checkout por conta própria.
     await store.flushProjections();
-    expect(
-      fs.readFileSync(path.join(projectRoot, '.nexus-memory', '.gitignore'), 'utf8'),
-    ).toBe('*\n');
+    expect(fs.existsSync(path.join(projectRoot, '.nexus-memory'))).toBe(false);
   });
 });

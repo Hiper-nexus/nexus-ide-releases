@@ -993,6 +993,12 @@
   font-weight: 600;
 }
 
+/* F-800/F-808: marcas da nota — quarentena e "a reverificar" pedem atenção. */
+.memory-workspace .memory-workspace__flag[data-flag='quarantine'],
+.memory-workspace .memory-workspace__flag[data-flag='reverify'] {
+  color: var(--status-warning);
+}
+
 .memory-workspace .product-pane__field {
   display: flex;
   flex-direction: column;

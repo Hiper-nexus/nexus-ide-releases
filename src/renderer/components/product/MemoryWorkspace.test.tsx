@@ -21,6 +21,7 @@ const memoryBoundary = {
 
 const agenticMemoryBoundary = {
   forget: vi.fn(),
+  promote: vi.fn(),
 };
 
 const mountedRoots: Array<{ host: HTMLDivElement; root: Root }> = [];
@@ -403,6 +404,57 @@ describe('MemoryWorkspace contracts', () => {
     expect(memoryBoundary.memoryList).toHaveBeenCalledTimes(2);
     expect(host.textContent).not.toContain(note.title);
     expect(host.textContent).toMatch(/nenhuma memória ainda/i);
+  });
+
+  it('F-808: nota em quarentena mostra a marca e o operador a promove pela tela', async () => {
+    const note = {
+      id: 'memory-quarantined',
+      title: 'Achado do scout',
+      body: 'Texto gravado por uma sessão exposta à web.',
+      kind: 'note',
+      source: `agent-authored:pane:${'ab'.repeat(32)}`,
+      flags: ['quarantine'],
+      reverify: null,
+    };
+    memoryBoundary.memoryList
+      .mockResolvedValueOnce([note])
+      .mockResolvedValueOnce([{ ...note, flags: ['promoted'] }]);
+    agenticMemoryBoundary.promote.mockResolvedValue({ enabled: true, promoted: true });
+    const host = mount(<MemoryWorkspace />);
+    await settleMemoryEffects();
+
+    const flag = host.querySelector<HTMLElement>('.memory-workspace__flag[data-flag="quarantine"]');
+    expect(flag?.textContent).toContain('em quarentena');
+    await act(async () => {
+      findButton(host, /promover memória achado do scout/i).click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(agenticMemoryBoundary.promote).toHaveBeenCalledWith(note.id);
+    expect(memoryBoundary.memoryList).toHaveBeenCalledTimes(2);
+    expect(host.querySelector('.memory-workspace__flag[data-flag="promoted"]')?.textContent).toContain('promovida');
+  });
+
+  it('F-800: nota ligada a arquivo que sumiu aparece marcada "a reverificar", sem sumir', async () => {
+    memoryBoundary.memoryList.mockResolvedValue([
+      {
+        id: 'memory-reverify',
+        title: 'Pool de conexões',
+        body: 'O pool vive em src/main/db/pool.ts.',
+        kind: 'note',
+        flags: ['reverify'],
+        reverify: 'src/main/db/pool.ts não existe mais no checkout',
+      },
+    ]);
+    const host = mount(<MemoryWorkspace />);
+    await settleMemoryEffects();
+    expect(host.textContent).toContain('Pool de conexões');
+    expect(host.querySelector('.memory-workspace__flag[data-flag="reverify"]')?.textContent).toContain(
+      'a reverificar: src/main/db/pool.ts não existe mais no checkout',
+    );
   });
 
   it('is an in-flow workspace page rather than a floating or dialog surface', async () => {

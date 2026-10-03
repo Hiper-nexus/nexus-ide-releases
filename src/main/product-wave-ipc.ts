@@ -456,6 +456,9 @@ export function registerProductWaveIpc(): void {
         source: meta?.source ?? null,
         createdAt: meta?.createdAt ?? note.updatedAt,
         updatedAt: meta?.updatedAt ?? note.updatedAt,
+        // F-800/F-808: marcas visíveis ao operador (quarentena, promovida, a reverificar).
+        flags: meta?.flags ?? [],
+        reverify: meta?.reverify ?? null,
       };
     });
   });

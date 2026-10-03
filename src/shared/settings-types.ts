@@ -169,6 +169,13 @@ export const orchSettingsSchema = z.object({
    * mantém o restante do sistema de memória intacto.
    */
   workspaceMemoryInjection: z.boolean().default(true),
+  /**
+   * F-806: "Memória visível no projeto (abre no Obsidian)". Exporta a cópia
+   * legível `.nexus-memory/` para a PASTA DO PROJETO (fora do git). Padrão
+   * desligado: a memória canônica e a projeção em userData não dependem disto,
+   * e contexto read-only/consulta nunca dispara a exportação.
+   */
+  workspaceMemoryVaultExport: z.boolean().default(false),
   /** Carta de Design anti-genérico (Impeccable) para tarefas com UI. */
   designPro: z.boolean().default(true),
   /** Direção estética aplicada pelo motor de design junto com a carta. */

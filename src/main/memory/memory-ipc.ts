@@ -21,6 +21,7 @@ import { MEMORY_CHANNELS } from '../../shared/channels';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import type {
   MemoryForgetResult,
+  MemoryPromoteResult,
   MemoryRecallResult,
   MemoryStatsResult,
   MemoryUiBankStats,
@@ -109,5 +110,15 @@ export function registerMemoryIpc(): void {
     const scope = requireRendererWorkspaceScope(event.sender);
     const forgotten = getWorkspaceMemoryStore(scope).forget(id);
     return { enabled: true, forgotten };
+  });
+
+  // F-808: só o operador (renderer autorizado do workspace) promove uma nota
+  // em quarentena; nenhuma tool MCP alcança este caminho.
+  ipcMain.handle(MEMORY_CHANNELS.promote, (event, raw): MemoryPromoteResult => {
+    if (!memoryEnabled()) return { enabled: false };
+    const { id } = forgetRequestSchema.parse(raw);
+    const scope = requireRendererWorkspaceScope(event.sender);
+    const promoted = getWorkspaceMemoryStore(scope).promoteMemory(id);
+    return { enabled: true, promoted };
   });
 }

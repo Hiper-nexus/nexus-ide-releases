@@ -148,8 +148,9 @@ const ALWAYS_ALLOWED = new Set([
   // Memória compartilhada de longa duração (F-769): workers nascem com
   // allowlist vazia e nunca podiam consultar nem gravar — 0 retains na
   // auditoria. recall/stats são leitura FTS local; retain é validado e
-  // redigido no handler (bootstrap-authority) e só escreve no banco de
-  // memória em userData, nunca no workspace.
+  // redigido no handler (bootstrap-authority) e escreve no banco de memória
+  // em userData (SQLite + projeção). A cópia legível na PASTA DO PROJETO é
+  // opt-in do operador (F-806) e nunca é disparada por contexto read-only.
   "memory_recall",
   "memory_stats",
   "memory_retain",

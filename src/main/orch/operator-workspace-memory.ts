@@ -24,9 +24,14 @@ export function operatorWorkspaceMemoryContext(
 ): string | null {
   if (!isOperatorHandContext(ctx) || ctx.operatorParentSessionId) return null;
   if (providerReceivesContextOnlyByHook(ctx.providerId) !== (channel === 'hook')) return null;
-  const scope = ctx.executionScope ?? ctx.scope;
+  // F-806: a memória é por PROJETO e o store fixa a raiz do checkout na
+  // criação — ler a partir da worktree de uma aba (executionScope) movia o
+  // vault para lá. O escopo primário é o do workspace aberto.
+  const scope = ctx.scope;
   if (!scope) return null;
   return channel === 'hook'
-    ? workspaceMemoryContextBlock(scope, prompt ?? '', 'execution')
+    ? workspaceMemoryContextBlock(scope, prompt ?? '', 'execution', {
+        missionId: ctx.missionId ?? undefined,
+      })
     : standingWorkspaceMemoryBlock(scope);
 }

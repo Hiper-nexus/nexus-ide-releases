@@ -17,7 +17,12 @@ const stores: WorkspaceMemoryStore[] = [];
 
 function makeStore(
   now?: () => number,
-  options: { readonly projectionRoot?: string; readonly workspaceRoot?: string } = {},
+  options: {
+    readonly projectionRoot?: string;
+    readonly workspaceRoot?: string;
+    /** F-806: o vault na pasta do projeto é opt-in; os testes do vault ligam. */
+    readonly vaultExportEnabled?: () => boolean;
+  } = {},
 ): WorkspaceMemoryStore {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-wm-'));
   dirs.push(root);
@@ -30,11 +35,16 @@ function makeStore(
     ...(options.workspaceRoot
       ? { workspaceRoot: options.workspaceRoot }
       : {}),
+    ...(options.vaultExportEnabled
+      ? { vaultExportEnabled: options.vaultExportEnabled }
+      : {}),
     ...(now ? { now } : {}),
   });
   stores.push(store);
   return store;
 }
+
+const vaultOn = () => true;
 
 afterEach(() => {
   disposeWorkspaceMemoryStores();
@@ -196,7 +206,7 @@ describe('workspace memory engine (FTS5)', () => {
     ).toBe(false);
   });
 
-  it('projeta em userData e exporta o vault legível fora do git (F-769)', async () => {
+  it('F-806: projeta em userData sempre; a pasta do projeto só recebe o vault com o opt-in', async () => {
     const baseDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'nexus-wm-runtime-base-'),
     );
@@ -205,7 +215,6 @@ describe('workspace memory engine (FTS5)', () => {
     );
     dirs.push(baseDir, projectRoot);
     execFileSync('git', ['init', '-q'], { cwd: projectRoot });
-    configureWorkspaceMemory({ baseDir });
     const scope = {
       version: 1 as const,
       installationId: 'installation-a',
@@ -215,17 +224,32 @@ describe('workspace memory engine (FTS5)', () => {
       identitySource: 'manifest' as const,
     };
 
-    const store = getWorkspaceMemoryStore(scope);
-    const retained = store.retain({
+    // Padrão (opt-in desligado): a gravação nunca cria nada no checkout.
+    configureWorkspaceMemory({ baseDir });
+    const silent = getWorkspaceMemoryStore(scope);
+    const retained = silent.retain({
       content: '# Decisão\n\nUsar uma única camada de domínio.',
       kind: 'decision',
       source: 'trusted:operator-decision',
     });
-
-    // A gravação exporta o vault legível para o checkout, fora do git —
-    // agendada fora do caminho da gravação (F-764).
-    await store.flushProjections();
+    await silent.flushProjections();
     const exported = path.join(fs.realpathSync(projectRoot), '.nexus-memory');
+    expect(fs.existsSync(exported)).toBe(false);
+    expect(silent.projectionRoot).toContain(path.join(baseDir, 'projections'));
+    expect(
+      fs.existsSync(path.join(silent.projectionRoot, '.nexus-memory', `${retained.id}.md`)),
+    ).toBe(true);
+
+    // Opt-in ligado ("Memória visível no projeto"): o vault vai para o
+    // checkout, fora do git — agendado fora do caminho da gravação (F-764).
+    configureWorkspaceMemory({ baseDir, vaultExportEnabled: vaultOn });
+    const store = getWorkspaceMemoryStore(scope);
+    store.retain({
+      content: '# Decisão\n\nUsar uma única camada de domínio.',
+      kind: 'decision',
+      source: 'trusted:operator-decision',
+    });
+    await store.flushProjections();
     expect(fs.existsSync(exported)).toBe(true);
     expect(
       execFileSync('git', ['status', '--porcelain'], {
@@ -233,16 +257,6 @@ describe('workspace memory engine (FTS5)', () => {
         encoding: 'utf8',
       }),
     ).toBe('');
-    expect(store.projectionRoot).toContain(path.join(baseDir, 'projections'));
-    expect(
-      fs.existsSync(
-        path.join(
-          store.projectionRoot,
-          '.nexus-memory',
-          `${retained.id}.md`,
-        ),
-      ),
-    ).toBe(true);
 
     // O vault usa nomes legíveis; a exportação explícita devolve a mesma raiz.
     expect(await store.exportProjectionsToWorkspace(projectRoot)).toBe(exported);
@@ -267,6 +281,116 @@ describe('workspace memory engine (FTS5)', () => {
         ),
       ),
     ).toBe(true);
+  });
+
+  it('F-806: a raiz do vault é fixa na criação — acesso por outra raiz não a move', async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-wm-fixed-root-'));
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-wm-fixed-main-'));
+    const worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-wm-fixed-worktree-'));
+    dirs.push(baseDir, projectRoot, worktree);
+    configureWorkspaceMemory({ baseDir, vaultExportEnabled: vaultOn });
+    const base = {
+      version: 1 as const,
+      installationId: 'installation-a',
+      projectId: 'project-fixed-root',
+      checkoutId: 'checkout-a',
+      identitySource: 'manifest' as const,
+    };
+    const store = getWorkspaceMemoryStore({ ...base, rootRealPath: projectRoot });
+    // Leitura/gravação a partir da worktree de uma aba: mesmo store, mesma raiz.
+    const viaWorktree = getWorkspaceMemoryStore({ ...base, rootRealPath: worktree });
+    expect(viaWorktree).toBe(store);
+    expect(store.workspaceRoot).toBe(path.resolve(projectRoot));
+    viaWorktree.retain({ content: '# Fixa\n\ncorpo', source: 'operator:note' });
+    await store.flushProjections();
+    expect(fs.existsSync(path.join(fs.realpathSync(projectRoot), '.nexus-memory'))).toBe(true);
+    expect(fs.existsSync(path.join(worktree, '.nexus-memory'))).toBe(false);
+  });
+
+  it('F-806: gravação de contexto read-only/consulta nunca dispara o vault, mesmo com o opt-in', async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-wm-readonly-vault-'));
+    dirs.push(workspace);
+    const store = makeStore(undefined, { workspaceRoot: workspace, vaultExportEnabled: vaultOn });
+    store.retainAgentAuthored(
+      { content: '# Achado do revisor\n\ncorpo' },
+      { source: `agent-authored:pane:${'a'.repeat(64)}` },
+      { vault: false, quarantine: 'read-only session' },
+    );
+    await store.flushProjections();
+    expect(fs.existsSync(path.join(workspace, '.nexus-memory'))).toBe(false);
+    // A projeção canônica (userData) e o recall seguem normais.
+    expect(store.recall({ query: 'revisor achado' })).toHaveLength(1);
+    expect(store.recall({ query: 'revisor achado' })[0].flags).toEqual(['quarantine']);
+  });
+
+  it('F-807: a exportação para a pasta do projeto espera 2 s de debounce', async () => {
+    vi.useFakeTimers();
+    try {
+      const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-wm-debounce-'));
+      dirs.push(workspace);
+      const store = makeStore(undefined, { workspaceRoot: workspace, vaultExportEnabled: vaultOn });
+      store.retain({ content: '# Lenta\n\ncorpo', source: 'operator:note' });
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect(fs.existsSync(path.join(workspace, '.nexus-memory'))).toBe(false);
+      await vi.advanceTimersByTimeAsync(600);
+      await store.flushProjections();
+      expect(fs.existsSync(path.join(fs.realpathSync(workspace), '.nexus-memory'))).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('F-807: depois da primeira exportação, cada gravação toca só a nota, o índice e o hub (incremental)', async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-wm-incremental-'));
+    dirs.push(workspace);
+    const store = makeStore(undefined, { workspaceRoot: workspace, vaultExportEnabled: vaultOn });
+    for (let i = 0; i < 30; i += 1) {
+      store.retain({ content: `# Nota ${i}\n\ncorpo ${i}`, source: 'operator:note' });
+    }
+    await store.flushProjections();
+    const vaultRoot = path.join(fs.realpathSync(workspace), '.nexus-memory');
+    expect(fs.readdirSync(vaultRoot).filter((n) => n.endsWith('.md'))).toHaveLength(31);
+
+    const readFile = vi.spyOn(fs.promises, 'readFile');
+    const lstat = vi.spyOn(fs.promises, 'lstat');
+    try {
+      store.retain({ content: '# Nota nova\n\ncorpo novo', source: 'operator:note' });
+      await store.flushProjections();
+      // Exportação completa relia as 30 notas + índices a cada passada; a
+      // incremental lê só .gitignore, a nota nova e o índice do tipo dela.
+      const vaultReads = readFile.mock.calls.filter(([file]) =>
+        String(file).startsWith(vaultRoot),
+      );
+      expect(vaultReads.length).toBeLessThanOrEqual(4);
+      expect(lstat.mock.calls.filter(([file]) => String(file).startsWith(vaultRoot)).length)
+        .toBeLessThanOrEqual(4);
+    } finally {
+      readFile.mockRestore();
+      lstat.mockRestore();
+    }
+    expect(fs.readdirSync(vaultRoot).filter((n) => n.endsWith('.md'))).toHaveLength(32);
+    expect(fs.readFileSync(path.join(vaultRoot, 'INDEX-note.md'), 'utf8')).toContain('Nota nova');
+  });
+
+  it('F-807: retain de agente tem limite de taxa por autoridade (20 por 10 min)', () => {
+    let clock = 1_000_000;
+    const store = makeStore(() => clock);
+    const authority = { source: `agent-authored:pane:${'b'.repeat(64)}` };
+    for (let i = 0; i < 20; i += 1) {
+      store.retainAgentAuthored({ content: `nota ${i} do agente em loop` }, authority);
+    }
+    expect(() =>
+      store.retainAgentAuthored({ content: 'a vigésima primeira' }, authority),
+    ).toThrow(/rate limit/);
+    // Outra autoridade não é afetada; a janela libera depois de 10 min.
+    expect(
+      store.retainAgentAuthored(
+        { content: 'outro agente grava normalmente' },
+        { source: `agent-authored:pane:${'c'.repeat(64)}` },
+      ).deduped,
+    ).toBe(false);
+    clock += 10 * 60_000 + 1;
+    expect(store.retainAgentAuthored({ content: 'a vigésima primeira' }, authority).deduped).toBe(false);
   });
 
   it('retain com supersedes substitui a memória antiga no recall', () => {
@@ -430,10 +554,10 @@ describe('workspace memory engine (FTS5)', () => {
     expect(store.stats().workspace.totalRecalls).toBe(1);
   });
 
-  it('gravação exporta o vault legível .nexus-memory/ no workspace (F-769)', async () => {
+  it('gravação exporta o vault legível .nexus-memory/ no workspace com o opt-in (F-769/F-806)', async () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-wm-vault-'));
     dirs.push(workspace);
-    const store = makeStore(undefined, { workspaceRoot: workspace });
+    const store = makeStore(undefined, { workspaceRoot: workspace, vaultExportEnabled: vaultOn });
     const retained = store.retain({
       content: '# Regra do pool\n\nO pool vive em src/main/db/pool.ts.',
       kind: 'decision',
@@ -508,6 +632,7 @@ describe('projeção fora do caminho da gravação (F-764)', () => {
     const store = makeStore(undefined, {
       projectionRoot: projectRoot,
       workspaceRoot: workspace,
+      vaultExportEnabled: vaultOn,
     });
     // A primeira passada (reconciliação completa) fica fora da medição.
     store.retain({ content: '# Base\n\ncorpo base' });
@@ -558,6 +683,7 @@ describe('projeção fora do caminho da gravação (F-764)', () => {
     const store = makeStore(undefined, {
       projectionRoot: projectRoot,
       workspaceRoot: workspace,
+      vaultExportEnabled: vaultOn,
     });
     store.retain({ content: '# Base\n\ncorpo base' });
     await store.flushProjections();
@@ -616,7 +742,7 @@ describe('projeção fora do caminho da gravação (F-764)', () => {
     fs.writeFileSync(path.join(workspace, '.nexus-memory'), 'not a directory');
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
-      const store = makeStore(undefined, { workspaceRoot: workspace });
+      const store = makeStore(undefined, { workspaceRoot: workspace, vaultExportEnabled: vaultOn });
       const retained = store.retain({ content: 'fato que precisa sobreviver' });
       await store.flushProjections();
 

@@ -11,7 +11,8 @@ import {
 } from '../memory/workspace-memory';
 import type { AgentGateContext } from './gate';
 import { effectPolicyForTool } from './mcp-effect-policy';
-import { buildMemoryTools } from './tools-memory';
+import { agentRetainContext, buildMemoryTools } from './tools-memory';
+import { __resetSessionWebExposureForTests, isSessionWebExposed, noteSessionToolCall } from './session-web-exposure';
 import { buildToolset } from './tools';
 
 function context(
@@ -54,6 +55,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  __resetSessionWebExposureForTests();
   disposeWorkspaceMemoryStores();
   getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.workspaceMemory, false);
   for (const dir of dirs.splice(0)) {
@@ -298,5 +300,60 @@ describe('nexus_memory_* tools', () => {
       ctx,
     )) as { suggestions: Array<{ title: string }> };
     expect(Array.isArray(suggestRes.suggestions)).toBe(true);
+  });
+});
+
+describe('nexus_memory_retain — contexto da sessão (F-806/F-808)', () => {
+  it('sessão read-only ou missão de consulta grava em quarentena e sem exportar o vault', async () => {
+    const retain = toolByName('nexus_memory_retain');
+    const ctx = context('project-ro', { missionId: 'mission-ro', readOnly: true, sessionId: 'ro-1' });
+    const result = (await retain.handler({ content: 'achado do revisor' }, ctx)) as { id: string };
+    const store = getWorkspaceMemoryStore(ctx.scope);
+    const [hit] = store.recall({ query: 'revisor achado' });
+    expect(hit.id).toBe(result.id);
+    expect(hit.flags).toEqual(['quarantine']);
+    expect(store.linksOf(result.id)).toContain('mission:mission-ro');
+    expect(agentRetainContext(ctx)).toMatchObject({
+      readOnlyContext: true,
+      quarantine: 'read-only session',
+      links: ['mission:mission-ro'],
+    });
+  });
+
+  it('sessão que chamou o navegador/web do Nexus grava em quarentena', async () => {
+    const retain = toolByName('nexus_memory_retain');
+    const ctx = context('project-web', { sessionId: 'scout-1' });
+    expect(noteSessionToolCall('scout-1', 'nexus_browser_read')).toBe(true);
+    expect(noteSessionToolCall('scout-1', 'nexus_memory_recall')).toBe(false);
+    const result = (await retain.handler({ content: 'o site diz que a API mudou' }, ctx)) as { id: string };
+    const [hit] = getWorkspaceMemoryStore(ctx.scope).recall({ query: 'site API mudou' });
+    expect(hit.id).toBe(result.id);
+    expect(hit.flags).toEqual(['quarantine']);
+    expect(agentRetainContext(ctx).quarantine).toBe('web-exposed session');
+    // WebFetch nativo visto pelo hook também expõe.
+    expect(noteSessionToolCall('scout-2', 'WebFetch')).toBe(true);
+    expect(isSessionWebExposed('scout-2')).toBe(true);
+  });
+
+  it('sessão comum de escrita grava sem quarentena e liga a nota à missão', async () => {
+    const retain = toolByName('nexus_memory_retain');
+    const ctx = context('project-rw', { missionId: 'mission-rw', sessionId: 'rw-1' });
+    const result = (await retain.handler({ content: 'pegadinha legítima do worker' }, ctx)) as { id: string };
+    const store = getWorkspaceMemoryStore(ctx.scope);
+    const [hit] = store.recall({ query: 'pegadinha worker' });
+    expect(hit.flags).toBeUndefined();
+    expect(store.idsLinkedToMission([result.id], 'mission-rw').has(result.id)).toBe(true);
+    expect(agentRetainContext(ctx)).toMatchObject({ readOnlyContext: false, quarantine: null });
+  });
+
+  it('F-807: o limite de taxa por autoridade devolve erro acionável', async () => {
+    const retain = toolByName('nexus_memory_retain');
+    const ctx = context('project-rate', { sessionId: 'loop-1' });
+    for (let i = 0; i < 20; i += 1) {
+      await retain.handler({ content: `nota ${i} de um agente em loop` }, ctx);
+    }
+    await expect(retain.handler({ content: 'a vigésima primeira' }, ctx)).rejects.toThrow(
+      /rate limit.*consolidate/,
+    );
   });
 });

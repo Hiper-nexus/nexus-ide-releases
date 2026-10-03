@@ -40,6 +40,7 @@ import {
 import { requireMissionLeaderSession } from "./mission-leader-gate";
 import { validateToolArgs } from "./mcp-args-validation";
 import type { McpRegistry, McpToolDef } from "./mcp-protocol";
+import { noteSessionToolCall } from "./session-web-exposure";
 import { getContextWorkflowService } from "../context/context-workflow-registry";
 import { mutationTargetPaths } from "../context/context-workflow-service";
 import {
@@ -562,6 +563,11 @@ export async function dispatchToolCall(
     if (auditFailure) return auditFailure;
     return { ok: false, tool: toolName, error: `unknown tool: ${toolName}` };
   }
+
+  // F-808: pedido ao navegador/web do Nexus marca a sessão como exposta a
+  // conteúdo de terceiros — o que ela gravar em memória fica em quarentena.
+  // Só o nome da tool; antes dos gates de propósito (pedir já expõe a intenção).
+  noteSessionToolCall(sessionId, tool.name);
 
   let args: Record<string, unknown>;
   try {

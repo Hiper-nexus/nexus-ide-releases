@@ -24,7 +24,9 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import { redactSecretText } from '../terminal/command-redaction';
 import {
   exportMemoryVault,
+  exportMemoryVaultIncremental,
   projectionCounts,
+  projectionKindOf,
   projectionSignature,
   projectionTitle,
   removeCanonicalMemoryProjectionAt,
@@ -34,13 +36,42 @@ import {
   type CanonicalMemoryProjectionInput,
   type MemoryNote,
   type ProjectionCounts,
+  type VaultIndexEntry,
 } from './nexus-memory';
 import {
   collectProjectionEdits,
   type ProjectionEdit,
 } from './nexus-memory-ingest';
+import {
+  extractMemoryLinkTargets,
+  memorySubjectKey,
+  MISSION_LINK_PREFIX,
+} from './memory-links';
 
 export const MAX_MEMORY_CONTENT_BYTES = 8_192;
+
+/**
+ * Marcas de uma linha (F-800/F-808). `quarantine`: gravada por sessão
+ * read-only ou exposta à web — nunca entra em brief sem promoção do operador.
+ * `promoted`: o operador liberou a nota para o brief. `reverify`: um arquivo
+ * citado sumiu do checkout; a nota segue ativa, marcada.
+ */
+export const MEMORY_FLAGS = ['quarantine', 'promoted', 'reverify'] as const;
+export type MemoryFlag = (typeof MEMORY_FLAGS)[number];
+
+/** Alvo derivado da chave de assunto (`# Título`) gravado em memory_links. */
+export const SUBJECT_LINK_PREFIX = 'subject:';
+/** Versão do índice de arestas: mudar a extração força a reindexação. */
+const LINKS_INDEX_VERSION = '1';
+const LINKS_INDEX_META_KEY = 'links:index-version';
+
+/**
+ * Limite de taxa do retain de agente, por autoridade física (F-807): um
+ * agente em loop não pode multiplicar o custo de projeção/exportação. Um
+ * worker legítimo grava poucas pegadinhas por tarefa.
+ */
+export const AGENT_RETAIN_WINDOW_MS = 10 * 60_000;
+export const AGENT_RETAIN_MAX_PER_WINDOW = 20;
 
 export const MEMORY_KINDS = ['fact', 'decision', 'preference', 'note'] as const;
 export type MemoryKind = (typeof MEMORY_KINDS)[number];
@@ -70,6 +101,11 @@ const SUGGESTION_TITLE_MAX = 60;
  * viram UMA passada por raiz, agendada fora do caminho da gravação.
  */
 const PROJECTION_COALESCE_MS = 50;
+/**
+ * Debounce da exportação para a PASTA DO PROJETO (F-807): é disco do
+ * operador, opt-in, e nunca precisa refletir a gravação em tempo real.
+ */
+export const VAULT_EXPORT_DEBOUNCE_MS = 2_000;
 
 /** Trabalho acumulado para uma raiz até a próxima passada. */
 interface ProjectionBatch {
@@ -82,8 +118,12 @@ interface ProjectionBatch {
   check: boolean;
   /** Reconciliação completa (ingestão de edições, reescrita e colheita). */
   full: boolean;
-  /** Vault legível do checkout (F-769). */
-  vault: boolean;
+  /**
+   * Vault legível do checkout (F-769/F-806): ids alterados desde a última
+   * passada. A primeira passada de uma raiz no processo é completa.
+   */
+  readonly vaultIds: Set<string>;
+  vaultFull: boolean;
 }
 
 /** Fila serial de uma raiz: passadas da mesma raiz nunca se cruzam. */
@@ -134,6 +174,31 @@ export interface RetainResult {
   readonly deduped: boolean;
   /** True quando a redação de segredos alterou o conteúdo persistido. */
   readonly redacted: boolean;
+  /**
+   * Id da versão anterior do MESMO assunto (`# Título`, mesma fonte) que esta
+   * gravação substituiu (F-800); ausente quando nada foi substituído.
+   */
+  readonly supersededSubjectId?: string;
+}
+
+/**
+ * Contexto Main-derived de uma gravação. Nunca vem de argumento do agente:
+ * quem conhece a sessão (tools-memory, hook) decide.
+ */
+export interface RetainOptions {
+  /** Arestas extras Main-derived (ex.: `mission:<id>` do pane que gravou). */
+  readonly links?: readonly string[];
+  /**
+   * Motivo categórico de quarentena (sessão read-only, sessão exposta à web):
+   * a linha fica fora de todo brief até o operador promover.
+   */
+  readonly quarantine?: string | null;
+  /**
+   * False quando a gravação vem de contexto read-only/consulta: a projeção em
+   * userData segue normal, mas a exportação para a PASTA DO PROJETO nunca é
+   * disparada por ela (F-806).
+   */
+  readonly vault?: boolean;
 }
 
 export interface RecallInput {
@@ -163,6 +228,10 @@ export interface MemoryRecallHit {
    */
   readonly recallCount: number;
   readonly score: number;
+  /** Marcas ativas (quarantine/promoted/reverify); ausente quando não há. */
+  readonly flags?: readonly MemoryFlag[];
+  /** Detalhe da marca `reverify` (qual arquivo sumiu). */
+  readonly reverify?: string;
 }
 
 export interface MemoryBankStats {
@@ -187,10 +256,14 @@ export interface WorkspaceMemoryStoreOptions {
   /** Nexus-owned root receiving the generated `.nexus-memory/*.md` view. */
   readonly projectionRoot?: string;
   /**
-   * Raiz do checkout do workspace: quando presente, toda gravação também
-   * exporta o vault legível `<root>/.nexus-memory/` (F-769), best-effort.
+   * Raiz do checkout do workspace, FIXA na criação (F-806): é a única pasta
+   * de projeto que pode receber o vault legível `<root>/.nexus-memory/`, e só
+   * quando `vaultExportEnabled()` — a opção "Memória visível no projeto",
+   * desligada por padrão.
    */
   readonly workspaceRoot?: string;
+  /** Opt-in do operador para o vault na pasta do projeto. Default: Ajustes. */
+  readonly vaultExportEnabled?: () => boolean;
   readonly now?: () => number;
 }
 
@@ -271,6 +344,22 @@ CREATE TABLE IF NOT EXISTS memory_retention_skips (
 CREATE TABLE IF NOT EXISTS memory_retention_pending (
   id TEXT PRIMARY KEY, payload TEXT NOT NULL, created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS memory_meta (
+  key TEXT PRIMARY KEY, value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS memory_backfill_done (
+  key TEXT PRIMARY KEY, at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS memory_links (
+  memory_id TEXT NOT NULL, target TEXT NOT NULL,
+  PRIMARY KEY (memory_id, target)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_memory_links_target ON memory_links(target);
+CREATE TABLE IF NOT EXISTS memory_flags (
+  memory_id TEXT NOT NULL, flag TEXT NOT NULL, detail TEXT,
+  marked_at INTEGER NOT NULL,
+  PRIMARY KEY (memory_id, flag)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS memories (
   id               TEXT PRIMARY KEY,
   content          TEXT NOT NULL,
@@ -415,7 +504,13 @@ export class WorkspaceMemoryStore {
   readonly #projectionLanes = new Map<string, ProjectionLane>();
   /** Interrompe a passada em voo quando o store fecha. */
   readonly #projectionAbort = new AbortController();
-  #workspaceRoot: string | undefined;
+  /** Raiz do checkout, fixa na criação (F-806): nunca troca em leitura. */
+  readonly #workspaceRoot: string | undefined;
+  readonly #vaultExportEnabled: () => boolean;
+  /** Raízes que já receberam a exportação completa neste processo. */
+  readonly #vaultColdExported = new Set<string>();
+  /** Limite de taxa do retain de agente, por autoridade (F-807). */
+  readonly #agentRetainWindows = new Map<string, number[]>();
   #closed = false;
 
   constructor(options: WorkspaceMemoryStoreOptions) {
@@ -423,7 +518,10 @@ export class WorkspaceMemoryStore {
       throw new Error('workspace and global memory databases must be distinct files');
     }
     this.#now = options.now ?? Date.now;
-    this.#workspaceRoot = options.workspaceRoot;
+    this.#workspaceRoot = options.workspaceRoot
+      ? path.resolve(options.workspaceRoot)
+      : undefined;
+    this.#vaultExportEnabled = options.vaultExportEnabled ?? defaultVaultExportEnabled;
     const Constructor = loadDatabaseConstructor();
     this.#workspaceDb = this.#openDatabase(Constructor, options.workspaceDbPath);
     try {
@@ -435,6 +533,10 @@ export class WorkspaceMemoryStore {
     if (options.projectionRoot) {
       this.#registerProjectionRootBestEffort(options.projectionRoot);
     }
+    // Arestas (F-800/F-801): linhas gravadas antes do índice ganham as suas
+    // na abertura — uma vez por versão do índice, só nas linhas ativas.
+    this.#ensureLinksIndexed(this.#workspaceDb);
+    this.#ensureLinksIndexed(this.#globalDb);
     // F-768: retire only recognizable historical receipts with no substance.
     const legacyReceipts = this.#workspaceDb.prepare(`SELECT id, content FROM memories
       WHERE source = 'trusted:accepted-handoff' AND superseded_by IS NULL
@@ -580,42 +682,69 @@ export class WorkspaceMemoryStore {
    * Exporta a memória ativa do workspace como vault markdown legível em
    * `<projectRoot>/.nexus-memory/` (F-769): nomes por slug do título, um
    * INDEX por tipo, wikilinks para arquivos citados e `.gitignore` próprio.
-   * Visão morta e one-shot: o workspace nunca é registrado como raiz viva,
-   * então a ingestão de edições segue restrita às projeções em userData.
-   * Entra na fila da raiz, atrás de qualquer exportação agendada.
+   * Visão morta e one-shot, pedida EXPLICITAMENTE (tela Memória / opt-in):
+   * o workspace nunca é registrado como raiz viva, então a ingestão de
+   * edições segue restrita às projeções em userData. Entra na fila da raiz,
+   * atrás de qualquer exportação agendada.
    */
   async exportProjectionsToWorkspace(projectRoot: string): Promise<string> {
     this.#assertOpen();
-    return this.#onProjectionLane(path.resolve(projectRoot), () =>
-      exportMemoryVault(
-        projectRoot,
-        this.#activeProjectionRecords(),
-        undefined,
-        this.#projectionAbort.signal,
-      ),
-    );
-  }
-
-  /**
-   * Atualiza a raiz do checkout que recebe o vault legível (F-769). O store
-   * é compartilhado por todos os checkouts do projeto; a raiz mais recente
-   * vence, mantendo o vault perto de quem gravou por último.
-   */
-  noteWorkspaceRoot(root: string | undefined): void {
-    if (root) this.#workspaceRoot = root;
-  }
-
-  /** Exportação best-effort do vault: nunca derruba uma gravação de memória. */
-  async #exportVaultBestEffort(root: string): Promise<void> {
-    try {
-      await exportMemoryVault(
+    const root = path.resolve(projectRoot);
+    return this.#onProjectionLane(root, async () => {
+      const exported = await exportMemoryVault(
         root,
         this.#activeProjectionRecords(),
         undefined,
         this.#projectionAbort.signal,
       );
+      this.#vaultColdExported.add(root);
+      return exported;
+    });
+  }
+
+  /** Raiz do checkout fixada na criação; undefined fora de um workspace. */
+  get workspaceRoot(): string | undefined {
+    return this.#workspaceRoot;
+  }
+
+  /** O vault na pasta do projeto só existe com o opt-in do operador (F-806). */
+  vaultExportEnabled(): boolean {
+    try {
+      return this.#vaultExportEnabled() === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Exportação best-effort do vault: nunca derruba uma gravação de memória.
+   * A primeira passada de uma raiz no processo é completa (reconcilia o que
+   * mudou com o app fechado); as seguintes só tocam as notas do lote, os
+   * índices dos tipos afetados e os hubs das missões afetadas (F-807).
+   */
+  async #exportVaultBestEffort(root: string, batch: ProjectionBatch): Promise<void> {
+    try {
+      if (batch.vaultFull || !this.#vaultColdExported.has(root)) {
+        await exportMemoryVault(
+          root,
+          this.#activeProjectionRecords(),
+          undefined,
+          this.#projectionAbort.signal,
+        );
+        this.#vaultColdExported.add(root);
+        return;
+      }
+      if (batch.vaultIds.size === 0) return;
+      await exportMemoryVaultIncremental(
+        root,
+        this.#vaultDeltaFor([...batch.vaultIds]),
+        undefined,
+        this.#projectionAbort.signal,
+      );
     } catch (error) {
       if (this.#closed) return;
+      // Raiz não exportada por inteiro: a próxima passada reconcilia tudo.
+      this.#vaultColdExported.delete(root);
       console.warn(
         `[memory] could not export readable vault for ${path.basename(root)}:`,
         error instanceof Error ? error.message : error,
@@ -623,7 +752,76 @@ export class WorkspaceMemoryStore {
     }
   }
 
+  /**
+   * Delta de uma passada incremental: o estado ATUAL de cada id (ativo →
+   * escreve; esquecido/substituído → remove, com o nome derivado do conteúdo
+   * guardado), mais os índices dos tipos e os hubs das missões afetadas.
+   */
+  #vaultDeltaFor(ids: readonly string[]): {
+    readonly changed: CanonicalMemoryProjectionInput[];
+    readonly removed: CanonicalMemoryProjectionInput[];
+    readonly indexes: ReadonlyMap<MemoryNote['kind'], readonly VaultIndexEntry[]>;
+    readonly hubs: ReadonlyMap<string, readonly VaultIndexEntry[]>;
+  } {
+    const changed: CanonicalMemoryProjectionInput[] = [];
+    const removed: CanonicalMemoryProjectionInput[] = [];
+    const kinds = new Set<MemoryNote['kind']>();
+    const missions = new Set<string>();
+    const anyRow = this.#workspaceDb.prepare(
+      `SELECT id, content, kind, scope, importance, source,
+              created_at, updated_at, superseded_by
+       FROM memories
+       WHERE id = ? AND scope = 'workspace'`,
+    );
+    const missionLinks = this.#workspaceDb.prepare(
+      `SELECT target FROM memory_links WHERE memory_id = ? AND target LIKE '${MISSION_LINK_PREFIX}%'`,
+    );
+    for (const id of ids) {
+      const raw = anyRow.get(id) as
+        | (Record<string, unknown> & { superseded_by: string | null })
+        | undefined;
+      if (!raw) continue;
+      const { superseded_by: supersededBy, ...rest } = raw;
+      const record = this.#toProjectionInput(rest);
+      kinds.add(projectionKindOf(record));
+      for (const row of missionLinks.all(id) as Array<{ target: string }>) {
+        missions.add(row.target.slice(MISSION_LINK_PREFIX.length));
+      }
+      if (supersededBy === null) changed.push(this.#withReverify(record));
+      else removed.push(record);
+    }
+    const indexes = new Map<MemoryNote['kind'], VaultIndexEntry[]>();
+    const hubs = new Map<string, VaultIndexEntry[]>();
+    if (kinds.size > 0 || missions.size > 0) {
+      for (const kind of kinds) indexes.set(kind, []);
+      for (const mission of missions) hubs.set(mission, []);
+      const linked = this.#workspaceDb.prepare(
+        `SELECT memory_id FROM memory_links WHERE target = ?`,
+      );
+      const byMission = new Map<string, Set<string>>();
+      for (const mission of missions) {
+        byMission.set(
+          mission,
+          new Set(
+            (linked.all(`${MISSION_LINK_PREFIX}${mission}`) as Array<{ memory_id: string }>)
+              .map((row) => row.memory_id),
+          ),
+        );
+      }
+      for (const record of this.#activeProjectionRecords()) {
+        const entry = { record } as const;
+        const kind = projectionKindOf(record);
+        indexes.get(kind)?.push(entry);
+        for (const [mission, members] of byMission) {
+          if (members.has(record.id)) hubs.get(mission)!.push(entry);
+        }
+      }
+    }
+    return { changed, removed, indexes, hubs };
+  }
+
   #activeProjectionRecords(): CanonicalMemoryProjectionInput[] {
+    const reverify = this.#reverifyDetails();
     return this.#workspaceDb
       .prepare(
         `SELECT id, content, kind, scope, importance, source,
@@ -633,7 +831,25 @@ export class WorkspaceMemoryStore {
          ORDER BY created_at, id`,
       )
       .all()
-      .map((raw) => this.#toProjectionInput(raw));
+      .map((raw) => {
+        const record = this.#toProjectionInput(raw);
+        const detail = reverify.get(record.id);
+        return detail ? { ...record, reverify: detail } : record;
+      });
+  }
+
+  #reverifyDetails(): Map<string, string> {
+    const rows = this.#workspaceDb
+      .prepare(`SELECT memory_id, detail FROM memory_flags WHERE flag = 'reverify'`)
+      .all() as Array<{ memory_id: string; detail: string | null }>;
+    return new Map(rows.map((row) => [row.memory_id, row.detail ?? 'reverify']));
+  }
+
+  #withReverify(record: CanonicalMemoryProjectionInput): CanonicalMemoryProjectionInput {
+    const row = this.#workspaceDb
+      .prepare(`SELECT detail FROM memory_flags WHERE memory_id = ? AND flag = 'reverify'`)
+      .get(record.id) as { detail: string | null } | undefined;
+    return row ? { ...record, reverify: row.detail ?? 'reverify' } : record;
   }
 
   #toProjectionInput(raw: unknown): CanonicalMemoryProjectionInput {
@@ -659,7 +875,7 @@ export class WorkspaceMemoryStore {
          WHERE id = ? AND scope = 'workspace' AND superseded_by IS NULL`,
       )
       .get(id);
-    return raw ? this.#toProjectionInput(raw) : null;
+    return raw ? this.#withReverify(this.#toProjectionInput(raw)) : null;
   }
 
   // -------------------------------------------------------------------------
@@ -681,7 +897,13 @@ export class WorkspaceMemoryStore {
     mark: (batch: ProjectionBatch) => void,
   ): ProjectionLane {
     const lane = this.#projectionLane(root);
-    lane.batch ??= { ids: new Set(), check: false, full: false, vault: false };
+    lane.batch ??= {
+      ids: new Set(),
+      check: false,
+      full: false,
+      vaultIds: new Set(),
+      vaultFull: false,
+    };
     mark(lane.batch);
     return lane;
   }
@@ -690,13 +912,14 @@ export class WorkspaceMemoryStore {
   #scheduleProjection(
     root: string,
     mark: (batch: ProjectionBatch) => void,
+    delayMs = PROJECTION_COALESCE_MS,
   ): void {
     if (this.#closed) return;
     const lane = this.#markProjectionBatch(root, mark);
     if (lane.timer) return;
     lane.timer = setTimeout(() => {
       void this.#drainProjectionLane(root, lane);
-    }, PROJECTION_COALESCE_MS);
+    }, delayMs);
     lane.timer.unref?.();
   }
 
@@ -744,13 +967,21 @@ export class WorkspaceMemoryStore {
     }
   }
 
-  /** Vault legível do checkout (F-769), coalescido como a projeção. */
-  #scheduleVaultExport(): void {
+  /**
+   * Vault legível do checkout (F-769): só com o opt-in do operador, só na
+   * raiz fixada na criação, com debounce de 2 s e incremental (F-806/F-807).
+   * A pasta do projeto é disco do operador: a gravação em si nunca espera.
+   */
+  #scheduleVaultExport(ids: readonly string[]): void {
     const root = this.#workspaceRoot;
-    if (!root) return;
-    this.#scheduleProjection(path.resolve(root), (batch) => {
-      batch.vault = true;
-    });
+    if (!root || !this.vaultExportEnabled()) return;
+    this.#scheduleProjection(
+      root,
+      (batch) => {
+        for (const id of ids) batch.vaultIds.add(id);
+      },
+      VAULT_EXPORT_DEBOUNCE_MS,
+    );
   }
 
   /** Uma passada; best-effort — erro vira warn, nunca rejeita. */
@@ -765,8 +996,12 @@ export class WorkspaceMemoryStore {
     ) {
       await this.#reconcileProjectionRoot(root, batch);
     }
-    if (batch.vault && !this.#closed) {
-      await this.#exportVaultBestEffort(root);
+    if ((batch.vaultFull || batch.vaultIds.size > 0) && !this.#closed) {
+      // Opt-in reavaliado na passada: desligado entre a marca e a janela,
+      // nada é escrito na pasta do projeto.
+      if (root === this.#workspaceRoot && this.vaultExportEnabled()) {
+        await this.#exportVaultBestEffort(root, batch);
+      }
     }
   }
 
@@ -956,6 +1191,9 @@ export class WorkspaceMemoryStore {
            WHERE id = ? AND updated_at = ? AND superseded_by IS NULL`,
         )
         .run(content, hash, now, row.id, edit.baseUpdatedAt);
+      if (result.changes > 0) {
+        this.#replaceLinks(db, row.id, content, row.source, []);
+      }
       return result.changes > 0;
     })();
 
@@ -984,7 +1222,7 @@ export class WorkspaceMemoryStore {
    * (mesmo helper do histórico de terminal) antes de tocar o disco; retain de
    * conteúdo idêntico (hash normalizado) só renova updated_at.
    */
-  retain(rawInput: RetainInput): RetainResult {
+  retain(rawInput: RetainInput, options: RetainOptions = {}): RetainResult {
     this.#assertOpen();
     const input = retainInputSchema.parse(rawInput);
     if (Buffer.byteLength(input.content, 'utf8') > MAX_MEMORY_CONTENT_BYTES) {
@@ -1002,6 +1240,10 @@ export class WorkspaceMemoryStore {
     const hash = contentHash(content);
     const db = this.#dbFor(input.scope);
     const now = this.#now();
+    const source = redactMemorySource(input.source);
+    const extraLinks = (options.links ?? []).filter(
+      (target) => typeof target === 'string' && target.length > 0 && target.length <= 600,
+    );
 
     const transactionResult = db.transaction((): {
       readonly result: RetainResult;
@@ -1014,6 +1256,7 @@ export class WorkspaceMemoryStore {
         .get(hash) as { id: string } | undefined;
       let id: string;
       let deduped: boolean;
+      let supersededSubjectId: string | undefined;
       if (existing) {
         db.prepare('UPDATE memories SET updated_at = ? WHERE id = ?').run(
           now,
@@ -1021,6 +1264,9 @@ export class WorkspaceMemoryStore {
         );
         id = existing.id;
         deduped = true;
+        // O mesmo conteúdo gravado de outro contexto só soma arestas (ex.:
+        // mais uma missão); a marca de confiança da primeira gravação fica.
+        this.#addLinks(db, id, extraLinks);
       } else {
         id = `mem-${randomUUID()}`;
         db.prepare(
@@ -1035,11 +1281,27 @@ export class WorkspaceMemoryStore {
           input.kind,
           input.scope,
           input.importance,
-          redactMemorySource(input.source),
+          source,
           now,
           now,
         );
         deduped = false;
+        this.#replaceLinks(db, id, content, source, extraLinks);
+        if (options.quarantine) {
+          db.prepare(
+            `INSERT OR REPLACE INTO memory_flags(memory_id, flag, detail, marked_at)
+             VALUES (?, 'quarantine', ?, ?)`,
+          ).run(id, options.quarantine.slice(0, 120), now);
+        }
+        // F-800: versão nova do mesmo assunto, da MESMA fonte, substitui a
+        // anterior em vez de empilhar. Fonte diferente nunca é substituída
+        // por título — a autoridade de cada linha continua intacta.
+        if (!input.supersedes && source) {
+          const previous = this.#activeSameSubject(db, id, input.scope, source, content);
+          if (previous && this.#markSupersededInScope(input.scope, previous, id, now)) {
+            supersededSubjectId = previous;
+          }
+        }
       }
       const superseded =
         Boolean(input.supersedes) &&
@@ -1056,6 +1318,7 @@ export class WorkspaceMemoryStore {
           scope: input.scope,
           deduped,
           redacted: scrubbed.redacted,
+          ...(supersededSubjectId ? { supersededSubjectId } : {}),
         }),
         superseded,
       });
@@ -1064,15 +1327,13 @@ export class WorkspaceMemoryStore {
     // F-764: o SQLite acima é a fonte da verdade e já está gravado; a
     // projeção e o vault só são agendados — nada de fs no caminho da gravação.
     if (result.scope === 'workspace') {
-      this.#scheduleProjectionSync(result.id);
-      this.#scheduleVaultExport();
-    }
-    if (
-      transactionResult.superseded &&
-      input.scope === 'workspace' &&
-      input.supersedes
-    ) {
-      this.#scheduleProjectionSync(input.supersedes);
+      const touched = [result.id];
+      if (result.supersededSubjectId) touched.push(result.supersededSubjectId);
+      if (transactionResult.superseded && input.supersedes) touched.push(input.supersedes);
+      for (const id of touched) this.#scheduleProjectionSync(id);
+      // F-806: contexto read-only/consulta nunca dispara escrita na pasta do
+      // projeto; a projeção em userData acima já refletiu a gravação.
+      if (options.vault !== false) this.#scheduleVaultExport(touched);
     }
     return result;
   }
@@ -1081,14 +1342,18 @@ export class WorkspaceMemoryStore {
    * Agent-facing retention boundary. A worker may only replace an active
    * candidate authored by the same Main-derived physical authority in the
    * same memory bank. Trusted and foreign-origin rows remain immutable.
+   * F-807: limite de taxa por autoridade — um agente em loop para de gravar
+   * antes de multiplicar o custo de projeção.
    */
   retainAgentAuthored(
     rawInput: Omit<RetainInput, 'source'>,
     rawAuthority: AgentAuthoredMemoryAuthority,
+    options: RetainOptions = {},
   ): RetainResult {
     this.#assertOpen();
     const input = agentAuthoredRetainInputSchema.parse(rawInput);
     const authority = agentAuthoredAuthoritySchema.parse(rawAuthority);
+    this.#assertAgentRetainRate(authority.source);
     if (input.supersedes) {
       const db = this.#dbFor(input.scope);
       const target = this.#activeMemoryIdentity(db, input.supersedes);
@@ -1130,10 +1395,107 @@ export class WorkspaceMemoryStore {
         );
       }
     }
-    return this.retain({
-      ...input,
-      source: authority.source,
-    });
+    return this.retain(
+      {
+        ...input,
+        source: authority.source,
+      },
+      options,
+    );
+  }
+
+  /** Janela deslizante por autoridade; estoura → erro acionável, nada gravado. */
+  #assertAgentRetainRate(source: string): void {
+    const now = this.#now();
+    const floor = now - AGENT_RETAIN_WINDOW_MS;
+    const stamps = (this.#agentRetainWindows.get(source) ?? []).filter((at) => at > floor);
+    if (stamps.length >= AGENT_RETAIN_MAX_PER_WINDOW) {
+      this.#agentRetainWindows.set(source, stamps);
+      throw new Error(
+        `memory retain rate limit: at most ${AGENT_RETAIN_MAX_PER_WINDOW} retains per ` +
+          `${AGENT_RETAIN_WINDOW_MS / 60_000} min for this agent; consolidate what you ` +
+          'learned into fewer notes and retry later',
+      );
+    }
+    stamps.push(now);
+    this.#agentRetainWindows.set(source, stamps);
+    // Autoridades antigas não acumulam para sempre num processo longo.
+    if (this.#agentRetainWindows.size > 512) {
+      for (const [key, value] of this.#agentRetainWindows) {
+        if (value.every((at) => at <= floor)) this.#agentRetainWindows.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Linha ativa mais recente da mesma fonte com a mesma chave de assunto
+   * (`# Título`), distinta de `id`. Null sem heading ou com título genérico.
+   */
+  #activeSameSubject(
+    db: Database.Database,
+    id: string,
+    scope: MemoryScope,
+    source: string,
+    content: string,
+  ): string | null {
+    const subject = memorySubjectKey(content);
+    if (!subject) return null;
+    const row = db
+      .prepare(
+        `SELECT m.id FROM memory_links l
+         JOIN memories m ON m.id = l.memory_id
+         WHERE l.target = ? AND m.scope = ? AND m.source = ?
+           AND m.superseded_by IS NULL AND m.id != ?
+         ORDER BY m.created_at DESC, m.id DESC
+         LIMIT 1`,
+      )
+      .get(`${SUBJECT_LINK_PREFIX}${subject}`, scope, source, id) as { id: string } | undefined;
+    return row?.id ?? null;
+  }
+
+  /** Arestas derivadas do conteúdo/fonte + extras Main-derived; substitui as antigas. */
+  #replaceLinks(
+    db: Database.Database,
+    id: string,
+    content: string,
+    source: string | null,
+    extra: readonly string[],
+  ): void {
+    db.prepare('DELETE FROM memory_links WHERE memory_id = ?').run(id);
+    const targets = new Set(extractMemoryLinkTargets(content, source));
+    const subject = memorySubjectKey(content);
+    if (subject) targets.add(`${SUBJECT_LINK_PREFIX}${subject}`);
+    for (const target of extra) targets.add(target);
+    this.#addLinks(db, id, [...targets]);
+  }
+
+  #addLinks(db: Database.Database, id: string, targets: readonly string[]): void {
+    if (targets.length === 0) return;
+    const insert = db.prepare(
+      'INSERT OR IGNORE INTO memory_links(memory_id, target) VALUES (?, ?)',
+    );
+    for (const target of targets) insert.run(id, target);
+  }
+
+  /**
+   * Reindexa as arestas das linhas ativas uma vez por versão do índice: a
+   * memória gravada antes do F-800 passa a ter `file:`/`mission:`/`subject:`.
+   * Linhas ativas são poucas (centenas); o custo é o de uma abertura.
+   */
+  #ensureLinksIndexed(db: Database.Database): void {
+    const current = db
+      .prepare('SELECT value FROM memory_meta WHERE key = ?')
+      .get(LINKS_INDEX_META_KEY) as { value: string } | undefined;
+    if (current?.value === LINKS_INDEX_VERSION) return;
+    db.transaction(() => {
+      const rows = db
+        .prepare('SELECT id, content, source FROM memories WHERE superseded_by IS NULL')
+        .all() as Array<{ id: string; content: string; source: string | null }>;
+      for (const row of rows) this.#replaceLinks(db, row.id, row.content, row.source, []);
+      db.prepare(
+        'INSERT OR REPLACE INTO memory_meta(key, value) VALUES (?, ?)',
+      ).run(LINKS_INDEX_META_KEY, LINKS_INDEX_VERSION);
+    })();
   }
 
   /**
@@ -1235,20 +1597,270 @@ export class WorkspaceMemoryStore {
           a.row.id.localeCompare(b.row.id),
       )
       .slice(0, limit);
+    const flags = this.#flagsFor(db, scored.map(({ row }) => row.id));
     return scored.map(({ row, score }) =>
-      Object.freeze({
-        id: row.id,
-        content: row.content,
-        kind: row.kind,
-        scope: row.scope,
-        importance: row.importance,
-        source: row.source,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-        recallCount: row.recall_count,
-        score,
-      }),
+      this.#toHit(row, score, flags.get(row.id)),
     );
+  }
+
+  #toHit(
+    row: z.infer<typeof memoryRowSchema>,
+    score: number,
+    flags: ReadonlyArray<{ flag: MemoryFlag; detail: string | null }> | undefined,
+  ): MemoryRecallHit {
+    const reverify = flags?.find((entry) => entry.flag === 'reverify');
+    return Object.freeze({
+      id: row.id,
+      content: row.content,
+      kind: row.kind,
+      scope: row.scope,
+      importance: row.importance,
+      source: row.source,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      recallCount: row.recall_count,
+      score,
+      ...(flags && flags.length > 0
+        ? { flags: Object.freeze(flags.map((entry) => entry.flag)) }
+        : {}),
+      ...(reverify ? { reverify: reverify.detail ?? 'reverify' } : {}),
+    });
+  }
+
+  /** Marcas das linhas pedidas, num SELECT só. */
+  #flagsFor(
+    db: Database.Database,
+    ids: readonly string[],
+  ): Map<string, Array<{ flag: MemoryFlag; detail: string | null }>> {
+    const out = new Map<string, Array<{ flag: MemoryFlag; detail: string | null }>>();
+    if (ids.length === 0) return out;
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = db
+      .prepare(
+        `SELECT memory_id, flag, detail FROM memory_flags
+         WHERE memory_id IN (${placeholders})`,
+      )
+      .all(...ids) as Array<{ memory_id: string; flag: string; detail: string | null }>;
+    for (const row of rows) {
+      if (!(MEMORY_FLAGS as readonly string[]).includes(row.flag)) continue;
+      const list = out.get(row.memory_id) ?? [];
+      list.push({ flag: row.flag as MemoryFlag, detail: row.detail });
+      out.set(row.memory_id, list);
+    }
+    return out;
+  }
+
+  /**
+   * Recall por relação (F-801, "a hora de usar grafo"): as linhas ativas do
+   * workspace ligadas a qualquer dos alvos (`file:<caminho>` do raio de
+   * impacto, `mission:<id>`), sem consulta textual. Ordem: importância e
+   * recência; `excludeIds` tira o que o FTS já trouxe.
+   */
+  recallLinked(input: {
+    readonly targets: readonly string[];
+    readonly limit?: number;
+    readonly excludeIds?: readonly string[];
+    readonly trustedOnly?: boolean;
+  }): MemoryRecallHit[] {
+    this.#assertOpen();
+    const targets = [...new Set(input.targets)].filter(Boolean).slice(0, 128);
+    if (targets.length === 0) return [];
+    const limit = Math.max(1, Math.min(input.limit ?? 8, 32));
+    const exclude = new Set(input.excludeIds ?? []);
+    const placeholders = targets.map(() => '?').join(',');
+    const trustedFilter = input.trustedOnly ? "AND m.source LIKE 'trusted:%'" : '';
+    const rows = (
+      this.#workspaceDb
+        .prepare(
+          `SELECT DISTINCT m.id, m.content, m.kind, m.scope, m.importance, m.source,
+                  m.created_at, m.updated_at, m.recall_count, 0 AS rank
+           FROM memory_links l
+           JOIN memories m ON m.id = l.memory_id
+           WHERE l.target IN (${placeholders})
+             AND m.scope = 'workspace' AND m.superseded_by IS NULL
+             ${trustedFilter}
+           ORDER BY m.importance DESC, m.updated_at DESC, m.id ASC
+           LIMIT ?`,
+        )
+        .all(...targets, limit + exclude.size) as unknown[]
+    )
+      .map((raw) => memoryRowSchema.parse(raw))
+      .filter((row) => !exclude.has(row.id))
+      .slice(0, limit);
+    const flags = this.#flagsFor(this.#workspaceDb, rows.map((row) => row.id));
+    return rows.map((row) => this.#toHit(row, row.importance, flags.get(row.id)));
+  }
+
+  /** Dos ids dados, quais têm aresta com a missão (F-808: notas da MESMA missão). */
+  idsLinkedToMission(ids: readonly string[], missionId: string): Set<string> {
+    this.#assertOpen();
+    if (ids.length === 0) return new Set();
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = this.#workspaceDb
+      .prepare(
+        `SELECT memory_id FROM memory_links
+         WHERE target = ? AND memory_id IN (${placeholders})`,
+      )
+      .all(`${MISSION_LINK_PREFIX}${missionId}`, ...ids) as Array<{ memory_id: string }>;
+    return new Set(rows.map((row) => row.memory_id));
+  }
+
+  /** Alvos `file:`/`mission:`/… de uma linha, como gravados. */
+  linksOf(id: string): string[] {
+    this.#assertOpen();
+    const rows = this.#workspaceDb
+      .prepare('SELECT target FROM memory_links WHERE memory_id = ? ORDER BY target')
+      .all(id) as Array<{ target: string }>;
+    return rows.map((row) => row.target);
+  }
+
+  // -------------------------------------------------------------------------
+  // Marcas (F-800/F-808) e metadados de manutenção.
+  // -------------------------------------------------------------------------
+
+  /** Marca uma linha ativa do workspace; substitui o detalhe anterior da mesma marca. */
+  flagMemory(id: string, flag: MemoryFlag, detail?: string | null): boolean {
+    this.#assertOpen();
+    const active = this.#workspaceDb
+      .prepare(`SELECT 1 FROM memories WHERE id = ? AND superseded_by IS NULL`)
+      .get(id);
+    if (!active) return false;
+    this.#workspaceDb
+      .prepare(
+        `INSERT OR REPLACE INTO memory_flags(memory_id, flag, detail, marked_at)
+         VALUES (?, ?, ?, ?)`,
+      )
+      .run(id, flag, detail ? detail.slice(0, 512) : null, this.#now());
+    this.#scheduleProjectionSync(id);
+    this.#scheduleVaultExport([id]);
+    return true;
+  }
+
+  unflagMemory(id: string, flag: MemoryFlag): boolean {
+    this.#assertOpen();
+    const changed =
+      this.#workspaceDb
+        .prepare('DELETE FROM memory_flags WHERE memory_id = ? AND flag = ?')
+        .run(id, flag).changes > 0;
+    if (changed) {
+      this.#scheduleProjectionSync(id);
+      this.#scheduleVaultExport([id]);
+    }
+    return changed;
+  }
+
+  /**
+   * Promoção pelo operador (F-808): a nota em quarentena passa a poder entrar
+   * no brief de qualquer pane deste projeto. Só a tela Memória chama isto.
+   */
+  promoteMemory(id: string): boolean {
+    this.#assertOpen();
+    if (!this.flagMemory(id, 'promoted')) return false;
+    this.unflagMemory(id, 'quarantine');
+    return true;
+  }
+
+  /** Marcas das linhas pedidas (workspace), para a injeção e a tela Memória. */
+  flagsOf(ids: readonly string[]): ReadonlyMap<string, readonly MemoryFlag[]> {
+    this.#assertOpen();
+    const out = new Map<string, readonly MemoryFlag[]>();
+    for (const [id, entries] of this.#flagsFor(this.#workspaceDb, ids)) {
+      out.set(id, Object.freeze(entries.map((entry) => entry.flag)));
+    }
+    return out;
+  }
+
+  getMeta(key: string): string | null {
+    this.#assertOpen();
+    const row = this.#workspaceDb
+      .prepare('SELECT value FROM memory_meta WHERE key = ?')
+      .get(key) as { value: string } | undefined;
+    return row?.value ?? null;
+  }
+
+  setMeta(key: string, value: string): void {
+    this.#assertOpen();
+    this.#workspaceDb
+      .prepare('INSERT OR REPLACE INTO memory_meta(key, value) VALUES (?, ?)')
+      .run(key, value);
+  }
+
+  isBackfillDone(key: string): boolean {
+    this.#assertOpen();
+    return Boolean(
+      this.#workspaceDb.prepare('SELECT 1 FROM memory_backfill_done WHERE key = ?').get(key),
+    );
+  }
+
+  markBackfillDone(keys: readonly string[]): void {
+    this.#assertOpen();
+    if (keys.length === 0) return;
+    const now = this.#now();
+    const insert = this.#workspaceDb.prepare(
+      'INSERT OR IGNORE INTO memory_backfill_done(key, at) VALUES (?, ?)',
+    );
+    this.#workspaceDb.transaction(() => {
+      for (const key of keys) insert.run(key, now);
+    })();
+  }
+
+  /**
+   * Expiração por tipo (F-800): `session-digest` que nunca chegou a um
+   * contexto (recall_count = 0) e passou da idade vira tombstone `forgotten`.
+   * Devolve os ids esquecidos. Outros tipos não expiram — só são substituídos.
+   */
+  expireUnrecalledSessionDigests(maxAgeMs: number): string[] {
+    this.#assertOpen();
+    const now = this.#now();
+    const rows = this.#workspaceDb
+      .prepare(
+        `SELECT id FROM memories
+         WHERE scope = 'workspace' AND source = 'trusted:session-digest'
+           AND superseded_by IS NULL AND recall_count = 0 AND created_at < ?`,
+      )
+      .all(now - maxAgeMs) as Array<{ id: string }>;
+    const ids = rows.map((row) => row.id);
+    for (const id of ids) this.forget(id);
+    return ids;
+  }
+
+  /**
+   * Linhas ativas do workspace com arestas `file:` — a lista que a manutenção
+   * confere contra o checkout para marcar "a reverificar" (F-800).
+   */
+  activeFileLinked(kind?: MemoryKind, limit = 2_000): Array<{ id: string; files: string[] }> {
+    this.#assertOpen();
+    const kindFilter = kind ? 'AND m.kind = ?' : '';
+    const params: Array<string | number> = kind ? [kind, limit] : [limit];
+    const rows = this.#workspaceDb
+      .prepare(
+        `SELECT l.memory_id AS id, l.target AS target
+         FROM memory_links l JOIN memories m ON m.id = l.memory_id
+         WHERE l.target LIKE 'file:%' AND m.scope = 'workspace'
+           AND m.superseded_by IS NULL ${kindFilter}
+         ORDER BY m.created_at, l.target
+         LIMIT ?`,
+      )
+      .all(...params) as Array<{ id: string; target: string }>;
+    const grouped = new Map<string, string[]>();
+    for (const row of rows) {
+      const files = grouped.get(row.id) ?? [];
+      files.push(row.target.slice('file:'.length));
+      grouped.set(row.id, files);
+    }
+    return [...grouped].map(([id, files]) => ({ id, files }));
+  }
+
+  /** Linhas ativas do workspace de uma fonte (id + conteúdo), para reconciliação. */
+  activeBySource(source: string): Array<{ id: string; content: string }> {
+    this.#assertOpen();
+    return this.#workspaceDb
+      .prepare(
+        `SELECT id, content FROM memories
+         WHERE scope = 'workspace' AND source = ? AND superseded_by IS NULL
+         ORDER BY created_at, id`,
+      )
+      .all(source) as Array<{ id: string; content: string }>;
   }
 
   /**
@@ -1265,7 +1877,7 @@ export class WorkspaceMemoryStore {
     );
     if (forgotten) {
       this.#scheduleProjectionSync(id);
-      this.#scheduleVaultExport();
+      this.#scheduleVaultExport([id]);
     }
     return forgotten;
   }
@@ -1298,7 +1910,7 @@ export class WorkspaceMemoryStore {
     const forgotten = result.changes > 0;
     if (forgotten && input.scope === 'workspace') {
       this.#scheduleProjectionSync(input.id);
-      this.#scheduleVaultExport();
+      this.#scheduleVaultExport([input.id]);
     }
     return forgotten;
   }
@@ -1519,7 +2131,13 @@ export class WorkspaceMemoryStore {
    */
   activeWorkspaceMetas(): ReadonlyMap<
     string,
-    { source: string | null; createdAt: number; updatedAt: number }
+    {
+      source: string | null;
+      createdAt: number;
+      updatedAt: number;
+      flags: readonly MemoryFlag[];
+      reverify: string | null;
+    }
   > {
     this.#assertOpen();
     const rows = this.#workspaceDb
@@ -1534,15 +2152,21 @@ export class WorkspaceMemoryStore {
       created_at: number;
       updated_at: number;
     }>;
+    const flags = this.#flagsFor(this.#workspaceDb, rows.map((row) => row.id));
     return new Map(
-      rows.map((row) => [
-        row.id,
-        {
-          source: row.source,
-          createdAt: row.created_at,
-          updatedAt: row.updated_at,
-        },
-      ]),
+      rows.map((row) => {
+        const entries = flags.get(row.id) ?? [];
+        return [
+          row.id,
+          {
+            source: row.source,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+            flags: Object.freeze(entries.map((entry) => entry.flag)),
+            reverify: entries.find((entry) => entry.flag === 'reverify')?.detail ?? null,
+          },
+        ];
+      }),
     );
   }
 
@@ -1657,10 +2281,29 @@ export function resolveWorkspaceMemoryPaths(
 export interface WorkspaceMemoryRuntimeOptions {
   readonly baseDir: string;
   readonly now?: () => number;
+  /** Opt-in do vault na pasta do projeto; default lê Ajustes (desligado). */
+  readonly vaultExportEnabled?: () => boolean;
 }
 
 let runtimeOptions: WorkspaceMemoryRuntimeOptions | null = null;
 const storesByProject = new Map<string, WorkspaceMemoryStore>();
+
+/**
+ * "Memória visível no projeto (abre no Obsidian)" — Ajustes, padrão
+ * DESLIGADO (F-806). Fora do Electron/sem settings: desligado.
+ */
+function defaultVaultExportEnabled(): boolean {
+  try {
+    // Require tardio: o settings-store carrega `electron` no topo.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const settings = require('../persistence/settings-store') as {
+      getOrchSettings?: () => { workspaceMemoryVaultExport?: boolean };
+    };
+    return settings.getOrchSettings?.().workspaceMemoryVaultExport === true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Configura a base de armazenamento da memória (testes: tmpdir; produção:
@@ -1694,11 +2337,11 @@ export function getWorkspaceMemoryStore(
   scope: Pick<ProjectExecutionScope, 'projectId'> &
     Partial<Omit<ProjectExecutionScope, 'projectId'>>,
 ): WorkspaceMemoryStore {
+  // F-806: a raiz do vault é a do PRIMEIRO escopo que abriu o store neste
+  // processo (o workspace aberto); leituras a partir de worktrees de abas
+  // nunca a movem.
   const cached = storesByProject.get(scope.projectId);
-  if (cached) {
-    cached.noteWorkspaceRoot(scope.rootRealPath);
-    return cached;
-  }
+  if (cached) return cached;
   runtimeOptions ??= defaultRuntimeOptions();
   const paths = resolveWorkspaceMemoryPaths(runtimeOptions.baseDir, scope);
   fs.mkdirSync(paths.projectionRoot, {
@@ -1709,6 +2352,9 @@ export function getWorkspaceMemoryStore(
     ...paths,
     ...(scope.rootRealPath ? { workspaceRoot: scope.rootRealPath } : {}),
     ...(runtimeOptions.now ? { now: runtimeOptions.now } : {}),
+    ...(runtimeOptions.vaultExportEnabled
+      ? { vaultExportEnabled: runtimeOptions.vaultExportEnabled }
+      : {}),
   });
   storesByProject.set(scope.projectId, store);
   // First open after boot is a retry opportunity, independently of new handoffs.
