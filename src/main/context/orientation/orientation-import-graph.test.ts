@@ -90,6 +90,53 @@ describe('orientation import graph + blast radius + bootstrap (P1–P4)', () => 
     ).toBe(false);
   });
 
+  it('F-812: PRODUCT.md gravado pela 0.76.190 (marcador v1) mantém a revisão mecânica do bootstrap', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-greenfield-v1-')));
+    const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-greenfield-v1-cache-'));
+    roots.push(root, cacheRoot);
+    const scope = scopeFor(root);
+    // Template literal do commit 32230db8 (0.76.190), sem a seção de stack.
+    const legacyV1Brief = [
+      '# Approved product brief',
+      '',
+      '<!-- nexus-guided-greenfield-brief:v1 -->',
+      '',
+      'Nexus projected this source brief from the exact mission intent approved by the user.',
+      'Only the JSON envelope below is product authority.',
+      '',
+      '## Exact approved intent',
+      '',
+      '```json',
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: 'nexus-guided-greenfield-approved-intent',
+        goal: 'Entregar o produto aprovado',
+        acceptanceCriteria: ['O fluxo aprovado funciona de ponta a ponta'],
+      }),
+      '```',
+      '',
+      '## Explicit unknowns',
+      '',
+      '- Target users, domain vocabulary, business model, pricing, billing, tenancy, legal and regulatory requirements are unknown unless stated in the approved intent.',
+      '- Language, runtime, framework, dependencies, architecture, data model, deployment target and verification commands are not selected yet.',
+      '- Any product or technical choice not present in the exact approved intent remains undecided and requires governed implementation evidence.',
+      '',
+    ].join('\n');
+    write(root, GUIDED_GREENFIELD_BRIEF_PATH, legacyV1Brief);
+
+    const map = await new ProjectOrientationService({
+      cacheRoot,
+      includeContextSummary: false,
+    }).ensure(scope, { reason: 'mcp' });
+    const proposals = buildContextBootstrapProposals(scope, map);
+
+    expect(proposals).toHaveLength(6);
+    expect(
+      proposals.every((proposal) =>
+        isMechanicallyReviewableBootstrapProposal(scope, proposal)),
+    ).toBe(true);
+  });
+
   it('builds import edges and expands blast radius', async () => {
     const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-igraph-')));
     const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-igraph-cache-'));
