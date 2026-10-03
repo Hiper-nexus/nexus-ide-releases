@@ -16,6 +16,8 @@ import {
 import { grantWorkspacePathFromTrustedMain } from "./persistence/workspace-store";
 import { createRealPtyHost } from "./pty/pty-host-client";
 import { proveDarwinPtyPipelineForSmoke } from "./pty/darwin-pty-smoke";
+import { isSmokeBusyBannerProbeRequested, proveMountedBusyBannerForSmoke } from './hang-watchdog/smoke-busy-banner';
+import { SMOKE_HANG_PROBE_BLOCK_MS } from './hang-watchdog/smoke-hang-probe';
 
 
 
@@ -33,6 +35,11 @@ export function initSmokeTest(): void {
   if (!isCurrentProcessSmokeTest()) {
     return;
   }
+  const busyBannerProbe = isSmokeBusyBannerProbeRequested({
+    smokeTest: true, env: process.env, userDataPath: app.getPath('userData'),
+  });
+  // The forty-second live-renderer hang must not consume the ordinary functional deadline.
+  const smokeTimeoutMs = SMOKE_TIMEOUT_MS + (busyBannerProbe ? SMOKE_HANG_PROBE_BLOCK_MS + 10_000 : 0);
 
   const settle = createSmokeSettler(
     (code) =>
@@ -58,9 +65,9 @@ export function initSmokeTest(): void {
   setTimeout(() => {
     settle(
       "timeout",
-      `functional smoke did not complete within ${SMOKE_TIMEOUT_MS}ms`,
+      `functional smoke did not complete within ${smokeTimeoutMs}ms`,
     );
-  }, SMOKE_TIMEOUT_MS);
+  }, smokeTimeoutMs);
 
   app.on("browser-window-created", (_event, win) => {
     const wc = win.webContents;
@@ -133,7 +140,13 @@ export function initSmokeTest(): void {
       }
       console.log("[smoke] renderer-mounted");
       void darwinPtyPipelineProof
-        .then(() => {
+        .then(async () => {
+          if (busyBannerProbe) {
+            await proveMountedBusyBannerForSmoke(win, {
+              ipc: ipcMain, userData: app.getPath('userData'), appVersion: app.getVersion(),
+              packaged: app.isPackaged, smokeTest: true,
+            });
+          }
           const workspacePath = path.join(
             app.getPath("userData"),
             "functional-smoke-workspace",

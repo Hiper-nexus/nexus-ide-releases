@@ -121,22 +121,26 @@ try {
     smokeTest: isCurrentProcessSmokeTest(),
     env: process.env,
   });
+  const busyBannerProbe = isSmokeBusyBannerProbeRequested({
+    smokeTest: isCurrentProcessSmokeTest(), env: process.env, userDataPath: app.getPath('userData'),
+  });
+  const smokeHangWatchdog = hangProbe || busyBannerProbe;
   // Hang watchdog (campanha 0.50, C7; F-764 A.1): main pendurada vira marker
   // em disco e `.cpuprofile` do que ela estava rodando. Só empacotado — dev
   // pausa em debugger por design (doutrina Orca) — ou no probe do smoke.
-  if (app.isPackaged || hangProbe) {
+  if (app.isPackaged || smokeHangWatchdog) {
     hangWatchdog = startMainThreadHangWatchdog({
       logsDir: path.join(app.getPath("userData"), "logs"),
       version: app.getVersion(),
       runtimeContext: sampleHangRuntimeContext,
-      ...(hangProbe
+      ...(smokeHangWatchdog
         ? { tuning: SMOKE_HANG_PROBE_TUNING, heartbeatMs: SMOKE_HANG_PROBE_HEARTBEAT_MS }
         : {}),
       // A worker grava o histórico sozinha; quando a main volta, as mesmas
       // linhas entram no trace — o pós-mortem lê uma linha do tempo só.
       onRecord: (record) => {
         trace({ ...record });
-        if (hangProbe) console.log(describeHangRecordForSmoke(record));
+        if (smokeHangWatchdog) console.log(describeHangRecordForSmoke(record));
       },
     });
   }
@@ -499,6 +503,7 @@ import {
   induceSmokeMainHang,
   isSmokeHangProbeRequested,
 } from "./hang-watchdog/smoke-hang-probe";
+import { isSmokeBusyBannerProbeRequested } from './hang-watchdog/smoke-busy-banner';
 import {
   startEventLoopMonitor,
   stopEventLoopMonitor,

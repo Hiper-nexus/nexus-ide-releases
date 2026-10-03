@@ -34,6 +34,8 @@ import type { ScreenCaptureMetadata } from '../shared/vision-ipc';
 import { getAxTree, performAxAction } from './ax-tree';
 import { PTY_GAP_NOTICE, PtyGapBuffer } from './pty-gap-buffer';
 import { runFunctionalSmokeProbes } from './functional-smoke';
+import { observeBusyBannerForSmoke } from './busy-banner-smoke';
+import { BUSY_BANNER_SMOKE_CHANNELS, isBusyBannerSmokeNonce } from '../shared/busy-banner-smoke';
 import { UPDATE_CHANNELS } from '../shared/update-ipc';
 import type { UpdateState } from '../shared/update-ipc';
 import { ORCH_CHANNELS } from '../shared/orch-channels';
@@ -1494,6 +1496,19 @@ const api: NexusApi = {
   platform: process.platform,
   windowsBuild: windowsBuildNumber(),
 };
+
+// Main alone emits this test-only event, after React mounts in a private smoke
+// launch. There is deliberately no renderer-callable method on window.nexus.
+let busyBannerSmokeStarted = false;
+ipcRenderer.on(BUSY_BANNER_SMOKE_CHANNELS.run, (_event, payload: unknown) => {
+  if (busyBannerSmokeStarted || typeof payload !== 'object' || payload === null ||
+      Object.keys(payload).length !== 1 || !isBusyBannerSmokeNonce((payload as { nonce?: unknown }).nonce)) return;
+  busyBannerSmokeStarted = true;
+  const nonce = (payload as { nonce: string }).nonce;
+  void observeBusyBannerForSmoke(nonce, ready => ipcRenderer.send(BUSY_BANNER_SMOKE_CHANNELS.ready, ready))
+    .then(result => ipcRenderer.send(BUSY_BANNER_SMOKE_CHANNELS.result, result))
+    .catch(() => ipcRenderer.send(BUSY_BANNER_SMOKE_CHANNELS.result, { nonce, failed: true }));
+});
 
 let functionalSmokeStarted = false;
 ipcRenderer.on(WINDOW_CHANNELS.functionalSmokeRun, (_event, payload: unknown) => {

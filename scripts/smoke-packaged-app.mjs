@@ -1675,6 +1675,15 @@ async function main() {
   }
 
   const args = process.argv.slice(2);
+  if (args.includes('--verify-busy-banner-probe')) {
+    const { parseBusyBannerArguments, runPackagedBusyBannerProbe } = await import('./smoke-packaged-busy-banner.mjs');
+    const options = parseBusyBannerArguments(args);
+    const target = options.app ?? defaultPackagedTargetPath({ platform, arch });
+    const probe = resolvePackagedTarget(target, { platform, arch });
+    const targetArch = detectPackagedTargetArch(probe.binary, { platform, fallbackArch: arch });
+    await runPackagedBusyBannerProbe(target, { expectedVersion: options.expectedVersion, evidenceDir: options.evidenceDir, platform, arch: targetArch });
+    return;
+  }
   if (args.includes('--verify-hang-probe')) {
     // F-764 A.1: o watchdog perfila a main presa DENTRO do binário de release.
     const { parseHangProbeArguments, runPackagedHangProbe } = await import('./smoke-packaged-hang-probe.mjs');
