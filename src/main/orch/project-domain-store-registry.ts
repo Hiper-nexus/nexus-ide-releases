@@ -1,5 +1,6 @@
 import type { ProjectExecutionScope } from "../../shared/types";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
+import { startWorkspaceMemoryService, type WorkspaceMemoryService } from '../memory/workspace-memory-service';
 import {
   createScopedHandoffStore,
   type ScopedHandoffStore,
@@ -180,13 +181,16 @@ export class ProjectDomainStoreRegistry {
 }
 
 let configuredRegistry: ProjectDomainStoreRegistry | null = null;
+let memoryService: WorkspaceMemoryService | null = null;
 
 /** Installation-level service locator for main-process subsystems without IPC ownership. */
 export function configureProjectDomainStoreRegistry(
   runtimeManager: ProjectRuntimeManager,
 ): ProjectDomainStoreRegistry {
   configuredRegistry?.dispose();
+  void memoryService?.stop();
   configuredRegistry = new ProjectDomainStoreRegistry(runtimeManager);
+  memoryService = startWorkspaceMemoryService(configuredRegistry);
   return configuredRegistry;
 }
 
@@ -207,6 +211,8 @@ export function requireProjectDomainStoreRegistry(): ProjectDomainStoreRegistry 
 }
 
 export function disposeProjectDomainStoreRegistry(): void {
+  void memoryService?.stop();
+  memoryService = null;
   configuredRegistry?.dispose();
   configuredRegistry = null;
 }

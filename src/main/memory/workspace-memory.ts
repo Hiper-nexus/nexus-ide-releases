@@ -1493,20 +1493,29 @@ export class WorkspaceMemoryStore {
    * memória gravada antes do F-800 passa a ter `file:`/`mission:`/`subject:`.
    * Linhas ativas são poucas (centenas); o custo é o de uma abertura.
    */
-  #ensureLinksIndexed(db: Database.Database): void {
+  #ensureLinksIndexed(db: Database.Database, limit = 32): void {
     const current = db
       .prepare('SELECT value FROM memory_meta WHERE key = ?')
       .get(LINKS_INDEX_META_KEY) as { value: string } | undefined;
     if (current?.value === LINKS_INDEX_VERSION) return;
     db.transaction(() => {
+      const cursorKey = `links:index-cursor:${LINKS_INDEX_VERSION}`;
+      const cursor = (db.prepare('SELECT value FROM memory_meta WHERE key = ?').get(cursorKey) as { value: string } | undefined)?.value ?? '';
       const rows = db
-        .prepare('SELECT id, content, source FROM memories WHERE superseded_by IS NULL')
-        .all() as Array<{ id: string; content: string; source: string | null }>;
+        .prepare('SELECT id, content, source FROM memories WHERE superseded_by IS NULL AND id > ? ORDER BY id LIMIT ?')
+        .all(cursor, limit) as Array<{ id: string; content: string; source: string | null }>;
       for (const row of rows) this.#replaceLinks(db, row.id, row.content, row.source, []);
       db.prepare(
         'INSERT OR REPLACE INTO memory_meta(key, value) VALUES (?, ?)',
-      ).run(LINKS_INDEX_META_KEY, LINKS_INDEX_VERSION);
+      ).run(rows.length < limit ? LINKS_INDEX_META_KEY : cursorKey,
+        rows.length < limit ? LINKS_INDEX_VERSION : rows.at(-1)!.id);
     })();
+  }
+
+  indexHistoricalLinksBatch(): void {
+    this.#assertOpen();
+    this.#ensureLinksIndexed(this.#workspaceDb);
+    this.#ensureLinksIndexed(this.#globalDb);
   }
 
   /**
@@ -1820,19 +1829,39 @@ export class WorkspaceMemoryStore {
    * contexto (recall_count = 0) e passou da idade vira tombstone `forgotten`.
    * Devolve os ids esquecidos. Outros tipos não expiram — só são substituídos.
    */
-  expireUnrecalledSessionDigests(maxAgeMs: number): string[] {
+  expireUnrecalledSessionDigests(maxAgeMs: number, limit = 32): string[] {
     this.#assertOpen();
     const now = this.#now();
     const rows = this.#workspaceDb
       .prepare(
         `SELECT id FROM memories
          WHERE scope = 'workspace' AND source = 'trusted:session-digest'
-           AND superseded_by IS NULL AND recall_count = 0 AND created_at < ?`,
+           AND superseded_by IS NULL AND recall_count = 0 AND created_at < ?
+         ORDER BY created_at, id LIMIT ?`,
       )
-      .all(now - maxAgeMs) as Array<{ id: string }>;
+      .all(now - maxAgeMs, Math.max(1, Math.min(limit, 128))) as Array<{ id: string }>;
     const ids = rows.map((row) => row.id);
     for (const id of ids) this.forget(id);
     return ids;
+  }
+
+  /** Keyset pages rotate fairly; each fact has at most MAX_LINK_TARGETS links. */
+  fileLinkedFactPage(afterId = '', limit = 16): Array<{ id: string; files: string[]; reverify: string | null }> {
+    this.#assertOpen();
+    const rows = this.#workspaceDb.prepare(`SELECT m.id, l.target, f.detail
+      FROM memories m JOIN memory_links l ON l.memory_id = m.id AND l.target LIKE 'file:%'
+      LEFT JOIN memory_flags f ON f.memory_id = m.id AND f.flag = 'reverify'
+      WHERE m.id IN (SELECT m2.id FROM memories m2
+        WHERE m2.id > ? AND m2.kind = 'fact' AND m2.scope = 'workspace' AND m2.superseded_by IS NULL
+          AND EXISTS (SELECT 1 FROM memory_links l2 WHERE l2.memory_id = m2.id AND l2.target LIKE 'file:%')
+        ORDER BY m2.id LIMIT ?)
+      ORDER BY m.id, l.target`).all(afterId, Math.max(1, Math.min(limit, 32))) as Array<{ id: string; target: string; detail: string | null }>;
+    const grouped = new Map<string, { id: string; files: string[]; reverify: string | null }>();
+    for (const row of rows) {
+      const record = grouped.get(row.id) ?? { id: row.id, files: [], reverify: row.detail };
+      record.files.push(row.target.slice(5)); grouped.set(row.id, record);
+    }
+    return [...grouped.values()];
   }
 
   /**
