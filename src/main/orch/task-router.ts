@@ -696,6 +696,22 @@ function tokenSequenceMatcher(tokens: readonly string[]): RegExp {
   return new RegExp(`(?<![a-z0-9])${tokens.map(escapeRegExp).join('[^a-z0-9]?')}(?![a-z0-9])`, 'gu');
 }
 
+/**
+ * Só no casamento de menção: "qwen3" vira família + número ("qwen", "3").
+ * Sem isso o token tem dígito, não passa em /^[a-z]{3,}$/, e max/flash/preview
+ * são genéricos — nenhum Qwen é pedido por texto. O id do modelo não muda.
+ */
+function mentionTokens(model: string): string[] {
+  return model
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .flatMap((token) => {
+      const parts = token.match(/[a-z]+|\d+/g);
+      return parts && parts.length > 1 ? parts : [token];
+    });
+}
+
 interface MentionHit {
   readonly adapterId: string;
   readonly model: string;
@@ -744,7 +760,7 @@ export function mentionedRoute(
       adapterId: adapter.id,
       model,
       installed: adapter.installed,
-      tokens: model.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean),
+      tokens: mentionTokens(model),
     })),
   );
   // Token isolado só identifica um modelo se for único entre as CLIs INSTALADAS

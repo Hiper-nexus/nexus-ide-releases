@@ -107,6 +107,40 @@ describe('modelo e esforço citados no texto (inventário builtin completo)', ()
       .toEqual({ adapterId: 'codex', model: 'codex-auto-review' });
   });
 
+  it('F-767: "qwen3.8-max" casa a família; ids que já casavam continuam', () => {
+    // Vários Qwen compartilham o token "qwen3" — sozinho ele não é distintivo,
+    // e max/flash/plus/preview são genéricos. Sem partir letra+dígito, nada casa.
+    const adapters: AdapterAvailability[] = [
+      {
+        id: 'qwen',
+        installed: true,
+        models: ['qwen3.8-max', 'qwen3.8-max-preview', 'qwen3.6-flash', 'qwen3.6-plus'],
+      },
+      { id: 'kimi', installed: true, models: ['kimi-code/k3'] },
+      { id: 'codex', installed: true, models: ['gpt-6.1-sol', 'gpt-6-sol'] },
+      { id: 'devin', installed: true, models: ['swe-2-high'] },
+      { id: 'mimo-code', installed: true, models: ['xiaomi/mimo-v2.6-pro', 'xiaomi/mimo-v2.6-flash'] },
+      { id: 'muse', installed: true, models: ['muse-spark-1.3'] },
+      { id: 'claude', installed: true, models: ['claude-opus-5-5', 'claude-opus-5'] },
+    ];
+    expect(mentionedRoute('com o qwen3.8-max', adapters).model)
+      .toEqual({ adapterId: 'qwen', model: 'qwen3.8-max' });
+    expect(mentionedRoute('com o qwen3.6-flash', adapters).model)
+      .toEqual({ adapterId: 'qwen', model: 'qwen3.6-flash' });
+    expect(mentionedRoute('com o kimi-code/k3', adapters).model)
+      .toEqual({ adapterId: 'kimi', model: 'kimi-code/k3' });
+    expect(mentionedRoute('com o gpt-6.1-sol', adapters).model)
+      .toEqual({ adapterId: 'codex', model: 'gpt-6.1-sol' });
+    expect(mentionedRoute('com o swe-2-high', adapters).model)
+      .toEqual({ adapterId: 'devin', model: 'swe-2-high' });
+    expect(mentionedRoute('com o xiaomi/mimo-v2.6-pro', adapters).model)
+      .toEqual({ adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro' });
+    expect(mentionedRoute('com o muse-spark-1.3', adapters).model)
+      .toEqual({ adapterId: 'muse', model: 'muse-spark-1.3' });
+    expect(mentionedRoute('com o claude-opus-5-5', adapters).model)
+      .toEqual({ adapterId: 'claude', model: 'claude-opus-5-5' });
+  });
+
   it('modelo só de CLI ausente vira "indisponível" e não pina', () => {
     const semCodex = inventory(['claude', 'grok']);
     expect(mentionedRoute(ASTRA_REVIEW, semCodex)).toEqual({ unavailable: 'codex:gpt-6-astra', effort: 'xhigh' });
