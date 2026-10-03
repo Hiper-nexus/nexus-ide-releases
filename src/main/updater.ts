@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { runPeriodicTask, stopPeriodicTask } from './observability/periodic-task';
 import { app, autoUpdater, BrowserWindow, dialog } from 'electron';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
@@ -279,6 +281,10 @@ function officialWindowsUpdateFeed(version: string): string {
 }
 
 export class UpdateManager {
+  private readonly periodicId = `app-update-check:${randomUUID()}`;
+  private stopped = false;
+  private bootCheckTimer: ReturnType<typeof setTimeout> | null = null;
+  private onFocus: (() => void) | null = null;
   private state: UpdateState;
   private release: ParsedRelease | null = null;
   /** De onde veio o release ofertado: gh (repo privado) ou espelho público. */
@@ -450,13 +456,15 @@ export class UpdateManager {
     });
 
     const scheduled = () => {
+      if (this.stopped) return;
       // Checagem de fundo: só quando não há nada em andamento/pronto.
       if (['idle', 'uptodate', 'error', 'available'].includes(this.state.phase)) {
         void this.check();
       }
     };
     if (!this.deferUntilWindowsFirstRunDeadline()) {
-      setTimeout(scheduled, BOOT_CHECK_DELAY_MS).unref?.();
+      this.bootCheckTimer = setTimeout(scheduled, BOOT_CHECK_DELAY_MS);
+      this.bootCheckTimer.unref?.();
     }
     this.timer = setInterval(scheduled, CHECK_INTERVAL_MS);
     this.timer.unref?.();
@@ -469,6 +477,7 @@ export class UpdateManager {
         scheduled();
       }
     };
+    this.onFocus = onFocus;
     app.on('browser-window-focus', onFocus);
   }
 
@@ -510,7 +519,18 @@ export class UpdateManager {
   }
 
   private check(): Promise<void> {
-    return this.checkSingleFlight();
+    if (this.stopped) return Promise.resolve();
+    return runPeriodicTask(this.periodicId, ctx => ctx.wait(this.checkSingleFlight()),
+      { cadenceMs: CHECK_INTERVAL_MS, timeoutMs: 60_000 }).catch(() => undefined);
+  }
+
+  async stop(): Promise<void> {
+    this.stopped = true;
+    if (this.timer) clearInterval(this.timer);
+    if (this.bootCheckTimer) clearTimeout(this.bootCheckTimer);
+    if (this.firstRunCheckTimer) clearTimeout(this.firstRunCheckTimer);
+    if (this.onFocus) app.removeListener('browser-window-focus', this.onFocus);
+    await stopPeriodicTask(this.periodicId);
   }
 
   private deferUntilWindowsFirstRunDeadline(): boolean {
@@ -957,4 +977,10 @@ export function initAutoUpdater(options: AutoUpdaterInitOptions = {}): void {
   if (manager) return;
   manager = new UpdateManager(options.networkEnabled ?? true);
   manager.init();
+}
+
+export async function stopAutoUpdater(): Promise<void> {
+  const current = manager;
+  manager = null;
+  await current?.stop();
 }

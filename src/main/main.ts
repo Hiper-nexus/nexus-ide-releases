@@ -1,3 +1,8 @@
+import { stopOrientationForWorkspace } from './context/orientation/orientation-bootstrap';
+import { stopPaneSessionOutputGc } from './orch/pane-session-output';
+import { stopPetPeriodicWork } from './pet/pet-window';
+import { stopPreGoneCrashSampling } from './crash-reporting/process-gone-diagnostics';
+import { stopManagedAuthSpawnGateWatchers } from './adapters/managed-auth-spawn-gate';
 import { initializeLicenseAuthority } from "./license-bootstrap";
 import './macos-activation-policy';
 import { registerArmsIpc } from './connectors/arms-ipc';
@@ -233,6 +238,7 @@ import {
   configureAgentHookEndpointPath,
   APP_SHUTDOWN_PTY_TERMINATION,
   countLiveAgentSessions,
+  stopSessionMortalityReconciler,
   getAgentSessionInfo,
   listLiveSessionLocations,
   orchTerminateSession,
@@ -286,7 +292,7 @@ import { registerMemoryIpc } from "./memory/memory-ipc";
 import { flushWorkspaceMemoryProjections } from "./memory/workspace-memory";
 import { registerModelMetadataIpc } from "./adapters/model-metadata-ipc";
 import { registerMissionEventIpc } from "./orch/mission-event-ipc";
-import { startAgentLifecycleService } from "./agents/agent-lifecycle-service";
+import { startAgentLifecycleService, stopAgentLifecycleService } from "./agents/agent-lifecycle-service";
 import {
   configureFeatureFlagRegistry,
   enableAllProductFlagsForTesting,
@@ -325,6 +331,7 @@ import {
   listAccounts,
   setCooldown,
   startClaudeSubscriptionFreshness,
+  stopClaudeSubscriptionFreshness,
 } from "./persistence/account-store";
 import {
   resolveClaudeToken,
@@ -383,7 +390,7 @@ import {
 } from "./orch/token-speed-ipc";
 import { registerBillingIpc } from "./persistence/billing-ipc";
 import { registerAccountChoiceIpc } from "./persistence/account-choice-ipc";
-import { syncLicenseOnBoot } from "./license-sync";
+import { syncLicenseOnBoot, stopLicenseSync } from "./license-sync";
 import { registerTeamIpc } from "./team-ipc";
 import { installAppMenu } from "./app-menu";
 import { findTrustedMainWindow } from "./security/trusted-ipc";
@@ -432,7 +439,7 @@ import {
   disposeSyncRuntime,
 } from "./context/sync-runtime";
 import { wireDeepLinks, consumeLaunchDeepLink } from "./deep-link";
-import { initAutoUpdater } from "./updater";
+import { initAutoUpdater, stopAutoUpdater } from "./updater";
 import { stopRemoteBridge } from "./remote/remote-bridge";
 import { initSmokeTest } from "./smoke-test";
 import {
@@ -496,8 +503,8 @@ let hookDropBoxWatcher: AgentHookDropBoxWatcher | null = null;
 let sessionAliveSentinel: SessionAliveSentinel | null = null;
 /** Nexus Redline (menu bar): sink de snapshots + vigia do pedido de refresh. */
 let redlineSink: ReturnType<typeof createRedlineSink> | null = null;
-let stopRedlineRefreshWatch: (() => void) | null = null;
-let stopCliAutoUpdate: (() => void) | null = null;
+let stopRedlineRefreshWatch: (() => Promise<void>) | null = null;
+let stopCliAutoUpdate: (() => void | Promise<void>) | null = null;
 
 function traceBootstrap(phase: string): void {
   if (process.env.NEXUS_BOOT_TRACE === '1') {
@@ -762,7 +769,7 @@ function bootstrap(): void {
   // escrito pelo companheiro.
   redlineSink = createRedlineSink();
   stopRedlineRefreshWatch = redlineSink.watchRefreshRequests(() => {
-    void requireQuotaService().refresh();
+    return requireQuotaService().refresh();
   });
   initRedlineIpc();
   if (process.platform === "win32" && !isAutomatedReleaseTest()) {
@@ -1465,9 +1472,18 @@ function shutdown(): Promise<void> {
     stopMacOSDockWatchdog();
     // F-572: nenhum fechamento automático de pane pode disparar no meio do
     // teardown físico — a varredura e os timers param antes do PTY.
-    shutdownNonWorkerAutoClose();
-    stopPaneFootprintBroadcast();
-    stopEventLoopMonitor();
+    await shutdownNonWorkerAutoClose();
+    await stopPaneFootprintBroadcast();
+    await stopAgentLifecycleService();
+    await stopSessionMortalityReconciler();
+    await stopPaneSessionOutputGc();
+    await stopManagedAuthSpawnGateWatchers();
+    await stopClaudeSubscriptionFreshness();
+    await stopAutoUpdater();
+    await stopLicenseSync();
+    await stopOrientationForWorkspace();
+    await stopEventLoopMonitor();
+    await stopPreGoneCrashSampling();
     // Quiesce periodic orchestration before physical teardown, but retain its
     // exact exit observer and stores until PTY proof and reconciliation are
     // complete. A failed proof must leave the next retry operational.
@@ -1520,22 +1536,23 @@ function shutdown(): Promise<void> {
     configureAgentHookEndpointPath(null);
     await stopAgentHookHttpServer().catch(() => {});
     await stopShotBridgeServer().catch(() => {});
-    hookDropBoxWatcher?.dispose();
+    await hookDropBoxWatcher?.dispose();
     hookDropBoxWatcher = null;
-    sessionAliveSentinel?.markExpectedExit();
-    sessionAliveSentinel?.dispose();
+    await sessionAliveSentinel?.markExpectedExit();
+    await sessionAliveSentinel?.dispose();
     sessionAliveSentinel = null;
     disposeAgentAwakeService();
-    closeAdapterRegistry();
-    stopCliAutoUpdate?.();
+    await closeAdapterRegistry();
+    await stopCliAutoUpdate?.();
     stopCliAutoUpdate = null;
     closeVoiceIpc();
-    shutdownUsageTelemetry();
-    stopRedlineRefreshWatch?.();
+    await shutdownUsageTelemetry();
+    await stopPetPeriodicWork();
+    await stopRedlineRefreshWatch?.();
     stopRedlineRefreshWatch = null;
-    redlineSink?.stop();
+    await redlineSink?.stop();
     redlineSink = null;
-    shutdownRedlineIpc();
+    await shutdownRedlineIpc();
     shutdownQuotaService();
     shutdownGamificationService();
     disposeCronRuntime();

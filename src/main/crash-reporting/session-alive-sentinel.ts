@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
 
 export const SESSION_ALIVE_FILE = 'session.alive.v1.json';
 export const SESSION_ALIVE_SCHEME_VERSION = 1;
@@ -84,6 +85,7 @@ export interface SessionSentinelOptions {
 }
 
 export class SessionAliveSentinel {
+  readonly #taskId = `session-alive:${randomUUID()}`;
   readonly #userDataPath: string;
   readonly #intervalMs: number;
   readonly #getActivePanes: () => number;
@@ -128,7 +130,7 @@ export class SessionAliveSentinel {
     this.pulse();
 
     this.#timer = setInterval(() => {
-      this.pulse();
+      void this.pulseAsync().catch(() => undefined);
     }, this.#intervalMs);
 
     return { priorCrash };
@@ -153,28 +155,41 @@ export class SessionAliveSentinel {
     }
   }
 
-  markExpectedExit(): void {
+  async pulseAsync(): Promise<void> {
     if (this.#disposed) return;
-    const mem = process.memoryUsage?.()?.rss ?? 0;
-    const marker: SessionAliveMarker = {
-      schemeVersion: 1,
-      pid: process.pid,
-      startTime: this.#startTime,
-      lastPulse: Date.now(),
-      rssMb: bucketRssMb(mem),
-      activePanes: this.#getActivePanes(),
-      expectedExit: true,
-    };
-    try {
-      writeSessionAliveMarker(this.#userDataPath, marker);
-    } catch {}
+    await runPeriodicTask(this.#taskId, async (ctx) => {
+      await ctx.wait(this.#writeAsync(false, ctx));
+    }, { cadenceMs: this.#intervalMs, timeoutMs: this.#intervalMs, sliceMs: 10 });
   }
 
-  dispose(): void {
+  async #writeAsync(expectedExit: boolean, ctx?: PeriodicTaskContext): Promise<void> {
+    const marker: SessionAliveMarker = {
+      schemeVersion: 1, pid: process.pid, startTime: this.#startTime,
+      lastPulse: Date.now(), rssMb: bucketRssMb(process.memoryUsage().rss),
+      activePanes: this.#getActivePanes(), expectedExit,
+    };
+    const tmp = path.join(this.#userDataPath, `.${SESSION_ALIVE_FILE}.${randomUUID()}.tmp`);
+    try {
+      await fs.promises.mkdir(this.#userDataPath, { recursive: true });
+      ctx?.assertCurrent();
+      await fs.promises.writeFile(tmp, JSON.stringify(marker), { mode: 0o600, flag: 'wx' });
+      ctx?.assertCurrent();
+      await fs.promises.rename(tmp, path.join(this.#userDataPath, SESSION_ALIVE_FILE));
+    } finally { await fs.promises.unlink(tmp).catch(() => undefined); }
+  }
+
+  async markExpectedExit(): Promise<void> {
+    if (this.#disposed) return;
+    await this.dispose();
+    await this.#writeAsync(true).catch(() => undefined);
+  }
+
+  async dispose(): Promise<void> {
     this.#disposed = true;
     if (this.#timer) {
       clearInterval(this.#timer);
       this.#timer = null;
     }
+    await stopPeriodicTask(this.#taskId);
   }
 }

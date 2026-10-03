@@ -1,3 +1,4 @@
+import { periodicCallback, stopPeriodicTask } from '../observability/periodic-task';
 import path from 'node:path';
 import { app, BrowserWindow, ipcMain, screen } from 'electron';
 import { showOwnedOpenDialog } from '../dialog/owned-open-dialog';
@@ -210,6 +211,16 @@ let statsPushTimer: NodeJS.Timeout | null = null;
 let statsFlushTimer: NodeJS.Timeout | null = null;
 const STATS_PUSH_DEBOUNCE_MS = 1_500;
 const STATS_FLUSH_MS = 20_000;
+
+export async function stopPetPeriodicWork(): Promise<void> {
+  stopRaiseWatch(); stopLookLoop(); stopRoamLoop(); stopDrag();
+  if (statsFlushTimer) clearInterval(statsFlushTimer);
+  if (statsPushTimer) clearTimeout(statsPushTimer);
+  if (digestTimer) clearTimeout(digestTimer);
+  statsFlushTimer = null; statsPushTimer = null; digestTimer = null;
+  await Promise.all(['pet-raise', 'pet-look', 'pet-roam', 'pet-drag', 'pet-stats'].map(stopPeriodicTask));
+  await petStats?.flushAsync();
+}
 
 function getPetStats(): PetLifetimeTracker {
   petStats ??= new PetLifetimeTracker(userDataDir());
@@ -580,7 +591,7 @@ let raiseTimer: NodeJS.Timeout | null = null;
 function startRaiseWatch(): void {
   stopRaiseWatch();
   // Só reage se o SO demover o flag — re-pin preventivo a cada N ms pisca.
-  raiseTimer = setInterval(() => {
+  raiseTimer = setInterval(periodicCallback('pet-raise', () => {
     if (!petWindow || petWindow.isDestroyed()) {
       stopRaiseWatch();
       return;
@@ -591,7 +602,7 @@ function startRaiseWatch(): void {
       petPinnedTop = false;
       raisePetAboveAll(true);
     }
-  }, RAISE_WATCH_MS);
+  }, { cadenceMs: RAISE_WATCH_MS, timeoutMs: Math.max(1000, RAISE_WATCH_MS) }), RAISE_WATCH_MS);
 }
 
 function stopRaiseWatch(): void {
@@ -746,7 +757,7 @@ function roamTick(): void {
 
 function scheduleRoamTick(delayMs: number): void {
   if (roamTimer) clearTimeout(roamTimer);
-  roamTimer = setTimeout(runRoamTick, delayMs);
+  roamTimer = setTimeout(periodicCallback('pet-roam', runRoamTick, { cadenceMs: delayMs, timeoutMs: 1000 }), delayMs);
   roamTimer.unref?.();
 }
 
@@ -837,7 +848,7 @@ function sendLook(dir: number | null): void {
 function startLookLoop(): void {
   stopLookLoop();
   lookLastMoveAt = Date.now();
-  lookTimer = setInterval(() => {
+  lookTimer = setInterval(periodicCallback('pet-look', () => {
     if (!petWindow || petWindow.isDestroyed()) {
       stopLookLoop();
       return;
@@ -881,7 +892,7 @@ function startLookLoop(): void {
         lastDir: lookLastSent,
       }),
     );
-  }, LOOK_TICK_MS);
+  }, { cadenceMs: LOOK_TICK_MS, timeoutMs: Math.max(1000, LOOK_TICK_MS) }), LOOK_TICK_MS);
 }
 
 function persistPosition(pos: { x: number; y: number }): void {
@@ -1576,7 +1587,7 @@ function registerPetIpc(): void {
     // Watchdog: se o dragEnd do renderer se perder, assenta sozinho.
     const startedAt = Date.now();
     let lastApplied = { x: winX, y: winY };
-    dragTimer = setInterval(() => {
+    dragTimer = setInterval(periodicCallback('pet-drag', () => {
       if (!petWindow || petWindow.isDestroyed() || !dragOrigin) {
         stopDrag();
         return;
@@ -1601,7 +1612,7 @@ function registerPetIpc(): void {
       // Placement ao vivo a cada tick (dedup interno — IPC só na mudança):
       // o sprite encosta na borda DURANTE o arrasto, sem salto no drop.
       sendPetPlacement(clamped);
-    }, DRAG_TICK_MS);
+    }, { cadenceMs: DRAG_TICK_MS, timeoutMs: Math.max(1000, DRAG_TICK_MS) }), DRAG_TICK_MS);
   });
 
   ipcMain.on(PET_CHANNELS.dragEnd, (event) => {
@@ -1697,13 +1708,13 @@ export function initDesktopPet(): void {
   // o renderer principal lê via invoke, sem canal próprio de estado.
   ipcMain.handle(USAGE_CHANNELS.lifetime, () => getPetStats().stats());
   // Persistência preguiçosa do piso/panes — JSON pequeno, tmp+rename.
-  statsFlushTimer = setInterval(() => {
+  statsFlushTimer = setInterval(periodicCallback('pet-stats', async (ctx) => {
     try {
-      getPetStats().flush();
+      await ctx.wait(getPetStats().flushAsync());
     } catch (error) {
       console.warn('[pet] stats flush falhou:', error);
     }
-  }, STATS_FLUSH_MS);
+  }, { cadenceMs: STATS_FLUSH_MS, timeoutMs: Math.max(1000, STATS_FLUSH_MS) }), STATS_FLUSH_MS);
   statsFlushTimer.unref?.();
   // A patrulha fica armada sempre e se auto-veta (prefs/drag/balão); vetada
   // ou em pausa ela re-checa no máximo 1×/s (nextRoamDelayMs), e prefs/hold

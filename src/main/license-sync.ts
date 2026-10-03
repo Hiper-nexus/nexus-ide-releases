@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { runPeriodicTask, stopPeriodicTask } from './observability/periodic-task';
 import type { apiFetch } from './api-client';
 
 export interface LicenseSyncDeps {
@@ -19,6 +21,7 @@ export interface LicenseBootSyncDeps {
 const POLL_MS = 5_000;
 const POLL_MAX = 24;
 let defaults: LicenseSyncDeps | undefined;
+let stopping = false;
 function defaultDeps(): LicenseSyncDeps {
   if (defaults) return defaults;
   const { apiFetch: api } = require('./api-client') as typeof import('./api-client');
@@ -56,18 +59,21 @@ export function syncLicenseOnce(deps: LicenseSyncDeps = defaultDeps()): Promise<
   return flight;
 }
 const checkoutTimers = new WeakMap<LicenseSyncDeps, unknown>();
+const checkoutTasks = new WeakMap<LicenseSyncDeps, string>();
 export function startCheckoutPolling(deps: LicenseSyncDeps = defaultDeps()): void {
   if (checkoutTimers.has(deps)) deps.clearIntervalFn(checkoutTimers.get(deps));
+  const taskId = checkoutTasks.get(deps) ?? `license-checkout:${randomUUID()}`;
+  checkoutTasks.set(deps, taskId);
   let runs = 0;
   const session = deps.sessionKey();
-  const id = deps.setIntervalFn(async () => {
+  const id = deps.setIntervalFn(() => runPeriodicTask(taskId, async ctx => {
     runs += 1;
-    if (deps.sessionKey() === session) await syncLicenseOnce(deps);
+    if (deps.sessionKey() === session) await ctx.wait(syncLicenseOnce(deps));
     if (deps.sessionKey() !== session || deps.readAccess() === 'pro' || runs >= POLL_MAX) {
       deps.clearIntervalFn(id);
       checkoutTimers.delete(deps);
     }
-  }, POLL_MS);
+  }, { cadenceMs: POLL_MS, timeoutMs: 30_000 }).catch(() => undefined), POLL_MS);
   checkoutTimers.set(deps, id);
 }
 
@@ -78,7 +84,8 @@ export interface PeriodicLicenseSyncDeps {
   now: () => number;
 }
 /** Renew at least every 5 min, or one minute before exp; failures retry after 30s. */
-export function startPeriodicLicenseSync(deps: PeriodicLicenseSyncDeps): () => void {
+export function startPeriodicLicenseSync(deps: PeriodicLicenseSyncDeps): () => Promise<void> {
+  const taskId = `license-renewal:${randomUUID()}`;
   let stopped = false, running = false, scheduling = false;
   let timer: ReturnType<typeof setTimeout>;
   function schedule(retry = false): void {
@@ -90,7 +97,7 @@ export function startPeriodicLicenseSync(deps: PeriodicLicenseSyncDeps): () => v
     timer = setTimeout(async () => {
       running = true;
       let success = false;
-      try { success = await deps.sync(); } catch { /* offline keeps the unexpired token */ }
+      try { await runPeriodicTask(taskId, async ctx => { success = await ctx.wait(deps.sync()); }, { cadenceMs: delay, timeoutMs: 30_000 }); } catch { /* offline keeps the unexpired token */ }
       finally { running = false; schedule(!success); }
     }, delay);
     timer.unref?.();
@@ -98,9 +105,9 @@ export function startPeriodicLicenseSync(deps: PeriodicLicenseSyncDeps): () => v
   }
   const unsubscribe = deps.onChanged(() => schedule());
   schedule();
-  return () => { stopped = true; clearTimeout(timer); unsubscribe(); };
+  return async () => { stopped = true; clearTimeout(timer); unsubscribe(); await stopPeriodicTask(taskId); };
 }
-let stopPeriodic: (() => void) | undefined;
+let stopPeriodic: (() => Promise<void>) | undefined;
 /**
  * F-228: se o `mounted` do renderer se perder (crash, janela recriada) o sync
  * nunca começaria — o fallback de 10 s chama ready() uma única vez.
@@ -169,7 +176,21 @@ export function syncLicenseOnBoot(deps: LicenseBootSyncDeps = defaultBootSyncDep
   const settle = (): void => { bootSyncSettled = true; };
   if (deps.hasCachedAuthSession()) void deps.sync().catch(() => undefined).then(settle);
   deps.afterFirstPaint(() => {
+    if (stopping) return;
     deps.startPeriodic();
     void deps.sync().catch(() => undefined).then(settle);
   });
+}
+
+export async function stopLicenseSync(): Promise<void> {
+  stopping = true;
+  await stopPeriodic?.();
+  stopPeriodic = undefined;
+  if (!defaults) return;
+  const timer = checkoutTimers.get(defaults);
+  if (timer) defaults.clearIntervalFn(timer);
+  checkoutTimers.delete(defaults);
+  const taskId = checkoutTasks.get(defaults);
+  if (taskId) await stopPeriodicTask(taskId);
+  await flights.get(defaults)?.catch(() => undefined);
 }

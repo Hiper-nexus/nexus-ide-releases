@@ -508,13 +508,13 @@ export function initRedlineIpc(): void {
   handleTrusted(REDLINE_IPC.hide, () => hideRedline());
 }
 
-export function shutdownRedlineIpc(): void {
+export async function shutdownRedlineIpc(): Promise<void> {
   ipcMain.removeHandler(REDLINE_IPC.status);
   ipcMain.removeHandler(REDLINE_IPC.install);
   ipcMain.removeHandler(REDLINE_IPC.open);
   ipcMain.removeHandler(REDLINE_IPC.hide);
   // Quit do app: a bandeja some, mas a preferência do operador fica.
-  linuxController?.stop();
+  await linuxController?.stop();
 }
 
 // Cooldown exportado para testes futuros de repetição da oferta.

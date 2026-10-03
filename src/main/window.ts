@@ -1,3 +1,4 @@
+import { periodicCallback } from './observability/periodic-task';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron';
@@ -685,7 +686,7 @@ export function createMainWindow(
     ) {
       return;
     }
-    loadWatchdog = setInterval(() => {
+    loadWatchdog = setInterval(periodicCallback(`renderer-load:${wc.id}`, () => {
       if (win.isDestroyed()) {
         if (loadWatchdog) clearInterval(loadWatchdog);
         loadWatchdog = null;
@@ -718,7 +719,7 @@ export function createMainWindow(
       }
       console.warn('[window] renderer sem navegação ativa — tentando novamente');
       bootRecovery.schedule(WATCHDOG_RESTART_DELAY_MS, load);
-    }, 3_000);
+    }, { cadenceMs: 3_000, timeoutMs: Math.max(1000, 3_000) }), 3_000);
   };
   const MOUNT_POLL_MS = 2_000;
   wc.on('did-finish-load', () => {
@@ -736,15 +737,15 @@ export function createMainWindow(
     if (mounted) return;
     mountWatchdog.arm();
     let devDiagnosticsCaptured = false;
-    const poll = setInterval(() => {
+    const poll = setInterval(periodicCallback(`renderer-mount:${wc.id}`, async (ctx) => {
       if (win.isDestroyed() || mounted) {
         clearInterval(poll);
         return;
       }
-      wc.executeJavaScript(
+      await ctx.wait(wc.executeJavaScript(
         '!!document.getElementById("root")?.childElementCount',
-      )
-        .then((hasContent) => {
+      ))
+        .then(async (hasContent) => {
           // Resposta atrasada de um load anterior não decide pelo atual.
           if (win.isDestroyed() || mounted || mountPoll !== poll) return;
           if (hasContent) {
@@ -753,8 +754,7 @@ export function createMainWindow(
           }
           if (devServerUrl && !devDiagnosticsCaptured) {
             devDiagnosticsCaptured = true;
-            void wc
-              .executeJavaScript(
+            await ctx.wait(wc.executeJavaScript(
                 `JSON.stringify({
                 readyState: document.readyState,
                 nexus: typeof window.nexus,
@@ -780,7 +780,7 @@ export function createMainWindow(
                   )
                   .slice(0, 20),
               })`,
-              )
+              ))
               .then((diagnostics) => {
                 if (!win.isDestroyed()) {
                   console.warn(
@@ -797,7 +797,7 @@ export function createMainWindow(
           // Página em transição (navegação/reload em curso) — a próxima
           // checagem decide.
         });
-    }, MOUNT_POLL_MS);
+    }, { cadenceMs: MOUNT_POLL_MS, timeoutMs: Math.max(1000, MOUNT_POLL_MS) }), MOUNT_POLL_MS);
     mountPoll = poll;
   });
   wc.on('did-start-navigation', (details) => {

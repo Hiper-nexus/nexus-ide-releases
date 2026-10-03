@@ -1,3 +1,4 @@
+import { periodicCallback, stopPeriodicTask } from './periodic-task';
 /**
  * F-764 (A.3): atraso do event-loop do main como métrica contínua.
  *
@@ -88,7 +89,7 @@ export function eventLoopTraceReason(
 export interface EventLoopMonitorHandle {
   /** Último resumo fechado (ou `null` antes da primeira janela). */
   latest(): EventLoopSummary | null;
-  stop(): void;
+  stop(): void | Promise<void>;
 }
 
 export interface EventLoopMonitorOptions {
@@ -171,11 +172,11 @@ export function startEventLoopMonitor(
     });
   };
 
-  const timer = setInterval(tick, windowMs);
+  const timer = setInterval(periodicCallback('event-loop-monitor', tick, { cadenceMs: windowMs, timeoutMs: Math.max(1000, windowMs) }), windowMs);
   timer.unref?.();
   const handle: EventLoopMonitorHandle = {
     latest: () => latest,
-    stop: () => {
+    stop: async () => {
       clearInterval(timer);
       try {
         histogram.disable();
@@ -183,12 +184,13 @@ export function startEventLoopMonitor(
         // Já desligado.
       }
       if (active === handle) active = null;
+      await stopPeriodicTask('event-loop-monitor');
     },
   };
   active = handle;
   return handle;
 }
 
-export function stopEventLoopMonitor(): void {
-  active?.stop();
+export async function stopEventLoopMonitor(): Promise<void> {
+  await active?.stop();
 }

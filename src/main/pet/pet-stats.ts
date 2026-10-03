@@ -1,3 +1,4 @@
+import { promises as asyncFs } from 'node:fs';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { PetLifetimeStats, PetTier } from '../../shared/pet-types';
@@ -289,8 +290,38 @@ export class PetLifetimeTracker {
   /** Persiste pico + panes + missões. Retorna false se nada mudou. */
   flush(): boolean {
     if (!this.#dirty) return false;
+    this.#file = this.#snapshotForSave();
+    savePetStatsFile(this.#userDataDir, this.#file);
+    this.#dirty = false;
+    return true;
+  }
+
+  #saveFlight: Promise<boolean> | null = null;
+
+  /** Periodic persistence owns one physical write; mutations during IO remain dirty. */
+  flushAsync(): Promise<boolean> {
+    if (this.#saveFlight) return this.#saveFlight;
+    if (!this.#dirty) return Promise.resolve(false);
+    this.#file = this.#snapshotForSave();
+    const bytes = `${JSON.stringify(this.#file)}\n`;
+    this.#dirty = false;
+    const target = petStatsPath(this.#userDataDir);
+    const temporary = `${target}.tmp`;
+    this.#saveFlight = (async () => {
+      try {
+        await asyncFs.mkdir(path.dirname(target), { recursive: true });
+        await asyncFs.writeFile(temporary, bytes, 'utf8');
+        await asyncFs.rename(temporary, target);
+        return true;
+      } catch (error) { this.#dirty = true; throw error; }
+      finally { this.#saveFlight = null; }
+    })();
+    return this.#saveFlight;
+  }
+
+  #snapshotForSave(): PetStatsFile {
     const current = this.stats();
-    this.#file = {
+    return {
       peak: {
         tokensBurned: Math.max(current.tokensBurned, this.#file.peak.tokensBurned),
         usdEquivalent: Math.max(
@@ -319,9 +350,6 @@ export class PetLifetimeTracker {
       ),
       updatedAt: Date.now(),
     };
-    savePetStatsFile(this.#userDataDir, this.#file);
-    this.#dirty = false;
-    return true;
   }
 
   #currentPaneUnion(): Set<string> {

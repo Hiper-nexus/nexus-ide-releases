@@ -15,6 +15,18 @@ export interface PeriodicTaskOptions {
   readonly cadenceMs?: number;
 }
 
+/** Adapts an existing timer; keeps that timer's cadence and owns its real flight. */
+export function periodicCallback(
+  id: string,
+  run: (context: PeriodicTaskContext) => void | Promise<void>,
+  options: PeriodicTaskOptions = {},
+): () => void {
+  return () => { void runPeriodicTask(id, run, options).catch(() => {
+    // No exception text: tasks may carry credentials or file contents.
+    if (!options.signal?.aborted) console.warn(`[periodic] ${publicName(id)} did not complete`);
+  }); };
+}
+
 export interface PeriodicTaskDiagnostic {
   readonly name: string;
   readonly owner: 'main';

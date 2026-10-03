@@ -1,3 +1,4 @@
+import { periodicCallback, stopPeriodicTask } from '../../observability/periodic-task';
 import { resolveProjectExecutionScopeCached } from '../../persistence/project-identity';
 import {
   getProjectOrientationService,
@@ -6,6 +7,13 @@ import {
 
 const headWatchTimers = new Map<string, ReturnType<typeof setInterval>>();
 let activeWatchKey: string | null = null;
+const stoppingHeadTasks = new Set<Promise<void>>();
+function stopHeadTask(key: string): Promise<void> {
+  const stopped = stopPeriodicTask(`orientation-head:${key}`);
+  stoppingHeadTasks.add(stopped);
+  void stopped.finally(() => stoppingHeadTasks.delete(stopped));
+  return stopped;
+}
 
 /**
  * Fire-and-forget orientation build after workspace open.
@@ -29,15 +37,19 @@ export function scheduleOrientationForWorkspace(workspacePath: string): void {
 }
 
 /** Stop HEAD polling when the active workspace is closed or switched. */
-export function stopOrientationForWorkspace(): void {
+export async function stopOrientationForWorkspace(): Promise<void> {
   if (!activeWatchKey) {
     __clearOrientationHeadWatchesForTests();
+    await Promise.all(stoppingHeadTasks);
     return;
   }
   const timer = headWatchTimers.get(activeWatchKey);
   if (timer) clearInterval(timer);
+  const stopped = stopHeadTask(activeWatchKey);
   headWatchTimers.delete(activeWatchKey);
   activeWatchKey = null;
+  await stopped;
+  await Promise.all(stoppingHeadTasks);
 }
 
 function startHeadWatch(
@@ -50,21 +62,23 @@ function startHeadWatch(
   if (activeWatchKey && activeWatchKey !== key) {
     const previous = headWatchTimers.get(activeWatchKey);
     if (previous) clearInterval(previous);
+    void stopHeadTask(activeWatchKey);
     headWatchTimers.delete(activeWatchKey);
   }
   activeWatchKey = key;
   if (headWatchTimers.has(key)) return;
-  const timer = setInterval(() => {
+  const timer = setInterval(periodicCallback(`orientation-head:${key}`, async ctx => {
     const service = tryGetProjectOrientationService();
     if (!service) return;
     try {
       const scope = resolveProjectExecutionScopeCached(workspacePath);
       // ensure() invalidates when HEAD changes; no force rebuild on every tick.
-      void service.ensure(scope, { reason: 'head-change', waitMs: 0 }).catch(() => undefined);
+      if (activeWatchKey !== key) return;
+      await ctx.wait(service.ensure(scope, { reason: 'head-change', waitMs: 0 }));
     } catch {
       // workspace may have moved
     }
-  }, 60_000);
+  }, { cadenceMs: 60_000, timeoutMs: 30_000 }), 60_000);
   // Do not keep the process alive solely for orientation watch.
   if (typeof timer.unref === 'function') timer.unref();
   headWatchTimers.set(key, timer);
@@ -72,7 +86,7 @@ function startHeadWatch(
 
 /** Test helper */
 export function __clearOrientationHeadWatchesForTests(): void {
-  for (const timer of headWatchTimers.values()) clearInterval(timer);
+  for (const [key, timer] of headWatchTimers) { clearInterval(timer); void stopHeadTask(key); }
   headWatchTimers.clear();
   activeWatchKey = null;
 }

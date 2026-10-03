@@ -1,3 +1,5 @@
+let authorityPollSequence = 0;
+import { periodicCallback } from '../observability/periodic-task';
 import { randomUUID } from 'node:crypto';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { MissionRisk } from './contract-compiler';
@@ -419,14 +421,14 @@ export class AutomatedReviewSessionRegistry {
       session.waiters.add(settle);
       signal?.addEventListener('abort', onAbort, { once: true });
       if (assertCurrentAuthority) {
-        authorityTimer = setInterval(() => {
+        authorityTimer = setInterval(periodicCallback(`automated-review-authority:${++authorityPollSequence}`, () => {
           try {
             assertCurrentAuthority();
           } catch (error) {
             cleanup();
             reject(error);
           }
-        }, AUTHORITY_POLL_MS);
+        }, { cadenceMs: AUTHORITY_POLL_MS, timeoutMs: AUTHORITY_POLL_MS }), AUTHORITY_POLL_MS);
         authorityTimer.unref();
       }
       if (signal?.aborted) onAbort();

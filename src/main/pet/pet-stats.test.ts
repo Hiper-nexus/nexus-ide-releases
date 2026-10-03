@@ -45,6 +45,17 @@ function snap(over: Partial<UsageSnapshot> = {}): UsageSnapshot {
 }
 
 describe('PetLifetimeTracker', () => {
+  it('coalesces physical writes and preserves mutations arriving during asynchronous persistence', async () => {
+    const tracker = new PetLifetimeTracker(dir);
+    tracker.ingestSnapshot(SCOPE, snap({ global: { costUsd: 1, inputTokens: 10, outputTokens: 0, turns: 1 } }));
+    const first = tracker.flushAsync();
+    expect(tracker.flushAsync()).toBe(first);
+    tracker.ingestSnapshot(SCOPE, snap({ global: { costUsd: 2, inputTokens: 20, outputTokens: 0, turns: 2 } }));
+    await first;
+    expect(JSON.parse(readFileSync(petStatsPath(dir), 'utf8')).peak.tokensBurned).toBe(10);
+    expect(await tracker.flushAsync()).toBe(true);
+    expect(new PetLifetimeTracker(dir).stats().tokensBurned).toBe(20);
+  });
   it('começa zerado numa instalação nova', () => {
     const t = new PetLifetimeTracker(dir);
     const s = t.stats();

@@ -1,3 +1,4 @@
+import { periodicCallback, runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
 // Adapted from stablyai/orca @ f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92
 // Copyright (c) 2026 Lovecast Inc. — MIT License
 // See third_party/licenses/orca-MIT.txt. Nexus changes: none (pre-gone host memory sampling)
@@ -125,8 +126,15 @@ export function startPreGoneSystemMemorySampling(
   if (preGoneTimer) {
     return
   }
-  void samplePreGoneSystemMemory()
-  preGoneTimer = setInterval(() => void samplePreGoneSystemMemory(), intervalMs)
+  const tick = periodicCallback('host-memory', () => {
+    const issuedOnTick = ++sampleTick;
+    if (!commitHostMemorySample(Date.now())) return;
+    // A slow statfs must not suppress the cheap current host-memory sample.
+    void runPeriodicTask('host-memory-volume', ctx => ctx.wait(mergeSwapVolumeFreeSpace(issuedOnTick)),
+      { cadenceMs: intervalMs, timeoutMs: intervalMs }).catch(() => undefined);
+  }, { cadenceMs: intervalMs });
+  tick();
+  preGoneTimer = setInterval(tick, intervalMs)
   preGoneTimer.unref?.()
 }
 
@@ -139,6 +147,14 @@ export function resetPreGoneSystemMemorySamplingForTest(): void {
   swapVolumeReadInFlight = false
   // Why bump: an already-awaited volume read must not repopulate a reset sample.
   samplingGeneration += 1
+}
+
+export async function stopPreGoneSystemMemorySampling(): Promise<void> {
+  if (preGoneTimer) clearInterval(preGoneTimer);
+  preGoneTimer = null;
+  samplingGeneration++;
+  await stopPeriodicTask('host-memory');
+  await stopPeriodicTask('host-memory-volume');
 }
 
 /** Keyed as `systemMemoryPreGone*` so a scan over the `systemMemory` family sees both reads. */

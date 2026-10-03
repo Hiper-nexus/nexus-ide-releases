@@ -59,7 +59,7 @@ describe('session-alive-sentinel', () => {
     sentinel.dispose();
   });
 
-  it('marks expectedExit on graceful shutdown', () => {
+  it('marks expectedExit after any asynchronous pulse on graceful shutdown', async () => {
     const sentinel = new SessionAliveSentinel({
       userDataPath: tempDir,
       intervalMs: 100,
@@ -70,7 +70,9 @@ describe('session-alive-sentinel', () => {
     let current = readSessionAliveMarker(tempDir);
     expect(current?.expectedExit).toBe(false);
 
-    sentinel.markExpectedExit();
+    const pulse = sentinel.pulseAsync().catch(() => undefined);
+    await sentinel.markExpectedExit();
+    await pulse;
     current = readSessionAliveMarker(tempDir);
     expect(current?.expectedExit).toBe(true);
 

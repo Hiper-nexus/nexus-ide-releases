@@ -1,3 +1,5 @@
+import { periodicCallback, stopPeriodicTask } from '../observability/periodic-task';
+import { stopPreGoneSystemMemorySampling } from './pre-gone-host-memory';
 // Adapted from stablyai/orca @ f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92
 // Copyright (c) 2026 Lovecast Inc. — MIT License
 // See third_party/licenses/orca-MIT.txt. Nexus changes: app metrics via
@@ -243,7 +245,7 @@ export function startPreGoneCrashSampling(
     return
   }
   samplePreGoneProcessMetrics()
-  preGoneSampleTimer = setInterval(() => samplePreGoneProcessMetrics(), intervalMs)
+  preGoneSampleTimer = setInterval(periodicCallback('process-metrics', () => samplePreGoneProcessMetrics(), { cadenceMs: intervalMs, timeoutMs: Math.max(1000, intervalMs) }), intervalMs)
   preGoneSampleTimer.unref?.()
   startPreGoneSystemMemorySampling(systemMemoryIntervalMs)
 }
@@ -255,6 +257,13 @@ export function resetPreGoneCrashSamplingForTest(): void {
   preGoneSampleTimer = null
   preGoneSample = null
   resetPreGoneSystemMemorySamplingForTest()
+}
+
+export async function stopPreGoneCrashSampling(): Promise<void> {
+  if (preGoneSampleTimer) clearInterval(preGoneSampleTimer);
+  preGoneSampleTimer = null;
+  await stopPeriodicTask('process-metrics');
+  await stopPreGoneSystemMemorySampling();
 }
 
 const PROCESS_METRICS_KEY_PREFIX = 'processMetrics'

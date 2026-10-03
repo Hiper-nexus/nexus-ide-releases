@@ -1,3 +1,4 @@
+import { periodicCallback, stopPeriodicTask } from '../observability/periodic-task';
 /**
  * Watchdog da main thread em worker thread (campanha 0.50, C7; F-764 A.1).
  *
@@ -116,12 +117,13 @@ export function startMainThreadHangWatchdog(
     };
     // Primeiro heartbeat na hora: a medição começa com a worker, não 5 s depois.
     post({ type: 'heartbeat', at: Date.now() });
-    const heartbeat = setInterval(() => {
+    const heartbeat = setInterval(periodicCallback('main-heartbeat', () => {
       post({ type: 'heartbeat', at: Date.now() });
-    }, heartbeatMs);
+    }, { cadenceMs: heartbeatMs, timeoutMs: Math.max(1000, heartbeatMs) }), heartbeatMs);
     heartbeat.unref?.();
     const stop = async (): Promise<void> => {
       clearInterval(heartbeat);
+      await stopPeriodicTask('main-heartbeat');
       post({ type: 'stop' });
       await Promise.race([
         exit,
