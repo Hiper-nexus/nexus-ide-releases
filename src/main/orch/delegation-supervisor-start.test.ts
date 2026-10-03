@@ -30,7 +30,7 @@ const h = vi.hoisted(() => ({
         rootExit?: { exitCode: number; signal?: number } | null,
       ) => void),
   sessionState: vi.fn((_sessionId: string): string | null => null),
-  sessionOutput: vi.fn((_sessionId: string) => ''),
+  sessionOutput: vi.fn((_sessionId: string, _lines?: number) => ''),
   spawnedAt: vi.fn((_sessionId: string): number | null => null),
   terminationOrigin: vi.fn((_sessionId: string): string | null => null),
   turnStart: vi.fn((_sessionId: string) => 0),
@@ -151,7 +151,11 @@ import {
 } from './pane-start-watchdog';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from './workspace-handoff-delivery';
-import { recordPaneSessionData, __evictExitedBufferForTests } from './pane-session-output';
+import {
+  recordPaneSessionData,
+  readSessionOutput as readRealSessionOutput,
+  __evictExitedBufferForTests,
+} from './pane-session-output';
 
 const NOW = 200_000_000;
 const SCOPE = testProjectScope();
@@ -241,7 +245,9 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     h.getSemantic.mockReturnValue(null);
     h.toolActivity.mockReturnValue(0);
     h.lastTurnEnd.mockReturnValue(null);
-    h.sessionOutput.mockReturnValue('');
+    h.sessionOutput.mockImplementation((sessionId: string, lines?: number) =>
+      readRealSessionOutput(sessionId, lines),
+    );
     h.agentInfo.mockReturnValue(null);
     h.handoffList.mockReturnValue([]);
     h.listPaneSnapshots.mockReturnValue([]);
@@ -732,7 +738,9 @@ describe('F-734: turno do brief recusado pelo provedor é falha de início', () 
     h.getSemantic.mockReturnValue({ status: 'working', updatedAt: NOW - 50_000 });
     h.toolActivity.mockReturnValue(0);
     h.lastTurnEnd.mockReturnValue(null);
-    h.sessionOutput.mockReturnValue('');
+    h.sessionOutput.mockImplementation((sessionId: string, lines?: number) =>
+      readRealSessionOutput(sessionId, lines),
+    );
     h.agentInfo.mockReturnValue(null);
     h.handoffList.mockReturnValue([]);
     h.listPaneSnapshots.mockReturnValue([

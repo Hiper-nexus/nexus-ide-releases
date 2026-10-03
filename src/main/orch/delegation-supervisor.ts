@@ -83,7 +83,6 @@ import {
   tapAgentTurnEnd,
 } from './agent-status';
 import { trace } from '../observability/main-trace';
-import { readSessionOutput } from './pane-session-output';
 import { sanitizePaneBootOutput } from './pane-boot-output';
 import {
   persistLeftoverIsolation,
