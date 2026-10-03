@@ -583,3 +583,72 @@ describe('classifyWorkKind — escopo de auditoria/inventário (F-772)', () => {
     ).toBe('bug');
   });
 });
+
+/**
+ * F-813 — o escopo de auditoria (F-772) abafava a menção de defeito sempre que
+ * o texto trouxesse `inventário`/`auditoria`/`mapeamento`/`censo`/
+ * `levantamento`, mesmo como substantivo de DOMÍNIO ("o inventário do estoque
+ * trava ao abrir" virava `unknown`). Um verbo de falha claro não pode ser
+ * anulado por uma palavra de domínio.
+ */
+describe('classifyWorkKind — palavra de domínio não anula verbo de falha (F-813)', () => {
+  it.each([
+    'o inventário do estoque trava ao abrir',
+    'a auditoria de acesso trava quando o usuário clica em salvar',
+    'o mapeamento de rotas não abre depois do login',
+    'o censo de clientes não funciona no Safari',
+    'a tela de levantamento de preços travou ontem',
+    'the inventory page crashes on open',
+    'the audit module hangs when exporting',
+  ])('relato de falha com substantivo de domínio vira bug: %s', (goal) => {
+    const verdict = classifyWorkKind(goal);
+    expect(verdict.kind, goal).toBe('bug');
+    expect(verdict.signals.some((signal) => signal.kind === 'bug')).toBe(true);
+  });
+
+  it('com verbo de reparo continua bug forte, como antes', () => {
+    const verdict = classifyWorkKind('o inventário do estoque trava ao abrir, corrija');
+    expect(verdict.kind).toBe('bug');
+    expect(verdict.confidence).toBe('high');
+  });
+
+  it.each([
+    'auditoria de uso das contas e providers — aponte erros e desperdícios',
+    'faça um inventário das configurações e liste os erros encontrados',
+    'mapear os panes ativos e os travamentos recorrentes',
+    'audit the checkout flow and list possible failures',
+    // A auditoria é a TAREFA (verbo): enumerar o que trava é o achado.
+    'audite o checkout e liste onde ele trava',
+    'audit the checkout flow and list where it hangs',
+    'mapeie os módulos que travam ao abrir',
+    // Substantivo de domínio + substantivo de defeito: não há verbo de falha.
+    'faça um inventário dos erros do estoque',
+    // `quebra` é substantivo de domínio ("quebra de estoque"), não verbo de falha.
+    'auditoria da quebra de estoque e das falhas de contagem',
+  ])('auditoria que enumera defeitos continua NÃO sendo bug (F-772): %s', (goal) => {
+    expect(classifyWorkKind(goal).kind, goal).not.toBe('bug');
+  });
+
+  it('audit log segue sendo artefato, não escopo: defeito relatado é bug', () => {
+    expect(classifyWorkKind('o audit log mostra erros de escrita desde ontem').kind).toBe('bug');
+  });
+
+  it('varredura linear (teto de 50 ms em 16 KB)', () => {
+    const SIZE = 16_384;
+    const inputs: Array<[string, string]> = [
+      ['"inventario trava " repetido', 'inventario trava '.repeat(SIZE / 17)],
+      ['"nao " repetido', 'nao '.repeat(SIZE / 4)],
+      ['"nao" + espaços', `nao${' '.repeat(SIZE - 3)}`],
+      ['"not " + espaços', `not${' '.repeat(SIZE - 3)}`],
+      ['"audit " repetido', 'audit '.repeat(SIZE / 6)],
+      ['"trav" repetido', 'trav'.repeat(SIZE / 4)],
+      ['espaços', ' '.repeat(SIZE)],
+    ];
+    for (const [, text] of inputs) {
+      classifyWorkKind(text);
+      const startedAt = performance.now();
+      classifyWorkKind(text);
+      expect(performance.now() - startedAt).toBeLessThan(50);
+    }
+  });
+});

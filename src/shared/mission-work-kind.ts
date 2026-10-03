@@ -168,6 +168,29 @@ const REPAIR_VERB =
 const AUDIT_SCOPE =
   /\b(?:(?:auditorias?|auditar|audites?|audita|audit(?:s|ed|ing)?)(?!\s+(?:logs?|trails?))|inventarios?|inventariar|inventor(?:y|ies)|censos?|census|levantamentos?|mapeamentos?|mapear|mapeie)\b/;
 
+/**
+ * F-813: a parte VERBAL do escopo de auditoria — o chamador está mandando
+ * auditar/mapear/inventariar. Só ela é tarefa de auditoria por si; os
+ * substantivos de AUDIT_SCOPE (`inventario`, `auditoria`, `censo`,
+ * `levantamento`, `mapeamento`) também são palavras de DOMÍNIO ("o inventário
+ * do estoque", "a auditoria de acesso" como módulo do produto). Em inglês
+ * `audit` é substantivo ("the audit module hangs") salvo quando imperativo, com
+ * determinante ("audit the checkout flow").
+ */
+const AUDIT_TASK_VERB =
+  /\b(?:auditar|audites?|audita|audit(?:s|ed|ing)?(?=\s+(?:the|this|these|those|our|my|all|every|each|an?)\b)|inventariar|mapear|mapeie)\b/;
+
+/**
+ * F-813: verbo de FALHA inequívoco, conjugado — "trava", "travou", "não abre",
+ * "crashes". É um relato de mau funcionamento, não um achado esperado de
+ * auditoria: um substantivo de domínio de AUDIT_SCOPE ("o inventário do
+ * estoque trava ao abrir") não pode anulá-lo. Sempre um subconjunto de DEFECT
+ * e SÓ formas verbais: `falha(s)`, `erro(s)`, `failure(s)` seguem substantivos
+ * ("liste as falhas") e `quebra` também ("quebra de estoque").
+ */
+const FAILURE_VERB =
+  /\b(?:trav(?:a|am|ando|ou)|nao\s+(?:funciona|responde|abre)|not\s+working|crash(?:es|ed|ing)?|hang(?:s|ing)?|freez(?:e|es|ing))\b/;
+
 /*
  * VISUAL vocabulary — NOT declared here. `./ui-work-signal` owns it, and this
  * module reads its tiers:
@@ -270,8 +293,13 @@ function collectSignals(canonical: string): WorkKindSignal[] {
 
   const defect = DEFECT.exec(canonical);
   const repair = REPAIR_VERB.exec(canonical);
-  const auditScope = AUDIT_SCOPE.test(canonical);
-  if (defect && (repair || !auditScope)) {
+  // F-813: o escopo de auditoria só abafa a menção quando a auditoria é a
+  // TAREFA (verbo) ou quando não há verbo de falha claro — um substantivo de
+  // domínio ("inventário do estoque") não anula "trava ao abrir".
+  const auditSuppresses =
+    AUDIT_SCOPE.test(canonical) &&
+    (AUDIT_TASK_VERB.test(canonical) || !FAILURE_VERB.test(canonical));
+  if (defect && (repair || !auditSuppresses)) {
     // A defect noun WITH a repair verb is a repair order (strong). Alone it is
     // only a mention — this is what keeps "documentar os bugs conhecidos" on doc.
     // F-772: inside an audit/inventory scope the mention enumerates expected
