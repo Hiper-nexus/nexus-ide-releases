@@ -193,6 +193,11 @@ export class ProjectOrientationService {
     return null;
   }
 
+  /** Hot-path advisory consumers never read/rebuild a cold cache in Main. */
+  peek(scope: ProjectExecutionScope): ProjectOrientationMap | null {
+    return this.#memory.get(scopeKey(scope)) ?? null;
+  }
+
   async ensure(
     scope: ProjectExecutionScope,
     options: OrientationEnsureOptions,

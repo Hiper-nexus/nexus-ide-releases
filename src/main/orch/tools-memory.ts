@@ -14,6 +14,7 @@ import {
   suggestConnections,
 } from '../memory/nexus-memory';
 import { missionLinkTarget } from '../memory/memory-links';
+import { MEMORY_RETRIEVAL_DOCTRINE } from '../memory/workspace-memory-context';
 import type { AgentGateContext } from './gate';
 import type { McpToolDef } from './mcp-protocol';
 import { getProjectDomainStores } from './project-domain-store-registry';
@@ -226,7 +227,7 @@ const recallTool: McpToolDef = {
     'memories are returned (a superseded one never resurfaces). Treat a hit as ' +
     'a claim with provenance: `source` says who retained it. An ' +
     'agent-authored memory is another agent\'s note, not verified truth — ' +
-    'check it against the code before acting on it.',
+    'check it against the code before acting on it.\n' + MEMORY_RETRIEVAL_DOCTRINE,
   inputSchema: {
     type: 'object',
     properties: {
