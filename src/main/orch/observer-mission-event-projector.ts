@@ -70,11 +70,6 @@ function observerToolIdentity(frame: ObserverFrame): {
   // Revalidado aqui: o rótulo da skill nunca sai do padrão estrito.
   const skillName =
     frame.kind === "tool_call" ? normalizeSkillName(frame.payload.skillName) : null;
-  // F-808: WebFetch/WebSearch nativos (fora do MCP do Nexus) também expõem a
-  // sessão — o hook é o único lugar que os vê.
-  if (frame.kind === "tool_call") {
-    noteSessionToolCall(frame.sessionId, toolName, frame.payload.toolKind);
-  }
   return {
     toolName:
       typeof toolName === "string"
@@ -90,6 +85,11 @@ function observerToolIdentity(frame: ObserverFrame): {
 
 function projectObserverFrame(frame: ObserverFrame): void {
   try {
+    // F-808: exposição pertence à sessão, inclusive ao + Pane sem missão.
+    // O journal abaixo é opcional; sua ausência não torna a memória confiável.
+    if (frame.kind === "tool_call") {
+      noteSessionToolCall(frame.sessionId, frame.payload.toolName, frame.payload.toolKind);
+    }
     const agent = getAgentSessionInfo(frame.sessionId);
     const acp = agent ? null : getAcpDriverSession(frame.sessionId);
     const missionId = frame.missionId ?? agent?.missionId ?? acp?.missionId;

@@ -14,6 +14,8 @@ import { effectPolicyForTool } from './mcp-effect-policy';
 import { agentRetainContext, buildMemoryTools } from './tools-memory';
 import { __resetSessionWebExposureForTests, isSessionWebExposed, noteSessionToolCall } from './session-web-exposure';
 import { buildToolset } from './tools';
+import { installObserverMissionEventProjector, uninstallObserverMissionEventProjector } from './observer-mission-event-projector';
+import { publishObserverFrame } from './observer-bus';
 
 function context(
   projectId: string,
@@ -55,6 +57,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  uninstallObserverMissionEventProjector();
   __resetSessionWebExposureForTests();
   disposeWorkspaceMemoryStores();
   getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.workspaceMemory, false);
@@ -333,6 +336,24 @@ describe('nexus_memory_retain — contexto da sessão (F-806/F-808)', () => {
     // WebFetch nativo visto pelo hook também expõe.
     expect(noteSessionToolCall('scout-2', 'WebFetch')).toBe(true);
     expect(isSessionWebExposed('scout-2')).toBe(true);
+  });
+
+  it.each([
+    ['WebFetch', undefined],
+    ['WebSearch', undefined],
+  ])('pane solto: %s observado antes de retain fica em quarentena', async (toolName, toolKind) => {
+    const ctx = context('loose-web', { missionId: undefined, sessionId: `loose-${toolName}` });
+    installObserverMissionEventProjector();
+    publishObserverFrame({
+      sessionId: ctx.sessionId!, kind: 'tool_call',
+      payload: { callId: 'web-call', toolName, ...(toolKind ? { toolKind: toolKind as 'shell-http' } : {}) },
+    });
+    const result = await toolByName('nexus_memory_retain').handler(
+      { content: 'conclusão obtida na página externa' }, ctx,
+    ) as { id: string };
+    const [hit] = getWorkspaceMemoryStore(ctx.scope).recall({ query: 'conclusão página externa' });
+    expect(hit.id).toBe(result.id);
+    expect(hit.flags).toEqual(['quarantine']);
   });
 
   it('sessão comum de escrita grava sem quarentena e liga a nota à missão', async () => {
