@@ -55,6 +55,24 @@ import {
 import { evaluateWriterHandoffRegression } from "./handoff-regression-gate";
 import { normalizeFilesModified } from "./worker-files-modified";
 import { REGRESSION_UNVERIFIED_PREFIX } from "../regression-gate/regression-gate-handoff";
+import {
+  mechanicalHandoffReviewOutcome,
+  reviewMissionHandoff,
+} from "./jev-handoff-review";
+
+/** Íntegra do fechamento mecânico viaja no artifact `fullText` (turn-end-handoff). */
+function artifactFullText(artifacts: readonly unknown[]): string | undefined {
+  for (const artifact of artifacts) {
+    if (
+      artifact &&
+      typeof artifact === "object" &&
+      typeof (artifact as Record<string, unknown>).fullText === "string"
+    ) {
+      return (artifact as Record<string, unknown>).fullText as string;
+    }
+  }
+  return undefined;
+}
 
 const ptyStreamHandoffPayloadSchema = z
   .object({
@@ -358,10 +376,11 @@ async function preparePtyHandoff(
   // fechamento mecânico (que nasce `success`) não têm canal de devolução:
   // teste impactado falhando entra como blocked, nunca como success — nem
   // depois de o MCP ter recusado a mesma entrega.
+  const declaredFiles = normalizeFilesModified({ artifacts: payload.artifacts });
   const regression =
     payload.status === "success" && !isPlanHandoff && ctx.readOnly !== true
       ? await evaluateWriterHandoffRegression(ctx, {
-          declaredFiles: normalizeFilesModified({ artifacts: payload.artifacts }),
+          declaredFiles,
           mission,
           returnable: false,
         })
@@ -376,6 +395,48 @@ async function preparePtyHandoff(
     regression.artifact
       ? [regression.artifact]
       : [];
+  // F-786: a MESMA revisão de evidência do handoff MCP (tools-handoff), sem
+  // canal de devolução — o worker já encerrou, então a revisão roda com
+  // orçamento zero de devoluções e a entrega que NASCE fraca é registrada
+  // partial (texto integral preservado nos artifacts), nunca success.
+  // Fail-open como no MCP: exceção vira skipped e nada muda.
+  let jevOutcome = mechanicalHandoffReviewOutcome({
+    kind: "skipped",
+    reason: "not-run",
+  });
+  if (
+    payload.status === "success" &&
+    !isPlanHandoff &&
+    ctx.readOnly !== true &&
+    regression?.kind !== "exhausted"
+  ) {
+    try {
+      const jevVerdict = await reviewMissionHandoff({
+        sessionId,
+        declaredStatus: payload.status,
+        summary,
+        fullText: artifactFullText(payload.artifacts),
+        declaredFiles,
+        artifactKinds: payload.artifacts
+          .filter(
+            (a): a is { kind: string } =>
+              !!a &&
+              typeof a === "object" &&
+              typeof (a as Record<string, unknown>).kind === "string",
+          )
+          .map((a) => a.kind),
+        evidenceIdsCount: 0,
+        hasObservedCommit: Boolean(worktreeHeadSha),
+        maxBounces: 0,
+      });
+      jevOutcome = mechanicalHandoffReviewOutcome(jevVerdict);
+    } catch (error) {
+      console.warn("[pty-handoff] revisão Jev falhou (ignorada):", error);
+    }
+  }
+  if (jevOutcome.mark) {
+    summary = `[evidência fraca] ${summary}`;
+  }
   return Object.freeze({
     sessionId,
     ctx,
@@ -383,8 +444,13 @@ async function preparePtyHandoff(
     missionId: mission.id,
     dispatch,
     payload,
-    status: regression?.kind === "exhausted" ? "blocked" : payload.status,
-    artifacts: [...payload.artifacts, ...regressionArtifact],
+    status:
+      regression?.kind === "exhausted"
+        ? "blocked"
+        : jevOutcome.status === "partial"
+          ? "partial"
+          : payload.status,
+    artifacts: [...payload.artifacts, ...regressionArtifact, ...jevOutcome.artifacts],
     rawArgs,
     rawPayloadSha256: handoffRawPayloadSha256(rawArgs),
     summary,

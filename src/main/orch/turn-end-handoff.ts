@@ -274,7 +274,24 @@ export interface MechanicalHandoffInput {
 }
 
 export interface MechanicalHandoffPayload extends PtyStreamHandoffPayload {
-  status: 'success';
+  status: 'success' | 'partial';
+}
+
+/**
+ * F-786: admissão explícita, no próprio texto, de que a tarefa ficou sem a
+ * prova requerida ("não consegui abrir nem inspecionar o preview"). O
+ * fechamento mecânico nunca nasce `success` sobre ela — a entrega é `partial`
+ * com o texto integral preservado. Detector estreito por desenho: a revisão
+ * Jev (jev-handoff-review, compartilhada no pty-stream-handoff) refina o
+ * resto; regex sobre prosa não é verificador universal.
+ */
+const ADMITS_INCOMPLETE_RE =
+  /\bn[aã]o\s+(?:consegui|conseguimos|pude|pudemos)\b|\bn[aã]o\s+foi\s+poss[ií]vel\b/i;
+
+export function mechanicalHandoffStatusFor(
+  replyText: string,
+): 'success' | 'partial' {
+  return ADMITS_INCOMPLETE_RE.test(replyText) ? 'partial' : 'success';
 }
 
 /**
@@ -330,7 +347,7 @@ export function buildMechanicalHandoffPayload(
     }
   }
   return {
-    status: 'success',
+    status: mechanicalHandoffStatusFor(input.replyText),
     summary,
     artifacts: [artifacts],
   };

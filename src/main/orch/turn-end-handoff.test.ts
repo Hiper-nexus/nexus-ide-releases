@@ -227,6 +227,32 @@ describe('buildMechanicalHandoffPayload (regra 1.2.3)', () => {
     expect(artifact.sessionId).toBe('pty-9');
     expect(artifact.transcript).toBe('/tmp/t.jsonl');
   });
+
+  it('F-786: admissão de tarefa sem prova não nasce success — partial com texto integral', () => {
+    // Campo 03/10: o fechamento mecânico fixava success; "não consegui abrir
+    // nem inspecionar o preview" virava entrega bem-sucedida sem evidência.
+    const reply = 'não consegui abrir nem inspecionar o preview';
+    const payload = buildMechanicalHandoffPayload({ replyText: reply });
+    expect(payload.status).toBe('partial');
+    const artifact = payload.artifacts[0] as Record<string, unknown>;
+    expect(artifact.fullText).toBe(reply);
+  });
+
+  it('F-786: variações de admissão ("não foi possível") também nascem partial', () => {
+    expect(
+      buildMechanicalHandoffPayload({
+        replyText: 'Não foi possível rodar a suíte de testes desta vez.',
+      }).status,
+    ).toBe('partial');
+  });
+
+  it('F-786: resposta sem admissão de incompletude continua success', () => {
+    expect(
+      buildMechanicalHandoffPayload({
+        replyText: 'Preview inspecionado: layout quebrado no mobile; relatório acima.',
+      }).status,
+    ).toBe('success');
+  });
 });
 
 describe('payloadReplyText (F-355 — payload antes do transcript)', () => {

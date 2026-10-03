@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   markHandoffSubmitted: vi.fn(),
   onHandoffSubmitted: vi.fn(),
   getStores: vi.fn(),
+  reviewMissionHandoff: vi.fn(),
   committedPhysicalWorkerHead: vi.fn(
     async (_ctx: unknown, requireHead: boolean) =>
       requireHead ? "a".repeat(40) : undefined,
@@ -49,6 +50,11 @@ vi.mock("./physical-handoff-git", () => ({
 
 vi.mock("./mission-event-emit", () => ({
   getMissionEventRuntimeManager: () => null,
+}));
+
+vi.mock("./jev-handoff-review", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./jev-handoff-review")>()),
+  reviewMissionHandoff: mocks.reviewMissionHandoff,
 }));
 
 vi.mock("../jarvis/audit-log", () => ({
@@ -135,6 +141,11 @@ describe("submitPtyStreamHandoff MCP parity", () => {
     mocks.onHandoffSubmitted.mockReset();
     mocks.getStores.mockReset();
     mocks.assertReadOnlyLaneObservationCurrent.mockReset();
+    mocks.reviewMissionHandoff.mockReset();
+    mocks.reviewMissionHandoff.mockResolvedValue({
+      kind: "skipped",
+      reason: "test-default",
+    });
     mocks.committedPhysicalWorkerHead.mockReset();
     mocks.committedPhysicalWorkerHead.mockImplementation(
       async (_ctx: unknown, requireHead: boolean) =>
@@ -174,6 +185,100 @@ describe("submitPtyStreamHandoff MCP parity", () => {
       false,
     );
     expect(mocks.onHandoffSubmitted).toHaveBeenCalledOnce();
+  });
+
+  it("F-786: revisão fraca sem canal de retry registra partial, com texto integral preservado", async () => {
+    // Campo 03/10: o fechamento mecânico nascia success sem a revisão de
+    // evidência que o MCP aplica. Sem canal de devolução, a entrega fraca
+    // vira partial — nunca success — e o texto integral fica nos artifacts.
+    const reply = "Fechei a tarefa, mas não consegui abrir nem inspecionar o preview.";
+    const submitWithReplay = vi.fn((_input: Record<string, unknown>) => ({
+      handoff: {
+        id: "hoff-weak",
+        evidenceTrust: "nexus-trusted",
+        deliveryState: "queued",
+      },
+      replayed: false,
+    }));
+    mocks.getContextBySession.mockReturnValue(workerCtx());
+    mocks.getStores.mockReturnValue({
+      missions: { get: () => approvedMission() },
+      tasks: { list: () => [] },
+      missionPanes: { list: () => [] },
+      taskDispatches: { list: () => [] },
+      handoffs: {
+        submitFromPhysicalAgentBoundaryWithReplay: submitWithReplay,
+        submitFromPhysicalAgentBoundaryAndTransitionDispatch: vi.fn(),
+      },
+    });
+    mocks.reviewMissionHandoff.mockResolvedValueOnce({
+      kind: "weak",
+      signals: ["sem evidência de verificação"],
+      artifact: {
+        kind: "nexus.jevReview",
+        payload: {
+          outcome: "weak",
+          model: "jev-test",
+          probabilities: { has_verification: 0.1 },
+          signals: ["sem evidência de verificação"],
+        },
+      },
+    });
+
+    await submitPtyStreamHandoff("agy-session", {
+      status: "success",
+      summary: reply,
+      artifacts: [{ auto: true, fullText: reply }],
+    });
+
+    const persisted = submitWithReplay.mock.calls[0]![0];
+    expect(persisted.status).toBe("partial");
+    expect(persisted.summary).toContain("[evidência fraca]");
+    expect(JSON.stringify(persisted.artifacts)).toContain(
+      "não consegui abrir nem inspecionar o preview",
+    );
+    expect(JSON.stringify(persisted.artifacts)).toContain("nexus.jevReview");
+  });
+
+  it("F-786: revisão aprovada mantém success e anexa o artifact da revisão", async () => {
+    const submitWithReplay = vi.fn((_input: Record<string, unknown>) => ({
+      handoff: {
+        id: "hoff-ok",
+        evidenceTrust: "nexus-trusted",
+        deliveryState: "queued",
+      },
+      replayed: false,
+    }));
+    mocks.getContextBySession.mockReturnValue(workerCtx());
+    mocks.getStores.mockReturnValue({
+      missions: { get: () => approvedMission() },
+      tasks: { list: () => [] },
+      missionPanes: { list: () => [] },
+      taskDispatches: { list: () => [] },
+      handoffs: {
+        submitFromPhysicalAgentBoundaryWithReplay: submitWithReplay,
+        submitFromPhysicalAgentBoundaryAndTransitionDispatch: vi.fn(),
+      },
+    });
+    mocks.reviewMissionHandoff.mockResolvedValueOnce({
+      kind: "ok",
+      artifact: {
+        kind: "nexus.jevReview",
+        payload: {
+          outcome: "ok",
+          model: "jev-test",
+          probabilities: { is_specific: 0.9 },
+          signals: [],
+        },
+      },
+    });
+
+    await submitPtyStreamHandoff("agy-session", payload);
+
+    const persisted = submitWithReplay.mock.calls[0]![0];
+    expect(persisted.status).toBe("success");
+    expect(persisted.summary).not.toContain("[evidência fraca]");
+    expect(JSON.stringify(persisted.artifacts)).toContain("nexus.jevReview");
   });
 
   it("still binds a matching dispatch and requires HEAD when ceremonial work exists", async () => {
