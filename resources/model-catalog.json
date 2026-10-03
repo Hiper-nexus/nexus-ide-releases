@@ -3,7 +3,7 @@
   "updatedAt": "2026-10-03T00:00:00.000Z",
   "adapters": {
     "claude": {
-      "default": "claude-sonnet-5",
+      "default": "claude-sonnet-5-5",
       "models": [
         {
           "id": "claude-opus-5-5",

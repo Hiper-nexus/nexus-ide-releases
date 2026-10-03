@@ -114,6 +114,16 @@ describe('model catalog overlays', () => {
 });
 
 describe('published catalog JSON', () => {
+  it('uses the available Sonnet 5.5 line for a fresh Claude default', () => {
+    const original = { ...ADAPTER, id: 'claude', models: {
+      flag: '--model', list: ['claude-sonnet-5'], default: 'claude-sonnet-5',
+    } };
+    for (const catalog of [BUILTIN_MODEL_CATALOG, PUBLISHED_MODEL_CATALOG]) {
+      const configured = applyModelCatalogToAdapter(original, catalog);
+      expect(configured.models.default).toBe('claude-sonnet-5-5');
+      expect(configured.models.list).toContain(configured.models.default);
+    }
+  });
   it('exposes Sonnet 5.5 through stale catalogs without changing a pinned default', () => {
     const combined = mergeModelCatalogs(BUILTIN_MODEL_CATALOG, PUBLISHED_MODEL_CATALOG);
     const withLocal = mergeModelCatalogs(combined, {

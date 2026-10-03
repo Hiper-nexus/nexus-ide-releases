@@ -71,6 +71,7 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
   version: 1,
   adapters: {
     claude: {
+      default: 'claude-sonnet-5-5',
       models: [
         { id: 'claude-opus-5-5', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'claude-opus-5', availability: 'paid', costTier: 'high', source: 'bundled' },
