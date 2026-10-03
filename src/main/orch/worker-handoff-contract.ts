@@ -187,7 +187,7 @@ export function withHandoffContract(
       : null;
   const contract = systemDeliversContract ?? (viaMcp
     ? 'Ao concluir sua tarefa, finalize chamando a tool nexus_handoff_submit ' +
-      'com {status: "success"|"partial"|"blocked"|"failed", summary, artifacts} ' +
+      'com {status: "success"|"partial"|"blocked"|"failed", summary, fullText, artifacts}; fullText guarda a resposta completa antes de o pane fechar. ' +
       '(opcionalmente estruture o fio da meada em accomplished: [...], blockers: [...], nextSteps: [...]). ' +
       telemetryContract +
       ' ' +
@@ -214,4 +214,3 @@ export function withHandoffContract(
   const lean = orch.leanCode && tier.lean ? `\n\n${PONYTAIL_RULES}` : '';
   return `${prompt}${charter}${design}${lean}\n\n${autonomy}${visualVerification ? `\n\n${visualVerification}` : ''}\n\n${peerRead}${memoryDoctrine ? `\n\n${memoryDoctrine}` : ''}${browserDoctrine ? `\n\n${browserDoctrine}` : ''}\n\n${contract}`;
 }
-

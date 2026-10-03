@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   armAutoCloseOnHandoff,
+  assertAutoCloseReportPreserved,
   armAutoCloseOnHandoffForPane,
   armedAutoClosePaneId,
   disarmAutoCloseOnHandoff,
@@ -101,6 +102,17 @@ describe("selectScopedPaneCloseTargets", () => {
 });
 
 describe("scheduleAutoCloseAfterHandoff", () => {
+  it('accepts complete reports in the existing native artifact format and rejects truncation', () => {
+    armAutoCloseOnHandoff('report-format', 'pane-report');
+    try {
+      expect(() => assertAutoCloseReportPreserved('report-format', 'pane-report', 'success', {
+        summary: 'Resumo curto', artifacts: [{ fullText: 'Relatório completo do worker.' }],
+      })).not.toThrow();
+      expect(() => assertAutoCloseReportPreserved('report-format', 'pane-report', 'success', {
+        fullText: 'x'.repeat(60_001),
+      })).toThrow('handoff_report_required');
+    } finally { disarmAutoCloseOnHandoff('report-format', 'pane-report'); }
+  });
   it("não fecha a sessão substituta quando o pane muda antes do callback", async () => {
     vi.useFakeTimers();
     try {

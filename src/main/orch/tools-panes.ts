@@ -346,7 +346,7 @@ const SAME_CHECKOUT_ACTIVE_STATES = new Set<PaneSnapshot['state']>([
 
 /** Footer anexado a prompts de worker para lembrar o nexus_handoff_submit. */
 const WORKER_HANDOFF_FOOTER =
-  '[Ao terminar, chame nexus_handoff_submit uma vez com status, summary, artifacts e evidenceIds.]';
+  '[Ao terminar, chame nexus_handoff_submit uma vez com status, summary, fullText (relatório completo), artifacts e evidenceIds.]';
 
 function withWorkerHandoffFooter(
   sessionId: string,

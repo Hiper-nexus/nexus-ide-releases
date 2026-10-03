@@ -82,12 +82,17 @@ export function assertAutoCloseReportPreserved(
   sessionId: string | undefined,
   paneId: string | null,
   status: unknown,
-  args: { fullText?: unknown; summary?: unknown },
+  args: { fullText?: unknown; summary?: unknown; artifacts?: unknown },
 ): void {
   if (!sessionId || status !== 'success' || !armedAutoClosePaneId(sessionId, paneId)) return;
-  // Existing condensation persists a long summary verbatim as fullText.
-  const report = typeof args.fullText === 'string' ? args.fullText :
-    typeof args.summary === 'string' && args.summary.trim().length > 400 ? args.summary.trim() : null;
+  // Native system-delivery contract uses artifacts[].fullText; MCP also
+  // accepts a top-level fullText. Both already persist verbatim in the ledger.
+  const fullTextArtifact = Array.isArray(args.artifacts) ? args.artifacts.slice(0, 4096)
+    .find(artifact => artifact && typeof artifact === 'object' &&
+      (typeof artifact.fullText === 'string' || artifact.kind === 'overclock.fullText' && typeof artifact.payload === 'string')) : null;
+  const report: string | null = typeof args.fullText === 'string' ? args.fullText : fullTextArtifact
+    ? typeof fullTextArtifact.fullText === 'string' ? fullTextArtifact.fullText : fullTextArtifact.payload
+    : typeof args.summary === 'string' && args.summary.trim().length > 400 ? args.summary.trim() : null;
   if (!report?.trim() || report.length > 60_000) {
     throw new Error('handoff_report_required: este pane fecha após a entrega. Envie o relatório completo em fullText (até 60000 caracteres), além do summary. O pane foi preservado; nenhum sucesso foi registrado.');
   }
