@@ -1743,7 +1743,8 @@ export async function routeTaskForCaller(
   // → heurística e skillSuggestion null, como sempre.
   let jevRouting: JevRouteTaskBatch = { kind: 'skipped' };
   try {
-    jevRouting = await classifyTaskWithSkillForRouting(task, {
+    // F-802: sugestão do hook (sem spawn) não gasta a chave do operador.
+    if (internal.suggestOnly !== true) jevRouting = await classifyTaskWithSkillForRouting(task, {
       allowedSkills: ctx.allowedSkills ?? null,
       // F-753: as skills instaladas no projeto concorrem com as do Nexus. A
       // pasta é a de execução: é nela que o pane lê o `path` relativo.
@@ -2091,10 +2092,12 @@ export async function routeTaskForCaller(
   });
   // Proveniência: o spawn ad-hoc de modelos com warning de catálogo exige
   // uma decisão recente do router (ver adHocSpawnGateError em tools-panes).
-  recordRouteDecision({ adapterId: decision.adapterId, model: decision.model });
+  // F-802: a sugestão do hook não é uma decisão tomada — nem proveniência de
+  // spawn, nem linha no diário de rotas.
+  if (internal.suggestOnly !== true) recordRouteDecision({ adapterId: decision.adapterId, model: decision.model });
   // Observabilidade ("ver para crer"): registra a decisão + motivo para
   // inspeção, já que o reason antes só existia no retorno consumido pelo LLM.
-  recordRouteLog({
+  if (internal.suggestOnly !== true) recordRouteLog({
     task,
     tier: decision.tier,
     adapterId: decision.adapterId,

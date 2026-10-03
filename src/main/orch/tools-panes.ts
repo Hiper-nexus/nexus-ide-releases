@@ -563,6 +563,12 @@ export interface OperatorRouteInternal {
    * confina leitura, então a rota só pode escolher entre as que confinam.
    */
   readonly requireReadOnlyEnforceable?: boolean;
+  /**
+   * F-802: só sugerir (o hook /hook/delegate apontando a CLI melhor): sem o
+   * lote do Jev (não gasta a chave do operador) e sem registrar proveniência
+   * de spawn nem diário de rotas — nada foi decidido.
+   */
+  readonly suggestOnly?: boolean;
 }
 
 export type OperatorRouteResolver = (
@@ -597,6 +603,18 @@ setNextCliResolver(async ({ callerSessionId, task, excludeAdapterIds, preferAdap
   const effort = routeString(route, 'effort');
   return { adapterId, ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
 });
+
+/**
+ * F-802: a rota que o motor sugeriria para `task`, fora do spawn (o hook
+ * /hook/delegate aponta a CLI melhor em UMA linha). Mesmo motor, sem Jev e sem
+ * efeito colateral; null quando o resolver ainda não foi registrado (boot cedo).
+ */
+export function suggestOperatorRoute(
+  task: string,
+  ctx: AgentGateContext,
+): Promise<Record<string, unknown>> | null {
+  return operatorRouteResolver?.(task, ctx, { suggestOnly: true }) ?? null;
+}
 
 /**
  * Cria (ou reusa) a missão leve da aba do pane chamador e o adota como

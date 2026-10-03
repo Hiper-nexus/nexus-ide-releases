@@ -35,8 +35,12 @@ import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
 import { getOrchSettings } from '../persistence/settings-store';
 import {
   adoptThroughOperatorTabMission,
+  suggestOperatorRoute,
   type OperatorTabMission,
 } from './tools-panes';
+import { taskNeedsWebSearch } from './task-router';
+import { getAdapter } from '../adapters/adapter-registry';
+import { isJevAutopilotEnabled } from '../jev/jev-autopilot';
 import { trace } from '../observability/main-trace';
 import { maestroStandingDoctrineFor } from './maestro-standing-context';
 import { suggestSkillForTask } from './jev-skill-suggestion';
@@ -142,6 +146,8 @@ const browserHintDeliveredAt = new Map<string, number>();
 const memoryDeliveredAt = new Map<string, { hash: string; at: number }>();
 /** F-753: mesma skill sugerida ao mesmo pane no máximo a cada 30 min. */
 const skillHintDeliveredAt = new Map<string, number>();
+/** F-802: a dica de CLI melhor, uma vez por sessão a cada 30 min. */
+const routeHintDeliveredAt = new Map<string, number>();
 
 /** Confiança mínima para a dica de skill entrar no pedido (a mesma do spawn). */
 export const OPERATOR_SKILL_HINT_MIN_CONFIDENCE = 0.7;
@@ -181,6 +187,73 @@ export function __resetLeanRemindersForTests(): void {
   browserHintDeliveredAt.clear();
   memoryDeliveredAt.clear();
   skillHintDeliveredAt.clear();
+  routeHintDeliveredAt.clear();
+}
+
+/** Orçamento da dica de rota: o hook do Claude morre aos 5 s e leva o resto junto. */
+export const ROUTE_HINT_DEADLINE_MS = 1_500;
+/** Só o começo do pedido é varrido: o custo não cresce com o paste do operador. */
+const ROUTE_HINT_SCAN_CHARS = 4_000;
+
+export interface RouteHintDeps {
+  autopilot?: () => boolean;
+  /** A CLI do pane tem busca na web confirmada no manifesto? Desconhecida → sim (sem dica). */
+  paneHasWebSearch?: (providerId: string | undefined) => boolean;
+  suggestRoute?: (task: string, ctx: HookContext) => Promise<Record<string, unknown>> | null;
+  deadlineMs?: number;
+}
+
+function defaultPaneHasWebSearch(providerId: string | undefined): boolean {
+  const adapter = providerId ? getAdapter(providerId) : null;
+  return adapter?.kind !== 'cli-pty' || adapter.capabilities?.webSearch === true;
+}
+
+/**
+ * F-802: o pedido exige trabalho que a CLI deste pane não confirma ter — busca
+ * na web (o MiMo respondeu "WebSearch indisponível neste pane", 02/10) — e outra
+ * CLI do Nexus tem. Uma linha, sem forçar: a rota vem do mesmo motor do
+ * nexus_pane_spawn, SEM chamar o Jev (não gasta a chave do operador) e sem
+ * registrar decisão. Piloto automático desligado, CLI com busca confirmada, ou
+ * qualquer atraso/erro: nada.
+ */
+export async function operatorRouteHint(
+  ctx: HookContext,
+  prompt: string,
+  deps: RouteHintDeps = {},
+): Promise<string | null> {
+  if (!taskNeedsWebSearch(prompt.slice(0, ROUTE_HINT_SCAN_CHARS))) return null;
+  if (!(deps.autopilot ?? isJevAutopilotEnabled)()) return null;
+  if ((deps.paneHasWebSearch ?? defaultPaneHasWebSearch)(ctx.providerId)) return null;
+  const own = ctx.providerId ?? 'esta';
+  let target = '';
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const pending = (deps.suggestRoute ?? ((task, c) => suggestOperatorRoute(task, c as AgentGateContext)))(
+      prompt,
+      ctx,
+    );
+    if (pending) {
+      const route = await Promise.race([
+        pending.catch(() => null),
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), deps.deadlineMs ?? ROUTE_HINT_DEADLINE_MS);
+        }),
+      ]);
+      const adapterId = typeof route?.adapterId === 'string' ? route.adapterId : '';
+      const model = typeof route?.model === 'string' ? route.model : '';
+      // A rota repetir a CLI do pane não ensina nada: sem dica.
+      if (adapterId && adapterId === ctx.providerId) return null;
+      target = adapterId ? ` (rota sugerida: ${adapterId}${model ? ` ${model}` : ''})` : '';
+    }
+  } catch {
+    target = '';
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+  return (
+    `[Nexus · Jev] Este pedido precisa de busca na web, que o Nexus não confirma na CLI deste pane (${own}). ` +
+    `Para garantir a ferramenta, delegue com nexus_pane_spawn({ task, prompt })${target} — o Nexus escolhe a CLI; é só uma sugestão.`
+  );
 }
 
 type MemoryBlockFn = typeof operatorWorkspaceMemoryContext;
@@ -584,6 +657,8 @@ export async function handleHookDelegateRequest(
     suggestSkill?: typeof suggestSkillForTask;
     /** F-784: teto seguro de helpers agora; default = panes vivos × RAM livre. */
     parallelBudget?: ParallelBudgetFn;
+    /** F-802: dica de CLI melhor (busca na web); default = motor de rota sem Jev. */
+    routeHint?: (ctx: HookContext, prompt: string) => Promise<string | null>;
   } = {},
 ): Promise<{ statusCode: 200; payload: Record<string, unknown> }> {
   try {
@@ -651,6 +726,11 @@ export async function handleHookDelegateRequest(
       timeoutMs: DELEGATE_TIMEOUT_MS,
       signal: AbortSignal.timeout(DELEGATE_TIMEOUT_MS),
     }).catch(() => null);
+    // F-802: pedido que a CLI do pane não confirma atender (busca na web) — em
+    // paralelo com o resto, com prazo próprio; só roda com o regex local batendo.
+    const routeHintPromise = ctx.operatorParentSessionId === undefined
+      ? (deps.routeHint ?? operatorRouteHint)(ctx, prompt).catch(() => null)
+      : Promise.resolve(null);
     // Jev fora do ar não pode levar junto o contexto de design, que é local.
     const advice = await advicePromise;
     // O Codex não recebe a doutrina pelas instructions do MCP (ele as repete
@@ -688,6 +768,13 @@ export async function handleHookDelegateRequest(
         markReminded(skillHintDeliveredAt, key, now);
         parts.push(operatorSkillHint(skill));
       }
+    }
+    // A dica de CLI vale quando o conselho NÃO manda delegar: delegar já passa
+    // pelo roteador, e duas linhas do mesmo assunto só gastam contexto.
+    const routeLine = await routeHintPromise;
+    if (routeLine && !advice?.delegation && ctx.sessionId && !remindedRecently(routeHintDeliveredAt, ctx.sessionId, now)) {
+      markReminded(routeHintDeliveredAt, ctx.sessionId, now);
+      parts.push(routeLine);
     }
     if (advice?.delegation) {
       const autopilot =
