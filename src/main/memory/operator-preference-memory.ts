@@ -24,10 +24,12 @@ export const PREFERENCE_MARKER_RE =
 const CANDIDATE_MAX_CHARS = 300;
 
 /**
- * Teto do prompt que vai ao Jev como contexto. Prompt maior quase sempre é
- * texto colado (saída de agente, issue, log): não é fonte de preferência.
+ * Contexto que vai ao Jev é limitado, mas a busca no texto do operador pode
+ * alcançar a preferência no fim de uma mensagem longa (teto separado).
  */
 const CONTEXT_MAX_CHARS = 1_500;
+const PROMPT_MAX_CHARS = 65_536;
+const INJECTED_MESSAGE_RE = /<\/?(?:task-notification|pasted_content|system-reminder|tool_result|workspace-handoff)\b|\[Nexus\]|^\s*#\s*AGENTS\.md\b|^\s*(?:log da CI|CI log)\b/im;
 
 const PREFERENCE_SOURCE = 'trusted:operator-preference';
 
@@ -73,7 +75,7 @@ export type OperatorPreferenceOutcome =
  * prompt cita/nega a regra em vez de adotá-la.
  */
 export function extractPreferenceCandidate(prompt: string): string | null {
-  if (prompt.length > CONTEXT_MAX_CHARS || NOT_ADOPTED_RE.test(prompt)) return null;
+  if (prompt.length > PROMPT_MAX_CHARS || NOT_ADOPTED_RE.test(prompt) || INJECTED_MESSAGE_RE.test(prompt)) return null;
   const sentences = withoutQuotedText(prompt)
     .split(/(?<=[.!?\n])\s+|\n+/)
     .map((sentence) => sentence.replace(/\s+/g, ' ').trim())
@@ -118,7 +120,7 @@ export async function distillOperatorPreferenceMemory(
     // O Jev vê a frase E a mensagem de onde ela saiu: o recorte sozinho
     // esconderia negação, citação ou exemplo.
     const confirmed = await confirmOperatorPreference(
-      { candidate, context: prompt.slice(0, CONTEXT_MAX_CHARS) },
+      { candidate, context: preferenceContext(prompt, candidate) },
       deps,
     );
     if (!confirmed) return { retained: false, reason: 'jev-skip' };
@@ -132,4 +134,12 @@ export async function distillOperatorPreferenceMemory(
   } finally {
     pending.delete(candidate);
   }
+}
+
+/** Preserve the candidate's surrounding message, even when it occurs late. */
+function preferenceContext(prompt: string, candidate: string): string {
+  if (prompt.length <= CONTEXT_MAX_CHARS) return prompt;
+  const index = prompt.indexOf(candidate.split(/\n/)[0]!);
+  const start = Math.max(0, (index >= 0 ? index : prompt.length) - 600);
+  return prompt.slice(start, start + CONTEXT_MAX_CHARS);
 }

@@ -158,6 +158,7 @@ export const MEMORY_CHANNELS = {
    * para poder entrar no brief dos panes deste projeto (F-808).
    */
   promote: 'memory:promote',
+  attest: 'memory:attest',
 } as const;
 
 /**

@@ -22,6 +22,7 @@ const memoryBoundary = {
 const agenticMemoryBoundary = {
   forget: vi.fn(),
   promote: vi.fn(),
+  attest: vi.fn(),
 };
 
 const mountedRoots: Array<{ host: HTMLDivElement; root: Root }> = [];
@@ -99,6 +100,7 @@ beforeEach(() => {
   memoryBoundary.memoryList.mockReset();
   memoryBoundary.memoryRemember.mockReset();
   agenticMemoryBoundary.forget.mockReset();
+  agenticMemoryBoundary.attest.mockReset();
   installNexusBoundary();
 });
 
@@ -112,6 +114,22 @@ afterEach(() => {
 });
 
 describe('MemoryWorkspace contracts', () => {
+  it('saves architecture rules and global preferences only after explicit operator selection', async () => {
+    memoryBoundary.memoryList.mockResolvedValue([]);
+    agenticMemoryBoundary.attest.mockResolvedValue({ enabled: true, id: 'attested', scope: 'global' });
+    const host = mount(<MemoryWorkspace />); await settleMemoryEffects();
+    const select = host.querySelector<HTMLSelectElement>('[aria-label="Tipo de memória"]')!;
+    act(() => { select.value = 'operator-preference'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    const scope = host.querySelector<HTMLSelectElement>('[aria-label="Escopo da preferência"]')!;
+    act(() => { scope.value = 'global'; scope.dispatchEvent(new Event('change', { bubbles: true })); });
+    setFieldValue(host.querySelector('[aria-label="Título da memória"]')!, 'Idioma');
+    setFieldValue(host.querySelector('[aria-label="Corpo da memória"]')!, 'Responda em português.');
+    await act(async () => { findButton(host, /^salvar$/i).click(); await Promise.resolve(); });
+    expect(agenticMemoryBoundary.attest).toHaveBeenCalledWith({ type: 'operator-preference', title: 'Idioma', summary: 'Responda em português.', scope: 'global' });
+    expect(memoryBoundary.memoryRemember).not.toHaveBeenCalled();
+    act(() => { select.value = 'architecture-rule'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(host.querySelector('[aria-label="Escopo da preferência"]')).toBeNull();
+  });
   it('separates the note composer from the saved-memory area in the full page', async () => {
     memoryBoundary.memoryList.mockResolvedValue([]);
     const host = mount(<MemoryWorkspace />);

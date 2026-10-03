@@ -331,6 +331,8 @@ export function MemoryPanelBody({
   const [notes, setNotes] = useState<ProductMemoryNote[]>([]);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
+  const [memoryType, setMemoryType] = useState<'note' | 'architecture-rule' | 'operator-preference'>('note');
+  const [preferenceScope, setPreferenceScope] = useState<'workspace' | 'global'>('workspace');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [forgettingId, setForgettingId] = useState<string | null>(null);
@@ -401,11 +403,16 @@ export function MemoryPanelBody({
     try {
       const api = productApi();
       if (!api) throw new Error('product memory API unavailable');
-      await api.memoryRemember({
+      if (memoryType === 'note') await api.memoryRemember({
         title: trimmedTitle,
         body,
         kind: 'note',
       });
+      else {
+        const result = await memoryApi()?.attest({ type: memoryType, title: trimmedTitle,
+          summary: body || trimmedTitle, scope: memoryType === 'operator-preference' ? preferenceScope : 'workspace' });
+        if (!result?.enabled) throw new Error('memory attestation unavailable');
+      }
       if (!mountedRef.current) return;
       setTitle('');
       setBody('');
@@ -617,6 +624,22 @@ export function MemoryPanelBody({
 
       <div className="product-pane__form" aria-busy={saving || undefined}>
         {presentation === 'full' ? <h2>Nova memória</h2> : null}
+        <label className="product-pane__field">
+          <span>Tipo de memória</span>
+          <select className="product-pane__input" aria-label="Tipo de memória" value={memoryType}
+            disabled={saving} onChange={(event) => setMemoryType(event.target.value as typeof memoryType)}>
+            <option value="note">Nota</option>
+            <option value="architecture-rule">Regra aprovada por mim</option>
+            <option value="operator-preference">Minha preferência</option>
+          </select>
+        </label>
+        {memoryType === 'operator-preference' ? <label className="product-pane__field">
+          <span>Onde a preferência vale</span>
+          <select className="product-pane__input" aria-label="Escopo da preferência" value={preferenceScope}
+            disabled={saving} onChange={(event) => setPreferenceScope(event.target.value as typeof preferenceScope)}>
+            <option value="workspace">Neste projeto</option><option value="global">Em todos os meus projetos</option>
+          </select>
+        </label> : null}
         <label className="product-pane__field">
           <span>Título da nota</span>
           <input

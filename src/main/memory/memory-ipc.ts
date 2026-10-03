@@ -21,6 +21,7 @@ import { MEMORY_CHANNELS } from '../../shared/channels';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import type {
   MemoryForgetResult,
+  MemoryAttestationResult,
   MemoryPromoteResult,
   MemoryRecallResult,
   MemoryStatsResult,
@@ -37,6 +38,7 @@ import {
   type MemoryRecallHit,
   type WorkspaceMemoryStats,
 } from './workspace-memory';
+import { operatorMemoryAttestationSchema, retainOperatorMemoryAttestation } from './operator-memory-attestation';
 
 const recallRequestSchema = z
   .object({
@@ -120,5 +122,13 @@ export function registerMemoryIpc(): void {
     const scope = requireRendererWorkspaceScope(event.sender);
     const promoted = getWorkspaceMemoryStore(scope).promoteMemory(id);
     return { enabled: true, promoted };
+  });
+
+  ipcMain.handle(MEMORY_CHANNELS.attest, (event, raw): MemoryAttestationResult => {
+    if (!memoryEnabled()) return { enabled: false };
+    const scope = requireRendererWorkspaceScope(event.sender);
+    const input = operatorMemoryAttestationSchema.parse(raw);
+    const result = retainOperatorMemoryAttestation(scope, input);
+    return { enabled: true, id: result.id, scope: result.scope };
   });
 }
