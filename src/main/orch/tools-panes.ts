@@ -103,6 +103,13 @@ import { isMissionWorkerWriteEligibleCli } from './squad-runtime-policy';
 import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
 import { getAccountChoiceReceipt } from '../persistence/account-choice-receipts';
 import { trace } from '../observability/main-trace';
+import { resolveCodexCliVersion } from './codex-cli-version';
+import {
+  buildPaneSpawnLifecycleEvent,
+  buildPaneSpawnRecoveryEvent,
+  classifySpawnErrorCode,
+  type PaneSpawnLifecycleMeta,
+} from './pane-spawn-lifecycle';
 import {
   startPhaseTimer,
   type PhaseTimer,
@@ -654,17 +661,10 @@ export function assertCallerMaySpawnPane(
  * awaitada da entrada do tool até a criação do PTY; `meta` recebe a
  * identidade conforme o caminho a descobre (adapter resolvido, paneId do
  * resultado) e `ok` só vira true quando o handler devolve sucesso.
+ * F-787: o meta é o contrato de pane-spawn-lifecycle (modelo efetivo,
+ * sessionId, versão da CLI, código de erro) — só ids/categorias/números.
  */
-interface PaneSpawnTimingMeta {
-  adapterId?: string;
-  paneId?: string;
-  missionId?: string;
-  role?: string;
-  ok?: boolean;
-  /** F-215: tempos por etapa do materialize da worktree isolada (ms). */
-  gitWorktreeMs?: number;
-  cowMs?: number;
-}
+type PaneSpawnTimingMeta = PaneSpawnLifecycleMeta;
 interface PaneSpawnTiming {
   readonly timer: PhaseTimer;
   readonly meta: PaneSpawnTimingMeta;
@@ -881,34 +881,30 @@ const paneSpawn: McpToolDef = {
     } catch (error) {
       // Spawn que não saiu não deixa a missão da aba que nasceu para ele:
       // missão running vazia e pane promovido sem helper nenhum.
+      spawnTiming.meta.errorCode = classifySpawnErrorCode(error);
       tabMission?.discardIfUnused();
       throw error;
     } finally {
       // F-213: um evento por tentativa — sucesso, rota que falhou antes do
       // PTY, falha de spawn ou exceção interna. Só ids/labels/números.
+      // F-787: modelo efetivo, sessionId, versão da CLI, origem classificada
+      // da injeção, código permanente de erro e paneCreated (rejeição antes
+      // do primeiro turno ≠ pane criado). Nunca prompt/argv/ambiente/conta.
       const { totalMs, phases } = spawnTiming.timer.finish();
-      trace({
-        kind: 'pane-spawn-timing',
-        source: 'mcp',
-        adapterId:
-          spawnTiming.meta.adapterId ?? str(args, 'adapterId') ?? null,
-        paneId: spawnTiming.meta.paneId ?? null,
-        missionId:
-          spawnTiming.meta.missionId ??
-          str(args, 'missionId') ??
-          ctx.missionId ??
-          null,
-        role: spawnTiming.meta.role ?? null,
-        ok: spawnTiming.meta.ok === true,
-        totalMs,
-        phases,
-        ...(spawnTiming.meta.gitWorktreeMs === undefined
-          ? {}
-          : { gitWorktreeMs: spawnTiming.meta.gitWorktreeMs }),
-        ...(spawnTiming.meta.cowMs === undefined
-          ? {}
-          : { cowMs: spawnTiming.meta.cowMs }),
-      });
+      trace(
+        buildPaneSpawnLifecycleEvent({
+          meta: spawnTiming.meta,
+          caller: {
+            role: ctx.role,
+            missionId: ctx.missionId ?? null,
+            sessionId: ctx.sessionId ?? null,
+          },
+          requestedAdapterId: str(args, 'adapterId') ?? null,
+          requestedMissionId: str(args, 'missionId') ?? null,
+          totalMs,
+          phases,
+        }),
+      );
     }
   },
 };
@@ -1903,6 +1899,14 @@ const paneSpawnAfterTabMission = {
         spawnTiming.meta.adapterId = options.adapterId;
         spawnTiming.meta.missionId = options.missionId;
         spawnTiming.meta.role = options.role ?? ctx.role;
+        // F-787: modelo EFETIVO (rota AUTO inclusa) e a versão da CLI.
+        // ponytail: versão real só onde já há sonda memorizada no processo
+        // (Codex — cache quente da decoração do spawn, F-687/F-689); as
+        // demais CLIs ficam null até ganharem sonda própria — nunca probar
+        // --version aqui (subprocesso por spawn e CLIs que renovam auth).
+        spawnTiming.meta.model = options.model;
+        spawnTiming.meta.cliVersion =
+          options.adapterId === 'codex' ? resolveCodexCliVersion() : null;
       }
       // Reuso de helper ocioso (lote 0.76.135, superfície Jev helperReuse):
       // mão do operador sem missão ou orquestrador da missão da aba entrega a
@@ -1953,6 +1957,13 @@ const paneSpawnAfterTabMission = {
               ),
               invocation,
             );
+            if (spawnTiming) {
+              // F-787: reuso não é rejeição nem spawn novo — fica marcado.
+              spawnTiming.meta.ok = true;
+              spawnTiming.meta.reused = true;
+              spawnTiming.meta.paneId = reuseChoice.candidate.paneId;
+              spawnTiming.meta.sessionId = reuseChoice.candidate.sessionId;
+            }
             return {
               paneId: reuseChoice.candidate.paneId,
               sessionId: reuseChoice.candidate.sessionId,
@@ -2072,6 +2083,7 @@ const paneSpawnAfterTabMission = {
         if (spawnTiming) {
           spawnTiming.meta.ok = true;
           spawnTiming.meta.paneId = pending.paneId ?? undefined;
+          if (pending.sessionId) spawnTiming.meta.sessionId = pending.sessionId;
         }
         const pendingDiversity = harness.source === 'explicit'
           ? sameAdapterDiversityHint(options.adapterId, options.missionId, listPaneSnapshots(), pending.paneId ?? undefined)
@@ -2098,6 +2110,7 @@ const paneSpawnAfterTabMission = {
       if (spawnTiming) {
         spawnTiming.meta.ok = true;
         spawnTiming.meta.paneId = spawned.paneId;
+        spawnTiming.meta.sessionId = spawned.sessionId;
       }
       isolatedWriter?.link(spawned.paneId, spawned.sessionId ?? undefined);
       if (autoClose && spawned.sessionId) {
@@ -2289,19 +2302,43 @@ async function rerouteNotStartedSpawn(input: {
     ...(input.rosterSuccessor ? { agentName: input.rosterSuccessor } : {}),
     fresh: true,
   };
-  const receipt = (await paneSpawnAfterTabMission.handler(
-    args,
-    ctx,
-    invocation,
-    null,
-    parseExpectArg(args.expect),
-    undefined,
-    { excludeAdapterIds: input.excludeAdapterIds },
-  )) as { paneId?: unknown; harness?: { adapterId?: unknown } };
+  // F-787: a tentativa de recuperação e o resultado dela também vão ao trace
+  // (origem 'sistema') — antes, o reenvio automático era invisível.
+  let receipt: { paneId?: unknown; harness?: { adapterId?: unknown } };
+  try {
+    receipt = (await paneSpawnAfterTabMission.handler(
+      args,
+      ctx,
+      invocation,
+      null,
+      parseExpectArg(args.expect),
+      undefined,
+      { excludeAdapterIds: input.excludeAdapterIds },
+    )) as { paneId?: unknown; harness?: { adapterId?: unknown } };
+  } catch (error) {
+    trace(
+      buildPaneSpawnRecoveryEvent({
+        callerSessionId: input.callerSessionId,
+        excludeAdapterIds: input.excludeAdapterIds,
+        ok: false,
+        errorCode: classifySpawnErrorCode(error),
+      }),
+    );
+    throw error;
+  }
   const paneId = typeof receipt.paneId === 'string' ? receipt.paneId : null;
   const adapterId =
     typeof receipt.harness?.adapterId === 'string' ? receipt.harness.adapterId : null;
   if (!paneId || !adapterId) throw new Error('o reenvio não devolveu um pane');
+  trace(
+    buildPaneSpawnRecoveryEvent({
+      callerSessionId: input.callerSessionId,
+      excludeAdapterIds: input.excludeAdapterIds,
+      paneId,
+      adapterId,
+      ok: true,
+    }),
+  );
   return { paneId, adapterId };
 }
 
