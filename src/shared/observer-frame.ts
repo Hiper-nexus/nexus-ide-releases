@@ -96,6 +96,9 @@ export interface ObserverTurnStartedPayload {
   turnId: string;
   /** 1-based UserPromptSubmit count within the physical session. */
   turnSequence: number;
+  /** Main-owned successful PTY input provenance; never text or a text hash. */
+  inputOrigin?: 'human' | 'system' | 'unknown';
+  writer?: 'maestro' | 'supervisor' | 'failover' | 'nexus';
 }
 
 /** The provider reported the turn finished (stop hook) or failed (error). */

@@ -778,6 +778,8 @@ async function notifyPaneStartCaller(watch: PaneStartWatch, summary: string): Pr
       injectPrompt(
         parentSessionId,
         `${WORKSPACE_HANDOFF_DELIVERY_PREFIX} de ${watch.paneId} (sistema Nexus): ${summary}\n`,
+        undefined,
+        'supervisor',
       ),
     )
     .then(() => suite.handoffs.markSubmitted(handoff.id))

@@ -1,3 +1,4 @@
+import type { SystemInputWriter } from './operator-input-receipts';
 import { assertLicensedAgentCapacity } from '../license-enforcement';
 import { licenseErrorFrom } from '../../shared/license-errors';
 import { withWorkspaceDesignRule } from './workspace-design-rule';
@@ -469,17 +470,18 @@ export async function injectPrompt(
   sessionId: string,
   prompt: string,
   invocation?: McpToolInvocation,
+  inputWriter: SystemInputWriter = 'nexus',
 ): Promise<void> {
   clearAdaptiveEnterTimers(sessionId);
   const safePrompt = assertSafePtyPrompt(prompt);
   const input = injectedPromptInput(sessionId, safePrompt);
   assertMcpInvocationCurrent(invocation);
   const ingest = armPasteIngest(sessionId, safePrompt);
-  if (!orchWriteSession(sessionId, input, { markInputBusy: false })) {
+  if (!orchWriteSession(sessionId, input, { markInputBusy: false, inputWriter })) {
     ingest?.cancel();
     throw new Error('session is gone');
   }
-  await submitEnter(sessionId, invocation, undefined, false, ingest);
+  await submitEnter(sessionId, invocation, undefined, false, ingest, inputWriter);
 }
 
 const adaptiveEnterTimers = new Map<string, Set<ReturnType<typeof setTimeout>>>();
@@ -512,6 +514,7 @@ export function clearAdaptiveEnterTimers(sessionId?: string): void {
 function scheduleAdaptiveEnterRescue(
   sessionId: string,
   requireInjectableIdle = false,
+  inputWriter: SystemInputWriter = 'nexus',
 ): void {
   clearAdaptiveEnterTimers(sessionId);
   const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -560,7 +563,7 @@ function scheduleAdaptiveEnterRescue(
         return;
       }
       const enterKey = idx >= 2 ? '\r\n' : '\r';
-      orchWriteSession(sessionId, enterKey, { markInputBusy: false });
+      orchWriteSession(sessionId, enterKey, { markInputBusy: false, inputWriter });
       scheduleNext();
     }, delayMs);
     if (typeof timer.unref === 'function') timer.unref();
@@ -584,6 +587,7 @@ async function submitEnter(
   onBeforeSubmit?: () => boolean | void,
   requireInjectableIdle = false,
   ingest: PasteIngestWatch | null = null,
+  inputWriter: SystemInputWriter = 'nexus',
 ): Promise<void> {
   let observedBusy = getSessionState(sessionId) === 'busy';
   const untapState = tapSessionState((changedSessionId, state) => {
@@ -621,7 +625,7 @@ async function submitEnter(
       }
     });
     try {
-      const firstEnter = orchWriteSession(sessionId, '\r', { markInputBusy: false });
+      const firstEnter = orchWriteSession(sessionId, '\r', { markInputBusy: false, inputWriter });
       if (!firstEnter) {
         throw new Error('agent prompt Enter was not delivered to the PTY');
       }
@@ -632,14 +636,14 @@ async function submitEnter(
       if (!enterAcceptedBusy && isIdleNow) {
         assertMcpInvocationCurrent(invocation);
         if (onBeforeSubmit?.() === false) return;
-        const secondEnter = orchWriteSession(sessionId, '\r', { markInputBusy: false });
+        const secondEnter = orchWriteSession(sessionId, '\r', { markInputBusy: false, inputWriter });
         if (!secondEnter) {
           throw new Error('agent prompt Enter was not delivered to the PTY');
         }
         // F-589: Se o pane continua idle após 2 Enters, agenda resgate adaptativo
         // progressivo (600ms, 1200ms, 2000ms) com \r\n para acordar CLIs
         // que ainda estavam processando o paste ou repintando a TUI sob carga alta.
-        scheduleAdaptiveEnterRescue(sessionId, requireInjectableIdle);
+        scheduleAdaptiveEnterRescue(sessionId, requireInjectableIdle, inputWriter);
       }
     } finally {
       untapEnterBusy();
@@ -676,6 +680,7 @@ export async function injectPastedPrompt(
   sessionId: string,
   prompt: string,
   invocation?: McpToolInvocation,
+  inputWriter: SystemInputWriter = 'nexus',
 ): Promise<void> {
   clearAdaptiveEnterTimers(sessionId);
   const safePrompt = assertSafePtyPrompt(prompt);
@@ -684,12 +689,12 @@ export async function injectPastedPrompt(
   if (!orchWriteSession(
     sessionId,
     `\x1b[200~${safePrompt}\x1b[201~`,
-    { markInputBusy: false },
+    { markInputBusy: false, inputWriter },
   )) {
     ingest?.cancel();
     throw new Error('session is gone');
   }
-  await submitEnter(sessionId, invocation, undefined, false, ingest);
+  await submitEnter(sessionId, invocation, undefined, false, ingest, inputWriter);
 }
 
 async function assertAcceptedPromptAuthority(

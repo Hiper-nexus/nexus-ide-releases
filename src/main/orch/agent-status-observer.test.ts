@@ -5,6 +5,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CanonicalHookEvent } from '../../vendor/emdash/hooks/hooks-types';
+import { recordSessionInputReceipt, forgetSessionInputReceipt } from './operator-input-receipts';
 
 const harness = vi.hoisted(() => ({
   publish: vi.fn((_sessionId: string, _state: string) => true),
@@ -52,6 +53,7 @@ const permission: CanonicalHookEvent = {
 };
 
 beforeEach(() => {
+  forgetSessionInputReceipt('pty-1');
   __resetAgentStatusForTests();
   __resetObserverBusForTests();
   harness.publish.mockReset().mockImplementation(() => true);
@@ -116,6 +118,12 @@ describe('status_changed emission (every applied event)', () => {
 });
 
 describe('turn lifecycle emission', () => {
+  it('publishes Main input provenance without trusting hook prompt text', () => {
+    recordSessionInputReceipt('pty-1', 'private prompt\r', 'system', 'failover', 90);
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: userSubmit, now: 100 });
+    expect(snapshotObserverFrames('pty-1')[0]?.payload).toMatchObject({ inputOrigin: 'system', writer: 'failover' });
+    expect(JSON.stringify(snapshotObserverFrames('pty-1'))).not.toContain('private prompt');
+  });
   it('promptSubmitted opens a turn: turn_started before its status_changed', () => {
     applyCanonicalHookEvent({ sessionId: 'pty-1', event: userSubmit, now: 100 });
 

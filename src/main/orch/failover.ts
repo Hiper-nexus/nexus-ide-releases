@@ -1947,7 +1947,7 @@ function nudgeTransientContinue(
     // entrar no ciclo de carga do failover.
     const { injectPrompt } = await import('./tool-util');
     if (!isCurrentAuthority(authority)) return;
-    await injectPrompt(authority.sessionId, TRANSIENT_CONTINUE_PROMPT);
+    await injectPrompt(authority.sessionId, TRANSIENT_CONTINUE_PROMPT, undefined, 'failover');
     console.info(
       '[failover]',
       JSON.stringify({

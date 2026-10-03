@@ -1,4 +1,5 @@
 import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
+import { recordSessionInputReceipt, forgetSessionInputReceipt, type SystemInputWriter } from '../orch/operator-input-receipts';
 import { assertLicenseAccess, reserveLicensedAgent } from '../license-enforcement';
 import fs from "node:fs";
 import { canResumeMimoNativeSession } from "../adapters/mimo-session-owner";
@@ -1304,6 +1305,7 @@ function finalizeSession(
   s.releaseLicenseAgent?.();
   sessionLeaseRegistry.revokeLease(sessionId);
   lastInputOrigins.delete(sessionId);
+  forgetSessionInputReceipt(sessionId);
   terminationOrigins.delete(sessionId);
   resizeDropTracedSessions.delete(sessionId);
   if (s.idleTimer) clearTimeout(s.idleTimer);
@@ -3617,7 +3619,6 @@ export function writeSession(
   // F-764 C.1: a saída anterior à escrita chega aos taps antes dela.
   dataTapDispatcher.flush(sessionId);
   // User wrote input → re-arm the idle timer if applicable.
-  markSessionInputOrigin(sessionId, "human");
   if (session.state === "idle") {
     session.state = "busy";
     emitStateChange(wc, sessionId, "busy");
@@ -3625,6 +3626,8 @@ export function writeSession(
   if (session.idleTimeoutMs > 0) armIdleTimer(sessionId, session);
   try {
     session.proc.write(data);
+    markSessionInputOrigin(sessionId, "human");
+    recordSessionInputReceipt(sessionId, data, "human");
     publishSessionInput(sessionId, data, "human");
     return true;
   } catch {
@@ -3756,6 +3759,7 @@ export function orchWriteSession(
   options: {
     readonly markInputBusy?: boolean;
     readonly inputOrigin?: SessionInputOrigin;
+    readonly inputWriter?: SystemInputWriter;
   } = {},
 ): boolean {
   const session = sessions.get(sessionId);
@@ -3771,8 +3775,9 @@ export function orchWriteSession(
     emitStateChange(session.wc, sessionId, "busy");
   }
   if (session.idleTimeoutMs > 0) armIdleTimer(sessionId, session);
-  markSessionInputOrigin(sessionId, options.inputOrigin ?? "system");
   session.proc.write(data);
+  markSessionInputOrigin(sessionId, options.inputOrigin ?? "system");
+  recordSessionInputReceipt(sessionId, data, options.inputOrigin ?? "system", options.inputWriter);
   publishSessionInput(sessionId, data, options.inputOrigin ?? "system");
   return true;
 }
@@ -4347,4 +4352,3 @@ export function countLiveAgentSessions(): number {
   }
   return count;
 }
-

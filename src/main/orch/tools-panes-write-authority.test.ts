@@ -104,7 +104,7 @@ describe('pane write invocation authority', () => {
       ),
     ).rejects.toThrow('session_authority_revoked');
     expect(h.write).toHaveBeenCalledOnce();
-    expect(h.write).toHaveBeenCalledWith('session:pane-a', 'first');
+    expect(h.write).toHaveBeenCalledWith('session:pane-a', 'first', { inputWriter: 'maestro' });
   });
 });
 

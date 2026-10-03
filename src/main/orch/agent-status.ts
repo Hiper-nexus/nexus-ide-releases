@@ -41,6 +41,7 @@ import {
 import { publishObserverFrame } from './observer-bus';
 import type { ObserverToolKind } from './observer-tool-kind';
 import { detectLimit } from './limit-detector';
+import { recentSessionInputAttribution } from './operator-input-receipts';
 
 export const AGENT_SEMANTIC_STATUSES = [
   'working',
@@ -447,7 +448,7 @@ function publishHookObserverFrames(args: {
           ...observerFrameScope(sessionId, paneId),
           at,
           kind: 'turn_started',
-          payload: { turnId: `turn-${turnSequence}`, turnSequence },
+          payload: { turnId: `turn-${turnSequence}`, turnSequence, ...recentSessionInputAttribution(sessionId, at) },
         });
       }
     }

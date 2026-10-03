@@ -2840,9 +2840,9 @@ const paneWrite: McpToolDef = {
     );
     if (args.submit === false) {
       assertMcpInvocationCurrent(invocation);
-      orchWriteSession(sessionId, text);
+      orchWriteSession(sessionId, text, { inputWriter: ctx.role === 'orchestrator' ? 'maestro' : 'nexus' });
     } else {
-      await injectPrompt(sessionId, text, invocation);
+      await injectPrompt(sessionId, text, invocation, ctx.role === 'orchestrator' ? 'maestro' : 'nexus');
     }
     // OVKA-750 (soft): brief longo que cita card/task file → avisa o ponteiro.
     const briefingWarn = briefingPointerWarning(text);
@@ -2933,7 +2933,7 @@ const paneAsk: McpToolDef = {
     paneAskInFlight.add(asker);
     try {
       const before = readSessionOutput(sessionId, 200);
-      await injectPrompt(sessionId, question, invocation);
+      await injectPrompt(sessionId, question, invocation, ctx.role === 'orchestrator' ? 'maestro' : 'nexus');
       // Worker já idle (Codex no prompt) não pode resolver na hora — senão o
       // Maestro colhe a tela antiga, chama nexus 6 vezes e o "3" nasce depois.
       const state = await waitForNextIdle(sessionId, timeoutMs);
@@ -3029,9 +3029,9 @@ const paneWriteMany: McpToolDef = {
         const text = withWorkerHandoffFooter(sessionId, write.text ?? '');
         if (write.submit === false) {
           assertMcpInvocationCurrent(invocation);
-          orchWriteSession(sessionId, text);
+          orchWriteSession(sessionId, text, { inputWriter: ctx.role === 'orchestrator' ? 'maestro' : 'nexus' });
         } else {
-          await injectPrompt(sessionId, text, invocation);
+          await injectPrompt(sessionId, text, invocation, ctx.role === 'orchestrator' ? 'maestro' : 'nexus');
         }
         results.push({ paneId: write.paneId, ok: true, outcome: 'submitted' });
       } catch (err) {
