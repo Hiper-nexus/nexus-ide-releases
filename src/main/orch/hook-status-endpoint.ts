@@ -25,6 +25,11 @@ import {
 } from './agent-status';
 import { handleTurnEndMechanicalHandoff } from './turn-end-handoff';
 import { HOOK_JSON_CONTENT_TYPE } from './hook-http';
+import {
+  isShellHttpCommand,
+  normalizeSkillName,
+  observerToolKind,
+} from './observer-tool-kind';
 
 /** Turn-end callback seam — the default runs the mechanical handoff closure. */
 export type TurnEndHook = (input: {
@@ -103,6 +108,46 @@ export function extractHookToolName(
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+const HOOK_TOOL_EVENT_TYPES: ReadonlySet<string> = new Set([
+  'tool-use',
+  'tool-complete',
+  'tool-use-failure',
+]);
+
+/** Objeto de argumentos da tool no corpo cru (tool_input / toolInput / input). */
+function hookToolInput(body: Record<string, unknown>): Record<string, unknown> | undefined {
+  const candidate = body.tool_input ?? body.toolInput ?? body.input;
+  return candidate && typeof candidate === 'object' && !Array.isArray(candidate)
+    ? (candidate as Record<string, unknown>)
+    : undefined;
+}
+
+/**
+ * F-780 (complemento): os DOIS rótulos que a telemetria tira dos argumentos
+ * da tool, no momento do hook e sem guardar argumento nenhum:
+ * - `skillName`: a skill chamada pela tool `Skill` (nome validado);
+ * - `toolKind: 'shell-http'`: shell cujo comando começa com curl/wget.
+ * Fora dos eventos de tool, ou sem tool identificada, devolve vazio.
+ */
+export function extractHookToolLabels(
+  eventType: string,
+  toolName: string | undefined,
+  body: Record<string, unknown>,
+): { skillName?: string; toolKind?: 'shell-http' } {
+  if (!toolName || !HOOK_TOOL_EVENT_TYPES.has(eventType)) return {};
+  const kind = observerToolKind(toolName);
+  if (kind === 'skill') {
+    const skillName = normalizeSkillName(hookToolInput(body)?.skill);
+    return skillName ? { skillName } : {};
+  }
+  if (kind === 'execute') {
+    const input = hookToolInput(body);
+    const command = input?.command ?? input?.cmd ?? input?.CommandLine;
+    return isShellHttpCommand(command) ? { toolKind: 'shell-http' } : {};
+  }
+  return {};
+}
+
 /**
  * Handle one validated hook POST. `applyEvent` is injectable so tests can
  * prove the fail-closed contract (reducer throws → 500, gate unaffected).
@@ -151,12 +196,13 @@ export function handleHookStatusRequest(
   }
 
   try {
+    const toolName = extractHookToolName(body);
     const result = applyEvent({
       sessionId: ctx.sessionId,
       event,
       // Observer-frame emission needs the wire event type + tool name the
       // canonical event intentionally drops (additive; reducer ignores it).
-      hook: { eventType, toolName: extractHookToolName(body) },
+      hook: { eventType, toolName, ...extractHookToolLabels(eventType, toolName, body) },
     });
     // C-194.1: o turno do worker acabou. Quem garante que a resposta chega ao
     // orquestrador quando ele NÃO chamou a tool é o fechamento mecânico —

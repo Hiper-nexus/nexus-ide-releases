@@ -118,6 +118,39 @@ describe("observer mission event projector", () => {
     expect(payloads[2]).not.toHaveProperty("toolKind");
   });
 
+  it("F-780: skillName e shell-http sobem revalidados; rótulo inválido não sobe", () => {
+    mocks.getAgentSessionInfo.mockReturnValue({
+      missionId: "mission-a",
+      scope: SCOPE,
+    });
+    installObserverMissionEventProjector();
+
+    publishObserverFrame({
+      sessionId: "session-a",
+      kind: "tool_call",
+      payload: { callId: "call-1", toolName: "Skill", skillName: "ponytail" },
+    });
+    publishObserverFrame({
+      sessionId: "session-a",
+      kind: "tool_call",
+      payload: { callId: "call-2", toolName: "Bash", toolKind: "shell-http" },
+    });
+    publishObserverFrame({
+      sessionId: "session-a",
+      kind: "tool_call",
+      // Um quadro adulterado não faz a projeção gravar texto livre.
+      payload: { callId: "call-3", toolName: "Skill", skillName: "Deploy Prod; rm -rf /" },
+    });
+
+    const payloads = mocks.emitMissionEvent.mock.calls.map(
+      (call) => (call as unknown as [unknown, { payload: Record<string, unknown> }])[1].payload,
+    );
+    expect(payloads[0]).toMatchObject({ toolName: "Skill", toolKind: "skill", skillName: "ponytail" });
+    expect(payloads[1]).toMatchObject({ toolName: "Bash", toolKind: "shell-http" });
+    expect(payloads[2]).toMatchObject({ toolName: "Skill", toolKind: "skill" });
+    expect(payloads[2]).not.toHaveProperty("skillName");
+  });
+
   it("retains detached sessions in the observer ring without inventing a mission event", () => {
     mocks.getAgentSessionInfo.mockReturnValue(null);
     installObserverMissionEventProjector();

@@ -11,7 +11,7 @@ import {
   getMissionEventRuntimeManager,
   setMissionEventAppendTap,
 } from "./mission-event-emit";
-import { observerToolKind } from "./observer-tool-kind";
+import { normalizeSkillName, observerToolKind } from "./observer-tool-kind";
 import { createScopedMissionStore } from "./mission-store";
 import {
   requireProjectDomainStoreRegistry,
@@ -196,6 +196,7 @@ const OBSERVER_TOOL_EVENT_TYPES: ReadonlySet<string> = new Set([
 function observerToolFields(event: MissionEvent): {
   readonly toolName?: string;
   readonly toolKind?: string;
+  readonly skillName?: string;
 } {
   if (!OBSERVER_TOOL_EVENT_TYPES.has(event.type)) return {};
   const nested = event.payload.observer;
@@ -215,9 +216,14 @@ function observerToolFields(event: MissionEvent): {
     rawName,
     event.payload.toolKind ?? observer.toolKind,
   );
+  // Rótulo da skill: revalidado no padrão estrito antes de sair do SQLite.
+  const skillName = normalizeSkillName(
+    event.payload.skillName ?? observer.skillName,
+  );
   return {
     ...(toolName ? { toolName } : {}),
     ...(toolKind ? { toolKind } : {}),
+    ...(skillName ? { skillName } : {}),
   };
 }
 
@@ -241,6 +247,7 @@ function boardEventSummary(event: MissionEvent): string | null {
     safePayloadSummary(event.payload),
     tool.toolName ? `tool=${tool.toolName}` : null,
     tool.toolKind ? `toolKind=${tool.toolKind}` : null,
+    tool.skillName ? `skill=${tool.skillName}` : null,
   ].filter((part): part is string => Boolean(part));
   return parts.length > 0 ? parts.join(" ") : null;
 }
