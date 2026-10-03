@@ -108,7 +108,11 @@ import {
   requiresRouteReservation,
   squadBindingViolationError,
 } from './free-agent-choice';
-import { assertWorkerBudget, hasCurrentDispatchAuthority } from '../../shared/mission-intent';
+import {
+  assertWorkerBudget,
+  hasCurrentDispatchAuthority,
+  type MissionIntentContract,
+} from '../../shared/mission-intent';
 import type { Mission } from '../../shared/orch-types';
 
 const scope = testProjectScope();
@@ -614,7 +618,7 @@ describe('mission creation authority', () => {
 
       await missionCreateTool().handler({ title }, operatorHand());
 
-      const contract = create.mock.calls[0]![0].intentContract;
+      const contract = create.mock.calls[0]![0].intentContract as MissionIntentContract;
       expect(contract).toMatchObject({ lane });
       if (lane === 'standard') {
         expect(contract.budgets.maxWorkers).toBeGreaterThan(0);
@@ -649,7 +653,7 @@ describe('mission creation authority', () => {
         expect(input.intentState).toBe('awaiting_approval');
         expect(input.intentContract).toMatchObject({ lane });
         if (lane === 'standard') {
-          expect(input.intentContract.budgets.maxWorkers).toBeGreaterThan(0);
+          expect((input.intentContract as MissionIntentContract).budgets.maxWorkers).toBeGreaterThan(0);
         }
       } finally {
         disposeWorktreeRuntimeRegistry(); manager.closeAll(); fs.rmSync(directory, { recursive: true, force: true });
