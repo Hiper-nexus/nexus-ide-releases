@@ -103,7 +103,7 @@ import { isMissionWorkerWriteEligibleCli } from './squad-runtime-policy';
 import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
 import { getAccountChoiceReceipt } from '../persistence/account-choice-receipts';
 import { trace } from '../observability/main-trace';
-import { resolveCodexCliVersion } from './codex-cli-version';
+import { peekCodexCliVersion } from './codex-cli-version';
 import {
   buildPaneSpawnLifecycleEvent,
   buildPaneSpawnRecoveryEvent,
@@ -1904,9 +1904,11 @@ const paneSpawnAfterTabMission = {
         // (Codex — cache quente da decoração do spawn, F-687/F-689); as
         // demais CLIs ficam null até ganharem sonda própria — nunca probar
         // --version aqui (subprocesso por spawn e CLIs que renovam auth).
+        // Só leitura de cache (`peek`): cache frio = null; a sonda assíncrona
+        // fica por conta do spawn do Codex (settleCodexCliVersionForSpawn).
         spawnTiming.meta.model = options.model;
         spawnTiming.meta.cliVersion =
-          options.adapterId === 'codex' ? resolveCodexCliVersion() : null;
+          options.adapterId === 'codex' ? peekCodexCliVersion() : null;
       }
       // Reuso de helper ocioso (lote 0.76.135, superfície Jev helperReuse):
       // mão do operador sem missão ou orquestrador da missão da aba entrega a

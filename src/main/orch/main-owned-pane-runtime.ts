@@ -18,6 +18,7 @@ import {
   trackManagedSession,
 } from "../adapters/managed-credentials";
 import { recordAccountChoiceReceipt } from "../persistence/account-choice-receipts";
+import { settleCodexCliVersionForSpawn } from "./codex-cli-version";
 import {
   resolveRotatingAuthFile,
   ROTATING_REFRESH_SPAWN_ADAPTERS,
@@ -796,6 +797,12 @@ export async function spawnMainOwnedMissionPaneAsync(
 ): Promise<OrchPaneSpawnResult> {
   if (getOrchSettings().agentTransport !== "acp") {
     const adapter = getAdapter(options.adapterId);
+    if (adapter?.kind === "cli-pty") {
+      // F-790: Codex com a versão ainda em sondagem espera (teto curto) ANTES
+      // do preparo, para o gate de hooks enxergar a versão; as demais CLIs não.
+      const settling = settleCodexCliVersionForSpawn(adapter);
+      if (settling) await settling;
+    }
     const withPermit = async (
       run: () => OrchPaneSpawnResult | Promise<OrchPaneSpawnResult>,
     ): Promise<OrchPaneSpawnResult> => {

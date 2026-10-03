@@ -12,6 +12,7 @@ const deps = vi.hoisted(() => ({
   authoritative: vi.fn<(...args: unknown[]) => Promise<ProviderSpawnPreparation>>(),
   acquirePermit: vi.fn(async (_adapterId: string): Promise<() => void> => () => {}),
   liveClaudeAccounts: vi.fn(() => [] as string[]),
+  settle: vi.fn<(adapter: unknown) => Promise<void> | null | undefined>(),
 }));
 
 vi.mock('../adapters/adapter-registry', () => ({
@@ -33,6 +34,7 @@ vi.mock('../adapters/managed-auth-spawn-gate', async (importOriginal) => ({
   ...await importOriginal<typeof import('../adapters/managed-auth-spawn-gate')>(),
   waitForRotatingAuthSpawnGate: deps.gate,
 }));
+vi.mock('./codex-cli-version', () => ({ settleCodexCliVersionForSpawn: deps.settle }));
 vi.mock('../adapters/managed-credentials', async (importOriginal) => ({
   ...await importOriginal<typeof import('../adapters/managed-credentials')>(),
   trackManagedSession: deps.track,
@@ -81,6 +83,33 @@ beforeEach(() => {
   deps.adapterId = 'codex';
   deps.authoritative.mockResolvedValue({ ok: true, overrides });
   deps.acquirePermit.mockReset().mockResolvedValue(() => {});
+});
+
+describe('F-790: spawn do Codex aguarda a sonda de versão (teto curto)', () => {
+  it('Codex com a sonda em voo: nada é preparado nem spawnado até ela concluir', async () => {
+    let finish!: () => void;
+    deps.settle.mockReturnValueOnce(new Promise<void>((resolve) => { finish = resolve; }));
+    const pending = spawnMainOwnedMissionPaneAsync(options, hooks);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(deps.settle).toHaveBeenCalledWith(expect.objectContaining({ id: 'codex', bin: 'codex' }));
+    expect(deps.prepare).not.toHaveBeenCalled();
+    expect(deps.acquirePermit).not.toHaveBeenCalled();
+    expect(deps.spawn).not.toHaveBeenCalled();
+    finish();
+    await expect(pending).resolves.toMatchObject({ ok: true, sessionId: 'synthetic-codex-session' });
+    expect(deps.prepare).toHaveBeenCalledOnce();
+    expect(deps.spawn).toHaveBeenCalledOnce();
+  });
+
+  it('sem nada a esperar (null) o spawn segue direto — outras CLIs nunca esperam', async () => {
+    deps.adapterId = 'claude';
+    deps.settle.mockReturnValue(null);
+    const pending = spawnMainOwnedMissionPaneAsync({ ...options, adapterId: 'claude', role: 'orchestrator' }, hooks);
+    await expect(pending).resolves.toMatchObject({ ok: true });
+    expect(deps.settle).toHaveBeenCalledWith(expect.objectContaining({ id: 'claude' }));
+    expect(deps.spawn).toHaveBeenCalledOnce();
+  });
 });
 
 describe('main-owned Codex auth gate', () => {

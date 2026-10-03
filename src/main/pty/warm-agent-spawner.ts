@@ -14,6 +14,7 @@ import { warmPool, type WarmSession } from './warm-pool';
 import { onAccessChanged, requireAccess } from '../license-access';
 
 import { WARM_IDLE_CONTEXT } from './warm-adoption';
+import { settleCodexCliVersionForSpawn } from '../orch/codex-cli-version';
 import {
   setWarmAgentSpawner,
   spawnAgentSession,
@@ -66,6 +67,9 @@ export function registerWarmAgentSpawner(deps: {
       rows: 24,
     } as SpawnRequest;
     try {
+      // F-790: o pane ocioso do Codex também espera a versão ser conhecida.
+      const settling = settleCodexCliVersionForSpawn(adapter);
+      if (settling) await settling;
       const spawned = spawnAgentSession(null, req, adapter, {}, authority);
       if (!spawned.sessionId || !spawned.startKey) {
         // Sem startKey o lease não prova dono — não entra no pool.
