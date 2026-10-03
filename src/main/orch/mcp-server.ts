@@ -1913,7 +1913,7 @@ function installLegacyParser(
         sessionId,
         isCollecting ? (plain ?? stripAnsi(data)) : stripAnsi(probe),
       );
-    }));
+    }, "mcp-server"));
     track(tapSessionState((sessionId, state) => {
       missionControl.observeSessionState(sessionId, state);
       // Overclock Stop-hook parity: the live chunk parser can miss a TUI

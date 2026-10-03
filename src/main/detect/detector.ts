@@ -515,13 +515,16 @@ export function startAgentScreenDetection(): () => void {
     console.warn('[detect] screen detection disabled (manifest load failed):', err);
     return () => {};
   }
-  const untapData = tapSessionData((sessionId, data) => {
-    try {
-      detector.onData(sessionId, data);
-    } catch (err) {
-      console.warn('[detect] data tap failed:', err);
-    }
-  });
+  const untapData = tapSessionData(
+    (sessionId, data) => {
+      try {
+        detector.onData(sessionId, data);
+      } catch (err) {
+        console.warn('[detect] data tap failed:', err);
+      }
+    },
+    { name: 'detector' },
+  );
   const untapExit = tapSessionExit((sessionId) => {
     try {
       detector.onExit(sessionId);

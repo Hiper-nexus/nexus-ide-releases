@@ -153,6 +153,11 @@ import {
   upsertPersistentPty,
 } from "../persistence/persistent-session-store";
 import { trace } from "../observability/main-trace";
+import {
+  PtyDataTapDispatcher,
+  type SessionDataTap,
+  type SessionDataTapOptions,
+} from "./pty-tap-dispatcher";
 
 /**
  * Owns every live PTY session — one per pane, addressed by an opaque id. The
@@ -437,7 +442,11 @@ function cleanEnv(env: NodeJS.ProcessEnv): Record<string, string> {
  * chunks feed ring buffers + the legacy handoff parser, state changes feed
  * pane_wait_idle and idle delivery, exits clean the registries up.
  */
-export type SessionDataTap = (sessionId: string, data: string) => void;
+export type {
+  SessionDataTap,
+  SessionDataTapDelivery,
+  SessionDataTapOptions,
+} from "./pty-tap-dispatcher";
 export type SessionStateTap = (
   sessionId: string,
   state: PaneSessionState,
@@ -464,7 +473,22 @@ export type SessionTerminationTap = (
   agent: OwnedAgentSessionInfo | null,
 ) => void;
 
-const dataTaps = new Set<SessionDataTap>();
+/**
+ * F-764 C.1/A.3: os taps de DADOS recebem a saída em lote por sessão, com
+ * tempo por tap contabilizado (pty-tap-dispatcher.ts). Os demais taps passam
+ * pelo mesmo cronômetro em `fireTaps`.
+ */
+const dataTapDispatcher = new PtyDataTapDispatcher({
+  now: () => performance.now(),
+  setTimer: (run, ms) => {
+    const timer = setTimeout(run, ms);
+    timer.unref?.();
+    return timer;
+  },
+  clearTimer: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+  trace,
+  warn: (message, error) => console.warn(message, error),
+});
 const inputTaps = new Set<SessionInputTap>();
 const stateTaps = new Set<SessionStateTap>();
 const exitTaps = new Set<SessionExitTap>();
@@ -484,9 +508,19 @@ export function getLastSessionInputOrigin(
   return lastInputOrigins.get(sessionId);
 }
 
-export function tapSessionData(cb: SessionDataTap): () => void {
-  dataTaps.add(cb);
-  return () => dataTaps.delete(cb);
+/**
+ * Observa a saída de toda sessão. O segundo argumento (nome ou opções) é
+ * opcional: o nome aparece no trace de orçamento (`pty-tap-slow`) e a classe
+ * de entrega decide lote/inteiro/imediato — ver pty-tap-dispatcher.ts.
+ */
+export function tapSessionData(
+  cb: SessionDataTap,
+  options?: string | SessionDataTapOptions,
+): () => void {
+  return dataTapDispatcher.register(
+    cb,
+    typeof options === "string" ? { name: options } : options,
+  );
 }
 
 export function tapSessionInput(cb: SessionInputTap): () => void {
@@ -511,7 +545,7 @@ export function tapSessionTermination(cb: SessionTerminationTap): () => void {
 
 /** Route a non-PTY process exit through the same orchestration lifecycle. */
 export function publishExternalSessionExit(sessionId: string): void {
-  fireTaps(exitTaps, sessionId, null);
+  fireTaps("exit", exitTaps, sessionId, null);
 }
 
 /** Notify input observers after a write physically reached the PTY. */
@@ -521,20 +555,45 @@ function publishSessionInput(
   origin: SessionInputOrigin,
 ): void {
   if (inputTaps.size === 0 || data.length === 0) return;
-  fireTaps(inputTaps, sessionId, data, origin);
+  fireTaps("input", inputTaps, sessionId, data, origin);
 }
 
+/**
+ * Entrega um evento de sessão a todos os taps do tipo, cada um cronometrado
+ * (F-764 A.3): tap acima de 50 ms ou entrega acima de 100 ms vira trace com o
+ * nome da função do tap.
+ */
 function fireTaps<T extends (...args: never[]) => void>(
+  kind: string,
   taps: Set<T>,
   ...args: Parameters<T>
 ): void {
+  if (taps.size === 0) return;
+  const sessionId = String(args[0]);
+  let ms = 0;
+  let count = 0;
+  let slowestTap = "";
+  let slowestMs = 0;
   for (const tap of taps) {
-    try {
-      tap(...args);
-    } catch (err) {
-      console.warn("[pty-manager] orchestration tap threw:", err);
+    const name = tap.name || "anonimo";
+    const spent = dataTapDispatcher.budget.call(kind, name, sessionId, 0, () =>
+      tap(...args),
+    );
+    ms += spent;
+    count += 1;
+    if (spent > slowestMs) {
+      slowestMs = spent;
+      slowestTap = name;
     }
   }
+  dataTapDispatcher.budget.delivery(kind, sessionId, {
+    ms,
+    chars: 0,
+    chunks: 1,
+    taps: count,
+    slowestTap,
+    slowestMs,
+  });
 }
 
 /**
@@ -1028,10 +1087,14 @@ function emitStateChange(
   sessionId: string,
   state: PaneSessionState,
 ): void {
+  // F-764 C.1: a saída que chegou antes da troca de estado chega aos taps
+  // antes dela — leitores do anel no idle, portões de busy e o tool-util
+  // continuam vendo a mesma ordem de quando cada chunk ia direto.
+  dataTapDispatcher.flush(sessionId);
   if (canSend(wc)) {
     wc.send(PTY_CHANNELS.stateChange, { sessionId, state });
   }
-  fireTaps(stateTaps, sessionId, state);
+  fireTaps("state", stateTaps, sessionId, state);
 }
 
 /**
@@ -1126,7 +1189,10 @@ function onSessionData(
       session.wc.send(PTY_CHANNELS.data, event);
     }
   }
-  fireTaps(dataTaps, sessionId, data);
+  // F-764 C.1: taps de dados em lote por sessão (o push ao renderer acima e a
+  // janela de replay seguem chunk a chunk). A virada para busy logo abaixo
+  // esvazia o lote antes — o primeiro chunk depois do idle sai na hora.
+  dataTapDispatcher.push(sessionId, data);
   if (session.state !== "busy") {
     session.state = "busy";
     emitStateChange(session.wc, sessionId, "busy");
@@ -1194,6 +1260,9 @@ function finalizeSession(
     pendingTermination.exitTerminationOrigin === undefined
       ? terminationOrigins.get(sessionId) ?? null
       : pendingTermination.exitTerminationOrigin;
+  // F-764 C.1: os taps de saída veem todo o texto antes do exit — e os de
+  // dados ainda acham a sessão registrada enquanto recebem o último lote.
+  dataTapDispatcher.flush(sessionId);
   sessions.delete(sessionId);
   s.releaseLicenseAgent?.();
   sessionLeaseRegistry.revokeLease(sessionId);
@@ -1250,7 +1319,8 @@ function finalizeSession(
       ...(tracedTerminationOrigin ? { terminationOrigin: tracedTerminationOrigin } : {}),
     });
   }
-  fireTaps(exitTaps, sessionId, s.agent ? cloneAgentInfo(s.agent) : null);
+  fireTaps("exit", exitTaps, sessionId, s.agent ? cloneAgentInfo(s.agent) : null);
+  dataTapDispatcher.drop(sessionId);
   const termination = physicalTerminationFlights.get(sessionId);
   if (termination?.session === s) {
     physicalTerminationFlights.delete(sessionId);
@@ -3468,6 +3538,8 @@ export function writeSession(
     // explicit main-owned lane (orchWriteSession), never raw terminal IPC.
     return false;
   }
+  // F-764 C.1: a saída anterior à escrita chega aos taps antes dela.
+  dataTapDispatcher.flush(sessionId);
   // User wrote input → re-arm the idle timer if applicable.
   markSessionInputOrigin(sessionId, "human");
   if (session.state === "idle") {
@@ -3615,6 +3687,9 @@ export function orchWriteSession(
   if (physicalTerminationFlights.get(sessionId)?.session === session) {
     return false;
   }
+  // F-764 C.1: portões de aceite leem a saída anterior à escrita como "antes
+  // do envio" — ela chega aos taps antes da escrita, como chegava sem lote.
+  dataTapDispatcher.flush(sessionId);
   if (options.markInputBusy !== false && session.state === "idle") {
     session.state = "busy";
     emitStateChange(session.wc, sessionId, "busy");
@@ -3709,6 +3784,9 @@ function ensurePhysicalTerminationFlight(
 ): PhysicalTerminationFlight {
   const existing = physicalTerminationFlights.get(sessionId);
   if (existing?.session === session) return existing;
+  // F-764 C.1: a saída aceita antes do encerramento chega aos taps antes dos
+  // taps de encerramento (depois daqui o onSessionData descarta bytes).
+  dataTapDispatcher.flush(sessionId);
   let resolveExited!: () => void;
   const flight: PhysicalTerminationFlight = {
     sessionId,
@@ -3724,6 +3802,7 @@ function ensurePhysicalTerminationFlight(
   };
   physicalTerminationFlights.set(sessionId, flight);
   fireTaps(
+    "termination",
     terminationTaps,
     sessionId,
     session.agent ? cloneAgentInfo(session.agent) : null,
@@ -3994,7 +4073,7 @@ export function publishSessionActivityState(
 ): boolean {
   const session = sessions.get(sessionId);
   if (!session) {
-    fireTaps(stateTaps, sessionId, state);
+    fireTaps("state", stateTaps, sessionId, state);
     return false;
   }
   session.hookState = state;

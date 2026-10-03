@@ -790,6 +790,8 @@ async function injectWithBusyProof(
       physicalConfirmTimer = null;
     }
   });
+  // F-764 C.1: `immediate` — conta CHUNKS e depende da ordem exata com o
+  // submit; é O(1) por chunk e nunca lê o texto.
   const untapData = tapSessionData((changedSessionId, data) => {
     if (
       changedSessionId !== sessionId ||
@@ -803,7 +805,7 @@ async function injectWithBusyProof(
     observedOutputChunks += 1;
     armPhysicalTurnConfirmation();
     maybeAccept();
-  });
+  }, { name: 'tool-util:busy-proof', delivery: 'immediate' });
   const untapExit = tapSessionExit((exitedSessionId) => {
     if (exitedSessionId !== sessionId) return;
     sessionExited = true;
@@ -1081,6 +1083,7 @@ function waitForAgentActivity(
         edgeArmed = false;
       }
     });
+    // F-764 C.1: `immediate` — conta CHUNKS depois da borda de busy; O(1).
     const untapData = tapSessionData((changedSessionId, data) => {
       // The chunk that caused the busy edge arrives before the state tap, so
       // only data after the edge counts — a lone repaint frame never does.
@@ -1089,7 +1092,7 @@ function waitForAgentActivity(
       }
       dataAfterEdge += 1;
       if (dataAfterEdge >= 2) finish(true);
-    });
+    }, { name: 'tool-util:activity', delivery: 'immediate' });
     const untapExit = tapSessionExit((exitedSessionId) => {
       if (exitedSessionId === sessionId) finish(false);
     });

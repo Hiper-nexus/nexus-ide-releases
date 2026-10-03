@@ -470,19 +470,23 @@ export function initPanePipes(): void {
   if (tapsInstalled) return;
   tapsInstalled = true;
 
-  tapSessionData((sessionId, data) => {
-    const partition = partitionForSession(sessionId);
-    if (!partition) return;
-    const attached = pipesBySource(partition).get(sessionId);
-    if (!attached) return;
-    for (const scopedPipe of attached) {
-      if (scopedPipe.pipe.mode === 'stream') {
-        handleStreamChunk(partition, scopedPipe, sessionId, data);
-      } else {
-        partition.idleDirty.add(scopedPipe.pipe.id);
+  // Pipe em modo stream encaminha LINHAS: recebe o lote inteiro.
+  tapSessionData(
+    (sessionId, data) => {
+      const partition = partitionForSession(sessionId);
+      if (!partition) return;
+      const attached = pipesBySource(partition).get(sessionId);
+      if (!attached) return;
+      for (const scopedPipe of attached) {
+        if (scopedPipe.pipe.mode === 'stream') {
+          handleStreamChunk(partition, scopedPipe, sessionId, data);
+        } else {
+          partition.idleDirty.add(scopedPipe.pipe.id);
+        }
       }
-    }
-  });
+    },
+    { name: 'pane-pipe', delivery: 'complete' },
+  );
 
   tapSessionState((sessionId, state) => {
     if (state !== 'idle') return;
