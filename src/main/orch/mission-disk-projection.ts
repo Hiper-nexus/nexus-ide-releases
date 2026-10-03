@@ -11,6 +11,7 @@ import {
   getMissionEventRuntimeManager,
   setMissionEventAppendTap,
 } from "./mission-event-emit";
+import { observerToolKind } from "./observer-tool-kind";
 import { createScopedMissionStore } from "./mission-store";
 import {
   requireProjectDomainStoreRegistry,
@@ -179,6 +180,47 @@ function safePayloadSummary(
   return parts.length > 0 ? parts.join(" ") : null;
 }
 
+const OBSERVER_TOOL_EVENT_TYPES: ReadonlySet<string> = new Set([
+  "observer.tool_call",
+  "observer.tool_result",
+]);
+
+/**
+ * F-780: nome e categoria da tool de um evento do observer — o que a auditoria
+ * de 03/10 procurou no events.jsonl e não achou (o nome ficava só dentro de
+ * `observer`, fora de SAFE_PAYLOAD_KEYS). Só o rótulo, validado como
+ * identificador (sem espaço, caminho ou segredo); argumento e saída da tool
+ * nunca saem do SQLite. Eventos gravados antes do F-780 têm o nome só no
+ * quadro aninhado e também são projetados.
+ */
+function observerToolFields(event: MissionEvent): {
+  readonly toolName?: string;
+  readonly toolKind?: string;
+} {
+  if (!OBSERVER_TOOL_EVENT_TYPES.has(event.type)) return {};
+  const nested = event.payload.observer;
+  const observer =
+    nested && typeof nested === "object" && !Array.isArray(nested)
+      ? (nested as Readonly<Record<string, unknown>>)
+      : {};
+  const rawName =
+    typeof event.payload.toolName === "string"
+      ? event.payload.toolName
+      : observer.toolName;
+  const toolName =
+    typeof rawName === "string" && rawName.trim()
+      ? safeIdentifier(rawName.trim(), SAFE_VALUE_MAX_LENGTH)
+      : null;
+  const toolKind = observerToolKind(
+    rawName,
+    event.payload.toolKind ?? observer.toolKind,
+  );
+  return {
+    ...(toolName ? { toolName } : {}),
+    ...(toolKind ? { toolKind } : {}),
+  };
+}
+
 function eventLine(event: MissionEvent): string {
   const summary = safePayloadSummary(event.payload);
   return JSON.stringify({
@@ -187,8 +229,20 @@ function eventLine(event: MissionEvent): string {
     type: event.type,
     origin: event.origin,
     runId: safeIdentifier(event.runId, 128),
+    ...observerToolFields(event),
     ...(summary ? { summary } : {}),
   });
+}
+
+/** Resumo de uma linha de "Recent events" no BOARD.md. */
+function boardEventSummary(event: MissionEvent): string | null {
+  const tool = observerToolFields(event);
+  const parts = [
+    safePayloadSummary(event.payload),
+    tool.toolName ? `tool=${tool.toolName}` : null,
+    tool.toolKind ? `toolKind=${tool.toolKind}` : null,
+  ].filter((part): part is string => Boolean(part));
+  return parts.length > 0 ? parts.join(" ") : null;
 }
 
 /**
@@ -274,7 +328,7 @@ function renderBoard(input: {
     lines.push("_none yet_");
   }
   for (const event of input.events) {
-    const summary = safePayloadSummary(event.payload);
+    const summary = boardEventSummary(event);
     lines.push(
       `- ${event.sequence} · ${new Date(event.occurredAt).toISOString()} · ${event.type} (${event.origin})${summary ? ` — ${singleLine(summary, 240)}` : ""}`,
     );

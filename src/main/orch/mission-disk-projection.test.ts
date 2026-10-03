@@ -165,6 +165,96 @@ describe("mission disk projection", () => {
     expect(board).toContain("kind=bootstrap_progress step=workers_spawned");
   });
 
+  it("F-780: events.jsonl carries the tool name and kind, never the tool input or output", () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: "disk-tool-identity" });
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => "mission-tool-identity",
+    });
+    const mission = store.create({ title: "Tool identity" });
+    const journal = new MissionEventJournal(runtimeManager, scope);
+    const append = (
+      sequence: number,
+      type: "observer.tool_call" | "observer.tool_result",
+      payload: Record<string, unknown>,
+    ) =>
+      journal.append({
+        missionId: mission.id,
+        runId: "observer:abc123",
+        type,
+        payload: { frameSeq: sequence, sessionId: "pty-1", ...payload },
+        idempotencyKey: `tool-identity-${sequence}`,
+        origin: "main",
+        occurredAt: 7_000 + sequence,
+      });
+
+    // Formato do projetor depois do F-780: nome/categoria no topo.
+    append(1, "observer.tool_call", {
+      toolName: "WebFetch",
+      toolKind: "fetch",
+      observer: {
+        callId: "call-1",
+        toolName: "WebFetch",
+        input: {
+          url: "https://intranet.example/relatorio?token=abc",
+          prompt: "resuma o contrato confidencial",
+        },
+      },
+    });
+    // Linha gravada ANTES do F-780: nome só dentro do quadro (o caso da
+    // missão Terminais) — também precisa aparecer no espelho.
+    append(2, "observer.tool_call", {
+      observer: { callId: "call-2", toolName: "mcp__nexus__nexus_browser_read" },
+    });
+    append(3, "observer.tool_result", {
+      observer: {
+        callId: "call-1",
+        toolName: "WebFetch",
+        ok: false,
+        content: "<html>conteudo-secreto</html>",
+      },
+    });
+    // ACP: o título é texto livre (caminho!) e o `kind` do protocolo informa.
+    append(4, "observer.tool_call", {
+      observer: {
+        callId: "acp-1",
+        toolName: "Read /Users/operator/.ssh/id_rsa",
+        toolKind: "read",
+      },
+    });
+
+    const result = projectMissionToDisk(runtimeManager, scope, mission.id);
+    expect(result).not.toBeNull();
+    const events = fs.readFileSync(result!.eventsPath, "utf8");
+    const lines = events
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+    expect(events).toContain('"toolName":"WebFetch"');
+    expect(lines.map((line) => [line.toolName, line.toolKind])).toEqual([
+      ["WebFetch", "fetch"],
+      ["mcp__nexus__nexus_browser_read", "nexus-browser"],
+      ["WebFetch", "fetch"],
+      ["<redacted-id>", "read"],
+    ]);
+
+    const board = fs.readFileSync(result!.boardPath, "utf8");
+    expect(board).toContain("tool=mcp__nexus__nexus_browser_read toolKind=nexus-browser");
+    for (const content of [board, events]) {
+      for (const leaked of [
+        "intranet.example",
+        "token=abc",
+        "contrato confidencial",
+        "conteudo-secreto",
+        "/Users/operator",
+        "id_rsa",
+      ]) {
+        expect(content).not.toContain(leaked);
+      }
+    }
+  });
+
   it("redacts secrets and absolute paths from handoff summaries on the board", () => {
     const runtimeManager = manager();
     const scope = testProjectScope({ checkoutId: "disk-handoff-redact" });

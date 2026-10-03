@@ -104,6 +104,7 @@ import {
   writeClaudeFamilyZeroClickSettings,
   writeMcpConfigFile,
 } from "./hooks-gen";
+import { hasNexusBrowserAlternative } from "./nexus-browser-policy";
 import { handleHookStatusHttp } from "./hook-status-endpoint";
 import { handleHookTriageHttp } from "./hook-triage-endpoint";
 import { handleHookRegressionHttp } from "./hook-regression-endpoint";
@@ -1112,6 +1113,17 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
       // Writer isolado da mão do operador: mesma guarda de git do worker.
       ...(operatorChild && meta?.isolatedWriter === true ? { isolatedWriter: true as const } : {}),
     });
+    // F-781: só nega o WebFetch onde o navegador do Nexus está ao alcance
+    // deste token — mesmos portões do tools/list e do dispatch.
+    const denyWebFetch =
+      canUseNexusMcp(adapter) &&
+      hasNexusBrowserAlternative({
+        role: ctx.role,
+        missionId: ctx.missionId,
+        readOnly: ctx.readOnly,
+        allowedTools: ctx.allowedTools,
+        operatorChild,
+      });
 
     const env: Record<string, string> = canUseNexusMcp(adapter)
       ? {
@@ -1248,6 +1260,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           // gated panes keep the minimal surface and receive only the
           // identity entries above.
           carryNativeHome: meta?.readOnly !== true && !gateHome,
+          denyWebFetch,
         });
         if (approvedMissionProjectTrust) {
           const stagedProfile = JSON.parse(
@@ -1339,7 +1352,10 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         if (gateHome || gated || operatorChild)
           extraArgs.push("--strict-mcp-config");
         if (!gateHome) {
-          extraArgs.push("--settings", writeClaudeFamilyZeroClickSettings(ctx.token));
+          extraArgs.push(
+            "--settings",
+            writeClaudeFamilyZeroClickSettings(ctx.token, { denyWebFetch }),
+          );
         }
       } else if (
         adapter.quirks.mcpAutoload &&
@@ -1352,7 +1368,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           "--mcp-config",
           writeMcpConfigFile(ctx.token, mcpConfig),
           "--settings",
-          writeClaudeFamilyZeroClickSettings(ctx.token),
+          writeClaudeFamilyZeroClickSettings(ctx.token, { denyWebFetch }),
         );
         if (gated) {
           // A mission-owned pane must not inherit the operator's unrelated

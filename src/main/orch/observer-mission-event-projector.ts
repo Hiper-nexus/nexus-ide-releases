@@ -10,6 +10,7 @@ import { getAgentSessionInfo } from "../pty/pty-manager";
 import { getAcpDriverSession } from "../acp/acp-harness-driver";
 import { emitMissionEvent } from "./mission-event-emit";
 import { tapObserverFrames } from "./observer-bus";
+import { observerToolKind, type ObserverToolKind } from "./observer-tool-kind";
 
 const EVENT_TYPE_BY_FRAME_KIND: Readonly<
   Record<ObserverFrameKind, MissionEventType>
@@ -45,6 +46,33 @@ function stableFrameKey(frame: ObserverFrame): string {
   return `observer:${stableSessionKey(frame.sessionId)}:${frame.seq}:${digest}`;
 }
 
+/** Teto do nome copiado para o topo do payload (título de ACP é texto livre). */
+const TOOL_NAME_MAX_LENGTH = 200;
+
+/**
+ * F-780: nome e categoria da tool no TOPO do payload do evento — onde a linha
+ * do tempo da missão (AgentActivityTimeline) e a projeção em disco leem, e
+ * onde uma consulta SQL alcança sem descer no quadro. Só o rótulo: argumento
+ * e saída da tool (`input`/`content`) ficam apenas dentro de `observer`.
+ */
+function observerToolIdentity(frame: ObserverFrame): {
+  toolName?: string | null;
+  toolKind?: ObserverToolKind | null;
+} {
+  if (frame.kind !== "tool_call" && frame.kind !== "tool_result") return {};
+  const toolName = frame.payload.toolName;
+  return {
+    toolName:
+      typeof toolName === "string"
+        ? toolName.slice(0, TOOL_NAME_MAX_LENGTH)
+        : null,
+    toolKind: observerToolKind(
+      toolName,
+      frame.kind === "tool_call" ? frame.payload.toolKind : undefined,
+    ),
+  };
+}
+
 function projectObserverFrame(frame: ObserverFrame): void {
   try {
     const agent = getAgentSessionInfo(frame.sessionId);
@@ -61,6 +89,7 @@ function projectObserverFrame(frame: ObserverFrame): void {
       sessionId: frame.sessionId,
       ...(frame.paneId ? { paneId: frame.paneId } : {}),
       ...(frame.turnId ? { turnId: frame.turnId } : {}),
+      ...observerToolIdentity(frame),
       observer: frame.payload,
     };
     emitMissionEvent(scope, {

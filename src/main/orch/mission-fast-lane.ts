@@ -57,6 +57,10 @@ import { getAdapter } from '../adapters/adapter-registry';
 import { deliverAgentPrompt, proveNativeArgvBriefAccepted, withProjectContextBlocksAsync } from './tool-util';
 import { canUseNexusMcp } from './cli-mcp-inject';
 import {
+  NEXUS_BROWSER_BRIEF_RULE,
+  hasNexusBrowserAlternative,
+} from './nexus-browser-policy';
+import {
   OPERATOR_TAB_RESUME_NOTE,
   beginOperatorTabResumeTransfer,
   operatorTabMissionLeader,
@@ -1114,8 +1118,24 @@ async function spawnAgentPane(
   // <workspace-memory>), compostos ANTES da escolha do transporte: argv e as
   // colagens abaixo entregam este texto. O canal do "+ Pane" exclui missão.
   const resumeFromPaneId = spawnOpts?.resumeFromPaneId;
+  // F-781: este brief não passa pelo withHandoffContract, então a regra do
+  // navegador entra aqui — o deny do WebFetch só alcança a família Claude.
+  // Mesmo predicado do spawn: só com o MCP do Nexus e o navegador ao alcance.
+  const workerAdapter = role === 'worker' ? getAdapter(agent.cli) : undefined;
+  const brief =
+    briefPrompt &&
+    workerAdapter &&
+    canUseNexusMcp(workerAdapter) &&
+    hasNexusBrowserAlternative({
+      role,
+      missionId: mission.id,
+      readOnly,
+      allowedTools: agent.allowedTools ? [...agent.allowedTools] : null,
+    })
+      ? `${briefPrompt}\n\n${NEXUS_BROWSER_BRIEF_RULE}`
+      : briefPrompt;
   const initialPrompt = resumeFromPaneId ? briefPrompt : await withProjectContextBlocksAsync({
-    prompt: briefPrompt,
+    prompt: brief,
     scope,
     executionScope,
     missionId: mission.id,

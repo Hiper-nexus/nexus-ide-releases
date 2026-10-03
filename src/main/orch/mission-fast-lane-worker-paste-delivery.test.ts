@@ -25,6 +25,15 @@ const state = vi.hoisted(() => ({
   mission: null as Mission | null,
   physical: new Map<string, OwnedAgentSessionInfo>(),
   spawnPrompts: [] as Array<string | undefined>,
+  tasks: [] as Array<{ title: string; status: string }>,
+  adapters: new Map<string, unknown>(),
+}));
+
+// Registro vazio, como o harness sempre rodou (o boot é quem carrega os
+// adapters); o caso do F-781 semeia o adapter builtin real do Kimi.
+vi.mock('../adapters/adapter-registry', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../adapters/adapter-registry')>()),
+  getAdapter: (id: string) => state.adapters.get(id) ?? null,
 }));
 
 vi.mock('./squad-store', () => ({ getSquad: () => state.squad, listSquads: () => [] }));
@@ -107,15 +116,20 @@ vi.mock('./project-domain-store-registry', () => ({
   getProjectDomainStores: () => ({
     missions: { get: () => state.mission! },
     missionPanes: { record: () => {}, list: () => [] },
-    tasks: { list: () => [] },
+    tasks: { list: () => state.tasks },
   }),
 }));
 
 import { dispatchFastLaneFirstWave } from './mission-fast-lane';
+import { NEXUS_BROWSER_BRIEF_RULE } from './nexus-browser-policy';
+import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
+import { adapterSchema } from '../../shared/adapter-types';
 
 afterEach(() => {
   state.physical.clear();
   state.spawnPrompts.length = 0;
+  state.tasks.length = 0;
+  state.adapters.clear();
   deliverAgentPromptMock.mockClear();
   terminateMock.mockClear();
 });
@@ -215,5 +229,46 @@ describe('Via Rápida first-wave — entrega do briefing por colagem para o work
     expect(terminateMock).toHaveBeenCalledWith('session-Kimi', {
       origin: 'fast-lane:briefing-undelivered',
     });
+  });
+});
+
+/**
+ * F-781: o brief da Via Rápida não passa pelo withHandoffContract. Sem a regra
+ * aqui, o writer da 1ª onda em CLI que não lê o settings do Claude (Kimi,
+ * Codex, Grok…) nunca ouviria "página web → navegador do Nexus".
+ */
+describe('Via Rápida first-wave — regra do navegador do Nexus no briefing (F-781)', () => {
+  function prepareWriterMission() {
+    const prepared = prepare();
+    const mission = prepared.mission as Mission & {
+      intentContract: Record<string, unknown>;
+    };
+    mission.title = 'Corrigir o cliente da API';
+    mission.description = 'Leia a documentação da API e corrija o cliente.';
+    mission.intentContract.goal = mission.description;
+    delete mission.intentContract.routingAdvice;
+    state.tasks.push({ title: 'Corrigir o cliente da API', status: 'pending' });
+    return prepared;
+  }
+
+  function seedBuiltinKimi(): void {
+    const kimi = BUILTIN_ADAPTERS.find(
+      (adapter) => (adapter as { id?: unknown }).id === 'kimi',
+    );
+    state.adapters.set('kimi', adapterSchema.parse(kimi));
+  }
+
+  it('writer da 1ª onda com o navegador ao alcance (Kimi, allowlist livre) recebe a regra', async () => {
+    seedBuiltinKimi();
+    const { scope, mission } = prepareWriterMission();
+    expect(await dispatchFastLaneFirstWave(scope, mission.id)).toBeGreaterThan(0);
+    expect(state.spawnPrompts[0] ?? '').toContain(NEXUS_BROWSER_BRIEF_RULE);
+  });
+
+  it('seat somente leitura da pergunta aos panes não recebe a regra (não abre aba)', async () => {
+    seedBuiltinKimi();
+    const { scope, mission } = prepare();
+    expect(await dispatchFastLaneFirstWave(scope, mission.id)).toBe(1);
+    expect(state.spawnPrompts[0] ?? '').not.toContain('nexus_browser_open');
   });
 });

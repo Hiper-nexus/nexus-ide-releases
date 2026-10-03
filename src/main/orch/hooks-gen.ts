@@ -5,7 +5,9 @@ import {
   CLAUDE_AUTH_IDENTITY_KEYS,
   syncBackClaudeEphemeralAuth,
 } from './overlay-auth-syncback';
-import { mergeClaudeStatusHooks } from './hook-status-config';
+import { mergeClaudeStatusHooks, type ClaudeHooksMap } from './hook-status-config';
+import { NEXUS_HOOK_MARKER } from '../../vendor/emdash/hooks/hook-commands';
+import { WEB_FETCH_DENY_MESSAGE } from './nexus-browser-policy';
 import {
   linkEntry,
   linkFile,
@@ -386,6 +388,11 @@ export interface EphemeralHomeOptions {
    * superfície mínima.
    */
   readonly carryNativeHome?: boolean;
+  /**
+   * F-781: o pane alcança o navegador do Nexus (hasNexusBrowserAlternative) —
+   * o WebFetch é negado com a dica de nexus_browser_*. Default: não nega.
+   */
+  readonly denyWebFetch?: boolean;
 }
 
 /**
@@ -526,6 +533,44 @@ export function claudeSkillOverridesForFilter(
   return overrides;
 }
 
+function shellSingleQuoted(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * F-781: PreToolUse que nega o WebFetch e diz ao agente o que usar no lugar.
+ * Hook e não `permissions.deny`: a regra de deny não carrega mensagem (a tool
+ * some e o agente não sabe que existe o navegador do Nexus), e o hook é o
+ * canal que o Nexus já usa para barrar com motivo (nexus-gate.mjs, exit 2 →
+ * o stderr chega ao agente). Local de propósito: sem rede nem Main, não
+ * depende do gate estar de pé. POSIX — o Claude Code do Windows também roda
+ * hooks pelo Git Bash (F-704); se o shell não o executar, a tool passa
+ * (falha aberta), nunca trava o pane.
+ */
+export function claudeWebFetchDenyHook(): Record<string, unknown> {
+  return {
+    matcher: 'WebFetch',
+    hooks: [
+      {
+        type: 'command',
+        command:
+          `${NEXUS_HOOK_MARKER}=1 printf '%s\\n' ` +
+          `${shellSingleQuoted(WEB_FETCH_DENY_MESSAGE)} >&2; exit 2`,
+      },
+    ],
+  };
+}
+
+/**
+ * Acrescenta o deny DEPOIS do merge dos hooks de status: o merge descarta
+ * entradas com o marcador do Nexus, e este hook também o carrega.
+ */
+function withWebFetchDeny(hooks: ClaudeHooksMap, deny: boolean): ClaudeHooksMap {
+  if (!deny) return hooks;
+  const preToolUse = Array.isArray(hooks.PreToolUse) ? hooks.PreToolUse : [];
+  return { ...hooks, PreToolUse: [...preToolUse, claudeWebFetchDenyHook()] };
+}
+
 /**
  * Flag-settings file so ungated panes also skip the click dialog. Carries the
  * additive semantic-status hooks too (emdash wave 1): the same
@@ -533,7 +578,10 @@ export function claudeSkillOverridesForFilter(
  * they authenticate with $NEXUS_GATE_TOKEN from the pane env, so no secret is
  * written here. Rewritten wholesale per spawn (idempotent).
  */
-export function writeClaudeFamilyZeroClickSettings(tokenId: string): string {
+export function writeClaudeFamilyZeroClickSettings(
+  tokenId: string,
+  options: { readonly denyWebFetch?: boolean } = {},
+): string {
   const dir = path.join(os.homedir(), '.nexus', 'mcp-configs');
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const file = path.join(dir, `${tokenId.slice(0, 12)}.settings.json`);
@@ -542,7 +590,10 @@ export function writeClaudeFamilyZeroClickSettings(tokenId: string): string {
     JSON.stringify(
       {
         ...CLAUDE_FAMILY_ZERO_CLICK_SETTINGS,
-        hooks: mergeClaudeStatusHooks({}),
+        hooks: withWebFetchDeny(
+          mergeClaudeStatusHooks({}),
+          options.denyWebFetch === true,
+        ),
       },
       null,
       2,
@@ -671,6 +722,8 @@ export function prepareEphemeralHome(
       ],
     }),
   };
+  // F-781: deny do WebFetch onde o navegador do Nexus está ao alcance.
+  settings.hooks = withWebFetchDeny(settings.hooks, options.denyWebFetch === true);
   fs.writeFileSync(
     path.join(claudeDir, 'settings.json'),
     JSON.stringify(options.gateHooks === false ? nativeSettings : settings, null, 2),

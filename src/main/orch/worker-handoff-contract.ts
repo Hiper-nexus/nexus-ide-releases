@@ -6,6 +6,7 @@ import { composeDesignCharter } from './design-profile';
 import { getOrchSettings } from '../persistence/settings-store';
 import { canUseNexusMcp } from './cli-mcp-inject';
 import { isPaneMetaTask } from './mission-fast-lane';
+import { NEXUS_BROWSER_BRIEF_RULE } from './nexus-browser-policy';
 
 /**
  * UI-shaped work, detectado no brief da tarefa + título do pane/nome do agente.
@@ -55,6 +56,12 @@ export interface HandoffContractHints {
    * diff, então nenhuma carta se aplica — eram ~8 KB de prompt por helper.
    */
   readOnly?: boolean;
+  /**
+   * F-781: o pane alcança o navegador do Nexus (hasNexusBrowserAlternative).
+   * Só então o brief manda página web para nexus_browser_* — dizer isso a
+   * quem não tem as tools seria mandar usar o que não existe.
+   */
+  nexusBrowser?: boolean;
 }
 
 /** Charters only help roles that produce code/UI; for the rest they are noise. */
@@ -152,6 +159,11 @@ export function withHandoffContract(
       'Antes do handoff, grave as pegadinhas que descobriu com ' +
       'nexus_memory_retain (uma linha, sem segredos).'
     : '';
+  // F-781: a regra do navegador chega a TODA CLI pelo brief. Na família
+  // Claude o hook ainda nega o WebFetch; Codex, Kimi, Grok e as demais não
+  // leem aquele settings, então para elas o brief é a única trava.
+  const browserDoctrine =
+    viaMcp && hints.nexusBrowser === true ? NEXUS_BROWSER_BRIEF_RULE : '';
   // C-194.1: com fechamento mecânico no Main, a regra muda de "sempre chame a
   // tool" para CONDICIONAL por tamanho — curta viaja verbatim por cópia de
   // código; longa ou blocked/failed é onde o resumo do modelo tem valor.
@@ -200,6 +212,6 @@ export function withHandoffContract(
   const design =
     orch.designPro && tier.design ? `\n\n${composeDesignCharter(orch)}` : '';
   const lean = orch.leanCode && tier.lean ? `\n\n${PONYTAIL_RULES}` : '';
-  return `${prompt}${charter}${design}${lean}\n\n${autonomy}${visualVerification ? `\n\n${visualVerification}` : ''}\n\n${peerRead}${memoryDoctrine ? `\n\n${memoryDoctrine}` : ''}\n\n${contract}`;
+  return `${prompt}${charter}${design}${lean}\n\n${autonomy}${visualVerification ? `\n\n${visualVerification}` : ''}\n\n${peerRead}${memoryDoctrine ? `\n\n${memoryDoctrine}` : ''}${browserDoctrine ? `\n\n${browserDoctrine}` : ''}\n\n${contract}`;
 }
 
