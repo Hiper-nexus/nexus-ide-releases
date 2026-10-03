@@ -421,6 +421,72 @@ export interface ScopedHandoffStoreOptions extends ScopedStoreOptions {
   readonly missionEngine?: Pick<MissionEngine, "blockUser">;
 }
 
+/** F-773 (G4): quem entregou — CLI e modelo da sessão física do handoff. */
+export interface HandoffRouteAttribution {
+  readonly adapterId: string;
+  readonly model?: string;
+}
+
+/** F-773: desfecho real por (CLI, modelo) na janela — insumo da nota da rota. */
+export interface HandoffRouteOutcomeCount {
+  readonly adapterId: string;
+  readonly model?: string;
+  readonly successes: number;
+  readonly total: number;
+}
+
+let routeAttributionResolver:
+  | ((sessionId: string) => HandoffRouteAttribution | null)
+  | null = null;
+
+/**
+ * F-773: o Main registra quem roda cada sessão física (pty-manager, em
+ * main.ts). Injetado porque o store não importa o gerenciador de PTY — o
+ * import de volta fecharia um ciclo, como no sweep de worktree.
+ */
+export function setHandoffRouteAttributionResolver(
+  resolver: ((sessionId: string) => HandoffRouteAttribution | null) | null,
+): void {
+  routeAttributionResolver = resolver;
+}
+
+/**
+ * F-773: atribuição a partir do registro da sessão. O Maestro não entra: ele
+ * não é escolhido pelo roteador, e o handoff final dele não diz nada sobre a
+ * rota de um worker.
+ */
+export function routeAttributionFromSession(
+  agent:
+    | {
+        readonly adapterId: string;
+        readonly model?: string;
+        readonly requestedModel?: string;
+        readonly role: string;
+      }
+    | null
+    | undefined,
+): HandoffRouteAttribution | null {
+  if (!agent?.adapterId || agent.role === "orchestrator") return null;
+  const model = agent.model ?? agent.requestedModel;
+  return { adapterId: agent.adapterId, ...(model ? { model } : {}) };
+}
+
+function resolveRouteAttribution(
+  sessionId: string | undefined,
+): HandoffRouteAttribution | null {
+  if (!sessionId || !routeAttributionResolver) return null;
+  try {
+    const attribution = routeAttributionResolver(sessionId);
+    if (!attribution?.adapterId) return null;
+    const adapterId = attribution.adapterId.slice(0, 128);
+    const model = attribution.model?.slice(0, 256);
+    return { adapterId, ...(model ? { model } : {}) };
+  } catch {
+    // Atribuição é contabilidade derivada: nunca bloqueia a entrega.
+    return null;
+  }
+}
+
 export class ScopedHandoffStore {
   readonly #binding: ScopedStoreBinding;
   readonly #configuredMissionEngine:
@@ -575,6 +641,8 @@ export class ScopedHandoffStore {
       : undefined;
     const createdAt = this.#binding.now();
     const db = this.#binding.writeDatabase();
+    // F-773: lido do registro da sessão em memória, fora da transação.
+    const attribution = resolveRouteAttribution(input.sessionId);
 
     const insert = db.transaction(() => {
       const receiptExpectation = mcpBoundary
@@ -770,8 +838,9 @@ export class ScopedHandoffStore {
             authority_origin, status, summary,
             artifacts_json, evidence_ids_json, evidence_trusted,
             context_revision, contract_hash, base_sha, head_sha, diff_hash,
-            workflow_revision, delivered, delivery_state, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?)`,
+            workflow_revision, delivered, delivery_state, created_at,
+            adapter_id, model)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?, ?, ?)`,
       ).run(
         handoff.id,
         handoff.missionId ?? null,
@@ -791,6 +860,8 @@ export class ScopedHandoffStore {
         resolved.binding?.diffHash ?? null,
         resolved.binding?.workflowRevision ?? null,
         handoff.createdAt,
+        attribution?.adapterId ?? null,
+        attribution?.model ?? null,
       );
       if (handoff.mcpProvenance) {
         const chainLink = this.#nextReceiptChainLinkInTransaction(
@@ -1465,6 +1536,55 @@ export class ScopedHandoffStore {
     return row ? this.#fromRow(row, db) : null;
   }
 
+  /**
+   * F-773 (G4): desfecho real por (CLI, modelo) desde `sinceMs` neste
+   * checkout — o laço de resultado do roteador. Sucesso = `success` que o
+   * Maestro não devolveu (`ack_verdict` 'rework', F-782); `partial`,
+   * `blocked` e `failed` contam como falha; `progress`/`stalled` (sintéticos,
+   * não terminais) ficam fora. Falha provisória do watchdog/enforcement que a
+   * mesma sessão superou depois com um `success` também fica fora. O índice
+   * parcial `idx_handoffs_route_outcome` cobre a varredura da janela.
+   */
+  routeOutcomeCountsSince(sinceMs: number): HandoffRouteOutcomeCount[] {
+    const since = z.number().int().nonnegative().parse(Math.floor(sinceMs));
+    const provisional = PROVISIONAL_WORKER_HANDOFF_AUTHORS.map(() => "?").join(", ");
+    const rows = this.#binding
+      .readDatabase()
+      .prepare(
+        `SELECT h.adapter_id AS adapter_id, h.model AS model,
+                SUM(CASE WHEN h.status = 'success'
+                          AND (h.ack_verdict IS NULL OR h.ack_verdict = 'accepted')
+                         THEN 1 ELSE 0 END) AS successes,
+                COUNT(*) AS total
+           FROM handoffs AS h
+          WHERE h.adapter_id IS NOT NULL
+            AND h.created_at >= ?
+            AND h.status IN ('success', 'partial', 'blocked', 'failed')
+            AND NOT (
+              h.from_agent IN (${provisional})
+              AND EXISTS (
+                SELECT 1 FROM handoffs AS later
+                 WHERE later.session_id = h.session_id
+                   AND later.status = 'success'
+                   AND later.created_at >= h.created_at
+              )
+            )
+          GROUP BY h.adapter_id, h.model`,
+      )
+      .all(since, ...PROVISIONAL_WORKER_HANDOFF_AUTHORS) as Array<{
+      readonly adapter_id: string;
+      readonly model: string | null;
+      readonly successes: number;
+      readonly total: number;
+    }>;
+    return rows.map((row) => ({
+      adapterId: row.adapter_id,
+      ...(row.model ? { model: row.model } : {}),
+      successes: row.successes,
+      total: row.total,
+    }));
+  }
+
   markDelivered(rawId: string): boolean {
     const delivered = this.markSubmitted(rawId);
     if (delivered) {
@@ -1933,6 +2053,8 @@ export class ScopedHandoffStore {
         handoffId: id,
         missionId,
         orchestratorSessionId,
+        // F-773: o veredito entra na taxa de sucesso da rota (rework = falha).
+        verdict: input.verdict ?? "accepted",
       },
       physicalReceipt,
     );

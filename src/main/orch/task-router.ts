@@ -45,7 +45,11 @@ import { isSameLineAtLeast, newestInModelLine } from '../../shared/model-line';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { adapterSchema } from '../../shared/adapter-types';
 import { adapterCircuitBreakers } from './circuit-breaker';
-import { multiScoreRerank, tieBreakByUse } from './route-pipeline';
+import {
+  multiScoreRerank,
+  tieBreakByUse,
+  type RouteSuccessIndex,
+} from './route-pipeline';
 import { modelAccessQuarantine } from './model-access-quarantine';
 
 export type TaskTier = 'trivial' | 'easy' | 'medium' | 'hard' | 'critical';
@@ -112,6 +116,12 @@ export interface RouteContext {
    * 7 dias (todas as missões) — alimenta o fair-share global.
    */
   globalUseCounts?: ReadonlyMap<string, number>;
+  /**
+   * F-773 (G4): desfecho real dos handoffs por (CLI, modelo) em 14 dias —
+   * termo de sucesso do multi-score. Rotação, fair-share, lanes de topo e
+   * menção explícita vêm depois e continuam mandando.
+   */
+  routeOutcomes?: RouteSuccessIndex;
 }
 
 export type RankedRouteEntry = {

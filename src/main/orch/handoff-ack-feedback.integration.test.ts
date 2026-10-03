@@ -22,7 +22,10 @@ import type { JevResult } from "../jev/jev-client";
 import { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import { bindTokenToSession, mintToken, resetGateForTests } from "./gate";
-import { createScopedHandoffStore } from "./handoff-store";
+import {
+  createScopedHandoffStore,
+  setHandoffRouteAttributionResolver,
+} from "./handoff-store";
 import { runInsidePtyStreamAgentTransport } from "./http-mcp-boundary";
 import {
   resetJevReviewBudgetsForTesting,
@@ -165,6 +168,7 @@ describe("F-782: ACK do Maestro → rótulo da revisão do Jev (store real)", ()
   });
 
   afterEach(() => {
+    setHandoffRouteAttributionResolver(null);
     configureJevDecisionLog(undefined);
     disposeAuditLogRuntime();
     disposeProjectDomainStoreRegistry();
@@ -292,5 +296,32 @@ describe("F-782: ACK do Maestro → rótulo da revisão do Jev (store real)", ()
     await expect(ack(handoff.id, "rework")).resolves.toMatchObject({ ok: true });
     expect(handoffs.get(handoff.id)?.deliveryState).toBe("consumed");
     expect(listJevDecisions({ dir: logDir })).toEqual([]);
+  });
+
+  it("F-773: o veredito do ACK fica no handoff e a devolução derruba a taxa da CLI", async () => {
+    setHandoffRouteAttributionResolver((sessionId) =>
+      sessionId.startsWith("session-f782-") ? { adapterId: "kimi", model: "kimi-code/k3" } : null,
+    );
+    const reworked = await reviewedHandoff("ok", "session-f782-taxa-1");
+    const accepted = await reviewedHandoff("ok", "session-f782-taxa-2");
+    expect(handoffs.routeOutcomeCountsSince(0)).toEqual([
+      { adapterId: "kimi", model: "kimi-code/k3", successes: 2, total: 2 },
+    ]);
+
+    await ack(reworked.handoff.id, "rework");
+    await ack(accepted.handoff.id);
+
+    const verdicts = manager
+      .open(testProjectScope())
+      .db.prepare(`SELECT id, ack_verdict FROM handoffs ORDER BY rowid`)
+      .all();
+    expect(verdicts).toEqual([
+      { id: reworked.handoff.id, ack_verdict: "rework" },
+      { id: accepted.handoff.id, ack_verdict: "accepted" },
+    ]);
+    // O worker disse success nas duas; o Maestro devolveu uma: 1 de 2.
+    expect(handoffs.routeOutcomeCountsSince(0)).toEqual([
+      { adapterId: "kimi", model: "kimi-code/k3", successes: 1, total: 2 },
+    ]);
   });
 });

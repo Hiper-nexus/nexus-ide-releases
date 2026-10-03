@@ -23,12 +23,107 @@ import { publishedCodingQuality } from './published-benchmarks';
  */
 export const NEUTRAL_UNPUBLISHED_QUALITY = 15;
 
+/**
+ * F-773 (G4): laço de resultado. A nota da rota aprende com o desfecho real
+ * dos handoffs (status do worker + veredito do Maestro no ACK) por (CLI,
+ * modelo), numa janela de 14 dias. Abaixo de 5 amostras o termo é zero:
+ * amostra pequena não decide nada.
+ */
+export const ROUTE_OUTCOME_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+export const ROUTE_OUTCOME_MIN_SAMPLES = 5;
+/**
+ * Termo = (taxa − 0,5) × 10, no máximo ±5: menos que um degrau de tier (−10)
+ * e muito menos que um assento repetido na missão (−18). Desempata e vira
+ * disputa apertada; não passa por cima de tier, diversidade nem menção.
+ */
+export const ROUTE_OUTCOME_WEIGHT = 10;
+
+export interface RouteOutcomeCount {
+  readonly adapterId: string;
+  readonly model?: string;
+  readonly successes: number;
+  readonly total: number;
+}
+
+export interface RouteOutcomeTally {
+  successes: number;
+  total: number;
+}
+
+/** Contagens por (CLI, modelo) e o agregado da CLI. */
+export interface RouteSuccessIndex {
+  readonly byModel: ReadonlyMap<string, RouteOutcomeTally>;
+  readonly byAdapter: ReadonlyMap<string, RouteOutcomeTally>;
+  readonly minSamples: number;
+}
+
+export interface RouteSuccessRate {
+  readonly rate: number;
+  readonly samples: number;
+  /** De onde veio a taxa: o modelo exato ou, sem amostra dele, a CLI inteira. */
+  readonly scope: 'model' | 'cli';
+}
+
+const outcomeModelKey = (adapterId: string, model: string | undefined) =>
+  `${adapterId}\0${model ?? ''}`;
+
+export function buildRouteSuccessIndex(
+  rows: readonly RouteOutcomeCount[],
+  minSamples: number = ROUTE_OUTCOME_MIN_SAMPLES,
+): RouteSuccessIndex {
+  const byModel = new Map<string, RouteOutcomeTally>();
+  const byAdapter = new Map<string, RouteOutcomeTally>();
+  const add = (map: Map<string, RouteOutcomeTally>, key: string, row: RouteOutcomeCount) => {
+    const tally = map.get(key) ?? { successes: 0, total: 0 };
+    tally.successes += row.successes;
+    tally.total += row.total;
+    map.set(key, tally);
+  };
+  for (const row of rows) {
+    if (!row.adapterId || !(row.total > 0) || row.successes < 0 || row.successes > row.total) {
+      continue;
+    }
+    if (row.model) add(byModel, outcomeModelKey(row.adapterId, row.model), row);
+    add(byAdapter, row.adapterId, row);
+  }
+  return { byModel, byAdapter, minSamples };
+}
+
+/**
+ * Taxa do candidato: a do (CLI, modelo) quando há amostra suficiente; senão a
+ * da CLI inteira (o harness da CLI falha para qualquer modelo); senão null —
+ * sem termo.
+ */
+export function routeSuccessRate(
+  index: RouteSuccessIndex | undefined,
+  adapterId: string,
+  model: string | undefined,
+): RouteSuccessRate | null {
+  if (!index) return null;
+  const exact = model ? index.byModel.get(outcomeModelKey(adapterId, model)) : undefined;
+  if (exact && exact.total >= index.minSamples) {
+    return { rate: exact.successes / exact.total, samples: exact.total, scope: 'model' };
+  }
+  const cli = index.byAdapter.get(adapterId);
+  if (cli && cli.total >= index.minSamples) {
+    return { rate: cli.successes / cli.total, samples: cli.total, scope: 'cli' };
+  }
+  return null;
+}
+
+/** "0,82 (17)" — vírgula decimal, como o resto do recibo da rota. */
+export function formatRouteSuccessRate(rate: RouteSuccessRate): string {
+  return `${rate.rate.toFixed(2).replace('.', ',')} (${rate.samples}${rate.scope === 'cli' ? ', CLI' : ''})`;
+}
+
 export interface ScoreBreakdown {
   table: number;
   quality: number;
   cost: number;
   diversity: number;
   preference: number;
+  /** F-773: (taxa de sucesso 14d − 0,5) × 10; 0 sem amostra mínima. */
+  success: number;
   circuit: number;
   total: number;
 }
@@ -129,11 +224,15 @@ export function scoreRouteCandidate(
     preference += 4;
   }
 
+  // F-773 (G4): o que o (CLI, modelo) entregou de verdade nos últimos 14 dias.
+  const outcome = routeSuccessRate(input.context?.routeOutcomes, c.adapterId, c.model);
+  const success = outcome ? (outcome.rate - 0.5) * ROUTE_OUTCOME_WEIGHT : 0;
+
   const open = isCircuitOpen(c.adapterId, input.circuitOpen);
   const circuit = open ? -10_000 : 0;
 
-  const total = table + quality + cost + diversity + preference + circuit;
-  return { table, quality, cost, diversity, preference, circuit, total };
+  const total = table + quality + cost + diversity + preference + success + circuit;
+  return { table, quality, cost, diversity, preference, success, circuit, total };
 }
 
 /** Origem da nota de qualidade do candidato: nexus-eval > benchmark oficial > neutro. */
@@ -198,6 +297,23 @@ export function multiScoreRerank(input: MultiScoreInput): {
   }
   if (anyClosed && filtered.length < scored.length) {
     noteParts.push(' circuit-open skipped');
+  }
+  // F-773: o termo aparece no recibo — quem liderou e quem perdeu por ele.
+  const outcomes = sorted
+    .map((entry) => ({
+      entry,
+      rate: routeSuccessRate(input.context?.routeOutcomes, entry.c.adapterId, entry.c.model),
+    }))
+    .filter((item): item is { entry: ScoredRouteEntry; rate: RouteSuccessRate } => item.rate !== null)
+    .slice(0, 3);
+  if (outcomes.length > 0) {
+    noteParts.push(
+      `; sucesso 14d: ${outcomes
+        .map(({ entry, rate }) =>
+          `${entry.c.adapterId}${entry.c.model ? `:${entry.c.model}` : ''} ${formatRouteSuccessRate(rate)}`,
+        )
+        .join(', ')}`,
+    );
   }
 
   return {

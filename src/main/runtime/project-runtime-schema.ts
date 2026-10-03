@@ -852,6 +852,24 @@ CREATE INDEX idx_mission_review_verdicts_head
   ON mission_review_verdicts(mission_id, head_sha, created_at);
 `;
 
+/**
+ * F-773 (G4): laço de resultado da rota. O handoff passa a dizer QUEM entregou
+ * (CLI e modelo da sessão física) e o que o Maestro fez com a entrega no ACK
+ * (`accepted` | `rework`, F-782). Colunas novas são nulas: linha antiga fica
+ * sem atribuição e simplesmente não entra na taxa. O índice parcial cobre a
+ * consulta da janela de 14 dias sem ler `summary`/`artifacts_json` da linha.
+ */
+const HANDOFF_ROUTE_OUTCOME_SCHEMA = `
+ALTER TABLE handoffs ADD COLUMN adapter_id TEXT;
+ALTER TABLE handoffs ADD COLUMN model TEXT;
+ALTER TABLE handoffs ADD COLUMN ack_verdict TEXT
+  CHECK (ack_verdict IS NULL OR ack_verdict IN ('accepted', 'rework'));
+
+CREATE INDEX idx_handoffs_route_outcome
+  ON handoffs(created_at, adapter_id, model, status, ack_verdict, from_agent, session_id)
+  WHERE adapter_id IS NOT NULL;
+`;
+
 export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
   validateProjectMigrations([
     createProjectMigration({
@@ -978,5 +996,13 @@ export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
       sql: `ALTER TABLE mission_panes
             ADD COLUMN operator_opened INTEGER NOT NULL DEFAULT 0
             CHECK(operator_opened IN (0,1))`,
+    }),
+    // F-773 (G4): quem entregou cada handoff e o veredito do Maestro — a
+    // taxa de sucesso real por (CLI, modelo) que entra na nota da rota.
+    createProjectMigration({
+      id: '041-handoff-route-outcome',
+      schemaVersion: 41,
+      appVersion: '0.76.192',
+      sql: HANDOFF_ROUTE_OUTCOME_SCHEMA,
     }),
   ]);

@@ -900,7 +900,8 @@ const handoffAcknowledgeTool: McpToolDef = {
     'verdict (default "accepted"): pass "rework" when you do NOT accept the delivery ' +
     "as-is (you send it back, or redo it elsewhere). It only records the verdict — " +
     "you still send the correction yourself — and Nexus learns from it: the " +
-    "evidence review is labeled right/wrong against your decision.",
+    "evidence review is labeled right/wrong against your decision, and a rework " +
+    "counts as a failure in the CLI/model success rate that routing uses.",
   inputSchema: {
     type: "object",
     properties: {

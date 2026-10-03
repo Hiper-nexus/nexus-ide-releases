@@ -58,7 +58,12 @@ import {
   type JevRouteTaskBatch,
 } from './jev-task-routing';
 import { cliSupportsSkillSurface } from './jev-skill-suggestion';
-import { mergeAdapterUseLists } from './route-pipeline';
+import {
+  buildRouteSuccessIndex,
+  mergeAdapterUseLists,
+  ROUTE_OUTCOME_WINDOW_MS,
+  type RouteSuccessIndex,
+} from './route-pipeline';
 import { recordRouteDecision } from './route-provenance';
 import { recordRouteLog, recentRouteLog } from './route-log';
 import { ruleChoiceReceipt } from './route-rule-choice';
@@ -1867,6 +1872,20 @@ export async function routeTaskForCaller(
       globalUseCounts = undefined;
     }
   }
+  // F-773 (G4): laço de resultado — o que cada (CLI, modelo) entregou de
+  // verdade nos últimos 14 dias neste checkout (status do worker + veredito
+  // do Maestro no ACK). Vale também para o fan-out sem missão. Fail-open
+  // isolado: sem leitura, a rota segue exatamente como antes.
+  let routeOutcomes: RouteSuccessIndex | undefined;
+  try {
+    routeOutcomes = buildRouteSuccessIndex(
+      getProjectDomainStores(ctx.scope).handoffs.routeOutcomeCountsSince(
+        Date.now() - ROUTE_OUTCOME_WINDOW_MS,
+      ),
+    );
+  } catch {
+    routeOutcomes = undefined;
+  }
   // Preferência interna (pin de adapterId que virou preferência suave no
   // spawn) vale tanto quanto a do caller; nunca vira exclusão.
   const preferAdapters = [
@@ -1911,6 +1930,7 @@ export async function routeTaskForCaller(
     missionUseCounts,
     preferAdapters: preferAdapters.length > 0 ? preferAdapters : undefined,
     ...(globalUseCounts ? { globalUseCounts } : {}),
+    ...(routeOutcomes ? { routeOutcomes } : {}),
     // Uso geral: o multi-score (benchmark oficial + diversidade + custo)
     // vale também para o fan-out do operador sem missão — a ordem crua da
     // tabela não é medida de capacidade.
