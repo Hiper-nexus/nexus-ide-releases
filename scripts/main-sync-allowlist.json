@@ -1,0 +1,711 @@
+{
+  "version": 1,
+  "baselineCommit": "a95033a2",
+  "description": "Exact existing process primitives only. This maintenance allowlist is not a latency guarantee or an authority grant. New calls, changed calls, added aliases and stale entries fail. Exceptions must be reviewed and removed as call paths become asynchronous.",
+  "exceptions": [
+    {
+      "file": "src/main/adapters/agy-windows-keyring.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Windows credential-slot read/write uses fixed PowerShell scripts and bounded native-store transactions (F-677); no new calls permitted."
+    },
+    {
+      "file": "src/main/adapters/agy-windows-keyring.ts",
+      "method": "execFileSync",
+      "kind": "reference",
+      "fingerprint": "8cbce4944c355550a83933c4b3744ae375ca279d08daf247a6b46799d8d2e7de",
+      "count": 2,
+      "reason": "Windows credential-slot read/write uses fixed PowerShell scripts and bounded native-store transactions (F-677); no new calls permitted."
+    },
+    {
+      "file": "src/main/adapters/claude-credential.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "a7ee36e2f02edc3c3e9697b782ab092637b63ed92e8f090aa9c6577779598555",
+      "count": 1,
+      "reason": "Existing bounded macOS Keychain credential transaction; preserves native session custody and explicit account operations (F-645)."
+    },
+    {
+      "file": "src/main/adapters/claude-credential.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "b10da2094c2b706b8ccd573e91a89cfcedd4213c5d57f002a6fc26976df3fb22",
+      "count": 1,
+      "reason": "Existing bounded macOS Keychain credential transaction; preserves native session custody and explicit account operations (F-645)."
+    },
+    {
+      "file": "src/main/adapters/claude-credential.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Existing bounded macOS Keychain credential transaction; preserves native session custody and explicit account operations (F-645)."
+    },
+    {
+      "file": "src/main/adapters/claude-credential.ts",
+      "method": "spawnSync",
+      "kind": "call",
+      "fingerprint": "f64f1908f7c251df4cfc508980432a6b101a0e5f8a059a3192b0da94162624d8",
+      "count": 1,
+      "reason": "Existing bounded macOS Keychain credential transaction; preserves native session custody and explicit account operations (F-645)."
+    },
+    {
+      "file": "src/main/adapters/claude-credential.ts",
+      "method": "spawnSync",
+      "kind": "import",
+      "fingerprint": "36c0bd9f907a923481e84e567e620c87f881da11fb0633d8951a810cd052ca9d",
+      "count": 1,
+      "reason": "Existing bounded macOS Keychain credential transaction; preserves native session custody and explicit account operations (F-645)."
+    },
+    {
+      "file": "src/main/adapters/managed-claude-auth.ts",
+      "method": "spawnSync",
+      "kind": "call",
+      "fingerprint": "de6abc8e16365f54f14d0fdcd1e157534eb82462fb07decd1d31d521bc01f039",
+      "count": 1,
+      "reason": "Existing bounded Keychain existence proof for managed authentication; account isolation owner, never a PTY text detector."
+    },
+    {
+      "file": "src/main/adapters/managed-claude-auth.ts",
+      "method": "spawnSync",
+      "kind": "import",
+      "fingerprint": "36c0bd9f907a923481e84e567e620c87f881da11fb0633d8951a810cd052ca9d",
+      "count": 1,
+      "reason": "Existing bounded Keychain existence proof for managed authentication; account isolation owner, never a PTY text detector."
+    },
+    {
+      "file": "src/main/adapters/subscription-auth.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "3551bc85fb9c7308160e46a70f4954a7e2b06906551e44489753d1424304b7e9",
+      "count": 1,
+      "reason": "Existing bounded platform credential-presence compatibility APIs; caller authority and session fingerprint semantics must be preserved."
+    },
+    {
+      "file": "src/main/adapters/subscription-auth.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "50ae2a04574cc4b5f81ed28728e3882a569d8e9c31214f012f0c40a6f8eb3e0d",
+      "count": 1,
+      "reason": "Existing bounded platform credential-presence compatibility APIs; caller authority and session fingerprint semantics must be preserved."
+    },
+    {
+      "file": "src/main/adapters/subscription-auth.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "8364765f108be1b48027d88a6fe4c054ca1e103650d105f99c91db45c852cb3c",
+      "count": 1,
+      "reason": "Existing bounded platform credential-presence compatibility APIs; caller authority and session fingerprint semantics must be preserved."
+    },
+    {
+      "file": "src/main/adapters/subscription-auth.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "d40e604fc613e015f5d1109466ddeddc37349e3abf7b922b2ddcfa84b882df4b",
+      "count": 1,
+      "reason": "Existing bounded platform credential-presence compatibility APIs; caller authority and session fingerprint semantics must be preserved."
+    },
+    {
+      "file": "src/main/adapters/subscription-auth.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "d80e3a823aefb4f0209e48bf4ee75bb8ed3475ea3d53f8a5a8ebe5773c5fe4af",
+      "count": 1,
+      "reason": "Existing bounded platform credential-presence compatibility APIs; caller authority and session fingerprint semantics must be preserved."
+    },
+    {
+      "file": "src/main/adapters/subscription-auth.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "f19a665758c4edcc9d4686d32923f1f72a6ef8b66458d09a62b563b4cb64c7ea",
+      "count": 1,
+      "reason": "Existing bounded platform credential-presence compatibility APIs; caller authority and session fingerprint semantics must be preserved."
+    },
+    {
+      "file": "src/main/adapters/subscription-auth.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Existing bounded platform credential-presence compatibility APIs; caller authority and session fingerprint semantics must be preserved."
+    },
+    {
+      "file": "src/main/adapters/subscription-auth.ts",
+      "method": "execFileSync",
+      "kind": "reference",
+      "fingerprint": "1a0c611d4005e95395cec5d695e152efd41954f698b51290422e14f353ccbac7",
+      "count": 1,
+      "reason": "Existing bounded platform credential-presence compatibility APIs; caller authority and session fingerprint semantics must be preserved."
+    },
+    {
+      "file": "src/main/adapters/subscription-auth.ts",
+      "method": "execFileSync",
+      "kind": "reference",
+      "fingerprint": "caaa07be0bbda7e65609e75d781d7fb7b053254b5c08e3b2f713ff563ea9eb28",
+      "count": 4,
+      "reason": "Existing bounded platform credential-presence compatibility APIs; caller authority and session fingerprint semantics must be preserved."
+    },
+    {
+      "file": "src/main/integrations/token-vault.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "1a288b2884332e9d1deaaff55c71148e0a1364d94a6d4a1a5b733b4aacb8ff06",
+      "count": 1,
+      "reason": "Existing cached integration CLI token lookup with a three-second timeout; secrets remain inside the Main vault boundary."
+    },
+    {
+      "file": "src/main/integrations/token-vault.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Existing cached integration CLI token lookup with a three-second timeout; secrets remain inside the Main vault boundary."
+    },
+    {
+      "file": "src/main/linux-desktop-entry.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "9957c41d3dbb2cbe79e87b17e37c9b5057a7d39ec7e317244a10527327745f70",
+      "count": 1,
+      "reason": "Linux desktop database registration during portable-app setup; fixed argv and five-second timeout, never per terminal chunk."
+    },
+    {
+      "file": "src/main/linux-desktop-entry.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Linux desktop database registration during portable-app setup; fixed argv and five-second timeout, never per terminal chunk."
+    },
+    {
+      "file": "src/main/main.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "515cafd7bfc78a23a954c31378f323be6c3ea4fa09b532364e9b0f5a6e5e0482",
+      "count": 1,
+      "reason": "Quit-time emergency process inventory used by the final teardown authority after services stop; fixed ps argv and output cap."
+    },
+    {
+      "file": "src/main/ops/ops-ipc.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "12b42a39ccc8deaca29f3bc787c38dc0a8c413c7f5b3ea45b3e915e8eae0822a",
+      "count": 1,
+      "reason": "Explicit operator app-integrity/repair checks with pinned macOS signing tools; these existing verification calls fail closed."
+    },
+    {
+      "file": "src/main/ops/ops-ipc.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "14988be2987e7d889b68fb1c583a0145e21f0f2a3803af218a4cfc45edc17b03",
+      "count": 1,
+      "reason": "Explicit operator app-integrity/repair checks with pinned macOS signing tools; these existing verification calls fail closed."
+    },
+    {
+      "file": "src/main/ops/ops-ipc.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "1cfa1e13620c14c5d6d193dadf321d365f7f9da4e47a4340026fbf950070e169",
+      "count": 1,
+      "reason": "Explicit operator app-integrity/repair checks with pinned macOS signing tools; these existing verification calls fail closed."
+    },
+    {
+      "file": "src/main/ops/ops-ipc.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "dd74aacdca51d24c9061ecdbc3393889a49f1b94367f438dacf221615391d8d4",
+      "count": 1,
+      "reason": "Explicit operator app-integrity/repair checks with pinned macOS signing tools; these existing verification calls fail closed."
+    },
+    {
+      "file": "src/main/ops/ops-ipc.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Explicit operator app-integrity/repair checks with pinned macOS signing tools; these existing verification calls fail closed."
+    },
+    {
+      "file": "src/main/ops/ops-ipc.ts",
+      "method": "spawnSync",
+      "kind": "call",
+      "fingerprint": "14eb446722da3c8bfc7caa1b7269a135771757cc53c2b19cc4b671abf27bf9a5",
+      "count": 1,
+      "reason": "Explicit operator app-integrity/repair checks with pinned macOS signing tools; these existing verification calls fail closed."
+    },
+    {
+      "file": "src/main/ops/ops-ipc.ts",
+      "method": "spawnSync",
+      "kind": "import",
+      "fingerprint": "36c0bd9f907a923481e84e567e620c87f881da11fb0633d8951a810cd052ca9d",
+      "count": 1,
+      "reason": "Explicit operator app-integrity/repair checks with pinned macOS signing tools; these existing verification calls fail closed."
+    },
+    {
+      "file": "src/main/orch/cli-mcp-session-agy.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "cd6ff29a428b0b51f891e0bee3a77119a04ed767f8cb8e8a79099211ab86ef71",
+      "count": 1,
+      "reason": "Existing native AGY MCP registration transaction, cached per bridge signature and CLI timeout; preserves real-profile registration ownership."
+    },
+    {
+      "file": "src/main/orch/cli-mcp-session-agy.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Existing native AGY MCP registration transaction, cached per bridge signature and CLI timeout; preserves real-profile registration ownership."
+    },
+    {
+      "file": "src/main/orch/cli-mcp-session-devin.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "cd6ff29a428b0b51f891e0bee3a77119a04ed767f8cb8e8a79099211ab86ef71",
+      "count": 1,
+      "reason": "Existing native Devin MCP registration transaction, cached per bridge signature and CLI timeout; preserves user-scope registration ownership."
+    },
+    {
+      "file": "src/main/orch/cli-mcp-session-devin.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Existing native Devin MCP registration transaction, cached per bridge signature and CLI timeout; preserves user-scope registration ownership."
+    },
+    {
+      "file": "src/main/orch/cli-mcp-session-muse.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "f8841f7e909480e5bdf51a32fc37b56482ad5dfc1c03ca12386d13c7fb73e391",
+      "count": 1,
+      "reason": "Existing cached Muse compatibility probe before safe settings registration; fifteen-second timeout and fixed version argv."
+    },
+    {
+      "file": "src/main/orch/cli-mcp-session-muse.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Existing cached Muse compatibility probe before safe settings registration; fifteen-second timeout and fixed version argv."
+    },
+    {
+      "file": "src/main/orch/codex-cli-version.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Compatibility/test-injection seam and cached Windows no-daemon help probe; production version discovery is cache-only/async."
+    },
+    {
+      "file": "src/main/orch/codex-cli-version.ts",
+      "method": "execFileSync",
+      "kind": "reference",
+      "fingerprint": "45d173c1685356a7aaf9a22097064f2d20f85e3bd5974bb24d48407fbfd4efc4",
+      "count": 1,
+      "reason": "Compatibility/test-injection seam and cached Windows no-daemon help probe; production version discovery is cache-only/async."
+    },
+    {
+      "file": "src/main/orch/codex-cli-version.ts",
+      "method": "execFileSync",
+      "kind": "reference",
+      "fingerprint": "78d7e79525008c8ae28317ad06fe132ba90a6d5f2c63c9d3b29c104d25c72243",
+      "count": 2,
+      "reason": "Compatibility/test-injection seam and cached Windows no-daemon help probe; production version discovery is cache-only/async."
+    },
+    {
+      "file": "src/main/orch/codex-cli-version.ts",
+      "method": "execFileSync",
+      "kind": "reference",
+      "fingerprint": "9d6b70408908c6dc698d58f96efa23dab369c32a1e2b261b757ffab66fd6dbb7",
+      "count": 1,
+      "reason": "Compatibility/test-injection seam and cached Windows no-daemon help probe; production version discovery is cache-only/async."
+    },
+    {
+      "file": "src/main/orch/codex-cli-version.ts",
+      "method": "execFileSync",
+      "kind": "reference",
+      "fingerprint": "ab3b772e1be9b35a37eb11b353a5758b1844787f0bdc225d359635249385948f",
+      "count": 1,
+      "reason": "Compatibility/test-injection seam and cached Windows no-daemon help probe; production version discovery is cache-only/async."
+    },
+    {
+      "file": "src/main/orch/worker-files-modified.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "1a5ae75d0fff53fb50714dc3c415377879597169fec18d444e4c6f96adc06cfc",
+      "count": 1,
+      "reason": "Existing legacy Git evidence collector with bounded probes; asynchronous failover collector is separate and must not regress to this seam."
+    },
+    {
+      "file": "src/main/orch/worker-files-modified.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "dfa2432f7755a4325f0061294917db5e1dc39ab8ceba0828cc906c8d1a3e2b71",
+      "count": 1,
+      "reason": "Existing legacy Git evidence collector with bounded probes; asynchronous failover collector is separate and must not regress to this seam."
+    },
+    {
+      "file": "src/main/orch/worker-files-modified.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Existing legacy Git evidence collector with bounded probes; asynchronous failover collector is separate and must not regress to this seam."
+    },
+    {
+      "file": "src/main/persistence/project-git-lineage.ts",
+      "method": "spawnSync",
+      "kind": "call",
+      "fingerprint": "83b65d7c67510c9c70182a935585ebe5418a6f97d6302561a6dc85d9d504cffa",
+      "count": 1,
+      "reason": "Existing bounded canonical Git lineage identity probe; sanitized environment/output and identity consistency precede persistence."
+    },
+    {
+      "file": "src/main/persistence/project-git-lineage.ts",
+      "method": "spawnSync",
+      "kind": "import",
+      "fingerprint": "36c0bd9f907a923481e84e567e620c87f881da11fb0633d8951a810cd052ca9d",
+      "count": 1,
+      "reason": "Existing bounded canonical Git lineage identity probe; sanitized environment/output and identity consistency precede persistence."
+    },
+    {
+      "file": "src/main/persistence/shell-catalog.ts",
+      "method": "spawnSync",
+      "kind": "call",
+      "fingerprint": "34f75a2b5c92c5a89fb8f8550e91fb111c46a5dbc0fc8eae4f94075a9161e440",
+      "count": 1,
+      "reason": "One cached macOS login-shell discovery using fixed dscl argv and two-second timeout; not repeated for streamed output."
+    },
+    {
+      "file": "src/main/persistence/shell-catalog.ts",
+      "method": "spawnSync",
+      "kind": "import",
+      "fingerprint": "36c0bd9f907a923481e84e567e620c87f881da11fb0633d8951a810cd052ca9d",
+      "count": 1,
+      "reason": "One cached macOS login-shell discovery using fixed dscl argv and two-second timeout; not repeated for streamed output."
+    },
+    {
+      "file": "src/main/pty/darwin-pty-supervisor.ts",
+      "method": "spawnSync",
+      "kind": "call",
+      "fingerprint": "fef3e8237170ea32b84530f753fe068fd1264b74fd15990aa1c73d7c25d98922",
+      "count": 1,
+      "reason": "Existing pinned codesign proof at the process-isolation boundary; no relaxation of signature authority through this lint exception."
+    },
+    {
+      "file": "src/main/pty/darwin-pty-supervisor.ts",
+      "method": "spawnSync",
+      "kind": "import",
+      "fingerprint": "36c0bd9f907a923481e84e567e620c87f881da11fb0633d8951a810cd052ca9d",
+      "count": 1,
+      "reason": "Existing pinned codesign proof at the process-isolation boundary; no relaxation of signature authority through this lint exception."
+    },
+    {
+      "file": "src/main/pty/persistent-session.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "64de86e941d739ee12bf0b9764f6da395945e8b89faae46f55a30dc1b9cd4ddd",
+      "count": 1,
+      "reason": "Existing opt-in tmux lifecycle compatibility API with timeout/output cap; governed/sealed launches remain excluded."
+    },
+    {
+      "file": "src/main/pty/persistent-session.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Existing opt-in tmux lifecycle compatibility API with timeout/output cap; governed/sealed launches remain excluded."
+    },
+    {
+      "file": "src/main/pty/pty-env-locale.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "701130b2107894105cfa5691108285fed713bf9c07bc630daf2f5eabfdad8714",
+      "count": 1,
+      "reason": "One cached locale inventory probe with fixed argv and five-second timeout; used to choose valid PTY environment."
+    },
+    {
+      "file": "src/main/pty/pty-env-locale.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "One cached locale inventory probe with fixed argv and five-second timeout; used to choose valid PTY environment."
+    },
+    {
+      "file": "src/main/pty/trusted-native-cli-binary.ts",
+      "method": "spawnSync",
+      "kind": "call",
+      "fingerprint": "075a43adab66302ca8fe690aa1a2a526a396c871d646bfdc9ca3878e240ab74a",
+      "count": 1,
+      "reason": "Existing native binary identity and signed-supervisor qualification probes; fixed safety envelope and bounded child execution."
+    },
+    {
+      "file": "src/main/pty/trusted-native-cli-binary.ts",
+      "method": "spawnSync",
+      "kind": "call",
+      "fingerprint": "36b9e25dd1d853477ebde491e06beb02dc6e9f0c269007dca85032f8fe3a5d1f",
+      "count": 1,
+      "reason": "Existing native binary identity and signed-supervisor qualification probes; fixed safety envelope and bounded child execution."
+    },
+    {
+      "file": "src/main/pty/trusted-native-cli-binary.ts",
+      "method": "spawnSync",
+      "kind": "call",
+      "fingerprint": "412e711a0b9e4ca4f3787a42845130a5e92d6c908f8e6f0d50c367eb2095e269",
+      "count": 1,
+      "reason": "Existing native binary identity and signed-supervisor qualification probes; fixed safety envelope and bounded child execution."
+    },
+    {
+      "file": "src/main/pty/trusted-native-cli-binary.ts",
+      "method": "spawnSync",
+      "kind": "import",
+      "fingerprint": "36c0bd9f907a923481e84e567e620c87f881da11fb0633d8951a810cd052ca9d",
+      "count": 1,
+      "reason": "Existing native binary identity and signed-supervisor qualification probes; fixed safety envelope and bounded child execution."
+    },
+    {
+      "file": "src/main/quota/agy-bridge.ts",
+      "method": "spawnSync",
+      "kind": "call",
+      "fingerprint": "d16dd63830a7428ae278408e873207fc2732866daf566edc9a1ec595ee0218b7",
+      "count": 1,
+      "reason": "Existing bounded local AGY bridge process/port discovery; fixed commands and output cap, no user-controlled shell."
+    },
+    {
+      "file": "src/main/quota/agy-bridge.ts",
+      "method": "spawnSync",
+      "kind": "import",
+      "fingerprint": "36c0bd9f907a923481e84e567e620c87f881da11fb0633d8951a810cd052ca9d",
+      "count": 1,
+      "reason": "Existing bounded local AGY bridge process/port discovery; fixed commands and output cap, no user-controlled shell."
+    },
+    {
+      "file": "src/main/quota/claude-account-usage.ts",
+      "method": "spawnSync",
+      "kind": "call",
+      "fingerprint": "8442b72e1f321c541cf4555b7d7104fe89b01ef5b17b63e7bdf3b9d6c203cc02",
+      "count": 1,
+      "reason": "Existing three-second Keychain existence proof for quota authority; native-login protections stay enforced."
+    },
+    {
+      "file": "src/main/quota/claude-account-usage.ts",
+      "method": "spawnSync",
+      "kind": "import",
+      "fingerprint": "36c0bd9f907a923481e84e567e620c87f881da11fb0633d8951a810cd052ca9d",
+      "count": 1,
+      "reason": "Existing three-second Keychain existence proof for quota authority; native-login protections stay enforced."
+    },
+    {
+      "file": "src/main/quota/provider-usage-auth.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "c8eb86e9be06e73aa849d2bde91af474f386372edaba8bcda43af3c5373f7895",
+      "count": 1,
+      "reason": "Existing cached Windows native credential read via fixed PowerShell script with eight-second timeout; no secret logging."
+    },
+    {
+      "file": "src/main/quota/provider-usage-auth.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Existing cached Windows native credential read via fixed PowerShell script with eight-second timeout; no secret logging."
+    },
+    {
+      "file": "src/main/redline/redline-install.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "9a8df7e9adc493a6ba55c6b2e917c14a793986e8a2250db555141402c428958f",
+      "count": 1,
+      "reason": "Existing Redline companion presence/relaunch control, restricted to its fixed executable name during operator installation/open actions."
+    },
+    {
+      "file": "src/main/redline/redline-install.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "fdf75194279452f479dc62fd963f6f7dd019096c36c2c52364d86b17f77177c5",
+      "count": 1,
+      "reason": "Existing Redline companion presence/relaunch control, restricted to its fixed executable name during operator installation/open actions."
+    },
+    {
+      "file": "src/main/redline/redline-install.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Existing Redline companion presence/relaunch control, restricted to its fixed executable name during operator installation/open actions."
+    },
+    {
+      "file": "src/main/redline/redline-windows.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "1fc8b524fa24deabc49809f47a6a93558dd776c8dd5134c78591f35b45e79c02",
+      "count": 1,
+      "reason": "Existing Windows companion integration executor with structured argv; exact retained calls only, not a file-wide waiver."
+    },
+    {
+      "file": "src/main/redline/redline-windows.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Existing Windows companion integration executor with structured argv; exact retained calls only, not a file-wide waiver."
+    },
+    {
+      "file": "src/main/runtime/git-command.ts",
+      "method": "spawnSync",
+      "kind": "call",
+      "fingerprint": "0f42ea779701a776796fc9422ea1299a08f62f42d264d93d444a4e7bc2b7e183",
+      "count": 1,
+      "reason": "Synchronous compatibility runner retained for existing integration/recovery APIs; creation and latency-sensitive callers use AsyncProcessGitRunner."
+    },
+    {
+      "file": "src/main/runtime/git-command.ts",
+      "method": "spawnSync",
+      "kind": "import",
+      "fingerprint": "36c0bd9f907a923481e84e567e620c87f881da11fb0633d8951a810cd052ca9d",
+      "count": 1,
+      "reason": "Synchronous compatibility runner retained for existing integration/recovery APIs; creation and latency-sensitive callers use AsyncProcessGitRunner."
+    },
+    {
+      "file": "src/main/runtime/merge-queue-test-fixture.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "6c44724abedae86999d35d4746f6976374f491c6b202a62b01e2dbc4502bc9b7",
+      "count": 1,
+      "reason": "Test-only Git fixture helper imported by tests; no production caller or runtime input, kept under runtime for colocated fixtures."
+    },
+    {
+      "file": "src/main/runtime/merge-queue-test-fixture.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Test-only Git fixture helper imported by tests; no production caller or runtime input, kept under runtime for colocated fixtures."
+    },
+    {
+      "file": "src/main/runtime/nexus-doctor-capability-checks.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "32ef519f54539867fe6546412d9ab97d248c9f19b8cec1772011de1da43f91d2",
+      "count": 1,
+      "reason": "Existing explicit Doctor capability check for an immutable configured OCI image, bounded by ten-second timeout."
+    },
+    {
+      "file": "src/main/runtime/nexus-doctor-capability-checks.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Existing explicit Doctor capability check for an immutable configured OCI image, bounded by ten-second timeout."
+    },
+    {
+      "file": "src/main/runtime/process-sandbox-capability.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "60a3a9828740bd30c3141dc7e2a5518eee084eb19c666b522be66e3395750c39",
+      "count": 1,
+      "reason": "Existing cached fail-closed native sandbox qualification probes; prevents treating binary presence as enforcement proof."
+    },
+    {
+      "file": "src/main/runtime/process-sandbox-capability.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "6436f0e3b5352924e6c976026e5a9c1c88c0a0337bf00b43c6049002d643f8ea",
+      "count": 1,
+      "reason": "Existing cached fail-closed native sandbox qualification probes; prevents treating binary presence as enforcement proof."
+    },
+    {
+      "file": "src/main/runtime/process-sandbox-capability.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "71165560bc38f8ac3e63e3de0e2fe80a59766647cd7ab79ea508a0629fb87d51",
+      "count": 1,
+      "reason": "Existing cached fail-closed native sandbox qualification probes; prevents treating binary presence as enforcement proof."
+    },
+    {
+      "file": "src/main/runtime/process-sandbox-capability.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Existing cached fail-closed native sandbox qualification probes; prevents treating binary presence as enforcement proof."
+    },
+    {
+      "file": "src/main/runtime/worktree-cow.ts",
+      "method": "spawnSync",
+      "kind": "call",
+      "fingerprint": "89b19cca79b39f774c6daaf8a2e1a231c234a8226e3e6f8e62bda5497e1f8b3b",
+      "count": 1,
+      "reason": "Synchronous compatibility twins for injected test runners; production worktree materialization uses asynchronous Git/CoW path."
+    },
+    {
+      "file": "src/main/runtime/worktree-cow.ts",
+      "method": "spawnSync",
+      "kind": "call",
+      "fingerprint": "f60d634e9984a1d112fa4e3745fa10e0f7f97a3efe9a4d74c58e12517763820f",
+      "count": 1,
+      "reason": "Synchronous compatibility twins for injected test runners; production worktree materialization uses asynchronous Git/CoW path."
+    },
+    {
+      "file": "src/main/runtime/worktree-cow.ts",
+      "method": "spawnSync",
+      "kind": "import",
+      "fingerprint": "36c0bd9f907a923481e84e567e620c87f881da11fb0633d8951a810cd052ca9d",
+      "count": 1,
+      "reason": "Synchronous compatibility twins for injected test runners; production worktree materialization uses asynchronous Git/CoW path."
+    },
+    {
+      "file": "src/main/runtime/worktree-cow.ts",
+      "method": "spawnSync",
+      "kind": "reference",
+      "fingerprint": "8dce08efa8cd12e771f3d84eac483e560e9ae3c049b892e11514d7ef85cd53f6",
+      "count": 1,
+      "reason": "Synchronous compatibility twins for injected test runners; production worktree materialization uses asynchronous Git/CoW path."
+    },
+    {
+      "file": "src/main/runtime/worktree-cow.ts",
+      "method": "spawnSync",
+      "kind": "reference",
+      "fingerprint": "b927aa6208ea2e885faa345e401cb3692d6fac9d31660464c9f106440357b095",
+      "count": 2,
+      "reason": "Synchronous compatibility twins for injected test runners; production worktree materialization uses asynchronous Git/CoW path."
+    },
+    {
+      "file": "src/main/voice/stt-service.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "304df860a7fccfd46a6d6db05a17dec0cfb97c1ae6b8c20ba05c5856e366b833",
+      "count": 1,
+      "reason": "Existing local transcription binary discovery through platform lookup command; explicit voice initialization, no PTY text processing."
+    },
+    {
+      "file": "src/main/voice/stt-service.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Existing local transcription binary discovery through platform lookup command; explicit voice initialization, no PTY text processing."
+    },
+    {
+      "file": "src/main/voice/voice-config-store.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "f5be553b97b652c37217757931ce343b010959c1979c28043467b20dcae42a84",
+      "count": 1,
+      "reason": "Existing local voice executable availability check with argv lookup, retained for configuration compatibility."
+    },
+    {
+      "file": "src/main/voice/voice-config-store.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Existing local voice executable availability check with argv lookup, retained for configuration compatibility."
+    }
+  ]
+}
