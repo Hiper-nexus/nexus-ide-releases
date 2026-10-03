@@ -107,6 +107,10 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   codex: { inputPerM: 1.25, outputPerM: 10, cacheReadPerM: 0.125 },
 
   // === Google Gemini / AGY (ai.google.dev/pricing) ===
+  // F-774: Gemini 4 Argon (Google, 30/09). Preço ESTIMADO [I] — inferido do
+  // anúncio + comentário do catálogo; aguardando a tabela pública da Google
+  // Cloud (estudo 03/10, docs/analysis/2026-10-03-missao-terminais).
+  'gemini-4-argon': { inputPerM: 2.0, outputPerM: 10.0, cacheReadPerM: 0.2 },
   'gemini-3.8-pro': { inputPerM: 2.0, outputPerM: 10.0, cacheReadPerM: 0.2 },
   // 3.8 Flash: $0,75/$3,75 introdutório até 2026-12-31, depois $1,50/$7,50
   // (ai.google.dev, 2026-09-23). 3.1 Pro: $2/$12 até 200k (model card + Devin).
@@ -130,6 +134,11 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   // === Kimi / Moonshot AI (kimi.com & api.moonshot.cn/pricing) ===
   // K3: $3/$15 (morphllm 2026 + `devin models list` 2026-09-27).
   'kimi-code/k3': { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3 },
+  // F-774: aliases K2.7 do config.toml do Kimi Code (api.moonshot.cn, 08/2026)
+  // — sem chave própria caíam no prefixo `kimi-code` ($0,60/$2,50). A
+  // variante highspeed é 2x o preço base.
+  'kimi-code/kimi-for-coding-highspeed': { inputPerM: 1.9, outputPerM: 8.0, cacheReadPerM: 0.38 },
+  'kimi-code/kimi-for-coding': { inputPerM: 0.95, outputPerM: 4.0, cacheReadPerM: 0.19 },
   'kimi-k3': { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3 },
   k3: { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3 },
   'kimi-k2.8': { inputPerM: 0.95, outputPerM: 4.0, cacheReadPerM: 0.19 },
@@ -172,6 +181,8 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   // CLI descreve como "Fast variant. 2x the price." do grok-4.7 (models_cache.json, 2026-09-27).
   'grok-4.7-build-fast': { inputPerM: 4.0, outputPerM: 12.0 },
   'grok-code-fast-1': { inputPerM: 0.2, outputPerM: 1.5, cacheReadPerM: 0.02 },
+  // F-774: LEGADO — aposentado nas CLIs atuais (fora do models_cache do Grok
+  // e deprecated no catálogo); preço mantido só para custo histórico.
   'grok-composer-2.5-fast': { inputPerM: 0.2, outputPerM: 1.5, cacheReadPerM: 0.02 },
   'grok-4-fast': { inputPerM: 0.2, outputPerM: 0.5, cacheReadPerM: 0.05 },
   'grok-4.5': { inputPerM: 2.0, outputPerM: 6.0, cacheReadPerM: 0.5 },
@@ -197,6 +208,14 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   glm: { inputPerM: 0.6, outputPerM: 2.2 },
 
   // === Alibaba Qwen (help.aliyun.com/document_detail/271257.html) ===
+  // F-774: família 3.x do DashScope/Bailian (09/2026, F-238) — sem chaves
+  // próprias o qwen3.8-max roteado caía no prefixo genérico `qwen` ($0,40/$1,20)
+  // em vez do preço Max real.
+  'qwen3.8-max': { inputPerM: 1.6, outputPerM: 6.4 },
+  'qwen3.7-max': { inputPerM: 1.6, outputPerM: 6.4 },
+  'qwen3.7-plus': { inputPerM: 0.4, outputPerM: 1.2 },
+  'qwen3.6-plus': { inputPerM: 0.4, outputPerM: 1.2 },
+  'qwen3.6-flash': { inputPerM: 0.05, outputPerM: 0.2 },
   'qwen-2.5-coder': { inputPerM: 0.2, outputPerM: 0.6 },
   'qwen-turbo': { inputPerM: 0.05, outputPerM: 0.2 },
   'qwen-plus': { inputPerM: 0.4, outputPerM: 1.2 },
@@ -206,6 +225,7 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   // === Community / OpenCode free open models ($0) ===
   'opencode/big-pickle': { inputPerM: 0, outputPerM: 0 },
   'big-pickle': { inputPerM: 0, outputPerM: 0 },
+  'opencode/deepseek-v4-flash': { inputPerM: 0, outputPerM: 0 },
   'opencode/deepseek-v4-flash-free': { inputPerM: 0, outputPerM: 0 },
   'opencode/mimo-v2.5-free': { inputPerM: 0, outputPerM: 0 },
   'opencode/nemotron-3-ultra-free': { inputPerM: 0, outputPerM: 0 },

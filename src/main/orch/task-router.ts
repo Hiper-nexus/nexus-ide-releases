@@ -142,10 +142,14 @@ export type RankedRouteEntry = {
  */
 export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   trivial: [
-    { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'low' },
+    // F-774: o trivial lidera com barato+rápido, não com fronteira. GPT-6 Luna
+    // ($0,10/$0,50, 161 tok/s) e o 3.8 Flash ($0,75/$3,75, 306 tok/s) custam
+    // ~1/20 do grok-4.7 ($2/$6) que liderava só por ordem de tabela.
+    { adapterId: 'codex', model: 'gpt-6-luna', effort: 'low' },
     // O mais novo primeiro (regra do operador, 29/09); o 3.7 fica de reserva.
     { adapterId: 'agy', model: 'gemini-3.8-flash-low', effort: 'low' },
     { adapterId: 'agy', model: 'gemini-3.7-flash-low', effort: 'low' },
+    { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'low' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'low' },
     { adapterId: 'glm-flash', model: 'glm-5.3-flash[1m]', effort: 'low' },
     // DeepSeek roda na CLI do Claude no endpoint Anthropic-compatible deles;
@@ -251,8 +255,10 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'agy', model: 'gemini-3.8-flash-high', effort: 'high' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'high' },
     { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'high' },
+    // F-774: o mimo-v2.6-pro-ultraspeed saiu daqui e do crítico — api-only no
+    // catálogo e ausente da CLI instalada, gerava "CLI sem o modelo roteado"
+    // em toda decisão; o pro cobre a vaga por eliminação.
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro' },
-    { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro-ultraspeed' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3' },
     { adapterId: 'devin', model: 'swe-2-high' },
@@ -285,7 +291,6 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'agy', model: 'gemini-3.8-flash-high', effort: 'high' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'xhigh' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro' },
-    { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro-ultraspeed' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3' },
     // F-696: Muse Spark 1.3 (free, DeepSWE 75,4 / TB2.1 88,8) em todo tier.

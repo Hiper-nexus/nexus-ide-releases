@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-29T00:00:00.000Z",
+  "updatedAt": "2026-10-03T00:00:00.000Z",
   "adapters": {
     "claude": {
       "default": "claude-sonnet-5",
@@ -156,9 +156,10 @@
         },
         {
           "id": "grok-composer-2.5-fast",
-          "availability": "cheap",
+          "availability": "deprecated",
           "costTier": "low",
-          "source": "remote"
+          "source": "remote",
+          "warning": "Aposentado nas CLIs atuais (fora do models_cache do Grok) — fora da rota automática; só custo histórico."
         }
       ]
     },
@@ -235,6 +236,13 @@
     "agy": {
       "default": "gemini-3.8-flash-high",
       "models": [
+        {
+          "id": "gemini-4-argon",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote",
+          "warning": "Flagship Google (30/09), acesso restrito (Fairwind → Ultra → API paga): roda quando a conta tem acesso; sem acesso, quarentena absorve."
+        },
         {
           "id": "gemini-3.8-flash-high",
           "availability": "cheap",
