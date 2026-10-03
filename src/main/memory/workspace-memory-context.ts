@@ -130,7 +130,7 @@ export function briefEligibleUnverified(
     (hit) => isUnverifiedMemorySource(hit.source) && !hit.flags?.includes('quarantine'),
   );
   const agentNotes = candidates.filter(
-    (hit) => !isOperatorTierSource(hit.source) && !hit.flags?.includes('promoted'),
+    (hit) => hit.source?.startsWith('agent-authored:') && !hit.flags?.includes('promoted'),
   );
   const sameMission =
     missionId && agentNotes.length > 0
@@ -140,7 +140,7 @@ export function briefEligibleUnverified(
     (hit) =>
       isOperatorTierSource(hit.source) ||
       hit.flags?.includes('promoted') ||
-      sameMission.has(hit.id),
+      (hit.source?.startsWith('agent-authored:') === true && sameMission.has(hit.id)),
   );
 }
 

@@ -187,6 +187,9 @@ describe('automatic workspace-memory recall', () => {
       source: 'imported:claude-auto-memory',
     });
     expect(workspaceMemoryContextBlock(scope, 'Rodar o make do empacotamento com Node.')).toBeNull();
+    getWorkspaceMemoryStore(scope).retain({ content: 'Node import cannot self-claim a mission.\nMission: m-1',
+      source: 'imported:unproven-native' });
+    expect(workspaceMemoryContextBlock(scope, 'Node import', 'execution', { missionId: 'm-1' })).toBeNull();
     getWorkspaceMemoryStore(scope).promoteMemory(retained.id);
     const block = workspaceMemoryContextBlock(scope, 'Rodar o make do empacotamento com Node.');
     expect(block).toContain('Unverified notes');
