@@ -556,6 +556,11 @@ export interface OperatorRouteInternal {
    * `preferAdapters` do roteador (boost), nunca em excludes.
    */
   readonly preferAdapterIds?: readonly string[];
+  /**
+   * F-802: spawn somente leitura FORA do Autopilot — o spawn recusa CLI que não
+   * confina leitura, então a rota só pode escolher entre as que confinam.
+   */
+  readonly requireReadOnlyEnforceable?: boolean;
 }
 
 export type OperatorRouteResolver = (
@@ -1062,6 +1067,10 @@ const paneSpawnAfterTabMission = {
                 ? [...recoveryExcluded, ...excluded]
                 : excluded,
             ...routePreference(pinRedistributed, recoveryPreferred),
+            ...(args.readOnly === true &&
+            !isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)
+              ? { requireReadOnlyEnforceable: true }
+              : {}),
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);

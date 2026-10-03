@@ -266,6 +266,24 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     expect(options.allowedTools).toEqual([]);
   });
 
+  it('F-802: helper somente leitura fora do Autopilot pede à rota só CLI que confina leitura', async () => {
+    const resolver = vi.fn(async () => ({ adapterId: 'codex', model: 'gpt-5.1-codex', effort: 'medium' }));
+    setOperatorRouteResolver(resolver);
+
+    harness.settings.squadCliPolicy = 'governed';
+    await paneSpawnTool.handler({ prompt: 'leia o repo e liste os riscos', readOnly: true }, userPane());
+    expect(resolver).toHaveBeenLastCalledWith(
+      'leia o repo e liste os riscos',
+      expect.anything(),
+      expect.objectContaining({ requireReadOnlyEnforceable: true }),
+    );
+
+    // Autopilot: o spawn não exige confinamento nativo — nada a restringir.
+    harness.settings.squadCliPolicy = 'operator-choice';
+    await paneSpawnTool.handler({ prompt: 'leia o repo e liste os riscos', readOnly: true }, userPane());
+    expect(resolver.mock.calls.at(-1)?.[2]).not.toHaveProperty('requireReadOnlyEnforceable');
+  });
+
   it('sem adapterId roteia task/prompt pelo resolver do operador', async () => {
     const resolver = vi.fn(async () => ({
       adapterId: 'codex',

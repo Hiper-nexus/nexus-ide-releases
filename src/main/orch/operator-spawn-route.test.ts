@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ignoredRouteChoice,
+  limitToReadOnlyCapable,
   operatorChildUseCounts,
   operatorRouteTask,
   parentPaneIdFor,
@@ -129,5 +130,29 @@ describe('aviso de diversidade no spawn explícito (F-672)', () => {
     expect(sameAdapterDiversityHint('claude', 'm', panes, 'novo')).toBeNull();
     expect(sameAdapterDiversityHint(undefined, 'm', panes)).toBeNull();
     expect(sameAdapterDiversityHint('claude', undefined, panes)).toBeNull();
+  });
+});
+
+describe('somente leitura fora do Autopilot só roteia para CLI que confina (F-802)', () => {
+  const pool = [
+    { id: 'kimi', installed: true, capabilities: { readOnlyEnforceable: false } },
+    { id: 'codex', installed: true, capabilities: { readOnlyEnforceable: true } },
+    { id: 'grok', installed: false, capabilities: { readOnlyEnforceable: true } },
+    { id: 'mimo-code', installed: true },
+  ];
+
+  it('tira do pool as instaladas que não confinam e anota o motivo', () => {
+    const limited = limitToReadOnlyCapable(pool, true);
+    expect(limited.adapters.filter((a) => a.installed).map((a) => a.id)).toEqual(['codex']);
+    expect(limited.note).toContain('somente leitura');
+  });
+
+  it('sem exigência, o pool fica como está', () => {
+    expect(limitToReadOnlyCapable(pool, false)).toEqual({ adapters: pool, note: '' });
+  });
+
+  it('se NENHUMA instalada confina, o pool não é tocado (o spawn mostra o erro real)', () => {
+    const none = pool.map((a) => ({ ...a, capabilities: { readOnlyEnforceable: false } }));
+    expect(limitToReadOnlyCapable(none, true)).toEqual({ adapters: none, note: '' });
   });
 });
