@@ -69,13 +69,27 @@ export function createRealPtyHost(): PtyHost {
 }
 
 /** Kill the host on app quit. Its death takes every child PTY with it. */
+const hostStopFlights = new WeakMap<UtilityProcess, Promise<void>>();
 export async function shutdownPtyHost(): Promise<void> {
   const analysisStopped = shutdownPtyAnalysis();
-  const c = child; child = null;
-  const hostStopped = c ? new Promise<void>((resolve, reject) => {
-    c.once('exit', () => resolve());
-    if (!c.kill()) reject(new Error('PTY host stop could not be signalled'));
-  }) : Promise.resolve();
-  // Both process lifetimes physically settle before Main closes stores.
-  await Promise.all([analysisStopped, hostStopped]);
+  const c = child;
+  let hostStopped: Promise<void> = Promise.resolve();
+  if (c) {
+    const existing = hostStopFlights.get(c);
+    if (existing) hostStopped = existing;
+    else {
+      let signalled = false;
+      hostStopped = new Promise<void>((resolve, reject) => {
+        const exited = () => { if (child === c) child = null; hostStopFlights.delete(c); resolve(); };
+        c.once('exit', exited);
+        signalled = c.kill();
+        if (!signalled) { c.removeListener('exit', exited); reject(new Error('PTY host stop could not be signalled')); }
+      });
+      if (signalled) hostStopFlights.set(c, hostStopped);
+    }
+  }
+  // A signalling failure retains the exact live handle for retry, and never
+  // skips physical analysis settlement before reporting the failure.
+  const settled = await Promise.allSettled([analysisStopped, hostStopped]);
+  for (const result of settled) if (result.status === 'rejected') throw result.reason;
 }

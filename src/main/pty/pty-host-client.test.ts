@@ -20,3 +20,13 @@ it('surfaces unsignalled physical stop instead of fabricating a completed drain'
   h.stop = Promise.resolve(); const child = fixture(); child.kill = () => false;
   await expect(shutdownPtyHost()).rejects.toThrow('could not be signalled'); child.emit('exit', 0);
 });
+
+it('retains an unsignalled exact child for retry and drains analysis even when signalling fails', async () => {
+  let release!: () => void; h.stop = new Promise<void>((resolve) => { release = resolve; }); const child = fixture();
+  let attempts = 0; child.kill = () => ++attempts > 1;
+  let failed = false; const first = shutdownPtyHost().catch(() => { failed = true; });
+  await Promise.resolve(); expect(failed).toBe(false); release(); await first; expect(failed).toBe(true);
+  let done = false; const retry = shutdownPtyHost().then(() => { done = true; });
+  await Promise.resolve(); expect(done).toBe(false); expect(attempts).toBe(2);
+  child.emit('exit', 0); await retry; expect(done).toBe(true);
+});
