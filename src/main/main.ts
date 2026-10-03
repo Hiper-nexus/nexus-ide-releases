@@ -87,14 +87,6 @@ try {
     electron: process.versions.electron ?? "unknown",
     platform: process.platform,
   });
-  // Hang watchdog (campanha 0.50, C7): main pendurado vira marker em disco.
-  // Só empacotado — dev pausa em debugger por design (doutrina Orca).
-  if (app.isPackaged) {
-    startMainThreadHangWatchdog({
-      logsDir: path.join(userDataPath, "logs"),
-      version: app.getVersion(),
-    });
-  }
   const marker = readActiveGpuFallbackMarker(userDataPath, {
     appVersion: app.getVersion(),
     electronVersion: process.versions.electron ?? "unknown",
@@ -110,6 +102,41 @@ try {
   }
 } catch (err) {
   console.warn("[main] GPU fallback marker read failed:", err);
+}
+
+// Main thread vigiada (F-764).
+try {
+  const hangProbe = isSmokeHangProbeRequested({
+    smokeTest: isCurrentProcessSmokeTest(),
+    env: process.env,
+  });
+  // Hang watchdog (campanha 0.50, C7; F-764 A.1): main pendurada vira marker
+  // em disco e `.cpuprofile` do que ela estava rodando. Só empacotado — dev
+  // pausa em debugger por design (doutrina Orca) — ou no probe do smoke.
+  if (app.isPackaged || hangProbe) {
+    startMainThreadHangWatchdog({
+      logsDir: path.join(app.getPath("userData"), "logs"),
+      version: app.getVersion(),
+      ...(hangProbe
+        ? { tuning: SMOKE_HANG_PROBE_TUNING, heartbeatMs: SMOKE_HANG_PROBE_HEARTBEAT_MS }
+        : {}),
+      // A worker grava o histórico sozinha; quando a main volta, as mesmas
+      // linhas entram no trace — o pós-mortem lê uma linha do tempo só.
+      onRecord: (record) => {
+        trace({ ...record });
+        if (hangProbe) console.log(describeHangRecordForSmoke(record));
+      },
+    });
+  }
+  if (hangProbe) {
+    // Probe do smoke empacotado: trava a main AQUI, antes de qualquer serviço
+    // ou timer do boot existir; o harness confere o `.cpuprofile`.
+    console.log(`[smoke] hang-probe: travando a main por ${SMOKE_HANG_PROBE_BLOCK_MS} ms`);
+    induceSmokeMainHang();
+    console.log("[smoke] hang-probe: main liberada");
+  }
+} catch (err) {
+  console.warn("[main] main-thread watchdog failed to arm:", err);
 }
 
 // Remote debugging (Chrome DevTools Protocol) is a full local-RCE surface: any
@@ -431,6 +458,14 @@ import {
 } from "./close-authorization";
 import { trace } from "./observability/main-trace";
 import { startMainThreadHangWatchdog } from "./hang-watchdog/main-thread-hang-watchdog";
+import {
+  SMOKE_HANG_PROBE_BLOCK_MS,
+  SMOKE_HANG_PROBE_HEARTBEAT_MS,
+  SMOKE_HANG_PROBE_TUNING,
+  describeHangRecordForSmoke,
+  induceSmokeMainHang,
+  isSmokeHangProbeRequested,
+} from "./hang-watchdog/smoke-hang-probe";
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
 let hookDropBoxWatcher: AgentHookDropBoxWatcher | null = null;

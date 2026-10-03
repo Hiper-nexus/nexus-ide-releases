@@ -1,95 +1,140 @@
 /**
- * Watchdog da main thread em worker thread (campanha 0.50, C7).
+ * Watchdog da main thread em worker thread (campanha 0.50, C7; F-764 A.1).
  *
  * O main posta heartbeat a cada HANG_WATCHDOG_HEARTBEAT_MS; a worker mede o
- * gap. Acima do limiar, a worker escreve/regrava o marker em
- * `userData/logs/main-hang-marker.json` (a worker tem fs próprio — o main
- * pendurado não escreve nada). Só empacotado: dev pausa em debugger por
- * design (doutrina Orca). Nada de auto-kill: a evidência é o produto.
+ * gap. Acima do limiar, a worker grava o marker em
+ * `userData/logs/main-hang-marker.json`, uma linha em `main-hang.ndjson` e —
+ * uma vez por episódio — liga o Profiler da main pelo inspector e grava
+ * `main-hang-<ts>.cpuprofile` com as frames mais quentes (a worker tem fs
+ * próprio; o main pendurado não escreve nada). Só empacotado: dev pausa em
+ * debugger por design (doutrina Orca). Nada de auto-kill: a evidência é o
+ * produto.
+ *
+ * A worker é `hang-watchdog-worker.cjs`, embutida verbatim (`?raw`) e
+ * avaliada com `eval: true` — nada de arquivo de worker dentro do asar.
  */
 
 import { Worker } from 'node:worker_threads';
 import { join } from 'node:path';
 import { appendFileSync, mkdirSync } from 'node:fs';
+import HANG_WATCHDOG_WORKER_SOURCE from './hang-watchdog-worker.cjs?raw';
 import {
   HANG_WATCHDOG_HEARTBEAT_MS,
-  HANG_WATCHDOG_THRESHOLD_MS,
+  HANG_WATCHDOG_WORKER_KIND,
   buildHangMarker,
+  buildHangWatchdogConfig,
+  parseHangWatchdogMessage,
+  type HangWatchdogRecord,
+  type HangWatchdogTuning,
 } from './hang-watchdog-logic';
 
-const WORKER_SOURCE = `
-const { parentPort, workerData } = require('node:worker_threads');
-const fs = require('node:fs');
-const path = require('node:path');
-let lastHeartbeat = null;
-let markedAt = 0;
-parentPort.on('message', (msg) => {
-  if (msg && msg.type === 'heartbeat') lastHeartbeat = msg.at;
-  if (msg && msg.type === 'stop') process.exit(0);
-});
-setInterval(() => {
-  const now = Date.now();
-  if (lastHeartbeat === null) return;
-  const gap = now - lastHeartbeat;
-  if (gap <= workerData.thresholdMs) return;
-  // Remarca no máximo a cada 60s: a duração atualiza, sem spam de disco.
-  if (now - markedAt < 60_000) return;
-  markedAt = now;
-  const line = JSON.stringify({
-    kind: 'main-thread-hang',
-    hangDurationMs: gap,
-    appVersion: workerData.version,
-    lastHeartbeatAt: lastHeartbeat,
-    detectedAt: now,
-  }) + '\\n';
-  try {
-    fs.mkdirSync(workerData.logsDir, { recursive: true });
-    fs.writeFileSync(path.join(workerData.logsDir, 'main-hang-marker.json'), line);
-  } catch {}
-  // F-764: o marker é sobrescrito; o histórico guarda TODOS os travamentos
-  // (o incidente de 03/10 teve três seguidos e só o último sobrou).
-  try {
-    const history = path.join(workerData.logsDir, 'main-hang.ndjson');
-    try {
-      if (fs.statSync(history).size > 512 * 1024) fs.renameSync(history, history + '.1');
-    } catch {}
-    fs.appendFileSync(history, line);
-  } catch {}
-}, workerData.checkIntervalMs);
-`;
+export { HANG_WATCHDOG_WORKER_SOURCE };
+
+/** Prazo para a worker sair sozinha no `stop()` antes do terminate. */
+const STOP_GRACE_MS = 2_000;
 
 export interface HangWatchdogHandle {
-  readonly stop: () => void;
+  /** Último resumo do event-loop (A.3): sai na próxima linha de travamento. */
+  readonly reportEventLoop: (summary: object) => void;
+  /** Para a worker; resolve quando ela sair. */
+  readonly stop: () => Promise<void>;
 }
 
-export function startMainThreadHangWatchdog(options: {
+export interface StartHangWatchdogOptions {
   readonly logsDir: string;
   readonly version: string;
-}): HangWatchdogHandle | null {
+  /** Ajustes de limiar/captura (testes e o probe de smoke). */
+  readonly tuning?: HangWatchdogTuning;
+  /** Intervalo do heartbeat do main (padrão HANG_WATCHDOG_HEARTBEAT_MS). */
+  readonly heartbeatMs?: number;
+  /**
+   * Cada linha que a worker grava no `main-hang.ndjson`. Chega quando o main
+   * volta a processar mensagens — é o caminho para o `main.trace.ndjson`.
+   */
+  readonly onRecord?: (record: HangWatchdogRecord) => void;
+}
+
+/** Falha do próprio watchdog: vai para o histórico, nunca para o boot. */
+function recordWatchdogFailure(logsDir: string, kind: string, error: unknown): void {
+  try {
+    appendFileSync(
+      join(logsDir, 'main-hang.ndjson'),
+      `${JSON.stringify({ kind, error: String(error), at: Date.now() })}\n`,
+    );
+  } catch {
+    // Sem disco, sem registro — o app segue.
+  }
+}
+
+export function startMainThreadHangWatchdog(
+  options: StartHangWatchdogOptions,
+): HangWatchdogHandle | null {
   try {
     mkdirSync(options.logsDir, { recursive: true });
-    const worker = new Worker(WORKER_SOURCE, {
-      eval: true,
-      workerData: {
-        logsDir: options.logsDir,
-        version: options.version,
-        thresholdMs: HANG_WATCHDOG_THRESHOLD_MS,
-        checkIntervalMs: HANG_WATCHDOG_HEARTBEAT_MS,
-      },
+    const config = buildHangWatchdogConfig({
+      logsDir: options.logsDir,
+      version: options.version,
+      tuning: options.tuning,
     });
-    const heartbeat = setInterval(() => {
-      worker.postMessage({ type: 'heartbeat', at: Date.now() });
-    }, HANG_WATCHDOG_HEARTBEAT_MS);
-    heartbeat.unref?.();
-    const stop = () => {
-      clearInterval(heartbeat);
+    const heartbeatMs =
+      options.heartbeatMs && options.heartbeatMs > 0
+        ? options.heartbeatMs
+        : HANG_WATCHDOG_HEARTBEAT_MS;
+    const worker = new Worker(HANG_WATCHDOG_WORKER_SOURCE, {
+      eval: true,
+      workerData: { kind: HANG_WATCHDOG_WORKER_KIND, config },
+    });
+    // A worker não segura o processo vivo (testes, quit).
+    worker.unref();
+    let exited = false;
+    const exit = new Promise<void>((resolve) => {
+      worker.once('exit', () => {
+        exited = true;
+        resolve();
+      });
+    });
+    // Sem listener, um erro na worker vira exceção não tratada NO MAIN.
+    worker.on('error', (error) => {
+      recordWatchdogFailure(options.logsDir, 'hang-watchdog-worker-error', error);
+    });
+    worker.on('message', (message: unknown) => {
+      const record = parseHangWatchdogMessage(message);
+      if (!record || !options.onRecord) return;
       try {
-        worker.postMessage({ type: 'stop' });
+        options.onRecord(record);
       } catch {
-        // worker já saiu.
+        // Consumidor com defeito não derruba o watchdog.
+      }
+    });
+    const post = (message: object): void => {
+      if (exited) return;
+      try {
+        worker.postMessage(message);
+      } catch {
+        // Worker já saiu.
       }
     };
-    return { stop };
+    // Primeiro heartbeat na hora: a medição começa com a worker, não 5 s depois.
+    post({ type: 'heartbeat', at: Date.now() });
+    const heartbeat = setInterval(() => {
+      post({ type: 'heartbeat', at: Date.now() });
+    }, heartbeatMs);
+    heartbeat.unref?.();
+    const stop = async (): Promise<void> => {
+      clearInterval(heartbeat);
+      post({ type: 'stop' });
+      await Promise.race([
+        exit,
+        new Promise<void>((resolve) => {
+          setTimeout(resolve, STOP_GRACE_MS).unref?.();
+        }),
+      ]);
+      if (!exited) await worker.terminate().catch(() => undefined);
+    };
+    return {
+      reportEventLoop: (summary) => post({ type: 'event-loop', summary }),
+      stop,
+    };
   } catch (error) {
     // Watchdog é best-effort: falha ao armar nunca derruba o boot.
     try {
