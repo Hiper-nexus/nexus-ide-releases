@@ -566,7 +566,7 @@ describe('preview tool workspace confinement', () => {
   it('records capture provenance for the worker and refuses attribution after reassignment', async () => {
     const tool = buildBrowserTools().find(item => item.name === 'nexus_browser_screenshot')!;
     const worker = { scope, role: 'worker', sessionId: 'worker-session', missionId: 'mission-a',
-      visualTask: { since: 1000 } } as AgentGateContext;
+      visualTask: { since: 1000, id: 'capture-assignment' } } as AgentGateContext;
     const record = vi.spyOn(visualHandoff, 'recordVisualHandoffEvidence').mockReturnValue(true);
     const image = { artifactId: 'browser-proof', path: '/runtime/shot.png', url: 'http://127.0.0.1:1234/' };
     stubs.captureBrowserScreenshot.mockResolvedValueOnce(image);
@@ -575,7 +575,7 @@ describe('preview tool workspace confinement', () => {
       expect(record).toHaveBeenCalledWith(worker, image.artifactId);
       record.mockClear();
       stubs.captureBrowserScreenshot.mockImplementationOnce(async () => {
-        worker.visualTask = { since: 2000 };
+        worker.visualTask = { since: 2000, id: 'next-assignment' };
         return image;
       });
       await tool.handler({ paneId: 'browser-1' }, worker);

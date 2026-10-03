@@ -215,7 +215,7 @@ describe('nexus_pane_spawn dentro da missão sem adapterId', () => {
   it('carries the visual routing specialty even when the brief has no UI keyword', async () => {
     setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex', routeReservationId: 'rr-visual', specialty: 'visual' })));
     await paneSpawnTool.handler({ task: 'continuar o trabalho', prompt: 'siga a atribuição' }, ctx);
-    expect(h.spawn.mock.calls[0][0].visualTask).toEqual({ since: expect.any(Number) });
+    expect(h.spawn.mock.calls[0][0].visualTask).toEqual({ since: expect.any(Number), id: expect.any(String) });
   });
 
   it('F-793: worker com ACK pendente segura a vaga de maxWorkers até a linha durável existir', async () => {

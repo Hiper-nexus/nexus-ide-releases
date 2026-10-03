@@ -1,8 +1,10 @@
 import { z } from 'zod';
+import { createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import type {
   MissionPaneAuthoritySeal,
   MissionPaneSpec,
+  VisualTaskRequirement,
 } from '../../shared/orch-types';
 import { isAutomatedReviewerPaneIdentity } from '../../shared/automated-reviewer-pane';
 import {
@@ -22,7 +24,8 @@ const capabilityListSchema = z.array(z.string().min(1).max(128)).max(256);
 const nullableCapabilityListSchema = capabilityListSchema.nullable();
 const entityIdSchema = z.string().min(1).max(256);
 const hashSchema = z.string().regex(/^[a-f0-9]{64}$/);
-const visualTaskSchema = z.object({ since: z.number().int().nonnegative().safe() }).strict();
+const legacyVisualTaskSchema = z.object({ since: z.number().int().nonnegative().safe() }).strict();
+const visualTaskSchema = legacyVisualTaskSchema.extend({ id: z.string().regex(/^[A-Za-z0-9:_-]{1,128}$/) });
 const missionPaneAuthoritySealSchema = z
   .object({
     intentVersion: z.number().int().positive().max(1_000_000),
@@ -163,7 +166,10 @@ const persistedPaneScopesV5Schema = z
   })
   .strict();
 const persistedPaneScopesV6Schema = persistedPaneScopesV5Schema.extend({
-  schemaVersion: z.literal(6), visualTask: visualTaskSchema.nullable(),
+  schemaVersion: z.literal(6), visualTask: legacyVisualTaskSchema.nullable(),
+});
+const persistedPaneScopesV7Schema = persistedPaneScopesV5Schema.extend({
+  schemaVersion: z.literal(7), visualTask: visualTaskSchema.nullable(),
 });
 const persistedPaneScopesSchema = z.union([
   persistedPaneScopesV2Schema,
@@ -171,6 +177,7 @@ const persistedPaneScopesSchema = z.union([
   persistedPaneScopesV4Schema,
   persistedPaneScopesV5Schema,
   persistedPaneScopesV6Schema,
+  persistedPaneScopesV7Schema,
 ]);
 
 function encodeCapabilityList(
@@ -248,10 +255,10 @@ function encodePersistedPaneScopes(input: {
   readonly readOnly: boolean;
   readonly workerIncarnationId?: string;
   readonly authoritySeal?: MissionPaneAuthoritySeal;
-  readonly visualTask?: { readonly since: number };
+  readonly visualTask?: VisualTaskRequirement;
 }): string {
   return JSON.stringify({
-    schemaVersion: 6,
+    schemaVersion: 7,
     visualTask: input.visualTask ?? null,
     coordinationScope: input.coordinationScope,
     executionScope: input.executionScope,
@@ -618,7 +625,7 @@ export class ScopedMissionPaneStore {
 
   /** Main-only assignment update for an idle worker reused by the same mission. */
   assignVisualTask(paneId: string, missionId: string, workerIncarnationId: string | undefined,
-    expected: { readonly since: number } | undefined, next: { readonly since: number } | undefined): boolean {
+    expected: VisualTaskRequirement | undefined, next: VisualTaskRequirement | undefined): boolean {
     if (next) visualTaskSchema.parse(next);
     const db = this.#binding.writeDatabase();
     const changed = db.transaction(() => {
@@ -626,7 +633,8 @@ export class ScopedMissionPaneStore {
       if (rows.length !== 1) return false;
       const existing = rows[0];
       if (existing.role !== 'worker' || existing.missionId !== missionId ||
-          existing.workerIncarnationId !== workerIncarnationId || existing.visualTask?.since !== expected?.since) return false;
+          existing.workerIncarnationId !== workerIncarnationId || existing.visualTask?.since !== expected?.since ||
+          existing.visualTask?.id !== expected?.id) return false;
       return db.prepare('UPDATE mission_panes SET scope_json = ? WHERE id = ?').run(encodePersistedPaneScopes({
         coordinationScope: this.#binding.scope, executionScope: existing.executionScope,
         readOnly: existing.readOnly === true, workerIncarnationId: existing.workerIncarnationId,
@@ -804,27 +812,29 @@ export class ScopedMissionPaneStore {
     let readOnly = false;
     let workerIncarnationId: string | undefined;
     let authoritySeal: MissionPaneAuthoritySeal | undefined;
-    let visualTask: { readonly since: number } | undefined;
+    let visualTask: VisualTaskRequirement | undefined;
     try {
       const raw = JSON.parse(row.scope_json) as unknown;
       const modern = persistedPaneScopesSchema.safeParse(raw);
       if (modern.success) {
         persistedScope = modern.data.coordinationScope;
-        visualTask = modern.data.schemaVersion === 6 ? modern.data.visualTask ?? undefined : undefined;
+        visualTask = modern.data.schemaVersion === 7 ? modern.data.visualTask ?? undefined :
+          modern.data.schemaVersion === 6 && modern.data.visualTask ? { ...modern.data.visualTask,
+            id: `legacy-${createHash('sha256').update(row.id).digest('hex')}` } : undefined;
         executionScope = modern.data.executionScope;
         readOnly =
           modern.data.schemaVersion === 3 ||
           modern.data.schemaVersion === 4 ||
-          modern.data.schemaVersion === 5 || modern.data.schemaVersion === 6
+          modern.data.schemaVersion === 5 || modern.data.schemaVersion === 6 || modern.data.schemaVersion === 7
             ? modern.data.readOnly === true
             : false;
         workerIncarnationId =
           modern.data.schemaVersion === 4 ||
-          modern.data.schemaVersion === 5 || modern.data.schemaVersion === 6
+          modern.data.schemaVersion === 5 || modern.data.schemaVersion === 6 || modern.data.schemaVersion === 7
             ? modern.data.workerIncarnationId ?? undefined
             : undefined;
         authoritySeal =
-          modern.data.schemaVersion === 5 || modern.data.schemaVersion === 6
+          modern.data.schemaVersion === 5 || modern.data.schemaVersion === 6 || modern.data.schemaVersion === 7
             ? modern.data.authoritySeal ?? undefined
             : undefined;
       } else {

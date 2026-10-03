@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import {
   PET_STUDIO_SQUAD,
   PET_STUDIO_SQUAD_ID,
@@ -485,7 +485,9 @@ export function mintToken(input: MintTokenInput): AgentGateContext {
         : [...input.allowedSkills],
     operatorBrief: input.operatorBrief,
     ...(input.visualTask && Number.isSafeInteger(input.visualTask.since) && input.visualTask.since >= 0
-      ? { visualTask: Object.freeze({ since: input.visualTask.since }) } : {}),
+      ? { visualTask: Object.freeze({ since: input.visualTask.since,
+        id: typeof input.visualTask.id === 'string' && /^[A-Za-z0-9:_-]{1,128}$/.test(input.visualTask.id)
+          ? input.visualTask.id : randomUUID() }) } : {}),
     operatorParentSessionId: input.operatorParentSessionId,
     stopAttempts: 0,
     handoffSubmitted: false,

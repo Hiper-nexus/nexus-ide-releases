@@ -53,7 +53,7 @@ describe('scoped mission pane store', () => {
       allowedTools: ['nexus_file_read'],
       allowedSkills: ['review'],
       readOnly: true,
-      visualTask: { since: 75 },
+      visualTask: { since: 75, id: 'original-assignment' },
     });
     recorded.allowedTools?.push('mutated-outside');
 
@@ -69,7 +69,7 @@ describe('scoped mission pane store', () => {
       allowedTools: ['nexus_file_read'],
       allowedSkills: ['review'],
       readOnly: true,
-      visualTask: { since: 75 },
+      visualTask: { since: 75, id: 'original-assignment' },
     });
   });
 
@@ -116,15 +116,32 @@ describe('scoped mission pane store', () => {
     const mission = createScopedMissionStore(runtimeManager, scope).create({ title: 'Visual assignment' });
     const panes = createScopedMissionPaneStore(runtimeManager, scope);
     panes.record({ missionId: mission.id, adapterId: 'codex', paneId: 'reused-pane', role: 'worker', workerIncarnationId: 'inc-1' });
-    expect(panes.assignVisualTask('reused-pane', mission.id, 'inc-1', undefined, { since: 2000 })).toBe(true);
-    expect(panes.assignVisualTask('reused-pane', 'other', 'inc-1', { since: 2000 }, undefined)).toBe(false);
-    expect(panes.assignVisualTask('reused-pane', mission.id, 'old-inc', { since: 2000 }, undefined)).toBe(false);
+    expect(panes.assignVisualTask('reused-pane', mission.id, 'inc-1', undefined, { since: 2000, id: 'reused-assignment' })).toBe(true);
+    expect(panes.assignVisualTask('reused-pane', 'other', 'inc-1', { since: 2000, id: 'reused-assignment' }, undefined)).toBe(false);
+    expect(panes.assignVisualTask('reused-pane', mission.id, 'old-inc', { since: 2000, id: 'reused-assignment' }, undefined)).toBe(false);
     expect(panes.assignVisualTask('reused-pane', mission.id, 'inc-1', undefined, undefined)).toBe(false);
     runtimeManager.close(scope);
     const restored = createScopedMissionPaneStore(runtimeManager, scope);
-    expect(restored.findByPaneId('reused-pane')?.visualTask).toEqual({ since: 2000 });
-    expect(restored.assignVisualTask('reused-pane', mission.id, 'inc-1', { since: 2000 }, undefined)).toBe(true);
+    expect(restored.findByPaneId('reused-pane')?.visualTask).toEqual({ since: 2000, id: 'reused-assignment' });
+    expect(restored.assignVisualTask('reused-pane', mission.id, 'inc-1', { since: 2000, id: 'wrong-assignment' }, undefined)).toBe(false);
+    expect(restored.assignVisualTask('reused-pane', mission.id, 'inc-1', { since: 2000, id: 'reused-assignment' }, undefined)).toBe(true);
     expect(restored.findByPaneId('reused-pane')?.visualTask).toBeUndefined();
+  });
+
+  it('keeps legacy V6 visual restrictions while writing assignment identity in V7', () => {
+    const runtimeManager = manager(); const scope = testProjectScope();
+    const mission = createScopedMissionStore(runtimeManager, scope).create({ title: 'Legacy visual' });
+    const panes = createScopedMissionPaneStore(runtimeManager, scope);
+    const recorded = panes.record({ missionId: mission.id, adapterId: 'codex', paneId: 'legacy-pane', role: 'worker',
+      visualTask: { since: 1000, id: 'current-assignment' } });
+    const db = runtimeManager.open(scope).db;
+    const row = db.prepare('SELECT scope_json FROM mission_panes WHERE id = ?').get(recorded.id) as { scope_json: string };
+    const legacy = JSON.parse(row.scope_json); legacy.schemaVersion = 6; delete legacy.visualTask.id;
+    db.prepare('UPDATE mission_panes SET scope_json = ? WHERE id = ?').run(JSON.stringify(legacy), recorded.id);
+    runtimeManager.close(scope);
+    const restored = createScopedMissionPaneStore(runtimeManager, scope).findByPaneId('legacy-pane')!;
+    expect(restored.visualTask).toMatchObject({ since: 1000, id: expect.stringMatching(/^legacy-/) });
+    expect(createScopedMissionPaneStore(runtimeManager, scope).findByPaneId('legacy-pane')?.visualTask).toEqual(restored.visualTask);
   });
 
   it('keeps worker pane incarnations distinct and durable', () => {

@@ -1,5 +1,5 @@
 import type { SystemInputWriter } from './operator-input-receipts';
-import { visualTaskRequirement } from './visual-handoff-gate';
+import { createVisualTaskRequirement, visualTaskRequirement } from './visual-handoff-gate';
 import { assertLicensedAgentCapacity } from '../license-enforcement';
 import { licenseErrorFrom } from '../../shared/license-errors';
 import { withWorkspaceDesignRule } from './workspace-design-rule';
@@ -1813,7 +1813,7 @@ export async function spawnPaneAndMaybePrompt(
   const safeOptions: SpawnToolOptions = {
     ...options,
     visualTask: options.role === 'orchestrator' ? undefined : options.visualTask
-      ? { since: Date.now() } : visualTaskRequirement(options.memoryQuery ?? options.prompt),
+      ? createVisualTaskRequirement() : visualTaskRequirement(options.memoryQuery ?? options.prompt),
     model: effectiveModel,
     ...(initialPrompt === undefined ? {} : { initialPrompt }),
     // The durable pane seal is the authoritative mission revision. Main-owned

@@ -1,6 +1,6 @@
 import { assertLicenseAccess } from '../license-enforcement';
 import { captureMissionPaneResume } from './mission-pane-resume';
-import { visualTaskRequirement } from './visual-handoff-gate';
+import { createVisualTaskRequirement, visualTaskRequirement } from './visual-handoff-gate';
 import { assertTabSupportsOperation, missionExecutionScope } from './mission-execution-scope';
 import {
   assertMcpInvocationCurrent,
@@ -1709,7 +1709,7 @@ const paneSpawnAfterTabMission = {
           };
           const reservedRoute = missionSuite.missions.assertRouteReservation(expectedRoute);
           if (reservedRoute?.decision.specialty === 'visual') {
-            options = { ...options, visualTask: { since: Date.now() } };
+            options = { ...options, visualTask: createVisualTaskRequirement() };
           }
           if (!ctx.sessionId) {
             throw new Error(
@@ -1949,7 +1949,7 @@ const paneSpawnAfterTabMission = {
       // continue waiting for a concrete session id.
       options = {
         ...options,
-        ...(autoRoute?.specialty === 'visual' ? { visualTask: { since: Date.now() } } : {}),
+        ...(autoRoute?.specialty === 'visual' ? { visualTask: createVisualTaskRequirement() } : {}),
         [PENDING_SPAWN_RESULT]: true,
         operatorParentSessionId: operatorHand && !ctx.contextRevision
           ? ctx.sessionId

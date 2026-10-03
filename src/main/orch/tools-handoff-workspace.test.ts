@@ -138,7 +138,7 @@ describe("workspace handoff", () => {
   it('preserves the visual worker until a current Main capture proves the next handoff', async () => {
     caller('parent');
     const child = caller('child');
-    child.visualTask = { since: 1000 };
+    child.visualTask = { since: 1000, id: 'workspace-assignment' };
     const close = vi.spyOn(panes, 'requestPaneClose').mockResolvedValue(true);
     armAutoCloseOnHandoff('child', 'pane-child');
     const first = await tool('submit').handler({ ...args, fullText: args.summary }, child);

@@ -1087,4 +1087,10 @@ END;`,
       CREATE INDEX idx_visual_handoff_worker ON visual_handoff_evidence
         (session_id, mission_id, worker_incarnation_id, execution_root, captured_at DESC);`,
     }),
+    createProjectMigration({
+      id: '046-visual-assignment-identity', schemaVersion: 46, appVersion: '0.76.191',
+      sql: `ALTER TABLE visual_handoff_evidence ADD COLUMN assignment_id TEXT NOT NULL DEFAULT '';
+      CREATE INDEX idx_visual_handoff_assignment ON visual_handoff_evidence
+        (session_id, mission_id, worker_incarnation_id, execution_root, assignment_id, captured_at DESC);`,
+    }),
   ]);
