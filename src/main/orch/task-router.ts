@@ -1591,6 +1591,13 @@ export function routeTask(
   // provider só. As proteções reais continuam: benchmark medido preserva a
   // ordem medida, frontier/high-risk cobre hard+critical, e a lane visual
   // aplicada protege o assento dos modelos de topo.
+  // F-821 (revisão ec8524a8, B5): `security` fica FORA da rotação e do
+  // fair-share (bug pode seguir). O F-770 os liberou para a especialidade
+  // heurística; num conserto de segurança de tier medium isso entregava o
+  // assento ao CLI MENOS usado e tirava o líder do multi-score justo onde o
+  // erro custa mais. A diversidade em segurança vem do multi-score e da lane
+  // de julgamento, não de um revezamento cego.
+  const securityWork = specialtyVerdict.specialty === 'security';
   let rotationNote = '';
   const usedInMission = new Set<string>([
     ...(context.missionUsedAdapters ?? []),
@@ -1602,6 +1609,7 @@ export function routeTask(
     evaluated.length === 0 &&
     policy.source !== 'benchmark' &&
     !visualLaneApplied &&
+    !securityWork &&
     mention.model === undefined &&
     usedInMission.size > 0 &&
     usedInMission.has(ranked[0]?.c.adapterId ?? '')
@@ -1636,6 +1644,7 @@ export function routeTask(
     evaluated.length === 0 &&
     policy.source !== 'benchmark' &&
     !visualLaneApplied &&
+    !securityWork &&
     mention.model === undefined
   ) {
     const use = (id: string) => context.globalUseCounts!.get(id) ?? 0;
