@@ -242,6 +242,17 @@ describe('mergeKimiStatusHooks (Kimi TOML flat array)', () => {
     expect(hooks.some((hook) => hook.event === 'Stop' && hook.command.includes('$NEXUS_HOOK_REGRESSION_URL'))).toBe(true);
   });
 
+  it('UserPromptSubmit também pede o contexto do motor ao /hook/delegate (F-802)', () => {
+    const hooks = mergeKimiStatusHooks({}).hooks as Array<{ event: string; command: string }>;
+    const prompt = hooks.filter((hook) => hook.event === 'UserPromptSubmit');
+    expect(prompt.some((hook) => hook.command.includes('$NEXUS_HOOK_DELEGATE_URL'))).toBe(true);
+    // O status (user-submit) continua ali: o delegate é entrada a mais, não troca.
+    expect(prompt.some((hook) => hook.command.includes('X-Nexus-Hook-Event: user-submit'))).toBe(true);
+    // O comando do delegate imprime a resposta (stdout vira a mensagem no Kimi).
+    const delegate = prompt.find((hook) => hook.command.includes('$NEXUS_HOOK_DELEGATE_URL'))!;
+    expect(delegate.command).not.toContain('--output /dev/null');
+  });
+
   it('second spawn rewrite does not duplicate Nexus entries', () => {
     const once = mergeKimiStatusHooks({});
     const twice = mergeKimiStatusHooks(once);

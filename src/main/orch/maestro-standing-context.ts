@@ -2,6 +2,7 @@ import type { AgentGateContext } from './gate';
 import type { Mission } from '../../shared/orch-types';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { maestroStandingDoctrine } from './orchestrator-doctrine';
+import { providerReceivesContextOnlyByHook } from './operator-hand-context';
 
 type MaestroContext = Pick<AgentGateContext, 'role' | 'missionId' | 'providerId'> &
   Partial<Pick<AgentGateContext, 'scope'>>;
@@ -31,14 +32,14 @@ export function maestroStandingDoctrineFor(
 
 /**
  * Mesmo canal da doutrina do operador: `instructions` do MCP para toda CLI,
- * menos o Codex, que cola as instructions em cada tool e recebe a doutrina
- * pelo hook UserPromptSubmit (hook-delegate-endpoint).
+ * menos o Codex (cola as instructions em cada tool) e o Kimi (não as lê), que
+ * recebem a doutrina pelo hook UserPromptSubmit (hook-delegate-endpoint).
  */
 export function maestroStandingContext(
   ctx: MaestroContext,
   channel: 'mcp' | 'hook',
   lookup: MissionLookup = lookupMission,
 ): string | null {
-  if ((ctx.providerId === 'codex') !== (channel === 'hook')) return null;
+  if (providerReceivesContextOnlyByHook(ctx.providerId) !== (channel === 'hook')) return null;
   return maestroStandingDoctrineFor(ctx, lookup);
 }

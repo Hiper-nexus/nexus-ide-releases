@@ -15,6 +15,7 @@
 //    override shadows a same-key user hook for the session only.
 //  - Kimi: flat `hooks = [{event, command}]` merged into the private
 //    KIMI_CODE_HOME overlay's config.toml (excluded from auth sync-back).
+//    UserPromptSubmit também leva o contexto do motor (/hook/delegate, F-802).
 //  - Grok: dedicated `hooks/nexus.json` inside the private GROK_HOME overlay
 //    (user hooks in the real hooks/ dir are symlinked through).
 //  - Stop também chama o portão de regressão (/hook/regression) nos quatro.
@@ -199,6 +200,12 @@ export function mergeKimiStatusHooks(
   // então a reescrita por spawn continua idempotente. Sem campo de timeout
   // (o schema do Kimi não o documenta): o curl limita a espera sozinho.
   nexusEntries.push({ event: 'Stop', command: makeRegressionHookCommand() });
+  // F-802: UserPromptSubmit também pede o contexto do motor ao /hook/delegate.
+  // O Kimi injeta o stdout do comando como mensagem depois do prompt e o
+  // endpoint responde TEXTO PURO (vazio quando não há o que dizer): o Kimi não
+  // lê `additionalContext`, e um "{}" viraria uma mensagem a cada prompt. Sem as
+  // `instructions` do MCP (que o Kimi ignora), este é o único canal da doutrina.
+  nexusEntries.push({ event: 'UserPromptSubmit', command: makeDelegateHookCommand() });
   return { ...config, hooks: [...userEntries, ...nexusEntries] };
 }
 

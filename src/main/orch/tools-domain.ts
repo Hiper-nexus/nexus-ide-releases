@@ -25,11 +25,17 @@ import type { AgentGateContext } from './gate';
 import { z } from 'zod';
 import {
   findPane,
+  getPaneRuntimeAuthorityBySession,
   listPaneSnapshots,
   readSessionOutput,
   waitForIdle,
 } from './pane-registry';
-import { adapterIdsWithoutNexusMcp, liveMissionAdapterIds } from './operator-spawn-route';
+import {
+  adapterIdsWithoutNexusMcp,
+  limitToReadOnlyCapable,
+  liveMissionAdapterIds,
+  operatorChildUseCounts,
+} from './operator-spawn-route';
 import { isOperatorTabMission } from './operator-tab-mission-resume';
 import { getAdapter, listAdapters } from '../adapters/adapter-registry';
 import { canUseNexusMcp } from './cli-mcp-inject';
@@ -1680,6 +1686,27 @@ function routeLogSinkFor(scope: ProjectExecutionScope): RouteLogSink | null {
 }
 
 /**
+ * F-802: CLIs que o pane da mão do operador e os filhos vivos dele já usam. O
+ * spawn já entrega a contagem pronta; `nexus_route_task` chamado direto pelo
+ * pane do operador a calcula aqui, pelo mesmo critério.
+ */
+function operatorHandUseCounts(
+  ctx: AgentGateContext,
+  internal: OperatorRouteInternal,
+): ReadonlyMap<string, number> | undefined {
+  if (ctx.role !== 'user') return undefined;
+  const counts =
+    internal.tieBreakUseCounts ??
+    operatorChildUseCounts(
+      ctx.sessionId,
+      ctx.providerId,
+      listPaneSnapshots(),
+      (sessionId) => getPaneRuntimeAuthorityBySession(sessionId)?.operatorParentSessionId,
+    );
+  return counts.size > 0 ? counts : undefined;
+}
+
+/**
  * Corpo do nexus_route_task. `internal` só é preenchido pelo resolver do spawn
  * da mão do operador (contagens de uso para o desempate) — o handler MCP nunca
  * repassa argumentos para cá.
@@ -1859,9 +1886,29 @@ export async function routeTaskForCaller(
     adapters = buildAdapters(excluded);
     quotaFallbackNote = `; quota auto-exclude reverted, all candidates cooling: ${quotaExcluded.join(',')}`;
   }
+  // F-802: helper somente leitura da mão do operador fora do Autopilot só vai
+  // para CLI que confina leitura (o spawn recusa as demais).
+  const readOnlyPool = limitToReadOnlyCapable(
+    adapters,
+    internal.requireReadOnlyEnforceable === true,
+  );
+  adapters = readOnlyPool.adapters;
+  quotaFallbackNote += readOnlyPool.note;
   let missionAdapterIds: string[] | undefined;
   let reservedAdapterIds: string[] | undefined;
   let globalUseCounts: Map<string, number> | undefined;
+  if (!missionId) {
+    // F-802: o fair-share de 7 dias (F-232) vale também para o "+ Pane" — as
+    // reservas consumidas no checkout independem de quem está pedindo a rota.
+    try {
+      globalUseCounts = getProjectDomainStores(ctx.scope)
+        .missions.consumedRouteCountsByAdapterSince(
+          Date.now() - GLOBAL_USE_WINDOW_MS,
+        );
+    } catch {
+      globalUseCounts = undefined;
+    }
+  }
   if (missionId) {
     try {
       const stores = getProjectDomainStores(ctx.scope);
@@ -1920,10 +1967,12 @@ export async function routeTaskForCaller(
       ...strArray(args, 'preferAdapters'),
     ]),
   ];
-  const missionUseCounts = mergeAdapterUseLists(
-    missionAdapterIds,
-    reservedAdapterIds,
-  );
+  // F-802: sem missão, a "missão" do helper é o pai que o abriu — a CLI do pai
+  // e a dos filhos vivos dele alimentam a mesma diversidade (atenuação e
+  // rotação garantida) que a missão usa.
+  const missionUseCounts =
+    mergeAdapterUseLists(missionAdapterIds, reservedAdapterIds) ??
+    (missionId ? undefined : operatorHandUseCounts(ctx, internal));
   const usedAdapterIds = [
     ...(missionAdapterIds ?? []),
     ...(reservedAdapterIds ?? []),

@@ -19,6 +19,15 @@ export function sendHookJson(res: http.ServerResponse, status: number, payload: 
   res.end(body);
 }
 
+/** Texto puro (UTF-8): para a CLI que injeta o stdout do hook como está. */
+export function sendHookText(res: http.ServerResponse, status: number, text: string): void {
+  res.writeHead(status, {
+    'content-type': 'text/plain; charset=utf-8',
+    'content-length': Buffer.byteLength(text),
+  });
+  res.end(text);
+}
+
 function readBodyCapped(req: http.IncomingMessage, maxBytes: number): Promise<string> {
   return new Promise((resolve, reject) => {
     let size = 0;
@@ -46,6 +55,8 @@ export async function handleHookJsonPost(
   ctx: unknown | null,
   maxBytes: number,
   onBody: (body: unknown) => Promise<{ statusCode: number; payload: unknown }>,
+  /** Responde o payload de sucesso como texto puro em vez de JSON (ver sendHookText). */
+  asText?: (payload: unknown) => string,
 ): Promise<void> {
   if (!ctx) {
     sendHookJson(res, 401, { ok: false, error: 'missing or unknown bearer token' });
@@ -78,5 +89,9 @@ export async function handleHookJsonPost(
     return;
   }
   const result = await onBody(body);
+  if (asText && result.statusCode === 200) {
+    sendHookText(res, 200, asText(result.payload));
+    return;
+  }
   sendHookJson(res, result.statusCode, result.payload);
 }

@@ -138,6 +138,33 @@ export function adapterIdsWithoutNexusMcp<
 }
 
 /**
+ * F-802: fora do Autopilot o pty-ipc recusa "cannot enforce native read-only
+ * authority" para a CLI que não confina leitura. A rota do helper somente
+ * leitura da mão do operador não pode entregar uma CLI que o spawn vai
+ * derrubar: o pool fica só com as que confinam. Se NENHUMA instalada confina,
+ * o pool não é tocado (o spawn mostra o erro real; ausência de declaração não
+ * derruba a rota inteira) — o mesmo contrato do filtro de busca na web (F-771).
+ */
+export function limitToReadOnlyCapable<
+  T extends {
+    readonly installed: boolean;
+    readonly capabilities?: { readonly readOnlyEnforceable?: boolean };
+  },
+>(adapters: readonly T[], required: boolean): { adapters: T[]; note: string } {
+  const capable = (adapter: T): boolean =>
+    adapter.capabilities?.readOnlyEnforceable === true;
+  if (!required || !adapters.some((adapter) => adapter.installed && capable(adapter))) {
+    return { adapters: [...adapters], note: '' };
+  }
+  return {
+    adapters: adapters.map((adapter) =>
+      adapter.installed && !capable(adapter) ? { ...adapter, installed: false } : adapter,
+    ),
+    note: '; helper somente leitura fora do Autopilot — pool limitado às CLIs que confinam leitura',
+  };
+}
+
+/**
  * Recibo da proveniência do Jev (confiança por dimensão + o que a regra teria
  * escolhido), copiado do resultado da rota SÓ quando o Jev influenciou e só nos
  * campos conhecidos: ids de CLI/modelo/esforço e números. O texto da tarefa e
