@@ -1,3 +1,4 @@
+import { flushPtyAnalysis, subscribePtyAnalysis } from '../pty/pty-analysis-runtime';
 import { randomUUID } from 'node:crypto';
 import {
   completeCommandBlock,
@@ -5,7 +6,7 @@ import {
   type CommandBlock,
 } from '../../shared/command-block';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
-import { tapSessionData, tapSessionExit } from '../pty/pty-manager';
+import { tapSessionExit } from '../pty/pty-manager';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { computeCommandBlockIdempotencyKey } from './command-block-id';
 import { redactCommandLine } from './command-redaction';
@@ -45,6 +46,7 @@ interface LiveSession {
   cwd: string;
   running: CommandBlock | null;
   pendingCommand: string | null;
+  pendingRedaction?: ReturnType<typeof redactCommandLine>;
   blocks: CommandBlock[];
 }
 
@@ -75,15 +77,16 @@ export class CommandBlockTracker {
 
   start(): void {
     if (this.#untapData) return;
-    // Eventos OSC 133 não podem cair no meio: o tap recebe o lote inteiro.
-    this.#untapData = tapSessionData(
-      (sessionId, data) => {
-        this.handleData(sessionId, data);
-      },
-      { name: 'command-blocks', delivery: 'complete' },
-    );
+    this.#untapData = subscribePtyAnalysis('command', (sessionId, value) => {
+      if (!this.#isEnabled()) return;
+      this.handleData(sessionId, ''); // O(1) lazy metadata; scanner sees no text.
+      const session = this.#sessions.get(sessionId)!;
+      const event = value as Osc133Event & { redacted?: boolean; denylisted?: boolean; secretHits?: number };
+      if (event.kind === 'command_line') session.pendingRedaction = { command: event.command, redacted: event.redacted ?? false, denylisted: event.denylisted ?? false, secretHits: event.secretHits ?? 0 };
+      this.#applyEvent(sessionId, session, event);
+    });
     this.#untapExit = tapSessionExit((sessionId) => {
-      this.handleExit(sessionId);
+      void flushPtyAnalysis(sessionId).then(() => this.handleExit(sessionId));
     });
   }
 
@@ -208,7 +211,8 @@ export class CommandBlockTracker {
         const rawCommand = session.pendingCommand ?? '';
         session.pendingCommand = null;
         if (!rawCommand.trim()) return;
-        const scrubbed = redactCommandLine(rawCommand);
+        const scrubbed = session.pendingRedaction ?? redactCommandLine(rawCommand);
+        session.pendingRedaction = undefined;
         const startedAt = this.#now();
         const block = createCommandBlock({
           id: `cb-${randomUUID()}`,

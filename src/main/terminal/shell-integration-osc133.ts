@@ -52,6 +52,8 @@ export class Osc133Scanner {
       const esc = data.indexOf(ESC, i);
       if (esc < 0) break;
 
+      // A lone ESC is a legitimate split OSC introducer.
+      if (esc === data.length - 1) { this.#partial = ESC; break; }
       // OSC: ESC ]
       if (data[esc + 1] !== ']') {
         i = esc + 1;

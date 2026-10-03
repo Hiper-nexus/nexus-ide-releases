@@ -10,7 +10,7 @@
 // tail still holds the latest frame, which is what every region heuristic
 // keys on. See detector.ts for the consequences.
 
-import { stripAnsi } from '../orch/pane-session-output';
+import { stripAnsi } from '../../shared/ansi-text';
 
 /** Retained stripped characters per session (~256 KB of recent output). */
 const MAX_BUFFER_CHARS = 262_144;
@@ -63,7 +63,7 @@ export class SessionScreenBuffer {
   private readonly sessions = new Map<string, ScreenBufferState>();
 
   /** Feed one raw PTY chunk; bumps contentSeq when visible text results. */
-  append(sessionId: string, rawData: string): number {
+  append(sessionId: string, rawData: string, decoded?: (text: string) => void): number {
     let state = this.sessions.get(sessionId);
     if (!state) {
       state = { chunks: [], chars: 0, cached: '', pendingRaw: '', contentSeq: 0 };
@@ -77,6 +77,7 @@ export class SessionScreenBuffer {
       combined = combined.slice(0, lastEsc);
     }
     const stripped = stripAnsi(combined);
+    decoded?.(stripped);
     if (stripped.length === 0) return state.contentSeq;
     // Append is O(chunk): concatenating and slicing the full 256 KB tail on
     // every chunk dominated main-thread CPU under streaming output. The tail

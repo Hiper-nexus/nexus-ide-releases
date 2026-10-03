@@ -1,3 +1,5 @@
+import { analysisClient, flushPtyAnalysis, isPtyAnalysisEnabled, subscribePtyAnalysis } from '../pty/pty-analysis-runtime';
+import type { FailoverTextProposal } from './failover-text-core';
 import type { WebContents } from 'electron';
 import {
   ACCOUNT_CHANNELS,
@@ -9,7 +11,6 @@ import {
   getAgentSessionInfo,
   getSessionState,
   listAgentSessionsForPane,
-  tapSessionData,
   tapSessionExit,
 } from '../pty/pty-manager';
 import { getAdapter, getAdapterResolvedBin } from '../adapters/adapter-registry';
@@ -33,7 +34,6 @@ import {
   onRendererWorkspaceScopeChange,
 } from '../persistence/renderer-workspace-scope';
 import {
-  stripAnsi,
   findPaneBySessionOwnedBy,
   getOwnedPaneAuthzInfoBySession,
   getPaneRuntimeAuthorityBySession,
@@ -54,7 +54,7 @@ import {
   type PaneTaskRerouteRequest,
 } from './pane-task-reroute';
 import { DEFAULT_ROUTING_TABLE, TIER_ORDER } from './task-router';
-import { detectLimit, tierScopeFromModelId, type LimitHit } from './limit-detector';
+import { tierScopeFromModelId, type LimitHit } from './limit-detector';
 import { retryTargetMsForLimit } from './failover-retry-policy';
 import {
   hasFreshProviderApiWindowForLimit,
@@ -104,28 +104,7 @@ import { trace } from '../observability/main-trace';
  * Multi-pane storms coalesce on the same from-account → same to-account.
  */
 
-const WINDOW_CHARS = 4000;
 const REARM_MS = 30_000;
-/**
- * detectLimit varre a janela inteira (~120 µs em 4 KB de TUI) e rodava a cada
- * chunk de PTY — 2–6% de um núcleo do main com cinco panes transmitindo. Fora
- * de um episódio de erro ela roda no máximo a cada DETECT_MIN_INTERVAL_MS, ou
- * antes, a cada DETECT_MAX_PENDING_CHARS de texto novo: metade da janela, então
- * toda mensagem de limite passa inteira por pelo menos uma varredura. Uma
- * varredura final cobre o que chegou por último quando a saída para.
- */
-const DETECT_MIN_INTERVAL_MS = 250;
-const DETECT_MAX_PENDING_CHARS = WINDOW_CHARS / 2;
-/**
- * F-764: orçamento de UMA varredura. Uma regex com backtracking cúbico custou
- * 300 ms por janela de TUI em branco e, rodando a cada chunk de 12 panes,
- * congelou a main thread por minutos. Acima do orçamento a sessão só volta a
- * ser varrida depois do backoff — o texto segue entrando na janela e a
- * varredura final cobre tudo, então nenhum limite real se perde — e o trace
- * registra qual sessão estourou.
- */
-const DETECT_BUDGET_MS = 25;
-const DETECT_SLOW_BACKOFF_MS = 5_000;
 /** Reuse the same A→B decision for concurrent panes hitting the same limit. */
 const COALESCE_MS = 5_000;
 // Derived from can1357/oh-my-pi@03c48d073 auth-storage cooldown machine (MIT)
@@ -212,7 +191,7 @@ const TRANSIENT_RECHECK_MS = 30_000;
 const MAX_TRANSIENT_CHECKS = 6;
 /** Texto inédito que prova resposta de verdade depois do erro. */
 const TRANSIENT_PROGRESS_CHARS = 400;
-const TRANSIENT_MIN_LINE_CHARS = 20;
+
 /**
  * Pedido de continuação. Neutro de propósito: não ecoa o texto do erro
  * ("503", "overloaded", "unavailable"…), que o detector leria de volta no
@@ -1717,54 +1696,11 @@ function transientKey(key: string): string {
 }
 
 function endTransientEpisode(watch: SessionWatch): void {
+  analysisClient.control(watch.authority.sessionId, 'failover', { endTransient: true });
   watch.transientAt = 0;
   watch.progressChars = 0;
   watch.seenLines = new Set();
   watch.errorSignatures = new Set();
-}
-
-function normalizedLines(text: string): string[] {
-  return text
-    .split(/\r?\n/)
-    .map((raw) => raw.replace(/\s+/g, ' ').trim())
-    .filter((line) => line.length >= TRANSIENT_MIN_LINE_CHARS);
-}
-
-function rememberLine(watch: SessionWatch, line: string): void {
-  if (watch.seenLines.size >= 2_000) watch.seenLines = new Set();
-  watch.seenLines.add(line);
-}
-
-/**
- * Linha que é o próprio erro/retry da CLI, não resposta do modelo. Estreito
- * de propósito: uma resposta que cita "HTTP 500" ou "unavailable" na prosa
- * continua contando como resposta.
- */
-const TRANSIENT_NOISE_LINE =
-  /retrying\s+in\s+\d|attempt\s+\d+\s*\/\s*\d+|api\s*error|overloaded_error|service unavailable|status[\s:(]*5\d\d\b|\bhttp\s*5\d\d\b/i;
-
-/** O trecho da linha a partir do erro/retry, ou null se a linha não é erro. */
-function errorSignature(line: string): string | null {
-  const match = TRANSIENT_NOISE_LINE.exec(line);
-  return match ? line.slice(match.index) : null;
-}
-
-/**
- * Conta texto NOVO depois do último erro do provider. Linha já vista (repaint
- * do transcript antigo, da moldura, do próprio erro) e a linha de erro/retry
- * não provam resposta.
- */
-function noteTransientProgress(watch: SessionWatch, text: string): void {
-  for (const line of normalizedLines(text)) {
-    if (watch.seenLines.has(line)) continue;
-    rememberLine(watch, line);
-    const signature = errorSignature(line);
-    if (signature !== null) {
-      watch.errorSignatures.add(signature);
-      continue;
-    }
-    watch.progressChars += line.length;
-  }
 }
 
 /**
@@ -1787,35 +1723,18 @@ function handleTransientHit(
   hit: LimitHit,
   now: number,
   source: FailoverSignalSource,
-  detectedText = '',
 ): void {
-  const lines = normalizedLines(detectedText);
-  if (watch.transientAt !== 0) {
-    let freshError = false;
-    for (const line of lines) {
-      const signature = errorSignature(line);
-      if (signature !== null && !watch.errorSignatures.has(signature)) {
-        freshError = true;
-        watch.errorSignatures.add(signature);
-      }
-      rememberLine(watch, line);
-    }
-    // A CLI reimprimiu o erro num retry NOVO: a resposta ainda não veio.
-    if (freshError) watch.progressChars = 0;
-    return;
-  }
+  if (watch.transientAt !== 0) return;
   const current = paneAccount(pane);
   // Um limite de verdade já está esperando a conta liberar: o pane é dele.
   if (pendingRetries.has(key)) {
     logSuppressedFailover(pane, current, hit, 'transient-deferred-to-limit-retry', source);
+    analysisClient.control(authority.sessionId, 'failover', { rejectTransient: true });
     return;
   }
   watch.transientAt = now;
   watch.progressChars = 0;
-  watch.seenLines = new Set(lines);
-  watch.errorSignatures = new Set(
-    lines.map(errorSignature).filter((signature): signature is string => signature !== null),
-  );
+
   logSuppressedFailover(pane, current, hit, 'transient-provider-error', source);
   emitNoSwitch(authority, pane, current, hit, hit.reason, 'detected');
   scheduleTransientCheck(
@@ -1859,7 +1778,16 @@ function scheduleTransientCheck(
  * bateu limite. Pane do operador (sem missão) só recebe o aviso — o Nexus não
  * digita no terminal que o humano está dirigindo.
  */
-function checkTransientRecovery(
+function checkTransientRecovery(key: string, authority: FailoverAuthority, hit: LimitHit, attempt: number): void {
+  const watch = watches.get(key);
+  if (!isPtyAnalysisEnabled()) { checkTransientRecoveryNow(key, authority, hit, attempt); return; }
+  void flushPtyAnalysis(authority.sessionId).then((ok) => {
+    if (!ok || watches.get(key) !== watch || !isCurrentAuthority(authority)) return;
+    checkTransientRecoveryNow(key, authority, hit, attempt);
+  });
+}
+
+function checkTransientRecoveryNow(
   key: string,
   authority: FailoverAuthority,
   hit: LimitHit,
@@ -2643,116 +2571,21 @@ function commitLimitHit(
   });
 }
 
-function armTrailingDetect(
-  sessionId: string,
-  watch: SessionWatch,
-  now: number,
-): void {
-  if (watch.detectTimer) return;
-  const delay = Math.max(
-    0,
-    DETECT_MIN_INTERVAL_MS - (now - watch.lastDetectAt),
-    watch.slowDetectUntil - now,
-  );
-  watch.detectTimer = setTimeout(() => {
-    watch.detectTimer = null;
-    try {
-      detectPending(sessionId);
-    } catch (err) {
-      console.warn('[failover] trailing detection failed:', err);
+function acceptAnalysisProposal(sessionId: string, proposal: FailoverTextProposal): void {
+  const authority = resolveAuthority(sessionId);
+  if (!authority || !isCurrentAuthority(authority)) return;
+  const pane = resolvePaneDetails(authority); if (!pane) return;
+  const [key, watch] = watchFor(authority);
+  if (proposal.hit) {
+    if (proposal.at - watch.firedAt < REARM_MS) return;
+    if (proposal.hit.kind === 'transient') {
+      handleTransientHit(authority, pane, key, watch, proposal.hit, proposal.at, 'scrollback');
+    } else {
+      beginLimitHandling(key, watch, proposal.at);
+      handleLimitHit(authority, pane, key, proposal.hit, proposal.at, 'scrollback');
     }
-  }, delay);
-  watch.detectTimer.unref?.();
-}
-
-/** Varredura final: o texto que chegou dentro do intervalo não fica sem checagem. */
-function detectPending(sessionId: string): void {
-  const now = Date.now();
-  const authority = resolveAuthority(sessionId);
-  if (!authority) return;
-  const pane = resolvePaneDetails(authority);
-  if (!pane) return;
-  const [key, watch] = watchFor(authority);
-  if (watch.pendingChars === 0 || now - watch.firedAt < REARM_MS) return;
-  detectInWindow(authority, pane, key, watch, '', now);
-}
-
-function handleChunk(sessionId: string, data: string, now: number): void {
-  const authority = resolveAuthority(sessionId);
-  if (!authority) return;
-  const pane = resolvePaneDetails(authority);
-  if (!pane) return;
-
-  const [key, watch] = watchFor(authority);
-  const text = stripAnsi(data);
-  // Debounce: don't re-fire within REARM_MS of a switch.
-  if (now - watch.firedAt < REARM_MS) {
-    if (watch.transientAt !== 0) noteTransientProgress(watch, text);
-    return;
   }
-
-  watch.buffer = (watch.buffer + text).slice(-WINDOW_CHARS);
-  watch.pendingChars += text.length;
-  if (now < watch.slowDetectUntil) {
-    armTrailingDetect(sessionId, watch, now);
-    return;
-  }
-  if (
-    watch.transientAt === 0 &&
-    now - watch.lastDetectAt < DETECT_MIN_INTERVAL_MS &&
-    watch.pendingChars < DETECT_MAX_PENDING_CHARS
-  ) {
-    armTrailingDetect(sessionId, watch, now);
-    return;
-  }
-  detectInWindow(authority, pane, key, watch, text, now);
-}
-
-/** Varre a janela acumulada; `text` é o chunk que disparou (vazio no timer). */
-function detectInWindow(
-  authority: FailoverAuthority,
-  pane: FailoverPaneDetails,
-  key: string,
-  watch: SessionWatch,
-  text: string,
-  now: number,
-): void {
-  watch.lastDetectAt = now;
-  watch.pendingChars = 0;
-  if (watch.detectTimer) {
-    clearTimeout(watch.detectTimer);
-    watch.detectTimer = null;
-  }
-  const scanStartedAt = performance.now();
-  const hit = detectLimit(watch.buffer);
-  const scanMs = performance.now() - scanStartedAt;
-  if (scanMs > DETECT_BUDGET_MS) {
-    watch.slowDetectUntil = now + DETECT_SLOW_BACKOFF_MS;
-    trace({
-      kind: 'failover-detect-slow',
-      sessionId: authority.sessionId,
-      paneId: authority.paneId,
-      scanMs: Math.round(scanMs),
-      windowChars: watch.buffer.length,
-      backoffMs: DETECT_SLOW_BACKOFF_MS,
-    });
-  }
-  if (hit?.kind === 'transient') {
-    const detectedText = watch.buffer;
-    watch.buffer = ''; // consumed
-    // Sem rearm: um limite de VERDADE logo depois do 503 ainda é detectado.
-    // A detecção vem ANTES do progresso: ela decide se o erro é inédito.
-    handleTransientHit(authority, pane, key, watch, hit, now, 'scrollback', detectedText);
-    if (watch.transientAt !== 0) noteTransientProgress(watch, text);
-    return;
-  }
-  // Episódio de erro do provider em curso: mede se a CLI voltou a responder.
-  if (watch.transientAt !== 0) noteTransientProgress(watch, text);
-  if (!hit) return;
-
-  watch.buffer = ''; // consumed
-  beginLimitHandling(key, watch, now);
-  handleLimitHit(authority, pane, key, hit, now, 'scrollback');
+  if (watch.transientAt !== 0) watch.progressChars = proposal.progressChars;
 }
 
 /**
@@ -2763,6 +2596,7 @@ function detectInWindow(
  */
 function beginLimitHandling(key: string, watch: SessionWatch, now: number): void {
   watch.firedAt = now;
+  analysisClient.control(watch.authority.sessionId, 'failover', { firedAt: now });
   watch.buffer = '';
   cancelScheduledRetry(key);
   cancelScheduledRetry(transientKey(key));
@@ -2770,27 +2604,10 @@ function beginLimitHandling(key: string, watch: SessionWatch, now: number): void
 }
 
 function handleObserverFrame(frame: ObserverFrame): void {
-  if (frame.kind !== 'provider_error') return;
-  const authority = resolveAuthority(frame.sessionId);
-  if (!authority) return;
-  const pane = resolvePaneDetails(authority);
-  if (!pane) return;
-
-  const now = frame.at;
-  const [key, watch] = watchFor(authority);
-  if (now - watch.firedAt < REARM_MS) return;
-  const hit: LimitHit = {
-    kind: frame.payload.kind,
-    reason: frame.payload.reason,
-    cooldownMs: frame.payload.cooldownMs,
-    ...(frame.payload.scope ? { scope: frame.payload.scope } : {}),
-  };
-  if (hit.kind === 'transient') {
-    handleTransientHit(authority, pane, key, watch, hit, now, 'observer', hit.reason);
-    return;
-  }
-  beginLimitHandling(key, watch, now);
-  handleLimitHit(authority, pane, key, hit, now, 'observer');
+  if (frame.kind !== 'provider_error' || !resolveAuthority(frame.sessionId)) return;
+  const hit: LimitHit = { kind: frame.payload.kind, reason: frame.payload.reason, cooldownMs: frame.payload.cooldownMs,
+    ...(frame.payload.scope ? { scope: frame.payload.scope } : {}) };
+  analysisClient.control(frame.sessionId, 'failover', { observer: { hit, at: frame.at } });
 }
 
 export function initFailover(): void {
@@ -2801,13 +2618,9 @@ export function initFailover(): void {
     accountId: getActiveAccount(adapterId)?.id ?? null,
     installationId: cachedInstallationId(adapterId),
   }));
-  untapData = tapSessionData((sessionId, data) => {
-    try {
-      handleChunk(sessionId, data, Date.now());
-    } catch (err) {
-      console.warn('[failover] tap error:', err);
-    }
-  }, 'failover');
+  untapData = subscribePtyAnalysis('failover', (sessionId, proposal) => {
+    acceptAnalysisProposal(sessionId, proposal as FailoverTextProposal);
+  });
   untapExit = tapSessionExit((sessionId) => {
     for (const [key, watch] of [...watches]) {
       if (watch.authority.sessionId !== sessionId) continue;

@@ -1,4 +1,4 @@
-import { stripAnsi } from './pane-registry';
+import { stripAnsi } from '../../shared/ansi-text';
 
 /**
  * Passive dev-server URL detection over PTY output (VISUAL-EDIT-001, F1.5).

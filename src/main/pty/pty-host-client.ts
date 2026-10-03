@@ -1,3 +1,4 @@
+import { startPtyAnalysis, shutdownPtyAnalysis } from './pty-analysis-runtime';
 import path from 'node:path';
 import { utilityProcess, type UtilityProcess } from 'electron';
 import {
@@ -56,6 +57,7 @@ const transport = {
 
 /** Create (once) and return the PTY host injected into pty-manager. */
 export function createRealPtyHost(): PtyHost {
+  startPtyAnalysis();
   if (!bridge) {
     // The transport wait is bounded on every platform (pty-host-core). Darwin's
     // signed responsibility supervisor still owns the exact descendant proof —
@@ -68,6 +70,7 @@ export function createRealPtyHost(): PtyHost {
 
 /** Kill the host on app quit. Its death takes every child PTY with it. */
 export function shutdownPtyHost(): void {
+  shutdownPtyAnalysis();
   const c = child;
   child = null;
   c?.kill();

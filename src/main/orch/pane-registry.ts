@@ -1,3 +1,4 @@
+import { subscribePtyAnalysis } from '../pty/pty-analysis-runtime';
 import { assertLicensedAgentCapacity } from '../license-enforcement';
 import { licenseFailure } from '../../shared/license-errors';
 import type { WebContents } from "electron";
@@ -977,12 +978,9 @@ export function initPaneRegistry(): void {
     },
     { name: "pane-output", delivery: "complete" },
   );
-  tapSessionData(
-    (sessionId, data) => {
-      devServerScanner.onData(sessionId, data);
-    },
-    { name: "dev-server-scanner" },
-  );
+  subscribePtyAnalysis('dev-server', (sessionId, urls) => {
+    if (getSessionState(sessionId) !== null) devServerScanner.acceptUrls(sessionId, urls as string[]);
+  });
 
   tapSessionState((sessionId, state) => {
     recordPaneSessionState(sessionId, state);

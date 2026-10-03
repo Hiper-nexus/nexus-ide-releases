@@ -27,6 +27,7 @@ export interface DevServerScannerDeps {
 export interface DevServerScanner {
   onData(sessionId: string, chunk: string): void;
   onExit(sessionId: string): void;
+  acceptUrls(sessionId: string, urls: string[]): void;
   get(paneOrSessionRef: string): DevServerEntry | null;
   reset(): void;
 }
@@ -54,6 +55,18 @@ export function createDevServerScanner(
   }
 
   return {
+    acceptUrls(sessionId, urls) {
+      let state = sessions.get(sessionId);
+      if (!state) {
+        state = { entry: { paneId: null, sessionId, urls: [], url: '', detectedAt: 0 }, tail: '', announcedPane: false };
+        sessions.set(sessionId, state);
+      }
+      const fresh = urls.filter((url) => !state!.entry.urls.includes(url));
+      if (fresh.length) {
+        state.entry.urls = [...state.entry.urls, ...fresh].slice(0, MAX_URLS_PER_SESSION);
+        state.entry.url = state.entry.urls[0]; state.entry.detectedAt = now(); announce(state);
+      } else if (!state.announcedPane && state.entry.urls.length && deps.paneIdOf(sessionId)) announce(state);
+    },
     onData(sessionId, chunk) {
       let state = sessions.get(sessionId);
       if (!state) {

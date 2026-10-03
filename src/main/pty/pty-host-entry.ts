@@ -1,3 +1,4 @@
+import { PtyOutputCredits } from './pty-output-credits';
 /**
  * PTY host — the isolated utilityProcess that owns every live @lydell/node-pty
  * handle (docs/ARCHITECTURE.md §B.2). A native segfault or FD leak in the addon
@@ -49,6 +50,7 @@ const parentPort = (process as unknown as { parentPort: ParentPortLike })
 
 interface HostPtyEntry {
   readonly proc: nodePty.IPty;
+  readonly outputCredits: PtyOutputCredits;
   readonly exited: Promise<void>;
   readonly resolveExited: () => void;
   readonly exitObservation: Promise<{
@@ -180,6 +182,11 @@ function handleSpawn(spec: Extract<HostControlMsg, { type: 'spawn' }>): void {
   ) => void;
   const entry: HostPtyEntry = {
     proc,
+    outputCredits: new PtyOutputCredits({
+      send: (data) => post({ type: 'data', sessionId: spec.sessionId, data }),
+      pause: () => { try { proc.pause(); } catch {} },
+      resume: () => { try { proc.resume(); } catch {} },
+    }),
     exited: new Promise<void>((resolve) => {
       resolveExited = resolve;
     }),
@@ -193,7 +200,7 @@ function handleSpawn(spec: Extract<HostControlMsg, { type: 'spawn' }>): void {
     termination: null,
   };
   procs.set(spec.sessionId, entry);
-  proc.onData((data) => post({ type: 'data', sessionId: spec.sessionId, data }));
+  proc.onData((data) => entry.outputCredits.push(data));
   proc.onExit(({ exitCode, signal }) => {
     const observation = {
       exitCode,
@@ -217,7 +224,7 @@ function handleSpawn(spec: Extract<HostControlMsg, { type: 'spawn' }>): void {
     }
     entry.resolveExited();
     entry.resolveExitObservation(observation);
-    post({ type: 'exit', sessionId: spec.sessionId, exitCode, signal });
+    entry.outputCredits.seal(() => post({ type: 'exit', sessionId: spec.sessionId, exitCode, signal }));
   });
 }
 
@@ -359,6 +366,12 @@ parentPort.on('message', (e) => {
       } catch {
         // PTY died between the ownership check in main and this write.
       }
+      return;
+    case 'analysis-credit':
+      procs.get(msg.sessionId)?.outputCredits.grant(msg.bytes);
+      return;
+    case 'output-flow':
+      try { const proc = procs.get(msg.sessionId)?.proc; if (msg.paused) proc?.pause(); else proc?.resume(); } catch {}
       return;
     case 'resize':
       try {

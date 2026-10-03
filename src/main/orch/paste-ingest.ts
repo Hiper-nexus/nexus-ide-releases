@@ -22,10 +22,9 @@
  */
 import {
   getAgentSessionInfo,
-  tapSessionData,
   tapSessionExit,
 } from '../pty/pty-manager';
-import { stripAnsi } from './pane-session-output';
+import { watchPtyAnalysisSession } from '../pty/pty-analysis-runtime';
 
 /** O Codex troca a colagem pelo marcador a partir daqui. */
 export const CODEX_LARGE_PASTE_CHARS = 1000;
@@ -50,7 +49,7 @@ const PASTE_INGEST_BASE_MS = 2_000;
 const PASTE_INGEST_MS_PER_CHAR = 1.5;
 export const PASTE_INGEST_MAX_MS = 30_000;
 /** Só a saída nova interessa, e o marcador cabe com folga neste rabo. */
-const PASTE_INGEST_TAIL_CHARS = 8_192;
+
 
 export interface PasteIngestPlan {
   readonly marker: RegExp;
@@ -118,7 +117,6 @@ export function watchPasteIngest(
   sessionId: string,
   plan: PasteIngestPlan,
 ): PasteIngestWatch {
-  let tail = '';
   let settled = false;
   let resolveDone: (outcome: PasteIngestOutcome) => void = () => {};
   const done = new Promise<PasteIngestOutcome>((resolve) => {
@@ -137,11 +135,7 @@ export function watchPasteIngest(
     disarm();
     resolveDone(outcome);
   };
-  untapData = tapSessionData((changedSessionId, data) => {
-    if (changedSessionId !== sessionId || settled || data.length === 0) return;
-    tail = (tail + data).slice(-PASTE_INGEST_TAIL_CHARS);
-    if (plan.marker.test(stripAnsi(tail))) finish('marker');
-  }, 'paste-ingest');
+  untapData = watchPtyAnalysisSession('paste', sessionId, { adapterId: plan.marker === DEVIN_PASTE_MARKER ? 'devin' : 'codex' }, () => finish('marker'));
   untapExit = tapSessionExit((exitedSessionId) => {
     if (exitedSessionId === sessionId) finish('exit');
   });

@@ -186,7 +186,7 @@ function handleExit(sessionId: string): void {
 export function initCostTracker(): void {
   if (initialized) return;
   initialized = true;
-  tapSessionData(handleChunk, 'cost-tracker');
+  tapSessionData(handleChunk, { name: 'cost-tracker', delivery: 'complete' });
   tapSessionExit(handleExit);
 }
 

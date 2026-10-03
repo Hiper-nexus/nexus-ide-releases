@@ -635,6 +635,7 @@ const config: ForgeConfig = {
         // PTY host: separate utilityProcess entry, built beside main.js as
         // .vite/build/pty-host-entry.js (docs/ARCHITECTURE.md §B.2).
         { entry: 'src/main/pty/pty-host-entry.ts', config: 'vite.pty-host.config.ts', target: 'main' },
+        { entry: 'src/main/pty/pty-analysis-worker-entry.ts', config: 'vite.pty-analysis.config.ts', target: 'main' },
         { entry: 'src/preload/preload.ts', config: 'vite.preload.config.ts', target: 'preload' },
         // Remote pages run in their own sandboxed WebContentsView. This preload
         // exposes no page API; it only accepts the closed browser-automation IPC

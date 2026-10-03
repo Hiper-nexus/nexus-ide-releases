@@ -1,5 +1,6 @@
 import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
 import { recordSessionInputReceipt, forgetSessionInputReceipt, type SystemInputWriter } from '../orch/operator-input-receipts';
+import { configurePtyAnalysis, bindPtyAnalysisSession, feedPtyAnalysis, inputPtyAnalysis, statePtyAnalysis, exitPtyAnalysis, terminatePtyAnalysis } from './pty-analysis-runtime';
 import { assertLicenseAccess, reserveLicensedAgent } from '../license-enforcement';
 import fs from "node:fs";
 import { canResumeMimoNativeSession } from "../adapters/mimo-session-owner";
@@ -588,7 +589,8 @@ function publishSessionInput(
   data: string,
   origin: SessionInputOrigin,
 ): void {
-  if (inputTaps.size === 0 || data.length === 0) return;
+  if (data.length === 0) return;
+  inputPtyAnalysis(sessionId, data);
   fireTaps("input", inputTaps, sessionId, data, origin);
 }
 
@@ -1128,6 +1130,7 @@ function emitStateChange(
   if (canSend(wc)) {
     wc.send(PTY_CHANNELS.stateChange, { sessionId, state });
   }
+  statePtyAnalysis(sessionId, state);
   fireTaps("state", stateTaps, sessionId, state);
 }
 
@@ -1226,6 +1229,7 @@ function onSessionData(
   // F-764 C.1: taps de dados em lote por sessão (o push ao renderer acima e a
   // janela de replay seguem chunk a chunk). A virada para busy logo abaixo
   // esvazia o lote antes — o primeiro chunk depois do idle sai na hora.
+  feedPtyAnalysis(sessionId, data);
   dataTapDispatcher.push(sessionId, data);
   if (session.state !== "busy") {
     session.state = "busy";
@@ -1301,6 +1305,7 @@ function finalizeSession(
   // F-764 C.1: os taps de saída veem todo o texto antes do exit — e os de
   // dados ainda acham a sessão registrada enquanto recebem o último lote.
   dataTapDispatcher.flush(sessionId);
+  exitPtyAnalysis(sessionId);
   sessions.delete(sessionId);
   s.releaseLicenseAgent?.();
   sessionLeaseRegistry.revokeLease(sessionId);
@@ -1490,6 +1495,7 @@ export function spawnSession(
     const lease = sessionLeaseRegistry.issueLease(sessionId, { kind: "shell" });
     session.startKey = lease.startKey;
     sessions.set(sessionId, session);
+  bindPtyAnalysisSession(sessionId);
     return { sessionId, startKey: lease.startKey };
   } catch (err) {
     cleanupShellIntegrationPaths(cleanupPaths);
@@ -3034,6 +3040,7 @@ export function spawnAgentSession(
   const lease = sessionLeaseRegistry.issueLease(sessionId, { kind: adapter.id });
   session.startKey = lease.startKey;
   sessions.set(sessionId, session);
+  bindPtyAnalysisSession(sessionId);
   publishObserverFrame({
     sessionId,
     ...(req.paneId ? { paneId: req.paneId } : {}),
@@ -3869,6 +3876,7 @@ function ensurePhysicalTerminationFlight(
   // F-764 C.1: a saída aceita antes do encerramento chega aos taps antes dos
   // taps de encerramento (depois daqui o onSessionData descarta bytes).
   dataTapDispatcher.flush(sessionId);
+  if (rootExit) exitPtyAnalysis(sessionId); else terminatePtyAnalysis(sessionId);
   let resolveExited!: () => void;
   const flight: PhysicalTerminationFlight = {
     sessionId,
@@ -4156,7 +4164,8 @@ export function publishSessionActivityState(
 ): boolean {
   const session = sessions.get(sessionId);
   if (!session) {
-    fireTaps("state", stateTaps, sessionId, state);
+    statePtyAnalysis(sessionId, state);
+  fireTaps("state", stateTaps, sessionId, state);
     return false;
   }
   session.hookState = state;
@@ -4352,3 +4361,10 @@ export function countLiveAgentSessions(): number {
   }
   return count;
 }
+
+
+configurePtyAnalysis({
+  describe: (sessionId) => { const info = getAgentSessionInfo(sessionId); return info ? { adapterId: info.adapterId, paneId: info.paneId } : {}; },
+  credit: (sessionId, bytes) => sessions.get(sessionId)?.proc.acknowledgeOutput?.(bytes),
+  flow: (sessionId, paused) => sessions.get(sessionId)?.proc.setOutputPaused?.(paused),
+});

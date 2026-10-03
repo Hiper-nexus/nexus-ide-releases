@@ -45,6 +45,8 @@ export type HostControlMsg =
   | { type: 'write'; sessionId: string; data: string }
   | { type: 'resize'; sessionId: string; cols: number; rows: number }
   | { type: 'kill'; sessionId: string; signal?: PtyKillSignal }
+  | { type: 'analysis-credit'; sessionId: string; bytes: number }
+  | { type: 'output-flow'; sessionId: string; paused: boolean }
   | {
       type: 'terminate';
       sessionId: string;
@@ -87,6 +89,8 @@ export interface PtyProcHandle {
   write(data: string): void;
   resize(cols: number, rows: number): void;
   kill(signal?: PtyKillSignal): void;
+  acknowledgeOutput?(bytes: number): void;
+  setOutputPaused?(paused: boolean): void;
   terminate(options: {
     readonly termTimeoutMs: number;
     readonly killTimeoutMs: number;
@@ -444,6 +448,8 @@ export function createPtyHostBridge(
       transport.ensure();
       transport.post({ type: 'spawn', ...spec });
       return {
+        acknowledgeOutput: (bytes) => transport.post({ type: 'analysis-credit', sessionId: spec.sessionId, bytes }),
+        setOutputPaused: (paused) => transport.post({ type: 'output-flow', sessionId: spec.sessionId, paused }),
         write: (data) =>
           transport.post({ type: 'write', sessionId: spec.sessionId, data }),
         resize: (cols, rows) =>
