@@ -89,6 +89,14 @@ const binaryTrust = vi.hoisted(() => ({
   rejectedBinPath: null as string | null,
 }));
 
+// Physical binaries are synthetic in this registry fixture. Version-probe
+// behavior has its own suite; consulting the operator's PATH here leaks real
+// discovery into mocked spawns and prevents cleanup after an early failure.
+vi.mock('./codex-cli-version', async (original) => ({
+  ...(await original<typeof import('./codex-cli-version')>()),
+  settleCodexCliVersionForSpawn: () => null,
+}));
+
 vi.mock("../pty/pty-manager", () => ({
   spawnMainOwnedAgentSession: pty.spawn,
   orchKillSession: pty.kill,
