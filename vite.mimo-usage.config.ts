@@ -1,5 +1,5 @@
 import { defineConfig } from 'vite';
-/** SQLite stays external and runs only in this dedicated Main sibling worker. */
+/** SQLite stays external and runs only in this dedicated sibling utilityProcess. */
 export default defineConfig({
   build: { rollupOptions: { input: 'src/main/usage/mimo-usage-worker-entry.ts',
     external: [/^node:/, 'better-sqlite3'],
