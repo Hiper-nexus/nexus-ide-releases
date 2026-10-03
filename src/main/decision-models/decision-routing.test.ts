@@ -4,14 +4,29 @@ import type { DecisionSettings } from '../../shared/decision-models';
 
 const settings: DecisionSettings = { mode: 'auto', clefModel: 'clef', cloudflareAccountId: '0123456789abcdef0123456789abcdef', visionEnabled: false };
 const both = { jev: true, clef: true };
-
 describe('complementary decision routing', () => {
-  it('uses Clef for tool selection and Jev for tasks without a local promotion', () => {
+  it('uses Clef for tool selection, researchTriage, and rank in auto mode (F-783)', () => {
     expect(resolveDecisionRoute({ surface: 'toolPick' }, settings, both)).toMatchObject({ provider: 'clef', model: 'clef', evidence: 'public-benchmark' });
-    for (const surface of ['intake', 'taskRouting', 'delegation', 'paneState', 'terminalTriage', 'rank', 'rankTool', 'judgeTool', 'researchTriage', 'helperReuse', 'businessModel', 'missionPick', 'catalogPick'] as const) {
+    expect(resolveDecisionRoute({ surface: 'researchTriage' }, settings, both)).toMatchObject({
+      provider: 'clef',
+      model: 'clef',
+      evidence: 'public-benchmark',
+    });
+    expect(resolveDecisionRoute({ surface: 'rank' }, settings, both)).toMatchObject({
+      provider: 'clef',
+      model: 'clef',
+      evidence: 'public-benchmark',
+    });
+    expect(resolveDecisionRoute({ surface: 'rankTool' }, settings, both)).toMatchObject({
+      provider: 'clef',
+      model: 'clef',
+      evidence: 'public-benchmark',
+    });
+    for (const surface of ['intake', 'taskRouting', 'delegation', 'paneState', 'terminalTriage', 'judgeTool', 'helperReuse', 'businessModel', 'missionPick', 'catalogPick'] as const) {
       expect(resolveDecisionRoute({ surface }, settings, both)?.provider).toBe('jev');
     }
   });
+
 
   describe('effect-bearing surfaces stay on Jev (no Clef evaluation exists for their thresholds)', () => {
     const pinned = ['dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool'] as const;
@@ -71,9 +86,10 @@ describe('complementary decision routing', () => {
 
   it('uses an available text provider in automatic mode and identifies the fallback', () => {
     expect(resolveDecisionRoute({ surface: 'toolPick' }, settings, { jev: true, clef: false })).toMatchObject({ provider: 'jev', reason: 'credential-fallback' });
-    expect(resolveDecisionRoute({ surface: 'researchTriage' }, settings, { jev: false, clef: true })).toMatchObject({ provider: 'clef', reason: 'credential-fallback' });
+    expect(resolveDecisionRoute({ surface: 'researchTriage' }, settings, { jev: true, clef: false })).toMatchObject({ provider: 'jev', reason: 'credential-fallback' });
     expect(resolveDecisionRoute({ surface: 'judgeTool' }, settings, { jev: false, clef: true })).toMatchObject({ provider: 'clef', reason: 'credential-fallback' });
   });
+
 
   it('keeps image requests on Clef and requires explicit visual egress', () => {
     const images = [{ content_type: 'image/png' as const, base64: 'synthetic' }];

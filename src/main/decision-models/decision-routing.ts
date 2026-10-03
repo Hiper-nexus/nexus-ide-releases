@@ -16,6 +16,17 @@ export const JEV_PINNED_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevD
   'dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool',
 ]);
 
+/**
+ * Cheap and non-pinned surfaces routed to Clef in auto mode (F-783).
+ * Effect-bearing surfaces remain strictly pinned to Jev via JEV_PINNED_SURFACES.
+ */
+export const CLEF_PREFERRED_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevDecisionSurface>([
+  'toolPick',
+  'researchTriage',
+  'rank',
+  'rankTool',
+]);
+
 export function clefModel(model?: string): ClefModel | undefined {
   const selector = model?.replace('@cf/cloudflare/', '');
   return selector === 'clef' || selector === 'clef-flash' ? selector : undefined;
@@ -52,10 +63,14 @@ export function resolveDecisionRoute(input: RouteInput, settings: DecisionSettin
     if (!available[explicitProvider]) return null;
     return route(explicitProvider, explicitClef ?? jevModel, 'manual', 'explicit-model');
   }
-  const preferred = input.surface === 'toolPick' ? 'clef' : 'jev';
+  const preferred = input.surface && CLEF_PREFERRED_SURFACES.has(input.surface) ? 'clef' : 'jev';
   const selected = available[preferred] ? preferred : preferred === 'jev' ? 'clef' : 'jev';
   if (!available[selected]) return null;
   const evidence = selected === 'clef' && preferred === 'clef' ? 'public-benchmark' : 'legacy';
+  const autoReason = input.surface === 'toolPick' ? 'tool-selection'
+    : input.surface === 'researchTriage' ? 'research-triage'
+    : input.surface === 'rank' || input.surface === 'rankTool' ? 'ranking'
+    : 'public-benchmark';
   return route(selected, selected === 'clef' ? 'clef' : jevModel, evidence,
-    selected !== preferred ? 'credential-fallback' : selected === 'clef' ? 'tool-selection' : 'legacy');
+    selected !== preferred ? 'credential-fallback' : selected === 'clef' ? autoReason : 'legacy');
 }

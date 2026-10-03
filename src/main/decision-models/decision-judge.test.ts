@@ -70,7 +70,7 @@ describe('common decision service', () => {
 
   it('returns a Jev answer whose provider omitted usage without inventing a cost or failing', async () => {
     const { usage: _omitted, ...withoutUsage } = nativeResult;
-    const result = await judgeDecision({ ...input, surface: 'researchTriage' }, {
+    const result = await judgeDecision({ ...input, surface: 'intake' }, {
       nativeJudge: async () => ({ ...withoutUsage, usage: { input_tokens: 0, output_tokens: 0 }, usageMissing: true as const }),
       getSettings: () => settings, getAvailability: () => ({ jev: true, clef: true }), getConfigurationKey: () => 'stable',
     });
@@ -81,7 +81,7 @@ describe('common decision service', () => {
 
   it('discards an answer when the user changes configuration during inference', async () => {
     let revision = 'before'; const onNoAnswer = vi.fn();
-    const result = await judgeDecision({ ...input, surface: 'researchTriage', onNoAnswer }, {
+    const result = await judgeDecision({ ...input, surface: 'intake', onNoAnswer }, {
       nativeJudge: async () => { revision = 'after'; return nativeResult; },
       getSettings: () => settings, getAvailability: () => ({ jev: true, clef: true }),
       getConfigurationKey: () => revision,
