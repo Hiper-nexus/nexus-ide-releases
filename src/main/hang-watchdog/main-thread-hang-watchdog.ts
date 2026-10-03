@@ -35,18 +35,25 @@ setInterval(() => {
   // Remarca no máximo a cada 60s: a duração atualiza, sem spam de disco.
   if (now - markedAt < 60_000) return;
   markedAt = now;
+  const line = JSON.stringify({
+    kind: 'main-thread-hang',
+    hangDurationMs: gap,
+    appVersion: workerData.version,
+    lastHeartbeatAt: lastHeartbeat,
+    detectedAt: now,
+  }) + '\\n';
   try {
     fs.mkdirSync(workerData.logsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(workerData.logsDir, 'main-hang-marker.json'),
-      JSON.stringify({
-        kind: 'main-thread-hang',
-        hangDurationMs: gap,
-        appVersion: workerData.version,
-        lastHeartbeatAt: lastHeartbeat,
-        detectedAt: now,
-      }) + '\\n',
-    );
+    fs.writeFileSync(path.join(workerData.logsDir, 'main-hang-marker.json'), line);
+  } catch {}
+  // F-764: o marker é sobrescrito; o histórico guarda TODOS os travamentos
+  // (o incidente de 03/10 teve três seguidos e só o último sobrou).
+  try {
+    const history = path.join(workerData.logsDir, 'main-hang.ndjson');
+    try {
+      if (fs.statSync(history).size > 512 * 1024) fs.renameSync(history, history + '.1');
+    } catch {}
+    fs.appendFileSync(history, line);
   } catch {}
 }, workerData.checkIntervalMs);
 `;
