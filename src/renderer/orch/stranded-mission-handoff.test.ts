@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FAILOVER_HANDOFF_HEADER } from '../../shared/failover-handoff';
+import { maskAccountLabel } from '../../shared/account-choice';
 import {
   cliAcceptsContinuityPrompt,
   nextContinuityInjectionDelay,
@@ -203,7 +204,8 @@ describe('planOperatorAgentSpawn', () => {
     expect(planned.continuityPack).toContain(FAILOVER_HANDOFF_HEADER);
     expect(planned.continuityPack).toContain('m-radar');
     expect(planned.continuityPack).toContain('Radar BI');
-    expect(planned.continuityPack).toContain('arrumou a baderna');
+    // F-775: rótulos de conta no pack saem mascarados.
+    expect(planned.continuityPack).toContain(maskAccountLabel('arrumou a baderna'));
   });
 
   it('does not attach a pack when the focused agent is healthy', () => {

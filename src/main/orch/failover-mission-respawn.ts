@@ -7,14 +7,21 @@
  * Workers headless/main-owned de missão morriam no limite sem NUNCA trocar
  * de conta: o pane morria, a missão sentia como exit comum. Este módulo é o
  * consumidor do lado do Main: mata a sessão exausta e respawna o MESMO
- * agente da MESMA missão com a nova conta pinada e nota de continuidade.
+ * agente da MESMA missão com a nova conta pinada e o pacote de continuidade
+ * estruturado (F-775) como initialPrompt.
  */
 
+import { execFileSync } from 'node:child_process';
 import type { PaneSpawnOptions } from './main-owned-pane-runtime';
 import type { PaneOrchMeta } from './main-owned-pane-runtime';
 import { getMainOwnedPane } from './main-owned-pane-runtime';
 import { spawnMainOwnedMissionPaneAsync } from './pane-registry';
 import { orchTerminateSession } from '../pty/pty-manager';
+import {
+  buildContinuityPack,
+  type ContinuityPackInput,
+} from '../../shared/failover-handoff';
+import { collectFilesModified } from './worker-files-modified';
 
 export interface MainOwnedFailoverPlanInput {
   readonly adapterId: string;
@@ -28,6 +35,20 @@ export interface MainOwnedFailoverPlanInput {
    * de conta (o respawn já nasce no default do adapter).
    */
   readonly toModel?: string;
+  /** F-775: janela/reset medidos + estado da tarefa para o pack. */
+  readonly limitKind?: string;
+  readonly limitWindow?: string | null;
+  readonly limitResetsAt?: number | null;
+  readonly limitCooldownMs?: number | null;
+  readonly taskBrief?: string;
+  readonly nextStep?: string;
+  readonly scrollbackExcerpt?: string;
+  /** Pré-coletados (testes / chamador que já tem); senão coleta do cwd. */
+  readonly touchedFiles?: readonly string[];
+  readonly diffStat?: string;
+  /** cwd do pane antigo para `git status`/`diff --stat`. */
+  readonly cwd?: string;
+  readonly toAccountLabel?: string;
 }
 
 export type MainOwnedFailoverPlan =
@@ -43,11 +64,60 @@ export type MainOwnedFailoverPlan =
       readonly reason: string;
     };
 
+function collectGitTaskState(cwd: string | undefined): {
+  touchedFiles: string[];
+  diffStat: string | undefined;
+} {
+  if (!cwd) return { touchedFiles: [], diffStat: undefined };
+  let touchedFiles: string[] = [];
+  try {
+    touchedFiles = collectFilesModified(cwd);
+  } catch {
+    touchedFiles = [];
+  }
+  let diffStat: string | undefined;
+  try {
+    diffStat = execFileSync(
+      'git',
+      ['-C', cwd, 'diff', '--stat'],
+      { encoding: 'utf8', timeout: 3_000, stdio: ['ignore', 'pipe', 'ignore'] },
+    ).trim();
+  } catch {
+    diffStat = undefined;
+  }
+  return {
+    touchedFiles,
+    diffStat: diffStat ? diffStat : undefined,
+  };
+}
+
+function resolveGitState(input: MainOwnedFailoverPlanInput): {
+  touchedFiles: readonly string[] | undefined;
+  diffStat: string | undefined;
+} {
+  if (input.touchedFiles !== undefined || input.diffStat !== undefined) {
+    return {
+      touchedFiles: input.touchedFiles,
+      diffStat: input.diffStat,
+    };
+  }
+  const cwd =
+    input.cwd ??
+    input.meta?.executionScope?.rootRealPath ??
+    input.meta?.scope?.rootRealPath;
+  return collectGitTaskState(cwd);
+}
+
 /**
  * Planeamento puro do respawn: mesmo adapter, mesma missão, mesmo papel,
  * MESMO selo de autoridade (o contexto da missão não mudou — só a conta
  * física), conta NOVA pinada e encarnação NOVA (o processo antigo morreu no
  * limite; herdar o incarnationId mentiria a prova de dedup do handoff).
+ *
+ * Cross-account vira o pacote de continuidade estruturado (F-775) — nunca o
+ * motivo cru português de antes: o texto passa pelas máscaras anti-detector
+ * e carrega arquivos/diff/próximo passo. F-520 (rotação de modelo, mesma
+ * conta) mantém o prompt curto próprio — não é handoff entre credenciais.
  */
 export function planMainOwnedFailoverRespawn(
   input: MainOwnedFailoverPlanInput,
@@ -66,9 +136,7 @@ export function planMainOwnedFailoverRespawn(
     ? `O modelo anterior foi rejeitado pelo provider. ` +
       `Você foi religado automaticamente no modelo "${input.toModel}" — ` +
       `continuar a tarefa de onde parou, sem repetir trabalho já entregue.`
-    : `A conta "${input.fromAccountLabel}" bateu o limite (${input.reason}). ` +
-      `Você foi religado automaticamente na conta reserva — continuar a tarefa ` +
-      `de onde parou, sem repetir trabalho já entregue.`;
+    : buildCrossAccountPack(input, meta);
   return {
     action: 'respawn',
     options: {
@@ -95,6 +163,31 @@ export function planMainOwnedFailoverRespawn(
   };
 }
 
+function buildCrossAccountPack(
+  input: MainOwnedFailoverPlanInput,
+  meta: PaneOrchMeta,
+): string {
+  const git = resolveGitState(input);
+  const packInput: ContinuityPackInput = {
+    fromAccountLabel: input.fromAccountLabel,
+    toAccountLabel: input.toAccountLabel ?? input.toAccountId,
+    reason: input.reason,
+    role: meta.role,
+    missionId: meta.missionId,
+    taskBrief: input.taskBrief ?? meta.agentName,
+    openWorkHint: meta.agentName,
+    limitKind: input.limitKind,
+    limitWindow: input.limitWindow,
+    limitResetsAt: input.limitResetsAt,
+    limitCooldownMs: input.limitCooldownMs,
+    nextStep: input.nextStep,
+    scrollbackExcerpt: input.scrollbackExcerpt,
+    touchedFiles: git.touchedFiles,
+    diffStat: git.diffStat,
+  };
+  return buildContinuityPack(packInput);
+}
+
 /**
  * Executor: mata a sessão exausta (se ainda viva) e respawna o agente
  * main-owned com a nova conta. Devolve false quando não é pane de missão
@@ -110,6 +203,18 @@ export async function respawnMainOwnedPaneWithAccount(input: {
   readonly reason: string;
   /** F-520: failover de modelo — mesma conta, modelo alternativo. */
   readonly toModel?: string;
+  /** F-775: contexto estruturado do pack de continuidade. */
+  readonly limitKind?: string;
+  readonly limitWindow?: string | null;
+  readonly limitResetsAt?: number | null;
+  readonly limitCooldownMs?: number | null;
+  readonly taskBrief?: string;
+  readonly nextStep?: string;
+  readonly scrollbackExcerpt?: string;
+  readonly touchedFiles?: readonly string[];
+  readonly diffStat?: string;
+  readonly cwd?: string;
+  readonly toAccountLabel?: string;
 }): Promise<boolean> {
   const entry = getMainOwnedPane(input.paneId);
   const plan = planMainOwnedFailoverRespawn({
@@ -119,6 +224,17 @@ export async function respawnMainOwnedPaneWithAccount(input: {
     fromAccountLabel: input.fromAccountLabel,
     reason: input.reason,
     toModel: input.toModel,
+    limitKind: input.limitKind,
+    limitWindow: input.limitWindow,
+    limitResetsAt: input.limitResetsAt,
+    limitCooldownMs: input.limitCooldownMs,
+    taskBrief: input.taskBrief,
+    nextStep: input.nextStep,
+    scrollbackExcerpt: input.scrollbackExcerpt,
+    touchedFiles: input.touchedFiles,
+    diffStat: input.diffStat,
+    cwd: input.cwd,
+    toAccountLabel: input.toAccountLabel,
   });
   if (plan.action === 'skip') {
     console.info(
@@ -145,8 +261,8 @@ export async function respawnMainOwnedPaneWithAccount(input: {
   }
   console.info(
     `[failover-mission-respawn] ${input.paneId} trocou para a conta ` +
-    `${input.toAccountId} (novo pane ${spawned.paneId}, ` +
-    `session ${spawned.sessionId})`,
+      `${input.toAccountId} (novo pane ${spawned.paneId}, ` +
+      `session ${spawned.sessionId})`,
   );
   return true;
 }
