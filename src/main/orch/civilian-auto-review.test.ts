@@ -148,6 +148,7 @@ const healthySensors = {
     summary: 'Auditoria: ✓ nenhuma vulnerabilidade conhecida.',
     findings: [],
   }),
+  freshness: async () => ({ kind: 'dependency-freshness' as const, status: 'passed' as const, summary: 'Atualidade npm: orientação consultiva.', findings: [] }),
   // Portão de regressão fora dos testes de fluxo; coberto abaixo.
   regressionGate: null,
 };
@@ -233,6 +234,17 @@ describe('blockingFindingsOf / describeFindingsForOperator', () => {
 });
 
 describe('enforceCivilianAutoReview', () => {
+  it('freshness feedback remains advisory even when an injected result labels a finding critical', async () => {
+    __resetCivilianAutoReviewForTests();
+    const { dependencies } = deps();
+    const outcome = await enforceCivilianAutoReview({ mission: missionFixture(), scope, productFiles: ['src/app.ts'] }, {
+      ...dependencies,
+      freshness: async () => ({ kind: 'dependency-freshness', status: 'failed', summary: 'Aviso consultivo de versão, sem atualização aplicada.',
+        findings: [{ severity: 'critical', file: '(dependência) legacy', evidence: 'newer version', recommendation: 'review later' }] }),
+    });
+    expect(outcome.kind).toBe('approved');
+    if (outcome.kind === 'approved') expect(outcome.note).toContain('Aviso consultivo de versão');
+  });
   it('projeto real sem Git recebe análise dos arquivos e segue com limitação honesta', async () => {
     __resetCivilianAutoReviewForTests();
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'nexus-civil-review-')));

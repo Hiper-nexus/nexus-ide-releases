@@ -1,3 +1,4 @@
+import { getProjectDomainStores } from './project-domain-store-registry';
 import { missionExecutionScope, missionExecutionBaseSha } from './mission-execution-scope';
 import { createHash } from 'node:crypto';
 import type { Mission } from '../../shared/orch-types';
@@ -12,6 +13,7 @@ import {
 } from '../context/candidate-quality-scanner';
 import {
   runDependencyAuditSensor,
+  runDependencyFreshnessSensor,
   runTestCoverageSensor,
   runTypecheckSensor,
   type MechanicalCheckResult,
@@ -81,6 +83,7 @@ export interface CivilianAutoReviewDependencies {
     root: string,
   ) => Promise<MechanicalCheckResult>;
   readonly audit?: (root: string) => Promise<MechanicalCheckResult>;
+  readonly freshness?: (root: string) => Promise<MechanicalCheckResult>;
   readonly testCoverage?: (
     root: string,
     files: readonly string[],
@@ -234,7 +237,7 @@ export function civilianAutoReviewEvidenceNote(
 function mechanicalToReviewFindings(
   results: readonly MechanicalCheckResult[],
 ): readonly ReviewFindingInput[] {
-  return results.flatMap((result) =>
+  return results.filter((result) => result.kind !== 'dependency-freshness').flatMap((result) =>
     result.findings
       .filter((finding) => BLOCKING_SEVERITIES.has(finding.severity))
       .map((finding: MechanicalFinding): ReviewFindingInput => ({
@@ -365,6 +368,16 @@ export async function enforceCivilianAutoReview(
   const mechanical = await Promise.all([
     (dependencies.typecheck ?? runTypecheckSensor)(root),
     (dependencies.audit ?? runDependencyAuditSensor)(root),
+    dependencies.freshness ? dependencies.freshness(root) : runDependencyFreshnessSensor(root, {
+      assertCurrentAuthority: () => {
+        const live = getProjectDomainStores(input.scope).missions.get(input.mission.id);
+        if (!live || live.status !== input.mission.status || live.intentVersion !== input.mission.intentVersion ||
+          live.updatedAt !== input.mission.updatedAt || live.orchestratorSessionId !== input.mission.orchestratorSessionId ||
+          missionExecutionScope(input.scope, live).rootRealPath !== root) {
+          throw new Error('dependency advice mission authority changed');
+        }
+      },
+    }),
     (dependencies.testCoverage ?? runTestCoverageSensor)(root, changedFiles),
   ]);
   const mechanicalBlocking = mechanicalToReviewFindings(mechanical);

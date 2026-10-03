@@ -95,6 +95,7 @@ export const FEATURE_FLAG_IDS = {
   uiProjectOverview: 'feature.ui.projectOverview',
   /** Portão de regressão: testes impactados pelo diff antes de aceitar escrita (0.76.110). */
   regressionGate: 'feature.orch.regressionGate',
+  dependencyFreshness: 'feature.context.dependencyFreshness',
 } as const;
 
 export type FeatureFlagId =
@@ -367,6 +368,17 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     removeAfter: '2027-09-30',
     killSwitch: false,
     telemetry: true,
+    defaultEnabled: true,
+  },
+  {
+    id: FEATURE_FLAG_IDS.dependencyFreshness,
+    owner: 'context',
+    description: 'Consultar versões e avisos públicos de dependências npm, como orientação para manutenção.',
+    channel: 'dev',
+    createdAt: '2026-10-03',
+    removeAfter: '2027-10-03',
+    killSwitch: false,
+    telemetry: false,
     defaultEnabled: true,
   },
 ] as const;

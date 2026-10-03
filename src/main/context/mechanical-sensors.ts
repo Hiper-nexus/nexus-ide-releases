@@ -1,3 +1,9 @@
+import fsp from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { compareAppVersions, isValidAppVersion } from '../../shared/app-version';
+import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
+import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
+import { isAdvisoryNpmSelectorSafe, readAdvisoryNpmMetadata, type AdvisoryRegistryAuthority } from './sensor-broker';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -34,6 +40,7 @@ export interface MechanicalFinding {
 export type MechanicalCheckKind =
   | 'typecheck'
   | 'dependency-audit'
+  | 'dependency-freshness'
   | 'test-coverage';
 
 export interface MechanicalCheckResult {
@@ -414,6 +421,104 @@ export async function runDependencyAuditSensor(
     summary: `Auditoria: ✗ ${critical} crítica(s), ${high} alta(s) em produção.`,
     findings: blocking,
   };
+}
+
+export interface DependencyFreshnessDeps {
+  readonly readJson?: (file: string) => Promise<unknown>;
+  readonly metadata?: typeof readAdvisoryNpmMetadata;
+  readonly allowNetwork?: () => boolean;
+  readonly signal?: AbortSignal;
+  readonly assertCurrentAuthority?: () => void;
+}
+
+async function readFreshnessJson(file: string): Promise<unknown> {
+  const handle = await fsp.open(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0));
+  try {
+    const stat = await handle.stat();
+    const cap = file.endsWith('package.json') ? 256 * 1024 : 2 * 1024 * 1024;
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size > cap) throw new Error('invalid dependency input');
+    const buffer = Buffer.alloc(stat.size + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const after = await handle.stat();
+    const named = await fsp.lstat(file);
+    if (named.dev !== stat.dev || named.ino !== stat.ino || bytesRead > stat.size || after.size !== stat.size || after.mtimeMs !== stat.mtimeMs) throw new Error('dependency input changed');
+    return JSON.parse(buffer.subarray(0, bytesRead).toString('utf8'));
+  } finally { await handle.close(); }
+}
+
+function dependencyRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+/** Read-only public-registry advice; freshness never becomes a completion veto. */
+export async function runDependencyFreshnessSensor(root: string, deps: DependencyFreshnessDeps = {}): Promise<MechanicalCheckResult> {
+  const unavailable = (reason: string): MechanicalCheckResult => ({ kind: 'dependency-freshness', status: 'unavailable',
+    summary: `Atualidade npm: não verificada (${reason}).`, findings: [] });
+  const allowNetwork = deps.allowNetwork ?? (() => getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.dependencyFreshness));
+  const current = () => {
+    deps.assertCurrentAuthority?.();
+    if (deps.signal?.aborted) throw new Error('dependency advice authority revoked');
+  };
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  deps.signal?.addEventListener('abort', abort, { once: true });
+  const deadline = setTimeout(abort, 7000);
+  try {
+    current();
+    if (!allowNetwork()) return unavailable('consulta desativada');
+    const canonicalRoot = deps.readJson ? root : await fsp.realpath(root);
+    if (!deps.readJson && canonicalRoot !== root) return unavailable('raiz de execução alterada');
+    const read = deps.readJson ?? readFreshnessJson;
+    const manifest = dependencyRecord(await read(join(root, 'package.json')));
+    current();
+    const lock = dependencyRecord(await read(join(root, 'package-lock.json')));
+    current();
+    if (!deps.readJson && await fsp.realpath(root) !== canonicalRoot) return unavailable('raiz de execução alterada');
+    if (!manifest || !lock) return unavailable('manifesto ou versões instaladas ausentes');
+    const declared = new Map<string, unknown>();
+    for (const section of ['dependencies', 'devDependencies']) {
+      for (const [name, spec] of Object.entries(dependencyRecord(manifest[section]) ?? {})) declared.set(name, spec);
+    }
+    if (!declared.size) return { kind: 'dependency-freshness', status: 'passed', summary: 'Atualidade npm: sem dependências diretas.', findings: [] };
+    const packages = dependencyRecord(lock.packages);
+    const oldPackages = dependencyRecord(lock.dependencies);
+    const findings: MechanicalFinding[] = [];
+    let verified = 0;
+    let unverified = 0;
+    let inspected = 0;
+    for (const [name, spec] of declared) {
+      current();
+      if (controller.signal.aborted || !allowNetwork() || inspected >= 24) { unverified++; continue; }
+      if (typeof spec !== 'string' || /(?:workspace:|file:|link:|git|https?:|npm:|[/\\])/i.test(spec) ||
+        !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(name) || name.length > 214) { unverified++; continue; }
+      const installed = dependencyRecord(packages?.[`node_modules/${name}`] ?? oldPackages?.[name]);
+      const version = installed?.version;
+      const resolved = installed?.resolved;
+      if (typeof version !== 'string' || !isAdvisoryNpmSelectorSafe(name, version) || !isValidAppVersion(version) || typeof resolved !== 'string') { unverified++; continue; }
+      let publicSource = false;
+      try { const source = new URL(resolved); publicSource = source.origin === 'https://registry.npmjs.org' && !source.username && !source.password && !source.search && !source.hash; } catch { /* Private/file/git source: no egress. */ }
+      if (!publicSource) { unverified++; continue; }
+      inspected++;
+      const authority: AdvisoryRegistryAuthority = { signal: controller.signal, allowNetwork, assertCurrentAuthority: current };
+      const metadata = deps.metadata ?? readAdvisoryNpmMetadata;
+      const [installedInfo, latestInfo] = await Promise.all([metadata(name, version, authority), metadata(name, 'latest', authority)]);
+      current();
+      if (!allowNetwork() || controller.signal.aborted || !installedInfo || !latestInfo ||
+        installedInfo.name !== name || installedInfo.version !== version || latestInfo.name !== name ||
+        !isValidAppVersion(latestInfo.version)) { unverified++; continue; }
+      verified++;
+      if (installedInfo.deprecated && findings.length < MAX_FINDINGS_PER_SENSOR) {
+        findings.push({ severity: 'low', file: `(dependência) ${name}`, evidence: `${name}@${version} descontinuado no registry npm.`, recommendation: 'Revise a dependência quando planejar uma manutenção.' });
+      }
+      if (compareAppVersions(latestInfo.version, version) > 0 && findings.length < MAX_FINDINGS_PER_SENSOR) {
+        findings.push({ severity: 'low', file: `(dependência) ${name}`, evidence: `${name}: instalada ${version}; versão pública mais nova ${latestInfo.version}.`, recommendation: 'Avalie compatibilidade e testes antes de escolher uma atualização.' });
+      }
+    }
+    if (!allowNetwork() || deps.signal?.aborted || controller.signal.aborted) return unavailable('consulta cancelada ou tempo limite');
+    if (!verified) return unavailable(`${unverified} dependência(s) sem metadata pública verificável`);
+    return { kind: 'dependency-freshness', status: 'passed', summary: `Atualidade npm: orientação consultiva — ${verified} verificadas, ${findings.length} aviso(s), ${unverified} não verificadas.`, findings };
+  } catch { return unavailable('offline, entrada inválida ou autoridade alterada'); }
+  finally { controller.abort(); clearTimeout(deadline); deps.signal?.removeEventListener('abort', abort); }
 }
 
 /* ------------------------------------------------------------------ */

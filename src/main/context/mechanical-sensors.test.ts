@@ -1,9 +1,88 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   runDependencyAuditSensor,
+  runDependencyFreshnessSensor,
   runTestCoverageSensor,
   runTypecheckSensor,
 } from './mechanical-sensors';
+
+describe('dependency freshness advice', () => {
+  const root = '/advisory-project';
+  const files = {
+    manifest: { dependencies: { legacy: '^1.0.0', local: 'file:../private', gitdep: 'git+https://private/token', workspace: 'workspace:*', privatepkg: '2.0.0' } },
+    lock: { packages: { 'node_modules/legacy': { version: '1.0.0', resolved: 'https://registry.npmjs.org/legacy/-/legacy-1.0.0.tgz' },
+      'node_modules/privatepkg': { version: '2.0.0', resolved: 'https://token@private.registry/package.tgz' } } },
+  };
+  it('reports deprecated/newer public direct versions as advice without requesting private/local specs', async () => {
+    const requests: string[] = [];
+    const result = await runDependencyFreshnessSensor(root, {
+      allowNetwork: () => true,
+      readJson: async (file) => file.endsWith('package.json') ? files.manifest : files.lock,
+      metadata: async (name, version) => { requests.push(`${name}:${version}`); return { name, version: version === 'latest' ? '2.0.0' : version, ...(version !== 'latest' ? { deprecated: 'Use the maintained version.' } : {}) }; },
+    });
+    expect(requests.sort()).toEqual(['legacy:1.0.0', 'legacy:latest']);
+    expect(result.status).toBe('passed');
+    expect(result.findings.every((finding) => finding.severity === 'low')).toBe(true);
+    expect(result.findings.map((finding) => finding.evidence).join(' ')).toContain('2.0.0');
+    expect(result.findings.map((finding) => finding.evidence).join(' ')).toContain('descontinuad');
+  });
+  it('opt-out and offline are explicitly unverified and never a failed check', async () => {
+    let requests = 0;
+    const deps = { readJson: async () => ({ dependencies: { legacy: '1.0.0' } }), metadata: async () => { requests++; return null; } };
+    const off = await runDependencyFreshnessSensor(root, { ...deps, allowNetwork: () => false });
+    expect(requests).toBe(0);
+    expect(off.status).toBe('unavailable');
+    const offline = await runDependencyFreshnessSensor(root, { allowNetwork: () => true,
+      readJson: async (file) => file.endsWith('package.json') ? files.manifest : files.lock,
+      metadata: async () => null,
+    });
+    expect(offline.status).toBe('unavailable');
+    expect(offline.summary).toContain('não verificada');
+    expect(offline.findings).toEqual([]);
+  });
+  it('never requests token-like package names and caps public dependency inspection', async () => {
+    const dependencies: Record<string, string> = {};
+    const packages: Record<string, unknown> = {};
+    for (let i = 0; i < 30; i++) {
+      dependencies[`safe-${i}`] = '1.0.0';
+      packages[`node_modules/safe-${i}`] = { version: '1.0.0', resolved: `https://registry.npmjs.org/safe-${i}/-/safe-${i}-1.0.0.tgz` };
+    }
+    const token = `npm_${'a'.repeat(30)}`;
+    dependencies[token] = '1.0.0';
+    packages[`node_modules/${token}`] = { version: '1.0.0', resolved: 'https://registry.npmjs.org/token/-/token-1.0.0.tgz' };
+    const names: string[] = [];
+    const result = await runDependencyFreshnessSensor(root, { allowNetwork: () => true,
+      readJson: async (file) => file.endsWith('package.json') ? { dependencies } : { packages },
+      metadata: async (name, version) => { names.push(name); return { name, version: version === 'latest' ? '1.0.0' : version }; },
+    });
+    expect(new Set(names).size).toBe(24);
+    expect(names).not.toContain(token);
+    expect(result.summary).toContain('7 não verificadas');
+  });
+  it('reads real files without mutation and refuses a symlinked manifest before egress', async () => {
+    const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dependency-advice-')));
+    const manifest = path.join(directory, 'package.json');
+    const lock = path.join(directory, 'package-lock.json');
+    fs.writeFileSync(manifest, JSON.stringify({ dependencies: { legacy: '1.0.0' } }));
+    fs.writeFileSync(lock, JSON.stringify(files.lock));
+    const original = [fs.readFileSync(manifest, 'utf8'), fs.readFileSync(lock, 'utf8')];
+    let calls = 0;
+    const metadata = async (name: string, version: string) => { calls++; return { name, version: version === 'latest' ? '1.0.0' : version }; };
+    try {
+      expect((await runDependencyFreshnessSensor(directory, { allowNetwork: () => true, metadata })).status).toBe('passed');
+      expect([fs.readFileSync(manifest, 'utf8'), fs.readFileSync(lock, 'utf8')]).toEqual(original);
+      expect(fs.readdirSync(directory).sort()).toEqual(['package-lock.json', 'package.json']);
+      fs.renameSync(manifest, path.join(directory, 'private.json'));
+      fs.symlinkSync(path.join(directory, 'private.json'), manifest);
+      calls = 0;
+      expect((await runDependencyFreshnessSensor(directory, { allowNetwork: () => true, metadata })).status).toBe('unavailable');
+      expect(calls).toBe(0);
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+  });
+});
 
 const execOk = async () => ({ stdout: '', stderr: '' });
 const execFail = (stdout: string, code = 1) => async () => {

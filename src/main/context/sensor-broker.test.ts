@@ -4,7 +4,33 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { buildScopedExecPlan, createScopedSandboxHome } from '../runtime/process-sandbox';
-import { SensorBroker, type SensorProcessResult } from './sensor-broker';
+import { SensorBroker, readAdvisoryNpmMetadata, type SensorProcessResult } from './sensor-broker';
+
+describe('public npm advice transport', () => {
+  it('uses one fixed credential-free endpoint and checks authority before publishing metadata', async () => {
+    let current = true;
+    const request = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ name: '@scope/pkg', version: '1.2.3', deprecated: 'old' })));
+    const result = await readAdvisoryNpmMetadata('@scope/pkg', '1.2.3', {
+      allowNetwork: () => true, fetch: request, assertCurrentAuthority: () => { if (!current) throw new Error('revoked'); },
+    });
+    expect(result).toEqual({ name: '@scope/pkg', version: '1.2.3', deprecated: 'old' });
+    expect(request).toHaveBeenCalledWith('https://registry.npmjs.org/%40scope%2Fpkg/1.2.3', expect.objectContaining({ method: 'GET', redirect: 'error', credentials: 'omit' }));
+    request.mockImplementation(async () => { current = false; return new Response(JSON.stringify({ name: '@scope/pkg', version: '1.2.3' })); });
+    expect(await readAdvisoryNpmMetadata('@scope/pkg', '1.2.3', { allowNetwork: () => true, fetch: request,
+      assertCurrentAuthority: () => { if (!current) throw new Error('revoked'); } })).toBeNull();
+  });
+  it('refuses malicious selectors, mismatched/oversized output and times out offline requests', async () => {
+    const request = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ name: 'other', version: '1.0.0' })));
+    const policy = { allowNetwork: () => true, fetch: request };
+    expect(await readAdvisoryNpmMetadata('../private?token=abc', 'latest', policy)).toBeNull();
+    expect(request).not.toHaveBeenCalled();
+    expect(await readAdvisoryNpmMetadata('safe', 'latest', policy)).toBeNull();
+    request.mockResolvedValue(new Response('x'.repeat(70_000)));
+    expect(await readAdvisoryNpmMetadata('safe', 'latest', policy)).toBeNull();
+    request.mockImplementation((_url, init) => new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new Error('offline')), { once: true })));
+    expect(await readAdvisoryNpmMetadata('safe', 'latest', { ...policy, timeoutMs: 5 })).toBeNull();
+  });
+});
 
 const roots: string[] = [];
 

@@ -25,6 +25,74 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_TIMEOUT_MS = 15 * 60_000;
 const OUTPUT_LIMIT_BYTES = 2 * 1024 * 1024;
 
+export interface AdvisoryNpmMetadata {
+  readonly name: string;
+  readonly version: string;
+  readonly deprecated?: string;
+}
+
+export interface AdvisoryRegistryAuthority extends McpToolInvocation {
+  readonly allowNetwork: () => boolean;
+  readonly fetch?: typeof fetch;
+  readonly timeoutMs?: number;
+}
+
+export function isAdvisoryNpmSelectorSafe(name: string, version: string): boolean {
+  const packageName = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
+  const semanticVersion = /^(?:0|[1-9]\d{0,8})\.(?:0|[1-9]\d{0,8})\.(?:0|[1-9]\d{0,8})(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+  if (name.length > 214 || !packageName.test(name) || version.length > 80 ||
+    (version !== 'latest' && !semanticVersion.test(version)) ||
+    /(?:sk-|ghp_|github_pat_|npm_|xox[baprs]-)[A-Za-z0-9_-]{20,}/.test(`${name}:${version}`)) return false;
+  return true;
+}
+
+/** Consultive metadata only. This never issues TrustedEvidence or changes
+ * SensorDefinition.network=false, process sandbox policy, or project files. */
+export async function readAdvisoryNpmMetadata(
+  name: string,
+  version: string,
+  authority: AdvisoryRegistryAuthority,
+): Promise<AdvisoryNpmMetadata | null> {
+  if (!isAdvisoryNpmSelectorSafe(name, version)) return null;
+  const semanticVersion = /^(?:0|[1-9]\d{0,8})\.(?:0|[1-9]\d{0,8})\.(?:0|[1-9]\d{0,8})(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  authority.signal?.addEventListener('abort', abort, { once: true });
+  const timeout = setTimeout(abort, Math.max(1, Math.min(1500, authority.timeoutMs ?? 1500)));
+  try {
+    assertMcpInvocationCurrent(authority);
+    if (!authority.allowNetwork()) return null;
+    const response = await (authority.fetch ?? fetch)(
+      `https://registry.npmjs.org/${encodeURIComponent(name)}/${encodeURIComponent(version)}`,
+      { method: 'GET', redirect: 'error', credentials: 'omit', signal: controller.signal,
+        headers: { accept: 'application/json' } },
+    );
+    assertMcpInvocationCurrent(authority);
+    if (!authority.allowNetwork() || controller.signal.aborted || !response.ok || !response.body) return null;
+    if (response.url && new URL(response.url).origin !== 'https://registry.npmjs.org') return null;
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let bytes = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        assertMcpInvocationCurrent(authority);
+        if (!authority.allowNetwork() || controller.signal.aborted) return null;
+        if (done) break;
+        bytes += value.byteLength;
+        if (bytes > 64 * 1024) { controller.abort(); return null; }
+        chunks.push(value);
+      }
+    } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
+    const parsed = z.object({ name: z.string().max(214), version: z.string().max(80), deprecated: z.string().max(4096).optional() })
+      .safeParse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+    if (!parsed.success || parsed.data.name !== name || !semanticVersion.test(parsed.data.version) ||
+      (version !== 'latest' && parsed.data.version !== version)) return null;
+    return Object.freeze(parsed.data);
+  } catch { return null; }
+  finally { controller.abort(); clearTimeout(timeout); authority.signal?.removeEventListener('abort', abort); }
+}
+
 const sensorDefinitionSchema = z
   .object({
     id: z.string().regex(SENSOR_ID),
