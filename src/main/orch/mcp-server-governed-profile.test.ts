@@ -10,6 +10,7 @@ import type { BoundSpawnAuthority } from './spawn-authority';
 import { getContext, resetGateForTests } from './gate';
 import { assertIsolatedWriterGitTool, isIsolatedWriterContext } from './isolated-writer-policy';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
+import { resetHandoffSpoolForTests, startHandoffSpool } from './handoff-spool';
 
 vi.mock('electron', () => ({
   app: {
@@ -738,6 +739,43 @@ describe('mcp-server governed CLI profile wiring', () => {
 
     aider.onSpawnFailed?.();
     expect(fs.existsSync(aiderShimRoot)).toBe(false);
+  });
+
+  it('F-795: worker de missão ganha o spool de handoff no env e no grant do shim; spawn falho apaga', () => {
+    const root = tempRoot();
+    const cwd = path.join(root, 'workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+    const spoolRoot = path.join(root, 'userData', 'handoff-spool', 'v1');
+    startHandoffSpool({
+      root: spoolRoot,
+      deps: { getStores: () => { throw new Error('não usado'); }, deliver: () => undefined },
+      bootDelayMs: 600_000,
+      watch: false,
+    });
+    try {
+      const decoration = prepareAgentSpawnDecoration(
+        adapter('agy'),
+        { kind: 'cli-agent', cols: 80, rows: 24 },
+        authority(cwd, true),
+        { PATH: '/usr/bin:/bin' },
+      );
+      if (!decoration) throw new Error('expected AGY worker decoration');
+      const spoolDir = decoration.env.NEXUS_HANDOFF_SPOOL_DIR;
+      expect(spoolDir).toBe(fs.realpathSync(path.join(spoolRoot, 'sessions', decoration.env.NEXUS_HANDOFF_SPOOL_ID)));
+      expect(decoration.env.NEXUS_HANDOFF_SPOOL_KEY).toMatch(/^[a-f0-9]{64}$/);
+      expect(decoration.env.NEXUS_GATE_OFFLINE_POLICY).toBe('read-handoff');
+      expect(decoration.missionShimWritePaths).toContain(spoolDir);
+      expect(decoration.missionShimReadPaths).toContain(spoolDir);
+      // O vínculo (chave, missão) fica fora do que o agente pode escrever.
+      const binding = path.join(spoolRoot, 'bindings', `${decoration.env.NEXUS_HANDOFF_SPOOL_ID}.json`);
+      expect(fs.statSync(binding).mode & 0o777).toBe(0o600);
+      expect(decoration.missionShimWritePaths?.some((grant) => binding.startsWith(grant))).toBe(false);
+      decoration.onSpawnFailed?.();
+      expect(fs.existsSync(spoolDir)).toBe(false);
+      expect(fs.existsSync(binding)).toBe(false);
+    } finally {
+      resetHandoffSpoolForTests();
+    }
   });
 
   it('projects Claude trust only from an exact sealed mission authority', () => {

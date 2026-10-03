@@ -47,6 +47,15 @@ import {
 import { grantsIsolatedWriterGitTool } from "./isolated-writer-policy";
 import { installWorktreeSalvageNotifier } from "./worktree-salvage-notice";
 import {
+  createHandoffSpoolSession,
+  disposeHandoffSpoolBySession,
+  handoffSpoolRoot,
+  startHandoffSpool,
+  stopHandoffSpool,
+  type HandoffSpoolSession,
+} from "./handoff-spool";
+import { onHandoffSubmitted } from "./idle-delivery";
+import {
   handleMcpMessage,
   isJsonRpcRequest,
   type JsonRpcResponse,
@@ -1142,6 +1151,11 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           NEXUS_HOOK_REGRESSION_URL: hookRegressionUrl(),
           // PreToolUse/Bash integration review gate — same transport contract.
           NEXUS_HOOK_INTEGRATION_URL: hookIntegrationUrl(),
+          // F-795: com o gate inalcançável, o hook libera só leitura e o
+          // handoff (spool). O perfil exato do revisor interno não degrada.
+          NEXUS_GATE_OFFLINE_POLICY: internalPrevcReviewerAuthority
+            ? "closed"
+            : "read-handoff",
         }
       : {};
     const extraArgs: string[] = [];
@@ -1637,6 +1651,27 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     }
   }
 
+  // F-795: spool de handoff da sessão — o diretório privado onde shim, ponte
+  // stdio e hook guardam o handoff quando o Main não responde. Vai no mesmo
+  // grant de sandbox do shim. Rede de segurança: falhar aqui nunca impede o
+  // spawn (o worker segue com os caminhos de entrega de antes).
+  let handoffSpool: HandoffSpoolSession | null = null;
+  if (missionShim && ctx.missionId) {
+    try {
+      handoffSpool = createHandoffSpoolSession({
+        scope: ctx.scope,
+        missionId: ctx.missionId,
+        ...(ctx.workerIncarnationId ? { workerIncarnationId: ctx.workerIncarnationId } : {}),
+        agentLabel: ctx.agentName ?? ctx.label,
+        providerId: adapter.id,
+      });
+      if (handoffSpool) Object.assign(env, handoffSpool.env);
+    } catch (error) {
+      console.warn("[handoff-spool] sessão sem spool:", error);
+      handoffSpool = null;
+    }
+  }
+
   let attachmentReadPaths: readonly string[] | undefined;
   try {
     attachmentReadPaths = missionAttachmentReadPathsForSpawn(
@@ -1645,6 +1680,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     );
   } catch (error) {
     disposeMissionShim(missionShim);
+    handoffSpool?.discard();
     releaseSessionByToken(ctx.token);
     cleanupAgyMcpConfig(ctx.token);
     cleanupCliMcpSession(ctx.token);
@@ -1662,8 +1698,14 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     ...(attachmentReadPaths ? { attachmentReadPaths } : {}),
     ...(missionShim
       ? {
-          missionShimReadPaths: missionShim.readPaths,
-          missionShimWritePaths: missionShim.writePaths,
+          missionShimReadPaths: [
+            ...missionShim.readPaths,
+            ...(handoffSpool?.readPaths ?? []),
+          ],
+          missionShimWritePaths: [
+            ...missionShim.writePaths,
+            ...(handoffSpool?.writePaths ?? []),
+          ],
         }
       : {}),
     ...((advisoryProviderStateHome ||
@@ -1720,6 +1762,11 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         missionShim.bindSession(sessionId);
         missionShimBySession.set(sessionId, missionShim);
       }
+      try {
+        handoffSpool?.bindSession(sessionId);
+      } catch (error) {
+        console.warn("[handoff-spool] vínculo da sessão não gravado:", error);
+      }
     },
     onSpawnFailed: () => {
       // No session will ever exist for this token — drop it from the auth
@@ -1729,6 +1776,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
       cleanupCliMcpSession(ctx.token);
       cleanupSessionArtifacts(ctx.token);
       disposeMissionShim(missionShim);
+      handoffSpool?.discard();
     },
   };
   return decoration;
@@ -1967,11 +2015,14 @@ function installLegacyParser(
       }
       clearMcpPermissionSession(sessionId);
       disposeMissionShimBySession(sessionId);
+      // F-795: última passada do spool desta sessão; o diretório some vazio.
+      disposeHandoffSpoolBySession(sessionId);
       releaseSession(sessionId);
     }));
     track(
       tapSessionTermination((sessionId) => {
         disposeMissionShimBySession(sessionId);
+        disposeHandoffSpoolBySession(sessionId);
       }),
     );
   });
@@ -2006,6 +2057,16 @@ export function startMcpServer(): Promise<void> {
   installSpawnHook();
   // F-794: salvaguarda da worktree do writer avisa o orquestrador da missão.
   installWorktreeSalvageNotifier();
+  // F-795: spool de handoffs que o Main não recebeu — ingestão no boot, na
+  // volta do loop (watch) e no fim de cada sessão; nunca no caminho quente.
+  try {
+    startHandoffSpool({
+      root: handoffSpoolRoot(app.getPath("userData")),
+      deps: { getStores: getProjectDomainStores, deliver: onHandoffSubmitted },
+    });
+  } catch (error) {
+    console.warn("[handoff-spool] spool desligado:", error);
+  }
   // F-529: reenvios do autoresponder (tecla perdida na race do desenho do
   // diálogo de trust) digitam pelo mesmo caminho da resposta original.
   cliPromptAutoResponder.setWriter(orchWriteSession);
@@ -2189,6 +2250,8 @@ export function stopMcpServer(): void {
   sessionTokens.clear();
   for (const runtime of [...missionShims]) disposeMissionShim(runtime);
   missionShimBySession.clear();
+  // Fecha watchers/timers; o que estiver no disco fica para o próximo boot.
+  stopHandoffSpool();
   server?.close();
   server = null;
   port = 0;

@@ -6,11 +6,84 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const SCHEMA = "nexus.mission-shim-request/v1";
-const RESPONSE_TIMEOUT_MS = 30_000;
+const DEFAULT_RESPONSE_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 25;
 const LOCK_RETRY_MS = 10;
 const LOCK_TIMEOUT_MS = 5_000;
 const LOCK_STALE_MS = LOCK_TIMEOUT_MS;
+
+// O teto do Main (30 s de relógio) é o limite: o env só ENCURTA a espera.
+function responseTimeoutMs(env) {
+  const value = Number(env.NEXUS_SHIM_RESPONSE_TIMEOUT_MS);
+  if (!Number.isFinite(value) || value <= 0) return DEFAULT_RESPONSE_TIMEOUT_MS;
+  return Math.min(DEFAULT_RESPONSE_TIMEOUT_MS, Math.max(50, Math.floor(value)));
+}
+
+// F-795: spool de handoff em disco quando o Main não responde. Mesmo formato
+// e assinatura do hook e da ponte stdio (src/main/orch/handoff-spool-entry.ts);
+// o Main valida, deduplica e ingere no boot ou quando volta a responder.
+const NEXUS_SPOOL_SCHEMA = "nexus.handoff-spool-entry/v1";
+const NEXUS_SPOOL_MAX_PAYLOAD_BYTES = 400 * 1024;
+const NEXUS_SPOOL_MESSAGE =
+  "Nexus sem resposta: handoff guardado em disco. Ele será entregue ao orquestrador " +
+  "assim que o Nexus responder — não reenvie.";
+
+function nexusSpoolHandoff(env, transport, payload, requestId) {
+  try {
+    const dir = String(env.NEXUS_HANDOFF_SPOOL_DIR || "");
+    const spoolId = String(env.NEXUS_HANDOFF_SPOOL_ID || "");
+    const key = String(env.NEXUS_HANDOFF_SPOOL_KEY || "");
+    if (!dir || !path.isAbsolute(dir) || !spoolId || !/^[a-f0-9]{64}$/.test(key)) return null;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+    const body = JSON.stringify(payload);
+    if (Buffer.byteLength(body, "utf8") > NEXUS_SPOOL_MAX_PAYLOAD_BYTES) return null;
+    const entry = {
+      schema: NEXUS_SPOOL_SCHEMA,
+      spoolId,
+      entryId: crypto.randomUUID(),
+      createdAt: Date.now(),
+      transport,
+      toolName: "nexus_handoff_submit",
+    };
+    if (typeof requestId === "string" && requestId) entry.requestId = requestId;
+    entry.payload = body;
+    entry.mac = crypto
+      .createHmac("sha256", key)
+      .update(
+        JSON.stringify([
+          entry.schema,
+          entry.spoolId,
+          entry.entryId,
+          entry.createdAt,
+          entry.transport,
+          entry.toolName,
+          entry.requestId === undefined ? null : entry.requestId,
+          entry.payload,
+        ]),
+      )
+      .digest("hex");
+    const name = `${String(entry.createdAt).padStart(13, "0")}-${entry.entryId}.json`;
+    const temporary = path.join(dir, `.${name}.${process.pid}.tmp`);
+    fs.writeFileSync(temporary, `${JSON.stringify(entry)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+    });
+    try {
+      fs.renameSync(temporary, path.join(dir, name));
+    } catch (error) {
+      try {
+        fs.unlinkSync(temporary);
+      } catch {
+        // Nada a limpar.
+      }
+      throw error;
+    }
+    return { entryId: entry.entryId };
+  } catch {
+    return null;
+  }
+}
 
 function fail(message, exitCode = 2) {
   process.stderr.write(`${message}\n`);
@@ -312,6 +385,7 @@ async function submitRequest(parsed, env) {
   const sequencePath = path.join(stateDir, "sequence");
   const lock = await acquireLock(lockPath);
   let request;
+  let requestName;
   try {
     const prior = readLastSequence(sequencePath);
     const sequence = Math.max(Date.now() * 1_000, prior + 1);
@@ -334,7 +408,7 @@ async function submitRequest(parsed, env) {
       .update(signingInput(request))
       .digest("hex");
     writeAtomic(sequencePath, `${sequence}\n`);
-    const requestName = `${String(sequence).padStart(16, "0")}-${request.requestId}.json`;
+    requestName = `${String(sequence).padStart(16, "0")}-${request.requestId}.json`;
     writeAtomic(
       path.join(requestsDir, requestName),
       `${JSON.stringify(request)}\n`,
@@ -351,7 +425,7 @@ async function submitRequest(parsed, env) {
   }
 
   const responsePath = path.join(responsesDir, `${request.requestId}.json`);
-  const deadline = Date.now() + RESPONSE_TIMEOUT_MS;
+  const deadline = Date.now() + responseTimeoutMs(env);
   while (Date.now() < deadline) {
     try {
       const response = JSON.parse(fs.readFileSync(responsePath, "utf8"));
@@ -370,6 +444,26 @@ async function submitRequest(parsed, env) {
       }
     }
     await wait(POLL_INTERVAL_MS);
+  }
+  if (parsed.command === "mail" && parsed.operation === "send") {
+    // F-795: o Main não respondeu ao handoff. Tira o pedido da fila (se o
+    // Main ainda não o pegou, ele nunca vai processá-lo) e guarda o payload
+    // no spool da sessão; o Main ingere uma única vez quando voltar.
+    try {
+      fs.unlinkSync(path.join(requestsDir, requestName));
+    } catch {
+      // O Main já reivindicou o pedido: a ingestão deduplica pelo payload.
+    }
+    const spooled = nexusSpoolHandoff(env, "mission-shim", parsed.args, request.requestId);
+    if (spooled) {
+      return {
+        ok: true,
+        tool: "mission-shim",
+        spooled: true,
+        spoolEntryId: spooled.entryId,
+        message: NEXUS_SPOOL_MESSAGE,
+      };
+    }
   }
   return {
     ok: false,
