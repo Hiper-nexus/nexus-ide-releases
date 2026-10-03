@@ -8,18 +8,20 @@ type OperatorContext = Pick<AgentGateContext, 'role' | 'missionId' | 'providerId
   Partial<Pick<AgentGateContext, 'scope' | 'executionScope' | 'promotedFromUserSession'>>;
 
 /**
- * O pane do provider recebe o `UserPromptSubmit → /hook/delegate`? Só
- * Claude-family (settings `--settings`/HOME efêmero) e Codex (`-c hooks.…`)
- * têm o hook Nexus instalado no spawn — é lá que o bloco POR TAREFA chega.
- * Kimi/Grok/etc. não têm esse hook e continuam recebendo o bloco ESTÁTICO
- * pelas `instructions` do MCP initialize.
+ * O pane do provider recebe o `UserPromptSubmit → /hook/delegate`? Claude-family
+ * (settings `--settings`/HOME efêmero), Codex (`-c hooks.…`) e, desde o F-802,
+ * Kimi (`hooks` do config.toml do overlay; a saída do comando entra no contexto
+ * como mensagem) têm o hook Nexus instalado no spawn — é lá que o bloco POR
+ * TAREFA chega. Grok (o hook só observa: a saída é descartada), agy (outro
+ * evento e schema), MiMo e MiniMax (hook só por plugin) seguem recebendo o
+ * bloco ESTÁTICO pelas `instructions` do MCP initialize.
  */
 export function providerHasDelegateHook(providerId: string | undefined): boolean {
   if (!providerId) return false;
   const id = providerId.trim().toLowerCase();
   // Builtins claude/openclaude/codex: o registry vazio (teste, boot cedo) não
   // pode fingir que um pane Claude não tem hook — ele tem por construção.
-  if (id === 'codex' || id === 'claude' || id === 'openclaude') return true;
+  if (id === 'codex' || id === 'claude' || id === 'openclaude' || id === 'kimi') return true;
   const adapter = getAdapter(providerId);
   return adapter !== null && adapter.kind === 'cli-pty' && acceptsClaudeMcpCliFlags(adapter);
 }

@@ -1,7 +1,8 @@
 // Contexto do motor via hook `UserPromptSubmit` (C2, 25/09) — Claude e Codex
 // usam o mesmo formato (`hookSpecificOutput.additionalContext`; Codex 0.155
-// provado em 25/09). Como na triagem, a resposta do endpoint É a saída do hook
-// — sem `--output /dev/null`. `--max-time 4` cobre o teto de 2,5 s do Jev mais
+// provado em 25/09); o Kimi (F-802) recebe o mesmo comando, mas o endpoint
+// responde TEXTO PURO a ele (hook-delegate-endpoint). Como na triagem, a
+// resposta do endpoint É a saída do hook — sem `--output /dev/null`. `--max-time 4` cobre o teto de 2,5 s do Jev mais
 // o atraso de retry do judge. Nunca bloqueia: `-sf … || true`.
 import {
   NEXUS_HOOK_MARKER,

@@ -56,8 +56,8 @@ afterEach(() => {
 });
 
 describe('<workspace-memory> no "+ Pane" pelos canais do <business-model>', () => {
-  it('Kimi e Grok recebem pelas instructions do MCP, como dado neutralizado', async () => {
-    for (const providerId of ['kimi', 'grok', 'claude']) {
+  it('Grok e Claude recebem pelas instructions do MCP, como dado neutralizado', async () => {
+    for (const providerId of ['grok', 'claude']) {
       const instructions = await instructionsFor({ role: 'user', providerId });
       expect(instructions, providerId).toContain('<workspace-memory');
       expect(instructions).toContain('Sempre use pnpm no checkout');
@@ -66,13 +66,24 @@ describe('<workspace-memory> no "+ Pane" pelos canais do <business-model>', () =
     }
   });
 
-  it('helper (já recebe no brief), missão e Codex ficam fora do MCP', async () => {
+  it('helper (já recebe no brief), missão, Codex e Kimi (só hook) ficam fora do MCP', async () => {
     const helper = { role: 'user', providerId: 'kimi', operatorParentSessionId: 'op-1' };
     expect(await instructionsFor(helper)).not.toContain('<workspace-memory');
     expect(await instructionsFor({ role: 'user', providerId: 'grok', missionId: 'm' })).not.toContain(
       '<workspace-memory',
     );
     expect(await instructionsFor({ role: 'user', providerId: 'codex' })).not.toContain('<workspace-memory');
+    expect(await instructionsFor({ role: 'user', providerId: 'kimi' })).not.toContain('<workspace-memory');
+  });
+
+  it('Kimi recebe pelo hook (ele não lê as instructions do MCP), uma vez por janela', async () => {
+    const kimi = { role: 'user' as const, sessionId: 's-kimi', providerId: 'kimi', scope };
+    const deps = { advise: async () => null, now: () => 1_000 };
+    const first = await handleHookDelegateRequest(kimi, { prompt: 'instale com pnpm' }, deps);
+    expect(JSON.stringify(first.payload)).toContain('<workspace-memory');
+    expect(JSON.stringify(first.payload)).toContain('Sempre use pnpm no checkout');
+    const again = await handleHookDelegateRequest(kimi, { prompt: 'pnpm de novo' }, deps);
+    expect(JSON.stringify(again.payload)).not.toContain('<workspace-memory');
   });
 
   it('Codex suprime memória idêntica no hook dentro da janela', async () => {
@@ -109,7 +120,7 @@ describe('<workspace-memory> no "+ Pane" pelos canais do <business-model>', () =
     const previous = getOrchSettings().workspaceMemoryInjection;
     replaceOrchSettings({ workspaceMemoryInjection: false });
     try {
-      expect(await instructionsFor({ role: 'user', providerId: 'kimi' })).not.toContain('<workspace-memory');
+      expect(await instructionsFor({ role: 'user', providerId: 'grok' })).not.toContain('<workspace-memory');
       expect(withProjectContextBlocks({ prompt: 'instale com pnpm', scope })).toBe('instale com pnpm');
     } finally {
       replaceOrchSettings({ workspaceMemoryInjection: previous });

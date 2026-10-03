@@ -24,6 +24,7 @@ import { OPERATOR_DELEGATION_DOCTRINE } from './operator-delegation-doctrine';
 import {
   AUXILIARY_CONTEXT_HEADER,
   MAESTRO_TURN_REMINDER,
+  additionalContextText,
   __resetLeanRemindersForTests,
   formatDelegationContext,
   handleHookDelegateHttp,
@@ -42,6 +43,14 @@ describe('hook /hook/delegate', () => {
     expect(parseUserPrompt({ hook_event_name: 'UserPromptSubmit', prompt: 'x' })).toBe('x');
     expect(parseUserPrompt({ prompt: '' })).toBeNull();
     expect(parseUserPrompt('lixo')).toBeNull();
+  });
+
+  it('parseUserPrompt lê as partes de texto do Kimi (F-802) e ignora o que não é texto', () => {
+    expect(parseUserPrompt({ prompt: [{ type: 'text', text: 'revise o login' }, { type: 'text', text: 'e o logout' }] }))
+      .toBe('revise o login\ne o logout');
+    expect(parseUserPrompt({ prompt: [{ type: 'image_url', url: 'x' }, { type: 'text', text: '  ' }] })).toBeNull();
+    expect(parseUserPrompt({ prompt: [] })).toBeNull();
+    expect(parseUserPrompt({ prompt: 42 })).toBeNull();
   });
 
   const delegation = (parts: number, writers: number) => ({
@@ -336,6 +345,32 @@ describe('hook /hook/delegate', () => {
     // Claude lê as instructions do MCP uma vez no system prompt: não precisa do hook.
     expect((await handleHookDelegateRequest({ ...operator, providerId: 'claude' }, { prompt: 'oi' }, deps)).payload)
       .toEqual({});
+  });
+
+  it('Kimi (F-802): o contexto se apresenta como auxiliar e a doutrina chega pelo hook, uma vez por janela', async () => {
+    __resetLeanRemindersForTests();
+    let now = 7_000_000;
+    const advise = vi.fn(async () => delegation(3, 1));
+    const deps = { advise, now: () => now };
+    const kimi = { ...operator, sessionId: 's-kimi', providerId: 'kimi' };
+    const text = (out: { payload: Record<string, unknown> }) =>
+      (out.payload.hookSpecificOutput as { additionalContext: string }).additionalContext;
+    const first = text(await handleHookDelegateRequest(kimi, { prompt: [{ type: 'text', text: LONG }] }, deps));
+    expect(first.startsWith(AUXILIARY_CONTEXT_HEADER)).toBe(true);
+    expect(first).toContain(OPERATOR_DELEGATION_DOCTRINE);
+    expect(first).toContain('~3 partes');
+    // Segundo pedido: a doutrina já está no contexto — só o conselho do pedido.
+    const second = text(await handleHookDelegateRequest(kimi, { prompt: LONG }, deps));
+    expect(second).not.toContain(OPERATOR_DELEGATION_DOCTRINE);
+    expect(second).toContain('~3 partes');
+    now += 31 * 60_000;
+    expect(text(await handleHookDelegateRequest(kimi, { prompt: LONG }, deps))).toContain(OPERATOR_DELEGATION_DOCTRINE);
+  });
+
+  it('additionalContextText: o texto do contexto, ou vazio quando não há nada a dizer', () => {
+    expect(additionalContextText({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: 'oi' } })).toBe('oi');
+    expect(additionalContextText({})).toBe('');
+    expect(additionalContextText(null)).toBe('');
   });
 
   describe('Maestro de missão (F-701)', () => {

@@ -170,25 +170,28 @@ describe('ponto de montagem de blocos', () => {
 describe('"+ Pane" (mão do operador, sem missão)', () => {
   const scope = () => testProjectScope({ rootRealPath: root });
 
-  it('Claude/Kimi/Grok…: vai nas instructions do initialize do MCP, junto da doutrina', async () => {
+  it('Claude/Grok…: vai nas instructions do initialize do MCP, junto da doutrina', async () => {
     const registry = { serverName: 'nexus', serverVersion: 't', tools: [] } as unknown as McpRegistry;
-    const ctx = { token: 't', label: 'l', role: 'user' as const, providerId: 'kimi', scope: scope() } as unknown as AgentGateContext;
+    const ctx = { token: 't', label: 'l', role: 'user' as const, providerId: 'grok', scope: scope() } as unknown as AgentGateContext;
     const response = await handleMcpMessage(registry, ctx, { jsonrpc: '2.0', id: 1, method: 'initialize' });
     const instructions = (response as { result: { instructions: string } }).result.instructions;
     expect(instructions.startsWith(OPERATOR_DELEGATION_DOCTRINE)).toBe(true);
     expect(instructions).toContain('<business-model fonte=');
   });
 
-  it('Codex: não pelo MCP (cola em cada tool), sim pelo hook UserPromptSubmit, uma vez por sessão', async () => {
-    const codex = { role: 'user' as const, sessionId: 's-codex', providerId: 'codex', scope: scope() };
-    expect(operatorBusinessModelContext(codex, 'mcp')).toBeNull();
-    const deps = { advise: async () => null, now: () => 1_000 };
-    const first = await handleHookDelegateRequest(codex, { prompt: 'arrume a comissão' }, deps);
-    const text = (first.payload.hookSpecificOutput as { additionalContext: string }).additionalContext;
-    expect(text).toContain('<business-model fonte=');
-    const again = await handleHookDelegateRequest(codex, { prompt: 'e agora?' }, deps);
-    expect(JSON.stringify(again.payload)).not.toContain('<business-model');
-  });
+  it.each(['codex', 'kimi'])(
+    '%s: não pelo MCP (Codex cola em cada tool; Kimi não lê as instructions), sim pelo hook UserPromptSubmit, uma vez por sessão',
+    async (providerId) => {
+      const pane = { role: 'user' as const, sessionId: `s-${providerId}`, providerId, scope: scope() };
+      expect(operatorBusinessModelContext(pane, 'mcp')).toBeNull();
+      const deps = { advise: async () => null, now: () => 1_000 };
+      const first = await handleHookDelegateRequest(pane, { prompt: 'arrume a comissão' }, deps);
+      const text = (first.payload.hookSpecificOutput as { additionalContext: string }).additionalContext;
+      expect(text).toContain('<business-model fonte=');
+      const again = await handleHookDelegateRequest(pane, { prompt: 'e agora?' }, deps);
+      expect(JSON.stringify(again.payload)).not.toContain('<business-model');
+    },
+  );
 
   it('a promoção Main-owned do pane mantém o modelo de negócio no hook', async () => {
     const ctx = { role: 'orchestrator' as const, missionId: 'm', promotedFromUserSession: true as const,

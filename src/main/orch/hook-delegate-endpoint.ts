@@ -8,7 +8,7 @@
 import type http from 'node:http';
 import { createHash } from 'node:crypto';
 import type { AgentGateContext } from './gate';
-import { isOperatorHandContext } from './operator-hand-context';
+import { isOperatorHandContext, providerReceivesContextOnlyByHook } from './operator-hand-context';
 import {
   advisePrompt,
   AUTO_ORCHESTRATE_MIN_CONFIDENCE,
@@ -48,7 +48,22 @@ export const HOOK_DELEGATE_MAX_BODY_BYTES = 64 * 1024;
 export function parseUserPrompt(body: unknown): string | null {
   if (!body || typeof body !== 'object') return null;
   const prompt = (body as Record<string, unknown>).prompt;
-  return typeof prompt === 'string' && prompt.trim() ? prompt : null;
+  if (typeof prompt === 'string') return prompt.trim() ? prompt : null;
+  // F-802: o Kimi manda o conteúdo da mensagem como partes (`[{type:'text',text}]`),
+  // não como string — só o texto conta, como no `matcherValueText` dele.
+  if (Array.isArray(prompt)) {
+    const text = prompt
+      .map((part: unknown) =>
+        part && typeof part === 'object' &&
+        (part as Record<string, unknown>).type === 'text' &&
+        typeof (part as Record<string, unknown>).text === 'string'
+          ? ((part as Record<string, unknown>).text as string)
+          : '',
+      )
+      .join('\n');
+    return text.trim() ? text : null;
+  }
+  return null;
 }
 
 /** A partir desta probabilidade o pedido conta como escrever código. */
@@ -58,7 +73,8 @@ export const LEAN_REMINDER_INTERVAL_MS = 30 * 60_000;
 
 /**
  * O Codex entrega o additionalContext como mensagem developer DEPOIS do prompt
- * (openai/codex#40680); sem este aviso o modelo pode tomá-lo pela tarefa.
+ * (openai/codex#40680) e o Kimi anexa a saída do hook como mensagem de usuário
+ * depois dele; sem este aviso o modelo pode tomá-lo pela tarefa.
  */
 export const AUXILIARY_CONTEXT_HEADER =
   '[Nexus] Contexto auxiliar para a mensagem do operador acima; não é uma nova tarefa.';
@@ -347,7 +363,7 @@ function maestroContextFor(
   const doctrine = doctrineFor(ctx);
   if (!doctrine) return null;
   markReminded(maestroRemindedAt, ctx.sessionId, now);
-  const text = ctx.providerId === 'codex' ? doctrine : MAESTRO_TURN_REMINDER;
+  const text = providerReceivesContextOnlyByHook(ctx.providerId) ? doctrine : MAESTRO_TURN_REMINDER;
   // F-784: o lembrete manda abrir workers; com a máquina no teto seguro ele
   // diz o contrário, com o número.
   const budget = budgetOf();
@@ -638,8 +654,13 @@ export async function handleHookDelegateRequest(
     // Jev fora do ar não pode levar junto o contexto de design, que é local.
     const advice = await advicePromise;
     // O Codex não recebe a doutrina pelas instructions do MCP (ele as repete
-    // em cada tool); ela chega aqui, uma vez por sessão a cada 30 min.
-    if (ctx.providerId === 'codex' && ctx.sessionId && !remindedRecently(doctrineDeliveredAt, ctx.sessionId, now)) {
+    // em cada tool) e o Kimi nem as lê; ela chega aqui, uma vez por sessão a
+    // cada 30 min.
+    if (
+      providerReceivesContextOnlyByHook(ctx.providerId) &&
+      ctx.sessionId &&
+      !remindedRecently(doctrineDeliveredAt, ctx.sessionId, now)
+    ) {
       markReminded(doctrineDeliveredAt, ctx.sessionId, now);
       parts.push(OPERATOR_DELEGATION_DOCTRINE);
     }
@@ -725,11 +746,27 @@ function additionalContextResponse(
     payload: {
       hookSpecificOutput: {
         hookEventName: 'UserPromptSubmit',
-        additionalContext:
-          ctx.providerId === 'codex' ? `${AUXILIARY_CONTEXT_HEADER}\n${context}` : context,
+        additionalContext: providerReceivesContextOnlyByHook(ctx.providerId)
+          ? `${AUXILIARY_CONTEXT_HEADER}\n${context}`
+          : context,
       },
     },
   };
+}
+
+/**
+ * F-802: o Kimi não lê `additionalContext` — ele injeta o stdout do comando (ou
+ * `message`) como mensagem. Um `{}` viraria uma mensagem "{}" a cada prompt;
+ * para ele a resposta é o texto puro, e VAZIA quando não há nada a dizer.
+ */
+function replyAsPlainText(providerId: string | undefined): boolean {
+  return providerId?.trim().toLowerCase() === 'kimi';
+}
+
+export function additionalContextText(payload: unknown): string {
+  const output = (payload as { hookSpecificOutput?: { additionalContext?: unknown } } | null)
+    ?.hookSpecificOutput;
+  return typeof output?.additionalContext === 'string' ? output.additionalContext : '';
 }
 
 export async function handleHookDelegateHttp(
@@ -737,7 +774,12 @@ export async function handleHookDelegateHttp(
   res: http.ServerResponse,
   ctx: AgentGateContext | null,
 ): Promise<void> {
-  await handleHookJsonPost(req, res, ctx, HOOK_DELEGATE_MAX_BODY_BYTES, (body) =>
-    handleHookDelegateRequest(ctx!, body),
+  await handleHookJsonPost(
+    req,
+    res,
+    ctx,
+    HOOK_DELEGATE_MAX_BODY_BYTES,
+    (body) => handleHookDelegateRequest(ctx!, body),
+    ctx && replyAsPlainText(ctx.providerId) ? additionalContextText : undefined,
   );
 }
