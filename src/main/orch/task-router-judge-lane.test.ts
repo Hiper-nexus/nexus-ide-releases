@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_ROUTING_TABLE,
   JUDGE_FRONTIER_LANE,
+  isFrontierReviewer,
   routeTask,
   type AdapterAvailability,
 } from './task-router';
@@ -113,13 +114,51 @@ describe('lane de julgamento (F-233: só modelos de ponta julgam)', () => {
     expect(decision!.reason).not.toContain('lane de julgamento');
   });
 
-  it('lane lista exatamente os cinco assentos de topo', () => {
+  it('lane lista exatamente os sete assentos de topo', () => {
     expect([...JUDGE_FRONTIER_LANE]).toEqual([
       { adapterId: 'claude', model: 'claude-fable-5-1' },
       { adapterId: 'claude', model: 'claude-opus-5-5' },
       { adapterId: 'claude', model: 'claude-sonnet-5-5' },
       { adapterId: 'codex', model: 'gpt-6.1-sol' },
       { adapterId: 'codex', model: 'gpt-6-astra' },
+      { adapterId: 'agy', model: 'gemini-4-argon' },
+      { adapterId: 'grok', model: 'grok-4.7' },
     ]);
+  });
+
+  // F-779: com Claude e Codex já sentados na missão, a próxima revisão vai
+  // para outro carro-chefe da lane em vez de repetir os mesmos dois.
+  it('revisão com claude e codex já usados na missão vai para agy ou grok', () => {
+    const decision = routeTask(
+      'Revise o diff do worker e dê o veredito',
+      [
+        ...frontierAdapters,
+        { id: 'agy', installed: true, models: ['gemini-4-argon', 'gemini-3.8-flash-high'] },
+        { id: 'grok', installed: true, models: ['grok-4.7'] },
+      ],
+      DEFAULT_ROUTING_TABLE,
+      undefined,
+      false,
+      undefined,
+      {
+        multiScore: false,
+        missionUseCounts: new Map([
+          ['claude', 2],
+          ['codex', 2],
+        ]),
+      },
+    );
+    expect(decision!.reason).toContain('lane de julgamento');
+    expect(['agy:gemini-4-argon', 'grok:grok-4.7']).toContain(
+      `${decision!.adapterId}:${decision!.model}`,
+    );
+  });
+
+  it('portão F-234 aceita os carros-chefe novos e continua recusando GLM/MiMo', () => {
+    expect(isFrontierReviewer('agy', 'gemini-4-argon')).toBe(true);
+    expect(isFrontierReviewer('grok', 'grok-4.7')).toBe(true);
+    expect(isFrontierReviewer('glm', 'glm-5.3')).toBe(false);
+    expect(isFrontierReviewer('mimo-code', 'xiaomi/mimo-v2.6-pro')).toBe(false);
+    expect(isFrontierReviewer('agy', 'gemini-3.8-flash-high')).toBe(false);
   });
 });

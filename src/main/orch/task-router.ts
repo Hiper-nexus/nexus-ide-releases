@@ -542,6 +542,13 @@ export const JUDGE_FRONTIER_LANE: ReadonlyArray<{
   { adapterId: 'claude', model: 'claude-sonnet-5-5' },
   { adapterId: 'codex', model: 'gpt-6.1-sol' },
   { adapterId: 'codex', model: 'gpt-6-astra' },
+  // F-779 (operador, 03/10: "usar tudo que temos"): só Claude e Codex julgavam,
+  // então toda revisão/auditoria concentrava nos dois. Entram os carros-chefe
+  // de outros laboratórios de ponta com DeepSWE publicado ≥ o do Sonnet 5.5
+  // (71,0): Gemini 4 Argon (77,9) e Grok 4.7 (71,0). GLM/MiMo seguem fora
+  // por experiência do operador (F-233), não por benchmark.
+  { adapterId: 'agy', model: 'gemini-4-argon' },
+  { adapterId: 'grok', model: 'grok-4.7' },
 ]);
 
 /**
