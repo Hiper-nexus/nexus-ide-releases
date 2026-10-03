@@ -870,6 +870,34 @@ CREATE INDEX idx_handoffs_route_outcome
   WHERE adapter_id IS NOT NULL;
 `;
 
+/**
+ * F-773 (G6): o log de decisões de rota (nexus_route_log) era só memória com
+ * teto de 50 e voltava vazio a cada boot. A mesma linha agora persiste aqui;
+ * a retenção (30 dias / 5.000 linhas) é aplicada na escrita.
+ */
+const ROUTE_DECISION_LOG_SCHEMA = `
+CREATE TABLE route_decisions (
+  seq               INTEGER PRIMARY KEY AUTOINCREMENT,
+  mission_id        TEXT,
+  task_preview      TEXT NOT NULL CHECK (length(task_preview) <= 120),
+  tier              TEXT NOT NULL CHECK (length(tier) <= 32),
+  adapter_id        TEXT NOT NULL CHECK (length(adapter_id) <= 128),
+  model             TEXT CHECK (model IS NULL OR length(model) <= 256),
+  effort            TEXT CHECK (effort IS NULL OR length(effort) <= 64),
+  reason            TEXT NOT NULL CHECK (length(reason) <= 16384),
+  classifier_source TEXT CHECK (classifier_source IS NULL OR length(classifier_source) <= 32),
+  jev_unavailable   TEXT CHECK (jev_unavailable IS NULL OR length(jev_unavailable) <= 64),
+  confidence_json   TEXT CHECK (confidence_json IS NULL OR length(confidence_json) <= 1024),
+  rule_choice_json  TEXT CHECK (rule_choice_json IS NULL OR length(rule_choice_json) <= 1024),
+  alternatives_json TEXT CHECK (alternatives_json IS NULL OR length(alternatives_json) <= 8192),
+  created_at        INTEGER NOT NULL CHECK (created_at >= 0),
+  FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_route_decisions_created
+  ON route_decisions(created_at);
+`;
+
 export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
   validateProjectMigrations([
     createProjectMigration({
@@ -1004,5 +1032,12 @@ export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
       schemaVersion: 41,
       appVersion: '0.76.191',
       sql: HANDOFF_ROUTE_OUTCOME_SCHEMA,
+    }),
+    // F-773 (G6): o log de rota sobrevive ao restart ("por que X perdeu").
+    createProjectMigration({
+      id: '042-route-decision-log',
+      schemaVersion: 42,
+      appVersion: '0.76.191',
+      sql: ROUTE_DECISION_LOG_SCHEMA,
     }),
   ]);

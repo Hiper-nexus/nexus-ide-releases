@@ -1630,7 +1630,8 @@ const paneSpawnAfterTabMission = {
             reason:
               'escolha livre de agentes (opt-in da missão): spawn sem ' +
               'RouteReservation nem squad_binding',
-          });
+            missionId: options.missionId,
+          }, missionSuite?.missions.routeDecisions ?? null);
         }
       }
       if (options.role === 'worker' && options.missionId) {

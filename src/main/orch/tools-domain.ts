@@ -65,7 +65,7 @@ import {
   type RouteSuccessIndex,
 } from './route-pipeline';
 import { recordRouteDecision } from './route-provenance';
-import { recordRouteLog, recentRouteLog } from './route-log';
+import { recordRouteLog, recentRouteLog, type RouteLogSink } from './route-log';
 import { ruleChoiceReceipt } from './route-rule-choice';
 import { loadSpecialtyBenchmark } from './specialty-benchmark';
 import {
@@ -1640,7 +1640,9 @@ const routeLogTool: McpToolDef = {
     'most-recent-first list of {seq, tier, adapterId, model, effort, reason, ' +
     'taskPreview} plus, when known, classifierSource, confidence and ruleChoice ' +
     '(what the plain rule would have picked without Jev). Read-only; useful to ' +
-    'explain why a provider was (not) used.',
+    'explain why a provider was (not) used. Persisted per checkout (survives ' +
+    'restarts, 30 days): entries also carry at, missionId and alternatives ' +
+    '(who competed and lost, in rank order).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -1650,14 +1652,26 @@ const routeLogTool: McpToolDef = {
       },
     },
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const limitRaw = args.limit;
     const limit = typeof limitRaw === 'number' && Number.isFinite(limitRaw)
       ? Math.max(1, Math.min(50, Math.floor(limitRaw)))
       : 20;
-    return { decisions: recentRouteLog(limit) };
+    return { decisions: recentRouteLog(limit, routeLogSinkFor(ctx.scope)) };
   },
 };
+
+/**
+ * F-773 (G6): o log de rota persiste no SQLite do checkout e sobrevive ao
+ * restart. Store indisponível (boot, teste sem registro) = só a memória.
+ */
+function routeLogSinkFor(scope: ProjectExecutionScope): RouteLogSink | null {
+  try {
+    return getProjectDomainStores(scope).missions.routeDecisions ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Corpo do nexus_route_task. `internal` só é preenchido pelo resolver do spawn
@@ -2030,7 +2044,11 @@ export async function routeTaskForCaller(
     ...(jevUnavailable ? { jevUnavailable } : {}),
     ...(routing.confidence ? { confidence: routing.confidence } : {}),
     ...(ruleChoice ? { ruleChoice } : {}),
-  });
+    // F-773 (G6): quem disputou e perdeu, e a missão — a auditoria "por que
+    // X perdeu" persiste junto com o motivo.
+    ...(missionId ? { missionId } : {}),
+    alternatives: decision.alternatives,
+  }, routeLogSinkFor(ctx.scope));
   // Provenância da classificação (jev | heuristic | mixed) e o sinal
   // `escalate` do Jev — informação para o Maestro, nunca decisão do router.
   // A skillSuggestion do mesmo lote já foi resolvida acima (uma chamada judge).
