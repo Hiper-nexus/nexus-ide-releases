@@ -97,7 +97,7 @@ const SCOPE = { projectId: 'p', checkoutId: 'c' };
 function suite(mission: Mission) {
   return {
     scope: SCOPE,
-    missions: { list: () => [mission], get: () => mission, setStatus: vi.fn() },
+    missions: { list: () => [mission], listIdsBatch: (after?: string) => after ? [] : [mission.id], get: () => mission, setStatus: vi.fn() },
     tasks: { list: () => [] },
     handoffs: {
       list: vi.fn(() => []),
@@ -227,6 +227,8 @@ describe('F-242: worker travado no meio do turno acorda o Maestro', () => {
       scope: otherScope,
       missions: {
         list: () => [{ ...runningMission(), id: 'mission-outro-projeto', orchestratorSessionId: undefined }],
+        listIdsBatch: (after?: string) => after ? [] : ['mission-outro-projeto'],
+        get: () => ({ ...runningMission(), id: 'mission-outro-projeto', orchestratorSessionId: undefined }),
         setStatus: vi.fn(),
       },
       tasks: { list: () => [] },

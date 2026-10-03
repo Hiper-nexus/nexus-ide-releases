@@ -116,7 +116,7 @@ function makeFactoryRig(overrides: Partial<LoginStuckWatchdogDeps> = {}) {
 
 describe('createLoginStuckWatchdog', () => {
 
-  it('declares login-stuck on Please run /login after the quiet windows', () => {
+  it('declares login-stuck on Please run /login after the quiet windows', async () => {
     const { watchdog, rig } = makeFactoryRig();
     watchdog.trackSession('s1', 'p1', 'claude');
     rig.tails.set(
@@ -132,7 +132,7 @@ describe('createLoginStuckWatchdog', () => {
     expect(stuck[0]?.pattern).toBe('claude please-run-login');
   });
 
-  it('declares login-stuck after 2 quiet 15s windows with the pattern persisting', () => {
+  it('declares login-stuck after 2 quiet 15s windows with the pattern persisting', async () => {
     const { watchdog, rig } = makeFactoryRig();
     watchdog.trackSession('s1', 'p1', 'claude');
     rig.tails.set('s1', 'Claude Code\n\nSelect login method:\n> 1. Claude account');
@@ -155,7 +155,7 @@ describe('createLoginStuckWatchdog', () => {
     expect(watchdog.paneState('p1')?.stuck).toBe(true);
   });
 
-  it('stays silent when no pattern is present', () => {
+  it('stays silent when no pattern is present', async () => {
     const { watchdog, rig } = makeFactoryRig();
     watchdog.trackSession('s1', 'p1', 'claude');
     rig.tails.set('s1', 'working on the task…\nediting src/index.ts');
@@ -167,7 +167,7 @@ describe('createLoginStuckWatchdog', () => {
     expect(watchdog.paneState('p1')).toBeNull();
   });
 
-  it('emits recovery when the login screen leaves the tail', () => {
+  it('emits recovery when the login screen leaves the tail', async () => {
     const { watchdog, rig } = makeFactoryRig();
     watchdog.trackSession('s1', 'p1', 'grok');
     rig.tails.set('s1', 'Signing in…');
@@ -187,7 +187,7 @@ describe('createLoginStuckWatchdog', () => {
     expect(watchdog.paneState('p1')).toBeNull();
   });
 
-  it('clears stuck on the wave-1 working hook even while the pattern persists', () => {
+  it('clears stuck on the wave-1 working hook even while the pattern persists', async () => {
     const { watchdog, rig } = makeFactoryRig();
     watchdog.trackSession('s1', 'p1', 'claude');
     rig.tails.set('s1', 'Select login method:');
@@ -205,7 +205,7 @@ describe('createLoginStuckWatchdog', () => {
     expect(watchdog.paneState('p1')).toBeNull();
   });
 
-  it('new significant output re-arms the quiet windows (never declares stuck)', () => {
+  it('new significant output re-arms the quiet windows (never declares stuck)', async () => {
     const { watchdog, rig } = makeFactoryRig();
     watchdog.trackSession('s1', 'p1', 'claude');
     // The screen keeps changing (real progress through login steps) — words,
@@ -221,7 +221,7 @@ describe('createLoginStuckWatchdog', () => {
     expect(rig.events).toHaveLength(0);
   });
 
-  it('a repainting braille spinner/counter is NOT significant output', () => {
+  it('a repainting braille spinner/counter is NOT significant output', async () => {
     const { watchdog, rig } = makeFactoryRig();
     watchdog.trackSession('s1', 'p1', 'grok');
     let t = 0;
@@ -237,7 +237,7 @@ describe('createLoginStuckWatchdog', () => {
     expect(rig.events[0].pattern).toBe('grok signing-in spinner');
   });
 
-  it('never emits twice for the same stuck episode', () => {
+  it('never emits twice for the same stuck episode', async () => {
     const { watchdog, rig } = makeFactoryRig();
     watchdog.trackSession('s1', 'p1', 'agy');
     rig.tails.set('s1', 'Sign in with Google');
@@ -248,7 +248,7 @@ describe('createLoginStuckWatchdog', () => {
     expect(rig.events.filter((e) => e.stuck)).toHaveLength(1);
   });
 
-  it('enforces the watched-session cap', () => {
+  it('enforces the watched-session cap', async () => {
     const { watchdog, rig } = makeFactoryRig();
     for (let i = 0; i < LOGIN_STUCK_MAX_SESSIONS; i += 1) {
       expect(watchdog.trackSession(`s${i}`, `p${i}`, 'claude')).toBe(true);
@@ -264,7 +264,7 @@ describe('createLoginStuckWatchdog', () => {
     expect(rig.events).toHaveLength(0);
   });
 
-  it('trackSession is idempotent and dropSession stops watching', () => {
+  it('trackSession is idempotent and dropSession stops watching', async () => {
     const { watchdog, rig } = makeFactoryRig();
     expect(watchdog.trackSession('s1', 'p1', 'claude')).toBe(true);
     expect(watchdog.trackSession('s1', 'p1', 'claude')).toBe(true);
@@ -279,7 +279,7 @@ describe('createLoginStuckWatchdog', () => {
     }
     expect(rig.events).toHaveLength(0);
   });
-  it('declares mcp-auth stuck and keeps it under a working semantic hook', () => {
+  it('declares mcp-auth stuck and keeps it under a working semantic hook', async () => {
     const mcpCalls: PaneLoginStuckEvent[] = [];
     const { watchdog, rig } = makeFactoryRig({
       onMcpAuthStuck: (event) => mcpCalls.push(event),
@@ -310,7 +310,7 @@ describe('createLoginStuckWatchdog', () => {
     expect(watchdog.paneState('p1')?.stuck).toBe(true);
   });
 
-  it('fires onMcpAuthStuck only once per stuck episode', () => {
+  it('fires onMcpAuthStuck only once per stuck episode', async () => {
     const mcpCalls: PaneLoginStuckEvent[] = [];
     const { watchdog, rig } = makeFactoryRig({
       onMcpAuthStuck: (event) => mcpCalls.push(event),
@@ -325,7 +325,7 @@ describe('createLoginStuckWatchdog', () => {
     expect(mcpCalls[0].pattern).toBe('mcp handshake failed');
   });
 
-  it('still clears CLI-login stuck when the working hook fires', () => {
+  it('still clears CLI-login stuck when the working hook fires', async () => {
     const mcpCalls: PaneLoginStuckEvent[] = [];
     const { watchdog, rig } = makeFactoryRig({
       onMcpAuthStuck: (event) => mcpCalls.push(event),
@@ -368,7 +368,7 @@ describe('installLoginStuckWatchdog (wiring)', () => {
     vi.useRealTimers();
   });
 
-  it('ignores dumb shell/terminal sessions (no agent info)', () => {
+  it('ignores dumb shell/terminal sessions (no agent info)', async () => {
     const events: PaneLoginStuckEvent[] = [];
     const off = onPaneLoginStuck((e) => events.push(e));
     const dispose = installLoginStuckWatchdog();
@@ -376,16 +376,16 @@ describe('installLoginStuckWatchdog (wiring)', () => {
       harness.agentInfo.mockReturnValue(null); // shell pane
       harness.stateTap?.('shell-1', 'busy');
       harness.tail.mockReturnValue('Select login method:');
-      vi.advanceTimersByTime(120_000);
+      await vi.advanceTimersByTimeAsync(120_000);
       expect(events).toHaveLength(0);
       expect(getLoginStuckPaneState('shell-1')).toBeNull();
     } finally {
-      dispose();
+      await dispose();
       off();
     }
   });
 
-  it('tracks busy agent sessions and surfaces the stuck state', () => {
+  it('tracks busy agent sessions and surfaces the stuck state', async () => {
     const events: PaneLoginStuckEvent[] = [];
     const off = onPaneLoginStuck((e) => events.push(e));
     const dispose = installLoginStuckWatchdog();
@@ -395,7 +395,7 @@ describe('installLoginStuckWatchdog (wiring)', () => {
       harness.stateTap?.('s1', 'busy');
       harness.tail.mockReturnValue('Select login method:');
 
-      vi.advanceTimersByTime(60_000);
+      await vi.advanceTimersByTimeAsync(60_000);
 
       expect(events.filter((e) => e.stuck)).toHaveLength(1);
       expect(events[0]).toMatchObject({
@@ -406,12 +406,12 @@ describe('installLoginStuckWatchdog (wiring)', () => {
       });
       expect(getLoginStuckPaneState('p1')?.stuck).toBe(true);
     } finally {
-      dispose();
+      await dispose();
       off();
     }
   });
 
-  it('stops watching a session after exit (no late events)', () => {
+  it('stops watching a session after exit (no late events)', async () => {
     const events: PaneLoginStuckEvent[] = [];
     const off = onPaneLoginStuck((e) => events.push(e));
     const dispose = installLoginStuckWatchdog();
@@ -420,15 +420,15 @@ describe('installLoginStuckWatchdog (wiring)', () => {
       harness.stateTap?.('s1', 'busy');
       harness.exitTap?.('s1');
       harness.tail.mockReturnValue('Select login method:');
-      vi.advanceTimersByTime(120_000);
+      await vi.advanceTimersByTimeAsync(120_000);
       expect(events).toHaveLength(0);
     } finally {
-      dispose();
+      await dispose();
       off();
     }
   });
 
-  it('second install is a no-op (idempotent)', () => {
+  it('second install is a no-op (idempotent)', async () => {
     const disposeA = installLoginStuckWatchdog();
     const disposeB = installLoginStuckWatchdog();
     disposeB();
@@ -436,7 +436,7 @@ describe('installLoginStuckWatchdog (wiring)', () => {
     disposeA();
   });
 
-  it.each(['current-worker-incarnation', undefined])('requires the current pane nonce for synthetic failure (%s)', (workerIncarnationId) => {
+  it.each(['current-worker-incarnation', undefined])('requires the current pane nonce for synthetic failure (%s)', async (workerIncarnationId) => {
     const scope = testProjectScope();
     harness.agentInfo.mockReturnValue({ paneId: 'p1', adapterId: 'codex' });
     harness.ownedPane.mockReturnValue({
@@ -449,7 +449,7 @@ describe('installLoginStuckWatchdog (wiring)', () => {
     const dispose = installLoginStuckWatchdog();
     try {
       harness.stateTap?.('s1', 'busy');
-      vi.advanceTimersByTime(60_000);
+      await vi.advanceTimersByTimeAsync(60_000);
 
       if (workerIncarnationId) {
         expect(harness.submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
@@ -460,7 +460,7 @@ describe('installLoginStuckWatchdog (wiring)', () => {
         expect(harness.submit).not.toHaveBeenCalled();
       }
     } finally {
-      dispose();
+      await dispose();
     }
   });
 });

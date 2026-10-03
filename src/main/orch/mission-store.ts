@@ -1,3 +1,4 @@
+import type { PeriodicTaskContext } from '../observability/periodic-task';
 import { assertLicenseAccess } from '../license-enforcement';
 import { createHash } from 'node:crypto';
 import { emitAppEvent } from '../connectors/app-events';
@@ -734,6 +735,16 @@ export class ScopedMissionStore {
       .get(id);
     if (row === undefined) return null;
     return this.#routeReservations.withLatestRoute(db, this.#fromRow(row));
+  }
+
+  /** Indexed bounded candidate acquisition for periodic supervisors. */
+  listIdsBatch(afterId?: string, limit = 32): string[] {
+    const cursor = afterId === undefined ? '' : entityIdSchema.parse(afterId);
+    const count = z.number().int().min(1).max(64).parse(limit);
+    const rows = this.#binding.readDatabase().prepare(
+      'SELECT id FROM missions WHERE id > ? ORDER BY id ASC LIMIT ?',
+    ).all(cursor, count) as Array<{ id: string }>;
+    return rows.map((row) => row.id);
   }
 
   list(status?: MissionStatus): ScopedMission[] {
@@ -2084,4 +2095,20 @@ export function createScopedMissionStore(
   options: MissionStoreOptions = {},
 ): ScopedMissionStore {
   return new ScopedMissionStore(runtimeManager, scope, options);
+}
+
+/** A list page is only a hint; callers re-read exact authority before effects. */
+export async function* iteratePeriodicMissionIds(
+  store: Pick<ScopedMissionStore, 'listIdsBatch'>,
+  context?: PeriodicTaskContext,
+): AsyncGenerator<string> {
+  let cursor: string | undefined;
+  for (;;) {
+    if (context) await context.checkpoint();
+    else await new Promise<void>((resolve) => setImmediate(resolve));
+    const ids = store.listIdsBatch(cursor, 32);
+    for (const id of ids) { context?.assertCurrent(); yield id; }
+    if (ids.length < 32) return;
+    cursor = ids.at(-1);
+  }
 }

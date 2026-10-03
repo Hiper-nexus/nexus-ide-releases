@@ -28,6 +28,18 @@ describe('matchBootPrompt (padrões de confirmação de boot)', () => {
 });
 
 describe('createBootPromptWatchdog (aperta Enter sozinho em pane de missão)', () => {
+  it('does not type from a stability snapshot whose pane binding changed during a yield', async () => {
+    const h = harness({ 'session': 'Press Enter to continue' });
+    h.wd.trackSession('session', 'pane-old', 'codex', 'mission-old');
+    h.wd.tick();
+    await h.wd.tick({
+      signal: new AbortController().signal,
+      assertCurrent: () => undefined,
+      checkpoint: async () => { h.wd.trackSession('session', 'pane-new', 'codex', 'mission-new'); },
+      wait: async <T>(promise: Promise<T>) => promise,
+    });
+    expect(h.writes).toEqual([]);
+  });
   function harness(tails: Record<string, string>) {
     const writes: Array<{ sessionId: string; data: string }> = [];
     let clock = 1_000;

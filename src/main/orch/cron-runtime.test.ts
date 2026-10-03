@@ -41,7 +41,7 @@ function deps(
     saved,
     deps: {
       load: () => jobs,
-      save: (j) => saved.push(JSON.parse(JSON.stringify(j))),
+      save: (j) => { saved.push(JSON.parse(JSON.stringify(j))); },
       fire,
       executeOccurrence: async (scheduledJob, _scheduledFor, invoke) => {
         try {
@@ -213,7 +213,7 @@ describe('runCronTick', () => {
     expect(stopped).toBe(true);
   });
 
-  it('stopCronLoop solta o shutdown no teto mesmo com tick remoto pendurado', async () => {
+  it('stopCronLoop refuses store teardown at the deadline while the remote flight is physical', async () => {
     vi.useFakeTimers();
     let release!: () => void;
     const hungSync = new Promise<void>((resolve) => {
@@ -227,18 +227,16 @@ describe('runCronTick', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(fixture.deps.syncSchedules).toHaveBeenCalled();
     let stopped = false;
-    void stopCronLoop().then(() => {
-      stopped = true;
-    });
+    const stopping = stopCronLoop().then(() => { stopped = true; }, (error: unknown) => error);
     await Promise.resolve();
     expect(stopped).toBe(false);
 
-    // O primeiro passo do shutdown não pode depender de um backend remoto
-    // pendurado: o budget de 3s vence e o quit segue (teto de quit = 45s).
     await vi.advanceTimersByTimeAsync(3_000);
-    expect(stopped).toBe(true);
+    expect(stopped).toBe(false);
+    expect(await stopping).toMatchObject({ name: 'ShutdownTimeoutError' });
 
     release();
+    await stopCronLoop();
   });
 });
 
@@ -249,5 +247,5 @@ it('refuses a due occurrence before materializing it when license access is deni
   const execute = vi.spyOn(d, 'executeOccurrence');
   expect(await runCronTick(d)).toBe(0);
   expect(execute).not.toHaveBeenCalled();
-  expect(d.load()[0].lastError).toContain('license_access_denied');
+  expect((await d.load())[0].lastError).toContain('license_access_denied');
 });

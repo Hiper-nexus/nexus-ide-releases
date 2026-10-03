@@ -1,3 +1,4 @@
+import { iteratePeriodicMissionIds } from './mission-store';
 import { sameProjectScope } from './project-scoped-broadcast';
 import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
 import type {
@@ -1107,9 +1108,9 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
     'spawning', 'busy', 'idle', 'unknown',
   ]);
   const liveSessionIds = new Set<string>();
-  missions: for (const hint of suite.missions.list()) {
+  missions: for await (const missionId of iteratePeriodicMissionIds(suite.missions, context)) {
     await context.checkpoint();
-    const mission = suite.missions.get(hint.id);
+    const mission = suite.missions.get(missionId);
     if (!mission) continue;
     const revision = JSON.stringify([mission.status, mission.intentVersion, mission.intentState, mission.updatedAt, mission.orchestratorSessionId]);
     const paneStamp = () => JSON.stringify(listPaneSnapshots().filter((pane) => pane.missionId === mission.id)

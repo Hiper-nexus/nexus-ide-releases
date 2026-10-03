@@ -183,6 +183,7 @@ function suite(panes: MissionPaneSpec[]) {
     missions: {
       get: (missionId: string) => (missionId === mission.id ? mission : null),
       list: () => [mission],
+      listIdsBatch: (after?: string) => after ? [] : [mission.id],
     },
     missionPanes: {
       list: (missionId: string) => (missionId === mission.id ? panes : []),
@@ -203,6 +204,7 @@ function closeSuite(
       get: (missionId: string) =>
         missionId === current.id ? current : null,
       list: () => [current],
+      listIdsBatch: (after?: string) => after ? [] : [current.id],
       block: (missionId: string, kind: 'user' | 'technical') => {
         if (missionId !== current.id) return null;
         current = {
@@ -663,6 +665,7 @@ describe('mission runtime physical inventory termination', () => {
         get: (missionId: string) =>
           missionId === current.id ? current : null,
         list: () => [current],
+      listIdsBatch: (after?: string) => after ? [] : [current.id],
         update: (missionId: string, patch: Partial<Mission>) => {
           if (missionId !== current.id) return null;
           current = { ...current, ...patch, updatedAt: current.updatedAt + 1 };
@@ -733,6 +736,7 @@ describe('demoção preserva os panes — o operador continua no controle (06/08
         get: (missionId: string) =>
           missionId === current.id ? current : null,
         list: () => [current],
+      listIdsBatch: (after?: string) => after ? [] : [current.id],
         update: (missionId: string, patch: Partial<Mission>) => {
           if (missionId !== current.id) return null;
           current = { ...current, ...patch, updatedAt: current.updatedAt + 1 };
@@ -784,6 +788,7 @@ describe('unauthorized runtime reconciliation lifecycle lock', () => {
       missions: {
         // Deliberately stale wake-up snapshot.
         list: () => [blocked],
+      listIdsBatch: (after?: string) => after ? [] : [blocked.id],
         get: (missionId: string) =>
           missionId === current.id ? current : null,
       },
@@ -832,6 +837,7 @@ describe('unauthorized runtime reconciliation lifecycle lock', () => {
     const stores = {
       missions: {
         list: () => [current],
+      listIdsBatch: (after?: string) => after ? [] : [current.id],
         get: (missionId: string) =>
           missionId === current.id ? current : null,
       },

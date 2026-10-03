@@ -4,10 +4,23 @@ import {
   matchesCron,
   nextCronAfter,
   parseCronJobs,
+  parseCronJobsBudgeted,
   parseCronExpr,
   shouldFire,
   type CronJob,
 } from './cron-loop';
+
+it('parses cron arrays cooperatively in order and refuses malformed trailing data', async () => {
+  const jobs = Array.from({ length: 70 }, (_, index) => createCronJob({ name: `job ${index}`, schedule: '* * * * *', brief: 'quoted " } ] text' }, 0, () => `job-${index}`));
+  let heartbeat = false;
+  const pulse = new Promise<void>((resolve) => setImmediate(() => { heartbeat = true; resolve(); }));
+  const parsed = await parseCronJobsBudgeted(JSON.stringify(jobs));
+  expect(heartbeat).toBe(true);
+  expect(parsed.map((job) => job.id)).toEqual(jobs.map((job) => job.id));
+  await pulse;
+  await expect(parseCronJobsBudgeted('[{},]')).rejects.toThrow();
+  await expect(parseCronJobsBudgeted('[]{}')).rejects.toThrow();
+});
 
 describe('parseCronExpr', () => {
   it('aceita 5 campos e reconhece *', () => {

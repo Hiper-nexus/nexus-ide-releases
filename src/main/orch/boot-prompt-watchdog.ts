@@ -163,10 +163,7 @@ export function createBootPromptWatchdog(
     trackSession(sessionId, paneId, adapterId, missionId) {
       if (!missionId) return; // pane do operador: nunca digita por ele.
       const existing = sessions.get(sessionId);
-      if (existing) {
-        existing.missionId = missionId;
-        return;
-      }
+      if (existing && existing.paneId === paneId && existing.adapterId === adapterId && existing.missionId === missionId) return;
       sessions.set(sessionId, {
         sessionId,
         paneId,

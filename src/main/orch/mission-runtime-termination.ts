@@ -1,3 +1,4 @@
+import { iteratePeriodicMissionIds } from './mission-store';
 import type { PeriodicTaskContext } from '../observability/periodic-task';
 // Adapted from stablyai/orca @ c3620f0954ae283b3b71b295a241f6a9596af6aa
 // (MIT): physical-exit-before-replacement authority, under Nexus fences.
@@ -936,8 +937,7 @@ export async function terminateUnauthorizedMissionRuntimes(
   context?: PeriodicTaskContext,
 ): Promise<MissionRuntimeTerminationResult[]> {
   const results: MissionRuntimeTerminationResult[] = [];
-  const missionIds = suite.missions.list().map((mission) => mission.id);
-  for (const missionId of missionIds) {
+  for await (const missionId of iteratePeriodicMissionIds(suite.missions, context)) {
     await context?.checkpoint();
     const result = await withMissionLifecycleLock(
       scope,

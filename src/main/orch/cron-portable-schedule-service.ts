@@ -49,8 +49,8 @@ export interface PortableCronUpdateInput {
 
 export interface CronPortableScheduleServiceOptions {
   readonly backend: PortableCronScheduleBackend;
-  readonly load: () => CronJob[];
-  readonly save: (jobs: CronJob[]) => void;
+  readonly load: () => CronJob[] | Promise<CronJob[]>;
+  readonly save: (jobs: CronJob[]) => void | Promise<void>;
   readonly now?: () => number;
   readonly idFactory?: () => string;
 }
@@ -173,8 +173,8 @@ function scopedJob(job: CronJob, scope: ProjectExecutionScope): boolean {
 
 export class CronPortableScheduleService {
   readonly #backend: PortableCronScheduleBackend;
-  readonly #load: () => CronJob[];
-  readonly #save: (jobs: CronJob[]) => void;
+  readonly #load: () => CronJob[] | Promise<CronJob[]>;
+  readonly #save: (jobs: CronJob[]) => void | Promise<void>;
   readonly #now: () => number;
   readonly #idFactory: () => string;
 
@@ -264,7 +264,8 @@ export class CronPortableScheduleService {
         'portable cron backend returned an unexpected created definition',
       );
     }
-    const jobs = this.#load();
+    const jobs = await this.#load();
+    assertMcpInvocationCurrent(invocation);
     if (
       jobs.some(
         (job) =>
@@ -282,7 +283,7 @@ export class CronPortableScheduleService {
         }
       : materialized;
     assertMcpInvocationCurrent(invocation);
-    this.#save([...jobs, created]);
+    await this.#save([...jobs, created]);
     return created;
   }
 
@@ -323,7 +324,8 @@ export class CronPortableScheduleService {
     const jobId = z.string().min(1).max(256).parse(rawJobId);
     const patch = updateInputSchema.parse(rawPatch);
     const scope = immutableScope(rawScope);
-    const jobs = this.#load();
+    const jobs = await this.#load();
+    assertMcpInvocationCurrent(invocation);
     const index = jobs.findIndex(
       (job) => job.id === jobId && scopedJob(job, scope),
     );
@@ -394,7 +396,7 @@ export class CronPortableScheduleService {
     const next = [...jobs];
     next[index] = updated;
     assertMcpInvocationCurrent(invocation);
-    this.#save(next);
+    await this.#save(next);
     return updated;
   }
 
@@ -417,7 +419,8 @@ export class CronPortableScheduleService {
     assertMcpInvocationCurrent(invocation);
     const jobId = z.string().min(1).max(256).parse(rawJobId);
     const scope = immutableScope(rawScope);
-    const jobs = this.#load();
+    const jobs = await this.#load();
+    assertMcpInvocationCurrent(invocation);
     const index = jobs.findIndex(
       (job) => job.id === jobId && scopedJob(job, scope),
     );
@@ -438,7 +441,7 @@ export class CronPortableScheduleService {
       ),
     );
     assertMcpInvocationCurrent(invocation);
-    this.#save(jobs.filter((_job, candidate) => candidate !== index));
+    await this.#save(jobs.filter((_job, candidate) => candidate !== index));
     return true;
   }
 
@@ -461,7 +464,8 @@ export class CronPortableScheduleService {
     const listed = await this.#backend.list(scope.projectId, invocation);
     assertMcpInvocationCurrent(invocation);
     if (!listed.ok) return { ok: false, reason: 'backend-unavailable' };
-    const jobs = this.#load();
+    const jobs = await this.#load();
+    assertMcpInvocationCurrent(invocation);
     const next = [...jobs];
     const conflicts = new Set<string>();
     let imported = 0;
@@ -541,7 +545,7 @@ export class CronPortableScheduleService {
     }
     if (changed) {
       assertMcpInvocationCurrent(invocation);
-      this.#save(next);
+      await this.#save(next);
     }
     return conflicts.size > 0
       ? {

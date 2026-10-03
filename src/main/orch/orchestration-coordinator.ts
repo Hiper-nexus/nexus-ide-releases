@@ -41,7 +41,7 @@ import {
  */
 
 let coordinator: OrchestrationReconciler | null = null;
-let disposeLoginWatchdog: (() => void) | null = null;
+let disposeLoginWatchdog: (() => Promise<void>) | null = null;
 let disposeBootPromptWatchdog: (() => void) | null = null;
 let coordinatorStopFlight: Promise<void> | null = null;
 const MISSION_RUNTIME_AUTHORITY_RECONCILE_MS = 1_000;
@@ -147,7 +147,7 @@ export async function stopOrchestrationCoordinator(): Promise<void> {
     if (coordinator !== current) {
       throw new Error('orchestration coordinator identity changed during stop');
     }
-    disposeLoginWatchdog?.();
+    await disposeLoginWatchdog?.();
     disposeLoginWatchdog = null;
     disposeBootPromptWatchdog?.();
     disposeBootPromptWatchdog = null;

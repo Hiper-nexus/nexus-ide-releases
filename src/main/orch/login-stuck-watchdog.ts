@@ -1,4 +1,4 @@
-import { type PeriodicTaskContext } from '../observability/periodic-task';
+import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
 import type { WebContents } from 'electron';
 import {
   getAgentSessionInfo,
@@ -261,7 +261,9 @@ export function createLoginStuckWatchdog(
 
   return {
     trackSession(sessionId, paneId, adapterId) {
-      if (sessions.has(sessionId)) return true;
+      const existing = sessions.get(sessionId);
+      if (existing?.paneId === paneId && existing.adapterId === adapterId) return true;
+      if (existing) sessions.delete(sessionId);
       if (sessions.size >= LOGIN_STUCK_MAX_SESSIONS) {
         log(
           `[login-stuck] cap de ${LOGIN_STUCK_MAX_SESSIONS} sessões atingido; ` +
@@ -382,8 +384,9 @@ function canOpenLogin(adapterId: string): boolean {
  */
 export function installLoginStuckWatchdog(
   options: { readonly autoTick?: boolean } = {},
-): () => void {
-  if (activeWatchdog) return () => {};
+): () => Promise<void> {
+  if (activeWatchdog) return async () => {};
+  const controller = new AbortController();
   const mcpAuthHandoffSubmitted = new Set<string>();
   const watchdog = createLoginStuckWatchdog({
     now: () => Date.now(),
@@ -449,13 +452,18 @@ export function installLoginStuckWatchdog(
   });
   const timer = options.autoTick === false
     ? null
-    : setInterval(() => watchdog.tick(), LOGIN_STUCK_TICK_MS);
+    : setInterval(() => {
+      void runPeriodicTask('login-stuck:legacy', (context) => watchdog.tick(context),
+        { signal: controller.signal, cadenceMs: LOGIN_STUCK_TICK_MS }).catch(() => undefined);
+    }, LOGIN_STUCK_TICK_MS);
   timer?.unref?.();
-  return () => {
+  return async () => {
+    controller.abort(new Error('login stuck watcher disposed'));
     untapState();
     untapExit();
     if (timer) clearInterval(timer);
     if (activeWatchdog === watchdog) activeWatchdog = null;
+    await stopPeriodicTask('login-stuck:legacy');
   };
 }
 

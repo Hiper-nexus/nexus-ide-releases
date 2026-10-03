@@ -1,3 +1,4 @@
+import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
 import { assertLicenseAccess } from '../license-enforcement';
 import { randomUUID } from 'node:crypto';
 import type { MissionIntentContract } from '../../shared/mission-intent';
@@ -9,10 +10,12 @@ import {
   CRON_STALE_MS,
   CRON_TICK_MS,
   loadCronJobs,
+  loadCronJobsAsync,
   matchesCron,
   nextCronAfter,
   parseCronExpr,
   saveCronJobs,
+  saveCronJobsAsync,
   shouldFire,
   withCronJobsMutationLock,
   type CronJob,
@@ -47,11 +50,11 @@ import { getProjectDomainStores } from './project-domain-store-registry';
  */
 
 export interface CronRuntimeDeps {
-  load(): CronJob[];
-  save(jobs: CronJob[]): void;
+  load(context?: PeriodicTaskContext): CronJob[] | Promise<CronJob[]>;
+  save(jobs: CronJob[], context?: PeriodicTaskContext): void | Promise<void>;
   fire(job: CronJob): Promise<void>;
   executeOccurrence: CronOccurrenceExecutor['execute'];
-  syncSchedules?: () => Promise<void>;
+  syncSchedules?: (context?: PeriodicTaskContext) => Promise<void>;
   now(): number;
 }
 
@@ -166,8 +169,8 @@ export function configureCronRuntime(options: {
   configuredPortableSchedules = options.scheduleBackend
     ? new CronPortableScheduleService({
         backend: options.scheduleBackend,
-        load: loadCronJobs,
-        save: saveCronJobs,
+        load: loadCronJobsAsync,
+        save: saveCronJobsAsync,
       })
     : null;
   configuredScopeList = options.listScopes ?? null;
@@ -196,16 +199,18 @@ export async function syncCronJobsForScope(
   }
 }
 
-async function syncConfiguredCronScopes(): Promise<void> {
+async function syncConfiguredCronScopes(context?: PeriodicTaskContext): Promise<void> {
   if (!configuredPortableSchedules || !configuredScopeList) return;
   const seen = new Set<string>();
   for (const scope of configuredScopeList().slice(0, 32)) {
+    await context?.checkpoint();
     const key = `${scope.projectId}:${scope.checkoutId}`;
     if (seen.has(key) || scope.identitySource !== 'manifest') continue;
     seen.add(key);
     try {
-      await configuredPortableSchedules.syncScope(scope);
+      await configuredPortableSchedules.syncScope(scope, { signal: context?.signal, assertCurrentAuthority: context?.assertCurrent });
     } catch (error) {
+      context?.assertCurrent();
       console.warn('[cron] portable schedule sync failed:', cronErrorMessage(error));
     }
   }
@@ -227,8 +232,8 @@ async function executeConfiguredOccurrence(
 }
 
 export const defaultCronDeps: CronRuntimeDeps = {
-  load: loadCronJobs,
-  save: saveCronJobs,
+  load: loadCronJobsAsync,
+  save: saveCronJobsAsync,
   fire: fireCronJob,
   executeOccurrence: executeConfiguredOccurrence,
   syncSchedules: syncConfiguredCronScopes,
@@ -244,13 +249,17 @@ function cronErrorMessage(error: unknown): string {
  * nextFireAt de todos. Puro em relação ao tempo (recebe `now`/deps). Retorna
  * quantos dispararam.
  */
-async function runCronTickLocked(deps: CronRuntimeDeps): Promise<number> {
-  const jobs = deps.load();
+async function runCronTickLocked(deps: CronRuntimeDeps, context?: PeriodicTaskContext): Promise<number> {
+  context?.assertCurrent();
+  const jobs = await deps.load(context);
+  context?.assertCurrent();
   const now = deps.now();
   let fired = 0;
   let changed = false;
 
-  for (const job of jobs) {
+  for (const [ordinal, job] of jobs.entries()) {
+    if (context) await context.checkpoint();
+    else if (ordinal % 32 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
     if (job.status !== 'active') continue;
     let fields;
     try {
@@ -313,23 +322,28 @@ async function runCronTickLocked(deps: CronRuntimeDeps): Promise<number> {
     }
   }
 
-  if (changed) deps.save(jobs);
+  context?.assertCurrent();
+  if (changed) await deps.save(jobs, context);
   return fired;
 }
 
-export async function runCronTick(deps: CronRuntimeDeps): Promise<number> {
+export async function runCronTick(deps: CronRuntimeDeps, context?: PeriodicTaskContext): Promise<number> {
   // Remote reconciliation owns the same mutex internally; run it first to
   // avoid nested-lock deadlock, then keep load/fire/save as one transaction.
-  await deps.syncSchedules?.();
-  return withCronJobsMutationLock(() => runCronTickLocked(deps));
+  await deps.syncSchedules?.(context);
+  context?.assertCurrent();
+  return withCronJobsMutationLock(() => runCronTickLocked(deps, context));
 }
 
 let timer: ReturnType<typeof setInterval> | null = null;
 let tickFlight: Promise<number> | null = null;
+let cronController = new AbortController();
 
 function requestCronTick(deps: CronRuntimeDeps): Promise<number> {
   if (tickFlight) return tickFlight;
-  const flight = runCronTick(deps).finally(() => {
+  let result = 0;
+  const flight = runPeriodicTask('cron-runtime', async (context) => { result = await runCronTick(deps, context); },
+    { signal: cronController.signal, cadenceMs: CRON_TICK_MS }).then(() => result).finally(() => {
     if (tickFlight === flight) tickFlight = null;
   });
   tickFlight = flight;
@@ -339,6 +353,8 @@ function requestCronTick(deps: CronRuntimeDeps): Promise<number> {
 /** Inicia o loop de tick (idempotente). */
 export function startCronLoop(deps: CronRuntimeDeps = defaultCronDeps): void {
   if (timer) return;
+  if (tickFlight) throw new Error('cron runtime still settling');
+  cronController = new AbortController();
   timer = setInterval(() => {
     void requestCronTick(deps).catch((err) =>
       console.warn('[cron] tick falhou:', err),
@@ -347,21 +363,15 @@ export function startCronLoop(deps: CronRuntimeDeps = defaultCronDeps): void {
   timer.unref?.();
 }
 
-/**
- * Teto do quit: o tick em voo consulta backend remoto por escopo (syncScope,
- * até 32 escopos seriais sob mutex de mutação). Sem prazo, um backend ou lock
- * pendurado segura stopCronLoop — o PRIMEIRO passo do shutdown — e sozinho
- * estoura o teto de quit de 45s (incidente "ceiling-fired" de 13/09). O diário
- * de cron é persistido e reconcilia na próxima sessão; soltar o voo não perde
- * dado durável.
- */
+/** A deadline rejects teardown; the physical flight stays owned until settled. */
 const CRON_TICK_STOP_BUDGET_MS = 3_000;
 
 export async function stopCronLoop(): Promise<void> {
   if (timer) clearInterval(timer);
   timer = null;
+  cronController.abort(new Error('cron runtime stopped'));
   const active = tickFlight;
-  if (!active) return;
+  if (!active) { await stopPeriodicTask('cron-runtime'); return; }
   let budget: ReturnType<typeof setTimeout> | null = null;
   try {
     await Promise.race([
@@ -369,19 +379,16 @@ export async function stopCronLoop(): Promise<void> {
         () => undefined,
         () => undefined,
       ),
-      new Promise<void>((resolve) => {
-        budget = setTimeout(resolve, CRON_TICK_STOP_BUDGET_MS);
+      new Promise<never>((_resolve, reject) => {
+        budget = setTimeout(() => { const error = new Error('cron shutdown waiting for physical flight settlement'); error.name = 'ShutdownTimeoutError'; reject(error); }, CRON_TICK_STOP_BUDGET_MS);
         budget.unref?.();
       }),
     ]);
+    await stopPeriodicTask('cron-runtime');
   } finally {
     if (budget) clearTimeout(budget);
   }
-  if (active === tickFlight) {
-    // Voo órfão: ninguém mais observa este promise — sem este observador, uma
-    // rejeição tardia vira unhandled rejection no main já encerrando.
-    active.catch(() => {});
-  }
+
 }
 
 // ── CRUD helpers para as MCP tools / IPC ─────────────────────────────────────

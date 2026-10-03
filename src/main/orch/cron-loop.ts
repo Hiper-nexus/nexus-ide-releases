@@ -1,3 +1,7 @@
+import fsp from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { readRegularFileCappedAsync } from '../redline/redline-safe-read';
+import type { PeriodicTaskContext } from '../observability/periodic-task';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -251,6 +255,85 @@ export function loadCronJobs(): CronJob[] {
       cause: error,
     });
   }
+}
+
+/** Parse the array record by record: one bounded job, then a cooperative unit. */
+export async function parseCronJobsBudgeted(text: string, context?: PeriodicTaskContext): Promise<CronJob[]> {
+  const white = (character: string | undefined) => character === ' ' || character === '\n' || character === '\r' || character === '\t';
+  let position = 0;
+  while (white(text[position])) position++;
+  if (text[position++] !== '[') throw new Error('invalid cron job array');
+  const jobs: CronJob[] = [];
+  let needJob = false;
+  for (;;) {
+    while (white(text[position])) position++;
+    if (text[position] === ']') {
+      if (needJob) throw new Error('invalid cron trailing comma');
+      position++;
+      while (white(text[position])) position++;
+      if (position !== text.length) throw new Error('invalid cron trailing data');
+      return jobs;
+    }
+    if (text[position] !== '{') throw new Error('invalid cron job record');
+    const start = position;
+    let depth = 0;
+    let quoted = false;
+    let escaped = false;
+    do {
+      const character = text[position++];
+      if (character === undefined) throw new Error('incomplete cron job store');
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (character === '\\') escaped = true;
+        else if (character === '"') quoted = false;
+      } else if (character === '"') quoted = true;
+      else if (character === '{' || character === '[') depth++;
+      else if (character === '}' || character === ']') depth--;
+      if (position % 65536 === 0) {
+        if (context) await context.checkpoint();
+        else await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+    } while (depth > 0 || quoted);
+    if (position - start > 2 * 1024 * 1024) throw new Error('cron job record exceeds budget');
+    jobs.push(cronJobSchema.parse(JSON.parse(text.slice(start, position))));
+    if (jobs.length > 10_000) throw new Error('cron job count exceeds limit');
+    if (context) await context.checkpoint();
+    else if (jobs.length % 32 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+    while (white(text[position])) position++;
+    if (text[position] === ',') { position++; needJob = true; }
+    else if (text[position] === ']') needJob = false;
+    else throw new Error('invalid cron job delimiter');
+  }
+}
+
+export async function loadCronJobsAsync(context?: PeriodicTaskContext): Promise<CronJob[]> {
+  const read = await readRegularFileCappedAsync(cronFilePath(), 16 * 1024 * 1024);
+  context?.assertCurrent();
+  if (read.kind === 'none' && read.stamp === 'missing') return [];
+  if (read.kind !== 'text') throw new Error('cron job store is invalid; refusing an empty fallback');
+  return parseCronJobsBudgeted(read.text, context);
+}
+
+export async function saveCronJobsAsync(jobs: CronJob[], context?: PeriodicTaskContext): Promise<void> {
+  const records: string[] = [];
+  let bytes = 2;
+  for (const job of jobs) {
+    if (context) await context.checkpoint();
+    else if (records.length % 32 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+    const text = JSON.stringify(cronJobSchema.parse(job));
+    bytes += Buffer.byteLength(text) + 1;
+    if (bytes > 16 * 1024 * 1024 || records.length >= 10_000) throw new Error('cron job store exceeds budget');
+    records.push(text);
+  }
+  const file = cronFilePath();
+  const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await fsp.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+    context?.assertCurrent();
+    await fsp.writeFile(temporary, `[${records.join(',')}]`, { mode: 0o600, flag: 'wx' });
+    context?.assertCurrent();
+    await fsp.rename(temporary, file);
+  } finally { await fsp.unlink(temporary).catch(() => undefined); }
 }
 
 export function saveCronJobs(jobs: CronJob[]): void {

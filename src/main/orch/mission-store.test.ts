@@ -47,6 +47,20 @@ afterEach(() => {
 });
 
 describe('scoped mission store', () => {
+  it('pages periodic candidate IDs without materializing full mission history', () => {
+    let nextId = 0;
+    const store = createScopedMissionStore(manager(), testProjectScope(), {
+      idFactory: () => `periodic-${String(++nextId).padStart(3, '0')}`,
+    });
+    for (let i = 0; i < 40; i++) store.create({ title: `candidate ${i}` });
+    const first = store.listIdsBatch(undefined, 32);
+    const second = store.listIdsBatch(first.at(-1), 32);
+    expect(first).toHaveLength(32);
+    expect(second).toHaveLength(8);
+    expect(new Set([...first, ...second]).size).toBe(40);
+    expect(store.listIdsBatch(second.at(-1), 32)).toEqual([]);
+    expect(() => store.listIdsBatch(undefined, 1_000)).toThrow();
+  });
   it('publishes v+1 for native reapproval without rewriting dead-graph history', () => {
     const runtimeManager = manager();
     const scope = testProjectScope({ checkoutId: 'dead-graph-reapproval' });

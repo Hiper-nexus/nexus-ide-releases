@@ -201,7 +201,7 @@ function mission(): Mission {
 function registerSuite(): void {
   h.onScope!(SCOPE, {
     scope: SCOPE,
-    missions: { list: () => [mission()], get: () => mission(), setStatus: vi.fn() },
+    missions: { list: () => [mission()], listIdsBatch: (after?: string) => after ? [] : [mission().id], get: () => mission(), setStatus: vi.fn() },
     tasks: { list: () => [] },
     handoffs: {
       list: h.handoffList,
