@@ -33,6 +33,10 @@ vi.mock("../path-resolver", () => ({
   }),
   resolveWindowsCodexNpmShimLaunch: () => null,
   realUserHome: () => "/mock/home",
+  // F-790: a versão do Codex vem do cache (sonda fora do Main). Versão
+  // conhecida e nula = "desconhecida" sem disparar sonda nenhuma no teste.
+  cachedCliBinaryVersion: () => null,
+  probeCliBinaryVersion: async () => null,
 }));
 vi.mock("../pty/persistent-session", () => ({
   planPersistentAgentSpawn: (input: { file: string; args: readonly string[] }) => ({
@@ -766,6 +770,66 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     expect(physical.spawned[1]).toMatchObject({ missionId, role: "worker", isolatedWriter: true });
     expect(second).toMatchObject({ isolatedWorktree: { branch: "nexus/aba/1" } });
     expect(second.tabMission).toBeUndefined();
+  });
+
+  // F-810: a missão da aba existe para HOSPEDAR helpers. O texto livre do
+  // pedido ou do nome da aba nunca a rebaixa a consult/plan/ops (maxWorkers 0):
+  // o pane virava orquestrador de uma missão que recusava todo nexus_pane_spawn.
+  it.each([
+    ["análise (campo do relatório)", "Analise o fluxo de login e liste os riscos"],
+    ["investigação", "Investigue por que o build falha"],
+    ["auditoria de dependências", "Audite as dependências do projeto"],
+    ["mapeamento", "Mapeie os endpoints da API"],
+    ["planejamento", "Planejar a arquitetura do módulo de pagamentos"],
+    ["operação", "Faça o deploy do site no servidor"],
+    ["sincronização git", "Atualiza o repositório local com o GitHub"],
+  ])("missão sob demanda (+ Pane): helper de %s abre, com missão standard e maxWorkers > 0", async (_label, prompt) => {
+    const sessionId = operatorPane("pane-a");
+    register([{ paneId: "pane-a", sessionId }]);
+    useTabMissionProvider(authority());
+    const ctx = getContextBySession(sessionId)!;
+
+    const result = (await paneSpawnTool.handler(
+      { adapterId: "codex", prompt, readOnly: true },
+      ctx,
+    )) as Record<string, unknown>;
+
+    const mission = requireProjectDomainStoreRegistry().forScope(scope).missions.list()[0]!;
+    expect(result).toMatchObject({ tabMission: { missionId: mission.id } });
+    expect(physical.spawned[0]).toMatchObject({ missionId: mission.id, role: "worker" });
+    expect(mission.intentContract?.lane).toBe("standard");
+    expect(mission.intentContract?.budgets.maxWorkers).toBeGreaterThan(0);
+  });
+
+  it.each([
+    "Missão · Deploy",
+    "Missão · Backups",
+    "Missão · Servidor",
+    "Missão · Publicar site",
+    "Missão · Migrar banco",
+    "Missão · Atualizar repo",
+    "Missão · Auditoria",
+    "Missão · Análise de logs",
+    "Missão · Diagnóstico do app",
+    "Missão · Planejamento",
+  ])("Tornar orquestrador na aba \"%s\": o helper seguinte abre (maxWorkers > 0)", async (title) => {
+    const sessionId = operatorPane("pane-a");
+    register([{ paneId: "pane-a", sessionId }]);
+    const created = authority().createPaneMissionFromRenderer(owner, { paneId: "pane-a", title });
+    expect(created).toMatchObject({ ok: true });
+    const missionId = created.mission!.id;
+    const ctx = getContextBySession(sessionId)!;
+    expect(ctx).toMatchObject({ role: "orchestrator", missionId });
+
+    await paneSpawnTool.handler(
+      { adapterId: "codex", prompt: "Revise o fluxo de login", readOnly: true },
+      ctx,
+    );
+
+    expect(physical.spawned[0]).toMatchObject({ missionId, role: "worker" });
+    const mission = requireProjectDomainStoreRegistry().forScope(scope).missions.get(missionId)!;
+    expect(mission.intentContract?.lane).toBe("standard");
+    expect(mission.intentContract?.budgets.maxWorkers).toBeGreaterThan(0);
   });
 });
 

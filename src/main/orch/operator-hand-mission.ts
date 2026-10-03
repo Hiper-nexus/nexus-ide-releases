@@ -1,10 +1,20 @@
 import {
   compileIntentContract,
+  isExplicitGitSyncGoal,
   MISSION_INTENT_GOAL_MAX_CHARS,
-  suggestMissionLaneFromGoal,
   type MissionIntentContract,
+  type MissionLane,
 } from '../../shared/mission-intent';
 import { TAB_COMPLETION_INSTRUCTION } from './operator-tab-completion';
+
+/**
+ * Única categoria que a mão do operador aceita derivar do texto: `ops` quando o
+ * objetivo INTEIRO é, de forma explícita, sincronizar o repositório (F-785,
+ * F-811). Nunca consult nem plan.
+ */
+export function operatorHandMissionLane(goal: string): MissionLane | undefined {
+  return isExplicitGitSyncGoal(goal) ? 'ops' : undefined;
+}
 
 /**
  * Contrato da missão que a mão do operador cria em Autopilot: aprovado e
@@ -12,15 +22,26 @@ import { TAB_COMPLETION_INSTRUCTION } from './operator-tab-completion';
  * guardrails que não são cerimônia — containment, allowlists, 1 escritor por
  * checkout, maxWorkers — continuam valendo a jusante.
  *
- * F-785: a categoria de entrega (lane) nasce AQUI, classificada pelo mesmo
- * classificador do wizard — sem ela um pedido de só sincronizar o repositório
- * nascia `standard` e o done era recusado por não haver arquivo, embora o
- * gate de entrega já aceitasse ops/consulta com nota durável.
+ * F-810: a missão da mão do operador existe para HOSPEDAR helpers (o "+ Pane",
+ * o `/hook/delegate`, "Tornar orquestrador", `nexus_mission_create`). A
+ * categoria de entrega NUNCA vem do classificador de texto livre do wizard:
+ * ele devolvia consult/plan/ops para "Analise o fluxo de login…" ou para uma
+ * aba chamada "Deploy"/"Auditoria"/"Planejamento", e essas lanes zeram
+ * `maxWorkers` — o pane virava orquestrador de uma missão que recusava todo
+ * `nexus_pane_spawn` ("budget_exhausted: maxWorkers is 0"). Por padrão a missão
+ * é `standard`.
+ *
+ * Única exceção (F-785): quem CRIA a missão para si com um objetivo que é, por
+ * inteiro e de forma explícita, sincronizar o repositório
+ * (`recognizeGitSync`, só `nexus_mission_create`) nasce `ops`, para o done
+ * com nota durável fechar sem arquivo. Os caminhos que adotam o pane ou o
+ * primeiro helper (título = pedido/nome da aba) nunca passam essa opção.
  */
 export function operatorHandMissionContract(
   title: string,
   description: string | undefined,
   milestones: readonly string[],
+  options: { readonly recognizeGitSync?: boolean } = {},
 ): MissionIntentContract {
   const now = Date.now();
   const acceptanceCriteria = milestones
@@ -28,10 +49,11 @@ export function operatorHandMissionContract(
     .filter((milestone) => milestone.length > 0)
     .slice(0, 32);
   const goal = (description?.trim() || title).slice(0, MISSION_INTENT_GOAL_MAX_CHARS);
+  const lane = options.recognizeGitSync ? operatorHandMissionLane(goal) : undefined;
   return {
     ...compileIntentContract({
       goal,
-      lane: suggestMissionLaneFromGoal(goal) ?? undefined,
+      ...(lane ? { lane } : {}),
       source: 'typed',
       intentVersion: 1,
       executionMode: 'autopilot',

@@ -138,10 +138,9 @@ import {
   canCompleteConsultLane,
   canCompleteOpsLane,
   compileIntentContract,
-  suggestMissionLaneFromGoal,
 } from '../../shared/mission-intent';
 import { isTaskQueueManagedMission } from './task-dispatch-authority';
-import { operatorHandMissionContract } from './operator-hand-mission';
+import { operatorHandMissionContract, operatorHandMissionLane } from './operator-hand-mission';
 import { hasOperatorTabHost, recordOperatorTabCompletionRequest } from './operator-tab-completion';
 import { stripAwaitingAdjustmentMarker } from '../../shared/mission-recovery-policy';
 import {
@@ -361,7 +360,12 @@ const missionCreateTool: McpToolDef = {
       }
     }
     const spaceId = ctx.executionScope ? sharedPaneSpaceId(ctx.scope, ctx.executionScope) : undefined;
-    const operatorContract = operatorHandMissionContract(title, description, milestones);
+    // F-810: a missão da mão do operador hospeda helpers; só a sincronização
+    // explícita do repositório nasce ops (F-785) — nunca consult/plan por texto livre.
+    const operatorContract = operatorHandMissionContract(title, description, milestones, {
+      recognizeGitSync: true,
+    });
+    const syncLane = operatorHandMissionLane(description?.trim() || title);
     if (spaceId) operatorContract.workspaceBinding = { version: 1, spaceId };
     // Criação + pane do criador + running numa transação só: qualquer falha
     // (inclusive no update para running) desfaz tudo e nada é publicado.
@@ -384,10 +388,11 @@ const missionCreateTool: McpToolDef = {
               intentContract: {
                 ...compileIntentContract({
                   goal: description?.trim() || title,
-                  // F-785: a categoria de entrega nasce classificada também no
-                  // caminho Hardened — a aprovação na interface pode trocá-la,
-                  // mas o padrão nunca é standard para uma consulta/sincronização.
-                  lane: suggestMissionLaneFromGoal(description?.trim() || title) ?? undefined,
+                  // F-785/F-810: a categoria nasce `ops` só para a sincronização
+                  // explícita do repositório; o texto livre nunca rebaixa a
+                  // missão do operador a consult/plan (maxWorkers 0 impede o
+                  // pane de abrir os helpers que a missão existe para hospedar).
+                  ...(syncLane ? { lane: syncLane } : {}),
                   source: 'typed',
                   intentVersion: 1,
                 }),
