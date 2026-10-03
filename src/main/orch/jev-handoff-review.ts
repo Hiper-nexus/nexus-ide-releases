@@ -308,12 +308,15 @@ export interface ReviewMissionHandoffDeps {
 }
 
 export async function reviewMissionHandoff(
-  params: { sessionId: string | undefined; signal?: AbortSignal } & HandoffReviewInput,
+  params: { sessionId: string | undefined; signal?: AbortSignal; maxBounces?: number } & HandoffReviewInput,
   deps?: ReviewMissionHandoffDeps,
 ): Promise<JevReviewVerdict> {
   const judgeFn = deps?.judge ?? judge;
   const enabled = deps?.enabled ?? (() => isJevSurfaceEnabled('handoffReview'));
   const hasKey = deps?.hasKey ?? (() => hasDecisionCredential('handoffReview'));
+  // Caminho sem canal de devolução (fechamento mecânico PTY) passa 0: a
+  // entrega fraca NASCE weak — o worker já encerrou e não pode reenviar.
+  const maxBounces = params.maxBounces ?? JEV_REVIEW_MAX_BOUNCES;
 
   if (params.declaredStatus !== 'success') {
     return { kind: 'skipped', reason: 'status-not-success' };
@@ -386,7 +389,7 @@ export async function reviewMissionHandoff(
   }
 
   const budget = budgetBySession.get(sessionId) ?? { attempts: 0 };
-  if (bounceSignals.length > 0 && budget.attempts < JEV_REVIEW_MAX_BOUNCES) {
+  if (bounceSignals.length > 0 && budget.attempts < maxBounces) {
     budget.attempts += 1;
     budgetBySession.set(sessionId, budget);
     record('retry');
@@ -394,9 +397,9 @@ export async function reviewMissionHandoff(
       kind: 'retry',
       signals: bounceSignals,
       attempt: budget.attempts,
-      retries: JEV_REVIEW_MAX_BOUNCES,
+      retries: maxBounces,
       message:
-        `revisão de evidência (Jev) — devolução ${budget.attempts}/${JEV_REVIEW_MAX_BOUNCES}: ` +
+        `revisão de evidência (Jev) — devolução ${budget.attempts}/${maxBounces}: ` +
         `${bounceSignals.join('; ')}. ` +
         'Reenvie o nexus_handoff_submit com a evidência real (saída de ' +
         'testes/typecheck, commit, arquivos). Se não conseguir concluir, use ' +
@@ -418,4 +421,30 @@ export async function reviewMissionHandoff(
 
 export function resetJevReviewBudgetsForTesting(): void {
   budgetBySession.clear();
+}
+
+/**
+ * F-786: destino do veredito no caminho SEM canal de devolução (fechamento
+ * mecânico PTY). No MCP o `weak` fica success marcado porque o worker já teve
+ * a devolução dele; aqui a entrega NASCE fraca — nunca foi revista — então
+ * vira `partial` com o texto integral preservado nos artifacts. `retry` não
+ * deve ocorrer (a revisão roda com maxBounces 0), mas se ocorrer o destino é
+ * o mesmo: nunca success sem a prova requerida. `skipped` é fail-open, como
+ * no MCP.
+ */
+export function mechanicalHandoffReviewOutcome(verdict: JevReviewVerdict): {
+  readonly status: 'success' | 'partial';
+  readonly mark: boolean;
+  readonly artifacts: readonly JevReviewArtifact[];
+} {
+  switch (verdict.kind) {
+    case 'ok':
+      return { status: 'success', mark: false, artifacts: [verdict.artifact] };
+    case 'weak':
+      return { status: 'partial', mark: true, artifacts: [verdict.artifact] };
+    case 'retry':
+      return { status: 'partial', mark: true, artifacts: [] };
+    default:
+      return { status: 'success', mark: false, artifacts: [] };
+  }
 }

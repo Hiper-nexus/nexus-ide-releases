@@ -1,6 +1,7 @@
 import {
   compileIntentContract,
   MISSION_INTENT_GOAL_MAX_CHARS,
+  suggestMissionLaneFromGoal,
   type MissionIntentContract,
 } from '../../shared/mission-intent';
 import { TAB_COMPLETION_INSTRUCTION } from './operator-tab-completion';
@@ -10,6 +11,11 @@ import { TAB_COMPLETION_INSTRUCTION } from './operator-tab-completion';
  * despachado agora (é o próprio operador pedindo), em modo livre. Os
  * guardrails que não são cerimônia — containment, allowlists, 1 escritor por
  * checkout, maxWorkers — continuam valendo a jusante.
+ *
+ * F-785: a categoria de entrega (lane) nasce AQUI, classificada pelo mesmo
+ * classificador do wizard — sem ela um pedido de só sincronizar o repositório
+ * nascia `standard` e o done era recusado por não haver arquivo, embora o
+ * gate de entrega já aceitasse ops/consulta com nota durável.
  */
 export function operatorHandMissionContract(
   title: string,
@@ -21,9 +27,11 @@ export function operatorHandMissionContract(
     .map((milestone) => milestone.trim().slice(0, 2_048))
     .filter((milestone) => milestone.length > 0)
     .slice(0, 32);
+  const goal = (description?.trim() || title).slice(0, MISSION_INTENT_GOAL_MAX_CHARS);
   return {
     ...compileIntentContract({
-      goal: (description?.trim() || title).slice(0, MISSION_INTENT_GOAL_MAX_CHARS),
+      goal,
+      lane: suggestMissionLaneFromGoal(goal) ?? undefined,
       source: 'typed',
       intentVersion: 1,
       executionMode: 'autopilot',

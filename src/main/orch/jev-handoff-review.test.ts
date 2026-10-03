@@ -15,9 +15,11 @@ import {
   ADMITS_INCOMPLETE_MAX,
   buildHandoffReviewState,
   evaluateHandoffEvidence,
+  mechanicalHandoffReviewOutcome,
   resetJevReviewBudgetsForTesting,
   reviewMissionHandoff,
   type HandoffReviewInput,
+  type JevReviewArtifact,
 } from './jev-handoff-review';
 import type { JevQuestion } from '../jev/jev-client';
 
@@ -180,6 +182,21 @@ describe('reviewMissionHandoff', () => {
     expect(verdict).toEqual({ kind: 'skipped', reason: 'judge-unavailable' });
   });
 
+  it('F-786: sem canal de retry (maxBounces 0) o primeiro fraco já é weak, nunca retry', async () => {
+    // O fechamento mecânico PTY não pode devolver a entrega ao worker (ele já
+    // encerrou): orçamento zero de devoluções — nasce weak de cara.
+    const weak = result({ is_specific: 0.1, has_verification: 0.1, admits_incomplete: 0.1 });
+    const verdict = await reviewMissionHandoff(
+      { sessionId: 's-pty', ...baseInput, maxBounces: 0 },
+      deps(vi.fn(async () => weak)),
+    );
+    expect(verdict.kind).toBe('weak');
+    if (verdict.kind === 'weak') {
+      expect(verdict.signals.length).toBeGreaterThan(0);
+      expect(verdict.artifact.payload.outcome).toBe('weak');
+    }
+  });
+
   it('status partial → skipped sem chamar o judge', async () => {
     const j = vi.fn(async () => allPass());
     const verdict = await reviewMissionHandoff(
@@ -267,5 +284,52 @@ describe('reviewMissionHandoff', () => {
     );
     expect(asked[0].names_changes).toBeUndefined();
     expect(asked[1].names_changes).toBeDefined();
+  });
+});
+
+describe('mechanicalHandoffReviewOutcome (F-786 — caminho sem canal de devolução)', () => {
+  const artifact: JevReviewArtifact = {
+    kind: 'nexus.jevReview',
+    payload: { outcome: 'weak', model: 'jev-test', probabilities: {}, signals: ['s'] },
+  };
+
+  it('ok → success, sem marca, com artifact da revisão', () => {
+    const outcome = mechanicalHandoffReviewOutcome({
+      kind: 'ok',
+      artifact: { ...artifact, payload: { ...artifact.payload, outcome: 'ok' as const } },
+    });
+    expect(outcome.status).toBe('success');
+    expect(outcome.mark).toBe(false);
+    expect(outcome.artifacts).toHaveLength(1);
+  });
+
+  it('weak → partial com marca: entrega que NASCE fraca não é success', () => {
+    const outcome = mechanicalHandoffReviewOutcome({
+      kind: 'weak',
+      signals: ['sem evidência'],
+      artifact,
+    });
+    expect(outcome.status).toBe('partial');
+    expect(outcome.mark).toBe(true);
+    expect(outcome.artifacts).toHaveLength(1);
+  });
+
+  it('retry → partial (defesa: com maxBounces 0 não deve ocorrer)', () => {
+    const outcome = mechanicalHandoffReviewOutcome({
+      kind: 'retry',
+      signals: ['sem evidência'],
+      attempt: 1,
+      retries: 1,
+      message: 'm',
+    });
+    expect(outcome.status).toBe('partial');
+    expect(outcome.mark).toBe(true);
+  });
+
+  it('skipped → success sem marca (fail-open, como no MCP)', () => {
+    const outcome = mechanicalHandoffReviewOutcome({ kind: 'skipped', reason: 'no-credential' });
+    expect(outcome.status).toBe('success');
+    expect(outcome.mark).toBe(false);
+    expect(outcome.artifacts).toHaveLength(0);
   });
 });

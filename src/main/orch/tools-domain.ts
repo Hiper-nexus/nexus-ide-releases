@@ -138,6 +138,7 @@ import {
   canCompleteConsultLane,
   canCompleteOpsLane,
   compileIntentContract,
+  suggestMissionLaneFromGoal,
 } from '../../shared/mission-intent';
 import { isTaskQueueManagedMission } from './task-dispatch-authority';
 import { operatorHandMissionContract } from './operator-hand-mission';
@@ -381,7 +382,15 @@ const missionCreateTool: McpToolDef = {
               intentState: 'awaiting_approval' as const,
               intentVersion: 1,
               intentContract: {
-                ...compileIntentContract({ goal: description?.trim() || title, source: 'typed', intentVersion: 1 }),
+                ...compileIntentContract({
+                  goal: description?.trim() || title,
+                  // F-785: a categoria de entrega nasce classificada também no
+                  // caminho Hardened — a aprovação na interface pode trocá-la,
+                  // mas o padrão nunca é standard para uma consulta/sincronização.
+                  lane: suggestMissionLaneFromGoal(description?.trim() || title) ?? undefined,
+                  source: 'typed',
+                  intentVersion: 1,
+                }),
                 workspaceBinding: { version: 1 as const, spaceId },
               },
             } : {}),

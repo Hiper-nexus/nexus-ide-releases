@@ -1039,6 +1039,27 @@ export function suggestMissionLaneFromGoal(goal: string): MissionLane | null {
     );
   if (planArtifact) return 'plan';
 
+  // 3.5. SOMENTE sincronização/operação Git ("atualiza o repositório local com
+  //     o GitHub", "sincronizar com origin/main", "git merge --ff-only"): o
+  //     merge/pull daqui é o TRANSPORTE da atualização, não integração de
+  //     código novo — a missão não produz arquivo e o gate de entrega já
+  //     aceita ops com nota durável (F-785). Fica ANTES do passo 4 porque
+  //     "merge" é verbo de escrita ali; pedido misto ("sincronize e corrija")
+  //     tem outro verbo de escrita e segue para o 4 (standard).
+  const syncVerb = /\b(?:sincroniz(?:ar|e|a|ando)?|atualiz(?:ar|a|e)|pux(?:ar|a|e)|pull|fetch)\b/i;
+  const repoWord = /\b(?:reposit[oó]rio|repo\b|github|origin|upstream|git)\b/i;
+  const gitSyncOnly =
+    (syncVerb.test(g) && repoWord.test(g)) || /--ff-only|fast-?forward/i.test(g);
+  if (gitSyncOnly) {
+    // A mesma régua do passo 4, SEM o `merge` (o merge da sincronização é
+    // transporte): qualquer outro verbo de escrita desclassifica.
+    const writesBeyondSync =
+      /\b(implement(?:ar|e|a|em)|implementa[cç][aã]o|codar|escrever\s+c[oó]digo|cri(?:ar|e|a)|constru(?:ir|a|am)|mont(?:ar|e|a)|desenvolv(?:er|a)|refator(?:ar|e|a|ando)?|otimiz(?:ar|e|a)|adicion(?:ar|e|a)|integr(?:ar|e|a)|traduz(?:ir|a)|fix(ar)?\s|corrig(?:ir|e|em)|corrija|arrum(?:ar|e|a)|consert(?:ar|e|a)|resolv(?:er|a|e)|proteg(?:er|e)|proteja|bug|feature|worktree|testes?\s+e\s+c[oó]digo)\b/i.test(
+        g,
+      );
+    if (!writesBeyondSync) return 'ops';
+  }
+
   // 4. Qualquer verbo que escreve. Em missão MISTA ("analise E refatore",
   //    "diagnostique E otimize"), escrever vence — a lane excludente
   //    proibiria justamente a metade que produz a entrega.

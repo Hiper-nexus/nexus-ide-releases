@@ -594,6 +594,24 @@ describe('mission creation authority', () => {
       ).toBe(false);
     });
 
+    it.each([
+      ['consulta', 'Investigar por que o login está lento', 'consult'],
+      ['sincronização Git somente operacional', 'Atualiza o repositório local com o GitHub', 'ops'],
+      ['sync por merge fast-forward', 'Sincronizar git com git merge --ff-only origin/main', 'ops'],
+      ['pedido misto ("sincronize e corrija")', 'Sincronize o repositório e corrija o bug do login', 'standard'],
+    ] as const)('Autopilot: criação MCP de %s materializa a lane correta no contrato', async (_label, title, lane) => {
+      // F-785: a missão da aba nascia sempre standard; o set_status recusava
+      // done de uma sincronização real ("sem entrega real no projeto") embora
+      // o gate de entrega já aceitasse ops/consulta sem arquivo.
+      mocks.getOrchSettings.mockReturnValue({ squadCliPolicy: 'operator-choice' });
+      const { create } = missionStores();
+
+      await missionCreateTool().handler({ title }, operatorHand());
+
+      expect(create.mock.calls[0]![0].intentContract).toMatchObject({ lane });
+    });
+
+
     it('Hardened: a missão criada pela mão do operador espera o despacho na interface', async () => {
       mocks.getOrchSettings.mockReturnValue({ squadCliPolicy: 'governed' });
       const { create, update } = missionStores();
@@ -708,6 +726,91 @@ describe('mission creation authority', () => {
     );
     expect(setStatus).not.toHaveBeenCalled();
     expect(appendLearning).not.toHaveBeenCalled();
+  });
+
+  it('F-785: lane ops conclui sem arquivo com nota durável, e o contrato não muda', async () => {
+    // A sincronização real não produz arquivo: ops + nota ≥40 fecha done.
+    // set_status NUNCA troca a categoria retroativamente para escapar do gate.
+    let stored: Record<string, unknown> = {
+      id: 'mission-existing',
+      title: 'Atualiza o repositório local com o GitHub',
+      status: 'running',
+      intentState: 'executing',
+      intentVersion: 1,
+      updatedAt: 41,
+      learnings: '',
+      milestones: [],
+      intentContract: { lane: 'ops', goal: 'Atualiza o repositório local com o GitHub' },
+    };
+    mocks.completeVerified.mockImplementation(
+      (_scope: unknown, input: { result: unknown; learnings: string }) => {
+        stored = {
+          ...stored,
+          status: 'done',
+          intentState: 'done',
+          result: input.result,
+          learnings: input.learnings,
+        };
+      },
+    );
+    mocks.getProjectDomainStores.mockReturnValue({
+      missions: {
+        get: () => stored,
+        setStatus: vi.fn(),
+        appendLearning: vi.fn(),
+      },
+    });
+    mocks.getContextWorkflowService.mockReturnValue({
+      isMissionDriverComplete: () => false,
+      getMissionWorkflow: () => ({ contract: null, workflow: null }),
+    });
+
+    const result = await missionSetStatusTool().handler(
+      {
+        missionId: 'mission-existing',
+        status: 'done',
+        note: 'Merge --ff-only de origin/main aplicado; HEAD local atualizado sem conflitos.',
+      },
+      context('orchestrator'),
+    );
+
+    expect(result).toMatchObject({ id: 'mission-existing', status: 'done' });
+    expect(mocks.completeVerified).toHaveBeenCalledOnce();
+    // A categoria registrada na criação é a que vale — nada foi reclassificado.
+    expect(stored.intentContract).toMatchObject({ lane: 'ops' });
+  });
+
+  it('F-785: lane ops com nota vaga (<40) NÃO usa a exceção', async () => {
+    const stored: Record<string, unknown> = {
+      id: 'mission-existing',
+      title: 'Sync',
+      status: 'running',
+      intentState: 'executing',
+      intentVersion: 1,
+      updatedAt: 41,
+      learnings: '',
+      milestones: [],
+      intentContract: { lane: 'ops' },
+    };
+    mocks.getProjectDomainStores.mockReturnValue({
+      missions: {
+        get: () => stored,
+        setStatus: vi.fn(),
+        appendLearning: vi.fn(),
+      },
+    });
+    mocks.getContextWorkflowService.mockReturnValue({
+      isMissionDriverComplete: () => false,
+      getMissionWorkflow: () => ({ contract: null, workflow: null }),
+    });
+
+    await expect(
+      missionSetStatusTool().handler(
+        { missionId: 'mission-existing', status: 'done', note: 'feito' },
+        context('orchestrator'),
+      ),
+    ).rejects.toThrow(/durable note/);
+    expect(mocks.completeVerified).not.toHaveBeenCalled();
   });
 
   it('não aceita note como done de squad sem worker e handoff entregue', async () => {

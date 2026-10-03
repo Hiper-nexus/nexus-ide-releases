@@ -915,3 +915,35 @@ describe('missão MISTA — a lane não pode proibir a outra metade', () => {
     ).toBe('consult');
   });
 });
+
+describe('sincronização Git somente operacional (F-785)', () => {
+  it('pedido de só sincronizar/atualizar o repositório é ops, não standard', () => {
+    // Campo 03/10: "atualiza o repositório local com o GitHub" nasceu standard
+    // e o set_status recusou o done sem arquivo — mas o gate de entrega já
+    // aceita ops com nota durável. O merge/pull aqui é o TRANSPORTE da
+    // sincronização, não integração de código novo.
+    expect(
+      suggestMissionLaneFromGoal('atualiza o repositório local com o GitHub'),
+    ).toBe('ops');
+    expect(
+      suggestMissionLaneFromGoal('Sincronizar git com git merge --ff-only origin/main'),
+    ).toBe('ops');
+    expect(suggestMissionLaneFromGoal('sincronize o repositório com origin')).toBe('ops');
+    expect(suggestMissionLaneFromGoal('faça git pull --ff-only na branch principal')).toBe('ops');
+  });
+
+  it('pedido MISTO ("sincronize e corrija") continua standard', () => {
+    expect(
+      suggestMissionLaneFromGoal('sincronize o repositório e corrija o bug do login'),
+    ).toBeNull();
+    expect(
+      suggestMissionLaneFromGoal('atualiza o repositório e implementa a tela de perfil'),
+    ).toBeNull();
+  });
+
+  it('"sincronização de dados" como feature não é operação Git', () => {
+    expect(
+      suggestMissionLaneFromGoal('implementar a sincronização de dados em tempo real'),
+    ).toBeNull();
+  });
+});
