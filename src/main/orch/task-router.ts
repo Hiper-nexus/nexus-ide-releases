@@ -1363,12 +1363,12 @@ export function routeTask(
   // Lane visual (regra do operador, 30/09): UI/design vai sempre para os
   // modelos de topo.
   let visualNote = '';
-  if (
+  const visualLaneApplied =
     specialtyVerdict.specialty === 'visual' &&
     policy.source !== 'benchmark' &&
     mention.model === undefined &&
-    applyFrontierLane(VISUAL_FRONTIER_LANE)
-  ) {
+    applyFrontierLane(VISUAL_FRONTIER_LANE);
+  if (visualLaneApplied) {
     visualNote = '; lane visual (modelos de topo)';
   }
 
@@ -1396,6 +1396,12 @@ export function routeTask(
   // sem benchmark publicado quando há muitos com nota alta. Fora de alcance:
   // critical (o topo entre CLIs manda), menção explícita, escolha medida
   // (benchmark de especialidade / avaliação Nexus) e primeira reserva.
+  // F-770 (G2): a especialidade bug/security/visual NÃO desligava a diversidade
+  // por si só — com política heurística a especialidade nem reordena adapters
+  // (HEURISTIC_SPECIALTY_ADAPTERS é vazio) e a missão concentrava tudo num
+  // provider só. As proteções reais continuam: benchmark medido preserva a
+  // ordem medida, frontier/high-risk cobre hard+critical, e a lane visual
+  // aplicada protege o assento dos modelos de topo.
   let rotationNote = '';
   const usedInMission = new Set<string>([
     ...(context.missionUsedAdapters ?? []),
@@ -1406,9 +1412,7 @@ export function routeTask(
     frontier === null &&
     evaluated.length === 0 &&
     policy.source !== 'benchmark' &&
-    specialtyVerdict.specialty !== 'visual' &&
-    specialtyVerdict.specialty !== 'security' &&
-    specialtyVerdict.specialty !== 'bug' &&
+    !visualLaneApplied &&
     mention.model === undefined &&
     usedInMission.size > 0 &&
     usedInMission.has(ranked[0]?.c.adapterId ?? '')
@@ -1442,9 +1446,7 @@ export function routeTask(
     frontier === null &&
     evaluated.length === 0 &&
     policy.source !== 'benchmark' &&
-    specialtyVerdict.specialty !== 'visual' &&
-    specialtyVerdict.specialty !== 'security' &&
-    specialtyVerdict.specialty !== 'bug' &&
+    !visualLaneApplied &&
     mention.model === undefined
   ) {
     const use = (id: string) => context.globalUseCounts!.get(id) ?? 0;
