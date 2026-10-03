@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { isCredentiallessOpenCodeModel } from '../adapters/model-auth-readiness';
 import {
   DEFAULT_PRICE,
   MODEL_PRICES,
@@ -167,5 +168,48 @@ describe('estimateTokens', () => {
 
   it('never returns zero for non-empty text', () => {
     expect(estimateTokens('a')).toBe(1);
+  });
+});
+
+/**
+ * F-820: o F-774 precificou `opencode/deepseek-v4-flash` a $0 (antes saía
+ * $0,27/$1,10 pelo prefixo `deepseek`), mas o id sem `-free` é o modelo pago do
+ * gateway e o F-683 registra "Model access is disabled" nele. Grátis é só o que
+ * é provadamente sem credencial (allowlist exata) ou termina em `-free`.
+ */
+describe('opencode: só o provadamente grátis custa $0 (F-820)', () => {
+  it('opencode/deepseek-v4-flash é pago, no preço da família DeepSeek', () => {
+    const price = priceForModel('opencode/deepseek-v4-flash');
+    expect(price).toEqual(MODEL_PRICES.deepseek);
+    expect(price.inputPerM).toBeGreaterThan(0);
+    expect(price.outputPerM).toBeGreaterThan(0);
+    expect(estimateCost('opencode/deepseek-v4-flash', 1_000_000, 1_000_000)).toBeCloseTo(1.37);
+    expect(estimateCost('OpenCode/DeepSeek-V4-Flash', 1_000_000, 0)).toBeCloseTo(0.27);
+  });
+
+  it('a variante -free continua grátis (sufixo é mais longo e vence o prefixo)', () => {
+    expect(estimateCost('opencode/deepseek-v4-flash-free', 1_000_000, 1_000_000)).toBe(0);
+    expect(estimateCost('opencode/mimo-v2.5-free', 1_000_000, 1_000_000)).toBe(0);
+    expect(estimateCost('opencode/nemotron-3-ultra-free', 1_000_000, 1_000_000)).toBe(0);
+    expect(estimateCost('opencode/big-pickle', 1_000_000, 1_000_000)).toBe(0);
+  });
+
+  it('nenhum opencode/ a $0 na tabela escapa da regra: -free ou allowlist sem credencial', () => {
+    const zero = Object.entries(MODEL_PRICES).filter(
+      ([id, price]) =>
+        id.startsWith('opencode/') && price.inputPerM === 0 && price.outputPerM === 0,
+    );
+    expect(zero.length).toBeGreaterThan(0);
+    for (const [id] of zero) {
+      expect(
+        id.endsWith('-free') || isCredentiallessOpenCodeModel('opencode', id),
+        `${id} está a $0 sem ser -free nem provado sem credencial`,
+      ).toBe(true);
+    }
+  });
+
+  it('id opencode/ desconhecido nunca vira grátis por prefixo', () => {
+    expect(priceForModel('opencode/algum-modelo-novo')).toEqual(DEFAULT_PRICE);
+    expect(priceForModel('opencode/deepseek-v4-pro').inputPerM).toBeGreaterThan(0);
   });
 });

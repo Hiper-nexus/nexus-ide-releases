@@ -21,6 +21,7 @@ import {
   noteOperatorDirection,
   OPERATOR_CHOICE_PROOF_WINDOW_MS,
   operatorRecentlyNamedCli,
+  textNamesCli,
 } from './operator-cli-mentions';
 
 const MIN = 60_000;
@@ -206,5 +207,131 @@ describe('prova do operatorChoice (F-682)', () => {
     expect(operatorRecentlyNamedCli('maestro-janela', 'claude', later)).toBe(false);
     expect(operatorRecentlyNamedCli('maestro-janela', 'claude', later, OPERATOR_CHOICE_PROOF_WINDOW_MS)).toBe(true);
     expect(operatorRecentlyNamedCli('maestro-janela', 'claude', t0 + 31 * MIN, OPERATOR_CHOICE_PROOF_WINDOW_MS)).toBe(false);
+  });
+});
+
+/**
+ * F-818: a distância de 1 edição do F-766 "provava" que o operador nomeou uma
+ * CLI com palavras comuns — e o pin do Maestro deixava de ser redistribuído
+ * (F-195/F-682). Agora só vale o nome (espaço/hífen flexível) ou uma grafia
+ * errada EXPLÍCITA por alias.
+ */
+describe('palavras comuns não provam pedido de CLI (F-818)', () => {
+  // Tabela da revisão ec8524a8 + vizinhas: cada uma casava por 1 edição.
+  const COMMON_WORDS: Array<[string, string]> = [
+    ['mude o botão de lugar', 'muse'],
+    ['passa o mouse em cima do card', 'muse'],
+    ['isso devia funcionar já', 'devin'],
+    ['deixa a tela minimal', 'minimax-code'],
+    ['cria um memo', 'mimo-code'],
+    ['isso é um mito', 'mimo-code'],
+    ['uma table nova', 'claude'],
+    ['a clause do contrato', 'claude'],
+    ['os cursos de inglês', 'cursor'],
+    ['use o modo escuro', 'muse'],
+    ['revise o code do parser', 'codex'],
+    ['troca o codec de áudio', 'codex'],
+    ['abre o painel de grade', 'grok'],
+    ['o tema do site é minimo', 'minimax-code'],
+  ];
+
+  it.each(COMMON_WORDS)('"%s" não nomeia %s (texto puro)', (text, adapterId) => {
+    expect(textNamesCli(text, adapterId)).toBe(false);
+  });
+
+  it('digitado no pane, nenhuma delas prova a CLI (operatorChoice continua preferência)', () => {
+    const now = 1_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(now - MIN);
+    COMMON_WORDS.forEach(([text, adapterId], index) => {
+      const sessionId = `comum-${index}`;
+      type(sessionId, text);
+      expect(operatorRecentlyNamedCli(sessionId, adapterId, now), `${adapterId}: ${text}`).toBe(false);
+    });
+  });
+
+  it('digitado tecla a tecla, a palavra comum também não prova', () => {
+    const now = 1_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(now - MIN);
+    for (const ch of 'passa o mouse em cima do card') type('comum-teclas', ch);
+    expect(operatorRecentlyNamedCli('comum-teclas', 'muse', now)).toBe(false);
+  });
+
+  it('grafia errada FORA da tabela vira preferência, não prova (decisão do F-818)', () => {
+    expect(textNamesCli('cade groc', 'grok')).toBe(false);
+    expect(textNamesCli('cade codez', 'codex')).toBe(false);
+    expect(textNamesCli('cade kimo', 'kimi')).toBe(false);
+  });
+
+  it('o nome real continua provando, com caixa, acento, espaço e hífen', () => {
+    expect(textNamesCli('abre o muse pra mim', 'muse')).toBe(true);
+    expect(textNamesCli('abre o Devin', 'devin')).toBe(true);
+    expect(textNamesCli('usa o MiniMax', 'minimax-code')).toBe(true);
+    expect(textNamesCli('usa o mini max', 'minimax-code')).toBe(true);
+    expect(textNamesCli('usa o deep-seek', 'deepseek')).toBe(true);
+    expect(textNamesCli('testa com qwen 3.8', 'qwen')).toBe(true);
+    expect(textNamesCli('testa com qwen-3.8', 'qwen')).toBe(true);
+    expect(textNamesCli('cade o anti gravity', 'agy')).toBe(true);
+    expect(textNamesCli('cade o anti-gravity', 'agy')).toBe(true);
+  });
+
+  it('grafias erradas explícitas continuam provando (qwhen→qwen do F-766 e vizinhas)', () => {
+    for (const [text, adapterId] of [
+      ['cade qwhen', 'qwen'],
+      ['cade quen', 'qwen'],
+      ['abre o cluade', 'claude'],
+      ['abre um codx', 'codex'],
+      ['manda o gemni olhar', 'agy'],
+      ['usa o deepsek', 'deepseek'],
+      ['usa o kimmi', 'kimi'],
+      ['chama o devim', 'devin'],
+    ] as const) {
+      expect(textNamesCli(text, adapterId), `${adapterId}: ${text}`).toBe(true);
+    }
+  });
+
+  it('qwhen digitado tecla a tecla com backspace (caso real do F-766) continua provando', () => {
+    const now = 1_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(now - MIN);
+    for (const ch of 'cade qwhex') type('qwhen-teclas', ch);
+    type('qwhen-teclas', '\x7f');
+    type('qwhen-teclas', 'n');
+    expect(operatorRecentlyNamedCli('qwhen-teclas', 'qwen', now)).toBe(true);
+  });
+});
+
+/**
+ * F-818: os padrões flexíveis (espaço/hífen entre letras) rodam sobre texto do
+ * operador; a varredura tem de ser linear. O buffer do pane retém ≤ 4.000
+ * caracteres, mas a função pura recebe qualquer tamanho — mede-se 16 KB.
+ */
+describe('F-818: varredura linear em texto do operador', () => {
+  const SIZE = 16_384;
+  const ADAPTERS = [
+    'claude', 'codex', 'grok', 'agy', 'kimi', 'glm', 'glm-flash', 'mimo-code',
+    'minimax-code', 'devin', 'longcat', 'muse', 'deepseek', 'opencode',
+    'openclaude', 'aider', 'qwen', 'cursor',
+  ];
+  const inputs: Array<[string, string]> = [
+    ['espaços sem fim', ' '.repeat(SIZE)],
+    ['hífens sem fim', '-'.repeat(SIZE)],
+    ['"m" seguido de espaços', `m${' '.repeat(SIZE - 1)}`],
+    ['"qwe" seguido de espaços', `qwe${' '.repeat(SIZE - 3)}`],
+    ['"anti" seguido de hífens', `anti${'-'.repeat(SIZE - 4)}`],
+    ['letras do alias separadas', 'c l a u d '.repeat(SIZE / 10)],
+    ['prefixos repetidos de qwen', 'q w e '.repeat(SIZE / 6)],
+    ['prefixo de typo repetido', 'qwh '.repeat(SIZE / 4)],
+    ['"m u s" repetido', 'm u s '.repeat(SIZE / 6)],
+    ['"deep" e "seek" soltos', 'deep seek '.slice(0, 9).repeat(SIZE / 9)],
+    ['tabs e espaços', '\t \t '.repeat(SIZE / 4)],
+  ];
+
+  it.each(inputs)('%s: todas as CLIs, em tempo linear', (_label, text) => {
+    const run = () => ADAPTERS.map((id) => textNamesCli(text, id));
+    run(); // aquece: compilação/tier-up da regex não é o que se mede
+    const startedAt = performance.now();
+    run();
+    const elapsedMs = performance.now() - startedAt;
+    // 18 CLIs × todos os aliases e grafias erradas: linear fica em poucos ms.
+    expect(elapsedMs).toBeLessThan(50);
   });
 });

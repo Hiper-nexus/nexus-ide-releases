@@ -75,6 +75,7 @@ import {
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { workerMortalityCount } from './worker-mortality';
 import { authReadyModelsForProvider } from '../adapters/model-auth-readiness';
+import { discoveredModelsFor } from '../adapters/model-discovery';
 import {
   firstWaveCanSeat,
   peekKimiSeatReadiness,
@@ -1830,6 +1831,12 @@ export async function routeTaskForCaller(
             missionId: missionId ?? undefined,
           }),
         models,
+        // F-817: o que a PRÓPRIA CLI anunciou (`agy models`, cache vivo do
+        // Main — leitura de Map, sem I/O) e passou pela auth. É a prova de
+        // acesso do assento restrito da lane de julgamento (Argon).
+        liveModels: discoveredModelsFor(a.adapterId).filter((model) =>
+          models.includes(model),
+        ),
         efforts: a.efforts,
         // F-724: o provedor escolhido serve alguns ids com outro modelo.
         ...(a.modelAliases ? { modelAliases: a.modelAliases } : {}),

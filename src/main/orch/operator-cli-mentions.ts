@@ -51,6 +51,34 @@ const CLI_MENTION_ALIASES: Readonly<Record<string, readonly string[]>> = {
   qwen: ['qwen', 'qwen code', 'qwen 3.8'],
 };
 
+/**
+ * F-818: erros de digitação CONHECIDOS por alias (chave = alias normalizado).
+ * Substitui a distância de 1 edição do F-766, que "provava" que o operador
+ * nomeou uma CLI com palavras comuns ("mude"/"mouse" → muse, "devia" → devin,
+ * "minimal" → minimax, "memo"/"mito" → mimo, "table"/"clause" → claude,
+ * "cursos" → cursor): prova de pedido exige o nome ou uma grafia errada
+ * explícita, nunca uma palavra vizinha. Entrada nova só entra se NÃO for
+ * palavra de pt/en; o espaço/hífen flexível ("qwen 3.8", "anti gravity") vale
+ * para a grafia errada também. Grafia errada fora da lista só vira
+ * preferência (o pin é redistribuído), nunca escolha provada.
+ */
+const CLI_MENTION_TYPOS: Readonly<Record<string, readonly string[]>> = {
+  claude: ['cluade', 'claud', 'calude'],
+  sonnet: ['sonet', 'sonnett'],
+  codex: ['codx', 'cdex'],
+  grok: ['grook', 'grokk'],
+  gemini: ['gemni', 'geminy', 'gemeni'],
+  kimi: ['kimmi', 'kimy'],
+  minimax: ['minimaxx', 'minimx'],
+  devin: ['devim'],
+  muse: ['musse'],
+  deepseek: ['deepsek', 'depseek', 'dipseek', 'deepseak'],
+  opencode: ['opencod', 'opnecode'],
+  openclaude: ['openclaud'],
+  qwen: ['qwhen', 'quen', 'qwem'],
+  xiaomi: ['xiomi', 'xiaomy'],
+};
+
 /* eslint-disable no-control-regex */
 const OSC_PATTERN = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 const CSI_PATTERN = /\x1b\[[0-9;?]*[ -\/]*[@-~]/g;
@@ -144,40 +172,6 @@ function flexibleAliasPattern(core: string): RegExp {
   return new RegExp(`(?<![a-z0-9])${parts.join('[\\s-]*')}(?![a-z0-9])`, 'u');
 }
 
-/**
- * Uma edição (troca ou letra a mais/a menos). Sem relação de prefixo: "code"
- * não vira codex e "use" não vira muse. Apelido com menos de 4 letras nem chega aqui.
- */
-function withinOneEdit(a: string, b: string): boolean {
-  if (a === b) return false;
-  const diff = a.length - b.length;
-  if (diff === 0) {
-    let changes = 0;
-    for (let i = 0; i < a.length; i += 1) {
-      if (a[i] !== b[i]) changes += 1;
-      if (changes > 1) return false;
-    }
-    return changes === 1;
-  }
-  if (diff !== 1 && diff !== -1) return false;
-  const [shorter, longer] = a.length < b.length ? [a, b] : [b, a];
-  let i = 0;
-  let j = 0;
-  let skipped = false;
-  while (i < shorter.length && j < longer.length) {
-    if (shorter[i] === longer[j]) {
-      i += 1;
-      j += 1;
-    } else if (skipped) {
-      return false;
-    } else {
-      skipped = true;
-      j += 1;
-    }
-  }
-  return true;
-}
-
 function aliasMatches(text: string, alias: string): boolean {
   const normalizedAlias = normalizeForMatch(alias);
   if (!normalizedAlias) return false;
@@ -189,13 +183,10 @@ function aliasMatches(text: string, alias: string): boolean {
     ).test(text);
   }
   if (flexibleAliasPattern(core).test(text)) return true;
-  if (!/^[a-z]+$/u.test(core)) return false;
-  for (const word of text.split(/[^a-z0-9]+/u)) {
-    if (word.length < 4 || Math.abs(word.length - core.length) > 1) continue;
-    if (word.startsWith(core) || core.startsWith(word)) continue;
-    if (withinOneEdit(word, core)) return true;
-  }
-  return false;
+  // F-818: só grafia errada EXPLÍCITA — sem distância de edição genérica.
+  return (CLI_MENTION_TYPOS[normalizedAlias] ?? []).some((typo) =>
+    flexibleAliasPattern(typo).test(text),
+  );
 }
 
 function remember(sessionId: string, data: string): void {
@@ -257,9 +248,10 @@ export function installOperatorCliMentionTap(): () => void {
 
 /**
  * O operador nomeou esta CLI nesta sessão nos últimos 15 minutos? Casa alias
- * como palavra (espaço/hífen opcionais; apelido de 4+ letras tolera uma
- * edição, ex. "qwhen" → qwen). Apelido curto ("glm") fica exato. Sem sessão
- * → false (o pin volta a ser preferência).
+ * como palavra (espaço/hífen opcionais) ou uma grafia errada explícita da
+ * tabela `CLI_MENTION_TYPOS` ("qwhen" → qwen); palavra comum parecida não conta
+ * (F-818). Apelido curto ("glm") fica exato. Sem sessão → false (o pin volta a
+ * ser preferência).
  */
 export function operatorRecentlyNamedCli(
   sessionId: string | undefined,
@@ -275,6 +267,15 @@ export function operatorRecentlyNamedCli(
     (chunk) => now - chunk.at >= 0 && now - chunk.at <= window,
   );
   if (recent.length === 0) return false;
-  const normalized = normalizeForMatch(replayInput(recent));
+  return textNamesCli(replayInput(recent), adapterId);
+}
+
+/**
+ * Pura: o texto nomeia esta CLI? Alias como palavra (espaço/hífen opcionais)
+ * ou grafia errada explícita (F-818). Varredura linear no tamanho do texto
+ * (nenhum quantificador aninhado; teste de tempo com 16 KB adversarial).
+ */
+export function textNamesCli(text: string, adapterId: string): boolean {
+  const normalized = normalizeForMatch(text);
   return aliasesFor(adapterId).some((alias) => aliasMatches(normalized, alias));
 }
