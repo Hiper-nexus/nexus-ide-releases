@@ -48,7 +48,8 @@ export function startWorkspaceMemoryService(registry: ProjectDomainStoreRegistry
       for (const immediate of pending) clearImmediate(immediate);
       pending.clear();
       await Promise.all([...new Set([...suites.values()].map((suite) => suite.scope.projectId))]
-        .map((projectId) => stopPeriodicTask(`memory-maintenance:${projectId}`)));
+        .flatMap((projectId) => [stopPeriodicTask(`memory-maintenance:${projectId}`),
+          stopPeriodicTask(`memory-retention:${projectId}`)]));
       suites.clear();
     },
   };

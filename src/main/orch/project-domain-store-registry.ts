@@ -182,16 +182,34 @@ export class ProjectDomainStoreRegistry {
 
 let configuredRegistry: ProjectDomainStoreRegistry | null = null;
 let memoryService: WorkspaceMemoryService | null = null;
+let memoryLifecycleDrain: Promise<void> = Promise.resolve();
 
 /** Installation-level service locator for main-process subsystems without IPC ownership. */
 export function configureProjectDomainStoreRegistry(
   runtimeManager: ProjectRuntimeManager,
 ): ProjectDomainStoreRegistry {
-  configuredRegistry?.dispose();
-  void memoryService?.stop();
-  configuredRegistry = new ProjectDomainStoreRegistry(runtimeManager);
-  memoryService = startWorkspaceMemoryService(configuredRegistry);
-  return configuredRegistry;
+  const previousRegistry = configuredRegistry;
+  const previousService = memoryService;
+  const registry = new ProjectDomainStoreRegistry(runtimeManager);
+  configuredRegistry = registry;
+  let stopped = false;
+  let activeService: WorkspaceMemoryService | null = null;
+  // Keep the synchronous facade API, but serialize physical maintenance epochs.
+  // stop() closes admission synchronously before its first await.
+  const ready = Promise.all([memoryLifecycleDrain, previousService?.stop()]).then(() => {
+    previousRegistry?.dispose();
+    if (!stopped) activeService = startWorkspaceMemoryService(registry);
+  });
+  memoryLifecycleDrain = ready;
+  memoryService = {
+    async stop() {
+      stopped = true;
+      const draining = activeService?.stop();
+      await ready;
+      await draining;
+    },
+  };
+  return registry;
 }
 
 export function getProjectDomainStores(
@@ -210,9 +228,12 @@ export function requireProjectDomainStoreRegistry(): ProjectDomainStoreRegistry 
   return configuredRegistry;
 }
 
-export function disposeProjectDomainStoreRegistry(): void {
-  void memoryService?.stop();
+export async function disposeProjectDomainStoreRegistry(): Promise<void> {
+  const registry = configuredRegistry;
+  const service = memoryService;
   memoryService = null;
-  configuredRegistry?.dispose();
   configuredRegistry = null;
+  const draining = service?.stop() ?? Promise.resolve();
+  memoryLifecycleDrain = Promise.all([memoryLifecycleDrain, draining]).then(() => { registry?.dispose(); });
+  await memoryLifecycleDrain;
 }

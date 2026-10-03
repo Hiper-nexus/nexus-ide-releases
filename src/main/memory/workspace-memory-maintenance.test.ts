@@ -9,7 +9,7 @@ import { configureProjectDomainStoreRegistry, disposeProjectDomainStoreRegistry 
 import { configureWorkspaceMemory, disposeWorkspaceMemoryStores, getWorkspaceMemoryStore } from './workspace-memory';
 
 let root: string;
-afterEach(() => { disposeProjectDomainStoreRegistry(); disposeWorkspaceMemoryStores(); if (root) fs.rmSync(root, { recursive: true, force: true }); });
+afterEach(async () => { await disposeProjectDomainStoreRegistry(); disposeWorkspaceMemoryStores(); if (root) fs.rmSync(root, { recursive: true, force: true }); });
 
 it('expiry is strictly older than 30 days, never-injected digest only, and bounded', async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-maintain-'));
@@ -41,7 +41,7 @@ it('Main domain registration runs expiry after open without a prompt or new rete
     const registry = configureProjectDomainStoreRegistry(manager);
     registry.forScope(scope);
     await vi.waitFor(() => expect(store.recall({ query: 'transient' })).toHaveLength(0));
-  } finally { disposeProjectDomainStoreRegistry(); manager.closeAll(); }
+  } finally { await disposeProjectDomainStoreRegistry(); manager.closeAll(); }
 });
 
 it('production maintenance rotates fact pages, marks only missing files and clears restored facts', async () => {
