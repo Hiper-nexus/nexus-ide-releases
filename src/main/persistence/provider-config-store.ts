@@ -174,6 +174,7 @@ import { quotaAvailabilityScore } from '../quota/quota-policy';
 import { requireQuotaService } from '../quota/quota-service';
 import type { ApiQuotaKeyRequest } from '../quota/provider-live-usage';
 import { activateAgyAccountForSpawn } from './agy-keyring-activation';
+import { prepareMinimaxNodeRuntime } from '../adapters/minimax-node-runtime';
 
 /**
  * Provider configuration hub: per-adapter enable/disable, binary-path
@@ -190,8 +191,20 @@ const listeners = new Set<WebContents>();
 const cliUpdateLease = new CliUpdateLease();
 
 /** Hold until a pane has registered its PTY, so an updater cannot replace its launcher mid-spawn. */
-export function acquireCliSpawnPermit(adapterId: string): Promise<() => void> {
-  return cliUpdateLease.acquireSpawnPermit(adapterId);
+export async function acquireCliSpawnPermit(adapterId: string): Promise<() => void> {
+  const release = await cliUpdateLease.acquireSpawnPermit(adapterId);
+  if (adapterId === 'minimax-code') {
+    // F-789: com o lançador travado pelo permit, o Node do mcode fica decidido
+    // (sondagem assíncrona, em cache) antes do spawn síncrono. Nunca bloqueia
+    // o spawn: sem decisão ele segue pelo shebang, como antes.
+    try {
+      const binPath = activeProviderBinary(adapterId);
+      if (binPath) await prepareMinimaxNodeRuntime(binPath, process.env.PATH ?? '');
+    } catch (error) {
+      console.warn('[provider-config] MiniMax Code: Node do mcode não decidido:', error);
+    }
+  }
+  return release;
 }
 
 function defaultPermissionModeFor(adapterId: string): string {

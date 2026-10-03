@@ -312,6 +312,8 @@ vi.mock('../adapters/adapter-registry', () => ({
           ? '/opt/homebrew/bin/agy'
         : id === 'local-agent'
           ? '/usr/local/bin/local-agent'
+        : id === 'minimax-code'
+          ? '/usr/local/bin/mcode'
         : null,
   resolveAdapterBinary: (id: string) =>
     id === 'mimo-code' ? '/usr/local/bin/mimo' : id === 'claude'
@@ -454,6 +456,13 @@ vi.mock('../adapters/qwen-settings', () => ({
   qwenSettingsHasCredential: qwenSettingsProbe.hasCredential,
 }));
 
+const minimaxRuntime = vi.hoisted(() => ({
+  prepare: vi.fn(async (_binPath: string, _pathEnv?: string) => ({ kind: 'default' as const })),
+}));
+vi.mock('../adapters/minimax-node-runtime', () => ({
+  prepareMinimaxNodeRuntime: minimaxRuntime.prepare,
+}));
+
 import {
   acquireCliSpawnPermit,
   startCliAutoUpdate,
@@ -556,6 +565,43 @@ describe('background CLI maintenance during pane startup', () => {
       finishDiscovery?.();
       await pending;
       release?.();
+    }
+  });
+});
+
+describe('F-789: o permit da CLI decide o Node do mcode antes do spawn', () => {
+  beforeEach(() => {
+    minimaxRuntime.prepare.mockReset().mockResolvedValue({ kind: 'default' });
+  });
+
+  it('o permit do minimax-code só libera depois da decisão; o de outra CLI não sonda', async () => {
+    let finish!: () => void;
+    minimaxRuntime.prepare.mockImplementationOnce(() =>
+      new Promise((resolve) => { finish = () => resolve({ kind: 'default' }); }));
+    let release: (() => void) | undefined;
+    const pending = acquireCliSpawnPermit('minimax-code').then((permit) => { release = permit; });
+    await vi.waitFor(() => {
+      expect(minimaxRuntime.prepare).toHaveBeenCalledWith('/usr/local/bin/mcode', process.env.PATH ?? '');
+    });
+    expect(release).toBeUndefined();
+    finish();
+    await pending;
+    expect(release).toBeTypeOf('function');
+    release!();
+
+    (await acquireCliSpawnPermit('claude'))();
+    expect(minimaxRuntime.prepare).toHaveBeenCalledTimes(1);
+  });
+
+  it('erro na decisão nunca segura o permit', async () => {
+    minimaxRuntime.prepare.mockRejectedValueOnce(new Error('sonda quebrou'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const release = await acquireCliSpawnPermit('minimax-code');
+      expect(release).toBeTypeOf('function');
+      release();
+    } finally {
+      warn.mockRestore();
     }
   });
 });

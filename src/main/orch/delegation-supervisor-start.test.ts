@@ -24,7 +24,11 @@ const h = vi.hoisted(() => ({
   startFailureTap: null as null | ((failure: Record<string, unknown>) => void),
   terminationTap: null as
     | null
-    | ((sessionId: string, agent: Record<string, unknown> | null) => void),
+    | ((
+        sessionId: string,
+        agent: Record<string, unknown> | null,
+        rootExit?: { exitCode: number; signal?: number } | null,
+      ) => void),
   sessionState: vi.fn((_sessionId: string): string | null => null),
   sessionOutput: vi.fn((_sessionId: string) => ''),
   spawnedAt: vi.fn((_sessionId: string): number | null => null),
@@ -77,7 +81,11 @@ vi.mock('../pty/pty-manager', async (importOriginal) => ({
   getSessionSpawnedAtMs: h.spawnedAt,
   getRequestedTerminationOrigin: h.terminationOrigin,
   tapSessionTermination: (
-    cb: (sessionId: string, agent: Record<string, unknown> | null) => void,
+    cb: (
+      sessionId: string,
+      agent: Record<string, unknown> | null,
+      rootExit?: { exitCode: number; signal?: number } | null,
+    ) => void,
   ) => {
     h.terminationTap = cb;
     return () => {
@@ -143,6 +151,7 @@ import {
 } from './pane-start-watchdog';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from './workspace-handoff-delivery';
+import { recordPaneSessionData, __evictExitedBufferForTests } from './pane-session-output';
 
 const NOW = 200_000_000;
 const SCOPE = testProjectScope();
@@ -529,6 +538,91 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     expect(String((h.submit.mock.calls[0]![0] as { summary: string }).summary)).toContain(
       'o processo saiu antes de abrir o primeiro turno',
     );
+  });
+
+  it('persiste a cauda sanitizada de um boot-exit, mesmo depois de fechar e rerotear o pane', async () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
+    trackPaneStart(watchInit());
+    h.spawnedAt.mockReturnValue(NOW - 3_000);
+    recordPaneSessionData('session-boot-diagnostic', [
+      ...Array.from({ length: 55 }, (_, index) => `boot line ${index}`),
+      '\u001b[31mError: unrecognized argument --example\u001b[0m',
+      'api_key=opaque-secret-value',
+      'sessionFingerprint=opaque-fingerprint-value',
+      'eyJabcdefghijk.abcdefghijklm.nopqrstuvwxyz',
+    ].join('\n'));
+    h.terminationTap!('session-boot-diagnostic', { paneId: 'pane-qwen', adapterId: 'qwen' });
+    h.requestPaneClose.mockImplementationOnce(async () => {
+      __evictExitedBufferForTests('session-boot-diagnostic');
+      return true;
+    });
+
+    await checkPaneStarts(NOW);
+    const event = h.trace.mock.calls.map(([value]) => value).find(
+      (value) => value.kind === 'pane-not-started',
+    );
+    expect(event).toMatchObject({ cause: 'boot-exit', outputTail: expect.any(String) });
+    expect(event.outputTail).toContain('Error: unrecognized argument --example');
+    expect(event.outputTail).toContain('boot line 20');
+    expect(event.outputTail).not.toContain('boot line 0\n');
+    expect(event.outputTail).not.toMatch(/opaque-secret|opaque-fingerprint|eyJabcdefgh|\u001b/);
+    expect(event.outputTail.split('\n').length).toBeLessThanOrEqual(41);
+    expect(event.outputTail.length).toBeLessThanOrEqual(8192);
+    expect(JSON.stringify(h.submit.mock.calls)).not.toContain('--example');
+  });
+
+  it('F-792: agy one-shot que saiu com código 1 em 4 s (caso do F-773) vira pane-not-started e é reroteado', async () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    trackPaneStart(watchInit({ paneId: 'pane-agy', requestId: 'orchspawn-agy', adapterId: 'agy' }));
+    h.spawnedAt.mockReturnValue(NOW - 4_276);
+    recordPaneSessionData(
+      'session-agy',
+      'E1003 printmode.go:304] Print mode: invalid model selection (--model "gemini-4-argon" ' +
+        '--effort "high"): --effort is not supported for model "gemini-4-argon"\r\n',
+    );
+    // Exit natural (sem pedido do Nexus): o tap chega com a saída da raiz.
+    h.terminationTap!(
+      'session-agy',
+      { paneId: 'pane-agy', adapterId: 'agy', oneShot: true },
+      { exitCode: 1, signal: 0 },
+    );
+    // Falha provada não espera a varredura de 15 s.
+    await vi.advanceTimersByTimeAsync(0);
+    await flush();
+
+    expect(reroute).toHaveBeenCalledWith(['agy']);
+    expect(adapterCircuitBreakers.snapshot('agy').recentFailures).toBe(1);
+    const event = h.trace.mock.calls.map(([value]) => value).find(
+      (value) => value.kind === 'pane-not-started',
+    );
+    expect(event).toMatchObject({
+      paneId: 'pane-agy',
+      adapterId: 'agy',
+      cause: 'boot-exit',
+      outcome: 'rerouted',
+      nextAdapterId: 'codex',
+    });
+    expect(event.outputTail).toContain('--effort is not supported for model');
+    const summary = (h.submit.mock.calls[0]![0] as { summary: string }).summary;
+    expect(summary).toContain('o processo saiu antes de abrir o primeiro turno');
+    expect(getPaneStartWatch('pane-agy')).toBeNull();
+  });
+
+  it('F-792: one-shot que terminou com código 0 continua sem veredito (a tarefa acabou)', async () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    trackPaneStart(watchInit({ paneId: 'pane-agy', requestId: 'orchspawn-agy', adapterId: 'agy' }));
+    h.spawnedAt.mockReturnValue(NOW - 30_000);
+    h.terminationTap!(
+      'session-agy',
+      { paneId: 'pane-agy', adapterId: 'agy', oneShot: true },
+      { exitCode: 0, signal: 0 },
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    await checkPaneStarts(NOW);
+
+    expect(reroute).not.toHaveBeenCalled();
+    expect(h.submit).not.toHaveBeenCalled();
+    expect(getPaneStartWatch('pane-agy')).toBeNull();
   });
 
   it('pane fechado de propósito (encerramento pedido) não é falha de início', async () => {

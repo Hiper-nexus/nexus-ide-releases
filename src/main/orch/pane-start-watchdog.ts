@@ -10,7 +10,9 @@
  * rotear, avisar) moram no delegation-supervisor, que roda a varredura; quem
  * conhece o briefing e a rota (tool-util / tools-panes) entra aqui como
  * closure. A ficha nunca vai para disco, log, trace ou handoff: lá só passam
- * ids, adapter e um motivo curto por categoria.
+ * ids, adapter e um motivo curto por categoria. No trace `pane-not-started`
+ * de uma tentativa com sessão, o supervisor também guarda uma cauda limitada
+ * e sanitizada do ring PTY (F-788/F-789).
  *
  * F-734: na família Claude (prova de turno), turno aberto ainda não é "começou".
  * O pane que recebeu o brief e teve o turno encerrado por StopFailure de
@@ -547,10 +549,22 @@ export function notePaneStartAccepted(paneId: string, now: number = Date.now()):
 }
 
 /**
+ * F-792: one-shot (AGY `--print`, OpenCode `run`) que sai com código 0 acabou
+ * a tarefa; com código de erro ou sinal, morreu. Sem a saída da raiz (null)
+ * não há prova de morte: vale o comportamento antigo (terminou).
+ */
+function oneShotFinished(
+  exit: { readonly exitCode: number; readonly signal?: number } | null | undefined,
+): boolean {
+  return !exit || (exit.exitCode === 0 && (exit.signal ?? 0) === 0);
+}
+
+/**
  * Fim da sessão da tentativa. Saída SOZINHA (sem pedido de encerramento),
- * fora de one-shot e dentro da janela de início, sem turno → não começou. O
- * resto (fechamento pedido, one-shot que terminou, morte tardia) não é veredito
- * deste watchdog.
+ * dentro da janela de início, sem turno → não começou. Vale também para o
+ * one-shot que saiu com erro (F-792: o AGY recusou `--effort` e saiu com 1 em
+ * 4 s, e ninguém soube). O resto (fechamento pedido, one-shot que terminou
+ * com 0, morte tardia) não é veredito deste watchdog.
  */
 export function notePaneSessionEnded(
   watch: PaneStartWatch,
@@ -558,6 +572,8 @@ export function notePaneSessionEnded(
     readonly sessionId: string;
     readonly requested: boolean;
     readonly oneShot: boolean;
+    /** Saída da raiz quando o processo saiu sozinho (tap de terminação). */
+    readonly exit?: { readonly exitCode: number; readonly signal?: number } | null;
     readonly spawnedAt: number | null;
     readonly started: boolean;
     readonly now: number;
@@ -573,7 +589,7 @@ export function notePaneSessionEnded(
     watch.redeliveredAt ?? input.spawnedAt ?? watch.sessionSpawnedAt ?? watch.createdAt;
   if (
     !input.requested &&
-    !input.oneShot &&
+    !(input.oneShot && oneShotFinished(input.exit)) &&
     !input.started &&
     input.now - windowStart < START_GRACE_MS
   ) {

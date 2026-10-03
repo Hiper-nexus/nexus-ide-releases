@@ -83,6 +83,8 @@ import {
   tapAgentTurnEnd,
 } from './agent-status';
 import { trace } from '../observability/main-trace';
+import { readSessionOutput } from './pane-session-output';
+import { sanitizePaneBootOutput } from './pane-boot-output';
 import {
   persistLeftoverIsolation,
   shouldSkipLeftoverRemount,
@@ -841,6 +843,11 @@ async function handlePaneNotStarted(
     failure: watch.failure?.cause ?? null,
     hasSession: watch.sessionId !== null,
   });
+  // F-788/F-789: a cauda do PTY é lida antes de fechar/rerotear (o ring da
+  // sessão morta some depois) e vai só para o trace local, já sanitizada.
+  const outputTail = watch.sessionId !== null
+    ? sanitizePaneBootOutput(readSessionOutput(watch.sessionId, Number.MAX_SAFE_INTEGER))
+    : null;
   if (watch.sessionId === null) {
     // Um PTY atrasado desta tentativa não pode nascer depois do reenvio.
     abandonPendingOrchSpawn(watch.requestId, 'pane did not start within the start window');
@@ -894,6 +901,7 @@ async function handlePaneNotStarted(
     cause,
     outcome: outcome.kind,
     breaker,
+    ...(outputTail !== null ? { outputTail } : {}),
     ...(outcome.kind === 'rerouted'
       ? { nextPaneId: outcome.paneId, nextAdapterId: outcome.adapterId }
       : {}),
@@ -1023,13 +1031,15 @@ function installPaneStartTaps(): void {
     );
     notePaneStartFailure(failure.paneId, 'spawn-refused');
   });
-  const untapTermination = tapSessionTermination((sessionId, agent) => {
+  const untapTermination = tapSessionTermination((sessionId, agent, rootExit) => {
     const watch = paneStartWatchForSession(sessionId, agent?.paneId);
     if (!watch || (agent && agent.adapterId !== watch.adapterId)) return;
     notePaneSessionEnded(watch, {
       sessionId,
       requested: getRequestedTerminationOrigin(sessionId) !== null,
       oneShot: agent?.oneShot === true,
+      // F-792: one-shot com código de erro morreu; com 0, terminou.
+      exit: rootExit,
       spawnedAt: getSessionSpawnedAtMs(sessionId),
       started: hasPaneStartEvidence(watch, sessionId),
       now: Date.now(),

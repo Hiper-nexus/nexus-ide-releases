@@ -78,6 +78,7 @@ import {
 import { forgetAccountChoiceReceipt } from "../persistence/account-choice-receipts";
 import {
   realUserHome,
+  resolveCliBinary,
   resolveSpawnBinary,
   resolveWindowsCodexNpmShimLaunch,
 } from "../path-resolver";
@@ -87,7 +88,12 @@ import { agyModelForEffort, withoutEffortArg } from "../adapters/agy-effort-mode
 import { windowsMuseLauncherSpawn } from "../adapters/muse-windows-launcher";
 import { codexNoDaemonArgs } from "../orch/codex-cli-version";
 import { ensureMinimaxFullAccess } from "../orch/cli-mcp-session-minimax";
+import {
+  minimaxNodeRuntimeForSpawn,
+  prepareMinimaxNodeRuntime,
+} from "../adapters/minimax-node-runtime";
 import { windowsArgvPromptPlacement } from "./windows-command-line";
+import { qwenLogicalCwdLaunch, qwenNeedsLogicalCwd } from "./qwen-long-cwd";
 import {
   isBuiltinAdapter,
   resolveAdapterBinary,
@@ -458,10 +464,20 @@ export type SessionInputTap = (
   data: string,
   origin: SessionInputOrigin,
 ) => void;
-/** Logical authority revocation starts before physical PTY exit is proven. */
+/** Saída da raiz do PTY, quando ela chegou antes de qualquer pedido de encerramento. */
+export interface SessionRootExit {
+  readonly exitCode: number;
+  readonly signal?: number;
+}
+/**
+ * Logical authority revocation starts before physical PTY exit is proven.
+ * F-792: `rootExit` vem preenchido quando o processo saiu sozinho (é o exit
+ * que abriu a terminação); num encerramento pedido ele ainda não existe.
+ */
 export type SessionTerminationTap = (
   sessionId: string,
   agent: OwnedAgentSessionInfo | null,
+  rootExit: SessionRootExit | null,
 ) => void;
 
 const dataTaps = new Set<SessionDataTap>();
@@ -1160,7 +1176,11 @@ function finalizeSession(
   if (!s) return;
   let pendingTermination = physicalTerminationFlights.get(sessionId);
   if (!pendingTermination || pendingTermination.session !== s) {
-    pendingTermination = ensurePhysicalTerminationFlight(sessionId, s);
+    // F-792: saída sozinha — os taps de terminação já recebem o código.
+    pendingTermination = ensurePhysicalTerminationFlight(sessionId, s, {
+      exitCode,
+      ...(signal === undefined ? {} : { signal }),
+    });
   }
   if (!pendingTermination.physicalTreeProven) {
     pendingTermination.rootExit ??= {
@@ -2361,6 +2381,45 @@ export function spawnAgentSession(
       const mimoPermissions = mimoSkipPermissionsViaEnv(args);
       args = mimoPermissions.args;
       Object.assign(env, mimoPermissions.env);
+    }
+    // F-788: Qwen numa worktree cujo nome de projeto passaria de 255
+    // caracteres abre pelo Node com um cwd lógico curto. Executável e argv já
+    // são os finais: sandbox e tmux, abaixo, embrulham o que vai rodar.
+    if (adapter.id === "qwen" && qwenNeedsLogicalCwd(cwd)) {
+      const checkoutId = authority.scope.checkoutId;
+      const launch = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(checkoutId)
+        ? qwenLogicalCwdLaunch({
+            binPath: bin,
+            cwd,
+            stateHome: path.join(app.getPath("userData"), "provider-state", "qwen", checkoutId),
+            nodePath: resolveCliBinary("node", { processPath: env.PATH ?? "" })?.binPath ?? null,
+          })
+        : null;
+      if (launch) {
+        bin = launch.file;
+        args = [...launch.argsPrefix, ...args];
+        Object.assign(env, launch.env);
+      } else {
+        console.warn("[pty] Qwen: worktree longa sem apelido curto; o --session-id pode ser recusado");
+      }
+    }
+    // F-789: o mcode do npm sobe pelo primeiro Node do PATH; quando esse Node
+    // não carrega o SQLite nativo dele, abre pelo Node que carrega. A decisão
+    // vem pronta do permit da CLI (sondagem assíncrona, em cache).
+    if (adapter.id === "minimax-code") {
+      const runtime = minimaxNodeRuntimeForSpawn(bin, env.PATH ?? "");
+      if (runtime === undefined) {
+        // Spawn fora do permit (warm pool): segue pelo shebang e decide para o próximo.
+        void prepareMinimaxNodeRuntime(bin, env.PATH ?? "");
+      } else if (runtime.kind === "pinned") {
+        bin = runtime.launch.file;
+        args = [...runtime.launch.argsPrefix, ...args];
+      } else if (runtime.kind === "incompatible") {
+        console.warn(
+          "[pty] MiniMax Code: nenhum Node do PATH carrega o SQLite nativo do mcode; " +
+            "reinstale @minimax-ai/code com o Node em uso",
+        );
+      }
     }
   } catch (error) {
     decoration?.onSpawnFailed?.();
@@ -3706,6 +3765,7 @@ export const APP_SHUTDOWN_PTY_TERMINATION = Object.freeze({
 function ensurePhysicalTerminationFlight(
   sessionId: string,
   session: Session,
+  rootExit: SessionRootExit | null = null,
 ): PhysicalTerminationFlight {
   const existing = physicalTerminationFlights.get(sessionId);
   if (existing?.session === session) return existing;
@@ -3717,7 +3777,7 @@ function ensurePhysicalTerminationFlight(
       resolveExited = resolve;
     }),
     resolveExited: () => resolveExited(),
-    rootExit: null,
+    rootExit,
     physicalTreeProven: false,
     revocationPublished: true,
     attempt: null,
@@ -3727,6 +3787,7 @@ function ensurePhysicalTerminationFlight(
     terminationTaps,
     sessionId,
     session.agent ? cloneAgentInfo(session.agent) : null,
+    rootExit,
   );
   return flight;
 }

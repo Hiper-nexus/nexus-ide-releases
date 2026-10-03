@@ -72,7 +72,10 @@ vi.mock("../path-resolver", () => ({
   revalidateExecutable: (binPath: string) =>
     typeof binPath === "string" && binPath.startsWith("/"),
   resolveCliBinary: (command: string) => ({
-    binPath: `/mock/bin/${command}`,
+    // O smoke de boot real (opt-in) precisa de um Node que exista de verdade.
+    binPath: process.env.NEXUS_PROVIDER_BOOT_SMOKE === "1" && command === "node"
+      ? process.execPath
+      : `/mock/bin/${command}`,
     effectivePath: "/mock/bin",
     source: "process-path",
   }),
@@ -5816,6 +5819,50 @@ describe("F-212 PTY lifecycle tracing (exit + termination origin)", () => {
     );
   });
 
+  it("F-792: o tap de terminação recebe a saída da raiz que saiu sozinha; o encerramento pedido chega sem ela", async () => {
+    const seen = new Map<string, unknown>();
+    const dispose = tapSessionTermination((sessionId, _agent, rootExit) => {
+      seen.set(sessionId, rootExit);
+    });
+    try {
+      let handlers: PtySessionHandlers | null = null;
+      setPtyHost({
+        spawn(_spec, next) {
+          handlers = next;
+          return {
+            write: vi.fn(),
+            resize: vi.fn(),
+            kill: vi.fn(),
+            terminate: vi.fn(async () => ({
+              ok: true,
+              rootExited: true,
+              descendantsExited: true,
+            })),
+          };
+        },
+      });
+      const natural = spawnAgentSession(
+        fakeWc(),
+        { kind: "cli-agent", paneId: "pane-f792-natural", cols: 80, rows: 24 },
+        makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+        {},
+        missionGrantFor("mission-f792"),
+      );
+      handlers!.onExit(1, 0);
+      expect(seen.get(natural.sessionId)).toEqual({ exitCode: 1, signal: 0 });
+      await vi.waitFor(() => {
+        expect(lifecycleEvents("agent-pty-exit", natural.sessionId)).toHaveLength(1);
+      });
+
+      const killed = tracedAgentSession(fakeHost().host, "pane-f792-killed");
+      await orchTerminateSession(killed.sessionId, { origin: "pane-close" });
+      expect(seen.has(killed.sessionId)).toBe(true);
+      expect(seen.get(killed.sessionId)).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
   it("onExit duplicado não duplica o evento de exit no trace", async () => {
     let handlers: PtySessionHandlers | null = null;
     setPtyHost({
@@ -6049,3 +6096,238 @@ describe('F-235: liveClaudeMissionAccountIds — contas com pane Claude vivo na 
   });
 });
 
+describe("F-788: Qwen numa worktree longa abre com cwd lógico curto", () => {
+  function qwenFixture() {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "f788-qwen-")));
+    const entry = path.join(root, "qwen-code", "cli-entry.js");
+    const bin = path.join(root, "bin", "qwen");
+    fs.mkdirSync(path.dirname(entry), { recursive: true });
+    fs.writeFileSync(entry, "#!/usr/bin/env node\n");
+    fs.mkdirSync(path.dirname(bin), { recursive: true });
+    fs.symlinkSync(entry, bin);
+    // Mesmo formato da worktree de writer: o nome do projeto passa de 255.
+    const worktree = path.join(root, `project-${"a".repeat(64)}`, `checkout-${"b".repeat(64)}`,
+      "worktrees", `task-${"c".repeat(64)}`);
+    fs.mkdirSync(worktree, { recursive: true });
+    return { root, entry, bin, worktree };
+  }
+
+  async function spawnQwen(bin: string, authority: BoundSpawnAuthority): Promise<PtySpawnSpec> {
+    const host = fakeHost();
+    setPtyHost(host.host);
+    const { sessionId } = spawnAgentSession(
+      fakeWc(),
+      { kind: "cli-agent", cols: 80, rows: 24, model: "qwen3.8-max" },
+      builtinCliPtyAdapter("qwen"),
+      { binPath: bin },
+      authority,
+    );
+    const spec = host.specFor(sessionId);
+    await orchTerminateSession(sessionId);
+    return spec;
+  }
+
+  it("worktree longa: Node + preload + entrypoint, apelido estável e o --session-id intacto; worktree curta não muda", async () => {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    setAgentSpawnHook(null);
+    const fx = qwenFixture();
+    try {
+      const spec = await spawnQwen(fx.bin, revisionBoundWorker(fx.worktree));
+      const stateHome = path.join(app.getPath("userData"), "provider-state", "qwen", "checkout-test");
+      expect(spec.file).toBe("/mock/bin/node");
+      expect(spec.args.slice(0, 3)).toEqual([
+        "--require", path.join(stateHome, "nexus-logical-cwd.cjs"), fx.entry,
+      ]);
+      expect(spec.args.slice(3)).toEqual(expect.arrayContaining(["--model", "qwen3.8-max", "--session-id"]));
+      // O processo continua na worktree física; o Qwen vê o apelido.
+      expect(spec.cwd).toBe(fx.worktree);
+      const alias = spec.env.NEXUS_QWEN_LOGICAL_CWD!;
+      expect(path.dirname(alias)).toBe(stateHome);
+      expect(fs.readlinkSync(alias)).toBe(fx.worktree);
+      expect(spec.env.PWD).toBe(alias);
+      expect(alias.replace(/[^a-zA-Z0-9]/g, "-").length).toBeLessThanOrEqual(255);
+      // Respawn da mesma worktree: mesmo apelido (o --resume acha a conversa).
+      const again = await spawnQwen(fx.bin, revisionBoundWorker(fx.worktree));
+      expect(again.env.NEXUS_QWEN_LOGICAL_CWD).toBe(alias);
+
+      const short = await spawnQwen(fx.bin, revisionBoundWorker(fx.root));
+      expect(short.file).toBe(fx.bin);
+      expect(short.args).not.toContain("--require");
+      expect(short.env.NEXUS_QWEN_LOGICAL_CWD).toBeUndefined();
+    } finally {
+      fs.rmSync(fx.root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("F-789: MiniMax abre pelo Node que carrega o SQLite nativo do mcode", () => {
+  function mcodeFixture() {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "f789-mcode-")));
+    const pkg = path.join(root, "lib", "node_modules", "@minimax-ai", "code");
+    const addonDir = path.join(pkg, "node_modules", "better-sqlite3", "build", "Release");
+    fs.mkdirSync(addonDir, { recursive: true });
+    fs.writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "@minimax-ai/code", bin: { mcode: "./cli.js" } }));
+    const entry = path.join(pkg, "cli.js");
+    fs.writeFileSync(entry, "#!/usr/bin/env node\n");
+    fs.writeFileSync(path.join(addonDir, "better_sqlite3.node"), "abi-147");
+    const bin = path.join(root, "bin", "mcode");
+    fs.mkdirSync(path.dirname(bin));
+    fs.symlinkSync(entry, bin);
+    const nodes = ["node22", "node26"].map((version) => {
+      const node = path.join(root, version, "bin", "node");
+      fs.mkdirSync(path.dirname(node), { recursive: true });
+      fs.writeFileSync(node, "", { mode: 0o755 });
+      return node;
+    });
+    const home = path.join(root, "home");
+    fs.mkdirSync(home);
+    return { root, entry, bin, nodes, home };
+  }
+
+  async function spawnMcode(bin: string): Promise<PtySpawnSpec> {
+    const host = fakeHost();
+    setPtyHost(host.host);
+    const { sessionId } = spawnAgentSession(
+      fakeWc(),
+      { kind: "cli-agent", cols: 80, rows: 24, model: "minimax/MiniMax-M3" },
+      builtinCliPtyAdapter("minimax-code"),
+      { binPath: bin },
+      revisionBoundWorker(),
+    );
+    const spec = host.specFor(sessionId);
+    await orchTerminateSession(sessionId);
+    return spec;
+  }
+
+  it("decisão pronta do permit: Node que carrega o addon + entrypoint; sem decisão, o shebang de sempre", async () => {
+    const { minimaxNodeRuntimeForSpawn, resetMinimaxNodeRuntimeForTests, prepareMinimaxNodeRuntime } =
+      await import("../adapters/minimax-node-runtime");
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    setAgentSpawnHook(null);
+    const fx = mcodeFixture();
+    // PATH do spawn = PATH do processo, com o Node 22 (ABI errado) à frente.
+    vi.stubEnv("PATH", fx.nodes.map((node) => path.dirname(node)).join(path.delimiter));
+    vi.stubEnv("HOME", fx.home);
+    resetMinimaxNodeRuntimeForTests();
+    try {
+      const shebang = await spawnMcode(fx.bin);
+      expect(shebang.file).toBe(fx.bin);
+      expect(shebang.args[0]).not.toBe(fx.entry);
+      // O spawn sem decisão deixou a preparação correndo para o próximo spawn.
+      await vi.waitFor(() => {
+        expect(minimaxNodeRuntimeForSpawn(fx.bin, process.env.PATH ?? "")).toBeDefined();
+      });
+
+      // O permit da CLI decide antes do spawn (aqui com a sonda do ABI simulada).
+      resetMinimaxNodeRuntimeForTests();
+      await prepareMinimaxNodeRuntime(fx.bin, process.env.PATH ?? "",
+        async (node) => (node === fx.nodes[1] ? "loads" : "fails"));
+      const pinned = await spawnMcode(fx.bin);
+      expect(pinned.file).toBe(fx.nodes[1]);
+      expect(pinned.args[0]).toBe(fx.entry);
+      expect(pinned.args.slice(1)).toEqual(expect.arrayContaining(["--model", "minimax/MiniMax-M3"]));
+    } finally {
+      vi.unstubAllEnvs();
+      resetMinimaxNodeRuntimeForTests();
+      fs.rmSync(fx.root, { recursive: true, force: true });
+    }
+  });
+});
+
+// Smoke opt-in (NEXUS_PROVIDER_BOOT_SMOKE=1, fora da suíte normal): a CLI
+// instalada roda num PTY de verdade (scripts/provider-boot-pty.py) com o spawn
+// spec que o Nexus monta, por 20 s e SEM prompt (nenhuma chamada de modelo).
+// A credencial é a do perfil nativo, lida só pela própria CLI; spec e saída
+// ficam em memória e só a cauda sanitizada é impressa.
+it.skipIf(process.env.NEXUS_PROVIDER_BOOT_SMOKE !== "1").each([
+  ["qwen", "worktree longa (F-788)"],
+  ["minimax-code", "Node do PATH com outro ABI (F-789)"],
+])("smoke de boot real: %s — %s", async (provider) => {
+  const { prepareQwenMcpSession } = await import("../orch/cli-mcp-session-qwen");
+  const { prepareMinimaxMcpSession } = await import("../orch/cli-mcp-session-minimax");
+  const { prepareMinimaxNodeRuntime } = await import("../adapters/minimax-node-runtime");
+  const { sanitizePaneBootOutput } = await import("../orch/pane-boot-output");
+  const { execFile } = await import("node:child_process");
+  const { createServer } = await import("node:http");
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nexus-provider-boot-")));
+  // MCP do Nexus de mentira: só responde ao handshake.
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      const call = JSON.parse(body) as { id?: unknown; method?: string };
+      if (call.id === undefined) { res.writeHead(202).end(); return; }
+      const result = call.method === "initialize"
+        ? { protocolVersion: "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: "nexus", version: "1.0.0" } }
+        : call.method === "tools/list" ? { tools: [] } : {};
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ jsonrpc: "2.0", id: call.id, result }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`;
+  const token = "fixture-provider-boot-smoke";
+  const bin = path.join(os.homedir(), ".npm-global", "bin", provider === "qwen" ? "qwen" : "mcode");
+  // Writer do Qwen numa worktree com o formato da do Nexus (nome de projeto > 255).
+  const cwd = provider === "qwen"
+    ? path.join(root, `project-${"a".repeat(64)}`, `checkout-${"b".repeat(64)}`, "worktrees", `task-${"c".repeat(64)}`)
+    : fs.realpathSync(process.cwd());
+  fs.mkdirSync(cwd, { recursive: true });
+  const authority = preRevisionMissionWorker(cwd);
+  const host = fakeHost();
+  setPtyHost(host.host);
+  setSquadCliPolicyLookupForTests(() => "operator-choice");
+  const prepared = provider === "qwen"
+    ? prepareQwenMcpSession(url, token, {
+        home: path.join(root, "home"), providerHome: path.join(os.homedir(), ".qwen"),
+        artifactRoot: path.join(root, "artifacts"), userDataPath: app.getPath("userData"),
+        checkoutId: authority.scope.checkoutId, cwd, workspaceRoot: cwd,
+        governed: true, allowedSkills: [], allowedTools: [],
+      })
+    : { ...prepareMinimaxMcpSession(url, token, { home: path.join(root, "home"), nodePath: process.execPath }), extraArgs: [] };
+  // Qwen: settings de sistema (precedência máxima) só desligam o auto-update
+  // durante o smoke; a instalação global do operador não muda.
+  const systemSettings = path.join(root, "qwen-system-settings.json");
+  fs.writeFileSync(systemSettings, JSON.stringify({ general: { enableAutoUpdate: false } }));
+  const env = provider === "qwen"
+    ? { ...prepared.env, QWEN_CODE_SYSTEM_SETTINGS_PATH: systemSettings }
+    : prepared.env;
+  setAgentSpawnHook(() => ({ authorityToken: token, env, extraArgs: prepared.extraArgs }));
+  // O permit da CLI decide o Node do mcode antes do spawn (F-789).
+  const runtime = provider === "minimax-code"
+    ? await prepareMinimaxNodeRuntime(bin, process.env.PATH ?? "")
+    : null;
+  let id: string | undefined;
+  try {
+    const spawned = spawnAgentSession(fakeWc(), {
+      kind: "cli-agent", cols: 100, rows: 30,
+      model: provider === "qwen" ? "qwen3.8-max" : "minimax/MiniMax-M3",
+    }, builtinCliPtyAdapter(provider), { binPath: bin }, authority);
+    id = spawned.sessionId;
+    const spec = host.specFor(id);
+    const result = await new Promise<string>((resolve, reject) => {
+      const child = execFile("python3", ["scripts/provider-boot-pty.py"],
+        { timeout: 40_000, maxBuffer: 4 * 1024 * 1024 },
+        (error, stdout) => (error ? reject(error) : resolve(stdout)));
+      child.stdin!.end(JSON.stringify({ ...spec, seconds: 20 }));
+    });
+    const captured = JSON.parse(result) as { exitCode: number | null; output: string };
+    console.log(JSON.stringify({
+      provider,
+      file: spec.file,
+      argsHead: spec.args.slice(0, 3),
+      runtime,
+      logicalCwd: spec.env.NEXUS_QWEN_LOGICAL_CWD ?? null,
+      exitCode: captured.exitCode,
+      tail: sanitizePaneBootOutput(captured.output),
+    }, null, 2));
+    // Vivo depois de 20 s = passou do boot (Qwen morria em 2 s, MiniMax em ~10 s).
+    expect(captured.exitCode).toBe(null);
+  } finally {
+    if (id) await orchTerminateSession(id);
+    setAgentSpawnHook(null);
+    cleanupCliMcpSession(token);
+    server.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);
