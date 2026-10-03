@@ -14,7 +14,7 @@ const MAX_TRACKED_SESSIONS = 4_096;
 const exposed = new Map<string, number>();
 let exposureOverflow = false;
 
-const EXPOSING_KINDS: ReadonlySet<string> = new Set(['nexus-browser', 'web-search', 'fetch']);
+const EXPOSING_KINDS: ReadonlySet<string> = new Set(['nexus-browser', 'web-search', 'fetch', 'shell-http']);
 
 /** Marca a sessão quando a tool chamada alcança a web; devolve se marcou. */
 export function noteSessionToolCall(

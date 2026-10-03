@@ -341,6 +341,7 @@ describe('nexus_memory_retain — contexto da sessão (F-806/F-808)', () => {
   it.each([
     ['WebFetch', undefined],
     ['WebSearch', undefined],
+    ['Bash', 'shell-http'],
   ])('pane solto: %s observado antes de retain fica em quarentena', async (toolName, toolKind) => {
     const ctx = context('loose-web', { missionId: undefined, sessionId: `loose-${toolName}` });
     installObserverMissionEventProjector();

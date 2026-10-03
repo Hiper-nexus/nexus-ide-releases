@@ -3,6 +3,7 @@ import {
   __resetSessionWebExposureForTests,
   isSessionWebExposed,
   markSessionWebExposed,
+  noteSessionToolCall,
 } from './session-web-exposure';
 
 beforeEach(__resetSessionWebExposureForTests);
@@ -21,4 +22,11 @@ describe('session web exposure', () => {
     expect(isSessionWebExposed(null)).toBe(false);
   });
 
+  it('classifies shell HTTP from its trusted observer kind, without classifying local shell as web', () => {
+    expect(noteSessionToolCall('http', 'Bash', 'shell-http')).toBe(true);
+    expect(isSessionWebExposed('http')).toBe(true);
+    expect(noteSessionToolCall('local', 'Bash', 'execute')).toBe(false);
+    expect(isSessionWebExposed('local')).toBe(false);
+    expect(noteSessionToolCall('fetch', 'WebFetch', 'read')).toBe(true);
+  });
 });
