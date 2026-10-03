@@ -85,6 +85,13 @@ vi.mock('./pane-registry', () => ({
   ),
 }));
 
+const traceMocks = vi.hoisted(() => ({ trace: vi.fn() }));
+
+vi.mock('../observability/main-trace', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../observability/main-trace')>()),
+  trace: traceMocks.trace,
+}));
+
 vi.mock('./limit-detector', () => ({
   detectLimit: vi.fn((buffer: string) =>
     buffer.includes('LIMIT')
@@ -1678,6 +1685,43 @@ describe('varredura de limite sob saída contínua de PTY', () => {
     // 5 000 chars no mesmo instante: varredura a cada 2 000, sem esperar timer.
     expect(vi.mocked(detectLimit).mock.calls.length).toBeGreaterThanOrEqual(2);
     vi.advanceTimersByTime(250);
+    await settleFailover();
+    expect(accountMocks.setCooldown).toHaveBeenCalled();
+  });
+});
+
+describe('F-764: orçamento da varredura de limite', () => {
+  it('varredura acima do orçamento põe a sessão em backoff, registra no trace e cobre o texto depois', async () => {
+    const { detectLimit } = await import('./limit-detector');
+    const scope = testProjectScope();
+    const owner = renderer(9764);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    addPane({ owner, paneId: 'pane-slow', sessionId: 'sess-slow', missionId: 'm-slow', scope });
+    vi.mocked(detectLimit).mockClear();
+    traceMocks.trace.mockClear();
+    // Varredura lenta: o relógio (fake) anda 40 ms dentro da chamada.
+    vi.mocked(detectLimit).mockImplementationOnce(() => {
+      vi.advanceTimersByTime(40);
+      return null;
+    });
+
+    ptyMocks.dataTaps[0]!('sess-slow', 'tela'.repeat(4));
+    expect(detectLimit).toHaveBeenCalledTimes(1);
+    expect(traceMocks.trace).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'failover-detect-slow', sessionId: 'sess-slow', paneId: 'pane-slow' }),
+    );
+
+    // Dentro do backoff nenhum chunk varre de novo, mesmo com o intervalo mínimo vencido.
+    vi.advanceTimersByTime(1_000);
+    ptyMocks.dataTaps[0]!('sess-slow', 'LIMIT');
+    expect(detectLimit).toHaveBeenCalledTimes(1);
+
+    // Vencido o backoff, a varredura final pega o limite que chegou no meio.
+    vi.advanceTimersByTime(5_000);
+    expect(detectLimit).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(detectLimit).mock.calls[1]![0]).toContain('LIMIT');
     await settleFailover();
     expect(accountMocks.setCooldown).toHaveBeenCalled();
   });

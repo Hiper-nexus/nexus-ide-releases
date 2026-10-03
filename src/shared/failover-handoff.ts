@@ -49,11 +49,11 @@ const EXCERPT_TRIGGER_MASKS: ReadonlyArray<readonly [RegExp, string]> = [
   // Códigos emoldurados (o detector exige framing http/status/error).
   // Grupo nomeado: '$<framing>4xx' preserva o framing sem a ambiguidade de '$14xx'.
   [
-    /(?<framing>http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*[:=]?\s*|error\s*[:=]?\s*)40[12]\b/gi,
+    /(?<framing>http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*(?:[:=]\s*)?|error\s*(?:[:=]\s*)?)40[12]\b/gi,
     '$<framing>4xx',
   ],
   [
-    /(?<framing>http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*[:=]?\s*|error\s*[:=]?\s*)429\b/gi,
+    /(?<framing>http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*(?:[:=]\s*)?|error\s*(?:[:=]\s*)?)429\b/gi,
     '$<framing>4xx',
   ],
   [/401\s+unauthorized/gi, '4xx Unauthorized'],

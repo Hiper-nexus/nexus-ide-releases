@@ -79,6 +79,16 @@ const REARM_MS = 30_000;
  */
 const DETECT_MIN_INTERVAL_MS = 250;
 const DETECT_MAX_PENDING_CHARS = WINDOW_CHARS / 2;
+/**
+ * F-764: orçamento de UMA varredura. Uma regex com backtracking cúbico custou
+ * 300 ms por janela de TUI em branco e, rodando a cada chunk de 12 panes,
+ * congelou a main thread por minutos. Acima do orçamento a sessão só volta a
+ * ser varrida depois do backoff — o texto segue entrando na janela e a
+ * varredura final cobre tudo, então nenhum limite real se perde — e o trace
+ * registra qual sessão estourou.
+ */
+const DETECT_BUDGET_MS = 25;
+const DETECT_SLOW_BACKOFF_MS = 5_000;
 /** Reuse the same A→B decision for concurrent panes hitting the same limit. */
 const COALESCE_MS = 5_000;
 // Derived from can1357/oh-my-pi@03c48d073 auth-storage cooldown machine (MIT)
@@ -150,6 +160,8 @@ interface SessionWatch {
    * erro; um retry novo ("attempt 2/10") é outra assinatura.
    */
   errorSignatures: Set<string>;
+  /** F-764: varredura estourou o orçamento — nenhuma nova antes disto. */
+  slowDetectUntil: number;
 }
 
 /**
@@ -1080,6 +1092,7 @@ function watchFor(authority: FailoverAuthority): [string, SessionWatch] {
       progressChars: 0,
       seenLines: new Set(),
       errorSignatures: new Set(),
+      slowDetectUntil: 0,
     };
     watches.set(key, watch);
   }
@@ -1745,7 +1758,11 @@ function armTrailingDetect(
   now: number,
 ): void {
   if (watch.detectTimer) return;
-  const delay = Math.max(0, DETECT_MIN_INTERVAL_MS - (now - watch.lastDetectAt));
+  const delay = Math.max(
+    0,
+    DETECT_MIN_INTERVAL_MS - (now - watch.lastDetectAt),
+    watch.slowDetectUntil - now,
+  );
   watch.detectTimer = setTimeout(() => {
     watch.detectTimer = null;
     try {
@@ -1785,6 +1802,10 @@ function handleChunk(sessionId: string, data: string, now: number): void {
 
   watch.buffer = (watch.buffer + text).slice(-WINDOW_CHARS);
   watch.pendingChars += text.length;
+  if (now < watch.slowDetectUntil) {
+    armTrailingDetect(sessionId, watch, now);
+    return;
+  }
   if (
     watch.transientAt === 0 &&
     now - watch.lastDetectAt < DETECT_MIN_INTERVAL_MS &&
@@ -1811,7 +1832,20 @@ function detectInWindow(
     clearTimeout(watch.detectTimer);
     watch.detectTimer = null;
   }
+  const scanStartedAt = performance.now();
   const hit = detectLimit(watch.buffer);
+  const scanMs = performance.now() - scanStartedAt;
+  if (scanMs > DETECT_BUDGET_MS) {
+    watch.slowDetectUntil = now + DETECT_SLOW_BACKOFF_MS;
+    trace({
+      kind: 'failover-detect-slow',
+      sessionId: authority.sessionId,
+      paneId: authority.paneId,
+      scanMs: Math.round(scanMs),
+      windowChars: watch.buffer.length,
+      backoffMs: DETECT_SLOW_BACKOFF_MS,
+    });
+  }
   if (hit?.kind === 'transient') {
     const detectedText = watch.buffer;
     watch.buffer = ''; // consumed

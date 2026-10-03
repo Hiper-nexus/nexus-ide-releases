@@ -1,0 +1,71 @@
+# handoff-7d2eae78-1652-4e3b-91e8-eab831e6d299 (Devin CLI)
+
+# Auditoria do roteamento de CLI/modelo/esforço — Nexus IDE
+
+## 1. Resumo executivo
+
+O roteador é sofisticado (tier + especialidade + multi-score + rotação + fair-share global), mas quatro buracos estruturais explicam a concentração observada e os erros desta missão:
+
+- **A diversidade é desligada exatamente nos casos errados.** A rotação garantida e o fair-share são pulados quando a especialidade é `bug`, `security` ou `visual`, quando há política frontier (`cross-review`/`high-risk`) ou tier critical. Nesta missão, 2 das 10 rotas foram `cross-review` (auditoria → lane de juízes, só claude+codex) e várias outras tiveram `specialty=bug` — o resultado é que meia dúzia de CLIs elegíveis nunca chega a disputar.
+- **Não existe eixo de capacidade** (busca na web, read-only, handoff MCP, contexto longo) na entrada do roteador: `AdapterAvailability` (task-router.ts:597) só tem installed/models/efforts/modelAliases. Pesquisas com "busca na web" foram para muse/mimo/agy sem checar se o CLI sabe buscar.
+- **Não há laço de resultado**: a tabela `handoffs` nem sequer grava `adapter_id`; nada alimenta taxa de sucesso de volta ao score.
+- **O modelo é validado contra o catálogo cacheado do provider, não contra o binário resolvido**: o `gpt-6.1-sol` roteado morreu porque `provider.models` veio do models_cache de um cliente 0.160 e `resolveCliBinary` pegou o 0.146 do PATH (path-resolver.ts:457). `resolveRoutableModel` (task-router.ts:943) compara só com a lista declarada.
+- **Viés de skill confirmado nos dados**: oc-scout 20×, systematic-debugging 12×, oc-conveyor 6× em 108 julgamentos de 14d (jev/decisions.jsonl) — para uma missão de scouts é plausível, mas a pergunta de skill aceita UMA escolha e a confiança alta (0,66–0,95) mascara que "auditoria de uso" virou `specialty=bug` no Jev.
+
+## 2. Como o roteamento funciona hoje (arquivo:linha)
+
+**Entrada** — `routeTaskForCaller` em src/main/orch/tools-domain.ts:1651: monta o pool real (`buildAdapters`, :1764-1794) a partir de `listProviderSettings()` filtrado por `routableWorkerCliIds` da política viva (:1739-1747), auto-exclui CLI com todas as contas em cooldown (:1761-1763), reserva Claude ao Maestro quando a capacidade esgota (:1866-1878). `installed` exige enabled+installed+`firstWaveCanSeat`(auth)+sem writer-circuit (:1771-1788). `models` = `authReadyModelsForProvider` (model-auth-readiness.ts:53) — se `authReadyModels` existe, só os sondados entram; `login-needed` zera tudo (exceto opencode credentialless).
+
+**Classificação** — heurística `classifyTask` (task-router.ts:384): sinais crítico>hard>easy/trivial, ajuste por tamanho (:418-421) e piso `hard` para code review (`codeReviewTierFloor` :483). Jev substitui por campo quando confiança ≥0,6 (`routingOverridesFrom`, jev-task-routing.ts:389-450); especialidade heurística `classifyRouteSpecialty` (mission-route-specialty.ts:198) via work-kind + overlay de segurança; esforço vem de `effortForTier` (task-router.ts:627) com override do Jev/menção e clamp `nativeRouteEffort` (:831) contra `control.effort.levels` do manifest — CLIs sem níveis (kimi, mimo-code, minimax-code, qwen, devin, opencode, aider) recebem `cli-default`.
+
+**Ranking** — camadas em ordem (comentário :8-16): tabela por tier `DEFAULT_ROUTING_TABLE` (:143-294, cheapest-first dentro do tier) → resolução do modelo contra a lista real (`resolveRoutableModel` :943, variante de família F-217 via `newestInModelLine` model-line.ts:65) → prior de especialidade só se benchmark MEDIDO (`resolveSpecialtyPolicy`, mission-route-specialty.ts:290; hoje sempre heuristic — tabela vazia resources/mission-specialty-benchmark.json) → banda operacional (model-operational-bands, :1204-1237) → multi-score `multiScoreRerank` (route-pipeline.ts:158): `table` (distância de tier −10/degrau) + `quality` (nexus-eval > benchmark oficial `publishedCodingQuality` published-benchmarks.ts:148 > neutro 15) + `cost` (−costRank×4 trivial/easy, ×1,5 medium/hard, ×0,5 critical) + `diversity` (−18/assento já usado na missão) + `preference` (+4) + `circuit` (−10000) → lanes frontier (visual :1366, juiz :1380; `frontierRoutePolicy` :559) → **rotação garantida por missão** (:1393-1429: cada adapter elegível recebe um assento antes de repetir, só mesmo tier) → **fair-share global 7d** (:1437-1470, gap 2) → menção explícita de modelo (:1472-1500) → `reserveClaude` (:1510). Custos `free/cheap` vêm de `modelRoutingRank` sobre `costTier`/`availability` do model-catalog (model-catalog.ts:547; `preferiu rota free/cheap` quando rank ≤1, :1528). `pricing.ts` (src/main/orch) só estima custo de tokens — NÃO ordena rota.
+
+**Recibo** — `recordRouteLog` (route-log.ts:67) é **só memória, cap 50, sem persistência**; a reserva durável é `mission_route_reservations` (tools-domain.ts:2013).
+
+## 3. Distribuição real — fontes e números
+
+Fonte: `~/Library/Application Support/NexusIDE/project-runtime/.../checkout-72eb…/runtime.sqlite3` (read-only). As outras 2 runtimes recentes têm 0 reservas em 14d; `mission_panes` global e per-checkout estão praticamente vazias (a tabela do nexus.db raiz parou em jul/2026).
+
+**Reservas de rota consumidas (todas de hoje, esta missão; 10 totais, 9→10 consumidas):**
+codex/gpt-6.1-sol ×2 (hard, cross-review), codex/codex-auto-review ×1 (menção), claude/fable-5-1 ×1 (hard, cross-review), agy/gemini-3.8-flash-medium ×1, devin/swe-2-medium ×1, glm/glm-5.3 ×1 (bug), mimo-code/mimo-v2.6-flash ×1 (feature), muse/muse-spark-1.3 ×2 (general, "preferiu rota free/cheap").
+
+**Uso de tokens 14d (usage_events):** claude-fable-5-1: 119 eventos ≈$84,16; claude-opus-5-5: 63 ≈$6,64; mimo-v2.6-pro: 9; mimo-v2.5-pro: 2; gpt-5.6-sol: 1. → O trabalho medido em tokens concentra-se ~90% no Claude.
+
+**Julgamentos Jev taskRouting 14d:** 108 chamadas; tiers: hard 34, trivial 16, critical 10, medium 10 (o restante sem tier confiante → heurística). Skills sugeridas: oc-scout 20, systematic-debugging 12, oc-conveyor 6, TDD 2, archify 1, verification 1, none 1.
+
+**Handoffs 14d:** 22 (21 success, 1 partial) — sem adapter_id, impossível taxar por CLI.
+
+**Por que cada CLI pronto recebe pouco/nada:**
+- **qwen** (pronto, qwen3.8-max): está na tabela mas sem benchmark publicado → qualidade neutra 15 contra ~20+ de muse-spark (75,4 DeepSWE) e glm-5.3; multi-score nunca o deixa liderar medium, e a rotação ainda não chegou nele (é o 4º da fila medium, 7º trivial).
+- **grok/kimi**: release-qualified e com benchmark; simplesmente estão atrás na fila — a rotação por missão daria assento nos próximos spawns medium/easy.
+- **deepseek/openclaude/longcat/muse-claude**: auth `login-needed` → `canSeat` falso → `installed=false` no pool (squad-runtime-policy.ts:269-279). Longcat e aider e **opencode estão enabled:false** em ~/.nexus/providers.json — decisão de configuração, não bug.
+- **minimax-code**: benchmark fraco herdado (M3.1→M3: TB 66,0 → nota baixa) + posição tardia na tabela; chegaria pela rotação.
+- **Política Hardened (governed)**: `RELEASE_QUALIFIED_MISSION_WORKER_CLIS` (squad-runtime-policy.ts:98) × `autonomousWorkspaceWriteCapable` — que na prática é **só o Codex** (supportsEnforceableWorkspaceWriteNativeAuthority, autonomous-cli-policy.ts:326, é estruturalmente codex-only) — o comentário F-525 promete lane multi-CLI "nos dois modos", mas `routableWorkerCliIds` exige write-capable (:340); sob governed só codex senta como worker. Esta missão rodou em modo que admite qualquer handoff-capable (Autopilot), por isso mimo/muse/devin/agy entraram.
+- **orchestrationEvidence 'unsupported'** (adapter-registry.ts:88-110): só afeta assento de Maestro (verified = claude/codex), não worker — não é a causa de CLIs ociosas em worker.
+
+## 4. Lacunas por gravidade (evidência → causa → correção mínima + teste)
+
+**G1 — Validação do modelo contra o binário errado.** Evidência: spawn codex/gpt-6.1-sol morreu; catálogo do provider vinha de cliente 0.160, binário resolvido 0.146 (path-resolver.ts:457). Causa: `provider.models` mistura manifest+modelos descobertos+cache de outra versão; `resolveRoutableModel` só confere a lista. Correção mínima: no spawn (mission-worker-spawn-authority / cli-mcp-session-codex), ao resolver o binário, re-filtrar a decisão contra o `models_cache`/versão do binário efetivamente resolvido — ou carimbar `provider.models` com a versão que gerou a lista e invalidar quando o binário muda. Teste: fixture em codex-cli-version.test.ts com models_cache de 0.160 e binário mockado 0.146 — a rota deve cair para gpt-6-sol em vez de emitir gpt-6.1-sol.
+
+**G2 — Especialidade `bug`/`security` desliga a diversidade.** Evidência: rotação e fair-share excluem specialty∈{visual,security,bug} (task-router.ts:1409-1411, 1445-1447); a rota glm de hoje é `specialty=bug` sobre uma auditoria — com benchmark vazio a especialidade nem muda provider (HEURISTIC_SPECIALTY_ADAPTERS é tudo [], mission-route-specialty.ts:106), só serve de desculpa para não girar. Causa: exclusão defensiva sem ganho real quando `policy.source==='heuristic'`. Correção mínima: trocar a condição para excluir só quando `policy.source==='benchmark'` (benchmark medido de fato ordena adapters). Teste: task-router-fair-share.test.ts — missão com specialty=bug, 3 adapters elegíveis → 3 assentos distintos.
+
+**G3 — Sem eixo de capacidade (web/readonly/handoff/contexto).** Evidência: 2 pesquisas "com busca na web" saíram para muse e mimo-code (rotas free) sem checagem; nenhum campo de capacidade existe em `AdapterAvailability` (:597) nem nos manifests builtin. Causa: capacidade nunca foi modelada — só kind/handoff/effort. Correção mínima: adicionar `capabilities?: {webSearch?: boolean; readOnlyEnforceable?: boolean; handoffMcp?: boolean; maxContext?: number}` no AdapterInfo (já existe `supportsEnforceableReadOnlyNativeAuthority`, autonomous-cli-policy.ts:296, para readonly; flags de web por manifest, 1 campo por adapter JSON); em `routeTaskForCaller`, detectar necessidade no texto ("busca na web", "web search", "pesquisa" + "externa") e filtrar candidatos sem a flag antes do ranking. Teste: task-router-matrix.test.ts — task com "busca na web" não pode retornar adapter sem a flag quando um com a flag está instalado.
+
+**G4 — Sem laço de sucesso por (CLI, modelo, especialidade).** Evidência: `handoffs` não tem `adapter_id` (schema acima); nada lê outcome para rotear. Correção mínima: (a) gravar `adapter_id`/`model` na linha do handoff no dispatcher (o spawn já sabe); (b) agregado `successRateByAdapter` (janela 14d, mínimo N amostras) injetado no `RouteContext` e usado como termo ±(rate−0,5)×10 em `scoreRouteCandidate` (route-pipeline.ts:74). Teste: route-pipeline.test.ts — adapter com taxa 0,3 perde para neutro a mesma posição de tabela; adapter com <5 amostras não é penalizado.
+
+**G5 — Catálogo/roteamento desatualizado vs. CLI real.** Evidência: "CLI sem o modelo roteado: mimo-code:xiaomi/mimo-v2.6-pro-ultraspeed" em 9/10 rotas de hoje — a tabela ainda referencia o id (task-router.ts:255,288) e o aviso funciona (warnRoutedModelsMissingFromCli :969), mas polui toda decisão. Correção mínima: remover/atualizar as duas linhas da tabela (o candidato já cai para mimo-v2.6-pro por eliminação). Teste: task-router-catalog-contract.test.ts já reprovaria o id se o contrato comparasse à lista viva — estender para falhar quando id da tabela sai do catálogo do adapter.
+
+**G6 — Route log volátil.** `route-log.ts` é memória (cap 50). Sem persistência, o laço G4 e a auditoria "por que X perdeu" morrem a cada boot. Correção mínima: persistir a mesma linha numa tabela `route_decisions` do runtime.sqlite3 (já existe decision_json na reserva — para rota sem missão, gravar em store de escopo). Teste: route-log.test.ts — recordRouteLog persiste e recentRouteLog lê após reload.
+
+**G7 — Viés de sugestão de skill + especialidade mal classificada.** Evidência: oc-scout 19% das sugestões (20/108), confiança até 0,95 em tarefas homogêneas; "auditoria de uso" classificada `bug` (heurística) e a de orquestração `ops` (Jev). Causa: a pergunta `skill` é choice única sem critério de papel (scout/builder/conveyor) e `classifyWorkKind` mapeia auditoria→bug; o Jev herda a ambiguidade. Correção mínima: (a) restringir o catálogo de skills apresentado pelo papel da tarefa (read-only→oc-scout/conveyor apenas) — 1 filtro em `buildSkillSuggestionQuestions` (jev-skill-suggestion.ts:305); (b) adicionar critério explícito no texto de `specialty` (jev-task-routing.ts:105): "audit/inventory of usage or config is general, not bug — bug requires a reported malfunction". Teste: jev-task-routing.test.ts — resposta Jev specialty=bug para texto de auditoria não deve mudar o resultado esperado; skill para tarefa read-only nunca retorna oc-builder.
+
+**G8 (menor) — Esforço**: a política já existe (tier→esforço :627, clamp :831, piso por especialidade HEURISTIC_EFFORT_FLOOR mission-route-specialty.ts:118). Kimi/mimo/minimax/qwen/devin/opencode/aider não aceitam esforço → `cli-default`, o que é honesto; falta só registrar no `reason` que o modelo nativo decide — já existe (`effort=cli-default`). Sem ação além de manter.
+
+## 5. O que NÃO foi verificado
+
+- Não tive acesso às tools nexus_cli_inventory / nexus_route_log / nexus_model_ranking / nexus_quota_status (fora dos grants deste pane); authStrategy/authReadyModels ao vivo foram inferidos de providers.json + código, não da sonda.
+- `firstWaveCanSeat` e `writerCircuitBlocksSeat` não foram lidos por inteiro — o efeito líquido (installed=false) foi confirmado pelo schema, não linha a linha.
+- O governed lane (Hardened) ser efetivamente codex-only (G vs. comentário F-525) precisa de confirmação com um teste de inventário — é hipótese forte, não provada em runtime.
+- Onde exatamente `provider.models`/`authReadyModels` é povoado (sonda vs. cache por versão de binário) não foi rastreado até o writer — a conclusão G1 é do sintoma + código de leitura.
+- Não validei se kimi peekKimiSeatReadiness estava `present` hoje (sonda memoizada, não persistida).
+- Distribuição de 14 dias por modelo é aproximada: reservas persistidas só existem neste checkout (10 hoje); uso de tokens mede execução, não decisões de rota sem missão.

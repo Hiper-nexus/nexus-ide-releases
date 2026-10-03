@@ -669,3 +669,64 @@ describe('F-718: estrangulamento que a CLI do Kimi administra sozinha', () => {
     expect(detectLimit('Rate limited. Please wait before retrying.')?.kind).toBe('rate-limit');
   });
 });
+
+/**
+ * F-764 (03/10): três padrões de início de linha (`^[\s⎿│]*…\s*`) ficavam
+ * cúbicos numa tela de TUI em branco — 300 ms por janela de 4 KB, a cada chunk
+ * de PTY — e congelaram a main thread com 12 panes vivos. detectLimit também
+ * recebe texto de hook e de sonda de cota sem limite de tamanho, então a
+ * varredura tem de ser linear em qualquer entrada.
+ */
+describe('F-764: varredura linear em texto de TUI', () => {
+  const SIZE = 16_384;
+  const rows = (row: () => string, count: number) =>
+    Array.from({ length: count }, row).join('\n').slice(-SIZE);
+  const inputs: Array<[string, string]> = [
+    ['tela em branco', rows(() => ' '.repeat(131), 140)],
+    ['caixa de input │…│', rows(() => `│${' '.repeat(129)}│`, 140)],
+    ['moldura ⎿ e espaços', rows(() => `  ⎿${' '.repeat(128)}`, 140)],
+    ['espaço sem quebra (cursor absoluto)', ' '.repeat(SIZE)],
+    ['tabs e espaços', '\t \t '.repeat(SIZE / 4)],
+    ['só quebras de linha', '\n'.repeat(SIZE)],
+    ['"error" seguido de espaço', `error${' '.repeat(SIZE - 5)}`],
+    ['"status code" seguido de espaço', `status code${' '.repeat(SIZE - 11)}`],
+    ['moldura de shell │ ⎿', rows(() => `  │  ⎿${' '.repeat(120)}`, 140)],
+  ];
+
+  it.each(inputs)('%s: nenhum limite, em tempo linear', (_label, text) => {
+    // Aquece: a compilação/tier-up da regex não é o que está sendo medido.
+    detectLimit(text);
+    const startedAt = performance.now();
+    const hit = detectLimit(text);
+    const elapsedMs = performance.now() - startedAt;
+    expect(hit).toBeNull();
+    // Linear fica em ~1 ms; a versão cúbica passava de segundos neste tamanho.
+    expect(elapsedMs).toBeLessThan(50);
+  });
+
+  const nbsp = String.fromCharCode(0xa0);
+  it.each([
+    '  ⎿  Claude usage limit reached. Your limit will reset at 3pm.',
+    '│ Error: usage limit reached',
+    `${nbsp}${nbsp}You have reached your daily limit.`,
+    "saída anterior\n    You've hit your usage limit · resets 8pm",
+    'error:\n  usage limit reached',
+    '\tclaude\tusage limit reached!',
+  ])('moldura de linha continua reconhecida: %s', (text) => {
+    expect(detectLimit(text)?.kind).toBe('rate-limit');
+  });
+
+  it.each([
+    ['HTTP 429', 'rate-limit'],
+    ['status code:   429', 'rate-limit'],
+    ['status =429', 'rate-limit'],
+    ['error:\t402', 'quota'],
+    ['Error: 401 Unauthorized', 'auth'],
+  ])('código de status com ou sem separador continua reconhecido: %s', (text, kind) => {
+    expect(detectLimit(text)?.kind).toBe(kind);
+  });
+
+  it('rótulo de log com espaço antes do separador continua sendo histórico', () => {
+    expect(detectLimit('stdout   :   Error: 429 Too Many Requests')).toBeNull();
+  });
+});

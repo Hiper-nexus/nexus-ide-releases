@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.191 — Sem travar com muitos agentes
+
+Build do Mac. Inclui a 0.76.190 (arquivos do operador que o app não consegue ler, F-755).
+
+- **O Nexus não congela mais com muitos agentes trabalhando (F-764).** Com uns doze panes de agente ativos, a interface travava por minutos, voltava por alguns segundos e travava de novo; as chamadas MCP dos agentes ficavam esperando. A causa estava na detecção de limite de conta do failover, que lê a saída de cada pane: três padrões que reconhecem "usage limit reached" e "hit/reached your … limit" no começo da linha disputavam os mesmos espaços entre si e atravessavam quebras de linha. Numa tela de TUI cheia de espaços em branco, cada leitura levava 300 ms em vez de menos de 1 ms. Como ela roda a cada pedaço de saída de cada pane, a thread principal não dava conta e a fila só crescia. Os três padrões, e outros do mesmo caminho que ficavam lentos em linhas longas de espaço (códigos 401/402/429/5xx com separador, prefixo de moldura do classificador), foram reescritos em tempo linear: a leitura de uma janela de 4 KB caiu de 300 ms para 0,1 ms, e de 1 s para 0,5 ms em 16 KB sem quebra de linha. Testes travam o tempo em entradas adversariais.
+- **Uma leitura lenta não trava mais o app.** Se a detecção de limite passar de 25 ms num pane, aquele pane espera 5 s antes da próxima leitura e o caso fica no trace (`failover-detect-slow`). O texto continua entrando na janela e a leitura final cobre tudo: nenhum aviso de limite real se perde.
+- **Histórico de travamentos da thread principal.** Além do marcador, que guarda só o último, o watchdog mantém `logs/main-hang.ndjson` com todos os travamentos.
+
 ## 0.76.190 — Linux em dia
 
 Build do Linux (DEB, RPM e ZIP). Inclui tudo que Mac e Windows receberam da 0.76.179 à 0.76.189.

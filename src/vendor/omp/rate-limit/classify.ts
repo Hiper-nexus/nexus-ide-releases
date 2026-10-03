@@ -70,7 +70,7 @@ const REASON_PATTERNS: readonly ReasonPattern[] = [
   // omp: includes("529")/includes("503") nus — inaceitável em PTY (números de
   // linha, portas). Mesmo shape de prefixo do 429 legado do Nexus, ou o
   // reason-phrase do HTTP junto do código.
-  { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /(?:http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*[:=]?\s*|error\s*[:=]?\s*|code\s*[:=]?\s*)(?:529|503)\b/i },
+  { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /(?:http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*(?:[:=]\s*)?|error\s*(?:[:=]\s*)?|code\s*(?:[:=]\s*)?)(?:529|503)\b/i },
   { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /\b(?:529|503)\s+(?:service\s+unavailable|overloaded)\b/i },
   // omp: includes("resource exhausted") — código do Google (gRPC). No Nexus o
   // legado classifica antes como rate-limit; mantido por fidelidade.
@@ -129,12 +129,12 @@ const REASON_PATTERNS: readonly ReasonPattern[] = [
   // PRÓPRIO usuário (curl num dev server). Exigimos shape de status/código.
   // Falso positivo residual (agente cita um 500 do provider em prosa) custa
   // só 20s de cooldown, debounced pelo failover.
-  { reason: 'SERVER_ERROR', re: /(?:http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*[:=]?\s*|error\s*[:=]?\s*|code\s*[:=]?\s*)500\b/i },
+  { reason: 'SERVER_ERROR', re: /(?:http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*(?:[:=]\s*)?|error\s*(?:[:=]\s*)?|code\s*(?:[:=]\s*)?)500\b/i },
   { reason: 'SERVER_ERROR', re: /\b500\s+internal\s+server\s+error\b/i },
   // Bare codes embedded in a task ("corrija internal_error no meu app")
   // are not provider events. Require a response line or a JSON error code.
-  { reason: 'SERVER_ERROR', re: /^[ \t]*[│┃⎿•·✖×!>-]?[ \t]*(?:(?:api|provider|server)\s+)?(?:(?:error|failed|failure)\s*:\s*)?(?<signal>internal[_-]server[_-]error|internal_error)\b(?:\s*:|(?=\s*$))/im },
-  { reason: 'SERVER_ERROR', re: /^[ \t]*[│┃⎿•·✖×!>-]?[ \t]*(?:(?:api\s+)?error\s*:\s*)?\{[^\n]*"(?:type|code)"\s*:\s*"(?<signal>internal[_-]server[_-]error|internal_error)"/im },
+  { reason: 'SERVER_ERROR', re: /^[ \t]*(?:[│┃⎿•·✖×!>-][ \t]*)?(?:(?:api|provider|server)\s+)?(?:(?:error|failed|failure)\s*:\s*)?(?<signal>internal[_-]server[_-]error|internal_error)\b(?:\s*:|(?=\s*$))/im },
+  { reason: 'SERVER_ERROR', re: /^[ \t]*(?:[│┃⎿•·✖×!>-][ \t]*)?(?:(?:api\s+)?error\s*:\s*)?\{[^\n]*"(?:type|code)"\s*:\s*"(?<signal>internal[_-]server[_-]error|internal_error)"/im },
   { reason: 'SERVER_ERROR', re: /\binternal (?:server )?error\b[^\n]{0,20}\b(?:occurred|encountered)\b/i },
 ];
 

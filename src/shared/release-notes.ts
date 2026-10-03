@@ -9849,7 +9849,7 @@ export const RELEASE_076189: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076190: AppRelease = {
   version: '0.76.190',
   date: '2026-10-02',
   codename: 'Linux em dia',
@@ -9880,4 +9880,38 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.191',
+  date: '2026-10-03',
+  codename: 'Sem travar com muitos agentes',
+  summary:
+    'Com uma dúzia de agentes trabalhando, a janela do Nexus podia congelar ' +
+    'por minutos. A causa foi encontrada e corrigida, e uma proteção impede ' +
+    'que uma leitura lenta volte a travar o app.',
+  highlights: [
+    {
+      title: 'O Nexus não congela mais com muitos agentes',
+      detail:
+        'A detecção de limite de conta lê a saída de cada pane. Em telas cheias ' +
+        'de espaços em branco, alguns padrões levavam 300 ms por leitura e, com ' +
+        'muitos panes ativos, a interface travava. Agora cada leitura leva ' +
+        'menos de 1 ms.',
+    },
+    {
+      title: 'Proteção contra leituras lentas',
+      detail:
+        'Se a leitura de um pane passar de 25 ms, ele espera alguns segundos ' +
+        'antes da próxima. O texto continua sendo lido, então nenhum aviso de ' +
+        'limite se perde.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Histórico de travamentos',
+      detail:
+        'O watchdog da janela principal guarda todos os travamentos em ' +
+        'logs/main-hang.ndjson, não só o último.',
+    },
+  ],
 };

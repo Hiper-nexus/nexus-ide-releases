@@ -109,7 +109,7 @@ const PATTERNS: Pattern[] = [
   {
     kind: 'quota',
     cooldownMs: 12 * HOUR,
-    re: /(?:http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*[:=]?\s*|error\s*[:=]?\s*)402\b|payment required/i,
+    re: /(?:http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*(?:[:=]\s*)?|error\s*(?:[:=]\s*)?)402\b|payment required/i,
   },
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /out of credits|no credits remaining/i },
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /billing[_\s]?hard[_\s]?limit/i },
@@ -135,11 +135,17 @@ const PATTERNS: Pattern[] = [
   // emoldurada pela ferramenta de shell do Claude Code ("⎿  You've hit…"), e
   // o limite do filho é o da MESMA conta do pane — sem reconhecer a moldura
   // o failover nunca disparava e o pane ficava preso na conta esgotada.
-  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /^[\s⎿│]*(?:claude|error:?)?\s*usage limit reached(?:[.!\s]|$)/im },
-  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /^[\s⎿│]*(?:claude|error:?)?\s*(?:you(?:'ve| have) )?reached your (?:usage|5-hour|daily|session) limit(?:[.!\s·]|$)/im },
+  //
+  // F-764: a moldura é só da LINHA — espaço horizontal (`\s` sem quebras) e
+  // ⎿│ — e não se sobrepõe ao que vem depois. O antigo `^[\s⎿│]*…\s*`
+  // atravessava `\n` e disputava os espaços com o `\s*` seguinte: numa tela
+  // de TUI em branco a busca ficava cúbica (300 ms por janela de 4 KB, a cada
+  // chunk de PTY) e congelou a main thread com 12 panes vivos.
+  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /^(?:[^\S\r\n\u2028\u2029]|[⎿│])*(?:(?:claude|error:?)[^\S\r\n\u2028\u2029]*)?usage limit reached(?:[.!\s]|$)/im },
+  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /^(?:[^\S\r\n\u2028\u2029]|[⎿│])*(?:(?:claude|error:?)[^\S\r\n\u2028\u2029]*)?(?:you(?:'ve| have) )?reached your (?:usage|5-hour|daily|session) limit(?:[.!\s·]|$)/im },
   // 2026-09: "You've hit your session limit · resets 8:10pm (America/Sao_Paulo)"
   // (janela rolante de 5h da conta Claude, com o reset em hora local).
-  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /^[\s⎿│]*(?:claude|error:?)?\s*(?:you(?:'ve| have) )?hit your (?:usage|rate|token|session) limit(?:[.!\s·]|$)/im },
+  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /^(?:[^\S\r\n\u2028\u2029]|[⎿│])*(?:(?:claude|error:?)[^\S\r\n\u2028\u2029]*)?(?:you(?:'ve| have) )?hit your (?:usage|rate|token|session) limit(?:[.!\s·]|$)/im },
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /5[-\s]?hour (?:usage )?limit (?:reached|exceeded|hit)/i },
   // PT: limite de uso / 5 horas (error-shaped).
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /limite de (?:uso|utiliza[cç][aã]o) (?:atingido|excedido|alcan[cç]ado)/i },
@@ -157,7 +163,7 @@ const PATTERNS: Pattern[] = [
     // A prosa nua "rate limit" continua fora (ver comentário acima).
     re: /rate[_\s]?limit(?:ed|_error)|rate[_\s]?limit[_\s]+(?:exceeded|reached|hit)|ratelimiterror|rate[_\s]?limit.{0,24}\btry again\b|(?:error|failed|failure)\b[^|\n]{0,40}\brate[_\s]?limit/i,
   },
-  { kind: 'rate-limit', cooldownMs: HOUR, re: /(?:http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*[:=]?\s*|error\s*[:=]?\s*)429\b|too many requests/i },
+  { kind: 'rate-limit', cooldownMs: HOUR, re: /(?:http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*(?:[:=]\s*)?|error\s*(?:[:=]\s*)?)429\b|too many requests/i },
   { kind: 'rate-limit', cooldownMs: HOUR, re: /resource[_\s]?exhausted/i },
   { kind: 'rate-limit', cooldownMs: HOUR, re: /(?:tokens? per min(?:ute)?|tpm) (?:limit|exceeded)/i },
   { kind: 'rate-limit', cooldownMs: HOUR, re: /(?:requests? per min(?:ute)?|rpm) (?:limit|exceeded)/i },
@@ -180,7 +186,7 @@ const PATTERNS: Pattern[] = [
   {
     kind: 'auth',
     cooldownMs: 15 * 60 * 1000,
-    re: /(?:http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*[:=]?\s*|error\s*[:=]?\s*)401\b|401\s+unauthorized|authentication[_\s]?error/i,
+    re: /(?:http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*(?:[:=]\s*)?|error\s*(?:[:=]\s*)?)401\b|401\s+unauthorized|authentication[_\s]?error/i,
   },
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /invalid[_\s]?(?:api[_\s]?key|x-api-key)/i },
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /oauth token (?:expired|revoked)/i },
@@ -486,7 +492,9 @@ function isLabeledHistoricalOutput(line: string): boolean {
   if (emphasized) {
     candidate = emphasized[2] + candidate.slice(emphasized[0].length);
   }
-  const separatorAt = candidate.search(/\s*[:=-]\s*/);
+  // O rótulo é aparado logo abaixo: basta o 1º separador. O antigo
+  // /\s*[:=-]\s*/ ficava quadrático numa linha longa de espaços (F-764).
+  const separatorAt = candidate.search(/[:=-]/);
   if (separatorAt < 0) return false;
   return LOG_OUTPUT_LABEL.test(candidate.slice(0, separatorAt).trim());
 }
