@@ -26,7 +26,7 @@ beforeEach(() => {
   getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.workspaceMemory, true);
   distill.mockReset().mockImplementation(async (_input, deps) => { deps?.onSkip?.('jev-skip'); return null; });
 });
-afterEach(() => { disposeProjectDomainStoreRegistry(); disposeWorkspaceMemoryStores(); manager.closeAll(); fs.rmSync(root, { recursive: true, force: true }); });
+afterEach(async () => { await disposeProjectDomainStoreRegistry(); disposeWorkspaceMemoryStores(); manager.closeAll(); fs.rmSync(root, { recursive: true, force: true }); });
 
 it('Main registry opens replay for historical handoffs without a new prompt or ACK', async () => {
   createScopedHandoffStore(manager, scope).submit({ status: 'success', summary: 'Historical live-domain replay knowledge.' });
@@ -71,4 +71,17 @@ it('unavailable Jev replay persists the candidate before advancing its cursor', 
   await runPeriodicTask('memory-maintenance:backfill-project', (ctx) => backfillWorkspaceMemory(scope, handoffs, ctx));
   expect(getWorkspaceMemoryStore(scope).pendingRetentions()).toHaveLength(1);
   expect(getWorkspaceMemoryStore(scope).stats().workspace.active).toBe(0);
+});
+
+it('backfill does not redistill an accepted handoff already retained by the live production path', async () => {
+  distill.mockResolvedValue('Live accepted knowledge is already durable.');
+  const handoffs = createScopedHandoffStore(manager, scope);
+  handoffs.submit({ status: 'success', summary: 'Live accepted knowledge is already durable.' });
+  const store = getWorkspaceMemoryStore(scope);
+  await vi.waitFor(() => expect(store.stats().workspace.active).toBe(1));
+  distill.mockReset().mockResolvedValue('A differently phrased duplicate of the same handoff.');
+  const { backfillWorkspaceMemory } = await import('./workspace-memory-backfill');
+  await runPeriodicTask('memory-maintenance:backfill-project', (ctx) => backfillWorkspaceMemory(scope, handoffs, ctx));
+  expect(distill).not.toHaveBeenCalled();
+  expect(store.stats().workspace.active).toBe(1);
 });

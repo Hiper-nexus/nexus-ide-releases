@@ -19,6 +19,10 @@ export async function backfillWorkspaceMemory(scope: ProjectExecutionScope, hand
   for (const { handoff, accepted } of page.items) {
     const key = `handoff:v1:${scope.checkoutId}:${handoff.id}`;
     if (store.isBackfillDone(key)) continue;
+    if (store.latestActiveWithLine('trusted:accepted-handoff', `Reference: ${handoff.id}`)) {
+      store.markBackfillDone([key]);
+      continue;
+    }
     ctx.assertCurrent();
     const provenance = handoff.mcpProvenance ? { mcpReceiptId: handoff.mcpProvenance.receiptId } : {};
     let skipped: string | undefined;

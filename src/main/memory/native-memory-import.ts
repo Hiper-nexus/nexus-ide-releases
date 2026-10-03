@@ -10,13 +10,19 @@ export async function importNativeMemoryFile(scope: ProjectExecutionScope, file:
   assertOperatorScope: () => void): Promise<RetainResult> {
   assertOperatorScope();
   if (!path.isAbsolute(file) || !/\.(md|txt)$/i.test(file)) throw new Error('native memory file type');
-  const handle = await fs.promises.open(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  const handle = await fs.promises.open(file, fs.constants.O_RDONLY |
+    (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
   let content: string;
   try {
     const stat = await handle.stat();
     if (!stat.isFile() || stat.size < 1 || stat.size > MAX_MEMORY_CONTENT_BYTES) throw new Error('native memory size');
     const buffer = Buffer.alloc(MAX_MEMORY_CONTENT_BYTES + 1);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const chunk = await handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead);
+      if (chunk.bytesRead === 0) break;
+      bytesRead += chunk.bytesRead;
+    }
     if (bytesRead > MAX_MEMORY_CONTENT_BYTES) throw new Error('native memory size changed');
     content = new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, bytesRead));
     if (content.includes('\0') || !content.trim()) throw new Error('native memory text');

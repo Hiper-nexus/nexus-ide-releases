@@ -1065,4 +1065,11 @@ CREATE TRIGGER task_mutation_delete AFTER DELETE ON tasks BEGIN
   ON CONFLICT(task_id) DO UPDATE SET revision = revision + 1;
 END;`,
     }),
+    createProjectMigration({
+      id: '044-memory-handoff-dispatch-index',
+      schemaVersion: 44,
+      appVersion: '0.76.191',
+      sql: `CREATE INDEX idx_task_dispatch_queue_handoff_memory
+        ON task_dispatch_queue(handoff_id) WHERE handoff_id IS NOT NULL;`,
+    }),
   ]);

@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { testProjectScope } from '../orch/__tests__/scope-fixture';
 import { configureWorkspaceMemory, disposeWorkspaceMemoryStores, getWorkspaceMemoryStore } from './workspace-memory';
 import { workspaceMemoryContextBlock } from './workspace-memory-context';
@@ -9,7 +10,7 @@ import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 
 let root: string;
-afterEach(() => { disposeWorkspaceMemoryStores(); if (root) fs.rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { vi.restoreAllMocks(); disposeWorkspaceMemoryStores(); if (root) fs.rmSync(root, { recursive: true, force: true }); });
 
 it('explicit import preserves native bytes, redacts secrets, dedupes across restart and never trusts a source string', async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-native-'));
@@ -34,6 +35,42 @@ it('explicit import preserves native bytes, redacts secrets, dedupes across rest
   store.promoteMemory(first.id);
   expect(workspaceMemoryContextBlock(scope, 'Quota native session')).toContain('Quota preserves native session');
   expect(getWorkspaceMemoryStore(testProjectScope({ projectId: 'foreign' })).stats().workspace.active).toBe(0);
+});
+
+it('completes real short reads without dropping text across chunks', async () => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-native-short-'));
+  const scope = testProjectScope({ rootRealPath: root });
+  configureWorkspaceMemory({ baseDir: path.join(root, 'bank') });
+  const content = 'Short reads preserve português and every final byte.';
+  const file = path.join(root, 'short.md'); fs.writeFileSync(file, content);
+  const open = fs.promises.open.bind(fs.promises);
+  vi.spyOn(fs.promises, 'open').mockImplementation(async (...args) => {
+    const handle = await open(...args);
+    const read = handle.read.bind(handle);
+    Object.defineProperty(handle, 'read', { value: (buffer: Buffer, offset: number, length: number, position: number) =>
+      read(buffer, offset, Math.min(3, length), position) });
+    return handle;
+  });
+  const { importNativeMemoryFile } = await import('./native-memory-import');
+  await importNativeMemoryFile(scope, file, () => {});
+  expect(getWorkspaceMemoryStore(scope).recall({ query: 'Short reads' })[0].content).toBe(content);
+});
+
+it.skipIf(process.platform === 'win32')('FIFO selection is refused without waiting for a writer', async () => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-native-fifo-'));
+  const scope = testProjectScope({ rootRealPath: root });
+  configureWorkspaceMemory({ baseDir: path.join(root, 'bank') });
+  const file = path.join(root, 'pipe.md'); execFileSync('mkfifo', [file]);
+  const { importNativeMemoryFile } = await import('./native-memory-import');
+  // If regression blocks on open, release its physical read so the test cannot hang.
+  const release = setTimeout(() => {
+    try { const fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK); fs.closeSync(fd); } catch { /* no reader */ }
+  }, 500);
+  const started = Date.now();
+  try {
+    await expect(importNativeMemoryFile(scope, file, () => {})).rejects.toThrow();
+    expect(Date.now() - started).toBeLessThan(400);
+  } finally { clearTimeout(release); }
 });
 
 it('bounded import rejects oversized/symlink files and rechecks operator scope after IO before retention', async () => {
