@@ -320,6 +320,15 @@ describe('doutrina de segurança chega ao coordenador', () => {
     const brief = buildMaestroKickoffBrief(base);
     expect(brief).not.toContain('SEGURANÇA');
   });
+
+  it('F-781: a regra do navegador entra no kickoff quando o Maestro alcança o navegador', () => {
+    const rule = 'Página web: use nexus_browser_open e nexus_browser_read.';
+    const brief = buildMaestroKickoffBrief({ ...base, browserRule: rule });
+    expect(brief).toContain(rule);
+    // Antes da coordenação: é regra de trabalho, não parte do objetivo.
+    expect(brief.indexOf(rule)).toBeLessThan(brief.indexOf('## ORQUESTRAÇÃO'));
+    expect(buildMaestroKickoffBrief(base)).not.toContain('nexus_browser_open');
+  });
 });
 
 describe('doutrina permanente do Maestro (F-701)', () => {
@@ -331,6 +340,9 @@ describe('doutrina permanente do Maestro (F-701)', () => {
     expect(MAESTRO_STANDING_DOCTRINE.length).toBeLessThan(1_500);
     // F-714: gate longo não para a esteira.
     expect(MAESTRO_STANDING_DOCTRINE).toContain('Esteira');
+    // F-781: a regra do navegador sobrevive à compactação também no Maestro
+    // adotado (pane do operador) e nas CLIs sem o hook do WebFetch.
+    expect(MAESTRO_STANDING_DOCTRINE).toMatch(/nexus_browser_open\/read.*não WebFetch/);
   });
 
   it('o Maestro VERIFICA o que os workers entregam: handoff é alegação, não prova (dever do operador, 02/10)', () => {

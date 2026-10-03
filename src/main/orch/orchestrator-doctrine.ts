@@ -90,6 +90,12 @@ export interface MaestroKickoffBriefInput {
   readonly uiNote?: string;
   /** Doutrina de segurança — o coordenador precisa dela ANTES de delegar. */
   readonly securityNote?: string;
+  /**
+   * F-781: regra "página web → navegador do Nexus" para o Maestro que alcança
+   * o navegador. Na família Claude o hook ainda nega o WebFetch; nas outras
+   * CLIs (Codex, Kimi, Grok…) o kickoff é o único lugar onde a regra chega.
+   */
+  readonly browserRule?: string;
   readonly designContext?: string;
   readonly lane?: string | null;
   readonly maxWorkers?: number | null;
@@ -217,6 +223,7 @@ export function buildMaestroKickoffBrief(
     `Objetivo: ${input.objective}`,
     input.uiNote?.trim() || '',
     input.securityNote?.trim() || '',
+    input.browserRule?.trim() || '',
     input.designContext?.trim() || '',
     coordination,
     metaPane ? META_PANE_DOCTRINE : mode ? buildDirectDoctrine(mode) : DOCTRINE_BASE,
@@ -248,6 +255,9 @@ export const MAESTRO_STANDING_DOCTRINE = [
   '6. Esteira: gate longo (validador, make verify, suíte) não para a missão. Enquanto ele roda, adiante em workers as próximas unidades independentes; só comando pesado local vai um por vez.',
   // Dever do operador (02/10): o Maestro confere o que os workers dizem ter feito.
   '7. Verifique: handoff é alegação, não prova. Antes de aceitar ou integrar, leia o diff e rode o teste que prova a correção; sem isso, o que vale é "não verificado".',
+  // F-781: a regra do navegador sobrevive à compactação também no Maestro
+  // adotado (pane do operador) e nas CLIs sem o hook que nega o WebFetch.
+  '8. Página web: navegador do Nexus (nexus_browser_open/read), não WebFetch; curl só para JSON de API ou arquivo cru.',
 ].join('\n');
 
 /**

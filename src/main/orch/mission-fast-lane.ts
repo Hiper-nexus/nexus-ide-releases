@@ -822,7 +822,22 @@ export function agentPrompt(
   ).length;
 
   if (agent.category === 'orchestrator') {
+    // F-781: a mesma regra que o worker recebe no contrato. Vale para o pane
+    // spawnado e para o pane do operador adotado como Maestro (mesmo prompt);
+    // só quando a CLI tem o MCP do Nexus e o navegador está ao alcance.
+    const orchestratorAdapter = getAdapter(agent.cli);
+    const browserRule =
+      orchestratorAdapter &&
+      canUseNexusMcp(orchestratorAdapter) &&
+      hasNexusBrowserAlternative({
+        role: 'orchestrator',
+        missionId: mission.id,
+        allowedTools: agent.allowedTools ? [...agent.allowedTools] : null,
+      })
+        ? NEXUS_BROWSER_BRIEF_RULE
+        : undefined;
     return buildMaestroKickoffBrief({
+      browserRule,
       title,
       objective: [
         objective,
