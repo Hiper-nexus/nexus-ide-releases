@@ -401,6 +401,7 @@ export function MemoryPanelBody({
     savingRef.current = true;
     setSaving(true);
     setFailure(null);
+    setImportStatus(null);
     try {
       const api = productApi();
       if (!api) throw new Error('product memory API unavailable');
@@ -413,6 +414,9 @@ export function MemoryPanelBody({
         const result = await memoryApi()?.attest({ type: memoryType, title: trimmedTitle,
           summary: body || trimmedTitle, scope: memoryType === 'operator-preference' ? preferenceScope : 'workspace' });
         if (!result?.enabled) throw new Error('memory attestation unavailable');
+        if (result.scope === 'global' && mountedRef.current) {
+          setImportStatus('Preferência salva para todos os seus projetos.');
+        }
       }
       if (!mountedRef.current) return;
       setTitle('');
@@ -687,7 +691,9 @@ export function MemoryPanelBody({
           {saving ? 'Salvando…' : 'Salvar'}
         </button>
         <p className="product-pane__hint">
-          Salva nos dados do app para este projeto, não no repositório.
+          {memoryType === 'operator-preference' && preferenceScope === 'global'
+            ? 'Salva nos dados do app para todos os seus projetos.'
+            : 'Salva nos dados do app para este projeto, não no repositório.'}
         </p>
         <button type="button" className="product-pane__retry" disabled={saving}
           onClick={() => void importNative()}>Importar memórias nativas</button>

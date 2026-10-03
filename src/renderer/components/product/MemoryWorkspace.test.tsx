@@ -139,6 +139,7 @@ describe('MemoryWorkspace contracts', () => {
     await act(async () => { findButton(host, /^salvar$/i).click(); await Promise.resolve(); });
     expect(agenticMemoryBoundary.attest).toHaveBeenCalledWith({ type: 'operator-preference', title: 'Idioma', summary: 'Responda em português.', scope: 'global' });
     expect(memoryBoundary.memoryRemember).not.toHaveBeenCalled();
+    expect(host.querySelector('[role="status"]')?.textContent).toContain('todos os seus projetos');
     act(() => { select.value = 'architecture-rule'; select.dispatchEvent(new Event('change', { bubbles: true })); });
     expect(host.querySelector('[aria-label="Escopo da preferência"]')).toBeNull();
   });
