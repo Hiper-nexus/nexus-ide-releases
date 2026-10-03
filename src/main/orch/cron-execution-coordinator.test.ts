@@ -82,6 +82,34 @@ class MemoryLeaseBackend implements LeaseBackend {
   }
 }
 
+it('coalesces renewal ticks and waits for the physical renewal before finishing fire', async () => {
+  const backend = new MemoryLeaseBackend();
+  let pulse!: () => void;
+  let finishFire!: () => void;
+  let finishRenew!: () => void;
+  let renewals = 0;
+  backend.renew = async (request, token) => {
+    renewals++;
+    if (renewals === 1) await new Promise<void>((resolve) => { finishRenew = resolve; });
+    return { acquired: true, token, expiresAt: backend.now + request.ttlMs, reused: true };
+  };
+  const pc = coordinator({ runtimeManager: manager(), projectScope: scope('installation-coalesce'), backend, now: () => backend.now,
+    renewalTimer: { setInterval: (callback) => { pulse = callback; return 1; }, clearInterval: () => undefined } });
+  const pending = pc.execute(job(), 9_000, () => new Promise<void>((resolve) => { finishFire = resolve; }));
+  await vi.waitFor(() => expect(pulse).toBeTypeOf('function'));
+  pulse();
+  await vi.waitFor(() => expect(renewals).toBe(1));
+  for (let i = 0; i < 50; i++) pulse();
+  finishFire();
+  let settled = false;
+  void pending.then(() => { settled = true; });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(settled).toBe(false);
+  finishRenew();
+  await pending;
+  expect(renewals).toBe(2); // one periodic renewal + the mandatory completion fence
+});
+
 const managers: ProjectRuntimeManager[] = [];
 const roots: string[] = [];
 

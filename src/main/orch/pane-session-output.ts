@@ -1,3 +1,4 @@
+import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
 import type { PaneRegistryEntry, PaneSnapshot } from "../../shared/orch-types";
 import { emitAppEvent } from '../connectors/app-events';
 import type { PaneSessionState } from "../../shared/types";
@@ -70,14 +71,24 @@ function settleBusyWaiter(
 }
 
 // Retain dead-session output briefly for delayed handoffs, then release it.
-setInterval(() => {
-  const cutoff = Date.now() - EXITED_BUFFER_TTL_MS;
-  for (const [sessionId, buffer] of buffers) {
-    if (buffer.exited && (buffer.exitedAt ?? 0) < cutoff) {
-      buffers.delete(sessionId);
+const gcController = new AbortController();
+const outputGcTimer = setInterval(() => {
+  void runPeriodicTask('pane-output-gc', async (context) => {
+    const cutoff = Date.now() - EXITED_BUFFER_TTL_MS;
+    for (const sessionId of [...buffers.keys()]) {
+      await context.checkpoint();
+      const buffer = buffers.get(sessionId);
+      if (buffer?.exited && (buffer.exitedAt ?? 0) < cutoff) buffers.delete(sessionId);
     }
-  }
-}, 60_000).unref();
+  }, { signal: gcController.signal, cadenceMs: 60_000 }).catch(() => undefined);
+}, 60_000);
+outputGcTimer.unref();
+
+export async function stopPaneSessionOutputGc(): Promise<void> {
+  clearInterval(outputGcTimer);
+  gcController.abort(new Error('pane output GC stopped'));
+  await stopPeriodicTask('pane-output-gc');
+}
 
 export function recordPaneSessionData(sessionId: string, data: string): void {
   let buffer = buffers.get(sessionId);

@@ -1,8 +1,10 @@
+import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
 import { ipcMain } from 'electron';
 import { AGENT_LIFECYCLE_CHANNELS } from '../../shared/channels';
 import {
   listAgents,
   reapFinishedAgents,
+  reapFinishedAgentsBudgeted,
   recordAgentEvent,
   type AgentLifecycleEvent,
   type AgentRecord,
@@ -21,6 +23,7 @@ const DEFAULT_MAX_AGE_MS = 60_000;
 
 let reapTimer: ReturnType<typeof setInterval> | null = null;
 let registered = false;
+let reapController = new AbortController();
 
 export interface AgentLifecycleServiceOptions {
   readonly reapIntervalMs?: number;
@@ -56,12 +59,13 @@ export function startAgentLifecycleService(
 
   if (reapTimer) return;
   const interval = options.reapIntervalMs ?? DEFAULT_REAP_INTERVAL_MS;
+  reapController = new AbortController();
   reapTimer = setInterval(() => {
-    try {
-      reapFinishedAgents(now(), maxAgeMs);
-    } catch (err) {
-      console.warn('[agent-lifecycle] reap tick failed:', err);
-    }
+    void runPeriodicTask('agent-lifecycle-reap', async (context) => {
+      await reapFinishedAgentsBudgeted(context, now(), maxAgeMs);
+    }, { signal: reapController.signal, cadenceMs: interval }).catch((error) => {
+      if (!reapController.signal.aborted) console.warn('[agent-lifecycle] reap tick failed:', error);
+    });
   }, interval);
   // Don't keep the process alive solely for reaping in tests/dev.
   if (typeof reapTimer === 'object' && 'unref' in reapTimer) {
@@ -69,11 +73,13 @@ export function startAgentLifecycleService(
   }
 }
 
-export function stopAgentLifecycleService(): void {
+export async function stopAgentLifecycleService(): Promise<void> {
+  reapController.abort(new Error('agent lifecycle reaper stopped'));
   if (reapTimer) {
     clearInterval(reapTimer);
     reapTimer = null;
   }
+  await stopPeriodicTask('agent-lifecycle-reap');
 }
 
 /** Test-only: allow re-register after stop. */

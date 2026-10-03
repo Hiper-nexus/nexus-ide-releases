@@ -1,3 +1,4 @@
+import { type PeriodicTaskContext } from '../observability/periodic-task';
 import { getAgentSessionInfo, orchWriteSession, tapSessionExit, tapSessionState } from '../pty/pty-manager';
 import { readSessionOutput } from './pane-registry';
 
@@ -117,7 +118,7 @@ export interface BootPromptWatchdog {
     missionId: string | undefined,
   ): void;
   dropSession(sessionId: string): void;
-  tick(): void;
+  tick(context?: PeriodicTaskContext): void | Promise<void>;
   watchedCount(): number;
 }
 
@@ -126,6 +127,37 @@ export function createBootPromptWatchdog(
 ): BootPromptWatchdog {
   const sessions = new Map<string, WatchedSession>();
   const log = deps.log ?? ((message: string) => console.info(message));
+
+  const tickSession = (watch: WatchedSession, now: number): void => {
+    const sessionId = watch.sessionId;
+        const match = matchBootPromptPattern(deps.readTail(sessionId));
+        // Padrões de BOOT respeitam a janela de 5 min; diálogos MID-TURN
+        // (rate-limit/troca de modelo) valem a sessão inteira — o do gate
+        // 0.62 apareceu 20+ min depois do spawn e congelou o worker. O mapa
+        // é limpo no exit da sessão (dropSession), não por idade.
+        const inBootWindow =
+          now - watch.firstSeenAt <= BOOT_PROMPT_MAX_AGE_MS;
+        if (match && !match.midTurn && !inBootWindow) return;
+        if (!match) {
+          if (watch.promptTicks > 0 && now - watch.lastPromptAt > BOOT_PROMPT_TICK_MS * 2) {
+            watch.promptTicks = 0; // prompt sumiu: reseta a estabilidade.
+          }
+          return;
+        }
+        watch.promptTicks += 1;
+        watch.lastPromptAt = now;
+        if (watch.promptTicks < BOOT_PROMPT_REQUIRED_TICKS) return;
+        if (watch.attempts >= BOOT_PROMPT_MAX_ATTEMPTS) return;
+        watch.attempts += 1;
+        watch.promptTicks = 0;
+        const written = deps.write(sessionId, match.answer);
+        log(
+          `[boot-prompt] ${match.answer === '\r' ? 'Enter' : 'ESC'} enviado ` +
+            `em ${sessionId} (${match.label}, ` +
+            `tentativa ${watch.attempts}/${BOOT_PROMPT_MAX_ATTEMPTS}` +
+            `${written ? '' : ', write recusado'})`,
+        );
+  };
 
   return {
     trackSession(sessionId, paneId, adapterId, missionId) {
@@ -149,38 +181,22 @@ export function createBootPromptWatchdog(
     dropSession(sessionId) {
       sessions.delete(sessionId);
     },
-    tick() {
+    tick(context) {
       const now = deps.now();
-      for (const [sessionId, watch] of [...sessions.entries()]) {
-        const match = matchBootPromptPattern(deps.readTail(sessionId));
-        // Padrões de BOOT respeitam a janela de 5 min; diálogos MID-TURN
-        // (rate-limit/troca de modelo) valem a sessão inteira — o do gate
-        // 0.62 apareceu 20+ min depois do spawn e congelou o worker. O mapa
-        // é limpo no exit da sessão (dropSession), não por idade.
-        const inBootWindow =
-          now - watch.firstSeenAt <= BOOT_PROMPT_MAX_AGE_MS;
-        if (match && !match.midTurn && !inBootWindow) continue;
-        if (!match) {
-          if (watch.promptTicks > 0 && now - watch.lastPromptAt > BOOT_PROMPT_TICK_MS * 2) {
-            watch.promptTicks = 0; // prompt sumiu: reseta a estabilidade.
-          }
-          continue;
-        }
-        watch.promptTicks += 1;
-        watch.lastPromptAt = now;
-        if (watch.promptTicks < BOOT_PROMPT_REQUIRED_TICKS) continue;
-        if (watch.attempts >= BOOT_PROMPT_MAX_ATTEMPTS) continue;
-        watch.attempts += 1;
-        watch.promptTicks = 0;
-        const written = deps.write(sessionId, match.answer);
-        log(
-          `[boot-prompt] ${match.answer === '\r' ? 'Enter' : 'ESC'} enviado ` +
-            `em ${sessionId} (${match.label}, ` +
-            `tentativa ${watch.attempts}/${BOOT_PROMPT_MAX_ATTEMPTS}` +
-            `${written ? '' : ', write recusado'})`,
-        );
+      const snapshot = [...sessions.entries()];
+      if (!context) {
+        for (const [, watch] of snapshot) tickSession(watch, now);
+        return;
       }
+      return (async () => {
+        for (const [sessionId, watch] of snapshot) {
+          await context.checkpoint();
+          if (sessions.get(sessionId) !== watch) continue;
+          tickSession(watch, now);
+        }
+      })();
     },
+
     watchedCount() {
       return sessions.size;
     },
@@ -222,6 +238,6 @@ export function installBootPromptWatchdog(): () => void {
   };
 }
 
-export function reconcileBootPromptWatchdog(): void {
-  activeWatchdog?.tick();
+export function reconcileBootPromptWatchdog(context?: PeriodicTaskContext): void | Promise<void> {
+  return activeWatchdog?.tick(context);
 }

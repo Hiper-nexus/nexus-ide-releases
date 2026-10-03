@@ -188,7 +188,7 @@ function mission(): Mission {
 function registerSuite(): void {
   h.onScope!(SCOPE, {
     scope: SCOPE,
-    missions: { list: () => [mission()], setStatus: vi.fn() },
+    missions: { list: () => [mission()], get: () => mission(), setStatus: vi.fn() },
     tasks: { list: () => [] },
     handoffs: {
       list: h.handoffList,
@@ -235,7 +235,7 @@ const flush = async (): Promise<void> => {
 };
 
 describe('F-723: pane que não começou a tarefa é corrigido ou mandado para outro', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     h.pendingSession.mockReturnValue({ state: 'waiting' });
     h.sessionState.mockReturnValue(null);
@@ -255,13 +255,13 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     redeliver.mockResolvedValue(false);
     adapterCircuitBreakers.reset();
     resetPaneStartWatchdogForTests();
-    shutdownDelegationSupervisor();
+    await shutdownDelegationSupervisor();
     prepareDelegationSupervisor();
     registerSuite();
   });
-  afterEach(() => {
+  afterEach(async () => {
     vi.useRealTimers();
-    shutdownDelegationSupervisor();
+    await shutdownDelegationSupervisor();
     resetPaneStartWatchdogForTests();
   });
 
@@ -316,7 +316,7 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     expect(getPaneStartWatch('pane-qwen')).toBeNull();
 
     // Nada se repete nas varreduras seguintes.
-    reconcileDelegationSupervisor(NOW + 60_000);
+    await reconcileDelegationSupervisor(NOW + 60_000);
     await flush();
     expect(reroute).toHaveBeenCalledTimes(1);
     expect(h.submit).toHaveBeenCalledTimes(1);
@@ -727,7 +727,7 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
 describe('F-734: turno do brief recusado pelo provedor é falha de início', () => {
   const PROVIDER_TEXT = 'Your api key: ****WXYZ is invalid';
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     h.pendingSession.mockReturnValue({ state: 'bound', sessionId: 'session-ds' });
     h.sessionState.mockReturnValue('idle');
@@ -756,13 +756,13 @@ describe('F-734: turno do brief recusado pelo provedor é falha de início', () 
     reroute.mockResolvedValue({ paneId: 'pane-novo', adapterId: 'codex' });
     adapterCircuitBreakers.reset();
     resetPaneStartWatchdogForTests();
-    shutdownDelegationSupervisor();
+    await shutdownDelegationSupervisor();
     prepareDelegationSupervisor();
     registerSuite();
   });
-  afterEach(() => {
+  afterEach(async () => {
     vi.useRealTimers();
-    shutdownDelegationSupervisor();
+    await shutdownDelegationSupervisor();
     resetPaneStartWatchdogForTests();
   });
 
@@ -850,7 +850,7 @@ describe('F-734: turno do brief recusado pelo provedor é falha de início', () 
     expect(JSON.stringify(h.trace.mock.calls)).not.toContain(PROVIDER_TEXT);
 
     // Nada se repete nas varreduras seguintes.
-    reconcileDelegationSupervisor(NOW + 60_000);
+    await reconcileDelegationSupervisor(NOW + 60_000);
     await flush();
     expect(reroute).toHaveBeenCalledTimes(1);
     expect(h.submit).toHaveBeenCalledTimes(1);

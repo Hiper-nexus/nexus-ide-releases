@@ -9,6 +9,16 @@ import {
 } from "./hook-drop-box";
 
 describe("hook-drop-box", () => {
+  it("owns one async drain across concurrent requests and stops before delivery", async () => {
+    const watcher = new AgentHookDropBoxWatcher({ dropDir: tempDir });
+    writeAtomicHookDropFile(tempDir, { sessionId: 'held', status: 'idle', timestamp: Date.now() });
+    const first = watcher.drain();
+    void first.catch(() => undefined);
+    expect(first).toBeInstanceOf(Promise);
+    expect(watcher.drain()).toBe(first);
+    await watcher.dispose();
+    await first.catch(() => undefined);
+  });
   let tempDir: string;
 
   beforeEach(() => {
@@ -44,7 +54,7 @@ describe("hook-drop-box", () => {
     expect(content.userPrompt.length).toBe(4096);
   });
 
-  it("drains drop files, invokes callback, and cleans up files", () => {
+  it("drains drop files, invokes callback, and cleans up files", async () => {
     const ingested: CanonicalHookEnvelope[] = [];
     const envelope: CanonicalHookEnvelope = {
       sessionId: "session-456",
@@ -61,7 +71,7 @@ describe("hook-drop-box", () => {
       onIngest: (ev) => ingested.push(ev),
     });
 
-    const count = watcher.drain();
+    const count = await watcher.drain();
     expect(count).toBe(1);
     expect(ingested.length).toBe(1);
     expect(ingested[0].sessionId).toBe("session-456");
@@ -71,7 +81,7 @@ describe("hook-drop-box", () => {
     const remaining = fs.readdirSync(tempDir);
     expect(remaining.length).toBe(0);
 
-    watcher.dispose();
+    await watcher.dispose();
   });
 
   it("watches directory and drains new files as they arrive", async () => {
@@ -101,6 +111,6 @@ describe("hook-drop-box", () => {
     expect(ingested[0].sessionId).toBe("session-async");
     expect(ingested[0].status).toBe("needs-input");
 
-    watcher.dispose();
+    await watcher.dispose();
   });
 });

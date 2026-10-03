@@ -1,3 +1,4 @@
+import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
 import path from 'node:path';
 import { z } from 'zod';
 import {
@@ -447,16 +448,27 @@ export class CronExecutionCoordinator implements CronOccurrenceExecutor {
     token: string;
   }): Promise<CronOccurrenceResult> {
     let renewalFailure: string | null = null;
-    let renewalChain = Promise.resolve();
-    const timer = this.#renewalTimer.setInterval(() => {
-      renewalChain = renewalChain.then(async () => {
-        if (renewalFailure) return;
-        const renewed = await input.lease.renew(input.request, input.token);
-        if (!renewed.acquired) {
-          renewalFailure = `remote cron lease renewal failed: ${renewed.reason}`;
-        }
-      });
-    }, Math.max(1, Math.floor(this.#leaseTtlMs / 3)));
+    let renewalFlight: Promise<void> | null = null;
+    let renewalPending = false;
+    let renewalAdmission = true;
+    const cadenceMs = Math.max(1, Math.floor(this.#leaseTtlMs / 3));
+    const taskId = `cron-lease-renewal:${input.scope.projectId}:${input.job.id}:${input.scheduledFor}`;
+    const requestRenewal = () => {
+      if (!renewalAdmission || renewalFailure) return;
+      if (renewalFlight) { renewalPending = true; return; }
+      const current = runPeriodicTask(taskId, async (context) => {
+        do {
+          renewalPending = false;
+          await context.checkpoint();
+          if (!renewalAdmission) return;
+          const renewed = await context.wait(input.lease.renew(input.request, input.token));
+          if (!renewed.acquired) renewalFailure = `remote cron lease renewal failed: ${renewed.reason}`;
+        } while (renewalAdmission && renewalPending && !renewalFailure);
+      }, { cadenceMs }).catch((error) => { renewalFailure = errorMessage(error); });
+      renewalFlight = current;
+      void current.finally(() => { if (renewalFlight === current) renewalFlight = null; });
+    };
+    const timer = this.#renewalTimer.setInterval(requestRenewal, cadenceMs);
 
     let fireFailure: string | null = null;
     try {
@@ -464,8 +476,11 @@ export class CronExecutionCoordinator implements CronOccurrenceExecutor {
     } catch (error) {
       fireFailure = errorMessage(error);
     } finally {
+      renewalAdmission = false;
+      renewalPending = false;
       this.#renewalTimer.clearInterval(timer);
-      await renewalChain;
+      await renewalFlight;
+      await stopPeriodicTask(taskId);
     }
 
     if (fireFailure) {

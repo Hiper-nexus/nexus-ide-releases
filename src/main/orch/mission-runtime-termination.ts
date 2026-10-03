@@ -1,3 +1,4 @@
+import type { PeriodicTaskContext } from '../observability/periodic-task';
 // Adapted from stablyai/orca @ c3620f0954ae283b3b71b295a241f6a9596af6aa
 // (MIT): physical-exit-before-replacement authority, under Nexus fences.
 // Resync check 2026-09-11 against f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92: no
@@ -932,14 +933,17 @@ export async function closeMissionRuntimePreservingHistory(input: {
 export async function terminateUnauthorizedMissionRuntimes(
   scope: ProjectExecutionScope,
   suite: ProjectDomainStoreSuite,
+  context?: PeriodicTaskContext,
 ): Promise<MissionRuntimeTerminationResult[]> {
   const results: MissionRuntimeTerminationResult[] = [];
   const missionIds = suite.missions.list().map((mission) => mission.id);
   for (const missionId of missionIds) {
+    await context?.checkpoint();
     const result = await withMissionLifecycleLock(
       scope,
       missionId,
       async (): Promise<MissionRuntimeTerminationResult | null> => {
+        context?.assertCurrent();
         // The list() result is only a wake-up hint. Re-authorize after waiting
         // for the same mutex used by resume/bootstrap so an approved runtime
         // that won the lock cannot be killed from a stale blocked snapshot.

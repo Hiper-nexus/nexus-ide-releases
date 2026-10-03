@@ -1,3 +1,4 @@
+import type { PeriodicTaskContext } from '../observability/periodic-task';
 import type { Handoff } from "../../shared/orch-types";
 import type { ProjectExecutionScope } from "../../shared/types";
 import { onHandoffSubmitted } from "./idle-delivery";
@@ -34,9 +35,10 @@ interface HandoffDeliveryOutboxDependencies {
  * final settlement. Reconciliation is safe to repeat and queued PTY work
  * deduplicates by exact mission/session authority.
  */
-export function reconcilePendingHandoffDeliveryOutbox(
+export async function reconcilePendingHandoffDeliveryOutbox(
   dependencies: HandoffDeliveryOutboxDependencies = {},
-): HandoffDeliveryOutboxResult {
+  context?: PeriodicTaskContext,
+): Promise<HandoffDeliveryOutboxResult> {
   const suites =
     dependencies.suites ??
     requireProjectDomainStoreRegistry().listSuites();
@@ -44,6 +46,7 @@ export function reconcilePendingHandoffDeliveryOutbox(
   let attempted = 0;
   let failed = 0;
   for (const suite of suites) {
+    await context?.checkpoint();
     let pending: readonly Handoff[];
     try {
       pending = suite.handoffs.listDeliveryOutboxCandidates();
@@ -56,7 +59,10 @@ export function reconcilePendingHandoffDeliveryOutbox(
       );
       continue;
     }
-    for (const handoff of pending) {
+    for (const hint of pending) {
+      await context?.checkpoint();
+      const handoff = suite.handoffs.listDeliveryOutboxCandidates().find((live) => live.id === hint.id);
+      if (!handoff) continue;
       attempted += 1;
       try {
         if (
@@ -68,9 +74,11 @@ export function reconcilePendingHandoffDeliveryOutbox(
           // cerimonial re-provava a autoridade do scheduler aqui; a Via
           // Rápida não tem dispatch durável a re-provar — nada a refazer.
         } else {
-          deliver(handoff, suite.scope);
+          const delivery = Promise.resolve(deliver(handoff, suite.scope));
+          if (context) await context.wait(delivery); else await delivery;
         }
       } catch (error) {
+        context?.assertCurrent();
         failed += 1;
         console.warn(
           `[handoff-outbox] delivery reconciliation failed; retained handoff ${handoff.id}:`,

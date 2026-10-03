@@ -1,3 +1,5 @@
+import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
+import { randomUUID } from 'node:crypto';
 /**
  * Nexus Redline no Linux — a bandeja DENTRO do app em execução.
  *
@@ -47,7 +49,7 @@ import {
   resolveRedlineRefreshPath,
   resolveRedlineSnapshotPath,
 } from '../quota/redline-sink';
-import { readRegularFileCapped } from './redline-safe-read';
+import { readRegularFileCapped, readRegularFileCappedAsync } from './redline-safe-read';
 import { REDLINE_SNAPSHOT_MAX_BYTES, parseRedlineSnapshot } from './redline-snapshot-parse';
 import {
   readRedlineLinuxEnabled,
@@ -107,7 +109,7 @@ export interface RedlineLinuxController {
   /** Desliga e persiste. */
   disable(): RedlineInAppTrayStatus;
   /** Encerra a bandeja sem mexer na preferência (quit do app). */
-  stop(): void;
+  stop(): Promise<void>;
   status(): RedlineInAppTrayStatus;
 }
 
@@ -210,6 +212,8 @@ export function createRedlineLinuxController(deps: RedlineLinuxDeps): RedlineLin
   let menuPublishedAt = 0;
   let failureReason: string | undefined;
   let warned = false;
+  const taskId = `redline-linux:${randomUUID()}`;
+  let controller = new AbortController();
 
   const supported = platform === 'linux';
 
@@ -303,11 +307,20 @@ export function createRedlineLinuxController(deps: RedlineLinuxDeps): RedlineLin
   }
 
   function refreshView(): void {
-    try {
-      render(reloadSnapshotIfChanged());
-    } catch (error) {
-      warnOnce(error);
-    }
+    const owner = tray;
+    if (!owner) return;
+    void runPeriodicTask(taskId, async (context) => {
+      const result = await context.wait(readRegularFileCappedAsync(snapshotPath, REDLINE_SNAPSHOT_MAX_BYTES, snapshotStamp));
+      if (tray !== owner) return;
+      if (owner.isDestroyed()) { render(false); return; }
+      if (result.kind === 'unchanged') { render(false); return; }
+      const changed = result.stamp !== snapshotStamp;
+      snapshot = result.kind === 'text' ? parseRedlineSnapshot(result.text) : null;
+      snapshotStamp = result.stamp;
+      render(changed);
+    }, { signal: controller.signal, cadenceMs: REDLINE_LINUX_POLL_MS }).catch((error) => {
+      if (!controller.signal.aborted) warnOnce(error);
+    });
   }
 
   function scheduleReload(): void {
@@ -322,6 +335,8 @@ export function createRedlineLinuxController(deps: RedlineLinuxDeps): RedlineLin
   // ── Ciclo de vida ───────────────────────────────────────────────────────
 
   function teardown(): void {
+    controller.abort(new Error('redline tray closed'));
+    void stopPeriodicTask(taskId);
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = null;
     if (pollTimer) clearInterval(pollTimer);
@@ -360,6 +375,7 @@ export function createRedlineLinuxController(deps: RedlineLinuxDeps): RedlineLin
   /** Cria o Tray e liga os vigias. Devolve false (e guarda o motivo) se falhar. */
   function startTray(): boolean {
     if (tray) return true;
+    controller = new AbortController();
     try {
       snapshot = null;
       snapshotStamp = '';
@@ -435,8 +451,9 @@ export function createRedlineLinuxController(deps: RedlineLinuxDeps): RedlineLin
     startIfEnabled,
     enable,
     disable,
-    stop: () => {
+    stop: async () => {
       if (supported) teardown();
+      await stopPeriodicTask(taskId);
     },
     status,
   };

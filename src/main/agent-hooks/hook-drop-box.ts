@@ -1,3 +1,5 @@
+import fsp from 'node:fs/promises';
+import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -125,6 +127,9 @@ export class AgentHookDropBoxWatcher {
   #drainTimer: ReturnType<typeof setTimeout> | null = null;
   #pollingTimer: ReturnType<typeof setInterval> | null = null;
   #disposed = false;
+  readonly #taskId = `agent-hook-dropbox:${randomUUID()}`;
+  readonly #controller = new AbortController();
+  #flight: Promise<number> | null = null;
 
   constructor(options: AgentHookDropBoxOptions = {}) {
     this.#dropDir = options.dropDir || resolveDefaultDropBoxDir();
@@ -141,7 +146,7 @@ export class AgentHookDropBoxWatcher {
     fs.mkdirSync(this.#dropDir, { recursive: true, mode: 0o700 });
 
     // Initial drain
-    this.drain();
+    this.#requestDrain();
 
     // Watch for new drop files
     try {
@@ -158,41 +163,90 @@ export class AgentHookDropBoxWatcher {
     } catch (err) {
       console.warn("[hook-drop-box] failed to watch directory, falling back to polling:", err);
       this.#pollingTimer = setInterval(() => {
-        this.drain();
+        this.#requestDrain();
       }, 1000);
     }
   }
 
+  #requestDrain(): void {
+    void this.drain().catch((error) => {
+      if (!this.#disposed) this.#onError?.(error, this.#dropDir);
+    });
+  }
+
   #scheduleDrain(): void {
-    if (this.#drainTimer) return;
+    if (this.#disposed || this.#drainTimer) return;
     this.#drainTimer = setTimeout(() => {
       this.#drainTimer = null;
-      this.drain();
+      this.#requestDrain();
     }, 50);
   }
 
-  drain(): number {
-    if (this.#disposed || !fs.existsSync(this.#dropDir)) return 0;
+  drain(): Promise<number> {
+    if (this.#disposed) return Promise.resolve(0);
+    if (this.#flight) return this.#flight;
+    let processedCount = 0;
+    const work = runPeriodicTask(this.#taskId, async (context) => {
+      processedCount = await this.#drain(context);
+    }, { signal: this.#controller.signal, cadenceMs: 1_000 });
+    const flight = work.then(() => processedCount);
+    this.#flight = flight;
+    void flight.then(() => { if (this.#flight === flight) this.#flight = null; },
+      () => { if (this.#flight === flight) this.#flight = null; });
+    return flight;
+  }
 
-    let entries: string[] = [];
-    try {
-      entries = fs.readdirSync(this.#dropDir);
-    } catch {
-      return 0;
-    }
-
-    const jsonFiles = entries
-      .filter((f) => !f.startsWith(".") && f.endsWith(".json"))
-      .sort();
-
+  async #drain(context: PeriodicTaskContext): Promise<number> {
     const MAX_DRAIN_BATCH = 100;
-    const batch = jsonFiles.slice(0, MAX_DRAIN_BATCH);
+    const batch: string[] = [];
+    let total = 0;
+    let directory: Awaited<ReturnType<typeof fsp.opendir>>;
+    try { directory = await fsp.opendir(this.#dropDir, { bufferSize: 32 }); }
+    catch { return 0; }
+    try {
+      for (;;) {
+        await context.checkpoint();
+        const entry = await context.wait(directory.read());
+        if (!entry) break;
+        if (!entry.isFile() || entry.name.startsWith('.') || !entry.name.endsWith('.json')) continue;
+        total++;
+        // Keep the earliest lexical batch with bounded memory, matching the
+        // previous sort order without materializing the whole directory.
+        batch.push(entry.name);
+        batch.sort();
+        if (batch.length > MAX_DRAIN_BATCH) batch.pop();
+      }
+    } finally { await directory.close(); }
     let processedCount = 0;
 
     for (const filename of batch) {
+      await context.checkpoint();
+      if (this.#disposed) break;
       const filePath = path.join(this.#dropDir, filename);
+      let identity: Awaited<ReturnType<typeof fsp.lstat>> | null = null;
+      const removeCurrentFile = async () => {
+        if (!identity || this.#disposed) return;
+        const current = await fsp.lstat(filePath).catch(() => null);
+        if (current && current.dev === identity.dev && current.ino === identity.ino &&
+          current.size === identity.size && current.mtimeMs === identity.mtimeMs) await fsp.unlink(filePath).catch(() => undefined);
+      };
       try {
-        const rawContent = fs.readFileSync(filePath, "utf8");
+        const handle = await fsp.open(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+        let rawContent: string;
+        try {
+          context.assertCurrent();
+          identity = await context.wait(handle.stat());
+          if (!identity.isFile() || identity.nlink !== 1 || identity.size > 65_536) throw new Error('invalid hook drop file');
+          const buffer = Buffer.alloc(identity.size + 1);
+          const { bytesRead } = await context.wait(handle.read(buffer, 0, buffer.length, 0));
+          if (bytesRead > identity.size) throw new Error('hook drop file changed');
+          rawContent = buffer.subarray(0, bytesRead).toString('utf8');
+          const current = await context.wait(fsp.lstat(filePath));
+          if (current.dev !== identity.dev || current.ino !== identity.ino || current.mtimeMs !== identity.mtimeMs ||
+            current.size !== identity.size) continue;
+        } finally { await handle.close(); }
+        context.assertCurrent();
+        if (this.#disposed) break;
         const json = JSON.parse(rawContent) as Record<string, unknown>;
 
         // Handle raw Claude / agent hook payloads
@@ -204,7 +258,7 @@ export class AgentHookDropBoxWatcher {
           ingestAgentHookStatus(sid, json, { pathname: "/hook/claude" });
           processedCount++;
           try {
-            fs.unlinkSync(filePath);
+            await removeCurrentFile();
           } catch {}
           continue;
         }
@@ -244,25 +298,27 @@ export class AgentHookDropBoxWatcher {
         processedCount++;
 
         // Clean up consumed drop file
-        fs.unlinkSync(filePath);
+        await removeCurrentFile();
       } catch (err) {
+        context.assertCurrent();
         this.#onError?.(err, filePath);
         // On parse/validation error, delete malformed file so it does not loop
         try {
-          fs.unlinkSync(filePath);
+          await removeCurrentFile();
         } catch {}
       }
     }
 
-    if (jsonFiles.length > MAX_DRAIN_BATCH) {
+    if (total > MAX_DRAIN_BATCH) {
       this.#scheduleDrain();
     }
 
     return processedCount;
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
     this.#disposed = true;
+    this.#controller.abort(new Error('hook dropbox disposed'));
     if (this.#drainTimer) {
       clearTimeout(this.#drainTimer);
       this.#drainTimer = null;
@@ -277,5 +333,7 @@ export class AgentHookDropBoxWatcher {
       } catch {}
       this.#watcher = null;
     }
+    await stopPeriodicTask(this.#taskId);
+    await this.#flight?.catch(() => undefined);
   }
 }

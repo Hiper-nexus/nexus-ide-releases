@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AUTH_SPAWN_GATE_SKEW_MS,
   AUTH_SPAWN_GATE_TIMEOUT_MS,
@@ -169,10 +169,7 @@ describe('waitForRotatingAuthSpawnGate', () => {
     });
     // Follower is waiting on the lock. Rotate the shared auth.json like Codex
     // would after a successful refresh.
-    for (let i = 0; i < 20 && sleeps.length === 0; i += 1) {
-      await Promise.resolve();
-    }
-    expect(sleeps.length).toBeGreaterThan(0);
+    await vi.waitFor(() => expect(sleeps.length).toBeGreaterThan(0));
     fs.writeFileSync(
       authFile,
       blob({

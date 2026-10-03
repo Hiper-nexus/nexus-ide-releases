@@ -29,7 +29,23 @@ afterEach(() => {
 });
 
 describe("durable handoff delivery outbox", () => {
-  it("recovers an accepted delivery after restart before consumption committed", () => {
+  it('owns an asynchronous delivery until physical settlement', async () => {
+    let finish!: () => void;
+    const effect = new Promise<void>((resolve) => { finish = resolve; });
+    const handoff = { id: 'pending', delivered: false, deliveryState: 'queued' } as Handoff;
+    const pending = reconcilePendingHandoffDeliveryOutbox({
+      suites: [{ scope: testProjectScope(), handoffs: { listDeliveryOutboxCandidates: () => [handoff] } }],
+      deliver: () => effect,
+    });
+    expect(pending).toBeInstanceOf(Promise);
+    let settled = false;
+    void Promise.resolve(pending).then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    finish();
+    expect(await pending).toEqual({ attempted: 1, failed: 0 });
+  });
+  it("recovers an accepted delivery after restart before consumption committed", async () => {
     const baseDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nexus-handoff-outbox-accepted-crash-"),
     );
@@ -88,7 +104,7 @@ describe("durable handoff delivery outbox", () => {
     // Aceito e aguardando ACK: a reconciliação da Via Rápida nunca re-pasta
     // nem sintetiza consumo — o handoff permanece exatamente como estava.
     expect(
-      reconcilePendingHandoffDeliveryOutbox({
+      await reconcilePendingHandoffDeliveryOutbox({
         suites,
         deliver,
       }),
@@ -100,7 +116,7 @@ describe("durable handoff delivery outbox", () => {
     });
   });
 
-  it("retries an accepted delivery requeued by orchestrator rebind", () => {
+  it("retries an accepted delivery requeued by orchestrator rebind", async () => {
     const baseDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nexus-handoff-outbox-rebind-"),
     );
@@ -160,7 +176,7 @@ describe("durable handoff delivery outbox", () => {
     const deliver = vi.fn();
 
     expect(
-      reconcilePendingHandoffDeliveryOutbox({
+      await reconcilePendingHandoffDeliveryOutbox({
         suites: [{ scope, handoffs }],
         deliver,
       }),
@@ -174,7 +190,7 @@ describe("durable handoff delivery outbox", () => {
     );
   });
 
-  it("isolates an unreadable project suite and still delivers healthy suites", () => {
+  it("isolates an unreadable project suite and still delivers healthy suites", async () => {
     const scope = testProjectScope();
     const queued: Handoff = {
       id: "handoff-healthy",
@@ -193,7 +209,7 @@ describe("durable handoff delivery outbox", () => {
     const deliver = vi.fn();
 
     expect(
-      reconcilePendingHandoffDeliveryOutbox({
+      await reconcilePendingHandoffDeliveryOutbox({
         suites: [
           {
             scope,
@@ -217,7 +233,7 @@ describe("durable handoff delivery outbox", () => {
     expect(deliver).toHaveBeenCalledWith(queued, scope);
   });
 
-  it("does not rescan accepted delivery history after its mission is terminal", () => {
+  it("does not rescan accepted delivery history after its mission is terminal", async () => {
     const baseDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nexus-handoff-outbox-terminal-"),
     );
@@ -280,13 +296,13 @@ describe("durable handoff delivery outbox", () => {
     );
 
     expect(
-      reconcilePendingHandoffDeliveryOutbox({
+      await reconcilePendingHandoffDeliveryOutbox({
         suites: [{ scope, handoffs }],
       }),
     ).toEqual({ attempted: 0, failed: 0 });
   });
 
-  it("recovers queued work after restart and retries a throwing callback", () => {
+  it("recovers queued work after restart and retries a throwing callback", async () => {
     const baseDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nexus-handoff-outbox-"),
     );
@@ -326,17 +342,17 @@ describe("durable handoff delivery outbox", () => {
     const suites = [{ scope, handoffs: restartedHandoffs }];
 
     expect(
-      reconcilePendingHandoffDeliveryOutbox({ suites, deliver }),
+      await reconcilePendingHandoffDeliveryOutbox({ suites, deliver }),
     ).toEqual({ attempted: 1, failed: 1 });
     expect(restartedHandoffs.list()).toHaveLength(1);
 
     expect(
-      reconcilePendingHandoffDeliveryOutbox({ suites, deliver }),
+      await reconcilePendingHandoffDeliveryOutbox({ suites, deliver }),
     ).toEqual({ attempted: 1, failed: 0 });
     expect(restartedHandoffs.list()).toHaveLength(0);
 
     expect(
-      reconcilePendingHandoffDeliveryOutbox({ suites, deliver }),
+      await reconcilePendingHandoffDeliveryOutbox({ suites, deliver }),
     ).toEqual({ attempted: 0, failed: 0 });
     expect(deliver).toHaveBeenCalledTimes(2);
   });

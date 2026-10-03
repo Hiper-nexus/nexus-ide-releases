@@ -1,3 +1,4 @@
+import type { PeriodicTaskContext } from '../observability/periodic-task';
 import { z } from 'zod';
 
 /**
@@ -64,6 +65,20 @@ export function reapFinishedAgents(now = Date.now(), maxAgeMs = 60_000): string[
     if (rec.status !== 'finished') continue;
     if (rec.finishedAt !== undefined && now - rec.finishedAt < maxAgeMs) continue;
     agents.set(id, { ...rec, status: 'reaped' });
+    reaped.push(id);
+  }
+  return reaped;
+}
+
+/** Periodic variant re-reads each record after a real cooperative checkpoint. */
+export async function reapFinishedAgentsBudgeted(context: PeriodicTaskContext, now: number, maxAgeMs: number): Promise<string[]> {
+  const reaped: string[] = [];
+  for (const id of [...agents.keys()]) {
+    await context.checkpoint();
+    const record = agents.get(id);
+    if (!record || record.status !== 'finished') continue;
+    if (record.finishedAt !== undefined && now - record.finishedAt < maxAgeMs) continue;
+    agents.set(id, { ...record, status: 'reaped' });
     reaped.push(id);
   }
   return reaped;

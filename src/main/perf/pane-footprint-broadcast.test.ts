@@ -16,6 +16,7 @@ vi.mock('electron', () => ({
 }));
 vi.mock('../pty/pty-manager', () => ({
   getLiveSessionCount: () => physical.liveSessionCount,
+  getSessionState: () => 'idle',
   probePaneFootprints: () => Promise.resolve(physical.footprints),
 }));
 vi.mock('../orch/pane-admission', () => ({
@@ -40,7 +41,7 @@ describe('pane-footprint-broadcast', () => {
 
   afterEach(async () => {
     const mod = await import('./pane-footprint-broadcast');
-    mod.stopPaneFootprintBroadcast();
+    await mod.stopPaneFootprintBroadcast();
     vi.resetModules();
   });
 
@@ -117,7 +118,7 @@ describe('pane-footprint-broadcast', () => {
       await vi.advanceTimersByTimeAsync(30_000);
       expect(wc.send).toHaveBeenCalledTimes(1);
 
-      mod.stopPaneFootprintBroadcast();
+      await mod.stopPaneFootprintBroadcast();
       await vi.advanceTimersByTimeAsync(60_000);
       expect(wc.send).toHaveBeenCalledTimes(1);
     } finally {

@@ -96,56 +96,56 @@ function harness(overrides: Partial<Harness['state']> = {}): Harness {
 }
 
 describe('pane-non-worker-auto-close (P1-4: auto-fechar panes não-worker idle)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.useFakeTimers();
   });
 
-  afterEach(() => {
-    shutdownNonWorkerAutoClose();
+  afterEach(async () => {
+    await shutdownNonWorkerAutoClose();
     statusTaps.clear();
     exitTaps.clear();
     vi.useRealTimers();
   });
 
   // (a) pane não-worker idle além do limite auto-fecha
-  it('encerra pane não-worker idle após o TTL configurável', () => {
+  it('encerra pane não-worker idle após o TTL configurável', async () => {
     const h = harness();
     initNonWorkerAutoClose(h.deps);
     emitStatus('pty-u1', 'idle');
 
-    vi.advanceTimersByTime(NON_WORKER_AUTO_CLOSE_TTL_MS - 1);
+    await vi.advanceTimersByTimeAsync(NON_WORKER_AUTO_CLOSE_TTL_MS - 1);
     expect(h.closed).toHaveLength(0);
 
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
     expect(h.closed).toHaveLength(1);
     expect(h.closed[0]).toBe('pane-pty-u1');
   });
 
   // (b) pane não-worker ATIVO não é fechado
-  it('cancela o encerramento quando o pane volta a trabalhar', () => {
+  it('cancela o encerramento quando o pane volta a trabalhar', async () => {
     const h = harness();
     initNonWorkerAutoClose(h.deps);
     emitStatus('pty-u1', 'idle');
-    vi.advanceTimersByTime(NON_WORKER_AUTO_CLOSE_TTL_MS / 2);
+    await vi.advanceTimersByTimeAsync(NON_WORKER_AUTO_CLOSE_TTL_MS / 2);
 
     emitStatus('pty-u1', 'working');
-    vi.advanceTimersByTime(NON_WORKER_AUTO_CLOSE_TTL_MS * 2);
+    await vi.advanceTimersByTimeAsync(NON_WORKER_AUTO_CLOSE_TTL_MS * 2);
     expect(h.closed).toHaveLength(0);
   });
 
   // (b) re-avalia no disparo: pane ativo entre arm e fire não é fechado
-  it('re-avalia no disparo: busy entre armar e disparar não fecha', () => {
+  it('re-avalia no disparo: busy entre armar e disparar não fecha', async () => {
     const h = harness();
     initNonWorkerAutoClose(h.deps);
     emitStatus('pty-u1', 'idle');
 
     h.state.idle = false;
-    vi.advanceTimersByTime(NON_WORKER_AUTO_CLOSE_TTL_MS + 1);
+    await vi.advanceTimersByTimeAsync(NON_WORKER_AUTO_CLOSE_TTL_MS + 1);
     expect(h.closed).toHaveLength(0);
   });
 
   // (c) limite é configurável
-  it('respeita TTL customizado', () => {
+  it('respeita TTL customizado', async () => {
     const state = { enabled: true, idle: true, ref: refFor('pty-u1') };
     const closed: string[] = [];
     const customTtl = 10_000;
@@ -160,63 +160,63 @@ describe('pane-non-worker-auto-close (P1-4: auto-fechar panes não-worker idle)'
     initNonWorkerAutoClose(deps);
     emitStatus('pty-u1', 'idle');
 
-    vi.advanceTimersByTime(customTtl - 1);
+    await vi.advanceTimersByTimeAsync(customTtl - 1);
     expect(closed).toHaveLength(0);
 
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
     expect(closed).toHaveLength(1);
   });
 
-  it('não encerra quando a flag está desligada', () => {
+  it('não encerra quando a flag está desligada', async () => {
     const h = harness({ enabled: false });
     initNonWorkerAutoClose(h.deps);
     emitStatus('pty-u1', 'idle');
-    vi.advanceTimersByTime(NON_WORKER_AUTO_CLOSE_TTL_MS * 2);
+    await vi.advanceTimersByTimeAsync(NON_WORKER_AUTO_CLOSE_TTL_MS * 2);
     expect(h.closed).toHaveLength(0);
   });
 
   // F-572: worker COM missão continua intocável (a missão governa o ciclo de
   // vida); worker SEM missão é a classe órfã e passou a ser elegível — ver o
   // describe "pane guardian" abaixo.
-  it('nunca encerra pane com role=worker de uma missão', () => {
+  it('nunca encerra pane com role=worker de uma missão', async () => {
     const h = harness({
       ref: refFor('pty-u1', { role: 'worker', missionId: 'mission-1' }),
     });
     initNonWorkerAutoClose(h.deps);
     emitStatus('pty-u1', 'idle');
-    vi.advanceTimersByTime(NON_WORKER_AUTO_CLOSE_TTL_MS * 2);
+    await vi.advanceTimersByTimeAsync(NON_WORKER_AUTO_CLOSE_TTL_MS * 2);
     expect(h.closed).toHaveLength(0);
   });
 
-  it('nunca encerra pane com role=orchestrator', () => {
+  it('nunca encerra pane com role=orchestrator', async () => {
     const h = harness({
       ref: refFor('pty-u1', { role: 'orchestrator' }),
     });
     initNonWorkerAutoClose(h.deps);
     emitStatus('pty-u1', 'idle');
-    vi.advanceTimersByTime(NON_WORKER_AUTO_CLOSE_TTL_MS * 2);
+    await vi.advanceTimersByTimeAsync(NON_WORKER_AUTO_CLOSE_TTL_MS * 2);
     expect(h.closed).toHaveLength(0);
   });
 
-  it('exit da sessão cancela o timer', () => {
+  it('exit da sessão cancela o timer', async () => {
     const h = harness();
     initNonWorkerAutoClose(h.deps);
     emitStatus('pty-u1', 'idle');
     emitExit('pty-u1');
-    vi.advanceTimersByTime(NON_WORKER_AUTO_CLOSE_TTL_MS * 2);
+    await vi.advanceTimersByTimeAsync(NON_WORKER_AUTO_CLOSE_TTL_MS * 2);
     expect(h.closed).toHaveLength(0);
   });
 
-  it('shutdown limpa timers pendentes', () => {
+  it('shutdown limpa timers pendentes', async () => {
     const h = harness();
     initNonWorkerAutoClose(h.deps);
     emitStatus('pty-u1', 'idle');
-    shutdownNonWorkerAutoClose();
-    vi.advanceTimersByTime(NON_WORKER_AUTO_CLOSE_TTL_MS * 2);
+    await shutdownNonWorkerAutoClose();
+    await vi.advanceTimersByTimeAsync(NON_WORKER_AUTO_CLOSE_TTL_MS * 2);
     expect(h.closed).toHaveLength(0);
   });
 
-  it('múltiplos panes não-worker encerrados independentemente', () => {
+  it('múltiplos panes não-worker encerrados independentemente', async () => {
     const sessions = ['pty-u1', 'pty-u2', 'pty-u3'] as const;
     const refs = new Map<string, NonWorkerPaneRef>(
       sessions.map((sid) => [sid, refFor(sid)]),
@@ -234,10 +234,10 @@ describe('pane-non-worker-auto-close (P1-4: auto-fechar panes não-worker idle)'
 
     for (const sid of sessions) emitStatus(sid, 'idle');
 
-    vi.advanceTimersByTime(NON_WORKER_AUTO_CLOSE_TTL_MS - 1);
+    await vi.advanceTimersByTimeAsync(NON_WORKER_AUTO_CLOSE_TTL_MS - 1);
     expect(closed).toHaveLength(0);
 
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
     expect(closed).toHaveLength(sessions.length);
     expect(closed.sort()).toEqual(sessions.map((s) => `pane-${s}`).sort());
   });
@@ -249,38 +249,38 @@ describe('pane-non-worker-auto-close (P1-4: auto-fechar panes não-worker idle)'
 // parados após handoff recusado; 22 panes × ~1 GB esgotaram a RAM do Mac.
 // ---------------------------------------------------------------------------
 describe('pane guardian (F-572): worker órfão + varredura periódica', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.useFakeTimers();
   });
 
-  afterEach(() => {
-    shutdownNonWorkerAutoClose();
+  afterEach(async () => {
+    await shutdownNonWorkerAutoClose();
     statusTaps.clear();
     exitTaps.clear();
     vi.useRealTimers();
   });
 
-  it('encerra worker SEM missão idle após o TTL (classe órfã do F-565)', () => {
+  it('encerra worker SEM missão idle após o TTL (classe órfã do F-565)', async () => {
     const h = harness({
       ref: refFor('pty-w1', { role: 'worker', missionId: undefined }),
     });
     initNonWorkerAutoClose(h.deps);
     emitStatus('pty-w1', 'idle');
-    vi.advanceTimersByTime(NON_WORKER_AUTO_CLOSE_TTL_MS + 1);
+    await vi.advanceTimersByTimeAsync(NON_WORKER_AUTO_CLOSE_TTL_MS + 1);
     expect(h.closed).toEqual(['pane-pty-w1']);
   });
 
-  it('nunca encerra worker COM missão (a missão governa o ciclo de vida)', () => {
+  it('nunca encerra worker COM missão (a missão governa o ciclo de vida)', async () => {
     const h = harness({
       ref: refFor('pty-w2', { role: 'worker', missionId: 'mission-1' }),
     });
     initNonWorkerAutoClose(h.deps);
     emitStatus('pty-w2', 'idle');
-    vi.advanceTimersByTime(NON_WORKER_AUTO_CLOSE_TTL_MS * 2);
+    await vi.advanceTimersByTimeAsync(NON_WORKER_AUTO_CLOSE_TTL_MS * 2);
     expect(h.closed).toHaveLength(0);
   });
 
-  it('varredura encerra pane idle no PTY mesmo sem nenhum status semântico (CLI sem hooks)', () => {
+  it('varredura encerra pane idle no PTY mesmo sem nenhum status semântico (CLI sem hooks)', async () => {
     const idle = new Set<string>(['pty-s1']);
     const closed: string[] = [];
     const deps: NonWorkerAutoCloseDeps = {
@@ -295,13 +295,13 @@ describe('pane guardian (F-572): worker órfão + varredura periódica', () => {
     };
     initNonWorkerAutoClose(deps);
     // Nenhum emitStatus: só a varredura enxerga o pane.
-    vi.advanceTimersByTime(9_999);
+    await vi.advanceTimersByTimeAsync(9_999);
     expect(closed).toHaveLength(0);
-    vi.advanceTimersByTime(1_001);
+    await vi.advanceTimersByTimeAsync(1_001);
     expect(closed).toEqual(['pane-pty-s1']);
   });
 
-  it('varredura conta o idle a partir da PRIMEIRA observação, nunca fecha na hora', () => {
+  it('varredura conta o idle a partir da PRIMEIRA observação, nunca fecha na hora', async () => {
     const idle = new Set<string>(['pty-s2']);
     const closed: string[] = [];
     const deps: NonWorkerAutoCloseDeps = {
@@ -315,11 +315,11 @@ describe('pane guardian (F-572): worker órfão + varredura periódica', () => {
       sweepIntervalMs: 1_000,
     };
     initNonWorkerAutoClose(deps);
-    vi.advanceTimersByTime(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(closed).toHaveLength(0);
   });
 
-  it('varredura zera o relógio quando o pane volta a ficar busy', () => {
+  it('varredura zera o relógio quando o pane volta a ficar busy', async () => {
     const idle = new Set<string>(['pty-s3']);
     const closed: string[] = [];
     const deps: NonWorkerAutoCloseDeps = {
@@ -333,17 +333,17 @@ describe('pane guardian (F-572): worker órfão + varredura periódica', () => {
       sweepIntervalMs: 1_000,
     };
     initNonWorkerAutoClose(deps);
-    vi.advanceTimersByTime(6_000);
+    await vi.advanceTimersByTimeAsync(6_000);
     idle.delete('pty-s3'); // busy
-    vi.advanceTimersByTime(2_000);
+    await vi.advanceTimersByTimeAsync(2_000);
     idle.add('pty-s3'); // idle de novo — relógio recomeça
-    vi.advanceTimersByTime(9_000);
+    await vi.advanceTimersByTimeAsync(9_000);
     expect(closed).toHaveLength(0);
-    vi.advanceTimersByTime(2_000);
+    await vi.advanceTimersByTimeAsync(2_000);
     expect(closed).toEqual(['pane-pty-s3']);
   });
 
-  it('varredura respeita o veto de idle (awaiting-input) e os papéis protegidos', () => {
+  it('varredura respeita o veto de idle (awaiting-input) e os papéis protegidos', async () => {
     const listed = ['pty-a1', 'pty-o1', 'pty-m1'];
     const refs = new Map<string, NonWorkerPaneRef>([
       ['pty-a1', refFor('pty-a1')],
@@ -363,11 +363,11 @@ describe('pane guardian (F-572): worker órfão + varredura periódica', () => {
       sweepIntervalMs: 1_000,
     };
     initNonWorkerAutoClose(deps);
-    vi.advanceTimersByTime(30_000);
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(closed).toHaveLength(0);
   });
 
-  it('shutdown para a varredura', () => {
+  it('shutdown para a varredura', async () => {
     const idle = new Set<string>(['pty-s4']);
     const closed: string[] = [];
     const deps: NonWorkerAutoCloseDeps = {
@@ -381,46 +381,46 @@ describe('pane guardian (F-572): worker órfão + varredura periódica', () => {
       sweepIntervalMs: 1_000,
     };
     initNonWorkerAutoClose(deps);
-    vi.advanceTimersByTime(5_000);
-    shutdownNonWorkerAutoClose();
-    vi.advanceTimersByTime(60_000);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await shutdownNonWorkerAutoClose();
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(closed).toHaveLength(0);
   });
 });
 
 describe('pane guardian (F-572): quem NUNCA é fechado', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.useFakeTimers();
   });
 
-  afterEach(() => {
-    shutdownNonWorkerAutoClose();
+  afterEach(async () => {
+    await shutdownNonWorkerAutoClose();
     statusTaps.clear();
     exitTaps.clear();
     vi.useRealTimers();
   });
 
-  it('pane aberto pelo humano no renderer (sem pai, sem papel) fica aberto mesmo ocioso', () => {
+  it('pane aberto pelo humano no renderer (sem pai, sem papel) fica aberto mesmo ocioso', async () => {
     const h = harness({
       ref: refFor('pty-h1', { role: undefined, operatorParentSessionId: undefined }),
     });
     initNonWorkerAutoClose(h.deps);
     emitStatus('pty-h1', 'idle');
-    vi.advanceTimersByTime(NON_WORKER_AUTO_CLOSE_TTL_MS * 3);
+    await vi.advanceTimersByTimeAsync(NON_WORKER_AUTO_CLOSE_TTL_MS * 3);
     expect(h.closed).toHaveLength(0);
   });
 
-  it('helper aberto pela mão do operador (com pai) fecha após o TTL', () => {
+  it('helper aberto pela mão do operador (com pai) fecha após o TTL', async () => {
     const h = harness({
       ref: refFor('pty-h2', { role: undefined, operatorParentSessionId: 'pty-op' }),
     });
     initNonWorkerAutoClose(h.deps);
     emitStatus('pty-h2', 'idle');
-    vi.advanceTimersByTime(NON_WORKER_AUTO_CLOSE_TTL_MS + 1);
+    await vi.advanceTimersByTimeAsync(NON_WORKER_AUTO_CLOSE_TTL_MS + 1);
     expect(h.closed).toEqual(['pane-pty-h2']);
   });
 
-  it('pane com contrato de entrega armado (expect) não fecha enquanto não entregar', () => {
+  it('pane com contrato de entrega armado (expect) não fecha enquanto não entregar', async () => {
     const closed: string[] = [];
     let armed = true;
     const deps: NonWorkerAutoCloseDeps = {
@@ -435,21 +435,21 @@ describe('pane guardian (F-572): quem NUNCA é fechado', () => {
       sweepIntervalMs: 1_000,
     };
     initNonWorkerAutoClose(deps);
-    vi.advanceTimersByTime(30_000);
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(closed).toHaveLength(0);
     armed = false;
-    vi.advanceTimersByTime(2_000);
+    await vi.advanceTimersByTimeAsync(2_000);
     expect(closed).toEqual(['pane-pty-d1']);
   });
 });
 
 describe('pane guardian (0.76.44): reaper de emergência sob pressão de memória', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.useFakeTimers();
   });
 
-  afterEach(() => {
-    shutdownNonWorkerAutoClose();
+  afterEach(async () => {
+    await shutdownNonWorkerAutoClose();
     statusTaps.clear();
     exitTaps.clear();
     vi.useRealTimers();
@@ -472,35 +472,35 @@ describe('pane guardian (0.76.44): reaper de emergência sob pressão de memóri
     return { deps, closed };
   }
 
-  it('sob pressão, fecha na hora o pane ocioso elegível mais antigo, sem esperar o TTL', () => {
+  it('sob pressão, fecha na hora o pane ocioso elegível mais antigo, sem esperar o TTL', async () => {
     const pressure = { on: false };
     const idle = new Set<string>(['pty-e1', 'pty-e2']);
     const h = pressureHarness(pressure, idle);
     initNonWorkerAutoClose(h.deps);
-    vi.advanceTimersByTime(1_000); // e1 e e2 vistos idle
+    await vi.advanceTimersByTimeAsync(1_000); // e1 e e2 vistos idle
     idle.add('pty-e3');
-    vi.advanceTimersByTime(1_000); // e3 visto depois
+    await vi.advanceTimersByTimeAsync(1_000); // e3 visto depois
     expect(h.closed).toHaveLength(0);
     pressure.on = true;
-    vi.advanceTimersByTime(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
     // Um por tick, o mais parado primeiro: e1 (ou e2, mesma idade) antes de e3.
     expect(h.closed).toHaveLength(1);
     expect(['pane-pty-e1', 'pane-pty-e2']).toContain(h.closed[0]);
-    vi.advanceTimersByTime(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(h.closed).toHaveLength(2);
     expect(h.closed).not.toContain('pane-pty-e3');
   });
 
-  it('sem pressão, o TTL normal continua valendo', () => {
+  it('sem pressão, o TTL normal continua valendo', async () => {
     const pressure = { on: false };
     const idle = new Set<string>(['pty-e4']);
     const h = pressureHarness(pressure, idle);
     initNonWorkerAutoClose(h.deps);
-    vi.advanceTimersByTime(10 * 60_000);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
     expect(h.closed).toHaveLength(0);
   });
 
-  it('sob pressão continua respeitando os vetos: orquestrador e pane do humano ficam', () => {
+  it('sob pressão continua respeitando os vetos: orquestrador e pane do humano ficam', async () => {
     const pressure = { on: true };
     const idle = new Set<string>(['pty-o', 'pty-h']);
     const refs = new Map<string, NonWorkerPaneRef>([
@@ -520,24 +520,24 @@ describe('pane guardian (0.76.44): reaper de emergência sob pressão de memóri
       isUnderMemoryPressure: () => pressure.on,
     };
     initNonWorkerAutoClose(deps);
-    vi.advanceTimersByTime(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(closed).toHaveLength(0);
   });
 });
 
 describe('pane guardian (0.76.45): estacionar em vez de fechar', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.useFakeTimers();
   });
 
-  afterEach(() => {
-    shutdownNonWorkerAutoClose();
+  afterEach(async () => {
+    await shutdownNonWorkerAutoClose();
     statusTaps.clear();
     exitTaps.clear();
     vi.useRealTimers();
   });
 
-  it('com parkPane presente, estaciona (closePane nunca é chamado) e passa o motivo', () => {
+  it('com parkPane presente, estaciona (closePane nunca é chamado) e passa o motivo', async () => {
     const parked: Array<{ paneId: string; reason: string }> = [];
     const closed: string[] = [];
     const idle = new Set<string>(['pty-p1']);
@@ -555,14 +555,14 @@ describe('pane guardian (0.76.45): estacionar em vez de fechar', () => {
       isUnderMemoryPressure: () => pressure.on,
     };
     initNonWorkerAutoClose(deps);
-    vi.advanceTimersByTime(11_000);
+    await vi.advanceTimersByTimeAsync(11_000);
     expect(closed).toHaveLength(0);
     expect(parked).toEqual([{ paneId: 'pane-pty-p1', reason: 'idle' }]);
 
     idle.add('pty-p2');
-    vi.advanceTimersByTime(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
     pressure.on = true;
-    vi.advanceTimersByTime(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(parked[1]).toEqual({ paneId: 'pane-pty-p2', reason: 'memory-pressure' });
     expect(closed).toHaveLength(0);
   });
@@ -570,18 +570,18 @@ describe('pane guardian (0.76.45): estacionar em vez de fechar', () => {
 
 
 describe('pane guardian (0.76.45): carência pós-acordar e gate cego', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.useFakeTimers();
   });
 
-  afterEach(() => {
-    shutdownNonWorkerAutoClose();
+  afterEach(async () => {
+    await shutdownNonWorkerAutoClose();
     statusTaps.clear();
     exitTaps.clear();
     vi.useRealTimers();
   });
 
-  it('sob pressão, um pane que acabou de acordar não é estacionado de novo dentro da carência', () => {
+  it('sob pressão, um pane que acabou de acordar não é estacionado de novo dentro da carência', async () => {
     const idle = new Set<string>(['pty-w1', 'pty-w2']);
     const parked: string[] = [];
     const wokeAgo = new Map<string, number>([['pty-w1', 30_000]]); // acordou há 30 s
@@ -599,12 +599,12 @@ describe('pane guardian (0.76.45): carência pós-acordar e gate cego', () => {
       wokeAgoMs: (sid) => wokeAgo.get(sid) ?? null,
     };
     initNonWorkerAutoClose(deps);
-    vi.advanceTimersByTime(1_000); // ambos vistos idle
-    vi.advanceTimersByTime(1_000); // pressão: w1 tem carência, w2 é estacionado
+    await vi.advanceTimersByTimeAsync(1_000); // ambos vistos idle
+    await vi.advanceTimersByTimeAsync(1_000); // pressão: w1 tem carência, w2 é estacionado
     expect(parked).toEqual(['pane-pty-w2']);
   });
 
-  it('avisa uma vez quando a amostra de memória some por 3 varreduras seguidas', () => {
+  it('avisa uma vez quando a amostra de memória some por 3 varreduras seguidas', async () => {
     const logs: string[] = [];
     const deps: NonWorkerAutoCloseDeps = {
       isEnabled: () => true,
@@ -618,11 +618,11 @@ describe('pane guardian (0.76.45): carência pós-acordar e gate cego', () => {
       isMemorySampleMissing: () => true,
     };
     initNonWorkerAutoClose(deps);
-    vi.advanceTimersByTime(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(logs.filter((m) => m.includes('gate de pressão está cego'))).toHaveLength(1);
   });
 
-  it('sob pressão de memória, estaciona worker de missão ocioso via parkPane', () => {
+  it('sob pressão de memória, estaciona worker de missão ocioso via parkPane', async () => {
     const idle = new Set<string>(['pty-worker-1', 'pty-orch']);
     const parked: Array<{ paneId: string; reason: string }> = [];
     const closed: string[] = [];
@@ -647,15 +647,15 @@ describe('pane guardian (0.76.45): carência pós-acordar e gate cego', () => {
       isUnderMemoryPressure: () => true,
     };
     initNonWorkerAutoClose(deps);
-    vi.advanceTimersByTime(1_000); // visto idle
-    vi.advanceTimersByTime(1_000); // pressão dispara estacionamento
+    await vi.advanceTimersByTimeAsync(1_000); // visto idle
+    await vi.advanceTimersByTimeAsync(1_000); // pressão dispara estacionamento
     expect(parked).toEqual([{ paneId: 'pane-pty-worker-1', reason: 'memory-pressure' }]);
     expect(closed).toHaveLength(0);
     // Orquestrador continua intocado
     expect(idle.has('pty-orch')).toBe(true);
   });
 
-  it('sem parkPane, worker de missão ocioso NUNCA é fechado destrutivamente sob pressão', () => {
+  it('sem parkPane, worker de missão ocioso NUNCA é fechado destrutivamente sob pressão', async () => {
     const idle = new Set<string>(['pty-worker-1']);
     const closed: string[] = [];
     const refs = new Map<string, NonWorkerPaneRef>([
@@ -673,11 +673,11 @@ describe('pane guardian (0.76.45): carência pós-acordar e gate cego', () => {
       isUnderMemoryPressure: () => true,
     };
     initNonWorkerAutoClose(deps);
-    vi.advanceTimersByTime(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(closed).toHaveLength(0);
   });
 
-  it('TTL sem pressão preserva panes manuais e workers de missão, mesmo com parkPane', () => {
+  it('TTL sem pressão preserva panes manuais e workers de missão, mesmo com parkPane', async () => {
     const idle = new Set<string>(['pty-worker-old', 'pty-manual', 'pty-orchestrator']);
     const parked: Array<{ paneId: string; reason: string }> = [];
     const closed: string[] = [];
@@ -703,7 +703,7 @@ describe('pane guardian (0.76.45): carência pós-acordar e gate cego', () => {
       isUnderMemoryPressure: () => false,
     };
     initNonWorkerAutoClose(deps);
-    vi.advanceTimersByTime(31_000);
+    await vi.advanceTimersByTimeAsync(31_000);
     expect(parked).toEqual([]);
     expect(closed).toHaveLength(0);
   });

@@ -1,3 +1,6 @@
+import fsp from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
 /**
  * Sink de persistência do Nexus Redline: publica cada snapshot que virou
  * `lastSnapshot` em `~/.nexus/redline-last-good.json` (atômico, 0600, sem
@@ -6,7 +9,7 @@
  * Falha de escrita nunca afeta o quota-service: warn no máx. 1×/min.
  */
 
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir as osHomedir } from 'node:os';
 import { join } from 'node:path';
 import type { AccountInfo } from '../../shared/account-types';
@@ -69,8 +72,8 @@ export interface RedlineSink {
   /** Agenda a escrita do snapshot (last-wins; nunca lança). */
   persist(snap: QuotaFleetSnapshot, accounts: ReadonlyArray<AccountInfo>): void;
   /** Observa o arquivo-sinal de refresh; retorna stop(). */
-  watchRefreshRequests(onRequest: () => void): () => void;
-  stop(): void;
+  watchRefreshRequests(onRequest: () => unknown | Promise<unknown>): () => Promise<void>;
+  stop(): Promise<void>;
 }
 
 export interface RedlineSinkDeps {
@@ -118,30 +121,39 @@ export function createRedlineSink(deps?: RedlineSinkDeps): RedlineSink {
   const now = deps?.now ?? Date.now;
   const snapshotPath = resolveRedlineSnapshotPath(deps?.homedir);
   const refreshPath = resolveRedlineRefreshPath(deps?.homedir);
-  let writing = false;
+  let writing: Promise<void> | null = null;
+  let stopped = false;
+  const controller = new AbortController();
+  const taskId = `redline-refresh-request:${randomUUID()}`;
   let pending: RedlineSnapshotFile | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let lastRefreshAt = 0;
 
-  async function flush(): Promise<void> {
-    if (writing || !pending) return;
-    const file = pending;
-    pending = null;
-    writing = true;
-    try {
-      writeRedlineSnapshotFileSync(snapshotPath, file);
-    } catch (err) {
-      warnThrottled(
-        `falha ao publicar snapshot (${(err as Error).message ?? err})`,
-      );
-    } finally {
-      writing = false;
-      if (pending) void flush();
-    }
+  function flush(): Promise<void> {
+    if (writing) return writing;
+    if (stopped || !pending) return Promise.resolve();
+    const flight = (async () => {
+      while (pending && !stopped) {
+        const file = pending;
+        pending = null;
+        const directory = join(snapshotPath, '..');
+        const temporary = join(directory, `.${REDLINE_SNAPSHOT_FILENAME}.tmp-${randomUUID()}`);
+        try {
+          await fsp.mkdir(directory, { recursive: true, mode: 0o700 });
+          await fsp.writeFile(temporary, `${JSON.stringify(file, null, 2)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+          if (!stopped) await fsp.rename(temporary, snapshotPath);
+        } catch (error) { warnThrottled(`falha ao publicar snapshot (${(error as Error).message ?? error})`); }
+        finally { await fsp.rm(temporary, { force: true }).catch(() => undefined); }
+      }
+    })();
+    writing = flight;
+    void flight.finally(() => { if (writing === flight) writing = null; });
+    return flight;
   }
 
   return {
     persist(snap, accounts) {
+      if (stopped) return;
       if (pending) {
         // Last-wins: um snapshot mais novo substitui o enfileirado.
         pending = buildRedlineSnapshotFile(snap, accounts, now());
@@ -154,36 +166,41 @@ export function createRedlineSink(deps?: RedlineSinkDeps): RedlineSink {
     watchRefreshRequests(onRequest) {
       // Poll de 1s: o arquivo-sinal é minúsculo e raro — simples vence esperto.
       pollTimer = setInterval(() => {
-        if (!existsSync(refreshPath)) return;
-        const at = now();
-        if (at - lastRefreshAt < 1_000) return;
-        lastRefreshAt = at;
-        try {
-          rmSync(refreshPath, { force: true });
-        } catch {
-          return;
-        }
-        try {
-          onRequest();
-        } catch (err) {
-          warnThrottled(`refresh pedido falhou (${(err as Error).message ?? err})`);
-        }
+        void runPeriodicTask(taskId, async (context) => {
+          const signalFile = await context.wait(fsp.lstat(refreshPath).catch(() => null));
+          if (!signalFile || !signalFile.isFile() || signalFile.isSymbolicLink()) return;
+          const at = now();
+          if (at - lastRefreshAt < 1_000) return;
+          const identity = await context.wait(fsp.lstat(refreshPath).catch(() => null));
+          if (!identity || identity.dev !== signalFile.dev || identity.ino !== signalFile.ino ||
+            identity.size !== signalFile.size || identity.mtimeMs !== signalFile.mtimeMs) return;
+          await context.wait(fsp.unlink(refreshPath));
+          lastRefreshAt = at;
+          await context.wait(Promise.resolve(onRequest()));
+        }, { signal: controller.signal, cadenceMs: 1_000 }).catch((error) => {
+          if (!stopped) warnThrottled(`refresh pedido falhou (${(error as Error).message ?? error})`);
+        });
       }, 1_000);
       pollTimer.unref?.();
-      return () => {
+      return async () => {
         if (pollTimer) {
           clearInterval(pollTimer);
           pollTimer = null;
         }
+        await stopPeriodicTask(taskId);
       };
     },
 
-    stop() {
+    async stop() {
+      stopped = true;
+      controller.abort(new Error('redline sink stopped'));
       pending = null;
       if (pollTimer) {
         clearInterval(pollTimer);
         pollTimer = null;
       }
+      await stopPeriodicTask(taskId);
+      await writing;
     },
   };
 }

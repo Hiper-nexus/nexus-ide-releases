@@ -1,3 +1,4 @@
+import type { PeriodicTaskContext } from '../observability/periodic-task';
 /**
  * Reconciliador de mortalidade: transforma "exit perdido" em exit sintetizado.
  *
@@ -51,7 +52,7 @@ const DEFAULT_STRIKES = 2;
 
 export interface MortalityReconciler {
   /** Uma rodada de reconciliação. Serializada: reentrada vira no-op. */
-  tick(): Promise<void>;
+  tick(context?: PeriodicTaskContext): Promise<void>;
   /** Remove memória de strikes de uma sessão (finalizada por outra via). */
   forget(sessionId: string): void;
 }
@@ -66,7 +67,7 @@ export function createMortalityReconciler(
   let inFlight = false;
 
   return {
-    async tick(): Promise<void> {
+    async tick(context): Promise<void> {
       if (inFlight) return;
       inFlight = true;
       try {
@@ -78,7 +79,8 @@ export function createMortalityReconciler(
         // pela via normal ou entraram em terminação) — sem isso, um id
         // reusado herdaria strikes antigos.
         const candidateIds = new Set(candidates.map((c) => c.sessionId));
-        for (const id of strikes.keys()) {
+        for (const id of [...strikes.keys()]) {
+          await context?.checkpoint();
           if (!candidateIds.has(id)) strikes.delete(id);
         }
         if (candidates.length === 0) return;
@@ -86,9 +88,13 @@ export function createMortalityReconciler(
         const live = await deps.probeLiveness(
           candidates.map((c) => c.sessionId),
         );
+        context?.assertCurrent();
         if (live === null) return; // unverifiable — nunca condena
 
         for (const candidate of candidates) {
+          await context?.checkpoint();
+          const current = deps.listCandidates().find((live) => live.sessionId === candidate.sessionId);
+          if (!current || current.spawnedAtMs !== candidate.spawnedAtMs) { strikes.delete(candidate.sessionId); continue; }
           if (live.has(candidate.sessionId)) {
             strikes.delete(candidate.sessionId);
             continue;

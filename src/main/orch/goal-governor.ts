@@ -1,3 +1,5 @@
+import fsp from 'node:fs/promises';
+import type { PeriodicTaskContext } from '../observability/periodic-task';
 /**
  * Autonomous Goal Governor & Wave Engine
  *
@@ -86,20 +88,31 @@ function goalsDirForScope(scope: ProjectExecutionScope): string {
   }
 }
 
+const pendingGoalWrites = new Map<string, { directory: string; text: string }>();
+const goalWriteFlights = new Map<string, Promise<void>>();
+let goalWriteSequence = 0;
+
 function persistGoalToDisk(goal: GoalDefinition): void {
-  const dir = goalsDirForScope(goal.scope);
-  if (!dir) return;
-  try {
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+  const directory = goalsDirForScope(goal.scope);
+  if (!directory) return;
+  pendingGoalWrites.set(goal.id, { directory, text: JSON.stringify(goal, null, 2) });
+  if (goalWriteFlights.has(goal.id)) return;
+  const flight = (async () => {
+    while (pendingGoalWrites.has(goal.id)) {
+      const snapshot = pendingGoalWrites.get(goal.id)!;
+      pendingGoalWrites.delete(goal.id);
+      const target = path.join(snapshot.directory, `${goal.id}.json`);
+      const temporary = `${target}.tmp.${process.pid}.${++goalWriteSequence}`;
+      try {
+        await fsp.mkdir(snapshot.directory, { recursive: true });
+        await fsp.writeFile(temporary, snapshot.text, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+        await fsp.rename(temporary, target);
+      } catch { /* Preserve the existing in-memory fallback on readonly FS. */ }
+      finally { await fsp.unlink(temporary).catch(() => undefined); }
     }
-    const target = path.join(dir, `${goal.id}.json`);
-    const tmp = `${target}.tmp.${Date.now()}`;
-    fs.writeFileSync(tmp, JSON.stringify(goal, null, 2), 'utf8');
-    fs.renameSync(tmp, target);
-  } catch {
-    // Gracefully handled in memory if filesystem is read-only or mocked
-  }
+  })();
+  goalWriteFlights.set(goal.id, flight);
+  void flight.finally(() => { if (goalWriteFlights.get(goal.id) === flight) goalWriteFlights.delete(goal.id); });
 }
 
 function updateAwakeLock(): void {
@@ -675,10 +688,12 @@ function nudgeOrchestrator(
  * Adaptive Clock Reconciler Participant
  * Called every ~3 seconds by OrchestrationReconciler.
  */
-export async function reconcileGoalGovernor(now: number): Promise<void> {
+export async function reconcileGoalGovernor(now: number, context?: PeriodicTaskContext): Promise<void> {
   updateAwakeLock();
 
-  for (const goal of goals.values()) {
+  goalsPass: for (const goal of [...goals.values()]) {
+    await context?.checkpoint();
+    if (goals.get(goal.id) !== goal) continue;
     if (goal.status !== 'running' && goal.status !== 'evaluating_gate') {
       continue;
     }
@@ -700,20 +715,32 @@ export async function reconcileGoalGovernor(now: number): Promise<void> {
     if (!currentWave) continue;
 
     // 1. Check bound worker panes for exit or task completion
-    for (const paneId of currentWave.workerPaneIds) {
+    for (const paneId of [...currentWave.workerPaneIds]) {
+      await context?.checkpoint();
+      if (goals.get(goal.id) !== goal || goal.waves[goal.currentWaveIndex] !== currentWave ||
+        goal.status !== 'running') continue goalsPass;
       const pane = findPane(paneId);
       if (pane && pane.state === 'exited') {
         // Worker exited — mark any in-progress tasks assigned to this pane as completed
-        for (const task of currentWave.tasks) {
+        for (const task of [...currentWave.tasks]) {
+          await context?.checkpoint();
+          if (goals.get(goal.id) !== goal || goal.waves[goal.currentWaveIndex] !== currentWave ||
+            goal.status !== 'running' || findPane(paneId)?.sessionId !== pane.sessionId ||
+            findPane(paneId)?.state !== 'exited') continue goalsPass;
           if (task.assignedPaneId === paneId && task.status === 'in_progress') {
             task.status = 'completed';
             task.updatedAt = now;
             goal.updatedAt = now;
-            persistGoalToDisk(goal);
           }
         }
       }
     }
+
+    persistGoalToDisk(goal);
+    if (context) await context.wait(goalWriteFlights.get(goal.id) ?? Promise.resolve());
+    else await goalWriteFlights.get(goal.id);
+    if (goals.get(goal.id) !== goal || goal.waves[goal.currentWaveIndex] !== currentWave ||
+      (goal.status !== 'running' && goal.status !== 'evaluating_gate')) continue;
 
     // 2. Evaluate if current wave is ready for gate evaluation
     const allTasksCompleted =
@@ -745,6 +772,7 @@ export async function reconcileGoalGovernor(now: number): Promise<void> {
 }
 
 export async function shutdownGoalGovernor(): Promise<void> {
+  await Promise.allSettled([...goalWriteFlights.values()]);
   // Release power blocker
   if (powerBlockerId !== null) {
     try {

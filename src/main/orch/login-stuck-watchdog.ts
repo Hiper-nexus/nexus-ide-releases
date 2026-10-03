@@ -1,3 +1,4 @@
+import { type PeriodicTaskContext } from '../observability/periodic-task';
 import type { WebContents } from 'electron';
 import {
   getAgentSessionInfo,
@@ -149,7 +150,7 @@ export interface LoginStuckWatchdog {
   trackSession(sessionId: string, paneId: string, adapterId: string): boolean;
   dropSession(sessionId: string): void;
   /** One evaluation pass over every watched session (clock comes from deps). */
-  tick(): void;
+  tick(context?: PeriodicTaskContext): void | Promise<void>;
   /** Current stuck event for a pane, or null when the pane is fine. */
   paneState(paneId: string): PaneLoginStuckEvent | null;
   watchedCount(): number;
@@ -212,6 +213,52 @@ export function createLoginStuckWatchdog(
     if (wasStuck) deps.emit(buildEvent(watch, false));
   }
 
+  const tickSession = (watch: WatchedSession, now: number): void => {
+        const tail = deps.readTail(watch.sessionId);
+        const pattern = matchPattern(watch.adapterId, tail);
+        // Wave-1 hook: real work beats CLI-login heuristics. MCP-auth hangs
+        // can keep the semantic status on `working` while the quietKey is
+        // frozen (handshake loop), so those patterns are NOT cleared here.
+        if (
+          pattern?.kind !== 'mcp-auth' &&
+          deps.getSemanticStatus(watch.paneId)?.status === 'working'
+        ) {
+          clearProgress(watch);
+          return;
+        }
+        if (!pattern) {
+          // No login/MCP screen in the tail → progress (or never stuck).
+          clearProgress(watch);
+          return;
+        }
+        const quietKey = quietKeyOf(tail);
+        if (quietKey !== watch.lastQuietKey) {
+          // New significant output: re-arm the quiet windows from this screen.
+          const wasStuck = watch.stuck;
+          watch.lastQuietKey = quietKey;
+          watch.matchedPattern = pattern;
+          watch.windowStartedAt = null;
+          watch.quietWindows = 0;
+          watch.stuck = false;
+          if (wasStuck) deps.emit(buildEvent(watch, false));
+          return;
+        }
+        // Same screen, no significant new output: accumulate quiet windows.
+        if (watch.windowStartedAt === null) {
+          watch.windowStartedAt = now;
+          watch.matchedPattern = pattern;
+          return;
+        }
+        if (now - watch.windowStartedAt >= LOGIN_STUCK_WINDOW_MS) {
+          watch.quietWindows += 1;
+          watch.windowStartedAt = now;
+          watch.matchedPattern = pattern;
+          if (watch.quietWindows >= LOGIN_STUCK_REQUIRED_WINDOWS && !watch.stuck) {
+            declareStuck(watch);
+          }
+        }
+  };
+
   return {
     trackSession(sessionId, paneId, adapterId) {
       if (sessions.has(sessionId)) return true;
@@ -239,53 +286,20 @@ export function createLoginStuckWatchdog(
       sessions.delete(sessionId);
     },
 
-    tick() {
+    tick(context) {
       const now = deps.now();
-      for (const watch of sessions.values()) {
-        const tail = deps.readTail(watch.sessionId);
-        const pattern = matchPattern(watch.adapterId, tail);
-        // Wave-1 hook: real work beats CLI-login heuristics. MCP-auth hangs
-        // can keep the semantic status on `working` while the quietKey is
-        // frozen (handshake loop), so those patterns are NOT cleared here.
-        if (
-          pattern?.kind !== 'mcp-auth' &&
-          deps.getSemanticStatus(watch.paneId)?.status === 'working'
-        ) {
-          clearProgress(watch);
-          continue;
-        }
-        if (!pattern) {
-          // No login/MCP screen in the tail → progress (or never stuck).
-          clearProgress(watch);
-          continue;
-        }
-        const quietKey = quietKeyOf(tail);
-        if (quietKey !== watch.lastQuietKey) {
-          // New significant output: re-arm the quiet windows from this screen.
-          const wasStuck = watch.stuck;
-          watch.lastQuietKey = quietKey;
-          watch.matchedPattern = pattern;
-          watch.windowStartedAt = null;
-          watch.quietWindows = 0;
-          watch.stuck = false;
-          if (wasStuck) deps.emit(buildEvent(watch, false));
-          continue;
-        }
-        // Same screen, no significant new output: accumulate quiet windows.
-        if (watch.windowStartedAt === null) {
-          watch.windowStartedAt = now;
-          watch.matchedPattern = pattern;
-          continue;
-        }
-        if (now - watch.windowStartedAt >= LOGIN_STUCK_WINDOW_MS) {
-          watch.quietWindows += 1;
-          watch.windowStartedAt = now;
-          watch.matchedPattern = pattern;
-          if (watch.quietWindows >= LOGIN_STUCK_REQUIRED_WINDOWS && !watch.stuck) {
-            declareStuck(watch);
-          }
-        }
+      const snapshot = [...sessions.entries()];
+      if (!context) {
+        for (const [, watch] of snapshot) tickSession(watch, now);
+        return;
       }
+      return (async () => {
+        for (const [sessionId, watch] of snapshot) {
+          await context.checkpoint();
+          if (sessions.get(sessionId) !== watch) continue;
+          tickSession(watch, now);
+        }
+      })();
     },
 
     paneState(paneId) {
@@ -446,8 +460,8 @@ export function installLoginStuckWatchdog(
 }
 
 /** One pass for the main-owned orchestration coordinator. */
-export function reconcileLoginStuckWatchdog(): void {
-  activeWatchdog?.tick();
+export function reconcileLoginStuckWatchdog(context?: PeriodicTaskContext): void | Promise<void> {
+  return activeWatchdog?.tick(context);
 }
 
 /** Queryable stuck state for a pane (null when fine or not installed). */

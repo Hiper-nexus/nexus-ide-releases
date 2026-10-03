@@ -7,6 +7,10 @@
  * independent sibling.
  */
 
+import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
+
+let reconcilerInstance = 0;
+
 export interface OrchestrationReconcileParticipant {
   readonly id: string;
   readonly cadenceMs: number;
@@ -16,7 +20,7 @@ export interface OrchestrationReconcileParticipant {
    * observed and single-flight until it really settles.
    */
   readonly timeoutMs?: number;
-  readonly run: (now: number, signal?: AbortSignal) => void | Promise<void>;
+  readonly run: (now: number, signal?: AbortSignal, context?: PeriodicTaskContext) => void | Promise<void>;
 }
 
 export interface OrchestrationReconcilerOptions {
@@ -74,6 +78,8 @@ export function createOrchestrationReconciler(
   participants: readonly OrchestrationReconcileParticipant[],
   options: OrchestrationReconcilerOptions = {},
 ): OrchestrationReconciler {
+  const instanceId = ++reconcilerInstance;
+  const taskId = (id: string) => `${id}:orchestration-${instanceId}`;
   const now = options.now ?? Date.now;
   const warn = options.warn ?? ((message: string, error: unknown) => {
     console.warn(message, error);
@@ -204,7 +210,11 @@ export function createOrchestrationReconciler(
 
     let result: void | Promise<void>;
     try {
-      result = state.participant.run(runAt, flight.controller.signal);
+      result = runPeriodicTask(taskId(state.participant.id), (context) =>
+        state.participant.run(runAt, context.signal, context), {
+          signal: flight.controller.signal,
+          cadenceMs: state.participant.cadenceMs,
+        });
     } catch (error) {
       result = Promise.reject(error);
     }
@@ -327,7 +337,10 @@ export function createOrchestrationReconciler(
         }
         // Store teardown is safe only after every original participant promise
         // has really settled, even when a participant ignored cancellation.
-        if (participantFlights.length === 0) return;
+        if (participantFlights.length === 0) {
+          await Promise.all([...states.keys()].map((id) => stopPeriodicTask(taskId(id))));
+          return;
+        }
         let timeout: ReturnType<typeof setTimeout> | null = null;
         try {
           await Promise.race([
@@ -344,6 +357,7 @@ export function createOrchestrationReconciler(
               }, shutdownSettlementTimeoutMs);
             }),
           ]);
+          await Promise.all([...states.keys()].map((id) => stopPeriodicTask(taskId(id))));
         } finally {
           if (timeout) clearTimeout(timeout);
         }

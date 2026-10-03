@@ -1,3 +1,4 @@
+import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
 import { assertLicenseAccess, reserveLicensedAgent } from '../license-enforcement';
 import fs from "node:fs";
 import { canResumeMimoNativeSession } from "../adapters/mimo-session-owner";
@@ -365,9 +366,11 @@ export function setPtyHost(host: PtyHost): void {
  */
 const MORTALITY_TICK_MS = 10_000;
 let mortalityTimer: ReturnType<typeof setInterval> | null = null;
+let mortalityController = new AbortController();
 
 export function startSessionMortalityReconciler(): void {
   if (mortalityTimer) return;
+  mortalityController = new AbortController();
   const reconciler = createMortalityReconciler({
     listCandidates: () => {
       const activeCandidates = [...sessions.entries()]
@@ -417,14 +420,17 @@ export function startSessionMortalityReconciler(): void {
     now: Date.now,
   });
   mortalityTimer = setInterval(() => {
-    void reconciler.tick();
+    void runPeriodicTask('pty-mortality', (context) => reconciler.tick(context),
+      { signal: mortalityController.signal, cadenceMs: MORTALITY_TICK_MS }).catch(() => undefined);
   }, MORTALITY_TICK_MS);
   mortalityTimer.unref?.();
 }
 
-export function stopSessionMortalityReconciler(): void {
+export async function stopSessionMortalityReconciler(): Promise<void> {
+  mortalityController.abort(new Error('PTY mortality stopped'));
   if (mortalityTimer) clearInterval(mortalityTimer);
   mortalityTimer = null;
+  await stopPeriodicTask('pty-mortality');
 }
 
 function requireHost(): PtyHost {

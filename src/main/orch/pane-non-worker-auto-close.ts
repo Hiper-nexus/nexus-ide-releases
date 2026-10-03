@@ -1,3 +1,4 @@
+import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
 /**
  * Pane guardian — auto-fechar panes ociosos (P1-4, paridade Bridge commit
  * 869c08f7; endurecido no F-572).
@@ -293,6 +294,8 @@ const idleSince = new Map<string, number>();
 const closing = new Set<string>();
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 let blindTicks = 0;
+let sweepController = new AbortController();
+const closeFlights = new Set<Promise<unknown>>();
 let untapStatus: (() => void) | null = null;
 let untapExit: (() => void) | null = null;
 
@@ -308,8 +311,8 @@ function closeIdlePane(
   sessionId: string,
   trail: 'evento' | 'varredura',
   reason: 'idle' | 'memory-pressure' = 'idle',
-): void {
-  if (closing.has(sessionId)) return;
+): Promise<void> {
+  if (closing.has(sessionId)) return Promise.resolve();
   closing.add(sessionId);
   const verb = deps.parkPane ? 'estacionando' : 'encerrando';
   deps.log(
@@ -319,9 +322,10 @@ function closeIdlePane(
   const outcome: Promise<'parked' | 'closed' | boolean> = deps.parkPane
     ? Promise.resolve(deps.parkPane(ref.paneId, reason))
     : Promise.resolve(deps.closePane(ref.paneId));
-  void outcome.then(
+  const flight = outcome.then(
     (closed) => {
       closing.delete(sessionId);
+      if (closed) idleSince.delete(sessionId);
       if (!closed) {
         deps.log(
           `fechamento recusado pela autoridade do pane ` +
@@ -338,6 +342,9 @@ function closeIdlePane(
       );
     },
   );
+  closeFlights.add(flight);
+  void flight.finally(() => closeFlights.delete(flight));
+  return flight;
 }
 
 function armTimer(deps: NonWorkerAutoCloseDeps, sessionId: string): void {
@@ -357,7 +364,7 @@ function armTimer(deps: NonWorkerAutoCloseDeps, sessionId: string): void {
  * idle zera; quem venceu o TTL e continua elegível fecha. Exportado para o
  * teste e para o doctor poderem forçar um tick.
  */
-export function sweepIdlePanes(deps: NonWorkerAutoCloseDeps): void {
+export async function sweepIdlePanes(deps: NonWorkerAutoCloseDeps, context?: PeriodicTaskContext): Promise<void> {
   const list = deps.listIdleSessions;
   if (!list) return;
   const now = (deps.now ?? Date.now)();
@@ -374,9 +381,12 @@ export function sweepIdlePanes(deps: NonWorkerAutoCloseDeps): void {
   }
   const idleNow = new Set(list());
   for (const sessionId of [...idleSince.keys()]) {
-    if (!idleNow.has(sessionId)) idleSince.delete(sessionId);
+    await context?.checkpoint();
+    if (!new Set(list()).has(sessionId)) idleSince.delete(sessionId);
   }
   for (const sessionId of idleNow) {
+    await context?.checkpoint();
+    if (!new Set(list()).has(sessionId)) continue;
     const since = idleSince.get(sessionId);
     if (since === undefined) {
       idleSince.set(sessionId, now);
@@ -385,7 +395,8 @@ export function sweepIdlePanes(deps: NonWorkerAutoCloseDeps): void {
     if (now - since < deps.ttlMs) continue;
     const ref = paneIsClosable(deps, sessionId);
     if (ref) {
-      closeIdlePane(deps, ref, sessionId, 'varredura');
+      await closeIdlePane(deps, ref, sessionId, 'varredura');
+      context?.assertCurrent();
       continue;
     }
     // F-150: expiry alone cannot end a human's pane or a mission worker.
@@ -396,25 +407,32 @@ export function sweepIdlePanes(deps: NonWorkerAutoCloseDeps): void {
   // elegível por tick, o mais parado primeiro; os vetos (orquestrador,
   // entrega armada, awaiting-input) continuam.
   if (deps.isUnderMemoryPressure?.()) {
-    const oldestFirst = [...idleSince.entries()]
-      .filter(([sessionId]) => idleNow.has(sessionId) && !closing.has(sessionId))
-      .sort((a, b) => a[1] - b[1]);
-    for (const [sessionId] of oldestFirst) {
+    let oldest: string | null = null;
+    let oldestAt = Number.POSITIVE_INFINITY;
+    for (const [sessionId, idleAt] of [...idleSince.entries()]) {
+      await context?.checkpoint();
+      if (!new Set(list()).has(sessionId) || closing.has(sessionId) || !paneIsParkableUnderPressure(deps, sessionId)) continue;
       const wokeAgo = deps.wokeAgoMs?.(sessionId);
       if (wokeAgo !== null && wokeAgo !== undefined && wokeAgo < PANE_WAKE_GRACE_MS) continue;
+      if (idleAt < oldestAt) { oldest = sessionId; oldestAt = idleAt; }
+    }
+    if (oldest && deps.isUnderMemoryPressure?.() && new Set(list()).has(oldest)) {
+      const sessionId = oldest;
+      const wokeAgo = deps.wokeAgoMs?.(sessionId);
+      if (wokeAgo !== null && wokeAgo !== undefined && wokeAgo < PANE_WAKE_GRACE_MS) return;
       const parkRef = paneIsParkableUnderPressure(deps, sessionId);
-      if (!parkRef) continue;
+      if (!parkRef) return;
       // Se não temos parkPane (apenas closePane destrutivo), fechamos apenas
       // se for elegível a fechamento definitivo (isGuardianEligiblePane).
-      if (!deps.parkPane && !isGuardianEligiblePane(parkRef)) continue;
+      if (!deps.parkPane && !isGuardianEligiblePane(parkRef)) return;
       const verb = deps.parkPane ? 'estacionando' : 'fechando';
       const roleLabel = parkRef.role ?? 'none';
       deps.log(
         `pressão de memória: ${verb} o pane ocioso mais antigo sem esperar o TTL ` +
           `(pane=${parkRef.paneId}, role=${roleLabel}, ocioso há ${Math.round((now - (idleSince.get(sessionId) ?? now)) / 1000)} s)`,
       );
-      closeIdlePane(deps, parkRef, sessionId, 'varredura', 'memory-pressure');
-      break;
+      await closeIdlePane(deps, parkRef, sessionId, 'varredura', 'memory-pressure');
+      context?.assertCurrent();
     }
   }
 }
@@ -429,6 +447,7 @@ export function initNonWorkerAutoClose(
   deps: NonWorkerAutoCloseDeps = productionDeps(),
 ): void {
   if (untapStatus) return;
+  sweepController = new AbortController();
   deps.registerAdvisor?.();
   untapStatus = tapAgentSemanticStatus((entry) => {
     if (entry.status === 'idle' || entry.status === 'completed') {
@@ -447,12 +466,16 @@ export function initNonWorkerAutoClose(
   });
   if (deps.listIdleSessions) {
     const interval = deps.sweepIntervalMs ?? PANE_GUARDIAN_SWEEP_INTERVAL_MS;
-    sweepTimer = setInterval(() => sweepIdlePanes(deps), interval);
+    sweepTimer = setInterval(() => {
+      void runPeriodicTask('pane-guardian', (context) => sweepIdlePanes(deps, context),
+        { signal: sweepController.signal, cadenceMs: interval }).catch(() => undefined);
+    }, interval);
     if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
   }
 }
 
-export function shutdownNonWorkerAutoClose(): void {
+export async function shutdownNonWorkerAutoClose(): Promise<void> {
+  sweepController.abort(new Error('pane guardian stopped'));
   untapStatus?.();
   untapStatus = null;
   untapExit?.();
@@ -463,4 +486,6 @@ export function shutdownNonWorkerAutoClose(): void {
   idleSince.clear();
   closing.clear();
   blindTicks = 0;
+  await stopPeriodicTask('pane-guardian');
+  await Promise.allSettled([...closeFlights]);
 }

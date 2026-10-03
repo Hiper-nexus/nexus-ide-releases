@@ -1,3 +1,7 @@
+import fsp from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
+import { readRegularFileCappedAsync } from '../redline/redline-safe-read';
 /**
  * Serialize Codex (ChatGPT) and Grok pane spawns that share one auth.json.
  *
@@ -35,10 +39,12 @@ export const AUTH_SPAWN_GATE_POLL_MS = 50;
 
 export type AuthSpawnGateRole = 'fresh' | 'leader' | 'follower-fresh';
 
-const watchers = new Set<ReturnType<typeof setInterval>>();
+let watcherEpoch = 0;
+const watchers = new Map<ReturnType<typeof setInterval>, { id: string; controller: AbortController }>();
 
 export function resetManagedAuthSpawnGateForTests(): void {
-  for (const timer of watchers) clearInterval(timer);
+  watcherEpoch++;
+  for (const [timer, owner] of watchers) { clearInterval(timer); owner.controller.abort(new Error('auth gate watcher stopped')); void stopPeriodicTask(owner.id); }
   watchers.clear();
   resetGrokAuthFamiliesForTests();
 }
@@ -80,14 +86,6 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
-function readText(file: string): string | null {
-  try {
-    const text = fs.readFileSync(file, 'utf8');
-    return text.length > 0 ? text : null;
-  } catch {
-    return null;
-  }
-}
 
 export interface AuthBlobFreshness {
   /** JWT `exp` in ms, when the access token is a JWT. */
@@ -199,47 +197,60 @@ function tryAcquireLock(
   }
 }
 
-function releaseLock(lockPath: string): void {
-  try {
-    fs.unlinkSync(lockPath);
-  } catch {
-    // Already gone.
-  }
-}
 
-function watchUntilRefreshed(options: {
+async function watchUntilRefreshed(options: {
   authFile: string;
   lockPath: string;
   freshnessAtStart: number | null;
   timeoutMs: number;
   pollMs: number;
   now: () => number;
-  readAuth: (file: string) => string | null;
-}): void {
+  readAuth: (file: string) => string | null | Promise<string | null>;
+}): Promise<void> {
+  const registrationEpoch = watcherEpoch;
   const deadline = options.now() + options.timeoutMs;
+  const identity = await fsp.lstat(options.lockPath).catch(() => null);
+  if (registrationEpoch !== watcherEpoch || !identity || !identity.isFile() || identity.isSymbolicLink()) return;
+  const controller = new AbortController();
+  const id = `managed-auth-refresh-watch:${randomUUID()}`;
   const timer = setInterval(() => {
-    const now = options.now();
-    const blob = options.readAuth(options.authFile);
-    const freshness = blob ? rotationMarker(blob) : null;
-    const rotated =
-      freshness !== null &&
-      (options.freshnessAtStart === null ||
-        freshness > options.freshnessAtStart);
-    if (rotated || now >= deadline) {
+    void runPeriodicTask(id, async (context) => {
+      const blob = await context.wait(Promise.resolve(options.readAuth(options.authFile)));
+      const freshness = blob ? rotationMarker(blob) : null;
+      const rotated = freshness !== null &&
+        (options.freshnessAtStart === null || freshness > options.freshnessAtStart);
+      if (!rotated && options.now() < deadline) return;
+      const owner = watchers.get(timer);
+      if (!owner || owner.controller !== controller) return;
+      const current = await context.wait(fsp.lstat(options.lockPath).catch(() => null));
+      if (watchers.get(timer)?.controller !== controller) return;
       clearInterval(timer);
       watchers.delete(timer);
-      releaseLock(options.lockPath);
-    }
+      if (current && current.dev === identity.dev && current.ino === identity.ino &&
+        current.size === identity.size && current.mtimeMs === identity.mtimeMs) {
+        await context.wait(fsp.unlink(options.lockPath).catch(() => undefined));
+      }
+    }, { signal: controller.signal, cadenceMs: options.pollMs }).catch(() => undefined).finally(() => {
+      if (!watchers.has(timer)) void stopPeriodicTask(id);
+    });
   }, options.pollMs);
-  watchers.add(timer);
+  watchers.set(timer, { id, controller });
   timer.unref?.();
+}
+
+export async function stopManagedAuthSpawnGateWatchers(): Promise<void> {
+  watcherEpoch++;
+  const owners = [...watchers];
+  watchers.clear();
+  for (const [timer, owner] of owners) { clearInterval(timer); owner.controller.abort(new Error('auth gate watchers stopped')); }
+  await Promise.all(owners.map(([, owner]) => stopPeriodicTask(owner.id)));
 }
 
 type GateOptions = {
   authFile: string;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
-  readAuth?: (file: string) => string | null;
+  readAuth?: (file: string) => string | null | Promise<string | null>;
   timeoutMs?: number;
   pollMs?: number;
   skewMs?: number;
@@ -254,20 +265,23 @@ async function waitForAuthFile(options: GateOptions): Promise<AuthSpawnGateRole>
   const sleep =
     options.sleep ??
     ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  const readAuth = options.readAuth ?? readText;
+  const readAuth = options.readAuth ?? (async (file: string) => {
+    const result = await readRegularFileCappedAsync(file, 256 * 1024);
+    return result.kind === 'text' && result.text.length ? result.text : null;
+  });
   const timeoutMs = options.timeoutMs ?? AUTH_SPAWN_GATE_TIMEOUT_MS;
   const pollMs = options.pollMs ?? AUTH_SPAWN_GATE_POLL_MS;
   const skewMs = options.skewMs ?? AUTH_SPAWN_GATE_SKEW_MS;
   const authFile = options.authFile;
   const lockPath = rotatingAuthLockPath(authFile);
 
-  const blob = readAuth(authFile);
+  const blob = await readAuth(authFile);
   if (!blob) return 'fresh';
   if (authBlobIsFreshForSpawn(blob, now(), skewMs)) return 'fresh';
 
   const freshnessAtStart = rotationMarker(blob);
   if (tryAcquireLock(lockPath, now(), timeoutMs)) {
-    watchUntilRefreshed({
+    await watchUntilRefreshed({
       authFile,
       lockPath,
       freshnessAtStart,
@@ -282,7 +296,7 @@ async function waitForAuthFile(options: GateOptions): Promise<AuthSpawnGateRole>
   const deadline = now() + timeoutMs;
   while (now() < deadline) {
     await sleep(pollMs);
-    const current = readAuth(authFile);
+    const current = await readAuth(authFile);
     if (current && authBlobIsFreshForSpawn(current, now(), skewMs)) {
       return 'follower-fresh';
     }

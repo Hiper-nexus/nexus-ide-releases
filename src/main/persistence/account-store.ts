@@ -1,3 +1,4 @@
+import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -1012,28 +1013,47 @@ export async function ensureFreshClaudeSubscription(
  * Sweeper de frescor: mantém os tokens das contas Claude secundárias válidos
  * para que qualquer spawn/failover encontre credencial viva no vault.
  */
+let freshnessSequence = 0;
+const freshnessStops = new Set<() => Promise<void>>();
+
 export function startClaudeSubscriptionFreshness(
   intervalMs = 15 * 60 * 1000,
-): () => void {
-  const tick = (): void => {
-    for (const account of listAccounts('claude')) {
-      // Cold boot must never open the macOS Keychain or decrypt the vault.
-      // `security`/safeStorage are synchronous and can wait indefinitely for a
-      // hidden SecurityAgent prompt, freezing Electron's main loop. Refresh
-      // only credentials already unlocked by an explicit account/spawn flow.
-      // Native-lineage read-back remains on those explicit flows above.
-      if (!hasCachedSecret(CRED_PREFIX + account.id)) continue;
-      void ensureFreshClaudeSubscription(account.id);
-    }
+): () => Promise<void> {
+  const controller = new AbortController();
+  const id = `claude-auth-freshness:${++freshnessSequence}`;
+  const tick = () => {
+    void runPeriodicTask(id, async (context) => {
+      for (const hint of listAccounts('claude')) {
+        await context.checkpoint();
+        const account = accounts.get(hint.id);
+        if (!account || account.adapterId !== 'claude') continue;
+        // Cold boot remains cache-only: never unlock the native Keychain.
+        if (!hasCachedSecret(CRED_PREFIX + account.id)) continue;
+        // External rotation must settle under its existing lineage checks;
+        // cancellation stops subsequent accounts, never loses a rotated grant.
+        await context.wait(ensureFreshClaudeSubscription(account.id));
+      }
+    }, { signal: controller.signal, cadenceMs: intervalMs }).catch((error) => {
+      if (!controller.signal.aborted) console.warn('[accounts] freshness sweep failed:', error);
+    });
   };
   const initial = setTimeout(tick, 0);
   initial.unref?.();
   const timer = setInterval(tick, intervalMs);
   timer.unref?.();
-  return () => {
+  const stop = async () => {
     clearTimeout(initial);
     clearInterval(timer);
+    controller.abort(new Error('account freshness stopped'));
+    await stopPeriodicTask(id);
+    freshnessStops.delete(stop);
   };
+  freshnessStops.add(stop);
+  return stop;
+}
+
+export async function stopClaudeSubscriptionFreshness(): Promise<void> {
+  await Promise.all([...freshnessStops].map((stop) => stop()));
 }
 
 /**

@@ -65,11 +65,38 @@ describe("mission shim filesystem transport", () => {
     runtime.bindSession(SESSION_ID);
   });
 
-  afterEach(() => {
-    runtime?.dispose();
+  afterEach(async () => {
+    await runtime?.dispose();
     resetGateForTests();
     fs.rmSync(baseDir, { recursive: true, force: true });
     vi.useRealTimers();
+  });
+
+  it('settles a pending handler before removing its runtime and never publishes after disposal', async () => {
+    await runtime.dispose();
+    let finish!: () => void;
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => { started = resolve; });
+    runtime = createMissionShimRuntime({ ctx, baseDir, pollIntervalMs: 60_000,
+      invoke: async (invocation) => {
+        started();
+        await new Promise<void>((resolve) => { finish = resolve; });
+        return { ok: true, tool: invocation.toolName, result: { accepted: true } };
+      },
+    });
+    runtime.bindSession(SESSION_ID);
+    const request = runtime.createRequestForTests({ requestId: '00000000-0000-4000-8000-000000000099',
+      sequence: 1, issuedAt: Date.now(), command: 'notify', operation: 'heartbeat', args: {} });
+    fs.writeFileSync(path.join(runtime.requestsDir, `0000000000000001-${request.requestId}.json`), JSON.stringify(request));
+    const scan = runtime.scanNowForTests();
+    void scan.catch(() => undefined);
+    await entered;
+    const stop = runtime.dispose();
+    expect(stop).toBeInstanceOf(Promise);
+    expect(fs.existsSync(runtime.rootDir)).toBe(true);
+    finish();
+    await stop;
+    expect(fs.existsSync(runtime.rootDir)).toBe(false);
   });
 
   it("injects private canonical commands and routes nx-mail send", async () => {

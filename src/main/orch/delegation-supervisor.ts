@@ -1,3 +1,4 @@
+import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
 import type {
   Handoff,
   Mission,
@@ -753,7 +754,7 @@ function tracePaneStartRejected(
  * de workspace (F-565) entregue ao pane pai pelo mesmo `injectPrompt`. Status
  * `progress`: `stalled` é diagnóstico e não chega ao PTY do Maestro.
  */
-function notifyPaneStartCaller(watch: PaneStartWatch, summary: string): void {
+async function notifyPaneStartCaller(watch: PaneStartWatch, summary: string): Promise<void> {
   const suite = suiteForScope(watch.scope);
   if (watch.missionId) {
     const handoff = suite.handoffs.submit({
@@ -772,7 +773,7 @@ function notifyPaneStartCaller(watch: PaneStartWatch, summary: string): void {
   });
   const parentSessionId = watch.callerSessionId;
   if (getSessionState(parentSessionId) === null) return; // fica listada
-  void import('./tool-util')
+  await import('./tool-util')
     .then(({ injectPrompt }) =>
       injectPrompt(
         parentSessionId,
@@ -907,7 +908,7 @@ async function handlePaneNotStarted(
   });
   console.warn(`[delegation-supervisor] ${summary}`);
   try {
-    notifyPaneStartCaller(watch, summary);
+    await notifyPaneStartCaller(watch, summary);
   } catch (error) {
     console.warn(
       `[delegation-supervisor] aviso de pane que não iniciou falhou ` +
@@ -1004,19 +1005,18 @@ async function checkPaneStart(watch: PaneStartWatch, now: number): Promise<void>
 }
 
 /** Uma passada do watchdog de início (varredura de 15 s ou falha provada). */
-export async function checkPaneStarts(now: number = Date.now()): Promise<void> {
-  await Promise.all(
-    listPaneStartWatches()
-      .filter((watch) => watch.phase === 'watching' && !watch.redelivering)
-      .map((watch) =>
-        checkPaneStart(watch, now).catch((error) => {
-          console.warn(
-            `[delegation-supervisor] verificação de início falhou ` +
-              `(pane=${watch.paneId}): ${shortStartError(error)}`,
-          );
-        }),
-      ),
-  );
+export function checkPaneStarts(now: number = Date.now(), parentContext?: PeriodicTaskContext): Promise<void> {
+  return runPeriodicTask('pane-start-check', async (context) => {
+    for (const watch of listPaneStartWatches()) {
+      await context.checkpoint();
+      if (watch.phase !== 'watching' || watch.redelivering) continue;
+      try { await context.wait(checkPaneStart(watch, now)); }
+      catch (error) {
+        context.assertCurrent();
+        console.warn(`[delegation-supervisor] verificação de início falhou (pane=${watch.paneId}): ${shortStartError(error)}`);
+      }
+    }
+  }, { signal: parentContext?.signal, cadenceMs: DELEGATION_SCAN_MS });
 }
 
 let disposePaneStartTaps: (() => void) | null = null;
@@ -1074,12 +1074,26 @@ function installPaneStartTaps(): void {
   };
 }
 
-function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
+async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: PeriodicTaskContext): Promise<void> {
   const liveStates = new Set<PaneRuntimeState>([
     'spawning', 'busy', 'idle', 'unknown',
   ]);
   const liveSessionIds = new Set<string>();
-  for (const mission of suite.missions.list()) {
+  missions: for (const hint of suite.missions.list()) {
+    await context.checkpoint();
+    const mission = suite.missions.get(hint.id);
+    if (!mission) continue;
+    const revision = JSON.stringify([mission.status, mission.intentVersion, mission.intentState, mission.updatedAt, mission.orchestratorSessionId]);
+    const paneStamp = () => JSON.stringify(listPaneSnapshots().filter((pane) => pane.missionId === mission.id)
+      .map((pane) => [pane.paneId, pane.sessionId, pane.state, pane.role]));
+    const initialPaneStamp = paneStamp();
+    const current = () => {
+      context.assertCurrent();
+      const live = suite.missions.get(mission.id);
+      return suites.get(scopeKey(suite)) === suite && !!live &&
+        JSON.stringify([live.status, live.intentVersion, live.intentState, live.updatedAt, live.orchestratorSessionId]) === revision &&
+        paneStamp() === initialPaneStamp;
+    };
     const squad = mission.squadId ? getSquad(mission.squadId) : null;
     const lane = mission.intentContract?.lane;
     const rosterWorkers =
@@ -1097,6 +1111,8 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
       (pane) => pane.missionId === mission.id && liveStates.has(pane.state),
     );
     for (const pane of panes) {
+      await context.checkpoint();
+      if (!current()) continue missions;
       if (pane.sessionId) liveSessionIds.add(pane.sessionId);
     }
     let recoveries = suite.handoffs
@@ -1106,7 +1122,11 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
     // Expire leftover queued recoveries (hello-file / prior mission) so they
     // stop freezing the supervisor and stop idle-delivery spam forever.
     let expiredStale = false;
-    for (const recovery of recoveries) {
+    for (const hint of recoveries) {
+      await context.checkpoint();
+      if (!current()) continue missions;
+      const recovery = suite.handoffs.list({ missionId: mission.id, includeDelivered: true }).find((live) => live.id === hint.id);
+      if (!recovery) continue;
       if (
         recovery.deliveryState === 'queued' &&
         now - recovery.createdAt >= RECOVERY_QUEUED_TTL_MS
@@ -1393,13 +1413,10 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
       }
       // Acorda a Via Rápida: o orquestrador morreu, spawna um novo.
       // Antes ficava parado esperando "Mission Driver recovery" que nunca vinha.
-      void import('./mission-fast-lane').then(({ resumeFastLaneMission }) =>
-        resumeFastLaneMission(suite.scope, mission.id, {
-          remountKind: 'automatic',
-        }).catch((err) =>
-          console.warn('[delegation-supervisor] resume falhou:', err),
-        ),
-      );
+      const { resumeFastLaneMission } = await context.wait(import('./mission-fast-lane'));
+      if (!current()) continue;
+      await context.wait(resumeFastLaneMission(suite.scope, mission.id, { remountKind: 'automatic' })
+        .catch((error) => console.warn('[delegation-supervisor] resume falhou:', error)));
       console.warn(
         `[delegation-supervisor] stage 2 — mission ${mission.id} restart via fast-lane`,
       );
@@ -1434,7 +1451,8 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
   // mais dela. Os avisos das outras suites ficam com elas (F-725).
   const notifiedAt = hungWorkerNotifiedAt.get(scopeKey(suite));
   if (notifiedAt) {
-    for (const sessionId of notifiedAt.keys()) {
+    for (const sessionId of [...notifiedAt.keys()]) {
+      await context.checkpoint();
       if (!liveSessionIds.has(sessionId)) notifiedAt.delete(sessionId);
     }
   }
@@ -1467,7 +1485,7 @@ function suiteForScope(
 export function initDelegationSupervisor(): void {
   if (timer) return;
   prepareDelegationSupervisor();
-  timer = setInterval(() => reconcileDelegationSupervisor(), DELEGATION_SCAN_MS);
+  timer = setInterval(() => { void reconcileDelegationSupervisor().catch((error) => console.warn('[delegation-supervisor] scan failed:', error)); }, DELEGATION_SCAN_MS);
   timer.unref?.();
 }
 
@@ -1481,25 +1499,31 @@ export function prepareDelegationSupervisor(): void {
 }
 
 /** One main-coordinator scan, error-isolated per project scope. */
-export function reconcileDelegationSupervisor(now: number = Date.now()): void {
-  for (const suite of suites.values()) {
-    try {
-      scanSuite(suite, now);
-    } catch (error) {
-      console.warn('[delegation-supervisor] scan failed:', error);
+export function reconcileDelegationSupervisor(now: number = Date.now(), context?: PeriodicTaskContext): Promise<void> {
+  const reconcile = async (budget: PeriodicTaskContext) => {
+    for (const suite of [...suites.values()]) {
+      await budget.checkpoint();
+      if (suites.get(scopeKey(suite)) !== suite) continue;
+      try { await budget.wait(scanSuite(suite, now, budget)); }
+      catch (error) {
+        budget.assertCurrent();
+        console.warn('[delegation-supervisor] scan failed:', error);
+      }
     }
-  }
-  // F-723: panes soltos que ainda não provaram que começaram a tarefa.
-  void checkPaneStarts(now);
+    await budget.wait(checkPaneStarts(now, budget));
+  };
+  return context ? reconcile(context) : runPeriodicTask('delegation-supervisor:legacy', reconcile, { cadenceMs: DELEGATION_SCAN_MS });
 }
 
-export function shutdownDelegationSupervisor(): void {
+export async function shutdownDelegationSupervisor(): Promise<void> {
+  const settling = Promise.all([stopPeriodicTask('delegation-supervisor:legacy'), stopPeriodicTask('pane-start-check')]);
   if (timer) clearInterval(timer);
   timer = null;
   unsubscribeScopes?.();
   unsubscribeScopes = null;
   disposePaneStartTaps?.();
   disposePaneStartTaps = null;
+  await settling;
   suites.clear();
   chefIdleTrackers.clear();
   zeroDeliveryPoked.clear();

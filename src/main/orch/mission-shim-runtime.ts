@@ -1,3 +1,5 @@
+import fsp from 'node:fs/promises';
+import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
 import {
   createHmac,
   randomBytes,
@@ -15,7 +17,6 @@ import {
 } from "./gate";
 import { runInsideMissionShimTransport } from "./http-mcp-boundary";
 import type { ToolDispatchResult } from "./mcp-dispatch-contract";
-import { removeTreeSync } from '../util/remove-tree';
 
 const REQUEST_SCHEMA = "nexus.mission-shim-request/v1";
 const MAX_REQUEST_BYTES = 64 * 1024;
@@ -89,7 +90,7 @@ export interface MissionShimRuntime {
   readonly readPaths: readonly string[];
   readonly writePaths: readonly string[];
   bindSession(sessionId: string): void;
-  dispose(): void;
+  dispose(): Promise<void>;
   scanNowForTests(): Promise<void>;
   createRequestForTests(
     input: Omit<MissionShimRequest, "schema" | "capabilityId" | "mac">,
@@ -173,15 +174,15 @@ function writePrivateFileAtomic(
   }
 }
 
-function discardDirectoryEntry(parent: string, name: string): void {
+async function discardDirectoryEntry(parent: string, name: string): Promise<void> {
   if (name === "." || name === ".." || path.basename(name) !== name) return;
   const entry = path.join(parent, name);
   try {
-    const stat = fs.lstatSync(entry);
+    const stat = await fsp.lstat(entry);
     if (stat.isDirectory() && !stat.isSymbolicLink()) {
-      removeTreeSync(entry, { recursive: true, force: true });
+      await fsp.rm(entry, { recursive: true, force: true });
     } else {
-      fs.unlinkSync(entry);
+      await fsp.unlink(entry);
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -190,14 +191,14 @@ function discardDirectoryEntry(parent: string, name: string): void {
   }
 }
 
-function isActiveRequestTemp(
+async function isActiveRequestTemp(
   parent: string,
   name: string,
   now: number,
-): boolean {
+): Promise<boolean> {
   if (!REQUEST_TEMP_FILE_RE.test(name)) return false;
   try {
-    const stat = fs.lstatSync(path.join(parent, name));
+    const stat = await fsp.lstat(path.join(parent, name));
     return (
       stat.isFile() &&
       !stat.isSymbolicLink() &&
@@ -343,6 +344,11 @@ export function createMissionShimRuntime(
   let sessionId: string | null = null;
   let disposed = false;
   let scanning: Promise<void> | null = null;
+  let disposal: Promise<void> | null = null;
+  const controller = new AbortController();
+  const taskId = `mission-shim:${capabilityId}`;
+  const bindingCurrent = () => !disposed && !!sessionId && options.ctx.sessionId === sessionId &&
+    getContextBySession(sessionId) === options.ctx && isCurrentGateContext(options.ctx);
   let timer: NodeJS.Timeout | null = null;
 
   const createSignedRequest = (
@@ -357,6 +363,7 @@ export function createMissionShimRuntime(
   };
 
   const processRequest = async (raw: unknown): Promise<ToolDispatchResult> => {
+    if (!bindingCurrent()) return denied("session_authority_revoked");
     const parsed = requestSchema.safeParse(raw);
     if (!parsed.success) return denied("invalid_request");
     const request = parsed.data;
@@ -409,10 +416,11 @@ export function createMissionShimRuntime(
     claimedPath: string,
     expectedRequestId: string,
     expectedSequence: number,
+    context: PeriodicTaskContext,
   ): Promise<void> => {
     let response: ToolDispatchResult = denied("invalid_request");
     try {
-      const stat = fs.lstatSync(claimedPath);
+      const stat = await context.wait(fsp.lstat(claimedPath));
       if (
         !stat.isFile() ||
         stat.isSymbolicLink() ||
@@ -422,9 +430,10 @@ export function createMissionShimRuntime(
         response = denied("invalid_request");
       } else {
         const noFollow = fs.constants.O_NOFOLLOW ?? 0;
-        const fd = fs.openSync(claimedPath, fs.constants.O_RDONLY | noFollow);
+        const fd = await fsp.open(claimedPath, fs.constants.O_RDONLY | noFollow);
         try {
-          const opened = fs.fstatSync(fd);
+          context.assertCurrent();
+          const opened = await context.wait(fd.stat());
           if (
             !opened.isFile() ||
             opened.nlink !== 1 ||
@@ -432,7 +441,11 @@ export function createMissionShimRuntime(
           ) {
             response = denied("invalid_request");
           } else {
-            const text = fs.readFileSync(fd, "utf8");
+            const buffer = Buffer.alloc(MAX_REQUEST_BYTES + 1);
+            const { bytesRead } = await context.wait(fd.read(buffer, 0, buffer.length, 0));
+            if (bytesRead > MAX_REQUEST_BYTES || opened.dev !== stat.dev || opened.ino !== stat.ino ||
+              !bindingCurrent()) throw new Error('request identity changed');
+            const text = buffer.subarray(0, bytesRead).toString('utf8');
             const raw = JSON.parse(text) as unknown;
             const parsed = requestSchema.safeParse(raw);
             if (!parsed.success) {
@@ -443,11 +456,11 @@ export function createMissionShimRuntime(
             ) {
               response = denied("request_filename_mismatch");
             } else {
-              response = await processRequest(parsed.data);
+              response = await context.wait(processRequest(parsed.data));
             }
           }
         } finally {
-          fs.closeSync(fd);
+          await fd.close();
         }
       }
     } catch (error) {
@@ -458,7 +471,7 @@ export function createMissionShimRuntime(
       );
     } finally {
       try {
-        fs.unlinkSync(claimedPath);
+        await fsp.unlink(claimedPath);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
           console.warn(
@@ -468,66 +481,66 @@ export function createMissionShimRuntime(
         }
       }
     }
-    if (disposed) return;
+    context.assertCurrent();
+    if (!bindingCurrent()) return;
+    const target = path.join(responsesDir, `${expectedRequestId}.json`);
+    const temporary = `${target}.${randomUUID()}.tmp`;
     try {
-      writePrivateFileAtomic(
-        path.join(responsesDir, `${expectedRequestId}.json`),
-        `${JSON.stringify(response)}\n`,
-        0o600,
-      );
+      await context.wait(fsp.writeFile(temporary, `${JSON.stringify(response)}\n`, { mode: 0o600, flag: 'wx' }));
+      if (!bindingCurrent()) return;
+      await context.wait(fsp.rename(temporary, target));
     } catch (error) {
-      console.warn("[mission-shim] failed to write response", error);
-    }
+      if (!disposed) console.warn("[mission-shim] failed to write response", error);
+    } finally { await fsp.unlink(temporary).catch(() => undefined); }
   };
 
-  const scan = async (): Promise<void> => {
+  const scan = (): Promise<void> => {
     if (disposed || scanning) return scanning ?? Promise.resolve();
-    scanning = (async () => {
-      let names: string[];
+    scanning = runPeriodicTask(taskId, async (context) => {
+      let directory: Awaited<ReturnType<typeof fsp.opendir>>;
+      try { directory = await fsp.opendir(requestsDir, { bufferSize: 32 }); }
+      catch { return; }
+      const names: string[] = [];
       try {
-        names = fs.readdirSync(requestsDir).sort();
-      } catch (error) {
-        if (!disposed)
-          console.warn("[mission-shim] request scan failed", error);
-        return;
-      }
-      for (const name of names) {
-        const match = REQUEST_FILE_RE.exec(name);
-        const source = path.join(requestsDir, name);
-        if (!match) {
-          if (isActiveRequestTemp(requestsDir, name, now())) continue;
-          discardDirectoryEntry(requestsDir, name);
-          continue;
+        for (;;) {
+          await context.checkpoint();
+          if (!bindingCurrent()) return;
+          const entry = await context.wait(directory.read());
+          if (!entry) break;
+          if (!REQUEST_FILE_RE.test(entry.name)) {
+            if (await isActiveRequestTemp(requestsDir, entry.name, now())) continue;
+            context.assertCurrent();
+            if (!bindingCurrent()) return;
+            await context.wait(discardDirectoryEntry(requestsDir, entry.name));
+          } else {
+            names.push(entry.name);
+            names.sort();
+            if (names.length > 100) names.pop();
+          }
         }
+      } finally { await directory.close(); }
+      for (const name of names) {
+        await context.checkpoint();
+        if (!bindingCurrent()) return;
+        const match = REQUEST_FILE_RE.exec(name)!;
+        const source = path.join(requestsDir, name);
         try {
-          const stat = fs.lstatSync(source);
+          const stat = await context.wait(fsp.lstat(source));
+          if (!bindingCurrent()) return;
           if (!stat.isFile() || stat.isSymbolicLink()) {
-            discardDirectoryEntry(requestsDir, name);
+            await context.wait(discardDirectoryEntry(requestsDir, name));
             continue;
           }
-        } catch {
-          continue;
-        }
+        } catch { context.assertCurrent(); continue; }
         const claimed = path.join(processingDir, name);
-        try {
-          fs.renameSync(source, claimed);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-            console.warn("[mission-shim] failed to claim request", error);
-          }
-          continue;
-        }
-        try {
-          await responseFor(claimed, match[2], Number(match[1]));
-        } catch (error) {
-          if (!disposed) {
-            console.warn("[mission-shim] request processing failed", error);
-          }
-        }
+        try { await context.wait(fsp.rename(source, claimed)); }
+        catch { context.assertCurrent(); continue; }
+        if (!bindingCurrent()) return;
+        await responseFor(claimed, match[2], Number(match[1]), context);
       }
-    })().finally(() => {
-      scanning = null;
-    });
+    }, { signal: controller.signal, cadenceMs: pollIntervalMs }).catch((error) => {
+      if (!disposed) console.warn('[mission-shim] request processing failed', error);
+    }).finally(() => { scanning = null; });
     return scanning;
   };
 
@@ -563,17 +576,20 @@ export function createMissionShimRuntime(
       }
     },
     dispose() {
-      if (disposed) return;
+      if (disposal) return disposal;
       disposed = true;
       if (timer) clearInterval(timer);
       timer = null;
+      controller.abort(new Error('mission shim disposed'));
       sessionId = null;
-      seenRequestIds.clear();
-      try {
-        removeTreeSync(rootDir, { recursive: true, force: true });
-      } catch (error) {
-        console.warn("[mission-shim] failed to remove private runtime", error);
-      }
+      disposal = (async () => {
+        await stopPeriodicTask(taskId);
+        await scanning;
+        seenRequestIds.clear();
+        await fsp.rm(rootDir, { recursive: true, force: true }).catch((error) =>
+          console.warn('[mission-shim] failed to remove private runtime', error));
+      })();
+      return disposal;
     },
     scanNowForTests: scan,
     createRequestForTests: createSignedRequest,

@@ -18,6 +18,7 @@ import {
   openSync,
   readSync,
 } from 'node:fs';
+import fsp from 'node:fs/promises';
 
 export type SafeRead =
   /** `stamp` = `mtimeMs:tamanho`, para o chamador pular leituras repetidas. */
@@ -28,6 +29,39 @@ export type SafeRead =
   | { kind: 'none'; stamp: string };
 
 const O_NONBLOCK = fsConstants.O_NONBLOCK ?? 0;
+
+/** Same bounded descriptor/regular-file policy for periodic Main readers. */
+export async function readRegularFileCappedAsync(
+  file: string,
+  maxBytes: number,
+  knownStamp?: string,
+): Promise<SafeRead> {
+  let handle: Awaited<ReturnType<typeof fsp.open>>;
+  try { handle = await fsp.open(file, fsConstants.O_RDONLY | O_NONBLOCK); }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    let absent = code === 'ENOENT' || code === 'ENOTDIR';
+    if (code === 'ENOENT' && await fsp.lstat(file).then(() => true, () => false)) absent = false;
+    return { kind: 'none', stamp: absent ? 'missing' : 'unreadable' };
+  }
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size > maxBytes) return { kind: 'none', stamp: `rejected:${stat.size}` };
+    const stamp = `${stat.mtimeMs}:${stat.size}`;
+    if (stamp === knownStamp) return { kind: 'unchanged' };
+    const buffer = Buffer.alloc(stat.size + 1);
+    let filled = 0;
+    while (filled < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, filled, buffer.length - filled, filled);
+      if (!bytesRead) break;
+      filled += bytesRead;
+    }
+    const after = await handle.stat();
+    if (filled > stat.size || after.size !== stat.size || after.mtimeMs !== stat.mtimeMs) return { kind: 'none', stamp: 'unstable' };
+    return { kind: 'text', stamp, text: buffer.toString('utf8', 0, filled) };
+  } catch { return { kind: 'none', stamp: 'unreadable' }; }
+  finally { await handle.close(); }
+}
 
 export function readRegularFileCapped(
   file: string,

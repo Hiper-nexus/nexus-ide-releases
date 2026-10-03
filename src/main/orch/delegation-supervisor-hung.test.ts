@@ -97,7 +97,7 @@ const SCOPE = { projectId: 'p', checkoutId: 'c' };
 function suite(mission: Mission) {
   return {
     scope: SCOPE,
-    missions: { list: () => [mission], setStatus: vi.fn() },
+    missions: { list: () => [mission], get: () => mission, setStatus: vi.fn() },
     tasks: { list: () => [] },
     handoffs: {
       list: vi.fn(() => []),
@@ -116,13 +116,18 @@ function suite(mission: Mission) {
 }
 
 describe('F-242: worker travado no meio do turno acorda o Maestro', () => {
-  beforeEach(() => {
+  it('returns the owned periodic reconciliation flight', async () => {
+    const result = reconcileDelegationSupervisor(NOW);
+    expect(result).toBeInstanceOf(Promise);
+    await result;
+  });
+  beforeEach(async () => {
     vi.clearAllMocks();
-    shutdownDelegationSupervisor();
+    await shutdownDelegationSupervisor();
     prepareDelegationSupervisor();
   });
 
-  it('working há 25 min + PTY idle → um handoff stalled [travado] entregue', () => {
+  it('working há 25 min + PTY idle → um handoff stalled [travado] entregue', async () => {
     const mission = runningMission();
     h.onScope!(SCOPE, suite(mission));
     h.listPaneSnapshots.mockReturnValue([
@@ -153,7 +158,7 @@ describe('F-242: worker travado no meio do turno acorda o Maestro', () => {
         : { status: 'working', updatedAt: NOW - 10_000 },
     );
 
-    reconcileDelegationSupervisor(NOW);
+    await reconcileDelegationSupervisor(NOW);
 
     expect(h.submit).toHaveBeenCalledTimes(1);
     expect(h.submit).toHaveBeenCalledWith(
@@ -171,12 +176,12 @@ describe('F-242: worker travado no meio do turno acorda o Maestro', () => {
     // Segundo scan 1 min depois: já notificado → nada novo.
     h.submit.mockClear();
     h.onHandoffSubmitted.mockClear();
-    reconcileDelegationSupervisor(NOW + 60_000);
+    await reconcileDelegationSupervisor(NOW + 60_000);
     expect(h.submit).not.toHaveBeenCalled();
     expect(h.onHandoffSubmitted).not.toHaveBeenCalled();
   });
 
-  it('worker com PTY busy não é travado → nenhum handoff', () => {
+  it('worker com PTY busy não é travado → nenhum handoff', async () => {
     const mission = runningMission();
     h.onScope!(SCOPE, suite(mission));
     h.listPaneSnapshots.mockReturnValue([
@@ -206,11 +211,11 @@ describe('F-242: worker travado no meio do turno acorda o Maestro', () => {
         : { status: 'working', updatedAt: NOW - 10_000 },
     );
 
-    reconcileDelegationSupervisor(NOW);
+    await reconcileDelegationSupervisor(NOW);
     expect(h.submit).not.toHaveBeenCalled();
   });
 
-  it('F-725: com dois projetos abertos o worker travado é avisado uma vez, não a cada varredura', () => {
+  it('F-725: com dois projetos abertos o worker travado é avisado uma vez, não a cada varredura', async () => {
     // Campo 02/10: "[travado] worker DeepSeek … há 45/46 min" saiu a cada
     // 15 s. A limpeza do aviso usava as sessões vivas de UMA suite e apagava
     // o aviso da outra — o worker parecia novo em toda varredura.
@@ -254,9 +259,9 @@ describe('F-242: worker travado no meio do turno acorda o Maestro', () => {
         : { status: 'working', updatedAt: NOW - 10_000 },
     );
 
-    reconcileDelegationSupervisor(NOW);
-    reconcileDelegationSupervisor(NOW + 15_000);
-    reconcileDelegationSupervisor(NOW + 30_000);
+    await reconcileDelegationSupervisor(NOW);
+    await reconcileDelegationSupervisor(NOW + 15_000);
+    await reconcileDelegationSupervisor(NOW + 30_000);
 
     expect(h.submit).toHaveBeenCalledTimes(1);
     expect(h.submit.mock.calls[0]![0].summary).toContain('[travado]');
@@ -264,7 +269,7 @@ describe('F-242: worker travado no meio do turno acorda o Maestro', () => {
 
     // A sessão saiu do inventário DA PRÓPRIA suite: o próximo episódio avisa.
     h.listPaneSnapshots.mockReturnValue([]);
-    reconcileDelegationSupervisor(NOW + 45_000);
+    await reconcileDelegationSupervisor(NOW + 45_000);
     h.listPaneSnapshots.mockReturnValue([
       {
         paneId: 'pane-deepseek',
@@ -277,7 +282,7 @@ describe('F-242: worker travado no meio do turno acorda o Maestro', () => {
         missionId: mission.id,
       },
     ] as never);
-    reconcileDelegationSupervisor(NOW + 60_000);
+    await reconcileDelegationSupervisor(NOW + 60_000);
     expect(h.submit).toHaveBeenCalledTimes(2);
   });
 });

@@ -1,3 +1,4 @@
+import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
 import type { ProjectExecutionScope } from '../../shared/types'
 import type { TokenSpeedSnapshot } from '../../shared/token-speed-types'
 import { EMPTY_TOKEN_SPEED_SNAPSHOT } from '../../shared/token-speed-types'
@@ -47,6 +48,7 @@ interface ScopeSpeedState {
   settleTimer: ReturnType<typeof setTimeout> | null
   liveTimer: ReturnType<typeof setInterval> | null
   dirty: boolean
+  controller: AbortController
 }
 
 interface SessionBinding {
@@ -95,23 +97,27 @@ function stateFor(
     settleTimer: null,
     liveTimer: null,
     dirty: false,
+    controller: new AbortController(),
   }
   states.set(key, state)
   return state
 }
 
 function emitNow(state: ScopeSpeedState): void {
-  state.dirty = false
-  const snapshot = state.meter.snapshot(Date.now())
-  if (snapshot.streaming) startLiveTick(state)
-  else stopLiveTick(state)
-  for (const listener of listeners) {
-    try {
-      listener(state.scope, snapshot)
-    } catch (error) {
-      console.warn('[token-speed] change listener threw:', error)
+  const key = scopeKey(state.scope)
+  void runPeriodicTask(`token-speed-live:${key}`, async (context) => {
+    if (states.get(key) !== state) return
+    state.dirty = false
+    const snapshot = state.meter.snapshot(Date.now())
+    if (snapshot.streaming) startLiveTick(state)
+    else stopLiveTick(state)
+    for (const listener of [...listeners]) {
+      await context.checkpoint()
+      if (states.get(key) !== state || !listeners.has(listener)) continue
+      try { listener(state.scope, snapshot) }
+      catch (error) { console.warn('[token-speed] change listener threw:', error) }
     }
-  }
+  }, { signal: state.controller.signal, cadenceMs: LIVE_TICK_MS }).catch(() => undefined)
 }
 
 function startLiveTick(state: ScopeSpeedState): void {
@@ -327,6 +333,8 @@ export function resetTokenSpeedTrackerForTests(): void {
     if (state.emitTimer) clearTimeout(state.emitTimer)
     if (state.settleTimer) clearTimeout(state.settleTimer)
     stopLiveTick(state)
+    state.controller.abort(new Error('token speed tracker stopped'))
+    void stopPeriodicTask(`token-speed-live:${scopeKey(state.scope)}`)
   }
   states.clear()
   bindings.clear()

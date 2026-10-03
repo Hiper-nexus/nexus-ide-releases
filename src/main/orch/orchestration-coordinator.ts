@@ -61,27 +61,29 @@ export function startOrchestrationCoordinator(): void {
     {
       id: 'login-stuck',
       cadenceMs: LOGIN_STUCK_TICK_MS,
-      run: () => reconcileLoginStuckWatchdog(),
+      run: (_now, _signal, context) => reconcileLoginStuckWatchdog(context),
     },
     {
       id: 'boot-prompt',
       cadenceMs: BOOT_PROMPT_TICK_MS,
-      run: () => reconcileBootPromptWatchdog(),
+      run: (_now, _signal, context) => reconcileBootPromptWatchdog(context),
     },
     {
       id: 'delegation-supervisor',
       cadenceMs: DELEGATION_SCAN_MS,
-      run: (now) => reconcileDelegationSupervisor(now),
+      run: (now, _signal, context) => reconcileDelegationSupervisor(now, context),
     },
     {
       id: 'mission-runtime-authority',
       cadenceMs: MISSION_RUNTIME_AUTHORITY_RECONCILE_MS,
-      run: async () => {
+      run: async (_now, _signal, context) => {
         const registry = requireProjectDomainStoreRegistry();
         for (const suite of registry.listSuites()) {
+          await context?.checkpoint();
           const results = await terminateUnauthorizedMissionRuntimes(
             suite.scope,
             suite,
+            context,
           );
           const failure = results.find((result) => !result.ok);
           if (failure) {
@@ -96,12 +98,12 @@ export function startOrchestrationCoordinator(): void {
     {
       id: 'handoff-delivery-outbox',
       cadenceMs: HANDOFF_DELIVERY_OUTBOX_RECONCILE_MS,
-      run: () => reconcilePendingHandoffDeliveryOutbox(),
+      run: async (_now, _signal, context) => { await reconcilePendingHandoffDeliveryOutbox({}, context); },
     },
     {
       id: 'goal-governor',
       cadenceMs: GOAL_GOVERNOR_RECONCILE_CADENCE_MS,
-      run: (now) => reconcileGoalGovernor(now),
+      run: (now, _signal, context) => reconcileGoalGovernor(now, context),
     },
   ]);
   coordinator = instance;
@@ -149,7 +151,7 @@ export async function stopOrchestrationCoordinator(): Promise<void> {
     disposeLoginWatchdog = null;
     disposeBootPromptWatchdog?.();
     disposeBootPromptWatchdog = null;
-    shutdownDelegationSupervisor();
+    await shutdownDelegationSupervisor();
     configureHandoffDeliveryRuntimeRecovery(null);
     await shutdownGoalGovernor();
     coordinator = null;

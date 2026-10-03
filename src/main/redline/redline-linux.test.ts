@@ -1,3 +1,4 @@
+import { periodicTaskSnapshot } from '../observability/periodic-task';
 import { execFileSync } from 'node:child_process';
 import {
   existsSync,
@@ -126,6 +127,13 @@ function labels(template: Template): string[] {
   return template.map((item) => (item.type === 'separator' ? '---' : (item.label ?? '')));
 }
 
+async function advancePeriodic(milliseconds: number): Promise<void> {
+  await vi.advanceTimersByTimeAsync(milliseconds);
+  await vi.waitFor(() => {
+    expect(periodicTaskSnapshot().tasks.find((task) => task.name === 'redline-linux')?.running ?? 0).toBe(0);
+  });
+}
+
 describe('redline linux controller', () => {
   let home: string;
   let userData: string;
@@ -182,7 +190,7 @@ describe('redline linux controller', () => {
     vi.useFakeTimers();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.useRealTimers();
     warn.mockRestore();
     rmSync(home, { recursive: true, force: true });
@@ -190,20 +198,20 @@ describe('redline linux controller', () => {
   });
 
   describe('opt-in and platform gating', () => {
-    it('is ON by default: the first boot shows the tray without a saved choice (F-739)', () => {
+    it('is ON by default: the first boot shows the tray without a saved choice (F-739)', async () => {
       const status = make().startIfEnabled();
       expect(status).toEqual({ enabled: true, state: 'running' });
       expect(fake.FakeTray.instances).toHaveLength(1);
     });
 
-    it('a left click on the icon opens the quota panel inside Nexus (F-750)', () => {
+    it('a left click on the icon opens the quota panel inside Nexus (F-750)', async () => {
       make().startIfEnabled();
       expect(openQuota).not.toHaveBeenCalled();
       fake.FakeTray.instances[0].listeners.get('click')?.();
       expect(openQuota).toHaveBeenCalledOnce();
     });
 
-    it('boot creates nothing once the operator hid it', () => {
+    it('boot creates nothing once the operator hid it', async () => {
       writeRedlineLinuxEnabled(userData, false);
       const status = make().startIfEnabled();
       expect(status).toEqual({ enabled: false, state: 'off' });
@@ -211,7 +219,7 @@ describe('redline linux controller', () => {
       expect(fake.createFromBuffer).not.toHaveBeenCalled();
     });
 
-    it('boot starts the tray when the operator already enabled it', () => {
+    it('boot starts the tray when the operator already enabled it', async () => {
       writeRedlineLinuxEnabled(userData, true);
       const status = make().startIfEnabled();
       expect(status).toEqual({ enabled: true, state: 'running' });
@@ -236,7 +244,7 @@ describe('redline linux controller', () => {
       },
     );
 
-    it('enable() persists ON and creates exactly one tray, even when called twice', () => {
+    it('enable() persists ON and creates exactly one tray, even when called twice', async () => {
       const controller = make();
       expect(controller.enable()).toEqual({ enabled: true, state: 'running' });
       expect(controller.enable()).toEqual({ enabled: true, state: 'running' });
@@ -244,7 +252,7 @@ describe('redline linux controller', () => {
       expect(readRedlineLinuxEnabled(userData)).toBe(true);
     });
 
-    it('disable() persists OFF, destroys the tray and leaves no timer or watcher', () => {
+    it('disable() persists OFF, destroys the tray and leaves no timer or watcher', async () => {
       const controller = make();
       controller.enable();
       const created = tray();
@@ -255,7 +263,7 @@ describe('redline linux controller', () => {
       expect(vi.getTimerCount()).toBe(0);
     });
 
-    it('stop() destroys the tray but keeps the preference (quit is not "hide")', () => {
+    it('stop() destroys the tray but keeps the preference (quit is not "hide")', async () => {
       const controller = make();
       controller.enable();
       const created = tray();
@@ -269,7 +277,7 @@ describe('redline linux controller', () => {
   });
 
   describe('missing StatusNotifier host / tray creation failure', () => {
-    it('enable() reports unavailable with a reason, does not throw and does not persist ON', () => {
+    it('enable() reports unavailable with a reason, does not throw and does not persist ON', async () => {
       fake.FakeTray.failWith = new Error('no status icon host');
       const controller = make();
       const status = controller.enable();
@@ -281,7 +289,7 @@ describe('redline linux controller', () => {
       expect(vi.getTimerCount()).toBe(0);
     });
 
-    it('logs the failure once, however many times it is retried', () => {
+    it('logs the failure once, however many times it is retried', async () => {
       fake.FakeTray.failWith = new Error('boom');
       const controller = make();
       controller.enable();
@@ -290,7 +298,7 @@ describe('redline linux controller', () => {
       expect(warn).toHaveBeenCalledTimes(1);
     });
 
-    it('a persisted ON with a failing tray reports unavailable (and keeps the preference)', () => {
+    it('a persisted ON with a failing tray reports unavailable (and keeps the preference)', async () => {
       writeRedlineLinuxEnabled(userData, true);
       fake.FakeTray.failWith = new Error('dbus down');
       const status = make().startIfEnabled();
@@ -300,7 +308,7 @@ describe('redline linux controller', () => {
       expect(readRedlineLinuxEnabled(userData)).toBe(true);
     });
 
-    it('retrying after the desktop recovers brings the tray up', () => {
+    it('retrying after the desktop recovers brings the tray up', async () => {
       fake.FakeTray.failWith = new Error('not yet');
       const controller = make();
       expect(controller.enable().state).toBe('unavailable');
@@ -308,7 +316,7 @@ describe('redline linux controller', () => {
       expect(controller.enable()).toEqual({ enabled: true, state: 'running' });
     });
 
-    it('a menu that fails to build tears the tray down instead of leaving a half-made icon', () => {
+    it('a menu that fails to build tears the tray down instead of leaving a half-made icon', async () => {
       fake.buildFromTemplate.mockImplementationOnce(() => {
         throw new Error('menu exploded');
       });
@@ -318,7 +326,7 @@ describe('redline linux controller', () => {
       expect(tray()?.destroyed).toBe(true);
     });
 
-    it('enable() undoes the tray when the preference cannot be saved', () => {
+    it('enable() undoes the tray when the preference cannot be saved', async () => {
       const blocker = path.join(userData, 'blocker');
       writeFileSync(blocker, 'x');
       const status = make({ userDataDir: path.join(blocker, 'sub') }).enable();
@@ -328,7 +336,7 @@ describe('redline linux controller', () => {
       expect(vi.getTimerCount()).toBe(0);
     });
 
-    it('truncates a very long error message in the reason', () => {
+    it('truncates a very long error message in the reason', async () => {
       fake.FakeTray.failWith = new Error(`x${'y'.repeat(1000)}`);
       const status = make().enable();
       expect((status.reason ?? '').length).toBeLessThan(220);
@@ -336,7 +344,7 @@ describe('redline linux controller', () => {
   });
 
   describe('what the tray shows', () => {
-    it('builds the icon from a PNG at 2x and shows the snapshot in tooltip and menu', () => {
+    it('builds the icon from a PNG at 2x and shows the snapshot in tooltip and menu', async () => {
       writeSnapshot(snapshotJson());
       make().enable();
       const [buffer, options] = fake.createFromBuffer.mock.calls[0] as [Buffer, { scaleFactor: number }];
@@ -350,7 +358,7 @@ describe('redline linux controller', () => {
       expect(items.slice(-3)).toEqual(['Abrir cotas no Nexus', '---', 'Ocultar da bandeja']);
     });
 
-    it('info lines are disabled and only the three actions are clickable', () => {
+    it('info lines are disabled and only the three actions are clickable', async () => {
       writeSnapshot(snapshotJson());
       make().enable();
       const template = tray()?.menu?.template ?? [];
@@ -361,26 +369,26 @@ describe('redline linux controller', () => {
       expect(info.every((i) => i.enabled === false)).toBe(true);
     });
 
-    it('escapes & so an account label cannot become a menu accelerator', () => {
+    it('escapes & so an account label cannot become a menu accelerator', async () => {
       writeSnapshot(snapshotJson({}, 'Claude A&B'));
       make().enable();
       expect(menuLabels().some((l) => l.includes('Claude A&&B'))).toBe(true);
       expect(escapeMenuLabel('a&b && c')).toBe('a&&b &&&& c');
     });
 
-    it('with no snapshot file it shows the waiting state and does not throw', () => {
+    it('with no snapshot file it shows the waiting state and does not throw', async () => {
       make().enable();
       expect(tray()?.tooltip).toContain('aguardando');
       expect(menuLabels()[0]).toBe('Redline · sem dados de cota ainda');
     });
 
-    it('a corrupt snapshot behaves like no snapshot', () => {
+    it('a corrupt snapshot behaves like no snapshot', async () => {
       writeSnapshot('{"formatVersion":1,"entries":[');
       make().enable();
       expect(menuLabels()[0]).toBe('Redline · sem dados de cota ainda');
     });
 
-    it('an oversized snapshot is refused without reading it', () => {
+    it('an oversized snapshot is refused without reading it', async () => {
       writeSnapshot(snapshotJson({ pad: 'x'.repeat(1_100_000) }));
       make().enable();
       expect(menuLabels()[0]).toBe('Redline · sem dados de cota ainda');
@@ -406,13 +414,13 @@ describe('redline linux controller', () => {
       },
     );
 
-    it('a directory in place of the snapshot is just "no data"', () => {
+    it('a directory in place of the snapshot is just "no data"', async () => {
       mkdirSync(snapshotFile(), { recursive: true });
       make().enable();
       expect(menuLabels()[0]).toBe('Redline · sem dados de cota ainda');
     });
 
-    it('a raw email in the file never reaches the tray', () => {
+    it('a raw email in the file never reaches the tray', async () => {
       writeSnapshot(snapshotJson({}, 'Claude gustavo@gmail.com'));
       make().enable();
       const everything = `${tray()?.tooltip}\n${menuLabels().join('\n')}`;
@@ -421,7 +429,7 @@ describe('redline linux controller', () => {
   });
 
   describe('keeping up with the snapshot', () => {
-    it('reloads (debounced) when the directory watcher fires', () => {
+    it('reloads (debounced) when the directory watcher fires', async () => {
       writeSnapshot(snapshotJson(), 1_780_000_000);
       make().enable();
       expect(menuLabels()[0]).toContain('62%');
@@ -444,32 +452,32 @@ describe('redline linux controller', () => {
       watchers[0].onChange();
       watchers[0].onChange();
       expect(menuLabels()[0]).toContain('62%');
-      vi.advanceTimersByTime(REDLINE_LINUX_DEBOUNCE_MS);
+      await advancePeriodic(REDLINE_LINUX_DEBOUNCE_MS);
       expect(menuLabels()[0]).toContain('91%');
       expect(menuLabels()[0]).toContain('crítico');
     });
 
-    it('falls back to the poll when the watcher cannot start', () => {
+    it('falls back to the poll when the watcher cannot start', async () => {
       watchShouldThrow = true;
       writeSnapshot(snapshotJson(), 1_780_000_000);
       const controller = make();
       expect(controller.enable().state).toBe('running');
       expect(watchers).toHaveLength(0);
       writeSnapshot(snapshotJson({ updatedAt: NOW }, 'Conta Nova'), 1_780_000_200);
-      vi.advanceTimersByTime(REDLINE_LINUX_POLL_MS);
+      await advancePeriodic(REDLINE_LINUX_POLL_MS);
       expect(menuLabels().some((l) => l.includes('Conta Nova'))).toBe(true);
     });
 
-    it('the poll ages the data: a fresh snapshot turns stale without a file change', () => {
+    it('the poll ages the data: a fresh snapshot turns stale without a file change', async () => {
       writeSnapshot(snapshotJson());
       make().enable();
       expect(tray()?.tooltip).not.toContain('desatualizada');
       now = NOW + 11 * 60_000;
-      vi.advanceTimersByTime(REDLINE_LINUX_POLL_MS);
+      await advancePeriodic(REDLINE_LINUX_POLL_MS);
       expect(tray()?.tooltip).toContain('leitura desatualizada');
     });
 
-    it('does not republish the menu, tooltip or icon when nothing changed', () => {
+    it('does not republish the menu, tooltip or icon when nothing changed', async () => {
       writeSnapshot(snapshotJson());
       make().enable();
       const created = tray();
@@ -478,9 +486,9 @@ describe('redline linux controller', () => {
         tip: created?.setToolTipCalls,
         image: created?.setImageCalls,
       };
-      vi.advanceTimersByTime(REDLINE_LINUX_POLL_MS * 0.5);
+      await advancePeriodic(REDLINE_LINUX_POLL_MS * 0.5);
       watchers[0].onChange();
-      vi.advanceTimersByTime(REDLINE_LINUX_DEBOUNCE_MS);
+      await advancePeriodic(REDLINE_LINUX_DEBOUNCE_MS);
       expect({
         menu: created?.setContextMenuCalls,
         tip: created?.setToolTipCalls,
@@ -488,7 +496,7 @@ describe('redline linux controller', () => {
       }).toEqual(before);
     });
 
-    it('countdown drift alone republishes the menu at most every 5 minutes', () => {
+    it('countdown drift alone republishes the menu at most every 5 minutes', async () => {
       writeSnapshot(snapshotJson(), 1_780_000_000);
       make().enable();
       const created = tray();
@@ -498,86 +506,86 @@ describe('redline linux controller', () => {
       // 2 min depois: o texto da contagem mudaria ("1h18"), mas o menu aberto
       // do operador não é derrubado por isso.
       now = NOW + 2 * 60_000;
-      vi.advanceTimersByTime(REDLINE_LINUX_POLL_MS);
+      await advancePeriodic(REDLINE_LINUX_POLL_MS);
       expect(menuCalls()).toBe(first);
       expect(menuLabels()).toContain('  5h ▮▮▮▯▯ 62% · reset em 1h20');
       // Passados 5 min, o menu é reconstruído com a contagem nova.
       now = NOW + REDLINE_LINUX_MENU_REFRESH_MS + 60_000;
-      vi.advanceTimersByTime(REDLINE_LINUX_POLL_MS);
+      await advancePeriodic(REDLINE_LINUX_POLL_MS);
       expect(menuCalls()).toBe(first + 1);
       expect(menuLabels()).toContain('  5h ▮▮▮▯▯ 62% · reset em 1h14');
     });
 
-    it('the tooltip still ages every tick (it never closes anything)', () => {
+    it('the tooltip still ages every tick (it never closes anything)', async () => {
       writeSnapshot(snapshotJson(), 1_780_000_000);
       make().enable();
       expect(tray()?.tooltip).toContain('agora mesmo');
       now = NOW + 4 * 60_000;
-      vi.advanceTimersByTime(REDLINE_LINUX_POLL_MS);
+      await advancePeriodic(REDLINE_LINUX_POLL_MS);
       expect(tray()?.tooltip).toContain('há 4 min');
     });
 
-    it('a snapshot change republishes the menu at once, even inside the 5 min window', () => {
+    it('a snapshot change republishes the menu at once, even inside the 5 min window', async () => {
       writeSnapshot(snapshotJson(), 1_780_000_000);
       make().enable();
       const created = tray();
       const before = created?.setContextMenuCalls ?? 0;
       writeSnapshot(snapshotJson({}, 'Conta Trocada'), 1_780_000_300);
       watchers[0].onChange();
-      vi.advanceTimersByTime(REDLINE_LINUX_DEBOUNCE_MS);
+      await advancePeriodic(REDLINE_LINUX_DEBOUNCE_MS);
       expect(created?.setContextMenuCalls).toBe(before + 1);
       expect(menuLabels().some((l) => l.includes('Conta Trocada'))).toBe(true);
     });
 
-    it('re-arms the directory watcher on the poll once it can start again', () => {
+    it('re-arms the directory watcher on the poll once it can start again', async () => {
       watchShouldThrow = true;
       const controller = make();
       controller.enable();
       expect(watchers).toHaveLength(0);
       watchShouldThrow = false;
-      vi.advanceTimersByTime(REDLINE_LINUX_POLL_MS);
+      await advancePeriodic(REDLINE_LINUX_POLL_MS);
       expect(watchers).toHaveLength(1);
       // Não empilha vigias a cada tick.
-      vi.advanceTimersByTime(REDLINE_LINUX_POLL_MS * 3);
+      await advancePeriodic(REDLINE_LINUX_POLL_MS * 3);
       expect(watchers).toHaveLength(1);
     });
 
-    it('re-arms after the watcher dies on its own (inotify exhausted, dir removed)', () => {
+    it('re-arms after the watcher dies on its own (inotify exhausted, dir removed)', async () => {
       const controller = make();
       controller.enable();
       expect(watchers).toHaveLength(1);
       // O vigia real fecha a si mesmo antes de avisar que morreu.
       watchers[0].closed = true;
       watchers[0].onDead();
-      vi.advanceTimersByTime(REDLINE_LINUX_POLL_MS);
+      await advancePeriodic(REDLINE_LINUX_POLL_MS);
       expect(watchers).toHaveLength(2);
       controller.disable();
       expect(watchers.every((w) => w.closed)).toBe(true);
     });
 
-    it('swaps the icon only when urgency or staleness changes', () => {
+    it('swaps the icon only when urgency or staleness changes', async () => {
       writeSnapshot(snapshotJson(), 1_780_000_000);
       make().enable();
       const created = tray();
       expect(created?.setImageCalls).toBe(0); // criado com a imagem certa
       now = NOW + 11 * 60_000;
-      vi.advanceTimersByTime(REDLINE_LINUX_POLL_MS);
+      await advancePeriodic(REDLINE_LINUX_POLL_MS);
       expect(created?.setImageCalls).toBe(1); // ficou velho: ponto vazado
     });
 
-    it('a snapshot that disappears returns the tray to the waiting state', () => {
+    it('a snapshot that disappears returns the tray to the waiting state', async () => {
       writeSnapshot(snapshotJson());
       make().enable();
       rmSync(snapshotFile());
-      vi.advanceTimersByTime(REDLINE_LINUX_POLL_MS);
+      await advancePeriodic(REDLINE_LINUX_POLL_MS);
       expect(menuLabels()[0]).toBe('Redline · sem dados de cota ainda');
     });
 
-    it('survives a poll tick that hits an unreadable file', () => {
+    it('survives a poll tick that hits an unreadable file', async () => {
       writeSnapshot(snapshotJson(), 1_780_000_000);
       make().enable();
       writeSnapshot('\u0000\u0001\u0002', 1_780_000_500);
-      expect(() => vi.advanceTimersByTime(REDLINE_LINUX_POLL_MS)).not.toThrow();
+      await advancePeriodic(REDLINE_LINUX_POLL_MS);
       expect(menuLabels()[0]).toBe('Redline · sem dados de cota ainda');
     });
   });
@@ -589,7 +597,7 @@ describe('redline linux controller', () => {
       item?.click?.();
     }
 
-    it('"Atualizar agora" writes the same refresh signal the other companions write', () => {
+    it('"Atualizar agora" writes the same refresh signal the other companions write', async () => {
       make().enable();
       click('Atualizar agora');
       const signal = path.join(home, '.nexus', 'redline-refresh.request');
@@ -597,11 +605,11 @@ describe('redline linux controller', () => {
       expect(readFileSync(signal, 'utf8')).toBe(`{"source":"tray","at":${NOW}}\n`);
     });
 
-    it('the refresh signal body matches the Windows companion byte for byte', () => {
+    it('the refresh signal body matches the Windows companion byte for byte', async () => {
       expect(refreshRequestBody(1_780_000_000_000)).toBe('{"source":"tray","at":1780000000000}\n');
     });
 
-    it('"Atualizar agora" creates ~/.nexus when it does not exist yet', () => {
+    it('"Atualizar agora" creates ~/.nexus when it does not exist yet', async () => {
       expect(existsSync(path.join(home, '.nexus'))).toBe(false);
       make().enable();
       click('Atualizar agora');
@@ -629,7 +637,7 @@ describe('redline linux controller', () => {
       expect(mode).toBe(0o600);
     });
 
-    it('"Abrir cotas no Nexus" asks the app to open Uso e cotas', () => {
+    it('"Abrir cotas no Nexus" asks the app to open Uso e cotas', async () => {
       make().enable();
       click('Abrir cotas no Nexus');
       expect(openQuota).toHaveBeenCalledTimes(1);
@@ -649,7 +657,7 @@ describe('redline linux controller', () => {
       expect(controller.status()).toEqual({ enabled: false, state: 'off' });
     });
 
-    it('an action that throws does not escape the menu handler', () => {
+    it('an action that throws does not escape the menu handler', async () => {
       openQuota.mockImplementation(() => {
         throw new Error('window gone');
       });
@@ -658,7 +666,7 @@ describe('redline linux controller', () => {
       expect(warn).toHaveBeenCalled();
     });
 
-    it('a failed refresh write is contained (read-only home)', () => {
+    it('a failed refresh write is contained (read-only home)', async () => {
       const controller = make({ homedir: path.join(home, 'not-a-dir', 'x') });
       writeFileSync(path.join(home, 'not-a-dir'), 'file in the way');
       controller.enable();
@@ -667,13 +675,13 @@ describe('redline linux controller', () => {
   });
 
   describe('tray destroyed from outside / real directory watcher', () => {
-    it('a tray the system destroyed is torn down quietly on the next tick', () => {
+    it('a tray the system destroyed is torn down quietly on the next tick', async () => {
       writeSnapshot(snapshotJson(), 1_780_000_000);
       const controller = make();
       controller.enable();
       const created = tray();
       if (created) created.destroyed = true;
-      expect(() => vi.advanceTimersByTime(REDLINE_LINUX_POLL_MS)).not.toThrow();
+      await advancePeriodic(REDLINE_LINUX_POLL_MS);
       expect(vi.getTimerCount()).toBe(0);
       expect(watchers.every((w) => w.closed)).toBe(true);
       const status = controller.status();
@@ -682,7 +690,7 @@ describe('redline linux controller', () => {
       expect(warn).not.toHaveBeenCalled();
     });
 
-    it('works with the real fs.watch (no injected watcher) and cleans up', () => {
+    it('works with the real fs.watch (no injected watcher) and cleans up', async () => {
       vi.useRealTimers();
       mkdirSync(path.join(home, '.nexus'), { recursive: true });
       const controller = createRedlineLinuxController({
@@ -698,12 +706,12 @@ describe('redline linux controller', () => {
   });
 
   describe('status', () => {
-    it('reflects the stored preference even before the tray runs', () => {
+    it('reflects the stored preference even before the tray runs', async () => {
       writeRedlineLinuxEnabled(userData, true);
       expect(make().status()).toEqual({ enabled: true, state: 'off' });
     });
 
-    it('is running while the tray exists', () => {
+    it('is running while the tray exists', async () => {
       const controller = make();
       controller.enable();
       expect(controller.status()).toEqual({ enabled: true, state: 'running' });

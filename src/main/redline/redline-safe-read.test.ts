@@ -3,9 +3,18 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readRegularFileCapped } from './redline-safe-read';
+import { readRegularFileCapped, readRegularFileCappedAsync } from './redline-safe-read';
 
 describe('readRegularFileCapped', () => {
+  it('acquires capped periodic file evidence asynchronously and preserves stamp semantics', async () => {
+    writeFileSync(file(), '{"a":1}');
+    const pending = readRegularFileCappedAsync(file(), 1024);
+    expect(pending).toBeInstanceOf(Promise);
+    const result = await pending;
+    expect(result).toMatchObject({ kind: 'text', text: '{"a":1}' });
+    if (result.kind === 'text') expect(await readRegularFileCappedAsync(file(), 1024, result.stamp)).toEqual({ kind: 'unchanged' });
+    expect(await readRegularFileCappedAsync(file(), 2)).toMatchObject({ kind: 'none' });
+  });
   let dir: string;
   beforeEach(() => {
     dir = mkdtempSync(path.join(tmpdir(), 'redline-safe-read-'));

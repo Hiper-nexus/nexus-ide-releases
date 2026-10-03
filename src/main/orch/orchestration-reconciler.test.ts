@@ -6,6 +6,21 @@ afterEach(() => {
 });
 
 describe('orchestration reconciler', () => {
+  it('supplies a cooperative context owned by the original participant flight', async () => {
+    vi.useFakeTimers();
+    let supplied = false;
+    const reconciler = createOrchestrationReconciler([
+      { id: 'budget-context', cadenceMs: 100, run: async (_now, signal, context) => {
+        expect(context?.signal).toBe(signal);
+        expect(context?.checkpoint).toEqual(expect.any(Function));
+        supplied = true;
+      } },
+    ]);
+    reconciler.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(supplied).toBe(true);
+    await reconciler.stop();
+  });
   it('runs every participant from one adaptive timer at its own cadence', async () => {
     vi.useFakeTimers();
     const order: string[] = [];
