@@ -1,4 +1,6 @@
 import type { HeavyCommandKind } from './heavy-command-permit';
+import { tokenizeStartupCommand } from '../../shared/tui-agent-startup-shell';
+import { getCommandTokenPathBasename } from '../../shared/command-token-scanner';
 
 const SCAN_CHARS = 16_384;
 // This is resource scheduling, not a shell authorization parser. Unknown long
@@ -6,6 +8,37 @@ const SCAN_CHARS = 16_384;
 export function classifyHeavyCommand(command: string): HeavyCommandKind | null {
   if (command.length > SCAN_CHARS) return 'build';
   const text = command.slice(0, SCAN_CHARS);
+  const parsed = tokenizeStartupCommand(text, process.platform === 'win32' ? 'cmd' : 'posix');
+  const words = (parsed.ok ? parsed.tokens : text.split(/\s+/)).flatMap(token => token.split(/[;&|]/)).filter(Boolean);
+  const program = (word: string) => getCommandTokenPathBasename(word).toLowerCase().replace(/\.(?:cmd|bat|exe|mjs|cjs|js)$/, '');
+  const valueOptions = new Set(['--workspace', '--prefix', '--cwd', '--dir', '--filter', '--package', '--registry', '--cache', '--userconfig', '-w', '-c', '-p']);
+  const nextArgument = (start: number): number => {
+    let index = start;
+    while (index < words.length && words[index].startsWith('-')) {
+      const option = words[index].toLowerCase();
+      index += valueOptions.has(option) ? 2 : 1;
+    }
+    return index;
+  };
+  const actionKind = (action: string | undefined): HeavyCommandKind | null => {
+    if (action && /^(?:typecheck|check-types)(?::|$)/i.test(action)) return 'typescript';
+    if (action && /^(?:test|tests)(?::|$)/i.test(action)) return 'tests';
+    if (action && /^(?:ci|install|add)(?::|$)/i.test(action)) return 'install';
+    if (action && /^(?:build|check|verify|lint|publish)(?::|$)/i.test(action)) return 'build';
+    return null;
+  };
+  for (let i = 0; i < words.length; i++) {
+    const name = program(words[i]);
+    if (name === 'tsc' || name === '_tsc') return 'typescript';
+    if (['vitest', 'jest', 'pytest', 'mocha'].includes(name)) return 'tests';
+    if (['npm', 'pnpm', 'yarn', 'bun'].includes(name)) {
+      const first = nextArgument(i + 1);
+      const verb = words[first]?.toLowerCase();
+      const kind = actionKind(verb === 'run' ? words[nextArgument(first + 1)] : verb);
+      if (kind) return kind;
+    }
+    if (['vite', 'webpack', 'rollup', 'esbuild', 'next'].includes(name) && words.slice(i + 1).includes('build')) return 'build';
+  }
   if (/(?:^|[\s/\\'";&|])(?:tsc(?:\.js|\.cjs)?|typecheck)(?=$|[\s'";&|:])/i.test(text)) return 'typescript';
   if (/(?:^|[\s/\\'";&|])(?:vitest|jest|pytest|mocha)(?=$|[\s'";&|])/i.test(text) ||
       /\b(?:npm|pnpm|yarn|bun|go|cargo|dotnet)\s+(?:run\s+)?(?:test|tests)(?=$|[\s'";&|:])/i.test(text)) return 'tests';
