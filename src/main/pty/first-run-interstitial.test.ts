@@ -10,6 +10,7 @@ import {
   screenNamesOwnCwd,
   type FirstRunInterstitialContext,
 } from './first-run-interstitial';
+import { cpuTimeMs } from '../../test/cpu-time';
 
 const CWD = '/Users/op/dev/nexus-ide';
 const HOME = '/Users/op';
@@ -540,5 +541,51 @@ describe('operator kill switch', () => {
       answer: ANSWER_FIRST_NUMBERED_OPTION,
       pattern: 'workspace-trust-directory-contents',
     });
+  });
+});
+
+describe('prova de cwd em tempo linear (F-764 C.3)', () => {
+  /** A versão anterior, só como referência: `[…]+$` sem âncora de início. */
+  function referenceNamesOwnCwd(screenText: string, cwd: string): boolean {
+    const strip = (text: string) => text.replace(/[─-▟|]/g, ' ').replace(/\s+/g, ' ').trim();
+    const normalize = (raw: string) => {
+      let value = raw.trim().replace(/[.,;:!?)\]}…]+$/, '');
+      value = value.replace(/\\/g, '/').replace(/\/{2,}/g, '/');
+      if (value.length > 1) value = value.replace(/\/+$/, '');
+      return /^[A-Za-z]:\//.test(value) ? value.toLowerCase() : value;
+    };
+    if (!cwd.trim()) return false;
+    const haystack = strip(screenText);
+    const target = normalize(cwd);
+    const candidates = [
+      ...(haystack.match(/(?:~|\/)[^\s"'`,;:()[\]{}<>]+/g) ?? []),
+      ...(haystack.match(/[A-Za-z]:[\\/][^\s"'`,;()[\]{}<>]*/g) ?? []),
+    ];
+    return candidates.some((candidate) => normalize(candidate) === target);
+  }
+
+  it('decide igual à versão anterior em 20 mil telas aleatórias', () => {
+    const pieces = ['/tmp', '/x', '.', '.', '!', '?', '…', ')', ']', '}', ' ', '/', 'C:\\x', 'a'];
+    let seed = 99;
+    const random = () => {
+      seed = (seed * 1_103_515_245 + 12_345) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    };
+    for (let round = 0; round < 20_000; round += 1) {
+      let screen = '';
+      const length = Math.floor(random() * 10);
+      for (let i = 0; i < length; i += 1) screen += pieces[Math.floor(random() * pieces.length)];
+      for (const cwd of ['/tmp', '/tmp/x', 'C:/x']) {
+        expect(screenNamesOwnCwd(screen, cwd), `${JSON.stringify(screen)} ${cwd}`).toBe(
+          referenceNamesOwnCwd(screen, cwd),
+        );
+      }
+    }
+  });
+
+  it('16 KB de pontuação antes de uma letra: tempo linear', () => {
+    const screen = `/${'.'.repeat(16_382)}x`;
+    // A versão anterior custava ~190 ms com esta tela.
+    expect(cpuTimeMs(() => screenNamesOwnCwd(screen, '/tmp/x'))).toBeLessThan(20);
   });
 });

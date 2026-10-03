@@ -12,6 +12,7 @@ import {
   focusedMenuResponse,
   matchesPromptSignature,
 } from './cli-prompt-autoresponder';
+import { cpuTimeMs } from '../../test/cpu-time';
 
 const AGY_TRUST_PROMPT = `
 Accessing workspace:
@@ -729,5 +730,129 @@ describe('aviso de Bypass Permissions sem números (F-681)', () => {
     expect(
       matchesPromptSignature(CLAUDE_BYPASS_UNNUMBERED, byName('claude-bypass-acknowledgement-unnumbered')),
     ).toBe(true);
+  });
+});
+
+/**
+ * F-764 C.3: as leituras de menu anteriores, só como referência — a regex
+ * recomeçava em cada espaço de uma corrida (`[ \t]*`) e em cada `ESC ]` sem
+ * BEL (`[^\x07]*`), quadrática em tela de TUI.
+ */
+const REFERENCE_CODEX_OPTION_RE =
+  /(›|>)?[ \t]*(\d)\.[ \t]*(open restricted|trust and continue|open existing task|quit)/gi;
+function referencePlain(raw: string): string {
+  return raw
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b\][^\x07]*\x07/g, '');
+}
+function referenceFocusedMenu(raw: string, banner: string, labels: readonly string[], target: string): string | null {
+  const plain = referencePlain(raw);
+  const start = plain.toLowerCase().lastIndexOf(banner);
+  if (start < 0) return null;
+  const escaped = labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const re = new RegExp(`([❯›])?[ \\t]*(${escaped.join('|')})`, 'gi');
+  const found: Array<{ label: string; focused: boolean }> = [];
+  for (const match of plain.slice(start).matchAll(re)) {
+    const label = match[2].toLowerCase();
+    const seen = found.find((option) => option.label === label);
+    if (seen) seen.focused ||= Boolean(match[1]);
+    else found.push({ label, focused: Boolean(match[1]) });
+  }
+  if (found.length !== labels.length) return null;
+  const targetIndex = found.findIndex((option) => option.label === target);
+  const focusedIndexes = found.flatMap((option, index) => (option.focused ? [index] : []));
+  if (targetIndex < 0 || focusedIndexes.length !== 1) return null;
+  const delta = targetIndex - focusedIndexes[0]!;
+  return (delta >= 0 ? '\x1b[B'.repeat(delta) : '\x1b[A'.repeat(-delta)) + '\r';
+}
+function referenceCodexOptions(raw: string, banner: string): string[] {
+  const plain = referencePlain(raw);
+  const start = plain.toLowerCase().lastIndexOf(banner);
+  if (start < 0) return [];
+  return [...plain.slice(start).matchAll(REFERENCE_CODEX_OPTION_RE)].map(
+    (match) => `${match.index}:${match[1] ?? ''}:${match[2]}:${match[3]}`,
+  );
+}
+
+describe('leitura de menu em tempo linear (F-764 C.3)', () => {
+  const PIECES = [
+    ' ', ' ', '\t', '›', '>', '❯', '1.', '2.', '3.', 'open restricted', 'trust and continue',
+    'quit', 'no, exit', 'yes, i accept', 'Yes, I Accept', 'x', '\n', '\x1b]0;t', '\x07',
+    '\x1b[1m', '\x1b]',
+  ];
+  let seed = 681;
+  const random = () => {
+    seed = (seed * 1_103_515_245 + 12_345) & 0x7fffffff;
+    return seed / 0x7fffffff;
+  };
+  const screen = (banner: string) => {
+    let out = banner;
+    const length = Math.floor(random() * 14);
+    for (let i = 0; i < length; i += 1) out += PIECES[Math.floor(random() * PIECES.length)];
+    return out;
+  };
+  const BYPASS = 'claude code running in bypass permissions mode';
+
+  it('focusedMenuResponse responde igual à leitura anterior em 10 mil telas', () => {
+    for (let round = 0; round < 10_000; round += 1) {
+      const raw = screen(BYPASS);
+      expect(
+        focusedMenuResponse(raw, BYPASS, ['no, exit', 'yes, i accept'], 'yes, i accept'),
+        JSON.stringify(raw),
+      ).toBe(referenceFocusedMenu(raw, BYPASS, ['no, exit', 'yes, i accept'], 'yes, i accept'));
+    }
+  });
+
+  it('as opções do Codex casam igual à leitura anterior em 10 mil telas', () => {
+    for (let round = 0; round < 10_000; round += 1) {
+      const access = screen('Folder access ');
+      const trust = screen('Trust this folder? ');
+      expect(codexFolderAccessResponse(access), JSON.stringify(access)).toBe(
+        referenceCodexAccess(access),
+      );
+      expect(codexFolderTrustResponse(trust), JSON.stringify(trust)).toBe(
+        referenceCodexTrust(trust),
+      );
+    }
+  });
+
+  function orderedResponse(options: string[], wanted: string): string | null {
+    const byNumber = new Map<number, { focused: boolean; label: string }>();
+    for (const option of options) {
+      const [, cursor, number, label] = option.split(':');
+      if (!byNumber.has(Number(number))) {
+        byNumber.set(Number(number), { focused: Boolean(cursor), label: label.toLowerCase() });
+      }
+    }
+    const ordered = [...byNumber.entries()].sort(([a], [b]) => a - b).map(([, option]) => option);
+    const target = ordered.findIndex((option) => option.label === wanted);
+    if (target < 0) return null;
+    const focused = Math.max(0, ordered.findIndex((option) => option.focused));
+    const delta = target - focused;
+    return (delta >= 0 ? '\x1b[B'.repeat(delta) : '\x1b[A'.repeat(-delta)) + '\r';
+  }
+  function referenceCodexAccess(raw: string): string | null {
+    return orderedResponse(referenceCodexOptions(raw, 'folder access'), 'open restricted');
+  }
+  function referenceCodexTrust(raw: string): string | null {
+    const plain = referencePlain(raw);
+    const start = plain.toLowerCase().lastIndexOf('trust this folder?');
+    if (start < 0) return null;
+    if (/open restricted|folder access/i.test(plain.slice(start))) return null;
+    return orderedResponse(referenceCodexOptions(raw, 'trust this folder?'), 'trust and continue');
+  }
+
+  it.each([
+    ['espaço sem quebra', ' '.repeat(16_384)],
+    ['espaço e x no fim', `${' '.repeat(16_383)}x`],
+    ['ESC ] sem BEL', '\x1b]'.repeat(8_192)],
+  ])('%s: 16 KB em tempo linear', (_label, text) => {
+    const run = () => {
+      focusedMenuResponse(`${BYPASS}\n${text}`, BYPASS, ['no, exit', 'yes, i accept'], 'yes, i accept');
+      codexFolderAccessResponse(`Folder access\n${text}`);
+      codexFolderTrustResponse(`Trust this folder?\n${text}`);
+    };
+    // As três leituras somavam ~450 ms aqui antes da correção.
+    expect(cpuTimeMs(run)).toBeLessThan(30);
   });
 });

@@ -35,24 +35,44 @@ const LEGACY_MARKER_VARIANTS = Object.freeze([
 const MAX_BLOCK_CHARS = 16_384;
 const TAIL_KEEP =
   Math.max(...LEGACY_MARKER_VARIANTS.map((marker) => marker.length)) - 1;
+/** O núcleo comum a toda variante. */
+const MARKER_CORE = 'NEXUS_HANDOFF';
+/** Prefixo mais longo entre as variantes: `#### `. */
+const MAX_MARKER_HASHES = 4;
 
-function findLegacyMarker(text: string): {
+/**
+ * A variante mais à esquerda — e, no empate, a mais longa — numa passada só
+ * (F-764 C.3). Antes eram dez `indexOf` sobre o texto inteiro, refeitos depois
+ * de cada bloco: um texto com muitos marcadores ficava quadrático (16 KB:
+ * 14 ms; 64 KB estourava a pilha pela recursão de `feed`).
+ *
+ * Equivalência: toda variante é `[#{1,4} ]NEXUS_HANDOFF[ v1]`. Ocorrências do
+ * núcleo não se sobrepõem (distam ≥ 13) e o prefixo tem no máximo 5
+ * caracteres, então a variante que começa mais cedo vem da PRIMEIRA
+ * ocorrência do núcleo, com o maior prefixo `#…# ` encostado nela (até 4 `#`)
+ * e o ` v1` quando ele vem logo depois.
+ */
+export function findLegacyMarker(text: string): {
   index: number;
   length: number;
 } | null {
-  let found: { index: number; length: number } | null = null;
-  for (const marker of LEGACY_MARKER_VARIANTS) {
-    const index = text.indexOf(marker);
-    if (index === -1) continue;
-    if (
-      found === null ||
-      index < found.index ||
-      (index === found.index && marker.length > found.length)
+  const core = text.indexOf(MARKER_CORE);
+  if (core === -1) return null;
+  let index = core;
+  if (core >= 2 && text[core - 1] === ' ') {
+    let hashes = 0;
+    while (
+      hashes < MAX_MARKER_HASHES &&
+      core - 2 - hashes >= 0 &&
+      text[core - 2 - hashes] === '#'
     ) {
-      found = { index, length: marker.length };
+      hashes += 1;
     }
+    if (hashes > 0) index = core - 1 - hashes;
   }
-  return found;
+  let length = core - index + MARKER_CORE.length;
+  if (text.startsWith(' v1', core + MARKER_CORE.length)) length += 3;
+  return { index, length };
 }
 
 export interface LegacyHandoffPayload {
@@ -232,9 +252,19 @@ export function normalizeHandoffStatusInput(raw: unknown): unknown {
   return raw;
 }
 
+/**
+ * F-764 C.3: pertença direta ao enum. O `safeParse` do zod custa ~40 µs por
+ * FALHA (monta o erro), e a releitura do anel no idle pagava isso por bloco —
+ * 256 KB de blocos vazios passavam de 300 ms. Mesmo veredito: o enum só aceita
+ * estas strings.
+ */
+const HANDOFF_STATUSES: ReadonlySet<string> = new Set(handoffStatusSchema.options);
+
 function normalizeObservedHandoffStatus(raw: unknown): HandoffStatus | null {
-  const parsed = handoffStatusSchema.safeParse(normalizeHandoffStatusInput(raw));
-  return parsed.success ? parsed.data : null;
+  const value = normalizeHandoffStatusInput(raw);
+  return typeof value === 'string' && HANDOFF_STATUSES.has(value)
+    ? (value as HandoffStatus)
+    : null;
 }
 
 function toPayload(value: unknown): LegacyHandoffPayload | null {
@@ -289,39 +319,40 @@ export class LegacyHandoffParser {
   }
 
   feed(sessionId: string, chunk: string): void {
-    if (this.collecting.has(sessionId)) {
-      this.collect(sessionId, chunk);
-      return;
+    // Laço, não recursão (F-764 C.3): cada bloco extraído devolvia o resto a
+    // `feed`, e um texto com milhares de blocos estourava a pilha.
+    let input = chunk;
+    for (;;) {
+      if (this.collecting.has(sessionId)) {
+        const body = (this.collecting.get(sessionId) ?? '') + input;
+        const extracted = extractJsonObject(body);
+        if (!extracted) {
+          if (body.length > MAX_BLOCK_CHARS) {
+            // Malformed/unterminated block — abandon rather than buffer forever.
+            this.collecting.delete(sessionId);
+          } else {
+            this.collecting.set(sessionId, body);
+          }
+          return;
+        }
+        this.collecting.delete(sessionId);
+        const payload = toPayload(extracted.value);
+        if (payload) this.onHandoff(sessionId, payload);
+        // Re-scan the remainder for another marker.
+        input = body.slice(extracted.end);
+        continue;
+      }
+      const buffered = (this.pending.get(sessionId) ?? '') + input;
+      const marker = findLegacyMarker(buffered);
+      if (!marker) {
+        // Keep only enough tail to detect a marker that spans two chunks.
+        this.pending.set(sessionId, buffered.slice(-TAIL_KEEP));
+        return;
+      }
+      this.pending.delete(sessionId);
+      this.collecting.set(sessionId, '');
+      input = buffered.slice(marker.index + marker.length);
     }
-    const buffered = (this.pending.get(sessionId) ?? '') + chunk;
-    const marker = findLegacyMarker(buffered);
-    if (!marker) {
-      // Keep only enough tail to detect a marker that spans two chunks.
-      this.pending.set(sessionId, buffered.slice(-TAIL_KEEP));
-      return;
-    }
-    this.pending.delete(sessionId);
-    this.collecting.set(sessionId, '');
-    this.collect(sessionId, buffered.slice(marker.index + marker.length));
-  }
-
-  private collect(sessionId: string, chunk: string): void {
-    const body = (this.collecting.get(sessionId) ?? '') + chunk;
-    const extracted = extractJsonObject(body);
-    if (extracted) {
-      this.collecting.delete(sessionId);
-      const payload = toPayload(extracted.value);
-      if (payload) this.onHandoff(sessionId, payload);
-      // Re-scan the remainder for another marker.
-      this.feed(sessionId, body.slice(extracted.end));
-      return;
-    }
-    if (body.length > MAX_BLOCK_CHARS) {
-      // Malformed/unterminated block — abandon rather than buffer forever.
-      this.collecting.delete(sessionId);
-      return;
-    }
-    this.collecting.set(sessionId, body);
   }
 
   dropSession(sessionId: string): void {

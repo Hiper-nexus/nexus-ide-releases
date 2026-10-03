@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { compileManifest, compiledGateMatches } from './compiler';
 import { parseManifest } from './manifest';
+import { cpuTimeMs } from '../../test/cpu-time';
 
 function compileDoc(doc: string) {
   return compileManifest(parseManifest(doc));
@@ -179,5 +180,43 @@ describe('gate semantics (compiled_gate_matches parity)', () => {
     expect(matches(doc, 'outer no')).toBe(true);
     expect(matches(doc, 'outer not really no')).toBe(false);
     expect(matches(doc, 'yes')).toBe(false);
+  });
+});
+
+describe('prefixo `.*` redundante (F-764 C.3)', () => {
+  const OPENCODE_DOC = [
+    'id = "x"',
+    '[[rules]]',
+    'id = "r"',
+    "line_regex = ['(?i).*opencode.*esc (again to )?interrupt']",
+  ].join('\n');
+
+  it('casa exatamente as mesmas linhas que o padrão original', () => {
+    const original = /.*opencode.*esc (again to )?interrupt/iu;
+    const pieces = ['opencode', 'OpenCode', ' esc ', 'esc ', 'again to ', 'interrupt', 'x', ' '];
+    let seed = 34;
+    const random = () => {
+      seed = (seed * 1_103_515_245 + 12_345) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    };
+    for (let round = 0; round < 10_000; round += 1) {
+      let line = '';
+      const length = Math.floor(random() * 8);
+      for (let i = 0; i < length; i += 1) line += pieces[Math.floor(random() * pieces.length)];
+      expect(matches(OPENCODE_DOC, line), JSON.stringify(line)).toBe(original.test(line));
+    }
+  });
+
+  it('linha de 16 KB sem o termo: tempo linear', () => {
+    const line = 'abc def ghi '.repeat(1_366);
+    expect(matches(OPENCODE_DOC, line)).toBe(false);
+    // Com o `.*` inicial a mesma linha custava ~120 ms (714 ms com moldura).
+    expect(cpuTimeMs(() => matches(OPENCODE_DOC, line))).toBeLessThan(20);
+  });
+
+  it('padrão que é só `.*` continua casando qualquer texto', () => {
+    const doc = ['id = "x"', '[[rules]]', 'id = "r"', "regex = ['.*']"].join('\n');
+    expect(matches(doc, '')).toBe(true);
+    expect(matches(doc, 'qualquer coisa')).toBe(true);
   });
 });

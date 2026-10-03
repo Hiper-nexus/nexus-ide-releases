@@ -83,6 +83,16 @@ function translatePattern(
     .replace(/\\A/g, '^')
     .replace(/\\z/g, '$');
 
+  // F-764 C.3: todo padrão compilado aqui só é usado com `test()`, e um `.*`
+  // no COMEÇO não muda se há casamento (ele pode casar vazio). Mas obriga o
+  // motor a varrer a linha inteira a partir de cada posição — quadrático numa
+  // linha longa: `(?i).*opencode.*esc …` (opencode.toml) custava 714 ms em
+  // 16 KB. O manifesto continua byte-idêntico ao do Herdr; só a forma
+  // compilada perde o prefixo redundante.
+  while (source.startsWith('.*')) {
+    source = source.slice(source.startsWith('.*?') ? 3 : 2);
+  }
+
   return { source, flags };
 }
 
