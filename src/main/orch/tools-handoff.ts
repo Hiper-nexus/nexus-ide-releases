@@ -81,6 +81,7 @@ import {
   type RegressionHandoffVerdict,
 } from "../regression-gate/regression-gate-handoff";
 import { evaluateWriterHandoffRegression } from "./handoff-regression-gate";
+import { withHandoffSubmitResilience } from "./handoff-submit-resilience";
 
 function buildOverclockArtifacts(
   args: Record<string, unknown>,
@@ -972,7 +973,8 @@ const workerHeartbeatTool: McpToolDef = {
 
 export function buildHandoffTools(): McpToolDef[] {
   return [
-    handoffSubmitTool,
+    // F-794: salvaguarda da worktree do writer isolado depois do handoff.
+    withHandoffSubmitResilience(handoffSubmitTool),
     handoffListTool,
     handoffAcknowledgeTool,
     workerHeartbeatTool,
