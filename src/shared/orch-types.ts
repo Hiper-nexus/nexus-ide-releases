@@ -602,7 +602,11 @@ export interface MissionPaneAuthoritySeal {
   readonly squadRevisionHash: string;
 }
 
+export interface VisualTaskRequirement { readonly since: number }
+
 export interface MissionPaneSpec {
+  /** Main-derived requirement retained across exact resume. */
+  visualTask?: VisualTaskRequirement;
   id: string;
   missionId: string;
   adapterId: string;

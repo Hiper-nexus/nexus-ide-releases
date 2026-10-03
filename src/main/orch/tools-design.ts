@@ -1,4 +1,5 @@
-import type { McpToolDef } from './mcp-protocol';
+import { assertMcpInvocationCurrent, type McpToolDef } from './mcp-protocol';
+import { recordVisualHandoffEvidence } from './visual-handoff-gate';
 import {
   browserDesignSessionKey,
   captureBrowserScreenshot,
@@ -43,7 +44,7 @@ const designSelectionGetTool: McpToolDef = {
     },
     required: ['paneId'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const paneId = requireStr(args, 'paneId');
     authorizePaneRef(ctx, paneId, 'read');
     const sessionKey = browserDesignSessionKey(ctx.scope, paneId);
@@ -72,6 +73,7 @@ const designSelectionGetTool: McpToolDef = {
       }
     }
 
+    const visualAssignment = ctx.visualTask;
     let screenshot;
     if (args.includeScreenshot === true && selection) {
       try {
@@ -79,13 +81,16 @@ const designSelectionGetTool: McpToolDef = {
           paneId,
           ctx.scope,
           ctx.missionId,
-          { clip: selection.rect },
+          { clip: selection.rect, signal: invocation?.signal, assertCurrentAuthority: invocation?.assertCurrentAuthority },
         );
+        assertMcpInvocationCurrent(invocation);
+        if (ctx.visualTask === visualAssignment) recordVisualHandoffEvidence(ctx, screenshot.artifactId);
       } catch {
         // Hidden/destroyed panes degrade to a context-only result.
       }
     }
 
+    assertMcpInvocationCurrent(invocation);
     const selections = getSelections(sessionKey);
     return {
       paneId,

@@ -165,7 +165,7 @@ describe("submitPtyStreamHandoff MCP parity", () => {
     mocks.getContextBySession.mockReturnValue(workerCtx());
     mocks.getStores.mockReturnValue({
       missions: { get: () => approvedMission() },
-      tasks: { list: () => [] },
+      tasks: { list: () => [], getPlannedTask: () => null },
       missionPanes: { list: () => [] },
       taskDispatches: { list: () => [] },
       handoffs: {
@@ -187,6 +187,22 @@ describe("submitPtyStreamHandoff MCP parity", () => {
     expect(mocks.onHandoffSubmitted).toHaveBeenCalledOnce();
   });
 
+  it('keeps mechanical visual completion partial even when the worker claims a screenshot', async () => {
+    const persist = vi.fn((_input: Record<string, unknown>) => ({
+      handoff: { id: 'visual-handoff', evidenceTrust: 'nexus-trusted', deliveryState: 'queued' }, replayed: false,
+    }));
+    mocks.getContextBySession.mockReturnValue({ ...workerCtx(), visualTask: { since: Date.now() } });
+    mocks.getStores.mockReturnValue({
+      missions: { get: () => approvedMission() }, tasks: { list: () => [], getPlannedTask: () => null },
+      missionPanes: { list: () => [] }, taskDispatches: { list: () => [] },
+      handoffs: { submitFromPhysicalAgentBoundaryWithReplay: persist },
+    });
+    await submitPtyStreamHandoff('agy-session', { ...payload, artifacts: [{ path: '/tmp/proof.png' }] });
+    expect(persist.mock.calls[0]![0]).toMatchObject({ status: 'partial' });
+    expect(persist.mock.calls[0]![0].artifacts).toContainEqual({ kind: 'nexus.visualVerification',
+      payload: expect.objectContaining({ required: true, verified: false }) });
+  });
+
   it("F-786: revisão fraca sem canal de retry registra partial, com texto integral preservado", async () => {
     // Campo 03/10: o fechamento mecânico nascia success sem a revisão de
     // evidência que o MCP aplica. Sem canal de devolução, a entrega fraca
@@ -203,7 +219,7 @@ describe("submitPtyStreamHandoff MCP parity", () => {
     mocks.getContextBySession.mockReturnValue(workerCtx());
     mocks.getStores.mockReturnValue({
       missions: { get: () => approvedMission() },
-      tasks: { list: () => [] },
+      tasks: { list: () => [], getPlannedTask: () => null },
       missionPanes: { list: () => [] },
       taskDispatches: { list: () => [] },
       handoffs: {
@@ -258,7 +274,7 @@ describe("submitPtyStreamHandoff MCP parity", () => {
     mocks.getContextBySession.mockReturnValue(workerCtx());
     mocks.getStores.mockReturnValue({
       missions: { get: () => approvedMission() },
-      tasks: { list: () => [] },
+      tasks: { list: () => [], getPlannedTask: () => null },
       missionPanes: { list: () => [] },
       taskDispatches: { list: () => [] },
       handoffs: {
@@ -305,7 +321,7 @@ describe("submitPtyStreamHandoff MCP parity", () => {
     mocks.getContextBySession.mockReturnValue(workerCtx());
     mocks.getStores.mockReturnValue({
       missions: { get: () => approvedMission() },
-      tasks: { list: () => [] },
+      tasks: { list: () => [], getPlannedTask: () => null },
       missionPanes: { list: () => [] },
       taskDispatches: { list: () => [] },
       handoffs: {
@@ -347,7 +363,7 @@ describe("submitPtyStreamHandoff MCP parity", () => {
     mocks.getContextBySession.mockReturnValue(workerCtx());
     mocks.getStores.mockReturnValue({
       missions: { get: () => approvedMission() },
-      tasks: { list: () => [] },
+      tasks: { list: () => [], getPlannedTask: () => null },
       missionPanes: { list: () => [] },
       taskDispatches: {
         list: () => [
@@ -390,7 +406,7 @@ describe("submitPtyStreamHandoff MCP parity", () => {
     mocks.getContextBySession.mockReturnValue(workerCtx());
     mocks.getStores.mockReturnValue({
       missions: { get: () => approvedMission() },
-      tasks: { list: () => [] },
+      tasks: { list: () => [], getPlannedTask: () => null },
       missionPanes: { list: () => [] },
       taskDispatches: {
         list: () => [
@@ -444,7 +460,7 @@ describe("submitPtyStreamHandoff MCP parity", () => {
           intentContract: null,
         }),
       },
-      tasks: { list: () => [] },
+      tasks: { list: () => [], getPlannedTask: () => null },
       missionPanes: { list: () => [] },
       taskDispatches: { list: () => [] },
       handoffs: {
@@ -471,7 +487,7 @@ describe("submitPtyStreamHandoff MCP parity", () => {
           intentContract: null,
         }),
       },
-      tasks: { list: () => [] },
+      tasks: { list: () => [], getPlannedTask: () => null },
       missionPanes: { list: () => [] },
       taskDispatches: { list: () => [] },
       handoffs: {

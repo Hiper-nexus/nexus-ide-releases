@@ -1,4 +1,5 @@
 import path from "node:path";
+import { checkVisualHandoff } from './visual-handoff-gate';
 import { submitWorkspaceHandoff } from "./tools-handoff-workspace";
 import {
   canSubmitMissionHandoff,
@@ -486,11 +487,17 @@ const handoffSubmitTool: McpToolDef = {
     } else if (jevSkipReason) {
       jevVerdict = { kind: "skipped", reason: jevSkipReason };
     }
+    const visual = declaredStatus === 'success' && !isPlanHandoff ? await checkVisualHandoff(ctx, {
+      task: boundDispatch?.taskId ? suite.tasks.getPlannedTask(boundDispatch.taskId) : undefined,
+      assertCurrent: () => assertMcpInvocationCurrent(invocation),
+    }) : undefined;
+    const visualPending = visual?.required === true && !visual.verified;
+    if (visualPending) summary = `[verificação visual pendente] ${summary}`;
     const status: typeof declaredStatus =
       contractVerdict.kind === "exhausted" ||
       regressionVerdict.kind === "exhausted"
         ? "blocked"
-        : declaredStatus;
+        : visualPending ? 'partial' : declaredStatus;
     if (regressionVerdict.kind === "exhausted") {
       summary = `[testes impactados falhando] ${summary}`;
     } else if (
@@ -552,6 +559,7 @@ const handoffSubmitTool: McpToolDef = {
           ]
         : [];
     const artifacts = [
+      ...(visual?.required ? [{ kind: 'nexus.visualVerification', payload: visual }] : []),
       ...(Array.isArray(args.artifacts) ? args.artifacts : []),
       ...overclockArtifacts,
       ...condensedFullText,
@@ -647,7 +655,7 @@ const handoffSubmitTool: McpToolDef = {
       !replayed || handoff.deliveryState === "queued"
         ? onHandoffSubmitted(handoff, ctx.scope)
         : null;
-    if (ctx.missionId && !replayed) {
+    if (ctx.missionId && !replayed && !visualPending) {
       try {
         const diskFiles = await collectFilesModified(executionScopeFor(ctx).rootRealPath);
         assertMcpInvocationCurrent(invocation);
@@ -753,6 +761,7 @@ const handoffSubmitTool: McpToolDef = {
     return {
       ok: true,
       handoffId: handoff.id,
+      ...(visual?.required ? { visualVerification: visual, status } : {}),
       evidenceTrust: handoff.evidenceTrust,
       stopGateSatisfied: handoff.evidenceTrust === "nexus-trusted",
       ...(replayed ? { replayed: true } : {}),

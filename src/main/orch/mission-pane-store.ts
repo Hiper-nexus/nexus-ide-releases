@@ -22,6 +22,7 @@ const capabilityListSchema = z.array(z.string().min(1).max(128)).max(256);
 const nullableCapabilityListSchema = capabilityListSchema.nullable();
 const entityIdSchema = z.string().min(1).max(256);
 const hashSchema = z.string().regex(/^[a-f0-9]{64}$/);
+const visualTaskSchema = z.object({ since: z.number().int().nonnegative().safe() }).strict();
 const missionPaneAuthoritySealSchema = z
   .object({
     intentVersion: z.number().int().positive().max(1_000_000),
@@ -51,6 +52,7 @@ const recordMissionPaneInputSchema = z
     executionScope: projectExecutionScopeSchema.optional(),
     authoritySeal: missionPaneAuthoritySealSchema.optional(),
     operatorOpened: z.boolean().optional(),
+    visualTask: visualTaskSchema.optional(),
   })
   .strict();
 
@@ -160,11 +162,15 @@ const persistedPaneScopesV5Schema = z
     authoritySeal: missionPaneAuthoritySealSchema.nullable(),
   })
   .strict();
+const persistedPaneScopesV6Schema = persistedPaneScopesV5Schema.extend({
+  schemaVersion: z.literal(6), visualTask: visualTaskSchema.nullable(),
+});
 const persistedPaneScopesSchema = z.union([
   persistedPaneScopesV2Schema,
   persistedPaneScopesV3Schema,
   persistedPaneScopesV4Schema,
   persistedPaneScopesV5Schema,
+  persistedPaneScopesV6Schema,
 ]);
 
 function encodeCapabilityList(
@@ -191,6 +197,7 @@ function parseCapabilityList(
 function cloneSpec(spec: ScopedMissionPaneSpec): ScopedMissionPaneSpec {
   return {
     ...spec,
+    visualTask: spec.visualTask ? Object.freeze({ ...spec.visualTask }) : undefined,
     allowedTools:
       spec.allowedTools === null
         ? null
@@ -241,9 +248,11 @@ function encodePersistedPaneScopes(input: {
   readonly readOnly: boolean;
   readonly workerIncarnationId?: string;
   readonly authoritySeal?: MissionPaneAuthoritySeal;
+  readonly visualTask?: { readonly since: number };
 }): string {
   return JSON.stringify({
-    schemaVersion: 5,
+    schemaVersion: 6,
+    visualTask: input.visualTask ?? null,
     coordinationScope: input.coordinationScope,
     executionScope: input.executionScope,
     readOnly: input.readOnly,
@@ -344,6 +353,7 @@ export class ScopedMissionPaneStore {
         title,
         agentName: input.agentName,
         workerIncarnationId: input.workerIncarnationId,
+        visualTask: input.visualTask ? Object.freeze({ ...input.visualTask }) : undefined,
         role,
         operatorOpened: input.operatorOpened === true || undefined,
         paneId: input.paneId,
@@ -391,6 +401,7 @@ export class ScopedMissionPaneStore {
           readOnly: spec.readOnly === true,
           workerIncarnationId: spec.workerIncarnationId,
           authoritySeal: spec.authoritySeal,
+          visualTask: spec.visualTask,
         }),
         encodeCapabilityList(spec.allowedTools),
         encodeCapabilityList(spec.allowedSkills),
@@ -458,6 +469,7 @@ export class ScopedMissionPaneStore {
             readOnly: next.readOnly === true,
             workerIncarnationId: next.workerIncarnationId,
             authoritySeal: next.authoritySeal,
+            visualTask: next.visualTask,
           }),
           encodeCapabilityList(next.allowedTools),
           encodeCapabilityList(next.allowedSkills),
@@ -589,6 +601,7 @@ export class ScopedMissionPaneStore {
             readOnly: updated.readOnly === true,
             workerIncarnationId: updated.workerIncarnationId,
             authoritySeal: updated.authoritySeal,
+            visualTask: updated.visualTask,
           }),
           updated.id,
         );
@@ -601,6 +614,27 @@ export class ScopedMissionPaneStore {
     })();
     if (result.changed) this.#binding.emitChange();
     return cloneSpec(result.spec);
+  }
+
+  /** Main-only assignment update for an idle worker reused by the same mission. */
+  assignVisualTask(paneId: string, missionId: string, workerIncarnationId: string | undefined,
+    expected: { readonly since: number } | undefined, next: { readonly since: number } | undefined): boolean {
+    if (next) visualTaskSchema.parse(next);
+    const db = this.#binding.writeDatabase();
+    const changed = db.transaction(() => {
+      const rows = this.#findRowsByPaneId(db, entityIdSchema.parse(paneId));
+      if (rows.length !== 1) return false;
+      const existing = rows[0];
+      if (existing.role !== 'worker' || existing.missionId !== missionId ||
+          existing.workerIncarnationId !== workerIncarnationId || existing.visualTask?.since !== expected?.since) return false;
+      return db.prepare('UPDATE mission_panes SET scope_json = ? WHERE id = ?').run(encodePersistedPaneScopes({
+        coordinationScope: this.#binding.scope, executionScope: existing.executionScope,
+        readOnly: existing.readOnly === true, workerIncarnationId: existing.workerIncarnationId,
+        authoritySeal: existing.authoritySeal, visualTask: next,
+      }), existing.id).changes === 1;
+    })();
+    if (changed) this.#binding.emitChange();
+    return changed;
   }
 
   #fillMissingAuthority(
@@ -638,15 +672,17 @@ export class ScopedMissionPaneStore {
         ? input.allowedSkills
         : existing.allowedSkills;
     const authoritySeal = existing.authoritySeal ?? input.authoritySeal;
+    const visualTask = existing.visualTask ?? input.visualTask;
     const hasChanges =
       paneId !== existing.paneId ||
       allowedTools !== existing.allowedTools ||
       allowedSkills !== existing.allowedSkills ||
-      authoritySeal !== existing.authoritySeal;
+      authoritySeal !== existing.authoritySeal || visualTask !== existing.visualTask;
     if (!hasChanges) return { spec: cloneSpec(existing), changed: false };
 
     const updated: ScopedMissionPaneSpec = {
       ...existing,
+      visualTask,
       paneId,
       allowedTools:
         allowedTools === null
@@ -679,6 +715,7 @@ export class ScopedMissionPaneStore {
           readOnly: updated.readOnly === true,
           workerIncarnationId: updated.workerIncarnationId,
           authoritySeal: updated.authoritySeal,
+          visualTask: updated.visualTask,
         }),
         encodeCapabilityList(updated.allowedTools),
         encodeCapabilityList(updated.allowedSkills),
@@ -767,25 +804,27 @@ export class ScopedMissionPaneStore {
     let readOnly = false;
     let workerIncarnationId: string | undefined;
     let authoritySeal: MissionPaneAuthoritySeal | undefined;
+    let visualTask: { readonly since: number } | undefined;
     try {
       const raw = JSON.parse(row.scope_json) as unknown;
       const modern = persistedPaneScopesSchema.safeParse(raw);
       if (modern.success) {
         persistedScope = modern.data.coordinationScope;
+        visualTask = modern.data.schemaVersion === 6 ? modern.data.visualTask ?? undefined : undefined;
         executionScope = modern.data.executionScope;
         readOnly =
           modern.data.schemaVersion === 3 ||
           modern.data.schemaVersion === 4 ||
-          modern.data.schemaVersion === 5
+          modern.data.schemaVersion === 5 || modern.data.schemaVersion === 6
             ? modern.data.readOnly === true
             : false;
         workerIncarnationId =
           modern.data.schemaVersion === 4 ||
-          modern.data.schemaVersion === 5
+          modern.data.schemaVersion === 5 || modern.data.schemaVersion === 6
             ? modern.data.workerIncarnationId ?? undefined
             : undefined;
         authoritySeal =
-          modern.data.schemaVersion === 5
+          modern.data.schemaVersion === 5 || modern.data.schemaVersion === 6
             ? modern.data.authoritySeal ?? undefined
             : undefined;
       } else {
@@ -823,6 +862,7 @@ export class ScopedMissionPaneStore {
       agentName: row.agent_name ?? undefined,
       workerIncarnationId,
       authoritySeal,
+      visualTask,
       role: row.role,
       operatorOpened: row.operator_opened === 1 || undefined,
       paneId: row.pane_id ?? undefined,

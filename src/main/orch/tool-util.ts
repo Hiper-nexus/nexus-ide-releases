@@ -1,4 +1,5 @@
 import type { SystemInputWriter } from './operator-input-receipts';
+import { visualTaskRequirement } from './visual-handoff-gate';
 import { assertLicensedAgentCapacity } from '../license-enforcement';
 import { licenseErrorFrom } from '../../shared/license-errors';
 import { withWorkspaceDesignRule } from './workspace-design-rule';
@@ -1321,6 +1322,7 @@ export async function withProjectContextBlocksAsync(
 }
 
 export interface SpawnToolOptions {
+  visualTask?: import('../../shared/orch-types').VisualTaskRequirement;
   adapterId: string;
   /** Origem da rota (A, 25/09) exibida no cabeçalho do pane; nunca autoridade. */
   spawnRoute?: SpawnRouteInfo;
@@ -1810,6 +1812,8 @@ export async function spawnPaneAndMaybePrompt(
   // pty-manager's user-shell fallback to HOME.
   const safeOptions: SpawnToolOptions = {
     ...options,
+    visualTask: options.role === 'orchestrator' ? undefined : options.visualTask
+      ? { since: Date.now() } : visualTaskRequirement(options.memoryQuery ?? options.prompt),
     model: effectiveModel,
     ...(initialPrompt === undefined ? {} : { initialPrompt }),
     // The durable pane seal is the authoritative mission revision. Main-owned
@@ -2156,6 +2160,7 @@ function recordSpawnedMissionPane(
     allowedSkills: options.allowedSkills,
     readOnly: options.readOnly,
     authoritySeal: pane.authoritySeal,
+    visualTask: safeOptions.visualTask,
     operatorOpened: options.operatorOpened === true || undefined,
     // Chave do resume direcionado: o reopen reusa este paneId para o CLI
     // voltar à MESMA conversa (não à mais recente do cwd).

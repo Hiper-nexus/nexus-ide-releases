@@ -20,6 +20,9 @@ import * as panes from "./pane-registry";
 import * as transport from "./tool-util";
 import type { PaneRuntimeAuthority } from "./pane-registry";
 import { reviewMissionHandoff } from "./jev-handoff-review";
+import { configureMissionEventEmit } from './mission-event-emit';
+import { createScopedBrowserArtifactStore } from '../browser/browser-artifact-store';
+import { recordVisualHandoffEvidence } from './visual-handoff-gate';
 import {
   armAutoCloseOnHandoff,
   armedAutoClosePaneId,
@@ -85,6 +88,7 @@ beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-workspace-handoff-"));
   manager = new ProjectRuntimeManager({ baseDir: dir, appVersion: "test" });
   configureProjectDomainStoreRegistry(manager);
+  configureMissionEventEmit(manager);
   configureAuditLogRuntime(manager);
   runtime = new Map([
     [
@@ -124,12 +128,30 @@ afterEach(async () => {
   vi.restoreAllMocks();
   await disposeProjectDomainStoreRegistry();
   disposeAuditLogRuntime();
+  configureMissionEventEmit(null);
   manager.closeAll();
   fs.rmSync(dir, { recursive: true, force: true });
   resetGateForTests();
 });
 
 describe("workspace handoff", () => {
+  it('preserves the visual worker until a current Main capture proves the next handoff', async () => {
+    caller('parent');
+    const child = caller('child');
+    child.visualTask = { since: 1000 };
+    const close = vi.spyOn(panes, 'requestPaneClose').mockResolvedValue(true);
+    armAutoCloseOnHandoff('child', 'pane-child');
+    const first = await tool('submit').handler({ ...args, fullText: args.summary }, child);
+    expect(first).toMatchObject({ status: 'partial', visualVerification: { verified: false } });
+    expect(close).not.toHaveBeenCalled();
+    expect(armedAutoClosePaneId('child')).toBe('pane-child');
+    const proof = createScopedBrowserArtifactStore(manager, scope).recordScreenshot({ paneId: 'browser-pane',
+      png: Buffer.from('Main capture fixture'), width: 1, height: 1, url: 'http://localhost:3000', title: 'UI', capturedAt: 1100 });
+    expect(recordVisualHandoffEvidence(child, proof.id)).toBe(true);
+    const second = await tool('submit').handler({ ...args, fullText: args.summary }, child);
+    expect(second).toMatchObject({ status: 'success', visualVerification: { verified: true, artifactId: proof.id } });
+    expect(getProjectDomainStores(scope).handoffs.list({ includeDelivered: true }).map(h => h.status)).toEqual(['partial', 'success']);
+  });
   it('keeps a summary-only helper open until its full report can be preserved', async () => {
     caller('parent');
     const child = caller('child');

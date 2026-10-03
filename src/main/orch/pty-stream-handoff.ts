@@ -1,4 +1,5 @@
 import { analysisClient, flushPtyAnalysis, isPtyAnalysisEnabled } from '../pty/pty-analysis-runtime';
+import { checkVisualHandoff } from './visual-handoff-gate';
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
@@ -152,6 +153,7 @@ export async function terminateStaleReadOnlyMcpSession(
 }
 
 interface PreparedPtyHandoff {
+  readonly visualPending?: boolean;
   readonly sessionId: string;
   readonly ctx: AgentGateContext;
   readonly suite: ProjectDomainStoreSuite;
@@ -439,7 +441,16 @@ async function preparePtyHandoff(
   if (jevOutcome.mark) {
     summary = `[evidência fraca] ${summary}`;
   }
+  const visual = payload.status === 'success' && !isPlanHandoff ? await checkVisualHandoff(ctx, {
+    task: dispatch?.taskId ? suite.tasks.getPlannedTask(dispatch.taskId) : undefined,
+    assertCurrent: () => {
+      if (requireCurrentPtyWorkerContext(sessionId) !== ctx) throw new Error('handoff_provenance: visual proof context changed');
+    },
+  }) : undefined;
+  const visualPending = visual?.required === true && !visual.verified;
+  if (visualPending) summary = `[verificação visual pendente] ${summary}`;
   return Object.freeze({
+    visualPending,
     sessionId,
     ctx,
     suite,
@@ -449,10 +460,11 @@ async function preparePtyHandoff(
     status:
       regression?.kind === "exhausted"
         ? "blocked"
-        : jevOutcome.status === "partial"
+        : jevOutcome.status === "partial" || visualPending
           ? "partial"
           : payload.status,
-    artifacts: [...payload.artifacts, ...regressionArtifact, ...jevOutcome.artifacts],
+    artifacts: [...payload.artifacts, ...regressionArtifact, ...jevOutcome.artifacts,
+      ...(visual?.required ? [{ kind: 'nexus.visualVerification', payload: visual }] : [])],
     rawArgs,
     rawPayloadSha256: handoffRawPayloadSha256(rawArgs),
     summary,
@@ -601,7 +613,7 @@ async function persistPtyHandoff(
     if (!committed.replayed || committed.handoff.deliveryState === "queued") {
       onHandoffSubmitted(committed.handoff, ctx.scope);
       try {
-        advanceFastLaneStoryTaskFromHandoff(prepared.suite, {
+        if (!prepared.visualPending) advanceFastLaneStoryTaskFromHandoff(prepared.suite, {
           missionId: prepared.missionId,
           fromAgent: committed.handoff.fromAgent,
           summary: prepared.summary,

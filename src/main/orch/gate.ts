@@ -40,6 +40,8 @@ import {
 export type GateRole = "orchestrator" | "worker" | "user";
 
 export interface AgentGateContext {
+  /** Derived by Main from the assigned task, never handoff text. */
+  visualTask?: import('../../shared/orch-types').VisualTaskRequirement;
   token: string;
   label: string;
   role: GateRole;
@@ -324,6 +326,7 @@ const contextBySession = new Map<string, AgentGateContext>();
 const abortByToken = new Map<string, AbortController>();
 
 export interface MintTokenInput {
+  visualTask?: import('../../shared/orch-types').VisualTaskRequirement;
   label: string;
   role: GateRole;
   missionId?: string;
@@ -481,6 +484,8 @@ export function mintToken(input: MintTokenInput): AgentGateContext {
         ? null
         : [...input.allowedSkills],
     operatorBrief: input.operatorBrief,
+    ...(input.visualTask && Number.isSafeInteger(input.visualTask.since) && input.visualTask.since >= 0
+      ? { visualTask: Object.freeze({ since: input.visualTask.since }) } : {}),
     operatorParentSessionId: input.operatorParentSessionId,
     stopAttempts: 0,
     handoffSubmitted: false,

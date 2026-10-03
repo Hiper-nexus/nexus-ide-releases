@@ -1,5 +1,6 @@
 import { assertLicenseAccess } from '../license-enforcement';
 import { captureMissionPaneResume } from './mission-pane-resume';
+import { visualTaskRequirement } from './visual-handoff-gate';
 import { assertTabSupportsOperation, missionExecutionScope } from './mission-execution-scope';
 import {
   assertMcpInvocationCurrent,
@@ -1467,6 +1468,7 @@ const paneSpawnAfterTabMission = {
     if (missionResume) {
       const original = missionResume.spec;
       options = { ...options, adapterId: original.adapterId, model: original.model,
+        visualTask: original.visualTask,
         accountId: original.accountId, effort: original.effort, cwd: original.cwd,
         executionScope: original.executionScope, resume: true, resumeFromPaneId: original.paneId,
         readOnly: options.readOnly === true || original.readOnly === true,
@@ -1705,7 +1707,10 @@ const paneSpawnAfterTabMission = {
             ...(options.model ? { model: options.model } : {}),
             ...(options.effort ? { effort: options.effort } : {}),
           };
-          missionSuite.missions.assertRouteReservation(expectedRoute);
+          const reservedRoute = missionSuite.missions.assertRouteReservation(expectedRoute);
+          if (reservedRoute?.decision.specialty === 'visual') {
+            options = { ...options, visualTask: { since: Date.now() } };
+          }
           if (!ctx.sessionId) {
             throw new Error(
               'route_reservation_session_required: a reserva só pode ser consumida ' +
@@ -1944,6 +1949,7 @@ const paneSpawnAfterTabMission = {
       // continue waiting for a concrete session id.
       options = {
         ...options,
+        ...(autoRoute?.specialty === 'visual' ? { visualTask: { since: Date.now() } } : {}),
         [PENDING_SPAWN_RESULT]: true,
         operatorParentSessionId: operatorHand && !ctx.contextRevision
           ? ctx.sessionId
@@ -2076,14 +2082,37 @@ const paneSpawnAfterTabMission = {
             callerSessionId: ctx.sessionId,
           });
           if (reuseChoice) {
-            await injectPrompt(
-              reuseChoice.candidate.sessionId,
-              withWorkerHandoffFooter(
+            const reusedContext = getContextBySession(reuseChoice.candidate.sessionId);
+            const previousVisualTask = reusedContext?.visualTask;
+            const assignedVisualTask = options.visualTask ?? visualTaskRequirement(options.memoryQuery ?? options.prompt);
+            if (assignedVisualTask && (!reusedContext || reusedContext.missionId !== options.missionId ||
+              reusedContext.scope.projectId !== ctx.scope.projectId || reusedContext.scope.checkoutId !== ctx.scope.checkoutId ||
+              reusedContext.scope.rootRealPath !== ctx.scope.rootRealPath)) {
+              throw new Error('visual worker authority changed before idle reuse');
+            }
+            const assignmentStore = reusedContext?.missionId ? getProjectDomainStores(ctx.scope).missionPanes : undefined;
+            if (assignmentStore && !assignmentStore.assignVisualTask(reuseChoice.candidate.paneId,
+              reusedContext!.missionId!, reusedContext!.workerIncarnationId, previousVisualTask, assignedVisualTask)) {
+              throw new Error('worker assignment changed before idle reuse');
+            }
+            if (reusedContext) reusedContext.visualTask = assignedVisualTask;
+            try {
+              await injectPrompt(
                 reuseChoice.candidate.sessionId,
-                options.prompt!,
-              ),
-              invocation,
-            );
+                withWorkerHandoffFooter(
+                  reuseChoice.candidate.sessionId,
+                  options.prompt!,
+                ),
+                invocation,
+              );
+            } catch (error) {
+              if (reusedContext && reusedContext.visualTask === assignedVisualTask) {
+                assignmentStore?.assignVisualTask(reuseChoice.candidate.paneId, reusedContext.missionId!,
+                  reusedContext.workerIncarnationId, assignedVisualTask, previousVisualTask);
+                reusedContext.visualTask = previousVisualTask;
+              }
+              throw error;
+            }
             if (spawnTiming) {
               // F-787: reuso não é rejeição nem spawn novo — fica marcado.
               spawnTiming.meta.ok = true;

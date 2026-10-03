@@ -282,6 +282,49 @@ export class ScopedBrowserArtifactStore {
     }
   }
 
+  /** Handoff proof reads one indexed artifact and hashes bounded chunks off the hot path. */
+  async verifiedScreenshot(id: string, assertCurrent: () => void = () => {}): Promise<BrowserScreenshotArtifact | null> {
+    assertCurrent();
+    if (!/^browser-[a-z0-9-]{1,128}$/i.test(id)) return null;
+    const runtime = this.#runtimeManager.open(this.scope);
+    const raw = runtime.db.prepare(`SELECT id, mission_id, session_id, storage_key, metadata_json, created_at
+      FROM browser_artifacts WHERE id = ? AND artifact_type = ?`).get(id, SCREENSHOT_TYPE);
+    if (!raw) return null;
+    try {
+      const row = rowSchema.parse(raw);
+      const metadata = metadataSchema.extend({ sha256: z.string().regex(/^[a-f0-9]{64}$/) }).parse(JSON.parse(row.metadata_json));
+      if (row.session_id !== metadata.paneId || row.created_at !== metadata.capturedAt) return null;
+      const storageKey = safeStorageKey(row.storage_key);
+      const root = path.dirname(runtime.databasePath);
+      const filePath = path.resolve(root, storageKey);
+      if (!isInside(root, filePath) || await fs.promises.realpath(filePath) !== filePath) return null;
+      assertCurrent();
+      const handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
+      try {
+        const stat = await handle.stat();
+        if (!stat.isFile() || stat.nlink !== 1 || stat.size <= 0 || stat.size > MAX_SCREENSHOT_BYTES) return null;
+        const hash = createHash('sha256');
+        const buffer = Buffer.alloc(64 * 1024);
+        let offset = 0;
+        while (offset < stat.size) {
+          assertCurrent();
+          const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, stat.size - offset), offset);
+          if (!bytesRead) return null;
+          hash.update(buffer.subarray(0, bytesRead)); offset += bytesRead;
+        }
+        const after = await fs.promises.lstat(filePath);
+        assertCurrent();
+        if (!after.isFile() || after.dev !== stat.dev || after.ino !== stat.ino || after.size !== stat.size ||
+            after.mtimeMs !== stat.mtimeMs || hash.digest('hex') !== metadata.sha256 || await fs.promises.realpath(filePath) !== filePath) return null;
+        assertCurrent();
+        return { id: row.id, projectId: this.scope.projectId, checkoutId: this.scope.checkoutId,
+          missionId: row.mission_id, paneId: metadata.paneId, storageKey, path: filePath,
+          sha256: metadata.sha256, width: metadata.width, height: metadata.height,
+          url: metadata.url, title: metadata.title, capturedAt: metadata.capturedAt };
+      } finally { await handle.close(); }
+    } catch { assertCurrent(); return null; }
+  }
+
   listScreenshots(paneId?: string): BrowserScreenshotArtifact[] {
     const parsedPaneId =
       paneId === undefined

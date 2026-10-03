@@ -24,6 +24,8 @@ const h = vi.hoisted(() => ({
   stdinWritable: vi.fn((_sessionId: string) => true),
   jevKey: { value: false },
   assertRouteReservation: vi.fn(),
+  gateContext: vi.fn((_sessionId: string): AgentGateContext | null => null),
+  assignVisualTask: vi.fn(() => true),
   consumeRouteReservation: vi.fn(),
   mission: {} as Record<string, unknown>,
   panes: [] as Array<Record<string, unknown>>,
@@ -66,6 +68,7 @@ vi.mock('../jev/jev-decision-log', async (original) => ({
 }));
 vi.mock('./gate', async (original) => ({
   ...(await original<typeof import('./gate')>()),
+  getContextBySession: h.gateContext,
   assertCurrentMissionOrchestratorSession: vi.fn(),
 }));
 vi.mock('./project-domain-store-registry', () => ({
@@ -75,7 +78,7 @@ vi.mock('./project-domain-store-registry', () => ({
       assertRouteReservation: h.assertRouteReservation,
       consumeRouteReservation: h.consumeRouteReservation,
     },
-    missionPanes: { list: () => [{ paneId: 'pane-w', role: 'worker' }], findByPaneId: () => h.resumeSpec },
+    missionPanes: { list: () => [{ paneId: 'pane-w', role: 'worker' }], findByPaneId: () => h.resumeSpec, assignVisualTask: h.assignVisualTask },
   }),
 }));
 vi.mock('../persistence/provider-session-store', async original => ({
@@ -138,6 +141,8 @@ beforeEach(() => {
   h.jevKey.value = false;
   h.panes = [];
   h.resumeSpec = null;
+  h.gateContext.mockReturnValue(null);
+  h.assignVisualTask.mockReturnValue(true);
   h.providerSession.mockReturnValue({ key: 'session_id', id: 'provider-conversation' });
   h.mission = {
     id: 'mission-a', title: 'Feature', description: '', status: 'running', squadId: 'squad',
@@ -205,6 +210,12 @@ describe('nexus_pane_spawn dentro da missão sem adapterId', () => {
     expect(receipt.harness.source).toBe('auto-route');
     expect(receipt.route.tier).toBe('medium');
     expect(receipt.route.ignored).toEqual({ model: 'ignorado' });
+  });
+
+  it('carries the visual routing specialty even when the brief has no UI keyword', async () => {
+    setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex', routeReservationId: 'rr-visual', specialty: 'visual' })));
+    await paneSpawnTool.handler({ task: 'continuar o trabalho', prompt: 'siga a atribuição' }, ctx);
+    expect(h.spawn.mock.calls[0][0].visualTask).toEqual({ since: expect.any(Number) });
   });
 
   it('F-793: worker com ACK pendente segura a vaga de maxWorkers até a linha durável existir', async () => {
@@ -642,6 +653,7 @@ describe('reuso de helper ocioso (helperReuse)', () => {
     h.semantic.mockImplementation((sid) => (sid === 'sess-h1' ? idleSemantic(sid) : null));
     h.authority.mockImplementation((sid) =>
       sid === 'sess-h1' ? ({ operatorParentSessionId: 'op-session' } as never) : null);
+    h.gateContext.mockReturnValue({ ...userCtx, token: 'helper-token', sessionId: 'sess-h1' });
     judgePick('h1', 0.9);
     const receipt = await paneSpawnTool.handler(
       { task: 'ajeitar o rodapé', prompt: 'arrume o rodapé' }, userCtx,

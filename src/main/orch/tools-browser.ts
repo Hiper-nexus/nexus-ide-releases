@@ -28,6 +28,7 @@ import { requestBrowserPane, requestPaneClose } from './pane-registry';
 import { authorizePaneRef, num, requireStr, str, strArray } from './tool-util';
 import { resolveCwdForScope } from './workspace-path';
 import { executionScopeFor } from './gate';
+import { recordVisualHandoffEvidence } from './visual-handoff-gate';
 import {
   recordAutomatedReviewBrowserInspection,
   resolveAutomatedReviewBrowserAuthority,
@@ -281,6 +282,7 @@ const browserScreenshotTool: McpToolDef = {
     const paneId = requireStr(args, 'paneId');
     const reviewAuthority = authorizeBrowserPane(ctx, paneId, 'read');
     assertReviewSurfaceCurrent(ctx, reviewAuthority);
+    const visualAssignment = ctx.visualTask;
     const result = await captureBrowserScreenshot(
       paneId,
       ctx.scope,
@@ -299,6 +301,8 @@ const browserScreenshotTool: McpToolDef = {
       }
       recordAutomatedReviewBrowserInspection(reviewAuthority, 'screenshot');
     }
+    assertMcpInvocationCurrent(invocation);
+    if (ctx.visualTask === visualAssignment) recordVisualHandoffEvidence(ctx, result.artifactId);
     return result;
   },
 };
@@ -336,12 +340,20 @@ const browserResponsiveTool: McpToolDef = {
       (device): device is BrowserDeviceKind =>
         device === 'mobile' || device === 'tablet' || device === 'desktop',
     );
-    return analyzeBrowserResponsive(paneId, ctx.scope, {
+    const visualAssignment = ctx.visualTask;
+    const result = await analyzeBrowserResponsive(paneId, ctx.scope, {
       devices,
       missionId: ctx.missionId,
       signal: invocation?.signal,
       assertCurrentAuthority: invocation?.assertCurrentAuthority,
     });
+    assertMcpInvocationCurrent(invocation);
+    for (const breakpoint of result.breakpoints) {
+      if (ctx.visualTask === visualAssignment && 'screenshot' in breakpoint && breakpoint.screenshot) {
+        recordVisualHandoffEvidence(ctx, breakpoint.screenshot.artifactId);
+      }
+    }
+    return result;
   },
 };
 

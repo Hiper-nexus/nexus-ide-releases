@@ -263,7 +263,7 @@ describe("handoff MCP stop receipt", () => {
           updatedAt: 1,
         }),
       },
-      tasks: { list: () => [] },
+      tasks: { list: () => [], getPlannedTask: () => null },
       missionPanes: { list: () => [] },
       handoffs: {
         submitFromPhysicalAgentBoundary: mocks.submit,
@@ -309,6 +309,17 @@ describe("handoff MCP stop receipt", () => {
       ),
     ).rejects.toThrow("handoff_origin: mission authority unavailable");
     expect(mocks.submit).not.toHaveBeenCalled();
+  });
+
+  it('marks a visual assignment partial despite success prose and a claimed PNG', async () => {
+    const ctx = { ...context(), visualTask: { since: Date.now() } };
+    mocks.submit.mockReturnValue(handoff('nexus-trusted'));
+    const result = await submitTool().handler({ status: 'success', summary: 'Interface pronta e validada.',
+      artifacts: [{ path: '/tmp/claimed.png', kind: 'screenshot' }],
+    }, ctx, invocation());
+    expect(mocks.submit.mock.calls[0]![0]).toMatchObject({ status: 'partial' });
+    expect(mocks.submit.mock.calls[0]![0].summary).toContain('verificação visual pendente');
+    expect(result).toMatchObject({ status: 'partial', visualVerification: { required: true, verified: false } });
   });
 
   it("preserves a plan handoff above 4k exactly for physical promotion", async () => {

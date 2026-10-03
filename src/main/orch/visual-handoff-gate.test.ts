@@ -1,0 +1,81 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import { createScopedBrowserArtifactStore } from '../browser/browser-artifact-store';
+import { testProjectScope } from './__tests__/scope-fixture';
+import { checkVisualHandoff, recordVisualHandoffEvidence, visualTaskRequirement } from './visual-handoff-gate';
+
+let dir: string;
+let manager: ProjectRuntimeManager;
+const scope = testProjectScope();
+const context = () => ({ scope, executionScope: scope, sessionId: 'worker-session', missionId: 'mission',
+  workerIncarnationId: 'incarnation', visualTask: { since: 1000 } });
+beforeEach(() => {
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'visual-handoff-'));
+  manager = new ProjectRuntimeManager({ baseDir: dir, appVersion: 'test' });
+  manager.open(scope).db.prepare("INSERT INTO missions (id,title,status,created_at,updated_at) VALUES ('mission','UI','running',1,1)").run();
+});
+afterEach(() => { manager.closeAll(); fs.rmSync(dir, { recursive: true, force: true }); });
+
+it('derives a visual requirement from the assigned task, not from a completion claim', () => {
+  expect(visualTaskRequirement('Crie a tela de login com layout responsivo.', 1000)).toEqual({ since: 1000 });
+  expect(visualTaskRequirement('Documente os endpoints da API de login.', 1000)).toBeUndefined();
+});
+it('a declared screenshot path or convincing summary cannot satisfy missing Main evidence', async () => {
+  expect(await checkVisualHandoff(context(), { manager })).toMatchObject({ required: true, verified: false });
+  expect(await checkVisualHandoff({ ...context(), visualTask: undefined }, { manager })).toEqual({ required: false, verified: true });
+});
+it('requires the exact worker generation, execution root, assignment time and current image bytes', async () => {
+  const store = createScopedBrowserArtifactStore(manager, scope);
+  const image = store.recordScreenshot({ paneId: 'browser-pane', missionId: 'mission', png: Buffer.from('fixture-png'),
+    width: 1, height: 1, url: 'http://localhost:3000', title: 'UI', capturedAt: 1100 });
+  expect(recordVisualHandoffEvidence(context(), image.id, manager)).toBe(true);
+  expect(await checkVisualHandoff(context(), { manager })).toMatchObject({ verified: true, artifactId: image.id });
+  expect(await checkVisualHandoff({ ...context(), workerIncarnationId: 'other' }, { manager })).toMatchObject({ verified: false });
+  expect(await checkVisualHandoff({ ...context(), executionScope: { ...scope, rootRealPath: '/other' } }, { manager })).toMatchObject({ verified: false });
+  expect(await checkVisualHandoff({ ...context(), visualTask: { since: 1200 } }, { manager })).toMatchObject({ verified: false });
+  fs.writeFileSync(image.path, 'tampered');
+  expect(await checkVisualHandoff(context(), { manager })).toMatchObject({ verified: false });
+});
+
+it('requires evidence from a sealed visual task even without a spawn hint', async () => {
+  expect(await checkVisualHandoff({ ...context(), visualTask: undefined }, { manager,
+    task: { plannedTitle: 'Crie a tela de login', plannedDetail: 'Layout responsivo com formulário.', task: { createdAt: 1000 } },
+  })).toMatchObject({ required: true, verified: false });
+});
+
+it('does not let another worker or mission claim an existing capture', async () => {
+  const store = createScopedBrowserArtifactStore(manager, scope);
+  const image = store.recordScreenshot({ paneId: 'browser-pane', missionId: 'mission', png: Buffer.from('fixture'),
+    width: 1, height: 1, url: 'http://localhost', title: 'UI', capturedAt: 1100 });
+  expect(recordVisualHandoffEvidence(context(), image.id, manager)).toBe(true);
+  expect(recordVisualHandoffEvidence({ ...context(), sessionId: 'other' }, image.id, manager)).toBe(false);
+  expect(recordVisualHandoffEvidence({ ...context(), missionId: 'other' }, image.id, manager)).toBe(false);
+  expect(await checkVisualHandoff({ ...context(), sessionId: 'other' }, { manager })).toMatchObject({ verified: false });
+});
+
+it('revokes an in-flight check if the assignment changes and propagates authority cancellation', async () => {
+  const ctx = context();
+  const image = createScopedBrowserArtifactStore(manager, scope).recordScreenshot({ paneId: 'browser-pane',
+    missionId: 'mission', png: Buffer.from('fixture'), width: 1, height: 1, url: 'http://localhost', title: 'UI', capturedAt: 1100 });
+  recordVisualHandoffEvidence(ctx, image.id, manager);
+  const realOpen = fs.promises.open.bind(fs.promises);
+  const open = vi.spyOn(fs.promises, 'open').mockImplementation(async (...args: Parameters<typeof fs.promises.open>) => {
+    ctx.visualTask = { since: 1200 };
+    return realOpen(...args);
+  });
+  try { expect(await checkVisualHandoff(ctx, { manager })).toMatchObject({ verified: false }); }
+  finally { open.mockRestore(); }
+  await expect(checkVisualHandoff(context(), { manager, assertCurrent: () => { throw new Error('stale authority'); } }))
+    .rejects.toThrow('stale authority');
+});
+
+it('selects bounded proof candidates through the worker index', () => {
+  const plan = manager.open(scope).db.prepare(`EXPLAIN QUERY PLAN SELECT artifact_id FROM visual_handoff_evidence
+    WHERE session_id = ? AND mission_id IS ? AND worker_incarnation_id IS ? AND execution_root = ? AND captured_at >= ?
+    ORDER BY captured_at DESC LIMIT 4`).all('worker-session', 'mission', 'incarnation', scope.rootRealPath, 1000);
+  expect(JSON.stringify(plan)).toContain('idx_visual_handoff_worker');
+  expect(JSON.stringify(plan)).not.toContain('TEMP B-TREE');
+});

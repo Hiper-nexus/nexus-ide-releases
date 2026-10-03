@@ -1098,6 +1098,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           ? "verified-active-profile"
           : undefined,
       readOnly: meta?.readOnly === true,
+      visualTask: meta?.visualTask,
       allowedTools: meta?.allowedTools ?? null,
       allowedSkills: meta?.allowedSkills ?? null,
       scope: authority.coordinationScope ?? authority.scope,

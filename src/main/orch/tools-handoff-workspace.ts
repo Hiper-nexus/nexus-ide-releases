@@ -1,4 +1,5 @@
 import { handoffStatusSchema } from "../../shared/orch-types";
+import { checkVisualHandoff } from './visual-handoff-gate';
 import {
   embedTelemetryArtifact,
   sanitizeHandoffTelemetry,
@@ -97,10 +98,14 @@ export async function submitWorkspaceHandoff(
     if (regressionVerdict.kind === "retry")
       throw new Error(regressionVerdict.message);
   }
+  const visual = declaredStatus === 'success' ? await checkVisualHandoff(ctx, {
+    assertCurrent: () => assertMcpInvocationCurrent(invocation),
+  }) : undefined;
+  const visualPending = visual?.required === true && !visual.verified;
   const status =
     verdict.kind === "exhausted" || regressionVerdict.kind === "exhausted"
       ? "blocked"
-      : declaredStatus;
+      : visualPending ? 'partial' as const : declaredStatus;
   const condensed = condenseHandoffSummary(
     filterAntiSocialChatter(rawSummary).clean,
   );
@@ -110,7 +115,7 @@ export async function submitWorkspaceHandoff(
   // `unverified` — a revisão só filtra relatórios vazios para o operador, não
   // minta evidência nem recibo.
   let jevVerdict: JevReviewVerdict = { kind: "skipped", reason: "not-run" };
-  let reviewedSummary = condensed.summary;
+  let reviewedSummary = visualPending ? `[verificação visual pendente] ${condensed.summary}` : condensed.summary;
   if (
     declaredStatus === "success" &&
     ctx.readOnly !== true &&
@@ -161,6 +166,7 @@ export async function submitWorkspaceHandoff(
   }
   const telemetry = sanitizeHandoffTelemetry(args.telemetry);
   const artifacts = [
+    ...(visual?.required ? [{ kind: 'nexus.visualVerification', payload: visual }] : []),
     ...(Array.isArray(args.artifacts) ? args.artifacts : []),
     ...metadata,
     ...(condensed.condensed && condensed.original && !args.fullText
@@ -242,6 +248,7 @@ export async function submitWorkspaceHandoff(
   return {
     ok: true,
     handoffId: handoff.id,
+    ...(visual?.required ? { visualVerification: visual, status } : {}),
     evidenceTrust: handoff.evidenceTrust,
     stopGateSatisfied: false,
     delivered,

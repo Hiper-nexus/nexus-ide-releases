@@ -9,6 +9,7 @@ import type { ProjectExecutionScope } from "../../shared/types";
 import type { SpawnRouteInfo } from '../../shared/spawn-route';
 import { copyProviderPaneSession } from '../persistence/provider-session-store';
 import { currentMimoSessionOwnerKey } from '../adapters/mimo-session-owner';
+import { visualTaskRequirement } from './visual-handoff-gate';
 import {
   getAdapter,
   isAdapterInstalled,
@@ -62,6 +63,7 @@ import { spawnMainOwnedAcpMissionPane } from "./acp-mission-spawn";
 import { issueAgentIdentityBestEffort } from "./agent-identity-spawn";
 
 export interface PaneOrchMeta {
+  visualTask?: import('../../shared/orch-types').VisualTaskRequirement;
   /** Main-authored spawner for missionless operator handoffs. */
   operatorParentSessionId?: string;
   missionId?: string;
@@ -101,6 +103,8 @@ export interface PaneOrchMeta {
 }
 
 export interface PaneSpawnOptions {
+  /** Main-only task verification metadata; not part of the renderer request. */
+  visualTask?: import('../../shared/orch-types').VisualTaskRequirement;
   /**
    * 0.76.45: retomar a conversa de um pane ANTIGO (estacionado/fechado) no
    * pane novo — o registro de sessão do provider é copiado para o paneId
@@ -707,6 +711,7 @@ export function spawnMainOwnedMissionPane(
       error: 'resume_context_unavailable: conversa original indisponível; recusando pane sem contexto' };
   }
   const context = Object.freeze({
+    visualTask: options.role === 'orchestrator' ? undefined : options.visualTask ?? visualTaskRequirement(options.initialPrompt),
     operatorParentSessionId: options.operatorParentSessionId,
     missionId: options.missionId,
     contextRevision: options.contextRevision,

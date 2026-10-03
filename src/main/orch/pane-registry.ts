@@ -21,6 +21,7 @@ import type {
 } from "../../shared/orch-types";
 import { ORCH_CHANNELS } from "../../shared/orch-channels";
 import { copyProviderPaneSession } from "../persistence/provider-session-store";
+import { visualTaskRequirement } from './visual-handoff-gate';
 import { currentMimoSessionOwnerKey } from "../adapters/mimo-session-owner";
 import { providerAuthStrategy, resolveRuntimeApiKey } from "../persistence/provider-config-store";
 import { DEV_SERVER_CHANNELS, PTY_CHANNELS } from "../../shared/channels";
@@ -3063,6 +3064,7 @@ export function requestPaneSpawn(
       abortSignal: options.abortSignal,
       meta: {
         missionId: options.missionId,
+        visualTask: options.role === 'orchestrator' ? undefined : options.visualTask ?? visualTaskRequirement(options.initialPrompt),
         contextRevision: options.contextRevision,
         agentName: options.agentName,
         workerIncarnationId: mintedWorkerIncarnationId(options),

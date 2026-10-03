@@ -14,6 +14,7 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import { ACP_ACCOUNT_SELECTION_UNSUPPORTED } from '../../shared/acp-session-config';
 import { getOrchSettings } from '../persistence/settings-store';
 import { mintToken, releaseSessionByToken } from './gate';
+import { visualTaskRequirement } from './visual-handoff-gate';
 import { getAcpHarness } from '../acp/harness-store';
 import { buildAcpMcpStdioServer } from '../acp/acp-mcp-stdio-bridge';
 import { makeId } from './store-util';
@@ -140,6 +141,7 @@ export async function spawnMainOwnedAcpMissionPane(
       workerIncarnationId: options.workerIncarnationId,
       providerId: options.adapterId,
       readOnly: options.readOnly === true,
+      visualTask: options.role === 'orchestrator' ? undefined : options.visualTask ?? visualTaskRequirement(options.initialPrompt),
       scope: options.scope,
       executionScope: options.executionScope ?? options.scope,
       allowedTools: options.allowedTools ?? null,

@@ -53,6 +53,7 @@ describe('scoped mission pane store', () => {
       allowedTools: ['nexus_file_read'],
       allowedSkills: ['review'],
       readOnly: true,
+      visualTask: { since: 75 },
     });
     recorded.allowedTools?.push('mutated-outside');
 
@@ -68,6 +69,7 @@ describe('scoped mission pane store', () => {
       allowedTools: ['nexus_file_read'],
       allowedSkills: ['review'],
       readOnly: true,
+      visualTask: { since: 75 },
     });
   });
 
@@ -106,6 +108,23 @@ describe('scoped mission pane store', () => {
         (spec) => spec.paneId === 'pane-op' && spec.operatorOpened === true,
       ),
     ).toBe(true);
+  });
+
+  it('persists reused-worker visual assignments with mission and incarnation fences', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const mission = createScopedMissionStore(runtimeManager, scope).create({ title: 'Visual assignment' });
+    const panes = createScopedMissionPaneStore(runtimeManager, scope);
+    panes.record({ missionId: mission.id, adapterId: 'codex', paneId: 'reused-pane', role: 'worker', workerIncarnationId: 'inc-1' });
+    expect(panes.assignVisualTask('reused-pane', mission.id, 'inc-1', undefined, { since: 2000 })).toBe(true);
+    expect(panes.assignVisualTask('reused-pane', 'other', 'inc-1', { since: 2000 }, undefined)).toBe(false);
+    expect(panes.assignVisualTask('reused-pane', mission.id, 'old-inc', { since: 2000 }, undefined)).toBe(false);
+    expect(panes.assignVisualTask('reused-pane', mission.id, 'inc-1', undefined, undefined)).toBe(false);
+    runtimeManager.close(scope);
+    const restored = createScopedMissionPaneStore(runtimeManager, scope);
+    expect(restored.findByPaneId('reused-pane')?.visualTask).toEqual({ since: 2000 });
+    expect(restored.assignVisualTask('reused-pane', mission.id, 'inc-1', { since: 2000 }, undefined)).toBe(true);
+    expect(restored.findByPaneId('reused-pane')?.visualTask).toBeUndefined();
   });
 
   it('keeps worker pane incarnations distinct and durable', () => {

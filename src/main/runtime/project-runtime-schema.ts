@@ -1072,4 +1072,19 @@ END;`,
       sql: `CREATE INDEX idx_task_dispatch_queue_handoff_memory
         ON task_dispatch_queue(handoff_id) WHERE handoff_id IS NOT NULL;`,
     }),
+    createProjectMigration({
+      id: '045-visual-handoff-evidence',
+      schemaVersion: 45,
+      appVersion: '0.76.191',
+      sql: `CREATE TABLE visual_handoff_evidence (
+        artifact_id TEXT PRIMARY KEY REFERENCES browser_artifacts(id) ON DELETE CASCADE,
+        mission_id TEXT,
+        session_id TEXT NOT NULL,
+        worker_incarnation_id TEXT,
+        execution_root TEXT NOT NULL,
+        captured_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_visual_handoff_worker ON visual_handoff_evidence
+        (session_id, mission_id, worker_incarnation_id, execution_root, captured_at DESC);`,
+    }),
   ]);
