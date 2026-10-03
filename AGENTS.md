@@ -326,8 +326,10 @@ saber isto antes de mexer:
   worktrees e candidatos de merge moram em `<project-runtime>\wt` e `\mc` com
   nomes compactos. Todo caminho físico de worktree sai de
   `managed-worktree-layout.ts` (criação, validação, recuperação, fila de
-  merge); macOS/Linux mantêm o layout histórico byte a byte. Não monte esse
-  caminho à mão em outro lugar.
+  merge). Linux mantém o layout histórico byte a byte. No macOS, somente novas
+  worktrees e candidatos usam raízes `.noindex` (exceção autorizada pelo operador
+  em 03/10, N13); caminhos e WIP existentes são preservados e continuam aceitos.
+  Não monte esse caminho à mão em outro lugar.
 
 ## Várias missões pelo "+ Pane" (F-198/F-373/F-374)
 

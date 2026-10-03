@@ -2,7 +2,7 @@
 
 Há conflito entre a melhoria registrada no coverage-audit (pasta de worktrees
 com sufixo `.noindex`) e AGENTS.md / managed-worktree-layout.ts (layout histórico
-macOS/Linux preservado byte a byte). A mudança abaixo está proposta, não aplicada.
+macOS/Linux preservado byte a byte). A exceção foi aprovada pelo operador e a mudança abaixo está implementada com testes de compatibilidade.
 
 ## Caminhos propostos
 
@@ -27,7 +27,8 @@ original. Sua eficácia no sistema instalado exige teste separado de indexação
 Não será usado `.metadata_never_index` como substituto sem comprovação, nem
 alterada a lista de privacidade do Spotlight ou outra preferência do operador.
 
-## Decisão pendente
+## Decisão aprovada pelo operador
 
-Autorizar a exceção para NOVAS raízes no macOS, com compatibilidade do legado,
-ou manter a regra atual e encerrar N13 como proposta incompatível com ela.
+Novas raízes no macOS usam o sufixo, com compatibilidade dos caminhos legados.
+
+Em 03/10/2026 o operador autorizou: “Sim, novas pastas .noindex; preservar as existentes”. A implementação deve seguir estritamente a compatibilidade proposta acima.

@@ -12,8 +12,9 @@ import { digest } from "./worktree-contract";
  * escritor isolado, missão planejada e, desde o F-162, toda aba nova.
  *
  * No win32 elas moram em raízes curtas ao lado dos runtimes de projeto, com
- * nomes compactos derivados dos MESMOS ids. macOS e Linux mantêm o layout
- * histórico byte a byte: registros são validados por caminho exato.
+ * nomes compactos derivados dos MESMOS ids. Novas raízes do macOS recebem
+ * .noindex; seus registros históricos continuam válidos no caminho original.
+ * Linux mantém o layout histórico. Registros são validados por caminho exato.
  */
 export type WorktreeLayoutPlatform = NodeJS.Platform;
 
@@ -37,7 +38,7 @@ export function managedWorktreesRoot(
 ): string {
   return compact(platform)
     ? path.join(location.baseDirectory, "wt")
-    : path.join(location.runtimeDirectory, "worktrees");
+    : path.join(location.runtimeDirectory, platform === 'darwin' ? 'worktrees.noindex' : 'worktrees');
 }
 
 export function managedCandidatesRoot(
@@ -46,7 +47,7 @@ export function managedCandidatesRoot(
 ): string {
   return compact(platform)
     ? path.join(location.baseDirectory, "mc")
-    : path.join(location.runtimeDirectory, "merge-candidates");
+    : path.join(location.runtimeDirectory, platform === 'darwin' ? 'merge-candidates.noindex' : 'merge-candidates');
 }
 
 /** Caminho da worktree de uma task, relativo a `managedWorktreesRoot`. */
@@ -68,8 +69,7 @@ export function managedWorktreeRelativePath(
 }
 
 /**
- * Raiz histórica das worktrees de um checkout. Fora do win32 é a raiz atual;
- * no win32 só guarda registros anteriores ao F-654.
+ * Raiz histórica: anterior ao .noindex no macOS e ao F-654 no Windows.
  */
 export function legacyWorktreesRoot(runtimeDirectory: string): string {
   return path.join(runtimeDirectory, "worktrees");
@@ -77,7 +77,7 @@ export function legacyWorktreesRoot(runtimeDirectory: string): string {
 
 /**
  * Caminhos absolutos que um registro pode carregar: o layout atual sob a raiz
- * atual e, no win32, o histórico no lugar físico onde ele estava — registros
+ * atual e, no macOS/Windows, o histórico no lugar físico onde ele estava — registros
  * anteriores ao F-654 só falharam, mas continuam válidos e inertes em vez de
  * travar o estado inteiro do checkout.
  */
@@ -92,14 +92,28 @@ export function acceptedWorktreePaths(
     roots.worktreesRoot,
     managedWorktreeRelativePath(projectId, checkoutId, taskKey, platform),
   );
-  if (!compact(platform) || !roots.legacyWorktreesRoot) return [current];
-  return [
+  if ((!compact(platform) && platform !== 'darwin') || !roots.legacyWorktreesRoot) return [current];
+  return [...new Set([
     current,
     path.join(
       roots.legacyWorktreesRoot,
       managedWorktreeRelativePath(projectId, checkoutId, taskKey, "linux"),
     ),
-  ];
+  ])];
+}
+
+/** Only exact derived paths are eligible for recovery; never scan sibling folders. */
+export function acceptedCandidatePaths(
+  roots: { readonly candidatesRoot: string; readonly runtimeDirectory: string },
+  scopeKey: string,
+  candidateKey: string,
+  platform: WorktreeLayoutPlatform = process.platform,
+): readonly string[] {
+  const relative = managedCandidateRelativePath(scopeKey, candidateKey, platform);
+  const current = path.join(roots.candidatesRoot, relative);
+  return platform === 'darwin'
+    ? [...new Set([current, path.join(roots.runtimeDirectory, 'merge-candidates', relative)])]
+    : [current];
 }
 
 /**

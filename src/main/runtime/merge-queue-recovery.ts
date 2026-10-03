@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
-import path from 'node:path';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   MergeAuthorityRevokedError,
@@ -16,7 +15,7 @@ import {
   type RetryMergeInput,
 } from './merge-queue-contract';
 import { cloneMergeQueueEntry as cloneEntry } from './merge-queue-state';
-import { managedCandidateRelativePath } from './managed-worktree-layout';
+import { acceptedCandidatePaths } from './managed-worktree-layout';
 import {
   stalledMergeReason,
   type MergeReconcileStallContext,
@@ -783,49 +782,44 @@ export class MergeQueueRecovery {
       !entry.integrationBaseSha ||
       !entry.taskHeadSha
     ) return;
-    const candidatePath = path.join(
-      this.#candidatesRoot,
-      managedCandidateRelativePath(
-        scopeKey,
-        this.#candidateKey(
-          scopeKey,
-          entry.taskKey,
-          entry.integrationBaseSha,
-          entry.taskHeadSha,
-        ),
-      ),
+    const candidates = acceptedCandidatePaths(
+      { candidatesRoot: this.#candidatesRoot, runtimeDirectory: this.#worktrees.runtimeRoot },
+      scopeKey,
+      this.#candidateKey(scopeKey, entry.taskKey, entry.integrationBaseSha, entry.taskHeadSha),
     );
-    try {
-      if (!fs.existsSync(candidatePath)) return;
-      const real = fs.realpathSync(candidatePath);
-      if (real !== candidatePath || !fs.statSync(real).isDirectory()) return;
-      assertSafeLocalGitConfig(this.#git, real);
-      const topLevel = fs.realpathSync(
-        this.#git.run(real, ['rev-parse', '--show-toplevel']).stdout.trim(),
-      );
-      if (topLevel !== real) return;
-      const symbolic = this.#git.run(
-        real,
-        ['symbolic-ref', '--quiet', 'HEAD'],
-        { allowFailure: true },
-      );
-      if (symbolic.status !== 1) return;
-      const status = this.#git.run(real, [
-        'status',
-        '--porcelain=v1',
-        '-z',
-        '--untracked-files=all',
-      ]).stdout;
-      if (status.length > 0) return;
-      const record = this.#worktrees.get(
-        scope,
-        entry.missionId,
-        entry.taskId,
-      );
-      if (!record) return;
-      this.#git.run(record.rootRealPath, ['worktree', 'remove', real]);
-    } catch {
-      // Never force-remove an interrupted candidate with uncertain identity.
+    for (const candidatePath of candidates) {
+      try {
+        if (!fs.existsSync(candidatePath)) continue;
+        const real = fs.realpathSync(candidatePath);
+        if (real !== candidatePath || !fs.statSync(real).isDirectory()) continue;
+        assertSafeLocalGitConfig(this.#git, real);
+        const topLevel = fs.realpathSync(
+          this.#git.run(real, ['rev-parse', '--show-toplevel']).stdout.trim(),
+        );
+        if (topLevel !== real) continue;
+        const symbolic = this.#git.run(
+          real,
+          ['symbolic-ref', '--quiet', 'HEAD'],
+          { allowFailure: true },
+        );
+        if (symbolic.status !== 1) continue;
+        const status = this.#git.run(real, [
+          'status',
+          '--porcelain=v1',
+          '-z',
+          '--untracked-files=all',
+        ]).stdout;
+        if (status.length > 0) continue;
+        const record = this.#worktrees.get(
+          scope,
+          entry.missionId,
+          entry.taskId,
+        );
+        if (!record) continue;
+        this.#git.run(record.rootRealPath, ['worktree', 'remove', real]);
+      } catch {
+        // Never force-remove an interrupted candidate with uncertain identity.
+      }
     }
   }
 

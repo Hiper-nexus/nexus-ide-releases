@@ -12,6 +12,8 @@ import {
   worktreeTaskKey,
 } from "./worktree-manager";
 import { ScopedStoreBinding } from "../orch/scoped-store";
+import { WorktreeManager } from './worktree-manager';
+import { SqliteWorktreeStateStore } from './sqlite-workflow-state-stores';
 
 const sweep = vi.hoisted(() => vi.fn());
 vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
@@ -131,6 +133,29 @@ afterEach(() => {
 });
 
 describe("project worktree runtime registry", () => {
+  it.runIf(process.platform === 'darwin')('creates noindex worktrees while preserving a legacy dirty worktree across restart', async () => {
+    const { scope, manager } = fixture();
+    const runtimeRoot = manager.locationFor(scope).directory;
+    seedWorkState(manager, scope, { missionId: 'legacy-mission', taskId: 'legacy-task', missionStatus: 'running', taskStatus: 'pending' });
+    const legacy = new WorktreeManager({ runtimeRoot, worktreesRoot: path.join(runtimeRoot, 'worktrees'),
+      stateStore: new SqliteWorktreeStateStore(manager, scope) });
+    const original = await legacy.create({ scope, missionId: 'legacy-mission', taskId: 'legacy-task', workerId: 'legacy-worker',
+      ownership: { files: ['legacy.txt'], symbols: [], domains: [] } });
+    fs.writeFileSync(path.join(original.worktreePath, 'legacy.txt'), 'uncommitted operator work');
+    const registry = new WorktreeRuntimeRegistry(manager);
+    const restored = registry.get(scope, 'legacy-mission', 'legacy-task');
+    expect(restored?.worktreePath).toBe(original.worktreePath);
+    expect(fs.readFileSync(path.join(original.worktreePath, 'legacy.txt'), 'utf8')).toBe('uncommitted operator work');
+    const fresh = await createTrackedWorktree(registry, manager, { scope, missionId: 'new-mission', taskId: 'new-task', workerId: 'new-worker',
+      ownership: { files: ['new.txt'], symbols: [], domains: [] } });
+    expect(fresh.worktreePath).toContain(`${path.sep}worktrees.noindex${path.sep}`);
+    expect(fs.existsSync(path.join(original.worktreePath, 'legacy.txt'))).toBe(true);
+    registry.dispose();
+    const restarted = new WorktreeRuntimeRegistry(manager);
+    expect(restarted.get(scope, 'legacy-mission', 'legacy-task')?.worktreePath).toBe(original.worktreePath);
+    expect(fs.readFileSync(path.join(original.worktreePath, 'legacy.txt'), 'utf8')).toBe('uncommitted operator work');
+    restarted.dispose();
+  });
   it("keeps pane writers through task sweeps and releases their claims after restart without deleting output", async () => {
     const { root, scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);

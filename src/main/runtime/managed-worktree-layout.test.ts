@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { digest, worktreeTaskKey } from './worktree-contract';
 import {
   WINDOWS_GIT_WORKTREE_PATH_LIMIT,
+  acceptedCandidatePaths,
   acceptedWorktreePaths,
   acceptedWorktreeRelativePaths,
   legacyWorktreesRoot,
@@ -25,9 +26,11 @@ const runtimeDirectory = [
 ].join('\\');
 
 describe('managed worktree layout (F-654)', () => {
-  it('mantém o layout histórico byte a byte fora do Windows', () => {
+  it('mantém os componentes históricos e usa novas raízes noindex só no macOS', () => {
     const location = { runtimeDirectory: '/rt/checkout', baseDirectory: '/rt' };
-    expect(managedWorktreesRoot(location, 'darwin')).toBe(path.join('/rt/checkout', 'worktrees'));
+    expect(managedWorktreesRoot(location, 'darwin')).toBe(path.join('/rt/checkout', 'worktrees.noindex'));
+    expect(managedCandidatesRoot(location, 'darwin')).toBe(path.join('/rt/checkout', 'merge-candidates.noindex'));
+    expect(managedWorktreesRoot(location, 'linux')).toBe(path.join('/rt/checkout', 'worktrees'));
     expect(managedCandidatesRoot(location, 'linux')).toBe(path.join('/rt/checkout', 'merge-candidates'));
     expect(managedWorktreeRelativePath(projectId, checkoutId, taskKey, 'darwin')).toBe(
       path.join(
@@ -40,6 +43,21 @@ describe('managed worktree layout (F-654)', () => {
       path.join(`scope-${'s'.repeat(64)}`, `candidate-${'c'.repeat(64)}`),
     );
     expect(acceptedWorktreeRelativePaths(projectId, checkoutId, taskKey, 'darwin')).toHaveLength(1);
+  });
+
+  it('aceita no macOS tanto o caminho novo quanto o legado exato, sem mover nenhum deles', () => {
+    const location = { runtimeDirectory: '/rt/checkout', baseDirectory: '/rt' };
+    const relative = managedWorktreeRelativePath(projectId, checkoutId, taskKey, 'darwin');
+    const roots = { worktreesRoot: '/rt/checkout/worktrees.noindex',
+      legacyWorktreesRoot: legacyWorktreesRoot(location.runtimeDirectory) };
+    expect(acceptedWorktreePaths(roots, projectId, checkoutId, taskKey, 'darwin')).toEqual([
+      path.join(roots.worktreesRoot, relative), path.join(roots.legacyWorktreesRoot, relative),
+    ]);
+    expect(acceptedWorktreePaths(roots, projectId, checkoutId, taskKey, 'linux')).toEqual([
+      path.join(roots.worktreesRoot, relative),
+    ]);
+    expect(acceptedCandidatePaths({ candidatesRoot: '/rt/checkout/merge-candidates.noindex', runtimeDirectory: '/rt/checkout' }, 's', 'c', 'darwin'))
+      .toEqual(['/rt/checkout/merge-candidates.noindex/scope-s/candidate-c', '/rt/checkout/merge-candidates/scope-s/candidate-c']);
   });
 
   it('no Windows a worktree de produção cabe no teto do Git; o layout antigo não cabia', () => {
