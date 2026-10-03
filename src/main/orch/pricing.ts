@@ -225,7 +225,12 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   // === Community / OpenCode free open models ($0) ===
   'opencode/big-pickle': { inputPerM: 0, outputPerM: 0 },
   'big-pickle': { inputPerM: 0, outputPerM: 0 },
-  'opencode/deepseek-v4-flash': { inputPerM: 0, outputPerM: 0 },
+  // F-820: SEM o sufixo -free o id é o modelo PAGO do gateway — o F-774 o pôs a
+  // $0 por engano, e o F-683 registra "Model access is disabled" justamente
+  // nele (não está na lista de modelos sem credencial,
+  // CREDENTIALLESS_OPENCODE_MODEL_IDS). Preço = o da família DeepSeek, o mesmo
+  // que o prefixo `deepseek` dava antes. Só a variante -free é grátis.
+  'opencode/deepseek-v4-flash': { inputPerM: 0.27, outputPerM: 1.1, cacheReadPerM: 0.07 },
   'opencode/deepseek-v4-flash-free': { inputPerM: 0, outputPerM: 0 },
   'opencode/mimo-v2.5-free': { inputPerM: 0, outputPerM: 0 },
   'opencode/nemotron-3-ultra-free': { inputPerM: 0, outputPerM: 0 },
