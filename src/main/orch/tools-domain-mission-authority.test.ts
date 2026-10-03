@@ -108,7 +108,7 @@ import {
   requiresRouteReservation,
   squadBindingViolationError,
 } from './free-agent-choice';
-import { hasCurrentDispatchAuthority } from '../../shared/mission-intent';
+import { assertWorkerBudget, hasCurrentDispatchAuthority } from '../../shared/mission-intent';
 import type { Mission } from '../../shared/orch-types';
 
 const scope = testProjectScope();
@@ -595,7 +595,11 @@ describe('mission creation authority', () => {
     });
 
     it.each([
-      ['consulta', 'Investigar por que o login está lento', 'consult'],
+      ['consulta (investigar)', 'Investigar por que o login está lento', 'standard'],
+      ['análise (campo do relatório)', 'Analise o fluxo de login e liste os riscos', 'standard'],
+      ['planejamento', 'Planejar a arquitetura do módulo de pagamentos', 'standard'],
+      ['operação (deploy)', 'Deploy do site no servidor', 'standard'],
+      ['atualização que escreve (dependências)', 'Atualize as dependências do repositório', 'standard'],
       ['sincronização Git somente operacional', 'Atualiza o repositório local com o GitHub', 'ops'],
       ['sync por merge fast-forward', 'Sincronizar git com git merge --ff-only origin/main', 'ops'],
       ['pedido misto ("sincronize e corrija")', 'Sincronize o repositório e corrija o bug do login', 'standard'],
@@ -603,14 +607,54 @@ describe('mission creation authority', () => {
       // F-785: a missão da aba nascia sempre standard; o set_status recusava
       // done de uma sincronização real ("sem entrega real no projeto") embora
       // o gate de entrega já aceitasse ops/consulta sem arquivo.
+      // F-810: só a sincronização explícita vira ops — consult/plan/ops por
+      // texto livre zeravam maxWorkers e o pane não abria helper nenhum.
       mocks.getOrchSettings.mockReturnValue({ squadCliPolicy: 'operator-choice' });
       const { create } = missionStores();
 
       await missionCreateTool().handler({ title }, operatorHand());
 
-      expect(create.mock.calls[0]![0].intentContract).toMatchObject({ lane });
+      const contract = create.mock.calls[0]![0].intentContract;
+      expect(contract).toMatchObject({ lane });
+      if (lane === 'standard') {
+        expect(contract.budgets.maxWorkers).toBeGreaterThan(0);
+        expect(assertWorkerBudget(contract, 0)).toEqual({ ok: true });
+      }
     });
 
+    it.each([
+      ['Analise o fluxo de login e liste os riscos', 'standard'],
+      ['Planejar a arquitetura do módulo de pagamentos', 'standard'],
+      ['Sincronizar git com git merge --ff-only origin/main', 'ops'],
+    ] as const)('Hardened com aba isolada (F-810): "%s" nasce %s no contrato aguardando aprovação', async (title, lane) => {
+      mocks.getOrchSettings.mockReturnValue({ squadCliPolicy: 'governed' });
+      const directory = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-hardened-lane-')));
+      const root = path.join(directory, 'repo'); fs.mkdirSync(root);
+      const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { stdio: 'pipe' });
+      git('init', '-q'); git('config', 'user.name', 'Nexus Fixture'); git('config', 'user.email', 'fixture@example.invalid');
+      fs.writeFileSync(path.join(root, 'file.txt'), 'baseline'); git('add', 'file.txt'); git('commit', '-qm', 'baseline');
+      const coordination = testProjectScope({ rootRealPath: root });
+      const manager = new ProjectRuntimeManager({ baseDir: path.join(directory, 'runtime'), appVersion: 'test' });
+      configureWorktreeRuntimeRegistry(manager);
+      mocks.gitRun.mockImplementation((cwd, args, options) =>
+        realGitRun.call(new ProcessGitRunner(), cwd, args, options));
+      try {
+        const tab = await preparePaneSpaceWorktree(coordination, 'space-hardened-lane');
+        const { create } = missionStores();
+        await missionCreateTool().handler(
+          { title },
+          { ...operatorHand(), scope: coordination, executionScope: tab.scope },
+        );
+        const input = create.mock.calls[0]![0];
+        expect(input.intentState).toBe('awaiting_approval');
+        expect(input.intentContract).toMatchObject({ lane });
+        if (lane === 'standard') {
+          expect(input.intentContract.budgets.maxWorkers).toBeGreaterThan(0);
+        }
+      } finally {
+        disposeWorktreeRuntimeRegistry(); manager.closeAll(); fs.rmSync(directory, { recursive: true, force: true });
+      }
+    });
 
     it('Hardened: a missão criada pela mão do operador espera o despacho na interface', async () => {
       mocks.getOrchSettings.mockReturnValue({ squadCliPolicy: 'governed' });

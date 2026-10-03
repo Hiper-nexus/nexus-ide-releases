@@ -206,6 +206,29 @@ describe('delivery artifact gate', () => {
     })).toEqual({ ok: true });
   });
 
+  // F-811: o classificador "só sincronização" virava ops tarefa de escrita
+  // ("atualize o README do repositório") e o done passava só com texto; e
+  // tirava a entrega por texto de uma investigação que citava o git.
+  it('F-811: investigação que cita o git pull mantém a entrega textual', () => {
+    expect(evaluateDeliveryArtifactsForDone({
+      lane: 'standard', goal: 'investigue por que o git pull falha', rootRealPath: tmpRoot(),
+      handoffs: [{ status: 'success', summary: 'Causa: o upstream da branch não estava configurado.' }],
+    })).toEqual({ ok: true });
+  });
+
+  it.each([
+    'atualize o README do repositório',
+    'atualize as dependências do repositório para a versão mais nova',
+    'atualizar o workflow do GitHub Actions',
+    'puxe as issues do github e gere um relatório em docs/',
+    'fetch os dados da API do GitHub e mostre no dashboard',
+  ])('F-811: tarefa de escrita "%s" NÃO fecha só com texto', (goal) => {
+    expect(evaluateDeliveryArtifactsForDone({
+      lane: 'standard', goal, rootRealPath: tmpRoot(),
+      handoffs: [{ status: 'success', summary: 'Feito, tudo atualizado conforme o pedido.' }],
+    }).ok).toBe(false);
+  });
+
   it('não usa subpastas vazias como prova de entrega', () => {
     const root = tmpRoot();
     fs.mkdirSync(path.join(root, 'loja', 'src'), { recursive: true });
