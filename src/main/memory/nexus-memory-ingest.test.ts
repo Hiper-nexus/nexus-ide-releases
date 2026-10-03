@@ -54,9 +54,9 @@ function projectionPath(root: string, id = ID): string {
 }
 
 describe('collectProjectionEdits', () => {
-  it('reads back the operator edit as the new content', () => {
+  it('reads back the operator edit as the new content', async () => {
     const root = project();
-    writeCanonicalMemoryProjection(root, record());
+    await writeCanonicalMemoryProjection(root, record());
     const file = projectionPath(root);
     fs.writeFileSync(
       file,
@@ -66,7 +66,7 @@ describe('collectProjectionEdits', () => {
       ),
     );
 
-    const edits = collectProjectionEdits(root, [record()]);
+    const edits = await collectProjectionEdits(root, [record()]);
 
     expect(edits).toHaveLength(1);
     expect(edits[0].id).toBe(ID);
@@ -75,11 +75,11 @@ describe('collectProjectionEdits', () => {
     expect(edits[0].content).toContain('# Regra');
   });
 
-  it('does not report an untouched projection as an edit', () => {
+  it('does not report an untouched projection as an edit', async () => {
     const root = project();
-    writeCanonicalMemoryProjection(root, record());
+    await writeCanonicalMemoryProjection(root, record());
 
-    expect(collectProjectionEdits(root, [record()])).toEqual([]);
+    expect(await collectProjectionEdits(root, [record()])).toEqual([]);
   });
 
   /**
@@ -88,17 +88,17 @@ describe('collectProjectionEdits', () => {
    * raw bytes against stored content) is what keeps that from looking like an
    * operator edit on every single pass.
    */
-  it('does not invent an edit for content stored without a heading', () => {
+  it('does not invent an edit for content stored without a heading', async () => {
     const root = project();
     const headless = record({ content: 'anotação solta sem título' });
-    writeCanonicalMemoryProjection(root, headless);
+    await writeCanonicalMemoryProjection(root, headless);
 
-    expect(collectProjectionEdits(root, [headless])).toEqual([]);
+    expect(await collectProjectionEdits(root, [headless])).toEqual([]);
   });
 
-  it('ignores an edit made against a version SQLite has already moved past', () => {
+  it('ignores an edit made against a version SQLite has already moved past', async () => {
     const root = project();
-    writeCanonicalMemoryProjection(root, record({ updatedAt: 20 }));
+    await writeCanonicalMemoryProjection(root, record({ updatedAt: 20 }));
     const file = projectionPath(root);
     fs.writeFileSync(
       file,
@@ -107,14 +107,14 @@ describe('collectProjectionEdits', () => {
 
     // The row advanced after that file was written: the file is stale, and a
     // stale file never wins — it is repaired from SQLite instead.
-    expect(collectProjectionEdits(root, [record({ updatedAt: 31 })])).toEqual(
+    expect(await collectProjectionEdits(root, [record({ updatedAt: 31 })])).toEqual(
       [],
     );
   });
 
-  it('ignores a file whose declared id disagrees with its filename', () => {
+  it('ignores a file whose declared id disagrees with its filename', async () => {
     const root = project();
-    writeCanonicalMemoryProjection(root, record());
+    await writeCanonicalMemoryProjection(root, record());
     const file = projectionPath(root);
     fs.writeFileSync(
       file,
@@ -124,18 +124,18 @@ describe('collectProjectionEdits', () => {
         .replace('não duplicar', 'EDITADO'),
     );
 
-    expect(collectProjectionEdits(root, [record()])).toEqual([]);
+    expect(await collectProjectionEdits(root, [record()])).toEqual([]);
   });
 
-  it('ignores a file that lost the canonical marker', () => {
+  it('ignores a file that lost the canonical marker', async () => {
     const root = project();
-    writeCanonicalMemoryProjection(root, record());
+    await writeCanonicalMemoryProjection(root, record());
     fs.writeFileSync(projectionPath(root), '# conteúdo adulterado\n');
 
-    expect(collectProjectionEdits(root, [record()])).toEqual([]);
+    expect(await collectProjectionEdits(root, [record()])).toEqual([]);
   });
 
-  it('never lets a planted file speak for a memory that has no row', () => {
+  it('never lets a planted file speak for a memory that has no row', async () => {
     const root = project();
     fs.mkdirSync(resolveMemoryRoot(root), { recursive: true });
     fs.writeFileSync(
@@ -143,22 +143,22 @@ describe('collectProjectionEdits', () => {
       `---\nid: ${OTHER_ID}\ncanonical: ${CANONICAL_MEMORY_PROJECTION}\nkind: note\nupdatedAt: 20\n---\n\n# Plantada\n\ncorpo plantado\n`,
     );
 
-    expect(collectProjectionEdits(root, [record()])).toEqual([]);
+    expect(await collectProjectionEdits(root, [record()])).toEqual([]);
   });
 
-  it('survives a missing projection file without proposing anything', () => {
+  it('survives a missing projection file without proposing anything', async () => {
     const root = project();
     fs.mkdirSync(resolveMemoryRoot(root), { recursive: true });
 
-    expect(collectProjectionEdits(root, [record()])).toEqual([]);
+    expect(await collectProjectionEdits(root, [record()])).toEqual([]);
   });
 });
 
 describe('projectionCounts', () => {
-  it('counts notes per kind and serves repeat calls from the stat cache', () => {
+  it('counts notes per kind and serves repeat calls from the stat cache', async () => {
     const root = project();
-    writeCanonicalMemoryProjection(root, record());
-    writeCanonicalMemoryProjection(
+    await writeCanonicalMemoryProjection(root, record());
+    await writeCanonicalMemoryProjection(
       root,
       record({
         id: OTHER_ID,
@@ -178,13 +178,13 @@ describe('projectionCounts', () => {
     expect(projectionCounts(root).cached).toBe(true);
   });
 
-  it('invalidates the cache when a projection changes on disk', () => {
+  it('invalidates the cache when a projection changes on disk', async () => {
     const root = project();
-    writeCanonicalMemoryProjection(root, record());
+    await writeCanonicalMemoryProjection(root, record());
     expect(projectionCounts(root).notes).toBe(1);
     expect(projectionCounts(root).cached).toBe(true);
 
-    writeCanonicalMemoryProjection(
+    await writeCanonicalMemoryProjection(
       root,
       record({ id: OTHER_ID, content: '# Outra\n\ncorpo' }),
     );

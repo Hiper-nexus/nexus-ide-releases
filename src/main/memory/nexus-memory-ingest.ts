@@ -41,22 +41,22 @@ export interface ProjectionEdit {
   readonly baseUpdatedAt: number;
 }
 
-function readProjectionFile(filePath: string): string | null {
+async function readProjectionFile(filePath: string): Promise<string | null> {
   try {
-    if (!fs.lstatSync(filePath).isFile()) return null;
-    return fs.readFileSync(filePath, 'utf8');
+    if (!(await fs.promises.lstat(filePath)).isFile()) return null;
+    return await fs.promises.readFile(filePath, 'utf8');
   } catch {
     // Missing or unreadable: the write pass repairs it from SQLite.
     return null;
   }
 }
 
-function editFor(
+async function editFor(
   root: string,
   record: CanonicalMemoryProjectionInput,
-): ProjectionEdit | null {
+): Promise<ProjectionEdit | null> {
   const filePath = memoryProjectionPath(root, record.id);
-  const raw = readProjectionFile(filePath);
+  const raw = await readProjectionFile(filePath);
   if (raw === null) return null;
 
   const frontmatter = parseFrontmatter(raw);
@@ -76,11 +76,12 @@ function editFor(
   });
 }
 
-export function collectProjectionEdits(
+/** F-764: lê os arquivos com `fs.promises` — a passada nunca para o Main. */
+export async function collectProjectionEdits(
   projectRoot: string,
   records: readonly CanonicalMemoryProjectionInput[],
   dirname = DEFAULT_MEMORY_DIR,
-): ProjectionEdit[] {
+): Promise<ProjectionEdit[]> {
   let root: string;
   try {
     root = resolveMemoryRoot(projectRoot, dirname);
@@ -89,7 +90,7 @@ export function collectProjectionEdits(
   }
   const edits: ProjectionEdit[] = [];
   for (const record of records) {
-    const edit = editFor(root, record);
+    const edit = await editFor(root, record);
     if (edit) edits.push(edit);
   }
   return edits;

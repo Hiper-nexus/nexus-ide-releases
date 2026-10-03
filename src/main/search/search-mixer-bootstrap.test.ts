@@ -66,14 +66,15 @@ describe('search mixer bootstrap', () => {
     roots.push(baseDir, projectRoot);
     configureWorkspaceMemory({ baseDir });
     getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.searchMixer, true);
-    getWorkspaceMemoryStore({
+    const store = getWorkspaceMemoryStore({
       version: 1,
       installationId: 'installation-search',
       projectId: 'project-search-memory',
       checkoutId: 'checkout-search',
       rootRealPath: projectRoot,
       identitySource: 'manifest',
-    }).retain({
+    });
+    store.retain({
       content: '# Mission Checkout Clean\n\nProjection lives outside Git.',
       kind: 'fact',
       // Forma real que tools-memory.defaultSource emite (e que
@@ -98,6 +99,12 @@ describe('search mixer bootstrap', () => {
       }),
     ]);
     expect(result.hits[0]).not.toHaveProperty('path');
-    expect(fs.existsSync(path.join(projectRoot, '.nexus-memory'))).toBe(false);
+    // A busca lê a projeção canônica em userData. O checkout só recebe o
+    // vault legível do F-769 (agendado fora da gravação, F-764), que se exclui
+    // do git pelo próprio `.gitignore`.
+    await store.flushProjections();
+    expect(
+      fs.readFileSync(path.join(projectRoot, '.nexus-memory', '.gitignore'), 'utf8'),
+    ).toBe('*\n');
   });
 });

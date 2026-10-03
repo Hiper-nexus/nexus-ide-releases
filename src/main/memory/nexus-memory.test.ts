@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe('nexus memory', () => {
-  it('does not follow a pre-planted canonical note symlink', () => {
+  it('does not follow a pre-planted canonical note symlink', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mem-create-link-'));
     dirs.push(root);
     const memoryRoot = path.join(root, '.nexus-memory');
@@ -35,7 +35,7 @@ describe('nexus memory', () => {
       path.join(memoryRoot, `${id}.md`),
     );
 
-    const note = writeCanonicalMemoryProjection(root, {
+    const note = await writeCanonicalMemoryProjection(root, {
       id,
       content: '# Same\n\nsafe',
       kind: 'note',
@@ -86,7 +86,7 @@ describe('nexus memory', () => {
     expect(listMemoryNotes(root)).toEqual([]);
   });
 
-  it('projects canonical markdown, resolves wikilinks, searches, backlinks', () => {
+  it('projects canonical markdown, resolves wikilinks, searches, backlinks', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mem-'));
     dirs.push(root);
 
@@ -95,7 +95,7 @@ describe('nexus memory', () => {
       'Foo',
     ]);
 
-    const note = writeCanonicalMemoryProjection(root, {
+    const note = await writeCanonicalMemoryProjection(root, {
       id: 'mem-decision-auth',
       content: '# Decision Auth\n\nWe chose JWT. Related [[Mission Alpha]].',
       kind: 'decision',
@@ -108,7 +108,7 @@ describe('nexus memory', () => {
     expect(fs.existsSync(note.path)).toBe(true);
     expect(note.wikilinks).toContain('Mission Alpha');
 
-    writeCanonicalMemoryProjection(root, {
+    await writeCanonicalMemoryProjection(root, {
       id: 'mem-mission-alpha',
       content: '# Mission Alpha\n\nDepends on [[Decision Auth]].',
       kind: 'fact',
@@ -135,7 +135,7 @@ describe('nexus memory', () => {
     expect(listed.filter((n) => n.kind === 'mission')).toHaveLength(1);
   });
 
-  it('sync rewrites canonical projections and removes only stale generated files', () => {
+  it('sync rewrites canonical projections and removes only stale generated files', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mem-sync-'));
     dirs.push(root);
     const memoryRoot = path.join(root, '.nexus-memory');
@@ -143,7 +143,7 @@ describe('nexus memory', () => {
     const legacyPath = path.join(memoryRoot, 'human-note.md');
     fs.writeFileSync(legacyPath, '# Human note\n\nDo not delete.');
 
-    writeCanonicalMemoryProjection(root, {
+    await writeCanonicalMemoryProjection(root, {
       id: 'mem-stale',
       content: '# Stale\n\nOld canonical content.',
       kind: 'note',
@@ -154,7 +154,7 @@ describe('nexus memory', () => {
       updatedAt: 1,
     });
 
-    syncCanonicalMemoryProjections(root, [
+    await syncCanonicalMemoryProjections(root, [
       {
         id: 'mem-current',
         content: '# Current\n\nSQLite wins.',
@@ -172,8 +172,8 @@ describe('nexus memory', () => {
     expect(listMemoryNotes(root).map((note) => note.id)).toEqual([
       'mem-current',
     ]);
-    expect(removeCanonicalMemoryProjection(root, 'mem-current')).toBe(true);
-    expect(removeCanonicalMemoryProjection(root, 'mem-current')).toBe(false);
+    expect(await removeCanonicalMemoryProjection(root, 'mem-current')).toBe(true);
+    expect(await removeCanonicalMemoryProjection(root, 'mem-current')).toBe(false);
   });
 });
 
@@ -194,11 +194,11 @@ describe('exportMemoryVault — vault markdown legível (F-769)', () => {
     updatedAt: 1,
   });
 
-  it('gera nomes legíveis, INDEX por tipo, .gitignore e wikilinks de arquivo', () => {
+  it('gera nomes legíveis, INDEX por tipo, .gitignore e wikilinks de arquivo', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-vault-'));
     dirs.push(root);
 
-    const vaultRoot = exportMemoryVault(root, [
+    const vaultRoot = await exportMemoryVault(root, [
       input(
         'mem-aaaa1111-1111-4111-8111-111111111111',
         '# Regra do pool do PostgreSQL\n\nO pool vive em src/main/db/pool.ts e esgota com 9 panes.',
@@ -242,7 +242,7 @@ describe('exportMemoryVault — vault markdown legível (F-769)', () => {
     expect(pref).toContain('[[docs/cache.md]]');
   });
 
-  it('colhe arquivos gerados que saíram do conjunto e preserva markdown humano', () => {
+  it('colhe arquivos gerados que saíram do conjunto e preserva markdown humano', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-vault-reap-'));
     dirs.push(root);
     const first = input(
@@ -257,10 +257,10 @@ describe('exportMemoryVault — vault markdown legível (F-769)', () => {
       'note',
       'operator:note',
     );
-    const vaultRoot = exportMemoryVault(root, [first, second]);
+    const vaultRoot = await exportMemoryVault(root, [first, second]);
     fs.writeFileSync(path.join(vaultRoot, 'minha-nota.md'), '# Minha\n\nmanual');
 
-    exportMemoryVault(root, [first]);
+    await exportMemoryVault(root, [first]);
 
     const names = fs.readdirSync(vaultRoot).sort();
     expect(names).toContain('minha-nota.md');

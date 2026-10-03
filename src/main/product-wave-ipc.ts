@@ -149,14 +149,16 @@ export function operatorMemorySource(
   return missionProjectionSource(authorizedMission);
 }
 
-function canonicalMemoryView(sender: Electron.WebContents) {
+async function canonicalMemoryView(sender: Electron.WebContents) {
   requireFlag(
     FEATURE_FLAG_IDS.workspaceMemory,
     'feature.memory.workspaceMemory',
   );
   const { scope } = requireScopedRoot(sender);
   const store = getWorkspaceMemoryStore(scope);
-  store.ensureProjections();
+  // F-764: a reconciliação roda fora do event loop; espera também as
+  // gravações ainda na janela de coalescência.
+  await store.ensureProjections();
   return { scope, root: store.projectionRoot, store };
 }
 
@@ -441,9 +443,9 @@ export function registerProductWaveIpc(): void {
     return list;
   });
 
-  ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryList, (event) => {
+  ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryList, async (event) => {
     requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
-    const { root, store } = canonicalMemoryView(event.sender);
+    const { root, store } = await canonicalMemoryView(event.sender);
     // Origem e data vêm do SQLite canônico: a projeção Markdown nunca lê
     // provenance de volta (contrato de autoridade do nexus-memory).
     const metas = store.activeWorkspaceMetas();
@@ -460,7 +462,7 @@ export function registerProductWaveIpc(): void {
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryRemember, async (event, raw) => {
     requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
-    const { scope, root, store } = canonicalMemoryView(event.sender);
+    const { scope, root, store } = await canonicalMemoryView(event.sender);
     const input = z
       .object({
         title: z.string().trim().min(1).max(256),
@@ -491,6 +493,9 @@ export function registerProductWaveIpc(): void {
             importance: kind === 'mission' ? 4 : 3,
             source: operatorMemorySource(kind, missionId),
           });
+    // A projeção da gravação acima é agendada (F-764): espera ela chegar ao
+    // disco antes de devolver a nota.
+    await store.ensureProjections();
     const note = listMemoryNotes(root).find(
       (candidate) => candidate.id === retained.id,
     );
@@ -500,23 +505,23 @@ export function registerProductWaveIpc(): void {
     return note;
   });
 
-  ipcMain.handle(PRODUCT_WAVE_CHANNELS.memorySearch, (event, raw) => {
+  ipcMain.handle(PRODUCT_WAVE_CHANNELS.memorySearch, async (event, raw) => {
     requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
-    const { root } = canonicalMemoryView(event.sender);
+    const { root } = await canonicalMemoryView(event.sender);
     const { query } = z.object({ query: z.string().max(512) }).parse(raw);
     return searchMemory(root, query);
   });
 
-  ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryBacklinks, (event, raw) => {
+  ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryBacklinks, async (event, raw) => {
     requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
-    const { root } = canonicalMemoryView(event.sender);
+    const { root } = await canonicalMemoryView(event.sender);
     const { title } = z.object({ title: z.string().min(1).max(256) }).parse(raw);
     return backlinks(root, title);
   });
 
-  ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryComplete, (event, raw) => {
+  ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryComplete, async (event, raw) => {
     requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
-    const { root } = canonicalMemoryView(event.sender);
+    const { root } = await canonicalMemoryView(event.sender);
     const { prefix } = z.object({ prefix: z.string().max(128) }).parse(raw);
     return wikilinkCompletions(root, prefix);
   });
