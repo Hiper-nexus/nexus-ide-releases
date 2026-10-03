@@ -202,7 +202,7 @@ export class TapTimingBudget {
       window.maxSuppressedMs = Math.max(window.maxSuppressedMs, ms);
       return;
     }
-    const suppression =
+    const suppression: Record<string, number> =
       window && window.suppressed > 0
         ? {
             suppressed: window.suppressed,

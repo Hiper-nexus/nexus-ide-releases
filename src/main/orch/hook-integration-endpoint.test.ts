@@ -32,7 +32,7 @@ vi.mock('node:child_process', async (importOriginal) => {
   const watch = <F extends (...args: never[]) => unknown>(name: string, fn: F): F =>
     ((...args: unknown[]) => {
       if (syncProcessSpy.tracking) syncProcessSpy.calls.push(name);
-      return (fn as (...a: unknown[]) => unknown)(...args);
+      return Reflect.apply(fn, undefined, args);
     }) as unknown as F;
   const patched = {
     ...actual,

@@ -267,7 +267,9 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
   });
 
   it('F-802: helper somente leitura fora do Autopilot pede à rota só CLI que confina leitura', async () => {
-    const resolver = vi.fn(async () => ({ adapterId: 'codex', model: 'gpt-5.1-codex', effort: 'medium' }));
+    const resolver = vi.fn<NonNullable<Parameters<typeof setOperatorRouteResolver>[0]>>(
+      async () => ({ adapterId: 'codex', model: 'gpt-5.1-codex', effort: 'medium' }),
+    );
     setOperatorRouteResolver(resolver);
 
     harness.settings.squadCliPolicy = 'governed';
