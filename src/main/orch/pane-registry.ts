@@ -2988,6 +2988,8 @@ export function requestPaneSpawn(
       nativeOwnerKey,
     );
     if (!copied) {
+      if (options.missionId) return Promise.resolve({ requestId, ok: false,
+        error: 'resume_context_unavailable: conversa original indisponível; recusando pane sem contexto' });
       console.warn(
         `[pane-registry] resumeFromPaneId=${options.resumeFromPaneId}: nenhuma sessão do provider gravada; o pane novo nasce sem contexto`,
       );

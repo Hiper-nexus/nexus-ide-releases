@@ -1,4 +1,5 @@
 import { assertLicenseAccess } from '../license-enforcement';
+import { captureMissionPaneResume } from './mission-pane-resume';
 import { assertTabSupportsOperation, missionExecutionScope } from './mission-execution-scope';
 import {
   assertMcpInvocationCurrent,
@@ -1031,6 +1032,19 @@ const paneSpawnAfterTabMission = {
     // contra o que está instalado. `resume` fica de fora — trocar a CLI
     // perderia a conversa retomada.
     const resumeRef = str(args, 'resume');
+    const missionResume = ctx.missionId && resumeRef
+      ? captureMissionPaneResume(ctx.scope, ctx.missionId, resumePaneRefOf(resumeRef, ctx.scope), {
+          adapterId: str(args, 'adapterId'), model: str(args, 'model'),
+          accountId: str(args, 'accountId'), effort: str(args, 'effort'), cwd: str(args, 'cwd'),
+        }) : null;
+    let resumeBound = false;
+    if (missionResume) {
+      const callerInvocation = invocation;
+      invocation = { ...invocation, assertCurrentAuthority: () => {
+        assertMcpInvocationCurrent(callerInvocation);
+        if (!resumeBound) missionResume.assertCurrent();
+      } };
+    }
     const operatorExplicit =
       operatorHand && !resumeRef && !str(args, 'missionId') && str(args, 'adapterId') !== undefined;
     // Uso geral: um adapterId fixado SEM o operador ter digitado a CLI nesta
@@ -1264,7 +1278,7 @@ const paneSpawnAfterTabMission = {
       // prompt` pelo mesmo motor do nexus_route_task (sugestão livre, sem
       // RouteReservation). Fora da mão do operador o adapterId segue
       // obrigatório como sempre.
-      let adHocAdapterId = forceOperatorRoute ? undefined : str(args, 'adapterId');
+      let adHocAdapterId = missionResume?.spec.adapterId ?? (forceOperatorRoute ? undefined : str(args, 'adapterId'));
       if (forceOperatorRoute) {
         autoRoute = await timedOperatorRoute();
         adHocAdapterId = routeString(autoRoute, 'adapterId');
@@ -1370,8 +1384,8 @@ const paneSpawnAfterTabMission = {
         !resumeRef && squadAgent?.model
           ? applyNewestModelLine(adHocAdapterId, squadAgent.model)
           : squadAgent?.model;
-      const selectedAdHocModel = uniqueSealed?.model ?? adHocModel ?? squadTemplateModel;
-      const selectedAdHocEffort = uniqueSealed?.effort ?? adHocEffort ?? squadAgent?.effort;
+      const selectedAdHocModel = missionResume ? missionResume.spec.model : uniqueSealed?.model ?? adHocModel ?? squadTemplateModel;
+      const selectedAdHocEffort = missionResume ? missionResume.spec.effort : uniqueSealed?.effort ?? adHocEffort ?? squadAgent?.effort;
       // Spawn ad-hoc (sem agentName): modelo com warning de catálogo (ex.:
       // grok-4.5) só entra se veio de uma decisão real do nexus_route_task.
       // Omitir o model NÃO contorna o gate: sem model explícito, o que roda é
@@ -1404,7 +1418,7 @@ const paneSpawnAfterTabMission = {
       // A mão do operador escolhe o modelo: o aviso de catálogo (custo/faixa)
       // não vira parede `route_required` no pane dele. O gate de modelo
       // fantasma continua a jusante (resolveModelForSpawn).
-      if (!routeReservationId && !operatorHand) {
+      if (!routeReservationId && !operatorHand && !missionResume) {
         const gateError = adHocSpawnGateError(
           adHocAdapterId,
           gateModel,
@@ -1448,6 +1462,16 @@ const paneSpawnAfterTabMission = {
         scope: ctx.scope,
         resume: str(args, 'resume') ? true : undefined,
         resumeFromPaneId: resumePaneRefOf(str(args, 'resume'), ctx.scope),
+      };
+    }
+    if (missionResume) {
+      const original = missionResume.spec;
+      options = { ...options, adapterId: original.adapterId, model: original.model,
+        accountId: original.accountId, effort: original.effort, cwd: original.cwd,
+        executionScope: original.executionScope, resume: true, resumeFromPaneId: original.paneId,
+        readOnly: options.readOnly === true || original.readOnly === true,
+        allowedTools: attenuateTools(options.allowedTools ?? null, original.allowedTools === undefined ? [] : original.allowedTools),
+        allowedSkills: attenuateSkills(options.allowedSkills ?? null, original.allowedSkills === undefined ? [] : original.allowedSkills),
       };
     }
     if (autoRoute) {
@@ -1845,6 +1869,10 @@ const paneSpawnAfterTabMission = {
             resumeIsolatedWriterWorktree(ctx.scope, missionId, options.resumeFromPaneId) ??
             recoveryWorktree(missionId) ??
             undefined;
+          if (missionResume && !isolatedWriter &&
+              missionResume.spec.executionScope.rootRealPath !== checkoutRoot) {
+            throw new Error('resume_worktree_unavailable: worktree original indisponível; retomada preservada para recuperação');
+          }
           if (!isolatedWriter && !spawnReadOnly) {
             let blockedBy: string | undefined;
             if (args.isolatedWriter !== true) {
@@ -2186,11 +2214,15 @@ const paneSpawnAfterTabMission = {
           : undefined;
       let spawned: { paneId: string; sessionId: string };
       try {
+        if (missionResume && (options.executionScope ?? options.scope).rootRealPath !== missionResume.spec.executionScope.rootRealPath) {
+          throw new Error('resume_scope_changed: a retomada deve usar a pasta original');
+        }
         spawned = await spawnPaneAndMaybePrompt(options, {
           // Capture the PTY identity before missionPanes.record(). If that
           // durable write fails, the finally block must retain the reservation
           // instead of treating the spawn as if it never happened.
           onPaneCreated: (paneId) => {
+            resumeBound = true;
             spawnedWorkerPaneId = paneId;
           },
           invocation,

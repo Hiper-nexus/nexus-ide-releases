@@ -80,6 +80,23 @@ vi.mock('./pane-registry', () => ({
   waitForIdle: stubs.waitForIdle,
 }));
 vi.mock('./pane-authz', () => ({ authorizePaneAccess: vi.fn() }));
+
+vi.mock('../pty/pty-analysis-runtime', async original => {
+  const { PtyAnalysisCore } = await import('../pty/pty-analysis-core');
+  return { ...await original<typeof import('../pty/pty-analysis-runtime')>(),
+    watchPtyAnalysisSession: (_consumer: string, id: string, config: { adapterId?: string }, callback: (value: unknown) => void) => {
+      let seq = 0;
+      const core = new PtyAnalysisCore([], result => { for (const event of result.events) if (event.consumer === 'paste') callback(event.value); });
+      const feed = (body: object) => core.process({ sessionId: id, generation: 1, workerEpoch: 1, eventSeq: ++seq, observedAt: Date.now(), ...body } as Parameters<typeof core.process>[0]);
+      feed({ kind: 'bind', binding: { adapterId: config.adapterId } });
+      feed({ kind: 'arm', consumer: 'paste', registration: 1, config });
+      const tap = (sessionId: string, data: string) => { if (sessionId === id) feed({ kind: 'data', data }); };
+      stubs.dataTaps.push(tap);
+      return () => { const index = stubs.dataTaps.indexOf(tap); if (index >= 0) stubs.dataTaps.splice(index, 1); core.close(); };
+    },
+  };
+});
+
 vi.mock('../pty/pty-manager', () => ({
   getAgentSessionInfo: stubs.physicalSessionInfo,
   orchWriteSession: stubs.writeSession,
@@ -215,7 +232,8 @@ vi.mock('../adapters/adapter-registry', () => ({
   isAdapterInstalled: vi.fn(() => false),
 }));
 // Keep the spawn path independent of the host's real credential state.
-vi.mock('../pty/pre-spawn-probe', () => ({
+vi.mock('../pty/pre-spawn-probe', async original => ({
+  ...await original<typeof import('../pty/pre-spawn-probe')>(),
   assertPreSpawnProbe: stubs.preSpawnProbe,
 }));
 vi.mock('./mission-pane-store', () => ({ recordMissionPane: vi.fn() }));
@@ -232,7 +250,7 @@ vi.mock('./mission-pane-authority', () => ({
   sameMissionPaneAuthoritySeal: (left: unknown, right: unknown) =>
     JSON.stringify(left) === JSON.stringify(right),
 }));
-vi.mock('./legacy-handoff', () => ({ LEGACY_MARKER: 'marker' }));
+vi.mock('./legacy-handoff', async original => ({ ...await original<typeof import('./legacy-handoff')>(), LEGACY_MARKER: 'marker' }));
 vi.mock('./ponytail', () => ({ PONYTAIL_RULES: '' }));
 vi.mock('./engineering-charter', () => ({ ENGINEERING_CHARTER: '' }));
 vi.mock('./design-charter', () => ({ DESIGN_CHARTER: '' }));
@@ -253,6 +271,7 @@ import {
 } from './tool-util';
 import { startPhaseTimer } from '../observability/phase-timer';
 import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
+import { PreSpawnProbeError } from '../pty/pre-spawn-probe';
 import { getPaneAuthzInfo, pendingSpawnAttemptSession } from './pane-registry';
 import { onWorkerSpawnFailed } from './spawn-fail-events';
 import { adapterCircuitBreakers } from './circuit-breaker';
@@ -391,6 +410,20 @@ describe('agent pane workspace confinement', () => {
       failClosed: false,
       silentRemint: true,
     });
+  });
+
+  it('keeps the recorded model on resume instead of applying current model migrations', async () => {
+    await spawnPaneAndMaybePrompt({ adapterId: 'codex', model: 'gpt-5.4', resume: true, resumeFromPaneId: 'pane-old', scope });
+    expect(stubs.preSpawnProbe).toHaveBeenCalledWith('codex', expect.objectContaining({ model: 'gpt-5.4' }));
+    expect(stubs.requestPaneSpawn).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-5.4', resume: true }));
+  });
+
+  it('never substitutes another CLI when the resumed conversation has a credential failure', async () => {
+    const error = new PreSpawnProbeError({ code: 'missing-credential', adapterId: 'codex', hint: 'fixture' });
+    stubs.preSpawnProbe.mockRejectedValueOnce(error);
+    await expect(spawnPaneAndMaybePrompt({ adapterId: 'codex', resume: true, resumeFromPaneId: 'pane-old', scope })).rejects.toBe(error);
+    expect(stubs.preSpawnProbe).toHaveBeenCalledTimes(1);
+    expect(stubs.requestPaneSpawn).not.toHaveBeenCalled();
   });
 
   it('binds main-owned mission workers to the durable pane seal revision', async () => {
@@ -1403,7 +1436,7 @@ describe('agent prompt injection', () => {
         2,
         'session-1',
         '\r',
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
       await vi.advanceTimersByTimeAsync(400);
       await pending;
@@ -1412,19 +1445,19 @@ describe('agent prompt injection', () => {
         1,
         'session-1',
         '\x1b[200~line one\nline two\x1b[201~',
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
       expect(stubs.writeSession).toHaveBeenNthCalledWith(
         2,
         'session-1',
         '\r',
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
       expect(stubs.writeSession).toHaveBeenNthCalledWith(
         3,
         'session-1',
         '\r',
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
     } finally {
       vi.useRealTimers();
@@ -1446,13 +1479,13 @@ describe('agent prompt injection', () => {
         1,
         'session-1',
         expected,
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
       expect(stubs.writeSession).toHaveBeenNthCalledWith(
         2,
         'session-1',
         '\r',
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
     } finally {
       stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
@@ -1875,7 +1908,7 @@ describe('agent prompt injection', () => {
         2,
         'session-1',
         '\r',
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
       await vi.advanceTimersByTimeAsync(400);
       await pending;
@@ -1883,7 +1916,7 @@ describe('agent prompt injection', () => {
         3,
         'session-1',
         '\r',
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
     } finally {
       vi.useRealTimers();
@@ -1941,7 +1974,7 @@ describe('agent prompt injection', () => {
         2,
         'session-1',
         '\r',
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
 
       current = false;
@@ -2029,7 +2062,7 @@ describe('agent prompt injection', () => {
         2,
         'session-1',
         '\r',
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
 
       for (const tap of [...stubs.stateTaps]) tap('session-1', 'busy');
@@ -2068,7 +2101,7 @@ describe('agent prompt injection', () => {
         2,
         'session-1',
         '\r',
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
       stubs.sessionState.mockReturnValue('busy');
       for (const tap of [...stubs.stateTaps]) tap('session-1', 'busy');
@@ -2097,7 +2130,7 @@ describe('agent prompt injection', () => {
         1,
         'session-1',
         expect.not.stringMatching(/^\x1b\[200~/),
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
 
       for (const tap of [...stubs.dataTaps]) {
@@ -2110,7 +2143,7 @@ describe('agent prompt injection', () => {
         2,
         'session-1',
         '\r',
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
       stubs.sessionState.mockReturnValue('busy');
       for (const tap of [...stubs.stateTaps]) tap('session-1', 'busy');
@@ -2139,7 +2172,7 @@ describe('agent prompt injection', () => {
         2,
         'session-1',
         '\r',
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
 
       stubs.turnStartSequence = 1;
@@ -2183,13 +2216,13 @@ describe('agent prompt injection', () => {
         1,
         'session-1',
         '',
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
       expect(stubs.writeSession).toHaveBeenNthCalledWith(
         2,
         'session-1',
         '\r',
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
       expect(stubs.writeSession).toHaveBeenCalledTimes(2);
     } finally {
@@ -2256,7 +2289,7 @@ describe('agent prompt injection', () => {
       expect(stubs.writeSession).toHaveBeenCalledWith(
         'session-1',
         '',
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
       expect(stubs.writeSession).not.toHaveBeenCalledWith(
         'session-1',
@@ -2542,7 +2575,7 @@ describe('agent prompt injection', () => {
       expect(stubs.writeSession).toHaveBeenCalledWith(
         'session-1',
         expect.stringContaining('Implemente o spawn do Devin.'),
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
       expect(onPromptAccepted).toHaveBeenCalledOnce();
     } finally {
@@ -2597,7 +2630,7 @@ describe('agent prompt injection', () => {
       expect(stubs.writeSession).toHaveBeenCalledWith(
         'session-1',
         'build the feature',
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
     } finally {
       cliPromptAutoResponder.clear();
@@ -2625,7 +2658,7 @@ describe('agent prompt injection', () => {
       }) as typeof stubs.writeSession);
       await vi.advanceTimersByTimeAsync(2_000);
       await expect(pending).resolves.toBe(true);
-      expect(stubs.writeSession).toHaveBeenCalledWith('session-1', 'revise o diff', { markInputBusy: false });
+      expect(stubs.writeSession).toHaveBeenCalledWith('session-1', 'revise o diff', expect.objectContaining({ markInputBusy: false }));
     } finally {
       vi.useRealTimers();
     }
@@ -2723,7 +2756,7 @@ describe('agent prompt injection', () => {
       expect(stubs.writeSession).toHaveBeenCalledWith(
         'session-1',
         'build the feature',
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
     } finally {
       vi.useRealTimers();
@@ -2767,7 +2800,7 @@ describe('agent prompt injection', () => {
       expect(stubs.writeSession).toHaveBeenCalledWith(
         'session-1',
         'build the feature',
-        { markInputBusy: false },
+        expect.objectContaining({ markInputBusy: false }),
       );
     } finally {
       vi.useRealTimers();

@@ -20,6 +20,7 @@ const h = vi.hoisted(() => ({
   mission: {} as Record<string, unknown>,
   parents: {} as Record<string, string>,
   handoffs: {} as Record<string, { sessionId?: string }>,
+  resumeRecords: new Map<string, Record<string, unknown>>(),
 }));
 vi.mock('./tool-util', async (original) => ({
   ...(await original<typeof import('./tool-util')>()),
@@ -44,8 +45,12 @@ vi.mock('./project-domain-store-registry', () => ({
   getProjectDomainStores: () => ({
     missions: { get: () => h.mission },
     handoffs: { get: (id: string) => h.handoffs[id] ?? null },
-    missionPanes: { list: () => h.panes.map((p) => ({ ...p, role: 'worker' })) },
+    missionPanes: { list: () => h.panes.map((p) => ({ ...p, role: 'worker' })), findByPaneId: (id: string) => h.resumeRecords.get(id) ?? null },
   }),
+}));
+vi.mock('../persistence/provider-session-store', async original => ({
+  ...(await original<typeof import('../persistence/provider-session-store')>()),
+  getProviderPaneSession: (_scope: unknown, id: string) => h.resumeRecords.has(id) ? { key: 'session_id', id: `conversation-${id}` } : null,
 }));
 vi.mock('./task-dispatch-authority', () => ({ isTaskQueueManagedMission: () => false }));
 const traceHarness = vi.hoisted(() => ({ events: [] as Array<Record<string, unknown>> }));
@@ -88,6 +93,7 @@ beforeEach(() => {
   h.panes = [];
   h.parents = {};
   h.handoffs = {};
+  h.resumeRecords.clear();
   temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-pane-writer-')));
   const root = path.join(temp, 'repo');
   fs.mkdirSync(root);
@@ -110,6 +116,10 @@ beforeEach(() => {
   h.spawn.mockImplementation(async (options: SpawnToolOptions, hooks: { onPaneCreated?: (pane: string, session: string) => void }) => {
     const paneId = `pane-${h.panes.length}`;
     const sessionId = `session-${paneId}`;
+    h.resumeRecords.set(paneId, { id: `composition-${paneId}`, paneId, missionId: options.missionId,
+      adapterId: options.adapterId, model: options.model, accountId: options.accountId, effort: options.effort,
+      cwd: options.cwd, scope: options.scope, executionScope: options.executionScope ?? options.scope,
+      readOnly: options.readOnly, allowedTools: options.allowedTools ?? null, allowedSkills: options.allowedSkills ?? null });
     h.panes.push({ paneId, sessionId, kind: 'cli-agent', title: 'worker', state: 'busy', role: 'worker',
       missionId: options.missionId, scope: options.scope, executionScope: options.executionScope ?? options.scope,
       readOnly: options.readOnly });

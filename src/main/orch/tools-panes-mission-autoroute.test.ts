@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
     _options: Record<string, unknown>,
     hooks?: {
       onPaneCreated?: (p: string) => void;
+      invocation?: { assertCurrentAuthority?: () => void };
       onPendingMissionPane?: (recorded: Promise<'recorded' | 'no-session' | 'unrecorded'>) => void;
     },
   ) => {
@@ -26,6 +27,8 @@ const h = vi.hoisted(() => ({
   consumeRouteReservation: vi.fn(),
   mission: {} as Record<string, unknown>,
   panes: [] as Array<Record<string, unknown>>,
+  resumeSpec: null as Record<string, unknown> | null,
+  providerSession: vi.fn((..._args: unknown[]): unknown => ({ key: 'session_id', id: 'provider-conversation' })),
   // F-797: expor o navegador ao worker não pode abrir aba nenhuma.
   requestBrowserPane: vi.fn(async () => ({ requestId: 'never', ok: false, error: 'não deveria ser chamado' })),
 }));
@@ -72,8 +75,12 @@ vi.mock('./project-domain-store-registry', () => ({
       assertRouteReservation: h.assertRouteReservation,
       consumeRouteReservation: h.consumeRouteReservation,
     },
-    missionPanes: { list: () => [{ paneId: 'pane-w', role: 'worker' }] },
+    missionPanes: { list: () => [{ paneId: 'pane-w', role: 'worker' }], findByPaneId: () => h.resumeSpec },
   }),
+}));
+vi.mock('../persistence/provider-session-store', async original => ({
+  ...(await original<typeof import('../persistence/provider-session-store')>()),
+  getProviderPaneSession: (...args: unknown[]) => h.providerSession(...args),
 }));
 vi.mock('./task-dispatch-authority', () => ({ isTaskQueueManagedMission: () => false }));
 vi.mock('../adapters/adapter-registry', async (original) => ({
@@ -130,6 +137,8 @@ beforeEach(() => {
   h.stdinWritable.mockReturnValue(true);
   h.jevKey.value = false;
   h.panes = [];
+  h.resumeSpec = null;
+  h.providerSession.mockReturnValue({ key: 'session_id', id: 'provider-conversation' });
   h.mission = {
     id: 'mission-a', title: 'Feature', description: '', status: 'running', squadId: 'squad',
     intentContract: { ...compileIntentContract({ goal: 'Feature', intentVersion: 1 }), maxWorkers: 8 },
@@ -137,6 +146,48 @@ beforeEach(() => {
 });
 
 describe('nexus_pane_spawn dentro da missão sem adapterId', () => {
+  const resumeSpec = () => ({
+    id: 'composition-old', paneId: 'pane-old', missionId: ctx.missionId,
+    adapterId: 'muse', model: 'muse-recorded-model', accountId: 'account-recorded', effort: 'high',
+    title: 'Original', role: 'worker', scope: ctx.scope, executionScope: ctx.scope,
+    cwd: ctx.scope.rootRealPath, readOnly: true, allowedTools: null, allowedSkills: null, createdAt: 1,
+  });
+  it('resumes a mission Muse pane without routing and preserves its recorded runtime', async () => {
+    h.resumeSpec = resumeSpec();
+    h.mission.intentContract = { ...(h.mission.intentContract as object), freeAgentChoice: true };
+    const route = vi.fn(); setOperatorRouteResolver(route);
+    await paneSpawnTool.handler({ resume: 'pane-old', prompt: 'continue' }, ctx);
+    expect(route).not.toHaveBeenCalled();
+    expect(h.spawn.mock.calls[0][0]).toMatchObject({ adapterId: 'muse', model: 'muse-recorded-model',
+      accountId: 'account-recorded', effort: 'high', readOnly: true, resumeFromPaneId: 'pane-old' });
+  });
+  it.each(['missing', 'foreign-mission', 'foreign-root', 'missing-conversation', 'mismatched-cli'])('refuses %s resume without starting a fresh pane', async scenario => {
+    h.resumeSpec = resumeSpec();
+    if (scenario === 'missing') h.resumeSpec = null;
+    if (scenario === 'foreign-mission') h.resumeSpec!.missionId = 'other';
+    if (scenario === 'foreign-root') h.resumeSpec!.scope = { ...ctx.scope, rootRealPath: '/other' };
+    if (scenario === 'missing-conversation') h.providerSession.mockReturnValue(null);
+    const route = vi.fn(); setOperatorRouteResolver(route);
+    await expect(paneSpawnTool.handler({ resume: 'pane-old', ...(scenario === 'mismatched-cli' ? { adapterId: 'codex' } : {}) }, ctx)).rejects.toThrow(/resume/);
+    expect(route).not.toHaveBeenCalled(); expect(h.spawn).not.toHaveBeenCalled();
+  });
+  it('rechecks the original conversation after asynchronous preparation', async () => {
+    h.resumeSpec = resumeSpec();
+    h.mission.intentContract = { ...(h.mission.intentContract as object), freeAgentChoice: true };
+    h.spawn.mockImplementationOnce(async (_options, hooks) => {
+      await Promise.resolve();
+      h.providerSession.mockReturnValue({ key: 'session_id', id: 'replacement' });
+      hooks!.invocation!.assertCurrentAuthority!();
+      return { paneId: 'pane-w', sessionId: 'session-w' };
+    });
+    await expect(paneSpawnTool.handler({ resume: 'pane-old' }, ctx)).rejects.toThrow('resume_authority_changed');
+  });
+  it('never allocates a replacement when the original isolated worktree cannot be resumed', async () => {
+    h.resumeSpec = { ...resumeSpec(), cwd: '/missing-original', executionScope: { ...ctx.scope, rootRealPath: '/missing-original' } };
+    h.mission.intentContract = { ...(h.mission.intentContract as object), freeAgentChoice: true };
+    await expect(paneSpawnTool.handler({ resume: 'pane-old' }, ctx)).rejects.toThrow('resume_worktree_unavailable');
+    expect(h.spawn).not.toHaveBeenCalled();
+  });
   it('roteia pela task da missão e consome a RouteReservation devolvida', async () => {
     const resolver = vi.fn(async () => ({
       adapterId: 'codex', model: 'gpt-5.4', effort: 'high', routeReservationId: 'rr-1', tier: 'medium',
@@ -271,6 +322,7 @@ describe('nexus_pane_spawn dentro da missão sem adapterId', () => {
   });
 
   it('pin com resume é honrado literalmente, sem rotear', async () => {
+    h.resumeSpec = { ...resumeSpec(), adapterId: 'claude' };
     h.mission = {
       ...h.mission,
       squadId: undefined,

@@ -1538,8 +1538,9 @@ function normalizeAgentModel(
   failClosedOnUnusable: boolean,
   /** Kimi: canal e perfil do processo que vai subir (ver `usesKimiTransientModel`). */
   kimi: { readonly transientModel: boolean; readonly kimiCodeHome?: string } = { transientModel: false },
+  preserveVersion = false,
 ): string {
-  const migrated = migrateModelId(model) ?? model;
+  const migrated = preserveVersion ? model : migrateModelId(model) ?? model;
   if (adapter.id === "kimi") {
     const alias =
       migrated === "kimi-for-coding" ? "kimi-code/kimi-for-coding" : migrated;
@@ -1757,6 +1758,7 @@ export function spawnAgentSession(
         transientModel: adapter.id === "kimi" && Boolean(overrides.keyEnv?.KIMI_MODEL_NAME),
         kimiCodeHome: overrides.keyEnv?.KIMI_CODE_HOME,
       },
+      req.resume === true,
     ),
     overrides.modelAliases,
   );

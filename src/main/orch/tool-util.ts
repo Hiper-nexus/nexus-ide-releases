@@ -1610,9 +1610,10 @@ export async function spawnPaneAndMaybePrompt(
   const runnableModels =
     discoverCliModels().get(options.adapterId) ?? adapter.models.list;
   const rawModel = options.model?.trim();
-  const sealedModel = migrateModelId(rawModel);
+  const preservingResume = Boolean(options.resume || options.resumeFromPaneId);
+  const sealedModel = preservingResume ? rawModel : migrateModelId(rawModel);
   let effectiveModel = sealedModel ?? options.model;
-  if (sealedModel) {
+  if (sealedModel && !preservingResume) {
     if (
       adapter.models.list.includes(sealedModel) ||
       runnableModels.includes(sealedModel)
@@ -1666,6 +1667,8 @@ export async function spawnPaneAndMaybePrompt(
     // (shared/seat-chains, mesma regra do remint do revisor) em vez de morrer
     // silencioso e prender a missão num pane que nunca nasce.
     if (!isCredentialProbeFailure(error)) throw error;
+    // A successor CLI has no authority over the original conversation.
+    if (preservingResume) throw error;
     const successor = await settleSeatAfterCredentialFailure({
       failedCli: activeAdapterId,
       probe: (cli) =>

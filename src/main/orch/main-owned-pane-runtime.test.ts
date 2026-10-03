@@ -13,6 +13,7 @@ const deps = vi.hoisted(() => ({
   acquirePermit: vi.fn(async (_adapterId: string): Promise<() => void> => () => {}),
   liveClaudeAccounts: vi.fn(() => [] as string[]),
   settle: vi.fn<(adapter: unknown) => Promise<void> | null | undefined>(),
+  copyConversation: vi.fn(() => true),
 }));
 
 vi.mock('../adapters/adapter-registry', () => ({
@@ -40,6 +41,10 @@ vi.mock('../adapters/managed-credentials', async (importOriginal) => ({
   trackManagedSession: deps.track,
 }));
 vi.mock('../persistence/account-choice-receipts', () => ({ recordAccountChoiceReceipt: vi.fn() }));
+vi.mock('../persistence/provider-session-store', async original => ({
+  ...await original<typeof import('../persistence/provider-session-store')>(),
+  copyProviderPaneSession: deps.copyConversation,
+}));
 vi.mock('../pty/pty-manager', () => ({
   getAgentSessionInfo: vi.fn(), getSessionState: () => 'spawning', spawnMainOwnedAgentSession: deps.spawn,
   liveClaudeMissionAccountIds: deps.liveClaudeAccounts,
@@ -83,6 +88,23 @@ beforeEach(() => {
   deps.adapterId = 'codex';
   deps.authoritative.mockResolvedValue({ ok: true, overrides });
   deps.acquirePermit.mockReset().mockResolvedValue(() => {});
+  deps.copyConversation.mockReturnValue(true);
+});
+
+describe('exact headless mission resume', () => {
+  it('copies the recorded conversation and sends the exact-resume flag to the physical PTY', async () => {
+    const result = await spawnMainOwnedMissionPaneAsync({ ...options, resume: true, resumeFromPaneId: 'pane-original' }, hooks);
+    expect(result.ok).toBe(true);
+    expect(deps.copyConversation).toHaveBeenCalledWith(options.scope, 'pane-original', result.paneId, 'codex', undefined, undefined);
+    expect(deps.spawn).toHaveBeenCalledWith(expect.objectContaining({ resume: true }), expect.anything(), expect.anything(),
+      expect.objectContaining({ context: expect.objectContaining({ exactResumeRequired: true }) }));
+  });
+  it('never creates a fresh process when the original conversation cannot be copied', async () => {
+    deps.copyConversation.mockReturnValue(false);
+    await expect(spawnMainOwnedMissionPaneAsync({ ...options, resume: true, resumeFromPaneId: 'pane-original' }, hooks))
+      .resolves.toMatchObject({ ok: false, error: expect.stringContaining('resume_context_unavailable') });
+    expect(deps.spawn).not.toHaveBeenCalled();
+  });
 });
 
 describe('F-790: spawn do Codex aguarda a sonda de versão (teto curto)', () => {

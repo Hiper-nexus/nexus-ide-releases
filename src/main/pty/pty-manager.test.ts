@@ -3122,6 +3122,18 @@ describe("cli-agent spawn argv hardening", () => {
     } finally { setResumeSessionLookup(null); fs.rmSync(temp, { recursive: true, force: true }); }
   });
 
+  it('keeps the recorded model in the physical resume argv', () => {
+    const h = fakeHost(); setPtyHost(h.host); setResumeSessionLookup(() => 'provider-exact');
+    const base = makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }, { resumeIdArgs: ['--resume'] });
+    const adapter = { ...base, models: { flag: '--model', list: ['gpt-5.4'], default: 'gpt-5.4' },
+      spawn: { ...base.spawn, interactive: ['test-cli', '--model', '{{MODEL}}'] } };
+    try {
+      const result = spawnAgentSession(fakeWc(), { kind: 'cli-agent', paneId: 'pane-preserve-model', resume: true, model: 'gpt-5.4', cols: 80, rows: 24 }, adapter, {}, trustedSpawn());
+      expect(h.specFor(result.sessionId).args).toEqual(expect.arrayContaining(['--model', 'gpt-5.4', '--resume', 'provider-exact']));
+      orchKillSession(result.sessionId);
+    } finally { setResumeSessionLookup(null); }
+  });
+
   it("opens a fresh direct-user session when no exact session exists", () => {
     const h = fakeHost();
     setPtyHost(h.host);

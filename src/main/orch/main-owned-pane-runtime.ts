@@ -7,6 +7,8 @@ import type {
 } from "../../shared/orch-types";
 import type { ProjectExecutionScope } from "../../shared/types";
 import type { SpawnRouteInfo } from '../../shared/spawn-route';
+import { copyProviderPaneSession } from '../persistence/provider-session-store';
+import { currentMimoSessionOwnerKey } from '../adapters/mimo-session-owner';
 import {
   getAdapter,
   isAdapterInstalled,
@@ -695,6 +697,15 @@ export function spawnMainOwnedMissionPane(
     };
   }
   const cwd = resolveCwdForScope(executionScope, options.cwd);
+  let exactResumeRequired = false;
+  if (options.resumeFromPaneId) {
+    const nativeOwnerKey = adapter.id === 'mimo-code' && !selectedAccountId
+      ? currentMimoSessionOwnerKey(preparedOverrides.keyEnv.XIAOMI_API_KEY) ?? undefined : undefined;
+    exactResumeRequired = copyProviderPaneSession(options.scope, options.resumeFromPaneId,
+      paneId, adapter.id, selectedAccountId, nativeOwnerKey);
+    if (!exactResumeRequired) return { requestId, ok: false,
+      error: 'resume_context_unavailable: conversa original indisponível; recusando pane sem contexto' };
+  }
   const context = Object.freeze({
     operatorParentSessionId: options.operatorParentSessionId,
     missionId: options.missionId,
@@ -711,6 +722,7 @@ export function spawnMainOwnedMissionPane(
     nativeReadOnly,
     operatorOpened: options.operatorOpened === true || undefined,
     authoritySeal: options.authoritySeal,
+    ...(exactResumeRequired ? { exactResumeRequired: true as const } : {}),
   });
   const spawnContext = Object.freeze({
     ...context,
@@ -744,6 +756,8 @@ export function spawnMainOwnedMissionPane(
         effort: options.effort,
         cwd,
         missionId: options.missionId,
+        resume: Boolean(options.resume),
+        resumeLatestOnly: exactResumeRequired ? false : options.resumeLatestOnly,
       },
       adapter,
       preparedOverrides,
@@ -864,6 +878,8 @@ export async function spawnMainOwnedMissionPaneAsync(
       : spawnMainOwnedMissionPane(options, hooks);
   }
   const requestId = makeId("orchspawn");
+  if (options.resume || options.resumeFromPaneId) return { requestId, ok: false,
+    error: 'resume_transport_unavailable: este transporte ACP não implementa retomada da conversa original' };
   const authoritySeal = options.authoritySeal;
   if (!authoritySeal) {
     return {
