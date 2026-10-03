@@ -20,11 +20,47 @@ let store: ScopedMissionStore;
 let missionId = '';
 let scope: ReturnType<typeof testProjectScope>;
 
-function git(...args: string[]): string {
-  return execFileSync('git', ['-C', repo, ...args], {
+/**
+ * F-816: o fixture não pode depender da máquina. Sem isso, o `git init` criava
+ * `master` onde `init.defaultBranch` não está configurado (e o teste assumia
+ * `main`), e um `~/.gitconfig` com `url.insteadOf`, assinatura ou autor próprio
+ * mudava o resultado. O env abaixo vale para o git do FIXTURE; o runner de
+ * produção descarta `GIT_*` (git-command.ts) e lê o config global pelo HOME,
+ * por isso o `beforeEach` também aponta HOME/XDG para um diretório vazio.
+ */
+const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null';
+const HERMETIC_GIT_ENV: NodeJS.ProcessEnv = {
+  GIT_CONFIG_GLOBAL: NULL_DEVICE,
+  GIT_CONFIG_NOSYSTEM: '1',
+  GIT_TERMINAL_PROMPT: '0',
+  GIT_AUTHOR_NAME: 'Nexus Fixture',
+  GIT_AUTHOR_EMAIL: 'fixture@example.invalid',
+  GIT_COMMITTER_NAME: 'Nexus Fixture',
+  GIT_COMMITTER_EMAIL: 'fixture@example.invalid',
+};
+const ISOLATED_HOME_VARS = ['HOME', 'USERPROFILE', 'XDG_CONFIG_HOME'] as const;
+const savedHomeEnv: Partial<Record<(typeof ISOLATED_HOME_VARS)[number], string | undefined>> = {};
+
+function runGit(cwd: string, ...args: string[]): string {
+  return execFileSync('git', ['-C', cwd, ...args], {
     stdio: ['ignore', 'pipe', 'pipe'],
     encoding: 'utf8',
+    env: { ...process.env, ...HERMETIC_GIT_ENV },
   }).trim();
+}
+
+function git(...args: string[]): string {
+  return runGit(repo, ...args);
+}
+
+/** Outro desenvolvedor clona o remoto, commita `file` e publica no `main` dele. */
+function pushFromOtherClone(remoteDir: string, name: string, file: string, message: string): void {
+  const otherDir = path.join(dir, name);
+  runGit(dir, 'clone', '-q', remoteDir, otherDir);
+  fs.writeFileSync(path.join(otherDir, file), message);
+  runGit(otherDir, 'add', file);
+  runGit(otherDir, '-c', 'user.name=Other Dev', '-c', 'user.email=other@example.invalid', 'commit', '-qm', message);
+  runGit(otherDir, 'push', '-q', 'origin', 'main');
 }
 
 function hookCtx(overrides: Partial<AgentGateContext> = {}) {
@@ -51,7 +87,13 @@ beforeEach(() => {
   dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-hook-integration-')));
   repo = path.join(dir, 'repo');
   fs.mkdirSync(repo);
-  git('init', '-q');
+  const isolatedHome = path.join(dir, 'home');
+  fs.mkdirSync(isolatedHome);
+  for (const name of ISOLATED_HOME_VARS) {
+    savedHomeEnv[name] = process.env[name];
+    process.env[name] = isolatedHome;
+  }
+  git('init', '-q', '-b', 'main');
   git('config', 'user.name', 'Nexus Fixture');
   git('config', 'user.email', 'fixture@example.invalid');
   fs.writeFileSync(path.join(repo, 'a.txt'), 'a');
@@ -68,6 +110,10 @@ beforeEach(() => {
 
 afterEach(() => {
   runtime.closeAll();
+  for (const name of ISOLATED_HOME_VARS) {
+    if (savedHomeEnv[name] === undefined) delete process.env[name];
+    else process.env[name] = savedHomeEnv[name];
+  }
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -158,7 +204,7 @@ describe('POST /hook/integration', () => {
   describe('sincronização fast-forward e direção do merge (F-778)', () => {
     function setupRemote(remoteName = 'origin') {
       const remoteDir = path.join(dir, `${remoteName}.git`);
-      execFileSync('git', ['clone', '--bare', repo, remoteDir], { stdio: 'ignore' });
+      runGit(dir, 'clone', '-q', '--bare', repo, remoteDir);
       git('remote', 'add', remoteName, remoteDir);
       git('fetch', remoteName, '-q');
       git('branch', `--set-upstream-to=${remoteName}/main`, 'main');
@@ -177,14 +223,7 @@ describe('POST /hook/integration', () => {
 
     it('atrás do upstream com --ff-only passa sem exigir veredito', async () => {
       const remoteDir = setupRemote('origin');
-      const otherDir = path.join(dir, 'other-clone');
-      execFileSync('git', ['clone', remoteDir, otherDir, '-q'], { stdio: 'ignore' });
-      execFileSync('git', ['-C', otherDir, 'config', 'user.name', 'Other Dev'], { stdio: 'ignore' });
-      execFileSync('git', ['-C', otherDir, 'config', 'user.email', 'other@example.invalid'], { stdio: 'ignore' });
-      fs.writeFileSync(path.join(otherDir, 'upstream.txt'), 'upstream content');
-      execFileSync('git', ['-C', otherDir, 'add', 'upstream.txt'], { stdio: 'ignore' });
-      execFileSync('git', ['-C', otherDir, 'commit', '-qm', 'upstream commit'], { stdio: 'ignore' });
-      execFileSync('git', ['-C', otherDir, 'push', 'origin', 'main', '-q'], { stdio: 'ignore' });
+      pushFromOtherClone(remoteDir, 'other-clone', 'upstream.txt', 'upstream commit');
       git('fetch', 'origin', '-q');
 
       const result = await handleHookIntegrationRequest(
@@ -213,14 +252,7 @@ describe('POST /hook/integration', () => {
       });
 
       // Divergente: commit no remote também
-      const otherDir = path.join(dir, 'other-divergent');
-      execFileSync('git', ['clone', remoteDir, otherDir, '-q'], { stdio: 'ignore' });
-      execFileSync('git', ['-C', otherDir, 'config', 'user.name', 'Other Dev'], { stdio: 'ignore' });
-      execFileSync('git', ['-C', otherDir, 'config', 'user.email', 'other@example.invalid'], { stdio: 'ignore' });
-      fs.writeFileSync(path.join(otherDir, 'remote-div.txt'), 'remote div');
-      execFileSync('git', ['-C', otherDir, 'add', 'remote-div.txt'], { stdio: 'ignore' });
-      execFileSync('git', ['-C', otherDir, 'commit', '-qm', 'remote div commit'], { stdio: 'ignore' });
-      execFileSync('git', ['-C', otherDir, 'push', 'origin', 'main', '-q'], { stdio: 'ignore' });
+      pushFromOtherClone(remoteDir, 'other-divergent', 'remote-div.txt', 'remote div commit');
       git('fetch', 'origin', '-q');
 
       const resultDiv = await handleHookIntegrationRequest(
@@ -252,7 +284,7 @@ describe('POST /hook/integration', () => {
     it('alvo diferente do upstream exige gate', async () => {
       setupRemote('origin');
       const upstreamDir = path.join(dir, 'upstream.git');
-      execFileSync('git', ['clone', '--bare', repo, upstreamDir], { stdio: 'ignore' });
+      runGit(dir, 'clone', '-q', '--bare', repo, upstreamDir);
       git('remote', 'add', 'upstream', upstreamDir);
       git('fetch', 'upstream', '-q');
 
