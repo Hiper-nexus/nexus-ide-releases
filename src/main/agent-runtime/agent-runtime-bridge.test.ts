@@ -83,8 +83,8 @@ describe('agent-runtime-bridge production seam', () => {
     expect(recordCrashBreadcrumb).toHaveBeenCalled();
   });
 
-  it('ingestAgentHookStatus routes through listener module to pane state', () => {
-    const result = ingestAgentHookStatus('pty-1', {
+  it('ingestAgentHookStatus routes through listener module to pane state', async () => {
+    const result = await ingestAgentHookStatus('pty-1', {
       state: 'done',
       prompt: 'ship it',
       agentType: 'codex',

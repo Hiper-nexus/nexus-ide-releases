@@ -8,6 +8,20 @@ import { validateMimoRootSession, type MimoRuntime, type MimoSessionBinding } fr
 const runtimes = new Map<string, { runtime: MimoRuntime; token: string; stop: () => void; binding?: MimoSessionBinding }>();
 type Listener = (ptySessionId: string, binding: MimoSessionBinding | null) => void;
 const listeners = new Set<Listener>();
+const proofs = new WeakMap<MimoSessionBinding, object>();
+
+function sameLiveAuthority(ptySessionId: string, runtime: MimoRuntime): boolean {
+  const agent = getAgentSessionInfo(ptySessionId);
+  if (!agent || agent.adapterId !== 'mimo-code' || agent.paneId !== runtime.paneId ||
+    agent.accountId !== runtime.accountId || !sameProjectScope(agent.scope, runtime.scope)) return false;
+  try { return fs.realpathSync(agent.cwd) === runtime.cwd; } catch { return false; }
+}
+
+/** A result cannot survive runtime replacement, exit, account or scope changes. */
+export function isMimoSessionBindingCurrent(binding: MimoSessionBinding): boolean {
+  const entry = runtimes.get(binding.ptySessionId);
+  return !!entry && proofs.get(binding) === entry && sameLiveAuthority(binding.ptySessionId, entry.runtime);
+}
 
 function notify(ptySessionId: string, binding: MimoSessionBinding | null): void {
   for (const listener of listeners) {
@@ -37,29 +51,29 @@ export function registerMimoRuntime(runtime: MimoRuntime, token: string): void {
 }
 
 /** Prove the exact root and checkout before status or resume state may change. */
-export function validateMimoSessionBinding(ptySessionId: string, providerSessionId: string, token?: string): MimoSessionBinding | null {
+export async function validateMimoSessionBinding(ptySessionId: string, providerSessionId: string, token?: string): Promise<MimoSessionBinding | null> {
   const entry = runtimes.get(ptySessionId);
   if (!entry || !token || !/^[a-f0-9]{64}$/i.test(token) ||
     !timingSafeEqual(Buffer.from(token), Buffer.from(entry.token))) return null;
-  const agent = getAgentSessionInfo(ptySessionId);
-  if (!agent || agent.adapterId !== 'mimo-code' ||
-    agent.paneId !== entry.runtime.paneId || agent.accountId !== entry.runtime.accountId ||
-    !sameProjectScope(agent.scope, entry.runtime.scope)) return null;
+  if (!sameLiveAuthority(ptySessionId, entry.runtime)) return null;
   try {
-    if (fs.realpathSync(agent.cwd) !== entry.runtime.cwd ||
-      !validateMimoRootSession(entry.runtime, providerSessionId) ||
-      !providerSessionAccountIsCompatible(agent.scope, agent.adapterId, providerSessionId, agent.accountId, entry.runtime.nativeOwnerKey)) return null;
+    if (!await validateMimoRootSession(entry.runtime, providerSessionId) ||
+      runtimes.get(ptySessionId) !== entry || !sameLiveAuthority(ptySessionId, entry.runtime) ||
+      !providerSessionAccountIsCompatible(entry.runtime.scope, 'mimo-code', providerSessionId,
+        entry.runtime.accountId, entry.runtime.nativeOwnerKey)) return null;
   } catch { return null; }
   for (const [otherPty, other] of runtimes) {
     if (otherPty !== ptySessionId && other.binding?.providerSessionId === providerSessionId &&
       other.runtime.databasePath === entry.runtime.databasePath) return null;
   }
-  return Object.freeze({ ...entry.runtime, providerSessionId });
+  const binding = Object.freeze({ ...entry.runtime, providerSessionId });
+  proofs.set(binding, entry);
+  return binding;
 }
 
 export function publishMimoSessionBinding(binding: MimoSessionBinding): void {
   const entry = runtimes.get(binding.ptySessionId);
-  if (!entry) return;
+  if (!entry || !isMimoSessionBindingCurrent(binding)) return;
   entry.binding = binding;
   notify(binding.ptySessionId, binding);
 }

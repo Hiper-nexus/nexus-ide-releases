@@ -2,7 +2,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, expect, it, vi } from 'vitest';
+import { prepareMimoWorker } from '../usage/__tests__/mimo-worker-fixture';
+import { stopMimoValidationReader } from '../usage/mimo-worker-reader';
 const deps = vi.hoisted(() => ({ agent: null as any, db: null as any }));
 vi.mock('../pty/pty-manager', () => ({ getAgentSessionInfo: () => deps.agent, tapSessionExit: () => () => undefined }));
 vi.mock('../persistence/db', () => ({ getDb: () => deps.db }));
@@ -13,8 +15,10 @@ import { mimoStatusHookSource } from './mimo-hook-source';
 import { getProviderPaneSession } from '../persistence/provider-session-store';
 
 let root = '';
+beforeAll(prepareMimoWorker);
 afterEach(async () => {
   unregisterMimoRuntime('pty-a'); await stopAgentHookHttpServer();
+  await stopMimoValidationReader();
   deps.db?.close(); deps.db = null; deps.agent = null;
   vi.unstubAllEnvs();
   if (root) fs.rmSync(root, { recursive: true, force: true });

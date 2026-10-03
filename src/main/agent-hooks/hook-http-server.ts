@@ -184,7 +184,7 @@ async function handleRequest(
           ? (payload as { sessionId: string }).sessionId
           : '';
     const mimoToken = req.headers['x-nexus-mimo-session-token'];
-    result = ingestAgentHookStatus(sessionId, payload, {
+    result = await ingestAgentHookStatus(sessionId, payload, {
       pathname: url.pathname,
       ...(typeof mimoToken === 'string' ? { mimoToken } : {}),
     });
@@ -192,7 +192,7 @@ async function handleRequest(
     // Form-urlencoded (managed scripts).
     const params = new URLSearchParams(body);
     const sessionId = params.get('paneKey') ?? params.get('sessionId') ?? '';
-    result = ingestAgentHookFormBody(sessionId, body, url.pathname);
+    result = await ingestAgentHookFormBody(sessionId, body, url.pathname);
   }
 
   // Explicitly refuse evidence authorization in the HTTP response surface.

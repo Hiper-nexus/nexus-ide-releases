@@ -18,7 +18,8 @@ import {
 import { publishAgentHookActivity } from '../agent-runtime/agent-runtime-bridge';
 import { getAgentSessionInfo } from '../pty/pty-manager';
 import { saveProviderPaneSession } from '../persistence/provider-session-store';
-import { publishMimoSessionBinding, validateMimoSessionBinding } from './mimo-session-registry';
+import { isMimoSessionBindingCurrent, publishMimoSessionBinding, validateMimoSessionBinding } from './mimo-session-registry';
+import type { MimoSessionBinding } from '../usage/mimo-scanner';
 
 let listenerState: HookListenerState | null = null;
 
@@ -63,7 +64,7 @@ export function ingestAgentHookStatus(
   sessionId: string,
   payload: unknown,
   options?: { pathname?: string; mimoToken?: string },
-): IngestAgentHookResult {
+): IngestAgentHookResult | Promise<IngestAgentHookResult> {
   if (!sessionId || sessionId.length > 200) {
     return { ok: false, reason: 'invalid-session-id' };
   }
@@ -76,6 +77,7 @@ export function ingestAgentHookStatus(
   if (!parsed) {
     return { ok: false, reason: 'invalid-status-payload' };
   }
+  const normalized = parsed;
   const providerSession =
     parsed.providerSession ??
     (source && typeof payload === 'object' && payload !== null
@@ -86,33 +88,41 @@ export function ingestAgentHookStatus(
   if (isMimo && (source !== 'mimo-code' || parsed.agentType !== 'mimo-code')) {
     return { ok: false, reason: 'unverified-mimo-session' };
   }
-  const mimoBinding = isMimo && providerSession?.key === 'session_id'
-    ? validateMimoSessionBinding(sessionId, providerSession.id, options?.mimoToken) : null;
-  if (isMimo && !mimoBinding) return { ok: false, reason: 'unverified-mimo-session' };
+  if (isMimo) {
+    if (providerSession?.key !== 'session_id') return { ok: false, reason: 'unverified-mimo-session' };
+    return validateMimoSessionBinding(sessionId, providerSession.id, options?.mimoToken).then(binding => {
+      if (!binding || !isMimoSessionBindingCurrent(binding)) return { ok: false, reason: 'unverified-mimo-session' };
+      return publish(binding);
+    });
+  }
+  return publish(null);
+  function publish(mimoBinding: MimoSessionBinding | null): IngestAgentHookResult {
+  const currentAgent = getAgentSessionInfo(sessionId);
   if (providerSession) {
-    if (agent?.paneId) {
+    if (currentAgent?.paneId) {
       const saved = saveProviderPaneSession(
-        agent.scope,
-        agent.paneId,
-        agent.adapterId,
+        currentAgent.scope,
+        currentAgent.paneId,
+        currentAgent.adapterId,
         providerSession,
-        agent.accountId,
+        currentAgent.accountId,
         mimoBinding?.nativeOwnerKey,
       );
       if (mimoBinding && !saved) return { ok: false, reason: 'unverified-mimo-session' };
     }
   }
-  const published = publishAgentHookActivity(parsed.state, { sessionId, agentType: parsed.agentType });
-  for (const tap of hookStatusTaps) tap(sessionId, parsed.state);
+  const published = publishAgentHookActivity(normalized.state, { sessionId, agentType: normalized.agentType });
+  for (const tap of hookStatusTaps) tap(sessionId, normalized.state);
   if (mimoBinding) publishMimoSessionBinding(mimoBinding);
   return {
     ok: true,
     sessionId,
-    status: parsed.state,
+    status: normalized.state,
     paneSessionState: published.paneSessionState,
     authorizesEvidence: false,
     source,
   };
+  }
 }
 
 /**
@@ -122,7 +132,7 @@ export function ingestAgentHookFormBody(
   sessionId: string,
   formBody: string,
   pathname = '/hook/claude',
-): IngestAgentHookResult {
+): IngestAgentHookResult | Promise<IngestAgentHookResult> {
   getAgentHookListenerState();
   const fields = parseFormEncodedBody(formBody);
   let payload: unknown = fields;
