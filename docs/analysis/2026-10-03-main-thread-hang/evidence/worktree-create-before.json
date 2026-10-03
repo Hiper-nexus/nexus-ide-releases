@@ -1,0 +1,30 @@
+{
+  "schema": "nexus.worktree-create-benchmark/v1",
+  "fileCount": 2048,
+  "measurements": [
+    {
+      "worker": 0,
+      "wallMs": 487.7265,
+      "heartbeatCount": 0,
+      "maxHeartbeatGapMs": 487.7481670000001,
+      "p99LagMs": 0,
+      "maxLagMs": 0
+    },
+    {
+      "worker": 1,
+      "wallMs": 442.690208,
+      "heartbeatCount": 0,
+      "maxHeartbeatGapMs": 442.705417,
+      "p99LagMs": 0,
+      "maxLagMs": 0
+    },
+    {
+      "worker": 2,
+      "wallMs": 388.03541600000017,
+      "heartbeatCount": 0,
+      "maxHeartbeatGapMs": 388.1155410000001,
+      "p99LagMs": 0,
+      "maxLagMs": 0
+    }
+  ]
+}

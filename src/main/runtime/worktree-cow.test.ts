@@ -317,7 +317,7 @@ describe.skipIf(!darwin)('F-215 — clonefile direto via osascript', () => {
       'node_modules/dep/index.js': 'x',
     });
     const checked: string[] = [];
-    const run = vi.fn((_cwd: string, args: readonly string[]) => {
+    const run = vi.fn(async (_cwd: string, args: readonly string[]) => {
       if (args[0] === 'check-ignore') {
         checked.push(args[args.length - 1]);
         return {

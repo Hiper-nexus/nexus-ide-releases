@@ -7,6 +7,8 @@ import path from "node:path";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
   assertSafeLocalGitConfig,
+  assertSafeLocalGitConfigAsync,
+  type AsyncGitRunner,
   type GitRunner,
 } from "./git-command";
 import {
@@ -174,6 +176,164 @@ export function assertTaskWorktree(
     gitOutput(git, real, ["rev-parse", "--verify", "HEAD^{commit}"]),
     "task HEAD",
   );
+}
+
+/** F-764: same Git proofs as the synchronous integration/recovery lane;
+ * creation must yield for EVERY child process, including status/config probes. */
+export async function gitOutputAsync(
+  runner: AsyncGitRunner,
+  cwd: string,
+  args: readonly string[],
+): Promise<string> {
+  return (await runner.run(cwd, args)).stdout.trim();
+}
+
+export async function readRepositorySnapshotAsync(
+  git: AsyncGitRunner,
+  scope: Pick<
+    ProjectExecutionScope,
+    "projectId" | "checkoutId" | "rootRealPath"
+  >,
+  requireClean: boolean,
+): Promise<RepositorySnapshot> {
+  const expectedRoot = path.resolve(scope.rootRealPath);
+  const rootRealPath = fs.realpathSync(expectedRoot);
+  if (
+    scope.rootRealPath !== expectedRoot ||
+    rootRealPath !== expectedRoot ||
+    !fs.statSync(rootRealPath).isDirectory()
+  ) {
+    throw new Error("scope root is not canonical");
+  }
+  const topLevel = fs.realpathSync(
+    await gitOutputAsync(git, rootRealPath, ["rev-parse", "--show-toplevel"]),
+  );
+  if (topLevel !== rootRealPath) {
+    throw new Error("scope root must equal the canonical Git top-level");
+  }
+  await assertSafeLocalGitConfigAsync(git, rootRealPath);
+  let integrationRef: string;
+  try {
+    integrationRef = await gitOutputAsync(git, rootRealPath, [
+      "symbolic-ref",
+      "--quiet",
+      "HEAD",
+    ]);
+  } catch (error) {
+    throw new Error("primary checkout must be on an integration branch", {
+      cause: error,
+    });
+  }
+  if (!integrationRef.startsWith("refs/heads/")) {
+    throw new Error("primary checkout has an invalid integration ref");
+  }
+  const headSha = assertSha(
+    await gitOutputAsync(git, rootRealPath, [
+      "rev-parse",
+      "--verify",
+      "HEAD^{commit}",
+    ]),
+    "integration HEAD",
+  );
+  const clean =
+    (await git.run(rootRealPath, [
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=all",
+    ])).stdout.length === 0;
+  if (requireClean && !clean) {
+    throw new Error("primary checkout must be clean");
+  }
+  if (fs.realpathSync(expectedRoot) !== rootRealPath) {
+    throw new WorktreeStateConflictError("scope root changed during Git inspection");
+  }
+  return Object.freeze({ rootRealPath, integrationRef, headSha, clean });
+}
+
+export async function assertRepositoryUnchangedAsync(
+  git: AsyncGitRunner,
+  expected: RepositorySnapshot,
+  requireClean: boolean,
+): Promise<void> {
+  const current = await readRepositorySnapshotAsync(
+    git,
+    {
+      projectId: "",
+      checkoutId: "",
+      rootRealPath: expected.rootRealPath,
+    } as ProjectExecutionScope,
+    requireClean,
+  );
+  if (
+    current.integrationRef !== expected.integrationRef ||
+    current.headSha !== expected.headSha
+  ) {
+    throw new WorktreeStateConflictError(
+      "primary checkout changed after base SHA was frozen",
+    );
+  }
+}
+
+export async function assertTaskWorktreeAsync(
+  git: AsyncGitRunner,
+  record: WorktreeRecord,
+): Promise<string> {
+  const real = fs.realpathSync(record.worktreePath);
+  if (real !== record.worktreePath || !fs.statSync(real).isDirectory()) {
+    throw new WorktreeStateConflictError("task worktree path changed");
+  }
+  const topLevel = fs.realpathSync(
+    await gitOutputAsync(git, real, ["rev-parse", "--show-toplevel"]),
+  );
+  if (topLevel !== real) {
+    throw new WorktreeStateConflictError("task worktree Git root changed");
+  }
+  const branchRef = await gitOutputAsync(git, real, [
+    "symbolic-ref",
+    "--quiet",
+    "HEAD",
+  ]);
+  if (branchRef !== record.branchRef) {
+    throw new WorktreeStateConflictError("task worktree branch changed");
+  }
+  const repositoryCommonDirectory = fs.realpathSync(
+    await gitOutputAsync(git, record.rootRealPath, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    ]),
+  );
+  const worktreeCommonDirectory = fs.realpathSync(
+    await gitOutputAsync(git, real, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    ]),
+  );
+  if (worktreeCommonDirectory !== repositoryCommonDirectory) {
+    throw new WorktreeStateConflictError(
+      "task worktree is not linked to the frozen repository",
+    );
+  }
+  await assertSafeLocalGitConfigAsync(git, real);
+  const status = (await git.run(real, [
+    "status",
+    "--porcelain=v1",
+    "-z",
+    "--untracked-files=all",
+  ])).stdout;
+  if (status.length > 0) {
+    throw new WorktreeStateConflictError(TASK_WORKTREE_NOT_CLEAN_MESSAGE);
+  }
+  const headSha = assertSha(
+    await gitOutputAsync(git, real, ["rev-parse", "--verify", "HEAD^{commit}"]),
+    "task HEAD",
+  );
+  if (fs.realpathSync(record.worktreePath) !== real) {
+    throw new WorktreeStateConflictError("task worktree path changed");
+  }
+  return headSha;
 }
 
 export interface ReservationReconcileDeps {

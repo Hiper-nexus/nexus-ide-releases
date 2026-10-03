@@ -499,8 +499,11 @@ describe('GC de worktrees fora do caminho do spawn/fechamento (Fable P2-9)', () 
     let finish!: () => void;
     const collect = vi.spyOn(registry, 'collectIntegratedPaneWorktrees')
       .mockImplementation(() => new Promise((resolve) => { finish = () => resolve([]); }));
-    await paneSpawnTool.handler({ adapterId: 'codex', isolatedWriter: true }, op);
+    const spawning = paneSpawnTool.handler({ adapterId: 'codex', isolatedWriter: true }, op);
     expect(collect).not.toHaveBeenCalled();
+    // F-764: Git agora cede o event loop. O GC pode começar DURANTE o spawn;
+    // seu promise continua pendurado, sem impedir a criação de terminar.
+    await spawning;
     await new Promise((resolve) => setImmediate(resolve));
     expect(collect).toHaveBeenCalledTimes(1);
     // Com a coleta pendurada, spawn e fechamento seguem livres e não empilham GCs.
