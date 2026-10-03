@@ -599,6 +599,22 @@ function frontierFirst(list: readonly RouteCandidate[], order: readonly string[]
   });
 }
 
+/**
+ * F-771 (G3): eixo de capacidade da CLI roteada. `webSearch` vem do manifest
+ * do adapter (só declarado onde há evidência — tool nativa de busca);
+ * `readOnlyEnforceable` reusa o detector nativo e `handoffMcp` o
+ * canUseNexusMcp. Campo ausente = capacidade NÃO declarada ("na dúvida,
+ * false"): o filtro só remove quem não declara quando ALGUM instalado
+ * declara — o pool nunca colapsa por falta de declaração.
+ */
+export interface AdapterRouteCapabilities {
+  webSearch?: boolean;
+  readOnlyEnforceable?: boolean;
+  handoffMcp?: boolean;
+  /** Janela de contexto em tokens, quando documentada para o CLI. */
+  maxContext?: number;
+}
+
 export interface AdapterAvailability {
   id: string;
   installed: boolean;
@@ -612,6 +628,8 @@ export interface AdapterAvailability {
    * trocado sobe no modelo servido em vez de ser descartada.
    */
   modelAliases?: Readonly<Record<string, string>>;
+  /** Capacidades de tarefa declaradas/detectadas (F-771). */
+  capabilities?: AdapterRouteCapabilities;
 }
 
 /** Modelo que o provedor do adapter realmente serve para o id da tabela. */
@@ -1038,6 +1056,20 @@ function evaluatedCandidates(
 }
 
 /**
+ * F-771 (G3): pedido explícito de busca/grounding na web (pt + en). "Estado
+ * da arte" e "versões atuais" exigem dado vivo — um CLI sem ferramenta de
+ * busca responderia de memória (o MiMo respondeu "WebSearch indisponível
+ * neste pane" numa pesquisa real, 02/10).
+ */
+const WEB_SEARCH_NEED =
+  /\b(?:bus(?:ca|cando|car|que)\s+na\s+(?:web|internet)|pesquis(?:a|e|ar|ando)\s+(?:na\s+)?(?:web|internet|online|externa)|web[\s-]?search|search(?:ing)?\s+(?:the\s+)?(?:web|internet|online)|estado\s+da\s+arte|state[\s-]of[\s-]the[\s-]art|vers(?:ão|ões|oes|ion|ions)\s+(?:atual|atuais|current|latest)|últimas?\s+vers(?:ão|ões)|latest\s+(?:version|release|docs?|documentation|prices?|news)|documenta(?:ção|cao)\s+atualizada|current\s+(?:docs?|documentation|versions?|pricing|news)|notícias\s+(?:recentes|atuais)|recent\s+news)\b/iu;
+
+/** A tarefa exige que a CLI roteada tenha ferramenta de busca na web. */
+export function taskNeedsWebSearch(taskText: string): boolean {
+  return WEB_SEARCH_NEED.test(taskText);
+}
+
+/**
  * Pick the first installed candidate of the task's tier (candidates are
  * ordered cheapest-first). When nothing of the tier is installed, walk the
  * cheaper tiers down then the stronger ones up; last resort is the first
@@ -1058,14 +1090,35 @@ export function routeTask(
   modelCatalog: ModelCatalog = loadModelCatalog(),
   context: RouteContext = {},
 ): RouteDecision | null {
+  // F-771 (G3): tarefa que pede busca na web limita o pool ANTES do ranking —
+  // quem não declara `capabilities.webSearch` sai como "não instalado" (a
+  // menção explícita a um CLI sem a capacidade vira nota de indisponível, não
+  // rota). Quando NENHUM instalado declara a capacidade o pool não é tocado:
+  // ausência de declaração não pode derrubar a rota inteira.
+  const needsWebSearch = taskNeedsWebSearch(taskText);
+  const webSearchCapable =
+    needsWebSearch &&
+    adapters.some((a) => a.installed && a.capabilities?.webSearch === true);
+  const routedAdapters = webSearchCapable
+    ? adapters.map((a) =>
+        a.installed && a.capabilities?.webSearch === true
+          ? a
+          : { ...a, installed: false },
+      )
+    : adapters;
+  const capabilityNote = needsWebSearch
+    ? webSearchCapable
+      ? '; exige busca na web — pool limitado a capabilities.webSearch'
+      : '; exige busca na web — nenhum adapter declara a capacidade'
+    : '';
   const available = new Map(
-    adapters.filter((a) => a.installed).map((a) => [a.id, a]),
+    routedAdapters.filter((a) => a.installed).map((a) => [a.id, a]),
   );
   if (available.size === 0) return null;
 
   const classification = classifyTask(taskText);
   const tier = tierOverride ?? classification.tier;
-  const mention = mentionedRoute(taskText, adapters);
+  const mention = mentionedRoute(taskText, routedAdapters);
   const requestedEffort = mention.effort ?? context.effortOverride ?? effortForTier(tier);
   const effortFor = (adapterId: string) => nativeRouteEffort(requestedEffort, available.get(adapterId)!);
   const effortNoteFor = (adapterId: string) =>
@@ -1392,12 +1445,12 @@ export function routeTask(
   // Lane visual (regra do operador, 30/09): UI/design vai sempre para os
   // modelos de topo.
   let visualNote = '';
-  if (
+  const visualLaneApplied =
     specialtyVerdict.specialty === 'visual' &&
     policy.source !== 'benchmark' &&
     mention.model === undefined &&
-    applyFrontierLane(VISUAL_FRONTIER_LANE)
-  ) {
+    applyFrontierLane(VISUAL_FRONTIER_LANE);
+  if (visualLaneApplied) {
     visualNote = '; lane visual (modelos de topo)';
   }
 
@@ -1425,6 +1478,12 @@ export function routeTask(
   // sem benchmark publicado quando há muitos com nota alta. Fora de alcance:
   // critical (o topo entre CLIs manda), menção explícita, escolha medida
   // (benchmark de especialidade / avaliação Nexus) e primeira reserva.
+  // F-770 (G2): a especialidade bug/security/visual NÃO desligava a diversidade
+  // por si só — com política heurística a especialidade nem reordena adapters
+  // (HEURISTIC_SPECIALTY_ADAPTERS é vazio) e a missão concentrava tudo num
+  // provider só. As proteções reais continuam: benchmark medido preserva a
+  // ordem medida, frontier/high-risk cobre hard+critical, e a lane visual
+  // aplicada protege o assento dos modelos de topo.
   let rotationNote = '';
   const usedInMission = new Set<string>([
     ...(context.missionUsedAdapters ?? []),
@@ -1435,9 +1494,7 @@ export function routeTask(
     frontier === null &&
     evaluated.length === 0 &&
     policy.source !== 'benchmark' &&
-    specialtyVerdict.specialty !== 'visual' &&
-    specialtyVerdict.specialty !== 'security' &&
-    specialtyVerdict.specialty !== 'bug' &&
+    !visualLaneApplied &&
     mention.model === undefined &&
     usedInMission.size > 0 &&
     usedInMission.has(ranked[0]?.c.adapterId ?? '')
@@ -1471,9 +1528,7 @@ export function routeTask(
     frontier === null &&
     evaluated.length === 0 &&
     policy.source !== 'benchmark' &&
-    specialtyVerdict.specialty !== 'visual' &&
-    specialtyVerdict.specialty !== 'security' &&
-    specialtyVerdict.specialty !== 'bug' &&
+    !visualLaneApplied &&
     mention.model === undefined
   ) {
     const use = (id: string) => context.globalUseCounts!.get(id) ?? 0;
@@ -1586,7 +1641,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
       alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId) })),
       specialty: specialtyVerdict.specialty,
       policySource,
@@ -1609,7 +1664,7 @@ export function routeTask(
     tier,
     adapterId: fallback,
     effort: effortFor(fallback),
-    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback} (menos usado na missão)${missingNote}${effortNoteFor(fallback)}`,
+    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback} (menos usado na missão)${capabilityNote}${missingNote}${effortNoteFor(fallback)}`,
     alternatives: [],
     specialty: specialtyVerdict.specialty,
     policySource: policy.source,

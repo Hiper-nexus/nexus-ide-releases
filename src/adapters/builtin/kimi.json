@@ -96,5 +96,8 @@
       ],
       "default": ""
     }
+  },
+  "capabilities": {
+    "webSearch": true
   }
 }

@@ -121,5 +121,8 @@
       ]
     },
     "verbose": "--verbose"
+  },
+  "capabilities": {
+    "webSearch": true
   }
 }

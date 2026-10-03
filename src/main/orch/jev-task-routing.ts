@@ -29,6 +29,7 @@ import {
   allowedSkillCatalog,
   buildSkillSuggestionQuestions,
   parseSkillSuggestions,
+  skillCatalogForTaskRole,
   type SkillSuggestionPick,
 } from './jev-skill-suggestion';
 import {
@@ -108,11 +109,14 @@ const TASK_ROUTING_QUESTIONS: Record<string, JevQuestion> = {
     criteria: {
       visual: 'UI, layout, design, styling, components, screens — what the user sees',
       security: 'auth, permissions, secrets, sandboxing, vulnerabilities, hardening',
-      bug: 'something that used to work is broken or behaves wrong; fix it',
+      bug: 'something that used to work is broken or behaves wrong AND the task is to fix it; ' +
+        'an audit, inventory or review that only lists possible problems is general, not bug',
       feature: 'new capability or behavior that does not exist yet',
       doc: 'documentation, comments, README, guides, explanations',
       ops: 'build, deploy, CI, infrastructure, servers, environments, releases',
-      general: 'none of the above clearly applies or the task mixes several',
+      general: 'none of the above clearly applies, the task mixes several, or it is an ' +
+        'audit/inventory/mapping of usage, configuration or code that only reports findings ' +
+        '(a defect reported to be fixed is bug, not general)',
     },
   },
   effort: {
@@ -311,7 +315,13 @@ export async function classifyTaskWithSkillForRouting(
     return { kind: 'unavailable', reason: 'no-key', skillSuggestion: null, batch: noBatch };
   }
 
-  const catalog = allowedSkillCatalog(opts.allowedSkills);
+  // F-772 (G7a): o papel da tarefa restringe o catálogo ANTES do Jev julgar —
+  // worker nunca vê oc-scout (o bug: scout em 20/108 sugestões da missão) e
+  // pane read-only nunca vê builder/systematic-debugging.
+  const catalog = skillCatalogForTaskRole(
+    task,
+    allowedSkillCatalog(opts.allowedSkills),
+  );
   const projectCatalog = allowedProjectSkillCatalog(
     opts.allowedSkills,
     opts.projectRoot,

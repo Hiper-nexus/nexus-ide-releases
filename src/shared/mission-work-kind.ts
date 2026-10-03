@@ -156,6 +156,18 @@ const DEFECT =
 const REPAIR_VERB =
   /\b(corrig(?:ir|e|em|indo)|corrija|correcao|arrum(?:ar|e|a)|consert(?:ar|e|a)|resolv(?:er|a|e)|debug(?:ar)?|depurar|fix(?:es|ed|ing)?|repair|hotfix|troubleshoot)\b/;
 
+/**
+ * F-772: escopo de AUDITORIA/INVENTÁRIO — "auditoria de uso", "inventário de
+ * configuração", "mapear os providers". Um defeito NOMEADO dentro de um
+ * escopo assim enumera achados esperados, não um mau funcionamento relatado:
+ * bug exige defeito que o chamador quer CONSERTADO, então a menção fraca é
+ * suprimida (defeito + verbo de reparo — "audite e corrija" — continua bug
+ * forte). `audit log`/`audit trail` nomeiam artefatos, não tarefa de
+ * auditoria — por isso o lookahead.
+ */
+const AUDIT_SCOPE =
+  /\b(?:(?:auditorias?|auditar|audites?|audita|audit(?:s|ed|ing)?)(?!\s+(?:logs?|trails?))|inventarios?|inventariar|inventor(?:y|ies)|censos?|census|levantamentos?|mapeamentos?|mapear|mapeie)\b/;
+
 /*
  * VISUAL vocabulary — NOT declared here. `./ui-work-signal` owns it, and this
  * module reads its tiers:
@@ -258,9 +270,13 @@ function collectSignals(canonical: string): WorkKindSignal[] {
 
   const defect = DEFECT.exec(canonical);
   const repair = REPAIR_VERB.exec(canonical);
-  if (defect) {
+  const auditScope = AUDIT_SCOPE.test(canonical);
+  if (defect && (repair || !auditScope)) {
     // A defect noun WITH a repair verb is a repair order (strong). Alone it is
     // only a mention — this is what keeps "documentar os bugs conhecidos" on doc.
+    // F-772: inside an audit/inventory scope the mention enumerates expected
+    // findings ("auditoria de uso apontando erros") — not a reported
+    // malfunction — so it is suppressed entirely and the task stays general.
     push(
       Object.freeze({
         kind: 'bug',
@@ -269,7 +285,7 @@ function collectSignals(canonical: string): WorkKindSignal[] {
         match: repair ? `${repair[0]} ${defect[0]}` : defect[0],
       }),
     );
-  } else if (repair) {
+  } else if (repair && !defect) {
     // Repair verb with no named defect: corrective in nature, but the surface
     // may still claim it (e.g. "arrumar o visual do rail" is visual work).
     push(

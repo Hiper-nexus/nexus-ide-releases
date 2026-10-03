@@ -31,8 +31,9 @@ import {
 } from './pane-registry';
 import { adapterIdsWithoutNexusMcp, liveMissionAdapterIds } from './operator-spawn-route';
 import { isOperatorTabMission } from './operator-tab-mission-resume';
-import { listAdapters } from '../adapters/adapter-registry';
+import { getAdapter, listAdapters } from '../adapters/adapter-registry';
 import { canUseNexusMcp } from './cli-mcp-inject';
+import { supportsEnforceableReadOnlyNativeAuthority } from '../pty/autonomous-cli-policy';
 import {
   adoptUserAgentSessionAsMissionOrchestrator,
   getAgentSessionInfo,
@@ -56,6 +57,7 @@ import {
   routingOverridesFrom,
   type JevRouteTaskBatch,
 } from './jev-task-routing';
+import { cliSupportsSkillSurface } from './jev-skill-suggestion';
 import { mergeAdapterUseLists } from './route-pipeline';
 import { recordRouteDecision } from './route-provenance';
 import { recordRouteLog, recentRouteLog } from './route-log';
@@ -1766,6 +1768,14 @@ export async function routeTaskForCaller(
       const models = [
         ...authReadyModelsForProvider(a, a.models),
       ];
+      // F-771 (G3): eixo de capacidade da CLI. `webSearch`/`maxContext` vêm do
+      // manifest do adapter (só declarados com evidência); o confinamento
+      // read-only e o transporte MCP são detectados pelo código main-owned,
+      // nunca pela palavra do manifest.
+      const cliAdapter = (() => {
+        const adapter = getAdapter(a.adapterId);
+        return adapter?.kind === 'cli-pty' ? adapter : undefined;
+      })();
       return {
         id: a.adapterId,
         installed:
@@ -1790,6 +1800,13 @@ export async function routeTaskForCaller(
         efforts: a.efforts,
         // F-724: o provedor escolhido serve alguns ids com outro modelo.
         ...(a.modelAliases ? { modelAliases: a.modelAliases } : {}),
+        capabilities: {
+          ...(cliAdapter?.capabilities ?? {}),
+          readOnlyEnforceable: cliAdapter
+            ? supportsEnforceableReadOnlyNativeAuthority(cliAdapter)
+            : undefined,
+          handoffMcp: cliAdapter ? canUseNexusMcp(cliAdapter) : undefined,
+        },
       };
     });
   let adapters = buildAdapters(new Set([...excluded, ...quotaExcluded]));
@@ -1998,6 +2015,13 @@ export async function routeTaskForCaller(
     ...(routing.confidence ? { confidence: routing.confidence } : {}),
     ...(ruleChoice ? { ruleChoice } : {}),
   };
+  // F-772 (G7a): a sugestão foi julgada antes da rota existir — agora que a
+  // CLI escolhida é conhecida, a dica só sai quando a sessão dela recebe
+  // SKILL.md (worker muse/minimax/aider não recebe e leria instrução morta).
+  const routedSkillSuggestion =
+    skillSuggestion && cliSupportsSkillSurface(decision.adapterId)
+      ? skillSuggestion
+      : null;
   // F-233: sem nenhum modelo de ponta para julgar, o Maestro é avisado de
   // que o veredito é dele — nunca delegado a um modelo barato.
   const judgeHint = decision.judgeUnavailable
@@ -2008,14 +2032,14 @@ export async function routeTaskForCaller(
       }
     : {};
   if (!missionId) {
-    return { ...decision, ...provenance, skillSuggestion, ...judgeHint };
+    return { ...decision, ...provenance, skillSuggestion: routedSkillSuggestion, ...judgeHint };
   }
   const reservation = getProjectDomainStores(ctx.scope)
     .missions.reserveRouteDecision(missionId, task, decision);
   return {
     ...decision,
     ...provenance,
-    skillSuggestion,
+    skillSuggestion: routedSkillSuggestion,
     ...judgeHint,
     routeReservationId: reservation.id,
     routeReservationExpiresAt: reservation.expiresAt,

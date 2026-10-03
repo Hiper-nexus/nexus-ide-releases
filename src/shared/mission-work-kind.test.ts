@@ -553,3 +553,33 @@ describe('verbo de retrabalho governa a superfície visual', () => {
     ).toBe(false);
   });
 });
+
+describe('classifyWorkKind — escopo de auditoria/inventário (F-772)', () => {
+  it('auditoria que enumera possíveis defeitos NÃO é bug — é general', () => {
+    // O achado da missão: "auditoria de uso" virava bug só por mencionar
+    // erros — dentro de um inventário o defeito é o ACHADO esperado, não um
+    // mau funcionamento relatado para consertar.
+    for (const goal of [
+      'auditoria de uso das contas e providers — aponte erros e desperdícios',
+      'faça um inventário das configurações e liste os erros encontrados',
+      'mapear os panes ativos e os travamentos recorrentes',
+      'audit the checkout flow and list possible failures',
+    ]) {
+      const verdict = classifyWorkKind(goal);
+      expect(verdict.kind, goal).not.toBe('bug');
+    }
+  });
+
+  it('defeito relatado continua bug — mesmo dentro de uma trilha de auditoria', () => {
+    // "Audite E CORRIJA" é ordem de reparo: o verbo forte decide, o escopo
+    // de auditoria não abafa. E "audit log" é artefato, não escopo.
+    expect(
+      classifyWorkKind('audite o parser e corrija as falhas que encontrar')
+        .kind,
+    ).toBe('bug');
+    expect(
+      classifyWorkKind('o audit log mostra erros de escrita desde ontem')
+        .kind,
+    ).toBe('bug');
+  });
+});
