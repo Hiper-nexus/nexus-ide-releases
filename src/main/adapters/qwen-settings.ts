@@ -1,3 +1,4 @@
+import { readRegularFileCappedAsync } from '../redline/redline-safe-read';
 /**
  * Leitor somente-leitura do `~/.qwen/settings.json` (F-238).
  *
@@ -68,21 +69,24 @@ export function qwenSettingsPath(home: string = os.homedir()): string {
   return path.join(process.env.QWEN_HOME ?? path.join(home, '.qwen'), 'settings.json');
 }
 
-export function readQwenSettingsSummary(
-  home: string = os.homedir(),
-): QwenSettingsSummary {
+export function readQwenSettingsSummary(home: string = os.homedir()): QwenSettingsSummary {
+  try { return parseQwenSettingsSummary(JSON.parse(fs.readFileSync(qwenSettingsPath(home), 'utf8'))); }
+  catch { return parseQwenSettingsSummary(null); }
+}
+
+export async function readQwenSettingsSummaryAsync(home: string = os.homedir()): Promise<QwenSettingsSummary> {
+  const result = await readRegularFileCappedAsync(qwenSettingsPath(home), 1024 * 1024);
+  try { return parseQwenSettingsSummary(result.kind === 'text' ? JSON.parse(result.text) : null); }
+  catch { return parseQwenSettingsSummary(null); }
+}
+
+function parseQwenSettingsSummary(raw: unknown): QwenSettingsSummary {
   const empty: QwenSettingsSummary = {
     hasCredential: false,
     baseUrl: null,
     tokenPlan: false,
     modelIds: [],
   };
-  let raw: unknown;
-  try {
-    raw = JSON.parse(fs.readFileSync(qwenSettingsPath(home), 'utf8'));
-  } catch {
-    return empty;
-  }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return empty;
   const settings = raw as Record<string, unknown>;
 

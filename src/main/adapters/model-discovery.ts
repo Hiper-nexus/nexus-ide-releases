@@ -1,3 +1,4 @@
+import type { PeriodicTaskContext } from '../observability/periodic-task';
 import { execFile } from 'node:child_process';
 import { isModelId } from '../../shared/model-id';
 import { getEffectivePath, resolveCliBinary } from '../path-resolver';
@@ -5,6 +6,7 @@ import {
   CLI_MODEL_CACHE_SOURCES,
   cliCacheConsumerVersion,
   readCliModelCache,
+  readCliModelCacheAsync,
   type CliModelCacheReadOptions,
 } from './cli-model-discovery';
 
@@ -288,6 +290,7 @@ interface CacheEntry {
   readonly consumerVersion?: string | null;
 }
 
+let discoveryEpoch = 0;
 const cache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<void>>();
 
@@ -322,7 +325,7 @@ export function discoveredModelsFor(adapterId: string): readonly string[] {
   if (entry && 'consumerVersion' in entry &&
       entry.consumerVersion !== (cliCacheConsumerVersion(adapterId) ?? null)) {
     cache.delete(adapterId);
-    void hydrateFromOfficialCache(adapterId, { force: true });
+    void refreshDiscoveredModels(adapterId, { force: true }).catch(() => undefined);
     return [];
   }
   return entry?.models ?? [];
@@ -385,7 +388,7 @@ function execDiscovery(strategy: DiscoveryStrategy): Promise<string[]> {
   });
 }
 
-function hydrateFromOfficialCache(
+async function hydrateFromOfficialCache(
   adapterId: string,
   options: { force?: boolean; cacheFiles?: readonly string[] } = {},
 ): Promise<void> {
@@ -396,15 +399,18 @@ function hydrateFromOfficialCache(
   const files = options.cacheFiles ?? officialCacheFiles(adapterId);
   let producerChecked = false;
   let consumerVersion: string | null = null;
-  const models = modelsFromOfficialCliCache(files, {
+  const epoch = discoveryEpoch;
+  const models: string[] = [];
+  for (const file of files) models.push(...await readCliModelCacheAsync(file, {
     clientVersion: () => {
       producerChecked = true;
       consumerVersion = cliCacheConsumerVersion(adapterId) ?? null;
       return consumerVersion;
     },
-  });
+  }));
+  if (epoch !== discoveryEpoch || (producerChecked && consumerVersion !== (cliCacheConsumerVersion(adapterId) ?? null))) return;
   cache.set(adapterId, {
-    models,
+    models: sanitizeDiscoveredModels(models),
     fetchedAt: Date.now(),
     failed: models.length === 0,
     ...(producerChecked ? { consumerVersion } : {}),
@@ -425,8 +431,14 @@ export function refreshDiscoveredModels(
     cacheFiles?: readonly string[];
   } = {},
 ): Promise<void> {
+  const running = inFlight.get(adapterId);
+  if (running) return running;
   if (CACHE_HYDRATE_ADAPTERS.has(adapterId)) {
-    return hydrateFromOfficialCache(adapterId, options);
+    const task = hydrateFromOfficialCache(adapterId, options).finally(() => {
+      if (inFlight.get(adapterId) === task) inFlight.delete(adapterId);
+    });
+    inFlight.set(adapterId, task);
+    return task;
   }
   const strategy = STRATEGIES[adapterId];
   if (!strategy) return Promise.resolve();
@@ -434,13 +446,14 @@ export function refreshDiscoveredModels(
   if (!options.force && isFresh(cache.get(adapterId), now)) {
     return Promise.resolve();
   }
-  const running = inFlight.get(adapterId);
-  if (running) return running;
+  const epoch = discoveryEpoch;
   const task = execDiscovery(strategy)
     .then((models) => {
+      if (discoveryEpoch !== epoch) return;
       cache.set(adapterId, { models, fetchedAt: Date.now(), failed: false });
     })
     .catch(() => {
+      if (discoveryEpoch !== epoch) return;
       cache.set(adapterId, {
         models: cache.get(adapterId)?.models ?? [],
         fetchedAt: Date.now(),
@@ -448,7 +461,7 @@ export function refreshDiscoveredModels(
       });
     })
     .finally(() => {
-      inFlight.delete(adapterId);
+      if (inFlight.get(adapterId) === task) inFlight.delete(adapterId);
     });
   inFlight.set(adapterId, task);
   return task;
@@ -458,18 +471,22 @@ export function refreshDiscoveredModels(
  * Dispara descoberta para vários adapters e chama onSettled quando TODAS
  * terminarem (para o chamador re-broadcastar a lista de providers).
  */
-export function refreshAllDiscoveredModels(
+export async function refreshAllDiscoveredModels(
   adapterIds: readonly string[],
   onSettled?: () => void,
-): void {
-  const tasks = adapterIds
-    .filter((id) => supportsModelDiscovery(id))
-    .map((id) => refreshDiscoveredModels(id));
-  if (tasks.length === 0) return;
-  void Promise.allSettled(tasks).then(() => onSettled?.());
+  context?: PeriodicTaskContext,
+): Promise<void> {
+  for (const id of adapterIds) {
+    await context?.checkpoint();
+    if (!supportsModelDiscovery(id)) continue;
+    await refreshDiscoveredModels(id);
+    context?.assertCurrent();
+  }
+  onSettled?.();
 }
 
 export function resetModelDiscoveryForTests(): void {
+  discoveryEpoch++;
   cache.clear();
   inFlight.clear();
 }

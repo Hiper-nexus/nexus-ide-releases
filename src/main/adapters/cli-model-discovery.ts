@@ -1,10 +1,12 @@
+import { readRegularFileCappedAsync } from '../redline/redline-safe-read';
+import type { PeriodicTaskContext } from '../observability/periodic-task';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { Adapter } from '../../shared/adapter-types';
 import { MODEL_ID_PATTERN } from '../../shared/model-id';
 import { parseKimiConfigModelAliases } from './kimi-runtime-env';
-import { readQwenSettingsSummary } from './qwen-settings';
+import { readQwenSettingsSummary, readQwenSettingsSummaryAsync } from './qwen-settings';
 import { cachedCliBinaryVersion, resolveCliBinary } from '../path-resolver';
 import { compareAppVersions, isValidAppVersion } from '../../shared/app-version';
 
@@ -18,6 +20,7 @@ export interface CliModelCacheSource {
   files: string[];
   /** Custom reader for non-`models`-shaped files (e.g. Qwen settings.json). */
   read?(file: string): string[];
+  readAsync?(file: string): Promise<string[]>;
   clientVersion?: () => string | null | undefined;
 }
 
@@ -96,6 +99,7 @@ export const CLI_MODEL_CACHE_SOURCES: CliModelCacheSource[] = [
     files: [path.join(home, '.qwen', 'settings.json')],
     read: (file) =>
       readQwenSettingsSummary(path.dirname(path.dirname(file))).modelIds as string[],
+    readAsync: async (file) => [...(await readQwenSettingsSummaryAsync(path.dirname(path.dirname(file)))).modelIds],
   },
 ];
 
@@ -116,12 +120,21 @@ function modelId(value: unknown): string | null {
 }
 
 export function readCliModelCache(file: string, options: CliModelCacheReadOptions = {}): string[] {
+  try { return parseCliModelCacheText(file, readCacheText(file), options); } catch { return []; }
+}
+
+export async function readCliModelCacheAsync(file: string, options: CliModelCacheReadOptions = {}): Promise<string[]> {
+  const result = await readRegularFileCappedAsync(file, 1024 * 1024);
+  return result.kind === 'text' ? parseCliModelCacheText(file, result.text, options) : [];
+}
+
+function parseCliModelCacheText(file: string, text: string, options: CliModelCacheReadOptions): string[] {
   try {
     if (file.endsWith('.toml')) {
-      return parseKimiConfigModelAliases(readCacheText(file))
+      return parseKimiConfigModelAliases(text)
         .filter((alias) => MODEL_ID.test(alias));
     }
-    const raw = JSON.parse(readCacheText(file)) as unknown;
+    const raw = JSON.parse(text) as unknown;
     if (!cacheMatchesConsumer(raw, options)) return [];
     const models = raw && typeof raw === 'object'
       ? (raw as { models?: unknown }).models
@@ -149,8 +162,17 @@ const EFFORT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
  * separate from model ids lets older/other CLI cache shapes degrade safely.
  */
 export function readCliEfforts(file: string, options: CliModelCacheReadOptions = {}): string[] {
+  try { return parseCliEffortsText(readCacheText(file), options); } catch { return []; }
+}
+
+export async function readCliEffortsAsync(file: string, options: CliModelCacheReadOptions = {}): Promise<string[]> {
+  const result = await readRegularFileCappedAsync(file, 1024 * 1024);
+  return result.kind === 'text' ? parseCliEffortsText(result.text, options) : [];
+}
+
+function parseCliEffortsText(text: string, options: CliModelCacheReadOptions): string[] {
   try {
-    const raw = JSON.parse(readCacheText(file)) as unknown;
+    const raw = JSON.parse(text) as unknown;
     if (!cacheMatchesConsumer(raw, options)) return [];
     const models = raw && typeof raw === 'object'
       ? (raw as { models?: unknown }).models
@@ -212,6 +234,40 @@ export function discoverCliEfforts(
       })) levels.add(effort);
     }
     if (levels.size > 0) discovered.set(source.adapterId, [...levels]);
+  }
+  return discovered;
+}
+
+export async function discoverCliModelsAsync(sources: readonly CliModelCacheSource[] = CLI_MODEL_CACHE_SOURCES, context?: PeriodicTaskContext): Promise<Map<string, string[]>> {
+  const discovered = new Map<string, string[]>();
+  for (const source of sources) {
+    await context?.checkpoint();
+    const ids = new Set<string>();
+    for (const file of source.files) {
+      await context?.checkpoint();
+      const models = source.readAsync ? await source.readAsync(file) : source.read ? source.read(file) : await readCliModelCacheAsync(file, {
+        clientVersion: source.clientVersion ?? (() => cliCacheConsumerVersion(source.adapterId)),
+      });
+      context?.assertCurrent();
+      for (const id of models) ids.add(id);
+    }
+    if (ids.size) discovered.set(source.adapterId, [...ids]);
+  }
+  return discovered;
+}
+
+export async function discoverCliEffortsAsync(sources: readonly CliModelCacheSource[] = CLI_MODEL_CACHE_SOURCES, context?: PeriodicTaskContext): Promise<Map<string, string[]>> {
+  const discovered = new Map<string, string[]>();
+  for (const source of sources) {
+    await context?.checkpoint();
+    const levels = new Set<string>();
+    for (const file of source.files) {
+      await context?.checkpoint();
+      const efforts = await readCliEffortsAsync(file, { clientVersion: source.clientVersion ?? (() => cliCacheConsumerVersion(source.adapterId)) });
+      context?.assertCurrent();
+      for (const effort of efforts) levels.add(effort);
+    }
+    if (levels.size) discovered.set(source.adapterId, [...levels]);
   }
   return discovered;
 }

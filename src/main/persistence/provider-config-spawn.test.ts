@@ -1,3 +1,5 @@
+import fsp from 'node:fs/promises';
+import * as periodicFileRead from '../redline/redline-safe-read';
 import mimoRaw from '../../adapters/builtin/mimo-code.json';
 import fs from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
@@ -494,6 +496,13 @@ describe('background CLI maintenance during pane startup', () => {
     vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({ enabled: true, checkedAt: {} }));
     vi.spyOn(fs, 'realpathSync').mockReturnValue('/fixture-quota-home/.local/share/claude/versions/1');
     vi.spyOn(fs, 'accessSync').mockImplementation(() => {});
+    vi.spyOn(fsp, 'realpath').mockResolvedValue('/fixture-quota-home/.local/share/claude/versions/1');
+    vi.spyOn(fsp, 'access').mockResolvedValue(undefined);
+    vi.spyOn(fsp, 'rename').mockResolvedValue(undefined);
+    vi.spyOn(fsp, 'mkdir').mockResolvedValue(undefined);
+    vi.spyOn(fsp, 'writeFile').mockResolvedValue(undefined);
+    vi.spyOn(fsp, 'rm').mockResolvedValue(undefined);
+    vi.spyOn(periodicFileRead, 'readRegularFileCappedAsync').mockResolvedValue({ kind: 'text', stamp: 'fixture', text: JSON.stringify({ enabled: true, checkedAt: {} }) });
     vi.spyOn(fs, 'renameSync').mockImplementation(() => {});
     finishUpdate = undefined;
     spawnDeps.execFile.mockImplementation((...args: unknown[]) => {
@@ -506,9 +515,10 @@ describe('background CLI maintenance during pane startup', () => {
   });
 
   afterEach(async () => {
-    stop?.();
+    const stopped = stop?.();
     finishUpdate?.();
     await vi.advanceTimersByTimeAsync(0);
+    await stopped;
     vi.restoreAllMocks();
     vi.useRealTimers();
   });

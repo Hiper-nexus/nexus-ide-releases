@@ -1,3 +1,4 @@
+import { sameProjectScope } from './project-scoped-broadcast';
 import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
 import type {
   Handoff,
@@ -585,14 +586,21 @@ function recoverySummary(missionId: string, stage: 1 | 2): string {
   );
 }
 
-function notifyHungWorkerPanes(
+async function notifyHungWorkerPanes(
   suite: ProjectDomainStoreSuite,
   mission: Mission,
   panes: readonly PaneSnapshot[],
   now: number,
-): void {
+  context: PeriodicTaskContext,
+  current: () => boolean,
+): Promise<void> {
   const notifiedAt = hungWorkerNotifiedAtFor(suite);
-  for (const pane of panes) {
+  for (const hint of panes) {
+    await context.checkpoint();
+    if (!current()) return;
+    const pane = listPaneSnapshots().find((live) => live.paneId === hint.paneId &&
+      live.sessionId === hint.sessionId && live.missionId === mission.id);
+    if (!pane) continue;
     if (pane.role !== 'worker' || !pane.sessionId) continue;
     const semantic = getAgentSemanticStatusBySession(pane.sessionId);
     const decision = decideWorkerHung({
@@ -759,7 +767,8 @@ function tracePaneStartRejected(
  * de workspace (F-565) entregue ao pane pai pelo mesmo `injectPrompt`. Status
  * `progress`: `stalled` é diagnóstico e não chega ao PTY do Maestro.
  */
-async function notifyPaneStartCaller(watch: PaneStartWatch, summary: string): Promise<void> {
+async function notifyPaneStartCaller(watch: PaneStartWatch, summary: string, context?: PeriodicTaskContext): Promise<void> {
+  context?.assertCurrent();
   const suite = suiteForScope(watch.scope);
   if (watch.missionId) {
     const handoff = suite.handoffs.submit({
@@ -777,17 +786,27 @@ async function notifyPaneStartCaller(watch: PaneStartWatch, summary: string): Pr
     fromAgent: DELEGATION_SUPERVISOR_AGENT,
   });
   const parentSessionId = watch.callerSessionId;
-  if (getSessionState(parentSessionId) === null) return; // fica listada
+  const parent = getAgentSessionInfo(parentSessionId);
+  if (!parent || getSessionState(parentSessionId) === null || !sameProjectScope(parent.scope, watch.scope)) return;
+  const assertParentCurrent = () => {
+    context?.assertCurrent();
+    const live = getAgentSessionInfo(parentSessionId);
+    if (!live || getSessionState(parentSessionId) === null || !sameProjectScope(live.scope, watch.scope) ||
+      live.paneId !== parent.paneId || live.workerIncarnationId !== parent.workerIncarnationId ||
+      live.adapterId !== parent.adapterId || live.accountId !== parent.accountId || live.cwd !== parent.cwd) {
+      throw new Error('pane start notice parent authority changed');
+    }
+  };
   await import('./tool-util')
     .then(({ injectPrompt }) =>
       injectPrompt(
         parentSessionId,
         `${WORKSPACE_HANDOFF_DELIVERY_PREFIX} de ${watch.paneId} (sistema Nexus): ${summary}\n`,
-        undefined,
+        { signal: context?.signal, assertCurrentAuthority: assertParentCurrent },
         'supervisor',
       ),
     )
-    .then(() => suite.handoffs.markSubmitted(handoff.id))
+    .then(() => { assertParentCurrent(); return suite.handoffs.markSubmitted(handoff.id); })
     .catch((error) => {
       // A linha durável fica `queued`: o operador ainda a lista.
       console.warn(
@@ -844,6 +863,7 @@ async function closeNotStartedPane(watch: PaneStartWatch): Promise<void> {
 async function handlePaneNotStarted(
   watch: PaneStartWatch,
   action: 'reroute' | 'notify-only',
+  context?: PeriodicTaskContext,
 ): Promise<void> {
   watch.phase = 'acting';
   const cause = notStartedCause({
@@ -915,7 +935,7 @@ async function handlePaneNotStarted(
   });
   console.warn(`[delegation-supervisor] ${summary}`);
   try {
-    await notifyPaneStartCaller(watch, summary);
+    await notifyPaneStartCaller(watch, summary, context);
   } catch (error) {
     console.warn(
       `[delegation-supervisor] aviso de pane que não iniciou falhou ` +
@@ -926,7 +946,8 @@ async function handlePaneNotStarted(
   }
 }
 
-async function checkPaneStart(watch: PaneStartWatch, now: number): Promise<void> {
+async function checkPaneStart(watch: PaneStartWatch, now: number, context?: PeriodicTaskContext): Promise<void> {
+  context?.assertCurrent();
   // Varredura e chute imediato podem se cruzar: um efeito por ficha por vez.
   if (watch.phase !== 'watching' || watch.redelivering) return;
   if (watch.sessionId === null) {
@@ -1008,7 +1029,7 @@ async function checkPaneStart(watch: PaneStartWatch, now: number): Promise<void>
     await redeliverPaneStartBrief(watch, now);
     return;
   }
-  await handlePaneNotStarted(watch, action);
+  await handlePaneNotStarted(watch, action, context);
 }
 
 /** Uma passada do watchdog de início (varredura de 15 s ou falha provada). */
@@ -1017,7 +1038,7 @@ export function checkPaneStarts(now: number = Date.now(), parentContext?: Period
     for (const watch of listPaneStartWatches()) {
       await context.checkpoint();
       if (watch.phase !== 'watching' || watch.redelivering) continue;
-      try { await context.wait(checkPaneStart(watch, now)); }
+      try { await context.wait(checkPaneStart(watch, now, context)); }
       catch (error) {
         context.assertCurrent();
         console.warn(`[delegation-supervisor] verificação de início falhou (pane=${watch.paneId}): ${shortStartError(error)}`);
@@ -1167,7 +1188,8 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
 
     if (mission.status === 'pending' || mission.status === 'running') {
       flushAllNexusTaskFailClosedRetries(suite.scope, mission.id);
-      notifyHungWorkerPanes(suite, mission, panes, now);
+      await notifyHungWorkerPanes(suite, mission, panes, now, context, current);
+      if (!current()) continue;
     }
 
     // Re-arm de handoff: Maestro idle + pendente durable, COM OU SEM workers.

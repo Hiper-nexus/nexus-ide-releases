@@ -1,3 +1,6 @@
+import fsp from 'node:fs/promises';
+import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
+import { readRegularFileCappedAsync } from '../redline/redline-safe-read';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -30,7 +33,9 @@ import {
   applyDiscoveredModelsToAdapter,
   cliModelCacheDirectories,
   discoverCliEfforts,
+  discoverCliEffortsAsync,
   discoverCliModels,
+  discoverCliModelsAsync,
 } from './cli-model-discovery';
 import {
   discoveredModelsFor,
@@ -43,6 +48,7 @@ import {
   invalidateModelCatalogCache,
   isModelBlockedForAutoRouting,
   loadModelCatalog,
+  loadModelCatalogAsync,
   modelCatalogInfo,
   modelInfoForAdapter,
   refreshRemoteModelCatalog,
@@ -410,6 +416,8 @@ let watcher: fs.FSWatcher | null = null;
 let modelCatalogWatcher: fs.FSWatcher | null = null;
 const cliModelWatchers: fs.FSWatcher[] = [];
 let periodicRefresh: ReturnType<typeof setInterval> | null = null;
+let registryController = new AbortController();
+let registryEpoch = 0;
 let reloadTimer: ReturnType<typeof setTimeout> | null = null;
 let cliVersionRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let stopCliVersionListener: (() => void) | null = null;
@@ -500,6 +508,53 @@ function reload(): void {
   refreshInstalledCache();
 }
 
+async function reloadBudgeted(context: PeriodicTaskContext): Promise<void> {
+  const epoch = registryEpoch;
+  const previousRegistry = registry;
+  const catalog = await context.wait(loadModelCatalogAsync());
+  const discovered = await context.wait(discoverCliModelsAsync(undefined, context));
+  const efforts = await context.wait(discoverCliEffortsAsync(undefined, context));
+  const users: Adapter[] = [];
+  let directory: Awaited<ReturnType<typeof fsp.opendir>> | null = null;
+  try { directory = await fsp.opendir(USER_ADAPTER_DIR, { bufferSize: 32 }); } catch { /* No user definitions. */ }
+  if (directory) {
+    try {
+      for (;;) {
+        await context.checkpoint();
+        const entry = await context.wait(directory.read());
+        if (!entry) break;
+        if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+        const file = path.join(USER_ADAPTER_DIR, entry.name);
+        const read = await context.wait(readRegularFileCappedAsync(file, 1024 * 1024));
+        if (read.kind !== 'text') continue;
+        try { const adapter = parseAdapter(JSON.parse(read.text), file); if (adapter) users.push(adapter); }
+        catch { /* A malformed definition contributes no capability. */ }
+      }
+    } finally { await directory.close(); }
+  }
+  const next = mergeAdapters(loadBuiltins(), users);
+  for (const [id, adapter] of next) {
+    await context.checkpoint();
+    next.set(id, applyNewestModelLineDefault(applyModelCatalogToAdapter(
+      applyDiscoveredEffortsToAdapter(applyDiscoveredModelsToAdapter(adapter, discovered), efforts), catalog), catalog));
+  }
+  if (registryEpoch !== epoch) return;
+  context.assertCurrent();
+  const origins = new Set(users.map((adapter) => adapter.id));
+  const installations = new Map<string, AdapterBinResolution>();
+  for (const [id, adapter] of next) {
+    await context.checkpoint();
+    if (registryEpoch !== epoch || registry !== previousRegistry) return;
+    installations.set(id, resolveAdapterBin(adapter));
+  }
+  if (registryEpoch !== epoch || registry !== previousRegistry) return;
+  registry = next;
+  adapterOrigins = new Map([...next.keys()].map((id) => [id, origins.has(id) ? 'user' : 'builtin']));
+  installedCache = installations;
+  invalidateAdapterHotCache();
+  broadcast();
+}
+
 /**
  * Send a payload to every live listener, pruning any whose webContents has
  * already been destroyed. Exported so the destroyed-window guard can be tested
@@ -539,12 +594,14 @@ export function notifyAdaptersChanged(): void {
 }
 
 function scheduleReloadAndBroadcast(): void {
+  registryEpoch++;
   if (reloadTimer) clearTimeout(reloadTimer);
   reloadTimer = setTimeout(() => {
     reloadTimer = null;
     invalidateModelCatalogCache();
-    reload();
-    broadcast();
+    void runPeriodicTask('adapter-registry-reload', reloadBudgeted, { signal: registryController.signal }).catch((error) => {
+      if (!registryController.signal.aborted) console.warn('[adapter-registry] refresh failed:', error);
+    });
   }, WATCH_DEBOUNCE_MS);
 }
 
@@ -555,6 +612,7 @@ function scheduleReloadAndBroadcast(): void {
  * rajada de sondas.
  */
 function scheduleCliVersionRefresh(): void {
+  registryEpoch++;
   if (cliVersionRefreshTimer) return;
   cliVersionRefreshTimer = setTimeout(() => {
     cliVersionRefreshTimer = null;
@@ -573,6 +631,8 @@ function warmAdapterCliVersions(): Promise<number> {
 // ── Public API ───────────────────────────────────────────────────────────────
 
 export function initAdapterRegistry(): void {
+  registryEpoch++;
+  registryController = new AbortController();
   fs.mkdirSync(NEXUS_DIR, { recursive: true });
   fs.mkdirSync(USER_ADAPTER_DIR, { recursive: true });
   // Seed ~/.nexus/model-catalog.json from the published JSON when missing so
@@ -627,14 +687,16 @@ export function initAdapterRegistry(): void {
     }
   }
 
-  void refreshRemoteModelCatalog().then((updated) => {
-    if (updated) scheduleReloadAndBroadcast();
+  void runPeriodicTask('adapter-model-refresh', async (context) => {
+    await Promise.all([
+      context.wait(refreshRemoteModelCatalog()),
+      context.wait(refreshAllDiscoveredModels([...registry.keys()], undefined, context)),
+    ]);
+    invalidateModelCatalogCache();
+    await reloadBudgeted(context);
+  }, { signal: registryController.signal, cadenceMs: MODEL_DISCOVERY_POLL_MS }).catch((error) => {
+    if (!registryController.signal.aborted) console.warn('[adapter-registry] initial model refresh failed:', error);
   });
-
-  refreshAllDiscoveredModels(
-    [...registry.keys()],
-    () => scheduleReloadAndBroadcast(),
-  );
 
   // Remote metadata is eventually consistent; CLI cache watchers provide the
   // immediate path (Claude/Codex/Grok). Polling covers providers that atomically
@@ -643,8 +705,14 @@ export function initAdapterRegistry(): void {
   // Grok is cache-only: the poll re-reads ~/.grok/models_cache.json and never
   // spawns `grok models` (that CLI rotates the refresh token on every run).
   periodicRefresh ??= setInterval(() => {
-    refreshAllDiscoveredModels([...registry.keys()]);
-    void refreshRemoteModelCatalog().finally(() => scheduleReloadAndBroadcast());
+    void runPeriodicTask('adapter-model-refresh', async (context) => {
+      await context.wait(refreshAllDiscoveredModels([...registry.keys()], undefined, context));
+      await context.wait(refreshRemoteModelCatalog());
+      invalidateModelCatalogCache();
+      await reloadBudgeted(context);
+    }, { signal: registryController.signal, cadenceMs: MODEL_DISCOVERY_POLL_MS }).catch((error) => {
+      if (!registryController.signal.aborted) console.warn('[adapter-registry] model refresh failed:', error);
+    });
   }, MODEL_DISCOVERY_POLL_MS);
   periodicRefresh.unref?.();
 }
@@ -752,7 +820,11 @@ export function listAdapterInfos(): AdapterInfo[] {
   );
 }
 
-export function closeAdapterRegistry(): void {
+export async function closeAdapterRegistry(): Promise<void> {
+  registryEpoch++;
+  registryController.abort(new Error('adapter registry stopped'));
+  if (periodicRefresh) clearInterval(periodicRefresh);
+  periodicRefresh = null;
   if (reloadTimer) {
     clearTimeout(reloadTimer);
     reloadTimer = null;
@@ -768,4 +840,5 @@ export function closeAdapterRegistry(): void {
   modelCatalogWatcher?.close();
   modelCatalogWatcher = null;
   listeners.clear();
+  await Promise.all([stopPeriodicTask('adapter-model-refresh'), stopPeriodicTask('adapter-registry-reload')]);
 }

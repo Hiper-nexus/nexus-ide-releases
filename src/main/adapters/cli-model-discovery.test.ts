@@ -10,9 +10,21 @@ import {
   discoverCliModels,
   readCliEfforts,
   readCliModelCache,
+  readCliModelCacheAsync,
 } from './cli-model-discovery';
 
 describe('CLI model discovery', () => {
+  it('periodic cache reads are async and still refuse newer producer offers', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'async-cli-cache-'));
+    const file = path.join(root, 'models.json');
+    try {
+      fs.writeFileSync(file, JSON.stringify({ client_version: '3.0.0', models: [{ id: 'future-model' }] }));
+      const pending = readCliModelCacheAsync(file, { clientVersion: '2.0.0' });
+      expect(pending).toBeInstanceOf(Promise);
+      expect(await pending).toEqual([]);
+      expect(await readCliModelCacheAsync(file, { clientVersion: '3.0.0' })).toEqual(['future-model']);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
   it('F-724: catálogo vivo do Qwen Code traz o deepseek-v4-pro só no Token Plan', () => {
     const qwen = CLI_MODEL_CACHE_SOURCES.find((source) => source.adapterId === 'qwen')!;
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-cli-models-qwen-'));

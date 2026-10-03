@@ -1,3 +1,7 @@
+import fsp from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
+import { readRegularFileCappedAsync } from '../redline/redline-safe-read';
 import { mimoCredentialSupportsModel } from '../adapters/mimo-auth';
 import { qwenSettingsHasCredential } from '../adapters/qwen-settings';
 import { migrateModelId } from '../../shared/model-defaults';
@@ -2142,6 +2146,38 @@ function automaticCliCandidate(adapterId: string): AutomaticCliCandidate | null 
   } catch { return null; }
 }
 
+async function automaticCliCandidateAsync(adapterId: string): Promise<AutomaticCliCandidate | null> {
+  const adapter = getAdapter(adapterId);
+  if (!adapter || adapter.kind !== 'cli-pty' || !isBuiltinAdapter(adapterId) ||
+      configFor(adapterId).binPath) return null;
+  const binPath = activeProviderBinary(adapterId);
+  if (!binPath) return null;
+  let realBinPath: string;
+  try { realBinPath = await fsp.realpath(process.platform === 'win32'
+    ? windowsNpmShimTarget(adapterId, binPath) ?? binPath : binPath); }
+  catch { return null; }
+  const writable = new Map<string, boolean>();
+  for (const target of [binPath, realBinPath]) {
+    writable.set(target, await fsp.access(path.dirname(target), fs.constants.W_OK).then(() => true, () => false));
+  }
+  const recipe = selectAutomaticCliUpdateRecipe({
+    adapterId, platform: process.platform, binPath, realBinPath,
+    userHome: realUserHome(), windowsLocalAppData: process.env.LOCALAPPDATA,
+    installationDistribution: adapterId === 'devin' ? installedDevinDistribution(realBinPath) : null,
+    isRunnerResolvable: (runner) => resolveRunnerPath(runner) !== null,
+    resolveRealPath: resolveCliRealPath,
+    isTargetWritable: (target) => writable.get(target) === true,
+  });
+  if (!recipe) return null;
+  if (recipe.kind !== 'argv') {
+    return { adapterId, label: adapter.label, binPath, realBinPath, recipe, prepared: null };
+  }
+  try {
+    return { adapterId, label: adapter.label, binPath, realBinPath, recipe,
+      prepared: prepareArgvInstallInvocation(recipe) };
+  } catch { return null; }
+}
+
 /** Linha do diálogo de consentimento: o comando exato ou o script oficial. */
 function describeAutomaticCliCandidate(candidate: AutomaticCliCandidate): string {
   if (candidate.prepared) {
@@ -2170,17 +2206,45 @@ function readAutoCliPreferences(file: string): AutoCliPreferences | null {
   } catch { return null; }
 }
 
+let autoCliPreferencesRevision = 0;
+
 function writeAutoCliPreferences(file: string, state: AutoCliPreferences): boolean {
   const temp = `${file}.${process.pid}.tmp`;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     fs.writeFileSync(temp, JSON.stringify(state), { mode: 0o600 });
     fs.renameSync(temp, file);
+    autoCliPreferencesRevision++;
     return true;
   } catch {
     try { fs.rmSync(temp, { force: true }); } catch { /* no-op */ }
     return false;
   }
+}
+
+async function readAutoCliPreferencesAsync(file: string): Promise<AutoCliPreferences | null> {
+  const result = await readRegularFileCappedAsync(file, 256 * 1024);
+  if (result.kind !== 'text') return null;
+  try {
+    const parsed = z.object({ enabled: z.boolean(), askAgainAt: z.number().finite().nonnegative().optional(),
+      checkedAt: z.record(z.string(), z.number().finite().nonnegative()).default({}) }).safeParse(JSON.parse(result.text));
+    return parsed.success ? parsed.data : null;
+  } catch { return null; }
+}
+
+async function writeAutoCliPreferencesAsync(file: string, state: AutoCliPreferences, current: () => boolean): Promise<boolean> {
+  const revision = autoCliPreferencesRevision;
+  const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await fsp.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+    if (!current()) return false;
+    await fsp.writeFile(temporary, JSON.stringify(state), { mode: 0o600, flag: 'wx' });
+    if (!current() || revision !== autoCliPreferencesRevision) return false;
+    await fsp.rename(temporary, file);
+    autoCliPreferencesRevision++;
+    return true;
+  } catch { return false; }
+  finally { await fsp.rm(temporary, { force: true }).catch(() => undefined); }
 }
 
 function autoCliStatus(state: AutoCliPreferences | null): import('../../shared/provider-settings-types').CliAutoUpdateStatus {
@@ -2219,9 +2283,11 @@ const CLI_AUTO_UPDATE_IDLE_SECONDS = 60;
 export function startCliAutoUpdate(
   userDataDir: string,
   hasLivePane: (adapterId: string) => boolean,
-): () => void {
-  if (process.platform !== 'darwin' && process.platform !== 'win32') return () => {};
+): () => Promise<void> {
+  if (process.platform !== 'darwin' && process.platform !== 'win32') return async () => {};
   const file = path.join(userDataDir, 'cli-auto-update.json');
+  const controller = new AbortController();
+  const taskId = `cli-auto-update:${randomUUID()}`;
   let preferences = readAutoCliPreferences(file);
   const queue = new CliAutoUpdateQueue(preferences?.checkedAt);
   let prompting = false;
@@ -2229,8 +2295,8 @@ export function startCliAutoUpdate(
   let stopped = false;
   let lastDiscoveryAt = 0;
   let candidates: AutomaticCliCandidate[] = [];
-  const tick = async () => {
-    preferences = readAutoCliPreferences(file) ?? preferences;
+  const tick = async (context: PeriodicTaskContext) => {
+    preferences = await context.wait(readAutoCliPreferencesAsync(file)) ?? preferences;
     if (stopped || prompting || checking || cliUpdateLease.isProvisioning() ||
         (preferences?.enabled === false && !shouldOfferAutoCliConsent(preferences, Date.now()))) return;
     checking = true;
@@ -2239,10 +2305,14 @@ export function startCliAutoUpdate(
       // operator opened their first pane. Do maintenance while they are away.
       if (powerMonitor.getSystemIdleTime() < CLI_AUTO_UPDATE_IDLE_SECONDS) return;
       if (Date.now() - lastDiscoveryAt >= 30 * 60_000) {
-        await rescanAdapterBinaries();
-        candidates = listAdapters()
-          .map((adapter) => automaticCliCandidate(adapter.id))
-          .filter((candidate): candidate is AutomaticCliCandidate => candidate !== null);
+        await context.wait(rescanAdapterBinaries());
+        candidates = [];
+        for (const adapter of listAdapters()) {
+          await context.checkpoint();
+          if (stopped) return;
+          const candidate = await context.wait(automaticCliCandidateAsync(adapter.id));
+          if (candidate) candidates.push(candidate);
+        }
         lastDiscoveryAt = Date.now();
       }
       if (candidates.length === 0) return;
@@ -2251,40 +2321,50 @@ export function startCliAutoUpdate(
         if (!cliUpdateLease.beginAutoConsent()) return;
         prompting = true;
         try {
-          const accepted = await confirmAutomaticCliConsent(candidates);
+          const accepted = await context.wait(confirmAutomaticCliConsent(candidates));
           const next = {
             enabled: accepted,
             askAgainAt: accepted ? undefined : Date.now() + 7 * 24 * 60 * 60_000,
             checkedAt: preferences?.checkedAt ?? {},
           };
-          if (!writeAutoCliPreferences(file, next)) return;
+          if (stopped || !await context.wait(writeAutoCliPreferencesAsync(file, next, () => !stopped))) return;
           preferences = next;
         } finally { prompting = false; cliUpdateLease.endAutoConsent(); }
       }
       if (!preferences?.enabled || stopped) return;
-      if (readAutoCliPreferences(file)?.enabled !== true) return;
+      if ((await context.wait(readAutoCliPreferencesAsync(file)))?.enabled !== true) return;
       const now = Date.now();
       await queue.runOne(candidates.map((candidate) => candidate.adapterId), now,
         (id) => hasLivePane(id) || cliUpdateLease.isHeld(id), async (id) => {
         // Revalidate the effective launcher and permissions immediately before mutation.
-        const selected = automaticCliCandidate(id);
+        const selected = await context.wait(automaticCliCandidateAsync(id));
+        const admittedPreference = await context.wait(readAutoCliPreferencesAsync(file));
         if (!selected || stopped || hasLivePane(id) ||
             powerMonitor.getSystemIdleTime() < CLI_AUTO_UPDATE_IDLE_SECONDS ||
-            readAutoCliPreferences(file)?.enabled !== true ||
+            admittedPreference?.enabled !== true ||
             !cliUpdateLease.acquire(id)) return false;
         try {
-          const beforeVersion = await installedCliVersion(id, selected.binPath);
+          const beforeVersion = await context.wait(installedCliVersion(id, selected.binPath));
           let stillSameTarget = false;
           try {
-            stillSameTarget = fs.realpathSync(process.platform === 'win32'
+            stillSameTarget = await fsp.realpath(process.platform === 'win32'
               ? windowsNpmShimTarget(id, selected.binPath) ?? selected.binPath
               : selected.binPath) === selected.realBinPath;
           } catch { /* The launcher disappeared while being checked. */ }
+          const effectivePreference = await context.wait(readAutoCliPreferencesAsync(file));
           if (!beforeVersion || !stillSameTarget || stopped || hasLivePane(id) ||
               powerMonitor.getSystemIdleTime() < CLI_AUTO_UPDATE_IDLE_SECONDS ||
-              readAutoCliPreferences(file)?.enabled !== true ||
+              effectivePreference?.enabled !== true ||
               activeProviderBinary(id) !== selected.binPath) return false;
-          try { await runInstallRecipe(selected.recipe, selected.prepared ?? undefined); }
+          const preferenceRevision = autoCliPreferencesRevision;
+          const assertInstallCurrent = () => {
+            context.assertCurrent();
+            if (stopped || autoCliPreferencesRevision !== preferenceRevision || hasLivePane(id) ||
+              powerMonitor.getSystemIdleTime() < CLI_AUTO_UPDATE_IDLE_SECONDS || activeProviderBinary(id) !== selected.binPath) {
+              throw new Error('CLI update authority changed before execution');
+            }
+          };
+          try { await context.wait(runInstallRecipe(selected.recipe, selected.prepared ?? undefined, assertInstallCurrent)); }
           catch (error) {
             console.warn(`[cli-auto-update] ${id}: update failed`, error);
             return false;
@@ -2293,8 +2373,8 @@ export function startCliAutoUpdate(
           // scan below must not keep a ready launcher behind unrelated CLIs.
           resolveAdapterBinary(id);
           const afterBin = activeProviderBinary(id);
-          const afterVersion = afterBin ? await installedCliVersion(id, afterBin) : null;
-          if (!afterBin || !afterVersion) return false;
+          const afterVersion = afterBin ? await context.wait(installedCliVersion(id, afterBin)) : null;
+          if (!afterBin || !afterVersion || stopped) return false;
           const result = assessCliUpdate({
             beforeBin: selected.binPath, beforeVersion, afterBin, afterVersion,
             platform: process.platform,
@@ -2302,26 +2382,36 @@ export function startCliAutoUpdate(
           if (result === 'different-launcher') return false;
           console.info(`[cli-auto-update] ${id}: ${result === 'updated' ? 'updated' : 'checked'}, ${afterVersion}`);
         } finally { cliUpdateLease.release(id); }
-        await rescanAdapterBinaries();
+        await context.wait(rescanAdapterBinaries());
+        if (stopped) return false;
         broadcast();
         return true;
       });
-      const current = readAutoCliPreferences(file);
+      const current = await context.wait(readAutoCliPreferencesAsync(file));
       if (current?.enabled) {
         preferences = { ...current, checkedAt: queue.snapshot() };
-        if (!writeAutoCliPreferences(file, preferences)) {
+        if (!await context.wait(writeAutoCliPreferencesAsync(file, preferences, () => !stopped))) {
           console.warn('[cli-auto-update] could not persist last check');
         }
       } else {
         preferences = current;
       }
     } catch (error) {
-      console.warn('[cli-auto-update] background check deferred', error);
+      if (!stopped) console.warn('[cli-auto-update] background check deferred', error);
     } finally { checking = false; }
   };
-  const initial = setTimeout(() => { void tick(); }, 60_000);
-  const interval = setInterval(() => { void tick(); }, 60_000);
-  return () => { stopped = true; clearTimeout(initial); clearInterval(interval); };
+  const request = () => {
+    void runPeriodicTask(taskId, tick, { signal: controller.signal, cadenceMs: 60_000 }).catch(() => undefined);
+  };
+  const initial = setTimeout(request, 60_000);
+  const interval = setInterval(request, 60_000);
+  return async () => {
+    stopped = true;
+    clearTimeout(initial);
+    clearInterval(interval);
+    controller.abort(new Error('CLI auto update stopped'));
+    await stopPeriodicTask(taskId);
+  };
 }
 
 function installedDevinDistribution(realBinPath: string): string | null {
@@ -2373,7 +2463,9 @@ async function installedCliVersion(adapterId: string, binPath: string): Promise<
 async function runScriptInstall(
   scriptUrl: string,
   envOverrides?: Readonly<Record<string, string>>,
+  assertCurrent?: () => void,
 ): Promise<void> {
+  assertCurrent?.();
   const url = new URL(scriptUrl);
   if (url.protocol !== 'https:') {
     throw new Error('instalador oficial precisa ser HTTPS');
@@ -2388,8 +2480,9 @@ async function runScriptInstall(
     os.tmpdir(),
     `nexus-cli-install-${Date.now()}-${process.pid}.sh`,
   );
-  fs.writeFileSync(file, body, { mode: 0o700 });
+  await fsp.writeFile(file, body, { mode: 0o700, flag: 'wx' });
   try {
+    assertCurrent?.();
     await new Promise<void>((resolve, reject) => {
       execFile(
         resolveRunnerPath('bash') ?? 'bash',
@@ -2401,7 +2494,7 @@ async function runScriptInstall(
       );
     });
   } finally {
-    fs.rmSync(file, { force: true });
+    await fsp.rm(file, { force: true });
   }
 }
 
@@ -2412,7 +2505,9 @@ async function runScriptInstall(
 async function runPowerShellScriptInstall(
   scriptUrl: string,
   replacesLocalAppDataExecutable?: string,
+  assertCurrent?: () => void,
 ): Promise<void> {
+  assertCurrent?.();
   const url = new URL(scriptUrl);
   if (url.protocol !== 'https:') {
     throw new Error('instalador oficial precisa ser HTTPS');
@@ -2427,7 +2522,7 @@ async function runPowerShellScriptInstall(
     os.tmpdir(),
     `nexus-cli-install-${Date.now()}-${process.pid}.ps1`,
   );
-  fs.writeFileSync(file, body, { mode: 0o600 });
+  await fsp.writeFile(file, body, { mode: 0o600, flag: 'wx' });
   // F-747: o executável em uso por um pane sai do caminho do `Copy-Item`.
   const localAppData = process.env.LOCALAPPDATA;
   const entry =
@@ -2436,10 +2531,12 @@ async function runPowerShellScriptInstall(
       : null;
   let aside: string | null = null;
   try {
+    assertCurrent?.();
     if (entry) {
       removeStaleExecutableCopies(entry);
       aside = moveExecutableAside(entry, String(Date.now()));
     }
+    assertCurrent?.();
     await new Promise<void>((resolve, reject) => {
       execFile(
         resolveRunnerPath('powershell') ?? 'powershell.exe',
@@ -2455,7 +2552,7 @@ async function runPowerShellScriptInstall(
     if (entry) restoreExecutableIfMissing(entry, aside);
     throw error;
   } finally {
-    fs.rmSync(file, { force: true });
+    await fsp.rm(file, { force: true });
   }
 }
 
@@ -2513,16 +2610,19 @@ function describeArgvInstallInvocation(invocation: ArgvInstallInvocation): strin
 async function runInstallRecipe(
   recipe: CliInstallRecipe,
   prepared?: ArgvInstallInvocation,
+  assertCurrent?: () => void,
 ): Promise<void> {
+  assertCurrent?.();
   if (recipe.kind === 'script') {
-    await runScriptInstall(recipe.scriptUrl, recipe.env);
+    await runScriptInstall(recipe.scriptUrl, recipe.env, assertCurrent);
     return;
   }
   if (recipe.kind === 'powershell-script') {
-    await runPowerShellScriptInstall(recipe.scriptUrl, recipe.replacesLocalAppDataExecutable);
+    await runPowerShellScriptInstall(recipe.scriptUrl, recipe.replacesLocalAppDataExecutable, assertCurrent);
     return;
   }
   const invocation = prepared ?? prepareArgvInstallInvocation(recipe);
+  assertCurrent?.();
   await new Promise<void>((resolve, reject) => {
     execFile(
       invocation.executable,

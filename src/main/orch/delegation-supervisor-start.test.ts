@@ -667,6 +667,7 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
   });
 
   it('helper do operador sem outra CLI: não reroteia e avisa o pane pai pela entrega sem missão', async () => {
+    h.agentInfo.mockImplementation((sessionId) => sessionId === 'session-operador' ? { scope: SCOPE, adapterId: 'codex', role: 'user', cwd: '/workspace' } : null);
     trackPaneStart(watchInit({
       missionId: undefined,
       role: 'helper',
@@ -693,7 +694,7 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
       expect.stringMatching(
         new RegExp(`^\\${WORKSPACE_HANDOFF_DELIVERY_PREFIX.slice(0, -1)}\\] de pane-qwen`),
       ),
-      undefined,
+      expect.objectContaining({ assertCurrentAuthority: expect.any(Function) }),
       'supervisor',
     );
   });
