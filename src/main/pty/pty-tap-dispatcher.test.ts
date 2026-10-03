@@ -305,3 +305,181 @@ describe('PtyDataTapDispatcher — tempo por tap (F-764 A.3)', () => {
     ]);
   });
 });
+
+describe('PtyDataTapDispatcher — inundação (F-764 C.2)', () => {
+  const KB = 1024;
+  const line = (index: number, size: number) =>
+    `${String(index).padStart(8, '0')} ${'x'.repeat(size - 10)}\n`;
+
+  /** Despeja `charsPerSec` em chunks de `size` por `seconds` de relógio. */
+  function stream(
+    h: ReturnType<typeof harness>,
+    sessionId: string,
+    seconds: number,
+    charsPerSec: number,
+    size = KB,
+  ): string[] {
+    const intervalMs = (size / charsPerSec) * 1_000;
+    const count = Math.round((seconds * 1_000) / intervalMs);
+    const sent: string[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const chunk = line(index, size);
+      sent.push(chunk);
+      h.dispatcher.push(sessionId, chunk);
+      h.advance(intervalMs);
+    }
+    return sent;
+  }
+
+  function taps(h: ReturnType<typeof harness>) {
+    const analysis: string[] = [];
+    const complete: string[] = [];
+    h.dispatcher.register((_s, data) => analysis.push(data), { name: 'análise' });
+    h.dispatcher.register((_s, data) => complete.push(data), {
+      name: 'anel',
+      delivery: 'complete',
+    });
+    return { analysis, complete };
+  }
+
+  it('5 MB/s: análise recebe só o tail limitado; complete recebe tudo; trace pty-flood', () => {
+    const h = harness();
+    const { analysis, complete } = taps(h);
+    // 1 s para a janela de vazão detectar a inundação (rajada inicial).
+    const warmup = stream(h, 's', 1, 5 * KB * KB);
+    expect(h.dispatcher.isFlooding('s')).toBe(true);
+    const analysisBefore = analysis.length;
+    const sent = stream(h, 's', 2, 5 * KB * KB);
+    h.dispatcher.flush('s');
+    const total = sent.reduce((sum, chunk) => sum + chunk.length, 0);
+    expect(total).toBeGreaterThanOrEqual(10 * KB * KB - KB);
+    // O anel do pane (complete) não perde um byte.
+    expect(complete.join('')).toBe([...warmup, ...sent].join(''));
+    // Em regime, a análise vê no máximo 16 KB a cada 250 ms: ~8 entregas em
+    // 2 s (+1 do flush final), ~128 KB para 10 MB despejados.
+    const steady = analysis.slice(analysisBefore);
+    const steadyChars = steady.reduce((sum, data) => sum + data.length, 0);
+    expect(steady.length).toBeLessThanOrEqual(2_000 / PTY_TAP_BUDGET.floodAnalysisMs + 2);
+    expect(Math.max(...steady.map((data) => data.length))).toBeLessThanOrEqual(
+      PTY_TAP_BUDGET.floodTailChars,
+    );
+    expect(steadyChars).toBeLessThanOrEqual(
+      (2_000 / PTY_TAP_BUDGET.floodAnalysisMs + 2) * PTY_TAP_BUDGET.floodTailChars,
+    );
+    // A rajada de detecção também é limitada: ~a vazão de entrada de 1 s.
+    const burstChars = analysis
+      .slice(0, analysisBefore)
+      .reduce((sum, data) => sum + data.length, 0);
+    expect(burstChars).toBeLessThanOrEqual(
+      PTY_TAP_BUDGET.floodEnterCharsPerSec + 6 * PTY_TAP_BUDGET.floodTailChars,
+    );
+    // A última entrega termina no fim do fluxo e começa numa linha inteira.
+    const last = steady.at(-1)!;
+    expect(sent.join('').endsWith(last)).toBe(true);
+    expect(last).toMatch(/^\d{8} x/);
+    expect(h.traces.filter((event) => event.kind === 'pty-flood')).toEqual([
+      expect.objectContaining({
+        kind: 'pty-flood',
+        sessionId: 's',
+        tailChars: PTY_TAP_BUDGET.floodTailChars,
+        analysisEveryMs: PTY_TAP_BUDGET.floodAnalysisMs,
+      }),
+    ]);
+    const flood = h.traces.find((event) => event.kind === 'pty-flood')!;
+    expect(flood.charsPerSec as number).toBeGreaterThan(PTY_TAP_BUDGET.floodEnterCharsPerSec);
+  });
+
+  it('a inundação acaba com a vazão baixa: pty-flood-end e análise volta ao lote inteiro', () => {
+    const h = harness();
+    const { analysis } = taps(h);
+    stream(h, 's', 1, 5 * KB * KB);
+    h.advance(2_000);
+    analysis.length = 0;
+    h.dispatcher.push('s', 'calmo\n');
+    h.advance(PTY_TAP_BUDGET.flushMs);
+    expect(h.dispatcher.isFlooding('s')).toBe(false);
+    expect(analysis.join('')).toContain('calmo\n');
+    const end = h.traces.find((event) => event.kind === 'pty-flood-end');
+    expect(end).toEqual(
+      expect.objectContaining({ kind: 'pty-flood-end', sessionId: 's', reason: 'rate' }),
+    );
+    expect(end!.droppedChars as number).toBeGreaterThan(4 * KB * KB);
+  });
+
+  it('abaixo de 512 K/s nada é podado', () => {
+    const h = harness();
+    const { analysis, complete } = taps(h);
+    const sent = stream(h, 's', 2, 400 * KB);
+    h.dispatcher.flush('s');
+    expect(analysis.join('')).toBe(sent.join(''));
+    expect(complete.join('')).toBe(sent.join(''));
+    expect(h.traces.some((event) => event.kind === 'pty-flood')).toBe(false);
+  });
+
+  it('histerese: entre 256 K e 512 K/s a inundação continua', () => {
+    const h = harness();
+    taps(h);
+    stream(h, 's', 1, 2 * KB * KB);
+    expect(h.dispatcher.isFlooding('s')).toBe(true);
+    stream(h, 's', 2, 384 * KB);
+    expect(h.dispatcher.isFlooding('s')).toBe(true);
+    stream(h, 's', 2, 128 * KB);
+    expect(h.dispatcher.isFlooding('s')).toBe(false);
+  });
+
+  it('evento do Main (flush) entrega o tail na hora, fora da cadência', () => {
+    const h = harness();
+    const { analysis } = taps(h);
+    stream(h, 's', 1, 5 * KB * KB);
+    const before = analysis.length;
+    h.dispatcher.push('s', 'antes-da-escrita\n');
+    h.dispatcher.flush('s');
+    expect(analysis.length).toBe(before + 1);
+    expect(analysis.at(-1)!.endsWith('antes-da-escrita\n')).toBe(true);
+  });
+
+  it('trace pty-flood no máximo um por sessão por minuto, com os suprimidos contados', () => {
+    const h = harness();
+    taps(h);
+    const floodThenCalm = () => {
+      stream(h, 's', 1, 5 * KB * KB);
+      h.advance(3_000);
+      h.dispatcher.push('s', 'calmo\n');
+      h.advance(PTY_TAP_BUDGET.flushMs);
+    };
+    floodThenCalm();
+    floodThenCalm();
+    expect(h.traces.filter((event) => event.kind === 'pty-flood')).toHaveLength(1);
+    h.advance(PTY_TAP_BUDGET.floodTraceEveryMs);
+    floodThenCalm();
+    const floods = h.traces.filter((event) => event.kind === 'pty-flood');
+    expect(floods).toHaveLength(2);
+    expect(floods[1]).toEqual(expect.objectContaining({ suppressedFloods: 1 }));
+  });
+
+  it('sessão que sai inundando fecha o episódio com reason exit', () => {
+    const h = harness();
+    taps(h);
+    stream(h, 's', 1, 5 * KB * KB);
+    h.dispatcher.flush('s');
+    h.dispatcher.drop('s');
+    expect(h.traces.at(-1)).toEqual(
+      expect.objectContaining({ kind: 'pty-flood-end', sessionId: 's', reason: 'exit' }),
+    );
+  });
+
+  it('o tail cortado começa numa linha inteira', () => {
+    const h = harness({ floodTailChars: 100 });
+    const { analysis } = taps(h);
+    stream(h, 's', 1, 5 * KB * KB, 64);
+    expect(h.dispatcher.isFlooding('s')).toBe(true);
+    analysis.length = 0;
+    stream(h, 's', 1, 5 * KB * KB, 64);
+    h.dispatcher.flush('s');
+    expect(analysis.length).toBeGreaterThan(0);
+    for (const data of analysis) {
+      expect(data.length).toBeLessThanOrEqual(100);
+      expect(data).toMatch(/^\d{8} /);
+    }
+  });
+});

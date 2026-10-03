@@ -25,6 +25,16 @@
  *    aceite que CONTAM chunks e dependem da ordem exata com escrita e estado;
  *    tem de ser O(1) por chunk e nunca ler o texto.
  *
+ * Inundação (C.2): sessão acima de 512 K caracteres/s (janela deslizante de
+ * 1 s) passa a alimentar os taps de ANÁLISE só com o tail de 16 KB do que
+ * chegou desde a última entrega, no máximo a cada 250 ms — o custo deles fica
+ * limitado (~64 KB/s por sessão) qualquer que seja a vazão. Os taps COMPLETE
+ * seguem recebendo tudo, em lotes maiores (50 ms / 256 KB). A UI não depende
+ * disto: push ao renderer e replay ficam no pty-manager, chunk a chunk. O
+ * trace registra `pty-flood` (no máximo um por sessão por minuto) e
+ * `pty-flood-end` com quanto a análise deixou de ver. Sai da inundação abaixo
+ * de 256 K/s (histerese).
+ *
  * Contabilidade (A.3): cada tap é cronometrado. Tap acima de 50 ms ou entrega
  * inteira acima de 100 ms vira trace (`pty-tap-slow` / `pty-tap-batch-slow`)
  * com o nome registrado — no máximo um a cada 10 s por tap, com a contagem do
@@ -55,6 +65,20 @@ export interface PtyTapBudgetConfig {
   readonly slowTraceEveryMs: number;
   /** Um tick do timer de lotes cede o main depois disto e continua em seguida. */
   readonly sliceBudgetMs: number;
+  /** Acima disto (caracteres/s, janela de 1 s) a sessão está inundando. */
+  readonly floodEnterCharsPerSec: number;
+  /** Abaixo disto a inundação acabou (histerese). */
+  readonly floodExitCharsPerSec: number;
+  /** Tail que os taps de análise recebem sob inundação. */
+  readonly floodTailChars: number;
+  /** Cadência dos taps de análise sob inundação. */
+  readonly floodAnalysisMs: number;
+  /** Janela do lote dos taps `complete` sob inundação. */
+  readonly floodFlushMs: number;
+  /** Teto do lote sob inundação (memória e tamanho de cada entrega). */
+  readonly floodMaxBatchChars: number;
+  /** No máximo um trace `pty-flood` por sessão neste intervalo. */
+  readonly floodTraceEveryMs: number;
 }
 
 export const PTY_TAP_BUDGET: PtyTapBudgetConfig = Object.freeze({
@@ -64,6 +88,13 @@ export const PTY_TAP_BUDGET: PtyTapBudgetConfig = Object.freeze({
   batchSlowMs: 100,
   slowTraceEveryMs: 10_000,
   sliceBudgetMs: 50,
+  floodEnterCharsPerSec: 512 * 1024,
+  floodExitCharsPerSec: 256 * 1024,
+  floodTailChars: 16 * 1024,
+  floodAnalysisMs: 250,
+  floodFlushMs: 50,
+  floodMaxBatchChars: 256 * 1024,
+  floodTraceEveryMs: 60_000,
 });
 
 export interface PtyTapDispatcherDeps {
@@ -74,6 +105,8 @@ export interface PtyTapDispatcherDeps {
   /** Trace persistido do main; nunca recebe texto do PTY, só ids e números. */
   readonly trace: (event: Record<string, unknown>) => void;
   readonly warn: (message: string, error: unknown) => void;
+  /** Ids do pane/adapter da sessão para o trace de inundação (nunca texto). */
+  readonly describeSession?: (sessionId: string) => Record<string, unknown> | null;
 }
 
 const round1 = (ms: number) => Math.round(ms * 10) / 10;
@@ -197,6 +230,39 @@ interface SessionBatch {
   chars: number;
   /** Relógio do primeiro chunk pendente: o lote sai até `flushMs` depois. */
   firstChunkAt: number;
+  // Vazão: janela deslizante de 1 s (janela atual + fração da anterior).
+  windowStartedAt: number;
+  windowChars: number;
+  previousWindowChars: number;
+  // Inundação (C.2).
+  flooding: boolean;
+  floodStartedAt: number;
+  floodPeakCharsPerSec: number;
+  floodDroppedChars: number;
+  floodTraced: boolean;
+  lastFloodTraceAt: number | null;
+  suppressedFloods: number;
+  /** O que os taps de análise ainda não viram (no máximo `floodTailChars`). */
+  tail: string;
+  tailPending: boolean;
+  tailTruncated: boolean;
+  lastAnalysisAt: number;
+}
+
+/**
+ * Início seguro do tail cortado: a primeira linha veio pela metade, então
+ * começa na linha seguinte; sem quebra por perto, no próximo ESC (não começa
+ * no meio de uma sequência); nunca no meio de um par substituto.
+ */
+function safeTailStart(text: string): string {
+  const newline = text.indexOf('\n');
+  if (newline >= 0 && newline < 1_024 && newline < text.length - 1) {
+    return text.slice(newline + 1);
+  }
+  const escape = text.indexOf('\x1b');
+  if (escape > 0 && escape < 256) return text.slice(escape);
+  const first = text.charCodeAt(0);
+  return first >= 0xdc00 && first <= 0xdfff ? text.slice(1) : text;
 }
 
 export class PtyDataTapDispatcher {
@@ -239,39 +305,58 @@ export class PtyDataTapDispatcher {
   push(sessionId: string, data: string): void {
     if (data.length === 0) return;
     if (this.#immediate.length > 0) {
-      this.#deliver(this.#immediate, sessionId, data, 1);
+      this.#deliver(this.#immediate, sessionId, data, data, 1);
     }
     if (this.#batched.length === 0) return;
+    const now = this.deps.now();
     let batch = this.#batches.get(sessionId);
     if (!batch) {
-      batch = { sessionId, chunks: [], chars: 0, firstChunkAt: 0 };
+      batch = this.#newBatch(sessionId, now);
       this.#batches.set(sessionId, batch);
     }
-    if (batch.chunks.length === 0) batch.firstChunkAt = this.deps.now();
+    // A janela de 1 s precisa acumular `floodEnterCharsPerSec` para disparar:
+    // a rajada inicial de uma inundação (~100 ms a 5 MB/s) ainda é analisada
+    // inteira, uma vez por episódio. Depois disso o custo fica limitado.
+    const rate = this.#observeRate(batch, data.length, now);
+    if (batch.flooding) {
+      if (rate < this.#config.floodExitCharsPerSec) {
+        // O tail pendente sai antes do lote novo no próximo esvaziamento.
+        this.#endFlood(batch, now, 'rate');
+      } else {
+        batch.floodPeakCharsPerSec = Math.max(batch.floodPeakCharsPerSec, rate);
+      }
+    } else if (rate > this.#config.floodEnterCharsPerSec) {
+      this.#startFlood(batch, rate, now);
+    }
+    if (batch.chunks.length === 0) batch.firstChunkAt = now;
     batch.chunks.push(data);
     batch.chars += data.length;
-    if (batch.chars >= this.#config.maxBatchChars) {
-      this.#flushBatch(batch);
+    const maxChars = batch.flooding
+      ? this.#config.floodMaxBatchChars
+      : this.#config.maxBatchChars;
+    if (batch.chars >= maxChars) {
+      this.#flushBatch(batch, false);
       return;
     }
     this.#pending.add(batch);
-    this.#arm(batch.firstChunkAt + this.#config.flushMs);
+    this.#arm(this.#dueAt(batch));
   }
 
   /** Esvazia o lote de uma sessão agora (evento do Main que os taps leem). */
   flush(sessionId: string): void {
     const batch = this.#batches.get(sessionId);
-    if (batch) this.#flushBatch(batch);
+    if (batch) this.#flushBatch(batch, true);
   }
 
   flushAll(): void {
-    for (const batch of [...this.#pending]) this.#flushBatch(batch);
+    for (const batch of [...this.#pending]) this.#flushBatch(batch, true);
   }
 
   /** Sessão finalizada: descarta o estado (depois do `flush` final). */
   drop(sessionId: string): void {
     const batch = this.#batches.get(sessionId);
     if (!batch) return;
+    if (batch.flooding) this.#endFlood(batch, this.deps.now(), 'exit');
     this.#batches.delete(sessionId);
     this.#pending.delete(batch);
   }
@@ -279,6 +364,11 @@ export class PtyDataTapDispatcher {
   /** Caracteres ainda no lote da sessão (testes e diagnóstico). */
   pendingChars(sessionId: string): number {
     return this.#batches.get(sessionId)?.chars ?? 0;
+  }
+
+  /** A sessão está inundando agora? (testes e diagnóstico) */
+  isFlooding(sessionId: string): boolean {
+    return this.#batches.get(sessionId)?.flooding ?? false;
   }
 
   #unregister(entry: TapEntry): void {
@@ -296,20 +386,56 @@ export class PtyDataTapDispatcher {
     this.#immediate = all.filter((entry) => entry.delivery === 'immediate');
   }
 
-  #flushBatch(batch: SessionBatch): void {
+  /**
+   * Entrega o lote. `force` = um evento do Main pediu (estado, escrita,
+   * encerramento, registro): sob inundação o tail de análise sai junto, fora
+   * da cadência — a ordem relativa ao evento vale também para a análise.
+   */
+  #flushBatch(batch: SessionBatch, force: boolean): void {
     this.#pending.delete(batch);
-    if (batch.chunks.length === 0) return;
+    const now = this.deps.now();
     const chunks = batch.chunks.length;
-    const text = chunks === 1 ? batch.chunks[0] : batch.chunks.join('');
+    const text =
+      chunks === 0 ? '' : chunks === 1 ? batch.chunks[0] : batch.chunks.join('');
     batch.chunks = [];
     batch.chars = 0;
-    this.#deliver(this.#batched, batch.sessionId, text, chunks);
+    if (
+      batch.flooding &&
+      this.#observeRate(batch, 0, now) < this.#config.floodExitCharsPerSec
+    ) {
+      this.#endFlood(batch, now, 'rate');
+    }
+    if (!batch.flooding) {
+      // O resto do tail de uma inundação que acabou vem antes do lote novo.
+      const analysis = batch.tailPending ? this.#takeTail(batch, now) + text : text;
+      if (text.length > 0 || analysis.length > 0) {
+        this.#deliver(this.#batched, batch.sessionId, text, analysis, chunks);
+      }
+      return;
+    }
+    if (text.length > 0) this.#appendTail(batch, text);
+    const analysisDue =
+      force || now - batch.lastAnalysisAt >= this.#config.floodAnalysisMs;
+    const analysis =
+      analysisDue && batch.tailPending ? this.#takeTail(batch, now) : null;
+    if (text.length > 0 || analysis !== null) {
+      this.#deliver(this.#batched, batch.sessionId, text, analysis, chunks);
+    }
+    if (batch.tailPending && this.#batches.get(batch.sessionId) === batch) {
+      this.#pending.add(batch);
+      this.#arm(this.#dueAt(batch));
+    }
   }
 
+  /**
+   * `complete` recebe `text`; `analysis` recebe `analysis` (o lote, ou só o
+   * tail sob inundação; `null` = nada para a análise nesta entrega).
+   */
   #deliver(
     entries: readonly TapEntry[],
     sessionId: string,
     text: string,
+    analysis: string | null,
     chunks: number,
   ): void {
     let ms = 0;
@@ -319,8 +445,10 @@ export class PtyDataTapDispatcher {
     for (const entry of entries) {
       // Removido no meio da entrega (um tap que se desliga sozinho).
       if (this.#taps.get(entry.tap) !== entry) continue;
-      const spent = this.budget.call('data', entry.name, sessionId, text.length, () =>
-        entry.tap(sessionId, text),
+      const data = entry.delivery === 'analysis' ? analysis : text;
+      if (data === null || data.length === 0) continue;
+      const spent = this.budget.call('data', entry.name, sessionId, data.length, () =>
+        entry.tap(sessionId, data),
       );
       ms += spent;
       taps += 1;
@@ -331,12 +459,149 @@ export class PtyDataTapDispatcher {
     }
     this.budget.delivery('data', sessionId, {
       ms,
-      chars: text.length,
+      chars: Math.max(text.length, analysis?.length ?? 0),
       chunks,
       taps,
       slowestTap,
       slowestMs,
     });
+  }
+
+  #newBatch(sessionId: string, now: number): SessionBatch {
+    return {
+      sessionId,
+      chunks: [],
+      chars: 0,
+      firstChunkAt: now,
+      windowStartedAt: now,
+      windowChars: 0,
+      previousWindowChars: 0,
+      flooding: false,
+      floodStartedAt: 0,
+      floodPeakCharsPerSec: 0,
+      floodDroppedChars: 0,
+      floodTraced: false,
+      lastFloodTraceAt: null,
+      suppressedFloods: 0,
+      tail: '',
+      tailPending: false,
+      tailTruncated: false,
+      lastAnalysisAt: now,
+    };
+  }
+
+  /** Caracteres no último segundo: janela atual + a fração da anterior. */
+  #observeRate(batch: SessionBatch, chars: number, now: number): number {
+    const elapsed = now - batch.windowStartedAt;
+    if (elapsed >= 1_000) {
+      const windows = Math.floor(elapsed / 1_000);
+      batch.previousWindowChars = windows === 1 ? batch.windowChars : 0;
+      batch.windowChars = 0;
+      batch.windowStartedAt += windows * 1_000;
+    }
+    batch.windowChars += chars;
+    const intoWindow = (now - batch.windowStartedAt) / 1_000;
+    return batch.windowChars + batch.previousWindowChars * (1 - intoWindow);
+  }
+
+  /** Quando o lote (ou o tail de análise) desta sessão vence. */
+  #dueAt(batch: SessionBatch): number {
+    let due = Infinity;
+    if (batch.chunks.length > 0) {
+      due =
+        batch.firstChunkAt +
+        (batch.flooding ? this.#config.floodFlushMs : this.#config.flushMs);
+    }
+    if (batch.tailPending) {
+      due = Math.min(due, batch.lastAnalysisAt + this.#config.floodAnalysisMs);
+    }
+    return due;
+  }
+
+  #appendTail(batch: SessionBatch, text: string): void {
+    const max = this.#config.floodTailChars;
+    if (text.length >= max) {
+      batch.floodDroppedChars += batch.tail.length + text.length - max;
+      batch.tail = text.slice(-max);
+      batch.tailTruncated = true;
+    } else {
+      const keep = max - text.length;
+      if (batch.tail.length > keep) {
+        batch.floodDroppedChars += batch.tail.length - keep;
+        batch.tail = batch.tail.slice(-keep);
+        batch.tailTruncated = true;
+      }
+      batch.tail += text;
+    }
+    batch.tailPending = true;
+  }
+
+  #takeTail(batch: SessionBatch, now: number): string {
+    const tail = batch.tailTruncated ? safeTailStart(batch.tail) : batch.tail;
+    batch.tail = '';
+    batch.tailPending = false;
+    batch.tailTruncated = false;
+    batch.lastAnalysisAt = now;
+    return tail;
+  }
+
+  #startFlood(batch: SessionBatch, rate: number, now: number): void {
+    batch.flooding = true;
+    batch.floodStartedAt = now;
+    batch.floodPeakCharsPerSec = rate;
+    batch.floodDroppedChars = 0;
+    batch.lastAnalysisAt = now;
+    if (
+      batch.lastFloodTraceAt !== null &&
+      now - batch.lastFloodTraceAt < this.#config.floodTraceEveryMs
+    ) {
+      batch.floodTraced = false;
+      batch.suppressedFloods += 1;
+      return;
+    }
+    batch.floodTraced = true;
+    batch.lastFloodTraceAt = now;
+    const suppressed = batch.suppressedFloods;
+    batch.suppressedFloods = 0;
+    this.#trace({
+      kind: 'pty-flood',
+      sessionId: batch.sessionId,
+      ...this.#describe(batch.sessionId),
+      charsPerSec: Math.round(rate),
+      tailChars: this.#config.floodTailChars,
+      analysisEveryMs: this.#config.floodAnalysisMs,
+      ...(suppressed > 0 ? { suppressedFloods: suppressed } : {}),
+    });
+  }
+
+  #endFlood(batch: SessionBatch, now: number, reason: 'rate' | 'exit'): void {
+    batch.flooding = false;
+    if (!batch.floodTraced) return;
+    batch.floodTraced = false;
+    this.#trace({
+      kind: 'pty-flood-end',
+      sessionId: batch.sessionId,
+      reason,
+      durationMs: Math.round(now - batch.floodStartedAt),
+      droppedChars: batch.floodDroppedChars,
+      peakCharsPerSec: Math.round(batch.floodPeakCharsPerSec),
+    });
+  }
+
+  #describe(sessionId: string): Record<string, unknown> {
+    try {
+      return this.deps.describeSession?.(sessionId) ?? {};
+    } catch {
+      return {};
+    }
+  }
+
+  #trace(event: Record<string, unknown>): void {
+    try {
+      this.deps.trace(event);
+    } catch {
+      // Instrumentação nunca derruba o caminho de PTY.
+    }
   }
 
   #arm(dueAt: number): void {
@@ -363,12 +628,13 @@ export class PtyDataTapDispatcher {
         nextDue = now;
         break;
       }
-      const due = batch.firstChunkAt + this.#config.flushMs;
+      const due = this.#dueAt(batch);
       if (due > now) {
         nextDue = Math.min(nextDue, due);
         continue;
       }
-      this.#flushBatch(batch);
+      this.#flushBatch(batch, false);
+      if (this.#pending.has(batch)) nextDue = Math.min(nextDue, this.#dueAt(batch));
     }
     if (nextDue !== Infinity) this.#arm(nextDue);
   }

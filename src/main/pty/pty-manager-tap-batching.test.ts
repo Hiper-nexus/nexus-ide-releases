@@ -230,6 +230,54 @@ describe('pty-manager: taps de dados em lote (F-764 C.1)', () => {
     await finish(shell);
   });
 
+  it('5 MB/s numa sessão: análise só com o tail, anel com tudo, trace pty-flood (F-764 C.2)', async () => {
+    fakeClock();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f764-flood-trace-'));
+    setTraceDirectory(dir);
+    try {
+      const shell = spawnShell();
+      const analysis: number[] = [];
+      const complete: string[] = [];
+      track(tapSessionData((sessionId, data) => {
+        if (sessionId === shell.sessionId) analysis.push(data.length);
+      }, 'analise-teste'));
+      track(tapSessionData((sessionId, data) => {
+        if (sessionId === shell.sessionId) complete.push(data);
+      }, { name: 'anel-teste', delivery: 'complete' }));
+      const chunk = `${'y'.repeat(1_023)}\n`;
+      // 2 s a 5 MB/s: 5 chunks de 1 KB por milissegundo.
+      for (let ms = 0; ms < 2_000; ms += 1) {
+        for (let i = 0; i < 5; i += 1) shell.handlers.onData(chunk);
+        vi.advanceTimersByTime(1);
+      }
+      publishSessionActivityState(shell.sessionId, 'idle');
+      const sentChars = 2_000 * 5 * chunk.length;
+      expect(complete.join('').length).toBe(sentChars);
+      const analysisChars = analysis.reduce((sum, size) => sum + size, 0);
+      // Rajada de detecção (~512 KB) + 16 KB a cada 250 ms: bem menos que 10 MB.
+      expect(analysisChars).toBeLessThan(
+        PTY_TAP_BUDGET.floodEnterCharsPerSec + 12 * PTY_TAP_BUDGET.floodTailChars,
+      );
+      const events = fs
+        .readFileSync(path.join(dir, 'logs', 'main.trace.ndjson'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          kind: 'pty-flood',
+          sessionId: shell.sessionId,
+          paneId: null,
+          adapterId: null,
+        }),
+      );
+      await finish(shell);
+    } finally {
+      setTraceDirectory(null);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('tap lento vira trace pty-tap-slow com o nome registrado', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'f764-tap-trace-'));
     setTraceDirectory(dir);

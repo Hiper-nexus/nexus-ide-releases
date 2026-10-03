@@ -490,9 +490,10 @@ export type SessionTerminationTap = (
 ) => void;
 
 /**
- * F-764 C.1/A.3: os taps de DADOS recebem a saída em lote por sessão, com
- * tempo por tap contabilizado (pty-tap-dispatcher.ts). Os demais taps passam
- * pelo mesmo cronômetro em `fireTaps`.
+ * F-764 C.1/C.2/A.3: os taps de DADOS recebem a saída em lote por sessão,
+ * com backpressure de inundação e tempo por tap contabilizado
+ * (pty-tap-dispatcher.ts). Os demais taps passam pelo mesmo cronômetro em
+ * `fireTaps`.
  */
 const dataTapDispatcher = new PtyDataTapDispatcher({
   now: () => performance.now(),
@@ -504,6 +505,16 @@ const dataTapDispatcher = new PtyDataTapDispatcher({
   clearTimer: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
   trace,
   warn: (message, error) => console.warn(message, error),
+  // C.2: o trace `pty-flood` diz QUAL pane inundou — ids, nunca texto.
+  describeSession: (sessionId) => {
+    const session = sessions.get(sessionId);
+    if (!session) return null;
+    return {
+      paneId: session.agent?.paneId ?? session.agentSpawn?.paneId ?? null,
+      adapterId:
+        session.agent?.adapterId ?? session.agentSpawn?.adapterId ?? null,
+    };
+  },
 });
 const inputTaps = new Set<SessionInputTap>();
 const stateTaps = new Set<SessionStateTap>();
