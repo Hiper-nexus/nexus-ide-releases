@@ -65,6 +65,66 @@ afterEach(() => {
 });
 
 describe('scoped task store', () => {
+  it('F-764: task mutation identity detects same-clock transaction ABA across facades and ignores other tasks', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const tasks = createScopedTaskStore(runtimeManager, scope, { now: () => 100, idFactory: () => 'target' });
+    const target = tasks.create({ title: 'Target' });
+    const revision = (id: string) => tasks.readMutationRevision(id);
+    const baseline = revision(target.id)!;
+    const otherFacade = createScopedTaskStore(runtimeManager, scope, { now: () => 100, idFactory: () => 'other' });
+    const other = otherFacade.create({ title: 'Other' });
+    otherFacade.update(other.id, { status: 'done' });
+    expect(revision(target.id)).toBe(baseline);
+    const db = runtimeManager.open(scope).db;
+    db.transaction(() => {
+      otherFacade.update(target.id, { status: 'done' });
+      otherFacade.update(target.id, { status: 'pending' });
+    })();
+    expect(tasks.list().find(task => task.id === target.id)).toMatchObject({ status: 'pending', updatedAt: 100 });
+    expect(revision(target.id)).toBe(baseline + 2);
+    const beforeRollback = revision(target.id);
+    expect(() => db.transaction(() => {
+      otherFacade.update(target.id, { status: 'failed' });
+      throw new Error('rollback');
+    })()).toThrow('rollback');
+    expect(revision(target.id)).toBe(beforeRollback);
+    runtimeManager.close(scope);
+    const restarted = createScopedTaskStore(runtimeManager, scope);
+    expect(restarted.readMutationRevision(target.id)).toBe(beforeRollback);
+  });
+
+  it('F-764: mutation tombstone survives delete/reinsert and raw SQL writes', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const tasks = createScopedTaskStore(runtimeManager, scope, { now: () => 100, idFactory: () => 'same-id' });
+    const target = tasks.create({ title: 'Target' });
+    const revision = () => tasks.readMutationRevision(target.id);
+    const baseline = revision()!;
+    const db = runtimeManager.open(scope).db;
+    db.prepare("UPDATE tasks SET status = 'failed' WHERE id = ?").run(target.id);
+    expect(revision()).toBe(baseline + 1);
+    db.prepare('DELETE FROM tasks WHERE id = ?').run(target.id);
+    expect(tasks.list().find(task => task.id === target.id)).toBeUndefined();
+    expect(revision()).toBe(baseline + 2);
+    tasks.create({ title: 'Replacement' });
+    expect(revision()).toBe(baseline + 3);
+  });
+
+  it('F-764: additive task mutation migration backfills legacy tasks without changing their records', () => {
+    const scope = testProjectScope();
+    const legacy = new ProjectRuntimeManager({ baseDir, appVersion: '0.76.191',
+      migrations: INITIAL_PROJECT_MIGRATIONS.filter(({ schemaVersion }) => schemaVersion <= 42) });
+    managers.push(legacy);
+    const tasks = createScopedTaskStore(legacy, scope, { now: () => 100, idFactory: () => 'legacy' });
+    const initial = tasks.create({ title: 'Existing task' });
+    legacy.closeAll();
+    const upgraded = manager();
+    const current = createScopedTaskStore(upgraded, scope);
+    expect(current.list().find(task => task.id === initial.id)).toEqual(initial);
+    expect(current.readMutationRevision(initial.id)).toBe(1);
+  });
+
   it('persists task mutations with explicit project and checkout ownership', () => {
     const runtimeManager = manager();
     const scope = testProjectScope();

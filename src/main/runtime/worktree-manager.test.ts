@@ -19,6 +19,7 @@ import {
   type WorktreeStateSnapshot,
   type WorktreeStateStore,
 } from "./worktree-manager";
+import { rollbackIntegrationCheckout } from "./merge-integration-rollback";
 import { AsyncProcessGitRunner } from "./git-command";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -301,6 +302,43 @@ describe("WorktreeManager", () => {
       expect(fs.existsSync(record!.worktreePath)).toBe(true);
       expect(git(record!.worktreePath, "rev-parse", "HEAD")).toBe(record!.baseSha);
     }
+  });
+
+  it("F-764: integration rollback invalidates pre-integration reuse but queued rollback remains idempotent", async () => {
+    const scope = projectScope();
+    const real = new AsyncProcessGitRunner();
+    let replay = false;
+    const racing = new WorktreeManager({ runtimeRoot, stateStore, gitRunner, now: () => 1_700_000_000_000,
+      asyncGitRunner: { run: async (cwd, args, options) => {
+        const result = await real.run(cwd, args, options);
+        if (replay && cwd !== scope.rootRealPath && args[0] === "status") {
+          replay = false;
+          git(root, "merge", "--ff-only", queued.branchRef);
+          racing.markIntegrated(scope, "rollback", "task", taskHead);
+          rollbackIntegrationCheckout({ scope, missionId: "rollback", taskId: "task",
+            taskHeadSha: taskHead, integrationBaseSha: initial.baseSha, candidateSha: taskHead,
+            record: queued, git: gitRunner, worktrees: racing });
+        }
+        return result;
+      } },
+    });
+    const input = { scope, missionId: "rollback", taskId: "task", workerId: "same-worker",
+      ownership: { files: ["src/rollback.ts"], symbols: [], domains: [] } };
+    const initial = await racing.create(input);
+    write("src/rollback.ts", "export const output = 1;\n", initial.worktreePath);
+    git(initial.worktreePath, "add", "src/rollback.ts");
+    git(initial.worktreePath, "commit", "-qm", "task output");
+    const taskHead = git(initial.worktreePath, "rev-parse", "HEAD");
+    const queued = racing.markQueued(scope, "rollback", "task", taskHead);
+    expect(racing.restoreQueuedAfterIntegrationRollback(scope, "rollback", "task", taskHead, taskHead)
+      .reservationGeneration).toBe(queued.reservationGeneration);
+    replay = true;
+    await expect(racing.create(input)).rejects.toThrow(/reservation.*changed/i);
+    const retried = await racing.create(input);
+    expect(retried.status).toBe("queued");
+    expect(retried.reservationGeneration).not.toBe(queued.reservationGeneration);
+    expect(git(root, "rev-parse", "HEAD")).toBe(initial.baseSha);
+    expect(git(initial.worktreePath, "rev-parse", "HEAD")).toBe(taskHead);
   });
 
   it("F-764: legacy generations migrate on reuse, persist across bindings, and rotate on reopen", async () => {

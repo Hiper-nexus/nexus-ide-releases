@@ -3017,7 +3017,8 @@ describe("MCP dispatch effect safety", () => {
     const update = vi.fn();
     vi.spyOn(domainStores, 'getProjectDomainStores').mockReturnValue({
       missions: { get: () => dispatchedMissionFixture().mission },
-      tasks: { list: () => [{ id: 'task-a' }], update },
+      tasks: { list: () => [{ id: 'task-a', status: 'pending', updatedAt: 1 }],
+        readMutationRevision: () => 1, update },
     } as never);
     workflowRegistryMocks.getContextWorkflowService.mockReturnValue({
       assertMutationAllowed: () => undefined,

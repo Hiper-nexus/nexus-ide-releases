@@ -382,6 +382,16 @@ export class ScopedTaskStore {
     return this.#binding.onChange(listener);
   }
 
+  /** Main-only effect fence; tombstones prevent delete/reinsert ABA. */
+  readMutationRevision(rawId: string): number | null {
+    const id = entityIdSchema.parse(rawId);
+    const row = this.#binding.readDatabase().prepare(
+      'SELECT revision FROM task_mutation_versions WHERE task_id = ?',
+    ).get(id) as { revision: unknown } | undefined;
+    if (!row) return null;
+    return z.number().int().positive().safe().parse(row.revision);
+  }
+
   create(rawInput: CreateTaskInput): ScopedTaskRecord {
     const input = createTaskInputSchema.parse(rawInput);
     const now = this.#binding.now();

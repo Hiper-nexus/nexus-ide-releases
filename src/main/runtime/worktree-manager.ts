@@ -949,6 +949,8 @@ export class WorktreeManager {
       }
       return {
         ...withoutIntegration,
+        // Integration ended this attempt. Queued-only rollback is a replay.
+        ...(isIntegrated ? { reservationGeneration: randomUUID() } : {}),
         status: "queued",
         taskHeadSha,
         failureReason: undefined,

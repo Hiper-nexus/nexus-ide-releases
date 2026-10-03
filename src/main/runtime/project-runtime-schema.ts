@@ -1040,4 +1040,29 @@ export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
       appVersion: '0.76.191',
       sql: ROUTE_DECISION_LOG_SCHEMA,
     }),
+    // F-764: task-scoped mutation identity survives same-clock status ABA,
+    // other store facades and deletion/recreation of the same task id.
+    createProjectMigration({
+      id: '043-task-mutation-versions',
+      schemaVersion: 43,
+      appVersion: '0.76.191',
+      sql: `
+CREATE TABLE task_mutation_versions (
+  task_id TEXT PRIMARY KEY,
+  revision INTEGER NOT NULL CHECK (typeof(revision) = 'integer' AND revision > 0)
+);
+INSERT INTO task_mutation_versions(task_id, revision) SELECT id, 1 FROM tasks;
+CREATE TRIGGER task_mutation_insert AFTER INSERT ON tasks BEGIN
+  INSERT INTO task_mutation_versions(task_id, revision) VALUES (NEW.id, 1)
+  ON CONFLICT(task_id) DO UPDATE SET revision = revision + 1;
+END;
+CREATE TRIGGER task_mutation_update AFTER UPDATE ON tasks BEGIN
+  INSERT INTO task_mutation_versions(task_id, revision) VALUES (OLD.id, 1)
+  ON CONFLICT(task_id) DO UPDATE SET revision = revision + 1;
+END;
+CREATE TRIGGER task_mutation_delete AFTER DELETE ON tasks BEGIN
+  INSERT INTO task_mutation_versions(task_id, revision) VALUES (OLD.id, 1)
+  ON CONFLICT(task_id) DO UPDATE SET revision = revision + 1;
+END;`,
+    }),
   ]);

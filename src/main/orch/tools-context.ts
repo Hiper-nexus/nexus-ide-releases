@@ -753,6 +753,11 @@ const worktreeCreateTool: McpToolDef = {
     if (!planned) {
       throw new Error('worktree task is outside the sealed Nexus mission plan');
     }
+    if (planned.status === 'done') {
+      throw new Error('worktree task is already done');
+    }
+    const taskRevision = tasks.readMutationRevision(input.taskId);
+    if (taskRevision === null) throw new Error('worktree task mutation identity is missing');
     // P4 auto-pilot: expand ownership with structural blast radius (still no .context).
     let ownership = input.ownership;
     let ownershipExpanded = false;
@@ -791,8 +796,11 @@ const worktreeCreateTool: McpToolDef = {
       const stores = getProjectDomainStores(ctx.scope);
       assertMainTaskDispatcherAuthority(stores, input.missionId, 'nexus_worktree_create');
       getContextWorkflowService(ctx.scope).assertMutationAllowed(input.missionId, 'nexus_worktree_create', {});
-      if (!stores.tasks.list(input.missionId).some((task) => task.id === input.taskId)) {
-        throw new Error('worktree task is outside the sealed Nexus mission plan');
+      const currentTask = stores.tasks.list(input.missionId).find((task) => task.id === input.taskId);
+      if (!currentTask) throw new Error('worktree task is outside the sealed Nexus mission plan');
+      if (currentTask.status !== planned.status || currentTask.updatedAt !== planned.updatedAt ||
+          stores.tasks.readMutationRevision(input.taskId) !== taskRevision) {
+        throw new Error('worktree task changed during creation; retry against its current state');
       }
     };
     assertCreateAuthority();
