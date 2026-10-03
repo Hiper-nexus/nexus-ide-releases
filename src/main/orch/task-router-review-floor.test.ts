@@ -89,6 +89,24 @@ describe('modelo e esforço citados no texto (inventário builtin completo)', ()
     expect(mentionedRoute('revise com esforço high', installed).effort).toBe('high');
   });
 
+  it('F-767: "auto-update" e "descoberta de modelos" não pedem codex-auto-review', () => {
+    const phrase = 'preferir a mais nova, alinhar auto-update e descoberta de modelos';
+    const withUtility: AdapterAvailability[] = [
+      {
+        id: 'codex',
+        installed: true,
+        models: ['codex-auto-review', 'gpt-6-sol', 'gpt-6-luna'],
+      },
+      { id: 'grok', installed: true, models: ['grok-4'] },
+    ];
+    expect(mentionedRoute(phrase, withUtility).model).toBeUndefined();
+    const decision = routeTask(phrase, withUtility, DEFAULT_ROUTING_TABLE);
+    expect(decision?.model).not.toBe('codex-auto-review');
+    expect(decision?.reason ?? '').not.toContain('codex-auto-review');
+    expect(mentionedRoute('use o codex-auto-review neste diff', withUtility).model)
+      .toEqual({ adapterId: 'codex', model: 'codex-auto-review' });
+  });
+
   it('modelo só de CLI ausente vira "indisponível" e não pina', () => {
     const semCodex = inventory(['claude', 'grok']);
     expect(mentionedRoute(ASTRA_REVIEW, semCodex)).toEqual({ unavailable: 'codex:gpt-6-astra', effort: 'xhigh' });

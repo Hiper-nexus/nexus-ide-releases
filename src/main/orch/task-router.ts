@@ -646,7 +646,12 @@ const MENTION_GENERIC_TOKENS = new Set([
   'code', 'flash', 'fast', 'high', 'medium', 'low', 'xhigh', 'mini', 'pro',
   'preview', 'latest', 'chat', 'instruct', 'thinking', 'lite', 'plus', 'turbo',
   'ultra', 'ultraspeed', 'highspeed', 'build', 'coder', 'default', 'beta', 'max',
+  // F-767: palavras de nome que não escolhem modelo ("auto-update", "review").
+  'auto', 'review', 'update',
 ]);
+
+/** Modelo de ferramenta, não de escrita. Token solto nunca o escolhe. */
+const MENTION_UTILITY_MODELS = new Set(['codex-auto-review']);
 
 /** "não use o Astra" / "without Fable": citado para EXCLUIR. */
 const MENTION_NEGATIONS = new Set([
@@ -769,14 +774,17 @@ export function mentionedRoute(
     // Sequências candidatas: sufixos com ≥2 tokens ("fable 5 1", "6 astra") e
     // cada token de nome sozinho ("astra", "fable") em qualquer posição.
     const sequences: string[][] = [];
+    const utility = MENTION_UTILITY_MODELS.has(entry.model);
     for (let from = 0; from + 2 <= entry.tokens.length; from += 1) {
+      // Sufixo solto de modelo utilitário ("auto review") não é pedido.
+      if (utility && from > 0) continue;
       const suffix = entry.tokens.slice(from);
       if (suffix.some((token) => /^[a-z]{3,}$/.test(token) && !MENTION_GENERIC_TOKENS.has(token))) {
         sequences.push(suffix); // "5 1" ou "flash high" não nomeiam um modelo
       }
     }
     for (const token of new Set(entry.tokens)) {
-      if (!nameLike(token)) continue;
+      if (utility || !nameLike(token)) continue;
       if (distinctiveAlone(token)) {
         sequences.push([token]);
       } else if (entry.installed) {
