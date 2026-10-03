@@ -1,4 +1,6 @@
 import path from 'node:path';
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import type { EventEmitter } from 'node:events';
 import { parseMimoWorkerReply, type MimoWorkerReply, type MimoWorkerRequest } from './mimo-worker-protocol';
 
@@ -9,17 +11,17 @@ export interface MimoReaderProcess {
   /** Signal the exact owned process; false retains the handle/proof for retry. */
   terminate(): boolean;
 }
-export type MimoProcessFactory = (entryPath: string) => MimoReaderProcess;
+export type MimoProcessFactory = (entryPath: string, privateRoot: string) => MimoReaderProcess;
 export interface MimoReaderOptions {
   readonly workerPath?: string; readonly timeoutMs?: number; readonly processFactory?: MimoProcessFactory;
 }
 const DEFAULT_WORKER_PATH = path.join(__dirname, 'mimo-usage-worker-entry.js');
 let workerPath = DEFAULT_WORKER_PATH;
-function forkUtility(entryPath: string): MimoReaderProcess {
+function forkUtility(entryPath: string, privateRoot: string): MimoReaderProcess {
   // Lazy import keeps this module testable; production never forks Electron as Node
   // (RunAsNode is fused off) and never opts into unsigned native libraries.
   const { utilityProcess } = require('electron') as typeof import('electron');
-  const child = utilityProcess.fork(entryPath, [], { serviceName: 'nexus-mimo-usage', stdio: 'ignore',
+  const child = utilityProcess.fork(entryPath, [privateRoot], { serviceName: 'nexus-mimo-usage', stdio: 'ignore',
     execArgv: ['--max-old-space-size=64'] });
   return {
     postMessage: message => child.postMessage(message),
@@ -45,6 +47,7 @@ export async function stopMimoValidationReader(): Promise<void> {
 interface OwnedProcess {
   readonly child: MimoReaderProcess; readonly exited: Promise<void>; readonly resolveExit: () => void;
   terminating: boolean; retry: ReturnType<typeof setTimeout> | null;
+  exitedObserved: boolean;
 }
 
 /** One physically killable utility process and bounded FIFO; no Main SQLite fallback. */
@@ -71,11 +74,16 @@ export class MimoWorkerReader {
     this.#tail = run.then(() => undefined, () => undefined);
     return run.finally(() => this.#queued--);
   }
-  #ensureWorker(): OwnedProcess {
+  async #ensureWorker(): Promise<OwnedProcess> {
     if (this.#worker) return this.#worker;
+    const privateRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nexus-mimo-read-'));
+    if (this.#stopped) { await fs.rm(privateRoot, { recursive: true, force: true }); throw new Error('Reader stopped'); }
     let resolveExit!: () => void;
     const exited = new Promise<void>(resolve => { resolveExit = resolve; });
-    const worker: OwnedProcess = { child: this.#factory(this.#path), exited, resolveExit, terminating: false, retry: null };
+    let child: MimoReaderProcess;
+    try { child = this.#factory(this.#path, privateRoot); }
+    catch (error) { await fs.rm(privateRoot, { recursive: true, force: true }); throw error; }
+    const worker: OwnedProcess = { child, exited, resolveExit, terminating: false, retry: null, exitedObserved: false };
     this.#worker = worker;
     worker.child.on('message', raw => {
       if (this.#worker !== worker || this.#stopped || worker.terminating) return;
@@ -85,16 +93,18 @@ export class MimoWorkerReader {
     });
     worker.child.on('error', () => this.#terminate(worker));
     worker.child.on('spawn', () => { if (worker.terminating) this.#terminate(worker); });
-    worker.child.on('exit', () => {
+    worker.child.on('exit', () => { void (async () => {
+      worker.exitedObserved = true;
       if (worker.retry) clearTimeout(worker.retry);
       worker.retry = null;
+      await fs.rm(privateRoot, { recursive: true, force: true }).catch(() => undefined);
       if (this.#worker === worker) { this.#worker = null; this.#settle(null); }
       worker.resolveExit();
-    });
+    })(); });
     return worker;
   }
   #terminate(worker: OwnedProcess): void {
-    if (this.#worker !== worker) return;
+    if (this.#worker !== worker || worker.exitedObserved) return;
     worker.terminating = true;
     try { worker.child.terminate(); } catch { /* Retain physical ownership until exit. */ }
     if (!worker.retry) {
@@ -110,7 +120,9 @@ export class MimoWorkerReader {
     if (this.#stopped) return null;
     let worker: OwnedProcess | undefined;
     try {
-      worker = this.#ensureWorker(); const job = ++this.#job;
+      worker = await this.#ensureWorker();
+      if (this.#stopped) { this.#terminate(worker); await worker.exited; return null; }
+      const job = ++this.#job;
       return await new Promise<MimoWorkerReply | null>(resolve => {
         const timer = setTimeout(() => this.#terminate(worker!), this.#timeoutMs);
         timer.unref(); this.#pending = { job, resolve, timer };

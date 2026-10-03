@@ -6,8 +6,8 @@ import { configureMimoUsageProcessFactory, configureMimoUsageWorkerPath,
   type MimoProcessFactory } from '../mimo-worker-reader';
 
 /** Test-only adapter. Production uses Electron utilityProcess, with the same CJS entry. */
-export const forkMimoFixtureProcess: MimoProcessFactory = entry => {
-  const child = fork(path.resolve('.vite/mimo-worker-test/node-port.cjs'), [entry], {
+export const forkMimoFixtureProcess: MimoProcessFactory = (entry, privateRoot) => {
+  const child = fork(path.resolve('.vite/mimo-worker-test/node-port.cjs'), [entry, privateRoot], {
     execPath: '/opt/homebrew/opt/node@22/bin/node', stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
   });
   return {
@@ -24,7 +24,7 @@ export async function prepareMimoWorker(): Promise<string> {
   fs.writeFileSync('.vite/mimo-worker-test/node-port.cjs', `process.parentPort = {
     on: (event, listener) => process.on(event, data => listener({ data })),
     postMessage: message => process.send(message)
-  }; require(process.argv[2]);`);
+  }; const entry = process.argv[2]; process.argv.splice(1, 1); require(entry);`);
   const file = path.resolve('.vite/mimo-worker-test/mimo-usage-worker-entry.js');
   configureMimoUsageWorkerPath(file); configureMimoUsageProcessFactory(forkMimoFixtureProcess); return file;
 }

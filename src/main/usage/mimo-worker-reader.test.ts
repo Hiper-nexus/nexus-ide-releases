@@ -61,7 +61,7 @@ it.each(['timeout', 'stop'] as const)('physically stops a pathological SQLite vi
   const before = fs.readFileSync(databasePath);
   let exited = false;
   const reader = new MimoWorkerReader({ workerPath: nativeEntry, timeoutMs: 100,
-    processFactory: entry => { const child = forkMimoFixtureProcess(entry);
+    processFactory: (entry, privateRoot) => { const child = forkMimoFixtureProcess(entry, privateRoot);
       child.on('exit', () => { exited = true; }); return child; } }); readers.push(reader);
   const runtime = { checkoutId: 'checkout', cwd: root, stateRoot, databasePath };
   expect((await reader.read({ kind: 'validate', rootId: 'ses_root', runtime }))?.valid).toBe(true);
@@ -82,8 +82,8 @@ it('retains physical proof when signalling fails and retries the same owned chil
     require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'started');
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0); });`);
   let attempts = 0; let exited = false;
-  const reader = new MimoWorkerReader({ workerPath: entry, processFactory: file => {
-    const child = forkMimoFixtureProcess(file); child.on('exit', () => { exited = true; });
+  const reader = new MimoWorkerReader({ workerPath: entry, processFactory: (file, privateRoot) => {
+    const child = forkMimoFixtureProcess(file, privateRoot); child.on('exit', () => { exited = true; });
     return { ...child, terminate: () => ++attempts === 1 ? false : child.terminate() };
   } }); readers.push(reader);
   let settled = false; const running = reader.read(input).then(value => { settled = true; return value; });

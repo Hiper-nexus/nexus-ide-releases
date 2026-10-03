@@ -6,8 +6,10 @@ interface ParentPort {
 }
 const port = (process as unknown as { parentPort?: ParentPort }).parentPort;
 if (!port) throw new Error('MiMo usage requires an isolated process port');
+const privateRoot = process.argv[2];
+if (!privateRoot) throw new Error('MiMo usage requires a Main-owned snapshot directory');
 port.on('message', ({ data: input }) => {
-  try { port.postMessage(readMimoDatabase(input)); }
+  try { port.postMessage(readMimoDatabase(input, privateRoot)); }
   catch { port.postMessage({ job: input?.job, valid: false, fetched: 0,
     cursor: input?.cursor ?? { at: 0, id: '' }, highWatermark: 0, events: [] }); }
 });

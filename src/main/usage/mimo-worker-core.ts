@@ -1,34 +1,86 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import Database from 'better-sqlite3';
 import { parseMimoUsageRow } from './mimo-transcript';
 import { MIMO_RAW_ROW_BYTES, MIMO_SCAN_ROWS, mimoWorkerRequestSchema,
   type MimoRuntimeInput, type MimoWorkerReply, type MimoWorkerRequest } from './mimo-worker-protocol';
 
-function openDatabase(runtime: MimoRuntimeInput): Database.Database | null {
+function sameFile(a: fs.BigIntStats, b: fs.BigIntStats): boolean {
+  return a.dev === b.dev && a.ino === b.ino && a.mode === b.mode && a.nlink === b.nlink &&
+    a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
+}
+interface SnapshotDatabase { readonly db: Database.Database; readonly dispose: () => void }
+function openDatabase(runtime: MimoRuntimeInput, privateRoot?: string): SnapshotDatabase | null {
+  let snapshot: string | undefined; let db: Database.Database | undefined;
+  const descriptors: number[] = [];
   try {
     if (path.basename(runtime.stateRoot) !== runtime.checkoutId ||
       path.basename(path.dirname(runtime.stateRoot)) !== 'mimo-code' ||
       runtime.databasePath !== path.join(runtime.stateRoot, 'database', 'mimocode.db') ||
       fs.realpathSync(runtime.stateRoot) !== runtime.stateRoot ||
       fs.realpathSync(runtime.databasePath) !== runtime.databasePath) return null;
-    for (const suffix of ['', '-wal', '-shm', '-journal']) {
-      const stat = fs.lstatSync(`${runtime.databasePath}${suffix}`, { throwIfNoEntry: false });
-      if (stat && (!stat.isFile() || stat.nlink > 1)) return null;
+    const sources = ['', '-wal', '-shm', '-journal'].map(suffix => {
+      const file = `${runtime.databasePath}${suffix}`;
+      const stat = fs.lstatSync(file, { bigint: true, throwIfNoEntry: false });
+      if (stat && (!stat.isFile() || stat.nlink !== 1n)) throw new Error('Unsafe MiMo source');
+      return { suffix, file, stat };
+    });
+    if (!sources[0]!.stat) return null;
+    snapshot = fs.mkdtempSync(path.join(privateRoot ?? os.tmpdir(), 'mimo-snapshot-'));
+    fs.chmodSync(snapshot, 0o700);
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    for (const source of sources) {
+      if (!source.stat) continue;
+      // Pin the checked object before reading bytes. fstat rejects directory
+      // swaps even where O_NOFOLLOW is unavailable; SQLite never opens this name.
+      const fd = fs.openSync(source.file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+      descriptors.push(fd);
+      if (!sameFile(source.stat, fs.fstatSync(fd, { bigint: true })) ||
+        fs.realpathSync(source.file) !== source.file) throw new Error('MiMo source replaced');
+      // Build a private WAL index rather than copying/modifying native -shm.
+      if (source.suffix !== '-shm') {
+        const target = fs.openSync(path.join(snapshot, `mimocode.db${source.suffix}`), 'wx', 0o600);
+        try {
+          let position = 0;
+          for (;;) {
+            const size = fs.readSync(fd, buffer, 0, buffer.length, position);
+            if (size === 0) break;
+            let written = 0;
+            while (written < size) written += fs.writeSync(target, buffer, written, size - written);
+            position += size;
+          }
+        } finally { fs.closeSync(target); }
+      }
+      if (!sameFile(source.stat, fs.fstatSync(fd, { bigint: true }))) throw new Error('MiMo source changed');
     }
-    const db = new Database(runtime.databasePath, { readonly: true, fileMustExist: true, timeout: 100 });
+    for (const source of sources) {
+      const current = fs.lstatSync(source.file, { bigint: true, throwIfNoEntry: false });
+      if (source.stat ? !current || !sameFile(source.stat, current) || fs.realpathSync(source.file) !== source.file : current) {
+        throw new Error('MiMo source replaced during snapshot');
+      }
+    }
+    if (fs.realpathSync(runtime.stateRoot) !== runtime.stateRoot) throw new Error('MiMo root replaced');
+    db = new Database(path.join(snapshot, 'mimocode.db'), { readonly: true, fileMustExist: true, timeout: 100 });
     db.pragma('query_only = ON'); db.pragma('trusted_schema = OFF');
-    return db;
-  } catch { return null; }
+    const ownedDb = db; const ownedSnapshot = snapshot;
+    return { db: ownedDb, dispose: () => { try { ownedDb.close(); }
+      finally { fs.rmSync(ownedSnapshot, { recursive: true, force: true }); } } };
+  } catch {
+    try { db?.close(); } catch { /* Failed opens have no live SQL authority. */ }
+    if (snapshot) fs.rmSync(snapshot, { recursive: true, force: true });
+    return null;
+  } finally { for (const fd of descriptors) fs.closeSync(fd); }
 }
 
-/** Only the dedicated worker calls this: SQLite VM work is synchronous there. */
-export function readMimoDatabase(raw: MimoWorkerRequest): MimoWorkerReply {
+/** Only the isolated process calls this: native VM and snapshot IO stay off Main. */
+export function readMimoDatabase(raw: MimoWorkerRequest, privateRoot?: string): MimoWorkerReply {
   const input = mimoWorkerRequestSchema.parse(raw);
   const cursor = input.cursor ?? { at: 0, id: '' };
   const empty = { job: input.job, valid: false, fetched: 0, cursor, highWatermark: cursor.at, events: [] };
-  const db = openDatabase(input.runtime);
-  if (!db) return empty;
+  const snapshot = openDatabase(input.runtime, privateRoot);
+  if (!snapshot) return empty;
+  const db = snapshot.db;
   try {
     const root = db.prepare('SELECT directory, parent_id FROM session WHERE id = ?').get(input.rootId) as
       { directory: unknown; parent_id: unknown } | undefined;
@@ -63,5 +115,5 @@ export function readMimoDatabase(raw: MimoWorkerRequest): MimoWorkerReply {
     }
     return { job: input.job, valid: true, fetched: rows.length, cursor: last, highWatermark, events };
   } catch { return empty; }
-  finally { db.close(); }
+  finally { snapshot.dispose(); }
 }
