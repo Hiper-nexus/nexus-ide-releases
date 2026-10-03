@@ -16,8 +16,15 @@ import {
 import type { AgentGateContext } from './gate';
 import type { McpToolDef } from './mcp-protocol';
 
-function resolveMemoryProjectionRoot(ctx: AgentGateContext): string {
+/**
+ * F-764: a projeção é gravada fora do caminho da gravação; quem lê o grafo
+ * logo depois de um retain espera a própria gravação chegar ao disco.
+ */
+async function resolveMemoryProjectionRoot(
+  ctx: AgentGateContext,
+): Promise<string> {
   const store = getWorkspaceMemoryStore(ctx.scope);
+  await store.flushProjections();
   return store.projectionRoot;
 }
 
@@ -249,7 +256,7 @@ const backlinksTool: McpToolDef = {
   handler: async (args, ctx) => {
     requireMemoryEnabled();
     const input = backlinksArgsSchema.parse(args);
-    const root = resolveMemoryProjectionRoot(ctx);
+    const root = await resolveMemoryProjectionRoot(ctx);
     const notes = backlinks(root, input.title);
     return {
       target: input.title,
@@ -272,7 +279,7 @@ const orphansTool: McpToolDef = {
   inputSchema: { type: 'object', properties: {} },
   handler: async (_args, ctx) => {
     requireMemoryEnabled();
-    const root = resolveMemoryProjectionRoot(ctx);
+    const root = await resolveMemoryProjectionRoot(ctx);
     const notes = listOrphans(root);
     return {
       orphansCount: notes.length,
@@ -315,7 +322,7 @@ const suggestConnectionsTool: McpToolDef = {
   handler: async (args, ctx) => {
     requireMemoryEnabled();
     const input = suggestConnectionsArgsSchema.parse(args);
-    const root = resolveMemoryProjectionRoot(ctx);
+    const root = await resolveMemoryProjectionRoot(ctx);
     const suggestions = suggestConnections(
       root,
       input.identifier,

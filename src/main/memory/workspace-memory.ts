@@ -27,9 +27,10 @@ import {
   projectionCounts,
   projectionSignature,
   projectionTitle,
-  removeCanonicalMemoryProjection,
+  removeCanonicalMemoryProjectionAt,
+  resolveMemoryRoot,
   syncCanonicalMemoryProjections,
-  writeCanonicalMemoryProjection,
+  writeCanonicalMemoryProjectionAt,
   type CanonicalMemoryProjectionInput,
   type MemoryNote,
   type ProjectionCounts,
@@ -64,6 +65,33 @@ const TRUSTED_SOURCE_PREFIX = 'trusted:';
 /** Candidates offered when an id lookup misses. */
 const NOT_FOUND_SUGGESTIONS = 3;
 const SUGGESTION_TITLE_MAX = 60;
+/**
+ * Janela de coalescência da projeção (F-764): gravações em rajada no SQLite
+ * viram UMA passada por raiz, agendada fora do caminho da gravação.
+ */
+const PROJECTION_COALESCE_MS = 50;
+
+/** Trabalho acumulado para uma raiz até a próxima passada. */
+interface ProjectionBatch {
+  /**
+   * Ids cujo arquivo deve refletir o estado ATUAL da linha no SQLite: ativa
+   * → escreve; esquecida ou substituída → remove.
+   */
+  readonly ids: Set<string>;
+  /** Caminho de leitura: reconcilia só se o diretório mexeu. */
+  check: boolean;
+  /** Reconciliação completa (ingestão de edições, reescrita e colheita). */
+  full: boolean;
+  /** Vault legível do checkout (F-769). */
+  vault: boolean;
+}
+
+/** Fila serial de uma raiz: passadas da mesma raiz nunca se cruzam. */
+interface ProjectionLane {
+  batch: ProjectionBatch | null;
+  timer: ReturnType<typeof setTimeout> | null;
+  tail: Promise<void>;
+}
 
 const EMPTY_PROJECTION_COUNTS: ProjectionCounts = Object.freeze({
   notes: 0,
@@ -384,6 +412,9 @@ export class WorkspaceMemoryStore {
   readonly #projectionRoots = new Set<string>();
   readonly #unsyncedProjectionRoots = new Set<string>();
   readonly #projectionSignatures = new Map<string, string>();
+  readonly #projectionLanes = new Map<string, ProjectionLane>();
+  /** Interrompe a passada em voo quando o store fecha. */
+  readonly #projectionAbort = new AbortController();
   #workspaceRoot: string | undefined;
   #closed = false;
 
@@ -488,14 +519,19 @@ export class WorkspaceMemoryStore {
    * Reconciles every registered generated view with the SQLite authority in
    * both directions: operator edits are ingested first, then the view is
    * rewritten from the (possibly updated) rows.
+   *
+   * F-764: a passada roda na fila da raiz com `fs.promises`; quem precisa do
+   * disco pronto aguarda a promessa.
    */
-  syncProjections(): void {
+  async syncProjections(): Promise<void> {
     this.#assertOpen();
-    for (const root of this.#projectionRoots) {
-      if (this.#syncProjectionRootBestEffort(root)) {
-        this.#unsyncedProjectionRoots.delete(root);
-      }
-    }
+    await Promise.all(
+      [...this.#projectionRoots].map((root) =>
+        this.#runProjectionNow(root, (batch) => {
+          batch.full = true;
+        }),
+      ),
+    );
   }
 
   /**
@@ -503,19 +539,40 @@ export class WorkspaceMemoryStore {
    * signature moved (one readdir plus an lstat per file), so the common case —
    * nothing touched the projection since the last pass — stays O(dir) instead
    * of re-reading and re-parsing every note on every keystroke.
+   *
+   * F-764: também drena as gravações ainda na janela de coalescência — quem
+   * lê a projeção logo depois de gravar enxerga a própria gravação.
    */
-  ensureProjections(): void {
+  async ensureProjections(): Promise<void> {
     this.#assertOpen();
-    for (const root of this.#projectionRoots) {
-      if (
-        !this.#unsyncedProjectionRoots.has(root) &&
-        this.#projectionSignatures.get(root) === projectionSignature(root)
-      ) {
-        continue;
+    await Promise.all(
+      [...this.#projectionRoots].map((root) =>
+        this.#runProjectionNow(root, (batch) => {
+          batch.check = true;
+        }),
+      ),
+    );
+  }
+
+  /**
+   * Espera a projeção alcançar o SQLite: drena agora os lotes ainda na janela
+   * e aguarda as passadas em voo — inclusive as encadeadas enquanto isso.
+   * Para testes, leitura logo após gravar e o shutdown; o caminho da gravação
+   * nunca espera.
+   */
+  async flushProjections(): Promise<void> {
+    for (;;) {
+      const waited = new Map<ProjectionLane, Promise<void>>();
+      for (const [root, lane] of this.#projectionLanes) {
+        waited.set(lane, this.#drainProjectionLane(root, lane));
       }
-      if (this.#syncProjectionRootBestEffort(root)) {
-        this.#unsyncedProjectionRoots.delete(root);
-      }
+      await Promise.all(waited.values());
+      const settled =
+        waited.size === this.#projectionLanes.size &&
+        [...waited].every(
+          ([lane, tail]) => lane.tail === tail && !lane.batch && !lane.timer,
+        );
+      if (settled) return;
     }
   }
 
@@ -525,10 +582,18 @@ export class WorkspaceMemoryStore {
    * INDEX por tipo, wikilinks para arquivos citados e `.gitignore` próprio.
    * Visão morta e one-shot: o workspace nunca é registrado como raiz viva,
    * então a ingestão de edições segue restrita às projeções em userData.
+   * Entra na fila da raiz, atrás de qualquer exportação agendada.
    */
-  exportProjectionsToWorkspace(projectRoot: string): string {
+  async exportProjectionsToWorkspace(projectRoot: string): Promise<string> {
     this.#assertOpen();
-    return exportMemoryVault(projectRoot, this.#activeProjectionRecords());
+    return this.#onProjectionLane(path.resolve(projectRoot), () =>
+      exportMemoryVault(
+        projectRoot,
+        this.#activeProjectionRecords(),
+        undefined,
+        this.#projectionAbort.signal,
+      ),
+    );
   }
 
   /**
@@ -541,12 +606,16 @@ export class WorkspaceMemoryStore {
   }
 
   /** Exportação best-effort do vault: nunca derruba uma gravação de memória. */
-  #exportVaultBestEffort(): void {
-    const root = this.#workspaceRoot;
-    if (!root) return;
+  async #exportVaultBestEffort(root: string): Promise<void> {
     try {
-      exportMemoryVault(root, this.#activeProjectionRecords());
+      await exportMemoryVault(
+        root,
+        this.#activeProjectionRecords(),
+        undefined,
+        this.#projectionAbort.signal,
+      );
     } catch (error) {
+      if (this.#closed) return;
       console.warn(
         `[memory] could not export readable vault for ${path.basename(root)}:`,
         error instanceof Error ? error.message : error,
@@ -593,19 +662,214 @@ export class WorkspaceMemoryStore {
     return raw ? this.#toProjectionInput(raw) : null;
   }
 
-  #syncProjectionRootBestEffort(root: string): boolean {
+  // -------------------------------------------------------------------------
+  // Fila da projeção (F-764). O caminho da gravação só marca o lote da raiz e
+  // arma a janela; a passada roda depois, serial por raiz, com fs.promises.
+  // -------------------------------------------------------------------------
+
+  #projectionLane(root: string): ProjectionLane {
+    let lane = this.#projectionLanes.get(root);
+    if (!lane) {
+      lane = { batch: null, timer: null, tail: Promise.resolve() };
+      this.#projectionLanes.set(root, lane);
+    }
+    return lane;
+  }
+
+  #markProjectionBatch(
+    root: string,
+    mark: (batch: ProjectionBatch) => void,
+  ): ProjectionLane {
+    const lane = this.#projectionLane(root);
+    lane.batch ??= { ids: new Set(), check: false, full: false, vault: false };
+    mark(lane.batch);
+    return lane;
+  }
+
+  /** Caminho da gravação: nenhum acesso a disco aqui, só a marca e o timer. */
+  #scheduleProjection(
+    root: string,
+    mark: (batch: ProjectionBatch) => void,
+  ): void {
+    if (this.#closed) return;
+    const lane = this.#markProjectionBatch(root, mark);
+    if (lane.timer) return;
+    lane.timer = setTimeout(() => {
+      void this.#drainProjectionLane(root, lane);
+    }, PROJECTION_COALESCE_MS);
+    lane.timer.unref?.();
+  }
+
+  /** Leitura e sync explícito: marca e drena já, sem esperar a janela. */
+  #runProjectionNow(
+    root: string,
+    mark: (batch: ProjectionBatch) => void,
+  ): Promise<void> {
+    return this.#drainProjectionLane(root, this.#markProjectionBatch(root, mark));
+  }
+
+  /** Encadeia o lote pendente na fila da raiz; devolve o fim da fila. */
+  #drainProjectionLane(root: string, lane: ProjectionLane): Promise<void> {
+    if (lane.timer) {
+      clearTimeout(lane.timer);
+      lane.timer = null;
+    }
+    const batch = lane.batch;
+    lane.batch = null;
+    if (batch) {
+      this.#onProjectionLane(root, () =>
+        this.#runProjectionBatch(root, batch),
+      ).catch(() => undefined);
+    }
+    return lane.tail;
+  }
+
+  /** Roda `task` depois de tudo o que a fila da raiz já tem. */
+  #onProjectionLane<T>(root: string, task: () => Promise<T>): Promise<T> {
+    const lane = this.#projectionLane(root);
+    const run = lane.tail.then(task);
+    lane.tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  /** Gravação ou remoção de `id` na projeção, coalescida por raiz. */
+  #scheduleProjectionSync(id: string): void {
+    for (const root of this.#projectionRoots) {
+      this.#scheduleProjection(root, (batch) => {
+        batch.ids.add(id);
+      });
+    }
+  }
+
+  /** Vault legível do checkout (F-769), coalescido como a projeção. */
+  #scheduleVaultExport(): void {
+    const root = this.#workspaceRoot;
+    if (!root) return;
+    this.#scheduleProjection(path.resolve(root), (batch) => {
+      batch.vault = true;
+    });
+  }
+
+  /** Uma passada; best-effort — erro vira warn, nunca rejeita. */
+  async #runProjectionBatch(
+    root: string,
+    batch: ProjectionBatch,
+  ): Promise<void> {
+    if (this.#closed) return;
+    if (
+      this.#projectionRoots.has(root) &&
+      (batch.full || batch.check || batch.ids.size > 0)
+    ) {
+      await this.#reconcileProjectionRoot(root, batch);
+    }
+    if (batch.vault && !this.#closed) {
+      await this.#exportVaultBestEffort(root);
+    }
+  }
+
+  /**
+   * Passada de uma raiz registrada. Se o diretório mexeu desde a nossa última
+   * passada (edição do operador, arquivo apagado) ou a raiz ainda não foi
+   * sincronizada, vira reconciliação completa — que ingere ANTES de escrever,
+   * para a reescrita não apagar a edição. Senão, só os ids do lote.
+   */
+  async #reconcileProjectionRoot(
+    root: string,
+    batch: ProjectionBatch,
+  ): Promise<void> {
+    const full =
+      batch.full ||
+      this.#unsyncedProjectionRoots.has(root) ||
+      this.#projectionSignatures.get(root) !==
+        (await projectionSignature(root));
+    if (this.#closed) return;
+    if (full) {
+      if (await this.#syncProjectionRootBestEffort(root)) {
+        this.#unsyncedProjectionRoots.delete(root);
+      }
+      return;
+    }
+    if (batch.ids.size === 0) return;
+    let memoryRoot: string;
+    try {
+      // Contenção síncrona, uma vez por lote — nunca uma vez por id.
+      memoryRoot = resolveMemoryRoot(root);
+    } catch (error) {
+      console.warn(
+        `[memory] could not update generated projection for ${path.basename(root)}:`,
+        error instanceof Error ? error.message : error,
+      );
+      this.#unsyncedProjectionRoots.add(root);
+      return;
+    }
+    let projected = true;
+    for (const id of batch.ids) {
+      if (this.#closed) return;
+      projected = (await this.#projectIdBestEffort(memoryRoot, id)) && projected;
+    }
+    if (projected) {
+      await this.#markProjectionSynced(root);
+    } else {
+      // Um arquivo ficou para trás: a próxima passada reconcilia tudo.
+      this.#unsyncedProjectionRoots.add(root);
+    }
+  }
+
+  /**
+   * Faz o arquivo de `id` refletir o estado ATUAL da linha. A passada lê o
+   * SQLite na hora, não o pedido enfileirado: gravações e remoções do mesmo
+   * id convergem na ordem certa mesmo coalescidas no mesmo lote.
+   */
+  async #projectIdBestEffort(memoryRoot: string, id: string): Promise<boolean> {
+    let action = 'update';
+    try {
+      const record = this.#projectionRecord(id);
+      if (record) {
+        await writeCanonicalMemoryProjectionAt(
+          memoryRoot,
+          record,
+          this.#projectionAbort.signal,
+        );
+      } else {
+        action = 'remove';
+        await removeCanonicalMemoryProjectionAt(memoryRoot, id);
+      }
+      return true;
+    } catch (error) {
+      if (!this.#closed) {
+        console.warn(
+          `[memory] could not ${action} generated projection ${id}:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+      return false;
+    }
+  }
+
+  async #syncProjectionRootBestEffort(root: string): Promise<boolean> {
     try {
       // Ingest before writing: an operator edit that lands in SQLite must be
       // reflected by the very same pass, or the write below would erase it.
-      this.#ingestProjectionEdits(root);
-      syncCanonicalMemoryProjections(root, this.#activeProjectionRecords());
-      this.#markProjectionSynced(root);
+      await this.#ingestProjectionEdits(root);
+      if (this.#closed) return false;
+      await syncCanonicalMemoryProjections(
+        root,
+        this.#activeProjectionRecords(),
+        undefined,
+        this.#projectionAbort.signal,
+      );
+      await this.#markProjectionSynced(root);
       return true;
     } catch (error) {
-      console.warn(
-        `[memory] could not sync generated projection for ${path.basename(root)}:`,
-        error instanceof Error ? error.message : error,
-      );
+      if (!this.#closed) {
+        console.warn(
+          `[memory] could not sync generated projection for ${path.basename(root)}:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
       return false;
     }
   }
@@ -616,10 +880,16 @@ export class WorkspaceMemoryStore {
    * the row has not moved since that file was rendered, never a trusted row,
    * and always through the same secret redaction `retain()` uses.
    */
-  #ingestProjectionEdits(root: string): number {
-    const edits = collectProjectionEdits(root, this.#activeProjectionRecords());
+  async #ingestProjectionEdits(root: string): Promise<number> {
+    const edits = await collectProjectionEdits(
+      root,
+      this.#activeProjectionRecords(),
+    );
     let applied = 0;
     for (const edit of edits) {
+      // The read was asynchronous: the row may have moved meanwhile, which
+      // #applyProjectionEdit re-checks against updated_at before writing.
+      if (this.#closed) break;
       try {
         if (this.#applyProjectionEdit(edit)) applied += 1;
       } catch (error) {
@@ -701,41 +971,11 @@ export class WorkspaceMemoryStore {
     return applied;
   }
 
-  #markProjectionSynced(root: string): void {
+  async #markProjectionSynced(root: string): Promise<void> {
     try {
-      this.#projectionSignatures.set(root, projectionSignature(root));
+      this.#projectionSignatures.set(root, await projectionSignature(root));
     } catch {
       this.#projectionSignatures.delete(root);
-    }
-  }
-
-  #writeProjectionBestEffort(id: string): void {
-    try {
-      const record = this.#projectionRecord(id);
-      if (!record) return;
-      for (const root of this.#projectionRoots) {
-        writeCanonicalMemoryProjection(root, record);
-        this.#markProjectionSynced(root);
-      }
-    } catch (error) {
-      console.warn(
-        `[memory] could not update generated projection ${id}:`,
-        error instanceof Error ? error.message : error,
-      );
-    }
-  }
-
-  #removeProjectionBestEffort(id: string): void {
-    for (const root of this.#projectionRoots) {
-      try {
-        removeCanonicalMemoryProjection(root, id);
-        this.#markProjectionSynced(root);
-      } catch (error) {
-        console.warn(
-          `[memory] could not remove generated projection ${id}:`,
-          error instanceof Error ? error.message : error,
-        );
-      }
     }
   }
 
@@ -821,16 +1061,18 @@ export class WorkspaceMemoryStore {
       });
     })();
     const result = transactionResult.result;
+    // F-764: o SQLite acima é a fonte da verdade e já está gravado; a
+    // projeção e o vault só são agendados — nada de fs no caminho da gravação.
     if (result.scope === 'workspace') {
-      this.#writeProjectionBestEffort(result.id);
-      this.#exportVaultBestEffort();
+      this.#scheduleProjectionSync(result.id);
+      this.#scheduleVaultExport();
     }
     if (
       transactionResult.superseded &&
       input.scope === 'workspace' &&
       input.supersedes
     ) {
-      this.#removeProjectionBestEffort(input.supersedes);
+      this.#scheduleProjectionSync(input.supersedes);
     }
     return result;
   }
@@ -1022,8 +1264,8 @@ export class WorkspaceMemoryStore {
       this.#now(),
     );
     if (forgotten) {
-      this.#removeProjectionBestEffort(id);
-      this.#exportVaultBestEffort();
+      this.#scheduleProjectionSync(id);
+      this.#scheduleVaultExport();
     }
     return forgotten;
   }
@@ -1055,8 +1297,8 @@ export class WorkspaceMemoryStore {
       );
     const forgotten = result.changes > 0;
     if (forgotten && input.scope === 'workspace') {
-      this.#removeProjectionBestEffort(input.id);
-      this.#exportVaultBestEffort();
+      this.#scheduleProjectionSync(input.id);
+      this.#scheduleVaultExport();
     }
     return forgotten;
   }
@@ -1350,6 +1592,15 @@ export class WorkspaceMemoryStore {
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
+    // A passada em voo para no próximo passo e o que ainda estava na janela
+    // morre aqui. O SQLite segue a fonte da verdade: a próxima abertura
+    // reconcilia a projeção e a próxima gravação reexporta o vault.
+    this.#projectionAbort.abort();
+    for (const lane of this.#projectionLanes.values()) {
+      if (lane.timer) clearTimeout(lane.timer);
+      lane.timer = null;
+      lane.batch = null;
+    }
     try {
       this.#workspaceDb.close();
     } finally {
@@ -1467,6 +1718,32 @@ export function getWorkspaceMemoryStore(
     ).catch(() => { console.warn('[memory] pending retention replay unavailable'); });
   }
   return store;
+}
+
+/**
+ * Shutdown (F-764): a projeção anda fora do caminho da gravação. Antes de
+ * sair, dá às passadas pendentes de todos os stores um teto curto para
+ * alcançar o SQLite. Nunca rejeita e nunca segura o quit além do teto.
+ */
+export async function flushWorkspaceMemoryProjections(
+  timeoutMs = 2_000,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.all(
+        [...storesByProject.values()].map((store) =>
+          store.flushProjections().catch(() => undefined),
+        ),
+      ),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /** Fecha e descarta todos os stores abertos (shutdown e testes). */

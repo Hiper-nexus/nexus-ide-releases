@@ -7,7 +7,7 @@ import {
   missionIdFromProjectionSource,
 } from '../../shared/mission-id';
 import { resolveSubdirUnderRoot } from '../security/scoped-workspace-fs';
-import { writeFileAtomic } from '../util/atomic-write';
+import { writeFileAtomicAsync } from '../util/atomic-write';
 
 /**
  * Human-readable projection of the canonical SQLite/FTS5 memory — and, since
@@ -23,6 +23,11 @@ import { writeFileAtomic } from '../util/atomic-write';
  *
  * Ingestion itself lives in `nexus-memory-ingest.ts`; this module owns how a
  * projection is rendered, parsed and listed.
+ *
+ * F-764: todo escritor da projeção (e a assinatura) usa `fs.promises` — a
+ * varredura O(N) e os fsync rodam no pool do libuv, nunca no event loop do
+ * Main. O `signal` opcional interrompe a passada entre um passo e outro
+ * quando o store fecha.
  */
 
 export const DEFAULT_MEMORY_DIR = '.nexus-memory';
@@ -104,9 +109,13 @@ export function resolveMemoryRoot(
  * `recursive: true` succeeds silently on a symlink-to-directory, redirecting
  * every subsequent write out of the project. Re-resolving here closes it.
  */
-function ensureProjectionRoot(root: string): void {
-  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  const real = fs.realpathSync(root);
+async function ensureProjectionRoot(
+  root: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  signal?.throwIfAborted();
+  await fs.promises.mkdir(root, { recursive: true, mode: 0o700 });
+  const real = await fs.promises.realpath(root);
   if (real !== root) {
     throw new Error(`memory root escaped project: ${root}`);
   }
@@ -216,28 +225,23 @@ function projectionMarkdown(
   ].join('\n');
 }
 
-export function writeCanonicalMemoryProjection(
-  projectRoot: string,
-  rawInput: CanonicalMemoryProjectionInput,
-  dirname = DEFAULT_MEMORY_DIR,
-): MemoryNote {
-  const input = canonicalProjectionInputSchema.parse(rawInput);
-  const root = resolveMemoryRoot(projectRoot, dirname);
-  ensureProjectionRoot(root);
+/**
+ * Writes one row's projection under an already-proven root. Containment is
+ * re-proved before *each* file, as the per-file call always did: a root
+ * swapped for a symlink mid-pass must stop the pass, not redirect it.
+ */
+async function writeProjectionFile(
+  root: string,
+  input: CanonicalMemoryProjectionInput,
+  signal?: AbortSignal,
+): Promise<MemoryNote> {
+  await ensureProjectionRoot(root, signal);
   const filePath = memoryProjectionPath(root, input.id);
   const kind = projectionKind(input);
   const missionId = projectionMissionId(input.source);
   const title = projectionTitle(input.content, input.id);
   const markdown = projectionMarkdown(input, kind, missionId);
-  let isCurrent = false;
-  try {
-    isCurrent =
-      fs.lstatSync(filePath).isFile() &&
-      fs.readFileSync(filePath, 'utf8') === markdown;
-  } catch {
-    // Missing/unreadable/stale projection is repaired by the atomic write.
-  }
-  if (!isCurrent) writeFileAtomic(filePath, markdown);
+  await writeFileIfChanged(filePath, markdown, signal);
   return memoryNoteSchema.parse({
     id: input.id,
     title,
@@ -248,6 +252,36 @@ export function writeCanonicalMemoryProjection(
     path: filePath,
     updatedAt: input.updatedAt,
   });
+}
+
+export async function writeCanonicalMemoryProjection(
+  projectRoot: string,
+  rawInput: CanonicalMemoryProjectionInput,
+  dirname = DEFAULT_MEMORY_DIR,
+  signal?: AbortSignal,
+): Promise<MemoryNote> {
+  return writeCanonicalMemoryProjectionAt(
+    resolveMemoryRoot(projectRoot, dirname),
+    rawInput,
+    signal,
+  );
+}
+
+/**
+ * Same write under a memory root already resolved by `resolveMemoryRoot`.
+ * The containment check is synchronous: a batch resolves it once instead of
+ * once per id, keeping O(ids) blocking syscalls off the Main thread.
+ */
+export async function writeCanonicalMemoryProjectionAt(
+  memoryRoot: string,
+  rawInput: CanonicalMemoryProjectionInput,
+  signal?: AbortSignal,
+): Promise<MemoryNote> {
+  return writeProjectionFile(
+    memoryRoot,
+    canonicalProjectionInputSchema.parse(rawInput),
+    signal,
+  );
 }
 
 const MEMORY_KINDS = new Set(['decision', 'mission', 'agent', 'note']);
@@ -319,57 +353,77 @@ function projectionIdForFile(name: string, raw: string): string | null {
   return fromName;
 }
 
-export function removeCanonicalMemoryProjection(
+export async function removeCanonicalMemoryProjection(
   projectRoot: string,
   id: string,
   dirname = DEFAULT_MEMORY_DIR,
-): boolean {
-  const root = resolveMemoryRoot(projectRoot, dirname);
-  const filePath = memoryProjectionPath(root, id);
-  if (!fs.existsSync(filePath)) return false;
-  const stat = fs.lstatSync(filePath);
+): Promise<boolean> {
+  return removeCanonicalMemoryProjectionAt(
+    resolveMemoryRoot(projectRoot, dirname),
+    id,
+  );
+}
+
+/** Removal under an already-resolved memory root (see the `At` writer). */
+export async function removeCanonicalMemoryProjectionAt(
+  memoryRoot: string,
+  id: string,
+): Promise<boolean> {
+  const filePath = memoryProjectionPath(memoryRoot, id);
+  // The root was resolved before an await: re-prove it still is itself
+  // (not swapped for a symlink) before unlinking anything under it.
+  const real = await fs.promises.realpath(memoryRoot).catch(() => null);
+  if (real !== memoryRoot) return false;
+  let stat: fs.Stats;
+  try {
+    stat = await fs.promises.lstat(filePath);
+  } catch {
+    return false;
+  }
   if (!stat.isFile()) return false;
-  const raw = fs.readFileSync(filePath, 'utf8');
+  const raw = await fs.promises.readFile(filePath, 'utf8');
   if (!isCanonicalProjection(raw, id)) return false;
-  fs.unlinkSync(filePath);
+  await fs.promises.unlink(filePath);
   return true;
 }
 
-export function syncCanonicalMemoryProjections(
+export async function syncCanonicalMemoryProjections(
   projectRoot: string,
   rawInputs: readonly CanonicalMemoryProjectionInput[],
   dirname = DEFAULT_MEMORY_DIR,
-): void {
+  signal?: AbortSignal,
+): Promise<void> {
   const inputs = rawInputs.map((input) =>
     canonicalProjectionInputSchema.parse(input),
   );
   const activeIds = new Set(inputs.map((input) => input.id));
   const root = resolveMemoryRoot(projectRoot, dirname);
-  ensureProjectionRoot(root);
+  await ensureProjectionRoot(root, signal);
 
   for (const input of inputs) {
-    writeCanonicalMemoryProjection(projectRoot, input, dirname);
+    await writeProjectionFile(root, input, signal);
   }
 
-  for (const name of fs.readdirSync(root)) {
+  for (const name of await fs.promises.readdir(root)) {
+    signal?.throwIfAborted();
     const filePath = path.join(root, name);
-    const stat = fs.lstatSync(filePath);
+    const stat = await fs.promises.lstat(filePath);
     if (!stat.isFile()) continue;
     // Sweep temp files orphaned by a crash between open() and rename();
     // nothing else ever reaps them and they accumulate without bound.
     if (/\.[0-9a-f]{16}\.tmp$/.test(name)) {
-      fs.unlinkSync(filePath);
+      await fs.promises.unlink(filePath);
       continue;
     }
     if (!name.endsWith('.md')) continue;
-    const raw = fs.readFileSync(filePath, 'utf8');
+    const raw = await fs.promises.readFile(filePath, 'utf8');
     const frontmatter = parseFrontmatter(raw);
     if (frontmatter.canonical !== CANONICAL_MEMORY_PROJECTION) continue;
     const id = projectionIdForFile(name, raw);
     // `id === null` here means the file carries our marker but its declared id
     // disagrees with its name — an impostor, removed regardless of activeIds.
     if (id === null || !activeIds.has(id)) {
-      fs.unlinkSync(filePath);
+      await fs.promises.unlink(filePath);
     }
   }
 }
@@ -477,16 +531,24 @@ function vaultIndexMarkdown(
   return [`# Índice — ${VAULT_INDEX_TITLES[kind]}`, '', ...lines, ''].join('\n');
 }
 
-function writeFileIfChanged(filePath: string, content: string): void {
+/** Rewrites only what moved: an unchanged file keeps its mtime (anti onChange loop). */
+async function writeFileIfChanged(
+  filePath: string,
+  content: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  signal?.throwIfAborted();
   let isCurrent = false;
   try {
     isCurrent =
-      fs.lstatSync(filePath).isFile() &&
-      fs.readFileSync(filePath, 'utf8') === content;
+      (await fs.promises.lstat(filePath)).isFile() &&
+      (await fs.promises.readFile(filePath, 'utf8')) === content;
   } catch {
     // Missing/unreadable/stale file is repaired by the atomic write.
   }
-  if (!isCurrent) writeFileAtomic(filePath, content);
+  if (isCurrent) return;
+  signal?.throwIfAborted();
+  await writeFileAtomicAsync(filePath, content);
 }
 
 /**
@@ -497,17 +559,18 @@ function writeFileIfChanged(filePath: string, content: string): void {
  * colhidos; markdown sem o marcador canônico (nota humana solta na pasta)
  * fica intacto.
  */
-export function exportMemoryVault(
+export async function exportMemoryVault(
   projectRoot: string,
   rawInputs: readonly CanonicalMemoryProjectionInput[],
   dirname = DEFAULT_MEMORY_DIR,
-): string {
+  signal?: AbortSignal,
+): Promise<string> {
   const inputs = rawInputs.map((input) =>
     canonicalProjectionInputSchema.parse(input),
   );
   const root = resolveMemoryRoot(projectRoot, dirname);
-  ensureProjectionRoot(root);
-  writeFileIfChanged(path.join(root, '.gitignore'), VAULT_GITIGNORE);
+  await ensureProjectionRoot(root, signal);
+  await writeFileIfChanged(path.join(root, '.gitignore'), VAULT_GITIGNORE, signal);
 
   const active = new Set<string>();
   const byKind = new Map<
@@ -523,7 +586,7 @@ export function exportMemoryVault(
       projectionMissionId(input.source),
     );
     active.add(name);
-    writeFileIfChanged(path.join(root, name), markdown);
+    await writeFileIfChanged(path.join(root, name), markdown, signal);
     const entries = byKind.get(kind) ?? [];
     entries.push({ file: name, title: projectionTitle(input.content, input.id) });
     byKind.set(kind, entries);
@@ -534,28 +597,42 @@ export function exportMemoryVault(
     if (!entries) continue;
     const name = vaultIndexName(kind);
     active.add(name);
-    writeFileIfChanged(path.join(root, name), vaultIndexMarkdown(kind, entries));
+    await writeFileIfChanged(
+      path.join(root, name),
+      vaultIndexMarkdown(kind, entries),
+      signal,
+    );
   }
 
-  for (const name of fs.readdirSync(root)) {
+  for (const name of await fs.promises.readdir(root)) {
+    signal?.throwIfAborted();
     const filePath = path.join(root, name);
-    const stat = fs.lstatSync(filePath);
+    const stat = await fs.promises.lstat(filePath);
     if (!stat.isFile()) continue;
     // Sweep temp files orphaned by a crash between open() and rename().
     if (/\.[0-9a-f]{16}\.tmp$/.test(name)) {
-      fs.unlinkSync(filePath);
+      await fs.promises.unlink(filePath);
       continue;
     }
     if (!name.endsWith('.md') || active.has(name)) continue;
     if (
       VAULT_INDEX_KINDS.some((kind) => name === vaultIndexName(kind)) ||
-      parseFrontmatter(fs.readFileSync(filePath, 'utf8')).canonical ===
-        CANONICAL_MEMORY_PROJECTION
+      parseFrontmatter(await fs.promises.readFile(filePath, 'utf8'))
+        .canonical === CANONICAL_MEMORY_PROJECTION
     ) {
-      fs.unlinkSync(filePath);
+      await fs.promises.unlink(filePath);
     }
   }
   return root;
+}
+
+function signatureOf(
+  entries: ReadonlyArray<{ name: string; stat: fs.Stats | null }>,
+): string {
+  return entries
+    .filter((entry) => entry.stat?.isFile())
+    .map((entry) => `${entry.name}:${entry.stat!.mtimeMs}:${entry.stat!.size}`)
+    .join('|');
 }
 
 /**
@@ -563,11 +640,40 @@ export function exportMemoryVault(
  * per candidate, no file contents. Everything that can change what the
  * directory *means* — a create, a rename, a reap, an in-place edit — moves a
  * name, an mtime or a size.
+ *
+ * F-764: a passada da projeção recalcula este token a cada lote; era O(N)
+ * síncrono por gravação. Aqui o readdir e os lstat rodam no pool do libuv.
  */
-export function projectionSignature(
+export async function projectionSignature(
   projectRoot: string,
   dirname = DEFAULT_MEMORY_DIR,
-): string {
+): Promise<string> {
+  let root: string;
+  try {
+    root = resolveMemoryRoot(projectRoot, dirname);
+  } catch {
+    return 'unresolvable';
+  }
+  let names: string[];
+  try {
+    names = (await fs.promises.readdir(root))
+      .filter((name) => name.endsWith('.md'))
+      .sort();
+  } catch {
+    return 'absent';
+  }
+  const entries = await Promise.all(
+    names.map(async (name) => ({
+      name,
+      // Vanished mid-scan (null): the next signature reflects it.
+      stat: await fs.promises.lstat(path.join(root, name)).catch(() => null),
+    })),
+  );
+  return signatureOf(entries);
+}
+
+/** Same token, for the synchronous listing cache of the read path. */
+function projectionSignatureSync(projectRoot: string, dirname: string): string {
   let root: string;
   try {
     root = resolveMemoryRoot(projectRoot, dirname);
@@ -580,17 +686,16 @@ export function projectionSignature(
   } catch {
     return 'absent';
   }
-  const parts: string[] = [];
-  for (const name of names) {
-    try {
-      const stat = fs.lstatSync(path.join(root, name));
-      if (!stat.isFile()) continue;
-      parts.push(`${name}:${stat.mtimeMs}:${stat.size}`);
-    } catch {
-      // Vanished mid-scan; the next signature reflects it.
-    }
-  }
-  return parts.join('|');
+  return signatureOf(
+    names.map((name) => {
+      try {
+        return { name, stat: fs.lstatSync(path.join(root, name)) };
+      } catch {
+        // Vanished mid-scan; the next signature reflects it.
+        return { name, stat: null };
+      }
+    }),
+  );
 }
 
 interface ProjectionScan {
@@ -656,7 +761,7 @@ function readProjectionNotes(
   dirname: string,
 ): { readonly notes: readonly MemoryNote[]; readonly cached: boolean } {
   const key = `${projectRoot}\0${dirname}`;
-  const signature = projectionSignature(projectRoot, dirname);
+  const signature = projectionSignatureSync(projectRoot, dirname);
   const hit = scanCache.get(key);
   if (hit?.signature === signature) return { notes: hit.notes, cached: true };
   const notes = Object.freeze(scanProjectionNotes(projectRoot, dirname));

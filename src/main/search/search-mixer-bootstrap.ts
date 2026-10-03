@@ -45,7 +45,7 @@ function createMissionsProvider(): SearchSourceProvider {
       const store = getWorkspaceMemoryStore({
         projectId: query.workspaceId,
       });
-      store.ensureProjections();
+      await store.ensureProjections();
       const notes = listMemoryNotes(store.projectionRoot).filter(
         (n) => n.kind === 'mission',
       );

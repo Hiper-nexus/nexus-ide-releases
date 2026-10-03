@@ -241,6 +241,7 @@ import { getSearchMixer } from "./search/search-mixer-bootstrap";
 import { registerProductWaveIpc } from "./product-wave-ipc";
 import { registerDiscoveryIpc } from "./discovery/discovery-ipc";
 import { registerMemoryIpc } from "./memory/memory-ipc";
+import { flushWorkspaceMemoryProjections } from "./memory/workspace-memory";
 import { registerModelMetadataIpc } from "./adapters/model-metadata-ipc";
 import { registerMissionEventIpc } from "./orch/mission-event-ipc";
 import { startAgentLifecycleService } from "./agents/agent-lifecycle-service";
@@ -1435,6 +1436,12 @@ function shutdown(): Promise<void> {
           trackShutdownPhase("closeOrchestration", closeOrchestration),
       },
       recordQuitIncident,
+    );
+    // F-764: a projeção da memória (vault markdown) anda fora do caminho da
+    // gravação; com os agentes já encerrados, ela tem um teto curto para
+    // alcançar o SQLite antes de o processo sair.
+    await trackShutdownPhase("flushMemoryProjections", () =>
+      flushWorkspaceMemoryProjections(),
     );
     await trackShutdownPhase("rest", async () => {
       stopRemoteBridge();

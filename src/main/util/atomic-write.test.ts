@@ -2,7 +2,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { writeFileAtomic, writeJsonAtomic, writeTimestampedBackup } from './atomic-write';
+import {
+  writeFileAtomic,
+  writeFileAtomicAsync,
+  writeJsonAtomic,
+  writeTimestampedBackup,
+} from './atomic-write';
 
 // This module is the canonical crash-safe writer for eight callers, including
 // remote-device-token-store.ts (remote pairing tokens) and remote-bridge.ts.
@@ -142,6 +147,63 @@ describe.skipIf(process.platform === 'win32')('writeFileAtomic permissions', () 
     writeFileAtomic(file, 'new');
 
     expect(modeOf(file)).toBe(0o600);
+  });
+});
+
+describe('writeFileAtomicAsync (F-764: fora do event loop do Main)', () => {
+  it('publishes the payload in a new parent and leaves no temporary file behind', async () => {
+    const file = nestedFile();
+
+    await writeFileAtomicAsync(file, 'payload');
+
+    expect(fs.readFileSync(file, 'utf8')).toBe('payload');
+    expect(fs.readdirSync(path.dirname(file))).toEqual(['tokens.json']);
+    if (process.platform !== 'win32') {
+      expect(modeOf(file)).toBe(0o600);
+      expect(modeOf(path.dirname(file))).toBe(0o700);
+    }
+  });
+
+  it('keeps the previous destination intact and unlinks the temp when rename fails', async () => {
+    const file = path.join(temporaryDirectory(), 'tokens.json');
+    await writeFileAtomicAsync(file, 'first');
+    vi.spyOn(fs.promises, 'rename').mockRejectedValueOnce(
+      new Error('disk unavailable'),
+    );
+
+    await expect(writeFileAtomicAsync(file, 'second')).rejects.toThrow(
+      'disk unavailable',
+    );
+    expect(fs.readFileSync(file, 'utf8')).toBe('first');
+    expect(fs.readdirSync(path.dirname(file))).toEqual(['tokens.json']);
+  });
+
+  it('replaces a symlink at the destination instead of writing through it', async () => {
+    const directory = temporaryDirectory();
+    const victim = path.join(directory, 'victim.txt');
+    fs.writeFileSync(victim, 'untouched', 'utf8');
+    const link = path.join(directory, 'tokens.json');
+    fs.symlinkSync(victim, link);
+
+    await writeFileAtomicAsync(link, 'payload');
+
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(false);
+    expect(fs.readFileSync(link, 'utf8')).toBe('payload');
+    expect(fs.readFileSync(victim, 'utf8')).toBe('untouched');
+  });
+
+  it('never touches the blocking fs API', async () => {
+    const blocking = [
+      vi.spyOn(fs, 'mkdirSync'),
+      vi.spyOn(fs, 'openSync'),
+      vi.spyOn(fs, 'writeFileSync'),
+      vi.spyOn(fs, 'fsyncSync'),
+      vi.spyOn(fs, 'renameSync'),
+    ];
+
+    await writeFileAtomicAsync(nestedFile(), 'payload');
+
+    for (const spy of blocking) expect(spy).not.toHaveBeenCalled();
   });
 });
 

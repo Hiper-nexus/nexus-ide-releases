@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
+import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 
 const NOFOLLOW_FLAG = fs.constants.O_NOFOLLOW ?? 0;
@@ -82,6 +83,62 @@ export function writeFileAtomic(
     } catch {
       // Temp file already gone.
     }
+    throw err;
+  }
+}
+
+/** `fsyncDirectory` without blocking the event loop. */
+async function fsyncDirectoryAsync(dir: string): Promise<void> {
+  let handle: FileHandle | undefined;
+  try {
+    handle = await fs.promises.open(dir, fs.constants.O_RDONLY);
+    await handle.sync();
+  } catch {
+    // Platform does not support directory fsync (notably Windows).
+  } finally {
+    await handle?.close().catch(() => {
+      // Already closed.
+    });
+  }
+}
+
+/**
+ * `writeFileAtomic` for the Electron main thread (F-764): the same guarantees —
+ * unpredictable O_CREAT|O_EXCL|O_NOFOLLOW temp, mode, fsync of the file and of
+ * the directory entry, temp unlinked on failure — but every syscall runs on
+ * the libuv pool instead of blocking the event loop.
+ */
+export async function writeFileAtomicAsync(
+  file: string,
+  value: string | NodeJS.ArrayBufferView,
+  mode: number = 0o600,
+): Promise<void> {
+  const dir = path.dirname(file);
+  await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+  const tmp = `${file}.${randomBytes(8).toString('hex')}.tmp`;
+  const handle = await fs.promises.open(
+    tmp,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | NOFOLLOW_FLAG,
+    mode,
+  );
+  try {
+    try {
+      await handle.writeFile(value);
+      try {
+        await handle.chmod(mode);
+      } catch {
+        // Best effort on filesystems that do not preserve POSIX mode.
+      }
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await fs.promises.rename(tmp, file);
+    await fsyncDirectoryAsync(dir);
+  } catch (err) {
+    await fs.promises.unlink(tmp).catch(() => {
+      // Temp file already gone.
+    });
     throw err;
   }
 }

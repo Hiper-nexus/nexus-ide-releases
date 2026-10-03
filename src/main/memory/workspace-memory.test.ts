@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   configureWorkspaceMemory,
   disposeWorkspaceMemoryStores,
@@ -135,7 +135,7 @@ describe('workspace memory engine (FTS5)', () => {
     expect(store.forget(id)).toBe(false);
   });
 
-  it('projeta a fonte SQLite em Markdown determinístico e remove ao esquecer', () => {
+  it('projeta a fonte SQLite em Markdown determinístico e remove ao esquecer', async () => {
     const projectRoot = fs.mkdtempSync(
       path.join(os.tmpdir(), 'nexus-wm-projection-'),
     );
@@ -154,6 +154,8 @@ describe('workspace memory engine (FTS5)', () => {
       `${retained.id}.md`,
     );
 
+    // F-764: a projeção é agendada fora do caminho da gravação.
+    await store.flushProjections();
     expect(fs.readFileSync(projectionPath, 'utf8')).toMatch(
       /canonical: sqlite-fts5/,
     );
@@ -164,16 +166,17 @@ describe('workspace memory engine (FTS5)', () => {
     // A projeção nunca vira segunda autoridade: uma nova sincronização
     // sobrescreve edição manual com o conteúdo canônico do SQLite.
     fs.writeFileSync(projectionPath, '# conteúdo adulterado');
-    store.syncProjections();
+    await store.syncProjections();
     expect(fs.readFileSync(projectionPath, 'utf8')).not.toContain(
       'conteúdo adulterado',
     );
 
     expect(store.forget(retained.id)).toBe(true);
+    await store.flushProjections();
     expect(fs.existsSync(projectionPath)).toBe(false);
   });
 
-  it('não projeta memórias globais em um workspace específico', () => {
+  it('não projeta memórias globais em um workspace específico', async () => {
     const projectRoot = fs.mkdtempSync(
       path.join(os.tmpdir(), 'nexus-wm-global-projection-'),
     );
@@ -184,6 +187,7 @@ describe('workspace memory engine (FTS5)', () => {
       kind: 'preference',
       scope: 'global',
     });
+    await store.flushProjections();
 
     expect(
       fs.existsSync(
@@ -192,7 +196,7 @@ describe('workspace memory engine (FTS5)', () => {
     ).toBe(false);
   });
 
-  it('projeta em userData e exporta o vault legível fora do git (F-769)', () => {
+  it('projeta em userData e exporta o vault legível fora do git (F-769)', async () => {
     const baseDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'nexus-wm-runtime-base-'),
     );
@@ -218,7 +222,9 @@ describe('workspace memory engine (FTS5)', () => {
       source: 'trusted:operator-decision',
     });
 
-    // A gravação exporta o vault legível para o checkout, fora do git.
+    // A gravação exporta o vault legível para o checkout, fora do git —
+    // agendada fora do caminho da gravação (F-764).
+    await store.flushProjections();
     const exported = path.join(fs.realpathSync(projectRoot), '.nexus-memory');
     expect(fs.existsSync(exported)).toBe(true);
     expect(
@@ -239,7 +245,7 @@ describe('workspace memory engine (FTS5)', () => {
     ).toBe(true);
 
     // O vault usa nomes legíveis; a exportação explícita devolve a mesma raiz.
-    expect(store.exportProjectionsToWorkspace(projectRoot)).toBe(exported);
+    expect(await store.exportProjectionsToWorkspace(projectRoot)).toBe(exported);
     const vaultNames = fs.readdirSync(exported);
     expect(
       vaultNames.some((name) => name.startsWith('decisao-') && name.endsWith('.md')),
@@ -251,6 +257,7 @@ describe('workspace memory engine (FTS5)', () => {
       kind: 'fact',
       source: 'trusted:accepted-handoff',
     });
+    await store.flushProjections();
     expect(
       fs.existsSync(
         path.join(
@@ -423,7 +430,7 @@ describe('workspace memory engine (FTS5)', () => {
     expect(store.stats().workspace.totalRecalls).toBe(1);
   });
 
-  it('gravação exporta o vault legível .nexus-memory/ no workspace (F-769)', () => {
+  it('gravação exporta o vault legível .nexus-memory/ no workspace (F-769)', async () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-wm-vault-'));
     dirs.push(workspace);
     const store = makeStore(undefined, { workspaceRoot: workspace });
@@ -435,7 +442,10 @@ describe('workspace memory engine (FTS5)', () => {
     });
 
     const vaultRoot = path.join(fs.realpathSync(workspace), '.nexus-memory');
-    expect(store.exportProjectionsToWorkspace(workspace)).toBe(vaultRoot);
+    // A própria gravação exporta (agendada, F-764) — antes da exportação explícita.
+    await store.flushProjections();
+    expect(fs.readdirSync(vaultRoot)).toContain('INDEX-decision.md');
+    expect(await store.exportProjectionsToWorkspace(workspace)).toBe(vaultRoot);
     expect(fs.readFileSync(path.join(vaultRoot, '.gitignore'), 'utf8')).toBe('*\n');
     const names = fs.readdirSync(vaultRoot);
     const noteName = names.find(
@@ -449,6 +459,7 @@ describe('workspace memory engine (FTS5)', () => {
 
     // Esquecer remove a nota do vault; o índice vazio é colhido junto.
     expect(store.forget(retained.id)).toBe(true);
+    await store.flushProjections();
     expect(fs.existsSync(path.join(vaultRoot, noteName!))).toBe(false);
     const indexPath = path.join(vaultRoot, 'INDEX-decision.md');
     if (fs.existsSync(indexPath)) {
@@ -477,5 +488,195 @@ describe('workspace memory engine (FTS5)', () => {
     expect(paths.projectionRoot).not.toContain('proj-a');
     expect(paths.projectionRoot).not.toBe(other.projectionRoot);
     expect(paths.projectionRoot).toContain(path.join('base', 'projections'));
+  });
+});
+
+describe('projeção fora do caminho da gravação (F-764)', () => {
+  function tempDir(prefix: string): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    dirs.push(dir);
+    return dir;
+  }
+
+  function projectionFile(projectRoot: string, id: string): string {
+    return path.join(projectRoot, '.nexus-memory', `${id}.md`);
+  }
+
+  it('retain e forget não fazem nenhuma chamada síncrona de fs', async () => {
+    const projectRoot = tempDir('nexus-wm-nosync-projection-');
+    const workspace = tempDir('nexus-wm-nosync-vault-');
+    const store = makeStore(undefined, {
+      projectionRoot: projectRoot,
+      workspaceRoot: workspace,
+    });
+    // A primeira passada (reconciliação completa) fica fora da medição.
+    store.retain({ content: '# Base\n\ncorpo base' });
+    await store.flushProjections();
+
+    const blocking = [
+      vi.spyOn(fs, 'readdirSync'),
+      vi.spyOn(fs, 'lstatSync'),
+      vi.spyOn(fs, 'statSync'),
+      vi.spyOn(fs, 'readFileSync'),
+      vi.spyOn(fs, 'writeFileSync'),
+      vi.spyOn(fs, 'existsSync'),
+      vi.spyOn(fs, 'mkdirSync'),
+      vi.spyOn(fs, 'realpathSync'),
+      vi.spyOn(fs, 'openSync'),
+      vi.spyOn(fs, 'renameSync'),
+      vi.spyOn(fs, 'unlinkSync'),
+    ];
+    const touched: string[] = [];
+    try {
+      const first = store.retain({ content: '# Nova\n\ncorpo novo', kind: 'decision' });
+      const second = store.retain({
+        content: '# Substituta\n\ncorpo substituto',
+        supersedes: first.id,
+      });
+      store.forget(second.id);
+      touched.push(first.id, second.id);
+      for (const spy of blocking) expect(spy).not.toHaveBeenCalled();
+    } finally {
+      for (const spy of blocking) spy.mockRestore();
+    }
+
+    // E o disco alcança o SQLite depois, fora do caminho da gravação.
+    await store.flushProjections();
+    for (const id of touched) {
+      expect(fs.existsSync(projectionFile(projectRoot, id))).toBe(false);
+    }
+    expect(
+      fs
+        .readdirSync(path.join(fs.realpathSync(workspace), '.nexus-memory'))
+        .filter((name) => name.endsWith('.md') && !name.startsWith('INDEX-')),
+    ).toEqual([expect.stringMatching(/^base-/)]);
+  });
+
+  it('muitas gravações seguidas viram poucas varreduras (coalescência por raiz)', async () => {
+    const projectRoot = tempDir('nexus-wm-burst-projection-');
+    const workspace = tempDir('nexus-wm-burst-vault-');
+    const store = makeStore(undefined, {
+      projectionRoot: projectRoot,
+      workspaceRoot: workspace,
+    });
+    store.retain({ content: '# Base\n\ncorpo base' });
+    await store.flushProjections();
+
+    const readdir = vi.spyOn(fs.promises, 'readdir');
+    try {
+      for (let i = 0; i < 40; i += 1) {
+        store.retain({ content: `# Nota ${i}\n\ncorpo ${i}` });
+      }
+      expect(readdir).not.toHaveBeenCalled();
+      await store.flushProjections();
+      // Antes: duas varreduras síncronas POR gravação (assinatura da projeção
+      // + exportação do vault) = 80. Agora: uma passada por raiz.
+      expect(readdir.mock.calls.length).toBeLessThanOrEqual(3);
+    } finally {
+      readdir.mockRestore();
+    }
+    expect(
+      fs
+        .readdirSync(path.join(projectRoot, '.nexus-memory'))
+        .filter((name) => name.endsWith('.md')),
+    ).toHaveLength(41);
+    expect(
+      fs
+        .readdirSync(path.join(fs.realpathSync(workspace), '.nexus-memory'))
+        .filter((name) => name.endsWith('.md') && !name.startsWith('INDEX-')),
+    ).toHaveLength(41);
+  });
+
+  it('gravação e remoção do mesmo id na mesma janela convergem na ordem certa', async () => {
+    const projectRoot = tempDir('nexus-wm-order-');
+    let clock = 1_000;
+    const store = makeStore(() => clock, { projectionRoot: projectRoot });
+    const kept = store.retain({ content: '# Fica\n\ncorpo que fica' });
+    const gone = store.retain({ content: '# Sai\n\ncorpo que sai' });
+    expect(store.forget(gone.id)).toBe(true);
+    clock = 2_000;
+    // Dedupe renova updated_at na mesma janela: vale a versão mais nova.
+    expect(store.retain({ content: '# Fica\n\ncorpo que fica' }).id).toBe(kept.id);
+    await store.flushProjections();
+
+    expect(fs.existsSync(projectionFile(projectRoot, gone.id))).toBe(false);
+    expect(fs.readFileSync(projectionFile(projectRoot, kept.id), 'utf8')).toContain(
+      'updatedAt: 2000',
+    );
+
+    // Em janelas separadas, a remoção que chega depois também vence.
+    expect(store.forget(kept.id)).toBe(true);
+    await store.flushProjections();
+    expect(fs.existsSync(projectionFile(projectRoot, kept.id))).toBe(false);
+  });
+
+  it('falha na projeção vira warn e nunca derruba a gravação', async () => {
+    const workspace = tempDir('nexus-wm-besteffort-');
+    // `.nexus-memory` ocupado por um arquivo: a exportação do vault falha.
+    fs.writeFileSync(path.join(workspace, '.nexus-memory'), 'not a directory');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const store = makeStore(undefined, { workspaceRoot: workspace });
+      const retained = store.retain({ content: 'fato que precisa sobreviver' });
+      await store.flushProjections();
+
+      expect(store.recall({ query: 'sobreviver' }).map((hit) => hit.id)).toEqual([
+        retained.id,
+      ]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('could not export readable vault'),
+        expect.anything(),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('edição do operador é ingerida antes da passada de uma gravação posterior', async () => {
+    const projectRoot = tempDir('nexus-wm-edit-then-write-');
+    let clock = 1_000;
+    const store = makeStore(() => clock, { projectionRoot: projectRoot });
+    const edited = store.retain({
+      content: '# Nota\n\ncorpo original',
+      source: 'operator:note',
+    });
+    await store.flushProjections();
+    const file = projectionFile(projectRoot, edited.id);
+    fs.writeFileSync(
+      file,
+      fs
+        .readFileSync(file, 'utf8')
+        .replace('corpo original', 'corpo editado pelo operador'),
+    );
+    // Temporário órfão de um crash entre open() e rename().
+    const orphan = `${file}.0123456789abcdef.tmp`;
+    fs.writeFileSync(orphan, 'partial write');
+    clock = 2_000;
+
+    // Outra gravação qualquer: a passada dela vê o diretório mexido e ingere
+    // ANTES de escrever — a edição não é apagada nem absorvida.
+    store.retain({ content: '# Outra\n\noutro corpo', source: 'operator:note' });
+    await store.flushProjections();
+
+    expect(store.recall({ query: 'editado' }).map((hit) => hit.id)).toEqual([
+      edited.id,
+    ]);
+    expect(fs.readFileSync(file, 'utf8')).toContain('corpo editado pelo operador');
+    expect(fs.existsSync(orphan)).toBe(false);
+  });
+
+  it('close() derruba o que ainda estava na janela sem warn nem gravação', async () => {
+    const projectRoot = tempDir('nexus-wm-close-');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const store = makeStore(undefined, { projectionRoot: projectRoot });
+      const retained = store.retain({ content: '# Na janela\n\ncorpo' });
+      store.close();
+      await store.flushProjections();
+      expect(fs.existsSync(projectionFile(projectRoot, retained.id))).toBe(false);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

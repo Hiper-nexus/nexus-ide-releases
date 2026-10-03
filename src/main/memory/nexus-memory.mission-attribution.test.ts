@@ -45,10 +45,10 @@ function project(root: string, id: string, source: string | null) {
 }
 
 describe('projeção: kind=mission exige autoridade real', () => {
-  it('promove a missão pelo source canônico e faz round-trip do id', () => {
+  it('promove a missão pelo source canônico e faz round-trip do id', async () => {
     const root = tempRoot();
 
-    const note = project(root, 'mem-real', 'operator:mission:mission-lz4k2p-3');
+    const note = await project(root, 'mem-real', 'operator:mission:mission-lz4k2p-3');
 
     expect(note.kind).toBe('mission');
     expect(note.missionId).toBe('mission-lz4k2p-3');
@@ -58,12 +58,12 @@ describe('projeção: kind=mission exige autoridade real', () => {
     expect(listed?.missionId).toBe('mission-lz4k2p-3');
   });
 
-  it('mantém a nota de missão escrita por agente na busca, sem inventar id', () => {
+  it('mantém a nota de missão escrita por agente na busca, sem inventar id', async () => {
     const root = tempRoot();
     // tools-memory deriva `agent-authored:mission:<sha256>` da autoridade
     // física do pane. É escopo de missão legítimo — mas o hash NÃO é um mission
     // id, e o parser antigo publicava ele como se fosse.
-    const note = project(
+    const note = await project(
       root,
       'mem-agente',
       `agent-authored:mission:${'a'.repeat(64)}`,
@@ -77,7 +77,7 @@ describe('projeção: kind=mission exige autoridade real', () => {
     expect(listed[0]?.missionId).toBeUndefined();
   });
 
-  it('não promove source forjado que apenas CONTÉM "mission:"', () => {
+  it('não promove source forjado que apenas CONTÉM "mission:"', async () => {
     const root = tempRoot();
     const forged = [
       'mission:m1',
@@ -87,11 +87,11 @@ describe('projeção: kind=mission exige autoridade real', () => {
       'operator:mission:',
     ];
 
-    forged.forEach((source, index) => {
-      const note = project(root, `mem-forged-${index}`, source);
+    for (const [index, source] of forged.entries()) {
+      const note = await project(root, `mem-forged-${index}`, source);
       expect(note.kind).not.toBe('mission');
       expect(note.missionId).toBeUndefined();
-    });
+    }
 
     // Este é o filtro literal do provider de busca de missões.
     expect(listMemoryNotes(root).filter((n) => n.kind === 'mission')).toEqual(
@@ -99,7 +99,7 @@ describe('projeção: kind=mission exige autoridade real', () => {
     );
   });
 
-  it('não deixa traversal nem caixa alta virarem missionId', () => {
+  it('não deixa traversal nem caixa alta virarem missionId', async () => {
     const root = tempRoot();
     const unsafe = [
       'operator:mission:../../etc/passwd',
@@ -108,11 +108,11 @@ describe('projeção: kind=mission exige autoridade real', () => {
       'operator:mission:a:b',
     ];
 
-    unsafe.forEach((source, index) => {
-      const note = project(root, `mem-unsafe-${index}`, source);
+    for (const [index, source] of unsafe.entries()) {
+      const note = await project(root, `mem-unsafe-${index}`, source);
       expect(note.missionId).toBeUndefined();
       expect(note.kind).not.toBe('mission');
-    });
+    }
 
     // O frontmatter em disco também não pode carregar o id não-sanitizado.
     for (const note of listMemoryNotes(root)) {
@@ -169,22 +169,22 @@ describe('projeção: kind=mission exige autoridade real', () => {
     }
   });
 
-  it('preserva kind=mission legítimo lido do frontmatter', () => {
+  it('preserva kind=mission legítimo lido do frontmatter', async () => {
     const root = tempRoot();
-    project(root, 'mem-ok', 'operator:mission:mission-lz4k2p-3');
+    await project(root, 'mem-ok', 'operator:mission:mission-lz4k2p-3');
 
     const listed = listMemoryNotes(root).filter((n) => n.kind === 'mission');
     expect(listed).toHaveLength(1);
     expect(listed[0]?.missionId).toBe('mission-lz4k2p-3');
   });
 
-  it('mantém a promoção a agent/decision intocada', () => {
+  it('mantém a promoção a agent/decision intocada', async () => {
     const root = tempRoot();
 
-    expect(project(root, 'mem-agent', 'operator:agent:manual').kind).toBe(
+    expect((await project(root, 'mem-agent', 'operator:agent:manual')).kind).toBe(
       'agent',
     );
-    const decision = writeCanonicalMemoryProjection(root, {
+    const decision = await writeCanonicalMemoryProjection(root, {
       id: 'mem-decision',
       content: '# D\n\ncorpo',
       kind: 'decision',

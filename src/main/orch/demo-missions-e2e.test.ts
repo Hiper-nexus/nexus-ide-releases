@@ -353,7 +353,7 @@ describe('Demo & Mission E2E Simulation (Simple and Complex)', () => {
     expect(reviewCycle1.escalateToOperator).toBe(false);
 
     // 5. Integração de Conhecimento e Grafo de Memória
-    writeCanonicalMemoryProjection(workspaceDir, {
+    await writeCanonicalMemoryProjection(workspaceDir, {
       id: 'mem-arch-1',
       kind: 'decision',
       content: '# Database Architecture\n\nCore architecture decision for transactional storage.',
@@ -364,7 +364,7 @@ describe('Demo & Mission E2E Simulation (Simple and Complex)', () => {
       updatedAt: Date.now(),
     });
 
-    writeCanonicalMemoryProjection(workspaceDir, {
+    await writeCanonicalMemoryProjection(workspaceDir, {
       id: 'mem-storage-1',
       kind: 'note',
       content: '# Storage Adapter\n\nImplements disk layout based on [[Database Architecture|DB Specs]].',
