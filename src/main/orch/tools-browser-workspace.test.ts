@@ -592,3 +592,29 @@ describe('preview tool workspace confinement', () => {
     expect(stubs.resolveCwdForScope).not.toHaveBeenCalled();
   });
 });
+
+describe('F-797: nexus_browser_open sem aba possível devolve erro acionável', () => {
+  it('sem janela do Nexus para este pane: o erro aponta o curl e o registro no handoff', async () => {
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_open')!;
+    const worker = { role: 'worker', scope, missionId: 'mission-a', sessionId: 'worker-session' } as never;
+    stubs.requestBrowserPane.mockResolvedValueOnce({
+      requestId: '', ok: false, error: 'no renderer window available',
+    } as never);
+    await expect(tool.handler({ url: 'https://docs.example.com' }, worker)).rejects.toThrow(
+      /no renderer window available — .*curl -sL <url>.*registre no handoff/,
+    );
+    expect(stubs.loadBrowser).not.toHaveBeenCalled();
+  });
+
+  it('projeto fora da tela: a mensagem original continua, com a dica do curl', async () => {
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_open')!;
+    const worker = { role: 'worker', scope, missionId: 'mission-a', sessionId: 'worker-session' } as never;
+    stubs.requestBrowserPane.mockResolvedValueOnce({
+      requestId: '', ok: false,
+      error: 'the Nexus window is showing another project right now, so a new browser pane cannot open',
+    } as never);
+    await expect(tool.handler({ url: 'https://docs.example.com' }, worker)).rejects.toThrow(
+      /showing another project right now.*navegador do Nexus não está disponível.*curl -sL/,
+    );
+  });
+});

@@ -19,6 +19,52 @@ export const NEXUS_BROWSER_PAGE_TOOLS = [
   'nexus_browser_read',
 ] as const;
 
+/**
+ * F-797: tools de página que o worker de missão aberto pelo orquestrador
+ * recebe por padrão (antes nascia com `[]` e o navegador do Nexus nunca o
+ * alcançava — os 30 workers da missão Terminais). Só leitura e extração:
+ * nada de clicar, preencher, digitar ou executar. Expor não abre aba: a aba
+ * só nasce quando o worker chama nexus_browser_open (pane-registry).
+ */
+export const NEXUS_BROWSER_WORKER_TOOLS = [
+  ...NEXUS_BROWSER_PAGE_TOOLS,
+  'nexus_browser_find',
+  'nexus_browser_extract',
+  'nexus_browser_inspect',
+  'nexus_browser_wait',
+  'nexus_browser_screenshot',
+] as const;
+
+/**
+ * Allowlist padrão de um spawn sem roster e sem `allowedTools` explícita.
+ * Só o worker de missão gravável ganha as tools de página: o pane somente
+ * leitura (analista) não pode abrir aba (efeito de missão) e o filho do
+ * operador em modo governado não é worker de missão — os dois seguem com `[]`.
+ */
+export function defaultMissionWorkerTools(subject: {
+  readonly missionWorker: boolean;
+  readonly readOnly: boolean;
+}): string[] {
+  return subject.missionWorker && !subject.readOnly
+    ? [...NEXUS_BROWSER_WORKER_TOOLS]
+    : [];
+}
+
+/**
+ * Anexado ao erro de nexus_browser_open quando a aba não pôde nascer (sem
+ * janela do Nexus, projeto fora da tela, pane sem renderer, tempo esgotado):
+ * o agente segue com curl e declara a falha, em vez de parar.
+ */
+export const NEXUS_BROWSER_UNAVAILABLE_HINT =
+  'O navegador do Nexus não está disponível para este pane agora (sem janela ' +
+  'do Nexus para esta aba, projeto fora da tela ou pane sem renderer). Siga ' +
+  'sem ele: leia a página com curl -sL <url> (ou wget -qO- <url>) e registre ' +
+  'no handoff que o navegador do Nexus não abriu.';
+
+export function browserUnavailableError(reason: string): string {
+  return `${reason} — ${NEXUS_BROWSER_UNAVAILABLE_HINT}`;
+}
+
 export interface NexusBrowserSubject {
   /** Papel do token do pane (spawn sem papel nasce `user`). */
   readonly role: GateRole;

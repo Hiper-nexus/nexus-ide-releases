@@ -35,6 +35,7 @@ import {
 } from './automated-review-browser-authority';
 import type { AgentGateContext } from './gate';
 import type { PaneAction } from './pane-authz';
+import { browserUnavailableError } from './nexus-browser-policy';
 
 function authorizeBrowserPane(
   ctx: AgentGateContext,
@@ -190,7 +191,8 @@ const browserOpenTool: McpToolDef = {
       caller: ctx,
     });
     if (!result.ok || !result.paneId) {
-      throw new Error(result.error ?? 'browser open failed');
+      // F-797: sem aba possível, o worker segue com curl e declara a falha.
+      throw new Error(browserUnavailableError(result.error ?? 'browser open failed'));
     }
     try {
       assertMcpInvocationCurrent(invocation);
