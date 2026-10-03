@@ -8,6 +8,7 @@
  * variante, o id do modelo manda e o `--effort` sai do argv.
  */
 const EFFORT_SUFFIX = /^(.+)-(low|medium|high)$/u;
+const GEMINI_MODEL = /^gemini-/u;
 
 export interface AgyModelEffort {
   readonly model: string;
@@ -22,7 +23,17 @@ export function agyModelForEffort(
 ): AgyModelEffort {
   const suffixed = EFFORT_SUFFIX.exec(model);
   const requested = effort?.trim();
-  if (!suffixed || !requested) return { model, dropEffort: false };
+  if (!requested) return { model, dropEffort: false };
+  if (!suffixed) {
+    // Gemini sem sufixo: a variante pedida entra se a CLI a lista; sem ela o
+    // `--effort` sai. O AGY 1.2.16 recusa o par e o pane morre no boot:
+    // `--effort is not supported for model "gemini-4-argon"` (F-773, 03/10).
+    if (!GEMINI_MODEL.test(model)) return { model, dropEffort: false };
+    const variant = `${model}-${requested}`;
+    return available.includes(variant)
+      ? { model: variant, dropEffort: false }
+      : { model, dropEffort: true };
+  }
   if (suffixed[2] === requested) return { model, dropEffort: false };
   const variant = `${suffixed[1]}-${requested}`;
   return available.includes(variant)

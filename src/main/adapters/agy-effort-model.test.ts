@@ -39,6 +39,23 @@ describe('AGY: esforço no sufixo do modelo (F-705)', () => {
     expect(agyModelForEffort('gemini-3.8-flash-low', undefined, LIST).model).toBe('gemini-3.8-flash-low');
   });
 
+  it('Gemini sem sufixo: usa a variante do esforço ou tira o --effort (o AGY recusa o par)', () => {
+    // F-773, 03/10: `--model gemini-4-argon --effort high` → "--effort is not
+    // supported for model" e o pane morreu em 4 s, antes do primeiro turno.
+    expect(agyModelForEffort('gemini-4-argon', 'high', LIST)).toEqual({
+      model: 'gemini-4-argon',
+      dropEffort: true,
+    });
+    expect(agyModelForEffort('gemini-3.8-flash', 'high', LIST)).toEqual({
+      model: 'gemini-3.8-flash-high',
+      dropEffort: false,
+    });
+    expect(agyModelForEffort('gemini-4-argon', undefined, LIST)).toEqual({
+      model: 'gemini-4-argon',
+      dropEffort: false,
+    });
+  });
+
   it('tira o par --effort do argv, nas duas grafias', () => {
     expect(withoutEffortArg(['--effort', 'medium', '--x'], '--effort')).toEqual(['--x']);
     expect(withoutEffortArg(['--effort=medium', '--x'], '--effort')).toEqual(['--x']);
