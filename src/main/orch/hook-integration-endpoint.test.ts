@@ -136,4 +136,165 @@ describe('POST /hook/integration', () => {
       handleHookIntegrationRequest(hookCtx(), bash('git push origin main'), { storesFor }),
     ).resolves.toMatchObject({ payload: {} });
   });
+
+  describe('sincronização fast-forward e direção do merge (F-778)', () => {
+    function setupRemote(remoteName = 'origin') {
+      const remoteDir = path.join(dir, `${remoteName}.git`);
+      execFileSync('git', ['clone', '--bare', repo, remoteDir], { stdio: 'ignore' });
+      git('remote', 'add', remoteName, remoteDir);
+      git('fetch', remoteName, '-q');
+      git('branch', `--set-upstream-to=${remoteName}/main`, 'main');
+      return remoteDir;
+    }
+
+    it('igual ao upstream com --ff-only passa sem exigir veredito', async () => {
+      setupRemote('origin');
+      const result = await handleHookIntegrationRequest(
+        hookCtx(),
+        bash('git merge --ff-only origin/main'),
+        { storesFor },
+      );
+      expect(result.payload).toEqual({});
+    });
+
+    it('atrás do upstream com --ff-only passa sem exigir veredito', async () => {
+      const remoteDir = setupRemote('origin');
+      const otherDir = path.join(dir, 'other-clone');
+      execFileSync('git', ['clone', remoteDir, otherDir, '-q'], { stdio: 'ignore' });
+      execFileSync('git', ['-C', otherDir, 'config', 'user.name', 'Other Dev'], { stdio: 'ignore' });
+      execFileSync('git', ['-C', otherDir, 'config', 'user.email', 'other@example.invalid'], { stdio: 'ignore' });
+      fs.writeFileSync(path.join(otherDir, 'upstream.txt'), 'upstream content');
+      execFileSync('git', ['-C', otherDir, 'add', 'upstream.txt'], { stdio: 'ignore' });
+      execFileSync('git', ['-C', otherDir, 'commit', '-qm', 'upstream commit'], { stdio: 'ignore' });
+      execFileSync('git', ['-C', otherDir, 'push', 'origin', 'main', '-q'], { stdio: 'ignore' });
+      git('fetch', 'origin', '-q');
+
+      const result = await handleHookIntegrationRequest(
+        hookCtx(),
+        bash('git merge --ff-only origin/main'),
+        { storesFor },
+      );
+      expect(result.payload).toEqual({});
+    });
+
+    it('à frente ou divergente exige gate', async () => {
+      const remoteDir = setupRemote('origin');
+      // Local commit à frente
+      fs.writeFileSync(path.join(repo, 'local.txt'), 'local commit');
+      git('add', 'local.txt');
+      git('commit', '-qm', 'local commit ahead');
+
+      const resultAhead = await handleHookIntegrationRequest(
+        hookCtx(),
+        bash('git merge --ff-only origin/main'),
+        { storesFor },
+      );
+      expect(resultAhead.payload).toMatchObject({
+        decision: 'block',
+        reason: expect.stringContaining('review_required'),
+      });
+
+      // Divergente: commit no remote também
+      const otherDir = path.join(dir, 'other-divergent');
+      execFileSync('git', ['clone', remoteDir, otherDir, '-q'], { stdio: 'ignore' });
+      execFileSync('git', ['-C', otherDir, 'config', 'user.name', 'Other Dev'], { stdio: 'ignore' });
+      execFileSync('git', ['-C', otherDir, 'config', 'user.email', 'other@example.invalid'], { stdio: 'ignore' });
+      fs.writeFileSync(path.join(otherDir, 'remote-div.txt'), 'remote div');
+      execFileSync('git', ['-C', otherDir, 'add', 'remote-div.txt'], { stdio: 'ignore' });
+      execFileSync('git', ['-C', otherDir, 'commit', '-qm', 'remote div commit'], { stdio: 'ignore' });
+      execFileSync('git', ['-C', otherDir, 'push', 'origin', 'main', '-q'], { stdio: 'ignore' });
+      git('fetch', 'origin', '-q');
+
+      const resultDiv = await handleHookIntegrationRequest(
+        hookCtx(),
+        bash('git merge --ff-only origin/main'),
+        { storesFor },
+      );
+      expect(resultDiv.payload).toMatchObject({
+        decision: 'block',
+        reason: expect.stringContaining('review_required'),
+      });
+    });
+
+    it('branch feature com --ff-only exige gate', async () => {
+      setupRemote('origin');
+      git('checkout', '-b', 'feature');
+
+      const result = await handleHookIntegrationRequest(
+        hookCtx(),
+        bash('git merge --ff-only origin/main'),
+        { storesFor },
+      );
+      expect(result.payload).toMatchObject({
+        decision: 'block',
+        reason: expect.stringContaining('review_required'),
+      });
+    });
+
+    it('alvo diferente do upstream exige gate', async () => {
+      setupRemote('origin');
+      const upstreamDir = path.join(dir, 'upstream.git');
+      execFileSync('git', ['clone', '--bare', repo, upstreamDir], { stdio: 'ignore' });
+      git('remote', 'add', 'upstream', upstreamDir);
+      git('fetch', 'upstream', '-q');
+
+      const result = await handleHookIntegrationRequest(
+        hookCtx(),
+        bash('git merge --ff-only upstream/main'),
+        { storesFor },
+      );
+      expect(result.payload).toMatchObject({
+        decision: 'block',
+        reason: expect.stringContaining('review_required'),
+      });
+    });
+
+    it('mistura com push no mesmo comando exige gate', async () => {
+      setupRemote('origin');
+      const result = await handleHookIntegrationRequest(
+        hookCtx(),
+        bash('git merge --ff-only origin/main && git push origin main'),
+        { storesFor },
+      );
+      expect(result.payload).toMatchObject({
+        decision: 'block',
+        reason: expect.stringContaining('review_required'),
+      });
+    });
+
+    it('git merge feature estando no main exige gate (destino implícito)', async () => {
+      git('checkout', '-b', 'feature');
+      fs.writeFileSync(path.join(repo, 'feat.txt'), 'feature code');
+      git('add', 'feat.txt');
+      git('commit', '-qm', 'feature commit');
+      git('checkout', 'main');
+
+      // Sem veredito, merge de feature no main deve ser bloqueado
+      const result = await handleHookIntegrationRequest(
+        hookCtx(),
+        bash('git merge feature'),
+        { storesFor },
+      );
+      expect(result.payload).toMatchObject({
+        decision: 'block',
+        reason: expect.stringContaining('review_required'),
+      });
+    });
+
+    it('detecta direção no integrationCommandHit pelo branch atual do cwd', () => {
+      git('checkout', '-b', 'feature');
+      fs.writeFileSync(path.join(repo, 'feat.txt'), 'feature code');
+      git('add', 'feat.txt');
+      git('commit', '-qm', 'feature commit');
+      git('checkout', 'main');
+
+      // No main, merge de feature é integração
+      expect(integrationCommandHit('git merge feature', repo)).toBe(true);
+      expect(integrationCommandHit('git merge feature', { cwd: repo })).toBe(true);
+
+      // No feature, merge de outro branch qualquer (não main/master) não é integração no main
+      git('checkout', 'feature');
+      expect(integrationCommandHit('git merge other', repo)).toBe(false);
+    });
+  });
 });
