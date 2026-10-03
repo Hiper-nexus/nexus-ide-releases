@@ -1,12 +1,13 @@
+import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
+import { AsyncProcessGitRunner } from '../runtime/git-command';
 import { missionExecutionScope } from './mission-execution-scope';
 import { resolveWorkspaceDesignContract } from './design-system-reader';
 import { isPaneMetaTask, extractMetaPaneQuestion } from '../../shared/pane-meta-task';
 import { getMissionRoutingHints } from '../../shared/mission-routing-advice';
 export { isPaneMetaTask, extractMetaPaneQuestion } from '../../shared/pane-meta-task';
 import { createHash } from 'node:crypto';
-import { execFile } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { isDeepStrictEqual, promisify } from 'node:util';
+import { isDeepStrictEqual } from 'node:util';
 import {
   pickDesignReference,
   type DesignReferenceCandidate,
@@ -397,16 +398,11 @@ export function decideExternalHeadChangeAction(input: {
   return { action: 'notify', from: input.baseline, to: input.current };
 }
 
-const execFileAsync = promisify(execFile);
-
 /** HEAD atual do checkout (null quando não é repo ou git falhou). */
 async function readCheckoutHead(root: string): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], {
-      cwd: root,
-      timeout: 4_000,
-    });
-    return stdout.trim() || null;
+    const result = await new AsyncProcessGitRunner().run(root, ['rev-parse', 'HEAD'], { allowFailure: true, timeoutMs: 4_000 });
+    return result.status === 0 ? result.stdout.trim() || null : null;
   } catch {
     return null;
   }
@@ -466,6 +462,7 @@ interface WatcherState {
   lastOrchActivityAt: number;
   timer: ReturnType<typeof setInterval> | null;
   stopped: boolean;
+  readonly controller: AbortController;
   /** Baseline da sentinela de HEAD (achado #14); null fora de repo. */
   baselineHeadSha: string | null;
   /** Assinatura de progresso real da missão; recarrega o orçamento de respawn. */
@@ -1411,7 +1408,9 @@ function stopWatcher(scope: ProjectExecutionScope, missionId: string): void {
   const key = watcherKey(scope, missionId);
   const watcher = watchers.get(key);
   if (watcher?.timer) clearInterval(watcher.timer);
+  if (watcher) { watcher.stopped = true; watcher.controller.abort(new Error('fast-lane watcher stopped')); }
   watchers.delete(key);
+  void stopPeriodicTask(`mission-fast-lane:${key}`);
 }
 
 /**
@@ -1423,7 +1422,7 @@ function stopWatcher(scope: ProjectExecutionScope, missionId: string): void {
  * todos entregaram. O watcher só observa o status da missão e a saúde do
  * orquestrador.
  */
-async function tickWatcher(state: WatcherState): Promise<void> {
+async function tickWatcher(state: WatcherState, context: PeriodicTaskContext): Promise<void> {
   if (state.stopped) {
     stopWatcher(state.scope, state.missionId);
     return;
@@ -1461,10 +1460,24 @@ async function tickWatcher(state: WatcherState): Promise<void> {
     return;
   }
 
+  const executionRoot = missionExecutionScope(state.scope, mission).rootRealPath;
+  const version = mission.intentVersion;
+  const current = () => {
+    context.assertCurrent();
+    const live = stores.missions.get(state.missionId);
+    if (state.stopped || watchers.get(watcherKey(state.scope, state.missionId)) !== state ||
+      !live || live.status !== 'running' || live.intentVersion !== version ||
+      live.orchestratorSessionId !== mission.orchestratorSessionId ||
+      missionExecutionScope(state.scope, live).rootRealPath !== executionRoot) {
+      throw new Error('fast-lane watcher authority changed');
+    }
+  };
+
   // Orientação enfileirada (kickoff/autoridade incompleta) tenta de novo a
   // cada tick — o flush pós-spawn pode rodar antes da autoridade fechar e a
   // fila ficava órfã (19/08: "authority is incomplete" cru pro operador).
-  void flushQueuedKickoffDirects(state.scope, stores, state.missionId);
+  await context.wait(flushQueuedKickoffDirects(state.scope, stores, state.missionId));
+  current();
 
   // TTL de stalled (paridade OC): entrega em voo sem veredito há 30min+
   // ganha status `stalled` — visível para cobrança/doctor em vez de
@@ -1499,6 +1512,7 @@ async function tickWatcher(state: WatcherState): Promise<void> {
           dispatchFastLaneFirstWave(state.scope, state.missionId),
       },
     );
+    current();
     if (civilian.completed) {
       stopWatcher(state.scope, state.missionId);
       return;
@@ -1509,6 +1523,8 @@ async function tickWatcher(state: WatcherState): Promise<void> {
       error instanceof Error ? error.message : error,
     );
   }
+
+  current();
 
   // Atualiza timestamp de atividade se o orquestrador está busy.
   const orchState = getSessionState(state.orchSessionId);
@@ -1521,13 +1537,16 @@ async function tickWatcher(state: WatcherState): Promise<void> {
   // — MENOS quando o HEAD novo bate na escada de SHAs das entregas da própria
   // missão (worker do same_checkout commitou): isso é trabalho interno, não
   // exclusividade violada (A6).
-  const currentHead = await readCheckoutHead(missionExecutionScope(state.scope, mission).rootRealPath);
+  const currentHead = await context.wait(readCheckoutHead(executionRoot));
+  current();
   const missionShaLadder = new Set<string>();
   try {
     for (const handoff of stores.handoffs.list({
       missionId: state.missionId,
       includeDelivered: true,
     })) {
+      await context.checkpoint();
+      current();
       // Os SHAs do trabalho vivem no binding de evidência (worker que
       // commitou entrega evidência confiável com base/head do diff).
       const binding = handoff.evidenceBinding;
@@ -1537,6 +1556,7 @@ async function tickWatcher(state: WatcherState): Promise<void> {
   } catch {
     // Escada ilegível: segue sem atribuição — o aviso é o default honesto.
   }
+  current();
   const headDecision = decideExternalHeadChangeAction({
     baseline: state.baselineHeadSha,
     current: currentHead,
@@ -1591,13 +1611,15 @@ async function tickWatcher(state: WatcherState): Promise<void> {
   const missionPanes = listPaneSnapshots().filter(
     (p) => p.missionId === state.missionId,
   );
-  recordWorkerMortalityTick(state.scope, state.missionId, missionPanes);
+  await recordWorkerMortalityTick(state.scope, state.missionId, missionPanes, context, current);
+  current();
   try {
-    const disk = reconcileSealedBoardFromDisk({
+    const disk = await context.wait(reconcileSealedBoardFromDisk({
       stores,
       missionId: state.missionId,
-      cwd: missionExecutionScope(state.scope, mission).rootRealPath,
-    });
+      cwd: executionRoot,
+    }));
+    current();
     if (disk.advancedTaskIds.length > 0) {
       console.info(
         `[fast-lane] board selado +${disk.advancedTaskIds.length} ` +
@@ -1611,7 +1633,8 @@ async function tickWatcher(state: WatcherState): Promise<void> {
       error instanceof Error ? error.message : error,
     );
   }
-  const livePanes = missionPanes.filter(
+  current();
+  const livePanes = listPaneSnapshots().filter((pane) => pane.missionId === state.missionId).filter(
     (p) => p.state === 'busy' || p.state === 'idle' || p.state === 'spawning',
   );
   const budgetKey = watcherKey(state.scope, state.missionId);
@@ -1766,7 +1789,7 @@ function settleFastLaneWriterDone(input: {
   }
 }
 
-function recordWorkerMortalityTick(
+async function recordWorkerMortalityTick(
   scope: ProjectExecutionScope,
   missionId: string,
   missionPanes: readonly {
@@ -1780,7 +1803,9 @@ function recordWorkerMortalityTick(
     /** F-231: mão do operador — nunca conta como mortalidade de worker. */
     operatorOpened?: boolean;
   }[],
-): void {
+  context: PeriodicTaskContext,
+  current: () => void,
+): Promise<void> {
   const mission = getProjectDomainStores(scope).missions.get(missionId);
   if (!mission) return;
   const workers = missionPanes.filter((p) => p.role === 'worker');
@@ -1798,7 +1823,12 @@ function recordWorkerMortalityTick(
     // Handoffs ilegíveis: segue sem prova de vida — a morte sem entrega é o
     // default honesto (o breaker precisa de 3 para agir).
   }
-  for (const pane of workers) {
+  for (const candidate of workers) {
+    await context.checkpoint();
+    current();
+    const pane = listPaneSnapshots().find((live) => live.paneId === candidate.paneId &&
+      live.sessionId === candidate.sessionId && live.missionId === missionId && live.role === 'worker');
+    if (!pane) continue;
     const adapterId = pane.adapterId?.trim() || '';
     if (!adapterId) continue;
     if (workerPaneHasDelivery(pane, deliveredHandoffs)) {
@@ -1808,7 +1838,11 @@ function recordWorkerMortalityTick(
     const cwd =
       (pane.sessionId ? getSessionCwd(pane.sessionId) : null) ??
       missionExecutionScope(scope, mission).rootRealPath;
-    const filesModified = collectFilesModified(cwd);
+    const filesModified = await context.wait(collectFilesModified(cwd));
+    current();
+    const livePane = listPaneSnapshots().find((live) => live.paneId === pane.paneId);
+    if (!livePane || livePane.sessionId !== pane.sessionId || livePane.missionId !== missionId ||
+      livePane.state !== pane.state || livePane.role !== 'worker') continue;
     const idleOrDead =
       pane.state === 'idle' ||
       pane.state === 'exited' ||
@@ -1900,16 +1934,18 @@ function startWatcher(
     lastOrchActivityAt: Date.now(),
     timer: null,
     stopped: false,
+    controller: new AbortController(),
     baselineHeadSha: null,
     lastProgressSignature: null,
   };
   void readCheckoutHead(missionExecutionScope(scope, mission).rootRealPath).then((head) => {
-    if (!watchers.has(key)) return;
+    if (watchers.get(key) !== state || state.stopped) return;
     state.baselineHeadSha = head;
   });
 
   state.timer = setInterval(() => {
-    void tickWatcher(state).catch((error) => {
+    void runPeriodicTask(`mission-fast-lane:${key}`, (context) => tickWatcher(state, context), { signal: state.controller.signal, cadenceMs: WATCHER_INTERVAL_MS }).catch((error) => {
+      if (state.stopped) return;
       console.warn(
         '[fast-lane] tick do watcher falhou:',
         error instanceof Error ? error.message : error,

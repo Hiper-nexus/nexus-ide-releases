@@ -1657,7 +1657,7 @@ export async function closeOrchestration(): Promise<void> {
     shutdownAgentWaitingBroadcast();
     shutdownWorkerHandoffTtl();
     shutdownMissionDoneTeardown();
-    shutdownWorkerDeliveryBoard();
+    await shutdownWorkerDeliveryBoard();
     shutdownWorkerHandoffEnforcement();
     stopAllPreviews();
     stopRemoteBridge();

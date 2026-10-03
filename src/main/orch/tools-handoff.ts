@@ -645,7 +645,8 @@ const handoffSubmitTool: McpToolDef = {
         : null;
     if (ctx.missionId && !replayed) {
       try {
-        const diskFiles = collectFilesModified(executionScopeFor(ctx).rootRealPath);
+        const diskFiles = await collectFilesModified(executionScopeFor(ctx).rootRealPath);
+        assertMcpInvocationCurrent(invocation);
         const filesModified =
           declaredFiles.length > 0 ? declaredFiles : diskFiles;
         if (filesModified.length > 0) {
@@ -699,10 +700,9 @@ const handoffSubmitTool: McpToolDef = {
           const cwd =
             ctx.executionScope?.rootRealPath ?? ctx.scope.rootRealPath;
           try {
-            markMissionFilesCredited(
-              ctx.missionId,
-              listDirtyPathsUnderCwd(cwd),
-            );
+            const dirtyFiles = await listDirtyPathsUnderCwd(cwd);
+            assertMcpInvocationCurrent(invocation);
+            markMissionFilesCredited(ctx.missionId, dirtyFiles);
           } catch {
             // Credit de arquivos é best-effort; a task já avançou.
           }

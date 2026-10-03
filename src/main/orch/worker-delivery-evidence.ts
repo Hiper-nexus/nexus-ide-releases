@@ -8,11 +8,11 @@
  * Zero arquivos ≠ entrega, a menos que um handoff SUCCESS já tenha
  * fechado a task.
  */
-import fs from 'node:fs';
-import path from 'node:path';
+import { listChangedMtimeFiles } from './worker-file-walk';
 import { dirtyPathsFromPorcelainV2 } from '../context/git-binding';
 import {
-  ProcessGitRunner,
+  AsyncProcessGitRunner,
+  type AsyncGitRunner,
   type GitRunner,
 } from '../runtime/git-command';
 
@@ -60,13 +60,13 @@ function uniquePaths(paths: readonly string[]): string[] {
   return out;
 }
 
-function runGit(
-  git: GitRunner,
+async function runGit(
+  git: GitRunner | AsyncGitRunner,
   cwd: string,
   args: readonly string[],
-): string | null {
+): Promise<string | null> {
   try {
-    const result = git.run(cwd, args, { allowFailure: true });
+    const result = await git.run(cwd, args, { allowFailure: true });
     if (result.status !== 0) return null;
     return result.stdout;
   } catch {
@@ -74,11 +74,11 @@ function runGit(
   }
 }
 
-export function listDirtyPathsUnderCwd(
+export async function listDirtyPathsUnderCwd(
   cwd: string,
-  git: GitRunner = new ProcessGitRunner(),
-): string[] {
-  const status = runGit(git, cwd, [
+  git: GitRunner | AsyncGitRunner = new AsyncProcessGitRunner(),
+): Promise<string[]> {
+  const status = await runGit(git, cwd, [
     'status',
     '--porcelain=v2',
     '--untracked-files=all',
@@ -88,18 +88,18 @@ export function listDirtyPathsUnderCwd(
   return uniquePaths(dirtyPathsFromPorcelainV2(status));
 }
 
-export function snapshotWorkerDeliveryBaseline(
+export async function snapshotWorkerDeliveryBaseline(
   cwd: string,
-  git: GitRunner = new ProcessGitRunner(),
-): WorkerDeliveryBaseline {
+  git: GitRunner | AsyncGitRunner = new AsyncProcessGitRunner(),
+): Promise<WorkerDeliveryBaseline> {
   const head =
-    runGit(git, cwd, ['rev-parse', '--verify', 'HEAD^{commit}'])
+    (await runGit(git, cwd, ['rev-parse', '--verify', 'HEAD^{commit}']))
       ?.trim()
       .toLowerCase() ?? null;
   return Object.freeze({
     cwd,
     headSha: head && /^[a-f0-9]{40,64}$/.test(head) ? head : null,
-    dirtyPaths: Object.freeze(listDirtyPathsUnderCwd(cwd, git)),
+    dirtyPaths: Object.freeze(await listDirtyPathsUnderCwd(cwd, git)),
     observedAt: Date.now(),
   });
 }
@@ -109,61 +109,22 @@ export function snapshotWorkerDeliveryBaseline(
  * symlink; pula `.git` / `node_modules` / artefactos. Baseline tardio
  * (observedAt ≈ agora) não varre o passado — só o que nasceu depois.
  */
-export function listMtimePathsSince(
+export async function listMtimePathsSince(
   cwd: string,
   observedAt: number,
-): string[] {
-  const root = cwd.trim();
-  if (!root || !Number.isFinite(observedAt)) return [];
-  const found: string[] = [];
-  const stack: Array<{ abs: string; rel: string; depth: number }> = [
-    { abs: root, rel: '', depth: 0 },
-  ];
-  let visited = 0;
-  while (
-    stack.length > 0 &&
-    found.length < MAX_FILES_MODIFIED &&
-    visited < MAX_MTIME_WALK_FILES
-  ) {
-    const current = stack.pop();
-    if (!current) break;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(current.abs, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (found.length >= MAX_FILES_MODIFIED) break;
-      if (visited >= MAX_MTIME_WALK_FILES) break;
-      if (entry.name === '.' || entry.name === '..') continue;
-      if (entry.isSymbolicLink()) continue;
-      const abs = path.join(current.abs, entry.name);
-      const rel = current.rel ? `${current.rel}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) {
-        if (SKIP_MTIME_DIRECTORIES.has(entry.name)) continue;
-        if (current.depth + 1 > MAX_MTIME_DEPTH) continue;
-        stack.push({ abs, rel, depth: current.depth + 1 });
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      visited += 1;
-      try {
-        if (fs.statSync(abs).mtimeMs > observedAt) found.push(rel);
-      } catch {
-        // Arquivo sumiu no meio da varredura — ignora.
-      }
-    }
-  }
-  return uniquePaths(found);
+): Promise<string[]> {
+  return uniquePaths(await listChangedMtimeFiles(cwd, observedAt, {
+    maxFiles: MAX_FILES_MODIFIED, maxDepth: MAX_MTIME_DEPTH,
+    maxEntries: MAX_MTIME_WALK_FILES, skipDirectories: SKIP_MTIME_DIRECTORIES,
+  }));
 }
 
-function listDiffNames(
-  git: GitRunner,
+async function listDiffNames(
+  git: GitRunner | AsyncGitRunner,
   cwd: string,
   range: string,
-): string[] {
-  const out = runGit(git, cwd, [
+): Promise<string[]> {
+  const out = await runGit(git, cwd, [
     'diff',
     '--name-only',
     '--diff-filter=ACMRTUXB',
@@ -180,21 +141,21 @@ function listDiffNames(
  * Git dirty novo / commits `spawnHead...HEAD` têm prioridade; se o git
  * não vir nada, mtime > observedAt ainda conta (ex.: ficheiro gitignored).
  */
-export function collectFilesModifiedSince(
+export async function collectFilesModifiedSince(
   cwd: string,
   baseline: WorkerDeliveryBaseline,
-  git: GitRunner = new ProcessGitRunner(),
-): string[] {
-  const currentDirty = listDirtyPathsUnderCwd(cwd, git);
+  git: GitRunner | AsyncGitRunner = new AsyncProcessGitRunner(),
+): Promise<string[]> {
+  const currentDirty = await listDirtyPathsUnderCwd(cwd, git);
   const baselineDirty = new Set(baseline.dirtyPaths);
   const newlyDirty = currentDirty.filter((path) => !baselineDirty.has(path));
   const committed = baseline.headSha
-    ? listDiffNames(git, cwd, `${baseline.headSha}...HEAD`)
+    ? await listDiffNames(git, cwd, `${baseline.headSha}...HEAD`)
     : [];
   const fromGit = uniquePaths([...newlyDirty, ...committed]);
   if (fromGit.length > 0) return fromGit;
   return uniquePaths(
-    listMtimePathsSince(cwd, baseline.observedAt).filter(
+    (await listMtimePathsSince(cwd, baseline.observedAt)).filter(
       (filePath) => !baselineDirty.has(filePath),
     ),
   );

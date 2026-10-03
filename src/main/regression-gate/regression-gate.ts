@@ -53,7 +53,7 @@ import { readWorkspaceTextFile } from '../orch/workspace-file';
 import { assertMcpInvocationCurrent, type McpToolInvocation } from '../orch/mcp-protocol';
 import { buildScopedExecPlan, createScopedSandboxHome } from '../runtime/process-sandbox';
 import { listDirtyPathsUnderCwd } from '../orch/worker-delivery-evidence';
-import { ProcessGitRunner, type GitRunner } from '../runtime/git-command';
+import { AsyncProcessGitRunner, ProcessGitRunner, type GitRunner } from '../runtime/git-command';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { removeTreeSync } from '../util/remove-tree';
@@ -499,13 +499,13 @@ interface ChangedSnapshot {
   readonly foreign: readonly string[];
 }
 
-function collectChanged(
+async function collectChanged(
   root: string,
   input: Pick<RunRegressionGateInput, 'declaredFiles' | 'startedAtMs'>,
   base: RegressionBase,
   git: GitRunner,
-): ChangedSnapshot {
-  const dirty = listDirtyPathsUnderCwd(root, git);
+): Promise<ChangedSnapshot> {
+  const dirty = await listDirtyPathsUnderCwd(root, git instanceof ProcessGitRunner ? new AsyncProcessGitRunner() : git);
   const committed = base.sha
     ? gitNames(git, root, ['diff', '--name-only', '--no-renames', `${base.sha}...HEAD`])
     : [];
@@ -543,12 +543,12 @@ function collectChanged(
 }
 
 /** Diff observado: sujo + não rastreado + commits desde a base + declarados. */
-export function collectRegressionChangedFiles(
+export async function collectRegressionChangedFiles(
   root: string,
   input: Pick<RunRegressionGateInput, 'declaredFiles' | 'baseSha' | 'startedAtMs'>,
   git: GitRunner = new ProcessGitRunner(),
-): string[] {
-  return [...collectChanged(root, input, resolveRegressionBase(root, input, git), git).files];
+ ): Promise<string[]> {
+  return [...(await collectChanged(root, input, resolveRegressionBase(root, input, git), git)).files];
 }
 
 /** Estado das dependências instaladas: `npm ci` sem mudar o diff invalida o cache. */
@@ -593,9 +593,9 @@ interface ObservedState {
   readonly diffHash: string;
 }
 
-function observeState(root: string, input: RunRegressionGateInput, git: GitRunner): ObservedState {
+async function observeState(root: string, input: RunRegressionGateInput, git: GitRunner): Promise<ObservedState> {
   const base = resolveRegressionBase(root, input, git);
-  const changed = collectChanged(root, input, base, git);
+  const changed = await collectChanged(root, input, base, git);
   const modelHash = createHash('sha256')
     .update(JSON.stringify({
       executionScope: input.scope,
@@ -1946,7 +1946,7 @@ export async function runRegressionGate(
 ): Promise<RegressionGateResult> {
   const root = input.scope.rootRealPath;
   const git = deps.git ?? new ProcessGitRunner();
-  const before = observeState(root, input, git);
+  const before = await observeState(root, input, git);
   if (before.changed.files.length === 0) {
     // Diff vazio só é "limpo" se o git respondeu: erro nele (lock, índice
     // corrompido) devolve lista vazia e não pode passar por árvore limpa.
@@ -1999,10 +1999,10 @@ export async function runRegressionGate(
     if (!running.signal?.aborted || input.signal?.aborted) return shared;
     if (inflight.get(key) === running) inflight.delete(key);
   }
-  const promise = evaluate(input, root, before, deps, git).then((result) => {
+  const promise = evaluate(input, root, before, deps, git).then(async (result) => {
     // Edição concorrente durante a execução: o verde (ou vermelho) é de um
     // conteúdo que não existe mais — não vale para o estado atual.
-    const after = observeState(root, input, git);
+    const after = await observeState(root, input, git);
     if (after.diffHash !== before.diffHash) {
       return Object.freeze({
         ...result,

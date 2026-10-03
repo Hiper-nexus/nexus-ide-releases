@@ -61,11 +61,11 @@ export interface WorkerDeliveryBoardDeps {
   readonly getAgent: (sessionId: string) => OwnedAgentSessionInfo | null;
   readonly getCwd: (sessionId: string) => string | null;
   readonly getStores: (scope: ProjectExecutionScope) => ProjectDomainStoreSuite;
-  readonly snapshotBaseline: (cwd: string) => WorkerDeliveryBaseline;
+  readonly snapshotBaseline: (cwd: string) => WorkerDeliveryBaseline | Promise<WorkerDeliveryBaseline>;
   readonly collectFilesModified: (
     cwd: string,
     baseline: WorkerDeliveryBaseline,
-  ) => string[];
+  ) => string[] | Promise<string[]>;
 }
 
 export interface WorkerDeliveryResult {
@@ -76,6 +76,24 @@ export interface WorkerDeliveryResult {
 
 const baselines = new Map<string, WorkerDeliveryBaseline>();
 const missionBaselines = new Map<string, WorkerDeliveryBaseline>();
+const baselineFlights = new Map<string, Promise<WorkerDeliveryBaseline | null>>();
+const deliveryFlights = new Set<Promise<unknown>>();
+let boardGeneration = 0;
+
+function authorityState(stores: ProjectDomainStoreSuite, missionId: string): string {
+  const mission = stores.missions.get(missionId);
+  return JSON.stringify({
+    mission: mission && [mission.status, mission.intentVersion, mission.intentState,
+      mission.updatedAt, mission.orchestratorSessionId, mission.intentContract],
+    tasks: stores.tasks.list(missionId).map((task) => [task.id, task.status, task.updatedAt]),
+  });
+}
+
+function ownDelivery<T>(flight: Promise<T>): Promise<T> {
+  deliveryFlights.add(flight);
+  void flight.then(() => deliveryFlights.delete(flight), () => deliveryFlights.delete(flight));
+  return flight;
+}
 
 let untapState: (() => void) | null = null;
 let untapExit: (() => void) | null = null;
@@ -109,23 +127,31 @@ export function noteWorkerDeliveryBaseline(
   sessionId: string,
   cwd: string,
   deps: WorkerDeliveryBoardDeps = productionDeps(),
-): WorkerDeliveryBaseline | null {
+): Promise<WorkerDeliveryBaseline | null> {
   const id = sessionId.trim();
   const root = cwd.trim();
-  if (!id || !root) return null;
+  if (!id || !root) return Promise.resolve(null);
   const existing = baselines.get(id);
-  if (existing && existing.cwd === root) return existing;
-  try {
-    const snapshot = deps.snapshotBaseline(root);
-    baselines.set(id, snapshot);
-    return snapshot;
-  } catch (error) {
-    console.warn(
-      '[worker-delivery] snapshot do cwd falhou (fail-closed):',
-      error instanceof Error ? error.message : error,
-    );
-    return null;
-  }
+  if (existing && existing.cwd === root) return Promise.resolve(existing);
+  const pending = baselineFlights.get(id);
+  if (pending) return pending;
+  const generation = boardGeneration;
+  const flight = ownDelivery((async () => {
+    try {
+      const snapshot = await deps.snapshotBaseline(root);
+      if (generation !== boardGeneration) return null;
+      const agent = deps.getAgent(id);
+      if (agent && resolveCwd(deps, id, agent) !== root) return null;
+      baselines.set(id, snapshot);
+      return snapshot;
+    } catch (error) {
+      console.warn('[worker-delivery] snapshot do cwd falhou (fail-closed):', error);
+      return null;
+    }
+  })());
+  baselineFlights.set(id, flight);
+  void flight.finally(() => { if (baselineFlights.get(id) === flight) baselineFlights.delete(id); });
+  return flight;
 }
 
 const SUCCESS_RECEIPT_STATUSES = new Set(['success', 'partial']);
@@ -207,7 +233,7 @@ function boundTaskId(
  * Worker pane/turno terminou. Se o cwd ganhou arquivos desde o spawn,
  * avança uma task selada aberta. Sem arquivos, o board não mexe.
  */
-export function handleWorkerPaneDone(
+export async function handleWorkerPaneDone(
   input: {
     readonly sessionId: string;
     readonly agent?: OwnedAgentSessionInfo | null;
@@ -215,7 +241,7 @@ export function handleWorkerPaneDone(
     readonly summary?: string | null;
   },
   deps: WorkerDeliveryBoardDeps = productionDeps(),
-): WorkerDeliveryResult {
+): Promise<WorkerDeliveryResult> {
   const sessionId = input.sessionId.trim();
   if (!sessionId) {
     return { advancedTaskId: null, filesModified: [], reason: 'sem sessionId' };
@@ -282,13 +308,30 @@ export function handleWorkerPaneDone(
     return { advancedTaskId: null, filesModified: [], reason: 'cwd do worker ausente' };
   }
 
+  const generation = boardGeneration;
+  const authority = authorityState(stores, missionId);
+  const incarnation = agent?.workerIncarnationId ?? ctx?.workerIncarnationId;
+  const taskId = boundTaskId(stores, missionId, sessionId, incarnation);
+  const current = () => {
+    if (generation !== boardGeneration || authorityState(stores, missionId) !== authority) return false;
+    if (ctx && getContextBySession(sessionId) !== ctx) return false;
+    const live = deps.getAgent(sessionId);
+    if (live && (live.missionId !== missionId || live.workerIncarnationId !== incarnation ||
+      resolveCwd(deps, sessionId, live) !== cwd)) return false;
+    return boundTaskId(stores, missionId, sessionId, incarnation) === taskId &&
+      !sessionAlreadyCreditedSealedBoard(sessionId) &&
+      !sessionHasSealedBoardSuccessReceipt(stores, { missionId, sessionId, workerIncarnationId: incarnation });
+  };
+  await baselineFlights.get(sessionId);
+  if (!current()) return { advancedTaskId: null, filesModified: [], reason: 'autoridade alterada durante coleta' };
   let baseline = baselines.get(sessionId);
   if (!baseline) {
     // Sem snapshot de spawn: usar o dirty-state ACTUAL como baseline para
     // não contar arquivos pré-existentes do workspace como produzidos pelo
     // worker — caso contrário, arquivos sujos irrelevantes avançam o board.
     try {
-      const late = deps.snapshotBaseline(cwd);
+      const late = await deps.snapshotBaseline(cwd);
+      if (!current()) return { advancedTaskId: null, filesModified: [], reason: 'autoridade alterada durante baseline' };
       baseline = Object.freeze({
         cwd: late.cwd,
         headSha: late.headSha,
@@ -311,7 +354,8 @@ export function handleWorkerPaneDone(
 
   let filesModified: string[] = [];
   try {
-    filesModified = deps.collectFilesModified(cwd, baseline);
+    filesModified = await deps.collectFilesModified(cwd, baseline);
+    if (!current() || baselines.get(sessionId) !== baseline) return { advancedTaskId: null, filesModified: [], reason: 'autoridade alterada durante coleta' };
   } catch (error) {
     console.warn(
       '[worker-delivery] colheita de files-modified falhou:',
@@ -387,7 +431,7 @@ export interface DiskReconcileResult {
  * Se o board ainda está 0/N e o disco já tem arquivos, o dirty atual
  * conta — um snapshot tardio não pode zerar a evidência ao vivo.
  */
-export function reconcileSealedBoardFromDisk(
+export async function reconcileSealedBoardFromDisk(
   input: {
     readonly stores: ProjectDomainStoreSuite;
     readonly missionId: string;
@@ -397,7 +441,7 @@ export function reconcileSealedBoardFromDisk(
     WorkerDeliveryBoardDeps,
     'snapshotBaseline' | 'collectFilesModified'
   > = productionDeps(),
-): DiskReconcileResult {
+): Promise<DiskReconcileResult> {
   const missionId = input.missionId.trim();
   const cwd = input.cwd.trim();
   if (!missionId || !cwd) {
@@ -421,10 +465,14 @@ export function reconcileSealedBoardFromDisk(
     missionId,
   );
 
+  const generation = boardGeneration;
+  const authority = authorityState(input.stores, missionId);
+  const current = () => generation === boardGeneration && authorityState(input.stores, missionId) === authority;
   let baseline = missionBaselines.get(missionId);
   if (!baseline) {
     try {
-      const snap = deps.snapshotBaseline(cwd);
+      const snap = await deps.snapshotBaseline(cwd);
+      if (!current()) return { advancedTaskIds: [], filesModified: [], reason: 'autoridade alterada durante baseline' };
       baseline = Object.freeze({
         cwd: snap.cwd,
         headSha: snap.headSha,
@@ -447,7 +495,7 @@ export function reconcileSealedBoardFromDisk(
 
   let filesModified: string[] = [];
   try {
-    const delta = deps.collectFilesModified(cwd, baseline);
+    const delta = await deps.collectFilesModified(cwd, baseline);
     const progress = boardProgressFromSealedTasks(tasks);
     const hasPending = tasks.some(
       (task) => task.status === 'pending' || task.status === 'running',
@@ -457,11 +505,12 @@ export function reconcileSealedBoardFromDisk(
     // NOT count — otherwise unrelated dirty files trigger a false "Pronto".
     const pasta =
       hasPending && progress.completed > 0
-        ? deps.collectFilesModified(cwd, {
+        ? await deps.collectFilesModified(cwd, {
             ...baseline,
             dirtyPaths: Object.freeze([]),
           })
         : [];
+    if (!current() || missionBaselines.get(missionId) !== baseline) return { advancedTaskIds: [], filesModified: [], reason: 'autoridade alterada durante coleta' };
     filesModified = uncreditedMissionFiles(missionId, [
       ...new Set([...delta, ...pasta]),
     ]);
@@ -519,14 +568,14 @@ export function reconcileSealedBoardFromDisk(
 }
 
 /** Fire-and-forget a partir do turn-end / PTY exit / idle / watcher. Nunca lança. */
-export function recordWorkerDeliveryIfDelivered(input: {
+export async function recordWorkerDeliveryIfDelivered(input: {
   readonly sessionId: string;
   readonly agent?: OwnedAgentSessionInfo | null;
   readonly source: WorkerDeliverySource;
   readonly summary?: string | null;
-}): void {
+}): Promise<void> {
   try {
-    const result = handleWorkerPaneDone(input);
+    const result = await ownDelivery(handleWorkerPaneDone(input));
     if (result.advancedTaskId) {
       console.info(
         `[worker-delivery] ${input.sessionId}: ${result.reason} ` +
@@ -553,51 +602,36 @@ export function initWorkerDeliveryBoard(
     const agent = deps.getAgent(sessionId);
     if (agent?.role !== 'worker' || !agent.missionId) return;
     const cwd = resolveCwd(deps, sessionId, agent);
-    if (cwd) noteWorkerDeliveryBaseline(sessionId, cwd, deps);
+    if (cwd) void noteWorkerDeliveryBaseline(sessionId, cwd, deps);
   });
   untapStatus = tapAgentSemanticStatus((entry) => {
     if (entry.status !== 'idle' && entry.status !== 'completed') return;
-    try {
-      handleWorkerPaneDone(
-        { sessionId: entry.sessionId, source: 'idle' },
-        deps,
-      );
-    } catch (error) {
-      console.warn(
-        '[worker-delivery] idle falhou:',
-        error instanceof Error ? error.message : error,
-      );
-    }
+    void ownDelivery(handleWorkerPaneDone({ sessionId: entry.sessionId, source: 'idle' }, deps))
+      .catch((error) => console.warn('[worker-delivery] idle falhou:', error));
   });
   untapExit = tapSessionExit((sessionId, agent) => {
-    try {
-      handleWorkerPaneDone(
-        { sessionId, agent, source: 'pty-exit' },
-        deps,
-      );
-    } catch (error) {
-      console.warn(
-        '[worker-delivery] pty-exit falhou:',
-        error instanceof Error ? error.message : error,
-      );
-    }
-    baselines.delete(sessionId);
+    void ownDelivery(handleWorkerPaneDone({ sessionId, agent, source: 'pty-exit' }, deps))
+      .catch((error) => console.warn('[worker-delivery] pty-exit falhou:', error))
+      .finally(() => baselines.delete(sessionId));
   });
 }
 
-export function shutdownWorkerDeliveryBoard(): void {
+export async function shutdownWorkerDeliveryBoard(): Promise<void> {
+  boardGeneration++;
   untapState?.();
   untapState = null;
   untapStatus?.();
   untapStatus = null;
   untapExit?.();
   untapExit = null;
+  await Promise.allSettled([...deliveryFlights]);
+  baselineFlights.clear();
   baselines.clear();
   missionBaselines.clear();
   clearSealedBoardSessionCredits();
 }
 
 /** Test-only. */
-export function __resetWorkerDeliveryBoardForTests(): void {
-  shutdownWorkerDeliveryBoard();
+export async function __resetWorkerDeliveryBoardForTests(): Promise<void> {
+  await shutdownWorkerDeliveryBoard();
 }

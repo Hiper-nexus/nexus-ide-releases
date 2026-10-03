@@ -332,30 +332,6 @@
       "reason": "Compatibility/test-injection seam and cached Windows no-daemon help probe; production version discovery is cache-only/async."
     },
     {
-      "file": "src/main/orch/worker-files-modified.ts",
-      "method": "execFileSync",
-      "kind": "call",
-      "fingerprint": "1a5ae75d0fff53fb50714dc3c415377879597169fec18d444e4c6f96adc06cfc",
-      "count": 1,
-      "reason": "Existing legacy Git evidence collector with bounded probes; asynchronous failover collector is separate and must not regress to this seam."
-    },
-    {
-      "file": "src/main/orch/worker-files-modified.ts",
-      "method": "execFileSync",
-      "kind": "call",
-      "fingerprint": "dfa2432f7755a4325f0061294917db5e1dc39ab8ceba0828cc906c8d1a3e2b71",
-      "count": 1,
-      "reason": "Existing legacy Git evidence collector with bounded probes; asynchronous failover collector is separate and must not regress to this seam."
-    },
-    {
-      "file": "src/main/orch/worker-files-modified.ts",
-      "method": "execFileSync",
-      "kind": "import",
-      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
-      "count": 1,
-      "reason": "Existing legacy Git evidence collector with bounded probes; asynchronous failover collector is separate and must not regress to this seam."
-    },
-    {
       "file": "src/main/persistence/project-git-lineage.ts",
       "method": "spawnSync",
       "kind": "call",

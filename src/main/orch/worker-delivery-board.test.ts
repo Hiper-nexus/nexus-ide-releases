@@ -93,8 +93,8 @@ function manager(): ProjectRuntimeManager {
   return value;
 }
 
-beforeEach(() => {
-  __resetWorkerDeliveryBoardForTests();
+beforeEach(async () => {
+  await __resetWorkerDeliveryBoardForTests();
   baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-delivery-board-'));
   repo = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-delivery-cwd-'));
   git('init -b main');
@@ -105,8 +105,8 @@ beforeEach(() => {
   git('commit -m seed');
 });
 
-afterEach(() => {
-  __resetWorkerDeliveryBoardForTests();
+afterEach(async () => {
+  await __resetWorkerDeliveryBoardForTests();
   for (const value of managers.splice(0)) value.closeAll();
   fs.rmSync(baseDir, { recursive: true, force: true });
   fs.rmSync(repo, { recursive: true, force: true });
@@ -177,7 +177,24 @@ function workerAgent(missionId: string) {
 }
 
 describe('handleWorkerPaneDone → board selado', () => {
-  it('worker pane done + files-modified no disco incrementa o board (1/20)', () => {
+  it('does not commit disk evidence after mission authority changes while collecting', async () => {
+    const { mission, tasks, stores } = sealBoard();
+    const deps = depsFor(stores);
+    await noteWorkerDeliveryBaseline('pty-writer-1', repo, deps);
+    let finish!: (files: string[]) => void;
+    const pendingFiles = new Promise<string[]>((resolve) => { finish = resolve; });
+    const pending = handleWorkerPaneDone({
+      sessionId: 'pty-writer-1', agent: workerAgent(mission.id), source: 'pty-exit',
+    }, { ...deps, collectFilesModified: () => pendingFiles });
+    expect(pending).toBeInstanceOf(Promise);
+    stores.missions.setStatus(mission.id, 'blocked');
+    finish(['src/waitlist.ts']);
+    const result = await pending;
+    expect(result.advancedTaskId).toBeNull();
+    expect(result.reason).toMatch(/authority|autoridade/);
+    expect(boardProgressFromSealedTasks(tasks.list(mission.id)).completed).toBe(0);
+  });
+  it('worker pane done + files-modified no disco incrementa o board (1/20)', async () => {
     const { mission, tasks, stores } = sealBoard();
     expect(boardProgressFromSealedTasks(tasks.list(mission.id))).toEqual({
       completed: 0,
@@ -185,11 +202,11 @@ describe('handleWorkerPaneDone → board selado', () => {
     });
 
     const deps = depsFor(stores);
-    noteWorkerDeliveryBaseline('pty-writer-1', repo, deps);
+    await noteWorkerDeliveryBaseline('pty-writer-1', repo, deps);
     fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
     fs.writeFileSync(path.join(repo, 'src', 'waitlist.ts'), 'export const ok = true;\n');
 
-    const result = handleWorkerPaneDone(
+    const result = await handleWorkerPaneDone(
       {
         sessionId: 'pty-writer-1',
         agent: workerAgent(mission.id),
@@ -207,12 +224,12 @@ describe('handleWorkerPaneDone → board selado', () => {
     });
   });
 
-  it('worker done + 0 files + sem handoff deixa o board 0/20', () => {
+  it('worker done + 0 files + sem handoff deixa o board 0/20', async () => {
     const { mission, tasks, stores } = sealBoard();
     const deps = depsFor(stores);
-    noteWorkerDeliveryBaseline('pty-writer-1', repo, deps);
+    await noteWorkerDeliveryBaseline('pty-writer-1', repo, deps);
 
-    const result = handleWorkerPaneDone(
+    const result = await handleWorkerPaneDone(
       {
         sessionId: 'pty-writer-1',
         agent: workerAgent(mission.id),
@@ -230,19 +247,19 @@ describe('handleWorkerPaneDone → board selado', () => {
     });
   });
 
-  it('PTY exit + ficheiro só no mtime (gitignored) sem SUCCESS avança a próxima aberta', () => {
+  it('PTY exit + ficheiro só no mtime (gitignored) sem SUCCESS avança a próxima aberta', async () => {
     fs.writeFileSync(path.join(repo, '.gitignore'), '*.local\n');
     git('add .gitignore');
     git('commit -m ignore');
     const { mission, tasks, stores } = sealBoard();
     const deps = depsFor(stores);
-    const baseline = noteWorkerDeliveryBaseline('pty-writer-1', repo, deps);
+    const baseline = await noteWorkerDeliveryBaseline('pty-writer-1', repo, deps);
     const ignored = path.join(repo, 'landing.local');
     fs.writeFileSync(ignored, 'ok\n');
     const later = new Date((baseline?.observedAt ?? Date.now()) + 5_000);
     fs.utimesSync(ignored, later, later);
 
-    const result = handleWorkerPaneDone(
+    const result = await handleWorkerPaneDone(
       {
         sessionId: 'pty-writer-1',
         agent: workerAgent(mission.id),
@@ -260,15 +277,15 @@ describe('handleWorkerPaneDone → board selado', () => {
     });
   });
 
-  it('recibo SUCCESS da sessão + files-modified não fecha uma segunda task', () => {
+  it('recibo SUCCESS da sessão + files-modified não fecha uma segunda task', async () => {
     const { mission, tasks, stores } = sealBoard([
       { status: 'success', sessionId: 'pty-writer-1' },
     ]);
     const deps = depsFor(stores);
-    noteWorkerDeliveryBaseline('pty-writer-1', repo, deps);
+    await noteWorkerDeliveryBaseline('pty-writer-1', repo, deps);
     fs.writeFileSync(path.join(repo, 'extra.ts'), 'export {}\n');
 
-    const result = handleWorkerPaneDone(
+    const result = await handleWorkerPaneDone(
       {
         sessionId: 'pty-writer-1',
         agent: workerAgent(mission.id),
@@ -285,14 +302,14 @@ describe('handleWorkerPaneDone → board selado', () => {
     });
   });
 
-  it('sessão já creditada pelo MCP não fecha uma segunda task no PTY exit', () => {
+  it('sessão já creditada pelo MCP não fecha uma segunda task no PTY exit', async () => {
     const { mission, tasks, stores } = sealBoard();
     const deps = depsFor(stores);
-    noteWorkerDeliveryBaseline('pty-writer-1', repo, deps);
+    await noteWorkerDeliveryBaseline('pty-writer-1', repo, deps);
     markSessionSealedBoardCredited('pty-writer-1');
     fs.writeFileSync(path.join(repo, 'extra.ts'), 'export {}\n');
 
-    const result = handleWorkerPaneDone(
+    const result = await handleWorkerPaneDone(
       {
         sessionId: 'pty-writer-1',
         agent: workerAgent(mission.id),
@@ -311,12 +328,12 @@ describe('handleWorkerPaneDone → board selado', () => {
 });
 
 describe('reconcileSealedBoardFromDisk — first-wave sem PTY death', () => {
-  it('17 arquivos no disco com board 0/N incrementa sem pane exit', () => {
+  it('17 arquivos no disco com board 0/N incrementa sem pane exit', async () => {
     const { mission, tasks, stores } = sealBoard();
     const deps = depsFor(stores);
 
     // First tick: sets baseline while repo is clean.
-    reconcileSealedBoardFromDisk(
+    await reconcileSealedBoardFromDisk(
       { stores, missionId: mission.id, cwd: repo },
       deps,
     );
@@ -330,7 +347,7 @@ describe('reconcileSealedBoardFromDisk — first-wave sem PTY death', () => {
     }
 
     // Second tick: detects newly dirty files.
-    const result = reconcileSealedBoardFromDisk(
+    const result = await reconcileSealedBoardFromDisk(
       { stores, missionId: mission.id, cwd: repo },
       deps,
     );
@@ -343,9 +360,9 @@ describe('reconcileSealedBoardFromDisk — first-wave sem PTY death', () => {
     expect(boardProgressFromSealedTasks(tasks.list(mission.id)).total).toBe(20);
   });
 
-  it('cwd limpo sem handoff SUCCESS não mexe no board', () => {
+  it('cwd limpo sem handoff SUCCESS não mexe no board', async () => {
     const { mission, tasks, stores } = sealBoard();
-    const result = reconcileSealedBoardFromDisk(
+    const result = await reconcileSealedBoardFromDisk(
       { stores, missionId: mission.id, cwd: repo },
       depsFor(stores),
     );
@@ -356,14 +373,14 @@ describe('reconcileSealedBoardFromDisk — first-wave sem PTY death', () => {
     });
   });
 
-  it('missão com recibo SUCCESS não reconcilia mais tasks pelos ficheiros dirty', () => {
+  it('missão com recibo SUCCESS não reconcilia mais tasks pelos ficheiros dirty', async () => {
     const { mission, tasks, stores } = sealBoard([
       { status: 'success', sessionId: 'pty-writer-1' },
     ]);
     const deps = depsFor(stores);
 
     // First tick: sets baseline while repo is clean.
-    reconcileSealedBoardFromDisk(
+    await reconcileSealedBoardFromDisk(
       { stores, missionId: mission.id, cwd: repo },
       deps,
     );
@@ -372,7 +389,7 @@ describe('reconcileSealedBoardFromDisk — first-wave sem PTY death', () => {
     fs.writeFileSync(path.join(repo, 'server.js'), 'listen(4341)\n');
 
     // Second tick: detects new file but SUCCESS receipt blocks advancement.
-    const result = reconcileSealedBoardFromDisk(
+    const result = await reconcileSealedBoardFromDisk(
       { stores, missionId: mission.id, cwd: repo },
       deps,
     );
@@ -387,11 +404,11 @@ describe('reconcileSealedBoardFromDisk — first-wave sem PTY death', () => {
 });
 
 describe('reconcileSealedBoardFromDisk — pasta pending-with-file (sem sqlite)', () => {
-  beforeEach(() => {
-    __resetWorkerDeliveryBoardForTests();
+  beforeEach(async () => {
+    await __resetWorkerDeliveryBoardForTests();
   });
 
-  it('067 unique file já na pasta fecha Landing após recibo SUCCESS', () => {
+  it('067 unique file já na pasta fecha Landing após recibo SUCCESS', async () => {
     const objective = [
       '1. Landing',
       ...Array.from(
@@ -474,7 +491,7 @@ describe('reconcileSealedBoardFromDisk — pasta pending-with-file (sem sqlite)'
     });
 
     const pastaFiles = ['story-01-landing.html', '05-admin-lista-emails.js'];
-    const result = reconcileSealedBoardFromDisk(
+    const result = await reconcileSealedBoardFromDisk(
       { stores: stores as never, missionId: mission.id, cwd: '/tmp/067' },
       {
         snapshotBaseline: () =>

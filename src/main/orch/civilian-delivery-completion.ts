@@ -647,7 +647,7 @@ export async function listDeliveredProductFiles(
     if (absolute && isNonEmptyFile(absolute)) found.add(relative(root, absolute));
   }
   if (createdAt !== undefined) {
-    for (const changed of listMtimePathsSince(root, createdAt)) {
+    for (const changed of await listMtimePathsSince(root, createdAt)) {
       if (!isAutomaticallyDiscoverableArtifact(changed)) continue;
       const absolute = resolveWorkspaceFile(root, changed);
       if (absolute && isNonEmptyFile(absolute)) found.add(relative(root, absolute));
