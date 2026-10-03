@@ -32,7 +32,31 @@ export const HOOK_INTEGRATION_MAX_BODY_BYTES = 64 * 1024;
 
 const defaultGitRunner = new ProcessGitRunner();
 
-const INTEGRATION_SEGMENT = /^\s*(git\s+push\b|gh\s+pr\s+(?:create|merge)\b|git\s+merge\b[^;&|]*\b(?:main|master)\b)/u;
+// F-814: `git merge` só é o subcomando `merge` quando seguido de espaço/fim. Com
+// `\b`, o hífen de `git merge-base`/`merge-tree`/`merge-file` (plumbing de
+// leitura) casava como fronteira de palavra e tudo virava "integração".
+const GIT_MERGE_COMMAND = /^\s*git\s+merge(?=\s|$)/u;
+const INTEGRATION_SEGMENT = /^\s*(git\s+push\b|gh\s+pr\s+(?:create|merge)\b|git\s+merge(?=\s)[^;&|]*\b(?:main|master)\b)/u;
+
+/**
+ * F-814: `git merge --abort|--quit|--continue` só encerra/retoma um merge JÁ
+ * iniciado (o início passou pelo portão; o push continua exigindo o veredito
+ * do HEAD resultante). Bloqueá-los no checkout main deixava o agente sem o
+ * comando de recuperação no meio de um conflito. Só vale a forma NUA — o
+ * argumento sozinho (redirecionamentos de saída à parte): `git merge -m
+ * '--abort' feature` e `git merge --abort feature` seguem sendo merge.
+ */
+const MERGE_CONTROL_FLAGS = new Set(['--abort', '--quit', '--continue']);
+const SHELL_REDIRECTION_TOKEN = /^(?:\d*|&)(?:>>?|<)/u;
+
+function isMergeControlSegment(segment: string): boolean {
+  const match = /^\s*git\s+merge(?=\s|$)(.*)$/u.exec(segment);
+  if (!match) return false;
+  const args = tokenizeArgs(match[1]).filter(
+    (token) => !SHELL_REDIRECTION_TOKEN.test(token),
+  );
+  return args.length === 1 && MERGE_CONTROL_FLAGS.has(args[0]);
+}
 
 function currentBranchName(git: GitRunner, cwd: string): string | null {
   try {
@@ -96,8 +120,9 @@ export function integrationCommandHit(
 
   for (const segment of command.split(/&&|\|\||[;\n|]/u)) {
     if (segment.includes('--dry-run')) continue;
+    if (isMergeControlSegment(segment)) continue;
     if (INTEGRATION_SEGMENT.test(segment)) return true;
-    if (/^\s*git\s+merge\b/u.test(segment) && protectedCwd()) return true;
+    if (GIT_MERGE_COMMAND.test(segment) && protectedCwd()) return true;
   }
   return false;
 }
@@ -124,14 +149,14 @@ export function isExemptFastForwardSync(
     .split(/&&|\|\||[;\n|]/u)
     .map((s) => s.trim())
     .filter(Boolean);
-  const mergeSegments = segments.filter((s) => /^\s*git\s+merge\b/u.test(s));
+  const mergeSegments = segments.filter((s) => GIT_MERGE_COMMAND.test(s));
   if (mergeSegments.length !== 1) return false;
-  if (segments.some((s) => !/^\s*git\s+merge\b/u.test(s) && /\bgit\b/u.test(s))) {
+  if (segments.some((s) => !GIT_MERGE_COMMAND.test(s) && /\bgit\b/u.test(s))) {
     return false;
   }
 
   const mergeSegment = mergeSegments[0];
-  const match = mergeSegment.match(/^\s*git\s+merge\b(.*)$/u);
+  const match = mergeSegment.match(/^\s*git\s+merge(?=\s|$)(.*)$/u);
   if (!match) return false;
 
   const tokens = tokenizeArgs(match[1]);

@@ -56,6 +56,23 @@ export function measureIntegrationState(
   return { headSha: headSha(git, cwd), treeDirty: treeIsDirty(git, cwd) };
 }
 
+/**
+ * F-814: um merge que parou em conflito deixa a árvore "suja" com marcadores
+ * de conflito. A mensagem genérica ("commite e peça o veredito") levava o
+ * agente a commitar os marcadores; com `MERGE_HEAD` presente a saída certa é
+ * resolver ou abortar. `MERGE_HEAD` é pseudo-ref por worktree (`rev-parse`
+ * resolve o gitdir certo em checkout vinculado); sai 1, calado, quando não há.
+ */
+const MERGE_HEAD_ARGS = ['rev-parse', '-q', '--verify', 'MERGE_HEAD'] as const;
+
+export const MERGE_IN_PROGRESS_REASON =
+  'merge em andamento — resolva os conflitos e conclua com `git merge --continue`, ' +
+  'ou desfaça com `git merge --abort`; só depois peça o veredito do HEAD';
+
+function mergeInProgress(git: GitRunner, cwd: string): boolean {
+  return git.run(cwd, MERGE_HEAD_ARGS, { allowFailure: true }).status === 0;
+}
+
 function treeIsDirty(git: GitRunner, cwd: string): boolean {
   const result = git.run(cwd, [
     'status',
@@ -97,7 +114,11 @@ export function assertIntegrationReviewed(
   const { headSha: sha, treeDirty } = measureIntegrationState(cwd, git);
   assertLive(signal);
   if (treeDirty) {
-    block('árvore suja — commite e peça o veredito do HEAD');
+    block(
+      mergeInProgress(git, cwd)
+        ? MERGE_IN_PROGRESS_REASON
+        : 'árvore suja — commite e peça o veredito do HEAD',
+    );
   }
   const verdict = suite.missions.reviewVerdicts.latestFor(missionId, sha);
   if (

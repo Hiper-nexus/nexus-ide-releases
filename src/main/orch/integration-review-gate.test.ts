@@ -15,11 +15,15 @@ let runtime: ProjectRuntimeManager;
 let store: ScopedMissionStore;
 let missionId = '';
 
-function git(...args: string[]): string {
-  return execFileSync('git', ['-C', repo, ...args], {
+function gitIn(cwd: string, ...args: string[]): string {
+  return execFileSync('git', ['-C', cwd, ...args], {
     stdio: ['ignore', 'pipe', 'pipe'],
     encoding: 'utf8',
   }).trim();
+}
+
+function git(...args: string[]): string {
+  return gitIn(repo, ...args);
 }
 
 function headSha(): string {
@@ -108,6 +112,62 @@ describe('assertIntegrationReviewed', () => {
     expect(() => assertIntegrationReviewed(suite(), missionId, repo)).toThrow(
       /review_required: árvore suja/,
     );
+  });
+
+  describe('F-814: merge parado em conflito', () => {
+    /** Deixa `cwd` no meio de um merge em conflito em a.txt (sem supor o nome da branch). */
+    function conflictMergeIn(cwd: string, otherBranch: string): void {
+      const current = gitIn(cwd, 'rev-parse', '--abbrev-ref', 'HEAD');
+      gitIn(cwd, 'checkout', '-q', '-b', otherBranch);
+      fs.writeFileSync(path.join(cwd, 'a.txt'), `lado ${otherBranch}`);
+      gitIn(cwd, 'commit', '-qam', `edita em ${otherBranch}`);
+      gitIn(cwd, 'checkout', '-q', current);
+      fs.writeFileSync(path.join(cwd, 'a.txt'), `lado ${current}`);
+      gitIn(cwd, 'commit', '-qam', `edita em ${current}`);
+      expect(() => gitIn(cwd, 'merge', otherBranch)).toThrow();
+    }
+
+    it('com MERGE_HEAD a recusa manda resolver ou abortar, nunca commitar os marcadores', () => {
+      conflictMergeIn(repo, 'feature');
+      let message = '';
+      try {
+        assertIntegrationReviewed(suite(), missionId, repo);
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+      expect(message).toMatch(/^review_required: merge em andamento/u);
+      expect(message).toContain('git merge --abort');
+      expect(message).not.toMatch(/commit/iu);
+      expect(message).not.toContain('árvore suja');
+    });
+
+    it('vale também no checkout vinculado (worktree), onde MERGE_HEAD é por worktree', () => {
+      const linked = path.join(dir, 'linked');
+      git('worktree', 'add', '-q', '-b', 'linked-branch', linked);
+      conflictMergeIn(linked, 'feature');
+      // O checkout principal segue limpo e só pede veredito; o vinculado está no meio do merge.
+      expect(() => assertIntegrationReviewed(suite(), missionId, linked)).toThrow(
+        /review_required: merge em andamento/u,
+      );
+      expect(() => assertIntegrationReviewed(suite(), missionId, repo)).toThrow(
+        /review_required:.*veredito/su,
+      );
+    });
+
+    it('depois do --abort volta a regra normal (sem veredito do HEAD, pede o veredito)', () => {
+      conflictMergeIn(repo, 'feature');
+      git('merge', '--abort');
+      expect(() => assertIntegrationReviewed(suite(), missionId, repo)).toThrow(
+        /review_required:.*modelo de ponta/su,
+      );
+    });
+
+    it('árvore suja comum (sem MERGE_HEAD) mantém a mensagem de commit', () => {
+      fs.writeFileSync(path.join(repo, 'a.txt'), 'edição solta');
+      expect(() => assertIntegrationReviewed(suite(), missionId, repo)).toThrow(
+        /review_required: árvore suja — commite/u,
+      );
+    });
   });
 
   it('passa com approve de ponta do HEAD exato e torna a bloquear quando o HEAD anda', () => {
