@@ -78,6 +78,7 @@ import {
 import { forgetAccountChoiceReceipt } from "../persistence/account-choice-receipts";
 import {
   realUserHome,
+  resolveCliBinary,
   resolveSpawnBinary,
   resolveWindowsCodexNpmShimLaunch,
 } from "../path-resolver";
@@ -88,6 +89,7 @@ import { windowsMuseLauncherSpawn } from "../adapters/muse-windows-launcher";
 import { codexNoDaemonArgs } from "../orch/codex-cli-version";
 import { ensureMinimaxFullAccess } from "../orch/cli-mcp-session-minimax";
 import { windowsArgvPromptPlacement } from "./windows-command-line";
+import { qwenLogicalCwdLaunch, qwenNeedsLogicalCwd } from "./qwen-long-cwd";
 import {
   isBuiltinAdapter,
   resolveAdapterBinary,
@@ -2375,6 +2377,27 @@ export function spawnAgentSession(
       const mimoPermissions = mimoSkipPermissionsViaEnv(args);
       args = mimoPermissions.args;
       Object.assign(env, mimoPermissions.env);
+    }
+    // F-788: Qwen numa worktree cujo nome de projeto passaria de 255
+    // caracteres abre pelo Node com um cwd lógico curto. Executável e argv já
+    // são os finais: sandbox e tmux, abaixo, embrulham o que vai rodar.
+    if (adapter.id === "qwen" && qwenNeedsLogicalCwd(cwd)) {
+      const checkoutId = authority.scope.checkoutId;
+      const launch = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(checkoutId)
+        ? qwenLogicalCwdLaunch({
+            binPath: bin,
+            cwd,
+            stateHome: path.join(app.getPath("userData"), "provider-state", "qwen", checkoutId),
+            nodePath: resolveCliBinary("node", { processPath: env.PATH ?? "" })?.binPath ?? null,
+          })
+        : null;
+      if (launch) {
+        bin = launch.file;
+        args = [...launch.argsPrefix, ...args];
+        Object.assign(env, launch.env);
+      } else {
+        console.warn("[pty] Qwen: worktree longa sem apelido curto; o --session-id pode ser recusado");
+      }
     }
   } catch (error) {
     decoration?.onSpawnFailed?.();

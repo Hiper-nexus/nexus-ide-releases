@@ -6093,3 +6093,66 @@ describe('F-235: liveClaudeMissionAccountIds — contas com pane Claude vivo na 
   });
 });
 
+describe("F-788: Qwen numa worktree longa abre com cwd lógico curto", () => {
+  function qwenFixture() {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "f788-qwen-")));
+    const entry = path.join(root, "qwen-code", "cli-entry.js");
+    const bin = path.join(root, "bin", "qwen");
+    fs.mkdirSync(path.dirname(entry), { recursive: true });
+    fs.writeFileSync(entry, "#!/usr/bin/env node\n");
+    fs.mkdirSync(path.dirname(bin), { recursive: true });
+    fs.symlinkSync(entry, bin);
+    // Mesmo formato da worktree de writer: o nome do projeto passa de 255.
+    const worktree = path.join(root, `project-${"a".repeat(64)}`, `checkout-${"b".repeat(64)}`,
+      "worktrees", `task-${"c".repeat(64)}`);
+    fs.mkdirSync(worktree, { recursive: true });
+    return { root, entry, bin, worktree };
+  }
+
+  async function spawnQwen(bin: string, authority: BoundSpawnAuthority): Promise<PtySpawnSpec> {
+    const host = fakeHost();
+    setPtyHost(host.host);
+    const { sessionId } = spawnAgentSession(
+      fakeWc(),
+      { kind: "cli-agent", cols: 80, rows: 24, model: "qwen3.8-max" },
+      builtinCliPtyAdapter("qwen"),
+      { binPath: bin },
+      authority,
+    );
+    const spec = host.specFor(sessionId);
+    await orchTerminateSession(sessionId);
+    return spec;
+  }
+
+  it("worktree longa: Node + preload + entrypoint, apelido estável e o --session-id intacto; worktree curta não muda", async () => {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    setAgentSpawnHook(null);
+    const fx = qwenFixture();
+    try {
+      const spec = await spawnQwen(fx.bin, revisionBoundWorker(fx.worktree));
+      const stateHome = path.join(app.getPath("userData"), "provider-state", "qwen", "checkout-test");
+      expect(spec.file).toBe("/mock/bin/node");
+      expect(spec.args.slice(0, 3)).toEqual([
+        "--require", path.join(stateHome, "nexus-logical-cwd.cjs"), fx.entry,
+      ]);
+      expect(spec.args.slice(3)).toEqual(expect.arrayContaining(["--model", "qwen3.8-max", "--session-id"]));
+      // O processo continua na worktree física; o Qwen vê o apelido.
+      expect(spec.cwd).toBe(fx.worktree);
+      const alias = spec.env.NEXUS_QWEN_LOGICAL_CWD!;
+      expect(path.dirname(alias)).toBe(stateHome);
+      expect(fs.readlinkSync(alias)).toBe(fx.worktree);
+      expect(spec.env.PWD).toBe(alias);
+      expect(alias.replace(/[^a-zA-Z0-9]/g, "-").length).toBeLessThanOrEqual(255);
+      // Respawn da mesma worktree: mesmo apelido (o --resume acha a conversa).
+      const again = await spawnQwen(fx.bin, revisionBoundWorker(fx.worktree));
+      expect(again.env.NEXUS_QWEN_LOGICAL_CWD).toBe(alias);
+
+      const short = await spawnQwen(fx.bin, revisionBoundWorker(fx.root));
+      expect(short.file).toBe(fx.bin);
+      expect(short.args).not.toContain("--require");
+      expect(short.env.NEXUS_QWEN_LOGICAL_CWD).toBeUndefined();
+    } finally {
+      fs.rmSync(fx.root, { recursive: true, force: true });
+    }
+  });
+});
