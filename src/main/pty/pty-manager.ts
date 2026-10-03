@@ -4383,3 +4383,12 @@ configurePtyAnalysis({
   credit: (sessionId, bytes) => sessions.get(sessionId)?.proc.acknowledgeOutput?.(bytes),
   flow: (sessionId, paused) => sessions.get(sessionId)?.proc.setOutputPaused?.(paused),
 });
+
+/** Authenticated Main callers only; utility host proves exact PTY ancestry. */
+export async function claimSessionCommandProcess(sessionId: string, pid: number): Promise<string | null> {
+  if (!sessions.get(sessionId)?.agent || physicalTerminationFlights.has(sessionId)) return null;
+  return await ptyHost?.claimCommandProcess?.(sessionId, pid) ?? null;
+}
+export async function probeSessionCommandProcess(sessionId: string, claimId: string): Promise<import('./owned-command-process').CommandProcessState> {
+  return await ptyHost?.probeCommandProcess?.(sessionId, claimId) ?? 'unknown';
+}

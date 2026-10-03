@@ -1,3 +1,4 @@
+import type { CommandProcessState } from './owned-command-process';
 /**
  * PTY host protocol + main-side dispatcher — pure logic, no electron / node-pty
  * imports so it unit-tests directly under vitest (same convention as
@@ -47,6 +48,8 @@ export type HostControlMsg =
   | { type: 'kill'; sessionId: string; signal?: PtyKillSignal }
   | { type: 'analysis-credit'; sessionId: string; bytes: number }
   | { type: 'output-flow'; sessionId: string; paused: boolean }
+  | { type: 'command-process'; requestId: string; sessionId: string; op: 'claim'; pid: number }
+  | { type: 'command-process'; requestId: string; sessionId: string; op: 'probe'; claimId: string }
   | {
       type: 'terminate';
       sessionId: string;
@@ -60,6 +63,7 @@ export type HostControlMsg =
 
 /** host → main (events). */
 export type HostEventMsg =
+  | { type: 'command-process-result'; requestId: string; sessionId: string; claimId: string | null; state: CommandProcessState | null }
   | { type: 'data'; sessionId: string; data: string }
   | { type: 'exit'; sessionId: string; exitCode: number; signal?: number }
   | {
@@ -98,6 +102,8 @@ export interface PtyProcHandle {
 }
 
 export interface PtyHost {
+  claimCommandProcess?(sessionId: string, pid: number): Promise<string | null>;
+  probeCommandProcess?(sessionId: string, claimId: string): Promise<CommandProcessState>;
   spawn(spec: PtySpawnSpec, handlers: PtySessionHandlers): PtyProcHandle;
   /**
    * Pergunta ao host quais destas sessões têm handle vivo no seu mapa.
@@ -442,7 +448,21 @@ export function createPtyHostBridge(
   >();
   let livenessProbeCounter = 0;
 
+  let commandCounter = 0;
+  const pendingCommands = new Map<string, { sessionId: string; resolve: (result: Extract<HostEventMsg, { type: 'command-process-result' }> | null) => void; timer: ReturnType<typeof setTimeout> }>();
+  function commandRequest(body: { op: 'claim'; pid: number } | { op: 'probe'; claimId: string }, sessionId: string) {
+    if (pendingCommands.size >= 128) return Promise.resolve(null);
+    const requestId = `pty-command-${++commandCounter}`;
+    return new Promise<Extract<HostEventMsg, { type: 'command-process-result' }> | null>((resolve) => {
+      const timer = setTimeout(() => { if (pendingCommands.delete(requestId)) resolve(null); }, 2_000); timer.unref?.();
+      pendingCommands.set(requestId, { sessionId, resolve, timer });
+      try { transport.post({ type: 'command-process', requestId, sessionId, ...body }); }
+      catch { pendingCommands.delete(requestId); clearTimeout(timer); resolve(null); }
+    });
+  }
   const host: PtyHost = {
+    claimCommandProcess: async (sessionId, pid) => (await commandRequest({ op: 'claim', pid }, sessionId))?.claimId ?? null,
+    probeCommandProcess: async (sessionId, claimId) => (await commandRequest({ op: 'probe', claimId }, sessionId))?.state ?? 'unknown',
     spawn(spec, h) {
       handlers.set(spec.sessionId, h);
       transport.ensure();
@@ -564,6 +584,11 @@ export function createPtyHostBridge(
   };
 
   function dispatchEvent(msg: HostEventMsg): void {
+    if (msg.type === 'command-process-result') {
+      const pending = pendingCommands.get(msg.requestId); if (!pending || pending.sessionId !== msg.sessionId) return;
+      pendingCommands.delete(msg.requestId); clearTimeout(pending.timer); pending.resolve(msg); return;
+    }
+
     if (msg.type === 'termination-result') {
       const pending = pendingTerminations.get(msg.requestId);
       if (!pending || pending.sessionId !== msg.sessionId) return;
@@ -599,6 +624,9 @@ export function createPtyHostBridge(
   }
 
   function handleHostDown(): void {
+    for (const pending of pendingCommands.values()) { clearTimeout(pending.timer); pending.resolve(null); }
+    pendingCommands.clear();
+
     // Probes pendentes: host morto = resposta nenhuma → unverifiable. As
     // sessões órfãs recebem onExit(-1) logo abaixo, pela via de host-down.
     const probes = [...pendingLivenessProbes.values()];

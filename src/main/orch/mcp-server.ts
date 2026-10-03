@@ -1,3 +1,5 @@
+import { handleNativeHeavyCommandHttp, nativeHeavyCommands } from './native-heavy-command';
+import { appendHeavyCommandPreload, heavyCommandPreloadPath } from './native-heavy-preload';
 import { analysisClient, flushPtyAnalysis, subscribePtyAnalysis } from '../pty/pty-analysis-runtime';
 import type { AnalysisFence } from '../pty/pty-analysis-protocol';
 import http from "node:http";
@@ -1154,8 +1156,14 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
             : "read-handoff",
         }
       : {};
+    if (ctx.missionId && ctx.role !== 'user' && canUseNexusMcp(adapter)) {
+      env.NEXUS_MISSION_ID = ctx.missionId;
+      env.NEXUS_HEAVY_COMMAND_URL = `http://127.0.0.1:${port}/hook/heavy-command`;
+      env.NODE_OPTIONS = appendHeavyCommandPreload(preparedEnv?.NODE_OPTIONS ?? process.env.NODE_OPTIONS, heavyCommandPreloadPath());
+    }
     const extraArgs: string[] = [];
     const envRemove: string[] = [];
+    if (!ctx.missionId || ctx.role === 'user' || !canUseNexusMcp(adapter)) envRemove.push('NEXUS_MISSION_ID', 'NEXUS_HEAVY_COMMAND_URL');
     let ephemeralHomeDir: string | null = null;
     let skillsPrepared = false;
     // Real provider home (~/.kimi-code, ~/.grok) the governed overlay symlinks
@@ -1708,10 +1716,12 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
       advisoryProviderSessionHome ||
       advisoryProviderStateReadPaths.length > 0 ||
       advisoryProviderStateWritePaths.length > 0 ||
-      claudeStatePaths.length > 0)
+      claudeStatePaths.length > 0 ||
+      (ctx.missionId && ctx.role !== 'user' && canUseNexusMcp(adapter)))
       ? {
           // Grant auth/profile and the exact checkout's durable conversations.
           providerStateReadPaths: [
+            ...(ctx.missionId && ctx.role !== 'user' ? [path.dirname(heavyCommandPreloadPath())] : []),
             ...claudeStatePaths,
             ...claudeProfileReadPaths,
             ...advisoryProviderStateReadPaths,
@@ -1963,6 +1973,7 @@ export function installLegacyParser(
 }
 
 export function startMcpServer(): Promise<void> {
+  nativeHeavyCommands.startAdmission();
   httpConfirmationScheduler.close();
   httpConfirmationScheduler = new McpConfirmationScheduler(
     showHttpMcpConfirmation,
@@ -2088,6 +2099,9 @@ export function startMcpServer(): Promise<void> {
         await handleHookRegressionHttp(req, res, ctx);
         return;
       }
+      if (url === '/hook/heavy-command' && req.method === 'POST') {
+        await handleNativeHeavyCommandHttp(req, res, ctx); return;
+      }
       // PreToolUse/Bash → portão de integração (veredito de ponta por HEAD).
       if (url === "/hook/integration" && req.method === "POST") {
         await handleHookIntegrationHttp(req, res, ctx);
@@ -2158,6 +2172,7 @@ export function startMcpServer(): Promise<void> {
 }
 
 export function stopMcpServer(): void {
+  nativeHeavyCommands.stopAdmission();
   setAgentSpawnHook(null);
   setDeferredInitialPromptHook(null);
   legacyParserTaps.dispose();

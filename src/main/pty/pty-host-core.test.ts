@@ -611,3 +611,14 @@ describe('createPtyHostBridge', () => {
     });
   });
 });
+
+it('command process ownership replies are session-bound and host loss is unknown, never gone', async () => {
+ const transport = fakeTransport(); const bridge = createPtyHostBridge(transport.transport);
+ const claim = bridge.host.claimCommandProcess!('s1', 123);
+ const request = transport.posted.at(-1)!;
+ if (request.type !== 'command-process') throw new Error('missing command request');
+ bridge.dispatchEvent({ type: 'command-process-result', requestId: request.requestId, sessionId: 'foreign', claimId: 'forged', state: null });
+ bridge.dispatchEvent({ type: 'command-process-result', requestId: request.requestId, sessionId: 's1', claimId: 'owned', state: null });
+ expect(await claim).toBe('owned');
+ const proof = bridge.host.probeCommandProcess!('s1', 'owned'); bridge.handleHostDown(); expect(await proof).toBe('unknown');
+});

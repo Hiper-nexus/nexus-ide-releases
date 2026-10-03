@@ -1,3 +1,4 @@
+import { OwnedCommandProcesses } from './owned-command-process';
 import { PtyOutputCredits } from './pty-output-credits';
 /**
  * PTY host — the isolated utilityProcess that owns every live @lydell/node-pty
@@ -65,6 +66,7 @@ interface HostPtyEntry {
 }
 
 const procs = new Map<string, HostPtyEntry>();
+const commandProcesses = new OwnedCommandProcesses((sessionId) => { const entry = procs.get(sessionId); return entry ? { pid: entry.proc.pid, identity: entry } : null; });
 
 /** F-572: uma leitura de `ps`, atribuída por root de sessão. */
 function captureFootprints(): Promise<SessionFootprint[]> {
@@ -366,6 +368,13 @@ parentPort.on('message', (e) => {
       } catch {
         // PTY died between the ownership check in main and this write.
       }
+      return;
+    case 'command-process':
+      void (async () => {
+        const claimId = msg.op === 'claim' ? await commandProcesses.claim(msg.sessionId, msg.pid) : msg.claimId;
+        const state = msg.op === 'probe' ? await commandProcesses.probe(msg.sessionId, msg.claimId) : null;
+        post({ type: 'command-process-result', requestId: msg.requestId, sessionId: msg.sessionId, claimId, state });
+      })().catch(() => post({ type: 'command-process-result', requestId: msg.requestId, sessionId: msg.sessionId, claimId: null, state: 'unknown' }));
       return;
     case 'analysis-credit':
       procs.get(msg.sessionId)?.outputCredits.grant(msg.bytes);

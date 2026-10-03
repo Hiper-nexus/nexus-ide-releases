@@ -448,6 +448,7 @@ const config: ForgeConfig = {
       'bin/nexus-arms.mjs',
       'resources/wake',
       'resources/mission-shims',
+      'resources/heavy-command',
       'resources/model-ranking.json',
       // Pacote de ~15 pets Codex v2 offline (manifest + sheets/*.webp).
       'resources/pets',
