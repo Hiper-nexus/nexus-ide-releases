@@ -171,6 +171,20 @@ export const cliPtyAdapterSchema = z.object({
   stateParsing: stateParsingSchema,
   quirks: quirksSchema,
   control: controlSchema,
+  /**
+   * F-771: capacidades de TAREFA do binário roteado — o que esta CLI pode
+   * fazer por natureza (não confundir com AdapterCapabilityMatrix, que são
+   * qualificações de release main-owned). Só declare `true` com evidência
+   * (tool nativa no código/manifest/doc da CLI); em dúvida, omita.
+   */
+  capabilities: z
+    .object({
+      /** A CLI tem ferramenta nativa de busca/grounding na web. */
+      webSearch: z.boolean().optional(),
+      /** Janela de contexto documentada para o modelo, em tokens. */
+      maxContext: z.number().int().positive().optional(),
+    })
+    .optional(),
 });
 
 export const apiProviderAdapterSchema = z.object({

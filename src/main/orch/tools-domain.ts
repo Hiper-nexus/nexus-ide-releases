@@ -31,8 +31,9 @@ import {
 } from './pane-registry';
 import { adapterIdsWithoutNexusMcp, liveMissionAdapterIds } from './operator-spawn-route';
 import { isOperatorTabMission } from './operator-tab-mission-resume';
-import { listAdapters } from '../adapters/adapter-registry';
+import { getAdapter, listAdapters } from '../adapters/adapter-registry';
 import { canUseNexusMcp } from './cli-mcp-inject';
+import { supportsEnforceableReadOnlyNativeAuthority } from '../pty/autonomous-cli-policy';
 import {
   adoptUserAgentSessionAsMissionOrchestrator,
   getAgentSessionInfo,
@@ -1766,6 +1767,14 @@ export async function routeTaskForCaller(
       const models = [
         ...authReadyModelsForProvider(a, a.models),
       ];
+      // F-771 (G3): eixo de capacidade da CLI. `webSearch`/`maxContext` vêm do
+      // manifest do adapter (só declarados com evidência); o confinamento
+      // read-only e o transporte MCP são detectados pelo código main-owned,
+      // nunca pela palavra do manifest.
+      const cliAdapter = (() => {
+        const adapter = getAdapter(a.adapterId);
+        return adapter?.kind === 'cli-pty' ? adapter : undefined;
+      })();
       return {
         id: a.adapterId,
         installed:
@@ -1790,6 +1799,13 @@ export async function routeTaskForCaller(
         efforts: a.efforts,
         // F-724: o provedor escolhido serve alguns ids com outro modelo.
         ...(a.modelAliases ? { modelAliases: a.modelAliases } : {}),
+        capabilities: {
+          ...(cliAdapter?.capabilities ?? {}),
+          readOnlyEnforceable: cliAdapter
+            ? supportsEnforceableReadOnlyNativeAuthority(cliAdapter)
+            : undefined,
+          handoffMcp: cliAdapter ? canUseNexusMcp(cliAdapter) : undefined,
+        },
       };
     });
   let adapters = buildAdapters(new Set([...excluded, ...quotaExcluded]));
