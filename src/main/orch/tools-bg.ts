@@ -20,6 +20,9 @@ import { emitBgTaskEvent } from './bg-task-events';
 import { sameProjectScope } from './project-scoped-broadcast';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { removeTreeSync } from '../util/remove-tree';
+import { acquireHeavyCommandPermit, type HeavyCommandPermit } from './heavy-command-permit';
+import { classifyHeavyCommand } from './heavy-command-classifier';
+import { retainHeavyCommandPermitForProcess } from './heavy-command-process';
 
 interface BgTask {
   id: string;
@@ -149,7 +152,8 @@ const bgRun: McpToolDef = {
   name: 'nexus_bg_run',
   description:
     'Start a shell command in the background (dev servers, long tests, builds). ' +
-    'Returns taskId immediately. Poll with nexus_bg_wait / kill with nexus_bg_kill. ' +
+    'Heavy mission commands wait for admission; returns taskId after the process starts. ' +
+    'Poll with nexus_bg_wait / kill with nexus_bg_kill. ' +
     'Sandboxed to the workspace like nexus_terminal_run.',
   inputSchema: {
     type: 'object',
@@ -199,7 +203,12 @@ const bgRun: McpToolDef = {
       throw error;
     }
     let proc: ChildProcess;
+    let heavyPermit: HeavyCommandPermit | undefined;
     try {
+      const kind = classifyHeavyCommand(command);
+      if (kind) heavyPermit = await acquireHeavyCommandPermit({ scope: ctx.scope, missionId: ctx.missionId,
+        sessionId: ctx.sessionId, kind, signal: invocation?.signal,
+        isCurrent: () => { assertMcpInvocationCurrent(invocation); return true; } });
       // Linearization point after all path/sandbox preparation.
       assertMcpInvocationCurrent(invocation);
       proc = spawn(plan.file, plan.args, {
@@ -209,9 +218,11 @@ const bgRun: McpToolDef = {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (error) {
+      heavyPermit?.release(); // No physical process was spawned.
       removeTreeSync(sandbox.dir, { recursive: true, force: true });
       throw error;
     }
+    if (heavyPermit) retainHeavyCommandPermitForProcess(heavyPermit, proc, { detached: plan.detached });
     const id = `bg-${++bgCounter}`;
     let resolvePhysicalExit!: () => void;
     const physicalExit = new Promise<void>((resolve) => {

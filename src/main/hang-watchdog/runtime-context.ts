@@ -1,6 +1,7 @@
 import { periodicTaskSnapshot } from '../observability/periodic-task';
 import { recentTraceContext, mainTraceStatus } from '../observability/main-trace';
 import { analysisClient } from '../pty/pty-analysis-runtime';
+import { heavyCommandPermitSnapshot } from '../orch/heavy-command-permit';
 
 let previous: { at: number; bytes: number } | null = null;
 let previousSessions = new Map<string, number>();
@@ -28,5 +29,6 @@ export function sampleHangRuntimeContext() {
     periodic: periodicTaskSnapshot(),
     analysis: { ...analysis, outputBytesPerSecond, sessionRates: sessions },
     trace: mainTraceStatus(),
+    heavyCommands: heavyCommandPermitSnapshot(),
   };
 }

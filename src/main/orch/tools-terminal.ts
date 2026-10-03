@@ -24,6 +24,9 @@ import {
 } from '../../shared/squad-cli-policy';
 import { triageCommandFailure } from '../jev/jev-terminal-triage';
 import { removeTreeSync } from '../util/remove-tree';
+import { acquireHeavyCommandPermit, type HeavyCommandPermit } from './heavy-command-permit';
+import { classifyHeavyCommand } from './heavy-command-classifier';
+import { retainHeavyCommandPermitForProcess } from './heavy-command-process';
 
 /**
  * Terminal execution MCP tools for Jarvis agent.
@@ -180,6 +183,7 @@ const terminalRun: McpToolDef = {
     'Run a shell command in the workspace directory. Returns stdout and stderr. ' +
     'The command runs to completion or until the timeout (default 30s). ' +
     'Use this for build commands, tests, linting, and other CLI tools. ' +
+    'Heavy commands from mission agents wait for the project slot and available memory. ' +
     'DESTRUCTIVE commands (rm -rf, git push --force, etc.) are BLOCKED by guardrails. ' +
     'On non-zero exit, `triage` may be attached: {kind: flaky|environment|config|regression|usage, confidence, retryHelps} — use it to decide between rerun, fix environment, or fix code.',
   inputSchema: {
@@ -256,7 +260,12 @@ const terminalRun: McpToolDef = {
     }
 
     let proc: ChildProcess;
+    let heavyPermit: HeavyCommandPermit | undefined;
     try {
+      const kind = classifyHeavyCommand(command);
+      if (kind) heavyPermit = await acquireHeavyCommandPermit({ scope: ctx.scope, missionId: ctx.missionId,
+        sessionId: ctx.sessionId, kind, signal: invocation?.signal,
+        isCurrent: () => { assertMcpInvocationCurrent(invocation); return true; } });
       // Linearization point: no process may exist unless the exact MCP
       // session/intent is still current after all preparation.
       assertMcpInvocationCurrent(invocation);
@@ -267,9 +276,11 @@ const terminalRun: McpToolDef = {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (error) {
+      heavyPermit?.release(); // No physical process was spawned.
       removeTreeSync(sandbox.dir, { recursive: true, force: true });
       throw error;
     }
+    if (heavyPermit) retainHeavyCommandPermitForProcess(heavyPermit, proc, { detached: plan.detached });
 
     const result = await new Promise<{
       exitCode: number | null;
