@@ -11,7 +11,8 @@
  * estruturado (F-775) como initialPrompt.
  */
 
-import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { PaneSpawnOptions } from './main-owned-pane-runtime';
 import type { PaneOrchMeta } from './main-owned-pane-runtime';
 import { getMainOwnedPane } from './main-owned-pane-runtime';
@@ -21,7 +22,13 @@ import {
   buildContinuityPack,
   type ContinuityPackInput,
 } from '../../shared/failover-handoff';
-import { collectFilesModified } from './worker-files-modified';
+import { parseGitPorcelain } from './worker-files-modified';
+import {
+  AsyncProcessGitRunner,
+  assertSafeLocalGitConfigAsync,
+  type AsyncGitRunner,
+  type GitRunOptions,
+} from '../runtime/git-command';
 
 export interface MainOwnedFailoverPlanInput {
   readonly adapterId: string;
@@ -44,11 +51,9 @@ export interface MainOwnedFailoverPlanInput {
   readonly taskBrief?: string;
   readonly nextStep?: string;
   readonly scrollbackExcerpt?: string;
-  /** Pré-coletados (testes / chamador que já tem); senão coleta do cwd. */
+  /** Estado da tarefa já coletado (`collectGitTaskState`, worktree do pane). */
   readonly touchedFiles?: readonly string[];
   readonly diffStat?: string;
-  /** cwd do pane antigo para `git status`/`diff --stat`. */
-  readonly cwd?: string;
   readonly toAccountLabel?: string;
 }
 
@@ -65,48 +70,58 @@ export type MainOwnedFailoverPlan =
       readonly reason: string;
     };
 
-function collectGitTaskState(cwd: string | undefined): {
-  touchedFiles: string[];
-  diffStat: string | undefined;
-} {
-  if (!cwd) return { touchedFiles: [], diffStat: undefined };
-  let touchedFiles: string[] = [];
-  try {
-    touchedFiles = collectFilesModified(cwd);
-  } catch {
-    touchedFiles = [];
-  }
-  let diffStat: string | undefined;
-  try {
-    diffStat = execFileSync(
-      'git',
-      ['-C', cwd, 'diff', '--stat'],
-      { encoding: 'utf8', timeout: 3_000, stdio: ['ignore', 'pipe', 'ignore'] },
-    ).trim();
-  } catch {
-    diffStat = undefined;
-  }
-  return {
-    touchedFiles,
-    diffStat: diffStat ? diffStat : undefined,
-  };
+/** F-822: teto de CADA consulta ao git do pane — o failover não espera mais. */
+export const GIT_STATE_TIMEOUT_MS = 1_000;
+
+export interface GitTaskState {
+  readonly touchedFiles: string[];
+  readonly diffStat: string | undefined;
 }
 
-function resolveGitState(input: MainOwnedFailoverPlanInput): {
-  touchedFiles: readonly string[] | undefined;
-  diffStat: string | undefined;
-} {
-  if (input.touchedFiles !== undefined || input.diffStat !== undefined) {
+const NO_GIT_STATE: GitTaskState = Object.freeze({ touchedFiles: [], diffStat: undefined });
+
+/**
+ * F-822: arquivos tocados e `git diff --stat` para o pacote de continuidade —
+ * SÓ na worktree do próprio pane. Em checkout compartilhado (a raiz da missão
+ * ou do projeto) "Touched files" listaria o trabalho de outros workers, então
+ * não coleta. Git assíncrono no envelope seguro do Nexus (AsyncProcessGitRunner:
+ * hooks nulos, fsmonitor desligado, ambiente limpo), config local executável
+ * recusada (`assertSafeLocalGitConfigAsync` — um `core.fsmonitor` ou
+ * `diff.*.textconv` plantado não roda), diff sem driver externo e timeout de
+ * 1 s por consulta. Antes eram três `execFileSync` com git cru (até 11 s por
+ * pane) dentro do planejador "puro". Qualquer falha devolve estado vazio: a
+ * seção some do pacote, o failover segue.
+ */
+export async function collectGitTaskState(
+  worktreePath: string | undefined,
+  options: { readonly sharedRootPath?: string; readonly git?: AsyncGitRunner } = {},
+): Promise<GitTaskState> {
+  if (!worktreePath) return NO_GIT_STATE;
+  const runner = options.git ?? new AsyncProcessGitRunner();
+  const git: AsyncGitRunner = {
+    run: (cwd: string, args: readonly string[], runOptions: GitRunOptions = {}) =>
+      runner.run(cwd, args, { ...runOptions, timeoutMs: GIT_STATE_TIMEOUT_MS }),
+  };
+  try {
+    const real = await fs.promises.realpath(worktreePath);
+    if (options.sharedRootPath) {
+      const shared = await fs.promises.realpath(options.sharedRootPath).catch(() =>
+        path.resolve(options.sharedRootPath!),
+      );
+      if (real === shared) return NO_GIT_STATE;
+    }
+    await assertSafeLocalGitConfigAsync(git, real);
+    const [status, diff] = await Promise.all([
+      git.run(real, ['status', '--porcelain'], { allowFailure: true }),
+      git.run(real, ['diff', '--stat', '--no-ext-diff', '--no-textconv'], { allowFailure: true }),
+    ]);
     return {
-      touchedFiles: input.touchedFiles,
-      diffStat: input.diffStat,
+      touchedFiles: status.status === 0 ? parseGitPorcelain(status.stdout) : [],
+      diffStat: diff.status === 0 && diff.stdout.trim() ? diff.stdout.trim() : undefined,
     };
+  } catch {
+    return NO_GIT_STATE;
   }
-  const cwd =
-    input.cwd ??
-    input.meta?.executionScope?.rootRealPath ??
-    input.meta?.scope?.rootRealPath;
-  return collectGitTaskState(cwd);
 }
 
 /**
@@ -168,7 +183,6 @@ function buildCrossAccountPack(
   input: MainOwnedFailoverPlanInput,
   meta: PaneOrchMeta,
 ): string {
-  const git = resolveGitState(input);
   const packInput: ContinuityPackInput = {
     fromAccountLabel: input.fromAccountLabel,
     toAccountLabel: input.toAccountLabel ?? input.toAccountId ?? '',
@@ -183,8 +197,8 @@ function buildCrossAccountPack(
     limitCooldownMs: input.limitCooldownMs,
     nextStep: input.nextStep,
     scrollbackExcerpt: input.scrollbackExcerpt,
-    touchedFiles: git.touchedFiles,
-    diffStat: git.diffStat,
+    touchedFiles: input.touchedFiles,
+    diffStat: input.diffStat,
   };
   return buildContinuityPack(packInput);
 }
@@ -214,10 +228,23 @@ export async function respawnMainOwnedPaneWithAccount(input: {
   readonly scrollbackExcerpt?: string;
   readonly touchedFiles?: readonly string[];
   readonly diffStat?: string;
-  readonly cwd?: string;
   readonly toAccountLabel?: string;
-}): Promise<boolean> {
+}, deps: { readonly git?: AsyncGitRunner } = {}): Promise<boolean> {
   const entry = getMainOwnedPane(input.paneId);
+  // Troca de conta leva o estado da tarefa — coletado AQUI, assíncrono e só
+  // na worktree do próprio pane (F-822); rotação de modelo (F-520) não.
+  const worktree =
+    !input.toModel &&
+    input.touchedFiles === undefined &&
+    input.diffStat === undefined
+      ? entry?.meta?.executionScope?.rootRealPath
+      : undefined;
+  const git = worktree
+    ? await collectGitTaskState(worktree, {
+        sharedRootPath: entry?.meta?.scope?.rootRealPath,
+        git: deps.git,
+      })
+    : { touchedFiles: input.touchedFiles, diffStat: input.diffStat };
   const plan = planMainOwnedFailoverRespawn({
     adapterId: input.adapterId,
     meta: entry?.meta ?? null,
@@ -232,9 +259,8 @@ export async function respawnMainOwnedPaneWithAccount(input: {
     taskBrief: input.taskBrief,
     nextStep: input.nextStep,
     scrollbackExcerpt: input.scrollbackExcerpt,
-    touchedFiles: input.touchedFiles,
-    diffStat: input.diffStat,
-    cwd: input.cwd,
+    touchedFiles: git.touchedFiles,
+    diffStat: git.diffStat,
     toAccountLabel: input.toAccountLabel,
   });
   if (plan.action === 'skip') {

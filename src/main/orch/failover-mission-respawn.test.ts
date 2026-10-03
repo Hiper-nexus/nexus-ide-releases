@@ -1,11 +1,17 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OrchPaneSpawnResult } from '../../shared/orch-types';
+import type { AsyncGitRunner, GitResult } from '../runtime/git-command';
 const deps = vi.hoisted(() => ({
   getPane: vi.fn(),
   spawnSync: vi.fn(() => ({ requestId: 'sync', ok: true, paneId: 'sync-pane', sessionId: 'sync-session' })),
   spawnAsync: vi.fn<(...args: unknown[]) => Promise<OrchPaneSpawnResult>>(),
   terminate: vi.fn(async () => true),
-  collectFiles: vi.fn(() => ['src/a.ts', 'src/b.ts']),
+  /** F-822: nada de processo síncrono no caminho do failover. */
+  execFileSync: vi.fn(() => { throw new Error('execFileSync no caminho do failover'); }),
+  spawnSyncChild: vi.fn(() => { throw new Error('spawnSync no caminho do failover'); }),
 }));
 vi.mock('./main-owned-pane-runtime', () => ({ getMainOwnedPane: deps.getPane }));
 vi.mock('./pane-registry', () => ({
@@ -13,11 +19,45 @@ vi.mock('./pane-registry', () => ({
   spawnMainOwnedMissionPaneAsync: deps.spawnAsync,
 }));
 vi.mock('../pty/pty-manager', () => ({ orchTerminateSession: deps.terminate }));
-vi.mock('./worker-files-modified', () => ({
-  collectFilesModified: deps.collectFiles,
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:child_process')>()),
+  execFileSync: deps.execFileSync,
+  spawnSync: deps.spawnSyncChild,
 }));
 
+/** Git falso e hermético: responde por subcomando e guarda cada chamada. */
+function fakeGit(overrides: Partial<Record<'config' | 'status' | 'diff', GitResult | Error>> = {}) {
+  const calls: Array<{ cwd: string; args: readonly string[]; timeoutMs?: number }> = [];
+  const runner: AsyncGitRunner = {
+    run: async (cwd, args, options = {}) => {
+      calls.push({ cwd, args, timeoutMs: options.timeoutMs });
+      const sub = args[0] as 'config' | 'status' | 'diff';
+      const answer = overrides[sub] ?? {
+        config: { status: 1, stdout: '', stderr: '' },
+        status: { status: 0, stdout: ' M src/a.ts\n?? src/novo.ts\n', stderr: '' },
+        diff: { status: 0, stdout: ' src/a.ts | 3 ++-\n', stderr: '' },
+      }[sub];
+      if (answer instanceof Error) throw answer;
+      return answer;
+    },
+  };
+  return { runner, calls };
+}
+
+let tempDirs: string[] = [];
+function tempDir(prefix: string): string {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  tempDirs.push(dir);
+  return dir;
+}
+afterEach(() => {
+  for (const dir of tempDirs) fs.rmSync(dir, { recursive: true, force: true });
+  tempDirs = [];
+});
+
 import {
+  GIT_STATE_TIMEOUT_MS,
+  collectGitTaskState,
   planMainOwnedFailoverRespawn,
   respawnMainOwnedPaneWithAccount,
 } from './failover-mission-respawn';
@@ -126,7 +166,6 @@ describe('respawnMainOwnedPaneWithAccount', () => {
     vi.clearAllMocks();
     deps.spawnAsync.mockReset();
     deps.getPane.mockReturnValue({ meta });
-    deps.collectFiles.mockReturnValue(['src/a.ts']);
   });
 
   it('waits for the asynchronous account gate before reporting a successful failover', async () => {
@@ -154,7 +193,15 @@ describe('respawnMainOwnedPaneWithAccount', () => {
     expect(deps.spawnSync).not.toHaveBeenCalled();
   });
 
-  it('integração F-775: limite com 2 contas → pane novo recebe o pack e conta pinada (recibo pinned)', async () => {
+  it('integração F-775: limite com 2 contas → pane novo recebe o pack e a conta pinada', async () => {
+    // A conta EXPLÍCITA no spawn é o que faz o recibo nascer `source: 'pinned'`
+    // (provider-config-spawn.test.ts); aqui se prova que a reserva é a pinada.
+    const worktree = tempDir('nexus-f822-worktree-');
+    const shared = tempDir('nexus-f822-shared-');
+    deps.getPane.mockReturnValue({
+      meta: { ...meta, scope: { rootRealPath: shared }, executionScope: { rootRealPath: worktree } },
+    });
+    const git = fakeGit();
     deps.spawnAsync.mockResolvedValueOnce({
       requestId: 'async', ok: true, paneId: 'new-pane', sessionId: 'new-session',
     });
@@ -172,25 +219,84 @@ describe('respawnMainOwnedPaneWithAccount', () => {
       taskBrief: 'Continuar F-775',
       nextStep: 'Validar o pack com detectLimit',
       scrollbackExcerpt: 'working…\nusage limit reached\ndeath',
-      cwd: '/workspace/mission-checkout',
-      // 2 contas: a exausta (primary) foi para cooldown; a reserva é pinada.
-    });
+    }, { git: git.runner });
     expect(ok).toBe(true);
     // Só depois do spawn real o caller emite switched:true (F-249).
     expect(deps.spawnAsync).toHaveBeenCalledTimes(1);
     const options = deps.spawnAsync.mock.calls[0][0] as {
       accountId: string;
+      adapterId: string;
       initialPrompt: string;
     };
-    expect(options.accountId).toBe('account-b');
+    expect(options).toMatchObject({ accountId: 'account-b', adapterId: 'claude' });
     expect(options.initialPrompt).toContain(FAILOVER_HANDOFF_HEADER);
     expect(options.initialPrompt).toContain('Validar o pack com detectLimit');
-    expect(options.initialPrompt).toContain('src/a.ts');
+    expect(options.initialPrompt).toContain('- src/a.ts');
+    expect(options.initialPrompt).toContain('- src/novo.ts');
+    expect(options.initialPrompt).toContain('src/a.ts | 3 ++-');
     expect(detectLimit(options.initialPrompt)).toBeNull();
+    // F-822: o git rodou só na worktree do pane, assíncrono e no envelope seguro.
+    expect(git.calls.map((call) => call.cwd)).toEqual([worktree, worktree, worktree]);
+    expect(deps.execFileSync).not.toHaveBeenCalled();
+    expect(deps.spawnSyncChild).not.toHaveBeenCalled();
     // Termina a sessão exausta ANTES do spawn novo.
     expect(deps.terminate).toHaveBeenCalledWith(
       'old-session',
       expect.objectContaining({ origin: 'failover-respawn' }),
     );
+  });
+
+});
+
+describe('F-822: estado da tarefa só da worktree do pane, git seguro e curto', () => {
+  it('checkout compartilhado não entra: nenhum git roda e o pacote fica sem a seção', async () => {
+    const shared = tempDir('nexus-f822-shared-');
+    const git = fakeGit();
+    await expect(collectGitTaskState(shared, { sharedRootPath: shared, git: git.runner }))
+      .resolves.toEqual({ touchedFiles: [], diffStat: undefined });
+    await expect(collectGitTaskState(undefined, { git: git.runner }))
+      .resolves.toEqual({ touchedFiles: [], diffStat: undefined });
+    expect(git.calls).toEqual([]);
+  });
+
+  it('worktree própria: confere a config local antes, diff sem driver externo, timeout de 1 s em tudo', async () => {
+    const worktree = tempDir('nexus-f822-worktree-');
+    const shared = tempDir('nexus-f822-shared-');
+    const git = fakeGit();
+    const state = await collectGitTaskState(worktree, { sharedRootPath: shared, git: git.runner });
+    expect(state).toEqual({ touchedFiles: ['src/a.ts', 'src/novo.ts'], diffStat: 'src/a.ts | 3 ++-' });
+    expect(git.calls[0]!.args.slice(0, 3)).toEqual(['config', '--local', '--get-regexp']);
+    expect(git.calls.map((call) => call.args[0])).toEqual(['config', 'status', 'diff']);
+    expect(git.calls[2]!.args).toEqual(['diff', '--stat', '--no-ext-diff', '--no-textconv']);
+    expect(GIT_STATE_TIMEOUT_MS).toBeLessThanOrEqual(1_000);
+    expect(git.calls.every((call) => call.timeoutMs === GIT_STATE_TIMEOUT_MS)).toBe(true);
+  });
+
+  it('config local executável plantada (fsmonitor/textconv): recusa sem rodar status nem diff', async () => {
+    const worktree = tempDir('nexus-f822-worktree-');
+    const git = fakeGit({
+      config: { status: 0, stdout: 'core.fsmonitor /tmp/planted.sh\n', stderr: '' },
+    });
+    await expect(collectGitTaskState(worktree, { git: git.runner }))
+      .resolves.toEqual({ touchedFiles: [], diffStat: undefined });
+    expect(git.calls.map((call) => call.args[0])).toEqual(['config']);
+  });
+
+  it('git lento ou quebrado não segura o failover: a seção some', async () => {
+    const worktree = tempDir('nexus-f822-worktree-');
+    const git = fakeGit({ status: new Error('Git process could not complete (timeout)') });
+    await expect(collectGitTaskState(worktree, { git: git.runner }))
+      .resolves.toEqual({ touchedFiles: [], diffStat: undefined });
+  });
+
+  it('o planejador é puro: com o estado já coletado, não roda git nenhum', () => {
+    const plan = planMainOwnedFailoverRespawn({
+      adapterId: 'claude', meta: { ...meta, executionScope: { rootRealPath: '/inexistente' } } as never,
+      toAccountId: 'acct-2', fromAccountLabel: 'a@b.c', reason: 'quota',
+      touchedFiles: ['x.ts'], diffStat: 'x.ts | 1 +',
+    });
+    expect(plan.action).toBe('respawn');
+    expect(deps.execFileSync).not.toHaveBeenCalled();
+    expect(deps.spawnSyncChild).not.toHaveBeenCalled();
   });
 });
