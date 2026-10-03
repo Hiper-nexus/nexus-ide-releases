@@ -41,6 +41,12 @@ afterEach(() => {
 });
 
 describe('CodexUsageScanner multi-project activation', () => {
+  it('stop returns physical scan and resume settlement', async () => {
+    const scanner = new CodexUsageScanner({ isWatched: () => false, onEvent: () => undefined });
+    const stopped = scanner.stop();
+    expect(stopped).toBeInstanceOf(Promise);
+    await stopped;
+  });
   it('parks an unrelated rollout then replays it when that project becomes active', async () => {
     const sessionsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-scan-'));
     roots.push(sessionsDir);
@@ -106,7 +112,7 @@ describe('CodexUsageScanner multi-project activation', () => {
         sessionStartedAt: null,
       },
     );
-    scanner.stop();
+    await scanner.stop();
   });
 
   it('cede ao event loop durante um replay grande sem perder nem duplicar eventos', async () => {
@@ -168,7 +174,7 @@ describe('CodexUsageScanner multi-project activation', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(messageIds).toHaveLength(usageLines.length);
-    scanner.stop();
+    await scanner.stop();
   });
 
   it('preserva UTF-8 quando um caractere cruza a fronteira de leitura', async () => {
@@ -229,7 +235,7 @@ describe('CodexUsageScanner multi-project activation', () => {
         sessionStartedAt: null,
       },
     );
-    scanner.stop();
+    await scanner.stop();
   });
 
   it('separa thread e provider session sem emitir o histórico copiado do pai', async () => {
@@ -332,7 +338,7 @@ describe('CodexUsageScanner multi-project activation', () => {
         parentThreadId,
       },
     );
-    scanner.stop();
+    await scanner.stop();
   });
 
   it('varre também as raízes provider-state por checkout (F-211)', async () => {
@@ -395,7 +401,7 @@ describe('CodexUsageScanner multi-project activation', () => {
         sessionStartedAt: null,
       },
     );
-    scanner.stop();
+    await scanner.stop();
   });
 
   it('raízes extras avaliadas a cada varredura acompanham checkouts novos', async () => {
@@ -444,6 +450,6 @@ describe('CodexUsageScanner multi-project activation', () => {
     );
     extraRoots.push(lateRoot);
     await eventually(() => expect(onEvent).toHaveBeenCalledTimes(1));
-    scanner.stop();
+    await scanner.stop();
   });
 });

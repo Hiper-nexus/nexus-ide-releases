@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -113,6 +115,9 @@ export class CodexUsageScanner {
   private timer: ReturnType<typeof setInterval> | null = null;
   private scanInFlight: Promise<void> | null = null;
   private stopped = false;
+  private controller = new AbortController();
+  private readonly taskId = `usage-codex:${randomUUID()}`;
+  private stopping: Promise<void> | null = null;
   private readonly resumeStore: CodexResumeStore | null;
   private resumeDirty = false;
 
@@ -123,7 +128,9 @@ export class CodexUsageScanner {
 
   start(): void {
     if (this.timer) return;
+    if (this.stopping || this.scanInFlight) throw new Error('Codex scanner still settling');
     this.stopped = false;
+    this.controller = new AbortController();
     this.timer = setInterval(
       () => this.scheduleScan(),
       this.opts.pollMs ?? DEFAULT_POLL_MS,
@@ -132,17 +139,26 @@ export class CodexUsageScanner {
     this.scheduleScan();
   }
 
-  stop(): void {
+  stop(): Promise<void> {
+    if (this.stopping) return this.stopping;
     this.stopped = true;
+    this.controller.abort(new Error('Codex usage scanner stopped'));
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
-    this.flushResumeStore();
+    const flight = (async () => {
+      await stopPeriodicTask(this.taskId);
+      await this.scanInFlight?.catch(() => undefined);
+      await this.flushResumeStore();
+    })();
+    this.stopping = flight;
+    void flight.finally(() => { if (this.stopping === flight) this.stopping = null; });
+    return flight;
   }
 
-  private flushResumeStore(): void {
+  private async flushResumeStore(): Promise<void> {
     if (!this.resumeDirty || !this.resumeStore) return;
     this.resumeDirty = false;
-    this.resumeStore.save();
+    await this.resumeStore.saveAsync();
   }
 
   private roots(): string[] {
@@ -157,7 +173,7 @@ export class CodexUsageScanner {
 
   private scheduleScan(): void {
     if (this.stopped || this.scanInFlight) return;
-    const scan = this.scan();
+    const scan = runPeriodicTask(this.taskId, (context) => this.scan(context), { signal: this.controller.signal, cadenceMs: this.opts.pollMs ?? DEFAULT_POLL_MS });
     this.scanInFlight = scan;
     void scan.then(
       () => {
@@ -169,8 +185,9 @@ export class CodexUsageScanner {
     );
   }
 
-  private async scan(): Promise<void> {
+  private async scan(context: PeriodicTaskContext): Promise<void> {
     if (this.stopped) return;
+    await context.wait(this.resumeStore?.loadAsync() ?? Promise.resolve());
     const now = new Date();
     const yesterday = new Date(now.getTime() - 86_400_000);
     const dirs = this.roots().flatMap((root) => [
@@ -178,20 +195,23 @@ export class CodexUsageScanner {
       dayDir(root, yesterday),
     ]);
     for (const dir of dirs) {
+      await context.checkpoint();
       if (this.stopped) return;
-      let names: string[];
+      let directory: Awaited<ReturnType<typeof fs.promises.opendir>>;
+      try { directory = await fs.promises.opendir(dir, { bufferSize: 32 }); }
+      catch { continue; }
       try {
-        names = fs.readdirSync(dir);
-      } catch {
-        continue;
-      }
-      for (const name of names) {
-        if (this.stopped) return;
-        if (!name.startsWith('rollout-') || !name.endsWith('.jsonl')) continue;
-        await this.ingestTail(path.join(dir, name));
-      }
+        for (;;) {
+          await context.checkpoint();
+          if (this.stopped) return;
+          const entry = await context.wait(directory.read());
+          if (!entry) break;
+          if (!entry.isFile() || !entry.name.startsWith('rollout-') || !entry.name.endsWith('.jsonl')) continue;
+          await context.wait(this.ingestTail(path.join(dir, entry.name)));
+        }
+      } finally { await directory.close(); }
     }
-    this.flushResumeStore();
+    await this.flushResumeStore();
   }
 
   private freshFileState(): FileState {

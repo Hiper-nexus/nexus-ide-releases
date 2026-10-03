@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -118,6 +120,8 @@ export class ClaudeTranscriptWatcher {
   private queueTail: Promise<void> = Promise.resolve();
   private readonly queued = new Set<string>();
   private stopped = false;
+  private readonly controller = new AbortController();
+  private readonly taskId = `usage-claude:${randomUUID()}`;
 
   constructor(private opts: WatcherOptions) {}
 
@@ -135,6 +139,7 @@ export class ClaudeTranscriptWatcher {
   }
 
   start(): void {
+    if (this.pollTimer || this.stopped) return;
     this.pollTimer = setInterval(() => this.scheduleScan(), this.opts.pollMs ?? DEFAULT_POLL_MS);
     // unref: o watcher nunca deve segurar o processo vivo no quit.
     this.pollTimer.unref?.();
@@ -143,6 +148,7 @@ export class ClaudeTranscriptWatcher {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.controller.abort(new Error('Claude transcript watcher stopped'));
     for (const watcher of this.watchers.values()) {
       try {
         watcher.close();
@@ -153,15 +159,16 @@ export class ClaudeTranscriptWatcher {
     this.watchers.clear();
     if (this.pollTimer) clearInterval(this.pollTimer);
     this.pollTimer = null;
-    this.opts.resumeStore?.save();
+    await stopPeriodicTask(this.taskId);
+    await this.scanInFlight?.catch(() => undefined);
     // onEvent runs before the asynchronous digest/checkpoint completes. A
     // replacement watcher must not load its cursor until that work is saved.
     await this.queueTail;
-    this.opts.resumeStore?.save();
+    await this.opts.resumeStore?.saveAsync();
   }
 
   private watchDirectory(dir: string): void {
-    if (this.watchers.has(dir) || !fs.existsSync(dir)) return;
+    if (this.watchers.has(dir)) return;
     try {
       const watcher = fs.watch(dir, (_event, filename) => {
         if (filename && filename.endsWith('.jsonl')) {
@@ -186,7 +193,7 @@ export class ClaudeTranscriptWatcher {
   /** Um rescan por vez: o poll não empilha varreduras enquanto uma corre. */
   private scheduleScan(): void {
     if (this.stopped || this.scanInFlight) return;
-    const scan = this.scanAll().then(
+    const scan = runPeriodicTask(this.taskId, (context) => this.scanAll(context), { signal: this.controller.signal, cadenceMs: this.opts.pollMs ?? DEFAULT_POLL_MS }).then(
       () => {
         if (this.scanInFlight === scan) this.scanInFlight = null;
       },
@@ -197,23 +204,27 @@ export class ClaudeTranscriptWatcher {
     this.scanInFlight = scan;
   }
 
-  private async scanAll(): Promise<void> {
+  private async scanAll(context: PeriodicTaskContext): Promise<void> {
     if (this.stopped) return;
+    await context.wait(this.opts.resumeStore?.loadAsync() ?? Promise.resolve());
     for (const dir of this.projectDirs()) {
+      await context.checkpoint();
       if (this.stopped) return;
       this.watchDirectory(dir);
-      let names: string[];
+      let directory: Awaited<ReturnType<typeof fs.promises.opendir>>;
+      try { directory = await fs.promises.opendir(dir, { bufferSize: 32 }); }
+      catch { continue; }
       try {
-        names = await fs.promises.readdir(dir);
-      } catch {
-        continue;
-      }
-      for (const name of names) {
-        if (this.stopped) return;
-        if (name.endsWith('.jsonl')) await this.enqueue(path.join(dir, name));
-      }
+        for (;;) {
+          await context.checkpoint();
+          if (this.stopped || !this.projectDirs().includes(dir)) break;
+          const entry = await context.wait(directory.read());
+          if (!entry) break;
+          if (entry.isFile() && entry.name.endsWith('.jsonl')) await context.wait(this.enqueue(path.join(dir, entry.name)));
+        }
+      } finally { await directory.close(); }
     }
-    this.opts.resumeStore?.save();
+    await this.opts.resumeStore?.saveAsync();
   }
 
   /**
@@ -222,10 +233,12 @@ export class ClaudeTranscriptWatcher {
    * que houver quando chegar a vez dele.
    */
   private enqueue(file: string): Promise<void> {
+    if (this.stopped) return Promise.resolve();
     if (this.queued.has(file)) return this.queueTail;
     this.queued.add(file);
     const run = this.queueTail.then(async () => {
       this.queued.delete(file);
+      await this.opts.resumeStore?.loadAsync();
       await this.ingest(file);
     });
     this.queueTail = run.catch(() => undefined);
