@@ -5,7 +5,7 @@ vi.mock('electron', () => ({ utilityProcess: { fork: () => h.child } }));
 vi.mock('./pty-analysis-runtime', () => ({ startPtyAnalysis: () => {}, shutdownPtyAnalysis: () => h.stop }));
 import { createRealPtyHost, shutdownPtyHost } from './pty-host-client';
 function fixture() {
-  const child = Object.assign(new EventEmitter(), { postMessage: () => {}, kill: () => true }); h.child = child;
+  const child = Object.assign(new EventEmitter(), { postMessage: () => {}, kill: (): boolean => true }); h.child = child;
   createRealPtyHost().spawn({ sessionId: 'finite', file: '/usr/bin/true', args: [], cwd: '/tmp', cols: 80, rows: 24, env: {} }, { onData: () => {}, onExit: () => {} });
   return child;
 }
