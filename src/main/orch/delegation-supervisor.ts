@@ -79,6 +79,8 @@ import {
   tapAgentTurnEnd,
 } from './agent-status';
 import { trace } from '../observability/main-trace';
+import { readSessionOutput } from './pane-session-output';
+import { sanitizePaneBootOutput } from './pane-boot-output';
 import {
   persistLeftoverIsolation,
   shouldSkipLeftoverRemount,
@@ -811,6 +813,11 @@ async function handlePaneNotStarted(
     failure: watch.failure?.cause ?? null,
     hasSession: watch.sessionId !== null,
   });
+  // F-788/F-789: a cauda do PTY é lida antes de fechar/rerotear (o ring da
+  // sessão morta some depois) e vai só para o trace local, já sanitizada.
+  const outputTail = watch.sessionId !== null
+    ? sanitizePaneBootOutput(readSessionOutput(watch.sessionId, Number.MAX_SAFE_INTEGER))
+    : null;
   if (watch.sessionId === null) {
     // Um PTY atrasado desta tentativa não pode nascer depois do reenvio.
     abandonPendingOrchSpawn(watch.requestId, 'pane did not start within the start window');
@@ -864,6 +871,7 @@ async function handlePaneNotStarted(
     cause,
     outcome: outcome.kind,
     breaker,
+    ...(outputTail !== null ? { outputTail } : {}),
     ...(outcome.kind === 'rerouted'
       ? { nextPaneId: outcome.paneId, nextAdapterId: outcome.adapterId }
       : {}),

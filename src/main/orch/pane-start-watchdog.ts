@@ -10,7 +10,9 @@
  * rotear, avisar) moram no delegation-supervisor, que roda a varredura; quem
  * conhece o briefing e a rota (tool-util / tools-panes) entra aqui como
  * closure. A ficha nunca vai para disco, log, trace ou handoff: lá só passam
- * ids, adapter e um motivo curto por categoria.
+ * ids, adapter e um motivo curto por categoria. No trace `pane-not-started`
+ * de uma tentativa com sessão, o supervisor também guarda uma cauda limitada
+ * e sanitizada do ring PTY (F-788/F-789).
  *
  * F-734: na família Claude (prova de turno), turno aberto ainda não é "começou".
  * O pane que recebeu o brief e teve o turno encerrado por StopFailure de

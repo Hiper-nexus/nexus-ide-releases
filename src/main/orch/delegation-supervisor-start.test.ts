@@ -138,6 +138,7 @@ import {
 } from './pane-start-watchdog';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from './workspace-handoff-delivery';
+import { recordPaneSessionData, __evictExitedBufferForTests } from './pane-session-output';
 
 const NOW = 200_000_000;
 const SCOPE = testProjectScope();
@@ -408,6 +409,37 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     expect(String((h.submit.mock.calls[0]![0] as { summary: string }).summary)).toContain(
       'o processo saiu antes de abrir o primeiro turno',
     );
+  });
+
+  it('persiste a cauda sanitizada de um boot-exit, mesmo depois de fechar e rerotear o pane', async () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
+    trackPaneStart(watchInit());
+    h.spawnedAt.mockReturnValue(NOW - 3_000);
+    recordPaneSessionData('session-boot-diagnostic', [
+      ...Array.from({ length: 55 }, (_, index) => `boot line ${index}`),
+      '\u001b[31mError: unrecognized argument --example\u001b[0m',
+      'api_key=opaque-secret-value',
+      'sessionFingerprint=opaque-fingerprint-value',
+      'eyJabcdefghijk.abcdefghijklm.nopqrstuvwxyz',
+    ].join('\n'));
+    h.terminationTap!('session-boot-diagnostic', { paneId: 'pane-qwen', adapterId: 'qwen' });
+    h.requestPaneClose.mockImplementationOnce(async () => {
+      __evictExitedBufferForTests('session-boot-diagnostic');
+      return true;
+    });
+
+    await checkPaneStarts(NOW);
+    const event = h.trace.mock.calls.map(([value]) => value).find(
+      (value) => value.kind === 'pane-not-started',
+    );
+    expect(event).toMatchObject({ cause: 'boot-exit', outputTail: expect.any(String) });
+    expect(event.outputTail).toContain('Error: unrecognized argument --example');
+    expect(event.outputTail).toContain('boot line 20');
+    expect(event.outputTail).not.toContain('boot line 0\n');
+    expect(event.outputTail).not.toMatch(/opaque-secret|opaque-fingerprint|eyJabcdefgh|\u001b/);
+    expect(event.outputTail.split('\n').length).toBeLessThanOrEqual(41);
+    expect(event.outputTail.length).toBeLessThanOrEqual(8192);
+    expect(JSON.stringify(h.submit.mock.calls)).not.toContain('--example');
   });
 
   it('pane fechado de propósito (encerramento pedido) não é falha de início', async () => {

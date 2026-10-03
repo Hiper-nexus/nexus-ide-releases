@@ -21,7 +21,12 @@ export const MISSION_ORCHESTRATOR_EXIT_OUTPUT_MAX_LINES = 24;
  * PTY tails can contain echoed credentials. Persist only a small, printable
  * diagnostic and redact whole credential-bearing lines before token patterns.
  */
-export function sanitizeMissionOrchestratorExitOutput(raw: string): string {
+export function sanitizeMissionOrchestratorExitOutput(
+  raw: string,
+  limits: { maxChars?: number; maxLines?: number } = {},
+): string {
+  const maxChars = limits.maxChars ?? MISSION_ORCHESTRATOR_EXIT_OUTPUT_MAX_CHARS;
+  const maxLines = limits.maxLines ?? MISSION_ORCHESTRATOR_EXIT_OUTPUT_MAX_LINES;
   const printable = raw
     .replace(/\r\n?/gu, '\n')
     .replace(CONTROL_PATTERN, '')
@@ -36,15 +41,15 @@ export function sanitizeMissionOrchestratorExitOutput(raw: string): string {
 
   const lines = printable.split('\n');
   const boundedLines = lines.slice(
-    Math.max(0, lines.length - MISSION_ORCHESTRATOR_EXIT_OUTPUT_MAX_LINES),
+    Math.max(0, lines.length - maxLines),
   );
   let bounded = boundedLines.join('\n');
-  if (bounded.length > MISSION_ORCHESTRATOR_EXIT_OUTPUT_MAX_CHARS) {
+  if (bounded.length > maxChars) {
     const prefix = '[...saída anterior omitida...]\n';
     bounded =
       prefix +
       bounded.slice(
-        -(MISSION_ORCHESTRATOR_EXIT_OUTPUT_MAX_CHARS - prefix.length),
+        -(maxChars - prefix.length),
       );
   } else if (boundedLines.length < lines.length) {
     const prefix =
@@ -52,7 +57,7 @@ export function sanitizeMissionOrchestratorExitOutput(raw: string): string {
     bounded =
       prefix +
       bounded.slice(
-        -(MISSION_ORCHESTRATOR_EXIT_OUTPUT_MAX_CHARS - prefix.length),
+        -(maxChars - prefix.length),
       );
   }
   return bounded;
