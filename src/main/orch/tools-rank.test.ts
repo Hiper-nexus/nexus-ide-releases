@@ -168,6 +168,18 @@ describe('nexus_rank handler', () => {
     expect(out.lowConfidence).toEqual(['a']);
   });
 
+  it('o toggle "Ranking de entregas" desligado tira a ferramenta e explica onde religar', async () => {
+    process.env.NEXUS_JEV_SURFACE_RANK = '0';
+    try {
+      expect(tool.available?.()).toBe(false);
+      await expect(tool.handler(validArgs, ctx)).rejects.toThrow(/Ranking de entregas/);
+      expect(jev.judge).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.NEXUS_JEV_SURFACE_RANK;
+    }
+    expect(tool.available?.()).toBe(true);
+  });
+
   it('fails with the settings hint when there is no key', async () => {
     jev.hasJevCredential.mockReturnValue(false);
     await expect(tool.handler(validArgs, ctx)).rejects.toThrow(

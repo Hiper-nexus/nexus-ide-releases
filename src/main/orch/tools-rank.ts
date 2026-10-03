@@ -6,6 +6,7 @@
  * nunca decide o ranking sozinho. Read-only (egress à conta TypeSafe do
  * usuário, mesmo rate-limit de 30/min por sessão do nexus_judge).
  */
+import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
 import { z } from 'zod';
 import type { McpToolDef } from './mcp-protocol';
 import type { AgentGateContext } from './gate';
@@ -82,7 +83,9 @@ const rankTool: McpToolDef = {
     'choice in your own logic; treat lowConfidence ids as needing your own ' +
     'reading. Never include secrets in candidate text — it leaves the ' +
     "machine to the user's configured decision provider.",
-  available: () => hasDecisionCredential('rankTool'),
+  // O toggle "Ranking de entregas" desliga a ferramenta (era fiação morta
+  // desde 17/09: nada lia `jevSurfaces.rank`).
+  available: () => isJevSurfaceEnabled('rank') && hasDecisionCredential('rankTool'),
   inputSchema: {
     type: 'object',
     properties: {
@@ -109,6 +112,12 @@ const rankTool: McpToolDef = {
           `nexus_rank: peso para critério desconhecido '${key}'`,
         );
       }
+    }
+    if (!isJevSurfaceEnabled('rank')) {
+      throw new Error(
+        'nexus_rank desligado: ligue "Ranking de entregas" e o Piloto automático ' +
+          'em Ajustes → Padrões de execução',
+      );
     }
     if (!hasDecisionCredential('rankTool')) {
       throw new Error(

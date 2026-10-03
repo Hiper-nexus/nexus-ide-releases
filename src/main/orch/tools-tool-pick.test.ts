@@ -187,6 +187,22 @@ describe('runToolPick', () => {
     ).rejects.toThrow(/indisponível agora/);
   });
 
+  it('o toggle "Recomendação de ferramenta" desligado tira a ferramenta e explica onde religar', async () => {
+    const judge = vi.fn<JudgeMock>(async () => choice({ pane_read: 1 }));
+    const [def] = buildToolPickTools();
+    process.env.NEXUS_JEV_SURFACE_TOOLPICK = '0';
+    try {
+      expect(def!.available?.()).toBe(false);
+      await expect(
+        runToolPick({ need: 'ler pane' }, userCtx(), undefined, { judge, tools: TOOLS }),
+      ).rejects.toThrow(/Recomendação de ferramenta/);
+      expect(judge).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.NEXUS_JEV_SURFACE_TOOLPICK;
+    }
+    expect(def!.available?.()).toBe(true);
+  });
+
   it('exposes the tool def with the availability predicate', () => {
     const [def] = buildToolPickTools();
     expect(def!.name).toBe('nexus_tool_pick');

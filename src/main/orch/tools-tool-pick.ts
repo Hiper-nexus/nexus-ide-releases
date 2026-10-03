@@ -1,3 +1,4 @@
+import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
 import { decisionResultUsage } from '../decision-models/decision-usage';
 /**
  * `nexus_tool_pick` — recomendação semântica de ferramenta via TypeSafe Jev.
@@ -199,7 +200,9 @@ export interface ToolPickDeps {
 
 const toolPickTool: McpToolDef = {
   name: TOOL_PICK_NAME,
-  available: () => hasDecisionCredential('toolPick'),
+  // O toggle "Recomendação de ferramenta" desliga a ferramenta (nada lia
+  // `jevSurfaces.toolPick`).
+  available: () => isJevSurfaceEnabled('toolPick') && hasDecisionCredential('toolPick'),
   description:
     'Semantic tool recommendation: describe what you need to do and get the ' +
     'best-matching nexus_* tools you are allowed to call, ranked by ' +
@@ -232,6 +235,12 @@ export async function runToolPick(
       `nexus_tool_pick: argumentos inválidos: ${parsed.error.issues
         .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
         .join('; ')}`,
+    );
+  }
+  if (!isJevSurfaceEnabled('toolPick')) {
+    throw new Error(
+      'nexus_tool_pick desligado: ligue "Recomendação de ferramenta" e o Piloto ' +
+        'automático em Ajustes → Padrões de execução',
     );
   }
   if (!hasDecisionCredential('toolPick')) {
