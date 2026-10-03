@@ -89,6 +89,7 @@ export function runPeriodicTask(
     },
   };
   states.set(id, state);
+  const waits = new Set<Promise<unknown>>();
   let sliceStartedAt = performance.now();
   const assertCurrent = () => {
     if (controller.signal.aborted) throw controller.signal.reason ?? new Error('periodic task aborted');
@@ -112,19 +113,24 @@ export function runPeriodicTask(
         sliceStartedAt = performance.now();
       }
     },
-    async wait<T>(promise: Promise<T>): Promise<T> {
+    wait<T>(promise: Promise<T>): Promise<T> {
       // A supplied promise has already launched: always observe its physical
       // settlement, even if cancellation occurred immediately before this call.
       measureSlice();
       state.diagnostic = { ...state.diagnostic, waitingIo: state.diagnostic.waitingIo + 1 };
-      try {
-        const result = await promise;
-        assertCurrent();
-        return result;
-      } finally {
-        state.diagnostic = { ...state.diagnostic, waitingIo: state.diagnostic.waitingIo - 1 };
-        sliceStartedAt = performance.now();
-      }
+      const wait = (async () => {
+        try {
+          const result = await promise;
+          assertCurrent();
+          return result;
+        } finally {
+          state.diagnostic = { ...state.diagnostic, waitingIo: state.diagnostic.waitingIo - 1 };
+          sliceStartedAt = performance.now();
+        }
+      })();
+      waits.add(wait);
+      void wait.then(() => waits.delete(wait), () => waits.delete(wait));
+      return wait;
     },
   };
   const abort = () => controller.abort(options.signal?.reason ?? new Error('periodic task aborted'));
@@ -144,7 +150,13 @@ export function runPeriodicTask(
   let reject!: (error: unknown) => void;
   const flight = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
   state.flight = flight;
-  const settle = (error?: unknown, failed = false) => {
+  const settle = async (error?: unknown, failed = false) => {
+    // Promise.all can reject while a sibling wait is physically pending.
+    // Every registered IO flight belongs to this run, even on callback error.
+    while (waits.size) await Promise.allSettled([...waits]);
+    if (!failed) {
+      try { assertCurrent(); } catch (currentError) { error = currentError; failed = true; }
+    }
     measureSlice();
     if (timeout) clearTimeout(timeout);
     options.signal?.removeEventListener('abort', abort);
@@ -159,9 +171,9 @@ export function runPeriodicTask(
   try {
     assertCurrent();
     Promise.resolve(run(context)).then(() => {
-      try { assertCurrent(); settle(); } catch (error) { settle(error, true); }
-    }, (error) => settle(error, true));
-  } catch (error) { settle(error, true); }
+      void settle();
+    }, (error) => { void settle(error, true); });
+  } catch (error) { void settle(error, true); }
   return flight;
 }
 

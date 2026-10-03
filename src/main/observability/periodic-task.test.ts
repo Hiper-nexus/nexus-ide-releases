@@ -6,6 +6,24 @@ import { periodicTaskSnapshot, runPeriodicTask, stopPeriodicTask } from './perio
 afterEach(() => vi.useRealTimers());
 
 describe('periodic task physical flights', () => {
+  it('owns every registered wait when Promise.all rejects before a sibling settles', async () => {
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    let runs = 0;
+    const first = runPeriodicTask('test-siblings', async (context) => {
+      runs++;
+      await Promise.all([context.wait(Promise.reject(new Error('failed sibling'))), context.wait(pending)]);
+    });
+    const result = first.catch((error) => error);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const duplicate = runPeriodicTask('test-siblings', () => { runs++; });
+    void duplicate.catch(() => undefined);
+    expect(duplicate).toBe(first);
+    expect(runs).toBe(1);
+    finish();
+    expect((await result).message).toBe('failed sibling');
+    await stopPeriodicTask('test-siblings');
+  });
   it('holds admission through timeout until the original IO physically settles', async () => {
     vi.useFakeTimers();
     let finish!: () => void;
