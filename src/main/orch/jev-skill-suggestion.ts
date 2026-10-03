@@ -29,6 +29,9 @@ import {
 import type { SkillAsset } from './impeccable-manifest';
 import { scanSkillsDirectory, type SkillEntry } from '../skills/skills-catalog';
 import { tryResolveSubdirUnderRoot } from '../security/scoped-workspace-fs';
+import { suggestMissionLaneFromGoal } from '../../shared/mission-intent';
+import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
+import { adapterSchema } from '../../shared/adapter-types';
 
 export const SKILL_SUGGESTION_MIN_CONFIDENCE = 0.6;
 const SKILL_SUGGESTION_TIMEOUT_MS = 4_000;
@@ -299,6 +302,77 @@ function filterByGrants(
 export const PROJECT_SKILL_QUESTION = 'projectSkill';
 
 /**
+ * F-772 (G7a): skills de PAPEL do squad. Workers (escrevem código) usam
+ * builder/pilot/debugging; panes read-only (lane consult) investigam e
+ * relatam — scout/conveyor. Antes o catálogo inteiro ia para toda tarefa e
+ * o Jev sugeria oc-scout para workers (20/108 sugestões da missão, até 0,95)
+ * e systematic-debugging para sessões que nem a tinham.
+ */
+const WRITER_ROLE_SKILLS = new Set([
+  'oc-pilot',
+  'oc-builder',
+  'systematic-debugging',
+]);
+const SCOUT_ROLE_SKILLS = new Set(['oc-scout', 'oc-conveyor']);
+
+/**
+ * Filtra o catálogo apresentado ao Jev pelo papel que a tarefa pede. Lane
+ * `consult` (read-only) perde as skills de escrita; todo o resto perde as de
+ * investigação. Skills de projeto nunca passam por aqui — nome livre, o
+ * operador escolheu instalar.
+ */
+export function skillCatalogForTaskRole(
+  taskText: string,
+  catalog: BundledSkillCatalogEntry[],
+): BundledSkillCatalogEntry[] {
+  const excluded =
+    suggestMissionLaneFromGoal(taskText) === 'consult'
+      ? WRITER_ROLE_SKILLS
+      : SCOUT_ROLE_SKILLS;
+  return catalog.filter((entry) => !excluded.has(entry.name.toLowerCase()));
+}
+
+/** CLIs com entrega própria de skills (skill-mirror ou sessão governada). */
+const GOVERNED_SKILL_SURFACE_ADAPTERS = new Set([
+  'codex',
+  'agy',
+  'kimi',
+  'grok',
+  'opencode',
+  'mimo-code',
+  'qwen',
+]);
+
+const BUILTIN_ADAPTER_IDS = new Set(
+  BUILTIN_ADAPTERS.map((raw) => adapterSchema.parse(raw).id),
+);
+
+const CLAUDE_LAYOUT_SURFACE_ADAPTERS = new Set(
+  BUILTIN_ADAPTERS.map((raw) => adapterSchema.parse(raw))
+    .filter((adapter) => adapter.kind === 'cli-pty' && adapter.bin === 'claude')
+    .map((adapter) => adapter.id),
+);
+
+/**
+ * F-772 (G7a): a dica "leia a SKILL.md" só vale quando a CLI roteada tem
+ * superfície de skills — a família do binário `claude` (HOME `.claude/skills`
+ * real ou efêmero) e os CLIs com entrega própria. Sem superfície (muse,
+ * minimax-code, aider, devin, openclaude…), sugerir uma skill mandaria o
+ * worker ler um arquivo que não existe na sessão dele. Adapter de usuário
+ * (fora do catálogo bundled) mantém a sugestão: fail-open, o gate de grants
+ * no spawn continua decidindo o que entra.
+ */
+export function cliSupportsSkillSurface(adapterId: string): boolean {
+  if (
+    GOVERNED_SKILL_SURFACE_ADAPTERS.has(adapterId) ||
+    CLAUDE_LAYOUT_SURFACE_ADAPTERS.has(adapterId)
+  ) {
+    return true;
+  }
+  return !BUILTIN_ADAPTER_IDS.has(adapterId);
+}
+
+/**
  * As duas perguntas de skill do lote: bundled (`skill`) e do projeto
  * (`projectSkill`), cada uma só quando o seu catálogo não está vazio.
  */
@@ -387,6 +461,12 @@ export async function suggestSkillForTask(
     allowedSkills: string[] | null;
     /** Raiz do projeto: as skills instaladas nele entram no catálogo (F-753). */
     projectRoot?: string;
+    /**
+     * F-772 (G7a): CLI de destino, quando conhecida. Sem superfície de skills
+     * (muse, minimax-code…) a sugestão nem é perguntada — mandaria o pane ler
+     * uma SKILL.md que a sessão dele não recebe.
+     */
+    adapterId?: string;
     sessionId?: string;
     missionId?: string;
     /**
@@ -403,8 +483,17 @@ export async function suggestSkillForTask(
   const judgeFn = opts.deps?.judge ?? judge;
   const record = opts.deps?.record ?? recordJevDecision;
   if (!task.trim() || !enabled() || !hasKey()) return null;
+  if (opts.adapterId !== undefined && !cliSupportsSkillSurface(opts.adapterId)) {
+    return null;
+  }
 
-  const catalog = allowedSkillCatalog(opts.allowedSkills);
+  // F-772 (G7a): papel da tarefa restringe o catálogo bundled antes do Jev
+  // escolher — scout/conveyor fora de workers, builder/debugging fora de
+  // panes read-only.
+  const catalog = skillCatalogForTaskRole(
+    task,
+    allowedSkillCatalog(opts.allowedSkills),
+  );
   const projectCatalog = allowedProjectSkillCatalog(
     opts.allowedSkills,
     opts.projectRoot,

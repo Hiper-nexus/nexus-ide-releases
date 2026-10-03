@@ -12,9 +12,11 @@ import {
   allowedProjectSkillCatalog,
   allowedSkillCatalog,
   buildSkillSuggestionQuestions,
+  cliSupportsSkillSurface,
   listBundledSkillCatalog,
   listProjectSkillCatalog,
   parseSkillSuggestions,
+  skillCatalogForTaskRole,
   suggestSkillForTask,
 } from './jev-skill-suggestion';
 
@@ -468,5 +470,114 @@ describe('suggestSkillForTask', () => {
         },
       }),
     ).toBeNull();
+  });
+});
+
+describe('papel da tarefa e superfície do CLI filtram o catálogo (F-772)', () => {
+  // O bug: oc-scout saía para TODAS as tarefas da missão (20/108, até 0,95) e
+  // um writer Codex recebeu "systematic-debugging", que a sessão dele nem
+  // tinha — o catálogo inteiro ia para o Jev sem papel nem CLI.
+  const squadManifests = {
+    squad: manifest({
+      'oc-scout/SKILL.md': SKILL_MD('oc-scout', 'read-only researcher'),
+      'oc-conveyor/SKILL.md': SKILL_MD('oc-conveyor', 'findings relayer'),
+      'oc-builder/SKILL.md': SKILL_MD('oc-builder', 'leaf executor'),
+      'oc-pilot/SKILL.md': SKILL_MD('oc-pilot', 'mission pilot'),
+    }),
+    superpowers: manifest({
+      'systematic-debugging/SKILL.md': SKILL_MD(
+        'systematic-debugging',
+        'debug discipline',
+      ),
+    }),
+    ponytail: manifest({
+      'SKILL.md': SKILL_MD('ponytail', 'lazy senior dev'),
+    }),
+  };
+  const catalog = allowedSkillCatalog(null, squadManifests);
+
+  it('worker não vê as skills de investigação (scout/conveyor)', () => {
+    const names = skillCatalogForTaskRole(
+      'corrigir o bug do login que derruba a sessão',
+      catalog,
+    ).map((entry) => entry.name);
+    expect(names).not.toContain('oc-scout');
+    expect(names).not.toContain('oc-conveyor');
+    expect(names).toContain('oc-builder');
+    expect(names).toContain('oc-pilot');
+    expect(names).toContain('systematic-debugging');
+    // Skill de propósito geral continua disponível nos dois papéis.
+    expect(names).toContain('ponytail');
+  });
+
+  it('pane read-only não vê as skills de escrita (builder/debugging)', () => {
+    const names = skillCatalogForTaskRole(
+      'analise e mapeie como o roteamento escolhe a CLI, sem alterar nada',
+      catalog,
+    ).map((entry) => entry.name);
+    expect(names).toContain('oc-scout');
+    expect(names).toContain('oc-conveyor');
+    expect(names).not.toContain('oc-builder');
+    expect(names).not.toContain('oc-pilot');
+    expect(names).not.toContain('systematic-debugging');
+  });
+
+  it('CLI sem superfície de skills nem pergunta ao Jev', async () => {
+    const judge = vi.fn();
+    for (const adapterId of ['muse', 'minimax-code', 'aider', 'devin']) {
+      const suggestion = await suggestSkillForTask('corrigir o bug do login', {
+        allowedSkills: null,
+        adapterId,
+        deps: { judge, record: vi.fn(), ...on },
+      });
+      expect(suggestion, adapterId).toBeNull();
+    }
+    expect(judge).not.toHaveBeenCalled();
+  });
+
+  it('a superfície cobre claude-family e as CLIs com entrega própria', () => {
+    for (const adapterId of [
+      'claude',
+      'codex',
+      'agy',
+      'kimi',
+      'grok',
+      'opencode',
+      'mimo-code',
+      'qwen',
+      // Roda o binário claude: a sessão lê .claude/skills como a do Claude.
+      'muse-claude',
+      'glm',
+      'deepseek',
+    ]) {
+      expect(cliSupportsSkillSurface(adapterId), adapterId).toBe(true);
+    }
+    // Adapter de usuário (fora do catálogo bundled) mantém a sugestão.
+    expect(cliSupportsSkillSurface('meu-cli-custom')).toBe(true);
+  });
+
+  it('o catálogo apresentado ao Jev já vem sem as skills do papel errado', async () => {
+    const judge = vi.fn(async (_req: unknown) =>
+      jevResult({
+        skill: {
+          type: 'choice',
+          choice: 'none',
+          probabilities: { none: 0.9 },
+          confidence: 0.9,
+        },
+      }),
+    );
+    await suggestSkillForTask('corrigir o bug do login', {
+      allowedSkills: null,
+      adapterId: 'codex',
+      deps: { judge, record: vi.fn(), ...on },
+    });
+    const request = judge.mock.calls[0][0] as {
+      questions: Record<string, { criteria: Record<string, unknown> }>;
+    };
+    const criteria = Object.keys(request.questions.skill.criteria);
+    expect(criteria).not.toContain('oc-scout');
+    expect(criteria).not.toContain('oc-conveyor');
+    expect(criteria).toContain('systematic-debugging');
   });
 });

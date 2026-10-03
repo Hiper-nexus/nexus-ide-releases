@@ -517,6 +517,9 @@ export async function handleHookDelegateRequest(
     const skillPromise = (deps.suggestSkill ?? suggestSkillForTask)(prompt, {
       allowedSkills: ctx.allowedSkills ?? null,
       projectRoot: skillScope?.rootRealPath,
+      // F-772 (G7a): pane sem superfície de skills (muse, minimax-code…)
+      // nunca recebe a dica de uma SKILL.md que a sessão dele não tem.
+      adapterId: ctx.providerId,
       sessionId: ctx.sessionId,
       timeoutMs: DELEGATE_TIMEOUT_MS,
       signal: AbortSignal.timeout(DELEGATE_TIMEOUT_MS),

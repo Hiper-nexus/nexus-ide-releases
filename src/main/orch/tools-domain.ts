@@ -57,6 +57,7 @@ import {
   routingOverridesFrom,
   type JevRouteTaskBatch,
 } from './jev-task-routing';
+import { cliSupportsSkillSurface } from './jev-skill-suggestion';
 import { mergeAdapterUseLists } from './route-pipeline';
 import { recordRouteDecision } from './route-provenance';
 import { recordRouteLog, recentRouteLog } from './route-log';
@@ -2014,6 +2015,13 @@ export async function routeTaskForCaller(
     ...(routing.confidence ? { confidence: routing.confidence } : {}),
     ...(ruleChoice ? { ruleChoice } : {}),
   };
+  // F-772 (G7a): a sugestão foi julgada antes da rota existir — agora que a
+  // CLI escolhida é conhecida, a dica só sai quando a sessão dela recebe
+  // SKILL.md (worker muse/minimax/aider não recebe e leria instrução morta).
+  const routedSkillSuggestion =
+    skillSuggestion && cliSupportsSkillSurface(decision.adapterId)
+      ? skillSuggestion
+      : null;
   // F-233: sem nenhum modelo de ponta para julgar, o Maestro é avisado de
   // que o veredito é dele — nunca delegado a um modelo barato.
   const judgeHint = decision.judgeUnavailable
@@ -2024,14 +2032,14 @@ export async function routeTaskForCaller(
       }
     : {};
   if (!missionId) {
-    return { ...decision, ...provenance, skillSuggestion, ...judgeHint };
+    return { ...decision, ...provenance, skillSuggestion: routedSkillSuggestion, ...judgeHint };
   }
   const reservation = getProjectDomainStores(ctx.scope)
     .missions.reserveRouteDecision(missionId, task, decision);
   return {
     ...decision,
     ...provenance,
-    skillSuggestion,
+    skillSuggestion: routedSkillSuggestion,
     ...judgeHint,
     routeReservationId: reservation.id,
     routeReservationExpiresAt: reservation.expiresAt,
