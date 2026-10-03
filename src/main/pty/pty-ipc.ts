@@ -88,6 +88,7 @@ import {
 import { getCommandBlockTracker } from "../terminal/command-block-tracker";
 import { registerCommandBlockScope } from "../terminal/command-block-scope-registry";
 import { getProjectDomainStores } from "../orch/project-domain-store-registry";
+import { settleCodexCliVersionForSpawn } from "../orch/codex-cli-version";
 import {
   type TaskDispatchRecord,
   type TaskDispatchStore,
@@ -689,6 +690,10 @@ export function registerPtyIpc(): void {
           const coordinationScope = spawn.authority.scope;
           return preparePaneSpaceWorktree(coordinationScope, req.worktreeSpaceId!, req.cwd)
             .then(async (worktree): Promise<SpawnResult> => {
+              // F-790: Codex com a versão ainda em sondagem espera (teto curto)
+              // ANTES do preparo e da checagem de escopo, para o gate de hooks
+              // enxergar a versão — as demais CLIs seguem direto.
+              await settleCodexCliVersionForSpawn(adapter);
               requireLiveRendererWorkspaceScope(event.sender, coordinationScope);
               const result = await spawnCliPtyAgentPane(event.sender, adapter, {
                 ...spawn,
@@ -706,9 +711,18 @@ export function registerPtyIpc(): void {
               return licenseFailure(error) ?? { ok: false, error: `Não foi possível abrir a pasta isolada da aba: ${error instanceof Error ? error.message : String(error)}` };
             });
         }
-        const outcome = spawnCliPtyAgentPane(
-          event.sender, adapter, spawn, undefined, false, false, spawnTiming,
-        );
+        // F-790: só o Codex, e só com a versão ainda em sondagem, espera —
+        // `null` mantém o caminho síncrono de sempre.
+        const settling = settleCodexCliVersionForSpawn(adapter);
+        const outcome = settling
+          ? settling.then(() =>
+              spawnCliPtyAgentPane(
+                event.sender, adapter, spawn, undefined, false, false, spawnTiming,
+              ),
+            )
+          : spawnCliPtyAgentPane(
+              event.sender, adapter, spawn, undefined, false, false, spawnTiming,
+            );
         if (outcome instanceof Promise) {
           return outcome.then(
             (result) => {

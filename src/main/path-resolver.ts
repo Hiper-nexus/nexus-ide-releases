@@ -568,6 +568,11 @@ export function probeCliBinaryVersion(
   return probe;
 }
 
+/** Há alguma sonda `--version` em voo? Barato: só quem decide se vale esperar. */
+export function hasCliVersionProbesInFlight(): boolean {
+  return cliVersionProbes.size > 0;
+}
+
 /** Avisa quando uma sonda aprende uma versão: a escolha entre instalações pode mudar. */
 export function onCliVersionLearned(listener: () => void): () => void {
   cliVersionListeners.add(listener);

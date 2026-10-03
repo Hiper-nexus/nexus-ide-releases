@@ -8,6 +8,11 @@ import path from "node:path";
 import { PTY_CHANNELS } from "../../shared/channels";
 
 const tabDeps = vi.hoisted(() => ({ prepare: vi.fn(), requireLive: vi.fn() }));
+// F-790: a espera do Codex pela sonda de versão (o helper real tem testes próprios).
+const settleDeps = vi.hoisted(() => ({
+  settle: vi.fn((_adapter: unknown): Promise<void> | null => null),
+}));
+vi.mock('../orch/codex-cli-version', () => ({ settleCodexCliVersionForSpawn: settleDeps.settle }));
 vi.mock('./pane-space-worktree', () => ({ preparePaneSpaceWorktree: tabDeps.prepare }));
 
 const ipcDeps = vi.hoisted(() => {
@@ -483,6 +488,51 @@ describe("registerPtyIpc account fail-fast", () => {
       scope, coordinationScope: authorityDeps.scope, cwd: '/private/tab-a', source: 'direct-user',
     }));
     else expect(ptyDeps.spawnSession).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ scope, cwd: '/private/tab-a' }));
+  });
+
+  it('F-790: Codex com a sonda de versão em voo só prepara e spawna depois dela; outras CLIs não esperam', async () => {
+    providerDeps.prepareProviderSpawn.mockReturnValue({ ok: true, overrides: {} });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn)!;
+    let finish!: () => void;
+    settleDeps.settle.mockReturnValueOnce(new Promise<void>((resolve) => { finish = resolve; }));
+
+    const pending = handler({ sender: { id: 7 } }, { kind: 'cli-agent', adapterId: 'codex', cols: 100, rows: 30 }) as Promise<unknown>;
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settleDeps.settle).toHaveBeenCalledWith(expect.objectContaining({ id: 'codex', bin: 'codex' }));
+    expect(providerDeps.prepareProviderSpawn).not.toHaveBeenCalled();
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+    finish();
+    await expect(pending).resolves.toMatchObject({ ok: true, sessionId: 'pty-created' });
+    expect(ptyDeps.spawnAgentSession).toHaveBeenCalledOnce();
+
+    // Nada a esperar (null): o caminho de sempre, sem espera.
+    ptyDeps.spawnAgentSession.mockClear();
+    const other = await handler({ sender: { id: 7 } }, { kind: 'cli-agent', adapterId: 'claude', cols: 100, rows: 30 });
+    expect(settleDeps.settle).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'claude' }));
+    expect(other).toMatchObject({ ok: true });
+    expect(ptyDeps.spawnAgentSession).toHaveBeenCalledOnce();
+  });
+
+  it('F-790: aba isolada também espera a sonda do Codex antes de preparar o spawn', async () => {
+    providerDeps.prepareProviderSpawn.mockReturnValue({ ok: true, overrides: {} });
+    const scope = { ...authorityDeps.scope, rootRealPath: '/private/tab-a' };
+    tabDeps.prepare.mockResolvedValue({ scope, cwd: scope.rootRealPath });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn)!;
+    let finish!: () => void;
+    settleDeps.settle.mockReturnValueOnce(new Promise<void>((resolve) => { finish = resolve; }));
+
+    const pending = handler({ sender: { id: 7 } }, {
+      kind: 'cli-agent', adapterId: 'codex', paneId: 'pane-tab', worktreeSpaceId: 'space-a',
+      cwd: '/private/tab-a', cols: 80, rows: 24,
+    }) as Promise<unknown>;
+    for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    expect(settleDeps.settle).toHaveBeenCalledWith(expect.objectContaining({ id: 'codex' }));
+    expect(providerDeps.prepareProviderSpawn).not.toHaveBeenCalled();
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+    finish();
+    await expect(pending).resolves.toMatchObject({ ok: true, cwd: '/private/tab-a' });
+    expect(ptyDeps.spawnAgentSession).toHaveBeenCalledOnce();
   });
 
   it('restores an operator helper tab after its ad-hoc spawn grant expired', async () => {

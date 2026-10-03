@@ -8,13 +8,15 @@
 // back to the review prompt).
 
 import { execFileSync } from 'node:child_process';
-import { resolveLoginShellPath } from '../adapters/adapter-registry';
+import { resolveAdapterBinary, resolveLoginShellPath } from '../adapters/adapter-registry';
 import { windowsNpmShimSpawn } from '../adapters/windows-npm-shim';
 import {
   cachedCliBinaryVersion,
+  hasCliVersionProbesInFlight,
   probeCliBinaryVersion,
   resolveCliBinary,
   resolveWindowsCodexNpmShimLaunch,
+  warmCliBinaryVersions,
 } from '../path-resolver';
 
 /** Minimum codex version that honors --dangerously-bypass-hook-trust. */
@@ -115,6 +117,98 @@ export async function warmCodexCliVersion(bin = 'codex'): Promise<string | null>
   return selected
     ? probeCliBinaryVersion(selected.binPath, resolveLoginShellPath(), 'codex')
     : null;
+}
+
+/**
+ * Leitura só de cache da versão do Codex selecionado (B1/F-787): sem
+ * `execFileSync`, sem sonda própria, sem esperar. Cache frio = `null`. Serve à
+ * telemetria do spawn, que nunca pode custar um subprocesso; quem decide a
+ * flag usa `resolveCodexCliVersion` depois de `settleCodexCliVersionForSpawn`.
+ */
+export function peekCodexCliVersion(bin = 'codex'): string | null {
+  const selected = resolveCliBinary(bin);
+  if (!selected) return null;
+  return cachedCliBinaryVersion(selected.binPath, 'codex') ?? null;
+}
+
+/** Teto da espera do spawn do Codex por uma sonda de versão ainda em voo. */
+export const CODEX_SPAWN_VERSION_WAIT_MS = 2_000;
+
+/** O que o spawn precisa saber do adapter para decidir se espera. */
+export interface CodexSpawnVersionAdapter {
+  readonly id: string;
+  readonly bin: string;
+  readonly quirks?: { readonly nexusMcp?: unknown };
+}
+
+/**
+ * Fecha a janela do boot (F-790/F-764): enquanto o aquecimento não terminou, a
+ * versão do Codex é "desconhecida" e o pane nasceria SEM
+ * `--dangerously-bypass-hook-trust`, caindo na revisão de hooks. Quem decide o
+ * spawn do Codex chama isto ANTES do preparo e aguarda a promessa devolvida.
+ *
+ * - Devolve `null` — nada a esperar — para qualquer CLI que não seja do sabor
+ *   codex (a flag só existe aí) e quando a versão da instalação escolhida já
+ *   está em cache e não há sonda em voo (o caso de sempre, depois do boot).
+ * - Senão, aguarda as sondas daquela instalação (e das duplicadas do PATH) com
+ *   o teto `timeoutMs`. Concluiu: refaz o cache de binários — o spawn e o gate
+ *   enxergam a mesma instalação — e a próxima leitura do gate já sabe a
+ *   versão. Estourou o teto: segue como hoje (versão desconhecida, sem a
+ *   flag); a sonda termina em segundo plano e alimenta o cache.
+ * Nunca rejeita e não faz chamada síncrona nova: só lê o cache.
+ */
+export function settleCodexCliVersionForSpawn(
+  adapter: CodexSpawnVersionAdapter,
+  timeoutMs = CODEX_SPAWN_VERSION_WAIT_MS,
+): Promise<void> | null {
+  if (adapter.quirks?.nexusMcp !== 'codex') return null;
+  const selected = resolveCliBinary(adapter.bin);
+  if (!selected) return null;
+  if (
+    cachedCliBinaryVersion(selected.binPath, 'codex') !== undefined &&
+    !hasCliVersionProbesInFlight()
+  ) {
+    return null;
+  }
+  return waitForCodexCliVersion(adapter, selected.binPath, timeoutMs);
+}
+
+async function waitForCodexCliVersion(
+  adapter: CodexSpawnVersionAdapter,
+  binPath: string,
+  timeoutMs: number,
+): Promise<void> {
+  const warming = Promise.all([
+    warmCliBinaryVersions({ commands: [adapter.bin], alsoSingle: [adapter.bin] }),
+    // A instalação escolhida é sondada de qualquer jeito: adapter de usuário
+    // com `bin` fora do catálogo de CLIs de IA também alimenta o gate.
+    probeCliBinaryVersion(binPath, resolveLoginShellPath(), 'codex'),
+  ]).then(
+    () => true,
+    () => false,
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const settled = await Promise.race([
+    warming,
+    new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), timeoutMs);
+      timer.unref?.();
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
+  if (settled) {
+    // O cache de binários pode ter sido montado antes das versões chegarem.
+    try {
+      resolveAdapterBinary(adapter.id);
+    } catch {
+      /* O spawn refaz a resolução por conta própria. */
+    }
+    return;
+  }
+  console.warn(
+    `[codex] versão do Codex ainda não conhecida após ${timeoutMs} ms; ` +
+      'o spawn segue sem a flag de confiança de hooks',
+  );
 }
 
 /**
