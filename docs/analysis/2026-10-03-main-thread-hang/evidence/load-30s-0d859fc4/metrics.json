@@ -1,0 +1,219 @@
+{
+  "pasteOutcome": "marker",
+  "finalCompletion": "done",
+  "finalHandoffs": 1,
+  "finalCommands": 1,
+  "missionStatus": "running",
+  "workerState": "idle",
+  "supervisorPaneStates": [
+    {
+      "paneId": "finite-0",
+      "role": "orchestrator",
+      "state": "busy"
+    },
+    {
+      "paneId": "finite-1",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-2",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-3",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-4",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-5",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-6",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-7",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-8",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-9",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-10",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-11",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-12",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-13",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-14",
+      "role": "worker",
+      "state": "exited"
+    },
+    {
+      "paneId": "pane-musv91vl-4",
+      "role": "worker",
+      "state": "busy"
+    }
+  ],
+  "supervisorStallHandoffs": 1,
+  "semanticWorkerStatus": "working",
+  "routedSpawnWallMs": 32.3842910000003,
+  "checksums": [
+    {
+      "sessionId": "pty-musv91g6-1",
+      "generated": "3f2943b17bcb5570c21eb74b2f7ee3af42ea2d65277e9c8a5efb5b6a35d1c5e2",
+      "received": "3f2943b17bcb5570c21eb74b2f7ee3af42ea2d65277e9c8a5efb5b6a35d1c5e2",
+      "chunks": 14738
+    },
+    {
+      "sessionId": "pty-musv91gi-2",
+      "generated": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "received": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "chunks": 1173
+    },
+    {
+      "sessionId": "pty-musv91gk-3",
+      "generated": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "received": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "chunks": 1173
+    },
+    {
+      "sessionId": "pty-musv91gl-4",
+      "generated": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "received": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "chunks": 1173
+    },
+    {
+      "sessionId": "pty-musv91gm-5",
+      "generated": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "received": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "chunks": 1173
+    },
+    {
+      "sessionId": "pty-musv91gn-6",
+      "generated": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "received": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "chunks": 1173
+    },
+    {
+      "sessionId": "pty-musv91gn-7",
+      "generated": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "received": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "chunks": 1173
+    },
+    {
+      "sessionId": "pty-musv91go-8",
+      "generated": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "received": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "chunks": 1173
+    },
+    {
+      "sessionId": "pty-musv91gq-9",
+      "generated": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "received": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "chunks": 1173
+    },
+    {
+      "sessionId": "pty-musv91gr-10",
+      "generated": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "received": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "chunks": 1173
+    },
+    {
+      "sessionId": "pty-musv91gs-11",
+      "generated": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "received": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "chunks": 1173
+    },
+    {
+      "sessionId": "pty-musv91gt-12",
+      "generated": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "received": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "chunks": 1173
+    },
+    {
+      "sessionId": "pty-musv91gt-13",
+      "generated": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "received": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "chunks": 1173
+    },
+    {
+      "sessionId": "pty-musv91gv-14",
+      "generated": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "received": "482fc023323f4096423684e958ebda5046f05679844ecbc6cbf91d48cf69e777",
+      "chunks": 1173
+    },
+    {
+      "sessionId": "pty-musv91gw-15",
+      "generated": "82d96c716105789e7605dc7f7d1128b3724a73c991b783e8a0f54a2b8fbc60bc",
+      "received": "82d96c716105789e7605dc7f7d1128b3724a73c991b783e8a0f54a2b8fbc60bc",
+      "chunks": 1174
+    },
+    {
+      "sessionId": "pty-musv91vm-16",
+      "generated": "48e2327388bd2938593e5f69b6ece9492421524553e09facd3c75949c39dc759",
+      "received": "48e2327388bd2938593e5f69b6ece9492421524553e09facd3c75949c39dc759",
+      "chunks": 1158
+    }
+  ],
+  "label": "production Main + fake credit host",
+  "head": "0d859fc465617a1f81ae0ba3e3d33350958b4019",
+  "fixtureBase": "88f3cdd628fe8e936d058ab9dd01b66e846f4665",
+  "runtime": "v22.23.2",
+  "sessions": 16,
+  "generatedBytes": 483018913,
+  "receivedBytes": 483018913,
+  "elapsedMs": 30019.284625,
+  "receivedBytesPerSec": 16090287.261467343,
+  "p99LagMs": 5.873663,
+  "maxBlockingMs": 101.69579199999953,
+  "maxSpawnBlockingMs": 12.074375000000146,
+  "supervisorScans": 298,
+  "analysis": {
+    "degradedSessions": 0,
+    "workerEpoch": 1,
+    "pendingBytes": 0,
+    "inFlight": true,
+    "admittedBytes": 483018913,
+    "ackedBytes": 483018913,
+    "highwaterBytes": 196848,
+    "sessions": 16,
+    "degraded": false
+  },
+  "liveAgentBindings": 15,
+  "limitations": [
+    "Signed native host and hard-watchdog fault run still pending; do not treat this partial harness as C.1/C.2 acceptance"
+  ]
+}
