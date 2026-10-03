@@ -2,16 +2,46 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { createScopedMissionStore, type ScopedMissionStore } from './mission-store';
 import {
+  boundedHookGitRunner,
   handleHookIntegrationRequest,
+  HOOK_GIT_CALL_TIMEOUT_MS,
+  HOOK_GIT_TOTAL_BUDGET_MS,
   integrationCommandHit,
 } from './hook-integration-endpoint';
 import type { AgentGateContext } from './gate';
-import type { GitRunner } from '../runtime/git-command';
+import {
+  AsyncProcessGitRunner,
+  GitCommandError,
+  type AsyncGitRunner,
+  type GitRunOptions,
+} from '../runtime/git-command';
+
+/**
+ * F-815: conta as chamadas SÍNCRONAS de processo (`spawnSync`, `execFileSync`,
+ * `execSync`) que o hook faz enquanto `tracking` está ligado. O fixture do
+ * teste usa `execFileSync` de verdade, por isso só se conta dentro do handler.
+ */
+const syncProcessSpy = vi.hoisted(() => ({ tracking: false, calls: [] as string[] }));
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  const watch = <F extends (...args: never[]) => unknown>(name: string, fn: F): F =>
+    ((...args: unknown[]) => {
+      if (syncProcessSpy.tracking) syncProcessSpy.calls.push(name);
+      return (fn as (...a: unknown[]) => unknown)(...args);
+    }) as unknown as F;
+  const patched = {
+    ...actual,
+    spawnSync: watch('spawnSync', actual.spawnSync),
+    execFileSync: watch('execFileSync', actual.execFileSync),
+    execSync: watch('execSync', actual.execSync),
+  };
+  return { ...patched, default: patched };
+});
 
 let dir = '';
 let repo = '';
@@ -51,6 +81,16 @@ function runGit(cwd: string, ...args: string[]): string {
 
 function git(...args: string[]): string {
   return runGit(repo, ...args);
+}
+
+/** Remoto bare clonado do repo, com `main` rastreando `<remoto>/main`. */
+function setupRemote(remoteName = 'origin'): string {
+  const remoteDir = path.join(dir, `${remoteName}.git`);
+  runGit(dir, 'clone', '-q', '--bare', repo, remoteDir);
+  git('remote', 'add', remoteName, remoteDir);
+  git('fetch', remoteName, '-q');
+  git('branch', `--set-upstream-to=${remoteName}/main`, 'main');
+  return remoteDir;
 }
 
 /** Outro desenvolvedor clona o remoto, commita `file` e publica no `main` dele. */
@@ -118,30 +158,30 @@ afterEach(() => {
 });
 
 describe('integrationCommandHit', () => {
-  it('casa comandos integradores e ignora os demais', () => {
-    expect(integrationCommandHit('git push origin main')).toBe(true);
-    expect(integrationCommandHit('  gh pr create --fill')).toBe(true);
-    expect(integrationCommandHit('git merge feature main')).toBe(true);
-    expect(integrationCommandHit('cd repo && git push')).toBe(true);
-    expect(integrationCommandHit('git status')).toBe(false);
-    expect(integrationCommandHit('git push --dry-run')).toBe(false);
-    expect(integrationCommandHit('git merge feature hotfix')).toBe(false);
+  it('casa comandos integradores e ignora os demais', async () => {
+    expect(await integrationCommandHit('git push origin main')).toBe(true);
+    expect(await integrationCommandHit('  gh pr create --fill')).toBe(true);
+    expect(await integrationCommandHit('git merge feature main')).toBe(true);
+    expect(await integrationCommandHit('cd repo && git push')).toBe(true);
+    expect(await integrationCommandHit('git status')).toBe(false);
+    expect(await integrationCommandHit('git push --dry-run')).toBe(false);
+    expect(await integrationCommandHit('git merge feature hotfix')).toBe(false);
   });
 
-  it('só pergunta a branch ao git quando o comando é um git merge', () => {
-    // O hook roda em todo Bash de pane de missão e o git do runner é
-    // spawnSync no Main: comando comum não pode pagar um processo git.
+  it('só pergunta a branch ao git quando o comando é um git merge', async () => {
+    // O hook roda em todo Bash de pane de missão: comando comum não pode
+    // pagar um processo git.
     const calls: string[][] = [];
-    const spy: GitRunner = {
-      run: (_cwd, args) => {
+    const spy: AsyncGitRunner = {
+      run: async (_cwd, args) => {
         calls.push([...args]);
         return { status: 0, stdout: 'main\n', stderr: '' };
       },
     };
-    expect(integrationCommandHit('ls -la && npx vitest run', { cwd: '/repo', git: spy })).toBe(false);
-    expect(integrationCommandHit('git status', { cwd: '/repo', git: spy })).toBe(false);
+    expect(await integrationCommandHit('ls -la && npx vitest run', { cwd: '/repo', git: spy })).toBe(false);
+    expect(await integrationCommandHit('git status', { cwd: '/repo', git: spy })).toBe(false);
     expect(calls).toEqual([]);
-    expect(integrationCommandHit('git merge feature', { cwd: '/repo', git: spy })).toBe(true);
+    expect(await integrationCommandHit('git merge feature', { cwd: '/repo', git: spy })).toBe(true);
     expect(calls).toEqual([['symbolic-ref', '--short', '-q', 'HEAD']]);
   });
 });
@@ -189,7 +229,7 @@ describe('F-814: merge-* de leitura e controle de merge não são integração',
     await expect(
       handleHookIntegrationRequest(hookCtx(), bash(command), { storesFor }),
     ).resolves.toMatchObject({ payload: {} });
-    expect(integrationCommandHit(command, repo)).toBe(false);
+    expect(await integrationCommandHit(command, repo)).toBe(false);
   });
 
   it.each(READ_ONLY_MERGE_COMMANDS)('%s não é bloqueado no meio de um conflito', async (command) => {
@@ -197,7 +237,7 @@ describe('F-814: merge-* de leitura e controle de merge não são integração',
     await expect(
       handleHookIntegrationRequest(hookCtx(), bash(command), { storesFor }),
     ).resolves.toMatchObject({ payload: {} });
-    expect(integrationCommandHit(command, repo)).toBe(false);
+    expect(await integrationCommandHit(command, repo)).toBe(false);
   });
 
   const MERGE_CONTROL_COMMANDS = [
@@ -216,7 +256,7 @@ describe('F-814: merge-* de leitura e controle de merge não são integração',
     await expect(
       handleHookIntegrationRequest(hookCtx(), bash(command), { storesFor }),
     ).resolves.toMatchObject({ payload: {} });
-    expect(integrationCommandHit(command, repo)).toBe(false);
+    expect(await integrationCommandHit(command, repo)).toBe(false);
   });
 
   it('o --abort liberado de fato desfaz o merge: a recuperação existe de ponta a ponta', async () => {
@@ -246,21 +286,21 @@ describe('F-814: merge-* de leitura e controle de merge não são integração',
     }
   });
 
-  it('não dá para esconder um merge real atrás de "--abort" como argumento de outra opção', () => {
+  it('não dá para esconder um merge real atrás de "--abort" como argumento de outra opção', async () => {
     createFeatureBranch();
-    expect(integrationCommandHit("git merge -m '--abort' feature", repo)).toBe(true);
-    expect(integrationCommandHit('git merge --abort feature', repo)).toBe(true);
-    expect(integrationCommandHit('git merge --continue --no-ff feature', repo)).toBe(true);
-    expect(integrationCommandHit('git merge --abort; git push origin main', repo)).toBe(true);
+    expect(await integrationCommandHit("git merge -m '--abort' feature", repo)).toBe(true);
+    expect(await integrationCommandHit('git merge --abort feature', repo)).toBe(true);
+    expect(await integrationCommandHit('git merge --continue --no-ff feature', repo)).toBe(true);
+    expect(await integrationCommandHit('git merge --abort; git push origin main', repo)).toBe(true);
   });
 
-  it('merge explícito para main fora do checkout main continua sendo integração; merge-base não', () => {
-    expect(integrationCommandHit('git merge feature main')).toBe(true);
-    expect(integrationCommandHit('git merge origin/main')).toBe(true);
-    expect(integrationCommandHit('git merge-base feature main')).toBe(false);
-    expect(integrationCommandHit('git merge-base --is-ancestor feature master')).toBe(false);
-    expect(integrationCommandHit('git merge-tree --write-tree main feature')).toBe(false);
-    expect(integrationCommandHit('git merge-file main.txt a b')).toBe(false);
+  it('merge explícito para main fora do checkout main continua sendo integração; merge-base não', async () => {
+    expect(await integrationCommandHit('git merge feature main')).toBe(true);
+    expect(await integrationCommandHit('git merge origin/main')).toBe(true);
+    expect(await integrationCommandHit('git merge-base feature main')).toBe(false);
+    expect(await integrationCommandHit('git merge-base --is-ancestor feature master')).toBe(false);
+    expect(await integrationCommandHit('git merge-tree --write-tree main feature')).toBe(false);
+    expect(await integrationCommandHit('git merge-file main.txt a b')).toBe(false);
   });
 
   it('merge em andamento recebe mensagem própria, nunca "commite" (push com conflito no main)', async () => {
@@ -291,7 +331,7 @@ describe('F-814: merge-* de leitura e controle de merge não são integração',
   describe('varredura linear (16 KB, teto de 50 ms)', () => {
     const SIZE = 16_384;
     // Runner espião: a branch vem sem processo, então o tempo medido é só o da regex.
-    const onMain: GitRunner = { run: () => ({ status: 0, stdout: 'main\n', stderr: '' }) };
+    const onMain: AsyncGitRunner = { run: async () => ({ status: 0, stdout: 'main\n', stderr: '' }) };
     const inputs: Array<[string, string, boolean]> = [
       ['git merge e espaços sem fim', `git merge${' '.repeat(SIZE)}`, true],
       ['git merge-base e espaços', `git merge-base${' '.repeat(SIZE)}`, false],
@@ -306,11 +346,11 @@ describe('F-814: merge-* de leitura e controle de merge não são integração',
       ['linhas em branco', '\n'.repeat(SIZE), false],
     ];
 
-    it.each(inputs)('%s', (_label, text, expected) => {
+    it.each(inputs)('%s', async (_label, text, expected) => {
       // Aquece: a compilação da regex não é o que está sendo medido.
-      integrationCommandHit(text, { cwd: '/repo', git: onMain });
+      await integrationCommandHit(text, { cwd: '/repo', git: onMain });
       const startedAt = performance.now();
-      const hit = integrationCommandHit(text, { cwd: '/repo', git: onMain });
+      const hit = await integrationCommandHit(text, { cwd: '/repo', git: onMain });
       const elapsedMs = performance.now() - startedAt;
       expect(hit).toBe(expected);
       expect(elapsedMs).toBeLessThan(50);
@@ -374,15 +414,6 @@ describe('POST /hook/integration', () => {
   });
 
   describe('sincronização fast-forward e direção do merge (F-778)', () => {
-    function setupRemote(remoteName = 'origin') {
-      const remoteDir = path.join(dir, `${remoteName}.git`);
-      runGit(dir, 'clone', '-q', '--bare', repo, remoteDir);
-      git('remote', 'add', remoteName, remoteDir);
-      git('fetch', remoteName, '-q');
-      git('branch', `--set-upstream-to=${remoteName}/main`, 'main');
-      return remoteDir;
-    }
-
     it('igual ao upstream com --ff-only passa sem exigir veredito', async () => {
       setupRemote('origin');
       const result = await handleHookIntegrationRequest(
@@ -503,7 +534,7 @@ describe('POST /hook/integration', () => {
       });
     });
 
-    it('detecta direção no integrationCommandHit pelo branch atual do cwd', () => {
+    it('detecta direção no integrationCommandHit pelo branch atual do cwd', async () => {
       git('checkout', '-b', 'feature');
       fs.writeFileSync(path.join(repo, 'feat.txt'), 'feature code');
       git('add', 'feat.txt');
@@ -511,12 +542,219 @@ describe('POST /hook/integration', () => {
       git('checkout', 'main');
 
       // No main, merge de feature é integração
-      expect(integrationCommandHit('git merge feature', repo)).toBe(true);
-      expect(integrationCommandHit('git merge feature', { cwd: repo })).toBe(true);
+      expect(await integrationCommandHit('git merge feature', repo)).toBe(true);
+      expect(await integrationCommandHit('git merge feature', { cwd: repo })).toBe(true);
 
       // No feature, merge de outro branch qualquer (não main/master) não é integração no main
       git('checkout', 'feature');
-      expect(integrationCommandHit('git merge other', repo)).toBe(false);
+      expect(await integrationCommandHit('git merge other', repo)).toBe(false);
+    });
+  });
+
+  /**
+   * F-815: o hook roda a cada comando Bash de todo pane, dentro do Main. A
+   * isenção do F-778 fazia até 9 `spawnSync` git por comando de merge.
+   */
+  describe('git assíncrono, com timeout, no caminho do hook (F-815)', () => {
+    /** Roda o handler contando processos síncronos e passagens pelo runner assíncrono real. */
+    async function runTracked(command: string, cwd?: string) {
+      const asyncRun = vi.spyOn(AsyncProcessGitRunner.prototype, 'run');
+      syncProcessSpy.calls.length = 0;
+      syncProcessSpy.tracking = true;
+      try {
+        const result = await handleHookIntegrationRequest(hookCtx(), bash(command, cwd), { storesFor });
+        return {
+          result,
+          syncCalls: [...syncProcessSpy.calls],
+          asyncGitCalls: asyncRun.mock.calls.map((call) => [...call[1]]),
+        };
+      } finally {
+        syncProcessSpy.tracking = false;
+        asyncRun.mockRestore();
+      }
+    }
+
+    function createFeatureBranch(): void {
+      git('checkout', '-q', '-b', 'feature');
+      fs.writeFileSync(path.join(repo, 'feat.txt'), 'feature code');
+      git('add', 'feat.txt');
+      git('commit', '-qm', 'feature commit');
+      git('checkout', '-q', 'main');
+    }
+
+    it('a isenção do --ff-only prova o upstream com ~9 chamadas git e nenhuma síncrona', async () => {
+      setupRemote('origin');
+      const { result, syncCalls, asyncGitCalls } = await runTracked('git merge --ff-only origin/main');
+      expect(result.payload).toEqual({});
+      expect(syncCalls).toEqual([]);
+      // config segura + branch + upstream + alvo + 3 SHAs + merge-base + rev-list.
+      expect(asyncGitCalls.length).toBeGreaterThanOrEqual(9);
+      expect(asyncGitCalls[0]).toEqual(expect.arrayContaining(['config', '--local', '--get-regexp']));
+      expect(asyncGitCalls.some((args) => args[0] === 'merge-base')).toBe(true);
+    });
+
+    it('o portão que recusa (merge no main sem veredito) também não usa processo síncrono', async () => {
+      createFeatureBranch();
+      const { result, syncCalls, asyncGitCalls } = await runTracked('git merge feature');
+      expect(result.payload).toMatchObject({
+        decision: 'block',
+        reason: expect.stringMatching(/review_required:.*HEAD [a-f0-9]{7}/su),
+      });
+      expect(syncCalls).toEqual([]);
+      // branch (direção) + config segura + HEAD + status.
+      expect(asyncGitCalls.map((args) => args[0])).toEqual(['symbolic-ref', 'config', 'rev-parse', 'status']);
+    });
+
+    it('merge em andamento e push com veredito aprovado: sem processo síncrono', async () => {
+      store.reviewVerdicts.record({
+        missionId,
+        headSha: git('rev-parse', 'HEAD'),
+        treeDirty: false,
+        verdict: 'approve',
+        reviewerAdapter: 'claude',
+        reviewerModel: 'claude-opus-5-6',
+        frontier: true,
+        summary: 'Aprovado.',
+      });
+      const approved = await runTracked('git push origin main');
+      expect(approved.result.payload).toEqual({});
+      expect(approved.syncCalls).toEqual([]);
+      expect(approved.asyncGitCalls.length).toBeGreaterThan(0);
+
+      git('checkout', '-q', '-b', 'feature');
+      fs.writeFileSync(path.join(repo, 'a.txt'), 'lado da feature');
+      git('commit', '-qam', 'feature edita a.txt');
+      git('checkout', '-q', 'main');
+      fs.writeFileSync(path.join(repo, 'a.txt'), 'lado do main');
+      git('commit', '-qam', 'main edita a.txt');
+      expect(() => git('merge', 'feature')).toThrow();
+      const conflicted = await runTracked('git push origin main');
+      expect(conflicted.result.payload).toMatchObject({
+        decision: 'block',
+        reason: expect.stringContaining('merge em andamento'),
+      });
+      expect(conflicted.syncCalls).toEqual([]);
+    });
+
+    it('comando comum não dispara git nenhum, síncrono ou assíncrono', async () => {
+      for (const command of ['ls -la', 'git status', 'npm test && git diff', 'git merge-base HEAD main']) {
+        const { result, syncCalls, asyncGitCalls } = await runTracked(command);
+        expect(result.payload, command).toEqual({});
+        expect(syncCalls, command).toEqual([]);
+        expect(asyncGitCalls, command).toEqual([]);
+      }
+    });
+
+    it('toda chamada ao git leva timeout curto, e o runner do handler respeita o orçamento', async () => {
+      setupRemote('origin');
+      const real = new AsyncProcessGitRunner();
+      const timeouts: Array<number | undefined> = [];
+      const recording: AsyncGitRunner = {
+        run: (cwd, args, options) => {
+          timeouts.push(options?.timeoutMs);
+          return real.run(cwd, args, options);
+        },
+      };
+      const result = await handleHookIntegrationRequest(
+        hookCtx(),
+        bash('git merge --ff-only origin/main'),
+        { storesFor, git: recording },
+      );
+      expect(result.payload).toEqual({});
+      expect(timeouts.length).toBeGreaterThanOrEqual(9);
+      for (const timeoutMs of timeouts) {
+        expect(timeoutMs).toBeGreaterThan(0);
+        expect(timeoutMs).toBeLessThanOrEqual(HOOK_GIT_CALL_TIMEOUT_MS);
+      }
+      // O orçamento total cabe no transporte do hook (curl --max-time 10).
+      expect(HOOK_GIT_CALL_TIMEOUT_MS).toBeLessThanOrEqual(HOOK_GIT_TOTAL_BUDGET_MS);
+      expect(HOOK_GIT_TOTAL_BUDGET_MS).toBeLessThan(10_000);
+    });
+
+    it('boundedHookGitRunner: timeout vira o que resta do orçamento e esgotado não dispara processo', async () => {
+      let nowMs = 1_000;
+      const seen: Array<GitRunOptions | undefined> = [];
+      const inner: AsyncGitRunner = {
+        run: async (_cwd, _args, options) => {
+          seen.push(options);
+          return { status: 0, stdout: '', stderr: '' };
+        },
+      };
+      const bounded = boundedHookGitRunner(inner, 8_000, () => nowMs);
+      await bounded.run('/repo', ['status']);
+      nowMs += 6_500; // restam 1_500 ms
+      await bounded.run('/repo', ['status'], { allowFailure: true });
+      expect(seen.map((o) => o?.timeoutMs)).toEqual([HOOK_GIT_CALL_TIMEOUT_MS, 1_500]);
+      expect(seen[1]).toMatchObject({ allowFailure: true });
+      nowMs += 1_500; // orçamento esgotado
+      await expect(bounded.run('/repo', ['status'])).rejects.toThrow('hook_git_budget_exhausted');
+      expect(seen).toHaveLength(2);
+    });
+
+    it('git que estoura o timeout é falha de infraestrutura: o hook responde {} e não trava o CLI', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const timedOut: AsyncGitRunner = {
+          run: (_cwd, args) =>
+            Promise.reject(new GitCommandError('Git process could not complete', args)),
+        };
+        for (const command of ['git push origin main', 'git merge --ff-only origin/main', 'git merge feature']) {
+          await expect(
+            handleHookIntegrationRequest(hookCtx(), bash(command), { storesFor, git: timedOut }),
+          ).resolves.toMatchObject({ payload: {} });
+        }
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('config local executável: a isenção não roda nenhum git além da inspeção de config', async () => {
+      setupRemote('origin');
+      const marker = path.join(dir, 'fsmonitor-ran');
+      const script = path.join(dir, 'fsmonitor.sh');
+      fs.writeFileSync(script, `#!/bin/sh\ntouch '${marker}'\n`, { mode: 0o755 });
+      git('config', 'core.fsmonitor', script);
+      const real = new AsyncProcessGitRunner();
+      const argv: string[][] = [];
+      const recording: AsyncGitRunner = {
+        run: (cwd, args, options) => {
+          argv.push([...args]);
+          return real.run(cwd, args, options);
+        },
+      };
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        await handleHookIntegrationRequest(hookCtx(), bash('git merge --ff-only origin/main'), {
+          storesFor,
+          git: recording,
+        });
+      } finally {
+        warn.mockRestore();
+      }
+      expect(argv.length).toBeGreaterThan(0);
+      expect(argv.every((args) => args[0] === 'config')).toBe(true);
+      expect(fs.existsSync(marker)).toBe(false);
+    });
+
+    it('limite da heurística: remote-tracking forjado libera o merge LOCAL, mas o push segue barrado', async () => {
+      setupRemote('origin');
+      createFeatureBranch();
+      // Sem fetch nenhum: o ref remote-tracking é gravado localmente.
+      git('update-ref', 'refs/remotes/origin/main', git('rev-parse', 'feature'));
+      const merge = await handleHookIntegrationRequest(
+        hookCtx(),
+        bash('git merge --ff-only origin/main'),
+        { storesFor },
+      );
+      expect(merge.payload).toEqual({});
+      git('merge', '--ff-only', 'origin/main');
+      expect(git('rev-parse', 'HEAD')).toBe(git('rev-parse', 'feature'));
+      // O veredito é por HEAD exato: o HEAD forjado não tem veredito, então o push é recusado.
+      const push = await handleHookIntegrationRequest(hookCtx(), bash('git push origin main'), { storesFor });
+      expect(push.payload).toMatchObject({
+        decision: 'block',
+        reason: expect.stringContaining('veredito'),
+      });
     });
   });
 });

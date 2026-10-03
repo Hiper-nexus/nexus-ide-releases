@@ -16,21 +16,63 @@ import { executionScopeFor } from './gate';
 import { handleHookJsonPost } from './hook-http';
 import { isInsidePath } from './workspace-path';
 import {
-  assertIntegrationReviewed,
+  assertIntegrationReviewedAsync,
   isIntegrationReviewRequiredError,
 } from './integration-review-gate';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import {
-  assertSafeLocalGitConfig,
-  ProcessGitRunner,
-  type GitRunner,
+  assertSafeLocalGitConfigAsync,
+  AsyncProcessGitRunner,
+  type AsyncGitRunner,
 } from '../runtime/git-command';
 import { trace } from '../observability/main-trace';
 
 /** Mesmo teto do /hook/triage — payloads de hook são metadados de evento. */
 export const HOOK_INTEGRATION_MAX_BODY_BYTES = 64 * 1024;
 
-const defaultGitRunner = new ProcessGitRunner();
+/**
+ * F-815: este hook roda a cada comando Bash de todo pane de missão, dentro do
+ * Main (Electron). O git é SEMPRE assíncrono (`AsyncProcessGitRunner`: mesmo
+ * envelope de segurança do runner síncrono — `-c core.fsmonitor=false`,
+ * hooks desligados, `GIT_*` descartado — e `assertSafeLocalGitConfigAsync`
+ * antes de qualquer leitura num checkout que o agente escreve), com timeout
+ * curto e um orçamento total por requisição. O transporte do hook desiste em
+ * 10 s (`INTEGRATION_HOOK_TRANSPORT_SECONDS`); estourar o orçamento é falha de
+ * infraestrutura e o hook responde `{}` (nunca atrapalha o CLI).
+ */
+export const HOOK_GIT_CALL_TIMEOUT_MS = 5_000;
+export const HOOK_GIT_TOTAL_BUDGET_MS = 8_000;
+
+let sharedGitRunner: AsyncGitRunner | undefined;
+/** Sob demanda: quem importa só `integrationCommandHit` não instancia o runner. */
+function defaultGitRunner(): AsyncGitRunner {
+  return (sharedGitRunner ??= new AsyncProcessGitRunner());
+}
+
+/**
+ * Envolve o runner com timeout por chamada e o orçamento total do hook: cada
+ * `run` recebe `min(teto por chamada, o que resta do orçamento)` e, esgotado o
+ * orçamento, nem dispara o processo.
+ */
+export function boundedHookGitRunner(
+  git: AsyncGitRunner,
+  budgetMs: number = HOOK_GIT_TOTAL_BUDGET_MS,
+  now: () => number = Date.now,
+): AsyncGitRunner {
+  const deadline = now() + budgetMs;
+  return {
+    run: (cwd, args, options) => {
+      const remainingMs = deadline - now();
+      if (remainingMs <= 0) {
+        return Promise.reject(new Error('hook_git_budget_exhausted'));
+      }
+      return git.run(cwd, args, {
+        ...options,
+        timeoutMs: Math.min(HOOK_GIT_CALL_TIMEOUT_MS, remainingMs),
+      });
+    },
+  };
+}
 
 // F-814: `git merge` só é o subcomando `merge` quando seguido de espaço/fim. Com
 // `\b`, o hífen de `git merge-base`/`merge-tree`/`merge-file` (plumbing de
@@ -58,9 +100,12 @@ function isMergeControlSegment(segment: string): boolean {
   return args.length === 1 && MERGE_CONTROL_FLAGS.has(args[0]);
 }
 
-function currentBranchName(git: GitRunner, cwd: string): string | null {
+async function currentBranchName(
+  git: AsyncGitRunner,
+  cwd: string,
+): Promise<string | null> {
   try {
-    const result = git.run(cwd, ['symbolic-ref', '--short', '-q', 'HEAD'], {
+    const result = await git.run(cwd, ['symbolic-ref', '--short', '-q', 'HEAD'], {
       allowFailure: true,
     });
     if (result.status === 0) {
@@ -95,26 +140,29 @@ function tokenizeArgs(argString: string): string[] {
  * F-778: se o cwd aponta para um repo cuja branch atual é main/master, qualquer
  * `git merge` para dentro dela é detectado como integração real (destino implícito).
  */
-export function integrationCommandHit(
+export async function integrationCommandHit(
   command: string,
-  cwdOrOptions?: string | { cwd?: string; git?: GitRunner },
-  gitArg?: GitRunner,
-): boolean {
+  cwdOrOptions?: string | { cwd?: string; git?: AsyncGitRunner },
+  gitArg?: AsyncGitRunner,
+): Promise<boolean> {
   let cwd: string | undefined;
-  let runner: GitRunner = gitArg ?? defaultGitRunner;
+  let runner: AsyncGitRunner | undefined = gitArg;
   if (typeof cwdOrOptions === 'string') {
     cwd = cwdOrOptions;
   } else if (cwdOrOptions && typeof cwdOrOptions === 'object') {
     cwd = cwdOrOptions.cwd;
     if (cwdOrOptions.git) runner = cwdOrOptions.git;
   }
+  const gitRunner = (): AsyncGitRunner => (runner ??= defaultGitRunner());
 
   // ponytail: branch atual inferida do cwd (main/master) fecha o falso negativo.
-  // O git é spawnSync no Main e este hook roda em TODO Bash de pane de missão:
-  // só pergunta a branch quando o segmento é de fato um `git merge`.
+  // Este hook roda em TODO Bash de pane de missão: só pergunta a branch (ao
+  // git, assíncrono) quando o segmento é de fato um `git merge`, e uma vez só.
   let onProtected: boolean | undefined;
-  const protectedCwd = (): boolean => {
-    onProtected ??= cwd ? isProtectedBranch(currentBranchName(runner, cwd)) : false;
+  const protectedCwd = async (): Promise<boolean> => {
+    onProtected ??= cwd
+      ? isProtectedBranch(await currentBranchName(gitRunner(), cwd))
+      : false;
     return onProtected;
   };
 
@@ -122,7 +170,7 @@ export function integrationCommandHit(
     if (segment.includes('--dry-run')) continue;
     if (isMergeControlSegment(segment)) continue;
     if (INTEGRATION_SEGMENT.test(segment)) return true;
-    if (GIT_MERGE_COMMAND.test(segment) && protectedCwd()) return true;
+    if (GIT_MERGE_COMMAND.test(segment) && (await protectedCwd())) return true;
   }
   return false;
 }
@@ -134,12 +182,23 @@ export function integrationCommandHit(
  * 3) O git prova que HEAD é ancestral do alvo (zero commits locais exclusivos).
  *
  * Sem prova cabal, retorna false e o portão deliberado se aplica normalmente.
+ *
+ * F-815: as checagens de sintaxe vêm primeiro e não custam processo; só um
+ * `git merge --ff-only <ref>` bem formado chega ao git, que é assíncrono.
+ *
+ * Limite conhecido (heurística, não prova): o "upstream" é um ref
+ * remote-tracking (`refs/remotes/<remoto>/<branch>`) e esse ref pode ser
+ * gravado localmente (`git update-ref refs/remotes/origin/main <sha>`) sem
+ * nenhum fetch. Quem forjar o ref faz um fast-forward LOCAL do main para um
+ * commit sem veredito. Isso não fura o F-234: o veredito é por HEAD exato e o
+ * push (este hook, `nexus_git_push` e o push do `set_status`) continua exigindo
+ * `approve` de modelo de ponta para o HEAD resultante.
  */
-export function isExemptFastForwardSync(
+export async function isExemptFastForwardSync(
   command: string,
   cwd: string,
-  git: GitRunner = defaultGitRunner,
-): boolean {
+  git: AsyncGitRunner = defaultGitRunner(),
+): Promise<boolean> {
   // 1. Sem composição ambígua nem mistura com push/pr ou comandos de navegação
   if (/\b(?:push|pr)\b/u.test(command)) return false;
   if (/\bcd\b/u.test(command)) return false;
@@ -185,10 +244,10 @@ export function isExemptFastForwardSync(
   const targetRefInput = targets[0];
 
   try {
-    assertSafeLocalGitConfig(git, cwd);
+    await assertSafeLocalGitConfigAsync(git, cwd);
 
     // 2. Branch atual deve ser main/master
-    const branchResult = git.run(cwd, ['symbolic-ref', '--short', '-q', 'HEAD'], {
+    const branchResult = await git.run(cwd, ['symbolic-ref', '--short', '-q', 'HEAD'], {
       allowFailure: true,
     });
     if (branchResult.status !== 0) return false;
@@ -196,7 +255,7 @@ export function isExemptFastForwardSync(
     if (!isProtectedBranch(currentBranch)) return false;
 
     // 3. Upstream da branch atual configurado
-    const upstreamResult = git.run(
+    const upstreamResult = await git.run(
       cwd,
       ['rev-parse', '--symbolic-full-name', `${currentBranch}@{upstream}`],
       { allowFailure: true },
@@ -206,7 +265,7 @@ export function isExemptFastForwardSync(
     if (!upstreamFullName.startsWith('refs/remotes/')) return false;
 
     // 4. Alvo deve ser exatamente o ref remote-tracking upstream
-    const targetResult = git.run(
+    const targetResult = await git.run(
       cwd,
       ['rev-parse', '--symbolic-full-name', targetRefInput],
       { allowFailure: true },
@@ -216,7 +275,7 @@ export function isExemptFastForwardSync(
     if (targetFullName !== upstreamFullName) return false;
 
     // 5. Resolução e revalidação dos SHAs
-    const targetShaResult = git.run(
+    const targetShaResult = await git.run(
       cwd,
       ['rev-parse', '--verify', `${targetFullName}^{commit}`],
       { allowFailure: true },
@@ -225,7 +284,7 @@ export function isExemptFastForwardSync(
     const targetSha = targetShaResult.stdout.trim().toLowerCase();
     if (!/^[a-f0-9]{40}$|^[a-f0-9]{64}$/u.test(targetSha)) return false;
 
-    const headShaResult = git.run(
+    const headShaResult = await git.run(
       cwd,
       ['rev-parse', '--verify', 'HEAD^{commit}'],
       { allowFailure: true },
@@ -235,7 +294,7 @@ export function isExemptFastForwardSync(
     if (!/^[a-f0-9]{40}$|^[a-f0-9]{64}$/u.test(headSha)) return false;
 
     // Revalidação do SHA do upstream
-    const upstreamShaResult = git.run(
+    const upstreamShaResult = await git.run(
       cwd,
       ['rev-parse', '--verify', `${upstreamFullName}^{commit}`],
       { allowFailure: true },
@@ -244,7 +303,7 @@ export function isExemptFastForwardSync(
     if (upstreamShaResult.stdout.trim().toLowerCase() !== targetSha) return false;
 
     // 6. Prova git de que HEAD é ancestral do alvo (merge-base)
-    const ancestorResult = git.run(
+    const ancestorResult = await git.run(
       cwd,
       ['merge-base', '--is-ancestor', 'HEAD', targetSha],
       { allowFailure: true },
@@ -252,7 +311,7 @@ export function isExemptFastForwardSync(
     if (ancestorResult.status !== 0) return false;
 
     // 7. Zero commits locais exclusivos
-    const countResult = git.run(
+    const countResult = await git.run(
       cwd,
       ['rev-list', `${targetSha}..HEAD`, '--count'],
       { allowFailure: true },
@@ -293,7 +352,7 @@ export async function handleHookIntegrationRequest(
   body: unknown,
   deps: {
     readonly signal?: AbortSignal;
-    readonly git?: GitRunner;
+    readonly git?: AsyncGitRunner;
     readonly storesFor?: (
       ctx: HookContext,
     ) => Pick<
@@ -307,7 +366,8 @@ export async function handleHookIntegrationRequest(
     if (!call) return { statusCode: 200, payload: {} };
     if (!ctx.missionId || !ctx.scope) return { statusCode: 200, payload: {} };
 
-    const runner = deps.git ?? defaultGitRunner;
+    // Orçamento de tempo por requisição (F-815): ver `boundedHookGitRunner`.
+    const runner = boundedHookGitRunner(deps.git ?? defaultGitRunner());
 
     // O comando roda DENTRO do checkout de execução da missão; um cwd fora
     // dele tentando integrar é bloqueio deliberado, não fail-open.
@@ -327,7 +387,7 @@ export async function handleHookIntegrationRequest(
       cwd = resolved;
     }
 
-    const hit = integrationCommandHit(
+    const hit = await integrationCommandHit(
       call.command,
       cwdInside ? { cwd, git: runner } : undefined,
       runner,
@@ -349,7 +409,7 @@ export async function handleHookIntegrationRequest(
     }
 
     // F-778: isenta sincronização fast-forward comprovada pelo git
-    if (isExemptFastForwardSync(call.command, cwd, runner)) {
+    if (await isExemptFastForwardSync(call.command, cwd, runner)) {
       trace({
         kind: 'integration-review-gate',
         missionId: ctx.missionId,
@@ -363,7 +423,13 @@ export async function handleHookIntegrationRequest(
       if (!c.scope) throw new Error('missing scope');
       return getProjectDomainStores(c.scope);
     }))(ctx);
-    assertIntegrationReviewed(suite, ctx.missionId, cwd, deps.signal, runner);
+    await assertIntegrationReviewedAsync(
+      suite,
+      ctx.missionId,
+      cwd,
+      deps.signal,
+      runner,
+    );
     return { statusCode: 200, payload: {} };
   } catch (error) {
     if (isIntegrationReviewRequiredError(error)) {
