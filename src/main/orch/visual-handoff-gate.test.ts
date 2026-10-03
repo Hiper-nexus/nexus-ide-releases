@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { createScopedBrowserArtifactStore } from '../browser/browser-artifact-store';
 import { testProjectScope } from './__tests__/scope-fixture';
-import { checkVisualHandoff, recordVisualHandoffEvidence, visualTaskRequirement } from './visual-handoff-gate';
+import { checkVisualHandoff, recordVisualHandoffEvidence, visualTaskRequirement, visualTaskAtSpawn } from './visual-handoff-gate';
 
 let dir: string;
 let manager: ProjectRuntimeManager;
@@ -22,6 +22,12 @@ afterEach(() => { manager.closeAll(); fs.rmSync(dir, { recursive: true, force: t
 it('derives a visual requirement from the assigned task, not from a completion claim', () => {
   expect(visualTaskRequirement('Crie a tela de login com layout responsivo.', 1000)).toEqual({ since: 1000 });
   expect(visualTaskRequirement('Documente os endpoints da API de login.', 1000)).toBeUndefined();
+});
+it('preserves an already classified nonvisual task instead of reclassifying appended instructions', () => {
+  const initialPrompt = 'Crie a tela de login com layout responsivo.';
+  expect(visualTaskAtSpawn({ role: 'worker', visualTask: undefined, initialPrompt })).toBeUndefined();
+  expect(visualTaskAtSpawn({ role: 'worker', initialPrompt })).toEqual({ since: expect.any(Number) });
+  expect(visualTaskAtSpawn({ role: 'orchestrator', initialPrompt })).toBeUndefined();
 });
 it('a declared screenshot path or convincing summary cannot satisfy missing Main evidence', async () => {
   expect(await checkVisualHandoff(context(), { manager })).toMatchObject({ required: true, verified: false });

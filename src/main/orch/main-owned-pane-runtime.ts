@@ -9,7 +9,7 @@ import type { ProjectExecutionScope } from "../../shared/types";
 import type { SpawnRouteInfo } from '../../shared/spawn-route';
 import { copyProviderPaneSession } from '../persistence/provider-session-store';
 import { currentMimoSessionOwnerKey } from '../adapters/mimo-session-owner';
-import { visualTaskRequirement } from './visual-handoff-gate';
+import { visualTaskAtSpawn } from './visual-handoff-gate';
 import {
   getAdapter,
   isAdapterInstalled,
@@ -711,7 +711,7 @@ export function spawnMainOwnedMissionPane(
       error: 'resume_context_unavailable: conversa original indisponível; recusando pane sem contexto' };
   }
   const context = Object.freeze({
-    visualTask: options.role === 'orchestrator' ? undefined : options.visualTask ?? visualTaskRequirement(options.initialPrompt),
+    visualTask: visualTaskAtSpawn(options),
     operatorParentSessionId: options.operatorParentSessionId,
     missionId: options.missionId,
     contextRevision: options.contextRevision,

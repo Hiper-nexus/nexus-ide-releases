@@ -23,6 +23,14 @@ export function visualTaskRequirement(assignment: string | undefined, now = Date
   return assignment && requiresDesignAuthority(assignment.slice(0, 16_384)) ? Object.freeze({ since: now }) : undefined;
 }
 
+/** A supplied undefined is Main's negative classification, before adding boilerplate. */
+export function visualTaskAtSpawn(input: {
+  role?: string; visualTask?: VisualTaskRequirement; initialPrompt?: string;
+}): VisualTaskRequirement | undefined {
+  if (input.role === 'orchestrator') return undefined;
+  return Object.hasOwn(input, 'visualTask') ? input.visualTask : visualTaskRequirement(input.initialPrompt);
+}
+
 /** Called after an authorized native browser capture, not from tool arguments. */
 export function recordVisualHandoffEvidence(ctx: VisualHandoffContext, artifactId: string,
   manager = getMissionEventRuntimeManager()): boolean {
