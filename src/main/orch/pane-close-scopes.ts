@@ -77,6 +77,22 @@ export function shouldAutoCloseAfterHandoff(input: {
   return input.armed && input.status === "success";
 }
 
+/** A short notification alone must not destroy the pane's only complete report. */
+export function assertAutoCloseReportPreserved(
+  sessionId: string | undefined,
+  paneId: string | null,
+  status: unknown,
+  args: { fullText?: unknown; summary?: unknown },
+): void {
+  if (!sessionId || status !== 'success' || !armedAutoClosePaneId(sessionId, paneId)) return;
+  // Existing condensation persists a long summary verbatim as fullText.
+  const report = typeof args.fullText === 'string' ? args.fullText :
+    typeof args.summary === 'string' && args.summary.trim().length > 400 ? args.summary.trim() : null;
+  if (!report?.trim() || report.length > 60_000) {
+    throw new Error('handoff_report_required: este pane fecha após a entrega. Envie o relatório completo em fullText (até 60000 caracteres), além do summary. O pane foi preservado; nenhum sucesso foi registrado.');
+  }
+}
+
 /** Consome o braço apenas depois de um handoff persistido; fechar fica fora da resposta. */
 export function scheduleAutoCloseAfterHandoff(
   sessionId: string | undefined,

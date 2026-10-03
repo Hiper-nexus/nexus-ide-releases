@@ -22,6 +22,7 @@ import { requireMissionLeaderSession } from "./mission-leader-gate";
 import { onHandoffSubmitted } from "./idle-delivery";
 import {
   scheduleAutoCloseAfterHandoff,
+  assertAutoCloseReportPreserved,
 } from "./pane-close-scopes";
 import { findPane, listPaneSnapshots, requestPaneClose } from "./pane-registry";
 import {
@@ -241,7 +242,7 @@ const handoffSubmitTool: McpToolDef = {
       evidenceIds: { type: "array", items: { type: "string" } },
       briefId: { type: "string", description: "Optional task/brief id (Overclock parity)." },
       to: { type: "string", description: "Optional target pane id (Overclock parity)." },
-      fullText: { type: "string", description: "Optional full worker response (Overclock parity)." },
+      fullText: { type: "string", description: "Complete worker report, up to 60000 characters. Required for a success that automatically closes the pane; summary alone only notifies the parent." },
       evidence: { type: "object", description: "Optional untrusted evidence blob (Overclock parity)." },
       telemetry: {
         type: "object",
@@ -260,6 +261,9 @@ const handoffSubmitTool: McpToolDef = {
     required: ["status", "summary"],
   },
   handler: async (args, ctx, invocation) => {
+    assertAutoCloseReportPreserved(ctx.sessionId,
+      ctx.sessionId ? findPane(ctx.sessionId)?.paneId ?? null : null,
+      normalizeHandoffStatusInput(args.status), args);
     if (!ctx.missionId) {
       return submitWorkspaceHandoff(args, ctx, invocation, [
         ...buildOverclockArtifacts(args),
