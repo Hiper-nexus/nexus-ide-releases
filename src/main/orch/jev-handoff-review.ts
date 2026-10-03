@@ -283,6 +283,12 @@ export type JevReviewVerdict =
       readonly kind: 'weak';
       readonly signals: string[];
       readonly artifact: JevReviewArtifact;
+      /**
+       * F-823: os sinais que o MCP devolveria ao worker (ver
+       * `handoffBounceSignals`). Vazio = fraca só por sinal que nem o MCP
+       * devolve (pendência admitida, revisão/plano sem teste).
+       */
+      readonly bounceSignals?: string[];
     };
 
 interface ReviewBudget {
@@ -431,6 +437,7 @@ export async function reviewMissionHandoff(
     kind: 'weak',
     signals,
     artifact: reviewArtifact('weak', result, signals, decisionId),
+    bounceSignals,
   };
 }
 
@@ -509,12 +516,17 @@ export function recordHandoffAckFeedback(
 
 /**
  * F-786: destino do veredito no caminho SEM canal de devolução (fechamento
- * mecânico PTY). No MCP o `weak` fica success marcado porque o worker já teve
- * a devolução dele; aqui a entrega NASCE fraca — nunca foi revista — então
- * vira `partial` com o texto integral preservado nos artifacts. `retry` não
+ * mecânico PTY). Fraca por sinal que o MCP devolveria (resumo genérico,
+ * código sem verificação ou sem dizer onde) vira `partial`: aqui não há
+ * devolução, e a entrega nunca é success sem a prova requerida. `retry` não
  * deve ocorrer (a revisão roda com maxBounces 0), mas se ocorrer o destino é
- * o mesmo: nunca success sem a prova requerida. `skipped` é fail-open, como
- * no MCP.
+ * o mesmo. `skipped` é fail-open, como no MCP.
+ *
+ * F-823: fraca SÓ por sinal que nem o MCP devolve (pendência admitida,
+ * revisão/plano sem teste) espelha o MCP — success marcado `[evidência
+ * fraca]`. Rebaixar a partial tirava a entrega do portão de regressão e do
+ * done e fazia CLI sem MCP entrar em loop de redespacho. Sem a informação
+ * (`bounceSignals` ausente), fica o destino conservador de antes.
  */
 export function mechanicalHandoffReviewOutcome(verdict: JevReviewVerdict): {
   readonly status: 'success' | 'partial';
@@ -525,7 +537,11 @@ export function mechanicalHandoffReviewOutcome(verdict: JevReviewVerdict): {
     case 'ok':
       return { status: 'success', mark: false, artifacts: [verdict.artifact] };
     case 'weak':
-      return { status: 'partial', mark: true, artifacts: [verdict.artifact] };
+      return {
+        status: verdict.bounceSignals?.length === 0 ? 'success' : 'partial',
+        mark: true,
+        artifacts: [verdict.artifact],
+      };
     case 'retry':
       return { status: 'partial', mark: true, artifacts: [] };
     default:

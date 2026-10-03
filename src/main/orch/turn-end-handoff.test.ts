@@ -10,6 +10,8 @@ import {
   __resetTurnEndHandoffForTests,
   attachToExistingHandoff,
   buildMechanicalHandoffPayload,
+  closingParagraph,
+  mechanicalHandoffStatusFor,
   condenseFullText,
   countRecentWorkerHandoffs,
   decideTurnEndClosure,
@@ -252,6 +254,68 @@ describe('buildMechanicalHandoffPayload (regra 1.2.3)', () => {
         replyText: 'Preview inspecionado: layout quebrado no mobile; relatório acima.',
       }).status,
     ).toBe('success');
+  });
+
+  // F-823 (revisão adversarial M7): a regex rebaixava entrega boa a partial,
+  // que sai do portão de regressão e do done — CLI sem MCP entrava em loop.
+  it('F-823: relato do caminho não é pendência — entrega com testes passando continua success', () => {
+    expect(
+      buildMechanicalHandoffPayload({
+        replyText:
+          'Não foi possível reproduzir o bug antes do fix; agora os 12 testes passam (npx vitest run).',
+      }).status,
+    ).toBe('success');
+  });
+
+  it('F-823: devolução explícita no fechamento continua partial', () => {
+    expect(
+      buildMechanicalHandoffPayload({ replyText: 'Não consegui concluir a migração do banco.' }).status,
+    ).toBe('partial');
+    expect(
+      buildMechanicalHandoffPayload({
+        replyText: 'Corrigi o parser e o teste novo passa.\n\nNÃO CONSEGUI RODAR a suíte inteira: o Main travou.',
+      }).status,
+    ).toBe('partial');
+  });
+
+  it('F-823: só o fechamento conta; despedida curta não esconde a admissão de cima', () => {
+    expect(
+      buildMechanicalHandoffPayload({
+        replyText:
+          'No começo não consegui abrir o preview (porta ocupada).\n\n' +
+          'Liberei a porta, abri o preview, inspecionei o mobile e o desktop e corrigi o layout.',
+      }).status,
+    ).toBe('success');
+    expect(
+      buildMechanicalHandoffPayload({
+        replyText: 'Não consegui abrir nem inspecionar o preview.\n\nPronto.\n',
+      }).status,
+    ).toBe('partial');
+  });
+
+  it('F-823: palavra com o verbo dentro não conta ("abrirá", "testarei")', () => {
+    expect(mechanicalHandoffStatusFor('Não pude testarei amanhã, mas o build passou.')).toBe('success');
+    const longClosing = 'Fechamento longo o bastante para ser o parágrafo final.';
+    expect(closingParagraph(`meio\n\n${longClosing}\n\n`)).toBe(longClosing);
+    // Despedida curta traz junto o parágrafo de cima.
+    expect(closingParagraph('a\n\nb\n\n')).toBe('a\n\nb');
+  });
+
+  it('F-823: detector linear — 16 KB adversariais em menos de 50 ms cada', () => {
+    const adversarial = [
+      'não consegui '.repeat(1_300),
+      `não ${' '.repeat(16_000)}x`,
+      'não foi possível '.repeat(1_000),
+      `${'\n'.repeat(8_000)}${' \n'.repeat(4_000)}não consegui`,
+      'não não não '.repeat(1_400),
+      `${'ã'.repeat(16_000)}não consegui concluir`,
+    ];
+    for (const text of adversarial) {
+      expect(text.length).toBeGreaterThanOrEqual(16_000);
+      const started = performance.now();
+      mechanicalHandoffStatusFor(text);
+      expect(performance.now() - started).toBeLessThan(50);
+    }
   });
 });
 

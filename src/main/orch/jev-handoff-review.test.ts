@@ -193,6 +193,32 @@ describe('reviewMissionHandoff', () => {
     expect(verdict).toEqual({ kind: 'skipped', reason: 'judge-unavailable' });
   });
 
+  it('F-823: o weak diz quais sinais o MCP devolveria (vazio para achado de revisão)', async () => {
+    const reviewerFindings = await reviewMissionHandoff(
+      {
+        sessionId: 's-revisor',
+        ...baseInput,
+        summary: 'Revisão somente leitura: 1 MEDIUM, 2 LOW. Nenhum arquivo alterado.',
+        declaredFiles: [],
+        maxBounces: 0,
+      },
+      deps(vi.fn(async () =>
+        result({ is_specific: 0.9, has_verification: 0.2, admits_incomplete: 0.9, changed_code: 0.05, names_changes: 0.9 }),
+      )),
+    );
+    expect(reviewerFindings.kind).toBe('weak');
+    if (reviewerFindings.kind === 'weak') expect(reviewerFindings.bounceSignals).toEqual([]);
+
+    const codeWithoutProof = await reviewMissionHandoff(
+      { sessionId: 's-codigo', ...baseInput, maxBounces: 0 },
+      deps(vi.fn(async () => result({ is_specific: 0.9, has_verification: 0.1, admits_incomplete: 0.1 }))),
+    );
+    expect(codeWithoutProof.kind).toBe('weak');
+    if (codeWithoutProof.kind === 'weak') {
+      expect(codeWithoutProof.bounceSignals?.join(' ')).toContain('sem evidência de verificação');
+    }
+  });
+
   it('F-786: sem canal de retry (maxBounces 0) o primeiro fraco já é weak, nunca retry', async () => {
     // O fechamento mecânico PTY não pode devolver a entrega ao worker (ele já
     // encerrou): orçamento zero de devoluções — nasce weak de cara.
@@ -314,15 +340,35 @@ describe('mechanicalHandoffReviewOutcome (F-786 — caminho sem canal de devolu�
     expect(outcome.artifacts).toHaveLength(1);
   });
 
-  it('weak → partial com marca: entrega que NASCE fraca não é success', () => {
+  it('weak com sinal que o MCP devolveria → partial com marca (aqui não há devolução)', () => {
     const outcome = mechanicalHandoffReviewOutcome({
       kind: 'weak',
       signals: ['sem evidência'],
+      bounceSignals: ['sem evidência'],
       artifact,
     });
     expect(outcome.status).toBe('partial');
     expect(outcome.mark).toBe(true);
     expect(outcome.artifacts).toHaveLength(1);
+  });
+
+  it('F-823: weak só por sinal que nem o MCP devolve → success marcado, como no MCP', () => {
+    // Rebaixar a partial tirava a entrega do portão de regressão e do done
+    // (só success conta) e fazia CLI sem MCP entrar em loop de redespacho.
+    const outcome = mechanicalHandoffReviewOutcome({
+      kind: 'weak',
+      signals: ['o texto admite pendências, mas o status é success'],
+      bounceSignals: [],
+      artifact,
+    });
+    expect(outcome.status).toBe('success');
+    expect(outcome.mark).toBe(true);
+    expect(outcome.artifacts).toHaveLength(1);
+  });
+
+  it('weak sem a informação de devolução → destino conservador (partial)', () => {
+    const outcome = mechanicalHandoffReviewOutcome({ kind: 'weak', signals: ['s'], artifact });
+    expect(outcome.status).toBe('partial');
   });
 
   it('retry → partial (defesa: com maxBounces 0 não deve ocorrer)', () => {
