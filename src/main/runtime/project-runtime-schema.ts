@@ -1002,7 +1002,7 @@ export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
     createProjectMigration({
       id: '041-handoff-route-outcome',
       schemaVersion: 41,
-      appVersion: '0.76.192',
+      appVersion: '0.76.191',
       sql: HANDOFF_ROUTE_OUTCOME_SCHEMA,
     }),
   ]);
