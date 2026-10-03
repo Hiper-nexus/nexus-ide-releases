@@ -12,6 +12,7 @@ import { observerToolKind } from './observer-tool-kind';
 
 const MAX_TRACKED_SESSIONS = 4_096;
 const exposed = new Map<string, number>();
+let exposureOverflow = false;
 
 const EXPOSING_KINDS: ReadonlySet<string> = new Set(['nexus-browser', 'web-search', 'fetch']);
 
@@ -30,18 +31,20 @@ export function noteSessionToolCall(
 
 export function markSessionWebExposed(sessionId: string): void {
   if (exposed.size >= MAX_TRACKED_SESSIONS && !exposed.has(sessionId)) {
-    // Mais antiga sai: Map preserva a ordem de inserção.
-    const oldest = exposed.keys().next().value as string | undefined;
-    if (oldest !== undefined) exposed.delete(oldest);
+    // Esquecer exposição de sessão ainda viva elevaria conteúdo de terceiros.
+    // Mantém a memória limitada e quarentena as sessões sem prova até reiniciar.
+    exposureOverflow = true;
+    return;
   }
   exposed.set(sessionId, Date.now());
 }
 
 export function isSessionWebExposed(sessionId: string | null | undefined): boolean {
-  return Boolean(sessionId && exposed.has(sessionId));
+  return Boolean(sessionId && (exposureOverflow || exposed.has(sessionId)));
 }
 
 /** Test-only. */
 export function __resetSessionWebExposureForTests(): void {
   exposed.clear();
+  exposureOverflow = false;
 }
