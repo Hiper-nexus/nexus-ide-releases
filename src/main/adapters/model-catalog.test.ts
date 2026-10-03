@@ -519,10 +519,7 @@ describe('refreshRemoteModelCatalog', () => {
 
     const fetchMock = vi.fn(async (url: string) => {
       expect(url).toBe('https://example.test/remote-catalog.json');
-      return {
-        ok: true,
-        json: async () => remoteBody,
-      };
+      return new Response(JSON.stringify(remoteBody));
     });
     vi.stubGlobal('fetch', fetchMock);
 

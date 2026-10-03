@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type {
   Adapter,
@@ -267,6 +268,8 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
 };
 
 let cachedCatalog: ModelCatalog | null = null;
+let catalogEpoch = 0;
+const MAX_CATALOG_BYTES = 4 * 1024 * 1024;
 
 function safeModels(models: unknown, source: string): ModelCatalogEntryInfo[] {
   if (!Array.isArray(models)) return [];
@@ -375,6 +378,7 @@ export function mergeModelCatalogs(base: ModelCatalog, overlay: ModelCatalog): M
 }
 
 export function invalidateModelCatalogCache(): void {
+  catalogEpoch++;
   cachedCatalog = null;
 }
 
@@ -407,7 +411,13 @@ export function loadUserModelCatalog(file = USER_MODEL_CATALOG_FILE): ModelCatal
 export function loadModelCatalog(file = USER_MODEL_CATALOG_FILE): ModelCatalog {
   if (file === USER_MODEL_CATALOG_FILE && cachedCatalog) return cachedCatalog;
   const user = loadUserModelCatalog(file);
-  const catalog = isStaleUserModelCatalog(user)
+  const catalog = composeModelCatalog(user);
+  if (file === USER_MODEL_CATALOG_FILE) cachedCatalog = catalog;
+  return catalog;
+}
+
+function composeModelCatalog(user: ModelCatalog): ModelCatalog {
+  return isStaleUserModelCatalog(user)
     ? mergeModelCatalogs(
         mergeModelCatalogs(user, BUILTIN_MODEL_CATALOG),
         PUBLISHED_MODEL_CATALOG,
@@ -416,6 +426,33 @@ export function loadModelCatalog(file = USER_MODEL_CATALOG_FILE): ModelCatalog {
         mergeModelCatalogs(BUILTIN_MODEL_CATALOG, PUBLISHED_MODEL_CATALOG),
         user,
       );
+}
+
+async function readCatalogText(file: string): Promise<string> {
+  const handle = await fs.promises.open(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size > MAX_CATALOG_BYTES) throw new Error('catalog size');
+    const bytes = Buffer.alloc(stat.size + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, length, bytes.length - length, null);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    if (length === bytes.length) throw new Error('catalog changed size');
+    return bytes.subarray(0, length).toString('utf8');
+  } finally { await handle.close(); }
+}
+
+/** Same layers as the synchronous bootstrap getter, for periodic refresh. */
+export async function loadModelCatalogAsync(file = USER_MODEL_CATALOG_FILE): Promise<ModelCatalog> {
+  if (file === USER_MODEL_CATALOG_FILE && cachedCatalog) return cachedCatalog;
+  const epoch = catalogEpoch;
+  let user: ModelCatalog = {};
+  try { user = normaliseCatalog(JSON.parse(await readCatalogText(file)), 'local'); } catch { /* Missing overlay. */ }
+  const catalog = composeModelCatalog(user);
+  if (epoch !== catalogEpoch) return loadModelCatalogAsync(file);
   if (file === USER_MODEL_CATALOG_FILE) cachedCatalog = catalog;
   return catalog;
 }
@@ -451,11 +488,10 @@ export function seedLocalModelCatalogFromPublished(
   return true;
 }
 
-function loadCatalogFromLocalPath(filePath: string): ModelCatalog | null {
+async function loadCatalogFromLocalPath(filePath: string): Promise<ModelCatalog | null> {
   try {
-    return normaliseCatalog(JSON.parse(fs.readFileSync(filePath, 'utf8')), 'remote');
-  } catch (err) {
-    console.warn('[model-catalog] local path load failed:', err);
+    return normaliseCatalog(JSON.parse(await readCatalogText(filePath)), 'remote');
+  } catch {
     return null;
   }
 }
@@ -479,9 +515,21 @@ async function loadCatalogFromUrl(url: string): Promise<ModelCatalog | null> {
       headers: { 'User-Agent': 'nexus-ide' },
     });
     if (!res.ok) return null;
-    return normaliseCatalog(await res.json(), 'remote');
-  } catch (err) {
-    console.warn('[model-catalog] remote refresh failed:', err);
+    if (!res.body) return null;
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        size += next.value.byteLength;
+        if (size > MAX_CATALOG_BYTES) { await reader.cancel(); return null; }
+        chunks.push(next.value);
+      }
+    } finally { reader.releaseLock(); }
+    return normaliseCatalog(JSON.parse(Buffer.concat(chunks, size).toString('utf8')), 'remote');
+  } catch {
     return null;
   } finally {
     clearTimeout(timer);
@@ -493,22 +541,35 @@ export async function refreshRemoteModelCatalog(
   file = USER_MODEL_CATALOG_FILE,
 ): Promise<boolean> {
   if (!url) return false;
-
-  let json = await loadCatalogFromUrl(url);
+  const epoch = catalogEpoch;
+  const identity = async () => {
+    try { const s = await fs.promises.stat(file); return `${s.dev}:${s.ino}:${s.size}:${s.mtimeMs}:${s.ctimeMs}`; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
+  };
+  // Start IO together so cancellation/deadline ownership starts immediately.
+  let [json, initial] = await Promise.all([loadCatalogFromUrl(url), identity()]);
+  if (epoch !== catalogEpoch) return false;
 
   // Private GitHub raw → 404. Seed only a missing catalog; never replace a
   // newer local/CLI-discovered catalog with the older bundled snapshot.
   if (
     (!json || Object.keys(json.adapters ?? {}).length === 0) &&
     url === DEFAULT_MODEL_CATALOG_URL &&
-    !fs.existsSync(file)
+    initial === null
   ) {
     json = PUBLISHED_MODEL_CATALOG;
   }
 
   if (!json || Object.keys(json.adapters ?? {}).length === 0) return false;
-  writeCatalogFile(json, file);
-  return true;
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  try {
+    await fs.promises.mkdir(path.dirname(file), { recursive: true });
+    await fs.promises.writeFile(temporary, JSON.stringify(json, null, 2), { mode: 0o600, flag: 'wx' });
+    if (epoch !== catalogEpoch || await identity() !== initial) return false;
+    await fs.promises.rename(temporary, file);
+    invalidateModelCatalogCache();
+    return true;
+  } finally { await fs.promises.unlink(temporary).catch(() => undefined); }
 }
 
 export function modelCatalogInfo(
