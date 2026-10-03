@@ -351,6 +351,8 @@ function toAdapterInfo(
       ? cliInstallCommandFor(adapter.id) ??
         compatibleManualInstallCommand(adapter.install.command)
       : null;
+  const cliInstallationWarning = adapter.kind === 'cli-pty'
+    ? resolveCliBinary(adapter.bin)?.installationWarning : undefined;
   const loginHint =
     adapter.kind !== 'api-provider' ? adapter.auth.loginHint : undefined;
   // Merge user-added custom models so a CLI's newest models (added by hand)
@@ -377,6 +379,7 @@ function toAdapterInfo(
     },
     installed: resolution.installed,
     resolvedBinPath: resolution.binPath,
+    ...(cliInstallationWarning ? { cliInstallationWarning } : {}),
     // AdapterInfo mantém string por compatibilidade IPC; vazio significa que
     // não existe receita nativa segura para este SO (ex.: Muse no Windows).
     installCommand: installCommand ?? '',

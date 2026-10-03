@@ -829,6 +829,7 @@ const cliInventoryTool: McpToolDef = {
       models: { list: string[]; default: string };
       installed: boolean;
       resolvedBinPath?: string | null;
+      cliInstallationWarning?: string;
       installCommand: string;
       orchestratorCapable: boolean;
       orchestrationEvidence?: string;
@@ -910,6 +911,8 @@ const cliInventoryTool: McpToolDef = {
           label: adapter.label,
           kind: adapter.kind,
           installed: adapter.installed,
+          ...(adapter.cliInstallationWarning
+            ? { cliInstallationWarning: adapter.cliInstallationWarning } : {}),
           binaryResolved: typeof adapter.resolvedBinPath === 'string' &&
             adapter.resolvedBinPath.length > 0,
           enabled: auth ? auth.enabled : null,

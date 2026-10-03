@@ -79,6 +79,8 @@ export interface ProviderSettingsInfo {
   installCommand?: string;
   binPath: string;
   detectedBin: string;
+  /** Duplicate versions and the selected version, without filesystem paths. */
+  cliInstallationWarning?: string;
   defaultModel: string;
   models: string[];
   /**

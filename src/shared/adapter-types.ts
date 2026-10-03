@@ -343,6 +343,8 @@ export interface AdapterInfo {
    * Null when not installed or for api-provider adapters.
    */
   resolvedBinPath?: string | null;
+  /** Version-only duplicate installation diagnostic; no paths. */
+  cliInstallationWarning?: string;
   installCommand: string;
   loginHint?: string;
   /**

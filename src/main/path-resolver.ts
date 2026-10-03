@@ -1,7 +1,9 @@
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { BUILTIN_ADAPTERS } from '../adapters/builtin';
+import { windowsNpmShimSpawn, windowsNpmShimTarget } from './adapters/windows-npm-shim';
 import { compareAppVersions, isValidAppVersion } from '../shared/app-version';
 
 /**
@@ -44,6 +46,8 @@ export type LoginShellPathExecutor = (
 export interface CliBinaryResolution {
   /** Absolute path to an executable file. */
   readonly binPath: string;
+  /** Version-only diagnostic; never includes executable paths. */
+  readonly installationWarning?: string;
   /** PATH string that located the binary (process.env or login+fallbacks). */
   readonly effectivePath: string;
   /** How the binary was found. */
@@ -450,9 +454,53 @@ function nativeClaudeVersionBinary(home: string): string | null {
   return null;
 }
 
+// Only AI adapter commands compete by version; node/git/install runners keep PATH order.
+const aiCliCommands = new Map<string, string>([
+  ...BUILTIN_ADAPTERS.flatMap((raw) => {
+    const adapter = raw as { kind?: string; bin?: string; id: string };
+    return adapter.kind === 'cli-pty' && adapter.bin
+      ? [[adapter.bin, adapter.bin === 'claude' ? 'claude' : adapter.id] as [string, string]] : [];
+  }),
+  ['cursor-agent', 'cursor-agent'], ['qodercli', 'qoder'],
+  ['prime-agent', 'prime-agent'], ['omp', 'omp'], ['codex-fugu', 'sakana'],
+]);
+const cliVersionCache = new Map<string, { mtimeMs: number; version: string | null }>();
+
+/** One bounded --version probe per real executable + mtime, including failed probes. */
+export function readCliBinaryVersion(
+  binPath: string,
+  effectivePath = getEffectivePath(),
+  adapterId = aiCliCommands.get(path.basename(binPath).replace(/\.(?:exe|com|cmd|bat)$/iu, '')),
+): string | null {
+  if (!adapterId) return null;
+  try {
+    const target = process.platform === 'win32'
+      ? windowsNpmShimTarget(adapterId, binPath) ?? binPath : binPath;
+    const realPath = fs.realpathSync(target);
+    const { mtimeMs } = fs.statSync(realPath);
+    const cached = cliVersionCache.get(realPath);
+    if (cached?.mtimeMs === mtimeMs) return cached.version;
+    let version: string | null = null;
+    try {
+      const launch = process.platform === 'win32' && /\.cmd$/iu.test(binPath)
+        ? windowsNpmShimSpawn(adapterId, binPath) : { file: binPath, argsPrefix: [] };
+      if (launch) {
+        const output = execFileSync(launch.file, [...launch.argsPrefix, '--version'], {
+          encoding: 'utf8', timeout: 1500, maxBuffer: 16 * 1024, stdio: 'pipe',
+          windowsHide: true, env: { ...process.env, PATH: effectivePath },
+        });
+        version = /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/.exec(output)?.[0] ?? null;
+      }
+    } catch { /* Unreadable version: retain PATH order, and memoise the failure. */ }
+    cliVersionCache.set(realPath, { mtimeMs, version });
+    return version;
+  } catch { return null; }
+}
+
 /**
  * Resolve a CLI command (or absolute path) to an absolute executable.
- * Uses process PATH first, then the memoised effective PATH (login + fallbacks).
+ * AI adapters with distinct installations use the newest readable version.
+ * Other commands and unreadable versions preserve process/effective PATH order.
  */
 export function resolveCliBinary(
   command: string,
@@ -482,12 +530,10 @@ export function resolveCliBinary(
 
   const processPath = options.processPath ?? process.env.PATH ?? '';
   const fromProcess = lookupInPath(trimmed, processPath);
-  if (fromProcess) {
-    return {
-      binPath: fromProcess,
-      effectivePath: processPath,
-      source: 'process-path',
-    };
+  const aiCommand = trimmed.replace(/\.(?:exe|com|cmd|bat)$/iu, '');
+  const isAiCli = aiCliCommands.has(aiCommand);
+  if (fromProcess && !isAiCli) {
+    return { binPath: fromProcess, effectivePath: processPath, source: 'process-path' };
   }
 
   // Prefer memoised effective PATH (one login-shell probe per process lifetime
@@ -507,12 +553,41 @@ export function resolveCliBinary(
   // Only after PATH/explicit launchers lose: retain the operator's chosen
   // installation/channel. Recover a missing/broken native link without
   // overwriting that link or any custom launcher (F-210).
-  const resolved = fromEffective ?? (trimmed === 'claude' ? nativeClaudeVersionBinary(home) : null);
+  let resolved = fromProcess ?? fromEffective ?? (trimmed === 'claude' ? nativeClaudeVersionBinary(home) : null);
   if (!resolved) return null;
+  let installationWarning: string | undefined;
+  if (isAiCli) {
+    const candidates = new Map<string, string>();
+    for (const dir of new Set([...processPath.split(path.delimiter), ...effective.split(path.delimiter)])) {
+      if (!dir) continue;
+      const candidate = lookupInPath(trimmed, dir);
+      if (!candidate) continue;
+      try {
+        const target = process.platform === 'win32'
+          ? windowsNpmShimTarget(aiCliCommands.get(aiCommand)!, candidate) ?? candidate : candidate;
+        const realPath = fs.realpathSync(target);
+        if (!candidates.has(realPath)) candidates.set(realPath, candidate);
+      } catch { /* Raced with removal: no candidate. */ }
+    }
+    if (candidates.size > 1) {
+      const bins = [...candidates.values()];
+      const versions = bins.map((bin) => readCliBinaryVersion(bin, effective));
+      if (versions.every((version) => version !== null)) {
+        const newest = versions.reduce((best, version, index) =>
+          compareAppVersions(version!, versions[best]!) > 0 ? index : best, 0);
+        resolved = bins[newest];
+      }
+      if (new Set(versions).size > 1) {
+        const chosen = versions[bins.indexOf(resolved)] ?? 'não identificada';
+        installationWarning = `${bins.length} instalações: ${versions.map((v) => v ?? 'não identificada').join(' e ')}; usando ${chosen}`;
+      }
+    }
+  }
   return {
     binPath: resolved,
     effectivePath: effective,
-    source: classifySource(resolved, processPath, home),
+    source: lookupInPath(trimmed, processPath) === resolved ? 'process-path' : classifySource(resolved, processPath, home),
+    ...(installationWarning ? { installationWarning } : {}),
   };
 }
 
@@ -618,4 +693,5 @@ export function __resetPathResolverForTests(): void {
   folded = false;
   memoizedEffectivePath = null;
   bootLoginProbe = null;
+  cliVersionCache.clear();
 }

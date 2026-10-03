@@ -632,6 +632,9 @@ function ProviderDetail({
                   : 'Disponível nesta máquina.'
               : 'Não encontrado no PATH — instale a CLI ou aponte o binário em Avançado'}
           </p>
+          {provider.cliInstallationWarning && (
+            <p className="prov-detail__sub" role="status">{provider.cliInstallationWarning}</p>
+          )}
           {stateChips.length > 0 && (
             <div
               className="prov-state-chips"

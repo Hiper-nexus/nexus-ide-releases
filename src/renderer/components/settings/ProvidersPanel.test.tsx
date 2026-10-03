@@ -277,6 +277,14 @@ describe('ProvidersPanel hub', () => {
     act(() => root.unmount());
   });
 
+  it('F-790: shows the selected duplicate CLI version in the existing detail', () => {
+    const warning = '2 instalações: 0.146.0 e 0.160.0; usando 0.160.0';
+    useProviderStore.setState({ providers: [provider('codex', 'Codex', { cliInstallationWarning: warning })] });
+    const { host, root } = mount();
+    expect(host.querySelector('.prov-detail [role="status"]')?.textContent).toBe(warning);
+    act(() => root.unmount());
+  });
+
   it('surfaces account chip on the tile and detail accounts block', () => {
     const { host, root } = mount();
     expect(host.textContent).toContain('1 conta');

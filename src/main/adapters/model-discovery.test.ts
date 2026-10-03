@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { __resetPathResolverForTests, resolveCliBinary, resolveSpawnBinary } from '../path-resolver';
 import {
   discoveredModelsFor,
   MODEL_DISCOVERY_CAP,
@@ -24,7 +25,34 @@ import {
   usesCliExecForModelDiscovery,
 } from './model-discovery';
 
+vi.mock('../path-resolver', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../path-resolver')>();
+  return { ...actual, resolveCliBinary: vi.fn(actual.resolveCliBinary) };
+});
+
 describe('model discovery', () => {
+  it.skipIf(process.platform === 'win32')('F-790: live discovery executes the same newer binary selected for spawn', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-discovery-bin-'));
+    const resolver = await vi.importActual<typeof import('../path-resolver')>('../path-resolver');
+    try {
+      const oldDir = path.join(home, 'old'); const newDir = path.join(home, 'new');
+      for (const [dir, version, model] of [[oldDir, '1.0.0', 'old-model'], [newDir, '2.0.0', 'new-model']]) {
+        fs.mkdirSync(dir);
+        fs.writeFileSync(path.join(dir, 'agy'), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo agy ${version}; else echo ${model}; fi\n`, { mode: 0o755 });
+      }
+      const options = { processPath: oldDir, effectivePath: [oldDir, newDir].join(path.delimiter), home };
+      vi.mocked(resolveCliBinary).mockImplementation((command) => resolver.resolveCliBinary(command, options));
+      const selected = resolveCliBinary('agy')!;
+      expect(resolveSpawnBinary('agy', selected.binPath)?.binPath).toBe(path.join(newDir, 'agy'));
+      await refreshDiscoveredModels('agy', { force: true });
+      expect(discoveredModelsFor('agy')).toEqual(['new-model']);
+    } finally {
+      vi.mocked(resolveCliBinary).mockImplementation(resolver.resolveCliBinary);
+      resetModelDiscoveryForTests(); __resetPathResolverForTests();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('covers all catalog CLIs and only wires live exec where a list command exists', () => {
     expect(Object.keys(MODEL_DISCOVERY_INVENTORY)).toHaveLength(20);
     const live = Object.entries(MODEL_DISCOVERY_INVENTORY)

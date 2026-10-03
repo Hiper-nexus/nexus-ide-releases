@@ -922,6 +922,15 @@ describe('nexus_cli_inventory', () => {
     }
   });
 
+  it('F-790: reports duplicate versions and the selected version without paths', async () => {
+    const cliInstallationWarning = '2 instalações: 0.146.0 e 0.160.0; usando 0.160.0';
+    adapterMocks.listAdapterInfos.mockReturnValue([{ ...adapters[0], cliInstallationWarning }]);
+    providerMocks.listProviderSettings.mockReturnValue(providers);
+    const out = await tool('nexus_cli_inventory').handler({}, ctx()) as { clis: Array<Record<string, unknown>> };
+    expect(out.clis[0].cliInstallationWarning).toBe(cliInstallationWarning);
+    expect(JSON.stringify(out)).not.toContain('/Users/');
+  });
+
   it('merges install status with auth readiness in decision shape', async () => {
     adapterMocks.listAdapterInfos.mockReturnValue(adapters);
     providerMocks.listProviderSettings.mockReturnValue(providers);

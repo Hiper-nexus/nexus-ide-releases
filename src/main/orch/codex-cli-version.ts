@@ -10,7 +10,7 @@
 import { execFileSync } from 'node:child_process';
 import { resolveLoginShellPath } from '../adapters/adapter-registry';
 import { windowsNpmShimSpawn } from '../adapters/windows-npm-shim';
-import { resolveCliBinary, resolveWindowsCodexNpmShimLaunch } from '../path-resolver';
+import { readCliBinaryVersion, resolveCliBinary, resolveWindowsCodexNpmShimLaunch } from '../path-resolver';
 
 /** Minimum codex version that honors --dangerously-bypass-hook-trust. */
 const HOOK_TRUST_BYPASS_MIN_VERSION: [number, number, number] = [0, 134, 0];
@@ -69,15 +69,20 @@ export function windowsCodexVersionLaunch(
 }
 
 /**
- * Resolve the installed codex version (`codex --version`), memoised per bin
- * for the process lifetime. Returns null when the binary or its version
- * cannot be determined — callers must treat null as "feature unavailable".
+ * Resolve the selected codex version, sharing the real-path/mtime cache with
+ * binary selection. Injected executors retain the per-bin test cache. Returns
+ * null when the binary or its version cannot be determined — callers must treat null as "feature unavailable".
  */
 export function resolveCodexCliVersion(
   bin = 'codex',
   execImpl: CodexVersionExec = execFileSync as unknown as CodexVersionExec,
   launchImpl: CodexVersionLaunch = windowsCodexVersionLaunch,
 ): string | null {
+  if (execImpl === (execFileSync as unknown as CodexVersionExec) &&
+      launchImpl === windowsCodexVersionLaunch) {
+    const selected = resolveCliBinary(bin);
+    return selected ? readCliBinaryVersion(selected.binPath, resolveLoginShellPath(), 'codex') : null;
+  }
   const cached = versionCache.get(bin);
   if (cached !== undefined) return cached;
 

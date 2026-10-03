@@ -1,7 +1,35 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { __resetPathResolverForTests, resolveCliBinary, resolveSpawnBinary } from '../path-resolver';
 import { describe, expect, it } from 'vitest';
 import { CliAutoUpdateQueue, CliUpdateLease, isSafeAutomaticCliRecipe, selectAutomaticCliUpdateRecipe, shouldOfferAutoCliConsent } from './cli-auto-update';
 
 describe('automatic CLI updates', () => {
+  it.skipIf(process.platform === 'win32')('F-790: updates the same newer npm installation selected for the pane', () => {
+    const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-cli-update-')));
+    try {
+      const oldDir = path.join(home, 'homebrew', 'bin');
+      const prefix = path.join(home, '.npm-global');
+      const newDir = path.join(prefix, 'bin');
+      const entry = path.join(prefix, 'lib', 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+      fs.mkdirSync(oldDir, { recursive: true }); fs.mkdirSync(newDir, { recursive: true });
+      fs.mkdirSync(path.dirname(entry), { recursive: true });
+      fs.writeFileSync(path.join(oldDir, 'codex'), '#!/bin/sh\necho codex-cli 0.146.0\n', { mode: 0o755 });
+      fs.writeFileSync(entry, '#!/bin/sh\necho codex-cli 0.160.0\n', { mode: 0o755 });
+      const launcher = path.join(newDir, 'codex'); fs.symlinkSync(entry, launcher);
+      const selected = resolveCliBinary('codex', { processPath: oldDir, effectivePath: [oldDir, newDir].join(path.delimiter), home })!;
+      expect(resolveSpawnBinary('codex', selected.binPath)?.binPath).toBe(launcher);
+      expect(selectAutomaticCliUpdateRecipe({
+        adapterId: 'codex', platform: 'darwin', binPath: selected.binPath,
+        realBinPath: fs.realpathSync(selected.binPath), userHome: home,
+        isRunnerResolvable: () => true, isTargetWritable: () => true,
+      })).toMatchObject({ kind: 'argv', argv: ['npm', 'install', '-g', '--prefix', prefix, '@openai/codex'] });
+    } finally {
+      __resetPathResolverForTests(); fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('selects a due idle CLI without letting an active Claude pane block Codex', () => {
     const queue = new CliAutoUpdateQueue({ claude: 0, codex: 0 });
     const now = 30 * 60 * 60_000;

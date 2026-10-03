@@ -44,6 +44,91 @@ describe('path-resolver CLI binary resolution', () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
+  it.skipIf(process.platform === 'win32')('F-790: escolhe o Codex mais novo, mesmo depois do primeiro PATH', () => {
+    const old = path.join(binDir, 'codex');
+    const recent = path.join(kimiDir, 'codex');
+    fs.writeFileSync(old, '#!/bin/sh\necho codex-cli 0.146.0\n', { mode: 0o755 });
+    fs.writeFileSync(recent, '#!/bin/sh\necho codex-cli 0.160.0\n', { mode: 0o755 });
+    expect(resolveCliBinary('codex', {
+      processPath: binDir,
+      effectivePath: [binDir, kimiDir].join(path.delimiter),
+      home: tmp,
+    })?.binPath).toBe(recent);
+  });
+
+  it.skipIf(process.platform === 'win32')('F-790: memoises successful/failed probes by real path and invalidates after mtime changes', () => {
+    const old = path.join(binDir, 'codex');
+    const recent = path.join(kimiDir, 'codex');
+    const log = path.join(tmp, 'version-probes');
+    const writeVersion = (bin: string, version: string) => fs.writeFileSync(bin,
+      `#!/bin/sh\necho probe >> '${log}'\necho codex-cli ${version}\n`, { mode: 0o755 });
+    const count = () => fs.readFileSync(log, 'utf8').trim().split('\n').length;
+    writeVersion(old, '0.146.0'); writeVersion(recent, '0.160.0');
+    const options = { processPath: binDir, effectivePath: [binDir, kimiDir].join(path.delimiter), home: tmp };
+    const hit = resolveCliBinary('codex', options);
+    expect(hit?.installationWarning).toBe('2 instalações: 0.146.0 e 0.160.0; usando 0.160.0');
+    for (let i = 0; i < 5; i++) expect(resolveCliBinary('codex', options)?.binPath).toBe(recent);
+    expect(count()).toBe(2);
+    writeVersion(old, '0.170.0');
+    const later = new Date(Date.now() + 10_000);
+    fs.utimesSync(old, later, later);
+    expect(resolveCliBinary('codex', options)?.binPath).toBe(old);
+    expect(count()).toBe(3);
+    fs.writeFileSync(recent, `#!/bin/sh\necho probe >> '${log}'\nexit 1\n`, { mode: 0o755 });
+    fs.utimesSync(recent, later, later);
+    expect(resolveCliBinary('codex', options)?.binPath).toBe(old);
+    expect(resolveCliBinary('codex', options)?.binPath).toBe(old);
+    expect(count()).toBe(4);
+  });
+
+  it.skipIf(process.platform === 'win32')('F-790: keeps PATH order when any candidate version is unreadable, and on equal versions', () => {
+    const old = path.join(binDir, 'codex');
+    const recent = path.join(kimiDir, 'codex');
+    fs.writeFileSync(old, '#!/bin/sh\necho codex-cli 0.146.0\n', { mode: 0o755 });
+    fs.writeFileSync(recent, '#!/bin/sh\necho no-version\n', { mode: 0o755 });
+    const options = { processPath: binDir, effectivePath: [binDir, kimiDir].join(path.delimiter), home: tmp };
+    expect(resolveCliBinary('codex', options)?.binPath).toBe(old);
+    fs.writeFileSync(recent, '#!/bin/sh\necho codex-cli 0.146.0\n', { mode: 0o755 });
+    expect(resolveCliBinary('codex', options)?.binPath).toBe(old);
+    expect(resolveCliBinary('codex', options)?.installationWarning).toBeUndefined();
+    // Absolute overrides remain authoritative, even when a newer PATH installation exists.
+    fs.writeFileSync(recent, '#!/bin/sh\necho codex-cli 0.160.0\n', { mode: 0o755 });
+    expect(resolveCliBinary(old, options)?.binPath).toBe(old);
+  });
+
+  it.skipIf(process.platform === 'win32')('F-790: aliases of one real executable never compete or probe versions', () => {
+    const bin = path.join(binDir, 'codex');
+    const log = path.join(tmp, 'unexpected-probes');
+    fs.writeFileSync(bin, `#!/bin/sh\necho probe >> '${log}'\n`, { mode: 0o755 });
+    fs.symlinkSync(bin, path.join(kimiDir, 'codex'));
+    const hit = resolveCliBinary('codex', { processPath: binDir, effectivePath: [kimiDir, binDir, kimiDir].join(path.delimiter), home: tmp });
+    expect(hit?.binPath).toBe(bin);
+    expect(hit?.installationWarning).toBeUndefined();
+    expect(fs.existsSync(log)).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('F-790: never ranks node/git or probes single installations', () => {
+    const log = path.join(tmp, 'unexpected-probes');
+    for (const command of ['node', 'git']) {
+      for (const dir of [binDir, kimiDir]) fs.writeFileSync(path.join(dir, command), `#!/bin/sh\necho probe >> '${log}'\n`, { mode: 0o755 });
+      expect(resolveCliBinary(command, { processPath: binDir, effectivePath: kimiDir, home: tmp })?.binPath).toBe(path.join(binDir, command));
+    }
+    expect(resolveCliBinary('claude', { processPath: binDir, effectivePath: binDir, home: tmp })?.binPath).toBe(executable);
+    expect(fs.existsSync(log)).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('F-790: ranks all affected AI CLIs numerically and warns without paths', () => {
+    for (const command of ['claude', 'grok', 'agy']) {
+      for (const [dir, version] of [[binDir, '2.1.9'], [kimiDir, '2.1.10']]) {
+        fs.writeFileSync(path.join(dir, command), `#!/bin/sh\necho ${command} v${version}\n`, { mode: 0o755 });
+      }
+      const hit = resolveCliBinary(command, { processPath: '', effectivePath: [binDir, kimiDir].join(path.delimiter), home: tmp });
+      expect(hit?.binPath).toBe(path.join(kimiDir, command));
+      expect(hit?.installationWarning).toBe('2 instalações: 2.1.9 e 2.1.10; usando 2.1.10');
+      expect(hit?.installationWarning).not.toContain(tmp);
+    }
+  });
+
   it('includes vendor install dirs among curated fallbacks', () => {
     const home = tmp;
     const dirs = commonCliBinDirs(home);

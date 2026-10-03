@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   codexHookTrustBypassArgs,
@@ -32,6 +35,20 @@ describe('parseCodexCliVersion', () => {
 });
 
 describe('resolveCodexCliVersion', () => {
+  it.skipIf(process.platform === 'win32')('F-790: the real version cache refreshes after an in-place CLI update', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-codex-version-'));
+    const bin = path.join(dir, 'codex');
+    try {
+      fs.writeFileSync(bin, '#!/bin/sh\necho codex-cli 0.133.0\n', { mode: 0o755 });
+      expect(resolveCodexCliVersion(bin)).toBe('0.133.0');
+      expect(codexHookTrustBypassArgs(bin)).toEqual([]);
+      fs.writeFileSync(bin, '#!/bin/sh\necho codex-cli 0.160.0\n', { mode: 0o755 });
+      const later = new Date(Date.now() + 10_000); fs.utimesSync(bin, later, later);
+      expect(resolveCodexCliVersion(bin)).toBe('0.160.0');
+      expect(codexHookTrustBypassArgs(bin)).toEqual(['--dangerously-bypass-hook-trust']);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it('memoises the result per bin', () => {
     let calls = 0;
     const exec: CodexVersionExec = () => {

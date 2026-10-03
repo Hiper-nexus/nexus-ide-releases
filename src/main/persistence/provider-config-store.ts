@@ -1822,6 +1822,8 @@ function toInfo(
         ? cached
         : resolveAdapterBinary(adapterId);
   }
+  const cliInstallationWarning = adapter.kind === 'cli-pty' && !cfg.binPath
+    ? resolveCliBinary(adapter.bin)?.installationWarning : undefined;
   const detectedBin =
     adapter.kind !== 'api-provider'
       ? resolved || adapter.bin
@@ -1892,6 +1894,7 @@ function toInfo(
         : undefined) ?? undefined,
     binPath: cfg.binPath,
     detectedBin,
+    ...(cliInstallationWarning ? { cliInstallationWarning } : {}),
     defaultModel,
     models,
     authReadyModels,
