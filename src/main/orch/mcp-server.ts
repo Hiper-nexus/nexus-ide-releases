@@ -44,6 +44,8 @@ import {
   releaseSessionByToken,
   type AgentGateContext,
 } from "./gate";
+import { grantsIsolatedWriterGitTool } from "./isolated-writer-policy";
+import { installWorktreeSalvageNotifier } from "./worktree-salvage-notice";
 import {
   handleMcpMessage,
   isJsonRpcRequest,
@@ -719,11 +721,10 @@ async function handleGateRequest(
         });
         return;
       }
-      const allowlisted = isHookToolAllowed(
-        ctx.allowedTools,
-        toolName,
-        ctx.role,
-      );
+      const allowlisted =
+        isHookToolAllowed(ctx.allowedTools, toolName, ctx.role) ||
+        // F-794: mesmo critério do despacho para o Git da própria worktree.
+        grantsIsolatedWriterGitTool(ctx, toolName);
       const reviewerAllowed = isInternalPrevcReviewerHookToolAllowed(
         ctx,
         toolName,
@@ -2003,6 +2004,8 @@ export function startMcpServer(): Promise<void> {
   // por chamador na hora da chamada (mesmo critério do tools/list).
   setToolPickRegistry(registry.tools);
   installSpawnHook();
+  // F-794: salvaguarda da worktree do writer avisa o orquestrador da missão.
+  installWorktreeSalvageNotifier();
   // F-529: reenvios do autoresponder (tecla perdida na race do desenho do
   // diálogo de trust) digitam pelo mesmo caminho da resposta original.
   cliPromptAutoResponder.setWriter(orchWriteSession);

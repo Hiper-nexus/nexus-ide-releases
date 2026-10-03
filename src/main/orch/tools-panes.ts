@@ -505,6 +505,9 @@ export function withIsolatedWriterContract(
     'Não há reserva exclusiva de arquivos: outros escritores podem editar o mesmo arquivo e gerar conflitos. ' +
     'Não há merge automático; o orquestrador revisa e integra as branches na ordem de dependência. ' +
     'Use nexus_git_add/commit/status/diff/log na própria worktree; nexus_terminal_run aceita somente essas operações Git estruturadas. ' +
+    // F-794: a concessão vem da autoridade do Main, não do allowlist da squad.
+    'Essas cinco ferramentas Git já estão liberadas para esta worktree, mesmo que o seu allowlist venha vazio: commite antes do handoff. ' +
+    'Se o commit falhar mesmo assim, o Nexus guarda um snapshot das alterações não commitadas (refs/nexus-salvage/) quando você entrega o handoff e quando o pane fecha; declare isso no handoff. ' +
     'Use a ferramenta nativa do CLI, conforme o perfil escolhido, para builds e testes. ' +
     'Ao terminar, chame nexus_handoff_submit uma vez com branch, sha, lista completa de arquivos tocados e diff ' +
     '(patch anexado ou caminho de um artefato de diff), além das validações e bloqueios.\n\n' + prompt;

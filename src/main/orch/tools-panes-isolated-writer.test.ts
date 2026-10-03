@@ -65,6 +65,7 @@ vi.mock('./squad-store', () => ({
 
 import { paneSpawnTool } from './tools-panes';
 import { OPERATOR_HAND_WORKTREE_KEY, operatorHandGcIdle } from './isolated-writer-worktree';
+import { worktreeSalvageIdle } from './isolated-writer-salvage';
 
 let temp: string;
 let manager: ProjectRuntimeManager;
@@ -121,6 +122,7 @@ beforeEach(() => {
 afterEach(async () => {
   for (const pane of h.panes) exitPane(pane);
   await operatorHandGcIdle();
+  await worktreeSalvageIdle();
   disposeWorktreeRuntimeRegistry();
   manager.closeAll();
   fs.rmSync(temp, { recursive: true, force: true });
@@ -211,6 +213,30 @@ describe('Via Rápida isolated writers', () => {
     expect(registry.listMission(ctx.scope, ctx.missionId!).filter((r) => r.status === 'ready')).toHaveLength(1);
     expect(git(ctx.scope.rootRealPath, 'rev-parse', record.branchRef)).toBe(sha);
     expect(fs.readFileSync(path.join(record.worktreePath, 'untracked.txt'), 'utf8')).toBe('keep');
+  });
+
+  it('F-794: pane do writer sai com trabalho sem commit e o Nexus guarda um commit de salvaguarda', async () => {
+    await paneSpawnTool.handler({ agentName: 'Executor', isolatedWriter: true }, ctx);
+    const [record] = registry.listMission(ctx.scope, ctx.missionId!);
+    fs.writeFileSync(path.join(record.worktreePath, 'base.txt'), 'worker change\n');
+    fs.writeFileSync(path.join(record.worktreePath, 'F-999.md'), '# qa\n');
+    const head = git(record.worktreePath, 'rev-parse', 'HEAD');
+    exitPane(h.panes[0]);
+    await worktreeSalvageIdle();
+    const refs = git(ctx.scope.rootRealPath, 'for-each-ref', '--format=%(refname)', 'refs/nexus-salvage')
+      .split('\n').filter(Boolean);
+    expect(refs).toHaveLength(1);
+    expect(refs[0].startsWith(`refs/nexus-salvage/${record.branchRef.slice('refs/heads/'.length)}/`)).toBe(true);
+    expect(git(ctx.scope.rootRealPath, 'show', `${refs[0]}:base.txt`)).toBe('worker change');
+    expect(git(ctx.scope.rootRealPath, 'show', `${refs[0]}:F-999.md`)).toBe('# qa');
+    expect(git(ctx.scope.rootRealPath, 'rev-parse', `${refs[0]}^`)).toBe(head);
+    // A branch e os arquivos do writer continuam exatamente como ele deixou.
+    expect(git(record.worktreePath, 'rev-parse', 'HEAD')).toBe(head);
+    expect(git(record.worktreePath, 'status', '--porcelain')).toContain('base.txt');
+    expect(traceHarness.events).toContainEqual(expect.objectContaining({
+      kind: 'worktree-salvage', outcome: 'saved', reason: 'pane-exit', missionId: ctx.missionId,
+      sessionId: h.panes[0].sessionId, fileCount: 2,
+    }));
   });
 
   it('releases an allocation when spawning fails', async () => {

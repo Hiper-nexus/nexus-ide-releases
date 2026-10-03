@@ -3,7 +3,12 @@ import { requireStr, str } from './tool-util';
 import { resolveCwdForScope, resolvePathForScope } from './workspace-path';
 import path from 'node:path';
 import type { AgentGateContext } from './gate';
-import { assertIsolatedWriterGitTool, isIsolatedWriterContext, isolatedWriterPolicyError } from './isolated-writer-policy';
+import {
+  assertIsolatedWriterGitTool,
+  isIsolatedWriterContext,
+  isolatedWriterPolicyError,
+  ISOLATED_WRITER_BRANCH_PREFIX,
+} from './isolated-writer-policy';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { OPERATOR_HAND_WORKTREE_KEY } from './isolated-writer-worktree';
 import type { ProjectExecutionScope } from '../../shared/types';
@@ -34,7 +39,9 @@ function assertIsolatedGitAuthority(ctx: AgentGateContext, cwd: string): void {
   const records = requireWorktreeRuntimeRegistry().listMission(ctx.scope, registryKey)
     .filter((record) => record.worktreePath === execution.rootRealPath && record.status === 'ready' &&
       (ctx.missionId !== undefined || record.ownerKind === 'pane'));
-  if (records.length !== 1 || !records[0].branchRef.startsWith('refs/heads/')) throw isolatedWriterPolicyError();
+  // F-794: com o Git do writer liberado pela autoridade do Main, a branch
+  // alocada precisa estar no namespace derivado `nexus/…` — nunca main/master.
+  if (records.length !== 1 || !records[0].branchRef.startsWith(ISOLATED_WRITER_BRANCH_PREFIX)) throw isolatedWriterPolicyError();
   assertSafeLocalGitConfig(gitRunner, cwd);
   try {
     const top = gitRunner.run(cwd, ['rev-parse', '--show-toplevel']);

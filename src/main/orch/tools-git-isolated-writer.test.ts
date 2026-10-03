@@ -66,6 +66,14 @@ describe('isolated writer MCP Git policy', () => {
     await expect(tool('status').handler({}, ctx)).rejects.toThrow(/isolated_worktree/);
     expect(h.run).not.toHaveBeenCalled();
   });
+  it('F-794: recusa commit se o registro apontar branch fora de nexus/ (nunca main)', async () => {
+    for (const branchRef of ['refs/heads/main', 'refs/heads/master', 'refs/heads/feature/x']) {
+      h.run.mockClear();
+      h.records = [{ missionId: 'm', worktreePath: root, branchRef, status: 'ready' }];
+      await expect(tool('commit').handler({ message: 'No' }, ctx)).rejects.toThrow(/isolated_worktree/);
+      expect(h.run.mock.calls.some(([, args]) => args[0] === 'commit')).toBe(false);
+    }
+  });
   it('rejects cwd escape and absolute/traversal/magic/symlink pathspec escape', async () => {
     await expect(tool('status').handler({ cwd: temp }, ctx)).rejects.toThrow(/escapes workspace/);
     fs.symlinkSync(temp, path.join(root, 'escape'));

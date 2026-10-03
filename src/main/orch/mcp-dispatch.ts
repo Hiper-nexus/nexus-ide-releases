@@ -29,6 +29,7 @@ import {
   returnOperatorHandFromEndedMission,
   type AgentGateContext,
 } from "./gate";
+import { grantsIsolatedWriterGitTool } from "./isolated-writer-policy";
 import {
   effectPolicyForTool,
   isEffectfulTool,
@@ -663,7 +664,9 @@ export async function dispatchToolCall(
       ctx.allowedTools,
       tool.name,
       ctx.petStudioMediaAuthority,
-    )
+    ) &&
+    // F-794: Git da própria worktree pela autoridade do Main, não da squad.
+    !grantsIsolatedWriterGitTool(ctx, tool.name)
   ) {
     const reason =
       `tool "${tool.name}" is outside this agent's allowlist ` +

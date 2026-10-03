@@ -7,6 +7,7 @@ import { tapSessionExit } from '../pty/pty-manager';
 import { getPaneRuntimeAuthorityBySession, listPaneSnapshots } from './pane-registry';
 import { claimSameCheckoutWriter, hasPendingWriterClaim } from './delegated-writer-gate';
 import { getProjectDomainStores } from './project-domain-store-registry';
+import { scheduleWorktreeSalvage } from './isolated-writer-salvage';
 
 /**
  * Chave do registry para writers isolados da mão do operador (sem missão).
@@ -122,6 +123,17 @@ function trackAllocation(
     // id de task (h-N → sessão do handoff) achar esta worktree.
     if (!released) bind({ sessionId });
     release();
+    // F-794: o processo do writer já saiu (prova física) — sem corrida com
+    // ele. Alteração não commitada vira commit de salvaguarda em
+    // refs/nexus-salvage/, sem tocar branch, índice ou arquivos.
+    void scheduleWorktreeSalvage({
+      worktreePath: record.worktreePath,
+      branchRef: record.branchRef,
+      missionId: registryKey,
+      taskId: record.taskId,
+      reason: 'pane-exit',
+      sessionId,
+    }, { scope, notify: missionId !== undefined });
   });
   return {
     worktreePath: record.worktreePath,
@@ -133,6 +145,50 @@ function trackAllocation(
       bind({ paneId, sessionId });
     },
   };
+}
+
+const salvageSweptScopes = new Set<string>();
+
+/**
+ * F-794: o app fechado no meio da missão (o caso de 03/10) não deixa a
+ * salvaguarda da saída do pane terminar — o Git assíncrono morre com o
+ * processo. A worktree continua retida (o GC nunca remove worktree suja); na
+ * primeira alocação de writer do escopo depois de reabrir, as worktrees de
+ * writers já liberados que ainda têm alteração sem commit ganham o snapshot.
+ * Uma vez por escopo por processo, sequencial, depois do turno atual, e só
+ * quando o registry do escopo já foi construído pela própria alocação.
+ */
+function sweepReleasedPaneWriterWorktrees(scope: ProjectExecutionScope): void {
+  const key = `${scope.installationId}\0${scope.projectId}\0${scope.checkoutId}`;
+  if (salvageSweptScopes.has(key)) return;
+  salvageSweptScopes.add(key);
+  setImmediate(() => {
+    void (async () => {
+      let records: readonly WorktreeRecord[];
+      try {
+        const runtime = requireWorktreeRuntimeRegistry().forScope(scope);
+        records = runtime.worktreeState.read(runtime.worktrees.scopeKey(scope)).records;
+      } catch (error) {
+        console.warn('[worktree-salvage] varredura de reabertura adiada:', error);
+        return;
+      }
+      for (const record of records) {
+        if (record.ownerKind !== 'pane' || record.status !== 'failed' || inUseByPane(record.worktreePath)) continue;
+        await scheduleWorktreeSalvage({
+          worktreePath: record.worktreePath,
+          branchRef: record.branchRef,
+          missionId: record.missionId,
+          taskId: record.taskId,
+          reason: 'reopen-sweep',
+        }, { scope, notify: false });
+      }
+    })();
+  });
+}
+
+/** Testes: permite varrer de novo o mesmo escopo. */
+export function resetWorktreeSalvageSweepForTests(): void {
+  salvageSweptScopes.clear();
 }
 
 /** Allocate through the same durable CAS + Git + optional CoW as sealed tasks. */
@@ -157,6 +213,7 @@ export async function allocateIsolatedWriterWorktree(
     },
   });
   const allocation = trackAllocation(scope, missionId, registryKey, record);
+  sweepReleasedPaneWriterWorktrees(scope);
   return materialize ? { ...allocation, materialize } : allocation;
 }
 

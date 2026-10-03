@@ -3249,6 +3249,51 @@ describe("MCP dispatch effect safety", () => {
       expect(handler).not.toHaveBeenCalled();
     });
 
+    it("F-794: writer isolado com allowlist vazia commita na própria worktree; push segue negado", async () => {
+      const context = missionContext(TEST_CONTEXT_REVISION, []);
+      context.executionScope = {
+        ...context.scope,
+        rootRealPath: path.join(testDir, "writer-worktree"),
+      };
+      const commit = vi.fn(async () => ({ committed: true }));
+      const committed = await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: "nexus_git_commit",
+          description: "commit",
+          inputSchema: { type: "object", properties: {} },
+          handler: commit,
+        }),
+        "nexus_git_commit",
+        { message: "fix(cli): F-790 — trabalho do writer" },
+        context,
+        workflowOptions(),
+      );
+      expect(committed).toMatchObject({ ok: true });
+      expect(commit).toHaveBeenCalledOnce();
+
+      const push = vi.fn(async () => ({ shouldNotRun: true }));
+      const pushed = await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: "nexus_git_push",
+          description: "push",
+          inputSchema: { type: "object", properties: {} },
+          handler: push,
+        }),
+        "nexus_git_push",
+        {},
+        context,
+        workflowOptions(),
+      );
+      expect(pushed).toMatchObject({
+        ok: false,
+        denied: true,
+        error: expect.stringContaining("outside this agent's allowlist"),
+      });
+      expect(push).not.toHaveBeenCalled();
+    });
+
     it("hints that the internal reviewer only reads and concludes", async () => {
       const handler = vi.fn(async () => ({ shouldNotRun: true }));
       const result = await dispatchToolCall(
