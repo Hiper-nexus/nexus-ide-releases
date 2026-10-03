@@ -97,6 +97,7 @@ import {
   resetPaneStartWatchdogForTests,
 } from './pane-start-watchdog';
 import { adapterCircuitBreakers } from './circuit-breaker';
+import { getPaneTaskReroute, resetPaneTaskReroutesForTests } from './pane-task-reroute';
 
 const orchestrator: AgentGateContext = {
   token: 'orch', label: 'Maestro', role: 'orchestrator', sessionId: 'orch-session',
@@ -131,6 +132,7 @@ function pendingSpawns(): void {
 beforeEach(() => {
   vi.clearAllMocks();
   resetPaneStartWatchdogForTests();
+  resetPaneTaskReroutesForTests();
   adapterCircuitBreakers.reset();
   h.nextPending = null;
   h.current = true;
@@ -239,6 +241,46 @@ describe('F-723: ficha de início e reenvio pela rota do spawn', () => {
     expect(getPaneStartWatch('pane-1')).toMatchObject({ pinnedRuntime: true });
   });
 
+  it('F-765/F-775: o pedido fica com o pane; a reabertura leva o pacote depois do brief, sem fixar a CLI', async () => {
+    const resolver = vi.fn(async () => ({ adapterId: 'qwen', model: 'qwen3.8-max', routeReservationId: 'rr-1' }));
+    setOperatorRouteResolver(resolver);
+    await paneSpawnTool.handler(
+      { task: 'implementar o login', prompt: 'faça o login', title: 'login' }, orchestrator,
+    );
+    const handle = getPaneTaskReroute('pane-1')!;
+    expect(handle).toMatchObject({
+      paneId: 'pane-1', adapterId: 'qwen', missionId: 'mission-a', role: 'worker',
+      operatorOpened: false, pinnedRuntime: false, generation: 0,
+    });
+    expect(handle.hasAlternative([])).toBe(true);
+
+    resolver.mockResolvedValueOnce({ adapterId: 'qwen', model: 'qwen3.7-max', routeReservationId: 'rr-2' });
+    const pack = '[NEXUS FAILOVER HANDOFF]\nTouched files:\n- src/login.ts\nExecute the next concrete step now.';
+    const next = await handle.reroute({
+      excludeAdapterIds: [], preferAdapterIds: ['qwen'], appendPrompt: pack,
+    });
+    expect(next).toEqual({ paneId: 'pane-2', adapterId: 'qwen' });
+    // A rota segue a tarefa original; a mesma CLI entra só como preferência.
+    expect(resolver).toHaveBeenLastCalledWith('implementar o login', orchestrator, {
+      preferAdapterIds: ['qwen'],
+    });
+    const prompt = String(h.spawn.mock.calls[1]![0].prompt);
+    expect(prompt.indexOf('faça o login')).toBeLessThan(prompt.indexOf('[NEXUS FAILOVER HANDOFF]'));
+    // A reabertura é marcada: o pedido novo conta como a 1ª reabertura.
+    expect(getPaneTaskReroute('pane-2')).toMatchObject({ generation: 1 });
+    expect(getPaneStartWatch('pane-2')).toMatchObject({ rerouted: true });
+  });
+
+  it('F-765: CLI nomeada pelo operador fica guardada como fixa (o failover não a troca)', async () => {
+    h.liveCtx = operator;
+    h.mentionedCli = 'qwen';
+    setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex' })));
+    await paneSpawnTool.handler(
+      { adapterId: 'qwen', operatorChoice: true, task: 'revisar', prompt: 'revise' }, operator,
+    );
+    expect(getPaneTaskReroute('pane-1')).toMatchObject({ pinnedRuntime: true, role: 'helper' });
+  });
+
   it('spawn sem ACK pendente (erro devolvido ao chamador) não deixa ficha', async () => {
     setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'qwen', routeReservationId: 'rr-1' })));
     h.spawn.mockImplementationOnce(async (options: Record<string, unknown>, hooks?: {
@@ -254,5 +296,6 @@ describe('F-723: ficha de início e reenvio pela rota do spawn', () => {
       paneSpawnTool.handler({ task: 'revisar', prompt: 'revise' }, orchestrator),
     ).rejects.toThrow(/no renderer window/);
     expect(listPaneStartWatches()).toEqual([]);
+    expect(getPaneTaskReroute('pane-x')).toBeNull();
   });
 });

@@ -30,6 +30,20 @@ export const FAILOVER_HANDOFF_FOOTER = 'Execute the next concrete step now.';
 export const MAX_CONTINUITY_PACK_CHARS = 6_000;
 
 /**
+ * F-765: frase com que o Codex logado em conta ChatGPT recusa um modelo. O
+ * detector a compara sem espaços nem quebras (a TUI do Codex quebra a célula
+ * de erro em qualquer ponto), e a máscara abaixo segue a mesma regra.
+ */
+export const CODEX_CHATGPT_MODEL_REJECTION =
+  'model is not supported when using Codex with a ChatGPT account';
+
+/** A frase com qualquer branco (inclusive quebra de linha) entre as letras. */
+const CODEX_CHATGPT_MODEL_REJECTION_ANY_WRAP = new RegExp(
+  CODEX_CHATGPT_MODEL_REJECTION.replace(/\s+/g, '').split('').join('\\s*'),
+  'gi',
+);
+
+/**
  * Espelho de citação dos gatilhos de `limit-detector.ts` (F-511).
  *
  * O detector varre uma janela rolante de 4000 chars: quando o header do pack
@@ -77,6 +91,9 @@ const EXCERPT_TRIGGER_MASKS: ReadonlyArray<readonly [RegExp, string]> = [
   [/oauth token (?:expired|revoked)/gi, 'oauth token [expirado — citado]'],
   [/refresh token (?:expired|invalid|revoked)/gi, 'refresh token [inválido — citado]'],
   [/stored token for (["'])[^"']+\1 was rejected/gi, 'stored token [rejeitado — citado]'],
+  // F-765: o excerpt envelhecido continua sendo citação após sair o header —
+  // inclusive com a frase partida pela quebra de linha da TUI.
+  [CODEX_CHATGPT_MODEL_REJECTION_ANY_WRAP, 'model [rejeitado para esta conta — citado]'],
   [/please run \/login/gi, 'run /login [citado]'],
   [/not logged in/gi, 'not-logged-in [citado]'],
   [/session expired/gi, 'session [expirada — citada]'],

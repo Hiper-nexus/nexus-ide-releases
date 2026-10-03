@@ -16,6 +16,7 @@ import {
   paneStartNoticeSummary,
   paneStartProgress,
   providerRejectedCause,
+  releasePaneStartWatch,
   resetPaneStartWatchdogForTests,
   setPaneStartKick,
   shortStartError,
@@ -171,9 +172,26 @@ describe('turno do brief recusado pelo provedor (F-734)', () => {
     expect(progress({ lastTurnEnd: { outcome: 'error' } })).toEqual({ kind: 'not-ours' });
   });
 
-  it('CLI sem prova de turno segue o F-723: turno aberto já é início', () => {
+  it('CLI sem prova de turno segue o F-723: turno aberto (assentado) já é início', () => {
     expect(progress({ turnProof: false })).toEqual({ kind: 'started' });
     expect(progress({ turnProof: false, turnOpened: false })).toEqual({ kind: 'none' });
+    // F-765: enquanto assenta, só espera — a recusa do provedor chega em segundos.
+    expect(progress({ turnProof: false, settling: true })).toEqual({ kind: 'turn-open' });
+  });
+
+  it('F-765: só a EVIDÊNCIA de recusa segura uma CLI sem prova de turno', () => {
+    // Recusa do modelo no PTY, sem trabalho: a ficha espera o failover.
+    expect(progress({ turnProof: false, modelRejected: true })).toEqual({ kind: 'turn-open' });
+    expect(progress({
+      turnProof: false,
+      modelRejected: true,
+      lastTurnEnd: { outcome: 'error' },
+    })).toEqual({ kind: 'turn-open' });
+    // Turno fechado com erro e sem trabalho não é início (é do failover).
+    expect(progress({ turnProof: false, lastTurnEnd: { outcome: 'error' } })).toEqual({ kind: 'not-ours' });
+    // Trabalho e fim normal continuam provando início.
+    expect(progress({ turnProof: false, worked: true, modelRejected: true })).toEqual({ kind: 'started' });
+    expect(progress({ turnProof: false, lastTurnEnd: { outcome: 'completed' } })).toEqual({ kind: 'started' });
   });
 
   it('disjuntor: credencial sem conta gerenciada abre; com conta ou pedido recusado, só conta', () => {
@@ -376,6 +394,47 @@ describe('ficha do spawn pendente (F-723)', () => {
       }),
     ).toBeNull();
     expect(watch.failure?.cause).toBe('provider-auth');
+  });
+
+  it('F-765: fim de turno com modelo recusado conserva a ficha para o failover', () => {
+    const watch = trackPaneStart({ ...base(), adapterId: 'codex', turnProof: false });
+    notePaneStartAccepted('pane-a');
+    expect(notePaneTurnEnded(watch, {
+      sessionId: 'session-codex',
+      outcome: 'error',
+      stopFailure: 'invalid_request',
+      modelRejected: true,
+      worked: false,
+      now: NOW,
+    })).toBeNull();
+    expect(watch.failure).toBeNull();
+    expect(watch.turnOutcome).toBeNull();
+    expect(watch.phase).toBe('watching');
+    expect(watch.modelRejectedAt).toBe(NOW);
+  });
+
+  it('F-765: CLI sem prova de turno — fim de turno sem recusa decide como o F-723', () => {
+    const watch = trackPaneStart({ ...base(), adapterId: 'codex', turnProof: false });
+    notePaneStartAccepted('pane-a', NOW);
+    expect(watch.turnOpenedAt).toBe(NOW);
+    expect(notePaneTurnEnded(watch, {
+      sessionId: 'session-codex', outcome: 'error', worked: false, now: NOW + 1_000,
+    })).toBeNull();
+    expect(watch.turnOutcome).toBe('not-ours');
+    resetPaneStartWatchdogForTests();
+    const ok = trackPaneStart({ ...base(), adapterId: 'codex', turnProof: false });
+    notePaneTurnEnded(ok, {
+      sessionId: 'session-codex', outcome: 'completed', worked: false, now: NOW,
+    });
+    expect(ok.turnOutcome).toBe('started');
+  });
+
+  it('F-765: o failover assume o pane — a ficha sai sem veredito e uma só vez', () => {
+    const watch = trackPaneStart({ ...base(), adapterId: 'codex', turnProof: false });
+    expect(releasePaneStartWatch('pane-a')).toBe(true);
+    expect(watch.phase).toBe('done');
+    expect(getPaneStartWatch('pane-a')).toBeNull();
+    expect(releasePaneStartWatch('pane-a')).toBe(false);
   });
 
   it('F-734: trabalho no turno, Stop normal, limite ou transitório não são falha de início', () => {

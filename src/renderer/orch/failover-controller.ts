@@ -13,6 +13,7 @@ import {
 import {
   blockedFailoverToastCopy,
   recoveredFailoverToastCopy,
+  reroutedFailoverToastCopy,
 } from './failover-toast-copy';
 
 /**
@@ -24,6 +25,44 @@ export function useFailoverController(): void {
   useEffect(() => {
     return window.nexus.accounts.onFailover((event) => {
       const push = useToastStore.getState().push;
+      // F-765/F-775: o Main já reabriu a tarefa em outro pane e fechou o
+      // parado — aqui não se religa nada, só se conta o que aconteceu.
+      if (event.toPaneId) {
+        const copy = reroutedFailoverToastCopy(event);
+        push('warn', copy.title, {
+          detail: copy.detail,
+          dedupeKey: `failover:${event.paneId}`,
+        });
+        return;
+      }
+      // F-765: o pedido religa; somente o recibo do Main anuncia aplicação.
+      // Eventos antigos sem fase ainda pedem respawn, sem presumir sucesso.
+      if (event.toModel && (event.modelRotationPhase === 'requested' || event.switched)) {
+        const pane = listPanes(useLayoutStore.getState().root).find(
+          (p) => p.id === event.paneId,
+        );
+        if (!pane) return;
+        if (event.modelRotationPhase === 'applied') {
+          push(
+            'warn',
+            `Modelo rotacionado para "${event.toModel}"`,
+            `${event.reason}. A conta não foi trocada — apenas o modelo do pane.`,
+          );
+          return;
+        }
+        useLayoutStore.getState().setPaneModel(pane.id, event.toModel);
+        const updated = listPanes(useLayoutStore.getState().root).find(
+          (candidate) => candidate.id === pane.id,
+        );
+        if (updated) {
+          respawnWithResume(
+            updated,
+            `[nexus] modelo rejeitado → religando em "${event.toModel}" (mesma conta)…`,
+            { mode: 'same-account-resume' },
+          );
+        }
+        return;
+      }
       if (!event.switched) {
         if (event.missionTaskWaived) {
           push(
@@ -57,35 +96,6 @@ export function useFailoverController(): void {
               useProductNavigationStore.getState().openSettings('providers'),
           },
         });
-        return;
-      }
-      // Rotação de MODELO (F-520): a conta está sadia — aplica o modelo
-      // alternativo escolhido pelo main no pane e religa na MESMA conta,
-      // sem handoff de credencial nem continuity pack. O toast de sucesso
-      // só existe se o pane foi encontrado e religado de fato (evento pode
-      // chegar em janela de outro project-scope que não possui o pane).
-      if (event.toModel) {
-        const pane = listPanes(useLayoutStore.getState().root).find(
-          (p) => p.id === event.paneId,
-        );
-        if (pane) {
-          useLayoutStore.getState().setPaneModel(pane.id, event.toModel);
-          const updated = listPanes(useLayoutStore.getState().root).find(
-            (candidate) => candidate.id === pane.id,
-          );
-          if (updated) {
-            respawnWithResume(
-              updated,
-              `[nexus] modelo rejeitado → religando em "${event.toModel}" (mesma conta)…`,
-              { mode: 'same-account-resume' },
-            );
-            push(
-              'warn',
-              `Modelo rotacionado para "${event.toModel}"`,
-              `${event.reason}. A conta não foi trocada — apenas o modelo do pane.`,
-            );
-          }
-        }
         return;
       }
       const pane = listPanes(useLayoutStore.getState().root).find(

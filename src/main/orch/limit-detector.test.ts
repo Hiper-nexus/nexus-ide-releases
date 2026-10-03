@@ -78,6 +78,30 @@ describe('detectLimit', () => {
     expect(detectLimit('O modelo requer uma versão mais nova? melhor atualizar.')).toBeNull();
   });
 
+  it.each([
+    "Error: The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account",
+    'Error: The gpt-6.1-sol model is not supported when using Codex with a ChatGPT account',
+    'HTTP 400: model is not supported when using Codex with a ChatGPT account',
+    'Error: HTTP 400: model is not supported when using Codex with a ChatGPT account',
+    `{"error":{"message":"The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account","type":"invalid_request_error"}}`,
+  ])('F-765: recusa real Codex/ChatGPT é modelo, não limite da conta: %s', (text) => {
+    expect(detectLimit(text)?.kind).toBe('model');
+  });
+
+  it('F-765: recusa Codex citada em handoff, documentação ou narração não dispara', () => {
+    const error = "Error: The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account";
+    for (const text of [
+      `> Handoff: ${error}`,
+      `O pane antigo retornou ${error}; já foi corrigido.`,
+      `Documentação: ${error}`,
+      `\`\`\`text\n${error}\n\`\`\``,
+      `A documentação cita \`${error}\` como exemplo.`,
+      sanitizeHandoffExcerptForDetector(error),
+      "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account",
+      'Error: this feature is not supported',
+    ]) expect(detectLimit(text)).toBeNull();
+  });
+
   it('ignora erros citados em blockquotes Markdown (EN/PT)', () => {
     expect(
       detectLimit(
@@ -728,5 +752,88 @@ describe('F-764: varredura linear em texto de TUI', () => {
 
   it('rótulo de log com espaço antes do separador continua sendo histórico', () => {
     expect(detectLimit('stdout   :   Error: 429 Too Many Requests')).toBeNull();
+  });
+});
+
+/**
+ * F-765 (03/10): o Codex 0.146 com conta ChatGPT recusou o gpt-6.1-sol. A TUI
+ * quebra a célula de erro em várias linhas sozinha (print do operador), então
+ * a frase chega ao PTY partida — a regex de uma linha só nunca casou a tela.
+ */
+describe('F-765: recusa de modelo do Codex com conta ChatGPT', () => {
+  // Linhas exatas do print do operador (pane estreito), com o marcador ■.
+  const SCREEN = [
+    '⚠ Model metadata for `gpt-6.1-sol` not found. Defaulting to fallback metadata;',
+    '  this can degrade performance and cause issues.',
+    '',
+    '• You have 3 usage limit resets available. Run /usage to use one.',
+    '',
+    '■ {"type":"error","status":400,"error":',
+    '{"type":"invalid_request_error","message":"The \'gpt-6.1-sol\' model is not',
+    'supported when using Codex with a ChatGPT account."}}',
+  ].join('\n');
+
+  it('a tela real (célula de erro em três linhas) é recusa de modelo, presa ao Codex', () => {
+    const hit = detectLimit(SCREEN);
+    expect(hit).toMatchObject({ kind: 'model', adapterId: 'codex' });
+    expect(hit?.reason).toBe(
+      "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account",
+    );
+  });
+
+  it.each([
+    // Linha única (exec, log de rollout).
+    '■ {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-6.1-sol\' model is not supported when using Codex with a ChatGPT account."}}',
+    // Quebra no meio da palavra (largura diferente do pane).
+    '■ {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-6.1-sol\' model is not supp\norted when using Codex with a Chat\nGPT account."}}',
+    // Quebra no id do modelo e moldura de ferramenta de shell.
+    '  ⎿  ■ {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-6.1-\nsol\' model is not supported when using Codex with a ChatGPT account."}}',
+    'ERROR: unexpected status 400 Bad Request: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-6.1-sol\' model is not supported\nwhen using Codex with a ChatGPT account."}}',
+    'Error: The gpt-6.1-sol model is not supported when\n  using Codex with a ChatGPT account',
+  ])('variante de tela reconhecida: %s', (text) => {
+    expect(detectLimit(text)).toMatchObject({ kind: 'model', adapterId: 'codex' });
+  });
+
+  it.each([
+    // Linha em branco separa o marcador da frase: são blocos diferentes.
+    '■ {"type":"error","status":400}\n\nThe \'gpt-6.1-sol\' model is not supported when using Codex with a ChatGPT account.',
+    // Frase longe demais do marcador (mais linhas que uma célula de erro).
+    ['Error: falhou', 'a', 'b', 'c', 'd', 'e', 'f', "The 'x' model is not supported when using Codex with a ChatGPT account"].join('\n'),
+    // Prosa quebrada pela TUI: a linha da frase não abre com marcador de erro.
+    'O Maestro explicou que o pane mostrava a mensagem\nde que o model is not supported when using Codex with a ChatGPT account.',
+    // A frase sem o "model" na frente não é a recusa.
+    'Error: this account is not supported when using Codex with a ChatGPT account',
+  ])('não é célula de erro do Codex: %s', (text) => {
+    expect(detectLimit(text)).toBeNull();
+  });
+
+  it('a tela real mascarada no excerpt do pack (inteira ou com espaços colapsados) não dispara', () => {
+    expect(detectLimit(sanitizeHandoffExcerptForDetector(SCREEN))).toBeNull();
+    const collapsed = SCREEN.replace(/\s+/g, ' ');
+    expect(detectLimit(sanitizeHandoffExcerptForDetector(collapsed))).toBeNull();
+    const midWord = '■ {"type":"error","message":"The \'gpt-6.1-sol\' model is not supp orted when using Codex with a Chat GPT account."}}';
+    expect(detectLimit(midWord)?.kind).toBe('model');
+    expect(detectLimit(sanitizeHandoffExcerptForDetector(midWord))).toBeNull();
+  });
+
+  const SIZE = 16_384;
+  const phrase = "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account.";
+  const adversarial: Array<[string, string, 'model' | null]> = [
+    ['só marcadores ■ em linhas curtas', '■\n'.repeat(SIZE / 2), null],
+    ['"error:" e espaços em todas as linhas', `error:${' '.repeat(120)}\n`.repeat(140).slice(0, SIZE), null],
+    ['JSON de erro sem message, frase longe', `{"type":"error",${' '.repeat(600)}\n`.repeat(25).slice(0, SIZE - 100) + phrase, null],
+    ['frase em prosa repetida, sem marcador', `o pane disse ${phrase}\n`.repeat(200).slice(0, SIZE), null],
+    ['frase letra a letra com espaços', `${phrase.split('').join(' ')}\n`.repeat(100).slice(0, SIZE), null],
+    ['moldura │ ⎿ e linhas em branco', `  │  ⎿${' '.repeat(120)}\n\n`.repeat(130).slice(0, SIZE), null],
+    ['célula de erro real repetida', `■ {"type":"error","message":"${phrase}"}\n`.repeat(200).slice(-SIZE), 'model'],
+  ];
+
+  it.each(adversarial)('%s: tempo linear em 16 KB', (_label, text, kind) => {
+    detectLimit(text);
+    const startedAt = performance.now();
+    const hit = detectLimit(text);
+    const elapsedMs = performance.now() - startedAt;
+    expect(hit?.kind ?? null).toBe(kind);
+    expect(elapsedMs).toBeLessThan(50);
   });
 });

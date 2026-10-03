@@ -17,6 +17,13 @@
  * configuração (credencial, conta ou pedido recusados pelo provedor) sem fazer
  * nada não começou — e repetir não cura. A ficha espera o desfecho do turno:
  * ferramenta, handoff ou Stop normal provam o início.
+ *
+ * F-765: fora da família Claude o turno aberto continua bastando (F-723) — agy,
+ * MiMo, Muse e afins mandam um ou dois eventos por sessão, e exigir mais deles
+ * deixaria o worker que trabalha sem veredito. Só EVIDÊNCIA muda isso: o PTY
+ * mostrando a recusa do modelo (sem trabalho no turno) segura a ficha para o
+ * failover recuperar, e um turno fechado com erro não é início. Antes do
+ * veredito o turno assenta START_SETTLE_MS, para a recusa ter tempo de chegar.
  */
 import type { AgentStopFailureCategory } from '../../shared/agent-stop-failure';
 import type { ProjectExecutionScope } from '../../shared/types';
@@ -27,6 +34,17 @@ import { sanitizeMissionOrchestratorExitOutput } from './mission-orchestrator-ex
  * nascimento da sessão (ou do pedido, sem sessão) e de novo depois do reenvio.
  */
 export const START_GRACE_MS = 90_000;
+/**
+ * F-765: CLI sem prova de turno só é "começou" depois de o turno aberto
+ * assentar — a recusa do modelo (400 do provedor) chega em segundos. É só
+ * espera: enquanto assenta, a ficha não reenvia, não reroteia nem fecha nada.
+ */
+export const START_SETTLE_MS = 10_000;
+/**
+ * F-765: recusa de modelo segurada para o failover. Se ninguém assumiu o pane
+ * neste prazo, a ficha vira falha de início (pedido recusado) e segue o F-723.
+ */
+export const MODEL_REJECTION_HANDOFF_MS = 60_000;
 /**
  * Ficha sem veredito possível (CLI sem prova de turno, sessão viva) sai daqui:
  * a partir desse ponto quem cuida é o F-242 e a mortalidade de worker.
@@ -67,7 +85,7 @@ export interface StartCheckInput {
   readonly role: PaneStartRole;
   /** F-231: pane aberto pela mão do operador — a máquina nunca o fecha. */
   readonly operatorOpened: boolean;
-  /** Evidência de início: turno aberto, entrega aceita ou handoff. */
+  /** Evidência de início: ferramenta, handoff ou fim de turno confiável. */
   readonly started: boolean;
   /** Falha física já provada (spawn recusado, saída no boot, brief recusado). */
   readonly failed: boolean;
@@ -156,10 +174,11 @@ export function providerRejectedCause(
 }
 
 /**
- * F-734: onde o pane está no caminho até "começou". `turn-open` só existe na
- * família Claude (prova de turno): o turno abriu, mas ainda não fez trabalho
- * nem terminou — o veredito é do desfecho dele. `not-ours`: o turno acabou em
- * limite de uso ou erro transitório, que são do failover (F-249/F-718).
+ * F-734: onde o pane está no caminho até "começou". `turn-open`: o turno
+ * abriu, mas ainda não fez trabalho nem terminou — o veredito é do desfecho
+ * dele (família Claude), da recusa do modelo que o failover recupera ou do
+ * assentamento (F-765). `not-ours`: o turno acabou em limite de uso, erro
+ * transitório ou erro sem trabalho, que são do failover (F-249/F-718).
  */
 export type PaneStartProgress =
   | { readonly kind: 'none' | 'turn-open' | 'started' | 'not-ours' }
@@ -171,6 +190,16 @@ export function paneStartProgress(input: {
   readonly turnOpened: boolean;
   /** Trabalho provado: ferramenta na sessão ou handoff da sessão. */
   readonly worked: boolean;
+  /**
+   * F-765: o PTY mostra a recusa do modelo pelo provedor e o turno não fez
+   * trabalho. Em qualquer CLI isso não é início; a recuperação é do failover.
+   */
+  readonly modelRejected?: boolean;
+  /**
+   * F-765: CLI sem prova de turno com o turno aberto há menos de
+   * START_SETTLE_MS — a primeira resposta do provedor ainda pode ser recusa.
+   */
+  readonly settling?: boolean;
   /** Último turno fechado da sessão (sem conteúdo). */
   readonly lastTurnEnd: {
     readonly outcome: 'completed' | 'error';
@@ -178,9 +207,15 @@ export function paneStartProgress(input: {
   } | null;
 }): PaneStartProgress {
   if (input.worked) return { kind: 'started' };
-  // Sem prova de turno não há StopFailure: turno aberto basta (F-723).
-  if (!input.turnProof) return { kind: input.turnOpened ? 'started' : 'none' };
+  if (input.modelRejected) return { kind: 'turn-open' };
   const end = input.lastTurnEnd;
+  if (!input.turnProof) {
+    // Sem prova de turno não há StopFailure: um turno fechado sem trabalho é
+    // do failover se acabou em erro; aberto e assentado basta (F-723).
+    if (end) return { kind: end.outcome === 'completed' ? 'started' : 'not-ours' };
+    if (!input.turnOpened) return { kind: 'none' };
+    return { kind: input.settling ? 'turn-open' : 'started' };
+  }
   if (end) {
     if (end.outcome === 'completed') return { kind: 'started' };
     const cause = providerRejectedCause(end.stopFailure);
@@ -316,6 +351,10 @@ export interface PaneStartWatch extends PaneStartWatchInit {
    * um turno seguinte (o Maestro escrevendo no pane) nunca reverte o veredito.
    */
   turnOutcome: 'started' | 'not-ours' | null;
+  /** F-765: quando o turno do brief foi visto aberto (assentamento). */
+  turnOpenedAt: number | null;
+  /** F-765: quando a recusa do modelo apareceu no PTY sem trabalho. */
+  modelRejectedAt: number | null;
   redeliveredAt: number | null;
   /** Passo 1 em curso: a varredura espera, mas a saída da sessão ainda conta. */
   redelivering: boolean;
@@ -375,6 +414,8 @@ export function trackPaneStart(init: PaneStartWatchInit): PaneStartWatch {
     failure: early?.failure ? { cause: early.failure, at: early.at } : null,
     sessionEnded: false,
     turnOutcome: null,
+    turnOpenedAt: early?.accepted === true ? early.at : null,
+    modelRejectedAt: null,
     redeliveredAt: null,
     redelivering: false,
     phase: 'watching',
@@ -399,6 +440,18 @@ export function listPaneStartWatches(): PaneStartWatch[] {
 export function finishPaneStartWatch(watch: PaneStartWatch): void {
   watch.phase = 'done';
   if (watches.get(watch.paneId) === watch) watches.delete(watch.paneId);
+}
+
+/**
+ * F-765: o failover assumiu o pane (religou com outro modelo ou reabriu a
+ * tarefa pela rota do spawn). A ficha sai sem veredito: nem sucesso no
+ * disjuntor, nem um segundo reenvio da mesma tarefa.
+ */
+export function releasePaneStartWatch(paneId: string): boolean {
+  const watch = watches.get(paneId);
+  if (!watch || watch.phase !== 'watching') return false;
+  finishPaneStartWatch(watch);
+  return true;
 }
 
 /** Ficha da sessão: pela sessão já vinculada ou, antes do vínculo, pelo pane. */
@@ -447,6 +500,7 @@ export function notePaneTurnEnded(
     readonly outcome: 'completed' | 'error';
     readonly stopFailure?: AgentStopFailureCategory;
     readonly worked: boolean;
+    readonly modelRejected?: boolean;
     readonly now: number;
   },
 ): ProviderRejectedCause | null {
@@ -458,6 +512,7 @@ export function notePaneTurnEnded(
     turnProof: watch.turnProof,
     turnOpened: true,
     worked: input.worked,
+    modelRejected: input.modelRejected,
     lastTurnEnd: {
       outcome: input.outcome,
       ...(input.stopFailure ? { stopFailure: input.stopFailure } : {}),
@@ -467,6 +522,11 @@ export function notePaneTurnEnded(
     watch.failure = { cause: progress.cause, at: input.now };
     scheduleKick();
     return progress.cause;
+  }
+  if (progress.kind === 'turn-open') {
+    // F-765: recusa do modelo — a ficha espera o failover (ou o prazo dele).
+    watch.modelRejectedAt ??= input.now;
+    return null;
   }
   watch.turnOutcome = progress.kind === 'not-ours' ? 'not-ours' : 'started';
   return null;
@@ -480,7 +540,10 @@ export function notePaneStartAccepted(paneId: string, now: number = Date.now()):
     earlyMarks.set(paneId, { at: now, accepted: true });
     return;
   }
-  if (!watch.failure) watch.accepted = true;
+  if (!watch.failure) {
+    watch.accepted = true;
+    watch.turnOpenedAt ??= now;
+  }
 }
 
 /**

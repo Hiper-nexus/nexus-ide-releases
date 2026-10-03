@@ -26,7 +26,8 @@ import { collectFilesModified } from './worker-files-modified';
 export interface MainOwnedFailoverPlanInput {
   readonly adapterId: string;
   readonly meta: PaneOrchMeta | null;
-  readonly toAccountId: string;
+  /** Conta pinada no pane novo; ausente = login nativo (rotação de modelo). */
+  readonly toAccountId?: string;
   readonly fromAccountLabel: string;
   readonly reason: string;
   /**
@@ -170,7 +171,7 @@ function buildCrossAccountPack(
   const git = resolveGitState(input);
   const packInput: ContinuityPackInput = {
     fromAccountLabel: input.fromAccountLabel,
-    toAccountLabel: input.toAccountLabel ?? input.toAccountId,
+    toAccountLabel: input.toAccountLabel ?? input.toAccountId ?? '',
     reason: input.reason,
     role: meta.role,
     missionId: meta.missionId,
@@ -198,7 +199,7 @@ export async function respawnMainOwnedPaneWithAccount(input: {
   readonly paneId: string;
   readonly sessionId?: string;
   readonly adapterId: string;
-  readonly toAccountId: string;
+  readonly toAccountId?: string;
   readonly fromAccountLabel: string;
   readonly reason: string;
   /** F-520: failover de modelo — mesma conta, modelo alternativo. */
@@ -260,8 +261,8 @@ export async function respawnMainOwnedPaneWithAccount(input: {
     return false;
   }
   console.info(
-    `[failover-mission-respawn] ${input.paneId} trocou para a conta ` +
-      `${input.toAccountId} (novo pane ${spawned.paneId}, ` +
+    `[failover-mission-respawn] ${input.paneId} religou na conta ` +
+      `${input.toAccountId ?? 'nativa'} (novo pane ${spawned.paneId}, ` +
       `session ${spawned.sessionId})`,
   );
   return true;

@@ -97,6 +97,11 @@ import {
   untrackPaneStart,
   type PaneStartRerouteResult,
 } from './pane-start-watchdog';
+import {
+  forgetPaneTaskReroute,
+  registerPaneTaskReroute,
+  type PaneTaskRerouteRequest,
+} from './pane-task-reroute';
 import { selectSpawnFailSuccessor } from './spawn-fail-reroute';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { isMissionWorkerWriteEligibleCli } from './squad-runtime-policy';
@@ -924,6 +929,8 @@ const paneSpawnAfterTabMission = {
     // F-723: CLI que não começou a tarefa sai da rota do reenvio automático —
     // exclusão interna, autoritativa (nunca vem de argumento MCP).
     const recoveryExcluded = startRecovery?.excludeAdapterIds ?? [];
+    // F-765: a reabertura pelo failover prefere (sem fixar) a CLI de antes.
+    const recoveryPreferred = startRecovery?.preferAdapterIds ?? [];
     let routeReservationId = str(args, 'routeReservationId');
     let options: SpawnToolOptions;
     let executionMode: 'same_checkout' | 'isolated_worktree' | undefined;
@@ -1050,9 +1057,7 @@ const paneSpawnAfterTabMission = {
               recoveryExcluded.length > 0
                 ? [...recoveryExcluded, ...excluded]
                 : excluded,
-            ...(pinRedistributed
-              ? { preferAdapterIds: [pinRedistributed.adapterId] }
-              : {}),
+            ...routePreference(pinRedistributed, recoveryPreferred),
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -1246,9 +1251,7 @@ const paneSpawnAfterTabMission = {
                     ],
                   }
                 : {}),
-              ...(pinRedistributed
-                ? { preferAdapterIds: [pinRedistributed.adapterId] }
-                : {}),
+              ...routePreference(pinRedistributed, recoveryPreferred),
             },
           );
         } finally {
@@ -1995,24 +1998,63 @@ const paneSpawnAfterTabMission = {
       const startWatchRole =
         options.role === 'worker' ? 'worker' : options.role === undefined ? 'helper' : null;
       const startCallerSessionId = ctx.sessionId;
+      // CLI pedida pelo operador ou conversa retomada: troca nunca é sozinha.
+      const pinnedRuntime =
+        Boolean(resumeRef) ||
+        operatorChoiceProved ||
+        (operatorExplicit && pinRedistributed === null);
+      const rerouteGeneration = startRecovery?.generation ?? 0;
+      // "Mandar para outro" deste pedido: este mesmo handler, autoridade atual
+      // de quem pediu. Agente de roster selado numa missão com squad: o
+      // sucessor é o próximo do roster (spawn-fail-reroute), não uma CLI avulsa.
+      const taskRerouteFor = (failedAdapterId: string, callerSessionId: string) => {
+        const rosterSquadId =
+          agentRef && !forceOperatorRoute && missionRow?.squadId
+            ? missionRow.squadId
+            : undefined;
+        const rosterSuccessor = (): string | undefined =>
+          rosterSquadId
+            ? rosterSuccessorAgentName(rosterSquadId, agentRef!, failedAdapterId)
+            : undefined;
+        const needsNexusMcp =
+          !options.missionId ||
+          ctx.promotedFromUserSession === true ||
+          (missionRow ? isOperatorTabMission(missionRow) : false);
+        return {
+          reroute: (request: PaneTaskRerouteRequest) =>
+            rerouteNotStartedSpawn({
+              callerSessionId,
+              args,
+              ...request,
+              generation: rerouteGeneration + 1,
+              ...(rosterSquadId ? { rosterSuccessor: rosterSuccessor() ?? null } : {}),
+            }),
+          hasAlternative: (excludeAdapterIds: readonly string[]) =>
+            rosterSquadId
+              ? rosterSuccessor() !== undefined
+              : hasRerouteAlternative(excludeAdapterIds, needsNexusMcp),
+        };
+      };
+      // F-765/F-775: o pedido fica com o pane enquanto ele vive — o failover
+      // reabre a tarefa por aqui quando não dá para religar no lugar.
+      const registerTaskReroute = (paneId: string, adapterId: string): void => {
+        if (!startWatchRole || !startCallerSessionId) return;
+        registerPaneTaskReroute({
+          paneId,
+          adapterId,
+          ...(options.missionId ? { missionId: options.missionId } : {}),
+          role: startWatchRole,
+          operatorOpened: options.operatorOpened === true,
+          pinnedRuntime,
+          generation: rerouteGeneration,
+          ...taskRerouteFor(adapterId, startCallerSessionId),
+        });
+      };
       let trackedStartPaneId: string | undefined;
       const onPendingSpawn =
         startWatchRole && startCallerSessionId
           ? (attempt: PendingSpawnAttemptInfo) => {
-              // Agente de roster selado numa missão com squad: o sucessor é o
-              // próximo do roster (spawn-fail-reroute), não uma CLI avulsa.
-              const rosterSquadId =
-                agentRef && !forceOperatorRoute && missionRow?.squadId
-                  ? missionRow.squadId
-                  : undefined;
-              const rosterSuccessor = (): string | undefined =>
-                rosterSquadId
-                  ? rosterSuccessorAgentName(rosterSquadId, agentRef!, attempt.adapterId)
-                  : undefined;
-              const needsNexusMcp =
-                !options.missionId ||
-                ctx.promotedFromUserSession === true ||
-                (missionRow ? isOperatorTabMission(missionRow) : false);
+              const taskReroute = taskRerouteFor(attempt.adapterId, startCallerSessionId);
               trackPaneStart({
                 paneId: attempt.paneId,
                 requestId: attempt.requestId,
@@ -2023,27 +2065,15 @@ const paneSpawnAfterTabMission = {
                 callerSessionId: startCallerSessionId,
                 operatorOpened: options.operatorOpened === true,
                 turnProof: attempt.turnProof,
-                // CLI pedida pelo operador ou conversa retomada: troca nunca é sozinha.
-                pinnedRuntime:
-                  Boolean(resumeRef) ||
-                  operatorChoiceProved ||
-                  (operatorExplicit && pinRedistributed === null),
+                pinnedRuntime,
                 rerouted: startRecovery !== undefined,
                 createdAt: Date.now(),
                 redeliver: attempt.redeliver,
-                reroute: (excludeAdapterIds) =>
-                  rerouteNotStartedSpawn({
-                    callerSessionId: startCallerSessionId,
-                    args,
-                    excludeAdapterIds,
-                    ...(rosterSquadId ? { rosterSuccessor: rosterSuccessor() ?? null } : {}),
-                  }),
-                hasAlternative: () =>
-                  rosterSquadId
-                    ? rosterSuccessor() !== undefined
-                    : hasRerouteAlternative(attempt.adapterId, needsNexusMcp),
+                reroute: (excludeAdapterIds) => taskReroute.reroute({ excludeAdapterIds }),
+                hasAlternative: () => taskReroute.hasAlternative([attempt.adapterId]),
               });
               trackedStartPaneId = attempt.paneId;
+              registerTaskReroute(attempt.paneId, attempt.adapterId);
             }
           : undefined;
       let spawned: { paneId: string; sessionId: string };
@@ -2071,7 +2101,10 @@ const paneSpawnAfterTabMission = {
         const pending = takePendingPaneSpawnResult(invocation?.signal);
         if (!pending) {
           // Sem ACK pendente o chamador recebe o erro: nada a vigiar.
-          if (trackedStartPaneId) untrackPaneStart(trackedStartPaneId);
+          if (trackedStartPaneId) {
+            untrackPaneStart(trackedStartPaneId);
+            forgetPaneTaskReroute(trackedStartPaneId);
+          }
           throw error;
         }
         // ACK pendente: ainda não há sessão para armar; o braço vai no pane e
@@ -2107,6 +2140,10 @@ const paneSpawnAfterTabMission = {
       // sozinho no handoff SUCCESS — paridade Bridge, libera a vaga sem
       // segurar slot da onda seguinte; falha preserva pane para diagnóstico.
       spawnedPaneId = spawned.paneId;
+      // Spawn que nasceu sem ACK pendente (ex.: main-owned, sem renderer).
+      if (trackedStartPaneId !== spawned.paneId) {
+        registerTaskReroute(spawned.paneId, options.adapterId);
+      }
       if (spawnTiming) {
         spawnTiming.meta.ok = true;
         spawnTiming.meta.paneId = spawned.paneId;
@@ -2206,6 +2243,27 @@ const paneSpawnAfterTabMission = {
 /** F-723: reenvio automático de um spawn que não começou (nunca vem do MCP). */
 interface PaneStartRecovery {
   readonly excludeAdapterIds: readonly string[];
+  /** F-765: preferência suave da rota (a mesma CLI com outro modelo). */
+  readonly preferAdapterIds?: readonly string[];
+  /** F-765/F-775: quantas reaberturas automáticas este pedido já teve. */
+  readonly generation: number;
+}
+
+/**
+ * Preferência suave da rota: o pin do agente sem pedido do operador e a CLI
+ * que a reabertura pelo failover quer manter (F-765). Nunca vira exclusão.
+ */
+function routePreference(
+  pinRedistributed: { readonly adapterId: string } | null,
+  recoveryPreferred: readonly string[],
+): { preferAdapterIds?: readonly string[] } {
+  const ids = [
+    ...new Set([
+      ...(pinRedistributed ? [pinRedistributed.adapterId] : []),
+      ...recoveryPreferred,
+    ]),
+  ];
+  return ids.length > 0 ? { preferAdapterIds: ids } : {};
 }
 
 /**
@@ -2215,13 +2273,13 @@ interface PaneStartRecovery {
  * Nexus para entregar o handoff.
  */
 function hasRerouteAlternative(
-  failedAdapterId: string,
+  excludeAdapterIds: readonly string[],
   needsNexusMcp: boolean,
 ): boolean {
   return listAdapters().some(
     (adapter) =>
       adapter.kind === 'cli-pty' &&
-      adapter.id !== failedAdapterId &&
+      !excludeAdapterIds.includes(adapter.id) &&
       adapter.id !== 'shell' &&
       isAdapterInstalled(adapter.id) &&
       !adapterCircuitBreakers.isOpen(adapter.id) &&
@@ -2266,6 +2324,12 @@ async function rerouteNotStartedSpawn(input: {
   readonly callerSessionId: string;
   readonly args: Record<string, unknown>;
   readonly excludeAdapterIds: readonly string[];
+  /** F-765: preferência suave da rota (a mesma CLI com outro modelo). */
+  readonly preferAdapterIds?: readonly string[];
+  /** F-775: texto do Nexus anexado ao brief (pacote de continuidade). */
+  readonly appendPrompt?: string;
+  /** Reabertura automática nº N deste pedido (teto no failover). */
+  readonly generation: number;
   /** Agente de roster: o sucessor; null = o roster não tem outra CLI. */
   readonly rosterSuccessor?: string | null;
 }): Promise<PaneStartRerouteResult> {
@@ -2297,8 +2361,16 @@ async function rerouteNotStartedSpawn(input: {
     fresh: _fresh,
     ...rest
   } = input.args;
+  const brief = str(rest, 'prompt') ?? str(rest, 'task');
   const args: Record<string, unknown> = {
     ...rest,
+    // F-775: o pacote vai DEPOIS do brief; a rota segue a tarefa original.
+    ...(input.appendPrompt
+      ? {
+          ...(brief ? { task: str(rest, 'task') ?? brief } : {}),
+          prompt: brief ? `${brief}\n\n${input.appendPrompt}` : input.appendPrompt,
+        }
+      : {}),
     ...(input.rosterSuccessor ? { agentName: input.rosterSuccessor } : {}),
     fresh: true,
   };
@@ -2313,7 +2385,11 @@ async function rerouteNotStartedSpawn(input: {
       null,
       parseExpectArg(args.expect),
       undefined,
-      { excludeAdapterIds: input.excludeAdapterIds },
+      {
+        excludeAdapterIds: input.excludeAdapterIds,
+        ...(input.preferAdapterIds?.length ? { preferAdapterIds: input.preferAdapterIds } : {}),
+        generation: input.generation,
+      },
     )) as { paneId?: unknown; harness?: { adapterId?: unknown } };
   } catch (error) {
     trace(
