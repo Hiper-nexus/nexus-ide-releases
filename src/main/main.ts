@@ -87,14 +87,6 @@ try {
     electron: process.versions.electron ?? "unknown",
     platform: process.platform,
   });
-  // Hang watchdog (campanha 0.50, C7): main pendurado vira marker em disco.
-  // Só empacotado — dev pausa em debugger por design (doutrina Orca).
-  if (app.isPackaged) {
-    startMainThreadHangWatchdog({
-      logsDir: path.join(userDataPath, "logs"),
-      version: app.getVersion(),
-    });
-  }
   const marker = readActiveGpuFallbackMarker(userDataPath, {
     appVersion: app.getVersion(),
     electronVersion: process.versions.electron ?? "unknown",
@@ -110,6 +102,49 @@ try {
   }
 } catch (err) {
   console.warn("[main] GPU fallback marker read failed:", err);
+}
+
+// Main thread vigiada (F-764). O handle fica no módulo: o monitor de
+// event-loop alimenta a linha de travamento com o "como estava antes".
+let hangWatchdog: HangWatchdogHandle | null = null;
+try {
+  const hangProbe = isSmokeHangProbeRequested({
+    smokeTest: isCurrentProcessSmokeTest(),
+    env: process.env,
+  });
+  // Hang watchdog (campanha 0.50, C7; F-764 A.1): main pendurada vira marker
+  // em disco e `.cpuprofile` do que ela estava rodando. Só empacotado — dev
+  // pausa em debugger por design (doutrina Orca) — ou no probe do smoke.
+  if (app.isPackaged || hangProbe) {
+    hangWatchdog = startMainThreadHangWatchdog({
+      logsDir: path.join(app.getPath("userData"), "logs"),
+      version: app.getVersion(),
+      ...(hangProbe
+        ? { tuning: SMOKE_HANG_PROBE_TUNING, heartbeatMs: SMOKE_HANG_PROBE_HEARTBEAT_MS }
+        : {}),
+      // A worker grava o histórico sozinha; quando a main volta, as mesmas
+      // linhas entram no trace — o pós-mortem lê uma linha do tempo só.
+      onRecord: (record) => {
+        trace({ ...record });
+        if (hangProbe) console.log(describeHangRecordForSmoke(record));
+      },
+    });
+  }
+  // F-764 A.3: p50/p99/max do event-loop a cada 30 s. Trace só com agente
+  // vivo ou atraso perceptível; todo resumo segue para o watchdog.
+  startEventLoopMonitor({
+    liveAgents: countLiveAgentSessions,
+    onSummary: (summary) => hangWatchdog?.reportEventLoop(summary),
+  });
+  if (hangProbe) {
+    // Probe do smoke empacotado: trava a main AQUI, antes de qualquer serviço
+    // ou timer do boot existir; o harness confere o `.cpuprofile`.
+    console.log(`[smoke] hang-probe: travando a main por ${SMOKE_HANG_PROBE_BLOCK_MS} ms`);
+    induceSmokeMainHang();
+    console.log("[smoke] hang-probe: main liberada");
+  }
+} catch (err) {
+  console.warn("[main] main-thread watchdog/event-loop monitor failed to arm:", err);
 }
 
 // Remote debugging (Chrome DevTools Protocol) is a full local-RCE surface: any
@@ -197,6 +232,7 @@ import {
 import {
   configureAgentHookEndpointPath,
   APP_SHUTDOWN_PTY_TERMINATION,
+  countLiveAgentSessions,
   getAgentSessionInfo,
   listLiveSessionLocations,
   orchTerminateSession,
@@ -431,7 +467,23 @@ import {
   revokeAppQuitAuthorization,
 } from "./close-authorization";
 import { trace } from "./observability/main-trace";
-import { startMainThreadHangWatchdog } from "./hang-watchdog/main-thread-hang-watchdog";
+import {
+  startMainThreadHangWatchdog,
+  type HangWatchdogHandle,
+} from "./hang-watchdog/main-thread-hang-watchdog";
+import {
+  SMOKE_HANG_PROBE_BLOCK_MS,
+  SMOKE_HANG_PROBE_HEARTBEAT_MS,
+  SMOKE_HANG_PROBE_TUNING,
+  describeHangRecordForSmoke,
+  induceSmokeMainHang,
+  isSmokeHangProbeRequested,
+} from "./hang-watchdog/smoke-hang-probe";
+import {
+  startEventLoopMonitor,
+  stopEventLoopMonitor,
+} from "./observability/event-loop-monitor";
+import { registerMainHeartbeatIpc } from "./observability/main-heartbeat-ipc";
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
 let hookDropBoxWatcher: AgentHookDropBoxWatcher | null = null;
@@ -613,6 +665,8 @@ function bootstrap(): void {
   registerBrowserIpc(projectRuntimeManager);
   registerDesignWritebackIpc({ allowSourceMutation: !app.isPackaged });
   registerPerfIpc();
+  // F-764 C.7: eco trivial que o renderer pinga para acusar main ocupado.
+  registerMainHeartbeatIpc();
   registerLayoutIpc(projectRuntimeManager);
   registerAdapterIpc();
   traceBootstrap('before voice IPC');
@@ -1396,6 +1450,7 @@ function shutdown(): Promise<void> {
     // teardown físico — a varredura e os timers param antes do PTY.
     shutdownNonWorkerAutoClose();
     stopPaneFootprintBroadcast();
+    stopEventLoopMonitor();
     // Quiesce periodic orchestration before physical teardown, but retain its
     // exact exit observer and stores until PTY proof and reconciliation are
     // complete. A failed proof must leave the next retry operational.

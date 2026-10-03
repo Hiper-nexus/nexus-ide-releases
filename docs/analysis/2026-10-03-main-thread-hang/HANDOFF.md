@@ -189,11 +189,157 @@ cobre tudo) e o trace registra `failover-detect-slow`. Watchdog passa a
 manter `logs/main-hang.ndjson` (histórico). Testes de regressão com teto de
 tempo em entradas adversariais (o código antigo estoura todos).
 
-**O que da seção 3 continua pendente** (não bloqueia a 0.76.191): A.1 captura
-de `.cpuprofile` pelo `inspector.Session.connectToMainThread()` na worker do
-watchdog (validar no build empacotado com o fuse de inspect desligado); A.3
-métricas de event-loop e tempo por tap; C.1/C.2 coalescer chunks por sessão e
+**O que da seção 3 continua pendente** (não bloqueia a 0.76.191): ~~A.1
+captura de `.cpuprofile` pelo `inspector.Session.connectToMainThread()` na
+worker do watchdog~~ (entregue — seção 6; falta só rodar o probe no binário de
+release); A.3 ~~métricas de event-loop~~ (entregue — seção 6) e tempo por tap
+(com outro agente, em `pty-manager.ts`); C.1/C.2 coalescer chunks por sessão e
 tirar as taps de análise do main (o pty-host já é um utilityProcess); C.3 o
 mesmo teste de tempo para TODA regex do caminho de PTY (há ~200 quadráticas no
 bundle do main, a maioria fora do caminho quente); C.5 lint contra `*Sync`;
-C.6 semáforo de comandos pesados; C.7 faixa "Nexus ocupado" no renderer.
+C.6 semáforo de comandos pesados; ~~C.7 faixa "Nexus ocupado" no renderer~~
+(entregue — seção 6).
+
+## 6. A.1 implementado — e A.3 (event-loop) e C.7 (03/10, tarde)
+
+Branch `missao-terminais/f764-diag` — commits `20db9422` (A.1), `fb4e6b84`
+(A.3) e `e756d8a9` (C.7). O app deixa de ser cego: um travamento da main
+grava O QUE ela estava rodando, o loop tem métrica contínua e a janela avisa
+quando o main não responde.
+
+### A.1 — o watchdog captura a stack JS durante o travamento
+
+- **Como.** A worker do watchdog agora é `src/main/hang-watchdog/hang-watchdog-worker.cjs`:
+  JS puro, embutido VERBATIM no bundle (`?raw`) e avaliado com `eval: true`
+  (nada de arquivo de worker dentro do asar; o mesmo texto roda nos testes).
+  Quando o gap do heartbeat passa do limiar (`HANG_WATCHDOG_THRESHOLD_MS`,
+  30 s), abre um **episódio**; UMA vez por episódio a worker abre
+  `inspector.Session` + `connectToMainThread()` e faz `Profiler.enable` →
+  `setSamplingInterval` (1 ms) → `start` → 3 s → `stop`. As mensagens do
+  inspector chegam à main por **interrupção do V8**: funcionam com o JS preso
+  num laço, inclusive dentro de uma regex longa (provado abaixo).
+- **O que grava** (em `userData/logs/`):
+  - `main-hang-<ISO>.cpuprofile` — abre no DevTools (Performance → carregar
+    perfil). Retenção: os 5 mais recentes, no máximo 48 MB juntos, nenhum
+    acima de 16 MB (acima disso só o resumo sai).
+  - `main-hang.ndjson` (histórico, gira em 512 KB), três tipos de linha:
+    `main-thread-hang` (na detecção e a cada 60 s do mesmo episódio, com
+    `eventLoop` = último resumo do A.3); `main-thread-hang-profile` (uma por
+    episódio: `profileFile`, `sampleCount`, `captureMs` e `topFrames` — nós com
+    mais amostras PRÓPRIAS, agregados por função, cada um com `functionName`,
+    `url`, `line`/`column` 1-based, `selfPercent` e `stack` de até 6 chamadores
+    — ou `profilerUnavailable: <motivo>`); `main-thread-hang-recovered` com a
+    duração real quando o heartbeat volta.
+  - As mesmas linhas entram no `main.trace.ndjson` quando a main volta a
+    respirar (o reporte de problema lê o `kind` delas).
+- **Best-effort de verdade.** Sem inspector (build, fuse) ou main presa FORA do
+  JS (código nativo, syscall — não passa pelo ponto de interrupção) vira
+  `profilerUnavailable` com o motivo; no segundo caso a captura desiste em
+  3 s + 15 s. O main agora escuta `error` da worker (antes, uma exceção na
+  worker virava exceção não tratada no main). Mac dormindo não vira travamento
+  falso (a worker percebe que ela mesma parou e recomeça a contagem).
+- **Validação feita:**
+  1. `npx vitest run src/main/hang-watchdog` — máquina de estados com relógio,
+     fs e inspector falsos (16 testes: uma captura por episódio, remarca,
+     retenção, teto de tamanho, inspector ausente, main que não atende,
+     comando recusado, Mac dormindo) + **Worker real com o mesmo código e
+     inspector real** contra a main presa na regex cúbica do F-764 (a de antes
+     da correção). Números: 18 execuções da regex em 2,58 s (~143 ms cada);
+     travamento detectado com 524 ms de gap; `.cpuprofile` gravado 1 089 ms
+     ANTES de o laço acabar — a main nunca cedeu o event loop; 804 amostras,
+     `nexusHangTestBusyLoop` com 99,9 % do tempo próprio. Mutação: tirar a
+     guarda "uma captura por episódio" quebra 3 testes.
+  2. **Electron 43.7.4 oficial com os fuses de produção** (`RunAsNode=0`,
+     `EnableNodeCliInspectArguments=0`, `EnableNodeOptionsEnvironmentVariable=0`,
+     `OnlyLoadAppFromAsar=1`, `GrantFileProtocolExtraPrivileges=0`, via
+     `@electron/fuses` numa cópia do binário do cache) rodando de um
+     `app.asar` o código DESTE branch empacotado pelo Vite com `minify` (CJS,
+     como o Forge faz no main): `connectToMainThread()` funciona (era o risco
+     de verdade: em C++ o Node faz `CHECK_NOT_NULL(parent_handle_)` e
+     abortaria o processo em vez de lançar), travamento de 6 s detectado com
+     1 539 ms, profile de 1 090 amostras com `nexusSmokeInducedMainHang` em
+     100 % e pilha `A main.js:470:92` → módulo, volta registrada com 6 056 ms.
+     Não validado aqui: o binário de release (Developer ID + hardened runtime
+     + integridade do asar). O inspector é in-process (não há `task_for_pid`
+     nem anexar debugger), então não há motivo técnico para mudar — mas é
+     prova que falta.
+- **Como verificar no build empacotado (smoke de release).** Depois de
+  `npm run make:release` (ou de um `npm run package` local):
+
+  ```
+  node scripts/smoke-packaged-app.mjs --verify-hang-probe --app out/NexusIDE-darwin-arm64/NexusIDE.app
+  ```
+
+  Roda o smoke empacotado normal com `NEXUS_SMOKE_HANG_PROBE=1` (só vale com
+  o argumento de smoke; a env sozinha não faz nada): a main trava ~6 s no
+  carregamento do módulo com a regex do incidente
+  (`src/main/hang-watchdog/smoke-hang-probe.ts`), o watchdog arma com limiar
+  de 1,5 s e o harness exige `main-thread-hang` + `main-thread-hang-profile`
+  com `.cpuprofile` válido e `nexusSmokeInducedMainHang` no topo, e o resto
+  do smoke (renderer + sondas funcionais) passando depois. Sucesso imprime
+  `[smoke] hangProbeProof {"schema":"nexus.hang-probe/v1",…}` e sai 0. Se
+  sair `inspector indisponível no app empacotado: <motivo>`, o in-process não
+  serve no binário de release e a alternativa é a da seção 3 (Profiler
+  contínuo de baixa frequência no main, despejado quando ele volta).
+- **Lendo um profile de produção.** O bundle do main é minificado: as funções
+  aparecem com nome curto (`A`, `Xr`) e `url` =
+  `…/app.asar/.vite/build/main-<hash>.js`. `line:column` apontam o código
+  exato nesse bundle; extraia o mesmo arquivo do app daquela versão com
+  `npx @electron/asar extract-file <app>/Contents/Resources/app.asar .vite/build/main-<hash>.js`
+  e vá à posição — literais de regex e strings identificam o trecho. Proposta
+  (não feita): gerar sourcemap `hidden` do main no release e arquivá-lo por
+  versão. Chaves de objeto sobrevivem à minificação; por isso o probe usa um
+  método (`nexusSmokeInducedMainHang`).
+- **Limitação do V8 vista na prova.** Função que entrou em OSR (recompilada no
+  meio de um laço apertado) ANTES de o profiler ligar não é enxergada pelo
+  profiler: as amostras caem no CHAMADOR (no Electron, com um laço só de
+  `Date.now()`, o topo saiu `A`, 98,5 %). O caso do F-764 não sofre disso
+  (funções chamadas a cada chunk, otimizadas do jeito normal), mas o topo de
+  um profile pode ser "quem chamou o laço" — a `stack` e as `positionTicks`
+  do `.cpuprofile` ajudam a descer.
+
+### A.3 (parte do event-loop)
+
+- `src/main/observability/event-loop-monitor.ts`: `monitorEventLoopDelay`
+  (resolução 20 ms) no main, janela de 30 s com p50/p99/max/média do ATRASO
+  (o histograma do Node mede o intervalo inteiro; desconta a resolução) e a
+  duração medida da janela. Vai para o trace (`kind: main-event-loop`) só com
+  agente vivo (`reason: activity`) ou atraso perceptível — p99 ≥ 100 ms ou um
+  bloqueio ≥ 250 ms (`reason: lag`); main ociosa e saudável não escreve nada.
+  Com agentes vivos é uma linha de ~200 B a cada 30 s, dentro da rotação do
+  trace. TODO resumo vai para o watchdog e sai no `eventLoop` da linha de
+  travamento.
+- Ponto cego conhecido: o primeiro tick depois de cada `reset()` não registra
+  (~20 ms por janela); um bloqueio que comece exatamente aí ainda aparece em
+  `windowMs`.
+- Validação: 8 testes (conversão, gatilhos do trace, janelas com histograma
+  falso, consumidor com defeito e um bloqueio REAL de 350 ms visto pelo
+  `perf_hooks`). No Electron 43.7.4: p50 1,1–1,2 ms em repouso e um bloqueio
+  de ~800 ms no main apareceu como `maxMs` 825.
+- Fica com outro agente: a contabilidade de tempo por tap em `fireTaps`.
+
+### C.7 — main lento não fica mais silencioso
+
+- Canal `app:heartbeat` (`WINDOW_CHANNELS.heartbeat`) com handler trivial
+  (`src/main/observability/main-heartbeat-ipc.ts`, registrado no bootstrap,
+  antes de o renderer carregar) e `window.nexus.app.heartbeat()` no preload.
+- Renderer: `createMainHeartbeatMonitor` (`src/renderer/lib/main-heartbeat.ts`)
+  pinga a cada 3 s, um ping por vez (nunca empilha mensagem num main preso),
+  e acusa main ocupado quando um ping passa 10 s sem resposta; erro de IPC
+  também prova que o main atendeu. Relógio de 1 s via `setVisibleInterval`
+  (janela oculta não pinga; ao voltar confere na hora). `MainBusyBanner`
+  (`src/renderer/components/MainBusyBanner.tsx`) mostra no topo da janela
+  "Nexus ocupado — capturando diagnóstico" + "A janela volta a responder
+  sozinha.", `role="status"`, sem capturar clique, âmbar `--warn` com glifo,
+  `prefers-reduced-motion` respeitado; some sozinha quando o main responde.
+  Fica na última camada de overlay, fora do bloqueio de licença. Sem auto-kill.
+- Validação: 12 testes (controlador com relógio manual, componente com
+  jsdom, preload e handler) — mutação "empilhar ping" quebra 3. A premissa
+  (o renderer segue pintando com o main preso) foi medida no Electron 43.7.4
+  com fuses: main presa 8 s → 480 frames de `requestAnimationFrame` durante o
+  bloqueio (60 fps), a lógica do ping acendeu a faixa a 3,15 s (limiar de 3 s
+  no experimento) e 291 frames saíram depois da troca do texto, ainda com o
+  main preso. Não foi visto no app inteiro empacotado.
+- Nuance de texto: "capturando diagnóstico" é literal só no app empacotado a
+  partir de 30 s (limiar do watchdog); entre 10 e 30 s a faixa já aparece e a
+  captura ainda não começou. Texto mantido como pedido.

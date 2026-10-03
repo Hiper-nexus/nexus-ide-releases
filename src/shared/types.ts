@@ -392,6 +392,11 @@ export interface NexusApi {
   app: {
     /** Tell main that React committed its first frame (mount watchdog). */
     signalMounted(report?: { ok: boolean; error?: string }): void;
+    /**
+     * Pinga o main (F-764 C.7). Resolve quando ele atende; a demora é o sinal
+     * de main ocupado que a faixa "Nexus ocupado" mostra.
+     */
+    heartbeat(): Promise<{ at: number }>;
     /** Open an external http(s) URL in the OS browser. */
     openExternal(url: string): Promise<{ ok: boolean; error?: string }>;
     /** Inicia o login OAuth (nonce local + browser) no processo main. */
