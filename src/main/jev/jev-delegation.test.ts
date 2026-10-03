@@ -15,7 +15,13 @@ import { adviseDelegation, advisePrompt, DELEGATE_MIN_PROMPT_CHARS } from './jev
 type JudgeMock = (input: JudgeInput) => Promise<JevResult | null>;
 const LONG = 'Implemente a tela de login, escreva os testes e revise a segurança do fluxo inteiro.';
 
-function verdict(divisible: number, parts: string, writers: string, writesCode = 0.1): JevResult {
+function verdict(
+  divisible: number,
+  parts: string,
+  writers: string,
+  writesCode = 0.1,
+  heavyRead?: number,
+): JevResult {
   return {
     model: 'jev-test',
     answers: {
@@ -23,6 +29,7 @@ function verdict(divisible: number, parts: string, writers: string, writesCode =
       parts: { type: 'choice', choice: parts, probabilities: {}, confidence: 0.8 },
       writers: { type: 'choice', choice: writers, probabilities: {}, confidence: 0.8 },
       writesCode: { type: 'noul', noul: writesCode },
+      ...(heavyRead === undefined ? {} : { heavyRead: { type: 'noul' as const, noul: heavyRead } }),
     },
     usage: { input_tokens: 50, output_tokens: 5 },
   };
@@ -90,7 +97,7 @@ describe('advisePrompt', () => {
     });
   });
 
-  it('a régua divisible cobre trabalho replicado em apps/superfícies separadas (F-200)', async () => {
+  it('a régua divisible cobre apps/superfícies separadas (F-200) e vários problemas numa mensagem só (F-784)', async () => {
     const judge = vi.fn<JudgeMock>(async () => verdict(0.8, '2', '1'));
     await advisePrompt(LONG, { judge });
     const questions = judge.mock.calls[0]![0].questions;
@@ -99,11 +106,12 @@ describe('advisePrompt', () => {
     if (divisible?.type !== 'noul') return;
     expect(divisible.criteria?.true).toBe(
       'several independent pieces of work (research, implementation, tests, review…), ' +
-        'or the same feature or fix to be built in separate apps or surfaces ' +
-        '(for example the native app and the web or PWA)',
+        'a message that lists several distinct problems or requests (even in one ' +
+        'paragraph or as a follow-up), or the same feature or fix to be built in ' +
+        'separate apps or surfaces (for example the native app and the web or PWA)',
     );
     expect(divisible.criteria?.false).toBe(
-      'one cohesive task, a small change, a question or conversation, ' +
+      'one cohesive task, a small change, a single bug, a question or conversation, ' +
         'or a short follow-up or confirmation of work already under way',
     );
   });
@@ -115,5 +123,58 @@ describe('advisePrompt', () => {
       return result;
     });
     expect(await advisePrompt(LONG, { judge })).toEqual({ delegation: null, writesCode: 0 });
+  });
+});
+
+describe('F-784: decisão de delegação em casos representativos', () => {
+  // Pedido real de 03/10 (11:02), reescrito: varrer tudo o que existe — uma
+  // leitura grande, sem partes independentes declaradas.
+  const SCAN =
+    'algo que temos que ter inteligente: saber qual modelo usar, quando e com qual esforço, ' +
+    'e varrer todas as LLMs que temos disponíveis, todas mesmo, desde o Qwen';
+  const THREE_PARTS =
+    'Corrija o login que trava no Safari, adicione exportação CSV no relatório de vendas ' +
+    'e atualize a documentação da API pública.';
+
+  it('"oi, tudo bem?" continua solo e nem chama o Jev', async () => {
+    const judge = vi.fn<JudgeMock>();
+    expect(await advisePrompt('oi, tudo bem?', { judge })).toBeNull();
+    expect(judge).not.toHaveBeenCalled();
+  });
+
+  it('pedido com 3 partes independentes recebe delegate:3p', async () => {
+    const judge = vi.fn<JudgeMock>(async () => verdict(0.84, '3', '2', 0.9, 0.2));
+    expect((await advisePrompt(THREE_PARTS, { judge }))?.delegation).toEqual({
+      parts: 3, writers: 2, confidence: 0.84, model: 'jev-test',
+    });
+    expect(recordJevDecision).toHaveBeenLastCalledWith(
+      expect.objectContaining({ decision: 'delegate:3p/2w' }),
+    );
+  });
+
+  it('leitura pesada sem partes vai para UM helper readOnly (antes: solo)', async () => {
+    // Probabilidades do pedido de 11:02 no decisions.jsonl: divisible 0,49 → solo.
+    const judge = vi.fn<JudgeMock>(async () => verdict(0.49, '2', '0', 0.12, 0.86));
+    const advice = await advisePrompt(SCAN, { judge });
+    expect(advice?.delegation).toEqual({
+      parts: 1, writers: 0, confidence: 0.86, model: 'jev-test', heavyRead: true,
+    });
+    expect(recordJevDecision).toHaveBeenLastCalledWith(
+      expect.objectContaining({ decision: 'delegate:heavy-read' }),
+    );
+    expect(Object.keys(judge.mock.calls[0]![0].questions)).toContain('heavyRead');
+  });
+
+  it('leitura pequena, pergunta ou conversa seguem no pane (heavyRead abaixo de 0,7)', async () => {
+    const judge = vi.fn<JudgeMock>(async () => verdict(0.13, '1', '0', 0.2, 0.65));
+    expect((await advisePrompt('atualiza nosso repositório local com o github, por favor', { judge }))?.delegation)
+      .toBeNull();
+    expect(recordJevDecision).toHaveBeenLastCalledWith(expect.objectContaining({ decision: 'solo' }));
+  });
+
+  it('partes independentes valem mais que a leitura pesada (o leque não vira um helper só)', async () => {
+    const judge = vi.fn<JudgeMock>(async () => verdict(0.86, '5+', '2+', 0.88, 0.9));
+    expect((await advisePrompt(SCAN, { judge }))?.delegation).toMatchObject({ parts: 5, writers: 2 });
+    expect((await advisePrompt(SCAN, { judge }))?.delegation).not.toHaveProperty('heavyRead');
   });
 });

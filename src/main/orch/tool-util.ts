@@ -1405,7 +1405,22 @@ export interface SpawnPaneHooks {
    * início; `redeliver` é a mesma entrega comprovada deste spawn.
    */
   readonly onPendingSpawn?: (attempt: PendingSpawnAttemptInfo) => void;
+  /**
+   * F-793: pane de missão com ACK pendente — a linha de `missionPanes` só
+   * nasce quando o Main vincula a sessão física a esta tentativa. Quem segura
+   * a vaga de maxWorkers espera este desfecho antes de soltar a reserva.
+   */
+  readonly onPendingMissionPane?: (
+    recorded: Promise<PendingMissionPaneRecord>,
+  ) => void;
 }
+
+/**
+ * F-793: desfecho da gravação adiada de um pane de missão com ACK pendente.
+ * `no-session`: a tentativa acabou sem sessão (nada a contar);
+ * `unrecorded`: a sessão nasceu, mas a conferência física recusou a linha.
+ */
+export type PendingMissionPaneRecord = 'recorded' | 'no-session' | 'unrecorded';
 
 /** F-723: tentativa pendente com briefing (nunca carrega o texto do brief). */
 export interface PendingSpawnAttemptInfo {
@@ -1847,6 +1862,36 @@ export async function spawnPaneAndMaybePrompt(
       },
     );
   }
+  if (
+    result.ok &&
+    result.pending === true &&
+    result.paneId &&
+    options.missionId &&
+    options.transient !== true
+  ) {
+    // F-793: o throw de compatibilidade logo abaixo pulava a gravação da
+    // composição — helper despachado com ACK pendente nunca entrava em
+    // `missionPanes` (03/10: 28 helpers, uma linha, só o orquestrador). A
+    // linha nasce quando a sessão física se vincula a esta tentativa, com a
+    // mesma conferência do caminho síncrono (nunca a resposta do renderer).
+    const pane = { requestId: result.requestId, paneId: result.paneId };
+    const missionId = options.missionId;
+    const recordOptions = options;
+    const recorded = recordMissionPaneAfterPendingSpawn(pane, (sessionId) =>
+      recordSpawnedMissionPane(recordOptions, safeOptions, {
+        missionId,
+        model: effectiveModel,
+        authoritySeal,
+        paneId: pane.paneId,
+        sessionId,
+      }),
+    );
+    try {
+      hooks.onPendingMissionPane?.(recorded);
+    } catch (error) {
+      console.warn('[mission-panes] vigilância do pane pendente falhou:', error);
+    }
+  }
   if (!result.ok || !result.paneId || !result.sessionId) {
     const licenseError = licenseErrorFrom(result.error);
     if (licenseError) throw licenseError;
@@ -1936,40 +1981,12 @@ export async function spawnPaneAndMaybePrompt(
   // Remember the mission's composition so it can be reopened from history.
   if (options.missionId && options.transient !== true) {
     assertMcpInvocationCurrent(hooks.invocation);
-    const physicalPty = getAgentSessionInfo(result.sessionId);
-    const physical = physicalPty ?? getAcpDriverSession(result.sessionId)?.agent;
-    const physicalScope = physicalPty
-      ? safeOptions.executionScope ?? options.scope
-      : options.scope;
-    if (physical && (
-      physical.sessionId !== result.sessionId || physical.paneId !== result.paneId ||
-      physical.adapterId !== options.adapterId || physical.missionId !== options.missionId ||
-      !sameProjectScope(physical.scope, physicalScope) ||
-      (options.accountId !== undefined && physical.accountId !== options.accountId)
-    )) {
-      throw new Error('physical pane account authority does not match the spawned mission pane');
-    }
-    getProjectDomainStores(options.scope).missionPanes.record({
+    recordSpawnedMissionPane(options, safeOptions, {
       missionId: options.missionId,
-      adapterId: options.adapterId,
       model: effectiveModel,
-      // Use Main's physical selection, never a renderer-authored spawn reply.
-      accountId: physical?.accountId ?? options.accountId,
-      effort: options.effort,
-      cwd: safeOptions.cwd,
-      executionScope: safeOptions.executionScope,
-      title: options.title,
-      agentName: options.agentName,
-      workerIncarnationId: options.workerIncarnationId,
-      role: options.role ?? 'worker',
-      allowedTools: options.allowedTools,
-      allowedSkills: options.allowedSkills,
-      readOnly: options.readOnly,
       authoritySeal,
-      operatorOpened: options.operatorOpened === true || undefined,
-      // Chave do resume direcionado: o reopen reusa este paneId para o CLI
-      // voltar à MESMA conversa (não à mais recente do cwd).
       paneId: result.paneId,
+      sessionId: result.sessionId,
     });
   }
   if (finalPrompt) {
@@ -2062,7 +2079,103 @@ export async function spawnPaneAndMaybePrompt(
   return { paneId: result.paneId, sessionId: result.sessionId };
 }
 
+/**
+ * Grava a composição da missão (reopen do histórico, contagem de maxWorkers,
+ * grafo do Quadro) com a seleção FÍSICA do Main — nunca a resposta do
+ * renderer. Sessão física que não confere com o pane pedido lança e não grava.
+ */
+function recordSpawnedMissionPane(
+  options: SpawnToolOptions,
+  safeOptions: SpawnToolOptions,
+  pane: {
+    readonly missionId: string;
+    readonly model: string | undefined;
+    readonly authoritySeal: MissionPaneAuthoritySeal | undefined;
+    readonly paneId: string;
+    readonly sessionId: string;
+  },
+): void {
+  const physicalPty = getAgentSessionInfo(pane.sessionId);
+  const physical = physicalPty ?? getAcpDriverSession(pane.sessionId)?.agent;
+  const physicalScope = physicalPty
+    ? safeOptions.executionScope ?? options.scope
+    : options.scope;
+  if (physical && (
+    physical.sessionId !== pane.sessionId || physical.paneId !== pane.paneId ||
+    physical.adapterId !== options.adapterId || physical.missionId !== pane.missionId ||
+    !sameProjectScope(physical.scope, physicalScope) ||
+    (options.accountId !== undefined && physical.accountId !== options.accountId)
+  )) {
+    throw new Error('physical pane account authority does not match the spawned mission pane');
+  }
+  getProjectDomainStores(options.scope).missionPanes.record({
+    missionId: pane.missionId,
+    adapterId: options.adapterId,
+    model: pane.model,
+    // Use Main's physical selection, never a renderer-authored spawn reply.
+    accountId: physical?.accountId ?? options.accountId,
+    effort: options.effort,
+    cwd: safeOptions.cwd,
+    executionScope: safeOptions.executionScope,
+    title: options.title,
+    agentName: options.agentName,
+    workerIncarnationId: options.workerIncarnationId,
+    role: options.role ?? 'worker',
+    allowedTools: options.allowedTools,
+    allowedSkills: options.allowedSkills,
+    readOnly: options.readOnly,
+    authoritySeal: pane.authoritySeal,
+    operatorOpened: options.operatorOpened === true || undefined,
+    // Chave do resume direcionado: o reopen reusa este paneId para o CLI
+    // voltar à MESMA conversa (não à mais recente do cwd).
+    paneId: pane.paneId,
+  });
+}
+
 const PENDING_SPAWN_SESSION_POLL_MS = 500;
+
+/**
+ * F-793: espera a sessão que o Main vinculou a ESTA tentativa (requestId,
+ * nunca "a sessão atual do paneId") e grava a linha com a conferência física.
+ * Como a entrega adiada do brief, não depende da autoridade da requisição — a
+ * tool já respondeu; vale o que o Main vinculou. Só leitura de mapas em
+ * memória a cada 500 ms: nada síncrono pesado no Main.
+ */
+async function recordMissionPaneAfterPendingSpawn(
+  attempt: { readonly requestId: string; readonly paneId: string },
+  record: (sessionId: string) => void,
+): Promise<PendingMissionPaneRecord> {
+  const deadline = Date.now() + ORCH_SPAWN_GRANT_TTL_MS;
+  try {
+    for (;;) {
+      const bound = pendingSpawnAttemptSession(attempt.requestId);
+      // Tentativa encerrada sem sessão: o registry já limpou o spawn falho.
+      if (bound.state === 'gone') return 'no-session';
+      if (bound.state === 'bound') {
+        const physical =
+          getAgentSessionInfo(bound.sessionId) ??
+          getAcpDriverSession(bound.sessionId)?.agent;
+        if (physical?.paneId === attempt.paneId) {
+          record(bound.sessionId);
+          return 'recorded';
+        }
+        // A sessão da tentativa morreu antes de se registrar: nada a contar.
+        if (!physical && getSessionState(bound.sessionId) === null) return 'no-session';
+      }
+      if (Date.now() >= deadline) return 'no-session';
+      await delay(PENDING_SPAWN_SESSION_POLL_MS);
+    }
+  } catch (error) {
+    // Conferência física recusou (ou falha inesperada): sem linha, e quem
+    // segura a vaga de maxWorkers a mantém — bloquear uma vaga é melhor que
+    // passar do teto.
+    console.warn(
+      '[mission-panes] pane com ACK pendente não gravado:',
+      error instanceof Error ? error.message : error,
+    );
+    return 'unrecorded';
+  }
+}
 
 /**
  * Entrega pós-boot de um brief de colagem cujo pane nasceu com ACK pendente.

@@ -89,6 +89,7 @@ import {
   spawnPaneAndMaybePrompt,
   str,
   strArray,
+  type PendingMissionPaneRecord,
   type PendingSpawnAttemptInfo,
   type SpawnToolOptions,
 } from './tool-util';
@@ -1488,6 +1489,8 @@ const paneSpawnAfterTabMission = {
       : {};
     let releaseWorkerSlot: (() => void) | undefined;
     let spawnedWorkerPaneId: string | undefined;
+    /** F-793: gravação adiada da linha do worker que nasceu com ACK pendente. */
+    let pendingMissionPane: Promise<PendingMissionPaneRecord> | undefined;
     let consumeReservedRoute: (() => void) | undefined;
     let reservedRouteConsumed = false;
     try {
@@ -2061,6 +2064,9 @@ const paneSpawnAfterTabMission = {
           // etapa (rota, isolamento ou dentro desta chamada).
           timer: spawnTiming?.timer,
           ...(onPendingSpawn ? { onPendingSpawn } : {}),
+          onPendingMissionPane: (recorded) => {
+            pendingMissionPane = recorded;
+          },
         });
         spawnTiming?.timer.mark('pty-spawn');
       } catch (error) {
@@ -2185,7 +2191,22 @@ const paneSpawnAfterTabMission = {
                 .map((pane) => pane.paneId)
                 .filter((paneId): paneId is string => typeof paneId === 'string')
             : [];
-        if (
+        if (!spawnedWorkerPaneId && pendingMissionPane) {
+          // F-793: ACK pendente — a linha durável só nasce quando a sessão se
+          // vincula; até lá é a reserva que conta este worker no maxWorkers.
+          // Mesmo invariante do caminho síncrono: sem linha, a vaga fica.
+          const release = releaseWorkerSlot;
+          void pendingMissionPane.then((outcome) => {
+            if (outcome !== 'unrecorded') {
+              release();
+              return;
+            }
+            console.warn(
+              '[tools-panes] worker com ACK pendente não gravado; mantendo a ' +
+                `reserva de maxWorkers (mission=${missionId})`,
+            );
+          });
+        } else if (
           shouldReleaseWorkerReservation({
             spawnedPaneId: spawnedWorkerPaneId,
             recordedPaneIds,

@@ -1771,6 +1771,100 @@ describe('agent prompt injection', () => {
     });
   });
 
+  describe('F-793: helper de missão com ACK pendente entra em missionPanes', () => {
+    // Missão Terminais (03/10): 28 helpers abertos por nexus_pane_spawn, todos
+    // com ACK pendente, e `mission_panes` só com o orquestrador — o throw de
+    // compatibilidade saía antes da gravação.
+    const physical = {
+      sessionId: 'session-w', paneId: 'pane-w', adapterId: 'codex', missionId: 'm1',
+      accountId: 'main-selected', scope,
+    };
+    const spawnPendingWorker = async (extra: { readonly accountId?: string } = {}) => {
+      const outcomes: Array<Promise<string>> = [];
+      stubs.requestPaneSpawn.mockResolvedValueOnce({
+        requestId: 'req-w', ok: true, pending: true, paneId: 'pane-w', sessionId: null,
+      } as never);
+      vi.mocked(pendingSpawnAttemptSession).mockReturnValue({ state: 'waiting' });
+      // A regra do ACK pendente segue: o helper legado nunca devolve sessão
+      // nula — só o nexus_pane_spawn traduz o throw em sucesso.
+      await expect(
+        spawnPaneAndMaybePrompt(
+          { adapterId: 'codex', missionId: 'm1', role: 'worker', scope, ...extra },
+          { onPendingMissionPane: (recorded) => { outcomes.push(recorded); } },
+        ),
+      ).rejects.toThrow();
+      return outcomes;
+    };
+    const bind = (info: Record<string, unknown> = physical) => {
+      vi.mocked(pendingSpawnAttemptSession).mockReturnValue({ state: 'bound', sessionId: 'session-w' });
+      stubs.physicalSessionInfo.mockImplementation(((id: string) =>
+        id === 'session-w' ? info : null) as never);
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.mocked(pendingSpawnAttemptSession).mockReset().mockReturnValue({ state: 'waiting' });
+      stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
+      vi.useRealTimers();
+    });
+
+    it('grava a linha com a conta física quando a sessão da tentativa nasce', async () => {
+      const outcomes = await spawnPendingWorker();
+      // Sem sessão ainda: nada é gravado a partir da resposta do renderer.
+      expect(stubs.missionPanesRecord).not.toHaveBeenCalled();
+      bind();
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(stubs.missionPanesRecord).toHaveBeenCalledTimes(1);
+      expect(stubs.missionPanesRecord).toHaveBeenCalledWith(expect.objectContaining({
+        missionId: 'm1',
+        paneId: 'pane-w',
+        adapterId: 'codex',
+        role: 'worker',
+        accountId: 'main-selected',
+        authoritySeal: stubs.resolveMissionPaneAuthoritySeal(),
+      }));
+      expect(outcomes).toHaveLength(1);
+      await expect(outcomes[0]).resolves.toBe('recorded');
+    });
+
+    it('sessão física que não confere não grava (mesma conferência do caminho síncrono)', async () => {
+      const outcomes = await spawnPendingWorker({ accountId: 'pinned-account' });
+      bind({ ...physical, accountId: 'other-account' });
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(stubs.missionPanesRecord).not.toHaveBeenCalled();
+      await expect(outcomes[0]).resolves.toBe('unrecorded');
+    });
+
+    it('tentativa encerrada sem sessão não grava nada', async () => {
+      const outcomes = await spawnPendingWorker();
+      vi.mocked(pendingSpawnAttemptSession).mockReturnValue({ state: 'gone' });
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(stubs.missionPanesRecord).not.toHaveBeenCalled();
+      await expect(outcomes[0]).resolves.toBe('no-session');
+    });
+
+    it('pane fora de missão ou transitório não vira composição de missão', async () => {
+      const onPendingMissionPane = vi.fn();
+      for (const options of [
+        { adapterId: 'codex', scope },
+        { adapterId: 'codex', missionId: 'm1', role: 'worker' as const, scope, transient: true as const },
+      ]) {
+        stubs.requestPaneSpawn.mockResolvedValueOnce({
+          requestId: 'req-x', ok: true, pending: true, paneId: 'pane-x', sessionId: null,
+        } as never);
+        await expect(
+          spawnPaneAndMaybePrompt(options, { onPendingMissionPane }),
+        ).rejects.toThrow();
+      }
+      expect(onPendingMissionPane).not.toHaveBeenCalled();
+    });
+  });
+
   it('sends second Enter even when session was busy during paste echo if it is idle after first Enter', async () => {
     vi.useFakeTimers();
     try {

@@ -497,3 +497,35 @@ describe('modelo do assento respeita a escolha do usuário (grok 4.6→4.5, 19/0
     expect(seated[0]!.model).toBe('grok-4.6');
   });
 });
+
+describe('planFirstWaveSeats — teto seguro da máquina (F-784)', () => {
+  const present = new Set(['codex', 'grok', 'glm', 'kimi', 'opencode', 'aider']);
+  const plan = (storyCount: number, maxNewSeats?: number) =>
+    planFirstWaveSeats({
+      storyCount,
+      storyTitles: Array.from({ length: storyCount }, (_, i) => `Story ${i + 1}`),
+      agents: fullstackRoster,
+      extraPresentClis: [...FIRST_WAVE_OFFER_CLIS, 'opencode', 'aider'],
+      orchestratorCli: 'claude',
+      classifySeat: presentOf(present),
+      ...(maxNewSeats === undefined ? {} : { maxNewSeats }),
+    });
+
+  it('abre pelo menos todas as partes independentes quando cabem no teto', () => {
+    const wave = plan(3, 8);
+    expect(wave.targetSeats).toBe(3);
+    expect(wave.seats).toHaveLength(3);
+  });
+
+  it('missão grande num Mac já cheio abre só o que cabe — não 15 writers de uma vez', () => {
+    // Antes: 15 assentos (FIRST_WAVE_WRITER_SEATS) mesmo com a máquina no limite.
+    const wave = plan(20, 4);
+    expect(wave.targetSeats).toBe(4);
+    expect(wave.seats).toHaveLength(4);
+  });
+
+  it('máquina no teto: nenhum assento novo; sem orçamento, a onda de sempre', () => {
+    expect(plan(20, 0).seats).toHaveLength(0);
+    expect(plan(20).seats).toHaveLength(FIRST_WAVE_WRITER_SEATS);
+  });
+});

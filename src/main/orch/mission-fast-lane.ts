@@ -150,6 +150,7 @@ import {
   planFirstWaveSeats,
   planMetaPaneAskSeats,
 } from './via-rapida-first-wave';
+import { currentParallelHelperBudget } from './parallel-helper-budget';
 import { firstWaveWorkerPrompt, metaPaneAskPrompt } from './via-rapida-walk';
 import { hashMissionIntentAuthority } from './mission-pane-authority';
 import {
@@ -2823,6 +2824,10 @@ export async function dispatchFastLaneFirstWave(
     }
     const titles = allTitles.filter((title) => !isPaneMetaTask(title));
     if (titles.length === 0) return 0;
+    // F-784: a onda abre todas as histórias até o teto seguro da máquina —
+    // 15 writers de uma vez num Mac já cheio era o cenário do travamento de
+    // 03/10. O que não cabe fica para o Maestro despachar quando houver vaga.
+    const budget = currentParallelHelperBudget();
     const wave = planFirstWaveSeats({
       storyCount: titles.length,
       storyTitles: titles,
@@ -2832,6 +2837,7 @@ export async function dispatchFastLaneFirstWave(
       extraPresentClis,
       orchestratorCli,
       classifySeat,
+      ...(budget ? { maxNewSeats: budget.slots } : {}),
     });
     if (blockedAdapterIds.length > 0) {
       console.warn(
@@ -2880,6 +2886,7 @@ export async function dispatchFastLaneFirstWave(
         missionId,
         spawned,
         target: wave.targetSeats,
+        ...(budget ? { budgetSlots: budget.slots, budgetLimitedBy: budget.limitedBy } : {}),
       });
       console.info(
         `[fast-lane] first-wave despachou ${spawned} writer(s) no mesmo turno do Maestro (${missionId})`,

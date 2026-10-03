@@ -4,10 +4,17 @@ import { compileIntentContract } from '../../shared/mission-intent';
 import { testProjectScope } from './__tests__/scope-fixture';
 
 const h = vi.hoisted(() => ({
-  spawn: vi.fn(async (_options: Record<string, unknown>, hooks?: { onPaneCreated?: (p: string) => void }) => {
+  spawn: vi.fn(async (
+    _options: Record<string, unknown>,
+    hooks?: {
+      onPaneCreated?: (p: string) => void;
+      onPendingMissionPane?: (recorded: Promise<'recorded' | 'no-session' | 'unrecorded'>) => void;
+    },
+  ) => {
     hooks?.onPaneCreated?.('pane-w');
     return { paneId: 'pane-w', sessionId: 'session-w' };
   }),
+  pending: vi.fn((): unknown => null),
   injectPrompt: vi.fn(async (_sessionId: string, _text: string) => {}),
   judge: vi.fn(async () => null as Record<string, unknown> | null),
   recordDecision: vi.fn(() => 'dec-1'),
@@ -28,7 +35,7 @@ vi.mock('./tool-util', async (original) => ({
 vi.mock('./pane-registry', async (original) => ({
   ...(await original<typeof import('./pane-registry')>()),
   listPaneSnapshots: () => h.panes,
-  takePendingPaneSpawnResult: () => null,
+  takePendingPaneSpawnResult: () => h.pending(),
   getPaneRuntimeAuthorityBySession: (sessionId: string) => h.authority(sessionId),
 }));
 vi.mock('../pty/pty-manager', async (original) => ({
@@ -101,7 +108,8 @@ vi.mock('../adapters/cli-model-discovery', async (original) => ({
 
 import { operatorRecentlyNamedCli } from './operator-cli-mentions';
 
-import { paneSpawnTool, setOperatorRouteResolver } from './tools-panes';
+import { paneSpawnTool, reserveWorkerSpawnSlot, setOperatorRouteResolver } from './tools-panes';
+import type { MissionIntentContract } from '../../shared/mission-intent';
 
 const ctx: AgentGateContext = {
   token: 'orch', label: 'Maestro', role: 'orchestrator', sessionId: 'orch-session',
@@ -142,6 +150,45 @@ describe('nexus_pane_spawn dentro da missão sem adapterId', () => {
     expect(receipt.harness.source).toBe('auto-route');
     expect(receipt.route.tier).toBe('medium');
     expect(receipt.route.ignored).toEqual({ model: 'ignorado' });
+  });
+
+  it('F-793: worker com ACK pendente segura a vaga de maxWorkers até a linha durável existir', async () => {
+    let settle: (outcome: 'recorded') => void = () => {};
+    const recorded = new Promise<'recorded'>((resolve) => {
+      settle = resolve;
+    });
+    h.spawn.mockImplementationOnce(async (_options, hooks) => {
+      hooks?.onPendingMissionPane?.(recorded);
+      throw new Error('pane spawn failed');
+    });
+    h.pending.mockReturnValueOnce({
+      requestId: 'req-w', ok: true, paneId: 'pane-w', sessionId: null, pending: true,
+    });
+    setOperatorRouteResolver(vi.fn(async () => ({
+      adapterId: 'codex', model: 'gpt-5.4', effort: 'high', routeReservationId: 'rr-p',
+    })));
+    const receipt = await paneSpawnTool.handler(
+      { task: 'implementar o login', prompt: 'faça o login' }, ctx,
+    ) as Record<string, unknown>;
+    expect(receipt).toMatchObject({ paneId: 'pane-w', pending: true });
+
+    const contract = h.mission.intentContract as MissionIntentContract;
+    const probe = () => reserveWorkerSpawnSlot({
+      scope: ctx.scope,
+      missionId: 'mission-a',
+      contract: { ...contract, budgets: { ...contract.budgets, maxWorkers: 1 } },
+      currentWorkerCount: 0,
+      allowedTools: null,
+    });
+    // Sem linha durável ainda: é a reserva que conta o worker pendente.
+    expect(probe().ok).toBe(false);
+
+    settle('recorded');
+    await recorded;
+    await Promise.resolve();
+    const after = probe();
+    expect(after.ok).toBe(true);
+    if (after.ok) after.release();
   });
 
   it('tentativa abortada antes do spawn fecha a reserva do auto-roteamento', async () => {

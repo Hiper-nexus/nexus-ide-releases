@@ -334,3 +334,68 @@ describe('pane-admission: limites proporcionais à RAM da máquina (0.76.44)', (
     expect(lowMemory).toMatchObject({ ok: true, warning: expect.stringContaining('Memória livre baixa') });
   });
 });
+
+describe('pane-admission: orçamento de paralelismo da delegação (F-784)', () => {
+  const mac24 = DEFAULT_PANE_ADMISSION_LIMITS; // teto 12, mínimo livre 3.686 MB
+
+  it('o leque inicial abre todas as partes independentes quando a máquina tem folga', async () => {
+    const { helpersToOpenNow, parallelHelperBudget } = await import('./pane-admission');
+    const budget = parallelHelperBudget({
+      liveAgentPanes: 2,
+      limits: mac24,
+      memory: { freeMB: 14_000, swapUsedMB: 6_500 },
+    });
+    // Swap sem gate armado não pesa (pico do macOS, ver limitsForMachine).
+    expect(budget).toMatchObject({ slots: 8, limitedBy: 'memory' });
+    expect(helpersToOpenNow(3, budget)).toBe(3);
+    expect(helpersToOpenNow(5, budget)).toBe(5);
+  });
+
+  it('acima do teto seguro abre só o que cabe — panes vivos contra o teto da RAM', async () => {
+    const { helpersToOpenNow, parallelHelperBudget } = await import('./pane-admission');
+    const budget = parallelHelperBudget({ liveAgentPanes: 10, limits: mac24, memory: null });
+    expect(budget).toMatchObject({ slots: 2, limitedBy: 'cap', liveAgentPanes: 10, maxAgentPanes: 12 });
+    expect(helpersToOpenNow(5, budget)).toBe(2);
+  });
+
+  it('incidente de 03/10: ~15 CLIs vivas não deixam abrir mais nenhuma', async () => {
+    const { helpersToOpenNow, parallelHelperBudget } = await import('./pane-admission');
+    const budget = parallelHelperBudget({
+      liveAgentPanes: 15,
+      limits: mac24,
+      memory: { freeMB: 9_000, swapUsedMB: 9_200 },
+    });
+    expect(budget?.slots).toBe(0);
+    expect(helpersToOpenNow(5, budget)).toBe(0);
+  });
+
+  it('memória disponível corta pela régua de ~1,25 GB por pane acima do mínimo livre', async () => {
+    const { AGENT_PANE_FOOTPRINT_MB, parallelHelperBudget } = await import('./pane-admission');
+    const twoAndHalf = mac24.minFreeMB + 2.5 * AGENT_PANE_FOOTPRINT_MB;
+    expect(
+      parallelHelperBudget({ liveAgentPanes: 1, limits: mac24, memory: { freeMB: twoAndHalf, swapUsedMB: 0 } }),
+    ).toMatchObject({ slots: 2, limitedBy: 'memory' });
+    expect(
+      parallelHelperBudget({ liveAgentPanes: 1, limits: mac24, memory: { freeMB: 2_000, swapUsedMB: 0 } }),
+    ).toMatchObject({ slots: 0, limitedBy: 'memory' });
+  });
+
+  it('swap só zera o orçamento onde a máquina armou o gate dela', async () => {
+    const { parallelHelperBudget } = await import('./pane-admission');
+    const armed = { ...mac24, maxSwapUsedMB: 4_000 };
+    expect(
+      parallelHelperBudget({ liveAgentPanes: 1, limits: armed, memory: { freeMB: 14_000, swapUsedMB: 9_200 } }),
+    ).toMatchObject({ slots: 0, limitedBy: 'swap' });
+  });
+
+  it('guard desligado pelo operador: sem orçamento, o leque segue as partes', async () => {
+    const { helpersToOpenNow, parallelHelperBudget } = await import('./pane-admission');
+    const budget = parallelHelperBudget({
+      liveAgentPanes: 30,
+      limits: { ...mac24, enabled: false },
+      memory: { freeMB: 100, swapUsedMB: 0 },
+    });
+    expect(budget).toBeNull();
+    expect(helpersToOpenNow(4, budget)).toBe(4);
+  });
+});
