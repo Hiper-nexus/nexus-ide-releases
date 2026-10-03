@@ -12,6 +12,7 @@ import {
 import { parseRetryAfterMsFromText } from '../../vendor/omp/rate-limit/retry-after-text';
 import { parseAnthropicModelId } from '../../vendor/omp/catalog/identity';
 import {
+  CODEX_CHATGPT_MODEL_REJECTION,
   FAILOVER_HANDOFF_FOOTER,
   FAILOVER_HANDOFF_HEADER,
 } from '../../shared/failover-handoff';
@@ -37,6 +38,11 @@ export interface LimitHit {
    * Um cooldown escopado NÃO tira a conta do pool para outros modelos.
    */
   scope?: string;
+  /**
+   * F-765: o erro só existe na saída desta CLI (a frase cita o próprio
+   * produto). Em pane de outra CLI é texto citado, nunca sinal vivo.
+   */
+  adapterId?: string;
 }
 
 // Derived from can1357/oh-my-pi@03c48d073 auth-storage cooldown machine (MIT):
@@ -214,6 +220,7 @@ const PATTERNS: Pattern[] = [
   //   to it" / código model_not_found
   // - Anthropic: "not_found_error: model: …"
   // - Gemini: "models/gemini-x is not found"
+  // - Codex com conta ChatGPT (F-765): matcher próprio, abaixo dos padrões.
   { kind: 'model', cooldownMs: 5 * 60 * 1000, re: /model requires a newer version/i },
   {
     kind: 'model',
@@ -550,6 +557,97 @@ function stripQuotedDiagnosticExamples(text: string): string {
     .join('\n');
 }
 
+/**
+ * F-765: o Codex logado com conta ChatGPT recusa o modelo — a conta está
+ * sadia, quem não serve o modelo é a combinação conta/CLI (03/10: Codex 0.146
+ * com gpt-6.1-sol). Texto real (rollout e print do operador):
+ *
+ *   ■ {"type":"error","status":400,"error":{"type":"invalid_request_error",
+ *   "message":"The 'gpt-6.1-sol' model is not supported when using Codex with
+ *   a ChatGPT account."}}
+ *
+ * A TUI do Codex quebra a célula de erro em várias linhas por conta própria
+ * (no print: depois de `"error":` e entre "not" e "supported"); uma regex de
+ * linha nunca casava a tela real. A frase é comparada sem espaços nem quebras
+ * e só vale dentro de uma célula de erro: a linha que a contém, ou uma das
+ * poucas anteriores do mesmo bloco, começa com o marcador ■, `Error:`,
+ * `HTTP 400:`, `unexpected status 400` ou o JSON de erro. Prosa que cita a
+ * frase no meio da linha (narração, handoff, documentação) não dispara.
+ *
+ * Linear (F-764): um `replace` na janela e, só quando a frase aparece, um
+ * mapa de posições e até CODEX_REJECTION_MAX_HITS × LOOKBACK_LINES linhas.
+ */
+const CODEX_REJECTION_PHRASE = CODEX_CHATGPT_MODEL_REJECTION.replace(/\s+/g, '');
+const CODEX_REJECTION_PHRASE_RE = new RegExp(CODEX_REJECTION_PHRASE, 'gi');
+/** Início de célula de erro, ancorado (sticky) no começo de uma linha. */
+const CODEX_ERROR_CELL_START =
+  /[ \t⎿│]*(?:■|(?:api[ \t]+)?error:|http[ \t]*400:|unexpected[ \t]+status[ \t]+400\b|\{[ \t]*"(?:type|error)"[ \t]*:)/iy;
+/**
+ * A célula já sem brancos: marcador → (JSON até "message") → the '<modelo>' →
+ * frase. Roda ancorada, uma vez por linha candidata, numa fatia curta.
+ */
+const CODEX_REJECTION_CELL = new RegExp(
+  '^[⎿│]*(?:■|(?:api)?error:|http400:|unexpectedstatus400(?:badrequest)?:|(?=\\{"(?:type|error)":))' +
+    '(?:http400:|unexpectedstatus400(?:badrequest)?:)?' +
+    '(?:\\{.{0,300}?"message":")?' +
+    `(?:the(?:'([^']{1,80})'|"([^"]{1,80})"|([a-z0-9._/-]{1,80}?)))?` +
+    CODEX_REJECTION_PHRASE,
+  'i',
+);
+const CODEX_REJECTION_LOOKBACK_LINES = 6;
+const CODEX_REJECTION_LOOKBACK_CHARS = 480;
+const CODEX_REJECTION_MAX_HITS = 8;
+
+function codexChatGptModelRejection(text: string): LimitHit | null {
+  // Caso comum (sem a frase): só o replace e uma busca literal.
+  const compact = text.replace(/\s+/g, '');
+  const starts: number[] = [];
+  CODEX_REJECTION_PHRASE_RE.lastIndex = 0;
+  for (
+    let match = CODEX_REJECTION_PHRASE_RE.exec(compact);
+    match;
+    match = CODEX_REJECTION_PHRASE_RE.exec(compact)
+  ) {
+    starts.push(match.index);
+  }
+  if (starts.length === 0) return null;
+  // Posição original de cada caractere não-branco (mesma regra do replace).
+  const origin: number[] = [];
+  for (let index = 0; index < text.length; index += 1) {
+    if (!/\s/.test(text[index])) origin.push(index);
+  }
+  // A ocorrência mais recente vale mais: a tela atual está no fim da janela.
+  for (const start of starts.slice(-CODEX_REJECTION_MAX_HITS).reverse()) {
+    const phraseStart = origin[start];
+    const phraseEnd = origin[start + CODEX_REJECTION_PHRASE.length - 1] + 1;
+    let lineStart = text.lastIndexOf('\n', phraseStart - 1) + 1;
+    for (let line = 0; line < CODEX_REJECTION_LOOKBACK_LINES; line += 1) {
+      if (phraseStart - lineStart > CODEX_REJECTION_LOOKBACK_CHARS) break;
+      CODEX_ERROR_CELL_START.lastIndex = lineStart;
+      const cell = CODEX_ERROR_CELL_START.test(text)
+        ? CODEX_REJECTION_CELL.exec(text.slice(lineStart, phraseEnd).replace(/\s+/g, ''))
+        : null;
+      if (cell) {
+        const model = (cell[1] ?? cell[2] ?? cell[3])?.slice(0, 40);
+        return {
+          kind: 'model',
+          reason: model
+            ? `The '${model}' ${CODEX_CHATGPT_MODEL_REJECTION}`
+            : CODEX_CHATGPT_MODEL_REJECTION,
+          cooldownMs: 5 * 60 * 1000,
+          adapterId: 'codex',
+        };
+      }
+      if (lineStart === 0) break;
+      const previous = text.lastIndexOf('\n', lineStart - 2) + 1;
+      // Linha em branco fecha a célula: o erro é um bloco contíguo.
+      if (!text.slice(previous, lineStart - 1).trim()) break;
+      lineStart = previous;
+    }
+  }
+  return null;
+}
+
 export function detectLimit(rawText: string, now: number = Date.now()): LimitHit | null {
   const text = stripQuotedDiagnosticExamples(
     stripCliSelfManagedThrottle(stripFailoverHandoffPack(rawText)),
@@ -571,6 +669,8 @@ export function detectLimit(rawText: string, now: number = Date.now()): LimitHit
       ...(scope ? { scope } : {}),
     };
   }
+  const codexRejection = codexChatGptModelRejection(text);
+  if (codexRejection) return codexRejection;
   // Fonte ADICIONAL (vendored de oh-my-pi): taxonomia QUOTA / RATE_LIMIT /
   // CAPACITY / SERVER sobre fraseologia de Anthropic/Google/xAI/provedores
   // chineses que os padrões acima não cobrem. Os padrões legados têm

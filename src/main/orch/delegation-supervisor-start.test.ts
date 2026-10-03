@@ -26,6 +26,7 @@ const h = vi.hoisted(() => ({
     | null
     | ((sessionId: string, agent: Record<string, unknown> | null) => void),
   sessionState: vi.fn((_sessionId: string): string | null => null),
+  sessionOutput: vi.fn((_sessionId: string) => ''),
   spawnedAt: vi.fn((_sessionId: string): number | null => null),
   terminationOrigin: vi.fn((_sessionId: string): string | null => null),
   turnStart: vi.fn((_sessionId: string) => 0),
@@ -58,6 +59,7 @@ vi.mock('./project-domain-store-registry', () => ({
 }));
 vi.mock('./pane-registry', () => ({
   listPaneSnapshots: h.listPaneSnapshots,
+  readSessionOutput: h.sessionOutput,
   pendingSpawnAttemptSession: h.pendingSession,
   requestPaneClose: h.requestPaneClose,
   abandonPendingOrchSpawn: h.abandon,
@@ -130,8 +132,11 @@ import {
   shutdownDelegationSupervisor,
 } from './delegation-supervisor';
 import {
+  MODEL_REJECTION_HANDOFF_MS,
   START_GRACE_MS,
   getPaneStartWatch,
+  notePaneStartAccepted,
+  releasePaneStartWatch,
   resetPaneStartWatchdogForTests,
   trackPaneStart,
   type PaneStartWatchInit,
@@ -141,6 +146,12 @@ import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from './workspace-handoff-delivery'
 
 const NOW = 200_000_000;
 const SCOPE = testProjectScope();
+/** Tela real do Codex 0.146 com conta ChatGPT (03/10), célula quebrada pela TUI. */
+const CODEX_REJECTION_SCREEN = [
+  '■ {"type":"error","status":400,"error":',
+  '{"type":"invalid_request_error","message":"The \'gpt-6.1-sol\' model is not',
+  'supported when using Codex with a ChatGPT account."}}',
+].join('\n');
 
 function mission(): Mission {
   return {
@@ -221,6 +232,7 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     h.getSemantic.mockReturnValue(null);
     h.toolActivity.mockReturnValue(0);
     h.lastTurnEnd.mockReturnValue(null);
+    h.sessionOutput.mockReturnValue('');
     h.agentInfo.mockReturnValue(null);
     h.handoffList.mockReturnValue([]);
     h.listPaneSnapshots.mockReturnValue([]);
@@ -354,7 +366,7 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     expect(h.submit).not.toHaveBeenCalled();
   });
 
-  it('CLI sem prova de turno: turno aberto já é início (F-723)', async () => {
+  it('CLI sem prova de turno: o turno aberto assenta e vira início (F-723/F-765)', async () => {
     trackPaneStart(watchInit({ turnProof: false }));
     h.pendingSession.mockReturnValue({ state: 'bound', sessionId: 'session-w' });
     h.spawnedAt.mockReturnValue(NOW - 10 * 60_000);
@@ -362,9 +374,118 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     h.turnStart.mockReturnValue(1);
 
     await checkPaneStarts(NOW);
+    // Assentando: só espera a primeira resposta do provedor.
+    expect(getPaneStartWatch('pane-qwen')).not.toBeNull();
+    await checkPaneStarts(NOW + 15_000);
+    expect(getPaneStartWatch('pane-qwen')).toBeNull();
     expect(redeliver).not.toHaveBeenCalled();
     expect(reroute).not.toHaveBeenCalled();
+  });
+
+  it.each(['agy', 'mimo-code', 'muse'])(
+    'F-765: %s sem telemetria (sem ferramenta, sem fim de turno) e ocioso não recebe reenvio nem reroteamento',
+    async (adapterId) => {
+      // A CLI manda um ou dois eventos por sessão: nenhum de ferramenta nem de
+      // fim de turno. Ela trabalha calada no worktree e o PTY fica ocioso.
+      adapterCircuitBreakers.recordFailure(adapterId);
+      const watch = trackPaneStart(watchInit({ adapterId, turnProof: false }));
+      notePaneStartAccepted('pane-qwen', NOW - 1_000);
+      h.pendingSession.mockReturnValue({ state: 'bound', sessionId: 'session-w' });
+      h.spawnedAt.mockReturnValue(NOW - START_GRACE_MS - 60_000);
+      h.sessionState.mockReturnValue('idle');
+
+      await checkPaneStarts(NOW);
+      expect(getPaneStartWatch('pane-qwen')).toBe(watch);
+      await checkPaneStarts(NOW + 15_000);
+      // Muito depois da graça de 90 s, ainda ocioso: nada de "siga" fantasma.
+      await checkPaneStarts(NOW + START_GRACE_MS + 60_000);
+
+      expect(getPaneStartWatch('pane-qwen')).toBeNull();
+      expect(redeliver).not.toHaveBeenCalled();
+      expect(reroute).not.toHaveBeenCalled();
+      expect(h.requestPaneClose).not.toHaveBeenCalled();
+      expect(h.submit).not.toHaveBeenCalled();
+      // O início foi provado como no F-723: a falha antiga do adapter zera.
+      expect(adapterCircuitBreakers.snapshot(adapterId).recentFailures).toBe(0);
+    },
+  );
+
+  it('F-765: Codex com prompt aceito e erro permanente nunca registra sucesso nem dispara outro motor', async () => {
+    const watch = trackPaneStart(watchInit({ adapterId: 'codex', turnProof: false }));
+    watch.accepted = true;
+    h.pendingSession.mockReturnValue({ state: 'bound', sessionId: 'session-codex' });
+    h.spawnedAt.mockReturnValue(NOW - 5_000);
+    h.sessionState.mockReturnValue('idle');
+    h.turnStart.mockReturnValue(1);
+    const recordSuccess = vi.spyOn(adapterCircuitBreakers, 'recordSuccess');
+
+    await checkPaneStarts(NOW);
+    expect(getPaneStartWatch('pane-qwen')).toBe(watch);
+    h.sessionOutput.mockReturnValue(CODEX_REJECTION_SCREEN);
+    h.lastTurnEnd.mockReturnValue({ outcome: 'error' });
+    h.turnEndTap!({
+      sessionId: 'session-codex', paneId: 'pane-qwen', outcome: 'error',
+      worked: false, observedAt: NOW + 10_000,
+    });
+    expect(watch.failure).toBeNull();
+    expect(watch.turnOutcome).toBeNull();
+    await checkPaneStarts(NOW + 15_000);
+
+    expect(recordSuccess).not.toHaveBeenCalled();
+    expect(getPaneStartWatch('pane-qwen')).toBe(watch);
+    expect(redeliver).not.toHaveBeenCalled();
+    expect(reroute).not.toHaveBeenCalled();
+    expect(h.requestPaneClose).not.toHaveBeenCalled();
+    recordSuccess.mockRestore();
+  });
+
+  it('F-765: recusa de modelo que o failover não assumiu no prazo vira falha e segue o F-723', async () => {
+    trackPaneStart(watchInit({ adapterId: 'codex', turnProof: false }));
+    notePaneStartAccepted('pane-qwen', NOW - 2_000);
+    h.pendingSession.mockReturnValue({ state: 'bound', sessionId: 'session-codex' });
+    h.spawnedAt.mockReturnValue(NOW - 5_000);
+    h.sessionState.mockReturnValue('idle');
+    h.sessionOutput.mockReturnValue(CODEX_REJECTION_SCREEN);
+    h.listPaneSnapshots.mockReturnValue([
+      { paneId: 'pane-qwen', sessionId: 'session-codex', kind: 'cli-agent', role: 'worker', state: 'idle', missionId: 'mission-f723' },
+    ]);
+
+    await checkPaneStarts(NOW);
+    await checkPaneStarts(NOW + MODEL_REJECTION_HANDOFF_MS - 1);
+    expect(reroute).not.toHaveBeenCalled();
+
+    await checkPaneStarts(NOW + MODEL_REJECTION_HANDOFF_MS);
+    expect(reroute).toHaveBeenCalledWith(['codex']);
+    expect(h.requestPaneClose).toHaveBeenCalledWith('pane-qwen', 'session-codex');
+    expect(String((h.submit.mock.calls[0]![0] as { summary: string }).summary)).toContain(
+      'pedido recusado pelo provedor',
+    );
+  });
+
+  it('F-765: a recusa citada no pane de OUTRA CLI não segura a ficha', async () => {
+    trackPaneStart(watchInit({ adapterId: 'kimi', turnProof: false }));
+    notePaneStartAccepted('pane-qwen', NOW - 20_000);
+    h.pendingSession.mockReturnValue({ state: 'bound', sessionId: 'session-kimi' });
+    h.sessionState.mockReturnValue('idle');
+    h.sessionOutput.mockReturnValue(CODEX_REJECTION_SCREEN);
+
+    await checkPaneStarts(NOW);
     expect(getPaneStartWatch('pane-qwen')).toBeNull();
+    expect(reroute).not.toHaveBeenCalled();
+  });
+
+  it('F-765: depois que o failover assume o pane, a ficha não age mais', async () => {
+    trackPaneStart(watchInit({ adapterId: 'codex', turnProof: false }));
+    notePaneStartAccepted('pane-qwen', NOW - 2_000);
+    h.pendingSession.mockReturnValue({ state: 'bound', sessionId: 'session-codex' });
+    h.sessionState.mockReturnValue('idle');
+    h.sessionOutput.mockReturnValue(CODEX_REJECTION_SCREEN);
+
+    await checkPaneStarts(NOW);
+    expect(releasePaneStartWatch('pane-qwen')).toBe(true);
+    await checkPaneStarts(NOW + MODEL_REJECTION_HANDOFF_MS + 15_000);
+    expect(reroute).not.toHaveBeenCalled();
+    expect(h.submit).not.toHaveBeenCalled();
   });
 
   it('família Claude: turno aberto sem trabalho espera o desfecho; Stop normal prova o início (F-734)', async () => {
@@ -517,6 +638,7 @@ describe('F-734: turno do brief recusado pelo provedor é falha de início', () 
     h.getSemantic.mockReturnValue({ status: 'working', updatedAt: NOW - 50_000 });
     h.toolActivity.mockReturnValue(0);
     h.lastTurnEnd.mockReturnValue(null);
+    h.sessionOutput.mockReturnValue('');
     h.agentInfo.mockReturnValue(null);
     h.handoffList.mockReturnValue([]);
     h.listPaneSnapshots.mockReturnValue([

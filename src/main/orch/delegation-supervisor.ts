@@ -25,6 +25,7 @@ import {
   listPaneSnapshots,
   pendingSpawnAttemptSession,
   requestPaneClose,
+  readSessionOutput,
   tapPendingSpawnStartFailure,
 } from './pane-registry';
 import {
@@ -35,6 +36,7 @@ import {
   tapSessionTermination,
 } from '../pty/pty-manager';
 import { adapterCircuitBreakers } from './circuit-breaker';
+import { detectLimit } from './limit-detector';
 import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from './workspace-handoff-delivery';
 import {
   CREDENTIAL_REJECTED_OPEN_MS,
@@ -51,6 +53,8 @@ import {
   setPaneStartKick,
   shortStartError,
   startFailureBreakerAction,
+  MODEL_REJECTION_HANDOFF_MS,
+  START_SETTLE_MS,
   START_WATCH_TTL_MS,
   type PaneStartOutcome,
   type PaneStartProgress,
@@ -674,29 +678,55 @@ function hasPaneStartEvidence(watch: PaneStartWatch, sessionId: string): boolean
 }
 
 /**
+ * F-765: o PTY da sessão mostra a recusa do modelo pela CLI DA FICHA — a frase
+ * do Codex citada no pane de outra CLI não é recusa deste pane.
+ */
+function sessionShowsModelRejection(watch: PaneStartWatch, sessionId: string): boolean {
+  const hit = detectLimit(readSessionOutput(sessionId, 80));
+  return hit?.kind === 'model' && (!hit.adapterId || hit.adapterId === watch.adapterId);
+}
+
+/**
  * F-734: na família Claude o turno aberto ainda não prova o início — provam o
  * trabalho (ferramenta, handoff) ou um Stop normal. StopFailure de
- * configuração sem trabalho é recusa do provedor (`rejected`).
+ * configuração sem trabalho é recusa do provedor (`rejected`). F-765: em
+ * qualquer CLI, a recusa do modelo no PTY sem trabalho segura a ficha para o
+ * failover; fora da família Claude o turno aberto assenta antes do veredito.
  */
 function paneStartProgressFor(
   watch: PaneStartWatch,
   sessionId: string | null,
+  now: number,
 ): PaneStartProgress {
-  // O desfecho do turno do brief, visto pelo tap, vale sobre o último turno.
-  if (watch.turnOutcome !== null) return { kind: watch.turnOutcome };
+  const settling = (): boolean =>
+    watch.turnOpenedAt !== null && now - watch.turnOpenedAt < START_SETTLE_MS;
   if (sessionId === null) {
+    if (watch.turnOutcome !== null) return { kind: watch.turnOutcome };
     return paneStartProgress({
       turnProof: watch.turnProof,
       turnOpened: watch.accepted,
       worked: false,
+      settling: settling(),
       lastTurnEnd: null,
     });
   }
   const handoff = sessionHasHandoff(watch, sessionId);
+  const worked = handoff || getAgentToolActivityCount(sessionId) > 0;
+  if (!worked && sessionShowsModelRejection(watch, sessionId)) {
+    // A recuperação é do failover: a ficha fica, sem sucesso no disjuntor e
+    // sem abrir outra recuperação — até MODEL_REJECTION_HANDOFF_MS.
+    watch.modelRejectedAt ??= now;
+    return { kind: 'turn-open' };
+  }
+  // O desfecho do turno do brief, visto pelo tap, vale sobre o último turno.
+  if (watch.turnOutcome !== null) return { kind: watch.turnOutcome };
+  const turnOpened = handoff || hasTurnEvidence(watch, sessionId);
+  if (turnOpened) watch.turnOpenedAt ??= now;
   return paneStartProgress({
     turnProof: watch.turnProof,
-    turnOpened: handoff || hasTurnEvidence(watch, sessionId),
-    worked: handoff || getAgentToolActivityCount(sessionId) > 0,
+    turnOpened,
+    worked,
+    settling: settling(),
     lastTurnEnd: getAgentLastTurnEnd(sessionId),
   });
 }
@@ -899,7 +929,7 @@ async function checkPaneStart(watch: PaneStartWatch, now: number): Promise<void>
   const sessionId = watch.sessionId;
   const state = sessionId !== null ? getSessionState(sessionId) : null;
   if (!watch.failure) {
-    const progress = paneStartProgressFor(watch, sessionId);
+    const progress = paneStartProgressFor(watch, sessionId, now);
     if (progress.kind === 'started') {
       adapterCircuitBreakers.recordSuccess(watch.adapterId);
       finishPaneStartWatch(watch);
@@ -927,7 +957,16 @@ async function checkPaneStart(watch: PaneStartWatch, now: number): Promise<void>
     } else if (progress.kind === 'turn-open') {
       // F-734: turno aberto na família Claude, sem trabalho nem fim ainda —
       // o veredito é do desfecho dele (ferramenta, Stop ou StopFailure).
-      return;
+      // F-765: recusa do modelo que o failover não assumiu no prazo vira
+      // falha de início (pedido recusado) e segue o reenvio/aviso do F-723.
+      if (
+        watch.modelRejectedAt === null ||
+        now - watch.modelRejectedAt < MODEL_REJECTION_HANDOFF_MS
+      ) {
+        return;
+      }
+      watch.failure = { cause: 'provider-request', at: now };
+      tracePaneStartRejected(watch, 'provider-request');
     }
   }
   const action = decideStartAction({
@@ -1007,6 +1046,7 @@ function installPaneStartTaps(): void {
       sessionId: entry.sessionId,
       outcome: entry.outcome,
       ...(entry.stopFailure ? { stopFailure: entry.stopFailure } : {}),
+      modelRejected: !entry.worked && sessionShowsModelRejection(watch, entry.sessionId),
       worked:
         entry.worked ||
         (entry.stopFailure !== undefined && sessionHasHandoff(watch, entry.sessionId)),

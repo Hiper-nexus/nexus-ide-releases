@@ -13,7 +13,7 @@ import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { adapterSchema } from '../../shared/adapter-types';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import type { ModelCatalog } from '../adapters/model-catalog';
-import { quarantineRejectedModel, resetModelAccessQuarantineForTests } from './model-access-quarantine';
+import { quarantineRejectedModel, resetModelAccessQuarantineForTests, setModelQuarantineScopeResolver } from './model-access-quarantine';
 
 function adapters(...installed: string[]): AdapterAvailability[] {
   const all = [
@@ -100,6 +100,22 @@ describe('classifyTask', () => {
 });
 
 describe('routeTask', () => {
+  it('F-765: a rota exclui o acesso recusado só para a conta atual do Main', () => {
+    resetModelAccessQuarantineForTests();
+    let accountId = 'account-a';
+    setModelQuarantineScopeResolver(() => ({ accountId }));
+    try {
+      quarantineRejectedModel('grok', 'grok-4.7', 'Model access is disabled');
+      const pool = adapters('grok', 'claude', 'codex');
+      const task = 'corrigir typo no README do projeto agora';
+      expect(routeTask(task, pool)).not.toMatchObject({ adapterId: 'grok', model: 'grok-4.7' });
+      accountId = 'account-b';
+      expect(routeTask(task, pool)).toMatchObject({ adapterId: 'grok', model: 'grok-4.7' });
+    } finally {
+      resetModelAccessQuarantineForTests();
+    }
+  });
+
   it('F-683: modelo recusado pelo provider sai do roteamento até a quarentena vencer', () => {
     resetModelAccessQuarantineForTests();
     const before = routeTask('corrigir typo no README do projeto agora', adapters('grok', 'claude', 'codex'));

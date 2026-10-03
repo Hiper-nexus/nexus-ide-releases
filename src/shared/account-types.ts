@@ -81,16 +81,27 @@ export interface FailoverEvent {
    * compatibility with an already-open renderer during an app update.
    */
   kind?: FailoverReasonKind;
-  /** Whether a replacement account was found; false = no account left. */
+  /** Whether recovery was applied; model rotation is true only after respawn proof. */
   switched: boolean;
   /** Replacement account pinned to the pane before its resume spawn. */
   toAccountId?: string;
   /**
-   * kind='model' com switched=true: modelo alternativo escolhido pelo main
-   * (migração de id aposentado ou default do catálogo do adapter). O renderer
-   * aplica no pane e religa na MESMA conta — credencial não é punida.
+   * kind='model': modelo alternativo escolhido pelo Main. O renderer aplica
+   * no pedido e religa na MESMA conta — credencial não é punida.
    */
   toModel?: string;
+  /** Pedido de respawn ou recibo posterior de aplicação comprovada pelo Main. */
+  modelRotationPhase?: 'requested' | 'applied';
+  /**
+   * F-765/F-775: a tarefa saiu deste pane — o Main a reabriu pela rota do
+   * spawn (outro modelo ou outra CLI) e o pane novo é este. O renderer não
+   * religa nada: o pane antigo já foi fechado pelo Main; só avisa.
+   */
+  toPaneId?: string;
+  /** CLI do pane novo quando a tarefa foi reaberta. */
+  toAdapterId?: string;
+  /** CLI do pane que parou. */
+  fromAdapterId?: string;
   /** Exhausted account id (when known). */
   fromAccountId?: string;
   /**

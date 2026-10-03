@@ -8,11 +8,18 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import {
   getAgentSessionInfo,
   getSessionState,
+  listAgentSessionsForPane,
   tapSessionData,
   tapSessionExit,
 } from '../pty/pty-manager';
-import { getAdapter } from '../adapters/adapter-registry';
+import { getAdapter, getAdapterResolvedBin } from '../adapters/adapter-registry';
+import {
+  isModelBlockedForAutoRouting,
+  loadModelCatalog,
+  modelCatalogInfo,
+} from '../adapters/model-catalog';
 import { migrateModelId } from '../../shared/model-defaults';
+import { sanitizeHandoffExcerptForDetector } from '../../shared/failover-handoff';
 import { respawnMainOwnedPaneWithAccount } from './failover-mission-respawn';
 import {
   getRendererWorkspaceScope,
@@ -23,8 +30,19 @@ import {
   findPaneBySessionOwnedBy,
   getOwnedPaneAuthzInfoBySession,
   getPaneRuntimeAuthorityBySession,
+  requestPaneClose,
   type OwnedPaneAuthzInfo,
 } from './pane-registry';
+import { releasePaneStartWatch, shortStartError } from './pane-start-watchdog';
+import {
+  forgetPaneTaskReroute,
+  getPaneTaskReroute,
+  paneTaskRerouteBlocker,
+  type PaneTaskRerouteBlocker,
+  type PaneTaskRerouteHandle,
+  type PaneTaskRerouteRequest,
+} from './pane-task-reroute';
+import { DEFAULT_ROUTING_TABLE, TIER_ORDER } from './task-router';
 import { detectLimit, tierScopeFromModelId, type LimitHit } from './limit-detector';
 import { retryTargetMsForLimit } from './failover-retry-policy';
 import {
@@ -53,7 +71,14 @@ import {
 import { quotaAvailabilityScore } from '../quota/quota-policy';
 import { tapObserverFrames } from './observer-bus';
 import type { ObserverFrame } from '../../shared/observer-frame';
-import { quarantineRejectedModel } from './model-access-quarantine';
+import {
+  MODEL_ACCESS_QUARANTINE_MS,
+  modelAccessQuarantine,
+  quarantineRejectedModel,
+  resolveModelQuarantineInstallationId,
+  setModelQuarantineScopeResolver,
+  type ModelQuarantineScope,
+} from './model-access-quarantine';
 import { trace } from '../observability/main-trace';
 
 /**
@@ -1101,11 +1126,15 @@ function watchFor(authority: FailoverAuthority): [string, SessionWatch] {
 
 /**
  * F-520: escolha pura do modelo de rotação quando o provider rejeita o id do
- * pane. Ordem: migração de id aposentado (só conta se MUDOU o id), senão o
- * default curado do catálogo do adapter; se o resultado é o próprio modelo
- * rejeitado, não há rotação (undefined) e o pane recebe orientação acionável.
+ * pane. Ordem: migração de id aposentado (só conta se MUDOU o id), o default
+ * curado do catálogo do adapter e (F-765) os modelos da rota automática da
+ * CLI — quando o recusado É o default (gpt-6.1-sol no Codex, 03/10), a
+ * alternativa vem dali. Cada candidato precisa ser outro id, constar da lista
+ * da CLI instalada (quando há lista) e ser elegível: fora da quarentena da
+ * conta/instalação e do bloqueio do catálogo. Sem candidato → undefined e o
+ * pane recebe orientação acionável (ou a tarefa é reaberta em outra CLI).
  *
- * Pane SEM modelo explícito já roda no default do adapter (o pty-manager
+ * Pane SEM modelo conhecido já roda no default do adapter (o pty-manager
  * resolve models.default) — rotacionar "para o default" respawna o mesmo
  * modelo rejeitado com toast de sucesso mentiroso, então também retorna
  * undefined: a orientação certa é atualizar a CLI, não trocar de modelo.
@@ -1113,11 +1142,47 @@ function watchFor(authority: FailoverAuthority): [string, SessionWatch] {
 export function pickModelRotation(
   paneModel: string | undefined,
   adapterDefault: string | undefined,
+  options: {
+    /** Ordem de preferência depois da migração e do default. */
+    readonly candidates?: readonly string[];
+    /** Modelos que a CLI instalada lista (vazio = sem como validar). */
+    readonly available?: readonly string[];
+    /** false = fora (quarentena, catálogo). */
+    readonly eligible?: (model: string) => boolean;
+  } = {},
 ): string | undefined {
   if (!paneModel) return undefined;
+  const rejected = paneModel.trim().toLowerCase();
   const migrated = migrateModelId(paneModel);
-  const fallback = migrated !== paneModel ? migrated : adapterDefault;
-  return fallback && fallback !== paneModel ? fallback : undefined;
+  const ordered = [
+    ...(migrated && migrated !== paneModel ? [migrated] : []),
+    ...(adapterDefault ? [adapterDefault] : []),
+    ...(options.candidates ?? []),
+  ];
+  return ordered.find(
+    (candidate) =>
+      Boolean(candidate.trim()) &&
+      candidate.trim().toLowerCase() !== rejected &&
+      (!options.available?.length || options.available.includes(candidate)) &&
+      (!options.eligible || options.eligible(candidate)),
+  );
+}
+
+/**
+ * F-765: modelos da rota automática da CLI, do tier mais forte ao mais leve.
+ * O GPT-6 Astra não está na tabela (F-700: só pelo nome), então a rotação
+ * nunca o escolhe sozinha.
+ */
+export function routeModelsForAdapter(adapterId: string): string[] {
+  const models: string[] = [];
+  for (const tier of [...TIER_ORDER].reverse()) {
+    for (const row of DEFAULT_ROUTING_TABLE[tier]) {
+      if (row.adapterId === adapterId && row.model && !models.includes(row.model)) {
+        models.push(row.model);
+      }
+    }
+  }
+  return models;
 }
 
 type PaneDetails = NonNullable<ReturnType<typeof resolvePaneDetails>>;
@@ -1469,6 +1534,401 @@ function nudgeTransientContinue(
   });
 }
 
+/* ------------------------------------------------------------------------ *
+ * F-765: modelo recusado pelo provedor. O pane é religado em outro modelo
+ * elegível da MESMA CLI quando dá para religar no lugar; senão a tarefa é
+ * reaberta pela rota do spawn. O pedido de troca e o recibo são eventos
+ * separados: `switched:true` só sai depois de o religamento existir.
+ * ------------------------------------------------------------------------ */
+
+/** Prazo para o renderer religar o pane no modelo novo antes do recibo. */
+const MODEL_ROTATION_PROOF_MS = 45_000;
+const MODEL_ROTATION_PROOF_POLL_MS = 1_000;
+/** Religamentos no lugar por pane nesta janela — mais que isso é cascata. */
+const MAX_MODEL_ROTATIONS = 2;
+const MODEL_ROTATION_WINDOW_MS = 10 * 60_000;
+/** A identidade da instalação vai ao disco (assíncrono) no máximo nesta cadência. */
+const INSTALLATION_ID_TTL_MS = 60_000;
+/** Autor dos avisos do failover ao Maestro (handoff `progress`). */
+const FAILOVER_AGENT = 'nexus-failover';
+
+const modelRotationsByPane = new Map<string, number[]>();
+const rotationProofs = new Map<
+  string,
+  { readonly timer: ReturnType<typeof setTimeout>; readonly resolve: (proven: boolean) => void }
+>();
+const installationIds = new Map<
+  string,
+  { readonly binPath: string; readonly id: string | null; readonly at: number }
+>();
+const installationRefreshes = new Map<string, Promise<string | null>>();
+
+/** Identidade da instalação da CLI (alvo real + carimbo), lida do disco sem bloquear. */
+function refreshInstallationId(adapterId: string): Promise<string | null> {
+  const binPath = getAdapterResolvedBin(adapterId);
+  if (!binPath) return Promise.resolve(null);
+  const inFlight = installationRefreshes.get(adapterId);
+  if (inFlight) return inFlight;
+  const refresh = resolveModelQuarantineInstallationId(binPath)
+    .then((id) => {
+      installationIds.set(adapterId, { binPath, id, at: Date.now() });
+      return id;
+    })
+    .finally(() => installationRefreshes.delete(adapterId));
+  installationRefreshes.set(adapterId, refresh);
+  return refresh;
+}
+
+/** Valor já resolvido, para o roteador; vencido, renova em segundo plano. */
+function cachedInstallationId(adapterId: string): string | null {
+  const binPath = getAdapterResolvedBin(adapterId);
+  const cached = installationIds.get(adapterId);
+  if (binPath && (!cached || cached.binPath !== binPath || Date.now() - cached.at >= INSTALLATION_ID_TTL_MS)) {
+    void refreshInstallationId(adapterId).catch(() => undefined);
+  }
+  return cached && cached.binPath === binPath ? cached.id : null;
+}
+
+/**
+ * Recusa que é da INSTALAÇÃO (CLI velha), não da conta: some quando a CLI
+ * muda. 03/10: o Codex 0.146 recusava o gpt-6.1-sol "with a ChatGPT
+ * account" e o 0.160 aceitou — atualizar a CLI curou, a conta estava sadia.
+ */
+function rejectionIsInstallationBound(reason: string): boolean {
+  return /requires a newer version|not supported when using Codex with a ChatGPT account/i.test(
+    reason,
+  );
+}
+
+function noteModelRotation(paneId: string, now: number): boolean {
+  const recent = (modelRotationsByPane.get(paneId) ?? []).filter(
+    (at) => now - at < MODEL_ROTATION_WINDOW_MS,
+  );
+  const allowed = recent.length < MAX_MODEL_ROTATIONS;
+  if (allowed) recent.push(now);
+  modelRotationsByPane.set(paneId, recent);
+  return allowed;
+}
+
+/**
+ * Recibo de uma troca que já trocou a sessão (ou fechou o pane): a autoridade
+ * antiga deixou de ser a corrente, então vale o dono e o escopo de quando a
+ * troca começou — nunca outro projeto nem outra janela.
+ */
+function emitFailoverReceipt(authority: FailoverAuthority, event: FailoverEvent): void {
+  if (authority.owner && !listeners.has(authority.owner)) return;
+  broadcastToProject(
+    authority.owner ? [authority.owner] : listeners,
+    authority.scope,
+    ACCOUNT_CHANNELS.failover,
+    event,
+  );
+}
+
+/**
+ * Prova do religamento: uma sessão NOVA do mesmo pane, viva, no modelo pedido.
+ * Só memória do pty-manager — nada de disco nem de processo.
+ */
+function waitForModelRespawn(
+  paneId: string,
+  previousSessionId: string,
+  toModel: string,
+): Promise<boolean> {
+  const wanted = toModel.trim().toLowerCase();
+  const deadline = Date.now() + MODEL_ROTATION_PROOF_MS;
+  rotationProofs.get(paneId)?.resolve(false);
+  return new Promise((resolve) => {
+    const check = (): void => {
+      rotationProofs.delete(paneId);
+      const respawned = listAgentSessionsForPane(paneId).some(
+        (session) =>
+          session.sessionId !== previousSessionId &&
+          [session.model, session.requestedModel].some(
+            (model) => model?.trim().toLowerCase() === wanted,
+          ) &&
+          (getSessionState(session.sessionId) ?? 'exited') !== 'exited',
+      );
+      if (respawned || Date.now() >= deadline) {
+        resolve(respawned);
+        return;
+      }
+      const timer = setTimeout(check, MODEL_ROTATION_PROOF_POLL_MS);
+      timer.unref?.();
+      rotationProofs.set(paneId, {
+        timer,
+        resolve: (proven) => {
+          clearTimeout(timer);
+          rotationProofs.delete(paneId);
+          resolve(proven);
+        },
+      });
+    };
+    check();
+  });
+}
+
+/**
+ * Avisa o Maestro da missão pelo mesmo canal do supervisor (handoff
+ * `progress`). Só ids, CLI, modelo e o motivo mascarado — o texto de erro
+ * do provedor nunca volta cru para um PTY (F-511).
+ */
+async function notifyMissionOrchestrator(
+  authority: FailoverAuthority,
+  summary: string,
+): Promise<void> {
+  if (!authority.missionId) return;
+  if (getAgentSessionInfo(authority.sessionId)?.role === 'orchestrator') return;
+  try {
+    // Import tardio: o registro de stores e a entrega puxam o grafo da missão.
+    const [{ getProjectDomainStores }, { onHandoffSubmitted }] = await Promise.all([
+      import('./project-domain-store-registry'),
+      import('./idle-delivery'),
+    ]);
+    const handoff = getProjectDomainStores(authority.scope).handoffs.submit({
+      missionId: authority.missionId,
+      status: 'progress',
+      summary: sanitizeHandoffExcerptForDetector(summary),
+      fromAgent: FAILOVER_AGENT,
+    });
+    onHandoffSubmitted(handoff, authority.scope);
+  } catch (error) {
+    console.warn(
+      '[failover] aviso ao Maestro não entregue:',
+      error instanceof Error ? error.message : error,
+    );
+  }
+}
+
+type TaskReopenOutcome =
+  | { readonly ok: true; readonly paneId: string; readonly adapterId: string }
+  | { readonly ok: false; readonly error: string };
+
+/**
+ * F-765/F-775: a tarefa sai do pane parado e é reaberta pela rota do
+ * `nexus_pane_spawn` — pedido original, autoridade atual de quem pediu. O
+ * pane parado fecha ANTES (libera a vaga do worker e o checkout do writer);
+ * o resultado só existe depois de o pane novo nascer.
+ */
+async function reopenTaskElsewhere(
+  authority: FailoverAuthority,
+  pane: PaneDetails,
+  handle: PaneTaskRerouteHandle,
+  request: PaneTaskRerouteRequest,
+): Promise<TaskReopenOutcome> {
+  if (!handle.hasAlternative(request.excludeAdapterIds)) {
+    return { ok: false, error: 'nenhuma CLI pode receber a tarefa agora' };
+  }
+  // A ficha de início (F-723) não reabre a mesma tarefa de novo.
+  releasePaneStartWatch(pane.paneId);
+  const closed = await requestPaneClose(pane.paneId, authority.sessionId).catch(() => false);
+  if (!closed) return { ok: false, error: 'o pane parado não fechou; nada foi reaberto' };
+  forgetPaneTaskReroute(pane.paneId);
+  try {
+    const next = await handle.reroute(request);
+    return { ok: true, paneId: next.paneId, adapterId: next.adapterId };
+  } catch (error) {
+    return { ok: false, error: shortStartError(error) };
+  }
+}
+
+const REROUTE_BLOCKER_TEXT: Readonly<Record<PaneTaskRerouteBlocker, string>> = {
+  'no-request': 'o Nexus não tem como reabrir esta tarefa sozinho',
+  operator: 'o pane é do operador',
+  pinned: 'a CLI foi pedida pelo operador — não troquei de CLI sozinho',
+  'chain-limit': 'a tarefa já foi reaberta automaticamente o máximo de vezes',
+};
+
+async function handleModelRejection(
+  authority: FailoverAuthority,
+  pane: PaneDetails,
+  hit: LimitHit,
+  now: number,
+  source: FailoverSignalSource,
+  current: PaneAccount,
+): Promise<void> {
+  const adapterId = pane.adapterId;
+  // A frase cita o próprio produto: no pane de outra CLI é citação, não erro.
+  if (hit.adapterId && hit.adapterId !== adapterId) {
+    logSuppressedFailover(pane, current, hit, 'model-error-of-another-cli', source);
+    return;
+  }
+  // O modelo que o processo rodou de fato (o pane pode não ter id explícito).
+  const rejected = getAgentSessionInfo(authority.sessionId)?.model ?? pane.model;
+  const installationId = rejectionIsInstallationBound(hit.reason)
+    ? await refreshInstallationId(adapterId).catch(() => null)
+    : null;
+  if (!isCurrentAuthority(authority)) return;
+  const scope: ModelQuarantineScope = {
+    accountId: current?.id ?? null,
+    ...(installationId ? { installationId } : {}),
+  };
+  // F-683: o roteador para de mandar helpers para o modelo recusado. A recusa
+  // de acesso é da conta; a incompatibilidade é da instalação (F-765).
+  quarantineRejectedModel(adapterId, rejected, hit.reason, now, MODEL_ACCESS_QUARANTINE_MS, {
+    ...scope,
+    kind: installationId ? 'installation' : 'access',
+  });
+  const adapter = getAdapter(adapterId);
+  const catalog = loadModelCatalog();
+  const next = pickModelRotation(rejected, adapter?.models.default, {
+    candidates: routeModelsForAdapter(adapterId),
+    available: adapter?.models.list,
+    eligible: (model) =>
+      !modelAccessQuarantine(adapterId, model, now, scope) &&
+      !isModelBlockedForAutoRouting(modelCatalogInfo(catalog, adapterId, model)),
+  });
+  const label = current?.label ?? adapterId;
+  const refused = `modelo "${rejected ?? 'padrão'}" recusado (${hit.reason})`;
+  const base = {
+    paneId: pane.paneId,
+    fromAccountLabel: label,
+    kind: 'model' as const,
+    fromAccountId: current?.id,
+    missionId: authority.missionId,
+  };
+  const traceOutcome = (outcome: string, extra: Record<string, unknown> = {}): void =>
+    trace({
+      kind: 'account-failover',
+      outcome,
+      paneId: pane.paneId,
+      adapterId,
+      fromAccountId: current?.id ?? null,
+      limitKind: hit.kind,
+      reason: hit.reason,
+      fromModel: rejected ?? null,
+      missionId: authority.missionId ?? null,
+      ...extra,
+    });
+
+  // 1) Pane que o renderer religa no lugar (fora de missão): pedido → prova → recibo.
+  let capped = false;
+  if (next && authority.owner && !authority.missionId) {
+    if (noteModelRotation(pane.paneId, now)) {
+      const rotation = {
+        ...base,
+        toAccountLabel: label,
+        toModel: next,
+        ...(current ? { toAccountId: current.id } : {}),
+        crossAccount: false,
+      };
+      emitFailover(authority, {
+        ...rotation,
+        reason: `${refused} → religando em "${next}"`,
+        switched: false,
+        modelRotationPhase: 'requested',
+      });
+      traceOutcome('model-rotation-requested', { toModel: next });
+      const proven = await waitForModelRespawn(pane.paneId, authority.sessionId, next);
+      if (proven) releasePaneStartWatch(pane.paneId);
+      emitFailoverReceipt(authority, {
+        ...rotation,
+        reason: proven
+          ? `${refused} → rotacionado para "${next}"`
+          : `${refused} — o pane não religou em "${next}" em ` +
+            `${Math.round(MODEL_ROTATION_PROOF_MS / 1000)} s; nada foi trocado`,
+        switched: proven,
+        modelRotationPhase: 'applied',
+      });
+      traceOutcome(proven ? 'model-rotated' : 'model-rotation-failed', { toModel: next });
+      return;
+    }
+    capped = true;
+  }
+
+  // 2) Pane de missão (o renderer não religa pane de missão viva) ou helper
+  //    sem religamento no lugar: a tarefa é reaberta pela rota do spawn —
+  //    preferindo a mesma CLI quando ela ainda tem outro modelo elegível.
+  const handle = getPaneTaskReroute(pane.paneId);
+  const blocker = paneTaskRerouteBlocker(handle);
+  if (handle && !blocker) {
+    const sameCli = Boolean(next) && !capped;
+    const reopened = await reopenTaskElsewhere(authority, pane, handle, {
+      excludeAdapterIds: sameCli ? [] : [adapterId],
+      ...(sameCli ? { preferAdapterIds: [adapterId] } : {}),
+    });
+    const reason = reopened.ok
+      ? `${refused} → tarefa reaberta em ${reopened.adapterId} (pane ${reopened.paneId})`
+      : `${refused} — a tarefa não foi reaberta: ${reopened.error}`;
+    emitFailoverReceipt(authority, {
+      ...base,
+      toAccountLabel: '',
+      reason,
+      switched: reopened.ok,
+      fromAdapterId: adapterId,
+      ...(reopened.ok ? { toAdapterId: reopened.adapterId, toPaneId: reopened.paneId } : {}),
+    });
+    traceOutcome(reopened.ok ? 'task-rerouted' : 'task-reroute-failed', {
+      ...(reopened.ok ? { toAdapterId: reopened.adapterId, toPaneId: reopened.paneId } : {}),
+    });
+    await notifyMissionOrchestrator(
+      authority,
+      `[failover:${pane.paneId}] O pane ${pane.paneId} (${adapterId}) parou: ${reason}.` +
+        (reopened.ok ? '' : ' Decida: abra de novo com outro modelo ou outra CLI.'),
+    );
+    return;
+  }
+
+  // 3) Pane main-owned sem pedido guardado: o Main religa no modelo novo.
+  if (next && !authority.owner) {
+    if (noteModelRotation(pane.paneId, now)) {
+      let respawned = false;
+      try {
+        respawned = await respawnMainOwnedPaneWithAccount({
+          paneId: pane.paneId,
+          sessionId: authority.sessionId,
+          adapterId,
+          ...(current ? { toAccountId: current.id } : {}),
+          fromAccountLabel: label,
+          reason: hit.reason,
+          toModel: next,
+        });
+      } catch (error) {
+        console.warn(
+          '[failover] main-owned model respawn falhou:',
+          error instanceof Error ? error.message : error,
+        );
+      }
+      const reason = respawned
+        ? `${refused} → rotacionado para "${next}"`
+        : `${refused} — o pane não pôde ser religado em "${next}"`;
+      emitFailoverReceipt(authority, {
+        ...base,
+        toAccountLabel: label,
+        toModel: next,
+        reason,
+        switched: respawned,
+        modelRotationPhase: 'applied',
+      });
+      traceOutcome(respawned ? 'model-rotated' : 'model-rotation-failed', { toModel: next });
+      if (!respawned) {
+        await notifyMissionOrchestrator(
+          authority,
+          `[failover:${pane.paneId}] O pane ${pane.paneId} (${adapterId}) parou: ${reason}. ` +
+            'Decida: abra de novo com outro modelo ou outra CLI.',
+        );
+      }
+      return;
+    }
+    capped = true;
+  }
+
+  // 4) Sem como recuperar sozinho: aviso honesto (toast) e o Maestro decide.
+  // A orientação ("atualize a CLI…") vive SÓ no failover-toast-copy.
+  const why = capped
+    ? `${MAX_MODEL_ROTATIONS} religamentos seguidos já falharam neste pane`
+    : next
+      ? `${blocker ? REROUTE_BLOCKER_TEXT[blocker] : 'o pane não pode ser religado aqui'}; ` +
+        `"${next}" segue elegível nesta CLI`
+      : 'sem modelo alternativo elegível nesta CLI';
+  traceOutcome('model-no-recovery', { blocker: blocker ?? null, capped });
+  emitNoSwitch(authority, pane, current, hit, `${hit.reason} — ${why}`);
+  await notifyMissionOrchestrator(
+    authority,
+    `[failover:${pane.paneId}] O pane ${pane.paneId} (${adapterId}) parou: ${refused} — ${why}. ` +
+      'Decida: abra de novo com outro modelo ou outra CLI.',
+  );
+}
+
 function handleLimitHit(
   authority: FailoverAuthority,
   pane: PaneDetails,
@@ -1494,51 +1954,17 @@ function handleLimitHit(
     return;
   }
 
-  // Modelo rejeitado (F-520): a CONTA está sadia — "as contas estão todas
-  // operacionais". Rotacionar o MODELO do pane (id aposentado → migração;
-  // senão default curado do catálogo do adapter) e religar na MESMA conta.
-  // Cooldown de credencial aqui puniria conta sã e queimaria o pool inteiro.
+  // Modelo rejeitado (F-520/F-765): a CONTA está sadia — "as contas estão
+  // todas operacionais". Cooldown de credencial aqui puniria conta sã e
+  // queimaria o pool inteiro: a recuperação troca o MODELO (ou reabre a
+  // tarefa pela rota do spawn) e só anuncia a troca depois de ela existir.
   if (hit.kind === 'model') {
-    // F-683: o roteador para de mandar helpers para o modelo recusado.
-    quarantineRejectedModel(adapterId, pane.model, hit.reason, now);
-    const next = pickModelRotation(
-      pane.model,
-      getAdapter(adapterId)?.models.default,
-    );
-    emitFailover(authority, {
-      paneId: pane.paneId,
-      fromAccountLabel: current?.label ?? adapterId,
-      toAccountLabel: current?.label ?? adapterId,
-      toModel: next,
-      // A orientação ("atualize a CLI…") vive SÓ no failover-toast-copy —
-      // motivo aqui causa toast com a frase duplicada (donos únicos por kind).
-      reason: next
-        ? `modelo "${pane.model}" rejeitado (${hit.reason}) → rotacionado para "${next}"`
-        : `${hit.reason} — sem modelo alternativo no catálogo`,
-      kind: hit.kind,
-      switched: next !== undefined,
-      fromAccountId: current?.id,
-      toAccountId: next ? current?.id : undefined,
-      missionId: authority.missionId,
+    void handleModelRejection(authority, pane, hit, now, source, current).catch((error) => {
+      console.warn(
+        '[failover] recuperação de modelo recusado falhou:',
+        error instanceof Error ? error.message : error,
+      );
     });
-    // Pane main-owned (worker headless de missão): o renderer não é dono do
-    // processo — o Main respawna com a MESMA conta no modelo alternativo.
-    if (!authority.owner && next && current) {
-      void respawnMainOwnedPaneWithAccount({
-        paneId: pane.paneId,
-        sessionId: authority.sessionId,
-        adapterId,
-        toAccountId: current.id,
-        fromAccountLabel: current.label,
-        reason: hit.reason,
-        toModel: next,
-      }).catch((error) => {
-        console.warn(
-          '[failover] main-owned model respawn falhou (evento segue para o renderer):',
-          error instanceof Error ? error.message : error,
-        );
-      });
-    }
     return;
   }
 
@@ -1904,6 +2330,12 @@ function handleObserverFrame(frame: ObserverFrame): void {
 
 export function initFailover(): void {
   if (untapData || untapObserver) return;
+  // F-765: a quarentena do roteador lê a conta ativa e a instalação já
+  // resolvida (cache, sem disco no caminho da rota).
+  setModelQuarantineScopeResolver((adapterId) => ({
+    accountId: getActiveAccount(adapterId)?.id ?? null,
+    installationId: cachedInstallationId(adapterId),
+  }));
   untapData = tapSessionData((sessionId, data) => {
     try {
       handleChunk(sessionId, data, Date.now());
@@ -1946,6 +2378,11 @@ export function shutdownFailover(): void {
   // próximas e o trip dispara cedo demais.
   instantAuthDeaths.clear();
   for (const key of [...pendingRetries.keys()]) cancelScheduledRetry(key);
+  // F-765: provas de religamento pendentes terminam sem troca.
+  for (const proof of [...rotationProofs.values()]) proof.resolve(false);
+  modelRotationsByPane.clear();
+  installationIds.clear();
+  setModelQuarantineScopeResolver(null);
   coalesceByFrom.clear();
   for (const [wc, onDestroyed] of destroyHandlers) {
     wc.removeListener('destroyed', onDestroyed);

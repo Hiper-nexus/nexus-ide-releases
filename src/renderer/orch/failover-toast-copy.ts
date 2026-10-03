@@ -87,6 +87,25 @@ export function blockedFailoverToastCopy(
 }
 
 /**
+ * F-765/F-775: o Main reabriu a tarefa em outro pane (outro modelo ou outra
+ * CLI) e fechou o pane parado. O toast só conta o que já aconteceu.
+ */
+export function reroutedFailoverToastCopy(
+  event: FailoverEvent,
+): FailoverToastCopy {
+  const to = event.toAdapterId ?? 'outra CLI';
+  return {
+    title:
+      effectiveKind(event) === 'model'
+        ? `Tarefa reaberta em ${to}`
+        : `Tarefa seguiu em ${to}`,
+    detail:
+      `${event.reason}. O pane parado foi fechado; o trabalho segue no pane ` +
+      `${event.toPaneId ?? 'novo'}.`,
+  };
+}
+
+/**
  * Toast after switched=true same-account respawn. Auth must never claim
  * "Sessão recuperada automaticamente" — the credential is still dead.
  */
