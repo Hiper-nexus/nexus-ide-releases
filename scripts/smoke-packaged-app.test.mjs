@@ -69,6 +69,20 @@ function writeTree(root, relativeFiles) {
   }
 }
 
+const ONNX_REDISTRIBUTION_FILES = [
+  'onnxruntime-v1.19.2-MIT.txt',
+  'onnxruntime-v1.19.2-ThirdPartyNotices.txt',
+];
+const ONNX_NOTICE = '\n## Microsoft ONNX Runtime 1.19.2\nmicrosoft/onnxruntime\n';
+function writeOnnxLegalFiles(source) {
+  const dir = path.join(source, 'third_party', 'licenses');
+  fs.mkdirSync(dir, { recursive: true });
+  for (const file of ONNX_REDISTRIBUTION_FILES) {
+    fs.writeFileSync(path.join(dir, file),
+      fs.readFileSync(new URL(`../third_party/licenses/${file}`, import.meta.url)));
+  }
+}
+
 async function createFinishedPackage(source, destination) {
   // @electron/asar resolves createPackage after calling stream.end(), not
   // after the archive has physically emitted "finish". Reading immediately
@@ -332,8 +346,9 @@ describe('proofs: renderer, functional, marker, natives', () => {
     );
     fs.writeFileSync(
       path.join(source, 'THIRD_PARTY_NOTICES.md'),
-      '## Onlook CSS-to-Tailwind translator\nonlook-dev/onlook\n',
+      '## Onlook CSS-to-Tailwind translator\nonlook-dev/onlook\n' + ONNX_NOTICE,
     );
+    writeOnnxLegalFiles(source);
     fs.mkdirSync(resources, { recursive: true });
     await createFinishedPackage(source, path.join(resources, 'app.asar'));
 
@@ -420,7 +435,48 @@ describe('proofs: renderer, functional, marker, natives', () => {
     expect(resolvePackagedMainBundlePath(['resources/app/main.js'])).toBeNull();
   });
 
-  it('requires notices plus Apache and OFL texts inside app.asar', async () => {
+  it('F-881: rejects an ASAR that omits the ONNX Runtime redistribution texts', async () => {
+    const root = makeTemp('nexus-smoke-onnx-missing-');
+    const source = path.join(root, 'source');
+    const resources = path.join(root, 'resources');
+    writeTree(source, ['third_party/licenses/Apache-2.0.txt', 'third_party/licenses/OFL-1.1.txt']);
+    fs.writeFileSync(path.join(source, 'THIRD_PARTY_NOTICES.md'),
+      '## Onlook CSS-to-Tailwind translator\nonlook-dev/onlook\n');
+    fs.mkdirSync(resources, { recursive: true });
+    await createFinishedPackage(source, path.join(resources, 'app.asar'));
+
+    expect(() => inspectPackagedLegalArtifacts(resources)).toThrow(/onnxruntime/i);
+  });
+
+  it.each(ONNX_REDISTRIBUTION_FILES)('F-881: rejects missing pinned %s in a real ASAR', async (file) => {
+    const root = makeTemp('nexus-smoke-onnx-single-missing-');
+    const source = path.join(root, 'source');
+    const resources = path.join(root, 'resources');
+    writeTree(source, ['third_party/licenses/Apache-2.0.txt', 'third_party/licenses/OFL-1.1.txt']);
+    writeOnnxLegalFiles(source);
+    fs.unlinkSync(path.join(source, 'third_party', 'licenses', file));
+    fs.writeFileSync(path.join(source, 'THIRD_PARTY_NOTICES.md'),
+      '## Onlook CSS-to-Tailwind translator\nonlook-dev/onlook\n' + ONNX_NOTICE);
+    fs.mkdirSync(resources, { recursive: true });
+    await createFinishedPackage(source, path.join(resources, 'app.asar'));
+    expect(() => inspectPackagedLegalArtifacts(resources)).toThrow(/onnxruntime/i);
+  });
+
+  it.each(ONNX_REDISTRIBUTION_FILES)('F-881: rejects truncated or substituted %s in a real ASAR', async (file) => {
+    const root = makeTemp('nexus-smoke-onnx-tampered-');
+    const source = path.join(root, 'source');
+    const resources = path.join(root, 'resources');
+    writeTree(source, ['third_party/licenses/Apache-2.0.txt', 'third_party/licenses/OFL-1.1.txt']);
+    writeOnnxLegalFiles(source);
+    fs.writeFileSync(path.join(source, 'third_party', 'licenses', file), 'MIT License\nCopyright Microsoft\n');
+    fs.writeFileSync(path.join(source, 'THIRD_PARTY_NOTICES.md'),
+      '## Onlook CSS-to-Tailwind translator\nonlook-dev/onlook\n' + ONNX_NOTICE);
+    fs.mkdirSync(resources, { recursive: true });
+    await createFinishedPackage(source, path.join(resources, 'app.asar'));
+    expect(() => inspectPackagedLegalArtifacts(resources)).toThrow(/pinned ONNX Runtime/i);
+  });
+
+  it('requires notices plus Apache, OFL and pinned ONNX texts inside app.asar', async () => {
     const root = makeTemp('nexus-smoke-legal-');
     const source = path.join(root, 'source');
     const resources = path.join(root, 'resources');
@@ -429,7 +485,7 @@ describe('proofs: renderer, functional, marker, natives', () => {
     });
     fs.writeFileSync(
       path.join(source, 'THIRD_PARTY_NOTICES.md'),
-      '## Onlook CSS-to-Tailwind translator\nonlook-dev/onlook\n',
+      '## Onlook CSS-to-Tailwind translator\nonlook-dev/onlook\n' + ONNX_NOTICE,
     );
     fs.writeFileSync(
       path.join(source, 'third_party', 'licenses', 'Apache-2.0.txt'),
@@ -439,6 +495,7 @@ describe('proofs: renderer, functional, marker, natives', () => {
       path.join(source, 'third_party', 'licenses', 'OFL-1.1.txt'),
       'SIL Open Font License 1.1',
     );
+    writeOnnxLegalFiles(source);
     fs.mkdirSync(resources, { recursive: true });
     await createFinishedPackage(source, path.join(resources, 'app.asar'));
 

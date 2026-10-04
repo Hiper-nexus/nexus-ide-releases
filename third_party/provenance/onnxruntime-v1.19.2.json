@@ -1,0 +1,30 @@
+{
+  "source": "microsoft/onnxruntime",
+  "upstreamRepository": "https://github.com/microsoft/onnxruntime",
+  "upstreamVersion": "1.19.2",
+  "upstreamRef": "refs/tags/v1.19.2",
+  "upstreamCommit": "ffceed9d44f2f3efb9dd69fa75fea51163c91d91",
+  "packages": [
+    "onnxruntime-node@1.19.2",
+    "onnxruntime-common@1.19.2"
+  ],
+  "license": "MIT; upstream third-party notices retained verbatim",
+  "purpose": "Redistribution texts absent from the pinned npm packages; retained without translation or modification for packaged runtime binaries and JavaScript. The upstream notice is inclusive and does not assert every listed component is enabled in Nexus.",
+  "importedAt": "2026-10-04",
+  "files": [
+    {
+      "upstreamPath": "LICENSE",
+      "upstreamUrl": "https://raw.githubusercontent.com/microsoft/onnxruntime/ffceed9d44f2f3efb9dd69fa75fea51163c91d91/LICENSE",
+      "nexusPath": "third_party/licenses/onnxruntime-v1.19.2-MIT.txt",
+      "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+      "bytes": 1073
+    },
+    {
+      "upstreamPath": "ThirdPartyNotices.txt",
+      "upstreamUrl": "https://raw.githubusercontent.com/microsoft/onnxruntime/ffceed9d44f2f3efb9dd69fa75fea51163c91d91/ThirdPartyNotices.txt",
+      "nexusPath": "third_party/licenses/onnxruntime-v1.19.2-ThirdPartyNotices.txt",
+      "sha256": "cf7342f7ba482ef715ae58f5f497a8d3564fa255164175aea324cd293c5701a0",
+      "bytes": 338538
+    }
+  ]
+}

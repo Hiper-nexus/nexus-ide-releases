@@ -23,9 +23,18 @@ const PROCESS_TREE_PROOF_TIMEOUT_MS = 60_000;
 const MAX_LOG_CHARS = 32_000;
 const PACKAGED_MAIN_BUNDLE_PATH = '.vite/build/main.js';
 const PACKAGED_NOTICE_PATH = 'THIRD_PARTY_NOTICES.md';
+// Official v1.19.2 redistribution texts, pinned to upstream ffceed9d44f2.
+// Provenance: third_party/provenance/onnxruntime-v1.19.2.json.
+const PINNED_RUNTIME_LICENSES = {
+  'third_party/licenses/onnxruntime-v1.19.2-MIT.txt':
+    '2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c',
+  'third_party/licenses/onnxruntime-v1.19.2-ThirdPartyNotices.txt':
+    'cf7342f7ba482ef715ae58f5f497a8d3564fa255164175aea324cd293c5701a0',
+};
 const PACKAGED_LICENSE_PATHS = [
   'third_party/licenses/Apache-2.0.txt',
   'third_party/licenses/OFL-1.1.txt',
+  ...Object.keys(PINNED_RUNTIME_LICENSES),
 ];
 const PACKAGED_WAKE_MANIFEST_PATH = 'wake/manifest.json';
 const REQUIRED_WAKE_MODEL_FILE = 'ei-jarvis-ptbr.onnx';
@@ -536,6 +545,10 @@ export function inspectPackagedLegalArtifacts(resourcesDir) {
       const license = extractPackagedAsarFile(asarPath, licensePath);
       if (license.length === 0) {
         throw new Error(`${licensePath} is empty`);
+      }
+      const expected = PINNED_RUNTIME_LICENSES[licensePath];
+      if (expected && createHash('sha256').update(license).digest('hex') !== expected) {
+        throw new Error(`${licensePath} does not match the pinned ONNX Runtime redistribution text`);
       }
     }
   } catch (error) {

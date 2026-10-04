@@ -172,6 +172,25 @@ Source hashes, npm integrity, commit pins, patch summary and removal criteria:
 
 ## JavaScript and native dependencies
 
+### Microsoft ONNX Runtime 1.19.2
+
+The packaged wake-word runtime uses `onnxruntime-node@1.19.2` and
+`onnxruntime-common@1.19.2` from
+[`microsoft/onnxruntime`](https://github.com/microsoft/onnxruntime/tree/v1.19.2),
+Copyright (c) Microsoft Corporation, under the MIT License. The npm packages
+do not include the full redistribution texts, so Nexus includes the official
+files verbatim from tag `v1.19.2`, commit
+`ffceed9d44f2f3efb9dd69fa75fea51163c91d91`:
+
+- `third_party/licenses/onnxruntime-v1.19.2-MIT.txt`
+- `third_party/licenses/onnxruntime-v1.19.2-ThirdPartyNotices.txt`
+
+The upstream third-party notice is retained without translation or modification;
+its inclusive inventory does not assert that every listed execution provider
+or component is enabled in Nexus. Exact source URLs and SHA-256 hashes are
+recorded in `third_party/provenance/onnxruntime-v1.19.2.json`. The packaged
+legal gate requires both complete texts with their pinned hashes.
+
 The production dependency inventory and individual package licenses are
 recorded in the CycloneDX SBOM shipped with every release. Package license
 files remain present in their packaged npm modules when required by the
