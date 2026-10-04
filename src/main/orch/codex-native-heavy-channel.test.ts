@@ -43,6 +43,17 @@ it('does not activate configured remote grants on an offline named profile', () 
   const result = codexNativeHeavyChannelPolicy(config, []);
   expect(result.permissions).toEqual(config.permissions); expect(result).not.toHaveProperty('features');
 });
+it('preserves case-sensitive Unix set without inheriting an excluded uppercase alias', () => {
+  const result = codexNativeHeavyChannelPolicy({ shell_environment_policy: { inherit: 'none', set: { home: 'private-chosen' } } }, ['HOME', ...channelKeys]);
+  expect(result.shell_environment_policy.set).toEqual({ home: 'private-chosen' });
+  expect(result.shell_environment_policy.exclude).toEqual(['HOME']);
+  expect(result.shell_environment_policy.include_only).toEqual(['home', ...channelKeys]);
+});
+it('does not expand a literal wildcard set name into an unrelated inherited variable', () => {
+  const result = codexNativeHeavyChannelPolicy({ shell_environment_policy: { inherit: 'none', set: { 'SAFE*': 'chosen' } } }, ['SAFE_OTHER', ...channelKeys]);
+  expect(result.shell_environment_policy.exclude).toEqual(['SAFE_OTHER']);
+  expect(result.shell_environment_policy.set).toEqual({ 'SAFE*': 'chosen' });
+});
 function fixture() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-codex-channel-policy-'))); roots.push(root);
   const token = 'private-channel-'+roots.length; tokens.push(token);

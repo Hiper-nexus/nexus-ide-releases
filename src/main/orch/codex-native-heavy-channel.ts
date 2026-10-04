@@ -58,12 +58,21 @@ export interface CodexHeavyChannelPolicy extends Table {
 export function codexNativeHeavyChannelPolicy(input: Table, environmentNames: readonly string[]): CodexHeavyChannelPolicy {
   const config = structuredClone(input), shell = policyTable(config.shell_environment_policy);
   const settings = policyTable(shell.set);
-  if (Object.values(settings).some(value => typeof value !== 'string')) throw new Error('codex_heavy_environment_policy_invalid');
+  if (Object.keys(settings).length > 512 || Object.keys(settings).some(name => name.length > 256) ||
+      Object.values(settings).some(value => typeof value !== 'string')) throw new Error('codex_heavy_environment_policy_invalid');
   const names = inheritedNames(shell, environmentNames), overrides = { ...settings };
   for (const key of CHANNEL_KEYS) delete overrides[key];
   delete shell.filters;
+  const allowed = [...new Set([...names, ...CHANNEL_KEYS])], expected = new Set(allowed);
+  // Native filters ignore case and interpret '*'/'?' even in emitted names.
+  // Exclude only the extra inherited matches, then the native set stage restores
+  // its original case-sensitive keys without copying runtime values to disk.
+  const exclude = environmentNames.filter(name => !expected.has(name) && allowed.some(pattern => matches(name, pattern)));
+  const expanded = [...new Set([...environmentNames, ...CHANNEL_KEYS].filter(name => !exclude.some(pattern => matches(name, pattern)))
+    .concat(Object.keys(overrides)))].filter(name => allowed.some(pattern => matches(name, pattern)));
+  if (expanded.length !== expected.size || expanded.some(name => !expected.has(name))) throw new Error('codex_heavy_environment_policy_unrepresentable');
   config.shell_environment_policy = { ...shell, inherit: 'all', ignore_default_excludes: true,
-    exclude: [], include_only: [...new Set([...names, ...CHANNEL_KEYS])], set: overrides };
+    exclude, include_only: allowed, set: overrides };
   return config as CodexHeavyChannelPolicy;
 }
 /** Used only for non-governed Codex after the Main-owned session reservation. */
