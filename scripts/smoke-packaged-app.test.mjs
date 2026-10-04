@@ -83,6 +83,19 @@ function writeOnnxLegalFiles(source) {
   }
 }
 
+function writeElectronLegalFiles(resources) {
+  const dir = path.join(resources, 'electron-licenses');
+  fs.mkdirSync(dir, { recursive: true });
+  const files = ['LICENSE', 'LICENSES.chromium.html'].map(name => {
+    const bytes = fs.readFileSync(new URL(`../node_modules/electron/dist/${name}`, import.meta.url));
+    fs.writeFileSync(path.join(dir, name), bytes);
+    return { name, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+  });
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ schema: 'nexus.electron-licenses/v1',
+    electronVersion: '43.7.4', platform: 'darwin', arch: 'arm64', source: 'packager-extracted-template',
+    sourceUrl: 'https://github.com/electron/electron/releases/download/v43.7.4/electron-v43.7.4-darwin-arm64.zip', files }));
+}
+
 async function createFinishedPackage(source, destination) {
   // @electron/asar resolves createPackage after calling stream.end(), not
   // after the archive has physically emitted "finish". Reading immediately
@@ -353,7 +366,8 @@ describe('proofs: renderer, functional, marker, natives', () => {
     await createFinishedPackage(source, path.join(resources, 'app.asar'));
 
     expect(() => inspectPackagedMainBundle(resources)).not.toThrow();
-    expect(() => inspectPackagedLegalArtifacts(resources)).not.toThrow();
+    writeElectronLegalFiles(resources);
+    expect(() => inspectPackagedLegalArtifacts(resources, { platform: 'darwin', arch: 'arm64' })).not.toThrow();
   });
 
   it('requires the pinned default PT-BR wake model in packaged resources', async () => {
@@ -476,6 +490,29 @@ describe('proofs: renderer, functional, marker, natives', () => {
     expect(() => inspectPackagedLegalArtifacts(resources)).toThrow(/pinned ONNX Runtime/i);
   });
 
+  it.each(['missing', 'version', 'source', 'LICENSE', 'LICENSES.chromium.html'])('F-882: rejects %s Electron distribution proof at the Mac legal gate', async (fault) => {
+    const root = makeTemp('nexus-smoke-electron-legal-');
+    const source = path.join(root, 'source');
+    const resources = path.join(root, 'resources');
+    writeTree(source, ['third_party/licenses/Apache-2.0.txt', 'third_party/licenses/OFL-1.1.txt']);
+    writeOnnxLegalFiles(source);
+    fs.writeFileSync(path.join(source, 'THIRD_PARTY_NOTICES.md'),
+      '## Onlook CSS-to-Tailwind translator\nonlook-dev/onlook\n' + ONNX_NOTICE);
+    fs.mkdirSync(resources, { recursive: true });
+    await createFinishedPackage(source, path.join(resources, 'app.asar'));
+    if (fault !== 'missing') {
+      writeElectronLegalFiles(resources);
+      const manifestPath = path.join(resources, 'electron-licenses', 'manifest.json');
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      if (fault === 'version') manifest.electronVersion = '43.0.0';
+      else if (fault === 'source') manifest.sourceUrl = 'https://example.org/claimed-license.zip';
+      else fs.writeFileSync(path.join(resources, 'electron-licenses', fault), 'MIT\nCopyright Electron\n');
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+    }
+    expect(() => inspectPackagedLegalArtifacts(resources, { platform: 'darwin', arch: 'arm64' })).toThrow(/Electron.*legal/i);
+    if (fault === 'missing') expect(() => inspectPackagedLegalArtifacts(resources, { platform: 'linux', arch: 'x64' })).not.toThrow();
+  });
+
   it('requires notices plus Apache, OFL and pinned ONNX texts inside app.asar', async () => {
     const root = makeTemp('nexus-smoke-legal-');
     const source = path.join(root, 'source');
@@ -499,7 +536,8 @@ describe('proofs: renderer, functional, marker, natives', () => {
     fs.mkdirSync(resources, { recursive: true });
     await createFinishedPackage(source, path.join(resources, 'app.asar'));
 
-    expect(() => inspectPackagedLegalArtifacts(resources)).not.toThrow();
+    writeElectronLegalFiles(resources);
+    expect(() => inspectPackagedLegalArtifacts(resources, { platform: 'darwin', arch: 'arm64' })).not.toThrow();
   });
 
   it('fails closed when a declared packaged license is absent', async () => {

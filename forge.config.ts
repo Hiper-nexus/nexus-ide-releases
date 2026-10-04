@@ -20,6 +20,7 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 import type { WindowsSignOptions } from '@electron/packager';
 import { pruneNativePayload } from './build/prune-native-payload';
 import { removeUnusedMacPrivacyDescriptions } from './build/macos-info-plist';
+import { preserveMacElectronLicenses } from './build/electron-licenses';
 import {
   APPLE_TIMESTAMP_AUTHORITY_URL,
   assertMacPublishReleaseEnvironment,
@@ -378,7 +379,8 @@ const macNotarizeCredentials = createMacNotarizeCredentials(process.env);
 
 const config: ForgeConfig = {
   hooks: {
-    packageAfterPrune: async (_forgeConfig, buildPath, _electronVersion, platform, arch) => {
+    packageAfterPrune: async (_forgeConfig, buildPath, electronVersion, platform, arch) => {
+      await preserveMacElectronLicenses(buildPath, electronVersion, platform, arch);
       const removed = pruneNativePayload(buildPath, platform, arch);
       if (removed.length > 0) {
         console.log(`[package] pruned ${removed.length} foreign ONNX runtime payloads`);

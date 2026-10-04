@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { extractFile as extractAsarFile, listPackage } from '@electron/asar';
-import { constants as fsConstants, existsSync, readFileSync, statSync } from 'node:fs';
+import { constants as fsConstants, existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -31,6 +31,12 @@ const PINNED_RUNTIME_LICENSES = {
   'third_party/licenses/onnxruntime-v1.19.2-ThirdPartyNotices.txt':
     'cf7342f7ba482ef715ae58f5f497a8d3564fa255164175aea324cd293c5701a0',
 };
+// Distribution bytes qualified from Electron v43.7.4 Darwin; see F-882.
+const MAC_ELECTRON_VERSION = '43.7.4';
+const MAC_ELECTRON_LEGAL_FILES = [
+  { name: 'LICENSE', bytes: 1096, sha256: '5154e165bd6c2cc0cfbcd8916498c7abab0497923bafcd5cb07673fe8480087d' },
+  { name: 'LICENSES.chromium.html', bytes: 19956022, sha256: '7ae82e97b8a60b9d97871e0e11a05285aea2d42bef665f93f6a4f415235839ed' },
+];
 const PACKAGED_LICENSE_PATHS = [
   'third_party/licenses/Apache-2.0.txt',
   'third_party/licenses/OFL-1.1.txt',
@@ -533,7 +539,39 @@ export function inspectPackagedMainBundle(resourcesDir) {
   }
 }
 
-export function inspectPackagedLegalArtifacts(resourcesDir) {
+function inspectMacElectronLegalArtifacts(resourcesDir, arch) {
+  try {
+    const dir = path.join(resourcesDir, 'electron-licenses');
+    if (!lstatSync(dir).isDirectory()) throw new Error('license directory is not regular');
+    const manifestPath = path.join(dir, 'manifest.json');
+    const stat = lstatSync(manifestPath);
+    if (!stat.isFile() || stat.size > 4096) throw new Error('manifest is missing or oversized');
+    const receipt = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    const sourceUrl = `https://github.com/electron/electron/releases/download/v${MAC_ELECTRON_VERSION}/electron-v${MAC_ELECTRON_VERSION}-darwin-${arch}.zip`;
+    if (!SUPPORTED_ARCHES.has(arch) || receipt?.schema !== 'nexus.electron-licenses/v1' ||
+        receipt.electronVersion !== MAC_ELECTRON_VERSION || receipt.platform !== 'darwin' || receipt.arch !== arch ||
+        receipt.source !== 'packager-extracted-template' || receipt.sourceUrl !== sourceUrl ||
+        !Array.isArray(receipt.files) || receipt.files.length !== MAC_ELECTRON_LEGAL_FILES.length) {
+      throw new Error('runtime version or extracted-template provenance differs');
+    }
+    for (const [index, expected] of MAC_ELECTRON_LEGAL_FILES.entries()) {
+      const recorded = receipt.files[index];
+      if (recorded?.name !== expected.name || recorded.bytes !== expected.bytes || recorded.sha256 !== expected.sha256) {
+        throw new Error(`manifest does not bind ${expected.name}`);
+      }
+      const file = path.join(dir, expected.name);
+      const stat = lstatSync(file);
+      if (!stat.isFile() || stat.size !== expected.bytes ||
+          createHash('sha256').update(readFileSync(file)).digest('hex') !== expected.sha256) {
+        throw new Error(`distribution text ${expected.name} is absent or substituted`);
+      }
+    }
+  } catch (error) {
+    throw new Error(`Electron packaged legal resources are incomplete: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export function inspectPackagedLegalArtifacts(resourcesDir, { platform = process.platform, arch = process.arch } = {}) {
   const asarPath = path.join(resourcesDir, 'app.asar');
   let notice;
   try {
@@ -561,6 +599,7 @@ export function inspectPackagedLegalArtifacts(resourcesDir) {
   ) {
     throw new Error('packaged third-party notice is missing Onlook attribution');
   }
+  if (platform === 'darwin') inspectMacElectronLegalArtifacts(resourcesDir, arch);
 }
 
 /** A release without the trained PT-BR default model is not a valid Nexus build. */
@@ -1306,7 +1345,7 @@ export async function runPackagedSmoke(
   );
   await assertNativeArtifactsPresent(target.unpackedRoot, { platform, arch });
   inspectMainBundle(target.resourcesDir);
-  inspectLegalArtifacts(target.resourcesDir);
+  inspectLegalArtifacts(target.resourcesDir, { platform, arch });
   await inspectWakeModel(target.resourcesDir);
   if (platform === 'win32') {
     assertPackagedWindowsRuntimeIcon(target.resourcesDir);
