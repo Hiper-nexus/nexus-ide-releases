@@ -2,6 +2,12 @@
 if [[ -n "$NEXUS_HEAVY_ORIG_BASH_ENV" && "$NEXUS_HEAVY_ORIG_BASH_ENV" != "$BASH_ENV" && -r "$NEXUS_HEAVY_ORIG_BASH_ENV" ]]; then
   . "$NEXUS_HEAVY_ORIG_BASH_ENV"
 fi
+if [[ -n "$NEXUS_HEAVY_JOB_BASE" && -z "$NEXUS_HEAVY_LEASE" && "$NEXUS_HEAVY_HELPER" != 1 && -n "$BASH_EXECUTION_STRING" ]]; then
+  __nexus_start_kind=$(NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 "$NEXUS_HEAVY_NODE" "$NEXUS_HEAVY_DIR/classify.cjs" "$BASH_EXECUTION_STRING") || exit 78
+  if [[ -n "$__nexus_start_kind" ]]; then
+    exec env NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 "$NEXUS_HEAVY_NODE" "$NEXUS_HEAVY_DIR/job-launch.cjs" "$__nexus_start_kind" "$BASH" -c "$BASH_EXECUTION_STRING" "$0" "$@"
+  fi
+fi
 if [[ -n "$NEXUS_HEAVY_COMMAND_URL" && -n "$NEXUS_GATE_TOKEN" && "$NEXUS_HEAVY_HELPER" != 1 ]]; then
   __nexus_heavy_debug() {
     [[ "$__nexus_heavy_admitted" == 1 || "$__nexus_heavy_in_debug" == 1 ]] && return 0

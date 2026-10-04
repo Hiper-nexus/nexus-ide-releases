@@ -660,3 +660,13 @@ it('confirmation transport failure never returns a claim that could start a RAM 
  bridge.dispatchEvent({ type: 'command-process-result', requestId: request.requestId, sessionId: 's1', claimId: 'unconfirmed', state: null });
  expect(await result).toBeNull(); expect(posted.at(-1)).toEqual({ type: 'command-process-cancel', requestId: request.requestId, sessionId: 's1' });
 });
+
+it('heavy base preparation waits for the exact Host request and remains unavailable after host loss', async () => {
+ const transport = fakeTransport(); const bridge = createPtyHostBridge(transport.transport);
+ const pending = bridge.host.prepareNativeHeavyJobBase!(); const request = transport.posted.at(-1)!;
+ if (request.type !== 'prepare-native-heavy-job-base') throw new Error('missing preparation request');
+ bridge.dispatchEvent({ type: 'native-heavy-job-base', requestId: 'foreign', command: { file: '/forged', args: [] } });
+ const command = { file: '/usr/bin/perl', args: ['finite-main-owned-prefix'] };
+ bridge.dispatchEvent({ type: 'native-heavy-job-base', requestId: request.requestId, command }); expect(await pending).toEqual(command);
+ const unavailable = bridge.host.prepareNativeHeavyJobBase!(); bridge.handleHostDown(); expect(await unavailable).toBeNull();
+});

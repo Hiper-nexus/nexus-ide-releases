@@ -52,8 +52,9 @@ export type HostControlMsg =
   | { type: 'output-flow'; sessionId: string; paused: boolean }
   | { type: 'command-process-confirm'; requestId: string; sessionId: string; claimId: string }
   | { type: 'command-process-cancel'; requestId: string; sessionId: string }
-  | { type: 'command-process'; requestId: string; sessionId: string; op: 'claim'; pid: number }
-  | { type: 'command-process'; requestId: string; sessionId: string; op: 'probe'; claimId: string }
+  | { type: 'command-process'; requestId: string; sessionId: string; op: 'claim'; pid: number; proof?: 'darwin-job' }
+  | { type: 'prepare-native-heavy-job-base'; requestId: string }
+  | { type: 'command-process'; requestId: string; sessionId: string; op: 'probe' | 'stop'; claimId: string }
   | { type: 'command-process'; requestId: string; sessionId: string; op: 'borrow'; claimId: string; pid: number }
   | {
       type: 'terminate';
@@ -69,7 +70,8 @@ export type HostControlMsg =
 /** host → main (events). */
 export type HostEventMsg =
   | { type: 'prepared-command'; requestId: string; command: SupervisedPtyCommand | null }
-  | { type: 'command-process-result'; requestId: string; sessionId: string; claimId: string | null; state: CommandProcessState | null; borrowed?: boolean }
+  | { type: 'native-heavy-job-base'; requestId: string; command: import('./darwin-pty-supervisor').SupervisedPtyCommand | null }
+  | { type: 'command-process-result'; stopped?: boolean; requestId: string; sessionId: string; claimId: string | null; state: CommandProcessState | null; borrowed?: boolean }
   | { type: 'data'; sessionId: string; data: string }
   | { type: 'exit'; sessionId: string; exitCode: number; signal?: number }
   | {
@@ -110,8 +112,10 @@ export interface PtyProcHandle {
 export interface PtyHost {
   prepareCommandSupervisor?(file: string, args: readonly string[]): Promise<SupervisedPtyCommand | null>;
   borrowCommandProcess?(sessionId: string, claimId: string, pid: number): Promise<boolean>;
-  claimCommandProcess?(sessionId: string, pid: number): Promise<string | null>;
+  claimCommandProcess?(sessionId: string, pid: number, proof?: 'darwin-job'): Promise<string | null>;
+  prepareNativeHeavyJobBase?(): Promise<import('./darwin-pty-supervisor').SupervisedPtyCommand | null>;
   probeCommandProcess?(sessionId: string, claimId: string): Promise<CommandProcessState>;
+  stopCommandProcess?(sessionId: string, claimId: string): Promise<void>;
   spawn(spec: PtySpawnSpec, handlers: PtySessionHandlers): PtyProcHandle;
   /**
    * Pergunta ao host quais destas sessões têm handle vivo no seu mapa.
@@ -459,16 +463,17 @@ export function createPtyHostBridge(
   let commandCounter = 0;
   const pendingPreparations = new Map<string, { resolve: (value: SupervisedPtyCommand | null) => void; timer: ReturnType<typeof setTimeout> }>();
   const pendingCommands = new Map<string, { sessionId: string; claim: boolean; resolve: (result: Extract<HostEventMsg, { type: 'command-process-result' }> | null) => void; timer: ReturnType<typeof setTimeout> }>();
-  function commandRequest(body: { op: 'claim'; pid: number } | { op: 'probe'; claimId: string } | { op: 'borrow'; claimId: string; pid: number }, sessionId: string) {
+  function commandRequest(body: { op: 'claim'; pid: number; proof?: 'darwin-job' } | { op: 'probe' | 'stop'; claimId: string } | { op: 'borrow'; claimId: string; pid: number }, sessionId: string) {
     if (pendingCommands.size >= 128) return Promise.resolve(null);
     const requestId = `pty-command-${++commandCounter}`;
     return new Promise<Extract<HostEventMsg, { type: 'command-process-result' }> | null>((resolve) => {
-      const timer = setTimeout(() => { if (pendingCommands.delete(requestId)) { if (body.op === 'claim') { try { transport.post({ type: 'command-process-cancel', requestId, sessionId }); } catch {} } resolve(null); } }, 2_000); timer.unref?.();
+      const timer = setTimeout(() => { if (pendingCommands.delete(requestId)) { if (body.op === 'claim') { try { transport.post({ type: 'command-process-cancel', requestId, sessionId }); } catch {} } resolve(null); } }, body.op === 'stop' ? 15_000 : 2_000); timer.unref?.();
       pendingCommands.set(requestId, { sessionId, claim: body.op === 'claim', resolve, timer });
       try { transport.post({ type: 'command-process', requestId, sessionId, ...body }); }
       catch { pendingCommands.delete(requestId); clearTimeout(timer); resolve(null); }
     });
   }
+  const pendingJobBases = new Map<string, { resolve: (command: import('./darwin-pty-supervisor').SupervisedPtyCommand | null) => void; timer: ReturnType<typeof setTimeout> }>();
   const host: PtyHost = {
     prepareCommandSupervisor: (file, args) => {
       if (pendingPreparations.size >= 32 || !file || file.length > 4096 || file.includes('\0') ||
@@ -482,8 +487,16 @@ export function createPtyHostBridge(
         catch { pendingPreparations.delete(requestId); clearTimeout(timer); resolve(null); }
       });
     },
+    prepareNativeHeavyJobBase: () => new Promise((resolve) => {
+      const requestId = `heavy-job-base-${++commandCounter}`;
+      const timer = setTimeout(() => { pendingJobBases.delete(requestId); resolve(null); }, 15_000); timer.unref?.();
+      pendingJobBases.set(requestId, { resolve, timer });
+      try { transport.ensure(); transport.post({ type: 'prepare-native-heavy-job-base', requestId }); }
+      catch { clearTimeout(timer); pendingJobBases.delete(requestId); resolve(null); }
+    }),
     borrowCommandProcess: async (sessionId, claimId, pid) => (await commandRequest({ op: 'borrow', claimId, pid }, sessionId))?.borrowed === true,
-    claimCommandProcess: async (sessionId, pid) => (await commandRequest({ op: 'claim', pid }, sessionId))?.claimId ?? null,
+    claimCommandProcess: async (sessionId, pid, proof) => (await commandRequest({ op: 'claim', pid, ...(proof ? { proof } : {}) }, sessionId))?.claimId ?? null,
+    stopCommandProcess: async (sessionId, claimId) => { if ((await commandRequest({ op: 'stop', claimId }, sessionId))?.stopped !== true) throw new Error('native_heavy_authority_exit_unproved'); },
     probeCommandProcess: async (sessionId, claimId) => (await commandRequest({ op: 'probe', claimId }, sessionId))?.state ?? 'unknown',
     spawn(spec, h) {
       handlers.set(spec.sessionId, h);
@@ -610,6 +623,10 @@ export function createPtyHostBridge(
       const pending = pendingPreparations.get(msg.requestId); if (!pending) return;
       pendingPreparations.delete(msg.requestId); clearTimeout(pending.timer); pending.resolve(msg.command); return;
     }
+    if (msg.type === 'native-heavy-job-base') {
+      const pending = pendingJobBases.get(msg.requestId); if (!pending) return;
+      clearTimeout(pending.timer); pendingJobBases.delete(msg.requestId); pending.resolve(msg.command); return;
+    }
     if (msg.type === 'command-process-result') {
       const pending = pendingCommands.get(msg.requestId); if (!pending || pending.sessionId !== msg.sessionId) return;
       pendingCommands.delete(msg.requestId); clearTimeout(pending.timer);
@@ -657,6 +674,7 @@ export function createPtyHostBridge(
   function handleHostDown(): void {
     for (const pending of pendingPreparations.values()) { clearTimeout(pending.timer); pending.resolve(null); }
     pendingPreparations.clear();
+    for (const pending of pendingJobBases.values()) { clearTimeout(pending.timer); pending.resolve(null); } pendingJobBases.clear();
     for (const pending of pendingCommands.values()) { clearTimeout(pending.timer); pending.resolve(null); }
     pendingCommands.clear();
 

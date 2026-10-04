@@ -84,3 +84,13 @@ it('borrow refuses a claim removed while its capture was pending', async () => {
  expect(await tracker.probe('s', id)).toBe('gone'); finish(live);
  expect(await borrowed).toBe(false);
 });
+
+it('supervised claims ignore sampled disappearance until their authenticated whole job receipt', async () => {
+ const identity = {}; let rows = [row(10, 1), row(20, 10)]; let state: 'live' | 'gone' | 'unknown' = 'live';
+ const capture = async (pid: number): Promise<DescendantSnapshot> => ({ root: rows.find((r) => r.pid === pid) ?? null, descendants: rows.filter((r) => r.ppid === pid), inventory: rows, capturedAtMs: Date.parse('Sat Oct  3 12:00:02 2026') });
+ const tracker = new OwnedCommandProcesses(() => ({ pid: 10, identity }), capture, async () => ({ state: () => state, borrow: async () => false }));
+ const claim = (await tracker.claim('s', 20, 'darwin-job'))!; expect(claim).toBeTypeOf('string');
+ rows = [row(10, 1)]; expect(await tracker.probe('s', claim)).toBe('live');
+ state = 'unknown'; expect(await tracker.probe('s', claim)).toBe('unknown');
+ state = 'gone'; expect(await tracker.probe('s', claim)).toBe('gone');
+});

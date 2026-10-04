@@ -12,6 +12,13 @@ if (isMainThread && process.env.NEXUS_HEAVY_COMMAND_URL && process.env.NEXUS_GAT
   function admit(kind) {
     if (!kind || admitted) return;
     try {
+      if (process.env.NEXUS_HEAVY_JOB_BASE && !process.env.NEXUS_HEAVY_LEASE) {
+        if (process.channel) throw new Error('unwrapped native IPC entry');
+        const base = JSON.parse(process.env.NEXUS_HEAVY_JOB_BASE);
+        if (base.file !== '/usr/bin/perl' || !Array.isArray(base.args) || base.args.at(-1) !== 'heavy-job') throw new Error('invalid native job base');
+        try { execFileSync(base.file, [...base.args, kind, '--', process.execPath, ...process.execArgv, ...process.argv.slice(1)], { env: process.env, stdio: 'inherit' }); process.exit(0); }
+        catch (error) { if (typeof error.status === 'number') process.exit(error.status); throw error; }
+      }
       const lease = execFileSync(process.execPath, [path.join(__dirname, 'request.cjs'), String(process.pid), kind], {
         env: { NEXUS_HEAVY_COMMAND_URL: process.env.NEXUS_HEAVY_COMMAND_URL, NEXUS_GATE_TOKEN: process.env.NEXUS_GATE_TOKEN, NEXUS_HEAVY_CURL: process.env.NEXUS_HEAVY_CURL,
           ...(process.env.NEXUS_HEAVY_LEASE ? { NEXUS_HEAVY_LEASE: process.env.NEXUS_HEAVY_LEASE } : {}) },
@@ -25,7 +32,7 @@ if (isMainThread && process.env.NEXUS_HEAVY_COMMAND_URL && process.env.NEXUS_GAT
       process.exit(78);
     }
   }
-  if (!agentRoot) admit(catalog.entryKind(process.argv));
+  if (!agentRoot) admit(catalog.entryKind(process.argv) || (process.env.NEXUS_HEAVY_JOB_BASE && !persistent ? 'build' : null));
   // Require/eval and renamed package entry points still cross the module boundary.
   const Module = require('node:module');
   const load = Module._load;

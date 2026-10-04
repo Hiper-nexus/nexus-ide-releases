@@ -14,11 +14,14 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
+import { createServer as createHttpServer } from "node:http";
+import { OwnedCommandProcesses } from "../src/main/pty/owned-command-process.ts";
+import { watchDarwinHeavyCommand } from "../src/main/pty/darwin-heavy-command.ts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as nodePty from "@lydell/node-pty";
 import { buildDarwinPtySupervisor } from "./build-darwin-pty-supervisor.mjs";
 import { darwinNodePtyBootstrapLaunch } from "../src/main/pty/darwin-node-pty-bootstrap.ts";
-import { supervisedPtyCommand, supervisedJobCommand } from "../src/main/pty/darwin-pty-supervisor.ts";
+import { supervisedPtyCommand, supervisedJobCommand, nestedHeavyJobBaseCommand } from "../src/main/pty/darwin-pty-supervisor.ts";
 
 // F-715: pty-manager sets these markers; a pane inherits its supervisor's
 // responsibility, which main.c rejects as responsible_is_supervisor.
@@ -1084,6 +1087,107 @@ suite("Darwin PTY native responsibility supervisor", () => {
       /private responsibility.*unavailable|not its own signed/i,
     );
   }, 60_000);
+
+  for (const completion of ['natural', 'killed-helper', 'killed-authority']) {
+  it(`native heavy-job waits for authenticated watch/grant and retains an unseen setsid descendant under the original offline sandbox (${completion})`, async ({ skip }) => {
+    if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
+    const runtime = { platform: 'darwin', packaged: false, cwd: fixtureRoot, moduleDir: fixtureRoot };
+    const rootIdentity = {}; const proof = new OwnedCommandProcesses(() => ({ pid: process.pid, identity: rootIdentity }), undefined, (pid) => watchDarwinHeavyCommand(runtime, pid));
+    const tag = `heavy-job-${Math.random().toString(16).slice(2)}`;
+    const daemonFile = path.join(fixtureRoot, `${tag}.daemon`), primaryFile = path.join(fixtureRoot, `${tag}.primary`), releaseFile = path.join(fixtureRoot, `${tag}.release`);
+    const forbidden = path.join(os.tmpdir(), `${tag}.forbidden`);
+    let claim = null, grant = null, observedProof = null, helperPid = 0; const phases = [];
+    const server = createHttpServer((req, res) => { let raw = ''; req.on('data', (part) => raw += part); req.on('end', () => { const value = JSON.parse(raw); observedProof = value.proof; helperPid = value.pid; phases.push('request');
+      void proof.claimForRequest('s', 'request', value.pid, value.proof).then((id) => { claim = id; phases.push(id ? 'claimed' : 'claim-denied'); if (id) proof.confirmRequest('s', 'request', id);
+        grant = () => { if (res.writableEnded) return; res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ allow: Boolean(id), leaseId: 'finite-native-lease' })); }; }); }); });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)); const port = server.address().port;
+    const python = ['import os,sys,time,signal', `daemon=${JSON.stringify(daemonFile)}`, `primary=${JSON.stringify(primaryFile)}`, `release=${JSON.stringify(releaseFile)}`,
+      'first=os.fork()', 'if first == 0:', '  os.setsid()', '  second=os.fork()', '  if second > 0: os._exit(0)', '  signal.signal(signal.SIGTERM, signal.SIG_IGN)', '  with open(daemon,"w") as f: f.write(str(os.getpid()))', '  while not os.path.exists(release): time.sleep(0.01)', '  os._exit(0)',
+      'os.waitpid(first,0)', 'with open(primary,"w") as f: f.write(str(os.getpid()))', `try: open(${JSON.stringify(forbidden)},"w").write("widened")`, 'except PermissionError: pass', ...(completion === 'killed-helper' ? ['while not os.path.exists(release): time.sleep(0.02)'] : []), 'sys.exit(23)'].join('\n');
+    const base = nestedHeavyJobBaseCommand(runtime);
+    const script = `const child=require('node:child_process').spawn(${JSON.stringify(base.file)},${JSON.stringify([...base.args, 'build', '--', '/usr/bin/python3', '-c', python])},{stdio:'inherit'});child.on('exit',(code)=>process.exit(code));`;
+    const resources = path.join(process.cwd(), 'resources/heavy-command');
+    const profile = `(version 1)(allow default)(deny network*)(with-filter (process-path "/usr/bin/curl") (allow network-outbound (remote tcp "localhost:${port}")))(deny file-write*)(allow file-write* (subpath ${JSON.stringify(realpathSync(fixtureRoot))}))`;
+    const command = supervisedPtyCommand(runtime, '/usr/bin/sandbox-exec', ['-p', profile, process.execPath, '-e', script]);
+    const job = spawn(command.file, command.args, { detached: true, env: { ...process.env, NODE_OPTIONS: '', NEXUS_HEAVY_NODE: process.execPath, NEXUS_HEAVY_DIR: resources, NEXUS_HEAVY_CURL: '/usr/bin/curl', NEXUS_HEAVY_COMMAND_URL: `http://127.0.0.1:${port}/hook/heavy-command`, NEXUS_GATE_TOKEN: 'finite-native-watch' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let finished = false, daemonPid = 0, exitResult = null; let stderr = ''; job.stderr.on('data', (part) => stderr += part);
+    const done = new Promise((resolve) => job.once('exit', (code, signal) => { finished = true; exitResult = { code, signal }; resolve(exitResult); }));
+    try {
+      await waitFor(() => grant !== null || finished, 8_000); expect(finished, stderr).toBe(false);
+      expect(claim).toBeTypeOf('string'); expect(observedProof).toBe('darwin-job'); expect(existsSync(primaryFile)).toBe(false); expect(await proof.probe('s', claim)).toBe('live');
+      grant(); phases.push('granted'); await waitFor(() => existsSync(primaryFile) && existsSync(daemonFile) || finished, 8000); expect(finished, stderr).toBe(false); phases.push('daemon-created'); daemonPid = Number(readFileSync(daemonFile, 'utf8'));
+      const primaryPid = Number(readFileSync(primaryFile, 'utf8')); if (completion !== 'killed-helper') await waitFor(() => !processExists(primaryPid));
+      expect(processExists(daemonPid)).toBe(true); expect(await proof.probe('s', claim)).toBe('live'); expect(finished).toBe(false); expect(existsSync(forbidden)).toBe(false);
+      expect(await proof.borrow('s', claim, daemonPid)).toBe(true); expect(await proof.borrow('s', claim, process.pid)).toBe(false);
+      if (completion !== 'natural') {
+        const authorityPid = inventory().processes.find((row) => row.pid === daemonPid).responsiblePid;
+        process.kill(completion === 'killed-helper' ? helperPid : authorityPid, 'SIGKILL');
+        await new Promise((resolve) => setTimeout(resolve, 200)); expect(processExists(daemonPid)).toBe(true);
+        if (completion === 'killed-helper') {
+          expect(await proof.probe('s', claim)).toBe('live'); await proof.stop('s', claim);
+          expect(await proof.probe('s', claim)).toBe('gone'); expect(processExists(daemonPid)).toBe(false);
+        } else {
+          expect(await proof.probe('s', claim)).toBe('unknown'); await expect(proof.stop('s', claim)).rejects.toThrow('unproved');
+        }
+      }
+      writeFileSync(releaseFile, 'go'); phases.push('daemon-released'); expect(await done).toEqual({ code: completion === 'natural' ? 23 : 125, signal: null });
+      for (let i = 0; i < 100 && completion === 'natural' && await proof.probe('s', claim) !== 'gone'; i++) await new Promise((resolve) => setTimeout(resolve, 25)); expect(await proof.probe('s', claim)).toBe(completion === 'killed-authority' ? 'unknown' : 'gone');
+    } finally {
+      grant?.(); writeFileSync(releaseFile, 'go'); if (!finished) job.kill('SIGTERM'); await Promise.race([done, new Promise((resolve) => setTimeout(resolve, 2500))]); if (!finished) { console.error('native-heavy-fixture', phases, stderr); if (helperPid) { try { process.kill(helperPid, 'SIGKILL'); } catch {} } job.kill('SIGKILL'); await done; }
+      if (daemonPid && processExists(daemonPid)) { try { process.kill(daemonPid, 'SIGKILL'); } catch {} }
+      server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); rmSync(forbidden, { force: true });
+    }
+  }, 30_000);
+  }
+
+  it('native heavy fork preserves advanced Node IPC, target argv and nonzero target exit while borrowing one physical job', async ({ skip }) => {
+    if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
+    const runtime = { platform: 'darwin', packaged: false, cwd: fixtureRoot, moduleDir: fixtureRoot };
+    const identity = {}; const proof = new OwnedCommandProcesses(() => ({ pid: process.pid, identity }), undefined, (pid) => watchDarwinHeavyCommand(runtime, pid));
+    const entry = path.join(fixtureRoot, 'finite-agent.cjs'), target = path.join(fixtureRoot, 'node_modules/typescript/finite-ipc.cjs'); mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, `process.on('message',m=>{process.send({same:Buffer.isBuffer(m.bytes)&&m.bytes.toString()==='finite-ipc',arg:process.argv[2]});process.exit(19)});`);
+    writeFileSync(entry, `const cp=require('node:child_process');const c=cp.fork(${JSON.stringify(target)},['finite-argv'],{serialization:'advanced',env:{...process.env,NODE_OPTIONS:''}});let ok=false;c.on('message',m=>ok=m.same&&m.arg==='finite-argv');c.on('exit',code=>{console.log(ok&&code===19?'ipc-preserved':'ipc-broken:'+code);process.exit(ok&&code===19?0:1)});c.send({bytes:Buffer.from('finite-ipc')});`);
+    let claim = null, grants = 0, borrows = 0;
+    const server = createHttpServer((req, res) => { let raw = ''; req.on('data', (part) => raw += part); req.on('end', () => { const value = JSON.parse(raw);
+      void (async () => { let allow;
+        if (value.leaseId) { borrows++; allow = Boolean(claim && await proof.borrow('s', claim, value.pid)); }
+        else { grants++; claim = await proof.claimForRequest('s', 'ipc-request', value.pid, value.proof); if (claim) proof.confirmRequest('s', 'ipc-request', claim); allow = Boolean(claim); }
+        res.end(JSON.stringify({ allow, leaseId: 'finite-ipc-lease' })); })(); }); });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)); const port = server.address().port;
+    const resources = path.join(process.cwd(), 'resources/heavy-command'), base = nestedHeavyJobBaseCommand(runtime);
+    const command = supervisedPtyCommand(runtime, process.execPath, [entry]);
+    const job = spawn(command.file, command.args, { detached: true, env: { ...process.env, NODE_OPTIONS: `--require ${JSON.stringify(path.join(resources, 'preload.cjs'))}`, NEXUS_HEAVY_AGENT_ENTRY: entry,
+      NEXUS_HEAVY_JOB_BASE: JSON.stringify(base), NEXUS_HEAVY_NODE: process.execPath, NEXUS_HEAVY_DIR: resources, NEXUS_HEAVY_CURL: '/usr/bin/curl', NEXUS_HEAVY_COMMAND_URL: `http://127.0.0.1:${port}/hook/heavy-command`, NEXUS_GATE_TOKEN: 'finite-ipc-watch' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '', stderr = ''; job.stdout.on('data', (part) => output += part); job.stderr.on('data', (part) => stderr += part);
+    const done = new Promise((resolve) => job.once('exit', (code, signal) => resolve({ code, signal })));
+    try { expect(await done, stderr).toEqual({ code: 0, signal: null }); expect(output.trim()).toBe('ipc-preserved'); expect(grants).toBe(1); expect(borrows).toBeGreaterThan(0);
+      for (let i = 0; i < 100 && await proof.probe('s', claim) !== 'gone'; i++) await new Promise((resolve) => setTimeout(resolve, 25)); expect(await proof.probe('s', claim)).toBe('gone');
+    } finally { if (job.exitCode === null && job.signalCode === null) job.kill('SIGTERM'); await done; server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
+  }, 30_000);
+
+  it('native tool hook plus Bash startup borrow one physical job and preserve Bash command semantics', async ({ skip }) => {
+    if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
+    const runtime = { platform: 'darwin', packaged: false, cwd: fixtureRoot, moduleDir: fixtureRoot };
+    const identity = {}; const proof = new OwnedCommandProcesses(() => ({ pid: process.pid, identity }), undefined, (pid) => watchDarwinHeavyCommand(runtime, pid));
+    const resources = path.join(process.cwd(), 'resources/heavy-command');
+    const entry = path.join(fixtureRoot, 'finite-hook-agent.cjs'), makefile = path.join(fixtureRoot, 'hook.Makefile'); writeFileSync(makefile, 'all:\n\t@printf make-completed\n');
+    const original = `values=(finite bash); /usr/bin/make -f ${JSON.stringify(makefile)}; printf '\n%s\n' "\${values[1]}"`;
+    writeFileSync(entry, `const cp=require('node:child_process');const r=cp.execFileSync(process.execPath,[${JSON.stringify(path.join(resources, 'tool-hook.cjs'))}],{input:JSON.stringify({tool_input:{command:${JSON.stringify(original)}}}),encoding:'utf8'});const command=JSON.parse(r).hookSpecificOutput.updatedInput.command;const c=cp.spawn('/bin/bash',['-c',command],{stdio:'inherit'});c.on('exit',code=>process.exit(code));`);
+    let claim = null, grants = 0, borrows = 0;
+    const server = createHttpServer((req, res) => { let raw = ''; req.on('data', (part) => raw += part); req.on('end', () => { const value = JSON.parse(raw);
+      void (async () => { let allow;
+        if (value.leaseId) { borrows++; allow = Boolean(claim && await proof.borrow('s', claim, value.pid)); }
+        else { grants++; claim = await proof.claimForRequest('s', `hook-request-${grants}`, value.pid, value.proof); if (claim) proof.confirmRequest('s', `hook-request-${grants}`, claim); allow = Boolean(claim); }
+        res.end(JSON.stringify({ allow, leaseId: 'finite-hook-lease' })); })(); }); });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)); const port = server.address().port;
+    const command = supervisedPtyCommand(runtime, process.execPath, [entry]);
+    const job = spawn(command.file, command.args, { detached: true, env: { ...process.env, NODE_OPTIONS: `--require ${JSON.stringify(path.join(resources, 'preload.cjs'))}`, BASH_ENV: path.join(resources, 'shell.bash'), NEXUS_HEAVY_BASH_ENV: path.join(resources, 'shell.bash'), NEXUS_HEAVY_AGENT_ENTRY: entry,
+      NEXUS_HEAVY_JOB_BASE: JSON.stringify(nestedHeavyJobBaseCommand(runtime)), NEXUS_HEAVY_NODE: process.execPath, NEXUS_HEAVY_DIR: resources, NEXUS_HEAVY_CURL: '/usr/bin/curl', NEXUS_HEAVY_COMMAND_URL: `http://127.0.0.1:${port}/hook/heavy-command`, NEXUS_GATE_TOKEN: 'finite-hook-watch' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '', stderr = ''; job.stdout.on('data', (part) => output += part); job.stderr.on('data', (part) => stderr += part);
+    const done = new Promise((resolve) => job.once('exit', (code, signal) => resolve({ code, signal })));
+    try { expect(await done, stderr).toEqual({ code: 0, signal: null }); expect(output.trim()).toBe('make-completed\nbash'); expect(grants).toBe(1); expect(borrows).toBeGreaterThan(0); }
+    finally { if (job.exitCode === null && job.signalCode === null) job.kill('SIGTERM'); await done; server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
+  }, 30_000);
 
   for (const mode of ['natural', 'terminate']) {
   it(`supervise-job holds a detached setsid daemon after primary exit until ${mode} completion`, async ({ skip }) => {

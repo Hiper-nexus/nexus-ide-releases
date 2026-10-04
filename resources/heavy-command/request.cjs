@@ -11,7 +11,7 @@ function accepted(status, raw) {
   if (status !== 200 || result.allow !== true || typeof result.leaseId !== 'string' || !result.leaseId || result.leaseId.length > 128) process.exit(78);
   process.stdout.write(result.leaseId);
 }
-const body = JSON.stringify({ pid, kind, ...(process.env.NEXUS_HEAVY_LEASE ? { leaseId: process.env.NEXUS_HEAVY_LEASE } : {}) });
+const body = JSON.stringify({ pid, kind, ...(process.argv[4] === 'darwin-job' ? { proof: 'darwin-job' } : {}), ...(process.env.NEXUS_HEAVY_LEASE ? { leaseId: process.env.NEXUS_HEAVY_LEASE } : {}) });
 // ps birth identity is second-granularity: do not claim a same-second PID.
 setTimeout(() => {
   if (process.platform === 'darwin' && process.env.NEXUS_HEAVY_CURL === '/usr/bin/curl') {

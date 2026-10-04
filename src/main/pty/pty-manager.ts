@@ -4390,9 +4390,9 @@ configurePtyAnalysis({
 });
 
 /** Authenticated Main callers only; utility host proves exact PTY ancestry. */
-export async function claimSessionCommandProcess(sessionId: string, pid: number): Promise<string | null> {
-  if (!sessions.get(sessionId)?.agent || physicalTerminationFlights.has(sessionId)) return null;
-  return await ptyHost?.claimCommandProcess?.(sessionId, pid) ?? null;
+export async function claimSessionCommandProcess(sessionId: string, pid: number, proof?: 'darwin-job'): Promise<string | null> {
+  if (!sessions.get(sessionId)?.agent || physicalTerminationFlights.has(sessionId) || (process.platform === 'darwin' && proof !== 'darwin-job')) return null;
+  return await ptyHost?.claimCommandProcess?.(sessionId, pid, proof) ?? null;
 }
 export async function probeSessionCommandProcess(sessionId: string, claimId: string): Promise<import('./owned-command-process').CommandProcessState> {
   return await ptyHost?.probeCommandProcess?.(sessionId, claimId) ?? 'unknown';
@@ -4406,4 +4406,15 @@ export async function borrowSessionCommandProcess(sessionId: string, claimId: st
 /** Main-only command preparation; cold code-sign verification runs in host. */
 export async function prepareHeavyCommandSupervisor(file: string, args: readonly string[]): Promise<import('./darwin-pty-supervisor').SupervisedPtyCommand | null> {
   return await ptyHost?.prepareCommandSupervisor?.(file, args) ?? null;
+}
+
+/** Cold signature verification stays in the utility Host. */
+export async function prepareNativeHeavyJobBase(): Promise<import('./darwin-pty-supervisor').SupervisedPtyCommand | null> {
+  return await ptyHost?.prepareNativeHeavyJobBase?.() ?? null;
+}
+
+/** Cleanup remains authorized after the original agent/session has exited. */
+export async function stopSessionCommandProcess(sessionId: string, claimId: string): Promise<void> {
+  if (!ptyHost?.stopCommandProcess) throw new Error('native_heavy_authority_exit_unproved');
+  await ptyHost.stopCommandProcess(sessionId, claimId);
 }

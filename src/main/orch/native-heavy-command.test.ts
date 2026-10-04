@@ -296,3 +296,13 @@ it('final admission refuses an older live snapshot after its concurrent observer
  expect(releases).toBe(1); finishFinal('live');
  expect(await result).toMatchObject({ allow: false }); await native.drain();
 });
+
+it('drain stops an owned native authority and refuses success after that authority was lost', async () => {
+ const ctx = { token: 'finite', sessionId: 'finite', role: 'user', scope: {} } as AgentGateContext;
+ let state: 'live' | 'gone' | 'unknown' = 'live', released = false, stops = 0;
+ const native = new NativeHeavyCommands({ current: () => true, claim: async () => 'owned', probe: async () => state,
+  acquire: async () => ({ id: 'finite', release() { released = true; } }), stop: async () => { stops++; if (state === 'unknown') throw new Error('native_heavy_authority_exit_unproved'); state = 'gone'; } });
+ expect((await native.admit(ctx, { pid: 20, kind: 'build' })).allow).toBe(true);
+ state = 'unknown'; await expect(native.drain()).rejects.toThrow('unproved'); expect(released).toBe(false);
+ state = 'live'; await native.drain(); expect(stops).toBe(2); expect(released).toBe(true);
+});

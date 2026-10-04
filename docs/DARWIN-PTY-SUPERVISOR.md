@@ -251,3 +251,15 @@ Prova local: fixtures reais mantêm daemon destacado vivo após o shell sair,
 confirmam recibo somente após término natural, provam TERM contra daemon que
 ignora TERM e confirmam limpeza depois de SIGKILL do dono através do estágio
 Perl. A integração MCP e a prova no candidato assinado pertencem ao coordenador.
+
+## Native heavy jobs (F-875)
+
+`nestedHeavyJobBaseCommand` is a Main-owned Apple stage-zero prefix for `heavy-job <kind> -- <absolute-target> [args...]`. The CLI's original sandbox, cwd, env and stdio remain inherited. The exact canonical outer supervisor authorizes the nested bootstrap; the general one-shot Main launch authorization remains unchanged.
+
+Authority A establishes the responsibility anchor and a protected process group. Execution helper B is forked from A's already authenticated image, uses the original caller PG, and requests Main admission before target birth. B and every target/descendant inherit A's responsibility identity. A watches its exact stage-zero Perl owner P: P/normal caller PG death triggers cohort teardown. B SIGKILL cannot destroy A or orphan unobserved setsid descendants; A performs the existing fixed-point/audit-token cleanup and two complete empty scans.
+
+The utility Host launches its observer through the Apple stage-zero barrier. Before READY/grant, it validates the live image and mode of A/B, registers kqueue NOTE_EXIT/NOTE_EXITSTATUS on A, and fences uniqueID/idversion on both sides. Normal A exit is the canonical whole-cohort receipt. Borrow uses A's exact kernel responsibility identity. Caller/Node/Perl exit and sampled PID absence never prove the job gone.
+
+The private Main stop operation writes to the observer's control channel. The observer revalidates A's uniqueID, idversion and live seal, sends only audit-token-fenced TERM, and waits for the canonical receipt. It never PGKILLs A or signals a replacement PID. If A itself dies by signal, observer loss or NOTE_EXEC, state remains unknown and stop/drain reject explicitly; the reservation is preserved rather than fabricating a successful quit receipt. An outer PTY receipt cannot prove a separately disclaimed job.
+
+`nativeHeavyJobEnvironment()` must be awaited after `setPtyHost` and before spawns mount. Cold codesign runs only in the Host; Main validates/caches the exact immutable stage-zero prefix and reasserts it after overrides. Only private scheduling env/config carries it. Human shells strip it. The admission transport uses the original local curl grant; opt-in inner CLI sandboxes still require independent transport proof, and no target is proxied outside that boundary.

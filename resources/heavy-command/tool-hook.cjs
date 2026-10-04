@@ -20,6 +20,10 @@ process.stdin.on('end', () => {
     output({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'Physical CPU/RAM admission is unavailable for this native heavy command.' } }); return;
   }
   const quote = (value) => "'" + value.replace(/'/g, "'\\''") + "'";
+  if (process.env.NEXUS_HEAVY_JOB_BASE) {
+    const wrapped = `NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 ${quote(node)} ${quote(path.join(directory, 'job-launch.cjs'))} ${quote(kind)} "\${BASH:-\${SHELL:-/bin/bash}}" -c ${quote(input.command)}`;
+    output({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...input, command: wrapped } } }); return;
+  }
   const prefix = `NEXUS_HEAVY_LEASE="$(NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 ${quote(node)} ${quote(path.join(directory, 'request.cjs'))} "$$" ${quote(kind)})" || exit 78\nexport NEXUS_HEAVY_LEASE\n`;
   output({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...input, command: prefix + input.command } } });
 });

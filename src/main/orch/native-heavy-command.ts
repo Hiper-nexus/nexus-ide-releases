@@ -4,14 +4,15 @@ import type { AgentGateContext } from './gate';
 import { isCurrentGateContext, gateContextAbortSignal } from './gate';
 import { handleHookJsonPost } from './hook-http';
 import { acquireHeavyCommandPermit, type HeavyCommandPermit, type HeavyCommandRequest } from './heavy-command-permit';
-import { claimSessionCommandProcess, probeSessionCommandProcess, borrowSessionCommandProcess } from '../pty/pty-manager';
+import { claimSessionCommandProcess, probeSessionCommandProcess, borrowSessionCommandProcess, stopSessionCommandProcess } from '../pty/pty-manager';
 import type { CommandProcessState } from '../pty/owned-command-process';
-const schema = z.object({ pid: z.number().int().positive(), kind: z.enum(['typescript', 'tests', 'build', 'install']), leaseId: z.string().min(1).max(128).optional() }).strict();
+const schema = z.object({ pid: z.number().int().positive(), kind: z.enum(['typescript', 'tests', 'build', 'install']), leaseId: z.string().min(1).max(128).optional(), proof: z.literal('darwin-job').optional() }).strict();
 export interface NativeHeavyCommandPorts {
   current(ctx: AgentGateContext): boolean;
-  claim(sessionId: string, pid: number): Promise<string | null>;
+  claim(sessionId: string, pid: number, proof?: 'darwin-job'): Promise<string | null>;
   probe(sessionId: string, claim: string): Promise<CommandProcessState>;
   borrow?(sessionId: string, claim: string, pid: number): Promise<boolean>;
+  stop?(sessionId: string, claim: string): Promise<void>;
   acquire(request: HeavyCommandRequest): Promise<HeavyCommandPermit>;
 }
 interface Flight { ctx: AgentGateContext; claim: string; permit: HeavyCommandPermit; done: Promise<void> }
@@ -39,7 +40,7 @@ export class NativeHeavyCommands {
         : { allow: false, reason: 'heavy_command_nested_ownership_unproved' };
     }
     let claim: string | null = null;
-    try { claim = await this.ports.claim(ctx.sessionId, body.data.pid); } catch { /* ownership unavailable */ }
+    try { claim = await this.ports.claim(ctx.sessionId, body.data.pid, body.data.proof); } catch { /* ownership unavailable */ }
     if (!claim || !this.#accepting || !this.ports.current(ctx) || signal?.aborted) { if (claim) this.#reap(ctx, claim); return { allow: false, reason: 'heavy_command_process_ownership_unproved' }; }
     let permit: HeavyCommandPermit;
     try { permit = await this.ports.acquire({ scope: ctx.scope, missionId: ctx.missionId, sessionId: ctx.sessionId, kind: body.data.kind, signal, isCurrent: () => this.ports.current(ctx) && this.#accepting }); }
@@ -71,10 +72,10 @@ export class NativeHeavyCommands {
   }
   startAdmission(): void { this.#accepting = true; }
   stopAdmission(): void { this.#accepting = false; }
-  async drain(): Promise<void> { this.stopAdmission(); while (this.#pending.size) await Promise.allSettled([...this.#pending]); await Promise.all([...this.#flights].map((flight) => flight.done)); await Promise.all([...this.#orphans]); }
+  async drain(): Promise<void> { this.stopAdmission(); while (this.#pending.size) await Promise.allSettled([...this.#pending]); await Promise.all([...this.#flights].map((flight) => this.ports.stop?.(flight.ctx.sessionId!, flight.claim))); await Promise.all([...this.#flights].map((flight) => flight.done)); await Promise.all([...this.#orphans]); }
 }
 export const nativeHeavyCommands = new NativeHeavyCommands({ current: isCurrentGateContext, claim: claimSessionCommandProcess,
-  probe: probeSessionCommandProcess, borrow: borrowSessionCommandProcess, acquire: acquireHeavyCommandPermit });
+  probe: probeSessionCommandProcess, stop: stopSessionCommandProcess, borrow: borrowSessionCommandProcess, acquire: acquireHeavyCommandPermit });
 export async function handleNativeHeavyCommandHttp(req: http.IncomingMessage, res: http.ServerResponse, ctx: AgentGateContext | null): Promise<void> {
   const abort = new AbortController();
   const parent = ctx ? gateContextAbortSignal(ctx) : undefined;

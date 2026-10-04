@@ -26,7 +26,7 @@ import { codexPermissionProfileFor } from '../pty/codex-native-authority';
 
 function heavyCommandShellPolicy(env: Readonly<Record<string, string>> | undefined): Record<string, string> {
   const selected: Record<string, string> = {};
-  for (const key of ['NEXUS_HEAVY_CURL', 'NEXUS_HEAVY_AGENT_ENTRY', 'NEXUS_GATE_TOKEN', 'NEXUS_HEAVY_COMMAND_URL', 'NEXUS_HEAVY_DIR', 'NEXUS_HEAVY_NODE',
+  for (const key of ['NEXUS_HEAVY_JOB_BASE', 'NEXUS_HEAVY_CURL', 'NEXUS_HEAVY_AGENT_ENTRY', 'NEXUS_GATE_TOKEN', 'NEXUS_HEAVY_COMMAND_URL', 'NEXUS_HEAVY_DIR', 'NEXUS_HEAVY_NODE',
     'NEXUS_HEAVY_BASH_ENV', 'NEXUS_HEAVY_ORIG_BASH_ENV', 'NEXUS_HEAVY_ORIG_ZDOTDIR', 'BASH_ENV', 'ZDOTDIR', 'NODE_OPTIONS']) {
     if (env?.[key] !== undefined) selected[key] = env[key];
   }

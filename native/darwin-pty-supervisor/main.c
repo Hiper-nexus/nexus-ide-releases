@@ -9,6 +9,7 @@
 #include <Security/Security.h>
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <libproc.h>
 #include <limits.h>
 #include <mach-o/dyld.h>
@@ -19,6 +20,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/event.h>
 #include <sys/proc.h>
 #include <sys/proc_info.h>
 #include <sys/ptrace.h>
@@ -165,6 +167,10 @@ static volatile sig_atomic_t shutdown_signal = 0;
 
 static bool consume_main_owned_launch_authorization(
     const struct responsibility_api *api);
+static bool consume_nested_job_launch_authorization(const struct responsibility_api *api);
+static int acquire_native_heavy_job_lease(const char *kind);
+static int execute_native_heavy_job(int argc, char **argv, const struct responsibility_api *inherited);
+
 
 static bool debug_enabled(void) {
   const char *value = getenv("NEXUS_PTY_SUPERVISOR_DEBUG");
@@ -996,8 +1002,9 @@ static int bootstrap_disclaimed_supervisor_mode(int argc, char **argv,
           stderr);
     return NEXUS_EXIT_PRIVATE_API;
   }
-  if (require_launch_authorization &&
-      !consume_main_owned_launch_authorization(&api)) {
+  if ((!require_launch_authorization && strcmp(internal_mode, "__run-disclaimed-heavy-job") == 0 &&
+       !consume_nested_job_launch_authorization(&api)) ||
+      (require_launch_authorization && !consume_main_owned_launch_authorization(&api))) {
     fputs("nexus-pty-supervisor: launch authorization rejected before "
           "responsibility disclaim\n",
           stderr);
@@ -1942,6 +1949,21 @@ static bool consume_main_owned_launch_authorization(
   return true;
 }
 
+/* Only a nested job under the exact same canonical supervisor may establish
+ * its own anchor. This is not the general Main launch capability: no target
+ * is created until the internal image obtains a Host-authenticated permit. */
+static bool consume_nested_job_launch_authorization(const struct responsibility_api *api) {
+  struct process_record self, responsible;
+  char executable[PATH_MAX];
+  if (!load_stable_process_record(api, getpid(), &self) || self.responsible_pid == self.pid ||
+      !load_stable_process_record(api, self.responsible_pid, &responsible) ||
+      responsible.process_unique_id != self.responsible_unique_id || executable_path(executable) != 0) return false;
+  enum nexus_helper_signing_mode mode = current_helper_signing_mode();
+  if (mode == NEXUS_HELPER_SIGNING_INVALID) return false;
+  return live_code_matches_static(responsible.pid, executable, NEXUS_SUPERVISOR_IDENTIFIER,
+                                  mode == NEXUS_HELPER_SIGNING_PACKAGED ? NEXUS_TEAM_IDENTIFIER : NULL);
+}
+
 static bool
 signing_information_matches(CFDictionaryRef information,
                             const struct sealed_code_identity *expected) {
@@ -2287,6 +2309,53 @@ static int spawn_unsealed_child(pid_t *child, const char *executable,
   return error;
 }
 
+static bool heavy_job_kind(const char *kind) {
+  return strcmp(kind, "typescript") == 0 || strcmp(kind, "tests") == 0 ||
+         strcmp(kind, "build") == 0 || strcmp(kind, "install") == 0;
+}
+/* Credentials remain in the inherited private environment. The only network
+ * primitive is request.cjs -> canonical curl -> fixed Main loopback URL. */
+static int acquire_native_heavy_job_lease(const char *kind) {
+  const char *node = getenv("NEXUS_HEAVY_NODE"), *directory = getenv("NEXUS_HEAVY_DIR");
+  if (!heavy_job_kind(kind) || node == NULL || node[0] != '/' || directory == NULL || directory[0] != '/') return NEXUS_EXIT_USAGE;
+  char request[PATH_MAX], canonical[PATH_MAX], pid_text[32];
+  int length = snprintf(request, sizeof(request), "%s/request.cjs", directory);
+  if (length <= 0 || (size_t)length >= sizeof(request) || realpath(request, canonical) == NULL || strcmp(canonical, request) != 0) return NEXUS_EXIT_CODE_IDENTITY;
+  snprintf(pid_text, sizeof(pid_text), "%d", (int)getpid());
+  int output[2]; if (pipe(output) != 0) return NEXUS_EXIT_INTERNAL;
+  posix_spawn_file_actions_t actions;
+  int error = posix_spawn_file_actions_init(&actions);
+  if (error == 0) error = posix_spawn_file_actions_adddup2(&actions, output[1], STDOUT_FILENO);
+  if (error == 0) error = posix_spawn_file_actions_addclose(&actions, output[0]);
+  if (error == 0) error = posix_spawn_file_actions_addclose(&actions, output[1]);
+  const char *old_options = getenv("NODE_OPTIONS"), *old_channel = getenv("NODE_CHANNEL_FD"), *old_helper = getenv("NEXUS_HEAVY_HELPER");
+  char *saved_options = old_options ? strdup(old_options) : NULL, *saved_channel = old_channel ? strdup(old_channel) : NULL, *saved_helper = old_helper ? strdup(old_helper) : NULL;
+  unsetenv("NODE_OPTIONS"); unsetenv("NODE_CHANNEL_FD"); setenv("NEXUS_HEAVY_HELPER", "1", 1);
+  char *request_args[] = {(char *)node, request, pid_text, (char *)kind, "darwin-job", NULL};
+  pid_t requester = 0;
+  if (error == 0) error = posix_spawn(&requester, node, &actions, NULL, request_args, environ);
+  posix_spawn_file_actions_destroy(&actions); close(output[1]);
+  if (saved_options) setenv("NODE_OPTIONS", saved_options, 1); else unsetenv("NODE_OPTIONS");
+  if (saved_channel) setenv("NODE_CHANNEL_FD", saved_channel, 1); else unsetenv("NODE_CHANNEL_FD");
+  if (saved_helper) setenv("NEXUS_HEAVY_HELPER", saved_helper, 1); else unsetenv("NEXUS_HEAVY_HELPER");
+  free(saved_options); free(saved_channel); free(saved_helper);
+  if (error != 0) { close(output[0]); return NEXUS_EXIT_SPAWN; }
+  char lease[129]; size_t used = 0;
+  while (used < sizeof(lease)) {
+    ssize_t count = read(output[0], lease + used, sizeof(lease) - used);
+    if (count > 0) { used += (size_t)count; continue; }
+    if (count < 0 && errno == EINTR && shutdown_signal == 0) continue;
+    break;
+  }
+  close(output[0]);
+  if (shutdown_signal != 0) kill(requester, SIGTERM);
+  int status = 0; while (waitpid(requester, &status, 0) < 0 && errno == EINTR) {}
+  if (shutdown_signal != 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0 || used == 0 || used >= sizeof(lease)) return NEXUS_EXIT_RESPONSIBILITY;
+  lease[used] = '\0';
+  for (size_t i = 0; i < used; i++) if (!is_ascii_alphanumeric(lease[i]) && lease[i] != '-' && lease[i] != '_') return NEXUS_EXIT_RESPONSIBILITY;
+  return setenv("NEXUS_HEAVY_LEASE", lease, 1) == 0 ? 0 : NEXUS_EXIT_INTERNAL;
+}
+
 static int status_to_exit_code(int status) {
   int exit_code = NEXUS_EXIT_INTERNAL;
   if (WIFEXITED(status)) {
@@ -2361,6 +2430,7 @@ static int run_disclaimed_supervisor_mode(
     return NEXUS_EXIT_INTERNAL;
   }
 
+  bool native_heavy = strcmp(argv[1], "__run-disclaimed-heavy-job") == 0;
   struct process_record job_owner;
   memset(&job_owner, 0, sizeof(job_owner));
   if (keep_job_cohort) {
@@ -2371,7 +2441,8 @@ static int run_disclaimed_supervisor_mode(
     }
     struct process_record stage_zero;
     if (direct_parent_is_apple_perl(&api, &stage_zero)) {
-      if (!load_stable_process_record(&api, stage_zero.ppid, &job_owner)) {
+      if (native_heavy) job_owner = stage_zero;
+      else if (!load_stable_process_record(&api, stage_zero.ppid, &job_owner)) {
         fputs("nexus-pty-supervisor: stage-zero job owner unavailable\n", stderr);
         return NEXUS_EXIT_RESPONSIBILITY;
       }
@@ -2380,12 +2451,28 @@ static int run_disclaimed_supervisor_mode(
     }
   }
 
-  pid_t child = 0;
-  int spawn_error = sealed_identity == NULL
-                        ? spawn_unsealed_child(&child, argv[command_index],
-                                               &argv[command_index])
-                        : spawn_traced_child(&child, argv[command_index],
-                                             &argv[command_index]);
+  int cancel_pipe[2] = {-1, -1}; pid_t original_group = getpgrp();
+  pid_t child = 0; int spawn_error = 0;
+  if (native_heavy) {
+    /* Fork keeps the already authenticated image mapped in B. There is no
+     * pathname execution or nested tracer between A and the admission gate. */
+    if (setpgid(0, 0) != 0 || pipe(cancel_pipe) != 0) return NEXUS_EXIT_INTERNAL;
+    (void)fcntl(cancel_pipe[0], F_SETFD, FD_CLOEXEC); (void)fcntl(cancel_pipe[0], F_SETFL, O_NONBLOCK);
+    char fd_text[32]; snprintf(fd_text, sizeof(fd_text), "%d", cancel_pipe[1]);
+    if (setenv("NEXUS_HEAVY_CANCEL_FD", fd_text, 1) != 0) return NEXUS_EXIT_INTERNAL;
+    child = fork();
+    if (child == 0) {
+      close(cancel_pipe[0]);
+      if (setpgid(0, original_group) != 0) _exit(NEXUS_EXIT_RESPONSIBILITY);
+      _exit(execute_native_heavy_job(argc, argv, &api));
+    }
+    spawn_error = child < 0 ? errno : 0;
+    close(cancel_pipe[1]); cancel_pipe[1] = -1; unsetenv("NEXUS_HEAVY_CANCEL_FD");
+  } else {
+    spawn_error = sealed_identity == NULL
+      ? spawn_unsealed_child(&child, argv[command_index], &argv[command_index])
+      : spawn_traced_child(&child, argv[command_index], &argv[command_index]);
+  }
   if (spawn_error != 0) {
     fprintf(stderr, "nexus-pty-supervisor: cannot spawn %s: %s\n",
             argv[command_index], strerror(spawn_error));
@@ -2433,6 +2520,7 @@ static int run_disclaimed_supervisor_mode(
   bool child_reaped = false;
   bool job_owner_lost = false;
   while (!child_reaped && shutdown_signal == 0) {
+    if (native_heavy) { char command; if (read(cancel_pipe[0], &command, 1) == 1 && command == 'T') shutdown_signal = SIGTERM; }
     if (keep_job_cohort && !job_owner_is_live(&api, &job_owner)) {
       job_owner_lost = true;
       shutdown_signal = SIGTERM;
@@ -2456,6 +2544,7 @@ static int run_disclaimed_supervisor_mode(
     sleep_milliseconds(LOOP_DELAY_MS);
   }
 
+  if (cancel_pipe[0] >= 0) close(cancel_pipe[0]);
   /* A normal primary exit does not end an intentionally backgrounded job.
    * Keep the responsibility anchor while detached/reparented members run.
    * Empty proof remains two complete inventories under that live anchor. */
@@ -2581,6 +2670,124 @@ static int run_disclaimed_packaged_smoke_supervisor(int argc, char **argv) {
   return run_disclaimed_supervisor_mode(argc, argv, command_index, &identity, false);
 }
 
+/* B is an execution helper, never the responsibility authority. A remains
+ * alive outside the caller PG while B/work use the original PG and sandbox. */
+static int execute_native_heavy_job(int argc, char **argv, const struct responsibility_api *inherited) {
+  if (argc < 5 || !heavy_job_kind(argv[2]) || strcmp(argv[3], "--") || argv[4][0] != '/') return NEXUS_EXIT_USAGE;
+  struct responsibility_api api = *inherited;
+  struct process_record self, authority;
+  if (!load_stable_process_record(&api, getpid(), &self) ||
+      !load_stable_process_record(&api, self.responsible_pid, &authority) || self.ppid != authority.pid ||
+      authority.responsible_pid != authority.pid || self.responsible_unique_id != authority.process_unique_id) return NEXUS_EXIT_RESPONSIBILITY;
+  if (!install_signal_handlers()) return NEXUS_EXIT_INTERNAL;
+  const char *fd_value = getenv("NEXUS_HEAVY_CANCEL_FD"); char *end = NULL;
+  long cancel_fd = fd_value ? strtol(fd_value, &end, 10) : -1;
+  if (!fd_value || end == fd_value || *end || cancel_fd < 3 || cancel_fd > INT_MAX || fcntl((int)cancel_fd, F_SETFD, FD_CLOEXEC) != 0) return NEXUS_EXIT_INTERNAL;
+  unsetenv("NEXUS_HEAVY_CANCEL_FD");
+  int admission = acquire_native_heavy_job_lease(argv[2]);
+  if (admission != 0) return admission;
+  pid_t target = 0;
+  int error = spawn_unsealed_child(&target, argv[4], &argv[4]);
+  if (error != 0) return NEXUS_EXIT_SPAWN;
+  if (!validate_child_responsibility(&api, target, authority.pid, authority.process_unique_id)) {
+    (void)write((int)cancel_fd, "T", 1); return NEXUS_EXIT_RESPONSIBILITY;
+  }
+  int status = 0;
+  for (;;) {
+    if (shutdown_signal != 0 || !job_owner_is_live(&api, &authority)) {
+      (void)write((int)cancel_fd, "T", 1); close((int)cancel_fd); return 0;
+    }
+    pid_t waited = waitpid(target, &status, WNOHANG);
+    if (waited == target) { close((int)cancel_fd); return status_to_exit_code(status); }
+    if (waited < 0 && errno != EINTR) { (void)write((int)cancel_fd, "T", 1); return NEXUS_EXIT_INTERNAL; }
+    sleep_milliseconds(LOOP_DELAY_MS);
+  }
+}
+
+/* Read only argv[0..1], never environment or command arguments. A signed
+ * inventory/probe invocation cannot impersonate the admission-waiting mode. */
+static bool process_has_mode(pid_t pid, const char *mode) {
+  int mib[3] = {CTL_KERN, KERN_PROCARGS2, pid}; size_t size = 0;
+  if (sysctl(mib, 3, NULL, &size, NULL, 0) != 0 || size < sizeof(int) || size > 1024 * 1024) return false;
+  char *raw = malloc(size); if (raw == NULL) return false;
+  if (sysctl(mib, 3, raw, &size, NULL, 0) != 0) { free(raw); return false; }
+  int argc = 0; memcpy(&argc, raw, sizeof(argc));
+  size_t at = sizeof(argc);
+  while (at < size && raw[at] != '\0') at++;
+  while (at < size && raw[at] == '\0') at++;
+  while (at < size && raw[at] != '\0') at++;
+  if (at < size) at++;
+  bool match = argc >= 5 && at < size && memchr(raw + at, '\0', size - at) != NULL && strcmp(raw + at, mode) == 0;
+  free(raw); return match;
+}
+static int watch_heavy_job_mode(int argc, char **argv) {
+  if (argc != 13 || strcmp(argv[2], "--pid") || strcmp(argv[4], "--helper") || strcmp(argv[6], "--identifier") || strcmp(argv[8], "--team-id") || strcmp(argv[10], "--cdhash") || strcmp(argv[12], "--watch") || argv[5][0] != '/') return NEXUS_EXIT_USAGE;
+  char *end = NULL; long parsed = strtol(argv[3], &end, 10);
+  if (end == argv[3] || *end || parsed <= 0 || parsed > INT_MAX) return NEXUS_EXIT_USAGE;
+  struct sealed_code_identity seal = {.identifier = argv[7], .team_identifier = strcmp(argv[9], "-") == 0 ? NULL : argv[9], .cdhash_hex = argv[11]};
+  if (!valid_signing_identifier(seal.identifier) || (seal.team_identifier && !valid_team_identifier(seal.team_identifier)) || !parse_cdhash(seal.cdhash_hex, seal.cdhash)) return NEXUS_EXIT_USAGE;
+  struct responsibility_api api; memset(&api, 0, sizeof(api));
+  if (!load_responsibility_api(&api, false)) return NEXUS_EXIT_PRIVATE_API;
+  struct process_record executor_before, executor_after, authority_before, authority_after;
+  if (!load_stable_process_record(&api, (pid_t)parsed, &executor_before) ||
+      !load_stable_process_record(&api, executor_before.responsible_pid, &authority_before) ||
+      executor_before.ppid != authority_before.pid || authority_before.responsible_pid != authority_before.pid ||
+      executor_before.responsible_unique_id != authority_before.process_unique_id) return NEXUS_EXIT_INVENTORY;
+  int queue = kqueue(); if (queue < 0) return NEXUS_EXIT_INTERNAL;
+  struct kevent changes[2];
+  EV_SET(&changes[0], authority_before.pid, EVFILT_PROC, EV_ADD | EV_ENABLE | EV_ONESHOT, NOTE_EXIT | NOTE_EXITSTATUS | NOTE_EXEC, 0, NULL);
+  EV_SET(&changes[1], STDIN_FILENO, EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0, NULL);
+  if (kevent(queue, changes, 2, NULL, 0, NULL) != 0 ||
+      !validate_live_code_identity(executor_before.pid, &seal) ||
+      !validate_live_code_identity(authority_before.pid, &seal) ||
+      !live_code_matches_static(executor_before.pid, argv[5], seal.identifier, seal.team_identifier) ||
+      !live_code_matches_static(authority_before.pid, argv[5], seal.identifier, seal.team_identifier) ||
+      !process_has_mode(executor_before.pid, "__run-disclaimed-heavy-job") ||
+      !process_has_mode(authority_before.pid, "__run-disclaimed-heavy-job") ||
+      !load_stable_process_record(&api, executor_before.pid, &executor_after) ||
+      !load_stable_process_record(&api, authority_before.pid, &authority_after) ||
+      executor_before.process_unique_id != executor_after.process_unique_id || executor_before.process_id_version != executor_after.process_id_version ||
+      authority_before.process_unique_id != authority_after.process_unique_id || authority_before.process_id_version != authority_after.process_id_version) { close(queue); return NEXUS_EXIT_CODE_IDENTITY; }
+  if (!install_signal_handlers()) { close(queue); return NEXUS_EXIT_INTERNAL; }
+  struct process_record watcher_owner;
+  if (!load_stable_process_record(&api, getppid(), &watcher_owner)) { close(queue); return NEXUS_EXIT_RESPONSIBILITY; }
+  printf("NEXUS_HEAVY_JOB_READY_V1 %d %llu %d\n", authority_after.pid, (unsigned long long)authority_after.process_unique_id, authority_after.process_id_version); fflush(stdout);
+  bool stop_sent = false;
+  for (;;) {
+    bool stop_requested = shutdown_signal != 0 || !job_owner_is_live(&api, &watcher_owner);
+    struct kevent event; struct timespec delay = {.tv_sec = 0, .tv_nsec = 20000000};
+    int received = kevent(queue, NULL, 0, &event, 1, &delay);
+    if (received < 0 && errno != EINTR) { close(queue); return NEXUS_EXIT_RESPONSIBILITY; }
+    if (received == 1 && (event.flags & EV_ERROR)) { close(queue); return NEXUS_EXIT_RESPONSIBILITY; }
+    if (received == 1 && event.filter == EVFILT_READ) {
+      char command[16]; ssize_t length = read(STDIN_FILENO, command, sizeof(command));
+      if (length == 0 || (length == 5 && memcmp(command, "stop\n", 5) == 0)) stop_requested = true;
+      else { close(queue); return NEXUS_EXIT_RESPONSIBILITY; }
+    }
+    if (received == 1 && event.filter == EVFILT_PROC) {
+      int exit_status = (int)event.data;
+      close(queue);
+      if ((event.fflags & NOTE_EXEC) || !(event.fflags & NOTE_EXIT) || !(event.fflags & NOTE_EXITSTATUS) || !WIFEXITED(exit_status)) return NEXUS_EXIT_RESPONSIBILITY;
+      printf("NEXUS_HEAVY_JOB_PROVED_V1 %d %llu %d\n", authority_after.pid, (unsigned long long)authority_after.process_unique_id, authority_after.process_id_version); fflush(stdout);
+      return 0;
+    }
+    if (stop_requested && !stop_sent) {
+      struct process_record current;
+      if (load_stable_process_record(&api, authority_after.pid, &current) &&
+          current.process_unique_id == authority_after.process_unique_id && current.process_id_version == authority_after.process_id_version &&
+          current.responsible_pid == current.pid && current.responsible_unique_id == authority_after.process_unique_id &&
+          validate_live_code_identity(current.pid, &seal)) {
+        audit_token_t token; memset(&token, 0, sizeof(token)); token.val[5] = (uint32_t)current.pid; token.val[7] = (uint32_t)current.process_id_version;
+        int error = proc_signal_with_audittoken(&token, SIGTERM);
+        if (error != 0 && error != ESRCH) { close(queue); return NEXUS_EXIT_RESPONSIBILITY; }
+        stop_sent = true;
+      }
+      /* A reused/absent PID is never a signal target; its queued exit
+       * observation can still deliver the canonical receipt. */
+    }
+  }
+}
+
 static void print_usage(const char *program) {
   fprintf(stderr,
           "usage:\n"
@@ -2608,12 +2815,30 @@ int main(int argc, char **argv) {
    */
   struct sigaction default_trap;
   memset(&default_trap, 0, sizeof(default_trap));
-  default_trap.sa_handler = SIG_DFL;
+  default_trap.sa_handler = argc >= 2 && strcmp(argv[1], "__run-disclaimed-heavy-job") == 0 ? SIG_IGN : SIG_DFL;
   sigemptyset(&default_trap.sa_mask);
   (void)sigaction(SIGTRAP, &default_trap, NULL);
 
   if (argc >= 2 && strcmp(argv[1], "supervise") == 0) {
     return bootstrap_disclaimed_supervisor(argc, argv);
+  }
+  if (argc >= 2 && strcmp(argv[1], "heavy-job") == 0) {
+    if (argc < 5 || !heavy_job_kind(argv[2]) || strcmp(argv[3], "--") || argv[4][0] != '/') return NEXUS_EXIT_USAGE;
+    return bootstrap_disclaimed_supervisor_mode(argc, argv, "__run-disclaimed-heavy-job", 4, false);
+  }
+  if (argc >= 2 && strcmp(argv[1], "__run-disclaimed-heavy-job") == 0) {
+    if (argc < 5 || !heavy_job_kind(argv[2]) || strcmp(argv[3], "--") || argv[4][0] != '/') return NEXUS_EXIT_USAGE;
+    return run_disclaimed_supervisor_mode(argc, argv, 4, NULL, true);
+  }
+  if (argc >= 2 && strcmp(argv[1], "watch-heavy-job") == 0) {
+    if (argc != 13 || strcmp(argv[4], "--helper") != 0 || argv[5][0] != '/') return NEXUS_EXIT_USAGE;
+    return bootstrap_disclaimed_supervisor_mode(argc, argv, "__run-disclaimed-watch-heavy-job", 5, true);
+  }
+  if (argc >= 2 && strcmp(argv[1], "__run-disclaimed-watch-heavy-job") == 0) {
+    struct responsibility_api api; memset(&api, 0, sizeof(api));
+    struct responsibility_anchor anchor;
+    if (!load_responsibility_api(&api, false) || !capture_responsibility_anchor(&api, &anchor)) return NEXUS_EXIT_RESPONSIBILITY;
+    return watch_heavy_job_mode(argc, argv);
   }
   if (argc >= 2 && strcmp(argv[1], "supervise-job") == 0) {
     if (argc < 4 || strcmp(argv[2], "--") != 0 || argv[3][0] != '/') return NEXUS_EXIT_USAGE;

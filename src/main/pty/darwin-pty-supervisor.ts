@@ -1360,3 +1360,16 @@ export function supervisedJobCommand(
     'supervise-job', '--', file, ...args,
   ]);
 }
+
+/** Fixed Apple stage-zero prefix, evaluated in the original CLI subtree. */
+export function nestedHeavyJobBaseCommand(runtime: DarwinPtySupervisorRuntime): SupervisedPtyCommand {
+  if (runtime.platform !== 'darwin' || runtime.trustProfile === DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE) throw new Error('native heavy job requires normal Darwin authority');
+  return stageZeroSupervisorCommand(resolveDarwinPtySupervisorSeal(runtime), ['heavy-job']);
+}
+/** Read-only Host watcher, with the same independently verified helper seal. */
+export function heavyJobWatchCommand(runtime: DarwinPtySupervisorRuntime, pid: number): SupervisedPtyCommand {
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('invalid heavy job PID');
+  const helper = resolveDarwinPtySupervisorSeal(runtime);
+  return stageZeroSupervisorCommand(helper, ['watch-heavy-job', '--pid', String(pid), '--helper', helper.executablePath,
+    '--identifier', helper.identifier, '--team-id', helper.teamIdentifier ?? '-', '--cdhash', helper.cdHash, '--watch']);
+}

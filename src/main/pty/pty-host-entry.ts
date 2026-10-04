@@ -1,3 +1,5 @@
+import { watchDarwinHeavyCommand } from './darwin-heavy-command';
+import { nestedHeavyJobBaseCommand } from './darwin-pty-supervisor';
 import { OwnedCommandProcesses } from './owned-command-process';
 import { PtyOutputCredits } from './pty-output-credits';
 /**
@@ -67,7 +69,7 @@ interface HostPtyEntry {
 }
 
 const procs = new Map<string, HostPtyEntry>();
-const commandProcesses = new OwnedCommandProcesses((sessionId) => { const entry = procs.get(sessionId); return entry ? { pid: entry.proc.pid, identity: entry } : null; });
+const commandProcesses = new OwnedCommandProcesses((sessionId) => { const entry = procs.get(sessionId); return entry ? { pid: entry.proc.pid, identity: entry } : null; }, undefined, process.platform === 'darwin' ? (pid) => watchDarwinHeavyCommand(currentDarwinPtySupervisorRuntime(__dirname), pid) : undefined);
 
 /** F-572: uma leitura de `ps`, atribuída por root de sessão. */
 function captureFootprints(): Promise<SessionFootprint[]> {
@@ -376,16 +378,21 @@ parentPort.on('message', (e) => {
         // PTY died between the ownership check in main and this write.
       }
       return;
+    case 'prepare-native-heavy-job-base':
+      try { post({ type: 'native-heavy-job-base', requestId: msg.requestId, command: nestedHeavyJobBaseCommand(currentDarwinPtySupervisorRuntime(__dirname)) }); }
+      catch { post({ type: 'native-heavy-job-base', requestId: msg.requestId, command: null }); } return;
     case 'command-process-confirm':
       commandProcesses.confirmRequest(msg.sessionId, msg.requestId, msg.claimId); return;
     case 'command-process-cancel':
       commandProcesses.cancelRequest(msg.sessionId, msg.requestId); return;
     case 'command-process':
       void (async () => {
-        const claimId = msg.op === 'claim' ? await commandProcesses.claimForRequest(msg.sessionId, msg.requestId, msg.pid) : msg.claimId;
+        const claimId = msg.op === 'claim' ? await commandProcesses.claimForRequest(msg.sessionId, msg.requestId, msg.pid, msg.proof) : msg.claimId;
+        let stopped: boolean | undefined;
+        if (msg.op === 'stop') { try { await commandProcesses.stop(msg.sessionId, msg.claimId); stopped = true; } catch { stopped = false; } }
         const state = msg.op === 'probe' ? await commandProcesses.probe(msg.sessionId, msg.claimId) : null;
         const borrowed = msg.op === 'borrow' ? await commandProcesses.borrow(msg.sessionId, msg.claimId, msg.pid) : undefined;
-        post({ type: 'command-process-result', requestId: msg.requestId, sessionId: msg.sessionId, claimId, state, borrowed });
+        post({ type: 'command-process-result', requestId: msg.requestId, sessionId: msg.sessionId, claimId, state, borrowed, ...(stopped === undefined ? {} : { stopped }) });
       })().catch(() => post({ type: 'command-process-result', requestId: msg.requestId, sessionId: msg.sessionId, claimId: null, state: 'unknown' }));
       return;
     case 'analysis-credit':
