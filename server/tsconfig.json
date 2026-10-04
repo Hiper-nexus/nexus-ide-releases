@@ -8,6 +8,7 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "outDir": "dist",
+    "rootDir": "..",
     "rootDirs": ["src", "../shared"],
     "types": ["node"]
   },
