@@ -220,6 +220,8 @@ import {
   configureRendererMissionAuthority,
 } from "./orch/orch-ipc";
 import { quiesceOrchestrationCoordinator } from "./orch/orchestration-coordinator";
+import { nativeHeavyCommands } from "./orch/native-heavy-command";
+import { drainMissionShimDisposals } from "./orch/mcp-server";
 import {
   initNonWorkerAutoClose,
   shutdownNonWorkerAutoClose,
@@ -1481,6 +1483,7 @@ function shutdown(): Promise<void> {
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
     shutdownProgress.startedAt = Date.now();
+    nativeHeavyCommands.stopAdmission();
     stopMacOSDockWatchdog();
     // F-572: nenhum fechamento automático de pane pode disparar no meio do
     // teardown físico — a varredura e os timers param antes do PTY.
@@ -1526,9 +1529,14 @@ function shutdown(): Promise<void> {
         // F-240: orçamento 5s/8s/8s — ver o comentário de
         // APP_SHUTDOWN_PTY_TERMINATION (pty-manager) e QUIT_CEILING_MS.
         terminateAllSessions: () =>
-          trackShutdownPhase("terminateAllSessions", () =>
-            terminateAllSessions(APP_SHUTDOWN_PTY_TERMINATION),
-          ),
+          trackShutdownPhase("terminateAllSessions", async () => {
+            const result = await terminateAllSessions(APP_SHUTDOWN_PTY_TERMINATION);
+            // Claims live in the PTY host; retain it until owned process exit
+            // and private shim cleanup have physically settled.
+            await nativeHeavyCommands.drain();
+            await drainMissionShimDisposals();
+            return result;
+          }),
         shutdownPtyHost: () => trackShutdownPhase("shutdownPtyHost", shutdownPtyHost),
         // Via Rápida: o supervisor cerimonial de exit do orquestrador morreu;
         // não há reconciliação durável pendente a provar no shutdown.
