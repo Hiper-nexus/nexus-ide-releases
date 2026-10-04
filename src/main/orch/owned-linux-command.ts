@@ -94,8 +94,9 @@ export function prepareOwnedLinuxCommand(input: ScopedShellPlan, options: { io?:
   let resolveProof!: () => void;
   const proof = new Promise<void>(resolve => { resolveProof = resolve; });
   const closePins = async () => {
-    for (const fd of [outerFd, initFd]) if (fd !== null) await io.close(fd).catch(() => {});
+    const owned = [outerFd, initFd];
     outerFd = null; initFd = null;
+    for (const fd of owned) if (fd !== null) await io.close(fd).catch(() => {});
   };
   const complete = () => {
     if (settled || !outerClosed || !initGone || ambiguous) return;

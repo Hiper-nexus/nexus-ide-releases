@@ -44,6 +44,15 @@ function prepare(f: ReturnType<typeof fixture>) { const c = prepareOwnedLinuxCom
 function report(f: ReturnType<typeof fixture>, payload = '{"child-pid":101,"pid-namespace":4001}') { f.info.end(payload); }
 
 describe('owned Bubblewrap namespace lifetime', () => {
+  it('detaches pinned descriptors before asynchronous close so concurrent dispose cannot close a reused fd', async () => {
+    const f = fixture(); let finishClose!: () => void;
+    const closing = new Promise<void>(resolve => { finishClose = resolve; });
+    f.io.close = async fd => { f.closed.push(fd); if (fd === 100) await closing; };
+    const c = prepare(f); const proof = c.waitForExit(f.proc as unknown as ChildProcess);
+    report(f); await ticks(); f.state('Z'); f.proc.emit('close', 0, null); await ticks();
+    c.dispose(); await ticks(); expect(f.closed).toEqual([100]);
+    finishClose(); await proof; expect(f.closed).toEqual([100, 101]);
+  });
   it('rejects oversized info and binds only one ChildProcess', async () => {
     const f = fixture(); const c = prepare(f);
     void c.waitForExit(f.proc as unknown as ChildProcess);
