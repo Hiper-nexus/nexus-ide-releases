@@ -8,7 +8,7 @@ function deadline(ms) { clearTimeout(timer); timer = setTimeout(async () => { co
 deadline(5000);
 worker.on('message', (message) => {
  if (message.kind === 'start') { lastJob = message.id; deadline(250); }
- if (message.kind === 'end') clearTimeout(timer);
+ if (message.kind === 'end') deadline(5000);
  if (message.kind === 'done') { clearTimeout(timer); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, JSON.stringify(message.result, null, 2)); console.log(JSON.stringify(message.result)); worker.terminate(); }
 });
 worker.on('error', (error) => { clearTimeout(timer); console.error(error.message); process.exitCode = 1; });

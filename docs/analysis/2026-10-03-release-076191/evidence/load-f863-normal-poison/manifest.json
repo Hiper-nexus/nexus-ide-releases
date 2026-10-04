@@ -1,0 +1,76 @@
+{
+  "scope": "production Main with fake credit host, dedicated real analysis Worker",
+  "source": "9571a5b3 normal; 13398f61 poison; harness/CI WIP corresponding to cdc96181+5c4b4c3f and Root instrumentation",
+  "limitations": [
+    "not final union SHA",
+    "not signed native host proof",
+    "native CLI physical reservation findings remain open"
+  ],
+  "files": [
+    {
+      "path": "normal/metrics.json",
+      "bytes": 9542,
+      "sha256": "2042b24339e39c3689ebac0514cefa8ea26639816ac24f3417eb0a82747a0b71"
+    },
+    {
+      "path": "normal/analysis-final.json",
+      "bytes": 3245,
+      "sha256": "c583c7625e3db88ef670068541e6631dec88b8fcb9b881ef1794c3ca479adc75"
+    },
+    {
+      "path": "normal/barriers.json",
+      "bytes": 2632,
+      "sha256": "6fc2e5f4ca5a705d641efe431461f68f8320e5bb2cc798285f80709bd8c67479"
+    },
+    {
+      "path": "normal/main.cpuprofile",
+      "bytes": 484376,
+      "sha256": "2ec72d588c309499cd3e27d28db00bce59c6aff8beb6b921d5abb7c1c040d247"
+    },
+    {
+      "path": "normal/regex.json",
+      "bytes": 528,
+      "sha256": "52dca7d0d68aff4c8be81ee50512e43c78ee5ada587e615f75ef509bbbdd8c53"
+    },
+    {
+      "path": "normal/logs/main.trace.ndjson",
+      "bytes": 6551,
+      "sha256": "644e4846a8ff4f164203bec9c4ce083a69af323de943d59410e1c488931dfc6a"
+    },
+    {
+      "path": "normal/logs/lifecycle-2026-10-04.ndjson",
+      "bytes": 4408,
+      "sha256": "f9a9570f8693f71a371c15d4db57901896251606e3f455264cc1135ecdca8c1e"
+    },
+    {
+      "path": "poison/metrics.json",
+      "bytes": 11410,
+      "sha256": "027660c92e45732ba210b9035ff069c9e1c1739aa2ec9d62a2f1ee9f280d7810"
+    },
+    {
+      "path": "poison/analysis-final.json",
+      "bytes": 4298,
+      "sha256": "e9eef275eb4160ee169955a51997f493c70b003049f26ee016063d04c3250c7b"
+    },
+    {
+      "path": "poison/barriers.json",
+      "bytes": 3587,
+      "sha256": "c970d3291ff5a4fd9801d87a132352c6689aedccafcddf78047646d57e00d4e1"
+    },
+    {
+      "path": "poison/main.cpuprofile",
+      "bytes": 433438,
+      "sha256": "f1fa7db276bdfc38d991d2a978e8340a50e06b482679587439869513822d4050"
+    },
+    {
+      "path": "poison/logs/main.trace.ndjson",
+      "bytes": 7014,
+      "sha256": "f752c77622ab16a587cc2600bade4aa74c605d36fc2e444839f7d1c39ad44d7c"
+    },
+    {
+      "path": "poison/logs/lifecycle-2026-10-04.ndjson",
+      "bytes": 4676,
+      "sha256": "008b228719f48c27f5531c29c7a86c2c5a286d7fda12f97f4d4cf329b99c89ce"
+    }
+  ]
+}

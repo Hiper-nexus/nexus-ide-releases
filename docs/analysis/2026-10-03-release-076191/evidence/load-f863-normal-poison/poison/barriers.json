@@ -1,0 +1,206 @@
+[
+  {
+    "stage": "bound",
+    "sessionId": "pty-mut58hs7-1",
+    "ok": true,
+    "expected": true
+  },
+  {
+    "stage": "bound",
+    "sessionId": "pty-mut58ht2-2",
+    "ok": true,
+    "expected": true
+  },
+  {
+    "stage": "bound",
+    "sessionId": "pty-mut58ht4-3",
+    "ok": true,
+    "expected": true
+  },
+  {
+    "stage": "bound",
+    "sessionId": "pty-mut58ht5-4",
+    "ok": true,
+    "expected": true
+  },
+  {
+    "stage": "bound",
+    "sessionId": "pty-mut58ht6-5",
+    "ok": true,
+    "expected": true
+  },
+  {
+    "stage": "bound",
+    "sessionId": "pty-mut58ht7-6",
+    "ok": true,
+    "expected": true
+  },
+  {
+    "stage": "bound",
+    "sessionId": "pty-mut58ht8-7",
+    "ok": true,
+    "expected": true
+  },
+  {
+    "stage": "bound",
+    "sessionId": "pty-mut58htb-8",
+    "ok": true,
+    "expected": true
+  },
+  {
+    "stage": "bound",
+    "sessionId": "pty-mut58htc-9",
+    "ok": true,
+    "expected": true
+  },
+  {
+    "stage": "bound",
+    "sessionId": "pty-mut58hte-10",
+    "ok": true,
+    "expected": true
+  },
+  {
+    "stage": "bound",
+    "sessionId": "pty-mut58hte-11",
+    "ok": true,
+    "expected": true
+  },
+  {
+    "stage": "bound",
+    "sessionId": "pty-mut58htf-12",
+    "ok": true,
+    "expected": true
+  },
+  {
+    "stage": "bound",
+    "sessionId": "pty-mut58htg-13",
+    "ok": true,
+    "expected": true
+  },
+  {
+    "stage": "bound",
+    "sessionId": "pty-mut58hth-14",
+    "ok": true,
+    "expected": true
+  },
+  {
+    "stage": "bound",
+    "sessionId": "pty-mut58hti-15",
+    "ok": true,
+    "expected": true
+  },
+  {
+    "stage": "recovered-bound",
+    "sessionId": "pty-mut58iip-17",
+    "ok": true,
+    "expected": true
+  },
+  {
+    "stage": "loaded",
+    "sessionId": "pty-mut58hs7-1",
+    "ok": false,
+    "expected": false
+  },
+  {
+    "stage": "loaded",
+    "sessionId": "pty-mut58ht2-2",
+    "ok": false,
+    "expected": false
+  },
+  {
+    "stage": "loaded",
+    "sessionId": "pty-mut58ht4-3",
+    "ok": false,
+    "expected": false
+  },
+  {
+    "stage": "loaded",
+    "sessionId": "pty-mut58ht5-4",
+    "ok": false,
+    "expected": false
+  },
+  {
+    "stage": "loaded",
+    "sessionId": "pty-mut58ht6-5",
+    "ok": false,
+    "expected": false
+  },
+  {
+    "stage": "loaded",
+    "sessionId": "pty-mut58ht7-6",
+    "ok": false,
+    "expected": false
+  },
+  {
+    "stage": "loaded",
+    "sessionId": "pty-mut58ht8-7",
+    "ok": false,
+    "expected": false
+  },
+  {
+    "stage": "loaded",
+    "sessionId": "pty-mut58htb-8",
+    "ok": false,
+    "expected": false
+  },
+  {
+    "stage": "loaded",
+    "sessionId": "pty-mut58htc-9",
+    "ok": false,
+    "expected": false
+  },
+  {
+    "stage": "loaded",
+    "sessionId": "pty-mut58hte-10",
+    "ok": false,
+    "expected": false
+  },
+  {
+    "stage": "loaded",
+    "sessionId": "pty-mut58hte-11",
+    "ok": false,
+    "expected": false
+  },
+  {
+    "stage": "loaded",
+    "sessionId": "pty-mut58htf-12",
+    "ok": false,
+    "expected": false
+  },
+  {
+    "stage": "loaded",
+    "sessionId": "pty-mut58htg-13",
+    "ok": false,
+    "expected": false
+  },
+  {
+    "stage": "loaded",
+    "sessionId": "pty-mut58hth-14",
+    "ok": false,
+    "expected": false
+  },
+  {
+    "stage": "loaded",
+    "sessionId": "pty-mut58hti-15",
+    "ok": false,
+    "expected": false
+  },
+  {
+    "stage": "loaded",
+    "sessionId": "pty-mut58i7p-16",
+    "ok": false,
+    "expected": false
+  },
+  {
+    "stage": "loaded",
+    "sessionId": "pty-mut58iip-17",
+    "ok": true,
+    "expected": true
+  },
+  {
+    "stage": "physical-exit",
+    "sessionId": "pty-mut58iip-17",
+    "ok": true,
+    "expected": true
+  }
+]

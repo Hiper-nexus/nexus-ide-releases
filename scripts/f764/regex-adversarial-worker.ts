@@ -1,7 +1,7 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import fs from 'node:fs';
 import path from 'node:path';
-import ts from 'typescript';
+import { createRequire } from 'node:module';
 import { compileManifest, type CompiledGate } from '../../src/main/detect/compiler';
 import { loadManifestDir } from '../../src/main/detect/manifest';
 import { evaluateManifest } from '../../src/main/detect/evaluator';
@@ -12,6 +12,9 @@ import { PtyAnalysisCore } from '../../src/main/pty/pty-analysis-core';
 import type { AnalysisInput } from '../../src/main/pty/pty-analysis-protocol';
 const port = parentPort!;
 const root = workerData.root as string;
+// The audit bundle lives in a private temp directory; resolve the pinned
+// compiler from the repository instead of requiring a /tmp installation.
+const ts = createRequire(path.join(root, 'package.json'))('typescript') as typeof import('typescript');
 const compiled = loadManifestDir(path.join(root, 'resources/agent-detection')).map(({ manifest }) => compileManifest(manifest));
 const shapes = [ ['space-x', ' '.repeat(999_999) + 'x'], ['dots-x', '.'.repeat(999_999) + 'x'], ['tabs-between', 'a' + '\t'.repeat(999_998) + 'b'], ['frames-x', '─'.repeat(333_333) + 'x'], ['digits-suffix', '9'.repeat(999_999) + '!'] ] as const;
 const files = [
@@ -29,7 +32,7 @@ const literals: { id: string; regex: RegExp; cap: number }[] = [];
 for (const file of files) {
  const source = fs.readFileSync(path.join(root, file), 'utf8');
  const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
- const visit = (node: ts.Node) => {
+ const visit = (node: import('typescript').Node) => {
   if (node.kind === ts.SyntaxKind.RegularExpressionLiteral) {
    const literal = node.getText(tree); const slash = literal.lastIndexOf('/');
    literals.push({ id: `${file}:${tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1}`, regex: new RegExp(literal.slice(1, slash), literal.slice(slash + 1)), cap: file.includes('limit') || file.includes('failover') ? 4_000 : 32_768 });

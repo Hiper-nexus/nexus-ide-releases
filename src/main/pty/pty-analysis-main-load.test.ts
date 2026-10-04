@@ -65,6 +65,7 @@ import { configureWorktreeRuntimeRegistry, disposeWorktreeRuntimeRegistry } from
 import { spawnPaneAndMaybePrompt } from '../orch/tool-util';
 import { CommandBlockTracker } from '../terminal/command-block-tracker';
 import { allocateIsolatedWriterWorktree } from '../orch/isolated-writer-worktree';
+import { setTraceDirectory, flushMainTrace } from '../observability/main-trace';
 
 const adapter = {
   kind: 'cli-pty', id: 'codex', label: 'finite fake-host Codex fixture', bin: 'true',
@@ -78,9 +79,25 @@ const adapter = {
   control: { permission: { safe: [], yolo: [], modes: {}, default: '' } },
 } as unknown as CliPtyAdapter;
 
-it('drives the real Main PTY bridge with 15 bounded sessions and production supervisor', async () => {
+// Performance acceptance is a dedicated serial CI job with its own Worker
+// build. The regular suite must not depend on another run's /tmp artifact.
+it.runIf(Boolean(process.env.F764_WORKER_ENTRY))('drives the real Main PTY bridge with 15 bounded sessions and production supervisor', async () => {
+  const duration = Number(process.env.F764_LOAD_MS ?? 1_000);
+  if (!Number.isSafeInteger(duration) || duration < 1_000 || duration > 60_000) throw new Error('F764_LOAD_MS must be 1000..60000');
   const artifactDir = process.env.F764_ARTIFACT_DIR ?? fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-f764-main-load-'));
   fs.mkdirSync(artifactDir, { recursive: true });
+  setTraceDirectory(artifactDir);
+  const poisonMode = process.env.F764_INJECT_POISON === '1';
+  const poisonedSessions = new Set<string>();
+  const barriers: { stage: string; sessionId: string; ok: boolean; expected: boolean }[] = [];
+  const flush = async (sessionId: string, stage: string) => {
+    const ok = await flushPtyAnalysis(sessionId);
+    const expected = !poisonedSessions.has(sessionId);
+    if (!expected) expect(analysisClient.status(sessionId), 'false barrier requires proved degraded session').toBe('degraded');
+    barriers.push({ stage, sessionId, ok, expected });
+    fs.writeFileSync(path.join(artifactDir, 'barriers.json'), JSON.stringify(barriers, null, 2));
+    expect(ok, `analysis barrier ${stage} for ${sessionId}`).toBe(expected);
+  };
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-f764-project-')));
   const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' });
   git('init', '-q'); git('config', 'user.name', 'Finite Fixture'); git('config', 'user.email', 'fixture@example.test');
@@ -107,8 +124,20 @@ it('drives the real Main PTY bridge with 15 bounded sessions and production supe
     else if (message.type === 'terminate') { bridge.dispatchEvent({ type: 'exit', sessionId: message.sessionId, exitCode: 0 }); bridge.dispatchEvent({ type: 'termination-result', sessionId: message.sessionId, requestId: message.requestId, proof: { ok: true, rootExited: true, descendantsExited: true } }); }
   } });
   setPtyHost(bridge.host);
-  const workerEntry = process.env.F764_WORKER_ENTRY ?? '/tmp/nexus-f764-worker-build/pty-analysis-worker-entry.js';
-  setPtyAnalysisWorkerFactoryForTests(() => new Worker(workerEntry, { workerData: { manifestDir: path.join(process.cwd(), 'resources/agent-detection') } }));
+  const workerEntry = process.env.F764_WORKER_ENTRY!;
+  const poisonDir = poisonMode ? fs.mkdtempSync(path.join(os.tmpdir(), 'f764-poison-manifest-')) : null;
+  if (poisonDir) fs.writeFileSync(path.join(poisonDir, 'codex.toml'), [
+    'id = "codex"', '[[rules]]', 'id = "finite-poison"', 'state = "blocked"', 'region = "whole_recent"', "regex = ['(a+)+$']",
+  ].join('\n'));
+  let workerCount = 0; let poisonedWorkerExited = false;
+  let provePoisonedWorkerExited!: () => void;
+  const physicalPoisonExit = new Promise<void>(resolve => { provePoisonedWorkerExited = resolve; });
+  setPtyAnalysisWorkerFactoryForTests((analysisProgress) => {
+    const first = workerCount++ === 0;
+    const worker = new Worker(workerEntry, { workerData: { manifestDir: poisonDir && first ? poisonDir : path.join(process.cwd(), 'resources/agent-detection'), analysisProgress } });
+    if (poisonMode && first) worker.once('exit', () => { poisonedWorkerExited = true; provePoisonedWorkerExited(); });
+    return worker;
+  });
   startPtyAnalysis(); initPaneRegistry(); const stopScreen = startAgentScreenDetection(); initFailover(); initCostTracker(); initTokenSpeedTracker(); initPanePipes();
   const missionControl = new PtyStreamMissionControl({ isAuthorized: (id) => Boolean(getAgentSessionInfo(id)), isInjectableIdle: () => false, write: () => false, invoke: async () => ({ ok: false, tool: 'fixture', error: 'finite fixture does not issue tool actions' }) });
   installLegacyParser(missionControl);
@@ -130,7 +159,7 @@ it('drives the real Main PTY bridge with 15 bounded sessions and production supe
     return result.sessionId;
   };
   for (let index = 0; index < 15; index++) spawn(index);
-  await Promise.all(ids.map((id) => flushPtyAnalysis(id)));
+  await Promise.all(ids.map((id) => flush(id, 'bound')));
   const pasteWatch = watchPasteIngest(ids[0], { marker: CODEX_PASTE_MARKER, capMs: 5_000 });
   let pasteOutcome: string | null = null; void pasteWatch.done.then((outcome) => { pasteOutcome = outcome; });
   const lag = monitorEventLoopDelay({ resolution: 5 }); lag.enable();
@@ -139,9 +168,16 @@ it('drives the real Main PTY bridge with 15 bounded sessions and production supe
   const profile = new inspector.Session(); profile.connect();
   const post = (method: string) => new Promise<Record<string, unknown>>((resolve, reject) => profile.post(method as 'Profiler.enable', (error: Error | null, value: object) => error ? reject(error) : resolve(value as Record<string, unknown> ?? {})));
   await post('Profiler.enable'); await post('Profiler.start');
-  const duration = Number(process.env.F764_LOAD_MS ?? 1_000); const start = performance.now(); const flood = 'é'.repeat(16_384); const frame = '\x1b[2K\rWorking…\n';
+  let profileSaved = false;
+  const saveProfile = async () => {
+    if (profileSaved) return;
+    const cpu = await post('Profiler.stop'); profileSaved = true;
+    fs.writeFileSync(path.join(artifactDir, 'main.cpuprofile'), JSON.stringify(cpu.profile));
+  };
+  const start = performance.now(); const flood = 'é'.repeat(16_384); const frame = '\x1b[2K\rWorking…\n';
   const allocations: Promise<unknown>[] = []; let allocationError: unknown = null; let routedSpawnWallMs = 0;
   let pastedMarkerSent = false; let finalSession: string | null = null;
+  let poisonSent = false; let recoveredSession: string | null = null;
   let lastSideFrame = -Infinity; let lastSupervisor = start; let allocationStarted = false;
   try {
     while (performance.now() - start < duration) {
@@ -151,7 +187,15 @@ it('drives the real Main PTY bridge with 15 bounded sessions and production supe
       for (let index = 0; index < ids.length; index++) if (!paused.has(ids[index]) && (index === 0 || sideFrameDue)) {
         let data = index === 0 ? flood : frame;
         if (index === 0 && !pastedMarkerSent && elapsed > 50) { data = 'é'.repeat(8_000) + '[Pasted Content 1234 chars]' + 'é'.repeat(8_000); pastedMarkerSent = true; }
+        if (poisonMode && index === 13 && !poisonSent && elapsed > 500) { data = 'a'.repeat(5_000) + '!\n'; poisonSent = true; }
         generatedBytes += Buffer.byteLength(data); generatedHashes.get(ids[index])!.update(data); credits.get(ids[index])!.push(data);
+      }
+      if (poisonMode && poisonSent && poisonedWorkerExited && !recoveredSession) {
+        for (const id of ids) if (analysisClient.status(id) === 'degraded') poisonedSessions.add(id);
+        await physicalPoisonExit;
+        expect(poisonedWorkerExited).toBe(true);
+        recoveredSession = spawn(16);
+        await flush(recoveredSession, 'recovered-bound');
       }
       if (sideFrameDue && Math.floor(elapsed / 500) % 2 === 1) for (const id of ids.slice(1, 15)) publishSessionActivityState(id, 'idle');
       if (sideFrameDue) lastSideFrame = performance.now();
@@ -166,41 +210,68 @@ it('drives the real Main PTY bridge with 15 bounded sessions and production supe
           allocation.link(result.paneId, result.sessionId); return allocation;
         }).catch((error) => { allocationError = error; return null; }));
       }
-      if (performance.now() - lastSupervisor >= 100) { reconcileDelegationSupervisor(); supervisorScans++; lastSupervisor = performance.now(); }
+      if (performance.now() - lastSupervisor >= 100) { await reconcileDelegationSupervisor(); supervisorScans++; lastSupervisor = performance.now(); }
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
     await Promise.all(allocations); if (allocationError) throw allocationError;
-    await Promise.all(ids.map((id) => flushPtyAnalysis(id)));
-    finalSession = ids[14];
+    await Promise.all(ids.map((id) => flush(id, 'loaded')));
+    if (poisonMode) {
+      expect(poisonSent).toBe(true); expect(poisonedWorkerExited).toBe(true); expect(recoveredSession).not.toBeNull();
+      expect(poisonedSessions.size).toBeGreaterThanOrEqual(15);
+      expect(analysisClient.metrics().workerEpoch).toBeGreaterThan(1);
+      expect(analysisClient.metrics().lastFailure).toBe('work-timeout');
+    }
+    finalSession = poisonMode ? recoveredSession! : ids[14];
     const final = '\x1b]133;E;echo finite-final\x07\x1b]133;B\x07\x1b]133;D;0\x07\n### NEXUS_HANDOFF v1\n{"status":"success","summary":"Finite fixture handoff after complete byte transport","artifacts":[]}\nPRONTO: finite final completion';
     generatedBytes += Buffer.byteLength(final); generatedHashes.get(finalSession)!.update(final); credits.get(finalSession)!.push(final);
     credits.get(finalSession)!.seal(() => bridge.dispatchEvent({ type: 'exit', sessionId: finalSession!, exitCode: 0 }));
-    await flushPtyAnalysis(finalSession);
+    await orchTerminateSession(finalSession);
+    await flush(finalSession, 'physical-exit');
     const finalMarker = missionMarkerObserver.markerOf(finalSession);
     const finalHandoffs = analysisClient.evidence(finalSession, 'handoff');
     const elapsedMs = performance.now() - start;
     const idleWorker = ids[1];
     applyScreenDetectionEvent({ sessionId: idleWorker, state: 'working', visibleIdle: false, visibleBlocker: false, visibleWorking: true, now: Date.now() });
     publishSessionActivityState(idleWorker, 'idle');
-    reconcileDelegationSupervisor(Date.now() + 25 * 60_000); supervisorScans++;
+    await reconcileDelegationSupervisor(Date.now() + 25 * 60_000); supervisorScans++;
     const supervisorHandoffs = suite.handoffs.list({ missionId: mission.id, includeDelivered: true }).filter((h) => h.status === 'stalled');
     maxBlock = Math.max(maxBlock, performance.now() - heartbeatAt - 5);
-    const cpu = await post('Profiler.stop'); fs.writeFileSync(path.join(artifactDir, 'main.cpuprofile'), JSON.stringify(cpu.profile));
+    await saveProfile();
     const checksums = ids.map((id) => ({ sessionId: id, generated: generatedHashes.get(id)!.digest('hex'), received: receivedHashes.get(id)!.digest('hex'), chunks: receivedChunks.get(id) ?? 0 }));
-    const metrics = { pasteOutcome, finalCompletion: finalMarker?.kind, finalHandoffs: finalHandoffs.length, finalCommands: finishedCommands.length, missionStatus: suite.missions.get(mission.id)?.status, workerState: getSessionState(idleWorker), supervisorPaneStates: listPaneSnapshots().filter((p) => p.missionId === mission.id).map((p) => ({ paneId: p.paneId, role: p.role, state: p.state })), supervisorStallHandoffs: supervisorHandoffs.length, semanticWorkerStatus: getAgentSemanticStatusBySession(idleWorker)?.status, routedSpawnWallMs, checksums, label: 'production Main + fake credit host', head: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), fixtureBase: git('rev-parse', 'HEAD').trim(), runtime: process.version, sessions: ids.length, generatedBytes, receivedBytes, elapsedMs,
+    const metrics = { poisonMode, poisonedWorkerExited, recoveredSession, poisonedSessions: [...poisonedSessions], pasteOutcome, finalCompletion: finalMarker?.kind, finalHandoffs: finalHandoffs.length, finalCommands: finishedCommands.length, missionStatus: suite.missions.get(mission.id)?.status, workerState: getSessionState(idleWorker), supervisorPaneStates: listPaneSnapshots().filter((p) => p.missionId === mission.id).map((p) => ({ paneId: p.paneId, role: p.role, state: p.state })), supervisorStallHandoffs: supervisorHandoffs.length, semanticWorkerStatus: getAgentSemanticStatusBySession(idleWorker)?.status, routedSpawnWallMs, checksums, label: 'production Main + fake credit host', head: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), fixtureBase: git('rev-parse', 'HEAD').trim(), runtime: process.version, sessions: ids.length, generatedBytes, receivedBytes, elapsedMs,
       receivedBytesPerSec: receivedBytes * 1000 / elapsedMs, p99LagMs: lag.percentile(99) / 1e6, maxBlockingMs: maxBlock, maxSpawnBlockingMs: Math.max(...spawnTimes), supervisorScans,
-      analysis: analysisClient.metrics(), liveAgentBindings: ids.filter((id) => getAgentSessionInfo(id)).length,
+      analysis: analysisClient.metrics(), barriers, liveAgentBindings: ids.filter((id) => getAgentSessionInfo(id)).length,
       limitations: ['Signed native host and hard-watchdog fault run still pending; do not treat this partial harness as C.1/C.2 acceptance'] };
     fs.writeFileSync(path.join(artifactDir, 'metrics.json'), JSON.stringify(metrics, null, 2)); console.log(`F764 artifacts: ${artifactDir}`);
-    expect(pasteOutcome).toBe('marker'); expect(finalMarker?.kind).toBe('done'); expect(finalHandoffs).toHaveLength(1); expect(finishedCommands.some((block) => block.command === 'echo finite-final' && block.status === 'success')).toBe(true);
+    expect(pasteOutcome).toBe('marker'); expect(finalMarker?.kind).toBe('done'); expect(finalHandoffs).toHaveLength(1); expect(finishedCommands.some((block) => block.sessionId === finalSession && block.command === 'echo finite-final' && block.status === 'success')).toBe(true);
     expect(supervisorHandoffs.some((h) => h.summary.includes('[travado]'))).toBe(true);
-    expect(checksums.every((entry) => entry.generated === entry.received)).toBe(true); expect(supervisorScans).toBeGreaterThan(0); expect(metrics.liveAgentBindings).toBe(15);
+    expect(checksums.every((entry) => entry.generated === entry.received)).toBe(true); expect(supervisorScans).toBeGreaterThan(0); expect(metrics.liveAgentBindings).toBe(poisonMode ? 16 : 15);
     expect(metrics.analysis.degraded).toBe(false); expect(metrics.analysis.highwaterBytes).toBeLessThanOrEqual(4 * 1024 * 1024);
+    if (poisonMode) {
+      const fresh = analysisClient.diagnostics().sessions.find(session => session.sessionId === recoveredSession);
+      expect(fresh?.status).toBe('sealed');
+      expect(fresh?.totalAdmittedBytes).toBeGreaterThan(0);
+      expect(fresh?.totalAckedBytes).toBe(fresh?.totalAdmittedBytes);
+    }
+    if (!poisonMode) {
+      expect(metrics.analysis.degradedSessions).toBe(0); expect(metrics.analysis.lastFailure).toBeNull();
+      expect(metrics.analysis.admittedBytes).toBe(receivedBytes); expect(metrics.analysis.ackedBytes).toBe(receivedBytes);
+    }
     expect(metrics.p99LagMs).toBeLessThan(100); expect(metrics.maxBlockingMs).toBeLessThan(1_000); expect(metrics.maxSpawnBlockingMs).toBeLessThan(100);
+    expect(metrics.receivedBytesPerSec).toBeGreaterThanOrEqual(5_000_000);
   } finally {
-    pasteWatch.cancel(); clearInterval(heartbeat); lag.disable(); profile.disconnect(); stopScreen(); commandTracker.stop(); shutdownFailover(); shutdownDelegationSupervisor();
-    for (const id of ids) await orchTerminateSession(id);
-    ids.forEach((_, index) => deleteMainOwnedPane(`finite-${index}`));
-    await shutdownPtyAnalysis(); disposeWorktreeRuntimeRegistry(); disposeProjectDomainStoreRegistry(); manager.closeAll();
+    try {
+      fs.writeFileSync(path.join(artifactDir, 'analysis-final.json'), JSON.stringify({ analysis: analysisClient.metrics(), barriers }, null, 2));
+      await saveProfile();
+    } finally {
+      pasteWatch.cancel(); clearInterval(heartbeat); lag.disable(); profile.disconnect(); stopScreen(); commandTracker.stop(); shutdownFailover(); await shutdownDelegationSupervisor();
+      for (const id of ids) await orchTerminateSession(id);
+      ids.forEach((_, index) => deleteMainOwnedPane(`finite-${index}`));
+      try { await flushMainTrace(); }
+      finally {
+        await shutdownPtyAnalysis(); disposeWorktreeRuntimeRegistry(); await disposeProjectDomainStoreRegistry(); manager.closeAll();
+        setTraceDirectory(null);
+      }
+    }
   }
 }, 120_000);

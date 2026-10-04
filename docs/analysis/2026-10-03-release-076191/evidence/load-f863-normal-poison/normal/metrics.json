@@ -1,0 +1,382 @@
+{
+  "pasteOutcome": "marker",
+  "finalCompletion": "done",
+  "finalHandoffs": 1,
+  "finalCommands": 1,
+  "missionStatus": "running",
+  "workerState": "idle",
+  "supervisorPaneStates": [
+    {
+      "paneId": "finite-0",
+      "role": "orchestrator",
+      "state": "busy"
+    },
+    {
+      "paneId": "finite-1",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-2",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-3",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-4",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-5",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-6",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-7",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-8",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-9",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-10",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-11",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-12",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-13",
+      "role": "worker",
+      "state": "idle"
+    },
+    {
+      "paneId": "finite-14",
+      "role": "worker",
+      "state": "exited"
+    },
+    {
+      "paneId": "pane-mut3vefy-4",
+      "role": "worker",
+      "state": "busy"
+    }
+  ],
+  "supervisorStallHandoffs": 1,
+  "semanticWorkerStatus": "working",
+  "routedSpawnWallMs": 37.15516699999989,
+  "checksums": [
+    {
+      "sessionId": "pty-mut3vdpm-1",
+      "generated": "e2f3ae4da93a237e3784b12b70f004b8c6120f1ab392ac6fb214af49bcb035c2",
+      "received": "e2f3ae4da93a237e3784b12b70f004b8c6120f1ab392ac6fb214af49bcb035c2",
+      "chunks": 7662
+    },
+    {
+      "sessionId": "pty-mut3vdq5-2",
+      "generated": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "received": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "chunks": 1144
+    },
+    {
+      "sessionId": "pty-mut3vdq8-3",
+      "generated": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "received": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "chunks": 1144
+    },
+    {
+      "sessionId": "pty-mut3vdq9-4",
+      "generated": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "received": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "chunks": 1144
+    },
+    {
+      "sessionId": "pty-mut3vdqa-5",
+      "generated": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "received": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "chunks": 1144
+    },
+    {
+      "sessionId": "pty-mut3vdqd-6",
+      "generated": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "received": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "chunks": 1144
+    },
+    {
+      "sessionId": "pty-mut3vdqe-7",
+      "generated": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "received": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "chunks": 1144
+    },
+    {
+      "sessionId": "pty-mut3vdqk-8",
+      "generated": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "received": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "chunks": 1144
+    },
+    {
+      "sessionId": "pty-mut3vdqo-9",
+      "generated": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "received": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "chunks": 1144
+    },
+    {
+      "sessionId": "pty-mut3vdqq-10",
+      "generated": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "received": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "chunks": 1144
+    },
+    {
+      "sessionId": "pty-mut3vdqr-11",
+      "generated": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "received": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "chunks": 1144
+    },
+    {
+      "sessionId": "pty-mut3vdqs-12",
+      "generated": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "received": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "chunks": 1144
+    },
+    {
+      "sessionId": "pty-mut3vdqs-13",
+      "generated": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "received": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "chunks": 1144
+    },
+    {
+      "sessionId": "pty-mut3vdqu-14",
+      "generated": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "received": "6151ba108f6751b0bf9f5b50339b1b7673c404f7c3c0f9c1ff838fbee96e7ba6",
+      "chunks": 1144
+    },
+    {
+      "sessionId": "pty-mut3vdqu-15",
+      "generated": "1bb6733bfac1f5ef0abb70a1721b6a08e0008e6dc7502000f53f7488be586c46",
+      "received": "1bb6733bfac1f5ef0abb70a1721b6a08e0008e6dc7502000f53f7488be586c46",
+      "chunks": 1145
+    },
+    {
+      "sessionId": "pty-mut3vefy-16",
+      "generated": "9fa636416cc44c3b1d6d917b4d577380e771a60e2ea128e563cb4b1498a81063",
+      "received": "9fa636416cc44c3b1d6d917b4d577380e771a60e2ea128e563cb4b1498a81063",
+      "chunks": 1119
+    }
+  ],
+  "label": "production Main + fake credit host",
+  "head": "9571a5b36f8b8488218f113b226a8812b3d0879d",
+  "fixtureBase": "33db56f1da45e84e0a7b7148f98cd65a24373f4d",
+  "runtime": "v22.23.2",
+  "sessions": 16,
+  "generatedBytes": 251243729,
+  "receivedBytes": 251243729,
+  "elapsedMs": 30097.587208999998,
+  "receivedBytesPerSec": 8347636.880502876,
+  "p99LagMs": 9.404415,
+  "maxBlockingMs": 182.26925000000028,
+  "maxSpawnBlockingMs": 19.21837500000038,
+  "supervisorScans": 289,
+  "analysis": {
+    "degradedSessions": 0,
+    "workerEpoch": 1,
+    "pendingBytes": 0,
+    "inFlight": true,
+    "admittedBytes": 251243729,
+    "ackedBytes": 251243729,
+    "highwaterBytes": 201776,
+    "sessions": 16,
+    "degraded": false,
+    "lastFailure": null
+  },
+  "barriers": [
+    {
+      "stage": "bound",
+      "sessionId": "pty-mut3vdpm-1",
+      "ok": true
+    },
+    {
+      "stage": "bound",
+      "sessionId": "pty-mut3vdq5-2",
+      "ok": true
+    },
+    {
+      "stage": "bound",
+      "sessionId": "pty-mut3vdq8-3",
+      "ok": true
+    },
+    {
+      "stage": "bound",
+      "sessionId": "pty-mut3vdq9-4",
+      "ok": true
+    },
+    {
+      "stage": "bound",
+      "sessionId": "pty-mut3vdqa-5",
+      "ok": true
+    },
+    {
+      "stage": "bound",
+      "sessionId": "pty-mut3vdqd-6",
+      "ok": true
+    },
+    {
+      "stage": "bound",
+      "sessionId": "pty-mut3vdqe-7",
+      "ok": true
+    },
+    {
+      "stage": "bound",
+      "sessionId": "pty-mut3vdqk-8",
+      "ok": true
+    },
+    {
+      "stage": "bound",
+      "sessionId": "pty-mut3vdqo-9",
+      "ok": true
+    },
+    {
+      "stage": "bound",
+      "sessionId": "pty-mut3vdqq-10",
+      "ok": true
+    },
+    {
+      "stage": "bound",
+      "sessionId": "pty-mut3vdqr-11",
+      "ok": true
+    },
+    {
+      "stage": "bound",
+      "sessionId": "pty-mut3vdqs-12",
+      "ok": true
+    },
+    {
+      "stage": "bound",
+      "sessionId": "pty-mut3vdqs-13",
+      "ok": true
+    },
+    {
+      "stage": "bound",
+      "sessionId": "pty-mut3vdqu-14",
+      "ok": true
+    },
+    {
+      "stage": "bound",
+      "sessionId": "pty-mut3vdqu-15",
+      "ok": true
+    },
+    {
+      "stage": "loaded",
+      "sessionId": "pty-mut3vefy-16",
+      "ok": true
+    },
+    {
+      "stage": "loaded",
+      "sessionId": "pty-mut3vdpm-1",
+      "ok": true
+    },
+    {
+      "stage": "loaded",
+      "sessionId": "pty-mut3vdq5-2",
+      "ok": true
+    },
+    {
+      "stage": "loaded",
+      "sessionId": "pty-mut3vdq8-3",
+      "ok": true
+    },
+    {
+      "stage": "loaded",
+      "sessionId": "pty-mut3vdq9-4",
+      "ok": true
+    },
+    {
+      "stage": "loaded",
+      "sessionId": "pty-mut3vdqa-5",
+      "ok": true
+    },
+    {
+      "stage": "loaded",
+      "sessionId": "pty-mut3vdqd-6",
+      "ok": true
+    },
+    {
+      "stage": "loaded",
+      "sessionId": "pty-mut3vdqe-7",
+      "ok": true
+    },
+    {
+      "stage": "loaded",
+      "sessionId": "pty-mut3vdqk-8",
+      "ok": true
+    },
+    {
+      "stage": "loaded",
+      "sessionId": "pty-mut3vdqo-9",
+      "ok": true
+    },
+    {
+      "stage": "loaded",
+      "sessionId": "pty-mut3vdqq-10",
+      "ok": true
+    },
+    {
+      "stage": "loaded",
+      "sessionId": "pty-mut3vdqr-11",
+      "ok": true
+    },
+    {
+      "stage": "loaded",
+      "sessionId": "pty-mut3vdqs-12",
+      "ok": true
+    },
+    {
+      "stage": "loaded",
+      "sessionId": "pty-mut3vdqs-13",
+      "ok": true
+    },
+    {
+      "stage": "loaded",
+      "sessionId": "pty-mut3vdqu-14",
+      "ok": true
+    },
+    {
+      "stage": "loaded",
+      "sessionId": "pty-mut3vdqu-15",
+      "ok": true
+    },
+    {
+      "stage": "physical-exit",
+      "sessionId": "pty-mut3vdqu-15",
+      "ok": true
+    }
+  ],
+  "liveAgentBindings": 15,
+  "limitations": [
+    "Signed native host and hard-watchdog fault run still pending; do not treat this partial harness as C.1/C.2 acceptance"
+  ]
+}

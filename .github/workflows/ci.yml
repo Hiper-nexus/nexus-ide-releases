@@ -69,4 +69,33 @@ jobs:
       - run: npm run lint:main-sync
       - run: npm run security:renderer-sinks
       - run: npm test
-
+      - name: Prove Linux command namespace lifetime
+        env:
+          NEXUS_LINUX_OWNED_COMMAND_TEST: "1"
+        run: npx vitest run src/main/orch/owned-linux-command.test.ts --maxWorkers=1
+      - name: Build isolated F-764 analysis and regex audit workers
+        run: |
+          npx vite build --config vite.pty-analysis.config.ts --outDir "$RUNNER_TEMP/f764-pty"
+          npx vite build --config scripts/f764/vite.regex-audit.config.ts --outDir "$RUNNER_TEMP/f764-regex"
+      - name: Verify bounded adversarial detection regexes
+        run: node scripts/f764/regex-adversarial.cjs "$RUNNER_TEMP/f764-regex/regex-adversarial-worker.cjs" "$RUNNER_TEMP/f764-evidence/regex.json"
+      - name: Measure F-764 production Main with fifteen PTYs
+        env:
+          F764_LOAD_MS: "30000"
+          F764_WORKER_ENTRY: ${{ runner.temp }}/f764-pty/pty-analysis-worker-entry.js
+          F764_ARTIFACT_DIR: ${{ runner.temp }}/f764-evidence
+        run: npx vitest run src/main/pty/pty-analysis-main-load.test.ts --maxWorkers=1
+      - name: Prove F-764 responsiveness and semantic recovery after poisoned analysis
+        env:
+          F764_LOAD_MS: "30000"
+          F764_INJECT_POISON: "1"
+          F764_WORKER_ENTRY: ${{ runner.temp }}/f764-pty/pty-analysis-worker-entry.js
+          F764_ARTIFACT_DIR: ${{ runner.temp }}/f764-evidence/poison
+        run: npx vitest run src/main/pty/pty-analysis-main-load.test.ts --maxWorkers=1
+      - name: Preserve F-764 timing and CPU profile evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: f764-main-responsiveness
+          path: ${{ runner.temp }}/f764-evidence/
+          if-no-files-found: error

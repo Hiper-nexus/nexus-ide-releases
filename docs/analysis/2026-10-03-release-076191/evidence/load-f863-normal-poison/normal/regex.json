@@ -1,0 +1,30 @@
+{
+  "label": "C3 actual production windows + dedicated Worker audit",
+  "rawBytesPerShape": [
+    {
+      "name": "space-x",
+      "bytes": 1000000
+    },
+    {
+      "name": "dots-x",
+      "bytes": 1000000
+    },
+    {
+      "name": "tabs-between",
+      "bytes": 1000000
+    },
+    {
+      "name": "frames-x",
+      "bytes": 1000000
+    },
+    {
+      "name": "digits-suffix",
+      "bytes": 1000000
+    }
+  ],
+  "manifestCount": 21,
+  "literalRegexCount": 205,
+  "tests": 1565,
+  "semanticCases": 105,
+  "maxMs": 15.277625
+}
