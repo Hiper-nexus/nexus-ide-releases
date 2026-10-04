@@ -186,6 +186,7 @@ import {
   configurePtyProjectRuntimeManager,
   registerPtyIpc,
 } from "./pty/pty-ipc";
+import { nativeHeavyJobEnvironment } from "./orch/native-heavy-preload";
 import {
   registerBrowserIpc,
   destroyBrowsersFor,
@@ -667,6 +668,9 @@ async function bootstrap(): Promise<void> {
   });
   setPaneTerminalIdentity({ name: "NexusIDE", version: app.getVersion() });
   registerPtyIpc();
+  // Authenticate the native job base in the utility host before any agent
+  // receives its synchronous spawn environment.
+  await nativeHeavyJobEnvironment();
   // Semantic CommandBlock layer (OSC 133). Fail-closed behind feature flag;
   // never mutates the PTY byte stream — lateral tap only.
   // Persist finished blocks into project runtime SQLite when flag + scope ok.
