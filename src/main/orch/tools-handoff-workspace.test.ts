@@ -141,14 +141,14 @@ describe("workspace handoff", () => {
     child.visualTask = { since: 1000, id: 'workspace-assignment' };
     const close = vi.spyOn(panes, 'requestPaneClose').mockResolvedValue(true);
     armAutoCloseOnHandoff('child', 'pane-child');
-    const first = await tool('submit').handler({ ...args, fullText: args.summary }, child);
+    const first = await tool('submit').handler({ ...args, fullText: "Relatório completo: implementação em result.ts, validação executada e resultados conferidos." }, child);
     expect(first).toMatchObject({ status: 'partial', visualVerification: { verified: false } });
     expect(close).not.toHaveBeenCalled();
     expect(armedAutoClosePaneId('child')).toBe('pane-child');
     const proof = createScopedBrowserArtifactStore(manager, scope).recordScreenshot({ paneId: 'browser-pane',
       png: Buffer.from('Main capture fixture'), width: 1, height: 1, url: 'http://localhost:3000', title: 'UI', capturedAt: 1100 });
     expect(recordVisualHandoffEvidence(child, proof.id)).toBe(true);
-    const second = await tool('submit').handler({ ...args, fullText: args.summary }, child);
+    const second = await tool('submit').handler({ ...args, fullText: "Relatório completo: implementação em result.ts, validação executada e resultados conferidos." }, child);
     expect(second).toMatchObject({ status: 'success', visualVerification: { verified: true, artifactId: proof.id } });
     expect(getProjectDomainStores(scope).handoffs.list({ includeDelivered: true }).map(h => h.status)).toEqual(['partial', 'success']);
   });
@@ -162,6 +162,45 @@ describe("workspace handoff", () => {
     expect(getProjectDomainStores(scope).handoffs.list({ includeDelivered: true })).toHaveLength(0);
     expect(armedAutoClosePaneId('child')).toBe('pane-child');
   });
+  it.each([
+    { fullText: args.summary },
+    { artifacts: [{ fullText: `  ${args.summary}\n` }] },
+    { artifacts: [{ kind: 'overclock.fullText', payload: args.summary }] },
+  ])('preserves a Main-sanitized terminal tail before closing a repeated summary: %j', async (report) => {
+    caller('parent');
+    const child = caller('child');
+    const close = vi.spyOn(panes, 'requestPaneClose').mockResolvedValue(true);
+    const output = vi.spyOn(panes, 'readSessionOutput').mockReturnValue(
+      '\u001b[32mDetalhes da pesquisa: fonte primária, método e resultado.\u001b[0m\n' +
+      'ANTHROPIC_API_KEY=sk-ant-test-secret-do-not-preserve\n',
+    );
+    armAutoCloseOnHandoff('child', 'pane-child');
+    vi.useFakeTimers();
+    const result = await tool('submit').handler({ ...args, ...report }, child);
+    expect(result).toMatchObject({ delivered: true, warning: expect.stringContaining('cauda') });
+    const handoff = getProjectDomainStores(scope).handoffs.list({ includeDelivered: true })[0];
+    expect(handoff.artifacts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'nexus.terminal-tail', payload: expect.stringContaining('Detalhes da pesquisa') }),
+    ]));
+    expect(JSON.stringify(handoff.artifacts)).not.toContain('sk-ant-test-secret-do-not-preserve');
+    expect(JSON.stringify(handoff.artifacts)).not.toContain('\u001b');
+    expect(output).toHaveBeenCalledWith('child', 40);
+    expect(close).not.toHaveBeenCalled();
+    await vi.runAllTimersAsync();
+    expect(close).toHaveBeenCalledWith('pane-child', 'child');
+  });
+  it('keeps the pane and its report when repeated summary has no Main terminal tail', async () => {
+    caller('parent');
+    const child = caller('child');
+    const close = vi.spyOn(panes, 'requestPaneClose').mockResolvedValue(true);
+    vi.spyOn(panes, 'readSessionOutput').mockReturnValue('');
+    armAutoCloseOnHandoff('child', 'pane-child');
+    await expect(tool('submit').handler({ ...args, fullText: args.summary }, child))
+      .rejects.toThrow('handoff_report_required');
+    expect(getProjectDomainStores(scope).handoffs.list({ includeDelivered: true })).toHaveLength(0);
+    expect(close).not.toHaveBeenCalled();
+    expect(armedAutoClosePaneId('child')).toBe('pane-child');
+  });
   it("fecha helper armado só depois de registrar a entrega de sucesso", async () => {
     caller("parent");
     const child = caller("child");
@@ -169,7 +208,7 @@ describe("workspace handoff", () => {
     armAutoCloseOnHandoff("child", "pane-child");
     vi.useFakeTimers();
 
-    expect(await tool("submit").handler({ ...args, fullText: args.summary }, child)).toMatchObject({ delivered: true });
+    expect(await tool("submit").handler({ ...args, fullText: "Relatório completo: implementação em result.ts, validação executada e resultados conferidos." }, child)).toMatchObject({ delivered: true });
     expect(close).not.toHaveBeenCalled();
     expect(getProjectDomainStores(scope).handoffs.list({ includeDelivered: true })).toMatchObject([
       { deliveryState: "submitted" },
@@ -185,7 +224,7 @@ describe("workspace handoff", () => {
     armAutoCloseOnHandoff("child", "pane-child");
     vi.useFakeTimers();
 
-    expect(await tool("submit").handler({ ...args, fullText: args.summary }, caller("child"))).toMatchObject({ delivered: true });
+    expect(await tool("submit").handler({ ...args, fullText: "Relatório completo: implementação em result.ts, validação executada e resultados conferidos." }, caller("child"))).toMatchObject({ delivered: true });
     runtime.delete("child");
     runtime.set("replacement", {
       paneId: "pane-child",
@@ -216,7 +255,7 @@ describe("workspace handoff", () => {
     vi.mocked(transport.injectPrompt).mockRejectedValueOnce(new Error("parent gone"));
     armAutoCloseOnHandoff("child", "pane-child");
     vi.useFakeTimers();
-    expect(await tool("submit").handler({ ...args, fullText: args.summary }, caller("child"))).toMatchObject({ delivered: false });
+    expect(await tool("submit").handler({ ...args, fullText: "Relatório completo: implementação em result.ts, validação executada e resultados conferidos." }, caller("child"))).toMatchObject({ delivered: false });
     await vi.runAllTimersAsync();
     expect(close).not.toHaveBeenCalled();
     expect(armedAutoClosePaneId("child")).toBe("pane-child");

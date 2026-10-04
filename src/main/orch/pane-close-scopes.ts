@@ -4,7 +4,8 @@
  * o desligamento automático é declarado no nascimento do pane (registro, não
  * pergunta) e só dispara no handoff success — falha preserva pane e scrollback
  * para diagnóstico.
- */
+*/
+import { sanitizePaneBootOutput } from './pane-boot-output';
 
 export interface ScopedCloseCandidate {
   readonly paneId: string;
@@ -83,8 +84,9 @@ export function assertAutoCloseReportPreserved(
   paneId: string | null,
   status: unknown,
   args: { fullText?: unknown; summary?: unknown; artifacts?: unknown },
-): void {
-  if (!sessionId || status !== 'success' || !armedAutoClosePaneId(sessionId, paneId)) return;
+  readTerminalTail?: () => string,
+): string | null {
+  if (!sessionId || status !== 'success' || !armedAutoClosePaneId(sessionId, paneId)) return null;
   // Native system-delivery contract uses artifacts[].fullText; MCP also
   // accepts a top-level fullText. Both already persist verbatim in the ledger.
   const fullTextArtifact = Array.isArray(args.artifacts) ? args.artifacts.slice(0, 4096)
@@ -93,9 +95,19 @@ export function assertAutoCloseReportPreserved(
   const report: string | null = typeof args.fullText === 'string' ? args.fullText : fullTextArtifact
     ? typeof fullTextArtifact.fullText === 'string' ? fullTextArtifact.fullText : fullTextArtifact.payload
     : typeof args.summary === 'string' && args.summary.trim().length > 400 ? args.summary.trim() : null;
-  if (!report?.trim() || report.length > 60_000) {
+  const summary = typeof args.summary === 'string' ? args.summary.trim() : '';
+  // F-833/N4: naming the notification fullText does not preserve the report.
+  // Capture only Main-owned output, never an agent-authored terminal artifact.
+  const repeatedSummary = Boolean(report && summary && report.length <= 60_000 &&
+    report.trim().length <= summary.length);
+  if (!report?.trim() || repeatedSummary) {
+    const tail = sanitizePaneBootOutput(readTerminalTail?.() ?? '');
+    if (tail && tail !== '[sem saída capturada]' && tail !== summary) return tail;
+  }
+  if (!report?.trim() || report.length > 60_000 || repeatedSummary) {
     throw new Error('handoff_report_required: este pane fecha após a entrega. Envie o relatório completo em fullText (até 60000 caracteres), além do summary. O pane foi preservado; nenhum sucesso foi registrado.');
   }
+  return null;
 }
 
 /** Consome o braço apenas depois de um handoff persistido; fechar fica fora da resposta. */

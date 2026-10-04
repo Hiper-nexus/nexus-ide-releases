@@ -25,7 +25,7 @@ import {
   scheduleAutoCloseAfterHandoff,
   assertAutoCloseReportPreserved,
 } from "./pane-close-scopes";
-import { findPane, listPaneSnapshots, requestPaneClose } from "./pane-registry";
+import { findPane, listPaneSnapshots, readSessionOutput, requestPaneClose } from "./pane-registry";
 import {
   assertMcpInvocationCurrent,
   type McpToolDef,
@@ -262,14 +262,22 @@ const handoffSubmitTool: McpToolDef = {
     required: ["status", "summary"],
   },
   handler: async (args, ctx, invocation) => {
-    assertAutoCloseReportPreserved(ctx.sessionId,
+    const terminalTail = assertAutoCloseReportPreserved(ctx.sessionId,
       ctx.sessionId ? findPane(ctx.sessionId)?.paneId ?? null : null,
-      normalizeHandoffStatusInput(args.status), args);
+      normalizeHandoffStatusInput(args.status), args,
+      () => readSessionOutput(ctx.sessionId!, 40));
+    const terminalTailArtifacts = terminalTail
+      ? [{ kind: 'nexus.terminal-tail', payload: terminalTail }] : [];
+    const tailWarning = terminalTail ? {
+      warning: 'O relatório completo não foi enviado. A cauda sanitizada do terminal foi preservada no handoff; ela pode estar incompleta. Envie os detalhes em fullText nas próximas entregas.',
+    } : {};
     if (!ctx.missionId) {
-      return submitWorkspaceHandoff(args, ctx, invocation, [
+      const result = await submitWorkspaceHandoff(args, ctx, invocation, [
         ...buildOverclockArtifacts(args),
         ...buildContextDagArtifacts(args),
+        ...terminalTailArtifacts,
       ]);
+      return { ...result, ...tailWarning };
     }
     const physicalReceipt = requireHandoffMcpEffectIntent(invocation);
     let suite: ReturnType<typeof getProjectDomainStores>;
@@ -564,6 +572,7 @@ const handoffSubmitTool: McpToolDef = {
       ...overclockArtifacts,
       ...condensedFullText,
       ...contextDagArtifacts,
+      ...terminalTailArtifacts,
       ...(contractVerdict.kind === "exhausted"
         ? [deliveryContractExhaustedArtifact(contractVerdict, declaredStatus)]
         : []),
@@ -761,6 +770,7 @@ const handoffSubmitTool: McpToolDef = {
     return {
       ok: true,
       handoffId: handoff.id,
+      ...tailWarning,
       ...(visual?.required ? { visualVerification: visual, status } : {}),
       evidenceTrust: handoff.evidenceTrust,
       stopGateSatisfied: handoff.evidenceTrust === "nexus-trusted",

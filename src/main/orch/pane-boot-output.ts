@@ -1,7 +1,7 @@
 /**
  * F-788/F-789: cauda sanitizada da saída de um pane que morreu antes do
- * primeiro turno. Vai só para o trace local (`pane-not-started`), nunca para o
- * handoff: o próximo diagnóstico não depende mais de reproduzir o spawn.
+ * primeiro turno. Usada no trace local (`pane-not-started`) e no artifact
+ * untrusted de recuperação de handoff, sem promover a cauda a relatório completo.
  *
  * Tudo aqui é linear no tamanho da entrada (lição do F-764, regex quadrática
  * no Main): a varredura olha só o fim do ring, cada linha passa uma vez por
