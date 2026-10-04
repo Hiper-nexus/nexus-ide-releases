@@ -56,8 +56,9 @@ function isPersistent(argv) {
 function commandKind(command) {
   if (typeof command !== 'string') return null;
   if (command.length > 16384) return 'build';
-  if (/(?:^|[\s/\\'\";&|])vite(?:\.[cm]?js)?(?=$|[\s'\";&|])/i.test(command) && !/\bvite(?:\.[cm]?js)?[\s'\"]+build\b/i.test(command)) return null;
-  if (/(?:^|[\s/\\'\";&|])esbuild(?=$|[\s'\";&|])/i.test(command) && /--(?:serve|watch)(?:=|\s|$)/.test(command)) return null;
+  const evaluation = /(?:^|[\s/\\'\";&|])node(?:\.exe)?[\s'\"][^;&|]*?[\s'\"](?:-e|--eval|-p|--print)(?:[\s'\"=]|$)/i.test(command);
+  if (!evaluation && /(?:^|[\s/\\'\";&|])vite(?:\.[cm]?js)?(?=$|[\s'\";&|])/i.test(command) && !/\bvite(?:\.[cm]?js)?[\s'\"]+build\b/i.test(command)) return null;
+  if (!evaluation && /(?:^|[\s/\\'\";&|])esbuild(?=$|[\s'\";&|])/i.test(command) && /--(?:serve|watch)(?:=|\s|$)/.test(command)) return null;
   if (/\bnode(?:\.exe)?[\s'\"][^;&|]*?(?:^|[\s/\\'\"])(?:server|dev|serve)\.[cm]?js(?=$|[\s'\";&|])/i.test(command)) return null;
   if (/(?:^|[\s/\\'";&|])(?:tsc(?:\.[cm]?js)?|tsgo|typecheck)(?=$|[\s'";&|:])/i.test(command)) return 'typescript';
   if (/(?:^|[\s/\\'";&|])(?:vitest|jest|pytest|mocha)(?=$|[\s'";&|])/i.test(command) || /\b(?:npm|pnpm|yarn|bun|go|cargo|dotnet)\s+(?:run\s+)?tests?(?=$|[\s'";&|:])/i.test(command)) return 'tests';

@@ -140,3 +140,14 @@ it('real Vite serve, esbuild serve and node server processes do not reserve the 
   expect(requests).toBe(0);
  } finally { await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 40_000);
+
+it('a Node eval requiring Vite with stripped NODE_OPTIONS is finite work before the program executes', () => {
+ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-heavy-eval-'));
+ const resources = path.join(process.cwd(), 'resources/heavy-command'), marker = path.join(root, 'started');
+ const program = `require(${JSON.stringify(path.join(process.cwd(), 'node_modules/vite'))});require('node:fs').writeFileSync(${JSON.stringify(marker)},'started')`;
+ const env = { ...process.env, BASH_ENV: path.join(resources, 'shell.bash'), NEXUS_HEAVY_NODE: process.execPath, NEXUS_HEAVY_DIR: resources,
+  NEXUS_GATE_TOKEN: 'finite-eval', NEXUS_HEAVY_COMMAND_URL: 'http://127.0.0.1:1/hook/heavy-command' };
+ try { const result = spawnSync('/bin/bash', ['-c', `NODE_OPTIONS= ${JSON.stringify(process.execPath)} -e ${JSON.stringify(program)}`], { env, encoding: 'utf8' });
+  expect(result.status).toBe(78); expect(fs.existsSync(marker)).toBe(false); }
+ finally { fs.rmSync(root, { recursive: true, force: true }); }
+}, 10_000);
