@@ -102,3 +102,12 @@ it('a copied and renamed standalone TypeScript compiler is admitted before its c
  try { const result = spawnSync(process.execPath, [entry, '--version'], { env, encoding: 'utf8' }); expect(result.status).toBe(78); expect(result.stdout).toBe(''); }
  finally { fs.rmSync(root, { recursive: true, force: true }); }
 }, 10_000);
+
+
+it('scoped promisified execFile preserves Node22 Promise.child for SDK cancellation', () => {
+ const env = { ...process.env, NODE_OPTIONS: appendHeavyCommandPreload(undefined, path.join(process.cwd(), 'resources/heavy-command/preload.cjs')),
+   NEXUS_GATE_TOKEN: 'finite', NEXUS_HEAVY_COMMAND_URL: 'http://127.0.0.1:1/hook/heavy-command' };
+ const script = `const {promisify}=require('node:util');const cp=require('node:child_process');const pending=promisify(cp.execFile)(process.execPath,['-e','setTimeout(()=>{},10000)']);pending.catch(()=>{});console.log(Boolean(pending.child&&typeof pending.child.kill==='function'));if(pending.child)pending.child.kill();else setTimeout(()=>process.exit(0),50)`;
+ const result = spawnSync(process.execPath, ['-e', script], { env, encoding: 'utf8', timeout: 3000 });
+ expect(result.status).toBe(0); expect(result.stdout.trim()).toBe('true');
+});

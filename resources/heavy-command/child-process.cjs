@@ -41,7 +41,10 @@ module.exports = function install() {
     return cp.execFileSync(shell, args, { ...options, shell: false });
   };
   for (const key of ['exec', 'execFile']) cp[key][promisify.custom] = function(...args) {
-    return new Promise((resolve, reject) => cp[key](...args, (error, stdout, stderr) => { if (error) { error.stdout = stdout; error.stderr = stderr; reject(error); } else resolve({ stdout, stderr }); }));
+    let child;
+    const pending = new Promise((resolve, reject) => { child = cp[key](...args, (error, stdout, stderr) => { if (error) { error.stdout = stdout; error.stderr = stderr; reject(error); } else resolve({ stdout, stderr }); }); });
+    pending.child = child;
+    return pending;
   };
   require('node:module').syncBuiltinESMExports();
   return originals;
