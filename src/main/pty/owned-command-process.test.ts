@@ -37,7 +37,40 @@ it('borrow checks distinct identities rather than double counting captured desce
  set([row(10, 1), row(20, 10), ...Array.from({ length: 128 }, (_, i) => row(30 + i, 20))]);
  expect(await tracker.probe('s', id)).toBe('live'); expect(await tracker.borrow('s', id, 30)).toBe(true);
 });
+it('claim capacity stays at128 across concurrent captures after one existing claim', async () => {
+ const { tracker } = fixture(); expect(await tracker.claim('s', 20)).toBeTypeOf('string');
+ const results = await Promise.all(Array.from({ length: 128 }, () => tracker.claim('s', 20)));
+ expect(results.filter(Boolean)).toHaveLength(127);
+});
+it('gone physical claims are pruned before their slots deny a new owned command', async () => {
+ const { tracker, set } = fixture(); const results = await Promise.all(Array.from({ length: 128 }, () => tracker.claim('s', 20)));
+ expect(results.filter(Boolean)).toHaveLength(128); set([row(10, 1), row(30, 10)]);
+ expect(await tracker.claim('s', 30)).toBeTypeOf('string');
+});
 
+it('cancel only discards a tentative request, never a confirmed live physical claim', async () => {
+ const { tracker } = fixture();
+ const tentative = (await tracker.claimForRequest('s', 'request-tentative', 20))!;
+ tracker.cancelRequest('other', 'request-tentative'); expect(await tracker.probe('s', tentative)).toBe('live');
+ tracker.cancelRequest('s', 'request-tentative'); expect(await tracker.probe('s', tentative)).toBe('unknown');
+ const confirmed = (await tracker.claimForRequest('s', 'request-confirmed', 20))!;
+ tracker.confirmRequest('s', 'request-confirmed', confirmed); tracker.cancelRequest('s', 'request-confirmed');
+ expect(await tracker.probe('s', confirmed)).toBe('live');
+});
+
+it('cancel during capture removes all128 late tentative claims without occupying host capacity', async () => {
+ const identity = {}; let finish!: (snapshot: DescendantSnapshot) => void;
+ const pending = new Promise<DescendantSnapshot>((resolve) => finish = resolve);
+ let capturing = true;
+ const snapshot = { root: row(10, 1), descendants: [row(20, 10)], inventory: [row(10, 1), row(20, 10)], capturedAtMs: Date.parse('Sat Oct  3 12:00:02 2026') };
+ const tracker = new OwnedCommandProcesses(() => ({ pid: 10, identity }), async () => capturing ? pending : snapshot);
+ const requests = Array.from({ length: 128 }, (_, i) => `late-${i}`);
+ const results = requests.map((request) => tracker.claimForRequest('s', request, 20));
+ for (const request of requests) tracker.cancelRequest('s', request);
+ finish(snapshot); expect(await Promise.all(results)).toEqual(requests.map(() => null));
+ capturing = false;
+ expect(await tracker.claimForRequest('s', 'next', 20)).toBeTypeOf('string');
+});
 it('borrow refuses a claim removed while its capture was pending', async () => {
  const identity = {}; let finish!: (snapshot: DescendantSnapshot) => void;
  let deferredBorrow = false;
@@ -50,16 +83,4 @@ it('borrow refuses a claim removed while its capture was pending', async () => {
  deferredBorrow = true; const borrowed = tracker.borrow('s', id, 30);
  expect(await tracker.probe('s', id)).toBe('gone'); finish(live);
  expect(await borrowed).toBe(false);
-});
-
-it('claim capacity stays at128 across concurrent captures after one existing claim', async () => {
- const { tracker } = fixture(); expect(await tracker.claim('s', 20)).toBeTypeOf('string');
- const results = await Promise.all(Array.from({ length: 128 }, () => tracker.claim('s', 20)));
- expect(results.filter(Boolean)).toHaveLength(127);
-});
-
-it('gone physical claims are pruned before their slots deny a new owned command', async () => {
- const { tracker, set } = fixture(); const results = await Promise.all(Array.from({ length: 128 }, () => tracker.claim('s', 20)));
- expect(results.filter(Boolean)).toHaveLength(128); set([row(10, 1), row(30, 10)]);
- expect(await tracker.claim('s', 30)).toBeTypeOf('string');
 });

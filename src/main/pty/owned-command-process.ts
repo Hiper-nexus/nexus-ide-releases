@@ -8,6 +8,7 @@ interface Claim { sessionId: string; rootIdentity: object; rows: Map<number, { r
  * process; admission requires ancestry in the exact live PTY snapshot. */
 export class OwnedCommandProcesses {
   readonly #claims = new Map<string, Claim>();
+  readonly #requests = new Map<string, { sessionId: string; cancelled: boolean; claimId: string | null }>();
   readonly #gone = new Map<string, string>();
   constructor(private readonly rootFor: (sessionId: string) => Root | null,
     private readonly capture: (pid: number) => Promise<DescendantSnapshot | null> = captureNativeHeavyProcessSnapshot) {}
@@ -31,6 +32,31 @@ export class OwnedCommandProcesses {
     const id = randomUUID();
     this.#claims.set(id, { sessionId, rootIdentity: root.identity, root: row, rows: new Map([[row.pid, { row, observedAt: snapshot.capturedAtMs }]]) });
     return id;
+  }
+  /** Only the Main/host RPC can cancel a tentative claim; no permit exists yet. */
+  async claimForRequest(sessionId: string, requestId: string, pid: number): Promise<string | null> {
+    if (this.#requests.size >= 128 || this.#requests.has(requestId)) return null;
+    const entry = { sessionId, cancelled: false, claimId: null as string | null };
+    this.#requests.set(requestId, entry);
+    let id: string | null = null;
+    try { id = await this.claim(sessionId, pid); }
+    catch { this.#requests.delete(requestId); return null; }
+    if (entry.cancelled) {
+      if (id) this.#claims.delete(id);
+      this.#requests.delete(requestId); return null;
+    }
+    if (!id) this.#requests.delete(requestId); else entry.claimId = id;
+    return id;
+  }
+  confirmRequest(sessionId: string, requestId: string, claimId: string): void {
+    const entry = this.#requests.get(requestId);
+    if (entry?.sessionId === sessionId && !entry.cancelled && entry.claimId === claimId) this.#requests.delete(requestId);
+  }
+  cancelRequest(sessionId: string, requestId: string): void {
+    const entry = this.#requests.get(requestId);
+    if (!entry || entry.sessionId !== sessionId) return;
+    entry.cancelled = true;
+    if (entry.claimId) { this.#claims.delete(entry.claimId); this.#requests.delete(requestId); }
   }
   /** Borrowing is a host proof, never trust in an inherited lease string. */
   async borrow(sessionId: string, id: string, pid: number): Promise<boolean> {
@@ -68,8 +94,11 @@ export class OwnedCommandProcesses {
       else live = true;
     }
     if (live) return 'live'; if (ambiguous) return 'unknown';
+    this.#rememberGone(id, sessionId);
+    return 'gone';
+  }
+  #rememberGone(id: string, sessionId: string): void {
     this.#claims.delete(id); this.#gone.set(id, sessionId);
     while (this.#gone.size > 256) this.#gone.delete(this.#gone.keys().next().value!);
-    return 'gone';
   }
 }

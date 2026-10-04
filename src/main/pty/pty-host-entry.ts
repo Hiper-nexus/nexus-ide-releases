@@ -376,9 +376,13 @@ parentPort.on('message', (e) => {
         // PTY died between the ownership check in main and this write.
       }
       return;
+    case 'command-process-confirm':
+      commandProcesses.confirmRequest(msg.sessionId, msg.requestId, msg.claimId); return;
+    case 'command-process-cancel':
+      commandProcesses.cancelRequest(msg.sessionId, msg.requestId); return;
     case 'command-process':
       void (async () => {
-        const claimId = msg.op === 'claim' ? await commandProcesses.claim(msg.sessionId, msg.pid) : msg.claimId;
+        const claimId = msg.op === 'claim' ? await commandProcesses.claimForRequest(msg.sessionId, msg.requestId, msg.pid) : msg.claimId;
         const state = msg.op === 'probe' ? await commandProcesses.probe(msg.sessionId, msg.claimId) : null;
         const borrowed = msg.op === 'borrow' ? await commandProcesses.borrow(msg.sessionId, msg.claimId, msg.pid) : undefined;
         post({ type: 'command-process-result', requestId: msg.requestId, sessionId: msg.sessionId, claimId, state, borrowed });

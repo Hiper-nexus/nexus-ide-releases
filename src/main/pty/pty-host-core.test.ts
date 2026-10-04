@@ -638,3 +638,25 @@ it('prepares a signed job launcher off Main and rejects unrelated or lost host r
   const lost = bridge.host.prepareCommandSupervisor!('/bin/sh', ['-c', 'make']);
   bridge.handleHostDown(); expect(await lost).toBeNull();
 });
+
+it('a timed-out tentative claim cancels its host request before the late physical ACK arrives', async () => {
+ vi.useFakeTimers();
+ try {
+  const transport = fakeTransport(); const bridge = createPtyHostBridge(transport.transport);
+  const result = bridge.host.claimCommandProcess!('s1', 123); const request = transport.posted.at(-1)!;
+  if (request.type !== 'command-process') throw new Error('missing request');
+  await vi.advanceTimersByTimeAsync(2001); expect(await result).toBeNull();
+  expect(transport.posted.at(-1)).toEqual({ type: 'command-process-cancel', requestId: request.requestId, sessionId: 's1' });
+  bridge.dispatchEvent({ type: 'command-process-result', requestId: request.requestId, sessionId: 's1', claimId: 'late', state: null });
+  expect(transport.posted.filter((message) => message.type === 'command-process-confirm')).toHaveLength(0);
+ } finally { vi.useRealTimers(); }
+});
+
+it('confirmation transport failure never returns a claim that could start a RAM reservation', async () => {
+ const posted: HostControlMsg[] = [];
+ const bridge = createPtyHostBridge({ ensure() {}, post(message) { if (message.type === 'command-process-confirm') throw new Error('confirmation unavailable'); posted.push(message); } });
+ const result = bridge.host.claimCommandProcess!('s1', 123); const request = posted.at(-1)!;
+ if (request.type !== 'command-process') throw new Error('missing request');
+ bridge.dispatchEvent({ type: 'command-process-result', requestId: request.requestId, sessionId: 's1', claimId: 'unconfirmed', state: null });
+ expect(await result).toBeNull(); expect(posted.at(-1)).toEqual({ type: 'command-process-cancel', requestId: request.requestId, sessionId: 's1' });
+});

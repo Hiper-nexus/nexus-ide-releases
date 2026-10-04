@@ -50,6 +50,8 @@ export type HostControlMsg =
   | { type: 'kill'; sessionId: string; signal?: PtyKillSignal }
   | { type: 'analysis-credit'; sessionId: string; bytes: number }
   | { type: 'output-flow'; sessionId: string; paused: boolean }
+  | { type: 'command-process-confirm'; requestId: string; sessionId: string; claimId: string }
+  | { type: 'command-process-cancel'; requestId: string; sessionId: string }
   | { type: 'command-process'; requestId: string; sessionId: string; op: 'claim'; pid: number }
   | { type: 'command-process'; requestId: string; sessionId: string; op: 'probe'; claimId: string }
   | { type: 'command-process'; requestId: string; sessionId: string; op: 'borrow'; claimId: string; pid: number }
@@ -456,13 +458,13 @@ export function createPtyHostBridge(
 
   let commandCounter = 0;
   const pendingPreparations = new Map<string, { resolve: (value: SupervisedPtyCommand | null) => void; timer: ReturnType<typeof setTimeout> }>();
-  const pendingCommands = new Map<string, { sessionId: string; resolve: (result: Extract<HostEventMsg, { type: 'command-process-result' }> | null) => void; timer: ReturnType<typeof setTimeout> }>();
+  const pendingCommands = new Map<string, { sessionId: string; claim: boolean; resolve: (result: Extract<HostEventMsg, { type: 'command-process-result' }> | null) => void; timer: ReturnType<typeof setTimeout> }>();
   function commandRequest(body: { op: 'claim'; pid: number } | { op: 'probe'; claimId: string } | { op: 'borrow'; claimId: string; pid: number }, sessionId: string) {
     if (pendingCommands.size >= 128) return Promise.resolve(null);
     const requestId = `pty-command-${++commandCounter}`;
     return new Promise<Extract<HostEventMsg, { type: 'command-process-result' }> | null>((resolve) => {
-      const timer = setTimeout(() => { if (pendingCommands.delete(requestId)) resolve(null); }, 2_000); timer.unref?.();
-      pendingCommands.set(requestId, { sessionId, resolve, timer });
+      const timer = setTimeout(() => { if (pendingCommands.delete(requestId)) { if (body.op === 'claim') { try { transport.post({ type: 'command-process-cancel', requestId, sessionId }); } catch {} } resolve(null); } }, 2_000); timer.unref?.();
+      pendingCommands.set(requestId, { sessionId, claim: body.op === 'claim', resolve, timer });
       try { transport.post({ type: 'command-process', requestId, sessionId, ...body }); }
       catch { pendingCommands.delete(requestId); clearTimeout(timer); resolve(null); }
     });
@@ -610,7 +612,12 @@ export function createPtyHostBridge(
     }
     if (msg.type === 'command-process-result') {
       const pending = pendingCommands.get(msg.requestId); if (!pending || pending.sessionId !== msg.sessionId) return;
-      pendingCommands.delete(msg.requestId); clearTimeout(pending.timer); pending.resolve(msg); return;
+      pendingCommands.delete(msg.requestId); clearTimeout(pending.timer);
+      if (pending.claim && msg.claimId) {
+        try { transport.post({ type: 'command-process-confirm', requestId: msg.requestId, sessionId: msg.sessionId, claimId: msg.claimId }); }
+        catch { try { transport.post({ type: 'command-process-cancel', requestId: msg.requestId, sessionId: msg.sessionId }); } catch {} pending.resolve(null); return; }
+      }
+      pending.resolve(msg); return;
     }
 
     if (msg.type === 'termination-result') {
