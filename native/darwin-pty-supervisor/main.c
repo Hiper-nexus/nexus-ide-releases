@@ -1250,7 +1250,10 @@ static bool signal_if_still_owned(const struct responsibility_api *api,
   struct process_record current;
   bool disappeared = false;
   if (!load_process_record(api, record->pid, &current, &disappeared)) {
-    return !process_still_exists(record->pid);
+    /* The loader can prove committed exit (ESRCH) while kill(pid, 0) still
+     * sees an unreaped zombie. There is nothing left to signal. This is not
+     * an empty-cohort proof: release still requires two complete inventories. */
+    return disappeared || !process_still_exists(record->pid);
   }
   if (current.process_unique_id != record->process_unique_id ||
       current.process_id_version != record->process_id_version ||

@@ -50,6 +50,39 @@ function ptySkipReason() {
 }
 
 const isDarwin = process.platform === "darwin";
+it.runIf(isDarwin)('committed zombie disappearance does not falsely fail signalling or prove an empty cohort', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'nexus-zombie-signal-'));
+  const source = path.join(root, 'probe.c'), output = path.join(root, 'probe');
+  const mainSource = path.join(process.cwd(), 'native/darwin-pty-supervisor/main.c');
+  writeFileSync(source, `
+#define proc_pidinfo fixture_proc_pidinfo
+#define kill fixture_kill
+#define main original_supervisor_main
+#include ${JSON.stringify(mainSource)}
+#undef main
+int fixture_kill(pid_t pid, int signal_number) { (void)pid; (void)signal_number; return 0; }
+int fixture_proc_pidinfo(int pid, int flavor, uint64_t argument, void *buffer, int size) {
+  (void)pid; (void)argument; memset(buffer, 0, (size_t)size);
+  if (flavor == PROC_PIDUNIQIDENTIFIERINFO_PRIVATE) { struct nexus_proc_uniqidentifierinfo *info = buffer; info->p_uniqueid = 101; info->p_idversion = 1; return (int)sizeof(*info); }
+  if (flavor == PROC_PIDTBSDINFO) { ((struct proc_bsdinfo *)buffer)->pbi_status = SZOMB; return (int)sizeof(struct proc_bsdinfo); }
+  return 0;
+}
+static pid_t gone_pid(pid_t pid) { (void)pid; errno = ESRCH; return 0; }
+static uint64_t gone_unique(pid_t pid) { (void)pid; errno = ESRCH; return 0; }
+int main(void) {
+  struct responsibility_api api = { .responsible_pid = gone_pid, .responsible_unique_id = gone_unique, .set_disclaim = NULL };
+  struct process_record record = { .pid = 123, .process_unique_id = 101, .process_id_version = 1 };
+  struct responsibility_anchor anchor = { .pid = 123, .process_unique_id = 101, .process_id_version = 1, .responsible_pid = 123, .responsible_unique_id = 101 };
+  if (!signal_if_still_owned(&api, &record, &anchor, SIGTERM)) return 10;
+  if (prove_group_empty_twice(&api, &anchor)) return 11;
+  return 0;
+}
+`);
+  try {
+    execFileSync('xcrun', ['--sdk', 'macosx', 'clang', '-std=c11', '-O1', '-Wall', '-Wextra', '-Werror', source, '-lproc', '-framework', 'CoreFoundation', '-framework', 'Security', '-o', output], { stdio: 'pipe' });
+    expect(spawnSync(output, [], { encoding: 'utf8' }).status).toBe(0);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 const suite = isDarwin ? describe : describe.skip;
 const developerSigningIdentity = isDarwin
   ? (() => {
