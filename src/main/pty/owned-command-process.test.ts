@@ -51,3 +51,15 @@ it('borrow refuses a claim removed while its capture was pending', async () => {
  expect(await tracker.probe('s', id)).toBe('gone'); finish(live);
  expect(await borrowed).toBe(false);
 });
+
+it('claim capacity stays at128 across concurrent captures after one existing claim', async () => {
+ const { tracker } = fixture(); expect(await tracker.claim('s', 20)).toBeTypeOf('string');
+ const results = await Promise.all(Array.from({ length: 128 }, () => tracker.claim('s', 20)));
+ expect(results.filter(Boolean)).toHaveLength(127);
+});
+
+it('gone physical claims are pruned before their slots deny a new owned command', async () => {
+ const { tracker, set } = fixture(); const results = await Promise.all(Array.from({ length: 128 }, () => tracker.claim('s', 20)));
+ expect(results.filter(Boolean)).toHaveLength(128); set([row(10, 1), row(30, 10)]);
+ expect(await tracker.claim('s', 30)).toBeTypeOf('string');
+});

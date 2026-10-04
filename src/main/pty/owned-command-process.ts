@@ -12,10 +12,20 @@ export class OwnedCommandProcesses {
   constructor(private readonly rootFor: (sessionId: string) => Root | null,
     private readonly capture: (pid: number) => Promise<DescendantSnapshot | null> = captureNativeHeavyProcessSnapshot) {}
   async claim(sessionId: string, pid: number): Promise<string | null> {
-    if (!Number.isSafeInteger(pid) || pid <= 0 || this.#claims.size >= 128) return null;
+    if (!Number.isSafeInteger(pid) || pid <= 0) return null;
     const root = this.rootFor(sessionId); if (!root || root.pid === pid) return null;
     const snapshot = await this.capture(root.pid);
     if (!snapshot?.root || this.rootFor(sessionId)?.identity !== root.identity) return null;
+    // A Main RPC timeout may leave an unobserved claim. Physical disappearance
+    // still frees its host slot without inventing exit or forgetting live work.
+    for (const [id, claim] of this.#claims) {
+      const gone = [...claim.rows.values()].every(({ row }) => {
+        const current = snapshot.inventory.filter((candidate) => candidate.pid === row.pid);
+        return current.length === 0 || current.length === 1 && current[0].startedAt !== row.startedAt;
+      });
+      if (gone) this.#rememberGone(id, claim.sessionId);
+    }
+    if (this.#claims.size >= 128) return null;
     const row = snapshot.descendants.find((candidate) => candidate.pid === pid);
     if (!row || !Number.isFinite(Date.parse(row.startedAt)) || Date.parse(row.startedAt) >= Math.floor(snapshot.capturedAtMs / 1000) * 1000) return null;
     const id = randomUUID();
