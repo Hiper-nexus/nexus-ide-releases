@@ -241,6 +241,10 @@ export async function respawnMainOwnedPaneWithAccount(input: {
   readonly continuityPack?: string;
 }, deps: { readonly git?: AsyncGitRunner } = {}): Promise<boolean> {
   const entry = getMainOwnedPane(input.paneId);
+  if (!entry || input.sessionId && entry.entry.sessionId !== input.sessionId) return false;
+  const expectedSessionId = entry.entry.sessionId;
+  const isCurrent = () => getMainOwnedPane(input.paneId) === entry &&
+    entry.entry.sessionId === expectedSessionId;
   // Troca de conta leva o estado da tarefa — coletado AQUI, assíncrono e só
   // na worktree do próprio pane (F-822); rotação de modelo (F-520) não.
   const worktree =
@@ -256,6 +260,7 @@ export async function respawnMainOwnedPaneWithAccount(input: {
         git: deps.git,
       })
     : { touchedFiles: input.touchedFiles, diffStat: input.diffStat };
+  if (!isCurrent()) return false;
   const plan = planMainOwnedFailoverRespawn({
     adapterId: input.adapterId,
     meta: entry?.meta ?? null,
@@ -290,6 +295,7 @@ export async function respawnMainOwnedPaneWithAccount(input: {
       // Sessão já morta: o alvo do respawn é o novo processo.
     }
   }
+  if (!isCurrent()) return false;
   const spawned = await spawnMainOwnedMissionPaneAsync(plan.options);
   if (!spawned.ok) {
     console.warn(

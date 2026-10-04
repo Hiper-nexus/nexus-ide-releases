@@ -171,10 +171,44 @@ describe('planMainOwnedFailoverRespawn (failover de conta em pane de missão)', 
 });
 
 describe('respawnMainOwnedPaneWithAccount', () => {
+  it.each(['removed', 'replaced', 'new-session'])('F-886 refuses %s owner after awaited Git facts', async (change) => {
+    deps.spawnAsync.mockResolvedValue({ requestId: 'unexpected', ok: true, paneId: 'unexpected', sessionId: 'unexpected' });
+    const worktree = tempDir('nexus-f886-worktree-');
+    const shared = tempDir('nexus-f886-shared-');
+    const entry = { entry: { paneId: 'old-pane', sessionId: 'old-session' },
+      meta: { ...meta, scope: { rootRealPath: shared }, executionScope: { rootRealPath: worktree } } };
+    deps.getPane.mockReturnValue(entry);
+    let entered!: () => void;
+    const captured = new Promise<void>(resolve => { entered = resolve; });
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const runner: AsyncGitRunner = { run: async () => {
+      entered(); await gate; return { status: 1, stdout: '', stderr: '' };
+    } };
+    const flight = respawnMainOwnedPaneWithAccount({ paneId: 'old-pane', sessionId: 'old-session',
+      adapterId: 'claude', toAccountId: 'fixture-account', fromAccountLabel: 'fixture', reason: 'quota' }, { git: runner });
+    await captured;
+    if (change === 'removed') deps.getPane.mockReturnValue(undefined);
+    else if (change === 'replaced') deps.getPane.mockReturnValue({ ...entry, entry: { ...entry.entry } });
+    else entry.entry.sessionId = 'new-session';
+    release();
+    expect(await flight).toBe(false);
+    expect(deps.terminate).not.toHaveBeenCalled();
+    expect(deps.spawnAsync).not.toHaveBeenCalled();
+  });
+
+  it('F-886 refuses manual closure during physical termination before creating a replacement', async () => {
+    deps.spawnAsync.mockResolvedValue({ requestId: 'unexpected', ok: true, paneId: 'unexpected', sessionId: 'unexpected' });
+    deps.terminate.mockImplementationOnce(async () => { deps.getPane.mockReturnValue(undefined); return true; });
+    const flight = respawnMainOwnedPaneWithAccount({ paneId: 'old-pane', sessionId: 'old-session',
+      adapterId: 'claude', toModel: 'fixture-model', fromAccountLabel: 'fixture', reason: 'model rejected' });
+    expect(await flight).toBe(false);
+    expect(deps.spawnAsync).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     deps.spawnAsync.mockReset();
-    deps.getPane.mockReturnValue({ meta });
+    deps.getPane.mockReturnValue({ entry: { paneId: 'old-pane', sessionId: 'old-session' }, meta });
   });
 
   it('waits for the asynchronous account gate before reporting a successful failover', async () => {
@@ -208,6 +242,7 @@ describe('respawnMainOwnedPaneWithAccount', () => {
     const worktree = tempDir('nexus-f822-worktree-');
     const shared = tempDir('nexus-f822-shared-');
     deps.getPane.mockReturnValue({
+      entry: { paneId: 'old-pane', sessionId: 'old-session' },
       meta: { ...meta, scope: { rootRealPath: shared }, executionScope: { rootRealPath: worktree } },
     });
     const git = fakeGit();
