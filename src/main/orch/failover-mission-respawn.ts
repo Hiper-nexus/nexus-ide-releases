@@ -288,11 +288,14 @@ export async function respawnMainOwnedPaneWithAccount(input: {
   }
   if (input.sessionId) {
     try {
-      await orchTerminateSession(input.sessionId, {
+      const terminated = await orchTerminateSession(input.sessionId, {
         origin: 'failover-respawn',
       });
+      if (terminated !== true) return false;
     } catch {
-      // Sessão já morta: o alvo do respawn é o novo processo.
+      // An absent session already returns true. A rejection is not proof
+      // that its processes exited and must never start a replacement.
+      return false;
     }
   }
   if (!isCurrent()) return false;

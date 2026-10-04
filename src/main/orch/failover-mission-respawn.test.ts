@@ -171,6 +171,15 @@ describe('planMainOwnedFailoverRespawn (failover de conta em pane de missão)', 
 });
 
 describe('respawnMainOwnedPaneWithAccount', () => {
+  it.each(['unproved', 'rejected'])('F-890 keeps the worker without replacement when termination is %s', async (mode) => {
+    deps.spawnAsync.mockResolvedValue({ requestId: 'unexpected', ok: true, paneId: 'unexpected', sessionId: 'unexpected' });
+    if (mode === 'unproved') deps.terminate.mockResolvedValueOnce(false);
+    else deps.terminate.mockRejectedValueOnce(new Error('fixture physical proof unavailable'));
+    const result = await respawnMainOwnedPaneWithAccount({ paneId: 'old-pane', sessionId: 'old-session',
+      adapterId: 'claude', toModel: 'fixture-model', fromAccountLabel: 'fixture', reason: 'model rejected' });
+    expect(result).toBe(false);
+    expect(deps.spawnAsync).not.toHaveBeenCalled();
+  });
   it.each(['removed', 'replaced', 'new-session'])('F-886 refuses %s owner after awaited Git facts', async (change) => {
     deps.spawnAsync.mockResolvedValue({ requestId: 'unexpected', ok: true, paneId: 'unexpected', sessionId: 'unexpected' });
     const worktree = tempDir('nexus-f886-worktree-');
