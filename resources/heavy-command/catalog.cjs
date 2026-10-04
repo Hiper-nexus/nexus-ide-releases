@@ -38,9 +38,27 @@ function moduleKind(file) {
   }
   return null;
 }
+function isPersistent(argv) {
+  const entry = argv[1] || '', args = argv.slice(2);
+  const name = path.basename(entry).toLowerCase();
+  const normalized = entry.replace(/\\/g, '/').toLowerCase();
+  if (/^(?:npm-cli|npx-cli|pnpm|yarn|bun)(?:\.[cm]?js)?$/.test(name)) {
+    const values = []; const takesValue = new Set(['--workspace', '-w', '--prefix', '--dir', '-C', '--filter', '--cache', '--userconfig', '--globalconfig']);
+    for (let i = 0; i < args.length; i++) { if (takesValue.has(args[i])) { i++; continue; } if (!args[i].startsWith('-')) values.push(args[i]); }
+    if (/^(?:run(?:-script)?\s+)?(?:dev|start)(?:\s|$)/.test(values.join(' '))) return true;
+    if ((name.startsWith('npx-cli') || values[0] === 'exec') && values.includes('vite') && !values.includes('build')) return true;
+  }
+  if (/^(?:server|dev|serve)(?:\.[cm]?js)?$/.test(name)) return true;
+  if (/(?:^|\/)vite(?:\/|\.[cm]?js$|$)/.test(normalized) || knownPackage(entry) === 'vite') return !args.includes('build');
+  if (/(?:^|\/)esbuild(?:\/|$)/.test(normalized) || knownPackage(entry) === 'esbuild') return args.some((arg) => /^--(?:serve|watch)(?:=|$)/.test(arg));
+  return false;
+}
 function commandKind(command) {
   if (typeof command !== 'string') return null;
   if (command.length > 16384) return 'build';
+  if (/(?:^|[\s/\\'\";&|])vite(?:\.[cm]?js)?(?=$|[\s'\";&|])/i.test(command) && !/\bvite(?:\.[cm]?js)?[\s'\"]+build\b/i.test(command)) return null;
+  if (/(?:^|[\s/\\'\";&|])esbuild(?=$|[\s'\";&|])/i.test(command) && /--(?:serve|watch)(?:=|\s|$)/.test(command)) return null;
+  if (/\bnode(?:\.exe)?[\s'\"][^;&|]*?(?:^|[\s/\\'\"])(?:server|dev|serve)\.[cm]?js(?=$|[\s'\";&|])/i.test(command)) return null;
   if (/(?:^|[\s/\\'";&|])(?:tsc(?:\.[cm]?js)?|tsgo|typecheck)(?=$|[\s'";&|:])/i.test(command)) return 'typescript';
   if (/(?:^|[\s/\\'";&|])(?:vitest|jest|pytest|mocha)(?=$|[\s'";&|])/i.test(command) || /\b(?:npm|pnpm|yarn|bun|go|cargo|dotnet)\s+(?:run\s+)?tests?(?=$|[\s'";&|:])/i.test(command)) return 'tests';
   if (/\b(?:npm|pnpm|yarn|bun)\s+(?:ci|install|add)(?=$|[\s'";&|])/i.test(command)) return 'install';
@@ -49,6 +67,7 @@ function commandKind(command) {
   return null;
 }
 function entryKind(argv) {
+  if (isPersistent(argv)) return null;
   const entry = argv[1] || '';
   const name = path.basename(entry).toLowerCase().replace(/\.(?:[cm]?js|exe)$/, '');
   if (/^(?:npm-cli|npx-cli|pnpm|yarn|bun)$/.test(name) || /[\\/]node_modules[\\/](?:npm|pnpm|yarn)[\\/]/i.test(entry)) {
@@ -70,4 +89,4 @@ function entryKind(argv) {
   }
   return moduleKind(entry) || commandKind(name);
 }
-module.exports = { moduleKind, entryKind, commandKind };
+module.exports = { moduleKind, entryKind, commandKind, isPersistent };

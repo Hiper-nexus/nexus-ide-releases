@@ -31,7 +31,7 @@ it.each([
  const marker = path.join(root, 'loaded'); fs.writeFileSync(file, file.endsWith('.mjs') ? `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(marker)}, 'loaded')` : `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'loaded')`);
  const env = { ...process.env, NODE_OPTIONS: appendHeavyCommandPreload(undefined, path.join(process.cwd(), 'resources/heavy-command/preload.cjs')),
    NEXUS_GATE_TOKEN: 'finite', NEXUS_HEAVY_COMMAND_URL: 'http://127.0.0.1:1/hook/heavy-command' };
- const result = spawnSync(process.execPath, [file, ...(kind === 'install' ? ['install'] : [])], { env, encoding: 'utf8' });
+ const result = spawnSync(process.execPath, [file, ...(kind === 'install' ? ['install'] : entry.startsWith('vite/') ? ['build'] : [])], { env, encoding: 'utf8' });
  try { expect(result.status).toBe(78); expect(fs.existsSync(marker)).toBe(false); }
  finally { fs.rmSync(root, { recursive: true, force: true }); }
 }, 10_000);
@@ -111,3 +111,32 @@ it('scoped promisified execFile preserves Node22 Promise.child for SDK cancellat
  const result = spawnSync(process.execPath, ['-e', script], { env, encoding: 'utf8', timeout: 3000 });
  expect(result.status).toBe(0); expect(result.stdout.trim()).toBe('true');
 });
+
+it('real Vite serve, esbuild serve and node server processes do not reserve the finite heavy slot', async () => {
+ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-heavy-dev-'));
+ fs.writeFileSync(path.join(root, 'server.js'), "console.log('finite-server-ready');setInterval(()=>{},1000)");
+ fs.writeFileSync(path.join(root, 'fixture.js'), "console.log('finite-browser');");
+ let requests = 0; const server = http.createServer((req, res) => { req.resume(); req.on('end', () => { requests++; res.end(JSON.stringify({ allow: true, leaseId: 'finite-development-lease' })); }); });
+ await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve)); const { port } = server.address() as { port: number };
+ const resources = path.join(process.cwd(), 'resources/heavy-command');
+ const env = { ...process.env, BASH_ENV: path.join(resources, 'shell.bash'), NODE_OPTIONS: appendHeavyCommandPreload(undefined, path.join(resources, 'preload.cjs')),
+  NEXUS_HEAVY_NODE: process.execPath, NEXUS_HEAVY_DIR: resources, NEXUS_GATE_TOKEN: 'finite-development', NEXUS_HEAVY_COMMAND_URL: `http://127.0.0.1:${port}/hook/heavy-command` };
+ const commands = [
+  `${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(process.cwd(), 'node_modules/vite/bin/vite.js'))} --host 127.0.0.1 --port 0`,
+  `${JSON.stringify(path.join(process.cwd(), 'node_modules/esbuild/bin/esbuild'))} fixture.js --bundle --outfile=out.js --serve=127.0.0.1:0`,
+  `${JSON.stringify(process.execPath)} server.js`,
+ ];
+ try {
+  for (const command of commands) {
+   let output = ''; const child = spawn('/bin/bash', ['-c', command], { cwd: root, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+   const done = new Promise<void>((resolve) => child.once('close', () => resolve()));
+   child.stdout.on('data', (part) => output += part); child.stderr.on('data', (part) => output += part);
+   try {
+    const deadline = Date.now() + 10_000;
+    while (!/(?:Local:|127\.0\.0\.1:|finite-server-ready)/.test(output) && child.exitCode === null && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(output).toMatch(/(?:Local:|127\.0\.0\.1:|finite-server-ready)/); expect(child.exitCode).toBeNull();
+   } finally { try { process.kill(-child.pid!, 'SIGTERM'); } catch {} await done; }
+  }
+  expect(requests).toBe(0);
+ } finally { await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
+}, 40_000);

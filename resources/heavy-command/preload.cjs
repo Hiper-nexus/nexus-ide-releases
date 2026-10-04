@@ -7,7 +7,8 @@ if (isMainThread && process.env.NEXUS_HEAVY_COMMAND_URL && process.env.NEXUS_GAT
   const fs = require('node:fs');
   const real = (file) => { try { return fs.realpathSync(file); } catch { return file; } };
   const agentRoot = process.env.NEXUS_HEAVY_AGENT_ENTRY && real(process.argv[1]) === real(process.env.NEXUS_HEAVY_AGENT_ENTRY);
-  let admitted = false;
+  const persistent = catalog.isPersistent(process.argv);
+  let admitted = persistent;
   function admit(kind) {
     if (!kind || admitted) return;
     try {
