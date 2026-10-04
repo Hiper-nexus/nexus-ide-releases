@@ -92,7 +92,7 @@ describe('owned Bubblewrap namespace lifetime', () => {
     const f = fixture(); const original = canonical(); const c = prepareOwnedLinuxCommand(original, { io: f.io }); controllers.push(c);
     expect(f.paths).toEqual([]);
     expect(c.plan.args).toEqual([...original.args.slice(0, -4), '--info-fd', '3', '--block-fd', '4', '--sync-fd', '5', ...original.args.slice(-4)]);
-    expect(c.stdio).toEqual(['pipe', 'pipe', 'pipe', 'pipe', 'pipe', 'pipe']);
+    expect(c.stdio).toEqual(['ignore', 'pipe', 'pipe', 'pipe', 'pipe', 'pipe']);
   });
 
   it.each(['--as-pid-1', '--pidns', '--info-fd', '--block-fd', '--sync-fd', '--args'])('rejects ambiguous caller wrapper options %s', option => {

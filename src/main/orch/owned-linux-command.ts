@@ -153,7 +153,7 @@ export function prepareOwnedLinuxCommand(input: ScopedShellPlan, options: { io?:
     } catch { /* Capture errors keep exec blocked and ownership unknown. */ }
   };
   return {
-    plan, stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe', 'pipe'],
+    plan, stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe', 'pipe'],
     waitForExit(child) {
       if (proc) { if (proc !== child) throw new Error('Linux command already bound'); return proof; }
       proc = child; outerPid = pidNumber(child.pid) ? child.pid : null;
