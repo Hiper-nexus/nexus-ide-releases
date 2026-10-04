@@ -39,7 +39,7 @@ Respostas: `{ok:true,data:{…}}` ou `{ok:false,error:"…"}`.
 | `POST /v1/web/checkout`, `POST /v1/web/portal` | site (cookie + CSRF) |
 | `POST /v1/billing/checkout`, `POST /v1/billing/portal`, `GET /v1/license` | app (Bearer) |
 | `POST /v1/billing/webhook` | assinatura do Stripe |
-| `GET /v1/admin/overview`, `GET /v1/admin/accounts`, `POST /v1/admin/accounts/:id/{suspend,resume,extend-trial}` | site (cookie + admin; mutações com CSRF) |
+| `GET /v1/admin/overview`, `GET /v1/admin/accounts` (situação, parte do e-mail, cursor; 50 por página; `lastSeenAt`), `POST /v1/admin/accounts/:id/{suspend,resume,extend-trial}` | site (cookie + admin; mutações com CSRF) |
 | `POST /v1/bug-reports`, `GET /v1/bug-reports/mine` | app (Bearer); corpo até 64 KB, 5 relatos por hora por conta (`docs/bug-reports.md`) |
 | `GET /v1/admin/bug-reports`, `GET /v1/admin/bug-reports/stats`, `GET`/`PATCH /v1/admin/bug-reports/:id` | site (cookie + admin; `PATCH` com CSRF) |
 | `/v1/team`, `/v1/team/*`, `/v1/cron/*`, `/v1/sync/*` | app (Bearer); cron exige teste ou assinatura para gravar, sync exige assinatura |

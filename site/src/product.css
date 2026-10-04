@@ -165,3 +165,16 @@
 .linux-quick{flex-basis:100%;display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:4px;padding-top:20px;border-top:1px solid var(--line)}.linux-quick[hidden]{display:none}.linux-quick-label{font-size:12px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em}.linux-quick-cmd{flex:1 1 320px;min-width:0;overflow-x:auto;white-space:nowrap;padding:12px 16px;border:1px solid var(--strong);border-radius:8px;background:var(--bg);color:var(--ink);font:500 13px/1.4 ui-monospace,monospace}.linux-quick-cmd:focus-visible{outline:2px solid var(--pink);outline-offset:2px}.linux-copy{padding:12px 20px;border:1px solid var(--strong);border-radius:8px;background:var(--lift);color:var(--ink);font:500 14px/1 inherit;cursor:pointer;transition:border-color .2s var(--ease),color .2s var(--ease)}.linux-copy:hover,.linux-copy:focus-visible{border-color:var(--pink);color:var(--pink)}.linux-quick-note{min-width:120px;font-size:12px;color:var(--green)}
 .download-linux,.linux-quick{min-width:0}.linux-quick-cmd{max-width:100%}
 @media(max-width:760px){.linux-quick-label{flex-basis:100%}.linux-quick-cmd{flex:1 1 100%}.linux-copy{flex:1}}
+
+/* Ajustes de alinhamento (04/10): marcador fora do texto, comando inteiro, abas da demo que quebram em vez de cortar. */
+.plain-benefits li{position:relative;padding-left:28px}
+.plain-benefits li:before{position:absolute;left:0;margin-right:0}
+.real-legend li{display:grid;grid-template-columns:22px 1fr;column-gap:10px;align-items:start}
+.real-legend b{margin-right:0;vertical-align:0}
+.companion-story code{white-space:nowrap}
+.companion-art-caption{margin-top:var(--s2)}
+@media(max-width:760px){
+  .stage-list{flex-wrap:wrap;overflow:visible}
+  .shot-trim-labels{position:relative;z-index:1}
+  .shot-trim-labels span{background:var(--surface);padding:0 4px}
+}

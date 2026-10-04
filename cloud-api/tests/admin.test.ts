@@ -53,10 +53,13 @@ test('overview counts each account in exactly one situation', async () => {
 
 test('account list filters by situation and exposes only what the panel needs', async () => {
   const context = await setup();
-  const all = (await json(await context.get('/v1/admin/accounts?status=all&limit=50'))).data!.accounts as Record<string, unknown>[];
+  const listed = (await json(await context.get('/v1/admin/accounts?status=all&limit=50'))).data!;
+  const all = listed.accounts as Record<string, unknown>[];
   assert.equal(all.length, 5);
+  assert.equal(listed.nextCursor, null);
   const byId = Object.fromEntries(all.map(row => [row.id, row]));
-  assert.deepEqual(Object.keys(byId.paid).sort(), ['access', 'email', 'id', 'name', 'role', 'subscriptionStatus', 'trialEndsAt']);
+  assert.deepEqual(Object.keys(byId.paid).sort(), ['access', 'email', 'id', 'lastSeenAt', 'name', 'role', 'subscriptionStatus', 'trialEndsAt']);
+  assert.equal(byId.paid.lastSeenAt, null);
   assert.deepEqual([byId.paid.access, byId.paid.subscriptionStatus, byId.paid.role], ['pro', 'active', 'user']);
   assert.deepEqual([byId.trial.access, byId.trial.subscriptionStatus], ['trial', 'none']);
   assert.equal(byId.expired.access, 'expired');
@@ -125,5 +128,56 @@ test('extending a trial adds whole days from the later of now and the current en
   assert.deepEqual(entries.map(entry => entry.action), ['extend_trial', 'extend_trial']);
   assert.equal(JSON.parse(entries[1].details).days, 3);
   assert.equal((await context.post('/v1/admin/accounts/missing/extend-trial', { days: 3 })).status, 404);
+  context.db.close();
+});
+
+test('email search combines with status, last entry is last_seen_at, and pages pass the cap of 50', async () => {
+  const context = await setup();
+  const seen = 1_700_000_000_000;
+  await context.db.prepare("UPDATE accounts SET last_seen_at=? WHERE id='trial'").bind(seen).run();
+  for (const [id, created] of Object.entries({ admin: 50, trial: 40, expired: 30, paid: 20, blocked: 10 })) {
+    await context.db.prepare('UPDATE accounts SET created_at=? WHERE id=?').bind(created, id).run();
+  }
+
+  const trialSearch = (await json(await context.get('/v1/admin/accounts?status=trial&email=TRIAL@example'))).data!;
+  assert.deepEqual(trialSearch.accounts.map((row: { id: string }) => row.id), ['trial']);
+  assert.equal(trialSearch.accounts[0].lastSeenAt, new Date(seen).toISOString());
+  assert.equal(trialSearch.nextCursor, null);
+  assert.deepEqual((await json(await context.get('/v1/admin/accounts?status=active&email=trial@example.test'))).data!.accounts, []);
+  assert.deepEqual((await json(await context.get('/v1/admin/accounts?email=' + encodeURIComponent('%')))).data!.accounts, []);
+  assert.equal(((await json(await context.get('/v1/admin/accounts?email=%20%20&status=all'))).data!.accounts as unknown[]).length, 5);
+  const paid = ((await json(await context.get('/v1/admin/accounts?status=all'))).data!.accounts as { id: string; lastSeenAt: string | null }[]).find(row => row.id === 'paid');
+  assert.equal(paid?.lastSeenAt, null);
+
+  await seedAccount(context.db, 'm', { email: 'm@people.test' });
+  await seedAccount(context.db, 'z', { email: 'z@people.test' });
+  await context.db.prepare("UPDATE accounts SET created_at=25 WHERE id IN ('m','z')").run();
+
+  const seenIds: string[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < 6; page++) {
+    const data = (await json(await context.get('/v1/admin/accounts?status=all&limit=2' + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '')))).data as { accounts: { id: string }[]; nextCursor: string | null };
+    assert.ok(data.accounts.length > 0, `página ${page}`);
+    seenIds.push(...data.accounts.map(row => row.id));
+    cursor = data.nextCursor;
+    if (!cursor) break;
+  }
+  assert.equal(cursor, null);
+  assert.deepEqual(seenIds, ['admin', 'trial', 'expired', 'm', 'z', 'paid', 'blocked']);
+
+  const testers: string[] = [];
+  cursor = null;
+  for (;;) {
+    const data = (await json(await context.get('/v1/admin/accounts?status=trial&email=people.test&limit=1' + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '')))).data as { accounts: { id: string }[]; nextCursor: string | null };
+    testers.push(...data.accounts.map(row => row.id));
+    if (testers.length > 4) break;
+    cursor = data.nextCursor;
+    if (!cursor) break;
+  }
+  assert.deepEqual(testers, ['m', 'z']);
+
+  for (const query of ['cursor=%%%', 'cursor=abc', 'cursor=bm9wZQ', `email=${'a'.repeat(201)}`]) {
+    assert.equal((await context.get('/v1/admin/accounts?' + query)).status, 400, query);
+  }
   context.db.close();
 });

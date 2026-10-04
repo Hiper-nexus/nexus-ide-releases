@@ -58,55 +58,11 @@
 @media(prefers-reduced-motion:reduce){.loading-track:after{animation:none}}
 
 /* ---------- Below the game ---------- */
-.community-content{max-width:1280px;margin:auto;padding:96px 48px}.community-section-intro{display:flex;align-items:end;justify-content:space-between;gap:64px;margin-bottom:48px}.community-content h2{font-size:48px}.community-content h2 span{color:var(--muted)}.community-section-intro p{max-width:380px;color:var(--muted)}.invert-logo{filter:brightness(0) invert(1)}.group-invite{text-align:center;margin-top:64px}.group-invite h3{font-size:24px;font-weight:500}.group-invite p{color:var(--muted);margin:16px auto 24px;max-width:600px}.group-invite .game-note{font-size:11px;color:var(--faint);margin-top:24px}.community-lives{border-top:1px solid var(--line);border-bottom:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;align-items:center;gap:96px}.community-lives p{color:var(--muted);margin:24px 0;max-width:400px}.live-art{display:flex;justify-content:center}.live-art .pixel{font-size:72px;line-height:.8;color:var(--pink);transform:rotate(-6deg)}.community-faq{display:grid;grid-template-columns:1fr 1.3fr;gap:48px}.clear-progress{grid-column:2;background:none;border:1px solid var(--line);border-radius:8px;padding:12px 24px;width:max-content;font-size:12px;color:var(--muted)}
+.community-content{max-width:1280px;margin:auto;padding:96px 48px}.community-section-intro{display:flex;align-items:end;justify-content:space-between;gap:64px;margin-bottom:48px}.community-content h2{font-size:48px}.community-content h2 span{color:var(--muted)}.community-section-intro p{max-width:380px;color:var(--muted)}.invert-logo{filter:brightness(0) invert(1)}.community-lives{border-top:1px solid var(--line);border-bottom:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;align-items:center;gap:96px}.community-lives p{color:var(--muted);margin:24px 0;max-width:400px}.live-art{display:flex;justify-content:center}.live-art .pixel{font-size:72px;line-height:.8;color:var(--pink);transform:rotate(-6deg)}.community-faq{display:grid;grid-template-columns:1fr 1.3fr;gap:48px}.clear-progress{grid-column:2;background:none;border:1px solid var(--line);border-radius:8px;padding:12px 24px;width:max-content;font-size:12px;color:var(--muted)}
 
-@media(max-width:760px){.community-nav{padding:16px}.community-nav .brand{font-size:20px}.community-nav .button{font-size:10px;min-height:44px;padding:8px 10px}.community-content{padding:64px 24px}.community-section-intro{display:block;margin-bottom:32px}.community-content h2{font-size:36px}.community-section-intro p{font-size:14px;margin-top:24px}.group-invite{margin-top:40px}.group-invite h3{font-size:20px}.group-invite p{font-size:14px}.group-invite .button{font-size:13px}.community-lives{grid-template-columns:1fr;gap:48px}.community-lives p{font-size:14px}.live-art .pixel{font-size:60px}.community-faq{display:block}.community-faq h2{margin-bottom:32px}.community-faq summary{font-size:14px}.clear-progress{margin-top:32px}}
+@media(max-width:760px){.community-nav{padding:16px}.community-nav .brand{font-size:20px}.community-nav .button{font-size:10px;min-height:44px;padding:8px 10px}.community-content{padding:64px 24px}.community-section-intro{display:block;margin-bottom:32px}.community-content h2{font-size:36px}.community-section-intro p{font-size:14px;margin-top:24px}.community-lives{grid-template-columns:1fr;gap:48px}.community-lives p{font-size:14px}.live-art .pixel{font-size:60px}.community-faq{display:block}.community-faq h2{margin-bottom:32px}.community-faq summary{font-size:14px}.clear-progress{margin-top:32px}}
 
-/* Sorteio: the group is the raffle */
-.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
-.sorteio-lead{max-width:380px}
-.sorteio-lead .button{margin-top:24px}
-/* Os prêmios são bilhetes: o próximo a sair é maior e aceso; o seguinte espera a vez. */
-.sorteio-board{display:grid;grid-template-columns:1.35fr 1fr;gap:24px;margin-bottom:64px}
-.drop{--pad:32px;position:relative;display:flex;flex-direction:column;padding:var(--pad) var(--pad) 20px;border:1px solid var(--strong);border-radius:12px;background:var(--surface)}
-.drop-next{background:radial-gradient(90% 75% at 100% 0,rgb(255 111 145/.22),transparent 62%),radial-gradient(60% 50% at 0 100%,rgb(255 178 122/.07),transparent 70%),var(--surface);box-shadow:0 24px 70px rgb(0 0 0/.3)}
-.drop header{display:flex;align-items:center;justify-content:space-between;gap:16px}
-.drop header .pixel{font-size:28px;line-height:1;color:var(--faint)}
-.drop-next header .pixel{color:var(--pink)}
-.drop-state{font-size:10px;color:var(--faint);border:1px solid var(--line);border-radius:4px;padding:4px 8px}
-.drop-next .drop-state{display:inline-flex;align-items:center;gap:8px;color:var(--pink);border-color:rgb(255 79 139/.4)}
-.drop-next .drop-state:before{content:'';width:6px;height:6px;border-radius:50%;background:var(--pink);animation:drop-live 1.6s var(--ease) infinite alternate}
-.drop img{display:block;margin:40px 0 24px}
-.drop h3{font-size:36px;font-weight:500;letter-spacing:-.04em;line-height:1.05}
-.drop-next h3{font-size:clamp(3.5rem,2rem + 4vw,5.5rem)}
-.drop h3 span{color:var(--muted)}
-.drop>p{font-size:14px;color:var(--muted);margin-top:16px;max-width:400px}
-/* O letreiro do ganhador: gira e fecha na frase, como o nome saindo na live. */
-.drop>.drop-draw{display:flex;align-items:center;justify-content:space-between;gap:16px;max-width:none;margin:32px 0;padding:12px 16px;border:1px solid var(--line);border-radius:4px;background:var(--bar)}
-.drop-draw .mono{font-size:10px;color:var(--faint)}
-.drop-draw .pixel{font-size:28px;line-height:1;letter-spacing:.06em;color:var(--faint);white-space:pre}
-.drop-next .drop-draw .pixel{color:var(--pink)}
-/* O canhoto: picote tracejado e dois furos na borda do bilhete. */
-.drop-stub{position:relative;display:flex;align-items:baseline;justify-content:space-between;gap:8px 16px;flex-wrap:wrap;margin:auto calc(var(--pad)*-1) 0;padding:20px var(--pad) 0;border-top:1px dashed var(--strong)}
-.drop-stub:before,.drop-stub:after{content:'';position:absolute;top:-10px;width:20px;height:20px;border-radius:50%;border:1px solid var(--strong);background:var(--bg)}
-.drop-stub:before{left:-11px;clip-path:inset(-1px -1px -1px 9px)}
-.drop-stub:after{right:-11px;clip-path:inset(-1px 9px -1px -1px)}
-.drop-stub .pixel{font-size:24px;line-height:1}
-.drop-stub .mono{font-size:10px;color:var(--faint)}
-@keyframes drop-live{from{opacity:.35}to{opacity:1}}
-.sorteio-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;list-style:none;margin:0;padding:0}
-.sorteio-steps li{border-top:1px solid var(--strong);padding-top:24px}
-.sorteio-steps .mono{display:block;font-size:10px;color:var(--pink);margin-bottom:16px}
-.sorteio-steps h3{font-size:24px;font-weight:500;letter-spacing:-.04em}
-.sorteio-steps p{font-size:14px;color:var(--muted);margin-top:12px;max-width:360px}
-.sorteio-rules{border:1px solid var(--strong);border-radius:12px;background:var(--surface);padding:32px;margin-top:48px}
-.sorteio-rules h3{font-size:20px;font-weight:500}
-.sorteio-rules ul{list-style:none;margin:16px 0 0;padding:0;display:grid;gap:12px}
-.sorteio-rules li{font-size:14px;color:var(--muted);padding-left:20px;position:relative;max-width:70ch}
-.sorteio-rules li:before{content:'+';position:absolute;left:0;color:var(--pink)}
-@media(max-width:760px){.sorteio-lead{max-width:none}.sorteio-board{grid-template-columns:1fr;gap:16px;margin-bottom:40px}.drop{--pad:20px}.drop img{width:48px;height:48px;margin:24px 0 16px}.drop h3{font-size:28px}.drop-next h3{font-size:40px}.drop>.drop-draw{margin:24px 0}.drop-draw .pixel{font-size:22px}.drop-stub .pixel{font-size:20px}.sorteio-steps{grid-template-columns:1fr;gap:24px}.sorteio-steps h3{font-size:20px}.sorteio-rules{padding:24px;margin-top:32px}}
-
-/* ---------- O prêmio é a estrela: letreiro, bilhete que reage ao ponteiro, marca que flutua ---------- */
+/* ---------- Bilhete do prêmio na primeira tela ---------- */
 .intro-prize{position:relative;display:flex;flex-direction:column;gap:2px;width:max-content;max-width:100%;margin:24px auto 0;padding:10px 18px;border:1px solid rgb(255 79 139/.5);border-radius:4px;background:rgb(13 11 15/.78);transition:transform .22s var(--ease),border-color .22s var(--ease)}
 .intro-prize:before,.intro-prize:after{content:'';position:absolute;top:50%;width:10px;height:10px;margin-top:-5px;border-radius:50%;border:1px solid rgb(255 79 139/.5);background:var(--bg)}
 .intro-prize:before{left:-6px;clip-path:inset(-1px -1px -1px 5px)}
@@ -116,21 +72,54 @@
 .intro-prize-goal{font-size:10px;color:var(--ink);opacity:.85}
 
 
-.community-section-intro#sorteio{flex-direction:column;align-items:flex-start;gap:32px}
-.community-content h2.prize-title{font-size:clamp(2.5rem,1.3rem + 4.8vw,5.5rem);line-height:1}
-.sorteio-lead{max-width:none;display:flex;align-items:center;gap:20px 32px;flex-wrap:wrap}
-.sorteio-lead p{max-width:52ch}
-.sorteio-lead .button{margin-top:0}
+/* ---------- Sorteio: o grupo é a inscrição ---------- */
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 
-.sorteio-board{perspective:1400px}
-.drop-next{transition:transform .6s var(--ease);will-change:auto}
+.sorteio-head{display:flex;flex-direction:column;align-items:flex-start;gap:24px;margin-bottom:48px}
+.sorteio-eyebrow{display:inline-flex;align-items:center;font-size:11px;color:var(--pink);border:1px solid rgb(255 79 139/.35);border-radius:999px;padding:6px 12px;background:rgb(255 79 139/.06)}
+.community-content h2.prize-title{font-size:clamp(2.5rem,1.3rem + 4.8vw,5.5rem);line-height:1;max-width:14ch}
+.sorteio-lead-text{max-width:52ch;color:var(--muted);font-size:18px}
+.sorteio-cta{display:flex;align-items:center;gap:12px 24px;flex-wrap:wrap;margin-top:8px}
+.sorteio-cta .mono{font-size:10px;color:var(--faint)}
+
+/* Os prêmios são bilhetes: o próximo a sair é maior e aceso; o seguinte espera a vez. */
+.sorteio-board{display:grid;grid-template-columns:1.35fr 1fr;gap:24px;margin-bottom:64px;perspective:1400px}
+.drop{--pad:32px;position:relative;display:flex;flex-direction:column;padding:var(--pad) var(--pad) 20px;border:1px solid var(--strong);border-radius:12px;background:var(--surface)}
+.drop-next{background:radial-gradient(90% 75% at 100% 0,rgb(255 111 145/.22),transparent 62%),radial-gradient(60% 50% at 0 100%,rgb(255 178 122/.07),transparent 70%),var(--surface);border-color:rgb(255 79 139/.4);box-shadow:0 24px 70px rgb(0 0 0/.3);transition:transform .6s var(--ease)}
+.drop header{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.drop header .pixel{font-size:28px;line-height:1;color:var(--faint)}
+.drop-next header .pixel{color:var(--pink)}
+.drop-state{font-size:10px;color:var(--faint);border:1px solid var(--line);border-radius:4px;padding:4px 8px;white-space:nowrap}
+.drop-next .drop-state{display:inline-flex;align-items:center;gap:8px;color:var(--pink);border-color:rgb(255 79 139/.4)}
+.drop-next .drop-state:before{content:'';width:6px;height:6px;border-radius:50%;background:var(--pink);animation:drop-live 1.6s var(--ease) infinite alternate}
+.drop img{display:block;margin:40px 0 24px}
+.drop h3{font-size:36px;font-weight:500;letter-spacing:-.04em;line-height:1.05}
+.drop-next h3{font-size:clamp(3.5rem,2rem + 4vw,5.5rem)}
+.drop h3 span{color:var(--muted)}
+.drop.drop-next h3 span{color:var(--pink)}
+.drop>p{font-size:14px;color:var(--muted);margin-top:16px;max-width:400px}
+.drop>p:not(.drop-draw){margin-bottom:24px}
+/* Os dois bilhetes alinham o campo do ganhador na mesma linha, acima do canhoto, qualquer que seja a altura do título. */
+.drop>.drop-draw{display:flex;align-items:center;justify-content:space-between;gap:16px;max-width:none;margin:auto 0 32px;padding:12px 16px;border:1px solid var(--line);border-radius:4px;background:var(--bar)}
+.drop-draw .mono{font-size:10px;color:var(--faint)}
+.drop-draw .pixel{font-size:28px;line-height:1;letter-spacing:.06em;color:var(--faint);white-space:pre}
+.drop-next .drop-draw .pixel{color:var(--pink)}
+.drop-stub{position:relative;display:flex;align-items:baseline;justify-content:space-between;gap:8px 16px;flex-wrap:wrap;margin:0 calc(var(--pad)*-1);padding:20px var(--pad) 0;border-top:1px dashed var(--strong)}
+.drop-stub:before,.drop-stub:after{content:'';position:absolute;top:-10px;width:20px;height:20px;border-radius:50%;border:1px solid var(--strong);background:var(--bg)}
+.drop-stub:before{left:-11px;clip-path:inset(-1px -1px -1px 9px)}
+.drop-stub:after{right:-11px;clip-path:inset(-1px 9px -1px -1px)}
+.drop-stub .pixel{font-size:24px;line-height:1}
+.drop-stub .mono{font-size:10px;color:var(--faint)}
+.drop-mark{animation:drop-float 5.5s ease-in-out infinite}
+.drop:not(.drop-next) .drop-mark{animation-delay:-2.4s}
+@keyframes drop-live{from{opacity:.35}to{opacity:1}}
+@keyframes drop-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
+
+/* O bilhete do próximo prêmio cede ao ponteiro e o brilho segue o cursor. */
 .drop-next.tilting{transition:transform .12s linear;transform:rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg)) translateZ(0)}
 .drop-next:after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0;transition:opacity .3s var(--ease);background:radial-gradient(360px circle at var(--mx,70%) var(--my,10%),rgb(255 255 255/.09),transparent 62%)}
 .drop-next.tilting:after{opacity:1}
-.drop.drop-next h3 span{color:var(--pink)}
-.drop-mark{animation:drop-float 5.5s ease-in-out infinite}
-.drop:not(.drop-next) .drop-mark{animation-delay:-2.4s}
-@keyframes drop-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
+@media(hover:none){.drop-next.tilting{transform:none}.drop-next:after{display:none}}
 
 /* O bilhete sai da impressora: aparece de cima para baixo, uma vez, quando chega à tela. */
 .prize-ready .drop{clip-path:inset(0 0 100% 0)}
@@ -139,11 +128,50 @@
 .prize-ready .drop-next.printed.tilting{transition:clip-path 1s var(--ease),transform .12s linear}
 .prize-ready .drop+.drop.printed{transition-delay:.18s}
 
-@media(hover:none){.drop-next.tilting{transform:none}.drop-next:after{display:none}}
-@media(max-width:760px){.intro-prize{margin-top:20px}.intro-prize-name{font-size:26px}.community-section-intro#sorteio{gap:24px}.sorteio-lead{gap:16px}.drop-next h3{font-size:clamp(2.75rem,12vw,3.5rem)}}
-@media(prefers-reduced-motion:reduce){.prize-ready .drop{clip-path:none}}
+/* Como participar: três passos curtos, numerados como placar. */
+.sorteio-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;list-style:none;margin:0;padding:0}
+.sorteio-steps li{display:flex;gap:16px;align-items:flex-start;border-top:1px solid var(--strong);padding-top:24px}
+.step-num{flex:none;font-size:48px;line-height:.8;color:var(--pink)}
+.sorteio-steps h3{font-size:20px;font-weight:500;letter-spacing:-.03em;line-height:1.2}
+.sorteio-steps p{font-size:14px;color:var(--muted);margin-top:8px;max-width:32ch}
 
-/* Os dois bilhetes alinham o campo do ganhador na mesma linha, acima do canhoto, qualquer que seja a altura do título. */
-.drop>.drop-draw{margin:auto 0 32px}
-.drop>.drop-draw+.drop-stub{margin-top:0}
-@media(max-width:760px){.drop>.drop-draw{margin:24px 0}}
+/* Regras e convite final lado a lado: o que vale, e o botão logo ao lado. */
+.sorteio-final{display:grid;grid-template-columns:1.3fr 1fr;gap:24px;margin-top:64px}
+.sorteio-rules{border:1px solid var(--strong);border-radius:12px;background:var(--surface);padding:32px}
+.sorteio-rules h3{font-size:20px;font-weight:500}
+.sorteio-rules ul{list-style:none;margin:16px 0 0;padding:0;display:grid;gap:12px}
+.sorteio-rules li{font-size:14px;color:var(--muted);padding-left:20px;position:relative}
+.sorteio-rules li strong{color:var(--ink);font-weight:600}
+.sorteio-rules li:before{content:'+';position:absolute;left:0;color:var(--pink)}
+.sorteio-rules .game-note{margin-top:24px}
+.sorteio-rules .game-note a{color:var(--muted);text-decoration:underline;text-underline-offset:3px}
+.sorteio-rules .game-note a:hover{color:var(--pink)}
+.group-invite{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:16px;padding:32px;border:1px solid rgb(255 79 139/.4);border-radius:12px;background:radial-gradient(80% 80% at 100% 100%,rgb(37 211 102/.12),transparent 70%),var(--bar)}
+.group-invite-tag{font-size:24px;line-height:1;color:var(--pink);letter-spacing:.06em}
+.group-invite h3{font-size:28px;font-weight:500;letter-spacing:-.03em;line-height:1.15}
+.group-invite p{color:var(--muted);font-size:14px;max-width:44ch}
+.group-invite .button{margin-top:8px}
+
+@media(max-width:1000px){.sorteio-final{grid-template-columns:1fr}.sorteio-steps{grid-template-columns:1fr;gap:16px}.sorteio-steps li{padding-top:16px}}
+@media(max-width:760px){
+  .intro-prize{margin-top:20px}.intro-prize-name{font-size:26px}
+  .sorteio-head{gap:20px;margin-bottom:32px}
+  .sorteio-lead-text{font-size:16px}
+  .sorteio-cta{width:100%;flex-direction:column;align-items:stretch;gap:12px}
+  .sorteio-cta .mono{text-align:center}
+  .sorteio-board{grid-template-columns:1fr;gap:16px;margin-bottom:40px}
+  .drop{--pad:20px}
+  .drop img{width:48px;height:48px;margin:24px 0 16px}
+  .drop h3{font-size:28px}
+  .drop-next h3{font-size:clamp(2.75rem,12vw,3.5rem)}
+  .drop>.drop-draw{margin:24px 0}
+  .drop-draw .pixel{font-size:22px}
+  .drop-stub .pixel{font-size:20px}
+  .step-num{font-size:40px}
+  .sorteio-steps h3{font-size:18px}
+  .sorteio-final{margin-top:40px;gap:16px}
+  .sorteio-rules,.group-invite{padding:24px 20px}
+  .group-invite h3{font-size:24px}
+  .group-invite .button{width:100%}
+}
+@media(prefers-reduced-motion:reduce){.prize-ready .drop{clip-path:none}}
