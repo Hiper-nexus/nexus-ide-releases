@@ -183,6 +183,22 @@ let bootTimer: NodeJS.Timeout | null = null;
 let ingesting: Promise<HandoffSpoolIngestReport> | null = null;
 let rerun = false;
 let unsubscribeSettled: (() => void) | null = null;
+const RETIRED_SPOOL = Symbol('retired handoff spool');
+
+function assertCurrent(owner: SpoolState): void {
+  if (state !== owner) throw RETIRED_SPOOL;
+}
+
+async function waitCurrent<T>(owner: SpoolState, physical: Promise<T>): Promise<T> {
+  try {
+    const result = await physical;
+    assertCurrent(owner);
+    return result;
+  } catch (error) {
+    assertCurrent(owner);
+    throw error;
+  }
+}
 
 export function handoffSpoolRoot(userDataPath: string): string {
   return path.join(userDataPath, 'handoff-spool', 'v1');
@@ -208,13 +224,14 @@ function ensurePrivateDirectorySync(directory: string): void {
   fs.chmodSync(directory, 0o700);
 }
 
-async function ensurePrivateDirectory(directory: string): Promise<void> {
-  await fs.promises.mkdir(directory, { recursive: true, mode: 0o700 });
-  const stat = await fs.promises.lstat(directory);
+async function ensurePrivateDirectory(directory: string, owner: SpoolState): Promise<void> {
+  assertCurrent(owner);
+  await waitCurrent(owner, fs.promises.mkdir(directory, { recursive: true, mode: 0o700 }));
+  const stat = await waitCurrent(owner, fs.promises.lstat(directory));
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new Error('handoff spool path is not a private directory');
   }
-  await fs.promises.chmod(directory, 0o700);
+  await waitCurrent(owner, fs.promises.chmod(directory, 0o700));
 }
 
 function bindingPath(layout: Layout, spoolId: string): string {
@@ -244,19 +261,27 @@ export function startHandoffSpool(input: {
   /** Testes determinísticos desligam o watch; produção sempre observa. */
   readonly watch?: boolean;
 }): void {
-  // Reinício do servidor MCP no mesmo processo: as sessões vivas continuam
-  // valendo (mesma raiz) — só as dependências são trocadas.
-  if (state && state.root === input.root) {
-    state = { root: input.root, deps: input.deps, watch: input.watch !== false };
-    return;
+  // Same-root replacement retains live bindings, but retires every old pass
+  // and queued watcher callback. The physical ingest flight stays single.
+  if (state?.root === input.root) {
+    for (const live of liveSpools.values()) closeWatcher(live);
+    if (ingestTimer) clearTimeout(ingestTimer);
+    if (bootTimer) clearTimeout(bootTimer);
+    ingestTimer = null; bootTimer = null;
+    unsubscribeSettled?.();
+  } else {
+    void stopHandoffSpool();
   }
-  stopHandoffSpool();
   state = { root: input.root, deps: input.deps, watch: input.watch !== false };
+  const owner = state;
   unsubscribeSettled = onHandoffSubmitSettled((sessionId) => {
+    if (state !== owner) return;
     if (deferredSessions.delete(sessionId)) scheduleHandoffSpoolIngest('submit-settled');
   });
+  for (const live of liveSpools.values()) startWatcher(live);
   // Boot: o que ficou de um Main que travou ou fechou entra sem esperar evento.
   bootTimer = setTimeout(() => {
+    if (state !== owner) return;
     bootTimer = null;
     scheduleHandoffSpoolIngest('boot', 0);
   }, input.bootDelayMs ?? BOOT_INGEST_DELAY_MS);
@@ -264,7 +289,10 @@ export function startHandoffSpool(input: {
 }
 
 /** Para watchers e timers; nunca apaga nada do disco (o próximo boot ingere). */
-export function stopHandoffSpool(): void {
+export function stopHandoffSpool(): Promise<void> {
+  const physical = ingesting;
+  state = null;
+  rerun = false;
   for (const live of liveSpools.values()) closeWatcher(live);
   liveSpools.clear();
   spoolIdBySession.clear();
@@ -275,7 +303,9 @@ export function stopHandoffSpool(): void {
   bootTimer = null;
   unsubscribeSettled?.();
   unsubscribeSettled = null;
-  state = null;
+  // Revocation is synchronous; the exact read/write/delivery flight must
+  // physically settle before its domain registry may be closed.
+  return physical ? physical.then(() => undefined, () => undefined) : Promise.resolve();
 }
 
 function closeWatcher(live: LiveSpool): void {
@@ -300,8 +330,9 @@ export function createHandoffSpoolSession(input: {
   readonly providerId?: string;
 }): HandoffSpoolSession | null {
   if (!state) return null;
-  const layout = layoutOf(state.root);
-  ensurePrivateDirectorySync(path.dirname(state.root));
+  const owner = state;
+  const layout = layoutOf(owner.root);
+  ensurePrivateDirectorySync(path.dirname(owner.root));
   for (const directory of [layout.root, layout.sessions, layout.bindings]) {
     ensurePrivateDirectorySync(directory);
   }
@@ -330,7 +361,7 @@ export function createHandoffSpoolSession(input: {
     // Mesmo contrato do rótulo do handoff: sem controle, até 256.
     agentLabel: input.agentLabel.replace(/[\u0000-\u001F\u007F]+/gu, ' ').trim().slice(0, 256) || 'worker',
     ...(input.providerId ? { providerId: input.providerId } : {}),
-    createdAt: (state.deps.now ?? Date.now)(),
+    createdAt: (owner.deps.now ?? Date.now)(),
   });
   writeBindingSync(layout, binding);
   const live: LiveSpool = { spoolId, dir, binding, watcher: null };
@@ -346,17 +377,19 @@ export function createHandoffSpoolSession(input: {
     readPaths: Object.freeze([dir]),
     writePaths: Object.freeze([dir]),
     bindSession(sessionId) {
-      if (!liveSpools.has(spoolId)) return;
+      if (state !== owner || liveSpools.get(spoolId) !== live) return;
       live.binding = bindingSchema.parse({ ...live.binding, sessionId });
       writeBindingSync(layout, live.binding);
       spoolIdBySession.set(sessionId, spoolId);
       startWatcher(live);
     },
     dispose() {
+      if (liveSpools.get(spoolId) !== live) return;
       releaseLiveSpool(spoolId);
       scheduleHandoffSpoolIngest('session-end');
     },
     discard() {
+      if (state !== owner || liveSpools.get(spoolId) !== live) return;
       releaseLiveSpool(spoolId);
       fs.rmSync(dir, { recursive: true, force: true });
       fs.rmSync(bindingPath(layout, spoolId), { force: true });
@@ -366,13 +399,15 @@ export function createHandoffSpoolSession(input: {
 
 function startWatcher(live: LiveSpool): void {
   if (live.watcher || !state?.watch) return;
+  const owner = state;
   try {
     // Evento de diretório chega quando o loop do Main volta a girar — é a
     // "reconexão" depois de um travamento, sem polling.
     const watcher = fs.watch(live.dir, { persistent: false }, () => {
+      if (state !== owner || liveSpools.get(live.spoolId) !== live) return;
       scheduleHandoffSpoolIngest('watch');
     });
-    watcher.on('error', () => closeWatcher(live));
+    watcher.on('error', () => { if (live.watcher === watcher) closeWatcher(live); });
     live.watcher = watcher;
   } catch {
     // Sem watch (plataforma/limite de inotify): boot e fim de sessão cobrem.
@@ -404,7 +439,9 @@ export function scheduleHandoffSpoolIngest(reason: string, delayMs = 250): void 
     return;
   }
   if (ingestTimer) return;
+  const owner = state;
   ingestTimer = setTimeout(() => {
+    if (state !== owner) return;
     ingestTimer = null;
     void runScheduledIngest(reason);
   }, delayMs);
@@ -422,31 +459,33 @@ async function runScheduledIngest(reason: string): Promise<HandoffSpoolIngestRep
     return ingesting;
   }
   const current = state;
-  ingesting = (async () => {
+  const physical = (async () => {
     const total = emptyReport();
     do {
       rerun = false;
-      const pass = await runIngestPass(current.root, current.deps);
+      const pass = await runIngestPass(current);
       for (const key of Object.keys(total) as Array<keyof HandoffSpoolIngestReport>) {
         total[key] += pass[key];
       }
     } while (rerun && state === current);
     return total;
   })();
+  ingesting = physical;
   try {
-    const report = await ingesting;
-    if (Object.values(report).some((count) => count > 0)) {
+    const report = await physical;
+    if (state === current && Object.values(report).some((count) => count > 0)) {
       trace({ kind: 'handoff-spool-pass', trigger: reason, ...report });
     }
     return report;
   } catch (error) {
+    if (error === RETIRED_SPOOL) return emptyReport();
     console.warn('[handoff-spool] passada de ingestão falhou:', error);
     return emptyReport();
   } finally {
-    ingesting = null;
+    if (ingesting === physical) ingesting = null;
     // Pedido que chegou enquanto uma passada de OUTRA configuração rodava
     // (reinício do spool) não pode se perder: reagenda sob a atual.
-    if (rerun && state) {
+    if (state && (rerun || state !== current)) {
       rerun = false;
       scheduleHandoffSpoolIngest('rerun', 0);
     }
@@ -480,21 +519,15 @@ type BindingResult =
   | { readonly ok: true; readonly binding: HandoffSpoolBinding }
   | { readonly ok: false; readonly reason: string };
 
-async function loadBinding(layout: Layout, spoolId: string): Promise<BindingResult> {
+async function loadBinding(layout: Layout, spoolId: string, owner: SpoolState): Promise<BindingResult> {
+  assertCurrent(owner);
   const live = liveSpools.get(spoolId);
   if (live) return { ok: true, binding: live.binding };
-  let text: string;
+  const read = await readClaimedEntry(bindingPath(layout, spoolId), owner, 64 * 1024);
+  assertCurrent(owner);
+  if (!read.ok) return { ok: false, reason: read.reason === 'entry-unreadable' ? 'binding-missing' : 'binding-invalid' };
   try {
-    const stat = await fs.promises.lstat(bindingPath(layout, spoolId));
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 64 * 1024) {
-      return { ok: false, reason: 'binding-invalid' };
-    }
-    text = await fs.promises.readFile(bindingPath(layout, spoolId), 'utf8');
-  } catch {
-    return { ok: false, reason: 'binding-missing' };
-  }
-  try {
-    const parsed = bindingSchema.safeParse(JSON.parse(text));
+    const parsed = bindingSchema.safeParse(JSON.parse(read.text));
     if (!parsed.success || parsed.data.spoolId !== spoolId) return { ok: false, reason: 'binding-invalid' };
     return { ok: true, binding: parsed.data };
   } catch {
@@ -504,20 +537,33 @@ async function loadBinding(layout: Layout, spoolId: string): Promise<BindingResu
 
 type ReadResult = { readonly ok: true; readonly text: string } | { readonly ok: false; readonly reason: string };
 
-async function readClaimedEntry(file: string): Promise<ReadResult> {
+async function readClaimedEntry(file: string, owner: SpoolState, cap = HANDOFF_SPOOL_MAX_ENTRY_BYTES): Promise<ReadResult> {
+  assertCurrent(owner);
   let handle: FileHandle;
   try {
-    handle = await fs.promises.open(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    handle = await fs.promises.open(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
   } catch {
+    assertCurrent(owner);
     return { ok: false, reason: 'entry-unreadable' };
   }
   try {
-    const stat = await handle.stat();
+    // Capture the returned handle before fencing: a late open still owns an
+    // FD which must be closed physically even after cancellation.
+    assertCurrent(owner);
+    const stat = await waitCurrent(owner, handle.stat());
     if (!stat.isFile()) return { ok: false, reason: 'entry-not-regular' };
     // Link físico apontaria para fora do diretório do agente.
     if (stat.nlink !== 1) return { ok: false, reason: 'entry-hardlinked' };
-    if (stat.size > HANDOFF_SPOOL_MAX_ENTRY_BYTES) return { ok: false, reason: 'entry-too-large' };
-    return { ok: true, text: await handle.readFile('utf8') };
+    if (stat.size > cap) return { ok: false, reason: 'entry-too-large' };
+    const bytes = Buffer.alloc(cap + 1);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await waitCurrent(owner, handle.read(bytes, offset, bytes.length - offset, null));
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    if (offset > cap) return { ok: false, reason: 'entry-too-large' };
+    return { ok: true, text: bytes.subarray(0, offset).toString('utf8') };
   } finally {
     await handle.close();
   }
@@ -693,13 +739,13 @@ function buildSubmitInput(
   };
 }
 
-async function writeReceipt(layout: Layout, entryId: string, receipt: Record<string, unknown>): Promise<void> {
-  await ensurePrivateDirectory(layout.ingested);
+async function writeReceipt(layout: Layout, entryId: string, receipt: Record<string, unknown>, owner: SpoolState): Promise<void> {
+  await ensurePrivateDirectory(layout.ingested, owner);
   const target = path.join(layout.ingested, `${entryId}.json`);
   const temporary = `${target}.${randomUUID()}.tmp`;
   try {
-    await fs.promises.writeFile(temporary, `${JSON.stringify(receipt)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-    await fs.promises.rename(temporary, target);
+    await waitCurrent(owner, fs.promises.writeFile(temporary, `${JSON.stringify(receipt)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' }));
+    await waitCurrent(owner, fs.promises.rename(temporary, target));
   } finally {
     await fs.promises.rm(temporary, { force: true });
   }
@@ -712,63 +758,72 @@ async function quarantineClaimed(
   entryName: string,
   reason: string,
   now: number,
+  owner: SpoolState,
 ): Promise<void> {
-  await ensurePrivateDirectory(layout.quarantine);
+  await ensurePrivateDirectory(layout.quarantine, owner);
   const target = path.join(layout.quarantine, `${spoolId}--${entryName}`);
   try {
-    await fs.promises.rename(claimedPath, target);
-    await fs.promises.writeFile(
+    await waitCurrent(owner, fs.promises.rename(claimedPath, target));
+    await waitCurrent(owner, fs.promises.writeFile(
       `${target}.reason.json`,
       `${JSON.stringify({ reason, spoolId, entry: entryName, at: now })}\n`,
       { encoding: 'utf8', mode: 0o600 },
-    );
+    ));
   } catch (error) {
+    if (error === RETIRED_SPOOL) throw error;
     console.warn('[handoff-spool] quarentena falhou (entrada mantida onde está):', error);
   }
   trace({ kind: 'handoff-spool-quarantined', spoolId, entry: entryName, reason });
 }
 
 /** Falha transitória (banco ocupado, store fora): volta para a fila da sessão. */
-async function requeueClaimed(layout: Layout, claimedPath: string, spoolId: string, entryName: string): Promise<void> {
+async function requeueClaimed(layout: Layout, claimedPath: string, spoolId: string, entryName: string, owner: SpoolState): Promise<void> {
+  assertCurrent(owner);
   const sessionDir = path.join(layout.sessions, spoolId);
-  if (!(await exists(sessionDir))) return; // fica em processing/; o boot retoma
+  if (!(await waitCurrent(owner, exists(sessionDir)))) return; // fica em processing/; o boot retoma
   try {
-    await fs.promises.rename(claimedPath, path.join(sessionDir, entryName));
-  } catch {
+    await waitCurrent(owner, fs.promises.rename(claimedPath, path.join(sessionDir, entryName)));
+  } catch (error) {
+    if (error === RETIRED_SPOOL) throw error;
     // Fica em processing/; a próxima passada retoma de lá.
   }
 }
 
 async function processClaimed(
   layout: Layout,
-  deps: HandoffSpoolDeps,
+  owner: SpoolState,
   spoolId: string,
   entryName: string,
   claimedPath: string,
   bindingResult: BindingResult,
   report: HandoffSpoolIngestReport,
 ): Promise<void> {
+  assertCurrent(owner);
+  const deps = owner.deps;
   const now = (deps.now ?? Date.now)();
   const quarantine = async (reason: string): Promise<void> => {
-    await quarantineClaimed(layout, claimedPath, spoolId, entryName, reason, now);
+    await quarantineClaimed(layout, claimedPath, spoolId, entryName, reason, now, owner);
     report.quarantined += 1;
   };
   if (!bindingResult.ok) return quarantine(bindingResult.reason);
   const binding = bindingResult.binding;
-  const read = await readClaimedEntry(claimedPath);
+  const read = await readClaimedEntry(claimedPath, owner);
+  assertCurrent(owner);
   if (!read.ok) return quarantine(read.reason);
   const parsed = parseEntry(read.text, binding, spoolId, entryName);
   if (!parsed.ok) return quarantine(parsed.reason);
   const { entry } = parsed;
   const receiptPath = path.join(layout.ingested, `${entry.entryId}.json`);
-  if (await exists(receiptPath)) {
-    await fs.promises.rm(claimedPath, { force: true });
+  if (await waitCurrent(owner, exists(receiptPath))) {
+    await waitCurrent(owner, fs.promises.rm(claimedPath, { force: true }));
     report.duplicates += 1;
     return;
   }
   const rawPayloadSha256 = handoffRawPayloadSha256(parsed.payload);
   try {
+    assertCurrent(owner);
     const stores = deps.getStores(binding.scope);
+    assertCurrent(owner);
     if (!stores.missions.get(binding.missionId)) return quarantine('mission-missing');
     const existing = stores.handoffs.list({
       missionId: binding.missionId,
@@ -779,8 +834,8 @@ async function processClaimed(
     if (duplicate) {
       await writeReceipt(layout, entry.entryId, {
         entryId: entry.entryId, spoolId, outcome: duplicate.kind, handoffId: duplicate.handoffId, at: now,
-      });
-      await fs.promises.rm(claimedPath, { force: true });
+      }, owner);
+      await waitCurrent(owner, fs.promises.rm(claimedPath, { force: true }));
       report.duplicates += 1;
       trace({
         kind: 'handoff-spool-duplicate', spoolId, entryId: entry.entryId, outcome: duplicate.kind,
@@ -788,13 +843,14 @@ async function processClaimed(
       });
       return;
     }
+    assertCurrent(owner);
     const handoff = stores.handoffs.submit(buildSubmitInput(binding, parsed, rawPayloadSha256, now));
     // Recibo ANTES de qualquer efeito opcional: a partir daqui a entrada é feita.
     await writeReceipt(layout, entry.entryId, {
       entryId: entry.entryId, spoolId, outcome: 'ingested', handoffId: handoff.id,
       missionId: binding.missionId, transport: entry.transport, at: now,
-    });
-    await fs.promises.rm(claimedPath, { force: true });
+    }, owner);
+    await waitCurrent(owner, fs.promises.rm(claimedPath, { force: true }));
     report.ingested += 1;
     trace({
       kind: 'handoff-spool-ingested', spoolId, entryId: entry.entryId, transport: entry.transport,
@@ -802,13 +858,16 @@ async function processClaimed(
       handoffId: handoff.id, status: handoff.status, spooledAt: entry.createdAt,
     });
     try {
-      deps.deliver(handoff, binding.scope);
+      assertCurrent(owner);
+      await waitCurrent(owner, Promise.resolve(deps.deliver(handoff, binding.scope)));
     } catch (error) {
+      if (error === RETIRED_SPOOL) throw error;
       // O handoff é durável; a outbox re-arma a entrega quando o Maestro voltar.
       console.warn('[handoff-spool] entrega ao orquestrador adiada:', error);
     }
   } catch (error) {
-    await requeueClaimed(layout, claimedPath, spoolId, entryName);
+    if (error === RETIRED_SPOOL) throw error;
+    await requeueClaimed(layout, claimedPath, spoolId, entryName, owner);
     report.failed += 1;
     trace({
       kind: 'handoff-spool-retry', spoolId, entryId: entry.entryId,
@@ -817,11 +876,13 @@ async function processClaimed(
   }
 }
 
-async function removeStaleTemp(directory: string, name: string, now: number): Promise<void> {
+async function removeStaleTemp(directory: string, name: string, now: number, owner: SpoolState): Promise<void> {
+  assertCurrent(owner);
   try {
-    const stat = await fs.promises.lstat(path.join(directory, name));
-    if (now - stat.mtimeMs > STALE_TEMP_MS) await fs.promises.rm(path.join(directory, name), { force: true });
-  } catch {
+    const stat = await waitCurrent(owner, fs.promises.lstat(path.join(directory, name)));
+    if (now - stat.mtimeMs > STALE_TEMP_MS) await waitCurrent(owner, fs.promises.rm(path.join(directory, name), { force: true }));
+  } catch (error) {
+    if (error === RETIRED_SPOOL) throw error;
     // Escrita em curso ou já removido.
   }
 }
@@ -831,63 +892,68 @@ async function maybeRemoveSession(
   spoolId: string,
   bindingResult: BindingResult,
   now: number,
+  owner: SpoolState,
 ): Promise<void> {
+  assertCurrent(owner);
   if (liveSpools.has(spoolId)) return;
   const directory = path.join(layout.sessions, spoolId);
-  if ((await readdirSafe(directory)).length > 0) return;
+  if ((await waitCurrent(owner, readdirSafe(directory))).length > 0) return;
   const foreignAndRecent =
     !disposedInProcess.has(spoolId) &&
     bindingResult.ok &&
     now - bindingResult.binding.createdAt < FOREIGN_BINDING_TTL_MS;
   // Sessão de outro processo (pty-daemon pode mantê-la viva) fica por 48 h.
   if (foreignAndRecent) return;
-  await fs.promises.rm(directory, { recursive: true, force: true });
-  await fs.promises.rm(bindingPath(layout, spoolId), { force: true });
+  await waitCurrent(owner, fs.promises.rm(directory, { recursive: true, force: true }));
+  await waitCurrent(owner, fs.promises.rm(bindingPath(layout, spoolId), { force: true }));
   disposedInProcess.delete(spoolId);
 }
 
-async function gcReceipts(layout: Layout, now: number): Promise<void> {
-  for (const name of await readdirSafe(layout.ingested)) {
+async function gcReceipts(layout: Layout, now: number, owner: SpoolState): Promise<void> {
+  for (const name of await waitCurrent(owner, readdirSafe(layout.ingested))) {
     const file = path.join(layout.ingested, name);
     try {
-      const stat = await fs.promises.lstat(file);
-      if (now - stat.mtimeMs > RECEIPT_TTL_MS) await fs.promises.rm(file, { force: true });
-    } catch {
+      const stat = await waitCurrent(owner, fs.promises.lstat(file));
+      if (now - stat.mtimeMs > RECEIPT_TTL_MS) await waitCurrent(owner, fs.promises.rm(file, { force: true }));
+    } catch (error) {
+      if (error === RETIRED_SPOOL) throw error;
       // Já removido.
     }
   }
 }
 
-async function runIngestPass(root: string, deps: HandoffSpoolDeps): Promise<HandoffSpoolIngestReport> {
+async function runIngestPass(owner: SpoolState): Promise<HandoffSpoolIngestReport> {
+  assertCurrent(owner);
   const report = emptyReport();
-  const layout = layoutOf(root);
-  const now = (deps.now ?? Date.now)();
-  if (!(await exists(layout.root))) return report;
+  const layout = layoutOf(owner.root);
+  const now = (owner.deps.now ?? Date.now)();
+  if (!(await waitCurrent(owner, exists(layout.root)))) return report;
   for (const directory of [layout.processing, layout.ingested, layout.quarantine]) {
-    await ensurePrivateDirectory(directory);
+    await ensurePrivateDirectory(directory, owner);
   }
   // 1) Reivindicadas e não terminadas (o Main caiu no meio): o dedupe torna
   //    a retomada idempotente.
-  for (const name of await readdirSafe(layout.processing)) {
+  for (const name of await waitCurrent(owner, readdirSafe(layout.processing))) {
     const match = /^([0-9a-f-]{36})--(.+)$/.exec(name);
     if (!match || !UUID_RE.test(match[1]) || !ENTRY_FILE_RE.test(match[2])) continue;
     await processClaimed(
-      layout, deps, match[1], match[2], path.join(layout.processing, name),
-      await loadBinding(layout, match[1]), report,
+      layout, owner, match[1], match[2], path.join(layout.processing, name),
+      await loadBinding(layout, match[1], owner), report,
     );
   }
   // 2) Diretórios das sessões.
-  for (const spoolId of await readdirSafe(layout.sessions)) {
+  for (const spoolId of await waitCurrent(owner, readdirSafe(layout.sessions))) {
     if (!UUID_RE.test(spoolId)) continue;
     const directory = path.join(layout.sessions, spoolId);
     try {
-      const stat = await fs.promises.lstat(directory);
+      const stat = await waitCurrent(owner, fs.promises.lstat(directory));
       if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
-    } catch {
+    } catch (error) {
+      if (error === RETIRED_SPOOL) throw error;
       continue;
     }
-    const bindingResult = await loadBinding(layout, spoolId);
-    const names = await readdirSafe(directory);
+    const bindingResult = await loadBinding(layout, spoolId, owner);
+    const names = await waitCurrent(owner, readdirSafe(directory));
     const pending = names.filter((name) => ENTRY_FILE_RE.test(name));
     if (
       pending.length > 0 &&
@@ -903,7 +969,7 @@ async function runIngestPass(root: string, deps: HandoffSpoolDeps): Promise<Hand
     let processed = 0;
     for (const name of names) {
       if (name.startsWith('.')) {
-        await removeStaleTemp(directory, name, now);
+        await removeStaleTemp(directory, name, now, owner);
         continue;
       }
       if (!ENTRY_FILE_RE.test(name)) continue;
@@ -913,22 +979,24 @@ async function runIngestPass(root: string, deps: HandoffSpoolDeps): Promise<Hand
       }
       const claimed = path.join(layout.processing, `${spoolId}--${name}`);
       try {
-        await fs.promises.rename(path.join(directory, name), claimed);
-      } catch {
+        await waitCurrent(owner, fs.promises.rename(path.join(directory, name), claimed));
+      } catch (error) {
+        if (error === RETIRED_SPOOL) throw error;
         continue; // outra passada pegou primeiro
       }
       processed += 1;
-      await processClaimed(layout, deps, spoolId, name, claimed, bindingResult, report);
+      await processClaimed(layout, owner, spoolId, name, claimed, bindingResult, report);
     }
-    await maybeRemoveSession(layout, spoolId, bindingResult, now);
+    await maybeRemoveSession(layout, spoolId, bindingResult, now, owner);
   }
-  await gcReceipts(layout, now);
+  await gcReceipts(layout, now, owner);
   return report;
 }
 
 /** Testes. */
-export function resetHandoffSpoolForTests(): void {
-  stopHandoffSpool();
+export function resetHandoffSpoolForTests(): Promise<void> {
+  const physical = stopHandoffSpool();
   disposedInProcess.clear();
   rerun = false;
+  return physical;
 }

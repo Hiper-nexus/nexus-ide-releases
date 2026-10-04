@@ -4050,6 +4050,22 @@ describe('native operator attestation authority', () => {
 });
 
 describe('orchestration init/close epoch serialization', () => {
+  it('F-883: retains the registry until the MCP spool physical stop settles', async () => {
+    await initOrchestration();
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const drain = new Promise<void>(resolve => { release = resolve; });
+    vi.mocked(stopMcpServer).mockImplementationOnce(() => { entered(); return drain; });
+    vi.mocked(disposeProjectDomainStoreRegistry).mockClear();
+    const closing = closeOrchestration();
+    await started;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const registryClosedEarly = vi.mocked(disposeProjectDomainStoreRegistry).mock.calls.length;
+    release(); await closing;
+    expect(registryClosedEarly).toBe(0);
+    expect(disposeProjectDomainStoreRegistry).toHaveBeenCalledOnce();
+  });
+
   it('keeps a live start supervisor after a transient MCP failure', async () => {
     vi.useFakeTimers();
     vi.mocked(startMcpServer)

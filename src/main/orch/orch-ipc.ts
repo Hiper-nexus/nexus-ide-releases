@@ -1661,7 +1661,7 @@ export async function closeOrchestration(): Promise<void> {
     shutdownWorkerHandoffEnforcement();
     stopAllPreviews();
     stopRemoteBridge();
-    stopMcpServer();
+    await stopMcpServer();
     await disposeProjectDomainStoreRegistry();
     projectDomainStores = null;
     rendererMissionAuthority = null;

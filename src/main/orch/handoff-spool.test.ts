@@ -28,7 +28,7 @@ import {
   type HandoffSpoolStores,
   type HandoffSpoolSubmitInput,
 } from './handoff-spool';
-import { HANDOFF_SPOOL_WRITER_JS } from './handoff-spool-entry';
+import { HANDOFF_SPOOL_WRITER_JS, HANDOFF_SPOOL_MAX_ENTRY_BYTES } from './handoff-spool-entry';
 import { beginHandoffSubmitInFlight, resetHandoffSubmitInFlightForTests } from './handoff-submit-inflight';
 import { handoffRawPayloadSha256 } from './handoff-payload-identity';
 import { HOOK_SCRIPT } from './hooks-gen';
@@ -158,10 +158,156 @@ beforeEach(() => {
   session = openSession();
 });
 
-afterEach(() => {
-  resetHandoffSpoolForTests();
+afterEach(async () => {
+  await resetHandoffSpoolForTests();
+  vi.restoreAllMocks();
   resetHandoffSubmitInFlightForTests();
   fs.rmSync(temp, { recursive: true, force: true });
+});
+
+function pauseClaimedRead() {
+  let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>(resolve => { enter = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const open = fs.promises.open.bind(fs.promises);
+  let paused = false;
+  vi.spyOn(fs.promises, 'open').mockImplementation(async (...args) => {
+    const handle = await open(...args);
+    if (String(args[0]).startsWith(path.join(root, 'processing') + path.sep)) {
+      for (const method of ['read', 'readFile'] as const) {
+        const actual = handle[method].bind(handle);
+        handle[method] = (async (...readArgs: unknown[]) => {
+          if (!paused) { paused = true; enter(); await gate; }
+          return Reflect.apply(actual, handle, readArgs);
+        }) as typeof handle.read & typeof handle.readFile;
+      }
+    }
+    return handle;
+  });
+  return { entered, release };
+}
+
+describe('F-883: lifetime físico e leitura limitada do spool', () => {
+  it('revokes old callbacks immediately and waits for its paused FD before stop settles', async () => {
+    snippetWriter()(session.env, 'gate-hook', PAYLOAD);
+    const gate = pauseClaimedRead();
+    const flight = ingestHandoffSpoolNow();
+    await gate.entered;
+    let settled = false;
+    const stop = Promise.resolve(stopHandoffSpool()).then(() => { settled = true; });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const settledBeforeRead = settled;
+    gate.release();
+    await flight;
+    await stop;
+    expect(settledBeforeRead).toBe(false);
+    expect(submittedInputs).toEqual([]);
+    expect(delivered).toEqual([]);
+    expect(fs.readdirSync(path.join(root, 'processing'))).toHaveLength(1);
+    expect(fs.readdirSync(path.join(root, 'ingested'))).toEqual([]);
+    start();
+    await expect(ingestHandoffSpoolNow()).resolves.toMatchObject({ ingested: 1 });
+    expect(handoffs).toHaveLength(1);
+  });
+
+  it('same-root reconfiguration never uses retired dependencies and ingests once with the new owner', async () => {
+    snippetWriter()(session.env, 'gate-hook', PAYLOAD);
+    const gate = pauseClaimedRead();
+    const old = ingestHandoffSpoolNow();
+    await gate.entered;
+    const oldStores = stores;
+    const newSubmits: HandoffSpoolSubmitInput[] = [];
+    startHandoffSpool({ root, watch: false, bootDelayMs: 600_000, deps: {
+      getStores: () => ({ ...oldStores(), handoffs: { ...oldStores().handoffs, submit: input => {
+        newSubmits.push(input); return oldStores().handoffs.submit(input);
+      } } }), deliver: handoff => { delivered.push(handoff); },
+    } });
+    const next = ingestHandoffSpoolNow();
+    gate.release();
+    await old;
+    await next;
+    expect(submittedInputs).toHaveLength(1);
+    expect(newSubmits).toHaveLength(1);
+    expect(delivered).toHaveLength(1);
+  });
+
+  it('stop drains an already-started asynchronous delivery before stores may close', async () => {
+    let enter!: () => void, release!: () => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const delivery = new Promise<void>(resolve => { release = resolve; });
+    startHandoffSpool({ root, watch: false, bootDelayMs: 600_000, deps: {
+      getStores: () => stores(), deliver: () => { enter(); return delivery; },
+    } });
+    snippetWriter()(session.env, 'gate-hook', PAYLOAD);
+    const flight = ingestHandoffSpoolNow();
+    await entered;
+    let stopped = false;
+    const stop = Promise.resolve(stopHandoffSpool()).then(() => { stopped = true; });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const settledBeforeDelivery = stopped;
+    release(); await flight; await stop;
+    expect(settledBeforeDelivery).toBe(false);
+    expect(handoffs).toHaveLength(1);
+  });
+
+  it.skipIf(process.platform === 'win32')('a private FIFO entry settles without waiting for a writer', async () => {
+    const name = `${Date.now()}-${crypto.randomUUID()}.json`;
+    await execFileAsync('/usr/bin/mkfifo', [path.join(session.dir, name)]);
+    const claimed = path.join(root, 'processing', `${session.spoolId}--${name}`);
+    let entered!: () => void;
+    const opened = new Promise<void>(resolve => { entered = resolve; });
+    const open = fs.promises.open.bind(fs.promises);
+    vi.spyOn(fs.promises, 'open').mockImplementation((...args) => { if (String(args[0]) === claimed) entered(); return open(...args); });
+    let settled = false;
+    const flight = ingestHandoffSpoolNow().then(report => { settled = true; return report; });
+    await opened;
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const beforeRescue = settled;
+    const rescue = !beforeRescue ? fs.openSync(claimed, fs.constants.O_RDWR | fs.constants.O_NONBLOCK) : null;
+    try { await flight; } finally { if (rescue !== null) fs.closeSync(rescue); }
+    expect(beforeRescue).toBe(true);
+    expect(submittedInputs).toEqual([]);
+  });
+
+  it('bounds a growing entry after stat instead of consuming its whole new size', async () => {
+    snippetWriter()(session.env, 'gate-hook', PAYLOAD);
+    const open = fs.promises.open.bind(fs.promises);
+    vi.spyOn(fs.promises, 'open').mockImplementation(async (...args) => {
+      const handle = await open(...args);
+      if (String(args[0]).startsWith(path.join(root, 'processing') + path.sep)) {
+        const stat = handle.stat.bind(handle);
+        handle.stat = (async (...statArgs: unknown[]) => {
+          const result = await Reflect.apply(stat, handle, statArgs);
+          fs.appendFileSync(String(args[0]), 'x'.repeat(HANDOFF_SPOOL_MAX_ENTRY_BYTES));
+          return result;
+        }) as typeof handle.stat;
+      }
+      return handle;
+    });
+    await expect(ingestHandoffSpoolNow()).resolves.toMatchObject({ quarantined: 1 });
+    const reason = fs.readdirSync(path.join(root, 'quarantine')).find(name => name.endsWith('.reason.json'))!;
+    expect(JSON.parse(fs.readFileSync(path.join(root, 'quarantine', reason), 'utf8')).reason).toBe('entry-too-large');
+    expect(submittedInputs).toEqual([]);
+  });
+
+  it('reads a signed entry completely across short FD reads', async () => {
+    snippetWriter()(session.env, 'gate-hook', PAYLOAD);
+    const open = fs.promises.open.bind(fs.promises);
+    let reads = 0;
+    vi.spyOn(fs.promises, 'open').mockImplementation(async (...args) => {
+      const handle = await open(...args);
+      if (String(args[0]).startsWith(path.join(root, 'processing') + path.sep)) {
+        const read = handle.read.bind(handle);
+        handle.read = (async (buffer: Buffer, offset: number, length: number, position: number | null) => {
+          reads++; return read(buffer, offset, Math.min(length, 17), position);
+        }) as typeof handle.read;
+      }
+      return handle;
+    });
+    await expect(ingestHandoffSpoolNow()).resolves.toMatchObject({ ingested: 1 });
+    expect(reads).toBeGreaterThan(1);
+    expect(handoffs[0]?.summary).toContain(PAYLOAD.summary);
+  });
 });
 
 describe('spool de handoff: sessão (F-795)', () => {

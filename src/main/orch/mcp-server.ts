@@ -296,6 +296,7 @@ const MAX_BODY_BYTES = MAX_MCP_PAYLOAD_BYTES;
 let server: http.Server | null = null;
 let port = 0;
 let registry: McpRegistry | null = null;
+let mcpStopFlight: Promise<void> | null = null;
 const sessionTokens = new Map<string, string>(); // sessionId → token
 const missionShims = new Set<MissionShimRuntime>();
 const missionShimBySession = new Map<string, MissionShimRuntime>(); // sessionId → runtime
@@ -1988,7 +1989,10 @@ export function installLegacyParser(
   });
 }
 
-export function startMcpServer(): Promise<void> {
+export async function startMcpServer(): Promise<void> {
+  // A retry cannot install new dependencies while an old spool FD or
+  // already-started delivery still owns the previous registry generation.
+  if (mcpStopFlight) await mcpStopFlight;
   nativeHeavyCommands.startAdmission();
   httpConfirmationScheduler.close();
   httpConfirmationScheduler = new McpConfirmationScheduler(
@@ -2187,7 +2191,10 @@ export function startMcpServer(): Promise<void> {
     });
 }
 
-export function stopMcpServer(): void {
+export function stopMcpServer(): Promise<void> {
+  if (mcpStopFlight) return mcpStopFlight;
+  // Fence the spool before synchronous session/shim cleanup can run.
+  const spoolDrain = stopHandoffSpool();
   nativeHeavyCommands.stopAdmission();
   setAgentSpawnHook(null);
   setDeferredInitialPromptHook(null);
@@ -2216,11 +2223,15 @@ export function stopMcpServer(): void {
   for (const runtime of [...missionShims]) disposeMissionShim(runtime);
   missionShimBySession.clear();
   // Fecha watchers/timers; o que estiver no disco fica para o próximo boot.
-  stopHandoffSpool();
   server?.close();
   server = null;
   port = 0;
   removeArmsRuntimeDescriptor();
+  const physical = spoolDrain.finally(() => {
+    if (mcpStopFlight === physical) mcpStopFlight = null;
+  });
+  mcpStopFlight = physical;
+  return physical;
 }
 
 export function getMcpRuntimeInfo(): McpRuntimeInfo {
