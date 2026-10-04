@@ -1738,7 +1738,7 @@ const paneSpawnAfterTabMission = {
         ) {
           recordRouteLog({
             task:
-              options.prompt?.slice(0, 120) ??
+              options.prompt ??
               options.title ??
               options.agentName ??
               'worker ad-hoc',

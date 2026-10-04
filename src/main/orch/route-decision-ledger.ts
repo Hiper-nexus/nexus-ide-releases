@@ -11,6 +11,7 @@ import {
 } from '../../shared/spawn-route';
 import {
   parseRouteLogAlternatives,
+  routeTaskPreview,
   type RouteLogEntry,
   type RouteLogSink,
 } from './route-log';
@@ -58,7 +59,7 @@ function entryFromRow(raw: unknown): RouteLogEntry | null {
   const alternatives = parseRouteLogAlternatives(parseJson(row.alternatives_json));
   return {
     seq: row.seq,
-    taskPreview: row.task_preview,
+    taskPreview: routeTaskPreview(row.task_preview),
     tier: row.tier,
     adapterId: row.adapter_id,
     ...(row.model !== null ? { model: row.model } : {}),
@@ -101,7 +102,7 @@ export class RouteDecisionLedger implements RouteLogSink {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         clip(entry.missionId, 256),
-        entry.taskPreview.slice(0, 120),
+        routeTaskPreview(entry.taskPreview),
         entry.tier.slice(0, 32),
         entry.adapterId.slice(0, 128),
         clip(entry.model, 256),

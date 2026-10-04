@@ -21,6 +21,7 @@ import {
   type SpawnRouteConfidence,
   type SpawnRuleChoiceReceipt,
 } from '../../shared/spawn-route';
+import { redactSecretText } from '../terminal/command-redaction';
 
 export interface RouteLogEntry {
   /** Monotonic ordinal (no Date in pure logic); higher = newer. */
@@ -84,6 +85,11 @@ const LOG_CAP = 50;
 const ALTERNATIVES_CAP = 12;
 const ALTERNATIVE_ID_MAX_CHARS = 256;
 const TASK_PREVIEW_CHARS = 120;
+/** Redact before clipping; the extra fixed window covers a token crossing the
+ * visible preview boundary without scanning arbitrary prompt lengths. */
+export function routeTaskPreview(task: string): string {
+  return redactSecretText(task.slice(0, TASK_PREVIEW_CHARS + 512)).text.slice(0, TASK_PREVIEW_CHARS);
+}
 
 let log: RouteLogEntry[] = [];
 let seq = 0;
@@ -123,7 +129,7 @@ export function recordRouteLog(
   const alternatives = parseRouteLogAlternatives(input.alternatives);
   const entry: RouteLogEntry = {
     seq,
-    taskPreview: input.task.slice(0, TASK_PREVIEW_CHARS),
+    taskPreview: routeTaskPreview(input.task),
     tier: input.tier,
     adapterId: input.adapterId,
     model: input.model,

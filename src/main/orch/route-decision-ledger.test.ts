@@ -13,6 +13,7 @@ import {
   ROUTE_DECISION_RETENTION_MS,
 } from './route-decision-ledger';
 import { clearRouteLog, recentRouteLog, recordRouteLog } from './route-log';
+import { redactSecretText } from '../terminal/command-redaction';
 
 // F-773 (G6): o nexus_route_log era memória com teto de 50 e voltava vazio a
 // cada boot. A linha agora persiste na tabela route_decisions do checkout.
@@ -42,6 +43,21 @@ describe('log de rota persistente (F-773)', () => {
     runtimes = [];
     clearRouteLog();
     fs.rmSync(baseDir, { recursive: true, force: true });
+  });
+
+  it.each(['', 'x'.repeat(99) + ' '])('F-884 masks known secrets before preview truncation and durable storage (%s)', (prefix) => {
+    const first = open();
+    const secret = 'sk-' + 'FAKE_ONLY_'.repeat(5);
+    const task = `${prefix}${secret} configure fixture API`;
+    expect(redactSecretText(task).redacted).toBe(true);
+    recordRouteLog({ task, tier: 'easy',
+      adapterId: 'kimi', reason: 'easy route' }, first.store.routeDecisions);
+    clearRouteLog();
+    const persisted = recentRouteLog(1, first.store.routeDecisions)[0];
+    expect(persisted.taskPreview).toContain('[REDACTED]');
+    expect(persisted.taskPreview).not.toContain('sk-FAKE');
+    const row = first.runtime.open(scope).db.prepare('SELECT task_preview FROM route_decisions').get() as { task_preview: string };
+    expect(row.task_preview).not.toContain('sk-FAKE');
   });
 
   it('recordRouteLog persiste e recentRouteLog lê depois de recarregar o store', () => {
