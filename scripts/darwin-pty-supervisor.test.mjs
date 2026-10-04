@@ -600,6 +600,24 @@ suite("Darwin PTY native responsibility supervisor", () => {
     expect(architectures).toEqual(["arm64", "x86_64"]);
   });
 
+  it("restores only the canonical Main heavy Bash resource before the provider", async ({ skip }) => {
+    if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
+    const directory = realpathSync(path.join(process.cwd(), 'resources/heavy-command'));
+    const resource = path.join(directory, 'shell.bash');
+    const malicious = path.join(fixtureRoot, 'untrusted-bash-env');
+    const marker = path.join(fixtureRoot, 'untrusted-bash-loaded');
+    writeFileSync(malicious, `printf bad > '${marker}'\n`);
+    const result = await spawnResult(helper, ['supervise', '--', '/bin/bash', '-c', 'printf "%s" "$BASH_ENV"'], {
+      env: { ...process.env, BASH_ENV: malicious, NEXUS_HEAVY_DIR: directory, NEXUS_HEAVY_BASH_ENV: resource },
+    });
+    expect(result).toMatchObject({ status: 0, signal: null, stdout: resource });
+    expect(existsSync(marker)).toBe(false);
+    const refused = await spawnResult(helper, ['supervise', '--', '/bin/bash', '-c', 'printf unauthorized'], {
+      env: { ...process.env, NEXUS_HEAVY_DIR: directory, NEXUS_HEAVY_BASH_ENV: malicious },
+    });
+    expect(refused.status).not.toBe(0); expect(refused.stdout).toBe(''); expect(existsSync(marker)).toBe(false);
+  }, 20_000);
+
   it("refuses to supervise when its required code signature is removed", () => {
     const unsigned = path.join(fixtureRoot, "unsigned-supervisor");
     copyFileSync(helper, unsigned);

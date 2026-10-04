@@ -16,6 +16,7 @@ import { NEXUS_BROWSER_WORKER_TOOLS } from './nexus-browser-policy';
 vi.mock('electron', () => ({
   app: {
     getVersion: () => 'test',
+    getAppPath: () => process.cwd(),
     getPath: () => path.join(os.homedir(), '.nexus-test-user-data'),
   },
   dialog: { showMessageBox: vi.fn() },
@@ -440,7 +441,7 @@ describe('mcp-server governed CLI profile wiring', () => {
       expect(decoration.env.XDG_STATE_HOME).toBe(path.join(state, 'state'));
       expect(decoration.env.OPENCODE_DB).toBe(path.join(state, 'database', 'opencode.db'));
       expect(fs.readFileSync(path.join(decoration.env.XDG_DATA_HOME, 'opencode', 'auth.json'), 'utf8')).toContain('selected');
-      expect(decoration.providerStateReadPaths).toEqual([auth, state]);
+      expect(decoration.providerStateReadPaths).toEqual([path.join(process.cwd(), 'resources/heavy-command'), auth, state]);
       expect(decoration.providerStateWritePaths).toEqual([auth, state]);
       expect(fs.existsSync(decoration.env.OPENCODE_DB)).toBe(false);
     } finally {
@@ -468,7 +469,7 @@ describe('mcp-server governed CLI profile wiring', () => {
     )!;
     const state = path.join(home, '.nexus-test-user-data', 'provider-state', id, 'checkout-wiring');
     expect(fs.realpathSync(path.join(decoration.env[envKey], 'sessions'))).toBe(fs.realpathSync(path.join(state, 'sessions')));
-    expect(decoration.providerStateReadPaths).toEqual([authPath, state]);
+    expect(decoration.providerStateReadPaths).toEqual([path.join(process.cwd(), 'resources/heavy-command'), authPath, state]);
     expect(decoration.providerStateWritePaths).toEqual([authPath, state]);
     expect(decoration.providerStateReadPaths).not.toContain(providerHome);
     expect(decoration.providerStateWritePaths).not.toContain(providerHome);
@@ -487,7 +488,7 @@ describe('mcp-server governed CLI profile wiring', () => {
       authority(cwd, true), { [envKey]: providerHome },
     )!;
     const state = path.join(home, '.nexus-test-user-data', 'provider-state', id, 'checkout-wiring');
-    expect(decoration.providerStateReadPaths).toEqual([state]);
+    expect(decoration.providerStateReadPaths).toEqual([path.join(process.cwd(), 'resources/heavy-command'), state]);
     expect(decoration.providerStateWritePaths).toEqual([state]);
   });
 
@@ -507,16 +508,18 @@ describe('mcp-server governed CLI profile wiring', () => {
       // blanked — "CLAUDE_CONFIG_DIR=" resolves the binary's config dir to
       // "" and the file-backed credential store goes cwd-relative.
       expect(decoration.env.CLAUDE_CONFIG_DIR).toBeUndefined();
+      expect(decoration.env.NEXUS_HEAVY_COMMAND_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/hook\/heavy-command$/);
+      expect(decoration.env.NODE_OPTIONS).toContain('resources/heavy-command/preload.cjs');
       if (id === 'glm' && process.platform === 'darwin') {
         // F-629: terceiro no macOS ganha securestorage escopado no overlay.
-        expect(decoration.envRemove).toEqual(['CLAUDE_CONFIG_DIR']);
+        expect(decoration.envRemove).toEqual(['NEXUS_HEAVY_LEASE', 'NEXUS_HEAVY_HELPER', 'CLAUDE_CONFIG_DIR']);
       } else if (id === 'claude' && process.platform !== 'darwin') {
         // F-646: o login nativo é gravado no ~/.claude real, sem cópia no overlay.
         expect(decoration.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(path.join(os.homedir(), '.claude'));
         expect(fs.existsSync(path.join(decoration.env.HOME, '.claude', '.credentials.json'))).toBe(false);
-        expect(decoration.envRemove).toEqual(['CLAUDE_CONFIG_DIR']);
+        expect(decoration.envRemove).toEqual(['NEXUS_HEAVY_LEASE', 'NEXUS_HEAVY_HELPER', 'CLAUDE_CONFIG_DIR']);
       } else {
-        expect(decoration.envRemove).toEqual(['CLAUDE_SECURESTORAGE_CONFIG_DIR', 'CLAUDE_CONFIG_DIR']);
+        expect(decoration.envRemove).toEqual(['NEXUS_HEAVY_LEASE', 'NEXUS_HEAVY_HELPER', 'CLAUDE_SECURESTORAGE_CONFIG_DIR', 'CLAUDE_CONFIG_DIR']);
       }
     } finally { decoration.onSpawnFailed?.(); }
   });
@@ -678,7 +681,7 @@ describe('mcp-server governed CLI profile wiring', () => {
     });
   });
 
-  it('injects private nx commands for a mission worker independently of MCP support', () => {
+  it('injects private nx commands for a mission worker independently of MCP support', async () => {
     const root = tempRoot();
     const cwd = path.join(root, 'workspace');
     fs.mkdirSync(cwd, { recursive: true });
@@ -722,7 +725,7 @@ describe('mcp-server governed CLI profile wiring', () => {
     expect(cliRegistration.agy).toHaveBeenCalledTimes(1);
 
     decoration.onSpawnFailed?.();
-    expect(fs.existsSync(shimRoot)).toBe(false);
+    await vi.waitFor(() => expect(fs.existsSync(shimRoot)).toBe(false));
 
     // Metade sem MCP: o shim privado não depende do transporte nexus_*.
     const aider = prepareAgentSpawnDecoration(
@@ -739,7 +742,7 @@ describe('mcp-server governed CLI profile wiring', () => {
     expect(cliRegistration.devin).not.toHaveBeenCalled();
 
     aider.onSpawnFailed?.();
-    expect(fs.existsSync(aiderShimRoot)).toBe(false);
+    await vi.waitFor(() => expect(fs.existsSync(aiderShimRoot)).toBe(false));
   });
 
   it('F-795: worker de missão ganha o spool de handoff no env e no grant do shim; spawn falho apaga', () => {
@@ -1571,8 +1574,8 @@ describe('mcp-server governed CLI profile wiring', () => {
     expect(decoration.env.GEMINI_CLI_HOME).toBeUndefined();
     expect(decoration.processHome).toBeUndefined();
     expect(decoration.sandboxDir).toBeUndefined();
-    expect(decoration.providerStateReadPaths).toBeUndefined();
-    expect(decoration.providerStateWritePaths).toBeUndefined();
+    expect(decoration.providerStateReadPaths).toEqual([path.join(process.cwd(), 'resources/heavy-command')]);
+    expect(decoration.providerStateWritePaths).toEqual([]);
     expect(fs.readFileSync(nativeConfig).equals(originalBytes)).toBe(true);
     expect(decoration.extraArgs.join(' ')).not.toContain('mcp_config');
 

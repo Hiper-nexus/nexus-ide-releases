@@ -50,6 +50,7 @@ export type HostControlMsg =
   | { type: 'output-flow'; sessionId: string; paused: boolean }
   | { type: 'command-process'; requestId: string; sessionId: string; op: 'claim'; pid: number }
   | { type: 'command-process'; requestId: string; sessionId: string; op: 'probe'; claimId: string }
+  | { type: 'command-process'; requestId: string; sessionId: string; op: 'borrow'; claimId: string; pid: number }
   | {
       type: 'terminate';
       sessionId: string;
@@ -63,7 +64,7 @@ export type HostControlMsg =
 
 /** host → main (events). */
 export type HostEventMsg =
-  | { type: 'command-process-result'; requestId: string; sessionId: string; claimId: string | null; state: CommandProcessState | null }
+  | { type: 'command-process-result'; requestId: string; sessionId: string; claimId: string | null; state: CommandProcessState | null; borrowed?: boolean }
   | { type: 'data'; sessionId: string; data: string }
   | { type: 'exit'; sessionId: string; exitCode: number; signal?: number }
   | {
@@ -102,6 +103,7 @@ export interface PtyProcHandle {
 }
 
 export interface PtyHost {
+  borrowCommandProcess?(sessionId: string, claimId: string, pid: number): Promise<boolean>;
   claimCommandProcess?(sessionId: string, pid: number): Promise<string | null>;
   probeCommandProcess?(sessionId: string, claimId: string): Promise<CommandProcessState>;
   spawn(spec: PtySpawnSpec, handlers: PtySessionHandlers): PtyProcHandle;
@@ -450,7 +452,7 @@ export function createPtyHostBridge(
 
   let commandCounter = 0;
   const pendingCommands = new Map<string, { sessionId: string; resolve: (result: Extract<HostEventMsg, { type: 'command-process-result' }> | null) => void; timer: ReturnType<typeof setTimeout> }>();
-  function commandRequest(body: { op: 'claim'; pid: number } | { op: 'probe'; claimId: string }, sessionId: string) {
+  function commandRequest(body: { op: 'claim'; pid: number } | { op: 'probe'; claimId: string } | { op: 'borrow'; claimId: string; pid: number }, sessionId: string) {
     if (pendingCommands.size >= 128) return Promise.resolve(null);
     const requestId = `pty-command-${++commandCounter}`;
     return new Promise<Extract<HostEventMsg, { type: 'command-process-result' }> | null>((resolve) => {
@@ -461,6 +463,7 @@ export function createPtyHostBridge(
     });
   }
   const host: PtyHost = {
+    borrowCommandProcess: async (sessionId, claimId, pid) => (await commandRequest({ op: 'borrow', claimId, pid }, sessionId))?.borrowed === true,
     claimCommandProcess: async (sessionId, pid) => (await commandRequest({ op: 'claim', pid }, sessionId))?.claimId ?? null,
     probeCommandProcess: async (sessionId, claimId) => (await commandRequest({ op: 'probe', claimId }, sessionId))?.state ?? 'unknown',
     spawn(spec, h) {

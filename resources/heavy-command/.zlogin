@@ -1,0 +1,3 @@
+if [[ -n "$NEXUS_HEAVY_ORIG_ZDOTDIR" && "$NEXUS_HEAVY_ORIG_ZDOTDIR" != "$ZDOTDIR" && -r "$NEXUS_HEAVY_ORIG_ZDOTDIR/.zlogin" ]]; then
+  source "$NEXUS_HEAVY_ORIG_ZDOTDIR/.zlogin"
+fi

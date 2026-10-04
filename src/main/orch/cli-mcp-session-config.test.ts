@@ -1408,3 +1408,24 @@ describe('purgeStaleCliMcpSessions', () => {
     expect(fs.readFileSync(outsideMarker, 'utf8')).toBe('never-delete');
   });
 });
+
+
+it.each([false, true])('persists scheduling authority only in the private Codex shell policy (governed=%s)', (governed) => {
+ const root = tempRoot(), home = path.join(root, 'home'), cwd = path.join(root, 'workspace');
+ fs.mkdirSync(cwd, { recursive: true });
+ const original = 'model = "finite-model"\n[shell_environment_policy]\ninherit = "core"\n[shell_environment_policy.set]\nOPERATOR_SETTING = "preserved"\n';
+ write(path.join(home, '.codex/config.toml'), original);
+ const token = `finite-heavy-codex-${governed}`; tokens.push(token);
+ const options = { home, artifactRoot: path.join(root, 'private'), cwd, workspaceRoot: cwd, codexNativeAuthority: 'read-only' as const,
+   heavyCommandEnv: { NEXUS_GATE_TOKEN: token, NEXUS_HEAVY_COMMAND_URL: 'http://127.0.0.1:1234/hook/heavy-command', BASH_ENV: '/finite/bundled/shell.bash', ZDOTDIR: '/finite/bundled', NODE_OPTIONS: '--require /finite/bundled/preload.cjs', UNRELATED_SECRET: 'never-copy', NEXUS_HEAVY_LEASE: 'stale' } };
+ const result = governed ? prepareCodexGovernedSession(token, options) : prepareCodexOperatorMissionHome(token, options);
+ const config = parse(fs.readFileSync(path.join(result.env.CODEX_HOME, 'config.toml'), 'utf8')) as { shell_environment_policy: { inherit: string; set: Record<string, string> } };
+ expect(config.shell_environment_policy.inherit).toBe('core');
+ expect(config.shell_environment_policy.set.NEXUS_GATE_TOKEN).toBe(token);
+ expect(config.shell_environment_policy.set.NODE_OPTIONS).toBe('--require /finite/bundled/preload.cjs');
+ expect(config.shell_environment_policy.set.BASH_ENV).toBe('/finite/bundled/shell.bash');
+ expect(config.shell_environment_policy.set).not.toHaveProperty('UNRELATED_SECRET');
+ expect(config.shell_environment_policy.set).not.toHaveProperty('NEXUS_HEAVY_LEASE');
+ if (!governed) expect(config.shell_environment_policy.set.OPERATOR_SETTING).toBe('preserved');
+ expect(fs.readFileSync(path.join(home, '.codex/config.toml'), 'utf8')).toBe(original);
+});

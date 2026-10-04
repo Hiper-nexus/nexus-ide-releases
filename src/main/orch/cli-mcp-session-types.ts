@@ -3,6 +3,8 @@ import type { CodexNativeAuthority } from '../pty/codex-native-authority';
 import type { McpHubSpawnServer } from '../mcp-hub/mcp-hub-spawn';
 
 export interface CliMcpSessionOptions extends GovernedCliProfileOptions {
+  /** Exact Main-selected scheduling keys; never the complete provider env. */
+  heavyCommandEnv?: Readonly<Record<string, string>>;
   home?: string;
   providerHome?: string;
   artifactRoot?: string;

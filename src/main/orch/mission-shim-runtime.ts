@@ -587,9 +587,13 @@ export function createMissionShimRuntime(
         await scanning;
         seenRequestIds.clear();
         await fsp.rm(rootDir, { recursive: true, force: true }).catch((error) =>
-          console.warn('[mission-shim] failed to remove private runtime', error));
+          { console.warn('[mission-shim] failed to remove private runtime', error); throw error; });
       })();
-      return disposal;
+      const pending = disposal;
+      // Revoke once; a transient filesystem failure may retry deletion without
+      // restoring the timer, session authority or command admission.
+      void pending.catch(() => { if (disposal === pending) disposal = null; });
+      return pending;
     },
     scanNowForTests: scan,
     createRequestForTests: createSignedRequest,

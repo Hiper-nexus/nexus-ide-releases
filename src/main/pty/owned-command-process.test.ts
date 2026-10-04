@@ -21,3 +21,13 @@ it('PID reuse proves only the captured compiler is gone and never captures the r
  const { tracker, set } = fixture(); const id = (await tracker.claim('s', 20))!;
  set([row(10, 1), row(20, 1, 'Sat Oct  3 12:00:02 2026')]); expect(await tracker.probe('s', id)).toBe('gone'); expect(await tracker.probe('other', id)).toBe('unknown');
 });
+
+it('borrows only exact descendants of a claimed physical command and keeps that identity after reparent', async () => {
+ const { tracker, set } = fixture(); const id = (await tracker.claim('s', 20))!;
+ set([row(10, 1), row(20, 10), row(30, 20), row(40, 10)]);
+ expect(await tracker.borrow('s', id, 40)).toBe(false);
+ expect(await tracker.borrow('other', id, 30)).toBe(false);
+ expect(await tracker.borrow('s', id, 30)).toBe(true);
+ set([row(10, 1), row(30, 1)]); expect(await tracker.probe('s', id)).toBe('live');
+ set([row(10, 1)]); expect(await tracker.probe('s', id)).toBe('gone');
+});

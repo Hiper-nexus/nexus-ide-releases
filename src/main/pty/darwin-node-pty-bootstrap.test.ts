@@ -162,6 +162,7 @@ my $receipt = $ARGV[1];
 $receipt =~ /\A(\/[^\0]*)\z/s or die "invalid receipt path\n";
 open(my $fh, ">", $1) or die "cannot open receipt\n";
 print $fh $line;
+print $fh "PERL_BASH_ENV=" . ($ENV{"BASH_ENV"} // "absent") . "\n";
 close($fh) or die "cannot close receipt\n";
 `;
       const launch = darwinNodePtyBootstrapLaunch(
@@ -179,6 +180,9 @@ close($fh) or die "cannot close receipt\n";
           PERL5OPT: "-Mmodule_that_must_not_load",
           PERL5LIB: "/tmp/mutable-perl-library",
           TERM: "xterm-256color",
+          BASH_ENV: "/tmp/arbitrary-bash-env",
+          NEXUS_HEAVY_BASH_ENV: path.join(process.cwd(), "resources/heavy-command/shell.bash"),
+          NEXUS_HEAVY_DIR: path.join(process.cwd(), "resources/heavy-command"),
         },
       );
       const output: string[] = [];
@@ -200,6 +204,7 @@ close($fh) or die "cannot close receipt\n";
       expect(printed).toContain("ARG=tainted argument");
       expect(printed).toContain("PATH=relative:/provider/bin:/usr/bin:/bin");
       expect(printed).toContain("TTY=yes");
+      expect(printed).toContain("PERL_BASH_ENV=absent");
     });
 
     it("never executes a swapped legacy spawn-helper constructor", async () => {
@@ -249,6 +254,9 @@ close($fh) or die "cannot close receipt\n";
         {
           PATH: "/usr/bin:/bin",
           TERM: "xterm-256color",
+          BASH_ENV: "/tmp/arbitrary-bash-env",
+          NEXUS_HEAVY_BASH_ENV: path.join(process.cwd(), "resources/heavy-command/shell.bash"),
+          NEXUS_HEAVY_DIR: path.join(process.cwd(), "resources/heavy-command"),
         },
       );
       const output: string[] = [];

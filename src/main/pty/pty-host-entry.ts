@@ -373,7 +373,8 @@ parentPort.on('message', (e) => {
       void (async () => {
         const claimId = msg.op === 'claim' ? await commandProcesses.claim(msg.sessionId, msg.pid) : msg.claimId;
         const state = msg.op === 'probe' ? await commandProcesses.probe(msg.sessionId, msg.claimId) : null;
-        post({ type: 'command-process-result', requestId: msg.requestId, sessionId: msg.sessionId, claimId, state });
+        const borrowed = msg.op === 'borrow' ? await commandProcesses.borrow(msg.sessionId, msg.claimId, msg.pid) : undefined;
+        post({ type: 'command-process-result', requestId: msg.requestId, sessionId: msg.sessionId, claimId, state, borrowed });
       })().catch(() => post({ type: 'command-process-result', requestId: msg.requestId, sessionId: msg.sessionId, claimId: null, state: 'unknown' }));
       return;
     case 'analysis-credit':

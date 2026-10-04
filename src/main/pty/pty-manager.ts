@@ -1,4 +1,5 @@
 import { noteMimoMissionAuthority } from '../agent-hooks/mimo-mission-authority';
+import { stripInheritedHeavyCommandEnvironment, reassertHeavyCommandBashEnvironment } from '../orch/native-heavy-preload';
 import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
 import { recordSessionInputReceipt, forgetSessionInputReceipt, type SystemInputWriter } from '../orch/operator-input-receipts';
 import { configurePtyAnalysis, bindPtyAnalysisSession, feedPtyAnalysis, inputPtyAnalysis, statePtyAnalysis, exitPtyAnalysis, terminatePtyAnalysis } from './pty-analysis-runtime';
@@ -1446,6 +1447,7 @@ export function spawnSession(
   const cwd = trusted.cwd;
   const sessionId = makeSessionId();
   const baseEnv = cleanEnv(baseChildEnv());
+  stripInheritedHeavyCommandEnvironment(baseEnv);
   const { env: shellEnv, cleanupPaths } = applyShellIntegrationEnv(
     baseEnv,
     shell,
@@ -2206,6 +2208,7 @@ export function spawnAgentSession(
       const policy = resolveGovernedCliProfile(token);
       if (adapter.id === "codex") {
         const codex = prepareCodexGovernedSession(token, {
+          heavyCommandEnv: decoration?.env,
           userDataPath: app.getPath("userData"),
           checkoutId: authority.scope.checkoutId,
           providerHome: env.CODEX_HOME,
@@ -2244,6 +2247,7 @@ export function spawnAgentSession(
         throw new Error("Codex CLI spawn is missing its main-owned bearer");
       }
       const operatorHome = prepareCodexOperatorMissionHome(token, {
+        heavyCommandEnv: decoration?.env,
         userDataPath: app.getPath("userData"),
         checkoutId: authority.scope.checkoutId,
         codexResumeSessionId: resumeMode === "exact" ? trustedResumeArgs[trustedResumeArgs.length - 1] : undefined,
@@ -2528,6 +2532,7 @@ export function spawnAgentSession(
   let spawnArgs = args;
   let spawnCwd = cwd;
   let spawnEnv = cleanEnv(env);
+  reassertHeavyCommandBashEnvironment(spawnEnv, /^node(?:\.exe)?$/i.test(path.basename(bin)) && args[0] ? args[0] : bin);
   /** Seatbelt/Bubblewrap already owns this spawn — never wrap with tmux attach. */
   let processSandboxActive = false;
   if (codexProcessSandbox) {
@@ -4391,4 +4396,9 @@ export async function claimSessionCommandProcess(sessionId: string, pid: number)
 }
 export async function probeSessionCommandProcess(sessionId: string, claimId: string): Promise<import('./owned-command-process').CommandProcessState> {
   return await ptyHost?.probeCommandProcess?.(sessionId, claimId) ?? 'unknown';
+}
+
+export async function borrowSessionCommandProcess(sessionId: string, claimId: string, pid: number): Promise<boolean> {
+  if (!sessions.get(sessionId)?.agent || physicalTerminationFlights.has(sessionId)) return false;
+  return await ptyHost?.borrowCommandProcess?.(sessionId, claimId, pid) ?? false;
 }

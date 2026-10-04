@@ -99,6 +99,32 @@ describe("mission shim filesystem transport", () => {
     expect(fs.existsSync(runtime.rootDir)).toBe(false);
   });
 
+  it('cleanup failure preserves revoked authority and waits the active handler, then permits cleanup retry', async () => {
+    await runtime.dispose();
+    let finish!: () => void;
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => { started = resolve; });
+    runtime = createMissionShimRuntime({ ctx, baseDir, pollIntervalMs: 60_000,
+      invoke: async (invocation) => { started(); await new Promise<void>((resolve) => { finish = resolve; }); return { ok: true, tool: invocation.toolName, result: {} }; },
+    });
+    runtime.bindSession(SESSION_ID);
+    const request = runtime.createRequestForTests({ requestId: '00000000-0000-4000-8000-000000000098', sequence: 1, issuedAt: Date.now(), command: 'notify', operation: 'heartbeat', args: {} });
+    fs.writeFileSync(path.join(runtime.requestsDir, `0000000000000001-${request.requestId}.json`), JSON.stringify(request));
+    const scan = runtime.scanNowForTests(); void scan.catch(() => undefined); await entered;
+    const remove = vi.spyOn(fs.promises, 'rm').mockRejectedValueOnce(new Error('finite cleanup denied'));
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const stopping = runtime.dispose(); const rejected = expect(stopping).rejects.toThrow('finite cleanup denied');
+      expect(() => runtime.bindSession(SESSION_ID)).toThrow(/disposed/);
+      expect(fs.existsSync(runtime.rootDir)).toBe(true);
+      finish(); await rejected;
+      expect(fs.existsSync(runtime.rootDir)).toBe(true);
+      expect(fs.readdirSync(runtime.responsesDir)).toEqual([]);
+      remove.mockRestore(); await runtime.dispose();
+      expect(fs.existsSync(runtime.rootDir)).toBe(false);
+    } finally { remove.mockRestore(); warning.mockRestore(); }
+  });
+
   it("injects private canonical commands and routes nx-mail send", async () => {
     const result = await execFileAsync(
       path.join(

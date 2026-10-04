@@ -1,5 +1,5 @@
 import { handleNativeHeavyCommandHttp, nativeHeavyCommands } from './native-heavy-command';
-import { appendHeavyCommandPreload, heavyCommandPreloadPath } from './native-heavy-preload';
+import { appendHeavyCommandPreload, heavyCommandPreloadPath, heavyCommandShellEnvironment } from './native-heavy-preload';
 import { analysisClient, flushPtyAnalysis, subscribePtyAnalysis } from '../pty/pty-analysis-runtime';
 import type { AnalysisFence } from '../pty/pty-analysis-protocol';
 import http from "node:http";
@@ -314,13 +314,27 @@ const legacyParserTaps = new ReplaceableEventTapScope();
  */
 
 
+const missionShimDisposals = new Map<MissionShimRuntime, Promise<void>>();
+
 function disposeMissionShim(runtime: MissionShimRuntime | null): void {
   if (!runtime) return;
   missionShims.delete(runtime);
   for (const [sessionId, candidate] of missionShimBySession) {
     if (candidate === runtime) missionShimBySession.delete(sessionId);
   }
-  runtime.dispose();
+  const disposal = runtime.dispose();
+  missionShimDisposals.set(runtime, disposal);
+  void disposal.then(
+    () => { if (missionShimDisposals.get(runtime) === disposal) missionShimDisposals.delete(runtime); },
+    () => { console.warn('[mission-shim] disposal incomplete; retained for lifecycle drain'); },
+  );
+}
+
+/** Errors are observed immediately and remain failures for the lifecycle owner. */
+export async function drainMissionShimDisposals(): Promise<void> {
+  for (const runtime of [...missionShims]) disposeMissionShim(runtime);
+  for (const runtime of [...missionShimDisposals.keys()]) disposeMissionShim(runtime);
+  await Promise.all([...missionShimDisposals.values()]);
 }
 
 function disposeMissionShimBySession(sessionId: string): void {
@@ -1156,14 +1170,16 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
             : "read-handoff",
         }
       : {};
-    if (ctx.missionId && ctx.role !== 'user' && canUseNexusMcp(adapter)) {
-      env.NEXUS_MISSION_ID = ctx.missionId;
+    {
+      // Every CLI agent has a Main-minted session token, including the operator hand and loose helpers.
+      Object.assign(env, heavyCommandShellEnvironment(preparedEnv ?? process.env));
+      env.NEXUS_GATE_TOKEN = ctx.token;
       env.NEXUS_HEAVY_COMMAND_URL = `http://127.0.0.1:${port}/hook/heavy-command`;
       env.NODE_OPTIONS = appendHeavyCommandPreload(preparedEnv?.NODE_OPTIONS ?? process.env.NODE_OPTIONS, heavyCommandPreloadPath());
     }
     const extraArgs: string[] = [];
     const envRemove: string[] = [];
-    if (!ctx.missionId || ctx.role === 'user' || !canUseNexusMcp(adapter)) envRemove.push('NEXUS_MISSION_ID', 'NEXUS_HEAVY_COMMAND_URL');
+    envRemove.push('NEXUS_HEAVY_LEASE', 'NEXUS_HEAVY_HELPER');
     let ephemeralHomeDir: string | null = null;
     let skillsPrepared = false;
     // Real provider home (~/.kimi-code, ~/.grok) the governed overlay symlinks
@@ -1717,11 +1733,11 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
       advisoryProviderStateReadPaths.length > 0 ||
       advisoryProviderStateWritePaths.length > 0 ||
       claudeStatePaths.length > 0 ||
-      (ctx.missionId && ctx.role !== 'user' && canUseNexusMcp(adapter)))
+      env.NEXUS_HEAVY_COMMAND_URL)
       ? {
           // Grant auth/profile and the exact checkout's durable conversations.
           providerStateReadPaths: [
-            ...(ctx.missionId && ctx.role !== 'user' ? [path.dirname(heavyCommandPreloadPath())] : []),
+            path.dirname(heavyCommandPreloadPath()),
             ...claudeStatePaths,
             ...claudeProfileReadPaths,
             ...advisoryProviderStateReadPaths,

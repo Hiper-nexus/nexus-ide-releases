@@ -24,6 +24,7 @@
 #include <sys/ptrace.h>
 #include <sys/sysctl.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -2237,6 +2238,26 @@ static bool restore_stage_zero_provider_path(void) {
   return unsetenv("NEXUS_STAGE0_PROVIDER_PATH") == 0;
 }
 
+/* Main reasserts this exact bundled resource after env overrides. The two
+ * Apple Perl stages keep BASH_ENV absent; restore it only in the authenticated
+ * self-responsible helper immediately before the provider image is created. */
+static bool restore_heavy_command_bash_environment(void) {
+  const char *file = getenv("NEXUS_HEAVY_BASH_ENV");
+  if (file == NULL) return true;
+  const char *directory = getenv("NEXUS_HEAVY_DIR");
+  if (directory == NULL || directory[0] != '/' || file[0] != '/' ||
+      strnlen(directory, PATH_MAX) >= PATH_MAX ||
+      strnlen(file, PATH_MAX) >= PATH_MAX) return false;
+  char expected[PATH_MAX], real_directory[PATH_MAX], real_file[PATH_MAX];
+  const int written = snprintf(expected, sizeof(expected), "%s/shell.bash", directory);
+  if (written < 0 || (size_t)written >= sizeof(expected) || strcmp(expected, file) != 0 ||
+      realpath(directory, real_directory) == NULL || strcmp(real_directory, directory) != 0 ||
+      realpath(file, real_file) == NULL || strcmp(real_file, file) != 0) return false;
+  struct stat metadata;
+  if (stat(file, &metadata) != 0 || !S_ISREG(metadata.st_mode)) return false;
+  return setenv("BASH_ENV", file, 1) == 0;
+}
+
 static int spawn_unsealed_child(pid_t *child, const char *executable,
                                 char *const child_argv[]) {
   posix_spawnattr_t attributes = NULL;
@@ -2323,6 +2344,11 @@ static int run_disclaimed_supervisor_mode(
   }
   if (!restore_stage_zero_provider_path()) {
     perror("nexus-pty-supervisor: cannot restore provider PATH");
+    return NEXUS_EXIT_INTERNAL;
+  }
+
+  if (!restore_heavy_command_bash_environment()) {
+    fputs("nexus-pty-supervisor: invalid Main heavy command resource\n", stderr);
     return NEXUS_EXIT_INTERNAL;
   }
 

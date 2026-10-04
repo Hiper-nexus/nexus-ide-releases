@@ -24,6 +24,15 @@ import type {
 import { resolveGovernedCliProfile } from './governed-cli-profile';
 import { codexPermissionProfileFor } from '../pty/codex-native-authority';
 
+function heavyCommandShellPolicy(env: Readonly<Record<string, string>> | undefined): Record<string, string> {
+  const selected: Record<string, string> = {};
+  for (const key of ['NEXUS_HEAVY_CURL', 'NEXUS_HEAVY_AGENT_ENTRY', 'NEXUS_GATE_TOKEN', 'NEXUS_HEAVY_COMMAND_URL', 'NEXUS_HEAVY_DIR', 'NEXUS_HEAVY_NODE',
+    'NEXUS_HEAVY_BASH_ENV', 'NEXUS_HEAVY_ORIG_BASH_ENV', 'NEXUS_HEAVY_ORIG_ZDOTDIR', 'BASH_ENV', 'ZDOTDIR', 'NODE_OPTIONS']) {
+    if (env?.[key] !== undefined) selected[key] = env[key];
+  }
+  return selected;
+}
+
 function pathBelongsTo(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
   return (
@@ -503,6 +512,7 @@ export function prepareCodexGovernedSession(
           inherit: 'core',
           ignore_default_excludes: false,
           set: {
+            ...heavyCommandShellPolicy(options.heavyCommandEnv),
             HOME: shellHome,
             TMPDIR: shellTmp,
           },
@@ -693,6 +703,13 @@ export function prepareCodexOperatorMissionHome(
           model_context_window: contextWindow,
           model_auto_compact_token_limit: autoCompactLimit,
           sqlite_home: providerSessionHome,
+          ...(options.heavyCommandEnv ? { shell_environment_policy: {
+            ...(typeof userConfig.shell_environment_policy === 'object' && userConfig.shell_environment_policy ? userConfig.shell_environment_policy : {}),
+            set: {
+              ...((userConfig.shell_environment_policy as { set?: Record<string, string> } | undefined)?.set ?? {}),
+              ...heavyCommandShellPolicy(options.heavyCommandEnv),
+            },
+          } } : {}),
         }).trimEnd()}\n`,
       );
       // Skills live under the private home so deliverGrantedSkills can land

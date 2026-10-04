@@ -186,7 +186,7 @@ export class PtyAnalysisClient {
     for (const b of this.#barriers.get(id) ?? []) b.resolve(false); this.#barriers.delete(id);
   }
   #enqueue(id: string, body: InputBody) {
-    const s = this.#sessions.get(id); if (!s || this.#degraded) return;
+    const s = this.#sessions.get(id); if (!s || this.#degraded || s.status === 'degraded') return;
     const record = { ...body, workerEpoch: this.#epoch, sessionId: id, generation: s.generation,
       eventSeq: ++s.seq, observedAt: this.deps.now() } as AnalysisInput;
     if (record.kind === 'data') s.lastDataSeq = record.eventSeq;
