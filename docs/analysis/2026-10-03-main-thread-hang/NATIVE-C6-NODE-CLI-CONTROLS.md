@@ -16,6 +16,15 @@ HOME under `nexus-c6-node-primary-2zieccvd` in the owned macOS temp directory:
 | MiMo Code | `@mimo-ai/cli` 0.1.15 | `bin/mimo` is a Node launcher that `spawnSync`s native `@mimo-ai/mimocode-darwin-arm64/bin/mimo`. Wrapper SHA256 `b8898bbb2717cb29a1c03137b6b6117ae3c03e2990322ad9ee1e92d195cc5869` | Version/help only. Native tool/env-cleaner control remains pending; Node launcher presence is not a Node tool-transport PASS. |
 | MiniMax Code | `@minimax-ai/code` 0.5.5 | Node `cli.js`, SHA256 `8d36dec74e93beddf392459557a7afd8655bcdc874121981608d2c82658814ab` | Version/help/private provider-add help only. Actual tool baseline/scheduler remains pending. |
 
+Follow-up after the frozen Qwen milestone: the fixture now captures actual
+Git HEAD, exact fixture hash, copied resource hashes, generated helper hash,
+CLI entry hash and actual CLI Node/runtime/hash plus Nexus resolver result
+for the explicit fixture PATH. It does not label later mutable source as the
+original 701 resource snapshot. MiniMax ordinary baseline actually passed
+under its installed Node26/ABI147, but scheduled failed at its own persistent
+parent-death guardian registration; see
+`NATIVE-C6-MINIMAX-GUARDIAN-BOUNDARY.md`. It remains RED and unqualified.
+
 Qwen test command (serial under the Root mutex):
 
 ```sh
@@ -86,6 +95,14 @@ borrow PID18174/PID18235 produced one grant/release; baseline had none. The
 owned live-TCP negative passed in both phases. Focused real control:
 1 PASS/1 suite; app `tsc --noEmit` exit0, renderer sinks0, Main Sync91. All
 commands used Node22 and the Root mutex; no shared dependencies were rebuilt.
+An additional unchanged-resource Qwen run after that PASS executed the same
+workload/admission/borrows and closed code0 through EOF, but its supervisor
+reported responsibility inventory incomplete in stderr. The stricter
+assertion correctly left that run **RED**. Evidence is
+`nexus-c6-qwen-control-KEOFhP/scheduled/phase.json`, root PID64292, fresh job
+64305, borrows64346/64403. This intermittent physical boundary is handed to
+the Native owner; no clean-cohort claim is inferred from code0 or the earlier
+PASS. The installed-CLI/packaged matrix remains open until that is resolved.
 All current results are source/standalone controls. Remaining: actual MiMo
 and MiniMax tools, governed Qwen transport where applicable, and canonical
 app/final signed candidate execution. No grouped matrix PASS is inferred from
