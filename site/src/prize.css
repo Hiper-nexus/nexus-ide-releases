@@ -41,10 +41,17 @@
   .prize-ticket-stub{padding:16px 24px 18px}
   .prize-ticket-stub .pixel{font-size:26px}
 }
+/* Sem movimento o letreiro vira uma faixa parada: um grupo só, quebrando dentro da tela, nunca cortado nas bordas. */
 @media(prefers-reduced-motion:reduce){
-  .prize-marquee-track{width:auto;justify-content:center;padding:0 24px}
-  .prize-marquee-group{flex:0 1 auto;flex-wrap:wrap;justify-content:center}
+  .prize-marquee{padding:16px}
+  .prize-marquee-track{width:auto;max-width:1280px;margin:auto}
+  .prize-marquee-group{flex:1 1 auto;flex-wrap:wrap;justify-content:center;gap:8px 32px;min-width:0}
   .prize-marquee-group+.prize-marquee-group{display:none}
+  .prize-marquee-item{gap:12px;padding-right:0;white-space:normal;text-align:center}
+}
+@media(prefers-reduced-motion:reduce) and (max-width:760px){
+  .prize-marquee-group{flex-direction:column;align-items:center;gap:6px}
+  .prize-marquee-item{font-size:20px;letter-spacing:.04em}
 }
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .prize-ticket-copy>.prize-ticket-note{margin-top:12px;font-size:12px;color:var(--faint)}
