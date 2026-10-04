@@ -72,6 +72,17 @@ describe('log de rota persistente (F-773)', () => {
     expect(recentRouteLog(1, first.store.routeDecisions)[0].taskPreview).not.toContain('eyJ');
   });
 
+  it.each([64, 1024])('F-884 masks URL credentials before clipping a %d-character password', (length) => {
+    const first = open();
+    const password = 'fixtureSecret'.repeat(Math.ceil(length / 13)).slice(0, length);
+    const task = 'postgres://fixture-user:' + password + '@fixture.invalid/db';
+    recordRouteLog({ task, tier: 'easy', adapterId: 'kimi', reason: 'fixture route' }, first.store.routeDecisions);
+    clearRouteLog();
+    const row = first.runtime.open(scope).db.prepare('SELECT task_preview FROM route_decisions').get() as { task_preview: string };
+    expect(row.task_preview).not.toContain('fixtureSecret');
+    expect(recentRouteLog(1, first.store.routeDecisions)[0].taskPreview).not.toContain('fixtureSecret');
+  });
+
   it('F-884 masks the truncated JWT prefix from a legacy 120-character row on read', () => {
     const first = open();
     recordRouteLog({ task: 'legacy fixture', tier: 'easy', adapterId: 'kimi', reason: 'fixture route' }, first.store.routeDecisions);

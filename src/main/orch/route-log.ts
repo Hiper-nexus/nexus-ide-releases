@@ -91,7 +91,12 @@ export function routeTaskPreview(task: string): string {
   // Preview truncation may hide the signature of a JWT. Conservatively mask
   // its recognizable encoded JSON prefix even when the token is incomplete.
   const window = task.slice(0, TASK_PREVIEW_CHARS + 512)
-    .replace(/\beyJ[A-Za-z0-9_-]{7,}(?:\.[A-Za-z0-9_-]*){0,2}/g, '[REDACTED]');
+    .replace(/\beyJ[A-Za-z0-9_-]{7,}(?:\.[A-Za-z0-9_-]*){0,2}/g, '[REDACTED]')
+    // A long password can hide the terminating @ beyond the fixed window.
+    // Match only complete userinfo or a prefix ending at that window edge;
+    // ordinary host:port/path URLs are left to the existing redactor.
+    .replace(/(\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s/:@]{1,256}:)([^\s/@]*)(?=@|$)/giu,
+      '$1[REDACTED]');
   return redactSecretText(window).text.slice(0, TASK_PREVIEW_CHARS);
 }
 
