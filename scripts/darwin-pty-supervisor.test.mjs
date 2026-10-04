@@ -1088,7 +1088,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
     );
   }, 60_000);
 
-  for (const completion of ['natural', 'killed-helper', 'killed-authority']) {
+  for (const completion of ['natural', 'killed-helper', 'killed-authority', 'killed-owner']) {
   it(`native heavy-job waits for authenticated watch/grant and retains an unseen setsid descendant under the original offline sandbox (${completion})`, async ({ skip }) => {
     if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
     const runtime = { platform: 'darwin', packaged: false, cwd: fixtureRoot, moduleDir: fixtureRoot };
@@ -1103,7 +1103,7 @@ suite("Darwin PTY native responsibility supervisor", () => {
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)); const port = server.address().port;
     const python = ['import os,sys,time,signal', `daemon=${JSON.stringify(daemonFile)}`, `primary=${JSON.stringify(primaryFile)}`, `release=${JSON.stringify(releaseFile)}`,
       'first=os.fork()', 'if first == 0:', '  os.setsid()', '  second=os.fork()', '  if second > 0: os._exit(0)', '  signal.signal(signal.SIGTERM, signal.SIG_IGN)', '  with open(daemon,"w") as f: f.write(str(os.getpid()))', '  while not os.path.exists(release): time.sleep(0.01)', '  os._exit(0)',
-      'os.waitpid(first,0)', 'with open(primary,"w") as f: f.write(str(os.getpid()))', `try: open(${JSON.stringify(forbidden)},"w").write("widened")`, 'except PermissionError: pass', ...(completion === 'killed-helper' ? ['while not os.path.exists(release): time.sleep(0.02)'] : []), 'sys.exit(23)'].join('\n');
+      'os.waitpid(first,0)', 'with open(primary,"w") as f: f.write(str(os.getpid()))', `try: open(${JSON.stringify(forbidden)},"w").write("widened")`, 'except PermissionError: pass', ...(['killed-helper', 'killed-owner'].includes(completion) ? ['while not os.path.exists(release): time.sleep(0.02)'] : []), 'sys.exit(23)'].join('\n');
     const base = nestedHeavyJobBaseCommand(runtime);
     const script = `const child=require('node:child_process').spawn(${JSON.stringify(base.file)},${JSON.stringify([...base.args, 'build', '--', '/usr/bin/python3', '-c', python])},{stdio:'inherit'});child.on('exit',(code)=>process.exit(code));`;
     const resources = path.join(process.cwd(), 'resources/heavy-command');
@@ -1116,21 +1116,22 @@ suite("Darwin PTY native responsibility supervisor", () => {
       await waitFor(() => grant !== null || finished, 8_000); expect(finished, stderr).toBe(false);
       expect(claim).toBeTypeOf('string'); expect(observedProof).toBe('darwin-job'); expect(existsSync(primaryFile)).toBe(false); expect(await proof.probe('s', claim)).toBe('live');
       grant(); phases.push('granted'); await waitFor(() => existsSync(primaryFile) && existsSync(daemonFile) || finished, 8000); expect(finished, stderr).toBe(false); phases.push('daemon-created'); daemonPid = Number(readFileSync(daemonFile, 'utf8'));
-      const primaryPid = Number(readFileSync(primaryFile, 'utf8')); if (completion !== 'killed-helper') await waitFor(() => !processExists(primaryPid));
+      const primaryPid = Number(readFileSync(primaryFile, 'utf8')); if (!['killed-helper', 'killed-owner'].includes(completion)) await waitFor(() => !processExists(primaryPid));
       expect(processExists(daemonPid)).toBe(true); expect(await proof.probe('s', claim)).toBe('live'); expect(finished).toBe(false); expect(existsSync(forbidden)).toBe(false);
       expect(await proof.borrow('s', claim, daemonPid)).toBe(true); expect(await proof.borrow('s', claim, process.pid)).toBe(false);
       if (completion !== 'natural') {
         const authorityPid = inventory().processes.find((row) => row.pid === daemonPid).responsiblePid;
-        process.kill(completion === 'killed-helper' ? helperPid : authorityPid, 'SIGKILL');
+        const ownerPid = inventory().processes.find((row) => row.pid === authorityPid).ppid;
+        process.kill(completion === 'killed-owner' ? ownerPid : completion === 'killed-helper' ? helperPid : authorityPid, 'SIGKILL');
         await new Promise((resolve) => setTimeout(resolve, 200)); expect(processExists(daemonPid)).toBe(true);
-        if (completion === 'killed-helper') {
+        if (completion === 'killed-helper' || completion === 'killed-owner') {
           expect(await proof.probe('s', claim)).toBe('live'); await proof.stop('s', claim);
           expect(await proof.probe('s', claim)).toBe('gone'); expect(processExists(daemonPid)).toBe(false);
         } else {
           expect(await proof.probe('s', claim)).toBe('unknown'); await expect(proof.stop('s', claim)).rejects.toThrow('unproved');
         }
       }
-      writeFileSync(releaseFile, 'go'); phases.push('daemon-released'); expect(await done).toEqual({ code: completion === 'natural' ? 23 : 125, signal: null });
+      writeFileSync(releaseFile, 'go'); phases.push('daemon-released'); expect(await done).toEqual({ code: completion === 'natural' ? 23 : completion === 'killed-owner' ? 0 : 125, signal: null });
       for (let i = 0; i < 100 && completion === 'natural' && await proof.probe('s', claim) !== 'gone'; i++) await new Promise((resolve) => setTimeout(resolve, 25)); expect(await proof.probe('s', claim)).toBe(completion === 'killed-authority' ? 'unknown' : 'gone');
     } finally {
       grant?.(); writeFileSync(releaseFile, 'go'); if (!finished) job.kill('SIGTERM'); await Promise.race([done, new Promise((resolve) => setTimeout(resolve, 2500))]); if (!finished) { console.error('native-heavy-fixture', phases, stderr); if (helperPid) { try { process.kill(helperPid, 'SIGKILL'); } catch {} } job.kill('SIGKILL'); await done; }
