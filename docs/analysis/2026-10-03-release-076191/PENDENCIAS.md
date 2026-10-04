@@ -1,6 +1,7 @@
 # Pendências verificadas da release — 04/10/2026
 
-Atualização após `6e968c1e`, com main remota incorporada em `baa7c10c`.
+Atualização após `a369f136`, com main remota incorporada em `baa7c10c` e
+metadados da próxima versão livre **0.76.192** preparados, sem criar tag.
 A integração das entregas existentes está feita. **Esta integração ainda não
 foi empacotada nem publicada.**
 
@@ -9,9 +10,10 @@ foi empacotada nem publicada.**
 | Pendência | Evidência e próximo passo |
 |---|---|
 | Análise/EOF sob carga | F-863 corrigido: cargas normais e envenenadas de 30 s passam, com todas as provas finais e barriers esperados. Artefatos e CI foram commitados. Repetir no SHA final após concluir a supervisão nativa. |
-| Fila pesada nativa | F-871..874 e F-876 corrigem as falhas da revisão. F-875 ainda precisa integração do watcher autenticado e warmup Main; preserva o sandbox herdado. F-877 deve manter servidores dev fora da fila. Cobertura real de todas as CLIs e o candidato assinado continuam no aceite C6. |
+| Fila pesada nativa | F-871..874 e F-876 corrigem as falhas da revisão; F-877 já exclui servidores persistentes, com 74 testes/tipos/sinks/ratchet aprovados. F-875 tem watcher autenticado e testes físicos/IPC no executor, ainda sem integração: SIGKILL do helper interno deixa descendentes destacados cuja saída precisa de prova/teardown forte. O warmup Main e a cobertura real das CLIs/candidato continuam no aceite C6. |
 | Prova de descendentes MCP | F-868 integra supervisor/coorte Darwin, PID1 fixado Linux e identidade/remoção OCI. Revisão independente apontou F-880, agora corrigido e validado. Não confundir código/fixtures com prova de cada plataforma real. |
 | União completa | Instalação privada npm 12/Node 22 passou; 44 testes de dependências passaram. Suite completa em 6e968c1e: 1.847 suítes/21.545 testes passaram, 4 suítes/53 testes com skip; tipos app/server, sinks0 e ratchet Sync passam. Revisão final, matriz completa, segurança/SBOM/licenças e gate após F-875 seguem pendentes. |
+| Relatório do helper (N4/F-833) | Revisão confirmou fullText igual ao resumo ainda perdendo detalhes. 07096c9a preserva cauda Main sanitizada ou mantém pane aberto; quatro RED e 291 testes verdes. Revisão independente encontrou reenvio físico/condensação longa: correção adicional está em validação, sem afrouxar comparação exata de artifacts/recibos. |
 | Candidato e publicação | Conferir versão/tag, gerar DMG/ZIP assinado/notarizado, release:candidate, probes de 40 s/ocupado após renderer montado, fluxos reais, recursos por cinco minutos e quit sem órfãos. Publicar e validar canônica/espelho, hashes, recibos e download. |
 
 Já integrados desde o registro abaixo: C.3/harness de regex, C.4/follow-ups
@@ -29,6 +31,14 @@ A tag local v0.76.191 segue apontando para commit antigo; não reescrever tag.
 Em 04/10, canônica e espelho ainda publicam 0.76.190; refs remotas 191/192
 não existem. A tag final terá de apontar para a integração efetivamente validada.
 Autorização de integração completa e novas raízes .noindex já está vigente.
+
+A matriz atual enumera 104 requisitos e sua proveniência em
+`.superpowers/sdd/PLAN/coverage-current-final.md` (base congelada c38533bd,
+avanços posteriores separados). Os registros QA ausentes F-802 e F-815
+foram recuperados em e6bcb4d1/8cbae3b0, sem inventar novos defeitos.
+Credenciais Developer ID e perfil de notarização `nexus-notary` passaram no
+preflight; isso não é assinatura/notarização de um artifact. A revisão de
+licenças e a correção nativa seguem antes do empacotamento.
 
 ## Histórico — observado às 18:43 BRT, superado pelo estado acima
 
