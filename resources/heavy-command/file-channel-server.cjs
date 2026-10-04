@@ -26,7 +26,13 @@ function scan() {
       if (previous) {
         if (!stat || !same(stat, previous.identity)) { cancel(slot, previous); continue; }
         if (Date.now() - previous.started > (previous.id ? 360000 : 5000)) cancel(slot, previous);
-        else if (previous.id) continue;
+        else if (previous.id) {
+          let opened;
+          try { opened = io.open(file, fs.constants.O_RDONLY); if (!same(opened.identity, previous.identity) || io.read(opened.fd, file) !== previous.raw) cancel(slot, previous); }
+          catch { cancel(slot, previous); }
+          finally { if (opened) fs.closeSync(opened.fd); }
+          continue;
+        }
       }
       if (!stat) continue;
       if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > io.MAX) continue;

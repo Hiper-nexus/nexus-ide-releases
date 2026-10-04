@@ -57,6 +57,44 @@ it.runIf(process.platform === 'darwin')('file mode admits with both TCP and Unix
   for (const name of fs.readdirSync(channel.env.NEXUS_HEAVY_CHANNEL_DIR)) { const bytes = fs.readFileSync(path.join(channel.env.NEXUS_HEAVY_CHANNEL_DIR, name), 'utf8'); expect(bytes).not.toContain(channel.env.NEXUS_HEAVY_CHANNEL_KEY); expect(bytes).not.toContain(ctx.token); }
  } finally { child.kill('SIGTERM'); await exit; await channel.dispose(); await fsp.rmdir(root); }
 }, 10000);
+it.runIf(process.platform === 'darwin')('file slot reuse keeps its inode and cannot accept the previous signed UUID/digest', async () => {
+ const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexus-heavy-file-reuse-'));
+ let calls = 0, entered!: () => void, finish!: () => void;
+ const secondEntered = new Promise<void>(resolve => entered = resolve);
+ const channel = await createNativeHeavyLocalChannel(ctx, root, { spawn: nodeTestPort(), current: () => true, admit: async () => {
+  if (++calls === 2) { entered(); await new Promise<void>(resolve => finish = resolve); }
+  return { allow: true, leaseId: `finite-lease-${calls}` };
+ } }, { transport: 'file' });
+ const response = path.join(channel.env.NEXUS_HEAVY_CHANNEL_DIR, 'response-00.json'), before = fs.lstatSync(response);
+ try {
+  expect((await request(channel)).output).toBe('finite-lease-1'); const old = fs.readFileSync(response, 'utf8');
+  let settled = false; const next = request(channel).then(value => { settled = true; return value; }); await secondEntered;
+  await new Promise(resolve => setTimeout(resolve, 100)); expect(settled).toBe(false); expect(fs.readFileSync(response, 'utf8')).toBe(old);
+  finish(); expect((await next).output).toBe('finite-lease-2'); expect(fs.lstatSync(response).ino).toBe(before.ino); expect(fs.lstatSync(response).dev).toBe(before.dev); expect(calls).toBe(2);
+ } finally { finish?.(); await channel.dispose(); await fsp.rmdir(root); }
+}, 10000);
+it.runIf(process.platform === 'darwin')('file cleanup never truncates or deletes a foreign persistent response replacement and retries', async () => {
+ const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexus-heavy-file-foreign-'));
+ const channel = await createNativeHeavyLocalChannel(ctx, root, { spawn: nodeTestPort(), current: () => true, admit: async () => ({ allow: false }) }, { transport: 'file' });
+ const response = path.join(channel.env.NEXUS_HEAVY_CHANNEL_DIR, 'response-00.json'), moved = path.join(root, 'owned-response-moved');
+ fs.renameSync(response, moved); fs.writeFileSync(response, 'foreign-response');
+ await expect(channel.dispose()).rejects.toThrow('file_changed'); expect(fs.readFileSync(response, 'utf8')).toBe('foreign-response');
+ fs.unlinkSync(response); await channel.dispose(); fs.unlinkSync(moved); await fsp.rmdir(root);
+});
+it.runIf(process.platform === 'darwin')('same-inode request content change aborts admission before a late grant can be published', async () => {
+ const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexus-heavy-file-change-'));
+ let entered!: () => void, observeAbort!: () => void, finish!: () => void;
+ const started = new Promise<void>(resolve => entered = resolve), aborted = new Promise<void>(resolve => observeAbort = resolve);
+ const channel = await createNativeHeavyLocalChannel(ctx, root, { spawn: nodeTestPort(), current: () => true, admit: async (_ctx, _body, signal) => {
+  signal.addEventListener('abort', () => observeAbort()); entered(); await new Promise<void>(resolve => finish = resolve); return { allow: true, leaseId: 'late-grant' };
+ } }, { transport: 'file' });
+ const file = path.join(channel.env.NEXUS_HEAVY_CHANNEL_DIR, 'request-00.json'); fs.writeFileSync(file, JSON.stringify(packet(channel)), { flag: 'wx' });
+ try {
+  await started; const before = fs.lstatSync(file); fs.truncateSync(file); expect(fs.lstatSync(file).ino).toBe(before.ino);
+  await aborted; finish(); await new Promise(resolve => setTimeout(resolve, 50));
+  expect(fs.readFileSync(path.join(channel.env.NEXUS_HEAVY_CHANNEL_DIR, 'response-00.json'), 'utf8')).toBe('');
+ } finally { finish?.(); fs.unlinkSync(file); await channel.dispose(); await fsp.rmdir(root); }
+}, 5000);
 it.runIf(process.platform === 'darwin').each([false, true])('direct Node preload keeps scoped Unix borrowing and rejects tampered replies=%s', async (tamper) => {
  const root = fs.realpathSync(await fsp.mkdtemp(path.join(os.tmpdir(), 'nexus-heavy-node-unix-')));
  const entry = path.join(root, 'node_modules/typescript/bin/finite.cjs'), marker = path.join(root, 'loaded');
