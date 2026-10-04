@@ -15,7 +15,7 @@ import type {
 } from './cli-mcp-session-types';
 import { removeTreeSync } from '../util/remove-tree';
 
-type ArtifactProvider = 'codex' | 'opencode' | 'kimi' | 'grok' | 'mimo-code' | 'qwen';
+type ArtifactProvider = 'codex' | 'opencode' | 'kimi' | 'grok' | 'mimo-code' | 'qwen' | 'muse';
 
 export interface ArtifactSession {
   artifactDir: string;
@@ -355,6 +355,11 @@ export function purgeStaleCliMcpSessions(
     ),
     purgeOwnedSessionRoot(
       path.join(artifactRoot, 'mimo-code'),
+      active,
+      trustedBoundary,
+    ),
+    purgeOwnedSessionRoot(
+      path.join(artifactRoot, 'muse'),
       active,
       trustedBoundary,
     ),
