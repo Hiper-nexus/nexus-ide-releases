@@ -1,6 +1,6 @@
 # Pendências verificadas da release — 04/10/2026
 
-Atualização após `55691a0d`, com todas as entregas existentes integradas e
+Atualização após `f5238472c`, com todas as entregas existentes integradas e
 metadados de **0.76.192** preparados. **Ainda não há aplicativo, DMG ou ZIP
 assinado/notarizado desta integração, nem publicação.**
 
@@ -9,11 +9,11 @@ assinado/notarizado desta integração, nem publicação.**
 | Pendência | Evidência e próximo passo |
 |---|---|
 | Carga F-764 no conjunto final | Cargas anteriores de 30 s, normais e envenenadas, passaram; falta repetir no SHA final, com 15 terminais, ≥5 MB/s, conclusão semântica, p99 <100 ms, máximo <1 s e bloqueio de spawn <100 ms. |
-| Fila pesada nativa C.6 | Supervisor A/B autenticado, warmup Main, launcher compatível com sandbox interno e proxy herdado já integrados. Claude, Grok e Kimi reais têm provas privadas e gates Root aprovados. O OpenCode2 exige backend privado por pane (`--standalone`), já provado no controle, mas o transporte de admissão ainda está em correção. A matriz restante de CLIs continua em fechamento. |
-| Revisão independente composta | Achados F-883..F-890 receberam correções e testes focados. O parecer composto aprova os deltas examinados de F-883..F-888/F-890 e native. F-889 também recebeu revisão independente: 224 testes/7 suítes, com os módulos idênticos à integração. Os transportes nativos novos ainda precisam de revisão própria. A aprovação antiga não certifica o SHA atual. |
+| Fila pesada nativa C.6 | Claude, Grok, Kimi e OpenCode2 têm provas privadas. O backend privado do OpenCode2 e o canal Unix autenticado já estão integrados, com revisão independente de fonte. No Codex real, o controle workspace-write executa o comando e nega escrita fora do workspace, mas o comando com admissão falha; o canal Unix ainda não resolveu esse controle. Muse e as demais fronteiras da matriz continuam em verificação. Nenhum caso pendente é contado como aprovado. |
+| Revisão independente composta | F-883..F-892 receberam correções e testes focados. F-889 teve revisão independente com 224 testes/7 suítes. O canal Unix, a reserva Main e o buffering de input/resize receberam revisão independente com 58 testes/6 suítes. A verificação privada dos fluxos do pacote está em revisão. As aprovações de fonte não certificam execução no candidato assinado. |
 | Teste de recursos por cinco minutos | Harness integrado em 55691a0d e aprovado por revisão independente de fonte. Gate privado Root: 172 testes/13 suítes, tipos/sinks/Sync aprovados. Ainda precisa executar os 300 s no aplicativo assinado; fixtures não comprovam essa execução. |
 | Validação completa final | Instalação privada limpa passou. A suíte completa histórica em `6e968c1e` passou: 1.847 suítes/21.545 testes, com 4 suítes/53 testes ignorados. Falta a suíte no conjunto final, tipos app/server, segurança/audit/SBOM/licenças e matriz de 104 requisitos atualizada. |
-| Fluxos reais do candidato | O smoke existente verifica preparação/listagem de missão, mas não início/stop de ops/standard com workers/handoff/recovery/movimento. O smoke também nega microfone; isso não prova start/stop de voz. Está em levantamento o caminho mínimo de verificação privada dessas obrigações do checklist, sem login/perfil do operador ou alteração de permissões. |
+| Fluxos reais do candidato | O verificador privado foi integrado: missões ops/standard, workers, handoff/ACK, recovery, movimentação, pergunta/resposta, memória/resume e captura/teardown de voz. Gate Root em f5238472c: 131 testes/15 suítes, tipos e renderer-sinks aprovados; lint de processos síncronos aprovado com 91 usos legados. Falta revisão independente e execução nas duas inicializações do aplicativo assinado, com provas físicas e inspeção da imagem N7. Fixtures não comprovam os fluxos do pacote. |
 | Candidato e publicação | Criar a tag no SHA exato validado, gerar DMG/ZIP assinados/notarizados, executar release:candidate, probes de 40 s e aviso ocupado, fluxos reais, recursos por cinco minutos e quit sem órfãos. Publicar pelo script canônico, que integra main/tag na transação, e verificar canônica/espelho, hashes, recibos e download. |
 
 N4/F-833 está corrigido no código e aprovado por revisão independente em
