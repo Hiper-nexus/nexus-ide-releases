@@ -3,7 +3,8 @@ import { Worker } from 'node:worker_threads';
 import { resolveManifestDir } from '../detect/manifest';
 import { trace } from '../observability/main-trace';
 import { PtyAnalysisClient } from './pty-analysis-client';
-import type { AnalysisBinding, AnalysisConsumer, AnalysisFence, AnalysisInput, AnalysisWorkerMessage } from './pty-analysis-protocol';
+import { AnalysisJobProgress } from './pty-analysis-progress';
+import { validAnalysisResult, type AnalysisBinding, type AnalysisConsumer, type AnalysisFence, type AnalysisInput, type AnalysisWorkerMessage } from './pty-analysis-protocol';
 
 let enabled = false;
 let worker: Worker | null = null;
@@ -13,8 +14,8 @@ let pending: AnalysisInput | null = null;
 let deadline: ReturnType<typeof setTimeout> | null = null;
 let flow: (id: string, paused: boolean) => void = () => {};
 let credit: (id: string, bytes: number) => void = () => {};
-let workerFactory: (() => Worker) | null = null;
-export function setPtyAnalysisWorkerFactoryForTests(factory: () => Worker): void {
+let workerFactory: ((progress: SharedArrayBuffer) => Worker) | null = null;
+export function setPtyAnalysisWorkerFactoryForTests(factory: (progress: SharedArrayBuffer) => Worker): void {
   if (worker) throw new Error('analysis worker already started'); workerFactory = factory;
 }
 let describe: (id: string) => AnalysisBinding = () => ({});
@@ -22,24 +23,43 @@ const failures: number[] = [];
 const quarantinedManifests = new Set<string>();
 let riskyManifest: string | null = null;
 const bindings = new Map<string, AnalysisBinding>();
-function stopDeadline() { if (deadline) clearTimeout(deadline); deadline = null; }
+let progress: AnalysisJobProgress | null = null;
+let activeRecord: AnalysisInput | null = null;
+let activeToken = 0; let nextToken = 0; let workStartedToken = 0;
+let deadlineActivity: number | null = null;
+function stopDeadline() { if (deadline) clearTimeout(deadline); deadline = null; deadlineActivity = null; }
 function fail(reason: string) {
-  stopDeadline(); const old = worker; worker = null; ready = false; pending = null;
+  stopDeadline(); const old = worker; worker = null; ready = false; pending = null; activeRecord = null; progress = null;
   if (reason === 'work-timeout' && riskyManifest) quarantinedManifests.add(riskyManifest);
   if (reason !== 'shutdown') failures.push(Date.now()); riskyManifest = null;
   analysisClient.fail(reason);
   if (old) { physicalStop = Promise.all([physicalStop, old.terminate()]).then(() => {}); void physicalStop.catch(() => {}); }
   return physicalStop;
 }
-function armDeadline(ms: number, reason: string) {
-  stopDeadline(); deadline = setTimeout(() => fail(reason), ms); deadline.unref?.();
+function armDeadline(ms: number, reason: string, activity: number | null = null) {
+  stopDeadline();
+  deadlineActivity = activity;
+  const owner = worker; const job = activeToken; const jobProgress = progress;
+  deadline = setTimeout(() => {
+    if (worker !== owner || (activity === null && activeToken !== job)) return;
+    // The result can be queued behind Main's timers after a long Main callback.
+    // Only this exact job on this exact Worker can prove completion; a missing
+    // ACK still has the separate, unchanged two-second delivery deadline.
+    if (reason === 'work-timeout' && (activity === null ? jobProgress?.completed(job) : jobProgress?.completedActivity(activity))) {
+      trace({ kind: 'pty-analysis-main-delayed-ack', workerEpoch: activeRecord?.workerEpoch, job, budgetMs: ms });
+      if (activeRecord) armDeadline(2_000, 'delivery-timeout'); else stopDeadline();
+      return;
+    }
+    fail(reason);
+  }, ms); deadline.unref?.();
 }
 function ensureWorker() {
   if (worker) return;
   let appPath = process.cwd(); let packaged = false;
   try { const { app } = require('electron') as typeof import('electron'); appPath = app.getAppPath(); packaged = app.isPackaged; } catch {}
   const manifestDir = resolveManifestDir({ appPath, packaged, resourcesPath: process.resourcesPath });
-  const created = workerFactory ? workerFactory() : new Worker(path.join(__dirname, 'pty-analysis-worker-entry.js'), { workerData: { manifestDir, quarantinedManifests: [...quarantinedManifests] } });
+  progress = new AnalysisJobProgress();
+  const created = workerFactory ? workerFactory(progress.buffer) : new Worker(path.join(__dirname, 'pty-analysis-worker-entry.js'), { workerData: { manifestDir, quarantinedManifests: [...quarantinedManifests], analysisProgress: progress.buffer } });
   worker = created;
   armDeadline(2_000, 'startup-timeout');
   created.on('message', (message: AnalysisWorkerMessage) => {
@@ -48,14 +68,27 @@ function ensureWorker() {
       ready = true; stopDeadline();
       if (pending) { const record = pending; pending = null; send(record); }
     } else if (message.kind === 'work-end') {
-      riskyManifest = null; stopDeadline();
+      if (message.activityToken !== undefined && message.activityToken === deadlineActivity) {
+        stopDeadline(); if (activeRecord) armDeadline(2_000, 'delivery-timeout');
+      }
+      if (message.watchdogToken !== undefined && message.watchdogToken !== activeToken) return;
+      riskyManifest = null;
     } else if (message.kind === 'work-start') {
+      if (message.watchdogToken === undefined && Number.isSafeInteger(message.activityToken) && message.activityToken! > 0) {
+        riskyManifest = typeof message.manifestId === 'string' && message.manifestId.length <= 128 ? message.manifestId : null;
+        armDeadline(250, 'work-timeout', message.activityToken); return;
+      }
+      if (message.watchdogToken !== undefined && message.watchdogToken !== activeToken) return;
+      if (message.watchdogToken === undefined && (message.workerEpoch !== activeRecord?.workerEpoch || message.job !== activeRecord?.eventSeq || message.sessionId !== activeRecord?.sessionId)) return;
       const manifest = (message as { manifestId?: unknown }).manifestId;
       riskyManifest = typeof manifest === 'string' && manifest.length <= 128 ? manifest : null;
-      armDeadline(250, 'work-timeout');
+      if (workStartedToken !== activeToken) { workStartedToken = activeToken; armDeadline(250, 'work-timeout'); }
     } else if (message.kind === 'failed') fail(message.reason);
     else {
-      if (message.done !== false) stopDeadline();
+      if (validAnalysisResult(message) && message.done !== false && activeRecord &&
+          message.workerEpoch === activeRecord.workerEpoch && message.generation === activeRecord.generation &&
+          message.sessionId === activeRecord.sessionId && message.eventSeq === activeRecord.eventSeq &&
+          message.ackBytes === (activeRecord.kind === 'data' ? Buffer.byteLength(activeRecord.data) : 0)) { stopDeadline(); activeRecord = null; }
       analysisClient.accept(message);
     }
   });
@@ -65,8 +98,11 @@ function ensureWorker() {
 function send(record: AnalysisInput) {
   ensureWorker();
   if (!ready) { pending = record; return; }
+  activeRecord = record; activeToken = nextToken = nextToken >= 0x7fffffff ? 1 : nextToken + 1;
+  workStartedToken = 0; progress!.reset();
   // Covers a worker that stops consuming before posting work-start as well.
-  armDeadline(2_000, 'delivery-timeout'); worker!.postMessage(record);
+  if (deadlineActivity === null) armDeadline(2_000, 'delivery-timeout');
+  worker!.postMessage({ ...record, watchdogToken: activeToken });
 }
 export const analysisClient = new PtyAnalysisClient({ post: send, now: Date.now,
   flow: (id, paused) => flow(id, paused), acknowledged: (id, bytes) => credit(id, bytes), trace });

@@ -32,6 +32,7 @@ export class PtyAnalysisClient {
   #generation = 0; #epoch = 1; #flight: AnalysisInput | null = null;
   #lastSession = ''; #bytes = 0; #admitted = 0; #acked = 0; #highwater = 0;
   #degraded = false;
+  #lastFailure: string | null = null;
   constructor(private readonly deps: AnalysisClientDeps) {}
 
   bind(id: string, binding: AnalysisBinding): number {
@@ -58,6 +59,7 @@ export class PtyAnalysisClient {
     const bytes = Buffer.byteLength(data);
     if (s.bytes + bytes > ANALYSIS_SESSION_BYTES || this.#bytes + bytes > ANALYSIS_GLOBAL_BYTES) {
       s.status = 'degraded'; this.#pause(id, s, true);
+      this.#lastFailure = 'queue-overflow';
       this.deps.trace?.({ kind: 'pty-analysis-degraded', sessionId: id, reason: 'queue-overflow', bytes });
       return false;
     }
@@ -107,6 +109,7 @@ export class PtyAnalysisClient {
   }
   terminate(id: string): void {
     const s = this.#sessions.get(id); if (!s) return;
+    if (s.status !== 'active') return;
     s.status = 'terminated'; this.#enqueue(id, { kind: 'terminate' });
   }
   exit(id: string): void {
@@ -152,6 +155,7 @@ export class PtyAnalysisClient {
     this.#pump(); return true;
   }
   fail(reason: string): void {
+    if (reason !== 'shutdown') this.#lastFailure = /^[a-z-]{1,64}$/.test(reason) ? reason : 'worker-failed';
     this.#epoch++; this.#flight = null; this.#degraded = true;
     for (const [id, s] of this.#sessions) {
       s.status = 'degraded';
@@ -168,7 +172,7 @@ export class PtyAnalysisClient {
   }
   recoverFreshSessions(): void { this.#degraded = false; }
   metrics() { return { degradedSessions: [...this.#sessions.values()].filter((s) => s.status === 'degraded').length, workerEpoch: this.#epoch, pendingBytes: this.#bytes, inFlight: this.#flight !== null,
-    admittedBytes: this.#admitted, ackedBytes: this.#acked, highwaterBytes: this.#highwater, sessions: this.#sessions.size, degraded: this.#degraded }; }
+    admittedBytes: this.#admitted, ackedBytes: this.#acked, highwaterBytes: this.#highwater, sessions: this.#sessions.size, degraded: this.#degraded, lastFailure: this.#lastFailure }; }
   #apply(r: AnalysisResult, s: Session, e: AnalysisEvent) {
     if (e.consumer !== 'failover' || ((e.value as { scanned?: boolean }).scanned || (e.value as { unavailable?: boolean }).unavailable)) s.latest.set(e.consumer, { value: e.value, fence: { workerEpoch: r.workerEpoch, sessionId: r.sessionId, generation: r.generation, eventSeq: r.eventSeq, observedAt: r.observedAt } });
     if (e.archival && (e.consumer === 'handoff' || e.consumer === 'completion')) {
@@ -187,6 +191,8 @@ export class PtyAnalysisClient {
   }
   #enqueue(id: string, body: InputBody) {
     const s = this.#sessions.get(id); if (!s || this.#degraded || s.status === 'degraded') return;
+    if (s.status === 'sealed' && body.kind !== 'exit') return;
+    if (s.status === 'terminated' && body.kind !== 'terminate') return;
     const record = { ...body, workerEpoch: this.#epoch, sessionId: id, generation: s.generation,
       eventSeq: ++s.seq, observedAt: this.deps.now() } as AnalysisInput;
     if (record.kind === 'data') s.lastDataSeq = record.eventSeq;

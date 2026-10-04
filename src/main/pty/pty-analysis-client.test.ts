@@ -18,6 +18,24 @@ function fixture() {
 }
 
 describe('ordered off-Main analysis', () => {
+  it('seals EOF as the last job and keeps its archival evidence through late controls', async () => {
+    const { client, sent, ack } = fixture();
+    client.subscribe('completion', () => {}); client.bind('s', {}); ack(); ack();
+    client.data('s', 'PRONTO: complete'); client.exit('s');
+    client.control('s', 'completion', { drop: true }); client.state('s', 'idle'); client.terminate('s');
+    ack([{ consumer: 'completion', registration: 1, value: { kind: 'done' }, archival: true }]);
+    expect(sent.at(-1)?.kind).toBe('exit'); ack();
+    expect(sent.at(-1)?.kind).toBe('exit');
+    expect(await client.barrier('s')).toBe(true);
+    expect(client.evidence('s', 'completion')).toEqual([{ kind: 'done' }]);
+  });
+  it('records the reason that resolved an analysis barrier as false', async () => {
+    const { client, ack } = fixture(); client.bind('s', {}); ack();
+    client.data('s', 'last bytes'); const barrier = client.barrier('s');
+    client.fail('work-timeout');
+    expect(await barrier).toBe(false);
+    expect(client.metrics()).toMatchObject({ lastFailure: 'work-timeout', degraded: true });
+  });
   it('keeps a marker in the middle of a flood and counts UTF-8 bytes', () => {
     const { client, sent, ack } = fixture();
     client.bind('s', { adapterId: 'codex' }); ack();
