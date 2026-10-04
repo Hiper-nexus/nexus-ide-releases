@@ -4,9 +4,26 @@ import http from 'node:http';
 import { expect, it } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { appendHeavyCommandPreload, heavyCommandShellEnvironment, stripInheritedHeavyCommandEnvironment } from './native-heavy-preload';
 it('preserves existing NODE_OPTIONS and quotes resource paths with spaces', () => {
  expect(appendHeavyCommandPreload('--max-old-space-size=256', '/tmp/Application Support/preload.cjs')).toBe('--max-old-space-size=256 --require "/tmp/Application Support/preload.cjs"');
+});
+it.runIf(fs.existsSync('/Users/cleofaspereirarocha/.npm-global/lib/node_modules/@minimax-ai/code/chunks/chunk-S6GSNWAM.js'))('recognizes only the measured MiniMax IPC guardian and leaves heavy evals admitted', () => {
+ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-sdk-control-'));
+ const entry = path.join(root, 'cli.js'); fs.writeFileSync(entry, ''); fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: '@minimax-ai/code', version: '0.5.5' }));
+ const sdk = fs.readFileSync('/Users/cleofaspereirarocha/.npm-global/lib/node_modules/@minimax-ai/code/chunks/chunk-S6GSNWAM.js', 'utf8');
+ const source = /ej=String\.raw`([\s\S]*?)`/.exec(sdk)![1];
+ const control = createRequire(import.meta.url)(path.join(process.cwd(), 'resources/heavy-command/sdk-control.cjs'));
+ const args = ['--input-type=module', '--eval', source, String(process.pid), '3000', 'finite-sdk-lease'];
+ const options = { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'], env: {} };
+ try {
+  expect(control(process.execPath, args, options, entry)).toBe(true); expect(options.env).toEqual({});
+  expect(control(process.execPath, [...args.slice(0, 2), source + '\nawait import("typescript");', ...args.slice(3)], options, entry)).toBe(false);
+  expect(control(process.execPath, args, { ...options, stdio: ['ignore', 'ignore', 'ignore'] }, entry)).toBe(false);
+  expect(control(process.execPath, args, options, undefined)).toBe(false);
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'unrelated', version: '0.5.5' })); expect(control(process.execPath, args, options, entry)).toBe(false);
+ } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 it('does not intercept outside-mission operator Node processes', () => {
  const env: NodeJS.ProcessEnv = { ...process.env, NODE_OPTIONS: appendHeavyCommandPreload('--max-old-space-size=256', path.join(process.cwd(), 'resources/heavy-command/preload.cjs')) };
