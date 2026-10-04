@@ -13,8 +13,12 @@ import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import { HeavyCommandPermitPool } from './heavy-command-permit';
 import type { AgentGateContext } from './gate';
 import { resolveCliBinary } from '../path-resolver';
+import { buildControlArgs } from '../adapters/control-args';
+import { mimoSkipPermissionsViaEnv } from '../adapters/mimo-skip-permissions';
+import type { CliPtyAdapter } from '../../shared/adapter-types';
 
 const selected = process.env.NEXUS_TEST_NATIVE_NODE_CLI ?? 'qwen';
+const nexusDefault = process.env.NEXUS_TEST_NATIVE_NODE_DEFAULT !== '0';
 const installed = {
   qwen: '/Users/cleofaspereirarocha/.npm-global/lib/node_modules/@qwen-code/qwen-code/cli-entry.js',
   mimo: '/Users/cleofaspereirarocha/.npm-global/lib/node_modules/@mimo-ai/cli/bin/mimo',
@@ -71,13 +75,20 @@ function openaiStream(res: http.ServerResponse, model: string, tool: { name: str
   res.end('data: [DONE]\n\n');
 }
 
-async function actualControl(kind: 'qwen' | 'minimax') {
+async function actualControl(kind: 'qwen' | 'minimax' | 'mimo') {
   const evidence = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `nexus-c6-${kind}-control-`)));
   const entry = fs.realpathSync(installed[kind]), entrySha256 = sha(entry);
+  const nativeBinary = kind === 'mimo' ? fs.realpathSync(path.join(path.dirname(entry), '../node_modules/@mimo-ai/mimocode-darwin-arm64/bin/mimo')) : null;
+  const nativeSha256 = nativeBinary ? sha(nativeBinary) : null;
   const cliNode = kind === 'minimax' ? fs.realpathSync('/opt/homebrew/bin/node') : process.execPath;
   const cliRuntime = JSON.parse(execFileSync(cliNode, ['-p', 'JSON.stringify({version:process.version,modules:process.versions.modules})'], { encoding: 'utf8', timeout: 5000 }));
   const sourceSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: process.cwd(), encoding: 'utf8', timeout: 5000 }).trim();
   const fixtureSha256 = sha(path.join(process.cwd(), 'src/main/orch/native-heavy-node-clis.test.ts'));
+  const adapterId = kind === 'mimo' ? 'mimo-code' : kind === 'minimax' ? 'minimax-code' : kind;
+  const adapter = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'src/adapters/builtin', `${adapterId}.json`), 'utf8')) as CliPtyAdapter;
+  let controlArgs = nexusDefault ? buildControlArgs(adapter, {}) : [];
+  const controlEnv = kind === 'mimo' ? mimoSkipPermissionsViaEnv(controlArgs) : { args: controlArgs, env: {} };
+  controlArgs = controlEnv.args;
   const helper = path.join(evidence, 'resources/native/darwin/nexus-pty-supervisor');
   execFileSync(process.execPath, [path.join(process.cwd(), 'scripts/build-darwin-pty-supervisor.mjs'), '--output', helper], { stdio: 'ignore' });
   const runtime = { platform: 'darwin' as const, packaged: false, cwd: evidence, moduleDir: evidence };
@@ -133,7 +144,20 @@ async function actualControl(kind: 'qwen' | 'minimax') {
     fs.writeFileSync(path.join(home, '.qwen/settings.json'), JSON.stringify({ security: { auth: { selectedType: 'openai' } }, model: { name: 'finite-model' }, telemetry: { enabled: false } }));
     const env: NodeJS.ProcessEnv = { PATH: `${path.dirname(cliNode)}:/opt/homebrew/bin:/usr/bin:/bin`, HOME: home, TMPDIR: tmp, XDG_CONFIG_HOME: path.join(home, 'config'), XDG_CACHE_HOME: path.join(home, 'cache'),
       QWEN_HOME: path.join(home, '.qwen'), OPENAI_API_KEY: 'private-finite-model-key', OPENAI_BASE_URL: `http://127.0.0.1:${port}/v1`, OPENAI_MODEL: 'finite-model', LANG: 'en_US.UTF-8', TERM: 'dumb', SHELL: '/bin/bash' };
+    Object.assign(env, controlEnv.env);
     let cliArgs = ['--acp', '--approval-mode', 'default', '--model', 'finite-model'];
+    if (nexusDefault && kind === 'qwen') cliArgs = ['--acp', '--model', 'finite-model'];
+    if (kind === 'mimo') {
+      const mimoHome = path.join(home, 'mimo');
+      for (const directory of [mimoHome, path.join(mimoHome, 'data'), path.join(mimoHome, 'config')]) fs.mkdirSync(directory, { mode: 0o700 });
+      Object.assign(env, { MIMOCODE_HOME: mimoHome, MIMOCODE_DB: path.join(mimoHome, 'data/mimocode.db'), MIMOCODE_CONFIG_DIR: path.join(mimoHome, 'config'),
+        MIMOCODE_DISABLE_AUTOUPDATE: '1', XIAOMI_API_KEY: 'private-finite-model-key', SHELL: process.env.SHELL ?? '/bin/zsh',
+        MIMOCODE_CONFIG_CONTENT: JSON.stringify({ model: 'xiaomi/mimo-v2.6-flash', provider: { xiaomi: {
+          models: { 'mimo-v2.6-flash': { id: 'mimo-v2.6-flash', name: 'Finite private MiMo', reasoning: true, tool_call: true } },
+          options: { apiKey: '{env:XIAOMI_API_KEY}', baseURL: `http://127.0.0.1:${port}/v1` },
+        } } }) });
+      cliArgs = ['acp', '--cwd', workspace];
+    }
     if (kind === 'minimax') {
       env.MINIMAX_DATA_DIR = path.join(home, 'minimax-data'); env.NEXUS_FAKE_PROVIDER_KEY = 'private-finite-model-key';
       try {
@@ -154,12 +178,13 @@ async function actualControl(kind: 'qwen' | 'minimax') {
     // file profile (mission-cli-execution-policy). No PTY/device grant is
     // added here. Network is narrowed to this finite fixture only; that is
     // a test restriction, not a claim about plain Autopilot network policy.
-    const profile = `(version 1)(allow default)(deny network*)(allow network-outbound (remote tcp "localhost:${port}"))`;
-    const command = supervisedPtyCommand(runtime, '/usr/bin/sandbox-exec', ['-p', profile, cliNode, entry, ...cliArgs]);
+    const profile = `(version 1)(allow default)(deny network*)(allow network-outbound (remote tcp "localhost:${kind === 'mimo' ? '*' : port}"))${kind === 'mimo' ? '(allow network-bind (local tcp "localhost:*"))(allow network-inbound (local tcp "localhost:*"))' : ''}`;
+    const command = supervisedPtyCommand(runtime, '/usr/bin/sandbox-exec', ['-p', profile, cliNode, entry, ...controlArgs, ...cliArgs]);
     const child = spawn(command.file, command.args, { cwd: workspace, env, stdio: ['pipe', 'pipe', 'pipe'] }); cliPid = child.pid!;
     let stderr = ''; child.stderr.on('data', part => { stderr = (stderr + part).slice(-32768); });
     const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(resolve => child.once('close', (code, signal) => { cliAlive = false; resolve({ code, signal }); })), rpc = acp(child, approvals);
     const timer = setTimeout(() => { if (cliAlive) child.kill('SIGTERM'); }, 30000);
+    let failure: unknown;
     try {
       const initialized = await rpc.call('initialize', { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 'nexus-private-c6', version: '1' } });
       const session = await rpc.call('session/new', { cwd: workspace, mcpServers: [] });
@@ -175,26 +200,30 @@ async function actualControl(kind: 'qwen' | 'minimax') {
       expect(result.stopReason, stderr).toBe('end_turn'); expect(toolSent, JSON.stringify(shapes)).toBe(true);
       expect(fs.readFileSync(path.join(workspace, 'command-ran'), 'utf8'), JSON.stringify(rpc.updates) + stderr).toBe('REAL_C6_CHILD_DONE\n');
       expect(fs.readFileSync(path.join(workspace, 'outside-result'), 'utf8')).toBe('escaped'); expect(fs.readFileSync(outside, 'utf8')).toBe('forbidden');
-      expect(fs.readFileSync(path.join(workspace, 'network-result'), 'utf8')).toBe('denied');
-      expect(deniedRequests).toBe(1); // Parent positive reached it; CLI descendant never did.
+      expect(fs.readFileSync(path.join(workspace, 'network-result'), 'utf8')).toBe(kind === 'mimo' ? 'escaped' : 'denied');
+      expect(deniedRequests).toBe(kind === 'mimo' ? 2 : 1); // MiMo's own ephemeral server requires ordinary loopback.
       if (scheduled) { expect(admissions.some(a => a.proof === 'darwin-job' && a.pid !== cliPid)).toBe(true); expect(transitions[0]).toBe('grant'); await native.drain(); expect(transitions).toEqual(['grant', 'release']); }
       else { expect(admissions).toEqual([]); expect(transitions).toEqual([]); }
       phases.push({ phase, initialized, result, cliPid, admissions, transitions, approvals, shapes, updates: rpc.updates,
-        outsideWritePolicy: 'ordinary-no-file-confinement; owned private probe only', networkPolicy: 'fixture-only-local-gateway-restriction', deniedProbeParentRequests: deniedRequests,
-        nexusResolvedNode: resolveCliBinary('node', { processPath: env.PATH, home })?.binPath });
+        outsideWritePolicy: 'ordinary-no-file-confinement; owned private probe only', networkPolicy: kind === 'mimo' ? 'normal-loopback-required; external-fixture-only-restriction' : 'fixture-only-local-gateway-restriction', deniedProbeParentRequests: deniedRequests,
+        nexusResolvedNode: resolveCliBinary('node', { processPath: env.PATH, home })?.binPath, controlArgs, cliArgs });
+    } catch (error) { failure = error; throw error;
     } finally {
       clearTimeout(timer); rpc.stop(); child.stdin.end();
       const graceful = await Promise.race([closed.then(() => true), new Promise<false>(resolve => { const stop = setTimeout(() => resolve(false), 5000); stop.unref(); })]);
       if (!graceful && cliAlive) child.kill('SIGTERM'); const ending = await closed; await native.drain(); pool.close();
       for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => server.close(() => resolve()));
       for (const socket of denialSockets) socket.destroy(); await new Promise<void>(resolve => denialServer.close(() => resolve()));
-      fs.writeFileSync(path.join(root, 'phase.json'), JSON.stringify({ phase, cliPid, admissions, transitions, approvals, shapes, updates: rpc.updates, stderr, ending, graceful }) + '\n', { mode: 0o600 });
-      expect(ending).toEqual({ code: 0, signal: null }); expect(graceful).toBe(true); expect(stderr).not.toContain('responsibility inventory incomplete');
+      fs.writeFileSync(path.join(root, 'phase.json'), JSON.stringify({ phase, cliPid, admissions, transitions, approvals, shapes, updates: rpc.updates, stderr, ending, graceful,
+        failure: failure instanceof Error ? failure.message : failure, controlArgs, controlEnvKeys: Object.keys(controlEnv.env), cliArgs, nexusDefault }) + '\n', { mode: 0o600 });
+      if (!failure) { expect(ending).toEqual({ code: 0, signal: null }); expect(graceful).toBe(true); expect(stderr).not.toContain('responsibility inventory incomplete'); }
     }
   }
   expect(sha(entry)).toBe(entrySha256);
+  if (nativeBinary) expect(sha(nativeBinary)).toBe(nativeSha256);
   fs.writeFileSync(path.join(evidence, 'receipt.json'), JSON.stringify({ sourceSha, fixtureSha256, resourceHashes, helperSha256: sha(helper), cli: kind,
-    cliNode, cliNodeSha256: sha(cliNode), cliRuntime, validationRuntime: process.version, entry, entrySha256, phases }) + '\n', { mode: 0o600 });
+    cliNode, cliNodeSha256: sha(cliNode), cliRuntime, validationRuntime: process.version, entry, entrySha256, nativeBinary, nativeSha256, nexusDefault, controlArgs, phases }) + '\n', { mode: 0o600 });
 }
 it.runIf(process.platform === 'darwin' && selected === 'qwen' && fs.existsSync(installed.qwen))('actual Qwen ordinary ACP shell: baseline and scoped Native A+B scheduling use unchanged normal approval', () => actualControl('qwen'), 85000);
 it.runIf(process.platform === 'darwin' && selected === 'minimax' && fs.existsSync(installed.minimax))('actual MiniMax ordinary ACP shell: baseline and scoped Native A+B scheduling use unchanged normal approval', () => actualControl('minimax'), 85000);
+it.runIf(process.platform === 'darwin' && selected === 'mimo' && fs.existsSync(installed.mimo))('actual MiMo native ordinary ACP shell: baseline and scoped Native A+B scheduling use unchanged normal approval', () => actualControl('mimo'), 85000);

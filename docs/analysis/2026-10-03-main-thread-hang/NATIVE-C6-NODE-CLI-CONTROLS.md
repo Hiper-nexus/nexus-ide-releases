@@ -7,6 +7,16 @@ gateway. No operator account/config, global install, external AI, `--yolo`,
 sandbox disable, persistent/blanket permission allowlist or new PTY grant.
 This is standalone installed-CLI evidence, not signed application acceptance.
 
+The preceding scope describes the original frozen ordinary-approval milestone
+8b697e5f. Later operator authorization explicitly requires actual Nexus
+default full-auto argv; current fixture obtains it through `buildControlArgs`
+and the existing MiMo F742 conversion, identically in both phases.
+`NEXUS_TEST_NATIVE_NODE_DEFAULT=0` preserves the original ordinary-approval
+control. See `NATIVE-C6-MIMO-DEFAULT-CONTROL.md` for the actual default MiMo
+PASS and its normal loopback/file policy distinctions. The original no-yolo
+statement is historical, not a restriction imposed on the newly authorized
+default product verifier.
+
 Primary local `--version` and `--help` ran with network denied and private
 HOME under `nexus-c6-node-primary-2zieccvd` in the owned macOS temp directory:
 
