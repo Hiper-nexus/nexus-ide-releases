@@ -8,7 +8,7 @@ import { configureMimoUsageProcessFactory, configureMimoUsageWorkerPath,
 /** Test-only adapter. Production uses Electron utilityProcess, with the same CJS entry. */
 export const forkMimoFixtureProcess: MimoProcessFactory = (entry, privateRoot) => {
   const child = fork(path.resolve('.vite/mimo-worker-test/node-port.cjs'), [entry, privateRoot], {
-    execPath: '/opt/homebrew/opt/node@22/bin/node', stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    execPath: process.execPath, stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
   });
   return {
     postMessage: message => { child.send(message); },
