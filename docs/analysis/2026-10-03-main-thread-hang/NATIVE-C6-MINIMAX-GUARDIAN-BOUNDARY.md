@@ -89,3 +89,20 @@ The explicit MiniMax control remains RED until the owner provides a verified
 resource/IPC fix. Default focused selection remains Qwen, whose positive
 control is distinct. No generic matrix PASS, candidate execution, operator
 profile/process or external inference is claimed.
+
+## Verified resource follow-up
+
+The original RED artifact above is retained as baseline evidence. The owner
+fixed the guardian/target circular wait in F900, then independent review found
+that a loose node-basename/environment/options matcher could also exempt a
+different execution. The narrowed matcher requires the exact current
+process.execPath, fixed source digest/argv/IPC, deliberately closed SDK env,
+no shell execution, and only measured spawn fields. Primary chunk line171
+also contains `windowsHide:true`; preserving it closed the first strict
+real-round rejection without relaxing any executable/env boundary.
+
+Fresh post-fix union: 27 PASS / 1 unrelated CLI skip / 2 suites (37.46s),
+including actual MiniMax baseline/scheduled and all new negative matcher
+controls; full tsc exit0. The one-second guardian registration and its IPC
+contract remain unchanged. These are local/source controls, not signed
+candidate or universal adapter evidence.

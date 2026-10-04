@@ -16,12 +16,23 @@ it.runIf(fs.existsSync('/Users/cleofaspereirarocha/.npm-global/lib/node_modules/
  const source = /ej=String\.raw`([\s\S]*?)`/.exec(sdk)![1];
  const control = createRequire(import.meta.url)(path.join(process.cwd(), 'resources/heavy-command/sdk-control.cjs'));
  const args = ['--input-type=module', '--eval', source, String(process.pid), '3000', 'finite-sdk-lease'];
- const options = { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'], env: {} };
+ const options = { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true, env: {} };
  try {
   expect(control(process.execPath, args, options, entry)).toBe(true); expect(options.env).toEqual({});
   expect(control(process.execPath, [...args.slice(0, 2), source + '\nawait import("typescript");', ...args.slice(3)], options, entry)).toBe(false);
   expect(control(process.execPath, args, { ...options, stdio: ['ignore', 'ignore', 'ignore'] }, entry)).toBe(false);
   expect(control(process.execPath, args, options, undefined)).toBe(false);
+  expect(control(process.execPath, args, { ...options, env: { NODE_OPTIONS: '--require ./finite-private.cjs' } }, entry)).toBe(false);
+  expect(control(process.execPath, args, { ...options, env: { DYLD_INSERT_LIBRARIES: '/own/foreign.dylib' } }, entry)).toBe(false);
+  expect(control(process.execPath, args, { ...options, env: undefined }, entry)).toBe(false);
+  expect(control(process.execPath, args, { ...options, env: { ELECTRON_RUN_AS_NODE: '1' } }, entry)).toBe(Boolean(process.versions.electron));
+  expect(control(process.execPath, args, { ...options, shell: true }, entry)).toBe(false);
+  expect(control(process.execPath, args, { ...options, shell: '/bin/sh' }, entry)).toBe(false);
+  expect(control(process.execPath, args, { ...options, shell: false }, entry)).toBe(true);
+  expect(control(path.join(root, 'node'), args, options, entry)).toBe(false);
+  expect(control('node', args, options, entry)).toBe(false);
+  expect(control(process.execPath, args, { ...options, argv0: 'foreign' }, entry)).toBe(false);
+  expect(control(process.execPath, args, { ...options, windowsHide: 'foreign' }, entry)).toBe(false);
   fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'unrelated', version: '0.5.5' })); expect(control(process.execPath, args, options, entry)).toBe(false);
  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
