@@ -1331,11 +1331,14 @@ export async function runPackagedSmoke(
     remoteDebugging = false,
     runtimeProbe = null,
     runtimeProbeTimeoutMs = 30_000,
+    soakProbe = false,
   } = {},
 ) {
-  if (typeof remoteDebugging !== 'boolean' ||
+  const privateSoak = soakProbe === true && env.NEXUS_SMOKE_SOAK === '1' && remoteDebugging === false;
+  if (typeof remoteDebugging !== 'boolean' || typeof soakProbe !== 'boolean' || (soakProbe && !privateSoak) ||
+      (privateSoak && (typeof runtimeProbe !== 'function' || !Number.isFinite(timeoutMs) || timeoutMs < 300_000 || timeoutMs > 480_000)) ||
       (runtimeProbe !== null && typeof runtimeProbe !== 'function') ||
-      !Number.isFinite(runtimeProbeTimeoutMs) || runtimeProbeTimeoutMs <= 0 || runtimeProbeTimeoutMs > TIMEOUT_MS) {
+      !Number.isFinite(runtimeProbeTimeoutMs) || runtimeProbeTimeoutMs <= 0 || runtimeProbeTimeoutMs > (privateSoak ? 450_000 : TIMEOUT_MS)) {
     throw new Error('invalid packaged smoke runtime probe options');
   }
   const target = resolvePackagedTarget(targetPath, { platform, arch });

@@ -7,6 +7,7 @@ import {
   gracefulSmokeExit,
   isCurrentProcessSmokeTest,
   SMOKE_TIMEOUT_MS,
+  type SmokeSettler,
 } from "./smoke-core";
 import { WINDOW_CHANNELS } from "../shared/channels";
 import {
@@ -18,6 +19,8 @@ import { createRealPtyHost } from "./pty/pty-host-client";
 import { proveDarwinPtyPipelineForSmoke } from "./pty/darwin-pty-smoke";
 import { isSmokeBusyBannerProbeRequested, proveMountedBusyBannerForSmoke } from './hang-watchdog/smoke-busy-banner';
 import { SMOKE_HANG_PROBE_BLOCK_MS } from './hang-watchdog/smoke-hang-probe';
+import { isSoakSmokeRequested, proveSoakForSmoke } from './soak-smoke';
+import { SOAK_POLICY } from '../shared/soak-smoke';
 
 
 
@@ -38,10 +41,13 @@ export function initSmokeTest(): void {
   const busyBannerProbe = isSmokeBusyBannerProbeRequested({
     smokeTest: true, env: process.env, userDataPath: app.getPath('userData'),
   });
+  const soak = isSoakSmokeRequested({ smokeTest: true, packaged: app.isPackaged, env: process.env, userData: app.getPath('userData') });
+  const soakCancellation = new AbortController();
+  let soakFlight: Promise<void> | null = null;
   // The forty-second live-renderer hang must not consume the ordinary functional deadline.
-  const smokeTimeoutMs = SMOKE_TIMEOUT_MS + (busyBannerProbe ? SMOKE_HANG_PROBE_BLOCK_MS + 10_000 : 0);
+  const smokeTimeoutMs = SMOKE_TIMEOUT_MS + (busyBannerProbe ? SMOKE_HANG_PROBE_BLOCK_MS + 10_000 : 0) + (soak ? SOAK_POLICY.timeoutMs : 0);
 
-  const settle = createSmokeSettler(
+  const settleNow = createSmokeSettler(
     (code) =>
       gracefulSmokeExit(code, {
         setExitCode: (status) => {
@@ -51,6 +57,15 @@ export function initSmokeTest(): void {
       }),
     (line, isError) => (isError ? console.error(line) : console.log(line)),
   );
+  const settle: SmokeSettler = (event, detail) => {
+    if (soakFlight && event !== 'functional-ready') {
+      soakCancellation.abort();
+      // FAIL enters the existing sealed physical shutdown immediately, even
+      // if the soak is still awaiting setup IO or a wedged renderer callback.
+      // Shutdown owns the real drain/quit ceiling; no success is inferred.
+      settleNow(event, detail);
+    } else settleNow(event, detail);
+  };
 
 
   // Registering a listener suppresses Electron's blocking exception dialog,
@@ -71,6 +86,7 @@ export function initSmokeTest(): void {
 
   app.on("browser-window-created", (_event, win) => {
     const wc = win.webContents;
+    let smokeWorkspacePath = '';
     // The utility-process pipeline below is the production path and subsumes
     // the direct helper self-probe. Running both trace-exec proofs inside the
     // Electron process can deadlock Security.framework during AppKit startup.
@@ -96,7 +112,7 @@ export function initSmokeTest(): void {
       );
     };
     const onFunctionalResult = (event: Electron.IpcMainEvent, raw: unknown) => {
-      if (event.sender !== wc) return;
+      if (event.sender !== wc || event.senderFrame !== wc.mainFrame) return;
       const result = parseFunctionalSmokeResult(raw);
       if (!result) {
         removeListeners();
@@ -114,6 +130,15 @@ export function initSmokeTest(): void {
         return;
       }
       removeListeners();
+      if (soak) {
+        console.log('[smoke] soak-start: initial functional probes passed');
+        soakFlight = proveSoakForSmoke(win, { ipc: ipcMain, userData: app.getPath('userData'),
+          appVersion: app.getVersion(), packaged: app.isPackaged, smokeTest: true, workspacePath: smokeWorkspacePath, signal: soakCancellation.signal,
+          requestPhysicalShutdown: () => settleNow('functional-failed', 'soak failure; entering physical shutdown') });
+        void soakFlight.then(() => settle('functional-ready', 'soak and repeated functional probes passed'),
+          () => settle('functional-failed', 'soak activity/memory/cleanup proof failed'));
+        return;
+      }
       settle(
         "functional-ready",
         `${result.probes.length} probes, ${result.toolCount} tools, ${result.adapterCount} adapters`,
@@ -123,7 +148,7 @@ export function initSmokeTest(): void {
       event: Electron.IpcMainEvent,
       report?: { ok?: unknown; error?: unknown },
     ) => {
-      if (event.sender !== wc) return;
+      if (event.sender !== wc || event.senderFrame !== wc.mainFrame) return;
       ipcMain.removeListener(WINDOW_CHANNELS.mounted, onMounted);
       if (report?.ok === false) {
         ipcMain.removeListener(
@@ -164,6 +189,7 @@ export function initSmokeTest(): void {
           if (!canonicalWorkspacePath) {
             throw new Error("could not grant smoke workspace");
           }
+          smokeWorkspacePath = canonicalWorkspacePath;
           wc.send(WINDOW_CHANNELS.functionalSmokeRun, {
             workspacePath: canonicalWorkspacePath,
           });

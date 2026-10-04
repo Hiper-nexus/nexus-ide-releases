@@ -12,6 +12,14 @@ function between(start: string, end: string): string {
 }
 
 describe("deferred main renderer navigation", () => {
+  it('adds the soak renderer marker only from the explicit Main private smoke branch', () => {
+    const create = between('export function createMainWindow(', '// Establish the user-facing application policy');
+    expect(create).toContain('isSoakSmokeRequested');
+    expect(create).toContain('smokeTest: isCurrentProcessSmokeTest()');
+    expect(create).toContain('packaged: app.isPackaged');
+    expect(create).toContain('userData: app.getPath(\'userData\')');
+    expect(create).toContain('privateSoak ?');
+  });
   it("keeps xterm parsing timers active in a covered second Nexus window", () => {
     expect(between("const win = new BrowserWindow({", "// Policy already set before construction"))
       .toContain("backgroundThrottling: process.platform !== 'darwin'");

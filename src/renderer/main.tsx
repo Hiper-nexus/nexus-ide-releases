@@ -2,11 +2,13 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { installRestoredAgentsGate } from './orch/restore-agents-gate';
+import { installSoakRenderer } from './soak-smoke';
 import './styles/global.css';
 
 // Hold every restored CLI first; mission panes resume only after Main confirms
 // their exact persisted authority, while standalone agents follow user policy.
 installRestoredAgentsGate();
+installSoakRenderer();
 
 // No StrictMode: its dev-time double-mount would spawn/kill PTYs twice per pane.
 const container = document.getElementById('root');

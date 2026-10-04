@@ -1234,6 +1234,15 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
     expect(fs.existsSync(outside)).toBe(true);
   });
 
+  it('keeps long probe deadlines exclusive to explicit soak with inspector disabled', async () => {
+    for (const options of [
+      { runtimeProbeTimeoutMs: 450000 },
+      { runtimeProbeTimeoutMs: 450000, soakProbe: true, env: {} },
+      { runtimeProbeTimeoutMs: 450000, soakProbe: true, env: { NEXUS_SMOKE_SOAK: '1' }, remoteDebugging: true },
+      { runtimeProbeTimeoutMs: 450000, soakProbe: true, env: { NEXUS_SMOKE_SOAK: '1' }, timeoutMs: Infinity },
+    ]) await expect(runPackagedSmoke('/never-launched/NexusIDE.app', options)).rejects.toThrow('invalid packaged smoke runtime probe options');
+  });
+
   it.skipIf(process.platform === 'win32')('refuses a replaced profile symlink without touching its target', async () => {
     const { targetPath } = fixturePackage({ platform: 'linux', arch: 'x64' });
     const session = await packagedSmoke.createPackagedSmokeSession();
