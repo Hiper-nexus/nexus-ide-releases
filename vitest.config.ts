@@ -4,6 +4,9 @@ export default defineConfig({
   test: {
     exclude: [
       ...configDefaults.exclude,
+      // Session plans preserve incomplete review reproductions and worktree
+      // snapshots. Product suites live in src/server/scripts, not this archive.
+      '.superpowers/**',
       '.claude/**',
       // Runtime worktrees contain full project copies, including their tests.
       // Collecting them runs stale suites multiple times and may load native

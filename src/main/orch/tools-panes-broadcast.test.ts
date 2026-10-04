@@ -95,7 +95,7 @@ describe('broadcast com recibo por alvo (padrão Sidecar)', () => {
     ]);
     // Só o vivo recebeu bytes — um alvo recusado nunca para os irmãos.
     expect(h.write).toHaveBeenCalledOnce();
-    expect(h.write).toHaveBeenCalledWith('session:vivo', 'parem tudo');
+    expect(h.write).toHaveBeenCalledWith('session:vivo', 'parem tudo', { inputWriter: 'maestro' });
   });
 
   it('force passa por cima de "não pronto" e "hibernado", nunca de morto', async () => {

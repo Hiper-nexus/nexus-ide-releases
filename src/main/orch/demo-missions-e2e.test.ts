@@ -214,7 +214,7 @@ describe('Demo & Mission E2E Simulation (Simple and Complex)', () => {
       timestamp: Date.now(),
       userPrompt: 'Implementando endpoint...',
     });
-    watcher.drain();
+    await watcher.drain();
     expect(hookEvents.length).toBe(1);
     expect(hookEvents[0].status).toBe('running');
 
@@ -226,7 +226,7 @@ describe('Demo & Mission E2E Simulation (Simple and Complex)', () => {
       timestamp: Date.now(),
       nativeSessionId: 'claude-conversation-42',
     });
-    watcher.drain();
+    await watcher.drain();
     expect(hookEvents.length).toBe(2);
 
     // 7. Encerramento limpo da missão simples
@@ -234,12 +234,12 @@ describe('Demo & Mission E2E Simulation (Simple and Complex)', () => {
     mission.updatedAt = Date.now();
     expect(mission.status).toBe('done');
 
-    sentinel.markExpectedExit();
+    await sentinel.markExpectedExit();
     const marker = readSessionAliveMarker(tempDir);
     expect(marker?.expectedExit).toBe(true);
 
-    watcher.dispose();
-    sentinel.dispose();
+    await watcher.dispose();
+    await sentinel.dispose();
   });
 
   it('SIMULAÇÃO 2: Missão Complexa (Multi-Agent Swarm, Review, Scope & Graph) de início ao fim', async () => {
