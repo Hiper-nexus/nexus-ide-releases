@@ -35,6 +35,7 @@ import {
   currentDarwinPtySupervisorRuntime,
   isProvenDarwinPtySupervisorExit,
   supervisedPtyCommand,
+  supervisedJobCommand,
 } from './darwin-pty-supervisor';
 import { spawnFailureGuidance } from './spawn-failure-guidance';
 import { darwinNodePtyBootstrapLaunch } from './darwin-node-pty-bootstrap';
@@ -359,6 +360,12 @@ function handleTerminate(
 parentPort.on('message', (e) => {
   const msg = e.data;
   switch (msg.type) {
+    case 'prepare-command':
+      try {
+        const command = supervisedJobCommand(currentDarwinPtySupervisorRuntime(__dirname), msg.file, msg.args);
+        post({ type: 'prepared-command', requestId: msg.requestId, command });
+      } catch { post({ type: 'prepared-command', requestId: msg.requestId, command: null }); }
+      return;
     case 'spawn':
       handleSpawn(msg);
       return;

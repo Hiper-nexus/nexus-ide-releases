@@ -11,6 +11,7 @@ import type { PtyProcessTreeTerminationProof } from './pty-descendant-terminatio
 import type { SessionFootprint } from './pane-footprint';
 import type {
   DarwinPtyExecutableSeal,
+  SupervisedPtyCommand,
 } from './darwin-pty-supervisor';
 import type {
   DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE,
@@ -43,6 +44,7 @@ export type PtyKillSignal = 'SIGTERM' | 'SIGKILL';
 /** main → host (control). */
 export type HostControlMsg =
   | ({ type: 'spawn' } & PtySpawnSpec)
+  | { type: 'prepare-command'; requestId: string; file: string; args: string[] }
   | { type: 'write'; sessionId: string; data: string }
   | { type: 'resize'; sessionId: string; cols: number; rows: number }
   | { type: 'kill'; sessionId: string; signal?: PtyKillSignal }
@@ -64,6 +66,7 @@ export type HostControlMsg =
 
 /** host → main (events). */
 export type HostEventMsg =
+  | { type: 'prepared-command'; requestId: string; command: SupervisedPtyCommand | null }
   | { type: 'command-process-result'; requestId: string; sessionId: string; claimId: string | null; state: CommandProcessState | null; borrowed?: boolean }
   | { type: 'data'; sessionId: string; data: string }
   | { type: 'exit'; sessionId: string; exitCode: number; signal?: number }
@@ -103,6 +106,7 @@ export interface PtyProcHandle {
 }
 
 export interface PtyHost {
+  prepareCommandSupervisor?(file: string, args: readonly string[]): Promise<SupervisedPtyCommand | null>;
   borrowCommandProcess?(sessionId: string, claimId: string, pid: number): Promise<boolean>;
   claimCommandProcess?(sessionId: string, pid: number): Promise<string | null>;
   probeCommandProcess?(sessionId: string, claimId: string): Promise<CommandProcessState>;
@@ -451,6 +455,7 @@ export function createPtyHostBridge(
   let livenessProbeCounter = 0;
 
   let commandCounter = 0;
+  const pendingPreparations = new Map<string, { resolve: (value: SupervisedPtyCommand | null) => void; timer: ReturnType<typeof setTimeout> }>();
   const pendingCommands = new Map<string, { sessionId: string; resolve: (result: Extract<HostEventMsg, { type: 'command-process-result' }> | null) => void; timer: ReturnType<typeof setTimeout> }>();
   function commandRequest(body: { op: 'claim'; pid: number } | { op: 'probe'; claimId: string } | { op: 'borrow'; claimId: string; pid: number }, sessionId: string) {
     if (pendingCommands.size >= 128) return Promise.resolve(null);
@@ -463,6 +468,18 @@ export function createPtyHostBridge(
     });
   }
   const host: PtyHost = {
+    prepareCommandSupervisor: (file, args) => {
+      if (pendingPreparations.size >= 32 || !file || file.length > 4096 || file.includes('\0') ||
+          args.length > 1024 || args.some(arg => arg.length > 65536 || arg.includes('\0')) ||
+          args.reduce((bytes, arg) => bytes + Buffer.byteLength(arg), 0) > 1024 * 1024) return Promise.resolve(null);
+      const requestId = `pty-prepare-${++commandCounter}`;
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => { if (pendingPreparations.delete(requestId)) resolve(null); }, 8_000); timer.unref?.();
+        pendingPreparations.set(requestId, { resolve, timer });
+        try { transport.ensure(); transport.post({ type: 'prepare-command', requestId, file, args: [...args] }); }
+        catch { pendingPreparations.delete(requestId); clearTimeout(timer); resolve(null); }
+      });
+    },
     borrowCommandProcess: async (sessionId, claimId, pid) => (await commandRequest({ op: 'borrow', claimId, pid }, sessionId))?.borrowed === true,
     claimCommandProcess: async (sessionId, pid) => (await commandRequest({ op: 'claim', pid }, sessionId))?.claimId ?? null,
     probeCommandProcess: async (sessionId, claimId) => (await commandRequest({ op: 'probe', claimId }, sessionId))?.state ?? 'unknown',
@@ -587,6 +604,10 @@ export function createPtyHostBridge(
   };
 
   function dispatchEvent(msg: HostEventMsg): void {
+    if (msg.type === 'prepared-command') {
+      const pending = pendingPreparations.get(msg.requestId); if (!pending) return;
+      pendingPreparations.delete(msg.requestId); clearTimeout(pending.timer); pending.resolve(msg.command); return;
+    }
     if (msg.type === 'command-process-result') {
       const pending = pendingCommands.get(msg.requestId); if (!pending || pending.sessionId !== msg.sessionId) return;
       pendingCommands.delete(msg.requestId); clearTimeout(pending.timer); pending.resolve(msg); return;
@@ -627,6 +648,8 @@ export function createPtyHostBridge(
   }
 
   function handleHostDown(): void {
+    for (const pending of pendingPreparations.values()) { clearTimeout(pending.timer); pending.resolve(null); }
+    pendingPreparations.clear();
     for (const pending of pendingCommands.values()) { clearTimeout(pending.timer); pending.resolve(null); }
     pendingCommands.clear();
 

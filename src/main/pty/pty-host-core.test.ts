@@ -622,3 +622,19 @@ it('command process ownership replies are session-bound and host loss is unknown
  expect(await claim).toBe('owned');
  const proof = bridge.host.probeCommandProcess!('s1', 'owned'); bridge.handleHostDown(); expect(await proof).toBe('unknown');
 });
+
+it('prepares a signed job launcher off Main and rejects unrelated or lost host responses', async () => {
+  const t = fakeTransport(); const bridge = createPtyHostBridge(t.transport);
+  const prepared = bridge.host.prepareCommandSupervisor!('/usr/bin/sandbox-exec', ['-p', 'fixed-profile', '/bin/sh', '-c', 'make']);
+  expect(t.ensured()).toBe(1);
+  const request = t.posted.at(-1)!;
+  if (request.type !== 'prepare-command') throw new Error('missing preparation');
+  const command = { file: '/usr/bin/perl', args: ['fixed-signed-launcher'] };
+  bridge.dispatchEvent({ type: 'prepared-command', requestId: 'unrelated', command });
+  let finished = false; void prepared.then(() => { finished = true; });
+  await Promise.resolve(); expect(finished).toBe(false);
+  bridge.dispatchEvent({ type: 'prepared-command', requestId: request.requestId, command });
+  expect(await prepared).toEqual(command);
+  const lost = bridge.host.prepareCommandSupervisor!('/bin/sh', ['-c', 'make']);
+  bridge.handleHostDown(); expect(await lost).toBeNull();
+});

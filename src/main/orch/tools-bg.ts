@@ -19,10 +19,11 @@ import { assertGovernedWorkspaceControlBoundary } from './governed-workspace-con
 import { emitBgTaskEvent } from './bg-task-events';
 import { sameProjectScope } from './project-scoped-broadcast';
 import type { ProjectExecutionScope } from '../../shared/types';
-import { removeTreeSync } from '../util/remove-tree';
+import { removeTree } from '../util/remove-tree';
 import { acquireHeavyCommandPermit, type HeavyCommandPermit } from './heavy-command-permit';
 import { classifyHeavyCommand } from './heavy-command-classifier';
 import { retainHeavyCommandPermitForProcess } from './heavy-command-process';
+import { prepareOwnedCommandLaunch, type OwnedCommandLaunch } from './owned-command-launch';
 
 interface BgTask {
   id: string;
@@ -68,20 +69,6 @@ function pruneBgTasks(now = Date.now()): void {
   while (bgTasks.size > BG_TASK_MAP_MAX && exited.length > 0) {
     const [id] = exited.shift()!;
     bgTasks.delete(id);
-  }
-}
-
-function signalTree(proc: ChildProcess, signal: NodeJS.Signals): void {
-  if (proc.pid === undefined) return;
-  try {
-    if (process.platform === 'win32') proc.kill(signal);
-    else process.kill(-proc.pid, signal);
-  } catch {
-    try {
-      proc.kill(signal);
-    } catch {
-      // already gone
-    }
   }
 }
 
@@ -199,11 +186,12 @@ const bgRun: McpToolDef = {
         sandboxProfile,
       });
     } catch (error) {
-      removeTreeSync(sandbox.dir, { recursive: true, force: true });
+      await removeTree(sandbox.dir, { recursive: true, force: true });
       throw error;
     }
     let proc: ChildProcess;
     let heavyPermit: HeavyCommandPermit | undefined;
+    let ownedCommand: OwnedCommandLaunch | undefined;
     try {
       const kind = classifyHeavyCommand(command);
       if (kind) heavyPermit = await acquireHeavyCommandPermit({ scope: ctx.scope, missionId: ctx.missionId,
@@ -211,18 +199,24 @@ const bgRun: McpToolDef = {
         isCurrent: () => { assertMcpInvocationCurrent(invocation); return true; } });
       // Linearization point after all path/sandbox preparation.
       assertMcpInvocationCurrent(invocation);
+      ownedCommand = await prepareOwnedCommandLaunch(plan);
+      assertMcpInvocationCurrent(invocation);
+      plan = ownedCommand.plan;
       proc = spawn(plan.file, plan.args, {
         cwd: plan.cwd,
         env: plan.env,
         detached: plan.detached,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ownedCommand.stdio ?? ['ignore', 'pipe', 'pipe'],
       });
     } catch (error) {
+      await ownedCommand?.dispose();
       heavyPermit?.release(); // No physical process was spawned.
-      removeTreeSync(sandbox.dir, { recursive: true, force: true });
+      await removeTree(sandbox.dir, { recursive: true, force: true });
       throw error;
     }
-    if (heavyPermit) retainHeavyCommandPermitForProcess(heavyPermit, proc, { detached: plan.detached });
+    const ownedExit = ownedCommand!.waitForExit(proc);
+    void ownedExit.catch(() => {});
+    if (heavyPermit) retainHeavyCommandPermitForProcess(heavyPermit, proc, { detached: plan.detached, physicalExit: ownedExit });
     const id = `bg-${++bgCounter}`;
     let resolvePhysicalExit!: () => void;
     const physicalExit = new Promise<void>((resolve) => {
@@ -244,7 +238,7 @@ const bgRun: McpToolDef = {
       finalized: false,
       startedAt: Date.now(),
       endedAt: null,
-      killTree: (signal) => signalTree(proc, signal),
+      killTree: (signal) => ownedCommand!.stop(proc, signal),
       forceKillTimer: null,
       detachOutputListeners: () => {},
       detachAbortListener: () => {},
@@ -274,12 +268,15 @@ const bgRun: McpToolDef = {
         onAuthorityRevoked,
       );
     };
-    const finalize = (code: number | null, error = false) => {
+    let finalizing = false;
+    const finalize = async (code: number | null, error = false) => {
+      if (finalizing) return;
       if (task.finalized) return;
+      finalizing = true;
+      try { await ownedExit; await ownedCommand!.dispose(); }
+      catch { requestTaskTermination(task, false); finalizing = false; return; }
       task.finalized = true;
-      // A shell may close after daemonizing a child. Keep the detached group
-      // under Nexus ownership until every descendant receives termination.
-      task.killTree(task.terminationRequested ? 'SIGKILL' : 'SIGTERM');
+      // The complete job/namespace/container proof has already settled.
       task.state = 'exited';
       task.exitCode = error ? -1 : code;
       task.endedAt = Date.now();
@@ -299,7 +296,7 @@ const bgRun: McpToolDef = {
       });
       pruneBgTasks();
       try {
-        removeTreeSync(sandbox.dir, { recursive: true, force: true });
+        await removeTree(sandbox.dir, { recursive: true, force: true });
       } catch (cleanupError) {
         console.warn('[bg-task] sandbox cleanup failed:', cleanupError);
       }

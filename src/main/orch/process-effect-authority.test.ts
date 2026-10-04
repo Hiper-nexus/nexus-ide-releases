@@ -5,11 +5,13 @@ import type { AgentGateContext } from './gate';
 const harness = vi.hoisted(() => {
   let nextProcess: unknown;
   let onBuildPlan: (() => void) | undefined;
+  let onSpawn: (() => void) | undefined;
   return {
     spawn: vi.fn(() => {
       if (!nextProcess) throw new Error('missing fake child process');
       const process = nextProcess;
       nextProcess = undefined;
+      onSpawn?.();
       return process;
     }),
     buildScopedShellPlan: vi.fn(() => {
@@ -34,6 +36,8 @@ const harness = vi.hoisted(() => {
     setBuildHook(hook: (() => void) | undefined) {
       onBuildPlan = hook;
     },
+    setSpawnHook(hook: (() => void) | undefined) { onSpawn = hook; },
+    stopOwned: vi.fn((child: { kill(signal: NodeJS.Signals): void }, signal: NodeJS.Signals) => child.kill(signal)),
   };
 });
 
@@ -50,6 +54,9 @@ vi.mock('../runtime/process-sandbox', () => ({
 vi.mock('./workspace-path', () => ({
   resolveCwdForScope: harness.resolveCwdForScope,
 }));
+vi.mock('./owned-command-launch', async () => ({ prepareOwnedCommandLaunch: async (plan: import('../runtime/process-sandbox').ScopedShellPlan) => ({
+  ...await (await import('./__tests__/owned-command-fixture')).groupFixtureLaunch(plan), stop: harness.stopOwned,
+}) }));
 
 import { buildTerminalTools } from './tools-terminal';
 import { buildBgTools } from './tools-bg';
@@ -142,20 +149,17 @@ function tool(
 }
 
 function expectTreeSignal(
-  processKill: unknown,
+  _processKill: unknown,
   child: FakeChildProcess,
   signal: NodeJS.Signals,
 ): void {
-  if (process.platform === 'win32') {
-    expect(child.kill).toHaveBeenCalledWith(signal);
-  } else {
-    expect(processKill).toHaveBeenCalledWith(-child.pid, signal);
-  }
+  expect(harness.stopOwned).toHaveBeenCalledWith(child, signal);
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   harness.setBuildHook(undefined);
+  harness.setSpawnHook(undefined);
 });
 
 describe('effectful process invocation authority', () => {
@@ -181,6 +185,7 @@ describe('effectful process invocation authority', () => {
       const child = new FakeChildProcess(41001);
       harness.setProcess(child);
       const controller = new AbortController();
+      harness.setSpawnHook(() => controller.abort());
       const run = tool(buildTerminalTools(), 'nexus_terminal_run');
       const flight = run.handler(
         { command: 'write-after-revoke', timeoutMs: 60_000 },
@@ -188,7 +193,7 @@ describe('effectful process invocation authority', () => {
         { signal: controller.signal, assertCurrentAuthority: vi.fn() },
       );
 
-      controller.abort();
+      await vi.waitFor(() => expect(harness.stopOwned).toHaveBeenCalled());
       expectTreeSignal(processKill, child, 'SIGTERM');
       expect(child.stdout.listenerCount('data')).toBe(0);
       expect(child.stderr.listenerCount('data')).toBe(0);
@@ -211,6 +216,7 @@ describe('effectful process invocation authority', () => {
       const child = new FakeChildProcess(41004);
       harness.setProcess(child);
       const controller = new AbortController();
+      harness.setSpawnHook(() => controller.abort());
       const flight = tool(
         buildTerminalTools(),
         'nexus_terminal_run',
@@ -220,10 +226,10 @@ describe('effectful process invocation authority', () => {
         { signal: controller.signal, assertCurrentAuthority: vi.fn() },
       );
 
-      controller.abort();
       const rejected = expect(flight).rejects.toThrow(
         /session_authority_revoked.*physical process exit not proven/i,
       );
+      await vi.waitFor(() => expect(harness.stopOwned).toHaveBeenCalled());
       await vi.advanceTimersByTimeAsync(5_000);
       await rejected;
       expectTreeSignal(processKill, child, 'SIGTERM');
@@ -250,6 +256,7 @@ describe('effectful process invocation authority', () => {
       const rejected = expect(flight).rejects.toThrow(
         /terminal_timeout.*physical process exit not proven/i,
       );
+      await vi.waitFor(() => expect(harness.spawn).toHaveBeenCalledOnce());
       await vi.advanceTimersByTimeAsync(5_001);
       await rejected;
       expectTreeSignal(processKill, child, 'SIGTERM');
@@ -273,7 +280,7 @@ describe('effectful process invocation authority', () => {
         owner,
         { assertCurrentAuthority: vi.fn() },
       );
-      await Promise.resolve();
+      await vi.waitFor(() => expect(harness.spawn).toHaveBeenCalledOnce());
       const foreign = {
         ...owner,
         scope: {
@@ -321,6 +328,7 @@ describe('effectful process invocation authority', () => {
       const child = new FakeChildProcess(41002);
       harness.setProcess(child);
       const controller = new AbortController();
+      harness.setSpawnHook(() => controller.abort());
       const tools = buildBgTools();
       const flight = tool(tools, 'nexus_bg_run').handler(
         { command: 'deferred background write' },
@@ -328,7 +336,7 @@ describe('effectful process invocation authority', () => {
         { signal: controller.signal, assertCurrentAuthority: vi.fn() },
       );
 
-      controller.abort();
+      await vi.waitFor(() => expect(harness.stopOwned).toHaveBeenCalled());
       expectTreeSignal(processKill, child, 'SIGTERM');
       expect(child.stdout.listenerCount('data')).toBe(0);
       expect(child.stderr.listenerCount('data')).toBe(0);
@@ -453,7 +461,7 @@ describe('effectful process invocation authority', () => {
           assertCurrentAuthority: vi.fn(),
         },
       );
-      expect(terminalSignal.addCount).toBe(1);
+      await vi.waitFor(() => expect(terminalSignal.addCount).toBe(1));
       terminalChild.close(0);
       await expect(terminalFlight).resolves.toMatchObject({ exitCode: 0 });
       expect(terminalSignal.removeCount).toBe(1);
@@ -472,7 +480,7 @@ describe('effectful process invocation authority', () => {
       );
       expect(bgSignal.addCount).toBe(1);
       bgChild.close(0);
-      expect(bgSignal.removeCount).toBe(1);
+      await vi.waitFor(() => expect(bgSignal.removeCount).toBe(1));
       expect(bgChild.stdout.listenerCount('data')).toBe(0);
     } finally {
       processKill.mockRestore();

@@ -23,10 +23,11 @@ import {
   type SquadCliPolicyMode,
 } from '../../shared/squad-cli-policy';
 import { triageCommandFailure } from '../jev/jev-terminal-triage';
-import { removeTreeSync } from '../util/remove-tree';
+import { removeTree } from '../util/remove-tree';
 import { acquireHeavyCommandPermit, type HeavyCommandPermit } from './heavy-command-permit';
 import { classifyHeavyCommand } from './heavy-command-classifier';
 import { retainHeavyCommandPermitForProcess } from './heavy-command-process';
+import { prepareOwnedCommandLaunch, type OwnedCommandLaunch } from './owned-command-launch';
 
 /**
  * Terminal execution MCP tools for Jarvis agent.
@@ -146,26 +147,6 @@ function isSameOwner(entry: ActiveProcess, ctx: {
   );
 }
 
-function signalProcessTree(
-  proc: ChildProcess,
-  signal: NodeJS.Signals,
-): void {
-  if (proc.pid === undefined) return;
-  try {
-    if (process.platform === 'win32') {
-      proc.kill(signal);
-    } else {
-      process.kill(-proc.pid, signal);
-    }
-  } catch {
-    try {
-      proc.kill(signal);
-    } catch {
-      // The process tree already exited.
-    }
-  }
-}
-
 function revokedError(): Error {
   return new Error('session_authority_revoked');
 }
@@ -255,12 +236,13 @@ const terminalRun: McpToolDef = {
         sandboxProfile,
       });
     } catch (error) {
-      removeTreeSync(sandbox.dir, { recursive: true, force: true });
+      await removeTree(sandbox.dir, { recursive: true, force: true });
       throw error;
     }
 
     let proc: ChildProcess;
     let heavyPermit: HeavyCommandPermit | undefined;
+    let ownedCommand: OwnedCommandLaunch | undefined;
     try {
       const kind = classifyHeavyCommand(command);
       if (kind) heavyPermit = await acquireHeavyCommandPermit({ scope: ctx.scope, missionId: ctx.missionId,
@@ -269,18 +251,24 @@ const terminalRun: McpToolDef = {
       // Linearization point: no process may exist unless the exact MCP
       // session/intent is still current after all preparation.
       assertMcpInvocationCurrent(invocation);
+      ownedCommand = await prepareOwnedCommandLaunch(plan);
+      assertMcpInvocationCurrent(invocation);
+      plan = ownedCommand.plan;
       proc = spawn(plan.file, plan.args, {
         cwd: plan.cwd,
         env: plan.env,
         detached: plan.detached,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ownedCommand.stdio ?? ['ignore', 'pipe', 'pipe'],
       });
     } catch (error) {
+      await ownedCommand?.dispose();
       heavyPermit?.release(); // No physical process was spawned.
-      removeTreeSync(sandbox.dir, { recursive: true, force: true });
+      await removeTree(sandbox.dir, { recursive: true, force: true });
       throw error;
     }
-    if (heavyPermit) retainHeavyCommandPermitForProcess(heavyPermit, proc, { detached: plan.detached });
+    const physicalExit = ownedCommand!.waitForExit(proc);
+    void physicalExit.catch(() => {});
+    if (heavyPermit) retainHeavyCommandPermitForProcess(heavyPermit, proc, { detached: plan.detached, physicalExit });
 
     const result = await new Promise<{
       exitCode: number | null;
@@ -289,7 +277,7 @@ const terminalRun: McpToolDef = {
       killed: boolean;
     }>((resolve, reject) => {
       const killTree = (signal: NodeJS.Signals) =>
-        signalProcessTree(proc, signal);
+        ownedCommand!.stop(proc, signal);
 
       const id = String(++processCounter);
       activeProcesses.set(id, {
@@ -358,21 +346,28 @@ const terminalRun: McpToolDef = {
         if (authorityRevoked) return;
         requestTermination(true);
       };
-      const finalize = (code: number | null, error?: Error) => {
+      let finalizing = false;
+      const finalize = async (code: number | null, error?: Error) => {
+        if (finalizing) return;
         if (finalized) return;
+        finalizing = true;
+        try { await physicalExit; await ownedCommand!.dispose(); }
+        catch {
+          requestTermination(false);
+          if (!settled) { settled = true; reject(new Error('command_descendant_exit_unproven')); }
+          finalizing = false; return;
+        }
         finalized = true;
         if (timeoutTimer) clearTimeout(timeoutTimer);
         if (forceKillTimer) clearTimeout(forceKillTimer);
         if (teardownProofTimer) clearTimeout(teardownProofTimer);
         removeInvocationAbortListener(invocation, onAuthorityRevoked);
         removeOutputListeners();
-        // A shell can exit after daemonizing a child. End the entire detached
-        // process group before releasing its private runtime directory.
-        killTree(killed ? 'SIGKILL' : 'SIGTERM');
+        // The platform's complete lifetime proof has already settled.
         activeProcesses.delete(id);
         let cleanupError: Error | undefined;
         try {
-          removeTreeSync(sandbox.dir, { recursive: true, force: true });
+          await removeTree(sandbox.dir, { recursive: true, force: true });
         } catch (cause) {
           cleanupError =
             cause instanceof Error ? cause : new Error(String(cause));

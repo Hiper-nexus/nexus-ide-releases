@@ -12,6 +12,7 @@ export function retainHeavyCommandPermitForProcess(permit: HeavyCommandPermit, p
   readonly platform?: NodeJS.Platform;
   readonly groupExists?: (pid: number) => boolean | null;
   readonly pollMs?: number;
+  readonly physicalExit?: Promise<void>;
 }): void {
   if (!permit.id) return;
   const platform = options.platform ?? process.platform;
@@ -43,6 +44,12 @@ export function retainHeavyCommandPermitForProcess(permit: HeavyCommandPermit, p
     // successful fork does not prove that the process or its children exited.
     if (proc.pid === undefined) release();
   };
+  if (options.physicalExit) {
+    void options.physicalExit.then(release, () => {
+      // The caller retains the command and its permit for physical retry.
+    });
+    return;
+  }
   proc.once('close', closed);
   proc.on('error', failed);
 }

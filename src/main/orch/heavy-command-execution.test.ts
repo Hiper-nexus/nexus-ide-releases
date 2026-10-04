@@ -16,6 +16,7 @@ vi.mock('../runtime/process-sandbox', () => ({
 }));
 vi.mock('../jev/jev-terminal-triage', () => ({ triageCommandFailure: async () => null }));
 vi.mock('./bg-task-events', () => ({ emitBgTaskEvent: () => {} }));
+vi.mock('./owned-command-launch', async () => ({ prepareOwnedCommandLaunch: (await import('./__tests__/owned-command-fixture')).groupFixtureLaunch }));
 import { buildTerminalTools } from './tools-terminal';
 import { buildBgTools } from './tools-bg';
 import { heavyCommandPermitSnapshot } from './heavy-command-permit';
@@ -77,12 +78,13 @@ it.runIf(process.platform !== 'win32')('holds the slot after shell close while a
   const first = script('parent', `(trap '' TERM; printf ready > ${quote(ready)}; sleep .7) >/dev/null 2>&1 &\nwhile ! test -e ${quote(ready)}; do sleep .01; done\nprintf 'root-end\\n' >> ${quote(log)}`);
   const second = script('next', `printf 'next-start\\n' >> ${quote(log)}`);
   const run = buildTerminalTools().find(t => t.name === 'nexus_terminal_run')!;
-  await run.handler({ command: first, timeoutMs: 3000 }, ctx);
+  const firstFlight = run.handler({ command: first, timeoutMs: 3000 }, ctx);
+  await until(() => fs.existsSync(log));
   const next = run.handler({ command: second, timeoutMs: 3000 }, { ...ctx, token: 'next', sessionId: 'next' });
   try {
     await new Promise(resolve => setTimeout(resolve, 100));
     expect(fs.readFileSync(log, 'utf8')).toBe('root-end\n');
     expect(heavyCommandPermitSnapshot().active).toBe(1);
-  } finally { await next; }
+  } finally { await Promise.all([firstFlight, next]); }
   expect(fs.readFileSync(log, 'utf8')).toBe('root-end\nnext-start\n');
 });

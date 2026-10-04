@@ -18,6 +18,7 @@ vi.mock('../jev/jev-terminal-triage', () => ({
 vi.mock('../persistence/settings-store', () => ({
   getOrchSettings: vi.fn(() => ({})),
 }));
+vi.mock('./owned-command-launch', async () => ({ prepareOwnedCommandLaunch: (await import('./__tests__/owned-command-fixture')).groupFixtureLaunch }));
 // Spawn real /bin/sh sem Seatbelt — o que está em teste é o pós-processamento
 // do resultado (campo `triage`), não o plano de sandbox.
 vi.mock('../runtime/process-sandbox', () => ({

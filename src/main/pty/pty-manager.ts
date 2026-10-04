@@ -4402,3 +4402,8 @@ export async function borrowSessionCommandProcess(sessionId: string, claimId: st
   if (!sessions.get(sessionId)?.agent || physicalTerminationFlights.has(sessionId)) return false;
   return await ptyHost?.borrowCommandProcess?.(sessionId, claimId, pid) ?? false;
 }
+
+/** Main-only command preparation; cold code-sign verification runs in host. */
+export async function prepareHeavyCommandSupervisor(file: string, args: readonly string[]): Promise<import('./darwin-pty-supervisor').SupervisedPtyCommand | null> {
+  return await ptyHost?.prepareCommandSupervisor?.(file, args) ?? null;
+}
