@@ -43,6 +43,24 @@ it.runIf(process.platform === 'darwin')('a real Unix channel authenticates a Mai
   try { expect(await request(channel)).toEqual({ code: 0, output: 'finite-lease', error: '' }); expect(calls).toBe(1); }
   finally { await channel.dispose(); await fsp.rmdir(root); }
 });
+it.runIf(process.platform === 'darwin').each([false, true])('direct Node preload keeps scoped Unix borrowing and rejects tampered replies=%s', async (tamper) => {
+ const root = fs.realpathSync(await fsp.mkdtemp(path.join(os.tmpdir(), 'nexus-heavy-node-unix-')));
+ const entry = path.join(root, 'node_modules/typescript/bin/finite.cjs'), marker = path.join(root, 'loaded');
+ fs.mkdirSync(path.dirname(entry), { recursive: true }); fs.writeFileSync(entry, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'loaded')`);
+ let calls = 0, nodePid = 0;
+ const channel = await createNativeHeavyLocalChannel(ctx, root, { spawn: nodeTestPort(tamper), current: value => value === ctx, admit: async (value, body) => {
+  expect(value).toBe(ctx); expect(body).toMatchObject({ pid: nodePid, kind: 'typescript', leaseId: 'finite-parent-lease' }); calls++;
+  return tamper ? { allow: false } : { allow: true, leaseId: 'finite-parent-lease' };
+ } });
+ const profile = `(version 1)(allow default)(deny network*)(allow network-outbound (remote unix (subpath ${JSON.stringify(root)})))`;
+ const child = spawn('/usr/bin/sandbox-exec', ['-p', profile, process.execPath, entry], { cwd: root,
+  env: { NODE_OPTIONS: `--require ${JSON.stringify(path.join(process.cwd(), 'resources/heavy-command/preload.cjs'))}`, ...channel.env,
+   NEXUS_HEAVY_COMMAND_URL: 'http://127.0.0.1:1234/hook/heavy-command', NEXUS_GATE_TOKEN: 'finite-scoped', NEXUS_HEAVY_CURL: '/usr/bin/curl', NEXUS_HEAVY_LEASE: 'finite-parent-lease' }, stdio: ['ignore', 'pipe', 'pipe'] });
+ nodePid = child.pid!; let error = ''; child.stderr.on('data', part => error += part);
+ const exit = new Promise<number | null>(resolve => child.once('close', resolve));
+ try { expect(await exit, error).toBe(tamper ? 78 : 0); expect(calls).toBe(1); expect(fs.existsSync(marker)).toBe(!tamper); }
+ finally { child.kill('SIGTERM'); await exit; await channel.dispose(); fs.rmSync(root, { recursive: true, force: true }); }
+}, 10000);
 it.runIf(process.platform === 'darwin')('a tampered allow/lease reply never starts work', async () => {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexus-heavy-local-'));
   const channel = await createNativeHeavyLocalChannel(ctx, root, { spawn: nodeTestPort(true), current: () => true, admit: async () => ({ allow: false }) });

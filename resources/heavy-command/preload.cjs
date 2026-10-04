@@ -19,9 +19,13 @@ if (isMainThread && process.env.NEXUS_HEAVY_COMMAND_URL && process.env.NEXUS_GAT
         try { execFileSync(base.file, [...base.args, kind, '--', process.execPath, ...process.execArgv, ...process.argv.slice(1)], { env: process.env, stdio: 'inherit' }); process.exit(0); }
         catch (error) { if (typeof error.status === 'number') process.exit(error.status); throw error; }
       }
+      const requestEnv = { NEXUS_HEAVY_COMMAND_URL: process.env.NEXUS_HEAVY_COMMAND_URL, NEXUS_GATE_TOKEN: process.env.NEXUS_GATE_TOKEN, NEXUS_HEAVY_CURL: process.env.NEXUS_HEAVY_CURL,
+        ...(process.env.NEXUS_HEAVY_LEASE ? { NEXUS_HEAVY_LEASE: process.env.NEXUS_HEAVY_LEASE } : {}) };
+      for (const key of ['NEXUS_HEAVY_CHANNEL_DIR', 'NEXUS_HEAVY_CHANNEL_KEY', 'NEXUS_HEAVY_CHANNEL_EPOCH', 'NEXUS_HEAVY_CHANNEL_PUBLIC_KEY']) {
+        if (process.env[key]) requestEnv[key] = process.env[key];
+      }
       const lease = execFileSync(process.execPath, [path.join(__dirname, 'request.cjs'), String(process.pid), kind], {
-        env: { NEXUS_HEAVY_COMMAND_URL: process.env.NEXUS_HEAVY_COMMAND_URL, NEXUS_GATE_TOKEN: process.env.NEXUS_GATE_TOKEN, NEXUS_HEAVY_CURL: process.env.NEXUS_HEAVY_CURL,
-          ...(process.env.NEXUS_HEAVY_LEASE ? { NEXUS_HEAVY_LEASE: process.env.NEXUS_HEAVY_LEASE } : {}) },
+        env: requestEnv,
         encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 370_000,
       }).trim();
       if (!lease || lease.length > 128) throw new Error('missing physical lease');
