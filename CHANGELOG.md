@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.76.192 — Terminais e missões em dia
+
+Build do Mac. Integra as entregas pendentes da Missão Terminais e amplia as correções de travamento da 0.76.191. A tag histórica 0.76.191 é preservada.
+
+- **Saída de terminais em lotes, analisada fora do Main (F-764).** Backpressure por sessão, janelas de busca limitadas e prazos de tarefas periódicas impedem que uma torrente de texto ocupe a janela principal indefinidamente. O watchdog captura funções JavaScript e histórico de atividade; a interface mostra “Nexus ocupado”.
+- **Missões, rota e retomada.** Integra as correções de intenção, roteamento, recuperação e entrega. Retomar conserva a conta, o modelo e a worktree da sessão; comandos de recuperação de merge não ficam presos no portão de integração.
+- **Memória e contexto entre CLIs.** Contexto pelo canal suportado por cada CLI, memória ligada ao impacto nos arquivos, projeção/importação com limites e origem verificada. Conteúdo não verificado continua sem autoridade para alterar instruções.
+- **O relatório do helper é preservado (F-833).** `fullText` repetindo o resumo recebe uma cauda sanitizada do próprio terminal no ledger e um aviso explícito de que pode estar incompleta. Sem saída útil, o pane fica aberto. Um relatório completo distinto não recebe cauda extra.
+- **Worktrees e inventário.** Git assíncrono na criação e no portão de integração; novas pastas gerenciadas no Mac usam `.noindex`, preservando as existentes. Credencial Qwen inválida não é anunciada como pronta. O sensor de versões de dependências é consultivo e não atualiza pacotes sozinho.
+
+Os recibos de carga, assinatura, notarização e smoke desta versão serão vinculados ao SHA final no gate da candidata antes da publicação.
+
 ## 0.76.191 — Sem travar com muitos agentes
 
 Build do Mac. Inclui a 0.76.190 (arquivos do operador que o app não consegue ler, F-755).

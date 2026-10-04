@@ -9881,7 +9881,7 @@ export const RELEASE_076190: AppRelease = {
   ],
   fixes: [],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076191: AppRelease = {
   version: '0.76.191',
   date: '2026-10-03',
   codename: 'Sem travar com muitos agentes',
@@ -9912,6 +9912,53 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'O watchdog da janela principal guarda todos os travamentos em ' +
         'logs/main-hang.ndjson, não só o último.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.192',
+  date: '2026-10-04',
+  codename: 'Terminais e missões em dia',
+  summary:
+    'Integra as correções de terminais, recuperação de missões e memória ' +
+    'compartilhada, com proteções para manter a janela respondendo durante a saída dos agentes.',
+  highlights: [
+    {
+      title: 'Mais fôlego com vários terminais',
+      detail:
+        'A análise da saída roda fora da janela principal e recebe texto em lotes. ' +
+        'Um agente que produz texto demais tem sua velocidade limitada; ' +
+        'a janela avisa quando o Nexus está ocupado.',
+    },
+    {
+      title: 'Memória compartilhada com origem conferida',
+      detail:
+        'As CLIs recebem o contexto pelo canal que cada uma suporta. ' +
+        'A memória relaciona decisões e arquivos afetados, sem promover ' +
+        'texto não verificado a instrução confiável.',
+    },
+    {
+      title: 'Entregas e retomadas mais seguras',
+      detail:
+        'A retomada mantém a conta, o modelo e a pasta da sessão. ' +
+        'Se o helper enviar apenas um resumo, o Nexus preserva uma cauda ' +
+        'sanitizada do terminal antes de fechar e avisa que pode estar incompleta.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Diagnóstico de travamentos',
+      detail:
+        'O registro de travamentos inclui amostras das funções em execução ' +
+        'e contexto de atividade, para que a próxima investigação tenha provas.',
+    },
+    {
+      title: 'Worktrees e credenciais',
+      detail:
+        'Criar uma worktree usa Git assíncrono. Novas pastas gerenciadas no Mac ' +
+        'ficam fora da indexação do Spotlight; as existentes são preservadas. ' +
+        'Chave Qwen inválida deixa de aparecer como pronta para uso.',
     },
   ],
 };

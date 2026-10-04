@@ -1,4 +1,9 @@
-# Release 0.76.191 — integração completa e F-764
+# Release 0.76.192 — integração completa e F-764
+
+O diretório e a branch mantêm o nome inicial para preservar os registros. A
+tag local 0.76.191 aponta para a base histórica e não será reescrita. Em 04/10,
+os dois repositórios publicam até 0.76.190, sem refs/releases 191 ou 192 remotas;
+a integração usa a próxima versão livre 0.76.192, ainda sem tag/publicação.
 
 Autoridade: pedido do operador de 03/10: seguir até a nova release, tudo
 resolvido; confirmação explícita de incluir TODA a integração pendente da
