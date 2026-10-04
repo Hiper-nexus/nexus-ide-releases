@@ -5,6 +5,11 @@ import { fork, spawn, execFileSync } from 'node:child_process';
 import { expect, it, vi } from 'vitest';
 vi.mock('electron', () => ({ app: { isPackaged: false, getAppPath: () => process.cwd() }, utilityProcess: { fork: () => { throw new Error('explicit Node test port required'); } } }));
 import { createNativeHeavyLocalChannel } from './native-heavy-local-channel';
+import { reserveMuseNativeHeavyProfile } from './native-heavy-muse-profile';
+import { cleanupCliMcpSession } from './cli-mcp-session-artifacts';
+import { buildControlArgs } from '../adapters/control-args';
+import { cliPtyAdapterSchema } from '../../shared/adapter-types';
+import museAdapter from '../../adapters/builtin/muse.json';
 import { NativeHeavyCommands } from './native-heavy-command';
 import { nestedHeavyJobBaseCommand, supervisedPtyCommand } from '../pty/darwin-pty-supervisor';
 import { watchDarwinHeavyCommand } from '../pty/darwin-heavy-command';
@@ -25,7 +30,10 @@ function response(res: http.ServerResponse, item: Record<string, unknown>) {
  res.end();
 }
 
-it.runIf(process.platform === 'darwin' && Boolean(muse)).each([false, true])('real Muse inner Managed shell preserves outside deny with scheduling=%s', async (scheduled) => {
+it.runIf(process.platform === 'darwin' && Boolean(muse)).each([
+ { scheduled: false, fullAuto: false }, { scheduled: true, fullAuto: false },
+ { scheduled: false, fullAuto: true }, { scheduled: true, fullAuto: true },
+])('real Muse private selected profile and scheduling=$scheduled fullAuto=$fullAuto', async ({ scheduled, fullAuto }) => {
  const root = fs.realpathSync(fs.mkdtempSync(path.join(path.dirname(process.cwd()), 'native-muse-control-')));
  const workspace = path.join(root, 'workspace'), privateTmp = path.join(root, 'tmp'), home = path.join(root, 'home');
  for (const directory of [workspace, privateTmp, home]) fs.mkdirSync(directory);
@@ -70,6 +78,9 @@ it.runIf(process.platform === 'darwin' && Boolean(muse)).each([false, true])('re
    res.writeHead(404); res.end('{}');
   });
  });
+ server.maxConnections = 16; server.headersTimeout = 5000; server.requestTimeout = 5000;
+ const sockets = new Set<import('node:net').Socket>();
+ server.on('connection', socket => { sockets.add(socket); socket.setTimeout(5000, () => socket.destroy()); socket.once('close', () => sockets.delete(socket)); });
  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve)); const { port } = server.address() as { port: number };
  fs.cpSync(path.join(process.cwd(), 'resources/heavy-command'), path.join(root, 'heavy-command'), { recursive: true });
  const resources = fs.realpathSync(path.join(root, 'heavy-command'));
@@ -77,17 +88,22 @@ it.runIf(process.platform === 'darwin' && Boolean(muse)).each([false, true])('re
   const child = fork(entry, transport === 'file' ? ['--file'] : [], { cwd, execPath: process.execPath, execArgv: [], env: { PATH: '/usr/bin:/bin', LANG: 'C' }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
   return { on: (event, callback) => child.on(event, callback), postMessage: message => { child.send(message as Parameters<typeof child.send>[0]); }, kill: () => child.kill() };
  } }, { transport: 'file' }) : null;
- if (scheduled) {
-  const config = path.join(home, 'config/muse'); fs.mkdirSync(config, { recursive: true });
-  fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ schema_version: 1, hooks: { PreToolUse: [{ matcher: 'bash', hooks: [{ type: 'command', command: `NODE_OPTIONS= NEXUS_HOOK_STATUS=1 NEXUS_HEAVY_TOOL_PREEXEC=1 ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(resources, 'muse-tool-hook.cjs'))}` }] }] } }));
- }
+ const selectedConfig = path.join(home, 'config/muse'); fs.mkdirSync(selectedConfig, { recursive: true });
+ const originalSettings = JSON.stringify({ schema_version: 1, hooks: { Stop: [] } });
+ fs.writeFileSync(path.join(selectedConfig, 'settings.json'), originalSettings);
  const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, SHELL: '/bin/zsh', LANG: 'en_US.UTF-8', TERM: 'xterm-256color', TMPDIR: privateTmp, HOME: home, XDG_CONFIG_HOME: path.join(home, 'config'), XDG_CACHE_HOME: path.join(home, 'cache'), XDG_DATA_HOME: path.join(home, 'data'), XDG_STATE_HOME: path.join(home, 'state'), CLAUDE_CONFIG_DIR: path.join(home, 'claude'), CLAUDE_SECURESTORAGE_CONFIG_DIR: path.join(home, 'securestorage'),
   ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`, ANTHROPIC_AUTH_TOKEN: 'finite-test-credential', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
   NEXUS_HEAVY_JOB_BASE: JSON.stringify(nestedHeavyJobBaseCommand(runtime)), NEXUS_HEAVY_COMMAND_URL: `http://127.0.0.1:${port}/hook/heavy-command`, NEXUS_GATE_TOKEN: ctx.token, NEXUS_HEAVY_NODE: process.execPath, NEXUS_HEAVY_DIR: resources, NEXUS_HEAVY_CURL: '/usr/bin/curl' };
  delete env.ANTHROPIC_API_KEY; delete env.CLAUDECODE; delete env.NODE_OPTIONS;
  Object.assign(env, { ...channel?.env, META_API_KEY: 'finite-test-credential', NEXUS_FAKE_PROVIDER_KEY: 'finite-test-credential', NEXUS_HEAVY_BASH_ENV: path.join(resources, 'shell.bash'), BASH_ENV: path.join(resources, 'shell.bash'), ZDOTDIR: resources });
  if (!scheduled) for (const name of Object.keys(env)) if (name.startsWith('NEXUS_HEAVY_') || name === 'NEXUS_GATE_TOKEN' || name === 'BASH_ENV' || name === 'ZDOTDIR') delete env[name];
- const command = supervisedPtyCommand(runtime, muse!, ['exec', '--base-url', `http://127.0.0.1:${port}`, '--model', 'muse-spark-1.3', '--workspace', workspace, '--trust-workspace', '--approval-mode', 'never', 'finite fixture']);
+ if (scheduled) {
+  const profile = reserveMuseNativeHeavyProfile({ token: ctx.token, home, xdgConfigHome: env.XDG_CONFIG_HOME,
+   artifactRoot: path.join(privateTmp, 'nexus-muse-profiles'), node: process.execPath, resourceDirectory: resources });
+  Object.assign(env, profile.env); await profile.initialize(() => { if (!cliAlive) throw new Error('fixture_context_changed'); });
+ }
+ const command = supervisedPtyCommand(runtime, muse!, ['exec', '--base-url', `http://127.0.0.1:${port}`, '--model', 'muse-spark-1.3', '--workspace', workspace, '--trust-workspace',
+  ...(fullAuto ? buildControlArgs(cliPtyAdapterSchema.parse(museAdapter), {}) : ['--approval-mode', 'never']), 'finite fixture']);
  const child = spawn(command.file, command.args, { cwd: workspace, env, stdio: ['ignore', 'pipe', 'pipe'] });
  cliPid = child.pid!; let stderr = '', stdout = ''; child.stderr.on('data', (part) => stderr += part); child.stdout.on('data', (part) => stdout += part);
  const exit = new Promise<number | null>((resolve) => child.once('close', (code) => { cliAlive = false; resolve(code); }));
@@ -113,13 +129,16 @@ it.runIf(process.platform === 'darwin' && Boolean(muse)).each([false, true])('re
   expect(code, (stderr || stdout).slice(0, 2048)).toBe(0); expect(modelCalls).toBeGreaterThanOrEqual(2);
  expect(fs.existsSync(marker), JSON.stringify({ shapes, channelCalls: admissions.length, transitions }).slice(-7000) + (stderr + stdout).slice(-2000)).toBe(true);
   expect(fs.readFileSync(marker, 'utf8')).toBe('done');
-  expect(fs.existsSync(outside)).toBe(false); expect(JSON.stringify(shapes)).toContain('outside-denied');
+  expect(fs.existsSync(outside)).toBe(fullAuto); expect(JSON.stringify(shapes)).toContain(fullAuto ? 'outside-allowed' : 'outside-denied');
+  expect(fs.readFileSync(path.join(selectedConfig, 'settings.json'), 'utf8')).toBe(originalSettings);
   if (scheduled) expect((admissions[0] as { proof?: string } | undefined)?.proof, JSON.stringify(shapes).slice(-5000) + stderr.slice(-4000)).toBe('darwin-job'); else expect(admissions).toEqual([]);
   await native.drain(); expect(transitions).toEqual(scheduled ? ['grant', 'release'] : []); expect(stdout).toContain('finite fixture done');
  } finally {
   clearTimeout(timer); child.kill('SIGTERM'); await exit; pool.close();
   if (fsPreflight && channel && fs.existsSync(path.join(channel.env.NEXUS_HEAVY_CHANNEL_DIR, 'owned-fs-probe'))) fs.unlinkSync(path.join(channel.env.NEXUS_HEAVY_CHANNEL_DIR, 'owned-fs-probe'));
   await channel?.dispose();
+  cleanupCliMcpSession(ctx.token);
+  for (const socket of sockets) socket.destroy();
   await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true });
  }
 }, 35_000);

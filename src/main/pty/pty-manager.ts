@@ -1,5 +1,7 @@
 import { noteMimoMissionAuthority } from '../agent-hooks/mimo-mission-authority';
 import { stripInheritedHeavyCommandEnvironment, reassertHeavyCommandBashEnvironment } from '../orch/native-heavy-preload';
+import { reserveMuseNativeHeavyProfile } from '../orch/native-heavy-muse-profile';
+import { cleanupCliMcpSession } from '../orch/cli-mcp-session-artifacts';
 import { prepareOpenCodeSessionArgs, isOpenCodeOwnedServerProved } from './opencode-session-process';
 import { getContext as getNativeHeavyGateContext, isCurrentGateContext } from '../orch/gate';
 import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
@@ -1743,6 +1745,7 @@ export function spawnAgentSession(
   }
   const releaseLicenseAgent = reserveLicensedAgent();
   let licenseChildSpawned = false;
+  let museProfileToken: string | undefined;
   try {
   assertExclusiveOrchestratorProcessAvailable(adapter, authority);
   const requestedModel = (req.model ?? overrides.defaultModel)?.trim() || "";
@@ -2810,6 +2813,18 @@ export function spawnAgentSession(
   }
 
   for (const key of Object.keys(spawnEnv)) if (key.startsWith('NEXUS_HEAVY_CHANNEL_')) delete spawnEnv[key];
+  let museHeavyProfile: ReturnType<typeof reserveMuseNativeHeavyProfile> | undefined;
+  if (adapter.id === 'muse' && process.platform === 'darwin' && spawnEnv.NEXUS_GATE_TOKEN) {
+    const ctx = getNativeHeavyGateContext(spawnEnv.NEXUS_GATE_TOKEN);
+    if (!ctx || !isCurrentGateContext(ctx)) { decoration?.onSpawnFailed?.(); throw new Error('native_heavy_channel_context_invalid'); }
+    try {
+      museHeavyProfile = reserveMuseNativeHeavyProfile({ token: ctx.token, home: spawnEnv.HOME ?? os.homedir(),
+        xdgConfigHome: spawnEnv.XDG_CONFIG_HOME, artifactRoot: path.join(spawnEnv.TMPDIR ?? os.tmpdir(), 'nexus-muse-profiles'),
+        node: spawnEnv.NEXUS_HEAVY_NODE, resourceDirectory: spawnEnv.NEXUS_HEAVY_DIR });
+      museProfileToken = ctx.token;
+      Object.assign(spawnEnv, museHeavyProfile.env);
+    } catch (error) { decoration?.onSpawnFailed?.(); throw error; }
+  }
 
   // npm's Windows launcher is a .cmd batch file. cmd.exe caps the command
   // line at 8K (a Codex pane's hook config alone can pass it), CUTS an
@@ -2952,18 +2967,19 @@ export function spawnAgentSession(
     if (!ctx || !isCurrentGateContext(ctx)) throw new Error('native_deferred_spawn_context_changed');
   };
   const codexFileChannel = adapter.id === 'codex' && process.platform === 'darwin' && !codexProcessSandbox && !processSandboxActive && Boolean(spawnEnv.NEXUS_GATE_TOKEN);
-  const ready = adapter.id === 'opencode' || codexFileChannel ? (async () => {
+  const ready = adapter.id === 'opencode' || codexFileChannel || museHeavyProfile ? (async () => {
     // Preserve the synchronous logical reservation; this microtask starts only
     // after Main has recorded the new session and its owner.
     await Promise.resolve(); assertDeferredCurrent();
+    if (museHeavyProfile) { await museHeavyProfile.initialize(assertDeferredCurrent); assertDeferredCurrent(); }
     const prepared = adapter.id === 'opencode' ? await prepareOpenCodeSessionArgs(bin, args, env.PATH) : args; assertDeferredCurrent();
     const nextArgs = adapter.id === 'opencode' && prepared.includes('--standalone') && !args.includes('--standalone') ? [...spec.args, '--standalone'] : [...spec.args];
     const nextEnv: Record<string, string> = {};
-    if (process.platform === 'darwin' && (codexFileChannel || adapter.id === 'opencode' && isOpenCodeOwnedServerProved(bin))) {
+    if (process.platform === 'darwin' && (codexFileChannel || museHeavyProfile || adapter.id === 'opencode' && isOpenCodeOwnedServerProved(bin))) {
       const ctx = getNativeHeavyGateContext(spawnEnv.NEXUS_GATE_TOKEN ?? '');
       if (!ctx) throw new Error('native_heavy_channel_context_invalid');
       const { createNativeHeavyLocalChannel } = await import('../orch/native-heavy-local-channel'); assertDeferredCurrent();
-      nativeChannel = await createNativeHeavyLocalChannel(ctx, spawnEnv.TMPDIR ?? os.tmpdir(), undefined, { transport: codexFileChannel ? 'file' : 'unix' }); assertDeferredCurrent();
+      nativeChannel = await createNativeHeavyLocalChannel(ctx, spawnEnv.TMPDIR ?? os.tmpdir(), undefined, { transport: codexFileChannel || museHeavyProfile ? 'file' : 'unix' }); assertDeferredCurrent();
       Object.assign(nextEnv, nativeChannel.env);
       if (codexFileChannel) {
         const { configureCodexNativeHeavyChannel } = await import('../orch/codex-native-heavy-channel'); assertDeferredCurrent();
@@ -3147,6 +3163,7 @@ export function spawnAgentSession(
   }
   return { sessionId, startKey: lease.startKey, ...(resumeMode ? { resumeMode } : {}) };
   } catch (error) {
+    if (!licenseChildSpawned && museProfileToken) cleanupCliMcpSession(museProfileToken);
     if (!licenseChildSpawned) releaseLicenseAgent();
     throw error;
   }
