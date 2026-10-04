@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -81,6 +82,31 @@ describe('dependency freshness advice', () => {
       expect((await runDependencyFreshnessSensor(directory, { allowNetwork: () => true, metadata })).status).toBe('unavailable');
       expect(calls).toBe(0);
     } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+  });
+  it('refuses an invalid full manifest even when a short read returns a valid JSON prefix', async () => {
+    const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dependency-short-read-')));
+    const manifest = path.join(directory, 'package.json');
+    fs.writeFileSync(manifest, '{} invalid trailing content');
+    fs.writeFileSync(path.join(directory, 'package-lock.json'), '{}');
+    const open = fsp.open.bind(fsp);
+    const spy = vi.spyOn(fsp, 'open').mockImplementation(async (file, flags, mode) => {
+      const handle = await open(file, flags, mode);
+      if (file === manifest) {
+        const read = handle.read.bind(handle);
+        let first = true;
+        Object.defineProperty(handle, 'read', { value: async (buffer: Buffer, offset: number, length: number, position: number) => {
+          const count = first ? Math.min(2, length) : length;
+          first = false;
+          return read(buffer, offset, count, position);
+        } });
+      }
+      return handle;
+    });
+    const metadata = vi.fn(async () => null);
+    try {
+      expect((await runDependencyFreshnessSensor(directory, { allowNetwork: () => true, metadata })).status).toBe('unavailable');
+      expect(metadata).not.toHaveBeenCalled();
+    } finally { spy.mockRestore(); fs.rmSync(directory, { recursive: true, force: true }); }
   });
 });
 

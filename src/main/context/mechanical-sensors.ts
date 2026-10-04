@@ -438,10 +438,18 @@ async function readFreshnessJson(file: string): Promise<unknown> {
     const cap = file.endsWith('package.json') ? 256 * 1024 : 2 * 1024 * 1024;
     if (!stat.isFile() || stat.nlink !== 1 || stat.size > cap) throw new Error('invalid dependency input');
     const buffer = Buffer.alloc(stat.size + 1);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const read = await handle.read(buffer, bytesRead, Math.min(64 * 1024, buffer.length - bytesRead), bytesRead);
+      if (!read.bytesRead) break;
+      bytesRead += read.bytesRead;
+    }
     const after = await handle.stat();
     const named = await fsp.lstat(file);
-    if (named.dev !== stat.dev || named.ino !== stat.ino || bytesRead > stat.size || after.size !== stat.size || after.mtimeMs !== stat.mtimeMs) throw new Error('dependency input changed');
+    const same = (current: typeof stat) => current.isFile() && current.nlink === 1 &&
+      current.dev === stat.dev && current.ino === stat.ino && current.mode === stat.mode &&
+      current.size === stat.size && current.mtimeMs === stat.mtimeMs && current.ctimeMs === stat.ctimeMs;
+    if (bytesRead !== stat.size || !same(after) || !same(named)) throw new Error('dependency input changed');
     return JSON.parse(buffer.subarray(0, bytesRead).toString('utf8'));
   } finally { await handle.close(); }
 }
