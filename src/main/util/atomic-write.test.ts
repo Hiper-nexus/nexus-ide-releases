@@ -151,6 +151,19 @@ describe.skipIf(process.platform === 'win32')('writeFileAtomic permissions', () 
 });
 
 describe('writeFileAtomicAsync (F-764: fora do event loop do Main)', () => {
+  it('rejects a revoked deferred commit after flushing and retains the original bytes', async () => {
+    const file = path.join(temporaryDirectory(), 'tokens.json');
+    await writeFileAtomicAsync(file, 'original');
+    await expect(writeFileAtomicAsync(file, 'obsolete', 0o600, { createDirectory: false,
+      beforeCommit: () => { throw new Error('reservation revoked'); } })).rejects.toThrow('reservation revoked');
+    expect(fs.readFileSync(file, 'utf8')).toBe('original');
+    expect(fs.readdirSync(path.dirname(file))).toEqual(['tokens.json']);
+  });
+  it('does not recreate a retired private directory when creation is forbidden', async () => {
+    const parent = path.join(temporaryDirectory(), 'retired'), file = path.join(parent, 'config.toml');
+    await expect(writeFileAtomicAsync(file, 'obsolete', 0o600, { createDirectory: false })).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(fs.existsSync(parent)).toBe(false);
+  });
   it('publishes the payload in a new parent and leaves no temporary file behind', async () => {
     const file = nestedFile();
 

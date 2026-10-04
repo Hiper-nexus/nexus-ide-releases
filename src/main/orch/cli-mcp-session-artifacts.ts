@@ -315,6 +315,11 @@ export function activateArtifact(
   activeArtifactDirs.set(token, session);
 }
 
+/** Main-only identity used to fence deferred configuration before spawn. */
+export function getActiveCliMcpArtifact(token: string): Readonly<ArtifactSession> | undefined {
+  return activeArtifactDirs.get(token);
+}
+
 export function purgeStaleCliMcpSessions(
   options: CliMcpPurgeOptions = {},
 ): ArtifactPurgeResult {

@@ -112,9 +112,10 @@ export async function writeFileAtomicAsync(
   file: string,
   value: string | NodeJS.ArrayBufferView,
   mode: number = 0o600,
+  options: { beforeCommit?: () => void; createDirectory?: boolean } = {},
 ): Promise<void> {
   const dir = path.dirname(file);
-  await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+  if (options.createDirectory !== false) await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
   const tmp = `${file}.${randomBytes(8).toString('hex')}.tmp`;
   const handle = await fs.promises.open(
     tmp,
@@ -133,6 +134,7 @@ export async function writeFileAtomicAsync(
     } finally {
       await handle.close();
     }
+    options.beforeCommit?.();
     await fs.promises.rename(tmp, file);
     await fsyncDirectoryAsync(dir);
   } catch (err) {
