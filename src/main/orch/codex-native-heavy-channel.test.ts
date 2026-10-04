@@ -10,7 +10,8 @@ const roots: string[] = [], tokens: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); for (const token of tokens.splice(0)) cleanupCliMcpSession(token);
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
 const channelKeys = ['NEXUS_HEAVY_CHANNEL_DIR', 'NEXUS_HEAVY_CHANNEL_KEY', 'NEXUS_HEAVY_CHANNEL_EPOCH', 'NEXUS_HEAVY_CHANNEL_PUBLIC_KEY'];
-it.each(['invalid', { ignore_default_excludes: 'false' }, { filters: 'invalid' }, { filters: { SAFE: 'include', safe: 'exclude' } }])(
+it.each(['invalid', { ignore_default_excludes: 'false' }, { filters: 'invalid' }, { filters: { SAFE: 'include', safe: 'exclude' } },
+  { set: 'invalid' }, { set: ['invalid'] }, { set: { SAFE: 42 } }])(
   'does not make an invalid native environment policy valid while adding the channel: %j', shell_environment_policy => {
     expect(() => codexNativeHeavyChannelPolicy({ shell_environment_policy }, ['SAFE'])).toThrow('environment_policy_invalid');
   });

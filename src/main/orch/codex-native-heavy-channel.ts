@@ -57,7 +57,9 @@ export interface CodexHeavyChannelPolicy extends Table {
 /** Seal inherited names for the file channel without changing network or filesystem policy. */
 export function codexNativeHeavyChannelPolicy(input: Table, environmentNames: readonly string[]): CodexHeavyChannelPolicy {
   const config = structuredClone(input), shell = policyTable(config.shell_environment_policy);
-  const names = inheritedNames(shell, environmentNames), overrides = { ...table(shell.set) };
+  const settings = policyTable(shell.set);
+  if (Object.values(settings).some(value => typeof value !== 'string')) throw new Error('codex_heavy_environment_policy_invalid');
+  const names = inheritedNames(shell, environmentNames), overrides = { ...settings };
   for (const key of CHANNEL_KEYS) delete overrides[key];
   delete shell.filters;
   config.shell_environment_policy = { ...shell, inherit: 'all', ignore_default_excludes: true,
