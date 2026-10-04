@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { parse, stringify } from 'smol-toml';
 import { afterEach, expect, it, vi } from 'vitest';
 import { activateArtifact, cleanupCliMcpSession } from './cli-mcp-session-artifacts';
@@ -78,4 +79,13 @@ it('rejects a config symlink before touching a different file', async () => {
   fs.unlinkSync(f.file); fs.symlinkSync(outside, f.file);
   await expect(configureCodexNativeHeavyChannel(f.token, env, [], () => {})).rejects.toThrow();
   expect(fs.readFileSync(outside, 'utf8')).toBe('model="untouched"');
+});
+it.skipIf(process.platform === 'win32')('rejects a FIFO without requiring a writer to unblock the Main read', async () => {
+  const f = fixture(); fs.unlinkSync(f.file); execFileSync('/usr/bin/mkfifo', [f.file]);
+  let rescued = false;
+  const rescue = setTimeout(() => { rescued = true;
+    try { const fd = fs.openSync(f.file, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK); fs.closeSync(fd); } catch { /* No reader is waiting after the fix. */ }
+  }, 250);
+  try { await expect(configureCodexNativeHeavyChannel(f.token, env, [], () => {})).rejects.toThrow('config_invalid'); expect(rescued).toBe(false); }
+  finally { clearTimeout(rescue); }
 });

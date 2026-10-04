@@ -77,7 +77,7 @@ export async function configureCodexNativeHeavyChannel(token: string, env: Reado
   if (await fs.promises.realpath(directory) !== directory) throw new Error('codex_heavy_artifact_changed'); current();
   const parent = await fs.promises.lstat(directory); current();
   if (!parent.isDirectory() || parent.isSymbolicLink()) throw new Error('codex_heavy_artifact_changed');
-  const handle = await fs.promises.open(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  const handle = await fs.promises.open(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
   let original: fs.Stats, raw: string;
   try {
     current();
