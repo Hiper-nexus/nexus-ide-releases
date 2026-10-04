@@ -102,8 +102,10 @@ export function assertAutoCloseReportPreserved(
     report.trim().length <= summary.length);
   if (!report?.trim() || repeatedSummary) {
     const tail = sanitizePaneBootOutput(readTerminalTail?.() ?? '');
-    const useful = tail.split('\n').some(line => line.trim() &&
-      !/^\[(?:sem saída capturada|\.\.\.[^\]\r\n]*|[^\]\r\n]*redigid[oa]s?|REDACTED)\]$/iu.test(line.trim()));
+    // Redactors can emit several placeholders on one line. Only remaining
+    // contextual text counts as recovery, not their separators or brackets.
+    const useful = /[\p{L}\p{N}]/u.test(tail.replace(
+      /\[(?:sem saída capturada|\.\.\.[^\[\]\r\n]*|[^\[\]\r\n]*redigid[oa]s?|REDACTED(?:_[A-Z0-9]+)*)\]/giu, ''));
     if (useful && tail !== summary) return tail;
   }
   if (!report?.trim() || report.length > 60_000 || repeatedSummary) {

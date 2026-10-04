@@ -102,6 +102,28 @@ describe("selectScopedPaneCloseTargets", () => {
 });
 
 describe("scheduleAutoCloseAfterHandoff", () => {
+  it.each([' ', ' | ', '; '])('rejects multiple JWT redactions separated by %j without report context', (separator) => {
+    armAutoCloseOnHandoff('jwt-pair', 'pane-jwt');
+    try {
+      const summary = 'Pesquisa concluída, veja os detalhes.';
+      const jwt = 'eyJ' + 'a'.repeat(10) + '.' + 'b'.repeat(16) + '.' + 'c'.repeat(16);
+      expect(() => assertAutoCloseReportPreserved('jwt-pair', 'pane-jwt', 'success', {
+        summary, fullText: summary,
+      }, () => `${jwt}${separator}${jwt}`)).toThrow('handoff_report_required');
+      expect(armedAutoClosePaneId('jwt-pair')).toBe('pane-jwt');
+    } finally { disarmAutoCloseOnHandoff('jwt-pair', 'pane-jwt'); }
+  });
+  it('does not close on a JWT redaction marker with no report context', () => {
+    armAutoCloseOnHandoff('jwt-only', 'pane-jwt');
+    try {
+      const summary = 'Pesquisa concluída, veja os detalhes.';
+      const jwt = 'eyJ' + 'a'.repeat(10) + '.' + 'b'.repeat(16) + '.' + 'c'.repeat(16);
+      expect(() => assertAutoCloseReportPreserved('jwt-only', 'pane-jwt', 'success', {
+        summary, fullText: summary,
+      }, () => jwt)).toThrow('handoff_report_required');
+      expect(armedAutoClosePaneId('jwt-only')).toBe('pane-jwt');
+    } finally { disarmAutoCloseOnHandoff('jwt-only', 'pane-jwt'); }
+  });
   it('does not close on a redaction marker when the terminal contained only a private key', () => {
     armAutoCloseOnHandoff('private-only', 'pane-private');
     try {
