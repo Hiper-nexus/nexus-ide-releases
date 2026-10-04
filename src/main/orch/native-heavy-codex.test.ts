@@ -143,7 +143,7 @@ it.runIf(process.platform === 'darwin' && Boolean(codex)).each(['baseline', 'fil
     expect(configBytes).not.toContain(channel.env.NEXUS_HEAVY_CHANNEL_KEY);
     expect(configBytes).not.toContain(channel.env.NEXUS_HEAVY_CHANNEL_PUBLIC_KEY);
   }
-  const adapter = adapterSchema.parse(BUILTIN_ADAPTERS.find(item => item.id === 'codex')) as CliPtyAdapter;
+  const adapter = BUILTIN_ADAPTERS.map(raw => adapterSchema.parse(raw)).find(item => item.id === 'codex') as CliPtyAdapter;
   const permissionArgs = freedom ? buildControlArgs(adapter, {}) : [];
   const command = supervisedPtyCommand(runtime, codex!, ['exec', ...permissionArgs, '--skip-git-repo-check', '--json', '--cd', workspace, 'finite fixture']);
   const child = spawn(command.file, command.args, { cwd: workspace, env, stdio: ['ignore', 'pipe', 'pipe'] });
