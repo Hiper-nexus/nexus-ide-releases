@@ -62,7 +62,7 @@ vi.mock('./mission-pane-authority', () => ({ sameMissionPaneAuthoritySeal: vi.fn
 vi.mock('./acp-mission-spawn', () => ({ spawnMainOwnedAcpMissionPane: vi.fn() }));
 vi.mock('./agent-identity-spawn', () => ({ issueAgentIdentityBestEffort: vi.fn() }));
 
-import { getMainOwnedPane, spawnMainOwnedMissionPane, spawnMainOwnedMissionPaneAsync } from './main-owned-pane-runtime';
+import { deleteMainOwnedPane, getMainOwnedPane, setMainOwnedPane, spawnMainOwnedMissionPane, spawnMainOwnedMissionPaneAsync } from './main-owned-pane-runtime';
 
 const options: PaneSpawnOptions & { missionId: string; role: 'worker' } = {
   adapterId: 'codex', missionId: 'synthetic-mission', role: 'worker',
@@ -92,6 +92,73 @@ beforeEach(() => {
 });
 
 describe('exact headless mission resume', () => {
+  function deferredGuard(): () => void {
+    const call = deps.spawn.mock.calls.at(-1) as unknown as [unknown, unknown, { assertDeferredSpawnCurrent?: () => void }];
+    expect(call[2].assertDeferredSpawnCurrent).toBeTypeOf('function');
+    return call[2].assertDeferredSpawnCurrent!;
+  }
+
+  it('accepts only the exact Main reservation after a deferred spawn handle is published', async () => {
+    const result = await spawnMainOwnedMissionPaneAsync(options, hooks);
+    expect(result.ok).toBe(true);
+    const guard = deferredGuard();
+    expect(() => guard()).not.toThrow();
+    const record = getMainOwnedPane(result.paneId!)!;
+    record.entry.sessionId = 'replacement-from-another-operation';
+    expect(() => guard()).toThrow(/reservation/i);
+    deleteMainOwnedPane(result.paneId!);
+  });
+
+  it('denies deferred physical birth after the reserved pane is closed', async () => {
+    const result = await spawnMainOwnedMissionPaneAsync(options, hooks);
+    expect(result.ok).toBe(true);
+    const guard = deferredGuard();
+    deleteMainOwnedPane(result.paneId!);
+    expect(() => guard()).toThrow(/reservation/i);
+  });
+
+  it('rejects a different Main record even when the pane and session IDs were reused', async () => {
+    const result = await spawnMainOwnedMissionPaneAsync(options, hooks);
+    expect(result.ok).toBe(true);
+    const guard = deferredGuard();
+    const record = getMainOwnedPane(result.paneId!)!;
+    setMainOwnedPane(result.paneId!, { entry: { ...record.entry }, meta: { ...record.meta } });
+    expect(() => guard()).toThrow(/reservation/i);
+    deleteMainOwnedPane(result.paneId!);
+  });
+
+  it('transfers dispatch to the exact published reservation when presentation retires the ended origin', async () => {
+    let originCurrent = true;
+    const result = await spawnMainOwnedMissionPaneAsync({ ...options,
+      assertOriginCurrent: () => { if (!originCurrent) throw new Error('deferred origin closed'); },
+    }, hooks);
+    expect(result.ok).toBe(true);
+    const guard = deferredGuard();
+    expect(() => guard()).not.toThrow();
+    originCurrent = false;
+    expect(() => guard()).not.toThrow();
+    deleteMainOwnedPane(result.paneId!);
+    expect(() => guard()).toThrow(/reservation/i);
+  });
+
+  it('denies a deferred dispatch when reservation publication failed after handle allocation', async () => {
+    const result = await spawnMainOwnedMissionPaneAsync(options, {
+      ...hooks, attachSessionScope: () => { throw new Error('scope attachment failed'); },
+    });
+    expect(result).toMatchObject({ ok: false, error: 'scope attachment failed' });
+    expect(() => deferredGuard()()).toThrow(/reservation/i);
+  });
+
+  it('revalidates sealed mission authority after deferred readiness', async () => {
+    const result = await spawnMainOwnedMissionPaneAsync(options, hooks);
+    expect(result.ok).toBe(true);
+    const guard = deferredGuard();
+    expect(() => guard()).not.toThrow();
+    deps.assertCurrent.mockImplementation(() => { throw new Error('mission changed during readiness'); });
+    expect(() => guard()).toThrow('mission changed during readiness');
+    deleteMainOwnedPane(result.paneId!);
+  });
+
   it('F-886 revalidates Main origin after provider preparation before the physical spawn', async () => {
     deps.adapterId = 'claude';
     let release!: () => void;
@@ -231,7 +298,7 @@ describe('main-owned Codex auth gate', () => {
     release();
     await expect(result).resolves.toMatchObject({ ok: true, sessionId: 'synthetic-codex-session' });
     expect(deps.prepare).toHaveBeenCalledOnce();
-    expect(deps.spawn).toHaveBeenCalledWith(expect.anything(), expect.anything(), overrides, expect.anything());
+    expect(deps.spawn).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining(overrides), expect.anything());
   });
 
   it('retains the actual selected account in session metadata and credential tracking', async () => {

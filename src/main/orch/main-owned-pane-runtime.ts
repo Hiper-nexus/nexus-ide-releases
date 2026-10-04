@@ -746,6 +746,27 @@ export function spawnMainOwnedMissionPane(
     coordinationScope: options.scope,
     cwd,
   });
+  let reservation: MainOwnedPane | undefined;
+  let reservedSessionId: string | undefined;
+  let reservationFailed = false;
+  const overridesForSpawn = {
+    ...preparedOverrides,
+    // This closure remains in Main. Publication transfers dispatch authority
+    // to this exact new record; presentation may retire the ended origin.
+    assertDeferredSpawnCurrent: () => {
+      if (reservationFailed) throw new Error('main-owned spawn reservation failed');
+      if (!reservation) options.assertOriginCurrent?.();
+      else if (panes.get(paneId) !== reservation ||
+          reservation.entry.sessionId !== reservedSessionId) {
+        throw new Error('main-owned spawn reservation changed');
+      }
+      if (sealedAuthority && !operatorChoice) {
+        hooks.assertMissionAuthorityCurrent({ missionId: options.missionId,
+          scope: options.scope, contextRevision: sealedAuthority.contextRevision,
+          authoritySeal: sealedAuthority });
+      }
+    },
+  };
   try {
     options.assertOriginCurrent?.();
     // Best-effort only: vault/keyring must never block the first PTY.
@@ -770,7 +791,7 @@ export function spawnMainOwnedMissionPane(
         resumeLatestOnly: exactResumeRequired ? false : options.resumeLatestOnly,
       },
       adapter,
-      preparedOverrides,
+      overridesForSpawn,
       authority,
     );
     if (selectedAccountId && isFileAuthAdapter(adapter.id)) {
@@ -780,7 +801,7 @@ export function spawnMainOwnedMissionPane(
       recordAccountChoiceReceipt(sessionId, preparedOverrides.accountChoice);
     }
     hooks.attachSessionScope(sessionId, options.scope);
-    panes.set(paneId, {
+    reservation = {
       entry: {
         paneId,
         sessionId,
@@ -792,10 +813,13 @@ export function spawnMainOwnedMissionPane(
         state: getSessionState(sessionId) ?? "spawning",
       },
       meta: { ...context, scope: options.scope, executionScope },
-    });
+    };
+    reservedSessionId = sessionId;
+    panes.set(paneId, reservation);
     hooks.panesChanged();
     return { requestId, ok: true, paneId, sessionId };
   } catch (error) {
+    reservationFailed = true;
     return {
       requestId,
       ok: false,
