@@ -283,3 +283,16 @@ it('nested borrow refuses a flight physically released during its pending proof'
  expect(releases).toBe(1); finishBorrow(true);
  expect(await result).toMatchObject({ allow: false }); await native.drain();
 });
+
+it('final admission refuses an older live snapshot after its concurrent observer released the flight', async () => {
+ const ctx = { token: 'finite', sessionId: 'finite', role: 'user', scope: {} } as AgentGateContext;
+ let completeObserver!: (value: 'gone') => void, finishFinal!: (value: 'live') => void;
+ const observer = new Promise<'gone'>((resolve) => completeObserver = resolve), final = new Promise<'live'>((resolve) => finishFinal = resolve);
+ let probes = 0, releases = 0;
+ const native = new NativeHeavyCommands({ current: () => true, claim: async () => 'finite', acquire: async () => ({ id: 'finite', release() { releases++; } }), probe: () => ++probes === 1 ? observer : final });
+ const result = native.admit(ctx, { pid: 20, kind: 'build' });
+ while (probes < 2) await new Promise((resolve) => setImmediate(resolve));
+ completeObserver('gone'); await new Promise((resolve) => setImmediate(resolve));
+ expect(releases).toBe(1); finishFinal('live');
+ expect(await result).toMatchObject({ allow: false }); await native.drain();
+});

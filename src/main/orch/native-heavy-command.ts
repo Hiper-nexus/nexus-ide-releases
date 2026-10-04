@@ -48,7 +48,7 @@ export class NativeHeavyCommands {
     flight.done = this.#observe(flight); void flight.done.catch(() => {});
     let state: CommandProcessState = 'unknown';
     try { state = await this.ports.probe(ctx.sessionId, claim); } catch { /* unknown is not permission */ }
-    if (state !== 'live' || !this.#accepting || !this.ports.current(ctx) || signal?.aborted) return { allow: false, reason: 'heavy_command_process_ownership_changed' };
+    if (state !== 'live' || !this.#flights.has(flight) || !this.#accepting || !this.ports.current(ctx) || signal?.aborted) return { allow: false, reason: 'heavy_command_process_ownership_changed' };
     return { allow: true, leaseId: permit.id };
   }
   #reap(ctx: AgentGateContext, claim: string) {
