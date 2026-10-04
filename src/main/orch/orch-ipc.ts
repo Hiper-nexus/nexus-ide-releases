@@ -1,5 +1,6 @@
 import { assertLicenseAccess } from '../license-enforcement';
 import { licenseFailure } from '../../shared/license-errors';
+import { observePrivateMissionCommand } from '../private-mission-command-probe';
 import { BrowserWindow, dialog, ipcMain } from "electron";
 import { showOwnedOpenDialog } from "../dialog/owned-open-dialog";
 import type { WebContents } from "electron";
@@ -2003,6 +2004,7 @@ export function registerOrchIpc(): void {
     }
     const command = missionEngineCommandSchema.parse(raw);
     const scope = requireLiveRendererWorkspaceScope(event.sender);
+    return observePrivateMissionCommand(event, scope, command, async () => {
     if (command.kind === "answer-question") {
       const stores = requireProjectStores(event.sender);
       await runOperatorClarifyAnswer(
@@ -2042,6 +2044,7 @@ export function registerOrchIpc(): void {
     }
     const snapshot = await missionEngineForScope(scope).command(scope, command);
     return missionSnapshotSchema.parse(snapshot);
+    });
   });
   ipcMain.handle(ORCH_CHANNELS.missionSnapshot, async (event, raw) => {
     const missionId = canonicalMissionIdSchema.parse(raw);
