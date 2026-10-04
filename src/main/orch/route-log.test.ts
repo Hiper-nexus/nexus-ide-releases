@@ -26,6 +26,10 @@ describe('route log', () => {
     expect(recentRouteLog()).toEqual([]);
   });
 
+  it.each(['http://localhost:3000', 'http://localhost:5173'])('preserves the benign short host:port preview %s', (task) => {
+    expect(recordRouteLog(input({ task })).taskPreview).toBe(task);
+  });
+
   it('records a decision with its reason and a monotonic seq', () => {
     const e1 = recordRouteLog(input());
     const e2 = recordRouteLog(input({ adapterId: 'agy' }));
