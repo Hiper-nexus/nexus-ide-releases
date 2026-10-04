@@ -3,6 +3,7 @@ import { missionExecutionScope, missionExecutionBaseSha } from './mission-execut
 import { createHash } from 'node:crypto';
 import type { Mission } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
+import type { PeriodicTaskContext } from '../observability/periodic-task';
 import {
   AsyncProcessGitRunner,
   type AsyncGitRunner,
@@ -74,6 +75,8 @@ export interface CivilianAutoReviewInput {
   readonly productFiles: readonly string[];
   /** Sessão do Maestro vivo da missão, se existir. */
   readonly liveOrchestratorSessionId?: string | null;
+  /** Main-owned lifetime only; not a provider/renderer argument. */
+  readonly lifetime?: PeriodicTaskContext;
 }
 
 export interface CivilianAutoReviewDependencies {
@@ -95,6 +98,7 @@ export interface CivilianAutoReviewDependencies {
         readonly declaredFiles: readonly string[];
         readonly baseSha?: string;
         readonly trustedDependencyRoot?: string;
+        readonly signal?: AbortSignal;
       }) => Promise<RegressionGateResult>)
     | null;
   readonly deliverRepair?: (
@@ -308,6 +312,10 @@ export async function enforceCivilianAutoReview(
   input: CivilianAutoReviewInput,
   dependencies: CivilianAutoReviewDependencies = {},
 ): Promise<CivilianAutoReviewOutcome> {
+  const assertCurrent = () => input.lifetime?.assertCurrent();
+  const wait = <T>(promise: Promise<T>): Promise<T> => input.lifetime?.wait(promise) ?? promise;
+  const launch = <T>(run: () => Promise<T>): Promise<T> => { assertCurrent(); return wait(run()); };
+  assertCurrent();
   const now = dependencies.now ?? Date.now;
   if (repairCooldownActive(input.mission.id, now)) {
     // Reparo já despachado: dar tempo de trabalho ao Maestro.
@@ -316,15 +324,18 @@ export async function enforceCivilianAutoReview(
 
   const executionScope = missionExecutionScope(input.scope, input.mission);
   const root = executionScope.rootRealPath;
-  const git = dependencies.git ?? new AsyncProcessGitRunner();
+  const rawGit = dependencies.git ?? new AsyncProcessGitRunner();
+  const git: AsyncGitRunner = input.lifetime
+    ? { run: (cwd, args, options) => launch(() => rawGit.run(cwd, args, options)) }
+    : rawGit;
 
-  const observedHead = await currentHeadSha(git, root);
+  const observedHead = await launch(() => currentHeadSha(git, root));
   const headSha = observedHead ?? NO_GIT_REVISION;
   // HEAD não representa mudanças sem commit. Toda tentativa de concluir
   // precisa revalidar o código e os sensores sobre a entrega atual.
 
   const baseSha = observedHead
-    ? missionExecutionBaseSha(input.scope, input.mission) ?? await resolveAutoReviewBaseSha(git, root, input.mission.createdAt) ?? observedHead
+    ? missionExecutionBaseSha(input.scope, input.mission) ?? await launch(() => resolveAutoReviewBaseSha(git, root, input.mission.createdAt)) ?? observedHead
     : NO_GIT_REVISION;
 
   const changedFiles = [...new Set(input.productFiles)].slice(0, 512);
@@ -334,7 +345,7 @@ export async function enforceCivilianAutoReview(
 
   let analysis: CandidateQualityAnalysis;
   try {
-    analysis = await (dependencies.analyze ?? runCandidateQualityAnalysis)(
+    analysis = await launch(() => (dependencies.analyze ?? runCandidateQualityAnalysis)(
       {
         scope: executionScope,
         checkoutPath: root,
@@ -343,10 +354,12 @@ export async function enforceCivilianAutoReview(
         diffHash,
         changedFiles,
         candidateSource: 'working-tree',
+        ...(input.lifetime ? { signal: input.lifetime.signal } : {}),
       },
       dependencies.git ? { git: dependencies.git } : {},
-    );
+    ));
   } catch (error) {
+    assertCurrent();
     // F-144: este catch alimentava uma prova `unavailable` que o gate de revisão
     // aceita como conclusão, sem nenhuma linha de log. A política de concluir
     // quando o scanner não pôde rodar é deliberada e tem teste com nome próprio;
@@ -365,11 +378,13 @@ export async function enforceCivilianAutoReview(
   // Etapa 2 — sensores mecânicos Nexus-owned: typecheck + auditoria de
   // dependências + cobertura de testes quando o projeto permite. Não dependem
   // de scripts no alvo; falha de infraestrutura é indisponível, não bloqueio.
-  const mechanical = await Promise.all([
-    (dependencies.typecheck ?? runTypecheckSensor)(root),
-    (dependencies.audit ?? runDependencyAuditSensor)(root),
-    dependencies.freshness ? dependencies.freshness(root) : runDependencyFreshnessSensor(root, {
+  const mechanical = await wait(Promise.all([
+    launch(() => (dependencies.typecheck ?? runTypecheckSensor)(root)),
+    launch(() => (dependencies.audit ?? runDependencyAuditSensor)(root)),
+    launch(() => dependencies.freshness ? dependencies.freshness(root) : runDependencyFreshnessSensor(root, {
+      signal: input.lifetime?.signal,
       assertCurrentAuthority: () => {
+        assertCurrent();
         const live = getProjectDomainStores(input.scope).missions.get(input.mission.id);
         if (!live || live.status !== input.mission.status || live.intentVersion !== input.mission.intentVersion ||
           live.updatedAt !== input.mission.updatedAt || live.orchestratorSessionId !== input.mission.orchestratorSessionId ||
@@ -377,9 +392,9 @@ export async function enforceCivilianAutoReview(
           throw new Error('dependency advice mission authority changed');
         }
       },
-    }),
-    (dependencies.testCoverage ?? runTestCoverageSensor)(root, changedFiles),
-  ]);
+    })),
+    launch(() => (dependencies.testCoverage ?? runTestCoverageSensor)(root, changedFiles)),
+  ]));
   const mechanicalBlocking = mechanicalToReviewFindings(mechanical);
   const regressionGate =
     dependencies.regressionGate !== undefined
@@ -390,14 +405,16 @@ export async function enforceCivilianAutoReview(
   let regression: RegressionGateResult | null = null;
   if (regressionGate && observedHead) {
     try {
-      regression = await regressionGate({
+      regression = await launch(() => regressionGate({
         scope: executionScope,
         projectScope: input.scope,
         declaredFiles: changedFiles,
         baseSha,
         trustedDependencyRoot: input.scope.rootRealPath,
-      });
+        ...(input.lifetime ? { signal: input.lifetime.signal } : {}),
+      }));
     } catch (error) {
+      assertCurrent();
       console.warn('[civilian-auto-review] portão de regressão falhou (ignorado):', error);
     }
   }
@@ -406,6 +423,7 @@ export async function enforceCivilianAutoReview(
     ...mechanicalBlocking,
     ...regressionToReviewFindings(regression),
   ];
+  assertCurrent();
   if (blocking.length === 0) {
     const outcome: CivilianAutoReviewOutcome = {
       kind: 'approved',
@@ -423,11 +441,11 @@ export async function enforceCivilianAutoReview(
   ) {
     consumeRepairBudget(input.mission.id);
     try {
-      const delivered = await (dependencies.deliverRepair ??
-        deliverAgentPrompt)(
-        input.liveOrchestratorSessionId,
-        repairPromptFor(blocking),
-      );
+      const prompt = repairPromptFor(blocking);
+      const delivered = await launch(() => dependencies.deliverRepair
+        ? dependencies.deliverRepair(input.liveOrchestratorSessionId!, prompt)
+        : deliverAgentPrompt(input.liveOrchestratorSessionId!, prompt, input.lifetime
+          ? { signal: input.lifetime.signal, assertCurrentAuthority: assertCurrent } : undefined));
       if (delivered) {
         repairCooldowns.set(
           input.mission.id,
@@ -436,6 +454,7 @@ export async function enforceCivilianAutoReview(
         return { kind: 'repair-dispatched' };
       }
     } catch {
+      assertCurrent();
       // entrega falhou → cai para bloqueio visível abaixo
     }
   }

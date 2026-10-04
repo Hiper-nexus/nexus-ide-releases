@@ -51,6 +51,7 @@ import { AsyncProcessGitRunner } from '../runtime/git-command';
 import { listMtimePathsSince } from './worker-delivery-evidence';
 import { MissionLeadershipError, type MissionLeader } from './mission-leadership';
 import { getMissionLeadership } from './mission-leadership-runtime';
+import { runPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
 
 const execFileAsync = promisify(execFile);
 
@@ -179,6 +180,8 @@ export interface CivilianDeliveryDependencies {
       mission: Mission;
       scope: ProjectExecutionScope;
       productFiles: readonly string[];
+      /** Internal Main lifetime; never supplied by renderer/provider payload. */
+      lifetime?: PeriodicTaskContext;
     },
   ) => Promise<CivilianAutoReviewOutcome>;
   /** Injetável para testes; produção usa `getMissionLeadership().resolveMissionLeader`. */
@@ -980,13 +983,16 @@ function completionSummary(
 function markTasksDone(
   stores: CivilianStores,
   taskIds: readonly string[],
+  context: PeriodicTaskContext,
 ): string[] {
   const marked: string[] = [];
   for (const taskId of taskIds) {
+    context.assertCurrent();
     try {
       const updated = stores.tasks.markLifecycleStatus(taskId, 'done');
       if (updated?.status === 'done') marked.push(taskId);
     } catch (error) {
+      context.assertCurrent();
       console.warn(
         '[civilian-delivery] não avançou task selada',
         taskId,
@@ -1043,7 +1049,9 @@ async function defaultSpawnReviewers(
   mission: Mission,
   reviewers: readonly SquadAgent[],
   stores: CivilianStores,
+  context: PeriodicTaskContext,
 ): Promise<string[]> {
+  context.assertCurrent();
   const spawned: string[] = [];
   const sealedTasks = (() => {
     try {
@@ -1053,8 +1061,10 @@ async function defaultSpawnReviewers(
     }
   })();
   for (const agent of reviewers) {
+    await context.checkpoint();
     const prompt = buildCivilianReviewerPrompt(mission, agent, sealedTasks);
-    const spawn = await requestPaneSpawn({
+    const spawn = await context.wait(requestPaneSpawn({
+      abortSignal: context.signal,
       adapterId: agent.cli,
       model: agent.model || undefined,
       effort: agent.effort || undefined,
@@ -1069,7 +1079,7 @@ async function defaultSpawnReviewers(
       executionScope: missionExecutionScope(scope, mission),
       executionMode: 'same_checkout',
       initialPrompt: prompt,
-    });
+    }));
     if (!spawn.ok || !spawn.paneId || !spawn.sessionId) continue;
     stores.missionPanes?.record({
       missionId: mission.id,
@@ -1106,11 +1116,13 @@ async function civilianAutoReviewGate(
   panes: readonly LivePane[],
   provenOrchestratorSessionId: string | undefined,
   deps: CivilianDeliveryDependencies,
+  context: PeriodicTaskContext,
 ): Promise<
   | { readonly action: 'proceed'; readonly proof?: AutomaticCompletionProof; readonly extras?: { note?: string; evidenceIds?: readonly string[] } }
   | { readonly action: 'wait'; readonly spawnedReviewers: readonly string[] }
   | { readonly action: 'block'; readonly description: string }
 > {
+  context.assertCurrent();
   const squad = mission.squadId
     ? ((deps.getSquad ?? getSquad)(mission.squadId) ?? null)
     : null;
@@ -1128,17 +1140,19 @@ async function civilianAutoReviewGate(
   }
 
   const outcome =
-    (await deps.runAutoReviewGate?.({
+    (deps.runAutoReviewGate ? await context.wait(deps.runAutoReviewGate({
       mission,
       scope,
       productFiles,
-    })) ??
-    (await enforceCivilianAutoReview({
+      lifetime: context,
+    })) : undefined) ??
+    (await context.wait(enforceCivilianAutoReview({
       mission,
       scope,
       productFiles,
       liveOrchestratorSessionId: provenOrchestratorSessionId ?? null,
-    }));
+      lifetime: context,
+    })));
 
   switch (outcome.kind) {
     case 'approved':
@@ -1173,12 +1187,13 @@ async function civilianAutoReviewGate(
           .filter((agent) => !liveNames.has(paneAgentKey(agent.agentName)))
           .map((agent) => remintReviewerForSeat(agent));
         try {
-          const spawned = await (deps.spawnReviewers?.(scope, mission, toSpawn) ??
-            defaultSpawnReviewers(scope, mission, toSpawn, stores));
+          const spawned = await context.wait(Promise.resolve(deps.spawnReviewers?.(scope, mission, toSpawn) ??
+            defaultSpawnReviewers(scope, mission, toSpawn, stores, context)));
           if (spawned.length > 0) {
             return { action: 'wait', spawnedReviewers: spawned };
           }
         } catch (error) {
+          context.assertCurrent();
           // F-144: mesmo padrão do catch do scanner — sem log, uma falha de spawn
           // de revisor é indistinguível de "não havia revisor para spawnar".
           console.warn(
@@ -1295,24 +1310,51 @@ function emptyResult(
  * Fail-closed: sandbox / session_authority_revoked / orchestrator_spawn_forbidden
  * / blocked_technical / failed. Não inventa números do board.
  */
-const completionFlights = new Set<string>();
+const completionFlights = new Map<string, Promise<CivilianDeliveryResult>>();
+let completionGeneration = 1;
+let completionLifetime: { generation: number; controller: AbortController } | null =
+  { generation: completionGeneration, controller: new AbortController() };
 
-export async function maybeCompleteFastLaneOnDelivery(
+/** Start only after the previous physical epoch settled. Existing startup is idempotent. */
+export function startCivilianDeliveryCompletion(): void {
+  if (completionLifetime) return;
+  if (completionFlights.size) throw new Error('civilian completion is still draining');
+  completionLifetime = { generation: ++completionGeneration, controller: new AbortController() };
+}
+
+/** Revocation is synchronous; its promise retains all physical waits until settlement. */
+export function stopCivilianDeliveryCompletion(): Promise<void> {
+  const previous = completionLifetime;
+  completionLifetime = null;
+  previous?.controller.abort(new Error('civilian completion stopped'));
+  return Promise.allSettled([...completionFlights.values()]).then(() => undefined);
+}
+
+export function maybeCompleteFastLaneOnDelivery(
   scope: ProjectExecutionScope,
   missionId: string | undefined,
   deps: CivilianDeliveryDependencies = {},
 ): Promise<CivilianDeliveryResult> {
-  if (!missionId) return emptyResult();
+  const owner = completionLifetime;
+  if (!missionId || !owner) return Promise.resolve({ ...emptyResult(), reason: 'completion-stopped' });
   const key = missionLifecycleKey(scope, missionId);
   if (completionFlights.has(key)) {
-    return { ...emptyResult(), reason: 'review-in-progress' };
+    return Promise.resolve({ ...emptyResult(), reason: 'review-in-progress' });
   }
-  completionFlights.add(key);
-  try {
-    return await reconcileCivilianCompletionAttempt(scope, missionId, deps);
-  } finally {
-    completionFlights.delete(key);
-  }
+  let resolve!: (result: CivilianDeliveryResult) => void, reject!: (error: unknown) => void;
+  const flight = new Promise<CivilianDeliveryResult>((yes, no) => { resolve = yes; reject = no; });
+  completionFlights.set(key, flight);
+  let result = emptyResult();
+  const work = runPeriodicTask(`civilian-delivery:${owner.generation}:${key}`, async context => {
+    result = await reconcileCivilianCompletionAttempt(scope, missionId, deps, context);
+  }, { signal: owner.controller.signal });
+  const settled = () => { if (completionFlights.get(key) === flight) completionFlights.delete(key); };
+  void work.then(() => { settled(); resolve(result); }, error => {
+    settled();
+    if (owner.controller.signal.aborted) resolve({ ...emptyResult(), reason: 'completion-stopped' });
+    else reject(error);
+  });
+  return flight;
 }
 
 /**
@@ -1348,8 +1390,10 @@ async function captureCompletionCandidate(scope: ProjectExecutionScope, deps: Ci
 async function reconcileCivilianCompletionAttempt(
   scope: ProjectExecutionScope,
   missionId: string | undefined,
-  deps: CivilianDeliveryDependencies = {},
+  deps: CivilianDeliveryDependencies,
+  context: PeriodicTaskContext,
 ): Promise<CivilianDeliveryResult> {
+  context.assertCurrent();
   if (!missionId) return emptyResult();
   const stores = deps.getStores?.(scope) ?? getProjectDomainStores(scope);
   if (!storesReady(stores)) return emptyResult();
@@ -1412,7 +1456,7 @@ async function reconcileCivilianCompletionAttempt(
 
   const rawFiles = teamQuestion.applicable ? [] : [
     ...new Set(
-      await (deps.listProductFiles?.(
+      await context.wait(Promise.resolve(deps.listProductFiles?.(
         missionExecutionScope(scope, mission).rootRealPath,
         handoffs,
         mission.description ?? '',
@@ -1424,7 +1468,7 @@ async function reconcileCivilianCompletionAttempt(
           mission.description ?? '',
           mission.intentContract?.workspaceBinding?.spaceId ? undefined : mission.createdAt,
           missionExecutionBaseSha(scope, mission),
-        )),
+        ))),
     ),
   ];
   const evidence = inspectDeliveryEvidence(rawFiles, mission.description ?? '');
@@ -1440,6 +1484,7 @@ async function reconcileCivilianCompletionAttempt(
           stores.tasks.markLifecycleStatus(taskId, status)),
     },
   };
+  context.assertCurrent();
   let uniqueAdvanced: readonly string[] = [];
   try {
     uniqueAdvanced = advanceSealedTasksFromFilesOnDisk(
@@ -1451,6 +1496,7 @@ async function reconcileCivilianCompletionAttempt(
       },
     );
   } catch (error) {
+    context.assertCurrent();
     console.warn(
       '[civilian-delivery] pending-with-file falhou (fail-closed):',
       error instanceof Error ? error.message : error,
@@ -1492,7 +1538,7 @@ async function reconcileCivilianCompletionAttempt(
 
   const markedDoneTaskIds = [
     ...uniqueAdvanced,
-    ...markTasksDone(stores, inspection.deliveredWorkerTaskIds),
+    ...markTasksDone(stores, inspection.deliveredWorkerTaskIds, context),
   ];
 
   if (awaitsOperatorTabCompletionRequest(scope, mission)) {
@@ -1533,10 +1579,10 @@ async function reconcileCivilianCompletionAttempt(
   );
   const stateBeforeReview = completionState(stores, missionId, panes);
   const reviewBaseSha = shouldCaptureCandidate && !deps.captureCandidate
-    ? missionExecutionBaseSha(scope, mission) ?? await resolveAutoReviewBaseSha(new AsyncProcessGitRunner(), missionExecutionScope(scope, mission).rootRealPath, mission.createdAt) ?? undefined
+    ? missionExecutionBaseSha(scope, mission) ?? await context.wait(resolveAutoReviewBaseSha(new AsyncProcessGitRunner(), missionExecutionScope(scope, mission).rootRealPath, mission.createdAt)) ?? undefined
     : undefined;
   const candidateBefore = shouldCaptureCandidate
-    ? await captureCompletionCandidate(missionExecutionScope(scope, mission), deps, reviewBaseSha) : null;
+    ? await context.wait(captureCompletionCandidate(missionExecutionScope(scope, mission), deps, reviewBaseSha)) : null;
   const deletedCount = candidateBefore?.complete ? candidateBefore.deletedPaths?.length ?? 0 : 0;
   const action = deletedCount > 0
     ? decideCivilianDeliveryAction({ ...decisionInput, hasExpectedDelivery: true, productFileCount: productFiles.length + deletedCount })
@@ -1567,8 +1613,10 @@ async function reconcileCivilianCompletionAttempt(
       .filter((task) => task.status === 'pending' || task.status === 'running')
       .map((task) => task.title);
     try {
-      await deps.rerouteUnassigned?.(pendingTitles);
+      context.assertCurrent();
+      await context.wait(Promise.resolve(deps.rerouteUnassigned?.(pendingTitles)));
     } catch (error) {
+      context.assertCurrent();
       console.warn(
         '[civilian-delivery] reroute de stories sem assento falhou:',
         error instanceof Error ? error.message : error,
@@ -1611,9 +1659,11 @@ async function reconcileCivilianCompletionAttempt(
     );
     let spawnedReviewers: readonly string[] = [];
     try {
-      spawnedReviewers = await (deps.spawnReviewers?.(scope, mission, toSpawn) ??
-        defaultSpawnReviewers(scope, mission, toSpawn, stores));
+      context.assertCurrent();
+      spawnedReviewers = await context.wait(Promise.resolve(deps.spawnReviewers?.(scope, mission, toSpawn) ??
+        defaultSpawnReviewers(scope, mission, toSpawn, stores, context)));
     } catch (error) {
+      context.assertCurrent();
       console.warn(
         '[civilian-delivery] spawn de review falhou; missão civil segue:',
         error instanceof Error ? error.message : error,
@@ -1649,6 +1699,7 @@ async function reconcileCivilianCompletionAttempt(
     panes,
     provenOrchestratorSessionId,
     deps,
+    context,
   );
   if (autoReview.action === 'wait') {
     return {
@@ -1661,7 +1712,7 @@ async function reconcileCivilianCompletionAttempt(
     };
   }
   const candidateAfter = shouldCaptureCandidate
-    ? await captureCompletionCandidate(missionExecutionScope(scope, mission), deps, reviewBaseSha) : null;
+    ? await context.wait(captureCompletionCandidate(missionExecutionScope(scope, mission), deps, reviewBaseSha)) : null;
   const currentPanes = deps.listPanes?.() ??
     (typeof listPaneSnapshots === 'function' ? listPaneSnapshots() : []);
   if (
@@ -1701,6 +1752,7 @@ async function reconcileCivilianCompletionAttempt(
   let completed = false;
   let refusalSpawned: readonly string[] = [];
   try {
+    context.assertCurrent();
     const limitation = shouldCaptureCandidate && (!candidateBefore?.complete || !candidateAfter?.complete)
       ? 'A checagem de mudanças durante a revisão foi parcial ou indisponível.' : '';
     const extras = {
@@ -1727,6 +1779,7 @@ async function reconcileCivilianCompletionAttempt(
         }, complete)
       : complete();
   } catch (error) {
+    context.assertCurrent();
     const message = error instanceof Error ? error.message : String(error);
     if (!isCivilianReviewRefusal(message)) {
       if (shouldLogCivilianRefusal(mission.id, message)) {
@@ -1783,14 +1836,16 @@ async function reconcileCivilianCompletionAttempt(
         };
       }
       try {
-        refusalSpawned = await (deps.spawnReviewers?.(scope, mission, toSpawn) ??
-          defaultSpawnReviewers(scope, mission, toSpawn, stores));
+        context.assertCurrent();
+        refusalSpawned = await context.wait(Promise.resolve(deps.spawnReviewers?.(scope, mission, toSpawn) ??
+          defaultSpawnReviewers(scope, mission, toSpawn, stores, context)));
         if (refusalSpawned.length > 0) {
           console.info(
             `[civilian-delivery] revisor aberto pós-recusa: ${refusalSpawned.join(', ')}`,
           );
         }
       } catch (spawnError) {
+        context.assertCurrent();
         console.warn(
           '[civilian-delivery] spawn de revisor pós-recusa falhou:',
           spawnError instanceof Error ? spawnError.message : spawnError,

@@ -1631,6 +1631,9 @@ export async function closeOrchestration(): Promise<void> {
   if (orchestrationCloseFlight) return orchestrationCloseFlight;
   orchestrationClosing = true;
   orchestrationLifecycleEpoch += 1;
+  // Revoke before the first wait; retain physical completion work until stores can close.
+  const idleDeliveryStop = Promise.resolve(shutdownIdleDelivery());
+  void idleDeliveryStop.catch(() => undefined);
   const pendingInit = orchestrationInitFlight;
   const pendingStartSupervisor = orchestrationStartSupervisor;
   const pendingInitSettlement = pendingInit?.then(
@@ -1653,7 +1656,7 @@ export async function closeOrchestration(): Promise<void> {
     disposeSquadBroadcast = null;
     disposeMissionResurrection?.();
     disposeMissionResurrection = null;
-    shutdownIdleDelivery();
+    await idleDeliveryStop;
     shutdownAgentWaitingBroadcast();
     shutdownWorkerHandoffTtl();
     shutdownMissionDoneTeardown();

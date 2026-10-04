@@ -4050,6 +4050,26 @@ describe('native operator attestation authority', () => {
 });
 
 describe('orchestration init/close epoch serialization', () => {
+  it('F-889: revokes idle completion immediately and keeps the registry until its physical drain', async () => {
+    const { shutdownIdleDelivery } = await import('./idle-delivery');
+    await initOrchestration();
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const drain = new Promise<void>(resolve => { release = resolve; });
+    vi.mocked(shutdownIdleDelivery).mockClear();
+    vi.mocked(shutdownIdleDelivery).mockImplementationOnce(() => { entered(); return drain; });
+    vi.mocked(disposeProjectDomainStoreRegistry).mockClear();
+    const closing = closeOrchestration();
+    const revokedInCallerTurn = vi.mocked(shutdownIdleDelivery).mock.calls.length;
+    await started;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const registryClosedEarly = vi.mocked(disposeProjectDomainStoreRegistry).mock.calls.length;
+    release(); await closing;
+    expect(revokedInCallerTurn).toBe(1);
+    expect(registryClosedEarly).toBe(0);
+    expect(disposeProjectDomainStoreRegistry).toHaveBeenCalledOnce();
+  });
+
   it('F-883: retains the registry until the MCP spool physical stop settles', async () => {
     await initOrchestration();
     let entered!: () => void, release!: () => void;

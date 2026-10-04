@@ -26,7 +26,7 @@ import {
   completePetStudioHandoff,
   type PetStudioCompletionResult,
 } from './pet-studio-completion';
-import { maybeCompleteFastLaneOnDelivery } from './civilian-delivery-completion';
+import { maybeCompleteFastLaneOnDelivery, startCivilianDeliveryCompletion, stopCivilianDeliveryCompletion } from './civilian-delivery-completion';
 import {
   HANDOFF_DELIVERY_RETRY_BACKOFF_MS,
   MAX_HANDOFF_DELIVERY_ATTEMPTS,
@@ -1019,6 +1019,7 @@ function flushQueue(sessionId: string): void {
 
 export function initIdleDelivery(): void {
   if (untapState) return;
+  startCivilianDeliveryCompletion();
   untapState = tapSessionState((sessionId, state) => {
     if (state === 'busy') acceptPendingEnters(sessionId);
     if (state !== 'idle') requeuePendingDeliveryStarts(sessionId);
@@ -1146,7 +1147,8 @@ export function initIdleDelivery(): void {
   );
 }
 
-export function shutdownIdleDelivery(): void {
+export function shutdownIdleDelivery(): Promise<void> {
+  const drain = stopCivilianDeliveryCompletion();
   untapState?.();
   untapExit?.();
   untapSemanticStatus?.();
@@ -1170,6 +1172,7 @@ export function shutdownIdleDelivery(): void {
   for (const timer of retryBackoffTimers) clearTimeout(timer);
   retryBackoffTimers.clear();
   retryBackoffPending.clear();
+  return drain;
 }
 
 /** Resolve the exact owner/scope/mission authority for the orchestrator. */
