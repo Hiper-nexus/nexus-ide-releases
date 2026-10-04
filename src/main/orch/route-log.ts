@@ -88,7 +88,11 @@ const TASK_PREVIEW_CHARS = 120;
 /** Redact before clipping; the extra fixed window covers a token crossing the
  * visible preview boundary without scanning arbitrary prompt lengths. */
 export function routeTaskPreview(task: string): string {
-  return redactSecretText(task.slice(0, TASK_PREVIEW_CHARS + 512)).text.slice(0, TASK_PREVIEW_CHARS);
+  // Preview truncation may hide the signature of a JWT. Conservatively mask
+  // its recognizable encoded JSON prefix even when the token is incomplete.
+  const window = task.slice(0, TASK_PREVIEW_CHARS + 512)
+    .replace(/\beyJ[A-Za-z0-9_-]{7,}(?:\.[A-Za-z0-9_-]*){0,2}/g, '[REDACTED]');
+  return redactSecretText(window).text.slice(0, TASK_PREVIEW_CHARS);
 }
 
 let log: RouteLogEntry[] = [];

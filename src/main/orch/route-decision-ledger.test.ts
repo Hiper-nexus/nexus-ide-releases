@@ -60,6 +60,30 @@ describe('log de rota persistente (F-773)', () => {
     expect(row.task_preview).not.toContain('sk-FAKE');
   });
 
+  it('F-884 masks a long JWT whose signature is beyond the preview scan window', () => {
+    const first = open();
+    const jwt = 'eyJ' + 'a'.repeat(10) + '.' + 'b'.repeat(1024) + '.' + 'c'.repeat(16);
+    const task = 'x'.repeat(79) + ' ' + jwt;
+    expect(redactSecretText(task).redacted).toBe(true);
+    recordRouteLog({ task, tier: 'easy', adapterId: 'kimi', reason: 'fixture route' }, first.store.routeDecisions);
+    clearRouteLog();
+    const row = first.runtime.open(scope).db.prepare('SELECT task_preview FROM route_decisions').get() as { task_preview: string };
+    expect(row.task_preview).not.toContain('eyJ');
+    expect(recentRouteLog(1, first.store.routeDecisions)[0].taskPreview).not.toContain('eyJ');
+  });
+
+  it('F-884 masks the truncated JWT prefix from a legacy 120-character row on read', () => {
+    const first = open();
+    recordRouteLog({ task: 'legacy fixture', tier: 'easy', adapterId: 'kimi', reason: 'fixture route' }, first.store.routeDecisions);
+    const jwt = 'eyJ' + 'a'.repeat(10) + '.' + 'b'.repeat(1024) + '.' + 'c'.repeat(16);
+    const legacy = ('x'.repeat(79) + ' ' + jwt).slice(0, 120);
+    first.runtime.open(scope).db.prepare('UPDATE route_decisions SET task_preview = ?').run(legacy);
+    clearRouteLog();
+    expect(recentRouteLog(1, first.store.routeDecisions)[0].taskPreview).not.toContain('eyJ');
+    // Readback protects the caller without silently rewriting existing data.
+    expect((first.runtime.open(scope).db.prepare('SELECT task_preview FROM route_decisions').get() as { task_preview: string }).task_preview).toBe(legacy);
+  });
+
   it('recordRouteLog persiste e recentRouteLog lê depois de recarregar o store', () => {
     const first = open();
     const missionId = first.store.create({
