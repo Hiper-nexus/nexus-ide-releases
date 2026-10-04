@@ -243,3 +243,43 @@ it.runIf(process.platform === 'darwin')('two actual native Node tsc descendants 
   await native.drain(); expect(transitions.map((v) => v.kind)).toEqual(['grant', 'release', 'grant', 'release']); expect(pool.snapshot().active).toBe(0);
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
+
+
+it('stopAdmission fences the result after a pending final ownership probe', async () => {
+ const ctx = { token: 'finite', sessionId: 'finite', role: 'user', scope: {} } as AgentGateContext;
+ let observerDone!: (value: 'gone') => void, finalDone!: (value: 'live') => void;
+ const observer = new Promise<'gone'>((resolve) => observerDone = resolve), final = new Promise<'live'>((resolve) => finalDone = resolve);
+ let probes = 0;
+ const native = new NativeHeavyCommands({ current: () => true, claim: async () => 'finite', acquire: async () => ({ id: 'finite', release() {} }), probe: () => ++probes === 1 ? observer : final });
+ const result = native.admit(ctx, { pid: 20, kind: 'build' });
+ while (probes < 2) await new Promise((resolve) => setImmediate(resolve));
+ native.stopAdmission(); finalDone('live');
+ try { expect(await result).toMatchObject({ allow: false }); }
+ finally { observerDone('gone'); await native.drain(); }
+});
+
+it('stopAdmission fences a pending physical nested borrow', async () => {
+ const ctx = { token: 'finite', sessionId: 'finite', role: 'user', scope: {} } as AgentGateContext;
+ let state: 'live' | 'gone' = 'live', finish!: (value: boolean) => void;
+ const borrowed = new Promise<boolean>((resolve) => finish = resolve);
+ const native = new NativeHeavyCommands({ current: () => true, claim: async () => 'finite', acquire: async () => ({ id: 'finite', release() {} }), probe: async () => state, borrow: () => borrowed });
+ expect((await native.admit(ctx, { pid: 20, kind: 'build' })).allow).toBe(true);
+ const result = native.admit(ctx, { pid: 30, kind: 'tests', leaseId: 'finite' });
+ native.stopAdmission(); finish(true);
+ try { expect(await result).toMatchObject({ allow: false }); }
+ finally { state = 'gone'; await native.drain(); }
+});
+
+it('nested borrow refuses a flight physically released during its pending proof', async () => {
+ const ctx = { token: 'finite', sessionId: 'finite', role: 'user', scope: {} } as AgentGateContext;
+ let completeObserver!: (value: 'gone') => void, finishBorrow!: (value: boolean) => void;
+ const observer = new Promise<'gone'>((resolve) => completeObserver = resolve);
+ const borrowed = new Promise<boolean>((resolve) => finishBorrow = resolve);
+ let probes = 0, releases = 0;
+ const native = new NativeHeavyCommands({ current: () => true, claim: async () => 'finite', acquire: async () => ({ id: 'finite', release() { releases++; } }), probe: () => ++probes === 1 ? observer : Promise.resolve('live'), borrow: () => borrowed });
+ expect((await native.admit(ctx, { pid: 20, kind: 'build' })).allow).toBe(true);
+ const result = native.admit(ctx, { pid: 30, kind: 'tests', leaseId: 'finite' });
+ completeObserver('gone'); await new Promise((resolve) => setImmediate(resolve));
+ expect(releases).toBe(1); finishBorrow(true);
+ expect(await result).toMatchObject({ allow: false }); await native.drain();
+});

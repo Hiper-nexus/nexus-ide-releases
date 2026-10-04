@@ -34,13 +34,13 @@ export class NativeHeavyCommands {
       const flight = [...this.#flights].find((candidate) => candidate.permit.id === body.data.leaseId && candidate.ctx.token === ctx.token && candidate.ctx.sessionId === ctx.sessionId);
       let proved = false;
       try { proved = Boolean(flight && await this.ports.borrow?.(ctx.sessionId, flight.claim, body.data.pid)); } catch { /* fail closed */ }
-      return proved && this.ports.current(ctx) && !signal?.aborted
+      return proved && Boolean(flight && this.#flights.has(flight)) && this.#accepting && this.ports.current(ctx) && !signal?.aborted
         ? { allow: true, leaseId: body.data.leaseId }
         : { allow: false, reason: 'heavy_command_nested_ownership_unproved' };
     }
     let claim: string | null = null;
     try { claim = await this.ports.claim(ctx.sessionId, body.data.pid); } catch { /* ownership unavailable */ }
-    if (!claim || !this.ports.current(ctx) || signal?.aborted) { if (claim) this.#reap(ctx, claim); return { allow: false, reason: 'heavy_command_process_ownership_unproved' }; }
+    if (!claim || !this.#accepting || !this.ports.current(ctx) || signal?.aborted) { if (claim) this.#reap(ctx, claim); return { allow: false, reason: 'heavy_command_process_ownership_unproved' }; }
     let permit: HeavyCommandPermit;
     try { permit = await this.ports.acquire({ scope: ctx.scope, missionId: ctx.missionId, sessionId: ctx.sessionId, kind: body.data.kind, signal, isCurrent: () => this.ports.current(ctx) && this.#accepting }); }
     catch { this.#reap(ctx, claim); return { allow: false, reason: 'heavy_command_admission_denied' }; }
@@ -48,7 +48,7 @@ export class NativeHeavyCommands {
     flight.done = this.#observe(flight); void flight.done.catch(() => {});
     let state: CommandProcessState = 'unknown';
     try { state = await this.ports.probe(ctx.sessionId, claim); } catch { /* unknown is not permission */ }
-    if (state !== 'live' || !this.ports.current(ctx) || signal?.aborted) return { allow: false, reason: 'heavy_command_process_ownership_changed' };
+    if (state !== 'live' || !this.#accepting || !this.ports.current(ctx) || signal?.aborted) return { allow: false, reason: 'heavy_command_process_ownership_changed' };
     return { allow: true, leaseId: permit.id };
   }
   #reap(ctx: AgentGateContext, claim: string) {
