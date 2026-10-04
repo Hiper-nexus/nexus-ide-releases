@@ -18,7 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as nodePty from "@lydell/node-pty";
 import { buildDarwinPtySupervisor } from "./build-darwin-pty-supervisor.mjs";
 import { darwinNodePtyBootstrapLaunch } from "../src/main/pty/darwin-node-pty-bootstrap.ts";
-import { supervisedPtyCommand } from "../src/main/pty/darwin-pty-supervisor.ts";
+import { supervisedPtyCommand, supervisedJobCommand } from "../src/main/pty/darwin-pty-supervisor.ts";
 
 // F-715: pty-manager sets these markers; a pane inherits its supervisor's
 // responsibility, which main.c rejects as responsible_is_supervisor.
@@ -1084,6 +1084,73 @@ suite("Darwin PTY native responsibility supervisor", () => {
       /private responsibility.*unavailable|not its own signed/i,
     );
   }, 60_000);
+
+  for (const mode of ['natural', 'terminate']) {
+  it(`supervise-job holds a detached setsid daemon after primary exit until ${mode} completion`, async ({ skip }) => {
+    if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
+    const tag = `job-${Math.random().toString(16).slice(2)}`;
+    const daemonFile = path.join(fixtureRoot, `${tag}.daemon`), primaryFile = path.join(fixtureRoot, `${tag}.primary`);
+    const primaryRelease = path.join(fixtureRoot, `${tag}.release-primary`), daemonRelease = path.join(fixtureRoot, `${tag}.release-daemon`);
+    const python = [
+      'import os,signal,sys,time',
+      `daemon_file=${JSON.stringify(daemonFile)}`, `primary_file=${JSON.stringify(primaryFile)}`,
+      `primary_release=${JSON.stringify(primaryRelease)}`, `daemon_release=${JSON.stringify(daemonRelease)}`,
+      'first=os.fork()', 'if first == 0:', '  os.setsid()', '  second=os.fork()',
+      '  if second > 0: os._exit(0)', '  signal.signal(signal.SIGTERM, signal.SIG_IGN)',
+      '  with open(daemon_file,"w") as f: f.write(str(os.getpid()))',
+      '  while not os.path.exists(daemon_release): time.sleep(0.02)', '  os._exit(0)',
+      'os.waitpid(first,0)', 'with open(primary_file,"w") as f: f.write(str(os.getpid()))',
+      'while not os.path.exists(primary_release): time.sleep(0.02)', 'sys.exit(23)',
+    ].join('\n');
+    const job = spawn(helper, ['supervise-job', '--', '/usr/bin/python3', '-c', python], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let finished = false; let daemonPid = 0;
+    const exit = new Promise((resolve) => job.once('exit', (code, signal) => { finished = true; resolve({ code, signal }); }));
+    try {
+      await waitFor(() => { if (finished) throw new Error('supervise-job exited before starting the fixture'); return existsSync(primaryFile) && existsSync(daemonFile); });
+      daemonPid = Number(readFileSync(daemonFile, 'utf8')); const primaryPid = Number(readFileSync(primaryFile, 'utf8'));
+      await waitFor(() => Number(spawnSync('/bin/ps', ['-o', 'ppid=', '-p', String(daemonPid)], { encoding: 'utf8' }).stdout.trim()) === 1);
+      writeFileSync(primaryRelease, 'go'); await waitFor(() => !processExists(primaryPid));
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(finished).toBe(false); expect(processExists(daemonPid)).toBe(true);
+      if (mode === 'natural') writeFileSync(daemonRelease, 'go'); else job.kill('SIGTERM');
+      const result = await exit; expect(result).toEqual({ code: mode === 'natural' ? 23 : 0, signal: null });
+      await waitFor(() => !processExists(daemonPid)); expect(processExists(daemonPid)).toBe(false);
+    } finally {
+      if (!finished) job.kill('SIGTERM');
+      if (daemonPid && processExists(daemonPid)) { try { process.kill(daemonPid, 'SIGKILL'); } catch {} }
+      await exit;
+    }
+  }, 30_000);
+  }
+
+  it('supervise-job tears down its detached cohort when the exact Main owner dies through Apple stage zero', async ({ skip }) => {
+    if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
+    const tag = `job-owner-${Math.random().toString(16).slice(2)}`;
+    const daemonFile = path.join(fixtureRoot, `${tag}.daemon`), primaryFile = path.join(fixtureRoot, `${tag}.primary`), ownerReady = path.join(fixtureRoot, `${tag}.owner`), releaseFile = path.join(fixtureRoot, `${tag}.release`);
+    const python = ['import os,signal,sys,time', `daemon_file=${JSON.stringify(daemonFile)}`, `primary_file=${JSON.stringify(primaryFile)}`, `release_file=${JSON.stringify(releaseFile)}`,
+      'first=os.fork()', 'if first == 0:', '  os.setsid()', '  second=os.fork()', '  if second > 0: os._exit(0)',
+      '  signal.signal(signal.SIGTERM, signal.SIG_IGN)', '  with open(daemon_file,"w") as f: f.write(str(os.getpid()))', '  time.sleep(30)', '  os._exit(0)',
+      'os.waitpid(first,0)', 'with open(primary_file,"w") as f: f.write(str(os.getpid()))', 'while not os.path.exists(release_file): time.sleep(0.02)', 'sys.exit(23)',
+    ].join('\n');
+    const command = supervisedJobCommand({ platform: 'darwin', packaged: false, cwd: fixtureRoot, moduleDir: fixtureRoot }, '/usr/bin/python3', ['-c', python]);
+    const ownerScript = `const fs=require('node:fs');const task=require('node:child_process').spawn(${JSON.stringify(command.file)},${JSON.stringify(command.args)},{stdio:'ignore'});fs.writeFileSync(${JSON.stringify(ownerReady)},String(task.pid));setInterval(()=>{},1000);`;
+    const owner = spawn(process.execPath, ['-e', ownerScript], { stdio: 'ignore' });
+    let daemonPid = 0, stagePid = 0;
+    const ownerExit = new Promise((resolve) => owner.once('exit', resolve));
+    try {
+      await waitFor(() => existsSync(ownerReady) && existsSync(primaryFile) && existsSync(daemonFile));
+      stagePid = Number(readFileSync(ownerReady, 'utf8')); daemonPid = Number(readFileSync(daemonFile, 'utf8')); const primaryPid = Number(readFileSync(primaryFile, 'utf8'));
+      writeFileSync(releaseFile, 'go'); await waitFor(() => !processExists(primaryPid));
+      expect(processExists(stagePid)).toBe(true); expect(processExists(daemonPid)).toBe(true);
+      owner.kill('SIGKILL'); await ownerExit;
+      await waitFor(() => !processExists(daemonPid) && !processExists(stagePid));
+      expect(processExists(daemonPid)).toBe(false); expect(processExists(stagePid)).toBe(false);
+    } finally {
+      owner.kill('SIGKILL'); await ownerExit;
+      if (stagePid && processExists(stagePid)) { try { process.kill(stagePid, 'SIGTERM'); } catch {} }
+      if (daemonPid && processExists(daemonPid)) { try { process.kill(daemonPid, 'SIGKILL'); } catch {} }
+    }
+  }, 30_000);
 
   it("proves the cohort empty while an unrelated setuid process born after the anchor denies lookup", async ({ skip }) => {
     if (nexusPaneSkipReason) skip(nexusPaneSkipReason);

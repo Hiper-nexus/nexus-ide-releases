@@ -228,3 +228,26 @@ real UID mesmo quando alteram effective UID. Executar um binário setuid capaz d
 trocar o **real** UID fica fora do modelo de ameaça; o Nexus não concede essa
 elevação. Processos protegidos anteriores à âncora são excluídos apenas quando
 duas leituras do unique id monotônico provam que nasceram antes do supervisor.
+
+
+## Jobs Main-owned de comandos pesados (C6)
+
+`supervisedJobCommand(runtime, file, args)` usa o mesmo Perl SIP-owned e o selo
+vivo do helper, com modo nativo `supervise-job`. É um contrato separado do PTY:
+a saída normal do shell inicial conserva a âncora enquanto houver descendentes
+vivos na coorte de responsabilidade, inclusive double-fork, setsid e reparent
+para PID 1. Duas varreduras completas vazias sob a âncora viva liberam o recibo
+normal, preservando o código do shell. `TERM` continua passando pelo fixed point,
+sinais por audit token e prova de ausência existentes.
+
+O keeper também mede a identidade do dono real (PID, process unique id e PID
+version) pela cadeia de pai: Perl Apple → seu pai Main, ou pai direto nos testes
+de desenvolvimento. Não recebe PID do dono por argv/env. Morte, reutilização ou
+identidade não verificável do dono força teardown da própria coorte; depois da
+prova retorna 74, não sucesso sintético. Perfis `packaged-smoke` e plataformas
+sem o helper são recusados pelo builder de job.
+
+Prova local: fixtures reais mantêm daemon destacado vivo após o shell sair,
+confirmam recibo somente após término natural, provam TERM contra daemon que
+ignora TERM e confirmam limpeza depois de SIGKILL do dono através do estágio
+Perl. A integração MCP e a prova no candidato assinado pertencem ao coordenador.

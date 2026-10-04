@@ -26,6 +26,7 @@ import {
   satisfiesPackagedDarwinRuntimeOwnershipPolicy,
   satisfiesPackagedDarwinSupervisorSignaturePolicy,
   supervisedPtyCommand,
+  supervisedJobCommand,
 } from "./darwin-pty-supervisor";
 import type { DarwinAdHocSmokeExecutableSeal } from "./darwin-pty-supervisor";
 import type { DarwinTrustedExecutableSeal } from "./trusted-native-cli-binary";
@@ -1724,3 +1725,12 @@ describe.runIf(process.platform === "darwin")(
     }, 60_000);
   },
 );
+
+
+it('command job authority refuses non-Darwin, smoke-only profiles and ambiguous argv before any launch', () => {
+ const runtime = { platform: 'darwin' as const, packaged: false, cwd: '/tmp', moduleDir: '/tmp' };
+ expect(() => supervisedJobCommand({ ...runtime, platform: 'linux' }, '/bin/sh', [])).toThrow(/normal Main-owned/);
+ expect(() => supervisedJobCommand({ ...runtime, trustProfile: DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE }, '/bin/sh', [])).toThrow(/normal Main-owned/);
+ expect(() => supervisedJobCommand(runtime, 'sh', [])).toThrow(/absolute/);
+ expect(() => supervisedJobCommand(runtime, '/bin/sh', ['invalid\0arg'])).toThrow(/NUL-free/);
+});

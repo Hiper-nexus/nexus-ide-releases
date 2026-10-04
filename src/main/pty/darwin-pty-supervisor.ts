@@ -1341,3 +1341,22 @@ export function supervisedPtyCommand(
     ...args,
   ]);
 }
+
+
+/** Main-owned command jobs retain their exact responsibility cohort after the
+ * initial shell exits. This deliberately does not change the PTY lifecycle. */
+export function supervisedJobCommand(
+  runtime: DarwinPtySupervisorRuntime,
+  file: string,
+  args: readonly string[],
+): SupervisedPtyCommand {
+  if (runtime.platform !== 'darwin' || runtime.trustProfile === DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE) {
+    throw new Error('Darwin command job requires the normal Main-owned helper authority');
+  }
+  if (!path.isAbsolute(file) || file.includes('\0') || args.some((arg) => arg.includes('\0'))) {
+    throw new Error('Darwin command job requires an absolute, NUL-free command');
+  }
+  return stageZeroSupervisorCommand(resolveDarwinPtySupervisorSeal(runtime), [
+    'supervise-job', '--', file, ...args,
+  ]);
+}

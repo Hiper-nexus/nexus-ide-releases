@@ -2307,9 +2307,18 @@ static int status_to_exit_code(int status) {
   return exit_code;
 }
 
+static bool job_owner_is_live(const struct responsibility_api *api,
+                              const struct process_record *expected) {
+  struct process_record current;
+  return load_stable_process_record(api, expected->pid, &current) &&
+         current.process_unique_id == expected->process_unique_id &&
+         current.process_id_version == expected->process_id_version &&
+         current.status != SZOMB;
+}
+
 static int run_disclaimed_supervisor_mode(
     int argc, char **argv, int command_index,
-    const struct sealed_code_identity *sealed_identity) {
+    const struct sealed_code_identity *sealed_identity, bool keep_job_cohort) {
   if (argc <= command_index || argv[command_index][0] != '/') {
     fputs("nexus-pty-supervisor: invalid internal supervisor invocation\n",
           stderr);
@@ -2350,6 +2359,25 @@ static int run_disclaimed_supervisor_mode(
   if (!restore_heavy_command_bash_environment()) {
     fputs("nexus-pty-supervisor: invalid Main heavy command resource\n", stderr);
     return NEXUS_EXIT_INTERNAL;
+  }
+
+  struct process_record job_owner;
+  memset(&job_owner, 0, sizeof(job_owner));
+  if (keep_job_cohort) {
+    struct process_record parent;
+    if (!load_stable_process_record(&api, getppid(), &parent)) {
+      fputs("nexus-pty-supervisor: job owner identity unavailable\n", stderr);
+      return NEXUS_EXIT_RESPONSIBILITY;
+    }
+    struct process_record stage_zero;
+    if (direct_parent_is_apple_perl(&api, &stage_zero)) {
+      if (!load_stable_process_record(&api, stage_zero.ppid, &job_owner)) {
+        fputs("nexus-pty-supervisor: stage-zero job owner unavailable\n", stderr);
+        return NEXUS_EXIT_RESPONSIBILITY;
+      }
+    } else {
+      job_owner = parent;
+    }
   }
 
   pid_t child = 0;
@@ -2403,7 +2431,13 @@ static int run_disclaimed_supervisor_mode(
 
   int child_status = 0;
   bool child_reaped = false;
+  bool job_owner_lost = false;
   while (!child_reaped && shutdown_signal == 0) {
+    if (keep_job_cohort && !job_owner_is_live(&api, &job_owner)) {
+      job_owner_lost = true;
+      shutdown_signal = SIGTERM;
+      break;
+    }
     pid_t waited = waitpid(child, &child_status, WNOHANG);
     if (waited == child) {
       child_reaped = true;
@@ -2422,6 +2456,21 @@ static int run_disclaimed_supervisor_mode(
     sleep_milliseconds(LOOP_DELAY_MS);
   }
 
+  /* A normal primary exit does not end an intentionally backgrounded job.
+   * Keep the responsibility anchor while detached/reparented members run.
+   * Empty proof remains two complete inventories under that live anchor. */
+  if (keep_job_cohort && child_reaped && WIFEXITED(child_status)) {
+    while (shutdown_signal == 0) {
+      if (!job_owner_is_live(&api, &job_owner)) {
+        job_owner_lost = true;
+        shutdown_signal = SIGTERM;
+        break;
+      }
+      if (prove_group_empty_twice(&api, &anchor)) return status_to_exit_code(child_status);
+      sleep_milliseconds(250);
+    }
+  }
+
   int requested_signal = (int)shutdown_signal;
 #if NEXUS_TEST_PRE_TERMINATION_PROOF_HOLD_MS > 0
   if (requested_signal != 0) {
@@ -2435,6 +2484,7 @@ static int run_disclaimed_supervisor_mode(
     while (waitpid(child, &child_status, 0) < 0 && errno == EINTR) {
     }
   }
+  if (job_owner_lost) return NEXUS_EXIT_RESPONSIBILITY;
   if (requested_signal != 0) {
     /*
      * The responsibility cohort was already terminated and proven absent.
@@ -2452,7 +2502,7 @@ static int run_disclaimed_supervisor(int argc, char **argv) {
           stderr);
     return NEXUS_EXIT_USAGE;
   }
-  return run_disclaimed_supervisor_mode(argc, argv, 3, NULL);
+  return run_disclaimed_supervisor_mode(argc, argv, 3, NULL, false);
 }
 
 static int run_disclaimed_authenticated_supervisor(int argc, char **argv) {
@@ -2463,7 +2513,7 @@ static int run_disclaimed_authenticated_supervisor(int argc, char **argv) {
           stderr);
     return NEXUS_EXIT_USAGE;
   }
-  return run_disclaimed_supervisor_mode(argc, argv, command_index, &identity);
+  return run_disclaimed_supervisor_mode(argc, argv, command_index, &identity, false);
 }
 
 static bool has_suffix(const char *value, const char *suffix) {
@@ -2499,7 +2549,7 @@ static int run_disclaimed_local_smoke_supervisor(int argc, char **argv) {
           stderr);
     return NEXUS_EXIT_CODE_IDENTITY;
   }
-  return run_disclaimed_supervisor_mode(argc, argv, command_index, &identity);
+  return run_disclaimed_supervisor_mode(argc, argv, command_index, &identity, false);
 }
 
 static int run_disclaimed_packaged_smoke_supervisor(int argc, char **argv) {
@@ -2528,13 +2578,14 @@ static int run_disclaimed_packaged_smoke_supervisor(int argc, char **argv) {
           stderr);
     return NEXUS_EXIT_CODE_IDENTITY;
   }
-  return run_disclaimed_supervisor_mode(argc, argv, command_index, &identity);
+  return run_disclaimed_supervisor_mode(argc, argv, command_index, &identity, false);
 }
 
 static void print_usage(const char *program) {
   fprintf(stderr,
           "usage:\n"
           "  %s supervise -- <absolute-command> [args...]\n"
+          "  %s supervise-job -- <absolute-command> [args...]\n"
           "  %s supervise-authenticated --identifier <id> "
           "--team-id <team> --cdhash <40hex> -- "
           "<absolute-command> [args...]\n"
@@ -2545,7 +2596,7 @@ static void print_usage(const char *program) {
           " --cdhash <40hex> -- <packaged-helper> provider-probe\n"
           "  %s inventory [--responsible-unique-id <uint64>]\n"
           "  %s provider-probe\n",
-          program, program, program, program, program, program);
+          program, program, program, program, program, program, program);
 }
 
 int main(int argc, char **argv) {
@@ -2564,6 +2615,10 @@ int main(int argc, char **argv) {
   if (argc >= 2 && strcmp(argv[1], "supervise") == 0) {
     return bootstrap_disclaimed_supervisor(argc, argv);
   }
+  if (argc >= 2 && strcmp(argv[1], "supervise-job") == 0) {
+    if (argc < 4 || strcmp(argv[2], "--") != 0 || argv[3][0] != '/') return NEXUS_EXIT_USAGE;
+    return bootstrap_disclaimed_supervisor_mode(argc, argv, "__run-disclaimed-job", 3, true);
+  }
   if (argc >= 2 && strcmp(argv[1], "supervise-authenticated") == 0) {
     return bootstrap_authenticated_supervisor(argc, argv);
   }
@@ -2575,6 +2630,10 @@ int main(int argc, char **argv) {
   }
   if (argc >= 2 && strcmp(argv[1], "__run-disclaimed") == 0) {
     return run_disclaimed_supervisor(argc, argv);
+  }
+  if (argc >= 2 && strcmp(argv[1], "__run-disclaimed-job") == 0) {
+    if (argc < 4 || strcmp(argv[2], "--") != 0 || argv[3][0] != '/') return NEXUS_EXIT_USAGE;
+    return run_disclaimed_supervisor_mode(argc, argv, 3, NULL, true);
   }
   if (argc >= 2 && strcmp(argv[1], "__run-disclaimed-authenticated") == 0) {
     return run_disclaimed_authenticated_supervisor(argc, argv);
