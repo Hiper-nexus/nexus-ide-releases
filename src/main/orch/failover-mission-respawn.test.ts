@@ -67,6 +67,7 @@ import {
 } from '../../shared/failover-handoff';
 import { maskAccountLabel } from '../../shared/account-choice';
 import { detectLimit } from './limit-detector';
+import { createVisualTaskRequirement, visualTaskAtSpawn } from './visual-handoff-gate';
 
 const meta = {
   missionId: 'mission-1',
@@ -79,6 +80,14 @@ const meta = {
 };
 
 describe('planMainOwnedFailoverRespawn (failover de conta em pane de missão)', () => {
+  it('F-885 preserves the Main visual assignment through generic model-rotation prompts', () => {
+    const visualTask = createVisualTaskRequirement(1000, 'ui-assignment');
+    const plan = planMainOwnedFailoverRespawn({ adapterId: 'claude', meta: { ...meta, visualTask },
+      toModel: 'claude-sonnet-5-5', fromAccountLabel: 'fixture', reason: 'model rejected' });
+    expect(plan.action).toBe('respawn');
+    if (plan.action !== 'respawn') return;
+    expect(visualTaskAtSpawn(plan.options)).toEqual(visualTask);
+  });
   it('planeia respawn com a nova conta pinada e pacote de continuidade (F-775)', () => {
     const plan = planMainOwnedFailoverRespawn({
       adapterId: 'claude',

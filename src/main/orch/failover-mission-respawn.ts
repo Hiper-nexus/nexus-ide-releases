@@ -181,6 +181,7 @@ export function planMainOwnedFailoverRespawn(
       executionScope: meta.executionScope as PaneSpawnOptions['executionScope'],
       isolatedWriter: meta.isolatedWriter,
       authoritySeal: meta.authoritySeal,
+      visualTask: meta.visualTask,
       initialPrompt,
     },
   };
