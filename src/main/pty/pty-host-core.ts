@@ -116,7 +116,7 @@ export interface PtyHost {
   prepareNativeHeavyJobBase?(): Promise<import('./darwin-pty-supervisor').SupervisedPtyCommand | null>;
   probeCommandProcess?(sessionId: string, claimId: string): Promise<CommandProcessState>;
   stopCommandProcess?(sessionId: string, claimId: string): Promise<void>;
-  spawn(spec: PtySpawnSpec, handlers: PtySessionHandlers): PtyProcHandle;
+  spawn(spec: PtySpawnSpec, handlers: PtySessionHandlers, readiness?: PtySpawnReadiness): PtyProcHandle;
   /**
    * Pergunta ao host quais destas sessões têm handle vivo no seu mapa.
    * `null` = host não respondeu (mudo/timeout) — unverifiable, NUNCA morte.
@@ -131,6 +131,12 @@ export interface PtyHost {
    * nunca pressão inventada. Opcional: fakes de teste não precisam implementar.
    */
   probeFootprints?(): Promise<readonly SessionFootprint[] | null>;
+}
+/** Main-only preparation; never included in HostControlMsg/renderer IPC. */
+export interface PtySpawnReadiness {
+  wait: Promise<{ args?: readonly string[]; env?: Readonly<Record<string, string>> }>;
+  assertCurrent(): void;
+  cleanup(): Promise<void>;
 }
 
 /** Transport over the utilityProcess. `ensure()` lazily (re)forks the child. */
@@ -442,6 +448,8 @@ export function createPtyHostBridge(
   transport: HostTransport,
 ): PtyHostBridge {
   const handlers = new Map<string, PtySessionHandlers>();
+  const reservations = new Map<string, object>();
+  const pendingSpawns = new Map<object, { sessionId: string; cancel(): Promise<void> }>();
   const pendingTerminations = new Map<
     string,
     {
@@ -498,10 +506,33 @@ export function createPtyHostBridge(
     claimCommandProcess: async (sessionId, pid, proof) => (await commandRequest({ op: 'claim', pid, ...(proof ? { proof } : {}) }, sessionId))?.claimId ?? null,
     stopCommandProcess: async (sessionId, claimId) => { if ((await commandRequest({ op: 'stop', claimId }, sessionId))?.stopped !== true) throw new Error('native_heavy_authority_exit_unproved'); },
     probeCommandProcess: async (sessionId, claimId) => (await commandRequest({ op: 'probe', claimId }, sessionId))?.state ?? 'unknown',
-    spawn(spec, h) {
+    spawn(spec, h, readiness) {
       handlers.set(spec.sessionId, h);
+      const reservation = {}; reservations.set(spec.sessionId, reservation);
       transport.ensure();
-      transport.post({ type: 'spawn', ...spec });
+      const sealed = { ...spec, args: [...spec.args], env: { ...spec.env } };
+      let posted = false, cancelled = false, cleanup: Promise<void> | undefined;
+      const cancelBeforeBirth = () => {
+        if (posted) return Promise.resolve();
+        cancelled = true;
+        cleanup ??= readiness?.cleanup() ?? Promise.resolve();
+        return cleanup.then(() => { pendingSpawns.delete(reservation); if (reservations.get(spec.sessionId) === reservation) { reservations.delete(spec.sessionId); handlers.delete(spec.sessionId); h.onExit(1); } }, error => { cleanup = undefined; throw error; });
+      };
+      if (readiness) {
+        pendingSpawns.set(reservation, { sessionId: spec.sessionId, cancel: cancelBeforeBirth });
+        void readiness.wait.then(patch => {
+          if (cancelled || reservations.get(spec.sessionId) !== reservation || handlers.get(spec.sessionId) !== h) return cancelBeforeBirth();
+          readiness.assertCurrent();
+          if (patch.args) sealed.args = [...patch.args];
+          if (patch.env) {
+            const permitted = new Set(['NEXUS_HEAVY_CHANNEL_DIR', 'NEXUS_HEAVY_CHANNEL_KEY', 'NEXUS_HEAVY_CHANNEL_EPOCH', 'NEXUS_HEAVY_CHANNEL_PUBLIC_KEY']);
+            if (Object.keys(patch.env).some(key => !permitted.has(key))) throw new Error('invalid deferred spawn environment');
+            Object.assign(sealed.env, patch.env);
+          }
+          transport.post({ type: 'spawn', ...sealed }); posted = true; pendingSpawns.delete(reservation);
+          return undefined;
+        }).catch(() => cancelBeforeBirth()).catch(() => { /* retained unknown cleanup, terminate can retry */ });
+      } else { posted = true; transport.post({ type: 'spawn', ...sealed }); }
       return {
         acknowledgeOutput: (bytes) => transport.post({ type: 'analysis-credit', sessionId: spec.sessionId, bytes }),
         setOutputPaused: (paused) => transport.post({ type: 'output-flow', sessionId: spec.sessionId, paused }),
@@ -509,13 +540,15 @@ export function createPtyHostBridge(
           transport.post({ type: 'write', sessionId: spec.sessionId, data }),
         resize: (cols, rows) =>
           transport.post({ type: 'resize', sessionId: spec.sessionId, cols, rows }),
-        kill: (signal) =>
+        kill: (signal) => {
+          if (!posted) { void cancelBeforeBirth().catch(() => {}); return; }
           transport.post({
             type: 'kill',
             sessionId: spec.sessionId,
             ...(signal ? { signal } : {}),
-          }),
+          }); },
         terminate: ({ termTimeoutMs, killTimeoutMs }) => {
+          if (!posted) return cancelBeforeBirth().then(() => ({ ok: true, rootExited: true, descendantsExited: true }), error => ({ ok: false, rootExited: true, descendantsExited: false, error: error instanceof Error ? error.message : String(error) }));
           const requestId =
             `pty-termination-${Date.now().toString(36)}-${++terminationCounter}`;
           return new Promise<PtyProcessTreeTerminationProof>((resolve) => {
@@ -668,6 +701,7 @@ export function createPtyHostBridge(
       return;
     }
     handlers.delete(msg.sessionId);
+    reservations.delete(msg.sessionId);
     h.onExit(msg.exitCode, msg.signal);
   }
 
@@ -698,9 +732,11 @@ export function createPtyHostBridge(
           'O PTY host encerrou antes da prova física dos descendentes.',
       });
     }
-    const orphans = [...handlers.values()];
-    handlers.clear();
-    for (const h of orphans) h.onExit(-1, undefined);
+    for (const pending of pendingSpawns.values()) void pending.cancel().catch(() => {});
+    for (const [id, h] of handlers) {
+      const reservation = reservations.get(id); if (reservation && pendingSpawns.has(reservation)) continue;
+      handlers.delete(id); reservations.delete(id); h.onExit(-1, undefined);
+    }
   }
 
   return { host, dispatchEvent, handleHostDown, sessionCount: () => handlers.size };

@@ -1,5 +1,7 @@
 import { noteMimoMissionAuthority } from '../agent-hooks/mimo-mission-authority';
 import { stripInheritedHeavyCommandEnvironment, reassertHeavyCommandBashEnvironment } from '../orch/native-heavy-preload';
+import { prepareOpenCodeSessionArgs, isOpenCodeOwnedServerProved } from './opencode-session-process';
+import { getContext as getNativeHeavyGateContext, isCurrentGateContext } from '../orch/gate';
 import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
 import { recordSessionInputReceipt, forgetSessionInputReceipt, type SystemInputWriter } from '../orch/operator-input-receipts';
 import { configurePtyAnalysis, bindPtyAnalysisSession, feedPtyAnalysis, inputPtyAnalysis, statePtyAnalysis, exitPtyAnalysis, terminatePtyAnalysis } from './pty-analysis-runtime';
@@ -1508,6 +1510,8 @@ export function spawnSession(
 
 /** User overrides from the provider settings hub, applied at spawn time. */
 export interface AgentSpawnOverrides {
+  /** Main-only origin/reservation fence; never carried in env or Host IPC. */
+  assertDeferredSpawnCurrent?: () => void;
   binPath?: string | null;
   defaultModel?: string | null;
   extraArgs?: string[];
@@ -2805,6 +2809,8 @@ export function spawnAgentSession(
     }
   }
 
+  for (const key of Object.keys(spawnEnv)) if (key.startsWith('NEXUS_HEAVY_CHANNEL_')) delete spawnEnv[key];
+
   // npm's Windows launcher is a .cmd batch file. cmd.exe caps the command
   // line at 8K (a Codex pane's hook config alone can pass it), CUTS an
   // argument at its first newline — F-668: a worker's multi-line brief reached
@@ -2937,6 +2943,32 @@ export function spawnAgentSession(
   };
   let session!: Session;
   let proc: PtyProcHandle;
+  let deferredCancelled = false;
+  let nativeChannel: import('../orch/native-heavy-local-channel').NativeHeavyLocalChannel | undefined;
+  const assertDeferredCurrent = () => {
+    if (deferredCancelled || allSessionsTerminationInProgress || !session || sessions.get(sessionId) !== session || physicalTerminationFlights.has(sessionId)) throw new Error('native_deferred_spawn_reservation_changed');
+    overrides.assertDeferredSpawnCurrent?.();
+    const ctx = getNativeHeavyGateContext(spawnEnv.NEXUS_GATE_TOKEN ?? '');
+    if (!ctx || !isCurrentGateContext(ctx)) throw new Error('native_deferred_spawn_context_changed');
+  };
+  const ready = adapter.id === 'opencode' ? (async () => {
+    // Preserve the synchronous logical reservation; this microtask starts only
+    // after Main has recorded the new session and its owner.
+    await Promise.resolve(); assertDeferredCurrent();
+    const prepared = await prepareOpenCodeSessionArgs(bin, args, env.PATH); assertDeferredCurrent();
+    const nextArgs = prepared.includes('--standalone') && !args.includes('--standalone') ? [...spec.args, '--standalone'] : [...spec.args];
+    const nextEnv: Record<string, string> = {};
+    if (isOpenCodeOwnedServerProved(bin) && process.platform === 'darwin') {
+      const ctx = getNativeHeavyGateContext(spawnEnv.NEXUS_GATE_TOKEN ?? '');
+      if (!ctx) throw new Error('native_heavy_channel_context_invalid');
+      const { createNativeHeavyLocalChannel } = await import('../orch/native-heavy-local-channel'); assertDeferredCurrent();
+      nativeChannel = await createNativeHeavyLocalChannel(ctx, spawnEnv.TMPDIR ?? os.tmpdir()); assertDeferredCurrent();
+      Object.assign(nextEnv, nativeChannel.env);
+    }
+    assertDeferredCurrent(); return { args: nextArgs, env: nextEnv };
+  })() : undefined;
+  const readiness = ready ? { wait: ready, assertCurrent: assertDeferredCurrent, cleanup: async () => { deferredCancelled = true; await ready.catch(() => {}); await nativeChannel?.dispose(); } } : undefined;
+  void ready?.catch(() => {});
   try {
     const host = requireHost();
     const handlers = sessionHandlers(sessionId, () => session);
@@ -2944,7 +2976,7 @@ export function spawnAgentSession(
       revalidateTrustedNativeConfinementLaunch(trustedNativeLaunch);
     }
     assertLicenseAccess();
-    proc = host.spawn(spec, handlers);
+    proc = host.spawn(spec, handlers, readiness);
     licenseChildSpawned = true;
   } catch (err) {
     // The host itself is unavailable (never initialized / failed to fork), so

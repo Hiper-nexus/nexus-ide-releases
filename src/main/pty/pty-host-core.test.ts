@@ -36,6 +36,58 @@ const spec: PtySpawnSpec = {
   env: { PATH: '/usr/bin' },
 };
 
+describe('Main-only deferred PTY readiness', () => {
+  const handlers = () => ({ onData: vi.fn(), onExit: vi.fn() });
+  const flush = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
+  it('posts only after ready/fresh fence and seals original fields from later mutation', async () => {
+    const transport = fakeTransport(), bridge = createPtyHostBridge(transport.transport), h = handlers();
+    let finish!: (patch: { args: string[] }) => void; const wait = new Promise<{ args: string[] }>(resolve => finish = resolve), assertCurrent = vi.fn();
+    const input = { ...spec, args: ['--model', 'finite'], env: { PATH: '/finite' } };
+    bridge.host.spawn(input, h, { wait, assertCurrent, cleanup: async () => {} }); expect(transport.posted).toEqual([]);
+    input.env.PATH = '/changed'; finish({ args: ['--model', 'finite', '--standalone'] }); await flush();
+    expect(assertCurrent).toHaveBeenCalledOnce(); expect(transport.posted[0]).toMatchObject({ type: 'spawn', env: { PATH: '/finite' }, args: ['--model', 'finite', '--standalone'] });
+    expect(transport.posted[0]).not.toHaveProperty('wait');
+  });
+  it('termination during initialization prevents late birth and awaits the owned helper cleanup', async () => {
+    const transport = fakeTransport(), bridge = createPtyHostBridge(transport.transport), h = handlers();
+    let finishReady!: (value: {}) => void, finishCleanup!: () => void;
+    const wait = new Promise<{}>(resolve => finishReady = resolve), cleanup = vi.fn(() => new Promise<void>(resolve => finishCleanup = resolve));
+    const handle = bridge.host.spawn(spec, h, { wait, assertCurrent: vi.fn(), cleanup });
+    let settled = false; const stopping = handle.terminate({ termTimeoutMs: 1, killTimeoutMs: 1 }).then(value => { settled = true; return value; });
+    finishReady({}); await flush(); expect(transport.posted).toEqual([]); expect(settled).toBe(false); expect(cleanup).toHaveBeenCalledOnce();
+    finishCleanup(); expect(await stopping).toMatchObject({ ok: true, rootExited: true, descendantsExited: true }); expect(h.onExit).toHaveBeenCalledOnce();
+  });
+  it('a replaced reservation cannot post late even with the same session and handler object', async () => {
+    const transport = fakeTransport(), bridge = createPtyHostBridge(transport.transport), h = handlers();
+    let finish!: (value: {}) => void; const wait = new Promise<{}>(resolve => finish = resolve), cleanup = vi.fn(async () => {});
+    bridge.host.spawn(spec, h, { wait, assertCurrent: vi.fn(), cleanup }); bridge.host.spawn(spec, h);
+    finish({}); await flush(); expect(transport.posted.filter(message => message.type === 'spawn')).toHaveLength(1); expect(cleanup).toHaveBeenCalledOnce(); expect(h.onExit).not.toHaveBeenCalled();
+  });
+  it('host loss or a changed Main origin fence denies birth after readiness', async () => {
+    for (const changedOrigin of [true, false]) {
+      const transport = fakeTransport(), bridge = createPtyHostBridge(transport.transport), h = handlers();
+      let finish!: (value: {}) => void; const wait = new Promise<{}>(resolve => finish = resolve), cleanup = vi.fn(async () => {});
+      bridge.host.spawn(spec, h, { wait, cleanup, assertCurrent: () => { if (changedOrigin) throw new Error('source changed'); } });
+      if (!changedOrigin) bridge.handleHostDown(); finish({}); await flush();
+      expect(transport.posted).toEqual([]); expect(cleanup).toHaveBeenCalledOnce(); expect(h.onExit).toHaveBeenCalledOnce();
+    }
+  });
+  it('host loss retains initializing resources until owned cleanup really settles', async () => {
+    const transport = fakeTransport(), bridge = createPtyHostBridge(transport.transport), h = handlers();
+    let finish!: () => void; const cleanup = vi.fn(() => new Promise<void>(resolve => finish = resolve));
+    const handle = bridge.host.spawn(spec, h, { wait: new Promise(() => {}), cleanup, assertCurrent: vi.fn() });
+    bridge.handleHostDown(); await flush(); expect(h.onExit).not.toHaveBeenCalled(); expect(bridge.sessionCount()).toBe(1);
+    let ended = false; const stopping = handle.terminate({ termTimeoutMs: 1, killTimeoutMs: 1 }).then(value => { ended = true; return value; }); await flush(); expect(ended).toBe(false);
+    finish(); expect(await stopping).toMatchObject({ ok: true }); expect(h.onExit).toHaveBeenCalledOnce(); expect(bridge.sessionCount()).toBe(0);
+  });
+  it('cleanup failure remains unknown and retry cannot report success before cleanup', async () => {
+    const transport = fakeTransport(), bridge = createPtyHostBridge(transport.transport), h = handlers(); let attempts = 0;
+    const handle = bridge.host.spawn(spec, h, { wait: new Promise(() => {}), assertCurrent: vi.fn(), cleanup: async () => { if (++attempts === 1) throw new Error('foreign pathname'); } });
+    expect(await handle.terminate({ termTimeoutMs: 1, killTimeoutMs: 1 })).toMatchObject({ ok: false, descendantsExited: false }); expect(h.onExit).not.toHaveBeenCalled(); expect(bridge.sessionCount()).toBe(1);
+    expect(await handle.terminate({ termTimeoutMs: 1, killTimeoutMs: 1 })).toMatchObject({ ok: true }); expect(h.onExit).toHaveBeenCalledOnce(); expect(attempts).toBe(2);
+  });
+});
+
 describe('escalateDarwinSupervisorTermination', () => {
   const realDelay = (ms: number) =>
     new Promise<void>((resolve) => {
