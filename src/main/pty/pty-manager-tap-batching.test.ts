@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WebContents } from 'electron';
 import { PTY_CHANNELS } from '../../shared/channels';
-import { setTraceDirectory } from '../observability/main-trace';
+import { setTraceDirectory, flushMainTrace } from '../observability/main-trace';
 import type { PtyProcHandle, PtySessionHandlers } from './pty-host-core';
 import {
   __resetPtyShutdownLifecycleForTests,
@@ -258,6 +258,7 @@ describe('pty-manager: taps de dados em lote (F-764 C.1)', () => {
       expect(analysisChars).toBeLessThan(
         PTY_TAP_BUDGET.floodEnterCharsPerSec + 12 * PTY_TAP_BUDGET.floodTailChars,
       );
+      await flushMainTrace();
       const events = fs
         .readFileSync(path.join(dir, 'logs', 'main.trace.ndjson'), 'utf8')
         .trim()
@@ -291,6 +292,7 @@ describe('pty-manager: taps de dados em lote (F-764 C.1)', () => {
         }
       }, 'tap-lento-de-teste'));
       shell.handlers.onData('x');
+      await flushMainTrace();
       const lines = fs
         .readFileSync(path.join(dir, 'logs', 'main.trace.ndjson'), 'utf8')
         .trim()

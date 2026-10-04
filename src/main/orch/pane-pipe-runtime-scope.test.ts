@@ -52,6 +52,34 @@ vi.mock('../pty/pty-manager', () => ({
   }),
 }));
 
+// Preserve the production line reducer; only replace the Worker transport.
+// Pane-pipe routing/authority stays real and never receives legacy raw taps.
+vi.mock('../pty/pty-analysis-runtime', async () => {
+  const { PtyAnalysisCore } = await import('../pty/pty-analysis-core');
+  const sessions = new Map<string, { core: InstanceType<typeof PtyAnalysisCore>; seq: number }>();
+  let publish: (id: string, value: unknown) => void = () => {};
+  const feed = (id: string, body: object) => {
+    let entry = sessions.get(id);
+    if (!entry) {
+      const core = new PtyAnalysisCore([], result => {
+        for (const event of result.events) if (event.consumer === 'pipe') publish(result.sessionId, event.value);
+      });
+      entry = { core, seq: 0 }; sessions.set(id, entry);
+      core.process({ sessionId: id, generation: 1, workerEpoch: 1, eventSeq: ++entry.seq, observedAt: Date.now(), kind: 'bind', binding: {} });
+      core.process({ sessionId: id, generation: 1, workerEpoch: 1, eventSeq: ++entry.seq, observedAt: Date.now(), kind: 'arm', consumer: 'pipe', registration: 1 });
+    }
+    entry.core.process({ sessionId: id, generation: 1, workerEpoch: 1, eventSeq: ++entry.seq, observedAt: Date.now(), ...body } as Parameters<typeof entry.core.process>[0]);
+  };
+  return {
+    subscribePtyAnalysis: (_consumer: string, callback: typeof publish) => {
+      publish = callback;
+      const tap = (id: string, data: string) => feed(id, { kind: 'data', data }); ptyMocks.dataTaps.push(tap);
+      return () => { const index = ptyMocks.dataTaps.indexOf(tap); if (index >= 0) ptyMocks.dataTaps.splice(index, 1); for (const entry of sessions.values()) entry.core.close(); sessions.clear(); };
+    },
+    flushPtyAnalysis: async (id: string) => { feed(id, { kind: 'flush' }); return true; },
+  };
+});
+
 vi.mock('../persistence/renderer-workspace-scope', () => ({
   getRendererWorkspaceScope: vi.fn(
     (owner: { id: number }) => scopeMocks.byOwner.get(owner.id) ?? null,

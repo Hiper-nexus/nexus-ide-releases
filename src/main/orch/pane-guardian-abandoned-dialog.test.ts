@@ -66,39 +66,39 @@ beforeEach(() => {
     applyCanonicalHookEvent({ sessionId, event: permission });
   }
 });
-afterEach(() => {
-  shutdownNonWorkerAutoClose();
+afterEach(async () => {
+  await shutdownNonWorkerAutoClose();
   vi.useRealTimers();
 });
 
 describe('pane guardian — diálogo abandonado', () => {
-  it('sob pressão de memória não estaciona pane humano nem worker de missão parados num diálogo há 11 min', () => {
+  it('sob pressão de memória não estaciona pane humano nem worker de missão parados num diálogo há 11 min', async () => {
     const parked: string[] = [];
     const guardian = deps({ pressure: true, delivered: new Set(), parked });
     initNonWorkerAutoClose(guardian);
-    sweepIdlePanes(guardian);
-    vi.advanceTimersByTime(11 * 60_000);
-    sweepIdlePanes(guardian);
-    sweepIdlePanes(guardian);
-    sweepIdlePanes(guardian);
+    await sweepIdlePanes(guardian);
+    await vi.advanceTimersByTimeAsync(11 * 60_000);
+    await sweepIdlePanes(guardian);
+    await sweepIdlePanes(guardian);
+    await sweepIdlePanes(guardian);
 
     expect(parked).toEqual([]);
   });
 
-  it('pelo TTL, fecha só o helper que já entregou com sucesso', () => {
+  it('pelo TTL, fecha só o helper que já entregou com sucesso', async () => {
     const parked: string[] = [];
     const delivered = new Set<string>();
     const guardian = deps({ pressure: false, delivered, parked });
     initNonWorkerAutoClose(guardian);
-    sweepIdlePanes(guardian);
-    vi.advanceTimersByTime(31 * 60_000);
-    sweepIdlePanes(guardian);
+    await sweepIdlePanes(guardian);
+    await vi.advanceTimersByTimeAsync(31 * 60_000);
+    await sweepIdlePanes(guardian);
     expect(parked).toEqual([]);
 
     delivered.add('helper');
     delivered.add('humano');
     delivered.add('missao');
-    sweepIdlePanes(guardian);
+    await sweepIdlePanes(guardian);
     expect(parked).toEqual(['pane-helper']);
   });
 });

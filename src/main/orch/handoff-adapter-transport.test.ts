@@ -6,6 +6,9 @@ import { adapterSchema } from "../../shared/adapter-types";
 import { BUILTIN_ADAPTERS } from "../../adapters/builtin";
 import { canUseNexusMcp } from "./cli-mcp-inject";
 import { handoffTransportForAdapter } from "./handoff-adapter-transport";
+import { PtyAnalysisClient } from '../pty/pty-analysis-client';
+import { PtyAnalysisCore } from '../pty/pty-analysis-core';
+import type { AnalysisInput } from '../pty/pty-analysis-protocol';
 
 const USER_ADAPTER_DIR = path.join(
   os.homedir(),
@@ -127,18 +130,30 @@ describe("handoffTransportForAdapter catalog", () => {
     }
   });
 
-  it("Main idle/exit scrape is wired for every CLI, not only MCP adapters", () => {
-    const mcpServer = fs.readFileSync(
-      new URL("./mcp-server.ts", import.meta.url),
-      "utf8",
-    );
-    const enforcement = fs.readFileSync(
-      new URL("./worker-handoff-enforcement.ts", import.meta.url),
-      "utf8",
-    );
-    expect(mcpServer).toContain("promoteObservedPtyHandoffs");
-    expect(mcpServer).toContain('state === "idle"');
-    expect(enforcement).toContain("promoteObservedPtyHandoffs");
-    expect(enforcement).toContain("promoteObserved");
+  it.each(builtins)('keeps typed Worker handoff evidence through idle and EOF for $id, including non-MCP CLIs', async adapter => {
+    const received: Array<{ id: string; payload: unknown }> = [];
+    const queued: AnalysisInput[] = []; let running = false;
+    const core = new PtyAnalysisCore([], result => { client.accept(result); });
+    const client = new PtyAnalysisClient({
+      post: record => {
+        queued.push(record); if (running) return; running = true;
+        try { while (queued.length) core.process(queued.shift()!); }
+        finally { running = false; }
+      }, flow: () => {}, now: Date.now,
+    });
+    client.subscribe('handoff', (id, payload) => received.push({ id, payload }));
+    const id = `session-${adapter.id}`;
+    const payload = { status: 'success', summary: 'Implementação concluída e validada com evidência real.', artifacts: ['source.ts'] };
+    try {
+      client.bind(id, { adapterId: adapter.id, paneId: `pane-${adapter.id}` });
+      client.data(id, '\x1b[36m### NEXUS_HAN');
+      expect(received).toEqual([]);
+      client.data(id, `DOFF v1\x1b[0m\n${JSON.stringify(payload)}`);
+      client.state(id, 'idle'); expect(await client.barrier(id)).toBe(true);
+      expect(received).toEqual([{ id, payload }]);
+      client.exit(id); expect(await client.barrier(id)).toBe(true);
+      expect(client.status(id)).toBe('sealed');
+      expect(client.evidence(id, 'handoff')).toEqual([payload]);
+    } finally { core.close(); }
   });
 });

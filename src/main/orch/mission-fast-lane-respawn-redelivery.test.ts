@@ -45,6 +45,7 @@ const harness = vi.hoisted(() => ({
   trace: vi.fn(),
   /** F-721: roda dentro do spawn, antes do pane novo existir. */
   onSpawn: undefined as undefined | (() => void),
+  plannedTasks: [] as Array<{ id: string; title: string; plannerId: string; status: 'pending' }>,
 }));
 
 vi.mock('../pty/pty-manager', () => ({
@@ -68,15 +69,31 @@ vi.mock('../observability/main-trace', () => ({ trace: harness.trace }));
 
 // Fail-closed do bootstrap (0.60): o Maestro precisa de adapter cli-pty com
 // rota Nexus MCP; o registry real não carrega builtins no vitest.
-vi.mock('../adapters/adapter-registry', () => ({
+vi.mock('../adapters/adapter-registry', async importOriginal => ({
+  ...await importOriginal<typeof import('../adapters/adapter-registry')>(),
   getAdapter: (id: string) => ({
     id,
     label: id,
     kind: 'cli-pty',
     bin: 'claude',
+    auth: { method: 'api-key' },
     quirks: { nexusMcp: 'flag' },
     spawn: {},
   }),
+}));
+
+// This fixture owns respawn/retry/mortality, not installed CLI credentials.
+// First-wave warming must never probe the operator's Keychain/Kimi process.
+vi.mock('./squad-runtime-inventory', () => ({ warmSquadRuntimeSubscriptionAuth: async () => undefined }));
+vi.mock('../adapters/subscription-auth', async importOriginal => ({
+  ...await importOriginal<typeof import('../adapters/subscription-auth')>(),
+  detectSubscriptionAuthReadiness: () => 'missing',
+}));
+vi.mock('../persistence/provider-config-store', async importOriginal => ({
+  ...await importOriginal<typeof import('../persistence/provider-config-store')>(),
+  listProviderSettings: () => [],
+  providerAuthStrategy: () => 'api-key',
+  hasRuntimeKey: () => false,
 }));
 
 // Composição de contexto REAL (withProjectContextBlocks): só o transporte é dublê.
@@ -166,9 +183,14 @@ vi.mock('./project-domain-store-registry', async (importOriginal) => ({
       moveOrchestratorPane: harness.movePane,
     },
     tasks: {
-      hasPlan: () => false,
-      list: () => [],
-      listPlannedTasks: () => [],
+      hasPlan: () => harness.plannedTasks.length > 0,
+      list: () => [...harness.plannedTasks],
+      listPlannedTasks: () => harness.plannedTasks.map(task => ({ taskId: task.id, task })),
+      createPlanAtomically: (input: { rows: readonly { plannerId: string; title: string }[] }) => {
+        const rows = input.rows.map(row => ({ ...row, id: `fixture-task-${row.plannerId}`, status: 'pending' as const }));
+        harness.plannedTasks.splice(0, harness.plannedTasks.length, ...rows);
+        return [...rows];
+      },
     },
     taskDispatches: { list: () => [] },
     handoffs: {
@@ -239,23 +261,24 @@ vi.mock('./idle-delivery', () => ({
 const emitMissionEvent = vi.hoisted(() => vi.fn());
 vi.mock('./mission-event-emit', () => ({ emitMissionEvent }));
 
-// readCheckoutHead executa git de verdade; sob fake timers o await do child
-// process pendura o tick do watcher. HEAD estável e determinístico aqui.
-vi.mock('node:child_process', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('node:child_process')>();
-  const execFile = ((cmd: string, args: unknown, ...rest: unknown[]) => {
-    // Só o HEAD do watcher é dublê; o resto do git (extrator do modelo de
-    // negócio no teste P2-8) roda de verdade.
-    if (!Array.isArray(args) || args[0] !== 'rev-parse' || args[1] !== 'HEAD') {
-      return (actual.execFile as (...all: unknown[]) => unknown)(cmd, args, ...rest);
+// The fake /workspace has no disk delivery. C.5 now transports Git through
+// AsyncProcessGitRunner (with safe argv prefixes), not the old execFile args.
+// Real temporary repos in the tab/business-model tests still use real Git.
+vi.mock('../runtime/git-command', async importOriginal => {
+  const actual = await importOriginal<typeof import('../runtime/git-command')>();
+  return { ...actual, AsyncProcessGitRunner: class extends actual.AsyncProcessGitRunner {
+    override run(cwd: string, args: readonly string[], options?: import('../runtime/git-command').GitRunOptions) {
+      if (cwd === '/workspace') return Promise.resolve({ status: 0, stderr: '',
+        stdout: args[0] === 'rev-parse' ? (args[1] === '--is-inside-work-tree' ? 'true\n' : `${'a'.repeat(40)}\n`) : '',
+      });
+      return super.run(cwd, args, options);
     }
-    (rest[0] as (err: unknown, out: { stdout: string }) => void)(null, {
-      stdout: 'sha-teste\n',
-    });
-    return undefined;
-  }) as unknown as typeof actual.execFile;
-  return { ...actual, execFile };
+  } };
+});
+vi.mock('./worker-file-walk', async importOriginal => {
+  const actual = await importOriginal<typeof import('./worker-file-walk')>();
+  return { ...actual, listChangedMtimeFiles: (...args: Parameters<typeof actual.listChangedMtimeFiles>) =>
+    args[0] === '/workspace' ? Promise.resolve([]) : actual.listChangedMtimeFiles(...args) };
 });
 
 type FastLaneModule = typeof import('./mission-fast-lane');
@@ -278,6 +301,7 @@ beforeEach(async () => {
   harness.terminate.mockClear();
   harness.trace.mockClear();
   harness.onSpawn = undefined;
+  harness.plannedTasks.length = 0;
   harness.movePane.mockReset().mockImplementation((_missionId, specId, paneId) => {
     const spec = harness.missionPaneSpecs.find((row) => row.id === specId);
     if (spec) spec.paneId = paneId;
