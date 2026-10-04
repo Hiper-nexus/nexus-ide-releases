@@ -86,6 +86,34 @@ describe('registerBillingIpc', () => {
     expect(electronMock.openExternal).not.toHaveBeenCalled();
   });
 
+  it('mantém o corpo mensal sem cupom e encaminha período ou código', async () => {
+    const handler = electronMock.handlers.get(BILLING_CHANNELS.checkout);
+    expect(await handler?.(null, 'pro')).toEqual({ ok: true });
+    expect(billingDeps.apiFetch).toHaveBeenLastCalledWith('/v1/billing/checkout', {
+      method: 'POST',
+      body: { plan: 'pro' },
+    });
+
+    expect(await handler?.(null, { plan: 'pro', interval: 'quarter' })).toEqual({ ok: true });
+    expect(billingDeps.apiFetch).toHaveBeenLastCalledWith('/v1/billing/checkout', {
+      method: 'POST',
+      body: { plan: 'pro', interval: 'quarter' },
+    });
+
+    expect(await handler?.(null, { plan: 'pro', interval: 'year', coupon: ' nexus 10 ' })).toEqual({ ok: true });
+    expect(billingDeps.apiFetch).toHaveBeenLastCalledWith('/v1/billing/checkout', {
+      method: 'POST',
+      body: { plan: 'pro', interval: 'year', coupon: 'NEXUS10' },
+    });
+  });
+
+  it('recusa cupom malformado ou período desconhecido sem chamar a API', async () => {
+    const handler = electronMock.handlers.get(BILLING_CHANNELS.checkout);
+    expect(await handler?.(null, { plan: 'pro', coupon: '!!' })).toEqual({ ok: false, error: 'Cupom inválido.' });
+    expect(await handler?.(null, { plan: 'pro', interval: 'week' })).toEqual({ ok: false, error: 'plano inválido' });
+    expect(billingDeps.apiFetch).not.toHaveBeenCalled();
+  });
+
   it('recusa o plano Team legado no checkout', async () => {
     const handler = electronMock.handlers.get(BILLING_CHANNELS.checkout);
 

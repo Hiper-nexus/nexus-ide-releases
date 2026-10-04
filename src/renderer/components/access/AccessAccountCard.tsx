@@ -4,6 +4,7 @@ import { waitingProviderOf, type NexusLogin } from '../settings/use-nexus-login'
 import type { AccessPrimaryAction } from './access-view';
 import { GitHubMark, GoogleMark } from './BrandMarks';
 import { LicenseCodeForm } from './LicenseCodeForm';
+import { CheckoutChoices, type CheckoutChoice } from '../billing/CheckoutChoices';
 
 export interface AccessAccountCardProps {
   email: string | null;
@@ -20,6 +21,8 @@ export interface AccessAccountCardProps {
   retrying: boolean;
   actionError: string | null;
   onCheckout: () => void;
+  checkoutChoice: CheckoutChoice;
+  onCheckoutChoice: (next: CheckoutChoice) => void;
   onPortal: () => void;
   onRetry: () => void;
   /** "Tenho um código": o resgate exige conta logada (canRedeem). */
@@ -155,6 +158,12 @@ export function AccessAccountCard(props: AccessAccountCardProps) {
           </div>
         </dl>
         <div className="access-plans__actions">
+          <CheckoutChoices
+            group="access-interval"
+            value={props.checkoutChoice}
+            onChange={props.onCheckoutChoice}
+            disabled={props.checkoutBusy}
+          />
           <button
             type="button"
             className={`access-btn${primary === 'checkout' ? ' access-btn--primary' : ''}`}

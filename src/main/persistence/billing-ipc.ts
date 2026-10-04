@@ -3,6 +3,7 @@ import { logoutAuthSession } from '../auth-client';
 import { ipcMain, shell } from 'electron';
 import {
   BILLING_CHANNELS,
+  type CheckoutInterval,
   type CheckoutRequest,
   type LicenseState,
 } from '../../shared/billing-types';
@@ -63,12 +64,31 @@ const REDEEM_CODE_MAX = 80;
 
 export function currentPlan(): string { return getAccessState().plan; }
 
-function normalizeCheckoutRequest(raw: unknown): CheckoutRequest | null {
+const CHECKOUT_INTERVALS = new Set<CheckoutInterval>(['month', 'quarter', 'semiannual', 'year']);
+const CHECKOUT_COUPON = /^[A-Z0-9][A-Z0-9-]{2,31}$/;
+
+function normalizeCheckoutRequest(raw: unknown): { ok: true; body: CheckoutRequest } | { ok: false; error: string } {
   const req = (typeof raw === 'object' && raw !== null ? raw : { plan: raw }) as {
     plan?: unknown;
+    interval?: unknown;
+    coupon?: unknown;
   };
-  if (req.plan === 'pro') return { plan: 'pro' };
-  return null;
+  if (req.plan !== 'pro') return { ok: false, error: 'plano inválido' };
+  const interval = req.interval === undefined ? 'month' : req.interval;
+  if (typeof interval !== 'string' || !CHECKOUT_INTERVALS.has(interval as CheckoutInterval)) {
+    return { ok: false, error: 'plano inválido' };
+  }
+  let coupon = '';
+  if (req.coupon !== undefined && req.coupon !== null && req.coupon !== '') {
+    if (typeof req.coupon !== 'string') return { ok: false, error: 'Cupom inválido.' };
+    coupon = req.coupon.trim().replace(/\s+/g, '').toUpperCase();
+    if (coupon !== '' && !CHECKOUT_COUPON.test(coupon)) return { ok: false, error: 'Cupom inválido.' };
+  }
+  if (interval === 'month' && coupon === '') return { ok: true, body: { plan: 'pro' } };
+  const body: CheckoutRequest = { plan: 'pro' };
+  if (interval !== 'month') body.interval = interval as CheckoutInterval;
+  if (coupon !== '') body.coupon = coupon;
+  return { ok: true, body };
 }
 
 function defaultBillingIpcDeps(): BillingIpcDeps {
@@ -98,11 +118,11 @@ export function registerBillingIpc(overrides?: Partial<BillingIpcDeps>): void {
 
   ipcMain.handle(BILLING_CHANNELS.checkout, async (_e, raw: unknown) => {
     const req = normalizeCheckoutRequest(raw);
-    if (!req) return { ok: false, error: 'plano inválido' };
+    if (!req.ok) return { ok: false, error: req.error };
     const deps = resolveBillingIpcDeps(overrides);
     const result = await deps.apiFetch('/v1/billing/checkout', {
       method: 'POST',
-      body: req,
+      body: req.body,
     });
     const body = result.json as { ok?: boolean; data?: { url?: string }; error?: string } | null;
     if (result.status !== 200 || !body?.data?.url) {

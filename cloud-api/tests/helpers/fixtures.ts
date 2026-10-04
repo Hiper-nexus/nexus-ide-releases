@@ -7,6 +7,9 @@ export const SITE = 'https://nexuside.app';
 export const API = 'https://api.nexuside.app';
 export const ADMIN_EMAIL = 'admin@example.test';
 export const PRICE_PRO = 'price_pro_fixture';
+export const PRICE_QUARTER = 'price_quarter_fixture';
+export const PRICE_SEMI = 'price_semi_fixture';
+export const PRICE_YEAR = 'price_year_fixture';
 const keys = generateKeyPairSync('ed25519');
 export const LICENSE_PUBLIC_KEY = keys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -75,24 +78,55 @@ export function subscription(accountId: string, values: Partial<StripeSubscripti
   };
 }
 
+function catalogPrice(id: string): StripePrice {
+  const known: Record<string, { amount: number; interval: string; count: number }> = {
+    [PRICE_PRO]: { amount: 5999, interval: 'month', count: 1 },
+    [PRICE_QUARTER]: { amount: 17997, interval: 'month', count: 3 },
+    [PRICE_SEMI]: { amount: 35994, interval: 'month', count: 6 },
+    [PRICE_YEAR]: { amount: 71988, interval: 'year', count: 1 },
+  };
+  const spec = known[id] ?? { amount: 5999, interval: 'month', count: 1 };
+  return { id, active: true, currency: 'brl', unit_amount: spec.amount, type: 'recurring', recurring: { interval: spec.interval, interval_count: spec.count } };
+}
+
 export interface FakeStripe {
   readonly stripe: StripeLike;
-  readonly calls: { customers: unknown[][]; checkouts: unknown[][]; portals: unknown[][]; retrieved: string[]; prices: string[] };
+  readonly calls: { customers: unknown[][]; checkouts: unknown[][]; portals: unknown[][]; retrieved: string[]; prices: string[]; coupons: unknown[][]; expires: string[] };
   /** One-shot answers for the next subscription reads, used to interleave concurrent deliveries. */
   readonly retrievals: Array<() => Promise<StripeSubscription>>;
   subscription: StripeSubscription | Error | null;
   event: StripeEvent | Error | null;
   price: StripePrice | Error | null;
+  checkoutError: unknown;
+  couponError: unknown;
+  expireError: unknown;
 }
 
 /** Records calls and answers what the test programmed; never reaches the network. */
 export function fakeStripe(): FakeStripe {
   const fake: FakeStripe = {
-    calls: { customers: [], checkouts: [], portals: [], retrieved: [], prices: [] },
-    retrievals: [], subscription: null, event: null, price: null,
+    calls: { customers: [], checkouts: [], portals: [], retrieved: [], prices: [], coupons: [], expires: [] },
+    retrievals: [], subscription: null, event: null, price: null, checkoutError: null, couponError: null, expireError: null,
     stripe: {
       customers: { create: async (...args) => { fake.calls.customers.push(args); return { id: 'cus_created' }; } },
-      checkout: { sessions: { create: async (...args) => { fake.calls.checkouts.push(args); return { url: 'https://checkout.stripe.com/c/pay/fixture' }; } } },
+      checkout: { sessions: {
+        create: async (...args) => {
+          fake.calls.checkouts.push(args);
+          if (fake.checkoutError) throw fake.checkoutError;
+          return { id: `cs_${fake.calls.checkouts.length}`, url: 'https://checkout.stripe.com/c/pay/fixture' };
+        },
+        expire: async (id) => {
+          fake.calls.expires.push(id);
+          if (fake.expireError) throw fake.expireError;
+          return { id };
+        },
+      } },
+      coupons: { create: async (...args) => {
+        fake.calls.coupons.push(args);
+        if (fake.couponError) throw fake.couponError;
+        const params = args[0] as { id?: string };
+        return { id: params.id ?? 'coupon_created' };
+      } },
       billingPortal: { sessions: { create: async (...args) => { fake.calls.portals.push(args); return { url: 'https://billing.stripe.com/p/session/fixture' }; } } },
       subscriptions: {
         retrieve: async (id) => {
@@ -108,7 +142,7 @@ export function fakeStripe(): FakeStripe {
         retrieve: async (id) => {
           fake.calls.prices.push(id);
           if (fake.price instanceof Error) throw fake.price;
-          return fake.price ?? { id, active: true, currency: 'brl', unit_amount: 5999, type: 'recurring', recurring: { interval: 'month', interval_count: 1 } };
+          return fake.price ?? catalogPrice(id);
         },
       },
       webhooks: {

@@ -92,3 +92,13 @@ test('plan copy without server confirmation keeps the values marked as pending',
   assert.equal(copy.trialDays, 'Dias do teste indisponíveis por enquanto.');
   assert.equal(copy.trialAgents, 'Limite de agentes indisponível por enquanto.');
 });
+
+test('preserva períodos válidos e ignora uma lista malformada sem derrubar o mensal', () => {
+  const intervals = [{ id: 'quarter', months: 3, amount: 17997, available: false }];
+  const kept = validateStatus({ ...valid, billing: { ...valid.billing, intervals } });
+  assert.deepEqual(kept.billing.intervals, intervals);
+  assert.equal(describeStatus({ ...valid, billing: { ...valid.billing, intervals } }).price, 'R$\u00a059,99 / mês');
+  const dropped = validateStatus({ ...valid, billing: { ...valid.billing, intervals: [{ id: 'week', months: 1, amount: 1, available: true }] } });
+  assert.equal(dropped.billing.intervals, undefined);
+  assert.equal(dropped.billing.amount, 5999);
+});

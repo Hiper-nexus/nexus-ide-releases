@@ -15,6 +15,7 @@ import { sendDueNotices } from './email/dispatch.js';
 import { bugReportRoutes } from './bugs/routes.js';
 import { createBugAdminRoutes } from './bugs/admin-routes.js';
 import { purgeExpiredDiagnostics } from './bugs/store.js';
+import { publicBillingIntervals } from './billing-catalog.js';
 import { PRO_MONTHLY_PRICE } from './stripe.js';
 
 const WEBHOOK_PATH = '/v1/billing/webhook';
@@ -77,7 +78,7 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
     return c.json({ ok: true, data: {
       ready: config.MIGRATION_READY === 'true',
       auth: { google: authConfigured(config, 'google'), github: authConfigured(config, 'github') },
-      billing: { available: billingConfigured(config), amount: PRO_MONTHLY_PRICE.unitAmount, currency: PRO_MONTHLY_PRICE.currency, interval: PRO_MONTHLY_PRICE.interval },
+      billing: { available: billingConfigured(config), amount: PRO_MONTHLY_PRICE.unitAmount, currency: PRO_MONTHLY_PRICE.currency, interval: PRO_MONTHLY_PRICE.interval, intervals: publicBillingIntervals(config) },
       trial: { days: config.TRIAL_DAYS, maxAgents: config.TRIAL_MAX_AGENTS, cloudSync: config.TRIAL_CLOUD_SYNC === 'true' },
     } });
   });

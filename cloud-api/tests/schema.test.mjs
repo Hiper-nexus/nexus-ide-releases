@@ -19,6 +19,7 @@ function database(t) {
   db.exec(readFileSync(new URL('../migrations/0005_license_codes.sql', import.meta.url), 'utf8'));
   db.exec(readFileSync(new URL('../migrations/0006_account_notices.sql', import.meta.url), 'utf8'));
   db.exec(readFileSync(new URL('../migrations/0007_bug_reports.sql', import.meta.url), 'utf8'));
+  db.exec(readFileSync(new URL('../migrations/0008_billing_intervals_coupons.sql', import.meta.url), 'utf8'));
   return db;
 }
 
@@ -43,7 +44,7 @@ function project(db, accountId, projectId = 'same-project') {
 
 test('schema metadata records version without claiming PostgreSQL import', (t) => {
   const db = database(t);
-  assert.equal(db.prepare("SELECT value FROM system_metadata WHERE key = 'schema_version'").get().value, '7');
+  assert.equal(db.prepare("SELECT value FROM system_metadata WHERE key = 'schema_version'").get().value, '8');
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM system_metadata WHERE key LIKE 'import%'").get().n, 0);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM accounts").get().n, 0);
 });

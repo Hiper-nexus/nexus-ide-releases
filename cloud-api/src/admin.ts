@@ -6,6 +6,7 @@ import type { AccountRow, AdminAuditAction, LicenseCodeRow } from './db/schema.j
 import { jsonBody } from './http.js';
 import { emailConfigured } from './config.js';
 import { CLASSIFIED, LIVE, adminEmails } from './classified.js';
+import { disableCoupon, insertCoupon, listCoupons } from './coupons.js';
 import { mintLicenseCode } from './license-codes.js';
 import { requireAdmin, requireCsrf, requireWebAuth } from './middleware.js';
 import { decodeAccountCursor, encodeAccountCursor } from './admin-cursor.js';
@@ -173,5 +174,38 @@ adminRoutes.post('/admin/license-codes/:id/revoke', requireCsrf, async (c) => {
       WHERE id IN (SELECT account_id FROM license_redemptions WHERE code_id=?2)`).bind(now, id),
     codeAudit(c, 'revoke_license_code', { codeId: id }, now),
   ]);
+  return c.json({ ok: true, data: {} });
+});
+
+const createCouponSchema = z.strictObject({
+  code: z.string().trim().min(1).max(40),
+  kind: z.enum(['percent', 'amount']),
+  value: z.number().int().positive().max(100_000_000),
+  intervals: z.array(z.enum(['month', 'quarter', 'semiannual', 'year'])).min(1).max(4),
+  expiresAt: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/).nullish(),
+  maxRedemptions: z.number().int().min(1).max(100_000).nullish(),
+});
+
+adminRoutes.get('/admin/coupons', async (c) => {
+  return c.json({ ok: true, data: { coupons: await listCoupons(c.env.DB) } });
+});
+
+adminRoutes.post('/admin/coupons', requireCsrf, async (c) => {
+  const body = await jsonBody(c.req.raw, createCouponSchema);
+  const now = Date.now();
+  const expiresAt = body.expiresAt ? Date.parse(body.expiresAt) : null;
+  if (body.expiresAt && !Number.isFinite(expiresAt)) throw new HTTPException(400, { message: 'A validade do cupom precisa ser uma data futura.' });
+  const created = await insertCoupon(c.env.DB, {
+    code: body.code, kind: body.kind, value: body.value, intervals: body.intervals,
+    expiresAt, maxRedemptions: body.maxRedemptions ?? null, createdBy: c.get('session').account_id,
+  }, now);
+  await c.env.DB.batch([codeAudit(c, 'create_coupon', { couponId: created.id, code: created.code, kind: created.kind, value: created.value, intervals: created.intervals }, now)]);
+  return c.json({ ok: true, data: created });
+});
+
+adminRoutes.post('/admin/coupons/:id/disable', requireCsrf, async (c) => {
+  const id = c.req.param('id'), now = Date.now();
+  await disableCoupon(c.env.DB, id, now);
+  await c.env.DB.batch([codeAudit(c, 'disable_coupon', { couponId: id }, now)]);
   return c.json({ ok: true, data: {} });
 });

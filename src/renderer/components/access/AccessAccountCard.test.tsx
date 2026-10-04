@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NexusLogin, LoginPhase } from '../settings/use-nexus-login';
 import { AccessAccountCard, type AccessAccountCardProps } from './AccessAccountCard';
+import { DEFAULT_CHECKOUT_CHOICE } from '../billing/CheckoutChoices';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -27,6 +28,8 @@ function props(over: Partial<AccessAccountCardProps> = {}): AccessAccountCardPro
     retrying: false,
     actionError: null,
     onCheckout: vi.fn(),
+    checkoutChoice: DEFAULT_CHECKOUT_CHOICE,
+    onCheckoutChoice: vi.fn(),
     onPortal: vi.fn(),
     onRetry: vi.fn(),
     canRedeem: true,
