@@ -1,4 +1,35 @@
-# Pendências verificadas da release — 03/10/2026, 18:43 BRT
+# Pendências verificadas da release — 03/10/2026
+
+Atualização após `0fdc3629`. A integração das entregas existentes está feita;
+há correções e critérios de aceite pendentes. **Esta integração ainda não foi
+empacotada nem publicada.** O harness de carga/CI mantém quatro arquivos WIP.
+
+## Estado atual
+
+| Pendência | Evidência e próximo passo |
+|---|---|
+| Análise dos terminais sob carga | Carga perdeu análise aos 16 s mesmo passando os limites numéricos. Regressão determinística confirmou timeout falso quando Worker termina em 20 ms e Main recebe confirmação após 350 ms. F-863 usa progresso atômico preservando limite real de 250 ms; ainda validar análise em timer e ausência verdadeira de ACK. |
+| Controle após EOF | Carga instrumentada teve todos os barriers de bind/carga verdadeiros; após morte física, controle reenfileirado para sessão já descartada perdeu ACK. Fechar essa cauda, conservar evidência arquivada e repetir carga normal e envenenada. |
+| Fila pesada nativa | Broker MCP e Native integrados. Dez suítes/185 testes, tipos/sinks/ratchet e 16 testes do supervisor passam. F-856 continua aberto: CLIs não-Node com shell absoluta precisam transporte/admissão reais comprovados. |
+| Prova de descendentes MCP | PG não prova filho que fez setsid/reparent nem container após cliente OCI sair. Reutilizar coorte autenticada Darwin, modo que conserva background até término natural, namespace PID Linux e identidade privada exata OCI. |
+| União completa | Revisão independente, matriz atualizada, suites completas app/server, instalação privada limpa, segurança/SBOM/licenças e módulos nativos. Testes focados não substituem esta etapa. |
+| Candidato e publicação | Conferir versão/tag, gerar DMG/ZIP assinado/notarizado, release:candidate, probes de 40 s/ocupado após renderer montado, fluxos reais, recursos por cinco minutos e quit sem órfãos. Publicar e validar canônica/espelho, hashes, recibos e download. |
+
+Já integrados desde o registro abaixo: C.3/harness de regex, C.4/follow-ups
+periódicos, MiMo fora do Main e quatro correções da revisão, N9 consultivo,
+N7 com atribuição UUID e bugs visuais, N13 autorizado, probe de 40 s e probe
+da faixa real de ocupado. F-864 corrigiu leitura curta do manifesto; F-862
+agora drena shims/comandos antes do host/stores; F-865 aguarda a Promise de
+morte física do host. Cinco suítes/87 testes, tipos/sinks/ratchet passam;
+contagens se sobrepõem às anteriores e não se somam.
+
+Aceite de carga ainda exige SHA final, 15 terminais e pelo menos 5 MB/s,
+barriers e evidências finais corretos, p99 <100 ms, bloqueio máximo <1 s e
+bloqueio de spawn <100 ms. O teste antigo e seus números não provam a release.
+A tag local v0.76.191 segue apontando para commit antigo; não reescrever tag.
+Autorização de integração completa e novas raízes .noindex já está vigente.
+
+## Histórico — observado às 18:43 BRT, superado pelo estado acima
 
 Base da integração examinada: `40c56c20`, com a fila de comandos pesados ainda
 não commitada. Este registro descreve o estado observado, não substitui o
