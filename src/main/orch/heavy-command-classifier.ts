@@ -12,14 +12,17 @@ export function classifyHeavyCommand(command: string): HeavyCommandKind | null {
   const words = (parsed.ok ? parsed.tokens : text.split(/\s+/)).flatMap(token => token.split(/[;&|]/)).filter(Boolean);
   const program = (word: string) => getCommandTokenPathBasename(word).toLowerCase().replace(/\.(?:cmd|bat|exe|mjs|cjs|js)$/, '');
   const valueOptions = new Set(['--workspace', '--prefix', '--cwd', '--dir', '--filter', '--package', '--registry', '--cache', '--userconfig', '-w', '-c', '-p']);
-  const nextArgument = (start: number): number => {
-    let index = start;
-    while (index < words.length && words[index].startsWith('-')) {
-      const option = words[index].toLowerCase();
-      index += valueOptions.has(option) ? 2 : 1;
-    }
-    return index;
-  };
+  // Every token is visited once, including scripts with thousands of option
+  // tokens or repeated runner names inside the fixed scan window.
+  const argumentAt = new Int32Array(words.length + 2);
+  argumentAt.fill(words.length);
+  for (let i = words.length - 1; i >= 0; i--) {
+    argumentAt[i] = words[i].startsWith('-')
+      ? argumentAt[Math.min(words.length, i + (valueOptions.has(words[i].toLowerCase()) ? 2 : 1))]
+      : i;
+  }
+  const nextArgument = (start: number) => argumentAt[Math.min(start, words.length)];
+  const lastBuild = words.lastIndexOf('build');
   const actionKind = (action: string | undefined): HeavyCommandKind | null => {
     if (action && /^(?:typecheck|check-types)(?::|$)/i.test(action)) return 'typescript';
     if (action && /^(?:test|tests)(?::|$)/i.test(action)) return 'tests';
@@ -37,7 +40,7 @@ export function classifyHeavyCommand(command: string): HeavyCommandKind | null {
       const kind = actionKind(verb === 'run' ? words[nextArgument(first + 1)] : verb);
       if (kind) return kind;
     }
-    if (['vite', 'webpack', 'rollup', 'esbuild', 'next'].includes(name) && words.slice(i + 1).includes('build')) return 'build';
+    if (['vite', 'webpack', 'rollup', 'esbuild', 'next'].includes(name) && lastBuild > i) return 'build';
   }
   if (/(?:^|[\s/\\'";&|])(?:tsc(?:\.js|\.cjs)?|typecheck)(?=$|[\s'";&|:])/i.test(text)) return 'typescript';
   if (/(?:^|[\s/\\'";&|])(?:vitest|jest|pytest|mocha)(?=$|[\s'";&|])/i.test(text) ||
