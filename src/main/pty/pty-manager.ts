@@ -2951,19 +2951,24 @@ export function spawnAgentSession(
     const ctx = getNativeHeavyGateContext(spawnEnv.NEXUS_GATE_TOKEN ?? '');
     if (!ctx || !isCurrentGateContext(ctx)) throw new Error('native_deferred_spawn_context_changed');
   };
-  const ready = adapter.id === 'opencode' ? (async () => {
+  const codexFileChannel = adapter.id === 'codex' && process.platform === 'darwin' && !codexProcessSandbox && !processSandboxActive && Boolean(spawnEnv.NEXUS_GATE_TOKEN);
+  const ready = adapter.id === 'opencode' || codexFileChannel ? (async () => {
     // Preserve the synchronous logical reservation; this microtask starts only
     // after Main has recorded the new session and its owner.
     await Promise.resolve(); assertDeferredCurrent();
-    const prepared = await prepareOpenCodeSessionArgs(bin, args, env.PATH); assertDeferredCurrent();
-    const nextArgs = prepared.includes('--standalone') && !args.includes('--standalone') ? [...spec.args, '--standalone'] : [...spec.args];
+    const prepared = adapter.id === 'opencode' ? await prepareOpenCodeSessionArgs(bin, args, env.PATH) : args; assertDeferredCurrent();
+    const nextArgs = adapter.id === 'opencode' && prepared.includes('--standalone') && !args.includes('--standalone') ? [...spec.args, '--standalone'] : [...spec.args];
     const nextEnv: Record<string, string> = {};
-    if (isOpenCodeOwnedServerProved(bin) && process.platform === 'darwin') {
+    if (process.platform === 'darwin' && (codexFileChannel || adapter.id === 'opencode' && isOpenCodeOwnedServerProved(bin))) {
       const ctx = getNativeHeavyGateContext(spawnEnv.NEXUS_GATE_TOKEN ?? '');
       if (!ctx) throw new Error('native_heavy_channel_context_invalid');
       const { createNativeHeavyLocalChannel } = await import('../orch/native-heavy-local-channel'); assertDeferredCurrent();
-      nativeChannel = await createNativeHeavyLocalChannel(ctx, spawnEnv.TMPDIR ?? os.tmpdir()); assertDeferredCurrent();
+      nativeChannel = await createNativeHeavyLocalChannel(ctx, spawnEnv.TMPDIR ?? os.tmpdir(), undefined, { transport: codexFileChannel ? 'file' : 'unix' }); assertDeferredCurrent();
       Object.assign(nextEnv, nativeChannel.env);
+      if (codexFileChannel) {
+        const { configureCodexNativeHeavyChannel } = await import('../orch/codex-native-heavy-channel'); assertDeferredCurrent();
+        await configureCodexNativeHeavyChannel(ctx.token, nativeChannel.env, Object.keys({ ...spec.env, ...nativeChannel.env }), assertDeferredCurrent); assertDeferredCurrent();
+      }
     }
     assertDeferredCurrent(); return { args: nextArgs, env: nextEnv };
   })() : undefined;
