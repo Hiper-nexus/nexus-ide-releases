@@ -17,6 +17,9 @@ if (inheritedProxy) {
         !['127.0.0.1', 'localhost', '[::1]'].includes(proxy.hostname) || !proxy.port ||
         proxy.pathname !== '/' || proxy.search || proxy.hash ||
         /[\x00-\x20\x7f]/.test(decodeURIComponent(proxy.username + proxy.password))) process.exit(78);
+    // Keep the SDK's localhost proxy on a literal loopback address. Its
+    // credential and Main bearer must not depend on a mutable DNS/hosts name.
+    if (proxy.hostname === 'localhost') proxy.hostname = '127.0.0.1';
   } catch { process.exit(78); }
 }
 function accepted(status, raw) {
