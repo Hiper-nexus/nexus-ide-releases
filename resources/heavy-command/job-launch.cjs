@@ -16,7 +16,15 @@ if (env.NEXUS_HEAVY_LEASE) {
     target = file; targetArgs = args;
   } catch { process.exit(78); }
 }
-const job = cp.spawn(target, targetArgs, { env, stdio: 'inherit' });
+// Bash observes FD3 before Node starts: do not mistake Node's internal pipe
+// for a caller channel. Preserve only that existing pipe/socket in this
+// subtree; no new file or IPC capability is opened.
+const stdio = ['inherit', 'inherit', 'inherit'];
+if (env.NEXUS_HEAVY_INHERITED_FD3 === '1') {
+  try { const fd = require('node:fs').fstatSync(3); if (!fd.isFIFO() && !fd.isSocket()) process.exit(78); stdio.push(3); } catch { process.exit(78); }
+}
+delete env.NEXUS_HEAVY_INHERITED_FD3;
+const job = cp.spawn(target, targetArgs, { env, stdio });
 for (const signal of ['SIGTERM', 'SIGHUP', 'SIGINT']) process.on(signal, () => { try { job.kill(signal); } catch {} });
 job.once('error', () => process.exit(127));
 job.once('close', (code, signal) => { if (signal) { try { process.kill(process.pid, signal); } catch { process.exit(1); } } else process.exit(code ?? 1); });

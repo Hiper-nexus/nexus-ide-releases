@@ -1190,6 +1190,37 @@ suite("Darwin PTY native responsibility supervisor", () => {
     finally { if (job.exitCode === null && job.signalCode === null) job.kill('SIGTERM'); await done; server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
   }, 30_000);
 
+  it('native Bash positional command retains FD3 snapshot and $0 before physical admission', async ({ skip }) => {
+    if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
+    const runtime = { platform: 'darwin', packaged: false, cwd: fixtureRoot, moduleDir: fixtureRoot };
+    const identity = {}; const proof = new OwnedCommandProcesses(() => ({ pid: process.pid, identity }), undefined, (pid) => watchDarwinHeavyCommand(runtime, pid));
+    const resources = path.join(process.cwd(), 'resources/heavy-command');
+    const marker = path.join(fixtureRoot, 'positional-command.marker'), makefile = path.join(fixtureRoot, 'positional.Makefile');
+    writeFileSync(makefile, 'all:\n\t@printf positional-completed\n');
+    let claim = null, grants = 0, borrows = 0;
+    const server = createHttpServer((req, res) => { let raw = ''; req.on('data', (part) => raw += part); req.on('end', () => { const value = JSON.parse(raw);
+      void (async () => { let allow = false;
+        if (value.leaseId) { borrows++; allow = Boolean(claim && await proof.borrow('s', claim, value.pid)); }
+        else if (value.proof === 'darwin-job') {
+          grants++; expect(existsSync(marker)).toBe(false);
+          claim = await proof.claimForRequest('s', 'positional-request', value.pid, value.proof); if (claim) proof.confirmRequest('s', 'positional-request', claim); allow = Boolean(claim);
+        }
+        res.end(JSON.stringify({ allow, leaseId: 'finite-positional-lease' })); })(); }); });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)); const port = server.address().port;
+    const expression = 'snap=$(command cat <&3); builtin eval -- "$snap"; builtin eval -- "$1"';
+    const userCommand = `finite_snapshot; /usr/bin/make -f ${JSON.stringify(makefile)}; printf '\\narg0=%s\\n' "$0"`;
+    const command = supervisedPtyCommand(runtime, '/bin/bash', ['-c', expression, 'finite-wrapper', userCommand]);
+    const job = spawn(command.file, command.args, { detached: true, env: { ...process.env, NODE_OPTIONS: '', BASH_ENV: path.join(resources, 'shell.bash'), NEXUS_HEAVY_BASH_ENV: path.join(resources, 'shell.bash'),
+      NEXUS_HEAVY_JOB_BASE: JSON.stringify(nestedHeavyJobBaseCommand(runtime)), NEXUS_HEAVY_NODE: process.execPath, NEXUS_HEAVY_DIR: resources, NEXUS_HEAVY_CURL: '/usr/bin/curl', NEXUS_HEAVY_COMMAND_URL: `http://127.0.0.1:${port}/hook/heavy-command`, NEXUS_GATE_TOKEN: 'finite-positional-watch' }, stdio: ['ignore', 'pipe', 'pipe', 'pipe'] });
+    job.stdio[3].end(`finite_snapshot() { printf snapshot-preserved > ${JSON.stringify(marker)}; }\n`);
+    let output = '', stderr = ''; job.stdout.on('data', (part) => output += part); job.stderr.on('data', (part) => stderr += part);
+    const done = new Promise((resolve) => job.once('exit', (code, signal) => resolve({ code, signal })));
+    try {
+      expect(await done, stderr).toEqual({ code: 0, signal: null }); expect(output.trim()).toBe('positional-completed\narg0=finite-wrapper'); expect(readFileSync(marker, 'utf8')).toBe('snapshot-preserved'); expect(grants).toBe(1); expect(borrows).toBeGreaterThan(0);
+      for (let i = 0; i < 100 && await proof.probe('s', claim) !== 'gone'; i++) await new Promise((resolve) => setTimeout(resolve, 25)); expect(await proof.probe('s', claim)).toBe('gone');
+    } finally { if (job.exitCode === null && job.signalCode === null) job.kill('SIGTERM'); await done; server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
+  }, 30_000);
+
   for (const mode of ['natural', 'terminate']) {
   it(`supervise-job holds a detached setsid daemon after primary exit until ${mode} completion`, async ({ skip }) => {
     if (nexusPaneSkipReason) skip(nexusPaneSkipReason);
