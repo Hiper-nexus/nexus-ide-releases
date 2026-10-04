@@ -1,6 +1,6 @@
 # Pendências verificadas da release — 04/10/2026
 
-Atualização após `d8305e53`, com todas as entregas existentes integradas e
+Atualização após `55691a0d`, com todas as entregas existentes integradas e
 metadados de **0.76.192** preparados. **Ainda não há aplicativo, DMG ou ZIP
 assinado/notarizado desta integração, nem publicação.**
 
@@ -9,9 +9,9 @@ assinado/notarizado desta integração, nem publicação.**
 | Pendência | Evidência e próximo passo |
 |---|---|
 | Carga F-764 no conjunto final | Cargas anteriores de 30 s, normais e envenenadas, passaram; falta repetir no SHA final, com 15 terminais, ≥5 MB/s, conclusão semântica, p99 <100 ms, máximo <1 s e bloqueio de spawn <100 ms. |
-| Fila pesada nativa C.6 | Supervisor A/B autenticado, warmup Main, launcher compatível com sandbox interno e proxy herdado já integrados. Claude real e Grok real têm provas privadas; o conjunto `d8305e53` está em validação Root. Matriz de CLIs e controles adicionais ainda sendo fechada. |
-| Revisão independente composta | Achados F-883..F-890 receberam correções e testes focados. F-890 já tem aprovação independente; F-884/F-886/native e F-889 precisam dos pareceres compostos finais. A aprovação antiga não certifica o SHA atual. |
-| Teste de recursos por cinco minutos | Harness com atividade real, métricas Main/renderer, ciclo de terminal, encerramento físico e vínculo ao ZIP está em fechamento. Testes de fixtures não comprovam o aplicativo assinado. |
+| Fila pesada nativa C.6 | Supervisor A/B autenticado, warmup Main, launcher compatível com sandbox interno e proxy herdado já integrados. Claude, Grok e Kimi reais têm provas privadas e gates Root aprovados. O OpenCode2 exige backend privado por pane (`--standalone`), já provado no controle, mas o transporte de admissão ainda está em correção. A matriz restante de CLIs continua em fechamento. |
+| Revisão independente composta | Achados F-883..F-890 receberam correções e testes focados. O parecer composto aprova os deltas examinados de F-883..F-888/F-890 e native; F-889 ainda precisa do parecer independente de outro owner. A aprovação antiga não certifica o SHA atual. |
+| Teste de recursos por cinco minutos | Harness integrado em 55691a0d e aprovado por revisão independente de fonte. Gate privado Root: 172 testes/13 suítes, tipos/sinks/Sync aprovados. Ainda precisa executar os 300 s no aplicativo assinado; fixtures não comprovam essa execução. |
 | Validação completa final | Instalação privada limpa passou. A suíte completa histórica em `6e968c1e` passou: 1.847 suítes/21.545 testes, com 4 suítes/53 testes ignorados. Falta a suíte no conjunto final, tipos app/server, segurança/audit/SBOM/licenças e matriz de 104 requisitos atualizada. |
 | Candidato e publicação | Integrar em main conforme o gate, criar a tag no SHA exato validado, gerar DMG/ZIP assinados/notarizados, executar release:candidate, probes de 40 s e aviso ocupado, fluxos reais, recursos por cinco minutos e quit sem órfãos. Publicar e verificar canônica/espelho, hashes, recibos e download. |
 
