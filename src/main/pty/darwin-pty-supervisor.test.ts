@@ -16,6 +16,7 @@ import {
   DARWIN_PTY_PROVIDER_PROBE_MODE,
   DARWIN_PTY_PROVIDER_PROBE_RECEIPT,
   DARWIN_PTY_STAGE_ZERO_SOURCE,
+  DARWIN_NESTED_HEAVY_JOB_LAUNCH_SOURCE,
   DARWIN_PTY_SUPERVISOR_NAME,
   isProvenDarwinPtySupervisorExit,
   NEXUS_UTILITY_HELPER_IDENTIFIER,
@@ -27,6 +28,8 @@ import {
   satisfiesPackagedDarwinSupervisorSignaturePolicy,
   supervisedPtyCommand,
   supervisedJobCommand,
+  nestedHeavyJobBaseCommand,
+  heavyJobWatchCommand,
 } from "./darwin-pty-supervisor";
 import type { DarwinAdHocSmokeExecutableSeal } from "./darwin-pty-supervisor";
 import type { DarwinTrustedExecutableSeal } from "./trusted-native-cli-binary";
@@ -1733,4 +1736,20 @@ it('command job authority refuses non-Darwin, smoke-only profiles and ambiguous 
  expect(() => supervisedJobCommand({ ...runtime, trustProfile: DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE }, '/bin/sh', [])).toThrow(/normal Main-owned/);
  expect(() => supervisedJobCommand(runtime, 'sh', [])).toThrow(/absolute/);
  expect(() => supervisedJobCommand(runtime, '/bin/sh', ['invalid\0arg'])).toThrow(/NUL-free/);
+});
+
+it.runIf(process.platform === 'darwin')('only the nested job launcher omits ptrace while provider and external observer retain both live-image barriers', () => {
+ const { helper, runtime } = temporaryRuntime(); installSignedDevelopmentHelper(helper);
+ const nested = nestedHeavyJobBaseCommand(runtime);
+ const general = supervisedPtyCommand(runtime, '/usr/bin/true', []);
+ const watcher = heavyJobWatchCommand(runtime, 12345);
+ expect(general.args[2]).toBe(DARWIN_PTY_STAGE_ZERO_SOURCE);
+ expect(watcher.args[2]).toBe(DARWIN_PTY_STAGE_ZERO_SOURCE);
+ expect(DARWIN_PTY_STAGE_ZERO_SOURCE).toContain('syscall(26, 0, 0, 0, 0)');
+ expect(DARWIN_PTY_STAGE_ZERO_SOURCE.match(/  validate_live_helper\(\);/g)).toHaveLength(2);
+ expect(nested.args[2]).toBe(DARWIN_NESTED_HEAVY_JOB_LAUNCH_SOURCE);
+ expect(nested.args[2]).not.toContain('syscall(26, 0, 0, 0, 0)');
+ expect(nested.args[2]).not.toContain('  validate_live_helper();');
+ expect(nested.file).toBe('/usr/bin/perl'); expect(nested.args[0]).toBe('-T'); expect(nested.args.at(-1)).toBe('heavy-job');
+ expect(nested.args[2]).toMatch(/delete @ENV\{qw\([\s\S]*?ENV BASH_ENV\s*\)\};/);
 });

@@ -54,6 +54,52 @@ it('rejects a remote helper URL before sending its bearer token', async () => {
  } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
 });
 
+it.runIf(process.platform === 'darwin')('routes admission through the inherited loopback proxy even when NO_PROXY includes Main', async () => {
+ let targetRequests = 0, proxyRequests = 0;
+ const target = http.createServer((_req, res) => { targetRequests++; res.end(JSON.stringify({ allow: true, leaseId: 'finite-lease' })); });
+ await new Promise<void>((resolve) => target.listen(0, '127.0.0.1', resolve));
+ const targetPort = (target.address() as { port: number }).port;
+ const proxy = http.createServer((req, res) => {
+  proxyRequests++;
+  expect(req.headers['proxy-authorization']).toBe('Basic ' + Buffer.from('finite:private-proxy').toString('base64'));
+  expect(req.headers.authorization).toBe('Bearer finite-private');
+  expect(req.url).toBe(`http://127.0.0.1:${targetPort}/hook/heavy-command`);
+  const forwarded = http.request(req.url!, { method: req.method, headers: { authorization: req.headers.authorization } }, (response) => response.pipe(res));
+  req.pipe(forwarded);
+ });
+ await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve));
+ const proxyPort = (proxy.address() as { port: number }).port;
+ try {
+  const child = spawn(process.execPath, [path.join(process.cwd(), 'resources/heavy-command/request.cjs'), String(process.pid), 'build'], {
+   env: { NEXUS_HEAVY_CURL: '/usr/bin/curl', NEXUS_HEAVY_COMMAND_URL: `http://127.0.0.1:${targetPort}/hook/heavy-command`, NEXUS_GATE_TOKEN: 'finite-private', HTTP_PROXY: `http://finite:private-proxy@localhost:${proxyPort}`, NO_PROXY: 'localhost,127.0.0.1,::1' }, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let output = '', error = ''; child.stdout.on('data', (part) => output += part); child.stderr.on('data', (part) => error += part);
+  expect(await new Promise<number | null>((resolve) => child.once('close', resolve))).toBe(0);
+  expect(output).toBe('finite-lease'); expect(error).toBe(''); expect(proxyRequests).toBe(1); expect(targetRequests).toBe(1);
+ } finally { await Promise.all([new Promise<void>((resolve) => target.close(() => resolve())), new Promise<void>((resolve) => proxy.close(() => resolve()))]); }
+});
+
+it.runIf(process.platform === 'darwin').each(['http://example.invalid:80', 'https://127.0.0.1:8443', 'http://127.0.0.1:3128/?remote=1', 'http://finite:%0A@127.0.0.1:3128'])('rejects unsafe inherited proxy %s before bearer or direct-loopback egress', async (proxy) => {
+ let requests = 0; const target = http.createServer((_req, res) => { requests++; res.end('{}'); });
+ await new Promise<void>((resolve) => target.listen(0, '127.0.0.1', resolve));
+ const { port } = target.address() as { port: number };
+ try {
+  const child = spawn(process.execPath, [path.join(process.cwd(), 'resources/heavy-command/request.cjs'), String(process.pid), 'build'], { env: { NEXUS_HEAVY_CURL: '/usr/bin/curl', NEXUS_HEAVY_COMMAND_URL: `http://127.0.0.1:${port}/hook/heavy-command`, NEXUS_GATE_TOKEN: 'finite-private', http_proxy: proxy }, stdio: 'ignore' });
+  expect(await new Promise<number | null>((resolve) => child.once('close', resolve))).toBe(78); expect(requests).toBe(0);
+ } finally { await new Promise<void>((resolve) => target.close(() => resolve())); }
+});
+
+it.runIf(process.platform === 'darwin')('does not fall back to a direct admission when the inherited proxy denies credentials', async () => {
+ let targetRequests = 0, proxyRequests = 0;
+ const target = http.createServer((_req, res) => { targetRequests++; res.end(JSON.stringify({ allow: true, leaseId: 'finite-lease' })); });
+ const proxy = http.createServer((_req, res) => { proxyRequests++; res.writeHead(407); res.end('{}'); });
+ await Promise.all([new Promise<void>((resolve) => target.listen(0, '127.0.0.1', resolve)), new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve))]);
+ try {
+  const child = spawn(process.execPath, [path.join(process.cwd(), 'resources/heavy-command/request.cjs'), String(process.pid), 'build'], { env: { NEXUS_HEAVY_CURL: '/usr/bin/curl', NEXUS_HEAVY_COMMAND_URL: `http://127.0.0.1:${(target.address() as { port: number }).port}/hook/heavy-command`, NEXUS_GATE_TOKEN: 'finite-private', http_proxy: `http://invalid:credential@127.0.0.1:${(proxy.address() as { port: number }).port}`, no_proxy: '*' }, stdio: 'ignore' });
+  expect(await new Promise<number | null>((resolve) => child.once('close', resolve))).toBe(78); expect(proxyRequests).toBe(1); expect(targetRequests).toBe(0);
+ } finally { await Promise.all([new Promise<void>((resolve) => target.close(() => resolve())), new Promise<void>((resolve) => proxy.close(() => resolve()))]); }
+});
+
 it('Main canonicalizes scoped shell resources and strips them from human shells', () => {
  const directory = path.join(process.cwd(), 'resources/heavy-command');
  const scoped = heavyCommandShellEnvironment({ PATH: path.dirname(process.execPath), HOME: '/finite/operator', BASH_ENV: '/finite/original-env', ZDOTDIR: '/finite/original-zdot' }, path.join(directory, 'preload.cjs'));

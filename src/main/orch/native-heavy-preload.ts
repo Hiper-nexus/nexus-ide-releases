@@ -2,7 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import { app } from 'electron';
-import { DARWIN_PTY_STAGE_ZERO_SOURCE, DARWIN_PTY_SUPERVISOR_IDENTIFIER, NEXUS_APPLE_TEAM_ID } from '../pty/darwin-pty-supervisor';
+import { DARWIN_NESTED_HEAVY_JOB_LAUNCH_SOURCE, DARWIN_PTY_SUPERVISOR_IDENTIFIER, NEXUS_APPLE_TEAM_ID } from '../pty/darwin-pty-supervisor';
 let mainOwnedJobBase: string | undefined;
 export function heavyCommandPreloadPath(): string {
   return app.isPackaged ? path.join(process.resourcesPath, 'heavy-command', 'preload.cjs') : path.join(app.getAppPath(), 'resources', 'heavy-command', 'preload.cjs');
@@ -66,7 +66,7 @@ export async function nativeHeavyJobEnvironment(): Promise<Record<string, string
   const { prepareNativeHeavyJobBase } = await import('../pty/pty-manager');
   const command = await prepareNativeHeavyJobBase();
   const args = command?.args;
-  const fixed: Record<number, string> = { 0: '-T', 1: '-e', 2: DARWIN_PTY_STAGE_ZERO_SOURCE, 3: '--', 4: '--helper', 6: '--identifier', 7: DARWIN_PTY_SUPERVISOR_IDENTIFIER,
+  const fixed: Record<number, string> = { 0: '-T', 1: '-e', 2: DARWIN_NESTED_HEAVY_JOB_LAUNCH_SOURCE, 3: '--', 4: '--helper', 6: '--identifier', 7: DARWIN_PTY_SUPERVISOR_IDENTIFIER,
     8: '--team-id', 10: '--cdhash', 12: '--timeout-seconds', 13: '0', 14: '--', 15: 'heavy-job' };
   if (!command || command.file !== '/usr/bin/perl' || !args || args.length !== 16 ||
       Object.entries(fixed).some(([index, value]) => args[Number(index)] !== value) ||

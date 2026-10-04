@@ -1361,10 +1361,18 @@ export function supervisedJobCommand(
   ]);
 }
 
-/** Fixed Apple stage-zero prefix, evaluated in the original CLI subtree. */
+/** Nested jobs may inherit a CLI sandbox that denies ptrace. This fixed
+ * launcher is exclusive to heavy-job: it preserves the SIP-owned controller
+ * and env cleanup, while A/B live-image admission is enforced by the Host.
+ * The general provider launcher and the Host watcher keep both exec barriers. */
+export const DARWIN_NESTED_HEAVY_JOB_LAUNCH_SOURCE = DARWIN_PTY_STAGE_ZERO_SOURCE
+  .replace('    syscall(26, 0, 0, 0, 0) == 0 or POSIX::_exit(120);\n', '')
+  .replace('  wait_for_exec_trap();\n  validate_live_helper();\n  continue_trace(7);\n  wait_for_exec_trap();\n  validate_live_helper();\n  continue_trace(11);\n', '');
+
 export function nestedHeavyJobBaseCommand(runtime: DarwinPtySupervisorRuntime): SupervisedPtyCommand {
   if (runtime.platform !== 'darwin' || runtime.trustProfile === DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE) throw new Error('native heavy job requires normal Darwin authority');
-  return stageZeroSupervisorCommand(resolveDarwinPtySupervisorSeal(runtime), ['heavy-job']);
+  const command = stageZeroSupervisorCommand(resolveDarwinPtySupervisorSeal(runtime), ['heavy-job']);
+  return { ...command, args: command.args.map((arg, index) => index === 2 ? DARWIN_NESTED_HEAVY_JOB_LAUNCH_SOURCE : arg) };
 }
 /** Read-only Host watcher, with the same independently verified helper seal. */
 export function heavyJobWatchCommand(runtime: DarwinPtySupervisorRuntime, pid: number): SupervisedPtyCommand {

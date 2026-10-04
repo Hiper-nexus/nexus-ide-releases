@@ -6,6 +6,19 @@ if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.pathname !==
 const kind = process.argv[3] || 'typescript';
 const pid = Number(process.argv[2]);
 if (!['typescript', 'tests', 'build', 'install'].includes(kind) || !Number.isSafeInteger(pid) || pid <= 0 || !process.env.NEXUS_GATE_TOKEN) process.exit(78);
+// Inner CLI sandboxes may permit only their authenticated loopback proxy.
+// Preserve that route without granting a remote proxy the Main capability.
+const inheritedProxy = process.env.http_proxy || process.env.HTTP_PROXY || process.env.all_proxy || process.env.ALL_PROXY;
+let proxy;
+if (inheritedProxy) {
+  try {
+    proxy = new URL(inheritedProxy);
+    if (inheritedProxy.length > 2048 || proxy.protocol !== 'http:' ||
+        !['127.0.0.1', 'localhost', '[::1]'].includes(proxy.hostname) || !proxy.port ||
+        proxy.pathname !== '/' || proxy.search || proxy.hash ||
+        /[\x00-\x20\x7f]/.test(decodeURIComponent(proxy.username + proxy.password))) process.exit(78);
+  } catch { process.exit(78); }
+}
 function accepted(status, raw) {
   const result = JSON.parse(raw);
   if (status !== 200 || result.allow !== true || typeof result.leaseId !== 'string' || !result.leaseId || result.leaseId.length > 128) process.exit(78);
@@ -15,15 +28,16 @@ const body = JSON.stringify({ pid, kind, ...(process.argv[4] === 'darwin-job' ? 
 // ps birth identity is second-granularity: do not claim a same-second PID.
 setTimeout(() => {
   if (process.platform === 'darwin' && process.env.NEXUS_HEAVY_CURL === '/usr/bin/curl') {
-    // The governed Seatbelt already grants this exact executable only the Main
-    // loopback port. Credentials travel on stdin; no Node network grant, argv
-    // token, URL redirect or inherited curl configuration is required.
+    // Credentials and the proxy's existing authentication travel only on
+    // stdin. An inner proxy remains the policy authority even when its
+    // NO_PROXY lists Main loopback. Failure never retries a direct connection.
     try {
       const config = ['url = ' + JSON.stringify(url.href), 'request = "POST"',
         'header = ' + JSON.stringify('Authorization: Bearer ' + process.env.NEXUS_GATE_TOKEN),
-        'header = "Content-Type: application/json"', 'data = ' + JSON.stringify(body)].join('\n') + '\n';
+        'header = "Content-Type: application/json"', 'data = ' + JSON.stringify(body),
+        ...(proxy ? ['proxy = ' + JSON.stringify(proxy.href), 'noproxy = ""'] : ['noproxy = "*"'])].join('\n') + '\n';
       const output = require('node:child_process').execFileSync('/usr/bin/curl',
-        ['--disable', '--config', '-', '--silent', '--show-error', '--noproxy', '*', '--proto', '=http',
+        ['--disable', '--config', '-', '--silent', '--show-error', '--proto', '=http',
           '--max-time', '360', '--connect-timeout', '5', '--write-out', '\n%{http_code}'],
         { env: {}, input: config, encoding: 'utf8', timeout: 365_000, maxBuffer: 2048, stdio: ['pipe', 'pipe', 'pipe'] });
       const boundary = output.lastIndexOf('\n');

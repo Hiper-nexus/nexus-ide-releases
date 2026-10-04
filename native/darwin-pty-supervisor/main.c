@@ -2685,7 +2685,7 @@ static int execute_native_heavy_job(int argc, char **argv, const struct responsi
   if (!fd_value || end == fd_value || *end || cancel_fd < 3 || cancel_fd > INT_MAX || fcntl((int)cancel_fd, F_SETFD, FD_CLOEXEC) != 0) return NEXUS_EXIT_INTERNAL;
   unsetenv("NEXUS_HEAVY_CANCEL_FD");
   int admission = acquire_native_heavy_job_lease(argv[2]);
-  if (admission != 0) return admission;
+  if (admission != 0) { fputs("nexus-heavy: local admission request failed\n", stderr); return admission; }
   pid_t target = 0;
   int error = spawn_unsealed_child(&target, argv[4], &argv[4]);
   if (error != 0) return NEXUS_EXIT_SPAWN;
