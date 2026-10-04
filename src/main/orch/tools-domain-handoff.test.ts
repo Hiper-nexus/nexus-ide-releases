@@ -267,6 +267,7 @@ describe("handoff MCP stop receipt", () => {
       tasks: { list: () => [], getPlannedTask: () => null },
       missionPanes: { list: () => [] },
       handoffs: {
+        recoverPhysicalReplayTerminalTail: () => null,
         submitFromPhysicalAgentBoundary: mocks.submit,
         submitFromPhysicalAgentBoundaryWithReplay: mocks.submitWithReplay,
         submitFromPhysicalAgentBoundaryAndTransitionDispatch:

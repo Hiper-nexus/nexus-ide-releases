@@ -595,6 +595,49 @@ export class ScopedHandoffStore {
     };
   }
 
+  /** Recover derived Main output for an exact physical retry; never recapture
+   * mutable terminal state or weaken the exact artifact comparison at commit. */
+  recoverPhysicalReplayTerminalTail(
+    input: { missionId: string; sessionId: string; workerIncarnationId?: string; agentArtifacts: readonly unknown[] },
+    physicalReceipt: AgentTransportPhysicalReceipt,
+    rawOptions: z.input<typeof mcpBoundaryOptionsSchema>,
+  ): string | null {
+    const missionId = identifierSchema.parse(input.missionId);
+    const sessionId = identifierSchema.parse(input.sessionId);
+    const workerIncarnationId = input.workerIncarnationId === undefined
+      ? undefined : identifierSchema.parse(input.workerIncarnationId);
+    const options = mcpBoundaryOptionsSchema.parse(rawOptions);
+    const current = inspectCurrentAgentTransportPhysicalReceipt(physicalReceipt, {
+      projectId: this.#binding.scope.projectId, checkoutId: this.#binding.scope.checkoutId,
+      missionId, sessionId, workerIncarnationId, ...options,
+    });
+    if (current.toolName !== 'nexus_handoff_submit') throw new Error('handoff retry requires exact submit receipt');
+    const db = this.#binding.readDatabase();
+    const committed = this.#findCommittedPhysicalReceipt(db, missionId, sessionId,
+      workerIncarnationId, handoffLogicalOperationKey({ scope: this.#binding.scope,
+        missionId, sessionId, workerIncarnationId }), options.rawPayloadSha256);
+    // The current opaque receipt is freshly authenticated above. Its HMAC seed
+    // is per physical request, so its authority hash must not equal the first
+    // request's hash. The existing commit seam consumes this new receipt once.
+    if (!committed || committed.raw_payload_sha256 !== options.rawPayloadSha256 ||
+        committed.source !== current.source ||
+        (committed.worktree_head_sha ?? undefined) !== options.worktreeHeadSha) return null;
+    const row = handoffRowSchema.parse(db.prepare(`${HANDOFF_SELECT} WHERE id = ?`).get(committed.handoff_id));
+    const artifacts = parseJsonArray(row.artifacts_json, 'handoff replay artifacts');
+    const isTail = (value: unknown): value is { kind: string; payload: unknown } =>
+      Boolean(value && typeof value === 'object' && 'kind' in value && value.kind === 'nexus.terminal-tail');
+    // Same raw payload can contain agent-authored artifacts with this name;
+    // only an additional persisted artifact can be derived Main output.
+    if (artifacts.filter(isTail).length <= input.agentArtifacts.slice(0, 4096).filter(isTail).length) return null;
+    for (let index = artifacts.length - 1; index >= 0; index--) {
+      const artifact = artifacts[index];
+      if (artifact && typeof artifact === 'object' && 'kind' in artifact &&
+          artifact.kind === 'nexus.terminal-tail' && 'payload' in artifact &&
+          typeof artifact.payload === 'string' && artifact.payload.length <= 8192) return artifact.payload;
+    }
+    return null;
+  }
+
   /**
    * The only production port that may both persist a physical worker handoff
    * and advance/block its running dispatch. All rows commit in one immediate

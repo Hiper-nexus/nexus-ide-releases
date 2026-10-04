@@ -102,6 +102,27 @@ describe("selectScopedPaneCloseTargets", () => {
 });
 
 describe("scheduleAutoCloseAfterHandoff", () => {
+  it('does not close on a redaction marker when the terminal contained only a private key', () => {
+    armAutoCloseOnHandoff('private-only', 'pane-private');
+    try {
+      expect(() => assertAutoCloseReportPreserved('private-only', 'pane-private', 'success', {
+        summary: 'Pesquisa concluída, veja os detalhes.',
+        fullText: 'Pesquisa concluída, veja os detalhes.',
+      }, () => '-----BEGIN PRIVATE KEY-----\nprivate fixture bytes\n-----END PRIVATE KEY-----'))
+        .toThrow('handoff_report_required');
+      expect(armedAutoClosePaneId('private-only')).toBe('pane-private');
+    } finally { disarmAutoCloseOnHandoff('private-only', 'pane-private'); }
+  });
+  it('preserves a long summary through the existing full-summary condensation contract', () => {
+    armAutoCloseOnHandoff('long-report', 'pane-report');
+    const read = vi.fn(() => '');
+    try {
+      expect(assertAutoCloseReportPreserved('long-report', 'pane-report', 'success', {
+        summary: 'Relatório completo com os resultados e referências. '.repeat(12),
+      }, read)).toBeNull();
+      expect(read).not.toHaveBeenCalled();
+    } finally { disarmAutoCloseOnHandoff('long-report', 'pane-report'); }
+  });
   it('accepts complete reports in the existing native artifact format and rejects truncation', () => {
     armAutoCloseOnHandoff('report-format', 'pane-report');
     try {

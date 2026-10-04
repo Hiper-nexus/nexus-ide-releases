@@ -262,22 +262,21 @@ const handoffSubmitTool: McpToolDef = {
     required: ["status", "summary"],
   },
   handler: async (args, ctx, invocation) => {
-    const terminalTail = assertAutoCloseReportPreserved(ctx.sessionId,
+    const captureTerminalTail = () => assertAutoCloseReportPreserved(ctx.sessionId,
       ctx.sessionId ? findPane(ctx.sessionId)?.paneId ?? null : null,
       normalizeHandoffStatusInput(args.status), args,
       () => readSessionOutput(ctx.sessionId!, 40));
-    const terminalTailArtifacts = terminalTail
-      ? [{ kind: 'nexus.terminal-tail', payload: terminalTail }] : [];
-    const tailWarning = terminalTail ? {
+    const tailWarning = {
       warning: 'O relatório completo não foi enviado. A cauda sanitizada do terminal foi preservada no handoff; ela pode estar incompleta. Envie os detalhes em fullText nas próximas entregas.',
-    } : {};
+    };
     if (!ctx.missionId) {
+      const terminalTail = captureTerminalTail();
       const result = await submitWorkspaceHandoff(args, ctx, invocation, [
         ...buildOverclockArtifacts(args),
         ...buildContextDagArtifacts(args),
-        ...terminalTailArtifacts,
+        ...(terminalTail ? [{ kind: 'nexus.terminal-tail', payload: terminalTail }] : []),
       ]);
-      return { ...result, ...tailWarning };
+      return { ...result, ...(terminalTail ? tailWarning : {}) };
     }
     const physicalReceipt = requireHandoffMcpEffectIntent(invocation);
     let suite: ReturnType<typeof getProjectDomainStores>;
@@ -378,6 +377,11 @@ const handoffSubmitTool: McpToolDef = {
       ctx,
       ctx.role === "worker" && boundDispatch !== undefined,
     );
+    const terminalTail = (ctx.sessionId ? suite.handoffs.recoverPhysicalReplayTerminalTail(
+      { missionId: ctx.missionId, sessionId: ctx.sessionId, workerIncarnationId: ctx.workerIncarnationId,
+        agentArtifacts: Array.isArray(args.artifacts) ? args.artifacts : [] },
+      physicalReceipt, { worktreeHeadSha, rawPayloadSha256 },
+    ) : null) ?? captureTerminalTail();
     // Stale-observation fence: a Guided read_only lane whose tree went stale
     // between bind and handoff (executor integrated meanwhile) is refused
     // here — before any receipt state exists — so the task is retried
@@ -572,7 +576,7 @@ const handoffSubmitTool: McpToolDef = {
       ...overclockArtifacts,
       ...condensedFullText,
       ...contextDagArtifacts,
-      ...terminalTailArtifacts,
+      ...(terminalTail ? [{ kind: 'nexus.terminal-tail', payload: terminalTail }] : []),
       ...(contractVerdict.kind === "exhausted"
         ? [deliveryContractExhaustedArtifact(contractVerdict, declaredStatus)]
         : []),
@@ -770,7 +774,7 @@ const handoffSubmitTool: McpToolDef = {
     return {
       ok: true,
       handoffId: handoff.id,
-      ...tailWarning,
+      ...(terminalTail ? tailWarning : {}),
       ...(visual?.required ? { visualVerification: visual, status } : {}),
       evidenceTrust: handoff.evidenceTrust,
       stopGateSatisfied: handoff.evidenceTrust === "nexus-trusted",

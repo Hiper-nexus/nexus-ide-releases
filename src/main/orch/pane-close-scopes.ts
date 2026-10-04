@@ -98,11 +98,13 @@ export function assertAutoCloseReportPreserved(
   const summary = typeof args.summary === 'string' ? args.summary.trim() : '';
   // F-833/N4: naming the notification fullText does not preserve the report.
   // Capture only Main-owned output, never an agent-authored terminal artifact.
-  const repeatedSummary = Boolean(report && summary && report.length <= 60_000 &&
+  const repeatedSummary = Boolean((typeof args.fullText === 'string' || fullTextArtifact) && report && summary && report.length <= 60_000 &&
     report.trim().length <= summary.length);
   if (!report?.trim() || repeatedSummary) {
     const tail = sanitizePaneBootOutput(readTerminalTail?.() ?? '');
-    if (tail && tail !== '[sem saída capturada]' && tail !== summary) return tail;
+    const useful = tail.split('\n').some(line => line.trim() &&
+      !/^\[(?:sem saída capturada|\.\.\.[^\]\r\n]*|[^\]\r\n]*redigid[oa]s?|REDACTED)\]$/iu.test(line.trim()));
+    if (useful && tail !== summary) return tail;
   }
   if (!report?.trim() || report.length > 60_000 || repeatedSummary) {
     throw new Error('handoff_report_required: este pane fecha após a entrega. Envie o relatório completo em fullText (até 60000 caracteres), além do summary. O pane foi preservado; nenhum sucesso foi registrado.');

@@ -144,6 +144,7 @@ describe("physical HTTP MCP handoff boundary", () => {
   let endpoint = "";
   let nextHandoffId = 0;
   let handlerCalls = 0;
+  let terminalTailCapture: string | undefined;
   let currentMission: Mission;
   let missions: ReturnType<typeof createScopedMissionStore>;
   let dispatches: ReturnType<typeof createTaskDispatchStore>;
@@ -152,6 +153,7 @@ describe("physical HTTP MCP handoff boundary", () => {
 
   beforeEach(async () => {
     handlerCalls = 0;
+    terminalTailCapture = undefined;
     retainAcknowledged.mockClear();
     baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-http-mcp-proof-"));
     manager = new ProjectRuntimeManager({
@@ -310,6 +312,12 @@ describe("physical HTTP MCP handoff boundary", () => {
         }).text;
         const status = String(args.status) as
           "success" | "partial" | "blocked" | "failed";
+        const terminalTail = terminalTailCapture === undefined ? null :
+          handoffs.recoverPhysicalReplayTerminalTail({ missionId: toolCtx.missionId!,
+            sessionId: toolCtx.sessionId!, workerIncarnationId: toolCtx.workerIncarnationId,
+            agentArtifacts: [],
+          }, receipt, { worktreeHeadSha: useSecondHead ? HEAD_B : HEAD_A, rawPayloadSha256 })
+          ?? terminalTailCapture;
         const input = {
           missionId: toolCtx.missionId,
           sessionId: mismatch ? "session-mismatch" : toolCtx.sessionId,
@@ -317,6 +325,7 @@ describe("physical HTTP MCP handoff boundary", () => {
           fromAgent: toolCtx.agentName ?? toolCtx.label,
           status,
           summary: persistedSummary,
+          ...(terminalTail ? { artifacts: [{ kind: 'nexus.terminal-tail', payload: terminalTail }] } : {}),
         };
         const committed = summary.includes("atomic-dispatch")
           ? handoffs.submitFromPhysicalAgentBoundaryAndTransitionDispatch(
@@ -1199,6 +1208,26 @@ describe("physical HTTP MCP handoff boundary", () => {
       status: "hash-mismatch",
       seq: 2,
     });
+  });
+
+  it('recovers the original Main tail for an identical physical retry after terminal output changes', async () => {
+    const summary = 'Physical handoff report needs durable Main terminal recovery.';
+    terminalTailCapture = 'Original sanitized terminal report with research details.';
+    const first = await post(summary);
+    terminalTailCapture = 'Later terminal output must not change the committed handoff.';
+    const retry = await post(summary);
+    expect(first.status).toBe(200);
+    expect(retry.body.error).toBeUndefined();
+    expect(retry).toMatchObject({ status: 200, body: { ok: true,
+      result: { handoffId: first.body.result?.handoffId },
+    } });
+    const saved = handoffs.list({ missionId: MISSION_ID, includeDelivered: true });
+    expect(saved).toHaveLength(1);
+    expect(saved[0].artifacts).toEqual([{ kind: 'nexus.terminal-tail',
+      payload: 'Original sanitized terminal report with research details.',
+    }]);
+    expect(countRows(manager, 'handoff_mcp_receipts')).toBe(1);
+    expect(handoffs.verifyReceiptChain(MISSION_ID)).toEqual({ status: 'valid', length: 1 });
   });
 
   it("returns one generic handoff after response loss without a dispatch row or second charge", async () => {
