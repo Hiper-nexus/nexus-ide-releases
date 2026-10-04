@@ -1,11 +1,11 @@
 /* Peças do sorteio que a home e a comunidade dividem: o letreiro corrido e o bilhete horizontal. */
-.prize-marquee{overflow:hidden;border-block:1px solid var(--strong);background:var(--bar);padding:12px 0}
+.prize-marquee{overflow:hidden;max-width:100%;border-block:1px solid var(--strong);background:var(--bar);padding:12px 0}
 .prize-marquee:empty{display:none}
-.prize-marquee-track{display:flex;width:max-content;animation:prize-marquee 42s linear infinite}
+.prize-marquee-track{display:flex;width:max-content;max-width:none;animation:prize-marquee 42s linear infinite;will-change:transform}
 .prize-marquee:hover .prize-marquee-track{animation-play-state:paused}
 .prize-marquee-group{display:flex;flex:none}
 .prize-marquee-item{display:flex;align-items:center;gap:20px;padding-right:28px;font-family:VT323,monospace;font-size:28px;line-height:1;letter-spacing:.08em;white-space:nowrap;color:var(--ink)}
-.prize-marquee-item:after{content:'';width:8px;height:8px;background:var(--pink);transform:rotate(45deg)}
+.prize-marquee-item:after{content:'';flex:none;width:8px;height:8px;background:var(--pink);transform:rotate(45deg)}
 @keyframes prize-marquee{to{transform:translateX(-50%)}}
 
 /* Bilhete horizontal da home: corpo com o prêmio e canhoto picotado com o letreiro do ganhador. */
@@ -30,7 +30,7 @@
 
 @media(max-width:1150px){.prize-band{padding:var(--s5) 40px}.prize-ticket-main{gap:24px;padding:40px 40px 36px}.prize-ticket-stub{padding:18px 40px 20px}}
 @media(max-width:760px){
-  .prize-marquee-item{font-size:24px}
+  .prize-marquee-item{font-size:22px;letter-spacing:.05em;gap:14px;padding-right:20px}
   .prize-band{padding:var(--s5) 20px}
   .prize-ticket-main{grid-template-columns:1fr;padding:32px 24px 28px}
   .prize-ticket-art{order:-1;min-height:150px}
@@ -41,17 +41,22 @@
   .prize-ticket-stub{padding:16px 24px 18px}
   .prize-ticket-stub .pixel{font-size:26px}
 }
-/* Sem movimento o letreiro vira uma faixa parada: um grupo só, quebrando dentro da tela, nunca cortado nas bordas. */
+/* Sem movimento (iPhone com "Reduzir movimento"): faixa parada, um grupo só.
+ * min-width:0 + max-width:100% nos itens — VT323 é largo; sem isso o flex
+ * mantém a frase inteira e o overflow:hidden do letreiro corta "C" de CONTA. */
 @media(prefers-reduced-motion:reduce){
-  .prize-marquee{padding:16px}
-  .prize-marquee-track{width:auto;max-width:1280px;margin:auto}
-  .prize-marquee-group{flex:1 1 auto;flex-wrap:wrap;justify-content:center;gap:8px 32px;min-width:0}
+  .prize-marquee{padding:12px 16px}
+  .prize-marquee-track{display:block;width:100%;max-width:100%;margin:0;transform:none}
+  .prize-marquee-group{display:flex;flex-wrap:wrap;justify-content:center;gap:8px 24px;width:100%;min-width:0}
   .prize-marquee-group+.prize-marquee-group{display:none}
-  .prize-marquee-item{gap:12px;padding-right:0;white-space:normal;text-align:center}
+  .prize-marquee-item{display:block;max-width:100%;min-width:0;padding:0;white-space:normal;overflow-wrap:anywhere;text-align:center;line-height:1.25}
+  .prize-marquee-item:after{display:inline-block;vertical-align:.15em;margin-left:12px}
 }
 @media(prefers-reduced-motion:reduce) and (max-width:760px){
-  .prize-marquee-group{flex-direction:column;align-items:center;gap:6px}
-  .prize-marquee-item{font-size:20px;letter-spacing:.04em}
+  .prize-marquee{padding:12px}
+  .prize-marquee-group{flex-direction:column;align-items:stretch;gap:8px}
+  .prize-marquee-item{font-size:18px;letter-spacing:.03em;padding-inline:4px}
+  .prize-marquee-item:after{width:6px;height:6px;margin-left:10px}
 }
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .prize-ticket-copy>.prize-ticket-note{margin-top:12px;font-size:12px;color:var(--faint)}

@@ -2,6 +2,9 @@ import '@fontsource-variable/geist';
 import './content.css';
 import { browserPlatform } from './downloads/platform.js';
 import { nextSort, sortByValue } from './benchmarks/sort.js';
+import { initMobileNav } from './nav.js';
+
+initMobileNav();
 
 // Botões "Baixar": o link permanente de cada sistema (sempre a última release) conforme o computador de quem visita.
 async function recommendDownload() {

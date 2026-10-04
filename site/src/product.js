@@ -6,8 +6,10 @@ import { startDrawSign } from './sorteio/reel.js';
 import { initializeDownloads } from './downloads/ui.js';
 import { initializePlans } from './plans/ui.js';
 import { initializeHeroProof } from './hero/proof.js';
+import { initMobileNav } from './nav.js';
 import './voice/demo.js';
 
+initMobileNav();
 buildMarquee(document.getElementById('prize-marquee'));
 startDrawSign(document.getElementById('prize-draw'));
 const downloadsReady = initializeDownloads();

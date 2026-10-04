@@ -1,6 +1,9 @@
 import '@fontsource-variable/geist';
 import './account.css';
 import { agentLimitLabel, billingFlags, trialNotice } from './plans/account-rules.js';
+import { initMobileNav } from './nav.js';
+
+initMobileNav();
 
 // VITE_API_ORIGIN só existe em desenvolvimento local, para apontar a página a uma API rodando na máquina.
 export const API_ORIGIN = import.meta.env?.VITE_API_ORIGIN || 'https://api.nexuside.app';
