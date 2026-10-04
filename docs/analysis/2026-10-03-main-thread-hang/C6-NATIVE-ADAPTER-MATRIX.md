@@ -6,7 +6,7 @@ Todo `spawnAgentSession` recebe ambiente de scheduling Main-owned, sem condiçã
 
 | Adapter real | Imagem instalada observada (03/10) | Transporte disponível no Nexus | Prova e lacuna |
 |---|---|---|---|
-| Claude, GLM, GLM Flash, Longcat, DeepSeek, Muse Claude | Claude Mach-O 2.1.288 | settings privado por sessão; PreToolUse; BASH_ENV/ZDOTDIR herdados | FIFO de Bash/Zsh provado; ferramenta do CLI real ainda requer prova. NODE_OPTIONS não injeta JS em Mach-O |
+| Claude, GLM, GLM Flash, Longcat, DeepSeek, Muse Claude | Claude Mach-O 2.1.288 | settings privado por sessão; PreToolUse; BASH_ENV/ZDOTDIR herdados | CLI Claude 2.1.288 real provado em fixture loopback/sem credenciais: updatedInput pré-admite Bash no mesmo shell, incluindo sh absoluto e NODE_OPTIONS vazio. Variante/provider e candidato assinado ainda requerem prova |
 | OpenClaude | catálogo bin openclaude; imagem não inspecionada | hooks da família Claude e ambiente Main | runtime não verificado |
 | Codex | launcher Node → vendor nativo | config privado shell_environment_policy.set; hooks argv já existentes; Bash/Zsh | core antes retirava scheduling. Config privado agora inclui somente allowlist. Node launcher e ferramentas nativas são fronteiras distintas |
 | AGY, Qwen, MiniMax Code | catálogo; runtime Node declarado pelos preparadores | ambiente e child_process Node; perfis MCP por sessão | preexec de runners, require/eval e env removida provados por Node real; exec do CLI real ainda não provado |
@@ -25,3 +25,9 @@ Catálogo de fonte: Node TypeScript (inclui entrada renomeada dentro do pacote e
 Provas locais anteriores ao candidato: 7 arquivos/147 testes no conjunto nativo/config/host; 5 arquivos/181 testes + 8 skips no conjunto PTY/supervisor/bootstrap; typecheck completo verde. Contagens se sobrepõem. O marco posterior adiciona o fixture de Node AI root e o Seatbelt offline; consultar o relatório/commit mais recente para resultado final.
 
 Pendências explícitas: transporte absoluto /bin/sh de agentes não-Node; cada CLI real; ambiente Windows/CIM; candidato empacotado/assinado. Nenhuma delas é suprida pelo MCP terminal_run já governado ou por uma instrução em prompt.
+
+
+UpdatedInput do PreToolUse é suportado pela [documentação oficial Claude](https://code.claude.com/docs/en/hooks#pretooluse-decision-control).
+A transformação não altera permissionDecision. A [documentação oficial Grok](https://docs.x.ai/build/features/hooks)
+garante deny explícito e descreve falhas como fail-open, mas não promete updatedInput;
+o mecanismo Claude não é rotulado como mecanismo Grok.

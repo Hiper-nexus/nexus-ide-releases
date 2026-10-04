@@ -1,3 +1,4 @@
+import { claudeNativeHeavyHookCommand } from './native-heavy-tool-hook';
 // Native per-flavor STATUS hook configs — the Nexus wiring half of the emdash
 // hook-protocol harvest (wave 1). These writers extend what the spawn path
 // ALREADY writes per session for MCP (never the user's real profile or the
@@ -113,6 +114,12 @@ export function mergeClaudeStatusHooks(existing: ClaudeHooksMap): ClaudeHooksMap
       ],
     },
   ];
+  // C6: input transformation stays in the existing private session settings.
+  // The actual tool shell, not this hook process, owns the physical lease.
+  if (process.platform !== 'win32') next.PreToolUse.push({
+    matcher: 'Bash',
+    hooks: [{ type: 'command', command: claudeNativeHeavyHookCommand(), timeout: 5 }],
+  });
   // Stop → POST /hook/regression: testes impactados pelo diff no fim do
   // turno; a resposta (`decision: block`) devolve as falhas ao agente.
   const stop = Array.isArray(next.Stop) ? next.Stop : [];
