@@ -15,6 +15,9 @@ import { watchDarwinHeavyCommand } from '../pty/darwin-heavy-command';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import { HeavyCommandPermitPool } from './heavy-command-permit';
 import type { AgentGateContext } from './gate';
+import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
+import { adapterSchema, type CliPtyAdapter } from '../../shared/adapter-types';
+import { buildControlArgs } from '../adapters/control-args';
 
 const codex = process.env.NEXUS_TEST_CODEX_BIN ?? (process.env.PATH ?? '').split(path.delimiter)
   .map(directory => path.join(directory, 'codex')).find(file => fs.existsSync(file));
@@ -31,7 +34,8 @@ function response(res: http.ServerResponse, item: Record<string, unknown>) {
   res.end();
 }
 
-it.runIf(process.platform === 'darwin' && Boolean(codex)).each(['baseline', 'file'] as const)('real Codex workspace-write %s keeps scoped command policy', async mode => {
+it.runIf(process.platform === 'darwin' && Boolean(codex)).each(['baseline', 'file', 'default-baseline', 'default-scheduled'] as const)('real Codex %s preserves selected policy with admission', async mode => {
+  const freedom = mode.startsWith('default-'), scheduled = mode === 'file' || mode === 'default-scheduled';
   // Codex rejects helper aliases when CODEX_HOME is under the system TMP.
   // This new private directory is outside TMP and never reads a native HOME.
   const root = fs.realpathSync(fs.mkdtempSync(path.join(path.dirname(process.cwd()), 'native-codex-control-')));
@@ -89,7 +93,10 @@ it.runIf(process.platform === 'darwin' && Boolean(codex)).each(['baseline', 'fil
             toolSent = true;
             const tcpDenied = `/usr/bin/curl --disable --silent --show-error --fail --noproxy '*' --connect-timeout 1 --max-time 1 http://127.0.0.1:${forbiddenPort}/must-not-connect`;
             const unixDenied = `/usr/bin/curl --disable --silent --show-error --fail --noproxy '*' --connect-timeout 1 --max-time 1 --unix-socket ${JSON.stringify(foreignSocket)} http://127.0.0.1/must-not-connect`;
-            const command = `if (printf forbidden > ${JSON.stringify(path.join(root, 'outside-probe'))}) 2>/dev/null; then exit 91; fi; if ${tcpDenied} 2>/dev/null; then exit 92; fi; if ${unixDenied} 2>/dev/null; then exit 93; fi; printf tmp-ok > "$TMPDIR/codex-io-control"; NODE_OPTIONS= /bin/sh -c "/usr/bin/make -f Makefile"; ${JSON.stringify(process.execPath)} ${JSON.stringify(nodeEntry)}`;
+            const policyChecks = freedom
+              ? `printf permitted > ${JSON.stringify(path.join(root, 'outside-probe'))}; ${tcpDenied} >/dev/null; ${unixDenied} >/dev/null;`
+              : `if (printf forbidden > ${JSON.stringify(path.join(root, 'outside-probe'))}) 2>/dev/null; then exit 91; fi; if ${tcpDenied} 2>/dev/null; then exit 92; fi; if ${unixDenied} 2>/dev/null; then exit 93; fi;`;
+            const command = `${policyChecks} printf tmp-ok > "$TMPDIR/codex-io-control"; NODE_OPTIONS= /bin/sh -c "/usr/bin/make -f Makefile"; ${JSON.stringify(process.execPath)} ${JSON.stringify(nodeEntry)}`;
             const input = selected.name?.endsWith('shell') ? { command: ['/bin/zsh', '-c', command], workdir: workspace }
               : { cmd: command, workdir: workspace, yield_time_ms: 1000, max_output_tokens: 2048 };
             response(res, selected.type === 'custom' ? { id: 'ctc_private_fixture', type: 'custom_tool_call', call_id: 'call_private_fixture',
@@ -113,13 +120,13 @@ it.runIf(process.platform === 'darwin' && Boolean(codex)).each(['baseline', 'fil
   forbiddenPort = port;
   fs.cpSync(path.join(process.cwd(), 'resources/heavy-command'), path.join(root, 'heavy-command'), { recursive: true });
   const resources = fs.realpathSync(path.join(root, 'heavy-command')), providerHome = path.join(root, 'provider-codex'); fs.mkdirSync(providerHome);
-  const channel = mode === 'file' ? await createNativeHeavyLocalChannel(ctx, privateTmp, { current: () => cliAlive,
+  const channel = scheduled ? await createNativeHeavyLocalChannel(ctx, privateTmp, { current: () => cliAlive,
     admit: (context, body, signal) => { admissions.push(body); return native.admit(context, body, signal); },
     drainContext: context => native.drainContext(context), spawn: (entry, cwd, transport) => {
       const helper = fork(entry, transport === 'file' ? ['--file'] : [], { cwd, execPath: process.execPath, execArgv: [], env: { PATH: '/usr/bin:/bin', LANG: 'C' }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
       return { on: (event, callback) => helper.on(event, callback), postMessage: message => { helper.send(message as Parameters<typeof helper.send>[0]); }, kill: () => helper.kill() };
     } }, { transport: 'file' }) : undefined;
-  const heavy = mode === 'baseline' ? {} : { ...channel?.env, NEXUS_HEAVY_AGENT_ENTRY: fs.realpathSync(codex!), NEXUS_HEAVY_JOB_BASE: JSON.stringify(nestedHeavyJobBaseCommand(runtime)), NEXUS_HEAVY_COMMAND_URL: `http://127.0.0.1:${port}/hook/heavy-command`,
+  const heavy = !scheduled ? {} : { ...channel?.env, NEXUS_HEAVY_AGENT_ENTRY: fs.realpathSync(codex!), NEXUS_HEAVY_JOB_BASE: JSON.stringify(nestedHeavyJobBaseCommand(runtime)), NEXUS_HEAVY_COMMAND_URL: `http://127.0.0.1:${port}/hook/heavy-command`,
     NEXUS_GATE_TOKEN: ctx.token, NEXUS_HEAVY_NODE: process.execPath, NEXUS_HEAVY_DIR: resources,
     NEXUS_HEAVY_CURL: '/usr/bin/curl', NEXUS_HEAVY_BASH_ENV: path.join(resources, 'shell.bash'),
     BASH_ENV: path.join(resources, 'shell.bash'), ZDOTDIR: resources, NODE_OPTIONS: `--require ${JSON.stringify(path.join(resources, 'preload.cjs'))}` };
@@ -136,7 +143,9 @@ it.runIf(process.platform === 'darwin' && Boolean(codex)).each(['baseline', 'fil
     expect(configBytes).not.toContain(channel.env.NEXUS_HEAVY_CHANNEL_KEY);
     expect(configBytes).not.toContain(channel.env.NEXUS_HEAVY_CHANNEL_PUBLIC_KEY);
   }
-  const command = supervisedPtyCommand(runtime, codex!, ['exec', '--skip-git-repo-check', '--json', '--cd', workspace, 'finite fixture']);
+  const adapter = adapterSchema.parse(BUILTIN_ADAPTERS.find(item => item.id === 'codex')) as CliPtyAdapter;
+  const permissionArgs = freedom ? buildControlArgs(adapter, {}) : [];
+  const command = supervisedPtyCommand(runtime, codex!, ['exec', ...permissionArgs, '--skip-git-repo-check', '--json', '--cd', workspace, 'finite fixture']);
   const child = spawn(command.file, command.args, { cwd: workspace, env, stdio: ['ignore', 'pipe', 'pipe'] });
   cliPid = child.pid!; let stderr = '', stdout = '';
   child.stderr.on('data', part => stderr += part); child.stdout.on('data', part => stdout += part);
@@ -149,12 +158,12 @@ it.runIf(process.platform === 'darwin' && Boolean(codex)).each(['baseline', 'fil
     expect(fs.existsSync(path.join(workspace, 'command-ran')), JSON.stringify({ shapes, admissions, transitions }) + (stderr + stdout).slice(-5000)).toBe(true);
     expect(fs.readFileSync(path.join(workspace, 'command-ran'), 'utf8')).toBe('done');
     expect(fs.readFileSync(path.join(workspace, 'node-ran'), 'utf8')).toBe('node-done');
-    expect(fs.existsSync(path.join(root, 'outside-probe'))).toBe(false);
+    expect(fs.existsSync(path.join(root, 'outside-probe'))).toBe(freedom);
     expect(fs.readFileSync(path.join(privateTmp, 'codex-io-control'), 'utf8')).toBe('tmp-ok');
-    expect(forbiddenConnections).toBe(0);
-    expect(admissions.some(value => (value as { proof?: string }).proof === 'darwin-job')).toBe(mode === 'file');
-    if (mode === 'file') expect(admissions.some(value => typeof (value as { leaseId?: string }).leaseId === 'string'), JSON.stringify(admissions)).toBe(true);
-    await native.drain(); expect(transitions).toEqual(mode === 'file' ? ['grant', 'release'] : []);
+    expect(forbiddenConnections).toBe(freedom ? 2 : 0);
+    expect(admissions.some(value => (value as { proof?: string }).proof === 'darwin-job')).toBe(scheduled);
+    if (scheduled) expect(admissions.some(value => typeof (value as { leaseId?: string }).leaseId === 'string'), JSON.stringify(admissions)).toBe(true);
+    await native.drain(); expect(transitions).toEqual(scheduled ? ['grant', 'release'] : []);
   } finally {
     clearTimeout(timer); child.kill('SIGTERM'); await exit; pool.close(); await channel?.dispose();
     const closed = new Promise<void>(resolve => server.close(() => resolve())); for (const socket of sockets) socket.destroy(); await closed;

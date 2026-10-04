@@ -1,5 +1,23 @@
 # Codex real — controle privado de admissão pesada
 
+## Padrão livre confirmado após orientação do operador
+
+O operador autorizou explicitamente liberdade de rede e execução em04/10.
+O padrão do produto já é `operator-choice`/Autopilot: sem sandbox externo e
+com os argumentos full-auto declarados pelo adapter. A fixture agora usa
+`buildControlArgs` do Codex real para duas fases adicionais, baseline e fila,
+sem inventar flags de teste. Nessas fases a escrita no segundo caminho próprio,
+o TCP ao listener próprio e o Unix próprio são **permitidos**, como esperado;
+Make e Node passam pela mesma admissão/coorte física. Os efeitos permanecem
+nos diretórios e serviços locais da fixture.
+
+Gate `PLAN/freedom-native-defaults.log`: **31 PASS/3 suítes**,32,93s,
+incluindo quatro controles da CLI real (duas fases do padrão livre e duas
+fases adicionais de workspace-write offline), `control-args` e
+`mission-cli-execution-policy`. A política confinada adicional não limita
+o padrão livre do Nexus. Não é prova do aplicativo assinado nem do caller
+Main que ainda está em integração.
+
 Fonte de transporte: `172b4af771b216cbd71e96ba2ed1ccd2649560f6`, integrada
 como `6272f908138057fdff9c4f0b84893d6466286eb4`; API privada final em
 `a600004d9a2f96aab447cf8f1680a38026166e53`. A fixture co-locada é
