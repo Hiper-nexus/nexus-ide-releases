@@ -512,9 +512,11 @@ export function createPtyHostBridge(
       transport.ensure();
       const sealed = { ...spec, args: [...spec.args], env: { ...spec.env } };
       let posted = false, cancelled = false, cleanup: Promise<void> | undefined;
+      const writes: string[] = []; let writeBytes = 0, flushing = false, outputPaused: boolean | undefined, credits = 0;
       const cancelBeforeBirth = () => {
         if (posted) return Promise.resolve();
         cancelled = true;
+        writes.length = 0; writeBytes = 0; credits = 0;
         cleanup ??= readiness?.cleanup() ?? Promise.resolve();
         return cleanup.then(() => { pendingSpawns.delete(reservation); if (reservations.get(spec.sessionId) === reservation) { reservations.delete(spec.sessionId); handlers.delete(spec.sessionId); h.onExit(1); } }, error => { cleanup = undefined; throw error; });
       };
@@ -530,16 +532,27 @@ export function createPtyHostBridge(
             Object.assign(sealed.env, patch.env);
           }
           transport.post({ type: 'spawn', ...sealed }); posted = true; pendingSpawns.delete(reservation);
+          if (outputPaused !== undefined) transport.post({ type: 'output-flow', sessionId: spec.sessionId, paused: outputPaused });
+          if (credits) transport.post({ type: 'analysis-credit', sessionId: spec.sessionId, bytes: credits });
+          flushing = true;
+          try { while (writes.length) { const data = writes.shift()!; writeBytes -= Buffer.byteLength(data); transport.post({ type: 'write', sessionId: spec.sessionId, data }); } }
+          finally { flushing = false; }
           return undefined;
         }).catch(() => cancelBeforeBirth()).catch(() => { /* retained unknown cleanup, terminate can retry */ });
       } else { posted = true; transport.post({ type: 'spawn', ...sealed }); }
       return {
-        acknowledgeOutput: (bytes) => transport.post({ type: 'analysis-credit', sessionId: spec.sessionId, bytes }),
-        setOutputPaused: (paused) => transport.post({ type: 'output-flow', sessionId: spec.sessionId, paused }),
-        write: (data) =>
-          transport.post({ type: 'write', sessionId: spec.sessionId, data }),
-        resize: (cols, rows) =>
-          transport.post({ type: 'resize', sessionId: spec.sessionId, cols, rows }),
+        acknowledgeOutput: (bytes) => { if (!posted) { credits = Math.min(2 * 1024 * 1024, credits + Math.max(0, bytes)); return; } transport.post({ type: 'analysis-credit', sessionId: spec.sessionId, bytes }); },
+        setOutputPaused: (paused) => { if (!posted) { outputPaused = paused; return; } transport.post({ type: 'output-flow', sessionId: spec.sessionId, paused }); },
+        write: (data) => {
+          if (cancelled || reservations.get(spec.sessionId) !== reservation) throw new Error('pty_session_reservation_changed');
+          if (!posted || flushing) {
+            const bytes = Buffer.byteLength(data);
+            if (writes.length >= 128 || writeBytes + bytes > 128 * 1024) throw new Error('pty_deferred_input_full');
+            writes.push(data); writeBytes += bytes; return;
+          }
+          transport.post({ type: 'write', sessionId: spec.sessionId, data });
+        },
+        resize: (cols, rows) => { if (!posted) { sealed.cols = cols; sealed.rows = rows; return; } transport.post({ type: 'resize', sessionId: spec.sessionId, cols, rows }); },
         kill: (signal) => {
           if (!posted) { void cancelBeforeBirth().catch(() => {}); return; }
           transport.post({

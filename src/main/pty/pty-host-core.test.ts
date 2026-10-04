@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { spawn as spawnNode } from 'node:child_process';
 import {
   createPtyHostBridge,
   escalateDarwinSupervisorTermination,
@@ -85,6 +86,25 @@ describe('Main-only deferred PTY readiness', () => {
     const handle = bridge.host.spawn(spec, h, { wait: new Promise(() => {}), assertCurrent: vi.fn(), cleanup: async () => { if (++attempts === 1) throw new Error('foreign pathname'); } });
     expect(await handle.terminate({ termTimeoutMs: 1, killTimeoutMs: 1 })).toMatchObject({ ok: false, descendantsExited: false }); expect(h.onExit).not.toHaveBeenCalled(); expect(bridge.sessionCount()).toBe(1);
     expect(await handle.terminate({ termTimeoutMs: 1, killTimeoutMs: 1 })).toMatchObject({ ok: true }); expect(h.onExit).toHaveBeenCalledOnce(); expect(attempts).toBe(2);
+  });
+  it('a real Node target receives ordered prebirth input and starts with the latest resize', async () => {
+    let finish!: (patch: {}) => void, child: ReturnType<typeof spawnNode> | undefined, received = '', writes = 0;
+    let targetExit!: () => void; const exited = new Promise<void>(resolve => targetExit = resolve);
+    const posted: HostControlMsg[] = [];
+    const bridge = createPtyHostBridge({ ensure: () => {}, post: message => {
+      posted.push(message);
+      if (message.type === 'spawn') { child = spawnNode(process.execPath, ['-e', 'let x="";process.stdin.on("data",d=>x+=d);process.stdin.on("end",()=>process.stdout.end(x));'], { stdio: ['pipe', 'pipe', 'pipe'] }); child.stdout!.on('data', part => received += part); child.once('close', targetExit); }
+      if (message.type === 'write') { child!.stdin!.write(message.data); if (++writes === 2) child!.stdin!.end(); }
+    } });
+    const handle = bridge.host.spawn(spec, handlers(), { wait: new Promise(resolve => finish = resolve), assertCurrent: vi.fn(), cleanup: async () => {} });
+    handle.write('first prompt\n'); handle.write('second prompt\n'); handle.resize(100, 35); handle.resize(132, 44); expect(posted).toEqual([]);
+    finish({}); await exited; expect(received).toBe('first prompt\nsecond prompt\n'); expect(posted[0]).toMatchObject({ type: 'spawn', cols: 132, rows: 44 }); expect(posted.map(message => message.type)).toEqual(['spawn', 'write', 'write']);
+  });
+  it('a full deferred input queue rejects before accepting bytes and cancelled input never crosses generations', async () => {
+    const transport = fakeTransport(), bridge = createPtyHostBridge(transport.transport);
+    let finish!: (value: {}) => void; const handle = bridge.host.spawn(spec, handlers(), { wait: new Promise(resolve => finish = resolve), assertCurrent: vi.fn(), cleanup: async () => {} });
+    handle.write('x'.repeat(128 * 1024)); expect(() => handle.write('overflow')).toThrow('deferred_input_full');
+    await handle.terminate({ termTimeoutMs: 1, killTimeoutMs: 1 }); finish({}); await flush(); expect(transport.posted).toEqual([]); expect(() => handle.write('stale')).toThrow('reservation_changed');
   });
 });
 
