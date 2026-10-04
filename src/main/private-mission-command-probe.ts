@@ -25,6 +25,7 @@ export async function observePrivateMissionCommand(event: IpcMainInvokeEvent, sc
   try { questionId = (await owned.snapshot(command.missionId)).question?.id;
     if (command.kind === 'answer-question' && command.questionId !== questionId) { failed(); questionId = command.questionId; }
   } catch { failed(); }
+  if (!current()) { failed(); throw new Error('private_command_authority_revoked'); }
   // The canonical command is still the sole producer of effects and errors.
   try {
     const result = await run();

@@ -29,3 +29,35 @@ it('cannot change canonical success when a passive observation fails', async () 
   try { await expect(observePrivateMissionCommand({ sender: wc, senderFrame: frame } as never, scope as never,
     { kind: 'answer-question', missionId: 'm', questionId: 'q', optionId: 'choice' }, async () => result as never)).resolves.toBe(result); } finally { release(); }
 });
+it.each(['scope', 'frame', 'lease'])('F893 fences a %s change during the passive pre-read before canonical effects', async change => {
+  state.scope = scope; const frame = {}, wc = { mainFrame: frame };
+  let began!: () => void, finish!: () => void;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  const gate = new Promise<void>(resolve => { finish = resolve; });
+  const effects: unknown[] = [], run = vi.fn(async () => { effects.push(scope); return {} as never; });
+  const release = armPrivateMissionCommandProbe({ wc, frame, scope, nonce: '11111111-1111-4111-8111-111111111111',
+    snapshot: async () => { began(); await gate;
+      // The actual runtime controller fences its post-IO callback this way.
+      if (state.scope !== scope || wc.mainFrame !== frame) throw new Error('runtime authority revoked');
+      return { question: { id: 'q' } };
+    }, record: vi.fn(), failed: vi.fn() } as never);
+  try {
+    const flight = observePrivateMissionCommand({ sender: wc, senderFrame: frame } as never, scope as never,
+      { kind: 'retry-kickoff', missionId: 'm' }, run);
+    const outcome = flight.then(() => 'ran', () => 'refused');
+    await started;
+    if (change === 'scope') state.scope = { ...scope, checkoutId: 'other' };
+    else if (change === 'frame') wc.mainFrame = {};
+    else release();
+    finish(); expect(await outcome).toBe('refused'); expect(run).not.toHaveBeenCalled(); expect(effects).toEqual([]);
+  } finally { finish(); release(); state.scope = null; }
+});
+it('F893 preserves canonical success after observational IO failure with unchanged authority', async () => {
+  state.scope = scope; const frame = {}, wc = { mainFrame: frame }, result = {}, run = vi.fn(async () => result as never);
+  const release = armPrivateMissionCommandProbe({ wc, frame, scope, nonce: '11111111-1111-4111-8111-111111111111',
+    snapshot: async () => { throw new Error('observational IO failure'); }, record: vi.fn(), failed: vi.fn() } as never);
+  try {
+    await expect(observePrivateMissionCommand({ sender: wc, senderFrame: frame } as never, scope as never,
+      { kind: 'retry-kickoff', missionId: 'm' }, run)).resolves.toBe(result); expect(run).toHaveBeenCalledOnce();
+  } finally { release(); state.scope = null; }
+});
