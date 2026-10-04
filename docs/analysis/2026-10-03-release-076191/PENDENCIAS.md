@@ -1,44 +1,33 @@
 # Pendências verificadas da release — 04/10/2026
 
-Atualização após `a369f136`, com main remota incorporada em `baa7c10c` e
-metadados da próxima versão livre **0.76.192** preparados, sem criar tag.
-A integração das entregas existentes está feita. **Esta integração ainda não
-foi empacotada nem publicada.**
+Atualização após `d8305e53`, com todas as entregas existentes integradas e
+metadados de **0.76.192** preparados. **Ainda não há aplicativo, DMG ou ZIP
+assinado/notarizado desta integração, nem publicação.**
 
 ## Estado atual
 
 | Pendência | Evidência e próximo passo |
 |---|---|
-| Análise/EOF sob carga | F-863 corrigido: cargas normais e envenenadas de 30 s passam, com todas as provas finais e barriers esperados. Artefatos e CI foram commitados. Repetir no SHA final após concluir a supervisão nativa. |
-| Fila pesada nativa | F-871..874 e F-876 corrigem as falhas da revisão; F-877 já exclui servidores persistentes, com 74 testes/tipos/sinks/ratchet aprovados. F-875 tem watcher autenticado e testes físicos/IPC no executor, ainda sem integração: SIGKILL do helper interno deixa descendentes destacados cuja saída precisa de prova/teardown forte. O warmup Main e a cobertura real das CLIs/candidato continuam no aceite C6. |
-| Prova de descendentes MCP | F-868 integra supervisor/coorte Darwin, PID1 fixado Linux e identidade/remoção OCI. Revisão independente apontou F-880, agora corrigido e validado. Não confundir código/fixtures com prova de cada plataforma real. |
-| União completa | Instalação privada npm 12/Node 22 passou; 44 testes de dependências passaram. Suite completa em 6e968c1e: 1.847 suítes/21.545 testes passaram, 4 suítes/53 testes com skip; tipos app/server, sinks0 e ratchet Sync passam. Revisão final, matriz completa, segurança/SBOM/licenças e gate após F-875 seguem pendentes. |
-| Relatório do helper (N4/F-833) | Revisão confirmou fullText igual ao resumo ainda perdendo detalhes. 07096c9a preserva cauda Main sanitizada ou mantém pane aberto; quatro RED e 291 testes verdes. Revisão independente encontrou reenvio físico/condensação longa: correção adicional está em validação, sem afrouxar comparação exata de artifacts/recibos. |
-| Candidato e publicação | Conferir versão/tag, gerar DMG/ZIP assinado/notarizado, release:candidate, probes de 40 s/ocupado após renderer montado, fluxos reais, recursos por cinco minutos e quit sem órfãos. Publicar e validar canônica/espelho, hashes, recibos e download. |
+| Carga F-764 no conjunto final | Cargas anteriores de 30 s, normais e envenenadas, passaram; falta repetir no SHA final, com 15 terminais, ≥5 MB/s, conclusão semântica, p99 <100 ms, máximo <1 s e bloqueio de spawn <100 ms. |
+| Fila pesada nativa C.6 | Supervisor A/B autenticado, warmup Main, launcher compatível com sandbox interno e proxy herdado já integrados. Claude real e Grok real têm provas privadas; o conjunto `d8305e53` está em validação Root. Matriz de CLIs e controles adicionais ainda sendo fechada. |
+| Revisão independente composta | Achados F-883..F-890 receberam correções e testes focados. F-890 já tem aprovação independente; F-884/F-886/native e F-889 precisam dos pareceres compostos finais. A aprovação antiga não certifica o SHA atual. |
+| Teste de recursos por cinco minutos | Harness com atividade real, métricas Main/renderer, ciclo de terminal, encerramento físico e vínculo ao ZIP está em fechamento. Testes de fixtures não comprovam o aplicativo assinado. |
+| Validação completa final | Instalação privada limpa passou. A suíte completa histórica em `6e968c1e` passou: 1.847 suítes/21.545 testes, com 4 suítes/53 testes ignorados. Falta a suíte no conjunto final, tipos app/server, segurança/audit/SBOM/licenças e matriz de 104 requisitos atualizada. |
+| Candidato e publicação | Integrar em main conforme o gate, criar a tag no SHA exato validado, gerar DMG/ZIP assinados/notarizados, executar release:candidate, probes de 40 s e aviso ocupado, fluxos reais, recursos por cinco minutos e quit sem órfãos. Publicar e verificar canônica/espelho, hashes, recibos e download. |
 
-Já integrados desde o registro abaixo: C.3/harness de regex, C.4/follow-ups
-periódicos, MiMo fora do Main e quatro correções da revisão, N9 consultivo,
-N7 com atribuição UUID e bugs visuais, N13 autorizado, probe de 40 s e probe
-da faixa real de ocupado. F-864 corrigiu leitura curta do manifesto; F-862
-agora drena shims/comandos antes do host/stores; F-865 aguarda a Promise de
-morte física do host. Cinco suítes/87 testes, tipos/sinks/ratchet passam;
-contagens se sobrepõem às anteriores e não se somam.
+N4/F-833 está corrigido no código e aprovado por revisão independente em
+`32568689`: cauda Main sanitizada, preservação dos artifacts completos e
+recibo físico novo sem afrouxar a cadeia original. N13 está autorizado e
+implementado para novas pastas `.noindex`, preservando as existentes.
+C.3/C.4, MiMo fora do Main, N7, N9, memória e demais integrações já estão no
+conjunto. Não somar contagens dos testes focados, pois se sobrepõem.
 
-Aceite de carga ainda exige SHA final, 15 terminais e pelo menos 5 MB/s,
-barriers e evidências finais corretos, p99 <100 ms, bloqueio máximo <1 s e
-bloqueio de spawn <100 ms. O teste antigo e seus números não provam a release.
-A tag local v0.76.191 segue apontando para commit antigo; não reescrever tag.
-Em 04/10, canônica e espelho ainda publicam 0.76.190; refs remotas 191/192
-não existem. A tag final terá de apontar para a integração efetivamente validada.
-Autorização de integração completa e novas raízes .noindex já está vigente.
-
-A matriz atual enumera 104 requisitos e sua proveniência em
-`.superpowers/sdd/PLAN/coverage-current-final.md` (base congelada c38533bd,
-avanços posteriores separados). Os registros QA ausentes F-802 e F-815
-foram recuperados em e6bcb4d1/8cbae3b0, sem inventar novos defeitos.
-Credenciais Developer ID e perfil de notarização `nexus-notary` passaram no
-preflight; isso não é assinatura/notarização de um artifact. A revisão de
-licenças e a correção nativa seguem antes do empacotamento.
+A matriz de 104 requisitos em `.superpowers/sdd/PLAN/coverage-current-final.md`
+é um mapa de proveniência; deve receber as evidências e a revisão final.
+A tag local `v0.76.191` é histórica e não será reescrita. O estado remoto
+precisa ser conferido novamente antes da tag `v0.76.192`.
+O preflight de Developer ID e do perfil `nexus-notary` passou; não equivale
+à assinatura ou notarização de um artifact.
 
 ## Histórico — observado às 18:43 BRT, superado pelo estado acima
 
