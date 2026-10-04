@@ -1,0 +1,111 @@
+import http from 'node:http';
+import { randomUUID } from 'node:crypto';
+const MAX_REQUESTS = 160, MAX_BYTES = 4 * 1024 * 1024;
+function stream(res, model, content) {
+  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+  const event = (name, value) => res.write(`event: ${name}\ndata: ${JSON.stringify(value)}\n\n`);
+  event('message_start', { type: 'message_start', message: { id: `msg_runtime_${randomUUID().replaceAll('-', '')}`, type: 'message', role: 'assistant', model,
+    content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } });
+  if (content.type === 'tool_use') {
+    event('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: content.id, name: content.name, input: {} } });
+    event('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: JSON.stringify(content.input) } });
+  } else {
+    event('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+    event('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: content.text } });
+  }
+  event('content_block_stop', { type: 'content_block_stop', index: 0 });
+  event('message_delta', { type: 'message_delta', delta: { stop_reason: content.type === 'tool_use' ? 'tool_use' : 'end_turn', stop_sequence: null }, usage: { output_tokens: 1 } });
+  event('message_stop', { type: 'message_stop' }); res.end();
+}
+function objects(value, output = []) {
+  if (typeof value === 'string') { try { objects(JSON.parse(value), output); } catch { /* prose */ } }
+  else if (Array.isArray(value)) value.forEach(v => objects(v, output));
+  else if (value && typeof value === 'object') { output.push(value); Object.values(value).forEach(v => objects(v, output)); }
+  return output;
+}
+/** Only inference is simulated. Every Nexus tool result must come from the real installed CLI. */
+export async function startRuntimeGateway(nonce) {
+  if (!/^[a-f0-9-]{36}$/u.test(nonce)) throw new Error('runtime gateway nonce invalid');
+  let requests = 0, stopped = false, closeFlight = null;
+  const sockets = new Set(), observations = [];
+  const server = http.createServer((req, res) => {
+    req.setTimeout(5000, () => req.destroy());
+    if (stopped) { res.writeHead(503); res.end(); return; }
+    if (req.url === '/runtime-hello' && req.method === 'GET') { res.end(JSON.stringify({ nonce, pid: process.pid })); return; }
+    if (req.url === '/runtime-page' && req.method === 'GET') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'" });
+      res.end(`<html><head><title>Private runtime visual fixture</title></head><body style="background:#f4f4f4;color:#161616;padding:40px"><h1>Runtime visual fixture</h1><p>RT_VISUAL_${nonce}</p><p>This local page is the complete declared visual assignment.</p></body></html>`); return;
+    }
+    const requestPath = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
+    if (req.method !== 'POST' || !['/v1/messages', '/v1/messages/count_tokens'].includes(requestPath)) { res.writeHead(404); res.end('{}'); return; }
+    if (req.headers['x-api-key'] !== `rt-${nonce}` && req.headers.authorization !== `Bearer rt-${nonce}`) { res.writeHead(401); res.end('{}'); return; }
+    let raw = '', bytes = 0;
+    req.on('data', part => { bytes += part.length; if (bytes > MAX_BYTES) req.destroy(); else raw += part; });
+    req.on('end', () => {
+      try {
+        if (++requests > MAX_REQUESTS) throw new Error('runtime fixture request budget exceeded');
+        const body = JSON.parse(raw);
+        if (req.url.includes('count_tokens')) { res.end(JSON.stringify({ input_tokens: 1 })); return; }
+        const all = objects(body.messages), text = all.flatMap(v => typeof v.text === 'string' ? [v.text] : []).concat(
+          (body.messages ?? []).flatMap(v => typeof v.content === 'string' ? [v.content] : [])).join('\n');
+        const markers = [...text.matchAll(/RT_GATE (OPS|SPAWN|WRITE|REVIEW|ACK|QUESTION|RESUME|IDLE)/gu)];
+        const kind = markers.at(-1)?.[1];
+        const used = all.filter(v => v.type === 'tool_use' && typeof v.id === 'string' && v.id.startsWith(`toolu_rt_${kind}_`));
+        const step = used.length;
+        const tool = (suffix, input) => {
+          const choices = (body.tools ?? []).filter(v => v.name === suffix || v.name?.endsWith(`__${suffix}`));
+          if (choices.length !== 1) throw new Error(`real CLI did not advertise required tool: ${suffix}`);
+          observations.push({ kind, step, tool: suffix });
+          return { type: 'tool_use', id: `toolu_rt_${kind}_${step}`, name: choices[0].name, input };
+        };
+        let content = { type: 'text', text: 'Runtime fixture ready; waiting for scoped verifier instruction.' };
+        if (kind === 'OPS' && step === 0) content = tool('nexus_terminal_run', { command: `printf RT_OPS_${nonce}` });
+        else if (kind === 'SPAWN' && step < 2) content = tool('nexus_pane_spawn', { adapterId: 'claude', agentName: step ? 'Runtime reviewer' : 'Runtime writer',
+          role: 'worker', task: step ? 'Review runtime report' : 'Fix the UI visual fixture inspection report',
+          prompt: `RT_GATE IDLE ${nonce}. ${step ? 'Review the report when instructed.' : 'Fix the UI visual fixture inspection report: capture the local page with the Nexus browser and write runtime-report.txt when instructed.'} Wait for the scoped follow-up; use only Nexus tools within the approved private workspace.` });
+        else if (kind === 'WRITE' && step === 0) content = tool('nexus_browser_open', { url: `http://127.0.0.1:${server.address().port}/runtime-page` });
+        else if (kind === 'WRITE' && step === 1) {
+          const opened = [...all].reverse().find(v => v.ok === true && typeof v.paneId === 'string');
+          if (!opened) throw new Error('real browser open result absent'); content = tool('nexus_browser_screenshot', { paneId: opened.paneId });
+        }
+        else if (kind === 'WRITE' && step === 2) content = tool('nexus_file_write', { path: 'runtime-report.txt', content: `RT_REPORT_${nonce}\nPrivate acceptance report created by the real CLI through its authorized Nexus tool.\n` });
+        else if (kind === 'REVIEW' && step === 0) content = tool('nexus_file_read', { path: 'runtime-report.txt' });
+        else if ((kind === 'WRITE' && step === 3 || kind === 'REVIEW' && step === 1)) {
+          const capture = [...all].reverse().find(v => typeof v.artifactId === 'string' && /^[a-f0-9]{64}$/u.test(v.sha256 ?? '') && typeof v.path === 'string' && v.width > 0 && v.height > 0);
+          if (kind === 'WRITE' && !capture) throw new Error('real native capture result absent');
+          if (kind === 'REVIEW' && !all.some(v => typeof v.content === 'string' && v.content.includes(`RT_REPORT_${nonce}`))) throw new Error('real file read result absent');
+          content = tool('nexus_handoff_submit', { status: 'success',
+          summary: `RT_${kind}_${nonce}: Private runtime acceptance report was ${kind === 'WRITE' ? 'written' : 'read and reviewed'} through scoped Nexus tools. This durable full report preserves the actual result and deliberately contains no operator credentials or external data.`,
+          fullText: `RT_${kind}_${nonce}\nThe real CLI executed the advertised scoped Nexus tools for the approved private runtime fixture. ${kind === 'WRITE' ?
+            `The writer opened the loopback runtime-page in the Nexus browser, captured its native PNG and wrote runtime-report.txt. Capture artifact: ${capture.artifactId}; SHA256: ${capture.sha256}; dimensions: ${capture.width}x${capture.height}. Pixel inspection remains pending with the external verifier; capture is not an assertion of image contents.` :
+            'The reviewer read runtime-report.txt using the real file read tool and observed the RT_REPORT marker for this fixture.'}\nNo operator credentials, external pages, login, or model inference service were used by this fixture. The handoff and its ACK still require their physical authenticated Nexus receipts and normal Main gates.`,
+          filesModified: kind === 'WRITE' ? ['runtime-report.txt'] : [],
+          artifacts: kind === 'WRITE' ? [{ kind: 'nexus.browser.screenshot', payload: capture }] : [] });
+        }
+        else if (kind === 'QUESTION' && step === 0) content = tool('nexus_clarify', { question: `RT_QUESTION_${nonce}: select the private fixture route.`, options: ['Proceed', 'Wait'], allowFreeform: false });
+        else if (kind === 'ACK') {
+          if (step === 0) content = tool('nexus_handoff_list', { full: true });
+          else {
+            const handoffs = all.filter(v => typeof v.id === 'string' && typeof v.summary === 'string' && v.summary.includes(nonce) && v.status === 'success');
+            const unique = [...new Map(handoffs.map(v => [v.id, v])).values()];
+            if (step <= unique.length) content = tool('nexus_handoff_ack', { handoffId: unique[step - 1].id });
+          }
+        } else if (kind === 'RESUME') {
+          if (!text.includes(nonce) || !/RT_GATE (OPS|WRITE|REVIEW|QUESTION|IDLE)/u.test(text)) throw new Error('CLI resume did not preserve earlier conversation');
+          content = { type: 'text', text: `RT_RESUME_OK_${nonce}` };
+        }
+        if (kind && content.type === 'text' && kind !== 'RESUME') content.text = `RT_DONE_${kind}_${nonce}`;
+        stream(res, body.model ?? 'runtime-fixture', content);
+      } catch (error) { res.writeHead(422); res.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: error.message } })); }
+    });
+  });
+  server.maxConnections = 16;
+  server.headersTimeout = 5000; server.requestTimeout = 10000; server.keepAliveTimeout = 1000;
+  server.setTimeout(5000, socket => socket.destroy());
+  server.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  return { url: `http://127.0.0.1:${server.address().port}`, nonce, observations,
+    close() { if (closeFlight) return closeFlight; stopped = true;
+      closeFlight = new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      for (const socket of sockets) socket.destroy(); return closeFlight; } };
+}

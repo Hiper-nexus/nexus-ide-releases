@@ -35,6 +35,7 @@ import { getAxTree, performAxAction } from './ax-tree';
 import { PTY_GAP_NOTICE, PtyGapBuffer } from './pty-gap-buffer';
 import { runFunctionalSmokeProbes } from './functional-smoke';
 import { installSoakPreload } from './soak-smoke';
+import { installRuntimeGatePreload } from './runtime-gates';
 import { observeBusyBannerForSmoke } from './busy-banner-smoke';
 import { BUSY_BANNER_SMOKE_CHANNELS, isBusyBannerSmokeNonce } from '../shared/busy-banner-smoke';
 import { UPDATE_CHANNELS } from '../shared/update-ipc';
@@ -1513,6 +1514,7 @@ ipcRenderer.on(BUSY_BANNER_SMOKE_CHANNELS.run, (_event, payload: unknown) => {
 
 let functionalSmokeStarted = false;
 installSoakPreload(ipcRenderer, api, process);
+installRuntimeGatePreload(ipcRenderer, api, process);
 ipcRenderer.on(WINDOW_CHANNELS.functionalSmokeRun, (_event, payload: unknown) => {
   if (functionalSmokeStarted) return;
   functionalSmokeStarted = true;

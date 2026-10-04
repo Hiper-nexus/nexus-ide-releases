@@ -89,6 +89,7 @@ import {
 import { requiresVoiceCommandConfirmation } from "../jarvis/guardrails";
 import { isCurrentProcessSmokeTest } from "../smoke-core";
 import { shouldAllowVoiceCapture } from "./voice-capture-policy";
+import { privateCaptureProbeAllowed } from './private-capture-probe';
 
 /**
  * Wires the voice pipeline into IPC. Every renderer payload is zod-validated
@@ -622,8 +623,8 @@ function wireHotkey(): void {
   setHotkeyMode(mode);
 }
 
-function voiceCaptureAllowed(): boolean {
-  return shouldAllowVoiceCapture({
+function voiceCaptureAllowed(sender?: Electron.WebContents, senderFrame?: Electron.WebFrameMain | null): boolean {
+  return (isCurrentProcessSmokeTest() && privateCaptureProbeAllowed(sender, senderFrame)) || shouldAllowVoiceCapture({
     isPackaged: app.isPackaged === true,
     isSmokeTest: isCurrentProcessSmokeTest(),
     disableVoiceCaptureEnv: process.env.NEXUS_DISABLE_VOICE_CAPTURE,
@@ -773,8 +774,8 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
 
   ipcMain.handle(
     VOICE_CHANNELS.transcribe,
-    async (_event, raw): Promise<TranscribeResult> => {
-      if (!voiceCaptureAllowed()) {
+    async (event, raw): Promise<TranscribeResult> => {
+      if (!voiceCaptureAllowed(event.sender, event.senderFrame)) {
         return {
           ok: false,
           needsKey: false,
@@ -854,7 +855,7 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
   // Wake word "Hey Jarvis" (openWakeWord/onnx, sem conta): o renderer faz
   // stream dos frames PCM; a detecção volta somente ao owner capturado.
   ipcMain.on(VOICE_CHANNELS.wakeAudio, (event, raw: unknown) => {
-    if (!voiceCaptureAllowed()) {
+    if (!voiceCaptureAllowed(event.sender, event.senderFrame)) {
       const ownership = wakeOwnership;
       if (ownership?.owner === event.sender) {
         releaseWakeOwnership(ownership.generation);
@@ -1193,7 +1194,7 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
   );
 
   ipcMain.handle(VOICE_CHANNELS.liveStart, async (event, raw) => {
-    if (!voiceCaptureAllowed()) {
+    if (!voiceCaptureAllowed(event.sender, event.senderFrame)) {
       throw new Error("voice capture disabled");
     }
     const scope = getRendererWorkspaceScope(event.sender);

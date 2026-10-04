@@ -1332,13 +1332,18 @@ export async function runPackagedSmoke(
     runtimeProbe = null,
     runtimeProbeTimeoutMs = 30_000,
     soakProbe = false,
+    runtimeGatesProbe = false,
   } = {},
 ) {
   const privateSoak = soakProbe === true && env.NEXUS_SMOKE_SOAK === '1' && remoteDebugging === false;
-  if (typeof remoteDebugging !== 'boolean' || typeof soakProbe !== 'boolean' || (soakProbe && !privateSoak) ||
+  const privateRuntime = runtimeGatesProbe === true && env.NEXUS_SMOKE_RUNTIME_GATES === '1' && remoteDebugging === false && !soakProbe &&
+    ['exercise', 'resume'].includes(env.NEXUS_SMOKE_RUNTIME_PHASE) && /^http:\/\/127\.0\.0\.1:\d+$/u.test(env.NEXUS_SMOKE_RUNTIME_GATEWAY ?? '') &&
+    /^[a-f0-9-]{36}$/u.test(env.NEXUS_SMOKE_RUNTIME_GATEWAY_NONCE ?? '');
+  if (typeof remoteDebugging !== 'boolean' || typeof soakProbe !== 'boolean' || typeof runtimeGatesProbe !== 'boolean' || (soakProbe && !privateSoak) || (runtimeGatesProbe && !privateRuntime) ||
       (privateSoak && (typeof runtimeProbe !== 'function' || !Number.isFinite(timeoutMs) || timeoutMs < 300_000 || timeoutMs > 480_000)) ||
+      (privateRuntime && (typeof runtimeProbe !== 'function' || !smokeSession || !Number.isFinite(timeoutMs) || timeoutMs <= TIMEOUT_MS || timeoutMs > 600_000)) ||
       (runtimeProbe !== null && typeof runtimeProbe !== 'function') ||
-      !Number.isFinite(runtimeProbeTimeoutMs) || runtimeProbeTimeoutMs <= 0 || runtimeProbeTimeoutMs > (privateSoak ? 450_000 : TIMEOUT_MS)) {
+      !Number.isFinite(runtimeProbeTimeoutMs) || runtimeProbeTimeoutMs <= 0 || runtimeProbeTimeoutMs > (privateRuntime ? 590_000 : privateSoak ? 450_000 : TIMEOUT_MS)) {
     throw new Error('invalid packaged smoke runtime probe options');
   }
   const target = resolvePackagedTarget(targetPath, { platform, arch });

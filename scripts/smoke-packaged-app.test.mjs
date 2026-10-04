@@ -1240,6 +1240,9 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
       { runtimeProbeTimeoutMs: 450000, soakProbe: true, env: {} },
       { runtimeProbeTimeoutMs: 450000, soakProbe: true, env: { NEXUS_SMOKE_SOAK: '1' }, remoteDebugging: true },
       { runtimeProbeTimeoutMs: 450000, soakProbe: true, env: { NEXUS_SMOKE_SOAK: '1' }, timeoutMs: Infinity },
+      { runtimeProbeTimeoutMs: 590000, runtimeGatesProbe: true, env: {} },
+      { runtimeProbeTimeoutMs: 590000, runtimeGatesProbe: true, remoteDebugging: true, env: { NEXUS_SMOKE_RUNTIME_GATES: '1' } },
+      { runtimeProbeTimeoutMs: 590000, runtimeGatesProbe: true, env: { NEXUS_SMOKE_RUNTIME_GATES: '1', NEXUS_SMOKE_RUNTIME_GATEWAY: 'http://external.invalid:5000' } },
     ]) await expect(runPackagedSmoke('/never-launched/NexusIDE.app', options)).rejects.toThrow('invalid packaged smoke runtime probe options');
   });
 

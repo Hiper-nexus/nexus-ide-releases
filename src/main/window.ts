@@ -16,6 +16,8 @@ import {
 import { isCurrentProcessSmokeTest } from './smoke-core';
 import { isSoakSmokeRequested } from './soak-smoke';
 import { SOAK_URL_MARKER } from '../shared/soak-smoke';
+import { runtimeGateConfiguration } from './runtime-gate-mode';
+import { RUNTIME_URL_MARKER } from '../shared/runtime-gates';
 import { RENDERER_PROTOCOL_ENTRY_URL } from './renderer-protocol';
 import {
   DEFAULT_RENDERER_RECOVERY_MAX_RECOVERIES,
@@ -295,7 +297,8 @@ export function createMainWindow(
 ): BrowserWindow | null {
   const devServerUrl = MAIN_WINDOW_VITE_DEV_SERVER_URL;
   const privateSoak = isCurrentProcessSmokeTest() && app.isPackaged && isSoakSmokeRequested({ smokeTest: isCurrentProcessSmokeTest(), packaged: app.isPackaged, env: process.env, userData: app.getPath('userData') });
-  const rendererUrl = devServerUrl ?? (privateSoak ? `${RENDERER_PROTOCOL_ENTRY_URL}?${SOAK_URL_MARKER}=1` : RENDERER_PROTOCOL_ENTRY_URL);
+  const runtimeGate = isCurrentProcessSmokeTest() && app.isPackaged && runtimeGateConfiguration({ smokeTest: true, packaged: true, env: process.env, userData: app.getPath('userData') });
+  const rendererUrl = devServerUrl ?? (runtimeGate ? `${RENDERER_PROTOCOL_ENTRY_URL}?${RUNTIME_URL_MARKER}=1` : privateSoak ? `${RENDERER_PROTOCOL_ENTRY_URL}?${SOAK_URL_MARKER}=1` : RENDERER_PROTOCOL_ENTRY_URL);
 
   // Establish the user-facing application policy before the first native
   // window exists. This keeps launches from helpers/deep links visible in the

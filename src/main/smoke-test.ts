@@ -21,6 +21,8 @@ import { isSmokeBusyBannerProbeRequested, proveMountedBusyBannerForSmoke } from 
 import { SMOKE_HANG_PROBE_BLOCK_MS } from './hang-watchdog/smoke-hang-probe';
 import { isSoakSmokeRequested, proveSoakForSmoke } from './soak-smoke';
 import { SOAK_POLICY } from '../shared/soak-smoke';
+import { runtimeGateConfiguration } from './runtime-gate-mode';
+import { RUNTIME_TIMEOUT_MS } from '../shared/runtime-gates';
 
 
 
@@ -42,10 +44,11 @@ export function initSmokeTest(): void {
     smokeTest: true, env: process.env, userDataPath: app.getPath('userData'),
   });
   const soak = isSoakSmokeRequested({ smokeTest: true, packaged: app.isPackaged, env: process.env, userData: app.getPath('userData') });
+  const runtime = runtimeGateConfiguration({ smokeTest: true, packaged: app.isPackaged, env: process.env, userData: app.getPath('userData') });
   const soakCancellation = new AbortController();
   let soakFlight: Promise<void> | null = null;
   // The forty-second live-renderer hang must not consume the ordinary functional deadline.
-  const smokeTimeoutMs = SMOKE_TIMEOUT_MS + (busyBannerProbe ? SMOKE_HANG_PROBE_BLOCK_MS + 10_000 : 0) + (soak ? SOAK_POLICY.timeoutMs : 0);
+  const smokeTimeoutMs = SMOKE_TIMEOUT_MS + (busyBannerProbe ? SMOKE_HANG_PROBE_BLOCK_MS + 10_000 : 0) + (soak ? SOAK_POLICY.timeoutMs : 0) + (runtime ? RUNTIME_TIMEOUT_MS : 0);
 
   const settleNow = createSmokeSettler(
     (code) =>
@@ -130,6 +133,16 @@ export function initSmokeTest(): void {
         return;
       }
       removeListeners();
+      if (runtime) {
+        if (soak || busyBannerProbe) { settle('functional-failed', 'runtime verifier cannot combine acceptance modes'); return; }
+        console.log('[smoke] runtime-start: initial functional probes passed');
+        soakFlight = import('./runtime-gates').then(({ proveRuntimeGates }) => proveRuntimeGates(win, { ipc: ipcMain, userData: app.getPath('userData'),
+          appVersion: app.getVersion(), packaged: app.isPackaged, smokeTest: true, workspacePath: smokeWorkspacePath, signal: soakCancellation.signal,
+          requestPhysicalShutdown: () => settleNow('functional-failed', 'runtime failure; entering physical shutdown') }));
+        void soakFlight.then(() => settle('functional-ready', 'runtime observations and repeated functional probes passed'),
+          () => settle('functional-failed', 'runtime activity/cleanup proof failed'));
+        return;
+      }
       if (soak) {
         console.log('[smoke] soak-start: initial functional probes passed');
         soakFlight = proveSoakForSmoke(win, { ipc: ipcMain, userData: app.getPath('userData'),
