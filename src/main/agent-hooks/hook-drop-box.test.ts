@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { execFileSync } from 'node:child_process';
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   writeAtomicHookDropFile,
   AgentHookDropBoxWatcher,
@@ -26,9 +27,82 @@ describe("hook-drop-box", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     try {
       fs.rmSync(tempDir, { recursive: true, force: true });
     } catch {}
+  });
+
+  it.skipIf(process.platform === 'win32')('F-887: regular-to-FIFO replacement cannot block physical drain or disposal', async () => {
+    const file = writeAtomicHookDropFile(tempDir, { sessionId: 'fifo-fixture', status: 'idle', timestamp: Date.now() });
+    let enter!: () => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const open = fs.promises.open.bind(fs.promises);
+    vi.spyOn(fs.promises, 'open').mockImplementation((...args) => {
+      if (String(args[0]) === file) { fs.unlinkSync(file); execFileSync('/usr/bin/mkfifo', [file]); enter(); }
+      return open(...args);
+    });
+    const onIngest = vi.fn();
+    const watcher = new AgentHookDropBoxWatcher({ dropDir: tempDir, onIngest });
+    const flight = watcher.drain().catch(() => undefined);
+    await entered;
+    let disposed = false;
+    const stop = watcher.dispose().then(() => { disposed = true; });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const beforeRescue = disposed;
+    const rescue = !beforeRescue ? fs.openSync(file, fs.constants.O_RDWR | fs.constants.O_NONBLOCK) : null;
+    try { await flight; await stop; } finally { if (rescue !== null) fs.closeSync(rescue); }
+    expect(beforeRescue).toBe(true);
+    expect(onIngest).not.toHaveBeenCalled();
+  });
+
+  it('F-887: short FD reads preserve and ingest a complete valid record', async () => {
+    const file = writeAtomicHookDropFile(tempDir, { sessionId: 'short-fixture', status: 'idle', timestamp: Date.now(), body: 'A complete record must survive short reads.' });
+    const open = fs.promises.open.bind(fs.promises);
+    let reads = 0;
+    vi.spyOn(fs.promises, 'open').mockImplementation(async (...args) => {
+      const handle = await open(...args);
+      if (String(args[0]) === file) {
+        const read = handle.read.bind(handle);
+        handle.read = (async (buffer: Buffer, offset: number, length: number, position: number) => {
+          reads++; return read(buffer, offset, Math.min(length, 11), position);
+        }) as typeof handle.read;
+      }
+      return handle;
+    });
+    const onIngest = vi.fn();
+    const watcher = new AgentHookDropBoxWatcher({ dropDir: tempDir, onIngest });
+    try {
+      expect(await watcher.drain()).toBe(1);
+      expect(onIngest).toHaveBeenCalledWith(expect.objectContaining({ body: 'A complete record must survive short reads.' }));
+      expect(reads).toBeGreaterThan(1);
+      expect(fs.existsSync(file)).toBe(false);
+    } finally { await watcher.dispose(); }
+  });
+
+  it('F-887: a hardlink created after the initial FD stat cannot supply hook authority', async () => {
+    const file = writeAtomicHookDropFile(tempDir, { sessionId: 'link-fixture', status: 'idle', timestamp: Date.now() });
+    const open = fs.promises.open.bind(fs.promises);
+    let linked = false;
+    vi.spyOn(fs.promises, 'open').mockImplementation(async (...args) => {
+      const handle = await open(...args);
+      if (String(args[0]) === file) {
+        const read = handle.read.bind(handle);
+        handle.read = (async (...readArgs: unknown[]) => {
+          const result = await Reflect.apply(read, handle, readArgs);
+          if (!linked) { linked = true; fs.linkSync(file, path.join(tempDir, '.owned-link')); }
+          return result;
+        }) as typeof handle.read;
+      }
+      return handle;
+    });
+    const onIngest = vi.fn();
+    const watcher = new AgentHookDropBoxWatcher({ dropDir: tempDir, onIngest });
+    try {
+      expect(await watcher.drain()).toBe(0);
+      expect(onIngest).not.toHaveBeenCalled();
+      expect(fs.existsSync(file)).toBe(true);
+    } finally { await watcher.dispose(); }
   });
 
   it("writes drop file atomically and truncates user prompt to 4KB", () => {

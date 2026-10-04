@@ -226,23 +226,34 @@ export class AgentHookDropBoxWatcher {
       let identity: Awaited<ReturnType<typeof fsp.lstat>> | null = null;
       const removeCurrentFile = async () => {
         if (!identity || this.#disposed) return;
-        const current = await fsp.lstat(filePath).catch(() => null);
+        const current = await context.wait(fsp.lstat(filePath).catch(() => null));
+        if (this.#disposed) return;
         if (current && current.dev === identity.dev && current.ino === identity.ino &&
-          current.size === identity.size && current.mtimeMs === identity.mtimeMs) await fsp.unlink(filePath).catch(() => undefined);
+          current.size === identity.size && current.mtimeMs === identity.mtimeMs && current.nlink === identity.nlink) {
+          await context.wait(fsp.unlink(filePath).catch(() => undefined));
+        }
       };
       try {
-        const handle = await fsp.open(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+        // A Dirent can become a FIFO before open. Capture the handle before
+        // checking cancellation so a late open is still physically closed.
+        const handle = await fsp.open(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
         let rawContent: string;
         try {
           context.assertCurrent();
           identity = await context.wait(handle.stat());
           if (!identity.isFile() || identity.nlink !== 1 || identity.size > 65_536) throw new Error('invalid hook drop file');
           const buffer = Buffer.alloc(identity.size + 1);
-          const { bytesRead } = await context.wait(handle.read(buffer, 0, buffer.length, 0));
-          if (bytesRead > identity.size) throw new Error('hook drop file changed');
-          rawContent = buffer.subarray(0, bytesRead).toString('utf8');
+          let offset = 0;
+          while (offset < buffer.length) {
+            const { bytesRead } = await context.wait(handle.read(buffer, offset, buffer.length - offset, offset));
+            if (bytesRead === 0) break;
+            offset += bytesRead;
+          }
+          if (offset !== identity.size) throw new Error('hook drop file changed');
+          rawContent = buffer.subarray(0, offset).toString('utf8');
           const current = await context.wait(fsp.lstat(filePath));
-          if (current.dev !== identity.dev || current.ino !== identity.ino || current.mtimeMs !== identity.mtimeMs ||
+          if (!current.isFile() || current.isSymbolicLink() || current.nlink !== 1 ||
+            current.dev !== identity.dev || current.ino !== identity.ino || current.mtimeMs !== identity.mtimeMs ||
             current.size !== identity.size) continue;
         } finally { await handle.close(); }
         context.assertCurrent();
