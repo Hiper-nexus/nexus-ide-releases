@@ -205,6 +205,28 @@ describe("shutdownPtyRuntimeWithProof", () => {
     expect(shutdownPtyHost).toHaveBeenCalledOnce();
   });
 
+  it.each([shutdownOrchestrationRuntimesWithProof,
+    (deps: Parameters<typeof shutdownOrchestrationRuntimesWithProof>[0]) =>
+      shutdownOrchestrationRuntimesRecordingStragglers(deps, vi.fn()),
+  ])("keeps orchestration stores open until the host physically exits", async (shutdown) => {
+    let stopped!: () => void;
+    const hostExit = new Promise<void>((resolve) => { stopped = resolve; });
+    const closeOrchestration = vi.fn(async () => {});
+    const shutdownPtyHost = vi.fn(() => hostExit);
+    const attempt = shutdown({
+      quiesceOrchestration: async () => {},
+      terminateAllSessions: async () => result(),
+      shutdownPtyHost,
+      reconcileOrchestratorExits: () => true,
+      closeOrchestration,
+    });
+    await vi.waitFor(() => expect(shutdownPtyHost).toHaveBeenCalledOnce());
+    expect(closeOrchestration).not.toHaveBeenCalled();
+    stopped();
+    await attempt;
+    expect(closeOrchestration).toHaveBeenCalledOnce();
+  });
+
   it("keeps the host alive and reports retained sessions when proof fails", async () => {
     const shutdownPtyHost = vi.fn();
     const failed = result({

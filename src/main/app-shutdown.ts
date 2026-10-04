@@ -2,7 +2,7 @@ import type { TerminateAllSessionsResult } from "./pty/pty-manager";
 
 export interface PhysicalPtyShutdownDeps {
   readonly terminateAllSessions: () => Promise<TerminateAllSessionsResult>;
-  readonly shutdownPtyHost: () => void;
+  readonly shutdownPtyHost: () => void | Promise<void>;
 }
 
 export interface OrchestrationPtyShutdownDeps
@@ -58,7 +58,7 @@ export async function shutdownPtyRuntimeWithProof(
   ) {
     throw new PhysicalPtyShutdownError(result);
   }
-  deps.shutdownPtyHost();
+  await deps.shutdownPtyHost();
   return result;
 }
 
@@ -123,7 +123,7 @@ export async function shutdownOrchestrationRuntimesRecordingStragglers(
         result.failedSessionIds.join(", ") || "inventário PTY inconsistente",
     });
   }
-  deps.shutdownPtyHost();
+  await deps.shutdownPtyHost();
   if (!deps.reconcileOrchestratorExits()) {
     record({
       kind: "reconciliation-incomplete",
