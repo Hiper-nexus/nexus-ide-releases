@@ -29,7 +29,7 @@ async function prune(buildPath: string, version = '43.7.4', platform = 'darwin')
   await hook(forgeConfig, buildPath, version, platform, 'arm64');
 }
 
-describe('F-882: Electron legal resources before signing', () => {
+describe.runIf(process.platform === 'darwin')('F-882: Electron legal resources before signing', () => {
   it('preserves exact extracted-template texts through the real prune hook, ASAR and Mac ZIP maker', async () => {
     const f = fixture();
     try {

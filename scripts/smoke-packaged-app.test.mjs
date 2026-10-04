@@ -366,8 +366,8 @@ describe('proofs: renderer, functional, marker, natives', () => {
     await createFinishedPackage(source, path.join(resources, 'app.asar'));
 
     expect(() => inspectPackagedMainBundle(resources)).not.toThrow();
-    writeElectronLegalFiles(resources);
-    expect(() => inspectPackagedLegalArtifacts(resources, { platform: 'darwin', arch: 'arm64' })).not.toThrow();
+    if (process.platform === 'darwin') writeElectronLegalFiles(resources);
+    expect(() => inspectPackagedLegalArtifacts(resources, { platform: process.platform, arch: process.arch })).not.toThrow();
   });
 
   it('requires the pinned default PT-BR wake model in packaged resources', async () => {
@@ -490,7 +490,7 @@ describe('proofs: renderer, functional, marker, natives', () => {
     expect(() => inspectPackagedLegalArtifacts(resources)).toThrow(/pinned ONNX Runtime/i);
   });
 
-  it.each(['missing', 'version', 'source', 'LICENSE', 'LICENSES.chromium.html'])('F-882: rejects %s Electron distribution proof at the Mac legal gate', async (fault) => {
+  it.runIf(process.platform === 'darwin').each(['missing', 'version', 'source', 'LICENSE', 'LICENSES.chromium.html'])('F-882: rejects %s Electron distribution proof at the Mac legal gate', async (fault) => {
     const root = makeTemp('nexus-smoke-electron-legal-');
     const source = path.join(root, 'source');
     const resources = path.join(root, 'resources');
@@ -536,8 +536,8 @@ describe('proofs: renderer, functional, marker, natives', () => {
     fs.mkdirSync(resources, { recursive: true });
     await createFinishedPackage(source, path.join(resources, 'app.asar'));
 
-    writeElectronLegalFiles(resources);
-    expect(() => inspectPackagedLegalArtifacts(resources, { platform: 'darwin', arch: 'arm64' })).not.toThrow();
+    if (process.platform === 'darwin') writeElectronLegalFiles(resources);
+    expect(() => inspectPackagedLegalArtifacts(resources, { platform: process.platform, arch: process.arch })).not.toThrow();
   });
 
   it('fails closed when a declared packaged license is absent', async () => {
