@@ -145,8 +145,11 @@ export function prepareOwnedLinuxCommand(input: ScopedShellPlan, options: { io?:
       }
       const recheck = birth(await io.read(outerFd, 'stat'));
       if (init.pid !== info['child-pid'] || init.parent !== outerPid || init.group !== outerPid || init.session !== outerPid ||
-          init.state === 'Z' || recheck.start !== outer.start || recheck.pid !== outer.pid || !aliveOuter()) return;
+          recheck.start !== outer.start || recheck.pid !== outer.pid || !aliveOuter()) return;
       expected = init;
+      // Setup may fail before the private gate is released. The same pinned,
+      // authenticated PID1 zombie proves teardown, without starting the command.
+      if (init.state === 'Z') { initGone = true; complete(); return; }
       if (stopped) cancel();
       else { gateReleased = true; block!.write('1', () => {}); }
       void poll();

@@ -44,6 +44,14 @@ function prepare(f: ReturnType<typeof fixture>) { const c = prepareOwnedLinuxCom
 function report(f: ReturnType<typeof fixture>, payload = '{"child-pid":101,"pid-namespace":4001}') { f.info.end(payload); }
 
 describe('owned Bubblewrap namespace lifetime', () => {
+  it('settles a matched PID1 already zombie during capture without opening its gate', async () => {
+    const f = fixture(); f.state('Z'); const c = prepare(f);
+    const proof = c.waitForExit(f.proc as unknown as ChildProcess);
+    report(f); await ticks(); expect(f.paths).toContain('101:status'); expect(f.writes).toEqual([]);
+    f.proc.exitCode = 1; f.proc.emit('close', 1, null);
+    const result = await Promise.race([proof.then(() => 'settled'), new Promise(resolve => setTimeout(() => resolve('pending'), 20))]);
+    expect(result).toBe('settled'); expect(f.closed).toEqual([100, 101]);
+  });
   it('detaches pinned descriptors before asynchronous close so concurrent dispose cannot close a reused fd', async () => {
     const f = fixture(); let finishClose!: () => void;
     const closing = new Promise<void>(resolve => { finishClose = resolve; });
