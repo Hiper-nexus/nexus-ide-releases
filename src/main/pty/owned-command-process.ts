@@ -27,15 +27,17 @@ export class OwnedCommandProcesses {
     const claim = this.#claims.get(id);
     if (!claim || claim.sessionId !== sessionId || !Number.isSafeInteger(pid) || pid <= 0) return false;
     const snapshot = await this.capture(claim.root.pid);
-    if (!snapshot?.root || snapshot.root.startedAt !== claim.root.startedAt) return false;
+    if (this.#claims.get(id) !== claim || !snapshot?.root || snapshot.root.startedAt !== claim.root.startedAt) return false;
     const row = pid === claim.root.pid ? snapshot.root : snapshot.descendants.find((candidate) => candidate.pid === pid);
     if (!row || !Number.isFinite(Date.parse(row.startedAt)) || Date.parse(row.startedAt) >= Math.floor(snapshot.capturedAtMs / 1000) * 1000) return false;
-    if (claim.rows.size + snapshot.descendants.length > 256) return false;
+    const merged = new Map(claim.rows);
     for (const member of [row, ...snapshot.descendants]) {
-      const prior = claim.rows.get(member.pid);
+      const prior = merged.get(member.pid);
       if (prior && prior.row.startedAt !== member.startedAt) return false;
-      claim.rows.set(member.pid, { row: member, observedAt: snapshot.capturedAtMs });
+      if (!prior) merged.set(member.pid, { row: member, observedAt: snapshot.capturedAtMs });
     }
+    if (merged.size > 256) return false;
+    claim.rows = merged;
     return true;
   }
   async probe(sessionId: string, id: string): Promise<CommandProcessState> {
