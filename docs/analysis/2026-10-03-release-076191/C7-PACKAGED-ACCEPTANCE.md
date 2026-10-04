@@ -9,7 +9,7 @@ o resultado desse comando.
 /opt/homebrew/opt/node@22/bin/node scripts/smoke-packaged-app.mjs \
   --verify-busy-banner-probe \
   --app out/NexusIDE-darwin-arm64/NexusIDE.app \
-  --expected-version 0.76.191 \
+  --expected-version 0.76.192 \
   --evidence-dir /CAMINHO/ABSOLUTO/NOVO/c7-packaged-acceptance
 ```
 
