@@ -54,7 +54,7 @@ As chamadas de API usam cookies (`credentials: include`) e mutações usam `X-CS
 
 A CSP do Worker permite `connect-src 'self' https://api.nexuside.app` e mais nada, que é o que habilita as chamadas da conta, do admin e da seção de planos.
 
-`/admin/` mostra dados apenas após uma sessão com papel `admin`, com autorização obrigatória também no backend. Consulta `/v1/admin/overview` e `/v1/admin/accounts?status=…&limit=50`; ações POST por ID suspendem acesso com motivo, restauram acesso ou estendem o teste de 1 a 30 dias. A suspensão informa explicitamente que não cancela a assinatura ou cobranças Stripe. Respostas 401/403 limpam os dados exibidos. Nenhum e-mail administrativo ou regra de elevação é codificado no frontend. As respostas seguem `{ok:true,data:{…}}`, inclusive confirmação de mutações; falhas ficam em texto inline, sem alert/confirm.
+`/admin/` mostra dados apenas após uma sessão com papel `admin`, com autorização obrigatória também no backend. Consulta `/v1/admin/overview` e `/v1/admin/accounts` (situação, parte do e-mail e cursor; 50 por página, com “Carregar mais”). Cada conta traz `lastSeenAt`, a última entrada gravada no login, ou vazio. Ações POST por ID suspendem acesso com motivo, restauram acesso ou estendem o teste de 1 a 30 dias. A suspensão informa explicitamente que não cancela a assinatura ou cobranças Stripe. Respostas 401/403 limpam os dados exibidos. Nenhum e-mail administrativo ou regra de elevação é codificado no frontend. As respostas seguem `{ok:true,data:{…}}`, inclusive confirmação de mutações; falhas ficam em texto inline, sem alert/confirm.
 
 ## Assets e provas
 

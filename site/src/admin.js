@@ -1,10 +1,10 @@
 import { api, byId, message, displayDate, subscriptionLabel, ACCESS_LABELS } from './account.js';
 import { initCodes, resetCodes } from './admin-codes.js';
 import { initBugs, resetBugs } from './admin-bugs.js';
+import { accountsQuery, parseAccountsPage } from './plans/admin-accounts.js';
 
-const FILTERS = new Set(['all', 'trial', 'active', 'suspended', 'expired']);
 const ACTIONS = { suspend: 'Suspender acesso', resume: 'Restaurar acesso', 'extend-trial': 'Estender teste' };
-let session = null, selectedAction = null, isBusy = false;
+let session = null, selectedAction = null, isBusy = false, accountsCursor = null;
 
 function denyAccess(text) {
   session = null;
@@ -15,6 +15,8 @@ function denyAccess(text) {
   byId('admin-denied').hidden = false;
   byId('admin-overview').replaceChildren();
   byId('account-rows').replaceChildren();
+  accountsCursor = null;
+  byId('accounts-more').hidden = true;
   byId('admin-action-panel').hidden = true;
   byId('action-account').textContent = '';
   message('admin-message', text, 'error');
@@ -22,7 +24,7 @@ function denyAccess(text) {
 
 function setBusy(value) {
   isBusy = value;
-  document.querySelectorAll('#filter-form button, #filter-form select, .admin-row-actions button, #admin-action-form button').forEach(button => { button.disabled = value; });
+  document.querySelectorAll('#filter-form button, #filter-form select, #filter-form input, #accounts-more, .admin-row-actions button, #admin-action-form button').forEach(button => { button.disabled = value; });
 }
 
 function renderOverview(data) {
@@ -44,6 +46,19 @@ function textCell(text) {
   return cell;
 }
 
+function lastSeenCell(value) {
+  const cell = document.createElement('td');
+  if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) {
+    cell.textContent = 'Sem registro';
+    return cell;
+  }
+  const time = document.createElement('time');
+  time.dateTime = value;
+  time.textContent = displayDate(value);
+  cell.append(time);
+  return cell;
+}
+
 function accountRow(account) {
   const row = document.createElement('tr'), identity = document.createElement('td');
   const name = document.createElement('strong'), email = document.createElement('small');
@@ -62,36 +77,46 @@ function accountRow(account) {
   }
   actions.append(group);
   row.append(identity, textCell(ACCESS_LABELS[account.access] || 'A confirmar'), textCell(displayDate(account.trialEndsAt)),
-    textCell(subscriptionLabel(account.subscriptionStatus)), textCell(account.role === 'admin' ? 'Administrador' : 'Usuário'), actions);
+    textCell(subscriptionLabel(account.subscriptionStatus)), textCell(account.role === 'admin' ? 'Administrador' : 'Usuário'), lastSeenCell(account.lastSeenAt), actions);
   return row;
 }
 
-function renderAccounts(data) {
-  if (!Array.isArray(data.accounts) || !data.accounts.every(account => typeof account?.id === 'string' && account.id
-    && typeof account.email === 'string' && typeof account.role === 'string' && typeof account.access === 'string')) throw new Error('O serviço não retornou uma lista válida. Atualize novamente.');
-  byId('account-rows').replaceChildren(...data.accounts.map(accountRow));
-  byId('accounts-empty').hidden = data.accounts.length > 0;
+function renderAccounts(data, { append }) {
+  const page = parseAccountsPage(data);
+  if (!page) throw new Error('O serviço não retornou uma lista válida. Atualize novamente.');
+  const rows = page.accounts.map(accountRow);
+  if (append) byId('account-rows').append(...rows);
+  else byId('account-rows').replaceChildren(...rows);
+  accountsCursor = page.nextCursor;
+  byId('accounts-empty').hidden = byId('account-rows').children.length > 0;
+  byId('accounts-more').hidden = page.nextCursor === null;
 }
 
-async function loadAccounts() {
-  if (isBusy || !session) return;
+async function loadAccounts({ append = false } = {}) {
+  if (isBusy || !session) return false;
+  if (append && !accountsCursor) return false;
   setBusy(true);
-  byId('account-rows').replaceChildren();
-  byId('admin-overview').hidden = true;
+  if (!append) {
+    accountsCursor = null;
+    byId('account-rows').replaceChildren();
+    byId('admin-overview').hidden = true;
+  }
   byId('accounts-empty').hidden = true;
-  message('admin-message', 'Consultando contas e períodos de teste…');
-  const filter = FILTERS.has(byId('account-filter').value) ? byId('account-filter').value : 'all';
-  const results = await Promise.allSettled([api('/v1/admin/overview'), api(`/v1/admin/accounts?status=${filter}&limit=50`)]);
+  byId('accounts-more').hidden = true;
+  message('admin-message', append ? 'Carregando mais contas…' : 'Consultando contas e períodos de teste…');
+  const listCall = api(`/v1/admin/accounts?${accountsQuery({ status: byId('account-filter').value, email: byId('account-email').value, cursor: append ? accountsCursor : undefined })}`);
+  const results = await Promise.allSettled(append ? [listCall] : [api('/v1/admin/overview'), listCall]);
   const errors = [];
   for (let index = 0; index < results.length; index++) {
     const result = results[index];
     if (result.status === 'rejected') { errors.push(result.reason); continue; }
-    try { if (index === 0) renderOverview(result.value); else renderAccounts(result.value); }
+    try { if (!append && index === 0) renderOverview(result.value); else renderAccounts(result.value, { append }); }
     catch (error) { errors.push(error); }
   }
   setBusy(false);
   const permissionError = errors.find(error => error.status === 401 || error.status === 403);
   if (permissionError) { denyAccess(permissionError.message); return false; }
+  if (errors.length && append && accountsCursor) byId('accounts-more').hidden = false;
   message('admin-message', errors.length ? errors[0].message : 'Dados atualizados pelo servidor.', errors.length ? 'error' : '');
   return errors.length === 0;
 }
@@ -175,6 +200,7 @@ async function initializeAdmin() {
 }
 
 byId('filter-form').addEventListener('submit', event => { event.preventDefault(); closeAction(); void loadAccounts(); });
+byId('accounts-more').addEventListener('click', () => { void loadAccounts({ append: true }); });
 byId('admin-action-form').addEventListener('submit', submitAction);
 byId('cancel-admin-action').addEventListener('click', closeAction);
 void initializeAdmin();

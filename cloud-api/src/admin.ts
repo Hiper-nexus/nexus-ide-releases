@@ -8,11 +8,17 @@ import { emailConfigured } from './config.js';
 import { CLASSIFIED, LIVE, adminEmails } from './classified.js';
 import { mintLicenseCode } from './license-codes.js';
 import { requireAdmin, requireCsrf, requireWebAuth } from './middleware.js';
+import { decodeAccountCursor, encodeAccountCursor } from './admin-cursor.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SITUATIONS = ['trial', 'active', 'suspended', 'expired'] as const;
 type Situation = typeof SITUATIONS[number];
-const listSchema = z.strictObject({ status: z.enum(['all', ...SITUATIONS]).default('all'), limit: z.coerce.number().int().min(1).max(50).default(50) });
+const listSchema = z.strictObject({
+  status: z.enum(['all', ...SITUATIONS]).default('all'),
+  limit: z.coerce.number().int().min(1).max(50).default(50),
+  email: z.string().trim().max(200).optional(),
+  cursor: z.string().regex(/^[A-Za-z0-9_-]{1,160}$/).optional(),
+});
 const suspendSchema = z.strictObject({ reason: z.string().trim().min(1).max(500) });
 const extendSchema = z.strictObject({ days: z.number().int().min(1).max(30) });
 const mintCodeSchema = z.strictObject({
@@ -51,17 +57,30 @@ adminRoutes.get('/admin/overview', async (c) => {
 adminRoutes.get('/admin/accounts', async (c) => {
   const query = listSchema.safeParse(c.req.query());
   if (!query.success) throw new HTTPException(400, { message: 'Filtro inválido.' });
-  type Row = Pick<AccountRow, 'id' | 'email' | 'name' | 'trial_expires_at'> & { is_admin: number; situation: Situation; subscription_status: string | null };
-  const rows = await c.env.DB.prepare(`${CLASSIFIED} SELECT id,email,name,trial_expires_at,is_admin,situation,
+  const cursor = query.data.cursor === undefined ? null : decodeAccountCursor(query.data.cursor);
+  if (query.data.cursor !== undefined && cursor === null) throw new HTTPException(400, { message: 'Cursor inválido.' });
+  // last_seen_at é a última entrada real: findOrCreateAccount grava no login OAuth (conta nova, vínculo por e-mail e retorno).
+  // sessions.last_used_at não é preenchido e a sessão expira; a lista não deriva dali.
+  type Row = Pick<AccountRow, 'id' | 'email' | 'name' | 'trial_expires_at' | 'last_seen_at' | 'created_at'> & { is_admin: number; situation: Situation; subscription_status: string | null };
+  const rows = await c.env.DB.prepare(`${CLASSIFIED} SELECT id,email,name,trial_expires_at,last_seen_at,created_at,is_admin,situation,
       (SELECT s.status FROM subscriptions s WHERE (s.owner_type='account' AND s.account_id=classified.id)
         OR (s.owner_type='team' AND s.team_id IN (SELECT team_id FROM team_members WHERE account_id=classified.id)) ORDER BY ${LIVE} DESC,s.updated_at DESC LIMIT 1) AS subscription_status
-    FROM classified WHERE ?3='all' OR situation=?3 ORDER BY created_at DESC,id LIMIT ?4`)
-    .bind(Date.now(), adminEmails(c.get('config')), query.data.status, query.data.limit).all<Row>();
-  return c.json({ ok: true, data: { accounts: rows.results.map(row => ({
-    id: row.id, email: row.email.includes('@') ? row.email : '', name: row.name, role: row.is_admin ? 'admin' : 'user',
-    access: row.situation === 'active' ? 'pro' : row.situation, trialEndsAt: row.trial_expires_at === null ? null : new Date(row.trial_expires_at).toISOString(),
-    subscriptionStatus: row.subscription_status ?? 'none',
-  })) } });
+    FROM classified WHERE (?3='all' OR situation=?3)
+      AND (?5 IS NULL OR instr(lower(email), lower(?5))>0)
+      AND (?6 IS NULL OR created_at<?6 OR (created_at=?6 AND id>?7))
+    ORDER BY created_at DESC, id LIMIT ?4`)
+    .bind(Date.now(), adminEmails(c.get('config')), query.data.status, query.data.limit + 1, query.data.email ? query.data.email : null, cursor?.createdAt ?? null, cursor?.id ?? null).all<Row>();
+  const page = rows.results.slice(0, query.data.limit);
+  const last = rows.results.length > query.data.limit ? page.at(-1) : undefined;
+  return c.json({ ok: true, data: {
+    accounts: page.map(row => ({
+      id: row.id, email: row.email.includes('@') ? row.email : '', name: row.name, role: row.is_admin ? 'admin' : 'user',
+      access: row.situation === 'active' ? 'pro' : row.situation, trialEndsAt: row.trial_expires_at === null ? null : new Date(row.trial_expires_at).toISOString(),
+      subscriptionStatus: row.subscription_status ?? 'none',
+      lastSeenAt: row.last_seen_at === null ? null : new Date(row.last_seen_at).toISOString(),
+    })),
+    nextCursor: last ? encodeAccountCursor({ createdAt: last.created_at, id: last.id }) : null,
+  } });
 });
 
 // Suspension blocks NexusIDE access only. It never cancels the Stripe subscription, and the

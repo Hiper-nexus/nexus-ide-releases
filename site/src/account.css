@@ -81,3 +81,7 @@
 .bug-timeline time{font:12px/1.6 ui-monospace,monospace;color:var(--faint)}
 .bug-diagnostics{margin-top:var(--s2)}
 @media(max-width:760px){.bug-facts dd{font-size:18px;line-height:24px}.bug-detail{padding:var(--s3)}.bug-timeline li{grid-template-columns:1fr;gap:2px}}
+#account-email{background:var(--bar);color:var(--ink);font:inherit;border:1px solid var(--strong);border-radius:8px;padding:var(--s1) var(--s2);min-height:48px;width:min(260px,100%);appearance:none}
+#account-email:focus-visible{outline:2px solid var(--pink);outline-offset:4px}
+.admin-accounts .admin-table{min-width:980px}
+#accounts-more{margin-top:var(--s3)}

@@ -166,3 +166,21 @@ test('provider failure is diagnosable from logs without exposing secrets', async
     assert.match(text, /\[oauth\] token .*provider_error=incorrect_client_credentials/);
     assert.ok(!text.includes('fixture-secret') && !text.includes('provider-code'));
 });
+
+test('oauth sign-in writes last_seen_at and a later sign-in refreshes it', async () => {
+  const db = new SqliteD1();
+  const env = environment(db);
+  const router = app(googleFetch());
+  const first = await start(router, env, true);
+  const before = Date.now();
+  assert.equal((await callback(router, env, first.state, first.cookie)).status, 302);
+  const created = await db.prepare('SELECT last_seen_at AS seen FROM accounts').first<{ seen: number }>();
+  assert.ok(created && created.seen >= before && created.seen <= Date.now());
+  await db.prepare('UPDATE accounts SET last_seen_at=1').run();
+  const second = await start(router, env, true);
+  const again = Date.now();
+  assert.equal((await callback(router, env, second.state, second.cookie)).status, 302);
+  const refreshed = await db.prepare('SELECT last_seen_at AS seen FROM accounts').first<{ seen: number }>();
+  assert.ok(refreshed && refreshed.seen >= again && refreshed.seen <= Date.now());
+  db.close();
+});
