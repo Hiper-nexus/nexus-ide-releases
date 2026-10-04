@@ -299,7 +299,12 @@ export async function respawnMainOwnedPaneWithAccount(input: {
     }
   }
   if (!isCurrent()) return false;
-  const spawned = await spawnMainOwnedMissionPaneAsync(plan.options);
+  const spawned = await spawnMainOwnedMissionPaneAsync({
+    ...plan.options,
+    assertOriginCurrent: () => {
+      if (!isCurrent()) throw new Error('failover origin pane is stale');
+    },
+  });
   if (!spawned.ok) {
     console.warn(
       `[failover-mission-respawn] respawn recusado para ${input.paneId}: ` +

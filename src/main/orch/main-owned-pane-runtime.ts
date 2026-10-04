@@ -103,6 +103,8 @@ export interface PaneOrchMeta {
 }
 
 export interface PaneSpawnOptions {
+  /** Main-only origin fence; never serialized into pane metadata or renderer requests. */
+  assertOriginCurrent?: () => void;
   /** Main-only task verification metadata; not part of the renderer request. */
   visualTask?: import('../../shared/orch-types').VisualTaskRequirement;
   /**
@@ -420,6 +422,8 @@ export function spawnMainOwnedMissionPane(
   spawnPermitHeld = false,
 ): OrchPaneSpawnResult | Promise<OrchPaneSpawnResult> {
   const requestId = makeId("orchspawn");
+  try { options.assertOriginCurrent?.(); }
+  catch (error) { return { requestId, ok: false, error: error instanceof Error ? error.message : 'origin pane is stale' }; }
   const paneId = makeId("pane");
   const operatorChoice = isOperatorChoicePolicy(
     getOrchSettings().squadCliPolicy,
@@ -743,6 +747,7 @@ export function spawnMainOwnedMissionPane(
     cwd,
   });
   try {
+    options.assertOriginCurrent?.();
     // Best-effort only: vault/keyring must never block the first PTY.
     issueAgentIdentityBestEffort({
       missionId: options.missionId,

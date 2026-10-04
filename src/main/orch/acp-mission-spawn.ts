@@ -127,6 +127,7 @@ export async function spawnMainOwnedAcpMissionPane(
   const identityAgentId = options.agentName?.trim() || harness.id;
   let mcpToken: string | undefined;
   try {
+    options.assertOriginCurrent?.();
     issueAgentIdentityBestEffort({
       missionId: options.missionId,
       scope: options.scope,
@@ -149,6 +150,7 @@ export async function spawnMainOwnedAcpMissionPane(
     });
     mcpToken = gate.token;
     const { spawnAcpHarnessSession } = await import('../acp/acp-harness-driver');
+    options.assertOriginCurrent?.();
     const spawnPromise = spawnAcpHarnessSession({
       harness,
       cwd,

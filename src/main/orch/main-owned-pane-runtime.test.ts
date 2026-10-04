@@ -92,6 +92,40 @@ beforeEach(() => {
 });
 
 describe('exact headless mission resume', () => {
+  it('F-886 revalidates Main origin after provider preparation before the physical spawn', async () => {
+    deps.adapterId = 'claude';
+    let release!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    deps.authoritative.mockImplementationOnce(async () => { entered(); await blocked; return { ok: true, overrides }; });
+    let current = true;
+    const result = spawnMainOwnedMissionPaneAsync({ ...options, adapterId: 'claude', role: 'orchestrator',
+      assertOriginCurrent: () => { if (!current) throw new Error('origin pane closed'); },
+    }, hooks);
+    await started;
+    current = false;
+    release();
+    await expect(result).resolves.toMatchObject({ ok: false, error: 'origin pane closed' });
+    expect(deps.spawn).not.toHaveBeenCalled();
+  });
+
+  it('F-886 revalidates Main origin after the CLI permit wait', async () => {
+    let grant!: (value: () => void) => void;
+    const release = vi.fn();
+    deps.acquirePermit.mockImplementationOnce(() => new Promise(resolve => { grant = resolve; }));
+    let current = true;
+    const result = spawnMainOwnedMissionPaneAsync({ ...options,
+      assertOriginCurrent: () => { if (!current) throw new Error('origin pane replaced'); },
+    }, hooks);
+    await Promise.resolve();
+    await Promise.resolve();
+    current = false;
+    grant(release);
+    await expect(result).resolves.toMatchObject({ ok: false, error: 'origin pane replaced' });
+    expect(deps.spawn).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
+  });
   it('copies the recorded conversation and sends the exact-resume flag to the physical PTY', async () => {
     const result = await spawnMainOwnedMissionPaneAsync({ ...options, resume: true, resumeFromPaneId: 'pane-original' }, hooks);
     expect(result.ok).toBe(true);
