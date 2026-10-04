@@ -76,6 +76,7 @@ import {
 } from './editor/editor-buffer-bridge';
 import { writeFileAtomic } from './util/atomic-write';
 import { runSearchMixerQuery } from './search/search-mixer-bootstrap';
+import { requireLiveRendererWorkspaceScope } from './persistence/renderer-workspace-scope';
 import {
   requireScopedRoot,
   resolveScopedPath,
@@ -121,10 +122,13 @@ function loadMissionLookup(): Promise<MissionExistsInScope> {
 export async function authorizedMissionAttribution(
   scope: ProjectExecutionScope,
   claimed: string | undefined,
+  assertCurrent?: () => void,
 ): Promise<string | undefined> {
+  assertCurrent?.();
   if (claimed === undefined) return undefined;
   const missionId = assertProjectableMissionId(claimed);
   const missionExists = await loadMissionLookup();
+  assertCurrent?.();
   return authorizedMissionId(missionId, (id) => missionExists(scope, id));
 }
 
@@ -155,11 +159,14 @@ async function canonicalMemoryView(sender: Electron.WebContents) {
     'feature.memory.workspaceMemory',
   );
   const { scope } = requireScopedRoot(sender);
+  const assertCurrent = () => { requireLiveRendererWorkspaceScope(sender, scope); };
+  assertCurrent();
   const store = getWorkspaceMemoryStore(scope);
   // F-764: a reconciliação roda fora do event loop; espera também as
   // gravações ainda na janela de coalescência.
   await store.ensureProjections();
-  return { scope, root: store.projectionRoot, store };
+  assertCurrent();
+  return { scope, root: store.projectionRoot, store, assertCurrent };
 }
 
 /** Missing is a valid new document; every other read failure is fail-closed. */
@@ -445,11 +452,12 @@ export function registerProductWaveIpc(): void {
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryList, async (event) => {
     requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
-    const { root, store } = await canonicalMemoryView(event.sender);
+    const { root, store, assertCurrent } = await canonicalMemoryView(event.sender);
+    assertCurrent();
     // Origem e data vêm do SQLite canônico: a projeção Markdown nunca lê
     // provenance de volta (contrato de autoridade do nexus-memory).
     const metas = store.activeWorkspaceMetas();
-    return listMemoryNotes(root).map((note) => {
+    const notes = listMemoryNotes(root).map((note) => {
       const meta = metas.get(note.id);
       return {
         ...note,
@@ -461,11 +469,14 @@ export function registerProductWaveIpc(): void {
         reverify: meta?.reverify ?? null,
       };
     });
+    assertCurrent();
+    return notes;
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryRemember, async (event, raw) => {
     requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
-    const { scope, root, store } = await canonicalMemoryView(event.sender);
+    const { scope, root, store, assertCurrent } = await canonicalMemoryView(event.sender);
+    assertCurrent();
     const input = z
       .object({
         title: z.string().trim().min(1).max(256),
@@ -481,7 +492,9 @@ export function registerProductWaveIpc(): void {
     const missionId = await authorizedMissionAttribution(
       scope,
       input.missionId,
+      assertCurrent,
     );
+    assertCurrent();
     const retained =
       kind === 'decision'
         ? retainTrustedMemory(scope, {
@@ -499,34 +512,45 @@ export function registerProductWaveIpc(): void {
     // A projeção da gravação acima é agendada (F-764): espera ela chegar ao
     // disco antes de devolver a nota.
     await store.ensureProjections();
+    assertCurrent();
     const note = listMemoryNotes(root).find(
       (candidate) => candidate.id === retained.id,
     );
     if (!note) {
       throw new Error('canonical memory projection unavailable');
     }
+    assertCurrent();
     return note;
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.memorySearch, async (event, raw) => {
     requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
-    const { root } = await canonicalMemoryView(event.sender);
+    const { root, assertCurrent } = await canonicalMemoryView(event.sender);
+    assertCurrent();
     const { query } = z.object({ query: z.string().max(512) }).parse(raw);
-    return searchMemory(root, query);
+    const result = searchMemory(root, query);
+    assertCurrent();
+    return result;
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryBacklinks, async (event, raw) => {
     requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
-    const { root } = await canonicalMemoryView(event.sender);
+    const { root, assertCurrent } = await canonicalMemoryView(event.sender);
+    assertCurrent();
     const { title } = z.object({ title: z.string().min(1).max(256) }).parse(raw);
-    return backlinks(root, title);
+    const result = backlinks(root, title);
+    assertCurrent();
+    return result;
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryComplete, async (event, raw) => {
     requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
-    const { root } = await canonicalMemoryView(event.sender);
+    const { root, assertCurrent } = await canonicalMemoryView(event.sender);
+    assertCurrent();
     const { prefix } = z.object({ prefix: z.string().max(128) }).parse(raw);
-    return wikilinkCompletions(root, prefix);
+    const result = wikilinkCompletions(root, prefix);
+    assertCurrent();
+    return result;
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.skillsList, (event) => {
