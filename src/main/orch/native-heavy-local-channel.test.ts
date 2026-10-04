@@ -10,8 +10,8 @@ import { createNativeHeavyLocalChannel, type HeavyLocalChannelPorts, type Native
 import type { AgentGateContext } from './gate';
 
 function nodeTestPort(tamper = false): HeavyLocalChannelPorts['spawn'] {
-  return (entry, cwd) => {
-    const child = fork(entry, [], { cwd, execPath: process.execPath, execArgv: [], env: { PATH: '/usr/bin:/bin', LANG: 'C' }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+  return (entry, cwd, transport: 'unix' | 'file' = 'unix') => {
+    const child = fork(entry, transport === 'file' ? ['--file'] : [], { cwd, execPath: process.execPath, execArgv: [], env: { PATH: '/usr/bin:/bin', LANG: 'C' }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
     return { on: (event, callback) => child.on(event, callback), kill: () => child.kill(), postMessage: message => {
       const value = message as { type: string; raw?: string };
       if (tamper && value.type === 'response') { const reply = JSON.parse(value.raw!); reply.result = { allow: true, leaseId: 'forged' }; value.raw = JSON.stringify(reply); }
@@ -43,6 +43,20 @@ it.runIf(process.platform === 'darwin')('a real Unix channel authenticates a Mai
   try { expect(await request(channel)).toEqual({ code: 0, output: 'finite-lease', error: '' }); expect(calls).toBe(1); }
   finally { await channel.dispose(); await fsp.rmdir(root); }
 });
+it.runIf(process.platform === 'darwin')('file mode admits with both TCP and Unix denied and no channel secret persisted', async () => {
+ const root = fs.realpathSync(await fsp.mkdtemp(path.join(os.tmpdir(), 'nexus-heavy-file-'))); let calls = 0;
+ const channel = await createNativeHeavyLocalChannel(ctx, root, { spawn: nodeTestPort(), current: value => value === ctx, admit: async (value, body) => {
+  expect(value).toBe(ctx); expect(body).toMatchObject({ pid: process.pid, kind: 'build' }); calls++; return { allow: true, leaseId: 'finite-lease' };
+ } }, { transport: 'file' });
+ const child = spawn('/usr/bin/sandbox-exec', ['-p', '(version 1)(allow default)(deny network*)', process.execPath, path.join(process.cwd(), 'resources/heavy-command/request.cjs'), String(process.pid), 'build'], {
+  env: { ...channel.env, NEXUS_HEAVY_COMMAND_URL: 'http://127.0.0.1:1234/hook/heavy-command', NEXUS_GATE_TOKEN: ctx.token, NEXUS_HEAVY_CURL: '/usr/bin/curl' }, stdio: ['ignore', 'pipe', 'pipe'] });
+ let output = '', error = ''; child.stdout.on('data', part => output += part); child.stderr.on('data', part => error += part);
+ const exit = new Promise<number | null>(resolve => child.once('close', resolve));
+ try {
+  expect(await exit, error).toBe(0); expect(output).toBe('finite-lease'); expect(calls).toBe(1); expect(channel.transport).toBe('file');
+  for (const name of fs.readdirSync(channel.env.NEXUS_HEAVY_CHANNEL_DIR)) { const bytes = fs.readFileSync(path.join(channel.env.NEXUS_HEAVY_CHANNEL_DIR, name), 'utf8'); expect(bytes).not.toContain(channel.env.NEXUS_HEAVY_CHANNEL_KEY); expect(bytes).not.toContain(ctx.token); }
+ } finally { child.kill('SIGTERM'); await exit; await channel.dispose(); await fsp.rmdir(root); }
+}, 10000);
 it.runIf(process.platform === 'darwin').each([false, true])('direct Node preload keeps scoped Unix borrowing and rejects tampered replies=%s', async (tamper) => {
  const root = fs.realpathSync(await fsp.mkdtemp(path.join(os.tmpdir(), 'nexus-heavy-node-unix-')));
  const entry = path.join(root, 'node_modules/typescript/bin/finite.cjs'), marker = path.join(root, 'loaded');

@@ -29,7 +29,7 @@ function accepted(status, raw) {
 }
 const body = JSON.stringify({ pid, kind, ...(process.argv[4] === 'darwin-job' ? { proof: 'darwin-job' } : {}), ...(process.env.NEXUS_HEAVY_LEASE ? { leaseId: process.env.NEXUS_HEAVY_LEASE } : {}) });
 // ps birth identity is second-granularity: do not claim a same-second PID.
-setTimeout(() => {
+setTimeout(async () => {
   if (process.env.NEXUS_HEAVY_CHANNEL_DIR) {
     try {
       const crypto = require('node:crypto'), fs = require('node:fs'), directory = process.env.NEXUS_HEAVY_CHANNEL_DIR;
@@ -38,11 +38,21 @@ setTimeout(() => {
       const id = crypto.randomUUID(), issuedAt = Date.now(), payload = JSON.parse(body);
       const input = JSON.stringify([id, issuedAt, payload]);
       const packet = JSON.stringify({ id, issuedAt, body: payload, mac: crypto.createHmac('sha256', Buffer.from(process.env.NEXUS_HEAVY_CHANNEL_KEY, 'hex')).update(input).digest('hex') });
-      const config = ['url = ' + JSON.stringify(url.href), 'request = "POST"', 'header = "Content-Type: application/json"', 'data = ' + JSON.stringify(packet), 'noproxy = "*"'].join('\n') + '\n';
-      const raw = require('node:child_process').execFileSync('/usr/bin/curl', ['--disable', '--config', '-', '--silent', '--show-error', '--unix-socket', 'heavy.sock', '--proto', '=http', '--max-time', '360', '--connect-timeout', '5'],
-        { cwd: directory, env: {}, input: config, encoding: 'utf8', timeout: 365000, maxBuffer: 2048, stdio: ['pipe', 'pipe', 'pipe'] });
-      const reply = JSON.parse(raw), hash = crypto.createHash('sha256').update(input).digest('hex');
       const key = crypto.createPublicKey({ key: Buffer.from(process.env.NEXUS_HEAVY_CHANNEL_PUBLIC_KEY || '', 'base64'), format: 'der', type: 'spki' });
+      if (key.asymmetricKeyType !== 'ed25519') process.exit(78);
+      const io = require('./file-channel-io.cjs'), manifestFile = require('node:path').join(directory, 'transport.json');
+      const manifestFd = io.open(manifestFile, fs.constants.O_RDONLY);
+      let manifest; try { manifest = JSON.parse(io.read(manifestFd.fd, manifestFile)); } finally { fs.closeSync(manifestFd.fd); }
+      if (manifest.schema !== 'nexus.native-heavy-transport/v1' || manifest.epoch !== process.env.NEXUS_HEAVY_CHANNEL_EPOCH || manifest.directory !== directory || !['unix', 'file'].includes(manifest.transport) || manifest.slots !== 16 ||
+          typeof manifest.signature !== 'string' || !crypto.verify(null, Buffer.from(JSON.stringify([manifest.schema, manifest.epoch, manifest.directory, manifest.transport, manifest.slots])), key, Buffer.from(manifest.signature, 'base64'))) process.exit(78);
+      let raw;
+      if (manifest.transport === 'file') raw = await require('./file-channel-client.cjs')(directory, JSON.parse(packet));
+      else {
+        const config = ['url = ' + JSON.stringify(url.href), 'request = "POST"', 'header = "Content-Type: application/json"', 'data = ' + JSON.stringify(packet), 'noproxy = "*"'].join('\n') + '\n';
+        raw = require('node:child_process').execFileSync('/usr/bin/curl', ['--disable', '--config', '-', '--silent', '--show-error', '--unix-socket', 'heavy.sock', '--proto', '=http', '--max-time', '360', '--connect-timeout', '5'],
+          { cwd: directory, env: {}, input: config, encoding: 'utf8', timeout: 365000, maxBuffer: 2048, stdio: ['pipe', 'pipe', 'pipe'] });
+      }
+      const reply = JSON.parse(raw), hash = crypto.createHash('sha256').update(input).digest('hex');
       if (key.asymmetricKeyType !== 'ed25519' || reply.schema !== 'nexus.native-heavy-reply/v1' || reply.epoch !== process.env.NEXUS_HEAVY_CHANNEL_EPOCH || reply.id !== id || reply.hash !== hash ||
           typeof reply.signature !== 'string' || !crypto.verify(null, Buffer.from(JSON.stringify([reply.schema, reply.epoch, reply.id, reply.hash, reply.result])), key, Buffer.from(reply.signature, 'base64'))) process.exit(78);
       accepted(200, JSON.stringify(reply.result));

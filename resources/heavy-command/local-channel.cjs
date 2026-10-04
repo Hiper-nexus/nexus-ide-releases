@@ -1,4 +1,9 @@
 // Fixed byte transport. Main owns context, authentication and all admission.
+if (process.argv[2] === '--file' && process.argv.length === 3) {
+  require('./file-channel-server.cjs');
+} else if (process.argv.length !== 2) {
+  process.exit(1);
+} else {
 const http = require('node:http');
 const port = process.parentPort;
 const send = value => port ? port.postMessage(value) : process.send?.(value);
@@ -49,3 +54,4 @@ process.on('disconnect', close); process.on('SIGTERM', close);
 server.once('error', () => process.exit(1));
 // A relative endpoint keeps long private TMP paths out of sockaddr_un.
 server.listen('heavy.sock', () => send({ type: 'ready' }));
+}
