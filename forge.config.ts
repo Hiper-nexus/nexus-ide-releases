@@ -308,6 +308,15 @@ export function windowsTimestampServer(
     : DIGICERT_TIMESTAMP_SERVER_URL;
 }
 
+/**
+ * Certificado OV da SSL.com com a chave no eSigner (pedido co-f01l53ldh43). O
+ * eSigner cobra por assinatura e a build assina dezenas de arquivos: a build
+ * automática gerou faturas de excesso. Fica bloqueado aqui para nenhum ambiente
+ * voltar a usá-lo por engano; outro certificado no repositório do Windows (um
+ * YubiKey, por exemplo) continua possível.
+ */
+const ESIGNER_CERTIFICATE_SHA1 = 'E44D98FF840B1DF78D87F6768D177B5719952CAB';
+
 export function createWindowsSignOptions(
   environment: NodeJS.ProcessEnv,
 ): WindowsReleaseSignOptions | undefined {
@@ -343,6 +352,11 @@ export function createWindowsSignOptions(
     if (!certificateSha1 || !/^[a-f0-9]{40}$/iu.test(certificateSha1)) {
       throw new Error(
         'WINDOWS_CERTIFICATE_SHA1 must contain exactly 40 hexadecimal characters.',
+      );
+    }
+    if (certificateSha1.toUpperCase() === ESIGNER_CERTIFICATE_SHA1) {
+      throw new Error(
+        'WINDOWS_CERTIFICATE_SHA1 is the SSL.com eSigner certificate, which bills per signature and was removed on 2026-10-05. Windows releases ship unsigned; the Microsoft Store signs the Store build.',
       );
     }
     return {

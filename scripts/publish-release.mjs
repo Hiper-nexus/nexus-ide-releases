@@ -9,7 +9,7 @@ import {
   appendWindowsAssets,
   assertMonotonicWindowsRelease,
   fileHash as hashReleaseFile,
-  loadSignedWindowsCandidate,
+  loadAuthenticatedWindowsCandidate,
   requireWindowsRunId,
 } from './windows-release-candidate.mjs';
 
@@ -1368,7 +1368,7 @@ async function publishManualReleaseCore(
   const windows = macosOnly
     ? null
     : authoritative
-      ? await loadSignedWindowsCandidate({
+      ? await loadAuthenticatedWindowsCandidate({
           root, environment, version, commitSha: candidate.receipt.commitSha,
         })
       : await options.loadWindowsCandidate?.({
@@ -1585,7 +1585,7 @@ function collectWindowsReleaseRepositoryState(root, authority) {
 
 /**
  * Builds the two immutable inventories for a Windows-only public release.
- * The public mirror gets only Squirrel's payload; the signed worker receipt
+ * The public mirror gets only Squirrel's payload; the worker receipt
  * and an optional operator waiver remain in the private canonical release.
  */
 export function materializeWindowsReleaseCandidate(candidate) {
@@ -1677,7 +1677,7 @@ async function publishWindowsReleaseCore(
     : options.repositoryPublisher;
   const stage = authoritative ? stageReleaseAssets : options.stageReleaseAssets;
   const loadWindowsCandidate = authoritative
-    ? loadSignedWindowsCandidate
+    ? loadAuthenticatedWindowsCandidate
     : options.loadWindowsCandidate;
   if (
     !github ||
@@ -1815,7 +1815,7 @@ async function publishWindowsReleaseCore(
 }
 
 /** Windows is a self-contained release channel: no macOS signing or candidate
- * gate runs here. Its own signed worker artifact is the only binary authority. */
+ * gate runs here. Its own worker artifact is the only binary authority. */
 export function publishWindowsRelease(options = {}) {
   if (options === null || typeof options !== 'object') {
     throw new Error('sealed Windows release rejects dependency override: prototype');

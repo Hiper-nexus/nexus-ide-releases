@@ -8,7 +8,7 @@ import extractZip from '@electron-internal/extract-zip';
 const REPO = 'Hiper-nexus/nexus-ide';
 const MIRROR = 'Hiper-nexus/nexus-ide-releases';
 const WORKFLOW = '.github/workflows/windows-release.yml';
-const ARTIFACT = 'windows-x64-signed-release';
+const ARTIFACT = 'windows-x64-release';
 const RECEIPT = 'windows-release-receipt.json';
 /** Registro do waiver da prova N→N+1: só nasce quando o operador o declara, e vai para a release canônica ao lado do recibo. */
 const WAIVER = 'windows-upgrade-proof-waiver.json';
@@ -16,7 +16,6 @@ const WAIVER_ENV = 'NEXUS_WINDOWS_UPGRADE_PROOF_WAIVER';
 const WAIVER_MIN_REASON = 20;
 const WAIVER_MAX_REASON = 600;
 const STABLE = /^\d+\.\d+\.\d+$/u;
-const THUMBPRINT = /^[a-f\d]{40}$/iu;
 const SHA256 = /^[a-f\d]{64}$/u;
 const fail = message => { throw new Error(`Windows release: ${message}`); };
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -34,7 +33,7 @@ export function fileHash(filename, algorithm = 'sha256') {
 
 export function requireWindowsRunId(environment) {
   const id = environment.NEXUS_WINDOWS_RELEASE_RUN_ID;
-  if (!/^[1-9]\d*$/u.test(id ?? '')) fail('NEXUS_WINDOWS_RELEASE_RUN_ID must identify a successful signed Windows worker run; provision the protected CKA worker first. Mac-only publication is disabled.');
+  if (!/^[1-9]\d*$/u.test(id ?? '')) fail('NEXUS_WINDOWS_RELEASE_RUN_ID must identify a successful windows-release.yml run on the protected Windows worker. Mac-only publication is disabled.');
   return id;
 }
 
@@ -87,18 +86,28 @@ export function assertWindowsArtifact(artifact, archive, run) {
   }
 }
 
-function assertSignature(signature) {
-  if (signature?.status !== 'Valid' || !THUMBPRINT.test(signature?.thumbprint ?? '') || !THUMBPRINT.test(signature?.timestampThumbprint ?? '') ||
-    !/(?:^|,\s*)CN="?HIPERSEND TECNOLOGIA INTERNET & SOFTWARES LTDA"?(?:,|$)/u.test(signature?.subject ?? '')) fail('signature publisher or timestamp is invalid');
+/**
+ * O canal Windows saiu sem Authenticode desde 05/10/2026: o eSigner da SSL.com
+ * cobrava por assinatura e a build assinava dezenas de arquivos por release.
+ * A versão assinada passa a ser a da Microsoft Store, que reassina o MSIX de
+ * graça. Aqui o recibo prova integridade, não editor: o hash do Setup fica
+ * amarrado ao asset publicado; os de app, Update.exe e stub são registro
+ * forense (estão dentro do NUPKG e não são recalculados na publicação).
+ */
+function assertExecutableHashes(receipt) {
+  for (const kind of ['setup', 'app', 'updater', 'stub']) {
+    const digest = receipt.executables?.[kind]?.sha256;
+    if (typeof digest !== 'string' || !SHA256.test(digest)) fail(`executable hash missing or invalid: ${kind}`);
+  }
+  const setup = receipt.assets.find(asset => asset?.name === `NexusIDE-${receipt.version}-win32-x64-Setup.exe`);
+  if (setup?.sha256 !== receipt.executables.setup.sha256) fail('Setup hash is not bound to the published Setup asset');
 }
 
 function assertReceipt(receipt, expected) {
-  if (receipt?.schemaVersion !== 1 || !STABLE.test(expected.version) || receipt?.version !== expected.version ||
+  if (receipt?.schemaVersion !== 2 || receipt?.signing !== 'none' || !STABLE.test(expected.version) || receipt?.version !== expected.version ||
     receipt?.commitSha !== expected.commitSha || receipt?.runId !== expected.runId || receipt?.platform !== 'win32' || receipt?.arch !== 'x64' ||
     receipt?.smoke?.status !== 'pass' || !Array.isArray(receipt?.assets) || receipt.assets.length !== 3) fail('candidate receipt does not match the release or smoke failed');
-  for (const kind of ['setup', 'app', 'updater', 'stub']) assertSignature(receipt.signatures?.[kind]);
-  const publisher = receipt.signatures.setup.thumbprint.toUpperCase();
-  if (['app', 'updater', 'stub'].some(kind => receipt.signatures[kind].thumbprint.toUpperCase() !== publisher)) fail('candidate executables have different publishers');
+  assertExecutableHashes(receipt);
 }
 
 /**
@@ -137,7 +146,7 @@ function assertInstalledUpgradeProof(receipt, expected, waiver) {
     !proof.assetSha256 || Object.keys(proof.assetSha256).length !== 3 ||
     receipt.assets.some(asset => proof.assetSha256[asset.name] !== asset.sha256) ||
     ['signedBaselineInstalled', 'squirrelUpgradeApplied', 'targetRestarted', 'userDataPreserved'].some(check => proof.checks?.[check] !== true)) {
-    fail('installed N-to-N+1 upgrade proof is missing, failed or not bound to this candidate. Run a real signed installed-upgrade harness in the trusted worker and record target version, commit, run and all asset hashes; signed NUPKG smoke alone cannot authorize public publication.');
+    fail('installed N-to-N+1 upgrade proof is missing, failed or not bound to this candidate. Run a real installed-upgrade harness in the trusted worker and record target version, commit, run and all asset hashes; NUPKG smoke alone cannot authorize public publication.');
   }
 }
 
@@ -225,7 +234,7 @@ export function assertMonotonicWindowsRelease(releases, version) {
 }
 
 /**
- * O artefato assinado do worker tem ~556 MB; a ~0,6 MB/s medidos no link de
+ * O artefato do worker tem ~556 MB; a ~0,6 MB/s medidos no link de
  * publicação ele leva ~15 min, e o teto anterior de 10 min derrubava a
  * publicação da 0.76.37 com "lookup/download failed" sem culpa do worker.
  */
@@ -242,7 +251,7 @@ function github(args, root, outputFd, timeoutMs = API_TIMEOUT_MS) {
 }
 
 /** Production authority is exclusively authenticated GitHub metadata + bytes, never a caller-supplied local receipt. */
-export async function loadSignedWindowsCandidate({ root, environment, version, commitSha }) {
+export async function loadAuthenticatedWindowsCandidate({ root, environment, version, commitSha }) {
   const runId = requireWindowsRunId(environment);
   const upgradeProofWaiver = parseUpgradeProofWaiver(environment);
   const run = github([`repos/${REPO}/actions/runs/${runId}`], root);
@@ -255,10 +264,10 @@ export async function loadSignedWindowsCandidate({ root, environment, version, c
   assertMonotonicWindowsRelease(pages.flat(), version);
   const artifacts = github(['--paginate', '--slurp', `repos/${REPO}/actions/runs/${runId}/artifacts?per_page=100`], root).flatMap(page => page.artifacts);
   const matches = artifacts.filter(artifact => artifact.name === ARTIFACT);
-  if (matches.length !== 1) fail('signed worker artifact missing or ambiguous; unsigned previews cannot authorize publication');
+  if (matches.length !== 1) fail('worker artifact missing or ambiguous; preview builds cannot authorize publication');
   const artifact = matches[0];
   if (!Number.isSafeInteger(artifact.id) || artifact.id < 1 || artifact.expired !== false || !/^sha256:[a-f\d]{64}$/u.test(artifact.digest ?? '')) fail('artifact metadata lacks a usable immutable digest');
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-signed-windows-'));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-windows-candidate-'));
   const dispose = () => fs.rmSync(directory, { recursive: true, force: true });
   try {
     const zip = path.join(directory, 'worker.zip');

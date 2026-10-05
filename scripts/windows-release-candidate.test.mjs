@@ -19,16 +19,16 @@ function fixture() {
   roots.push(root);
   const setup = 'NexusIDE-1.2.3-win32-x64-Setup.exe';
   const nupkg = 'nexus_ide-1.2.3-full.nupkg';
-  const payloads = { [setup]: Buffer.from('signed setup'), [nupkg]: Buffer.from('signed package') };
+  const payloads = { [setup]: Buffer.from('setup bytes'), [nupkg]: Buffer.from('package bytes') };
   payloads.RELEASES = Buffer.from(`${hash(payloads[nupkg], 'sha1')} ${nupkg} ${payloads[nupkg].length}\n`);
-  const signature = { status: 'Valid', subject: 'CN=HIPERSEND TECNOLOGIA INTERNET & SOFTWARES LTDA, O=HIPERSEND', thumbprint: 'B'.repeat(40), timestampThumbprint: 'C'.repeat(40) };
-  const receipt = { schemaVersion: 1, version: '1.2.3', commitSha: sha, runId: '42', platform: 'win32', arch: 'x64', smoke: { status: 'pass', installedUpgradeVerified: true }, signatures: { setup: signature, app: signature, updater: signature, stub: signature }, assets: Object.entries(payloads).map(([name, bytes]) => ({ name, size: bytes.length, sha256: hash(bytes) })) };
+  const executables = { setup: { sha256: hash(payloads[setup]) }, app: { sha256: 'b'.repeat(64) }, updater: { sha256: 'c'.repeat(64) }, stub: { sha256: 'd'.repeat(64) } };
+  const receipt = { schemaVersion: 2, version: '1.2.3', commitSha: sha, runId: '42', platform: 'win32', arch: 'x64', signing: 'none', smoke: { status: 'pass', installedUpgradeVerified: true }, executables, assets: Object.entries(payloads).map(([name, bytes]) => ({ name, size: bytes.length, sha256: hash(bytes) })) };
   receipt.installedUpgradeProof = { schemaVersion: 1, status: 'pass', fromVersion: '1.2.2', toVersion: '1.2.3', commitSha: sha, runId: '42', assetSha256: Object.fromEntries(receipt.assets.map(a => [a.name, a.sha256])), checks: { signedBaselineInstalled: true, squirrelUpgradeApplied: true, targetRestarted: true, userDataPreserved: true } };
   for (const [name, bytes] of Object.entries(payloads)) fs.writeFileSync(path.join(root, name), bytes);
   fs.writeFileSync(path.join(root, 'windows-release-receipt.json'), JSON.stringify(receipt));
   return { root, receipt, setup, nupkg, expected: { version: '1.2.3', commitSha: sha, runId: '42' } };
 }
-describe('signed Windows workflow authority', () => {
+describe('Windows workflow authority', () => {
   it('requires explicit authenticated worker run, never a local receipt path', () => {
     expect(() => requireWindowsRunId({})).toThrow(/NEXUS_WINDOWS_RELEASE_RUN_ID/);
     expect(() => requireWindowsRunId({ NEXUS_WINDOWS_RELEASE_RUN_ID: '/tmp/receipt.json' })).toThrow();
@@ -48,7 +48,7 @@ describe('signed Windows workflow authority', () => {
   });
   it('binds an unexpired artifact to the workflow run and archive digest', () => {
     const bytes = Buffer.from('archive');
-    const artifact = { name: 'windows-x64-signed-release', expired: false, digest: `sha256:${hash(bytes)}`, workflow_run: { id: 42, head_sha: sha, repository_id: 12, head_repository_id: 12 } };
+    const artifact = { name: 'windows-x64-release', expired: false, digest: `sha256:${hash(bytes)}`, workflow_run: { id: 42, head_sha: sha, repository_id: 12, head_repository_id: 12 } };
     expect(() => assertWindowsArtifact(artifact, bytes, run)).not.toThrow();
     for (const value of [{ ...artifact, expired: true }, { ...artifact, digest: null }, { ...artifact, workflow_run: { ...artifact.workflow_run, id: 43 } }]) expect(() => assertWindowsArtifact(value, bytes, run)).toThrow();
     expect(() => assertWindowsArtifact(artifact, Buffer.from('tampered'), run)).toThrow();
@@ -137,8 +137,13 @@ describe('Windows candidate bytes within an authenticated archive', () => {
       expect(fs.existsSync(path.join(g.root, 'windows-upgrade-proof-waiver.json'))).toBe(false);
     });
   });
-  it('rejects unsigned, wrong publisher, missing timestamp, failed smoke, stale commit/version', () => {
-    for (const alter of [r => { r.signatures.app.status = 'NotSigned'; }, r => { r.signatures.setup.subject = 'CN=Other'; }, r => { r.signatures.updater.timestampThumbprint = ''; }, r => { r.smoke.status = 'fail'; }, r => { r.commitSha = 'b'.repeat(40); }, r => { r.version = '1.2.4'; }]) {
+  it('accepts an unsigned candidate: the channel no longer depends on a paid signing service', () => {
+    const f = fixture();
+    expect(f.receipt.signatures).toBeUndefined();
+    expect(() => assertWindowsCandidate(f.root, f.expected)).not.toThrow();
+  });
+  it('rejects old signed receipts, missing executable hashes, a setup hash not bound to the asset, failed smoke, stale commit/version', () => {
+    for (const alter of [r => { r.schemaVersion = 1; }, r => { r.signing = 'authenticode'; }, r => { delete r.executables.stub; }, r => { r.executables.app.sha256 = 'not-a-hash'; }, r => { r.executables.app.sha256 = ['b'.repeat(64)]; }, r => { r.executables.setup.sha256 = [r.executables.setup.sha256]; }, r => { r.executables.setup.sha256 = 'e'.repeat(64); }, r => { r.smoke.status = 'fail'; }, r => { r.commitSha = 'b'.repeat(40); }, r => { r.version = '1.2.4'; }]) {
       const f = fixture(); alter(f.receipt);
       fs.writeFileSync(path.join(f.root, 'windows-release-receipt.json'), JSON.stringify(f.receipt));
       expect(() => assertWindowsCandidate(f.root, f.expected)).toThrow();

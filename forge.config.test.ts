@@ -33,23 +33,30 @@ describe('Windows release signing', () => {
   it('configures SHA-256 certificate-store signing by thumbprint', () => {
     expect(createWindowsSignOptions({
       NEXUS_WINDOWS_RELEASE_SIGNING: '1',
-      WINDOWS_CERTIFICATE_SHA1: ' e44d98ff840b1df78d87f6768d177b5719952cab ',
+      WINDOWS_CERTIFICATE_SHA1: ' 0123456789abcdef0123456789abcdef01234567 ',
     })).toEqual({
       continueOnError: false,
       hashes: ['sha256'],
       signWithParams: [
         '/sm',
         '/sha1',
-        'E44D98FF840B1DF78D87F6768D177B5719952CAB',
+        '0123456789ABCDEF0123456789ABCDEF01234567',
       ],
       timestampServer: 'http://timestamp.digicert.com',
     });
   });
 
+  it('refuses the SSL.com eSigner certificate, which bills per signature', () => {
+    expect(() => createWindowsSignOptions({
+      NEXUS_WINDOWS_RELEASE_SIGNING: '1',
+      WINDOWS_CERTIFICATE_SHA1: ' e44d98ff840b1df78d87f6768d177b5719952cab ',
+    })).toThrow(/eSigner/u);
+  });
+
   it('troca o servidor de carimbo só com uma URL explícita (F-656)', () => {
     const storeMode = {
       NEXUS_WINDOWS_RELEASE_SIGNING: '1',
-      WINDOWS_CERTIFICATE_SHA1: 'E44D98FF840B1DF78D87F6768D177B5719952CAB',
+      WINDOWS_CERTIFICATE_SHA1: '0123456789ABCDEF0123456789ABCDEF01234567',
     };
     expect(createWindowsSignOptions({
       ...storeMode,

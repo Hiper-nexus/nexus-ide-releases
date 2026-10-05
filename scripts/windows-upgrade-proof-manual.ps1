@@ -62,16 +62,17 @@ function Get-LowerSha256([string]$PathValue) {
   (Get-FileHash -LiteralPath $PathValue -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
-function Assert-TrustedSignature([string]$PathValue, [string]$Label) {
-  Add-Log "Verificando assinatura Authenticode: $Label"
+# Desde 05/10/2026 o canal Windows sai sem Authenticode (eSigner removido). A
+# assinatura do baseline só vai para o log: versões antigas são assinadas, as
+# novas não. A integridade do candidato está no assetSha256 da prova, que o
+# publicador confere contra o recibo do worker.
+function Write-SignatureStatus([string]$PathValue, [string]$Label) {
   $signature = Get-AuthenticodeSignature -LiteralPath $PathValue
   $subject = ''
   if ($null -ne $signature.SignerCertificate) {
     $subject = [string]$signature.SignerCertificate.Subject
   }
-  if ($signature.Status -ne 'Valid' -or $subject -notlike "*$PublisherSubject*") {
-    throw "Assinatura inválida em $Label ($PathValue): Status=$($signature.Status); Subject=$subject"
-  }
+  Add-Log "Assinatura de ${Label}: Status=$($signature.Status); Subject=$subject (informativo)"
 }
 
 function Wait-ForPath([string]$PathValue, [string]$Label, [int]$TimeoutSeconds) {
@@ -203,9 +204,7 @@ try {
   }
   Assert-FileExists $BaselineSetup 'Setup baseline'
 
-  Assert-TrustedSignature $BaselineSetup 'Setup baseline'
-  Assert-TrustedSignature $candidateSetup 'Setup candidato'
-  Assert-TrustedSignature $candidatePackage 'NUPKG candidato'
+  Write-SignatureStatus $BaselineSetup 'Setup baseline'
 
   # Squirrel.Windows aceita --silent e -s; usamos --silent por legibilidade.
   Invoke-ProcessAndWait $BaselineSetup @('--silent') 'Instalando baseline com Squirrel --silent' 180

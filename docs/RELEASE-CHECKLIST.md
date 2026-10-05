@@ -85,12 +85,11 @@ Riscos residuais: ...
 ## Windows x64 (canal independente)
 
 - [ ] Workflow privado `windows-release.yml` concluído para a tag e o commit Windows em `main` protegido. Não exige candidata, assinatura ou notarização macOS.
-- [ ] Setup, aplicativo, Squirrel.exe (Update.exe instalado) e ExecutionStub têm assinatura HIPERSEND válida e timestamp.
-- [ ] Instalação limpa pelo Setup e atualização assinada N→N+1 funcionam sem gh/login; dados e terminal preservados.
+- [ ] Recibo `schemaVersion` 2 com `signing: none` e SHA-256 de Setup, aplicativo, Squirrel.exe (Update.exe instalado) e ExecutionStub. Sem Authenticode desde 05/10/2026 (eSigner removido); a versão assinada é a da Microsoft Store.
+- [ ] Instalação limpa pelo Setup e atualização N→N+1 funcionam sem gh/login; dados e terminal preservados.
 - [ ] SHA-256 do artifact GitHub validado; recibo e três assets Windows entram na transação de drafts do canal Windows (`npm run release:publish:windows`).
 - [ ] NUPKG mantém nome original e RELEASES contém uma única entrada completa; Setup identifica win32-x64.
 - [ ] Nenhuma versão Windows estável maior já foi publicada. Uma release somente macOS/Linux não avança nem bloqueia o canal Windows.
-- [ ] Saldo/validade CKA suficientes para o inventário real: dezenas de arquivos podem consumir várias assinaturas por build.
 
 O workflow não substitui a prova de upgrade instalado; o recibo distingue esse
 limite explicitamente. Nunca marque a release pronta apenas por um build unsigned.

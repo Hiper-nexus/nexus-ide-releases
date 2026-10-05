@@ -1,5 +1,11 @@
 # Continuar o NexusIDE no Windows
 
+> **Histórico. Não siga a parte de assinatura.** Em 05/10/2026 o eSigner da SSL.com
+> foi removido: cobrava por assinatura e a build automática gerou faturas de
+> excesso. A release Windows sai sem assinatura e a versão assinada é a da
+> Microsoft Store. Não configure eSigner CKA nem `WINDOWS_CERTIFICATE_SHA1`;
+> veja `docs/RELEASE.md` ("Canal Windows independente").
+
 Handoff de 14/09/2026. Repositório privado: `Hiper-nexus/nexus-ide`.
 Branch de trabalho: `codex/windows-test-20260914`.
 Último commit de código neste handoff: `f4f6c666`.

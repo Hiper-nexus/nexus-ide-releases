@@ -1,4 +1,4 @@
-name: Signed Windows x64 release candidate
+name: Windows x64 release candidate
 
 on:
   workflow_dispatch:
@@ -24,7 +24,6 @@ jobs:
     env:
       ONNXRUNTIME_NODE_INSTALL_CUDA: skip
       RELEASE_VERSION: ${{ inputs.version }}
-      WINDOWS_CERTIFICATE_SHA1: ${{ vars.WINDOWS_CERTIFICATE_SHA1 }}
       NODE_OPTIONS: "--max-old-space-size=4096"
     steps:
       - name: Require protected main before executing repository code
@@ -35,7 +34,6 @@ jobs:
           $ErrorActionPreference = 'Stop'
           if ($env:GITHUB_REPOSITORY -ne 'Hiper-nexus/nexus-ide' -or $env:GITHUB_REF -ne 'refs/heads/main') { throw 'unauthorized release source' }
           if ($env:RELEASE_VERSION -notmatch '^\d+\.\d+\.\d+$') { throw 'stable version required' }
-          if ($env:WINDOWS_CERTIFICATE_SHA1 -notmatch '^[A-Fa-f0-9]{40}$') { throw 'Configure the protected CKA worker certificate thumbprint first' }
           $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
           $branch = Invoke-RestMethod -Uri 'https://api.github.com/repos/Hiper-nexus/nexus-ide/branches/main' -Headers $headers
           if (-not $branch.protected -or $branch.commit.sha -ne $env:GITHUB_SHA) { throw 'release commit must be current protected main' }
@@ -53,7 +51,7 @@ jobs:
 
       # node-gyp (better-sqlite3) needs a real Python interpreter during the
       # Electron rebuild. Do this in pwsh instead of actions/setup-python:
-      # this signing host intentionally blocks Windows PowerShell scripts from
+      # this release host intentionally blocks Windows PowerShell scripts from
       # third-party actions, while the bundled runtime is already provisioned.
       - name: Configure Python for native rebuild
         shell: pwsh
@@ -104,26 +102,27 @@ jobs:
           npx vitest run forge.config.test.ts scripts/build-windows-icon.test.mjs build/prune-native-payload.test.ts scripts/rebuild-node-natives.test.mjs scripts/windows-release-workflow.test.mjs src/shared/terminal-control-sequences.test.ts src/preload/functional-smoke.test.ts src/main/updater.test.ts src/main/updater-feed.test.ts
           if ($LASTEXITCODE -ne 0) { throw 'release tests failed' }
 
-      - name: Build using preconfigured CKA certificate store
+      # Sem Authenticode desde 05/10/2026: o eSigner da SSL.com cobrava por
+      # assinatura e cada build assina dezenas de arquivos. A versão assinada é
+      # a da Microsoft Store, que reassina o MSIX de graça. Se a assinatura de
+      # release reaparecer no ambiente do worker, o Forge voltaria a chamar o
+      # eSigner: pare antes de empacotar.
+      - name: Build unsigned Windows x64 package
         shell: pwsh
-        env:
-          NEXUS_WINDOWS_RELEASE_SIGNING: '1'
         run: |
           $ErrorActionPreference = 'Stop'
-          if ($env:WINDOWS_CERTIFICATE_FILE -or $env:WINDOWS_CERTIFICATE_PASSWORD) { throw 'worker must use CKA certificate-store mode only' }
-          $cert = Get-Item "Cert:\LocalMachine\My\$env:WINDOWS_CERTIFICATE_SHA1"
-          if ($cert.Subject -notmatch '(?:^|,\s*)CN="?HIPERSEND TECNOLOGIA INTERNET & SOFTWARES LTDA"?(?:,|$)' -or $cert.NotAfter -le (Get-Date)) { throw 'unexpected or expired signing certificate' }
+          if ($env:NEXUS_WINDOWS_RELEASE_SIGNING -or $env:WINDOWS_CERTIFICATE_FILE) { throw 'Windows release must not sign through eSigner: remove NEXUS_WINDOWS_RELEASE_SIGNING and WINDOWS_CERTIFICATE_FILE from this worker' }
           if (Test-Path out) { Remove-Item out -Recurse -Force }
           npm run make -- --platform win32 --arch x64
-          if ($LASTEXITCODE -ne 0) { throw 'signed Windows build failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
 
-      - name: Verify signed package, run native smoke and collect immutable payload
+      - name: Hash package, run native smoke and collect immutable payload
         shell: pwsh
         run: ./scripts/collect-windows-release.ps1
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: windows-x64-signed-release
+          name: windows-x64-release
           path: windows-release-assets/*
           if-no-files-found: error
           retention-days: 90
@@ -131,7 +130,7 @@ jobs:
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: windows-x64-signed-receipt
+          name: windows-x64-release-receipt
           path: windows-release-assets/windows-release-receipt.json
           if-no-files-found: error
           retention-days: 90

@@ -4,7 +4,7 @@ Checklist funcional da candidata **0.60** (ainda em aberto):
 [`RELEASE-0.60.md`](../RELEASE-0.60.md).
 
 As publicações são **independentes por sistema operacional**. O Windows usa a
-candidata assinada produzida pelo workflow privado protegido
+candidata produzida pelo workflow privado protegido
 `windows-release.yml` e a publica com `npm run release:publish:windows`; esse
 comando não inicia nem exige build, assinatura ou notarização macOS. O Mac usa
 seu próprio caminho de Developer ID/notarização e publica com
@@ -231,9 +231,23 @@ Não verificado nesta máquina (não anuncie como testado):
 
 Uma publicação Windows usa somente a candidata Windows x64 do mesmo commit e
 tag estável. A release canônica privada recebe `Setup.exe`, NUPKG, `RELEASES`,
-recibo assinado e, quando autorizado, o waiver de prova de upgrade. O espelho
+o recibo e, quando autorizado, o waiver de prova de upgrade. O espelho
 público recebe **somente** `Setup.exe`, NUPKG e `RELEASES`. Assim o feed
 Squirrel Windows fica disponível sem aguardar um artefato de macOS.
+
+**Sem assinatura Authenticode desde 05/10/2026.** O eSigner da SSL.com cobrava
+por assinatura e cada build assina dezenas de arquivos, o que gerou faturas de
+excesso; ele foi removido do fluxo. Quem baixa o `Setup.exe` pelo site vê o aviso
+do SmartScreen ("O Windows protegeu o computador" → "Mais informações" →
+"Executar assim mesmo"). No Windows 11 com o Controle Inteligente de Aplicativos
+(Smart App Control) ligado, não há esse botão: o app sem assinatura é bloqueado
+até o usuário desligar o recurso em Segurança do Windows. Quem já tem o Nexus
+instalado atualiza pelo Squirrel. A versão assinada é a da Microsoft Store, que
+reassina o MSIX de graça (guia em `docs/windows-signing/MICROSOFT-STORE.md`, que
+chega com a branch `claude/ssl-code-signing-yubikey-ce1859`). Não religue o
+eSigner: o workflow para se `NEXUS_WINDOWS_RELEASE_SIGNING` ou
+`WINDOWS_CERTIFICATE_FILE` aparecer no ambiente do worker, e o `forge.config.ts`
+recusa o certificado do eSigner.
 
 O repositório público é compartilhado, mas cada atualizador seleciona apenas o
 asset compatível: uma release macOS sem Setup Windows não avança o canal
@@ -244,7 +258,7 @@ publica sua própria próxima versão estável.
 No host Windows de publicação, rode:
 
 ```powershell
-$env:NEXUS_WINDOWS_RELEASE_RUN_ID = '<run-assinado-do-windows-release.yml>'
+$env:NEXUS_WINDOWS_RELEASE_RUN_ID = '<run-do-windows-release.yml>'
 # Só enquanto o harness N→N+1 ainda não produzir a prova automaticamente:
 $env:NEXUS_WINDOWS_UPGRADE_PROOF_WAIVER = '<motivo aprovado pelo operador>'
 npm run release:publish:windows
@@ -363,7 +377,7 @@ publicado antes da canônica, o comando falha sem tentar “consertar”
 silenciosamente. Executar o comando novamente com ambas as releases publicadas
 só é aceito quando os dois snapshots são exatamente os esperados.
 
-O candidato Mac continua `arm64`; o candidato Windows é `x64`. Não há promessa de Mac universal/Intel ou Windows ARM sem build/prova separados. A existência do workflow não prova que o worker CKA já foi provisionado.
+O candidato Mac continua `arm64`; o candidato Windows é `x64`. Não há promessa de Mac universal/Intel ou Windows ARM sem build/prova separados.
 
 Para checar a credencial local sem expor segredo:
 
@@ -387,23 +401,23 @@ arquitetura realmente construída e provada nesta release.
 Antes de `npm run release:publish`, obtenha um run concluído com sucesso do workflow
 `.github/workflows/windows-release.yml`, no repositório privado canônico e no
 mesmo commit da candidata Mac em `main` protegido. O worker usa os labels
-`[self-hosted, Windows, X64, nexus-release-signing]`, o ambiente
-`windows-release-signing` e a variável de ambiente GitHub `WINDOWS_CERTIFICATE_SHA1`.
-Ele depende de CKA previamente configurado para a identidade Windows do runner.
-Não cadastre senha, PIN ou TOTP em argumentos de processo; não use PFX nesse worker.
+`[self-hosted, Windows, X64, nexus-release-signing]` e o ambiente
+`windows-release-signing` (os nomes ficaram da época da assinatura; trocá-los
+desliga o runner e as regras do ambiente). O worker não assina nada.
 O input `version` deve corresponder ao package.json, sem prefixo `v`. O worker não
 publica releases, e só pode ser iniciado a partir de `main` protegido.
 
 No Mac, selecione o run autenticado:
 
 ```bash
-NEXUS_WINDOWS_RELEASE_RUN_ID=<id-do-run-assinado> npm run release:publish
+NEXUS_WINDOWS_RELEASE_RUN_ID=<id-do-run> npm run release:publish
 ```
 
 O comando exige workflow, commit, repositório privado, sucesso e artefato exatos;
 verifica o SHA-256 do arquivo baixado contra o digest informado pelo GitHub antes
-de extrair. O recibo dentro desse arquivo vincula assinaturas, timestamp, smoke
-e bytes ao commit/versão. Um JSON local ou o workflow de preview unsigned não
+de extrair. O recibo dentro desse arquivo vincula o SHA-256 de cada executável
+(Setup, app, Update.exe e ExecutionStub; o do Setup amarrado ao asset), o smoke
+e os bytes ao commit/versão. Um JSON local ou o workflow de preview unsigned não
 serve como autoridade. Sem worker válido, a publicação Mac também é bloqueada.
 As duas plataformas entram na mesma transação de drafts já existente.
 
@@ -420,12 +434,12 @@ antes de precisar retomar uma release expirada. Releases antigas publicadas só
 com Mac não são convertidas por upload avulso: use uma próxima versão conjunta.
 
 O primeiro instalador público precisa conter o atualizador e passar instalação
-e atualização real assinada N→N+1, preservando dados. O worker atual prova
-assinatura e smoke do NUPKG; `installedUpgradeVerified=false` no recibo registra
+e atualização real N→N+1, preservando dados. O worker atual prova o smoke do
+NUPKG; `installedUpgradeVerified=false` no recibo registra
 que essa prova de instalação/upgrade ainda não é produzida por ele. O publicador
 **recusa esse recibo**: o candidato pode continuar privado, mas não pode tornar
-nenhuma das plataformas pública. Provisionamento
-CKA, assinatura real e upgrade instalado continuam não verificados nesta entrega.
+nenhuma das plataformas pública. O upgrade instalado continua não verificado
+nesta entrega.
 
 ### Prova de upgrade e concorrência
 

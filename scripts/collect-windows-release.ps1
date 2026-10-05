@@ -1,4 +1,7 @@
-# Runs only on the protected native Windows signing worker, after Forge make.
+# Runs only on the protected native Windows worker, after Forge make.
+# Windows releases are not Authenticode-signed since 05/10/2026 (the paid
+# eSigner service was removed; the Microsoft Store signs the Store build). The
+# receipt records the SHA-256 of every executable instead of a signature.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
@@ -8,22 +11,8 @@ function Get-OneFile([string]$Root, [string]$Filter) {
   return $files[0]
 }
 
-function Get-VerifiedSignature([string]$Filename) {
-  $signature = Get-AuthenticodeSignature -LiteralPath $Filename
-  if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate -or $null -eq $signature.TimeStamperCertificate) {
-    throw "Authenticode signature or timestamp invalid: $Filename"
-  }
-  if ($signature.SignerCertificate.Thumbprint -ne $env:WINDOWS_CERTIFICATE_SHA1 -or
-      $signature.SignerCertificate.Subject -notmatch '(?:^|,\s*)CN="?HIPERSEND TECNOLOGIA INTERNET & SOFTWARES LTDA"?(?:,|$)') {
-    throw "Unexpected signer: $Filename"
-  }
-  return @{
-    status = 'Valid'
-    subject = $signature.SignerCertificate.Subject
-    thumbprint = $signature.SignerCertificate.Thumbprint
-    timestampThumbprint = $signature.TimeStamperCertificate.Thumbprint
-    sha256 = (Get-FileHash -LiteralPath $Filename -Algorithm SHA256).Hash.ToLowerInvariant()
-  }
+function Get-ExecutableHash([string]$Filename) {
+  return @{ sha256 = (Get-FileHash -LiteralPath $Filename -Algorithm SHA256).Hash.ToLowerInvariant() }
 }
 
 if ($env:OS -ne 'Windows_NT' -or (node -p 'process.arch') -ne 'x64') { throw 'Native Windows x64 required' }
@@ -39,7 +28,7 @@ $packageHash = (Get-FileHash $package.FullName -Algorithm SHA1).Hash.ToLowerInva
 if ($releaseEntry -cne "$packageHash $($package.Name) $($package.Length)" -and
     $releaseEntry -cne "$($packageHash.ToUpperInvariant()) $($package.Name) $($package.Length)") { throw 'RELEASES must contain only the original full package entry' }
 
-$temporary = Join-Path $env:RUNNER_TEMP ('nexus-signed-' + [guid]::NewGuid().ToString('N'))
+$temporary = Join-Path $env:RUNNER_TEMP ('nexus-candidate-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temporary | Out-Null
 try {
   $archive = Join-Path $temporary 'full.zip'
@@ -50,14 +39,14 @@ try {
   # Squirrel.exe in the NUPKG becomes installed Update.exe.
   $updater = Get-OneFile $extracted 'Squirrel.exe'
   $stub = Get-OneFile $extracted 'nexus-ide_ExecutionStub.exe'
-  $signatures = @{
-    setup = Get-VerifiedSignature $setup.FullName
-    app = Get-VerifiedSignature $app.FullName
-    updater = Get-VerifiedSignature $updater.FullName
-    stub = Get-VerifiedSignature $stub.FullName
+  $executables = @{
+    setup = Get-ExecutableHash $setup.FullName
+    app = Get-ExecutableHash $app.FullName
+    updater = Get-ExecutableHash $updater.FullName
+    stub = Get-ExecutableHash $stub.FullName
   }
   node scripts/smoke-packaged-app.mjs --app $app.FullName
-  if ($LASTEXITCODE -ne 0) { throw 'Signed full-package native smoke failed' }
+  if ($LASTEXITCODE -ne 0) { throw 'Full-package native smoke failed' }
 
   $assets = Join-Path (Get-Location) 'windows-release-assets'
   if (Test-Path $assets) { Remove-Item $assets -Recurse -Force }
@@ -71,14 +60,15 @@ try {
     @{ name = $file.Name; size = $file.Length; sha256 = (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
   })
   $receipt = @{
-    schemaVersion = 1
+    schemaVersion = 2
     version = $version
     commitSha = $env:GITHUB_SHA
     runId = $env:GITHUB_RUN_ID
     platform = 'win32'
     arch = 'x64'
-    smoke = @{ status = 'pass'; kind = 'signed-nupkg-native'; installedUpgradeVerified = $false }
-    signatures = $signatures
+    signing = 'none'
+    smoke = @{ status = 'pass'; kind = 'nupkg-native'; installedUpgradeVerified = $false }
+    executables = $executables
     assets = $inventory
   }
   $receipt | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $assets 'windows-release-receipt.json') -Encoding utf8NoBOM

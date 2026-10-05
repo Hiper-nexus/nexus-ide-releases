@@ -1,5 +1,13 @@
 # Windows x64 preview and signing
 
+> **05/10/2026: o eSigner da SSL.com saiu do fluxo.** Ele cobrava por assinatura e
+> a build automática gerou faturas de excesso. A release Windows (`windows-release.yml`)
+> agora sai sem Authenticode, com o hash de cada executável no recibo, e a versão
+> assinada passa a ser a da Microsoft Store (guia em
+> `docs/windows-signing/MICROSOFT-STORE.md`, que chega com a branch
+> `claude/ssl-code-signing-yubikey-ce1859`). As seções marcadas "(histórico)"
+> descrevem o fluxo com eSigner CKA e não valem mais: não religue.
+
 Para continuar esta tarefa em outra máquina, comece pelo
 [roteiro Windows com certificado público](windows-signing/CONTINUAR-NO-WINDOWS.md).
 
@@ -35,7 +43,7 @@ Windows CLI spawning requires a native executable. Compatibility with npm
 `.cmd` and extensionless Unix shims is tracked separately and is not implied by
 this preview prerequisite.
 
-## Build with the SSL.com eSigner certificate store
+## Build with the SSL.com eSigner certificate store (histórico)
 
 A full signed build must run on Windows with eSigner CKA installed and the
 operator authenticated through the configured authenticator. CKA exposes the
@@ -69,7 +77,7 @@ The existing PFX mode remains available by setting
 thumbprint. A downloaded `.cer` or `.pem` contains no private key and cannot
 replace either a PFX with its password or the authenticated CKA store.
 
-## Verify the signed result
+## Verify the signed result (histórico)
 
 Verify both the installed application executable and Setup.exe. Checking only
 the outer installer does not prove that the app inside the NUPKG was signed.
@@ -88,7 +96,7 @@ a simple mission, process shutdown, and uninstall before considering a Windows
 release candidate. The private preview workflow alone never satisfies this
 release gate.
 
-## Continuous updates
+## Continuous updates (histórico: assinatura)
 
 An installed Windows x64 build uses the official Electron update service feed
 for `Hiper-nexus/nexus-ide-releases`. Portable packages and installations
@@ -109,7 +117,7 @@ timestamps before those assets are attached to the public stable release. A
 real installed N to N+1 update remains required before claiming continuous
 Windows update delivery.
 
-## Worker contínuo e publicação com Mac
+## Worker contínuo e publicação com Mac (histórico: assinatura)
 
 O workflow `windows-release.yml` está preparado para um runner Windows x64
 protegido com o label `nexus-release-signing` e CKA já configurado em modo
