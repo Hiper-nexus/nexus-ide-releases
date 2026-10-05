@@ -166,11 +166,9 @@ function handleChunk(sessionId: string, data: string): void {
     paused: capUsd !== undefined && costUsd >= capUsd,
   });
   const now = Date.now();
-  state.rateSamples = [
-    ...state.rateSamples,
-    { at: now, outputTokens, usd },
-  ];
-  pruneSamples(state, now);
+  // Append once per batch. Snapshot publication expires the rolling window;
+  // copying and filtering it here made a dense PTY stream quadratic.
+  state.rateSamples.push({ at: now, outputTokens, usd });
   stateKeyBySession.set(sessionId, scopeKey(state.scope));
   scheduleEmit(state);
 }

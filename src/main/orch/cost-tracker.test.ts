@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { PaneAuthzInfo } from './pane-authz';
 
+const monotonicNow = process.hrtime.bigint;
+
 const ptyMocks = vi.hoisted(() => ({
   dataTaps: [] as Array<(sessionId: string, data: string) => void>,
   exitTaps: [] as Array<(sessionId: string) => void>,
@@ -179,5 +181,28 @@ describe('project-scoped heuristic cost tracker', () => {
       ]),
     );
     expect(changes.every((event) => event.totalUsd !== 0.12)).toBe(true);
+  });
+
+  it('meters a dense PTY stream within budget and expires the exact rolling window', async () => {
+    const tracker = await import('./cost-tracker');
+    const executionScope = scope({});
+    paneMocks.byRef.set('dense-session', pane(executionScope, 'dense-session'));
+    tracker.initCostTracker();
+    const start = 1_000_000;
+    vi.setSystemTime(start);
+    const before = monotonicNow();
+    for (let i = 0; i < 10_000; i++) ptyMocks.dataTaps[0]('dense-session', 'x');
+    vi.setSystemTime(start + 30_000);
+    for (let i = 0; i < 10_000; i++) ptyMocks.dataTaps[0]('dense-session', 'x');
+    const elapsedMs = Number(monotonicNow() - before) / 1e6;
+    expect(elapsedMs).toBeLessThan(750);
+    vi.setSystemTime(start + 60_000);
+    expect(tracker.getCostSnapshot(executionScope).tokPerSec).toBe(20_000 / 60);
+    vi.setSystemTime(start + 60_001);
+    expect(tracker.getCostSnapshot(executionScope).tokPerSec).toBe(10_000 / 60);
+    vi.setSystemTime(start + 90_001);
+    expect(tracker.getCostSnapshot(executionScope)).toMatchObject({
+      perMinuteUsd: 0, tokPerSec: 0, panes: [{ outputTokens: 20_000 }],
+    });
   });
 });
