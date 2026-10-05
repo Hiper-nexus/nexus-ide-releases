@@ -10068,7 +10068,7 @@ export const RELEASE_076195: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.196',
+  version: '0.76.197',
   date: '2026-10-05',
   codename: 'Panes abrem, missão continua',
   summary: 'Corrige a falha que impedia abrir panes no Mac e preserva o coordenador quando a missão precisa de recuperação.',
@@ -10080,6 +10080,7 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Falha de abertura com código 76', detail: 'O cache de completamento do zsh podia ser gravado dentro do pacote assinado e impedir todos os panes seguintes. Os arquivos de inicialização agora recebem o diretório correto do usuário.' },
     { title: 'Ociosidade não encerra a missão', detail: 'Após uma hora aguardando workers sem progresso, o supervisor avisa o coordenador sem bloquear nem matar os panes.' },
     { title: 'Bloquear não mata o próprio Maestro', detail: 'Um bloqueio pausa o despacho e encerra workers, mas conserva o coordenador legítimo para recuperação. O comando Encerrar permanece explícito e efetivo.' },
+    { title: 'Panes isolados abrem juntos', detail: 'Duas criações simultâneas de worktree não disputam mais o registro interno do Git. Só esse registro é ordenado; cópias e trabalho dos agentes seguem em paralelo.' },
     { title: 'Retomar recupera o processo ausente', detail: 'O botão Retomar verifica o processo mesmo quando a missão já está marcada como em execução, em vez de retornar sem fazer nada.' },
   ],
 };
