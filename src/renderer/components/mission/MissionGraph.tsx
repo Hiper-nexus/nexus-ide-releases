@@ -8,8 +8,7 @@ import { MissionAgentCard } from './MissionAgentCard';
 import { ActionCard, EmptyState } from '../ActionCard';
 import {
   CORE_HEIGHT,
-  CORE_WIDTH,
-  CABLE_LANE_SPACING,
+  CABLE_PACKET_BAND_SPACING,
   CABLE_BRANCH_SPACING,
   RACK_HEIGHT,
   RACK_WIDTH,
@@ -48,11 +47,7 @@ const EDGE_KINDS = [
   'review',
 ] as const satisfies readonly MissionEdge['kind'][];
 
-export interface MissionGraphPosition {
-  readonly agentId: string;
-  readonly x: number;
-  readonly y: number;
-}
+export interface MissionGraphPosition extends RackBox {}
 
 export interface MissionGraphProps {
   readonly snapshot: MissionSnapshot;
@@ -77,13 +72,6 @@ type GraphSurfaceStyle = CSSProperties & {
   readonly '--mission-core-height': string;
 };
 
-/** Gutters comportam os chips de 28px sem sobrepor faixas de outras fileiras. */
-function graphWidth(agentCount: number): number {
-  const rows = Math.ceil(Math.max(0, agentCount - 1) / AGENTS_PER_ROW);
-  const gutter = rows > 1 ? (rows + 1) * CABLE_LANE_SPACING : 32;
-  return Math.max(GRAPH_WIDTH, (RACK_WIDTH + gutter) * AGENTS_PER_ROW);
-}
-
 /**
  * Produces one stable visual root followed by the remaining agents in input
  * order. Coordinates are static canvas pixels, so rendering never needs a
@@ -91,6 +79,7 @@ function graphWidth(agentCount: number): number {
  */
 export function layoutMissionGraph(
   agents: readonly MissionAgentSnapshot[],
+  relations?: readonly CableSpec[],
 ): readonly MissionGraphPosition[] {
   if (agents.length === 0) return [];
 
@@ -100,13 +89,36 @@ export function layoutMissionGraph(
   const rootIndex = orchestratorIndex >= 0 ? orchestratorIndex : 0;
   const root = agents[rootIndex];
   const workers = agents.filter((_, index) => index !== rootIndex);
-  const width = graphWidth(agents.length);
+  const rowById = new Map([[root.id, -1],
+    ...workers.map((agent, i) => [agent.id, Math.floor(i / AGENTS_PER_ROW)] as const)]);
+  const visible = relations?.filter((edge) => edge.sourceAgentId !== edge.targetAgentId &&
+    rowById.has(edge.sourceAgentId) && rowById.has(edge.targetAgentId)) ?? [];
+  const specs = visible.length ? visible : workers.map((worker) => ({
+    sourceAgentId: root.id, targetAgentId: worker.id,
+  }));
+  const tops = new Map<number, number>();
+  const bottoms = new Map<number, number>();
+  for (const spec of specs) {
+    const a = rowById.get(spec.sourceAgentId)!;
+    const b = rowById.get(spec.targetAgentId)!;
+    if (a === b) continue;
+    const upper = Math.min(a, b);
+    const lower = Math.max(a, b);
+    bottoms.set(upper, (bottoms.get(upper) ?? 0) + 1);
+    tops.set(lower, (tops.get(lower) ?? 0) + 1);
+  }
+  const dense = specs.length > 4;
+  const rootSize = rackSize(root);
+  const coreWidth = root.category === 'orchestrator'
+    ? Math.min(GRAPH_WIDTH - 64, Math.max(rootSize.width, (bottoms.get(-1) ?? 0) * JACK_LONG + 60)) : rootSize.width;
+  const width = GRAPH_WIDTH;
   const columnStep = width / AGENTS_PER_ROW;
-  const firstRowY = Math.max(FIRST_WORKER_ROW_Y,
-    ROOT_Y + CORE_HEIGHT / 2 + workers.length * CABLE_BRANCH_SPACING + 64 + RACK_HEIGHT / 2,
-  );
+  const gap = (upper: number, minimum: number) => Math.max(minimum, dense
+    ? (bottoms.get(upper) ?? 0) * (upper === -1 ? CABLE_BRANCH_SPACING : CABLE_PACKET_BAND_SPACING) + (tops.get(upper + 1) ?? 0) * CABLE_PACKET_BAND_SPACING + 112 : 0);
+  let rowY = Math.max(FIRST_WORKER_ROW_Y,
+    ROOT_Y + rootSize.height / 2 + gap(-1, CABLE_RUN) + RACK_HEIGHT / 2);
   const positions: MissionGraphPosition[] = [
-    { agentId: root.id, x: width / 2, y: ROOT_Y },
+    { agentId: root.id, x: width / 2, y: ROOT_Y, ...rootSize, width: coreWidth },
   ];
 
   for (let index = 0; index < workers.length; index += 1) {
@@ -115,11 +127,13 @@ export function layoutMissionGraph(
     const rowSize = Math.min(AGENTS_PER_ROW, workers.length - rowStart);
     const column = index - rowStart;
     const firstX = (width - (rowSize - 1) * columnStep) / 2;
+    if (column === 0 && row > 0) rowY += RACK_HEIGHT + gap(row - 1, WORKER_ROW_STEP - RACK_HEIGHT);
 
     positions.push({
       agentId: workers[index].id,
       x: firstX + column * columnStep,
-      y: firstRowY + row * WORKER_ROW_STEP,
+      y: rowY,
+      ...rackSize(workers[index]),
     });
   }
 
@@ -147,7 +161,7 @@ function positionedEdges(
       !positions.has(edge.sourceAgentId) ||
       !positions.has(edge.targetAgentId) ||
       !sourceAgent ||
-      !targetAgent
+      !targetAgent || edge.sourceAgentId === edge.targetAgentId
     ) {
       continue;
     }
@@ -210,7 +224,7 @@ export function MissionGraph({
   onOpenAgentPane,
   onRetry,
 }: MissionGraphProps) {
-  const layout = layoutMissionGraph(snapshot.agents);
+  const layout = layoutMissionGraph(snapshot.agents, snapshot.edges);
 
   if (layout.length === 0) {
     return (
@@ -242,16 +256,6 @@ export function MissionGraph({
     );
   }
 
-  const height = graphHeight(layout);
-  const width = graphWidth(snapshot.agents.length);
-  const surfaceStyle: GraphSurfaceStyle = {
-    '--mission-graph-width': `${width}px`,
-    '--mission-graph-height': `${height}px`,
-    '--mission-rack-width': `${RACK_WIDTH}px`,
-    '--mission-rack-height': `${RACK_HEIGHT}px`,
-    '--mission-core-width': `${CORE_WIDTH}px`,
-    '--mission-core-height': `${CORE_HEIGHT}px`,
-  };
   const positionsByAgentId = new Map(
     layout.map((position) => [position.agentId, position] as const),
   );
@@ -270,7 +274,7 @@ export function MissionGraph({
   for (const position of layout) {
     const agent = agentsById.get(position.agentId);
     if (!agent) continue;
-    boxes.set(position.agentId, { ...position, ...rackSize(agent) });
+    boxes.set(position.agentId, position);
   }
   const specs: readonly CableSpec[] =
     edges.length > 0
@@ -293,6 +297,16 @@ export function MissionGraph({
     agents: agentsById,
     missionState: snapshot.state,
   });
+  const width = GRAPH_WIDTH;
+  const height = Math.max(graphHeight(layout), ...cables.map((cable) => cable.extent?.bottom ?? 0));
+  const surfaceStyle: GraphSurfaceStyle = {
+    '--mission-graph-width': `${width}px`,
+    '--mission-graph-height': `${height}px`,
+    '--mission-rack-width': `${RACK_WIDTH}px`,
+    '--mission-rack-height': `${RACK_HEIGHT}px`,
+    '--mission-core-width': `${layout[0].width}px`,
+    '--mission-core-height': `${CORE_HEIGHT}px`,
+  };
 
   return (
     <section

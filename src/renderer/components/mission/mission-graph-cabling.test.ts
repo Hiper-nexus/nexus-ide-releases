@@ -105,6 +105,56 @@ function sharedRun(a: string, b: string): number {
 }
 
 describe('cabos da sala de racks', () => {
+  it.each([[20, 8], [20, 20], [128, 128]])('%i delegações + %i entregas têm faixas e pacotes para todas as relações', (delegations, deliveries) => {
+    const all = [agent('orq', { category: 'orchestrator' }),
+      ...Array.from({ length: 20 }, (_, i) => agent(`w${i}`))];
+    const agents = new Map(all.map((a) => [a.id, a]));
+    const specs: CableSpec[] = [
+      ...Array.from({ length: delegations }, (_, i) => delegation(`d-${i}`, 'orq', `w${i % 20}`)),
+      ...Array.from({ length: deliveries }, (_, i) => ({
+        id: `h-${i}`, kind: 'handoff' as const, sourceAgentId: `w${i % 20}`, targetAgentId: 'orq',
+      })),
+    ];
+    const layout = layoutMissionGraph(all, specs);
+    const boxes = new Map(layout.map((position) => [position.agentId, position]));
+    for (const card of boxes.values()) {
+      expect(card.x - card.width / 2).toBeGreaterThanOrEqual(0);
+      expect(card.x + card.width / 2).toBeLessThanOrEqual(960);
+    }
+    const cables = layoutCables({ specs, boxes, agents, missionState: 'running' });
+    expect(cables).toHaveLength(delegations + deliveries);
+    for (const cable of cables) {
+      expect(cable.packetPath, cable.id).toBeDefined();
+      for (const card of boxes.values()) {
+        if ([cable.sourceAgentId, cable.targetAgentId].includes(card.agentId)) continue;
+        expect(intersectsCard(cable.d, card), `${cable.id} × ${card.agentId}`).toBe(false);
+      }
+    }
+    for (let i = 0; i < cables.length; i++) for (let j = i + 1; j < cables.length; j++) {
+      expect(sharedRun(cables[i]!.d, cables[j]!.d),
+        `${cables[i]!.id} × ${cables[j]!.id}`).toBeLessThanOrEqual(12);
+    }
+  });
+  it('usa corredores verificados de 960px mesmo quando o trecho vertical é curto', () => {
+    const agents = new Map([['orq', agent('orq', { category: 'orchestrator' })], ['w', agent('w')]]);
+    const boxes = new Map([['orq', box('orq', 480, 113, true)], ['w', box('w', 120, 400)]]);
+    const specs = Array.from({ length: 5 }, (_, i) => delegation(`e${i}`, 'orq', 'w'));
+    const cables = layoutCables({ agents, boxes, specs, missionState: 'running' });
+    expect(cables).toHaveLength(5);
+    expect(cables.every((cable) => (cable.extent?.right ?? 960) <= 960)).toBe(true);
+    for (const cable of cables) {
+      expect(cable.packetPath).toBeDefined();
+      for (const card of boxes.values()) {
+        const s = straightSegments(cable.d);
+        // Inclusive as pontas: somente o primeiro/último segmento toca sua porta.
+        const interior = s.slice(1, -1).map((p, i) => `${i ? 'L' : 'M'} ${p.x1} ${p.y1} L ${p.x2} ${p.y2}`).join(' ');
+        expect(intersectsCard(interior, card)).toBe(false);
+      }
+    }
+    for (let i = 0; i < cables.length; i++) for (let j = i + 1; j < cables.length; j++) {
+      expect(sharedRun(cables[i]!.d, cables[j]!.d)).toBeLessThanOrEqual(12);
+    }
+  });
   it.each(['delegation', 'handoff', 'topology'] as const)(
     'com 20 helpers vivos, %s não atravessa cards de outras pontas', (kind) => {
       const all = [agent('orq', { category: 'orchestrator' }),

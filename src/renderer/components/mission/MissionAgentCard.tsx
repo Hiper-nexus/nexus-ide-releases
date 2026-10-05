@@ -42,6 +42,8 @@ const ACTIVITY_LEDS = 12;
 export interface MissionAgentCardPosition {
   readonly x: number;
   readonly y: number;
+  readonly width?: number;
+  readonly height?: number;
 }
 
 export interface MissionAgentCardProps {
@@ -97,11 +99,18 @@ export function MissionAgentCard({
   ]
     .filter((part): part is string => Boolean(part))
     .join('. ');
+  const isCore = agent.category === 'orchestrator';
   const positionStyle: PositionedCardStyle = {
     '--mission-agent-x': `${position.x}px`,
     '--mission-agent-y': `${position.y}px`,
+    // A caixa renderizada tem as mesmas dimensões usadas pelo roteador.
+    ...(position.width === undefined ? {} : {
+      [isCore ? '--mission-core-width' : '--mission-rack-width']: `${position.width}px`,
+    }),
+    ...(position.height === undefined ? {} : {
+      [isCore ? '--mission-core-height' : '--mission-rack-height']: `${position.height}px`,
+    }),
   };
-  const isCore = agent.category === 'orchestrator';
 
   return (
     <button
