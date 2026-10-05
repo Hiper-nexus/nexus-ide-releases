@@ -24,8 +24,10 @@ import { parseTrustedEvidence } from "../context/sensor-broker";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import type { MissionEngine } from "./mission-engine";
 import {
+  extractResolvedQaFinding,
   retainAcceptedHandoffMemoryDistilledBestEffort,
   retainAcknowledgedHandoffMemoryBestEffort,
+  retainResolvedProblemFromHandoffBestEffort,
   recordMemoryRetentionSkip,
 } from "../memory/trusted-memory";
 import {
@@ -343,6 +345,18 @@ function cloneBinding(
   binding: HandoffEvidenceBinding | undefined,
 ): HandoffEvidenceBinding | undefined {
   return binding ? Object.freeze({ ...binding }) : undefined;
+}
+
+/** Artefatos do handoff como texto varrível pelo detector de bug corrigido. */
+function handoffArtifactsText(artifacts: unknown): string {
+  if (!artifacts) return "";
+  if (Array.isArray(artifacts) && artifacts.length === 0) return "";
+  try {
+    const text = JSON.stringify(artifacts);
+    return typeof text === "string" ? text.slice(0, 8_000) : "";
+  } catch {
+    return "";
+  }
 }
 
 function cloneHandoff(handoff: ScopedHandoff): ScopedHandoff {
@@ -1023,6 +1037,12 @@ export class ScopedHandoffStore {
           committed.handoff.summary,
         ).catch(() =>
           recordMemoryRetentionSkip(this.#binding.scope, "store-unavailable"),
+        );
+        this.#retainResolvedProblemMemory(
+          committed.handoff.id,
+          committed.taskDispatch.missionId,
+          committed.handoff.summary,
+          committed.handoff.artifacts,
         );
       } else if (
         committed.handoff.status === "success" &&
@@ -2215,8 +2235,43 @@ export class ScopedHandoffStore {
       ).catch(() =>
         recordMemoryRetentionSkip(this.#binding.scope, "store-unavailable"),
       );
+      this.#retainResolvedProblemMemory(
+        id,
+        memoryMissionId,
+        handoff.summary,
+        handoff.artifacts,
+      );
     } catch {
       // Memória é contabilidade derivada: nunca desfaz nem trava o ACK.
+      recordMemoryRetentionSkip(this.#binding.scope, "store-unavailable");
+    }
+  }
+
+  /**
+   * Escritor resolved-problem: handoff de sucesso de missão (aceito no commit
+   * ou entregue/consumido) que declara a correção de um bug vira memória
+   * `trusted:resolved-problem` pela mesma barreira do F-703. Só de missão:
+   * helper sem missão segue só com o accepted-handoff. Assíncrono e
+   * best-effort: o Jev nunca segura o aceite, a entrega nem o ACK.
+   */
+  #retainResolvedProblemMemory(
+    id: string,
+    missionId: string | undefined,
+    summary: string | null | undefined,
+    artifacts: unknown,
+  ): void {
+    try {
+      if (!missionId) return;
+      const artifactsText = handoffArtifactsText(artifacts);
+      if (!extractResolvedQaFinding([summary, artifactsText])) return;
+      void retainResolvedProblemFromHandoffBestEffort(
+        this.#binding.scope,
+        { handoffId: id, missionId, status: "success", ...(summary ? { summary } : {}), ...(artifactsText ? { artifactsText } : {}) },
+      ).catch(() =>
+        recordMemoryRetentionSkip(this.#binding.scope, "store-unavailable"),
+      );
+    } catch {
+      // Memória é contabilidade derivada: nunca desfaz nem trava o fluxo.
       recordMemoryRetentionSkip(this.#binding.scope, "store-unavailable");
     }
   }

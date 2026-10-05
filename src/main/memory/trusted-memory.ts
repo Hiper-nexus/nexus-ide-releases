@@ -371,6 +371,95 @@ export async function retainAcknowledgedHandoffMemoryBestEffort(
   }
 }
 
+const QA_ITEM_PATH_RE = /docs\/qa\/items\/(F-\d{2,})\.(?:md|markdown)\b/i;
+const QA_FINDING_MENTION_RE = /\b(F-\d{2,})\b/;
+const BUG_FIX_WORD_RE =
+  /\b(corrigid[oa]s?|fixed|fixes|fix(?:ed|ing)?|resolveu|resolvid[oa]s?|solucionad[oa]s?|reparad[oa]s?|closes?)\b/i;
+
+/**
+ * Gatilho mínimo do escritor resolved-problem: um handoff de sucesso declara
+ * a correção de um bug quando cita o arquivo do item de QA
+ * (`docs/qa/items/F-XXX.md`) ou menciona um F-XXX como corrigido. Puro e
+ * determinístico — o texto do agente nunca vira referência sem passar por
+ * aqui e, depois, pela destilação do Jev (mesma barreira do F-703).
+ */
+export function extractResolvedQaFinding(
+  texts: ReadonlyArray<string | null | undefined>,
+): string | null {
+  let mentioned: string | null = null;
+  for (const text of texts) {
+    if (!text) continue;
+    const pathHit = QA_ITEM_PATH_RE.exec(text);
+    if (pathHit) {
+      const id = pathHit[1].toUpperCase();
+      if (/^F-\d{2,}$/.test(id)) return id;
+    }
+    const mentionHit = QA_FINDING_MENTION_RE.exec(text.toUpperCase());
+    if (mentionHit && BUG_FIX_WORD_RE.test(text)) {
+      const id = mentionHit[1].toUpperCase();
+      if (/^F-\d{2,}$/.test(id)) mentioned ??= id;
+    }
+  }
+  return mentioned;
+}
+
+const resolvedProblemHandoffSchema = z
+  .object({
+    handoffId: trustedIdentifierSchema,
+    missionId: trustedIdentifierSchema,
+    status: z.literal('success'),
+    summary: z.string().max(65_536).optional(),
+    artifactsText: z.string().max(16_384).optional(),
+  })
+  .strict();
+
+export type ResolvedProblemHandoffInput = z.infer<
+  typeof resolvedProblemHandoffSchema
+>;
+
+/**
+ * Retém um problema resolvido declarado por handoff de missão aceito/entregue.
+ * Proveniência fixa (`trusted:resolved-problem`, referência construída do id
+ * validado); o único texto livre é o resumo destilado que o Jev aprovar —
+ * texto de agente nunca vira instrução confiável. Best-effort: nunca segura
+ * aceite, entrega ou ACK.
+ */
+export async function retainResolvedProblemFromHandoffBestEffort(
+  scope: ProjectExecutionScope,
+  rawInput: ResolvedProblemHandoffInput,
+  deps: DistillHandoffSummaryDeps = {},
+): Promise<RetainResult | null> {
+  let input: ResolvedProblemHandoffInput;
+  try {
+    input = resolvedProblemHandoffSchema.parse(rawInput);
+  } catch {
+    return null;
+  }
+  const findingId = extractResolvedQaFinding([
+    input.summary,
+    input.artifactsText,
+  ]);
+  if (!findingId) return null;
+  try {
+    return await distillMemoryWithRetry(
+      scope,
+      {
+        type: 'resolved-problem',
+        title: `Resolved problem ${findingId}`,
+        summary: 'Pending distillation',
+        missionId: input.missionId,
+        reference: `docs/qa/items/${findingId}.md`,
+      },
+      input.summary,
+      deps,
+      { summarySuffix: `Handoff: ${input.handoffId}` },
+    );
+  } catch {
+    recordMemoryRetentionSkip(scope, 'store-unavailable');
+    return null;
+  }
+}
+
 /** Categorical diagnostics, never the content or exception text. */
 export function recordMemoryRetentionSkip(
   scope: ProjectExecutionScope | null | undefined,

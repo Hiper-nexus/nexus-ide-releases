@@ -13,13 +13,17 @@ vi.mock('../license-access', async () =>
 
 const memory = vi.hoisted(() => ({
   retain: vi.fn().mockResolvedValue(null),
+  resolved: vi.fn().mockResolvedValue(null),
   skip: vi.fn(),
 }));
 // The remote Jev barrier is covered in trusted-memory tests; these tests
 // exercise the durable handoff transitions that must actually invoke it.
-vi.mock('../memory/trusted-memory', () => ({
+// importOriginal keeps the pure resolved-problem detector real.
+vi.mock('../memory/trusted-memory', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../memory/trusted-memory')>()),
   retainAcknowledgedHandoffMemoryBestEffort: memory.retain,
   retainAcceptedHandoffMemoryDistilledBestEffort: vi.fn().mockResolvedValue(null),
+  retainResolvedProblemFromHandoffBestEffort: memory.resolved,
   recordMemoryRetentionSkip: memory.skip,
 }));
 
@@ -29,6 +33,7 @@ const scope = testProjectScope();
 
 beforeEach(() => {
   memory.retain.mockReset().mockResolvedValue(null);
+  memory.resolved.mockReset().mockResolvedValue(null);
   memory.skip.mockReset();
   baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-handoff-memory-'));
   manager = new ProjectRuntimeManager({ baseDir, appVersion: 'test' });
@@ -111,5 +116,65 @@ describe('F-768 handoff memory triggers', () => {
     await Promise.resolve();
     expect(memory.skip).toHaveBeenCalledWith(scope, 'store-unavailable');
     expect(handoffs.get(handoff.id)?.deliveryState).toBe('queued');
+  });
+});
+
+describe('resolved-problem writer trigger', () => {
+  it('emits resolved-problem when a delivered mission handoff declares a fixed bug', () => {
+    createScopedMissionStore(manager, scope, { idFactory: () => 'mission-a' })
+      .create({ title: 'Memória' });
+    const handoffs = createScopedHandoffStore(manager, scope);
+    const handoff = handoffs.submit({
+      missionId: 'mission-a', status: 'success',
+      summary: 'Corrigido o vazamento do watcher; ver docs/qa/items/F-911.md.',
+    });
+    expect(memory.resolved).not.toHaveBeenCalled();
+    expect(handoffs.markSubmitted(handoff.id)).toBe(true);
+    expect(memory.resolved).toHaveBeenCalledExactlyOnceWith(
+      scope,
+      {
+        handoffId: handoff.id, missionId: 'mission-a', status: 'success',
+        summary: 'Corrigido o vazamento do watcher; ver docs/qa/items/F-911.md.',
+      },
+    );
+  });
+
+  it('declares the fix through artifacts when the summary is silent', () => {
+    createScopedMissionStore(manager, scope, { idFactory: () => 'mission-a' })
+      .create({ title: 'Memória' });
+    const handoffs = createScopedHandoffStore(manager, scope);
+    const handoff = handoffs.submit({
+      missionId: 'mission-a', status: 'success',
+      summary: 'Rotina de sincronização concluída.',
+      artifacts: [{ kind: 'qa', ref: 'docs/qa/items/F-912.md' }],
+    });
+    expect(handoffs.markSubmitted(handoff.id)).toBe(true);
+    expect(memory.resolved).toHaveBeenCalledExactlyOnceWith(
+      scope,
+      expect.objectContaining({ handoffId: handoff.id, missionId: 'mission-a', status: 'success' }),
+    );
+  });
+
+  it('skips resolved-problem for mission handoffs without a declared fix', () => {
+    createScopedMissionStore(manager, scope, { idFactory: () => 'mission-a' })
+      .create({ title: 'Memória' });
+    const handoffs = createScopedHandoffStore(manager, scope);
+    const handoff = handoffs.submit({
+      missionId: 'mission-a', status: 'success',
+      summary: 'Acompanha o F-911 em andamento, ainda sem conclusão.',
+    });
+    expect(handoffs.markSubmitted(handoff.id)).toBe(true);
+    expect(memory.retain).toHaveBeenCalledTimes(1);
+    expect(memory.resolved).not.toHaveBeenCalled();
+  });
+
+  it('skips resolved-problem for helper handoffs even when they cite a fixed bug', () => {
+    const handoffs = createScopedHandoffStore(manager, scope);
+    handoffs.submit({
+      status: 'success',
+      summary: 'Corrigido o vazamento do watcher; ver docs/qa/items/F-911.md.',
+    });
+    expect(memory.retain).toHaveBeenCalledTimes(1);
+    expect(memory.resolved).not.toHaveBeenCalled();
   });
 });

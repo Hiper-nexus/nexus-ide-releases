@@ -12,9 +12,11 @@ import {
 } from './workspace-memory';
 import {
   buildAcceptedHandoffTrustedEvent,
+  extractResolvedQaFinding,
   retainAcceptedHandoffMemory,
   retainAcceptedHandoffMemoryDistilledBestEffort,
   retainAcknowledgedHandoffMemoryBestEffort,
+  retainResolvedProblemFromHandoffBestEffort,
   retainTrustedMemory,
   trustedMemoryEventSchema,
   TRUSTED_MEMORY_EVENT_TYPES,
@@ -379,5 +381,90 @@ describe('trusted automatic memory retention', () => {
       ),
     ).toThrow(/can only supersede/);
     expect(getWorkspaceMemoryStore(scope).stats().workspace.active).toBe(1);
+  });
+});
+
+describe('resolved-problem writer (F-911)', () => {
+  const approve = () =>
+    vi.fn<typeof jevJudge>(async () => ({
+      model: 'jev-1.13.0',
+      usage: { input_tokens: 120, output_tokens: 4 },
+      answers: {
+        worth_retaining: { type: 'noul', noul: 0.9 },
+        instruction_free: { type: 'noul', noul: 0.95 },
+        distilled_summary: { type: 'choice', choice: 'excerpt_0', probabilities: { excerpt_0: 0.95, none: 0.05 }, confidence: 0.95 },
+      },
+    }));
+  const on = { enabled: () => true, hasKey: () => true };
+
+  it('detects a fixed bug from the QA item path or a fixed F-XXX mention', () => {
+    expect(extractResolvedQaFinding(['Corrigido; ver docs/qa/items/F-911.md.'])).toBe('F-911');
+    expect(extractResolvedQaFinding(['O F-912 foi corrigido no watcher.'])).toBe('F-912');
+    expect(extractResolvedQaFinding(['fixed F-913 race in the spool'])).toBe('F-913');
+    expect(extractResolvedQaFinding([null, undefined, ''])).toBeNull();
+    expect(extractResolvedQaFinding(['Acompanha o F-911 em andamento, ainda sem conclusão.'])).toBeNull();
+    expect(extractResolvedQaFinding(['F-1 passou no teste.'])).toBeNull();
+  });
+
+  it('retains a resolved-problem with fixed provenance when Jev approves', async () => {
+    const result = await retainResolvedProblemFromHandoffBestEffort(
+      scope,
+      {
+        handoffId: 'handoff-911', missionId: 'mission-911', status: 'success',
+        summary: 'Corrigido o vazamento do watcher; ver docs/qa/items/F-911.md.',
+      },
+      { judge: approve(), ...on },
+    );
+    expect(result).not.toBeNull();
+    const [hit] = getWorkspaceMemoryStore(scope).recall({
+      query: 'vazamento watcher F-911',
+      includeGlobal: false,
+      trustedOnly: true,
+    });
+    expect(hit.source).toBe('trusted:resolved-problem');
+    expect(hit).toMatchObject({ kind: 'fact', importance: 5 });
+    expect(hit.content).toContain('Resolved problem:');
+    expect(hit.content).toContain('Reference: docs/qa/items/F-911.md');
+    expect(hit.content).toContain('Mission: mission-911');
+    expect(hit.content).toContain('Handoff: handoff-911');
+    expect(hit.content).toContain('Corrigido o vazamento do watcher');
+  });
+
+  it('retains nothing without a declared fix, without a mission, or when Jev denies', async () => {
+    const store = () => getWorkspaceMemoryStore(scope);
+    expect(
+      await retainResolvedProblemFromHandoffBestEffort(
+        scope,
+        { handoffId: 'handoff-x', missionId: 'mission-x', status: 'success', summary: 'Rotina concluída.' },
+        { judge: approve(), ...on },
+      ),
+    ).toBeNull();
+    expect(
+      await retainResolvedProblemFromHandoffBestEffort(
+        scope,
+        { handoffId: 'handoff-x', missionId: 'mission-x', status: 'success' } as never,
+        { judge: approve(), ...on },
+      ),
+    ).toBeNull();
+    const deny = vi.fn<typeof jevJudge>(async () => ({
+      model: 'jev-1.13.0',
+      usage: { input_tokens: 120, output_tokens: 4 },
+      answers: {
+        worth_retaining: { type: 'noul', noul: 0.2 },
+        instruction_free: { type: 'noul', noul: 0.95 },
+        distilled_summary: { type: 'choice', choice: 'excerpt_0', probabilities: { excerpt_0: 0.95, none: 0.05 }, confidence: 0.95 },
+      },
+    }));
+    expect(
+      await retainResolvedProblemFromHandoffBestEffort(
+        scope,
+        {
+          handoffId: 'handoff-911', missionId: 'mission-911', status: 'success',
+          summary: 'Corrigido o vazamento do watcher; ver docs/qa/items/F-911.md.',
+        },
+        { judge: deny, ...on },
+      ),
+    ).toBeNull();
+    expect(store().stats().workspace.active).toBe(0);
   });
 });
