@@ -7,12 +7,14 @@
 
 // Fonte única do contrato app↔backend (o servidor importa os MESMOS tipos).
 export type {
+  CheckoutInterval,
   CheckoutRequest,
   PlanId,
   LicenseInfo,
   TeamInfo,
   InviteInfo,
 } from '../../shared/contract';
+export { PRO_INTERVAL_PRICES } from '../../shared/pricing';
 import type { LicenseAccess, LicenseLimits, LicenseInfo } from '../../shared/contract';
 import { PRO_MONTHLY_PRICE } from '../../shared/pricing';
 

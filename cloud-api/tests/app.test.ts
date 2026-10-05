@@ -16,7 +16,15 @@ test('public status reports price, trial limits and configured logins without ex
   assert.deepEqual(body.data, {
     ready: true,
     auth: { google: true, github: false },
-    billing: { available: true, amount: 5999, currency: 'brl', interval: 'month' },
+    billing: {
+      available: true, amount: 5999, currency: 'brl', interval: 'month',
+      intervals: [
+        { id: 'month', months: 1, amount: 5999, available: true },
+        { id: 'quarter', months: 3, amount: 17997, available: false },
+        { id: 'semiannual', months: 6, amount: 35994, available: false },
+        { id: 'year', months: 12, amount: 71988, available: false },
+      ],
+    },
     trial: { days: 15, maxAgents: 2, cloudSync: false },
   });
   assert.equal(JSON.stringify(body).includes('fixture'), false);

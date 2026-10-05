@@ -19,14 +19,32 @@ export function validateStatus(data) {
   // O preço é obrigatório só quando a cobrança está disponível; sem ela o backend pode omitir o valor.
   if (billing.available && (!Number.isInteger(billing.amount) || billing.amount <= 0
     || billing.currency !== 'brl' || billing.interval !== 'month')) return null;
+  const intervals = publicIntervals(billing.intervals);
+  const billingView = billing.available
+    ? { available: true, amount: billing.amount, currency: billing.currency, interval: billing.interval }
+    : { available: false };
+  if (intervals) billingView.intervals = intervals;
   return {
     ready,
     auth: { google: auth.google, github: auth.github },
-    billing: billing.available
-      ? { available: true, amount: billing.amount, currency: billing.currency, interval: billing.interval }
-      : { available: false },
+    billing: billingView,
     trial: { days: trial.days, maxAgents: trial.maxAgents, cloudSync: trial.cloudSync },
   };
+}
+
+const INTERVAL_IDS = ['month', 'quarter', 'semiannual', 'year'];
+
+function publicIntervals(raw) {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) return undefined;
+  const out = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object' || !INTERVAL_IDS.includes(item.id)) return undefined;
+    if (!Number.isInteger(item.months) || item.months < 1 || item.months > 12) return undefined;
+    if (!Number.isInteger(item.amount) || item.amount <= 0 || typeof item.available !== 'boolean') return undefined;
+    out.push({ id: item.id, months: item.months, amount: item.amount, available: item.available });
+  }
+  return out;
 }
 
 export function formatPrice(amount) {

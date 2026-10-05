@@ -72,6 +72,12 @@ export interface TeamInfo {
   invites?: InviteInfo[];
 }
 
+export type CheckoutInterval = 'month' | 'quarter' | 'semiannual' | 'year';
+
 export interface CheckoutRequest {
   plan: 'pro';
+  /** Ausente significa mensal, o mesmo contrato de `{ plan: 'pro' }`. */
+  interval?: CheckoutInterval;
+  /** Código normalizado. Ausente significa checkout sem cupom. */
+  coupon?: string;
 }

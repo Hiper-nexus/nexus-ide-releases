@@ -1,6 +1,7 @@
 import '@fontsource-variable/geist';
 import './account.css';
 import { agentLimitLabel, billingFlags, trialNotice } from './plans/account-rules.js';
+import { checkoutBody, clientCouponError, offerLabel, offersFromBilling } from './plans/checkout-offer.js';
 import { initMobileNav } from './nav.js';
 
 initMobileNav();
@@ -108,6 +109,20 @@ function renderAvailability() {
   if (billing && Number.isInteger(billing.amount) && billing.currency === 'brl' && billing.interval === 'month') {
     byId('pro-price').textContent = `${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(billing.amount / 100)} / mês`;
   } else byId('pro-price').textContent = 'Preço temporariamente indisponível';
+  const offers = offersFromBilling(billing);
+  for (const offer of offers) {
+    const input = document.querySelector(`input[name="interval"][value="${offer.id}"]`);
+    const label = document.querySelector(`[data-interval-label="${offer.id}"]`);
+    if (label) label.textContent = offerLabel(offer);
+    if (input) input.disabled = !offer.available || isBusy;
+  }
+  const couponField = byId('coupon-code');
+  if (couponField) couponField.disabled = isBusy;
+  const checked = document.querySelector('input[name="interval"]:checked');
+  if (checked?.disabled) {
+    const month = document.querySelector('input[name="interval"][value="month"]');
+    if (month && !month.disabled) month.checked = true;
+  }
   const trial = availability?.trial;
   byId('trial-description').textContent = Number.isInteger(trial?.days) && Number.isInteger(trial.maxAgents)
     ? `${trial.days} dias de teste com até ${trial.maxAgents} agentes simultâneos${trial.cloudSync === false ? ', sem sincronização em nuvem' : ''}.`
@@ -209,12 +224,18 @@ function safeStripeUrl(value, hostname) {
 
 async function billingAction(kind) {
   if (isBusy || byId(kind === 'checkout' ? 'subscribe' : 'billing-portal').disabled) return;
+  const interval = document.querySelector('input[name="interval"]:checked')?.value || 'month';
+  const couponRaw = byId('coupon-code')?.value ?? '';
+  if (kind === 'checkout') {
+    const couponError = clientCouponError(couponRaw);
+    if (couponError) { message('account-message', couponError, 'error'); return; }
+  }
   isBusy = true;
   renderAvailability();
   message('account-message', kind === 'checkout' ? 'Preparando o checkout…' : 'Abrindo o portal de cobrança…');
   try {
     const data = await api(`/v1/web/${kind}`, { method: 'POST', csrfToken: session.csrfToken,
-      body: kind === 'checkout' ? { plan: 'pro', attemptId: crypto.randomUUID() } : {} });
+      body: kind === 'checkout' ? checkoutBody({ interval, coupon: couponRaw, attemptId: crypto.randomUUID() }) : {} });
     const url = safeStripeUrl(data.url, kind === 'checkout' ? 'checkout.stripe.com' : 'billing.stripe.com');
     window.location.assign(url);
   } catch (error) {

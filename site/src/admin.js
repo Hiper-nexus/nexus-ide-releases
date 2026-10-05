@@ -1,5 +1,6 @@
 import { api, byId, message, displayDate, subscriptionLabel, ACCESS_LABELS } from './account.js';
 import { initCodes, resetCodes } from './admin-codes.js';
+import { initCoupons, resetCoupons } from './admin-coupons.js';
 import { initBugs, resetBugs } from './admin-bugs.js';
 import { accountsQuery, parseAccountsPage } from './plans/admin-accounts.js';
 
@@ -9,6 +10,7 @@ let session = null, selectedAction = null, isBusy = false, accountsCursor = null
 function denyAccess(text) {
   session = null;
   resetCodes();
+  resetCoupons();
   resetBugs();
   selectedAction = null;
   byId('admin-content').hidden = true;
@@ -194,6 +196,7 @@ async function initializeAdmin() {
     session = data;
     byId('admin-content').hidden = false;
     initCodes(session, { onDenied: denyAccess });
+    initCoupons(session, { onDenied: denyAccess });
     initBugs(session, { onDenied: denyAccess });
     await loadAccounts();
   } catch (error) { denyAccess(error.message); }

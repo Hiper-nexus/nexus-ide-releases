@@ -42,7 +42,9 @@ test('web checkout creates a Stripe session bound to the signed-in account', asy
   assert.equal(params.customer, 'cus_created');
   assert.equal(params.client_reference_id, 'user');
   assert.deepEqual(params.line_items, [{ price: PRICE_PRO, quantity: 1 }]);
-  assert.deepEqual(params.subscription_data, { metadata: { accountId: 'user', plan: 'pro' } });
+  assert.deepEqual(params.subscription_data, { metadata: { accountId: 'user', plan: 'pro', interval: 'month' } });
+  assert.equal(params.metadata.interval, 'month');
+  assert.equal('discounts' in params, false);
   assert.equal(params.success_url, SITE + '/conta/?checkout=success');
   assert.equal(params.cancel_url, SITE + '/conta/?checkout=cancel');
   assert.equal(options.idempotencyKey, 'checkout:user:1');

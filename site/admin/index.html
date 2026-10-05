@@ -27,6 +27,31 @@
 <thead><tr><th scope="col">Código</th><th scope="col">Duração</th><th scope="col">Usos</th><th scope="col">Prazo para resgatar</th><th scope="col">Nota</th><th scope="col">Situação</th><th scope="col">Ações</th></tr></thead>
 <tbody id="code-rows"></tbody></table></div>
 <p id="codes-empty" class="account-hint" hidden>Nenhum código gerado ainda.</p></section>
+<section class="account-panel admin-coupons" aria-labelledby="coupons-title">
+<div class="admin-section-heading"><h2 id="coupons-title">Cupons de desconto.</h2>
+<button id="refresh-coupons" class="button button-outline" type="button">Atualizar lista</button></div>
+<p class="account-hint">Código que a pessoa digita no checkout do Pro. Desligar impede usos novos e mantém o histórico. O desconto vale só na primeira cobrança do período escolhido.</p>
+<form id="coupon-form" class="admin-code-form" novalidate>
+<div class="account-field"><label for="coupon-code-field">Código</label><input id="coupon-code-field" name="code" type="text" maxlength="40" autocomplete="off" spellcheck="false" placeholder="Ex.: PARCEIRO10" aria-describedby="coupon-code-hint"><p id="coupon-code-hint" class="account-hint">Letras, números e hífen, de 3 a 32 caracteres. É este texto que você entrega.</p></div>
+<div class="account-field"><label for="coupon-kind">Tipo</label><select id="coupon-kind" name="kind"><option value="percent">Percentual</option><option value="amount">Valor em reais</option></select></div>
+<div class="account-field"><label for="coupon-value">Valor</label><input id="coupon-value" name="value" type="text" inputmode="decimal" autocomplete="off" placeholder="10 ou 10,00" aria-describedby="coupon-value-hint"><p id="coupon-value-hint" class="account-hint">Percentual de 1 a 100, ou reais (ex.: 10,00). O valor em reais precisa caber em cada período marcado.</p></div>
+<fieldset id="coupon-intervals" class="admin-coupon-intervals"><legend>Períodos</legend>
+<label><input type="checkbox" name="intervals" value="month" checked> Mensal</label>
+<label><input type="checkbox" name="intervals" value="quarter" checked> Trimestral</label>
+<label><input type="checkbox" name="intervals" value="semiannual" checked> Semestral</label>
+<label><input type="checkbox" name="intervals" value="year" checked> Anual</label>
+</fieldset>
+<div class="account-field"><label for="coupon-expires">Validade</label><input id="coupon-expires" name="expires" type="date" aria-describedby="coupon-expires-hint"><p id="coupon-expires-hint" class="account-hint">Opcional. Vale até o fim desse dia (UTC).</p></div>
+<div class="account-field"><label for="coupon-max">Limite de usos</label><input id="coupon-max" name="maxRedemptions" type="text" inputmode="numeric" autocomplete="off" placeholder="Em branco = sem limite" aria-describedby="coupon-max-hint"><p id="coupon-max-hint" class="account-hint">Opcional. Cada assinatura paga conta um uso.</p></div>
+<p id="coupon-error" class="account-error" role="alert" hidden></p>
+<div class="account-actions"><button id="coupon-submit" class="button button-white" type="submit">Criar cupom</button></div>
+</form>
+<div class="admin-table-wrap" tabindex="0" role="region" aria-label="Lista de cupons; role horizontalmente para ver todas as colunas">
+<table class="admin-table admin-coupons-table">
+<thead><tr><th scope="col">Código</th><th scope="col">Tipo</th><th scope="col">Valor</th><th scope="col">Usos</th><th scope="col">Validade</th><th scope="col">Períodos</th><th scope="col">Situação</th><th scope="col">Ações</th></tr></thead>
+<tbody id="coupon-rows"></tbody></table></div>
+<p id="coupons-empty" class="account-hint" hidden>Nenhum cupom criado ainda.</p>
+</section>
 <section id="admin-action-panel" class="account-panel admin-action-panel" aria-labelledby="action-title" tabindex="-1" hidden><h2 id="action-title"></h2><p id="action-account" class="account-hint"></p><p id="suspension-note" class="account-message" hidden>Esta ação suspende o acesso ao NexusIDE. Ela não cancela a assinatura nem interrompe cobranças no Stripe.</p><form id="admin-action-form"><div id="reason-field" class="account-field" hidden><label for="suspension-reason">Motivo da suspensão</label><textarea id="suspension-reason" name="reason" rows="3" maxlength="500"></textarea></div><div id="days-field" class="account-field" hidden><label for="trial-days">Dias adicionais de teste</label><input id="trial-days" name="days" type="number" min="1" max="30" step="1" value="7"><p class="account-hint">Entre 1 e 30 dias. A nova validade é calculada pelo servidor.</p></div><p id="action-error" class="account-error" role="alert" hidden></p><div class="account-actions"><button id="confirm-admin-action" class="button button-white" type="submit">Confirmar ação</button><button id="cancel-admin-action" class="button button-outline" type="button">Cancelar</button></div></form></section>
 <section class="account-panel admin-bugs" aria-labelledby="bugs-title">
 <div class="admin-section-heading"><h2 id="bugs-title">Relatos de bugs.</h2><button id="refresh-bugs" class="button button-outline" type="button">Atualizar lista</button></div>

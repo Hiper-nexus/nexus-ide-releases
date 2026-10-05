@@ -85,3 +85,14 @@
 #account-email:focus-visible{outline:2px solid var(--pink);outline-offset:4px}
 .admin-accounts .admin-table{min-width:980px}
 #accounts-more{margin-top:var(--s3)}
+.checkout-intervals{border:1px solid var(--line);border-radius:12px;margin:var(--s3) 0 0;padding:var(--s3);display:grid;gap:8px}
+.checkout-intervals legend{padding:0 4px;color:var(--muted);font-size:14px}
+.checkout-interval{display:flex;align-items:center;gap:12px;min-height:48px;font-size:14px;color:var(--ink)}
+.checkout-interval input{width:18px;height:18px;accent-color:var(--pink)}
+.checkout-coupon{margin-top:var(--s3)}
+.admin-coupon-intervals{grid-column:1/-1;border:0;margin:var(--s3) 0 0;padding:0;display:flex;flex-wrap:wrap;gap:8px 16px}
+.admin-coupon-intervals legend{width:100%;font-size:14px;margin-bottom:4px}
+.admin-coupon-intervals label{display:flex;align-items:center;gap:8px;min-height:48px}
+.admin-code-form select{background:var(--bar);color:var(--ink);font:inherit;border:1px solid var(--strong);border-radius:8px;padding:var(--s2);min-height:48px;width:100%}
+.admin-coupon-code{font:13px/1.4 ui-monospace,monospace;user-select:all}
+.admin-coupons .admin-table{min-width:980px}

@@ -10,7 +10,7 @@ export type OwnerType = 'account' | 'team';
 export type TeamRole = 'owner' | 'member';
 export type AuthChannel = 'desktop' | 'web';
 export type AccountRole = 'user' | 'admin';
-export type AdminAuditAction = 'suspend' | 'resume' | 'extend_trial' | 'mint_license_code' | 'revoke_license_code' | 'test_notice';
+export type AdminAuditAction = 'suspend' | 'resume' | 'extend_trial' | 'mint_license_code' | 'revoke_license_code' | 'test_notice' | 'create_coupon' | 'disable_coupon';
 export type NoticeKind = 'welcome' | 'trial_ending_3d' | 'trial_ending_1d' | 'trial_ended';
 export type CronStatus = 'active' | 'paused' | 'deleted';
 export type SqlBoolean = 0 | 1;
@@ -34,6 +34,9 @@ export interface AccountRow {
   readonly last_seen_at: EpochMilliseconds | null;
   readonly checkout_generation: number;
   readonly checkout_open_until: EpochMilliseconds | null;
+  readonly checkout_interval: string;
+  readonly checkout_coupon: string;
+  readonly checkout_session_id: string | null;
   readonly notices_opt_out: SqlBoolean;
 }
 
@@ -130,6 +133,7 @@ export interface SubscriptionRow {
   readonly stripe_subscription_id: string;
   readonly stripe_customer_id: string;
   readonly plan: Plan;
+  readonly billing_interval: string | null;
   readonly status: string;
   readonly seats: number;
   readonly current_period_end: EpochMilliseconds | null;

@@ -33,10 +33,16 @@ function fakeStripe() {
 test('a primeira execução cria produto, preço, portal e webhook com os seis eventos', async () => {
   const { stripe, store, calls } = fakeStripe();
   const result = await provision(stripe);
-  assert.deepEqual(calls, ['products.create', 'prices.create', 'products.update', 'portal.create', 'webhook.create']);
+  assert.deepEqual(calls, ['products.create', 'prices.create', 'prices.create', 'prices.create', 'prices.create', 'products.update', 'portal.create', 'webhook.create']);
   assert.equal(store.prices[0].unit_amount, 5999);
   assert.equal(store.prices[0].currency, 'brl');
   assert.deepEqual(store.prices[0].recurring, { interval: 'month', interval_count: 1 });
+  assert.equal(store.prices[1].unit_amount, 17997);
+  assert.deepEqual(store.prices[1].recurring, { interval: 'month', interval_count: 3 });
+  assert.equal(store.prices[2].unit_amount, 35994);
+  assert.deepEqual(store.prices[2].recurring, { interval: 'month', interval_count: 6 });
+  assert.equal(store.prices[3].unit_amount, 71988);
+  assert.deepEqual(store.prices[3].recurring, { interval: 'year', interval_count: 1 });
   assert.equal(store.products[0].default_price, result.priceId);
   assert.equal(store.portals[0].features.subscription_cancel.mode, 'at_period_end');
   assert.equal(store.portals[0].features.subscription_update.enabled, false);
@@ -53,7 +59,7 @@ test('rodar de novo não duplica nada e corrige eventos alterados no painel', as
   const again = await provision(fake.stripe);
   assert.deepEqual(fake.calls, ['portal.update', 'webhook.update']);
   assert.equal(fake.store.products.length, 1);
-  assert.equal(fake.store.prices.length, 1);
+  assert.equal(fake.store.prices.length, 4);
   assert.equal(fake.store.hooks.length, 1);
   assert.equal(again.webhookSecret, null, 'o segredo só aparece na criação');
   assert.match(instructions(again, 'test'), /copie o signing secret no painel/);
@@ -91,8 +97,9 @@ test('reaproveita o produto e o preço que já existem na conta de produção (m
   assert.equal(result.productId, 'prod_legado');
   assert.equal(result.priceId, 'price_legado');
   assert.equal(fake.store.products.length, 1, 'não cria um segundo Nexus Pro');
-  assert.equal(fake.store.prices.length, 1, 'não cria um segundo preço de R$ 59,99');
-  assert.deepEqual(fake.calls, ['portal.create', 'webhook.create']);
+  assert.equal(fake.store.prices.filter(price => price.unit_amount === 5999).length, 1, 'não cria um segundo preço de R$ 59,99');
+  assert.equal(fake.store.prices.length, 4);
+  assert.deepEqual(fake.calls, ['prices.create', 'prices.create', 'prices.create', 'portal.create', 'webhook.create']);
 });
 
 test('em produção, recusa antes de mexer em qualquer coisa se o Customer Portal padrão é de outro uso da conta', async () => {

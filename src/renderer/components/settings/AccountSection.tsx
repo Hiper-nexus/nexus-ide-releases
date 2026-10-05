@@ -15,6 +15,7 @@ import { LOGIN_PROVIDERS, loginProviderLabel } from '../../../shared/auth-login'
 import { useNexusLogin, waitingProviderOf } from './use-nexus-login';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
 import { accountSessionBadge, isSessionExpiredError } from './account-session-badge';
+import { CheckoutChoices, checkoutRequestFrom, DEFAULT_CHECKOUT_CHOICE } from '../billing/CheckoutChoices';
 
 /**
  * Minha Conta — identidade Nexus (login), time e plano.
@@ -66,6 +67,7 @@ export function AccountSection({ accessOnly = false }: { accessOnly?: boolean })
   const [teamError, setTeamError] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
+  const [checkoutChoice, setCheckoutChoice] = useState(DEFAULT_CHECKOUT_CHOICE);
   const [redeemError, setRedeemError] = useState<string | null>(null);
   const [redeemBusy, setRedeemBusy] = useState(false);
   const [redeemOk, setRedeemOk] = useState(false);
@@ -200,11 +202,11 @@ export function AccountSection({ accessOnly = false }: { accessOnly?: boolean })
     await reloadTeam();
   };
 
-  const startCheckout = async (plan: 'pro') => {
+  const startCheckout = async () => {
     setCheckoutError(null);
     setCheckoutBusy(true);
     try {
-      const result = await window.nexus.billing.openCheckout(plan);
+      const result = await window.nexus.billing.openCheckout(checkoutRequestFrom(checkoutChoice));
       if (!result.ok) {
         setCheckoutError(result.error ?? 'Não foi possível abrir o checkout.');
       }
@@ -261,7 +263,9 @@ export function AccountSection({ accessOnly = false }: { accessOnly?: boolean })
         canRetry={canRetry}
         retrying={licenseLoading}
         actionError={checkoutError}
-        onCheckout={() => void startCheckout('pro')}
+        checkoutChoice={checkoutChoice}
+        onCheckoutChoice={setCheckoutChoice}
+        onCheckout={() => void startCheckout()}
         onPortal={() => void openPortal()}
         onRetry={() => void refreshAccess()}
         canRedeem={isLoggedIn}
@@ -667,24 +671,36 @@ export function AccountSection({ accessOnly = false }: { accessOnly?: boolean })
                     Começa no primeiro login
                   </span>
                 ) : (
-                  <button
-                    type="button"
-                    className="settings-btn settings-btn--primary account__plan-cta"
-                    disabled={checkoutBusy}
-                    onClick={() => void startCheckout('pro')}
-                    title="Abrir checkout seguro da Stripe"
-                  >
+                  <>
+                    {plan.id === 'pro' && (
+                      <CheckoutChoices
+                        group="account-interval"
+                        value={checkoutChoice}
+                        onChange={setCheckoutChoice}
+                        disabled={checkoutBusy}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      className="settings-btn settings-btn--primary account__plan-cta"
+                      disabled={checkoutBusy}
+                      onClick={() => void startCheckout()}
+                      title="Abrir checkout seguro da Stripe"
+                    >
                     {checkoutBusy ? 'Abrindo…' : `Assinar ${plan.name}`}
-                  </button>
+                    </button>
+                  </>
                 )}
               </article>
             );
           })}
         </div>
         <p className="account__zone-hint account__billing-note">
-          O teste dura 15 dias a partir do primeiro login verificado. Depois, é
-          necessário assinar o Pro, cobrado mensalmente em reais pela Stripe, que
-          pode ser cancelado a qualquer momento no portal da assinatura.
+          O teste dura 15 dias a partir do primeiro login verificado. Depois, o Pro
+          custa R$ 59,99 por mês e pode ser contratado por 1, 3, 6 ou 12 meses,
+          sempre esse valor vezes os meses. O único desconto é um cupom informado
+          no checkout. A cobrança é em reais pela Stripe e pode ser cancelada no
+          portal da assinatura.
         </p>
       </div>
 

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-/** Provisiona o Stripe do Nexus Pro de forma idempotente: produto, preço mensal
- * em BRL, Customer Portal e o webhook da API. Rodar de novo não duplica nada.
+/** Provisiona o Stripe do Nexus Pro de forma idempotente: produto, os quatro
+ * preços em BRL (mensal e os múltiplos sem desconto), Customer Portal e o
+ * webhook da API. Rodar de novo não duplica nada. O preço mensal existente
+ * (R$ 59,99) é reaproveitado.
  *
  *   STRIPE_SECRET_KEY=sk_test_... npm run stripe:provision [-- --dry-run] [-- --json]
  *   STRIPE_SECRET_KEY=sk_live_... npm run stripe:provision -- --live
@@ -11,6 +13,13 @@ import { pathToFileURL } from 'node:url';
 export const PRODUCT = { name: 'Nexus Pro', metadata: { nexus_product: 'pro' } };
 export const LEGACY_PRODUCT = 'nexuside_pro';
 export const PRICE = { currency: 'brl', unit_amount: 5999, recurring: { interval: 'month', interval_count: 1 }, metadata: { nexus_price: 'pro-monthly' } };
+/** Mesmo valor mensal vezes os meses. Nenhum destes preços embute desconto. */
+export const INTERVAL_PRICES = [
+  { env: 'STRIPE_PRICE_PRO', label: 'preço R$ 59,99 por mês', currency: 'brl', unit_amount: 5999, recurring: { interval: 'month', interval_count: 1 }, metadata: { nexus_price: 'pro-monthly' } },
+  { env: 'STRIPE_PRICE_PRO_QUARTERLY', label: 'preço R$ 179,97 a cada 3 meses', currency: 'brl', unit_amount: 17997, recurring: { interval: 'month', interval_count: 3 }, metadata: { nexus_price: 'pro-quarterly' } },
+  { env: 'STRIPE_PRICE_PRO_SEMIANNUAL', label: 'preço R$ 359,94 a cada 6 meses', currency: 'brl', unit_amount: 35994, recurring: { interval: 'month', interval_count: 6 }, metadata: { nexus_price: 'pro-semiannual' } },
+  { env: 'STRIPE_PRICE_PRO_ANNUAL', label: 'preço R$ 719,88 por ano', currency: 'brl', unit_amount: 71988, recurring: { interval: 'year', interval_count: 1 }, metadata: { nexus_price: 'pro-annual' } },
+];
 export const WEBHOOK_URL = 'https://api.nexuside.app/v1/billing/webhook';
 export const WEBHOOK_EVENTS = [
   'checkout.session.completed',
@@ -46,8 +55,8 @@ async function listAll(resource, params = {}) {
 /** O produto criado por este script ou o do catálogo antigo, que já existe na conta de produção. */
 const isNexusPro = product => product.metadata?.nexus_product === PRODUCT.metadata.nexus_product || product.metadata?.nexusProduct === LEGACY_PRODUCT;
 
-const samePrice = price => price.active && price.currency === PRICE.currency && price.unit_amount === PRICE.unit_amount
-  && price.recurring?.interval === PRICE.recurring.interval && price.recurring?.interval_count === PRICE.recurring.interval_count;
+const samePrice = (price, spec) => price.active && price.currency === spec.currency && price.unit_amount === spec.unit_amount
+  && price.recurring?.interval === spec.recurring.interval && price.recurring?.interval_count === spec.recurring.interval_count;
 
 export function keyMode(key) {
   if (!key) return 'missing';
@@ -76,15 +85,24 @@ export async function provision(stripe, { dryRun = false, log = () => {}, protec
   }
   result.productId = product.id;
 
-  let price = dryRun && product.id === 'prod_simulado' ? null : (await listAll(stripe.prices, { product: product.id, active: true })).find(samePrice);
-  if (!price) {
-    note('created', 'preço R$ 59,99 por mês');
-    price = dryRun ? { id: 'price_simulado' } : await stripe.prices.create({ product: product.id, ...PRICE });
+  const existingPrices = dryRun && product.id === 'prod_simulado' ? [] : await listAll(stripe.prices, { product: product.id, active: true });
+  result.prices = {};
+  for (const spec of INTERVAL_PRICES) {
+    let price = existingPrices.find(item => samePrice(item, spec));
+    if (!price) {
+      note('created', spec.label);
+      price = dryRun ? { id: `price_simulado_${spec.env}` } : await stripe.prices.create({
+        product: product.id, currency: spec.currency, unit_amount: spec.unit_amount, recurring: spec.recurring, metadata: spec.metadata,
+      });
+      existingPrices.push(price);
+    }
+    result.prices[spec.env] = price.id;
   }
-  result.priceId = price.id;
-  if (product.default_price !== price.id) {
+  const priceId = result.prices.STRIPE_PRICE_PRO;
+  result.priceId = priceId;
+  if (product.default_price !== priceId) {
     note('updated', 'preço padrão do produto');
-    if (!dryRun) await stripe.products.update(product.id, { default_price: price.id });
+    if (!dryRun) await stripe.products.update(product.id, { default_price: priceId });
   }
 
   const portals = await listAll(stripe.billingPortal.configurations, { active: true });
@@ -129,7 +147,8 @@ export function instructions(result, mode) {
     `  webhook ${result.webhookId}`,
     '',
     'Próximos passos, no repositório nexus-cloud-api:',
-    `  1. Em wrangler.jsonc, vars: "STRIPE_PRICE_PRO":"${result.priceId}"`,
+    '  1. Em wrangler.jsonc, vars (o mensal que já existe não muda; os outros ficam vazios até este script criar os Prices):',
+    ...INTERVAL_PRICES.map(spec => `     "${spec.env}":"${result.prices?.[spec.env] ?? ''}"`),
     '  2. npx wrangler secret put STRIPE_SECRET_KEY        (cole a mesma chave usada aqui)',
     result.webhookSecret
       ? '  3. npx wrangler secret put STRIPE_WEBHOOK_SECRET    (rode com --json para ver o whsec_ desta criação)'
