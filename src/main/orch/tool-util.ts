@@ -82,6 +82,7 @@ import {
 } from './spawn-seat-fallback';
 import { assertSafePtyPrompt } from './pty-prompt-safety';
 import {
+  getAgentSemanticStatusBySession,
   getAgentTurnStartSequence,
   isSessionInjectableIdle,
   tapAgentTurnStart,
@@ -610,7 +611,17 @@ async function submitEnter(
       // Enter; that is progress, not a permission modal. Only fail closed when
       // the session is still not busy and never observed a busy edge.
       const state = getSessionState(sessionId);
-      if (state !== 'busy' && !observedBusy) {
+      const semanticStatus = getAgentSemanticStatusBySession(sessionId)?.status;
+      // F-926: só um diálogo real (awaiting-input) impede o Enter — escrever
+      // ali iria para o lugar errado. Semantic `working` com o PTY em idle
+      // depois da colagem é o composer segurando o brief: Devin (SWE-2) e
+      // Kimi (05/10) ficavam com o prompt COLADO e sem o Enter final até o
+      // orquestrador digitar à mão. O estado idle + colagem já é prova
+      // suficiente para submeter.
+      if (semanticStatus === 'awaiting-input') {
+        throw new Error('agent pane is awaiting operator input');
+      }
+      if (state !== 'busy' && !observedBusy && state !== 'idle') {
         throw new Error('agent pane is awaiting operator input');
       }
     }

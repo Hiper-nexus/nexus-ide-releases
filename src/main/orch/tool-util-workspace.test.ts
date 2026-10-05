@@ -54,6 +54,8 @@ const stubs = vi.hoisted(() => ({
     squadRevisionHash: 'squad-revision-hash',
   })),
   injectable: true,
+  /** Status semântico do agente (F-926: 'working' com PTY idle não segura o Enter). */
+  semanticStatus: undefined as string | undefined,
   orchSettings: {
     leanCode: false,
     seniorMode: false,
@@ -128,7 +130,15 @@ vi.mock('../pty/pty-manager', () => ({
 vi.mock('../acp/acp-harness-driver', () => ({ getAcpDriverSession: stubs.acpSessionInfo }));
 vi.mock('./agent-status', () => ({
   isSessionInjectableIdle: vi.fn(
-    () => stubs.sessionState() === 'idle' && stubs.injectable,
+    () =>
+      stubs.sessionState() === 'idle' &&
+      stubs.injectable &&
+      // Espelha agent-status real: working fresco e awaiting-input vetam.
+      stubs.semanticStatus !== 'awaiting-input' &&
+      stubs.semanticStatus !== 'working',
+  ),
+  getAgentSemanticStatusBySession: vi.fn(() =>
+    stubs.semanticStatus ? { status: stubs.semanticStatus, updatedAt: Date.now() } : undefined,
   ),
   getAgentTurnStartSequence: vi.fn(() => stubs.turnStartSequence),
   tapAgentTurnStart: vi.fn(
@@ -1544,6 +1554,7 @@ describe('agent prompt injection', () => {
     });
     afterEach(() => {
       unsubscribe();
+      stubs.semanticStatus = undefined;
       stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
       vi.mocked(getPaneAuthzInfo).mockReset();
       vi.mocked(pendingSpawnAttemptSession).mockReset().mockReturnValue({ state: 'waiting' });
@@ -1563,6 +1574,58 @@ describe('agent prompt injection', () => {
       expect(typed.some(([, data]) => data === '\r')).toBe(true);
       expect(stubs.requestPaneClose).not.toHaveBeenCalled();
       expect(failures).toEqual([]);
+    });
+
+    it('F-926: semantic "working" com PTY idle ainda recebe o Enter (Devin/Kimi colados)', async () => {
+      // Campo 05/10: Devin (SWE-2) e Kimi nasciam com o prompt COLADO na
+      // caixa de entrada e sem o Enter final. O paste entra com a sessão
+      // idle; o eco da colagem/hook vira semantic `working` e o submitEnter
+      // antigo abortava o Enter — o brief já estava no composer.
+      answerEnterWithTurn();
+      stubs.writeSession.mockImplementation(
+        ((sessionId: string, data: string) => {
+          if (data.includes('revise o diff')) {
+            // Eco do paste: semantic vira working, PTY continua idle.
+            stubs.semanticStatus = 'working';
+          }
+          if (data === '\r') {
+            queueMicrotask(() => {
+              stubs.sessionState.mockReturnValue('busy');
+              for (const tap of [...stubs.stateTaps]) tap(sessionId, 'busy');
+              for (const tap of [...stubs.dataTaps]) tap(sessionId, 'working');
+            });
+          }
+          return true;
+        }) as typeof stubs.writeSession,
+      );
+      await spawnPendingKimi();
+      bindAttempt('session-kimi');
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      const typed = typedInto('session-kimi');
+      expect(typed[0]?.[1]).toContain('revise o diff');
+      expect(typed.some(([, data]) => data === '\r')).toBe(true);
+      expect(failures).toEqual([]);
+    });
+
+    it('F-926: semantic "awaiting-input" (diálogo real) ainda bloqueia o Enter', async () => {
+      // Mesmo com o brief já colado, um diálogo aberto (awaiting-input) faz o
+      // Enter ir para o lugar errado — segue recusado.
+      stubs.writeSession.mockImplementation(
+        ((_sessionId: string, data: string) => {
+          if (data.includes('revise o diff')) {
+            stubs.semanticStatus = 'awaiting-input';
+          }
+          return true;
+        }) as typeof stubs.writeSession,
+      );
+      await spawnPendingKimi();
+      bindAttempt('session-kimi');
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      const typed = typedInto('session-kimi');
+      // Colagem entra, mas o Enter NÃO — escrever num diálogo é o lugar errado.
+      expect(typed.some(([, data]) => data === '\r')).toBe(false);
     });
 
     it('a entrega não morre com a autoridade da requisição (a próxima tool do pane a substitui)', async () => {

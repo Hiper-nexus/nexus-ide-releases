@@ -42,6 +42,10 @@ import {
   syncPanes,
   attachOrchMeta,
 } from './pane-registry';
+import {
+  deleteMainOwnedPane,
+  setMainOwnedPane,
+} from './main-owned-pane-runtime';
 import { mintToken, bindTokenToSession, releaseSession } from './gate';
 import { testProjectScope } from './__tests__/scope-fixture';
 
@@ -162,5 +166,62 @@ describe('mirar pelo número atinge o mesmo pane que mirar pelo id', () => {
     syncPanes([entry('7', 5), entry('pane-real', 7)], renderer, 'gen-4');
     expect(getPaneAuthzInfo('7')?.paneId).toBe('7');
     expect(getPaneAuthzInfo('pane 7')?.paneId).toBe('pane-real');
+  });
+});
+
+describe('F-927: o mesmo pane nos dois registros não é ambiguidade', () => {
+  beforeEach(() => {
+    pty.live.clear();
+    syncPanes([], renderer, 'gen-reset');
+  });
+
+  it('duplicata renderer+main-owned resolve para um e o close não diz "unknown pane"', () => {
+    // Campo 05/10: nexus_pane_close("pane-muv26zi7-1b") devolvia "unknown
+    // pane" enquanto a própria mensagem listava o pane vivo. O pane estava no
+    // espelho do renderer E no registro main-owned (adoção sem remoção) —
+    // 2 matches do MESMO id viravam null no `length === 1` antigo.
+    const paneId = 'pane-muv26zi7-1b';
+    const sessionId = 'session-agy-idle';
+    pty.live.add(sessionId);
+    try {
+      syncPanes([entry(paneId, 3, sessionId)], renderer, 'gen-dup');
+      setMainOwnedPane(paneId, {
+        entry: {
+          paneId,
+          sessionId,
+          title: 'agy',
+          kind: 'cli-agent',
+          adapterId: 'agy',
+          state: 'idle',
+        },
+        meta: {
+          missionId: 'mission-a',
+          role: 'worker',
+          scope: testProjectScope(),
+        },
+      });
+      // O inventário lista o pane vivo…
+      const alive = listPaneSnapshots().filter((p) => p.paneId === paneId);
+      expect(alive.length).toBeGreaterThanOrEqual(1);
+      // …e a resolução acha o MESMO pane em vez de "unknown pane".
+      const info = getPaneAuthzInfo(paneId);
+      expect(info?.paneId).toBe(paneId);
+      expect(info?.sessionId).toBe(sessionId);
+    } finally {
+      deleteMainOwnedPane(paneId);
+    }
+  });
+
+  it('panes DIFERENTES com o mesmo sessionId continuam ambiguidade', () => {
+    const sessionId = 'session-shared';
+    pty.live.add(sessionId);
+    try {
+      syncPanes([entry('pane-left', 1, sessionId)], renderer, 'gen-amb');
+      syncPanes([entry('pane-right', 2, sessionId)], owner(2), 'gen-amb2');
+      expect(getPaneAuthzInfo(sessionId)).toBeNull();
+    } finally {
+      syncPanes([], renderer, 'gen-amb-clear');
+      syncPanes([], owner(2), 'gen-amb2-clear');
+    }
   });
 });
