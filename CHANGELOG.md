@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.195 — Atualizar o Codex de volta
+
+Build do Mac. Conserta o botão de atualizar o Codex para instalações fora do npm.
+
+- **Atualizar o Codex pelo app volta a funcionar.** Quem instalou o Codex pelo instalador oficial (`chatgpt.com/codex/install.sh`, binário em `~/.codex/packages/standalone`) ou pelo Homebrew recebia "Não reconheci o canal da CLI usada pelo pane" ao mandar atualizar. O app só sabia atualizar instalações por npm. Agora reconhece os dois canais: a instalação oficial é reexecutada no lugar (o próprio instalador é idempotente) e a do Homebrew usa `brew upgrade --cask codex`. As instalações por npm continuam iguais, sem regressão (F-929).
+
 ## 0.76.194 — Windows de volta
 
 Build do Windows. Traz para o Windows tudo o que saiu no Mac desde a 0.76.188, até a 0.76.193.

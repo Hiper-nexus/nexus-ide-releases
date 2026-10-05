@@ -10010,7 +10010,7 @@ export const RELEASE_076193: AppRelease = {
     },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076194: AppRelease = {
   version: '0.76.194',
   date: '2026-10-05',
   codename: 'Windows de volta',
@@ -10035,6 +10035,34 @@ export const CURRENT_RELEASE: AppRelease = {
         '"Mais informações" e depois em "Executar assim mesmo". Quem já tem o ' +
         'Nexus instalado atualiza sem esse aviso. A versão assinada virá pela ' +
         'Microsoft Store.',
+    },
+  ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.195',
+  date: '2026-10-05',
+  codename: 'Atualizar o Codex de volta',
+  summary:
+    'O botão de atualizar o Codex volta a funcionar para quem o instalou ' +
+    'pelo instalador oficial ou pelo Homebrew, sem mais o erro de canal.',
+  highlights: [
+    {
+      title: 'Atualizar o Codex pelo app',
+      detail:
+        'O Nexus agora reconhece o Codex instalado pelo instalador oficial e ' +
+        'pelo Homebrew, não só pelo npm, e atualiza cada um pelo seu canal.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Atualizar o Codex pelo app',
+      detail:
+        'Quem instalou o Codex pelo instalador oficial (chatgpt.com/codex/' +
+        'install.sh) ou pelo Homebrew via o app recebia "Não reconheci o canal ' +
+        'da CLI usada pelo pane" ao atualizar. Agora o app reconhece esses dois ' +
+        'canais: a instalação oficial é reexecutada no lugar e a do Homebrew ' +
+        'usa "brew upgrade --cask codex". As instalações por npm continuam ' +
+        'iguais.',
     },
   ],
 };
