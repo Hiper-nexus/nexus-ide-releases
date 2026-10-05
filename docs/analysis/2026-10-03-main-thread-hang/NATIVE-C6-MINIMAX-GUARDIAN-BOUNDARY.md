@@ -85,10 +85,10 @@ NEXUS_TEST_NATIVE_NODE_CLI=minimax PATH=/opt/homebrew/opt/node@22/bin:$PATH \
   src/main/orch/native-heavy-node-clis.test.ts --maxWorkers=1
 ```
 
-The explicit MiniMax control remains RED until the owner provides a verified
-resource/IPC fix. Default focused selection remains Qwen, whose positive
-control is distinct. No generic matrix PASS, candidate execution, operator
-profile/process or external inference is claimed.
+The original frozen MiniMax control was RED at this boundary; the verified
+resource follow-up appears below. Default focused selection remains Qwen,
+whose positive control is distinct. No generic matrix PASS, candidate
+execution, operator profile/process or external inference is claimed.
 
 ## Verified resource follow-up
 
