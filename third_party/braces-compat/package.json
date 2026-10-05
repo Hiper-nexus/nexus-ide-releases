@@ -1,0 +1,20 @@
+{
+  "name": "braces",
+  "version": "3.0.4-nexus.1",
+  "description": "Nexus security packaging of braces 3.0.3 with nesting-depth guards (GHSA-vfj7-8cjw-p6xm)",
+  "private": true,
+  "license": "MIT",
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "lib",
+    "LICENSE",
+    "NOTICE.md"
+  ],
+  "dependencies": {
+    "fill-range": "^7.1.1"
+  },
+  "engines": {
+    "node": ">=8"
+  }
+}

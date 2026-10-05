@@ -112,28 +112,40 @@ Adapted modules in this harvest:
 Every adapted source file carries an attribution header pointing at the pin
 and license. Existing copyright notices inside copied code are preserved.
 
-## brace-expansion 5.0.8 security compatibility package
+## brace-expansion 5.0.12 security compatibility package
 
 The build toolchain uses an exact copy of the patched
-[`brace-expansion@5.0.8`](https://github.com/juliangruber/brace-expansion/tree/v5.0.8)
+[`brace-expansion@5.0.12`](https://github.com/juliangruber/brace-expansion/tree/v5.0.12)
 CommonJS implementation (MIT, Copyright Julian Gruber; TypeScript port
 Copyright Isaac Z. Schlueter). A Nexus-authored export adapter keeps legacy
 minimatch 3.x/5.x consumers callable while retaining the modern `.expand` and
 named ESM contracts. The expansion algorithm itself is unmodified.
 
 This temporary local package addresses
-[`GHSA-mh99-v99m-4gvg`](https://github.com/advisories/GHSA-mh99-v99m-4gvg)
-until compatible v1/v2 maintenance releases are published and consumed by the
-complete Electron Forge maker tree. Removal is tracked against upstream pull
-requests
-[#129](https://github.com/juliangruber/brace-expansion/pull/129),
-[#130](https://github.com/juliangruber/brace-expansion/pull/130),
-[#134](https://github.com/juliangruber/brace-expansion/pull/134), and
-[#135](https://github.com/juliangruber/brace-expansion/pull/135).
+[`GHSA-rgw5-rvv9-x895`](https://github.com/advisories/GHSA-rgw5-rvv9-x895),
+[`GHSA-qhr7-859c-m2p7`](https://github.com/advisories/GHSA-qhr7-859c-m2p7) and
+[`GHSA-q2hr-2g5m-vwhr`](https://github.com/advisories/GHSA-q2hr-2g5m-vwhr)
+until compatible maintenance releases are published and consumed by the
+complete Electron Forge maker tree.
 
 License text: `third_party/licenses/brace-expansion-MIT.txt`. Source hashes,
 npm integrity, commit/tag pin, and compatibility rationale:
-`third_party/provenance/brace-expansion-5.0.8-compat.json`.
+`third_party/provenance/brace-expansion-5.0.12-compat.json`.
+
+## braces 3.0.3 security patch package
+
+The build toolchain (Electron Forge → `fast-glob` → `micromatch`) uses
+[`braces@3.0.3`](https://github.com/micromatch/braces/tree/3.0.3) (MIT,
+Copyright Jon Schlinkert) with nesting-depth guards for
+[`GHSA-vfj7-8cjw-p6xm`](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm),
+which has no patched release. `lib/compile.js` and `lib/expand.js` apply
+upstream pull request [#75](https://github.com/micromatch/braces/pull/75);
+`lib/stringify.js` gets the same guard. Every other file is an exact copy. The
+local package is versioned `3.0.4-nexus.1`; it is not an upstream release.
+
+License text: `third_party/licenses/braces-MIT.txt`. Source hashes, npm
+integrity, commit pin, and patch summary:
+`third_party/provenance/braces-3.0.3-depth-guard.json`.
 
 ## JavaScript and native dependencies
 
