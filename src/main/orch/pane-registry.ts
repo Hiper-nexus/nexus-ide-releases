@@ -2250,7 +2250,17 @@ export function getPaneAuthzInfo(paneRef: string): PaneAuthzInfo | null {
     ...parkedBrowserPanesById(paneRef).map(parkedBrowserAuthzInfo),
   ];
   if (byIdentity.length > 0) {
-    return byIdentity.length === 1 ? byIdentity[0]! : null;
+    // F-925: o mesmo pane pode aparecer no espelho do renderer E no registro
+    // main-owned (adoção sem remoção). Eram 2 matches do MESMO paneId e o
+    // `length === 1` devolvia null — "unknown pane" enquanto o inventário
+    // (listPaneSnapshots) listava o pane vivo. Ambiguidade real é só entre
+    // panes DIFERENTES; duplicata do mesmo id resolve para um.
+    const unique = new Map<string, PaneAuthzInfo>();
+    for (const info of byIdentity) {
+      const key = `${info.paneId}\u0000${info.sessionId ?? ''}`;
+      if (!unique.has(key)) unique.set(key, info);
+    }
+    return unique.size === 1 ? unique.values().next().value! : null;
   }
   const wanted = parsePaneNumberRef(paneRef);
   if (wanted === null) return null;
