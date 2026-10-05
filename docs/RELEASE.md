@@ -70,6 +70,12 @@ Limites que importam:
   `release:publish:linux` o exige. A publicação é manual: criar a release nos dois
   repositórios, `gh release upload` dos quatro arquivos (nunca `--clobber`),
   conferir o `digest` de cada asset e dizer nas notas que o build foi local.
+- **Tag imutável com teste quebrado já corrigido depois (caso real: `v0.76.191` e o F-764).**
+  A suíte não pode ser pulada às cegas. `KNOWN_TEST_FAILURE_FILE=<arquivo de teste>` e
+  `KNOWN_TEST_FAILURE_MATCH=<trecho exato da mensagem>` fazem o container rodar a suíte SEM
+  esse arquivo e rodá-lo à parte, e ele precisa falhar com exatamente esse trecho e nenhuma
+  outra falha; senão o build aborta. A exceção vai para `build-provenance.json`
+  (`knownTestFailure`) e DEVE constar nas notas da release.
 - **Não compile no Arch/Omarchy para distribuir.** A glibc de lá é nova demais e
   os módulos nativos quebram em Ubuntu 22.04 e Debian 12.
 - **O repositório NÃO pode ser montado em `/repo`:** testes usam esse caminho como
