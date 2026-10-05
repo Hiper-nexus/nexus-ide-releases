@@ -132,6 +132,7 @@
     "tmp": "^0.2.7",
     "undici": "7.29.1",
     "qs": "6.16.0",
+    "http-cache-semantics": "4.3.0",
     "@esbuild-kit/core-utils": {
       "esbuild": "^0.25.12"
     },
