@@ -18,7 +18,10 @@ concurrency:
 jobs:
   sign:
     if: github.repository == 'Hiper-nexus/nexus-ide' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.ref_protected
-    runs-on: [self-hosted, Windows, X64, nexus-release-signing]
+    # Máquina Windows do próprio GitHub, nova a cada build. O runner no PC do
+    # operador só existia para o certificado do eSigner instalado nele; sem
+    # assinatura, ele deixou de ser necessário (e estava offline desde 18/09).
+    runs-on: windows-latest
     environment: windows-release-signing
     timeout-minutes: 90
     env:
@@ -50,9 +53,8 @@ jobs:
           cache: npm
 
       # node-gyp (better-sqlite3) needs a real Python interpreter during the
-      # Electron rebuild. Do this in pwsh instead of actions/setup-python:
-      # this release host intentionally blocks Windows PowerShell scripts from
-      # third-party actions, while the bundled runtime is already provisioned.
+      # Electron rebuild. On windows-latest this resolves to the preinstalled
+      # Python on PATH; the explicit candidates only matter on a local host.
       - name: Configure Python for native rebuild
         shell: pwsh
         run: |

@@ -1,8 +1,17 @@
 // Public GitHub releases only. Refresh with npm run releases:update.
 export default {
-  "checkedAt": "2026-10-05T16:05:33.793Z",
+  "checkedAt": "2026-10-05T19:12:25.357Z",
   "catalog": {
     "macos": [
+      {
+        "version": "0.76.193",
+        "architecture": "arm64",
+        "name": "NexusIDE-0.76.193-arm64.dmg",
+        "size": 230094109,
+        "url": "https://github.com/Hiper-nexus/nexus-ide-releases/releases/download/v0.76.193/NexusIDE-0.76.193-arm64.dmg",
+        "releaseUrl": "https://github.com/Hiper-nexus/nexus-ide-releases/releases/tag/v0.76.193",
+        "publishedAt": "2026-10-05T17:48:34Z"
+      },
       {
         "version": "0.76.191",
         "architecture": "arm64",
@@ -20,15 +29,6 @@ export default {
         "url": "https://github.com/Hiper-nexus/nexus-ide-releases/releases/download/v0.76.188/NexusIDE-0.76.188-arm64.dmg",
         "releaseUrl": "https://github.com/Hiper-nexus/nexus-ide-releases/releases/tag/v0.76.188",
         "publishedAt": "2026-10-02T19:00:38Z"
-      },
-      {
-        "version": "0.76.182",
-        "architecture": "arm64",
-        "name": "NexusIDE-0.76.182-arm64.dmg",
-        "size": 228066226,
-        "url": "https://github.com/Hiper-nexus/nexus-ide-releases/releases/download/v0.76.182/NexusIDE-0.76.182-arm64.dmg",
-        "releaseUrl": "https://github.com/Hiper-nexus/nexus-ide-releases/releases/tag/v0.76.182",
-        "publishedAt": "2026-10-02T18:00:53Z"
       }
     ],
     "windows": [
@@ -61,6 +61,36 @@ export default {
       }
     ],
     "linux": [
+      {
+        "version": "0.76.193",
+        "architecture": "x64",
+        "files": [
+          {
+            "format": "deb",
+            "name": "nexus-ide_0.76.193_amd64.deb",
+            "size": 188008144,
+            "url": "https://github.com/Hiper-nexus/nexus-ide-releases/releases/download/v0.76.193/nexus-ide_0.76.193_amd64.deb"
+          },
+          {
+            "format": "rpm",
+            "name": "nexus-ide-0.76.193-1.x86_64.rpm",
+            "size": 205737357,
+            "url": "https://github.com/Hiper-nexus/nexus-ide-releases/releases/download/v0.76.193/nexus-ide-0.76.193-1.x86_64.rpm"
+          },
+          {
+            "format": "zip",
+            "name": "NexusIDE-linux-x64-0.76.193.zip",
+            "size": 245729623,
+            "url": "https://github.com/Hiper-nexus/nexus-ide-releases/releases/download/v0.76.193/NexusIDE-linux-x64-0.76.193.zip"
+          }
+        ],
+        "checksums": {
+          "size": 291,
+          "url": "https://github.com/Hiper-nexus/nexus-ide-releases/releases/download/v0.76.193/SHA256SUMS-linux-x64.txt"
+        },
+        "releaseUrl": "https://github.com/Hiper-nexus/nexus-ide-releases/releases/tag/v0.76.193",
+        "publishedAt": "2026-10-05T17:48:34Z"
+      },
       {
         "version": "0.76.191",
         "architecture": "x64",
@@ -120,36 +150,6 @@ export default {
         },
         "releaseUrl": "https://github.com/Hiper-nexus/nexus-ide-releases/releases/tag/v0.76.190",
         "publishedAt": "2026-10-02T21:06:31Z"
-      },
-      {
-        "version": "0.76.178",
-        "architecture": "x64",
-        "files": [
-          {
-            "format": "deb",
-            "name": "nexus-ide_0.76.178_amd64.deb",
-            "size": 187816684,
-            "url": "https://github.com/Hiper-nexus/nexus-ide-releases/releases/download/v0.76.178/nexus-ide_0.76.178_amd64.deb"
-          },
-          {
-            "format": "rpm",
-            "name": "nexus-ide-0.76.178-1.x86_64.rpm",
-            "size": 205223689,
-            "url": "https://github.com/Hiper-nexus/nexus-ide-releases/releases/download/v0.76.178/nexus-ide-0.76.178-1.x86_64.rpm"
-          },
-          {
-            "format": "zip",
-            "name": "NexusIDE-linux-x64-0.76.178.zip",
-            "size": 245420171,
-            "url": "https://github.com/Hiper-nexus/nexus-ide-releases/releases/download/v0.76.178/NexusIDE-linux-x64-0.76.178.zip"
-          }
-        ],
-        "checksums": {
-          "size": 291,
-          "url": "https://github.com/Hiper-nexus/nexus-ide-releases/releases/download/v0.76.178/SHA256SUMS-linux-x64.txt"
-        },
-        "releaseUrl": "https://github.com/Hiper-nexus/nexus-ide-releases/releases/tag/v0.76.178",
-        "publishedAt": "2026-10-02T17:08:37Z"
       }
     ]
   }

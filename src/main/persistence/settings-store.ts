@@ -49,7 +49,21 @@ import { bumpDecisionCredentialRevision } from '../decision-models/decision-revi
  * settings must never block the terminal from opening.
  */
 
-const SETTINGS_FILE = path.join(os.homedir(), '.nexus', 'settings.json');
+/**
+ * F-932: sob vitest o arquivo NUNCA é o do operador. Um teste que chama
+ * `replaceOrchSettings` sem ter carregado nada grava os PADRÕES por cima do
+ * `~/.nexus/settings.json` real — o Clef voltava para "Somente Jev" com o
+ * Account ID vazio toda vez que um agente rodava a suíte.
+ */
+export function resolveSettingsFile(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return env.VITEST
+    ? path.join(os.tmpdir(), `nexus-vitest-settings-${process.pid}`, 'settings.json')
+    : path.join(os.homedir(), '.nexus', 'settings.json');
+}
+
+const SETTINGS_FILE = resolveSettingsFile();
 
 type ProductMigrations = VibeProductMigrations;
 

@@ -400,10 +400,11 @@ arquitetura realmente construída e provada nesta release.
 
 Antes de `npm run release:publish`, obtenha um run concluído com sucesso do workflow
 `.github/workflows/windows-release.yml`, no repositório privado canônico e no
-mesmo commit da candidata Mac em `main` protegido. O worker usa os labels
-`[self-hosted, Windows, X64, nexus-release-signing]` e o ambiente
-`windows-release-signing` (os nomes ficaram da época da assinatura; trocá-los
-desliga o runner e as regras do ambiente). O worker não assina nada.
+mesmo commit da candidata Mac em `main` protegido. Desde 05/10/2026 o build roda
+numa máquina Windows do GitHub (`windows-latest`, nova a cada build, ~10 min) e não
+depende mais do runner no PC do operador, que só existia para o certificado do
+eSigner. O ambiente continua `windows-release-signing` (nome da época da
+assinatura). O worker não assina nada.
 O input `version` deve corresponder ao package.json, sem prefixo `v`. O worker não
 publica releases, e só pode ser iniciado a partir de `main` protegido.
 

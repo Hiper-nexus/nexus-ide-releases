@@ -3,9 +3,10 @@ import { describe, expect, it } from 'vitest';
 
 describe('protected Windows release worker', () => {
   const workflow = fs.readFileSync(new URL('../.github/workflows/windows-release.yml', import.meta.url), 'utf8');
-  it('runs only from protected main on the dedicated Windows host and never publishes', () => {
+  it('runs only from protected main on a fresh GitHub-hosted Windows machine and never publishes', () => {
     expect(workflow).toContain("github.ref == 'refs/heads/main' && github.ref_protected");
-    expect(workflow).toContain('runs-on: [self-hosted, Windows, X64, nexus-release-signing]');
+    expect(workflow).toContain('runs-on: windows-latest');
+    expect(workflow).not.toContain('self-hosted');
     expect(workflow).toContain('environment: windows-release-signing');
     expect(workflow).not.toMatch(/pull_request:|contents: write|gh release|release:publish/);
   });

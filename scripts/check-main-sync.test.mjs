@@ -57,6 +57,14 @@ describe('Main synchronous process ratchet (F-764)', () => {
     expect(a.map((use) => use.fingerprint)).toEqual(b.map((use) => use.fingerprint));
   });
 
+  it('F-929: a CRLF checkout yields the same fingerprint as LF, even after a template substitution', () => {
+    const lf = "import { spawnSync } from 'child_process';\nconst r = spawnSync(\n  'dscl',\n  [`/Users/${user}`, 'UserShell'],\n  { timeout: 2_000 },\n);\n";
+    const a = findSyncProcessUses(lf);
+    const b = findSyncProcessUses(lf.replaceAll('\n', '\r\n'));
+    expect(a.some((use) => use.kind === 'call')).toBe(true);
+    expect(b.map((use) => use.fingerprint)).toEqual(a.map((use) => use.fingerprint));
+  });
+
   it('normalizes Windows source paths before binding imported aliases', () => {
     const uses = findSyncProcessUses("import { execSync as run } from 'child_process'; run('git');", 'src\\main\\windows.ts');
     expect(uses.some((use) => use.kind === 'call')).toBe(true);
