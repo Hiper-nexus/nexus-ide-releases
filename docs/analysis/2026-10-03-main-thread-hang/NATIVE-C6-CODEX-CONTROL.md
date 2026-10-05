@@ -69,3 +69,9 @@ RAM para toda a CLI; esse erro não foi atribuído ao Nexus.
 Pendente: revisão final do transporte por arquivos, wiring do spawn Main com
 as cercas de reserva/geração/abort e teste no aplicativo assinado. F-894 fica
 aberto até esses critérios; este documento não certifica a release.
+
+## Verificação privada atual — 04/10, 21:29 BRT
+
+No novo checkout privado com Electron43.7.4, a fixture tinha socket Unix134bytes: curl recusou o caminho antes de conectar. Reprodução independente no host:131bytes, exit6, `Unix socket path too long`. O ajuste76ee1cf4e mantém a política do produto, usa diretório temporário curto para o socket e exige resultados distintos TCP/Unix, com falhas de curl propagadas no comando livre.
+
+Gate `PLAN/codex-short-unix-probe-green.log`:4/4 controles reais passaram21,63s, baseline e fila em cada uma das duas políticas. Typecheck privado completo exit0. A API e o caller Main receberam revisão independente de fonte/lifecycle (`review-codex-channel-api.md`, `review-native-file-final-followup.md`); a execução no aplicativo assinado continua pendente.
