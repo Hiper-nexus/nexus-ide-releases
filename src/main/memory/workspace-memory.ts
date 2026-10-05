@@ -2132,6 +2132,56 @@ export class WorkspaceMemoryStore {
   }
 
   /**
+   * Idempotência durável (F-911): existe linha do workspace da fonte — ativa,
+   * substituída ou esquecida — cujo conteúdo começa por `headingPrefix` e tem
+   * `line` como linha inteira? Replay de quem já gravou não grava de novo.
+   */
+  workspaceRecordExists(source: string, headingPrefix: string, line: string): boolean {
+    this.#assertOpen();
+    return Boolean(
+      this.#workspaceDb
+        .prepare(
+          `SELECT 1 FROM memories
+           WHERE scope = 'workspace' AND source = ?
+             AND substr(content, 1, ?) = ?
+             AND instr(char(10) || content || char(10), char(10) || ? || char(10)) > 0
+           LIMIT 1`,
+        )
+        .get(source, headingPrefix.length, headingPrefix, line),
+    );
+  }
+
+  /**
+   * Linha ativa mais recente do workspace, da mesma fonte e com o mesmo
+   * assunto (`# Título`) de `content` — quem a gravação vai substituir. Null
+   * sem assunto declarado.
+   */
+  activeWorkspaceSameSubject(
+    source: string,
+    content: string,
+  ): { id: string; content: string } | null {
+    this.#assertOpen();
+    const id = this.#activeSameSubject(this.#workspaceDb, '', 'workspace', source, content);
+    if (!id) return null;
+    const row = this.#workspaceDb
+      .prepare('SELECT id, content FROM memories WHERE id = ?')
+      .get(id) as { id: string; content: string } | undefined;
+    return row ?? null;
+  }
+
+  /** Data da memória ativa mais recente do workspace (Mem12); null num banco vazio. */
+  latestActiveWorkspaceAt(): number | null {
+    this.#assertOpen();
+    const row = this.#workspaceDb
+      .prepare(
+        `SELECT MAX(updated_at) AS at FROM memories
+         WHERE scope = 'workspace' AND superseded_by IS NULL`,
+      )
+      .get() as { at: number | null } | undefined;
+    return row?.at ?? null;
+  }
+
+  /**
    * Memórias trusted ativas do workspace por importância e recência, sem
    * consulta textual: o contexto de quem ainda não tem prompt (instructions
    * do MCP do "+ Pane").

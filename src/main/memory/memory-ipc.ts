@@ -21,6 +21,7 @@ import { MEMORY_CHANNELS } from '../../shared/channels';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import type {
   MemoryForgetResult,
+  MemoryUiActivity,
   MemoryAttestationResult,
   MemoryNativeImportResult,
   MemoryPromoteResult,
@@ -30,6 +31,7 @@ import type {
   MemoryUiHit,
   MemoryUiStats,
 } from '../../shared/memory-ui-types';
+import type { ProjectExecutionScope } from '../../shared/types';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { requireLiveRendererWorkspaceScope, requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
 import {
@@ -95,12 +97,49 @@ function toUiHit(hit: MemoryRecallHit): MemoryUiHit {
   };
 }
 
-export function registerMemoryIpc(): void {
+export interface MemoryIpcDeps {
+  /**
+   * Mem12: handoffs de sucesso entregues/aceitos no escopo em (since, until] —
+   * injetado pelo Main (registry de stores do projeto); sem ele, a atividade
+   * é desconhecida.
+   */
+  readonly countHandoffDeliveries?: (
+    scope: ProjectExecutionScope,
+    sinceMs: number,
+    untilMs: number,
+  ) => number;
+}
+
+/**
+ * Atividade do Main para o alerta "memória parada": memória ativa mais
+ * recente e handoffs entregues depois dela. Falha na contagem vira `null`.
+ */
+function memoryActivity(
+  scope: ProjectExecutionScope,
+  latestMemoryAt: number | null,
+  deps: MemoryIpcDeps,
+): MemoryUiActivity {
+  let delivered: number | null = null;
+  try {
+    const count = deps.countHandoffDeliveries?.(scope, latestMemoryAt ?? 0, Date.now());
+    delivered = typeof count === 'number' && Number.isSafeInteger(count) && count >= 0 ? count : null;
+  } catch {
+    delivered = null;
+  }
+  return { latestMemoryAt, deliveredHandoffsSinceLatestMemory: delivered };
+}
+
+export function registerMemoryIpc(deps: MemoryIpcDeps = {}): void {
   ipcMain.handle(MEMORY_CHANNELS.stats, (event): MemoryStatsResult => {
     if (!memoryEnabled()) return { enabled: false };
     const scope = requireRendererWorkspaceScope(event.sender);
-    const stats = getWorkspaceMemoryStore(scope).stats();
-    return { enabled: true, stats: toUiStats(stats) };
+    const store = getWorkspaceMemoryStore(scope);
+    const stats = store.stats();
+    return {
+      enabled: true,
+      stats: toUiStats(stats),
+      activity: memoryActivity(scope, store.latestActiveWorkspaceAt(), deps),
+    };
   });
 
   ipcMain.handle(MEMORY_CHANNELS.recall, (event, raw): MemoryRecallResult => {

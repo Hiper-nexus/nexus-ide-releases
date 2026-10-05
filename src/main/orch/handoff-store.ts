@@ -23,9 +23,13 @@ import { parseReviewReport } from "../context/review-council";
 import { parseTrustedEvidence } from "../context/sensor-broker";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import type { MissionEngine } from "./mission-engine";
+import { isSessionWebExposed } from "./session-web-exposure";
+import { getContextBySession } from "./gate";
 import {
+  extractResolvedQaFinding,
   retainAcceptedHandoffMemoryDistilledBestEffort,
   retainAcknowledgedHandoffMemoryBestEffort,
+  retainReportedFixFromHandoffBestEffort,
   recordMemoryRetentionSkip,
 } from "../memory/trusted-memory";
 import {
@@ -343,6 +347,41 @@ function cloneBinding(
   binding: HandoffEvidenceBinding | undefined,
 ): HandoffEvidenceBinding | undefined {
   return binding ? Object.freeze({ ...binding }) : undefined;
+}
+
+/** Valores de texto de um artefato (chaves fora), em profundidade limitada. */
+function artifactStrings(value: unknown, depth: number, out: string[]): void {
+  if (out.length >= 64) return;
+  if (typeof value === "string") {
+    out.push(value);
+  } else if (depth < 3 && Array.isArray(value)) {
+    for (const item of value.slice(0, 32)) artifactStrings(item, depth + 1, out);
+  } else if (depth < 3 && value && typeof value === "object") {
+    for (const item of Object.values(value).slice(0, 32)) {
+      artifactStrings(item, depth + 1, out);
+    }
+  }
+}
+
+/**
+ * Artefatos do handoff como texto para o detector de correção declarada: uma
+ * linha por artefato com seus valores de texto, para que a declaração fique
+ * ligada ao artefato que a faz e o trecho pertinente chegue ao Jev.
+ */
+function handoffArtifactsText(artifacts: unknown): string {
+  if (!Array.isArray(artifacts) || artifacts.length === 0) return "";
+  const lines: string[] = [];
+  let budget = 8_000;
+  for (const artifact of artifacts.slice(0, 256)) {
+    const strings: string[] = [];
+    artifactStrings(artifact, 0, strings);
+    const line = strings.join(" ").replace(/\s+/g, " ").trim().slice(0, 1_000);
+    if (!line) continue;
+    if (line.length + 1 > budget) break;
+    lines.push(line);
+    budget -= line.length + 1;
+  }
+  return lines.join("\n");
 }
 
 function cloneHandoff(handoff: ScopedHandoff): ScopedHandoff {
@@ -886,6 +925,7 @@ export class ScopedHandoffStore {
             })
           : undefined;
       const resolved = this.#resolveEvidence(db, input.missionId, evidenceIds);
+      const authorReadOnly = this.#authorReadOnlyAtSubmit(input.sessionId, input.missionId);
       const id = this.#binding.makeId("handoff");
       const handoff: ScopedHandoff = {
         id,
@@ -914,8 +954,8 @@ export class ScopedHandoffStore {
             artifacts_json, evidence_ids_json, evidence_trusted,
             context_revision, contract_hash, base_sha, head_sha, diff_hash,
             workflow_revision, delivered, delivery_state, created_at,
-            adapter_id, model)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?, ?, ?)`,
+            adapter_id, model, author_read_only)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?, ?, ?, ?)`,
       ).run(
         handoff.id,
         handoff.missionId ?? null,
@@ -937,6 +977,7 @@ export class ScopedHandoffStore {
         handoff.createdAt,
         attribution?.adapterId ?? null,
         attribution?.model ?? null,
+        authorReadOnly,
       );
       if (handoff.mcpProvenance) {
         const chainLink = this.#nextReceiptChainLinkInTransaction(
@@ -1023,6 +1064,14 @@ export class ScopedHandoffStore {
           committed.handoff.summary,
         ).catch(() =>
           recordMemoryRetentionSkip(this.#binding.scope, "store-unavailable"),
+        );
+        this.#retainReportedFixMemory(
+          committed.handoff.id,
+          committed.taskDispatch.missionId,
+          committed.handoff.sessionId,
+          committed.handoff.createdAt,
+          committed.handoff.summary,
+          committed.handoff.artifacts,
         );
       } else if (
         committed.handoff.status === "success" &&
@@ -1689,6 +1738,35 @@ export class ScopedHandoffStore {
     }));
   }
 
+  /**
+   * Mem12: handoffs de sucesso entregues ou aceitos em (sinceMs, untilMs] —
+   * submissão ao Maestro/pane pai, ACK, consumo ou aceite físico da tarefa.
+   * Contagem do Main, independente de a retenção de memória ter rodado ou
+   * falhado: é o que diz se "memória parada" é projeto parado ou esquecendo.
+   */
+  countSuccessfulDeliveriesBetween(sinceMs: number, untilMs: number): number {
+    const since = z.number().int().nonnegative().parse(Math.floor(sinceMs));
+    const until = z.number().int().nonnegative().parse(Math.floor(untilMs));
+    if (until <= since) return 0;
+    const row = this.#binding
+      .readDatabase()
+      .prepare(
+        `SELECT COUNT(*) AS n FROM handoffs
+         WHERE status = 'success' AND (
+           (submitted_at > ? AND submitted_at <= ?)
+           OR (acknowledged_at > ? AND acknowledged_at <= ?)
+           OR (consumed_at > ? AND consumed_at <= ?)
+           OR id IN (
+             SELECT handoff_id FROM task_dispatch_queue
+             WHERE handoff_id IS NOT NULL
+               AND handoff_accepted_at > ? AND handoff_accepted_at <= ?
+           )
+         )`,
+      )
+      .get(since, until, since, until, since, until, since, until) as { n: number };
+    return row.n;
+  }
+
   markDelivered(rawId: string): boolean {
     const delivered = this.markSubmitted(rawId);
     if (delivered) {
@@ -2215,10 +2293,131 @@ export class ScopedHandoffStore {
       ).catch(() =>
         recordMemoryRetentionSkip(this.#binding.scope, "store-unavailable"),
       );
+      this.#retainReportedFixMemory(
+        id,
+        memoryMissionId,
+        handoff.sessionId,
+        handoff.createdAt,
+        handoff.summary,
+        handoff.artifacts,
+      );
     } catch {
       // Memória é contabilidade derivada: nunca desfaz nem trava o ACK.
       recordMemoryRetentionSkip(this.#binding.scope, "store-unavailable");
     }
+  }
+
+  /**
+   * Escritor do relato de correção (F-911): handoff de sucesso de missão
+   * (aceito no commit ou entregue/consumido) que declara a correção de um bug
+   * vira nota de agente da MESMA missão, pela mesma barreira do F-703 — nunca
+   * memória trusted (M1/F-808). Sessão exposta à web ou missão de consulta
+   * grava em quarentena. Só de missão: helper sem missão segue só com o
+   * accepted-handoff. O `createdAt` do handoff (Main) ordena relatos.
+   * Assíncrono e best-effort: o Jev nunca segura o aceite, a entrega nem o ACK.
+   */
+  #retainReportedFixMemory(
+    id: string,
+    missionId: string | undefined,
+    sessionId: string | undefined,
+    createdAt: number,
+    summary: string | null | undefined,
+    artifacts: unknown,
+  ): void {
+    try {
+      if (!missionId) return;
+      const artifactsText = handoffArtifactsText(artifacts);
+      if (!extractResolvedQaFinding([summary, artifactsText])) return;
+      const authority = this.#reportedFixAuthorContext(id, missionId, sessionId);
+      void retainReportedFixFromHandoffBestEffort(
+        this.#binding.scope,
+        {
+          handoffId: id,
+          missionId,
+          status: "success",
+          handoffCreatedAt: createdAt,
+          ...(summary ? { summary } : {}),
+          ...(artifactsText ? { artifactsText } : {}),
+          ...authority,
+        },
+      ).catch(() =>
+        recordMemoryRetentionSkip(this.#binding.scope, "store-unavailable"),
+      );
+    } catch {
+      // Memória é contabilidade derivada: nunca desfaz nem trava o fluxo.
+      recordMemoryRetentionSkip(this.#binding.scope, "store-unavailable");
+    }
+  }
+
+  /**
+   * F-808: autoridade readOnly Main-owned da sessão autora, lida do gate no
+   * submit (nunca de argumento do agente) e gravada no handoff — vale depois
+   * que a sessão sai. Sessão ausente, de outro escopo ou de outra missão →
+   * null (não provada).
+   */
+  #authorReadOnlyAtSubmit(
+    sessionId: string | undefined,
+    missionId: string | undefined,
+  ): 0 | 1 | null {
+    if (!sessionId) return null;
+    const ctx = getContextBySession(sessionId);
+    if (
+      !ctx ||
+      ctx.scope.projectId !== this.#binding.scope.projectId ||
+      ctx.scope.checkoutId !== this.#binding.scope.checkoutId ||
+      (ctx.missionId ?? undefined) !== (missionId ?? undefined)
+    ) {
+      return null;
+    }
+    return ctx.readOnly === true ? 1 : 0;
+  }
+
+  /**
+   * F-806/F-808 Main-derived, como `agentRetainContext`: contexto read-only
+   * (autor readOnly gravado no submit, missão de consulta ou autoridade não
+   * provada) veta o vault; a causa da quarentena é outra coisa — web primeiro,
+   * depois read-only, depois autor não provado. Leitura ilegível → fail-safe.
+   */
+  #reportedFixAuthorContext(
+    handoffId: string,
+    missionId: string,
+    sessionId: string | undefined,
+  ): {
+    quarantine?: "web-exposed session" | "read-only session" | "unproven author session";
+    readOnlyContext?: true;
+  } {
+    let authorReadOnly: boolean | null = null;
+    let consult = false;
+    try {
+      const db = this.#binding.readDatabase();
+      const author = db
+        .prepare(`SELECT author_read_only FROM handoffs WHERE id = ?`)
+        .get(handoffId) as { author_read_only: number | null } | undefined;
+      authorReadOnly =
+        author?.author_read_only === 1 ? true : author?.author_read_only === 0 ? false : null;
+      const mission = db
+        .prepare(`SELECT intent_contract_json FROM missions WHERE id = ?`)
+        .get(missionId) as { intent_contract_json: string | null } | undefined;
+      if (mission?.intent_contract_json) {
+        const contract = JSON.parse(mission.intent_contract_json) as { lane?: unknown } | null;
+        consult = contract?.lane === "consult";
+      }
+    } catch {
+      authorReadOnly = null;
+      consult = true;
+    }
+    const readOnlyContext = authorReadOnly !== false || consult;
+    const quarantine = isSessionWebExposed(sessionId)
+      ? "web-exposed session"
+      : authorReadOnly === true || consult
+        ? "read-only session"
+        : authorReadOnly === null
+          ? "unproven author session"
+          : undefined;
+    return {
+      ...(quarantine ? { quarantine } : {}),
+      ...(readOnlyContext ? { readOnlyContext: true as const } : {}),
+    };
   }
 
   hasTrustedFromSession(

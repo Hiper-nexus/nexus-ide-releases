@@ -99,3 +99,28 @@ it('F-888: mission lookup after its import wait never opens stores of the old sc
   expect(fixture.stores).not.toHaveBeenCalled();
   expect(fixture.retain).not.toHaveBeenCalled();
 });
+
+// Estes testes ficam por último de propósito: o lookup de missão é um import
+// dinâmico preguiçoso (`missionLookup ??= import(...)`) cujo mock F-888 só
+// sincroniza na primeira carga — um teste com missionId antes dele rouba a
+// primeira carga e o F-888 trava no `await entered`.
+it('memoryRemember kind decision retains a trusted operator-decision', async () => {
+  await expect(handler(PRODUCT_WAVE_CHANNELS.memoryRemember)({ sender },
+    { title: 'Fixture decision', body: 'Sempre validar o failover em campo.', kind: 'decision' },
+  )).resolves.toMatchObject({ id: 'mem-fixture' });
+  expect(fixture.retain).toHaveBeenCalledOnce();
+  expect(fixture.retain).toHaveBeenCalledWith(
+    expect.anything(),
+    { type: 'operator-decision', title: 'Fixture decision', summary: 'Sempre validar o failover em campo.' },
+  );
+});
+
+it('memoryRemember kind decision attributes the claimed mission', async () => {
+  await expect(handler(PRODUCT_WAVE_CHANNELS.memoryRemember)({ sender },
+    { title: 'Fixture decision', body: 'Vale para a missão.', kind: 'decision', missionId: 'mission-fixture' },
+  )).resolves.toMatchObject({ id: 'mem-fixture' });
+  expect(fixture.retain).toHaveBeenCalledWith(
+    expect.anything(),
+    { type: 'operator-decision', title: 'Fixture decision', summary: 'Vale para a missão.', missionId: 'mission-fixture' },
+  );
+});

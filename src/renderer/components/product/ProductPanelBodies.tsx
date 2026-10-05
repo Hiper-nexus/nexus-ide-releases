@@ -313,6 +313,39 @@ export function memoryStalenessDays(
   return Math.max(0, Math.floor((now - latest) / DAY_MS));
 }
 
+/** Snapshot do Main para a linha "última memória" (Mem12): data e contagem juntas. */
+type MemoryActivitySnapshot = {
+  latestMemoryAt: number | null;
+  deliveredSinceLatest: number | null;
+};
+
+const isStamp = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+
+/**
+ * Um único snapshot do Main (`memory:stats` → `activity`): a memória ativa
+ * mais recente e os handoffs entregues depois dela, contados independente da
+ * retenção. Idade, linha e alerta saem dele — nunca misturados com a lista.
+ * Indisponível ou malformado → null (a linha cai para a lista, sem alerta).
+ */
+async function loadMemoryActivitySnapshot(): Promise<MemoryActivitySnapshot | null> {
+  try {
+    const result = await memoryApi()?.stats();
+    if (!result?.enabled || !result.activity) return null;
+    const { latestMemoryAt, deliveredHandoffsSinceLatestMemory: delivered } = result.activity;
+    if (latestMemoryAt !== null && !isStamp(latestMemoryAt)) return null;
+    return {
+      latestMemoryAt,
+      deliveredSinceLatest:
+        typeof delivered === 'number' && Number.isSafeInteger(delivered) && delivered >= 0
+          ? delivered
+          : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Linha "última memória há N dias" da tela Memória. */
 export function memoryStalenessLabel(days: number): string {
   if (days === 0) return 'Última memória hoje';
@@ -329,6 +362,7 @@ export function MemoryPanelBody({
   presentation = 'compact',
 }: MemoryPanelBodyProps = {}) {
   const [notes, setNotes] = useState<ProductMemoryNote[]>([]);
+  const [activity, setActivity] = useState<MemoryActivitySnapshot | null>(null);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [memoryType, setMemoryType] = useState<'note' | 'architecture-rule' | 'operator-preference'>('note');
@@ -355,7 +389,10 @@ export function MemoryPanelBody({
       try {
         const api = productApi();
         if (!api) throw new Error('product memory API unavailable');
-        const list = (await api.memoryList()) as ProductMemoryNote[];
+        const [list, snapshot] = await Promise.all([
+          api.memoryList() as Promise<ProductMemoryNote[]>,
+          loadMemoryActivitySnapshot(),
+        ]);
         if (
           !mountedRef.current ||
           generation !== reloadGenerationRef.current
@@ -363,6 +400,7 @@ export function MemoryPanelBody({
           return false;
         }
         setNotes(list ?? []);
+        setActivity(snapshot);
         return true;
       } catch {
         if (
@@ -709,10 +747,18 @@ export function MemoryPanelBody({
           </header>
           {!loading && !failure
             ? (() => {
-                const stalenessDays = memoryStalenessDays(notes);
+                // Mem12: idade, linha e alerta do MESMO snapshot do Main; sem
+                // ele, a linha vem da lista e nunca alarma.
+                const stalenessDays = activity
+                  ? memoryStalenessDays(
+                      activity.latestMemoryAt === null ? [] : [{ updatedAt: activity.latestMemoryAt }],
+                    )
+                  : memoryStalenessDays(notes);
                 if (stalenessDays === null) return null;
                 const stale =
-                  stalenessDays > MEMORY_STALE_DAYS_THRESHOLD;
+                  activity !== null &&
+                  stalenessDays > MEMORY_STALE_DAYS_THRESHOLD &&
+                  (activity.deliveredSinceLatest ?? 0) > 0;
                 return (
                   <p
                     className="product-pane__meta memory-workspace__staleness"
@@ -721,7 +767,7 @@ export function MemoryPanelBody({
                   >
                     {memoryStalenessLabel(stalenessDays)}
                     {stale
-                      ? ' — acima de 3 dias sem gravar: o projeto pode estar esquecendo o que aprendeu'
+                      ? ' — há mais de 3 dias com handoffs no período: o projeto pode estar esquecendo o que aprendeu'
                       : ''}
                   </p>
                 );

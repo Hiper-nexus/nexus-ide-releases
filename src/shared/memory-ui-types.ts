@@ -53,9 +53,24 @@ export interface MemoryRecallRequest {
   readonly kind?: MemoryUiKind;
 }
 
+/**
+ * Mem12: atividade do Main para o alerta "memória parada". `latestMemoryAt` é a
+ * memória ativa mais recente do workspace; `deliveredHandoffsSinceLatestMemory`
+ * conta handoffs de sucesso entregues/aceitos depois dela, independente da
+ * retenção. `null` = contagem indisponível (nunca um zero inventado).
+ */
+export interface MemoryUiActivity {
+  readonly latestMemoryAt: number | null;
+  readonly deliveredHandoffsSinceLatestMemory: number | null;
+}
+
 export type MemoryStatsResult =
   | { readonly enabled: false }
-  | { readonly enabled: true; readonly stats: MemoryUiStats };
+  | {
+      readonly enabled: true;
+      readonly stats: MemoryUiStats;
+      readonly activity?: MemoryUiActivity;
+    };
 
 export type MemoryRecallResult =
   | { readonly enabled: false }
