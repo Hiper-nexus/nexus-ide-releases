@@ -429,12 +429,15 @@ export const MANAGED_PROVIDER_SPECS: Record<FileAuthAdapterId, ManagedProviderSp
     adapterId: 'agy',
     homeEnvVar: 'GEMINI_CLI_HOME',
     authRelativePath: 'oauth_creds.json',
-    authCandidates: [path.join('antigravity-cli', 'antigravity-oauth-token')],
+    // AGY 1.2 keeps the login in the keychain; its file fallback is the
+    // standalone token (same {auth_method, token} shape as the 1.1 file).
+    authCandidates: [path.join('antigravity-cli', 'antigravity-oauth-token'), 'jetski-standalone-oauth-token'],
     identityCandidates: ['google_accounts.json'],
     skipLinkNames: [
       'oauth_creds.json',
       'antigravity',
       'antigravity-cli',
+      'jetski-standalone-oauth-token',
     ],
     systemHome: (home = os.homedir()) => path.join(home, '.gemini'),
   },

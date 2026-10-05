@@ -511,6 +511,19 @@ describe('F-567 checkout provider homes', () => {
     if (kind === 'agy') expect(first.env.GEMINI_CLI_HOME).toBe(path.join(first.env.HOME, '.gemini'));
   });
 
+  it('links the AGY 1.2 file-fallback token into the checkout home (keyring unavailable under sandbox)', () => {
+    const root = tempHome();
+    const sourceHome = path.join(root, 'native');
+    fs.mkdirSync(sourceHome, { recursive: true });
+    const token = JSON.stringify({ auth_method: 'oauth-v2', token: { access_token: 'synthetic', expiry: '2099-01-01T00:00:00.000Z' } });
+    fs.writeFileSync(path.join(sourceHome, 'jetski-standalone-oauth-token'), token);
+    const home = prepareCheckoutProviderHome('agy', { userDataPath: path.join(root, 'userData'), checkoutId: 'checkout-jetski', sourceHome });
+    const linked = path.join(home.env.GEMINI_CLI_HOME, 'jetski-standalone-oauth-token');
+    expect(fs.lstatSync(linked).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(linked, 'utf8')).toBe(token);
+    expect(home.sharedFiles).toContain(fs.realpathSync(path.join(sourceHome, 'jetski-standalone-oauth-token')));
+  });
+
   it('keeps AGY skills visible when the spawn hook mirrors them after home preparation', () => {
     const root = tempHome();
     const sourceHome = path.join(root, 'native');
