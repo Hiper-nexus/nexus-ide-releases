@@ -1,4 +1,5 @@
 import { downloadRedirectResponse, releaseCatalogResponse } from '../src/downloads/catalog.js';
+import { repoRedirectResponse } from '../src/downloads/repo.js';
 import {
   COMMUNITY_HOST, PRODUCTION_HOST, canonicalAssetLocation, communityAliasTarget, httpsUrl, isPublicHost, seoFile, visitorUsedHttp,
 } from './public-seo.js';
@@ -11,6 +12,8 @@ const DOWNLOAD_SYSTEMS = {
   macos: 'macos', mac: 'macos', windows: 'windows', win: 'windows',
   linux: 'linux', 'linux-deb': 'linux-deb', 'linux-rpm': 'linux-rpm', 'linux-zip': 'linux-zip',
 };
+// Repositórios apt e dnf do Linux: redirecionam para os assets da release Linux mais nova (src/downloads/repo.js).
+const REPO_PREFIXES = { '/apt/': 'apt', '/rpm/': 'rpm' };
 const ALIASES = new Set(['/comunidade', '/sorteio', '/sorteio/']);
 // A comunidade também abre no endereço principal: quem não consegue o subdomínio (filtro de rede, DNS) chega por aqui.
 const COMMUNITY_MIRROR_PATH = '/comunidade/';
@@ -61,6 +64,11 @@ export async function handleRequest(request, env, originFetch = fetch) {
   }
   if (url.pathname === '/api/releases') {
     return url.hostname === COMMUNITY_HOST ? new Response('Not found', { status: 404 }) : releaseCatalogResponse(request);
+  }
+  const repoPrefix = Object.keys(REPO_PREFIXES).find(prefix => url.pathname.startsWith(prefix));
+  if (repoPrefix) {
+    if (url.hostname === COMMUNITY_HOST) return new Response('Not found', { status: 404 });
+    return repoRedirectResponse(REPO_PREFIXES[repoPrefix], url.pathname.slice(repoPrefix.length));
   }
   if (url.pathname.startsWith(DOWNLOAD_PREFIX)) {
     const key = url.pathname.slice(DOWNLOAD_PREFIX.length);

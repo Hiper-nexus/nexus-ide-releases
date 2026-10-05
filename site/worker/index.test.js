@@ -206,3 +206,26 @@ test('/download/linux* existem: sem pacote publicado levam à seção de downloa
     assert.equal(response.headers.get('location'), 'https://nexuside.app/#download', path);
   }
 });
+
+test('o repositório apt e dnf redireciona para os assets da release Linux e some no domínio da comunidade', async t => {
+  const REPO = 'https://github.com/Hiper-nexus/nexus-ide-releases/releases';
+  const names = ['nexus-ide_0.76.200_amd64.deb', 'nexus-ide-0.76.200-1.x86_64.rpm', 'NexusIDE-linux-x64-0.76.200.zip', 'InRelease'];
+  const row = (version, files) => ({
+    tag_name: `v${version}`, draft: false, prerelease: false, published_at: '2026-10-05T12:00:00Z', html_url: `${REPO}/tag/v${version}`,
+    assets: files.map(name => ({ name, size: 1000, browser_download_url: `${REPO}/download/v${version}/${name}` })),
+  });
+  // O catálogo só vale com ao menos um instalador de Mac ou Windows; a release Linux vem junto.
+  t.mock.method(globalThis, 'fetch', async () => Response.json([row('0.76.197', ['NexusIDE-0.76.197-arm64.dmg']), row('0.76.200', names)]));
+  const env = { ASSETS: { fetch: async () => new Response('asset') } };
+  const apt = await handleRequest(new Request('https://nexuside.app/apt/InRelease'), env);
+  assert.equal(apt.status, 302);
+  assert.equal(apt.headers.get('location'), `${REPO}/download/v0.76.200/InRelease`);
+  const head = await handleRequest(new Request('https://nexuside.app/apt/InRelease', { method: 'HEAD' }), env);
+  assert.equal(head.status, 302);
+  const bad = await handleRequest(new Request('https://nexuside.app/apt/segredo.txt'), env);
+  assert.equal(bad.status, 404);
+  const community = await handleRequest(new Request('https://comunidade.nexuside.app/apt/InRelease'), env);
+  assert.equal(community.status, 404);
+  const post = await handleRequest(new Request('https://nexuside.app/apt/InRelease', { method: 'POST' }), env);
+  assert.equal(post.status, 405);
+});

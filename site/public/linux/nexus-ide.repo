@@ -1,0 +1,8 @@
+[nexus-ide]
+name=NexusIDE (Linux, beta)
+baseurl=https://nexuside.app/rpm/
+enabled=1
+gpgcheck=0
+repo_gpgcheck=1
+gpgkey=https://nexuside.app/linux/nexus-ide.asc
+metadata_expire=1h
