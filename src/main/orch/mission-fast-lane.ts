@@ -80,6 +80,7 @@ import { missionEngineForScope } from './mission-engine-registry';
 import { redeliverPendingHandoffs } from './idle-delivery';
 import { maybeCompleteFastLaneOnDelivery } from './civilian-delivery-completion';
 import {
+  isSpontaneousWorkerDeath,
   recordAdapterProofOfLife,
   recordWorkerDeathWithoutDelivery,
   shouldTripWorkerMortalityBreaker,
@@ -133,12 +134,17 @@ import {
 } from '../../shared/auto-seat-auth';
 import {
   clearOperatorDismissedPanes,
+  isMissionPaneOperatorDismissed,
   listPaneSnapshots,
   requestPaneSpawn,
   waitForIdle,
   readSessionOutput,
   wasOrchestratorOperatorDismissed,
 } from './pane-registry';
+import {
+  wasPaneDeliberatelyClosed,
+  wasPaneSessionExitObserved,
+} from './pane-session-output';
 import {
   peekKickoffDirects,
   rememberKickoffBrief,
@@ -1868,8 +1874,30 @@ async function recordWorkerMortalityTick(
     if (pane.state !== 'exited' && pane.state !== 'hibernated') continue;
     // F-231: pane aberto pelo operador é mão dele — nunca conta como
     // mortalidade de worker nem alimenta o breaker do adapter.
+    // F-918: só a CLI que saiu sozinha conta. Morte por reinício/shutdown
+    // do app (exited no boot seguinte sem exit observado neste processo),
+    // pane fechado por pedido e pane dispensado na UI ficam de fora.
     if (pane.operatorOpened === true) continue;
     if (mortalityCountedPanes.has(pane.paneId)) continue;
+    const spontaneouslyDead = isSpontaneousWorkerDeath({
+      state: pane.state,
+      exitObserved:
+        pane.sessionId != null && pane.sessionId.trim() !== ''
+          ? wasPaneSessionExitObserved(pane.sessionId)
+          : false,
+      deliberatelyClosed: wasPaneDeliberatelyClosed(pane.paneId),
+      operatorDismissed: isMissionPaneOperatorDismissed(pane.paneId),
+    });
+    if (!spontaneouslyDead) {
+      mortalityCountedPanes.add(pane.paneId);
+      trace({
+        kind: 'worker-exit-not-counted',
+        missionId,
+        paneId: pane.paneId,
+        adapterId,
+      });
+      continue;
+    }
     mortalityCountedPanes.add(pane.paneId);
     const deaths = recordWorkerDeathWithoutDelivery(missionId, adapterId);
     if (!filesModifiedSettledPanes.has(pane.paneId)) {

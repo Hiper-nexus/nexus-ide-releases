@@ -45,6 +45,47 @@ export function __evictExitedBufferForTests(sessionId: string): void {
   buffers.delete(sessionId);
 }
 
+/**
+ * F-918: panes de worker fechados por PEDIDO (orquestrador/operador via
+ * `nexus_pane_close`, guardian, watchdog) não morreram sozinhos — a morte
+ * deles nunca alimenta o circuit breaker de mortalidade. Marca por paneId
+ * (o exit observado chega depois, pela sessão); cap FIFO como as demais.
+ */
+const deliberatelyClosedPanes = new Map<string, number>();
+const DELIBERATE_CLOSE_CAP = 8_192;
+
+export function markPaneDeliberatelyClosed(paneId: string): void {
+  const id = paneId.trim();
+  if (!id) return;
+  deliberatelyClosedPanes.set(id, Date.now());
+  if (deliberatelyClosedPanes.size > DELIBERATE_CLOSE_CAP) {
+    const oldest = deliberatelyClosedPanes.keys().next().value;
+    if (oldest !== undefined) deliberatelyClosedPanes.delete(oldest);
+  }
+}
+
+export function wasPaneDeliberatelyClosed(paneId: string): boolean {
+  return deliberatelyClosedPanes.has(paneId.trim());
+}
+
+/** Test-only: limpa as marcas de fechamento deliberado entre casos. */
+export function __resetDeliberatelyClosedPanesForTests(): void {
+  deliberatelyClosedPanes.clear();
+}
+
+/**
+ * F-918: o exit do PTY foi observado NESTE processo (tap de exit)? Depois
+ * de um reinício/shutdown do app, panes mortos pelo fim do processo
+ * reaparecem como `exited` no boot seguinte sem nenhum exit observado —
+ * e não provam que a CLI saiu sozinha.
+ */
+export function wasPaneSessionExitObserved(sessionId: string): boolean {
+  const id = sessionId.trim();
+  if (!id) return false;
+  if (exitedMarkBySession.has(id)) return true;
+  return buffers.get(id)?.exited === true;
+}
+
 function idleWaitAbortFallback(): Error {
   const error = new Error("pane idle wait was aborted");
   error.name = "AbortError";

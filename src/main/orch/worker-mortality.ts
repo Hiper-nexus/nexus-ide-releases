@@ -91,6 +91,37 @@ function writerKey(missionId: string, adapterId: string) {
   } as const;
 }
 
+/**
+ * F-918: nem todo pane `exited` sem entrega é a CLI morrendo sozinha. Morte
+ * causada por reinício/shutdown do app (o pane aparece como `exited` no boot
+ * seguinte sem que nenhum exit tenha sido observado neste processo) e pane
+ * fechado por pedido (orquestrador/operador/guardian, via `nexus_pane_close`
+ * ou dispensa na UI) NÃO alimentam o breaker — só a CLI que saiu sozinha.
+ */
+export interface SpontaneousWorkerDeathInput {
+  readonly state: 'exited' | 'hibernated';
+  /** O exit do PTY foi observado neste processo (tap de exit). */
+  readonly exitObserved?: boolean;
+  /** F-231: mão do operador — nunca mortalidade. */
+  readonly operatorOpened?: boolean;
+  /** Fechado por `requestPaneClose` (pedido, não morte espontânea). */
+  readonly deliberatelyClosed?: boolean;
+  /** Dispensado pelo operador na UI (× no grid). */
+  readonly operatorDismissed?: boolean;
+}
+
+export function isSpontaneousWorkerDeath(
+  input: SpontaneousWorkerDeathInput,
+): boolean {
+  if (input.operatorOpened === true) return false;
+  if (input.deliberatelyClosed === true) return false;
+  if (input.operatorDismissed === true) return false;
+  // Hibernado mantém o comportamento histórico (conta); só o `exited`
+  // exige exit observado — é ele que o reinício do app forja sem prova.
+  if (input.state === 'hibernated') return true;
+  return input.exitObserved === true;
+}
+
 export function recordWorkerDeathWithoutDelivery(
   missionId: string,
   adapterId: string,

@@ -10,12 +10,16 @@ vi.mock("../pty/pty-manager", () => ({
 
 import {
   __evictExitedBufferForTests,
+  __resetDeliberatelyClosedPanesForTests,
+  markPaneDeliberatelyClosed,
   newOutputSince,
   paneSessionStateForEntry,
   recordPaneSessionExit,
   recordPaneSessionState,
   waitForIdle,
   waitForNextIdle,
+  wasPaneDeliberatelyClosed,
+  wasPaneSessionExitObserved,
 } from "./pane-session-output";
 
 describe("pane session idle wait cancellation", () => {
@@ -82,6 +86,33 @@ describe('waitForNextIdle — pane_ask não colhe a tela antiga', () => {
     const pending = waitForNextIdle('ask-busy', 5_000);
     recordPaneSessionState('ask-busy', 'idle');
     await expect(pending).resolves.toBe('idle');
+  });
+});
+
+// F-918: o breaker de mortalidade só conta a CLI que saiu sozinha —
+// exit precisa ter sido observado NESTE processo e o pane não pode ter
+// sido fechado por pedido.
+describe('exit observado × fechamento deliberado (F-918)', () => {
+  it('sessão sem exit observado não prova morte espontânea', () => {
+    expect(wasPaneSessionExitObserved('sessao-nunca-vista')).toBe(false);
+    expect(wasPaneSessionExitObserved('')).toBe(false);
+  });
+
+  it('recordPaneSessionExit marca o exit como observado, além do TTL do buffer', () => {
+    recordPaneSessionExit('sessao-morta-918');
+    expect(wasPaneSessionExitObserved('sessao-morta-918')).toBe(true);
+    __evictExitedBufferForTests('sessao-morta-918');
+    expect(wasPaneSessionExitObserved('sessao-morta-918')).toBe(true);
+  });
+
+  it('fechamento deliberado é por paneId e começa falso', () => {
+    __resetDeliberatelyClosedPanesForTests();
+    expect(wasPaneDeliberatelyClosed('pane-918')).toBe(false);
+    markPaneDeliberatelyClosed('pane-918');
+    expect(wasPaneDeliberatelyClosed('pane-918')).toBe(true);
+    expect(wasPaneDeliberatelyClosed('pane-outro')).toBe(false);
+    __resetDeliberatelyClosedPanesForTests();
+    expect(wasPaneDeliberatelyClosed('pane-918')).toBe(false);
   });
 });
 
