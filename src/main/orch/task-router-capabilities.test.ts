@@ -267,6 +267,19 @@ describe('taskContextRequirement (F-912)', () => {
     }
   });
 
+  // Re-revisão: a negação de OUTRA oração não se refere ao contexto — o
+  // pedido afirmativo da própria oração do contexto continua valendo.
+  it('negação de outra oração não derruba o pedido de contexto', () => {
+    expect(taskContextRequirement('Não edite, use contexto de 200k tokens')).toBe(200_000);
+    expect(taskContextRequirement('Sem editar, preciso de contexto de 200k tokens')).toBe(200_000);
+    expect(taskContextRequirement('Do not edit, use a 200k-token context window')).toBe(200_000);
+  });
+
+  it('aceita conector "of" e qualificador "input" na forma afirmativa em inglês', () => {
+    expect(taskContextRequirement('I need 200k tokens of input context')).toBe(200_000);
+    expect(taskContextRequirement('use 1M tokens of context for the dump')).toBe(1_000_000);
+  });
+
   it('unidade incompatível (bytes/linhas/caracteres) não é janela de tokens', () => {
     for (const task of [
       'janela de 500k bytes no buffer de rede',

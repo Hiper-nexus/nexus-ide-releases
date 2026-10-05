@@ -1189,8 +1189,10 @@ export function taskNeedsWebSearch(taskText: string): boolean {
  *    de contexto" e "custo de 200k tokens de saída" não contam;
  *  - citação não é pedido: trechos entre aspas/crase/bloco são descartados
  *    antes de casar ("contexto de 200k tokens" citado de README);
- *  - negação próxima rejeita a declaração ("Não preciso de contexto de
- *    200k tokens", "don't need a 500k context window");
+ *  - negação NA MESMA ORAÇÃO do pedido rejeita a declaração ("Não preciso
+ *    de contexto de 200k tokens", "don't need a 500k context window"); a
+ *    negação de outra oração não se refere ao contexto ("Não edite, use
+ *    contexto de 200k tokens" é pedido VÁLIDO);
  *  - sem declaração → null: nenhum modelo é excluído. Ausência de dado não
  *    pode derrubar candidato, espelhando o contrato do `maxContext` em si.
  */
@@ -1212,17 +1214,21 @@ const CONTEXT_CONFLICTING_UNIT =
 const CONTEXT_REQUIREMENT = new RegExp(
   '(?<![\\p{L}\\p{N}])(?:' +
     // 1) "contexto (de entrada) de 1M (tokens)", "context window of 250k tokens"
-    '(?:contexto|context|janela|window)\\s+(?:de\\s+)?(?:entrada\\s+)?(?:de\\s+|of\\s+|d[’\']\\s*)?' +
+    '(?:contexto|context|janela|window)\\s+(?:de\\s+)?(?:(?:entrada|input)\\s+)?(?:de\\s+|of\\s+|d[’\']\\s*)?' +
     `(?:${CONTEXT_QUANTITY})${CONTEXT_CONFLICTING_UNIT}[-\\s]*(?:tokens?\\b)?` +
     // 2) "1M tokens de contexto", "500k de contexto", "2M-token context",
-    //    "200000 tokens de entrada"
-    `|(?:${CONTEXT_QUANTITY})${CONTEXT_CONFLICTING_UNIT}[-\\s]*(?:tokens?\\b[-\\s]*)?(?:de\\s+)?(?:contexto|context|entrada)\\b` +
+    //    "200000 tokens de entrada", "200k tokens of input context"
+    `|(?:${CONTEXT_QUANTITY})${CONTEXT_CONFLICTING_UNIT}[-\\s]*(?:tokens?\\b[-\\s]*)?(?:(?:de|of)\\s+)?(?:(?:entrada|input)\\s+)?(?:contexto|context|entrada)\\b` +
     ')(?![\\p{L}\\p{N}])',
   'giu',
 );
-// Negação colada na declaração (até ~3 palavras antes do casamento).
+// Negação NA MESMA ORAÇÃO do pedido: a negação de outra oração ("Não edite,
+// use contexto de 200k") não se refere ao contexto. O prefixo é cortado na
+// última vírgula/ponto-e-vírgula/pontuação/conjunção antes do casamento.
+const CONTEXT_CLAUSE_CUT =
+  /(?:[,;:.!?…\n]|\b(?:e|mas|ou|nem|porém|contudo|todavia|então|and|but|or|nor|so|then|however|though)\b)/giu;
 const CONTEXT_NEGATION =
-  /(?:^|[\s(])(?:n[ãa]o|nunca|jamais|sem|sem\s+necessidade\s+de|don(?:'t|’t)?|do\s+not|doesn'?t|no\s+need|not)\b[^\n.;:!?]{0,28}$/iu;
+  /(?:^|[\s(])(?:n[ãa]o|nunca|jamais|sem|sem\s+necessidade\s+de|nem|don(?:'t|’t)?|do\s+not|doesn'?t|no\s+need|not)\b[^\n.;:!?]{0,28}$/iu;
 
 /** Trechos citados (bloco ```, crase, aspas retas/curvas) não são pedido. */
 function stripQuotedContextSpans(text: string): string {
@@ -1243,9 +1249,15 @@ export function taskContextRequirement(taskText: string): number | null {
   const prose = stripQuotedContextSpans(taskText);
   let requirement: number | null = null;
   for (const match of prose.matchAll(CONTEXT_REQUIREMENT)) {
-    // Negação imediatamente antes ("não preciso de contexto de…") não é pedido.
-    const prefix = prose.slice(Math.max(0, match.index - 40), match.index);
-    if (CONTEXT_NEGATION.test(prefix)) continue;
+    // Negação na MESMA ORAÇÃO do pedido ("não preciso de contexto de…") não é
+    // pedido; negação de outra oração ("Não edite, use contexto de 200k")
+    // refere-se a outro verbo e não rejeita.
+    const lookback = prose.slice(Math.max(0, match.index - 80), match.index);
+    let clauseStart = 0;
+    for (const cut of lookback.matchAll(CONTEXT_CLAUSE_CUT)) {
+      clauseStart = (cut.index ?? 0) + cut[0].length;
+    }
+    if (CONTEXT_NEGATION.test(lookback.slice(clauseStart))) continue;
     // A quantidade aparece DUAS vezes na regex (uma por alternativa); só a
     // alternativa casada preenche os grupos dela (1/2/3 ou 4/5/6).
     const quantity = Number.parseFloat(
