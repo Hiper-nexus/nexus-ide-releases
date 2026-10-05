@@ -147,6 +147,16 @@ export const HANDOFF_ENTER_RETRY_MS = 400;
 const MAX_DELIVERY_ATTEMPTS = MAX_HANDOFF_DELIVERY_ATTEMPTS;
 const RUNTIME_RECOVERY_RETRY_BASE_MS = 5_000;
 const RUNTIME_RECOVERY_RETRY_MAX_MS = 60_000;
+/**
+ * F-925 (revisão de 793aa40ca): depois de liberar o orçamento contra um
+ * Maestro VIVO ocioso, a recolagem espera uma janela que dobra a cada
+ * rodada falha DESTA sessão neste handoff até o teto — sem ela o outbox
+ * de 1 s recolava a cada ~13 s para sempre (546 colagens e 2184 Enters em
+ * 119 min contra um Maestro parado no prompt). Uma borda busy→idle real
+ * encurta a espera até a base — nunca abaixo dela.
+ */
+export const IDLE_RELEASE_RETRY_BASE_MS = 60_000;
+export const IDLE_RELEASE_RETRY_MAX_MS = 15 * 60_000;
 
 export function configureHandoffDeliveryRuntimeRecovery(
   recovery: HandoffDeliveryRuntimeRecovery | null,
@@ -523,7 +533,14 @@ function hasPendingDelivery(authority: DeliveryAuthority): boolean {
 // antes de recolar; enquanto espera, conta como entrega pendente para o
 // re-arm do supervisor não duplicar a colagem.
 const retryBackoffTimers = new Set<ReturnType<typeof setTimeout>>();
-const retryBackoffPending = new Map<string, string>();
+interface RetryBackoffWait {
+  readonly sessionId: string;
+  readonly timer: ReturnType<typeof setTimeout>;
+  readonly redeliver: () => void;
+  readonly earliestFireAt: number;
+  sawBusy: boolean;
+}
+const retryBackoffPending = new Map<string, RetryBackoffWait>();
 
 function trackRetryBackoff(
   authority: DeliveryAuthority,
@@ -532,13 +549,66 @@ function trackRetryBackoff(
   redeliver: () => void,
 ): void {
   const key = `${authorityKey(authority)}::${handoffId}`;
-  retryBackoffPending.set(key, handoffId);
+  const previous = retryBackoffPending.get(key);
+  if (previous) {
+    clearTimeout(previous.timer);
+    retryBackoffTimers.delete(previous.timer);
+  }
   const timer = setTimeout(() => {
     retryBackoffTimers.delete(timer);
     retryBackoffPending.delete(key);
     redeliver();
   }, backoffMs);
+  retryBackoffPending.set(key, {
+    sessionId: authority.sessionId,
+    timer,
+    redeliver,
+    // Uma borda busy→idle prova que o PTY mudou e pode encurtar a espera —
+    // nunca abaixo desta base, senão um TUI que repinta em loop viraria de
+    // novo colagem a cada ciclo de saída.
+    earliestFireAt:
+      Date.now() + Math.min(backoffMs, IDLE_RELEASE_RETRY_BASE_MS),
+    sawBusy: false,
+  });
   retryBackoffTimers.add(timer);
+}
+
+/**
+ * Borda busy→idle real é prova de mudança no PTY (modal soltou, um turno
+ * rodou): os re-drives represados em backoff da sessão disparam na hora em
+ * vez de esperar a janela crescente inteira — mas só depois da base da
+ * rodada, e só quem viu 'busy' depois de armado (re-publicar 'idle' não é
+ * borda: publishSessionActivityState dispara o tap mesmo sem sessão
+ * rastreada).
+ */
+function noteRetryBackoffBusyEdge(sessionId: string): void {
+  for (const wait of retryBackoffPending.values()) {
+    if (wait.sessionId === sessionId) wait.sawBusy = true;
+  }
+}
+
+function fireRetryBackoffsAtIdleEdge(sessionId: string): void {
+  const now = Date.now();
+  for (const [key, wait] of [...retryBackoffPending]) {
+    if (
+      wait.sessionId !== sessionId ||
+      !wait.sawBusy ||
+      now < wait.earliestFireAt
+    ) continue;
+    retryBackoffPending.delete(key);
+    retryBackoffTimers.delete(wait.timer);
+    clearTimeout(wait.timer);
+    wait.redeliver();
+  }
+}
+
+function dropRetryBackoffsForSession(sessionId: string): void {
+  for (const [key, wait] of [...retryBackoffPending]) {
+    if (wait.sessionId !== sessionId) continue;
+    retryBackoffPending.delete(key);
+    retryBackoffTimers.delete(wait.timer);
+    clearTimeout(wait.timer);
+  }
 }
 
 const INJECTABLE_WAKE_MS = 500;
@@ -674,12 +744,21 @@ function blockDeliveryFailure(
     // workers mortos). Liberar as falhas desta sessão reabre o orçamento
     // para a próxima rodada sem matar nem rebindar o Maestro; a auditoria
     // preserva a causa sob o prefixo `released:`.
+    let sessionAttempts = attempts;
     try {
-      getProjectDomainStores(authority.scope)
-        .handoffs.releaseFailedDeliveryAttempts({
-          handoffId,
-          orchestratorSessionId: authority.sessionId,
-        });
+      const handoffs = getProjectDomainStores(authority.scope).handoffs;
+      handoffs.releaseFailedDeliveryAttempts({
+        handoffId,
+        orchestratorSessionId: authority.sessionId,
+      });
+      // A espera cresce com as rodadas JÁ gastas por esta sessão neste
+      // handoff — vem do histórico durável, então um restart não reinicia
+      // a escada e uma sessão nova não herda a espera da anterior.
+      sessionAttempts = handoffs
+        .listDeliveryAttempts(handoffId)
+        .filter(
+          (attempt) => attempt.orchestratorSessionId === authority.sessionId,
+        ).length;
     } catch (error) {
       console.warn(
         '[idle-delivery] falha ao liberar tentativas de entrega esgotadas ' +
@@ -687,6 +766,30 @@ function blockDeliveryFailure(
         error instanceof Error ? error.message : error,
       );
     }
+    // F-925 (revisão de 793aa40ca): a liberação sem espera virava laço de
+    // ~13 s — o attempt_no é global e já passa do limite depois da primeira
+    // liberação, então retryOrBlockDelivery pulava o backoff F-112 e o
+    // outbox de 1 s recolava na hora (546 colagens em 119 min). A espera
+    // crescente por handoff+sessão (base × 2^rodada até o teto) usa
+    // trackRetryBackoff: conta como entrega pendente e segura o outbox, a
+    // caixa durável e o re-arm durante a janela.
+    trackRetryBackoff(
+      authority,
+      handoffId,
+      Math.min(
+        IDLE_RELEASE_RETRY_BASE_MS *
+          2 ** Math.max(0, sessionAttempts - MAX_DELIVERY_ATTEMPTS),
+        IDLE_RELEASE_RETRY_MAX_MS,
+      ),
+      () => {
+        if (!isCurrentAuthority(authority)) return;
+        const retryHandoff =
+          getProjectDomainStores(authority.scope).handoffs.get(handoffId);
+        if (retryHandoff?.deliveryState === 'queued') {
+          onHandoffSubmitted(retryHandoff, authority.scope);
+        }
+      },
+    );
     // Uma linha por handoff (o else loga na mesma chave — não duplicar).
     if (!blockedDeliveryWarned.has(handoffId)) {
       blockedDeliveryWarned.add(handoffId);
@@ -1065,9 +1168,15 @@ function flushQueue(sessionId: string): void {
 export function initIdleDelivery(): void {
   if (untapState) return;
   untapState = tapSessionState((sessionId, state) => {
-    if (state === 'busy') acceptPendingEnters(sessionId);
+    if (state === 'busy') {
+      acceptPendingEnters(sessionId);
+      noteRetryBackoffBusyEdge(sessionId);
+    }
     if (state !== 'idle') requeuePendingDeliveryStarts(sessionId);
     if (state === 'idle') {
+      // Uma borda busy→idle real dispara os re-drives represados pelo
+      // backoff crescente (F-925) antes da janela inteira vencer.
+      fireRetryBackoffsAtIdleEdge(sessionId);
       // Drain first: mailbox enqueue used to land AFTER flushQueue, so a
       // queued SQLite row never left the Maestro's already-idle prompt.
       drainDurableMailbox(sessionId);
@@ -1095,6 +1204,7 @@ export function initIdleDelivery(): void {
   untapExit = tapSessionExit((sessionId) => {
     lastMailboxDrainAt.delete(sessionId);
     clearInjectableWake(sessionId);
+    dropRetryBackoffsForSession(sessionId);
     scheduleFastLaneDeliveryCheck(sessionId);
     // Capture durable recovery targets BEFORE dropping the in-memory queue.
     // SQLite keeps handoffs as `queued`; without this the Maestro exit would
