@@ -9,13 +9,12 @@
  * nomes esperados, em repositórios conhecidos, nunca copiados do JSON da API. Só versão MAIOR que a
  * atual entra (sem downgrade). A pasta antiga fica ao lado como `.old` até a nova provar que sobe.
  */
-import fs from 'node:fs';
+import fs from './util/real-fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { cmpSemver } from './update-source';
 import { trustedSha256For, type UpdateSigningKey } from './linux-update-signing';
 import { extractLinuxZip } from './linux-zip-extract';
-import { removeTree } from './util/remove-tree';
 
 export const LINUX_SUMS_NAME = 'SHA256SUMS-linux-x64.txt';
 export const LINUX_SIG_NAME = `${LINUX_SUMS_NAME}.sig`;
@@ -104,6 +103,14 @@ export function linuxUpdateUrls(repos: readonly string[], release: LinuxUpdateRe
   return candidates.length ? { zipName, candidates } : null;
 }
 
+/**
+ * Apaga uma pasta de instalação do app (a `.new` e a `.old`), com o fs SEM o desvio de .asar. Só há links de dentro da
+ * própria pasta (a extração valida isso) e o rm recursivo não segue symlink no Linux; o F-663 é do Windows.
+ */
+export async function removeInstallTree(target: string): Promise<void> {
+  await fs.promises.rm(target, { recursive: true, force: true });
+}
+
 export class UpdateRefused extends Error {
   constructor(message: string) {
     super(message);
@@ -171,7 +178,7 @@ export async function stageLinuxUpdate(input: {
   const zipPath = path.join(install.parentDir, `.nexus-ide-update-${release.version}.zip`);
   const stagedDir = `${install.installDir}.new`;
   try {
-    await removeTree(stagedDir, { force: true });
+    await removeInstallTree(stagedDir);
     await fs.promises.rm(zipPath, { force: true });
     await deps.download(source.zip, zipPath, deps.onProgress);
     const { sha256, size } = await sha256OfFile(zipPath);
@@ -181,7 +188,7 @@ export async function stageLinuxUpdate(input: {
     log('stage:ready', { version: release.version, keyId: trusted.keyId });
     return { version: release.version, stagedDir, keyId: trusted.keyId };
   } catch (error) {
-    await removeTree(stagedDir, { force: true }).catch(() => undefined);
+    await removeInstallTree(stagedDir).catch(() => undefined);
     throw error;
   } finally {
     await fs.promises.rm(zipPath, { force: true }).catch(() => undefined);
@@ -231,7 +238,7 @@ export function launchApplyHelper(input: {
 export function scheduleOldInstallCleanup(
   install: Extract<LinuxInstall, { kind: 'portable' }>,
   delayMs = 90_000,
-  remove: (target: string) => Promise<void> = (target) => removeTree(target, { force: true }),
+  remove: (target: string) => Promise<void> = (target) => removeInstallTree(target),
 ): ReturnType<typeof setTimeout> | null {
   const old = `${install.installDir}.old`;
   if (!fs.existsSync(old)) return null;
@@ -263,7 +270,7 @@ export async function cleanupStaleStaging(
   };
   const staged = `${install.installDir}.new`;
   if (await stale(staged)) {
-    await removeTree(staged, { force: true }).catch(() => undefined);
+    await removeInstallTree(staged).catch(() => undefined);
     removed.push(staged);
   }
   let names: string[] = [];

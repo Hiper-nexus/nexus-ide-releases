@@ -110,6 +110,8 @@ export default defineConfig({
       // keeps them out of the Rollup graph so the build never tries to resolve
       // them — a runtime require() in a try/catch handles their absence.
       external: [
+        // O fs do Electron sem o desvio de .asar; vem do próprio runtime (src/main/util/real-fs.ts).
+        'original-fs',
         '@lydell/node-pty',
         'better-sqlite3',
         'uiohook-napi',
