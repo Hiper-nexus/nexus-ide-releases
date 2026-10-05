@@ -66,13 +66,16 @@ function defaultIsAlive(pid: number): boolean {
 export function decodeLsofName(name: string): string {
   if (!name.includes('\\')) return name;
   const bytes: number[] = [];
-  for (let index = 0; index < name.length; index += 1) {
-    const char = name[index]!;
-    if (char === '\\' && name[index + 1] === '\\') {
+  // Por code point (não por unidade UTF-16): caractere fora do plano básico
+  // no mesmo nome não se parte ao virar bytes.
+  const chars = [...name];
+  for (let index = 0; index < chars.length; index += 1) {
+    const char = chars[index]!;
+    if (char === '\\' && chars[index + 1] === '\\') {
       bytes.push(0x5c);
       index += 1;
-    } else if (char === '\\' && name[index + 1] === 'x' && /^[0-9a-f]{2}$/i.test(name.slice(index + 2, index + 4))) {
-      bytes.push(parseInt(name.slice(index + 2, index + 4), 16));
+    } else if (char === '\\' && chars[index + 1] === 'x' && /^[0-9a-f]{2}$/i.test(chars.slice(index + 2, index + 4).join(''))) {
+      bytes.push(parseInt(chars.slice(index + 2, index + 4).join(''), 16));
       index += 3;
     } else {
       bytes.push(...Buffer.from(char, 'utf8'));

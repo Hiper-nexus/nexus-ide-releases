@@ -80,6 +80,7 @@ describe('F-908: cwd atual dos processos', () => {
       expect(decodeLsofName('/Users/jo\\xc3\\xa3o/task-a\\xc3\\xa7\\xc3\\xa3o')).toBe('/Users/joão/task-ação');
       expect(decodeLsofName('/a\\\\b/c')).toBe('/a\\b/c');
       expect(decodeLsofName('/já/utf8')).toBe('/já/utf8');
+      expect(decodeLsofName('/\u{1F600}/a\\xc3\\xa7')).toBe('/\u{1F600}/aç');
       const dir = tmp();
       const uid = process.getuid!();
       expect(await listProcessCwds({ ...base, uid, privateAncestors: [dir],
