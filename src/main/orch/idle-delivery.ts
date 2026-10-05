@@ -641,6 +641,17 @@ function isDiagnosticDriverHandoff(handoff: Handoff): boolean {
   );
 }
 
+/**
+ * F-925: predicado único do "handoff que a entrega tentaria colar". O
+ * supervisor usa o MESMO critério para decidir se ainda existe pendência
+ * real na fila — contar diagnóstico que nunca chega ao PTY segurava o
+ * re-arm; contar só success/blocked deixava progress/failed queued para
+ * sempre (o wedge de 119 min do campo 05/10).
+ */
+export function handoffDeliveryEligible(handoff: Handoff): boolean {
+  return !isDiagnosticDriverHandoff(handoff);
+}
+
 function blockDeliveryFailure(
   authority: DeliveryAuthority,
   handoffId: string,
@@ -654,7 +665,41 @@ function blockDeliveryFailure(
   // Idle PTY after CR is a TUI modal (Codex PreToolUse hooks, DEV 25/08
   // 2x2): killing that Maestro dropped orchestratorSessionId. Keep queued
   // until a real busy→idle edge.
-  if (getSessionState(authority.sessionId) === 'idle') return;
+  if (getSessionState(authority.sessionId) === 'idle') {
+    // F-925: modal não é wedge terminal. O orçamento por sessão existe para
+    // parar de colar num PTY morto — contra um Maestro VIVO no prompt ele
+    // só criava silêncio: o re-drive periódico (outbox 1s, caixa durável,
+    // re-arm) reservava attempt novo, batia em `budget exhausted` e caía
+    // exatamente aqui de novo, para sempre (campo 05/10: 119 min parada,
+    // workers mortos). Liberar as falhas desta sessão reabre o orçamento
+    // para a próxima rodada sem matar nem rebindar o Maestro; a auditoria
+    // preserva a causa sob o prefixo `released:`.
+    try {
+      getProjectDomainStores(authority.scope)
+        .handoffs.releaseFailedDeliveryAttempts({
+          handoffId,
+          orchestratorSessionId: authority.sessionId,
+        });
+    } catch (error) {
+      console.warn(
+        '[idle-delivery] falha ao liberar tentativas de entrega esgotadas ' +
+          `(handoff=${handoffId}):`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+    // Uma linha por handoff (o else loga na mesma chave — não duplicar).
+    if (!blockedDeliveryWarned.has(handoffId)) {
+      blockedDeliveryWarned.add(handoffId);
+      console.warn(
+        '[idle-delivery] Maestro idle não aceitou a entrega (modal de TUI?); ' +
+          'tentativas falhas liberadas e o handoff segue queued para o ' +
+          `re-drive periódico (mission=${authority.missionId}, ` +
+          `handoff=${handoffId}, session=${authority.sessionId}, ` +
+          `attempts=${attempts})`,
+      );
+    }
+    return;
+  }
   requestRuntimeRecovery(authority, handoffId);
   // O ciclo re-arma a cada janela — o MESMO handoff repetia esta linha 63×
   // no voo do gate 0.62 e afogava o diagnóstico real. Uma linha por handoff.

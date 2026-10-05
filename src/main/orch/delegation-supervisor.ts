@@ -18,7 +18,11 @@ import {
   getProjectDomainStores,
   requireProjectDomainStoreRegistry,
 } from './project-domain-store-registry';
-import { onHandoffSubmitted, redeliverPendingHandoffs } from './idle-delivery';
+import {
+  handoffDeliveryEligible,
+  onHandoffSubmitted,
+  redeliverPendingHandoffs,
+} from './idle-delivery';
 import { getSquad } from './squad-store';
 import {
   abandonPendingOrchSpawn,
@@ -306,6 +310,21 @@ export function shouldRearmHandoffDelivery(input: {
 
 const handoffRearmLastRun = new Map<string, number>();
 
+/**
+ * F-925: re-arm conta o que a entrega realmente colaria, não só
+ * success/blocked. O aviso "Esteira parada" (progress do supervisor), o
+ * handoff sintético de worker morto (failed, handoff-enforcement) e
+ * qualquer partial/progress ficavam queued para sempre sem re-arm — o
+ * incidente de 05/10 (119 min, workers mortos, Maestro no prompt). O
+ * predicado vem de idle-delivery para que diagnóstico que nunca chega ao
+ * PTY (stalled de worker, mission-driver) também não segure o re-arm.
+ */
+export function pendingDeliverableHandoffs(
+  handoffs: readonly Handoff[],
+): number {
+  return handoffs.filter(handoffDeliveryEligible).length;
+}
+
 function rearmStuckHandoffDelivery(
   suite: ProjectDomainStoreSuite,
   mission: Mission,
@@ -315,10 +334,9 @@ function rearmStuckHandoffDelivery(
 ): void {
   let pendingDeliverable = 0;
   try {
-    pendingDeliverable = suite.handoffs
-      .list({ missionId: mission.id, includeDelivered: false })
-      .filter((handoff) => handoff.status === 'success' || handoff.status === 'blocked')
-      .length;
+    pendingDeliverable = pendingDeliverableHandoffs(
+      suite.handoffs.list({ missionId: mission.id, includeDelivered: false }),
+    );
   } catch {
     return; // sem leitura confiável não decide
   }

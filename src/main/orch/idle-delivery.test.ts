@@ -89,6 +89,7 @@ const storeMocks = vi.hoisted(() => ({
     orchestratorSessionId: string;
     attemptNo: number;
     state: 'reserved' | 'pasted' | 'accepted' | 'failed';
+    released?: boolean;
   }>(),
   nextAttemptId: 1,
 }));
@@ -269,7 +270,8 @@ vi.mock('./project-domain-store-registry', () => ({
         );
         const sessionAttempts = priorAttempts.filter(
           (attempt) =>
-            attempt.orchestratorSessionId === orchestratorSessionId,
+            attempt.orchestratorSessionId === orchestratorSessionId &&
+            !attempt.released,
         ).length;
         if (sessionAttempts >= maxAttempts) {
           throw new Error('handoff delivery attempt budget exhausted');
@@ -298,6 +300,27 @@ vi.mock('./project-domain-store-registry', () => ({
         }
         attempt.state = 'failed';
         return true;
+      },
+      releaseFailedDeliveryAttempts: ({
+        handoffId,
+        orchestratorSessionId,
+      }: {
+        handoffId: string;
+        orchestratorSessionId: string;
+      }) => {
+        let released = 0;
+        for (const attempt of storeMocks.deliveryAttempts.values()) {
+          if (
+            attempt.handoffId === handoffId &&
+            attempt.orchestratorSessionId === orchestratorSessionId &&
+            attempt.state === 'failed' &&
+            !attempt.released
+          ) {
+            attempt.released = true;
+            released += 1;
+          }
+        }
+        return released;
       },
       acceptDeliveryAttempt: ({
         attemptId,
@@ -1172,6 +1195,50 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
     // PTY still idle = modal, not a dead Maestro. Recovery would drop
     // orchestratorSessionId (DEV 25/08).
     expect(recovery).not.toHaveBeenCalled();
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('F-925: orçamento esgotado com Maestro idle não vira wedge — o re-drive periódico recola', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    const current = handoff();
+    storeMocks.handoffs.set(current.id, current);
+    const recovery = vi.fn(async () => true);
+    delivery.configureHandoffDeliveryRuntimeRecovery(recovery);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(current, scope);
+    const deliveries = () =>
+      ptyMocks.writes.mock.calls.filter((call) =>
+        String(call[1]).includes('completed the requested work'),
+      );
+
+    // 3 tentativas morrem de accept_timeout (backoffs de 15s e 30s, F-112).
+    // Campo 05/10: a partir daqui a missão ficou 119 min parada — Maestro
+    // vivo no prompt (modal?), workers mortos, zero pastes novos.
+    await vi.advanceTimersByTimeAsync(85_000);
+    expect(deliveries()).toHaveLength(3);
+    expect(storeMocks.delivered).toEqual([]);
+    expect(recovery).not.toHaveBeenCalled();
+
+    // O re-drive periódico (outbox 1s / caixa durável / re-arm do supervisor)
+    // re-submete o handoff queued. Sem a liberação das falhas, o reserve
+    // batia no orçamento esgotado e calava de novo.
+    expect(delivery.redeliverPendingHandoffs(scope, 'mission-a')).toBe(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(deliveries()).toHaveLength(4);
+    expect(storeMocks.delivered).toEqual([]);
+
+    // Quando o modal solta o turno, a borda busy aceita a entrega normal.
+    ptyMocks.state = 'busy';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
+    expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-a' }]);
+    expect(
+      storeMocks.missions.get(`${scope.projectId}:${scope.checkoutId}:mission-a`)
+        ?.status,
+    ).toBe('running');
     delivery.shutdownIdleDelivery();
   });
 
