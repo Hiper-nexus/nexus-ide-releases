@@ -460,12 +460,20 @@ export function layoutCables(input: {
     const target = ports[index]!.target!;
     const sourceAgent = input.agents.get(spec.sourceAgentId)!;
     const targetAgent = input.agents.get(spec.targetAgentId)!;
+    let path: Pick<Cable, 'd' | 'packetPath' | 'extent'>;
+    try {
+      path = routedCablePath(source, target, geometry, spec.sourceAgentId, spec.targetAgentId,
+        ranks[index]!.source, ranks[index]!.target, usable.length > 4, cableWorkerEnd(spec.kind, true, false));
+    } catch {
+      // Sem rota verificada: a curva simples, sem pacotes, mantém o grafo de pé.
+      path = { d: cablePath(source, target), packetPath: undefined,
+        extent: { right: CABLE_CANVAS_WIDTH, bottom: Math.max(source.y, target.y) + 32 } };
+    }
     return {
       ...spec,
       source,
       target,
-      ...routedCablePath(source, target, geometry, spec.sourceAgentId, spec.targetAgentId,
-        ranks[index]!.source, ranks[index]!.target, usable.length > 4, cableWorkerEnd(spec.kind, true, false)),
+      ...path,
       live: isCableLive(input.missionState, spec.kind, sourceAgent, targetAgent),
       workerState: cableWorkerEnd(spec.kind, sourceAgent, targetAgent).state,
       glyphs: [packetGlyph(spec.id), packetGlyph(`${spec.id}\u00002`)] as const,

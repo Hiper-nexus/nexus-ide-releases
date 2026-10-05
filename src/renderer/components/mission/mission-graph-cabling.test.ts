@@ -335,3 +335,25 @@ describe('cabos da sala de racks', () => {
     expect(cables.map((c) => c.id)).toEqual(['ok']);
   });
 });
+
+describe('cabo sem rota segura', () => {
+  it('degrada para a curva simples em vez de derrubar o grafo', () => {
+    // Rack cercado por quatro vizinhos encostados: nenhuma porta tem saída livre.
+    const w = RACK_WIDTH;
+    const h = RACK_HEIGHT;
+    const boxes = new Map<string, RackBox>([
+      ['root', box('root', 480, 60, true)],
+      ['inner', box('inner', 480, 400)],
+      ['n', box('n', 480, 400 - h)],
+      ['s', box('s', 480, 400 + h)],
+      ['w', box('w', 480 - w, 400)],
+      ['e', box('e', 480 + w, 400)],
+    ]);
+    const agents = new Map([...boxes.keys()].map((id) => [id, agent(id)] as const));
+    const specs = [delegation('blocked', 'root', 'inner')];
+    const cables = layoutCables({ specs, boxes, agents, missionState: 'running' });
+    expect(cables).toHaveLength(1);
+    expect(cables[0]!.d).toMatch(/^M/);
+    expect(cables[0]!.packetPath).toBeUndefined();
+  });
+});
