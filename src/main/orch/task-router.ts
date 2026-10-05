@@ -1178,12 +1178,21 @@ export function taskNeedsWebSearch(taskText: string): boolean {
 }
 
 /**
- * F-912: janela de contexto mínima DECLARADA no texto da tarefa. Só contam
- * pedidos explícitos com número e unidade — "contexto de 1M tokens",
- * "janela de 500k", "2M-token context", "window of 1M", "200000 tokens de
- * entrada" — porque o filtro exclui candidatos do ranking: sem declaração
- * explícita, nenhum modelo é excluído (retorna null). Ausência de dado não
- * pode derrubar candidato, espelhando o contrato do `maxContext` em si.
+ * F-912: janela de contexto mínima DECLARADA AFIRMATIVAMENTE no texto da
+ * tarefa — "preciso de contexto de 200k", "janela de 1M tokens", "carregar
+ * 300k tokens de contexto", "window of 250k tokens". O filtro exclui
+ * candidatos do ranking, então a menção tem de ser uma DECLARAÇÃO de
+ * janela/contexto de entrada do modelo, não um número qualquer de tokens
+ * (P2 da revisão de ponta):
+ *  - quantidade ancorada em contexto/janela/window (antes ou depois do
+ *    número) e em unidade de TOKENS — "janela de 500k bytes", "3 mil linhas
+ *    de contexto" e "custo de 200k tokens de saída" não contam;
+ *  - citação não é pedido: trechos entre aspas/crase/bloco são descartados
+ *    antes de casar ("contexto de 200k tokens" citado de README);
+ *  - negação próxima rejeita a declaração ("Não preciso de contexto de
+ *    200k tokens", "don't need a 500k context window");
+ *  - sem declaração → null: nenhum modelo é excluído. Ausência de dado não
+ *    pode derrubar candidato, espelhando o contrato do `maxContext` em si.
  */
 const CONTEXT_UNIT_MULTIPLIER: Record<string, number> = {
   k: 1_000,
@@ -1193,27 +1202,57 @@ const CONTEXT_UNIT_MULTIPLIER: Record<string, number> = {
   milhões: 1_000_000,
   million: 1_000_000,
 };
+// Quantidade: "200k", "1,5M", "500 mil", "2M" — ou número extenso "200000".
+const CONTEXT_QUANTITY =
+  '(\\d+(?:[.,]\\d+)?)\\s*(k|m|mil|milh(?:ão|ões)|million)\\b|(\\d{4,})';
+// Unidade incompatível logo após a quantidade invalida a declaração: a
+// janela é em tokens, não bytes/linhas/caracteres/palavras/arquivos.
+const CONTEXT_CONFLICTING_UNIT =
+  '(?!\\s*-?\\s*(?:bytes?|[kmg]?b\\b|caracteres?|chars?|linhas?|lines?|palavras?|words?|registros?|rows?|documentos?|arquivos?|files?|eventos?|records?\\b)\\b)';
 const CONTEXT_REQUIREMENT = new RegExp(
   '(?<![\\p{L}\\p{N}])(?:' +
-    // 1) "contexto/janela de 1M", "window of 2M tokens"
-    '(?:contexto|janela|window)\\s+(?:de|of)?\\s*' +
-    '(\\d+(?:[.,]\\d+)?)\\s*(k|m|mil|milh(?:ão|ões)|million)' +
-    // 2) "1M tokens", "500k de contexto", "2M-token context", "200000 tokens"
-    '|(\\d+(?:[.,]\\d+)?)\\s*(k|m|mil|milh(?:ão|ões)|million)\\s*-?\\s*(?:tokens?|tok|de\\s+contexto)' +
-    '|(\\d{4,})\\s*(?:tokens?|de\\s+contexto)' +
+    // 1) "contexto (de entrada) de 1M (tokens)", "context window of 250k tokens"
+    '(?:contexto|context|janela|window)\\s+(?:de\\s+)?(?:entrada\\s+)?(?:de\\s+|of\\s+|d[’\']\\s*)?' +
+    `(?:${CONTEXT_QUANTITY})${CONTEXT_CONFLICTING_UNIT}[-\\s]*(?:tokens?\\b)?` +
+    // 2) "1M tokens de contexto", "500k de contexto", "2M-token context",
+    //    "200000 tokens de entrada"
+    `|(?:${CONTEXT_QUANTITY})${CONTEXT_CONFLICTING_UNIT}[-\\s]*(?:tokens?\\b[-\\s]*)?(?:de\\s+)?(?:contexto|context|entrada)\\b` +
     ')(?![\\p{L}\\p{N}])',
   'giu',
 );
+// Negação colada na declaração (até ~3 palavras antes do casamento).
+const CONTEXT_NEGATION =
+  /(?:^|[\s(])(?:n[ãa]o|nunca|jamais|sem|sem\s+necessidade\s+de|don(?:'t|’t)?|do\s+not|doesn'?t|no\s+need|not)\b[^\n.;:!?]{0,28}$/iu;
+
+/** Trechos citados (bloco ```, crase, aspas retas/curvas) não são pedido. */
+function stripQuotedContextSpans(text: string): string {
+  return text
+    .replace(/```[\s\S]*?(```|$)/g, ' ')
+    .replace(/`[^`\n]*`/g, ' ')
+    .replace(/"[^"\n]*"/g, ' ')
+    .replace(/“[^”\n]*”/g, ' ')
+    .replace(/«[^»\n]*»/g, ' ')
+    // Aspas simples só quando abrem depois de espaço/ínicio — "don't" é
+    // apóstrofo de contração, não citação.
+    .replace(/(?<![\p{L}\p{N}])'[^'\n]*'/gu, ' ')
+    .replace(/(?<![\p{L}\p{N}])‘[^’\n]*’/gu, ' ');
+}
 
 /** Tokens mínimos de contexto exigidos pela tarefa, ou null se não declarado. */
 export function taskContextRequirement(taskText: string): number | null {
+  const prose = stripQuotedContextSpans(taskText);
   let requirement: number | null = null;
-  for (const match of taskText.matchAll(CONTEXT_REQUIREMENT)) {
+  for (const match of prose.matchAll(CONTEXT_REQUIREMENT)) {
+    // Negação imediatamente antes ("não preciso de contexto de…") não é pedido.
+    const prefix = prose.slice(Math.max(0, match.index - 40), match.index);
+    if (CONTEXT_NEGATION.test(prefix)) continue;
+    // A quantidade aparece DUAS vezes na regex (uma por alternativa); só a
+    // alternativa casada preenche os grupos dela (1/2/3 ou 4/5/6).
     const quantity = Number.parseFloat(
-      (match[1] ?? match[3] ?? match[5] ?? '').replace(',', '.'),
+      (match[1] ?? match[3] ?? match[4] ?? match[6] ?? '').replace(',', '.'),
     );
     if (!Number.isFinite(quantity)) continue;
-    const unit = (match[2] ?? match[4])?.toLowerCase();
+    const unit = (match[2] ?? match[5])?.toLowerCase();
     const tokens = Math.round(
       unit ? quantity * (CONTEXT_UNIT_MULTIPLIER[unit] ?? 1) : quantity,
     );
@@ -1395,23 +1434,29 @@ export function routeTask(
         // disponível, descarta — nunca cai no default silencioso do CLI.
         const eligible = eligibleModels(adapter);
         const resolved = resolveRoutableModel(c.model, adapter.models);
+        let routed: RouteCandidate;
         if (!resolved.ok) {
+          // Resgate da linha: id da tabela ausente da CLI sobe para o mais
+          // novo da MESMA linha — e o resgatado passa pela MESMA validação
+          // abaixo (bloqueio, quarentena, janela): não pode contornar o eixo
+          // de capacidade só porque chegou por upgrade (F-912, P2 da revisão).
           const newer = c.model ? newestInModelLine(c.model, eligible) : undefined;
           if (!newer || newer === c.model) {
             missingFromCli.push(`${c.adapterId}:${c.model}`);
             return [];
           }
           lineUpgrades.push(`${c.adapterId}:${c.model}→${newer}`);
-          return [{ ...c, model: newer }];
+          routed = { ...c, model: newer };
+        } else {
+          const upgraded =
+            resolved.model !== undefined
+              ? newestInModelLine(resolved.model, eligible)
+              : resolved.model;
+          if (upgraded !== resolved.model) {
+            lineUpgrades.push(`${c.adapterId}:${resolved.model}→${upgraded}`);
+          }
+          routed = { ...c, model: upgraded };
         }
-        const upgraded =
-          resolved.model !== undefined
-            ? newestInModelLine(resolved.model, eligible)
-            : resolved.model;
-        if (upgraded !== resolved.model) {
-          lineUpgrades.push(`${c.adapterId}:${resolved.model}→${upgraded}`);
-        }
-        const routed: RouteCandidate = { ...c, model: upgraded };
         const info = modelCatalogInfo(modelCatalog, routed.adapterId, routed.model);
         if (isModelBlockedForAutoRouting(info)) {
           skippedRisk.push(

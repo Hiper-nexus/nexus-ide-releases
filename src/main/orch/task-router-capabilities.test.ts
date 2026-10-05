@@ -219,21 +219,59 @@ const routeWithContext = (pool: AdapterAvailability[], task: string, catalog: Mo
   });
 
 describe('taskContextRequirement (F-912)', () => {
-  it('extrai pedidos explícitos de janela em pt e en', () => {
+  it('extrai declarações afirmativas de janela em pt e en', () => {
+    expect(taskContextRequirement('preciso de contexto de 200k tokens')).toBe(200_000);
+    expect(taskContextRequirement('use uma janela de 1M tokens')).toBe(1_000_000);
+    expect(taskContextRequirement('carregar 300k tokens de contexto no pane')).toBe(300_000);
     expect(taskContextRequirement('analise o dump com contexto de 1M tokens')).toBe(1_000_000);
-    expect(taskContextRequirement('janela de 500k para o refactor')).toBe(500_000);
     expect(taskContextRequirement('needs a 2M-token context')).toBe(2_000_000);
-    expect(taskContextRequirement('process the log with window of 250k tokens')).toBe(250_000);
+    expect(taskContextRequirement('process the log with a context window of 250k tokens')).toBe(250_000);
     expect(taskContextRequirement('carregue os 200000 tokens de entrada')).toBe(200_000);
     expect(taskContextRequirement('contexto de 1,5M tokens')).toBe(1_500_000);
   });
 
-  it('sem declaração explícita não exige nada (null)', () => {
+  // P2 da revisão de ponta: menção incidental de número de tokens não é
+  // requisito de janela — só declaração afirmativa conta.
+  it('menção incidental de tokens NÃO vira requisito', () => {
     for (const task of [
-      'corrigir o bug do login',
+      'Corrija o cálculo do custo de 200k tokens de saída',
+      'o orçamento estima 1M tokens de processamento no mês',
       'refactor de 5k linhas',
       'arquivos grandes do monorepo',
       'a versão atual trava com 3 threads',
+      'corrigir o bug do login',
+    ]) {
+      expect(taskContextRequirement(task), task).toBeNull();
+    }
+  });
+
+  it('citação entre aspas/crase/bloco não é pedido', () => {
+    for (const task of [
+      'o README diz "contexto de 200k tokens" na seção de limites',
+      'a doc cita “janela de 1M tokens” do modelo antigo',
+      'configurar `contexto de 500k` no arquivo não é o pedido',
+      '```\njanela de 2M tokens\n```',
+    ]) {
+      expect(taskContextRequirement(task), task).toBeNull();
+    }
+  });
+
+  it('negação próxima rejeita a declaração', () => {
+    for (const task of [
+      'Não preciso de contexto de 200k tokens',
+      'não use janela de 500k; o padrão basta',
+      'sem necessidade de contexto de 1M tokens',
+      "don't need a 500k context window",
+    ]) {
+      expect(taskContextRequirement(task), task).toBeNull();
+    }
+  });
+
+  it('unidade incompatível (bytes/linhas/caracteres) não é janela de tokens', () => {
+    for (const task of [
+      'janela de 500k bytes no buffer de rede',
+      'ajuste a janela de 64kB do socket',
+      'o parser lê 3 mil linhas de contexto do CSV',
     ]) {
       expect(taskContextRequirement(task), task).toBeNull();
     }
@@ -241,7 +279,7 @@ describe('taskContextRequirement (F-912)', () => {
 
   it('fica com o maior pedido quando a tarefa declara mais de um', () => {
     expect(
-      taskContextRequirement('comece com contexto de 100k e suba para 1M tokens'),
+      taskContextRequirement('comece com contexto de 100k e suba para 1M tokens de contexto'),
     ).toBe(1_000_000);
   });
 });
@@ -299,5 +337,44 @@ describe('filtro de janela de contexto maxContext (F-912)', () => {
     expect(decision).not.toBeNull();
     expect(decision!.reason).toContain('exige contexto');
     expect(decision!.reason).toContain('nenhum candidato da tabela instalado');
+  });
+
+  // P2 da revisão de ponta: o resgate de versão mais nova (tabela pede
+  // glm-5.3, CLI só lista glm-5.4) fazia return antecipado ANTES do
+  // fitsContext — o resgatado contornava o eixo de janela.
+  it('modelo resgatado por upgrade de linha também respeita a janela exigida', () => {
+    const glmNewerOnly: AdapterAvailability = {
+      id: 'glm',
+      installed: true,
+      models: ['glm-5.4'],
+    };
+    const catalog: ModelCatalog = {
+      version: 1,
+      adapters: {
+        glm: {
+          models: [
+            { id: 'glm-5.4', availability: 'paid', costTier: 'low', source: 'fixture', maxContext: 131_072 },
+          ],
+        },
+        grok: {
+          models: [
+            { id: 'grok-4.7', availability: 'paid', costTier: 'high', source: 'fixture', maxContext: 400_000 },
+          ],
+        },
+      },
+    };
+    const decision = routeWithContext(
+      [glmNewerOnly, grokPlain],
+      'preciso de contexto de 200k tokens para a análise do drift do schema',
+      catalog,
+    );
+    // Sem a correção, o upgrade glm-5.3→glm-5.4 retornava cedo e vencia a
+    // rota com 131072 tokens; agora passa pela mesma validação de janela.
+    expect(decision!.adapterId).toBe('grok');
+    expect(decision!.reason).toContain('mais novo da linha');
+    expect(decision!.reason).toContain('glm:glm-5.4');
+    expect(
+      decision!.alternatives.every((alt) => alt.model !== 'glm-5.4'),
+    ).toBe(true);
   });
 });
