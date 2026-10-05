@@ -181,6 +181,50 @@ function resumePaneRefOf(ref: string | undefined, scope: ProjectExecutionScope):
   }
 }
 
+/**
+ * F-919: `resume` mantém a CLI do pane retomado — adapterId/model herdados
+ * do registro vivo ou do worker record durável (`missionPanes`, que
+ * sobrevive ao pane fechado e ao reinício do app). Sem nenhum dos dois,
+ * devolve null e o chamador falha no `requireStr` como antes (fail-closed).
+ */
+function resumedPaneRuntime(
+  scope: ProjectExecutionScope,
+  ref: string,
+): { adapterId: string; model?: string } | null {
+  const live = findPane(ref);
+  if (live?.adapterId) {
+    return {
+      adapterId: live.adapterId,
+      ...(live.model ? { model: live.model } : {}),
+    };
+  }
+  const paneId = ref.startsWith('pane-')
+    ? ref
+    : (live?.paneId ?? resumePaneRefOf(ref, scope));
+  if (!paneId) return null;
+  if (!ref.startsWith('pane-')) {
+    const byPaneId = findPane(paneId);
+    if (byPaneId?.adapterId) {
+      return {
+        adapterId: byPaneId.adapterId,
+        ...(byPaneId.model ? { model: byPaneId.model } : {}),
+      };
+    }
+  }
+  try {
+    const spec = getProjectDomainStores(scope).missionPanes.findByPaneId(paneId);
+    if (spec?.adapterId) {
+      return {
+        adapterId: spec.adapterId,
+        ...(spec.model ? { model: spec.model } : {}),
+      };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 export function coerceSpawnReadOnly<T extends { readOnly?: boolean }>(
   options: T,
   callerReadOnly: boolean | undefined,
@@ -825,7 +869,9 @@ const paneSpawn: McpToolDef = {
           'worker\'s CLI session (e.g. claude --resume / codex resume) — same ' +
           'files and conversation in its head, zero re-briefing. Use for any ' +
           'adjustment/follow-up on a deliverable whose worker was already closed. ' +
-          'Combine with prompt (the adjustment).',
+          'Combine with prompt (the adjustment). adapterId/model may be ' +
+          'omitted: they are inherited from the resumed pane (live registry ' +
+          'or its durable worker record).',
       },
       fresh: {
         type: 'boolean',
@@ -1194,13 +1240,20 @@ const paneSpawnAfterTabMission = {
       // RouteReservation). Fora da mão do operador o adapterId segue
       // obrigatório como sempre.
       let adHocAdapterId = forceOperatorRoute ? undefined : str(args, 'adapterId');
+      // F-919: modelo do pane retomado (herança abaixo); o explícito vence.
+      let resumedModel: string | undefined;
       if (forceOperatorRoute) {
         autoRoute = await timedOperatorRoute();
         adHocAdapterId = routeString(autoRoute, 'adapterId');
-      } else if (operatorHand && resumeRef) {
-        // Retomar mantém a CLI do pane retomado: o registro vivo (pane
-        // estacionado) vence o que o agente mandou; sem registro, os args.
-        adHocAdapterId = findPane(resumeRef)?.adapterId ?? adHocAdapterId;
+      } else if (resumeRef && adHocAdapterId === undefined) {
+        // F-919: retomar mantém a CLI do pane retomado em qualquer papel
+        // (mão do operador ou missão): o registro vivo vence; sem ele, o
+        // worker record durável (pane fechado, pós-reinício); sem nenhum,
+        // os args — que vão falhar no `requireStr` abaixo (fail-closed).
+        // O pin explícito (adapterId no arg) continua vencendo o registro.
+        const resumedRuntime = resumedPaneRuntime(ctx.scope, resumeRef);
+        adHocAdapterId = resumedRuntime?.adapterId ?? adHocAdapterId;
+        resumedModel = resumedRuntime?.model;
       } else if (adHocAdapterId === undefined && operatorHand && operatorRouteResolver) {
         // Resolver sempre existe em produção; este ramo só cobre args com
         // missionId explícito vindos da mão do operador.
@@ -1278,7 +1331,7 @@ const paneSpawnAfterTabMission = {
           ? undefined
           : (operatorExplicitModel ??
             (resumeRef
-              ? str(args, 'model')
+              ? (str(args, 'model') ?? resumedModel)
               : applyNewestModelLine(adHocAdapterId, str(args, 'model'))));
       const adHocModel = adHocRequested ?? routeString(autoRoute, 'model');
       const adHocEffort =
