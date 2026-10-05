@@ -32,6 +32,15 @@ it('recognizes an SDK-backed declared MCP binary, without exempting its build sc
   fs.writeFileSync(build, 'console.log("finite build");');
   expect(catalog.isPersistent([process.execPath, build])).toBe(false);
 });
+it('exempts only the server bin of a multi-bin MCP package, never its build bin', () => {
+  const dir = path.join(root, 'multi-bin-mcp');
+  fs.mkdirSync(path.join(dir, 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'acme-tools', dependencies: { '@modelcontextprotocol/sdk': '1.0.0' },
+    bin: { 'acme-mcp': 'bin/stdio.js', 'acme-compile': 'bin/compile.js' } }));
+  for (const file of ['stdio.js', 'compile.js']) fs.writeFileSync(path.join(dir, 'bin', file), '');
+  expect(catalog.isPersistent([process.execPath, path.join(dir, 'bin/stdio.js')])).toBe(true);
+  expect(catalog.isPersistent([process.execPath, path.join(dir, 'bin/compile.js')])).toBe(false);
+});
 it('keeps the legacy MCP remote proxy persistent even with its SDK bundled', () => {
   const entry = executable('mcp-remote', {});
   expect(catalog.isPersistent([process.execPath, entry])).toBe(true);
@@ -109,4 +118,37 @@ it('still blocks compiler children of a package dispatcher when Main admission i
   expect(child.status, child.stderr).toBe(0);
   expect(JSON.parse(child.stdout).childStatus).toBe(78);
   expect(fs.existsSync(marker)).toBe(false);
+});
+it('meters an unknown finite child of an exempt dispatcher even without the Darwin job base', () => {
+  // Linux/Windows have no NEXUS_HEAVY_JOB_BASE fallback: `npx eslint .` must still queue.
+  const base = path.join(root, 'dispatcher-unknown');
+  const launcher = path.join(base, 'node_modules/npm/bin/npx-cli.js');
+  const tool = path.join(base, 'node_modules/lint-tool/bin/lint.js');
+  const marker = path.join(base, 'tool-ran'), grandchildMarker = path.join(base, 'grandchild-ran');
+  fs.mkdirSync(path.dirname(launcher), { recursive: true });
+  fs.mkdirSync(path.dirname(tool), { recursive: true });
+  fs.writeFileSync(path.join(base, 'node_modules/lint-tool/package.json'), JSON.stringify({ name: 'lint-tool', bin: { lint: 'bin/lint.js' } }));
+  fs.writeFileSync(tool, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'unexpected')`);
+  fs.writeFileSync(launcher, `
+    const result = require('node:child_process').spawnSync(process.execPath, [${JSON.stringify(tool)}], { encoding: 'utf8' });
+    process.stdout.write(JSON.stringify({ childStatus: result.status }));
+  `);
+  const env = { PATH: process.env.PATH, HOME: root,
+    NODE_OPTIONS: `--require ${JSON.stringify(path.join(process.cwd(), 'resources/heavy-command/preload.cjs'))}`,
+    NEXUS_HEAVY_COMMAND_URL: 'http://127.0.0.1:1/hook/heavy-command', NEXUS_GATE_TOKEN: 'private-dispatcher' };
+  const child = spawnSync(process.execPath, [launcher, 'lint-tool'], { env, encoding: 'utf8', timeout: 5000 });
+  expect(child.status, child.stderr).toBe(0);
+  expect(JSON.parse(child.stdout).childStatus).toBe(78);
+  expect(fs.existsSync(marker)).toBe(false);
+  // The mark covers the dispatcher's direct target only: a persistent service's
+  // own unknown helpers do not inherit it (no permit held for a service's life).
+  const serviceLauncher = path.join(base, 'service/node_modules/npm/bin/npx-cli.js');
+  const server = path.join(base, 'service/server.js'), helper = path.join(base, 'service/helper.js');
+  fs.mkdirSync(path.dirname(serviceLauncher), { recursive: true });
+  fs.writeFileSync(serviceLauncher, `process.exit(require('node:child_process').spawnSync(process.execPath, [${JSON.stringify(server)}]).status);`);
+  fs.writeFileSync(server, `process.exit(require('node:child_process').spawnSync(process.execPath, [${JSON.stringify(helper)}]).status);`);
+  fs.writeFileSync(helper, `require('node:fs').writeFileSync(${JSON.stringify(grandchildMarker)}, 'ran')`);
+  const nested = spawnSync(process.execPath, [serviceLauncher, 'svc'], { env, encoding: 'utf8', timeout: 5000 });
+  expect(nested.status, nested.stderr).toBe(0);
+  expect(fs.existsSync(grandchildMarker)).toBe(true);
 });

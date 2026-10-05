@@ -8,6 +8,11 @@ if (isMainThread && process.env.NEXUS_HEAVY_COMMAND_URL && process.env.NEXUS_GAT
   const real = (file) => { try { return fs.realpathSync(file); } catch { return file; } };
   const agentRoot = process.env.NEXUS_HEAVY_AGENT_ENTRY && real(process.argv[1]) === real(process.env.NEXUS_HEAVY_AGENT_ENTRY);
   const persistent = catalog.isPersistent(process.argv);
+  // An exempt dispatcher marks only its direct Node target: without the Darwin
+  // job base (Linux/Windows) an unknown target is still finite work to meter.
+  const dispatched = process.env.NEXUS_HEAVY_DISPATCHED === '1';
+  delete process.env.NEXUS_HEAVY_DISPATCHED;
+  if (catalog.isDispatcher(process.argv)) process.env.NEXUS_HEAVY_DISPATCHED = '1';
   let admitted = persistent;
   function admit(kind) {
     if (!kind || admitted) return;
@@ -36,7 +41,7 @@ if (isMainThread && process.env.NEXUS_HEAVY_COMMAND_URL && process.env.NEXUS_GAT
       process.exit(78);
     }
   }
-  if (!agentRoot) admit(catalog.entryKind(process.argv) || (process.env.NEXUS_HEAVY_JOB_BASE && !persistent ? 'build' : null));
+  if (!agentRoot) admit(catalog.entryKind(process.argv) || ((process.env.NEXUS_HEAVY_JOB_BASE || dispatched) && !persistent ? 'build' : null));
   // Require/eval and renamed package entry points still cross the module boundary.
   const Module = require('node:module');
   const load = Module._load;

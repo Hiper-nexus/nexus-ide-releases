@@ -11,7 +11,7 @@ module.exports = function install() {
     // project-slot wait here deadlocks its 1s target-registration contract.
     if (require('./sdk-control.cjs')(file, args, options, process.env.NEXUS_HEAVY_AGENT_ENTRY)) return { file, args, options };
     const env = { ...(options.env || process.env) };
-    for (const key of ['NEXUS_HEAVY_CHANNEL_DIR', 'NEXUS_HEAVY_CHANNEL_KEY', 'NEXUS_HEAVY_CHANNEL_EPOCH', 'NEXUS_HEAVY_CHANNEL_PUBLIC_KEY', 'NEXUS_HEAVY_JOB_BASE', 'NEXUS_HEAVY_CURL', 'NEXUS_HEAVY_AGENT_ENTRY', 'NEXUS_GATE_TOKEN', 'NEXUS_HEAVY_COMMAND_URL', 'NEXUS_HEAVY_DIR', 'NEXUS_HEAVY_NODE', 'NEXUS_HEAVY_BASH_ENV', 'NEXUS_HEAVY_LEASE', 'NEXUS_HEAVY_ORIG_BASH_ENV', 'NEXUS_HEAVY_ORIG_ZDOTDIR']) {
+    for (const key of ['NEXUS_HEAVY_CHANNEL_DIR', 'NEXUS_HEAVY_CHANNEL_KEY', 'NEXUS_HEAVY_CHANNEL_EPOCH', 'NEXUS_HEAVY_CHANNEL_PUBLIC_KEY', 'NEXUS_HEAVY_JOB_BASE', 'NEXUS_HEAVY_CURL', 'NEXUS_HEAVY_AGENT_ENTRY', 'NEXUS_GATE_TOKEN', 'NEXUS_HEAVY_COMMAND_URL', 'NEXUS_HEAVY_DIR', 'NEXUS_HEAVY_NODE', 'NEXUS_HEAVY_BASH_ENV', 'NEXUS_HEAVY_LEASE', 'NEXUS_HEAVY_ORIG_BASH_ENV', 'NEXUS_HEAVY_ORIG_ZDOTDIR', 'NEXUS_HEAVY_DISPATCHED']) {
       if (process.env[key] !== undefined) env[key] = process.env[key]; else delete env[key];
     }
     const helperEntry = typeof args[0] === 'string' && ['request.cjs', 'classify.cjs', 'tool-hook.cjs', 'job-launch.cjs'].some((name) => args[0] === path.join(__dirname, name));

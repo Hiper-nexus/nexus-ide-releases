@@ -39,8 +39,11 @@ function isMcpService(entry) {
   const declaredMcp = typeof value.mcpName === 'string' && value.mcpName.includes('/') ||
     typeof value.dependencies?.['@modelcontextprotocol/sdk'] === 'string' || info.name === 'mcp-remote';
   if (!declaredMcp) return false;
-  const bins = typeof value.bin === 'string' ? [value.bin] : value.bin && typeof value.bin === 'object' ? Object.values(value.bin) : [];
-  return bins.some(bin => {
+  const bins = typeof value.bin === 'string' ? [[info.name, value.bin]] : value.bin && typeof value.bin === 'object' ? Object.entries(value.bin) : [];
+  // Only the server bin is a service: a single-bin package, or a bin named for MCP.
+  // A sibling compile/build bin of the same package stays metered.
+  const serverBins = bins.length === 1 ? bins : bins.filter(([name]) => /mcp/i.test(name));
+  return serverBins.some(([, bin]) => {
     if (typeof bin !== 'string') return false;
     const candidate = path.resolve(info.directory, bin);
     if (!candidate.startsWith(info.directory + path.sep)) return false;
@@ -74,6 +77,15 @@ function launcherName(entry) {
   const name = path.basename(entry).toLowerCase();
   if (name !== 'npx' && name !== 'npm') return name;
   try { const real = path.basename(fs.realpathSync(entry)).toLowerCase(); return /^np[mx]-cli\.js$/.test(real) ? real : name; } catch { return name; }
+}
+// npx / npm exec run another program; that target is classified on its own.
+function isDispatcher(argv) {
+  const name = launcherName(argv[1] || '');
+  if (!/^(?:npm-cli|npx-cli)(?:\.[cm]?js)?$/.test(name)) return false;
+  if (name.startsWith('npx-cli')) return true;
+  const takesValue = new Set(['--workspace', '-w', '--prefix', '--dir', '-C', '--filter', '--cache', '--userconfig', '--globalconfig']);
+  for (let i = 2; i < argv.length; i++) { if (takesValue.has(argv[i])) { i++; continue; } if (!argv[i].startsWith('-')) return argv[i] === 'exec'; }
+  return false;
 }
 function isPersistent(argv) {
   const entry = argv[1] || '', args = argv.slice(2);
@@ -132,4 +144,4 @@ function entryKind(argv) {
   }
   return moduleKind(entry) || commandKind(name);
 }
-module.exports = { moduleKind, entryKind, commandKind, isPersistent };
+module.exports = { moduleKind, entryKind, commandKind, isPersistent, isDispatcher };
