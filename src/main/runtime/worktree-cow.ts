@@ -484,6 +484,33 @@ export function cowCopyHeavyDirsSync(
   return copied;
 }
 
+// Git enumerates sibling registrations during `worktree add`; simultaneous
+// adds can observe a directory before its commondir file has been written.
+// Share the queue across managers/checkouts of the same physical repository.
+const worktreeAddTails = new Map<string, Promise<void>>();
+
+async function withWorktreeAddLock<T>(input: MaterializeWorktreeInput, add: () => Promise<T>): Promise<T> {
+  const common = await input.git.run(input.repositoryRoot, [
+    'rev-parse', '--path-format=absolute', '--git-common-dir',
+  ]);
+  const directory = common.stdout.trim();
+  if (common.status !== 0 || !path.isAbsolute(directory)) {
+    throw new Error('Git common directory is unavailable for worktree creation');
+  }
+  const key = fs.realpathSync(directory);
+  const previous = worktreeAddTails.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const tail = new Promise<void>((resolve) => { release = resolve; });
+  worktreeAddTails.set(key, tail);
+  await previous;
+  try {
+    return await add();
+  } finally {
+    release();
+    if (worktreeAddTails.get(key) === tail) worktreeAddTails.delete(key);
+  }
+}
+
 /**
  * Materialize a linked git worktree, then optionally CoW heavy content.
  */
@@ -496,14 +523,14 @@ export async function materializeGitWorktree(
   }
 
   const gitStart = Date.now();
-  const result = await input.git.run(input.repositoryRoot, [
+  const result = await withWorktreeAddLock(input, () => input.git.run(input.repositoryRoot, [
     'worktree',
     'add',
     '-b',
     branch,
     input.worktreePath,
     input.headSha,
-  ]);
+  ]));
   if (result.status !== 0) {
     throw new GitCommandError(
       'Git could not create the task worktree',

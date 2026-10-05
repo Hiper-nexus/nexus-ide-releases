@@ -83,7 +83,7 @@ describe('worktree-cow', () => {
   });
 
   it('materializeGitWorktree uses git worktree add then reports method', async () => {
-    const run = vi.fn().mockReturnValue({ status: 0, stdout: '', stderr: '' });
+    const run = vi.fn().mockReturnValue({ status: 0, stdout: fs.realpathSync(os.tmpdir()), stderr: '' });
     const result = await materializeGitWorktree({
       repositoryRoot: '/repo',
       worktreePath: `/tmp/nexus-cow-test-${Date.now()}-missing`,
@@ -319,6 +319,7 @@ describe.skipIf(!darwin)('F-215 — clonefile direto via osascript', () => {
     });
     const checked: string[] = [];
     const run = vi.fn(async (_cwd: string, args: readonly string[]) => {
+      if (args[0] === 'rev-parse') return { status: 0, stdout: repo, stderr: '' };
       if (args[0] === 'check-ignore') {
         checked.push(args[args.length - 1]);
         return {
@@ -706,7 +707,7 @@ describe('worktree-cow', () => {
   });
 
   it('materializeGitWorktree uses git worktree add then reports method', async () => {
-    const run = vi.fn().mockReturnValue({ status: 0, stdout: '', stderr: '' });
+    const run = vi.fn().mockReturnValue({ status: 0, stdout: fs.realpathSync(os.tmpdir()), stderr: '' });
     const result = await materializeGitWorktree({
       repositoryRoot: '/repo',
       worktreePath: `/tmp/nexus-cow-test-${Date.now()}-missing`,
@@ -747,4 +748,53 @@ describe('worktree-cow', () => {
     ).toBe(false);
     expect(exec).not.toHaveBeenCalled();
   });
+});
+
+it.each([false, true])('F-255: serializes linked-checkout adds and releases after failure=%s', async (firstFails) => {
+  const root = tmpRoot();
+  let registering = false;
+  const git = { run: async (_cwd: string, args: readonly string[]) => {
+    if (args[0] === 'rev-parse') return { status: 0, stdout: root, stderr: '' };
+    if (registering) throw new Error('incomplete sibling commondir');
+    registering = true;
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      if (firstFails && args[3] === 'first') throw new Error('first add failed');
+      fs.mkdirSync(args[4], { recursive: true });
+      return { status: 0, stdout: '', stderr: '' };
+    } finally { registering = false; }
+  } };
+  try {
+    const results = await Promise.allSettled(['first', 'linked'].map((name) => materializeGitWorktree({
+      repositoryRoot: path.join(root, name), worktreePath: path.join(root, 'wt-' + name),
+      branchRef: 'refs/heads/' + name, headSha: 'a'.repeat(40), git, cowDirs: [],
+    })));
+    expect(results.map((r) => r.status)).toEqual([firstFails ? 'rejected' : 'fulfilled', 'fulfilled']);
+    expect(fs.existsSync(path.join(root, 'wt-first'))).toBe(!firstFails);
+    expect(fs.existsSync(path.join(root, 'wt-linked'))).toBe(true);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+it('F-255: another repository does not wait for an unrelated worktree registration', async () => {
+  const root = tmpRoot();
+  const a = path.join(root, 'a'), b = path.join(root, 'b');
+  fs.mkdirSync(a); fs.mkdirSync(b);
+  let release!: () => void;
+  const hold = new Promise<void>((resolve) => { release = resolve; });
+  let started!: () => void;
+  const firstStarted = new Promise<void>((resolve) => { started = resolve; });
+  const git = { run: async (cwd: string, args: readonly string[]) => {
+    if (args[0] === 'rev-parse') return { status: 0, stdout: cwd, stderr: '' };
+    if (cwd === a) { started(); await hold; }
+    fs.mkdirSync(args[4]);
+    return { status: 0, stdout: '', stderr: '' };
+  } };
+  const make = (repo: string) => materializeGitWorktree({ repositoryRoot: repo, worktreePath: path.join(repo, 'wt'), branchRef: 'refs/heads/work', headSha: 'a'.repeat(40), git, cowDirs: [] });
+  const first = make(a);
+  try {
+    await firstStarted;
+    await make(b);
+    expect(fs.existsSync(path.join(b, 'wt'))).toBe(true);
+    expect(fs.existsSync(path.join(a, 'wt'))).toBe(false);
+  } finally { release(); await first; fs.rmSync(root, { recursive: true, force: true }); }
 });
