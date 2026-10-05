@@ -9,8 +9,8 @@ native authentication status.
 | CLI | Actual installed primary | Measured result | Still required |
 |---|---|---|---|
 | Aider | UV `aider-chat` 0.86.2, Python 3.12 | Real owned-PTY baseline and scheduled shell execution passed with the exact command's normal one-time approval. Default Nexus `--yes-always` separately declined the shell command. | Canonical app/candidate execution; the default refusal is a CLI capability limit, not a scheduler execution PASS. |
-| Devin | Native 3000.11.3 (`9c803229faa4`) | Private `auth status`: Not logged in. Private default `--permission-mode dangerous --respect-workspace-trust false --print`: login canceled before tool dispatch. | Native auth availability and finite backend/tool control. A read-only native status attempt under a write-denied fixture failed at initialization, leaving auth availability indeterminate. That fixture restriction is not a product failure. |
-| AGY | Native 1.2.16 | Private official gateway configuration reached an eligibility/auth error before gateway parsing or tools: not logged into Antigravity. | Native auth availability plus public bounded gateway/tool control. Installed help exposes no auth-status command; no eligibility bypass or external inference was attempted. |
+| Devin | Native 3000.11.3 (`9c803229faa4`) | Native `auth status` confirms Logged in, credentials unchanged. Supported API-server override reaches the actual account-status protobuf endpoint in the owned gateway. Empty private HOME results are historical isolation controls. | Real native account validation plus finite inference/tool control; no entitlement response or codec is fabricated. |
+| AGY | Native 1.2.16 | Existing Nexus native Keychain accessor confirms a usable OAuth payload. Empty private HOME failed eligibility before gateway parsing or tools. | Actual native eligibility plus public bounded gateway/tool control. Installed help exposes no auth-status command; no eligibility bypass or external inference was attempted. |
 
 ## Aider physical proof
 
@@ -86,6 +86,43 @@ The historical adapter matrix's unmeasured Aider entry is superseded by this
 installed-PTY proof. Devin/AGY real tool admission remains open, as do the
 canonical signed candidate controls. Shared Bash/Node tests do not close these
 individual native CLI requirements.
+
+## Native authentication follow-up
+
+The initial Devin write-denied attempt is now explained: `tracing-appender`
+panicked at `rolling.rs:154` / `chisel/main.rs:105`, reporting failure to create
+its initial log file, before authentication. With writes allowed only to the
+existing native `~/.local/share/devin/cli/logs` directory plus private cache/TMP,
+native `auth status` exited 0 and confirmed Logged in. Network remained denied;
+the native credentials file's inode/size/mtime were unchanged. Raw stdout (which
+can contain identity) was discarded. Sanitized evidence:
+`/private/var/folders/sx/x73nxt3s0tnfhs1n_bl38bc40000gn/T/nexus-c6-devin-status-reason-tlxl6pby/status-log-allowed.json`.
+
+AGY's existing `subscription-auth.ts` accessor invokes `security
+find-generic-password -s gemini -a antigravity -w` against the native HOME, then
+checks its payload in memory. That exact read-only accessor command exited 0
+with a usable token payload; neither token nor raw output was stored or shown.
+This establishes local auth availability, not entitlement or tool execution.
+Evidence: `/private/var/folders/sx/x73nxt3s0tnfhs1n_bl38bc40000gn/T/nexus-c6-native-auth-gateway-h4f358eq/agy-auth.json`.
+
+The first Devin `DEVIN_API_URL` control timed out at 12 s with zero owned gateway
+requests. The installed primary's auth-status text explicitly names the separate
+`WINDSURF_API_SERVER_URL` override. Using that supported override reached three
+POSTs to `/exa.seat_management_pb.SeatManagementService/GetUserStatus` (981-byte
+protobuf bodies) and a POST to
+`/exa.product_analytics_pb.ProductAnalyticsService/BatchRecordAnalyticsEvents`.
+Only method/path/body length/top-level field names were retained; header, query,
+body, and identity values were discarded. The gateway returned 503 rather than
+manufacturing eligibility. The CLI hit the 12 s ceiling before tool dispatch;
+the native credential stat remained unchanged. Evidence:
+`/private/var/folders/sx/x73nxt3s0tnfhs1n_bl38bc40000gn/T/nexus-c6-native-auth-gateway-h4f358eq/devin-api-server-gateway.json`.
+
+Devin's account-status protobuf and AGY's native eligibility remain precise
+unproved boundaries. They are not missing-login claims, scheduler failures, or
+product permission restrictions. Future session controls can reuse canonical
+`prepareCheckoutProviderHome('devin')`, which provides private durable state and
+links the exact source auth file without copying credentials; normal auth
+lineage must remain in place.
 
 Final source checks: Node 22 `tsc --noEmit` exit 0, renderer sink audit 0
 executable sinks, Main sync ratchet 91 reviewed legacy uses/no new synchronous
