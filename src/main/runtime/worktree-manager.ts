@@ -91,12 +91,12 @@ const WORKTREE_STATUS_ARGS = [
 /**
  * F-908: caches regeneráveis. Um ignorado só deixa a worktree sair quando é
  * ou mora dentro de um destes, em qualquer nível (`mobile/node_modules/`, o
- * clone CoW). `out`/`dist`/`build`/`target`/`coverage` e qualquer outro
- * ignorado (`.env`, dumps, `.next/` inteiro) mantêm a worktree: podem guardar
- * entregável.
+ * clone CoW). `out`/`dist`/`build`/`target`/`coverage`, `__pycache__` e
+ * qualquer outro ignorado (`.env`, dumps, `.next/` inteiro) mantêm a
+ * worktree: podem guardar entregável.
  */
 const REGENERABLE_IGNORED = new Set([
-  "node_modules", ".vite", ".turbo", ".cache", ".pytest_cache", "__pycache__",
+  "node_modules", ".vite", ".turbo", ".cache", ".pytest_cache",
 ]);
 
 function regenerableIgnored(entry: string): boolean {
@@ -1239,6 +1239,9 @@ export class WorktreeManager {
     const record = this.#snapshot(scopeKey).records.find((current) =>
       current.taskKey === candidate.taskKey);
     if (!record || !released(record) || record.updatedAt !== candidate.updatedAt) return "changed";
+    // Marca exclusiva: outro coletor (fim do pane × paradas) que entrou antes
+    // da marca não a toma nem a apaga ao sair, senão a retomada passaria.
+    if (this.#collecting.has(record.taskKey)) return "collecting";
     this.#collecting.add(record.taskKey);
     try {
       // Revalida depois dos awaits da prova: ref da branch, ancestralidade,

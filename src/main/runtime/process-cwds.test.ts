@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { listProcessCwds, type ProcessCwdExec } from './process-cwds';
+import { decodeLsofName, listProcessCwds, type ProcessCwdExec } from './process-cwds';
 
 const temps: string[] = [];
 /** mkdtemp cria 0700 do próprio usuário: serve de ancestral privado. */
@@ -74,6 +74,16 @@ describe('F-908: cwd atual dos processos', () => {
       expect(await listProcessCwds({ ...base, uid: process.getuid!(), exec })).toBeNull();
       expect(await listProcessCwds({ ...base, uid: process.getuid!() + 1, privateAncestors: [tmp()], exec }))
         .toBeNull();
+    });
+
+    it('caminho não ASCII escapado pelo lsof volta a UTF-8', async () => {
+      expect(decodeLsofName('/Users/jo\\xc3\\xa3o/task-a\\xc3\\xa7\\xc3\\xa3o')).toBe('/Users/joão/task-ação');
+      expect(decodeLsofName('/a\\\\b/c')).toBe('/a\\b/c');
+      expect(decodeLsofName('/já/utf8')).toBe('/já/utf8');
+      const dir = tmp();
+      const uid = process.getuid!();
+      expect(await listProcessCwds({ ...base, uid, privateAncestors: [dir],
+        exec: fake(`1 ${uid} S\n`, 'p1\nn/w/task-a\\xc3\\xa7\\xc3\\xa3o\n') })).toEqual(['/w/task-ação']);
     });
 
     it('timeout/falha de ps ou lsof é sem prova', async () => {

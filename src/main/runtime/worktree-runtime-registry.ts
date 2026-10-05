@@ -253,8 +253,8 @@ export class WorktreeRuntimeRegistry {
    * F-908: remove worktrees LIMPAS de writers de pane liberados há mais de
    * `minIdleMs`, missão done/failed/ausente, sem sessão viva e sem processo
    * com o cwd ATUAL dentro (sem essa prova, nada sai). Suja ganha a
-   * salvaguarda F-794 e fica; branch não mesclada fica. Antes, prune dos
-   * `prunable` com layout Nexus. Resultado registrado.
+   * salvaguarda F-794 e fica; branch não mesclada fica. Antes, prune só
+   * quando todo `prunable` é registro Nexus atual. Resultado registrado.
    */
   async collectAgedPaneWriterWorktrees(
     scope: ProjectExecutionScope,

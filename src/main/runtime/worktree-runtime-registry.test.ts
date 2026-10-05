@@ -1402,7 +1402,7 @@ describe("F-908: coleta de worktrees de writers paradas", () => {
     registry.dispose();
   });
 
-  it("faz prune só de registros prunable dentro da raiz gerenciada", async () => {
+  it("faz prune só quando todo prunable é registro Nexus atual", async () => {
     const { root, scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);
     setMission(manager, scope, "mission-live", "running");

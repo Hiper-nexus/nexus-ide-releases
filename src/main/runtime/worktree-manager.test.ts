@@ -493,6 +493,35 @@ describe("WorktreeManager", () => {
         } } });
     };
 
+    it("dois coletores no mesmo writer: a marca é exclusiva e a retomada no meio é recusada", async () => {
+      const target = await writer("double");
+      merge(target);
+      let bDone: Promise<unknown> = Promise.resolve();
+      let reopened: unknown = "não tentou";
+      // B entra no candidato antes da marca de A (hook no último comando da prova de A).
+      const racing: WorktreeManager = hooked((args) => args[0] === "ls-files", () => {
+        bDone = racing.collectReleasedPaneWorktrees(scope(),
+          { owner: () => true, inUse: () => false, confirmUnused: async () => false });
+      });
+      const a = await racing.collectReleasedPaneWorktrees(scope(), {
+        owner: () => true, inUse: () => false,
+        confirmUnused: async () => {
+          // A já tem a marca; B terminou. A retomada tem de ser recusada.
+          await bDone;
+          try {
+            racing.reopenPaneWriter(scope(), "operator-hand", target.taskId);
+            reopened = "aceita";
+          } catch (error) {
+            reopened = (error as Error).message;
+          }
+          return true;
+        },
+      });
+      expect(await bDone).toMatchObject({ removed: [], kept: { collecting: 1 } });
+      expect(reopened).toMatch(/being collected/);
+      expect(a.removed.map((record) => record.taskId)).toEqual([target.taskId]);
+    });
+
     it("revalida a ref da branch e o HEAD do checkout depois da prova; mudou, mantém tudo", async () => {
       // Branch ganha commit no fim da prova (coleta de paradas, branch não mesclada).
       const moved = await writer("moved");
@@ -516,21 +545,27 @@ describe("WorktreeManager", () => {
       expect(git(root, "rev-parse", rolled.branchRef)).toBe(git(rolled.worktreePath, "rev-parse", "HEAD"));
     });
 
-    it("só remove com ignorados todos em cache regenerável; out/dist/.env/pasta qualquer mantêm", async () => {
+    it("só remove com ignorados todos em cache regenerável; out/dist/.env/__pycache__/.next/pasta qualquer mantêm", async () => {
       fs.appendFileSync(path.join(root, ".git", "info", "exclude"),
-        "node_modules/\n__pycache__/\n*.env\nscratch/\nout/\ndist/\n");
+        "node_modules/\n__pycache__/\n*.env\nscratch/\nout/\ndist/\n.vite/\n.turbo/\n.cache/\n.next/cache/\n.next/server/\n.pytest_cache/\n");
       const caches = await writer("caches");
-      const kept = { secret: ".env", other: "scratch/dump.sql", out: "out/customer-export.zip", dist: "dist/app.js" };
+      const kept = { secret: ".env", other: "scratch/dump.sql", out: "out/customer-export.zip", dist: "dist/app.js",
+        pyc: "src/__pycache__/m.pyc", next: ".next/server/page.js" };
       const records: Record<string, WorktreeRecord> = Object.fromEntries(
         await Promise.all(Object.keys(kept).map(async (id) => [id, await writer(id)] as const)));
       for (const record of [caches, ...Object.values(records)]) merge(record);
       write("node_modules/pkg/index.js", "x", caches.worktreePath);
       write("src/node_modules/pkg/index.js", "x", caches.worktreePath);
-      write("src/__pycache__/m.pyc", "x", caches.worktreePath);
+      // Diretório não rastreado só com ignorados vira UMA entrada no status
+      // (`pkg/`, `.next/`) e mantém a worktree (regra conservadora); aqui os
+      // caches ficam onde o Git os reporta pelo nome.
+      for (const cache of [".vite/deps/a.js", ".turbo/cache/b", ".cache/c", ".pytest_cache/v/e"]) {
+        write(cache, "x", caches.worktreePath);
+      }
       for (const [id, file] of Object.entries(kept)) write(file, `entregável ${id}`, records[id].worktreePath);
       const report = await manager.collectReleasedPaneWorktrees(scope(), { owner: () => true, inUse: () => false });
       expect(report.removed.map((r) => r.taskId)).toEqual([caches.taskId]);
-      expect(report.kept).toEqual({ "ignored-kept": 4 });
+      expect(report.kept).toEqual({ "ignored-kept": 6 });
       for (const [id, file] of Object.entries(kept)) {
         expect(fs.readFileSync(path.join(records[id].worktreePath, file), "utf8")).toBe(`entregável ${id}`);
       }

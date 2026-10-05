@@ -39,6 +39,9 @@ const defaultExec: ProcessCwdExec = (command, args, timeoutMs) =>
   new Promise((resolve) => {
     execFile(command, [...args], {
       encoding: 'utf8', timeout: timeoutMs, killSignal: 'SIGKILL', maxBuffer: 64 * 1024 * 1024,
+      // App aberto pelo Finder não tem LANG; sem localidade o lsof escapa
+      // byte não ASCII (`\xNN`). A decodificação abaixo cobre os dois casos.
+      env: { ...process.env, LC_ALL: 'en_US.UTF-8' },
     }, (error, stdout) => {
       const failure = error as (Error & { code?: unknown; killed?: boolean }) | null;
       const status = !failure ? 0 : typeof failure.code === 'number' && !failure.killed ? failure.code : null;
@@ -53,6 +56,29 @@ function defaultIsAlive(pid: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'EPERM';
   }
+}
+
+/**
+ * Nome como o lsof imprime: `\xNN` é um byte e `\\` uma barra invertida.
+ * Os bytes voltam a UTF-8, senão `/Users/joão` nunca casaria com a worktree
+ * e o processo vivo contaria como ausente.
+ */
+export function decodeLsofName(name: string): string {
+  if (!name.includes('\\')) return name;
+  const bytes: number[] = [];
+  for (let index = 0; index < name.length; index += 1) {
+    const char = name[index]!;
+    if (char === '\\' && name[index + 1] === '\\') {
+      bytes.push(0x5c);
+      index += 1;
+    } else if (char === '\\' && name[index + 1] === 'x' && /^[0-9a-f]{2}$/i.test(name.slice(index + 2, index + 4))) {
+      bytes.push(parseInt(name.slice(index + 2, index + 4), 16));
+      index += 3;
+    } else {
+      bytes.push(...Buffer.from(char, 'utf8'));
+    }
+  }
+  return Buffer.from(bytes).toString('utf8');
 }
 
 async function privateDirectory(dir: string, uid: number): Promise<boolean> {
@@ -83,7 +109,7 @@ export async function listProcessCwds(deps: ProcessCwdDeps = {}): Promise<readon
       let pid = 0;
       for (const line of lsof.stdout.split('\n')) {
         if (line.startsWith('p')) pid = Number(line.slice(1));
-        else if (line.startsWith('n')) cwdByPid.set(pid, line.slice(1));
+        else if (line.startsWith('n')) cwdByPid.set(pid, decodeLsofName(line.slice(1)));
       }
       const isAlive = deps.isAlive ?? defaultIsAlive;
       // Processo do mesmo uid, vivo, sem cwd absoluto no lsof: desconhecido.
