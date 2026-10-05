@@ -25,10 +25,13 @@ fi
 "${DOCKER[@]}" pull -q "$IMAGE" >/dev/null
 echo "[ci-local] commit $SHA em $IMAGE"
 status=0
-"${DOCKER[@]}" run --rm --init --shm-size=1g \
+TMPFS_ARGS=()
+[ -z "${CI_TMPFS:-}" ] || TMPFS_ARGS=(--tmpfs "/tmp:exec,mode=1777,size=$CI_TMPFS")
+"${DOCKER[@]}" run --rm --init --shm-size=1g "${TMPFS_ARGS[@]}" \
   --mount "type=bind,src=$REPO,dst=/source-ro,readonly" \
   --mount "type=bind,src=$REPO/scripts/linux-release-container.sh,dst=/linux-release-container.sh,readonly" \
   --env "CI_REF=$SHA" --env "IMAGE_ID=ci-local" \
+  --env "CI_TEST_FILES=${CI_TEST_FILES:-}" --env "NEXUS_CI_TMPDIR=${NEXUS_CI_TMPDIR:-}" \
   "$IMAGE" bash /linux-release-container.sh ci || status=$?
 if [ "$status" = 0 ]; then echo "[ci-local] PASSOU: $SHA"; else echo "[ci-local] FALHOU ($status): $SHA" >&2; fi
 exit "$status"

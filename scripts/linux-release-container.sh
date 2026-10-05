@@ -45,7 +45,7 @@ if [ "$STAGE" = root ]; then
     git openssh-client jq xz-utils sudo procps lsof ripgrep \
     build-essential g++-12 clang-15 python3 pkg-config bubblewrap fakeroot rpm xvfb xauth unzip zip \
     libgtk-3-0 libnss3 libasound2 libgbm1 libx11-xcb1 libdrm2 libxshmfence1 \
-    dbus-x11 binutils desktop-file-utils >/dev/null
+    dbus-x11 binutils desktop-file-utils zsh >/dev/null
   bwrap --version
   test "$(printf '%s\n' "$(git --version | cut -d' ' -f3)" 2.38.0 | sort -V | head -n1)" = 2.38.0
   git --version
@@ -76,6 +76,7 @@ if [ "$STAGE" = root ]; then
     CC=clang-15 CXX=clang++-15 \
     HOST_UID="${HOST_UID:-}" HOST_GID="${HOST_GID:-}" IMAGE_ID="${IMAGE_ID:-unknown}" CI_REF="$CI_REF" \
     KNOWN_TEST_FAILURE_FILE="${KNOWN_TEST_FAILURE_FILE:-}" KNOWN_TEST_FAILURE_MATCH="${KNOWN_TEST_FAILURE_MATCH:-}" \
+    CI_TEST_FILES="${CI_TEST_FILES:-}" NEXUS_CI_TMPDIR="${NEXUS_CI_TMPDIR:-}" CI_TMPFS="${CI_TMPFS:-}" \
     bash "$0" "$VERSION" runner
 fi
 
@@ -96,6 +97,11 @@ load_github_env() {
   done < "$GITHUB_PATH"
 }
 
+if [ -n "${NEXUS_CI_TMPDIR:-}" ]; then
+  mkdir -p "$NEXUS_CI_TMPDIR"
+  export TMPDIR="$NEXUS_CI_TMPDIR"
+  log "TMPDIR=$TMPDIR (${#TMPDIR} caracteres)"
+fi
 git config --global --add safe.directory '*'
 git clone -q /source-ro "$WORK/src"
 cd "$WORK/src"
@@ -164,6 +170,13 @@ CPP
 
 log "npm ci, typecheck, sinks do renderer, testes e segurança de release"
 npm ci
+if [ -n "${CI_TEST_FILES:-}" ] && [ -n "$CI_REF" ]; then
+  # Diagnóstico rápido: só estes arquivos de teste (modo CI), sem typecheck nem suíte inteira.
+  log "diagnóstico: apenas $CI_TEST_FILES"
+  # shellcheck disable=SC2086
+  npx vitest run $CI_TEST_FILES
+  exit $?
+fi
 npm run typecheck
 npm run security:renderer-sinks
 KNOWN_FAILURE_RECORD=""
@@ -243,6 +256,7 @@ log "coleta: três pacotes, checksums e proveniência"
 cp "$DEB" "$RPM" "$ZIP" /out/
 (cd /out && for f in "$(basename "$DEB")" "$(basename "$RPM")" "$(basename "$ZIP")"; do printf '%s  %s\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$f"; done | LC_ALL=C sort -k2 > SHA256SUMS-linux-x64.txt)
 NODE_VERSION="$NODE_VERSION" VERSION="$VERSION" RELEASE_COMMIT="$RELEASE_COMMIT" TAG_OBJECT="$TAG_OBJECT" KNOWN_FAILURE_RECORD="$KNOWN_FAILURE_RECORD" \
+BUILD_TMPDIR="${NEXUS_CI_TMPDIR:-}" BUILD_TMPFS="${CI_TMPFS:-}" \
 IMAGE_ID="${IMAGE_ID:-unknown}" python3 - <<'PY'
 import json, os, subprocess, datetime
 out = {
@@ -258,6 +272,13 @@ out = {
   "smoke": {"packaged": True, "debInstalled": True, "zipExtracted": True},
   "glibcMax": "<= 2.35",
 }
+if os.environ.get("BUILD_TMPDIR") or os.environ.get("BUILD_TMPFS"):
+  # Diferenças de ambiente do container em relação ao runner/macOS, sem pular nenhum teste.
+  out["testEnvironment"] = {
+    "zsh": True,
+    "tmpdirLength": len(os.environ.get("BUILD_TMPDIR", "")),
+    "tmpfs": os.environ.get("BUILD_TMPFS", "") or None,
+  }
 if os.environ.get("KNOWN_FAILURE_RECORD"):
   out["knownTestFailure"] = os.environ["KNOWN_FAILURE_RECORD"]
 json.dump(out, open("/out/build-provenance.json", "w"), indent=2)
