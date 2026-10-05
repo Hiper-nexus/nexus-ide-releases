@@ -27,7 +27,9 @@ import {
 } from "./sqlite-workflow-state-stores";
 import { ScopedStoreBinding } from "../orch/scoped-store";
 import { sweepPtysInsideWorktree, worktreeHasLiveSession } from "./worktree-pty-sweep";
-import { salvageCoversWorktree } from "../orch/isolated-writer-salvage";
+import { scheduleWorktreeSalvage } from "../orch/isolated-writer-salvage";
+import { listProcessCwds } from "./process-cwds";
+import { isPathInsideOrEqual } from "./worktree-removal-safety";
 import {
   managedCandidatesRoot,
   managedWorktreesRoot,
@@ -213,11 +215,11 @@ export class WorktreeRuntimeRegistry {
   }
 
   /**
-   * F-908: remove worktrees de writers de pane liberados há mais de
-   * `minIdleMs` cuja missão está done/failed/ausente e sem sessão viva
-   * dentro. Suja ou com branch não mesclada só sai depois da salvaguarda
-   * provada igual ao estado inteiro; branch não mesclada fica. Antes, prune
-   * dos registros `prunable` das raízes gerenciadas. Resultado registrado.
+   * F-908: remove worktrees LIMPAS de writers de pane liberados há mais de
+   * `minIdleMs`, missão done/failed/ausente, sem sessão viva e sem processo
+   * com o cwd ATUAL dentro (sem essa prova, nada sai). Suja ganha a
+   * salvaguarda F-794 e fica; branch não mesclada fica. Antes, prune dos
+   * `prunable` com layout Nexus. Resultado registrado.
    */
   async collectAgedPaneWriterWorktrees(
     scope: ProjectExecutionScope,
@@ -242,19 +244,30 @@ export class WorktreeRuntimeRegistry {
     };
     // Prune primeiro: libera a branch de pasta sumida para o `branch -d`.
     const prune = await runtime.worktrees.pruneManagedWorktrees(scope);
-    const report = await runtime.worktrees.collectReleasedPaneWorktrees(scope, {
-      owner: finished,
-      inUse: worktreeHasLiveSession,
-      minIdleMs,
-      maxCandidates,
-      deadlineAt,
-      preserve: (record) => salvageCoversWorktree({
-        worktreePath: record.worktreePath,
-        branchRef: record.branchRef,
-        missionId: record.missionId,
-        taskId: record.taskId,
-      }),
-    });
+    const cwds = await listProcessCwds();
+    const occupied = (worktreePath: string, current: readonly string[]) =>
+      worktreeHasLiveSession(worktreePath) || current.some((cwd) => isPathInsideOrEqual(worktreePath, cwd));
+    const report: PaneWorktreeGcReport = cwds === null
+      // win32, lsof/procfs indisponível ou com erro: sem prova de uso, nada sai.
+      ? { removed: [], kept: { "liveness-unavailable": 1 }, deferred: 0 }
+      : await runtime.worktrees.collectReleasedPaneWorktrees(scope, {
+        owner: finished,
+        inUse: (worktreePath) => occupied(worktreePath, cwds),
+        confirmUnused: async (worktreePath) => {
+          const current = await listProcessCwds();
+          return current !== null && !occupied(worktreePath, current);
+        },
+        minIdleMs,
+        maxCandidates,
+        deadlineAt,
+        salvageDirty: (record) => scheduleWorktreeSalvage({
+          worktreePath: record.worktreePath,
+          branchRef: record.branchRef,
+          missionId: record.missionId,
+          taskId: record.taskId,
+          reason: "gc",
+        }, { notify: false }),
+      });
     if (report.removed.length > 0 || Object.keys(report.kept).length > 0 ||
         report.deferred > 0 || !('pruned' in prune) || prune.pruned > 0) {
       console.warn(

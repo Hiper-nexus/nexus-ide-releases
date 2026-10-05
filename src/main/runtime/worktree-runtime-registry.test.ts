@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectExecutionScope } from "../../shared/types";
 import { ProjectRuntimeManager } from "./project-runtime-manager";
@@ -1309,43 +1309,24 @@ describe("F-908: coleta de worktrees de writers paradas", () => {
     registry.dispose();
   });
 
-  it("worktree suja vira salvaguarda com o estado inteiro antes de sair; branch não mesclada fica", async () => {
+  it("worktree suja ganha a salvaguarda F-794 e FICA; limpa não mesclada sai e a branch fica", async () => {
     const { root, scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);
     setMission(manager, scope, "mission-failed", "failed");
-    const record = await paneWriter(registry, scope, "mission-failed", "d", "d.txt");
-    fs.writeFileSync(path.join(record.worktreePath, "owned.txt"), "wip tracked\n");
-    fs.writeFileSync(path.join(record.worktreePath, "novo.txt"), "só existe aqui\n");
+    const dirty = await paneWriter(registry, scope, "mission-failed", "d", "d.txt");
+    fs.writeFileSync(path.join(dirty.worktreePath, "owned.txt"), "wip tracked\n");
+    fs.writeFileSync(path.join(dirty.worktreePath, "novo.txt"), "só existe aqui\n");
+    const clean = await paneWriter(registry, scope, "mission-failed", "c", "c.txt");
     const report = await registry.collectAgedPaneWriterWorktrees(scope, NOW);
-    expect(report.removed.map((r) => r.taskId)).toEqual([record.taskId]);
-    expect(fs.existsSync(record.worktreePath)).toBe(false);
+    expect(report.removed.map((r) => r.taskId)).toEqual([clean.taskId]);
+    expect(report.kept).toEqual({ "dirty-kept": 1 });
+    expect(fs.readFileSync(path.join(dirty.worktreePath, "novo.txt"), "utf8")).toBe("só existe aqui\n");
     const [ref] = salvageRefs(root);
     expect(ref).toMatch(/^refs\/nexus-salvage\/nexus\//);
     expect(git(root, "show", `${ref}:novo.txt`)).toBe("só existe aqui");
     expect(git(root, "show", `${ref}:owned.txt`)).toBe("wip tracked");
-    expect(git(root, "show", `${ref}:d.txt`)).toBe("d.txt");
-    // Commit não mesclado continua alcançável pela própria branch.
-    expect(branchExists(root, record.branchRef)).toBe(true);
-    registry.dispose();
-  });
-
-  it("mantém worktree suja cuja salvaguarda não é idêntica (arquivo grande fora do snapshot)", async () => {
-    const { root, scope, manager } = fixture();
-    const registry = new WorktreeRuntimeRegistry(manager);
-    setMission(manager, scope, "mission-failed", "failed");
-    const record = await paneWriter(registry, scope, "mission-failed", "big");
-    const big = path.join(record.worktreePath, "grande.bin");
-    fs.writeFileSync(big, Buffer.alloc(26 * 1024 * 1024, 1));
-    // Só o arquivo grande: a salvaguarda nada guarda e a árvore inteira difere do HEAD.
-    const report = await registry.collectAgedPaneWriterWorktrees(scope, NOW);
-    expect(report.removed).toEqual([]);
-    expect(report.kept).toEqual({ "salvage-tree-mismatch": 1 });
-    // Com edição rastreada, a salvaguarda grava, mas sem o grande: incompleta.
-    fs.writeFileSync(path.join(record.worktreePath, "owned.txt"), "wip\n");
-    expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).kept).toEqual({ "salvage-incomplete": 1 });
-    expect(fs.statSync(big).size).toBe(26 * 1024 * 1024);
-    expect(registry.listMission(scope, "mission-failed")).toHaveLength(1);
-    expect(branchExists(root, record.branchRef)).toBe(true);
+    expect(fs.existsSync(clean.worktreePath)).toBe(false);
+    expect(git(root, "show", `${clean.branchRef}:c.txt`)).toBe("c.txt");
     registry.dispose();
   });
 
@@ -1359,10 +1340,24 @@ describe("F-908: coleta de worktrees de writers paradas", () => {
     liveSession.mockImplementation((worktreePath) => worktreePath === busy.worktreePath);
     expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed).toEqual([]);
     liveSession.mockReturnValue(false);
+    // Processo real que fez `cd` para dentro (cwd ATUAL, provado por lsof/procfs).
+    if (process.platform !== "win32") {
+      fs.mkdirSync(path.join(busy.worktreePath, "sub"));
+      const shell = spawn("sleep", ["30"], { cwd: path.join(busy.worktreePath, "sub"), stdio: "ignore" });
+      try {
+        await new Promise((resolve) => shell.once("spawn", resolve));
+        expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed).toEqual([]);
+      } finally {
+        shell.kill("SIGKILL");
+        await new Promise((resolve) => shell.once("exit", resolve));
+      }
+      fs.rmdirSync(path.join(busy.worktreePath, "sub"));
+      expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed.map((r) => r.taskId))
+        .toEqual([busy.taskId]);
+    }
     // Idade mínima padrão (24 h): acabou de ser liberada, não é candidata.
     expect((await registry.collectAgedPaneWriterWorktrees(scope)).removed).toEqual([]);
     expect(fs.existsSync(live.worktreePath)).toBe(true);
-    expect(fs.existsSync(busy.worktreePath)).toBe(true);
     expect(registry.listMission(scope, "mission-live")).toHaveLength(1);
     registry.dispose();
   });
@@ -1423,8 +1418,16 @@ describe("F-908: coleta de worktrees de writers paradas", () => {
     git(root, "worktree", "add", "-q", "-b", "operator-own", foreign);
     fs.rmSync(foreign, { recursive: true, force: true });
     expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).prune)
-      .toEqual({ skipped: "prunable-outside-managed-root" });
+      .toEqual({ skipped: "prunable-not-nexus" });
     expect(git(root, "worktree", "list", "--porcelain")).toContain("prunable");
+    git(root, "worktree", "prune");
+    // Worktree manual do operador DENTRO da raiz gerenciada: também não é esquecida.
+    const manual = path.join(path.dirname(path.dirname(path.dirname(gone.worktreePath))), "manual");
+    git(root, "worktree", "add", "-q", "-b", "operator-manual", manual);
+    fs.rmSync(manual, { recursive: true, force: true });
+    expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).prune)
+      .toEqual({ skipped: "prunable-not-nexus" });
+    expect(git(root, "worktree", "list", "--porcelain")).toContain(manual);
     registry.dispose();
   });
 });

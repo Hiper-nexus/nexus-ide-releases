@@ -103,7 +103,7 @@ const SALVAGE_SCHEMA_REASON: Record<WorktreeSalvageReason, string> = {
   handoff: 'entrega do handoff',
   'pane-exit': 'pane encerrado',
   'reopen-sweep': 'reabertura do projeto depois de um encerramento',
-  gc: 'coleta de worktree parada há mais de um dia',
+  gc: 'worktree suja parada há mais de um dia (mantida)',
 };
 
 function refused(reason: string): WorktreeSalvageResult {
@@ -163,31 +163,6 @@ async function createAsyncPrivateIndex(): Promise<{ path: string; dispose: () =>
       await fs.promises.rm(real, { recursive: true, force: true });
     },
   };
-}
-
-/**
- * Parte do índice REAL (cache de stat): o `add` não precisa re-hashear a
- * árvore inteira. O índice real é só lido, nunca escrito.
- */
-async function seedPrivateIndex(git: AsyncGitRunner, real: string, privateIndex: string): Promise<void> {
-  const indexPath = (await git.run(real, ['rev-parse', '--git-path', 'index'])).stdout.trim();
-  try {
-    await fs.promises.copyFile(path.resolve(real, indexPath), privateIndex);
-  } catch {
-    await git.run(real, ['read-tree', 'HEAD'], { privateIndexFile: privateIndex });
-  }
-}
-
-/** Árvore do estado INTEIRO da worktree (rastreados + novos não ignorados, sem exclusões). */
-async function fullWorktreeTree(git: AsyncGitRunner, real: string): Promise<string> {
-  const index = await createAsyncPrivateIndex();
-  try {
-    await seedPrivateIndex(git, real, index.path);
-    await git.run(real, ['add', '-A', '--', '.'], { privateIndexFile: index.path, timeoutMs: 120_000 });
-    return (await git.run(real, ['write-tree'], { privateIndexFile: index.path })).stdout.trim();
-  } finally {
-    await index.dispose().catch(() => undefined);
-  }
 }
 
 function commitMessage(
@@ -297,7 +272,14 @@ async function runSalvage(
   const baseSha = (await git.run(real, ['rev-parse', '--verify', 'HEAD'])).stdout.trim();
   const index = await createAsyncPrivateIndex();
   try {
-    await seedPrivateIndex(git, real, index.path);
+    // Parte do índice REAL (cache de stat): o `add` não precisa re-hashear a
+    // árvore inteira. O índice real é só lido, nunca escrito.
+    const indexPath = (await git.run(real, ['rev-parse', '--git-path', 'index'])).stdout.trim();
+    try {
+      await fs.promises.copyFile(path.resolve(real, indexPath), index.path);
+    } catch {
+      await git.run(real, ['read-tree', 'HEAD'], { privateIndexFile: index.path });
+    }
     const addArgs = untrackedOmitted > 0
       ? ['add', '-u', '--', '.']
       : ['add', '-A', '--', '.', ...skipped.map(excludeLiteral)];
@@ -341,39 +323,6 @@ async function runSalvage(
   } finally {
     await index.dispose().catch(() => undefined);
   }
-}
-
-export type WorktreeSalvageCoverage =
-  | { readonly covered: true; readonly ref?: string }
-  | { readonly covered: false; readonly reason: string };
-
-/**
- * F-908: antes de a coleta apagar uma worktree parada que tem alteração sem
- * commit, guarda tudo numa salvaguarda e PROVA que a árvore guardada (ou o
- * HEAD, quando nada mudou) é igual ao estado inteiro da worktree, incluindo
- * arquivos novos não ignorados. Snapshot parcial (arquivo grande ou novos
- * demais fora dele) nunca cobre. Serializado com as outras salvaguardas da
- * mesma worktree.
- */
-export function salvageCoversWorktree(
-  target: Omit<WorktreeSalvageTarget, 'reason'>,
-  deps: WorktreeSalvageDeps = {},
-): Promise<WorktreeSalvageCoverage> {
-  const salvageTarget: WorktreeSalvageTarget = { ...target, reason: 'gc' };
-  return serialized(target.worktreePath, async () => {
-    const result = await runSalvage(salvageTarget, deps);
-    traceSalvage(salvageTarget, result);
-    if (result.kind === 'refused') return { covered: false, reason: `salvage-${result.reason}` };
-    if (result.kind === 'saved' && (result.skipped.length > 0 || result.untrackedOmitted > 0)) {
-      return { covered: false, reason: 'salvage-incomplete' };
-    }
-    const git = deps.git ?? new AsyncProcessGitRunner();
-    const real = await fs.promises.realpath(target.worktreePath);
-    const expected = (await git.run(real, ['rev-parse',
-      `${result.kind === 'clean' ? 'HEAD' : result.commit}^{tree}`])).stdout.trim();
-    if (await fullWorktreeTree(git, real) !== expected) return { covered: false, reason: 'salvage-tree-mismatch' };
-    return result.kind === 'clean' ? { covered: true } : { covered: true, ref: result.ref };
-  });
 }
 
 export interface WorktreeSalvageNotice {
