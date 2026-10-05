@@ -17,7 +17,7 @@ const provenance = require(
     root,
     'third_party',
     'provenance',
-    'brace-expansion-5.0.9-compat.json',
+    'brace-expansion-5.0.12-compat.json',
   ),
 );
 
@@ -31,7 +31,7 @@ function minimatchFunction(api) {
   throw new TypeError('installed minimatch has no callable API');
 }
 
-describe('brace-expansion 5.0.9 compatibility boundary', () => {
+describe('brace-expansion 5.0.12 compatibility boundary', () => {
   it('keeps every copied upstream artifact byte-for-byte pinned', () => {
     for (const file of provenance.files) {
       expect(sha256(path.join(root, file.nexusPath)), file.nexusPath).toBe(
@@ -68,10 +68,14 @@ describe('brace-expansion 5.0.9 compatibility boundary', () => {
     expect(commonJs.expand).toBe(upstream.expand);
     expect(commonJs.EXPANSION_MAX).toBe(100_000);
     expect(commonJs.EXPANSION_MAX_LENGTH).toBe(4_000_000);
+    expect(commonJs.EXPANSION_MAX_DEPTH).toBe(1_000);
+    expect(commonJs.EXPANSION_MAX_REWRITES).toBe(1_000);
 
     expect(esm.default).toBe(esm.expand);
     expect(esm.EXPANSION_MAX).toBe(100_000);
     expect(esm.EXPANSION_MAX_LENGTH).toBe(4_000_000);
+    expect(esm.EXPANSION_MAX_DEPTH).toBe(1_000);
+    expect(esm.EXPANSION_MAX_REWRITES).toBe(1_000);
     expect(fs.readFileSync(path.join(compatRoot, 'index.mjs'), 'utf8')).toContain(
       'export const expand = upstream.expand;',
     );
@@ -119,6 +123,26 @@ describe('brace-expansion 5.0.9 compatibility boundary', () => {
       count: 2_666,
       totalLength: 3_999_000,
     });
+  });
+
+  it('bounds nested groups (GHSA-qhr7-859c-m2p7) and the {a},b} rewrite (GHSA-q2hr-2g5m-vwhr)', () => {
+    const entrypoint = path.join(compatRoot, 'index.cjs');
+    const script = `
+      const expand = require(${JSON.stringify(entrypoint)});
+      const deep = expand('{'.repeat(5000) + 'a,b' + '}'.repeat(5000));
+      const started = Date.now();
+      const rewrites = expand('{a},b}'.repeat(3000));
+      process.stdout.write(JSON.stringify({ deep: deep.length, rewritesBounded: rewrites.length <= 1000, fast: Date.now() - started < 5000 }));
+    `;
+    const result = spawnSync(
+      process.execPath,
+      ['--stack-size=984', '-e', script],
+      { cwd: root, encoding: 'utf8', timeout: 15_000, maxBuffer: 1_024 * 1_024 },
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ deep: 1, rewritesBounded: true, fast: true });
   });
 
   it('supports every minimatch API shape installed by the Forge tree', () => {
@@ -173,7 +197,7 @@ describe('brace-expansion 5.0.9 compatibility boundary', () => {
     expect(packageLock.packages[''].version).toBe(packageJson.version);
     expect(packageLock.packages.server.version).toBe(serverPackageJson.version);
     expect(packageLock.packages['third_party/brace-expansion-compat'].version).toBe(
-      '5.0.9',
+      '5.0.12',
     );
     expect(braceEntries).toEqual([
       [
