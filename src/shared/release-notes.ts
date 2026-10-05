@@ -9960,5 +9960,52 @@ export const CURRENT_RELEASE: AppRelease = {
         'ficam fora da indexação do Spotlight; as existentes são preservadas. ' +
         'Chave Qwen inválida deixa de aparecer como pronta para uso.',
     },
+    {
+      title: 'Cópias de trabalho dos agentes não acumulam mais no disco',
+      detail:
+        'Ao fechar o pane de um agente de missão, a cópia de trabalho dele é removida ' +
+        'quando o trabalho já foi integrado. Cópias limpas paradas há mais de um dia saem aos poucos; ' +
+        'as que têm alterações não salvas ficam, com uma salvaguarda Git. Sem clone rápido, o Nexus ' +
+        'não copia mais as dependências arquivo por arquivo.',
+    },
+    {
+      title: 'Fila de compilação e testes para todas as CLIs',
+      detail:
+        'Muse, AGY e Devin entram na mesma fila de comandos pesados das outras CLIs. ' +
+        'Serviços MCP que ficam abertos a sessão inteira não ocupam mais a vez de um build. ' +
+        'O login e as configurações de cada CLI continuam no lugar.',
+    },
+    {
+      title: 'Panes da missão abrem de novo com qualquer CLI',
+      detail:
+        'Panes de AGY, DeepSeek, Grok e outras CLIs podiam mostrar "failed to start" com o agente ' +
+        'rodando por trás, quando a conta ou o modelo tinha sido reescolhido. O pane agora se liga ' +
+        'ao agente que já está rodando.',
+    },
+    {
+      title: 'Missões não ficam mais paradas esperando agente que caiu',
+      detail:
+        'Quando um agente cai ou um aviso de esteira parada fica na fila, o orquestrador volta a ser ' +
+        'chamado, com intervalo crescente. Um reinício do app não bloqueia mais a CLI como se ' +
+        'os agentes dela tivessem falhado.',
+    },
+    {
+      title: 'Agentes começam a trabalhar assim que abrem',
+      detail:
+        'O AGY passa direto pela pergunta de confiança da pasta, Devin e Kimi recebem a tarefa sem ' +
+        'ficar com o texto parado na caixa, e pedir uma CLI pelo nome no meio da conversa é respeitado.',
+    },
+    {
+      title: 'Grafo da missão legível com muitos agentes',
+      detail:
+        'Com muitos helpers, os cabos do grafo correm em faixas e não cruzam os cartões. ' +
+        'Um cabo sem caminho seguro vira uma curva simples em vez de quebrar a tela.',
+    },
+    {
+      title: 'Memória e roteamento mais precisos',
+      detail:
+        'O alerta de memória parada considera a atividade da missão. Correções relatadas pelos agentes ' +
+        'viram memória de problema resolvido, e o roteamento respeita o tamanho de contexto de cada modelo.',
+    },
   ],
 };
