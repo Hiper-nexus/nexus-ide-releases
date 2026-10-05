@@ -1,7 +1,8 @@
 import { downloadRedirectResponse, releaseCatalogResponse } from '../src/downloads/catalog.js';
+import {
+  COMMUNITY_HOST, PRODUCTION_HOST, canonicalAssetLocation, communityAliasTarget, httpsUrl, isPublicHost, seoFile, visitorUsedHttp,
+} from './public-seo.js';
 
-const PRODUCTION_HOST = 'nexuside.app';
-const COMMUNITY_HOST = 'comunidade.nexuside.app';
 const BACKEND_PATHS = ['/v1', '/billing', '/join', '/health', '/ready'];
 const ACCOUNT_PATHS = ['/conta', '/admin'];
 // Links permanentes de download: o HTML, os e-mails e a documentação apontam para cá e nunca ficam velhos.
@@ -38,8 +39,18 @@ async function fetchOrigin(request, originFetch) {
   }
 }
 
+function redirectTo(location, status) {
+  const headers = new Headers(SECURITY_HEADERS);
+  headers.set('location', location);
+  return new Response(null, { status, headers });
+}
+
 export async function handleRequest(request, env, originFetch = fetch) {
   const url = new URL(request.url);
+  if (isPublicHost(url.hostname) && visitorUsedHttp(request, url)) {
+    const status = request.method === 'GET' || request.method === 'HEAD' ? 301 : 308;
+    return redirectTo(httpsUrl(url), status);
+  }
   if (isBackendPath(url.pathname)) {
     return url.hostname === PRODUCTION_HOST
       ? fetchOrigin(request, originFetch)
@@ -60,13 +71,24 @@ export async function handleRequest(request, env, originFetch = fetch) {
     const target = new URL('https://' + COMMUNITY_HOST);
     target.search = url.search;
     if (url.pathname.startsWith('/sorteio')) target.hash = 'premios';
-    return Response.redirect(target.href, 307);
+    return redirectTo(target.href, 301);
+  }
+  if (url.hostname === COMMUNITY_HOST) {
+    const alias = communityAliasTarget(url.pathname, url.search);
+    if (alias) return redirectTo(alias, 301);
   }
   if (url.hostname === COMMUNITY_HOST && isAccountPath(url.pathname)) {
     return new Response('Not found', { status: 404 });
   }
+  const seo = seoFile(url.hostname, url.pathname);
+  if (seo) {
+    const headers = new Headers(SECURITY_HEADERS);
+    headers.set('content-type', seo.contentType);
+    headers.set('cache-control', 'public, max-age=3600');
+    return new Response(request.method === 'HEAD' ? null : seo.body, { status: 200, headers });
+  }
   const assetUrl = new URL(url);
-  if (url.hostname === COMMUNITY_HOST && (url.pathname === '/' || ALIASES.has(url.pathname))) assetUrl.pathname = '/comunidade/';
+  if (url.hostname === COMMUNITY_HOST && url.pathname === '/') assetUrl.pathname = '/comunidade/';
   if (url.hostname === COMMUNITY_HOST && ['/privacidade', '/privacidade.html', '/termos', '/termos.html'].includes(url.pathname)) assetUrl.pathname = '/comunidade' + url.pathname;
   let response = await env.ASSETS.fetch(new Request(assetUrl, request));
   if (response.status === 404) {
@@ -74,6 +96,8 @@ export async function handleRequest(request, env, originFetch = fetch) {
     const missing = await env.ASSETS.fetch(new Request(assetUrl, request));
     response = new Response(missing.body, { status: 404, headers: missing.headers });
   }
+  const canonical = canonicalAssetLocation(url, response);
+  if (canonical) response = new Response(null, { status: 301, headers: { location: canonical } });
   const headers = new Headers(response.headers);
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
   if (url.pathname.startsWith('/sorteio')) headers.set('x-robots-tag', 'noindex');

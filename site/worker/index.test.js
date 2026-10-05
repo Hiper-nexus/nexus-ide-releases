@@ -16,7 +16,7 @@ test('Cloudflare execution context does not replace the origin fetch function', 
 
 test('redirects the former community page away from the product domain', async () => {
   const res = await handleRequest(new Request('https://nexuside.app/comunidade?from=youtube'), {});
-  assert.equal(res.status, 307);
+  assert.equal(res.status, 301);
   assert.equal(res.headers.get('location'), 'https://comunidade.nexuside.app/?from=youtube');
 });
 
@@ -147,12 +147,13 @@ test('o endereço principal também serve a comunidade, para quem não consegue 
 
 test('/comunidade sem barra, o sorteio e subcaminhos continuam indo para o subdomínio', async () => {
   const noSlash = await handleRequest(new Request('https://nexuside.app/comunidade?from=youtube'), {});
-  assert.equal(noSlash.status, 307);
+  assert.equal(noSlash.status, 301);
   assert.equal(noSlash.headers.get('location'), 'https://comunidade.nexuside.app/?from=youtube');
   const raffle = await handleRequest(new Request('https://nexuside.app/sorteio'), {});
+  assert.equal(raffle.status, 301);
   assert.equal(raffle.headers.get('location'), 'https://comunidade.nexuside.app/#premios');
   const sub = await handleRequest(new Request('https://nexuside.app/comunidade/qualquer-coisa'), {});
-  assert.equal(sub.status, 307);
+  assert.equal(sub.status, 301);
 });
 
 // ---- Links permanentes de download ----
