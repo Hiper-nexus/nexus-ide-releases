@@ -193,6 +193,31 @@ cobre a validação compartilhada.
   diretório. Quem adicionar um caminho novo de execução sandboxed precisa
   garantir a mesma coisa: `env.PATH` do plano nunca vem de entrada de agente.
 
+## Linux: atualização automática assinada do pacote portátil (F-940)
+
+O ZIP portátil (`install.sh`, Arch/Omarchy) se atualiza sozinho. É código baixado da rede e executado
+como o usuário, então o GitHub sozinho não é a raiz de confiança.
+
+- **Raiz de confiança:** uma chave Ed25519 de atualização. A pública está embutida em
+  `src/main/linux-update-signing.ts` (lista, para rotação: a chave nova entra numa versão assinada pela antiga e
+  só depois a antiga sai). A privada vive só em `~/.config/nexus-release/linux-update-ed25519.pem` (0600) de quem
+  publica, fora do repositório e fora do container de build; `scripts/sign-linux-update.mjs` recusa chave legível
+  por outros e chave cujo id o app não conhece.
+- **O que é assinado:** o `SHA256SUMS-linux-x64.txt` (`.sig`, base64). O app só confia no ZIP cujo SHA-256 consta nesse
+  arquivo assinado; o formato é rígido (`<64 hex>␣␣<nome>`, sem barra, sem duplicata, ≤ 4 KB).
+- **Origem:** o app MONTA as URLs (`https://github.com/<repo conhecido>/releases/download/v<versão>/<nome>`); nada da
+  resposta da API vira URL. Tag e versão precisam casar (`v0.76.198` ↔ `0.76.198`).
+- **Sem downgrade:** só entra versão maior que a instalada. Sem `.sig`, sem assinatura válida ou ZIP fora da lista: recusa e
+  a instalação atual fica intacta.
+- **Extração própria** (`linux-zip-extract.ts`, o mesmo contrato do `scripts/extract-linux-zip.py`): raiz única, sem
+  `..`, caminho absoluto, duplicata, arquivo especial, link que escape ou passe por link, ZIP64/criptografia; tetos de
+  entradas, tamanho e razão de compressão; CRC32 e tamanho conferidos; o executável precisa ser ELF x86-64.
+- **Troca:** um script constante (`APPLY_SCRIPT`) espera o PID sair, move `<pasta>` para `<pasta>.old` e `<pasta>.new` para
+  `<pasta>`, desfaz se a segunda troca falhar e reabre o app. Só roda com a pasta nova irmã do destino. A `.old` some depois
+  de 90 s de vida da versão nova.
+- **Não cobre:** DEB e RPM (root; canal manual) e a conta do dono do repositório de releases ser comprometida JUNTO com a
+  chave privada. Perder a privada exige uma versão nova assinada por outra chave que o app já conheça (por isso a lista).
+
 ## Limits
 
 - Max redaction depth/size (audit-log constants).

@@ -102,6 +102,21 @@ público e, havendo uma versão Linux mais nova com os três pacotes, mostra
 dois pacotes declaram `bubblewrap` como dependência de runtime (sandbox dos
 PTYs); o ZIP também precisa desse provider e das bibliotecas Linux do sistema.
 
+### Assinar a versão para o auto-update (F-940)
+
+Toda versão Linux publicada precisa do `SHA256SUMS-linux-x64.txt.sig`, senão o app instalado só avisa e mostra o comando
+(não se atualiza sozinho). Depois do build e do teste nas distros, NO HOST (a chave privada nunca entra no container):
+
+```bash
+node scripts/sign-linux-update.mjs --sums <saída>/SHA256SUMS-linux-x64.txt   # grava <...>.sig
+gh release upload v<v> -R Hiper-nexus/nexus-ide <saída>/SHA256SUMS-linux-x64.txt.sig
+gh release upload v<v> -R Hiper-nexus/nexus-ide-releases <saída>/SHA256SUMS-linux-x64.txt.sig
+```
+
+A chave fica em `~/.config/nexus-release/linux-update-ed25519.pem` (0600); o script recusa outra permissão e chave que o
+app não conheça. Faça backup dela: sem ela, só uma versão assinada por OUTRA chave já embutida troca de chave. Rotação:
+acrescente a pública nova a `UPDATE_SIGNING_KEYS`, publique assinando com a antiga e, versões depois, retire a antiga.
+
 ### Preview Linux em PR e main
 
 `linux-preview.yml` roda em pull requests para `main` e em pushes na `main`,

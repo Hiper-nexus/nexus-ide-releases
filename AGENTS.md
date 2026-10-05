@@ -672,6 +672,18 @@ saber isto antes de mexer:
   Não use `--user-data-dir` nesse teste: a segunda instância lançada pela
   entrada de menu não recebe a flag e deixa de ser "segunda instância".
 
+## Linux se atualiza sozinho: pacote portátil, assinado (F-940)
+
+- O ZIP do `install.sh` (modo `linux-self` em `updater.ts`) baixa, confere e troca a própria pasta. DEB/RPM (`/usr/…`,
+  `/opt/…`) continuam `manual`: `detectLinuxInstall` decide pelo caminho real do executável e pela escrita na pasta.
+- A confiança é a chave Ed25519 de `linux-update-signing.ts`, não o GitHub: o `.sig` de cada versão assina o
+  `SHA256SUMS-linux-x64.txt` e o app só confia no ZIP listado nele. **Versão Linux publicada sem `.sig` não se atualiza
+  sozinha.** Assine no host com `scripts/sign-linux-update.mjs` e suba o `.sig` nos DOIS repositórios (docs/RELEASE.md).
+  A privada (`~/.config/nexus-release/`) nunca entra no repositório, no container nem em log.
+- O app monta as URLs de download; não use URL vinda do JSON da API. Extração só por `linux-zip-extract.ts`; troca só pelo
+  `APPLY_SCRIPT` constante. Não afrouxe nenhum dos dois sem teste novo de ataque.
+- O site no Linux nasce em movimento calmo (`site/src/calm-motion.js`, F-941); `?movimento=total` desfaz.
+
 ## Overlay Kimi leva o catálogo de modelos (F-611)
 
 - `$KIMI_CODE_HOME` do pane é o overlay efêmero, não `~/.kimi-code`. Sem
