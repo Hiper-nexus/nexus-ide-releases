@@ -225,3 +225,45 @@ it('a Node eval requiring Vite with stripped NODE_OPTIONS is finite work before 
   expect(result.status).toBe(78); expect(fs.existsSync(marker)).toBe(false); }
  finally { fs.rmSync(root, { recursive: true, force: true }); }
 }, 10_000);
+
+// F-251: compinit defaults its dump to ZDOTDIR. User startup must never
+// observe the signed bundle as its writable configuration directory.
+it.runIf(process.platform === 'darwin')('keeps real zsh completion and startup writes out of the signed resources', () => {
+ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-zdot-seal-'));
+ const resources = path.join(root, 'signed resources'), home = path.join(root, 'user home');
+ fs.cpSync(path.join(process.cwd(), 'resources/heavy-command'), resources, { recursive: true });
+ fs.mkdirSync(home);
+ const before = fs.readdirSync(resources).sort();
+ for (const stage of ['zshenv', 'zprofile', 'zshrc', 'zlogin', 'zlogout']) {
+  fs.writeFileSync(path.join(home, '.' + stage), `print -r -- ready > "$ZDOTDIR/${stage}.marker"\n` +
+   (stage === 'zshrc' ? 'autoload -Uz compinit; compinit -u\n' : ''));
+ }
+ try {
+  const result = spawnSync('/bin/zsh', ['-lic', '[[ "$ZDOTDIR" == "$NEXUS_HEAVY_DIR" ]] && print hook-path-preserved'], {
+   env: { PATH: '/usr/bin:/bin', HOME: home, ZDOTDIR: resources, NEXUS_HEAVY_DIR: resources, NEXUS_HEAVY_ORIG_ZDOTDIR: home }, encoding: 'utf8', timeout: 15_000,
+  });
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toContain('hook-path-preserved');
+  expect(fs.readdirSync(resources).sort()).toEqual(before);
+  expect(fs.existsSync(path.join(home, '.zcompdump'))).toBe(true);
+  for (const stage of ['zshenv', 'zprofile', 'zshrc', 'zlogin', 'zlogout']) expect(fs.existsSync(path.join(home, stage + '.marker'))).toBe(true);
+ } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+it.runIf(process.platform === 'darwin')('preserves a user zshenv redirect for later startup files and nested shells', () => {
+ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-zdot-redirect-'));
+ const resources = path.join(root, 'signed resources'), home = path.join(root, 'home'), config = path.join(home, '.config/zsh');
+ fs.cpSync(path.join(process.cwd(), 'resources/heavy-command'), resources, { recursive: true });
+ fs.mkdirSync(config, { recursive: true });
+ fs.writeFileSync(path.join(home, '.zshenv'), 'export ZDOTDIR="$HOME/.config/zsh"\n');
+ fs.writeFileSync(path.join(config, '.zshrc'), 'print -r -- loaded >> "$ZDOTDIR/loaded"\nreturn 0\n');
+ try {
+  const result = spawnSync('/bin/zsh', ['-ic', '/bin/zsh -ic true'], {
+   env: { PATH: '/usr/bin:/bin', HOME: home, ZDOTDIR: resources, NEXUS_HEAVY_DIR: resources, NEXUS_HEAVY_ORIG_ZDOTDIR: home }, encoding: 'utf8', timeout: 10_000,
+  });
+  expect(result.status, result.stderr).toBe(0);
+  expect(fs.existsSync(path.join(config, 'loaded'))).toBe(true);
+  expect(fs.readFileSync(path.join(config, 'loaded'), 'utf8')).toBe('loaded\nloaded\n');
+  expect(fs.existsSync(path.join(resources, 'loaded'))).toBe(false);
+ } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
