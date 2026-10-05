@@ -214,7 +214,7 @@ vi.mock("../feature-flags/feature-flag-registry", () => ({
 
 // F-906: AGY readiness seams. Only spawns carrying NEXUS_GATE_TOKEN reach them.
 const agyHeavy = vi.hoisted(() => ({
-  ensure: vi.fn(async (_options: { home: string; agyBin: string; node: string; resourceDirectory: string; assertCurrent?: () => void }) =>
+  ensure: vi.fn(async (_options: { home: string; agyBin: string; node: string; resourceDirectory: string; signal?: AbortSignal; assertCurrent?: () => void }) =>
     ({ registered: true }) as { registered: boolean; reason?: string }),
   channels: vi.fn(async (_ctx: unknown, _tmp: string, _ports: unknown, options: { transport?: string } = {}) => ({
     transport: options.transport ?? "unix",
@@ -6403,7 +6403,11 @@ describe("F-906 AGY native heavy admission readiness", () => {
         NEXUS_HEAVY_CHANNEL_EPOCH: "agy-epoch", NEXUS_HEAVY_CHANNEL_PUBLIC_KEY: "agy-public" } });
       expect(agyHeavy.ensure).toHaveBeenCalledOnce();
       expect(agyHeavy.ensure.mock.calls[0][0]).toMatchObject({ home: spec.env.HOME, agyBin: "/mock/bin/agy" });
+      // Installed where this pane's AGY reads plugins: its checkout HOME (F-567).
+      expect(spec.env.HOME).not.toBe(os.homedir());
+      expect(spec.env.HOME).toContain(path.join(app.getPath("userData"), "provider-state", "agy"));
       expect(agyHeavy.ensure.mock.calls[0][0].assertCurrent).toBeTypeOf("function");
+      expect(agyHeavy.ensure.mock.calls[0][0].signal).toBeInstanceOf(AbortSignal);
       expect(agyHeavy.channels).toHaveBeenCalledOnce();
       expect(agyHeavy.channels.mock.calls[0][3]).toEqual({ transport: "file" });
       expect(agyHeavy.ensure.mock.invocationCallOrder[0]).toBeLessThan(agyHeavy.channels.mock.invocationCallOrder[0]);
@@ -6417,6 +6421,31 @@ describe("F-906 AGY native heavy admission readiness", () => {
     const run = await spawnAgy(true);
     try {
       await expect(run.spawns[0].readiness!.wait).rejects.toThrow("agy_heavy_plugin_foreign_collision");
+      expect(agyHeavy.channels).not.toHaveBeenCalled();
+    } finally { await finish(run); }
+  });
+
+  darwinIt("degrades an operator-disabled plugin: the pane starts with the channel and a sanitized trace", async () => {
+    agyHeavy.ensure.mockResolvedValueOnce({ registered: false, reason: "agy_heavy_plugin_disabled" });
+    const run = await spawnAgy(true);
+    try {
+      await expect(run.spawns[0].readiness!.wait).resolves.toMatchObject({ env: { NEXUS_HEAVY_CHANNEL_EPOCH: "agy-epoch" } });
+      expect(agyHeavy.channels.mock.calls[0][3]).toEqual({ transport: "file" });
+      expect(lifecycleTrace.events.filter((event) => event.kind === "agy-heavy-plugin-degraded").at(-1)).toEqual({ kind: "agy-heavy-plugin-degraded", adapterId: "agy", name: "disabled" });
+    } finally { await finish(run); }
+  });
+
+  darwinIt("pane cancellation releases a readiness stuck in plugin registration", async () => {
+    agyHeavy.ensure.mockImplementationOnce((options) => new Promise((resolve) => {
+      options.signal?.addEventListener("abort", () => resolve({ registered: false, reason: "agy_heavy_plugin_context_changed" }), { once: true });
+    }));
+    const run = await spawnAgy(true);
+    try {
+      const readiness = run.spawns[0].readiness!;
+      await vi.waitFor(() => expect(agyHeavy.ensure).toHaveBeenCalledOnce());
+      await expect(readiness.cleanup()).resolves.toBeUndefined();
+      expect(agyHeavy.ensure.mock.calls[0][0].signal?.aborted).toBe(true);
+      await expect(readiness.wait).rejects.toThrow();
       expect(agyHeavy.channels).not.toHaveBeenCalled();
     } finally { await finish(run); }
   });
