@@ -3,19 +3,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { writeFileAtomicAsync } from '../util/atomic-write';
+import { fsyncDirectoryAsync } from '../util/atomic-write';
 
 type ObjectValue = Record<string, unknown>;
 type Owner = { id: string; pid: number; count: number };
 type Group = { hook: ObjectValue; inserted: boolean; committed: boolean; owners: Owner[] };
 interface RecordValue { schema: 'nexus.muse-hook-lease/v1'; settingsPath: string; hooksAbsent: boolean; preToolUseAbsent: boolean; groups: Group[] }
 interface Snapshot { raw: string; stat: fs.Stats }
+interface Transaction { file: string; pin: string; owned(): Promise<void> }
 const INSTANCE = randomUUID();
 const schema = 'nexus.muse-hook-lease/v1';
 const MARKER = 'NEXUS_HEAVY_MUSE_LEASE_V1=1 ';
-// A holder keeps the lock only for a few small writes. An older lock is abandoned
-// even when its pid was reused by an unrelated process.
-const LOCK_STALE_MS = 30_000, LOCK_ATTEMPTS = 200;
+// A holder keeps the lock for a few small writes; ~2 s of contention degrades the pane.
+// Startup recovery never waits and stops after a short global budget.
+const LOCK_ATTEMPTS = 80, RECOVERY_BUDGET_MS = 1_000;
 // Muse may rewrite settings.json with another key order; compare entries structurally.
 const sorted = (value: unknown) => JSON.stringify(value, (_key, item: unknown) => item && typeof item === 'object' && !Array.isArray(item)
   ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : item);
@@ -46,17 +47,41 @@ function same(now: fs.Stats | undefined, previous: Snapshot | undefined): void {
   if (!now && !previous) return;
   if (!now || !previous || !now.isFile() || now.dev !== previous.stat.dev || now.ino !== previous.stat.ino || now.size !== previous.stat.size || now.mtimeMs !== previous.stat.mtimeMs) throw new Error('muse_heavy_lease_changed');
 }
-async function publish(file: string, value: unknown, previous: Snapshot | undefined, current: () => void): Promise<void> {
+/**
+ * Commit with no synchronous IO, returning the snapshot of what this transaction wrote.
+ * The displaced inode is pinned by a hard link and checked before and after the
+ * rename: an in-place save that lands in between is put back and the commit fails
+ * as a conflict. A new file is created by link, which fails if anyone created it.
+ * ponytail: POSIX has no conditional rename and Node exposes no renamex_np /
+ * RENAME_EXCHANGE, so an atomic save (another rename) between the last check and
+ * ours is still lost undetected; closing that needs a native swap primitive.
+ */
+async function publish(file: string, value: unknown, previous: Snapshot | undefined, guard: () => Promise<void>, pinBase: string): Promise<Snapshot> {
   const raw = JSON.stringify(value, null, 2) + '\n';
   if (Buffer.byteLength(raw) > 1_048_576) throw new Error('muse_heavy_lease_invalid');
-  await writeFileAtomicAsync(file, raw, 0o600, { createDirectory: false, beforeCommit: () => {
-    current();
-    // ponytail: the atomic writer's commit fence is synchronous; this single lstat
-    // right before rename keeps the foreign-edit window to one syscall.
-    let now: fs.Stats | undefined;
-    try { now = fs.lstatSync(file); } catch (error) { if (!isMissing(error)) throw error; }
-    same(now, previous);
-  } });
+  const tmp = `${file}.${randomUUID()}.tmp`, pin = `${pinBase}.${randomUUID()}.pin`, conflict = () => new Error('muse_heavy_lease_changed');
+  let pinned = false;
+  try {
+    const handle = await fs.promises.open(tmp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+    let stat: fs.Stats;
+    try { await handle.writeFile(raw); await handle.sync(); stat = await handle.stat(); } finally { await handle.close(); }
+    if (!previous) {
+      await guard();
+      await fs.promises.link(tmp, file).catch((error: NodeJS.ErrnoException) => { throw error.code === 'EEXIST' ? conflict() : error; });
+    } else {
+      await fs.promises.link(file, pin).catch((error: NodeJS.ErrnoException) => { throw isMissing(error) ? conflict() : error; });
+      pinned = true; same(await fs.promises.lstat(pin), previous);
+      await guard(); same(await lstat(file), previous);
+      await fs.promises.rename(tmp, file);
+      try { same(await fs.promises.lstat(pin), previous); }
+      catch (error) { await fs.promises.rename(pin, file); pinned = false; throw error; } // the operator's save goes back
+    }
+    await fsyncDirectoryAsync(path.dirname(file));
+    return { raw, stat };
+  } finally {
+    await fs.promises.unlink(tmp).catch(() => {});
+    if (pinned) await fs.promises.unlink(pin).catch(() => {});
+  }
 }
 function parseRecord(raw: string): RecordValue {
   const value = object(JSON.parse(raw));
@@ -72,14 +97,15 @@ function parseRecord(raw: string): RecordValue {
   return value as unknown as RecordValue;
 }
 function hooksOf(document: ObjectValue): { hooks: ObjectValue; entries: unknown[] } {
-  const hooks = document.hooks === undefined ? {} : object(document.hooks), entries = hooks.PreToolUse ?? [];
+  // null is a shape we do not own (refused before any publication), unlike an absent key.
+  const hooks = document.hooks === undefined ? {} : object(document.hooks), entries = hooks.PreToolUse === undefined ? [] : hooks.PreToolUse;
   if (!Array.isArray(entries)) throw new Error('muse_heavy_hooks_invalid');
   return { hooks, entries };
 }
-function abandoned(previous: Snapshot): boolean {
-  if (Date.now() - previous.stat.mtimeMs > LOCK_STALE_MS) return true;
+/** Only a provably gone owner loses its lock. A live (or reused) pid is never broken, whatever its age. */
+function ownerGone(previous: Snapshot): boolean {
   let owner: ObjectValue;
-  try { owner = object(JSON.parse(previous.raw)); } catch { return false; } // unknown owner: only age frees it
+  try { owner = object(JSON.parse(previous.raw)); } catch { return false; }
   return Number.isInteger(owner.pid) && Number(owner.pid) > 0 && gone(Number(owner.pid), owner.id);
 }
 /** Unlink works by name only: move the judged lock aside and give back anything that raced into its place. */
@@ -93,7 +119,7 @@ async function breakLock(lock: string, previous: Snapshot): Promise<void> {
     if (moved.dev !== previous.stat.dev || moved.ino !== previous.stat.ino) await fs.promises.link(aside, lock).catch(() => {});
   } finally { await fs.promises.unlink(aside); }
 }
-async function locked<T>(directory: string, key: string, operation: (file: string) => Promise<T>): Promise<T> {
+async function locked<T>(directory: string, key: string, operation: (tx: Transaction) => Promise<T>, wait = true): Promise<T> {
   await fs.promises.mkdir(directory, { recursive: true, mode: 0o700 });
   if (await fs.promises.realpath(directory) !== directory) throw new Error('muse_heavy_lease_changed');
   const lock = path.join(directory, `${key}.lock`), prepared = `${lock}.${randomUUID()}.owner`;
@@ -105,40 +131,47 @@ async function locked<T>(directory: string, key: string, operation: (file: strin
     try { await handle.writeFile(JSON.stringify({ pid: process.pid, id: INSTANCE })); await handle.sync(); identity = await handle.stat(); }
     finally { await handle.close(); }
     for (let attempt = 0; !claimed; attempt++) {
-      if (attempt === LOCK_ATTEMPTS) throw new Error('muse_heavy_lease_busy');
+      if (attempt === (wait ? LOCK_ATTEMPTS : 2)) throw new Error('muse_heavy_lease_busy');
       try { await fs.promises.link(prepared, lock); claimed = true; }
       catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
         // owner + lock (+ a breaker's aside name); a lock released while we opened it is simply retried
         const previous = await read(lock, 2048, 3).catch((error: Error) => { if (error.message === 'muse_heavy_lease_changed') return undefined; throw error; });
-        if (previous && abandoned(previous)) await breakLock(lock, previous); else await delay(25);
+        if (!previous) continue;
+        if (ownerGone(previous)) await breakLock(lock, previous);
+        else if (wait) await delay(25); else throw new Error('muse_heavy_lease_busy');
       }
     }
-    if (!mine(await lstat(lock))) throw new Error('muse_heavy_lease_changed');
-    return await operation(path.join(directory, `${key}.json`));
+    const owned = async () => { if (!mine(await lstat(lock))) throw new Error('muse_heavy_lease_changed'); };
+    await owned();
+    // Pins left by a crashed transaction on this key would pin the settings inode (nlink 2).
+    for (const name of await fs.promises.readdir(directory)) if (name.startsWith(`${key}.`) && name.endsWith('.pin')) await fs.promises.unlink(path.join(directory, name)).catch(() => {});
+    return await operation({ file: path.join(directory, `${key}.json`), pin: path.join(directory, key), owned });
   } finally {
     try { if (claimed) { if (!mine(await lstat(lock))) throw new Error('muse_heavy_lease_changed'); await fs.promises.unlink(lock); } }
     finally { if (mine(await lstat(prepared))) await fs.promises.unlink(prepared); }
   }
 }
 /** Drop dead owners, remove only entries this ledger inserted, then retire or rewrite the ledger. */
-async function collect(file: string, record: RecordValue, snapshot: Snapshot): Promise<boolean> {
+async function collect(tx: Transaction, record: RecordValue, snapshot: Snapshot): Promise<boolean> {
   const settings = await read(record.settingsPath, 1_048_576);
   const document = settings ? object(JSON.parse(settings.raw)) : {}, { hooks, entries } = hooksOf(document);
   for (const group of record.groups) group.owners = group.owners.filter(owner => !gone(owner.pid, owner.id));
   // An absent leased entry was already removed (operator edit or an interrupted
   // earlier release): nothing is left to restore and foreign entries stay.
-  const ours = record.groups.filter(group => !group.owners.length && group.inserted).map(group => group.hook);
-  const next = entries.filter(entry => !ours.some(hook => equal(entry, hook)));
+  // At most one occurrence per inserted group: an identical copy the operator added stays.
+  const next = [...entries];
+  for (const group of record.groups) if (!group.owners.length && group.inserted)
+    for (let index = next.length - 1; index >= 0; index--) if (equal(next[index], group.hook)) { next.splice(index, 1); break; }
   if (next.length !== entries.length) {
     const newHooks: ObjectValue = { ...hooks, PreToolUse: next };
     if (!next.length && record.preToolUseAbsent) delete newHooks.PreToolUse;
     if (!Object.keys(newHooks).length && record.hooksAbsent) delete document.hooks; else document.hooks = newHooks;
-    await publish(record.settingsPath, document, settings, () => {});
+    await publish(record.settingsPath, document, settings, tx.owned, tx.pin);
   }
   record.groups = record.groups.filter(group => group.owners.length);
-  if (record.groups.length) await publish(file, record, snapshot, () => {});
-  else { same(await lstat(file), snapshot); await fs.promises.unlink(file); }
+  if (record.groups.length) await publish(tx.file, record, snapshot, tx.owned, tx.pin);
+  else { await tx.owned(); same(await lstat(tx.file), snapshot); await fs.promises.unlink(tx.file); }
   return !record.groups.length;
 }
 /** The selected config/auth directory stays in place. Only one public constant hook is leased. */
@@ -150,8 +183,9 @@ export function createMuseNativeHeavySettingsLease(settingsPath: string, hook: O
       for (const file of [path.dirname(settingsPath), settingsPath]) { current(); if ((await lstat(file))?.isSymbolicLink()) throw new Error('muse_heavy_lease_symlink'); }
       current(); await fs.promises.mkdir(path.dirname(settingsPath), { recursive: true, mode: 0o700 }); current();
       canonical = path.join(await fs.promises.realpath(path.dirname(settingsPath)), 'settings.json'); current();
-      await locked(directory, keyFor(canonical), async file => {
-        current(); const previous = await read(file, 262144); current();
+      await locked(directory, keyFor(canonical), async tx => {
+        const guard = async () => { current(); await tx.owned(); };
+        current(); const previous = await read(tx.file, 262144); current();
         const settings = await read(canonical!, 1_048_576); current(); const document = settings ? object(JSON.parse(settings.raw)) : {}, { hooks, entries } = hooksOf(document);
         const record: RecordValue = previous ? parseRecord(previous.raw) : { schema, settingsPath: canonical!, hooksAbsent: document.hooks === undefined, preToolUseAbsent: hooks.PreToolUse === undefined, groups: [] };
         if (record.settingsPath !== canonical) throw new Error('muse_heavy_lease_changed');
@@ -162,44 +196,48 @@ export function createMuseNativeHeavySettingsLease(settingsPath: string, hook: O
         let owner = group.owners.find(owner => owner.id === INSTANCE);
         if (owner) owner.count++; else { owner = { id: INSTANCE, pid: process.pid, count: 1 }; group.owners.push(owner); }
         // Persist the public restoration intent before touching selected config.
-        await publish(file, record, previous, current); held = true; current();
-        if (!present) await publish(canonical!, { ...document, hooks: { ...hooks, PreToolUse: [...entries, hook] } }, settings, current);
-        // Acknowledge our completed config write even if this pane was cancelled;
-        // cleanup still needs this public restoration receipt.
+        const intent = await publish(tx.file, record, previous, guard, tx.pin); held = true; current();
+        if (!present) await publish(canonical!, { ...document, hooks: { ...hooks, PreToolUse: [...entries, hook] } }, settings, guard, tx.pin);
+        // Acknowledge our completed config write even if this pane was cancelled; the
+        // receipt is bound to this transaction's own intent, never to a re-read.
         group.committed = true;
-        await publish(file, record, await read(file, 262144), () => {});
+        await publish(tx.file, record, intent, tx.owned, tx.pin);
       });
       current();
     },
     async release() {
       if (!held || !canonical) return;
-      await locked(directory, keyFor(canonical), async file => {
+      await locked(directory, keyFor(canonical), async tx => {
         if (releasedData) return;
-        const snapshot = await read(file, 262144); if (!snapshot) throw new Error('muse_heavy_lease_changed');
+        const snapshot = await read(tx.file, 262144); if (!snapshot) throw new Error('muse_heavy_lease_changed');
         const record = parseRecord(snapshot.raw), group = record.groups.find(group => equal(group.hook, hook)), owner = group?.owners.find(owner => owner.id === INSTANCE);
         if (!owner || owner.pid !== process.pid) throw new Error('muse_heavy_lease_changed');
         if (--owner.count === 0) group!.owners = group!.owners.filter(value => value !== owner);
-        await collect(file, record, snapshot); releasedData = true;
+        await collect(tx, record, snapshot); releasedData = true;
       });
       held = false;
     },
   };
 }
-/** Dead-owner restoration only; this never grants/releases a command permit or kills a process. */
+/**
+ * Dead-owner restoration only; this never grants/releases a command permit or kills a process.
+ * Startup never waits: one try-lock per ledger, a held lock or an exhausted budget is retained.
+ */
 export async function recoverMuseNativeHeavyLeases(options: { artifactRoot?: string } = {}): Promise<{ restored: number; retained: number; failed: number }> {
-  const result = { restored: 0, retained: 0, failed: 0 }, directory = rootFor(options.artifactRoot);
+  const result = { restored: 0, retained: 0, failed: 0 }, directory = rootFor(options.artifactRoot), deadline = Date.now() + RECOVERY_BUDGET_MS;
   let names: string[]; try { names = await fs.promises.readdir(directory); } catch (error) { if (isMissing(error)) return result; throw error; }
   if (names.length > 512) { result.failed++; return result; }
   for (const name of names.filter(name => /^[0-9a-f]{64}\.json$/.test(name))) {
+    if (Date.now() > deadline) { result.retained++; continue; }
     try {
-      const empty = await locked(directory, name.slice(0, 64), async file => {
-        const snapshot = await read(file, 262144); if (!snapshot) return true;
+      const empty = await locked(directory, name.slice(0, 64), async tx => {
+        const snapshot = await read(tx.file, 262144); if (!snapshot) return true;
         const record = parseRecord(snapshot.raw);
         if (keyFor(record.settingsPath) !== name.slice(0, 64)) throw new Error('muse_heavy_lease_invalid');
-        return collect(file, record, snapshot);
-      });
+        return collect(tx, record, snapshot);
+      }, false);
       if (empty) result.restored++; else result.retained++;
-    } catch { result.failed++; }
+    } catch (error) { if ((error as Error).message === 'muse_heavy_lease_busy') result.retained++; else result.failed++; }
   }
   return result;
 }

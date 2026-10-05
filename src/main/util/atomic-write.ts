@@ -88,7 +88,7 @@ export function writeFileAtomic(
 }
 
 /** `fsyncDirectory` without blocking the event loop. */
-async function fsyncDirectoryAsync(dir: string): Promise<void> {
+export async function fsyncDirectoryAsync(dir: string): Promise<void> {
   let handle: FileHandle | undefined;
   try {
     handle = await fs.promises.open(dir, fs.constants.O_RDONLY);

@@ -102,3 +102,15 @@ it.runIf(process.platform !== 'win32')('the shared hook leaves operator CLIs on 
   execFileSync('/bin/sh', ['-c', wrapped], { cwd: workspace, env: { PATH: '/usr/bin:/bin', NEXUS_GATE_TOKEN: 'only-token-without-url' } });
   expect(fs.readFileSync(path.join(workspace, 'ran'), 'utf8')).toBe('original');
 });
+it.runIf(process.platform !== 'win32').each(['/bin/sh', '/bin/bash'])('the operator fallback survives a trailing backslash and an unterminated heredoc and keeps cd/export under %s', (shell) => {
+  const f = fixture(), workspace = path.join(f.root, 'workspace'); fs.mkdirSync(path.join(workspace, 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(workspace, 'Makefile'), 'all:\n\t@printf original > ran\n');
+  const hook = path.join(process.cwd(), 'resources/heavy-command/muse-tool-hook.cjs'), env = { PATH: '/usr/bin:/bin' }, wrap = (command: string) =>
+    JSON.parse(execFileSync(process.execPath, [hook], { input: JSON.stringify({ tool_input: { command } }), env }).toString()).hookSpecificOutput.updatedInput.command as string;
+  execFileSync(shell, ['-c', wrap('make -f Makefile all; printf ok \\')], { cwd: workspace, env, stdio: 'ignore' });
+  expect(fs.readFileSync(path.join(workspace, 'ran'), 'utf8')).toBe('original');
+  execFileSync(shell, ['-c', wrap("make -f - <<'MK'\nall:\n\t@printf heredoc > ran2")], { cwd: workspace, env, stdio: 'ignore' });
+  expect(fs.readFileSync(path.join(workspace, 'ran2'), 'utf8')).toBe('heredoc');
+  execFileSync(shell, ['-c', `${wrap('cd sub && export PROBE=kept && make -f ../Makefile')}\nprintf '%s:%s' "$PROBE" "\${PWD##*/}" > ../state`], { cwd: workspace, env, stdio: 'ignore' });
+  expect(fs.readFileSync(path.join(workspace, 'state'), 'utf8')).toBe('kept:sub'); expect(fs.readFileSync(path.join(workspace, 'sub/ran'), 'utf8')).toBe('original');
+});

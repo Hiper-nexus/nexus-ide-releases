@@ -23,7 +23,9 @@ process.stdin.on('end', () => {
   if (!kind) { output({}); return; }
   if (input.command.startsWith('# Nexus heavy command wrapper v1\n')) { output({}); return; }
   // Muse clears hook env. Test the original tool env at execution time instead;
-  // external/operator CLIs execute their original command without admission.
-  const wrapped = `# Nexus heavy command wrapper v1\nif [ -n "\${NEXUS_GATE_TOKEN:-}" ] && [ -n "\${NEXUS_HEAVY_COMMAND_URL:-}" ]; then\nNODE_OPTIONS= NEXUS_HEAVY_HELPER=1 ${quote(process.execPath)} ${quote(path.join(directory, 'job-launch.cjs'))} ${quote(kind)} "\${BASH:-\${SHELL:-/bin/sh}}" -c ${quote(input.command)}\nelse\n${input.command}\nfi`;
+  // external/operator CLIs execute their original command without admission. The
+  // fallback evals the quoted text in this same shell (cd/export persist) so a
+  // trailing backslash or an unterminated heredoc cannot swallow the closing fi.
+  const wrapped = `# Nexus heavy command wrapper v1\nif [ -n "\${NEXUS_GATE_TOKEN:-}" ] && [ -n "\${NEXUS_HEAVY_COMMAND_URL:-}" ]; then\nNODE_OPTIONS= NEXUS_HEAVY_HELPER=1 ${quote(process.execPath)} ${quote(path.join(directory, 'job-launch.cjs'))} ${quote(kind)} "\${BASH:-\${SHELL:-/bin/sh}}" -c ${quote(input.command)}\nelse\neval ${quote(input.command)}\nfi`;
   output({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...input, command: wrapped } } });
 });
