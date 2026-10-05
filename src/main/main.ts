@@ -1,3 +1,5 @@
+// DEVE ser o primeiro import: `nexus-ide --redline-status` (barra do desktop) roda e sai aqui.
+import './redline/redline-cli-boot';
 import { stopOrientationForWorkspace } from './context/orientation/orientation-bootstrap';
 import { stopQwenReadiness } from './adapters/qwen-readiness-cache';
 import { stopPaneSessionOutputGc } from './orch/pane-session-output';
