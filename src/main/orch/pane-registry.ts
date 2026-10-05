@@ -69,6 +69,7 @@ import {
   type PaneSpawnOptions as MainOwnedPaneSpawnOptions,
 } from "./main-owned-pane-runtime";
 import {
+  markPaneDeliberatelyClosed,
   paneSessionStateForEntry,
   recordPaneSessionData,
   recordPaneSessionExit,
@@ -3900,6 +3901,8 @@ export async function requestPaneClose(
     }
     if (!deleteMainOwnedPane(paneId)) return false;
     panesVersion += 1;
+    // F-918: fechamento pedido — não é a CLI morrendo sozinha.
+    markPaneDeliberatelyClosed(paneId);
     return true;
   }
   if (owners.size !== 1) return false;
@@ -3935,6 +3938,8 @@ export async function requestPaneClose(
     } catch {
       // Scope-change listener detaches or terminates the old mission runtime;
       // never send a pane-id-only close into the renderer's new workspace.
+      // F-918: fechamento pedido — não é a CLI morrendo sozinha.
+      markPaneDeliberatelyClosed(paneId);
       return true;
     }
   }
@@ -3953,5 +3958,7 @@ export async function requestPaneClose(
     ORCH_CHANNELS.paneCloseRequest,
     expectedSessionId ? { paneId, expectedSessionId } : paneId,
   );
+  // F-918: fechamento pedido — não é a CLI morrendo sozinha.
+  markPaneDeliberatelyClosed(paneId);
   return true;
 }

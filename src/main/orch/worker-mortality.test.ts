@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   WORKER_MORTALITY_CIRCUIT_BREAK,
+  isSpontaneousWorkerDeath,
   recordWorkerDeathWithoutDelivery,
   recordAdapterProofOfLife,
   resetMissionWorkerMortality,
@@ -88,6 +89,60 @@ describe('estado de mortalidade por (missão, adapter)', () => {
   });
 });
 
+
+describe('isSpontaneousWorkerDeath — só a CLI que saiu sozinha conta (F-918)', () => {
+  it('exited com exit observado neste processo conta', () => {
+    expect(
+      isSpontaneousWorkerDeath({ state: 'exited', exitObserved: true }),
+    ).toBe(true);
+  });
+
+  it('exited sem exit observado (morte por reinício/shutdown do app) NÃO conta', () => {
+    expect(
+      isSpontaneousWorkerDeath({ state: 'exited', exitObserved: false }),
+    ).toBe(false);
+  });
+
+  it('pane fechado por pedido (orquestrador/operador) NÃO conta, mesmo com exit observado', () => {
+    expect(
+      isSpontaneousWorkerDeath({
+        state: 'exited',
+        exitObserved: true,
+        deliberatelyClosed: true,
+      }),
+    ).toBe(false);
+    expect(
+      isSpontaneousWorkerDeath({
+        state: 'exited',
+        exitObserved: true,
+        operatorDismissed: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('mão do operador nunca conta', () => {
+    expect(
+      isSpontaneousWorkerDeath({
+        state: 'exited',
+        exitObserved: true,
+        operatorOpened: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('hibernated mantém o comportamento atual', () => {
+    expect(
+      isSpontaneousWorkerDeath({ state: 'hibernated', exitObserved: false }),
+    ).toBe(true);
+    expect(
+      isSpontaneousWorkerDeath({
+        state: 'hibernated',
+        exitObserved: true,
+        deliberatelyClosed: true,
+      }),
+    ).toBe(false);
+  });
+});
 
 describe('workerPaneHasDelivery — exit pós-handoff não é mortalidade', () => {
   const frontendHandoff = {
