@@ -83,7 +83,10 @@ function escapeRegex(value: string): string {
 
 function remember(sessionId: string, data: string): void {
   const text = sanitizeInput(data);
-  if (!text.trim()) return;
+  // Mantém espaços: são fronteira de palavra. `!text.trim()` descartava a
+  // tecla espaço digitada sozinha e "solta grok" virava "soltagrok" — o
+  // `\bgrok\b` nunca casava (campo 05/10). Só chunks realmente vazios caem.
+  if (!text) return;
   const now = Date.now();
   const chunks = [...(inputBySession.get(sessionId) ?? []), { at: now, text }]
     .filter((chunk) => now - chunk.at <= RETENTION_MS);
@@ -155,8 +158,13 @@ export function operatorRecentlyNamedCli(
     (chunk) => now - chunk.at >= 0 && now - chunk.at <= window,
   );
   if (recent.length === 0) return false;
+  // Concatena sem inserir espaço entre chunks: a digitação tecla a tecla chega
+  // como um chunk por caractere, e `join(' ')` virava "g r o k" — o `\bgrok\b`
+  // nunca casava e o operatorChoice era redistribuído ("solta grok solta agy"
+  // no meio do turno, 05/10). O sanitize já converte Enter em espaço, então
+  // fronteiras de mensagem continuam separadas.
   const normalized = normalizeForMatch(
-    recent.map((chunk) => chunk.text).join(' '),
+    recent.map((chunk) => chunk.text).join(''),
   );
   return aliasesFor(adapterId).some((alias) => {
     const normalizedAlias = normalizeForMatch(alias);

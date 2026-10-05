@@ -55,6 +55,20 @@ describe('operatorRecentlyNamedCli', () => {
     expect(operatorRecentlyNamedCli('sess-a', 'claude', now)).toBe(false);
   });
 
+  it('reconhece a CLI digitada tecla a tecla no meio do turno (fila do agente)', () => {
+    const now = 1_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(now - MIN);
+    // Cada keystroke vira um chunk próprio no tap (xterm onData por caractere).
+    // O join antigo com espaço transformava "grok" em "g r o k" e o
+    // operatorChoice era redistribuído (campo 05/10: "solta grok solta agy").
+    for (const ch of 'solta grok solta agy') {
+      type('sess-keystrokes', ch);
+    }
+    expect(operatorRecentlyNamedCli('sess-keystrokes', 'grok', now)).toBe(true);
+    expect(operatorRecentlyNamedCli('sess-keystrokes', 'agy', now)).toBe(true);
+    expect(operatorRecentlyNamedCli('sess-keystrokes', 'muse', now)).toBe(false);
+  });
+
   it('casa aliases por família de adapter', () => {
     const now = 1_000_000;
     vi.spyOn(Date, 'now').mockReturnValue(now - MIN);
