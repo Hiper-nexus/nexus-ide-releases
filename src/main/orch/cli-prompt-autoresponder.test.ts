@@ -338,6 +338,35 @@ describe('CLI prompt autoresponder', () => {
     ).toBe(false);
   });
 
+  it('F-920: AGY 1.2.17 sem a linha "Antigravity CLI requires permission" ainda casa', () => {
+    // Campo 05/10: a tela real era só a pergunta + as duas opções. A assinatura
+    // de 3 frases nunca casava e o pane ficava parado no modal.
+    const short = `
+Accessing workspace:
+
+/Users/cleofasrocha/dev
+
+Do you trust the contents of this project?
+
+> Yes, I trust this folder
+  No, exit
+`;
+    expect(matchesPromptSignature(short, signature('agy-workspace-trust'))).toBe(
+      false,
+    );
+    expect(
+      matchesPromptSignature(short, signature('agy-workspace-trust-short')),
+    ).toBe(true);
+
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-agy1217', 'agy');
+    // Cursor no primeiro item ("Yes"): o responseFor lê a ordem e envia Enter.
+    expect(responder.observe('session-agy1217', short)).toBe(
+      ACCEPT_DEFAULT_PROMPT_RESPONSE,
+    );
+    expect(responder.observe('session-agy1217', short)).toBeNull();
+  });
+
   it('accepts a prompt split across terminal chunks only once', () => {
     const responder = new CliPromptAutoResponder();
     responder.bind('session-1', 'agy');

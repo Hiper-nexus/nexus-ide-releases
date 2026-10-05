@@ -191,6 +191,25 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
       'yes, i trust this folder',
     ],
     response: ACCEPT_DEFAULT_PROMPT_RESPONSE,
+    responseFor: claudeWorkspaceTrustResponse,
+    watchMs: TRUST_WATCH_WINDOW_MS,
+  },
+  {
+    // AGY 1.2.17 (campo 05/10) pinta o trust SEM a linha "Antigravity CLI
+    // requires permission…": só a pergunta + "Yes, I trust this folder" /
+    // "No, exit". A assinatura de 3 frases acima nunca casava e o pane ficava
+    // parado no modal — o brief era colado ali e engolido. As duas etiquetas
+    // são as mesmas do trust do Claude (cursor na primeira opção, `>`), então
+    // a resposta sai da ordem desenhada na tela.
+    adapterIds: ['agy'],
+    name: 'agy-workspace-trust-short',
+    phrases: [
+      'do you trust the contents of this project?',
+      'yes, i trust this folder',
+      'no, exit',
+    ],
+    response: ACCEPT_DEFAULT_PROMPT_RESPONSE,
+    responseFor: claudeWorkspaceTrustResponse,
     watchMs: TRUST_WATCH_WINDOW_MS,
   },
   {
