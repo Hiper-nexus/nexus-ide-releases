@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.76.201 — A atualização do Linux funciona
+
+Build do Linux (DEB, RPM e ZIP). Inclui tudo da 0.76.200.
+
+- **A atualização automática do ZIP portátil passa a funcionar de ponta a ponta (F-943).** No primeiro teste real, com a 0.76.199 instalada e a 0.76.200 publicada, o app baixou e conferiu a assinatura e o SHA-256, e falhou ao gravar `resources/app.asar`: dentro do Electron o `fs` trata caminho `.asar` como arquivo virtual. A extração e a troca agora usam o `original-fs`, com teste de regressão no runtime do Electron e conferência com o ZIP real. **Quem está na 0.76.199 ou na 0.76.200 pelo ZIP tem o defeito no código que atualiza: rode `curl -fsSL https://nexuside.app/install.sh | sh` uma vez, e dali em diante o app se atualiza sozinho.** Quem usa DEB/RPM não é afetado (atualiza pelo apt/dnf).
 ## 0.76.200 — Linux atualiza pelo sistema
 
 Build do Linux (DEB, RPM e ZIP). Inclui tudo da 0.76.199.
