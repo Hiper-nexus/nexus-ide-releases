@@ -15,6 +15,12 @@ export const RACK_WIDTH = 208;
 export const RACK_HEIGHT = 150;
 export const CORE_WIDTH = 304;
 export const CORE_HEIGHT = 162;
+/** Passo nominal dos fios; escala com a densidade nos gutters de 960px. */
+export const CABLE_LANE_SPACING = 8;
+/** Chips de 14px de altura + folga nas bandas horizontais entre fileiras. */
+export const CABLE_PACKET_BAND_SPACING = 20;
+const CABLE_CANVAS_WIDTH = 960;
+export const CABLE_BRANCH_SPACING = 8;
 
 /** Recuo das portas em relação à quina do rack (o cabo não sai da quina). */
 const PORT_INSET_HORIZONTAL = 30;
@@ -64,8 +70,12 @@ export interface CableSpec {
 export interface Cable extends CableSpec {
   readonly source: CablePort;
   readonly target: CablePort;
-  /** Curva do cabo (cubic Bézier) no espaço do canvas. */
+  /** Caminho do cabo no canvas: curva livre ou desvio pelos corredores. */
   readonly d: string;
+  /** Trecho exclusivo do corredor: glifos não entram no leque de portas. */
+  readonly packetPath?: string;
+  /** A borda externa pode ampliar o canvas, sem recortar cabos/pacotes. */
+  readonly extent?: { readonly right: number; readonly bottom: number };
   /** Energia passando: a missão está viva e a ponta de trabalho trabalha. */
   readonly live: boolean;
   /** Estado de quem trabalha na ponta do cabo — pinta o cabo parado. */
@@ -169,6 +179,201 @@ interface Attachment {
   readonly order: number;
 }
 
+type CablePoint = Pick<CablePort, 'x' | 'y'>;
+
+/** Retângulo conservador do segmento; nos desvios os segmentos são ortogonais. */
+function overlapsBox(a: CablePoint, b: CablePoint, box: RackBox, clearance = 6): boolean {
+  return Math.max(a.x, b.x) >= box.x - box.width / 2 - clearance &&
+    Math.min(a.x, b.x) <= box.x + box.width / 2 + clearance &&
+    Math.max(a.y, b.y) >= box.y - box.height / 2 - clearance &&
+    Math.min(a.y, b.y) <= box.y + box.height / 2 + clearance;
+}
+
+interface RoutingGeometry {
+  readonly boxes: readonly RackBox[];
+  readonly xs: readonly number[];
+  readonly ys: readonly number[];
+  readonly routes: CablePoint[][];
+  readonly verticalRuns: Map<number, [number, number][]>;
+  readonly horizontalRuns: Map<number, [number, number][]>;
+  readonly lanes: (readonly [CablePoint, CablePoint])[];
+  readonly packetLanes: (readonly [CablePoint, CablePoint])[];
+  readonly pitch: number;
+  readonly rootY: number;
+  readonly segmentClear: (a: CablePoint, b: CablePoint) => boolean;
+}
+
+/** Candidatos únicos e retângulos compartilhados por toda a renderização. */
+function routingGeometry(boxes: readonly RackBox[], count: number): RoutingGeometry {
+  const pitch = Math.min(CABLE_LANE_SPACING, 64 / Math.max(1, count));
+  const tracks = (axis: 'x' | 'y', size: 'width' | 'height') => {
+    const edges = [...new Set([...(axis === 'x' ? [0, CABLE_CANVAS_WIDTH] : []),
+      ...boxes.flatMap((box) => [box[axis] - box[size] / 2, box[axis] + box[size] / 2]),
+    ])].sort((a, b) => a - b);
+    const positions = new Set(edges.flatMap((edge) => [edge - 8, edge + 8]));
+    const step = axis === 'x' ? pitch : CABLE_PACKET_BAND_SPACING;
+    for (let i = 1; i < edges.length; i++) {
+      for (let n = edges[i - 1]! + 4; n <= edges[i]! - 4; n += step) {
+        positions.add(Math.round(n * 1000) / 1000);
+      }
+    }
+    return [...positions].filter((n) => n >= 4 && (axis !== 'x' || n <= CABLE_CANVAS_WIDTH - 4)).sort((a, b) => a - b);
+  };
+  const xBoxes = new Map<number, readonly RackBox[]>();
+  const yBoxes = new Map<number, readonly RackBox[]>();
+  const segmentClear = (a: CablePoint, b: CablePoint) => {
+    const vertical = a.x === b.x;
+    const coordinate = vertical ? a.x : a.y;
+    const cache = vertical ? xBoxes : yBoxes;
+    let candidates = cache.get(coordinate);
+    if (!candidates) {
+      candidates = boxes.filter((box) => vertical
+        ? coordinate >= box.x - box.width / 2 - 6 && coordinate <= box.x + box.width / 2 + 6
+        : coordinate >= box.y - box.height / 2 - 6 && coordinate <= box.y + box.height / 2 + 6);
+      cache.set(coordinate, candidates);
+    }
+    return candidates.every((box) => !overlapsBox(a, b, box));
+  };
+  return { boxes, xs: tracks('x', 'width'), ys: tracks('y', 'height'),
+    routes: [], verticalRuns: new Map(), horizontalRuns: new Map(), lanes: [], packetLanes: [], segmentClear, pitch, rootY: Math.min(...boxes.map((box) => box.y)) };
+}
+
+function intervalOverlap(a: number, b: number, c: number, d: number): number {
+  return Math.min(Math.max(a, b), Math.max(c, d)) - Math.max(Math.min(a, b), Math.min(c, d));
+}
+
+/** Só segmentos no mesmo eixo/coordenada podem coincidir: consulta indexada. */
+function runIsFree(geometry: RoutingGeometry, a: CablePoint, b: CablePoint): boolean {
+  const vertical = a.x === b.x;
+  const runs = (vertical ? geometry.verticalRuns : geometry.horizontalRuns).get(vertical ? a.x : a.y) ?? [];
+  return runs.every(([start, end]) => intervalOverlap(vertical ? a.y : a.x,
+    vertical ? b.y : b.x, start, end) <= 12);
+}
+
+function pathThrough(points: readonly CablePoint[]): string {
+  return points.map((point, i) => `${i ? 'L' : 'M'} ${point.x} ${point.y}`).join(' ');
+}
+
+/** Reserva uma faixa por cabo; os chips percorrem só seu trecho exclusivo. */
+function routedCablePath(
+  source: CablePort,
+  target: CablePort,
+  geometry: RoutingGeometry,
+  sourceAgentId: string,
+  targetAgentId: string,
+  sourceRank: number,
+  targetRank: number,
+  dense: boolean,
+  workerSource: boolean,
+): Pick<Cable, 'd' | 'packetPath' | 'extent'> {
+  const { boxes, routes, lanes } = geometry;
+  const obstacles = boxes.filter((box) =>
+    box.agentId !== sourceAgentId && box.agentId !== targetAgentId,
+  );
+  // O casco convexo dos controles contém toda a curva: só é liberada se livre.
+  const curve = cablePath(source, target);
+  if (!dense) {
+    const n = curve.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
+    const xs = n.filter((_, i) => i % 2 === 0);
+    const ys = n.filter((_, i) => i % 2 === 1);
+    const a = { x: Math.min(...xs), y: Math.min(...ys) };
+    const b = { x: Math.max(...xs), y: Math.max(...ys) };
+    if (!obstacles.some((box) => overlapsBox(a, b, box))) return { d: curve };
+  }
+  const lead = (port: CablePort, rank: number, id: string): CablePoint => {
+    const spacing = boxes.find((box) => box.agentId === id)!.y === geometry.rootY
+      ? CABLE_BRANCH_SPACING : CABLE_PACKET_BAND_SPACING;
+    const offset = 12 + (dense ? rank * spacing : 0);
+    return {
+      x: port.x + (port.side === 'right' ? offset : port.side === 'left' ? -offset : 0),
+      y: port.y + (port.side === 'bottom' ? offset : port.side === 'top' ? -offset : 0),
+    };
+  };
+  const start = lead(source, sourceRank, sourceAgentId);
+  const end = lead(target, targetRank, targetAgentId);
+  const vertical = source.side === 'top' || source.side === 'bottom';
+  let route: CablePoint[] | undefined;
+  let shortest = Infinity;
+  const packetEnds = (points: readonly CablePoint[]): readonly [CablePoint, CablePoint] => workerSource
+    ? [points[1]!, points[2]!] : [points[points.length - 3]!, points[points.length - 2]!];
+  const packetOverlap = (a: CablePoint, b: CablePoint, c: CablePoint, d: CablePoint) =>
+    Math.min(Math.max(a.y, b.y), Math.max(c.y, d.y)) + 7 > Math.max(Math.min(a.y, b.y), Math.min(c.y, d.y)) - 7 &&
+    Math.min(Math.max(a.x, b.x), Math.max(c.x, d.x)) + 14 > Math.max(Math.min(a.x, b.x), Math.min(c.x, d.x)) - 14;
+  if (!obstacles.every((box) => !overlapsBox(source, start, box) && !overlapsBox(end, target, box))) {
+    throw new Error(`No safe cable exit: ${sourceAgentId} -> ${targetAgentId}`);
+  }
+  const accept = (points: CablePoint[]) => {
+    if (points.some((point) => point.x < 4 || point.x > CABLE_CANVAS_WIDTH - 4)) return false;
+    const [p, q] = packetEnds(points);
+    if (dense && Math.abs(p.x - q.x) + Math.abs(p.y - q.y) < 96) return false;
+    for (let i = 1; i < points.length - 2; i++) {
+      if (!geometry.segmentClear(points[i]!, points[i + 1]!)) return false;
+    }
+    if (geometry.packetLanes.some(([c, d]) => packetOverlap(p, q, c, d))) return false;
+    const a = points[2]!;
+    const b = points[3]!;
+    if (lanes.some(([c, d]) => a.x === b.x
+      ? c.x === d.x && Math.abs(a.x - c.x) + 0.001 < geometry.pitch && intervalOverlap(a.y, b.y, c.y, d.y) > 0
+      : c.y === d.y && Math.abs(a.y - c.y) + 0.001 < geometry.pitch && intervalOverlap(a.x, b.x, c.x, d.x) > 0)) return false;
+    return points.slice(1).every((point, i) => runIsFree(geometry, points[i]!, point));
+  };
+  const stubLength = Math.abs(source.x - start.x) + Math.abs(source.y - start.y) +
+    Math.abs(target.x - end.x) + Math.abs(target.y - end.y);
+  const spineLength = vertical ? Math.abs(start.y - end.y) : Math.abs(start.x - end.x);
+  for (const track of vertical ? geometry.xs : geometry.ys) {
+    const length = stubLength + spineLength + (vertical
+      ? Math.abs(start.x - track) + Math.abs(end.x - track)
+      : Math.abs(start.y - track) + Math.abs(end.y - track));
+    if (length >= shortest) continue;
+    if (dense && (vertical ? Math.abs((workerSource ? start.x : end.x) - track)
+      : Math.abs((workerSource ? start.y : end.y) - track)) < 96) continue;
+    const a = vertical ? { x: track, y: start.y } : { x: start.x, y: track };
+    const b = vertical ? { x: track, y: end.y } : { x: end.x, y: track };
+    if (!geometry.segmentClear(a, b)) continue;
+    const points = [source, start, a, b, end, target];
+    if (!accept(points)) continue;
+    shortest = length;
+    route = points;
+  }
+  if (!route) {
+    // Fallback dentro das bordas: tenta as bandas livres entre/abaixo dos racks.
+    const bottom = Math.max(...boxes.map((box) => box.y + box.height / 2),
+      ...routes.flatMap((prior) => prior.map((point) => point.y)));
+    for (const y of [...geometry.ys, bottom + CABLE_PACKET_BAND_SPACING]) {
+      const points = [source, start, { x: start.x, y }, { x: end.x, y }, end, target];
+      if (!accept(points)) continue;
+      route = points;
+      break;
+    }
+  }
+  // Geometria impossível não vira uma curva que atravessa cards silenciosamente.
+  if (!route) throw new Error(`No safe cable route: ${sourceAgentId} -> ${targetAgentId}`);
+  routes.push(route);
+  for (let i = 1; i < route.length; i++) {
+    const a = route[i - 1]!;
+    const b = route[i]!;
+    const vertical = a.x === b.x;
+    const index = vertical ? geometry.verticalRuns : geometry.horizontalRuns;
+    const coordinate = vertical ? a.x : a.y;
+    const runs = index.get(coordinate) ?? [];
+    runs.push(vertical ? [a.y, b.y] : [a.x, b.x]);
+    index.set(coordinate, runs);
+  }
+  const a = route[2]!;
+  const b = route[3]!;
+  lanes.push([a, b]);
+  const [p, q] = packetEnds(route);
+  const dx = Math.sign(q.x - p.x) * 16;
+  const dy = Math.sign(q.y - p.y) * 16;
+  const packetPoints = [{ x: p.x + dx, y: p.y + dy }, { x: q.x - dx, y: q.y - dy }] as const;
+  geometry.packetLanes.push(packetPoints);
+  const packetPath = Math.abs(p.x - q.x) + Math.abs(p.y - q.y) >= 96 ? pathThrough(packetPoints) : undefined;
+  return { d: pathThrough(route), packetPath,
+    extent: { right: CABLE_CANVAS_WIDTH,
+      bottom: Math.max(...route.map((point) => point.y)) + 32 } };
+
+}
+
 /**
  * Liga cada relação a uma porta própria: os cabos que chegam no mesmo lado de
  * um rack se espalham pelo painel, ordenados pela posição da outra ponta para
@@ -233,16 +438,42 @@ export function layoutCables(input: {
     });
   }
 
+  const ranks = usable.map(() => ({ source: 0, target: 0 }));
+  const channels = new Map<string, Attachment[]>();
+  ports.forEach((ends, cableIndex) => {
+    for (const end of ['source', 'target'] as const) {
+      const port = ends[end]!;
+      const vertical = port.side === 'top' || port.side === 'bottom';
+      const key = `${port.side}:${vertical ? port.y : port.x}`;
+      const channel = channels.get(key) ?? [];
+      channel.push({ cableIndex, end, order: vertical ? port.x : port.y });
+      channels.set(key, channel);
+    }
+  });
+  for (const channel of channels.values()) {
+    channel.sort((a, b) => a.order - b.order || a.cableIndex - b.cableIndex);
+    channel.forEach((attachment, rank) => { ranks[attachment.cableIndex]![attachment.end] = rank; });
+  }
+  const geometry = routingGeometry([...input.boxes.values()], usable.length);
   return usable.map((spec, index) => {
     const source = ports[index]!.source!;
     const target = ports[index]!.target!;
     const sourceAgent = input.agents.get(spec.sourceAgentId)!;
     const targetAgent = input.agents.get(spec.targetAgentId)!;
+    let path: Pick<Cable, 'd' | 'packetPath' | 'extent'>;
+    try {
+      path = routedCablePath(source, target, geometry, spec.sourceAgentId, spec.targetAgentId,
+        ranks[index]!.source, ranks[index]!.target, usable.length > 4, cableWorkerEnd(spec.kind, true, false));
+    } catch {
+      // Sem rota verificada: a curva simples, sem pacotes, mantém o grafo de pé.
+      path = { d: cablePath(source, target), packetPath: undefined,
+        extent: { right: CABLE_CANVAS_WIDTH, bottom: Math.max(source.y, target.y) + 32 } };
+    }
     return {
       ...spec,
       source,
       target,
-      d: cablePath(source, target),
+      ...path,
       live: isCableLive(input.missionState, spec.kind, sourceAgent, targetAgent),
       workerState: cableWorkerEnd(spec.kind, sourceAgent, targetAgent).state,
       glyphs: [packetGlyph(spec.id), packetGlyph(`${spec.id}\u00002`)] as const,

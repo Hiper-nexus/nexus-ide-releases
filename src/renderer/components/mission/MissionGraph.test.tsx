@@ -253,6 +253,35 @@ describe('layoutMissionGraph', () => {
 });
 
 describe('MissionGraph', () => {
+  it.each([0, 8, 20])('keeps dense packet motion exclusive with 20 helpers and %i handoffs', (handoffs) => {
+    const denseAgents = Array.from({ length: 21 }, (_, index) => ({
+      ...agents[1], id: `dense-${index}`, agentName: `Agente ${index}`,
+      category: index === 0 ? 'orchestrator' as const : 'executor' as const,
+    }));
+    const edges: MissionSnapshot['edges'] = handoffs ? [
+      ...denseAgents.slice(1).map((a) => ({ id: `d-${a.id}`, kind: 'delegation' as const,
+        sourceAgentId: denseAgents[0].id, targetAgentId: a.id })),
+      ...denseAgents.slice(1, handoffs + 1).map((a) => ({ id: `h-${a.id}`, kind: 'handoff' as const,
+        sourceAgentId: a.id, targetAgentId: denseAgents[0].id })),
+    ] : [];
+    const { host } = renderGraph(null, {
+      snapshot: { ...snapshot, agents: denseAgents, edges },
+    });
+    const groups = [...host.querySelectorAll('.mission-graph__cable-group')];
+    expect(groups).toHaveLength(20 + handoffs);
+    for (const group of groups) {
+      const cable = group.querySelector('.mission-graph__edge')!.getAttribute('d');
+      const motions = [...group.querySelectorAll('animateMotion')];
+      expect(motions).toHaveLength(2);
+      for (const motion of motions) {
+        const path = motion.getAttribute('path')!;
+        expect(path).not.toBe(cable);
+        const [x1, y1, x2, y2] = path.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
+        expect(x1 === x2 || y1 === y2).toBe(true);
+        expect(Math.abs(x2 - x1) + Math.abs(y2 - y1)).toBeGreaterThanOrEqual(56);
+      }
+    }
+  });
   it('renders a canonical edge kind and label as a visible, accessible PT-BR relationship between named agents', () => {
     const { host } = renderGraph(null);
     const sourceName = agents[0].agentName;
