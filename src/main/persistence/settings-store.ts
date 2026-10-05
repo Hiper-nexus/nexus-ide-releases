@@ -42,6 +42,7 @@ import {
 } from './vibe-product-floor';
 import { applyPinkCityDefaultTheme } from './pink-city-default-migration';
 import { bumpDecisionCredentialRevision } from '../decision-models/decision-revision';
+import { decisionSettingsSchema, type DecisionSettings } from '../../shared/decision-models';
 
 /**
  * Terminal settings store: ~/.nexus/settings.json (same user-dir convention
@@ -64,6 +65,35 @@ export function resolveSettingsFile(
 }
 
 const SETTINGS_FILE = resolveSettingsFile();
+// Separate authority: old Nexus copies rewrite settings.json without knowing
+// decisionModels, and an unrelated invalid orch field must not erase it.
+const DECISION_SETTINGS_FILE = path.join(path.dirname(SETTINGS_FILE), 'decision-models.json');
+
+function loadDecisionPreferences(legacy: unknown): DecisionSettings | null {
+  let missing = false;
+  try {
+    const raw = JSON.parse(fs.readFileSync(DECISION_SETTINGS_FILE, 'utf8'));
+    const complete = raw && typeof raw === 'object' &&
+      ['mode', 'clefModel', 'cloudflareAccountId', 'visionEnabled'].every(key => Object.hasOwn(raw, key));
+    const saved = complete ? decisionSettingsSchema.safeParse(raw) : null;
+    if (saved?.success) return saved.data;
+  } catch (error) {
+    missing = (error as NodeJS.ErrnoException).code === 'ENOENT';
+  }
+  if (legacy === undefined) return null;
+  const parsed = decisionSettingsSchema.safeParse(legacy);
+  if (!parsed.success) return null;
+  // An existing but invalid authority cannot restore older egress consent.
+  // Keep a validated Account ID available for repair, with Cloudflare off.
+  if (!missing) return { ...parsed.data, mode: 'jev', visionEnabled: false };
+  // Only migrate an absent file. Preserve a corrupt/unreadable file for
+  // recovery; an explicit successful user save may replace it later.
+  if (missing) {
+    try { writeJsonFileAtomic(DECISION_SETTINGS_FILE, parsed.data); }
+    catch { console.warn('[settings] could not migrate decision preferences'); }
+  }
+  return parsed.data;
+}
 
 type ProductMigrations = VibeProductMigrations;
 
@@ -80,9 +110,11 @@ const uiListeners = new Set<WebContents>();
 
 function load(): void {
   let floorChanged = false;
+  let legacyDecisionSettings: unknown;
 
   try {
     const raw = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+    legacyDecisionSettings = raw?.orch?.decisionModels;
     const parsed = terminalSettingsSchema.safeParse(raw?.terminal ?? raw);
     if (parsed.success) {
       try {
@@ -138,6 +170,9 @@ function load(): void {
     // Missing/corrupt file — keep defaults.
   }
 
+  const decisionPreferences = loadDecisionPreferences(legacyDecisionSettings);
+  if (decisionPreferences) orchSettings = { ...orchSettings, decisionModels: decisionPreferences };
+
   const pinkCity = applyPinkCityDefaultTheme({
     terminal: current,
     productMigrations,
@@ -185,9 +220,12 @@ function snapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
   };
 }
 
-function persist(next = snapshot()): void {
+function persist(next = snapshot(), saveDecisionPreferences = false): void {
   try {
     writeJsonFileAtomic(SETTINGS_FILE, next);
+    if (saveDecisionPreferences) {
+      writeJsonFileAtomic(DECISION_SETTINGS_FILE, next.orch.decisionModels);
+    }
     if (next.productMigrations) {
       productMigrations = next.productMigrations;
     }
@@ -232,7 +270,7 @@ export function getOrchSettings(): OrchSettings {
 export function replaceOrchSettings(patch: Partial<OrchSettings>): OrchSettings {
   const parsed = orchSettingsSchema.safeParse({ ...orchSettings, ...patch });
   if (!parsed.success) return orchSettings;
-  persist(snapshot({ orch: parsed.data }));
+  persist(snapshot({ orch: parsed.data }), patch.decisionModels !== undefined);
   const changedDecisionModels = JSON.stringify(orchSettings.decisionModels) !== JSON.stringify(parsed.data.decisionModels);
   orchSettings = parsed.data;
   if (changedDecisionModels) bumpDecisionCredentialRevision();
@@ -372,7 +410,7 @@ export function registerSettingsIpc(): void {
         // Probe request is a one-shot trigger — never leave it sticky on disk.
         acpHarnessProbeRequest: null,
       };
-      persist(snapshot({ orch: next }));
+      persist(snapshot({ orch: next }), raw != null && Object.hasOwn(raw, 'decisionModels'));
       const changedDecisionModels = JSON.stringify(orchSettings.decisionModels) !== JSON.stringify(next.decisionModels);
       orchSettings = next;
       if (changedDecisionModels) bumpDecisionCredentialRevision();

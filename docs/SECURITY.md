@@ -273,3 +273,18 @@ o gate de intenção continua recusando execução/despacho até a retomada.
 `operator-close`, restart, hibernação e missões done/failed não usam a exceção.
 A demotion conserva o ponteiro do coordenador retido; Encerrar usa razão
 explícita e exige a mesma prova de saída física de antes.
+
+## Preferências de decisão duráveis (F-421)
+
+`~/.nexus/decision-models.json` é a autoridade de modo, modelo Clef, Account ID
+e consentimento visual. Não contém token: este permanece no cofre. O schema
+continua desligando visão em Somente Jev; carregar uma cópia antiga de
+settings.json não reativa consentimento. Migração só cria o arquivo ausente
+com uma seção legada validada; arquivo próprio válido prevalece sobre a cópia
+de compatibilidade em settings.json. Escritas de áudio, tema e demais opções
+não regravam essa autoridade. Sob Vitest ambos os arquivos ficam no diretório
+isolado de testes, nunca no perfil real do operador.
+
+Se o arquivo próprio existir, mas não validar, uma cópia antiga não pode
+reativar egress: o Account ID válido pode ser recuperado dela, mas o modo
+fica Jev e a visão desligada até uma gravação explícita do operador.
