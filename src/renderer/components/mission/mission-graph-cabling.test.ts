@@ -81,6 +81,29 @@ const delegation = (id: string, from: string, to: string): CableSpec => ({
   targetAgentId: to,
 });
 
+function straightSegments(d: string) {
+  if (d.includes('C')) return [];
+  const n = d.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
+  return Array.from({ length: n.length / 2 - 1 }, (_, i) => ({
+    x1: n[i * 2]!, y1: n[i * 2 + 1]!, x2: n[i * 2 + 2]!, y2: n[i * 2 + 3]!,
+  }));
+}
+
+function sharedRun(a: string, b: string): number {
+  let longest = 0;
+  for (const s of straightSegments(a)) for (const t of straightSegments(b)) {
+    const vertical = s.x1 === s.x2 && t.x1 === t.x2 && s.x1 === t.x1;
+    const horizontal = s.y1 === s.y2 && t.y1 === t.y2 && s.y1 === t.y1;
+    if (!vertical && !horizontal) continue;
+    const [a1, a2, b1, b2] = vertical
+      ? [s.y1, s.y2, t.y1, t.y2] : [s.x1, s.x2, t.x1, t.x2];
+    longest = Math.max(longest,
+      Math.min(Math.max(a1, a2), Math.max(b1, b2)) - Math.max(Math.min(a1, a2), Math.min(b1, b2)),
+    );
+  }
+  return longest;
+}
+
 describe('cabos da sala de racks', () => {
   it.each(['delegation', 'handoff', 'topology'] as const)(
     'com 20 helpers vivos, %s não atravessa cards de outras pontas', (kind) => {
@@ -97,6 +120,29 @@ describe('cabos da sala de racks', () => {
       }));
       const cables = layoutCables({ specs, boxes, agents, missionState: 'running' });
       expect(cables).toHaveLength(20);
+      for (let i = 0; i < cables.length; i++) {
+        for (let j = i + 1; j < cables.length; j++) {
+          expect(sharedRun(cables[i]!.d, cables[j]!.d),
+            `${cables[i]!.id} × ${cables[j]!.id}`).toBeLessThanOrEqual(12);
+        }
+      }
+      const packetBounds = cables.map((cable) => {
+        expect(cable).toHaveProperty('packetPath');
+        const path = (cable as { packetPath?: string }).packetPath ?? cable.d;
+        const segments = straightSegments(path);
+        expect(segments).toHaveLength(1);
+        const s = segments[0]!;
+        // Maior chip existente: 28 × 14 px; duas fichas separadas por meia volta.
+        expect(Math.abs(s.x2 - s.x1) + Math.abs(s.y2 - s.y1)).toBeGreaterThanOrEqual(56);
+        return { left: Math.min(s.x1, s.x2) - 14, right: Math.max(s.x1, s.x2) + 14,
+          top: Math.min(s.y1, s.y2) - 7, bottom: Math.max(s.y1, s.y2) + 7 };
+      });
+      for (let i = 0; i < packetBounds.length; i++) for (let j = i + 1; j < packetBounds.length; j++) {
+        const a = packetBounds[i]!;
+        const b = packetBounds[j]!;
+        expect(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top,
+          `glifos ${cables[i]!.id} × ${cables[j]!.id}`).toBe(true);
+      }
       let oldCrossings = 0;
       for (const cable of cables) {
         expect(cable.live).toBe(true);

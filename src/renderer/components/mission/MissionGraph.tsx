@@ -9,6 +9,8 @@ import { ActionCard, EmptyState } from '../ActionCard';
 import {
   CORE_HEIGHT,
   CORE_WIDTH,
+  CABLE_LANE_SPACING,
+  CABLE_BRANCH_SPACING,
   RACK_HEIGHT,
   RACK_WIDTH,
   layoutCables,
@@ -21,7 +23,6 @@ import {
 
 const AGENTS_PER_ROW = 4;
 const GRAPH_WIDTH = 960;
-const COLUMN_STEP = GRAPH_WIDTH / AGENTS_PER_ROW;
 /** Espaço vertical dos cabos entre o painel do núcleo e a primeira fileira. */
 const CABLE_RUN = 132;
 const ROOT_Y = 32 + CORE_HEIGHT / 2;
@@ -76,6 +77,13 @@ type GraphSurfaceStyle = CSSProperties & {
   readonly '--mission-core-height': string;
 };
 
+/** Gutters comportam os chips de 28px sem sobrepor faixas de outras fileiras. */
+function graphWidth(agentCount: number): number {
+  const rows = Math.ceil(Math.max(0, agentCount - 1) / AGENTS_PER_ROW);
+  const gutter = rows > 1 ? (rows + 1) * CABLE_LANE_SPACING : 32;
+  return Math.max(GRAPH_WIDTH, (RACK_WIDTH + gutter) * AGENTS_PER_ROW);
+}
+
 /**
  * Produces one stable visual root followed by the remaining agents in input
  * order. Coordinates are static canvas pixels, so rendering never needs a
@@ -92,8 +100,13 @@ export function layoutMissionGraph(
   const rootIndex = orchestratorIndex >= 0 ? orchestratorIndex : 0;
   const root = agents[rootIndex];
   const workers = agents.filter((_, index) => index !== rootIndex);
+  const width = graphWidth(agents.length);
+  const columnStep = width / AGENTS_PER_ROW;
+  const firstRowY = Math.max(FIRST_WORKER_ROW_Y,
+    ROOT_Y + CORE_HEIGHT / 2 + workers.length * CABLE_BRANCH_SPACING + 64 + RACK_HEIGHT / 2,
+  );
   const positions: MissionGraphPosition[] = [
-    { agentId: root.id, x: GRAPH_WIDTH / 2, y: ROOT_Y },
+    { agentId: root.id, x: width / 2, y: ROOT_Y },
   ];
 
   for (let index = 0; index < workers.length; index += 1) {
@@ -101,12 +114,12 @@ export function layoutMissionGraph(
     const rowStart = row * AGENTS_PER_ROW;
     const rowSize = Math.min(AGENTS_PER_ROW, workers.length - rowStart);
     const column = index - rowStart;
-    const firstX = (GRAPH_WIDTH - (rowSize - 1) * COLUMN_STEP) / 2;
+    const firstX = (width - (rowSize - 1) * columnStep) / 2;
 
     positions.push({
       agentId: workers[index].id,
-      x: firstX + column * COLUMN_STEP,
-      y: FIRST_WORKER_ROW_Y + row * WORKER_ROW_STEP,
+      x: firstX + column * columnStep,
+      y: firstRowY + row * WORKER_ROW_STEP,
     });
   }
 
@@ -181,7 +194,7 @@ function CablePackets({ cable }: { readonly cable: Cable }) {
               dur={`${PACKET_DURATION_S}s`}
               begin={`${-index * (PACKET_DURATION_S / cable.glyphs.length)}s`}
               repeatCount="indefinite"
-              path={cable.d}
+              path={cable.packetPath ?? cable.d}
             />
           </g>
         );
@@ -230,8 +243,9 @@ export function MissionGraph({
   }
 
   const height = graphHeight(layout);
+  const width = graphWidth(snapshot.agents.length);
   const surfaceStyle: GraphSurfaceStyle = {
-    '--mission-graph-width': `${GRAPH_WIDTH}px`,
+    '--mission-graph-width': `${width}px`,
     '--mission-graph-height': `${height}px`,
     '--mission-rack-width': `${RACK_WIDTH}px`,
     '--mission-rack-height': `${RACK_HEIGHT}px`,
@@ -289,7 +303,7 @@ export function MissionGraph({
       <div className="mission-graph__surface" style={surfaceStyle}>
         <svg
           className="mission-graph__edges"
-          viewBox={`0 0 ${GRAPH_WIDTH} ${height}`}
+          viewBox={`0 0 ${width} ${height}`}
           width="100%"
           height="100%"
           aria-hidden="true"
@@ -350,7 +364,7 @@ export function MissionGraph({
 
         <svg
           className="mission-graph__jacks"
-          viewBox={`0 0 ${GRAPH_WIDTH} ${height}`}
+          viewBox={`0 0 ${width} ${height}`}
           width="100%"
           height="100%"
           aria-hidden="true"

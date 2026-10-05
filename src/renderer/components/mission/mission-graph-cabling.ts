@@ -15,6 +15,9 @@ export const RACK_WIDTH = 208;
 export const RACK_HEIGHT = 150;
 export const CORE_WIDTH = 304;
 export const CORE_HEIGHT = 162;
+/** Chip máximo de 28px + folga; a capa do cabo mede 7px. */
+export const CABLE_LANE_SPACING = 32;
+export const CABLE_BRANCH_SPACING = 8;
 
 /** Recuo das portas em relação à quina do rack (o cabo não sai da quina). */
 const PORT_INSET_HORIZONTAL = 30;
@@ -66,6 +69,8 @@ export interface Cable extends CableSpec {
   readonly target: CablePort;
   /** Caminho do cabo no canvas: curva livre ou desvio pelos corredores. */
   readonly d: string;
+  /** Trecho exclusivo do corredor: glifos não entram no leque de portas. */
+  readonly packetPath?: string;
   /** Energia passando: a missão está viva e a ponta de trabalho trabalha. */
   readonly live: boolean;
   /** Estado de quem trabalha na ponta do cabo — pinta o cabo parado. */
@@ -179,49 +184,111 @@ function overlapsBox(a: CablePoint, b: CablePoint, box: RackBox, clearance = 6):
     Math.min(a.y, b.y) <= box.y + box.height / 2 + clearance;
 }
 
-/** Mantém curvas livres; cabos longos contornam racks pelos gutters existentes. */
+interface RoutingGeometry {
+  readonly boxes: readonly RackBox[];
+  readonly xs: readonly number[];
+  readonly ys: readonly number[];
+  readonly rootY: number;
+  readonly routes: CablePoint[][];
+  readonly lanes: (readonly [CablePoint, CablePoint])[];
+}
+
+/** Candidatos únicos e retângulos compartilhados por toda a renderização. */
+function routingGeometry(boxes: readonly RackBox[]): RoutingGeometry {
+  const tracks = (axis: 'x' | 'y', size: 'width' | 'height') => {
+    const edges = [...new Set(boxes.flatMap((box) =>
+      [box[axis] - box[size] / 2, box[axis] + box[size] / 2],
+    ))].sort((a, b) => a - b);
+    const positions = new Set(edges.flatMap((edge) => [edge - 16, edge + 16]));
+    for (let i = 1; i < edges.length; i++) {
+      for (let n = edges[i - 1]! + 16; n <= edges[i]! - 16; n += CABLE_LANE_SPACING) {
+        positions.add(n);
+      }
+    }
+    return [...positions].sort((a, b) => a - b);
+  };
+  return { boxes, xs: tracks('x', 'width'), ys: tracks('y', 'height'),
+    rootY: Math.min(...boxes.map((box) => box.y)), routes: [], lanes: [] };
+}
+
+function intervalOverlap(a: number, b: number, c: number, d: number): number {
+  return Math.min(Math.max(a, b), Math.max(c, d)) - Math.max(Math.min(a, b), Math.min(c, d));
+}
+
+function coincidentRun(a: CablePoint, b: CablePoint, c: CablePoint, d: CablePoint): number {
+  if (a.x === b.x && c.x === d.x && a.x === c.x) return intervalOverlap(a.y, b.y, c.y, d.y);
+  if (a.y === b.y && c.y === d.y && a.y === c.y) return intervalOverlap(a.x, b.x, c.x, d.x);
+  return 0;
+}
+
+function pathThrough(points: readonly CablePoint[]): string {
+  return points.map((point, i) => `${i ? 'L' : 'M'} ${point.x} ${point.y}`).join(' ');
+}
+
+/** Reserva uma faixa por cabo; os chips percorrem só seu trecho exclusivo. */
 function routedCablePath(
   source: CablePort,
   target: CablePort,
-  boxes: readonly RackBox[],
+  geometry: RoutingGeometry,
   sourceAgentId: string,
   targetAgentId: string,
-): string {
+  index: number,
+  dense: boolean,
+): Pick<Cable, 'd' | 'packetPath'> {
+  const { boxes, routes, lanes } = geometry;
   const obstacles = boxes.filter((box) =>
     box.agentId !== sourceAgentId && box.agentId !== targetAgentId,
   );
-  // A curva vertical fica dentro deste envelope; a lateral tem a barriga de 64px.
   const envelopeEnd = { x: target.x, y: Math.max(source.y, target.y) + 64 };
   const envelopeStart = { x: source.x, y: Math.min(source.y, target.y) };
-  if (!obstacles.some((box) => overlapsBox(envelopeStart, envelopeEnd, box))) {
-    return cablePath(source, target);
+  if (!dense && !obstacles.some((box) => overlapsBox(envelopeStart, envelopeEnd, box))) {
+    return { d: cablePath(source, target) };
   }
-  const lead = (port: CablePort): CablePoint => ({
-    x: port.x + (port.side === 'right' ? 12 : port.side === 'left' ? -12 : 0),
-    y: port.y + (port.side === 'bottom' ? 12 : port.side === 'top' ? -12 : 0),
-  });
-  const start = lead(source);
-  const end = lead(target);
-  const candidates: CablePoint[][] = [];
-  for (const box of boxes) {
-    for (const x of [box.x - box.width / 2 - 12, box.x + box.width / 2 + 12]) {
-      candidates.push([source, start, { x, y: start.y }, { x, y: end.y }, end, target]);
-    }
-    for (const y of [box.y - box.height / 2 - 12, box.y + box.height / 2 + 12]) {
-      candidates.push([source, start, { x: start.x, y }, { x: end.x, y }, end, target]);
-    }
+  const lead = (port: CablePort, id: string): CablePoint => {
+    const root = boxes.find((box) => box.agentId === id)!.y === geometry.rootY;
+    const offset = 12 + (dense ? (root ? index : index % 4) * CABLE_BRANCH_SPACING : 0);
+    return {
+      x: port.x + (port.side === 'right' ? offset : port.side === 'left' ? -offset : 0),
+      y: port.y + (port.side === 'bottom' ? offset : port.side === 'top' ? -offset : 0),
+    };
+  };
+  const start = lead(source, sourceAgentId);
+  const end = lead(target, targetAgentId);
+  const vertical = source.side === 'top' || source.side === 'bottom';
+  let route: CablePoint[] | undefined;
+  let shortest = Infinity;
+  for (const track of vertical ? geometry.xs : geometry.ys) {
+    const a = vertical ? { x: track, y: start.y } : { x: start.x, y: track };
+    const b = vertical ? { x: track, y: end.y } : { x: end.x, y: track };
+    const points = [source, start, a, b, end, target];
+    const length = points.slice(1).reduce((total, point, i) =>
+      total + Math.abs(point.x - points[i]!.x) + Math.abs(point.y - points[i]!.y), 0);
+    if (length >= shortest) continue;
+    if (dense && Math.abs(a.x - b.x) + Math.abs(a.y - b.y) < 88) continue;
+    if (lanes.some(([c, d]) => vertical
+      ? c.x === d.x && Math.abs(a.x - c.x) < CABLE_LANE_SPACING && intervalOverlap(a.y, b.y, c.y, d.y) > 0
+      : c.y === d.y && Math.abs(a.y - c.y) < CABLE_LANE_SPACING && intervalOverlap(a.x, b.x, c.x, d.x) > 0)) continue;
+    if (!points.slice(1).every((point, i) =>
+      (i === 0 || i === points.length - 2 ? obstacles : boxes).every((box) =>
+        !overlapsBox(points[i]!, point, box, 6),
+      ) && routes.every((prior) => prior.slice(1).every((other, j) =>
+        coincidentRun(points[i]!, point, prior[j]!, other) <= 12,
+      )),
+    )) continue;
+    shortest = length;
+    route = points;
   }
-  const length = (points: readonly CablePoint[]) => points.slice(1).reduce(
-    (total, point, i) => total + Math.abs(point.x - points[i]!.x) + Math.abs(point.y - points[i]!.y), 0,
-  );
-  const route = candidates.filter((points) => points.slice(1).every(
-    (point, i) => (i === 0 || i === points.length - 2 ? obstacles : boxes).every(
-      (box) => !overlapsBox(points[i]!, point, box),
-    ),
-  )).sort((a, b) => length(a) - length(b))[0];
-  return route
-    ? route.map((point, i) => `${i ? 'L' : 'M'} ${point.x} ${point.y}`).join(' ')
-    : cablePath(source, target);
+  if (!route) return { d: cablePath(source, target) };
+  routes.push(route);
+  const a = route[2]!;
+  const b = route[3]!;
+  lanes.push([a, b]);
+  const dx = Math.sign(b.x - a.x) * 16;
+  const dy = Math.sign(b.y - a.y) * 16;
+  const packetPath = Math.abs(a.x - b.x) + Math.abs(a.y - b.y) >= 88
+    ? pathThrough([{ x: a.x + dx, y: a.y + dy }, { x: b.x - dx, y: b.y - dy }])
+    : undefined;
+  return { d: pathThrough(route), packetPath };
 }
 
 /**
@@ -288,6 +355,7 @@ export function layoutCables(input: {
     });
   }
 
+  const geometry = routingGeometry([...input.boxes.values()]);
   return usable.map((spec, index) => {
     const source = ports[index]!.source!;
     const target = ports[index]!.target!;
@@ -297,7 +365,8 @@ export function layoutCables(input: {
       ...spec,
       source,
       target,
-      d: routedCablePath(source, target, [...input.boxes.values()], spec.sourceAgentId, spec.targetAgentId),
+      ...routedCablePath(source, target, geometry, spec.sourceAgentId, spec.targetAgentId,
+        index, usable.length > 4),
       live: isCableLive(input.missionState, spec.kind, sourceAgent, targetAgent),
       workerState: cableWorkerEnd(spec.kind, sourceAgent, targetAgent).state,
       glyphs: [packetGlyph(spec.id), packetGlyph(`${spec.id}\u00002`)] as const,

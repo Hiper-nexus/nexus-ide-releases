@@ -253,6 +253,29 @@ describe('layoutMissionGraph', () => {
 });
 
 describe('MissionGraph', () => {
+  it('keeps dense packet motion on exclusive cable lanes, away from the port fan', () => {
+    const denseAgents = Array.from({ length: 21 }, (_, index) => ({
+      ...agents[1], id: `dense-${index}`, agentName: `Agente ${index}`,
+      category: index === 0 ? 'orchestrator' as const : 'executor' as const,
+    }));
+    const { host } = renderGraph(null, {
+      snapshot: { ...snapshot, agents: denseAgents, edges: [] },
+    });
+    const groups = [...host.querySelectorAll('.mission-graph__cable-group')];
+    expect(groups).toHaveLength(20);
+    for (const group of groups) {
+      const cable = group.querySelector('.mission-graph__edge')!.getAttribute('d');
+      const motions = [...group.querySelectorAll('animateMotion')];
+      expect(motions).toHaveLength(2);
+      for (const motion of motions) {
+        const path = motion.getAttribute('path')!;
+        expect(path).not.toBe(cable);
+        const [x1, y1, x2, y2] = path.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
+        expect(x1).toBe(x2);
+        expect(Math.abs(y2 - y1)).toBeGreaterThanOrEqual(56);
+      }
+    }
+  });
   it('renders a canonical edge kind and label as a visible, accessible PT-BR relationship between named agents', () => {
     const { host } = renderGraph(null);
     const sourceName = agents[0].agentName;
