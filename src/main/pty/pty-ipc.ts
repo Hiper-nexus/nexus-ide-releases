@@ -438,7 +438,7 @@ function spawnCliPtyAgentPane(
             role: persistedPane.role,
             workerIncarnationId: persistedPane.workerIncarnationId,
             model: request.model,
-            accountId: selectedAccountId,
+            accountId: request.accountId,
             effort: request.effort,
             cwd: authority.cwd,
             agentName: persistedPane.agentName,

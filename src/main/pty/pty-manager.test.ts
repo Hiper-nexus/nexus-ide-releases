@@ -1111,7 +1111,19 @@ describe("PTY session ownership (renderer capability boundary)", () => {
         readOnly: true,
       }),
     ).toBeNull();
-    expect(adoptMainOwnedAgentSession(replacement, exactClaim)).toEqual({
+    // F-924: pin de conta divergente não adota; modelo/esforço/conta sem
+    // pin são do processo vivo e não impedem a adoção.
+    expect(
+      adoptMainOwnedAgentSession(replacement, {
+        ...exactClaim,
+        accountId: "acct-other",
+      }),
+    ).toBeNull();
+    expect(adoptMainOwnedAgentSession(replacement, {
+      ...exactClaim,
+      model: "upgraded-model",
+      effort: "high",
+    })).toEqual({
       sessionId,
       state: "busy",
     });

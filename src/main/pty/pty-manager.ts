@@ -3217,6 +3217,7 @@ export interface MainOwnedAgentSessionClaim {
   readonly role: "orchestrator" | "worker";
   readonly workerIncarnationId?: string;
   readonly model?: string;
+  /** Pin explícito de conta; sem pin, adota a conta que o processo já usa. */
   readonly accountId?: string;
   readonly effort?: string;
   readonly cwd: string;
@@ -3287,9 +3288,12 @@ export function adoptMainOwnedAgentSession(
       info.missionId === claim.missionId &&
       info.role === claim.role &&
       info.workerIncarnationId === claim.workerIncarnationId &&
-      info.requestedModel === claim.model &&
-      info.accountId === claim.accountId &&
-      info.effort === claim.effort &&
+      // F-924: modelo, esforço e conta escolhida são atributos do processo
+      // que já roda (upgrade de modelo, rotação de conta no re-pedido do
+      // renderer). Exigir igualdade recusava a adoção, a guarda negava a
+      // substituição e o pane mostrava "failed to start" com a CLI viva por
+      // trás. Só um pin explícito de conta divergente impede adotar.
+      (claim.accountId === undefined || info.accountId === claim.accountId) &&
       info.cwd === claim.cwd &&
       info.agentName === claim.agentName &&
       info.readOnly === claim.readOnly &&
