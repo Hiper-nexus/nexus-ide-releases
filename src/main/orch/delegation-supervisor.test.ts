@@ -9,6 +9,7 @@ import {
   decideWorkerHung,
   delegationRecoveryStage,
   isDelegationSupervisable,
+  pendingDeliverableHandoffs,
   shouldRearmHandoffDelivery,
   WORKER_HUNG_AFTER_MS,
   WORKER_HUNG_RENOTIFY_MS,
@@ -597,5 +598,63 @@ describe('shouldRearmHandoffDelivery — chef idle com pendente durável re-arma
         orchestratorStaleBusy: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe('F-925: re-arm conta todo handoff entregável, não só success/blocked', () => {
+  const queued = (overrides: Partial<Handoff>): Handoff => ({
+    id: overrides.id ?? 'handoff-x',
+    missionId: mission.id,
+    claimTrust: 'untrusted',
+    status: 'progress',
+    summary: 'aviso pendente',
+    artifacts: [],
+    evidenceIds: [],
+    evidenceTrust: 'unverified',
+    delivered: false,
+    deliveryState: 'queued',
+    createdAt: 1,
+    ...overrides,
+  });
+
+  it('progress de sistema e failed de worker morto re-armam com 0 workers vivos', () => {
+    // Campo 05/10: o "Esteira parada" (progress, supervisor) e o sintético de
+    // worker morto (failed, handoff-enforcement) ficaram queued 119 min sem
+    // nunca re-armar — o filtro só contava success|blocked.
+    expect(
+      pendingDeliverableHandoffs([
+        queued({
+          id: 'h-momentum',
+          status: 'progress',
+          fromAgent: 'nexus-delegation-supervisor',
+          summary: 'Esteira parada: nenhum worker há 20 min',
+        }),
+        queued({
+          id: 'h-dead-worker',
+          status: 'failed',
+          fromAgent: 'nexus-handoff-enforcement',
+          summary: 'worker saiu sem entregar',
+        }),
+        queued({
+          id: 'h-hung',
+          status: 'stalled',
+          fromAgent: 'nexus-delegation-supervisor',
+          summary: '[travado] worker pendurado (F-242)',
+        }),
+        queued({ id: 'h-partial', status: 'partial', fromAgent: 'worker-a' }),
+      ]),
+    ).toBe(4);
+  });
+
+  it('diagnóstico que nunca chega ao PTY não segura o re-arm', () => {
+    // isDiagnosticDriverHandoff: stalled de worker e mission-driver são
+    // ledger/UI — contá-los re-armaria uma fila que nunca desce.
+    expect(
+      pendingDeliverableHandoffs([
+        queued({ id: 'h1', status: 'stalled', fromAgent: 'worker-a' }),
+        queued({ id: 'h2', status: 'progress', fromAgent: 'nexus-mission-driver' }),
+        queued({ id: 'h3', status: 'stalled', fromAgent: 'nexus-mission-driver' }),
+      ]),
+    ).toBe(0);
   });
 });

@@ -429,6 +429,85 @@ describe("scoped handoff store", () => {
     });
   });
 
+  it("F-925: falhas contra o MESMO Maestro vivo liberam o orçamento sem apagar a auditoria", () => {
+    // Campo 05/10: Maestro ocioso no prompt (modal de TUI) recusou 3 pastes
+    // por accept_timeout e o orçamento durável por sessão virou wedge
+    // terminal — 119 min parado, workers mortos, operador teve de intervir.
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    let now = 100;
+    let id = 0;
+    const missions = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => "mission-release",
+    });
+    const handoffs = createScopedHandoffStore(runtimeManager, scope, {
+      now: () => now,
+      idFactory: (prefix) => `${prefix}-${++id}`,
+    });
+    missions.create({
+      title: "Release",
+      orchestratorSessionId: "orchestrator-session",
+    });
+    const handoff = handoffs.submit({
+      missionId: "mission-release",
+      sessionId: "worker-session",
+      fromAgent: "worker",
+      status: "success",
+      summary: "Entrega que nunca chegava ao Maestro idle.",
+    });
+    const reserve = () =>
+      handoffs.reserveDeliveryAttempt({
+        handoffId: handoff.id,
+        missionId: "mission-release",
+        orchestratorSessionId: "orchestrator-session",
+        maxAttempts: 2,
+      });
+    const fail = (attemptId: string) =>
+      handoffs.failDeliveryAttempt({
+        attemptId,
+        handoffId: handoff.id,
+        failureCode: "accept_timeout",
+      });
+
+    fail(reserve().id);
+    fail(reserve().id);
+    expect(() => reserve()).toThrow(/budget exhausted/i);
+    // Sem release, queued para sempre — exatamente o wedge do incidente.
+    expect(handoffs.get(handoff.id)).toMatchObject({
+      delivered: false,
+      deliveryState: "queued",
+    });
+
+    expect(
+      handoffs.releaseFailedDeliveryAttempts({
+        handoffId: handoff.id,
+        orchestratorSessionId: "orchestrator-session",
+      }),
+    ).toBe(2);
+    const third = reserve();
+    expect(third).toMatchObject({ attemptNo: 3, state: "reserved" });
+
+    // A causa original continua auditável sob o marcador de liberação.
+    expect(handoffs.listDeliveryAttempts(handoff.id)).toMatchObject([
+      { attemptNo: 1, state: "failed", failureCode: "released:accept_timeout" },
+      { attemptNo: 2, state: "failed", failureCode: "released:accept_timeout" },
+      { attemptNo: 3, state: "reserved" },
+    ]);
+    // Idempotente e com escopo da sessão: nada mais a liberar.
+    expect(
+      handoffs.releaseFailedDeliveryAttempts({
+        handoffId: handoff.id,
+        orchestratorSessionId: "orchestrator-session",
+      }),
+    ).toBe(0);
+    expect(
+      handoffs.releaseFailedDeliveryAttempts({
+        handoffId: handoff.id,
+        orchestratorSessionId: "orchestrator-session-outro",
+      }),
+    ).toBe(0);
+  });
+
   it("rebind NUNCA bloqueia a missão por projeção de entrega inconsistente — re-enfileira para a nova sessão (doutrina Overclock)", () => {
     const runtimeManager = manager();
     const scope = testProjectScope();

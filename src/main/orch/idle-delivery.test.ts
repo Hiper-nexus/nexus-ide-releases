@@ -89,6 +89,7 @@ const storeMocks = vi.hoisted(() => ({
     orchestratorSessionId: string;
     attemptNo: number;
     state: 'reserved' | 'pasted' | 'accepted' | 'failed';
+    released?: boolean;
   }>(),
   nextAttemptId: 1,
 }));
@@ -288,7 +289,8 @@ vi.mock('./project-domain-store-registry', () => ({
         );
         const sessionAttempts = priorAttempts.filter(
           (attempt) =>
-            attempt.orchestratorSessionId === orchestratorSessionId,
+            attempt.orchestratorSessionId === orchestratorSessionId &&
+            !attempt.released,
         ).length;
         if (sessionAttempts >= maxAttempts) {
           throw new Error('handoff delivery attempt budget exhausted');
@@ -318,6 +320,31 @@ vi.mock('./project-domain-store-registry', () => ({
         attempt.state = 'failed';
         return true;
       },
+      releaseFailedDeliveryAttempts: ({
+        handoffId,
+        orchestratorSessionId,
+      }: {
+        handoffId: string;
+        orchestratorSessionId: string;
+      }) => {
+        let released = 0;
+        for (const attempt of storeMocks.deliveryAttempts.values()) {
+          if (
+            attempt.handoffId === handoffId &&
+            attempt.orchestratorSessionId === orchestratorSessionId &&
+            attempt.state === 'failed' &&
+            !attempt.released
+          ) {
+            attempt.released = true;
+            released += 1;
+          }
+        }
+        return released;
+      },
+      listDeliveryAttempts: (handoffId: string) =>
+        [...storeMocks.deliveryAttempts.values()].filter(
+          (attempt) => attempt.handoffId === handoffId,
+        ),
       acceptDeliveryAttempt: ({
         attemptId,
         handoffId,
@@ -1194,6 +1221,151 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
     delivery.shutdownIdleDelivery();
   });
 
+  it('F-925: orçamento esgotado com Maestro idle não vira wedge — o re-drive periódico recola', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    const current = handoff();
+    storeMocks.handoffs.set(current.id, current);
+    const recovery = vi.fn(async () => true);
+    delivery.configureHandoffDeliveryRuntimeRecovery(recovery);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(current, scope);
+    const deliveries = () =>
+      ptyMocks.writes.mock.calls.filter((call) =>
+        String(call[1]).includes('completed the requested work'),
+      );
+
+    // 3 tentativas morrem de accept_timeout (backoffs de 15s e 30s, F-112).
+    // Campo 05/10: a partir daqui a missão ficou 119 min parada — Maestro
+    // vivo no prompt (modal?), workers mortos, zero pastes novos.
+    await vi.advanceTimersByTimeAsync(85_000);
+    expect(deliveries()).toHaveLength(3);
+    expect(storeMocks.delivered).toEqual([]);
+    expect(recovery).not.toHaveBeenCalled();
+
+    // O re-drive periódico (outbox 1s / caixa durável / re-arm do supervisor)
+    // re-submete o handoff queued. A liberação das falhas reabre o orçamento,
+    // MAS atrás de uma espera crescente — sem ela o laço recolava a cada
+    // ~13 s para sempre (revisão de 793aa40ca: 546 colagens em 119 min).
+    expect(delivery.redeliverPendingHandoffs(scope, 'mission-a')).toBe(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(deliveries()).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(
+      delivery.IDLE_RELEASE_RETRY_BASE_MS + 2_000,
+    );
+    expect(deliveries()).toHaveLength(4);
+    expect(storeMocks.delivered).toEqual([]);
+
+    // Quando o modal solta o turno, a borda busy aceita a entrega normal.
+    ptyMocks.state = 'busy';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
+    expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-a' }]);
+    expect(
+      storeMocks.missions.get(`${scope.projectId}:${scope.checkoutId}:mission-a`)
+        ?.status,
+    ).toBe('running');
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('F-925 revisão: com o outbox de 1 s ligado, 119 min produzem poucas colagens (O(log)+teto), e a entrega acontece quando o Maestro aceita', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    const current = handoff();
+    storeMocks.handoffs.set(current.id, current);
+    const recovery = vi.fn(async () => true);
+    delivery.configureHandoffDeliveryRuntimeRecovery(recovery);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(current, scope);
+    const pastes = () =>
+      ptyMocks.writes.mock.calls.filter((call) =>
+        String(call[1]).includes('completed the requested work'),
+      ).length;
+    const enters = () =>
+      ptyMocks.writes.mock.calls.filter(
+        (call) => call[1] === '\r' || call[1] === '\r\n',
+      ).length;
+
+    // O incidente real: outbox de 1 s recolando contra um Maestro ocioso.
+    // Sem a espera crescente foram 546 colagens e 2184 Enters em 119 min.
+    for (let tick = 0; tick < 119 * 60; tick += 1) {
+      await vi.advanceTimersByTimeAsync(1_000);
+      delivery.redeliverPendingHandoffs(scope, 'mission-a');
+    }
+
+    // O orçamento continua reabrindo (não é o wedge original), mas cada
+    // rodada dobra a espera por handoff+sessão até o teto.
+    expect(pastes()).toBeGreaterThan(3);
+    expect(pastes()).toBeLessThan(40);
+    expect(enters()).toBeLessThan(200);
+    expect(recovery).not.toHaveBeenCalled();
+    expect(storeMocks.handoffs.get('handoff-a')?.deliveryState).toBe('queued');
+    expect(
+      storeMocks.missions.get(`${scope.projectId}:${scope.checkoutId}:mission-a`)
+        ?.status,
+    ).toBe('running');
+
+    // O Maestro acorda: a borda busy marca a espera, e depois da base da
+    // rodada a borda idle dispara a recolagem represada na hora — a entrega
+    // não espera o teto nem vira wedge de novo.
+    ptyMocks.state = 'busy';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
+    await vi.advanceTimersByTimeAsync(
+      delivery.IDLE_RELEASE_RETRY_BASE_MS + 1_000,
+    );
+    ptyMocks.state = 'idle';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
+    await advanceUntilSubmitted(delivery);
+    ptyMocks.state = 'busy';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
+    expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-a' }]);
+    delivery.shutdownIdleDelivery();
+  }, 120_000);
+
+  it('F-925 revisão: borda busy→idle real dispara a rodada represada; re-publicar idle sem borda não', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    const current = handoff();
+    storeMocks.handoffs.set(current.id, current);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(current, scope);
+    const deliveries = () =>
+      ptyMocks.writes.mock.calls.filter((call) =>
+        String(call[1]).includes('completed the requested work'),
+      );
+
+    // 3 tentativas morrem de accept_timeout; a 4ª vem da liberação + espera
+    // de 1 min e falha do mesmo jeito → rodada seguinte espera 2 min.
+    await vi.advanceTimersByTimeAsync(160_000);
+    expect(deliveries()).toHaveLength(4);
+    expect(storeMocks.delivered).toEqual([]);
+
+    // Idle re-publicado sem borda busy não é prova de mudança no PTY.
+    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(deliveries()).toHaveLength(4);
+
+    // Borda busy→idle depois da base da rodada dispara a recolagem na hora,
+    // sem esperar a janela de 2 min terminar.
+    ptyMocks.state = 'busy';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
+    await vi.advanceTimersByTimeAsync(
+      delivery.IDLE_RELEASE_RETRY_BASE_MS + 1_000,
+    );
+    ptyMocks.state = 'idle';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
+    await advanceUntilPasted(delivery);
+    expect(deliveries()).toHaveLength(5);
+    delivery.shutdownIdleDelivery();
+  });
 
   it('mantém o handoff na fila quando o pane do Maestro morreu, sem fabricar aceite ou ACK', async () => {
     const delivery = await import('./idle-delivery');

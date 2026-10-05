@@ -1922,7 +1922,10 @@ export class ScopedHandoffStore {
           .prepare(
             `SELECT
                COALESCE(MAX(attempt_no), 0) AS latest_attempt_no,
-               COUNT(CASE WHEN orchestrator_session_id = ? THEN 1 END)
+               COUNT(CASE WHEN orchestrator_session_id = ?
+                       AND (failure_code IS NULL OR
+                            failure_code NOT LIKE 'released:%')
+                     THEN 1 END)
                  AS session_attempts
              FROM handoff_delivery_attempts
              WHERE handoff_id = ?`,
@@ -2003,6 +2006,39 @@ export class ScopedHandoffStore {
       .run(this.#binding.now(), failureCode, attemptId, handoffId);
     if (result.changes > 0) this.#binding.emitChange();
     return result.changes === 1;
+  }
+
+  /**
+   * F-925: libera o orçamento por sessão de um handoff cujas tentativas
+   * falharam contra um Maestro VIVO ocioso (modal de TUI — não dá para
+   * matar nem rebindar). Sem isso o limite durável virava wedge terminal:
+   * handoff queued para sempre com o Maestro parado no prompt (campo
+   * 05/10: 119 min, zero workers). O histórico segue auditável — o
+   * prefixo `released:` preserva a causa original — e
+   * `reserveDeliveryAttempt` deixa de contar essas linhas, então a
+   * próxima rodada periódica reserva um attempt_no novo. Idempotente e
+   * restrito à sessão informada.
+   */
+  releaseFailedDeliveryAttempts(input: {
+    readonly handoffId: string;
+    readonly orchestratorSessionId: string;
+  }): number {
+    const handoffId = identifierSchema.parse(input.handoffId);
+    const sessionId = identifierSchema.parse(input.orchestratorSessionId);
+    const result = this.#binding
+      .writeDatabase()
+      .prepare(
+        `UPDATE handoff_delivery_attempts
+         SET failure_code =
+           'released:' || substr(COALESCE(failure_code, 'unknown'), 1, 240)
+         WHERE handoff_id = ? AND orchestrator_session_id = ?
+           AND state = 'failed'
+           AND (failure_code IS NULL OR
+                failure_code NOT LIKE 'released:%')`,
+      )
+      .run(handoffId, sessionId);
+    if (result.changes > 0) this.#binding.emitChange();
+    return result.changes;
   }
 
   acceptDeliveryAttempt(input: {
