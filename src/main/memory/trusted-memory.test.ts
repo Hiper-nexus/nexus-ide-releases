@@ -446,6 +446,10 @@ describe('reported fix writer (F-911)', () => {
     // Ressalvas do MESMO id se somam na frase; ids diferentes seguem independentes.
     expect(id(['F-911 foi corrigido no Mac, mas o F-911 continua aberto no Windows.'])).toBeNull();
     expect(id(['F-911 foi corrigido, F-912 foi corrigido, mas o F-911 voltou aberto.'])).toBe('F-912');
+    // Re-revisão 3: referência a OUTRO id não herda a declaração do grupo.
+    expect(id(['F-911 foi corrigido (ver F-912), mas o F-911 continua aberto no Windows.'])).toBeNull();
+    expect(id(['Corrigido o watcher; ver docs/qa/items/F-911.md'])).toBe('F-911');
+    expect(id(['F-911 foi corrigido (ver docs/qa/items/F-911.md).'])).toBe('F-911');
     // O trecho pertinente é o que vai ao Jev — inclusive quando a fonte é o artefato.
     expect(extractResolvedQaFinding(['Rotina concluída. O F-914 foi corrigido no spool.'])?.excerpt)
       .toBe('O F-914 foi corrigido no spool.');

@@ -433,7 +433,13 @@ function declaredFixInSentence(sentence: string): string | null {
       ids.length > 0 &&
       words.some((word) => REFERENCE_MARKER_RE.test(word)) &&
       words.every((word) => REFERENCE_WORD_RE.test(word));
-    if (!current || (ids.length > 0 && !referenceOnly)) {
+    // A referência só herda a declaração do grupo sem id ou que já cita os
+    // MESMOS ids; outro id citado em referência abre grupo próprio, sem herança.
+    const inherits =
+      referenceOnly &&
+      current !== null &&
+      (current.ids.length === 0 || ids.every((id) => current!.ids.includes(id)));
+    if (!current || (ids.length > 0 && !inherits)) {
       current = { ids: [], declared: false, negated: false };
       groups.push(current);
     }
