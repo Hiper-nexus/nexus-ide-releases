@@ -24,6 +24,7 @@ import { parseTrustedEvidence } from "../context/sensor-broker";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import type { MissionEngine } from "./mission-engine";
 import { isSessionWebExposed } from "./session-web-exposure";
+import { getContextBySession } from "./gate";
 import {
   extractResolvedQaFinding,
   retainAcceptedHandoffMemoryDistilledBestEffort,
@@ -924,6 +925,7 @@ export class ScopedHandoffStore {
             })
           : undefined;
       const resolved = this.#resolveEvidence(db, input.missionId, evidenceIds);
+      const authorReadOnly = this.#authorReadOnlyAtSubmit(input.sessionId, input.missionId);
       const id = this.#binding.makeId("handoff");
       const handoff: ScopedHandoff = {
         id,
@@ -952,8 +954,8 @@ export class ScopedHandoffStore {
             artifacts_json, evidence_ids_json, evidence_trusted,
             context_revision, contract_hash, base_sha, head_sha, diff_hash,
             workflow_revision, delivered, delivery_state, created_at,
-            adapter_id, model)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?, ?, ?)`,
+            adapter_id, model, author_read_only)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?, ?, ?, ?)`,
       ).run(
         handoff.id,
         handoff.missionId ?? null,
@@ -975,6 +977,7 @@ export class ScopedHandoffStore {
         handoff.createdAt,
         attribution?.adapterId ?? null,
         attribution?.model ?? null,
+        authorReadOnly,
       );
       if (handoff.mcpProvenance) {
         const chainLink = this.#nextReceiptChainLinkInTransaction(
@@ -2325,7 +2328,7 @@ export class ScopedHandoffStore {
       if (!missionId) return;
       const artifactsText = handoffArtifactsText(artifacts);
       if (!extractResolvedQaFinding([summary, artifactsText])) return;
-      const quarantine = this.#reportedFixQuarantine(missionId, sessionId);
+      const authority = this.#reportedFixAuthorContext(id, missionId, sessionId);
       void retainReportedFixFromHandoffBestEffort(
         this.#binding.scope,
         {
@@ -2335,7 +2338,7 @@ export class ScopedHandoffStore {
           handoffCreatedAt: createdAt,
           ...(summary ? { summary } : {}),
           ...(artifactsText ? { artifactsText } : {}),
-          ...(quarantine ? { quarantine } : {}),
+          ...authority,
         },
       ).catch(() =>
         recordMemoryRetentionSkip(this.#binding.scope, "store-unavailable"),
@@ -2347,25 +2350,74 @@ export class ScopedHandoffStore {
   }
 
   /**
-   * F-808 Main-derived: sessão que tocou a web ou missão de consulta ("sem
-   * alterar nada") grava o relato em quarentena. Contrato ilegível → quarentena.
+   * F-808: autoridade readOnly Main-owned da sessão autora, lida do gate no
+   * submit (nunca de argumento do agente) e gravada no handoff — vale depois
+   * que a sessão sai. Sessão ausente, de outro escopo ou de outra missão →
+   * null (não provada).
    */
-  #reportedFixQuarantine(
+  #authorReadOnlyAtSubmit(
+    sessionId: string | undefined,
+    missionId: string | undefined,
+  ): 0 | 1 | null {
+    if (!sessionId) return null;
+    const ctx = getContextBySession(sessionId);
+    if (
+      !ctx ||
+      ctx.scope.projectId !== this.#binding.scope.projectId ||
+      ctx.scope.checkoutId !== this.#binding.scope.checkoutId ||
+      (ctx.missionId ?? undefined) !== (missionId ?? undefined)
+    ) {
+      return null;
+    }
+    return ctx.readOnly === true ? 1 : 0;
+  }
+
+  /**
+   * F-806/F-808 Main-derived, como `agentRetainContext`: contexto read-only
+   * (autor readOnly gravado no submit, missão de consulta ou autoridade não
+   * provada) veta o vault; a causa da quarentena é outra coisa — web primeiro,
+   * depois read-only, depois autor não provado. Leitura ilegível → fail-safe.
+   */
+  #reportedFixAuthorContext(
+    handoffId: string,
     missionId: string,
     sessionId: string | undefined,
-  ): "web-exposed session" | "read-only session" | undefined {
-    if (isSessionWebExposed(sessionId)) return "web-exposed session";
+  ): {
+    quarantine?: "web-exposed session" | "read-only session" | "unproven author session";
+    readOnlyContext?: true;
+  } {
+    let authorReadOnly: boolean | null = null;
+    let consult = false;
     try {
-      const row = this.#binding
-        .readDatabase()
+      const db = this.#binding.readDatabase();
+      const author = db
+        .prepare(`SELECT author_read_only FROM handoffs WHERE id = ?`)
+        .get(handoffId) as { author_read_only: number | null } | undefined;
+      authorReadOnly =
+        author?.author_read_only === 1 ? true : author?.author_read_only === 0 ? false : null;
+      const mission = db
         .prepare(`SELECT intent_contract_json FROM missions WHERE id = ?`)
         .get(missionId) as { intent_contract_json: string | null } | undefined;
-      if (!row?.intent_contract_json) return undefined;
-      const contract = JSON.parse(row.intent_contract_json) as { lane?: unknown } | null;
-      return contract?.lane === "consult" ? "read-only session" : undefined;
+      if (mission?.intent_contract_json) {
+        const contract = JSON.parse(mission.intent_contract_json) as { lane?: unknown } | null;
+        consult = contract?.lane === "consult";
+      }
     } catch {
-      return "read-only session";
+      authorReadOnly = null;
+      consult = true;
     }
+    const readOnlyContext = authorReadOnly !== false || consult;
+    const quarantine = isSessionWebExposed(sessionId)
+      ? "web-exposed session"
+      : authorReadOnly === true || consult
+        ? "read-only session"
+        : authorReadOnly === null
+          ? "unproven author session"
+          : undefined;
+    return {
+      ...(quarantine ? { quarantine } : {}),
+      ...(readOnlyContext ? { readOnlyContext: true as const } : {}),
+    };
   }
 
   hasTrustedFromSession(

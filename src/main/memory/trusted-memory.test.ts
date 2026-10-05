@@ -438,6 +438,14 @@ describe('reported fix writer (F-911)', () => {
     expect(id(['F-911 was fixed only partially.'])).toBeNull();
     expect(id(['F-911 corrigido no Mac, ainda aberto no Windows.'])).toBeNull();
     expect(id(['F-911 corrigido?'])).toBeNull();
+    // Re-revisão 2: id nu (com ":") abre grupo próprio; herança só com referência explícita.
+    expect(id(['F-911: em análise; F-912: corrigido.'])).toBe('F-912');
+    expect(id(['F-911: aberto; F-912: corrigido.'])).toBe('F-912');
+    expect(id(['F-911: corrigido.'])).toBe('F-911');
+    expect(id(['Corrigido: F-911.'])).toBeNull();
+    // Ressalvas do MESMO id se somam na frase; ids diferentes seguem independentes.
+    expect(id(['F-911 foi corrigido no Mac, mas o F-911 continua aberto no Windows.'])).toBeNull();
+    expect(id(['F-911 foi corrigido, F-912 foi corrigido, mas o F-911 voltou aberto.'])).toBe('F-912');
     // O trecho pertinente é o que vai ao Jev — inclusive quando a fonte é o artefato.
     expect(extractResolvedQaFinding(['Rotina concluída. O F-914 foi corrigido no spool.'])?.excerpt)
       .toBe('O F-914 foi corrigido no spool.');
@@ -684,6 +692,30 @@ describe('reported fix writer (F-911)', () => {
     expect(later).not.toHaveBeenCalled();
     expect(reportedFixRows()).toHaveLength(1);
     expect(reportedFixRows()[0]!.content).toContain('fila única');
+  });
+
+  it('F-806: a read-only context never exports to the vault, whatever the quarantine cause', async () => {
+    writeQaItem('F-911');
+    writeQaItem('F-926');
+    const spy = vi.spyOn(store(), 'retainAgentAuthored');
+    const cases = [
+      ['handoff-web-ro', 'F-911', { quarantine: 'web-exposed session', readOnlyContext: true }, false],
+      ['handoff-web-rw', 'F-926', { quarantine: 'web-exposed session' }, true],
+    ] as const;
+    for (const [handoffId, findingId, authority] of cases) {
+      expect(
+        await retainReportedFixFromHandoffBestEffort(
+          scope,
+          { handoffId, missionId: 'mission-a', status: 'success', handoffCreatedAt: 1_000,
+            summary: `O ${findingId} foi corrigido no watcher.`, ...authority },
+          { judge: approve(), ...on },
+        ),
+      ).not.toBeNull();
+    }
+    expect(spy).toHaveBeenCalledTimes(2);
+    cases.forEach(([, , , vault], call) => {
+      expect(spy.mock.calls[call]![2]).toMatchObject({ quarantine: 'web-exposed session', vault });
+    });
   });
 
   it('a replay never resurrects a report the operator forgot (durable per handoff)', async () => {

@@ -1093,4 +1093,11 @@ END;`,
       CREATE INDEX idx_visual_handoff_assignment ON visual_handoff_evidence
         (session_id, mission_id, worker_incarnation_id, execution_root, assignment_id, captured_at DESC);`,
     }),
+    // F-808/F-911: autoridade readOnly Main-owned da sessão autora, gravada no
+    // submit (NULL = não provada → quarentena fail-safe na memória).
+    createProjectMigration({
+      id: '047-handoff-author-read-only', schemaVersion: 47, appVersion: '0.76.192',
+      sql: `ALTER TABLE handoffs ADD COLUMN author_read_only INTEGER
+        CHECK (author_read_only IS NULL OR author_read_only IN (0, 1));`,
+    }),
   ]);

@@ -389,6 +389,8 @@ const CLAUSE_SPLIT_RE =
 /** Cláusula só de referência ("ver docs/qa/items/F-XXX.md") herda a anterior. */
 const REFERENCE_WORD_RE =
   /^(?:ver|veja|vide|see|cf|ref|refs|conforme|item|qa|em|no|na|in|per|detalhes|details|o|a|the)$/i;
+/** Herança exige referência explícita: id nu ("F-911:") abre o próprio grupo. */
+const REFERENCE_MARKER_RE = /^(?:ver|veja|vide|see|cf|ref|refs|conforme)$/i;
 const PERTINENT_EXCERPT_MAX_CHARS = 2_000;
 
 export interface DeclaredQaFix {
@@ -427,7 +429,10 @@ function declaredFixInSentence(sentence: string): string | null {
     if (tokens.length === 0) continue;
     const ids = tokens.flatMap((token) => findingIdOfToken(token) ?? []);
     const words = tokens.filter((token) => !findingIdOfToken(token));
-    const referenceOnly = ids.length > 0 && words.every((word) => REFERENCE_WORD_RE.test(word));
+    const referenceOnly =
+      ids.length > 0 &&
+      words.some((word) => REFERENCE_MARKER_RE.test(word)) &&
+      words.every((word) => REFERENCE_WORD_RE.test(word));
     if (!current || (ids.length > 0 && !referenceOnly)) {
       current = { ids: [], declared: false, negated: false };
       groups.push(current);
@@ -436,7 +441,20 @@ function declaredFixInSentence(sentence: string): string | null {
     current.declared ||= words.some((word) => FIX_DECLARATION_TOKEN_RE.test(word));
     current.negated ||= words.some((word) => NEGATION_TOKEN_RE.test(word));
   }
-  return groups.find((group) => group.ids.length > 0 && group.declared && !group.negated)?.ids[0] ?? null;
+  // Ressalvas do MESMO id se somam na frase; ids diferentes são independentes.
+  const verdicts = new Map<string, { declared: boolean; negated: boolean }>();
+  for (const group of groups) {
+    for (const id of group.ids) {
+      const verdict = verdicts.get(id) ?? { declared: false, negated: false };
+      verdict.declared ||= group.declared;
+      verdict.negated ||= group.negated;
+      verdicts.set(id, verdict);
+    }
+  }
+  for (const [id, verdict] of verdicts) {
+    if (verdict.declared && !verdict.negated) return id;
+  }
+  return null;
 }
 
 /**
@@ -551,7 +569,11 @@ export const REPORTED_FIX_TITLE_PREFIX = 'Reported fix ';
 const HANDOFF_ORDER_LINE_PREFIX = 'Handoff at: ';
 const REPORTED_FIX_MARK =
   'Agent report, unverified; Jev approved for retention, not factual verification.';
-const reportedFixQuarantineSchema = z.enum(['web-exposed session', 'read-only session']);
+const reportedFixQuarantineSchema = z.enum([
+  'web-exposed session',
+  'read-only session',
+  'unproven author session',
+]);
 
 const reportedFixHandoffSchema = z
   .object({
@@ -562,8 +584,10 @@ const reportedFixHandoffSchema = z
     handoffCreatedAt: z.number().int().nonnegative().max(8_640_000_000_000_000),
     summary: z.string().max(65_536).optional(),
     artifactsText: z.string().max(16_384).optional(),
-    /** F-808: sessão exposta à web ou missão de consulta (derivado pelo Main). */
+    /** F-808: causa da quarentena (derivada pelo Main a partir do autor). */
     quarantine: reportedFixQuarantineSchema.optional(),
+    /** F-806: autor readOnly, missão de consulta ou autoridade não provada — veta o vault. */
+    readOnlyContext: z.boolean().optional(),
   })
   .strict();
 
@@ -594,6 +618,7 @@ const agentReportSchema = z
     handoffAt: z.number().int().nonnegative().max(8_640_000_000_000_000),
     missionId: trustedIdentifierSchema,
     quarantine: reportedFixQuarantineSchema.nullable(),
+    vault: z.boolean(),
   })
   .strict();
 
@@ -612,8 +637,10 @@ const pendingAgentReportSchema = z
  * aprova relevância, nunca a alegação. A linha nasce na camada de notas de
  * agente (`agent-authored:mission:<autoridade da missão>`), marcada "Agent
  * report, unverified", ligada à missão: só workers da MESMA missão a recebem,
- * na seção não verificada; sessão exposta à web ou missão de consulta grava em
- * quarentena; nunca entra no contexto confiável nem no permanente.
+ * na seção não verificada; o Main grava em quarentena o relato de sessão
+ * exposta à web, de autor readOnly, de missão de consulta ou de autor cuja
+ * autoridade não foi provada, e contexto read-only nunca escreve no vault;
+ * nunca entra no contexto confiável nem no permanente.
  * `trusted:resolved-problem` com autoridade fica reservado a correção com
  * evidência validada pelo Main — caminho que hoje não existe.
  *
@@ -650,6 +677,7 @@ export async function retainReportedFixFromHandoffBestEffort(
         handoffAt: input.handoffCreatedAt,
         missionId: input.missionId,
         quarantine: input.quarantine ?? null,
+        vault: input.readOnlyContext !== true,
       },
       declared.excerpt,
       deps,
@@ -711,8 +739,8 @@ function retainReportedFixNote(
     {
       links: mission ? [mission] : [],
       quarantine: report.quarantine,
-      // F-806: missão de consulta nunca escreve na pasta do projeto.
-      vault: report.quarantine !== 'read-only session',
+      // F-806: contexto read-only nunca escreve na pasta do projeto.
+      vault: report.vault,
     },
   );
 }

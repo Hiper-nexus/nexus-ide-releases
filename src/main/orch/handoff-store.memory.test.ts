@@ -8,6 +8,7 @@ import { createScopedMissionStore } from './mission-store';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { __resetSessionWebExposureForTests, markSessionWebExposed } from './session-web-exposure';
 import { compileIntentContract } from '../../shared/mission-intent';
+import { bindTokenToSession, mintToken, releaseSession, resetGateForTests } from './gate';
 
 vi.mock('../license-access', async () =>
   (await import('../__tests__/licensed-access')).licensedAccessMock,
@@ -43,6 +44,7 @@ beforeEach(() => {
 
 afterEach(() => {
   __resetSessionWebExposureForTests();
+  resetGateForTests();
   manager.closeAll();
   fs.rmSync(baseDir, { recursive: true, force: true });
 });
@@ -130,9 +132,24 @@ describe('reported fix writer trigger (F-911)', () => {
     return createScopedHandoffStore(manager, scope);
   };
 
-  it('passes the Main-owned handoff order when a delivered mission handoff declares a fix', () => {
+  // Autoridade Main-owned da sessão autora (gate), como o MCP faz no spawn.
+  const session = (sessionId: string, missionId: string, readOnly: boolean) => {
+    const ctx = mintToken({ label: sessionId, role: 'worker', missionId, readOnly, scope });
+    bindTokenToSession(ctx.token, sessionId);
+  };
+  const consultMission = (id: string) =>
+    createScopedMissionStore(manager, scope, { idFactory: () => id }).create({
+      title: 'Consulta',
+      intentVersion: 1,
+      intentContract: compileIntentContract({
+        goal: 'Ler logs e resumir', intentVersion: 1, source: 'typed', lane: 'consult',
+      }),
+    });
+
+  it('passes the Main-owned handoff order when a writable author declares a fix (no quarantine)', () => {
     const handoffs = missionHandoffs();
-    const handoff = handoffs.submit({ missionId: 'mission-a', status: 'success', summary: declared });
+    session('worker-rw', 'mission-a', false);
+    const handoff = handoffs.submit({ missionId: 'mission-a', sessionId: 'worker-rw', status: 'success', summary: declared });
     expect(memory.resolved).not.toHaveBeenCalled();
     expect(handoffs.markSubmitted(handoff.id)).toBe(true);
     expect(memory.resolved).toHaveBeenCalledExactlyOnceWith(
@@ -146,8 +163,9 @@ describe('reported fix writer trigger (F-911)', () => {
 
   it('declares the fix through an artifact that states it, sending that artifact as text', () => {
     const handoffs = missionHandoffs();
+    session('worker-rw', 'mission-a', false);
     const handoff = handoffs.submit({
-      missionId: 'mission-a', status: 'success',
+      missionId: 'mission-a', sessionId: 'worker-rw', status: 'success',
       summary: 'Rotina de sincronização concluída.',
       artifacts: [{ kind: 'qa', ref: 'docs/qa/items/F-912.md', note: 'corrigido' }],
     });
@@ -174,31 +192,69 @@ describe('reported fix writer trigger (F-911)', () => {
     expect(memory.resolved).not.toHaveBeenCalled();
   });
 
-  it('F-808: quarantines the report of a web-exposed session', () => {
+  it('F-808: a readOnly reviewer of a standard mission is quarantined without vault, even after its session left', () => {
     const handoffs = missionHandoffs();
+    session('reviewer-ro', 'mission-a', true);
+    const handoff = handoffs.submit({ missionId: 'mission-a', sessionId: 'reviewer-ro', status: 'success', summary: declared });
+    releaseSession('reviewer-ro');
+    expect(handoffs.markSubmitted(handoff.id)).toBe(true);
+    expect(memory.resolved).toHaveBeenCalledExactlyOnceWith(
+      scope,
+      {
+        handoffId: handoff.id, missionId: 'mission-a', status: 'success',
+        handoffCreatedAt: handoff.createdAt, summary: declared,
+        quarantine: 'read-only session', readOnlyContext: true,
+      },
+    );
+  });
+
+  it('F-808: an author whose authority cannot be proven is quarantined without vault (fail-safe)', () => {
+    const handoffs = missionHandoffs();
+    const handoff = handoffs.submit({ missionId: 'mission-a', sessionId: 'unknown-session', status: 'success', summary: declared });
+    expect(handoffs.markSubmitted(handoff.id)).toBe(true);
+    expect(memory.resolved).toHaveBeenCalledExactlyOnceWith(
+      scope,
+      expect.objectContaining({ handoffId: handoff.id, quarantine: 'unproven author session', readOnlyContext: true }),
+    );
+  });
+
+  it('F-808: a writable web-exposed author is quarantined but keeps the vault', () => {
+    const handoffs = missionHandoffs();
+    session('worker-web', 'mission-a', false);
     markSessionWebExposed('worker-web');
     const handoff = handoffs.submit({ missionId: 'mission-a', sessionId: 'worker-web', status: 'success', summary: declared });
     expect(handoffs.markSubmitted(handoff.id)).toBe(true);
     expect(memory.resolved).toHaveBeenCalledExactlyOnceWith(
       scope,
-      expect.objectContaining({ handoffId: handoff.id, quarantine: 'web-exposed session' }),
+      {
+        handoffId: handoff.id, missionId: 'mission-a', status: 'success',
+        handoffCreatedAt: handoff.createdAt, summary: declared, quarantine: 'web-exposed session',
+      },
     );
   });
 
-  it('F-808: quarantines the report of a consult (read-only) mission', () => {
-    createScopedMissionStore(manager, scope, { idFactory: () => 'mission-c' }).create({
-      title: 'Consulta',
-      intentVersion: 1,
-      intentContract: compileIntentContract({
-        goal: 'Ler logs e resumir', intentVersion: 1, source: 'typed', lane: 'consult',
-      }),
-    });
+  it('F-808: a consult mission is quarantined without vault', () => {
+    consultMission('mission-c');
     const handoffs = createScopedHandoffStore(manager, scope);
-    const handoff = handoffs.submit({ missionId: 'mission-c', status: 'success', summary: declared });
+    session('worker-c', 'mission-c', false);
+    const handoff = handoffs.submit({ missionId: 'mission-c', sessionId: 'worker-c', status: 'success', summary: declared });
     expect(handoffs.markSubmitted(handoff.id)).toBe(true);
     expect(memory.resolved).toHaveBeenCalledExactlyOnceWith(
       scope,
-      expect.objectContaining({ handoffId: handoff.id, missionId: 'mission-c', quarantine: 'read-only session' }),
+      expect.objectContaining({ handoffId: handoff.id, missionId: 'mission-c', quarantine: 'read-only session', readOnlyContext: true }),
+    );
+  });
+
+  it('F-806: web exposure in a consult mission keeps the vault veto (read-only context wins over the cause)', () => {
+    consultMission('mission-c');
+    const handoffs = createScopedHandoffStore(manager, scope);
+    session('worker-cw', 'mission-c', false);
+    markSessionWebExposed('worker-cw');
+    const handoff = handoffs.submit({ missionId: 'mission-c', sessionId: 'worker-cw', status: 'success', summary: declared });
+    expect(handoffs.markSubmitted(handoff.id)).toBe(true);
+    expect(memory.resolved).toHaveBeenCalledExactlyOnceWith(
+      scope,
+      expect.objectContaining({ handoffId: handoff.id, quarantine: 'web-exposed session', readOnlyContext: true }),
     );
   });
 
