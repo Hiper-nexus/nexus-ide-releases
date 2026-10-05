@@ -11,8 +11,10 @@ process.stdin.on('end', () => {
   if (!process.env.NEXUS_GATE_TOKEN) { output(ask); return; }
   let event;
   try { event = JSON.parse(raw); } catch { output(deny); return; }
-  const input = event.toolCall?.args;
-  if (event.toolCall?.name !== 'run_command' || typeof input?.CommandLine !== 'string') { output(ask); return; }
+  // Malformed envelope (null, array, no toolCall object) never skips admission.
+  if (!event || typeof event !== 'object' || Array.isArray(event) || !event.toolCall || typeof event.toolCall !== 'object') { output(deny); return; }
+  const input = event.toolCall.args;
+  if (event.toolCall.name !== 'run_command' || typeof input?.CommandLine !== 'string') { output(ask); return; }
   let kind;
   try { kind = require('./catalog.cjs').commandKind(input.CommandLine); } catch { output(deny); return; }
   if (!kind) { output(ask); return; }

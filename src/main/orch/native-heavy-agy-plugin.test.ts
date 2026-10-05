@@ -1,8 +1,14 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { expect, it } from 'vitest';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { expect, it, vi } from 'vitest';
+// Seam to change the plugin directory between Main's check and its write.
+const beforeWrite = vi.hoisted(() => ({ run: undefined as undefined | (() => void) }));
+vi.mock('../util/atomic-write', async (original) => {
+  const real = await original<typeof import('../util/atomic-write')>();
+  return { ...real, writeFileAtomicAsync: async (...args: Parameters<typeof real.writeFileAtomicAsync>) => { const run = beforeWrite.run; beforeWrite.run = undefined; run?.(); return real.writeFileAtomicAsync(...args); } };
+});
 const script = path.join(process.cwd(), 'resources/heavy-command/agy-tool-hook.cjs');
 function hook(input: unknown, env: NodeJS.ProcessEnv = {}) {
   const result = spawnSync(process.execPath, [script], { input: JSON.stringify(input), encoding: 'utf8', env: { PATH: process.env.PATH, ...env }, timeout: 3000 });
@@ -11,6 +17,14 @@ function hook(input: unknown, env: NodeJS.ProcessEnv = {}) {
 }
 it('preserves AGY permission policy outside Nexus, including heavy input', () => {
   expect(hook({ toolCall: { name: 'run_command', args: { CommandLine: 'make', Cwd: '/private/fixture' } } })).toEqual({ decision: 'ask' });
+});
+it('validates the hook envelope: malformed input denies inside Nexus and asks outside', () => {
+  for (const raw of ['null', '[]', '"run_command"', '{}', '{"toolCall":null}']) {
+    for (const [env, decision] of [[{ NEXUS_GATE_TOKEN: 'finite' }, 'deny'], [{}, 'ask']] as const) {
+      const result = spawnSync(process.execPath, [script], { input: raw, encoding: 'utf8', env: { PATH: process.env.PATH, ...env }, timeout: 3000 });
+      expect({ raw, status: result.status, decision: JSON.parse(result.stdout || '{}').decision }).toEqual({ raw, status: 0, decision });
+    }
+  }
 });
 it('leaves light or other tools unchanged inside Nexus', () => {
   const env = { NEXUS_GATE_TOKEN: 'finite' };
@@ -64,7 +78,9 @@ it('registers through the async CLI once, checks readiness, and never touches ot
     expect(await f.ensure(f.options)).toEqual({registered:true});
     expect(f.calls.filter(c=>c[1]==='install')).toHaveLength(1); expect(fs.readFileSync(other,'utf8')).toBe('operator-owned');
     const definition=fs.readFileSync(path.join(f.destination,'hooks.json'),'utf8');
-    expect(definition).toContain('agy-tool-hook.cjs'); expect(definition).not.toMatch(/NEXUS_(?:GATE_TOKEN|HEAVY_CHANNEL_KEY|HEAVY_COMMAND_URL)/);
+    expect(definition).toContain('agy-tool-hook.cjs'); expect(definition).not.toMatch(/NEXUS_(?:HEAVY_CHANNEL_KEY|HEAVY_COMMAND_URL)/);
+    // The token is only tested for presence by the shell; its value never lands here.
+    expect(definition.match(/NEXUS_GATE_TOKEN/g)).toEqual(['NEXUS_GATE_TOKEN']); expect(definition).toContain('[ -n \\"$NEXUS_GATE_TOKEN\\" ]');
     expect(fs.existsSync(path.join(f.home,'.agents'))).toBe(false);
   } finally {fs.rmSync(f.home,{recursive:true,force:true});}
 });
@@ -114,16 +130,71 @@ it('recognizes its own plugin after the CLI rewrites JSON key order', async () =
     expect(fs.readFileSync(hooksFile,'utf8')).toBe(before);
   } finally {fs.rmSync(f.home,{recursive:true,force:true});}
 });
-it('re-enables its own disabled plugin through the CLI and never reports a disabled hook as ready', async () => {
+it('keeps the operator disable: never re-enables and reports disabled for the caller to degrade', async () => {
   const f=await registrationFixture(); const config=()=>path.join(f.home,'.gemini/config/config.json');
   try {
     expect(await f.ensure(f.options)).toEqual({registered:true});
     // `agy plugin disable` writes only this flag; the manifest entry stays.
-    fs.writeFileSync(config(),JSON.stringify({plugins:{[path.basename(f.destination)]:{enabled:false},operator:{enabled:false}}})); f.calls.length=0;
-    expect(await f.ensure(f.options)).toEqual({registered:true}); expect(f.calls).toEqual([['plugin','enable',path.basename(f.destination)]]);
-    expect(JSON.parse(fs.readFileSync(config(),'utf8')).plugins.operator).toEqual({enabled:false});
-    fs.writeFileSync(config(),JSON.stringify({plugins:{[path.basename(f.destination)]:{enabled:false}}})); f.calls.length=0;
-    expect(await f.ensure({...f.options,exec:async (_bin:string,args:readonly string[])=>{f.calls.push([...args]);}})).toEqual({registered:false,reason:'agy_heavy_plugin_disabled'});
-    expect(f.calls).toEqual([['plugin','enable',path.basename(f.destination)]]);
+    const disabled=JSON.stringify({plugins:{[path.basename(f.destination)]:{enabled:false},operator:{enabled:false}}});
+    fs.writeFileSync(config(),disabled); f.calls.length=0;
+    expect(await f.ensure(f.options)).toEqual({registered:false,reason:'agy_heavy_plugin_disabled'});
+    expect(f.calls).toEqual([]); expect(fs.readFileSync(config(),'utf8')).toBe(disabled);
+    fs.writeFileSync(config(),JSON.stringify({plugins:{[path.basename(f.destination)]:{enabled:true}}}));
+    expect(await f.ensure(f.options)).toEqual({registered:true}); expect(f.calls).toEqual([]);
   } finally {fs.rmSync(f.home,{recursive:true,force:true});}
+});
+it('the generated hook denies inside Nexus and asks outside when Node or the script is gone', async () => {
+  const f=await registrationFixture(); const resources=path.join(f.home,'resources'), node=path.join(f.home,'node');
+  try {
+    fs.cpSync(f.options.resourceDirectory,resources,{recursive:true}); fs.writeFileSync(node,`#!/bin/sh\nexec '${process.execPath}' "$@"\n`,{mode:0o755});
+    expect(await f.ensure({...f.options,node,resourceDirectory:resources})).toEqual({registered:true});
+    const command=(JSON.parse(fs.readFileSync(path.join(f.destination,'hooks.json'),'utf8'))[path.basename(f.destination)].PreToolUse[0].hooks[0].command) as string;
+    const run=(token:boolean)=>JSON.parse(execFileSync('/bin/sh',['-c',command],{input:JSON.stringify({toolCall:{name:'run_command',args:{CommandLine:'make'}}}),encoding:'utf8',env:{PATH:'/usr/bin:/bin',...(token?{NEXUS_GATE_TOKEN:'finite'}:{})},timeout:5000})).decision;
+    expect([run(false),run(true)]).toEqual(['ask','deny']);
+    fs.unlinkSync(node); expect([run(false),run(true)]).toEqual(['ask','deny']);
+    fs.writeFileSync(node,`#!/bin/sh\nexec '${process.execPath}' "$@"\n`,{mode:0o755}); fs.unlinkSync(path.join(resources,'agy-tool-hook.cjs'));
+    expect([run(false),run(true)]).toEqual(['ask','deny']);
+  } finally {fs.rmSync(f.home,{recursive:true,force:true});}
+});
+it.runIf(process.platform !== 'win32')('the CLI deadline SIGKILLs a group that ignores SIGTERM and settles only after physical exit', async () => {
+  const { runAgyPluginCli } = await import('./native-heavy-agy-plugin');
+  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'nexus-agy-cli-deadline-'))), cli=path.join(root,'agy');
+  fs.writeFileSync(cli,`#!/bin/sh\ntrap '' TERM\n/bin/sleep 30 &\necho "$$ $!" > '${root}/pids'\nwhile :; do /bin/sleep 1; done\n`,{mode:0o755});
+  const gone=(pid:number)=>{try{return execFileSync('/bin/ps',['-p',String(pid),'-o','stat='],{encoding:'utf8'}).trim().startsWith('Z');}catch{return true;}};
+  try {
+    const started=Date.now();
+    await expect(runAgyPluginCli(cli,['plugin','install','x'],{home:root,cwd:root},300,300)).rejects.toThrow('agy_heavy_plugin_cli_timeout');
+    expect(Date.now()-started).toBeLessThan(5000);
+    const pids=fs.readFileSync(path.join(root,'pids'),'utf8').trim().split(' ').map(Number);
+    await vi.waitFor(()=>expect(pids.map(gone)).toEqual([true,true]),{timeout:2000});
+    await expect(runAgyPluginCli('/usr/bin/true',[],{home:root,cwd:root})).resolves.toBeUndefined();
+    await expect(runAgyPluginCli('/usr/bin/false',[],{home:root,cwd:root})).rejects.toThrow('agy_heavy_plugin_cli_failed');
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+it('a cancelled pane stops waiting at once; the shared flight still serves the next caller', async () => {
+  const f=await registrationFixture(); let finish!:()=>void, installing=false; const waiting=new Promise<void>(r=>finish=r);
+  const exec=async (bin:string,args:readonly string[])=>{if(args[1]==='install'){installing=true;await waiting;} await f.exec(bin,args);};
+  const pane=new AbortController();
+  try {
+    const first=f.ensure({...f.options,exec,signal:pane.signal}); const second=f.ensure({...f.options,exec});
+    await vi.waitFor(()=>expect(installing).toBe(true));
+    pane.abort();
+    expect(await first).toEqual({registered:false,reason:'agy_heavy_plugin_context_changed'});
+    finish(); expect(await second).toEqual({registered:true}); expect(f.calls.filter(c=>c[1]==='install')).toHaveLength(1);
+  } finally {finish();fs.rmSync(f.home,{recursive:true,force:true});}
+});
+it('refuses when the plugin or source directory is replaced around a write or the CLI', async () => {
+  const f=await registrationFixture(); const elsewhere=path.join(f.home,'elsewhere');
+  try {
+    expect(await f.ensure(f.options)).toEqual({registered:true});
+    // Owned update path: the directory is swapped between check and write.
+    const node=path.join(f.home,'node'); fs.writeFileSync(node,`#!/bin/sh\nexec '${process.execPath}' "$@"\n`,{mode:0o755});
+    beforeWrite.run=()=>{fs.renameSync(f.destination,elsewhere);fs.mkdirSync(f.destination);for(const name of fs.readdirSync(elsewhere))fs.copyFileSync(path.join(elsewhere,name),path.join(f.destination,name));};
+    expect(await f.ensure({...f.options,node})).toEqual({registered:false,reason:'agy_heavy_plugin_directory_changed'});
+    // Fresh path: the private source is swapped while the CLI validates it.
+    const g=await registrationFixture(); const source=path.join(g.home,'.nexus/agy-native-heavy-plugin');
+    const exec=async (bin:string,args:readonly string[])=>{ await g.exec(bin,args); if(args[1]==='validate'){fs.renameSync(source,source+'.old');fs.cpSync(source+'.old',source,{recursive:true});} };
+    try { expect(await g.ensure({...g.options,exec})).toEqual({registered:false,reason:'agy_heavy_plugin_directory_changed'}); expect(g.calls.map(c=>c[1])).toEqual(['validate']); }
+    finally {fs.rmSync(g.home,{recursive:true,force:true});}
+  } finally {beforeWrite.run=undefined;fs.rmSync(f.home,{recursive:true,force:true});}
 });
