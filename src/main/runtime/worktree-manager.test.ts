@@ -466,6 +466,52 @@ describe("WorktreeManager", () => {
     expect(gc.get(scope, "operator-hand", dirty.taskId)).not.toBeNull();
   });
 
+  it("F-908: revalida a ref da branch e o HEAD depois da prova; mudou, mantém tudo", async () => {
+    const scope = projectScope();
+    const writer = async (id: string) => {
+      const record = await manager.create({ scope, missionId: "operator-hand", taskId: `pane-${id}`,
+        workerId: id, ownerKind: "pane", ownership: { files: [], symbols: [], domains: [`pane-${id}`] } });
+      write(`${id}.txt`, id, record.worktreePath);
+      git(record.worktreePath, "add", `${id}.txt`);
+      git(record.worktreePath, "commit", "-qm", id);
+      manager.markFailed(scope, "operator-hand", record.taskId, "pane closed");
+      return record;
+    };
+    // Branch ganha commit enquanto a salvaguarda prova o conteúdo.
+    const moved = await writer("moved");
+    const report = await manager.collectReleasedPaneWorktrees(scope, {
+      owner: () => true, inUse: () => false,
+      preserve: async () => {
+        write("late.txt", "late", moved.worktreePath);
+        git(moved.worktreePath, "add", "late.txt");
+        git(moved.worktreePath, "commit", "-qm", "late");
+        return { covered: true };
+      },
+    });
+    expect(report).toMatchObject({ removed: [], kept: { changed: 1 } });
+    expect(fs.existsSync(path.join(moved.worktreePath, "late.txt"))).toBe(true);
+    expect(git(root, "show", `${moved.branchRef}:late.txt`)).toBe("late");
+    manager.markFailed(scope, "operator-hand", moved.taskId, "pane closed");
+    // HEAD do checkout revertido depois de provada a mesclagem (regra estrita).
+    const head = await writer("rolled");
+    git(root, "merge", "-q", "--ff-only", head.branchRef.slice("refs/heads/".length));
+    const real = new AsyncProcessGitRunner();
+    let rolledBack = false;
+    const racing = new WorktreeManager({ runtimeRoot, stateStore, gitRunner, now: () => 1_700_000_000_000,
+      asyncGitRunner: { run: async (cwd, args, options) => {
+        if (!rolledBack && args[0] === "worktree" && args[1] === "list") {
+          rolledBack = true;
+          git(root, "reset", "-q", "--hard", "HEAD~1");
+        }
+        return real.run(cwd, args, options);
+      } } });
+    expect(await racing.collectIntegratedPaneWorktrees(scope, "operator-hand", (p) => p === moved.worktreePath))
+      .toEqual([]);
+    expect(rolledBack).toBe(true);
+    expect(fs.existsSync(head.worktreePath)).toBe(true);
+    expect(git(root, "rev-parse", head.branchRef)).toBe(git(head.worktreePath, "rev-parse", "HEAD"));
+  });
+
   it("never delegates versioned context authority to executor worktrees", async () => {
     await expect(manager.create({
         scope: projectScope(),

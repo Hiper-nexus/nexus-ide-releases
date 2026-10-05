@@ -79,6 +79,7 @@ export {
 const MAX_CAS_ATTEMPTS = 16;
 /** Remover ~2 GB de node_modules clonado passa fácil dos 30 s padrão do Git. */
 const WORKTREE_REMOVE_TIMEOUT_MS = 10 * 60_000;
+const WORKTREE_STATUS_ARGS = ["status", "--porcelain=v1", "-z", "--untracked-files=all"] as const;
 
 export interface PaneWorktreeGcOptions {
   /** Chaves do registry (missão ou `operator-hand`) cujos writers podem sair. */
@@ -1147,19 +1148,21 @@ export class WorktreeManager {
   ): Promise<string | null> {
     const git = this.#asyncGit;
     const root = candidate.rootRealPath;
-    const merged = (await git.run(root,
-      ["merge-base", "--is-ancestor", candidate.branchRef, "HEAD"], { allowFailure: true })).status === 0;
+    // Toda prova abaixo é sobre ESTE commit; a ref é conferida de novo antes de remover.
+    const tip = await this.#branchTip(root, candidate.branchRef);
+    if (!tip) return "branch-missing";
+    const isMerged = async () => (await git.run(root,
+      ["merge-base", "--is-ancestor", tip, "HEAD"], { allowFailure: true })).status === 0;
+    const merged = await isMerged();
     if (!merged && !preserve) return "unmerged";
-    if (!preserve) {
-      const head = await git.run(root, ["rev-parse", "--verify", `${candidate.branchRef}^{commit}`]);
-      if (head.stdout.trim() === candidate.baseSha) return "no-commits";
-    }
+    if (!preserve && tip === candidate.baseSha) return "no-commits";
     const entry = await fs.promises.lstat(candidate.worktreePath).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return null;
       throw error;
     });
     let real: string | undefined;
     let dirty = false;
+    let statusBefore = "";
     if (entry) {
       // Nunca segue symlink nem sai da raiz gerenciada.
       if (entry.isSymbolicLink() || !entry.isDirectory()) return "not-a-directory";
@@ -1175,7 +1178,8 @@ export class WorktreeManager {
           head.status !== 0 || head.stdout.trim() !== candidate.branchRef) return "identity";
       const listed = await git.run(root, ["worktree", "list", "--porcelain"]);
       if (!findRegisteredDeletableWorktree(root, real, parseWorktreeList(listed.stdout))) return "unregistered";
-      const status = await git.run(real, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+      const status = await git.run(real, WORKTREE_STATUS_ARGS);
+      statusBefore = status.stdout;
       dirty = status.stdout.length > 0;
       if (dirty && !preserve) return "dirty";
       if (dirty) {
@@ -1198,6 +1202,16 @@ export class WorktreeManager {
     if (!record || !released(record) || record.updatedAt !== candidate.updatedAt) return "changed";
     this.#collecting.add(record.taskKey);
     try {
+      // Revalida depois dos awaits da prova: ref da branch, ancestralidade,
+      // HEAD e status da worktree têm de ser os mesmos que foram provados.
+      if (await this.#branchTip(root, record.branchRef) !== tip || (merged && !await isMerged())) {
+        return "changed";
+      }
+      if (real !== undefined) {
+        const head = await git.run(real, ["symbolic-ref", "--quiet", "HEAD"], { allowFailure: true });
+        const status = await git.run(real, WORKTREE_STATUS_ARGS);
+        if (head.stdout.trim() !== record.branchRef || status.stdout !== statusBefore) return "changed";
+      }
       // Limpa: sem --force, o Git recusa de novo se algo mudou entre a prova e
       // a remoção. Suja: só chega aqui com a salvaguarda provada igual ao estado
       // inteiro da worktree. Worktree trancada (`git worktree lock`) segue recusada.
@@ -1206,6 +1220,7 @@ export class WorktreeManager {
           { timeoutMs: WORKTREE_REMOVE_TIMEOUT_MS });
       }
       // -d (não -D): o Git só apaga a branch se ela estiver mesclada.
+      if (await this.#branchTip(root, record.branchRef) !== tip) return "changed";
       await git.run(root, ["branch", "-d", record.branchRef.slice("refs/heads/".length)], { allowFailure: true });
       this.#mutate(scopeKey, (records) => ({
         records: records.filter((current) => current.taskKey !== record.taskKey),
@@ -1215,6 +1230,12 @@ export class WorktreeManager {
     } finally {
       this.#collecting.delete(record.taskKey);
     }
+  }
+
+  async #branchTip(root: string, branchRef: string): Promise<string> {
+    const tip = await this.#asyncGit.run(root,
+      ["rev-parse", "--verify", "--quiet", `${branchRef}^{commit}`], { allowFailure: true });
+    return tip.status === 0 ? tip.stdout.trim() : "";
   }
 
   /**
