@@ -15,10 +15,11 @@ import type {
 } from './cli-mcp-session-types';
 import { removeTreeSync } from '../util/remove-tree';
 
-type ArtifactProvider = 'codex' | 'opencode' | 'kimi' | 'grok' | 'mimo-code' | 'qwen' | 'muse';
+type ArtifactProvider = 'codex' | 'opencode' | 'kimi' | 'grok' | 'mimo-code' | 'qwen';
 
 export interface ArtifactSession {
-  artifactDir: string;
+  /** `null`: nothing private on disk; `dispose` releases a shared-config lease (Muse). */
+  artifactDir: string | null;
   /** Real provider home to persist a fresh in-pane login back into. */
   providerHome: string | null;
   /** Top-level config and isolated conversation entries — never synced to the real home. */
@@ -328,7 +329,7 @@ export function purgeStaleCliMcpSessions(
     options.artifactRoot ??
       path.join(home, '.nexus', 'ephemeral', 'mcp-clients'),
   );
-  const active = Array.from(activeArtifactDirs.values(), (s) => s.artifactDir);
+  const active = Array.from(activeArtifactDirs.values(), (s) => s.artifactDir).filter((dir) => dir !== null);
   const trustedBoundary = options.artifactRoot
     ? path.dirname(artifactRoot)
     : home;
@@ -358,11 +359,6 @@ export function purgeStaleCliMcpSessions(
       active,
       trustedBoundary,
     ),
-    purgeOwnedSessionRoot(
-      path.join(artifactRoot, 'muse'),
-      active,
-      trustedBoundary,
-    ),
   );
 }
 
@@ -379,7 +375,7 @@ export function cleanupCliMcpSession(token: string): void {
   // Persist a fresh in-pane login before the overlay is removed, otherwise the
   // provider stays "login-needed" even though the user just authenticated in
   // the pane (the overlay is ephemeral and would take the new auth with it).
-  if (session.syncBack && session.providerHome) {
+  if (session.syncBack && session.providerHome && session.artifactDir) {
     try {
       syncBackOverlayAuth(
         session.artifactDir,
@@ -392,7 +388,7 @@ export function cleanupCliMcpSession(token: string): void {
     }
   }
   try {
-    removeTreeSync(session.artifactDir, { recursive: true, force: true });
+    if (session.artifactDir) removeTreeSync(session.artifactDir, { recursive: true, force: true });
   } catch {
     // Best effort during process/session teardown.
   }

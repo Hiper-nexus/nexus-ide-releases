@@ -2819,10 +2819,9 @@ export function spawnAgentSession(
     if (!ctx || !isCurrentGateContext(ctx)) { decoration?.onSpawnFailed?.(); throw new Error('native_heavy_channel_context_invalid'); }
     try {
       museHeavyProfile = reserveMuseNativeHeavyProfile({ token: ctx.token, home: spawnEnv.HOME ?? os.homedir(),
-        xdgConfigHome: spawnEnv.XDG_CONFIG_HOME, artifactRoot: path.join(spawnEnv.TMPDIR ?? os.tmpdir(), 'nexus-muse-profiles'),
+        xdgConfigHome: spawnEnv.XDG_CONFIG_HOME,
         node: spawnEnv.NEXUS_HEAVY_NODE, resourceDirectory: spawnEnv.NEXUS_HEAVY_DIR });
       museProfileToken = ctx.token;
-      Object.assign(spawnEnv, museHeavyProfile.env);
     } catch (error) { decoration?.onSpawnFailed?.(); throw error; }
   }
 
@@ -3002,7 +3001,7 @@ export function spawnAgentSession(
     }
     assertDeferredCurrent(); return { args: nextArgs, env: nextEnv };
   })() : undefined;
-  const readiness = ready ? { wait: ready, assertCurrent: assertDeferredCurrent, cleanup: async () => { deferredCancelled = true; agyCancel?.abort(); await ready.catch(() => {}); await nativeChannel?.dispose(); } } : undefined;
+  const readiness = ready ? { wait: ready, assertCurrent: assertDeferredCurrent, cleanup: async () => { deferredCancelled = true; agyCancel?.abort(); await ready.catch(() => {}); await nativeChannel?.dispose(); await museHeavyProfile?.dispose(); } } : undefined;
   void ready?.catch(() => {});
   try {
     const host = requireHost();

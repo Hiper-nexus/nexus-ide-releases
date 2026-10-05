@@ -80,7 +80,7 @@ export async function configureCodexNativeHeavyChannel(token: string, env: Reado
   const artifact = getActiveCliMcpArtifact(token);
   const current = () => { assertCurrent(); if (!artifact || getActiveCliMcpArtifact(token) !== artifact) throw new Error('codex_heavy_artifact_changed'); };
   current();
-  if (!artifact?.providerHome || path.basename(path.dirname(artifact.artifactDir)) !== 'codex' ||
+  if (!artifact?.providerHome || !artifact.artifactDir || path.basename(path.dirname(artifact.artifactDir)) !== 'codex' ||
       Object.keys(env).some(key => !CHANNEL_KEYS.includes(key)) || CHANNEL_KEYS.some(key => typeof env[key] !== 'string' || !env[key])) throw new Error('codex_heavy_channel_context_invalid');
   const directory = artifact.artifactDir, file = path.join(directory, 'config.toml');
   if (await fs.promises.realpath(directory) !== directory) throw new Error('codex_heavy_artifact_changed'); current();
