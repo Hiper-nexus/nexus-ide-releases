@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
-import { forkMimoFixtureProcess, prepareMimoWorker } from './__tests__/mimo-worker-fixture';
+import { bootMimoFixtureProcess, forkMimoFixtureProcess, prepareMimoWorker } from './__tests__/mimo-worker-fixture';
 import { MimoWorkerReader } from './mimo-worker-reader';
 let root: string;
 const readers: MimoWorkerReader[] = [];
@@ -60,11 +60,14 @@ it.each(['timeout', 'stop'] as const)('physically stops a pathological SQLite vi
   db.close();
   const before = fs.readFileSync(databasePath);
   let exited = false;
+  // The 100 ms deadline targets sqlite3_step; host Node boot alone can exceed it.
+  const adopt = await bootMimoFixtureProcess();
   const reader = new MimoWorkerReader({ workerPath: nativeEntry, timeoutMs: 100,
-    processFactory: (entry, privateRoot) => { const child = forkMimoFixtureProcess(entry, privateRoot);
+    processFactory: (entry, privateRoot) => { const child = adopt(entry, privateRoot);
       child.on('exit', () => { exited = true; }); return child; } }); readers.push(reader);
   const runtime = { checkoutId: 'checkout', cwd: root, stateRoot, databasePath };
   expect((await reader.read({ kind: 'validate', rootId: 'ses_root', runtime }))?.valid).toBe(true);
+  expect(exited).toBe(false); // the scan must reach the same warm process, not a respawn
   const started = performance.now();
   const running = reader.read({ kind: 'scan', rootId: 'ses_root', runtime });
   const stopTimer = mode === 'stop' ? setTimeout(() => { void reader.stop(); }, 50) : undefined;
