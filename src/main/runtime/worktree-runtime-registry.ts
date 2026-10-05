@@ -5,6 +5,7 @@ import {
   DEAD_OWNER_WORKTREE_RELEASE_MARKER,
   WorktreeManager,
   type CreateWorktreeInput,
+  type PaneWorktreeGcReport,
   type WorktreeRecord,
 } from "./worktree-manager";
 import {
@@ -25,7 +26,8 @@ import {
   SqliteWorktreeStateStore,
 } from "./sqlite-workflow-state-stores";
 import { ScopedStoreBinding } from "../orch/scoped-store";
-import { sweepPtysInsideWorktree } from "./worktree-pty-sweep";
+import { sweepPtysInsideWorktree, worktreeHasLiveSession } from "./worktree-pty-sweep";
+import { salvageCoversWorktree } from "../orch/isolated-writer-salvage";
 import {
   managedCandidatesRoot,
   managedWorktreesRoot,
@@ -71,9 +73,30 @@ const DEAD_OWNER_WORKTREE_RELEASE_REASON =
   `${DEAD_OWNER_WORKTREE_RELEASE_MARKER} owning task or mission is terminal; ` +
   "ownership released, physical worktree kept for resume";
 
+/**
+ * F-908: coleta de worktrees de writers paradas. Roda depois do boot (nunca
+ * no caminho de abertura do escopo), no máximo uma vez a cada REARM por
+ * escopo, com teto de itens e de tempo por rodada.
+ */
+export const AGED_PANE_WORKTREE_GC: Readonly<Record<
+  "delayMs" | "rearmMs" | "minIdleMs" | "maxCandidates" | "budgetMs", number
+>> = Object.freeze({
+  delayMs: 30_000,
+  rearmMs: 6 * 60 * 60_000,
+  minIdleMs: 24 * 60 * 60_000,
+  maxCandidates: 12,
+  budgetMs: 3 * 60_000,
+});
+
+export type AgedPaneWorktreeGcReport = PaneWorktreeGcReport & {
+  readonly prune: { readonly pruned: number } | { readonly skipped: string };
+};
+
 export class WorktreeRuntimeRegistry {
   readonly #manager: ProjectRuntimeManager;
   readonly #runtimes = new Map<string, ScopeRuntime>();
+  readonly #agedGcNextAt = new Map<string, number>();
+  readonly #agedGcTimers = new Set<NodeJS.Timeout>();
 
   constructor(manager: ProjectRuntimeManager) {
     this.#manager = manager;
@@ -166,7 +189,81 @@ export class WorktreeRuntimeRegistry {
       queue,
     });
     this.#runtimes.set(key, value);
+    this.scheduleAgedPaneWriterGc(immutableScope);
     return value;
+  }
+
+  /**
+   * F-908: agenda a coleta de worktrees paradas deste escopo (boot e, num app
+   * aberto por dias, cada alocação nova re-arma a cada `rearmMs`). Nunca
+   * lança; o timer não segura o processo vivo.
+   */
+  scheduleAgedPaneWriterGc(scope: ProjectExecutionScope): void {
+    const key = scopeKey(scope);
+    if (Date.now() < (this.#agedGcNextAt.get(key) ?? 0)) return;
+    this.#agedGcNextAt.set(key, Date.now() + AGED_PANE_WORKTREE_GC.rearmMs);
+    const timer = setTimeout(() => {
+      this.#agedGcTimers.delete(timer);
+      void this.collectAgedPaneWriterWorktrees(scope).catch((error: unknown) => {
+        console.warn('[worktree-runtime] coleta de worktrees paradas adiada', error);
+      });
+    }, AGED_PANE_WORKTREE_GC.delayMs);
+    timer.unref?.();
+    this.#agedGcTimers.add(timer);
+  }
+
+  /**
+   * F-908: remove worktrees de writers de pane liberados há mais de
+   * `minIdleMs` cuja missão está done/failed/ausente e sem sessão viva
+   * dentro. Suja ou com branch não mesclada só sai depois da salvaguarda
+   * provada igual ao estado inteiro; branch não mesclada fica. Antes, prune
+   * dos registros `prunable` das raízes gerenciadas. Resultado registrado.
+   */
+  async collectAgedPaneWriterWorktrees(
+    scope: ProjectExecutionScope,
+    limits: Partial<typeof AGED_PANE_WORKTREE_GC> = {},
+  ): Promise<AgedPaneWorktreeGcReport> {
+    const { minIdleMs, maxCandidates, budgetMs } = { ...AGED_PANE_WORKTREE_GC, ...limits };
+    const deadlineAt = Date.now() + budgetMs;
+    const runtime = this.forScope(scope);
+    // Sem o status das missões, nada é coletado (a leitura lança).
+    const missionStatus = new Map(
+      (
+        new ScopedStoreBinding(this.#manager, scope)
+          .readDatabase()
+          .prepare('SELECT id, status FROM missions')
+          .all() as ReadonlyArray<{ id: string; status: string }>
+      ).map((row) => [row.id, row.status] as const),
+    );
+    // `operator-hand` nunca é linha de missão: conta como ausente.
+    const finished = (missionId: string) => {
+      const status = missionStatus.get(missionId);
+      return status === undefined || status === 'done' || status === 'failed';
+    };
+    // Prune primeiro: libera a branch de pasta sumida para o `branch -d`.
+    const prune = await runtime.worktrees.pruneManagedWorktrees(scope);
+    const report = await runtime.worktrees.collectReleasedPaneWorktrees(scope, {
+      owner: finished,
+      inUse: worktreeHasLiveSession,
+      minIdleMs,
+      maxCandidates,
+      deadlineAt,
+      preserve: (record) => salvageCoversWorktree({
+        worktreePath: record.worktreePath,
+        branchRef: record.branchRef,
+        missionId: record.missionId,
+        taskId: record.taskId,
+      }),
+    });
+    if (report.removed.length > 0 || Object.keys(report.kept).length > 0 ||
+        report.deferred > 0 || !('pruned' in prune) || prune.pruned > 0) {
+      console.warn(
+        `[worktree-runtime] coleta de worktrees paradas: ${report.removed.length} removida(s), ` +
+          `mantidas ${JSON.stringify(report.kept)}, ${report.deferred} para a próxima rodada, ` +
+          `prune ${JSON.stringify(prune)}`,
+      );
+    }
+    return Object.freeze({ ...report, prune });
   }
 
   /**
@@ -331,6 +428,7 @@ export class WorktreeRuntimeRegistry {
     input.assertCurrentAuthority?.();
     input.signal?.throwIfAborted();
     const runtime = this.forScope(input.scope);
+    this.scheduleAgedPaneWriterGc(input.scope);
     // `forScope` memoizes, so observe both stale-record lanes again before
     // the ownership-overlap check evaluates them.
     this.#purgeOrphanWorktrees(input.scope, runtime.worktrees);
@@ -630,6 +728,9 @@ export class WorktreeRuntimeRegistry {
   }
 
   dispose(): void {
+    for (const timer of this.#agedGcTimers) clearTimeout(timer);
+    this.#agedGcTimers.clear();
+    this.#agedGcNextAt.clear();
     this.#runtimes.clear();
   }
 }

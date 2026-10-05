@@ -44,6 +44,12 @@ import {
   managedWorktreeRelativePath,
 } from "./managed-worktree-layout";
 import { materializeGitWorktree } from "./worktree-cow";
+import {
+  findRegisteredDeletableWorktree,
+  isDangerousWorktreeRemovalPath,
+  isPathInsideOrEqual,
+  type RegisteredWorktreeInfo,
+} from "./worktree-removal-safety";
 import { DEAD_OWNER_WORKTREE_RELEASE_MARKER } from "./worktree-manager-markers";
 import {
   assertRepositoryUnchangedAsync,
@@ -71,6 +77,45 @@ export {
 } from "./worktree-manager-markers";
 
 const MAX_CAS_ATTEMPTS = 16;
+/** Remover ~2 GB de node_modules clonado passa fácil dos 30 s padrão do Git. */
+const WORKTREE_REMOVE_TIMEOUT_MS = 10 * 60_000;
+
+export interface PaneWorktreeGcOptions {
+  /** Chaves do registry (missão ou `operator-hand`) cujos writers podem sair. */
+  readonly owner: (missionId: string) => boolean;
+  readonly inUse: (worktreePath: string) => boolean;
+  /** Idade mínima desde a última mudança do registro (`updatedAt`). */
+  readonly minIdleMs?: number;
+  /** Teto de candidatos examinados nesta rodada. */
+  readonly maxCandidates?: number;
+  /** Hora (Date.now) a partir da qual nenhum candidato novo começa. */
+  readonly deadlineAt?: number;
+  /** Prova de que o conteúdo inteiro da worktree ficou guardado (salvaguarda). */
+  readonly preserve?: (record: WorktreeRecord) =>
+    Promise<{ readonly covered: true } | { readonly covered: false; readonly reason: string }>;
+}
+
+export interface PaneWorktreeGcReport {
+  readonly removed: readonly WorktreeRecord[];
+  /** Candidatos mantidos, por motivo (recusa de prova ou falha). */
+  readonly kept: Readonly<Record<string, number>>;
+  /** Candidatos não examinados por teto de itens/tempo. */
+  readonly deferred: number;
+}
+
+/** `git worktree list --porcelain`; a primeira entrada é a principal. */
+function parseWorktreeList(
+  stdout: string,
+): Array<RegisteredWorktreeInfo & { readonly prunable: boolean }> {
+  return stdout.split("\n\n").filter((block) => block.trim()).map((block, index) => {
+    const lines = block.split("\n");
+    return {
+      path: lines.find((line) => line.startsWith("worktree "))?.slice("worktree ".length) ?? "",
+      isMainWorktree: index === 0,
+      prunable: lines.some((line) => line === "prunable" || line.startsWith("prunable ")),
+    };
+  });
+}
 
 function assertExecutorOwnershipIsNotAuthority(files: readonly string[]): void {
   const protectedFile = files.find((file) => {
@@ -1029,74 +1074,166 @@ export class WorktreeManager {
 
   /**
    * GC dos writers de pane liberados: remove worktree, branch e registro só
-   * quando a branch já está contida no HEAD do checkout E a worktree está
-   * limpa (nada que exista só ali). Trabalho não integrado nunca é apagado;
-   * qualquer dúvida de identidade mantém tudo.
+   * quando a branch já está contida no HEAD do checkout, avançou além da base
+   * (um writer sem commit continua retomável) E a worktree está limpa (nada
+   * que exista só ali). Trabalho não integrado nunca é apagado; qualquer
+   * dúvida de identidade mantém tudo.
    */
-  collectIntegratedPaneWorktrees(
+  async collectIntegratedPaneWorktrees(
     scope: ProjectExecutionScope,
     missionId: string,
     inUse: (worktreePath: string) => boolean,
   ): Promise<readonly WorktreeRecord[]> {
-    return this.#collectIntegratedPaneWorktrees(scope, missionId, inUse);
+    return (await this.collectReleasedPaneWorktrees(scope, {
+      owner: (owner) => owner === missionId,
+      inUse,
+    })).removed;
   }
 
-  // Git assíncrono (fora do thread principal). Entre dois awaits o estado pode
-  // mudar (resume, pane novo): antes de remover, revalida registro e uso e
-  // marca o writer como "em coleta" para `reopenPaneWriter` recusá-lo.
-  async #collectIntegratedPaneWorktrees(
+  /**
+   * F-908: coleta configurável dos writers de pane liberados (`failed` ou
+   * `integrated`). Sem `preserve` vale a regra estrita acima; com `preserve`
+   * (coleta de worktrees paradas), worktree suja ou branch não mesclada só sai
+   * quando `preserve` prova que o conteúdo inteiro ficou guardado — a branch
+   * não mesclada nunca é apagada (`branch -d`). Git e fs assíncronos; cada
+   * recusa ou falha é contada por motivo em `kept`, nunca engolida.
+   */
+  async collectReleasedPaneWorktrees(
     scope: ProjectExecutionScope,
-    missionId: string,
-    inUse: (worktreePath: string) => boolean,
-  ): Promise<readonly WorktreeRecord[]> {
+    options: PaneWorktreeGcOptions,
+  ): Promise<PaneWorktreeGcReport> {
     const scopeKey = this.scopeKey(scope);
+    const now = this.#timestamp();
     const released = (record: WorktreeRecord) => record.ownerKind === "pane" &&
-      record.missionId === missionId && record.status === "failed" && !inUse(record.worktreePath);
+      // `tab` (abas isoladas) também é pane, mas não é writer: nunca coletada.
+      record.taskId.startsWith("pane-") &&
+      (record.status === "failed" || record.status === "integrated") &&
+      options.owner(record.missionId) &&
+      now - record.updatedAt >= (options.minIdleMs ?? 0) &&
+      !options.inUse(record.worktreePath);
     const candidates = this.#snapshot(scopeKey).records.filter(released);
-    const git = this.#asyncGit;
+    const maxCandidates = options.maxCandidates ?? Number.POSITIVE_INFINITY;
     const removed: WorktreeRecord[] = [];
-    for (const candidate of candidates) {
-      if (this.#collecting.has(candidate.taskKey)) continue;
+    const kept: Record<string, number> = {};
+    let deferred = 0;
+    for (const [index, candidate] of candidates.entries()) {
+      if (index >= maxCandidates || (options.deadlineAt !== undefined && Date.now() >= options.deadlineAt)) {
+        deferred = candidates.length - index;
+        break;
+      }
+      let reason: string | null;
       try {
-        const merged = await git.run(candidate.rootRealPath,
-          ["merge-base", "--is-ancestor", candidate.branchRef, "HEAD"], { allowFailure: true });
-        if (merged.status !== 0) continue;
-        let real: string | undefined;
-        if (fs.existsSync(candidate.worktreePath)) {
-          real = fs.realpathSync(candidate.worktreePath);
-          if (real !== candidate.worktreePath) continue;
-          await assertSafeLocalGitConfigAsync(git, real);
-          const top = await git.run(real, ["rev-parse", "--show-toplevel"], { allowFailure: true });
-          const head = await git.run(real, ["symbolic-ref", "--quiet", "HEAD"], { allowFailure: true });
-          if (top.status !== 0 || fs.realpathSync(top.stdout.trim()) !== real ||
-              head.status !== 0 || head.stdout.trim() !== candidate.branchRef) continue;
-          const status = await git.run(real, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
-          if (status.stdout.length > 0) continue;
+        reason = this.#collecting.has(candidate.taskKey)
+          ? "collecting"
+          : await this.#collectReleasedPaneWorktree(scopeKey, candidate, released, options.preserve);
+      } catch (error) {
+        // Identidade incerta mantém worktree, branch e registro — mas conta.
+        reason = `error: ${this.#failureMessage(error).slice(0, 120)}`;
+      }
+      if (reason === null) removed.push(candidate);
+      else kept[reason] = (kept[reason] ?? 0) + 1;
+    }
+    return Object.freeze({ removed: Object.freeze(removed), kept: Object.freeze(kept), deferred });
+  }
+
+  // Entre dois awaits o estado pode mudar (resume, pane novo): antes de
+  // remover, revalida registro e uso e marca o writer como "em coleta" para
+  // `reopenPaneWriter` recusá-lo. Devolve o motivo de manter, ou null.
+  async #collectReleasedPaneWorktree(
+    scopeKey: string,
+    candidate: WorktreeRecord,
+    released: (record: WorktreeRecord) => boolean,
+    preserve: PaneWorktreeGcOptions["preserve"],
+  ): Promise<string | null> {
+    const git = this.#asyncGit;
+    const root = candidate.rootRealPath;
+    const merged = (await git.run(root,
+      ["merge-base", "--is-ancestor", candidate.branchRef, "HEAD"], { allowFailure: true })).status === 0;
+    if (!merged && !preserve) return "unmerged";
+    if (!preserve) {
+      const head = await git.run(root, ["rev-parse", "--verify", `${candidate.branchRef}^{commit}`]);
+      if (head.stdout.trim() === candidate.baseSha) return "no-commits";
+    }
+    const entry = await fs.promises.lstat(candidate.worktreePath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    let real: string | undefined;
+    let dirty = false;
+    if (entry) {
+      // Nunca segue symlink nem sai da raiz gerenciada.
+      if (entry.isSymbolicLink() || !entry.isDirectory()) return "not-a-directory";
+      real = await fs.promises.realpath(candidate.worktreePath);
+      if (real !== candidate.worktreePath) return "path-mismatch";
+      const managed = [this.worktreesRoot, this.legacyWorktreesRoot].some((managedRoot) =>
+        real !== managedRoot && isPathInsideOrEqual(managedRoot, real!));
+      if (!managed || isDangerousWorktreeRemovalPath(real, root)) return "outside-managed-root";
+      await assertSafeLocalGitConfigAsync(git, real);
+      const top = await git.run(real, ["rev-parse", "--show-toplevel"], { allowFailure: true });
+      const head = await git.run(real, ["symbolic-ref", "--quiet", "HEAD"], { allowFailure: true });
+      if (top.status !== 0 || await fs.promises.realpath(top.stdout.trim()) !== real ||
+          head.status !== 0 || head.stdout.trim() !== candidate.branchRef) return "identity";
+      const listed = await git.run(root, ["worktree", "list", "--porcelain"]);
+      if (!findRegisteredDeletableWorktree(root, real, parseWorktreeList(listed.stdout))) return "unregistered";
+      const status = await git.run(real, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+      dirty = status.stdout.length > 0;
+      if (dirty && !preserve) return "dirty";
+      if (dirty) {
+        // `--force` apagaria o conteúdo de repositório aninhado/submódulo, que
+        // a salvaguarda só registra como gitlink.
+        if (status.stdout.split("\0").some((field) => field.endsWith("/"))) return "nested-repository";
+        if (await fs.promises.lstat(path.join(real, ".gitmodules")).then(() => true, () => false)) {
+          return "submodules";
         }
-        // Revalidação síncrona + marca: nada reabre este writer daqui em diante.
-        const record = this.#snapshot(scopeKey).records.find((current) =>
-          current.taskKey === candidate.taskKey);
-        if (!record || !released(record) || record.updatedAt !== candidate.updatedAt) continue;
-        this.#collecting.add(record.taskKey);
-        try {
-          // Sem --force: o Git recusa de novo se algo mudou entre a prova e a remoção.
-          if (real !== undefined) await git.run(record.rootRealPath, ["worktree", "remove", real]);
-          // -d (não -D): o Git só apaga a branch se ela estiver mesclada.
-          await git.run(record.rootRealPath,
-            ["branch", "-d", record.branchRef.slice("refs/heads/".length)], { allowFailure: true });
-          this.#mutate(scopeKey, (records) => ({
-            records: records.filter((current) => current.taskKey !== record.taskKey),
-            result: undefined,
-          }));
-          removed.push(record);
-        } finally {
-          this.#collecting.delete(record.taskKey);
-        }
-      } catch {
-        // Best-effort: identidade incerta mantém worktree, branch e registro.
       }
     }
-    return Object.freeze(removed);
+    // Pasta já sumida: nada no disco a perder; a branch não mesclada fica (-d).
+    if (preserve && real !== undefined && (!merged || dirty)) {
+      const coverage = await preserve(candidate);
+      if (!coverage.covered) return coverage.reason;
+    }
+    // Revalidação síncrona + marca: nada reabre este writer daqui em diante.
+    const record = this.#snapshot(scopeKey).records.find((current) =>
+      current.taskKey === candidate.taskKey);
+    if (!record || !released(record) || record.updatedAt !== candidate.updatedAt) return "changed";
+    this.#collecting.add(record.taskKey);
+    try {
+      // Limpa: sem --force, o Git recusa de novo se algo mudou entre a prova e
+      // a remoção. Suja: só chega aqui com a salvaguarda provada igual ao estado
+      // inteiro da worktree. Worktree trancada (`git worktree lock`) segue recusada.
+      if (real !== undefined) {
+        await git.run(root, ["worktree", "remove", ...(dirty ? ["--force"] : []), real],
+          { timeoutMs: WORKTREE_REMOVE_TIMEOUT_MS });
+      }
+      // -d (não -D): o Git só apaga a branch se ela estiver mesclada.
+      await git.run(root, ["branch", "-d", record.branchRef.slice("refs/heads/".length)], { allowFailure: true });
+      this.#mutate(scopeKey, (records) => ({
+        records: records.filter((current) => current.taskKey !== record.taskKey),
+        result: undefined,
+      }));
+      return null;
+    } finally {
+      this.#collecting.delete(record.taskKey);
+    }
+  }
+
+  /**
+   * F-908: `git worktree prune` assíncrono, só quando TODA entrada `prunable`
+   * do repositório mora numa raiz gerenciada (prune é tudo-ou-nada; não
+   * esquecemos a worktree de outro volume desmontado do operador).
+   */
+  async pruneManagedWorktrees(
+    scope: ProjectExecutionScope,
+  ): Promise<{ readonly pruned: number } | { readonly skipped: string }> {
+    const listed = await this.#asyncGit.run(scope.rootRealPath, ["worktree", "list", "--porcelain"]);
+    const prunable = parseWorktreeList(listed.stdout).filter((worktree) => worktree.prunable);
+    if (prunable.length === 0) return { pruned: 0 };
+    if (!prunable.every((worktree) => [this.worktreesRoot, this.legacyWorktreesRoot].some((managedRoot) =>
+      worktree.path !== managedRoot && isPathInsideOrEqual(managedRoot, worktree.path)))) {
+      return { skipped: "prunable-outside-managed-root" };
+    }
+    await this.#asyncGit.run(scope.rootRealPath, ["worktree", "prune"]);
+    return { pruned: prunable.length };
   }
 
   markFailed(
