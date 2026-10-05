@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.194 — Windows de volta
+
+Build do Windows. Traz para o Windows tudo o que saiu no Mac desde a 0.76.188, até a 0.76.193.
+
+- **O instalador do Windows sai sem assinatura digital.** O serviço de assinatura em nuvem da SSL.com (eSigner) cobrava por assinatura, e cada build assina dezenas de arquivos: a build automática gerou faturas de excesso. Ele saiu do fluxo. Ao instalar pelo site, o Windows mostra "O Windows protegeu o computador": clique em "Mais informações" e depois em "Executar assim mesmo". No Windows 11 com o Controle Inteligente de Aplicativos ligado, é preciso desligá-lo em Segurança do Windows para instalar. Quem já tem o Nexus atualiza sem esse aviso. A versão assinada virá pela Microsoft Store, que assina de graça.
+- **A release do Windows não volta a usar o eSigner por engano.** O recibo da release guarda o hash de cada executável, com o do instalador amarrado ao arquivo publicado. O fluxo para se a assinatura de release for religada no PC que gera o Windows, e a build recusa o certificado do eSigner.
+
 ## 0.76.193 — Terminais e missões em dia
 
 Build do Mac. Inclui a 0.76.191 (Login que fica) e integra as entregas pendentes da Missão Terminais.

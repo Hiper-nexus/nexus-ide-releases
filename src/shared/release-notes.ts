@@ -9910,7 +9910,7 @@ export const RELEASE_076191: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076193: AppRelease = {
   version: '0.76.193',
   date: '2026-10-05',
   codename: 'Terminais e missões em dia',
@@ -10007,6 +10007,34 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'O alerta de memória parada considera a atividade da missão. Correções relatadas pelos agentes ' +
         'viram memória de problema resolvido, e o roteamento respeita o tamanho de contexto de cada modelo.',
+    },
+  ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.194',
+  date: '2026-10-05',
+  codename: 'Windows de volta',
+  summary:
+    'O Windows recebe tudo o que saiu no Mac desde a 0.76.188. O instalador ' +
+    'sai sem assinatura digital até a versão da Microsoft Store chegar.',
+  highlights: [
+    {
+      title: 'Windows em dia com o Mac',
+      detail:
+        'O instalador do Windows volta a sair e traz as correções das versões ' +
+        '0.76.189 a 0.76.193: o app não congela com muitos agentes, as missões ' +
+        'não param no meio e os workers nascem trabalhando.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Aviso do Windows ao instalar',
+      detail:
+        'Por enquanto o instalador não tem assinatura digital. Ao instalar pelo ' +
+        'site, o Windows mostra "O Windows protegeu o computador": clique em ' +
+        '"Mais informações" e depois em "Executar assim mesmo". Quem já tem o ' +
+        'Nexus instalado atualiza sem esse aviso. A versão assinada virá pela ' +
+        'Microsoft Store.',
     },
   ],
 };
