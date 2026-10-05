@@ -178,6 +178,30 @@ describe('UpdateModal', () => {
     });
     expect(mockInstall).toHaveBeenCalled();
   });
+
+  it('no Linux o erro oferece a página de downloads e não o .dmg do Mac', () => {
+    const state: UpdateState = {
+      phase: 'error',
+      currentVersion: '0.76.197',
+      source: 'gh',
+      canInstall: true,
+      installerPlatform: 'linux',
+      error: 'atualização recusada: assinatura das somas inválida — rode no terminal: curl -fsSL https://nexuside.app/install.sh | sh',
+      available: { version: '0.76.198', tag: 'v0.76.198' },
+    };
+
+    mount(<UpdateModal state={state} onClose={vi.fn()} />);
+
+    const buttons = Array.from(document.body.querySelectorAll('button'));
+    expect(buttons.some((b) => b.textContent?.includes('.dmg'))).toBe(false);
+    const download = buttons.find((b) => b.textContent?.includes('Abrir página de downloads'));
+    expect(download).toBeDefined();
+    act(() => {
+      download?.click();
+    });
+    expect(mockOpenExternal).toHaveBeenCalledWith('https://nexuside.app/#download');
+    expect(buttons.find((b) => b.textContent?.includes('Tentar novamente'))).toBeDefined();
+  });
 });
 
 describe('UpdateBannerNotice', () => {

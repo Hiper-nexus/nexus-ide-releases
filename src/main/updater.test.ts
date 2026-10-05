@@ -1,4 +1,6 @@
-import { rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const electron = vi.hoisted(() => {
@@ -462,5 +464,143 @@ describe('UpdateManager', () => {
     } finally {
       process.env.NEXUS_UPDATE_FEED = prevFeed;
     }
+  });
+});
+
+describe('Linux self-update (pacote portátil)', () => {
+  const linuxRelease = (version: string) => ({
+    tag_name: `v${version}`,
+    published_at: '2026-10-05T15:00:19Z',
+    draft: false,
+    prerelease: false,
+    body: 'notas',
+    assets: [
+      { name: `nexus-ide_${version}_amd64.deb` },
+      { name: `nexus-ide-${version}-1.x86_64.rpm` },
+      { name: `NexusIDE-linux-x64-${version}.zip` },
+    ],
+  });
+  const stubReleases = (releases: unknown[]) =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify(releases) })),
+    );
+  const portable = { kind: 'portable', installDir: '/home/ana/.local/share/nexus-ide', parentDir: '/home/ana/.local/share' } as const;
+  const make = (overrides: Record<string, unknown> = {}) => {
+    const stage = vi.fn(async (input: { deps: { onProgress?: (a: number, b?: number) => void } }) => {
+      input.deps.onProgress?.(10 * 1024 * 1024, 100 * 1024 * 1024);
+      return { version: '0.15.2', stagedDir: `${portable.installDir}.new`, keyId: 'abc' };
+    });
+    const launch = vi.fn();
+    const quit = vi.fn();
+    const manager = new UpdateManager(true, {
+      runGh: vi.fn(),
+      runtimeArch: 'x64',
+      runtimePlatform: 'linux',
+      linuxSelfUpdate: { detect: () => portable, stage: stage as never, launch, quit, ...overrides },
+    });
+    return { manager, stage, launch, quit };
+  };
+
+  it('instalação portátil nasce com auto-update (canInstall, sem aviso manual)', () => {
+    const { manager } = make();
+    manager.init();
+    expect(manager.getState()).toMatchObject({ phase: 'idle', canInstall: true, source: 'gh' });
+    expect(manager.getState().manual).toBeUndefined();
+  });
+
+  it('DEB/RPM (instalação de sistema) continua no canal manual', () => {
+    const { manager } = make({ detect: () => ({ kind: 'system', reason: 'instalado pelo gerenciador de pacotes' }) });
+    manager.init();
+    expect(manager.getState()).toMatchObject({ source: 'manual', canInstall: false });
+    expect(manager.getState().manual?.command).toContain('install.sh');
+  });
+
+  it('avisa, baixa com progresso, fica pronto e reinicia aplicando a troca', async () => {
+    stubReleases([linuxRelease('0.15.2')]);
+    const { manager, stage, launch, quit } = make();
+    manager.init();
+    await electron.handlers.get(UPDATE_CHANNELS.check)?.(trustedSenderEvent());
+    expect(manager.getState()).toMatchObject({ phase: 'available', available: { version: '0.15.2', tag: 'v0.15.2' } });
+
+    await electron.handlers.get(UPDATE_CHANNELS.install)?.(trustedSenderEvent());
+    expect(stage).toHaveBeenCalledOnce();
+    expect(stage.mock.calls[0][0]).toMatchObject({
+      currentVersion: manager.getState().currentVersion,
+      release: { version: '0.15.2', tag: 'v0.15.2' },
+    });
+    expect(manager.getState()).toMatchObject({ phase: 'ready' });
+    expect(manager.getState().error).toBeUndefined();
+
+    // O reinício só é aplicado depois que a pasta nova existe no disco.
+    await electron.handlers.get(UPDATE_CHANNELS.restart)?.(trustedSenderEvent());
+    expect(launch).not.toHaveBeenCalled();
+    expect(manager.getState().phase).toBe('error');
+    expect(manager.getState().error).toContain('install.sh');
+    expect(quit).not.toHaveBeenCalled();
+  });
+
+  it('reinicia de verdade quando a pasta nova existe: lança o script e sai', async () => {
+    stubReleases([linuxRelease('0.15.2')]);
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'updater-linux-'));
+    try {
+      mkdirSync(path.join(`${dir}/nexus-ide.new`), { recursive: true });
+      writeFileSync(path.join(`${dir}/nexus-ide.new`, 'nexus-ide'), 'x');
+      const install = { kind: 'portable', installDir: `${dir}/nexus-ide`, parentDir: dir } as const;
+      const { manager, launch, quit } = make({
+        detect: () => install,
+        stage: vi.fn(async () => ({ version: '0.15.2', stagedDir: `${dir}/nexus-ide.new`, keyId: 'abc' })),
+      });
+      manager.init();
+      await electron.handlers.get(UPDATE_CHANNELS.check)?.(trustedSenderEvent());
+      await electron.handlers.get(UPDATE_CHANNELS.install)?.(trustedSenderEvent());
+      expect(manager.getState().phase).toBe('ready');
+      await electron.handlers.get(UPDATE_CHANNELS.restart)?.(trustedSenderEvent());
+      expect(launch).toHaveBeenCalledOnce();
+      expect(launch.mock.calls[0][0]).toMatchObject({ pid: process.pid, install });
+      expect(quit).toHaveBeenCalledOnce();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('recusa de assinatura vira erro com o comando manual e nada é aplicado', async () => {
+    stubReleases([linuxRelease('0.15.2')]);
+    const { UpdateRefused } = await import('./linux-self-update');
+    const { manager, launch, quit } = make({
+      stage: vi.fn(async () => {
+        throw new UpdateRefused('assinatura das somas inválida ou ZIP fora da lista');
+      }),
+    });
+    manager.init();
+    await electron.handlers.get(UPDATE_CHANNELS.check)?.(trustedSenderEvent());
+    await electron.handlers.get(UPDATE_CHANNELS.install)?.(trustedSenderEvent());
+    const state = manager.getState();
+    expect(state.phase).toBe('error');
+    expect(state.error).toContain('atualização recusada');
+    expect(state.error).toContain('install.sh');
+    await electron.handlers.get(UPDATE_CHANNELS.restart)?.(trustedSenderEvent());
+    expect(launch).not.toHaveBeenCalled();
+    expect(quit).not.toHaveBeenCalled();
+  });
+
+  it('falha de rede no download também devolve o comando manual', async () => {
+    stubReleases([linuxRelease('0.15.2')]);
+    const { manager } = make({ stage: vi.fn(async () => { throw new Error('download público: HTTP 503'); }) });
+    manager.init();
+    await electron.handlers.get(UPDATE_CHANNELS.check)?.(trustedSenderEvent());
+    await electron.handlers.get(UPDATE_CHANNELS.install)?.(trustedSenderEvent());
+    expect(manager.getState().error).toContain('download falhou');
+    expect(manager.getState().error).toContain('install.sh');
+  });
+
+  it('já em dia: instalar não baixa nada', async () => {
+    stubReleases([apiRelease('0.15.9')]);
+    const { manager, stage } = make();
+    manager.init();
+    await electron.handlers.get(UPDATE_CHANNELS.check)?.(trustedSenderEvent());
+    expect(manager.getState().phase).toBe('uptodate');
+    await electron.handlers.get(UPDATE_CHANNELS.install)?.(trustedSenderEvent());
+    expect(stage).not.toHaveBeenCalled();
   });
 });

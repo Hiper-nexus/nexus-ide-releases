@@ -365,11 +365,13 @@ export function UpdateModal({ state, onClose }: Props) {
                 className="update-modal__btn update-modal__btn--primary"
                 onClick={() => {
                   const tag = available.tag || `v${available.version}`;
-                  const url = `https://github.com/Hiper-nexus/nexus-ide/releases/tag/${tag}`;
+                  const url = state.installerPlatform === 'linux'
+                    ? 'https://nexuside.app/#download'
+                    : `https://github.com/Hiper-nexus/nexus-ide/releases/tag/${tag}`;
                   void window.nexus?.app?.openExternal(url);
                 }}
               >
-                Baixar instalador (.dmg)
+                {state.installerPlatform === 'linux' ? 'Abrir página de downloads' : 'Baixar instalador (.dmg)'}
               </button>
               {state.canInstall && (
                 <button

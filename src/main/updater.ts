@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { runPeriodicTask, stopPeriodicTask } from './observability/periodic-task';
 import { app, autoUpdater, BrowserWindow, dialog } from 'electron';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -25,6 +25,15 @@ import {
   PUBLIC_RELEASES_REPOS,
 } from './update-repos';
 import { createSingleFlight } from './single-flight';
+import {
+  detectLinuxInstall,
+  launchApplyHelper,
+  scheduleOldInstallCleanup,
+  stageLinuxUpdate,
+  UpdateRefused,
+  type LinuxInstall,
+  type StagedUpdate,
+} from './linux-self-update';
 
 /**
  * Auto-update com UI de verdade (fim do "às cegas"): o estado inteiro do
@@ -156,6 +165,26 @@ function githubMovedPermanentlyUrl(raw: string): string | null {
   return null;
 }
 
+/** GET anônimo de um arquivo pequeno (somas e assinatura) com deadline e teto de tamanho. */
+async function fetchPublicText(url: string, timeoutMs: number, maxBytes: number): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      headers: { 'user-agent': 'NexusIDE-updater' },
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`download público: HTTP ${response.status}`);
+    const declared = Number(response.headers.get('content-length'));
+    if (Number.isFinite(declared) && declared > maxBytes) throw new Error('arquivo maior que o esperado');
+    const text = await response.text();
+    if (Buffer.byteLength(text, 'utf8') > maxBytes) throw new Error('arquivo maior que o esperado');
+    return text;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** GET anônimo na API pública com deadline (mesma disciplina do gh). */
 async function fetchPublicJson(
   url: string,
@@ -267,7 +296,16 @@ export async function downloadPublicAsset(
   }
 }
 
+/** Costuras do auto-update do Linux portátil; os testes trocam por falsos. */
+export interface LinuxSelfUpdateDependencies {
+  detect: (execPath: string) => LinuxInstall;
+  stage: typeof stageLinuxUpdate;
+  launch: typeof launchApplyHelper;
+  quit: () => void;
+}
+
 export interface UpdateManagerDependencies {
+  linuxSelfUpdate?: Partial<LinuxSelfUpdateDependencies>;
   runGh?: GhExecutor;
   runtimeArch?: string;
   runtimePlatform?: string;
@@ -302,9 +340,13 @@ export class UpdateManager {
   private firstRunCheckTimer: ReturnType<typeof setTimeout> | null = null;
   /**
    * 'feed' = NEXUS_UPDATE_FEED direto; 'gh' = release privado via gh;
-   * 'manual' = Linux: só consulta o espelho público e avisa (F-751).
+   * 'manual' = Linux (DEB/RPM): só consulta o espelho público e avisa (F-751).
+   * 'linux-self' = Linux portátil (ZIP do install.sh): baixa, confere a assinatura e se troca sozinho.
    */
-  private mode: 'feed' | 'gh' | 'manual' | 'none' = 'none';
+  private mode: 'feed' | 'gh' | 'manual' | 'linux-self' | 'none' = 'none';
+  private linuxInstall: Extract<LinuxInstall, { kind: 'portable' }> | null = null;
+  private linuxStaged: StagedUpdate | null = null;
+  private readonly linuxSelf: LinuxSelfUpdateDependencies;
   private readonly checkSingleFlight = createSingleFlight(() => this.performCheck());
 
   constructor(
@@ -315,6 +357,12 @@ export class UpdateManager {
     this.runtimeArch = dependencies.runtimeArch ?? process.arch;
     this.runtimePlatform = dependencies.runtimePlatform ?? process.platform;
     this.runtimeArgs = dependencies.runtimeArgs ?? process.argv;
+    this.linuxSelf = {
+      detect: dependencies.linuxSelfUpdate?.detect ?? detectLinuxInstall,
+      stage: dependencies.linuxSelfUpdate?.stage ?? stageLinuxUpdate,
+      launch: dependencies.linuxSelfUpdate?.launch ?? launchApplyHelper,
+      quit: dependencies.linuxSelfUpdate?.quit ?? (() => app.quit()),
+    };
     const isPackagedWindowsX64 =
       app.isPackaged &&
       this.runtimePlatform === 'win32' &&
@@ -379,14 +427,26 @@ export class UpdateManager {
     const isLinuxManual =
       this.runtimePlatform === 'linux' && this.runtimeArch === 'x64' && app.isPackaged;
     if (isLinuxManual) {
-      this.mode = 'manual';
-      this.patch({
-        phase: 'idle',
-        source: 'manual',
-        canInstall: false,
-        error: undefined,
-        manual: { command: LINUX_UPDATE_COMMAND, downloadUrl: LINUX_DOWNLOAD_URL },
-      });
+      const install = this.linuxSelf.detect(app.getPath('exe'));
+      if (install.kind === 'portable') {
+        // Pacote portátil (Arch, Omarchy): o app se atualiza sozinho, com assinatura conferida.
+        this.mode = 'linux-self';
+        this.linuxInstall = install;
+        this.patch({ phase: 'idle', source: 'gh', canInstall: true, error: undefined, installerPlatform: 'linux' });
+        scheduleOldInstallCleanup(install);
+        writeUpdateLog('info', 'init:linux-self', { installDir: install.installDir });
+      } else {
+        this.mode = 'manual';
+        this.patch({
+          phase: 'idle',
+          source: 'manual',
+          canInstall: false,
+          error: undefined,
+          installerPlatform: 'linux',
+          manual: { command: LINUX_UPDATE_COMMAND, downloadUrl: LINUX_DOWNLOAD_URL },
+        });
+        writeUpdateLog('info', 'init:linux-manual', { reason: install.reason });
+      }
     }
     if (
       !isLinuxManual &&
@@ -492,7 +552,12 @@ export class UpdateManager {
       return this.getState();
     });
     handleTrusted(UPDATE_CHANNELS.restart, () => {
-      if (this.state.phase === 'ready') autoUpdater.quitAndInstall();
+      if (this.state.phase !== 'ready') return;
+      if (this.mode === 'linux-self') {
+        this.restartLinuxSelf();
+        return;
+      }
+      autoUpdater.quitAndInstall();
     });
   }
 
@@ -567,7 +632,7 @@ export class UpdateManager {
       }
       return;
     }
-    if (this.mode === 'manual') {
+    if (this.mode === 'manual' || this.mode === 'linux-self') {
       await this.performManualCheck();
       return;
     }
@@ -630,6 +695,7 @@ export class UpdateManager {
     try {
       const raw = await this.loadPublicReleaseJson();
       const available = parseLinuxReleases(raw, this.state.currentVersion, this.runtimeArch);
+      if (this.mode === 'linux-self' && this.state.phase !== 'ready') this.linuxStaged = null;
       if (available) {
         writeUpdateLog('info', 'check:available', {
           currentVersion: this.state.currentVersion,
@@ -650,6 +716,98 @@ export class UpdateManager {
       writeUpdateLog('warn', 'check:public-failed', { message });
       this.patch({ phase: 'error', error: `checagem falhou: ${message.slice(0, 160)}` });
     }
+  }
+
+  /**
+   * Linux portátil: baixa o ZIP, confere a assinatura das somas e o SHA-256, extrai ao lado da instalação
+   * e fica `ready` até o operador reiniciar. Qualquer falha deixa a instalação atual intacta e devolve o
+   * comando manual na mensagem.
+   */
+  private async installLinuxSelf(): Promise<void> {
+    const install = this.linuxInstall;
+    const retrying = this.state.phase === 'error' && Boolean(this.state.available);
+    if (!install || (this.state.phase !== 'available' && !retrying) || !this.state.available) return;
+    // A oferta pode ter ficado aberta por horas (ou a tentativa anterior falhou): revalida antes de baixar 240 MB.
+    await this.check();
+    const available = this.state.available;
+    if (this.state.phase !== 'available' || !available) return;
+    writeUpdateLog('info', 'install:linux-start', { tag: available.tag });
+    this.patch({ phase: 'downloading', error: undefined, downloadProgress: undefined });
+    let lastEmittedBytes = -1;
+    try {
+      const staged = await this.linuxSelf.stage({
+        install,
+        currentVersion: this.state.currentVersion,
+        release: { version: available.version, tag: available.tag },
+        repos: PUBLIC_RELEASES_REPOS,
+        deps: {
+          fetchText: (url, maxBytes) => fetchPublicText(url, GH_CHECK_TIMEOUT_MS, maxBytes),
+          download: (url, destination, onProgress) =>
+            downloadPublicAsset(url, destination, GH_DOWNLOAD_TIMEOUT_MS, (progress) =>
+              onProgress?.(progress.receivedBytes, progress.totalBytes),
+            ),
+          onProgress: (receivedBytes, totalBytes) => {
+            const shouldEmit =
+              receivedBytes - lastEmittedBytes >= 8 * 1024 * 1024 ||
+              (totalBytes !== undefined && receivedBytes === totalBytes);
+            if (!shouldEmit) return;
+            lastEmittedBytes = receivedBytes;
+            this.patch({
+              phase: 'downloading',
+              downloadProgress: { receivedBytes, ...(totalBytes !== undefined ? { totalBytes } : {}) },
+            });
+          },
+          log: (event, detail) => writeUpdateLog('info', `install:linux:${event}`, detail),
+        },
+      });
+      this.linuxStaged = staged;
+      writeUpdateLog('info', 'install:linux-ready', { version: staged.version, keyId: staged.keyId });
+      this.patch({ phase: 'ready', downloadProgress: undefined });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      writeUpdateLog('warn', 'install:linux-failed', { message });
+      this.patch({
+        phase: 'error',
+        downloadProgress: undefined,
+        error:
+          (err instanceof UpdateRefused ? `atualização recusada: ${message}` : `download falhou: ${message}`).slice(0, 160) +
+          ` — rode no terminal: ${LINUX_UPDATE_COMMAND}`,
+      });
+    }
+  }
+
+  /** Reinício do Linux portátil: um script solto troca a pasta depois que o app sai e reabre o novo. */
+  private restartLinuxSelf(): void {
+    const install = this.linuxInstall;
+    const staged = this.linuxStaged;
+    if (!install || !staged || !fs.existsSync(path.join(staged.stagedDir, 'nexus-ide'))) {
+      this.patch({ phase: 'error', error: `a atualização baixada sumiu — rode no terminal: ${LINUX_UPDATE_COMMAND}` });
+      return;
+    }
+    try {
+      this.linuxSelf.launch({
+        scriptPath: path.join(app.getPath('userData'), 'linux-apply-update.sh'),
+        pid: process.pid,
+        install,
+        deps: {
+          writeScript: (scriptPath, content) => {
+            fs.writeFileSync(scriptPath, content, { mode: 0o700 });
+            fs.chmodSync(scriptPath, 0o700);
+          },
+          spawnDetached: (command, args) => {
+            const child = spawn(command, args, { detached: true, stdio: 'ignore' });
+            child.unref();
+          },
+        },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      writeUpdateLog('warn', 'restart:linux-failed', { message });
+      this.patch({ phase: 'error', error: `não consegui reiniciar: ${message.slice(0, 120)}` });
+      return;
+    }
+    writeUpdateLog('info', 'restart:linux-apply', { version: staged.version });
+    this.linuxSelf.quit();
   }
 
   private async loadPublicReleaseJson(): Promise<string> {
@@ -812,8 +970,12 @@ export class UpdateManager {
   }
 
   private async install(): Promise<void> {
-    // Linux: a atualização é feita pelo operador (comando do estado `manual`).
+    // Linux (DEB/RPM): a atualização é feita pelo operador (comando do estado `manual`).
     if (this.mode === 'manual') return;
+    if (this.mode === 'linux-self') {
+      await this.installLinuxSelf();
+      return;
+    }
     if (this.state.phase !== 'available' || !this.release) return;
     if (!this.state.canInstall) {
       writeUpdateLog('warn', 'install:blocked-dev-build');

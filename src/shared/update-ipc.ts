@@ -65,6 +65,11 @@ export interface UpdateState {
    */
   manual?: UpdateManualInstall;
   /**
+   * Linux: o instalador de lá é o pacote do site, não o .dmg do Mac (a UI troca o botão e o link do
+   * erro). Ausente no Mac e no Windows.
+   */
+  installerPlatform?: 'linux';
+  /**
    * Progresso do download da atualização (fase 'downloading').
    * Ausente = tamanho desconhecido (a UI mostra apenas "baixando").
    */
