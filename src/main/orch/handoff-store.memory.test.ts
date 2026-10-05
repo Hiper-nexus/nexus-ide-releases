@@ -18,12 +18,12 @@ const memory = vi.hoisted(() => ({
 }));
 // The remote Jev barrier is covered in trusted-memory tests; these tests
 // exercise the durable handoff transitions that must actually invoke it.
-// importOriginal keeps the pure resolved-problem detector real.
+// importOriginal keeps the pure reported-fix detector real.
 vi.mock('../memory/trusted-memory', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../memory/trusted-memory')>()),
   retainAcknowledgedHandoffMemoryBestEffort: memory.retain,
   retainAcceptedHandoffMemoryDistilledBestEffort: vi.fn().mockResolvedValue(null),
-  retainResolvedProblemFromHandoffBestEffort: memory.resolved,
+  retainReportedFixFromHandoffBestEffort: memory.resolved,
   recordMemoryRetentionSkip: memory.skip,
 }));
 
@@ -119,62 +119,86 @@ describe('F-768 handoff memory triggers', () => {
   });
 });
 
-describe('resolved-problem writer trigger', () => {
-  it('emits resolved-problem when a delivered mission handoff declares a fixed bug', () => {
+describe('reported fix writer trigger (F-911)', () => {
+  const declared = 'Corrigido o vazamento do watcher; ver docs/qa/items/F-911.md.';
+  const missionHandoffs = () => {
     createScopedMissionStore(manager, scope, { idFactory: () => 'mission-a' })
       .create({ title: 'Memória' });
-    const handoffs = createScopedHandoffStore(manager, scope);
-    const handoff = handoffs.submit({
-      missionId: 'mission-a', status: 'success',
-      summary: 'Corrigido o vazamento do watcher; ver docs/qa/items/F-911.md.',
-    });
+    return createScopedHandoffStore(manager, scope);
+  };
+
+  it('passes the Main-owned handoff order when a delivered mission handoff declares a fix', () => {
+    const handoffs = missionHandoffs();
+    const handoff = handoffs.submit({ missionId: 'mission-a', status: 'success', summary: declared });
     expect(memory.resolved).not.toHaveBeenCalled();
     expect(handoffs.markSubmitted(handoff.id)).toBe(true);
     expect(memory.resolved).toHaveBeenCalledExactlyOnceWith(
       scope,
       {
         handoffId: handoff.id, missionId: 'mission-a', status: 'success',
-        summary: 'Corrigido o vazamento do watcher; ver docs/qa/items/F-911.md.',
+        handoffCreatedAt: handoff.createdAt, summary: declared,
       },
     );
   });
 
-  it('declares the fix through artifacts when the summary is silent', () => {
-    createScopedMissionStore(manager, scope, { idFactory: () => 'mission-a' })
-      .create({ title: 'Memória' });
-    const handoffs = createScopedHandoffStore(manager, scope);
+  it('declares the fix through an artifact that states it, sending that artifact as text', () => {
+    const handoffs = missionHandoffs();
     const handoff = handoffs.submit({
       missionId: 'mission-a', status: 'success',
       summary: 'Rotina de sincronização concluída.',
-      artifacts: [{ kind: 'qa', ref: 'docs/qa/items/F-912.md' }],
+      artifacts: [{ kind: 'qa', ref: 'docs/qa/items/F-912.md', note: 'corrigido' }],
     });
     expect(handoffs.markSubmitted(handoff.id)).toBe(true);
     expect(memory.resolved).toHaveBeenCalledExactlyOnceWith(
       scope,
-      expect.objectContaining({ handoffId: handoff.id, missionId: 'mission-a', status: 'success' }),
+      expect.objectContaining({
+        handoffId: handoff.id, missionId: 'mission-a', status: 'success',
+        artifactsText: 'qa docs/qa/items/F-912.md corrigido',
+      }),
     );
   });
 
-  it('skips resolved-problem for mission handoffs without a declared fix', () => {
-    createScopedMissionStore(manager, scope, { idFactory: () => 'mission-a' })
-      .create({ title: 'Memória' });
-    const handoffs = createScopedHandoffStore(manager, scope);
-    const handoff = handoffs.submit({
-      missionId: 'mission-a', status: 'success',
-      summary: 'Acompanha o F-911 em andamento, ainda sem conclusão.',
-    });
+  it.each([
+    ['open work', 'Acompanha o F-911 em andamento, ainda sem conclusão.', []],
+    ['a negated fix', 'O F-911 não foi corrigido nesta rodada.', []],
+    ['a bare QA path', 'Bug ainda aberto; ver docs/qa/items/F-911.md', []],
+    ['a bare QA artifact', 'Rotina concluída.', [{ kind: 'qa', ref: 'docs/qa/items/F-912.md' }]],
+  ] as const)('skips the writer for %s', (_label, summary, artifacts) => {
+    const handoffs = missionHandoffs();
+    const handoff = handoffs.submit({ missionId: 'mission-a', status: 'success', summary, artifacts: [...artifacts] });
     expect(handoffs.markSubmitted(handoff.id)).toBe(true);
     expect(memory.retain).toHaveBeenCalledTimes(1);
     expect(memory.resolved).not.toHaveBeenCalled();
   });
 
-  it('skips resolved-problem for helper handoffs even when they cite a fixed bug', () => {
+  it('skips the writer for helper handoffs even when they cite a fixed bug', () => {
     const handoffs = createScopedHandoffStore(manager, scope);
-    handoffs.submit({
-      status: 'success',
-      summary: 'Corrigido o vazamento do watcher; ver docs/qa/items/F-911.md.',
-    });
+    handoffs.submit({ status: 'success', summary: declared });
     expect(memory.retain).toHaveBeenCalledTimes(1);
     expect(memory.resolved).not.toHaveBeenCalled();
+  });
+});
+
+describe('Mem12 delivered handoff activity', () => {
+  it('counts successful deliveries in the window, independent of memory retention', () => {
+    createScopedMissionStore(manager, scope, { idFactory: () => 'mission-a' })
+      .create({ title: 'Memória' });
+    let now = 1_000;
+    const handoffs = createScopedHandoffStore(manager, scope, { now: () => now });
+    const delivered = handoffs.submit({ missionId: 'mission-a', status: 'success', summary: 'Entrega um.' });
+    const failed = handoffs.submit({ missionId: 'mission-a', status: 'failed', summary: 'Falhou.' });
+    const queued = handoffs.submit({ missionId: 'mission-a', status: 'success', summary: 'Ainda na fila.' });
+    now = 5_000;
+    expect(handoffs.markSubmitted(delivered.id)).toBe(true);
+    expect(handoffs.markSubmitted(failed.id)).toBe(true);
+    expect(queued.deliveryState).toBe('queued');
+    // A retenção pode ter falhado (mock): a contagem vem do banco de handoffs.
+    expect(handoffs.countSuccessfulDeliveriesBetween(4_000, 6_000)).toBe(1);
+    expect(handoffs.countSuccessfulDeliveriesBetween(5_000, 6_000)).toBe(0);
+    expect(handoffs.countSuccessfulDeliveriesBetween(0, 4_999)).toBe(0);
+    // Commit sem entrega (helper ainda na fila do pane pai) não conta.
+    now = 7_000;
+    handoffs.submit({ status: 'success', summary: 'Helper avulso ainda na fila.' });
+    expect(handoffs.countSuccessfulDeliveriesBetween(6_000, 8_000)).toBe(0);
   });
 });

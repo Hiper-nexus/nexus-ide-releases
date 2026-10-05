@@ -27,7 +27,7 @@ import {
   extractResolvedQaFinding,
   retainAcceptedHandoffMemoryDistilledBestEffort,
   retainAcknowledgedHandoffMemoryBestEffort,
-  retainResolvedProblemFromHandoffBestEffort,
+  retainReportedFixFromHandoffBestEffort,
   recordMemoryRetentionSkip,
 } from "../memory/trusted-memory";
 import {
@@ -347,16 +347,39 @@ function cloneBinding(
   return binding ? Object.freeze({ ...binding }) : undefined;
 }
 
-/** Artefatos do handoff como texto varrível pelo detector de bug corrigido. */
-function handoffArtifactsText(artifacts: unknown): string {
-  if (!artifacts) return "";
-  if (Array.isArray(artifacts) && artifacts.length === 0) return "";
-  try {
-    const text = JSON.stringify(artifacts);
-    return typeof text === "string" ? text.slice(0, 8_000) : "";
-  } catch {
-    return "";
+/** Valores de texto de um artefato (chaves fora), em profundidade limitada. */
+function artifactStrings(value: unknown, depth: number, out: string[]): void {
+  if (out.length >= 64) return;
+  if (typeof value === "string") {
+    out.push(value);
+  } else if (depth < 3 && Array.isArray(value)) {
+    for (const item of value.slice(0, 32)) artifactStrings(item, depth + 1, out);
+  } else if (depth < 3 && value && typeof value === "object") {
+    for (const item of Object.values(value).slice(0, 32)) {
+      artifactStrings(item, depth + 1, out);
+    }
   }
+}
+
+/**
+ * Artefatos do handoff como texto para o detector de correção declarada: uma
+ * linha por artefato com seus valores de texto, para que a declaração fique
+ * ligada ao artefato que a faz e o trecho pertinente chegue ao Jev.
+ */
+function handoffArtifactsText(artifacts: unknown): string {
+  if (!Array.isArray(artifacts) || artifacts.length === 0) return "";
+  const lines: string[] = [];
+  let budget = 8_000;
+  for (const artifact of artifacts.slice(0, 256)) {
+    const strings: string[] = [];
+    artifactStrings(artifact, 0, strings);
+    const line = strings.join(" ").replace(/\s+/g, " ").trim().slice(0, 1_000);
+    if (!line) continue;
+    if (line.length + 1 > budget) break;
+    lines.push(line);
+    budget -= line.length + 1;
+  }
+  return lines.join("\n");
 }
 
 function cloneHandoff(handoff: ScopedHandoff): ScopedHandoff {
@@ -1038,9 +1061,10 @@ export class ScopedHandoffStore {
         ).catch(() =>
           recordMemoryRetentionSkip(this.#binding.scope, "store-unavailable"),
         );
-        this.#retainResolvedProblemMemory(
+        this.#retainReportedFixMemory(
           committed.handoff.id,
           committed.taskDispatch.missionId,
+          committed.handoff.createdAt,
           committed.handoff.summary,
           committed.handoff.artifacts,
         );
@@ -1709,6 +1733,35 @@ export class ScopedHandoffStore {
     }));
   }
 
+  /**
+   * Mem12: handoffs de sucesso entregues ou aceitos em (sinceMs, untilMs] —
+   * submissão ao Maestro/pane pai, ACK, consumo ou aceite físico da tarefa.
+   * Contagem do Main, independente de a retenção de memória ter rodado ou
+   * falhado: é o que diz se "memória parada" é projeto parado ou esquecendo.
+   */
+  countSuccessfulDeliveriesBetween(sinceMs: number, untilMs: number): number {
+    const since = z.number().int().nonnegative().parse(Math.floor(sinceMs));
+    const until = z.number().int().nonnegative().parse(Math.floor(untilMs));
+    if (until <= since) return 0;
+    const row = this.#binding
+      .readDatabase()
+      .prepare(
+        `SELECT COUNT(*) AS n FROM handoffs
+         WHERE status = 'success' AND (
+           (submitted_at > ? AND submitted_at <= ?)
+           OR (acknowledged_at > ? AND acknowledged_at <= ?)
+           OR (consumed_at > ? AND consumed_at <= ?)
+           OR id IN (
+             SELECT handoff_id FROM task_dispatch_queue
+             WHERE handoff_id IS NOT NULL
+               AND handoff_accepted_at > ? AND handoff_accepted_at <= ?
+           )
+         )`,
+      )
+      .get(since, until, since, until, since, until, since, until) as { n: number };
+    return row.n;
+  }
+
   markDelivered(rawId: string): boolean {
     const delivered = this.markSubmitted(rawId);
     if (delivered) {
@@ -2235,9 +2288,10 @@ export class ScopedHandoffStore {
       ).catch(() =>
         recordMemoryRetentionSkip(this.#binding.scope, "store-unavailable"),
       );
-      this.#retainResolvedProblemMemory(
+      this.#retainReportedFixMemory(
         id,
         memoryMissionId,
+        handoff.createdAt,
         handoff.summary,
         handoff.artifacts,
       );
@@ -2248,15 +2302,18 @@ export class ScopedHandoffStore {
   }
 
   /**
-   * Escritor resolved-problem: handoff de sucesso de missão (aceito no commit
-   * ou entregue/consumido) que declara a correção de um bug vira memória
-   * `trusted:resolved-problem` pela mesma barreira do F-703. Só de missão:
-   * helper sem missão segue só com o accepted-handoff. Assíncrono e
-   * best-effort: o Jev nunca segura o aceite, a entrega nem o ACK.
+   * Escritor do relato de correção (F-911): handoff de sucesso de missão
+   * (aceito no commit ou entregue/consumido) que declara a correção de um bug
+   * vira memória na classe não verificada do accepted-handoff, pela mesma
+   * barreira do F-703 — nunca `trusted:resolved-problem` (M1). Só de missão:
+   * helper sem missão segue só com o accepted-handoff. O `createdAt` do
+   * handoff (Main) ordena relatos: replay antigo não substitui o mais novo.
+   * Assíncrono e best-effort: o Jev nunca segura o aceite, a entrega nem o ACK.
    */
-  #retainResolvedProblemMemory(
+  #retainReportedFixMemory(
     id: string,
     missionId: string | undefined,
+    createdAt: number,
     summary: string | null | undefined,
     artifacts: unknown,
   ): void {
@@ -2264,9 +2321,16 @@ export class ScopedHandoffStore {
       if (!missionId) return;
       const artifactsText = handoffArtifactsText(artifacts);
       if (!extractResolvedQaFinding([summary, artifactsText])) return;
-      void retainResolvedProblemFromHandoffBestEffort(
+      void retainReportedFixFromHandoffBestEffort(
         this.#binding.scope,
-        { handoffId: id, missionId, status: "success", ...(summary ? { summary } : {}), ...(artifactsText ? { artifactsText } : {}) },
+        {
+          handoffId: id,
+          missionId,
+          status: "success",
+          handoffCreatedAt: createdAt,
+          ...(summary ? { summary } : {}),
+          ...(artifactsText ? { artifactsText } : {}),
+        },
       ).catch(() =>
         recordMemoryRetentionSkip(this.#binding.scope, "store-unavailable"),
       );

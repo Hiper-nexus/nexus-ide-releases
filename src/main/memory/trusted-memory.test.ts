@@ -10,14 +10,16 @@ import {
   disposeWorkspaceMemoryStores,
   getWorkspaceMemoryStore,
 } from './workspace-memory';
+import { planAutoRecallInjection } from './workspace-memory-context';
 import {
   buildAcceptedHandoffTrustedEvent,
   extractResolvedQaFinding,
   retainAcceptedHandoffMemory,
   retainAcceptedHandoffMemoryDistilledBestEffort,
   retainAcknowledgedHandoffMemoryBestEffort,
-  retainResolvedProblemFromHandoffBestEffort,
+  retainReportedFixFromHandoffBestEffort,
   retainTrustedMemory,
+  retryPendingMemoryRetentions,
   trustedMemoryEventSchema,
   TRUSTED_MEMORY_EVENT_TYPES,
 } from './trusted-memory';
@@ -384,87 +386,263 @@ describe('trusted automatic memory retention', () => {
   });
 });
 
-describe('resolved-problem writer (F-911)', () => {
-  const approve = () =>
-    vi.fn<typeof jevJudge>(async () => ({
-      model: 'jev-1.13.0',
-      usage: { input_tokens: 120, output_tokens: 4 },
-      answers: {
-        worth_retaining: { type: 'noul', noul: 0.9 },
-        instruction_free: { type: 'noul', noul: 0.95 },
-        distilled_summary: { type: 'choice', choice: 'excerpt_0', probabilities: { excerpt_0: 0.95, none: 0.05 }, confidence: 0.95 },
-      },
-    }));
-  const on = { enabled: () => true, hasKey: () => true };
 
-  it('detects a fixed bug from the QA item path or a fixed F-XXX mention', () => {
-    expect(extractResolvedQaFinding(['Corrigido; ver docs/qa/items/F-911.md.'])).toBe('F-911');
-    expect(extractResolvedQaFinding(['O F-912 foi corrigido no watcher.'])).toBe('F-912');
-    expect(extractResolvedQaFinding(['fixed F-913 race in the spool'])).toBe('F-913');
-    expect(extractResolvedQaFinding([null, undefined, ''])).toBeNull();
-    expect(extractResolvedQaFinding(['Acompanha o F-911 em andamento, ainda sem conclusão.'])).toBeNull();
-    expect(extractResolvedQaFinding(['F-1 passou no teste.'])).toBeNull();
+describe('reported fix writer (F-911)', () => {
+  const approval = {
+    model: 'jev-1.13.0',
+    usage: { input_tokens: 120, output_tokens: 4 },
+    answers: {
+      worth_retaining: { type: 'noul' as const, noul: 0.9 },
+      instruction_free: { type: 'noul' as const, noul: 0.95 },
+      distilled_summary: { type: 'choice' as const, choice: 'excerpt_0', probabilities: { excerpt_0: 0.95, none: 0.05 }, confidence: 0.95 },
+    },
+  };
+  const approve = () => vi.fn<typeof jevJudge>(async () => approval);
+  const on = { enabled: () => true, hasKey: () => true };
+  const store = () => getWorkspaceMemoryStore(scope);
+  const qaDir = () => path.join(scope.rootRealPath, 'docs', 'qa', 'items');
+  const writeQaItem = (id: string, status = 'corrigido') => {
+    fs.mkdirSync(qaDir(), { recursive: true });
+    fs.writeFileSync(
+      path.join(qaDir(), `${id}.md`),
+      `# ${id} — Item de fixture\n\n## ${id} | categoria: funcional | severidade: media | status: ${status}\n- Passos: fixture.\n`,
+    );
+  };
+  const reportedFixRows = () =>
+    store().activeBySource('trusted:accepted-handoff')
+      .filter((row) => row.content.startsWith('# Reported fix '));
+  const declared = 'Corrigido o vazamento do watcher; ver docs/qa/items/F-911.md.';
+
+  it('detects only a positive fix declaration bound to the finding id', () => {
+    const id = (texts: Array<string | null | undefined>) => extractResolvedQaFinding(texts)?.id ?? null;
+    expect(id([declared])).toBe('F-911');
+    expect(id(['O F-912 foi corrigido no watcher.'])).toBe('F-912');
+    expect(id(['fixed F-913 race in the spool'])).toBe('F-913');
+    expect(id([null, undefined, ''])).toBeNull();
+    expect(id(['Acompanha o F-911 em andamento, ainda sem conclusão.'])).toBeNull();
+    expect(id(['F-1 passou no teste.'])).toBeNull();
+    // Revisão: citar o arquivo sem declarar correção, ou negar a correção, não é fix.
+    expect(id(['Bug ainda aberto; ver docs/qa/items/F-999999.md'])).toBeNull();
+    expect(id(['F-911 não foi corrigido'])).toBeNull();
+    expect(id(['The F-911 race is not fixed yet.'])).toBeNull();
+    expect(id(['F-911 parcialmente corrigido.'])).toBeNull();
+    // O verbo precisa estar ligado ao id: outra frase não conta.
+    expect(id(['Corrigido o watcher. Próximo passo: olhar o F-911 amanhã.'])).toBeNull();
+    expect(id(['O F-912 ainda não, mas o F-911 foi corrigido.'])).toBe('F-911');
+    // O trecho pertinente é o que vai ao Jev — inclusive quando a fonte é o artefato.
+    expect(extractResolvedQaFinding(['Rotina concluída. O F-914 foi corrigido no spool.'])?.excerpt)
+      .toBe('O F-914 foi corrigido no spool.');
+    expect(extractResolvedQaFinding(['Rotina concluída.', 'qa docs/qa/items/F-912.md corrigido']))
+      .toEqual({ id: 'F-912', excerpt: 'qa docs/qa/items/F-912.md corrigido' });
   });
 
-  it('retains a resolved-problem with fixed provenance when Jev approves', async () => {
-    const result = await retainResolvedProblemFromHandoffBestEffort(
+  it('M1: retains a declared fix only as an unverified agent report, never trusted:resolved-problem', async () => {
+    writeQaItem('F-911');
+    const result = await retainReportedFixFromHandoffBestEffort(
       scope,
-      {
-        handoffId: 'handoff-911', missionId: 'mission-911', status: 'success',
-        summary: 'Corrigido o vazamento do watcher; ver docs/qa/items/F-911.md.',
-      },
+      { handoffId: 'handoff-911', missionId: 'mission-911', status: 'success', handoffCreatedAt: 1_000, summary: declared },
       { judge: approve(), ...on },
     );
     expect(result).not.toBeNull();
-    const [hit] = getWorkspaceMemoryStore(scope).recall({
-      query: 'vazamento watcher F-911',
-      includeGlobal: false,
-      trustedOnly: true,
-    });
-    expect(hit.source).toBe('trusted:resolved-problem');
-    expect(hit).toMatchObject({ kind: 'fact', importance: 5 });
-    expect(hit.content).toContain('Resolved problem:');
+    expect(store().activeBySource('trusted:resolved-problem')).toEqual([]);
+    const [hit] = store().recall({ query: 'vazamento watcher', includeGlobal: false, trustedOnly: true });
+    expect(hit.source).toBe('trusted:accepted-handoff');
+    expect(hit).toMatchObject({ kind: 'fact', importance: 4 });
+    expect(hit.content.split('\n')[0]).toBe('# Reported fix F-911');
+    expect(hit.content).toMatch(
+      /^Summary: \[Agent report, unverified; Jev approved for retention, not factual verification\.\] Corrigido o vazamento do watcher/m,
+    );
     expect(hit.content).toContain('Reference: docs/qa/items/F-911.md');
     expect(hit.content).toContain('Mission: mission-911');
     expect(hit.content).toContain('Handoff: handoff-911');
-    expect(hit.content).toContain('Corrigido o vazamento do watcher');
+    expect(store().linksOf(hit.id)).toContain('mission:mission-911');
+    // Mesma restrição de contexto do accepted-handoff: só a linha Summary marcada entra no brief.
+    const injected = planAutoRecallInjection([hit], 'execution')?.text ?? '';
+    expect(injected).toContain('[Agent report, unverified; Jev approved for retention, not factual verification.] Corrigido o vazamento');
+    expect(injected).not.toContain('Reference:');
   });
 
-  it('retains nothing without a declared fix, without a mission, or when Jev denies', async () => {
-    const store = () => getWorkspaceMemoryStore(scope);
-    expect(
-      await retainResolvedProblemFromHandoffBestEffort(
+  it('confirms the QA item in the workspace (status corrigido, no symlink, bounded) before asking the Jev', async () => {
+    const attempt = async (findingId: string) => {
+      const judge = approve();
+      const result = await retainReportedFixFromHandoffBestEffort(
         scope,
-        { handoffId: 'handoff-x', missionId: 'mission-x', status: 'success', summary: 'Rotina concluída.' },
-        { judge: approve(), ...on },
+        { handoffId: `handoff-${findingId}`, missionId: 'mission-qa', status: 'success', handoffCreatedAt: 1_000,
+          summary: `O ${findingId} foi corrigido no watcher.` },
+        { judge, ...on },
+      );
+      return { result, judged: judge.mock.calls.length };
+    };
+    // Arquivo inexistente.
+    expect(await attempt('F-999999')).toEqual({ result: null, judged: 0 });
+    // Item ainda aberto no repositório.
+    writeQaItem('F-921', 'aberto');
+    expect(await attempt('F-921')).toEqual({ result: null, judged: 0 });
+    // Arquivo final é symlink para fora do repositório.
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-qa-outside-'));
+    dirs.push(outside);
+    fs.writeFileSync(path.join(outside, 'F-922.md'), '# F-922 — fora\n\n## F-922 | status: corrigido\n');
+    fs.mkdirSync(qaDir(), { recursive: true });
+    fs.symlinkSync(path.join(outside, 'F-922.md'), path.join(qaDir(), 'F-922.md'));
+    expect(await attempt('F-922')).toEqual({ result: null, judged: 0 });
+    // Arquivo acima do teto de leitura.
+    fs.writeFileSync(path.join(qaDir(), 'F-923.md'), `# F-923 — grande\n\n## F-923 | status: corrigido\n${'x'.repeat(70_000)}`);
+    expect(await attempt('F-923')).toEqual({ result: null, judged: 0 });
+    // Controle: item corrigido real passa.
+    writeQaItem('F-924');
+    expect((await attempt('F-924')).judged).toBe(1);
+    expect(reportedFixRows()).toHaveLength(1);
+    expect(store().stats().workspace.active).toBe(1);
+  });
+
+  it('refuses a QA items directory that is a symlink', async () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-qa-outside-'));
+    dirs.push(outside);
+    fs.writeFileSync(path.join(outside, 'F-925.md'), '# F-925 — fora\n\n## F-925 | status: corrigido\n');
+    fs.mkdirSync(path.join(scope.rootRealPath, 'docs', 'qa'), { recursive: true });
+    fs.symlinkSync(outside, qaDir());
+    const judge = approve();
+    expect(
+      await retainReportedFixFromHandoffBestEffort(
+        scope,
+        { handoffId: 'handoff-925', missionId: 'mission-qa', status: 'success', handoffCreatedAt: 1_000,
+          summary: 'O F-925 foi corrigido no watcher.' },
+        { judge, ...on },
+      ),
+    ).toBeNull();
+    expect(judge).not.toHaveBeenCalled();
+  });
+
+  it('sends the pertinent artifact excerpt to the Jev when artifacts declare the fix', async () => {
+    writeQaItem('F-912');
+    const judge = approve();
+    await retainReportedFixFromHandoffBestEffort(
+      scope,
+      { handoffId: 'handoff-912', missionId: 'mission-912', status: 'success', handoffCreatedAt: 1_000,
+        summary: 'Rotina de sincronização concluída.',
+        artifactsText: 'qa docs/qa/items/F-912.md corrigido' },
+      { judge, ...on },
+    );
+    expect(judge).toHaveBeenCalledOnce();
+    const sent = (judge.mock.calls[0]![0] as { state: { summary: string } }).state.summary;
+    expect(sent).toContain('docs/qa/items/F-912.md corrigido');
+    expect(sent).not.toContain('Rotina de sincronização');
+    expect(reportedFixRows()[0]?.content).toContain('Reference: docs/qa/items/F-912.md');
+  });
+
+  it('retains nothing without a mission, without a declared fix, or when the Jev denies', async () => {
+    writeQaItem('F-911');
+    const judge = approve();
+    // Sem missão: declaração válida e item corrigido, mas helper avulso não grava relato de fix.
+    expect(
+      await retainReportedFixFromHandoffBestEffort(
+        scope,
+        { handoffId: 'handoff-x', status: 'success', handoffCreatedAt: 1_000, summary: declared } as never,
+        { judge, ...on },
       ),
     ).toBeNull();
     expect(
-      await retainResolvedProblemFromHandoffBestEffort(
+      await retainReportedFixFromHandoffBestEffort(
         scope,
-        { handoffId: 'handoff-x', missionId: 'mission-x', status: 'success' } as never,
-        { judge: approve(), ...on },
+        { handoffId: 'handoff-y', missionId: 'mission-x', status: 'success', handoffCreatedAt: 1_000, summary: 'Rotina concluída.' },
+        { judge, ...on },
       ),
     ).toBeNull();
+    expect(judge).not.toHaveBeenCalled();
     const deny = vi.fn<typeof jevJudge>(async () => ({
-      model: 'jev-1.13.0',
-      usage: { input_tokens: 120, output_tokens: 4 },
-      answers: {
-        worth_retaining: { type: 'noul', noul: 0.2 },
-        instruction_free: { type: 'noul', noul: 0.95 },
-        distilled_summary: { type: 'choice', choice: 'excerpt_0', probabilities: { excerpt_0: 0.95, none: 0.05 }, confidence: 0.95 },
-      },
+      ...approval,
+      answers: { ...approval.answers, worth_retaining: { type: 'noul' as const, noul: 0.2 } },
     }));
     expect(
-      await retainResolvedProblemFromHandoffBestEffort(
+      await retainReportedFixFromHandoffBestEffort(
         scope,
-        {
-          handoffId: 'handoff-911', missionId: 'mission-911', status: 'success',
-          summary: 'Corrigido o vazamento do watcher; ver docs/qa/items/F-911.md.',
-        },
+        { handoffId: 'handoff-911', missionId: 'mission-911', status: 'success', handoffCreatedAt: 1_000, summary: declared },
         { judge: deny, ...on },
       ),
     ).toBeNull();
     expect(store().stats().workspace.active).toBe(0);
+  });
+
+  it('a late replay of an older handoff never supersedes the newer report (durable per handoff)', async () => {
+    writeQaItem('F-911');
+    const report = (handoffId: string, handoffCreatedAt: number, summary: string) =>
+      retainReportedFixFromHandoffBestEffort(
+        scope,
+        { handoffId, missionId: 'mission-911', status: 'success', handoffCreatedAt, summary },
+        { judge: approve(), ...on },
+      );
+    expect(await report('handoff-h1', 1_000, 'Corrigido o F-911 com lock no watcher.')).not.toBeNull();
+    expect(await report('handoff-h2', 2_000, 'Corrigido o F-911 com fila única no watcher.')).not.toBeNull();
+    expect(reportedFixRows()).toHaveLength(1);
+    expect(reportedFixRows()[0]!.content).toContain('fila única');
+    // ACK tardio / redestilação de H1 com outro trecho: nunca volta a solução antiga.
+    expect(await report('handoff-h1', 1_000, 'O F-911 foi corrigido com lock no watcher.')).toBeNull();
+    // O próprio H2 repetido também é idempotente.
+    expect(await report('handoff-h2', 2_000, 'F-911 corrigido de novo pela fila única.')).toBeNull();
+    expect(reportedFixRows()).toHaveLength(1);
+    expect(reportedFixRows()[0]!.content).toContain('Corrigido o F-911 com fila única no watcher.');
+  });
+
+  it('an older handoff queued while the Jev was down never replaces the newer report on retry', async () => {
+    writeQaItem('F-911');
+    const down = vi.fn<typeof jevJudge>(async () => null);
+    expect(
+      await retainReportedFixFromHandoffBestEffort(
+        scope,
+        { handoffId: 'handoff-h1', missionId: 'mission-911', status: 'success', handoffCreatedAt: 1_000,
+          summary: 'Corrigido o F-911 com lock no watcher.' },
+        { judge: down, ...on },
+      ),
+    ).toBeNull();
+    expect(store().stats().retention.pending).toBe(1);
+    let releaseOld!: () => void;
+    const oldGate = new Promise<void>((resolve) => { releaseOld = resolve; });
+    // H2 dispara a redestilação da fila (H1) em paralelo; o H1 só termina depois do H2 gravar.
+    const judge = vi.fn<typeof jevJudge>(async (request) => {
+      if (JSON.stringify(request.state).includes('lock')) await oldGate;
+      return approval;
+    });
+    expect(
+      await retainReportedFixFromHandoffBestEffort(
+        scope,
+        { handoffId: 'handoff-h2', missionId: 'mission-911', status: 'success', handoffCreatedAt: 2_000,
+          summary: 'Corrigido o F-911 com fila única no watcher.' },
+        { judge, ...on },
+      ),
+    ).not.toBeNull();
+    releaseOld();
+    await vi.waitFor(() => expect(store().stats().retention.pending).toBe(0));
+    await retryPendingMemoryRetentions(scope, { judge, ...on });
+    expect(reportedFixRows()).toHaveLength(1);
+    expect(reportedFixRows()[0]!.content).toContain('fila única');
+  });
+
+  it('a stale queued replay leaves the durable queue without another Jev call', async () => {
+    writeQaItem('F-911');
+    const oldReport = { handoffId: 'handoff-h1', missionId: 'mission-911', status: 'success' as const,
+      handoffCreatedAt: 1_000, summary: 'Corrigido o F-911 com lock no watcher.' };
+    // Jev fora para o relato antigo (fica na fila), de pé para o novo.
+    const judge = vi.fn<typeof jevJudge>(async (request) =>
+      JSON.stringify(request.state).includes('lock') ? null : approval);
+    expect(await retainReportedFixFromHandoffBestEffort(scope, oldReport, { judge, ...on })).toBeNull();
+    expect(
+      await retainReportedFixFromHandoffBestEffort(
+        scope,
+        { ...oldReport, handoffId: 'handoff-h2', handoffCreatedAt: 2_000, summary: 'Corrigido o F-911 com fila única no watcher.' },
+        { judge, ...on },
+      ),
+    ).not.toBeNull();
+    await vi.waitFor(() => expect(judge.mock.calls.length).toBeGreaterThanOrEqual(3));
+    expect(store().stats().retention.pending).toBe(1);
+    // Próxima rodada da fila (a de fundo pode ainda segurar a vez): o relato
+    // antigo já perdeu para o novo — sai da fila sem ir ao Jev.
+    const later = approve();
+    await vi.waitFor(async () => {
+      await retryPendingMemoryRetentions(scope, { judge: later, ...on });
+      expect(store().stats().retention.pending).toBe(0);
+    });
+    expect(later).not.toHaveBeenCalled();
+    expect(reportedFixRows()).toHaveLength(1);
+    expect(reportedFixRows()[0]!.content).toContain('fila única');
   });
 });

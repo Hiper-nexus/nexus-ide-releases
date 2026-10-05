@@ -45,3 +45,28 @@ it('operator import opens native selection, writes only quarantined scoped notes
   boundary.dialog.mockImplementation(async () => { clearRendererWorkspaceScope(sender); return { canceled: false, filePaths: [file] }; });
   await expect(importer!({ sender })).rejects.toThrow('authorized');
 });
+
+it('Mem12: stats exposes Main-owned deliveries since the latest memory, scoped to the sender', () => {
+  const store = getWorkspaceMemoryStore(scope);
+  const retained = store.retain({ content: 'Nota antiga do projeto.', kind: 'note', scope: 'workspace', source: 'operator:note' });
+  const latest = store.activeWorkspaceMetas().get(retained.id)!.updatedAt;
+  const counter = vi.fn((_scope: unknown, _since: number, _until: number) => 2);
+  boundary.handlers.clear(); registerMemoryIpc({ countHandoffDeliveries: counter });
+  const stats = boundary.handlers.get(MEMORY_CHANNELS.stats)!;
+  expect(stats({ sender })).toMatchObject({
+    enabled: true,
+    activity: { latestMemoryAt: latest, deliveredHandoffsSinceLatestMemory: 2 },
+  });
+  expect(counter).toHaveBeenCalledOnce();
+  const [countedScope, since, until] = counter.mock.calls[0]!;
+  expect(countedScope).toMatchObject({ projectId: scope.projectId, rootRealPath: root });
+  expect(since).toBe(latest);
+  expect(until).toBeGreaterThanOrEqual(latest);
+  // Sender sem escopo autorizado nunca chega à contagem.
+  counter.mockClear();
+  expect(() => stats({ sender: { id: 123 } })).toThrow('authorized');
+  expect(counter).not.toHaveBeenCalled();
+  // Contagem indisponível é desconhecida, nunca um zero inventado.
+  counter.mockImplementationOnce(() => { throw new Error('runtime closed'); });
+  expect(stats({ sender })).toMatchObject({ activity: { latestMemoryAt: latest, deliveredHandoffsSinceLatestMemory: null } });
+});

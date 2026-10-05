@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { z } from 'zod';
 import { recordJevDecision } from '../jev/jev-decision-log';
 import { clampUtf8TextPrefix } from '../../shared/utf8-byte-limits';
@@ -371,93 +373,274 @@ export async function retainAcknowledgedHandoffMemoryBestEffort(
   }
 }
 
-const QA_ITEM_PATH_RE = /docs\/qa\/items\/(F-\d{2,})\.(?:md|markdown)\b/i;
-const QA_FINDING_MENTION_RE = /\b(F-\d{2,})\b/;
-const BUG_FIX_WORD_RE =
-  /\b(corrigid[oa]s?|fixed|fixes|fix(?:ed|ing)?|resolveu|resolvid[oa]s?|solucionad[oa]s?|reparad[oa]s?|closes?)\b/i;
+const FINDING_ID_TOKEN_RE = /^F-\d{2,9}$/i;
+const QA_ITEM_PATH_TOKEN_RE = /(?:^|\/)docs\/qa\/items\/(F-\d{2,9})\.md$/i;
+/** Declaração de correção concluída (não intenção: "corrigir", "fix", "fixing"). */
+const FIX_DECLARATION_TOKEN_RE =
+  /^(?:corrigid[oa]s?|corrigi(?:u|mos)?|corrige|fixed|fixes|resolvid[oa]s?|resolveu|resolved|resolves|solucionad[oa]s?|reparad[oa]s?|closed|closes)$/i;
+/** Negação ou correção parcial perto do vínculo id↔verbo desfaz a declaração. */
+const NEGATION_TOKEN_RE =
+  /^(?:n[aã]o|nem|nunca|jamais|not|never|cannot|\p{L}+n['’]t|unfixed|unresolved|parcial|parcialmente|partial|partially|partly|pendente|pending|reaberto|reopened)$/iu;
+const MAX_ID_DECLARATION_DISTANCE = 8;
+const NEGATION_LOOKBEHIND_TOKENS = 2;
+const PERTINENT_EXCERPT_MAX_CHARS = 2_000;
+
+export interface DeclaredQaFix {
+  /** Id do item de QA (`F-XXX`) ligado à declaração positiva. */
+  readonly id: string;
+  /** Trecho pertinente (frase do resumo ou linha do artefato) que vai ao Jev. */
+  readonly excerpt: string;
+}
+
+function findingIdOfToken(token: string): string | null {
+  if (FINDING_ID_TOKEN_RE.test(token)) return token.toUpperCase();
+  const pathHit = QA_ITEM_PATH_TOKEN_RE.exec(token);
+  return pathHit ? pathHit[1]!.toUpperCase() : null;
+}
+
+function declaredFixInSegment(segment: string): string | null {
+  const tokens = segment
+    .split(/\s+/)
+    .map((token) => token.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}'’]+$/gu, ''))
+    .filter(Boolean);
+  const declarations = tokens.flatMap((token, index) =>
+    FIX_DECLARATION_TOKEN_RE.test(token) ? [index] : [],
+  );
+  if (declarations.length === 0) return null;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const id = findingIdOfToken(tokens[index]!);
+    if (!id) continue;
+    const bound = declarations.some((verb) => {
+      if (Math.abs(verb - index) > MAX_ID_DECLARATION_DISTANCE) return false;
+      const from = Math.max(0, Math.min(verb, index) - NEGATION_LOOKBEHIND_TOKENS);
+      return !tokens
+        .slice(from, Math.max(verb, index) + 1)
+        .some((token) => NEGATION_TOKEN_RE.test(token));
+    });
+    if (bound) return id;
+  }
+  return null;
+}
 
 /**
- * Gatilho mínimo do escritor resolved-problem: um handoff de sucesso declara
- * a correção de um bug quando cita o arquivo do item de QA
- * (`docs/qa/items/F-XXX.md`) ou menciona um F-XXX como corrigido. Puro e
- * determinístico — o texto do agente nunca vira referência sem passar por
- * aqui e, depois, pela destilação do Jev (mesma barreira do F-703).
+ * Gatilho do escritor de relato de correção: exige declaração POSITIVA ligada
+ * ao id na mesma frase (ou na mesma linha de artefato) — verbo de correção
+ * concluída a até 8 palavras do `F-XXX`/`docs/qa/items/F-XXX.md`, sem negação
+ * ou ressalva parcial entre eles nem logo antes. Citar o arquivo do item não
+ * basta ("Bug ainda aberto; ver docs/qa/items/F-XXX.md"). Puro e
+ * determinístico; o trecho devolvido é o que o Jev destila.
  */
 export function extractResolvedQaFinding(
   texts: ReadonlyArray<string | null | undefined>,
-): string | null {
-  let mentioned: string | null = null;
+): DeclaredQaFix | null {
   for (const text of texts) {
     if (!text) continue;
-    const pathHit = QA_ITEM_PATH_RE.exec(text);
-    if (pathHit) {
-      const id = pathHit[1].toUpperCase();
-      if (/^F-\d{2,}$/.test(id)) return id;
-    }
-    const mentionHit = QA_FINDING_MENTION_RE.exec(text.toUpperCase());
-    if (mentionHit && BUG_FIX_WORD_RE.test(text)) {
-      const id = mentionHit[1].toUpperCase();
-      if (/^F-\d{2,}$/.test(id)) mentioned ??= id;
+    const segments = text
+      .slice(0, 65_536)
+      .split(/\r?\n+|(?<=[.!?])\s+/u)
+      .map((segment) => segment.replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+    for (const segment of segments) {
+      const id = declaredFixInSegment(segment);
+      if (id) {
+        return Object.freeze({
+          id,
+          excerpt: Array.from(segment).slice(0, PERTINENT_EXCERPT_MAX_CHARS).join(''),
+        });
+      }
     }
   }
-  return mentioned;
+  return null;
 }
 
-const resolvedProblemHandoffSchema = z
+const QA_ITEM_MAX_BYTES = 64 * 1024;
+const QA_ITEM_FIXED_STATUS_RE = /^(?:corrigido|verificado)\b/i;
+
+/** Status do item de QA no formato do repositório (linha `## F-XXX | … | status:` ou seção `## Status`). */
+export function qaItemDeclaresFixedStatus(text: string, findingId: string): boolean {
+  if (!FINDING_ID_TOKEN_RE.test(findingId)) return false;
+  const head = text.slice(0, 8_192);
+  const firstLine = head.split(/\r?\n/, 1)[0] ?? '';
+  if (!new RegExp(`^#\\s+${findingId}(?![\\w-])`).test(firstLine)) return false;
+  const inline = new RegExp(
+    `^##\\s+${findingId}(?![\\w-])[^\\n]*\\|\\s*status:\\s*([^|\\r\\n]+)`,
+    'im',
+  ).exec(head)?.[1];
+  const section = /^##\s+Status\s*\r?\n+\s*([^\r\n]+)/im.exec(head)?.[1];
+  const status = (inline ?? section)?.trim();
+  return Boolean(status && QA_ITEM_FIXED_STATUS_RE.test(status));
+}
+
+/**
+ * Confirmação Main-owned do item de QA citado: `docs/qa/items/F-XXX.md` existe
+ * DENTRO do workspace do escopo, sem symlink em nenhum componente abaixo da
+ * raiz (lstat + O_NOFOLLOW + mesmo inode), até 64 KB, e declara status
+ * corrigido/verificado. Assíncrono; qualquer falha é "não confirmado".
+ */
+export async function confirmQaItemFixedInWorkspace(
+  workspaceRoot: string,
+  findingId: string,
+): Promise<boolean> {
+  if (!FINDING_ID_TOKEN_RE.test(findingId) || !path.isAbsolute(workspaceRoot)) {
+    return false;
+  }
+  try {
+    let current = workspaceRoot;
+    for (const segment of ['docs', 'qa', 'items']) {
+      current = path.join(current, segment);
+      const stat = await fs.promises.lstat(current);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) return false;
+    }
+    const file = path.join(current, `${findingId}.md`);
+    const linkStat = await fs.promises.lstat(file);
+    if (linkStat.isSymbolicLink() || !linkStat.isFile() || linkStat.size > QA_ITEM_MAX_BYTES) {
+      return false;
+    }
+    const handle = await fs.promises.open(
+      file,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0),
+    );
+    let text: string;
+    try {
+      const stat = await handle.stat();
+      if (
+        !stat.isFile() ||
+        stat.dev !== linkStat.dev ||
+        stat.ino !== linkStat.ino ||
+        stat.size > QA_ITEM_MAX_BYTES
+      ) {
+        return false;
+      }
+      const buffer = Buffer.alloc(QA_ITEM_MAX_BYTES + 1);
+      let bytesRead = 0;
+      while (bytesRead < buffer.length) {
+        const chunk = await handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead);
+        if (chunk.bytesRead === 0) break;
+        bytesRead += chunk.bytesRead;
+      }
+      if (bytesRead > QA_ITEM_MAX_BYTES) return false;
+      text = buffer.toString('utf8', 0, bytesRead);
+    } finally {
+      await handle.close();
+    }
+    return qaItemDeclaresFixedStatus(text, findingId);
+  } catch {
+    return false;
+  }
+}
+
+/** Título da classe "relato de correção": a chave de assunto é por item de QA. */
+export const REPORTED_FIX_TITLE_PREFIX = 'Reported fix ';
+const HANDOFF_ORDER_LINE_PREFIX = 'Handoff at: ';
+
+const reportedFixHandoffSchema = z
   .object({
     handoffId: trustedIdentifierSchema,
     missionId: trustedIdentifierSchema,
     status: z.literal('success'),
+    /** `createdAt` do handoff, gravado pelo Main: a ordem entre relatos. */
+    handoffCreatedAt: z.number().int().nonnegative().max(8_640_000_000_000_000),
     summary: z.string().max(65_536).optional(),
     artifactsText: z.string().max(16_384).optional(),
   })
   .strict();
 
-export type ResolvedProblemHandoffInput = z.infer<
-  typeof resolvedProblemHandoffSchema
->;
+export type ReportedFixHandoffInput = z.infer<typeof reportedFixHandoffSchema>;
 
 /**
- * Retém um problema resolvido declarado por handoff de missão aceito/entregue.
- * Proveniência fixa (`trusted:resolved-problem`, referência construída do id
- * validado); o único texto livre é o resumo destilado que o Jev aprovar —
- * texto de agente nunca vira instrução confiável. Best-effort: nunca segura
- * aceite, entrega ou ACK.
+ * Relato de correção de bug declarado por handoff de missão aceito/entregue
+ * (F-911). M1 — relato não é fato: o handoff é `unverified` e o Jev só aprova
+ * relevância, nunca a alegação. Por isso a linha nasce na MESMA classe do
+ * accepted-handoff (`trusted:accepted-handoff`, importância 4, linha Summary
+ * marcada "Agent report, unverified", só ela entra em brief, `Mission:`
+ * obrigatória), com assunto `Reported fix F-XXX`. `trusted:resolved-problem`
+ * com autoridade fica reservado a correção com evidência validada pelo Main —
+ * caminho que hoje não existe, então nada é promovido.
+ *
+ * Antes do Jev, o Main confirma o item de QA no workspace (status corrigido);
+ * ao Jev vai só o trecho pertinente (frase do resumo ou linha do artefato).
+ * Replay é idempotente por (handoff, classe) e nunca substitui relato de
+ * handoff mais novo. Best-effort: nunca segura aceite, entrega ou ACK.
  */
-export async function retainResolvedProblemFromHandoffBestEffort(
+export async function retainReportedFixFromHandoffBestEffort(
   scope: ProjectExecutionScope,
-  rawInput: ResolvedProblemHandoffInput,
+  rawInput: ReportedFixHandoffInput,
   deps: DistillHandoffSummaryDeps = {},
 ): Promise<RetainResult | null> {
-  let input: ResolvedProblemHandoffInput;
+  let input: ReportedFixHandoffInput;
   try {
-    input = resolvedProblemHandoffSchema.parse(rawInput);
+    input = reportedFixHandoffSchema.parse(rawInput);
   } catch {
     return null;
   }
-  const findingId = extractResolvedQaFinding([
-    input.summary,
-    input.artifactsText,
-  ]);
-  if (!findingId) return null;
+  const declared = extractResolvedQaFinding([input.summary, input.artifactsText]);
+  if (!declared) return null;
   try {
+    if (!(await confirmQaItemFixedInWorkspace(scope.rootRealPath, declared.id))) {
+      recordMemoryRetentionSkip(scope, 'qa-unconfirmed');
+      return null;
+    }
     return await distillMemoryWithRetry(
       scope,
       {
-        type: 'resolved-problem',
-        title: `Resolved problem ${findingId}`,
+        type: 'accepted-handoff',
+        title: `${REPORTED_FIX_TITLE_PREFIX}${declared.id}`,
         summary: 'Pending distillation',
         missionId: input.missionId,
-        reference: `docs/qa/items/${findingId}.md`,
+        reference: `docs/qa/items/${declared.id}.md`,
       },
-      input.summary,
+      declared.excerpt,
       deps,
-      { summarySuffix: `Handoff: ${input.handoffId}` },
+      {
+        summarySuffix:
+          `Handoff: ${input.handoffId}\n` +
+          `${HANDOFF_ORDER_LINE_PREFIX}${new Date(input.handoffCreatedAt).toISOString()}`,
+        replayGuard: { handoffId: input.handoffId, handoffAt: input.handoffCreatedAt },
+      },
     );
   } catch {
     recordMemoryRetentionSkip(scope, 'store-unavailable');
     return null;
   }
+}
+
+const replayGuardSchema = z
+  .object({
+    handoffId: trustedIdentifierSchema,
+    handoffAt: z.number().int().nonnegative().max(8_640_000_000_000_000),
+  })
+  .strict();
+
+type ReplayGuard = z.infer<typeof replayGuardSchema>;
+
+/**
+ * Idempotência durável por (handoff, classe do título) e ordem Main-owned:
+ * qualquer linha já gravada para este handoff — ativa, substituída ou
+ * esquecida pelo operador — encerra o replay; e um relato de handoff mais
+ * antigo nunca substitui o relato ativo do mesmo assunto vindo de handoff
+ * mais novo. Síncrono: roda colado à gravação, sem await no meio.
+ */
+function replayAllowsWrite(
+  store: ReturnType<typeof getWorkspaceMemoryStore>,
+  event: TrustedMemoryEvent,
+  guard: ReplayGuard,
+): boolean {
+  const title = event.title ?? '';
+  const classPrefix = title.startsWith(REPORTED_FIX_TITLE_PREFIX)
+    ? `# ${REPORTED_FIX_TITLE_PREFIX}`
+    : `# ${title}`;
+  const source = `trusted:${event.type}`;
+  if (store.workspaceRecordExists(source, classPrefix, `Handoff: ${guard.handoffId}`)) {
+    return false;
+  }
+  const current = store.activeWorkspaceSameSubject(source, `# ${title}`);
+  if (!current) return true;
+  const stamp = current.content
+    .split('\n')
+    .find((line) => line.startsWith(HANDOFF_ORDER_LINE_PREFIX))
+    ?.slice(HANDOFF_ORDER_LINE_PREFIX.length);
+  const currentAt = stamp ? Date.parse(stamp) : Number.NaN;
+  return !(Number.isFinite(currentAt) && currentAt > guard.handoffAt);
 }
 
 /** Categorical diagnostics, never the content or exception text. */
@@ -479,7 +662,11 @@ function countMemoryRetentionSkip(scope: ProjectExecutionScope | null | undefine
 const pendingRetentionSchema = z.object({
   event: trustedMemoryEventSchema,
   agentSummary: z.string().min(1).max(3 * 65_536 + 6),
-  options: z.object({ supersedes: z.string().max(128).optional(), summarySuffix: z.string().max(16_384).optional() }).strict(),
+  options: z.object({
+    supersedes: z.string().max(128).optional(),
+    summarySuffix: z.string().max(16_384).optional(),
+    replayGuard: replayGuardSchema.optional(),
+  }).strict(),
 }).strict();
 const retryableSkips = new Set(['no-route', 'timeout', 'jev-off', 'flag-off', 'aborted', 'malformed']);
 const retryingStores = new WeakSet<object>();
@@ -491,7 +678,7 @@ export async function distillMemoryWithRetry(
   event: TrustedMemoryEvent,
   agentSummary: string | null | undefined,
   deps: DistillHandoffSummaryDeps = {},
-  options: { supersedes?: string; summarySuffix?: string } = {},
+  options: { supersedes?: string; summarySuffix?: string; replayGuard?: ReplayGuard } = {},
   distillOverride: typeof distillHandoffSummary = distillHandoffSummary,
 ): Promise<RetainResult | null> {
   if (!getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory)) {
@@ -509,6 +696,13 @@ export async function distillMemoryWithRetry(
   }
   const payload = pendingRetentionSchema.parse({ event, agentSummary, options });
   const key = JSON.stringify(payload);
+  // Replay já conhecido nem chega ao Jev e sai da fila durável, se veio dela;
+  // a checagem que vale roda de novo colada à gravação.
+  if (options.replayGuard && !replayAllowsWrite(store, event, options.replayGuard)) {
+    store.removePendingRetention(store.enqueueRetention(key));
+    recordMemoryRetentionSkip(scope, 'replay');
+    return null;
+  }
   const pending = pendingWrites.get(store) ?? new Map<string, Promise<RetainResult | null>>();
   if (pending.has(key)) return pending.get(key)!;
   pendingWrites.set(store, pending);
@@ -523,6 +717,11 @@ export async function distillMemoryWithRetry(
       if (!approved) {
         if (!reason) { reason = 'jev-skip'; recordMemoryRetentionSkip(scope, reason); deps.onSkip?.('jev-skip'); }
         if (!retryableSkips.has(reason)) store.removePendingRetention(queuedId);
+        return null;
+      }
+      if (options.replayGuard && !replayAllowsWrite(store, event, options.replayGuard)) {
+        store.removePendingRetention(queuedId);
+        recordMemoryRetentionSkip(scope, 'replay');
         return null;
       }
       const summary = options.summarySuffix ? `${approved}\n${options.summarySuffix}` : approved;

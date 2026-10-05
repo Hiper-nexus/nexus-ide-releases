@@ -20,6 +20,7 @@ const memoryBoundary = {
 };
 
 const agenticMemoryBoundary = {
+  stats: vi.fn(),
   forget: vi.fn(),
   promote: vi.fn(),
   attest: vi.fn(),
@@ -100,6 +101,7 @@ function findButton(host: HTMLElement, name: RegExp): HTMLButtonElement {
 beforeEach(() => {
   memoryBoundary.memoryList.mockReset();
   memoryBoundary.memoryRemember.mockReset();
+  agenticMemoryBoundary.stats.mockReset();
   agenticMemoryBoundary.forget.mockReset();
   agenticMemoryBoundary.attest.mockReset();
   agenticMemoryBoundary.importNative.mockReset();
@@ -175,35 +177,73 @@ describe('MemoryWorkspace contracts', () => {
     expect(line?.textContent).not.toMatch(/pode estar esquecendo/);
   });
 
-  it('alerta acima de 3 dias quando há handoffs no período parado (Mem12)', async () => {
+  const staleLine = (host: HTMLElement) =>
+    host.querySelector<HTMLElement>('.memory-workspace__staleness');
+  const mainActivity = (latestMemoryAt: number, delivered: number | null) => ({
+    enabled: true,
+    stats: {
+      workspace: { total: 1, active: 1, byKind: {}, totalRecalls: 0 },
+      global: { total: 0, active: 0, byKind: {}, totalRecalls: 0 },
+    },
+    activity: { latestMemoryAt, deliveredHandoffsSinceLatestMemory: delivered },
+  });
+
+  it('não alerta quando o último handoff retido é a memória mais recente e nada foi entregue depois (Mem12)', async () => {
     const dayMs = 86_400_000;
+    const retainedAt = Date.now() - 5 * dayMs;
     memoryBoundary.memoryList.mockResolvedValue([
+      { id: 'memory-old-note', title: 'Decisão antiga', body: 'corpo', kind: 'note', updatedAt: Date.now() - 10 * dayMs },
       {
-        id: 'memory-old-note',
-        title: 'Decisão antiga',
-        body: 'corpo',
-        kind: 'note',
-        updatedAt: Date.now() - 10 * dayMs,
-      },
-      {
-        id: 'memory-stale-handoff',
-        title: 'Handoff aceito',
-        body: 'corpo',
-        kind: 'note',
-        source: 'trusted:accepted-handoff',
-        updatedAt: Date.now() - 5 * dayMs,
+        id: 'memory-last-handoff', title: 'Handoff aceito', body: 'corpo', kind: 'note',
+        source: 'trusted:accepted-handoff', updatedAt: retainedAt,
       },
     ]);
+    agenticMemoryBoundary.stats.mockResolvedValue(mainActivity(retainedAt, 0));
     const host = mount(<MemoryWorkspace />);
     await settleMemoryEffects();
 
-    const line = host.querySelector<HTMLElement>(
-      '.memory-workspace__staleness',
-    );
+    const line = staleLine(host);
     expect(line?.textContent).toContain('Última memória há 5 dias');
+    expect(line?.hasAttribute('data-stale')).toBe(false);
+    expect(line?.textContent).not.toMatch(/pode estar esquecendo/);
+  });
+
+  it('alerta com memória velha e entrega recente cuja retenção falhou (Mem12)', async () => {
+    const dayMs = 86_400_000;
+    const latest = Date.now() - 10 * dayMs;
+    memoryBoundary.memoryList.mockResolvedValue([
+      { id: 'memory-old-note', title: 'Decisão antiga', body: 'corpo', kind: 'note', updatedAt: latest },
+    ]);
+    agenticMemoryBoundary.stats.mockResolvedValue(mainActivity(latest, 2));
+    const host = mount(<MemoryWorkspace />);
+    await settleMemoryEffects();
+
+    const line = staleLine(host);
+    expect(line?.textContent).toContain('Última memória há 10 dias');
     expect(line?.getAttribute('data-stale')).toBe('true');
     expect(line?.textContent).toMatch(/handoffs no período/);
     expect(line?.textContent).toMatch(/pode estar esquecendo/);
+  });
+
+  it.each([
+    ['contagem do Main indisponível', () => agenticMemoryBoundary.stats.mockRejectedValue(new Error('offline'))],
+    ['memória desligada no Main', () => agenticMemoryBoundary.stats.mockResolvedValue({ enabled: false })],
+    ['contagem desconhecida', () => agenticMemoryBoundary.stats.mockResolvedValue(mainActivity(0, null))],
+  ])('nota de handoff no banco não substitui a contagem do Main: %s (Mem12)', async (_label, arrange) => {
+    const dayMs = 86_400_000;
+    memoryBoundary.memoryList.mockResolvedValue([
+      {
+        id: 'memory-last-handoff', title: 'Handoff aceito', body: 'corpo', kind: 'note',
+        source: 'trusted:accepted-handoff', updatedAt: Date.now() - 8 * dayMs,
+      },
+    ]);
+    arrange();
+    const host = mount(<MemoryWorkspace />);
+    await settleMemoryEffects();
+
+    const line = staleLine(host);
+    expect(line?.textContent).toContain('Última memória há 8 dias');
+    expect(line?.hasAttribute('data-stale')).toBe(false);
   });
 
   it('memória recente mostra a linha sem o alerta', async () => {

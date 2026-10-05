@@ -314,33 +314,22 @@ export function memoryStalenessDays(
 }
 
 /**
- * Origem das notas retidas de handoffs aceitos (projeção canônica do SQLite).
- * É o único rastro de "houve trabalho entregue" que a tela Memória recebe.
+ * Handoffs entregues desde a memória mais recente, contados pelo Main
+ * (`memory:stats` → `activity`), independente da retenção ter rodado (Mem12).
+ * Nota de handoff no banco nunca substitui essa contagem: ela só existe
+ * quando a retenção funcionou. Indisponível ou malformado → null (sem alerta).
  */
-export const HANDOFF_MEMORY_SOURCE = 'trusted:accepted-handoff';
-
-/**
- * Handoffs retidos desde a memória mais recente (Mem12): o alerta de
- * "parou de andar" só dispara quando houve entrega no período parado.
- * Teto conhecido: handoff entregue mas nunca retido (retenção desligada ou
- * falha) não aparece aqui — isso exigiria expor atividade do Main no IPC.
- */
-export function memoryHandoffsInStalePeriod(
-  notes: ReadonlyArray<Pick<ProductMemoryNote, 'createdAt' | 'updatedAt' | 'source'>>,
-): number {
-  let latest = 0;
-  for (const note of notes) {
-    const stamp = note.updatedAt ?? note.createdAt ?? 0;
-    if (stamp > latest) latest = stamp;
+async function loadDeliveredHandoffsSinceLatestMemory(): Promise<number | null> {
+  try {
+    const result = await memoryApi()?.stats();
+    if (!result?.enabled) return null;
+    const delivered = result.activity?.deliveredHandoffsSinceLatestMemory;
+    return typeof delivered === 'number' && Number.isSafeInteger(delivered) && delivered >= 0
+      ? delivered
+      : null;
+  } catch {
+    return null;
   }
-  if (latest <= 0) return 0;
-  let handoffs = 0;
-  for (const note of notes) {
-    if (note.source !== HANDOFF_MEMORY_SOURCE) continue;
-    const stamp = note.updatedAt ?? note.createdAt ?? 0;
-    if (stamp >= latest) handoffs += 1;
-  }
-  return handoffs;
 }
 
 /** Linha "última memória há N dias" da tela Memória. */
@@ -359,6 +348,7 @@ export function MemoryPanelBody({
   presentation = 'compact',
 }: MemoryPanelBodyProps = {}) {
   const [notes, setNotes] = useState<ProductMemoryNote[]>([]);
+  const [deliveredSinceLatest, setDeliveredSinceLatest] = useState<number | null>(null);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [memoryType, setMemoryType] = useState<'note' | 'architecture-rule' | 'operator-preference'>('note');
@@ -385,7 +375,10 @@ export function MemoryPanelBody({
       try {
         const api = productApi();
         if (!api) throw new Error('product memory API unavailable');
-        const list = (await api.memoryList()) as ProductMemoryNote[];
+        const [list, delivered] = await Promise.all([
+          api.memoryList() as Promise<ProductMemoryNote[]>,
+          loadDeliveredHandoffsSinceLatestMemory(),
+        ]);
         if (
           !mountedRef.current ||
           generation !== reloadGenerationRef.current
@@ -393,6 +386,7 @@ export function MemoryPanelBody({
           return false;
         }
         setNotes(list ?? []);
+        setDeliveredSinceLatest(delivered);
         return true;
       } catch {
         if (
@@ -741,10 +735,11 @@ export function MemoryPanelBody({
             ? (() => {
                 const stalenessDays = memoryStalenessDays(notes);
                 if (stalenessDays === null) return null;
-                // Mem12: idade sozinha não alarma — só com handoffs no período.
+                // Mem12: idade sozinha não alarma — só com handoffs entregues
+                // depois da última memória, na contagem do Main.
                 const stale =
                   stalenessDays > MEMORY_STALE_DAYS_THRESHOLD &&
-                  memoryHandoffsInStalePeriod(notes) > 0;
+                  (deliveredSinceLatest ?? 0) > 0;
                 return (
                   <p
                     className="product-pane__meta memory-workspace__staleness"

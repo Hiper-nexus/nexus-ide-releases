@@ -699,7 +699,13 @@ async function bootstrap(): Promise<void> {
   // Descoberta universal de configs de ecossistemas de agente (read-only, B4).
   registerDiscoveryIpc();
   // Memória agentic por workspace (C2): stats/recall read-only + forget.
-  registerMemoryIpc();
+  // Mem12: stats leva os handoffs entregues desde a última memória (Main).
+  registerMemoryIpc({
+    countHandoffDeliveries: (scope, sinceMs, untilMs) =>
+      requireProjectDomainStoreRegistry()
+        .forScope(scope)
+        .handoffs.countSuccessfulDeliveriesBetween(sinceMs, untilMs),
+  });
   // Metadado rico de modelo (A2): preço/janela/capacidades, read-only.
   registerModelMetadataIpc();
   // Agent lifecycle: record finished/needs-input; reap finished only (never running).
