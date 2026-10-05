@@ -32,6 +32,7 @@ import {
   MAX_HANDOFF_DELIVERY_ATTEMPTS,
 } from './handoff-delivery-policy';
 import { emitAppEvent } from '../connectors/app-events';
+import { emitMissionEvent } from './mission-event-emit';
 import {
   PASTE_INGEST_GRACE_MS,
   pasteIngestPlanForSession,
@@ -157,6 +158,17 @@ const RUNTIME_RECOVERY_RETRY_MAX_MS = 60_000;
  */
 export const IDLE_RELEASE_RETRY_BASE_MS = 60_000;
 export const IDLE_RELEASE_RETRY_MAX_MS = 15 * 60_000;
+/**
+ * F-925 (revisão de 899138577): teto de rodadas liberadas por handoff+sessão.
+ * Cada tentativa além do orçamento por sessão é uma rodada reaberta por
+ * `releaseFailedDeliveryAttempts`. Sem teto o re-drive ficava ~4 colagens/h
+ * para sempre contra um Maestro que não aceita. Na sexta rodada a entrega
+ * ESTACIONA: o handoff segue `queued`, um evento de missão
+ * `delivery-needs-operator` avisa o operador, e só uma prova de mudança —
+ * borda busy→idle real, sessão nova (rebind) ou ação do operador/list-ack —
+ * volta a colar. Sem kill, sem rebind do Maestro.
+ */
+export const IDLE_RELEASE_PARK_ROUNDS = 6;
 
 export function configureHandoffDeliveryRuntimeRecovery(
   recovery: HandoffDeliveryRuntimeRecovery | null,
@@ -511,7 +523,10 @@ function canPasteHandoff(sessionId: string): boolean {
   );
 }
 
-function hasPendingDelivery(authority: DeliveryAuthority): boolean {
+function hasPendingDelivery(
+  authority: DeliveryAuthority,
+  handoffId: string,
+): boolean {
   const key = authorityKey(authority);
   if (
     [...pendingEnters].some(
@@ -523,10 +538,11 @@ function hasPendingDelivery(authority: DeliveryAuthority): boolean {
   ) {
     return true;
   }
-  for (const entryKey of retryBackoffPending.keys()) {
-    if (entryKey.startsWith(`${key}::`)) return true;
-  }
-  return false;
+  // F-925 (revisão de 899138577): a espera represada segura SÓ o próprio
+  // handoff. Antes o prefixo `key::` represava a fila inteira atrás da
+  // escada de A — B do mesmo Maestro nunca era tentado (sonda: 20 min).
+  // A taxa total da sessão fica a cargo de `sessionPasteGateOpen`.
+  return retryBackoffPending.has(`${key}::${handoffId}`);
 }
 
 // Backoff de retry (F-112): tentativas que falharam aguardam esta janela
@@ -534,8 +550,10 @@ function hasPendingDelivery(authority: DeliveryAuthority): boolean {
 // re-arm do supervisor não duplicar a colagem.
 const retryBackoffTimers = new Set<ReturnType<typeof setTimeout>>();
 interface RetryBackoffWait {
+  readonly authority: DeliveryAuthority;
   readonly sessionId: string;
-  readonly timer: ReturnType<typeof setTimeout>;
+  /** Ausente na espera estacionada (só a borda busy→idle a dispara). */
+  readonly timer?: ReturnType<typeof setTimeout>;
   readonly redeliver: () => void;
   readonly earliestFireAt: number;
   sawBusy: boolean;
@@ -550,7 +568,7 @@ function trackRetryBackoff(
 ): void {
   const key = `${authorityKey(authority)}::${handoffId}`;
   const previous = retryBackoffPending.get(key);
-  if (previous) {
+  if (previous?.timer) {
     clearTimeout(previous.timer);
     retryBackoffTimers.delete(previous.timer);
   }
@@ -560,6 +578,7 @@ function trackRetryBackoff(
     redeliver();
   }, backoffMs);
   retryBackoffPending.set(key, {
+    authority,
     sessionId: authority.sessionId,
     timer,
     redeliver,
@@ -571,6 +590,56 @@ function trackRetryBackoff(
     sawBusy: false,
   });
   retryBackoffTimers.add(timer);
+}
+
+/**
+ * F-925 (revisão de 899138577): espera ESTACIONADA — sem timer. Depois de
+ * IDLE_RELEASE_PARK_ROUNDS rodadas liberadas sem aceite o handoff para de
+ * consumir a janela do PTY: a única saída é a prova de mudança (borda
+ * busy→idle real, via sawBusy + earliestFireAt=0) ou a saída da sessão.
+ * O handoff continua `queued` no ledger e a autoridade é revalidada no
+ * re-drive, como qualquer outra espera.
+ */
+function parkRetryBackoff(
+  authority: DeliveryAuthority,
+  handoffId: string,
+  redeliver: () => void,
+): void {
+  const key = `${authorityKey(authority)}::${handoffId}`;
+  const previous = retryBackoffPending.get(key);
+  if (previous?.timer) {
+    clearTimeout(previous.timer);
+    retryBackoffTimers.delete(previous.timer);
+  }
+  retryBackoffPending.set(key, {
+    authority,
+    sessionId: authority.sessionId,
+    timer: undefined,
+    redeliver,
+    earliestFireAt: 0,
+    sawBusy: false,
+  });
+}
+
+/**
+ * F-925 (revisão de 899138577): taxa total de colagens por sessão. Enquanto
+ * existir QUALQUER re-drive represado nesta sessão (escada crescente, F-112
+ * ou espera estacionada), nenhuma colagem nova entra antes da janela base a
+ * partir da última — somando todos os handoffs. Sem espera represada a
+ * entrega segue o ritmo normal das bordas idle. A colagem de B não toca a
+ * escada de A: os timers são por handoff e o gate só atrasa a entrada.
+ */
+const lastSessionPasteAt = new Map<string, number>();
+
+function sessionPasteGateOpen(sessionId: string): boolean {
+  for (const wait of retryBackoffPending.values()) {
+    if (wait.sessionId !== sessionId) continue;
+    return (
+      Date.now() - (lastSessionPasteAt.get(sessionId) ?? 0) >=
+      IDLE_RELEASE_RETRY_BASE_MS
+    );
+  }
+  return true;
 }
 
 /**
@@ -596,8 +665,10 @@ function fireRetryBackoffsAtIdleEdge(sessionId: string): void {
       now < wait.earliestFireAt
     ) continue;
     retryBackoffPending.delete(key);
-    retryBackoffTimers.delete(wait.timer);
-    clearTimeout(wait.timer);
+    if (wait.timer) {
+      retryBackoffTimers.delete(wait.timer);
+      clearTimeout(wait.timer);
+    }
     wait.redeliver();
   }
 }
@@ -606,8 +677,10 @@ function dropRetryBackoffsForSession(sessionId: string): void {
   for (const [key, wait] of [...retryBackoffPending]) {
     if (wait.sessionId !== sessionId) continue;
     retryBackoffPending.delete(key);
-    retryBackoffTimers.delete(wait.timer);
-    clearTimeout(wait.timer);
+    if (wait.timer) {
+      retryBackoffTimers.delete(wait.timer);
+      clearTimeout(wait.timer);
+    }
   }
 }
 
@@ -641,6 +714,10 @@ function enqueueHandoff(authority: DeliveryAuthority, handoff: Handoff): void {
   const queue = queues.get(key) ?? [];
   if (
     queue.some((item) => item.handoff.id === handoff.id) ||
+    // Handoff com espera represada (escada/F-112/estacionada) não entra na
+    // fila em memória: o re-drive dele é o único caminho, senão a entrada
+    // duplicada colava por cima da própria espera quando a fila andasse.
+    retryBackoffPending.has(`${key}::${handoff.id}`) ||
     [...pendingEnters].some((pending) =>
       pending.handoffId === handoff.id &&
       authorityKey(pending.authority) === key,
@@ -657,6 +734,40 @@ function enqueueHandoff(authority: DeliveryAuthority, handoff: Handoff): void {
   // fica para sempre se o Maestro já estava no prompt.
   if (getSessionState(authority.sessionId) === 'idle') {
     armInjectableWake(authority.sessionId);
+  }
+}
+
+/** Caminho único de entrada: entrega estável imediata ou fila em memória. */
+function routeOrEnqueue(
+  authority: DeliveryAuthority,
+  handoff: Handoff,
+): void {
+  if (
+    canPasteHandoff(authority.sessionId) &&
+    !hasPendingDelivery(authority, handoff.id) &&
+    sessionPasteGateOpen(authority.sessionId)
+  ) {
+    scheduleStableDelivery(authority, handoff);
+    return;
+  }
+  enqueueHandoff(authority, handoff);
+}
+
+/**
+ * Re-drive de um handoff que continuou `queued` depois de uma espera
+ * represada (escada crescente, F-112 ou estacionada). Revalida a autoridade
+ * e o estado durable antes de roteá-lo de novo pelo caminho normal.
+ */
+function redriveQueuedHandoff(
+  authority: DeliveryAuthority,
+  handoffId: string,
+): void {
+  if (!isCurrentAuthority(authority)) return;
+  const handoff = getProjectDomainStores(authority.scope).handoffs.get(
+    handoffId,
+  );
+  if (handoff?.deliveryState === 'queued') {
+    routeOrEnqueue(authority, handoff);
   }
 }
 
@@ -722,6 +833,47 @@ export function handoffDeliveryEligible(handoff: Handoff): boolean {
   return !isDiagnosticDriverHandoff(handoff);
 }
 
+/**
+ * F-925 (revisão de 899138577): sinal de atenção da missão quando a entrega
+ * estaciona no teto de rodadas. Vai pelo journal durável de eventos da
+ * missão — o canal existente que o renderer/operador lê — com a chave de
+ * idempotência incluindo o número da rodada para que cada estacionada nova
+ * (depois de uma retomada) gere aviso próprio sem spam.
+ */
+function emitDeliveryNeedsOperator(
+  authority: DeliveryAuthority,
+  handoffId: string,
+  sessionAttempts: number,
+): void {
+  try {
+    emitMissionEvent(authority.scope, {
+      missionId: authority.missionId,
+      runId: 'idle-delivery',
+      type: 'custom',
+      origin: 'system',
+      idempotencyKey:
+        `delivery_needs_operator:${handoffId.slice(0, 40)}:` +
+        `${authority.sessionId.slice(0, 40)}:${sessionAttempts}`,
+      payload: {
+        kind: 'delivery-needs-operator',
+        handoffId,
+        paneId: authority.paneId,
+        sessionId: authority.sessionId,
+        releasedRounds: sessionAttempts - MAX_DELIVERY_ATTEMPTS,
+        reason:
+          'Maestro idle não aceitou a entrega depois das rodadas ' +
+          'liberadas — entrega estacionada até prova de mudança ' +
+          '(borda busy→idle, sessão nova ou list-ack)',
+      },
+    });
+  } catch (error) {
+    console.warn(
+      '[idle-delivery] falha ao emitir delivery-needs-operator:',
+      error instanceof Error ? error.message : error,
+    );
+  }
+}
+
 function blockDeliveryFailure(
   authority: DeliveryAuthority,
   handoffId: string,
@@ -746,19 +898,68 @@ function blockDeliveryFailure(
     // preserva a causa sob o prefixo `released:`.
     let sessionAttempts = attempts;
     try {
-      const handoffs = getProjectDomainStores(authority.scope).handoffs;
-      handoffs.releaseFailedDeliveryAttempts({
-        handoffId,
-        orchestratorSessionId: authority.sessionId,
-      });
       // A espera cresce com as rodadas JÁ gastas por esta sessão neste
       // handoff — vem do histórico durável, então um restart não reinicia
-      // a escada e uma sessão nova não herda a espera da anterior.
-      sessionAttempts = handoffs
+      // a escada e uma sessão nova não herda a espera da anterior. Linhas
+      // `released:` contam: elas provam que a rodada aconteceu.
+      sessionAttempts = getProjectDomainStores(authority.scope).handoffs
         .listDeliveryAttempts(handoffId)
         .filter(
           (attempt) => attempt.orchestratorSessionId === authority.sessionId,
         ).length;
+    } catch (error) {
+      console.warn(
+        '[idle-delivery] falha ao ler tentativas de entrega da sessão ' +
+          `(handoff=${handoffId}):`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+    // F-925 (revisão de 899138577): cada tentativa além do orçamento por
+    // sessão só existe porque uma liberação a reabriu — `sessionAttempts -
+    // MAX` conta as rodadas já liberadas. Na sexta sem aceite a entrega
+    // ESTACIONA: sem timer, sem liberação nova — só a borda busy→idle real
+    // (prova de mudança no PTY), uma sessão nova (rebind) ou a ação do
+    // operador/list-ack volta a colar. O handoff segue `queued`, nunca é
+    // descartado, e o operador recebe o evento `delivery-needs-operator`
+    // no journal da missão. Sem kill e sem rebind do Maestro.
+    if (
+      sessionAttempts - MAX_DELIVERY_ATTEMPTS >=
+      IDLE_RELEASE_PARK_ROUNDS
+    ) {
+      parkRetryBackoff(authority, handoffId, () => {
+        if (!isCurrentAuthority(authority)) return;
+        try {
+          getProjectDomainStores(authority.scope).handoffs
+            .releaseFailedDeliveryAttempts({
+              handoffId,
+              orchestratorSessionId: authority.sessionId,
+            });
+        } catch (error) {
+          console.warn(
+            '[idle-delivery] falha ao liberar tentativas de entrega ' +
+              `estacionadas (handoff=${handoffId}):`,
+            error instanceof Error ? error.message : error,
+          );
+        }
+        redriveQueuedHandoff(authority, handoffId);
+      });
+      emitDeliveryNeedsOperator(authority, handoffId, sessionAttempts);
+      console.warn(
+        '[idle-delivery] entrega estacionada: Maestro idle não aceitou ' +
+          `depois de ${IDLE_RELEASE_PARK_ROUNDS} rodadas liberadas ` +
+          '(handoff segue queued; retoma só com prova de mudança — borda ' +
+          `busy→idle, sessão nova ou list-ack; mission=${authority.missionId}, ` +
+          `handoff=${handoffId}, session=${authority.sessionId}, ` +
+          `attempts=${sessionAttempts})`,
+      );
+      return;
+    }
+    try {
+      getProjectDomainStores(authority.scope).handoffs
+        .releaseFailedDeliveryAttempts({
+          handoffId,
+          orchestratorSessionId: authority.sessionId,
+        });
     } catch (error) {
       console.warn(
         '[idle-delivery] falha ao liberar tentativas de entrega esgotadas ' +
@@ -781,14 +982,7 @@ function blockDeliveryFailure(
           2 ** Math.max(0, sessionAttempts - MAX_DELIVERY_ATTEMPTS),
         IDLE_RELEASE_RETRY_MAX_MS,
       ),
-      () => {
-        if (!isCurrentAuthority(authority)) return;
-        const retryHandoff =
-          getProjectDomainStores(authority.scope).handoffs.get(handoffId);
-        if (retryHandoff?.deliveryState === 'queued') {
-          onHandoffSubmitted(retryHandoff, authority.scope);
-        }
-      },
+      () => redriveQueuedHandoff(authority, handoffId),
     );
     // Uma linha por handoff (o else loga na mesma chave — não duplicar).
     if (!blockedDeliveryWarned.has(handoffId)) {
@@ -901,8 +1095,27 @@ function retryOrBlockDelivery(
   attemptNo: number,
 ): void {
   if (!isCurrentAuthority(authority)) return;
-  if (attemptNo >= MAX_DELIVERY_ATTEMPTS) {
-    blockDeliveryFailure(authority, handoffId, attemptNo);
+  // F-925 (revisão de 899138577): o `attempt_no` é GLOBAL ao handoff — depois
+  // da primeira liberação ele já passou do limite e uma SESSÃO NOVA (rebind
+  // do Maestro) herdava a escada de 60 s em vez do backoff F-112. A decisão
+  // conta só as tentativas DESTA sessão; linhas `released:` continuam
+  // contando para a MESMA sessão não reiniciar a escada a cada liberação.
+  let sessionAttemptCount = attemptNo;
+  try {
+    sessionAttemptCount = getProjectDomainStores(authority.scope).handoffs
+      .listDeliveryAttempts(handoffId)
+      .filter(
+        (attempt) => attempt.orchestratorSessionId === authority.sessionId,
+      ).length;
+  } catch (error) {
+    console.warn(
+      '[idle-delivery] contagem de tentativas da sessão falhou; usando ' +
+        `attempt_no global (handoff=${handoffId}):`,
+      error instanceof Error ? error.message : error,
+    );
+  }
+  if (sessionAttemptCount >= MAX_DELIVERY_ATTEMPTS) {
+    blockDeliveryFailure(authority, handoffId, sessionAttemptCount);
     return;
   }
   const handoff = getProjectDomainStores(authority.scope).handoffs.get(handoffId);
@@ -911,15 +1124,10 @@ function retryOrBlockDelivery(
   // mesmo PTY que acabou de recusar o write. Um coordenador renascendo só
   // volta a aceitar depois do boot da CLI; a janela cresce com a tentativa.
   const backoffMs =
-    HANDOFF_DELIVERY_RETRY_BACKOFF_MS * Math.max(1, attemptNo);
-  trackRetryBackoff(authority, handoffId, backoffMs, () => {
-    if (!isCurrentAuthority(authority)) return;
-    const retryHandoff =
-      getProjectDomainStores(authority.scope).handoffs.get(handoffId);
-    if (retryHandoff?.deliveryState === 'queued') {
-      onHandoffSubmitted(retryHandoff, authority.scope);
-    }
-  });
+    HANDOFF_DELIVERY_RETRY_BACKOFF_MS * Math.max(1, sessionAttemptCount);
+  trackRetryBackoff(authority, handoffId, backoffMs, () =>
+    redriveQueuedHandoff(authority, handoffId),
+  );
 }
 
 function submitDelivery(
@@ -977,6 +1185,14 @@ function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
     !isCurrentAuthority(authority) ||
     !canPasteHandoff(authority.sessionId)
   ) return false;
+  // F-925 (revisão de 899138577): última verificação da taxa por sessão —
+  // o timer de estabilidade pode ter cruzado uma espera represada armada
+  // depois do agendamento. Fechado, o handoff volta para a fila e o wake
+  // ocioso o reoferece quando a janela abrir.
+  if (!sessionPasteGateOpen(authority.sessionId)) {
+    enqueueHandoff(authority, handoff);
+    return true;
+  }
   const stores = getProjectDomainStores(authority.scope);
   const current = stores.handoffs.get(handoff.id);
   if (!current) return false;
@@ -1024,6 +1240,7 @@ function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
     return true;
   }
   const pastedAt = Date.now();
+  lastSessionPasteAt.set(authority.sessionId, pastedAt);
   try {
     stores.handoffs.markDeliveryAttemptPasted({
       attemptId: attempt.id,
@@ -1088,6 +1305,13 @@ function scheduleStableDelivery(
     !isCurrentAuthority(authority) ||
     !canPasteHandoff(authority.sessionId)
   ) return false;
+  // Gate de taxa por sessão (F-925 revisão): com espera represada nesta
+  // sessão a colagem só entra depois da janela base desde a última. A fila
+  // em memória segura o handoff e o wake ocioso o reoferece.
+  if (!sessionPasteGateOpen(authority.sessionId)) {
+    enqueueHandoff(authority, handoff);
+    return true;
+  }
   let pending: PendingDeliveryStart;
   const timer = setTimeout(() => {
     clearPendingDeliveryStart(pending);
@@ -1154,10 +1378,17 @@ function flushQueue(sessionId: string): void {
     return;
   }
   const [key, queue] = matches[0];
-  if (hasPendingDelivery(queue[0]!.authority)) return;
+  // F-925 (revisão de 899138577): a espera represada segura SÓ o próprio
+  // handoff — a fila anda para o primeiro que não está esperando (B entra
+  // enquanto A aguarda a escada). A colagem EM VOO de outro handoff da
+  // mesma autoridade ainda segura tudo: o composer do PTY é um só.
+  const nextIndex = queue.findIndex(
+    (item) => !hasPendingDelivery(item.authority, item.handoff.id),
+  );
+  if (nextIndex < 0) return;
   // One handoff per idle transition: after delivery the orchestrator goes
   // busy processing it; remaining handoffs flush on subsequent idles.
-  const next = queue.shift()!;
+  const next = queue.splice(nextIndex, 1)[0]!;
   if (queue.length === 0) queues.delete(key);
   if (!scheduleStableDelivery(next.authority, next.handoff)) {
     // Session died — drop the rest of its queue.
@@ -1204,6 +1435,7 @@ export function initIdleDelivery(): void {
   });
   untapExit = tapSessionExit((sessionId) => {
     lastMailboxDrainAt.delete(sessionId);
+    lastSessionPasteAt.delete(sessionId);
     clearInjectableWake(sessionId);
     dropRetryBackoffsForSession(sessionId);
     scheduleFastLaneDeliveryCheck(sessionId);
@@ -1298,6 +1530,22 @@ export function initIdleDelivery(): void {
         }
         clearPendingDeliveryStart(pending);
       }
+      // Esperas represadas (armadas ou estacionadas) do escopo antigo saem
+      // junto — a estacionada não tem timer e ficaria viva para sempre
+      // segurando o gate de taxa da sessão.
+      for (const [waitKey, wait] of [...retryBackoffPending]) {
+        if (
+          wait.authority.owner?.id !== owner.id ||
+          !sameProjectScope(wait.authority.scope, previous)
+        ) {
+          continue;
+        }
+        retryBackoffPending.delete(waitKey);
+        if (wait.timer) {
+          retryBackoffTimers.delete(wait.timer);
+          clearTimeout(wait.timer);
+        }
+      }
     },
   );
 }
@@ -1316,6 +1564,7 @@ export function shutdownIdleDelivery(): Promise<void> {
   unsubscribeScopeChanges = null;
   queues.clear();
   lastMailboxDrainAt.clear();
+  lastSessionPasteAt.clear();
   for (const sessionId of [...injectableWakeTimers.keys()]) {
     clearInjectableWake(sessionId);
   }
@@ -1515,14 +1764,7 @@ export function onHandoffSubmitted(
   if (handoff.sessionId && handoff.sessionId === authority.sessionId) {
     return null;
   }
-  if (
-    canPasteHandoff(authority.sessionId) &&
-    !hasPendingDelivery(authority)
-  ) {
-    scheduleStableDelivery(authority, handoff);
-    return null;
-  }
-  enqueueHandoff(authority, handoff);
+  routeOrEnqueue(authority, handoff);
   return null;
 }
 

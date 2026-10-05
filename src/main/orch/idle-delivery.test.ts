@@ -121,6 +121,14 @@ vi.mock('./mission-leader-gate', () => ({
   requireMissionLeaderSession: missionLeaderGateMocks.requireMissionLeaderSession,
 }));
 
+const missionEventMocks = vi.hoisted(() => ({
+  emitMissionEvent: vi.fn(() => true),
+}));
+vi.mock('./mission-event-emit', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./mission-event-emit')>()),
+  emitMissionEvent: missionEventMocks.emitMissionEvent,
+}));
+
 vi.mock('../pty/pty-manager', () => ({
   getSessionState: vi.fn(() => ptyMocks.state),
   orchWriteSession: ptyMocks.writes,
@@ -537,6 +545,7 @@ beforeEach(() => {
   storeMocks.consumed.length = 0;
   storeMocks.deliveryAttempts.clear();
   storeMocks.nextAttemptId = 1;
+  missionEventMocks.emitMissionEvent.mockClear();
 });
 
 afterEach(() => {
@@ -1299,10 +1308,24 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
     }
 
     // O orçamento continua reabrindo (não é o wedge original), mas cada
-    // rodada dobra a espera por handoff+sessão até o teto.
+    // rodada dobra a espera por handoff+sessão até o teto — e a sexta
+    // rodada liberada sem aceite ESTACIONA a entrega (delivery-needs-
+    // operator). 119 min = 3 tentativas F-112 + 6 rodadas + teto.
     expect(pastes()).toBeGreaterThan(3);
-    expect(pastes()).toBeLessThan(40);
-    expect(enters()).toBeLessThan(200);
+    expect(pastes()).toBeLessThanOrEqual(14);
+    expect(enters()).toBeLessThanOrEqual(56);
+    expect(missionEventMocks.emitMissionEvent).toHaveBeenCalledWith(
+      scope,
+      expect.objectContaining({
+        missionId: 'mission-a',
+        type: 'custom',
+        origin: 'system',
+        payload: expect.objectContaining({
+          kind: 'delivery-needs-operator',
+          handoffId: 'handoff-a',
+        }),
+      }),
+    );
     expect(recovery).not.toHaveBeenCalled();
     expect(storeMocks.handoffs.get('handoff-a')?.deliveryState).toBe('queued');
     expect(
@@ -1364,6 +1387,176 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
     ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
     await advanceUntilPasted(delivery);
     expect(deliveries()).toHaveLength(5);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('F-925 revisão: a espera represada de A não prende a fila — B cola na taxa da sessão', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    const a = handoff({ id: 'handoff-a', summary: 'payload de A' });
+    const b = handoff({ id: 'handoff-b', summary: 'payload de B' });
+    storeMocks.handoffs.set(a.id, a);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+    const pastesOf = (text: string) =>
+      ptyMocks.writes.mock.calls.filter((call) =>
+        String(call[1]).includes(text),
+      ).length;
+
+    delivery.onHandoffSubmitted(a, scope);
+    // 3 tentativas de A morrem de accept_timeout (~13 s cada + backoffs F-112
+    // de 15/30 s): a liberação arma a espera crescente de 60 s para A.
+    await vi.advanceTimersByTimeAsync(85_000);
+    expect(pastesOf('payload de A')).toBe(3);
+
+    // B chega com A represado: não herda a escada de A — só a taxa da sessão
+    // (janela base de 60 s desde a última colagem de A, ~72 s atrás).
+    storeMocks.handoffs.set(b.id, b);
+    delivery.onHandoffSubmitted(b, scope);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(pastesOf('payload de B')).toBe(0);
+    // A espera de A (60 s a partir de ~84 s → ~144 s) ainda não venceu quando
+    // o gate da sessão abre (~132 s): B cola ANTES do próximo round de A.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(pastesOf('payload de B')).toBe(1);
+    expect(pastesOf('payload de A')).toBe(3);
+
+    // O aceite de B não adianta A: a borda busy→idle dentro da base da
+    // rodada não dispara a espera represada.
+    ptyMocks.state = 'busy';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
+    expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-b' }]);
+    ptyMocks.state = 'idle';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(pastesOf('payload de A')).toBe(3);
+
+    // Na janela da própria escada, A volta a colar normalmente.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(pastesOf('payload de A')).toBe(4);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('F-925 revisão: a sexta rodada liberada estaciona a entrega — delivery-needs-operator e retomada só com prova de mudança', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    const current = handoff();
+    storeMocks.handoffs.set(current.id, current);
+    const recovery = vi.fn(async () => true);
+    delivery.configureHandoffDeliveryRuntimeRecovery(recovery);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+    const pastes = () =>
+      ptyMocks.writes.mock.calls.filter((call) =>
+        String(call[1]).includes('completed the requested work'),
+      ).length;
+
+    delivery.onHandoffSubmitted(current, scope);
+    // 3 tentativas F-112 + 6 rodadas liberadas (esperas de 1/2/4/8/15/15 min)
+    // sem aceite: ~48 min de relógio, depois a entrega ESTACIONA.
+    await vi.advanceTimersByTimeAsync(50 * 60_000);
+    expect(pastes()).toBe(3 + delivery.IDLE_RELEASE_PARK_ROUNDS);
+    expect(missionEventMocks.emitMissionEvent).toHaveBeenCalledWith(
+      scope,
+      expect.objectContaining({
+        missionId: 'mission-a',
+        type: 'custom',
+        origin: 'system',
+        payload: expect.objectContaining({
+          kind: 'delivery-needs-operator',
+          handoffId: 'handoff-a',
+          sessionId: 'orchestrator-session',
+        }),
+      }),
+    );
+    expect(recovery).not.toHaveBeenCalled();
+    expect(storeMocks.handoffs.get('handoff-a')?.deliveryState).toBe('queued');
+    expect(
+      storeMocks.missions.get(`${scope.projectId}:${scope.checkoutId}:mission-a`)
+        ?.status,
+    ).toBe('running');
+
+    // Estacionada não tem timer: outbox, caixa durável e re-publish de idle
+    // não colam mais — 30 min parados de verdade.
+    delivery.redeliverPendingHandoffs(scope, 'mission-a');
+    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    expect(pastes()).toBe(3 + delivery.IDLE_RELEASE_PARK_ROUNDS);
+    expect(storeMocks.delivered).toEqual([]);
+
+    // Prova de mudança: a borda busy→idle real dispara a espera estacionada
+    // (earliestFireAt=0 — nem a base precisa passar), libera as falhas e
+    // recola; o busy seguinte é o aceite normal.
+    ptyMocks.state = 'busy';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
+    ptyMocks.state = 'idle';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
+    await advanceUntilSubmitted(delivery);
+    expect(pastes()).toBe(3 + delivery.IDLE_RELEASE_PARK_ROUNDS + 1);
+    ptyMocks.state = 'busy';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
+    expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-a' }]);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('F-925 revisão: sessão nova (rebind) não herda a escada — volta ao backoff F-112 com as tentativas dela', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    const current = handoff();
+    storeMocks.handoffs.set(current.id, current);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+    const pastes = () =>
+      ptyMocks.writes.mock.calls.filter((call) =>
+        String(call[1]).includes('completed the requested work'),
+      ).length;
+
+    delivery.onHandoffSubmitted(current, scope);
+    // 3 falhas da sessão antiga → liberação + escada de 60 s armada.
+    await vi.advanceTimersByTimeAsync(85_000);
+    expect(pastes()).toBe(3);
+
+    // O Maestro sai e renasce com OUTRA sessão: as esperas da antiga morrem
+    // com ela e a autoridade nova não tem tentativa nenhuma.
+    ptyMocks.exitTaps.forEach((tap) => tap('orchestrator-session'));
+    paneMocks.authorities.delete('orchestrator-session');
+    paneMocks.authorities.set('orchestrator-session-2', {
+      owner: { id: 101 },
+      paneId: 'orchestrator-pane',
+      sessionId: 'orchestrator-session-2',
+      kind: 'cli-agent',
+      missionId: 'mission-a',
+      role: 'orchestrator',
+      scope,
+    });
+    storeMocks.missions.set(`${scope.projectId}:${scope.checkoutId}:mission-a`, {
+      id: 'mission-a',
+      orchestratorSessionId: 'orchestrator-session-2',
+      status: 'running',
+      description: 'Objetivo original',
+    });
+
+    // Cola na hora (sem espera herdada) a partir do replay durável.
+    expect(delivery.redeliverPendingHandoffs(scope, 'mission-a')).toBe(1);
+    await advanceUntilPasted(delivery);
+    expect(pastes()).toBe(4);
+    expect(
+      ptyMocks.writes.mock.calls.filter(
+        (call) =>
+          call[0] === 'orchestrator-session-2' &&
+          String(call[1]).includes('completed the requested work'),
+      ),
+    ).toHaveLength(1);
+
+    // O accept_timeout da sessão nova conta na escada DELA (F-112: 15 s),
+    // não na escada de 60 s+ que a sessão anterior tinha armado.
+    await vi.advanceTimersByTimeAsync(26_000);
+    expect(pastes()).toBe(4);
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(pastes()).toBe(5);
     delivery.shutdownIdleDelivery();
   });
 
