@@ -1,83 +1,15 @@
-# Pendências verificadas da release — 04/10/2026
+# Pendências da release — 04/10/2026, 21:40 BRT
 
-Atualização após `f5238472c`, com todas as entregas existentes integradas e
-metadados de **0.76.192** preparados. **Ainda não há aplicativo, DMG ou ZIP
-assinado/notarizado desta integração, nem publicação.**
+Escopo integral: toda a integração pendente da Missão Terminais, F-764 completo e todas as melhorias solicitadas. Versão preparada: **0.76.192**. **Ainda não existe candidato assinado/notarizado nem publicação desta integração.**
 
-## Estado atual
-
-| Pendência | Evidência e próximo passo |
+| Etapa | Estado e trabalho restante |
 |---|---|
-| Carga F-764 no conjunto final | Cargas anteriores de 30 s, normais e envenenadas, passaram; falta repetir no SHA final, com 15 terminais, ≥5 MB/s, conclusão semântica, p99 <100 ms, máximo <1 s e bloqueio de spawn <100 ms. |
-| Fila pesada nativa C.6 | Claude, Grok, Kimi e OpenCode2 têm provas privadas. O backend privado do OpenCode2 e o canal Unix autenticado já estão integrados, com revisão independente de fonte. No Codex real, o controle workspace-write executa o comando e nega escrita fora do workspace, mas o comando com admissão falha; o canal Unix ainda não resolveu esse controle. Muse e as demais fronteiras da matriz continuam em verificação. Nenhum caso pendente é contado como aprovado. |
-| Revisão independente composta | F-883..F-892 receberam correções e testes focados. F-889 teve revisão independente com 224 testes/7 suítes. O canal Unix, a reserva Main e o buffering de input/resize receberam revisão independente com 58 testes/6 suítes. A verificação privada dos fluxos do pacote está em revisão. As aprovações de fonte não certificam execução no candidato assinado. |
-| Teste de recursos por cinco minutos | Harness integrado em 55691a0d e aprovado por revisão independente de fonte. Gate privado Root: 172 testes/13 suítes, tipos/sinks/Sync aprovados. Ainda precisa executar os 300 s no aplicativo assinado; fixtures não comprovam essa execução. |
-| Validação completa final | Instalação privada limpa passou. A suíte completa histórica em `6e968c1e` passou: 1.847 suítes/21.545 testes, com 4 suítes/53 testes ignorados. Falta a suíte no conjunto final, tipos app/server, segurança/audit/SBOM/licenças e matriz de 104 requisitos atualizada. |
-| Fluxos reais do candidato | O verificador privado foi integrado: missões ops/standard, workers, handoff/ACK, recovery, movimentação, pergunta/resposta, memória/resume e captura/teardown de voz. Gate Root em f5238472c: 131 testes/15 suítes, tipos e renderer-sinks aprovados; lint de processos síncronos aprovado com 91 usos legados. Falta revisão independente e execução nas duas inicializações do aplicativo assinado, com provas físicas e inspeção da imagem N7. Fixtures não comprovam os fluxos do pacote. |
-| Candidato e publicação | Criar a tag no SHA exato validado, gerar DMG/ZIP assinados/notarizados, executar release:candidate, probes de 40 s e aviso ocupado, fluxos reais, recursos por cinco minutos e quit sem órfãos. Publicar pelo script canônico, que integra main/tag na transação, e verificar canônica/espelho, hashes, recibos e download. |
+| Integração de fonte | Entregas existentes preservadas e integradas, incluindo análise de PTY fora do Main, batches/backpressure, Git assíncrono, watchdog/profile, aviso ocupado, memória, MiMo, N1–N14 e fila pesada. Autopilot preserva rede/execução livres. Novas worktrees/candidatos `.noindex`; caminhos existentes preservados. |
+| C.6 e CLIs reais | Claude/Grok/Kimi/OpenCode/Codex/Qwen/MiMo/MiniMax/Muse têm controles privados delimitados. Main caller Codex, canal por arquivos, guardian MiniMax e F901 receberam revisão independente de fonte. Muse caller aguarda revisão independente. Aider real em PTY passou no executor com confirmação única normal, aguardando importação/checagem. AGY/Devin continuam abertos: preflight de autenticação não permitiu alcançar a ferramenta real; presença de código não conta como execução aprovada. |
+| Correção da fixture Codex | Gate privado exato119e67127:148 PASS/8 skips/2 FAILED. As duas falhas vieram do socket Unix longo da fixture; reprodução independente curl exit6. Correção usa caminho curto e asserts separados TCP/Unix, sem mudar política do produto. Rerun pendente. |
+| Validação completa | Instalação privada nova902deps, Electron43.7.4, Node22/npm12, postinstall/rebuild:node aprovados. Falta congelar o conjunto final e executar suíte completa, tipos app/server, segurança/audit/SBOM/licenças/native e revisão final dos104 requisitos. Contagens históricas e focadas não substituem esse gate. |
+| Aceite F-764 | Repetir no SHA final:15 terminais, flood ≥5MB/s, supervisor/spawn concorrentes, paridade/conclusão semântica e falha do worker; p99<100ms, máximo<1s, bloqueio de criar worker<100ms. Executar regex adversarial e preservar perfis/contexto. |
+| Prova no aplicativo | Construir DMG/ZIP assinados/notarizados e executar release:candidate. Ainda faltam watchdog40s/recuperação e aviso ocupado, duas inicializações com missões/workers/handoff/ACK/recovery/movimentação/pergunta/memória/resume, imagem N7 inspecionada, voz/TCC, recursos300s, Keychain/update e quit sem órfãos. Revisões de fonte não aprovam esses fluxos físicos. |
+| Publicação | Conferir novamente remoto e versão livre; tag no SHA exato validado. Publicar pelo script canônico com integração main/tag e verificar canônica/espelho, recibos, hashes, feeds e download. A tag histórica v0.76.191 permanece intacta. |
 
-N4/F-833 está corrigido no código e aprovado por revisão independente em
-`32568689`: cauda Main sanitizada, preservação dos artifacts completos e
-recibo físico novo sem afrouxar a cadeia original. N13 está autorizado e
-implementado para novas pastas `.noindex`, preservando as existentes.
-C.3/C.4, MiMo fora do Main, N7, N9, memória e demais integrações já estão no
-conjunto. Não somar contagens dos testes focados, pois se sobrepõem.
-
-A matriz de 104 requisitos em `.superpowers/sdd/PLAN/coverage-current-final.md`
-é um mapa de proveniência; deve receber as evidências e a revisão final.
-A tag local `v0.76.191` é histórica e não será reescrita. O estado remoto
-precisa ser conferido novamente antes da tag `v0.76.192`.
-O preflight de Developer ID e do perfil `nexus-notary` passou; não equivale
-à assinatura ou notarização de um artifact.
-
-## Histórico — observado às 18:43 BRT, superado pelo estado acima
-
-Base da integração examinada: `40c56c20`, com a fila de comandos pesados ainda
-não commitada. Este registro descreve o estado observado, não substitui o
-checklist de aceite nem a revisão independente final.
-
-## Implementação e integração ainda necessárias
-
-| Item | Estado observado | O que falta |
-|---|---|---|
-| F-764 C.6 — fila de comandos pesados | Pool e classificador locais passam em 23 testes. `acquireHeavyCommandPermit` ainda não tem chamador de produção. | Ligar `nexus_terminal_run` e `nexus_bg_run`, e os compiladores iniciados pelas CLIs; provar fila por projeto, reserva de RAM, cancelamento e liberação apenas após saída física. Validar também o orçamento de workers no fluxo real. |
-| F-764 C.3 — regexes | Artefato `/tmp/nexus-f764-c3-regex.json`: 21 manifests, 205 regexes, 1.565 casos, 105 casos de paridade; máximo 8,098 ms. Patch/harness ainda na worktree do executor. | Revisar e integrar correções e harness reproduzível; levar a prova para a árvore final e o CI. |
-| F-764 C.4 — tarefas periódicas | Grande parte integrada. Revisão encontrou cancelamento não propagado até o rename assíncrono dos agendamentos e trecho de whitespace sem checkpoint. | Integrar o follow-up do executor; os 45 testes informados por ele ainda precisam acompanhar o commit recebido. |
-| MiMo fora do Main | Commit do executor `75447127` disponível, com worker SQLite e 27 testes; ainda não integrado. | Revisar/integrar, concluir parada física do serviço de uso e aguardar sua inicialização no Main; validar união com os scanners Claude/Codex já modificados. |
-| N9 — frescor de dependências | Sensor consultivo ainda ausente no código final. | Implementar e testar leitura limitada de metadados públicos, dependência obsoleta/deprecated e comportamento offline sem bloqueio nem atualização automática. |
-| F-764 A.1 — prova de 40 segundos | `SMOKE_HANG_PROBE_BLOCK_MS` ainda vale **6.000**, e o harness verifica captura de profile, sem exigir recuperação após 40 s. | Atualizar o indutor e a verificação para o critério de 40 segundos, com prazo suficiente para o restante do smoke. Depois executar no app assinado. |
-
-## Validação do candidato completo ainda necessária
-
-- Repetir o teste de carga no SHA final: 15 PTYs, flood de pelo menos 5 MB/s,
-  supervisor e spawn concorrentes. A evidência guardada é do SHA `0d859fc4`,
-  com host simulado: p99 5,874 ms, máximo 101,696 ms, bloqueio de spawn
-  12,074 ms. Ela não prova o candidato final nem a equivalência do host nativo.
-- Incorporar os casos de falha do worker de análise e conferir que o harness
-  de carga participa do CI com os limites de aceite.
-- Revisão independente do diff completo e correção dos achados. Os testes
-  focados e revisões parciais não substituem essa revisão.
-- Instalação limpa e validação completa de app e server; segurança, auditoria,
-  SBOM, licenças e módulos nativos. Typechecks e renderer-sinks focados já
-  passaram, mas a matriz final da release ainda não foi executada.
-- Reconciliar todos os itens da revisão antiga e N1–N14 com evidência final.
-  B7 documental foi fechado em `e6970f5b`, após 8 suítes/242 testes; os registros
-  históricos F-769/F-778 apontam para os itens individuais F-839–F-846.
-
-## Build e publicação ainda necessários
-
-- Atualizar notas da release e conferir versão/tag no SHA final. A tag local
-  `v0.76.191` aponta para o commit antigo `6050422d`, não para esta integração.
-  Não mover nem publicar tag sem revalidar o estado remoto canônico.
-- Integrar conforme o gate do repositório e gerar DMG/ZIP em ambiente privado,
-  com assinatura e notarização. **Esta worktree ainda não tem `out/`.**
-- Executar `release:candidate`, smoke de launcher/terminal/missões/recovery/
-  encerramento, probe de 40 s, aviso de ocupado e observação de recursos por
-  cinco minutos no binário final.
-- Publicar pelos scripts canônicos, conferir canônica e espelho público,
-  recibos, hashes e download. Não há comprovação de publicação desta integração.
-
-A autorização do operador para novas raízes `.noindex`, preservando as
-existentes, já foi aplicada em `01ff8882` e não está pendente. O handoff visual
-foi integrado em `5851aa49` e `40c56c20`; ambos ainda participam da revisão
-conjunta e do smoke final.
+Mapa de cobertura: `.superpowers/sdd/PLAN/coverage-current-final.md`. Continuidade operacional: `.superpowers/sdd/PLAN/checkpoint-20261004-2140.md`. Nenhum item aberto foi removido para acelerar a publicação.
