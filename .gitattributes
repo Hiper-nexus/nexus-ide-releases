@@ -2,3 +2,5 @@
 # no vitest (Vite) do Windows, e o CRLF quebra comparações byte a byte (F-643).
 *.mjs text eol=lf
 *.cjs text eol=lf
+# F-930: o smoke do pacote confere o SHA-256 destes textos; em CRLF não bate.
+third_party/licenses/onnxruntime-v1.19.2-*.txt text eol=lf
