@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_ROUTING_TABLE,
   routeTask,
+  taskContextRequirement,
   taskNeedsWebSearch,
   type AdapterAvailability,
 } from './task-router';
+import type { ModelCatalog } from '../adapters/model-catalog';
 
 // F-771 (G3): eixo de capacidade. Tarefa que pede busca na web só roda em
 // CLI que DECLARA `capabilities.webSearch` — antes, duas pesquisas reais
@@ -186,5 +188,209 @@ describe('filtro de capacidade webSearch (F-771)', () => {
     );
     expect(searching!.reason).toContain('busca na web');
     expect(['claude', 'kimi']).toContain(searching!.adapterId);
+  });
+});
+
+// F-912 (02/G3): eixo de janela de contexto. `maxContext` só é filtrado quando
+// DOCUMENTADO (catálogo do modelo ou manifest do adapter) e a tarefa DECLARA
+// um mínimo explícito — ausência de dado em qualquer lado não exclui nada.
+const CONTEXT_TASK = 'analise o monorepo inteiro com contexto de 200k tokens e corrija o drift do schema';
+const grokPlain: AdapterAvailability = { id: 'grok', installed: true, models: ['grok-4.7'] };
+// Janela documentada só para o glm — grok fica sem fonte (fail-open por modelo).
+const CONTEXT_CATALOG: ModelCatalog = {
+  version: 1,
+  adapters: {
+    glm: {
+      models: [
+        { id: 'glm-5.3', availability: 'paid', costTier: 'low', source: 'fixture', maxContext: 131_072 },
+      ],
+    },
+    grok: {
+      models: [
+        { id: 'grok-4.7', availability: 'paid', costTier: 'high', source: 'fixture', maxContext: 400_000 },
+      ],
+    },
+  },
+};
+
+const routeWithContext = (pool: AdapterAvailability[], task: string, catalog: ModelCatalog) =>
+  routeTask(task, pool, DEFAULT_ROUTING_TABLE, 'medium', false, catalog, {
+    multiScore: false,
+  });
+
+describe('taskContextRequirement (F-912)', () => {
+  it('extrai declarações afirmativas de janela em pt e en', () => {
+    expect(taskContextRequirement('preciso de contexto de 200k tokens')).toBe(200_000);
+    expect(taskContextRequirement('use uma janela de 1M tokens')).toBe(1_000_000);
+    expect(taskContextRequirement('carregar 300k tokens de contexto no pane')).toBe(300_000);
+    expect(taskContextRequirement('analise o dump com contexto de 1M tokens')).toBe(1_000_000);
+    expect(taskContextRequirement('needs a 2M-token context')).toBe(2_000_000);
+    expect(taskContextRequirement('process the log with a context window of 250k tokens')).toBe(250_000);
+    expect(taskContextRequirement('carregue os 200000 tokens de entrada')).toBe(200_000);
+    expect(taskContextRequirement('contexto de 1,5M tokens')).toBe(1_500_000);
+  });
+
+  // P2 da revisão de ponta: menção incidental de número de tokens não é
+  // requisito de janela — só declaração afirmativa conta.
+  it('menção incidental de tokens NÃO vira requisito', () => {
+    for (const task of [
+      'Corrija o cálculo do custo de 200k tokens de saída',
+      'o orçamento estima 1M tokens de processamento no mês',
+      'refactor de 5k linhas',
+      'arquivos grandes do monorepo',
+      'a versão atual trava com 3 threads',
+      'corrigir o bug do login',
+    ]) {
+      expect(taskContextRequirement(task), task).toBeNull();
+    }
+  });
+
+  it('citação entre aspas/crase/bloco não é pedido', () => {
+    for (const task of [
+      'o README diz "contexto de 200k tokens" na seção de limites',
+      'a doc cita “janela de 1M tokens” do modelo antigo',
+      'configurar `contexto de 500k` no arquivo não é o pedido',
+      '```\njanela de 2M tokens\n```',
+    ]) {
+      expect(taskContextRequirement(task), task).toBeNull();
+    }
+  });
+
+  it('negação próxima rejeita a declaração', () => {
+    for (const task of [
+      'Não preciso de contexto de 200k tokens',
+      'não use janela de 500k; o padrão basta',
+      'sem necessidade de contexto de 1M tokens',
+      "don't need a 500k context window",
+    ]) {
+      expect(taskContextRequirement(task), task).toBeNull();
+    }
+  });
+
+  // Re-revisão: a negação de OUTRA oração não se refere ao contexto — o
+  // pedido afirmativo da própria oração do contexto continua valendo.
+  it('negação de outra oração não derruba o pedido de contexto', () => {
+    expect(taskContextRequirement('Não edite, use contexto de 200k tokens')).toBe(200_000);
+    expect(taskContextRequirement('Sem editar, preciso de contexto de 200k tokens')).toBe(200_000);
+    expect(taskContextRequirement('Do not edit, use a 200k-token context window')).toBe(200_000);
+  });
+  it('"nem" nega o próprio pedido de contexto, não abre outra oração', () => {
+    expect(taskContextRequirement('Não preciso nem de contexto de 200k tokens')).toBeNull();
+  });
+
+  it('aceita conector "of" e qualificador "input" na forma afirmativa em inglês', () => {
+    expect(taskContextRequirement('I need 200k tokens of input context')).toBe(200_000);
+    expect(taskContextRequirement('use 1M tokens of context for the dump')).toBe(1_000_000);
+  });
+
+  it('unidade incompatível (bytes/linhas/caracteres) não é janela de tokens', () => {
+    for (const task of [
+      'janela de 500k bytes no buffer de rede',
+      'ajuste a janela de 64kB do socket',
+      'o parser lê 3 mil linhas de contexto do CSV',
+    ]) {
+      expect(taskContextRequirement(task), task).toBeNull();
+    }
+  });
+
+  it('fica com o maior pedido quando a tarefa declara mais de um', () => {
+    expect(
+      taskContextRequirement('comece com contexto de 100k e suba para 1M tokens de contexto'),
+    ).toBe(1_000_000);
+  });
+});
+
+describe('filtro de janela de contexto maxContext (F-912)', () => {
+  it('exclui do ranking o candidato com janela documentada menor que a exigida', () => {
+    const decision = routeWithContext([glm, grokPlain], CONTEXT_TASK, CONTEXT_CATALOG);
+    // glm lidera o medium, mas 131072 < 200000: sai da rota E das alternativas.
+    expect(decision!.adapterId).toBe('grok');
+    expect(decision!.model).toBe('grok-4.7');
+    expect(decision!.reason).toContain('exige contexto');
+    expect(decision!.reason).toContain('glm:glm-5.3');
+    expect(
+      decision!.alternatives.every((alt) => alt.adapterId !== 'glm'),
+    ).toBe(true);
+  });
+
+  it('fail-open: sem maxContext documentado no catálogo ninguém é excluído', () => {
+    const noWindowCatalog: ModelCatalog = {
+      version: 1,
+      adapters: {
+        glm: { models: [{ id: 'glm-5.3', availability: 'paid', costTier: 'low', source: 'fixture' }] },
+        grok: { models: [{ id: 'grok-4.7', availability: 'paid', costTier: 'high', source: 'fixture' }] },
+      },
+    };
+    const decision = routeWithContext([glm, grokPlain], CONTEXT_TASK, noWindowCatalog);
+    expect(decision!.adapterId).toBe('glm');
+  });
+
+  it('tarefa sem declaração de contexto não mexe no ranking', () => {
+    const decision = routeWithContext([glm, grokPlain], 'corrija o drift do schema', CONTEXT_CATALOG);
+    expect(decision!.adapterId).toBe('glm');
+    expect(decision!.reason).not.toContain('exige contexto');
+  });
+
+  it('usa o maxContext do manifest do adapter quando o modelo não declara', () => {
+    const glmSmallWindow: AdapterAvailability = {
+      ...glm,
+      capabilities: { maxContext: 131_072 },
+    };
+    const decision = routeWithContext(
+      [glmSmallWindow, grokPlain],
+      'contexto de 200k tokens para a análise do drift',
+      { version: 1, adapters: {} },
+    );
+    expect(decision!.adapterId).toBe('grok');
+  });
+
+  it('pedido além de toda janela documentada não deixa a rota sem destino', () => {
+    const decision = routeWithContext(
+      [glm, grokPlain],
+      'analise tudo com contexto de 5M tokens',
+      CONTEXT_CATALOG,
+    );
+    expect(decision).not.toBeNull();
+    expect(decision!.reason).toContain('exige contexto');
+    expect(decision!.reason).toContain('nenhum candidato da tabela instalado');
+  });
+
+  // P2 da revisão de ponta: o resgate de versão mais nova (tabela pede
+  // glm-5.3, CLI só lista glm-5.4) fazia return antecipado ANTES do
+  // fitsContext — o resgatado contornava o eixo de janela.
+  it('modelo resgatado por upgrade de linha também respeita a janela exigida', () => {
+    const glmNewerOnly: AdapterAvailability = {
+      id: 'glm',
+      installed: true,
+      models: ['glm-5.4'],
+    };
+    const catalog: ModelCatalog = {
+      version: 1,
+      adapters: {
+        glm: {
+          models: [
+            { id: 'glm-5.4', availability: 'paid', costTier: 'low', source: 'fixture', maxContext: 131_072 },
+          ],
+        },
+        grok: {
+          models: [
+            { id: 'grok-4.7', availability: 'paid', costTier: 'high', source: 'fixture', maxContext: 400_000 },
+          ],
+        },
+      },
+    };
+    const decision = routeWithContext(
+      [glmNewerOnly, grokPlain],
+      'preciso de contexto de 200k tokens para a análise do drift do schema',
+      catalog,
+    );
+    // Sem a correção, o upgrade glm-5.3→glm-5.4 retornava cedo e vencia a
+    // rota com 131072 tokens; agora passa pela mesma validação de janela.
+    expect(decision!.adapterId).toBe('grok');
+    expect(decision!.reason).toContain('mais novo da linha');
+    expect(decision!.reason).toContain('glm:glm-5.4');
+    expect(
+      decision!.alternatives.every((alt) => alt.model !== 'glm-5.4'),
+    ).toBe(true);
   });
 });

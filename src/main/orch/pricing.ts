@@ -67,9 +67,13 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   haiku: { inputPerM: 1, outputPerM: 5, cacheReadPerM: 0.1, cacheWritePerM: 1.25 },
 
   // === OpenAI / Codex (openai.com/api/pricing & models-rich.json) ===
-  // Estudo 2026-09 (docs/models/estudo-2026-09.md): só mudou preço com duas
-  // fontes concordantes — docs/anúncio + `devin models list` (2026-09-27).
-  // gpt-5.6-sol ficou como estava: fontes conflitam ($4/$20 × $1,20/$6).
+  // F-913: gpt-5.6-sol $5/$30 confirmados pela fonte oficial — anúncio GPT-5.6
+  // da OpenAI (https://openai.com/index/gpt-5-6/, consultado em 2026-10-04):
+  // "Sol is $5 input / $30 output" por 1M tokens. O conflito histórico do
+  // estudo 2026-09 se explica: $4/$20 era leitura do corte temporário da nota
+  // de 21/08/2026 (">20% por 3 meses", sem valor exato publicado — mantemos o
+  // preço de lista), e $1,20/$6 (Devin) é o preço da luna pós-corte de
+  // 30/07/2026, não do sol.
   'gpt-6-astra': { inputPerM: 10, outputPerM: 50, cacheReadPerM: 1 },
   'gpt-6': { inputPerM: 10, outputPerM: 50, cacheReadPerM: 1 },
   'gpt-6.1-sol': { inputPerM: 2, outputPerM: 10, cacheReadPerM: 0.1 },

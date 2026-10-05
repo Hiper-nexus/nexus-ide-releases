@@ -300,6 +300,12 @@ function safeModels(models: unknown, source: string): ModelCatalogEntryInfo[] {
             source: qualityRaw.source.trim(),
           }
         : undefined;
+    // F-912: janela explícita do overlay passa adiante; inválida vira ausente
+    // (mesma regra do quality — `undefined` não pode apagar o que veio antes).
+    const maxContext =
+      typeof raw.maxContext === 'number' && Number.isFinite(raw.maxContext) && raw.maxContext > 0
+        ? Math.round(raw.maxContext)
+        : undefined;
     return [
       {
         id: raw.id.trim(),
@@ -307,6 +313,7 @@ function safeModels(models: unknown, source: string): ModelCatalogEntryInfo[] {
         costTier: raw.costTier,
         source: raw.source ?? source,
         warning: raw.warning,
+        ...(maxContext !== undefined ? { maxContext } : {}),
         // Omit when invalid — explicit `quality: undefined` would wipe published
         // scores during mergeModelCatalogs ({ ...prev, ...overlay }).
         ...(quality ? { quality } : {}),
@@ -417,15 +424,42 @@ export function loadModelCatalog(file = USER_MODEL_CATALOG_FILE): ModelCatalog {
 }
 
 function composeModelCatalog(user: ModelCatalog): ModelCatalog {
-  return isStaleUserModelCatalog(user)
-    ? mergeModelCatalogs(
-        mergeModelCatalogs(user, BUILTIN_MODEL_CATALOG),
-        PUBLISHED_MODEL_CATALOG,
-      )
-    : mergeModelCatalogs(
-        mergeModelCatalogs(BUILTIN_MODEL_CATALOG, PUBLISHED_MODEL_CATALOG),
-        user,
-      );
+  return enrichMaxContext(
+    isStaleUserModelCatalog(user)
+      ? mergeModelCatalogs(
+          mergeModelCatalogs(user, BUILTIN_MODEL_CATALOG),
+          PUBLISHED_MODEL_CATALOG,
+        )
+      : mergeModelCatalogs(
+          mergeModelCatalogs(BUILTIN_MODEL_CATALOG, PUBLISHED_MODEL_CATALOG),
+          user,
+        ),
+  );
+}
+
+/**
+ * F-912: preenche `maxContext` dos modelos do catálogo a partir da janela
+ * (`contextWindow`) do recorte vendorado do oh-my-pi — a única fonte de
+ * janelas que o repo já traz. Aditivo: só quando o campo está ausente
+ * (valor explícito de BUILTIN/PUBLISHED/USER vence) e modelo sem fonte fica
+ * SEM o campo — nenhum número é inventado. O roteador trata ausência como
+ * "não filtrar", nunca como janela zero.
+ */
+function enrichMaxContext(catalog: ModelCatalog): ModelCatalog {
+  const adapters: Record<string, AdapterModelCatalog> = {};
+  for (const [adapterId, adapterCatalog] of Object.entries(catalog.adapters ?? {})) {
+    adapters[adapterId] = {
+      ...adapterCatalog,
+      models: (adapterCatalog.models ?? []).map((entry) => {
+        if (entry.maxContext !== undefined) return entry;
+        const contextWindow = getRichModelMetadata(adapterId, entry.id)?.contextWindow;
+        return typeof contextWindow === 'number' && contextWindow > 0
+          ? { ...entry, maxContext: contextWindow }
+          : entry;
+      }),
+    };
+  }
+  return { ...catalog, adapters };
 }
 
 async function readCatalogText(file: string): Promise<string> {

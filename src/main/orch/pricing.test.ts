@@ -18,6 +18,19 @@ describe('priceForModel', () => {
       expect(priceForModel('claude-sonnet-5')).toBe(MODEL_PRICES['claude-sonnet-5']);
     },
   );
+  it('keeps gpt-5.6-sol at the official OpenAI list price (F-913)', () => {
+    // Fonte: https://openai.com/index/gpt-5-6/ (consultado em 2026-10-04) —
+    // "Sol is $5 input / $30 output" por 1M tokens; cache da família GPT-5.6:
+    // leitura a 10% da entrada, escrita a 1,25x.
+    expect(MODEL_PRICES['gpt-5.6-sol']).toEqual({
+      inputPerM: 5,
+      outputPerM: 30,
+      cacheReadPerM: 0.5,
+      cacheWritePerM: 6.25,
+    });
+    expect(priceForModel('gpt-5.6-sol')).toBe(MODEL_PRICES['gpt-5.6-sol']);
+    expect(estimateCost('gpt-5.6-sol', 1_000_000, 1_000_000)).toBe(35);
+  });
   it('matches by prefix and resolves specific variants', () => {
     expect(priceForModel('claude-opus-4-8')).toEqual(MODEL_PRICES['claude-opus-4-8']);
     expect(priceForModel('gpt-5.2')).toEqual(MODEL_PRICES['gpt-5.2']);

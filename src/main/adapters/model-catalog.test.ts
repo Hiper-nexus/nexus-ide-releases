@@ -679,3 +679,54 @@ describe('refreshRemoteModelCatalog', () => {
     expect(seedLocalModelCatalogFromPublished(file, true)).toBe(true);
   });
 });
+
+describe('maxContext enrichment (F-912)', () => {
+  const tmpDirs: string[] = [];
+  afterEach(() => {
+    invalidateModelCatalogCache();
+    for (const dir of tmpDirs) fs.rmSync(dir, { recursive: true, force: true });
+    tmpDirs.length = 0;
+  });
+
+  it('preenche a janela a partir do catálogo vendorado e deixa ausente quem não tem fonte', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-max-context-'));
+    tmpDirs.push(dir);
+    const catalog = loadModelCatalog(path.join(dir, 'model-catalog.json'));
+    // anthropic/claude-sonnet-5-5 e zai/glm-5.3 têm contextWindow no recorte
+    // vendorado (src/vendor/omp/catalog/models-rich.json).
+    expect(modelCatalogInfo(catalog, 'claude', 'claude-sonnet-5-5')?.maxContext).toBe(1_000_000);
+    expect(modelCatalogInfo(catalog, 'glm', 'glm-5.3')?.maxContext).toBe(1_000_000);
+    // grok-4.7 não está no recorte xai: sem número inventado, o campo fica
+    // ausente (fail-open do filtro do roteador).
+    const grokInfo = modelCatalogInfo(catalog, 'grok', 'grok-4.7');
+    expect(grokInfo).not.toBeNull();
+    expect(grokInfo?.maxContext).toBeUndefined();
+  });
+
+  it('valor explícito do overlay do usuário vence o preenchimento vendorado', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-max-context-'));
+    tmpDirs.push(dir);
+    const file = path.join(dir, 'model-catalog.json');
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        version: 1,
+        adapters: {
+          claude: {
+            models: [
+              {
+                id: 'claude-sonnet-5-5',
+                availability: 'paid',
+                costTier: 'medium',
+                source: 'local',
+                maxContext: 123_456,
+              },
+            ],
+          },
+        },
+      }),
+    );
+    const catalog = loadModelCatalog(file);
+    expect(modelCatalogInfo(catalog, 'claude', 'claude-sonnet-5-5')?.maxContext).toBe(123_456);
+  });
+});

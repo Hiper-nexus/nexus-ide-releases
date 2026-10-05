@@ -1094,6 +1094,7 @@ function evaluatedCandidates(
   tier: TaskTier,
   available: ReadonlyMap<string, AdapterAvailability>,
   catalog: ModelCatalog,
+  contextRequirement: number | null,
 ): RouteCandidate[] {
   const dimension = qualityDimension(specialty, tier);
   const effort = effortForTier(tier);
@@ -1102,6 +1103,12 @@ function evaluatedCandidates(
       const info = modelCatalogInfo(catalog, adapter.id, model);
       if (!hasAuthoritativeModelQuality(info) || isModelBlockedForAutoRouting(info)) {
         return [];
+      }
+      // F-912: candidato com janela documentada menor que o pedido sai do
+      // ranking (ausência de maxContext = sem filtro).
+      if (contextRequirement !== null) {
+        const maxContext = info?.maxContext ?? adapter.capabilities?.maxContext;
+        if (maxContext !== undefined && maxContext < contextRequirement) return [];
       }
       const qualityInfo = info!.quality!;
       const quality =
@@ -1171,6 +1178,104 @@ export function taskNeedsWebSearch(taskText: string): boolean {
 }
 
 /**
+ * F-912: janela de contexto mínima DECLARADA AFIRMATIVAMENTE no texto da
+ * tarefa — "preciso de contexto de 200k", "janela de 1M tokens", "carregar
+ * 300k tokens de contexto", "window of 250k tokens". O filtro exclui
+ * candidatos do ranking, então a menção tem de ser uma DECLARAÇÃO de
+ * janela/contexto de entrada do modelo, não um número qualquer de tokens
+ * (P2 da revisão de ponta):
+ *  - quantidade ancorada em contexto/janela/window (antes ou depois do
+ *    número) e em unidade de TOKENS — "janela de 500k bytes", "3 mil linhas
+ *    de contexto" e "custo de 200k tokens de saída" não contam;
+ *  - citação não é pedido: trechos entre aspas/crase/bloco são descartados
+ *    antes de casar ("contexto de 200k tokens" citado de README);
+ *  - negação NA MESMA ORAÇÃO do pedido rejeita a declaração ("Não preciso
+ *    de contexto de 200k tokens", "don't need a 500k context window"); a
+ *    negação de outra oração não se refere ao contexto ("Não edite, use
+ *    contexto de 200k tokens" é pedido VÁLIDO);
+ *  - sem declaração → null: nenhum modelo é excluído. Ausência de dado não
+ *    pode derrubar candidato, espelhando o contrato do `maxContext` em si.
+ */
+const CONTEXT_UNIT_MULTIPLIER: Record<string, number> = {
+  k: 1_000,
+  mil: 1_000,
+  m: 1_000_000,
+  'milhão': 1_000_000,
+  milhões: 1_000_000,
+  million: 1_000_000,
+};
+// Quantidade: "200k", "1,5M", "500 mil", "2M" — ou número extenso "200000".
+const CONTEXT_QUANTITY =
+  '(\\d+(?:[.,]\\d+)?)\\s*(k|m|mil|milh(?:ão|ões)|million)\\b|(\\d{4,})';
+// Unidade incompatível logo após a quantidade invalida a declaração: a
+// janela é em tokens, não bytes/linhas/caracteres/palavras/arquivos.
+const CONTEXT_CONFLICTING_UNIT =
+  '(?!\\s*-?\\s*(?:bytes?|[kmg]?b\\b|caracteres?|chars?|linhas?|lines?|palavras?|words?|registros?|rows?|documentos?|arquivos?|files?|eventos?|records?\\b)\\b)';
+const CONTEXT_REQUIREMENT = new RegExp(
+  '(?<![\\p{L}\\p{N}])(?:' +
+    // 1) "contexto (de entrada) de 1M (tokens)", "context window of 250k tokens"
+    '(?:contexto|context|janela|window)\\s+(?:de\\s+)?(?:(?:entrada|input)\\s+)?(?:de\\s+|of\\s+|d[’\']\\s*)?' +
+    `(?:${CONTEXT_QUANTITY})${CONTEXT_CONFLICTING_UNIT}[-\\s]*(?:tokens?\\b)?` +
+    // 2) "1M tokens de contexto", "500k de contexto", "2M-token context",
+    //    "200000 tokens de entrada", "200k tokens of input context"
+    `|(?:${CONTEXT_QUANTITY})${CONTEXT_CONFLICTING_UNIT}[-\\s]*(?:tokens?\\b[-\\s]*)?(?:(?:de|of)\\s+)?(?:(?:entrada|input)\\s+)?(?:contexto|context|entrada)\\b` +
+    ')(?![\\p{L}\\p{N}])',
+  'giu',
+);
+// Negação NA MESMA ORAÇÃO do pedido: a negação de outra oração ("Não edite,
+// use contexto de 200k") não se refere ao contexto. O prefixo é cortado na
+// última vírgula/ponto-e-vírgula/pontuação/conjunção antes do casamento.
+const CONTEXT_CLAUSE_CUT =
+  /(?:[,;:.!?…\n]|\b(?:e|mas|ou|porém|contudo|todavia|então|and|but|or|so|then|however|though)\b)/giu;
+const CONTEXT_NEGATION =
+  /(?:^|[\s(])(?:n[ãa]o|nunca|jamais|sem|sem\s+necessidade\s+de|nem|don(?:'t|’t)?|do\s+not|doesn'?t|no\s+need|not)\b[^\n.;:!?]{0,28}$/iu;
+
+/** Trechos citados (bloco ```, crase, aspas retas/curvas) não são pedido. */
+function stripQuotedContextSpans(text: string): string {
+  return text
+    .replace(/```[\s\S]*?(```|$)/g, ' ')
+    .replace(/`[^`\n]*`/g, ' ')
+    .replace(/"[^"\n]*"/g, ' ')
+    .replace(/“[^”\n]*”/g, ' ')
+    .replace(/«[^»\n]*»/g, ' ')
+    // Aspas simples só quando abrem depois de espaço/ínicio — "don't" é
+    // apóstrofo de contração, não citação.
+    .replace(/(?<![\p{L}\p{N}])'[^'\n]*'/gu, ' ')
+    .replace(/(?<![\p{L}\p{N}])‘[^’\n]*’/gu, ' ');
+}
+
+/** Tokens mínimos de contexto exigidos pela tarefa, ou null se não declarado. */
+export function taskContextRequirement(taskText: string): number | null {
+  const prose = stripQuotedContextSpans(taskText);
+  let requirement: number | null = null;
+  for (const match of prose.matchAll(CONTEXT_REQUIREMENT)) {
+    // Negação na MESMA ORAÇÃO do pedido ("não preciso de contexto de…") não é
+    // pedido; negação de outra oração ("Não edite, use contexto de 200k")
+    // refere-se a outro verbo e não rejeita.
+    const lookback = prose.slice(Math.max(0, match.index - 80), match.index);
+    let clauseStart = 0;
+    for (const cut of lookback.matchAll(CONTEXT_CLAUSE_CUT)) {
+      clauseStart = (cut.index ?? 0) + cut[0].length;
+    }
+    if (CONTEXT_NEGATION.test(lookback.slice(clauseStart))) continue;
+    // A quantidade aparece DUAS vezes na regex (uma por alternativa); só a
+    // alternativa casada preenche os grupos dela (1/2/3 ou 4/5/6).
+    const quantity = Number.parseFloat(
+      (match[1] ?? match[3] ?? match[4] ?? match[6] ?? '').replace(',', '.'),
+    );
+    if (!Number.isFinite(quantity)) continue;
+    const unit = (match[2] ?? match[5])?.toLowerCase();
+    const tokens = Math.round(
+      unit ? quantity * (CONTEXT_UNIT_MULTIPLIER[unit] ?? 1) : quantity,
+    );
+    if (tokens >= 1_000 && (requirement === null || tokens > requirement)) {
+      requirement = tokens;
+    }
+  }
+  return requirement;
+}
+
+/**
  * Pick the first installed candidate of the task's tier (candidates are
  * ordered cheapest-first). When nothing of the tier is installed, walk the
  * cheaper tiers down then the stronger ones up; last resort is the first
@@ -1212,6 +1317,23 @@ export function routeTask(
       ? '; exige busca na web — pool limitado a capabilities.webSearch'
       : '; exige busca na web — nenhum adapter declara a capacidade'
     : '';
+  // F-912: janela de contexto declarada na tarefa. O filtro exclui o candidato
+  // cujo maxContext DOCUMENTADO (catálogo do modelo ou manifest do adapter) é
+  // menor que o pedido — ausência de maxContext não exclui ninguém. A menção
+  // explícita de modelo no texto continua vencendo (nota, não exclusão).
+  const contextRequirement = taskContextRequirement(taskText);
+  const effectiveMaxContext = (adapterId: string, model?: string): number | undefined =>
+    modelCatalogInfo(modelCatalog, adapterId, model)?.maxContext ??
+    available.get(adapterId)?.capabilities?.maxContext;
+  const fitsContext = (adapterId: string, model?: string): boolean => {
+    if (contextRequirement === null) return true;
+    const maxContext = effectiveMaxContext(adapterId, model);
+    return maxContext === undefined || maxContext >= contextRequirement;
+  };
+  const contextNote =
+    contextRequirement !== null
+      ? `; exige contexto ≥ ${contextRequirement.toLocaleString('en-US')} tokens — excluídos os com maxContext documentado menor`
+      : '';
   const available = new Map(
     routedAdapters.filter((a) => a.installed).map((a) => [a.id, a]),
   );
@@ -1253,7 +1375,7 @@ export function routeTask(
     }),
   );
   const evaluated = evaluationCoversAllInstalled
-    ? evaluatedCandidates(specialtyVerdict.specialty, tier, available, modelCatalog)
+    ? evaluatedCandidates(specialtyVerdict.specialty, tier, available, modelCatalog, contextRequirement)
     : [];
   const why =
     classification.signals.length > 0
@@ -1324,23 +1446,29 @@ export function routeTask(
         // disponível, descarta — nunca cai no default silencioso do CLI.
         const eligible = eligibleModels(adapter);
         const resolved = resolveRoutableModel(c.model, adapter.models);
+        let routed: RouteCandidate;
         if (!resolved.ok) {
+          // Resgate da linha: id da tabela ausente da CLI sobe para o mais
+          // novo da MESMA linha — e o resgatado passa pela MESMA validação
+          // abaixo (bloqueio, quarentena, janela): não pode contornar o eixo
+          // de capacidade só porque chegou por upgrade (F-912, P2 da revisão).
           const newer = c.model ? newestInModelLine(c.model, eligible) : undefined;
           if (!newer || newer === c.model) {
             missingFromCli.push(`${c.adapterId}:${c.model}`);
             return [];
           }
           lineUpgrades.push(`${c.adapterId}:${c.model}→${newer}`);
-          return [{ ...c, model: newer }];
+          routed = { ...c, model: newer };
+        } else {
+          const upgraded =
+            resolved.model !== undefined
+              ? newestInModelLine(resolved.model, eligible)
+              : resolved.model;
+          if (upgraded !== resolved.model) {
+            lineUpgrades.push(`${c.adapterId}:${resolved.model}→${upgraded}`);
+          }
+          routed = { ...c, model: upgraded };
         }
-        const upgraded =
-          resolved.model !== undefined
-            ? newestInModelLine(resolved.model, eligible)
-            : resolved.model;
-        if (upgraded !== resolved.model) {
-          lineUpgrades.push(`${c.adapterId}:${resolved.model}→${upgraded}`);
-        }
-        const routed: RouteCandidate = { ...c, model: upgraded };
         const info = modelCatalogInfo(modelCatalog, routed.adapterId, routed.model);
         if (isModelBlockedForAutoRouting(info)) {
           skippedRisk.push(
@@ -1352,6 +1480,14 @@ export function routeTask(
         if (modelAccessQuarantine(routed.adapterId, routed.model)) {
           skippedRisk.push(
             `${routed.adapterId}:${routed.model ?? '(default)'} (recusado pelo provider)`,
+          );
+          return [];
+        }
+        // F-912: janela documentada menor que a exigida pela tarefa.
+        if (!fitsContext(routed.adapterId, routed.model)) {
+          skippedRisk.push(
+            `${routed.adapterId}:${routed.model ?? '(default)'} ` +
+              `(contexto ${effectiveMaxContext(routed.adapterId, routed.model)} < ${contextRequirement})`,
           );
           return [];
         }
@@ -1525,6 +1661,9 @@ export function routeTask(
         isModelBlockedForAutoRouting(modelCatalogInfo(modelCatalog, seat.adapterId, chosen)) ||
         modelAccessQuarantine(seat.adapterId, chosen)
       ) return;
+      // F-912: assento de lane com janela documentada menor que a exigida
+      // perde o lugar (a lane promove topo de linha; sem fonte, segue).
+      if (!fitsContext(seat.adapterId, chosen)) return;
       laneSeats.push({ lane: laneIndex, adapterId: seat.adapterId, model: chosen });
       if (!ranked.some((r) => r.c.adapterId === seat.adapterId && r.c.model === chosen)) {
         ranked.push({ c: { adapterId: seat.adapterId, model: chosen }, fromTier: tier });
@@ -1767,7 +1906,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${contextNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
       alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId) })),
       specialty: specialtyVerdict.specialty,
       policySource,
@@ -1780,7 +1919,22 @@ export function routeTask(
   // missão num único CLI, tipicamente Codex). Escolhe o MENOS USADO da missão
   // entre os disponíveis — o mesmo sinal de diversidade do multi-score, agora
   // no degrau final.
-  const fallbackPool = [...available.keys()];
+  // F-912: no degrau final ainda prefere quem tem ALGUM modelo com janela
+  // suficiente (ou sem lista/janela documentada); se ninguém cabe, segue com
+  // todos — a rota nunca fica sem destino.
+  const contextFitFallbacks =
+    contextRequirement === null
+      ? []
+      : [...available.keys()].filter((id) => {
+          const models = available.get(id)?.models;
+          if (models === undefined) return true;
+          return models.some((model) => {
+            const maxContext = effectiveMaxContext(id, model);
+            return maxContext === undefined || maxContext >= contextRequirement;
+          });
+        });
+  const fallbackPool =
+    contextFitFallbacks.length > 0 ? contextFitFallbacks : [...available.keys()];
   const useCount = (id: string): number =>
     context.missionUseCounts?.get(id) ?? 0;
   const fallback = fallbackPool.reduce((least, id) =>
@@ -1790,7 +1944,7 @@ export function routeTask(
     tier,
     adapterId: fallback,
     effort: effortFor(fallback),
-    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback} (menos usado na missão)${capabilityNote}${missingNote}${effortNoteFor(fallback)}`,
+    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback} (menos usado na missão)${capabilityNote}${contextNote}${missingNote}${effortNoteFor(fallback)}`,
     alternatives: [],
     specialty: specialtyVerdict.specialty,
     policySource: policy.source,
