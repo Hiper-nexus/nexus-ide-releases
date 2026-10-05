@@ -313,6 +313,36 @@ export function memoryStalenessDays(
   return Math.max(0, Math.floor((now - latest) / DAY_MS));
 }
 
+/**
+ * Origem das notas retidas de handoffs aceitos (projeção canônica do SQLite).
+ * É o único rastro de "houve trabalho entregue" que a tela Memória recebe.
+ */
+export const HANDOFF_MEMORY_SOURCE = 'trusted:accepted-handoff';
+
+/**
+ * Handoffs retidos desde a memória mais recente (Mem12): o alerta de
+ * "parou de andar" só dispara quando houve entrega no período parado.
+ * Teto conhecido: handoff entregue mas nunca retido (retenção desligada ou
+ * falha) não aparece aqui — isso exigiria expor atividade do Main no IPC.
+ */
+export function memoryHandoffsInStalePeriod(
+  notes: ReadonlyArray<Pick<ProductMemoryNote, 'createdAt' | 'updatedAt' | 'source'>>,
+): number {
+  let latest = 0;
+  for (const note of notes) {
+    const stamp = note.updatedAt ?? note.createdAt ?? 0;
+    if (stamp > latest) latest = stamp;
+  }
+  if (latest <= 0) return 0;
+  let handoffs = 0;
+  for (const note of notes) {
+    if (note.source !== HANDOFF_MEMORY_SOURCE) continue;
+    const stamp = note.updatedAt ?? note.createdAt ?? 0;
+    if (stamp >= latest) handoffs += 1;
+  }
+  return handoffs;
+}
+
 /** Linha "última memória há N dias" da tela Memória. */
 export function memoryStalenessLabel(days: number): string {
   if (days === 0) return 'Última memória hoje';
@@ -711,8 +741,10 @@ export function MemoryPanelBody({
             ? (() => {
                 const stalenessDays = memoryStalenessDays(notes);
                 if (stalenessDays === null) return null;
+                // Mem12: idade sozinha não alarma — só com handoffs no período.
                 const stale =
-                  stalenessDays > MEMORY_STALE_DAYS_THRESHOLD;
+                  stalenessDays > MEMORY_STALE_DAYS_THRESHOLD &&
+                  memoryHandoffsInStalePeriod(notes) > 0;
                 return (
                   <p
                     className="product-pane__meta memory-workspace__staleness"
@@ -721,7 +753,7 @@ export function MemoryPanelBody({
                   >
                     {memoryStalenessLabel(stalenessDays)}
                     {stale
-                      ? ' — acima de 3 dias sem gravar: o projeto pode estar esquecendo o que aprendeu'
+                      ? ' — há mais de 3 dias com handoffs no período: o projeto pode estar esquecendo o que aprendeu'
                       : ''}
                   </p>
                 );

@@ -153,7 +153,7 @@ describe('MemoryWorkspace contracts', () => {
     expect(collection?.querySelector('.memory-workspace__empty')).not.toBeNull();
   });
 
-  it('mostra há quantos dias veio a última memória e alerta acima de 3 dias (F-769)', async () => {
+  it('mostra há quantos dias veio a última memória sem alertar quando não há handoffs (Mem12)', async () => {
     const dayMs = 86_400_000;
     memoryBoundary.memoryList.mockResolvedValue([
       {
@@ -171,7 +171,38 @@ describe('MemoryWorkspace contracts', () => {
       '.memory-workspace__staleness',
     );
     expect(line?.textContent).toContain('Última memória há 10 dias');
+    expect(line?.hasAttribute('data-stale')).toBe(false);
+    expect(line?.textContent).not.toMatch(/pode estar esquecendo/);
+  });
+
+  it('alerta acima de 3 dias quando há handoffs no período parado (Mem12)', async () => {
+    const dayMs = 86_400_000;
+    memoryBoundary.memoryList.mockResolvedValue([
+      {
+        id: 'memory-old-note',
+        title: 'Decisão antiga',
+        body: 'corpo',
+        kind: 'note',
+        updatedAt: Date.now() - 10 * dayMs,
+      },
+      {
+        id: 'memory-stale-handoff',
+        title: 'Handoff aceito',
+        body: 'corpo',
+        kind: 'note',
+        source: 'trusted:accepted-handoff',
+        updatedAt: Date.now() - 5 * dayMs,
+      },
+    ]);
+    const host = mount(<MemoryWorkspace />);
+    await settleMemoryEffects();
+
+    const line = host.querySelector<HTMLElement>(
+      '.memory-workspace__staleness',
+    );
+    expect(line?.textContent).toContain('Última memória há 5 dias');
     expect(line?.getAttribute('data-stale')).toBe('true');
+    expect(line?.textContent).toMatch(/handoffs no período/);
     expect(line?.textContent).toMatch(/pode estar esquecendo/);
   });
 
