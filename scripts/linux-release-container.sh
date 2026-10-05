@@ -97,11 +97,17 @@ load_github_env() {
   done < "$GITHUB_PATH"
 }
 
-if [ -n "${NEXUS_CI_TMPDIR:-}" ]; then
-  mkdir -p "$NEXUS_CI_TMPDIR"
-  export TMPDIR="$NEXUS_CI_TMPDIR"
-  log "TMPDIR=$TMPDIR (${#TMPDIR} caracteres)"
-fi
+# O TMPDIR comprido (como o do macOS) vale SÓ para a suíte: o Chromium cria um socket em
+# $TMPDIR e o smoke do app empacotado estoura o limite de 108 caracteres do sun_path com ele.
+with_test_tmp() {
+  if [ -n "${NEXUS_CI_TMPDIR:-}" ]; then
+    mkdir -p "$NEXUS_CI_TMPDIR"
+    TMPDIR="$NEXUS_CI_TMPDIR" "$@"
+  else
+    "$@"
+  fi
+}
+[ -z "${NEXUS_CI_TMPDIR:-}" ] || log "TMPDIR só na suíte: $NEXUS_CI_TMPDIR (${#NEXUS_CI_TMPDIR} caracteres)"
 git config --global --add safe.directory '*'
 git clone -q /source-ro "$WORK/src"
 cd "$WORK/src"
@@ -174,7 +180,7 @@ if [ -n "${CI_TEST_FILES:-}" ] && [ -n "$CI_REF" ]; then
   # Diagnóstico rápido: só estes arquivos de teste (modo CI), sem typecheck nem suíte inteira.
   log "diagnóstico: apenas $CI_TEST_FILES"
   # shellcheck disable=SC2086
-  npx vitest run $CI_TEST_FILES
+  with_test_tmp npx vitest run $CI_TEST_FILES
   exit $?
 fi
 npm run typecheck
@@ -184,9 +190,9 @@ if [ -n "${KNOWN_TEST_FAILURE_FILE:-}" ]; then
   test -n "${KNOWN_TEST_FAILURE_MATCH:-}"
   test -f "$KNOWN_TEST_FAILURE_FILE"
   log "falha conhecida: $KNOWN_TEST_FAILURE_FILE tem de falhar só com: $KNOWN_TEST_FAILURE_MATCH"
-  npm test -- --exclude "$KNOWN_TEST_FAILURE_FILE"
+  with_test_tmp npm test -- --exclude "$KNOWN_TEST_FAILURE_FILE"
   set +e
-  KNOWN_OUT="$(npx vitest run "$KNOWN_TEST_FAILURE_FILE" 2>&1)"
+  KNOWN_OUT="$(with_test_tmp npx vitest run "$KNOWN_TEST_FAILURE_FILE" 2>&1)"
   KNOWN_RC=$?
   set -e
   printf '%s\n' "$KNOWN_OUT" | tail -25
@@ -195,7 +201,7 @@ if [ -n "${KNOWN_TEST_FAILURE_FILE:-}" ]; then
   test "$(printf '%s\n' "$KNOWN_OUT" | sed 's/\x1b\[[0-9;]*m//g' | grep -cE '^ +Tests +1 failed')" = 1
   KNOWN_FAILURE_RECORD="$KNOWN_TEST_FAILURE_FILE: $KNOWN_TEST_FAILURE_MATCH"
 else
-  npm test
+  with_test_tmp npm test
 fi
 if [ -n "$CI_REF" ]; then
   log "CI ok: $RELEASE_COMMIT (typecheck, sinks do renderer e testes)"
