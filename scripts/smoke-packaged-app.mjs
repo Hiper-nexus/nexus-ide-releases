@@ -1305,7 +1305,9 @@ export async function disposePackagedSmokeSession(session) {
   }
   ownedSmokeSessions.delete(session);
   // fs.rm unlinks symlinks; it never follows a replaced profile into its target.
-  await fs.rm(session.userData, { recursive: true, force: true });
+  // F-931: no Windows uma CLI instalada no host (AGY) ainda segura o próprio
+  // SQLite no HOME isolado por instantes depois que o app sai (EBUSY).
+  await fs.rm(session.userData, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
 }
 
 export async function runPackagedSmoke(
