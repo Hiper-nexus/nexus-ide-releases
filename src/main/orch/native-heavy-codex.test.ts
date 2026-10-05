@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
+import os from 'node:os';
 import { fork, spawn, execFileSync } from 'node:child_process';
 import { expect, it, vi } from 'vitest';
 vi.mock('electron', () => ({ app: { isPackaged: false, getAppPath: () => process.cwd() }, utilityProcess: { fork: () => { throw new Error('explicit Node test port required'); } } }));
@@ -62,10 +63,13 @@ it.runIf(process.platform === 'darwin' && Boolean(codex)).each(['baseline', 'fil
       expect(fs.existsSync(path.join(workspace, 'node-ran'))).toBe(false);
       const permit = await pool.acquire(request); expect(fs.existsSync(path.join(workspace, 'command-ran'))).toBe(false); transitions.push('grant');
       return { id: permit.id, release: () => { transitions.push('release'); permit.release(); } }; } });
-  let toolSent = false, modelCalls = 0, forbiddenConnections = 0;
+  let toolSent = false, modelCalls = 0, tcpConnections = 0, unixConnections = 0;
   let forbiddenPort = 0;
-  const foreignSocket = path.join(privateTmp, 'foreign.sock');
-  const foreign = http.createServer((_req, res) => { forbiddenConnections++; res.end('forbidden'); });
+  // sockaddr_un has a fixed path budget. Keep the network probe independent
+  // of the checkout path, which can exceed that budget in private validation.
+  const socketDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-codex-'));
+  const foreignSocket = path.join(socketDirectory, 'foreign.sock');
+  const foreign = http.createServer((_req, res) => { unixConnections++; res.end('probe'); });
   foreign.maxConnections = 4; foreign.headersTimeout = 5000; foreign.requestTimeout = 5000;
   await new Promise<void>(resolve => foreign.listen(foreignSocket, resolve));
   const sockets = new Set<import('node:net').Socket>();
@@ -94,7 +98,7 @@ it.runIf(process.platform === 'darwin' && Boolean(codex)).each(['baseline', 'fil
             const tcpDenied = `/usr/bin/curl --disable --silent --show-error --fail --noproxy '*' --connect-timeout 1 --max-time 1 http://127.0.0.1:${forbiddenPort}/must-not-connect`;
             const unixDenied = `/usr/bin/curl --disable --silent --show-error --fail --noproxy '*' --connect-timeout 1 --max-time 1 --unix-socket ${JSON.stringify(foreignSocket)} http://127.0.0.1/must-not-connect`;
             const policyChecks = freedom
-              ? `printf permitted > ${JSON.stringify(path.join(root, 'outside-probe'))}; ${tcpDenied} >/dev/null; ${unixDenied} >/dev/null;`
+              ? `printf permitted > ${JSON.stringify(path.join(root, 'outside-probe'))} || exit 91; ${tcpDenied} >/dev/null || exit 92; ${unixDenied} >/dev/null || exit 93;`
               : `if (printf forbidden > ${JSON.stringify(path.join(root, 'outside-probe'))}) 2>/dev/null; then exit 91; fi; if ${tcpDenied} 2>/dev/null; then exit 92; fi; if ${unixDenied} 2>/dev/null; then exit 93; fi;`;
             const command = `${policyChecks} printf tmp-ok > "$TMPDIR/codex-io-control"; NODE_OPTIONS= /bin/sh -c "/usr/bin/make -f Makefile"; ${JSON.stringify(process.execPath)} ${JSON.stringify(nodeEntry)}`;
             const input = selected.name?.endsWith('shell') ? { command: ['/bin/zsh', '-c', command], workdir: workspace }
@@ -109,7 +113,7 @@ it.runIf(process.platform === 'darwin' && Boolean(codex)).each(['baseline', 'fil
           return;
         }
         if (req.url?.startsWith('/v1/models')) { res.end(JSON.stringify({ data: [{ id: 'gpt-6.1-sol' }] })); return; }
-        if (req.url === '/must-not-connect') { forbiddenConnections++; res.end('forbidden'); return; }
+        if (req.url === '/must-not-connect') { tcpConnections++; res.end('probe'); return; }
         res.writeHead(404); res.end('{}');
       } catch { res.writeHead(422); res.end('{}'); }
     });
@@ -160,7 +164,8 @@ it.runIf(process.platform === 'darwin' && Boolean(codex)).each(['baseline', 'fil
     expect(fs.readFileSync(path.join(workspace, 'node-ran'), 'utf8')).toBe('node-done');
     expect(fs.existsSync(path.join(root, 'outside-probe'))).toBe(freedom);
     expect(fs.readFileSync(path.join(privateTmp, 'codex-io-control'), 'utf8')).toBe('tmp-ok');
-    expect(forbiddenConnections).toBe(freedom ? 2 : 0);
+    expect({ tcpConnections, unixConnections }, (stderr + stdout).slice(-4000))
+      .toEqual(freedom ? { tcpConnections: 1, unixConnections: 1 } : { tcpConnections: 0, unixConnections: 0 });
     expect(admissions.some(value => (value as { proof?: string }).proof === 'darwin-job')).toBe(scheduled);
     if (scheduled) expect(admissions.some(value => typeof (value as { leaseId?: string }).leaseId === 'string'), JSON.stringify(admissions)).toBe(true);
     await native.drain(); expect(transitions).toEqual(scheduled ? ['grant', 'release'] : []);
@@ -168,6 +173,7 @@ it.runIf(process.platform === 'darwin' && Boolean(codex)).each(['baseline', 'fil
     clearTimeout(timer); child.kill('SIGTERM'); await exit; pool.close(); await channel?.dispose();
     const closed = new Promise<void>(resolve => server.close(() => resolve())); for (const socket of sockets) socket.destroy(); await closed;
     await new Promise<void>(resolve => foreign.close(() => resolve()));
+    fs.rmSync(socketDirectory, { recursive: true, force: true });
     cleanupCliMcpSession(ctx.token);
     fs.rmSync(root, { recursive: true, force: true });
   }
