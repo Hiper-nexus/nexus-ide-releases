@@ -26,6 +26,7 @@ import {
 } from './update-repos';
 import { createSingleFlight } from './single-flight';
 import {
+  cleanupStaleStaging,
   detectLinuxInstall,
   launchApplyHelper,
   scheduleOldInstallCleanup,
@@ -434,6 +435,9 @@ export class UpdateManager {
         this.linuxInstall = install;
         this.patch({ phase: 'idle', source: 'gh', canInstall: true, error: undefined, installerPlatform: 'linux' });
         scheduleOldInstallCleanup(install);
+        void cleanupStaleStaging(install).then((removed) => {
+          if (removed.length) writeUpdateLog('info', 'init:linux-stale-staging-removed', { count: removed.length });
+        });
         writeUpdateLog('info', 'init:linux-self', { installDir: install.installDir });
       } else {
         this.mode = 'manual';

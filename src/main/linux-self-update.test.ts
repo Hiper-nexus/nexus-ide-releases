@@ -7,6 +7,7 @@ import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { keyIdOf, type UpdateSigningKey } from './linux-update-signing';
 import {
   APPLY_SCRIPT,
+  cleanupStaleStaging,
   LINUX_SIG_NAME,
   LINUX_SUMS_NAME,
   detectLinuxInstall,
@@ -317,5 +318,36 @@ describe('scheduleOldInstallCleanup', () => {
     expect(scheduleOldInstallCleanup(w.install, 5, remove)).not.toBeNull();
     await new Promise((r) => setTimeout(r, 40));
     expect(remove).toHaveBeenCalledWith(`${w.install.installDir}.old`);
+  });
+});
+
+describe('cleanupStaleStaging', () => {
+  it('apaga a pasta .new e os ZIPs de tentativas antigas, e só eles', async () => {
+    const w = world();
+    const staged = `${w.install.installDir}.new`;
+    fs.mkdirSync(path.join(staged, 'resources'), { recursive: true });
+    fs.writeFileSync(path.join(staged, 'nexus-ide'), 'x');
+    fs.writeFileSync(path.join(w.base, '.nexus-ide-update-0.76.198.zip'), 'z');
+    fs.writeFileSync(path.join(w.base, 'minha-pasta.txt'), 'não toque');
+    fs.writeFileSync(path.join(w.base, '.nexus-ide-update-lixo.zip'), 'não casa o padrão');
+    const later = Date.now() + 60 * 60_000;
+    const removed = await cleanupStaleStaging(w.install, 15 * 60_000, later);
+    expect(removed.sort()).toEqual([staged, path.join(w.base, '.nexus-ide-update-0.76.198.zip')].sort());
+    expect(fs.readdirSync(w.base).sort()).toEqual(['.nexus-ide-update-lixo.zip', 'minha-pasta.txt', 'nexus-ide']);
+    expect(fs.existsSync(path.join(w.install.installDir, 'nexus-ide'))).toBe(true);
+  });
+
+  it('não encosta no que é recente (uma atualização sendo preparada agora)', async () => {
+    const w = world();
+    fs.mkdirSync(`${w.install.installDir}.new`);
+    fs.writeFileSync(path.join(w.base, '.nexus-ide-update-0.76.198.zip'), 'z');
+    expect(await cleanupStaleStaging(w.install, 15 * 60_000)).toEqual([]);
+    expect(fs.existsSync(`${w.install.installDir}.new`)).toBe(true);
+  });
+
+  it('não lança sem pasta pai legível nem sem nada para limpar', async () => {
+    const w = world();
+    expect(await cleanupStaleStaging(w.install)).toEqual([]);
+    expect(await cleanupStaleStaging({ ...w.install, parentDir: '/caminho/que/nao/existe', installDir: '/caminho/que/nao/existe/nexus-ide' })).toEqual([]);
   });
 });

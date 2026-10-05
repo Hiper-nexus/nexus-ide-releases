@@ -199,7 +199,7 @@ case "$dest" in /*) ;; *) exit 64 ;; esac
 i=0
 while kill -0 "$pid" 2>/dev/null; do
   i=$((i + 1))
-  [ "$i" -gt 150 ] && exit 66
+  [ "$i" -gt 500 ] && exit 66
   sleep 0.2
 done
 rm -rf "$old"
@@ -240,4 +240,45 @@ export function scheduleOldInstallCleanup(
   }, delayMs);
   timer.unref?.();
   return timer;
+}
+
+/**
+ * Resíduo de uma troca que não chegou a acontecer (o app demorou a fechar, o disco encheu, o operador
+ * desistiu): a pasta `.new` extraída e ZIPs temporários de tentativas antigas. Só apaga o que tem mais de
+ * `olderThanMs`, para nunca tocar numa atualização que está sendo preparada agora.
+ */
+export async function cleanupStaleStaging(
+  install: Extract<LinuxInstall, { kind: 'portable' }>,
+  olderThanMs = 15 * 60_000,
+  now = Date.now(),
+): Promise<string[]> {
+  const removed: string[] = [];
+  const stale = async (target: string): Promise<boolean> => {
+    try {
+      const info = await fs.promises.lstat(target);
+      return now - info.mtimeMs > olderThanMs;
+    } catch {
+      return false;
+    }
+  };
+  const staged = `${install.installDir}.new`;
+  if (await stale(staged)) {
+    await removeTree(staged, { force: true }).catch(() => undefined);
+    removed.push(staged);
+  }
+  let names: string[] = [];
+  try {
+    names = await fs.promises.readdir(install.parentDir);
+  } catch {
+    return removed;
+  }
+  for (const name of names) {
+    if (!/^\.nexus-ide-update-\d+\.\d+\.\d+\.zip$/u.test(name)) continue;
+    const target = path.join(install.parentDir, name);
+    if (await stale(target)) {
+      await fs.promises.rm(target, { force: true }).catch(() => undefined);
+      removed.push(target);
+    }
+  }
+  return removed;
 }
