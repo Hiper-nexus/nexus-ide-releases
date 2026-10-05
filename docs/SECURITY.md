@@ -218,6 +218,20 @@ como o usuário, então o GitHub sozinho não é a raiz de confiança.
 - **Não cobre:** DEB e RPM (root; canal manual) e a conta do dono do repositório de releases ser comprometida JUNTO com a
   chave privada. Perder a privada exige uma versão nova assinada por outra chave que o app já conheça (por isso a lista).
 
+## Linux: repositórios apt e dnf assinados (F-942)
+
+- **Quem assina:** uma chave GPG RSA 4096 só de repositório (`EFFD5CAE…E2518740`, expira em 2031-10-04), distinta da
+  chave Ed25519 do auto-update do ZIP (F-940). A privada fica em `~/.config/nexus-release/gnupg` (0700), fora do repositório
+  e fora de qualquer container; `scripts/build-linux-repo.sh` só assina no host e confere a assinatura com um chaveiro novo
+  que só tem a pública antes de qualquer upload.
+- **O que é assinado:** `InRelease`/`Release.gpg` (apt) e `repomd.xml.asc` (dnf). Os índices carregam o SHA-256 de cada
+  pacote, então a integridade do `.deb` vem do `Release` assinado. O RPM não é assinado (`gpgcheck=0`, `repo_gpgcheck=1`).
+- **O Worker não é confiável para conteúdo:** ele só redireciona (`site/src/downloads/repo.js`) para os assets da release
+  Linux mais nova do catálogo validado, e só para nomes de uma lista fechada. Se o Worker ou o GitHub entregarem outro
+  arquivo, o apt/dnf recusam por hash ou por assinatura.
+- **Opt-in:** só `install-repo.sh` altera repositórios do sistema (`/etc/apt/keyrings`, `sources.list.d`, `yum.repos.d`); o
+  `install.sh` comum continua sem tocar neles. O ativador confere a impressão digital da chave quando há `gpg` e tem `--remove`.
+
 ## Limits
 
 - Max redaction depth/size (audit-log constants).

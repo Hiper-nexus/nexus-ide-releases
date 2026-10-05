@@ -117,6 +117,24 @@ A chave fica em `~/.config/nexus-release/linux-update-ed25519.pem` (0600); o scr
 app não conheça. Faça backup dela: sem ela, só uma versão assinada por OUTRA chave já embutida troca de chave. Rotação:
 acrescente a pública nova a `UPDATE_SIGNING_KEYS`, publique assinando com a antiga e, versões depois, retire a antiga.
 
+### Repositórios apt e dnf (F-942)
+
+Depois de assinar o `SHA256SUMS` (acima) e ANTES de anunciar a versão, gere e suba os metadados assinados dos repositórios,
+NO HOST (a chave GPG não entra em container; use `source` por causa do `sudo`, como nos outros scripts):
+
+```bash
+export DOCKER="sudo -n docker"; source scripts/build-linux-repo.sh <saída do build> <saída>/repo   # confere a assinatura sozinho
+for f in <saída>/repo/assets/*; do
+  gh release upload v<v> -R Hiper-nexus/nexus-ide "$f"; gh release upload v<v> -R Hiper-nexus/nexus-ide-releases "$f"
+done
+```
+
+O Worker do site redireciona `https://nexuside.app/apt/*` e `/rpm/*` para os assets da release Linux mais nova; a release
+precisa ter os TRÊS pacotes e esses metadados. Sem os metadados da versão nova, o `apt update` falha em `Hash Sum mismatch` até
+eles subirem: suba-os logo depois dos pacotes. A chave GPG vive em `~/.config/nexus-release/gnupg` (0700) e expira em
+2031-10-04; faça backup, e para trocá-la publique a nova em `site/public/linux/` e atualize `KEY_FPR` em `install-repo.sh`.
+Quem quiser atualizações pelo sistema roda UMA vez `curl -fsSL https://nexuside.app/install-repo.sh | sh`.
+
 ### Preview Linux em PR e main
 
 `linux-preview.yml` roda em pull requests para `main` e em pushes na `main`,
