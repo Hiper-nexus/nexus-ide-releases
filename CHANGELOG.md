@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.199 — Linux se atualiza sozinho
+
+Build do Linux (DEB, RPM e ZIP). Inclui tudo da 0.76.198.
+
+- **O Linux portátil passa a se atualizar sozinho (F-940).** Quem instalou pelo `install.sh` (o ZIP do Arch e do Omarchy) vê "Atualizar" no app, que baixa a versão nova, confere a assinatura e o SHA-256, extrai ao lado e, ao reiniciar, troca a própria pasta e reabre. Cada versão é assinada com uma chave Ed25519 que o app já embute; sem assinatura válida nada é aplicado e o erro traz o comando manual. Versões anteriores a esta atualizam uma vez pelo `install.sh` e dali em diante sozinhas. DEB e RPM continuam no aviso com comando (precisam de root).
+- **Redline visível na barra do Omarchy (F-934).** A bandeja do Omarchy esconde todo ícone atrás da seta, então o Redline parecia não existir. `nexus-ide --redline-status` imprime a pior janela das contas (`▮▮▮▮▯ 87%`) para a barra, e `nexus-ide --redline-bar-install` instala o módulo com backup, de forma idempotente e reversível (`--redline-bar-uninstall`). Falta ver o módulo desenhado na barra.
+- O site, no Linux, nasce em movimento calmo: o letreiro do sorteio e as animações contínuas tremiam e apareciam duplicados num monitor 1,5x a 165 Hz (F-941).
 ## 0.76.198 — Preferências que ficam
 
 - **Proteção para as instalações dos clientes (F-421).** Modo Jev/Clef, modelo, Account ID e consentimento visual passam a ter gravação própria em `~/.nexus/decision-models.json`. As preferências válidas existentes são importadas automaticamente. O API Token continua exclusivamente no cofre.

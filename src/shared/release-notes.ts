@@ -10085,7 +10085,7 @@ export const RELEASE_076197: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076198: AppRelease = {
   version: '0.76.198',
   date: '2026-10-05',
   codename: 'Preferências que ficam',
@@ -10096,5 +10096,19 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [
     { title: 'Outra configuração inválida não apaga o Clef', detail: 'Um campo antigo ou inválido da orquestração podia restaurar toda a seção aos padrões, deixando Somente Jev e o Account ID vazio. Agora as preferências válidas dos modelos de decisão são recuperadas independentemente.' },
     { title: 'Cópia antiga do app não remove as preferências novas', detail: 'Uma versão antiga podia regravar settings.json sem conhecer o campo do Clef. A versão nova mantém sua própria cópia validada, inclusive ao reabrir o aplicativo.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.199',
+  date: '2026-10-05',
+  codename: 'Linux se atualiza sozinho',
+  summary: 'O Linux portátil baixa e troca a própria versão, com assinatura conferida, e o Redline aparece na barra do Omarchy.',
+  highlights: [
+    { title: 'Atualização automática no Linux', detail: 'Pelo pacote portátil (Arch, Omarchy), o app baixa a versão nova, confere a assinatura e o SHA-256 e se troca ao reiniciar. Sem assinatura válida, nada é aplicado.' },
+    { title: 'Redline na barra do Omarchy', detail: 'A bandeja do Omarchy esconde os ícones; agora a pior janela das contas pode ficar sempre visível na barra, com um comando que instala e desfaz o módulo.' },
+  ],
+  fixes: [
+    { title: 'Site sem tremor no Linux', detail: 'O letreiro do sorteio e as animações contínuas ficam parados no Linux desktop, onde apareciam duplicados e tremidos.' },
   ],
 };
