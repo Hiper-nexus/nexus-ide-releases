@@ -10,6 +10,8 @@ export interface ApiDeps {
   bindAccount?: (id: string, session: string, previousSession?: string) => { ok: boolean; error?: string };
   generation?: () => number;
   setSecret: (key: string, value: string) => { ok: boolean; error?: string };
+  /** The server refused this refresh for good: forget it, never present it again. */
+  discardRejectedSession?: (refresh: string) => void;
 }
 
 export interface ApiResult {
@@ -49,6 +51,7 @@ function defaultDeps(): ApiDeps {
     fetchFn: fetch,
     getSecret: (key) => secrets.getSecret(key),
     setSecret: (key, value) => secrets.setInternalSecret(key, value),
+    discardRejectedSession: (refresh) => auth.discardRejectedSession(refresh),
   };
 }
 
@@ -133,6 +136,10 @@ async function performRefresh(
       body: JSON.stringify({ refresh }),
       signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
     });
+    // Each dead refresh the server receives revokes every desktop session of
+    // the account: re-presenting it on the next retry or boot signs the user
+    // out of the apps where they just logged in again.
+    if (res.status === 401) deps.discardRejectedSession?.(refresh);
     if (!res.ok) return null;
     const body = (await boundedJson(res)) as {
       ok?: boolean;

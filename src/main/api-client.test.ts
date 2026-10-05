@@ -68,6 +68,39 @@ describe('apiFetch', () => {
     expect((d.fetchFn as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2);
   });
 
+  it('refresh recusado pelo servidor é descartado e nunca mais reapresentado', async () => {
+    const d = deps();
+    const discardRejectedSession = vi.fn((refresh: string) => {
+      if (d.store['auth:refresh'] !== refresh) return;
+      delete d.store['auth:session'];
+      delete d.store['auth:refresh'];
+    });
+    (d.fetchFn as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(json({ ok: false }, 401))
+      .mockResolvedValueOnce(json({ ok: false }, 401));
+
+    await apiFetch('/v1/license', {}, { ...d, discardRejectedSession } as never);
+    const retry = await apiFetch('/v1/license', {}, { ...d, discardRejectedSession } as never);
+
+    expect(discardRejectedSession).toHaveBeenCalledWith('ref-1');
+    expect(retry.status).toBe(401);
+    // O servidor revoga a conta toda a cada token morto que recebe: a 2ª chamada não pode tocar a rede.
+    expect((d.fetchFn as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2);
+  });
+
+  it('falha transitória do refresh mantém o par salvo', async () => {
+    const d = deps();
+    const discardRejectedSession = vi.fn();
+    (d.fetchFn as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(json({ ok: false }, 401))
+      .mockResolvedValueOnce(json({ ok: false }, 503));
+
+    await apiFetch('/v1/license', {}, { ...d, discardRejectedSession } as never);
+
+    expect(discardRejectedSession).not.toHaveBeenCalled();
+    expect(d.store['auth:refresh']).toBe('ref-1');
+  });
+
   it('sem sessao no Keychain retorna 401 sintetico sem rede', async () => {
     const d = deps({ getSecret: () => null });
 
