@@ -17,6 +17,9 @@ const MARKER = 'NEXUS_HEAVY_MUSE_LEASE_V1=1 ';
 // A holder keeps the lock for a few small writes; ~2 s of contention degrades the pane.
 // Startup recovery never waits and stops after a short global budget.
 const LOCK_ATTEMPTS = 80, RECOVERY_BUDGET_MS = 1_000;
+// A leftover this old is abandoned (a live writer finishes in milliseconds). Startup sweeps a bounded number of them.
+// A release that collided with an operator save or a busy lock lost nothing, so it is retried shortly.
+const LEFTOVER_AGE_MS = 600_000, SWEEP_LIMIT = 1024, SWEEP_BUDGET_MS = 250, RELEASE_BACKOFF_MS = [100, 400, 1_600];
 // Muse may rewrite settings.json with another key order; compare entries structurally.
 const sorted = (value: unknown) => JSON.stringify(value, (_key, item: unknown) => item && typeof item === 'object' && !Array.isArray(item)
   ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : item);
@@ -55,11 +58,16 @@ function same(now: fs.Stats | undefined, previous: Snapshot | undefined): void {
  * landing in the microseconds between that last check and the rename can still be
  * overwritten. No crash path leaves an operator's save only in a file Nexus deletes:
  * the temp holds our bytes, the destination holds either theirs or ours.
+ * The operator's file is re-serialized as 2-space JSON: formatting, the order of integer-like keys
+ * and numbers beyond 2^53 are not preserved, a commented file does not parse (the pane degrades),
+ * and the rename gives it a new inode (xattrs and ACLs are not carried). It keeps its permission
+ * bits; only a file created here is 0600, and a created `{}` settings.json stays after the last release.
  */
 async function publish(file: string, value: unknown, previous: Snapshot | undefined, guard: () => Promise<void>): Promise<Snapshot> {
   const raw = JSON.stringify(value, null, 2) + '\n';
   if (Buffer.byteLength(raw) > 1_048_576) throw new Error('muse_heavy_lease_invalid');
-  await writeFileAtomicAsync(file, raw, 0o600, { createDirectory: false, beforeCommit: async () => { await guard(); same(await lstat(file), previous); } });
+  const mode = previous ? previous.stat.mode & 0o777 : 0o600;
+  await writeFileAtomicAsync(file, raw, mode, { createDirectory: false, beforeCommit: async () => { await guard(); same(await lstat(file), previous); } });
   const written = await read(file, 1_048_576);
   if (written?.raw !== raw) throw new Error('muse_heavy_lease_changed');
   return written;
@@ -153,9 +161,39 @@ async function collect(tx: Transaction, record: RecordValue, snapshot: Snapshot)
   else { await tx.owned(); same(await lstat(tx.file), snapshot); await fs.promises.unlink(tx.file); }
   return !record.groups.length;
 }
+/**
+ * Leftovers a killed Main cannot clean: its prepared lock owners, breaker asides and unfinished ledger temps.
+ * Only our own names, and only a provably dead owner or a long-abandoned file; never a ledger or a live lock.
+ */
+async function sweepLeftovers(directory: string, names: string[], deadline: number): Promise<void> {
+  let budget = SWEEP_LIMIT;
+  for (const name of names) {
+    const owner = /^[0-9a-f]{64}\.lock\.[0-9a-f-]{36}\.(?:owner|stale)$/.test(name), temp = /^[0-9a-f]{64}\.json\.[0-9a-f]{16}\.tmp$/.test(name);
+    if (!owner && !temp) continue;
+    if (budget-- <= 0 || Date.now() > deadline) return;
+    try {
+      const file = path.join(directory, name), stat = await lstat(file);
+      if (!stat?.isFile()) continue;
+      const dead = owner && await read(file, 2048, 3).then(snapshot => snapshot ? ownerGone(snapshot) : false).catch(() => false);
+      if (dead || Date.now() - stat.mtimeMs > LEFTOVER_AGE_MS) await fs.promises.unlink(file);
+    } catch { /* one that cannot be judged or removed stays; the next startup tries again */ }
+  }
+}
 /** The selected config/auth directory stays in place. Only one public constant hook is leased. */
 export function createMuseNativeHeavySettingsLease(settingsPath: string, hook: ObjectValue, artifactRoot?: string): { acquire(current: () => void): Promise<void>; release(): Promise<void> } {
-  const directory = rootFor(artifactRoot); let held = false, releasedData = false, canonical: string | undefined;
+  const directory = rootFor(artifactRoot); let held = false, releasedData = false, canonical: string | undefined, releasing: Promise<void> | undefined;
+  const releaseOnce = async () => {
+    if (!held || !canonical) return;
+    await locked(directory, keyFor(canonical), async tx => {
+      if (releasedData) return;
+      const snapshot = await read(tx.file, 262144); if (!snapshot) throw new Error('muse_heavy_lease_changed');
+      const record = parseRecord(snapshot.raw), group = record.groups.find(group => equal(group.hook, hook)), owner = group?.owners.find(owner => owner.id === INSTANCE);
+      if (!owner || owner.pid !== process.pid) throw new Error('muse_heavy_lease_changed');
+      if (--owner.count === 0) group!.owners = group!.owners.filter(value => value !== owner);
+      await collect(tx, record, snapshot); releasedData = true;
+    });
+    held = false;
+  };
   return {
     async acquire(current) {
       // Dotfile managers link these. Never follow or replace an operator link (no ledger either).
@@ -170,10 +208,13 @@ export function createMuseNativeHeavySettingsLease(settingsPath: string, hook: O
         if (record.settingsPath !== canonical) throw new Error('muse_heavy_lease_changed');
         const present = entries.some(entry => equal(entry, hook));
         let group = record.groups.find(item => equal(item.hook, hook));
-        if (!group) { group = { hook, inserted: !present, committed: false, owners: [] }; record.groups.push(group); }
+        // No ledger group yet: an identical marker entry is a leftover of an earlier lease (an external save re-added it
+        // after the last release). It is provably ours, so this lease owns it and removes it with the last release.
+        if (!group) { group = { hook, inserted: true, committed: false, owners: [] }; record.groups.push(group); }
         else if (!present) group.inserted = true; // re-inserting a removed entry makes it ours to remove
         let owner = group.owners.find(owner => owner.id === INSTANCE);
         if (owner) owner.count++; else { owner = { id: INSTANCE, pid: process.pid, count: 1 }; group.owners.push(owner); }
+        parseRecord(JSON.stringify(record)); // never publish a ledger this module would refuse to read back
         // Persist the public restoration intent before touching selected config.
         const intent = await publish(tx.file, record, previous, guard); held = true; current();
         if (!present) await publish(canonical!, { ...document, hooks: { ...hooks, PreToolUse: [...entries, hook] } }, settings, guard);
@@ -184,29 +225,35 @@ export function createMuseNativeHeavySettingsLease(settingsPath: string, hook: O
       });
       current();
     },
-    async release() {
-      if (!held || !canonical) return;
-      await locked(directory, keyFor(canonical), async tx => {
-        if (releasedData) return;
-        const snapshot = await read(tx.file, 262144); if (!snapshot) throw new Error('muse_heavy_lease_changed');
-        const record = parseRecord(snapshot.raw), group = record.groups.find(group => equal(group.hook, hook)), owner = group?.owners.find(owner => owner.id === INSTANCE);
-        if (!owner || owner.pid !== process.pid) throw new Error('muse_heavy_lease_changed');
-        if (--owner.count === 0) group!.owners = group!.owners.filter(value => value !== owner);
-        await collect(tx, record, snapshot); releasedData = true;
-      });
-      held = false;
+    /** One shared flight for concurrent callers. Only a collision or a busy lock is retried; the rest is final. */
+    release() {
+      return releasing ??= (async () => {
+        try {
+          for (let attempt = 0; ; attempt++) {
+            try { return await releaseOnce(); }
+            catch (error) {
+              const code = (error as Error).message;
+              if (attempt >= RELEASE_BACKOFF_MS.length || (code !== 'muse_heavy_lease_changed' && code !== 'muse_heavy_lease_busy')) throw error;
+              await delay(RELEASE_BACKOFF_MS[attempt], undefined, { ref: false });
+            }
+          }
+        } finally { releasing = undefined; }
+      })();
     },
   };
 }
 /**
  * Dead-owner restoration only; this never grants/releases a command permit or kills a process.
  * Startup never waits: one try-lock per ledger, a held lock or an exhausted budget is retained.
+ * Afterwards it sweeps the leftovers of dead Mains in the same directory (bounded, own budget).
  */
 export async function recoverMuseNativeHeavyLeases(options: { artifactRoot?: string } = {}): Promise<{ restored: number; retained: number; failed: number }> {
   const result = { restored: 0, retained: 0, failed: 0 }, directory = rootFor(options.artifactRoot), deadline = Date.now() + RECOVERY_BUDGET_MS;
   let names: string[]; try { names = await fs.promises.readdir(directory); } catch (error) { if (isMissing(error)) return result; throw error; }
-  if (names.length > 512) { result.failed++; return result; }
-  for (const name of names.filter(name => /^[0-9a-f]{64}\.json$/.test(name))) {
+  // Only ledgers count against the cap: leftovers are swept below and can never switch recovery off.
+  const ledgers = names.filter(name => /^[0-9a-f]{64}\.json$/.test(name));
+  if (ledgers.length > 512) { result.failed++; return result; }
+  for (const name of ledgers) {
     if (Date.now() > deadline) { result.retained++; continue; }
     try {
       const empty = await locked(directory, name.slice(0, 64), async tx => {
@@ -218,5 +265,6 @@ export async function recoverMuseNativeHeavyLeases(options: { artifactRoot?: str
       if (empty) result.restored++; else result.retained++;
     } catch (error) { if ((error as Error).message === 'muse_heavy_lease_busy') result.retained++; else result.failed++; }
   }
+  await sweepLeftovers(directory, names, Date.now() + SWEEP_BUDGET_MS);
   return result;
 }

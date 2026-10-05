@@ -1990,15 +1990,30 @@ export function installLegacyParser(
   });
 }
 
+/**
+ * A stuck disk operation must not hold back the start of every other CLI. Past the
+ * deadline the recovery counts as incomplete and keeps finishing in the background.
+ */
+const MUSE_RECOVERY_DEADLINE_MS = 3_000;
+function museRecoveryWithinDeadline(
+  recovery: Promise<{ restored: number; retained: number; failed: number }>,
+): Promise<{ restored: number; retained: number; failed: number }> {
+  const incomplete = { restored: 0, retained: 0, failed: 1 };
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<typeof incomplete>((resolve) => {
+    timer = setTimeout(() => resolve(incomplete), MUSE_RECOVERY_DEADLINE_MS);
+    timer.unref?.();
+  });
+  return Promise.race([recovery.catch(() => incomplete), late]).finally(() => clearTimeout(timer));
+}
+
 export async function startMcpServer(): Promise<void> {
   // A retry cannot install new dependencies while an old spool FD or
   // already-started delivery still owns the previous registry generation.
   if (mcpStopFlight) await mcpStopFlight;
   // The start supervisor drains this attempt before MCP/store shutdown.
   // Recover shared hooks before a generic artifact purge can run.
-  const museRecovery = await recoverMuseNativeHeavyLeases().catch(() => ({
-    restored: 0, retained: 0, failed: 1,
-  }));
+  const museRecovery = await museRecoveryWithinDeadline(recoverMuseNativeHeavyLeases());
   if (museRecovery.failed > 0) {
     console.warn("[orch] Muse hook lease recovery was incomplete", {
       failed: museRecovery.failed, retained: museRecovery.retained,

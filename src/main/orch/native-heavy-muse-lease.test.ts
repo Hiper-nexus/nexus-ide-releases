@@ -29,9 +29,9 @@ it('leases one constant hook across concurrent sessions, preserves foreign edits
  await b.release(); expect(f.read()).toEqual({ ...f.original, model: 'new-selected', hooks: { Stop: [{ own: true }, { editor: true }] } });
  expect(fs.readdirSync(f.ledgerRoot)).toEqual([]);
 });
-it('preserves an existing identical hook instead of claiming it and rejects a non-regular selected file without blocking', async () => {
+it('adopts a leftover identical marker entry (no ledger group) and removes it on release; rejects a non-regular selected file without blocking', async () => {
  const f = fixture(); fs.writeFileSync(f.settings, JSON.stringify({ ...f.original, hooks: { PreToolUse: [hook] } }));
- const a = createMuseNativeHeavySettingsLease(f.settings, hook, f.artifactRoot); await a.acquire(() => {}); await a.release(); expect(f.read().hooks.PreToolUse).toEqual([hook]);
+ const a = createMuseNativeHeavySettingsLease(f.settings, hook, f.artifactRoot); await a.acquire(() => {}); expect(f.read().hooks.PreToolUse).toEqual([hook]); await a.release(); expect(f.read().hooks.PreToolUse).toEqual([]);
  fs.unlinkSync(f.settings); fs.symlinkSync('/dev/null', f.settings);
  const b = createMuseNativeHeavySettingsLease(f.settings, hook, f.artifactRoot); await expect(b.acquire(() => {})).rejects.toThrow(); expect(fs.lstatSync(f.settings).isSymbolicLink()).toBe(true);
 });
@@ -152,6 +152,57 @@ it('startup recovery never waits for a held lock: it is retained, untouched, in 
  fs.unlinkSync(f.lock); expect(await recoverMuseNativeHeavyLeases({ artifactRoot: f.artifactRoot })).toEqual({ restored: 1, retained: 0, failed: 0 });
 });
 
+it('keeps the permission bits of the operator file; only a file it creates is private', async () => {
+ const f = fixture(), mode = () => fs.statSync(f.settings).mode & 0o777; fs.chmodSync(f.settings, 0o644);
+ const a = createMuseNativeHeavySettingsLease(f.settings, hook, f.artifactRoot); await a.acquire(() => {}); expect(mode()).toBe(0o644); await a.release(); expect(mode()).toBe(0o644);
+ fs.unlinkSync(f.settings); const b = createMuseNativeHeavySettingsLease(f.settings, hook, f.artifactRoot); await b.acquire(() => {}); expect(mode()).toBe(0o600); await b.release();
+});
+it('a stale external save that re-adds the hook after the last release is cleaned by the next lease cycle', async () => {
+ const f = fixture(), a = createMuseNativeHeavySettingsLease(f.settings, hook, f.artifactRoot); await a.acquire(() => {});
+ const stale = fs.readFileSync(f.settings, 'utf8'); await a.release(); expect(f.read()).toEqual(f.original);
+ fs.writeFileSync(f.settings, stale); expect(f.read().hooks.PreToolUse).toEqual([hook]); // an editor/Muse buffer loaded while leased
+ const b = createMuseNativeHeavySettingsLease(f.settings, hook, f.artifactRoot); await b.acquire(() => {}); await b.release();
+ expect(f.read()).toEqual({ ...f.original, hooks: { Stop: [{ own: true }], PreToolUse: [] } }); expect(fs.readdirSync(f.ledgerRoot)).toEqual([]);
+});
+it('never publishes a ledger it could not read back: a full owner list degrades the acquisition and leaves the ledger readable', async () => {
+ const f = fixture(), a = createMuseNativeHeavySettingsLease(f.settings, hook, f.artifactRoot); await a.acquire(() => {});
+ const record = JSON.parse(fs.readFileSync(f.ledger, 'utf8')); record.groups[0].owners = Array.from({ length: 32 }, (_v, index) => ({ id: `live-other-${index}`, pid: process.ppid, count: 1 }));
+ fs.writeFileSync(f.ledger, JSON.stringify(record)); const before = fs.readFileSync(f.ledger, 'utf8');
+ await expect(createMuseNativeHeavySettingsLease(f.settings, hook, f.artifactRoot).acquire(() => {})).rejects.toThrow('invalid');
+ expect(fs.readFileSync(f.ledger, 'utf8')).toBe(before);
+ expect(await recoverMuseNativeHeavyLeases({ artifactRoot: f.artifactRoot })).toEqual({ restored: 0, retained: 1, failed: 0 });
+});
+it('retries a release that collided with an operator save, then restores without losing that save', async () => {
+ const f = fixture(), a = createMuseNativeHeavySettingsLease(f.settings, hook, f.artifactRoot); await a.acquire(() => {});
+ const open = fs.promises.open.bind(fs.promises), saved = { ...f.read(), model: 'operator-during-release' }; let injected = 0;
+ vi.spyOn(fs.promises, 'open').mockImplementation(async (...args: Parameters<typeof fs.promises.open>) => {
+  const handle = await open(...args), file = String(args[0]);
+  if (!injected && file.startsWith(`${f.settings}.`) && file.endsWith('.tmp')) { injected++; fs.writeFileSync(f.settings, JSON.stringify(saved)); }
+  return handle;
+ });
+ await Promise.all([a.release(), a.release()]); // concurrent callers share one flight
+ expect(injected).toBe(1); expect(f.read()).toEqual({ ...f.original, model: 'operator-during-release' });
+ expect(fs.readdirSync(f.ledgerRoot)).toEqual([]); expect(fs.readdirSync(path.dirname(f.settings))).toEqual(['settings.json']);
+});
+it('startup recovery still restores when thousands of leftovers fill the directory: only ledgers count against its cap', async () => {
+ const f = fixture(), a = createMuseNativeHeavySettingsLease(f.settings, hook, f.artifactRoot); await a.acquire(() => {});
+ const record = JSON.parse(fs.readFileSync(f.ledger, 'utf8')); record.groups[0].owners[0].pid = 2147483647; fs.writeFileSync(f.ledger, JSON.stringify(record));
+ for (let index = 0; index < 600; index++) fs.writeFileSync(path.join(f.ledgerRoot, `${f.key}.lock.${randomUUID()}.owner`), '');
+ expect(fs.readdirSync(f.ledgerRoot).length).toBeGreaterThan(512);
+ expect(await recoverMuseNativeHeavyLeases({ artifactRoot: f.artifactRoot })).toEqual({ restored: 1, retained: 0, failed: 0 }); expect(f.read()).toEqual(f.original);
+});
+it('sweeps only provably abandoned leftovers: dead owners, breaker asides, old unfinished files; never a live owner, a fresh file or a ledger', async () => {
+ const f = fixture(); fs.mkdirSync(f.ledgerRoot, { recursive: true });
+ const put = (name: string, body: string, old = false) => { const file = path.join(f.ledgerRoot, name); fs.writeFileSync(file, body); if (old) { const when = new Date(Date.now() - 3_600_000); fs.utimesSync(file, when, when); } return name; };
+ const owner = () => `${f.key}.lock.${randomUUID()}.owner`, gone = JSON.stringify({ pid: 2147483647, id: 'dead-main' }), live = JSON.stringify({ pid: process.ppid, id: 'live-main' });
+ const removed = [put(owner(), gone), put(`${f.key}.lock.${randomUUID()}.stale`, gone), put(owner(), '', true), put(`${f.key}.json.0123456789abcdef.tmp`, '{}', true), put(owner(), live, true)];
+ const kept = [put(owner(), live), put(owner(), ''), put(`${f.key}.json.fedcba9876543210.tmp`, '{}'), put(`${'b'.repeat(64)}.json`, '{}'), put('unrelated.txt', 'x', true)];
+ expect(await recoverMuseNativeHeavyLeases({ artifactRoot: f.artifactRoot })).toEqual({ restored: 0, retained: 0, failed: 1 }); // the planted ledger is malformed: kept, counted
+ const left = fs.readdirSync(f.ledgerRoot); for (const name of removed.slice(0, 4)) expect(left).not.toContain(name); for (const name of kept) expect(left).toContain(name);
+ // A live pid's file is only removed when it is abandoned by age (nothing live runs ten minutes between create and link).
+ expect(left).not.toContain(removed[4]);
+});
+
 // Real cross-process control: separate Node processes share only the files.
 const CHILD = String.raw`
 const fs = require('node:fs'); const path = require('node:path');
@@ -214,6 +265,6 @@ it.each([['crash-before', true], ['crash-after', true], ['crash-after', false]] 
  }
  expect(await recoverMuseNativeHeavyLeases({ artifactRoot: f.artifactRoot })).toEqual({ restored: 1, retained: 0, failed: 0 });
  expect(f.read()).toEqual(expected);
- // Only the dead Main's own prepared lock owner may remain (our file, never operator data).
- for (const name of fs.readdirSync(f.ledgerRoot)) { expect(name).toMatch(new RegExp(`^${f.key}\\.lock\\.[0-9a-f-]{36}\\.owner$`)); expect(JSON.parse(fs.readFileSync(path.join(f.ledgerRoot, name), 'utf8')).pid).toBe(proc.pid); }
+ // The dead Main's own prepared lock owner (our file, never operator data) is swept by the same recovery.
+ expect(fs.readdirSync(f.ledgerRoot)).toEqual([]);
 }, 30_000);
