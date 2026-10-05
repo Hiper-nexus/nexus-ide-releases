@@ -88,6 +88,22 @@ describe('apiFetch', () => {
     expect((d.fetchFn as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2);
   });
 
+  it('login iniciado durante o refresh recusado não é cancelado pelo descarte', async () => {
+    let generation = 1;
+    const d = deps({ generation: () => generation });
+    const discardRejectedSession = vi.fn();
+    (d.fetchFn as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(json({ ok: false }, 401))
+      .mockImplementationOnce(async () => {
+        generation += 1; // beginLogin enquanto a resposta do refresh viaja
+        return json({ ok: false }, 401);
+      });
+
+    await apiFetch('/v1/license', {}, { ...d, discardRejectedSession } as never);
+
+    expect(discardRejectedSession).not.toHaveBeenCalled();
+  });
+
   it('falha transitória do refresh mantém o par salvo', async () => {
     const d = deps();
     const discardRejectedSession = vi.fn();

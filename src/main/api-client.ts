@@ -138,8 +138,9 @@ async function performRefresh(
     });
     // Each dead refresh the server receives revokes every desktop session of
     // the account: re-presenting it on the next retry or boot signs the user
-    // out of the apps where they just logged in again.
-    if (res.status === 401) deps.discardRejectedSession?.(refresh);
+    // out of the apps where they just logged in again. A login started during
+    // the request owns the session now: discarding would cancel it.
+    if (res.status === 401 && deps.generation?.() === generation) deps.discardRejectedSession?.(refresh);
     if (!res.ok) return null;
     const body = (await boundedJson(res)) as {
       ok?: boolean;
