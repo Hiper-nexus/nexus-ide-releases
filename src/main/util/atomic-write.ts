@@ -88,7 +88,7 @@ export function writeFileAtomic(
 }
 
 /** `fsyncDirectory` without blocking the event loop. */
-export async function fsyncDirectoryAsync(dir: string): Promise<void> {
+async function fsyncDirectoryAsync(dir: string): Promise<void> {
   let handle: FileHandle | undefined;
   try {
     handle = await fs.promises.open(dir, fs.constants.O_RDONLY);
@@ -112,7 +112,7 @@ export async function writeFileAtomicAsync(
   file: string,
   value: string | NodeJS.ArrayBufferView,
   mode: number = 0o600,
-  options: { beforeCommit?: () => void; createDirectory?: boolean } = {},
+  options: { beforeCommit?: () => void | Promise<void>; createDirectory?: boolean } = {},
 ): Promise<void> {
   const dir = path.dirname(file);
   if (options.createDirectory !== false) await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
@@ -134,7 +134,9 @@ export async function writeFileAtomicAsync(
     } finally {
       await handle.close();
     }
-    options.beforeCommit?.();
+    // A synchronous fence keeps its no-await guarantee; an async one is awaited right before rename.
+    const fence = options.beforeCommit?.();
+    if (fence) await fence;
     await fs.promises.rename(tmp, file);
     await fsyncDirectoryAsync(dir);
   } catch (err) {

@@ -3,14 +3,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { fsyncDirectoryAsync } from '../util/atomic-write';
+import { writeFileAtomicAsync } from '../util/atomic-write';
 
 type ObjectValue = Record<string, unknown>;
 type Owner = { id: string; pid: number; count: number };
 type Group = { hook: ObjectValue; inserted: boolean; committed: boolean; owners: Owner[] };
 interface RecordValue { schema: 'nexus.muse-hook-lease/v1'; settingsPath: string; hooksAbsent: boolean; preToolUseAbsent: boolean; groups: Group[] }
 interface Snapshot { raw: string; stat: fs.Stats }
-interface Transaction { file: string; pin: string; owned(): Promise<void> }
+interface Transaction { file: string; owned(): Promise<void> }
 const INSTANCE = randomUUID();
 const schema = 'nexus.muse-hook-lease/v1';
 const MARKER = 'NEXUS_HEAVY_MUSE_LEASE_V1=1 ';
@@ -48,40 +48,21 @@ function same(now: fs.Stats | undefined, previous: Snapshot | undefined): void {
   if (!now || !previous || !now.isFile() || now.dev !== previous.stat.dev || now.ino !== previous.stat.ino || now.size !== previous.stat.size || now.mtimeMs !== previous.stat.mtimeMs) throw new Error('muse_heavy_lease_changed');
 }
 /**
- * Commit with no synchronous IO, returning the snapshot of what this transaction wrote.
- * The displaced inode is pinned by a hard link and checked before and after the
- * rename: an in-place save that lands in between is put back and the commit fails
- * as a conflict. A new file is created by link, which fails if anyone created it.
- * ponytail: POSIX has no conditional rename and Node exposes no renamex_np /
- * RENAME_EXCHANGE, so an atomic save (another rename) between the last check and
- * ours is still lost undetected; closing that needs a native swap primitive.
+ * Commit with no synchronous IO and return the snapshot this transaction wrote.
+ * The destination's dev/ino/size/mtime (or its absence, for a create) is checked
+ * again immediately before the rename; a change is a conflict and nothing is written.
+ * ponytail: POSIX/Node offer no conditional rename or exchange, so a concurrent save
+ * landing in the microseconds between that last check and the rename can still be
+ * overwritten. No crash path leaves an operator's save only in a file Nexus deletes:
+ * the temp holds our bytes, the destination holds either theirs or ours.
  */
-async function publish(file: string, value: unknown, previous: Snapshot | undefined, guard: () => Promise<void>, pinBase: string): Promise<Snapshot> {
+async function publish(file: string, value: unknown, previous: Snapshot | undefined, guard: () => Promise<void>): Promise<Snapshot> {
   const raw = JSON.stringify(value, null, 2) + '\n';
   if (Buffer.byteLength(raw) > 1_048_576) throw new Error('muse_heavy_lease_invalid');
-  const tmp = `${file}.${randomUUID()}.tmp`, pin = `${pinBase}.${randomUUID()}.pin`, conflict = () => new Error('muse_heavy_lease_changed');
-  let pinned = false;
-  try {
-    const handle = await fs.promises.open(tmp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
-    let stat: fs.Stats;
-    try { await handle.writeFile(raw); await handle.sync(); stat = await handle.stat(); } finally { await handle.close(); }
-    if (!previous) {
-      await guard();
-      await fs.promises.link(tmp, file).catch((error: NodeJS.ErrnoException) => { throw error.code === 'EEXIST' ? conflict() : error; });
-    } else {
-      await fs.promises.link(file, pin).catch((error: NodeJS.ErrnoException) => { throw isMissing(error) ? conflict() : error; });
-      pinned = true; same(await fs.promises.lstat(pin), previous);
-      await guard(); same(await lstat(file), previous);
-      await fs.promises.rename(tmp, file);
-      try { same(await fs.promises.lstat(pin), previous); }
-      catch (error) { await fs.promises.rename(pin, file); pinned = false; throw error; } // the operator's save goes back
-    }
-    await fsyncDirectoryAsync(path.dirname(file));
-    return { raw, stat };
-  } finally {
-    await fs.promises.unlink(tmp).catch(() => {});
-    if (pinned) await fs.promises.unlink(pin).catch(() => {});
-  }
+  await writeFileAtomicAsync(file, raw, 0o600, { createDirectory: false, beforeCommit: async () => { await guard(); same(await lstat(file), previous); } });
+  const written = await read(file, 1_048_576);
+  if (written?.raw !== raw) throw new Error('muse_heavy_lease_changed');
+  return written;
 }
 function parseRecord(raw: string): RecordValue {
   const value = object(JSON.parse(raw));
@@ -144,9 +125,7 @@ async function locked<T>(directory: string, key: string, operation: (tx: Transac
     }
     const owned = async () => { if (!mine(await lstat(lock))) throw new Error('muse_heavy_lease_changed'); };
     await owned();
-    // Pins left by a crashed transaction on this key would pin the settings inode (nlink 2).
-    for (const name of await fs.promises.readdir(directory)) if (name.startsWith(`${key}.`) && name.endsWith('.pin')) await fs.promises.unlink(path.join(directory, name)).catch(() => {});
-    return await operation({ file: path.join(directory, `${key}.json`), pin: path.join(directory, key), owned });
+    return await operation({ file: path.join(directory, `${key}.json`), owned });
   } finally {
     try { if (claimed) { if (!mine(await lstat(lock))) throw new Error('muse_heavy_lease_changed'); await fs.promises.unlink(lock); } }
     finally { if (mine(await lstat(prepared))) await fs.promises.unlink(prepared); }
@@ -167,10 +146,10 @@ async function collect(tx: Transaction, record: RecordValue, snapshot: Snapshot)
     const newHooks: ObjectValue = { ...hooks, PreToolUse: next };
     if (!next.length && record.preToolUseAbsent) delete newHooks.PreToolUse;
     if (!Object.keys(newHooks).length && record.hooksAbsent) delete document.hooks; else document.hooks = newHooks;
-    await publish(record.settingsPath, document, settings, tx.owned, tx.pin);
+    await publish(record.settingsPath, document, settings, tx.owned);
   }
   record.groups = record.groups.filter(group => group.owners.length);
-  if (record.groups.length) await publish(tx.file, record, snapshot, tx.owned, tx.pin);
+  if (record.groups.length) await publish(tx.file, record, snapshot, tx.owned);
   else { await tx.owned(); same(await lstat(tx.file), snapshot); await fs.promises.unlink(tx.file); }
   return !record.groups.length;
 }
@@ -196,12 +175,12 @@ export function createMuseNativeHeavySettingsLease(settingsPath: string, hook: O
         let owner = group.owners.find(owner => owner.id === INSTANCE);
         if (owner) owner.count++; else { owner = { id: INSTANCE, pid: process.pid, count: 1 }; group.owners.push(owner); }
         // Persist the public restoration intent before touching selected config.
-        const intent = await publish(tx.file, record, previous, guard, tx.pin); held = true; current();
-        if (!present) await publish(canonical!, { ...document, hooks: { ...hooks, PreToolUse: [...entries, hook] } }, settings, guard, tx.pin);
+        const intent = await publish(tx.file, record, previous, guard); held = true; current();
+        if (!present) await publish(canonical!, { ...document, hooks: { ...hooks, PreToolUse: [...entries, hook] } }, settings, guard);
         // Acknowledge our completed config write even if this pane was cancelled; the
         // receipt is bound to this transaction's own intent, never to a re-read.
         group.committed = true;
-        await publish(tx.file, record, intent, tx.owned, tx.pin);
+        await publish(tx.file, record, intent, tx.owned);
       });
       current();
     },

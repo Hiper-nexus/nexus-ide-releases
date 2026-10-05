@@ -104,18 +104,23 @@ it('recovers a previous Main with this pid and an uncommitted crash between inte
  expect(await recoverMuseNativeHeavyLeases({ artifactRoot: f.artifactRoot })).toEqual({ restored: 1, retained: 0, failed: 0 }); expect(f.read()).toEqual(f.original);
 });
 
-it('detects an in-place save landing after the last check, puts it back as a conflict, and uses no synchronous IO', async () => {
- const f = fixture(), rename = fs.promises.rename.bind(fs.promises), syncStat = vi.spyOn(fs, 'lstatSync'), saved = { ...f.original, model: 'operator-save' };
+it.each(['in-place', 'rename'])('a %s save during our write is caught by the immediate pre-rename check: conflict, nothing written, no sync IO', async (kind) => {
+ const f = fixture(), open = fs.promises.open.bind(fs.promises), syncStat = vi.spyOn(fs, 'lstatSync'), saved = { ...f.original, model: `operator-${kind}` };
  let injected = false;
- vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
-  if (!injected && to === f.settings) { injected = true; fs.writeFileSync(f.settings, JSON.stringify(saved)); } // same inode, after every check
-  return rename(from, to);
+ vi.spyOn(fs.promises, 'open').mockImplementation(async (...args: Parameters<typeof fs.promises.open>) => {
+  const handle = await open(...args), file = String(args[0]);
+  if (!injected && file.startsWith(`${f.settings}.`) && file.endsWith('.tmp')) {
+   injected = true;
+   if (kind === 'in-place') fs.writeFileSync(f.settings, JSON.stringify(saved));
+   else { fs.writeFileSync(`${f.settings}.editor`, JSON.stringify(saved)); fs.renameSync(`${f.settings}.editor`, f.settings); }
+  }
+  return handle;
  });
  const a = createMuseNativeHeavySettingsLease(f.settings, hook, f.artifactRoot);
  await expect(a.acquire(() => {})).rejects.toThrow('changed'); expect(injected).toBe(true); expect(f.read()).toEqual(saved);
  expect(syncStat.mock.calls.filter(([file]) => String(file).startsWith(f.root))).toEqual([]);
- await a.release(); expect(f.read()).toEqual(saved); expect(fs.readdirSync(f.ledgerRoot)).toEqual([]);
  expect(fs.readdirSync(path.dirname(f.settings))).toEqual(['settings.json']);
+ await a.release(); expect(f.read()).toEqual(saved); expect(fs.readdirSync(f.ledgerRoot)).toEqual([]);
 });
 it('binds the receipt to its own intent snapshot and never overwrites a foreign ledger write', async () => {
  const f = fixture(), rename = fs.promises.rename.bind(fs.promises);
@@ -151,11 +156,16 @@ it('startup recovery never waits for a held lock: it is retained, untouched, in 
 const CHILD = String.raw`
 const fs = require('node:fs'); const path = require('node:path');
 const [bundle, settings, artifactRoot, ledger, mode, rounds] = process.argv.slice(2);
+if (mode.startsWith('crash-')) { // a real SIGKILL just before or just after the settings commit
+  const fsp = fs.promises;
+  for (const name of ['rename', 'link']) { const commit = fsp[name].bind(fsp); fsp[name] = async (from, to) => { if (to === settings && mode === 'crash-before') process.kill(process.pid, 'SIGKILL'); await commit(from, to); if (to === settings && mode === 'crash-after') process.kill(process.pid, 'SIGKILL'); }; }
+}
 const { createMuseNativeHeavySettingsLease: lease } = require(bundle); const hook = JSON.parse(process.env.LEASE_HOOK);
 const has = () => (JSON.parse(fs.readFileSync(settings, 'utf8')).hooks?.PreToolUse ?? []).some(entry => JSON.stringify(entry) === JSON.stringify(hook));
 process.on('message', async () => {
   try {
     if (mode === 'hold') { await lease(settings, hook, artifactRoot).acquire(() => {}); process.send({ held: true }); return; }
+    if (mode.startsWith('crash-')) { await lease(settings, hook, artifactRoot).acquire(() => {}); process.send({ survived: true }); return; }
     for (let round = 0; round < Number(rounds); round++) {
       const a = lease(settings, hook, artifactRoot), b = lease(settings, hook, artifactRoot);
       await Promise.all([a.acquire(() => {}), b.acquire(() => {})]);
@@ -186,4 +196,24 @@ it('two real Node processes contend for the same selected settings with exclusio
   expect(await recoverMuseNativeHeavyLeases({ artifactRoot: f.artifactRoot })).toEqual({ restored: 1, retained: 0, failed: 0 });
   expect(f.read()).toEqual(f.original); expect(fs.readdirSync(f.ledgerRoot)).toEqual([]);
  } finally { for (const proc of children) if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL'); }
+}, 30_000);
+it.each([['crash-before', true], ['crash-after', true], ['crash-after', false]] as const)('a real Main killed at %s the settings commit (existing=%s) leaves the operator settings or ours, never neither, and recovery restores', async (mode, existing) => {
+ const f = fixture(), bundle = path.join(f.root, 'lease.cjs'), child = path.join(f.root, 'child.cjs');
+ if (!existing) fs.unlinkSync(f.settings);
+ const original = existing ? fs.readFileSync(f.settings, 'utf8') : undefined, expected = existing ? f.original : {};
+ await build({ entryPoints: [path.join(process.cwd(), 'src/main/orch/native-heavy-muse-lease.ts')], bundle: true, platform: 'node', format: 'cjs', outfile: bundle, logLevel: 'silent' });
+ fs.writeFileSync(child, CHILD);
+ const proc = fork(child, [bundle, f.settings, f.artifactRoot, f.ledger, mode, '1'], { execArgv: [], env: { PATH: '/usr/bin:/bin', HOME: f.root, LEASE_HOOK: JSON.stringify(hook) }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+ const exited = new Promise<NodeJS.Signals | null>(resolve => proc.once('exit', (_code, signal) => resolve(signal)));
+ proc.send('go'); expect(await exited).toBe('SIGKILL');
+ if (mode === 'crash-before') expect(fs.readFileSync(f.settings, 'utf8')).toBe(original); // operator bytes untouched
+ else expect(f.read()).toEqual(existing ? { ...f.original, hooks: { ...f.original.hooks, PreToolUse: [hook] } } : { hooks: { PreToolUse: [hook] } }); // ours = theirs + the entry
+ expect(fs.statSync(f.settings).nlink).toBe(1); // no second name pins the operator file
+ for (const name of fs.readdirSync(path.dirname(f.settings)).filter(name => name !== 'settings.json')) {
+  expect(name).toMatch(/^settings\.json\.[0-9a-f]+\.tmp$/); expect(fs.readFileSync(path.join(path.dirname(f.settings), name), 'utf8')).toContain('NEXUS_HEAVY_MUSE_LEASE_V1=1 ');
+ }
+ expect(await recoverMuseNativeHeavyLeases({ artifactRoot: f.artifactRoot })).toEqual({ restored: 1, retained: 0, failed: 0 });
+ expect(f.read()).toEqual(expected);
+ // Only the dead Main's own prepared lock owner may remain (our file, never operator data).
+ for (const name of fs.readdirSync(f.ledgerRoot)) { expect(name).toMatch(new RegExp(`^${f.key}\\.lock\\.[0-9a-f-]{36}\\.owner$`)); expect(JSON.parse(fs.readFileSync(path.join(f.ledgerRoot, name), 'utf8')).pid).toBe(proc.pid); }
 }, 30_000);
