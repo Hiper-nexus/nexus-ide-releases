@@ -2250,7 +2250,7 @@ export function getPaneAuthzInfo(paneRef: string): PaneAuthzInfo | null {
     ...parkedBrowserPanesById(paneRef).map(parkedBrowserAuthzInfo),
   ];
   if (byIdentity.length > 0) {
-    // F-925: o mesmo pane pode aparecer no espelho do renderer E no registro
+    // F-927: o mesmo pane pode aparecer no espelho do renderer E no registro
     // main-owned (adoção sem remoção). Eram 2 matches do MESMO paneId e o
     // `length === 1` devolvia null — "unknown pane" enquanto o inventário
     // (listPaneSnapshots) listava o pane vivo. Ambiguidade real é só entre

@@ -605,7 +605,7 @@ async function submitEnter(
       // the session is still not busy and never observed a busy edge.
       const state = getSessionState(sessionId);
       const semanticStatus = getAgentSemanticStatusBySession(sessionId)?.status;
-      // F-924: só um diálogo real (awaiting-input) impede o Enter — escrever
+      // F-926: só um diálogo real (awaiting-input) impede o Enter — escrever
       // ali iria para o lugar errado. Semantic `working` com o PTY em idle
       // depois da colagem é o composer segurando o brief: Devin (SWE-2) e
       // Kimi (05/10) ficavam com o prompt COLADO e sem o Enter final até o

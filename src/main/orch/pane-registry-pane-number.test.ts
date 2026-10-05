@@ -169,7 +169,7 @@ describe('mirar pelo número atinge o mesmo pane que mirar pelo id', () => {
   });
 });
 
-describe('F-925: o mesmo pane nos dois registros não é ambiguidade', () => {
+describe('F-927: o mesmo pane nos dois registros não é ambiguidade', () => {
   beforeEach(() => {
     pty.live.clear();
     syncPanes([], renderer, 'gen-reset');

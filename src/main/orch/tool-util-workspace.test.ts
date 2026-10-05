@@ -54,7 +54,7 @@ const stubs = vi.hoisted(() => ({
     squadRevisionHash: 'squad-revision-hash',
   })),
   injectable: true,
-  /** Status semântico do agente (F-924: 'working' com PTY idle não segura o Enter). */
+  /** Status semântico do agente (F-926: 'working' com PTY idle não segura o Enter). */
   semanticStatus: undefined as string | undefined,
   orchSettings: {
     leanCode: false,
@@ -1543,7 +1543,7 @@ describe('agent prompt injection', () => {
       expect(failures).toEqual([]);
     });
 
-    it('F-924: semantic "working" com PTY idle ainda recebe o Enter (Devin/Kimi colados)', async () => {
+    it('F-926: semantic "working" com PTY idle ainda recebe o Enter (Devin/Kimi colados)', async () => {
       // Campo 05/10: Devin (SWE-2) e Kimi nasciam com o prompt COLADO na
       // caixa de entrada e sem o Enter final. O paste entra com a sessão
       // idle; o eco da colagem/hook vira semantic `working` e o submitEnter
@@ -1575,7 +1575,7 @@ describe('agent prompt injection', () => {
       expect(failures).toEqual([]);
     });
 
-    it('F-924: semantic "awaiting-input" (diálogo real) ainda bloqueia o Enter', async () => {
+    it('F-926: semantic "awaiting-input" (diálogo real) ainda bloqueia o Enter', async () => {
       // Mesmo com o brief já colado, um diálogo aberto (awaiting-input) faz o
       // Enter ir para o lugar errado — segue recusado.
       stubs.writeSession.mockImplementation(
