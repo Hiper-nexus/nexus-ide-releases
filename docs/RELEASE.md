@@ -232,9 +232,28 @@ Verificado:
 - `bwrap` executa o mesmo comando de `processSandboxRuntimeAvailable`; a suíte
   `npm test` roda nesta máquina com os testes de sandbox que o runner
   hospedado pula.
+- Redline na barra do Omarchy (F-934, 05/10, Omarchy 4.0.4 com quickshell, NÃO
+  Waybar): o item da bandeja estava ativo, com tooltip e menu certos, mas só a
+  seta `<` aparece na barra (captura com `grim`); o ícone fica escondido na
+  gaveta. `nexus-ide --redline-status`, medido sob o Electron de verdade com o
+  bundle do Main gerado pelo Vite: ~340 ms, código 0, uma linha de JSON, sem
+  janela e sem stderr. O instalador, rodado contra uma CÓPIA do `shell.json` do
+  dono, mudou só 7 linhas (o módulo, depois da bandeja), foi idempotente na 2ª
+  execução e a desinstalação devolveu o arquivo idêntico. Com o módulo no
+  `shell.json` real (backup e volta ao original byte a byte), o quickshell
+  (pid pai) chamou `--redline-status` a cada 30 s (19:06:38, 19:07:08,
+  19:07:38 e 19:08:08) e parou depois da volta.
 
 Não verificado nesta máquina (não anuncie como testado):
 
+- Como o módulo `nexus-redline` APARECE na barra do Omarchy (texto, cor da
+  classe `active`, tooltip, clique): a tela estava bloqueada na validação de
+  05/10, então só se provou que a barra executa o comando. O log do shell traz
+  um `TypeError: Cannot assign to read-only property "moduleName"` em
+  `plugins/bar/Bar.qml[2004]` ao criar o módulo; é a injeção de propriedades do
+  próprio Omarchy num módulo `command` (a propriedade é `readonly`) e não se
+  provou que ele não afeta a exibição. Repetir com a tela desbloqueada:
+  `nexus-ide --redline-bar-install`, `grim -g "700,0 580x40" -s 2 barra.png`.
 - Aparência do ícone do Redline na barra e o clique com o mouse (tela
   bloqueada); missão com agentes reais;
   instalação do DEB/RPM (Arch não tem `dpkg`/`rpm`; isso fica com o workflow e

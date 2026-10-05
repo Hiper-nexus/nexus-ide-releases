@@ -608,6 +608,41 @@ saber isto antes de mexer:
 - Ainda NÃO validado: GNOME (precisa da extensão AppIndicator), KDE Plasma e
   XFCE. Antes de prometer esses desktops a um cliente, rode neles e confira
   ícone, tooltip, clique e atualização.
+- **Omarchy 4 não é Waybar e esconde o ícone (F-934).** A barra é o quickshell
+  (`/usr/share/omarchy/shell`, config em `~/.config/omarchy/shell.json`) e todo
+  StatusNotifierItem vai para uma gaveta atrás da seta `<`: o Redline estava
+  ativo, com tooltip e menu certos, e ninguém o via ("não mostra nada"). A
+  leitura sempre visível é um módulo `command` da barra (`type`, `exec`,
+  `interval`, `onClick`; saída em texto ou no JSON do Waybar; só a classe
+  `active` destaca). `redline-bar.ts` (puro) monta esse JSON a partir de
+  `redline-tray-model.ts`: `▮▮▮▮▯ 87%`, `?` quando o dado passou de 10 min,
+  `percentage` AUSENTE sem leitura (nunca 0%).
+- **`nexus-ide --redline-status` roda no próprio binário e sai** (a flag
+  `RunAsNode` do Electron está desligada, não dá para ser script solto).
+  `redline-cli-boot` DEVE ser o primeiro import de `main.ts` (teste trava):
+  mede ~340 ms e não abre janela nem toma o lock de instância única. Usa a
+  mesma leitura segura e o mesmo parse do ícone (`readRegularFileCapped` +
+  `parseRedlineSnapshot`); nunca confie no arquivo, FIFO ou arquivo enorme não
+  pendura a barra, e erro vira JSON neutro com código 0. Nunca use
+  `execFileSync` ali (o ratchet do F-764 recusa): o recarregar do shell é
+  `spawn` solto (`requestShellReload`). O resto do Main continua sendo
+  carregado em chunks antes do boot (o Rolldown os eleva); o custo medido já
+  inclui isso.
+- **`--redline-bar-install` é a ÚNICA parte do Redline que escreve na
+  configuração do operador.** Só por comando explícito (nunca no boot): backup
+  `shell.json.bak.nexus-redline.<epoch>` antes de cada mudança, idempotente,
+  preserva os ajustes do operador no módulo (só corrige `exec`), segue symlink
+  de dotfiles (edita o alvo), recusa JSON inválido/ilegível/grande sem tocar em
+  nada, grava com chaves ordenadas como o `jq -S` do Omarchy e manda
+  `omarchy-shell shell reloadConfig`. `--redline-bar-uninstall` desfaz;
+  `--redline-bar-snippet` só imprime (inclui o módulo `custom` do Waybar para
+  quem não usa o quickshell); `--app <caminho>` fixa o executável.
+- Visto a olho: só a seta `<` na barra (captura `grim`). NÃO visto a olho: o
+  módulo desenhado na barra (tela bloqueada em 05/10); só se provou que o
+  quickshell chama o comando a cada 30 s. O log dele mostra `TypeError: Cannot
+  assign to read-only property "moduleName"` em `Bar.qml[2004]` ao criar
+  QUALQUER módulo `command` (injeção de propriedades do Omarchy 4.0.4 numa
+  propriedade `readonly`); confirme com a tela desbloqueada antes de anunciar.
 
 ## Linux: identidade de desktop, login e cofre (F-728, F-729, F-731)
 
