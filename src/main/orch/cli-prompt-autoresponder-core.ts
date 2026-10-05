@@ -445,11 +445,16 @@ export function matchesPromptSignature(
   output: string,
   signature: PromptSignature,
 ): boolean {
-  const normalized = normalizePromptText(output);
-  if (signature.phrases.every((phrase) => normalized.includes(phrase))) {
+  return matchesNormalizedPromptSignature({ raw: output, normalized: normalizePromptText(output) }, signature);
+}
+
+interface NormalizedPromptText { raw: string; normalized: string; compact?: string }
+
+function matchesNormalizedPromptSignature(text: NormalizedPromptText, signature: PromptSignature): boolean {
+  if (signature.phrases.every((phrase) => text.normalized.includes(phrase))) {
     return true;
   }
-  const compact = compactPromptText(output);
+  const compact = text.compact ??= compactPromptText(text.raw);
   return signature.phrases.every((phrase) =>
     compact.includes(compactPromptText(phrase)),
   );
@@ -473,6 +478,9 @@ interface AcceptVerification {
 
 export class CliPromptAutoResponder {
   private readonly buffers = new Map<string, string>();
+  // One bounded text per session. Only pure text forms are reused; watch,
+  // settle and retry decisions continue to read their current time/state.
+  private readonly normalizedBuffers = new Map<string, NormalizedPromptText>();
   private readonly sessions = new Map<string, PromptSignature[]>();
   private readonly settlingUntil = new Map<string, number>();
   private readonly boundAt = new Map<string, number>();
@@ -510,6 +518,14 @@ export class CliPromptAutoResponder {
     return enabled;
   }
 
+  private normalizedBuffer(sessionId: string, raw = this.buffers.get(sessionId) ?? ''): NormalizedPromptText {
+    const previous = this.normalizedBuffers.get(sessionId);
+    if (previous?.raw === raw) return previous;
+    const text = { raw, normalized: normalizePromptText(raw) };
+    this.normalizedBuffers.set(sessionId, text);
+    return text;
+  }
+
   bind(
     sessionId: string,
     adapterId: string,
@@ -523,12 +539,14 @@ export class CliPromptAutoResponder {
     this.sessions.set(sessionId, signatures);
     this.boundAt.set(sessionId, now);
     this.buffers.delete(sessionId);
+    this.normalizedBuffers.delete(sessionId);
     this.settlingUntil.delete(sessionId);
   }
 
   unbind(sessionId: string): void {
     this.sessions.delete(sessionId);
     this.buffers.delete(sessionId);
+    this.normalizedBuffers.delete(sessionId);
     this.boundAt.delete(sessionId);
     // Intentionally keep settlingUntil so post-accept inject hold still works.
   }
@@ -585,14 +603,14 @@ export class CliPromptAutoResponder {
   ): PromptSignature | null {
     const signatures = this.watchingSignatures(sessionId, now);
     if (!signatures) return null;
-    const raw = this.buffers.get(sessionId) ?? '';
-    const buffer = normalizePromptText(raw);
+    const text = this.normalizedBuffer(sessionId);
+    const buffer = text.normalized;
     if (!buffer) return null;
-    const compact = compactPromptText(raw);
+    const compact = text.compact ??= compactPromptText(text.raw);
     return (
       signatures.find(
         (signature) =>
-          matchesPromptSignature(raw, signature) ||
+          matchesNormalizedPromptSignature(text, signature) ||
           (signature.earlyPhrase !== undefined &&
             (buffer.includes(signature.earlyPhrase) ||
               compact.includes(compactPromptText(signature.earlyPhrase)))) ||
@@ -640,14 +658,14 @@ export class CliPromptAutoResponder {
   ): PromptSignature | null {
     const signatures = this.watchingSignatures(sessionId, now);
     if (!signatures) return null;
-    const raw = this.buffers.get(sessionId) ?? '';
-    const buffer = normalizePromptText(raw);
-    const compact = compactPromptText(raw);
+    const text = this.normalizedBuffer(sessionId);
+    const buffer = text.normalized;
+    const compact = text.compact ??= compactPromptText(text.raw);
     // F-681: a assinatura que casa por INTEIRO vence a que só viu o banner —
     // o aviso de bypass numerado e o sem números têm o mesmo banner, e as
     // teclas de um encerram o pane no outro.
     return (
-      signatures.find((signature) => matchesPromptSignature(raw, signature)) ??
+      signatures.find((signature) => matchesNormalizedPromptSignature(text, signature)) ??
       signatures.find(
         (signature) =>
           signature.earlyPhrase !== undefined &&
@@ -780,6 +798,7 @@ export class CliPromptAutoResponder {
   clear(): void {
     this.sessions.clear();
     this.buffers.clear();
+    this.normalizedBuffers.clear();
     this.settlingUntil.clear();
     this.boundAt.clear();
     this.accepted.clear();
@@ -798,8 +817,9 @@ export class CliPromptAutoResponder {
     const buffer = `${this.buffers.get(sessionId) ?? ''}${output}`.slice(
       -PROMPT_WINDOW,
     );
+    const text = this.normalizedBuffer(sessionId, buffer);
     const match = signatures.find((signature) =>
-      matchesPromptSignature(buffer, signature),
+      matchesNormalizedPromptSignature(text, signature),
     );
     if (!match) {
       this.buffers.set(sessionId, buffer);
@@ -819,4 +839,3 @@ export class CliPromptAutoResponder {
     return response;
   }
 }
-
