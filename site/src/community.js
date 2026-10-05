@@ -1,10 +1,14 @@
 import '@fontsource-variable/geist';
 import './community.css';
 import './prize.css';
+import './calm.css';
+import { applyCalmMotion } from './calm-motion.js';
 import { buildMarquee } from './sorteio/marquee.js';
 import { startDrawSign } from './sorteio/reel.js';
 import { tiltFor } from './sorteio/tilt.js';
 
+// No Linux desktop a página nasce no movimento calmo (ver calm-motion.js).
+const calmMotion = applyCalmMotion();
 const id = name => document.getElementById(name);
 
 async function boot() {
@@ -36,7 +40,7 @@ const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').match
 
 /** O bilhete do próximo prêmio cede na ponta que o ponteiro encosta e o brilho segue o dedo. */
 function tiltTicket(ticket) {
-  if (!ticket || reducedMotion() || !matchMedia('(hover: hover)').matches) return;
+  if (!ticket || calmMotion || reducedMotion() || !matchMedia('(hover: hover)').matches) return;
   let frame = 0;
   const paint = event => {
     cancelAnimationFrame(frame);

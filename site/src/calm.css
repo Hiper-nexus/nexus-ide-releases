@@ -1,0 +1,26 @@
+/* Movimento calmo (ver calm-motion.js): o mesmo visual do "Reduzir movimento", aplicado no Linux desktop.
+ * Só desliga o que anda sem parar ou segue o ponteiro; as revelações de uma vez só continuam. */
+html.calm-motion .prize-marquee{padding:12px 16px}
+html.calm-motion .prize-marquee-track{display:block;width:100%;max-width:100%;margin:0;transform:none;animation:none;will-change:auto}
+html.calm-motion .prize-marquee-group{display:flex;flex-wrap:wrap;justify-content:center;gap:8px 24px;width:100%;min-width:0}
+html.calm-motion .prize-marquee-group+.prize-marquee-group{display:none}
+html.calm-motion .prize-marquee-item{display:block;max-width:100%;min-width:0;padding:0;white-space:normal;overflow-wrap:anywhere;text-align:center;line-height:1.25}
+html.calm-motion .prize-marquee-item:after{display:inline-block;vertical-align:.15em;margin-left:12px}
+@media(max-width:760px){
+  html.calm-motion .prize-marquee{padding:12px}
+  html.calm-motion .prize-marquee-group{flex-direction:column;align-items:stretch;gap:8px}
+  html.calm-motion .prize-marquee-item{font-size:18px;letter-spacing:.03em;padding-inline:4px}
+  html.calm-motion .prize-marquee-item:after{width:6px;height:6px;margin-left:10px}
+}
+/* Piso 3D e brasas do topo, flutuação dos bilhetes, cabeça de leitura do Nexus Shot e pontos piscando. */
+html.calm-motion .hero-floor span{display:none}
+html.calm-motion .hero-floor:before{animation:none;transform:perspective(700px) rotateX(68deg) translateY(0)}
+html.calm-motion .hero-reel{transform:none}
+html.calm-motion .drop-mark{animation:none}
+html.calm-motion .shot-playhead b{animation:none;left:50%}
+html.calm-motion .live-dot,
+html.calm-motion .nav-chip .live-dot,
+html.calm-motion .shot-rec .live-dot,
+html.calm-motion .drop-next .drop-state:before{animation:none}
+html.calm-motion .drop-next.tilting{transform:none;transition:none}
+html.calm-motion .drop-next:after{display:none}

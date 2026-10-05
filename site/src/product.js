@@ -1,6 +1,11 @@
 import '@fontsource-variable/geist';
 import './product.css';
 import './prize.css';
+import './calm.css';
+import { applyCalmMotion } from './calm-motion.js';
+
+// Antes de qualquer outra coisa: no Linux desktop a página nasce no movimento calmo (ver calm-motion.js).
+const calmMotion = applyCalmMotion();
 import { buildMarquee } from './sorteio/marquee.js';
 import { startDrawSign } from './sorteio/reel.js';
 import { initializeDownloads } from './downloads/ui.js';
@@ -83,7 +88,7 @@ window.addEventListener('pagehide',()=>{stop();video.pause();});
 // O filme do topo acompanha o ponteiro por poucos pixels, como um objeto sobre o piso. Só com mouse e sem redução de movimento.
 (() => {
   const hero = document.querySelector('.product-hero'), reel = document.querySelector('.hero-reel');
-  if (!hero || !reel || reduced || !matchMedia('(hover: hover)').matches) return;
+  if (!hero || !reel || reduced || calmMotion || !matchMedia('(hover: hover)').matches) return;
   let frame = 0;
   hero.addEventListener('pointermove', event => {
     cancelAnimationFrame(frame);
