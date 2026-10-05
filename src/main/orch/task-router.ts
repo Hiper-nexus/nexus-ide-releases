@@ -1094,6 +1094,7 @@ function evaluatedCandidates(
   tier: TaskTier,
   available: ReadonlyMap<string, AdapterAvailability>,
   catalog: ModelCatalog,
+  contextRequirement: number | null,
 ): RouteCandidate[] {
   const dimension = qualityDimension(specialty, tier);
   const effort = effortForTier(tier);
@@ -1102,6 +1103,12 @@ function evaluatedCandidates(
       const info = modelCatalogInfo(catalog, adapter.id, model);
       if (!hasAuthoritativeModelQuality(info) || isModelBlockedForAutoRouting(info)) {
         return [];
+      }
+      // F-912: candidato com janela documentada menor que o pedido sai do
+      // ranking (ausência de maxContext = sem filtro).
+      if (contextRequirement !== null) {
+        const maxContext = info?.maxContext ?? adapter.capabilities?.maxContext;
+        if (maxContext !== undefined && maxContext < contextRequirement) return [];
       }
       const qualityInfo = info!.quality!;
       const quality =
@@ -1171,6 +1178,53 @@ export function taskNeedsWebSearch(taskText: string): boolean {
 }
 
 /**
+ * F-912: janela de contexto mínima DECLARADA no texto da tarefa. Só contam
+ * pedidos explícitos com número e unidade — "contexto de 1M tokens",
+ * "janela de 500k", "2M-token context", "window of 1M", "200000 tokens de
+ * entrada" — porque o filtro exclui candidatos do ranking: sem declaração
+ * explícita, nenhum modelo é excluído (retorna null). Ausência de dado não
+ * pode derrubar candidato, espelhando o contrato do `maxContext` em si.
+ */
+const CONTEXT_UNIT_MULTIPLIER: Record<string, number> = {
+  k: 1_000,
+  mil: 1_000,
+  m: 1_000_000,
+  'milhão': 1_000_000,
+  milhões: 1_000_000,
+  million: 1_000_000,
+};
+const CONTEXT_REQUIREMENT = new RegExp(
+  '(?<![\\p{L}\\p{N}])(?:' +
+    // 1) "contexto/janela de 1M", "window of 2M tokens"
+    '(?:contexto|janela|window)\\s+(?:de|of)?\\s*' +
+    '(\\d+(?:[.,]\\d+)?)\\s*(k|m|mil|milh(?:ão|ões)|million)' +
+    // 2) "1M tokens", "500k de contexto", "2M-token context", "200000 tokens"
+    '|(\\d+(?:[.,]\\d+)?)\\s*(k|m|mil|milh(?:ão|ões)|million)\\s*-?\\s*(?:tokens?|tok|de\\s+contexto)' +
+    '|(\\d{4,})\\s*(?:tokens?|de\\s+contexto)' +
+    ')(?![\\p{L}\\p{N}])',
+  'giu',
+);
+
+/** Tokens mínimos de contexto exigidos pela tarefa, ou null se não declarado. */
+export function taskContextRequirement(taskText: string): number | null {
+  let requirement: number | null = null;
+  for (const match of taskText.matchAll(CONTEXT_REQUIREMENT)) {
+    const quantity = Number.parseFloat(
+      (match[1] ?? match[3] ?? match[5] ?? '').replace(',', '.'),
+    );
+    if (!Number.isFinite(quantity)) continue;
+    const unit = (match[2] ?? match[4])?.toLowerCase();
+    const tokens = Math.round(
+      unit ? quantity * (CONTEXT_UNIT_MULTIPLIER[unit] ?? 1) : quantity,
+    );
+    if (tokens >= 1_000 && (requirement === null || tokens > requirement)) {
+      requirement = tokens;
+    }
+  }
+  return requirement;
+}
+
+/**
  * Pick the first installed candidate of the task's tier (candidates are
  * ordered cheapest-first). When nothing of the tier is installed, walk the
  * cheaper tiers down then the stronger ones up; last resort is the first
@@ -1212,6 +1266,23 @@ export function routeTask(
       ? '; exige busca na web — pool limitado a capabilities.webSearch'
       : '; exige busca na web — nenhum adapter declara a capacidade'
     : '';
+  // F-912: janela de contexto declarada na tarefa. O filtro exclui o candidato
+  // cujo maxContext DOCUMENTADO (catálogo do modelo ou manifest do adapter) é
+  // menor que o pedido — ausência de maxContext não exclui ninguém. A menção
+  // explícita de modelo no texto continua vencendo (nota, não exclusão).
+  const contextRequirement = taskContextRequirement(taskText);
+  const effectiveMaxContext = (adapterId: string, model?: string): number | undefined =>
+    modelCatalogInfo(modelCatalog, adapterId, model)?.maxContext ??
+    available.get(adapterId)?.capabilities?.maxContext;
+  const fitsContext = (adapterId: string, model?: string): boolean => {
+    if (contextRequirement === null) return true;
+    const maxContext = effectiveMaxContext(adapterId, model);
+    return maxContext === undefined || maxContext >= contextRequirement;
+  };
+  const contextNote =
+    contextRequirement !== null
+      ? `; exige contexto ≥ ${contextRequirement.toLocaleString('en-US')} tokens — excluídos os com maxContext documentado menor`
+      : '';
   const available = new Map(
     routedAdapters.filter((a) => a.installed).map((a) => [a.id, a]),
   );
@@ -1253,7 +1324,7 @@ export function routeTask(
     }),
   );
   const evaluated = evaluationCoversAllInstalled
-    ? evaluatedCandidates(specialtyVerdict.specialty, tier, available, modelCatalog)
+    ? evaluatedCandidates(specialtyVerdict.specialty, tier, available, modelCatalog, contextRequirement)
     : [];
   const why =
     classification.signals.length > 0
@@ -1352,6 +1423,14 @@ export function routeTask(
         if (modelAccessQuarantine(routed.adapterId, routed.model)) {
           skippedRisk.push(
             `${routed.adapterId}:${routed.model ?? '(default)'} (recusado pelo provider)`,
+          );
+          return [];
+        }
+        // F-912: janela documentada menor que a exigida pela tarefa.
+        if (!fitsContext(routed.adapterId, routed.model)) {
+          skippedRisk.push(
+            `${routed.adapterId}:${routed.model ?? '(default)'} ` +
+              `(contexto ${effectiveMaxContext(routed.adapterId, routed.model)} < ${contextRequirement})`,
           );
           return [];
         }
@@ -1525,6 +1604,9 @@ export function routeTask(
         isModelBlockedForAutoRouting(modelCatalogInfo(modelCatalog, seat.adapterId, chosen)) ||
         modelAccessQuarantine(seat.adapterId, chosen)
       ) return;
+      // F-912: assento de lane com janela documentada menor que a exigida
+      // perde o lugar (a lane promove topo de linha; sem fonte, segue).
+      if (!fitsContext(seat.adapterId, chosen)) return;
       laneSeats.push({ lane: laneIndex, adapterId: seat.adapterId, model: chosen });
       if (!ranked.some((r) => r.c.adapterId === seat.adapterId && r.c.model === chosen)) {
         ranked.push({ c: { adapterId: seat.adapterId, model: chosen }, fromTier: tier });
@@ -1767,7 +1849,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${contextNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
       alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId) })),
       specialty: specialtyVerdict.specialty,
       policySource,
@@ -1780,7 +1862,22 @@ export function routeTask(
   // missão num único CLI, tipicamente Codex). Escolhe o MENOS USADO da missão
   // entre os disponíveis — o mesmo sinal de diversidade do multi-score, agora
   // no degrau final.
-  const fallbackPool = [...available.keys()];
+  // F-912: no degrau final ainda prefere quem tem ALGUM modelo com janela
+  // suficiente (ou sem lista/janela documentada); se ninguém cabe, segue com
+  // todos — a rota nunca fica sem destino.
+  const contextFitFallbacks =
+    contextRequirement === null
+      ? []
+      : [...available.keys()].filter((id) => {
+          const models = available.get(id)?.models;
+          if (models === undefined) return true;
+          return models.some((model) => {
+            const maxContext = effectiveMaxContext(id, model);
+            return maxContext === undefined || maxContext >= contextRequirement;
+          });
+        });
+  const fallbackPool =
+    contextFitFallbacks.length > 0 ? contextFitFallbacks : [...available.keys()];
   const useCount = (id: string): number =>
     context.missionUseCounts?.get(id) ?? 0;
   const fallback = fallbackPool.reduce((least, id) =>
@@ -1790,7 +1887,7 @@ export function routeTask(
     tier,
     adapterId: fallback,
     effort: effortFor(fallback),
-    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback} (menos usado na missão)${capabilityNote}${missingNote}${effortNoteFor(fallback)}`,
+    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback} (menos usado na missão)${capabilityNote}${contextNote}${missingNote}${effortNoteFor(fallback)}`,
     alternatives: [],
     specialty: specialtyVerdict.specialty,
     policySource: policy.source,

@@ -273,6 +273,8 @@ export interface ModelCatalogEntryInfo {
   source?: string;
   warning?: string;
   quality?: ModelQualityEvaluation;
+  /** Janela de contexto em tokens, quando documentada (F-912). Ausente = sem fonte. */
+  maxContext?: number;
 }
 
 export type ModelInfoMap = Record<string, ModelCatalogEntryInfo>;
