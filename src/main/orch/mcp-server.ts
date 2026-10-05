@@ -233,6 +233,7 @@ import {
   purgeStaleCliMcpSessions,
 } from "./cli-mcp-session-config";
 import { readTomlObject } from "./cli-mcp-session-artifacts";
+import { recoverMuseNativeHeavyLeases } from "./native-heavy-muse-lease";
 import { getActiveAgentHookHttpServer } from "../agent-hooks/hook-http-server";
 import { registerMimoRuntime } from "../agent-hooks/mimo-session-registry";
 import { currentMimoSessionOwnerKey } from "../adapters/mimo-session-owner";
@@ -1993,6 +1994,16 @@ export async function startMcpServer(): Promise<void> {
   // A retry cannot install new dependencies while an old spool FD or
   // already-started delivery still owns the previous registry generation.
   if (mcpStopFlight) await mcpStopFlight;
+  // The start supervisor drains this attempt before MCP/store shutdown.
+  // Recover shared hooks before a generic artifact purge can run.
+  const museRecovery = await recoverMuseNativeHeavyLeases().catch(() => ({
+    restored: 0, retained: 0, failed: 1,
+  }));
+  if (museRecovery.failed > 0) {
+    console.warn("[orch] Muse hook lease recovery was incomplete", {
+      failed: museRecovery.failed, retained: museRecovery.retained,
+    });
+  }
   nativeHeavyCommands.startAdmission();
   httpConfirmationScheduler.close();
   httpConfirmationScheduler = new McpConfirmationScheduler(
