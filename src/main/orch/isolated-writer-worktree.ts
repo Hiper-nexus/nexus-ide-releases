@@ -41,47 +41,49 @@ function inUseByPane(worktreePath: string): boolean {
   );
 }
 
-interface OperatorHandGc {
+interface PaneWriterGc {
   scope: ProjectExecutionScope;
   again: boolean;
   done: Promise<void>;
 }
-const operatorHandGcByRepo = new Map<string, OperatorHandGc>();
+const paneWriterGcByKey = new Map<string, PaneWriterGc>();
 
 /**
- * GC seguro dos writers da mão do operador já integrados (ver registry).
- * Agendado fora do caminho do spawn/fechamento (Git assíncrono, depois do
- * turno atual) e nunca dois no mesmo repo: pedidos durante uma coleta viram
+ * GC seguro dos writers de pane já integrados (ver registry), da mão do
+ * operador ou de uma missão (F-908: chave do próprio registro). Agendado fora
+ * do caminho do spawn/fechamento (Git assíncrono, depois do turno atual) e
+ * nunca dois na mesma chave do mesmo repo: pedidos durante uma coleta viram
  * uma única rodada extra ao fim dela.
  */
-function scheduleOperatorHandGc(scope: ProjectExecutionScope): void {
-  const running = operatorHandGcByRepo.get(scope.rootRealPath);
+function schedulePaneWriterGc(scope: ProjectExecutionScope, registryKey: string): void {
+  const key = `${scope.rootRealPath}\0${registryKey}`;
+  const running = paneWriterGcByKey.get(key);
   if (running) {
     running.scope = scope;
     running.again = true;
     return;
   }
-  const gc: OperatorHandGc = { scope, again: true, done: Promise.resolve() };
-  operatorHandGcByRepo.set(scope.rootRealPath, gc);
+  const gc: PaneWriterGc = { scope, again: true, done: Promise.resolve() };
+  paneWriterGcByKey.set(key, gc);
   gc.done = (async () => {
     while (gc.again) {
       gc.again = false;
       await new Promise((resolve) => setImmediate(resolve));
       try {
         await requireWorktreeRuntimeRegistry()
-          .collectIntegratedPaneWorktrees(gc.scope, OPERATOR_HAND_WORKTREE_KEY, inUseByPane);
+          .collectIntegratedPaneWorktrees(gc.scope, registryKey, inUseByPane);
       } catch (error) {
         console.warn('[isolated-writer] GC de worktrees integradas adiado', error);
       }
     }
-    operatorHandGcByRepo.delete(scope.rootRealPath);
+    paneWriterGcByKey.delete(key);
   })();
 }
 
 /** Testes: espera as coletas agendadas terminarem. */
 export async function operatorHandGcIdle(): Promise<void> {
-  while (operatorHandGcByRepo.size > 0) {
-    await Promise.all([...operatorHandGcByRepo.values()].map((gc) => gc.done));
+  while (paneWriterGcByKey.size > 0) {
+    await Promise.all([...paneWriterGcByKey.values()].map((gc) => gc.done));
   }
 }
 
@@ -109,7 +111,7 @@ function trackAllocation(
       'pane writer closed or spawn failed; worktree and branch retained for integration');
     released = true;
     untap();
-    if (!missionId) scheduleOperatorHandGc(scope);
+    schedulePaneWriterGc(scope, registryKey);
   };
   // PTY taps run only after physical process-tree exit is proven. This covers
   // user close, natural exit and the existing mission termination/teardown.
@@ -201,7 +203,7 @@ export async function allocateIsolatedWriterWorktree(
   authority.signal?.throwIfAborted();
   const workerId = randomUUID();
   const registryKey = missionId ?? OPERATOR_HAND_WORKTREE_KEY;
-  if (!missionId) scheduleOperatorHandGc(scope);
+  schedulePaneWriterGc(scope, registryKey);
   let materialize: MaterializeWorktreeResult | undefined;
   const record = await requireWorktreeRuntimeRegistry().create({
     ...authority,

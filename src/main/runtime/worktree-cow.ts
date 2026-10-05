@@ -33,6 +33,10 @@ export interface MaterializeWorktreeResult {
   worktreePath: string;
   /** Which relative dirs were clonefile-copied (empty when pure git). */
   cowCopied: readonly string[];
+  /** F-908: método efetivo de cada diretório clonado. */
+  cowMethods: Readonly<Record<string, HeavyDirCloneMethod>>;
+  /** F-908: diretórios pulados sem clone APFS possível (o writer segue sem eles). */
+  cowSkipped: readonly { readonly dir: string; readonly reason: string }[];
   /** `git worktree add` wall time — surfaced on pane-spawn-timing (F-215). */
   gitWorktreeMs: number;
   /** CoW copy of heavy dirs — the dominant step before the JXA clonefile. */
@@ -184,6 +188,15 @@ async function removePartialCloneDestAsync(dest: string): Promise<void> {
   }
 }
 
+/** `clonefile` = clonefile(2) do diretório; `cp-clone` = `cp -cR` no mesmo volume. */
+export type HeavyDirCloneMethod = 'clonefile' | 'cp-clone';
+export type HeavyDirCloneOutcome =
+  | { readonly method: HeavyDirCloneMethod }
+  | { readonly skipped: string };
+export type DeviceOf = (target: string) => Promise<number | bigint>;
+
+const defaultDeviceOf: DeviceOf = async (target) => (await fs.promises.stat(target)).dev;
+
 /**
  * macOS APFS clonefile via `cp -c` (copy-on-write when filesystem supports it).
  * Async — does not block the Electron main event loop.
@@ -193,10 +206,22 @@ export async function tryClonefileCopy(
   dest: string,
   exec: ClonefileExecAsync = defaultClonefileExecAsync,
   osaExec: OsascriptExecAsync = defaultOsascriptExecAsync,
+  deviceOf: DeviceOf = defaultDeviceOf,
 ): Promise<boolean> {
-  if (process.platform !== 'darwin') return false;
-  if (!fs.existsSync(source)) return false;
-  if (fs.existsSync(dest)) return false;
+  return 'method' in await cloneHeavyDir(source, dest, exec, osaExec, deviceOf);
+}
+
+/** Como `tryClonefileCopy`, dizendo o método efetivo ou por que pulou. */
+export async function cloneHeavyDir(
+  source: string,
+  dest: string,
+  exec: ClonefileExecAsync = defaultClonefileExecAsync,
+  osaExec: OsascriptExecAsync = defaultOsascriptExecAsync,
+  deviceOf: DeviceOf = defaultDeviceOf,
+): Promise<HeavyDirCloneOutcome> {
+  if (process.platform !== 'darwin') return { skipped: 'not-darwin' };
+  if (!fs.existsSync(source)) return { skipped: 'source-missing' };
+  if (fs.existsSync(dest)) return { skipped: 'dest-exists' };
   const parent = path.dirname(dest);
   fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
   // clonefile(2) com flags 0 segue uma origem symlink; o `cp -cR` copia o
@@ -209,10 +234,25 @@ export async function tryClonefileCopy(
       { encoding: 'utf8', timeout: CLONEFILE_TIMEOUT_MS },
     );
     if (fast.status === 0 && fast.stdout.trim() === '0' && fs.existsSync(dest)) {
-      return true;
+      return { method: 'clonefile' };
     }
     // -1 / falha / timeout: tira o que sobrou e cai no `cp -cR` de sempre.
     await removePartialCloneDestAsync(dest);
+  }
+  // F-908: sem clone possível, `cp -c` cai calado em copyfile(2) e copia o
+  // node_modules byte a byte (GBs por worktree). clonefile exige o mesmo
+  // volume: em outro volume, pula — o writer segue sem o diretório.
+  if (!sourceIsSymlink) {
+    let sameVolume = false;
+    try {
+      sameVolume = await deviceOf(source) === await deviceOf(parent);
+    } catch {
+      // Sem prova de mesmo volume, não copia.
+    }
+    if (!sameVolume) {
+      console.warn(`[worktree-cow] ${source} não foi clonado: outro volume, sem clone APFS`);
+      return { skipped: 'cross-volume' };
+    }
   }
   const result = await exec('cp', ['-cR', source, dest], {
     encoding: 'utf8',
@@ -220,9 +260,9 @@ export async function tryClonefileCopy(
   });
   if (result.status !== 0 || !fs.existsSync(dest)) {
     await removePartialCloneDestAsync(dest);
-    return false;
+    return { skipped: 'cp-failed' };
   }
-  return true;
+  return { method: 'cp-clone' };
 }
 
 /**
@@ -396,6 +436,7 @@ export async function cowCopyHeavyDirs(
   exec: ClonefileExecAsync = defaultClonefileExecAsync,
   osaExec: OsascriptExecAsync = defaultOsascriptExecAsync,
   isIgnored?: AsyncCowIgnorePredicate,
+  onOutcome?: (rel: string, outcome: HeavyDirCloneOutcome) => void,
 ): Promise<string[]> {
   if (!cowWorktreeAvailable()) return [];
   const copied: string[] = [];
@@ -408,9 +449,9 @@ export async function cowCopyHeavyDirs(
     const src = path.join(repositoryRoot, rel);
     const dest = path.join(worktreePath, rel);
     if (!fs.existsSync(src) || fs.existsSync(dest)) continue;
-    if (await tryClonefileCopy(src, dest, exec, osaExec)) {
-      copied.push(rel.replaceAll('\\', '/'));
-    }
+    const outcome = await cloneHeavyDir(src, dest, exec, osaExec);
+    onOutcome?.(rel.replaceAll('\\', '/'), outcome);
+    if ('method' in outcome) copied.push(rel.replaceAll('\\', '/'));
   }
   return copied;
 }
@@ -479,6 +520,8 @@ export async function materializeGitWorktree(
       ['check-ignore', '--quiet', rel],
       { allowFailure: true },
     )).status === 0;
+  const cowMethods: Record<string, HeavyDirCloneMethod> = {};
+  const cowSkipped: { dir: string; reason: string }[] = [];
   const cowCopied = await cowCopyHeavyDirs(
     input.repositoryRoot,
     input.worktreePath,
@@ -486,6 +529,10 @@ export async function materializeGitWorktree(
     undefined,
     undefined,
     isIgnored,
+    (dir, outcome) => {
+      if ('method' in outcome) cowMethods[dir] = outcome.method;
+      else cowSkipped.push({ dir, reason: outcome.skipped });
+    },
   );
   const cowMs = Date.now() - cowStart;
 
@@ -493,6 +540,8 @@ export async function materializeGitWorktree(
     method: cowCopied.length > 0 ? 'clonefile' : 'git-worktree',
     worktreePath: input.worktreePath,
     cowCopied,
+    cowMethods,
+    cowSkipped,
     gitWorktreeMs,
     cowMs,
   };

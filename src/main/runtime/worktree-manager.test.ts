@@ -466,6 +466,191 @@ describe("WorktreeManager", () => {
     expect(gc.get(scope, "operator-hand", dirty.taskId)).not.toBeNull();
   });
 
+  describe("F-908: coleta de writers de pane", () => {
+    const scope = () => projectScope();
+    const writer = async (id: string, commit = true) => {
+      const record = await manager.create({ scope: scope(), missionId: "operator-hand", taskId: `pane-${id}`,
+        workerId: id, ownerKind: "pane", ownership: { files: [], symbols: [], domains: [`pane-${id}`] } });
+      if (commit) {
+        write(`${id}.txt`, id, record.worktreePath);
+        git(record.worktreePath, "add", `${id}.txt`);
+        git(record.worktreePath, "commit", "-qm", id);
+      }
+      manager.markFailed(scope(), "operator-hand", record.taskId, "pane closed");
+      return record;
+    };
+    const merge = (record: WorktreeRecord) =>
+      git(root, "merge", "-q", "--no-edit", record.branchRef.slice("refs/heads/".length));
+    const aged = { owner: () => true, inUse: () => false, salvageDirty: async () => undefined };
+    /** Manager sobre o mesmo store cujo Git roda `hook` antes do 1º comando `match`. */
+    const hooked = (match: (args: readonly string[]) => boolean, hook: () => void) => {
+      const real = new AsyncProcessGitRunner();
+      let fired = false;
+      return new WorktreeManager({ runtimeRoot, stateStore, gitRunner, now: () => 1_700_000_000_000,
+        asyncGitRunner: { run: async (cwd, args, options) => {
+          if (!fired && match(args)) { fired = true; hook(); }
+          return real.run(cwd, args, options);
+        } } });
+    };
+
+    it("dois coletores no mesmo writer: a marca é exclusiva e a retomada no meio é recusada", async () => {
+      const target = await writer("double");
+      merge(target);
+      let bDone: Promise<unknown> = Promise.resolve();
+      let reopened: unknown = "não tentou";
+      // B entra no candidato antes da marca de A (hook no último comando da prova de A).
+      const racing: WorktreeManager = hooked((args) => args[0] === "ls-files", () => {
+        bDone = racing.collectReleasedPaneWorktrees(scope(),
+          { owner: () => true, inUse: () => false, confirmUnused: async () => false });
+      });
+      const a = await racing.collectReleasedPaneWorktrees(scope(), {
+        owner: () => true, inUse: () => false,
+        confirmUnused: async () => {
+          // A já tem a marca; B terminou. A retomada tem de ser recusada.
+          await bDone;
+          try {
+            racing.reopenPaneWriter(scope(), "operator-hand", target.taskId);
+            reopened = "aceita";
+          } catch (error) {
+            reopened = (error as Error).message;
+          }
+          return true;
+        },
+      });
+      expect(await bDone).toMatchObject({ removed: [], kept: { collecting: 1 } });
+      expect(reopened).toMatch(/being collected/);
+      expect(a.removed.map((record) => record.taskId)).toEqual([target.taskId]);
+    });
+
+    it("revalida a ref da branch e o HEAD do checkout depois da prova; mudou, mantém tudo", async () => {
+      // Branch ganha commit no fim da prova (coleta de paradas, branch não mesclada).
+      const moved = await writer("moved");
+      const racing = hooked((args) => args[0] === "ls-files", () => {
+        write("late.txt", "late", moved.worktreePath);
+        git(moved.worktreePath, "add", "late.txt");
+        git(moved.worktreePath, "commit", "-qm", "late");
+      });
+      expect(await racing.collectReleasedPaneWorktrees(scope(), aged))
+        .toMatchObject({ removed: [], kept: { changed: 1 } });
+      expect(git(root, "show", `${moved.branchRef}:late.txt`)).toBe("late");
+      manager.markFailed(scope(), "operator-hand", moved.taskId, "pane closed");
+      // HEAD do checkout revertido logo depois da prova de mesclagem (regra estrita).
+      const rolled = await writer("rolled");
+      git(root, "merge", "-q", "--ff-only", rolled.branchRef.slice("refs/heads/".length));
+      const rolling = hooked((args) => args[0] === "worktree" && args[1] === "list",
+        () => git(root, "reset", "-q", "--hard", "HEAD~1"));
+      expect(await rolling.collectIntegratedPaneWorktrees(scope(), "operator-hand",
+        (worktreePath) => worktreePath === moved.worktreePath)).toEqual([]);
+      expect(fs.existsSync(rolled.worktreePath)).toBe(true);
+      expect(git(root, "rev-parse", rolled.branchRef)).toBe(git(rolled.worktreePath, "rev-parse", "HEAD"));
+    });
+
+    it("só remove com ignorados todos em cache regenerável; out/dist/.env/__pycache__/.next/pasta qualquer mantêm", async () => {
+      fs.appendFileSync(path.join(root, ".git", "info", "exclude"),
+        "node_modules/\n__pycache__/\n*.env\nscratch/\nout/\ndist/\n.vite/\n.turbo/\n.cache/\n.next/cache/\n.next/server/\n.pytest_cache/\n");
+      const caches = await writer("caches");
+      const kept = { secret: ".env", other: "scratch/dump.sql", out: "out/customer-export.zip", dist: "dist/app.js",
+        pyc: "src/__pycache__/m.pyc", next: ".next/server/page.js" };
+      const records: Record<string, WorktreeRecord> = Object.fromEntries(
+        await Promise.all(Object.keys(kept).map(async (id) => [id, await writer(id)] as const)));
+      for (const record of [caches, ...Object.values(records)]) merge(record);
+      write("node_modules/pkg/index.js", "x", caches.worktreePath);
+      write("src/node_modules/pkg/index.js", "x", caches.worktreePath);
+      // Diretório não rastreado só com ignorados vira UMA entrada no status
+      // (`pkg/`, `.next/`) e mantém a worktree (regra conservadora); aqui os
+      // caches ficam onde o Git os reporta pelo nome.
+      for (const cache of [".vite/deps/a.js", ".turbo/cache/b", ".cache/c", ".pytest_cache/v/e"]) {
+        write(cache, "x", caches.worktreePath);
+      }
+      for (const [id, file] of Object.entries(kept)) write(file, `entregável ${id}`, records[id].worktreePath);
+      const report = await manager.collectReleasedPaneWorktrees(scope(), { owner: () => true, inUse: () => false });
+      expect(report.removed.map((r) => r.taskId)).toEqual([caches.taskId]);
+      expect(report.kept).toEqual({ "ignored-kept": 6 });
+      for (const [id, file] of Object.entries(kept)) {
+        expect(fs.readFileSync(path.join(records[id].worktreePath, file), "utf8")).toBe(`entregável ${id}`);
+      }
+    });
+
+    it("refaz o inventário depois da prova de uso: ignorado novo nesse meio mantém tudo", async () => {
+      fs.appendFileSync(path.join(root, ".git", "info", "exclude"), "*.env\n");
+      const late = await writer("late");
+      merge(late);
+      const report = await manager.collectReleasedPaneWorktrees(scope(), {
+        owner: () => true, inUse: () => false,
+        confirmUnused: async (worktreePath) => {
+          write(".env", "TOKEN=chegou-depois", worktreePath);
+          return true;
+        },
+      });
+      expect(report).toMatchObject({ removed: [], kept: { changed: 1 } });
+      expect(fs.readFileSync(path.join(late.worktreePath, ".env"), "utf8")).toBe("TOKEN=chegou-depois");
+    });
+
+    it("mantém worktree com flag de índice que esconde edição e com gitlink", async () => {
+      const flagged = await writer("flagged");
+      merge(flagged);
+      git(flagged.worktreePath, "update-index", "--assume-unchanged", "README.md");
+      write("README.md", "edição escondida\n", flagged.worktreePath);
+      expect(git(flagged.worktreePath, "status", "--porcelain")).toBe("");
+      const linked = await writer("linked", false);
+      // Repositório interno commitado e limpo: o status não acusa nada, só o índice (modo 160000).
+      const nested = path.join(linked.worktreePath, "nested");
+      fs.mkdirSync(nested);
+      git(nested, "init", "-q");
+      git(nested, "config", "user.name", "Nexus Test");
+      git(nested, "config", "user.email", "nexus@example.test");
+      write("only-here.txt", "commit só do repo interno", nested);
+      git(nested, "add", "only-here.txt");
+      git(nested, "commit", "-qm", "interno");
+      git(linked.worktreePath, "add", "nested");
+      git(linked.worktreePath, "commit", "-qm", "gitlink");
+      expect(git(linked.worktreePath, "status", "--porcelain")).toBe("");
+      merge(linked);
+      const report = await manager.collectReleasedPaneWorktrees(scope(), aged);
+      expect(report).toMatchObject({ removed: [], kept: { "index-flags": 1, gitlink: 1 } });
+      expect(fs.readFileSync(path.join(flagged.worktreePath, "README.md"), "utf8")).toBe("edição escondida\n");
+      expect(fs.readFileSync(path.join(nested, "only-here.txt"), "utf8")).toBe("commit só do repo interno");
+    });
+
+    it("worktree suja (inclusive staged distinto) ganha salvaguarda e fica; nunca --force", async () => {
+      const dirty = await writer("dirty");
+      write("README.md", "versão A\n", dirty.worktreePath);
+      git(dirty.worktreePath, "add", "README.md");
+      write("README.md", "versão B\n", dirty.worktreePath);
+      const salvaged: string[] = [];
+      const report = await manager.collectReleasedPaneWorktrees(scope(), {
+        ...aged, salvageDirty: async (record) => { salvaged.push(record.taskId); },
+      });
+      expect(report).toMatchObject({ removed: [], kept: { "dirty-kept": 1 } });
+      expect(salvaged).toEqual([dirty.taskId]);
+      expect(git(dirty.worktreePath, "show", ":README.md")).toBe("versão A");
+      expect(fs.readFileSync(path.join(dirty.worktreePath, "README.md"), "utf8")).toBe("versão B\n");
+    });
+
+    it("roda o teto: candidato mantido não bloqueia o removível na rodada seguinte", async () => {
+      const dirty = await writer("first");
+      write("wip.txt", "wip", dirty.worktreePath);
+      const clean = await writer("second");
+      const limited = { ...aged, maxCandidates: 1 };
+      const removals: string[][] = [];
+      const real = new AsyncProcessGitRunner();
+      const gc = new WorktreeManager({ runtimeRoot, stateStore, gitRunner, now: () => 1_700_000_000_000,
+        asyncGitRunner: { run: (cwd, args, options) => {
+          if (args[0] === "worktree" && args[1] === "remove") removals.push([...args]);
+          return real.run(cwd, args, options);
+        } } });
+      expect(await gc.collectReleasedPaneWorktrees(scope(), limited))
+        .toMatchObject({ removed: [], kept: { "dirty-kept": 1 }, deferred: 1 });
+      const second = await gc.collectReleasedPaneWorktrees(scope(), limited);
+      expect(removals).toEqual([["worktree", "remove", clean.worktreePath]]);
+      expect(second.removed.map((r) => r.taskId)).toEqual([clean.taskId]);
+      expect(fs.existsSync(clean.worktreePath)).toBe(false);
+      // Branch não mesclada fica.
+      expect(git(root, "rev-parse", clean.branchRef)).toMatch(/^[0-9a-f]{40}$/);
+      expect(fs.existsSync(path.join(dirty.worktreePath, "wip.txt"))).toBe(true);
+    });
+  });
+
   it("never delegates versioned context authority to executor worktrees", async () => {
     await expect(manager.create({
         scope: projectScope(),

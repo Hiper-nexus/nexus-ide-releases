@@ -112,3 +112,19 @@ export function sweepPtysInsideWorktree(worktreePath: string): readonly string[]
   }
   return doomed;
 }
+
+/**
+ * F-908: há sessão viva com `cwd` dentro do worktree? Prova de "fora de uso"
+ * da coleta de worktrees paradas. Fail-closed no sentido inverso da varredura
+ * acima: sem portas ligadas ou com erro na listagem, conta como EM USO, porque
+ * aqui o custo do engano é apagar o diretório de um processo vivo.
+ */
+export function worktreeHasLiveSession(worktreePath: string): boolean {
+  const ports = configuredPorts;
+  if (!ports) return true;
+  try {
+    return sessionsInsideWorktree({ worktreePath, sessions: ports.listSessions() }).length > 0;
+  } catch {
+    return true;
+  }
+}

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  cloneHeavyDir,
   cowCopyHeavyDirs,
   cowCopyHeavyDirsSync,
   cowWorktreeAvailable,
@@ -398,6 +399,57 @@ describe.skipIf(!darwin)('F-215 — clonefile direto via osascript', () => {
     ).toBe(true);
     expect(cpSync).not.toHaveBeenCalled();
     expect(osaSync).toHaveBeenCalledOnce();
+  });
+});
+
+describe.skipIf(!darwin)('F-908 — sem clone APFS, node_modules não é copiado byte a byte', () => {
+  // O pai do dest mora noutro volume; a origem, no primeiro.
+  const otherVolume = (dest: string) => async (target: string) => (target === path.dirname(dest) ? 2 : 1);
+
+  it('fast path falho em outro volume: pula sem cp e sem dest', async () => {
+    const root = tmpRoot();
+    const src = path.join(root, 'repo', 'node_modules');
+    const dest = path.join(root, 'wt', 'node_modules');
+    makeTree(src, { 'pkg/index.js': 'x' });
+    const cpCalls: string[][] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      expect(await cloneHeavyDir(src, dest, cpExecImpl(cpCalls), osaExecImpl([], '-1\n'), otherVolume(dest)))
+        .toEqual({ skipped: 'cross-volume' });
+      expect(cpCalls).toEqual([]);
+      expect(fs.existsSync(dest)).toBe(false);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('outro volume'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('NEXUS_COW_DIRECTORY_CLONE=0 em outro volume também pula o cp -cR', async () => {
+    const root = tmpRoot();
+    const src = path.join(root, 'repo', 'node_modules');
+    const dest = path.join(root, 'wt', 'node_modules');
+    makeTree(src, { 'pkg/index.js': 'x' });
+    const prev = process.env.NEXUS_COW_DIRECTORY_CLONE;
+    process.env.NEXUS_COW_DIRECTORY_CLONE = '0';
+    const cpCalls: string[][] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      expect(await tryClonefileCopy(src, dest, cpExecImpl(cpCalls), osaExecImpl([]), otherVolume(dest))).toBe(false);
+      expect(cpCalls).toEqual([]);
+    } finally {
+      warn.mockRestore();
+      if (prev === undefined) delete process.env.NEXUS_COW_DIRECTORY_CLONE;
+      else process.env.NEXUS_COW_DIRECTORY_CLONE = prev;
+    }
+  });
+
+  it('reporta o método efetivo: clonefile no fast path, cp-clone no fallback do mesmo volume', async () => {
+    const root = tmpRoot();
+    makeTree(path.join(root, 'repo', 'node_modules'), { 'pkg/index.js': 'x' });
+    expect(await cloneHeavyDir(path.join(root, 'repo', 'node_modules'), path.join(root, 'wt1', 'node_modules'),
+      cpExecImpl([]), osaExecImpl([]))).toEqual({ method: 'clonefile' });
+    expect(await cloneHeavyDir(path.join(root, 'repo', 'node_modules'), path.join(root, 'wt2', 'node_modules'),
+      cpExecImpl([]), osaExecImpl([], '-1\n'))).toEqual({ method: 'cp-clone' });
   });
 });
 

@@ -56,7 +56,7 @@ const MAX_UNTRACKED_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_LISTED_FILES = 200;
 const NOTICE_LISTED_FILES = 12;
 
-export type WorktreeSalvageReason = 'handoff' | 'pane-exit' | 'reopen-sweep';
+export type WorktreeSalvageReason = 'handoff' | 'pane-exit' | 'reopen-sweep' | 'gc';
 
 export interface WorktreeSalvageTarget {
   /** Caminho real da worktree registrada do writer. */
@@ -103,6 +103,7 @@ const SALVAGE_SCHEMA_REASON: Record<WorktreeSalvageReason, string> = {
   handoff: 'entrega do handoff',
   'pane-exit': 'pane encerrado',
   'reopen-sweep': 'reabertura do projeto depois de um encerramento',
+  gc: 'worktree suja parada há mais de um dia (mantida)',
 };
 
 function refused(reason: string): WorktreeSalvageResult {

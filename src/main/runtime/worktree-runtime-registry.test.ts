@@ -1,11 +1,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectExecutionScope } from "../../shared/types";
 import { ProjectRuntimeManager } from "./project-runtime-manager";
-import { WorktreeRuntimeRegistry } from "./worktree-runtime-registry";
+import { AGED_PANE_WORKTREE_GC, WorktreeRuntimeRegistry } from "./worktree-runtime-registry";
 import {
   DEAD_OWNER_WORKTREE_RELEASE_MARKER,
   OwnershipOverlapError,
@@ -16,9 +16,13 @@ import { WorktreeManager } from './worktree-manager';
 import { SqliteWorktreeStateStore } from './sqlite-workflow-state-stores';
 
 const sweep = vi.hoisted(() => vi.fn());
+const liveSession = vi.hoisted(() => vi.fn((_worktreePath: string) => false));
 vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 
-vi.mock('./worktree-pty-sweep', () => ({ sweepPtysInsideWorktree: sweep }));
+vi.mock('./worktree-pty-sweep', () => ({
+  sweepPtysInsideWorktree: sweep,
+  worktreeHasLiveSession: liveSession,
+}));
 
 const roots: string[] = [];
 const managers: ProjectRuntimeManager[] = [];
@@ -127,6 +131,8 @@ function seedWorkState(
 
 afterEach(() => {
   sweep.mockClear();
+  liveSession.mockReset();
+  liveSession.mockReturnValue(false);
   for (const manager of managers.splice(0)) manager.closeAll();
   for (const root of roots.splice(0))
     fs.rmSync(root, { recursive: true, force: true });
@@ -1249,5 +1255,232 @@ describe("project worktree runtime registry", () => {
         ),
       },
     ]);
+  });
+});
+
+describe("F-908: coleta de worktrees de writers paradas", () => {
+  const NOW = { minIdleMs: 0 };
+
+  async function paneWriter(
+    registry: WorktreeRuntimeRegistry,
+    scope: ProjectExecutionScope,
+    missionId: string,
+    id: string,
+    commit?: string,
+  ) {
+    const record = await registry.create({
+      scope, missionId, taskId: `pane-${id}`, workerId: id, ownerKind: "pane",
+      ownership: { files: [], symbols: [], domains: [`pane-${id}`] },
+    });
+    if (commit) {
+      fs.writeFileSync(path.join(record.worktreePath, commit), `${commit}\n`);
+      git(record.worktreePath, "add", commit);
+      git(record.worktreePath, "commit", "-qm", commit);
+    }
+    registry.markFailed(scope, missionId, record.taskId, "pane closed");
+    return record;
+  }
+
+  function setMission(manager: ProjectRuntimeManager, scope: ProjectExecutionScope, id: string, status: string) {
+    manager.open(scope).db.prepare(
+      `INSERT INTO missions (id, title, status, created_at, updated_at) VALUES (?, ?, ?, 1, 1)
+       ON CONFLICT(id) DO UPDATE SET status = excluded.status`,
+    ).run(id, id, status);
+  }
+
+  const branchExists = (root: string, ref: string) => {
+    try { git(root, "rev-parse", "--verify", "--quiet", ref); return true; } catch { return false; }
+  };
+  const salvageRefs = (root: string) =>
+    git(root, "for-each-ref", "--format=%(refname)", "refs/nexus-salvage/").split("\n").filter(Boolean);
+
+  it("remove o writer de missão integrado e limpo: pasta, branch e registro", async () => {
+    const { root, scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    setMission(manager, scope, "mission-done", "done");
+    const record = await paneWriter(registry, scope, "mission-done", "a", "a.txt");
+    git(root, "merge", "-q", "--no-edit", record.branchRef.slice("refs/heads/".length));
+    const report = await registry.collectAgedPaneWriterWorktrees(scope, NOW);
+    expect(report.removed.map((r) => r.taskId)).toEqual([record.taskId]);
+    expect(fs.existsSync(record.worktreePath)).toBe(false);
+    expect(branchExists(root, record.branchRef)).toBe(false);
+    expect(registry.listMission(scope, "mission-done")).toEqual([]);
+    expect(salvageRefs(root)).toEqual([]);
+    registry.dispose();
+  });
+
+  it("worktree suja ganha a salvaguarda F-794 e FICA; limpa não mesclada sai e a branch fica", async () => {
+    const { root, scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    setMission(manager, scope, "mission-failed", "failed");
+    const dirty = await paneWriter(registry, scope, "mission-failed", "d", "d.txt");
+    fs.writeFileSync(path.join(dirty.worktreePath, "owned.txt"), "wip tracked\n");
+    fs.writeFileSync(path.join(dirty.worktreePath, "novo.txt"), "só existe aqui\n");
+    const clean = await paneWriter(registry, scope, "mission-failed", "c", "c.txt");
+    const report = await registry.collectAgedPaneWriterWorktrees(scope, NOW);
+    expect(report.removed.map((r) => r.taskId)).toEqual([clean.taskId]);
+    expect(report.kept).toEqual({ "dirty-kept": 1 });
+    expect(fs.readFileSync(path.join(dirty.worktreePath, "novo.txt"), "utf8")).toBe("só existe aqui\n");
+    const [ref] = salvageRefs(root);
+    expect(ref).toMatch(/^refs\/nexus-salvage\/nexus\//);
+    expect(git(root, "show", `${ref}:novo.txt`)).toBe("só existe aqui");
+    expect(git(root, "show", `${ref}:owned.txt`)).toBe("wip tracked");
+    expect(fs.existsSync(clean.worktreePath)).toBe(false);
+    expect(git(root, "show", `${clean.branchRef}:c.txt`)).toBe("c.txt");
+    registry.dispose();
+  });
+
+  it("missão viva, sessão viva dentro ou liberação recente mantêm a worktree", async () => {
+    const { scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    setMission(manager, scope, "mission-live", "running");
+    setMission(manager, scope, "mission-done", "done");
+    const live = await paneWriter(registry, scope, "mission-live", "live");
+    const busy = await paneWriter(registry, scope, "mission-done", "busy");
+    liveSession.mockImplementation((worktreePath) => worktreePath === busy.worktreePath);
+    expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed).toEqual([]);
+    liveSession.mockReturnValue(false);
+    // Processo real que fez `cd` para dentro (cwd ATUAL, provado por lsof/procfs).
+    if (process.platform !== "win32") {
+      fs.mkdirSync(path.join(busy.worktreePath, "sub"));
+      const shell = spawn("sleep", ["30"], { cwd: path.join(busy.worktreePath, "sub"), stdio: "ignore" });
+      try {
+        await new Promise((resolve) => shell.once("spawn", resolve));
+        expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed).toEqual([]);
+      } finally {
+        shell.kill("SIGKILL");
+        await new Promise((resolve) => shell.once("exit", resolve));
+      }
+      fs.rmdirSync(path.join(busy.worktreePath, "sub"));
+      expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed.map((r) => r.taskId))
+        .toEqual([busy.taskId]);
+    }
+    // Idade mínima padrão (24 h): acabou de ser liberada, não é candidata.
+    expect((await registry.collectAgedPaneWriterWorktrees(scope)).removed).toEqual([]);
+    expect(fs.existsSync(live.worktreePath)).toBe(true);
+    expect(registry.listMission(scope, "mission-live")).toHaveLength(1);
+    registry.dispose();
+  });
+
+  it("respeita o teto de candidatos por rodada", async () => {
+    const { scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    const records = [];
+    for (const id of ["c1", "c2", "c3"]) records.push(await paneWriter(registry, scope, "operator-hand", id));
+    const first = await registry.collectAgedPaneWriterWorktrees(scope, { ...NOW, maxCandidates: 2 });
+    expect(first.removed).toHaveLength(2);
+    expect(first.deferred).toBe(1);
+    expect(records.filter((r) => fs.existsSync(r.worktreePath))).toHaveLength(1);
+    const expired = await registry.collectAgedPaneWriterWorktrees(scope, { ...NOW, budgetMs: 0 });
+    expect(expired).toMatchObject({ removed: [], deferred: 1 });
+    registry.dispose();
+  });
+
+  it("recusa symlink no lugar da worktree e caminho que sai da raiz gerenciada", async () => {
+    const { scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    const swapped = await paneWriter(registry, scope, "operator-hand", "link");
+    const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nexus-gc-outside-")));
+    roots.push(outside);
+    fs.writeFileSync(path.join(outside, "alvo.txt"), "não pode sumir");
+    fs.renameSync(swapped.worktreePath, `${swapped.worktreePath}.moved`);
+    fs.symlinkSync(outside, swapped.worktreePath);
+    const report = await registry.collectAgedPaneWriterWorktrees(scope, NOW);
+    expect(report.removed).toEqual([]);
+    expect(report.kept).toEqual({ "not-a-directory": 1 });
+    expect(fs.readFileSync(path.join(outside, "alvo.txt"), "utf8")).toBe("não pode sumir");
+    // Diretório pai trocado por symlink: o caminho real sai da raiz gerenciada.
+    fs.unlinkSync(swapped.worktreePath);
+    const parent = path.dirname(swapped.worktreePath);
+    fs.renameSync(parent, `${parent}.moved`);
+    fs.mkdirSync(path.join(outside, "checkout"));
+    fs.renameSync(`${parent}.moved/${path.basename(swapped.worktreePath)}.moved`,
+      path.join(outside, "checkout", path.basename(swapped.worktreePath)));
+    fs.symlinkSync(path.join(outside, "checkout"), parent);
+    expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).kept).toEqual({ "path-mismatch": 1 });
+    expect(fs.existsSync(path.join(outside, "checkout", path.basename(swapped.worktreePath), "owned.txt"))).toBe(true);
+    registry.dispose();
+  });
+
+  it("faz prune só quando todo prunable é registro Nexus atual", async () => {
+    const { root, scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    setMission(manager, scope, "mission-live", "running");
+    const gone = await paneWriter(registry, scope, "mission-live", "gone");
+    fs.rmSync(gone.worktreePath, { recursive: true, force: true });
+    expect(git(root, "worktree", "list", "--porcelain")).toContain("prunable");
+    const report = await registry.collectAgedPaneWriterWorktrees(scope, NOW);
+    expect(report.prune).toEqual({ pruned: 1 });
+    expect(git(root, "worktree", "list", "--porcelain")).not.toContain("prunable");
+    // Worktree do operador fora da raiz gerenciada: o prune tudo-ou-nada não roda.
+    const foreign = path.join(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nexus-gc-foreign-"))), "wt");
+    roots.push(path.dirname(foreign));
+    git(root, "worktree", "add", "-q", "-b", "operator-own", foreign);
+    fs.rmSync(foreign, { recursive: true, force: true });
+    expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).prune)
+      .toEqual({ skipped: "prunable-not-nexus" });
+    expect(git(root, "worktree", "list", "--porcelain")).toContain("prunable");
+    git(root, "worktree", "prune");
+    // Worktree manual DENTRO da raiz gerenciada, com caminho no formato exato
+    // do Nexus mas sem registro: formato não é proveniência, não é esquecida.
+    const manual = path.join(path.dirname(path.dirname(path.dirname(gone.worktreePath))),
+      `project-${"a".repeat(64)}`, `checkout-${"b".repeat(64)}`, `task-${"c".repeat(64)}`);
+    git(root, "worktree", "add", "-q", "-b", "operator-manual", manual);
+    fs.rmSync(manual, { recursive: true, force: true });
+    expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).prune)
+      .toEqual({ skipped: "prunable-not-nexus" });
+    expect(git(root, "worktree", "list", "--porcelain")).toContain(manual);
+    registry.dispose();
+  });
+
+  it.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
+    "GC estrito do fim do pane também exige a prova de cwd real do SO",
+    async () => {
+      const { root, scope, manager } = fixture();
+      const registry = new WorktreeRuntimeRegistry(manager);
+      setMission(manager, scope, "mission-live", "running");
+      const record = await paneWriter(registry, scope, "mission-live", "s", "s.txt");
+      git(root, "merge", "-q", "--no-edit", record.branchRef.slice("refs/heads/".length));
+      const shell = spawn("sleep", ["30"], { cwd: record.worktreePath, stdio: "ignore" });
+      try {
+        await new Promise((resolve) => shell.once("spawn", resolve));
+        expect(await registry.collectIntegratedPaneWorktrees(scope, "mission-live", () => false)).toEqual([]);
+        expect(fs.existsSync(record.worktreePath)).toBe(true);
+      } finally {
+        shell.kill("SIGKILL");
+        await new Promise((resolve) => shell.once("exit", resolve));
+      }
+      expect((await registry.collectIntegratedPaneWorktrees(scope, "mission-live", () => false))
+        .map((r) => r.taskId)).toEqual([record.taskId]);
+      registry.dispose();
+    },
+  );
+
+  it("rodada que bateu no teto agenda continuação limitada, sem esperar o re-arme", async () => {
+    const { scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    vi.useFakeTimers();
+    try {
+      const deferred = { removed: [], kept: {}, deferred: 3, prune: { pruned: 0 } };
+      const collect = vi.spyOn(registry, "collectAgedPaneWriterWorktrees").mockResolvedValue(deferred);
+      registry.scheduleAgedPaneWriterGc(scope);
+      await vi.advanceTimersByTimeAsync(AGED_PANE_WORKTREE_GC.delayMs);
+      expect(collect).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(AGED_PANE_WORKTREE_GC.continuationDelayMs);
+      expect(collect).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(
+        AGED_PANE_WORKTREE_GC.continuationDelayMs * (AGED_PANE_WORKTREE_GC.maxContinuations + 3));
+      expect(collect).toHaveBeenCalledTimes(1 + AGED_PANE_WORKTREE_GC.maxContinuations);
+      // Sem adiados, não há continuação.
+      collect.mockClear();
+      collect.mockResolvedValue({ ...deferred, deferred: 0 });
+      vi.setSystemTime(Date.now() + AGED_PANE_WORKTREE_GC.rearmMs);
+      registry.scheduleAgedPaneWriterGc(scope);
+      await vi.advanceTimersByTimeAsync(AGED_PANE_WORKTREE_GC.delayMs + AGED_PANE_WORKTREE_GC.continuationDelayMs * 3);
+      expect(collect).toHaveBeenCalledTimes(1);
+    } finally {
+      registry.dispose();
+      vi.useRealTimers();
+    }
   });
 });

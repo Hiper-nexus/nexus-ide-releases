@@ -37,6 +37,14 @@ vi.mock('../pty/pty-manager', async (original) => ({
   ...(await original<typeof import('../pty/pty-manager')>()),
   tapSessionExit: (tap: SessionExitTap) => { h.exits.add(tap); return () => h.exits.delete(tap); },
 }));
+// F-908: o app configura as portas do sweep de PTY no boot; aqui não há
+// sessão PTY real e o padrão sem portas (fail-closed) seria "em uso" sempre.
+// Sessão viva = pane não encerrado com o cwd dentro da worktree.
+vi.mock('../runtime/worktree-pty-sweep', async (original) => ({
+  ...(await original<typeof import('../runtime/worktree-pty-sweep')>()),
+  worktreeHasLiveSession: (worktreePath: string) => h.panes.some((pane) =>
+    pane.state !== 'exited' && pane.executionScope?.rootRealPath === worktreePath),
+}));
 vi.mock('./gate', async (original) => ({
   ...(await original<typeof import('./gate')>()),
   assertCurrentMissionOrchestratorSession: vi.fn(),
@@ -498,6 +506,32 @@ describe('revisão cruzada 0.76.110: corrida, retomada, WIP e GC', () => {
       .rejects.toThrow(/worktree original do writer isolado pane-0 .*não está disponível/);
     expect(h.spawn).toHaveBeenCalledTimes(1);
     expect(opRecords()).toHaveLength(1);
+  });
+
+  it('F-908: fim do pane de missão coleta o writer já mesclado; sem commit ou não mesclado fica', async () => {
+    await Promise.all([1, 2, 3].map(() => paneSpawnTool.handler({ agentName: 'Executor', isolatedWriter: true }, ctx)));
+    const [merged, unmerged, idle] = h.panes.map((pane) => registry.listMission(ctx.scope, ctx.missionId!)
+      .find((r) => r.worktreePath === pane.executionScope!.rootRealPath)!);
+    for (const [record, file] of [[merged, 'm.txt'], [unmerged, 'u.txt']] as const) {
+      fs.writeFileSync(path.join(record.worktreePath, file), file);
+      git(record.worktreePath, 'add', file);
+      git(record.worktreePath, 'commit', '-qm', file);
+    }
+    git(ctx.scope.rootRealPath, 'merge', '-q', '--no-edit', merged.branchRef.slice('refs/heads/'.length));
+    for (const pane of h.panes) {
+      pane.state = 'exited';
+      exitPane(pane);
+    }
+    await operatorHandGcIdle();
+    await worktreeSalvageIdle();
+    const kept = registry.listMission(ctx.scope, ctx.missionId!).map((r) => r.taskId);
+    expect(fs.existsSync(merged.worktreePath)).toBe(false);
+    expect(kept).not.toContain(merged.taskId);
+    expect(() => git(ctx.scope.rootRealPath, 'rev-parse', '--verify', '--quiet', merged.branchRef)).toThrow();
+    // Não mesclado e sem commit (retomável) continuam inteiros.
+    expect(kept).toEqual(expect.arrayContaining([unmerged.taskId, idle.taskId]));
+    expect(fs.existsSync(unmerged.worktreePath)).toBe(true);
+    expect(fs.existsSync(idle.worktreePath)).toBe(true);
   });
 
   it('resume de writer isolado da missão reusa a worktree original', async () => {

@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
 import type { ProjectExecutionScope } from "../../shared/types";
 import type { ProjectRuntimeManager } from "./project-runtime-manager";
 import {
   DEAD_OWNER_WORKTREE_RELEASE_MARKER,
   WorktreeManager,
   type CreateWorktreeInput,
+  type PaneWorktreeGcReport,
   type WorktreeRecord,
 } from "./worktree-manager";
 import {
@@ -25,7 +27,10 @@ import {
   SqliteWorktreeStateStore,
 } from "./sqlite-workflow-state-stores";
 import { ScopedStoreBinding } from "../orch/scoped-store";
-import { sweepPtysInsideWorktree } from "./worktree-pty-sweep";
+import { sweepPtysInsideWorktree, worktreeHasLiveSession } from "./worktree-pty-sweep";
+import { scheduleWorktreeSalvage } from "../orch/isolated-writer-salvage";
+import { listProcessCwds } from "./process-cwds";
+import { isPathInsideOrEqual } from "./worktree-removal-safety";
 import {
   managedCandidatesRoot,
   managedWorktreesRoot,
@@ -71,9 +76,35 @@ const DEAD_OWNER_WORKTREE_RELEASE_REASON =
   `${DEAD_OWNER_WORKTREE_RELEASE_MARKER} owning task or mission is terminal; ` +
   "ownership released, physical worktree kept for resume";
 
+/**
+ * F-908: coleta de worktrees de writers paradas. Roda depois do boot (nunca
+ * no caminho de abertura do escopo), no máximo uma vez a cada REARM por
+ * escopo, com teto de itens e de tempo por rodada.
+ */
+export const AGED_PANE_WORKTREE_GC: Readonly<Record<
+  "delayMs" | "rearmMs" | "minIdleMs" | "maxCandidates" | "budgetMs" |
+  "continuationDelayMs" | "maxContinuations", number
+>> = Object.freeze({
+  delayMs: 30_000,
+  /** Rodada que bateu no teto continua logo, sem esperar o re-arme. */
+  continuationDelayMs: 60_000,
+  maxContinuations: 5,
+  rearmMs: 6 * 60 * 60_000,
+  minIdleMs: 24 * 60 * 60_000,
+  maxCandidates: 12,
+  budgetMs: 3 * 60_000,
+});
+
+export type AgedPaneWorktreeGcReport = PaneWorktreeGcReport & {
+  readonly prune: { readonly pruned: number } | { readonly skipped: string };
+};
+
 export class WorktreeRuntimeRegistry {
   readonly #manager: ProjectRuntimeManager;
   readonly #runtimes = new Map<string, ScopeRuntime>();
+  readonly #agedGcNextAt = new Map<string, number>();
+  readonly #agedGcTimers = new Set<NodeJS.Timeout>();
+  #agedGcGeneration = 0;
 
   constructor(manager: ProjectRuntimeManager) {
     this.#manager = manager;
@@ -166,7 +197,118 @@ export class WorktreeRuntimeRegistry {
       queue,
     });
     this.#runtimes.set(key, value);
+    this.scheduleAgedPaneWriterGc(immutableScope);
     return value;
+  }
+
+  /**
+   * F-908: agenda a coleta de worktrees paradas deste escopo (boot e, num app
+   * aberto por dias, cada alocação nova re-arma a cada `rearmMs`). Nunca
+   * lança; o timer não segura o processo vivo.
+   */
+  scheduleAgedPaneWriterGc(scope: ProjectExecutionScope): void {
+    const key = scopeKey(scope);
+    if (Date.now() < (this.#agedGcNextAt.get(key) ?? 0)) return;
+    this.#agedGcNextAt.set(key, Date.now() + AGED_PANE_WORKTREE_GC.rearmMs);
+    this.#armAgedPaneWriterGc(scope, AGED_PANE_WORKTREE_GC.delayMs, AGED_PANE_WORKTREE_GC.maxContinuations);
+  }
+
+  #armAgedPaneWriterGc(scope: ProjectExecutionScope, delayMs: number, continuations: number): void {
+    const generation = this.#agedGcGeneration;
+    const timer = setTimeout(() => {
+      this.#agedGcTimers.delete(timer);
+      void this.collectAgedPaneWriterWorktrees(scope).then((report) => {
+        // Candidatos adiados pelo teto: rodada de continuação, limitada.
+        if (report.deferred > 0 && continuations > 0 && generation === this.#agedGcGeneration) {
+          this.#armAgedPaneWriterGc(scope, AGED_PANE_WORKTREE_GC.continuationDelayMs, continuations - 1);
+        }
+      }, (error: unknown) => {
+        console.warn('[worktree-runtime] coleta de worktrees paradas adiada', error);
+      });
+    }, delayMs);
+    timer.unref?.();
+    this.#agedGcTimers.add(timer);
+  }
+
+  /**
+   * Prova de uso pelo cwd ATUAL dos processos, para a worktree: cwd
+   * desconhecido do mesmo uid (ou de outro uid sem ancestral 0700 do usuário)
+   * conta como em uso.
+   */
+  #unusedByProcesses(): (worktreePath: string) => Promise<boolean> {
+    return async (worktreePath) => {
+      // Ancestrais do caminho real da worktree: os roots do manager podem ser
+      // o caminho não resolvido (/var → /private/var) e não casariam.
+      const privateAncestors: string[] = [];
+      for (let dir = path.dirname(worktreePath); dir !== path.dirname(dir); dir = path.dirname(dir)) {
+        privateAncestors.push(dir);
+      }
+      const cwds = await listProcessCwds({ privateAncestors });
+      return cwds !== null && !worktreeHasLiveSession(worktreePath) &&
+        !cwds.some((cwd) => isPathInsideOrEqual(worktreePath, cwd));
+    };
+  }
+
+  /**
+   * F-908: remove worktrees LIMPAS de writers de pane liberados há mais de
+   * `minIdleMs`, missão done/failed/ausente, sem sessão viva e sem processo
+   * com o cwd ATUAL dentro (sem essa prova, nada sai). Suja ganha a
+   * salvaguarda F-794 e fica; branch não mesclada fica. Antes, prune só
+   * quando todo `prunable` é registro Nexus atual. Resultado registrado.
+   */
+  async collectAgedPaneWriterWorktrees(
+    scope: ProjectExecutionScope,
+    limits: Partial<typeof AGED_PANE_WORKTREE_GC> = {},
+  ): Promise<AgedPaneWorktreeGcReport> {
+    const { minIdleMs, maxCandidates, budgetMs } = { ...AGED_PANE_WORKTREE_GC, ...limits };
+    const deadlineAt = Date.now() + budgetMs;
+    const runtime = this.forScope(scope);
+    // Sem o status das missões, nada é coletado (a leitura lança).
+    const missionStatus = new Map(
+      (
+        new ScopedStoreBinding(this.#manager, scope)
+          .readDatabase()
+          .prepare('SELECT id, status FROM missions')
+          .all() as ReadonlyArray<{ id: string; status: string }>
+      ).map((row) => [row.id, row.status] as const),
+    );
+    // `operator-hand` nunca é linha de missão: conta como ausente.
+    const finished = (missionId: string) => {
+      const status = missionStatus.get(missionId);
+      return status === undefined || status === 'done' || status === 'failed';
+    };
+    // Prune primeiro: libera a branch de pasta sumida para o `branch -d`.
+    const prune = await runtime.worktrees.pruneManagedWorktrees(scope);
+    const cwds = await listProcessCwds({ privateAncestors: [runtime.worktrees.runtimeRoot] });
+    const occupied = (worktreePath: string, current: readonly string[]) =>
+      worktreeHasLiveSession(worktreePath) || current.some((cwd) => isPathInsideOrEqual(worktreePath, cwd));
+    const report: PaneWorktreeGcReport = cwds === null
+      // win32, lsof/procfs indisponível ou com erro: sem prova de uso, nada sai.
+      ? { removed: [], kept: { "liveness-unavailable": 1 }, deferred: 0 }
+      : await runtime.worktrees.collectReleasedPaneWorktrees(scope, {
+        owner: finished,
+        inUse: (worktreePath) => occupied(worktreePath, cwds),
+        confirmUnused: this.#unusedByProcesses(),
+        minIdleMs,
+        maxCandidates,
+        deadlineAt,
+        salvageDirty: (record) => scheduleWorktreeSalvage({
+          worktreePath: record.worktreePath,
+          branchRef: record.branchRef,
+          missionId: record.missionId,
+          taskId: record.taskId,
+          reason: "gc",
+        }, { notify: false }),
+      });
+    if (report.removed.length > 0 || Object.keys(report.kept).length > 0 ||
+        report.deferred > 0 || !('pruned' in prune) || prune.pruned > 0) {
+      console.warn(
+        `[worktree-runtime] coleta de worktrees paradas: ${report.removed.length} removida(s), ` +
+          `mantidas ${JSON.stringify(report.kept)}, ${report.deferred} para a próxima rodada, ` +
+          `prune ${JSON.stringify(prune)}`,
+      );
+    }
+    return Object.freeze({ ...report, prune });
   }
 
   /**
@@ -331,6 +473,7 @@ export class WorktreeRuntimeRegistry {
     input.assertCurrentAuthority?.();
     input.signal?.throwIfAborted();
     const runtime = this.forScope(input.scope);
+    this.scheduleAgedPaneWriterGc(input.scope);
     // `forScope` memoizes, so observe both stale-record lanes again before
     // the ownership-overlap check evaluates them.
     this.#purgeOrphanWorktrees(input.scope, runtime.worktrees);
@@ -403,7 +546,8 @@ export class WorktreeRuntimeRegistry {
     missionId: string,
     inUse: (worktreePath: string) => boolean,
   ): Promise<readonly WorktreeRecord[]> {
-    return this.forScope(scope).worktrees.collectIntegratedPaneWorktrees(scope, missionId, inUse);
+    return this.forScope(scope).worktrees
+      .collectIntegratedPaneWorktrees(scope, missionId, inUse, this.#unusedByProcesses());
   }
 
   listMission(
@@ -630,6 +774,10 @@ export class WorktreeRuntimeRegistry {
   }
 
   dispose(): void {
+    this.#agedGcGeneration += 1;
+    for (const timer of this.#agedGcTimers) clearTimeout(timer);
+    this.#agedGcTimers.clear();
+    this.#agedGcNextAt.clear();
     this.#runtimes.clear();
   }
 }
