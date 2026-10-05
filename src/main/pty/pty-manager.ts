@@ -2967,19 +2967,33 @@ export function spawnAgentSession(
     if (!ctx || !isCurrentGateContext(ctx)) throw new Error('native_deferred_spawn_context_changed');
   };
   const codexFileChannel = adapter.id === 'codex' && process.platform === 'darwin' && !codexProcessSandbox && !processSandboxActive && Boolean(spawnEnv.NEXUS_GATE_TOKEN);
-  const ready = adapter.id === 'opencode' || codexFileChannel || museHeavyProfile ? (async () => {
+  // F-906: AGY's PreToolUse plugin admits run_command over the file channel
+  // without depending on shell startup files.
+  const agyNativeHeavy = adapter.id === 'agy' && process.platform === 'darwin' && Boolean(spawnEnv.NEXUS_GATE_TOKEN);
+  const agyCancel = agyNativeHeavy ? new AbortController() : undefined;
+  const ready = adapter.id === 'opencode' || codexFileChannel || museHeavyProfile || agyNativeHeavy ? (async () => {
     // Preserve the synchronous logical reservation; this microtask starts only
     // after Main has recorded the new session and its owner.
     await Promise.resolve(); assertDeferredCurrent();
     if (museHeavyProfile) { await museHeavyProfile.initialize(assertDeferredCurrent); assertDeferredCurrent(); }
+    if (agyNativeHeavy) {
+      const { ensureAgyNativeHeavyPlugin } = await import('../orch/native-heavy-agy-plugin'); assertDeferredCurrent();
+      // The pane's effective HOME (checkout HOME, F-567): where its AGY reads plugins.
+      const plugin = await ensureAgyNativeHeavyPlugin({ home: spawnEnv.HOME ?? '', agyBin: bin, node: spawnEnv.NEXUS_HEAVY_NODE ?? '',
+        resourceDirectory: spawnEnv.NEXUS_HEAVY_DIR ?? '', signal: agyCancel?.signal, assertCurrent: assertDeferredCurrent }); assertDeferredCurrent();
+      // F-723: an operator-disabled plugin stays disabled; the pane starts and
+      // the shell route admits. Every other failure keeps the pane unborn.
+      if (plugin.reason === 'agy_heavy_plugin_disabled') trace({ kind: 'agy-heavy-plugin-degraded', adapterId: 'agy', name: 'disabled' });
+      else if (!plugin.registered) throw new Error(plugin.reason ?? 'agy_heavy_plugin_registration_failed');
+    }
     const prepared = adapter.id === 'opencode' ? await prepareOpenCodeSessionArgs(bin, args, env.PATH) : args; assertDeferredCurrent();
     const nextArgs = adapter.id === 'opencode' && prepared.includes('--standalone') && !args.includes('--standalone') ? [...spec.args, '--standalone'] : [...spec.args];
     const nextEnv: Record<string, string> = {};
-    if (process.platform === 'darwin' && (codexFileChannel || museHeavyProfile || adapter.id === 'opencode' && isOpenCodeOwnedServerProved(bin))) {
+    if (process.platform === 'darwin' && (codexFileChannel || museHeavyProfile || agyNativeHeavy || adapter.id === 'opencode' && isOpenCodeOwnedServerProved(bin))) {
       const ctx = getNativeHeavyGateContext(spawnEnv.NEXUS_GATE_TOKEN ?? '');
       if (!ctx) throw new Error('native_heavy_channel_context_invalid');
       const { createNativeHeavyLocalChannel } = await import('../orch/native-heavy-local-channel'); assertDeferredCurrent();
-      nativeChannel = await createNativeHeavyLocalChannel(ctx, spawnEnv.TMPDIR ?? os.tmpdir(), undefined, { transport: codexFileChannel || museHeavyProfile ? 'file' : 'unix' }); assertDeferredCurrent();
+      nativeChannel = await createNativeHeavyLocalChannel(ctx, spawnEnv.TMPDIR ?? os.tmpdir(), undefined, { transport: codexFileChannel || museHeavyProfile || agyNativeHeavy ? 'file' : 'unix' }); assertDeferredCurrent();
       Object.assign(nextEnv, nativeChannel.env);
       if (codexFileChannel) {
         const { configureCodexNativeHeavyChannel } = await import('../orch/codex-native-heavy-channel'); assertDeferredCurrent();
@@ -2988,7 +3002,7 @@ export function spawnAgentSession(
     }
     assertDeferredCurrent(); return { args: nextArgs, env: nextEnv };
   })() : undefined;
-  const readiness = ready ? { wait: ready, assertCurrent: assertDeferredCurrent, cleanup: async () => { deferredCancelled = true; await ready.catch(() => {}); await nativeChannel?.dispose(); } } : undefined;
+  const readiness = ready ? { wait: ready, assertCurrent: assertDeferredCurrent, cleanup: async () => { deferredCancelled = true; agyCancel?.abort(); await ready.catch(() => {}); await nativeChannel?.dispose(); } } : undefined;
   void ready?.catch(() => {});
   try {
     const host = requireHost();

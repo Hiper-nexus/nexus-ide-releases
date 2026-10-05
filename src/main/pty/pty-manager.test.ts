@@ -212,6 +212,23 @@ vi.mock("../feature-flags/feature-flag-registry", () => ({
   }),
 }));
 
+// F-906: AGY readiness seams. Only spawns carrying NEXUS_GATE_TOKEN reach them.
+const agyHeavy = vi.hoisted(() => ({
+  ensure: vi.fn(async (_options: { home: string; agyBin: string; node: string; resourceDirectory: string; signal?: AbortSignal; assertCurrent?: () => void }) =>
+    ({ registered: true }) as { registered: boolean; reason?: string }),
+  channels: vi.fn(async (_ctx: unknown, _tmp: string, _ports: unknown, options: { transport?: string } = {}) => ({
+    transport: options.transport ?? "unix",
+    env: { NEXUS_HEAVY_CHANNEL_DIR: "/private/agy-channel", NEXUS_HEAVY_CHANNEL_KEY: "a".repeat(64),
+      NEXUS_HEAVY_CHANNEL_EPOCH: "agy-epoch", NEXUS_HEAVY_CHANNEL_PUBLIC_KEY: "agy-public" },
+    dispose: async () => {},
+  })),
+}));
+vi.mock("../orch/native-heavy-agy-plugin", () => ({ ensureAgyNativeHeavyPlugin: agyHeavy.ensure }));
+vi.mock("../orch/native-heavy-local-channel", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../orch/native-heavy-local-channel")>()),
+  createNativeHeavyLocalChannel: agyHeavy.channels,
+}));
+
 // F-212: captura dos eventos de ciclo de vida PTY. A escrita NDJSON em disco é
 // responsabilidade de main-trace (testada lá); aqui só interessa o payload.
 const lifecycleTrace = vi.hoisted(() => ({
@@ -271,6 +288,7 @@ import type {
   PtyHost,
   PtyProcHandle,
   PtySessionHandlers,
+  PtySpawnReadiness,
   PtySpawnSpec,
 } from "./pty-host-core";
 import type { CliPtyAdapter } from "../../shared/adapter-types";
@@ -6343,3 +6361,109 @@ it.skipIf(process.env.NEXUS_PROVIDER_BOOT_SMOKE !== "1").each([
     fs.rmSync(root, { recursive: true, force: true });
   }
 }, 60_000);
+
+describe("F-906 AGY native heavy admission readiness", () => {
+  const darwinIt = process.platform === "darwin" ? it : it.skip;
+  async function spawnAgy(gate: boolean) {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const spawns: Array<{ spec: PtySpawnSpec; readiness?: PtySpawnReadiness }> = [];
+    setPtyHost({
+      spawn(spec, handlers, readiness) {
+        spawns.push({ spec, readiness });
+        return { write: vi.fn(), resize: vi.fn(), kill: vi.fn(), terminate: vi.fn(async () => {
+          handlers.onExit(0, 15); return { ok: true, rootExited: true, descendantsExited: true };
+        }) };
+      },
+    });
+    const tokens: string[] = [];
+    setAgentSpawnHook((_adapter, _request, authority) => {
+      const ctx = mintToken({ label: "agy-heavy", role: "user", scope: authority.scope, executionScope: authority.scope, allowedTools: null, allowedSkills: null });
+      tokens.push(ctx.token);
+      const env: Record<string, string> = gate ? { NEXUS_GATE_TOKEN: ctx.token } : {};
+      return { authorityToken: ctx.token, env, extraArgs: [] };
+    });
+    const session = spawnAgentSession(fakeWc(), { kind: "cli-agent", cols: 80, rows: 24 }, builtinCliPtyAdapter("agy"), {}, trustedSpawn());
+    return { spawns, session, tokens };
+  }
+  async function finish(run: Awaited<ReturnType<typeof spawnAgy>>) {
+    await orchTerminateSession(run.session.sessionId);
+    setAgentSpawnHook(null);
+    for (const token of run.tokens) cleanupCliMcpSession(token);
+    resetGateForTests();
+    agyHeavy.ensure.mockClear(); agyHeavy.channels.mockClear();
+  }
+
+  darwinIt("registers the AGY plugin, then opens the file channel, before the physical spawn", async () => {
+    const run = await spawnAgy(true);
+    try {
+      const [{ spec, readiness }] = run.spawns;
+      expect(readiness).toBeDefined();
+      await expect(readiness!.wait).resolves.toEqual({ args: spec.args, env: {
+        NEXUS_HEAVY_CHANNEL_DIR: "/private/agy-channel", NEXUS_HEAVY_CHANNEL_KEY: "a".repeat(64),
+        NEXUS_HEAVY_CHANNEL_EPOCH: "agy-epoch", NEXUS_HEAVY_CHANNEL_PUBLIC_KEY: "agy-public" } });
+      expect(agyHeavy.ensure).toHaveBeenCalledOnce();
+      expect(agyHeavy.ensure.mock.calls[0][0]).toMatchObject({ home: spec.env.HOME, agyBin: "/mock/bin/agy" });
+      // Installed where this pane's AGY reads plugins: its checkout HOME (F-567).
+      expect(spec.env.HOME).not.toBe(os.homedir());
+      expect(spec.env.HOME).toContain(path.join(app.getPath("userData"), "provider-state", "agy"));
+      expect(agyHeavy.ensure.mock.calls[0][0].assertCurrent).toBeTypeOf("function");
+      expect(agyHeavy.ensure.mock.calls[0][0].signal).toBeInstanceOf(AbortSignal);
+      expect(agyHeavy.channels).toHaveBeenCalledOnce();
+      expect(agyHeavy.channels.mock.calls[0][3]).toEqual({ transport: "file" });
+      expect(agyHeavy.ensure.mock.invocationCallOrder[0]).toBeLessThan(agyHeavy.channels.mock.invocationCallOrder[0]);
+      // Approval/network choices stay the selected Autopilot argv.
+      expect(spec.args).toContain("--dangerously-skip-permissions");
+    } finally { await finish(run); }
+  });
+
+  darwinIt("never births AGY when the plugin is not registered", async () => {
+    agyHeavy.ensure.mockResolvedValueOnce({ registered: false, reason: "agy_heavy_plugin_foreign_collision" });
+    const run = await spawnAgy(true);
+    try {
+      await expect(run.spawns[0].readiness!.wait).rejects.toThrow("agy_heavy_plugin_foreign_collision");
+      expect(agyHeavy.channels).not.toHaveBeenCalled();
+    } finally { await finish(run); }
+  });
+
+  darwinIt("degrades an operator-disabled plugin: the pane starts with the channel and a sanitized trace", async () => {
+    agyHeavy.ensure.mockResolvedValueOnce({ registered: false, reason: "agy_heavy_plugin_disabled" });
+    const run = await spawnAgy(true);
+    try {
+      await expect(run.spawns[0].readiness!.wait).resolves.toMatchObject({ env: { NEXUS_HEAVY_CHANNEL_EPOCH: "agy-epoch" } });
+      expect(agyHeavy.channels.mock.calls[0][3]).toEqual({ transport: "file" });
+      expect(lifecycleTrace.events.filter((event) => event.kind === "agy-heavy-plugin-degraded").at(-1)).toEqual({ kind: "agy-heavy-plugin-degraded", adapterId: "agy", name: "disabled" });
+    } finally { await finish(run); }
+  });
+
+  darwinIt("pane cancellation releases a readiness stuck in plugin registration", async () => {
+    agyHeavy.ensure.mockImplementationOnce((options) => new Promise((resolve) => {
+      options.signal?.addEventListener("abort", () => resolve({ registered: false, reason: "agy_heavy_plugin_context_changed" }), { once: true });
+    }));
+    const run = await spawnAgy(true);
+    try {
+      const readiness = run.spawns[0].readiness!;
+      await vi.waitFor(() => expect(agyHeavy.ensure).toHaveBeenCalledOnce());
+      await expect(readiness.cleanup()).resolves.toBeUndefined();
+      expect(agyHeavy.ensure.mock.calls[0][0].signal?.aborted).toBe(true);
+      await expect(readiness.wait).rejects.toThrow();
+      expect(agyHeavy.channels).not.toHaveBeenCalled();
+    } finally { await finish(run); }
+  });
+
+  darwinIt("revalidates the session after the plugin await", async () => {
+    agyHeavy.ensure.mockImplementationOnce(async () => { resetGateForTests(); return { registered: true }; });
+    const run = await spawnAgy(true);
+    try {
+      await expect(run.spawns[0].readiness!.wait).rejects.toThrow("native_deferred_spawn_context_changed");
+      expect(agyHeavy.channels).not.toHaveBeenCalled();
+    } finally { await finish(run); }
+  });
+
+  darwinIt("leaves AGY without a Nexus gate token unchanged", async () => {
+    const run = await spawnAgy(false);
+    try {
+      expect(run.spawns[0].readiness).toBeUndefined();
+      expect(agyHeavy.ensure).not.toHaveBeenCalled();
+    } finally { await finish(run); }
+  });
+});
