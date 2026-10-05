@@ -221,8 +221,10 @@ const RECIPES: Readonly<Record<string, PlatformRecipes>> = Object.freeze({
     win32: [npmRecipe('@anthropic-ai/claude-code')],
   },
   codex: {
-    // Fallback: formula oficial no homebrew-core.
-    darwin: [npmRecipe('@openai/codex'), brewRecipe('codex')],
+    // Fallback: cask oficial do Homebrew (`brew install --cask codex`); o
+    // instalador standalone (chatgpt.com/codex/install.sh) é tratado à parte
+    // no updater, que reconhece ~/.codex/packages/standalone.
+    darwin: [npmRecipe('@openai/codex'), brewCaskRecipe('codex')],
     linux: [npmRecipe('@openai/codex')],
     win32: [npmRecipe('@openai/codex')],
   },
@@ -440,6 +442,20 @@ export function selectCliUpdateRecipe(input: {
       realPath.startsWith(`${home}/.grok/downloads/grok-`))
   )) {
     return selfUpdate(['update']);
+  }
+  // Codex instalado pelo instalador standalone (chatgpt.com/codex/install.sh):
+  // o binário fica em ~/.codex/packages/standalone/releases/<versão>/bin/codex
+  // e ~/.local/bin/codex é só um symlink. Não é npm nem cask, então cairia no
+  // `return null` final ("Não reconheci o canal da CLI usada pelo pane"). O
+  // próprio instalador é o atualizador: reexecutá-lo baixa a release mais nova
+  // in-place. O sinal confiável é o realPath — o binPath ~/.local/bin/codex
+  // também é usado por symlinks de instalações npm (vide testes acima).
+  if (input.adapterId === 'codex' &&
+      /\/\.codex\/packages\/standalone\//u.test(realPath)) {
+    return selectInstallRecipe(
+      [scriptRecipe('https://chatgpt.com/codex/install.sh', { automaticUpdate: true })],
+      input.isRunnerResolvable,
+    );
   }
   if (input.adapterId === 'minimax-code') {
     return selfUpdate(['update']);

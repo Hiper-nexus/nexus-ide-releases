@@ -267,6 +267,41 @@ describe('updating the CLI that Nexus launches', () => {
     })).toBeNull();
   });
 
+  it('reruns the official installer for a standalone Codex (F-929)', () => {
+    // Instalado via chatgpt.com/codex/install.sh: ~/.local/bin/codex é symlink
+    // para ~/.codex/packages/standalone/releases/<versão>/bin/codex. Antes
+    // caía no `return null` → "Não reconheci o canal da CLI usada pelo pane".
+    const selected = selectCliUpdateRecipe({
+      adapterId: 'codex',
+      platform: 'darwin',
+      binPath: '/Users/operator/.local/bin/codex',
+      realBinPath: '/Users/operator/.codex/packages/standalone/releases/0.160.0/bin/codex',
+      userHome: '/Users/operator',
+      isRunnerResolvable: (runner) => runner === 'bash',
+    });
+    expect(selected).toMatchObject({
+      ok: true,
+      recipe: { kind: 'script', scriptUrl: 'https://chatgpt.com/codex/install.sh' },
+    });
+    if (selected?.ok) {
+      expect(describeInstallRecipe(selected.recipe)).toContain('chatgpt.com/codex/install.sh');
+    }
+  });
+
+  it('updates a Homebrew-cask Codex with brew upgrade --cask (F-929)', () => {
+    const selected = selectCliUpdateRecipe({
+      adapterId: 'codex',
+      platform: 'darwin',
+      binPath: '/opt/homebrew/bin/codex',
+      realBinPath: '/opt/homebrew/Caskroom/codex/0.160.0/codex',
+      isRunnerResolvable: () => true,
+    });
+    expect(selected).toMatchObject({
+      ok: true,
+      recipe: { argv: ['/opt/homebrew/bin/brew', 'upgrade', '--cask', 'codex'] },
+    });
+  });
+
   it('updates a native Grok launcher whose real binary lives under downloads', () => {
     expect(selectCliUpdateRecipe({
       adapterId: 'grok',
