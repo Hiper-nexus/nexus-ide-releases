@@ -69,9 +69,15 @@ function moduleKind(file) {
   }
   return null;
 }
+// Node keeps the bin link in argv[1] (`…/bin/npx`), not npm's npx-cli.js.
+function launcherName(entry) {
+  const name = path.basename(entry).toLowerCase();
+  if (name !== 'npx' && name !== 'npm') return name;
+  try { const real = path.basename(fs.realpathSync(entry)).toLowerCase(); return /^np[mx]-cli\.js$/.test(real) ? real : name; } catch { return name; }
+}
 function isPersistent(argv) {
   const entry = argv[1] || '', args = argv.slice(2);
-  const name = path.basename(entry).toLowerCase();
+  const name = launcherName(entry);
   const normalized = entry.replace(/\\/g, '/').toLowerCase();
   if (isMcpService(entry)) return true;
   if (/^(?:npm-cli|npx-cli|pnpm|yarn|bun)(?:\.[cm]?js)?$/.test(name)) {
@@ -106,7 +112,7 @@ function commandKind(command) {
 function entryKind(argv) {
   if (isPersistent(argv)) return null;
   const entry = argv[1] || '';
-  const name = path.basename(entry).toLowerCase().replace(/\.(?:[cm]?js|exe)$/, '');
+  const name = launcherName(entry).replace(/\.(?:[cm]?js|exe)$/, '');
   if (/^(?:npm-cli|npx-cli|pnpm|yarn|bun)$/.test(name) || /[\\/]node_modules[\\/](?:npm|pnpm|yarn)[\\/]/i.test(entry)) {
     const values = [];
     const takesValue = new Set(['--workspace', '-w', '--prefix', '--dir', '-C', '--filter', '--cache', '--userconfig', '--globalconfig']);

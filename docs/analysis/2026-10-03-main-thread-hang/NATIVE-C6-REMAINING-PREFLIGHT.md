@@ -124,6 +124,93 @@ product permission restrictions. Future session controls can reuse canonical
 links the exact source auth file without copying credentials; normal auth
 lineage must remain in place.
 
+## Actual authenticated Devin tool control
+
+`native-heavy-devin-authenticated.test.ts` is explicitly opt-in. It uses normal
+`--permission-mode dangerous`, actual `models list` (selected advertised
+`deepseek-v4-pro-high`), canonical checkout credential links, owned PTY/supervisor,
+and a 30 s physical ceiling per invocation. The model sees only the finite
+Make/Node task; output/argv/credentials are not retained. Network is unrestricted;
+the fixture protects original credential/config files from writes. No monetary
+cap is asserted.
+
+Private HOME baseline and scheduled CURRENT environment both passed, 1 test in
+44.79 s: `/private/var/folders/sx/x73nxt3s0tnfhs1n_bl38bc40000gn/T/nexus-c6-devin-auth-KfLDg6/receipt.json`.
+Scheduled Bash/login-false actual exec admitted fresh job 39158 and borrower
+39206, both allowed; the marker, physical PTY exit 0, natural Main claim `gone`,
+grant/release, and zero cleanup stop calls were independently observed. Existing
+BASH_ENV interception works for this actual CLI; no new provider hook was used.
+
+Native HOME comparison is a preserved RED, not downgraded:
+`/private/var/folders/sx/x73nxt3s0tnfhs1n_bl38bc40000gn/T/nexus-c6-devin-auth-NHNjYr/receipt.json`.
+Baseline produced the marker/exit 0. Scheduled startup Node job 42342 acquired
+the sole build permit and admitted borrowers 42608/42798. Other startup jobs,
+including 42344 (`@playwright/mcp`), and finite Bash/Make job 42897 waited behind
+it; their actual admission replies were denied when the owner hit the 30 s
+physical deadline (signal 9). The marker remained absent after all claimed jobs
+were physically `gone` and before any cleanup stop (`stopCalls:0`). The first
+Node's module was deliberately not retained in that receipt; a separate bounded
+owned-process diagnostic is required to identify it. Native credential stat
+remained unchanged in both controls. Both receipts bind source `d42842c93`,
+in-flight fixture SHA256 `f8776d1f562489b9e6629dd89714941b60f18e9bfd4ff6ae4385a0e8a8d41e4f`,
+and actual supervisor/CLI hashes.
+
+This HOME difference can matter in production: `pty-manager.ts:2056` calls
+`prepareCheckoutProviderHome`, whose Devin environment sets only XDG_DATA_HOME
+(`managed-credentials.ts:752`), preserving incoming HOME absent later decoration.
+The native profile autoloads MCP services. It is not dismissed as a fixture-only
+configuration. Production recognition of persistent service/dispatcher processes
+must be reviewed before closing this boundary.
+
+Earlier `r1fT2M` is historical only: its queued-admission HTTP idle deadline
+incorrectly remained active after request parsing, producing actual exec
+`nexus-heavy: local admission request failed` / exit 74. The final fixture clears
+that read timer after bounded parsing and records actual admission responses;
+the native HOME RED above persists with this correction. A natural physical
+claim barrier also precedes cleanup, so forced drain is not mistaken for normal
+command completion.
+
+Run only with explicit authorization for the small authenticated task:
+
+```sh
+NEXUS_TEST_DEVIN_AUTHENTICATED=1 PATH=/opt/homebrew/opt/node@22/bin:$PATH \
+  python3 /Users/cleofaspereirarocha/.nexus-worktrees/release-076191-final/.superpowers/sdd/PLAN/with-validation-lock.py \
+  /opt/homebrew/opt/node@22/bin/node ./node_modules/vitest/vitest.mjs run src/main/orch/native-heavy-devin-authenticated.test.ts --maxWorkers=1
+# Add NEXUS_TEST_DEVIN_NATIVE_HOME=1 to preserve the native MCP startup regression.
+```
+
+### After F-907 and its npx-symlink follow-up (04/10, 22:3x BRT)
+
+Both HOME cases are now green with the integration catalog. These controls ran
+as one-shot launchd jobs, because the darwin PTY supervisor rejects launch from
+inside a Nexus pane (exit 76, launch authorization before responsibility
+disclaim); that rejection is environmental and is not counted as a result.
+
+- F-907 alone (`995c27284` catalog): private HOME PASS (46.8 s,
+  `nexus-c6-devin-auth-UVU2pV`); native HOME still RED (scheduled phase hit the
+  30 s ceiling). The added sanitized argv diagnostic showed the four startup
+  launchers as `node …/bin/npx -y mcp-remote|figma-developer-mcp|@playwright/mcp|firecrawl-mcp`:
+  Node keeps the `bin/npx` link in argv[1], so the dispatcher rule keyed on
+  `npx-cli.js` never matched and the generic Node rule gave each one a build
+  permit (`nexus-c6-devin-auth-39qGtu`; scheduled-only diagnostic
+  `nexus-c6-devin-auth-9f67XF`). One intermediate native run timed out already
+  in the ungated baseline (`nexus-c6-devin-auth-3mswmA`): native MCP startup
+  through `npx -y` makes this HOME noisy near the 30 s ceiling.
+- Follow-up: `catalog.cjs` resolves an argv[1] named `npx`/`npm` to npm's own
+  `npx-cli.js`/`npm-cli.js` before classifying (an unrelated file named `npx`
+  stays metered). All four child services are recognized by the F-907 metadata
+  rules (`mcpName` for firecrawl/figma/@playwright, the `mcp-remote` proxy name).
+- Native HOME after the follow-up: PASS, 1 test, baseline and scheduled exit 0,
+  marker present, only the finite Make job claimed (`darwin-job`, `gone`),
+  `grant`/`release`, natural claims gone, `stopCalls` 0, native credential stat
+  unchanged (`nexus-c6-devin-auth-XV8Rw4`).
+- Private HOME repeated with the same catalog: PASS, baseline and scheduled,
+  only the Make job claimed, credential stat unchanged (`nexus-c6-devin-auth-rnUSpo`).
+
+The fixture now records sanitized launcher argv (basenames only, URLs and long
+values redacted) for each claim and accepts `NEXUS_TEST_DEVIN_PHASES=scheduled`
+to isolate the scheduled phase.
+
 Final source checks: Node 22 `tsc --noEmit` exit 0, renderer sink audit 0
 executable sinks, Main sync ratchet 91 reviewed legacy uses/no new synchronous
 processes, and `git diff --check` exit 0. No production source changed.

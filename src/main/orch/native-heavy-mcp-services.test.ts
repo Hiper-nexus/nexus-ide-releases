@@ -46,6 +46,23 @@ it('treats npx and npm exec as dispatchers whose children retain instrumentation
   expect(catalog.entryKind([process.execPath, '/npm/bin/npm-cli.js', 'ci'])).toBe('install');
   expect(catalog.entryKind([process.execPath, '/npm/bin/npm-cli.js', 'run', 'build'])).toBe('build');
 });
+it('resolves npx/npm bin symlinks to the dispatcher, as Node keeps the link in argv[1]', () => {
+  const bin = path.join(root, 'prefix/bin'), cli = path.join(root, 'prefix/lib/node_modules/npm/bin');
+  fs.mkdirSync(bin, { recursive: true }); fs.mkdirSync(cli, { recursive: true });
+  for (const name of ['npx', 'npm']) {
+    fs.writeFileSync(path.join(cli, `${name}-cli.js`), '');
+    fs.symlinkSync(path.join(cli, `${name}-cli.js`), path.join(bin, name));
+  }
+  // Native-HOME Devin startup: `node …/bin/npx -y mcp-remote <url>` held the only build permit.
+  expect(catalog.isPersistent([process.execPath, path.join(bin, 'npx'), '-y', 'mcp-remote', 'https://example.invalid/mcp'])).toBe(true);
+  expect(catalog.isPersistent([process.execPath, path.join(bin, 'npm'), 'exec', '--', 'tsc'])).toBe(true);
+  expect(catalog.entryKind([process.execPath, path.join(bin, 'npm'), 'ci'])).toBe('install');
+  expect(catalog.entryKind([process.execPath, path.join(bin, 'npm'), 'run', 'typecheck'])).toBe('typescript');
+  // A program merely called npx is not npm's dispatcher.
+  const impostor = path.join(root, 'other/npx');
+  fs.mkdirSync(path.dirname(impostor), { recursive: true }); fs.writeFileSync(impostor, '');
+  expect(catalog.isPersistent([process.execPath, impostor, '-y', 'anything'])).toBe(false);
+});
 it('starts the actual generated Nexus bridge without taking the finite command slot', async () => {
   const { ensureNexusMcpBridgeScript } = await import('./cli-mcp-session-minimax');
   const bridge = ensureNexusMcpBridgeScript(path.join(root, 'bridge-home'));
