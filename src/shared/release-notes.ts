@@ -10099,7 +10099,7 @@ export const RELEASE_076198: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076199: AppRelease = {
   version: '0.76.199',
   date: '2026-10-05',
   codename: 'Linux se atualiza sozinho',
@@ -10110,5 +10110,18 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
   fixes: [
     { title: 'Site sem tremor no Linux', detail: 'O letreiro do sorteio e as animações contínuas ficam parados no Linux desktop, onde apareciam duplicados e tremidos.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.200',
+  date: '2026-10-05',
+  codename: 'Linux atualiza pelo sistema',
+  summary: 'DEB e RPM ganham repositório apt e dnf assinado, e o aviso de versão nova mostra o comando certo.',
+  highlights: [
+    { title: 'Atualização pelo apt e pelo dnf', detail: 'Um comando registra o repositório assinado do NexusIDE; depois, o apt upgrade ou o dnf upgrade atualiza o app. É opcional e se desfaz com --remove.' },
+  ],
+  fixes: [
+    { title: 'Troca automática do ZIP mais limpa', detail: 'Resíduo de uma troca que não aconteceu é removido no boot, e o script espera mais tempo o app fechar.' },
   ],
 };

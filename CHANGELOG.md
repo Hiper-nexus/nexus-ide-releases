@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.200 — Linux atualiza pelo sistema
+
+Build do Linux (DEB, RPM e ZIP). Inclui tudo da 0.76.199.
+
+- **DEB e RPM passam a ter repositório (F-942).** `curl -fsSL https://nexuside.app/install-repo.sh | sh` registra o repositório assinado do NexusIDE no apt (Debian, Ubuntu) ou no dnf (Fedora, RHEL) e instala por ele; dali em diante o `apt upgrade` ou o `dnf upgrade` atualiza o app. Os índices são assinados com uma chave GPG que só o NexusIDE tem, e o apt e o dnf recusam índice sem essa assinatura. É opt-in: o instalador comum continua sem mexer nos repositórios do sistema, e `--remove` desfaz. O aviso de versão nova nos DEB/RPM agora mostra o comando certo para cada caso.
+- **A atualização automática do ZIP limpa o resíduo (F-940).** Uma pasta `.new` de ~600 MB ou um ZIP temporário de uma troca que não chegou a acontecer somem no boot, só quando têm mais de 15 minutos; o script de troca espera até 100 s o app fechar.
 ## 0.76.199 — Linux se atualiza sozinho
 
 Build do Linux (DEB, RPM e ZIP). Inclui tudo da 0.76.198.
