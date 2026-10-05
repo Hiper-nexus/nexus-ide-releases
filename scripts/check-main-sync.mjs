@@ -11,6 +11,10 @@ const PROCESS_MODULES = new Set(['child_process', 'node:child_process']);
 const EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.cjs', '.mjs']);
 
 function normalizedTokens(source) {
+  // F-929: o scanner não reescaneia templates; depois de um `${…}` o resto do
+  // trecho vira um token só, com as quebras de linha dentro. Num checkout CRLF
+  // (Windows, autocrlf) a impressão digital mudava e a exceção não casava.
+  source = source.replace(/\r\n?/g, '\n');
   const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, source);
   const tokens = [];
   while (scanner.scan() !== ts.SyntaxKind.EndOfFileToken) tokens.push(scanner.getTokenText());
