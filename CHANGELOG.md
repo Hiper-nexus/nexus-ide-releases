@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.198 — Preferências que ficam
+
+- **Proteção para as instalações dos clientes (F-421).** Modo Jev/Clef, modelo, Account ID e consentimento visual passam a ter gravação própria em `~/.nexus/decision-models.json`. As preferências válidas existentes são importadas automaticamente. O API Token continua exclusivamente no cofre.
+- Um campo inválido em outra preferência de orquestração não restaura mais o modo para Somente Jev nem esvazia um Account ID válido. A cópia própria também sobrevive à regravação de settings.json por uma versão antiga do Nexus.
+- Mantém as correções da 0.76.197 para panes, missão bloqueada, retomada e abertura concorrente de worktrees.
+
 ## 0.76.197 — Panes abrem, missão continua
 
 Build do Mac com correções urgentes de terminais e recuperação de missão. A candidata 0.76.196 foi substituída antes da publicação para incluir o F-255.

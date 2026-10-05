@@ -10067,7 +10067,7 @@ export const RELEASE_076195: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076197: AppRelease = {
   version: '0.76.197',
   date: '2026-10-05',
   codename: 'Panes abrem, missão continua',
@@ -10082,5 +10082,19 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Bloquear não mata o próprio Maestro', detail: 'Um bloqueio pausa o despacho e encerra workers, mas conserva o coordenador legítimo para recuperação. O comando Encerrar permanece explícito e efetivo.' },
     { title: 'Panes isolados abrem juntos', detail: 'Duas criações simultâneas de worktree não disputam mais o registro interno do Git. Só esse registro é ordenado; cópias e trabalho dos agentes seguem em paralelo.' },
     { title: 'Retomar recupera o processo ausente', detail: 'O botão Retomar verifica o processo mesmo quando a missão já está marcada como em execução, em vez de retornar sem fazer nada.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.198',
+  date: '2026-10-05',
+  codename: 'Preferências que ficam',
+  summary: 'Protege o modo Automático e o Account ID Cloudflare dos clientes contra regravações de outras configurações.',
+  highlights: [
+    { title: 'Modo e Account ID preservados', detail: 'As preferências de Jev e Clef têm gravação própria. O que já está salvo é importado automaticamente; o token continua no cofre.' },
+  ],
+  fixes: [
+    { title: 'Outra configuração inválida não apaga o Clef', detail: 'Um campo antigo ou inválido da orquestração podia restaurar toda a seção aos padrões, deixando Somente Jev e o Account ID vazio. Agora as preferências válidas dos modelos de decisão são recuperadas independentemente.' },
+    { title: 'Cópia antiga do app não remove as preferências novas', detail: 'Uma versão antiga podia regravar settings.json sem conhecer o campo do Clef. A versão nova mantém sua própria cópia validada, inclusive ao reabrir o aplicativo.' },
   ],
 };
