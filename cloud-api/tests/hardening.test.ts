@@ -74,6 +74,42 @@ test('a refresh rotation that loses the race with a revocation leaves no usable 
   db.close();
 });
 
+test('a dead or expired refresh token is refused without logging out the other desktop apps', async () => {
+  const db = new SqliteD1();
+  await seedAccount(db, 'user');
+  const stolen = await issueTokens(db, 'user', 'desktop');
+  const successor = await rotateRefresh(db, stolen.refresh, 'desktop');
+  assert.ok(successor);
+  // Real reuse of a rotated token still revokes every desktop session.
+  assert.equal(await rotateRefresh(db, stolen.refresh, 'desktop'), null);
+  assert.equal(await sessionFor(db, successor.tokens.session, 'desktop'), null);
+  const expired = await issueTokens(db, 'user', 'desktop', Date.now() - 31 * 24 * 60 * 60 * 1000);
+  // Another app (or machine) signs in again after the revocation.
+  const fresh = await issueTokens(db, 'user', 'desktop');
+  // The logged-out app wakes up and presents what it still has on disk.
+  for (const dead of [successor.tokens.refresh, stolen.refresh, expired.refresh]) {
+    assert.equal(await rotateRefresh(db, dead, 'desktop'), null);
+  }
+  assert.ok(await sessionFor(db, fresh.session, 'desktop'), 'the fresh login survives');
+  assert.ok(await rotateRefresh(db, fresh.refresh, 'desktop'), 'and keeps renewing');
+  db.close();
+});
+
+test('a refresh whose license cannot be signed still hands over the rotated pair', async () => {
+  const db = new SqliteD1();
+  await seedAccount(db, 'user');
+  const tokens = await issueTokens(db, 'user', 'desktop');
+  // The old token is already consumed when the license is built: losing the new pair turns the next retry into reuse.
+  const failing = interleave(db, /^SELECT \* FROM accounts WHERE id=\?/, async () => { throw new Error('d1 hiccup'); });
+  const response = await createApp().request('/v1/auth/refresh', { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ refresh: tokens.refresh }) }, environment(failing as SqliteD1));
+  assert.equal(response.status, 200);
+  const body = await response.json() as { data: { session: string; refresh: string; licenca?: string } };
+  assert.ok(await sessionFor(db, body.data.session, 'desktop'));
+  assert.equal(body.data.licenca, undefined);
+  db.close();
+});
+
 test('a delayed restore cannot erase a suspension applied after it was read', async () => {
   const db = new SqliteD1();
   await seedAccount(db, 'admin', { admin: true });

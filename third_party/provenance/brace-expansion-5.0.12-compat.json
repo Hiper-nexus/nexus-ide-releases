@@ -14,15 +14,13 @@
     "TypeScript port Copyright Isaac Z. Schlueter <i@izs.me>"
   ],
   "licenseFile": "third_party/licenses/brace-expansion-MIT.txt",
-  "importedAt": "2026-10-03",
-  "rationale": "Temporary compatibility packaging for GHSA-6j4f-fj2g-mc7p, GHSA-qhr7-859c-m2p7 and GHSA-q2hr-2g5m-vwhr (stack exhaustion in parseCommaParts and nested groups; quadratic {a},b} rewrite), on top of the earlier GHSA-rgw5-rvv9-x895 and GHSA-mh99-v99m-4gvg fixes. The patched 5.0.12 algorithm is used unchanged while a narrow export adapter supports legacy callable CommonJS consumers and modern named-export consumers.",
+  "importedAt": "2026-10-05",
+  "rationale": "Temporary compatibility packaging for GHSA-rgw5-rvv9-x895, GHSA-qhr7-859c-m2p7 (stack exhaustion on nested groups) and GHSA-q2hr-2g5m-vwhr (quadratic {a},b} rewrite). The patched 5.0.12 algorithm is used unchanged while a narrow export adapter supports legacy callable CommonJS consumers and modern named-export consumers.",
   "removalCriteria": "Remove after patched compatible maintenance releases are published and consumed throughout Electron Forge's complete maker tree, with npm audit remaining at zero.",
   "upstreamTracking": [
-    "https://github.com/advisories/GHSA-6j4f-fj2g-mc7p",
-    "https://github.com/advisories/GHSA-qhr7-859c-m2p7",
-    "https://github.com/advisories/GHSA-q2hr-2g5m-vwhr",
     "https://github.com/advisories/GHSA-rgw5-rvv9-x895",
-    "https://github.com/advisories/GHSA-mh99-v99m-4gvg"
+    "https://github.com/advisories/GHSA-qhr7-859c-m2p7",
+    "https://github.com/advisories/GHSA-q2hr-2g5m-vwhr"
   ],
   "files": [
     {

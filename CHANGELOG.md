@@ -1,9 +1,12 @@
 # Changelog
 
-## 0.76.192 — Terminais e missões em dia
+## 0.76.193 — Terminais e missões em dia
 
-Build do Mac. Integra as entregas pendentes da Missão Terminais e amplia as correções de travamento da 0.76.191. A tag histórica 0.76.191 é preservada.
+Build do Mac. Inclui a 0.76.191 (Login que fica) e integra as entregas pendentes da Missão Terminais.
 
+- **O Nexus não congela mais com muitos agentes trabalhando (F-764).** Com uns doze panes de agente ativos, a interface travava por minutos, voltava por alguns segundos e travava de novo; as chamadas MCP dos agentes ficavam esperando. A causa estava na detecção de limite de conta do failover, que lê a saída de cada pane: três padrões que reconhecem "usage limit reached" e "hit/reached your … limit" no começo da linha disputavam os mesmos espaços entre si e atravessavam quebras de linha. Numa tela de TUI cheia de espaços em branco, cada leitura levava 300 ms em vez de menos de 1 ms. Como ela roda a cada pedaço de saída de cada pane, a thread principal não dava conta e a fila só crescia. Os três padrões, e outros do mesmo caminho que ficavam lentos em linhas longas de espaço (códigos 401/402/429/5xx com separador, prefixo de moldura do classificador), foram reescritos em tempo linear: a leitura de uma janela de 4 KB caiu de 300 ms para 0,1 ms, e de 1 s para 0,5 ms em 16 KB sem quebra de linha. Testes travam o tempo em entradas adversariais.
+- **Uma leitura lenta não trava mais o app.** Se a detecção de limite passar de 25 ms num pane, aquele pane espera 5 s antes da próxima leitura e o caso fica no trace (`failover-detect-slow`). O texto continua entrando na janela e a leitura final cobre tudo: nenhum aviso de limite real se perde.
+- **Histórico de travamentos da thread principal.** Além do marcador, que guarda só o último, o watchdog mantém `logs/main-hang.ndjson` com todos os travamentos.
 - **Saída de terminais em lotes, analisada fora do Main (F-764).** Backpressure por sessão, janelas de busca limitadas e prazos de tarefas periódicas impedem que uma torrente de texto ocupe a janela principal indefinidamente. O watchdog captura funções JavaScript e histórico de atividade; a interface mostra “Nexus ocupado”.
 - **Missões, rota e retomada.** Integra as correções de intenção, roteamento, recuperação e entrega. Retomar conserva a conta, o modelo e a worktree da sessão; comandos de recuperação de merge não ficam presos no portão de integração.
 - **Memória e contexto entre CLIs.** Contexto pelo canal suportado por cada CLI, memória ligada ao impacto nos arquivos, projeção/importação com limites e origem verificada. Conteúdo não verificado continua sem autoridade para alterar instruções.
@@ -21,14 +24,14 @@ Build do Mac. Integra as entregas pendentes da Missão Terminais e amplia as cor
 
 Os recibos de carga, assinatura, notarização e smoke desta versão serão vinculados ao SHA final no gate da candidata antes da publicação.
 
-## 0.76.191 — Sem travar com muitos agentes
+## 0.76.191 — Login que fica
 
-Build do Mac. Inclui a 0.76.190 (arquivos do operador que o app não consegue ler, F-755).
+Build do Mac. Inclui o que já estava no código principal até esta versão.
 
-- **Toolchain de build em dia com o `npm audit` de novo.** Depois da 0.76.190, o audit passou a apontar falhas de segurança em três pacotes que só o Electron Forge usa para empacotar: `brace-expansion` (atualizado para a 5.0.12), `braces` e `http-cache-semantics` (sem versão corrigida no upstream, entram builds do Nexus com a correção mínima). Sem efeito no app, que não contém esses pacotes.
-- **O Nexus não congela mais com muitos agentes trabalhando (F-764).** Com uns doze panes de agente ativos, a interface travava por minutos, voltava por alguns segundos e travava de novo; as chamadas MCP dos agentes ficavam esperando. A causa estava na detecção de limite de conta do failover, que lê a saída de cada pane: três padrões que reconhecem "usage limit reached" e "hit/reached your … limit" no começo da linha disputavam os mesmos espaços entre si e atravessavam quebras de linha. Numa tela de TUI cheia de espaços em branco, cada leitura levava 300 ms em vez de menos de 1 ms. Como ela roda a cada pedaço de saída de cada pane, a thread principal não dava conta e a fila só crescia. Os três padrões, e outros do mesmo caminho que ficavam lentos em linhas longas de espaço (códigos 401/402/429/5xx com separador, prefixo de moldura do classificador), foram reescritos em tempo linear: a leitura de uma janela de 4 KB caiu de 300 ms para 0,1 ms, e de 1 s para 0,5 ms em 16 KB sem quebra de linha. Testes travam o tempo em entradas adversariais.
-- **Uma leitura lenta não trava mais o app.** Se a detecção de limite passar de 25 ms num pane, aquele pane espera 5 s antes da próxima leitura e o caso fica no trace (`failover-detect-slow`). O texto continua entrando na janela e a leitura final cobre tudo: nenhum aviso de limite real se perde.
-- **Histórico de travamentos da thread principal.** Além do marcador, que guarda só o último, o watchdog mantém `logs/main-hang.ndjson` com todos os travamentos.
+- **O login do Nexus não cai mais a cada reinício.** Quando o servidor recusa a renovação da sessão, o app agora esquece aquela sessão em vez de reapresentá-la a cada 30 segundos e em todo boot. Cada reapresentação fazia o servidor encerrar as sessões de todos os apps desktop da conta (NexusIDE, Nexus Shot e outras máquinas), e o login recém-feito num deles caía quando outro abria. Um login iniciado enquanto essa recusa chega não é cancelado.
+- **API (api.nexuside.app, já no ar em 05/10).** Só o reuso real de um token já renovado encerra as sessões da conta; um token revogado ou vencido é só recusado. E uma falha ao assinar a licença durante a renovação não perde mais a sessão renovada: a licença chega depois por `/v1/license`.
+- **Pro em período trimestral, semestral ou anual, com cupom.** A escolha de plano na tela de acesso e em Conta mostra o período e um campo de cupom opcional. O mensal continua igual.
+- **Toolchain de build sem vulnerabilidades conhecidas.** `brace-expansion` 5.0.12, `braces` 3.0.3 com o limite de aninhamento do PR #75 (o upstream não tem versão corrigida) e `http-cache-semantics` 4.3.0. Afetam só o build: a árvore de produção do app já estava em zero.
 
 ## 0.76.190 — Linux em dia
 

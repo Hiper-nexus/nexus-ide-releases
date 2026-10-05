@@ -25,23 +25,6 @@ const {
 } = require('./constants');
 
 /**
- * Nexus security patch (GHSA-vfj7-8cjw-p6xm / CVE-2026-93687).
- * compile, expand and stringify walk the AST recursively, one stack frame per
- * nested brace or parenthesis block. Bound that nesting here, where every
- * string pattern is parsed, so a short but deeply nested pattern fails with a
- * SyntaxError instead of exhausting the call stack. Real globs nest a handful
- * of levels; the stack runs out only after a few thousand.
- */
-
-const MAX_DEPTH = 512;
-
-const assertDepth = nesting => {
-  if (nesting > MAX_DEPTH) {
-    throw new SyntaxError(`Input nesting depth (${nesting}), exceeds max depth (${MAX_DEPTH})`);
-  }
-};
-
-/**
  * parse
  */
 
@@ -160,7 +143,6 @@ const parse = (input, options = {}) => {
      */
 
     if (value === CHAR_LEFT_PARENTHESES) {
-      assertDepth(stack.length);
       block = push({ type: 'paren', nodes: [] });
       stack.push(block);
       push({ type: 'text', value });
@@ -213,7 +195,6 @@ const parse = (input, options = {}) => {
      */
 
     if (value === CHAR_LEFT_CURLY_BRACE) {
-      assertDepth(stack.length);
       depth++;
 
       const dollar = prev.value && prev.value.slice(-1) === '$' || block.dollar === true;

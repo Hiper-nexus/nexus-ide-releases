@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { beginLogin, probeLoginEndpoint, exchangeAuthCode, resetPendingLogin, getAuthenticatedAccountId, bindAuthenticatedAccount, restoreAuthenticatedAccount, logoutAuthSession } from './auth-client';
+import { beginLogin, probeLoginEndpoint, exchangeAuthCode, resetPendingLogin, getAuthenticatedAccountId, bindAuthenticatedAccount, restoreAuthenticatedAccount, logoutAuthSession, discardRejectedSession } from './auth-client';
 
 function okFetch() {
   return vi.fn().mockResolvedValueOnce(
@@ -346,4 +346,15 @@ it('logout revokes Main access before deleting credentials and survives an offli
     fetchFn: vi.fn().mockRejectedValue(new Error('offline')) });
   expect(steps).toEqual(['clear', 'auth:session', 'auth:refresh']);
   expect(secrets.size).toBe(0); expect(result.ok).toBe(true);
+});
+
+it.each([
+  ['the rejected pair is still stored', 'r', ['clear', 'auth:session', 'auth:refresh']],
+  ['a newer login already replaced it', 'r-new', []],
+])('a refused refresh is forgotten locally when %s', (_label, stored, expected) => {
+  const steps: string[] = [];
+  const secrets = new Map([['auth:session', 's'], ['auth:refresh', stored]]);
+  discardRejectedSession('r', { clearAccess: () => { steps.push('clear'); }, getSecret: key => secrets.get(key) ?? null,
+    deleteSecret: key => { steps.push(key); secrets.delete(key); return { ok: true }; } });
+  expect(steps).toEqual(expected);
 });

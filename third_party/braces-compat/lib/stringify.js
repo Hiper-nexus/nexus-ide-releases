@@ -3,7 +3,11 @@
 const utils = require('./utils');
 
 module.exports = (ast, options = {}) => {
-  const stringify = (node, parent = {}) => {
+  const maxDepth = typeof options.maxDepth === 'number' ? options.maxDepth : 64;
+  const stringify = (node, parent = {}, depth = 0) => {
+    if (depth > maxDepth) {
+      throw new RangeError('input exceeds maximum nesting depth. Use options.maxDepth to increase or disable the limit.');
+    }
     const invalidBlock = options.escapeInvalid && utils.isInvalidBrace(parent);
     const invalidNode = node.invalid === true && options.escapeInvalid === true;
     let output = '';
@@ -21,7 +25,7 @@ module.exports = (ast, options = {}) => {
 
     if (node.nodes) {
       for (const child of node.nodes) {
-        output += stringify(child);
+        output += stringify(child, undefined, depth + 1);
       }
     }
     return output;

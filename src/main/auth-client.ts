@@ -267,6 +267,17 @@ function defaultLogoutDeps(): LogoutDeps {
     deleteSecret: key => secretStore().deleteInternalSecret(key), fetchFn: fetch,
     clearAccess: () => (require('./license-access') as typeof import('./license-access')).clearAccess() };
 }
+/**
+ * Local-only logout after the server refused `refresh`. No /v1/auth/logout:
+ * the session is already dead server-side. A newer login that replaced the
+ * pair during the request is left alone.
+ */
+export function discardRejectedSession(refresh: string, deps: Pick<LogoutDeps, 'getSecret' | 'deleteSecret' | 'clearAccess'> = defaultLogoutDeps()): void {
+  if (deps.getSecret('auth:refresh') !== refresh) return;
+  deps.clearAccess();
+  deps.deleteSecret('auth:session');
+  deps.deleteSecret('auth:refresh');
+}
 /** Main-owned logout. Revocation comes first; existing processes and project data are untouched. */
 export async function logoutAuthSession(deps: LogoutDeps = defaultLogoutDeps()): Promise<{ ok: boolean; error?: string }> {
   deps.clearAccess();

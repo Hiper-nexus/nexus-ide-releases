@@ -9883,47 +9883,48 @@ export const RELEASE_076190: AppRelease = {
 };
 export const RELEASE_076191: AppRelease = {
   version: '0.76.191',
-  date: '2026-10-03',
-  codename: 'Sem travar com muitos agentes',
+  date: '2026-10-05',
+  codename: 'Login que fica',
   summary:
-    'Com uma dúzia de agentes trabalhando, a janela do Nexus podia congelar ' +
-    'por minutos. A causa foi encontrada e corrigida, e uma proteção impede ' +
-    'que uma leitura lenta volte a travar o app.',
+    'O login do Nexus deixa de cair a cada reinício, e o Pro pode ser ' +
+    'assinado por trimestre, semestre ou ano, com cupom de desconto.',
   highlights: [
     {
-      title: 'O Nexus não congela mais com muitos agentes',
+      title: 'Pro trimestral, semestral ou anual, com cupom',
       detail:
-        'A detecção de limite de conta lê a saída de cada pane. Em telas cheias ' +
-        'de espaços em branco, alguns padrões levavam 300 ms por leitura e, com ' +
-        'muitos panes ativos, a interface travava. Agora cada leitura leva ' +
-        'menos de 1 ms.',
-    },
-    {
-      title: 'Proteção contra leituras lentas',
-      detail:
-        'Se a leitura de um pane passar de 25 ms, ele espera alguns segundos ' +
-        'antes da próxima. O texto continua sendo lido, então nenhum aviso de ' +
-        'limite se perde.',
+        'Ao assinar, escolha o período e, se tiver, digite um cupom. O mensal ' +
+        'continua com o mesmo preço.',
     },
   ],
   fixes: [
     {
-      title: 'Histórico de travamentos',
+      title: 'O login do Nexus não cai mais a cada reinício',
       detail:
-        'O watchdog da janela principal guarda todos os travamentos em ' +
-        'logs/main-hang.ndjson, não só o último.',
+        'Quando o servidor recusava a renovação da sessão, o app guardava a ' +
+        'sessão vencida e a reapresentava a cada 30 segundos e ao abrir. Cada ' +
+        'tentativa fazia o servidor encerrar o login de todos os seus apps ' +
+        'desktop, inclusive o que você tinha acabado de fazer. Agora o app ' +
+        'esquece a sessão recusada e o servidor só encerra tudo diante de ' +
+        'reuso real.',
     },
   ],
 };
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.192',
-  date: '2026-10-04',
+  version: '0.76.193',
+  date: '2026-10-05',
   codename: 'Terminais e missões em dia',
   summary:
     'Integra as correções de terminais, recuperação de missões e memória ' +
     'compartilhada, com proteções para manter a janela respondendo durante a saída dos agentes.',
   highlights: [
+    {
+      title: 'O Nexus não congela mais com muitos agentes',
+      detail:
+        'Com uma dúzia de agentes trabalhando, a janela podia congelar por minutos: alguns padrões da ' +
+        'detecção de limite levavam 300 ms por leitura. Agora cada leitura leva menos de 1 ms, e um pane ' +
+        'cuja leitura passe de 25 ms espera alguns segundos antes da próxima.',
+    },
     {
       title: 'Mais fôlego com vários terminais',
       detail:

@@ -27,7 +27,10 @@ export async function revokeAll(db:D1Database,accountId:string,now=Date.now(),ch
 export async function rotateRefresh(db:D1Database,raw:string,channel:AuthChannel,now=Date.now()):Promise<{accountId:string;tokens:Tokens}|null>{
   const hash=await hashToken(raw);
   const row=await db.prepare('UPDATE refresh_tokens SET used_at=? WHERE token_hash=? AND channel=? AND used_at IS NULL AND revoked_at IS NULL AND expires_at>? RETURNING *').bind(now,hash,channel,now).first<RefreshTokenRow>();
-  if(!row){const prior=await db.prepare('SELECT * FROM refresh_tokens WHERE token_hash=? AND channel=? LIMIT 1').bind(hash,channel).first<RefreshTokenRow>();if(prior)await revokeAll(db,prior.account_id,now,channel);return null;}
+  if(!row){const prior=await db.prepare('SELECT * FROM refresh_tokens WHERE token_hash=? AND channel=? LIMIT 1').bind(hash,channel).first<RefreshTokenRow>();
+    // Only a rotated, still-unrevoked token proves reuse. A revoked or expired one is a logged-out app
+    // waking up: revoking again would sign every other app out, and each of them would do the same back.
+    if(prior&&prior.used_at!==null&&prior.revoked_at===null)await revokeAll(db,prior.account_id,now,channel);return null;}
   const tokens=await issue(db,row.account_id,channel,now,row.id);return tokens?{accountId:row.account_id,tokens}:null;
 }
 export async function consumeAuthCode(db:D1Database,raw:string,verifier:string|undefined,challenge:(value:string)=>Promise<string>,now=Date.now()):Promise<string|null>{
