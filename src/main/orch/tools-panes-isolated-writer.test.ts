@@ -37,6 +37,14 @@ vi.mock('../pty/pty-manager', async (original) => ({
   ...(await original<typeof import('../pty/pty-manager')>()),
   tapSessionExit: (tap: SessionExitTap) => { h.exits.add(tap); return () => h.exits.delete(tap); },
 }));
+// F-908: o app configura as portas do sweep de PTY no boot; aqui não há
+// sessão PTY real e o padrão sem portas (fail-closed) seria "em uso" sempre.
+// Sessão viva = pane não encerrado com o cwd dentro da worktree.
+vi.mock('../runtime/worktree-pty-sweep', async (original) => ({
+  ...(await original<typeof import('../runtime/worktree-pty-sweep')>()),
+  worktreeHasLiveSession: (worktreePath: string) => h.panes.some((pane) =>
+    pane.state !== 'exited' && pane.executionScope?.rootRealPath === worktreePath),
+}));
 vi.mock('./gate', async (original) => ({
   ...(await original<typeof import('./gate')>()),
   assertCurrentMissionOrchestratorSession: vi.fn(),

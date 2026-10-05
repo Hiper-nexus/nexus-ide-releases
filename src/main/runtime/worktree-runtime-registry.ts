@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
 import type { ProjectExecutionScope } from "../../shared/types";
 import type { ProjectRuntimeManager } from "./project-runtime-manager";
 import {
@@ -81,9 +82,13 @@ const DEAD_OWNER_WORKTREE_RELEASE_REASON =
  * escopo, com teto de itens e de tempo por rodada.
  */
 export const AGED_PANE_WORKTREE_GC: Readonly<Record<
-  "delayMs" | "rearmMs" | "minIdleMs" | "maxCandidates" | "budgetMs", number
+  "delayMs" | "rearmMs" | "minIdleMs" | "maxCandidates" | "budgetMs" |
+  "continuationDelayMs" | "maxContinuations", number
 >> = Object.freeze({
   delayMs: 30_000,
+  /** Rodada que bateu no teto continua logo, sem esperar o re-arme. */
+  continuationDelayMs: 60_000,
+  maxContinuations: 5,
   rearmMs: 6 * 60 * 60_000,
   minIdleMs: 24 * 60 * 60_000,
   maxCandidates: 12,
@@ -99,6 +104,7 @@ export class WorktreeRuntimeRegistry {
   readonly #runtimes = new Map<string, ScopeRuntime>();
   readonly #agedGcNextAt = new Map<string, number>();
   readonly #agedGcTimers = new Set<NodeJS.Timeout>();
+  #agedGcGeneration = 0;
 
   constructor(manager: ProjectRuntimeManager) {
     this.#manager = manager;
@@ -204,14 +210,43 @@ export class WorktreeRuntimeRegistry {
     const key = scopeKey(scope);
     if (Date.now() < (this.#agedGcNextAt.get(key) ?? 0)) return;
     this.#agedGcNextAt.set(key, Date.now() + AGED_PANE_WORKTREE_GC.rearmMs);
+    this.#armAgedPaneWriterGc(scope, AGED_PANE_WORKTREE_GC.delayMs, AGED_PANE_WORKTREE_GC.maxContinuations);
+  }
+
+  #armAgedPaneWriterGc(scope: ProjectExecutionScope, delayMs: number, continuations: number): void {
+    const generation = this.#agedGcGeneration;
     const timer = setTimeout(() => {
       this.#agedGcTimers.delete(timer);
-      void this.collectAgedPaneWriterWorktrees(scope).catch((error: unknown) => {
+      void this.collectAgedPaneWriterWorktrees(scope).then((report) => {
+        // Candidatos adiados pelo teto: rodada de continuação, limitada.
+        if (report.deferred > 0 && continuations > 0 && generation === this.#agedGcGeneration) {
+          this.#armAgedPaneWriterGc(scope, AGED_PANE_WORKTREE_GC.continuationDelayMs, continuations - 1);
+        }
+      }, (error: unknown) => {
         console.warn('[worktree-runtime] coleta de worktrees paradas adiada', error);
       });
-    }, AGED_PANE_WORKTREE_GC.delayMs);
+    }, delayMs);
     timer.unref?.();
     this.#agedGcTimers.add(timer);
+  }
+
+  /**
+   * Prova de uso pelo cwd ATUAL dos processos, para a worktree: cwd
+   * desconhecido do mesmo uid (ou de outro uid sem ancestral 0700 do usuário)
+   * conta como em uso.
+   */
+  #unusedByProcesses(): (worktreePath: string) => Promise<boolean> {
+    return async (worktreePath) => {
+      // Ancestrais do caminho real da worktree: os roots do manager podem ser
+      // o caminho não resolvido (/var → /private/var) e não casariam.
+      const privateAncestors: string[] = [];
+      for (let dir = path.dirname(worktreePath); dir !== path.dirname(dir); dir = path.dirname(dir)) {
+        privateAncestors.push(dir);
+      }
+      const cwds = await listProcessCwds({ privateAncestors });
+      return cwds !== null && !worktreeHasLiveSession(worktreePath) &&
+        !cwds.some((cwd) => isPathInsideOrEqual(worktreePath, cwd));
+    };
   }
 
   /**
@@ -244,7 +279,7 @@ export class WorktreeRuntimeRegistry {
     };
     // Prune primeiro: libera a branch de pasta sumida para o `branch -d`.
     const prune = await runtime.worktrees.pruneManagedWorktrees(scope);
-    const cwds = await listProcessCwds();
+    const cwds = await listProcessCwds({ privateAncestors: [runtime.worktrees.runtimeRoot] });
     const occupied = (worktreePath: string, current: readonly string[]) =>
       worktreeHasLiveSession(worktreePath) || current.some((cwd) => isPathInsideOrEqual(worktreePath, cwd));
     const report: PaneWorktreeGcReport = cwds === null
@@ -253,10 +288,7 @@ export class WorktreeRuntimeRegistry {
       : await runtime.worktrees.collectReleasedPaneWorktrees(scope, {
         owner: finished,
         inUse: (worktreePath) => occupied(worktreePath, cwds),
-        confirmUnused: async (worktreePath) => {
-          const current = await listProcessCwds();
-          return current !== null && !occupied(worktreePath, current);
-        },
+        confirmUnused: this.#unusedByProcesses(),
         minIdleMs,
         maxCandidates,
         deadlineAt,
@@ -514,7 +546,8 @@ export class WorktreeRuntimeRegistry {
     missionId: string,
     inUse: (worktreePath: string) => boolean,
   ): Promise<readonly WorktreeRecord[]> {
-    return this.forScope(scope).worktrees.collectIntegratedPaneWorktrees(scope, missionId, inUse);
+    return this.forScope(scope).worktrees
+      .collectIntegratedPaneWorktrees(scope, missionId, inUse, this.#unusedByProcesses());
   }
 
   listMission(
@@ -741,6 +774,7 @@ export class WorktreeRuntimeRegistry {
   }
 
   dispose(): void {
+    this.#agedGcGeneration += 1;
     for (const timer of this.#agedGcTimers) clearTimeout(timer);
     this.#agedGcTimers.clear();
     this.#agedGcNextAt.clear();

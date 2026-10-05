@@ -516,21 +516,39 @@ describe("WorktreeManager", () => {
       expect(git(root, "rev-parse", rolled.branchRef)).toBe(git(rolled.worktreePath, "rev-parse", "HEAD"));
     });
 
-    it("só remove com ignorados todos regeneráveis; .env ou pasta ignorada qualquer mantém", async () => {
-      fs.appendFileSync(path.join(root, ".git", "info", "exclude"), "node_modules/\n*.env\nscratch/\n");
+    it("só remove com ignorados todos em cache regenerável; out/dist/.env/pasta qualquer mantêm", async () => {
+      fs.appendFileSync(path.join(root, ".git", "info", "exclude"),
+        "node_modules/\n__pycache__/\n*.env\nscratch/\nout/\ndist/\n");
       const caches = await writer("caches");
-      const secret = await writer("secret");
-      const other = await writer("other");
-      for (const record of [caches, secret, other]) merge(record);
+      const kept = { secret: ".env", other: "scratch/dump.sql", out: "out/customer-export.zip", dist: "dist/app.js" };
+      const records: Record<string, WorktreeRecord> = Object.fromEntries(
+        await Promise.all(Object.keys(kept).map(async (id) => [id, await writer(id)] as const)));
+      for (const record of [caches, ...Object.values(records)]) merge(record);
       write("node_modules/pkg/index.js", "x", caches.worktreePath);
       write("src/node_modules/pkg/index.js", "x", caches.worktreePath);
-      write(".env", "TOKEN=1", secret.worktreePath);
-      write("scratch/dump.sql", "dados", other.worktreePath);
+      write("src/__pycache__/m.pyc", "x", caches.worktreePath);
+      for (const [id, file] of Object.entries(kept)) write(file, `entregável ${id}`, records[id].worktreePath);
       const report = await manager.collectReleasedPaneWorktrees(scope(), { owner: () => true, inUse: () => false });
       expect(report.removed.map((r) => r.taskId)).toEqual([caches.taskId]);
-      expect(report.kept).toEqual({ "ignored-kept": 2 });
-      expect(fs.readFileSync(path.join(secret.worktreePath, ".env"), "utf8")).toBe("TOKEN=1");
-      expect(fs.readFileSync(path.join(other.worktreePath, "scratch", "dump.sql"), "utf8")).toBe("dados");
+      expect(report.kept).toEqual({ "ignored-kept": 4 });
+      for (const [id, file] of Object.entries(kept)) {
+        expect(fs.readFileSync(path.join(records[id].worktreePath, file), "utf8")).toBe(`entregável ${id}`);
+      }
+    });
+
+    it("refaz o inventário depois da prova de uso: ignorado novo nesse meio mantém tudo", async () => {
+      fs.appendFileSync(path.join(root, ".git", "info", "exclude"), "*.env\n");
+      const late = await writer("late");
+      merge(late);
+      const report = await manager.collectReleasedPaneWorktrees(scope(), {
+        owner: () => true, inUse: () => false,
+        confirmUnused: async (worktreePath) => {
+          write(".env", "TOKEN=chegou-depois", worktreePath);
+          return true;
+        },
+      });
+      expect(report).toMatchObject({ removed: [], kept: { changed: 1 } });
+      expect(fs.readFileSync(path.join(late.worktreePath, ".env"), "utf8")).toBe("TOKEN=chegou-depois");
     });
 
     it("mantém worktree com flag de índice que esconde edição e com gitlink", async () => {

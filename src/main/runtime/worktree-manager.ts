@@ -89,25 +89,21 @@ const WORKTREE_STATUS_ARGS = [
 ] as const;
 
 /**
- * F-908: caches regeneráveis. Um ignorado só deixa a worktree sair quando
- * mora dentro de um destes (1º segmento) ou é um destes diretórios inteiro
- * (`mobile/node_modules/`). `.env`, dumps e o resto ignorado mantêm tudo.
+ * F-908: caches regeneráveis. Um ignorado só deixa a worktree sair quando é
+ * ou mora dentro de um destes, em qualquer nível (`mobile/node_modules/`, o
+ * clone CoW). `out`/`dist`/`build`/`target`/`coverage` e qualquer outro
+ * ignorado (`.env`, dumps, `.next/` inteiro) mantêm a worktree: podem guardar
+ * entregável.
  */
 const REGENERABLE_IGNORED = new Set([
-  "node_modules", "dist", "build", "out", ".vite", "coverage", ".next",
-  ".turbo", ".cache", "target", "__pycache__", ".pytest_cache",
+  "node_modules", ".vite", ".turbo", ".cache", ".pytest_cache", "__pycache__",
 ]);
 
 function regenerableIgnored(entry: string): boolean {
-  const segments = entry.split("/");
-  if (REGENERABLE_IGNORED.has(segments[0])) return true;
-  return entry.endsWith("/") && REGENERABLE_IGNORED.has(segments.at(-2) ?? "");
+  const segments = entry.replace(/\/$/, "").split("/");
+  return segments.some((segment, index) => REGENERABLE_IGNORED.has(segment) ||
+    (segment === ".next" && segments[index + 1] === "cache"));
 }
-
-/** Layout das worktrees que o próprio Nexus cria (ver managed-worktree-layout). */
-const NEXUS_WORKTREE_LAYOUT = process.platform === "win32"
-  ? /^[0-9a-f]{16}[\\/]t-[0-9a-f]{24}$/
-  : /^project-[0-9a-f]{64}\/checkout-[0-9a-f]{64}\/task-[0-9a-f]{64}$/;
 
 export interface PaneWorktreeGcOptions {
   /** Chaves do registry (missão ou `operator-hand`) cujos writers podem sair. */
@@ -1119,10 +1115,12 @@ export class WorktreeManager {
     scope: ProjectExecutionScope,
     missionId: string,
     inUse: (worktreePath: string) => boolean,
+    confirmUnused?: (worktreePath: string) => Promise<boolean>,
   ): Promise<readonly WorktreeRecord[]> {
     return (await this.collectReleasedPaneWorktrees(scope, {
       owner: (owner) => owner === missionId,
       inUse,
+      ...(confirmUnused ? { confirmUnused } : {}),
     })).removed;
   }
 
@@ -1249,10 +1247,13 @@ export class WorktreeManager {
         return "changed";
       }
       if (real !== undefined) {
+        if (options.confirmUnused && !await options.confirmUnused(real).catch(() => false)) return "in-use";
+        // Inventário (alterações + ignorados) refeito por último, logo antes da
+        // remoção: o que surgiu durante a prova de uso mantém tudo. Janela
+        // residual: o que for escrito entre esta leitura e o `worktree remove`.
         const head = await git.run(real, ["symbolic-ref", "--quiet", "HEAD"], { allowFailure: true });
         const status = await git.run(real, WORKTREE_STATUS_ARGS);
         if (head.stdout.trim() !== record.branchRef || status.stdout !== statusBefore) return "changed";
-        if (options.confirmUnused && !await options.confirmUnused(real).catch(() => false)) return "in-use";
         // Nunca --force: o Git re-checa a limpeza na própria remoção e recusa
         // worktree trancada (`git worktree lock`).
         await git.run(root, ["worktree", "remove", real], { timeoutMs: WORKTREE_REMOVE_TIMEOUT_MS });
@@ -1278,8 +1279,8 @@ export class WorktreeManager {
 
   /**
    * F-908: `git worktree prune` assíncrono, só quando TODA entrada `prunable`
-   * do repositório mora numa raiz gerenciada (prune é tudo-ou-nada; não
-   * esquecemos a worktree de outro volume desmontado do operador).
+   * do repositório é caminho de um registro Nexus atual (prune é tudo-ou-nada;
+   * não esquecemos a worktree de outro volume desmontado do operador).
    */
   async pruneManagedWorktrees(
     scope: ProjectExecutionScope,
@@ -1287,15 +1288,10 @@ export class WorktreeManager {
     const listed = await this.#asyncGit.run(scope.rootRealPath, ["worktree", "list", "--porcelain"]);
     const prunable = parseWorktreeList(listed.stdout).filter((worktree) => worktree.prunable);
     if (prunable.length === 0) return { pruned: 0 };
+    // Só caminhos de registros Nexus atuais deste runtime; formato de caminho
+    // não é proveniência (worktree manual do operador nunca é esquecida).
     const known = new Set(this.#snapshot(this.scopeKey(scope)).records.map((record) => record.worktreePath));
-    // Só entradas com o layout que o Nexus cria (ou de um registro conhecido):
-    // worktree manual do operador, mesmo dentro da raiz, nunca é esquecida.
-    if (!prunable.every((worktree) => known.has(worktree.path) ||
-      [this.worktreesRoot, this.legacyWorktreesRoot].some((managedRoot) =>
-        isPathInsideOrEqual(managedRoot, worktree.path) &&
-        NEXUS_WORKTREE_LAYOUT.test(path.relative(managedRoot, worktree.path))))) {
-      return { skipped: "prunable-not-nexus" };
-    }
+    if (!prunable.every((worktree) => known.has(worktree.path))) return { skipped: "prunable-not-nexus" };
     await this.#asyncGit.run(scope.rootRealPath, ["worktree", "prune"]);
     return { pruned: prunable.length };
   }

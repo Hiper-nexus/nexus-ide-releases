@@ -5,7 +5,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectExecutionScope } from "../../shared/types";
 import { ProjectRuntimeManager } from "./project-runtime-manager";
-import { WorktreeRuntimeRegistry } from "./worktree-runtime-registry";
+import { AGED_PANE_WORKTREE_GC, WorktreeRuntimeRegistry } from "./worktree-runtime-registry";
 import {
   DEAD_OWNER_WORKTREE_RELEASE_MARKER,
   OwnershipOverlapError,
@@ -1421,13 +1421,66 @@ describe("F-908: coleta de worktrees de writers paradas", () => {
       .toEqual({ skipped: "prunable-not-nexus" });
     expect(git(root, "worktree", "list", "--porcelain")).toContain("prunable");
     git(root, "worktree", "prune");
-    // Worktree manual do operador DENTRO da raiz gerenciada: também não é esquecida.
-    const manual = path.join(path.dirname(path.dirname(path.dirname(gone.worktreePath))), "manual");
+    // Worktree manual DENTRO da raiz gerenciada, com caminho no formato exato
+    // do Nexus mas sem registro: formato não é proveniência, não é esquecida.
+    const manual = path.join(path.dirname(path.dirname(path.dirname(gone.worktreePath))),
+      `project-${"a".repeat(64)}`, `checkout-${"b".repeat(64)}`, `task-${"c".repeat(64)}`);
     git(root, "worktree", "add", "-q", "-b", "operator-manual", manual);
     fs.rmSync(manual, { recursive: true, force: true });
     expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).prune)
       .toEqual({ skipped: "prunable-not-nexus" });
     expect(git(root, "worktree", "list", "--porcelain")).toContain(manual);
     registry.dispose();
+  });
+
+  it.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
+    "GC estrito do fim do pane também exige a prova de cwd real do SO",
+    async () => {
+      const { root, scope, manager } = fixture();
+      const registry = new WorktreeRuntimeRegistry(manager);
+      setMission(manager, scope, "mission-live", "running");
+      const record = await paneWriter(registry, scope, "mission-live", "s", "s.txt");
+      git(root, "merge", "-q", "--no-edit", record.branchRef.slice("refs/heads/".length));
+      const shell = spawn("sleep", ["30"], { cwd: record.worktreePath, stdio: "ignore" });
+      try {
+        await new Promise((resolve) => shell.once("spawn", resolve));
+        expect(await registry.collectIntegratedPaneWorktrees(scope, "mission-live", () => false)).toEqual([]);
+        expect(fs.existsSync(record.worktreePath)).toBe(true);
+      } finally {
+        shell.kill("SIGKILL");
+        await new Promise((resolve) => shell.once("exit", resolve));
+      }
+      expect((await registry.collectIntegratedPaneWorktrees(scope, "mission-live", () => false))
+        .map((r) => r.taskId)).toEqual([record.taskId]);
+      registry.dispose();
+    },
+  );
+
+  it("rodada que bateu no teto agenda continuação limitada, sem esperar o re-arme", async () => {
+    const { scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    vi.useFakeTimers();
+    try {
+      const deferred = { removed: [], kept: {}, deferred: 3, prune: { pruned: 0 } };
+      const collect = vi.spyOn(registry, "collectAgedPaneWriterWorktrees").mockResolvedValue(deferred);
+      registry.scheduleAgedPaneWriterGc(scope);
+      await vi.advanceTimersByTimeAsync(AGED_PANE_WORKTREE_GC.delayMs);
+      expect(collect).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(AGED_PANE_WORKTREE_GC.continuationDelayMs);
+      expect(collect).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(
+        AGED_PANE_WORKTREE_GC.continuationDelayMs * (AGED_PANE_WORKTREE_GC.maxContinuations + 3));
+      expect(collect).toHaveBeenCalledTimes(1 + AGED_PANE_WORKTREE_GC.maxContinuations);
+      // Sem adiados, não há continuação.
+      collect.mockClear();
+      collect.mockResolvedValue({ ...deferred, deferred: 0 });
+      vi.setSystemTime(Date.now() + AGED_PANE_WORKTREE_GC.rearmMs);
+      registry.scheduleAgedPaneWriterGc(scope);
+      await vi.advanceTimersByTimeAsync(AGED_PANE_WORKTREE_GC.delayMs + AGED_PANE_WORKTREE_GC.continuationDelayMs * 3);
+      expect(collect).toHaveBeenCalledTimes(1);
+    } finally {
+      registry.dispose();
+      vi.useRealTimers();
+    }
   });
 });
