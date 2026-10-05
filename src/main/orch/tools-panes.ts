@@ -1331,12 +1331,12 @@ const paneSpawnAfterTabMission = {
       if (forceOperatorRoute) {
         autoRoute = await timedOperatorRoute();
         adHocAdapterId = routeString(autoRoute, 'adapterId');
-      } else if (resumeRef && adHocAdapterId === undefined) {
-        // F-919: retomar mantém a CLI do pane retomado em qualquer papel
-        // (mão do operador ou missão): o registro vivo vence; sem ele, o
-        // worker record durável (pane fechado, pós-reinício); sem nenhum,
-        // os args — que vão falhar no `requireStr` abaixo (fail-closed).
-        // O pin explícito (adapterId no arg) continua vencendo o registro.
+      } else if (resumeRef && !missionResume) {
+        // F-919: retomar mantém a CLI do pane retomado: o registro vivo vence
+        // (trocar a CLI perderia a conversa retomada); sem ele, o worker
+        // record durável (pane fechado, pós-reinício); sem nenhum, os args —
+        // que vão falhar no `requireStr` abaixo (fail-closed). Dentro de
+        // missão, `captureMissionPaneResume` já fixou a CLI acima.
         const resumedRuntime = resumedPaneRuntime(ctx.scope, resumeRef);
         adHocAdapterId = resumedRuntime?.adapterId ?? adHocAdapterId;
         resumedModel = resumedRuntime?.model;

@@ -37,6 +37,7 @@ vi.mock('../pty/pty-manager', () => ({
 
 import {
   getPaneAuthzInfo,
+  getPaneRuntimeAuthorityBySession,
   listLivePaneNumbers,
   listPaneSnapshots,
   syncPanes,
@@ -207,6 +208,9 @@ describe('F-927: o mesmo pane nos dois registros não é ambiguidade', () => {
       const info = getPaneAuthzInfo(paneId);
       expect(info?.paneId).toBe(paneId);
       expect(info?.sessionId).toBe(sessionId);
+      // Mesma duplicata pela sessão (entrega de handoff, autoridade do
+      // renderer): vale o registro do main, dono real do processo.
+      expect(getPaneRuntimeAuthorityBySession(sessionId)).toMatchObject({ paneId, owner: null });
     } finally {
       deleteMainOwnedPane(paneId);
     }
@@ -219,6 +223,7 @@ describe('F-927: o mesmo pane nos dois registros não é ambiguidade', () => {
       syncPanes([entry('pane-left', 1, sessionId)], renderer, 'gen-amb');
       syncPanes([entry('pane-right', 2, sessionId)], owner(2), 'gen-amb2');
       expect(getPaneAuthzInfo(sessionId)).toBeNull();
+      expect(getPaneRuntimeAuthorityBySession(sessionId)).toBeNull();
     } finally {
       syncPanes([], renderer, 'gen-amb-clear');
       syncPanes([], owner(2), 'gen-amb2-clear');

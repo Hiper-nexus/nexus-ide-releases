@@ -110,6 +110,7 @@ const toolUtilMock = vi.hoisted(
 vi.mock('./tool-util', toolUtilMock);
 
 vi.mock('./pane-registry', () => ({
+  isMissionPaneOperatorDismissed: () => false,
   readSessionOutput: () => '',
   wasOrchestratorOperatorDismissed: () => false,
   clearOperatorDismissedPanes: () => {},
@@ -652,6 +653,8 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
       adapterId: 'glm',
     });
     harness.sessionStates.set('session-worker-morto', 'exited');
+    // F-918: só conta a CLI cujo exit este processo observou (morte espontânea).
+    (await import('./pane-session-output')).recordPaneSessionExit('session-worker-morto');
 
     await vi.advanceTimersByTimeAsync(15_000);
 

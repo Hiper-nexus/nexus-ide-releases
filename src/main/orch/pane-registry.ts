@@ -2324,7 +2324,16 @@ export function getPaneRuntimeAuthorityBySession(
       ),
     ...findMainOwnedRuntimeAuthority(sessionId),
   ];
-  return matches.length === 1 ? matches[0] : null;
+  if (matches.length === 1) return matches[0];
+  // F-927: o pane adotado aparece no espelho do renderer E no registro
+  // main-owned (mesmo paneId e sessão). Nesse caso vale o registro do main,
+  // dono real do processo; qualquer outra ambiguidade continua fail-closed.
+  const [first] = matches;
+  if (first && matches.every((match) => match.paneId === first.paneId)) {
+    const mainOwned = findMainOwnedRuntimeAuthority(sessionId);
+    if (mainOwned.length === 1) return mainOwned[0];
+  }
+  return null;
 }
 
 /**

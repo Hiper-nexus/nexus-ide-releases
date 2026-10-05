@@ -142,6 +142,7 @@ import {
   wasOrchestratorOperatorDismissed,
 } from './pane-registry';
 import {
+  paneSessionExitObservedAt,
   wasPaneDeliberatelyClosed,
   wasPaneSessionExitObserved,
 } from './pane-session-output';
@@ -1885,7 +1886,10 @@ async function recordWorkerMortalityTick(
         pane.sessionId != null && pane.sessionId.trim() !== ''
           ? wasPaneSessionExitObserved(pane.sessionId)
           : false,
-      deliberatelyClosed: wasPaneDeliberatelyClosed(pane.paneId),
+      deliberatelyClosed: wasPaneDeliberatelyClosed(
+        pane.paneId,
+        pane.sessionId ? paneSessionExitObservedAt(pane.sessionId) : undefined,
+      ),
       operatorDismissed: isMissionPaneOperatorDismissed(pane.paneId),
     });
     if (!spontaneouslyDead) {

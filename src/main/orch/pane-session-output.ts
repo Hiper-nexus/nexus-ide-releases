@@ -64,8 +64,23 @@ export function markPaneDeliberatelyClosed(paneId: string): void {
   }
 }
 
-export function wasPaneDeliberatelyClosed(paneId: string): boolean {
-  return deliberatelyClosedPanes.has(paneId.trim());
+/**
+ * O pedido de close é fire-and-forget (IPC sem confirmação): a marca só
+ * desculpa uma morte cujo exit veio logo depois do pedido. Uma CLI que segue
+ * viva (close perdido) e morre sozinha mais tarde conta para o breaker.
+ */
+export const DELIBERATE_CLOSE_EXIT_WINDOW_MS = 120_000;
+
+export function wasPaneDeliberatelyClosed(paneId: string, exitAt?: number): boolean {
+  const markedAt = deliberatelyClosedPanes.get(paneId.trim());
+  if (markedAt === undefined) return false;
+  if (exitAt === undefined) return true;
+  return exitAt >= markedAt - 1_000 && exitAt - markedAt <= DELIBERATE_CLOSE_EXIT_WINDOW_MS;
+}
+
+/** Quando o exit desta sessão foi observado neste processo (epoch ms). */
+export function paneSessionExitObservedAt(sessionId: string): number | undefined {
+  return exitedMarkBySession.get(sessionId.trim());
 }
 
 /** Test-only: limpa as marcas de fechamento deliberado entre casos. */

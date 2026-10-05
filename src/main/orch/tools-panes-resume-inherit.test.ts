@@ -104,11 +104,15 @@ vi.mock('../adapters/cli-model-discovery', async (original) => ({
 
 import { paneSpawnTool, setOperatorRouteResolver } from './tools-panes';
 
-const ctx: AgentGateContext = {
+const missionCtx: AgentGateContext = {
   token: 'orch', label: 'Maestro', role: 'orchestrator', sessionId: 'orch-session',
   missionId: 'mission-a', scope: testProjectScope(),
   allowedTools: null, allowedSkills: null, stopAttempts: 0, handoffSubmitted: false,
 };
+// Na integração 0.76.192, o resume DENTRO de missão é o `captureMissionPaneResume`
+// (registro durável + conversa, pin divergente recusado; ver
+// mission-pane-resume.test.ts). A herança do F-919 cobre o resume fora de missão.
+const ctx: AgentGateContext = { ...missionCtx, missionId: undefined };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -164,7 +168,7 @@ describe('nexus_pane_spawn resume sem adapterId herda a CLI do pane (F-919)', ()
     });
   });
 
-  it('adapterId explícito continua vencendo o registro (pin honrado)', async () => {
+  it('o registro do pane vence o adapterId passado (trocar a CLI perderia a conversa)', async () => {
     h.findByPaneId.mockReturnValue({
       paneId: 'pane-muuku9jt-8',
       missionId: 'mission-a',
@@ -177,10 +181,17 @@ describe('nexus_pane_spawn resume sem adapterId herda a CLI do pane (F-919)', ()
       ctx,
     );
     expect(h.spawn.mock.calls[0][0]).toMatchObject({
-      adapterId: 'kimi',
+      adapterId: 'codex',
       resume: true,
       resumeFromPaneId: 'pane-muuku9jt-8',
     });
+  });
+
+  it('dentro de missão: resume desconhecido é recusado pelo registro durável (fail-closed)', async () => {
+    await expect(
+      paneSpawnTool.handler({ resume: 'pane-fantasma-9', task: 'olha o repo' }, missionCtx),
+    ).rejects.toThrow(/resume_unavailable/);
+    expect(h.spawn).not.toHaveBeenCalled();
   });
 
   it('resume desconhecido sem adapterId continua recusado (fail-closed)', async () => {

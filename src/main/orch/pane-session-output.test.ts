@@ -111,6 +111,12 @@ describe('exit observado × fechamento deliberado (F-918)', () => {
     markPaneDeliberatelyClosed('pane-918');
     expect(wasPaneDeliberatelyClosed('pane-918')).toBe(true);
     expect(wasPaneDeliberatelyClosed('pane-outro')).toBe(false);
+    // Close fire-and-forget: só desculpa o exit logo depois do pedido; a CLI
+    // que seguiu viva e morreu sozinha minutos depois conta para o breaker.
+    const markedAt = Date.now();
+    expect(wasPaneDeliberatelyClosed('pane-918', markedAt + 5_000)).toBe(true);
+    expect(wasPaneDeliberatelyClosed('pane-918', markedAt + 10 * 60_000)).toBe(false);
+    expect(wasPaneDeliberatelyClosed('pane-918', markedAt - 60_000)).toBe(false);
     __resetDeliberatelyClosedPanesForTests();
     expect(wasPaneDeliberatelyClosed('pane-918')).toBe(false);
   });
