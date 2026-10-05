@@ -26,6 +26,10 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 OUT="${2:-$REPO/release-artifacts/linux-local/$VERSION}"
 read -r -a DOCKER <<< "${DOCKER:-docker}"
 IMAGE="${LINUX_BUILD_IMAGE:-ubuntu:22.04}"
+# Padrões que fazem a suíte rodar no container como no macOS e no runner (ver o cabeçalho
+# acima): /tmp em tmpfs e um TMPDIR de 59 caracteres, só durante os testes. Vazio desliga.
+CI_TMPFS="${CI_TMPFS-6g}"
+NEXUS_CI_TMPDIR="${NEXUS_CI_TMPDIR-/tmp/nexus-ci-macos-like/0123456789abcdef0123456789abcdef/T}"
 
 git -C "$REPO" cat-file -e "refs/tags/v$VERSION" 2>/dev/null || { echo "a tag v$VERSION não existe neste checkout" >&2; exit 1; }
 test "$(git -C "$REPO" cat-file -t "refs/tags/v$VERSION")" = tag || { echo "v$VERSION precisa ser tag ANOTADA" >&2; exit 1; }
