@@ -9849,7 +9849,7 @@ export const RELEASE_076189: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076190: AppRelease = {
   version: '0.76.190',
   date: '2026-10-02',
   codename: 'Linux em dia',
@@ -9880,4 +9880,32 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.191',
+  date: '2026-10-05',
+  codename: 'Login que fica',
+  summary:
+    'O login do Nexus deixa de cair a cada reinício, e o Pro pode ser ' +
+    'assinado por trimestre, semestre ou ano, com cupom de desconto.',
+  highlights: [
+    {
+      title: 'Pro trimestral, semestral ou anual, com cupom',
+      detail:
+        'Ao assinar, escolha o período e, se tiver, digite um cupom. O mensal ' +
+        'continua com o mesmo preço.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'O login do Nexus não cai mais a cada reinício',
+      detail:
+        'Quando o servidor recusava a renovação da sessão, o app guardava a ' +
+        'sessão vencida e a reapresentava a cada 30 segundos e ao abrir. Cada ' +
+        'tentativa fazia o servidor encerrar o login de todos os seus apps ' +
+        'desktop, inclusive o que você tinha acabado de fazer. Agora o app ' +
+        'esquece a sessão recusada e o servidor só encerra tudo diante de ' +
+        'reuso real.',
+    },
+  ],
 };

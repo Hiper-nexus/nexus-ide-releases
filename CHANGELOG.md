@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.191 — Login que fica
+
+Build do Mac. Inclui o que já estava no código principal até esta versão.
+
+- **O login do Nexus não cai mais a cada reinício.** Quando o servidor recusa a renovação da sessão, o app agora esquece aquela sessão em vez de reapresentá-la a cada 30 segundos e em todo boot. Cada reapresentação fazia o servidor encerrar as sessões de todos os apps desktop da conta (NexusIDE, Nexus Shot e outras máquinas), e o login recém-feito num deles caía quando outro abria. Um login iniciado enquanto essa recusa chega não é cancelado.
+- **API (api.nexuside.app, já no ar em 05/10).** Só o reuso real de um token já renovado encerra as sessões da conta; um token revogado ou vencido é só recusado. E uma falha ao assinar a licença durante a renovação não perde mais a sessão renovada: a licença chega depois por `/v1/license`.
+- **Pro em período trimestral, semestral ou anual, com cupom.** A escolha de plano na tela de acesso e em Conta mostra o período e um campo de cupom opcional. O mensal continua igual.
+- **Toolchain de build sem vulnerabilidades conhecidas.** `brace-expansion` 5.0.12, `braces` 3.0.3 com o limite de aninhamento do PR #75 (o upstream não tem versão corrigida) e `http-cache-semantics` 4.3.0. Afetam só o build: a árvore de produção do app já estava em zero.
+
 ## 0.76.190 — Linux em dia
 
 Build do Linux (DEB, RPM e ZIP). Inclui tudo que Mac e Windows receberam da 0.76.179 à 0.76.189.
