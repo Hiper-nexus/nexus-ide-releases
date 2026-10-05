@@ -17,6 +17,7 @@ const h = vi.hoisted(() => ({
   ),
   onHandoffSubmitted: vi.fn(),
   submit: vi.fn(),
+  blockTechnical: vi.fn(),
 }));
 
 vi.mock('./project-domain-store-registry', () => ({
@@ -47,7 +48,7 @@ vi.mock('./mission-event-emit', () => ({
 }));
 vi.mock('./mission-intent-events', () => ({ emitMissionIntentEvent: vi.fn() }));
 vi.mock('./mission-engine-registry', () => ({
-  missionEngineForScope: () => ({ blockTechnical: vi.fn() }),
+  missionEngineForScope: () => ({ blockTechnical: h.blockTechnical }),
 }));
 vi.mock('./zero-delivery-watchdog', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./zero-delivery-watchdog')>()),
@@ -125,6 +126,28 @@ describe('F-242: worker travado no meio do turno acorda o Maestro', () => {
     vi.clearAllMocks();
     await shutdownDelegationSupervisor();
     prepareDelegationSupervisor();
+  });
+
+  it('F-252: an hour awaiting workers warns the leader without revoking mission authority', async () => {
+    const mission = runningMission();
+    const stores = suite(mission);
+    h.blockTechnical.mockImplementation(() => { mission.status = 'blocked'; });
+    h.onScope!(SCOPE, stores);
+    h.listPaneSnapshots.mockReturnValue([
+      { paneId: 'leader', sessionId: 'session-orch', kind: 'cli-agent', role: 'orchestrator', state: 'idle', missionId: mission.id },
+      { paneId: 'worker', sessionId: 'session-worker', kind: 'cli-agent', role: 'worker', state: 'idle', missionId: mission.id },
+    ]);
+    h.getSemantic.mockReturnValue({ status: 'idle', updatedAt: NOW - 1 });
+    await reconcileDelegationSupervisor(NOW);
+    await reconcileDelegationSupervisor(NOW + 60 * 60_000);
+    expect(mission.status).toBe('running');
+    expect(h.blockTechnical).not.toHaveBeenCalled();
+    expect(h.submit).toHaveBeenCalledWith(expect.objectContaining({
+      missionId: mission.id, status: 'stalled', summary: expect.stringContaining('[chef-idle:'),
+    }));
+    const count = h.submit.mock.calls.length;
+    await reconcileDelegationSupervisor(NOW + 60 * 60_000 + 15_000);
+    expect(h.submit).toHaveBeenCalledTimes(count);
   });
 
   it('working há 25 min + PTY idle → um handoff stalled [travado] entregue', async () => {

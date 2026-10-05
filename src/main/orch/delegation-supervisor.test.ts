@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Handoff, Mission } from '../../shared/orch-types';
 import {
-  CHEF_IDLE_BLOCK_AFTER_MS,
+  CHEF_IDLE_NOTIFY_AFTER_MS,
   chefIdleAgentActivity,
   DELEGATION_RETRY_MS,
   DELEGATION_SLA_MS,
@@ -132,12 +132,12 @@ describe('delegation supervisor policy', () => {
         missionStatus: 'running',
         trackedSince: t0,
         trackedWorkerCount: 1,
-        now: t0 + CHEF_IDLE_BLOCK_AFTER_MS - 1,
+        now: t0 + CHEF_IDLE_NOTIFY_AFTER_MS - 1,
       }),
     ).toEqual({ action: 'watch' });
   });
 
-  it('chef idle cruza o teto sem mudança de workers: bloqueia com motivo visível', () => {
+  it('chef idle cruza o teto sem mudança de workers: avisa sem revogar a missão', () => {
     const t0 = 1_000_000;
     expect(
       decideChefIdleEscalation({
@@ -146,9 +146,9 @@ describe('delegation supervisor policy', () => {
         missionStatus: 'running',
         trackedSince: t0,
         trackedWorkerCount: 1,
-        now: t0 + CHEF_IDLE_BLOCK_AFTER_MS,
+        now: t0 + CHEF_IDLE_NOTIFY_AFTER_MS,
       }),
-    ).toEqual({ action: 'block', sinceMs: t0 });
+    ).toEqual({ action: 'notify', sinceMs: t0 });
   });
 
   it('mudança no número de workers reinicia o relógio (episódio novo)', () => {
@@ -160,7 +160,7 @@ describe('delegation supervisor policy', () => {
         missionStatus: 'running',
         trackedSince: t0,
         trackedWorkerCount: 1,
-        now: t0 + CHEF_IDLE_BLOCK_AFTER_MS + 5_000,
+        now: t0 + CHEF_IDLE_NOTIFY_AFTER_MS + 5_000,
       }),
     ).toEqual({ action: 'reset' });
   });
@@ -227,7 +227,7 @@ describe('delegation supervisor policy', () => {
       workers: [{ sessionId: 'pty-w1', state: 'idle' }],
       now,
       // "working" preso há mais que o teto do chef-idle não é trabalho.
-      semanticStatus: () => ({ status: 'working', updatedAt: now - CHEF_IDLE_BLOCK_AFTER_MS - 1 }),
+      semanticStatus: () => ({ status: 'working', updatedAt: now - CHEF_IDLE_NOTIFY_AFTER_MS - 1 }),
     });
     expect(stalled).toEqual({ orchestratorInTurn: false, workerActive: false });
   });

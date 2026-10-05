@@ -71,9 +71,7 @@ import {
 import { emitMissionIntentEvent } from './mission-intent-events';
 import {
   emitChefIdleAwaitingWorkers,
-  emitMissionEvent,
 } from './mission-event-emit';
-import { missionEngineForScope } from './mission-engine-registry';
 import {
   decideZeroDeliveryWatchdog,
   zeroDeliveryEscalateSummary,
@@ -201,52 +199,28 @@ function trackChefIdleEscalation(
     chefIdleTrackers.delete(mission.id);
     return;
   }
-  // block: motivo acionável + estado visível no rail ("Precisa de reparo").
-  // Sem intentState conhecido não há CAS válido — zera e deixa o próximo
-  // episódio recomeçar em vez de jogar exceção no scan.
-  if (!mission.intentState) {
-    chefIdleTrackers.delete(mission.id);
-    return;
-  }
+  // Idle is an observation, never revocation of the operator's dispatch.
+  // Blocking here made the authority reconciler terminate every live pane.
   const minutes = Math.round((now - decision.sinceMs) / 60_000);
   try {
-    missionEngineForScope(suite.scope).blockTechnical(suite.scope, {
+    const handoff = suite.handoffs.submit({
       missionId: mission.id,
-      expectedStatus: mission.status,
-      expectedIntentState: mission.intentState,
-      expectedUpdatedAt: mission.updatedAt,
-      expectedIntentVersion: mission.intentVersion ?? 0,
-      // F-244: o marcador nomeia a causa no Quadro (mission-block-cause);
-      // builds antigas gravaram só o texto sem marcador.
-      description:
-        `[NEXUS_CHEF_IDLE] Orquestrador ocioso aguardando ` +
-        `${workerPaneCount} worker(s) por ` +
-        `${minutes}min sem progresso. Use Retomar no rail (respawna o ` +
-        `orquestrador com nota de continuidade) ou pare a missão.`,
+      status: 'stalled',
+      fromAgent: DELEGATION_SUPERVISOR_AGENT,
+      summary:
+        `[chef-idle:${mission.id}:${decision.sinceMs}] Orquestrador aguardando ` +
+        `${workerPaneCount} worker(s) por ${minutes}min sem progresso observado. ` +
+        'Confira os panes e os handoffs pendentes e retome o trabalho autorizado. ' +
+        'A missão e os processos continuam ativos; este aviso não autoriza encerrar a missão.',
     });
+    onHandoffSubmitted(handoff, suite.scope);
+    chefIdleTrackers.set(mission.id, { sinceMs: now, workerCount: workerPaneCount });
   } catch (error) {
     console.warn(
-      `[delegation-supervisor] chef-idle block falhou para ${mission.id}:`,
+      `[delegation-supervisor] chef-idle aviso falhou para ${mission.id}:`,
       error instanceof Error ? error.message : error,
     );
   }
-  try {
-    emitMissionEvent(suite.scope, {
-      missionId: mission.id,
-      runId: `chef-idle-${mission.id}`,
-      type: 'custom',
-      origin: 'main',
-      idempotencyKey: `chef_idle_blocked:${mission.id}:${decision.sinceMs}`,
-      payload: {
-        kind: 'chef_idle_escalated_blocked',
-        workerCount: workerPaneCount,
-        idleMinutes: minutes,
-      },
-    });
-  } catch {
-    // Journal é best-effort; o blocked_technical já é o sinal visível.
-  }
-  chefIdleTrackers.delete(mission.id);
 }
 
 /**
@@ -271,10 +245,9 @@ export const DELEGATION_SUPERVISOR_AGENT = 'nexus-delegation-supervisor';
  * Teto do chef-idle (2026-08-17): orquestrador idle com workers presentes e
  * NENHUMA mudança por meia hora é missão parada no tempo — o caso real ficou
  * 33h soltando chef_idle_awaiting_workers no journal sem ninguém escalar.
- * Bloquear com motivo visível entrega o Retomar ao operador; silêncio eterno
- * não é estado de missão.
+ * O aviso acorda o coordenador sem revogar o despacho nem matar os panes.
  */
-export const CHEF_IDLE_BLOCK_AFTER_MS = 60 * 60_000;
+export const CHEF_IDLE_NOTIFY_AFTER_MS = 60 * 60_000;
 
 /**
  * Re-arm de entrega parada (18/08): handoff durable queued com ZERO tentativas
@@ -406,7 +379,7 @@ export function chefIdleAgentActivity(input: {
   ) => { readonly status: string; readonly updatedAt: number } | null;
   readonly windowMs?: number;
 }): ChefIdleAgentActivity {
-  const windowMs = input.windowMs ?? CHEF_IDLE_BLOCK_AFTER_MS;
+  const windowMs = input.windowMs ?? CHEF_IDLE_NOTIFY_AFTER_MS;
   const inTurn = (sessionId: string | null | undefined): boolean => {
     if (!sessionId) return false;
     const entry = input.semanticStatus(sessionId);
@@ -423,7 +396,7 @@ export function chefIdleAgentActivity(input: {
 export type ChefIdleEscalationDecision =
   | { readonly action: 'watch' }
   | { readonly action: 'reset' }
-  | { readonly action: 'block'; readonly sinceMs: number };
+  | { readonly action: 'notify'; readonly sinceMs: number };
 
 /**
  * Decisão pura do watchdog chef-idle.
@@ -432,8 +405,8 @@ export type ChefIdleEscalationDecision =
  *   novo arma no próximo scan).
  * - watch: dentro do teto — mantém/rearma o rastreador (caller grava now
  *   quando ainda não havia).
- * - block: cruzou o teto sem mudança — caller bloqueia blocked_technical
- *   com motivo acionável e zera o rastreador.
+ * - notify: cruzou o teto sem mudança — caller avisa sem revogar a missão
+ *   e rearma o relógio para limitar a frequência dos avisos.
  */
 export function decideChefIdleEscalation(input: {
   readonly idle: boolean;
@@ -455,9 +428,9 @@ export function decideChefIdleEscalation(input: {
   if (input.trackedWorkerCount !== input.workerCount) {
     return { action: 'reset' };
   }
-  const thresholdMs = input.thresholdMs ?? CHEF_IDLE_BLOCK_AFTER_MS;
+  const thresholdMs = input.thresholdMs ?? CHEF_IDLE_NOTIFY_AFTER_MS;
   if (input.now - input.trackedSince >= thresholdMs) {
-    return { action: 'block', sinceMs: input.trackedSince };
+    return { action: 'notify', sinceMs: input.trackedSince };
   }
   return { action: 'watch' };
 }
@@ -1250,7 +1223,7 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
       (mission.status === 'pending' || mission.status === 'running')
     ) {
       emitChefIdleAwaitingWorkers(suite.scope, mission.id, workerPaneCount);
-      // F-680: worker trabalhando é progresso — o relógio do bloqueio recomeça.
+      // F-680: worker trabalhando é progresso — o relógio do aviso recomeça.
       if (chefActivity.workerActive) {
         chefIdleTrackers.delete(mission.id);
       } else {
