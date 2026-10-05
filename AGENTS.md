@@ -80,8 +80,9 @@ npm run rebuild:node           # rebuild native modules for Node (CI/tests)
   assinatura, a build assina dezenas de arquivos e a build automática gerou
   faturas de excesso. Não religue eSigner, CKA, `NEXUS_WINDOWS_RELEASE_SIGNING`
   nem `WINDOWS_CERTIFICATE_SHA1`; o `forge.config.ts` recusa o certificado dele.
-- `windows-release.yml` gera o candidato sem Authenticode; o recibo (schemaVersion
-  2, `signing: none`) traz o hash de cada executável. A versão assinada é a da
+- `windows-release.yml` gera o candidato sem Authenticode numa máquina do GitHub
+  (`windows-latest`); não depende mais do runner no PC do operador. O recibo
+  (schemaVersion 2, `signing: none`) traz o hash de cada executável. A versão assinada é a da
   Microsoft Store (MSIX), que a Store reassina de graça.
 
 ## Authoritative Owners
