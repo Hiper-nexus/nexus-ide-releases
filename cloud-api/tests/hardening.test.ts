@@ -95,6 +95,21 @@ test('a dead or expired refresh token is refused without logging out the other d
   db.close();
 });
 
+test('a refresh whose license cannot be signed still hands over the rotated pair', async () => {
+  const db = new SqliteD1();
+  await seedAccount(db, 'user');
+  const tokens = await issueTokens(db, 'user', 'desktop');
+  // The old token is already consumed when the license is built: losing the new pair turns the next retry into reuse.
+  const failing = interleave(db, /^SELECT \* FROM accounts WHERE id=\?/, async () => { throw new Error('d1 hiccup'); });
+  const response = await createApp().request('/v1/auth/refresh', { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ refresh: tokens.refresh }) }, environment(failing as SqliteD1));
+  assert.equal(response.status, 200);
+  const body = await response.json() as { data: { session: string; refresh: string; licenca?: string } };
+  assert.ok(await sessionFor(db, body.data.session, 'desktop'));
+  assert.equal(body.data.licenca, undefined);
+  db.close();
+});
+
 test('a delayed restore cannot erase a suspension applied after it was read', async () => {
   const db = new SqliteD1();
   await seedAccount(db, 'admin', { admin: true });

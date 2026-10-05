@@ -186,7 +186,13 @@ export function createAuthRoutes(fetchFn: typeof fetch = fetch): Hono<AppEnv> {
         if (!rotated)
             throw new HTTPException(401, { message: 'Sessão inválida. Entre novamente.' });
         const { session, refresh } = rotated.tokens;
-        return c.json({ ok: true, data: { session, refresh, licenca: await licenseForAccount(c.env.DB, rotated.accountId, c.get('config')) } });
+        // The old token is already consumed: losing this pair makes the client's retry look like reuse, which
+        // revokes every desktop app. Clients fetch /v1/license on their own, so an unsigned license only waits.
+        const licenca = await licenseForAccount(c.env.DB, rotated.accountId, c.get('config')).catch((error: unknown) => {
+            console.error('nexus-cloud-api: licença do refresh falhou:', error instanceof Error ? error.message : 'unknown');
+            return undefined;
+        });
+        return c.json({ ok: true, data: { session, refresh, licenca } });
     });
     routes.post('/auth/logout', requireNativeAuth, async (c) => { await revokeAll(c.env.DB, c.get('session').account_id); return c.json({ ok: true }); });
     routes.get('/me', requireNativeAuth, async (c) => c.json({ ok: true, data: await profileFor(c, c.get('session').account_id) }));
