@@ -274,6 +274,9 @@ describe('taskContextRequirement (F-912)', () => {
     expect(taskContextRequirement('Sem editar, preciso de contexto de 200k tokens')).toBe(200_000);
     expect(taskContextRequirement('Do not edit, use a 200k-token context window')).toBe(200_000);
   });
+  it('"nem" nega o próprio pedido de contexto, não abre outra oração', () => {
+    expect(taskContextRequirement('Não preciso nem de contexto de 200k tokens')).toBeNull();
+  });
 
   it('aceita conector "of" e qualificador "input" na forma afirmativa em inglês', () => {
     expect(taskContextRequirement('I need 200k tokens of input context')).toBe(200_000);

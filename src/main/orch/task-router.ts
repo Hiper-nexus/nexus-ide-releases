@@ -1226,7 +1226,7 @@ const CONTEXT_REQUIREMENT = new RegExp(
 // use contexto de 200k") não se refere ao contexto. O prefixo é cortado na
 // última vírgula/ponto-e-vírgula/pontuação/conjunção antes do casamento.
 const CONTEXT_CLAUSE_CUT =
-  /(?:[,;:.!?…\n]|\b(?:e|mas|ou|nem|porém|contudo|todavia|então|and|but|or|nor|so|then|however|though)\b)/giu;
+  /(?:[,;:.!?…\n]|\b(?:e|mas|ou|porém|contudo|todavia|então|and|but|or|so|then|however|though)\b)/giu;
 const CONTEXT_NEGATION =
   /(?:^|[\s(])(?:n[ãa]o|nunca|jamais|sem|sem\s+necessidade\s+de|nem|don(?:'t|’t)?|do\s+not|doesn'?t|no\s+need|not)\b[^\n.;:!?]{0,28}$/iu;
 
