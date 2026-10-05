@@ -10,7 +10,7 @@ import {
   disposeWorkspaceMemoryStores,
   getWorkspaceMemoryStore,
 } from './workspace-memory';
-import { planAutoRecallInjection } from './workspace-memory-context';
+import { standingWorkspaceMemoryBlock, workspaceMemoryContextBlock } from './workspace-memory-context';
 import {
   buildAcceptedHandoffTrustedEvent,
   extractResolvedQaFinding,
@@ -408,8 +408,9 @@ describe('reported fix writer (F-911)', () => {
       `# ${id} — Item de fixture\n\n## ${id} | categoria: funcional | severidade: media | status: ${status}\n- Passos: fixture.\n`,
     );
   };
+  // Independe da classe: acha toda linha ativa "Reported fix" do workspace.
   const reportedFixRows = () =>
-    store().activeBySource('trusted:accepted-handoff')
+    store().recall({ query: 'Reported fix', limit: 32, includeGlobal: false })
       .filter((row) => row.content.startsWith('# Reported fix '));
   const declared = 'Corrigido o vazamento do watcher; ver docs/qa/items/F-911.md.';
 
@@ -429,6 +430,14 @@ describe('reported fix writer (F-911)', () => {
     // O verbo precisa estar ligado ao id: outra frase não conta.
     expect(id(['Corrigido o watcher. Próximo passo: olhar o F-911 amanhã.'])).toBeNull();
     expect(id(['O F-912 ainda não, mas o F-911 foi corrigido.'])).toBe('F-911');
+    // Re-revisão: declaração e ressalvas por cláusula de cada id.
+    expect(id(['F-911 continua aberto; F-912 foi corrigido'])).toBe('F-912');
+    expect(id(['O F-912 foi corrigido, mas o F-911 continua aberto.'])).toBe('F-912');
+    expect(id(['F-911 continua aberto; F-912 em análise.'])).toBeNull();
+    expect(id(['F-911 foi corrigido apenas parcialmente'])).toBeNull();
+    expect(id(['F-911 was fixed only partially.'])).toBeNull();
+    expect(id(['F-911 corrigido no Mac, ainda aberto no Windows.'])).toBeNull();
+    expect(id(['F-911 corrigido?'])).toBeNull();
     // O trecho pertinente é o que vai ao Jev — inclusive quando a fonte é o artefato.
     expect(extractResolvedQaFinding(['Rotina concluída. O F-914 foi corrigido no spool.'])?.excerpt)
       .toBe('O F-914 foi corrigido no spool.');
@@ -436,30 +445,61 @@ describe('reported fix writer (F-911)', () => {
       .toEqual({ id: 'F-912', excerpt: 'qa docs/qa/items/F-912.md corrigido' });
   });
 
-  it('M1: retains a declared fix only as an unverified agent report, never trusted:resolved-problem', async () => {
+  it('M1/F-808: a reported fix is an agent note of its own mission only, never trusted context', async () => {
     writeQaItem('F-911');
     const result = await retainReportedFixFromHandoffBestEffort(
       scope,
-      { handoffId: 'handoff-911', missionId: 'mission-911', status: 'success', handoffCreatedAt: 1_000, summary: declared },
+      { handoffId: 'handoff-911', missionId: 'mission-a', status: 'success', handoffCreatedAt: 1_000, summary: declared },
       { judge: approve(), ...on },
     );
     expect(result).not.toBeNull();
+    const [row] = reportedFixRows();
+    expect(row?.source).toMatch(/^agent-authored:mission:[a-f0-9]{64}$/);
+    expect(row?.flags ?? []).not.toContain('quarantine');
     expect(store().activeBySource('trusted:resolved-problem')).toEqual([]);
-    const [hit] = store().recall({ query: 'vazamento watcher', includeGlobal: false, trustedOnly: true });
-    expect(hit.source).toBe('trusted:accepted-handoff');
-    expect(hit).toMatchObject({ kind: 'fact', importance: 4 });
-    expect(hit.content.split('\n')[0]).toBe('# Reported fix F-911');
-    expect(hit.content).toMatch(
-      /^Summary: \[Agent report, unverified; Jev approved for retention, not factual verification\.\] Corrigido o vazamento do watcher/m,
-    );
-    expect(hit.content).toContain('Reference: docs/qa/items/F-911.md');
-    expect(hit.content).toContain('Mission: mission-911');
-    expect(hit.content).toContain('Handoff: handoff-911');
-    expect(store().linksOf(hit.id)).toContain('mission:mission-911');
-    // Mesma restrição de contexto do accepted-handoff: só a linha Summary marcada entra no brief.
-    const injected = planAutoRecallInjection([hit], 'execution')?.text ?? '';
-    expect(injected).toContain('[Agent report, unverified; Jev approved for retention, not factual verification.] Corrigido o vazamento');
-    expect(injected).not.toContain('Reference:');
+    expect(store().recall({ query: 'vazamento watcher', includeGlobal: false, trustedOnly: true })).toEqual([]);
+    expect(row?.content.split('\n')[0]).toBe('# Reported fix F-911');
+    expect(row?.content).toContain('Agent report, unverified');
+    expect(row?.content).toContain('Corrigido o vazamento do watcher');
+    expect(row?.content).toContain('Reference: docs/qa/items/F-911.md');
+    expect(row?.content).toContain('Mission: mission-a');
+    expect(row?.content).toContain('Handoff: handoff-911');
+    const prompt = 'Investigar de novo o watcher e o F-911.';
+    // Missão A: entra na seção não verificada, marcado.
+    const own = workspaceMemoryContextBlock(scope, prompt, 'execution', { missionId: 'mission-a' }) ?? '';
+    expect(own).toContain('Unverified notes from agents and the operator');
+    expect(own).toContain('Agent report, unverified');
+    expect(own).toContain('Corrigido o vazamento do watcher');
+    // Missão B, pane sem missão e contexto permanente: nada.
+    for (const other of [
+      workspaceMemoryContextBlock(scope, prompt, 'execution', { missionId: 'mission-b' }),
+      workspaceMemoryContextBlock(scope, prompt),
+      standingWorkspaceMemoryBlock(scope),
+    ]) {
+      expect(other ?? '').not.toContain('vazamento do watcher');
+    }
+  });
+
+  it('F-808: a report from a web-exposed or read-only session stays quarantined, even in its mission', async () => {
+    for (const [handoffId, findingId, quarantine] of [
+      ['handoff-web', 'F-911', 'web-exposed session'],
+      ['handoff-ro', 'F-926', 'read-only session'],
+    ] as const) {
+      writeQaItem(findingId);
+      expect(
+        await retainReportedFixFromHandoffBestEffort(
+          scope,
+          { handoffId, missionId: 'mission-a', status: 'success', handoffCreatedAt: 1_000,
+            summary: `O ${findingId} foi corrigido no watcher (${handoffId}).`, quarantine },
+          { judge: approve(), ...on },
+        ),
+      ).not.toBeNull();
+    }
+    const rows = reportedFixRows();
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row.flags).toContain('quarantine');
+    const own = workspaceMemoryContextBlock(scope, 'watcher F-911 corrigido', 'execution', { missionId: 'mission-a' }) ?? '';
+    expect(own).not.toContain('foi corrigido no watcher');
   });
 
   it('confirms the QA item in the workspace (status corrigido, no symlink, bounded) before asking the Jev', async () => {
@@ -644,5 +684,35 @@ describe('reported fix writer (F-911)', () => {
     expect(later).not.toHaveBeenCalled();
     expect(reportedFixRows()).toHaveLength(1);
     expect(reportedFixRows()[0]!.content).toContain('fila única');
+  });
+
+  it('a replay never resurrects a report the operator forgot (durable per handoff)', async () => {
+    writeQaItem('F-911');
+    const report = (summary: string) =>
+      retainReportedFixFromHandoffBestEffort(
+        scope,
+        { handoffId: 'handoff-h1', missionId: 'mission-911', status: 'success', handoffCreatedAt: 1_000, summary },
+        { judge: approve(), ...on },
+      );
+    const first = await report('Corrigido o F-911 com lock no watcher.');
+    expect(first).not.toBeNull();
+    expect(store().forget(first!.id)).toBe(true);
+    // ACK tardio do mesmo handoff, com outro trecho: nenhuma linha ativa para ordenar.
+    expect(await report('O F-911 foi corrigido com lock no watcher.')).toBeNull();
+    expect(reportedFixRows()).toHaveLength(0);
+  });
+
+  it('equal Main timestamps never supersede: H2 after H1 with the same createdAt is rejected', async () => {
+    writeQaItem('F-911');
+    const report = (handoffId: string, summary: string) =>
+      retainReportedFixFromHandoffBestEffort(
+        scope,
+        { handoffId, missionId: 'mission-911', status: 'success', handoffCreatedAt: 5_000, summary },
+        { judge: approve(), ...on },
+      );
+    expect(await report('handoff-h1', 'Corrigido o F-911 com lock no watcher.')).not.toBeNull();
+    expect(await report('handoff-h2', 'Corrigido o F-911 com fila única no watcher.')).toBeNull();
+    expect(reportedFixRows()).toHaveLength(1);
+    expect(reportedFixRows()[0]!.content).toContain('com lock no watcher');
   });
 });

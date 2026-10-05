@@ -23,6 +23,7 @@ import { parseReviewReport } from "../context/review-council";
 import { parseTrustedEvidence } from "../context/sensor-broker";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import type { MissionEngine } from "./mission-engine";
+import { isSessionWebExposed } from "./session-web-exposure";
 import {
   extractResolvedQaFinding,
   retainAcceptedHandoffMemoryDistilledBestEffort,
@@ -1064,6 +1065,7 @@ export class ScopedHandoffStore {
         this.#retainReportedFixMemory(
           committed.handoff.id,
           committed.taskDispatch.missionId,
+          committed.handoff.sessionId,
           committed.handoff.createdAt,
           committed.handoff.summary,
           committed.handoff.artifacts,
@@ -2291,6 +2293,7 @@ export class ScopedHandoffStore {
       this.#retainReportedFixMemory(
         id,
         memoryMissionId,
+        handoff.sessionId,
         handoff.createdAt,
         handoff.summary,
         handoff.artifacts,
@@ -2304,15 +2307,16 @@ export class ScopedHandoffStore {
   /**
    * Escritor do relato de correção (F-911): handoff de sucesso de missão
    * (aceito no commit ou entregue/consumido) que declara a correção de um bug
-   * vira memória na classe não verificada do accepted-handoff, pela mesma
-   * barreira do F-703 — nunca `trusted:resolved-problem` (M1). Só de missão:
-   * helper sem missão segue só com o accepted-handoff. O `createdAt` do
-   * handoff (Main) ordena relatos: replay antigo não substitui o mais novo.
+   * vira nota de agente da MESMA missão, pela mesma barreira do F-703 — nunca
+   * memória trusted (M1/F-808). Sessão exposta à web ou missão de consulta
+   * grava em quarentena. Só de missão: helper sem missão segue só com o
+   * accepted-handoff. O `createdAt` do handoff (Main) ordena relatos.
    * Assíncrono e best-effort: o Jev nunca segura o aceite, a entrega nem o ACK.
    */
   #retainReportedFixMemory(
     id: string,
     missionId: string | undefined,
+    sessionId: string | undefined,
     createdAt: number,
     summary: string | null | undefined,
     artifacts: unknown,
@@ -2321,6 +2325,7 @@ export class ScopedHandoffStore {
       if (!missionId) return;
       const artifactsText = handoffArtifactsText(artifacts);
       if (!extractResolvedQaFinding([summary, artifactsText])) return;
+      const quarantine = this.#reportedFixQuarantine(missionId, sessionId);
       void retainReportedFixFromHandoffBestEffort(
         this.#binding.scope,
         {
@@ -2330,6 +2335,7 @@ export class ScopedHandoffStore {
           handoffCreatedAt: createdAt,
           ...(summary ? { summary } : {}),
           ...(artifactsText ? { artifactsText } : {}),
+          ...(quarantine ? { quarantine } : {}),
         },
       ).catch(() =>
         recordMemoryRetentionSkip(this.#binding.scope, "store-unavailable"),
@@ -2337,6 +2343,28 @@ export class ScopedHandoffStore {
     } catch {
       // Memória é contabilidade derivada: nunca desfaz nem trava o fluxo.
       recordMemoryRetentionSkip(this.#binding.scope, "store-unavailable");
+    }
+  }
+
+  /**
+   * F-808 Main-derived: sessão que tocou a web ou missão de consulta ("sem
+   * alterar nada") grava o relato em quarentena. Contrato ilegível → quarentena.
+   */
+  #reportedFixQuarantine(
+    missionId: string,
+    sessionId: string | undefined,
+  ): "web-exposed session" | "read-only session" | undefined {
+    if (isSessionWebExposed(sessionId)) return "web-exposed session";
+    try {
+      const row = this.#binding
+        .readDatabase()
+        .prepare(`SELECT intent_contract_json FROM missions WHERE id = ?`)
+        .get(missionId) as { intent_contract_json: string | null } | undefined;
+      if (!row?.intent_contract_json) return undefined;
+      const contract = JSON.parse(row.intent_contract_json) as { lane?: unknown } | null;
+      return contract?.lane === "consult" ? "read-only session" : undefined;
+    } catch {
+      return "read-only session";
     }
   }
 

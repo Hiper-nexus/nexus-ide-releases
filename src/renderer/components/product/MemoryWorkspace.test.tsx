@@ -225,10 +225,26 @@ describe('MemoryWorkspace contracts', () => {
     expect(line?.textContent).toMatch(/pode estar esquecendo/);
   });
 
+  it('idade, linha e alerta vêm do mesmo snapshot do Main, não da lista (Mem12)', async () => {
+    const dayMs = 86_400_000;
+    // Lista ainda velha (10 dias), mas o Main já viu uma memória agora e 2 entregas antes dela.
+    memoryBoundary.memoryList.mockResolvedValue([
+      { id: 'memory-old-note', title: 'Decisão antiga', body: 'corpo', kind: 'note', updatedAt: Date.now() - 10 * dayMs },
+    ]);
+    agenticMemoryBoundary.stats.mockResolvedValue(mainActivity(Date.now(), 2));
+    const host = mount(<MemoryWorkspace />);
+    await settleMemoryEffects();
+
+    const line = staleLine(host);
+    expect(line?.textContent).toContain('Última memória hoje');
+    expect(line?.hasAttribute('data-stale')).toBe(false);
+    expect(line?.textContent).not.toMatch(/pode estar esquecendo/);
+  });
+
   it.each([
     ['contagem do Main indisponível', () => agenticMemoryBoundary.stats.mockRejectedValue(new Error('offline'))],
     ['memória desligada no Main', () => agenticMemoryBoundary.stats.mockResolvedValue({ enabled: false })],
-    ['contagem desconhecida', () => agenticMemoryBoundary.stats.mockResolvedValue(mainActivity(0, null))],
+    ['contagem desconhecida', () => agenticMemoryBoundary.stats.mockResolvedValue(mainActivity(Date.now() - 8 * 86_400_000, null))],
   ])('nota de handoff no banco não substitui a contagem do Main: %s (Mem12)', async (_label, arrange) => {
     const dayMs = 86_400_000;
     memoryBoundary.memoryList.mockResolvedValue([

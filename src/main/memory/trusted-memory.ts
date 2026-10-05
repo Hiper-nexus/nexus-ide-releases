@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
@@ -12,6 +13,7 @@ import {
   type DistillHandoffSummaryDeps,
   type MemoryDistillSkipReason,
 } from '../jev/jev-memory-distill';
+import { missionLinkTarget } from './memory-links';
 import {
   getWorkspaceMemoryStore,
   type MemoryKind,
@@ -378,11 +380,15 @@ const QA_ITEM_PATH_TOKEN_RE = /(?:^|\/)docs\/qa\/items\/(F-\d{2,9})\.md$/i;
 /** Declaração de correção concluída (não intenção: "corrigir", "fix", "fixing"). */
 const FIX_DECLARATION_TOKEN_RE =
   /^(?:corrigid[oa]s?|corrigi(?:u|mos)?|corrige|fixed|fixes|resolvid[oa]s?|resolveu|resolved|resolves|solucionad[oa]s?|reparad[oa]s?|closed|closes)$/i;
-/** Negação ou correção parcial perto do vínculo id↔verbo desfaz a declaração. */
+/** Negação, ressalva parcial ou item em aberto na cláusula do id desfaz a declaração. */
 const NEGATION_TOKEN_RE =
-  /^(?:n[aã]o|nem|nunca|jamais|not|never|cannot|\p{L}+n['’]t|unfixed|unresolved|parcial|parcialmente|partial|partially|partly|pendente|pending|reaberto|reopened)$/iu;
-const MAX_ID_DECLARATION_DISTANCE = 8;
-const NEGATION_LOOKBEHIND_TOKENS = 2;
+  /^(?:n[aã]o|nem|nunca|jamais|not|never|cannot|\p{L}+n['’]t|unfixed|unresolved|parcial|parcialmente|partial|partially|partly|pendente|pending|reaberto|reopened|abert[oa]s?|open)$/iu;
+/** Fronteira de cláusula: pontuação de oração e conjunções adversativas. */
+const CLAUSE_SPLIT_RE =
+  /[;:,()[\]{}—–]+|\s+(?:mas|porém|porem|contudo|entretanto|todavia|enquanto|but|however|while|whereas|although|though)\s+/iu;
+/** Cláusula só de referência ("ver docs/qa/items/F-XXX.md") herda a anterior. */
+const REFERENCE_WORD_RE =
+  /^(?:ver|veja|vide|see|cf|ref|refs|conforme|item|qa|em|no|na|in|per|detalhes|details|o|a|the)$/i;
 const PERTINENT_EXCERPT_MAX_CHARS = 2_000;
 
 export interface DeclaredQaFix {
@@ -398,54 +404,65 @@ function findingIdOfToken(token: string): string | null {
   return pathHit ? pathHit[1]!.toUpperCase() : null;
 }
 
-function declaredFixInSegment(segment: string): string | null {
-  const tokens = segment
+function clauseTokens(clause: string): string[] {
+  return clause
     .split(/\s+/)
     .map((token) => token.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}'’]+$/gu, ''))
     .filter(Boolean);
-  const declarations = tokens.flatMap((token, index) =>
-    FIX_DECLARATION_TOKEN_RE.test(token) ? [index] : [],
-  );
-  if (declarations.length === 0) return null;
-  for (let index = 0; index < tokens.length; index += 1) {
-    const id = findingIdOfToken(tokens[index]!);
-    if (!id) continue;
-    const bound = declarations.some((verb) => {
-      if (Math.abs(verb - index) > MAX_ID_DECLARATION_DISTANCE) return false;
-      const from = Math.max(0, Math.min(verb, index) - NEGATION_LOOKBEHIND_TOKENS);
-      return !tokens
-        .slice(from, Math.max(verb, index) + 1)
-        .some((token) => NEGATION_TOKEN_RE.test(token));
-    });
-    if (bound) return id;
-  }
-  return null;
 }
 
 /**
- * Gatilho do escritor de relato de correção: exige declaração POSITIVA ligada
- * ao id na mesma frase (ou na mesma linha de artefato) — verbo de correção
- * concluída a até 8 palavras do `F-XXX`/`docs/qa/items/F-XXX.md`, sem negação
- * ou ressalva parcial entre eles nem logo antes. Citar o arquivo do item não
- * basta ("Bug ainda aberto; ver docs/qa/items/F-XXX.md"). Puro e
- * determinístico; o trecho devolvido é o que o Jev destila.
+ * Agrupa as cláusulas da frase por id: cláusula com id próprio abre um grupo;
+ * cláusula sem id (ressalva, complemento) e cláusula só de referência entram
+ * no grupo corrente. Um id só vale com verbo de correção concluída no seu
+ * grupo e nenhuma negação/ressalva nele — "F-911 continua aberto; F-912 foi
+ * corrigido" dá F-912; "corrigido apenas parcialmente" não dá nada.
+ */
+function declaredFixInSentence(sentence: string): string | null {
+  if (/\?\s*$/.test(sentence)) return null; // pergunta não é declaração
+  const groups: Array<{ ids: string[]; declared: boolean; negated: boolean }> = [];
+  let current: (typeof groups)[number] | null = null;
+  for (const clause of sentence.split(CLAUSE_SPLIT_RE)) {
+    const tokens = clauseTokens(clause);
+    if (tokens.length === 0) continue;
+    const ids = tokens.flatMap((token) => findingIdOfToken(token) ?? []);
+    const words = tokens.filter((token) => !findingIdOfToken(token));
+    const referenceOnly = ids.length > 0 && words.every((word) => REFERENCE_WORD_RE.test(word));
+    if (!current || (ids.length > 0 && !referenceOnly)) {
+      current = { ids: [], declared: false, negated: false };
+      groups.push(current);
+    }
+    current.ids.push(...ids);
+    current.declared ||= words.some((word) => FIX_DECLARATION_TOKEN_RE.test(word));
+    current.negated ||= words.some((word) => NEGATION_TOKEN_RE.test(word));
+  }
+  return groups.find((group) => group.ids.length > 0 && group.declared && !group.negated)?.ids[0] ?? null;
+}
+
+/**
+ * Gatilho do escritor de relato de correção: exige declaração POSITIVA na
+ * cláusula do id (ou na linha do artefato) — verbo de correção concluída,
+ * sem negação, ressalva parcial ou "aberto" no mesmo grupo de cláusulas.
+ * Citar o arquivo do item não basta ("Bug ainda aberto; ver
+ * docs/qa/items/F-XXX.md"). Puro e determinístico; o trecho devolvido (a
+ * frase) é o que o Jev destila.
  */
 export function extractResolvedQaFinding(
   texts: ReadonlyArray<string | null | undefined>,
 ): DeclaredQaFix | null {
   for (const text of texts) {
     if (!text) continue;
-    const segments = text
+    const sentences = text
       .slice(0, 65_536)
       .split(/\r?\n+|(?<=[.!?])\s+/u)
-      .map((segment) => segment.replace(/\s+/g, ' ').trim())
+      .map((sentence) => sentence.replace(/\s+/g, ' ').trim())
       .filter(Boolean);
-    for (const segment of segments) {
-      const id = declaredFixInSegment(segment);
+    for (const sentence of sentences) {
+      const id = declaredFixInSentence(sentence);
       if (id) {
         return Object.freeze({
           id,
-          excerpt: Array.from(segment).slice(0, PERTINENT_EXCERPT_MAX_CHARS).join(''),
+          excerpt: Array.from(sentence).slice(0, PERTINENT_EXCERPT_MAX_CHARS).join(''),
         });
       }
     }
@@ -532,6 +549,9 @@ export async function confirmQaItemFixedInWorkspace(
 /** Título da classe "relato de correção": a chave de assunto é por item de QA. */
 export const REPORTED_FIX_TITLE_PREFIX = 'Reported fix ';
 const HANDOFF_ORDER_LINE_PREFIX = 'Handoff at: ';
+const REPORTED_FIX_MARK =
+  'Agent report, unverified; Jev approved for retention, not factual verification.';
+const reportedFixQuarantineSchema = z.enum(['web-exposed session', 'read-only session']);
 
 const reportedFixHandoffSchema = z
   .object({
@@ -542,25 +562,66 @@ const reportedFixHandoffSchema = z
     handoffCreatedAt: z.number().int().nonnegative().max(8_640_000_000_000_000),
     summary: z.string().max(65_536).optional(),
     artifactsText: z.string().max(16_384).optional(),
+    /** F-808: sessão exposta à web ou missão de consulta (derivado pelo Main). */
+    quarantine: reportedFixQuarantineSchema.optional(),
   })
   .strict();
 
 export type ReportedFixHandoffInput = z.infer<typeof reportedFixHandoffSchema>;
 
 /**
+ * Autoridade opaca dos relatos de correção de UMA missão, derivada do escopo
+ * e da missão (Main) — nunca de texto do agente. Formato da camada de notas
+ * de agente, então o filtro do F-808 (mesma missão, quarentena) vale inteiro.
+ */
+export function reportedFixAuthority(
+  scope: ProjectExecutionScope,
+  missionId: string,
+): string {
+  const digest = createHash('sha256')
+    .update(JSON.stringify([
+      'nexus-reported-fix', scope.installationId, scope.projectId, scope.checkoutId, missionId,
+    ]))
+    .digest('hex');
+  return `agent-authored:mission:${digest}`;
+}
+
+const agentReportSchema = z
+  .object({
+    source: z.string().regex(/^agent-authored:mission:[a-f0-9]{64}$/),
+    findingId: z.string().regex(/^F-\d{2,9}$/),
+    handoffId: trustedIdentifierSchema,
+    handoffAt: z.number().int().nonnegative().max(8_640_000_000_000_000),
+    missionId: trustedIdentifierSchema,
+    quarantine: reportedFixQuarantineSchema.nullable(),
+  })
+  .strict();
+
+type AgentReport = z.infer<typeof agentReportSchema>;
+
+const pendingAgentReportSchema = z
+  .object({
+    agentReport: agentReportSchema,
+    agentSummary: z.string().min(1).max(65_536),
+  })
+  .strict();
+
+/**
  * Relato de correção de bug declarado por handoff de missão aceito/entregue
- * (F-911). M1 — relato não é fato: o handoff é `unverified` e o Jev só aprova
- * relevância, nunca a alegação. Por isso a linha nasce na MESMA classe do
- * accepted-handoff (`trusted:accepted-handoff`, importância 4, linha Summary
- * marcada "Agent report, unverified", só ela entra em brief, `Mission:`
- * obrigatória), com assunto `Reported fix F-XXX`. `trusted:resolved-problem`
- * com autoridade fica reservado a correção com evidência validada pelo Main —
- * caminho que hoje não existe, então nada é promovido.
+ * (F-911). M1/F-808 — relato não é fato: o handoff é `unverified` e o Jev só
+ * aprova relevância, nunca a alegação. A linha nasce na camada de notas de
+ * agente (`agent-authored:mission:<autoridade da missão>`), marcada "Agent
+ * report, unverified", ligada à missão: só workers da MESMA missão a recebem,
+ * na seção não verificada; sessão exposta à web ou missão de consulta grava em
+ * quarentena; nunca entra no contexto confiável nem no permanente.
+ * `trusted:resolved-problem` com autoridade fica reservado a correção com
+ * evidência validada pelo Main — caminho que hoje não existe.
  *
  * Antes do Jev, o Main confirma o item de QA no workspace (status corrigido);
  * ao Jev vai só o trecho pertinente (frase do resumo ou linha do artefato).
  * Replay é idempotente por (handoff, classe) e nunca substitui relato de
- * handoff mais novo. Best-effort: nunca segura aceite, entrega ou ACK.
+ * handoff mais novo ou de mesma hora. Best-effort: nunca segura aceite,
+ * entrega ou ACK.
  */
 export async function retainReportedFixFromHandoffBestEffort(
   scope: ProjectExecutionScope,
@@ -580,23 +641,18 @@ export async function retainReportedFixFromHandoffBestEffort(
       recordMemoryRetentionSkip(scope, 'qa-unconfirmed');
       return null;
     }
-    return await distillMemoryWithRetry(
+    return await distillAgentReportWithRetry(
       scope,
       {
-        type: 'accepted-handoff',
-        title: `${REPORTED_FIX_TITLE_PREFIX}${declared.id}`,
-        summary: 'Pending distillation',
+        source: reportedFixAuthority(scope, input.missionId),
+        findingId: declared.id,
+        handoffId: input.handoffId,
+        handoffAt: input.handoffCreatedAt,
         missionId: input.missionId,
-        reference: `docs/qa/items/${declared.id}.md`,
+        quarantine: input.quarantine ?? null,
       },
       declared.excerpt,
       deps,
-      {
-        summarySuffix:
-          `Handoff: ${input.handoffId}\n` +
-          `${HANDOFF_ORDER_LINE_PREFIX}${new Date(input.handoffCreatedAt).toISOString()}`,
-        replayGuard: { handoffId: input.handoffId, handoffAt: input.handoffCreatedAt },
-      },
     );
   } catch {
     recordMemoryRetentionSkip(scope, 'store-unavailable');
@@ -604,43 +660,61 @@ export async function retainReportedFixFromHandoffBestEffort(
   }
 }
 
-const replayGuardSchema = z
-  .object({
-    handoffId: trustedIdentifierSchema,
-    handoffAt: z.number().int().nonnegative().max(8_640_000_000_000_000),
-  })
-  .strict();
-
-type ReplayGuard = z.infer<typeof replayGuardSchema>;
-
 /**
- * Idempotência durável por (handoff, classe do título) e ordem Main-owned:
- * qualquer linha já gravada para este handoff — ativa, substituída ou
- * esquecida pelo operador — encerra o replay; e um relato de handoff mais
- * antigo nunca substitui o relato ativo do mesmo assunto vindo de handoff
- * mais novo. Síncrono: roda colado à gravação, sem await no meio.
+ * Idempotência durável por (handoff, classe "Reported fix") e ordem
+ * Main-owned: qualquer linha já gravada para este handoff — ativa,
+ * substituída ou esquecida pelo operador — encerra o replay; e um relato só
+ * substitui o relato ativo do mesmo assunto quando o handoff dele é
+ * ESTRITAMENTE mais novo (mesma hora não decide ordem: rejeita). Síncrono:
+ * roda colado à gravação, sem await no meio.
  */
-function replayAllowsWrite(
+function reportAllowsWrite(
   store: ReturnType<typeof getWorkspaceMemoryStore>,
-  event: TrustedMemoryEvent,
-  guard: ReplayGuard,
+  report: AgentReport,
 ): boolean {
-  const title = event.title ?? '';
-  const classPrefix = title.startsWith(REPORTED_FIX_TITLE_PREFIX)
-    ? `# ${REPORTED_FIX_TITLE_PREFIX}`
-    : `# ${title}`;
-  const source = `trusted:${event.type}`;
-  if (store.workspaceRecordExists(source, classPrefix, `Handoff: ${guard.handoffId}`)) {
+  if (store.workspaceRecordExists(
+    report.source, `# ${REPORTED_FIX_TITLE_PREFIX}`, `Handoff: ${report.handoffId}`,
+  )) {
     return false;
   }
-  const current = store.activeWorkspaceSameSubject(source, `# ${title}`);
+  const current = store.activeWorkspaceSameSubject(
+    report.source, `# ${REPORTED_FIX_TITLE_PREFIX}${report.findingId}`,
+  );
   if (!current) return true;
   const stamp = current.content
     .split('\n')
     .find((line) => line.startsWith(HANDOFF_ORDER_LINE_PREFIX))
     ?.slice(HANDOFF_ORDER_LINE_PREFIX.length);
   const currentAt = stamp ? Date.parse(stamp) : Number.NaN;
-  return !(Number.isFinite(currentAt) && currentAt > guard.handoffAt);
+  return !(Number.isFinite(currentAt) && currentAt >= report.handoffAt);
+}
+
+function retainReportedFixNote(
+  store: ReturnType<typeof getWorkspaceMemoryStore>,
+  report: AgentReport,
+  approved: string,
+): RetainResult {
+  const content = clampUtf8TextPrefix([
+    `# ${REPORTED_FIX_TITLE_PREFIX}${report.findingId}`,
+    '',
+    REPORTED_FIX_MARK,
+    `Summary: ${approved}`,
+    `Handoff: ${report.handoffId}`,
+    `${HANDOFF_ORDER_LINE_PREFIX}${new Date(report.handoffAt).toISOString()}`,
+    `Mission: ${report.missionId}`,
+    `Reference: docs/qa/items/${report.findingId}.md`,
+  ].join('\n'), TRUSTED_CONTENT_MAX_BYTES);
+  const mission = missionLinkTarget(report.missionId);
+  return store.retainAgentAuthored(
+    { content, kind: 'fact', importance: 3, scope: 'workspace' },
+    { source: report.source },
+    {
+      links: mission ? [mission] : [],
+      quarantine: report.quarantine,
+      // F-806: missão de consulta nunca escreve na pasta do projeto.
+      vault: report.quarantine !== 'read-only session',
+    },
+  );
 }
 
 /** Categorical diagnostics, never the content or exception text. */
@@ -662,25 +736,19 @@ function countMemoryRetentionSkip(scope: ProjectExecutionScope | null | undefine
 const pendingRetentionSchema = z.object({
   event: trustedMemoryEventSchema,
   agentSummary: z.string().min(1).max(3 * 65_536 + 6),
-  options: z.object({
-    supersedes: z.string().max(128).optional(),
-    summarySuffix: z.string().max(16_384).optional(),
-    replayGuard: replayGuardSchema.optional(),
-  }).strict(),
+  options: z.object({ supersedes: z.string().max(128).optional(), summarySuffix: z.string().max(16_384).optional() }).strict(),
 }).strict();
 const retryableSkips = new Set(['no-route', 'timeout', 'jev-off', 'flag-off', 'aborted', 'malformed']);
 const retryingStores = new WeakSet<object>();
 const pendingWrites = new WeakMap<object, Map<string, Promise<RetainResult | null>>>();
 
-/** Persist failures in the existing workspace database, then redistill on boot/opportunity. */
-export async function distillMemoryWithRetry(
+/** Store da retenção (flag, texto e banco ok) e, de carona, a redestilação pendente. */
+function openRetentionStore(
   scope: ProjectExecutionScope,
-  event: TrustedMemoryEvent,
   agentSummary: string | null | undefined,
-  deps: DistillHandoffSummaryDeps = {},
-  options: { supersedes?: string; summarySuffix?: string; replayGuard?: ReplayGuard } = {},
-  distillOverride: typeof distillHandoffSummary = distillHandoffSummary,
-): Promise<RetainResult | null> {
+  deps: DistillHandoffSummaryDeps,
+  distillOverride: typeof distillHandoffSummary,
+): ReturnType<typeof getWorkspaceMemoryStore> | null {
   if (!getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory)) {
     recordMemoryRetentionSkip(scope, 'flag-off');
     return null;
@@ -694,11 +762,25 @@ export async function distillMemoryWithRetry(
       recordMemoryRetentionSkip(scope, 'store-unavailable');
     });
   }
-  const payload = pendingRetentionSchema.parse({ event, agentSummary, options });
-  const key = JSON.stringify(payload);
-  // Replay já conhecido nem chega ao Jev e sai da fila durável, se veio dela;
-  // a checagem que vale roda de novo colada à gravação.
-  if (options.replayGuard && !replayAllowsWrite(store, event, options.replayGuard)) {
+  return store;
+}
+
+/**
+ * Núcleo durável: enfileira `key` (payload que a redestilação sabe reler),
+ * pergunta ao Jev e grava só o aprovado. `allowsWrite` (opcional, síncrono)
+ * roda antes do Jev — o replay negado sai da fila — e de novo colado à gravação.
+ */
+async function distillWithDurableRetry(
+  scope: ProjectExecutionScope,
+  store: ReturnType<typeof getWorkspaceMemoryStore>,
+  key: string,
+  agentSummary: string,
+  deps: DistillHandoffSummaryDeps,
+  distillOverride: typeof distillHandoffSummary,
+  write: (approved: string) => RetainResult,
+  allowsWrite?: () => boolean,
+): Promise<RetainResult | null> {
+  if (allowsWrite && !allowsWrite()) {
     store.removePendingRetention(store.enqueueRetention(key));
     recordMemoryRetentionSkip(scope, 'replay');
     return null;
@@ -719,13 +801,12 @@ export async function distillMemoryWithRetry(
         if (!retryableSkips.has(reason)) store.removePendingRetention(queuedId);
         return null;
       }
-      if (options.replayGuard && !replayAllowsWrite(store, event, options.replayGuard)) {
+      if (allowsWrite && !allowsWrite()) {
         store.removePendingRetention(queuedId);
         recordMemoryRetentionSkip(scope, 'replay');
         return null;
       }
-      const summary = options.summarySuffix ? `${approved}\n${options.summarySuffix}` : approved;
-      const result = retainParsedTrustedMemory(scope, trustedMemoryEventSchema.parse({ ...event, summary }), options);
+      const result = write(approved);
       store.removePendingRetention(queuedId);
       return result;
     } catch {
@@ -736,6 +817,42 @@ export async function distillMemoryWithRetry(
   pending.set(key, attempt);
   try { return await attempt; }
   finally { pending.delete(key); }
+}
+
+/** Persist failures in the existing workspace database, then redistill on boot/opportunity. */
+export async function distillMemoryWithRetry(
+  scope: ProjectExecutionScope,
+  event: TrustedMemoryEvent,
+  agentSummary: string | null | undefined,
+  deps: DistillHandoffSummaryDeps = {},
+  options: { supersedes?: string; summarySuffix?: string } = {},
+  distillOverride: typeof distillHandoffSummary = distillHandoffSummary,
+): Promise<RetainResult | null> {
+  const store = openRetentionStore(scope, agentSummary, deps, distillOverride);
+  if (!store || !agentSummary) return null;
+  const payload = pendingRetentionSchema.parse({ event, agentSummary, options });
+  return distillWithDurableRetry(scope, store, JSON.stringify(payload), agentSummary, deps, distillOverride,
+    (approved) => {
+      const summary = options.summarySuffix ? `${approved}\n${options.summarySuffix}` : approved;
+      return retainParsedTrustedMemory(scope, trustedMemoryEventSchema.parse({ ...event, summary }), options);
+    });
+}
+
+/** Mesma fila durável para o relato de correção (nota de agente, F-911). */
+async function distillAgentReportWithRetry(
+  scope: ProjectExecutionScope,
+  rawReport: AgentReport,
+  agentSummary: string,
+  deps: DistillHandoffSummaryDeps = {},
+  distillOverride: typeof distillHandoffSummary = distillHandoffSummary,
+): Promise<RetainResult | null> {
+  const store = openRetentionStore(scope, agentSummary, deps, distillOverride);
+  if (!store) return null;
+  const payload = pendingAgentReportSchema.parse({ agentReport: rawReport, agentSummary });
+  const report = payload.agentReport;
+  return distillWithDurableRetry(scope, store, JSON.stringify(payload), agentSummary, deps, distillOverride,
+    (approved) => retainReportedFixNote(store, report, approved),
+    () => reportAllowsWrite(store, report));
 }
 
 export async function retryPendingMemoryRetentions(
@@ -751,15 +868,25 @@ export async function retryPendingMemoryRetentions(
     await runPeriodicTask(`memory-retention:${scope.projectId}`, async (ctx) => {
     for (const row of store.pendingRetentions(4)) {
       ctx.assertCurrent();
-      let payload: z.infer<typeof pendingRetentionSchema>;
-      try { payload = pendingRetentionSchema.parse(JSON.parse(row.payload)); }
-      catch { recordMemoryRetentionSkip(scope, 'malformed'); store.removePendingRetention(row.id); continue; }
-      if (payload.options.supersedes && store.activeWorkspaceSource(payload.options.supersedes) !== `trusted:${payload.event.type}`) {
-        delete payload.options.supersedes;
-      }
+      let payload: z.infer<typeof pendingRetentionSchema> | z.infer<typeof pendingAgentReportSchema>;
+      try {
+        const raw: unknown = JSON.parse(row.payload);
+        payload = raw && typeof raw === 'object' && 'agentReport' in raw
+          ? pendingAgentReportSchema.parse(raw)
+          : pendingRetentionSchema.parse(raw);
+      } catch { recordMemoryRetentionSkip(scope, 'malformed'); store.removePendingRetention(row.id); continue; }
       let skipped: string | undefined;
-      const result = await ctx.wait(distillMemoryWithRetry(scope, payload.event, payload.agentSummary,
-        { ...deps, signal: ctx.signal, onSkip: (reason) => { skipped = reason; deps.onSkip?.(reason); } }, payload.options, distillOverride));
+      const retryDeps = { ...deps, signal: ctx.signal, onSkip: (reason: MemoryDistillSkipReason) => { skipped = reason; deps.onSkip?.(reason); } };
+      let attempt: Promise<RetainResult | null>;
+      if ('agentReport' in payload) {
+        attempt = distillAgentReportWithRetry(scope, payload.agentReport, payload.agentSummary, retryDeps, distillOverride);
+      } else {
+        if (payload.options.supersedes && store.activeWorkspaceSource(payload.options.supersedes) !== `trusted:${payload.event.type}`) {
+          delete payload.options.supersedes;
+        }
+        attempt = distillMemoryWithRetry(scope, payload.event, payload.agentSummary, retryDeps, payload.options, distillOverride);
+      }
+      const result = await ctx.wait(attempt);
       ctx.assertCurrent();
       if (result || (skipped && !retryableSkips.has(skipped))) store.removePendingRetention(row.id);
       if (skipped && retryableSkips.has(skipped)) break; // provider unavailable: avoid hammering the backlog

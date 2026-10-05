@@ -6,6 +6,8 @@ import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { createScopedHandoffStore } from './handoff-store';
 import { createScopedMissionStore } from './mission-store';
 import { testProjectScope } from './__tests__/scope-fixture';
+import { __resetSessionWebExposureForTests, markSessionWebExposed } from './session-web-exposure';
+import { compileIntentContract } from '../../shared/mission-intent';
 
 vi.mock('../license-access', async () =>
   (await import('../__tests__/licensed-access')).licensedAccessMock,
@@ -40,6 +42,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  __resetSessionWebExposureForTests();
   manager.closeAll();
   fs.rmSync(baseDir, { recursive: true, force: true });
 });
@@ -169,6 +172,34 @@ describe('reported fix writer trigger (F-911)', () => {
     expect(handoffs.markSubmitted(handoff.id)).toBe(true);
     expect(memory.retain).toHaveBeenCalledTimes(1);
     expect(memory.resolved).not.toHaveBeenCalled();
+  });
+
+  it('F-808: quarantines the report of a web-exposed session', () => {
+    const handoffs = missionHandoffs();
+    markSessionWebExposed('worker-web');
+    const handoff = handoffs.submit({ missionId: 'mission-a', sessionId: 'worker-web', status: 'success', summary: declared });
+    expect(handoffs.markSubmitted(handoff.id)).toBe(true);
+    expect(memory.resolved).toHaveBeenCalledExactlyOnceWith(
+      scope,
+      expect.objectContaining({ handoffId: handoff.id, quarantine: 'web-exposed session' }),
+    );
+  });
+
+  it('F-808: quarantines the report of a consult (read-only) mission', () => {
+    createScopedMissionStore(manager, scope, { idFactory: () => 'mission-c' }).create({
+      title: 'Consulta',
+      intentVersion: 1,
+      intentContract: compileIntentContract({
+        goal: 'Ler logs e resumir', intentVersion: 1, source: 'typed', lane: 'consult',
+      }),
+    });
+    const handoffs = createScopedHandoffStore(manager, scope);
+    const handoff = handoffs.submit({ missionId: 'mission-c', status: 'success', summary: declared });
+    expect(handoffs.markSubmitted(handoff.id)).toBe(true);
+    expect(memory.resolved).toHaveBeenCalledExactlyOnceWith(
+      scope,
+      expect.objectContaining({ handoffId: handoff.id, missionId: 'mission-c', quarantine: 'read-only session' }),
+    );
   });
 
   it('skips the writer for helper handoffs even when they cite a fixed bug', () => {
