@@ -7,6 +7,7 @@ import {
   RACK_HEIGHT,
   RACK_WIDTH,
   cableWorkerEnd,
+  cablePath,
   isCableLive,
   layoutCables,
   packetGlyph,
@@ -14,6 +15,44 @@ import {
   type CableSpec,
   type RackBox,
 } from './mission-graph-cabling';
+import { layoutMissionGraph } from './MissionGraph';
+
+/** Achatamento da curva apenas no teste, seguido de interseção segmento × retângulo. */
+function intersectsCard(d: string, card: RackBox): boolean {
+  const numbers = d.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
+  const points: { x: number; y: number }[] = [];
+  if (d.includes('C')) {
+    for (let i = 0; i <= 512; i++) {
+      const t = i / 512;
+      const u = 1 - t;
+      points.push({
+        x: u ** 3 * numbers[0]! + 3 * u ** 2 * t * numbers[2]! + 3 * u * t ** 2 * numbers[4]! + t ** 3 * numbers[6]!,
+        y: u ** 3 * numbers[1]! + 3 * u ** 2 * t * numbers[3]! + 3 * u * t ** 2 * numbers[5]! + t ** 3 * numbers[7]!,
+      });
+    }
+  } else {
+    for (let i = 0; i < numbers.length; i += 2) points.push({ x: numbers[i]!, y: numbers[i + 1]! });
+  }
+  return points.slice(1).some((b, i) => {
+    const a = points[i]!;
+    let enter = 0;
+    let leave = 1;
+    for (const [start, delta, min, max] of [
+      [a.x, b.x - a.x, card.x - card.width / 2, card.x + card.width / 2],
+      [a.y, b.y - a.y, card.y - card.height / 2, card.y + card.height / 2],
+    ]) {
+      if (delta === 0) {
+        if (start < min || start > max) return false;
+      } else {
+        const t1 = (min - start) / delta;
+        const t2 = (max - start) / delta;
+        enter = Math.max(enter, Math.min(t1, t2));
+        leave = Math.min(leave, Math.max(t1, t2));
+      }
+    }
+    return enter <= leave;
+  });
+}
 
 function agent(
   id: string,
@@ -43,6 +82,34 @@ const delegation = (id: string, from: string, to: string): CableSpec => ({
 });
 
 describe('cabos da sala de racks', () => {
+  it.each(['delegation', 'handoff', 'topology'] as const)(
+    'com 20 helpers vivos, %s não atravessa cards de outras pontas', (kind) => {
+      const all = [agent('orq', { category: 'orchestrator' }),
+        ...Array.from({ length: 20 }, (_, i) => agent(`w${i}`))];
+      const agents = new Map(all.map((a) => [a.id, a]));
+      const boxes = new Map(layoutMissionGraph(all).map((position) => [
+        position.agentId, { ...position, ...rackSize(agents.get(position.agentId)!) },
+      ]));
+      const specs = all.slice(1).map((a) => ({
+        id: `e-${a.id}`, kind,
+        sourceAgentId: kind === 'handoff' ? a.id : 'orq',
+        targetAgentId: kind === 'handoff' ? 'orq' : a.id,
+      }));
+      const cables = layoutCables({ specs, boxes, agents, missionState: 'running' });
+      expect(cables).toHaveLength(20);
+      let oldCrossings = 0;
+      for (const cable of cables) {
+        expect(cable.live).toBe(true);
+        for (const card of boxes.values()) {
+          if ([cable.sourceAgentId, cable.targetAgentId].includes(card.agentId)) continue;
+          if (intersectsCard(cablePath(cable.source, cable.target), card)) oldCrossings++;
+          expect(intersectsCard(cable.d, card), `${cable.id} × ${card.agentId}`).toBe(false);
+        }
+      }
+      // A mesma geometria com o cabo direto reproduz o defeito original.
+      expect(oldCrossings).toBeGreaterThan(0);
+    },
+  );
   it('o coordenador é o núcleo, mais largo; os outros são racks', () => {
     expect(rackSize({ category: 'orchestrator' })).toEqual({ width: CORE_WIDTH, height: CORE_HEIGHT });
     expect(rackSize({ category: 'executor' })).toEqual({ width: RACK_WIDTH, height: RACK_HEIGHT });
