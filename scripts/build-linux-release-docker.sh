@@ -5,6 +5,9 @@
 #
 #   scripts/build-linux-release-docker.sh <versão sem v> [diretório de saída]
 #
+# Falha conhecida de uma tag imutável (já corrigida depois): KNOWN_TEST_FAILURE_FILE e
+# KNOWN_TEST_FAILURE_MATCH; o teste precisa falhar exatamente assim ou o build aborta
+# (ver linux-release-container.sh). A exceção fica em build-provenance.json.
 # Variáveis: DOCKER (padrão "docker"; use "sudo docker" se o usuário não está no
 # grupo docker) e LINUX_BUILD_IMAGE (padrão ubuntu:22.04).
 #
@@ -35,5 +38,6 @@ status=0
   --mount "type=bind,src=$OUT,dst=/out" \
   --mount "type=bind,src=$REPO/scripts/linux-release-container.sh,dst=/linux-release-container.sh,readonly" \
   --env "IMAGE_ID=$IMAGE_ID" --env "HOST_UID=$(id -u)" --env "HOST_GID=$(id -g)" \
+  --env "KNOWN_TEST_FAILURE_FILE=${KNOWN_TEST_FAILURE_FILE:-}" --env "KNOWN_TEST_FAILURE_MATCH=${KNOWN_TEST_FAILURE_MATCH:-}" \
   "$IMAGE" bash /linux-release-container.sh "$VERSION" || status=$?
 exit "$status"

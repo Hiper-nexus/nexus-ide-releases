@@ -8,6 +8,11 @@
 # Modo CI: com CI_REF (um commit) no ambiente, o VERSION é só um rótulo ("ci"), nada
 # exige tag e o script para depois de `npm test`, as mesmas etapas de `ci.yml`
 # (typecheck, sinks do renderer, testes). Quem chama é `scripts/ci-local-docker.sh`.
+# Falha conhecida: uma tag imutável pode carregar um teste quebrado que já foi corrigido
+# depois dela. KNOWN_TEST_FAILURE_FILE (arquivo de teste) e KNOWN_TEST_FAILURE_MATCH
+# (trecho exato da mensagem) NÃO pulam o teste às cegas: a suíte roda sem ele e o arquivo
+# é rodado à parte, e precisa FALHAR com exatamente esse trecho e nenhuma outra falha.
+# Qualquer outra coisa aborta. A exceção vai para build-provenance.json.
 # /repo é um caminho de mentira que testes usam: nunca monte nada ali.
 # Saída em /out: os três pacotes, SHA256SUMS-linux-x64.txt e build-provenance.json.
 #
@@ -70,6 +75,7 @@ if [ "$STAGE" = root ]; then
     ONNXRUNTIME_NODE_INSTALL_CUDA=skip NODE_OPTIONS=--max-old-space-size=4096 \
     CC=clang-15 CXX=clang++-15 \
     HOST_UID="${HOST_UID:-}" HOST_GID="${HOST_GID:-}" IMAGE_ID="${IMAGE_ID:-unknown}" CI_REF="$CI_REF" \
+    KNOWN_TEST_FAILURE_FILE="${KNOWN_TEST_FAILURE_FILE:-}" KNOWN_TEST_FAILURE_MATCH="${KNOWN_TEST_FAILURE_MATCH:-}" \
     bash "$0" "$VERSION" runner
 fi
 
@@ -160,7 +166,24 @@ log "npm ci, typecheck, sinks do renderer, testes e segurança de release"
 npm ci
 npm run typecheck
 npm run security:renderer-sinks
-npm test
+KNOWN_FAILURE_RECORD=""
+if [ -n "${KNOWN_TEST_FAILURE_FILE:-}" ]; then
+  test -n "${KNOWN_TEST_FAILURE_MATCH:-}"
+  test -f "$KNOWN_TEST_FAILURE_FILE"
+  log "falha conhecida: $KNOWN_TEST_FAILURE_FILE tem de falhar só com: $KNOWN_TEST_FAILURE_MATCH"
+  npm test -- --exclude "$KNOWN_TEST_FAILURE_FILE"
+  set +e
+  KNOWN_OUT="$(npx vitest run "$KNOWN_TEST_FAILURE_FILE" 2>&1)"
+  KNOWN_RC=$?
+  set -e
+  printf '%s\n' "$KNOWN_OUT" | tail -25
+  test "$KNOWN_RC" -ne 0
+  printf '%s\n' "$KNOWN_OUT" | grep -qF -- "$KNOWN_TEST_FAILURE_MATCH"
+  test "$(printf '%s\n' "$KNOWN_OUT" | sed 's/\x1b\[[0-9;]*m//g' | grep -cE '^ +Tests +1 failed')" = 1
+  KNOWN_FAILURE_RECORD="$KNOWN_TEST_FAILURE_FILE: $KNOWN_TEST_FAILURE_MATCH"
+else
+  npm test
+fi
 if [ -n "$CI_REF" ]; then
   log "CI ok: $RELEASE_COMMIT (typecheck, sinks do renderer e testes)"
   exit 0
@@ -219,7 +242,7 @@ test "$(printf '%s\n' "${need:-GLIBC_0}" GLIBC_2.35 | sort -V | tail -n1)" = GLI
 log "coleta: três pacotes, checksums e proveniência"
 cp "$DEB" "$RPM" "$ZIP" /out/
 (cd /out && for f in "$(basename "$DEB")" "$(basename "$RPM")" "$(basename "$ZIP")"; do printf '%s  %s\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$f"; done | LC_ALL=C sort -k2 > SHA256SUMS-linux-x64.txt)
-NODE_VERSION="$NODE_VERSION" VERSION="$VERSION" RELEASE_COMMIT="$RELEASE_COMMIT" TAG_OBJECT="$TAG_OBJECT" \
+NODE_VERSION="$NODE_VERSION" VERSION="$VERSION" RELEASE_COMMIT="$RELEASE_COMMIT" TAG_OBJECT="$TAG_OBJECT" KNOWN_FAILURE_RECORD="$KNOWN_FAILURE_RECORD" \
 IMAGE_ID="${IMAGE_ID:-unknown}" python3 - <<'PY'
 import json, os, subprocess, datetime
 out = {
@@ -235,6 +258,8 @@ out = {
   "smoke": {"packaged": True, "debInstalled": True, "zipExtracted": True},
   "glibcMax": "<= 2.35",
 }
+if os.environ.get("KNOWN_FAILURE_RECORD"):
+  out["knownTestFailure"] = os.environ["KNOWN_FAILURE_RECORD"]
 json.dump(out, open("/out/build-provenance.json", "w"), indent=2)
 PY
 cat /out/SHA256SUMS-linux-x64.txt
