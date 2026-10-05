@@ -9,7 +9,13 @@ const runs = job.steps.filter((step) => step.run).map((step) => step.run);
 
 describe('macOS preview authority and runtime proof', () => {
   it('uses read-only main/PR sources without publication or signing credentials', () => {
-    expect(workflow.on).toEqual({ push: { branches: ['main'] }, pull_request: { branches: ['main'] } });
+    // Só push/PR em main, sem tag nem dispatch. `paths-ignore` apenas poupa minutos
+    // (macOS custa ~10x): site, API e docs não entram no app.
+    const semApp = ['site/**', 'cloud-api/**', 'docs/**', '**/*.md'];
+    expect(workflow.on).toEqual({
+      push: { branches: ['main'], 'paths-ignore': semApp },
+      pull_request: { branches: ['main'], 'paths-ignore': semApp },
+    });
     expect(workflow.permissions).toEqual({ contents: 'read' });
     expect(job['runs-on']).toBe('macos-15');
     const checkout = job.steps.find((step) => step.uses?.startsWith('actions/checkout@'));
