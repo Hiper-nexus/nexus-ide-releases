@@ -10038,7 +10038,7 @@ export const RELEASE_076194: AppRelease = {
     },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076195: AppRelease = {
   version: '0.76.195',
   date: '2026-10-05',
   codename: 'Atualizar o Codex de volta',
@@ -10064,5 +10064,22 @@ export const CURRENT_RELEASE: AppRelease = {
         'usa "brew upgrade --cask codex". As instalações por npm continuam ' +
         'iguais.',
     },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.196',
+  date: '2026-10-05',
+  codename: 'Panes abrem, missão continua',
+  summary: 'Corrige a falha que impedia abrir panes no Mac e preserva o coordenador quando a missão precisa de recuperação.',
+  highlights: [
+    { title: 'Panes voltam a abrir no Mac', detail: 'A inicialização do zsh grava seus caches na configuração do usuário, preservando a assinatura do aplicativo.' },
+    { title: 'Missão bloqueada mantém o coordenador', detail: 'O coordenador continua disponível para conversar e retomar. Encerrar por sua ordem continua encerrando os processos.' },
+  ],
+  fixes: [
+    { title: 'Falha de abertura com código 76', detail: 'O cache de completamento do zsh podia ser gravado dentro do pacote assinado e impedir todos os panes seguintes. Os arquivos de inicialização agora recebem o diretório correto do usuário.' },
+    { title: 'Ociosidade não encerra a missão', detail: 'Após uma hora aguardando workers sem progresso, o supervisor avisa o coordenador sem bloquear nem matar os panes.' },
+    { title: 'Bloquear não mata o próprio Maestro', detail: 'Um bloqueio pausa o despacho e encerra workers, mas conserva o coordenador legítimo para recuperação. O comando Encerrar permanece explícito e efetivo.' },
+    { title: 'Retomar recupera o processo ausente', detail: 'O botão Retomar verifica o processo mesmo quando a missão já está marcada como em execução, em vez de retornar sem fazer nada.' },
   ],
 };

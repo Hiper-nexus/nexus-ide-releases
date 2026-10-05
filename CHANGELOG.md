@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.196 — Panes abrem, missão continua
+
+Build do Mac com correções urgentes de terminais e recuperação de missão.
+
+- **Panes voltam a abrir (F-251).** O zsh podia gravar `.zcompdump` dentro do aplicativo assinado, invalidando o pacote e fazendo todos os novos panes caírem com código 76. Os wrappers agora carregam a configuração do usuário no diretório correto, preservando redirecionamentos e hooks.
+- **Ociosidade avisa sem encerrar (F-252).** Após 60 minutos aguardando workers sem progresso, o supervisor envia um aviso ao coordenador, limitado a uma vez por hora, sem revogar o despacho nem matar panes.
+- **Bloqueio conserva o coordenador (F-253).** Declarar a missão bloqueada não mata o próprio Maestro. Só a sessão legítima de uma revisão aprovada permanece para conversa e recuperação; workers param, efeitos continuam sujeitos ao gate e Encerrar continua encerrando tudo.
+- **Retomar deixa de ser um botão sem efeito (F-254).** Missão marcada running/executing com processo morto agora passa pela recuperação física; coordenador vivo é reutilizado e ausente é recriado.
+
 ## 0.76.195 — Atualizar o Codex de volta
 
 Build do Mac. Conserta o botão de atualizar o Codex para instalações fora do npm.
