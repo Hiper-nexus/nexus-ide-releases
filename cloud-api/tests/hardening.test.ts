@@ -74,6 +74,27 @@ test('a refresh rotation that loses the race with a revocation leaves no usable 
   db.close();
 });
 
+test('a dead or expired refresh token is refused without logging out the other desktop apps', async () => {
+  const db = new SqliteD1();
+  await seedAccount(db, 'user');
+  const stolen = await issueTokens(db, 'user', 'desktop');
+  const successor = await rotateRefresh(db, stolen.refresh, 'desktop');
+  assert.ok(successor);
+  // Real reuse of a rotated token still revokes every desktop session.
+  assert.equal(await rotateRefresh(db, stolen.refresh, 'desktop'), null);
+  assert.equal(await sessionFor(db, successor.tokens.session, 'desktop'), null);
+  const expired = await issueTokens(db, 'user', 'desktop', Date.now() - 31 * 24 * 60 * 60 * 1000);
+  // Another app (or machine) signs in again after the revocation.
+  const fresh = await issueTokens(db, 'user', 'desktop');
+  // The logged-out app wakes up and presents what it still has on disk.
+  for (const dead of [successor.tokens.refresh, stolen.refresh, expired.refresh]) {
+    assert.equal(await rotateRefresh(db, dead, 'desktop'), null);
+  }
+  assert.ok(await sessionFor(db, fresh.session, 'desktop'), 'the fresh login survives');
+  assert.ok(await rotateRefresh(db, fresh.refresh, 'desktop'), 'and keeps renewing');
+  db.close();
+});
+
 test('a delayed restore cannot erase a suspension applied after it was read', async () => {
   const db = new SqliteD1();
   await seedAccount(db, 'admin', { admin: true });
