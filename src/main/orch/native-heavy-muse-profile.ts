@@ -1,8 +1,14 @@
 import path from 'node:path';
 import { activateArtifact } from './cli-mcp-session-artifacts';
 import { createMuseNativeHeavySettingsLease } from './native-heavy-muse-lease';
+import { trace } from '../observability/main-trace';
 
 const quote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
+/** Errno code or our fixed lease code only: fs messages carry personal paths. */
+const reasonOf = (error: unknown) => {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code, message = error instanceof Error ? error.message : '';
+  return typeof code === 'string' && /^E[A-Z]{2,15}$/.test(code) ? code : /^muse_heavy_[a-z_]{1,40}$/.test(message) ? message : error instanceof SyntaxError ? 'json_invalid' : 'unknown';
+};
 /** Main-selected resource references only; no bearer/URL/env dump is persisted. */
 export function museNativeHeavySettings(original: Record<string, unknown>, node: string, directory: string): Record<string, unknown> {
   if (!path.isAbsolute(node) || !path.isAbsolute(directory)) throw new Error('muse_heavy_resource_invalid');
@@ -26,7 +32,10 @@ export interface MuseNativeHeavyProfileOptions {
 /**
  * Keep the selected auth/settings root in place (no env change); defer the
  * public hook lease until the Main reservation exists. The token's existing
- * physical-exit cleanup (`cleanupCliMcpSession`) releases it.
+ * physical-exit cleanup (`cleanupCliMcpSession`) releases it. Only
+ * cancellation fails closed: a settings file the lease cannot own (link,
+ * FIFO, invalid JSON, permissions, contention) leaves the pane to start
+ * without the hook; the shell route (BASH_ENV/ZDOTDIR) stays as spawned (F-723).
  */
 export function reserveMuseNativeHeavyProfile(options: MuseNativeHeavyProfileOptions): {
   initialize: (assertCurrent: () => void) => Promise<void>;
@@ -41,5 +50,10 @@ export function reserveMuseNativeHeavyProfile(options: MuseNativeHeavyProfileOpt
   const dispose = async () => { disposed = true; await initialization?.catch(() => {}); await lease.release(); };
   activateArtifact(options.token, { artifactDir: null, providerHome: null, configFiles: [], syncBack: false,
     dispose: () => { void dispose().catch(() => console.warn('[native-heavy] Muse hook lease release is pending until startup recovery')); } });
-  return { initialize: current => disposed ? Promise.reject(new Error('muse_heavy_lease_disposed')) : initialization ??= lease.acquire(current), dispose };
+  const acquire = async (current: () => void) => {
+    let cancelled = false;
+    try { await lease.acquire(() => { try { current(); } catch (error) { cancelled = true; throw error; } }); }
+    catch (error) { if (cancelled) throw error; trace({ kind: 'muse-hook-lease-degraded', adapterId: 'muse', name: reasonOf(error) }); }
+  };
+  return { initialize: current => disposed ? Promise.reject(new Error('muse_heavy_lease_disposed')) : initialization ??= acquire(current), dispose };
 }

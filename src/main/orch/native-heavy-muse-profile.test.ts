@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { afterEach, expect, it, vi } from 'vitest';
 import { museNativeHeavySettings, reserveMuseNativeHeavyProfile } from './native-heavy-muse-profile';
 import { cleanupCliMcpSession, getActiveCliMcpArtifact } from './cli-mcp-session-artifacts';
+import { recentTraceContext } from '../observability/main-trace';
 
 const fixtures: Array<{ root: string; token: string }> = [];
 afterEach(() => { vi.restoreAllMocks(); for (const fixture of fixtures.splice(0)) { cleanupCliMcpSession(fixture.token); fs.rmSync(fixture.root, { recursive: true, force: true }); } });
@@ -66,11 +67,29 @@ it('does no deferred IO after cancellation and never acquires after dispose', as
   await Promise.all([second.dispose(), second.dispose()]);
   await expect(second.initialize(() => {})).rejects.toThrow('disposed'); expect(fs.readFileSync(f.settings, 'utf8')).toBe('{}');
 });
-it.runIf(process.platform !== 'win32')('rejects a selected FIFO without blocking and leaves it in place', async () => {
+const degraded = () => recentTraceContext().filter(event => event.kind === 'muse-hook-lease-degraded').at(-1);
+it.each(['settings', 'muse-directory'])('F-723: a dotfile-linked %s lets the pane start without the hook, following nothing and leaving no ledger', async (linked) => {
+  const f = fixture(), dotfiles = path.join(f.root, 'dotfiles'); fs.mkdirSync(dotfiles);
+  const target = path.join(dotfiles, 'settings.json'); fs.writeFileSync(target, '{"model":"dotfile"}'); const before = fs.statSync(target);
+  if (linked === 'settings') fs.symlinkSync(target, f.settings);
+  else { fs.rmSync(path.dirname(f.settings), { recursive: true }); fs.symlinkSync(dotfiles, path.dirname(f.settings)); }
+  const profile = reserveMuseNativeHeavyProfile(f.options);
+  await expect(profile.initialize(() => {})).resolves.toBeUndefined();
+  expect(fs.readFileSync(target, 'utf8')).toBe('{"model":"dotfile"}'); expect(fs.statSync(target).mtimeMs).toBe(before.mtimeMs);
+  expect(fs.lstatSync(linked === 'settings' ? f.settings : path.dirname(f.settings)).isSymbolicLink()).toBe(true);
+  expect(fs.existsSync(f.ledgerRoot)).toBe(false); expect(fs.readdirSync(dotfiles)).toEqual(['settings.json']);
+  expect(degraded()).toMatchObject({ adapterId: 'muse', name: 'muse_heavy_lease_symlink' }); expect(JSON.stringify(degraded())).not.toContain(f.root);
+  await profile.dispose(); expect(fs.readFileSync(target, 'utf8')).toBe('{"model":"dotfile"}');
+});
+it.runIf(process.platform !== 'win32')('a selected FIFO degrades without blocking and stays in place; cancellation still fails closed', async () => {
   const f = fixture();
   execFileSync('/usr/bin/mkfifo', [f.settings]); const profile = reserveMuseNativeHeavyProfile(f.options);
-  await expect(profile.initialize(() => {})).rejects.toThrow('invalid'); expect(fs.lstatSync(f.settings).isFIFO()).toBe(true);
+  await expect(profile.initialize(() => {})).resolves.toBeUndefined(); expect(fs.lstatSync(f.settings).isFIFO()).toBe(true);
+  expect(degraded()).toMatchObject({ name: 'muse_heavy_lease_invalid' });
   await profile.dispose(); expect(fs.lstatSync(f.settings).isFIFO()).toBe(true);
+  fs.unlinkSync(f.settings); fs.symlinkSync('/dev/null', f.settings); let calls = 0;
+  const revoked = reserveMuseNativeHeavyProfile(f.options);
+  await expect(revoked.initialize(() => { if (++calls > 1) throw new Error('context revoked'); })).rejects.toThrow('context revoked');
 });
 it.runIf(process.platform !== 'win32')('the shared hook leaves operator CLIs on their original command and never double-wraps', () => {
   const f = fixture(), workspace = path.join(f.root, 'workspace'); fs.mkdirSync(workspace);

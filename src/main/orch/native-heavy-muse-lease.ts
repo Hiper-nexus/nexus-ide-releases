@@ -146,6 +146,8 @@ export function createMuseNativeHeavySettingsLease(settingsPath: string, hook: O
   const directory = rootFor(artifactRoot); let held = false, releasedData = false, canonical: string | undefined;
   return {
     async acquire(current) {
+      // Dotfile managers link these. Never follow or replace an operator link (no ledger either).
+      for (const file of [path.dirname(settingsPath), settingsPath]) { current(); if ((await lstat(file))?.isSymbolicLink()) throw new Error('muse_heavy_lease_symlink'); }
       current(); await fs.promises.mkdir(path.dirname(settingsPath), { recursive: true, mode: 0o700 }); current();
       canonical = path.join(await fs.promises.realpath(path.dirname(settingsPath)), 'settings.json'); current();
       await locked(directory, keyFor(canonical), async file => {
