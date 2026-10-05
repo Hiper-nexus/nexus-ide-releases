@@ -1,0 +1,77 @@
+[
+  {
+    "file": "fontes/AUDITORIA-PEDIDOS-ORIGINAL.md",
+    "source": "/Users/cleofaspereirarocha/nexus-incident-2026-10-03/coverage-audit.md",
+    "sha256": "61349a5eb712ba84076b1cf76ffdb36f3de0f9be48b38320444cc8d88038fbc4"
+  },
+  {
+    "file": "fontes/MATRIZ-COBERTURA-104-HISTORICA.md",
+    "source": "/Users/cleofaspereirarocha/.nexus-worktrees/release-076191-final/.superpowers/sdd/PLAN/coverage-current-final.md",
+    "sha256": "08d5a40949d9295b2ec1041b9f928ff5ce11ab5aa3e0ddd60374a87053390d63"
+  },
+  {
+    "file": "fontes/REVISAO-ORIGINAL.md",
+    "source": "/Users/cleofaspereirarocha/nexus-incident-2026-10-03/review-ec8524a8.md",
+    "sha256": "6b484a9dbdef5c1bbdb4b64a88bb73f81989994546f2f41b85a307695a629328"
+  },
+  {
+    "file": "fontes/F764-HANDOFF-ORIGINAL.md",
+    "source": "/Users/cleofaspereirarocha/.nexus-worktrees/release-076191-final/docs/analysis/2026-10-03-main-thread-hang/HANDOFF.md",
+    "sha256": "037746a3e050710870e53d987f6d5ad3ff28b0f344a4f482cb3bf29ab88f21a4"
+  },
+  {
+    "file": "fontes/HANDOFF-INTEGRACAO-ORIGINAL.md",
+    "source": "/Users/cleofaspereirarocha/.nexus-worktrees/release-076191-final/docs/analysis/2026-10-03-missao-terminais/HANDOFF-INTEGRACAO.md",
+    "sha256": "6bfac2d1bcf3910e064a7fbec768891eeeda4dd280efbbc9bb51228a6e133c3f"
+  },
+  {
+    "file": "fontes/PLANO-RELEASE.md",
+    "source": "/Users/cleofaspereirarocha/.nexus-worktrees/release-076191-final/docs/analysis/2026-10-03-release-076191/PLAN.md",
+    "sha256": "45c84bd0bede229274ecfe5e695252b12ba6875068e104a00e2675b906ee38df"
+  },
+  {
+    "file": "fontes/RELEASE-CHECKLIST.md",
+    "source": "/Users/cleofaspereirarocha/.nexus-worktrees/release-076191-final/docs/RELEASE-CHECKLIST.md",
+    "sha256": "425f9e8f092f651f5514d060a1b370ce5e5a9302ab1562bd25b3d4a65e1c14b1"
+  },
+  {
+    "file": "fontes/analises/01-memoria.md",
+    "source": "/Users/cleofaspereirarocha/.nexus-worktrees/release-076191-final/docs/analysis/2026-10-03-missao-terminais/01-memoria.md",
+    "sha256": "32178500672c8898d93cfb2c19808d3e9358d69f83230665c5cdb5552461ca6b"
+  },
+  {
+    "file": "fontes/analises/02-roteamento-e-diversidade.md",
+    "source": "/Users/cleofaspereirarocha/.nexus-worktrees/release-076191-final/docs/analysis/2026-10-03-missao-terminais/02-roteamento-e-diversidade.md",
+    "sha256": "55da5e7e3aead34cdcfb4a3ae7d14a1e5127ed6e7a132bf81ffab14cba5d462c"
+  },
+  {
+    "file": "fontes/analises/03-multiconta.md",
+    "source": "/Users/cleofaspereirarocha/.nexus-worktrees/release-076191-final/docs/analysis/2026-10-03-missao-terminais/03-multiconta.md",
+    "sha256": "d954e08cf772a83fdd5703ece94d0f009e5ac531332c4cf8bd57121d9f280417"
+  },
+  {
+    "file": "fontes/analises/04-estudo-de-modelos.md",
+    "source": "/Users/cleofaspereirarocha/.nexus-worktrees/release-076191-final/docs/analysis/2026-10-03-missao-terminais/04-estudo-de-modelos.md",
+    "sha256": "aea6cc76ae578ea7f27a4c3fffe1fcf839748c7f6a1e72f30f2144073d24d2d9"
+  },
+  {
+    "file": "fontes/analises/05-stack-e-libs.md",
+    "source": "/Users/cleofaspereirarocha/.nexus-worktrees/release-076191-final/docs/analysis/2026-10-03-missao-terminais/05-stack-e-libs.md",
+    "sha256": "248ddca6fccb668ed4a319d142bbde04c2c106da07d38556ccdacf0195f404bf"
+  },
+  {
+    "file": "fontes/analises/06-uso-real.md",
+    "source": "/Users/cleofaspereirarocha/.nexus-worktrees/release-076191-final/docs/analysis/2026-10-03-missao-terminais/06-uso-real.md",
+    "sha256": "36d8cfe0e51a59839864a46626c9c014161c8897cce6cb031d6b7a036b1dda0c"
+  },
+  {
+    "file": "fontes/analises/07-orquestracao.md",
+    "source": "/Users/cleofaspereirarocha/.nexus-worktrees/release-076191-final/docs/analysis/2026-10-03-missao-terminais/07-orquestracao.md",
+    "sha256": "e85ba8753476391944a6c9fb097017d44979f34ab77041bbf0134b6d18b84f18"
+  },
+  {
+    "file": "fontes/analises/08-pesquisa-memoria.md",
+    "source": "/Users/cleofaspereirarocha/.nexus-worktrees/release-076191-final/docs/analysis/2026-10-03-missao-terminais/08-pesquisa-memoria.md",
+    "sha256": "ccfd9ae2b1eec1ba5aeda2b9f83ebbd0081e23e14d6b52879c907c8d10076383"
+  }
+]
