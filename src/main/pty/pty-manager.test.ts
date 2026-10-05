@@ -303,6 +303,7 @@ import { installMcpSessionTerminationRevocation } from "../orch/mcp-session-revo
 import { cleanupCliMcpSession } from "../orch/cli-mcp-session-config";
 import { saveProviderPaneSession } from "../persistence/provider-session-store";
 import { mimoSessionOwnerKey } from "../adapters/mimo-session-owner";
+import { qwenNeedsLogicalCwd } from "./qwen-long-cwd";
 
 afterAll(() => fs.rmSync(app.getPath("userData"), { recursive: true, force: true }));
 
@@ -6147,9 +6148,15 @@ describe("F-788: Qwen numa worktree longa abre com cwd lógico curto", () => {
     fs.writeFileSync(entry, "#!/usr/bin/env node\n");
     fs.mkdirSync(path.dirname(bin), { recursive: true });
     fs.symlinkSync(entry, bin);
-    // Mesmo formato da worktree de writer: o nome do projeto passa de 255.
-    const worktree = path.join(root, `project-${"a".repeat(64)}`, `checkout-${"b".repeat(64)}`,
-      "worktrees", `task-${"c".repeat(64)}`);
+    // Mesmo formato da worktree de writer: o nome do projeto passa de 255 com qualquer tmpdir
+    // (o do macOS é comprido; o /tmp do Linux não).
+    let lead = 64;
+    let worktree = "";
+    do {
+      worktree = path.join(root, `project-${"a".repeat(lead)}`, `checkout-${"b".repeat(64)}`,
+        "worktrees", `task-${"c".repeat(64)}`);
+      lead += 8;
+    } while (!qwenNeedsLogicalCwd(worktree));
     fs.mkdirSync(worktree, { recursive: true });
     return { root, entry, bin, worktree };
   }

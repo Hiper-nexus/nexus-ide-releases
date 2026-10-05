@@ -21,9 +21,16 @@ afterEach(() => {
 function fixture() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'qwen-long-cwd-')));
   roots.push(root);
-  // Mesmo formato da worktree de writer do Nexus: vários segmentos de 64 hex.
-  const cwd = path.join(root, `project-${'a'.repeat(64)}`, `checkout-${'b'.repeat(64)}`,
-    'worktrees', `task-${'c'.repeat(64)}`);
+  // Mesmo formato da worktree de writer do Nexus: vários segmentos de 64 hex. O primeiro
+  // cresce até o nome do projeto do Qwen passar de 255 com QUALQUER tmpdir: o do macOS é
+  // comprido, o /tmp do Linux não (sem isso a fixture ficava em ~252 e o teste falhava).
+  let lead = 64;
+  let cwd = '';
+  do {
+    cwd = path.join(root, `project-${'a'.repeat(lead)}`, `checkout-${'b'.repeat(64)}`,
+      'worktrees', `task-${'c'.repeat(64)}`);
+    lead += 8;
+  } while (!qwenNeedsLogicalCwd(cwd));
   const entry = path.join(root, 'qwen-code', 'cli-entry.js');
   const bin = path.join(root, 'bin', 'qwen');
   const stateHome = path.join(root, 'provider-state', 'qwen', 'checkout-1');
