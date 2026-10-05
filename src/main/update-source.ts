@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import type { UpdateAvailableInfo } from '../shared/update-ipc';
 
 /**
@@ -176,6 +177,24 @@ export function parseGhReleases(
 
 /** Linux: atualização manual. O comando é o mesmo da instalação no site. */
 export const LINUX_UPDATE_COMMAND = 'curl -fsSL https://nexuside.app/install.sh | sh';
+/** DEB/RPM sem repositório: o ativador registra o repositório assinado e instala por apt/dnf (F-942). */
+export const LINUX_REPO_ENABLE_COMMAND = 'curl -fsSL https://nexuside.app/install-repo.sh | sh';
+const APT_SOURCE_LIST = '/etc/apt/sources.list.d/nexus-ide.list';
+const DNF_REPO_FILE = '/etc/yum.repos.d/nexus-ide.repo';
+
+/**
+ * O que o operador de um DEB/RPM roda para atualizar: com o repositório do NexusIDE registrado é o próprio gerenciador
+ * de pacotes; sem ele, o ativador (que também instala a versão mais nova).
+ */
+export function linuxPackageUpdateCommand(exists: (target: string) => boolean = (target) => fs.existsSync(target)): string {
+  try {
+    if (exists(APT_SOURCE_LIST)) return 'sudo apt update && sudo apt install --only-upgrade nexus-ide';
+    if (exists(DNF_REPO_FILE)) return 'sudo dnf upgrade nexus-ide';
+  } catch {
+    // sem acesso: cai no ativador
+  }
+  return LINUX_REPO_ENABLE_COMMAND;
+}
 export const LINUX_DOWNLOAD_URL = 'https://nexuside.app/#download';
 
 /** Os três pacotes que o canal Linux x64 publica juntos numa versão. */

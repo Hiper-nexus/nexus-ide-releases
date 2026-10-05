@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSquirrelFeed,
   cmpSemver,
+  LINUX_REPO_ENABLE_COMMAND,
+  linuxPackageUpdateCommand,
   macUpdateArchitecture,
   parseGhRelease,
   parseGhReleases,
@@ -275,5 +277,25 @@ describe('parseLinuxReleases (F-751)', () => {
     for (const raw of ['', 'not json', '{}', 'null', '[1,"x",null,{}]']) {
       expect(parseLinuxReleases(raw, '0.76.175', 'x64')).toBeNull();
     }
+  });
+});
+
+describe('linuxPackageUpdateCommand (F-942)', () => {
+  const only = (...paths: string[]) => (target: string) => paths.includes(target);
+
+  it('com o repositório apt registrado, o próprio apt atualiza', () => {
+    expect(linuxPackageUpdateCommand(only('/etc/apt/sources.list.d/nexus-ide.list'))).toBe(
+      'sudo apt update && sudo apt install --only-upgrade nexus-ide',
+    );
+  });
+
+  it('com o repositório dnf registrado, o dnf atualiza', () => {
+    expect(linuxPackageUpdateCommand(only('/etc/yum.repos.d/nexus-ide.repo'))).toBe('sudo dnf upgrade nexus-ide');
+  });
+
+  it('sem repositório (ou sem poder olhar), o ativador registra e instala a versão mais nova', () => {
+    expect(linuxPackageUpdateCommand(only())).toBe(LINUX_REPO_ENABLE_COMMAND);
+    expect(linuxPackageUpdateCommand(() => { throw new Error('EACCES'); })).toBe(LINUX_REPO_ENABLE_COMMAND);
+    expect(LINUX_REPO_ENABLE_COMMAND).toBe('curl -fsSL https://nexuside.app/install-repo.sh | sh');
   });
 });

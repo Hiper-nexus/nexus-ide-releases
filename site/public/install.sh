@@ -223,9 +223,11 @@ esac
 
 say ""
 say "Pronto: NexusIDE $VERSION instalado."
+say "Abra pelo menu de aplicativos ou rode: nexus-ide"
 if [ "$METHOD" = "zip" ]; then
-  say "Abra pelo menu de aplicativos ou rode: nexus-ide"
+  say "O pacote portátil se atualiza sozinho: o app avisa e troca a versão ao reiniciar."
 else
-  say "Abra pelo menu de aplicativos ou rode: nexus-ide"
+  say "Para receber as próximas versões pelo ${METHOD} (opcional, registra o repositório do NexusIDE):"
+  say "  curl -fsSL $SITE/install-repo.sh | sh"
 fi
 say "Para atualizar no futuro, rode este mesmo comando de novo."

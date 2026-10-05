@@ -15,6 +15,7 @@ import {
   type ParsedRelease,
   LINUX_DOWNLOAD_URL,
   LINUX_UPDATE_COMMAND,
+  linuxPackageUpdateCommand,
   parseLinuxReleases,
 } from './update-source';
 import { validateUpdateFeedUrl } from './update-feed-policy';
@@ -447,7 +448,7 @@ export class UpdateManager {
           canInstall: false,
           error: undefined,
           installerPlatform: 'linux',
-          manual: { command: LINUX_UPDATE_COMMAND, downloadUrl: LINUX_DOWNLOAD_URL },
+          manual: { command: linuxPackageUpdateCommand(), downloadUrl: LINUX_DOWNLOAD_URL },
         });
         writeUpdateLog('info', 'init:linux-manual', { reason: install.reason });
       }

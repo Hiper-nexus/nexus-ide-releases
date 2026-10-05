@@ -290,7 +290,7 @@ describe('UpdateManager', () => {
         source: 'manual',
         canInstall: false,
         manual: {
-          command: 'curl -fsSL https://nexuside.app/install.sh | sh',
+          command: 'curl -fsSL https://nexuside.app/install-repo.sh | sh',
           downloadUrl: 'https://nexuside.app/#download',
         },
       });
@@ -339,7 +339,7 @@ describe('UpdateManager', () => {
       await electron.handlers.get(UPDATE_CHANNELS.check)?.(trustedSenderEvent());
       expect(manager.getState().phase).toBe('error');
       expect(manager.getState().error).toContain('checagem falhou');
-      expect(manager.getState().manual?.command).toContain('install.sh');
+      expect(manager.getState().manual?.command).toContain('install-repo.sh');
     });
 
     it('keeps other non-updating platforms and Linux arm64 on the unsupported path', () => {
@@ -513,7 +513,7 @@ describe('Linux self-update (pacote portátil)', () => {
     const { manager } = make({ detect: () => ({ kind: 'system', reason: 'instalado pelo gerenciador de pacotes' }) });
     manager.init();
     expect(manager.getState()).toMatchObject({ source: 'manual', canInstall: false });
-    expect(manager.getState().manual?.command).toContain('install.sh');
+    expect(manager.getState().manual?.command).toContain('install-repo.sh');
   });
 
   it('avisa, baixa com progresso, fica pronto e reinicia aplicando a troca', async () => {
