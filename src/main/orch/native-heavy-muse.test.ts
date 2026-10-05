@@ -5,7 +5,7 @@ import { fork, spawn, execFileSync } from 'node:child_process';
 import { expect, it, vi } from 'vitest';
 vi.mock('electron', () => ({ app: { isPackaged: false, getAppPath: () => process.cwd() }, utilityProcess: { fork: () => { throw new Error('explicit Node test port required'); } } }));
 import { createNativeHeavyLocalChannel } from './native-heavy-local-channel';
-import { reserveMuseNativeHeavyProfile } from './native-heavy-muse-profile';
+import { museNativeHeavySettings, reserveMuseNativeHeavyProfile } from './native-heavy-muse-profile';
 import { cleanupCliMcpSession } from './cli-mcp-session-artifacts';
 import { buildControlArgs } from '../adapters/control-args';
 import { cliPtyAdapterSchema } from '../../shared/adapter-types';
@@ -33,7 +33,7 @@ function response(res: http.ServerResponse, item: Record<string, unknown>) {
 it.runIf(process.platform === 'darwin' && Boolean(muse)).each([
  { scheduled: false, fullAuto: false }, { scheduled: true, fullAuto: false },
  { scheduled: false, fullAuto: true }, { scheduled: true, fullAuto: true },
-])('real Muse private selected profile and scheduling=$scheduled fullAuto=$fullAuto', async ({ scheduled, fullAuto }) => {
+])('real Muse selected config in place and scheduling=$scheduled fullAuto=$fullAuto', async ({ scheduled, fullAuto }) => {
  const root = fs.realpathSync(fs.mkdtempSync(path.join(path.dirname(process.cwd()), 'native-muse-control-')));
  const workspace = path.join(root, 'workspace'), privateTmp = path.join(root, 'tmp'), home = path.join(root, 'home');
  for (const directory of [workspace, privateTmp, home]) fs.mkdirSync(directory);
@@ -89,8 +89,8 @@ it.runIf(process.platform === 'darwin' && Boolean(muse)).each([
   return { on: (event, callback) => child.on(event, callback), postMessage: message => { child.send(message as Parameters<typeof child.send>[0]); }, kill: () => child.kill() };
  } }, { transport: 'file' }) : null;
  const selectedConfig = path.join(home, 'config/muse'); fs.mkdirSync(selectedConfig, { recursive: true });
- const originalSettings = JSON.stringify({ schema_version: 1, hooks: { Stop: [] } });
- fs.writeFileSync(path.join(selectedConfig, 'settings.json'), originalSettings);
+ const originalSettings = JSON.stringify({ schema_version: 1, hooks: { Stop: [] } }), auth = path.join(selectedConfig, 'auth.json');
+ fs.writeFileSync(path.join(selectedConfig, 'settings.json'), originalSettings); fs.writeFileSync(auth, '{"fictional":"private-initial"}'); const authBefore = fs.statSync(auth);
  const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, SHELL: '/bin/zsh', LANG: 'en_US.UTF-8', TERM: 'xterm-256color', TMPDIR: privateTmp, HOME: home, XDG_CONFIG_HOME: path.join(home, 'config'), XDG_CACHE_HOME: path.join(home, 'cache'), XDG_DATA_HOME: path.join(home, 'data'), XDG_STATE_HOME: path.join(home, 'state'), CLAUDE_CONFIG_DIR: path.join(home, 'claude'), CLAUDE_SECURESTORAGE_CONFIG_DIR: path.join(home, 'securestorage'),
   ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`, ANTHROPIC_AUTH_TOKEN: 'finite-test-credential', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
   NEXUS_HEAVY_JOB_BASE: JSON.stringify(nestedHeavyJobBaseCommand(runtime)), NEXUS_HEAVY_COMMAND_URL: `http://127.0.0.1:${port}/hook/heavy-command`, NEXUS_GATE_TOKEN: ctx.token, NEXUS_HEAVY_NODE: process.execPath, NEXUS_HEAVY_DIR: resources, NEXUS_HEAVY_CURL: '/usr/bin/curl' };
@@ -98,10 +98,13 @@ it.runIf(process.platform === 'darwin' && Boolean(muse)).each([
  Object.assign(env, { ...channel?.env, META_API_KEY: 'finite-test-credential', NEXUS_FAKE_PROVIDER_KEY: 'finite-test-credential', NEXUS_HEAVY_BASH_ENV: path.join(resources, 'shell.bash'), BASH_ENV: path.join(resources, 'shell.bash'), ZDOTDIR: resources });
  if (!scheduled) for (const name of Object.keys(env)) if (name.startsWith('NEXUS_HEAVY_') || name === 'NEXUS_GATE_TOKEN' || name === 'BASH_ENV' || name === 'ZDOTDIR') delete env[name];
  if (scheduled) {
+  // Ledger under the private root: never the operator's ~/.nexus. Auth/XDG stay selected.
   const profile = reserveMuseNativeHeavyProfile({ token: ctx.token, home, xdgConfigHome: env.XDG_CONFIG_HOME,
-   artifactRoot: path.join(privateTmp, 'nexus-muse-profiles'), node: process.execPath, resourceDirectory: resources });
-  Object.assign(env, profile.env); await profile.initialize(() => { if (!cliAlive) throw new Error('fixture_context_changed'); });
+   artifactRoot: path.join(privateTmp, 'nexus-muse-leases'), node: process.execPath, resourceDirectory: resources });
+  await profile.initialize(() => { if (!cliAlive) throw new Error('fixture_context_changed'); });
+  expect(JSON.parse(fs.readFileSync(path.join(selectedConfig, 'settings.json'), 'utf8')).hooks.PreToolUse[0].hooks[0].command).toMatch(/^NEXUS_HEAVY_MUSE_LEASE_V1=1 /);
  }
+ expect(env.XDG_CONFIG_HOME).toBe(path.join(home, 'config'));
  const command = supervisedPtyCommand(runtime, muse!, ['exec', '--base-url', `http://127.0.0.1:${port}`, '--model', 'muse-spark-1.3', '--workspace', workspace, '--trust-workspace',
   ...(fullAuto ? buildControlArgs(cliPtyAdapterSchema.parse(museAdapter), {}) : ['--approval-mode', 'never']), 'finite fixture']);
  const child = spawn(command.file, command.args, { cwd: workspace, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -130,7 +133,13 @@ it.runIf(process.platform === 'darwin' && Boolean(muse)).each([
  expect(fs.existsSync(marker), JSON.stringify({ shapes, channelCalls: admissions.length, transitions }).slice(-7000) + (stderr + stdout).slice(-2000)).toBe(true);
   expect(fs.readFileSync(marker, 'utf8')).toBe('done');
   expect(fs.existsSync(outside)).toBe(fullAuto); expect(JSON.stringify(shapes)).toContain(fullAuto ? 'outside-allowed' : 'outside-denied');
-  expect(fs.readFileSync(path.join(selectedConfig, 'settings.json'), 'utf8')).toBe(originalSettings);
+  // The token's physical-exit cleanup restores the selected settings; auth was never moved or rewritten.
+  cleanupCliMcpSession(ctx.token);
+  if (scheduled) {
+   await vi.waitFor(() => expect(JSON.parse(fs.readFileSync(path.join(selectedConfig, 'settings.json'), 'utf8'))).toEqual(JSON.parse(originalSettings)));
+   expect(fs.readdirSync(path.join(privateTmp, 'nexus-muse-leases/muse/leases'))).toEqual([]);
+  } else expect(fs.readFileSync(path.join(selectedConfig, 'settings.json'), 'utf8')).toBe(originalSettings);
+  expect(fs.statSync(auth).ino).toBe(authBefore.ino); expect(fs.readFileSync(auth, 'utf8')).toBe('{"fictional":"private-initial"}');
   if (scheduled) expect((admissions[0] as { proof?: string } | undefined)?.proof, JSON.stringify(shapes).slice(-5000) + stderr.slice(-4000)).toBe('darwin-job'); else expect(admissions).toEqual([]);
   await native.drain(); expect(transitions).toEqual(scheduled ? ['grant', 'release'] : []); expect(stdout).toContain('finite fixture done');
  } finally {
@@ -141,4 +150,35 @@ it.runIf(process.platform === 'darwin' && Boolean(muse)).each([
   for (const socket of sockets) socket.destroy();
   await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true });
  }
+}, 35_000);
+
+// F-904: a lease entry left behind after the app was removed must not block the
+// operator's own Muse. Muse 1.4 only blocks on exit 2 / an explicit deny; a
+// missing node/script exits 127 and the original command runs.
+it.runIf(process.platform === 'darwin' && Boolean(muse)).each([{ fullAuto: false }, { fullAuto: true }])('real Muse runs the original command under an orphan lease hook fullAuto=$fullAuto', async ({ fullAuto }) => {
+ const root = fs.realpathSync(fs.mkdtempSync(path.join(path.dirname(process.cwd()), 'native-muse-orphan-')));
+ const home = path.join(root, 'home'), workspace = path.join(root, 'workspace'), marker = path.join(workspace, 'command-ran');
+ fs.mkdirSync(path.join(home, 'config/muse'), { recursive: true }); fs.mkdirSync(workspace);
+ fs.writeFileSync(path.join(home, 'config/muse/settings.json'), JSON.stringify(museNativeHeavySettings({ schema_version: 1 }, path.join(root, 'removed-app/node'), path.join(root, 'removed-app/heavy-command'))));
+ let toolSent = false;
+ const server = http.createServer((req, res) => {
+  if (req.method === 'GET') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ object: 'list', data: [{ id: 'muse-spark-1.3', object: 'model' }], models: [{ id: 'muse-spark-1.3' }] })); return; }
+  let raw = ''; req.on('data', (part) => { raw += part; if (raw.length > 4 * 1024 * 1024) req.destroy(); });
+  req.on('end', () => {
+   if (req.url?.includes('count_tokens')) { res.end(JSON.stringify({ input_tokens: 1 })); return; }
+   const request = JSON.parse(raw), offered = (request.tools ?? []).flatMap((tool: { name?: string; tools?: Array<{ name?: string }> }) => tool.tools?.map((entry) => ({ ...entry, namespace: tool.name })) ?? [tool]);
+   const tool = offered.find((entry: { name?: string }) => /shell|bash|exec|terminal/i.test(entry.name ?? ''));
+   if (!toolSent && tool) { toolSent = true; response(res, { type: 'function_call', id: 'fc_orphan', call_id: 'call_orphan', name: tool.name, ...(tool.namespace ? { namespace: tool.namespace } : {}), arguments: JSON.stringify({ command: `printf done > ${JSON.stringify(marker)}`, description: 'Run finite fixture command', workdir: workspace, yield_time_ms: 10000 }), status: 'completed' }); }
+   else response(res, { type: 'message', id: 'message_orphan', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'finite fixture done', annotations: [] }] });
+  });
+ });
+ await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve)); const { port } = server.address() as { port: number };
+ const env = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', HOME: home, XDG_CONFIG_HOME: path.join(home, 'config'), XDG_CACHE_HOME: path.join(home, 'cache'), XDG_DATA_HOME: path.join(home, 'data'), XDG_STATE_HOME: path.join(home, 'state'), TMPDIR: root, LANG: 'en_US.UTF-8', SHELL: '/bin/zsh', META_API_KEY: 'finite-test-credential' };
+ const child = spawn(muse!, ['exec', '--base-url', `http://127.0.0.1:${port}`, '--model', 'muse-spark-1.3', '--workspace', workspace, '--trust-workspace', ...(fullAuto ? buildControlArgs(cliPtyAdapterSchema.parse(museAdapter), {}) : ['--approval-mode', 'never']), 'finite fixture'], { cwd: workspace, env, stdio: ['ignore', 'pipe', 'pipe'] });
+ let output = ''; child.stdout.on('data', (part) => output += part); child.stderr.on('data', (part) => output += part);
+ const timer = setTimeout(() => child.kill('SIGTERM'), 25_000);
+ try {
+  expect(await new Promise((resolve) => child.once('close', resolve)), output.slice(-2000)).toBe(0);
+  expect(toolSent).toBe(true); expect(fs.readFileSync(marker, 'utf8')).toBe('done');
+ } finally { clearTimeout(timer); child.kill('SIGTERM'); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 35_000);

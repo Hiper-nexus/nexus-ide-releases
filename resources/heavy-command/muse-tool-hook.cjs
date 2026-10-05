@@ -21,6 +21,9 @@ process.stdin.on('end', () => {
   if (!input || typeof input.command !== 'string') { output(deny); return; }
   const kind = commandKind(input.command);
   if (!kind) { output({}); return; }
-  const wrapped = `NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 ${quote(process.execPath)} ${quote(path.join(directory, 'job-launch.cjs'))} ${quote(kind)} "\${BASH:-\${SHELL:-/bin/sh}}" -c ${quote(input.command)}`;
+  if (input.command.startsWith('# Nexus heavy command wrapper v1\n')) { output({}); return; }
+  // Muse clears hook env. Test the original tool env at execution time instead;
+  // external/operator CLIs execute their original command without admission.
+  const wrapped = `# Nexus heavy command wrapper v1\nif [ -n "\${NEXUS_GATE_TOKEN:-}" ] && [ -n "\${NEXUS_HEAVY_COMMAND_URL:-}" ]; then\nNODE_OPTIONS= NEXUS_HEAVY_HELPER=1 ${quote(process.execPath)} ${quote(path.join(directory, 'job-launch.cjs'))} ${quote(kind)} "\${BASH:-\${SHELL:-/bin/sh}}" -c ${quote(input.command)}\nelse\n${input.command}\nfi`;
   output({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...input, command: wrapped } } });
 });

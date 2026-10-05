@@ -2,31 +2,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { activateArtifact, cleanupCliMcpSession, getActiveCliMcpArtifact, linkProviderSessionState, linkSelectedEntries, purgeStaleCliMcpSessions, withCliMcpArtifactTransaction } from './cli-mcp-session-artifacts';
+import { linkProviderSessionState, linkSelectedEntries } from './cli-mcp-session-artifacts';
 
 const roots: string[] = [];
-const museTokens: string[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
-  for (const token of museTokens.splice(0)) cleanupCliMcpSession(token);
   for (const root of roots.splice(0))
     fs.rmSync(root, { recursive: true, force: true });
-});
-
-it('owns private Muse overlays, preserves live records and purges only stale bounded entries', () => {
-  const { root } = fixture(), artifactRoot = path.join(root, 'artifacts'), token = 'private-muse-registry'; museTokens.push(token);
-  const active = withCliMcpArtifactTransaction('muse', token, artifactRoot, artifactDir => {
-    fs.writeFileSync(path.join(artifactDir, 'settings.json'), '{"model":"selected"}');
-    activateArtifact(token, { artifactDir, providerHome: null, configFiles: ['settings.json'], syncBack: false }); return artifactDir;
-  });
-  const stale = path.join(artifactRoot, 'muse', 'a'.repeat(32)); fs.mkdirSync(stale); fs.writeFileSync(path.join(stale, 'settings.json'), '{}');
-  const outside = path.join(root, 'outside'); fs.mkdirSync(outside); fs.writeFileSync(path.join(outside, 'keep'), 'untouched');
-  fs.symlinkSync(outside, path.join(artifactRoot, 'muse', 'b'.repeat(32)));
-  const result = purgeStaleCliMcpSessions({ artifactRoot });
-  expect(result.removed).toBe(2); expect(result.skippedActive).toBe(1); expect(result.failed).toBe(0);
-  expect(fs.existsSync(stale)).toBe(false); expect(fs.readFileSync(path.join(outside, 'keep'), 'utf8')).toBe('untouched');
-  expect(getActiveCliMcpArtifact(token)?.artifactDir).toBe(active);
-  cleanupCliMcpSession(token); expect(fs.existsSync(active)).toBe(false); expect(getActiveCliMcpArtifact(token)).toBeUndefined();
 });
 
 function fixture() {
