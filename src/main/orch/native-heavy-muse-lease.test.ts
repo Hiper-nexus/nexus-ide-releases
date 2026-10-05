@@ -131,10 +131,10 @@ it('binds the receipt to its own intent snapshot and never overwrites a foreign 
  await expect(createMuseNativeHeavySettingsLease(f.settings, hook, f.artifactRoot).acquire(() => {})).rejects.toThrow('changed');
  expect(JSON.parse(fs.readFileSync(f.ledger, 'utf8')).groups[0].owners.map((owner: { id: string }) => owner.id)).toContain('foreign-writer');
 });
-it('removes at most its own occurrence when the operator added an identical copy', async () => {
+it('removes every unowned marker occurrence the operator duplicated: the marker proves the family, so no copy stays', async () => {
  const f = fixture(), a = createMuseNativeHeavySettingsLease(f.settings, hook, f.artifactRoot); await a.acquire(() => {});
  const document = f.read(); document.hooks.PreToolUse.push(structuredClone(hook)); fs.writeFileSync(f.settings, JSON.stringify(document));
- await a.release(); expect(f.read().hooks.PreToolUse).toEqual([hook]); expect(f.read().hooks.Stop).toEqual([{ own: true }]);
+ await a.release(); expect(f.read()).toEqual(f.original); // both copies carry our marker; foreign entries still stay
 });
 it('refuses PreToolUse null before any publication', async () => {
  const f = fixture(), raw = JSON.stringify({ ...f.original, hooks: { PreToolUse: null } }); fs.writeFileSync(f.settings, raw);
@@ -201,6 +201,63 @@ it('sweeps only provably abandoned leftovers: dead owners, breaker asides, old u
  const left = fs.readdirSync(f.ledgerRoot); for (const name of removed.slice(0, 4)) expect(left).not.toContain(name); for (const name of kept) expect(left).toContain(name);
  // A live pid's file is only removed when it is abandoned by age (nothing live runs ten minutes between create and link).
  expect(left).not.toContain(removed[4]);
+});
+it('adopts and retires a leftover marker entry embedding another node path (a node update), not only an identical one', async () => {
+ const f = fixture(), oldPath = { ...hook, hooks: [{ type: 'command', command: hook.hooks[0].command.replace('/Main/node', '/Other/node/22') }] };
+ fs.writeFileSync(f.settings, JSON.stringify({ ...f.original, hooks: { ...f.original.hooks, PreToolUse: [oldPath] } }));
+ const a = createMuseNativeHeavySettingsLease(f.settings, hook, f.artifactRoot); await a.acquire(() => {});
+ expect(f.read().hooks.PreToolUse).toEqual([hook]); // the stale node path is replaced, never accumulated
+ await a.release();
+ expect(f.read()).toEqual({ ...f.original, hooks: { ...f.original.hooks, PreToolUse: [] } }); // the leftover made the key present at acquire
+ expect(fs.readdirSync(f.ledgerRoot)).toEqual([]);
+});
+it('startup recovery retires an unowned marker entry with another node path, not just the entries of its own dead groups', async () => {
+ const f = fixture(), oldPath = { ...hook, hooks: [{ type: 'command', command: hook.hooks[0].command.replace('/Main/node', '/Other/node/22') }] };
+ fs.writeFileSync(path.join(f.root, 'noop.cjs'), '');
+ const dead = fork(path.join(f.root, 'noop.cjs'), [], { execArgv: [] }); await new Promise<void>(resolve => dead.once('exit', () => resolve()));
+ fs.writeFileSync(f.settings, JSON.stringify({ ...f.original, hooks: { ...f.original.hooks, PreToolUse: [oldPath] } }));
+ fs.mkdirSync(f.ledgerRoot, { recursive: true });
+ fs.writeFileSync(f.ledger, JSON.stringify({ schema: 'nexus.muse-hook-lease/v1', settingsPath: f.settings, hooksAbsent: false, preToolUseAbsent: true,
+  groups: [{ hook, inserted: true, committed: false, owners: [{ id: 'dead-main', pid: dead.pid, count: 1 }] }] })); // its own (new-path) entry is absent; oldPath belongs to no group
+ expect(await recoverMuseNativeHeavyLeases({ artifactRoot: f.artifactRoot })).toEqual({ restored: 1, retained: 0, failed: 0 });
+ expect(f.read()).toEqual(f.original); expect(fs.readdirSync(f.ledgerRoot)).toEqual([]);
+});
+it('retries a release that met a truncated in-place save (transient parse error) on the same backoff before failing', async () => {
+ const f = fixture(), a = createMuseNativeHeavySettingsLease(f.settings, hook, f.artifactRoot); await a.acquire(() => {});
+ fs.writeFileSync(f.settings, '{"model": "selected", "credential": "only-origi'); // an editor caught half-written
+ const started = performance.now();
+ await expect(a.release()).rejects.toThrow('muse_heavy_lease_changed'); // mapped, not a raw SyntaxError
+ expect(performance.now() - started).toBeGreaterThanOrEqual(2_000); // 100 + 400 + 1600 ms of backoffs happened first
+ expect(fs.existsSync(f.ledger)).toBe(true); // the lease waits for the next startup recovery
+});
+it('a failed verification read after the intent rename still leaves a releasable owner, never a ghost', async () => {
+ const f = fixture(), a = createMuseNativeHeavySettingsLease(f.settings, hook, f.artifactRoot);
+ const open = fs.promises.open.bind(fs.promises); let reads = 0;
+ vi.spyOn(fs.promises, 'open').mockImplementation(async (...args: Parameters<typeof fs.promises.open>) => {
+  if (String(args[0]) === f.ledger && args[1] === (fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK) && ++reads === 2) throw Object.assign(new Error('injected verification EIO'), { code: 'EIO' });
+  return open(...args);
+ });
+ await expect(a.acquire(() => {})).rejects.toThrow('injected verification EIO');
+ vi.restoreAllMocks();
+ await a.release(); // the published owner is cleanable even though acquire failed at its verification read
+ expect(fs.readdirSync(f.ledgerRoot)).toEqual([]);
+ expect(await recoverMuseNativeHeavyLeases({ artifactRoot: f.artifactRoot })).toEqual({ restored: 0, retained: 0, failed: 0 });
+});
+it('an owner recorded on a previous boot is dead even when its pid was reused by a live process', async () => {
+ const f = fixture();
+ fs.writeFileSync(f.settings, JSON.stringify({ ...f.original, hooks: { ...f.original.hooks, PreToolUse: [hook] } }));
+ fs.mkdirSync(f.ledgerRoot, { recursive: true });
+ fs.writeFileSync(f.ledger, JSON.stringify({ schema: 'nexus.muse-hook-lease/v1', settingsPath: f.settings, hooksAbsent: false, preToolUseAbsent: true,
+  groups: [{ hook, inserted: true, committed: true, owners: [{ id: 'previous-boot-main', pid: process.ppid, count: 1, boot: '{ sec = 0, usec = 0 } Thu Jan  1 00:00:00 1970' }] }] }));
+ expect(await recoverMuseNativeHeavyLeases({ artifactRoot: f.artifactRoot })).toEqual({ restored: 1, retained: 0, failed: 0 });
+ expect(f.read()).toEqual(f.original);
+});
+it('a lock left by a previous boot is broken even when its pid now belongs to a live process', async () => {
+ const f = fixture(); fs.mkdirSync(f.ledgerRoot, { recursive: true });
+ fs.writeFileSync(f.lock, JSON.stringify({ pid: process.ppid, id: 'previous-boot-main', boot: '{ sec = 0, usec = 0 } Thu Jan  1 00:00:00 1970' }));
+ const a = createMuseNativeHeavySettingsLease(f.settings, hook, f.artifactRoot);
+ await a.acquire(() => {}); await a.release();
+ expect(f.read()).toEqual(f.original); expect(fs.readdirSync(f.ledgerRoot)).toEqual([]);
 });
 
 // Real cross-process control: separate Node processes share only the files.
