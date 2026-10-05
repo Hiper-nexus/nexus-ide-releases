@@ -154,6 +154,13 @@ beforeEach(async () => {
 });
 
 describe('engine resume — os estados em que a UI oferece Retomar', () => {
+  it('F-254: running/executing with a dead coordinator still reaches physical recovery', async () => {
+    liveMission = baseMission({ status: 'running', intentState: 'executing', orchestratorSessionId: 'dead-session' });
+    await engine.command(scope, { kind: 'resume', missionId: 'mission-1' });
+    expect(harness.resumeFastLaneMission).toHaveBeenCalledWith(scope, 'mission-1', { remountKind: 'operator' });
+    expect(transitionCount).toBe(0);
+  });
+
   it('missão encerrada pelo operador reabre: limpa o selo, volta a executar e religa a Via Rápida', async () => {
     liveMission = baseMission({
       description:

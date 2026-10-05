@@ -1941,6 +1941,9 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
         mission.status === "running" &&
         mission.intentState === "executing"
       ) {
+        // A durable running row does not prove a live coordinator. The
+        // physical recovery path watches an existing leader or respawns one.
+        await resumeFastLaneMission(scope, command.missionId, { remountKind: "operator" });
         return;
       }
       // Os DOIS estados em que o card anuncia Retomar (mission-snapshot
