@@ -1,20 +1,51 @@
 // Resource scheduling only. This catalog never authorizes shell side effects.
 const path = require('node:path');
 const fs = require('node:fs');
-function knownPackage(file) {
-  if (!path.isAbsolute(file)) return '';
+function packageInfo(file) {
+  if (!path.isAbsolute(file)) return null;
   let directory = path.dirname(file);
   for (let depth = 0; depth < 16; depth++) {
     try {
       const manifest = path.join(directory, 'package.json');
       if (fs.statSync(manifest).size <= 65536) {
         const value = JSON.parse(fs.readFileSync(manifest, 'utf8'));
-        if (typeof value.name === 'string') return value.name.toLowerCase();
+        if (typeof value.name === 'string') return { directory, name: value.name.toLowerCase(), value };
       }
     } catch {}
     const parent = path.dirname(directory); if (parent === directory) break; directory = parent;
   }
-  return '';
+  return null;
+}
+function knownPackage(file) { return packageInfo(file)?.name || ''; }
+function isMcpService(entry) {
+  if (!entry || entry.startsWith('-')) return false;
+  let file;
+  try { file = fs.realpathSync(entry); } catch { return false; }
+  // The generated Nexus stdio bridge is a service, even without an npm package.
+  if (path.basename(file) === 'nexus-mcp-bridge.cjs' && path.basename(path.dirname(file)) === 'mcp-bridge' &&
+      path.basename(path.dirname(path.dirname(file))) === '.nexus') {
+    let fd;
+    try {
+      fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+      if (!fs.fstatSync(fd).isFile()) return false;
+      const bytes = Buffer.alloc(256);
+      const count = fs.readSync(fd, bytes, 0, bytes.length, 0);
+      if (bytes.subarray(0, count).toString('utf8').startsWith("'use strict';\n// Nexus IDE — ponte MCP para o MiniMax Code. Gerado pelo Nexus; não edite.")) return true;
+    } catch {} finally { if (fd !== undefined) fs.closeSync(fd); }
+  }
+  const info = packageInfo(file);
+  if (!info) return false;
+  const value = info.value;
+  const declaredMcp = typeof value.mcpName === 'string' && value.mcpName.includes('/') ||
+    typeof value.dependencies?.['@modelcontextprotocol/sdk'] === 'string' || info.name === 'mcp-remote';
+  if (!declaredMcp) return false;
+  const bins = typeof value.bin === 'string' ? [value.bin] : value.bin && typeof value.bin === 'object' ? Object.values(value.bin) : [];
+  return bins.some(bin => {
+    if (typeof bin !== 'string') return false;
+    const candidate = path.resolve(info.directory, bin);
+    if (!candidate.startsWith(info.directory + path.sep)) return false;
+    try { return fs.realpathSync(candidate) === file; } catch { return false; }
+  });
 }
 function moduleKind(file) {
   if (typeof file !== 'string') return null;
@@ -42,9 +73,14 @@ function isPersistent(argv) {
   const entry = argv[1] || '', args = argv.slice(2);
   const name = path.basename(entry).toLowerCase();
   const normalized = entry.replace(/\\/g, '/').toLowerCase();
+  if (isMcpService(entry)) return true;
   if (/^(?:npm-cli|npx-cli|pnpm|yarn|bun)(?:\.[cm]?js)?$/.test(name)) {
     const values = []; const takesValue = new Set(['--workspace', '-w', '--prefix', '--dir', '-C', '--filter', '--cache', '--userconfig', '--globalconfig']);
     for (let i = 0; i < args.length; i++) { if (takesValue.has(args[i])) { i++; continue; } if (!args[i].startsWith('-')) values.push(args[i]); }
+    // npx/exec dispatch another program. Keep their child-process hooks active,
+    // but let the child own the finite-work reservation; an MCP child may live
+    // for the whole CLI session. Explicit install/ci/run-build remain metered.
+    if (name.startsWith('npx-cli') || values[0] === 'exec') return true;
     if (/^(?:run(?:-script)?\s+)?(?:dev|start)(?:\s|$)/.test(values.join(' '))) return true;
     if ((name.startsWith('npx-cli') || values[0] === 'exec') && values.includes('vite') && !values.includes('build')) return true;
   }
