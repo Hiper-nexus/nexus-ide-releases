@@ -774,6 +774,41 @@ describe('demoção preserva os panes — o operador continua no controle (06/08
 });
 
 describe('unauthorized runtime reconciliation lifecycle lock', () => {
+  it('F-253: blocked dispatch keeps its exact coordinator alive while stopping workers', async () => {
+    const blocked = { ...authorizedMission(), status: 'blocked' as const, intentState: 'blocked_technical' as const, orchestratorSessionId: 'pty-leader' };
+    const leader = { ...pane('pane-leader', 'inc-leader'), role: 'orchestrator' as const };
+    runtime.pty = [
+      { ...physical('pty-leader', 'pane-leader', 'inc-leader'), role: 'orchestrator' },
+      physical('pty-worker', 'pane-worker', 'inc-worker'),
+    ];
+    const stores = closeSuite(blocked, [leader, pane('pane-worker', 'inc-worker')]);
+    await settleMissionRuntimeDemotion({ scope, suite: stores.suite, demotedMission: blocked });
+    expect(runtime.pty.map((entry) => entry.sessionId)).toEqual(['pty-leader']);
+    expect(stores.current().orchestratorSessionId).toBe('pty-leader');
+    expect(stores.current().status).toBe('blocked');
+    await terminateUnauthorizedMissionRuntimes(scope, stores.suite);
+    expect(runtime.pty.map((entry) => entry.sessionId)).toEqual(['pty-leader']);
+    // Explicit operator stop still terminates the retained coordinator.
+    const closed = await closeMissionRuntimePreservingHistory({ scope, suite: stores.suite, missionId: blocked.id });
+    expect(closed.ok).toBe(true);
+    expect(runtime.pty).toEqual([]);
+  });
+
+  it.each(['wrong-session', 'unapproved', 'operator-closed', 'done', 'orphan'])(
+    'F-253: never retains a coordinator with %s authority', async (kind) => {
+      const blocked: Mission = { ...authorizedMission(), status: 'blocked', intentState: 'blocked_technical', orchestratorSessionId: 'pty-leader' };
+      if (kind === 'wrong-session') blocked.orchestratorSessionId = 'old-session';
+      if (kind === 'unapproved') blocked.intentVersion = 2;
+      if (kind === 'operator-closed') blocked.description = MISSION_RUNTIME_CLOSED_MARKER;
+      if (kind === 'done') blocked.status = 'done';
+      const leader = { ...pane('pane-leader', 'inc-leader'), role: 'orchestrator' as const };
+      runtime.pty = [{ ...physical('pty-leader', 'pane-leader', 'inc-leader'), role: 'orchestrator' }];
+      const stores = closeSuite(blocked, kind === 'orphan' ? [] : [leader]);
+      await terminateUnauthorizedMissionRuntimes(scope, stores.suite);
+      expect(runtime.pty).toEqual([]);
+    },
+  );
+
   it('does not terminate when an approved resume wins the mission lock', async () => {
     const blocked: Mission = {
       ...mission,

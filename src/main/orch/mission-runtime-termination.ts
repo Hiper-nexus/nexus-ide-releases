@@ -16,6 +16,7 @@ import { createHash } from 'node:crypto';
 import { appendMissionVerdict } from '../../shared/mission-block-cause';
 import {
   hasCurrentDispatchAuthority,
+  hasCurrentApprovedDispatchContract,
   missionBlockPatch,
 } from '../../shared/mission-intent';
 import {
@@ -24,6 +25,7 @@ import {
 } from '../../shared/mission-leftover-isolation';
 import {
   hasAutomaticTechnicalRecovery,
+  wasMissionRuntimeClosedByOperator,
   MISSION_RUNTIME_CLOSED_MARKER,
 } from '../../shared/mission-recovery-policy';
 import type {
@@ -219,6 +221,7 @@ function runtimeTargets(input: {
   readonly panes: readonly MissionPaneSpec[];
   readonly paneId?: string;
   readonly expectedSessionId?: string;
+  readonly reason?: MissionRuntimeTerminationReason;
 }): RuntimeTarget[] {
   const specs = input.panes.filter(
     (pane) =>
@@ -362,6 +365,22 @@ function runtimeTargets(input: {
       result[0]?.sessionId !== input.expectedSessionId)
   ) {
     throw new Error('mission pane session changed before termination');
+  }
+  // Blocking pauses dispatch, not the conversation needed to recover it.
+  // Only the exact persisted coordinator from this approved revision stays;
+  // workers, orphans, completed missions and explicit teardown remain strict.
+  if (
+    input.reason === 'authority-revoked' &&
+    input.mission.status === 'blocked' &&
+    (input.mission.intentState === 'blocked_technical' || input.mission.intentState === 'blocked_user') &&
+    hasCurrentApprovedDispatchContract(input.mission) &&
+    !wasMissionRuntimeClosedByOperator(input.mission)
+  ) {
+    return result.filter((target) => !(
+      target.role === 'orchestrator' &&
+      target.sessionId === input.mission.orchestratorSessionId &&
+      !target.orphaned
+    ));
   }
   return result;
 }
@@ -593,6 +612,7 @@ export function prepareMissionRuntimeTermination(input: {
   const mission = input.suite.missions.get(input.missionId);
   if (!mission) throw new Error('mission not found');
   const targets = runtimeTargets({
+    reason: input.reason,
     scope: input.scope,
     mission,
     panes: input.suite.missionPanes.list(mission.id),
@@ -631,6 +651,7 @@ export async function terminateMissionRuntime(input: {
     if (!found) throw new Error('mission not found');
     mission = found;
     targets = runtimeTargets({
+      reason: input.reason,
       scope: input.scope,
       mission,
       panes: input.suite.missionPanes.list(mission.id),
@@ -699,6 +720,7 @@ export async function terminateMissionRuntime(input: {
         };
       }
       targets = runtimeTargets({
+        reason: input.reason,
         scope: input.scope,
         mission: currentMission,
         panes: input.suite.missionPanes.list(currentMission.id),
@@ -711,6 +733,7 @@ export async function terminateMissionRuntime(input: {
   const currentMission = input.suite.missions.get(input.missionId);
   const remaining = currentMission
     ? runtimeTargets({
+        reason: input.reason,
         scope: input.scope,
         mission: currentMission,
         panes: input.suite.missionPanes.list(currentMission.id),
@@ -770,6 +793,7 @@ export async function settleMissionRuntimeDemotion(input: {
   readonly scope: ProjectExecutionScope;
   readonly suite: ProjectDomainStoreSuite;
   readonly demotedMission: Mission;
+  readonly reason?: 'authority-revoked' | 'operator-close';
 }): Promise<MissionRuntimeDemotionResult> {
   if (
     input.demotedMission.status !== 'blocked' &&
@@ -784,7 +808,7 @@ export async function settleMissionRuntimeDemotion(input: {
       scope: input.scope,
       suite: input.suite,
       missionId: input.demotedMission.id,
-      reason: 'authority-revoked',
+      reason: input.reason ?? 'authority-revoked',
       // Panes ficam (06/08): fechar o último pane invoca o HomeDeck e EJETA o
       // operador com o scrollback junto. A sessão morre com prova física; o
       // pane preserva transcript e controle, e o card diz o porquê + Retomar.
@@ -798,6 +822,12 @@ export async function settleMissionRuntimeDemotion(input: {
     };
   }
   if (termination.ok) {
+    const current = input.suite.missions.get(input.demotedMission.id);
+    if (current?.orchestratorSessionId && physicalSessionIsLive(current.orchestratorSessionId)) {
+      // A blocked coordinator is intentionally retained for recovery. Losing
+      // its durable pointer would make the next reconciliation kill it.
+      return { mission: current, termination };
+    }
     const mission =
       input.demotedMission.orchestratorSessionId === undefined
         ? input.demotedMission
@@ -911,6 +941,7 @@ export async function closeMissionRuntimePreservingHistory(input: {
     scope: input.scope,
     suite: input.suite,
     demotedMission: blocked,
+    reason: 'operator-close',
   });
   return settled.termination.ok
     ? {
@@ -952,6 +983,7 @@ export async function terminateUnauthorizedMissionRuntimes(
         let targets: RuntimeTarget[];
         try {
           targets = runtimeTargets({
+            reason: 'authority-revoked',
             scope,
             mission: current,
             panes: suite.missionPanes.list(current.id),

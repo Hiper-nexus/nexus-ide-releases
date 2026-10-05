@@ -260,3 +260,16 @@ não é o dono desse endpoint. O site/admin é do repositório `nexus-site`.
 A revisão final confirmou os contratos locais e o GET protegido `/mine`
 retornou 401 sem credencial; isso não constitui envio de relato nem teste
 de administração em produção. Nenhuma dessas árvores externas foi alterada.
+
+## Bloqueio de missão preserva o coordenador (F-253)
+
+`authority-revoked` ainda encerra os workers, mas conserva o coordenador exato
+para conversa/recuperação quando a missão está `blocked_user` ou
+`blocked_technical`, a revisão mantém seu contrato aprovado e despachado,
+e não existe encerramento vigente pelo operador. A sessão precisa coincidir
+com `orchestratorSessionId`, ter spec persistida e autoridade física sem
+ambiguidade; órfãos não ganham a exceção. Isso não concede autoridade de efeito:
+o gate de intenção continua recusando execução/despacho até a retomada.
+`operator-close`, restart, hibernação e missões done/failed não usam a exceção.
+A demotion conserva o ponteiro do coordenador retido; Encerrar usa razão
+explícita e exige a mesma prova de saída física de antes.
