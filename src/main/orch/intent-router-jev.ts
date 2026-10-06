@@ -182,6 +182,9 @@ export async function routeWithJev(
     state: { request: capText(objective, 6_000) },
     questions,
     timeoutMs: JEV_INTAKE_TIMEOUT_MS,
+    // O intake roda antes do spawn do orquestrador: retry duplicaria a espera
+    // de um prazo que já é o máximo tolerado, atrasando a missão nascer.
+    retryOnTimeout: false,
     surface: 'intake',
   });
   if (!result) return null;

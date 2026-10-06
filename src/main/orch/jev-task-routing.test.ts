@@ -65,6 +65,9 @@ describe('classifyTaskWithJev', () => {
     );
     const state = judge.mock.calls[0]![0].state as { task: string };
     expect(state.task).toContain('race condition');
+    // Rota no caminho crítico do spawn: sem retry de transporte no timeout.
+    expect(judge.mock.calls[0]![0].retryOnTimeout).toBe(false);
+    expect(judge.mock.calls[0]![0].timeoutMs).toBeLessThanOrEqual(5_000);
   });
 
   it('returns null when disabled, without a key, on empty task, or when the judge fails', async () => {

@@ -55,6 +55,14 @@ export const CHANGED_CODE_MIN = 0.5;
 /** Quantas devoluções o worker recebe antes de o handoff entrar como fraco. */
 export const JEV_REVIEW_MAX_BOUNCES = 1;
 
+/**
+ * Prazo do judge no handoff. O review roda ANTES da escrita durável e do
+ * delivery ao pai: sem teto, o default do transporte (8 s + retry de 400 ms)
+ * chegava a ~16 s de rede segurando a entrega. Timeout vira `skipped`
+ * (fail-open), nunca bloqueia o handoff.
+ */
+export const JEV_REVIEW_TIMEOUT_MS = 5_000;
+
 export const HANDOFF_REVIEW_QUESTIONS: Record<string, JevQuestion> = {
   is_specific: {
     type: 'noul',
@@ -366,6 +374,11 @@ export async function reviewMissionHandoff(
     state: buildHandoffReviewState(params),
     questions,
     signal: params.signal,
+    // O review segura a escrita durável do handoff: o prazo é o limite real
+    // de espera, e o retry do transporte só dobraria a latência da entrega
+    // ao pai sem melhorar o veredito (timeout vira skipped/fail-open).
+    timeoutMs: JEV_REVIEW_TIMEOUT_MS,
+    retryOnTimeout: false,
     surface: 'handoffReview',
   });
   if (!result) {

@@ -19,6 +19,7 @@ import {
   buildHandoffReviewState,
   evaluateHandoffEvidence,
   handoffReviewFeedback,
+  JEV_REVIEW_TIMEOUT_MS,
   jevReviewReceipt,
   mechanicalHandoffReviewOutcome,
   recordHandoffAckFeedback,
@@ -142,9 +143,10 @@ describe('reviewMissionHandoff', () => {
   });
 
   it('relatório forte → ok + artifact com probabilidades', async () => {
+    const judge = vi.fn(async () => allPass());
     const verdict = await reviewMissionHandoff(
       { sessionId: 's1', ...baseInput },
-      deps(vi.fn(async () => allPass())),
+      deps(judge),
     );
     expect(verdict.kind).toBe('ok');
     if (verdict.kind === 'ok') {
@@ -152,6 +154,12 @@ describe('reviewMissionHandoff', () => {
       expect(verdict.artifact.payload.outcome).toBe('ok');
       expect(verdict.artifact.payload.probabilities.is_specific).toBe(0.9);
     }
+    // O review segura a escrita durável do handoff: prazo limitado e sem
+    // retry de transporte (o default do client dobraria a espera).
+    expect(judge).toHaveBeenCalledWith(expect.objectContaining({
+      timeoutMs: JEV_REVIEW_TIMEOUT_MS,
+      retryOnTimeout: false,
+    }));
   });
 
   it('primeiro fraco → retry com mensagem e tentativa 1/1', async () => {

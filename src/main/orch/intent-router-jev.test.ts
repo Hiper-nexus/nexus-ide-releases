@@ -83,6 +83,9 @@ describe('routeWithJev', () => {
     expect(route.triage?.complexity).toBeCloseTo(1.4);
     expect(route.triage?.riskSensitive).toBeCloseTo(0.12);
     expect(route.triage?.ambiguous).toBeCloseTo(0.2);
+    // O intake roda antes do spawn do orquestrador: sem retry no timeout.
+    expect(judge.mock.calls[0]![0].retryOnTimeout).toBe(false);
+    expect(judge.mock.calls[0]![0].timeoutMs).toBeLessThanOrEqual(6_000);
   });
 
   it('falls through (null) when kind confidence < 0.6', async () => {

@@ -235,6 +235,9 @@ export async function classifyTaskForRouting(
     state: { task: capText(task, TASK_MAX_CHARS) },
     questions: TASK_ROUTING_QUESTIONS,
     timeoutMs: TASK_ROUTING_TIMEOUT_MS,
+    // A rota roda no caminho crítico do spawn: o timeout já é o prazo máximo
+    // tolerado; o retry duplicaria a espera antes de cair na heurística.
+    retryOnTimeout: false,
     surface: 'taskRouting',
     onNoAnswer: (reason) => {
       noAnswer = reason;
@@ -339,6 +342,9 @@ export async function classifyTaskWithSkillForRouting(
     state: { task: capText(task, TASK_MAX_CHARS) },
     questions,
     timeoutMs: TASK_ROUTING_TIMEOUT_MS,
+    // Mesma regra do classify: rota no caminho crítico do spawn não dobra a
+    // espera em retry — o fail-open é a heurística de palavras-chave.
+    retryOnTimeout: false,
     surface: 'taskRouting',
     sessionId: opts.sessionId,
     missionId: opts.missionId,
