@@ -1830,10 +1830,13 @@ export function completeVerifiedMission(
     }
     const textOnly = teamQuestion.applicable || current.intentContract?.routingAdvice?.kind === 'direct-answer';
     const automaticProof = getAutomaticCompletionProof(scope, current);
-    const frozenReviewProof = !textOnly && !automaticProof && missionRequiresIndependentReview(current, squad)
+    const frozenReviewProof = !textOnly && !automaticProof &&
+      ((current.intentContract?.lane ?? 'standard') === 'standard' || missionRequiresIndependentReview(current, squad))
       ? resolveFrozenMissionReviewProof(scope, current) : null;
+    const codeCompletionRequired = !textOnly && (current.intentContract?.lane ?? 'standard') === 'standard' &&
+      current.squadId !== PET_STUDIO_SQUAD_ID && !frozenReviewProof;
     assertIndependentReviewForDone({
-      mission: current, scope, squad, handoffs, automaticProof, frozenReviewProof, textOnly,
+      mission: current, scope, squad, handoffs, automaticProof, frozenReviewProof, textOnly, codeCompletionRequired,
       deliveryAttemptsOf: (handoffId) => stores.handoffs?.listDeliveryAttempts?.(handoffId) ?? [],
       dispatches: stores.taskDispatches?.list?.(current.id) ?? [],
     });

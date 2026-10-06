@@ -223,7 +223,8 @@ vi.mock("../adapters/adapter-registry", () => ({
   resolveAdapterBinary: (id: string) => id === 'muse' ? '/usr/local/bin/muse' : '/usr/local/bin/claude',
 }));
 
-vi.mock("../path-resolver", () => ({
+vi.mock("../path-resolver", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../path-resolver")>(),
   revalidateExecutable: (binPath: string) =>
     typeof binPath === "string" && binPath.startsWith("/"),
 }));

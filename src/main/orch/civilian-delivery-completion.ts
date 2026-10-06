@@ -45,6 +45,7 @@ import type { ScopedTaskRecord } from './task-store';
 import { missionLifecycleKey } from './mission-lifecycle-lock';
 import { captureWorkingTreeCandidate } from '../context/candidate-working-tree-snapshot';
 import { withAutomaticCompletionProof, type AutomaticCompletionProof } from './automatic-completion-proof';
+import type { MissionCodeCompletionOutcome } from './mission-code-completion';
 import { SKIP_DIRECTORIES } from '../context/orientation/orientation-types';
 import { readFrozenMissionReviewContext } from './mission-review-proof';
 import { AsyncProcessGitRunner } from '../runtime/git-command';
@@ -144,6 +145,7 @@ type LivePane = TeamQuestionPaneRuntime & {
 };
 
 export interface CivilianDeliveryDependencies {
+  readonly runCodeCompletionGate?: CivilianCodeCompletionGate;
   readonly readFrozenReviewContext?: typeof readFrozenMissionReviewContext;
   readonly captureCandidate?: (scope: ProjectExecutionScope) => Promise<{
     readonly fingerprint: string;
@@ -189,6 +191,20 @@ export interface CivilianDeliveryDependencies {
     scope: ProjectExecutionScope,
     missionId: string,
   ) => MissionLeader | null;
+}
+
+export type CivilianCodeCompletionGate = (input: {
+  readonly scope: ProjectExecutionScope;
+  readonly mission: Mission;
+  readonly productFiles: readonly string[];
+  readonly liveOrchestratorSessionId?: string | null;
+  readonly lifetime?: PeriodicTaskContext;
+}) => Promise<MissionCodeCompletionOutcome>;
+let civilianCodeCompletionGate: CivilianCodeCompletionGate | null = null;
+
+/** Main startup wiring; an absent verifier never turns into scanner-only approval. */
+export function configureCivilianCodeCompletionGate(gate: CivilianCodeCompletionGate | null): void {
+  civilianCodeCompletionGate = gate;
 }
 
 export type CivilianStores = {
@@ -1128,7 +1144,8 @@ async function civilianAutoReviewGate(
     : null;
   // A revisão de um candidato congelado já tem Council próprio. Missões
   // sem esse workflow usam o mesmo scanner/reparo, inclusive guided/legacy.
-  if (missionRequiresIndependentReview(mission, squad) &&
+  if ((missionRequiresIndependentReview(mission, squad) ||
+       (mission.intentContract?.lane ?? 'standard') === 'standard') &&
       (deps.readFrozenReviewContext ?? readFrozenMissionReviewContext)(scope, mission.id)) {
     return { action: 'proceed' };
   }
@@ -1137,6 +1154,18 @@ async function civilianAutoReviewGate(
     squad?.id === PET_STUDIO_SQUAD_ID
   ) {
     return { action: 'proceed' };
+  }
+
+  if ((mission.intentContract?.lane ?? 'standard') === 'standard') {
+    const verify = deps.runCodeCompletionGate ?? civilianCodeCompletionGate;
+    if (!verify) return { action: 'block', description: 'O verificador de conclusão de código não está disponível. Restabeleça o serviço do Nexus e retome a missão; a entrega não foi marcada como verificada.' };
+    const checked = await context.wait(verify({ scope, mission, productFiles,
+      liveOrchestratorSessionId: provenOrchestratorSessionId, lifetime: context }));
+    context.assertCurrent();
+    if ('proof' in checked) return { action: 'proceed', proof: checked.proof,
+      extras: { note: checked.proof.note, evidenceIds: checked.proof.codeCompletion?.evidenceIds } };
+    if (checked.kind === 'waiting') return { action: 'wait', spawnedReviewers: [] };
+    return { action: 'block', description: `${checked.reason}\n${checked.hint}` };
   }
 
   const outcome =
@@ -1774,7 +1803,7 @@ async function reconcileCivilianCompletionAttempt(
     completed = autoReview.proof
       ? withAutomaticCompletionProof(scope, mission, {
           ...autoReview.proof,
-          ...(candidateBefore?.complete && candidateAfter?.complete
+          ...(!autoReview.proof.codeCompletion && candidateBefore?.complete && candidateAfter?.complete
             ? { candidateFingerprint: candidateAfter.fingerprint, deletedArtifactPaths: candidateAfter.deletedPaths } : {}),
         }, complete)
       : complete();

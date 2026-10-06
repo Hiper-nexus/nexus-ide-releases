@@ -11,6 +11,7 @@ import { testProjectScope } from './__tests__/scope-fixture';
 import { ProcessGitRunner } from '../runtime/git-command';
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 import { awaitsOperatorTabCompletionRequest } from './operator-tab-completion';
+import * as codeBaseline from './mission-code-baseline-ledger';
 
 const mocks = vi.hoisted(() => ({
   getProjectDomainStores: vi.fn(),
@@ -430,11 +431,12 @@ describe('mission creation authority', () => {
       const update = vi.fn((id: string, patch: { status?: string }) =>
         id === created.id ? { ...created, ...patch, updatedAt: 2 } : null,
       );
+      const recordBaseline = vi.fn();
       mocks.getProjectDomainStores.mockReturnValue({
-        missions: { create, update, atomically: <T>(fn: () => T) => fn() },
+        missions: { create, update, codeBaseline: { record: recordBaseline }, atomically: <T>(fn: () => T) => fn() },
         missionPanes: { record: vi.fn() },
       });
-      return { create, update };
+      return { create, update, recordBaseline };
     }
 
     beforeEach(() => {
@@ -445,6 +447,33 @@ describe('mission creation authority', () => {
       ]);
     });
     afterEach(() => vi.mocked(listSquads).mockReturnValue([]));
+
+    it('stores the Main-captured baseline together with the newly created mission', async () => {
+      mocks.getOrchSettings.mockReturnValue({ squadCliPolicy: 'operator-choice' });
+      const stores = missionStores();
+      const capture = vi.spyOn(codeBaseline, 'captureMissionCodeBaseline');
+      await missionCreateTool().handler({ title: 'Implementar uma feature' }, operatorHand());
+      expect(capture).toHaveBeenCalledWith(scope.rootRealPath);
+      const measured = await capture.mock.results[0]!.value;
+      expect(stores.recordBaseline).toHaveBeenCalledWith('mission-new', measured);
+      expect(stores.create.mock.invocationCallOrder[0]).toBeLessThan(stores.recordBaseline.mock.invocationCallOrder[0]);
+    });
+
+    it('revocation while reading the baseline cannot create or promote a mission', async () => {
+      const stores = missionStores();
+      const ctx = operatorHand();
+      const capture = codeBaseline.captureMissionCodeBaseline;
+      let revoked = false;
+      vi.spyOn(codeBaseline, 'captureMissionCodeBaseline').mockImplementationOnce(async root => {
+        const result = await capture(root); revoked = true; return result;
+      });
+      await expect(missionCreateTool().handler({ title: 'Implementar uma feature' }, ctx, {
+        assertCurrentAuthority: () => { if (revoked) throw new Error('scope changed during capture'); },
+      })).rejects.toThrow('scope changed during capture');
+      expect(stores.create).not.toHaveBeenCalled();
+      expect(stores.recordBaseline).not.toHaveBeenCalled();
+      expect(ctx.role).toBe('user');
+    });
 
     it('criar é atômico: pane de outra missão viva recusa SEM gravar a missão', async () => {
       mocks.getOrchSettings.mockReturnValue({ squadCliPolicy: 'operator-choice' });
@@ -677,7 +706,7 @@ describe('mission creation authority', () => {
     });
   });
 
-  it('rejects direct done when immutable PREVC receipts are incomplete', async () => {
+  it('queues verification without completing when immutable PREVC receipts are incomplete', async () => {
     const setStatus = vi.fn();
     mocks.getProjectDomainStores.mockReturnValue({
       missions: {
@@ -702,11 +731,12 @@ describe('mission creation authority', () => {
     await expect(missionSetStatusTool().handler(
       { missionId: 'mission-existing', status: 'done' },
       context('orchestrator'),
-    )).rejects.toThrow(/immutable step receipts/i);
+    )).resolves.toMatchObject({ status: 'running', completionRequested: true });
     expect(setStatus).not.toHaveBeenCalled();
+    expect(mocks.completeVerified).not.toHaveBeenCalled();
   });
 
-  it('allows standard-lane done with a durable note when no contract is frozen', async () => {
+  it('a durable note requests verification but cannot complete a standard mission directly', async () => {
     const setStatus = vi.fn();
     const appendLearning = vi.fn();
     let stored: Record<string, unknown> = {
@@ -743,7 +773,7 @@ describe('mission creation authority', () => {
     });
     mocks.getContextWorkflowService.mockReturnValue({
       isMissionDriverComplete: () => false,
-      // PREVC degrada: sem contrato congelado, done fecha com nota durável.
+      // No frozen PREVC: the common automatic verifier owns completion.
       getMissionWorkflow: () => ({ contract: null, workflow: null }),
     });
 
@@ -758,22 +788,14 @@ describe('mission creation authority', () => {
 
     expect(result).toMatchObject({
       id: 'mission-existing',
-      status: 'done',
-      result: {
-        outcome: 'success',
-        summary: 'Form de login corrigido e validado manualmente no navegador.',
-      },
+      status: 'running',
+      completionRequested: true,
     });
-    expect(mocks.completeVerified).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        missionId: 'mission-existing',
-        expectedStatus: 'running',
-        result: expect.objectContaining({ outcome: 'success' }),
-      }),
-    );
+    expect(mocks.completeVerified).not.toHaveBeenCalled();
+    expect(mocks.reconcile).toHaveBeenCalledWith(scope, 'mission-existing');
     expect(setStatus).not.toHaveBeenCalled();
-    expect(appendLearning).not.toHaveBeenCalled();
+    expect(appendLearning).toHaveBeenCalledWith('mission-existing',
+      '## Solicitação de conclusão\nForm de login corrigido e validado manualmente no navegador.');
   });
 
   it('F-785: lane ops conclui sem arquivo com nota durável, e o contrato não muda', async () => {
@@ -1225,13 +1247,15 @@ describe('mission creation authority', () => {
     expect(mocks.reconcile).not.toHaveBeenCalled();
   });
 
-  it('F-185: aba sem squad continua concluindo pelo pedido explícito com nota durável', async () => {
+  it('F-185: aba sem squad records the explicit request and also requires automatic verification', async () => {
     let stored: Record<string, unknown> = {
       id: 'mission-existing', status: 'running', learnings: '', milestones: [],
+      orchestratorSessionId: 'orchestrator-session',
       intentVersion: 1, intentState: 'executing', updatedAt: 10,
       intentContract: { lane: 'standard', workspaceBinding: { adoptedPaneId: 'operator-pane' } },
     };
-    mocks.getProjectDomainStores.mockReturnValue({ missions: { get: () => stored } });
+    mocks.getProjectDomainStores.mockReturnValue({ missions: { get: () => stored,
+      updateContent: (_id: string, patch: object) => (stored = { ...stored, ...patch }), appendLearning: vi.fn() } });
     mocks.getContextWorkflowService.mockReturnValue({
       isMissionDriverComplete: () => false,
       getMissionWorkflow: () => ({ contract: null }),
@@ -1243,8 +1267,10 @@ describe('mission creation authority', () => {
       missionId: 'mission-existing', status: 'done',
       note: 'Pedido inteiro entregue, testes validados e release publicada com recibo.',
     }, context('orchestrator'));
-    expect(result).toMatchObject({ status: 'done' });
-    expect(mocks.completeVerified).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ status: 'running', completionRequested: true });
+    expect(mocks.completeVerified).not.toHaveBeenCalled();
+    expect(mocks.reconcile).toHaveBeenCalledWith(scope, 'mission-existing');
+    expect(awaitsOperatorTabCompletionRequest(scope, stored as never)).toBe(false);
   });
 
   it('libera o turno enquanto sensores trabalham e deixa a reconciliação concluir depois', async () => {
@@ -1355,7 +1381,7 @@ describe('mission creation authority', () => {
     expect(setStatus).not.toHaveBeenCalled();
   });
 
-  it('rejects standard-lane done without a durable note when no contract is frozen', async () => {
+  it('a short completion request still requires proof from the automatic verifier', async () => {
     const setStatus = vi.fn();
     mocks.getProjectDomainStores.mockReturnValue({
       missions: {
@@ -1378,8 +1404,9 @@ describe('mission creation authority', () => {
     await expect(missionSetStatusTool().handler(
       { missionId: 'mission-existing', status: 'done', note: 'ok' },
       context('orchestrator'),
-    )).rejects.toThrow(/without a frozen PREVC contract requires a durable note/i);
+    )).resolves.toMatchObject({ status: 'running', completionRequested: true });
     expect(setStatus).not.toHaveBeenCalled();
+    expect(mocks.completeVerified).not.toHaveBeenCalled();
   });
 
   it('allows ops-lane done with a durable note (no PREVC green required)', async () => {

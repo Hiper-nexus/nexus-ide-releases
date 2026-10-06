@@ -1,8 +1,11 @@
 import type { Mission } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { missionLifecycleKey } from './mission-lifecycle-lock';
+import type { CodeCompletionCertification } from './mission-code-completion';
 
 export interface AutomaticCompletionProof {
+  /** Opaque Main-issued certification; serialized/cloned claims do not verify. */
+  readonly codeCompletion?: CodeCompletionCertification;
   readonly status: 'verified' | 'unavailable';
   readonly candidateFingerprint?: string;
   readonly deletedArtifactPaths?: readonly string[];

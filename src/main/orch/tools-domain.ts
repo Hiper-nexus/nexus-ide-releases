@@ -1,4 +1,8 @@
 import { isFindingCorrectionTask, matchesReviewedFinding } from './routing-cost-policy';
+import { captureMissionCodeBaseline } from './mission-code-baseline-ledger';
+import { configureCivilianCodeCompletionGate } from './civilian-delivery-completion';
+import { runMissionCodeCompletion, recordMissionCodeCompletionReview,
+  isCurrentCodeCompletionFindingFix } from './mission-code-completion-production';
 import { missionExecutionScope } from './mission-execution-scope';
 import { sharedPaneSpaceId } from '../pty/pane-space-worktree';
 import {
@@ -333,7 +337,8 @@ const missionCreateTool: McpToolDef = {
     },
     required: ['title'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
     if (ctx.role !== 'user') {
       throw new Error(
         'not authorized: only a user-owned session may create a mission',
@@ -344,6 +349,9 @@ const missionCreateTool: McpToolDef = {
     const description = str(args, 'description');
     const milestones = strArray(args, 'milestones');
     const rawSquadId = str(args, 'squadId');
+    const baseline = await captureMissionCodeBaseline(executionScopeFor(ctx).rootRealPath);
+    assertMcpInvocationCurrent(invocation);
+    if (ctx.role !== 'user') throw new Error('not authorized: the mission creator changed during baseline capture');
     const autopilot = isOperatorChoicePolicy(getOrchSettings().squadCliPolicy);
     // A mão do operador já abre panes e worktrees sem missão; a missão dela só
     // registra o trabalho. Em Autopilot ela nasce como o "modo livre" da UI:
@@ -414,6 +422,7 @@ const missionCreateTool: McpToolDef = {
               },
             } : {}),
       });
+      stores.missions.codeBaseline.record(created.id, baseline);
       // The creator's own pane is part of the mission composition too, so a
       // history reopen restores the orchestrator alongside the workers.
       if (orchPane?.adapterId) {
@@ -585,17 +594,13 @@ const missionSetStatusTool: McpToolDef = {
   name: 'nexus_mission_set_status',
   description:
     'Update a mission status (pending|running|blocked|done|failed). ' +
-    'For standard squads, done requests automatic verification and returns the current mission state. ' +
+    'For standard code missions, including +Pane missions without a squad, done requests automatic verification and returns the current mission state. ' +
     'If completionRequested=true, finish your turn so Nexus can verify; do not poll or mark blocked merely to wait. ' +
+    'Nexus runs applicable checks and an independent frontier review of the current candidate; review findings return for correction. ' +
     'An explicit push waits for this verification attempt. If pushPending=true, no push is queued; retry with fresh authority after completion. ' +
-    'The mission reaches done ONLY after real completion. A standard squad mission is ' +
-    'completed through the main-owned verified path, which does NOT re-check PREVC step ' +
-    'receipts — do not assume incomplete steps will be refused there. For any other mission, ' +
-    'with a frozen PREVC contract, done requires the complete workflow and immutable step ' +
-    'receipts; without a frozen contract (PREVC degrades, never blocks), a non-orchestrated ' +
-    'completion requires a durable note (or existing learnings) ≥40 chars. A standard squad ' +
-    'mission may only reach done through main-owned verified completion receipts; prose or a ' +
-    'reporter claim is never orchestration completion. ' +
+    'The mission reaches done ONLY through main-owned verified completion receipts. Prose or a reporter claim is never code completion. ' +
+    'A frozen PREVC candidate retains its existing workflow and immutable review receipts; do not open a duplicate final reviewer. ' +
+    'Consult/ops and proven text-only deliveries retain their existing completion authority; without a frozen contract, a durable note (or existing learnings) of at least 40 chars is required. ' +
     'Use blocked when the environment is not ready (work may still ' +
     'have been delivered outside the pipeline). Use failed when execution started and ended in error. ' +
     'Optional note: required for durable blocked/failed justification and for done without ' +
@@ -917,6 +922,17 @@ const reviewVerdictTool: McpToolDef = {
       throw new Error('only mission orchestrator/worker panes register verdicts');
     }
     const input = reviewVerdictArgsSchema.parse(args);
+    const completion = await recordMissionCodeCompletionReview(ctx, input, invocation);
+    if (completion.handled) {
+      // Never relabel a candidate-bound review with a HEAD observed later.
+      // The completion coordinator separately validates any Git push receipt.
+      return { recorded: completion.accepted, completionReviewRecorded: completion.accepted,
+        satisfiesGate: false, ...(completion.result ? { verdictId: completion.result.verdict.verdictId,
+          headSha: completion.result.verdict.headSha, frontier: completion.result.verdict.frontier } : {}),
+        hint: completion.accepted
+          ? 'Veredito do candidato registrado. Entregue o handoff da revisão; o Nexus revalida a entrega antes da conclusão.'
+          : completion.reason };
+    }
     const { headSha, treeDirty } = measureIntegrationState(
       executionScopeFor(ctx).rootRealPath,
     );
@@ -2011,6 +2027,9 @@ export async function routeTaskForCaller(
         reviewedFindingFix = matchesReviewedFinding(task, verdict, missionId, measured.headSha);
       }
     } catch { /* No proof: the normal economic implementation preference remains. */ }
+    if (!reviewedFindingFix) {
+      reviewedFindingFix = await isCurrentCodeCompletionFindingFix(ctx.scope, missionId, task).catch(() => false);
+    }
   }
   // Contexto da REGRA: tudo que o roteador sabe, menos o que o Jev decidiu.
   // O contrafactual do recibo (`ruleChoice`, abaixo) reusa este objeto como
@@ -2158,7 +2177,7 @@ export async function routeTaskForCaller(
           'no seu pane em vez de delegar a um modelo barato.',
       }
     : {};
-  if (!missionId) {
+  if (!missionId || internal.suggestOnly === true) {
     return { ...decision, ...provenance, skillSuggestion: routedSkillSuggestion, ...judgeHint };
   }
   const reservation = getProjectDomainStores(ctx.scope)
@@ -2247,6 +2266,7 @@ const routeTaskTool: McpToolDef = {
 setOperatorRouteResolver((task, ctx, internal) =>
   routeTaskForCaller({ task }, ctx, internal),
 );
+configureCivilianCodeCompletionGate(runMissionCodeCompletion);
 
 const cronTool: McpToolDef = {
   name: 'nexus_cron',

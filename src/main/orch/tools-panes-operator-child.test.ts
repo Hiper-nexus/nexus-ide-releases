@@ -781,6 +781,25 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
 });
 
 describe('nexus_pane_spawn — missão sob demanda da aba', () => {
+  it('waits for asynchronous adoption and revalidates invocation before spawning', async () => {
+    let finish!: (value: { missionId: string; discardIfUnused: () => void }) => void;
+    setOperatorTabMissionProvider(() => new Promise(resolve => { finish = resolve; }));
+    let current = true;
+    const discard = vi.fn();
+    const pending = paneSpawnTool.handler({ adapterId: 'codex', task: 'revise o login' }, userPane(), {
+      signal: new AbortController().signal,
+      assertCurrentAuthority: () => { if (!current) throw new Error('authority changed'); },
+    });
+    const rejected = expect(pending).rejects.toThrow('authority changed');
+    await Promise.resolve();
+    expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
+    current = false;
+    finish({ missionId: 'new-mission', discardIfUnused: discard });
+    await rejected;
+    expect(discard).toHaveBeenCalledOnce();
+    expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
+  });
+
   it('só o pane do operador em Autopilot pede a missão; Hardened e filho do operador não', async () => {
     const provider = vi.fn(() => null);
     setOperatorTabMissionProvider(provider);

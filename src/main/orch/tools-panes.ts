@@ -660,8 +660,9 @@ setNextCliResolver(async ({ callerSessionId, task, excludeAdapterIds, preferAdap
 export function suggestOperatorRoute(
   task: string,
   ctx: AgentGateContext,
+  constraints: Pick<OperatorRouteInternal, 'excludeAdapterIds' | 'requireReadOnlyEnforceable'> = {},
 ): Promise<Record<string, unknown>> | null {
-  return operatorRouteResolver?.(task, ctx, { suggestOnly: true }) ?? null;
+  return operatorRouteResolver?.(task, ctx, { ...constraints, suggestOnly: true }) ?? null;
 }
 
 /**
@@ -678,7 +679,7 @@ export interface OperatorTabMission {
 export type OperatorTabMissionProvider = (
   ctx: AgentGateContext,
   task: string | null,
-) => OperatorTabMission | null;
+) => OperatorTabMission | null | Promise<OperatorTabMission | null>;
 
 let operatorTabMissionProvider: OperatorTabMissionProvider | null = null;
 
@@ -693,11 +694,11 @@ export function setOperatorTabMissionProvider(
  * /hook/delegate adota o pane na auto-orquestração do Autopilot). O chamador
  * decide se usa `discardIfUnused` — o hook nunca descarta: o pane já vive.
  */
-export function adoptThroughOperatorTabMission(
+export async function adoptThroughOperatorTabMission(
   ctx: AgentGateContext,
   task: string | null,
-): OperatorTabMission | null {
-  return operatorTabMissionProvider?.(ctx, task) ?? null;
+): Promise<OperatorTabMission | null> {
+  return await operatorTabMissionProvider?.(ctx, task) ?? null;
 }
 
 export function attenuateSkills(
@@ -970,13 +971,14 @@ const paneSpawn: McpToolDef = {
       !str(args, 'resume') &&
       isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)
     ) {
-      tabMission = operatorTabMissionProvider(ctx, operatorRouteTask(args));
+      tabMission = await operatorTabMissionProvider(ctx, operatorRouteTask(args));
     }
     const spawnTiming: PaneSpawnTiming = {
       timer: startPhaseTimer(),
       meta: {},
     };
     try {
+      assertMcpInvocationCurrent(invocation);
       return await paneSpawnAfterTabMission.handler(
         args,
         ctx,

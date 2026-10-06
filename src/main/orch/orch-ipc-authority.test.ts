@@ -4273,6 +4273,18 @@ describe('missionCreateForPane — a missão do GRUPO do pane (F-374)', () => {
     expect(harness.createPaneMission).not.toHaveBeenCalled();
   });
 
+  it('revalidates the requester workspace after asynchronous mission creation', async () => {
+    configureRendererMissionAuthority({} as never);
+    const sender = owner(933); harness.scopes.set(sender.id, SCOPE_A);
+    let finish!: (value: unknown) => void;
+    harness.createPaneMission.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    const pending = canonicalHandler(ORCH_CHANNELS.missionCreateForPane)({ sender }, { paneId: 'pane-a', title: 'New mission' });
+    const rejected = expect(pending).rejects.toThrow(/scope|workspace/);
+    harness.scopes.set(sender.id, SCOPE_B);
+    finish({ ok: true, mission: { id: 'mission-old-scope' } });
+    await rejected;
+  });
+
   it('ownGroup booleano chega à autoridade sem tocar o resto do payload', async () => {
     configureRendererMissionAuthority({} as never);
     const sender = owner(932);

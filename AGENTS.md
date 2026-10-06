@@ -1724,3 +1724,33 @@ saber isto antes de mexer:
   `liveOrchestratorSessionId` não a reconhece; só o Retomar do operador pode
   encerrar e substituir um Maestro vivo.
 
+
+## Conclusão de código e validadores Main (06/10)
+
+- Missão `standard`, inclusive sem squad/+Pane, pede verificação por `done`;
+  `completionRequested` não prova conclusão. `mission-code-completion.ts` emite
+  a certificação Main vinculada à missão e ao candidato atual; nota, scanner
+  isolado e handoff do próprio autor não substituem o juiz independente.
+- A base nasce antes da missão (`mission-code-baseline-ledger.ts`). Sem base
+  conhecida, a leitura cobre o estado atual e não atribui autoria do WIP.
+  Artefatos existentes declarados também entram no fingerprint. Leitura
+  truncada, paths protegidos ou cobertura desconhecida nunca viram aprovação.
+- O reviewer frontier nasce em leitura, registra o veredito do candidato exato
+  e entrega seu relatório antes de fechar. Achados voltam ao Maestro para
+  correção; candidato alterado exige nova revisão. Council congelado conserva
+  seu fluxo próprio. Conclusão humana explícita e entregas textuais comprovadas
+  mantêm suas autoridades existentes.
+- `owned-check-exec.ts` compartilha a reserva de RAM/comando pesado com os
+  workers. Prazo lógico pode terminar antes da árvore física: reserva, HOME e
+  worktree de comparação só são liberados com prova de saída. Fila/cancelamento
+  recuperável não consome orçamento de reparo de código. Typecheck e auditoria
+  pesados são sequenciais na conclusão; metadados leves podem ser paralelos.
+- Ausência de compilador/sandbox não é teste aprovado. Ausência comprovada de
+  teste aplicável também não é obrigação de inventar testes. O runner reconhece
+  JS/Python e suítes nativas Go/Rust; sucesso de compilação Cargo não prova teste.
+  Falha Rust sem identidade inequívoca do alvo não recebe dispensa F-246 pelo
+  nome do caso. GoWork só inclui módulos comprovados dentro do escopo.
+- Toolchains nativas usam cache privado e grants restritos ao SDK; nunca dar
+  leitura do HOME inteiro por um prefixo de instalação. Rustup de descoberta
+  usa `RUSTUP_AUTO_INSTALL=0`. Windows usa ferramentas da imagem OCI configurada;
+  não tenta executar launchers `.cmd` nem nomes da imagem no host Windows.
